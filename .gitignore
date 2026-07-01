@@ -1,0 +1,8 @@
+work-obj*.cf
+*.o
+*.ghw
+*.vcd
+ref/*.bin
+ref/runq
+ref/run
+__pycache__/
