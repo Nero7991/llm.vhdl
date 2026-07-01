@@ -9,3 +9,5 @@ ref/runq_dump
 ref/run
 mem/golden/gen.txt
 __pycache__/
+ref/run_i16
+ref/run_i8fq
