@@ -3,6 +3,9 @@ work-obj*.cf
 *.ghw
 *.vcd
 ref/*.bin
+ref/*.pt
 ref/runq
+ref/runq_dump
 ref/run
+mem/golden/gen.txt
 __pycache__/
