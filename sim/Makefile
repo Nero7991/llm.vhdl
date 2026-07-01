@@ -1,6 +1,6 @@
 GHDL   ?= ghdl
 STD    ?= --std=08
-RTL    := $(wildcard ../rtl/*.vhd)
+RTL    := ../rtl/util_pkg.vhd $(filter-out ../rtl/util_pkg.vhd,$(wildcard ../rtl/*.vhd))
 TB     ?= tb_smoke
 WORK   := work-obj08.cf
 
