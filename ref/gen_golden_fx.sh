@@ -10,4 +10,6 @@ gcc -O3 -o ref/run_fx ref/run_fx.c -lm
 for f in fx_rmsnorm_l0 fx_rope_l0 fx_softmax_l0_h0 fx_swiglu_l0 fx_matvec_wq_l0 fx_layer0_out fx_tokens_greedy; do
   test -s "mem/golden/$f.txt" || { echo "MISSING mem/golden/$f.txt"; exit 1; }
 done
+tl=$(wc -l < mem/golden/fx_tokens_greedy.txt)
+[ "$tl" -eq 200 ] || { echo "fx_tokens_greedy.txt: expected 200 lines, got $tl"; exit 1; }
 echo "golden fx files OK"; ls mem/golden/fx_*.txt

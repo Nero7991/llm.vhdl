@@ -554,9 +554,10 @@ static void rope_fx(float* vec, int pos, int dim, int head_size) {
 
 /* ----------------------------------------------------------------------------
  * forward_fx — copy of forward() with matmul() replaced by matmul_fx().
- * When g_dump is set, the first call (pos=0) captures layer-0 golden vectors.
+ * When g_dump is set, the pos==DUMP_POS call captures layer-0 golden vectors.
  * The static dump_done guard ensures each file is written exactly once.
  * -------------------------------------------------------------------------- */
+#define DUMP_POS 3   /* non-trivial: RoPE angle != 0, attention window = 4 */
 static float* forward_fx(Transformer* transformer, int token, int pos) {
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
@@ -568,11 +569,12 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
     int hidden_dim = p->hidden_dim;
     int head_size  = dim / p->n_heads;
 
-    /* One-shot dump guard: fires on the very first forward_fx call (pos=0,
-     * token = first prompt token = BOS).  All seven layer-0 golden files are
-     * written at this position so the dump position is unambiguous. */
+    /* One-shot dump guard: fires at pos==DUMP_POS so RoPE (non-zero angle) and
+     * softmax (multi-element attention window) goldens exercise real computation
+     * rather than the pos=0 identity/singleton cases.  All layer-0 golden files
+     * are written at this single position so the dump position is unambiguous. */
     static int dump_done = 0;
-    int do_dump = g_dump && !dump_done;
+    int do_dump = g_dump && !dump_done && pos == DUMP_POS;
 
     /* Token embedding lookup (not a matmul — stays float). */
     float* content_row = w->token_embedding_table + token * dim;
