@@ -369,6 +369,21 @@ static void matmul_fx(float* xout, float* x, float* w, int n, int d) {
     }
 }
 
+/* Integer RoPE rotation using Q1.15 twiddle LUTs from fx.h.
+ * Identical body to rope_fx in test_rope.c. */
+static void rope_fx(float* vec, int pos, int dim, int head_size) {
+    for (int i = 0; i < dim; i += 2) {
+        int16_t fcr = fx_cos(pos, i % head_size, head_size);
+        int16_t fci = fx_sin(pos, i % head_size, head_size);
+        float v0 = vec[i], v1 = vec[i+1];
+        int64_t q0 = llround(v0 * 4096.0), q1 = llround(v1 * 4096.0);
+        int64_t r0 = (q0 * fcr - q1 * fci + (1LL << 14)) >> 15;
+        int64_t r1 = (q0 * fci + q1 * fcr + (1LL << 14)) >> 15;
+        vec[i]   = (float)(r0 / 4096.0);
+        vec[i+1] = (float)(r1 / 4096.0);
+    }
+}
+
 /* ----------------------------------------------------------------------------
  * forward_fx — copy of forward() with matmul() replaced by matmul_fx()
  * -------------------------------------------------------------------------- */
@@ -401,20 +416,9 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         matmul_fx(s->k,  s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul_fx(s->v,  s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
-        /* RoPE (float, uses fx.h tables only for validation in later tasks). */
-        for (int i = 0; i < dim; i += 2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val), fci = sinf(val);
-            int rotn = i < kv_dim ? 2 : 1;
-            for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k;
-                float v0 = vec[i], v1 = vec[i+1];
-                vec[i]   = v0 * fcr - v1 * fci;
-                vec[i+1] = v0 * fci + v1 * fcr;
-            }
-        }
+        /* RoPE — integer Q1.15 twiddle tables (Task 4). */
+        rope_fx(s->q, pos, dim,    head_size);   /* rotate all query dims */
+        rope_fx(s->k, pos, kv_dim, head_size);   /* rotate key dims (kv_dim <= dim) */
 
         /* Multi-head attention (float). */
         int h;
