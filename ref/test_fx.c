@@ -23,6 +23,18 @@ int main(void) {
         CHECK("bfp_roundtrip", maxerr < 1e-3, maxerr, 0.0);
     }
 
+    // 1b. block-fp large magnitude: exponent goes negative, no silent saturation.
+    {
+        float x[4] = {50000.0f, -33000.0f, 12345.0f, 100.0f};
+        int16_t m[4]; int e = fx_bfp_from_float(m, x, 4);
+        double maxrel = 0;
+        for (int j = 0; j < 4; j++) {
+            double got = fx_bfp_get(m, e, j), rel = fabs(got - x[j]) / fabs(x[j]);
+            if (rel > maxrel) maxrel = rel;
+        }
+        CHECK("bfp_large", maxrel < 0.01, maxrel, 0.0);
+    }
+
     // 2. fx_make_scale + fx_scale_mul reproduce a float scale on a known accumulator.
     {
         float scale = 0.0123456f; int32_t mult; int shift; fx_make_scale(scale, &mult, &shift);
