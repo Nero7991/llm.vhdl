@@ -96,6 +96,17 @@ static void dump_rmsnorm_l0(const float *x_in, const float *x_out, int n)
     fclose(f);
 }
 
+/* fx_rmsnorm_l0_w.txt — one BFP section: layer-0 att RMS weight quantised to
+ * int16 block-fp.  This is the w_mant/w_exp representation the RTL consumes.
+ * Using fx_bfp_from_float is identical to what the RTL's input port carries. */
+static void dump_rmsnorm_l0_w(const float *w, int n)
+{
+    FILE *f = fopen("mem/golden/fx_rmsnorm_l0_w.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_rmsnorm_l0_w.txt\n"); return; }
+    write_bfp_section(f, w, n);
+    fclose(f);
+}
+
 /* fx_rope_l0.txt — four BFP sections: q_pre, k_pre, q_post, k_post. */
 static void dump_rope_l0(const float *q_pre, int q_len,
                           const float *k_pre, int k_len,
@@ -617,10 +628,11 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         /* Attention RMSNorm (integer). */
         rmsnorm_fx(s->xb, x, w->rms_att_weight + l*dim, dim);
 
-        /* --- DUMP: write rmsnorm golden + Wq matvec golden (layer 0) --- */
+        /* --- DUMP: write rmsnorm golden + weight + Wq matvec golden (layer 0) --- */
         if (do_dump && l == 0) {
             if (x_in_copy) {
                 dump_rmsnorm_l0(x_in_copy, s->xb, dim);
+                dump_rmsnorm_l0_w(w->rms_att_weight + 0 * dim, dim);
                 free(x_in_copy);
                 x_in_copy = NULL;
             }
