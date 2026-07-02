@@ -176,6 +176,34 @@ static void rmsnorm(float* o, float* x, float* weight, int size) {
     for (int j = 0; j < size; j++) o[j] = weight[j] * (ss * x[j]);
 }
 
+/* Integer RMSNorm via fx_rsqrt (Task 3).  Identical body to test_rmsnorm.c. */
+static void rmsnorm_fx(float* o, const float* x, const float* w, int n) {
+    enum { RQ = 12 };
+    int16_t xm[n];
+    int xe = fx_bfp_from_float(xm, x, n);
+
+    /* S = sum(xm[j]^2) ≈ sum(x_j^2) * 2^(2*xe) */
+    int64_t S = 0;
+    for (int j = 0; j < n; j++) S += (int64_t)xm[j] * xm[j];
+
+    /* mean_sq_q = round(mean_sq * 2^RQ) where mean_sq = S / (n * 2^(2*xe)) */
+    int64_t num = S << RQ;                      /* S * 2^RQ; fits int64 for n<=8192 */
+    int64_t mean_sq_q = (num + (int64_t)n / 2) / (int64_t)n;  /* rounded /n */
+    if (xe >= 0) {
+        int sh = 2 * xe; if (sh > 62) sh = 62;
+        if (sh > 0) mean_sq_q = (mean_sq_q + (1LL << (sh - 1))) >> sh;  /* rounded >>sh */
+    } else {
+        int sh = -2 * xe; if (sh > 62) sh = 62;
+        mean_sq_q <<= sh;
+    }
+    mean_sq_q += (int64_t)llround(1e-5 * (1 << RQ));  /* eps in Qq; = 0 at RQ=12 */
+    if (mean_sq_q < 1) mean_sq_q = 1;
+
+    int32_t inv = fx_rsqrt(mean_sq_q, RQ);
+    float inv_f = (float)inv / (float)(1 << RQ);
+    for (int j = 0; j < n; j++) o[j] = w[j] * inv_f * x[j];
+}
+
 static void softmax(float* x, int size) {
     float max_val = x[0];
     for (int i = 1; i < size; i++) if (x[i] > max_val) max_val = x[i];
@@ -361,8 +389,8 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
 
     for (unsigned long long l = 0; l < (unsigned long long)p->n_layers; l++) {
 
-        /* Attention RMSNorm (float). */
-        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        /* Attention RMSNorm (integer). */
+        rmsnorm_fx(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         int loff = l * p->seq_len * kv_dim;
         s->k = s->key_cache   + loff + pos * kv_dim;
@@ -415,8 +443,8 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         matmul_fx(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
         for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
 
-        /* FFN RMSNorm (float). */
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        /* FFN RMSNorm (integer). */
+        rmsnorm_fx(s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
         /* FFN gate/up matmuls — integer block-fp. */
         matmul_fx(s->hb,  s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
@@ -435,8 +463,8 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         for (int i = 0; i < dim; i++) x[i] += s->xb[i];
     }
 
-    /* Final RMSNorm + classifier (float rmsnorm; classifier uses int block-fp). */
-    rmsnorm(x, x, w->rms_final_weight, dim);
+    /* Final RMSNorm (integer) + classifier (int block-fp). */
+    rmsnorm_fx(x, x, w->rms_final_weight, dim);
     matmul_fx(s->logits, x, w->wcls, p->dim, p->vocab_size);
     return s->logits;
 }
