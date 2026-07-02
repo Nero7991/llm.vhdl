@@ -1,9 +1,34 @@
 /* ref/run_fx.c
- * Fork of run_i16.c.  All matmuls in forward_fx() run via integer
- * block-fp; nonlinearities (RMSNorm, RoPE, attention, softmax, SwiGLU)
- * stay in float for now.  Activations are block-fp quantised to int16
- * per matmul call; weights are per-row int16 fake-quant stored as float
- * multiples of their row scale (mantissas recovered on the fly).
+ * Fork of run_i16.c.  forward_fx() is the fixed-point golden model.
+ *
+ * INTEGER (bit-exact) parts of the datapath: all matmul dot-products
+ * (int16 block-fp activation x int16 weight -> int64 accumulate) and the
+ * nonlinear KERNELS (fx_rsqrt for RMSNorm, fx_exp_q for softmax, fx_sigmoid_q
+ * for SwiGLU, Q1.15 fx_cos/fx_sin for RoPE).
+ *
+ * FLOAT (tolerance-grade) glue that still connects those integer parts:
+ * the RMSNorm normalize+weight multiply, the softmax reciprocal/divide, the
+ * attention V-weighted sum (V not yet quantised), the residual adds, and the
+ * matmul dequant back to the residual stream.  Consequence for the goldens:
+ *   - BIT-EXACT oracles: fx_matvec_wq_l0 (int16 in/weights + raw int64 acc)
+ *     and fx_tokens_greedy (greedy argmax is robust to the glue's float noise,
+ *     which is exactly why fp-vs-fx stays 200/200 COHERENT EXACT).
+ *   - TOLERANCE-GRADE oracles (~+-1 int16 LSB): fx_rmsnorm_l0, fx_rope_l0,
+ *     fx_softmax_l0_h0, fx_swiglu_l0, fx_layer0_out -- these snapshot a
+ *     float-glued intermediate then quantise to int16 BFP, so Plan 3 RTL must
+ *     compare them within a small tolerance, not bit-for-bit.  (Making the glue
+ *     integer end-to-end -- a fully bit-exact datapath -- is a documented
+ *     future refinement; not required for token-match, which argmax carries.)
+ *
+ * Coherence baseline: apply_i16_fakequant runs UNCONDITIONALLY, so the fp
+ * "reference" that forward() computes for run_tokens.sh already uses int16-
+ * quantised weights.  "COHERENT EXACT" therefore means the integer datapath
+ * matches float-math-on-int16-weights (isolating datapath quant from weight
+ * quant), not fp32 originals.
+ *
+ * Activations are block-fp quantised to int16 per matmul call; weights are
+ * per-row int16 fake-quant stored as float multiples of their row scale
+ * (mantissas recovered on the fly).
  *
  * New flags (parsed in main):
  *   --fx    select forward_fx() instead of forward() in the generate loop

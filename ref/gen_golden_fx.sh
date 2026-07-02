@@ -13,3 +13,8 @@ done
 tl=$(wc -l < mem/golden/fx_tokens_greedy.txt)
 [ "$tl" -eq 200 ] || { echo "fx_tokens_greedy.txt: expected 200 lines, got $tl"; exit 1; }
 echo "golden fx files OK"; ls mem/golden/fx_*.txt
+echo ""
+echo "Golden grades for Plan 3 RTL comparison:"
+echo "  BIT-EXACT   : fx_matvec_wq_l0 (int16 in/weights + int64 acc), fx_tokens_greedy"
+echo "  TOLERANCE   : fx_rmsnorm_l0, fx_rope_l0, fx_softmax_l0_h0, fx_swiglu_l0,"
+echo "                fx_layer0_out (float glue snapshot; compare within ~+-2 int16 LSB)"
