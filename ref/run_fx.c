@@ -212,6 +212,42 @@ static void softmax(float* x, int size) {
     for (int i = 0; i < size; i++) x[i] /= sum;
 }
 
+/* Integer softmax via fx_exp_q (Q12).  Identical body to test_softmax.c. */
+static void softmax_fx(float* x, int n) {
+    /* Find max (float ok; z = x[i]-max is always <= 0). */
+    float max_val = x[0];
+    for (int i = 1; i < n; i++) if (x[i] > max_val) max_val = x[i];
+
+    /* Compute Q12 exp for each element and accumulate integer sum. */
+    int32_t e_arr[n];
+    int64_t sum = 0;
+    for (int i = 0; i < n; i++) {
+        float z = x[i] - max_val;
+        int32_t z_q = (int32_t)lroundf(z * 4096.0f);
+        e_arr[i] = fx_exp_q(z_q, 12);
+        sum += e_arr[i];
+    }
+    if (sum == 0) sum = 1;  /* guard: can only happen if all inputs << -16 */
+
+    /* Normalize: probability = e_i / sum (Q12 scale cancels). */
+    for (int i = 0; i < n; i++) {
+        x[i] = (float)e_arr[i] / (float)sum;
+    }
+}
+
+/* Integer SwiGLU/SiLU via fx_sigmoid_q (Q12).  Identical body to test_swiglu.c. */
+static void swiglu_fx(float* hb, const float* hb2, int n) {
+    /* SiLU(v) * w3: v*sigmoid(v)*hb2, all in Q12 fixed point. */
+    for (int i = 0; i < n; i++) {
+        int32_t v_q  = (int32_t)lroundf(hb[i]  * 4096.0f);
+        int32_t h2_q = (int32_t)lroundf(hb2[i] * 4096.0f);
+        int32_t sig  = fx_sigmoid_q(v_q, 12);                /* Q12, in [0,1] */
+        int64_t silu_q = ((int64_t)v_q * sig) >> 12;         /* silu=v*sig, Q12 */
+        int64_t out_q  = (silu_q * h2_q) >> 12;              /* *hb2, Q12 */
+        hb[i] = (float)out_q / 4096.0f;
+    }
+}
+
 /* Float matmul used by the unmodified forward() path. */
 static void matmul(float* xout, float* x, float* w, int n, int d) {
     int i;
@@ -420,20 +456,32 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         rope_fx(s->q, pos, dim,    head_size);   /* rotate all query dims */
         rope_fx(s->k, pos, kv_dim, head_size);   /* rotate key dims (kv_dim <= dim) */
 
-        /* Multi-head attention (float). */
+        /* Multi-head attention: integer block-fp q·k dot + integer softmax. */
         int h;
         #pragma omp parallel for private(h)
         for (h = 0; h < p->n_heads; h++) {
             float* q   = s->q   + h * head_size;
             float* att = s->att + h * p->seq_len;
+
+            /* Quantize the q-head once; k is quantized per cached timestep. */
+            int16_t qm[head_size];
+            int qe = fx_bfp_from_float(qm, q, head_size);
+            float inv_qe = (qe >= 0) ? (1.0f / (float)(1 << qe))
+                                     : (float)(1 << (-qe));
+
             for (int t = 0; t <= pos; t++) {
                 float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) score += q[i] * k[i];
+                int16_t km[head_size];
+                int ke = fx_bfp_from_float(km, k, head_size);
+                float inv_ke = (ke >= 0) ? (1.0f / (float)(1 << ke))
+                                         : (float)(1 << (-ke));
+                int64_t acc = 0;
+                for (int i = 0; i < head_size; i++) acc += (int64_t)qm[i] * km[i];
+                float score = (float)acc * inv_qe * inv_ke;
                 score /= sqrtf(head_size);
                 att[t] = score;
             }
-            softmax(att, pos + 1);
+            softmax_fx(att, pos + 1);
             float* xb = s->xb + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
@@ -454,13 +502,8 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         matmul_fx(s->hb,  s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul_fx(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
-        /* SwiGLU nonlinearity (float). */
-        for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
-            val *= (1.0f / (1.0f + expf(-val)));
-            val *= s->hb2[i];
-            s->hb[i] = val;
-        }
+        /* SwiGLU nonlinearity — integer fx_sigmoid_q (Task 5). */
+        swiglu_fx(s->hb, s->hb2, hidden_dim);
 
         /* FFN down projection — integer block-fp. */
         matmul_fx(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
