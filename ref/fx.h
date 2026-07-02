@@ -179,7 +179,7 @@ static inline int32_t fx_rsqrt(int64_t mean_sq_q, int q)
         int64_t y2  = (y * y) >> 30;                 /* Q30 */
         int64_t my2 = (mant_q30 * y2) >> 30;         /* Q30, ~1 */
         int64_t three = (int64_t)3 << 30;
-        y = (y * (three - my2) >> 30) >> 1;          /* *(3-my2) then /2 */
+        y = (y * (three - my2)) >> 31;               /* *(3-my2) then /2 (>>30 then >>1) */
     }
 
     /* v = mant * 2^(p-q). 1/sqrt(v) = ymant * 2^(-(p-q)/2).
