@@ -1,0 +1,189 @@
+-- rtl/rope.vhd
+-- RoPE (Rotary Position Embedding) rotation unit.
+-- Matches rope_fx() in ref/run_fx.c bit-for-bit on the integer kernel.
+--
+-- Block-fp convention: value[j] = mant[j] * 2^(-exp).
+-- Rotation preserves the block exponent: the twiddle >>15 keeps mantissas
+-- at the same scale, so qo_exp = q_exp and ko_exp = k_exp.
+--
+-- Algorithm (mirrors rope_fx for each pair i, i+1):
+--   twiddle_idx = POS * (HEAD/2) + (i mod HEAD) / 2
+--   fcr = COS_ROM[twiddle_idx]   (Q1.15)
+--   fci = SIN_ROM[twiddle_idx]   (Q1.15)
+--   r0  = (q0*fcr - q1*fci + (1<<14)) >> 15
+--   r1  = (q0*fci + q1*fcr + (1<<14)) >> 15
+--
+-- Twiddle ROMs: mem/luts/rope_cos.mem and rope_sin.mem.
+-- Layout: _fx_cos_tbl[pos*(head_size/2) + i/2], where i is i_outer mod head_size.
+-- ROM has 512 * (HEAD/2) entries (HEAD=8 -> 2048 entries).
+library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
+use std.textio.all;
+
+entity rope is
+  generic(
+    DIM   : positive := 64;
+    HEAD  : positive := 8;
+    KVDIM : positive := 32;
+    POS   : integer  := 3
+  );
+  port(
+    clk     : in  std_logic;
+    rst     : in  std_logic;
+    start   : in  std_logic;
+    q_mant  : in  std_logic_vector(DIM*16-1 downto 0);
+    q_exp   : in  integer;
+    k_mant  : in  std_logic_vector(KVDIM*16-1 downto 0);
+    k_exp   : in  integer;
+    done    : out std_logic;
+    qo_mant : out std_logic_vector(DIM*16-1 downto 0);
+    qo_exp  : out integer;
+    ko_mant : out std_logic_vector(KVDIM*16-1 downto 0);
+    ko_exp  : out integer
+  );
+end entity;
+
+architecture rtl of rope is
+
+  -- ROM depth: 512 positions * (HEAD/2) half-frequencies.
+  -- For HEAD=8 this is 2048 entries matching the .mem file sizes.
+  constant HALF      : integer := HEAD / 2;
+  constant ROM_DEPTH : integer := 512 * HALF;
+
+  -- Load a ROM from a text file (one signed decimal integer per line).
+  -- Path relative to the GHDL simulation working directory (sim/).
+  impure function load_rom(fn : string) return integer_vector is
+    file   fh : text open read_mode is fn;
+    variable L : line;
+    variable v : integer;
+    variable r : integer_vector(0 to ROM_DEPTH-1);
+  begin
+    for i in 0 to ROM_DEPTH-1 loop
+      readline(fh, L);
+      read(L, v);
+      r(i) := v;
+    end loop;
+    return r;
+  end function;
+
+  constant COS_ROM : integer_vector(0 to ROM_DEPTH-1) :=
+    load_rom("../mem/luts/rope_cos.mem");
+  constant SIN_ROM : integer_vector(0 to ROM_DEPTH-1) :=
+    load_rom("../mem/luts/rope_sin.mem");
+
+begin
+
+  process(clk)
+    variable q0_v, q1_v   : signed(15 downto 0);
+    variable k0_v, k1_v   : signed(15 downto 0);
+    variable fcr_v, fci_v : signed(15 downto 0);
+    variable acc_v        : signed(63 downto 0);
+    variable r_v          : signed(63 downto 0);
+    variable rom_idx      : integer;
+    constant BIAS         : signed(63 downto 0) := to_signed(16384, 64);  -- 1 << 14
+  begin
+    if rising_edge(clk) then
+      done <= '0';
+      if rst = '1' then
+        qo_exp  <= 0;
+        ko_exp  <= 0;
+        qo_mant <= (others => '0');
+        ko_mant <= (others => '0');
+      elsif start = '1' then
+        -- Output exponents are preserved (twiddle >>15 keeps the same scale).
+        qo_exp <= q_exp;
+        ko_exp <= k_exp;
+
+        -- ----------------------------------------------------------------
+        -- Rotate Q: DIM elements, DIM/2 pairs.
+        -- ----------------------------------------------------------------
+        for i in 0 to DIM/2-1 loop
+          q0_v    := signed(q_mant((2*i+1)*16-1 downto (2*i)*16));
+          q1_v    := signed(q_mant((2*i+2)*16-1 downto (2*i+1)*16));
+          -- twiddle index: POS*(HEAD/2) + (i_raw mod HEAD)/2
+          -- i_raw = 2*i; (2*i mod HEAD)/2 = i mod (HEAD/2)
+          rom_idx := POS * HALF + ((2*i) mod HEAD) / 2;
+          fcr_v   := to_signed(COS_ROM(rom_idx), 16);
+          fci_v   := to_signed(SIN_ROM(rom_idx), 16);
+
+          -- r0 = (q0*fcr - q1*fci + (1<<14)) >> 15
+          acc_v := resize(q0_v, 32) * resize(fcr_v, 32)
+                 - resize(q1_v, 32) * resize(fci_v, 32)
+                 + BIAS;
+          r_v   := shift_right(acc_v, 15);
+          -- Saturate to int16 (should not trigger for well-formed inputs)
+          if    r_v > 32767  then
+            qo_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(to_signed( 32767, 16));
+          elsif r_v < -32768 then
+            qo_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(to_signed(-32768, 16));
+          else
+            qo_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(resize(r_v, 16));
+          end if;
+
+          -- r1 = (q0*fci + q1*fcr + (1<<14)) >> 15
+          acc_v := resize(q0_v, 32) * resize(fci_v, 32)
+                 + resize(q1_v, 32) * resize(fcr_v, 32)
+                 + BIAS;
+          r_v   := shift_right(acc_v, 15);
+          if    r_v > 32767  then
+            qo_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(to_signed( 32767, 16));
+          elsif r_v < -32768 then
+            qo_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(to_signed(-32768, 16));
+          else
+            qo_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(resize(r_v, 16));
+          end if;
+        end loop;
+
+        -- ----------------------------------------------------------------
+        -- Rotate K: KVDIM elements, KVDIM/2 pairs.
+        -- Same twiddle ROM, same index formula.
+        -- ----------------------------------------------------------------
+        for i in 0 to KVDIM/2-1 loop
+          k0_v    := signed(k_mant((2*i+1)*16-1 downto (2*i)*16));
+          k1_v    := signed(k_mant((2*i+2)*16-1 downto (2*i+1)*16));
+          rom_idx := POS * HALF + ((2*i) mod HEAD) / 2;
+          fcr_v   := to_signed(COS_ROM(rom_idx), 16);
+          fci_v   := to_signed(SIN_ROM(rom_idx), 16);
+
+          acc_v := resize(k0_v, 32) * resize(fcr_v, 32)
+                 - resize(k1_v, 32) * resize(fci_v, 32)
+                 + BIAS;
+          r_v   := shift_right(acc_v, 15);
+          if    r_v > 32767  then
+            ko_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(to_signed( 32767, 16));
+          elsif r_v < -32768 then
+            ko_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(to_signed(-32768, 16));
+          else
+            ko_mant((2*i+1)*16-1 downto (2*i)*16) <=
+              std_logic_vector(resize(r_v, 16));
+          end if;
+
+          acc_v := resize(k0_v, 32) * resize(fci_v, 32)
+                 + resize(k1_v, 32) * resize(fcr_v, 32)
+                 + BIAS;
+          r_v   := shift_right(acc_v, 15);
+          if    r_v > 32767  then
+            ko_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(to_signed( 32767, 16));
+          elsif r_v < -32768 then
+            ko_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(to_signed(-32768, 16));
+          else
+            ko_mant((2*i+2)*16-1 downto (2*i+1)*16) <=
+              std_logic_vector(resize(r_v, 16));
+          end if;
+        end loop;
+
+        done <= '1';
+      end if;
+    end if;
+  end process;
+
+end architecture;
