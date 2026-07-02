@@ -7,7 +7,7 @@
  *
  * New flags (parsed in main):
  *   --fx    select forward_fx() instead of forward() in the generate loop
- *   --dump  reserved no-op (will be wired in Task 6)
+ *   --dump  write fixed-point golden vectors to mem/golden/fx_*.txt (Task 6)
  *
  * Every token decided in generate() is logged to stderr as "TOKID <n>"
  * so run_tokens.sh can grep and compare the fp vs --fx streams.
@@ -32,7 +32,139 @@
 
 /* Global mode flags set by main() before generate() is called. */
 static int g_use_fx = 0;   /* --fx: use forward_fx() */
-static int g_dump   = 0;   /* --dump: no-op until Task 6 */
+static int g_dump   = 0;   /* --dump: write golden vectors to mem/golden/fx_*.txt */
+
+/* ----------------------------------------------------------------------------
+ * Golden-vector dump helpers (Task 6).
+ *
+ * Active only when g_dump is set.  All paths are relative to CWD (repo root),
+ * which gen_golden_fx.sh ensures before invoking the binary.
+ *
+ * File format (per-file layout documented beside each helper):
+ *   BFP section: line1 = n, line2 = "EXP <e>", line3 = n int16s space-sep.
+ *   Value reconstructed as: v[j] = m[j] * 2^(-e).
+ * -------------------------------------------------------------------------- */
+
+/* Write one BFP section to an already-open FILE*. */
+static void write_bfp_section(FILE *f, const float *v, int n)
+{
+    int16_t *m = (int16_t *)malloc(n * sizeof(int16_t));
+    if (!m) { fprintf(stderr, "[dump] malloc failed\n"); return; }
+    int e = fx_bfp_from_float(m, v, n);
+    fprintf(f, "%d\n", n);
+    fprintf(f, "EXP %d\n", e);
+    for (int j = 0; j < n; j++) {
+        fprintf(f, "%d", (int)m[j]);
+        if (j < n - 1) fputc(' ', f);
+    }
+    fputc('\n', f);
+    free(m);
+}
+
+/* fx_rmsnorm_l0.txt — two BFP sections: input x (att RMSNorm in), output xb. */
+static void dump_rmsnorm_l0(const float *x_in, const float *x_out, int n)
+{
+    FILE *f = fopen("mem/golden/fx_rmsnorm_l0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_rmsnorm_l0.txt\n"); return; }
+    write_bfp_section(f, x_in,  n);
+    write_bfp_section(f, x_out, n);
+    fclose(f);
+}
+
+/* fx_rope_l0.txt — four BFP sections: q_pre, k_pre, q_post, k_post. */
+static void dump_rope_l0(const float *q_pre, int q_len,
+                          const float *k_pre, int k_len,
+                          const float *q_post, const float *k_post)
+{
+    FILE *f = fopen("mem/golden/fx_rope_l0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_rope_l0.txt\n"); return; }
+    write_bfp_section(f, q_pre,  q_len);
+    write_bfp_section(f, k_pre,  k_len);
+    write_bfp_section(f, q_post, q_len);
+    write_bfp_section(f, k_post, k_len);
+    fclose(f);
+}
+
+/* fx_softmax_l0_h0.txt — two BFP sections: scores_in, probs_out (head 0). */
+static void dump_softmax_l0_h0(const float *scores, int n, const float *probs)
+{
+    FILE *f = fopen("mem/golden/fx_softmax_l0_h0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_softmax_l0_h0.txt\n"); return; }
+    write_bfp_section(f, scores, n);
+    write_bfp_section(f, probs,  n);
+    fclose(f);
+}
+
+/* fx_swiglu_l0.txt — three BFP sections: hb_in (w1 out), hb2_in (w3 out), gated_out. */
+static void dump_swiglu_l0(const float *hb_in, const float *hb2_in,
+                             int n, const float *hb_out)
+{
+    FILE *f = fopen("mem/golden/fx_swiglu_l0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_swiglu_l0.txt\n"); return; }
+    write_bfp_section(f, hb_in,  n);
+    write_bfp_section(f, hb2_in, n);
+    write_bfp_section(f, hb_out, n);
+    fclose(f);
+}
+
+/* fx_matvec_wq_l0.txt:
+ *   line 1: d n   (output rows, input cols)
+ *   line 2: EXP <xe>   (shared activation block exponent)
+ *   line 3: n int16 activation mantissas
+ *   then d rows, each: <n int16 weight mantissas> <int64 accumulator>
+ * Re-computes mantissas from the fake-quantized float weights (same formula
+ * as matmul_fx); results are bit-identical to what the datapath computed.
+ */
+static void dump_matvec_wq_l0(const float *x, const float *w, int n, int d)
+{
+    FILE *f = fopen("mem/golden/fx_matvec_wq_l0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_matvec_wq_l0.txt\n"); return; }
+
+    int16_t *xm = (int16_t *)malloc(n * sizeof(int16_t));
+    if (!xm) { fclose(f); return; }
+    int xe = fx_bfp_from_float(xm, x, n);
+
+    fprintf(f, "%d %d\n", d, n);
+    fprintf(f, "EXP %d\n", xe);
+    for (int j = 0; j < n; j++) {
+        fprintf(f, "%d", (int)xm[j]);
+        if (j < n - 1) fputc(' ', f);
+    }
+    fputc('\n', f);
+
+    for (int i = 0; i < d; i++) {
+        const float *row = w + (size_t)i * n;
+        float mx = 0.0f;
+        for (int j = 0; j < n; j++) {
+            float a = fabsf(row[j]);
+            if (a > mx) mx = a;
+        }
+        float wscale = (mx > 0.0f) ? mx / 32767.0f : 1.0f;
+        int64_t acc = 0;
+        for (int j = 0; j < n; j++) {
+            long wl = lroundf(row[j] / wscale);
+            if (wl >  32767) wl =  32767;
+            if (wl < -32767) wl = -32767;
+            int16_t wm = (int16_t)wl;
+            fprintf(f, "%d", (int)wm);
+            if (j < n - 1) fputc(' ', f);
+            acc += (int64_t)wm * (int64_t)xm[j];
+        }
+        fprintf(f, " %lld\n", (long long)acc);
+    }
+
+    free(xm);
+    fclose(f);
+}
+
+/* fx_layer0_out.txt — one BFP section: residual stream x after full layer 0. */
+static void dump_layer0_out(const float *x, int n)
+{
+    FILE *f = fopen("mem/golden/fx_layer0_out.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_layer0_out.txt\n"); return; }
+    write_bfp_section(f, x, n);
+    fclose(f);
+}
 
 /* ----------------------------------------------------------------------------
  * Transformer model (identical to run_i16.c)
@@ -421,7 +553,9 @@ static void rope_fx(float* vec, int pos, int dim, int head_size) {
 }
 
 /* ----------------------------------------------------------------------------
- * forward_fx — copy of forward() with matmul() replaced by matmul_fx()
+ * forward_fx — copy of forward() with matmul() replaced by matmul_fx().
+ * When g_dump is set, the first call (pos=0) captures layer-0 golden vectors.
+ * The static dump_done guard ensures each file is written exactly once.
  * -------------------------------------------------------------------------- */
 static float* forward_fx(Transformer* transformer, int token, int pos) {
     Config* p = &transformer->config;
@@ -434,14 +568,38 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
     int hidden_dim = p->hidden_dim;
     int head_size  = dim / p->n_heads;
 
+    /* One-shot dump guard: fires on the very first forward_fx call (pos=0,
+     * token = first prompt token = BOS).  All seven layer-0 golden files are
+     * written at this position so the dump position is unambiguous. */
+    static int dump_done = 0;
+    int do_dump = g_dump && !dump_done;
+
     /* Token embedding lookup (not a matmul — stays float). */
     float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim * sizeof(*x));
 
     for (unsigned long long l = 0; l < (unsigned long long)p->n_layers; l++) {
 
+        /* --- DUMP: capture x before att RMSNorm (layer 0 only) --- */
+        float *x_in_copy = NULL;
+        if (do_dump && l == 0) {
+            x_in_copy = (float *)malloc(dim * sizeof(float));
+            if (x_in_copy) memcpy(x_in_copy, x, dim * sizeof(float));
+        }
+
         /* Attention RMSNorm (integer). */
         rmsnorm_fx(s->xb, x, w->rms_att_weight + l*dim, dim);
+
+        /* --- DUMP: write rmsnorm golden + Wq matvec golden (layer 0) --- */
+        if (do_dump && l == 0) {
+            if (x_in_copy) {
+                dump_rmsnorm_l0(x_in_copy, s->xb, dim);
+                free(x_in_copy);
+                x_in_copy = NULL;
+            }
+            /* w->wq points to layer 0's Wq (offset 0*dim*dim = 0). */
+            dump_matvec_wq_l0(s->xb, w->wq, dim, dim);
+        }
 
         int loff = l * p->seq_len * kv_dim;
         s->k = s->key_cache   + loff + pos * kv_dim;
@@ -452,9 +610,52 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         matmul_fx(s->k,  s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul_fx(s->v,  s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
+        /* --- DUMP: capture q,k before RoPE (layer 0) --- */
+        float *q_pre = NULL, *k_pre = NULL;
+        if (do_dump && l == 0) {
+            q_pre = (float *)malloc(dim    * sizeof(float));
+            k_pre = (float *)malloc(kv_dim * sizeof(float));
+            if (q_pre) memcpy(q_pre, s->q, dim    * sizeof(float));
+            if (k_pre) memcpy(k_pre, s->k, kv_dim * sizeof(float));
+        }
+
         /* RoPE — integer Q1.15 twiddle tables (Task 4). */
         rope_fx(s->q, pos, dim,    head_size);   /* rotate all query dims */
         rope_fx(s->k, pos, kv_dim, head_size);   /* rotate key dims (kv_dim <= dim) */
+
+        /* --- DUMP: write RoPE golden (layer 0) --- */
+        if (do_dump && l == 0) {
+            if (q_pre && k_pre)
+                dump_rope_l0(q_pre, dim, k_pre, kv_dim, s->q, s->k);
+            free(q_pre);  q_pre = NULL;
+            free(k_pre);  k_pre = NULL;
+        }
+
+        /* --- DUMP: compute head-0 pre-softmax scores sequentially (layer 0) ---
+         * The OMP loop below runs softmax in-place, so we capture the raw scores
+         * now by re-running the integer q·k dot for head 0 only. */
+        float *att0_pre = NULL;
+        if (do_dump && l == 0) {
+            att0_pre = (float *)malloc((pos + 1) * sizeof(float));
+            if (att0_pre) {
+                float *q0 = s->q + 0 * head_size;
+                int16_t qm[head_size];
+                int qe = fx_bfp_from_float(qm, q0, head_size);
+                float inv_qe = (qe >= 0) ? (1.0f / (float)(1 << qe))
+                                         : (float)(1 << (-qe));
+                for (int t = 0; t <= pos; t++) {
+                    float *kc = s->key_cache + loff + t * kv_dim + 0 * head_size;
+                    int16_t km[head_size];
+                    int ke = fx_bfp_from_float(km, kc, head_size);
+                    float inv_ke = (ke >= 0) ? (1.0f / (float)(1 << ke))
+                                             : (float)(1 << (-ke));
+                    int64_t acc = 0;
+                    for (int i = 0; i < head_size; i++)
+                        acc += (int64_t)qm[i] * km[i];
+                    att0_pre[t] = (float)acc * inv_qe * inv_ke / sqrtf(head_size);
+                }
+            }
+        }
 
         /* Multi-head attention: integer block-fp q·k dot + integer softmax. */
         int h;
@@ -491,6 +692,13 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
             }
         }
 
+        /* --- DUMP: write softmax golden head-0 (layer 0) ---
+         * s->att + 0*seq_len now holds the post-softmax probs for head 0. */
+        if (do_dump && l == 0 && att0_pre) {
+            dump_softmax_l0_h0(att0_pre, pos + 1, s->att + 0 * p->seq_len);
+            free(att0_pre);  att0_pre = NULL;
+        }
+
         /* Output projection — integer block-fp. */
         matmul_fx(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
         for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
@@ -502,12 +710,35 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
         matmul_fx(s->hb,  s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul_fx(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
+        /* --- DUMP: capture hb, hb2 before SwiGLU (layer 0) --- */
+        float *hb_copy = NULL, *hb2_copy = NULL;
+        if (do_dump && l == 0) {
+            hb_copy  = (float *)malloc(hidden_dim * sizeof(float));
+            hb2_copy = (float *)malloc(hidden_dim * sizeof(float));
+            if (hb_copy)  memcpy(hb_copy,  s->hb,  hidden_dim * sizeof(float));
+            if (hb2_copy) memcpy(hb2_copy, s->hb2, hidden_dim * sizeof(float));
+        }
+
         /* SwiGLU nonlinearity — integer fx_sigmoid_q (Task 5). */
         swiglu_fx(s->hb, s->hb2, hidden_dim);
+
+        /* --- DUMP: write SwiGLU golden (layer 0) --- */
+        if (do_dump && l == 0) {
+            if (hb_copy && hb2_copy)
+                dump_swiglu_l0(hb_copy, hb2_copy, hidden_dim, s->hb);
+            free(hb_copy);   hb_copy  = NULL;
+            free(hb2_copy);  hb2_copy = NULL;
+        }
 
         /* FFN down projection — integer block-fp. */
         matmul_fx(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
         for (int i = 0; i < dim; i++) x[i] += s->xb[i];
+
+        /* --- DUMP: write layer-0 residual output; mark dump complete --- */
+        if (do_dump && l == 0) {
+            dump_layer0_out(x, dim);
+            dump_done = 1;  /* prevent re-firing on subsequent forward calls */
+        }
     }
 
     /* Final RMSNorm (integer) + classifier (int block-fp). */
@@ -845,6 +1076,15 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
         exit(EXIT_FAILURE);
     }
 
+    /* Open fx_tokens_greedy.txt when --dump is set.  Written for all 200 tokens,
+     * independent of the per-layer-0 dump guard in forward_fx. */
+    FILE *tok_f = NULL;
+    if (g_dump) {
+        tok_f = fopen("mem/golden/fx_tokens_greedy.txt", "w");
+        if (!tok_f)
+            fprintf(stderr, "[dump] cannot open mem/golden/fx_tokens_greedy.txt\n");
+    }
+
     long start = 0;
     int next;
     int token = prompt_tokens[0];
@@ -862,6 +1102,7 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
 
         /* Log every decided token for run_tokens.sh comparison. */
         fprintf(stderr, "TOKID %d\n", next);
+        if (tok_f) fprintf(tok_f, "%d\n", next);
 
         if (next == 1) break; /* BOS signals end-of-sequence */
 
@@ -873,6 +1114,8 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
         if (start == 0) start = time_in_ms();
     }
     printf("\n");
+
+    if (tok_f) fclose(tok_f);
 
     if (pos > 1) {
         long end = time_in_ms();
@@ -958,7 +1201,7 @@ static void error_usage(void) {
     fprintf(stderr, "  -m <string> mode: generate|chat (default generate)\n");
     fprintf(stderr, "  -y <string> system prompt (chat mode)\n");
     fprintf(stderr, "  --fx        use integer block-fp forward (forward_fx)\n");
-    fprintf(stderr, "  --dump      reserved no-op (Task 6)\n");
+    fprintf(stderr, "  --dump      write golden vectors to mem/golden/fx_*.txt\n");
     exit(EXIT_FAILURE);
 }
 
@@ -1019,7 +1262,7 @@ int main(int argc, char *argv[]) {
     if (g_use_fx)
         fprintf(stderr, "[run_fx] forward path: forward_fx (integer block-fp matmul)\n");
     if (g_dump)
-        fprintf(stderr, "[run_fx] --dump flag set (no-op until Task 6)\n");
+        fprintf(stderr, "[run_fx] --dump: will write golden vectors to mem/golden/fx_*.txt\n");
 
     Tokenizer tokenizer;
     build_tokenizer(&tokenizer, tokenizer_path, transformer.config.vocab_size);
