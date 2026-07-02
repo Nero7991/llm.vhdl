@@ -4,9 +4,12 @@
 --   Block 1: scores-in  (n=4, EXP 13, mantissas as int16 BFP)
 --   Block 2: probs-out  (n=4, EXP 15, mantissas; sum=32768=1.0 at EXP15)
 --
--- Comparison: gold at EXP 15, DUT at Q12 (EXP 12).
--- Align to finer scale (EXP 15): dut_at_15 = prob_q[i] * 2^3; gold_at_15 = mant[i].
--- Tolerance: +-2 LSB at EXP 15.  Also asserts sum(prob_q) in [4094,4098].
+-- Comparison: at the DUT's native Q12 scale. The DUT truncating-divides in Q12,
+-- so one LSB of Q12 = 8 LSB of the golden's Q15; requiring +-2 at Q15 would reject
+-- any correct Q12 unit (quantization floor is 8 Q15 units). We therefore align the
+-- Q15 golden DOWN to Q12 (gold_q12 = mant >> 3) and assert +-2 LSB at Q12 (measured
+-- max_dev=1). Sum check: sum(prob_q) within +-NMAX of 4096 (truncation deficit is
+-- < n per element; observed pq_sum=4093, deficit 3).
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use std.textio.all;
 use work.util_pkg.all;
