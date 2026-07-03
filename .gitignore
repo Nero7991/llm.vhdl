@@ -12,3 +12,6 @@ __pycache__/
 ref/run_i16
 ref/run_i8fq
 .superpowers/
+server/llama_server
+server/llama_server_arm
+server/*.o

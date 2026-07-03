@@ -1558,6 +1558,15 @@ LlamaCtx *llama_load(const char *checkpoint_path, const char *tokenizer_path) {
     if (!c) return NULL;
     g_use_fx = 1;   /* serve the fixed-point (VHDL-equivalent) forward path */
     build_transformer(&c->transformer, (char*)checkpoint_path);
+    /* int16 fake-quantize the weights — REQUIRED for the fixed-point path to
+     * be token-identical to the VHDL (the CLI's main() does the same). */
+    apply_i16_fakequant(&c->transformer.weights, &c->transformer.config);
+    /* Build the fixed-point LUTs forward_fx depends on (rsqrt/exp/sigmoid +
+     * RoPE cos/sin) — without these the nonlinear kernels read zero LUTs and
+     * every token collapses to <unk>. The CLI's main() does this too. */
+    fx_init();
+    fx_rope_init(c->transformer.config.seq_len,
+                 c->transformer.config.dim / c->transformer.config.n_heads);
     build_tokenizer(&c->tokenizer, (char*)tokenizer_path,
                     c->transformer.config.vocab_size);
     return c;
@@ -1583,6 +1592,7 @@ int llama_generate(LlamaCtx *ctx, const char *prompt, int max_tokens,
 
 void llama_free(LlamaCtx *ctx) {
     if (!ctx) return;
+    free_fakequant_buffers();
     free_transformer(&ctx->transformer);
     free_tokenizer(&ctx->tokenizer);
     free(ctx);
