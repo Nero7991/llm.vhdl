@@ -688,7 +688,19 @@ begin
             bfp_e := 30 - ti;
             if bfp_e >= 0 then bfp_sc := bfp_mx * real(2**bfp_e);
             else               bfp_sc := bfp_mx / real(2**(-bfp_e)); end if;
-            if integer(round(bfp_sc)) <= 32767 then exit; end if;
+            -- Compare in the real domain, NOT integer(round(bfp_sc)) <= 32767:
+            -- the first iteration (bfp_e=30) can produce bfp_sc up to
+            -- bfp_mx*2^30, which overflows a 32-bit integer for any bfp_mx
+            -- greater than ~2.0 and silently wraps to a huge negative number
+            -- (GHDL does not range-check integer(real) conversions here) --
+            -- that wrapped value spuriously satisfies "<= 32767" on the very
+            -- first iteration, picking exponent 30 instead of the correct
+            -- (much smaller) one and saturating every output element to
+            -- +-32767/-32768. Found via seq_ctrl.vhd's end-to-end test: at
+            -- cur_pos=0 the residual-2 bfp_mx (~3.66) was just large enough
+            -- to trigger the overflow; layer.vhd's own single-position
+            -- tb_layer.vhd (POS=3) never happened to hit a bfp_mx > 2.0 here.
+            if bfp_sc <= 32767.0 then exit; end if;
           end loop;
           xb_att_e := bfp_e;
           for j in 0 to DIM-1 loop
@@ -738,7 +750,9 @@ begin
             bfp_e := 30 - ti;
             if bfp_e >= 0 then bfp_sc := bfp_mx * real(2**bfp_e);
             else               bfp_sc := bfp_mx / real(2**(-bfp_e)); end if;
-            if integer(round(bfp_sc)) <= 32767 then exit; end if;
+            -- Real-domain compare -- see the overflow note on the identical
+            -- search loop above (attention-output BFP encode).
+            if bfp_sc <= 32767.0 then exit; end if;
           end loop;
           xm_e := bfp_e;
           for j in 0 to DIM-1 loop
@@ -936,7 +950,11 @@ begin
             bfp_e := 30 - ti;
             if bfp_e >= 0 then bfp_sc := bfp_mx * real(2**bfp_e);
             else               bfp_sc := bfp_mx / real(2**(-bfp_e)); end if;
-            if integer(round(bfp_sc)) <= 32767 then exit; end if;
+            -- Real-domain compare -- see the overflow note on the identical
+            -- search loop above (attention-output BFP encode). This is the
+            -- occurrence that actually manifested the bug (residual-2 output
+            -- at cur_pos=0, bfp_mx ~3.66).
+            if bfp_sc <= 32767.0 then exit; end if;
           end loop;
           y_exp <= bfp_e;
           for j in 0 to DIM-1 loop

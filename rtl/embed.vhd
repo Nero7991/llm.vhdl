@@ -107,7 +107,15 @@ begin
           bfp_e := 30 - ti;
           if bfp_e >= 0 then bfp_sc := bfp_mx * real(2**bfp_e);
           else               bfp_sc := bfp_mx / real(2**(-bfp_e)); end if;
-          if integer(round(bfp_sc)) <= 32767 then exit; end if;
+          -- Compare in the real domain, NOT integer(round(bfp_sc)) <= 32767:
+          -- the first iteration (bfp_e=30) can produce bfp_sc up to
+          -- bfp_mx*2^30, which overflows a 32-bit integer for any bfp_mx
+          -- greater than ~2.0 and silently wraps to a huge negative number
+          -- (GHDL does not range-check integer(real) here), spuriously
+          -- satisfying "<= 32767" on the first iteration and saturating
+          -- every output element. Same latent bug found and fixed in
+          -- layer.vhd's three identical search loops (see its comments).
+          if bfp_sc <= 32767.0 then exit; end if;
         end loop;
         x_exp <= bfp_e;
         for j in 0 to DIM-1 loop
