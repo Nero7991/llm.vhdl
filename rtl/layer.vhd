@@ -1,10 +1,16 @@
 -- rtl/layer.vhd
--- Single transformer layer: att-rmsnorm -> wq -> rope-Q -> attention -> wo ->
--- residual1 -> ffn-rmsnorm -> w1/w3 -> swiglu -> w2 -> residual2.
+-- Single transformer layer: att-rmsnorm -> wq/wk/wv -> rope-Q, rope-K ->
+-- attention -> wo -> residual1 -> ffn-rmsnorm -> w1/w3 -> swiglu -> w2 ->
+-- residual2.
 --
--- All 4 K/V history vectors (positions 0..POS) are supplied as ports so the
--- TB can inject the exact post-RoPE K/V golden values without a separate
--- wk/wv/rope-K pipeline inside this layer.
+-- Self-contained: the layer computes its OWN current-position K[POS]/V[POS]
+-- from the att-rmsnorm output xb (WK/WV matmul, rope applied to K only),
+-- appends them to the K/V HISTORY supplied via ports (positions 0..POS-1)
+-- to form the full 0..POS attention window, and exposes the computed
+-- K[POS]/V[POS] on k_out/v_out so an external sequencer can cache them for
+-- future positions. History ports carry POS slots (0..POS-1); at POS=0 this
+-- is a null-range (zero-width) vector -- legal VHDL, and the unpack loop
+-- ("for t in 0 to POS-1") naturally does not execute.
 --
 -- All weight matrices load at elaboration from mem/weights/L0/ as integer
 -- constants. The full forward pass runs in a single clock cycle (start=1 ->
@@ -41,17 +47,24 @@ entity layer is
     -- Input residual (DIM int16 mantissas packed, one shared exponent)
     x_mant : in  std_logic_vector(DIM*16-1 downto 0);
     x_exp  : in  integer;
-    -- KV cache: (POS+1) slots, time-major packed.
+    -- KV HISTORY only: POS slots, positions 0..POS-1, time-major packed.
+    -- (POS=0 => null-range/zero-width ports; no history to unpack.)
     -- k_mant[(t+1)*KVDIM*16-1 : t*KVDIM*16] = K[t] mantissas
     -- k_exp_packed[(t+1)*32-1  : t*32]       = K[t] exponent as signed 32-bit
-    k_mant       : in  std_logic_vector((POS+1)*KVDIM*16-1 downto 0);
-    k_exp_packed : in  std_logic_vector((POS+1)*32-1 downto 0);
-    v_mant       : in  std_logic_vector((POS+1)*KVDIM*16-1 downto 0);
-    v_exp_packed : in  std_logic_vector((POS+1)*32-1 downto 0);
+    k_mant       : in  std_logic_vector(POS*KVDIM*16-1 downto 0);
+    k_exp_packed : in  std_logic_vector(POS*32-1 downto 0);
+    v_mant       : in  std_logic_vector(POS*KVDIM*16-1 downto 0);
+    v_exp_packed : in  std_logic_vector(POS*32-1 downto 0);
     -- Output residual
     done   : out std_logic;
     y_mant : out std_logic_vector(DIM*16-1 downto 0);
-    y_exp  : out integer
+    y_exp  : out integer;
+    -- Layer's own computed current-position K[POS] (post-RoPE) / V[POS]
+    -- (raw), for an external sequencer to cache for future positions.
+    k_out_mant : out std_logic_vector(KVDIM*16-1 downto 0);
+    k_out_exp  : out integer;
+    v_out_mant : out std_logic_vector(KVDIM*16-1 downto 0);
+    v_out_exp  : out integer
   );
 end entity;
 
@@ -156,11 +169,17 @@ begin
     -- Q vector (after wq + rope)
     variable q_v      : intarr(0 to DIM-1);
     variable q_e      : integer;
-    -- KV cache (POS+1 positions, KVDIM values each)
+    -- KV cache (POS+1 positions, KVDIM values each): 0..POS-1 from history
+    -- ports, POS computed internally (WK/WV + rope-K for position POS).
     variable kc_v     : intarr(0 to (POS+1)*KVDIM-1);
     variable vc_v     : intarr(0 to (POS+1)*KVDIM-1);
     variable kc_e     : intarr(0 to POS);
     variable vc_e     : intarr(0 to POS);
+    -- Current-position K/V (after wk/wv; k_new further gets rope applied)
+    variable k_new_v  : intarr(0 to KVDIM-1);
+    variable k_new_e  : integer;
+    variable v_new_v  : intarr(0 to KVDIM-1);
+    variable v_new_e  : integer;
     -- Attention output (float accumulator + BFP convert for WO matmul input)
     variable xb_att_r : realarr(0 to DIM-1);  -- scratch real, reused after att
     variable xb_att_v : intarr(0 to DIM-1);
@@ -213,6 +232,7 @@ begin
     -- RoPE temporaries
     variable fcr_v, fci_v : signed(15 downto 0);
     variable q0_v, q1_v   : signed(15 downto 0);
+    variable k0_v, k1_v   : signed(15 downto 0);
     variable rope_acc     : signed(63 downto 0);
     variable rope_r       : signed(63 downto 0);
     variable rom_idx      : integer;
@@ -266,8 +286,12 @@ begin
     if rising_edge(clk) then
       done <= '0';
       if rst = '1' then
-        y_exp  <= 0;
-        y_mant <= (others => '0');
+        y_exp      <= 0;
+        y_mant     <= (others => '0');
+        k_out_exp  <= 0;
+        k_out_mant <= (others => '0');
+        v_out_exp  <= 0;
+        v_out_mant <= (others => '0');
 
       elsif start = '1' then
 
@@ -278,7 +302,8 @@ begin
         for j in 0 to DIM-1 loop
           x_v(j) := to_integer(signed(x_mant((j+1)*16-1 downto j*16)));
         end loop;
-        for t in 0 to POS loop
+        -- History only: t = 0..POS-1 (POS=0 -> empty range, nothing to read)
+        for t in 0 to POS-1 loop
           kc_e(t) := to_integer(signed(k_exp_packed((t+1)*32-1 downto t*32)));
           vc_e(t) := to_integer(signed(v_exp_packed((t+1)*32-1 downto t*32)));
           for j in 0 to KVDIM-1 loop
@@ -366,7 +391,86 @@ begin
         end loop;
 
         -- ===================================================================
-        -- 3. RoPE on Q (K already post-RoPE in the supplied KV cache)
+        -- 2b. WK matmul: xb -> k_new (KVDIM x DIM). RoPE applied in step 3b.
+        --     Same per-row scale_mul + global-shift BFP pattern as WQ (2).
+        -- ===================================================================
+        max_abs := 0;
+        for i in 0 to KVDIM-1 loop
+          acc64 := (others => '0');
+          for j in 0 to DIM-1 loop
+            w16    := to_signed(WK_MANT(i*DIM+j), 16);
+            x16    := to_signed(xb_v(j), 16);
+            prod32 := w16 * x16;
+            acc64  := acc64 + resize(prod32, 64);
+          end loop;
+          res32       := scale_mul(acc64, to_signed(WK_MULT(i), 32), WK_SHFT(i));
+          result_v(i) := to_integer(res32);
+          abs_v := result_v(i); if abs_v < 0 then abs_v := -abs_v; end if;
+          if abs_v > max_abs then max_abs := abs_v; end if;
+        end loop;
+        -- Unlike WQ's shift_o (clamped >=0; Q values already fill the int16
+        -- range so a right-shift-only reduction suffices), K/V magnitudes
+        -- vary a lot more, so shift_o may be NEGATIVE here (a left-shift /
+        -- exponent increase) to fully use the mantissa's precision, matching
+        -- the golden's max-precision BFP re-quantisation (fx_bfp_from_float).
+        p_msb   := msb_pos(max_abs);
+        shift_o := p_msb - 14;
+        k_new_e := xb_e - shift_o;
+        for i in 0 to KVDIM-1 loop
+          if shift_o >= 0 then
+            res32 := scale_mul(to_signed(result_v(i), 64), to_signed(1, 32), shift_o);
+            if    res32 >  32767 then k_new_v(i) :=  32767;
+            elsif res32 < -32768 then k_new_v(i) := -32768;
+            else                      k_new_v(i) := to_integer(res32);
+            end if;
+          else
+            acc64 := shift_left(to_signed(result_v(i), 64), -shift_o);
+            if    acc64 >  32767 then k_new_v(i) :=  32767;
+            elsif acc64 < -32768 then k_new_v(i) := -32768;
+            else                      k_new_v(i) := to_integer(acc64);
+            end if;
+          end if;
+        end loop;
+
+        -- ===================================================================
+        -- 2c. WV matmul: xb -> v_new (KVDIM x DIM). No RoPE (V is raw/BFP).
+        -- ===================================================================
+        max_abs := 0;
+        for i in 0 to KVDIM-1 loop
+          acc64 := (others => '0');
+          for j in 0 to DIM-1 loop
+            w16    := to_signed(WV_MANT(i*DIM+j), 16);
+            x16    := to_signed(xb_v(j), 16);
+            prod32 := w16 * x16;
+            acc64  := acc64 + resize(prod32, 64);
+          end loop;
+          res32       := scale_mul(acc64, to_signed(WV_MULT(i), 32), WV_SHFT(i));
+          result_v(i) := to_integer(res32);
+          abs_v := result_v(i); if abs_v < 0 then abs_v := -abs_v; end if;
+          if abs_v > max_abs then max_abs := abs_v; end if;
+        end loop;
+        -- shift_o may be negative here too (see note in the WK block above).
+        p_msb   := msb_pos(max_abs);
+        shift_o := p_msb - 14;
+        v_new_e := xb_e - shift_o;
+        for i in 0 to KVDIM-1 loop
+          if shift_o >= 0 then
+            res32 := scale_mul(to_signed(result_v(i), 64), to_signed(1, 32), shift_o);
+            if    res32 >  32767 then v_new_v(i) :=  32767;
+            elsif res32 < -32768 then v_new_v(i) := -32768;
+            else                      v_new_v(i) := to_integer(res32);
+            end if;
+          else
+            acc64 := shift_left(to_signed(result_v(i), 64), -shift_o);
+            if    acc64 >  32767 then v_new_v(i) :=  32767;
+            elsif acc64 < -32768 then v_new_v(i) := -32768;
+            else                      v_new_v(i) := to_integer(acc64);
+            end if;
+          end if;
+        end loop;
+
+        -- ===================================================================
+        -- 3. RoPE on Q
         --    twiddle_idx = POS * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2
         -- ===================================================================
         for i in 0 to DIM/2-1 loop
@@ -395,6 +499,52 @@ begin
           end if;
         end loop;
         -- q_e unchanged by RoPE (>>15 preserves scale)
+
+        -- ===================================================================
+        -- 3b. RoPE on K[POS] (first kv_dim elements only; same twiddle ROM
+        --     and index formula as Q's rope, over KVDIM/2 pairs).
+        --     k_new_e unchanged by RoPE (>>15 preserves scale).
+        -- ===================================================================
+        for i in 0 to KVDIM/2-1 loop
+          k0_v    := to_signed(k_new_v(2*i),   16);
+          k1_v    := to_signed(k_new_v(2*i+1), 16);
+          rom_idx := POS * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2;
+          fcr_v   := to_signed(COS_ROM(rom_idx), 16);
+          fci_v   := to_signed(SIN_ROM(rom_idx), 16);
+          rope_acc := resize(k0_v, 32) * resize(fcr_v, 32)
+                    - resize(k1_v, 32) * resize(fci_v, 32)
+                    + ROPE_BIAS;
+          rope_r   := shift_right(rope_acc, 15);
+          if    rope_r >  32767 then k_new_v(2*i)   :=  32767;
+          elsif rope_r < -32768 then k_new_v(2*i)   := -32768;
+          else                       k_new_v(2*i)   := to_integer(resize(rope_r, 32));
+          end if;
+          rope_acc := resize(k0_v, 32) * resize(fci_v, 32)
+                    + resize(k1_v, 32) * resize(fcr_v, 32)
+                    + ROPE_BIAS;
+          rope_r   := shift_right(rope_acc, 15);
+          if    rope_r >  32767 then k_new_v(2*i+1) :=  32767;
+          elsif rope_r < -32768 then k_new_v(2*i+1) := -32768;
+          else                       k_new_v(2*i+1) := to_integer(resize(rope_r, 32));
+          end if;
+        end loop;
+
+        -- Append computed K[POS]/V[POS] into the KV cache (history was
+        -- unpacked into indices 0..POS-1 in step 0).
+        kc_e(POS) := k_new_e;
+        vc_e(POS) := v_new_e;
+        for j in 0 to KVDIM-1 loop
+          kc_v(POS*KVDIM+j) := k_new_v(j);
+          vc_v(POS*KVDIM+j) := v_new_v(j);
+        end loop;
+
+        -- Drive k_out/v_out ports with the computed current-position K/V.
+        k_out_exp <= k_new_e;
+        v_out_exp <= v_new_e;
+        for j in 0 to KVDIM-1 loop
+          k_out_mant((j+1)*16-1 downto j*16) <= std_logic_vector(to_signed(k_new_v(j), 16));
+          v_out_mant((j+1)*16-1 downto j*16) <= std_logic_vector(to_signed(v_new_v(j), 16));
+        end loop;
 
         -- ===================================================================
         -- 4. Multi-head attention: scores, softmax, V-weighted sum (float glue)
