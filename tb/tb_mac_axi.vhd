@@ -63,10 +63,13 @@ begin
     -- build a known vector (mix of signs), compute expected
     expect := 0;
     for i in 0 to N-1 loop
-      act(i) := (i mod 7) - 3;            -- -3..3
-      w(i)   := ((i*5) mod 11) - 5;       -- -5..5
+      act(i) := (i mod 7) - 3;            -- -3..3 (signed)
+      w(i)   := (i mod 5) + 1;            -- 1..5 (positive, keeps the sum from cancelling to 0)
       expect := expect + act(i)*w(i);
     end loop;
+    -- Guard: a zero expected sum would let a stuck-at-0 datapath pass. Make the
+    -- gate meaningful by requiring a non-zero golden value.
+    assert expect /= 0 report "test vector sums to 0 - weak gate, change the vector" severity failure;
     -- load
     axi_write(16#08#, N);                 -- N (reserved)
     for i in 0 to N-1 loop
