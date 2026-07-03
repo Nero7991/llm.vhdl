@@ -700,7 +700,7 @@ begin
             -- cur_pos=0 the residual-2 bfp_mx (~3.66) was just large enough
             -- to trigger the overflow; layer.vhd's own single-position
             -- tb_layer.vhd (POS=3) never happened to hit a bfp_mx > 2.0 here.
-            if bfp_sc <= 32767.0 then exit; end if;
+            if bfp_sc < 32767.5 then exit; end if;
           end loop;
           xb_att_e := bfp_e;
           for j in 0 to DIM-1 loop
@@ -752,7 +752,7 @@ begin
             else               bfp_sc := bfp_mx / real(2**(-bfp_e)); end if;
             -- Real-domain compare -- see the overflow note on the identical
             -- search loop above (attention-output BFP encode).
-            if bfp_sc <= 32767.0 then exit; end if;
+            if bfp_sc < 32767.5 then exit; end if;
           end loop;
           xm_e := bfp_e;
           for j in 0 to DIM-1 loop
@@ -954,7 +954,7 @@ begin
             -- search loop above (attention-output BFP encode). This is the
             -- occurrence that actually manifested the bug (residual-2 output
             -- at cur_pos=0, bfp_mx ~3.66).
-            if bfp_sc <= 32767.0 then exit; end if;
+            if bfp_sc < 32767.5 then exit; end if;
           end loop;
           y_exp <= bfp_e;
           for j in 0 to DIM-1 loop

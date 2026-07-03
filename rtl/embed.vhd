@@ -115,7 +115,7 @@ begin
           -- satisfying "<= 32767" on the first iteration and saturating
           -- every output element. Same latent bug found and fixed in
           -- layer.vhd's three identical search loops (see its comments).
-          if bfp_sc <= 32767.0 then exit; end if;
+          if bfp_sc < 32767.5 then exit; end if;
         end loop;
         x_exp <= bfp_e;
         for j in 0 to DIM-1 loop
