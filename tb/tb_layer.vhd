@@ -59,7 +59,7 @@ begin
       KVDIM      => KVDIM,
       HEAD_SIZE  => HEAD_SIZE,
       POS        => POS,
-      WEIGHT_DIR => "../mem/weights_l0/"
+      WEIGHT_DIR => "../mem/weights/L0/"
     )
     port map(
       clk          => clk,

@@ -6,7 +6,7 @@
 -- TB can inject the exact post-RoPE K/V golden values without a separate
 -- wk/wv/rope-K pipeline inside this layer.
 --
--- All weight matrices load at elaboration from mem/weights_l0/ as integer
+-- All weight matrices load at elaboration from mem/weights/L0/ as integer
 -- constants. The full forward pass runs in a single clock cycle (start=1 ->
 -- done=1 at the next rising edge), matching every other unit in this project.
 --
@@ -32,7 +32,7 @@ entity layer is
     KVDIM     : integer := 32;
     HEAD_SIZE : integer := 8;    -- DIM/NHEADS
     POS       : integer := 3;    -- 0-based position being computed
-    WEIGHT_DIR : string := "../mem/weights_l0/"
+    WEIGHT_DIR : string := "../mem/weights/L0/"
   );
   port(
     clk   : in  std_logic;
