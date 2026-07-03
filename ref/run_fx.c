@@ -229,6 +229,73 @@ static void dump_layer0_kv(const float *key_cache, const float *val_cache,
     fclose(f);
 }
 
+/* fx_embed.txt — one BFP section per prompt token (order matches
+ * mem/golden/prompt_tokens.txt): token_embedding_table[token] re-BFP-encoded
+ * with fx_bfp_from_float (via write_bfp_section), exactly as forward_fx's
+ * raw (float) embedding-lookup row is block-fp quantised the moment it hits
+ * the first matmul_fx/rmsnorm_fx call. Golden for embed.vhd's ROM-lookup +
+ * BFP re-quantise output (Plan 4 Task 3). */
+static void dump_embed_prompt(const float *table, const int *tokens, int n_tokens, int dim)
+{
+    FILE *f = fopen("mem/golden/fx_embed.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_embed.txt\n"); return; }
+    for (int i = 0; i < n_tokens; i++) {
+        const float *row = table + (size_t)tokens[i] * dim;
+        write_bfp_section(f, row, dim);
+    }
+    fclose(f);
+}
+
+/* fx_lmhead.txt — golden for lm_head.vhd + sampler.vhd (Plan 4 Task 3).
+ *   1. One BFP section: the final-rmsnorm x fed to the classifier (dim=DIM).
+ *   2. VOCAB lines: raw int32 logit[v] = fx_scale_mul(dot(x, embed_row_v),
+ *      mult_v, shift_v) -- bit-identical to what lm_head.vhd computes.
+ *      Recomputed here from the (already fake-quant'd) tied embedding table
+ *      using the SAME per-row scale scheme as dump_weight_matrix/matmul_fx.
+ *      NOT dequantised by the activation exponent (x_exp) -- lm_head.vhd
+ *      intentionally skips that division since it's a common factor across
+ *      all 512 rows and therefore doesn't affect argmax.
+ *   3. One final line: the argmax index over those raw logits (first max on
+ *      ties, matching sample_argmax) -- the oracle "next token" used by
+ *      sampler.vhd's golden. */
+static void dump_lmhead(const float *x, int dim, const float *table, int vocab)
+{
+    FILE *f = fopen("mem/golden/fx_lmhead.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_lmhead.txt\n"); return; }
+
+    write_bfp_section(f, x, dim);
+
+    int16_t *xm = (int16_t *)malloc(dim * sizeof(int16_t));
+    if (!xm) { fclose(f); return; }
+    fx_bfp_from_float(xm, x, dim);
+
+    int32_t best_logit = 0;
+    int     best_idx   = 0;
+    for (int v = 0; v < vocab; v++) {
+        const float *row = table + (size_t)v * dim;
+        float mx = 0.0f;
+        for (int j = 0; j < dim; j++) { float a = fabsf(row[j]); if (a > mx) mx = a; }
+        float wscale = (mx > 0.0f) ? mx / 32767.0f : 1.0f;
+        int32_t mult; int shift;
+        fx_make_scale(wscale, &mult, &shift);
+
+        int64_t acc = 0;
+        for (int j = 0; j < dim; j++) {
+            long wl = lroundf(row[j] / wscale);
+            if (wl >  32767) wl =  32767;
+            if (wl < -32767) wl = -32767;
+            acc += (int64_t)(int16_t)wl * (int64_t)xm[j];
+        }
+        int32_t logit = fx_scale_mul(acc, mult, shift);
+        fprintf(f, "%d\n", logit);
+        if (v == 0 || logit > best_logit) { best_logit = logit; best_idx = v; }
+    }
+    fprintf(f, "%d\n", best_idx);
+
+    free(xm);
+    fclose(f);
+}
+
 /* Dump one weight matrix as per-element int16 mantissas (.mem) and per-row
  * scale factors (two separate files: _mult.mem and _shift.mem).
  * Uses the same per-row quantisation as matmul_fx.  `dir` has no trailing
@@ -968,6 +1035,12 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
     /* Final RMSNorm (integer) + classifier (int block-fp). */
     rmsnorm_fx(x, x, w->rms_final_weight, dim);
     matmul_fx(s->logits, x, w->wcls, p->dim, p->vocab_size);
+
+    /* --- DUMP: final-rmsnorm x + 512 raw classifier logits + argmax --- */
+    if (do_dump) {
+        dump_lmhead(x, dim, w->wcls, p->vocab_size);
+    }
+
     return s->logits;
 }
 
@@ -1311,6 +1384,11 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
         } else {
             fprintf(stderr, "[dump] cannot open mem/golden/prompt_tokens.txt\n");
         }
+        /* fx_embed.txt: golden BFP-encoded embedding rows for these same
+         * prompt token ids (embed.vhd's TB golden; Plan 4 Task 3). */
+        dump_embed_prompt(transformer->weights.token_embedding_table,
+                           prompt_tokens, num_prompt_tokens,
+                           transformer->config.dim);
     }
 
     /* Open fx_tokens_greedy.txt when --dump is set.  Written for all 200 tokens,
