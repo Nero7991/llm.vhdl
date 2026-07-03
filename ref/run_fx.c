@@ -57,6 +57,7 @@
 #include <errno.h>
 
 #include "fx.h"
+#include "llama_fx.h"
 
 /* Global mode flags set by main() before generate() is called. */
 static int g_use_fx = 0;   /* --fx: use forward_fx() */
@@ -1360,8 +1361,15 @@ static void free_fakequant_buffers(void) {
  * prints TOKID for every token decided (for coherence comparison).
  * -------------------------------------------------------------------------- */
 
-static void generate(Transformer *transformer, Tokenizer *tokenizer,
-                     Sampler *sampler, char *prompt, int steps) {
+/* Core generation loop shared by the CLI and the in-process library API.
+ * Each GENERATED token's decoded piece goes to on_piece(piece, user) instead
+ * of being printed directly, so the caller chooses the sink (stdout for the
+ * CLI, an HTTP response for the server). The TOKID/stderr log and the --dump
+ * golden files are kept unchanged so the CLI's golden/coherence scripts stay
+ * byte-identical. Returns the number of positions advanced. */
+int generate_stream(Transformer *transformer, Tokenizer *tokenizer,
+                    Sampler *sampler, char *prompt, int steps,
+                    llama_piece_cb on_piece, void *user) {
     char *empty_prompt = "";
     if (prompt == NULL) prompt = empty_prompt;
 
@@ -1370,7 +1378,8 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
     encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
     if (num_prompt_tokens < 1) {
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
-        exit(EXIT_FAILURE);
+        free(prompt_tokens);
+        return 0;
     }
 
     /* Dump prompt token ids (one per line) when --dump is set. Read-only
@@ -1400,7 +1409,6 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
             fprintf(stderr, "[dump] cannot open mem/golden/fx_tokens_greedy.txt\n");
     }
 
-    long start = 0;
     int next;
     int token = prompt_tokens[0];
     int pos   = 0;
@@ -1422,21 +1430,37 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
         if (next == 1) break; /* BOS signals end-of-sequence */
 
         char* piece = decode(tokenizer, token, next);
-        safe_printf(piece);
-        fflush(stdout);
+        int stop = on_piece ? on_piece(piece, user) : 0;
         token = next;
-
-        if (start == 0) start = time_in_ms();
+        if (stop) break;
     }
-    printf("\n");
 
     if (tok_f) fclose(tok_f);
+    free(prompt_tokens);
+    return pos;
+}
 
+/* CLI piece sink: print to stdout (the original generate() behaviour). */
+static int cli_piece(const char *piece, void *user) {
+    (void)user;
+    safe_printf((char*)piece);
+    fflush(stdout);
+    return 0;   /* never stop early — run to `steps` as before */
+}
+
+/* CLI wrapper: same signature/behaviour as before — stream pieces to stdout,
+ * a trailing newline, and the tok/s line. */
+static void generate(Transformer *transformer, Tokenizer *tokenizer,
+                     Sampler *sampler, char *prompt, int steps) {
+    long t0 = time_in_ms();
+    int pos = generate_stream(transformer, tokenizer, sampler, prompt, steps,
+                              cli_piece, NULL);
+    printf("\n");
     if (pos > 1) {
         long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos - 1) / (double)(end - start) * 1000);
+        fprintf(stderr, "achieved tok/s: %f\n",
+                (pos - 1) / (double)(end - t0) * 1000);
     }
-    free(prompt_tokens);
 }
 
 static void read_stdin(const char* guide, char* buffer, size_t bufsize) {
@@ -1520,6 +1544,51 @@ static void error_usage(void) {
     exit(EXIT_FAILURE);
 }
 
+/* ----------------------------------------------------------------------------
+ * In-process library API (llama_fx.h). Wraps the same verified path the CLI
+ * uses. Compile run_fx.c with -DLLAMA_LIB to drop main() and link this.
+ * -------------------------------------------------------------------------- */
+struct LlamaCtx {
+    Transformer transformer;
+    Tokenizer   tokenizer;
+};
+
+LlamaCtx *llama_load(const char *checkpoint_path, const char *tokenizer_path) {
+    LlamaCtx *c = (LlamaCtx*)calloc(1, sizeof(LlamaCtx));
+    if (!c) return NULL;
+    g_use_fx = 1;   /* serve the fixed-point (VHDL-equivalent) forward path */
+    build_transformer(&c->transformer, (char*)checkpoint_path);
+    build_tokenizer(&c->tokenizer, (char*)tokenizer_path,
+                    c->transformer.config.vocab_size);
+    return c;
+}
+
+int llama_seq_len(const LlamaCtx *ctx) { return ctx->transformer.config.seq_len; }
+int llama_vocab(const LlamaCtx *ctx)   { return ctx->transformer.config.vocab_size; }
+
+int llama_generate(LlamaCtx *ctx, const char *prompt, int max_tokens,
+                   float temperature, float top_p, unsigned long long seed,
+                   llama_piece_cb on_piece, void *user) {
+    int steps = max_tokens;
+    int seq   = ctx->transformer.config.seq_len;
+    if (steps <= 0 || steps > seq) steps = seq;
+    Sampler sampler;
+    build_sampler(&sampler, ctx->transformer.config.vocab_size,
+                  temperature, top_p, seed);
+    int n = generate_stream(&ctx->transformer, &ctx->tokenizer, &sampler,
+                            (char*)prompt, steps, on_piece, user);
+    free_sampler(&sampler);
+    return n;
+}
+
+void llama_free(LlamaCtx *ctx) {
+    if (!ctx) return;
+    free_transformer(&ctx->transformer);
+    free_tokenizer(&ctx->tokenizer);
+    free(ctx);
+}
+
+#ifndef LLAMA_LIB
 int main(int argc, char *argv[]) {
     char *checkpoint_path = NULL;
     char *tokenizer_path  = "tokenizer.bin";
@@ -1601,4 +1670,5 @@ int main(int argc, char *argv[]) {
     free_transformer(&transformer);
     return 0;
 }
+#endif /* LLAMA_LIB */
 #endif /* TESTING */
