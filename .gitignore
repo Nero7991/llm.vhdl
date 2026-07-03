@@ -15,3 +15,12 @@ ref/run_i8fq
 server/llama_server
 server/llama_server_arm
 server/*.o
+ref/dump_luts
+ref/test_fx
+ref/test_rmsnorm
+ref/test_rope
+ref/test_softmax
+ref/test_swiglu
+ref/*.tokerr
+mem/weights_l0/
+*.notes
