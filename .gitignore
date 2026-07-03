@@ -24,3 +24,4 @@ ref/test_swiglu
 ref/*.tokerr
 mem/weights_l0/
 *.notes
+hw/ip_proj/
