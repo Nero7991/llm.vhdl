@@ -51,7 +51,10 @@
 #else
     #include <unistd.h>
     #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <sys/types.h>
 #endif
+#include <errno.h>
 
 #include "fx.h"
 
@@ -228,13 +231,14 @@ static void dump_layer0_kv(const float *key_cache, const float *val_cache,
 
 /* Dump one weight matrix as per-element int16 mantissas (.mem) and per-row
  * scale factors (two separate files: _mult.mem and _shift.mem).
- * Uses the same per-row quantisation as matmul_fx. */
-static void dump_weight_matrix(const char *name, const float *w, int rows, int cols)
+ * Uses the same per-row quantisation as matmul_fx.  `dir` has no trailing
+ * slash (e.g. "mem/weights_l0" or "mem/weights/L0"). */
+static void dump_weight_matrix(const char *dir, const char *name, const float *w, int rows, int cols)
 {
     char path_m[512], path_mult[512], path_shft[512];
-    snprintf(path_m,    sizeof(path_m),    "mem/weights_l0/%s.mem",       name);
-    snprintf(path_mult, sizeof(path_mult), "mem/weights_l0/%s_mult.mem",  name);
-    snprintf(path_shft, sizeof(path_shft), "mem/weights_l0/%s_shift.mem", name);
+    snprintf(path_m,    sizeof(path_m),    "%s/%s.mem",       dir, name);
+    snprintf(path_mult, sizeof(path_mult), "%s/%s_mult.mem",  dir, name);
+    snprintf(path_shft, sizeof(path_shft), "%s/%s_shift.mem", dir, name);
 
     FILE *fm   = fopen(path_m,    "w");
     FILE *fmul = fopen(path_mult, "w");
@@ -267,6 +271,59 @@ static void dump_weight_matrix(const char *name, const float *w, int rows, int c
         fprintf(fmul, "%d\n", (int)mult);
         fprintf(fsh,  "%d\n", shift);
     }
+    fclose(fm); fclose(fmul); fclose(fsh);
+}
+
+/* Create dir if it doesn't exist (mkdir -p semantics for a single path
+ * component or a "parent/child" style path — parent is assumed to already
+ * exist or be creatable in one mkdir call, which holds for the paths used
+ * here: "mem/weights" and "mem/weights/L<n>" are created in that order). */
+static void ensure_dir(const char *path)
+{
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "[dump] mkdir(%s) failed: %s\n", path, strerror(errno));
+    }
+}
+
+/* Dump one weight VECTOR (e.g. an rmsnorm weight) using the same per-row
+ * int16-mantissa + mult/shift scale scheme as dump_weight_matrix, treating
+ * the whole vector as a single "row". Reuses fx_make_scale for the scale,
+ * kept consistent/reusable rather than duplicating the matrix logic. */
+static void dump_weight_vector(const char *dir, const char *name, const float *w, int n)
+{
+    char path_m[512], path_mult[512], path_shft[512];
+    snprintf(path_m,    sizeof(path_m),    "%s/%s.mem",       dir, name);
+    snprintf(path_mult, sizeof(path_mult), "%s/%s_mult.mem",  dir, name);
+    snprintf(path_shft, sizeof(path_shft), "%s/%s_shift.mem", dir, name);
+
+    FILE *fm   = fopen(path_m,    "w");
+    FILE *fmul = fopen(path_mult, "w");
+    FILE *fsh  = fopen(path_shft, "w");
+    if (!fm || !fmul || !fsh) {
+        fprintf(stderr, "[dump] cannot open weight vector files for %s\n", name);
+        if (fm)  fclose(fm);
+        if (fmul) fclose(fmul);
+        if (fsh) fclose(fsh);
+        return;
+    }
+
+    float mx = 0.0f;
+    for (int j = 0; j < n; j++) {
+        float a = fabsf(w[j]);
+        if (a > mx) mx = a;
+    }
+    float wscale = (mx > 0.0f) ? mx / 32767.0f : 1.0f;
+    int32_t mult; int shift;
+    fx_make_scale(wscale, &mult, &shift);
+
+    for (int j = 0; j < n; j++) {
+        long wl = lroundf(w[j] / wscale);
+        if (wl >  32767) wl =  32767;
+        if (wl < -32767) wl = -32767;
+        fprintf(fm, "%ld\n", wl);
+    }
+    fprintf(fmul, "%d\n", (int)mult);
+    fprintf(fsh,  "%d\n", shift);
     fclose(fm); fclose(fmul); fclose(fsh);
 }
 
@@ -405,15 +462,60 @@ static void dump_layer0_weights(TransformerWeights *w, Config *p)
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     int hidden = p->hidden_dim;
 
-    dump_weight_matrix("wq", w->wq, dim,    dim);
-    dump_weight_matrix("wk", w->wk, kv_dim, dim);
-    dump_weight_matrix("wv", w->wv, kv_dim, dim);
-    dump_weight_matrix("wo", w->wo, dim,    dim);
-    dump_weight_matrix("w1", w->w1, hidden, dim);
-    dump_weight_matrix("w3", w->w3, hidden, dim);
-    dump_weight_matrix("w2", w->w2, dim,    hidden);
+    dump_weight_matrix("mem/weights_l0", "wq", w->wq, dim,    dim);
+    dump_weight_matrix("mem/weights_l0", "wk", w->wk, kv_dim, dim);
+    dump_weight_matrix("mem/weights_l0", "wv", w->wv, kv_dim, dim);
+    dump_weight_matrix("mem/weights_l0", "wo", w->wo, dim,    dim);
+    dump_weight_matrix("mem/weights_l0", "w1", w->w1, hidden, dim);
+    dump_weight_matrix("mem/weights_l0", "w3", w->w3, hidden, dim);
+    dump_weight_matrix("mem/weights_l0", "w2", w->w2, dim,    hidden);
     dump_rmsnorm_weight("att_rmsnorm_w", w->rms_att_weight, dim);
     dump_rmsnorm_weight("ffn_rmsnorm_w", w->rms_ffn_weight, dim);
+}
+
+/* dump_all_weights (Plan 4 Task 1) — emit every layer's 7 weight matrices +
+ * 2 rmsnorm vectors to mem/weights/L<l>/, plus the (tied) token embedding
+ * table and the final rmsnorm vector to mem/weights/.  Uses the int16
+ * mantissa + mult/shift scale scheme throughout (dump_weight_matrix /
+ * dump_weight_vector), NOT the older BFP+exponent scheme that
+ * dump_layer0_weights/dump_rmsnorm_weight use for mem/weights_l0/ — that
+ * older directory and format are left untouched since rtl/layer.vhd and
+ * tb/tb_layer.vhd already depend on it. Indexes w->wq/wk/... directly by
+ * layer, so this does not need to run inside the per-layer forward loop —
+ * called once from forward_fx's existing one-shot dump guard. */
+static void dump_all_weights(TransformerWeights *w, Config *p)
+{
+    int dim    = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int hidden = p->hidden_dim;
+    int vocab  = p->vocab_size;
+    long long L = p->n_layers;
+
+    ensure_dir("mem/weights");
+
+    for (long long l = 0; l < L; l++) {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "mem/weights/L%lld", l);
+        ensure_dir(dir);
+
+        dump_weight_matrix(dir, "wq", w->wq + l*dim*dim,        dim,    dim);
+        dump_weight_matrix(dir, "wk", w->wk + l*dim*kv_dim,     kv_dim, dim);
+        dump_weight_matrix(dir, "wv", w->wv + l*dim*kv_dim,     kv_dim, dim);
+        dump_weight_matrix(dir, "wo", w->wo + l*dim*dim,        dim,    dim);
+        dump_weight_matrix(dir, "w1", w->w1 + l*dim*hidden,     hidden, dim);
+        dump_weight_matrix(dir, "w3", w->w3 + l*dim*hidden,     hidden, dim);
+        dump_weight_matrix(dir, "w2", w->w2 + l*hidden*dim,     dim,    hidden);
+        dump_weight_vector(dir, "att_rmsnorm_w", w->rms_att_weight + l*dim, dim);
+        dump_weight_vector(dir, "ffn_rmsnorm_w", w->rms_ffn_weight + l*dim, dim);
+    }
+
+    /* Tied embedding table (lm_head == token_embedding_table for this
+     * checkpoint — confirmed via memory_map_weights()/apply_i16_fakequant(),
+     * which set w->wcls = w->token_embedding_table when shared_weights). */
+    dump_weight_matrix("mem/weights", "embed", w->token_embedding_table, vocab, dim);
+
+    /* Final RMSNorm vector. */
+    dump_weight_vector("mem/weights", "final_rmsnorm_w", w->rms_final_weight, dim);
 }
 
 static void read_checkpoint(char* checkpoint, Config* config,
@@ -751,6 +853,7 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
                 dump_rmsnorm_l0_w(w->rms_att_weight + 0 * dim, dim);
                 dump_layer0_in(x_in_copy, dim);
                 dump_layer0_weights(w, p);
+                dump_all_weights(w, p);
                 free(x_in_copy);
                 x_in_copy = NULL;
             }
@@ -1234,6 +1337,19 @@ static void generate(Transformer *transformer, Tokenizer *tokenizer,
     if (num_prompt_tokens < 1) {
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
         exit(EXIT_FAILURE);
+    }
+
+    /* Dump prompt token ids (one per line) when --dump is set. Read-only
+     * w.r.t. prompt_tokens/num_prompt_tokens -- does not mutate them. */
+    if (g_dump) {
+        FILE *pt_f = fopen("mem/golden/prompt_tokens.txt", "w");
+        if (pt_f) {
+            for (int i = 0; i < num_prompt_tokens; i++)
+                fprintf(pt_f, "%d\n", prompt_tokens[i]);
+            fclose(pt_f);
+        } else {
+            fprintf(stderr, "[dump] cannot open mem/golden/prompt_tokens.txt\n");
+        }
     }
 
     /* Open fx_tokens_greedy.txt when --dump is set.  Written for all 200 tokens,
