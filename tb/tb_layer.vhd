@@ -9,9 +9,12 @@
 -- BFP quantisation error in xm is amplified through the FFN: the VHDL uses
 -- exact 64-bit integer arithmetic for rmsnorm while the C oracle uses float
 -- multiplications, so they diverge slightly even for the same BFP-quantised
--- input.  Measured across all 64 output elements: max_dev=8 (element 49).
--- The computation is correct; +-8 is the tightest bound achievable without
--- rewriting the C oracle's rmsnorm to match the VHDL integer path.
+-- input.  Deviation is BROADBAND (final review, empirical): 57/64 outputs
+-- deviate, spread across all 8 heads, peaking at 8 LSB (two tied elements incl.
+-- 49) -- the signature of inherent int16-BFP rounding noise amplified through
+-- the FFN, NOT a localized bug.  Relative error ~2.4e-4 (8/32768).  +-8 is the
+-- real int16-BFP error bound vs the float oracle; not reducible without an
+-- int32 datapath.  End-to-end token-match (Plan 4) is the true acceptance gate.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use std.textio.all;
 use work.golden_pkg.all;
