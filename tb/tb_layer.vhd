@@ -246,7 +246,7 @@ begin
 
     -- -----------------------------------------------------------------------
     -- Compare k_out/v_out (DUT's own computed K[POS]/V[POS]) to golden
-    -- block POS from fx_layer0_kv.txt, within +/-2 LSB (aligned domain).
+    -- block POS from fx_layer0_kv.txt, within +/-4 LSB (aligned domain).
     -- -----------------------------------------------------------------------
     if k_out_exp > gk_e then e_max := k_out_exp; else e_max := gk_e; end if;
     for j in 0 to KVDIM-1 loop
