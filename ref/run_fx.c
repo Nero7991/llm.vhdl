@@ -202,6 +202,102 @@ static void dump_layer0_out(const float *x, int n)
     fclose(f);
 }
 
+/* fx_layer0_in.txt — one BFP section: residual x fed INTO layer 0 at DUMP_POS. */
+static void dump_layer0_in(const float *x, int n)
+{
+    FILE *f = fopen("mem/golden/fx_layer0_in.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_layer0_in.txt\n"); return; }
+    write_bfp_section(f, x, n);
+    fclose(f);
+}
+
+/* fx_layer0_kv.txt — (pos+1) K BFP sections then (pos+1) V BFP sections.
+ * key_cache and val_cache are already-RoPE'd (for K) / raw (for V) float arrays,
+ * laid out as [pos_t * kv_dim + elem]. */
+static void dump_layer0_kv(const float *key_cache, const float *val_cache,
+                            int n_pos, int kv_dim)
+{
+    FILE *f = fopen("mem/golden/fx_layer0_kv.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_layer0_kv.txt\n"); return; }
+    for (int t = 0; t < n_pos; t++)
+        write_bfp_section(f, key_cache + t * kv_dim, kv_dim);
+    for (int t = 0; t < n_pos; t++)
+        write_bfp_section(f, val_cache + t * kv_dim, kv_dim);
+    fclose(f);
+}
+
+/* Dump one weight matrix as per-element int16 mantissas (.mem) and per-row
+ * scale factors (two separate files: _mult.mem and _shift.mem).
+ * Uses the same per-row quantisation as matmul_fx. */
+static void dump_weight_matrix(const char *name, const float *w, int rows, int cols)
+{
+    char path_m[512], path_mult[512], path_shft[512];
+    snprintf(path_m,    sizeof(path_m),    "mem/weights_l0/%s.mem",       name);
+    snprintf(path_mult, sizeof(path_mult), "mem/weights_l0/%s_mult.mem",  name);
+    snprintf(path_shft, sizeof(path_shft), "mem/weights_l0/%s_shift.mem", name);
+
+    FILE *fm   = fopen(path_m,    "w");
+    FILE *fmul = fopen(path_mult, "w");
+    FILE *fsh  = fopen(path_shft, "w");
+    if (!fm || !fmul || !fsh) {
+        fprintf(stderr, "[dump] cannot open weight files for %s\n", name);
+        if (fm)  fclose(fm);
+        if (fmul) fclose(fmul);
+        if (fsh) fclose(fsh);
+        return;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        const float *row = w + (size_t)i * cols;
+        float mx = 0.0f;
+        for (int j = 0; j < cols; j++) {
+            float a = fabsf(row[j]);
+            if (a > mx) mx = a;
+        }
+        float wscale = (mx > 0.0f) ? mx / 32767.0f : 1.0f;
+        int32_t mult; int shift;
+        fx_make_scale(wscale, &mult, &shift);
+
+        for (int j = 0; j < cols; j++) {
+            long wl = lroundf(row[j] / wscale);
+            if (wl >  32767) wl =  32767;
+            if (wl < -32767) wl = -32767;
+            fprintf(fm, "%ld\n", wl);
+        }
+        fprintf(fmul, "%d\n", (int)mult);
+        fprintf(fsh,  "%d\n", shift);
+    }
+    fclose(fm); fclose(fmul); fclose(fsh);
+}
+
+/* Dump one rmsnorm weight vector as BFP int16 mantissas (.mem) + exponent (_exp.txt). */
+static void dump_rmsnorm_weight(const char *name, const float *w, int n)
+{
+    char path_m[512], path_e[512];
+    snprintf(path_m, sizeof(path_m), "mem/weights_l0/%s.mem",     name);
+    snprintf(path_e, sizeof(path_e), "mem/weights_l0/%s_exp.txt", name);
+
+    int16_t *m = (int16_t *)malloc(n * sizeof(int16_t));
+    if (!m) { fprintf(stderr, "[dump] malloc failed for %s\n", name); return; }
+    int e = fx_bfp_from_float(m, w, n);
+
+    FILE *fm = fopen(path_m, "w");
+    FILE *fe = fopen(path_e, "w");
+    if (!fm || !fe) {
+        fprintf(stderr, "[dump] cannot open rmsnorm weight files for %s\n", name);
+        free(m);
+        if (fm) fclose(fm);
+        if (fe) fclose(fe);
+        return;
+    }
+    for (int j = 0; j < n; j++) fprintf(fm, "%d\n", (int)m[j]);
+    fprintf(fe, "%d\n", e);
+    fclose(fm); fclose(fe);
+    free(m);
+}
+
+/* dump_layer0_weights is defined after the struct typedefs below. */
+
 /* ----------------------------------------------------------------------------
  * Transformer model (identical to run_i16.c)
  * -------------------------------------------------------------------------- */
@@ -298,6 +394,26 @@ static void memory_map_weights(TransformerWeights *w, Config* p,
     ptr += p->seq_len * head_size / 2;
     ptr += p->seq_len * head_size / 2;
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
+}
+
+/* dump_layer0_weights — emit all 7 weight matrices and 2 rmsnorm weights for
+ * layer 0 to mem/weights_l0/. Assumes w has already been fake-quant'd for
+ * the matmul weights; rmsnorm weights use raw float (not fake-quant'd). */
+static void dump_layer0_weights(TransformerWeights *w, Config *p)
+{
+    int dim    = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int hidden = p->hidden_dim;
+
+    dump_weight_matrix("wq", w->wq, dim,    dim);
+    dump_weight_matrix("wk", w->wk, kv_dim, dim);
+    dump_weight_matrix("wv", w->wv, kv_dim, dim);
+    dump_weight_matrix("wo", w->wo, dim,    dim);
+    dump_weight_matrix("w1", w->w1, hidden, dim);
+    dump_weight_matrix("w3", w->w3, hidden, dim);
+    dump_weight_matrix("w2", w->w2, dim,    hidden);
+    dump_rmsnorm_weight("att_rmsnorm_w", w->rms_att_weight, dim);
+    dump_rmsnorm_weight("ffn_rmsnorm_w", w->rms_ffn_weight, dim);
 }
 
 static void read_checkpoint(char* checkpoint, Config* config,
@@ -633,6 +749,8 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
             if (x_in_copy) {
                 dump_rmsnorm_l0(x_in_copy, s->xb, dim);
                 dump_rmsnorm_l0_w(w->rms_att_weight + 0 * dim, dim);
+                dump_layer0_in(x_in_copy, dim);
+                dump_layer0_weights(w, p);
                 free(x_in_copy);
                 x_in_copy = NULL;
             }
@@ -668,6 +786,9 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
                 dump_rope_l0(q_pre, dim, k_pre, kv_dim, s->q, s->k);
             free(q_pre);  q_pre = NULL;
             free(k_pre);  k_pre = NULL;
+            /* KV cache at all positions 0..pos (K is post-rope, V is pre-rope). */
+            dump_layer0_kv(s->key_cache + loff, s->value_cache + loff,
+                           pos + 1, kv_dim);
         }
 
         /* --- DUMP: compute head-0 pre-softmax scores sequentially (layer 0) ---
