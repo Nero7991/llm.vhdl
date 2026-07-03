@@ -42,22 +42,26 @@ architecture sim of tb_layer is
   constant NKVH      : integer := 4;
   constant KVDIM     : integer := 32;
   constant HEAD_SIZE : integer := 8;
-  constant POS       : integer := 3;  -- position being computed (0-based)
+  constant MAXPOS    : integer := 8;  -- static max sequence positions (> POS)
+  constant POS       : integer := 3;  -- position being computed (0-based, runtime)
   constant NPOS      : integer := POS + 1;  -- = 4
 
-  signal clk   : std_logic := '0';
-  signal rst   : std_logic := '1';
-  signal start : std_logic := '0';
-  signal done  : std_logic;
+  signal clk     : std_logic := '0';
+  signal rst     : std_logic := '1';
+  signal start   : std_logic := '0';
+  signal done    : std_logic;
+  signal cur_pos : integer := POS;
 
   signal x_mant : std_logic_vector(DIM*16-1 downto 0)          := (others => '0');
   signal x_exp  : integer := 0;
 
-  -- History only: positions 0..POS-1 (POS slots). At POS=3 this is 3 slots.
-  signal k_mant       : std_logic_vector(POS*KVDIM*16-1 downto 0) := (others => '0');
-  signal k_exp_packed : std_logic_vector(POS*32-1 downto 0)        := (others => '0');
-  signal v_mant       : std_logic_vector(POS*KVDIM*16-1 downto 0) := (others => '0');
-  signal v_exp_packed : std_logic_vector(POS*32-1 downto 0)        := (others => '0');
+  -- History ports carry MAXPOS slots (0..MAXPOS-1); only slots 0..POS-1 are
+  -- populated (fed from the golden file), slots POS..MAXPOS-1 left zero and
+  -- are guarded out by the DUT via cur_pos.
+  signal k_mant       : std_logic_vector(MAXPOS*KVDIM*16-1 downto 0) := (others => '0');
+  signal k_exp_packed : std_logic_vector(MAXPOS*32-1 downto 0)        := (others => '0');
+  signal v_mant       : std_logic_vector(MAXPOS*KVDIM*16-1 downto 0) := (others => '0');
+  signal v_exp_packed : std_logic_vector(MAXPOS*32-1 downto 0)        := (others => '0');
 
   signal y_mant : std_logic_vector(DIM*16-1 downto 0);
   signal y_exp  : integer;
@@ -79,13 +83,14 @@ begin
       NKVH       => NKVH,
       KVDIM      => KVDIM,
       HEAD_SIZE  => HEAD_SIZE,
-      POS        => POS,
+      MAXPOS     => MAXPOS,
       WEIGHT_DIR => "../mem/weights/L0/"
     )
     port map(
       clk          => clk,
       rst          => rst,
       start        => start,
+      cur_pos      => cur_pos,
       x_mant       => x_mant,
       x_exp        => x_exp,
       k_mant       => k_mant,

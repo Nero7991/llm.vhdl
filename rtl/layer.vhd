@@ -3,14 +3,22 @@
 -- attention -> wo -> residual1 -> ffn-rmsnorm -> w1/w3 -> swiglu -> w2 ->
 -- residual2.
 --
--- Self-contained: the layer computes its OWN current-position K[POS]/V[POS]
--- from the att-rmsnorm output xb (WK/WV matmul, rope applied to K only),
--- appends them to the K/V HISTORY supplied via ports (positions 0..POS-1)
--- to form the full 0..POS attention window, and exposes the computed
--- K[POS]/V[POS] on k_out/v_out so an external sequencer can cache them for
--- future positions. History ports carry POS slots (0..POS-1); at POS=0 this
--- is a null-range (zero-width) vector -- legal VHDL, and the unpack loop
--- ("for t in 0 to POS-1") naturally does not execute.
+-- Self-contained: the layer computes its OWN current-position K[cur_pos]/
+-- V[cur_pos] from the att-rmsnorm output xb (WK/WV matmul, rope applied to
+-- K only), appends them to the K/V HISTORY supplied via ports (positions
+-- 0..cur_pos-1) to form the full 0..cur_pos attention window, and exposes
+-- the computed K[cur_pos]/V[cur_pos] on k_out/v_out so an external
+-- sequencer can cache them for future positions.
+--
+-- Position is split into a compile-time MAXPOS (static sizing for all
+-- ports/arrays, so the same instance can be reused across the whole
+-- sequence by a runtime sequencer) and a runtime cur_pos port (all dynamic
+-- bounds -- loop trip counts, RoPE twiddle index, KV-append index). History
+-- ports carry MAXPOS slots (0..MAXPOS-1); only slots 0..cur_pos-1 are valid
+-- (populated by the caller) -- slots cur_pos..MAXPOS-1 are never read. All
+-- POS-bound loops are now static "0 to MAXPOS-1" loops guarded by a runtime
+-- "if t <= cur_pos[-1] then" so VHDL's locally-static loop-range rule is
+-- satisfied while the effective trip count still tracks cur_pos.
 --
 -- All weight matrices load at elaboration from mem/weights/L0/ as integer
 -- constants. The full forward pass runs in a single clock cycle (start=1 ->
@@ -37,30 +45,33 @@ entity layer is
     NKVH      : integer := 4;
     KVDIM     : integer := 32;
     HEAD_SIZE : integer := 8;    -- DIM/NHEADS
-    POS       : integer := 3;    -- 0-based position being computed
+    MAXPOS    : integer := 8;    -- static max sequence positions (0..MAXPOS-1)
     WEIGHT_DIR : string := "../mem/weights/L0/"
   );
   port(
-    clk   : in  std_logic;
-    rst   : in  std_logic;
-    start : in  std_logic;
+    clk     : in  std_logic;
+    rst     : in  std_logic;
+    start   : in  std_logic;
+    cur_pos : in  integer;   -- 0-based position being computed (runtime)
     -- Input residual (DIM int16 mantissas packed, one shared exponent)
     x_mant : in  std_logic_vector(DIM*16-1 downto 0);
     x_exp  : in  integer;
-    -- KV HISTORY only: POS slots, positions 0..POS-1, time-major packed.
-    -- (POS=0 => null-range/zero-width ports; no history to unpack.)
+    -- KV HISTORY only: MAXPOS slots, positions 0..MAXPOS-1, time-major
+    -- packed. Only slots 0..cur_pos-1 are valid/read; slots cur_pos..
+    -- MAXPOS-1 are never read (cur_pos=0 => nothing to unpack).
     -- k_mant[(t+1)*KVDIM*16-1 : t*KVDIM*16] = K[t] mantissas
     -- k_exp_packed[(t+1)*32-1  : t*32]       = K[t] exponent as signed 32-bit
-    k_mant       : in  std_logic_vector(POS*KVDIM*16-1 downto 0);
-    k_exp_packed : in  std_logic_vector(POS*32-1 downto 0);
-    v_mant       : in  std_logic_vector(POS*KVDIM*16-1 downto 0);
-    v_exp_packed : in  std_logic_vector(POS*32-1 downto 0);
+    k_mant       : in  std_logic_vector(MAXPOS*KVDIM*16-1 downto 0);
+    k_exp_packed : in  std_logic_vector(MAXPOS*32-1 downto 0);
+    v_mant       : in  std_logic_vector(MAXPOS*KVDIM*16-1 downto 0);
+    v_exp_packed : in  std_logic_vector(MAXPOS*32-1 downto 0);
     -- Output residual
     done   : out std_logic;
     y_mant : out std_logic_vector(DIM*16-1 downto 0);
     y_exp  : out integer;
-    -- Layer's own computed current-position K[POS] (post-RoPE) / V[POS]
-    -- (raw), for an external sequencer to cache for future positions.
+    -- Layer's own computed current-position K[cur_pos] (post-RoPE) /
+    -- V[cur_pos] (raw), for an external sequencer to cache for future
+    -- positions.
     k_out_mant : out std_logic_vector(KVDIM*16-1 downto 0);
     k_out_exp  : out integer;
     v_out_mant : out std_logic_vector(KVDIM*16-1 downto 0);
@@ -169,12 +180,14 @@ begin
     -- Q vector (after wq + rope)
     variable q_v      : intarr(0 to DIM-1);
     variable q_e      : integer;
-    -- KV cache (POS+1 positions, KVDIM values each): 0..POS-1 from history
-    -- ports, POS computed internally (WK/WV + rope-K for position POS).
-    variable kc_v     : intarr(0 to (POS+1)*KVDIM-1);
-    variable vc_v     : intarr(0 to (POS+1)*KVDIM-1);
-    variable kc_e     : intarr(0 to POS);
-    variable vc_e     : intarr(0 to POS);
+    -- KV cache (MAXPOS+1 static slots, KVDIM values each): 0..cur_pos-1 from
+    -- history ports, cur_pos computed internally (WK/WV + rope-K for the
+    -- current position). Sized statically by MAXPOS; only 0..cur_pos are
+    -- ever written/read at runtime.
+    variable kc_v     : intarr(0 to (MAXPOS+1)*KVDIM-1);
+    variable vc_v     : intarr(0 to (MAXPOS+1)*KVDIM-1);
+    variable kc_e     : intarr(0 to MAXPOS);
+    variable vc_e     : intarr(0 to MAXPOS);
     -- Current-position K/V (after wk/wv; k_new further gets rope applied)
     variable k_new_v  : intarr(0 to KVDIM-1);
     variable k_new_e  : integer;
@@ -254,11 +267,11 @@ begin
     variable dot32      : signed(31 downto 0);  -- scale_mul output for dot
     variable qh16, kh16 : signed(15 downto 0);
     variable ph32       : signed(31 downto 0);
-    variable scores     : realarr(0 to POS);
-    variable probs      : realarr(0 to POS);
+    variable scores     : realarr(0 to MAXPOS);
+    variable probs      : realarr(0 to MAXPOS);
     variable score_max  : real;
     variable z_q32      : signed(31 downto 0);
-    variable e_arr      : intarr(0 to POS);
+    variable e_arr      : intarr(0 to MAXPOS);
     variable e_i32      : signed(31 downto 0);
     variable sum_e      : signed(63 downto 0);
     variable inv_qe     : real;
@@ -302,14 +315,18 @@ begin
         for j in 0 to DIM-1 loop
           x_v(j) := to_integer(signed(x_mant((j+1)*16-1 downto j*16)));
         end loop;
-        -- History only: t = 0..POS-1 (POS=0 -> empty range, nothing to read)
-        for t in 0 to POS-1 loop
-          kc_e(t) := to_integer(signed(k_exp_packed((t+1)*32-1 downto t*32)));
-          vc_e(t) := to_integer(signed(v_exp_packed((t+1)*32-1 downto t*32)));
-          for j in 0 to KVDIM-1 loop
-            kc_v(t*KVDIM+j) := to_integer(signed(k_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
-            vc_v(t*KVDIM+j) := to_integer(signed(v_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
-          end loop;
+        -- History only: t = 0..cur_pos-1 (cur_pos=0 -> nothing valid to read).
+        -- Static MAXPOS-bound loop, runtime-guarded so slots cur_pos..
+        -- MAXPOS-1 of the history ports (unpopulated/garbage) are never read.
+        for t in 0 to MAXPOS-1 loop
+          if t <= cur_pos-1 then
+            kc_e(t) := to_integer(signed(k_exp_packed((t+1)*32-1 downto t*32)));
+            vc_e(t) := to_integer(signed(v_exp_packed((t+1)*32-1 downto t*32)));
+            for j in 0 to KVDIM-1 loop
+              kc_v(t*KVDIM+j) := to_integer(signed(k_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+              vc_v(t*KVDIM+j) := to_integer(signed(v_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+            end loop;
+          end if;
         end loop;
 
         -- ===================================================================
@@ -471,12 +488,12 @@ begin
 
         -- ===================================================================
         -- 3. RoPE on Q
-        --    twiddle_idx = POS * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2
+        --    twiddle_idx = cur_pos * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2
         -- ===================================================================
         for i in 0 to DIM/2-1 loop
           q0_v    := to_signed(q_v(2*i),   16);
           q1_v    := to_signed(q_v(2*i+1), 16);
-          rom_idx := POS * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2;
+          rom_idx := cur_pos * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2;
           fcr_v   := to_signed(COS_ROM(rom_idx), 16);
           fci_v   := to_signed(SIN_ROM(rom_idx), 16);
           -- r0 = round((q0*cos - q1*sin) >> 15)
@@ -501,14 +518,14 @@ begin
         -- q_e unchanged by RoPE (>>15 preserves scale)
 
         -- ===================================================================
-        -- 3b. RoPE on K[POS] (first kv_dim elements only; same twiddle ROM
-        --     and index formula as Q's rope, over KVDIM/2 pairs).
+        -- 3b. RoPE on K[cur_pos] (first kv_dim elements only; same twiddle
+        --     ROM and index formula as Q's rope, over KVDIM/2 pairs).
         --     k_new_e unchanged by RoPE (>>15 preserves scale).
         -- ===================================================================
         for i in 0 to KVDIM/2-1 loop
           k0_v    := to_signed(k_new_v(2*i),   16);
           k1_v    := to_signed(k_new_v(2*i+1), 16);
-          rom_idx := POS * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2;
+          rom_idx := cur_pos * ROPE_HALF + ((2*i) mod HEAD_SIZE) / 2;
           fcr_v   := to_signed(COS_ROM(rom_idx), 16);
           fci_v   := to_signed(SIN_ROM(rom_idx), 16);
           rope_acc := resize(k0_v, 32) * resize(fcr_v, 32)
@@ -529,13 +546,13 @@ begin
           end if;
         end loop;
 
-        -- Append computed K[POS]/V[POS] into the KV cache (history was
-        -- unpacked into indices 0..POS-1 in step 0).
-        kc_e(POS) := k_new_e;
-        vc_e(POS) := v_new_e;
+        -- Append computed K[cur_pos]/V[cur_pos] into the KV cache (history
+        -- was unpacked into indices 0..cur_pos-1 in step 0).
+        kc_e(cur_pos) := k_new_e;
+        vc_e(cur_pos) := v_new_e;
         for j in 0 to KVDIM-1 loop
-          kc_v(POS*KVDIM+j) := k_new_v(j);
-          vc_v(POS*KVDIM+j) := v_new_v(j);
+          kc_v(cur_pos*KVDIM+j) := k_new_v(j);
+          vc_v(cur_pos*KVDIM+j) := v_new_v(j);
         end loop;
 
         -- Drive k_out/v_out ports with the computed current-position K/V.
@@ -572,69 +589,85 @@ begin
           end if;
           inv_qe := 2.0 ** (-qe_head);
 
-          -- Attention scores for each position
-          for t in 0 to POS loop
-            k_head_max := 0;
-            for j in 0 to HEAD_SIZE-1 loop
-              k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
-              abs_v := k_head_m(j); if abs_v < 0 then abs_v := -abs_v; end if;
-              if abs_v > k_head_max then k_head_max := abs_v; end if;
-            end loop;
-            if k_head_max = 0 then k_extra := 0;
-            else                   k_extra := 14 - msb_pos(k_head_max);
+          -- Attention scores for each position (history + current: static
+          -- MAXPOS-bound loop, guarded to the valid 0..cur_pos range).
+          for t in 0 to MAXPOS-1 loop
+            if t <= cur_pos then
+              k_head_max := 0;
+              for j in 0 to HEAD_SIZE-1 loop
+                k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+                abs_v := k_head_m(j); if abs_v < 0 then abs_v := -abs_v; end if;
+                if abs_v > k_head_max then k_head_max := abs_v; end if;
+              end loop;
+              if k_head_max = 0 then k_extra := 0;
+              else                   k_extra := 14 - msb_pos(k_head_max);
+              end if;
+              ke_head := kc_e(t) + k_extra;
+              if k_extra >= 0 then
+                for j in 0 to HEAD_SIZE-1 loop k_head_m(j) := k_head_m(j) * (2**k_extra); end loop;
+              else
+                for j in 0 to HEAD_SIZE-1 loop k_head_m(j) := k_head_m(j) / (2**(-k_extra)); end loop;
+              end if;
+              inv_ke  := 2.0 ** (-ke_head);
+              -- Integer dot Q.K
+              dot_i64 := (others => '0');
+              for j in 0 to HEAD_SIZE-1 loop
+                qh16    := to_signed(q_head_m(j), 16);
+                kh16    := to_signed(k_head_m(j), 16);
+                ph32    := qh16 * kh16;
+                dot_i64 := dot_i64 + resize(ph32, 64);
+              end loop;
+              -- Safe to_integer: max dot = HEAD_SIZE*32767^2 ~ 2^31 may overflow int32.
+              -- Scale down to 30-bit range using scale_mul, then restore scale in real.
+              abs_dot64 := dot_i64;
+              if dot_i64 < 0 then abs_dot64 := -dot_i64; end if;
+              dot_sh := 0;
+              for k in 0 to 62 loop
+                if abs_dot64(k) = '1' then dot_sh := k; end if;
+              end loop;
+              if dot_sh > 30 then dot_sh := dot_sh - 30; else dot_sh := 0; end if;
+              dot32     := scale_mul(dot_i64, to_signed(1, 32), dot_sh);
+              scores(t) := real(to_integer(dot32)) * (2.0 ** dot_sh) * inv_qe * inv_ke / SQRT_HEAD_SIZE;
             end if;
-            ke_head := kc_e(t) + k_extra;
-            if k_extra >= 0 then
-              for j in 0 to HEAD_SIZE-1 loop k_head_m(j) := k_head_m(j) * (2**k_extra); end loop;
-            else
-              for j in 0 to HEAD_SIZE-1 loop k_head_m(j) := k_head_m(j) / (2**(-k_extra)); end loop;
-            end if;
-            inv_ke  := 2.0 ** (-ke_head);
-            -- Integer dot Q.K
-            dot_i64 := (others => '0');
-            for j in 0 to HEAD_SIZE-1 loop
-              qh16    := to_signed(q_head_m(j), 16);
-              kh16    := to_signed(k_head_m(j), 16);
-              ph32    := qh16 * kh16;
-              dot_i64 := dot_i64 + resize(ph32, 64);
-            end loop;
-            -- Safe to_integer: max dot = HEAD_SIZE*32767^2 ~ 2^31 may overflow int32.
-            -- Scale down to 30-bit range using scale_mul, then restore scale in real.
-            abs_dot64 := dot_i64;
-            if dot_i64 < 0 then abs_dot64 := -dot_i64; end if;
-            dot_sh := 0;
-            for k in 0 to 62 loop
-              if abs_dot64(k) = '1' then dot_sh := k; end if;
-            end loop;
-            if dot_sh > 30 then dot_sh := dot_sh - 30; else dot_sh := 0; end if;
-            dot32     := scale_mul(dot_i64, to_signed(1, 32), dot_sh);
-            scores(t) := real(to_integer(dot32)) * (2.0 ** dot_sh) * inv_qe * inv_ke / SQRT_HEAD_SIZE;
           end loop;
 
-          -- Softmax: max-subtract, exp_q Q12, normalise
+          -- Softmax: max-subtract, exp_q Q12, normalise.
+          -- score_max seeds from scores(0), always valid (cur_pos >= 0).
+          -- The running-max/running-sum loops below are static MAXPOS-bound,
+          -- guarded to 0..cur_pos; out-of-range iterations are skipped
+          -- entirely (not folded in as a zero/no-op term) so they cannot
+          -- corrupt the max search or the sum.
           score_max := scores(0);
-          for t in 1 to POS loop
-            if scores(t) > score_max then score_max := scores(t); end if;
+          for t in 1 to MAXPOS-1 loop
+            if t <= cur_pos then
+              if scores(t) > score_max then score_max := scores(t); end if;
+            end if;
           end loop;
           sum_e := (others => '0');
-          for t in 0 to POS loop
-            z_q32    := to_signed(integer(round((scores(t) - score_max) * 4096.0)), 32);
-            e_i32    := exp_q(resize(z_q32, 64), 12);
-            e_arr(t) := to_integer(e_i32);
-            sum_e    := sum_e + resize(e_i32, 64);
+          for t in 0 to MAXPOS-1 loop
+            if t <= cur_pos then
+              z_q32    := to_signed(integer(round((scores(t) - score_max) * 4096.0)), 32);
+              e_i32    := exp_q(resize(z_q32, 64), 12);
+              e_arr(t) := to_integer(e_i32);
+              sum_e    := sum_e + resize(e_i32, 64);
+            end if;
           end loop;
           if sum_e <= 0 then sum_e := to_signed(1, 64); end if;
-          for t in 0 to POS loop
-            probs(t) := real(e_arr(t)) / real(to_integer(sum_e));
+          for t in 0 to MAXPOS-1 loop
+            if t <= cur_pos then
+              probs(t) := real(e_arr(t)) / real(to_integer(sum_e));
+            end if;
           end loop;
 
           -- V-weighted sum
           for j in 0 to HEAD_SIZE-1 loop
             xb_att_r(h*HEAD_SIZE + j) := 0.0;
-            for t in 0 to POS loop
-              xb_att_r(h*HEAD_SIZE + j) :=
-                xb_att_r(h*HEAD_SIZE + j) +
-                probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+            for t in 0 to MAXPOS-1 loop
+              if t <= cur_pos then
+                xb_att_r(h*HEAD_SIZE + j) :=
+                  xb_att_r(h*HEAD_SIZE + j) +
+                  probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+              end if;
             end loop;
           end loop;
         end loop;
