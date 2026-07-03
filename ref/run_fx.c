@@ -285,54 +285,15 @@ static void ensure_dir(const char *path)
     }
 }
 
-/* Dump one weight VECTOR (e.g. an rmsnorm weight) using the same per-row
- * int16-mantissa + mult/shift scale scheme as dump_weight_matrix, treating
- * the whole vector as a single "row". Reuses fx_make_scale for the scale,
- * kept consistent/reusable rather than duplicating the matrix logic. */
-static void dump_weight_vector(const char *dir, const char *name, const float *w, int n)
-{
-    char path_m[512], path_mult[512], path_shft[512];
-    snprintf(path_m,    sizeof(path_m),    "%s/%s.mem",       dir, name);
-    snprintf(path_mult, sizeof(path_mult), "%s/%s_mult.mem",  dir, name);
-    snprintf(path_shft, sizeof(path_shft), "%s/%s_shift.mem", dir, name);
 
-    FILE *fm   = fopen(path_m,    "w");
-    FILE *fmul = fopen(path_mult, "w");
-    FILE *fsh  = fopen(path_shft, "w");
-    if (!fm || !fmul || !fsh) {
-        fprintf(stderr, "[dump] cannot open weight vector files for %s\n", name);
-        if (fm)  fclose(fm);
-        if (fmul) fclose(fmul);
-        if (fsh) fclose(fsh);
-        return;
-    }
-
-    float mx = 0.0f;
-    for (int j = 0; j < n; j++) {
-        float a = fabsf(w[j]);
-        if (a > mx) mx = a;
-    }
-    float wscale = (mx > 0.0f) ? mx / 32767.0f : 1.0f;
-    int32_t mult; int shift;
-    fx_make_scale(wscale, &mult, &shift);
-
-    for (int j = 0; j < n; j++) {
-        long wl = lroundf(w[j] / wscale);
-        if (wl >  32767) wl =  32767;
-        if (wl < -32767) wl = -32767;
-        fprintf(fm, "%ld\n", wl);
-    }
-    fprintf(fmul, "%d\n", (int)mult);
-    fprintf(fsh,  "%d\n", shift);
-    fclose(fm); fclose(fmul); fclose(fsh);
-}
-
-/* Dump one rmsnorm weight vector as BFP int16 mantissas (.mem) + exponent (_exp.txt). */
-static void dump_rmsnorm_weight(const char *name, const float *w, int n)
+/* Dump one rmsnorm weight vector as BFP int16 mantissas (.mem) + exponent
+ * (_exp.txt) into <dir>. This is the format layer.vhd / rmsnorm.vhd consume
+ * (mant + single block exponent), NOT the per-row mult/shift matmul scheme. */
+static void dump_rmsnorm_weight(const char *dir, const char *name, const float *w, int n)
 {
     char path_m[512], path_e[512];
-    snprintf(path_m, sizeof(path_m), "mem/weights_l0/%s.mem",     name);
-    snprintf(path_e, sizeof(path_e), "mem/weights_l0/%s_exp.txt", name);
+    snprintf(path_m, sizeof(path_m), "%s/%s.mem",     dir, name);
+    snprintf(path_e, sizeof(path_e), "%s/%s_exp.txt", dir, name);
 
     int16_t *m = (int16_t *)malloc(n * sizeof(int16_t));
     if (!m) { fprintf(stderr, "[dump] malloc failed for %s\n", name); return; }
@@ -469,20 +430,20 @@ static void dump_layer0_weights(TransformerWeights *w, Config *p)
     dump_weight_matrix("mem/weights_l0", "w1", w->w1, hidden, dim);
     dump_weight_matrix("mem/weights_l0", "w3", w->w3, hidden, dim);
     dump_weight_matrix("mem/weights_l0", "w2", w->w2, dim,    hidden);
-    dump_rmsnorm_weight("att_rmsnorm_w", w->rms_att_weight, dim);
-    dump_rmsnorm_weight("ffn_rmsnorm_w", w->rms_ffn_weight, dim);
+    dump_rmsnorm_weight("mem/weights_l0", "att_rmsnorm_w", w->rms_att_weight, dim);
+    dump_rmsnorm_weight("mem/weights_l0", "ffn_rmsnorm_w", w->rms_ffn_weight, dim);
 }
 
 /* dump_all_weights (Plan 4 Task 1) — emit every layer's 7 weight matrices +
  * 2 rmsnorm vectors to mem/weights/L<l>/, plus the (tied) token embedding
- * table and the final rmsnorm vector to mem/weights/.  Uses the int16
- * mantissa + mult/shift scale scheme throughout (dump_weight_matrix /
- * dump_weight_vector), NOT the older BFP+exponent scheme that
- * dump_layer0_weights/dump_rmsnorm_weight use for mem/weights_l0/ — that
- * older directory and format are left untouched since rtl/layer.vhd and
- * tb/tb_layer.vhd already depend on it. Indexes w->wq/wk/... directly by
- * layer, so this does not need to run inside the per-layer forward loop —
- * called once from forward_fx's existing one-shot dump guard. */
+ * table and the final rmsnorm vector to mem/weights/.  Matmul weights and the
+ * embedding use the int16 mantissa + per-row mult/shift scheme
+ * (dump_weight_matrix, consumed by mac_array via scale_mul); the rmsnorm
+ * vectors use the BFP mantissa + single-exponent scheme (dump_rmsnorm_weight),
+ * which is what rmsnorm.vhd / layer.vhd consume (mant + _exp.txt) — matching
+ * the mem/weights_l0/ layer-0 format so the WDIR-parameterized layer reads
+ * L<l>/ identically. Indexes w->wq/wk/... directly by layer, so this runs once
+ * from forward_fx's one-shot dump guard, not inside the per-layer forward loop. */
 static void dump_all_weights(TransformerWeights *w, Config *p)
 {
     int dim    = p->dim;
@@ -505,8 +466,8 @@ static void dump_all_weights(TransformerWeights *w, Config *p)
         dump_weight_matrix(dir, "w1", w->w1 + l*dim*hidden,     hidden, dim);
         dump_weight_matrix(dir, "w3", w->w3 + l*dim*hidden,     hidden, dim);
         dump_weight_matrix(dir, "w2", w->w2 + l*hidden*dim,     dim,    hidden);
-        dump_weight_vector(dir, "att_rmsnorm_w", w->rms_att_weight + l*dim, dim);
-        dump_weight_vector(dir, "ffn_rmsnorm_w", w->rms_ffn_weight + l*dim, dim);
+        dump_rmsnorm_weight(dir, "att_rmsnorm_w", w->rms_att_weight + l*dim, dim);
+        dump_rmsnorm_weight(dir, "ffn_rmsnorm_w", w->rms_ffn_weight + l*dim, dim);
     }
 
     /* Tied embedding table (lm_head == token_embedding_table for this
@@ -515,7 +476,7 @@ static void dump_all_weights(TransformerWeights *w, Config *p)
     dump_weight_matrix("mem/weights", "embed", w->token_embedding_table, vocab, dim);
 
     /* Final RMSNorm vector. */
-    dump_weight_vector("mem/weights", "final_rmsnorm_w", w->rms_final_weight, dim);
+    dump_rmsnorm_weight("mem/weights", "final_rmsnorm_w", w->rms_final_weight, dim);
 }
 
 static void read_checkpoint(char* checkpoint, Config* config,
