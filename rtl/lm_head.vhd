@@ -20,8 +20,8 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use std.textio.all;
 use work.fixed_pkg.all;
+use work.lmhead_rom_pkg.all;
 
 entity lm_head is
   generic(
@@ -44,20 +44,10 @@ architecture rtl of lm_head is
 
   type intarr is array(natural range <>) of integer;
 
-  impure function load_ints(fn : string; n : integer) return intarr is
-    file   fh : text open read_mode is fn;
-    variable L : line; variable v : integer;
-    variable r : intarr(0 to n-1);
-  begin
-    for i in 0 to n-1 loop
-      readline(fh, L); read(L, v); r(i) := v;
-    end loop;
-    return r;
-  end function;
-
-  constant EMBED_MANT : intarr(0 to VOCAB*DIM-1) := load_ints(WEIGHT_DIR & "embed.mem",       VOCAB*DIM);
-  constant EMBED_MULT : intarr(0 to VOCAB-1)      := load_ints(WEIGHT_DIR & "embed_mult.mem",  VOCAB);
-  constant EMBED_SHFT : intarr(0 to VOCAB-1)      := load_ints(WEIGHT_DIR & "embed_shift.mem", VOCAB);
+  -- Tied-classifier weight ROMs are provided as literal constants by
+  -- lmhead_rom_pkg (generated from mem/weights/embed{,_mult,_shift}.mem,
+  -- bit-identical to the former std.textio load_ints() init).
+  -- EMBED_MANT/EMBED_MULT/EMBED_SHFT come from the package.
 
 begin
 

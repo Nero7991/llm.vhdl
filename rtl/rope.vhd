@@ -17,7 +17,7 @@
 -- Layout: _fx_cos_tbl[pos*(head_size/2) + i/2], where i is i_outer mod head_size.
 -- ROM has 512 * (HEAD/2) entries (HEAD=8 -> 2048 entries).
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
-use std.textio.all;
+use work.rope_rom_pkg.all;
 
 entity rope is
   generic(
@@ -49,26 +49,9 @@ architecture rtl of rope is
   constant HALF      : integer := HEAD / 2;
   constant ROM_DEPTH : integer := 512 * HALF;
 
-  -- Load a ROM from a text file (one signed decimal integer per line).
-  -- Path relative to the GHDL simulation working directory (sim/).
-  impure function load_rom(fn : string) return integer_vector is
-    file   fh : text open read_mode is fn;
-    variable L : line;
-    variable v : integer;
-    variable r : integer_vector(0 to ROM_DEPTH-1);
-  begin
-    for i in 0 to ROM_DEPTH-1 loop
-      readline(fh, L);
-      read(L, v);
-      r(i) := v;
-    end loop;
-    return r;
-  end function;
-
-  constant COS_ROM : integer_vector(0 to ROM_DEPTH-1) :=
-    load_rom("../mem/luts/rope_cos.mem");
-  constant SIN_ROM : integer_vector(0 to ROM_DEPTH-1) :=
-    load_rom("../mem/luts/rope_sin.mem");
+  -- Twiddle ROMs are provided as literal constants by rope_rom_pkg
+  -- (generated from mem/luts/rope_{cos,sin}.mem, bit-identical to the former
+  -- std.textio load_rom() init). COS_ROM/SIN_ROM come from the package.
 
 begin
 
