@@ -5,7 +5,7 @@ STD      ?= --std=08
 # lmhead_rom_pkg and embed_rom_pkg must precede their consumers (rope.vhd /
 # lm_head.vhd / embed.vhd, which all sort BEFORE the pkg name alphabetically);
 # then the rest.
-PINNED   := ../rtl/util_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd ../rtl/rope_rom_pkg.vhd ../rtl/lmhead_rom_pkg.vhd ../rtl/embed_rom_pkg.vhd
+PINNED   := ../rtl/util_pkg.vhd ../rtl/weights_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd ../rtl/rope_rom_pkg.vhd ../rtl/lmhead_rom_pkg.vhd ../rtl/embed_rom_pkg.vhd
 RTL      := $(PINNED) $(filter-out $(PINNED),$(wildcard ../rtl/*.vhd))
 # sim-local packages (golden_pkg etc.) analyzed before each TB
 SIM_PKGS := golden_pkg.vhd

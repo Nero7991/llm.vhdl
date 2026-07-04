@@ -155,15 +155,7 @@ architecture rtl of layer is
   constant COS_ROM : intarr(0 to ROPE_DEPTH-1) := load_rope_rom("../mem/luts/rope_cos.mem");
   constant SIN_ROM : intarr(0 to ROPE_DEPTH-1) := load_rope_rom("../mem/luts/rope_sin.mem");
 
-  -- Highest set bit index (0 for v<=0)
-  function msb_pos(v : integer) return integer is
-    variable u : integer := v;
-    variable p : integer := 0;
-  begin
-    if u <= 0 then return 0; end if;
-    while u > 1 loop u := u / 2; p := p + 1; end loop;
-    return p;
-  end function;
+  -- msb_pos (highest set bit index, 0 for v<=0) now lives in work.util_pkg.
 
   -- Unconstrained array of 64-bit signed (mirrors rmsnorm.vhd raw64_arr)
   type s64arr is array(natural range <>) of signed(63 downto 0);
