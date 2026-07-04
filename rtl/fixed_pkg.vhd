@@ -1,8 +1,8 @@
 -- rtl/fixed_pkg.vhd
 -- Fixed-point kernels: rsqrt_q, exp_q, sigmoid_q, scale_mul.
--- Bit-exact vs ref/fx.h. ROMs loaded from mem/luts/*.mem at elaboration.
+-- Bit-exact vs ref/fx.h. ROMs sourced from work.fixed_luts_pkg (generated).
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
-use std.textio.all;
+use work.fixed_luts_pkg.all;
 
 package fixed_pkg is
   function rsqrt_q  (mean_sq_q : signed; q : integer) return signed;
@@ -19,26 +19,10 @@ package body fixed_pkg is
   subtype s96  is signed(95 downto 0);
   subtype s128 is signed(127 downto 0);
 
-  -- -----------------------------------------------------------------------
-  -- ROM load helper: read n signed decimal integers, one per line.
-  -- Path relative to the sim/ working directory (where GHDL elaborates).
-  -- -----------------------------------------------------------------------
-  impure function load_mem(fn : string; n : integer) return integer_vector is
-    file   fh : text open read_mode is fn;
-    variable L : line;
-    variable v : integer;
-    variable r : integer_vector(0 to n-1);
-  begin
-    for i in 0 to n-1 loop
-      readline(fh, L); read(L, v); r(i) := v;
-    end loop;
-    return r;
-  end function;
-
-  -- ROMs (elaboration-time constants)
-  constant RSQRT_ROM : integer_vector(0 to  63) := load_mem("../mem/luts/rsqrt_seed.mem",  64);
-  constant EXP_ROM   : integer_vector(0 to 256) := load_mem("../mem/luts/exp_lut.mem",    257);
-  constant SIG_ROM   : integer_vector(0 to 512) := load_mem("../mem/luts/sig_lut.mem",    513);
+  -- ROMs: bit-identical to the former mem/luts/*.mem TEXTIO load, now sourced
+  -- from work.fixed_luts_pkg (RSQRT_ROM/EXP_ROM/SIG_ROM) so this package
+  -- elaborates without std.textio and synthesizes in Vivado. Regenerate the
+  -- package with tools/gen_fixed_luts_pkg.py if the .mem files change.
 
   -- -----------------------------------------------------------------------
   -- Internal helper: multiply two s64, arithmetic-right-shift the 128-bit
