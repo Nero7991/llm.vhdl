@@ -24,7 +24,13 @@ entity softmax is
     score_mant : in  std_logic_vector(NMAX*16-1 downto 0);
     score_exp  : in  integer;
     done       : out std_logic;
-    prob_q     : out std_logic_vector(NMAX*32-1 downto 0)
+    prob_q     : out std_logic_vector(NMAX*32-1 downto 0);
+    -- Additive outputs (do not affect prob_q): the raw integer exp weights
+    -- e_i and their sum, so a consumer (attention.vhd) can form a
+    -- full-precision weighted sum  Sum(e_i*v_i)/sum  instead of the coarser
+    -- per-element Q-truncated prob_q.  Unconnected by tb_softmax.
+    e_out      : out std_logic_vector(NMAX*32-1 downto 0);
+    sum_out    : out std_logic_vector(63 downto 0)
   );
 end entity softmax;
 
@@ -99,7 +105,11 @@ begin
           end if;
           prob_q((i+1)*32-1 downto i*32) <=
             std_logic_vector(resize(p_i, 32));
+          -- Expose raw exp weights e_i (Q-scale) for the full-precision path.
+          e_out((i+1)*32-1 downto i*32) <=
+            std_logic_vector(resize(e_arr(i), 32));
         end loop;
+        sum_out <= std_logic_vector(sum);
 
         done <= '1';
       end if;

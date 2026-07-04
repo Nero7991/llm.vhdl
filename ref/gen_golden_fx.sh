@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 mkdir -p mem/golden mem/weights_l0
 gcc -O3 -o ref/run_fx ref/run_fx.c -lm
 ./ref/run_fx ref/stories260K.bin -z ref/tok512.bin -t 0 -i "Once upon a time" -n 200 --fx --dump 2>/dev/null >/dev/null
-for f in fx_rmsnorm_l0 fx_rmsnorm_l0_w fx_rope_l0 fx_softmax_l0_h0 fx_swiglu_l0 fx_matvec_wq_l0 fx_layer0_out fx_tokens_greedy fx_layer0_in fx_layer0_kv fx_embed fx_lmhead; do
+for f in fx_rmsnorm_l0 fx_rmsnorm_l0_w fx_rope_l0 fx_softmax_l0_h0 fx_att_out_l0 fx_swiglu_l0 fx_matvec_wq_l0 fx_layer0_out fx_tokens_greedy fx_layer0_in fx_layer0_kv fx_embed fx_lmhead; do
   test -s "mem/golden/$f.txt" || { echo "MISSING mem/golden/$f.txt"; exit 1; }
 done
 for wname in wq wk wv wo w1 w3 w2; do

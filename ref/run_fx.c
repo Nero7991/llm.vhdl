@@ -135,6 +135,17 @@ static void dump_softmax_l0_h0(const float *scores, int n, const float *probs)
     fclose(f);
 }
 
+/* fx_att_out_l0.txt — one BFP section: multi-head attention output xb (all
+ * heads concatenated, dim values) right after the V-weighted sum for layer 0,
+ * BEFORE the WO output projection.  Golden for attention.vhd's xb output. */
+static void dump_att_out_l0(const float *xb, int n)
+{
+    FILE *f = fopen("mem/golden/fx_att_out_l0.txt", "w");
+    if (!f) { fprintf(stderr, "[dump] cannot open fx_att_out_l0.txt\n"); return; }
+    write_bfp_section(f, xb, n);
+    fclose(f);
+}
+
 /* fx_swiglu_l0.txt — three BFP sections: hb_in (w1 out), hb2_in (w3 out), gated_out. */
 static void dump_swiglu_l0(const float *hb_in, const float *hb2_in,
                              int n, const float *hb_out)
@@ -990,6 +1001,10 @@ static float* forward_fx(Transformer* transformer, int token, int pos) {
             dump_softmax_l0_h0(att0_pre, pos + 1, s->att + 0 * p->seq_len);
             free(att0_pre);  att0_pre = NULL;
         }
+
+        /* --- DUMP: multi-head attention output xb (layer 0), before WO. --- */
+        if (do_dump && l == 0)
+            dump_att_out_l0(s->xb, dim);
 
         /* Output projection — integer block-fp. */
         matmul_fx(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
