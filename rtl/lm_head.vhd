@@ -43,7 +43,7 @@ end entity;
 architecture rtl of lm_head is
 
   type intarr is array(natural range <>) of integer;
-  type state_t is (S_IDLE, S_MAC);
+  type state_t is (S_IDLE, S_P1, S_P2, S_MAC);
 
   -- Tied-classifier weight ROMs are provided as literal constants by
   -- lmhead_rom_pkg (generated from mem/weights/embed{,_mult,_shift}.mem,
@@ -59,8 +59,43 @@ architecture rtl of lm_head is
   -- writes logit[v].  The int64 accumulation order (j = 0..DIM-1) is identical to
   -- the unrolled loop, so every logit is bit-exact (tb_lm_head max_dev=0).
   -- `done` pulses (multi-cycle) after the last row.
+  --
+  -- BLOCK-RAM ROM READ (matmul_rt pattern).  The 32768-entry EMBED_MANT was
+  -- read COMBINATIONALLY (EMBED_MANT(v*DIM+j) inside the FSM), forcing Vivado to
+  -- bake the whole table into distributed LUT (~28% CLB LUT).  It is now read
+  -- through a TWO-stage synchronous pipeline so Vivado infers Block RAM:
+  --   mant_addr (fabric address register, +1 counter)
+  --      -> mant_data  (the BRAM's OWN output register)
+  --      -> w_pipe     (a plain pipeline register that feeds the multiplier)
+  -- The extra w_pipe stage is essential: if mant_data fed the DSP multiplier
+  -- directly, Vivado would absorb it as the DSP input register, leaving the ROM
+  -- with only a registered ADDRESS -- which cannot pack into the BRAM address
+  -- port once it carries an init/reset (Synth 8-6040), dropping the ROM back to
+  -- LUT.  With w_pipe present, mant_data stays as the BRAM output register (as
+  -- matmul_rt's rom_data does), the address register lives in fabric (init OK),
+  -- and w_pipe is the register the DSP absorbs.  Because (v*DIM+j) is
+  -- monotonically increasing by 1 across the whole 0..32767 stream, the address
+  -- is a simple +1 counter running TWO elements ahead of the consumer (the read
+  -- pipeline depth), primed in S_P1/S_P2.  The small VOCAB-deep EMBED_MULT/
+  -- EMBED_SHFT tables stay combinational (read once per row).  Arithmetic is
+  -- unchanged, so every logit stays bit-exact.
+
+  signal mant_addr : integer range 0 to VOCAB*DIM-1 := 0;  -- fabric addr register
+  signal mant_data : signed(15 downto 0) := (others => '0');  -- BRAM output register
+  signal w_pipe    : signed(15 downto 0) := (others => '0');  -- DSP input pipeline reg
 
 begin
+
+  -- Block-ROM inference template: registered address -> registered ROM output
+  -- (mant_data) -> pipeline register (w_pipe).  mant_data is the BRAM output
+  -- register; w_pipe decouples the DSP so mant_data is not absorbed.
+  rom_rd: process(clk)
+  begin
+    if rising_edge(clk) then
+      mant_data <= to_signed(EMBED_MANT(mant_addr), 16);
+      w_pipe    <= mant_data;
+    end if;
+  end process;
 
   process(clk)
     variable state  : state_t := S_IDLE;
@@ -68,7 +103,6 @@ begin
     variable j_idx  : integer range 0 to DIM   := 0;
     variable x_v    : intarr(0 to DIM-1);
     variable acc64  : signed(63 downto 0);
-    variable w16    : signed(15 downto 0);
     variable x16    : signed(15 downto 0);
     variable prod32 : signed(31 downto 0);
     variable res32  : signed(31 downto 0);
@@ -77,34 +111,53 @@ begin
     if rising_edge(clk) then
       done <= '0';
       if rst = '1' then
-        state  := S_IDLE;
-        v_idx  := 0;
-        j_idx  := 0;
+        state     := S_IDLE;
+        v_idx     := 0;
+        j_idx     := 0;
+        mant_addr <= 0;
         logits <= (others => '0');
       else
         case state is
 
-          -- Latch the activation row, reset the accumulator, start streaming.
+          -- Latch the activation row, reset the accumulator, issue the read for
+          -- flat element 0, then run the two ROM-latency prime cycles.
           when S_IDLE =>
             if start = '1' then
               x_e := x_exp;  -- accepted for interface symmetry (unused, see header)
               for j in 0 to DIM-1 loop
                 x_v(j) := to_integer(signed(x_mant((j+1)*16-1 downto j*16)));
               end loop;
-              v_idx := 0;
-              j_idx := 0;
-              acc64 := (others => '0');
-              state := S_MAC;
+              v_idx     := 0;
+              j_idx     := 0;
+              acc64     := (others => '0');
+              mant_addr <= 0;        -- flat element 0
+              state     := S_P1;
             end if;
 
-          -- One MAC per cycle over the shared multiplier: acc += w*x. On the
-          -- last column of a row, scale_mul -> logit[v], then advance to the
-          -- next row (accumulator re-zeroed) or finish.
+          -- Two-deep read-pipeline prime: the address runs two elements ahead of
+          -- the consumer (mant_data then w_pipe latency).  w_pipe holds flat
+          -- element 0 as we enter S_MAC.
+          when S_P1 =>
+            mant_addr <= 1;
+            state     := S_P2;
+          when S_P2 =>
+            mant_addr <= 2;
+            state     := S_MAC;
+
+          -- One MAC per cycle over the shared multiplier: acc += w*x, where w is
+          -- the block-RAM data (via w_pipe) for the current element.  On the last
+          -- column of a row, scale_mul -> logit[v], then advance to the next row
+          -- (accumulator re-zeroed) or finish.  mant_addr is bumped one element
+          -- per cycle (it holds flat_idx+2 while consuming flat_idx); guarded so
+          -- it never exceeds the ROM's last index.
           when S_MAC =>
-            w16    := to_signed(EMBED_MANT(v_idx*DIM + j_idx), 16);
             x16    := to_signed(x_v(j_idx), 16);
-            prod32 := w16 * x16;
+            prod32 := w_pipe * x16;
             acc64  := acc64 + resize(prod32, 64);
+
+            if mant_addr < VOCAB*DIM-1 then
+              mant_addr <= mant_addr + 1;
+            end if;
 
             if j_idx = DIM-1 then
               res32 := scale_mul(acc64, to_signed(EMBED_MULT(v_idx), 32),
