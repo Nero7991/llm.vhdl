@@ -46,13 +46,13 @@ begin
     generic map(
       DIM   => DIM,
       HEAD  => HEAD,
-      KVDIM => KVDIM,
-      POS   => POS
+      KVDIM => KVDIM
     )
     port map(
       clk     => clk,
       rst     => rst,
       start   => start,
+      pos     => POS,
       q_mant  => q_mant,
       q_exp   => q_exp,
       k_mant  => k_mant,

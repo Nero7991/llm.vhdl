@@ -23,13 +23,13 @@ entity rope is
   generic(
     DIM   : positive := 64;
     HEAD  : positive := 8;
-    KVDIM : positive := 32;
-    POS   : integer  := 3
+    KVDIM : positive := 32
   );
   port(
     clk     : in  std_logic;
     rst     : in  std_logic;
     start   : in  std_logic;
+    pos     : in  integer;
     q_mant  : in  std_logic_vector(DIM*16-1 downto 0);
     q_exp   : in  integer;
     k_mant  : in  std_logic_vector(KVDIM*16-1 downto 0);
@@ -84,7 +84,7 @@ begin
           q1_v    := signed(q_mant((2*i+2)*16-1 downto (2*i+1)*16));
           -- twiddle index: POS*(HEAD/2) + (i_raw mod HEAD)/2
           -- i_raw = 2*i; (2*i mod HEAD)/2 = i mod (HEAD/2)
-          rom_idx := POS * HALF + ((2*i) mod HEAD) / 2;
+          rom_idx := pos * HALF + ((2*i) mod HEAD) / 2;
           fcr_v   := to_signed(COS_ROM(rom_idx), 16);
           fci_v   := to_signed(SIN_ROM(rom_idx), 16);
 
@@ -129,7 +129,7 @@ begin
         for i in 0 to KVDIM/2-1 loop
           k0_v    := signed(k_mant((2*i+1)*16-1 downto (2*i)*16));
           k1_v    := signed(k_mant((2*i+2)*16-1 downto (2*i+1)*16));
-          rom_idx := POS * HALF + ((2*i) mod HEAD) / 2;
+          rom_idx := pos * HALF + ((2*i) mod HEAD) / 2;
           fcr_v   := to_signed(COS_ROM(rom_idx), 16);
           fci_v   := to_signed(SIN_ROM(rom_idx), 16);
 

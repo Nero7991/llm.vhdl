@@ -259,8 +259,8 @@ begin
 
   -- RoPE on Q (post-WQ) and K (post-WK); exponents preserved.
   u_rope : entity work.rope
-    generic map(DIM => DIM, HEAD => HEAD_SIZE, KVDIM => KVDIM, POS => POS)
-    port map(clk => clk, rst => rst, start => rope_start,
+    generic map(DIM => DIM, HEAD => HEAD_SIZE, KVDIM => KVDIM)
+    port map(clk => clk, rst => rst, start => rope_start, pos => POS,
              q_mant => wq_o_mant, q_exp => wq_o_exp,
              k_mant => wk_o_mant, k_exp => wk_o_exp,
              done => rope_done,
