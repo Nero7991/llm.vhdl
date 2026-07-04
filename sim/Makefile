@@ -1,6 +1,8 @@
 GHDL     ?= ghdl
 STD      ?= --std=08
-RTL      := ../rtl/util_pkg.vhd $(filter-out ../rtl/util_pkg.vhd,$(wildcard ../rtl/*.vhd))
+# util_pkg first (needed by everything); wq_l0_rom_pkg next (needed by
+# matvec_engine, which sorts before it alphabetically); then the rest.
+RTL      := ../rtl/util_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd $(filter-out ../rtl/util_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd,$(wildcard ../rtl/*.vhd))
 # sim-local packages (golden_pkg etc.) analyzed before each TB
 SIM_PKGS := golden_pkg.vhd
 TB       ?= tb_smoke
