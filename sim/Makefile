@@ -6,7 +6,11 @@ STD      ?= --std=08
 # lm_head.vhd / embed.vhd, which all sort BEFORE the pkg name alphabetically);
 # then the rest.
 PINNED   := ../rtl/util_pkg.vhd ../rtl/weights_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd ../rtl/rope_rom_pkg.vhd ../rtl/lmhead_rom_pkg.vhd ../rtl/embed_rom_pkg.vhd
-RTL      := $(PINNED) $(filter-out $(PINNED),$(wildcard ../rtl/*.vhd))
+# layer_fsm.vhd instantiates rmsnorm/matmul/rope/attention/swiglu by direct
+# entity binding, so it must be analyzed AFTER them (it sorts before matmul/
+# rmsnorm/rope/swiglu alphabetically) -> pin it LAST.
+LAST     := ../rtl/layer_fsm.vhd
+RTL      := $(PINNED) $(filter-out $(PINNED) $(LAST),$(wildcard ../rtl/*.vhd)) $(LAST)
 # sim-local packages (golden_pkg etc.) analyzed before each TB
 SIM_PKGS := golden_pkg.vhd
 TB       ?= tb_smoke
