@@ -36,6 +36,14 @@ entity embed is
   );
   port(
     clk    : in  std_logic;
+    -- Optional compute-enable.  Defaults to '1' so existing instantiations
+    -- (tb_embed, seq_ctrl) are unchanged and embed recomputes every clock as
+    -- before.  The autoregressive engine drives it low outside the one-shot
+    -- embed window so this always-on process does not re-run its heavy body on
+    -- every one of the ~270k cycles/position of the shared-MAC datapath (a
+    -- ~600x GHDL-sim speedup; purely a simulation-cost gate, output held while
+    -- disabled).
+    en     : in  std_logic := '1';
     token  : in  integer;
     done   : out std_logic;
     x_mant : out std_logic_vector(DIM*16-1 downto 0);
@@ -87,6 +95,10 @@ begin
     variable found   : boolean;
   begin
     if rising_edge(clk) then
+     if en /= '1' then
+      -- Disabled: hold outputs, keep done deasserted (sim-cost gate only).
+      done <= '0';
+     else
       tok  := token;
       mult := to_signed(EMBED_MULT(tok), 64);
       shft := EMBED_SHFT(tok);
@@ -153,6 +165,7 @@ begin
       end if;
 
       done <= '1';
+     end if;   -- en
     end if;
   end process;
 

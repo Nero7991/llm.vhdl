@@ -280,6 +280,13 @@ begin
         state    <= S_IDLE;
         xb_mant  <= (others => '0');
         xb_exp   <= 0;
+        -- Clear the persistent KV cache. Harmless for the single-shot testbenches
+        -- (they only assert rst before any position is written), and required by
+        -- the autoregressive engine's kv_reset so a fresh run starts empty.
+        kc_v <= (others => 0);
+        vc_v <= (others => 0);
+        kc_e <= (others => 0);
+        vc_e <= (others => 0);
       else
         case state is
           -- ------------------------------------------------------------
