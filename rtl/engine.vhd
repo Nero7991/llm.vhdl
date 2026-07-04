@@ -87,7 +87,8 @@ architecture rtl of engine is
   signal embed_token  : integer := 0;
   signal embed_x_mant : std_logic_vector(DIM*16-1 downto 0);
   signal embed_x_exp  : integer;
-  signal emb_en       : std_logic := '0';   -- gate embed's heavy per-edge body
+  signal emb_en       : std_logic := '0';   -- rising edge starts one embed run
+  signal emb_done     : std_logic;           -- embed sequential completion pulse
 
   -- ---- per-layer (5 layer_ar instances, each with its own KV cache) ------
   type dim_mant_arr is array(0 to NLAYERS-1) of std_logic_vector(DIM*16-1 downto 0);
@@ -115,7 +116,7 @@ architecture rtl of engine is
 
   -- ---- outer FSM --------------------------------------------------------
   type state_t is (
-    E_IDLE, E_KV, E_TOKSET, E_EMB1, E_EMB2,
+    E_IDLE, E_KV, E_TOKSET, E_EMB_S, E_EMB_W,
     E_LAY_S, E_LAY_W,
     E_RMS_S, E_RMS_W, E_LM_S, E_LM_W, E_SAMP_S, E_SAMP_W,
     E_EMIT, E_FIN
@@ -136,12 +137,15 @@ begin
   -- ---------------------------------------------------------------------
   u_embed: entity work.embed
     generic map(DIM => DIM, VOCAB => VOCAB)
-    port map(clk => clk, en => emb_en, token => embed_token, done => open,
+    port map(clk => clk, en => emb_en, token => embed_token, done => emb_done,
              x_mant => embed_x_mant, x_exp => embed_x_exp);
 
-  -- Enable embed only during its one-shot window (token set -> row latched),
-  -- so it does not re-run its heavy body every cycle of the layer datapath.
-  emb_en <= '1' when (state = E_TOKSET or state = E_EMB1 or state = E_EMB2)
+  -- embed is element-sequential: a rising edge of emb_en (with embed_token
+  -- already stable, set one state earlier in E_TOKSET) launches one run, and
+  -- emb_done pulses when the reconstructed row is ready.  emb_en is held high
+  -- across the compute window (E_EMB_S -> E_EMB_W) and low elsewhere so the
+  -- E_TOKSET -> E_EMB_S transition provides the starting rising edge.
+  emb_en <= '1' when (state = E_EMB_S or state = E_EMB_W)
             else '0';
 
   gen_layers: for l in 0 to NLAYERS-1 generate
@@ -218,15 +222,17 @@ begin
             if p_idx = 0 then tok := PROMPT(0);
             else              tok := prev_next; end if;
             embed_token <= tok;
-            state <= E_EMB1;
+            state <= E_EMB_S;   -- token now stable; next edge raises emb_en
 
-          when E_EMB1 =>
-            state <= E_EMB2;      -- let embed register its row (1 edge)
-          when E_EMB2 =>
-            x_mant_cur <= embed_x_mant;
-            x_exp_cur  <= embed_x_exp;
-            cur_layer  <= 0;
-            state <= E_LAY_S;
+          when E_EMB_S =>
+            state <= E_EMB_W;     -- emb_en rising here starts the embed FSM
+          when E_EMB_W =>
+            if emb_done = '1' then
+              x_mant_cur <= embed_x_mant;
+              x_exp_cur  <= embed_x_exp;
+              cur_layer  <= 0;
+              state <= E_LAY_S;
+            end if;
 
           -- ---- 5 transformer layers, sequentially -------------------
           when E_LAY_S =>

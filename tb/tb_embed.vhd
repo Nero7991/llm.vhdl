@@ -17,6 +17,7 @@ architecture sim of tb_embed is
   constant NTOK : integer := 5;  -- prompt: "Once upon a time" -> [1,403,407,261,378]
 
   signal clk    : std_logic := '0';
+  signal en     : std_logic := '0';
   signal token  : integer   := 0;
   signal done   : std_logic;
   signal x_mant : std_logic_vector(DIM*16-1 downto 0);
@@ -32,6 +33,7 @@ begin
     )
     port map(
       clk    => clk,
+      en     => en,
       token  => token,
       done   => done,
       x_mant => x_mant,
@@ -65,10 +67,15 @@ begin
     file_open(f_emb, "../mem/golden/fx_embed.txt", read_mode);
 
     for i in 0 to NTOK-1 loop
-      -- ---- drive token, wait one clock for the registered BFP output ----
+      -- ---- drive token, pulse en (rising edge starts the element-sequential
+      --      embed run), then wait for its done pulse ----
       token <= tok_ids(i);
-      wait until rising_edge(clk);
+      en    <= '0';
+      wait until rising_edge(clk);   -- token settles, en low
+      en    <= '1';                  -- rising edge -> start
+      wait until done = '1';
       wait for 1 ns;  -- delta settle
+      en    <= '0';
 
       assert done = '1'
         report "token " & integer'image(i) & ": done not asserted" severity failure;

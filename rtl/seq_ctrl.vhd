@@ -113,6 +113,8 @@ architecture rtl of seq_ctrl is
   signal embed_token  : integer := 0;
   signal embed_x_mant : std_logic_vector(DIM*16-1 downto 0);
   signal embed_x_exp  : integer;
+  signal embed_en     : std_logic := '0';   -- rising edge starts one embed run
+  signal embed_done   : std_logic;          -- embed sequential completion pulse
 
   -- ---------------------------------------------------------------------
   -- Per-layer arrays (5 independent layer instances, each with its own KV
@@ -174,8 +176,9 @@ begin
     generic map(DIM => DIM, VOCAB => VOCAB)
     port map(
       clk    => clk,
+      en     => embed_en,
       token  => embed_token,
-      done   => open,
+      done   => embed_done,
       x_mant => embed_x_mant,
       x_exp  => embed_x_exp
     );
@@ -279,13 +282,18 @@ begin
         tok := prev_next;
       end if;
 
-      -- Step: embed(token) -> x  (no start/rst; continuously computes,
-      -- registered one cycle after `token` is sampled)
+      -- Step: embed(token) -> x.  embed is element-sequential: present the
+      -- token, then a rising edge of embed_en starts one run; wait for its
+      -- done pulse before latching the reconstructed row.
       embed_token <= tok;
-      wait until rising_edge(clk);
+      embed_en    <= '0';
+      wait until rising_edge(clk);   -- token settles, embed_en low
+      embed_en    <= '1';            -- rising edge -> start
+      wait until embed_done = '1';
       wait for 1 ns;
       x_mant_cur <= embed_x_mant;
       x_exp_cur  <= embed_x_exp;
+      embed_en   <= '0';
       wait for 1 ns;
 
       -- Step: 5 transformer layers, sequentially, threading x through each
