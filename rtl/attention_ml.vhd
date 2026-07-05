@@ -77,6 +77,19 @@ architecture rtl of attention_ml is
   signal qmant_l : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
   signal qexp_l  : integer := 0;
 
+  -- ---- POSITION-SEQUENTIAL iteration state (registers, one t/cycle) -------
+  -- The per-position work (vref min, q.k scores, prob*V weighted sum) is
+  -- time-multiplexed over ONE position per clock instead of the old MAXPOS-wide
+  -- combinational unroll, so area is O(1) in MAXPOS (see FSM below).
+  signal t_idx     : integer := 0;                 -- current position 0..cp
+  signal smax_s    : signed(63 downto 0) := (others => '0'); -- running |score| max
+  type sfx_sig_arr is array(0 to MAXPOS-1) of signed(63 downto 0);
+  signal sfx_s     : sfx_sig_arr := (others => (others => '0')); -- per-pos raw scores
+  signal qhead_s   : integer_vector(0 to HEAD_SIZE-1) := (others => 0); -- re-BFP q head
+  signal qe_head_s : integer := 0;                 -- q head block exp
+  type num_arr is array(0 to HEAD_SIZE-1) of signed(63 downto 0);
+  signal num_s     : num_arr := (others => (others => '0'));  -- per-j V-weighted sums
+
   -- ---- softmax interface -------------------------------------------------
   signal sm_start      : std_logic := '0';
   signal sm_done       : std_logic;
@@ -92,7 +105,11 @@ architecture rtl of attention_ml is
   -- Weighted-sum fixed-point headroom (see attention.vhd).
   constant WQ : integer := 16;
 
-  type state_t is (S_IDLE, S_SETUP, S_HEAD, S_SMWAIT, S_WSUM, S_PACK);
+  -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are now multi-cycle sub-
+  -- states iterating one position t per clock (S_VREF, S_SCORE, S_SPACK, S_WACC),
+  -- preserving the per-HEAD outer sequencing.
+  type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SPACK,
+                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_PACK);
   signal state : state_t := S_IDLE;
 
   component softmax is
@@ -202,9 +219,7 @@ begin
     variable prod     : signed(95 downto 0);
     variable bias96   : signed(95 downto 0);
     variable tsh      : integer;
-    type sfx_arr is array(0 to MAXPOS-1) of signed(63 downto 0);
-    variable sfx      : sfx_arr;
-    variable smax     : signed(63 downto 0);
+    variable sc64     : signed(63 downto 0);   -- this position's raw score
     variable g        : integer;
     -- weighted sum
     variable num      : signed(63 downto 0);
@@ -217,7 +232,6 @@ begin
     variable qd96     : signed(95 downto 0);
     variable amax     : signed(63 downto 0);
     variable gx       : integer;
-    variable vr       : integer;
   begin
     if rising_edge(clk) then
       done     <= '0';
@@ -253,25 +267,36 @@ begin
             end if;
 
           -- ------------------------------------------------------------
+          -- vref = min vc_e over 0..cp within this bank.  Sequentialised:
+          -- seed with slot 0, then S_VREF folds one position per cycle.
           when S_SETUP =>
+            ebase  := lyr*MAXPOS;
+            vref_s <= vc_e(ebase + 0);
+            if cp = 0 then
+              hd    <= 0;
+              state <= S_HEAD;
+            else
+              t_idx <= 1;
+              state <= S_VREF;
+            end if;
+
+          -- One position per cycle: min-fold vc_e(t) into vref_s.
+          when S_VREF =>
             ebase := lyr*MAXPOS;
-            -- vref = min vc_e over 0..cp within this bank
-            vr := vc_e(ebase + 0);
-            for t in 1 to MAXPOS-1 loop
-              if t <= cp then
-                if vc_e(ebase + t) < vr then vr := vc_e(ebase + t); end if;
-              end if;
-            end loop;
-            vref_s <= vr;
-            hd     <= 0;
-            state  <= S_HEAD;
+            if vc_e(ebase + t_idx) < vref_s then
+              vref_s <= vc_e(ebase + t_idx);
+            end if;
+            if t_idx = cp then
+              hd    <= 0;
+              state <= S_HEAD;
+            else
+              t_idx <= t_idx + 1;
+            end if;
 
           -- ------------------------------------------------------------
+          -- Per-head setup: q-head re-BFP (once, HEAD_SIZE-wide combinational),
+          -- then launch the position-sequential score pass.
           when S_HEAD =>
-            kv_h  := hd / KV_MUL;
-            kbase := lyr*MAXPOS*KVDIM;
-            ebase := lyr*MAXPOS;
-
             -- (a) q-head re-BFP to fill int16
             qmax := 0;
             for j in 0 to HEAD_SIZE-1 loop
@@ -286,68 +311,79 @@ begin
             for j in 0 to HEAD_SIZE-1 loop
               if qextra >= 0 then qhead(j) := qhead(j) * (2**qextra);
               else                qhead(j) := qhead(j) / (2**(-qextra)); end if;
+              qhead_s(j) <= qhead(j);     -- persist for the sequential score pass
             end loop;
-
-            -- (b) scores per cached position
-            for t in 0 to MAXPOS-1 loop
-              sfx(t) := (others => '0');
-              if t <= cp then
-                kmax := 0;
-                for j in 0 to HEAD_SIZE-1 loop
-                  khead(j) := kc_v(kbase + t*KVDIM + kv_h*HEAD_SIZE + j);
-                  av := khead(j); if av < 0 then av := -av; end if;
-                  if av > kmax then kmax := av; end if;
-                end loop;
-                if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
-                ke_head := kc_e(ebase + t) + kextra;
-                for j in 0 to HEAD_SIZE-1 loop
-                  if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
-                  else                khead(j) := khead(j) / (2**(-kextra)); end if;
-                end loop;
-                -- integer dot Q.K (int64)
-                dot := (others => '0');
-                for j in 0 to HEAD_SIZE-1 loop
-                  pr  := to_signed(qhead(j), 32) * to_signed(khead(j), 32);
-                  dot := dot + pr;
-                end loop;
-                -- score_fixed = round( dot * 11585 * 2^-ke_head / 2^15 )
-                prod := dot * to_signed(INV_SQRT8_Q15, 32);
-                tsh  := 15 + ke_head;
-                if tsh > 0 then
-                  bias96 := shift_left(to_signed(1, 96), tsh - 1);
-                  sfx(t) := resize(shift_right(prod + bias96, tsh), 64);
-                elsif tsh = 0 then
-                  sfx(t) := resize(prod, 64);
-                else
-                  sfx(t) := resize(shift_left(prod, -tsh), 64);
-                end if;
-              end if;
-            end loop;
-
-            -- (c) BFP-pack scores over t -> score_mant + g; exp = qe_head + g
-            smax := (others => '0');
-            for t in 0 to MAXPOS-1 loop
-              if t <= cp then
-                if sfx(t) >= 0 then
-                  if sfx(t) > smax then smax := sfx(t); end if;
-                else
-                  if -sfx(t) > smax then smax := -sfx(t); end if;
-                end if;
-              end if;
-            end loop;
-            g := bfp_g(smax);
+            qe_head_s     <= qe_head;
+            smax_s        <= (others => '0');
             sm_score_mant <= (others => '0');
-            for t in 0 to MAXPOS-1 loop
-              if t <= cp then
-                sm_score_mant((t+1)*16-1 downto t*16) <=
-                  std_logic_vector(to_signed(pack1(sfx(t), g), 16));
-              end if;
-            end loop;
-            sm_score_exp <= qe_head + g;
-            sm_n         <= cp + 1;
+            t_idx         <= 0;
+            state         <= S_SCORE;
 
-            sm_start <= '1';       -- kick softmax (score signals settle same edge)
-            state    <= S_SMWAIT;
+          -- (b) one cached position per cycle: q.k dot -> raw score sfx_s(t),
+          -- while tracking the running |score| max for the BFP pack.  The
+          -- HEAD_SIZE-wide inner dot stays combinational (it is small).
+          when S_SCORE =>
+            kv_h  := hd / KV_MUL;
+            kbase := lyr*MAXPOS*KVDIM;
+            ebase := lyr*MAXPOS;
+            -- k-head re-BFP for this position
+            kmax := 0;
+            for j in 0 to HEAD_SIZE-1 loop
+              khead(j) := kc_v(kbase + t_idx*KVDIM + kv_h*HEAD_SIZE + j);
+              av := khead(j); if av < 0 then av := -av; end if;
+              if av > kmax then kmax := av; end if;
+            end loop;
+            if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
+            ke_head := kc_e(ebase + t_idx) + kextra;
+            for j in 0 to HEAD_SIZE-1 loop
+              if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
+              else                khead(j) := khead(j) / (2**(-kextra)); end if;
+            end loop;
+            -- integer dot Q.K (int64) using the persisted re-BFP'd q head
+            dot := (others => '0');
+            for j in 0 to HEAD_SIZE-1 loop
+              pr  := to_signed(qhead_s(j), 32) * to_signed(khead(j), 32);
+              dot := dot + pr;
+            end loop;
+            -- score_fixed = round( dot * 11585 * 2^-ke_head / 2^15 )
+            prod := dot * to_signed(INV_SQRT8_Q15, 32);
+            tsh  := 15 + ke_head;
+            if tsh > 0 then
+              bias96 := shift_left(to_signed(1, 96), tsh - 1);
+              sc64   := resize(shift_right(prod + bias96, tsh), 64);
+            elsif tsh = 0 then
+              sc64   := resize(prod, 64);
+            else
+              sc64   := resize(shift_left(prod, -tsh), 64);
+            end if;
+            sfx_s(t_idx) <= sc64;
+            -- running max|sfx| (feeds the common BFP shift g)
+            if sc64 >= 0 then
+              if sc64 > smax_s then smax_s <= sc64; end if;
+            else
+              if -sc64 > smax_s then smax_s <= -sc64; end if;
+            end if;
+            if t_idx = cp then
+              t_idx <= 0;
+              state <= S_SPACK;
+            else
+              t_idx <= t_idx + 1;
+            end if;
+
+          -- (c) one position per cycle: BFP-pack sfx_s(t) with the now-final
+          -- shift g -> score_mant; on the last, kick softmax (exp = qe_head+g).
+          when S_SPACK =>
+            g := bfp_g(smax_s);
+            sm_score_mant((t_idx+1)*16-1 downto t_idx*16) <=
+              std_logic_vector(to_signed(pack1(sfx_s(t_idx), g), 16));
+            if t_idx = cp then
+              sm_score_exp <= qe_head_s + g;
+              sm_n         <= cp + 1;
+              sm_start     <= '1';        -- kick softmax (score signals settled)
+              state        <= S_SMWAIT;
+            else
+              t_idx <= t_idx + 1;
+            end if;
 
           -- ------------------------------------------------------------
           when S_SMWAIT =>
@@ -358,27 +394,43 @@ begin
             end if;
 
           -- ------------------------------------------------------------
+          -- V-weighted sum, position-sequential: zero the HEAD_SIZE lane
+          -- accumulators, then S_WACC folds one position per cycle.
           when S_WSUM =>
+            for j in 0 to HEAD_SIZE-1 loop
+              num_s(j) <= (others => '0');
+            end loop;
+            t_idx <= 0;
+            state <= S_WACC;
+
+          -- One position per cycle: accumulate prob(t)*V(t) into all HEAD_SIZE
+          -- lanes (the HEAD_SIZE-wide inner loop stays combinational).
+          when S_WACC =>
             kv_h  := hd / KV_MUL;
             kbase := lyr*MAXPOS*KVDIM;
             ebase := lyr*MAXPOS;
+            ei    := to_integer(signed(e_l((t_idx+1)*32-1 downto t_idx*32)));
+            sh    := vc_e(ebase + t_idx) - vref_s;   -- >= 0 by construction
             for j in 0 to HEAD_SIZE-1 loop
-              num := (others => '0');
-              for t in 0 to MAXPOS-1 loop
-                if t <= cp then
-                  ei   := to_integer(signed(e_l((t+1)*32-1 downto t*32)));
-                  vval := vc_v(kbase + t*KVDIM + kv_h*HEAD_SIZE + j);
-                  term := to_signed(ei, 32) * to_signed(vval, 32);
-                  sh   := vc_e(ebase + t) - vref_s;   -- >= 0 by construction
-                  if sh > 0 then
-                    bias64 := shift_left(to_signed(1, 64), sh - 1);
-                    term   := shift_right(term + bias64, sh);
-                  end if;
-                  num := num + term;
-                end if;
-              end loop;
-              -- acc[j] = round(num * 2^WQ / sum)  (round-to-nearest divide)
-              num96 := shift_left(resize(num, 96), WQ);
+              vval := vc_v(kbase + t_idx*KVDIM + kv_h*HEAD_SIZE + j);
+              term := to_signed(ei, 32) * to_signed(vval, 32);
+              if sh > 0 then
+                bias64 := shift_left(to_signed(1, 64), sh - 1);
+                term   := shift_right(term + bias64, sh);
+              end if;
+              num_s(j) <= num_s(j) + term;
+            end loop;
+            if t_idx = cp then
+              state <= S_WDIV;
+            else
+              t_idx <= t_idx + 1;
+            end if;
+
+          -- Per-head finalise: acc[j] = round(num*2^WQ / sum) for each lane,
+          -- then advance to the next head (or pack).
+          when S_WDIV =>
+            for j in 0 to HEAD_SIZE-1 loop
+              num96 := shift_left(resize(num_s(j), 96), WQ);
               if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
               else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
               end if;
