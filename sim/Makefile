@@ -16,7 +16,7 @@ PINNED   := ../rtl/util_pkg.vhd ../rtl/fixed_luts_pkg.vhd ../rtl/fixed_pkg.vhd .
 # engine_shared.vhd instantiates embed/rmsnorm/matmul_rt/rope/attention_ml/
 # swiglu/lm_head/sampler (all leaf units in the wildcard middle), so it must be
 # analyzed AFTER them -> pin it LAST.
-LAST     := ../rtl/layer_fsm.vhd ../rtl/layer_ar.vhd ../rtl/engine.vhd ../rtl/engine_shared.vhd
+LAST     := ../rtl/layer_fsm.vhd ../rtl/layer_ar.vhd ../rtl/engine.vhd ../rtl/engine_shared.vhd ../rtl/llama_engine_axi.vhd
 RTL      := $(PINNED) $(filter-out $(PINNED) $(LAST),$(wildcard ../rtl/*.vhd)) $(LAST)
 # sim-local packages (golden_pkg etc.) analyzed before each TB
 SIM_PKGS := golden_pkg.vhd
