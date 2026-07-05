@@ -215,10 +215,10 @@ architecture rtl of engine_shared is
   signal lm_done   : std_logic;
   signal lm_x_mant : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
   signal lm_x_exp  : integer := 0;
-  signal lm_logits : std_logic_vector(VOCAB*32-1 downto 0);
+  signal lm_logit_valid : std_logic;                       -- streamed logit strobe
+  signal lm_logit_v     : std_logic_vector(31 downto 0);   -- streamed logit value
 
-  signal samp_start : std_logic := '0';
-  signal samp_done  : std_logic;
+  signal samp_clr   : std_logic := '0';
   signal samp_token : integer;
 
   -- ---- shared sequential residual add (o = a + b, BFP) ------------------
@@ -267,7 +267,7 @@ architecture rtl of engine_shared is
     L_W1_S, L_W1_W, L_W3_S, L_W3_W,
     L_SW_S, L_SW_W, L_HBPACK_S, L_HBPACK_W,
     L_W2_S, L_W2_W, L_RES2_S, L_RES2_W,
-    E_RMS_S, E_RMS_W, E_LM_S, E_LM_W, E_SAMP_S, E_SAMP_W,
+    E_RMS_S, E_RMS_W, E_LM_S, E_LM_W,
     E_EMIT, E_FIN
   );
   signal state     : state_t := E_IDLE;
@@ -336,12 +336,16 @@ begin
     generic map(DIM => DIM, VOCAB => VOCAB)
     port map(clk => clk, rst => rst, start => lm_start,
              x_mant => lm_x_mant, x_exp => lm_x_exp,
-             done => lm_done, logits => lm_logits);
+             done => lm_done,
+             logits => open,     -- parallel bus unused here -> pruned
+             logit_valid => lm_logit_valid, logit_v => lm_logit_v);
 
-  u_sampler: entity work.sampler
+  -- Streaming argmax: cleared at lm_head start, folds each streamed logit.
+  u_sampler: entity work.sampler_stream
     generic map(VOCAB => VOCAB)
-    port map(clk => clk, rst => rst, start => samp_start,
-             logits => lm_logits, done => samp_done, token => samp_token);
+    port map(clk => clk, rst => rst, clr => samp_clr,
+             in_valid => lm_logit_valid, in_v => lm_logit_v,
+             token => samp_token);
 
   -- Sequential top-level residual add + BFP pack (extracted from the former
   -- inline combinational blocks; one shared datapath each, handshake-driven).
@@ -449,7 +453,7 @@ begin
       att_start   <= '0';
       sw_start    <= '0';
       lm_start    <= '0';
-      samp_start  <= '0';
+      samp_clr    <= '0';
       res_start   <= '0';
       hbp_start   <= '0';
       token_valid <= '0';
@@ -676,13 +680,13 @@ begin
           when E_LM_S =>
             lm_x_mant <= rms_o_mant;
             lm_x_exp  <= rms_o_exp;
-            lm_start  <= '1'; state <= E_LM_W;
+            lm_start  <= '1';
+            samp_clr  <= '1';    -- clear the streaming sampler before logits arrive
+            state <= E_LM_W;
+          -- lm_head streams logits into the sampler during E_LM_W; when lm_done
+          -- pulses the sampler's running argmax (samp_token) is already final.
           when E_LM_W =>
-            if lm_done = '1' then state <= E_SAMP_S; end if;
-          when E_SAMP_S =>
-            samp_start <= '1'; state <= E_SAMP_W;
-          when E_SAMP_W =>
-            if samp_done = '1' then state <= E_EMIT; end if;
+            if lm_done = '1' then state <= E_EMIT; end if;
 
           -- ---- teacher forcing vs argmax, emit, advance ------------
           when E_EMIT =>

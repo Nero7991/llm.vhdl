@@ -40,14 +40,24 @@ entity lm_head is
     x_mant : in  std_logic_vector(DIM*16-1 downto 0);
     x_exp  : in  integer;
     done   : out std_logic;
-    logits : out std_logic_vector(VOCAB*32-1 downto 0)
+    -- Legacy PARALLEL output (used by rtl/engine.vhd, rtl/seq_ctrl.vhd, tb_lm_head):
+    -- the full VOCAB*32-bit logits vector.  engine_shared leaves this OPEN, so
+    -- synthesis prunes the 16384-bit register + 512-way demux write in that path.
+    logits : out std_logic_vector(VOCAB*32-1 downto 0);
+    -- STREAMING output (used by rtl/engine_shared.vhd with sampler_stream): one
+    -- int32 logit per cycle, row order v=0..VOCAB-1, so a running-max sampler needs
+    -- no 16384-bit bus / 512-way comparator tree.
+    logit_valid : out std_logic;
+    logit_v     : out std_logic_vector(31 downto 0)
   );
 end entity;
 
 architecture rtl of lm_head is
 
   type intarr is array(natural range <>) of integer;
-  type state_t is (S_IDLE, S_P1, S_P2, S_MAC);
+  -- S_FLUSH: one trailing cycle after the last logit so the streaming sampler
+  -- registers it before `done` is observed by the engine.
+  type state_t is (S_IDLE, S_P1, S_P2, S_MAC, S_FLUSH);
 
   -- Tied-classifier weight ROMs are provided as literal constants by
   -- lmhead_rom_pkg (generated from mem/weights/embed{,_mult,_shift}.mem,
@@ -123,13 +133,14 @@ begin
     variable x_e    : integer;
   begin
     if rising_edge(clk) then
-      done <= '0';
+      done        <= '0';
+      logit_valid <= '0';
       if rst = '1' then
         state     := S_IDLE;
         v_idx     := 0;
         j_idx     := 0;
         mant_addr <= 0;
-        logits <= (others => '0');
+        logits    <= (others => '0');
       else
         case state is
 
@@ -176,19 +187,26 @@ begin
             if j_idx = DIM-1 then
               res32 := scale_mul(acc64, to_signed(EMBED_MULT(v_idx), 32),
                                  EMBED_SHFT(v_idx));
-              logits((v_idx+1)*32-1 downto v_idx*32) <= std_logic_vector(res32);
+              logits((v_idx+1)*32-1 downto v_idx*32) <= std_logic_vector(res32); -- legacy bus
+              logit_v     <= std_logic_vector(res32);   -- stream logit[v]
+              logit_valid <= '1';
               j_idx := 0;
               acc64 := (others => '0');
               if v_idx = VOCAB-1 then
                 v_idx := 0;
-                done  <= '1';
-                state := S_IDLE;
+                state := S_FLUSH;    -- 1 cycle so sampler latches the last logit
               else
                 v_idx := v_idx + 1;
               end if;
             else
               j_idx := j_idx + 1;
             end if;
+
+          -- Trailing cycle: the final logit_valid was asserted last cycle; pulse
+          -- `done` now so the sampler's running max already includes it.
+          when S_FLUSH =>
+            done  <= '1';
+            state := S_IDLE;
 
         end case;
       end if;

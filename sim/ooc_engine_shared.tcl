@@ -20,7 +20,7 @@ set files [list \
   util_pkg.vhd rom_init_pkg.vhd rms_weights_pkg.vhd wq_l0_rom_pkg.vhd \
   rope_rom_pkg.vhd lmhead_rom_pkg.vhd embed_rom_pkg.vhd fixed_luts_pkg.vhd \
   fixed_pkg.vhd mac_array.vhd matmul_rt.vhd rmsnorm.vhd rope.vhd swiglu.vhd \
-  embed.vhd lm_head.vhd sampler.vhd softmax.vhd attention_ml.vhd \
+  embed.vhd lm_head.vhd sampler.vhd sampler_stream.vhd softmax.vhd attention_ml.vhd \
   residual.vhd bfp_pack.vhd \
   engine_shared.vhd ]
 
