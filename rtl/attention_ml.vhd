@@ -118,6 +118,7 @@ architecture rtl of attention_ml is
   signal qe_head_s : integer := 0;                 -- q head block exp
   type num_arr is array(0 to HEAD_SIZE-1) of signed(63 downto 0);
   signal num_s     : num_arr := (others => (others => '0'));  -- per-j V-weighted sums
+  signal amax_s    : signed(63 downto 0) := (others => '0');  -- running |xb_acc| max (S_PACK)
 
   -- ---- softmax interface -------------------------------------------------
   signal sm_start      : std_logic := '0';
@@ -138,7 +139,7 @@ architecture rtl of attention_ml is
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
   type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SPACK,
-                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_PACK);
+                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_PACK, S_PACK_EMIT);
   signal state : state_t := S_IDLE;
 
   component softmax is
@@ -468,48 +469,63 @@ begin
               end loop;
             end if;
             if t_idx = cp + 1 then
+              t_idx <= 0;               -- prime the per-lane S_WDIV counter
               state <= S_WDIV;
             else
               t_idx <= t_idx + 1;
             end if;
 
-          -- Per-head finalise: acc[j] = round(num*2^WQ / sum) for each lane,
-          -- then advance to the next head (or pack).
+          -- Per-head finalise, one LANE per cycle (t_idx = lane 0..HEAD_SIZE-1):
+          -- acc[j] = round(num*2^WQ / sum) via ONE shared divider (was 8 parallel
+          -- 96-bit dividers), then advance to the next head (or pack).
           when S_WDIV =>
-            for j in 0 to HEAD_SIZE-1 loop
-              num96 := shift_left(resize(num_s(j), 96), WQ);
-              if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
-              else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
+            num96 := shift_left(resize(num_s(t_idx), 96), WQ);
+            if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
+            else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
+            end if;
+            qd96 := num96 / resize(sum_l, 96);
+            xb_acc(hd*HEAD_SIZE + t_idx) <= resize(qd96, 64);
+            if t_idx = HEAD_SIZE-1 then
+              t_idx <= 0;
+              if hd = NHEADS-1 then
+                amax_s <= (others => '0');   -- prime the S_PACK max scan
+                state  <= S_PACK;
+              else
+                hd    <= hd + 1;
+                state <= S_HEAD;
               end if;
-              qd96 := num96 / resize(sum_l, 96);
-              xb_acc(hd*HEAD_SIZE + j) <= resize(qd96, 64);
-            end loop;
-            if hd = NHEADS-1 then
-              state <= S_PACK;
             else
-              hd    <= hd + 1;
-              state <= S_HEAD;
+              t_idx <= t_idx + 1;
             end if;
 
           -- ------------------------------------------------------------
+          -- BFP-pack acc vector (value = acc*2^-(Q+vref)) -> xb_mant/xb_exp.
+          -- Max-abs scan: ONE element per cycle (t_idx = 0..DIM-1).
           when S_PACK =>
-            -- BFP-pack acc vector (value = acc*2^-(Q+vref)) -> xb_mant/xb_exp
-            amax := (others => '0');
-            for j in 0 to DIM-1 loop
-              if xb_acc(j) >= 0 then
-                if xb_acc(j) > amax then amax := xb_acc(j); end if;
-              else
-                if -xb_acc(j) > amax then amax := -xb_acc(j); end if;
-              end if;
-            end loop;
-            gx := bfp_g(amax);
-            for j in 0 to DIM-1 loop
-              xb_mant((j+1)*16-1 downto j*16) <=
-                std_logic_vector(to_signed(pack1(xb_acc(j), gx), 16));
-            end loop;
+            if xb_acc(t_idx) >= 0 then
+              if xb_acc(t_idx) > amax_s then amax_s <= xb_acc(t_idx); end if;
+            else
+              if -xb_acc(t_idx) > amax_s then amax_s <= -xb_acc(t_idx); end if;
+            end if;
+            if t_idx = DIM-1 then
+              t_idx <= 0;
+              state <= S_PACK_EMIT;
+            else
+              t_idx <= t_idx + 1;
+            end if;
+
+          -- Emit: pack ONE element per cycle with the now-final shift gx.
+          when S_PACK_EMIT =>
+            gx := bfp_g(amax_s);
+            xb_mant((t_idx+1)*16-1 downto t_idx*16) <=
+              std_logic_vector(to_signed(pack1(xb_acc(t_idx), gx), 16));
             xb_exp <= (vref_s + WQ) + gx;
-            done   <= '1';
-            state  <= S_IDLE;
+            if t_idx = DIM-1 then
+              done  <= '1';
+              state <= S_IDLE;
+            else
+              t_idx <= t_idx + 1;
+            end if;
         end case;
       end if;
     end if;
