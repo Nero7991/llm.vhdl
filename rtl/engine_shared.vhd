@@ -221,6 +221,22 @@ architecture rtl of engine_shared is
   signal samp_done  : std_logic;
   signal samp_token : integer;
 
+  -- ---- shared sequential residual add (o = a + b, BFP) ------------------
+  signal res_start  : std_logic := '0';
+  signal res_done   : std_logic;
+  signal res_a_mant : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
+  signal res_a_exp  : integer := 0;
+  signal res_b_mant : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
+  signal res_b_exp  : integer := 0;
+  signal res_o_mant : std_logic_vector(DIM*16-1 downto 0);
+  signal res_o_exp  : integer;
+
+  -- ---- shared sequential BFP pack (swiglu Q12 int32 -> int16 BFP) --------
+  signal hbp_start  : std_logic := '0';
+  signal hbp_done   : std_logic;
+  signal hbp_o_mant : std_logic_vector(HIDDEN*16-1 downto 0);
+  signal hbp_o_exp  : integer;
+
   -- ---- datapath holding registers ---------------------------------------
   signal q_reg   : std_logic_vector(DIM*16-1 downto 0)   := (others => '0');
   signal q_exp_r : integer := 0;
@@ -246,11 +262,11 @@ architecture rtl of engine_shared is
     L_WQ_S, L_WQ_W, L_WK_S, L_WK_W, L_WV_S, L_WV_W,
     L_ROPE_S, L_ROPE_W,
     L_ATT_S, L_ATT_W,
-    L_WO_S, L_WO_W, L_RES1,
+    L_WO_S, L_WO_W, L_RES1_S, L_RES1_W,
     L_RMS_FFN_S, L_RMS_FFN_W,
     L_W1_S, L_W1_W, L_W3_S, L_W3_W,
-    L_SW_S, L_SW_W, L_HBPACK,
-    L_W2_S, L_W2_W, L_RES2,
+    L_SW_S, L_SW_W, L_HBPACK_S, L_HBPACK_W,
+    L_W2_S, L_W2_W, L_RES2_S, L_RES2_W,
     E_RMS_S, E_RMS_W, E_LM_S, E_LM_W, E_SAMP_S, E_SAMP_W,
     E_EMIT, E_FIN
   );
@@ -326,6 +342,21 @@ begin
     generic map(VOCAB => VOCAB)
     port map(clk => clk, rst => rst, start => samp_start,
              logits => lm_logits, done => samp_done, token => samp_token);
+
+  -- Sequential top-level residual add + BFP pack (extracted from the former
+  -- inline combinational blocks; one shared datapath each, handshake-driven).
+  u_res: entity work.residual
+    generic map(N => DIM)
+    port map(clk => clk, rst => rst, start => res_start,
+             a_mant => res_a_mant, a_exp => res_a_exp,
+             b_mant => res_b_mant, b_exp => res_b_exp,
+             done => res_done, o_mant => res_o_mant, o_exp => res_o_exp);
+
+  u_hbpack: entity work.bfp_pack
+    generic map(N => HIDDEN, Q => 12)
+    port map(clk => clk, rst => rst, start => hbp_start,
+             in_q => sw_out_q, done => hbp_done,
+             o_mant => hbp_o_mant, o_exp => hbp_o_exp);
 
   -- ---------------------------------------------------------------------
   -- Combinational RMSNorm weight mux (small 64-wide constants).
@@ -419,6 +450,8 @@ begin
       sw_start    <= '0';
       lm_start    <= '0';
       samp_start  <= '0';
+      res_start   <= '0';
+      hbp_start   <= '0';
       token_valid <= '0';
 
       if rst = '1' then
@@ -536,13 +569,19 @@ begin
             if mm_done = '1' then
               wo_reg   <= mm_o_mant(DIM*16-1 downto 0);
               wo_exp_r <= mm_o_exp;
-              state <= L_RES1;
+              state <= L_RES1_S;
             end if;
-          when L_RES1 =>
-            residual_add(x_mant_cur, x_exp_cur, wo_reg, wo_exp_r, rm, re);
-            xm_mant <= rm;
-            xm_exp  <= re;
-            state <= L_RMS_FFN_S;
+          when L_RES1_S =>
+            res_a_mant <= x_mant_cur; res_a_exp <= x_exp_cur;
+            res_b_mant <= wo_reg;     res_b_exp <= wo_exp_r;
+            res_start  <= '1';
+            state <= L_RES1_W;
+          when L_RES1_W =>
+            if res_done = '1' then
+              xm_mant <= res_o_mant;
+              xm_exp  <= res_o_exp;
+              state <= L_RMS_FFN_S;
+            end if;
 
           -- ---- 6. FFN RMSNorm --------------------------------------
           when L_RMS_FFN_S =>
@@ -583,28 +622,17 @@ begin
             sw_hb2_mant <= w3_reg; sw_hb2_exp <= w3_exp_r;
             sw_start <= '1'; state <= L_SW_W;
           when L_SW_W =>
-            if sw_done = '1' then state <= L_HBPACK; end if;
-          when L_HBPACK =>
-            -- Q12 int (sw_out_q) -> BFP int16 mantissas (feeds W2).
-            max_abs := 0;
-            for i in 0 to HIDDEN-1 loop
-              hbq := to_integer(signed(sw_out_q((i+1)*32-1 downto i*32)));
-              av := hbq; if av < 0 then av := -av; end if;
-              if av > max_abs then max_abs := av; end if;
-            end loop;
-            p_msb   := msb_pos(max_abs);
-            shift_o := p_msb - 14; if shift_o < 0 then shift_o := 0; end if;
-            mm_xexp <= 12 - shift_o;                 -- hb block exponent
-            for i in 0 to HIDDEN-1 loop
-              hbq := to_integer(signed(sw_out_q((i+1)*32-1 downto i*32)));
-              r32 := scale_mul(to_signed(hbq, 64), to_signed(1, 32), shift_o);
-              if    r32 >  32767 then sat :=  32767;
-              elsif r32 < -32768 then sat := -32768;
-              else                    sat := to_integer(r32);
-              end if;
-              mm_xin((i+1)*16-1 downto i*16) <= std_logic_vector(to_signed(sat, 16));
-            end loop;
-            state <= L_W2_S;
+            if sw_done = '1' then state <= L_HBPACK_S; end if;
+          -- Q12 int (sw_out_q) -> BFP int16 mantissas (feeds W2), sequential.
+          when L_HBPACK_S =>
+            hbp_start <= '1';
+            state <= L_HBPACK_W;
+          when L_HBPACK_W =>
+            if hbp_done = '1' then
+              mm_xin  <= pad_cols(hbp_o_mant);
+              mm_xexp <= hbp_o_exp;
+              state <= L_W2_S;
+            end if;
 
           -- ---- 9. W2 matmul + residual add 2 -> output -------------
           when L_W2_S =>
@@ -615,17 +643,23 @@ begin
             if mm_done = '1' then
               w2_reg   <= mm_o_mant(DIM*16-1 downto 0);
               w2_exp_r <= mm_o_exp;
-              state <= L_RES2;
+              state <= L_RES2_S;
             end if;
-          when L_RES2 =>
-            residual_add(xm_mant, xm_exp, w2_reg, w2_exp_r, rm, re);
-            x_mant_cur <= rm;
-            x_exp_cur  <= re;
-            if cur_layer = NLAYERS-1 then
-              state <= E_RMS_S;
-            else
-              cur_layer <= cur_layer + 1;
-              state <= L_RMS_ATT_S;
+          when L_RES2_S =>
+            res_a_mant <= xm_mant; res_a_exp <= xm_exp;
+            res_b_mant <= w2_reg;  res_b_exp <= w2_exp_r;
+            res_start  <= '1';
+            state <= L_RES2_W;
+          when L_RES2_W =>
+            if res_done = '1' then
+              x_mant_cur <= res_o_mant;
+              x_exp_cur  <= res_o_exp;
+              if cur_layer = NLAYERS-1 then
+                state <= E_RMS_S;
+              else
+                cur_layer <= cur_layer + 1;
+                state <= L_RMS_ATT_S;
+              end if;
             end if;
 
           -- =========================================================

@@ -7,7 +7,7 @@ STD      ?= --std=08
 # then the rest.
 # rom_init_pkg (file-init BRAM loader) must precede matmul_rt/embed/lm_head;
 # rms_weights_pkg (small split-out RMS constants) must precede engine_shared.
-PINNED   := ../rtl/util_pkg.vhd ../rtl/rom_init_pkg.vhd ../rtl/rms_weights_pkg.vhd ../rtl/weights_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd ../rtl/rope_rom_pkg.vhd ../rtl/lmhead_rom_pkg.vhd ../rtl/embed_rom_pkg.vhd
+PINNED   := ../rtl/util_pkg.vhd ../rtl/fixed_luts_pkg.vhd ../rtl/fixed_pkg.vhd ../rtl/rom_init_pkg.vhd ../rtl/rms_weights_pkg.vhd ../rtl/weights_pkg.vhd ../rtl/wq_l0_rom_pkg.vhd ../rtl/rope_rom_pkg.vhd ../rtl/lmhead_rom_pkg.vhd ../rtl/embed_rom_pkg.vhd
 # layer_fsm.vhd and layer_ar.vhd instantiate rmsnorm/matmul/rope/attention/
 # swiglu by direct entity binding, so they must be analyzed AFTER them (they
 # sort before matmul/rmsnorm/rope/swiglu alphabetically) -> pin them LAST.
