@@ -8,17 +8,29 @@
 -- so ONE attention compute datapath is time-multiplexed across all 5 transformer
 -- layers (each layer keeps its own persistent K/V history at bank[layer]).
 --
---   write/read slot  = layer*MAXPOS*KVDIM + pos*KVDIM + j   (K,V mantissas)
---   per-slot exp     = layer*MAXPOS       + pos            (K,V block exps)
+--   write/read slot  = layer*MAXPOS + pos       (one KVDIM-wide word per pos)
+--   per-slot exp     = layer*MAXPOS + pos        (K,V block exps)
 --
--- `rst` clears ALL banks (drives the engine's kv_reset at run start).  Debug
--- ports were dropped (unused by the engine); everything else is line-for-line
--- attention.vhd, so xb_mant/xb_exp are bit-identical for a given (layer) bank.
+-- `rst` clears the position/pointer state (NOT the BRAM banks -- see below).
+--
+-- KV cache is held in SYNCHRONOUS BRAM (rtl/kv_mem.vhd), not signal arrays, so
+-- attention_ml fits the XCZU3EG.  Each cache uses ONE word per (layer,pos) that
+-- is KVDIM*16 bits wide (a whole position's K or V vector), so a single BRAM
+-- read returns everything needed for one position.  Depth = NLAYERS*MAXPOS.
+-- Access is registered-read (1-cycle latency): the position-sequential score
+-- (S_SCORE) and weighted-sum (S_WACC) loops issue the read address for the next
+-- position and consume the registered data one cycle later (a read-ahead bubble,
+-- like matmul_rt), so the math is bit-identical to the array version.
+--
+-- BRAM cannot be mass-reset, so there is NO (others=>0) cache clear.  Attention
+-- only reads positions 0..cur_pos, and every one of those was written earlier in
+-- THIS run (each token writes its own K/V at cur_pos in S_IDLE before the passes
+-- read positions 0..cur_pos), so write-before-read holds and no clear is needed.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.util_pkg.all;   -- msb_pos
+use work.util_pkg.all;   -- msb_pos, clog2
 
 entity attention_ml is
   generic(
@@ -57,13 +69,30 @@ architecture rtl of attention_ml is
   -- round(2^15 / sqrt(8)) = 11585  (1/sqrt(HEAD_SIZE), HEAD_SIZE=8)
   constant INV_SQRT8_Q15 : integer := 11585;
 
-  -- ---- banked cache (NLAYERS independent K/V histories) ------------------
-  type i16_cache is array(0 to NLAYERS*MAXPOS*KVDIM-1) of integer range -32768 to 32767;
-  signal kc_v : i16_cache := (others => 0);
-  signal vc_v : i16_cache := (others => 0);
-  type iexp_arr is array(0 to NLAYERS*MAXPOS-1) of integer;
-  signal kc_e : iexp_arr := (others => 0);
-  signal vc_e : iexp_arr := (others => 0);
+  -- ---- banked KV cache in BRAM -------------------------------------------
+  -- One KVDIM-wide word per (layer,pos): a whole position's K (or V) vector.
+  constant KVWORDS  : integer := NLAYERS*MAXPOS;   -- depth (words)
+  constant KVW      : integer := KVDIM*16;         -- word width (a full pos vec)
+  constant KVADDR_W : integer := clog2(KVWORDS);
+
+  component kv_mem is
+    generic(WORDS : positive; W : positive := 16);
+    port(clk : in std_logic; we : in std_logic;
+         waddr, raddr : in std_logic_vector(clog2(WORDS)-1 downto 0);
+         din  : in  std_logic_vector(W-1 downto 0);
+         dout : out std_logic_vector(W-1 downto 0));
+  end component;
+
+  signal kv_we    : std_logic;
+  signal kv_waddr : std_logic_vector(KVADDR_W-1 downto 0);
+  signal kv_raddr : std_logic_vector(KVADDR_W-1 downto 0);
+  signal fetch_pos: integer := 0;               -- clamped read position 0..MAXPOS-1
+  signal kc_v_do  : std_logic_vector(KVW-1 downto 0);   -- K mantissa word out
+  signal vc_v_do  : std_logic_vector(KVW-1 downto 0);   -- V mantissa word out
+  signal kc_e_do  : std_logic_vector(31 downto 0);      -- K block-exp out
+  signal vc_e_do  : std_logic_vector(31 downto 0);      -- V block-exp out
+  signal kc_e_di  : std_logic_vector(31 downto 0);      -- K block-exp in
+  signal vc_e_di  : std_logic_vector(31 downto 0);      -- V block-exp in
 
   -- ---- per-element attention accumulators (value = acc * 2^-(Q+vref)) -----
   type acc_arr is array(0 to DIM-1) of signed(63 downto 0);
@@ -78,10 +107,10 @@ architecture rtl of attention_ml is
   signal qexp_l  : integer := 0;
 
   -- ---- POSITION-SEQUENTIAL iteration state (registers, one t/cycle) -------
-  -- The per-position work (vref min, q.k scores, prob*V weighted sum) is
-  -- time-multiplexed over ONE position per clock instead of the old MAXPOS-wide
-  -- combinational unroll, so area is O(1) in MAXPOS (see FSM below).
-  signal t_idx     : integer := 0;                 -- current position 0..cp
+  -- t_idx now doubles as the BRAM read-ahead pointer: at t_idx it ISSUES the
+  -- read for position t_idx (via the combinational kv_raddr) and CONSUMES the
+  -- registered data for position t_idx-1 (see S_VREF/S_SCORE/S_WACC).
+  signal t_idx     : integer := 0;                 -- read-ahead position pointer
   signal smax_s    : signed(63 downto 0) := (others => '0'); -- running |score| max
   type sfx_sig_arr is array(0 to MAXPOS-1) of signed(63 downto 0);
   signal sfx_s     : sfx_sig_arr := (others => (others => '0')); -- per-pos raw scores
@@ -105,9 +134,9 @@ architecture rtl of attention_ml is
   -- Weighted-sum fixed-point headroom (see attention.vhd).
   constant WQ : integer := 16;
 
-  -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are now multi-cycle sub-
-  -- states iterating one position t per clock (S_VREF, S_SCORE, S_SPACK, S_WACC),
-  -- preserving the per-HEAD outer sequencing.
+  -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are multi-cycle sub-states
+  -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
+  -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
   type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SPACK,
                    S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_PACK);
   signal state : state_t := S_IDLE;
@@ -180,6 +209,31 @@ architecture rtl of attention_ml is
   end function;
 
 begin
+  -- ---- KV cache BRAMs (one KVDIM-wide word per (layer,pos)) --------------
+  -- Read address is COMBINATIONAL from the read-ahead pointer t_idx (clamped so
+  -- the trailing bubble read at t_idx=cp+1 stays in range); write address/enable
+  -- are combinational off the ports so the S_IDLE write commits while the
+  -- current-position K/V/exp inputs are still valid (start='1').
+  fetch_pos <= t_idx when t_idx <= MAXPOS-1 else MAXPOS-1;
+  kv_raddr  <= std_logic_vector(to_unsigned(lyr*MAXPOS + fetch_pos, KVADDR_W));
+  kv_waddr  <= std_logic_vector(to_unsigned(layer*MAXPOS + cur_pos, KVADDR_W));
+  kv_we     <= '1' when (state = S_IDLE and start = '1') else '0';
+  kc_e_di   <= std_logic_vector(to_signed(k_new_exp, 32));
+  vc_e_di   <= std_logic_vector(to_signed(v_new_exp, 32));
+
+  u_kc_v : kv_mem generic map(WORDS => KVWORDS, W => KVW)
+    port map(clk => clk, we => kv_we, waddr => kv_waddr, raddr => kv_raddr,
+             din => k_new_mant, dout => kc_v_do);
+  u_vc_v : kv_mem generic map(WORDS => KVWORDS, W => KVW)
+    port map(clk => clk, we => kv_we, waddr => kv_waddr, raddr => kv_raddr,
+             din => v_new_mant, dout => vc_v_do);
+  u_kc_e : kv_mem generic map(WORDS => KVWORDS, W => 32)
+    port map(clk => clk, we => kv_we, waddr => kv_waddr, raddr => kv_raddr,
+             din => kc_e_di, dout => kc_e_do);
+  u_vc_e : kv_mem generic map(WORDS => KVWORDS, W => 32)
+    port map(clk => clk, we => kv_we, waddr => kv_waddr, raddr => kv_raddr,
+             din => vc_e_di, dout => vc_e_do);
+
   -- Shared softmax datapath (BFP scores in, Q12 probs out).
   u_softmax: softmax
     generic map(NMAX => MAXPOS, Q => Q)
@@ -196,7 +250,7 @@ begin
       sum_out    => sm_sum_out
     );
 
-  -- Main FSM (compute identical to attention.vhd; cache indexed by bank `lyr`).
+  -- Main FSM (compute identical to attention.vhd; cache in BRAM bank `lyr`).
   process(clk)
     -- q-head re-BFP
     variable qh       : integer;
@@ -211,8 +265,7 @@ begin
     variable ke_head  : integer;
     variable av       : integer;
     variable kv_h     : integer;
-    variable kbase    : integer;   -- bank base for K/V mantissas
-    variable ebase    : integer;   -- bank base for K/V block exps
+    variable p        : integer;   -- position being CONSUMED this cycle (t_idx-1)
     -- dot / score
     variable dot      : signed(63 downto 0);
     variable pr       : signed(63 downto 0);
@@ -222,7 +275,6 @@ begin
     variable sc64     : signed(63 downto 0);   -- this position's raw score
     variable g        : integer;
     -- weighted sum
-    variable num      : signed(63 downto 0);
     variable term     : signed(63 downto 0);
     variable bias64   : signed(63 downto 0);
     variable sh       : integer;
@@ -240,11 +292,10 @@ begin
         state    <= S_IDLE;
         xb_mant  <= (others => '0');
         xb_exp   <= 0;
-        -- Clear ALL persistent KV banks (engine's kv_reset routes here).
-        kc_v <= (others => 0);
-        vc_v <= (others => 0);
-        kc_e <= (others => 0);
-        vc_e <= (others => 0);
+        t_idx    <= 0;
+        -- NOTE: the KV BRAM banks are NOT cleared (BRAM can't mass-reset).
+        -- Write-before-read holds: every position read (0..cur_pos) is written
+        -- earlier this run, so stale contents are never observed.
       else
         case state is
           -- ------------------------------------------------------------
@@ -254,39 +305,30 @@ begin
               lyr     <= layer;
               qmant_l <= q_mant;
               qexp_l  <= q_exp;
-              -- write current K/V into bank[layer] at slot cur_pos
-              for j in 0 to KVDIM-1 loop
-                kc_v(layer*MAXPOS*KVDIM + cur_pos*KVDIM + j) <=
-                  to_integer(signed(k_new_mant((j+1)*16-1 downto j*16)));
-                vc_v(layer*MAXPOS*KVDIM + cur_pos*KVDIM + j) <=
-                  to_integer(signed(v_new_mant((j+1)*16-1 downto j*16)));
-              end loop;
-              kc_e(layer*MAXPOS + cur_pos) <= k_new_exp;
-              vc_e(layer*MAXPOS + cur_pos) <= v_new_exp;
+              -- current K/V + block exps are written into bank[layer] at slot
+              -- cur_pos by the combinational kv_we/kv_waddr, committing on this
+              -- edge while the inputs are still valid.
               state <= S_SETUP;
             end if;
 
           -- ------------------------------------------------------------
-          -- vref = min vc_e over 0..cp within this bank.  Sequentialised:
-          -- seed with slot 0, then S_VREF folds one position per cycle.
+          -- Prime the V-exp read-ahead scan for vref = min vc_e over 0..cp.
           when S_SETUP =>
-            ebase  := lyr*MAXPOS;
-            vref_s <= vc_e(ebase + 0);
-            if cp = 0 then
-              hd    <= 0;
-              state <= S_HEAD;
-            else
-              t_idx <= 1;
-              state <= S_VREF;
-            end if;
+            t_idx <= 0;
+            state <= S_VREF;
 
-          -- One position per cycle: min-fold vc_e(t) into vref_s.
+          -- One position per cycle (read-ahead): at t_idx>=1 the data for
+          -- position p=t_idx-1 is on vc_e_do; min-fold it into vref_s.
           when S_VREF =>
-            ebase := lyr*MAXPOS;
-            if vc_e(ebase + t_idx) < vref_s then
-              vref_s <= vc_e(ebase + t_idx);
+            if t_idx >= 1 then
+              p := t_idx - 1;
+              if p = 0 then
+                vref_s <= to_integer(signed(vc_e_do));
+              elsif to_integer(signed(vc_e_do)) < vref_s then
+                vref_s <= to_integer(signed(vc_e_do));
+              end if;
             end if;
-            if t_idx = cp then
+            if t_idx = cp + 1 then
               hd    <= 0;
               state <= S_HEAD;
             else
@@ -295,9 +337,8 @@ begin
 
           -- ------------------------------------------------------------
           -- Per-head setup: q-head re-BFP (once, HEAD_SIZE-wide combinational),
-          -- then launch the position-sequential score pass.
+          -- then prime the position-sequential score pass (read-ahead from 0).
           when S_HEAD =>
-            -- (a) q-head re-BFP to fill int16
             qmax := 0;
             for j in 0 to HEAD_SIZE-1 loop
               qh := to_integer(signed(
@@ -319,51 +360,54 @@ begin
             t_idx         <= 0;
             state         <= S_SCORE;
 
-          -- (b) one cached position per cycle: q.k dot -> raw score sfx_s(t),
-          -- while tracking the running |score| max for the BFP pack.  The
-          -- HEAD_SIZE-wide inner dot stays combinational (it is small).
+          -- (b) read-ahead over cached positions: at t_idx>=1 the whole K word
+          -- for position p=t_idx-1 is on kc_v_do (block exp on kc_e_do); q.k dot
+          -- -> raw score sfx_s(p), tracking the running |score| max for the BFP
+          -- pack.  The HEAD_SIZE-wide inner dot stays combinational (small).
           when S_SCORE =>
-            kv_h  := hd / KV_MUL;
-            kbase := lyr*MAXPOS*KVDIM;
-            ebase := lyr*MAXPOS;
-            -- k-head re-BFP for this position
-            kmax := 0;
-            for j in 0 to HEAD_SIZE-1 loop
-              khead(j) := kc_v(kbase + t_idx*KVDIM + kv_h*HEAD_SIZE + j);
-              av := khead(j); if av < 0 then av := -av; end if;
-              if av > kmax then kmax := av; end if;
-            end loop;
-            if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
-            ke_head := kc_e(ebase + t_idx) + kextra;
-            for j in 0 to HEAD_SIZE-1 loop
-              if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
-              else                khead(j) := khead(j) / (2**(-kextra)); end if;
-            end loop;
-            -- integer dot Q.K (int64) using the persisted re-BFP'd q head
-            dot := (others => '0');
-            for j in 0 to HEAD_SIZE-1 loop
-              pr  := to_signed(qhead_s(j), 32) * to_signed(khead(j), 32);
-              dot := dot + pr;
-            end loop;
-            -- score_fixed = round( dot * 11585 * 2^-ke_head / 2^15 )
-            prod := dot * to_signed(INV_SQRT8_Q15, 32);
-            tsh  := 15 + ke_head;
-            if tsh > 0 then
-              bias96 := shift_left(to_signed(1, 96), tsh - 1);
-              sc64   := resize(shift_right(prod + bias96, tsh), 64);
-            elsif tsh = 0 then
-              sc64   := resize(prod, 64);
-            else
-              sc64   := resize(shift_left(prod, -tsh), 64);
+            kv_h := hd / KV_MUL;
+            if t_idx >= 1 then
+              p := t_idx - 1;
+              -- k-head re-BFP for this position (slice the KVDIM-wide word)
+              kmax := 0;
+              for j in 0 to HEAD_SIZE-1 loop
+                khead(j) := to_integer(signed(
+                  kc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)));
+                av := khead(j); if av < 0 then av := -av; end if;
+                if av > kmax then kmax := av; end if;
+              end loop;
+              if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
+              ke_head := to_integer(signed(kc_e_do)) + kextra;
+              for j in 0 to HEAD_SIZE-1 loop
+                if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
+                else                khead(j) := khead(j) / (2**(-kextra)); end if;
+              end loop;
+              -- integer dot Q.K (int64) using the persisted re-BFP'd q head
+              dot := (others => '0');
+              for j in 0 to HEAD_SIZE-1 loop
+                pr  := to_signed(qhead_s(j), 32) * to_signed(khead(j), 32);
+                dot := dot + pr;
+              end loop;
+              -- score_fixed = round( dot * 11585 * 2^-ke_head / 2^15 )
+              prod := dot * to_signed(INV_SQRT8_Q15, 32);
+              tsh  := 15 + ke_head;
+              if tsh > 0 then
+                bias96 := shift_left(to_signed(1, 96), tsh - 1);
+                sc64   := resize(shift_right(prod + bias96, tsh), 64);
+              elsif tsh = 0 then
+                sc64   := resize(prod, 64);
+              else
+                sc64   := resize(shift_left(prod, -tsh), 64);
+              end if;
+              sfx_s(p) <= sc64;
+              -- running max|sfx| (feeds the common BFP shift g)
+              if sc64 >= 0 then
+                if sc64 > smax_s then smax_s <= sc64; end if;
+              else
+                if -sc64 > smax_s then smax_s <= -sc64; end if;
+              end if;
             end if;
-            sfx_s(t_idx) <= sc64;
-            -- running max|sfx| (feeds the common BFP shift g)
-            if sc64 >= 0 then
-              if sc64 > smax_s then smax_s <= sc64; end if;
-            else
-              if -sc64 > smax_s then smax_s <= -sc64; end if;
-            end if;
-            if t_idx = cp then
+            if t_idx = cp + 1 then
               t_idx <= 0;
               state <= S_SPACK;
             else
@@ -394,8 +438,8 @@ begin
             end if;
 
           -- ------------------------------------------------------------
-          -- V-weighted sum, position-sequential: zero the HEAD_SIZE lane
-          -- accumulators, then S_WACC folds one position per cycle.
+          -- V-weighted sum: zero the HEAD_SIZE lane accumulators, then prime
+          -- the read-ahead scan.
           when S_WSUM =>
             for j in 0 to HEAD_SIZE-1 loop
               num_s(j) <= (others => '0');
@@ -403,24 +447,27 @@ begin
             t_idx <= 0;
             state <= S_WACC;
 
-          -- One position per cycle: accumulate prob(t)*V(t) into all HEAD_SIZE
-          -- lanes (the HEAD_SIZE-wide inner loop stays combinational).
+          -- Read-ahead: at t_idx>=1 the whole V word for position p=t_idx-1 is
+          -- on vc_v_do (block exp on vc_e_do); accumulate prob(p)*V(p) into all
+          -- HEAD_SIZE lanes (the HEAD_SIZE-wide inner loop stays combinational).
           when S_WACC =>
-            kv_h  := hd / KV_MUL;
-            kbase := lyr*MAXPOS*KVDIM;
-            ebase := lyr*MAXPOS;
-            ei    := to_integer(signed(e_l((t_idx+1)*32-1 downto t_idx*32)));
-            sh    := vc_e(ebase + t_idx) - vref_s;   -- >= 0 by construction
-            for j in 0 to HEAD_SIZE-1 loop
-              vval := vc_v(kbase + t_idx*KVDIM + kv_h*HEAD_SIZE + j);
-              term := to_signed(ei, 32) * to_signed(vval, 32);
-              if sh > 0 then
-                bias64 := shift_left(to_signed(1, 64), sh - 1);
-                term   := shift_right(term + bias64, sh);
-              end if;
-              num_s(j) <= num_s(j) + term;
-            end loop;
-            if t_idx = cp then
+            kv_h := hd / KV_MUL;
+            if t_idx >= 1 then
+              p    := t_idx - 1;
+              ei   := to_integer(signed(e_l((p+1)*32-1 downto p*32)));
+              sh   := to_integer(signed(vc_e_do)) - vref_s;   -- >= 0 by construction
+              for j in 0 to HEAD_SIZE-1 loop
+                vval := to_integer(signed(
+                  vc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)));
+                term := to_signed(ei, 32) * to_signed(vval, 32);
+                if sh > 0 then
+                  bias64 := shift_left(to_signed(1, 64), sh - 1);
+                  term   := shift_right(term + bias64, sh);
+                end if;
+                num_s(j) <= num_s(j) + term;
+              end loop;
+            end if;
+            if t_idx = cp + 1 then
               state <= S_WDIV;
             else
               t_idx <= t_idx + 1;
