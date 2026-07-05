@@ -53,7 +53,12 @@ entity engine_shared is
     MAXPOS     : integer := 24;
     NLAYERS    : integer := 5;
     NUM_PROMPT : integer := 5;
-    NGEN       : integer := 16   -- total positions to run: p = 0 .. NGEN-1
+    NGEN       : integer := 16;  -- total positions to run: p = 0 .. NGEN-1
+    -- Directory of the file-init weight ROMs (matmul_rt/embed/lm_head).  Default
+    -- "../mem/rom/" resolves from sim/ for GHDL + OOC Vivado; the design_1
+    -- module-reference overrides this to an ABSOLUTE path so the .mem files
+    -- resolve during the impl synth run (whose CWD is the run dir).
+    ROM_DIR    : string  := "../mem/rom/"
   );
   port(
     clk         : in  std_logic;
@@ -285,7 +290,7 @@ begin
   -- Sub-unit instances (ONE of each).
   -- ---------------------------------------------------------------------
   u_embed: entity work.embed
-    generic map(DIM => DIM, VOCAB => VOCAB)
+    generic map(DIM => DIM, VOCAB => VOCAB, ROM_DIR => ROM_DIR)
     port map(clk => clk, en => emb_en, token => embed_token, done => emb_done,
              x_mant => embed_x_mant, x_exp => embed_x_exp);
   emb_en <= '1' when (state = E_EMB_S or state = E_EMB_W) else '0';
@@ -298,7 +303,7 @@ begin
              done => rms_done, o_mant => rms_o_mant, o_exp => rms_o_exp);
 
   u_matmul: entity work.matmul_rt
-    generic map(MAXROWS => MAXROWS, MAXCOLS => MAXCOLS)
+    generic map(MAXROWS => MAXROWS, MAXCOLS => MAXCOLS, ROM_DIR => ROM_DIR)
     port map(clk => clk, rst => rst, start => mm_start,
              mat_sel => mm_sel, layer => mm_layer,
              x_mant => mm_xin, x_exp => mm_xexp,
@@ -333,7 +338,7 @@ begin
              done => sw_done, out_q => sw_out_q);
 
   u_lm_head: entity work.lm_head
-    generic map(DIM => DIM, VOCAB => VOCAB)
+    generic map(DIM => DIM, VOCAB => VOCAB, ROM_DIR => ROM_DIR)
     port map(clk => clk, rst => rst, start => lm_start,
              x_mant => lm_x_mant, x_exp => lm_x_exp,
              done => lm_done,

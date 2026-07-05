@@ -25,6 +25,9 @@ entity llama_engine_axi is
     MAXPOS : integer := 24;
     NGEN   : integer := 24;
     MAXTOK : integer := 32;   -- token readback buffer depth (>= NGEN)
+    -- Weight-ROM directory forwarded to engine_shared; the design_1 module-ref
+    -- overrides this to an absolute path so the .mem files resolve at impl synth.
+    ROM_DIR : string := "../mem/rom/";
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8);
   port(
@@ -82,7 +85,7 @@ begin
   eng_rst <= '1' when (s_axi_aresetn='0' or rst_cnt /= 0) else '0';
 
   u_engine: entity work.engine_shared
-    generic map(MAXPOS => MAXPOS, NGEN => NGEN)
+    generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR)
     port map(clk => s_axi_aclk, rst => eng_rst, start => eng_start,
              token_out => eng_token, pos_out => eng_pos,
              token_valid => eng_tvalid, run_done => eng_rundone);
