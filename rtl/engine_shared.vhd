@@ -37,7 +37,9 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.util_pkg.all;      -- msb_pos
 use work.fixed_pkg.all;     -- scale_mul
-use work.weights_pkg.all;   -- intarr + ATT_RMS_W/FFN_RMS_W/FINAL_RMS_W (+ exps)
+use work.rms_weights_pkg.all;   -- intarr + ATT_RMS_W/FFN_RMS_W/FINAL_RMS_W (+ exps)
+                                -- (small split-out pkg; the 227K weight aggregate
+                                -- lives in mem/rom/*.mem, file-loaded by matmul_rt)
 
 entity engine_shared is
   generic(

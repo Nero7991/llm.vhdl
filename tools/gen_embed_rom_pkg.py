@@ -13,8 +13,11 @@ VOCAB = 512
 DIM = 64
 
 # (VHDL constant name, mem file, expected length) -- must match embed.vhd
+# NOTE: EMBED_MANT (the 32768-entry mantissa table) is NO LONGER emitted here --
+# embed.vhd now loads it as file-init BRAM from mem/rom/embed_mant.mem (see
+# tools/gen_weight_mem.py + rtl/rom_init_pkg.vhd) so Vivado no longer constant-
+# folds 32K literals.  This package keeps only the small per-row scale tables.
 TABLES = [
-    ("EMBED_MANT", "embed.mem",       VOCAB * DIM),
     ("EMBED_MULT", "embed_mult.mem",  VOCAB),
     ("EMBED_SHFT", "embed_shift.mem", VOCAB),
 ]

@@ -37,12 +37,16 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.util_pkg.all;      -- msb_pos
 use work.fixed_pkg.all;     -- scale_mul
-use work.weights_pkg.all;   -- WQ..W2 + *_MULT/*_SHIFT constant arrays
+use work.rom_init_pkg.all;  -- init_rom_hex (file-loaded BRAM)
 
 entity matmul_rt is
   generic(
     MAXROWS : positive := 172;   -- largest OUT_ROWS (W1/W3)
-    MAXCOLS : positive := 172    -- largest IN_COLS  (W2)
+    MAXCOLS : positive := 172;   -- largest IN_COLS  (W2)
+    -- Directory holding the file-init ROMs (weights_mant/mult/shift.mem).
+    -- Default resolves from sim/ for both GHDL and the OOC Vivado runs; a
+    -- different build dir can override it.
+    ROM_DIR : string := "../mem/rom/"
   );
   port(
     clk     : in  std_logic;
@@ -59,12 +63,25 @@ entity matmul_rt is
 end entity;
 
 architecture rtl of matmul_rt is
-  -- ---- Unified weight ROMs (concatenated in mat_sel order 0..6) --------------
-  constant WROM : intarr := WQ & WK & WV & WO & W1 & W3 & W2;
-  constant MROM : intarr :=
-    WQ_MULT & WK_MULT & WV_MULT & WO_MULT & W1_MULT & W3_MULT & W2_MULT;
-  constant SROM : intarr :=
-    WQ_SHIFT & WK_SHIFT & WV_SHIFT & WO_SHIFT & W1_SHIFT & W3_SHIFT & W2_SHIFT;
+  -- ---- Unified weight ROMs (concatenated in mat_sel order WQ,WK,WV,WO,W1,W3,W2)
+  -- File-initialized BLOCK RAM.  Formerly one giant VHDL constant aggregate
+  -- (WQ & WK & ... from work.weights_pkg) -- ~227K int16 + 2*3000 int32 literals
+  -- that Vivado constant-folded, peaking ~25 GB during synth.  Now loaded at
+  -- elaboration from mem/rom/*.mem (bit-identical, tools/gen_weight_mem.py) via
+  -- rom_init_pkg.init_rom_hex -> Vivado infers file-init BRAM, light elaboration.
+  constant WROM_N  : natural := 226560;  -- WQ..W2 mantissas, 5 layers each
+  constant MSROM_N : natural := 3000;    -- *_MULT / *_SHIFT per-row scalars
+  signal WROM : integer_vector(0 to WROM_N-1) :=
+    init_rom_hex(ROM_DIR & "weights_mant.mem",  WROM_N,  16);
+  signal MROM : integer_vector(0 to MSROM_N-1) :=
+    init_rom_hex(ROM_DIR & "weights_mult.mem",  MSROM_N, 32);
+  signal SROM : integer_vector(0 to MSROM_N-1) :=
+    init_rom_hex(ROM_DIR & "weights_shift.mem", MSROM_N, 32);
+  -- Force block-RAM inference (harmless user attribute under GHDL).
+  attribute rom_style : string;
+  attribute rom_style of WROM : signal is "block";
+  attribute rom_style of MROM : signal is "block";
+  attribute rom_style of SROM : signal is "block";
 
   -- ---- Per-matrix parameter tables (indexed by mat_sel) ----------------------
   type i7 is array(0 to 6) of integer;

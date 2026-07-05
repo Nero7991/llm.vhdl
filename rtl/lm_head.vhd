@@ -21,13 +21,17 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.fixed_pkg.all;
-use work.lmhead_rom_pkg.all;
+use work.lmhead_rom_pkg.all;  -- EMBED_MULT / EMBED_SHFT (small, kept as constants)
+use work.rom_init_pkg.all;    -- init_rom_hex (file-loaded mantissa BRAM)
 
 entity lm_head is
   generic(
     DIM        : integer := 64;
     VOCAB      : integer := 512;
-    WEIGHT_DIR : string  := "../mem/weights/"
+    WEIGHT_DIR : string  := "../mem/weights/";
+    -- Directory holding the file-init mantissa ROM (embed_mant.mem).  Default
+    -- resolves from sim/ for both GHDL and the OOC Vivado runs.
+    ROM_DIR    : string  := "../mem/rom/"
   );
   port(
     clk    : in  std_logic;
@@ -79,6 +83,16 @@ architecture rtl of lm_head is
   -- pipeline depth), primed in S_P1/S_P2.  The small VOCAB-deep EMBED_MULT/
   -- EMBED_SHFT tables stay combinational (read once per row).  Arithmetic is
   -- unchanged, so every logit stays bit-exact.
+
+  -- EMBED_MANT is now FILE-INITIALIZED BRAM (loaded from mem/rom/embed_mant.mem
+  -- via rom_init_pkg.init_rom_hex), replacing the 32768-literal constant aggregate
+  -- from lmhead_rom_pkg that Vivado constant-folded.  The small per-row EMBED_MULT/
+  -- EMBED_SHFT tables stay compile-time constants in work.lmhead_rom_pkg.
+  constant EMBED_N : natural := VOCAB*DIM;
+  signal EMBED_MANT : integer_vector(0 to EMBED_N-1) :=
+    init_rom_hex(ROM_DIR & "embed_mant.mem", EMBED_N, 16);
+  attribute rom_style : string;
+  attribute rom_style of EMBED_MANT : signal is "block";
 
   signal mant_addr : integer range 0 to VOCAB*DIM-1 := 0;  -- fabric addr register
   signal mant_data : signed(15 downto 0) := (others => '0');  -- BRAM output register

@@ -12,8 +12,11 @@ WEIGHTS = os.path.join(ROOT, "mem", "weights")
 
 # (VHDL constant name, mem file, expected length) -- must match lm_head.vhd
 # defaults: DIM=64, VOCAB=512 -> VOCAB*DIM=32768.
+# NOTE: EMBED_MANT (32768-entry mantissa) is NO LONGER emitted here -- lm_head.vhd
+# now loads it as file-init BRAM from mem/rom/embed_mant.mem (tools/gen_weight_mem.py
+# + rtl/rom_init_pkg.vhd) so Vivado no longer constant-folds 32K literals.  Only the
+# small per-row scale tables remain.
 TABLES = [
-    ("EMBED_MANT", "embed.mem",       32768),
     ("EMBED_MULT", "embed_mult.mem",  512),
     ("EMBED_SHFT", "embed_shift.mem", 512),
 ]
