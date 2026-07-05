@@ -57,7 +57,7 @@ end entity;
 
 architecture rtl of embed is
 
-  type state_t is (S_IDLE, S_MAX_P1, S_MAX_P2, S_MAX, S_EXP,
+  type state_t is (S_IDLE, S_MAX_P1, S_MAX_P2, S_MAX, S_EXP, S_EXP_IT,
                    S_EMIT_P1, S_EMIT_P2, S_EMIT);
 
   -- Weight ROMs:
@@ -148,6 +148,7 @@ begin
     variable e       : integer;
     variable net     : integer;
     variable sh      : integer;
+    variable ti_v    : integer range 0 to 61 := 0;  -- exp-search candidate index
     variable r       : signed(63 downto 0);
     variable m       : signed(63 downto 0);
     variable found   : boolean;
@@ -197,37 +198,45 @@ begin
             idx := idx + 1;
           end if;
 
-        -- One-shot: choose the block exponent (shift-only search, no multiply).
+        -- Choose the block exponent (shift-only search).  Was a 61-way unrolled
+        -- combinational loop (= 61 parallel 64-bit barrel shifters); now ONE
+        -- shared shift iterated one candidate/cycle over S_EXP_IT.
         when S_EXP =>
           if max_prod = 0 then
             -- All-zero row: matches the original all-zero branch.
-            x_exp    <= 14;
-            zero_row := true;
-            net      := 0;
+            x_exp     <= 14;
+            zero_row  := true;
+            net       := 0;
+            idx       := 0;
+            mant_addr <= base;        -- re-prime the ROM read for the emit sweep
+            state     := S_EMIT_P1;
           else
-            -- Largest e in [-30,30] with round(max_prod*2^(e-shift)) <= 32767
-            -- (round-half-up; monotone-decreasing in e, so first hit wins).
-            e     := -30;
-            found := false;
-            for ti in 0 to 60 loop
-              e   := 30 - ti;
-              net := e - shft;
-              if net >= 0 then
-                r := to_signed(32768, 64);   -- positive shift of nonzero max > 32767
-              else
-                sh := -net;
-                r  := shift_right(max_prod + (to_signed(1, 64) sll (sh-1)), sh);
-              end if;
-              if r <= 32767 then found := true; exit; end if;
-            end loop;
-            assert found report "embed: no valid BFP exponent found" severity failure;
-            x_exp    <= e;
-            net      := e - shft;
-            zero_row := false;
+            ti_v  := 0;
+            state := S_EXP_IT;
           end if;
-          idx       := 0;
-          mant_addr <= base;          -- re-prime the ROM read for the emit sweep
-          state     := S_EMIT_P1;
+
+        -- One candidate/cycle: e = 30 - ti downwards; first e with
+        -- round(max_prod*2^(e-shft)) <= 32767 wins (monotone-decreasing in e).
+        when S_EXP_IT =>
+          e   := 30 - ti_v;
+          net := e - shft;
+          if net >= 0 then
+            r := to_signed(32768, 64);   -- positive shift of nonzero max > 32767
+          else
+            sh := -net;
+            r  := shift_right(max_prod + (to_signed(1, 64) sll (sh-1)), sh);
+          end if;
+          if r <= 32767 then
+            x_exp     <= e;
+            net       := e - shft;
+            zero_row  := false;
+            idx       := 0;
+            mant_addr <= base;        -- re-prime the ROM read for the emit sweep
+            state     := S_EMIT_P1;
+          else
+            assert ti_v < 60 report "embed: no valid BFP exponent found" severity failure;
+            ti_v := ti_v + 1;
+          end if;
 
         -- Two-deep read-pipeline prime for the emit sweep (same as S_MAX_P1/P2).
         when S_EMIT_P1 =>
