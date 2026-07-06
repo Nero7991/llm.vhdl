@@ -156,6 +156,12 @@ begin
     axi_read(16#CC#, rd); report "DBG_FIN(pos4): nz=" & std_logic'image(rd(24)) &
       " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
       " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#D4#, rd); report "DBG_RMS(pos4 L0): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#D8#, rd); report "DBG_ATT(pos4 L0): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
     axi_read(16#D0#, rd); report "DBG_SAMPTOK(pos4)=" & integer'image(to_integer(signed(rd))) severity note;
 
     std.env.finish;

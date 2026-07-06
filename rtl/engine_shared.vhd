@@ -77,6 +77,9 @@ entity engine_shared is
     dbg_l0_nz   : out std_logic; dbg_l0_e  : out integer; dbg_l0_m  : out std_logic_vector(15 downto 0);
     dbg_l4_nz   : out std_logic; dbg_l4_e  : out integer; dbg_l4_m  : out std_logic_vector(15 downto 0);
     dbg_fin_nz  : out std_logic; dbg_fin_e : out integer; dbg_fin_m : out std_logic_vector(15 downto 0);
+    -- intra-layer-0 taps: after the attention-rmsnorm and after attention itself
+    dbg_rms_nz  : out std_logic; dbg_rms_e : out integer; dbg_rms_m : out std_logic_vector(15 downto 0);
+    dbg_att_nz  : out std_logic; dbg_att_e : out integer; dbg_att_m : out std_logic_vector(15 downto 0);
     dbg_samptok : out integer
   );
 end entity;
@@ -297,9 +300,9 @@ architecture rtl of engine_shared is
     for i in v'range loop r := r or v(i); end loop;
     return r;
   end function;
-  signal d_emb_nz, d_l0_nz, d_l4_nz, d_fin_nz : std_logic := '0';
-  signal d_emb_e, d_l0_e, d_l4_e, d_fin_e, d_stok : integer := 0;
-  signal d_emb_m, d_l0_m, d_l4_m, d_fin_m : std_logic_vector(15 downto 0) := (others=>'0');
+  signal d_emb_nz, d_l0_nz, d_l4_nz, d_fin_nz, d_rms_nz, d_att_nz : std_logic := '0';
+  signal d_emb_e, d_l0_e, d_l4_e, d_fin_e, d_rms_e, d_att_e, d_stok : integer := 0;
+  signal d_emb_m, d_l0_m, d_l4_m, d_fin_m, d_rms_m, d_att_m : std_logic_vector(15 downto 0) := (others=>'0');
 
 begin
 
@@ -538,7 +541,13 @@ begin
             rms_start  <= '1';
             state <= L_RMS_ATT_W;
           when L_RMS_ATT_W =>
-            if rms_done = '1' then state <= L_WQ_S; end if;
+            if rms_done = '1' then
+              state <= L_WQ_S;
+              if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out (L0)
+                d_rms_nz <= is_nz(rms_o_mant); d_rms_e <= rms_o_exp;
+                d_rms_m  <= rms_o_mant(15 downto 0);
+              end if;
+            end if;
 
           -- ---- 2. WQ / WK / WV matmuls (input = att-rms output) -----
           when L_WQ_S =>
@@ -592,7 +601,13 @@ begin
             att_v_new_exp  <= v_exp_r;
             att_start <= '1'; state <= L_ATT_W;
           when L_ATT_W =>
-            if att_done = '1' then state <= L_WO_S; end if;
+            if att_done = '1' then
+              state <= L_WO_S;
+              if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention output xb (L0)
+                d_att_nz <= is_nz(att_xb_mant); d_att_e <= att_xb_exp;
+                d_att_m  <= att_xb_mant(15 downto 0);
+              end if;
+            end if;
 
           -- ---- 5. WO matmul + residual add 1 -----------------------
           when L_WO_S =>
@@ -767,6 +782,8 @@ begin
   dbg_l0_nz  <= d_l0_nz;  dbg_l0_e  <= d_l0_e;  dbg_l0_m  <= d_l0_m;
   dbg_l4_nz  <= d_l4_nz;  dbg_l4_e  <= d_l4_e;  dbg_l4_m  <= d_l4_m;
   dbg_fin_nz <= d_fin_nz; dbg_fin_e <= d_fin_e; dbg_fin_m <= d_fin_m;
+  dbg_rms_nz <= d_rms_nz; dbg_rms_e <= d_rms_e; dbg_rms_m <= d_rms_m;
+  dbg_att_nz <= d_att_nz; dbg_att_e <= d_att_e; dbg_att_m <= d_att_m;
   dbg_samptok <= d_stok;
 
 end architecture;

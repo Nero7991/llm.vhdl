@@ -75,9 +75,9 @@ architecture rtl of llama_engine_axi is
 
   -- debug taps (from engine_shared, for the position dbg_pos_reg)
   signal dbg_pos_reg : integer := -1;
-  signal e_emb_nz, e_l0_nz, e_l4_nz, e_fin_nz : std_logic;
-  signal e_emb_e, e_l0_e, e_l4_e, e_fin_e, e_stok : integer;
-  signal e_emb_m, e_l0_m, e_l4_m, e_fin_m : std_logic_vector(15 downto 0);
+  signal e_emb_nz, e_l0_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
+  signal e_emb_e, e_l0_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
+  signal e_emb_m, e_l0_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
 
   -- pack a debug point {nz, exp(int8), m0(int16)} into one 32-bit reg.
   function dbgpack(nz : std_logic; e : integer; m : std_logic_vector(15 downto 0))
@@ -107,6 +107,8 @@ begin
              dbg_l0_nz  => e_l0_nz,  dbg_l0_e  => e_l0_e,  dbg_l0_m  => e_l0_m,
              dbg_l4_nz  => e_l4_nz,  dbg_l4_e  => e_l4_e,  dbg_l4_m  => e_l4_m,
              dbg_fin_nz => e_fin_nz, dbg_fin_e => e_fin_e, dbg_fin_m => e_fin_m,
+             dbg_rms_nz => e_rms_nz, dbg_rms_e => e_rms_e, dbg_rms_m => e_rms_m,
+             dbg_att_nz => e_att_nz, dbg_att_e => e_att_e, dbg_att_m => e_att_m,
              dbg_samptok => e_stok);
 
   -- AXI write channel + CTRL decode.
@@ -197,6 +199,8 @@ begin
               when 50 => rdata_r <= dbgpack(e_l4_nz,  e_l4_e,  e_l4_m);         -- x after all layers
               when 51 => rdata_r <= dbgpack(e_fin_nz, e_fin_e, e_fin_m);        -- x after final rmsnorm
               when 52 => rdata_r <= std_logic_vector(to_signed(e_stok, 32));    -- this pos's argmax
+              when 53 => rdata_r <= dbgpack(e_rms_nz, e_rms_e, e_rms_m);        -- L0 attention-rmsnorm out
+              when 54 => rdata_r <= dbgpack(e_att_nz, e_att_e, e_att_m);        -- L0 attention output xb
               when others => rdata_r <= (others=>'0');
             end case;
           end if;
