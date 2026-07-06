@@ -99,6 +99,9 @@ begin
       report "ID mismatch: got " & to_hstring(rd) severity failure;
     report "ID ok = " & to_hstring(rd) severity note;
 
+    -- DBG_POS = 4 (first greedy position) so the engine latches x-summaries there.
+    axi_write(16#10#, x"00000004");
+
     -- START.
     axi_write(16#00#, x"00000001");
 
@@ -138,6 +141,23 @@ begin
       report "FAIL:llama_engine_axi " & integer'image(n_matched) & "/" & integer'image(N) &
              " tokens; first mismatch pos=" & integer'image(first_fail) severity failure;
     end if;
+
+    -- DEBUG taps (reference values for pos 4; on HW compare which stage first zeros).
+    -- reg fields: bit24=nz (x nonzero?), bits[23:16]=exp (signed), bits[15:0]=x[0].
+    axi_read(16#C0#, rd); report "DBG_EMB(pos4): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#C4#, rd); report "DBG_L0 (pos4): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#C8#, rd); report "DBG_L4 (pos4): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#CC#, rd); report "DBG_FIN(pos4): nz=" & std_logic'image(rd(24)) &
+      " exp=" & integer'image(to_integer(signed(rd(23 downto 16)))) &
+      " m0=" & integer'image(to_integer(signed(rd(15 downto 0)))) severity note;
+    axi_read(16#D0#, rd); report "DBG_SAMPTOK(pos4)=" & integer'image(to_integer(signed(rd))) severity note;
+
     std.env.finish;
   end process;
 end architecture;

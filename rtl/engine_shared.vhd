@@ -67,7 +67,17 @@ entity engine_shared is
     token_out   : out integer;
     pos_out     : out integer;
     token_valid : out std_logic;
-    run_done    : out std_logic
+    run_done    : out std_logic;
+    -- DEBUG TAPS: for the position p_idx == dbg_pos, latch a summary of the
+    -- residual stream x at 4 points (after embed / after layer 0 / after all 5
+    -- layers / after final rmsnorm = lm_head input) plus that position's argmax.
+    -- nz = OR of all mantissa bits (is x all-zero?), e = block exp, m = x[0].
+    dbg_pos     : in  integer := -1;
+    dbg_emb_nz  : out std_logic; dbg_emb_e : out integer; dbg_emb_m : out std_logic_vector(15 downto 0);
+    dbg_l0_nz   : out std_logic; dbg_l0_e  : out integer; dbg_l0_m  : out std_logic_vector(15 downto 0);
+    dbg_l4_nz   : out std_logic; dbg_l4_e  : out integer; dbg_l4_m  : out std_logic_vector(15 downto 0);
+    dbg_fin_nz  : out std_logic; dbg_fin_e : out integer; dbg_fin_m : out std_logic_vector(15 downto 0);
+    dbg_samptok : out integer
   );
 end entity;
 
@@ -279,6 +289,17 @@ architecture rtl of engine_shared is
   signal p_idx     : integer := 0;
   signal cur_layer : integer := 0;
   signal prev_next : integer := 0;
+
+  -- DEBUG taps: OR-reduce of a mantissa vector (nonzero if any bit set).
+  function is_nz(v : std_logic_vector) return std_logic is
+    variable r : std_logic := '0';
+  begin
+    for i in v'range loop r := r or v(i); end loop;
+    return r;
+  end function;
+  signal d_emb_nz, d_l0_nz, d_l4_nz, d_fin_nz : std_logic := '0';
+  signal d_emb_e, d_l0_e, d_l4_e, d_fin_e, d_stok : integer := 0;
+  signal d_emb_m, d_l0_m, d_l4_m, d_fin_m : std_logic_vector(15 downto 0) := (others=>'0');
 
 begin
 
@@ -499,6 +520,10 @@ begin
               x_exp_cur  <= embed_x_exp;
               cur_layer  <= 0;
               state <= L_RMS_ATT_S;
+              if p_idx = dbg_pos then   -- DEBUG: x after embed
+                d_emb_nz <= is_nz(embed_x_mant); d_emb_e <= embed_x_exp;
+                d_emb_m  <= embed_x_mant(15 downto 0);
+              end if;
             end if;
 
           -- =========================================================
@@ -663,6 +688,16 @@ begin
             if res_done = '1' then
               x_mant_cur <= res_o_mant;
               x_exp_cur  <= res_o_exp;
+              if p_idx = dbg_pos then   -- DEBUG: x after this layer's residual2
+                if cur_layer = 0 then
+                  d_l0_nz <= is_nz(res_o_mant); d_l0_e <= res_o_exp;
+                  d_l0_m  <= res_o_mant(15 downto 0);
+                end if;
+                if cur_layer = NLAYERS-1 then
+                  d_l4_nz <= is_nz(res_o_mant); d_l4_e <= res_o_exp;
+                  d_l4_m  <= res_o_mant(15 downto 0);
+                end if;
+              end if;
               if cur_layer = NLAYERS-1 then
                 state <= E_RMS_S;
               else
@@ -681,7 +716,13 @@ begin
             rms_start  <= '1';
             state <= E_RMS_W;
           when E_RMS_W =>
-            if rms_done = '1' then state <= E_LM_S; end if;
+            if rms_done = '1' then
+              state <= E_LM_S;
+              if p_idx = dbg_pos then   -- DEBUG: x after final rmsnorm (lm_head input)
+                d_fin_nz <= is_nz(rms_o_mant); d_fin_e <= rms_o_exp;
+                d_fin_m  <= rms_o_mant(15 downto 0);
+              end if;
+            end if;
           when E_LM_S =>
             lm_x_mant <= rms_o_mant;
             lm_x_exp  <= rms_o_exp;
@@ -704,6 +745,7 @@ begin
             pos_out     <= p_idx;
             token_valid <= '1';
             prev_next   <= next_tok;
+            if p_idx = dbg_pos then d_stok <= samp_token; end if;  -- DEBUG: this pos's argmax
             if p_idx = NGEN - 1 then
               state <= E_FIN;
             else
@@ -719,5 +761,12 @@ begin
       end if;
     end if;
   end process;
+
+  -- DEBUG tap outputs (driven from the latched summaries).
+  dbg_emb_nz <= d_emb_nz; dbg_emb_e <= d_emb_e; dbg_emb_m <= d_emb_m;
+  dbg_l0_nz  <= d_l0_nz;  dbg_l0_e  <= d_l0_e;  dbg_l0_m  <= d_l0_m;
+  dbg_l4_nz  <= d_l4_nz;  dbg_l4_e  <= d_l4_e;  dbg_l4_m  <= d_l4_m;
+  dbg_fin_nz <= d_fin_nz; dbg_fin_e <= d_fin_e; dbg_fin_m <= d_fin_m;
+  dbg_samptok <= d_stok;
 
 end architecture;
