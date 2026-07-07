@@ -562,7 +562,10 @@ begin
               if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out + INPUTS (L0)
                 d_rms_nz <= is_nz(rms_o_mant); d_rms_e <= rms_o_exp;
                 d_rms_m  <= rms_o_mant(15 downto 0);
-                d_rxchk  <= chksum(rms_x_mant); d_rwchk <= chksum(rms_w_mant);
+                -- raw x[1] / w[1] (cheap slices; adder-tree checksums made the
+                -- 93%-full design unroutable). x[0]/w[0] captured elsewhere.
+                d_rxchk  <= to_integer(signed(rms_x_mant(31 downto 16)));
+                d_rwchk  <= to_integer(signed(rms_w_mant(31 downto 16)));
                 d_rxe    <= rms_x_exp; d_rwe <= rms_w_exp; d_rw0 <= rms_w_mant(15 downto 0);
               end if;
             end if;
