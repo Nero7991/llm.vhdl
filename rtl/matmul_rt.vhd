@@ -119,11 +119,11 @@ architecture rtl of matmul_rt is
   type i32arr is array(0 to MAXROWS-1) of integer;
   signal result_v : i32arr := (others=>0);
 
-  -- Force to REGISTERS (not distributed LUTRAM): under engine congestion Vivado
-  -- inferred these indexed arrays as uninitialized LUTRAM (non-deterministic HW).
-  attribute ram_style : string;
-  attribute ram_style of wreg     : signal is "registers";
-  attribute ram_style of result_v : signal is "registers";
+  -- NOTE: wreg/result_v are left to default inference. Teacher-forced tokens 0-3
+  -- come out correct, so matmul's datapath is deterministic in practice; forcing
+  -- these (172x16 + 172x32) to registers added ~3.5K LUT of read-mux and made the
+  -- engine unroutable (RTSTAT-13 at 97.9% LUT). Only attention_ml's xb_acc (the
+  -- att-rmsnorm-feeding accumulator) is register-forced, that being the divergence.
   signal max_abs  : integer := 0;
 
   -- ---- FSM -------------------------------------------------------------------
