@@ -120,6 +120,15 @@ architecture rtl of attention_ml is
   signal num_s     : num_arr := (others => (others => '0'));  -- per-j V-weighted sums
   signal amax_s    : signed(63 downto 0) := (others => '0');  -- running |xb_acc| max (S_PACK)
 
+  -- Force these indexed arrays to REGISTERS (not distributed LUTRAM).  Under the
+  -- 93%+ engine congestion Vivado inferred them as UNINITIALIZED LUTRAM (349
+  -- cells), giving non-deterministic HW reads -> wrong tokens.  Registers carry
+  -- their init and are deterministic.
+  attribute ram_style : string;
+  attribute ram_style of xb_acc : signal is "registers";
+  attribute ram_style of sfx_s  : signal is "registers";
+  attribute ram_style of num_s  : signal is "registers";
+
   -- ---- softmax interface -------------------------------------------------
   signal sm_start      : std_logic := '0';
   signal sm_done       : std_logic;
