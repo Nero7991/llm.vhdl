@@ -81,7 +81,6 @@ begin
     variable sh      : integer := 0;
     -- Persistent exp-weight storage (registers).  e_i is small (<= exp(0) at
     -- Qq), so 32 bits is exact.
-    variable e_arr   : s32_arr(0 to NMAX-1);   -- exp weight e_i
     -- Reduction accumulators (persist across cycles).
     variable max_q   : signed(63 downto 0);
     variable sum     : signed(63 downto 0);
@@ -146,7 +145,8 @@ begin
             sq_i        := conv_q(sc_raw, sh);   -- recompute score_q[idx]
             z_q         := sq_i - max_q;
             e_i         := exp_q(z_q, Q);
-            e_arr(idx)  := e_i;
+            -- e_i is NOT stored (no e_arr array -> avoids uninitialized distributed
+            -- RAM under engine congestion); S_NORM re-computes it (bit-identical).
             sum         := sum + resize(e_i, 64);
             if idx = nreg-1 then
               if sum <= 0 then sum := to_signed(1, 64); end if;
@@ -162,12 +162,17 @@ begin
           -- Also expose the raw exp weight e_i for the full-precision path.
           -- ----------------------------------------------------------------
           when S_NORM =>
-            num := shift_left(resize(e_arr(idx), 64), Q);
+            -- re-compute e_i (== S_EXP) instead of reading a stored array.
+            sc_raw := signed(score_mant((idx+1)*16-1 downto idx*16));
+            sq_i   := conv_q(sc_raw, sh);
+            z_q    := sq_i - max_q;
+            e_i    := exp_q(z_q, Q);
+            num := shift_left(resize(e_i, 64), Q);
             p_i := num / sum;
             prob_q((idx+1)*32-1 downto idx*32) <=
               std_logic_vector(resize(p_i, 32));
             e_out((idx+1)*32-1 downto idx*32) <=
-              std_logic_vector(e_arr(idx));
+              std_logic_vector(e_i);
             if idx = nreg-1 then
               done  <= '1';
               idx   := 0;

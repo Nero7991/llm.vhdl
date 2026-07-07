@@ -49,8 +49,6 @@ entity rmsnorm is
 end entity;
 
 architecture rtl of rmsnorm is
-  -- Array of 64-bit signed, one raw accumulator per element (registers).
-  type raw64_arr is array (natural range <>) of signed(63 downto 0);
   type state_t is (S_IDLE, S_ACC, S_INV, S_RAW, S_SHIFT, S_EMIT);
 begin
   process(clk)
@@ -69,7 +67,6 @@ begin
     variable wm_ext      : signed(63 downto 0);
     variable xm_inv      : signed(63 downto 0);   -- xm[j] * inv (fits ~33 bits)
     variable raw_j       : signed(63 downto 0);   -- xm[j]*inv*wm[j] (fits ~48 bits)
-    variable raws        : raw64_arr(0 to N-1);
     -- Magnitude tracking
     variable max_raw     : signed(63 downto 0);
     variable abs_raw_j   : signed(63 downto 0);
@@ -150,6 +147,11 @@ begin
           -- ----------------------------------------------------------------
           -- Step 4: raw[j] = xm[j]*inv*wm[j], one element per cycle; track max.
           --   resize(a*b,64) takes the lower 64 bits (values fit in <2^48).
+          --   The per-element raw values are NOT stored (no `raws` array): S_EMIT
+          --   RE-COMPUTES raw[j] from the still-valid x/w ports + inv.  This removes
+          --   a 64x64-bit indexed array that Vivado inferred as UNINITIALIZED
+          --   distributed RAM in the congested engine (-> non-deterministic HW
+          --   output); recompute is bit-identical (same widths/order).
           -- ----------------------------------------------------------------
           when S_RAW =>
             xm_j   := signed(x_mant((idx+1)*16-1 downto idx*16));
@@ -158,7 +160,6 @@ begin
             wm_ext := resize(wm_j, 64);
             xm_inv := resize(xm_ext * inv_ext, 64);
             raw_j  := resize(xm_inv * wm_ext, 64);
-            raws(idx) := raw_j;
             -- Absolute value for magnitude tracking
             if raw_j < 0 then abs_raw_j := -raw_j;
             else               abs_raw_j :=  raw_j;
@@ -191,7 +192,13 @@ begin
           --   done pulses on the final element (o_mant fully written by then).
           -- ----------------------------------------------------------------
           when S_EMIT =>
-            om_32 := scale_mul(raws(idx), to_signed(1, 32), shift_total);
+            -- Re-compute raw[idx] (identical to S_RAW) instead of reading a stored
+            -- array -- avoids the LUTRAM the array inferred to under congestion.
+            xm_j   := signed(x_mant((idx+1)*16-1 downto idx*16));
+            wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
+            xm_inv := resize(resize(xm_j, 64) * inv_ext, 64);
+            raw_j  := resize(xm_inv * resize(wm_j, 64), 64);
+            om_32  := scale_mul(raw_j, to_signed(1, 32), shift_total);
             -- Saturate to int16 range (should not trigger if shift_total chosen correctly)
             if    om_32 > 32767  then
               o_mant((idx+1)*16-1 downto idx*16) <= std_logic_vector(to_signed( 32767, 16));
