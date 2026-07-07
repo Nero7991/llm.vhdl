@@ -80,6 +80,10 @@ entity engine_shared is
     -- intra-layer-0 taps: after the attention-rmsnorm and after attention itself
     dbg_rms_nz  : out std_logic; dbg_rms_e : out integer; dbg_rms_m : out std_logic_vector(15 downto 0);
     dbg_att_nz  : out std_logic; dbg_att_e : out integer; dbg_att_m : out std_logic_vector(15 downto 0);
+    -- inputs the engine feeds the L0 att-rmsnorm: checksums (sum of the 64 int16s)
+    -- of x and w, plus their exps -- to see if x/weights are corrupt on HW.
+    dbg_rxchk   : out integer; dbg_rwchk : out integer;
+    dbg_rxe     : out integer; dbg_rwe   : out integer; dbg_rw0 : out std_logic_vector(15 downto 0);
     dbg_samptok : out integer
   );
 end entity;
@@ -303,6 +307,18 @@ architecture rtl of engine_shared is
   signal d_emb_nz, d_l0_nz, d_l4_nz, d_fin_nz, d_rms_nz, d_att_nz : std_logic := '0';
   signal d_emb_e, d_l0_e, d_l4_e, d_fin_e, d_rms_e, d_att_e, d_stok : integer := 0;
   signal d_emb_m, d_l0_m, d_l4_m, d_fin_m, d_rms_m, d_att_m : std_logic_vector(15 downto 0) := (others=>'0');
+  signal d_rxchk, d_rwchk, d_rxe, d_rwe : integer := 0;
+  signal d_rw0 : std_logic_vector(15 downto 0) := (others=>'0');
+
+  -- sum of the N int16 words of a mant vector (checksum to detect corruption).
+  function chksum(v : std_logic_vector) return integer is
+    variable s : integer := 0;
+  begin
+    for i in 0 to DIM-1 loop
+      s := s + to_integer(signed(v((i+1)*16-1 downto i*16)));
+    end loop;
+    return s;
+  end function;
 
 begin
 
@@ -543,9 +559,11 @@ begin
           when L_RMS_ATT_W =>
             if rms_done = '1' then
               state <= L_WQ_S;
-              if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out (L0)
+              if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out + INPUTS (L0)
                 d_rms_nz <= is_nz(rms_o_mant); d_rms_e <= rms_o_exp;
                 d_rms_m  <= rms_o_mant(15 downto 0);
+                d_rxchk  <= chksum(rms_x_mant); d_rwchk <= chksum(rms_w_mant);
+                d_rxe    <= rms_x_exp; d_rwe <= rms_w_exp; d_rw0 <= rms_w_mant(15 downto 0);
               end if;
             end if;
 
@@ -784,6 +802,7 @@ begin
   dbg_fin_nz <= d_fin_nz; dbg_fin_e <= d_fin_e; dbg_fin_m <= d_fin_m;
   dbg_rms_nz <= d_rms_nz; dbg_rms_e <= d_rms_e; dbg_rms_m <= d_rms_m;
   dbg_att_nz <= d_att_nz; dbg_att_e <= d_att_e; dbg_att_m <= d_att_m;
+  dbg_rxchk <= d_rxchk; dbg_rwchk <= d_rwchk; dbg_rxe <= d_rxe; dbg_rwe <= d_rwe; dbg_rw0 <= d_rw0;
   dbg_samptok <= d_stok;
 
 end architecture;
