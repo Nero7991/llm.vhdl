@@ -520,13 +520,19 @@ begin
             state   <= S_DIV_ITER;
 
           -- One restoring-division step per cycle, MSB-first: floor(|num|/den).
+          -- SHIFT-based (no variable-indexed bit read/write, which synthesised
+          -- wrong on HW): consume div_absnum's MSB each cycle and shift it out;
+          -- shift the quotient bit into div_quo's LSB.  After 96 cycles div_quo
+          -- holds the quotient with bits in the correct order.
           when S_DIV_ITER =>
-            rem_sh := div_rem(62 downto 0) & div_absnum(div_i);  -- (rem<<1)|bit
+            rem_sh := div_rem(62 downto 0) & div_absnum(95);   -- (rem<<1)|MSB
+            div_absnum <= div_absnum(94 downto 0) & '0';       -- drop consumed MSB
             if rem_sh >= div_den then
-              div_rem        <= rem_sh - div_den;
-              div_quo(div_i) <= '1';
+              div_rem <= rem_sh - div_den;
+              div_quo <= div_quo(94 downto 0) & '1';
             else
               div_rem <= rem_sh;
+              div_quo <= div_quo(94 downto 0) & '0';
             end if;
             if div_i = 0 then state <= S_DIV_FIN;
             else              div_i <= div_i - 1;
