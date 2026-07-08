@@ -144,11 +144,23 @@ architecture rtl of attention_ml is
   -- Weighted-sum fixed-point headroom (see attention.vhd).
   constant WQ : integer := 16;
 
+  -- Iterative restoring divider state (replaces the single-cycle 96-bit
+  -- combinational '/' in S_WDIV, which synthesised to ~1273 CARRY8 and was both
+  -- the u_att congestion hotspot and the engine Fmax limiter). One shift-subtract
+  -- per cycle, 96 cycles per lane; bit-exact with signed truncate-toward-zero.
+  signal div_absnum : unsigned(95 downto 0) := (others => '0');  -- |biased num|
+  signal div_quo    : unsigned(95 downto 0) := (others => '0');  -- floor(|num|/den)
+  signal div_rem    : unsigned(63 downto 0) := (others => '0');  -- running remainder (< den)
+  signal div_den    : unsigned(63 downto 0) := (others => '0');  -- sum_l (positive)
+  signal div_sign   : std_logic := '0';                         -- result sign
+  signal div_i      : integer range 0 to 95 := 0;               -- current dividend bit
+
   -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are multi-cycle sub-states
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
   type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SPACK,
-                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_PACK, S_PACK_EMIT);
+                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_DIV_ITER, S_DIV_FIN,
+                   S_PACK, S_PACK_EMIT);
   signal state : state_t := S_IDLE;
 
   component softmax is
@@ -292,6 +304,7 @@ begin
     variable vval     : integer;
     variable num96    : signed(95 downto 0);
     variable qd96     : signed(95 downto 0);
+    variable rem_sh   : unsigned(63 downto 0);   -- (div_rem << 1) | next dividend bit
     variable amax     : signed(63 downto 0);
     variable gx       : integer;
   begin
@@ -485,15 +498,47 @@ begin
             end if;
 
           -- Per-head finalise, one LANE per cycle (t_idx = lane 0..HEAD_SIZE-1):
-          -- acc[j] = round(num*2^WQ / sum) via ONE shared divider (was 8 parallel
-          -- 96-bit dividers), then advance to the next head (or pack).
+          -- acc[j] = round(num*2^WQ / sum).  The divide is iterative (S_DIV_ITER):
+          -- S_WDIV LOADS the biased dividend + sign, then 96 shift-subtract cycles,
+          -- then S_DIV_FIN writes xb_acc and advances the lane/head.
           when S_WDIV =>
             num96 := shift_left(resize(num_s(t_idx), 96), WQ);
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
             end if;
-            qd96 := num96 / resize(sum_l, 96);
-            xb_acc(hd*HEAD_SIZE + t_idx) <= resize(qd96, 64);
+            if num96 >= 0 then
+              div_sign   <= '0';
+              div_absnum <= unsigned(num96);
+            else
+              div_sign   <= '1';
+              div_absnum <= unsigned(-num96);
+            end if;
+            div_den <= unsigned(sum_l);      -- softmax sum, always > 0
+            div_rem <= (others => '0');
+            div_quo <= (others => '0');
+            div_i   <= 95;
+            state   <= S_DIV_ITER;
+
+          -- One restoring-division step per cycle, MSB-first: floor(|num|/den).
+          when S_DIV_ITER =>
+            rem_sh := div_rem(62 downto 0) & div_absnum(div_i);  -- (rem<<1)|bit
+            if rem_sh >= div_den then
+              div_rem        <= rem_sh - div_den;
+              div_quo(div_i) <= '1';
+            else
+              div_rem <= rem_sh;
+            end if;
+            if div_i = 0 then state <= S_DIV_FIN;
+            else              div_i <= div_i - 1;
+            end if;
+
+          -- Apply sign, store acc[j], advance lane -> next lane / head / pack.
+          when S_DIV_FIN =>
+            if div_sign = '1' then
+              xb_acc(hd*HEAD_SIZE + t_idx) <= -signed(resize(div_quo, 64));
+            else
+              xb_acc(hd*HEAD_SIZE + t_idx) <=  signed(resize(div_quo, 64));
+            end if;
             if t_idx = HEAD_SIZE-1 then
               t_idx <= 0;
               if hd = NHEADS-1 then
@@ -505,6 +550,7 @@ begin
               end if;
             else
               t_idx <= t_idx + 1;
+              state <= S_WDIV;               -- load next lane
             end if;
 
           -- ------------------------------------------------------------
