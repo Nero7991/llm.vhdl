@@ -562,10 +562,13 @@ begin
               if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out + INPUTS (L0)
                 d_rms_nz <= is_nz(rms_o_mant); d_rms_e <= rms_o_exp;
                 d_rms_m  <= rms_o_mant(15 downto 0);
-                -- raw x[1] / w[1] (cheap slices; adder-tree checksums made the
-                -- 93%-full design unroutable). x[0]/w[0] captured elsewhere.
-                d_rxchk  <= to_integer(signed(rms_x_mant(31 downto 16)));
-                d_rwchk  <= to_integer(signed(rms_w_mant(31 downto 16)));
+                -- FULL-VECTOR signatures (routable now at 82% LUT): d_rxchk = sum of
+                -- all 64 rms INPUT lanes, d_rwchk = sum of all 64 rms OUTPUT lanes.
+                -- If d_rxchk is stable run-to-run but d_rwchk varies -> the non-
+                -- determinism is genuinely inside rmsnorm (deterministic full input,
+                -- non-deterministic full output).  If d_rxchk varies -> upstream.
+                d_rxchk  <= chksum(rms_x_mant);
+                d_rwchk  <= chksum(rms_o_mant);
                 d_rxe    <= rms_x_exp; d_rwe <= rms_w_exp; d_rw0 <= rms_w_mant(15 downto 0);
               end if;
             end if;
