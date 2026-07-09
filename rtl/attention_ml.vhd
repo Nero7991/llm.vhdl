@@ -168,10 +168,15 @@ architecture rtl of attention_ml is
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
   type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_DOT, S_SCORE_B, S_SPACK,
-                   S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_DIV_ITER, S_DIV_FIN,
+                   S_SMWAIT, S_WSUM, S_WACC, S_WACC_L, S_WDIV, S_DIV_ITER, S_DIV_FIN,
                    S_PACK, S_PACK_EMIT);
   signal state : state_t := S_IDLE;
   signal dj    : integer range 0 to HEAD_SIZE := 0;   -- pipelined dot lane counter
+  signal wj    : integer range 0 to HEAD_SIZE := 0;   -- pipelined weighted-sum lane counter
+  signal v_word_r : std_logic_vector(KVW-1 downto 0) := (others=>'0');  -- latched V word
+  signal ei_r  : integer := 0;   -- latched exp weight for the current position
+  signal sh_r  : integer := 0;   -- latched V-exp shift for the current position
+  signal kvh_r : integer := 0;   -- latched kv head
 
   component softmax is
     generic(NMAX : positive; Q : integer := 12);
@@ -516,26 +521,41 @@ begin
           when S_WACC =>
             kv_h := hd / KV_MUL;
             if t_idx >= 1 then
-              p    := t_idx - 1;
-              ei   := to_integer(signed(e_l((p+1)*32-1 downto p*32)));
-              sh   := to_integer(signed(vc_e_do)) - vref_s;   -- >= 0 by construction
-              for j in 0 to HEAD_SIZE-1 loop
-                vval := to_integer(signed(
-                  vc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)));
-                term := to_signed(ei, 32) * to_signed(vval, 32);
-                if sh > 0 then
-                  bias64 := shift_left(to_signed(1, 64), sh - 1);
-                  term   := shift_right(term + bias64, sh);
-                end if;
-                num_s(j) <= num_s(j) + term;
-                -- (V-cache value tap removed; taps now on ke_head/kc_e_do/score.)
-              end loop;
-            end if;
-            if t_idx = cp + 1 then
-              t_idx <= 0;               -- prime the per-lane S_WDIV counter
-              state <= S_WDIV;
+              -- Latch this position's ei / V word / shift, then accumulate the
+              -- HEAD_SIZE lanes ONE multiply per cycle in S_WACC_L (the 8 combinational
+              -- ei*vval multiplies were a cascaded-DSP cone -> non-deterministic HW
+              -- attention output).  t_idx frozen so vc_v_do stays valid.
+              p      := t_idx - 1;
+              ei_r   <= to_integer(signed(e_l((p+1)*32-1 downto p*32)));
+              sh_r   <= to_integer(signed(vc_e_do)) - vref_s;
+              v_word_r <= vc_v_do;
+              kvh_r  <= kv_h;
+              wj     <= 0;
+              state  <= S_WACC_L;
             else
-              t_idx <= t_idx + 1;
+              t_idx <= t_idx + 1;   -- prime read-ahead (t_idx=0 -> 1)
+            end if;
+
+          -- One weighted-sum lane per cycle: num_s(wj) += (ei*V[wj]) >> sh.
+          when S_WACC_L =>
+            vval := to_integer(signed(
+              v_word_r(((kvh_r*HEAD_SIZE+wj)+1)*16-1 downto (kvh_r*HEAD_SIZE+wj)*16)));
+            term := to_signed(ei_r, 32) * to_signed(vval, 32);
+            if sh_r > 0 then
+              bias64 := shift_left(to_signed(1, 64), sh_r - 1);
+              term   := shift_right(term + bias64, sh_r);
+            end if;
+            num_s(wj) <= num_s(wj) + term;
+            if wj = HEAD_SIZE-1 then
+              if t_idx = cp + 1 then
+                t_idx <= 0;               -- prime the per-lane S_WDIV counter
+                state <= S_WDIV;
+              else
+                t_idx <= t_idx + 1;
+                state <= S_WACC;
+              end if;
+            else
+              wj <= wj + 1;
             end if;
 
           -- Per-head finalise, one LANE per cycle (t_idx = lane 0..HEAD_SIZE-1):
