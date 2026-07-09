@@ -464,6 +464,8 @@ begin
           -- shift g -> score_mant; on the last, kick softmax (exp = qe_head+g).
           when S_SPACK =>
             g := bfp_g(smax_s);
+            -- DEBUG: raw score for pos 0 (head0), the softmax input -> dsc_r.
+            if hd = 0 and t_idx = 0 then dsc_r <= to_integer(resize(sfx_s(0), 32)); end if;
             sm_score_mant((t_idx+1)*16-1 downto t_idx*16) <=
               std_logic_vector(to_signed(pack1(sfx_s(t_idx), g), 16));
             if t_idx = cp then
@@ -511,9 +513,9 @@ begin
                   term   := shift_right(term + bias64, sh);
                 end if;
                 num_s(j) <= num_s(j) + term;
-                -- DEBUG: head0 lane0 position0 inputs (ei = exp weight, vval = V read)
+                -- DEBUG: head0 lane0 pos0 V-cache value (vval); dsc_r now = the raw
+                -- score for pos 0 (softmax input, see S_SPACK) to split score vs softmax.
                 if hd = 0 and t_idx = 1 and j = 0 then
-                  dsc_r  <= ei;    -- exp weight for pos 0
                   dsum_r <= vval;  -- V-cache value (head0 lane0 pos0)
                 end if;
               end loop;
