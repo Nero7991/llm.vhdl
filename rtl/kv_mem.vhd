@@ -10,17 +10,17 @@ end;
 architecture rtl of kv_mem is
   type ram_t is array(0 to WORDS-1) of std_logic_vector(W-1 downto 0);
   signal ram : ram_t := (others=>(others=>'0'));
-  -- Force BLOCK RAM: the narrow exp caches (u_kc_e/u_vc_e) otherwise infer as
-  -- DISTRIBUTED RAM, which ignores the zero-init -> uninitialised reads are
-  -- non-deterministic on HW (attention output varied run-to-run while the KV
-  -- INPUT was deterministic).  Block RAM honours the init (reads-before-write = 0).
-  attribute ram_style : string;
-  attribute ram_style of ram : signal is "block";
+  -- NOTE: NOT block RAM.  Forcing block RAM introduced a read/write COLLISION on
+  -- HW -- a read of a fixed slot returned different data at different times (V[0]
+  -- varied run-to-run across token positions), corrupting attention from pos ~3 on.
+  -- Distributed RAM reads the OLD value on a same-address R/W (deterministic), and
+  -- the non-determinism block RAM was meant to fix was actually cured by the
+  -- softmax-exp pipeline.  Explicit READ_FIRST semantics below make it unambiguous.
 begin
   process(clk) begin
     if rising_edge(clk) then
+      dout <= ram(to_integer(unsigned(raddr)));   -- read BEFORE write (READ_FIRST)
       if we='1' then ram(to_integer(unsigned(waddr))) <= din; end if;
-      dout <= ram(to_integer(unsigned(raddr)));
     end if;
   end process;
 end;
