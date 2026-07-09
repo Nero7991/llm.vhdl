@@ -158,7 +158,7 @@ architecture rtl of attention_ml is
   -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are multi-cycle sub-states
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
-  type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SPACK,
+  type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SCORE_B, S_SPACK,
                    S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_DIV_ITER, S_DIV_FIN,
                    S_PACK, S_PACK_EMIT);
   signal state : state_t := S_IDLE;
@@ -405,36 +405,46 @@ begin
                 if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
                 else                khead(j) := khead(j) / (2**(-kextra)); end if;
               end loop;
-              -- integer dot Q.K (int64) using the persisted re-BFP'd q head
+              -- integer dot Q.K (int64) using the persisted re-BFP'd q head.
+              -- Registered here; the dot*INV_SQRT8 scaling is done in S_SCORE_B so
+              -- the two multiply LEVELS (q*k then dot*scale) are NOT a cascaded-DSP
+              -- combinational cone (the timing tool under-counts those -> wrong/
+              -- non-deterministic on HW; same fix as rmsnorm's rsqrt/S_RAW).
               dot := (others => '0');
               for j in 0 to HEAD_SIZE-1 loop
                 pr  := to_signed(qhead_s(j), 32) * to_signed(khead(j), 32);
                 dot := dot + pr;
               end loop;
-              -- score_fixed = round( dot * 11585 * 2^-ke_head / 2^15 )
-              prod := dot * to_signed(INV_SQRT8_Q15, 32);
-              tsh  := 15 + ke_head;
-              if tsh > 0 then
-                bias96 := shift_left(to_signed(1, 96), tsh - 1);
-                sc64   := resize(shift_right(prod + bias96, tsh), 64);
-              elsif tsh = 0 then
-                sc64   := resize(prod, 64);
-              else
-                sc64   := resize(shift_left(prod, -tsh), 64);
-              end if;
-              sfx_s(p) <= sc64;
-              -- running max|sfx| (feeds the common BFP shift g)
-              if sc64 >= 0 then
-                if sc64 > smax_s then smax_s <= sc64; end if;
-              else
-                if -sc64 > smax_s then smax_s <= -sc64; end if;
-              end if;
+              state <= S_SCORE_B;            -- ke_head, dot, p persist
+            else
+              if t_idx = cp + 1 then t_idx <= 0; state <= S_SPACK;
+              else t_idx <= t_idx + 1; end if;
+            end if;
+
+          -- Scale + BFP-pack the score for position p (2nd multiply level).
+          when S_SCORE_B =>
+            prod := dot * to_signed(INV_SQRT8_Q15, 32);
+            tsh  := 15 + ke_head;
+            if tsh > 0 then
+              bias96 := shift_left(to_signed(1, 96), tsh - 1);
+              sc64   := resize(shift_right(prod + bias96, tsh), 64);
+            elsif tsh = 0 then
+              sc64   := resize(prod, 64);
+            else
+              sc64   := resize(shift_left(prod, -tsh), 64);
+            end if;
+            sfx_s(p) <= sc64;
+            if sc64 >= 0 then
+              if sc64 > smax_s then smax_s <= sc64; end if;
+            else
+              if -sc64 > smax_s then smax_s <= -sc64; end if;
             end if;
             if t_idx = cp + 1 then
               t_idx <= 0;
               state <= S_SPACK;
             else
               t_idx <= t_idx + 1;
+              state <= S_SCORE;
             end if;
 
           -- (c) one position per cycle: BFP-pack sfx_s(t) with the now-final
