@@ -511,6 +511,7 @@ begin
       res_start   <= '0';
       hbp_start   <= '0';
       token_valid <= '0';
+      run_done    <= '0';   -- one-cycle pulse (E_FIN); was held high -> broke re-run
 
       if rst = '1' then
         state     <= E_IDLE;
@@ -800,8 +801,8 @@ begin
             end if;
 
           when E_FIN =>
-            run_done <= '1';
-            state    <= E_FIN;
+            run_done <= '1';     -- one-cycle pulse; then wait idle for a fresh START
+            state    <= E_IDLE;  -- clean re-run: next START re-triggers from E_IDLE
 
         end case;
       end if;
