@@ -531,6 +531,11 @@ begin
           -- acc[j] = round(num*2^WQ / sum).  The divide is iterative (S_DIV_ITER):
           -- S_WDIV LOADS the biased dividend + sign, then 96 shift-subtract cycles,
           -- then S_DIV_FIN writes xb_acc and advances the lane/head.
+          -- Per-head finalise, one LANE per cycle: acc[j] = round(num*2^WQ / sum).
+          -- COMBINATIONAL divide (VHDL '/', a standard signed-divide macro that
+          -- synthesises deterministically + bit-exact).  The iterative shift-divider
+          -- was deterministic but WRONG on HW (score/sum/num_s all matched sim, only
+          -- the divide output diverged); '/' at 3 MHz meets timing with huge margin.
           when S_WDIV =>
             -- DEBUG: num_s checksum (settled here; low bits; last head/lane wins)
             dbg_acc := 0;
@@ -542,45 +547,8 @@ begin
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
             end if;
-            if num96 >= 0 then
-              div_sign   <= '0';
-              div_absnum <= unsigned(num96);
-            else
-              div_sign   <= '1';
-              div_absnum <= unsigned(-num96);
-            end if;
-            div_den <= unsigned(sum_l);      -- softmax sum, always > 0
-            div_rem <= (others => '0');
-            div_quo <= (others => '0');
-            div_i   <= 95;
-            state   <= S_DIV_ITER;
-
-          -- One restoring-division step per cycle, MSB-first: floor(|num|/den).
-          -- SHIFT-based (no variable-indexed bit read/write, which synthesised
-          -- wrong on HW): consume div_absnum's MSB each cycle and shift it out;
-          -- shift the quotient bit into div_quo's LSB.  After 96 cycles div_quo
-          -- holds the quotient with bits in the correct order.
-          when S_DIV_ITER =>
-            rem_sh := div_rem(62 downto 0) & div_absnum(95);   -- (rem<<1)|MSB
-            div_absnum <= div_absnum(94 downto 0) & '0';       -- drop consumed MSB
-            if rem_sh >= div_den then
-              div_rem <= rem_sh - div_den;
-              div_quo <= div_quo(94 downto 0) & '1';
-            else
-              div_rem <= rem_sh;
-              div_quo <= div_quo(94 downto 0) & '0';
-            end if;
-            if div_i = 0 then state <= S_DIV_FIN;
-            else              div_i <= div_i - 1;
-            end if;
-
-          -- Apply sign, store acc[j], advance lane -> next lane / head / pack.
-          when S_DIV_FIN =>
-            if div_sign = '1' then
-              xb_acc(hd*HEAD_SIZE + t_idx) <= -signed(resize(div_quo, 64));
-            else
-              xb_acc(hd*HEAD_SIZE + t_idx) <=  signed(resize(div_quo, 64));
-            end if;
+            qd96 := num96 / resize(sum_l, 96);
+            xb_acc(hd*HEAD_SIZE + t_idx) <= resize(qd96, 64);
             if t_idx = HEAD_SIZE-1 then
               t_idx <= 0;
               if hd = NHEADS-1 then
@@ -591,9 +559,12 @@ begin
                 state <= S_HEAD;
               end if;
             else
-              t_idx <= t_idx + 1;
-              state <= S_WDIV;               -- load next lane
+              t_idx <= t_idx + 1;            -- next lane, stay in S_WDIV
             end if;
+
+          -- (iterative-divider states retained in the enum but never entered)
+          when S_DIV_ITER => state <= S_PACK;
+          when S_DIV_FIN  => state <= S_PACK;
 
           -- ------------------------------------------------------------
           -- BFP-pack acc vector (value = acc*2^-(Q+vref)) -> xb_mant/xb_exp.
