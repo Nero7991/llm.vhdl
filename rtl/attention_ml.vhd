@@ -547,8 +547,11 @@ begin
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
             end if;
-            qd96 := num96 / resize(sum_l, 96);
-            xb_acc(hd*HEAD_SIZE + t_idx) <= resize(qd96, 64);
+            -- 64-bit divide (num96 < 2^48 always: num_s <= sum_l*2^15 <= ~3.2e9,
+            -- <<WQ=16 -> ~2^48).  Bit-exact with the 96-bit divide but ~1/3 the
+            -- CARRY -> cuts the u_att routing congestion the wide divide caused.
+            xb_acc(hd*HEAD_SIZE + t_idx) <=
+              resize(resize(num96, 64) / resize(sum_l, 64), 64);
             if t_idx = HEAD_SIZE-1 then
               t_idx <= 0;
               if hd = NHEADS-1 then
