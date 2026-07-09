@@ -637,7 +637,9 @@ begin
               if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention output xb (L0)
                 d_att_nz <= is_nz(att_xb_mant); d_att_e <= att_xb_exp;
                 d_att_m  <= att_xb_mant(15 downto 0);
-                d_att_sc <= att_dbg_sc; d_att_sum <= att_dbg_sum; d_att_num <= att_dbg_num;
+                -- d_att_sc = FULL attention-output checksum (all 64 elems) -> is the
+                -- WHOLE attention output right, or just element 0 that we tap?
+                d_att_sc <= chksum(att_xb_mant); d_att_sum <= att_dbg_sum; d_att_num <= att_dbg_num;
               end if;
             end if;
 
