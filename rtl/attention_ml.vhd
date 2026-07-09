@@ -60,7 +60,11 @@ entity attention_ml is
     done       : out std_logic;
     -- attention output xb (BFP: xb[i] = xb_mant[i]*2^-xb_exp)
     xb_mant    : out std_logic_vector(DIM*16-1 downto 0);
-    xb_exp     : out integer
+    xb_exp     : out integer;
+    -- DEBUG taps (last-head values, for HW non-determinism localisation):
+    dbg_sc     : out integer;   -- sum of packed scores (softmax input)
+    dbg_sum    : out integer;   -- softmax sum_l (divider denominator)
+    dbg_num    : out integer    -- sum of num_s lanes (weighted sum, divider numerator)
   );
 end entity attention_ml;
 
@@ -155,6 +159,11 @@ architecture rtl of attention_ml is
   signal div_sign   : std_logic := '0';                         -- result sign
   signal div_i      : integer range 0 to 95 := 0;               -- current dividend bit
 
+  -- DEBUG tap registers (last-head values); drive dbg_sc/dbg_sum/dbg_num ports.
+  signal dsc_r  : integer := 0;
+  signal dsum_r : integer := 0;
+  signal dnum_r : integer := 0;
+
   -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are multi-cycle sub-states
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
@@ -237,6 +246,9 @@ begin
   -- are combinational off the ports so the S_IDLE write commits while the
   -- current-position K/V/exp inputs are still valid (start='1').
   fetch_pos <= t_idx when t_idx <= MAXPOS-1 else MAXPOS-1;
+  dbg_sc  <= dsc_r;
+  dbg_sum <= dsum_r;
+  dbg_num <= dnum_r;
   kv_raddr  <= std_logic_vector(to_unsigned(lyr*MAXPOS + fetch_pos, KVADDR_W));
   kv_waddr  <= std_logic_vector(to_unsigned(layer*MAXPOS + cur_pos, KVADDR_W));
   kv_we     <= '1' when (state = S_IDLE and start = '1') else '0';
@@ -305,6 +317,7 @@ begin
     variable num96    : signed(95 downto 0);
     variable qd96     : signed(95 downto 0);
     variable rem_sh   : unsigned(63 downto 0);   -- (div_rem << 1) | next dividend bit
+    variable dbg_acc  : integer;                  -- debug checksum accumulator
     variable amax     : signed(63 downto 0);
     variable gx       : integer;
   begin
@@ -467,6 +480,13 @@ begin
             if sm_done = '1' then
               e_l    <= sm_e_out;
               sum_l  <= signed(sm_sum_out);
+              -- DEBUG: softmax sum + score checksum (low bits; last head)
+              dsum_r <= to_integer(signed(sm_sum_out(31 downto 0)));
+              dbg_acc := 0;
+              for i in 0 to MAXPOS-1 loop
+                dbg_acc := dbg_acc + to_integer(signed(sm_score_mant((i+1)*16-1 downto i*16)));
+              end loop;
+              dsc_r  <= dbg_acc;
               state  <= S_WSUM;
             end if;
 
@@ -512,6 +532,12 @@ begin
           -- S_WDIV LOADS the biased dividend + sign, then 96 shift-subtract cycles,
           -- then S_DIV_FIN writes xb_acc and advances the lane/head.
           when S_WDIV =>
+            -- DEBUG: num_s checksum (settled here; low bits; last head/lane wins)
+            dbg_acc := 0;
+            for j in 0 to HEAD_SIZE-1 loop
+              dbg_acc := dbg_acc + to_integer(signed(num_s(j)(15 downto 0)));
+            end loop;
+            dnum_r <= dbg_acc;
             num96 := shift_left(resize(num_s(t_idx), 96), WQ);
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);

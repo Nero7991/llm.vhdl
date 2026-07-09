@@ -84,7 +84,9 @@ entity engine_shared is
     -- of x and w, plus their exps -- to see if x/weights are corrupt on HW.
     dbg_rxchk   : out integer; dbg_rwchk : out integer;
     dbg_rxe     : out integer; dbg_rwe   : out integer; dbg_rw0 : out std_logic_vector(15 downto 0);
-    dbg_samptok : out integer
+    dbg_samptok : out integer;
+    -- attention-internal taps (localise the attention non-determinism)
+    dbg_att_sc  : out integer; dbg_att_sum : out integer; dbg_att_num : out integer
   );
 end entity;
 
@@ -222,6 +224,12 @@ architecture rtl of engine_shared is
   signal att_v_new_exp : integer := 0;
   signal att_xb_mant   : std_logic_vector(DIM*16-1 downto 0);
   signal att_xb_exp    : integer;
+  signal att_dbg_sc    : integer;   -- attention score/sum/num taps (HW debug)
+  signal att_dbg_sum   : integer;
+  signal att_dbg_num   : integer;
+  signal d_att_sc      : integer := 0;
+  signal d_att_sum     : integer := 0;
+  signal d_att_num     : integer := 0;
 
   -- ---- shared swiglu ----------------------------------------------------
   signal sw_start   : std_logic := '0';
@@ -368,7 +376,8 @@ begin
              q_mant => att_q_mant, q_exp => att_q_exp,
              k_new_mant => att_k_new_mant, k_new_exp => att_k_new_exp,
              v_new_mant => att_v_new_mant, v_new_exp => att_v_new_exp,
-             done => att_done, xb_mant => att_xb_mant, xb_exp => att_xb_exp);
+             done => att_done, xb_mant => att_xb_mant, xb_exp => att_xb_exp,
+             dbg_sc => att_dbg_sc, dbg_sum => att_dbg_sum, dbg_num => att_dbg_num);
 
   u_sw: entity work.swiglu
     generic map(N => HIDDEN, Q => 12)
@@ -630,6 +639,7 @@ begin
               if p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention output xb (L0)
                 d_att_nz <= is_nz(att_xb_mant); d_att_e <= att_xb_exp;
                 d_att_m  <= att_xb_mant(15 downto 0);
+                d_att_sc <= att_dbg_sc; d_att_sum <= att_dbg_sum; d_att_num <= att_dbg_num;
               end if;
             end if;
 
@@ -810,5 +820,6 @@ begin
   dbg_att_nz <= d_att_nz; dbg_att_e <= d_att_e; dbg_att_m <= d_att_m;
   dbg_rxchk <= d_rxchk; dbg_rwchk <= d_rwchk; dbg_rxe <= d_rxe; dbg_rwe <= d_rwe; dbg_rw0 <= d_rw0;
   dbg_samptok <= d_stok;
+  dbg_att_sc <= d_att_sc; dbg_att_sum <= d_att_sum; dbg_att_num <= d_att_num;
 
 end architecture;

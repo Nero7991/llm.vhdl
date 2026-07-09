@@ -77,6 +77,7 @@ architecture rtl of llama_engine_axi is
   signal dbg_pos_reg : integer := -1;
   signal e_emb_nz, e_l0_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
   signal e_emb_e, e_l0_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
+  signal e_att_sc, e_att_sum, e_att_num : integer;   -- attention-internal taps
   signal e_emb_m, e_l0_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
   signal e_rxchk, e_rwchk, e_rxe, e_rwe : integer;
   signal e_rw0 : std_logic_vector(15 downto 0);
@@ -112,7 +113,8 @@ begin
              dbg_rms_nz => e_rms_nz, dbg_rms_e => e_rms_e, dbg_rms_m => e_rms_m,
              dbg_att_nz => e_att_nz, dbg_att_e => e_att_e, dbg_att_m => e_att_m,
              dbg_rxchk => e_rxchk, dbg_rwchk => e_rwchk, dbg_rxe => e_rxe, dbg_rwe => e_rwe, dbg_rw0 => e_rw0,
-             dbg_samptok => e_stok);
+             dbg_samptok => e_stok,
+             dbg_att_sc => e_att_sc, dbg_att_sum => e_att_sum, dbg_att_num => e_att_num);
 
   -- AXI write channel + CTRL decode.
   process(s_axi_aclk)
@@ -209,6 +211,9 @@ begin
               when 57 => rdata_r <= std_logic_vector(to_signed(e_rxe, 32));     -- L0 rms x_exp
               when 58 => rdata_r <= std_logic_vector(to_signed(e_rwe, 32));     -- L0 rms w_exp
               when 59 => rdata_r <= (31 downto 16 => '0') & e_rw0;              -- L0 rms weight[0]
+              when 60 => rdata_r <= std_logic_vector(to_signed(e_att_sc, 32));  -- 0xF0 L0 att score chksum
+              when 61 => rdata_r <= std_logic_vector(to_signed(e_att_sum, 32)); -- 0xF4 L0 att softmax sum
+              when 62 => rdata_r <= std_logic_vector(to_signed(e_att_num, 32)); -- 0xF8 L0 att num_s chksum
               when others => rdata_r <= (others=>'0');
             end case;
           end if;
