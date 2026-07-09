@@ -414,6 +414,11 @@ begin
               end loop;
               if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
               ke_head := to_integer(signed(kc_e_do)) + kextra;
+              -- DEBUG (head0, pos0): ke_head (score shift) + raw K-exp cache read.
+              if hd = 0 and t_idx = 1 then
+                dsc_r  <= ke_head;
+                dsum_r <= to_integer(signed(kc_e_do));
+              end if;
               for j in 0 to HEAD_SIZE-1 loop
                 if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
                 else                khead(j) := khead(j) / (2**(-kextra)); end if;
@@ -464,8 +469,8 @@ begin
           -- shift g -> score_mant; on the last, kick softmax (exp = qe_head+g).
           when S_SPACK =>
             g := bfp_g(smax_s);
-            -- DEBUG: raw score for pos 0 (head0), the softmax input -> dsc_r.
-            if hd = 0 and t_idx = 0 then dsc_r <= to_integer(resize(sfx_s(0), 32)); end if;
+            -- DEBUG: raw score for pos 0 (head0), the softmax input -> dnum_r.
+            if hd = 0 and t_idx = 0 then dnum_r <= to_integer(resize(sfx_s(0), 32)); end if;
             sm_score_mant((t_idx+1)*16-1 downto t_idx*16) <=
               std_logic_vector(to_signed(pack1(sfx_s(t_idx), g), 16));
             if t_idx = cp then
@@ -513,11 +518,7 @@ begin
                   term   := shift_right(term + bias64, sh);
                 end if;
                 num_s(j) <= num_s(j) + term;
-                -- DEBUG: head0 lane0 pos0 V-cache value (vval); dsc_r now = the raw
-                -- score for pos 0 (softmax input, see S_SPACK) to split score vs softmax.
-                if hd = 0 and t_idx = 1 and j = 0 then
-                  dsum_r <= vval;  -- V-cache value (head0 lane0 pos0)
-                end if;
+                -- (V-cache value tap removed; taps now on ke_head/kc_e_do/score.)
               end loop;
             end if;
             if t_idx = cp + 1 then
@@ -539,7 +540,7 @@ begin
           when S_WDIV =>
             -- DEBUG: expose num_s(0) directly (head 0 lane 0 = attOut element 0's
             -- numerator) to localize the deterministic error per-lane.
-            if hd = 0 then dnum_r <= to_integer(resize(num_s(0), 32)); end if;
+            -- (num_s tap removed; dnum_r now carries the raw score from S_SPACK.)
             num96 := shift_left(resize(num_s(t_idx), 96), WQ);
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
