@@ -58,7 +58,9 @@ architecture rtl of rmsnorm is
   type state_t is (S_IDLE, S_ACC, S_INV,
                    S_RQ_SEED, S_RQ_I1M1, S_RQ_I1M2, S_RQ_I1M3,
                    S_RQ_I2M1, S_RQ_I2M2, S_RQ_I2M3, S_RQ_FOLD, S_RQ_FIN,
-                   S_RAW, S_SHIFT, S_EMIT);
+                   -- S_RAW/S_EMIT split so xm*inv and (xm*inv)*wm are NOT a
+                   -- cascaded-DSP combinational cone (same fix as rsqrt).
+                   S_RAW, S_RAW_B, S_SHIFT, S_EMIT, S_EMIT_B);
 begin
   process(clk)
     -- Control
@@ -243,9 +245,10 @@ begin
             wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
             xm_ext := resize(xm_j, 64);
             wm_ext := resize(wm_j, 64);
-            xm_inv := resize(xm_ext * inv_ext, 64);
-            raw_j  := resize(xm_inv * wm_ext, 64);
-            -- Absolute value for magnitude tracking
+            xm_inv := resize(xm_ext * inv_ext, 64);   -- multiply 1 (registered)
+            state  := S_RAW_B;
+          when S_RAW_B =>
+            raw_j  := resize(xm_inv * wm_ext, 64);     -- multiply 2 (wm_ext from S_RAW)
             if raw_j < 0 then abs_raw_j := -raw_j;
             else               abs_raw_j :=  raw_j;
             end if;
@@ -254,7 +257,8 @@ begin
               idx   := 0;
               state := S_SHIFT;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_RAW;
             end if;
 
           -- ----------------------------------------------------------------
@@ -279,10 +283,13 @@ begin
           when S_EMIT =>
             -- Re-compute raw[idx] (identical to S_RAW) instead of reading a stored
             -- array -- avoids the LUTRAM the array inferred to under congestion.
+            -- Split multiply 1 / multiply 2 (registered) -- no cascaded DSP cone.
             xm_j   := signed(x_mant((idx+1)*16-1 downto idx*16));
             wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
-            xm_inv := resize(resize(xm_j, 64) * inv_ext, 64);
-            raw_j  := resize(xm_inv * resize(wm_j, 64), 64);
+            xm_inv := resize(resize(xm_j, 64) * inv_ext, 64);   -- multiply 1 (registered)
+            state  := S_EMIT_B;
+          when S_EMIT_B =>
+            raw_j  := resize(xm_inv * resize(wm_j, 64), 64);     -- multiply 2 (wm_j from S_EMIT)
             om_32  := scale_mul(raw_j, to_signed(1, 32), shift_total);
             -- Saturate to int16 range (should not trigger if shift_total chosen correctly)
             if    om_32 > 32767  then
@@ -297,7 +304,8 @@ begin
               done  <= '1';
               state := S_IDLE;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_EMIT;
             end if;
 
         end case;
