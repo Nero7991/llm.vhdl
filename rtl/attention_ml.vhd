@@ -167,10 +167,11 @@ architecture rtl of attention_ml is
   -- FSM: the position loops of S_SETUP/S_HEAD/S_WSUM are multi-cycle sub-states
   -- iterating one position per clock (S_VREF, S_SCORE, S_SPACK, S_WACC), each
   -- with a 1-cycle BRAM read-ahead bubble (consume position t_idx-1).
-  type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_SCORE_B, S_SPACK,
+  type state_t is (S_IDLE, S_SETUP, S_VREF, S_HEAD, S_SCORE, S_DOT, S_SCORE_B, S_SPACK,
                    S_SMWAIT, S_WSUM, S_WACC, S_WDIV, S_DIV_ITER, S_DIV_FIN,
                    S_PACK, S_PACK_EMIT);
   signal state : state_t := S_IDLE;
+  signal dj    : integer range 0 to HEAD_SIZE := 0;   -- pipelined dot lane counter
 
   component softmax is
     generic(NMAX : positive; Q : integer := 12);
@@ -428,15 +429,24 @@ begin
               -- the two multiply LEVELS (q*k then dot*scale) are NOT a cascaded-DSP
               -- combinational cone (the timing tool under-counts those -> wrong/
               -- non-deterministic on HW; same fix as rmsnorm's rsqrt/S_RAW).
+              -- PIPELINED dot: one q*k multiply per cycle in S_DOT (the 8 combinational
+              -- multiplies summed here were a cascaded-DSP cone -> non-deterministic
+              -- score/attention output on HW).  khead/qhead_s/dot persist to S_DOT.
               dot := (others => '0');
-              for j in 0 to HEAD_SIZE-1 loop
-                pr  := to_signed(qhead_s(j), 32) * to_signed(khead(j), 32);
-                dot := dot + pr;
-              end loop;
-              state <= S_SCORE_B;            -- ke_head, dot, p persist
+              dj  <= 0;
+              state <= S_DOT;
             else
               if t_idx = cp + 1 then t_idx <= 0; state <= S_SPACK;
               else t_idx <= t_idx + 1; end if;
+            end if;
+
+          -- One q*k multiply-accumulate per cycle (dj = 0..HEAD_SIZE-1).
+          when S_DOT =>
+            dot := dot + resize(to_signed(qhead_s(dj), 32) * to_signed(khead(dj), 32), 64);
+            if dj = HEAD_SIZE-1 then
+              state <= S_SCORE_B;           -- ke_head, dot, p persist
+            else
+              dj <= dj + 1;
             end if;
 
           -- Scale + BFP-pack the score for position p (2nd multiply level).
