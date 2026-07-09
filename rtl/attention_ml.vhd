@@ -480,13 +480,10 @@ begin
             if sm_done = '1' then
               e_l    <= sm_e_out;
               sum_l  <= signed(sm_sum_out);
-              -- DEBUG: softmax sum + score checksum (low bits; last head)
+              -- DEBUG: softmax sum_l (denominator); dsc_r/dnum_r now expose lane-0
+              -- num_s / xb_acc directly (see S_WDIV / S_PACK) to localize the
+              -- deterministic attOut value error (checksum masked per-lane).
               dsum_r <= to_integer(signed(sm_sum_out(31 downto 0)));
-              dbg_acc := 0;
-              for i in 0 to MAXPOS-1 loop
-                dbg_acc := dbg_acc + to_integer(signed(sm_score_mant((i+1)*16-1 downto i*16)));
-              end loop;
-              dsc_r  <= dbg_acc;
               state  <= S_WSUM;
             end if;
 
@@ -537,12 +534,9 @@ begin
           -- was deterministic but WRONG on HW (score/sum/num_s all matched sim, only
           -- the divide output diverged); '/' at 3 MHz meets timing with huge margin.
           when S_WDIV =>
-            -- DEBUG: num_s checksum (settled here; low bits; last head/lane wins)
-            dbg_acc := 0;
-            for j in 0 to HEAD_SIZE-1 loop
-              dbg_acc := dbg_acc + to_integer(signed(num_s(j)(15 downto 0)));
-            end loop;
-            dnum_r <= dbg_acc;
+            -- DEBUG: expose num_s(0) directly (head 0 lane 0 = attOut element 0's
+            -- numerator) to localize the deterministic error per-lane.
+            if hd = 0 then dnum_r <= to_integer(resize(num_s(0), 32)); end if;
             num96 := shift_left(resize(num_s(t_idx), 96), WQ);
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
@@ -573,6 +567,8 @@ begin
           -- BFP-pack acc vector (value = acc*2^-(Q+vref)) -> xb_mant/xb_exp.
           -- Max-abs scan: ONE element per cycle (t_idx = 0..DIM-1).
           when S_PACK =>
+            -- DEBUG: expose xb_acc(0) (element-0 divide output, pre-pack) -> dsc_r.
+            if t_idx = 0 then dsc_r <= to_integer(resize(xb_acc(0), 32)); end if;
             if xb_acc(t_idx) >= 0 then
               if xb_acc(t_idx) > amax_s then amax_s <= xb_acc(t_idx); end if;
             else
