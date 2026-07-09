@@ -480,10 +480,6 @@ begin
             if sm_done = '1' then
               e_l    <= sm_e_out;
               sum_l  <= signed(sm_sum_out);
-              -- DEBUG: softmax sum_l (denominator); dsc_r/dnum_r now expose lane-0
-              -- num_s / xb_acc directly (see S_WDIV / S_PACK) to localize the
-              -- deterministic attOut value error (checksum masked per-lane).
-              dsum_r <= to_integer(signed(sm_sum_out(31 downto 0)));
               state  <= S_WSUM;
             end if;
 
@@ -515,6 +511,11 @@ begin
                   term   := shift_right(term + bias64, sh);
                 end if;
                 num_s(j) <= num_s(j) + term;
+                -- DEBUG: head0 lane0 position0 inputs (ei = exp weight, vval = V read)
+                if hd = 0 and t_idx = 1 and j = 0 then
+                  dsc_r  <= ei;    -- exp weight for pos 0
+                  dsum_r <= vval;  -- V-cache value (head0 lane0 pos0)
+                end if;
               end loop;
             end if;
             if t_idx = cp + 1 then
@@ -567,8 +568,6 @@ begin
           -- BFP-pack acc vector (value = acc*2^-(Q+vref)) -> xb_mant/xb_exp.
           -- Max-abs scan: ONE element per cycle (t_idx = 0..DIM-1).
           when S_PACK =>
-            -- DEBUG: expose xb_acc(0) (element-0 divide output, pre-pack) -> dsc_r.
-            if t_idx = 0 then dsc_r <= to_integer(resize(xb_acc(0), 32)); end if;
             if xb_acc(t_idx) >= 0 then
               if xb_acc(t_idx) > amax_s then amax_s <= xb_acc(t_idx); end if;
             else
