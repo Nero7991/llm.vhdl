@@ -420,11 +420,7 @@ begin
               end loop;
               if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
               ke_head := to_integer(signed(kc_e_do)) + kextra;
-              -- DEBUG (head0, pos0): ke_head (score shift) + raw K-exp cache read.
-              if hd = 0 and t_idx = 1 then
-                dsc_r  <= ke_head;
-                dsum_r <= to_integer(signed(kc_e_do));
-              end if;
+              -- (dsc_r/dsum_r now carry att-output chksum / sum_l; see engine_shared + S_SMWAIT.)
               for j in 0 to HEAD_SIZE-1 loop
                 if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
                 else                khead(j) := khead(j) / (2**(-kextra)); end if;
@@ -485,7 +481,6 @@ begin
           when S_SPACK =>
             g := bfp_g(smax_s);
             -- DEBUG: raw score for pos 0 (head0), the softmax input -> dnum_r.
-            if hd = 0 and t_idx = 0 then dnum_r <= to_integer(resize(sfx_s(0), 32)); end if;
             sm_score_mant((t_idx+1)*16-1 downto t_idx*16) <=
               std_logic_vector(to_signed(pack1(sfx_s(t_idx), g), 16));
             if t_idx = cp then
@@ -502,6 +497,7 @@ begin
             if sm_done = '1' then
               e_l    <= sm_e_out;
               sum_l  <= signed(sm_sum_out);
+              if hd = 0 then dsum_r <= to_integer(signed(sm_sum_out(31 downto 0))); end if; -- softmax sum
               state  <= S_WSUM;
             end if;
 
@@ -568,9 +564,10 @@ begin
           -- was deterministic but WRONG on HW (score/sum/num_s all matched sim, only
           -- the divide output diverged); '/' at 3 MHz meets timing with huge margin.
           when S_WDIV =>
-            -- DEBUG: expose num_s(0) directly (head 0 lane 0 = attOut element 0's
-            -- numerator) to localize the deterministic error per-lane.
-            -- (num_s tap removed; dnum_r now carries the raw score from S_SPACK.)
+            -- DEBUG: num_s(0) (head0 lane0) = the divide NUMERATOR -> dnum_r; with
+            -- dsum_r=sum_l (denominator) + 0xF0=att-output chksum, this splits whether
+            -- the residual non-determinism is the weighted sum or the divide/pack.
+            if hd = 0 then dnum_r <= to_integer(resize(num_s(0), 32)); end if;
             num96 := shift_left(resize(num_s(t_idx), 96), WQ);
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
