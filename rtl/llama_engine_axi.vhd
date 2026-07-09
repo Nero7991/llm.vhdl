@@ -73,22 +73,6 @@ architecture rtl of llama_engine_axi is
   signal busy        : std_logic := '0';
   signal status_done : std_logic := '0';
 
-  -- debug taps (from engine_shared, for the position dbg_pos_reg)
-  signal dbg_pos_reg : integer := -1;
-  signal e_emb_nz, e_l0_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
-  signal e_emb_e, e_l0_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
-  signal e_att_sc, e_att_sum, e_att_num : integer;   -- attention-internal taps
-  signal e_emb_m, e_l0_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
-  signal e_rxchk, e_rwchk, e_rxe, e_rwe : integer;
-  signal e_rw0 : std_logic_vector(15 downto 0);
-
-  -- pack a debug point {nz, exp(int8), m0(int16)} into one 32-bit reg.
-  function dbgpack(nz : std_logic; e : integer; m : std_logic_vector(15 downto 0))
-    return std_logic_vector is
-  begin
-    return (31 downto 25 => '0') & nz & std_logic_vector(to_signed(e, 8)) & m;
-  end function;
-
   -- token readback buffer
   type tokbuf_t is array(0 to MAXTOK-1) of std_logic_vector(31 downto 0);
   signal tok_buf   : tokbuf_t := (others => (others => '0'));
@@ -104,17 +88,7 @@ begin
     generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR)
     port map(clk => s_axi_aclk, rst => eng_rst, start => eng_start,
              token_out => eng_token, pos_out => eng_pos,
-             token_valid => eng_tvalid, run_done => eng_rundone,
-             dbg_pos => dbg_pos_reg,
-             dbg_emb_nz => e_emb_nz, dbg_emb_e => e_emb_e, dbg_emb_m => e_emb_m,
-             dbg_l0_nz  => e_l0_nz,  dbg_l0_e  => e_l0_e,  dbg_l0_m  => e_l0_m,
-             dbg_l4_nz  => e_l4_nz,  dbg_l4_e  => e_l4_e,  dbg_l4_m  => e_l4_m,
-             dbg_fin_nz => e_fin_nz, dbg_fin_e => e_fin_e, dbg_fin_m => e_fin_m,
-             dbg_rms_nz => e_rms_nz, dbg_rms_e => e_rms_e, dbg_rms_m => e_rms_m,
-             dbg_att_nz => e_att_nz, dbg_att_e => e_att_e, dbg_att_m => e_att_m,
-             dbg_rxchk => e_rxchk, dbg_rwchk => e_rwchk, dbg_rxe => e_rxe, dbg_rwe => e_rwe, dbg_rw0 => e_rw0,
-             dbg_samptok => e_stok,
-             dbg_att_sc => e_att_sc, dbg_att_sum => e_att_sum, dbg_att_num => e_att_num);
+             token_valid => eng_tvalid, run_done => eng_rundone);
 
   -- AXI write channel + CTRL decode.
   process(s_axi_aclk)
@@ -130,7 +104,6 @@ begin
         if awready='1' and wready='1' then
           case to_integer(unsigned(wr_addr(7 downto 2))) is
             when 0 => if s_axi_wdata(0)='1' then start_pulse<='1'; end if;  -- CTRL START
-            when 4 => dbg_pos_reg <= to_integer(signed(s_axi_wdata));        -- DBG_POS
             when others => null;
           end case;
           bvalid<='1';
@@ -198,22 +171,6 @@ begin
               when 3 => rdata_r <= std_logic_vector(to_unsigned(NGEN, 16)) &
                                    std_logic_vector(to_unsigned(MAXPOS, 16));   -- CFG
               when 8 => rdata_r <= x"6C6C6D31";                                 -- ID "llm1"
-              -- DEBUG taps for dbg_pos: {nz[24], exp[23:16], m0[15:0]}
-              when 48 => rdata_r <= dbgpack(e_emb_nz, e_emb_e, e_emb_m);        -- x after embed
-              when 49 => rdata_r <= dbgpack(e_l0_nz,  e_l0_e,  e_l0_m);         -- x after layer 0
-              when 50 => rdata_r <= dbgpack(e_l4_nz,  e_l4_e,  e_l4_m);         -- x after all layers
-              when 51 => rdata_r <= dbgpack(e_fin_nz, e_fin_e, e_fin_m);        -- x after final rmsnorm
-              when 52 => rdata_r <= std_logic_vector(to_signed(e_stok, 32));    -- this pos's argmax
-              when 53 => rdata_r <= dbgpack(e_rms_nz, e_rms_e, e_rms_m);        -- L0 attention-rmsnorm out
-              when 54 => rdata_r <= dbgpack(e_att_nz, e_att_e, e_att_m);        -- L0 attention output xb
-              when 55 => rdata_r <= std_logic_vector(to_signed(e_rxchk, 32));   -- L0 rms x checksum
-              when 56 => rdata_r <= std_logic_vector(to_signed(e_rwchk, 32));   -- L0 rms weight checksum
-              when 57 => rdata_r <= std_logic_vector(to_signed(e_rxe, 32));     -- L0 rms x_exp
-              when 58 => rdata_r <= std_logic_vector(to_signed(e_rwe, 32));     -- L0 rms w_exp
-              when 59 => rdata_r <= (31 downto 16 => '0') & e_rw0;              -- L0 rms weight[0]
-              when 60 => rdata_r <= std_logic_vector(to_signed(e_att_sc, 32));  -- 0xF0 L0 att score chksum
-              when 61 => rdata_r <= std_logic_vector(to_signed(e_att_sum, 32)); -- 0xF4 L0 att softmax sum
-              when 62 => rdata_r <= std_logic_vector(to_signed(e_att_num, 32)); -- 0xF8 L0 att num_s chksum
               when others => rdata_r <= (others=>'0');
             end case;
           end if;
