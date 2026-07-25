@@ -34,7 +34,6 @@ entity residual is
 end entity;
 
 architecture rtl of residual is
-  type s64arr is array(natural range <>) of signed(63 downto 0);
   type state_t is (S_IDLE, S_ACC, S_PACK);
 
   -- Highest set-bit index of a nonnegative signed value (0 for 0); mirrors
@@ -64,7 +63,6 @@ begin
     variable r32   : signed(31 downto 0);
     variable r64   : signed(63 downto 0);
     variable sat   : integer;
-    variable sums  : s64arr(0 to N-1);
   begin
     if rising_edge(clk) then
       done <= '0';
@@ -86,12 +84,14 @@ begin
               state := S_ACC;
             end if;
 
-          -- One element/cycle: sums(j) = a<<da + b<<db; accumulate max|sums|.
+          -- One element/cycle: s(j) = a<<da + b<<db; accumulate max|s|.  The
+          -- per-element sums are NOT stored (no `sums` array -> avoids the
+          -- uninitialized distributed-RAM Vivado infers under engine congestion);
+          -- S_PACK re-computes s(j) from the still-valid a/b ports (bit-identical).
           when S_ACC =>
             av := resize(signed(a_mant((idx+1)*16-1 downto idx*16)), 64);
             bv := resize(signed(b_mant((idx+1)*16-1 downto idx*16)), 64);
             s  := shift_left(av, da) + shift_left(bv, db);
-            sums(idx) := s;
             if s < 0 then ab := -s; else ab := s; end if;
             if ab > mx then mx := ab; end if;
             if idx = N-1 then
@@ -105,16 +105,19 @@ begin
               idx := idx + 1;
             end if;
 
-          -- One element/cycle: requantise sums(j) by sh, saturate to int16.
+          -- One element/cycle: re-compute s(idx) (== S_ACC), requantise by sh.
           when S_PACK =>
+            av := resize(signed(a_mant((idx+1)*16-1 downto idx*16)), 64);
+            bv := resize(signed(b_mant((idx+1)*16-1 downto idx*16)), 64);
+            s  := shift_left(av, da) + shift_left(bv, db);
             if sh >= 0 then
-              r32 := scale_mul(sums(idx), to_signed(1, 32), sh);
+              r32 := scale_mul(s, to_signed(1, 32), sh);
               if    r32 >  32767 then sat :=  32767;
               elsif r32 < -32768 then sat := -32768;
               else                    sat := to_integer(r32);
               end if;
             else
-              r64 := shift_left(sums(idx), -sh);
+              r64 := shift_left(s, -sh);
               if    r64 >  32767 then sat :=  32767;
               elsif r64 < -32768 then sat := -32768;
               else                    sat := to_integer(r64);

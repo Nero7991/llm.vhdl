@@ -118,7 +118,13 @@ architecture rtl of attention_ml is
   signal smax_s    : signed(63 downto 0) := (others => '0'); -- running |score| max
   type sfx_sig_arr is array(0 to MAXPOS-1) of signed(63 downto 0);
   signal sfx_s     : sfx_sig_arr := (others => (others => '0')); -- per-pos raw scores
-  signal qhead_s   : integer_vector(0 to HEAD_SIZE-1) := (others => 0); -- re-BFP q head
+  type shd_arr is array(0 to HEAD_SIZE-1) of signed(31 downto 0);
+  -- re-BFP q/k heads as SIGNED vectors (not integer): the dot multiply reads these
+  -- directly, avoiding to_signed(integer) which Vivado sign-drops (same class as the
+  -- confirmed V-multiply bug).  qextra/kextra are always >=0 (16-bit mantissa), so
+  -- the shift_left scaling is bit-exact with the old integer *2^extra.
+  signal qhead_s   : shd_arr := (others => (others => '0'));
+  signal khead_s   : shd_arr := (others => (others => '0'));
   signal qe_head_s : integer := 0;                 -- q head block exp
   type num_arr is array(0 to HEAD_SIZE-1) of signed(63 downto 0);
   signal num_s     : num_arr := (others => (others => '0'));  -- per-j V-weighted sums
@@ -132,6 +138,11 @@ architecture rtl of attention_ml is
   attribute ram_style of xb_acc : signal is "registers";
   attribute ram_style of sfx_s  : signal is "registers";
   attribute ram_style of num_s  : signal is "registers";
+  -- NOTE (2026-07-18): forcing num_s off SRL (shreg_extract="no") + raising global
+  -- hold uncertainty to 0.15 ns just moved the binding hold path onto the KV-cache
+  -- BRAM write (real -0.118 ns violation) and corrupted attention worse.  So global
+  -- margin tops out at 0.1 ns; the FFN gets extra hold via TARGETED set_min_delay in
+  -- tcl/route_hold_uncertainty.tcl instead, leaving attention/num_s at the working 0.1.
 
   -- ---- softmax interface -------------------------------------------------
   signal sm_start      : std_logic := '0';
@@ -177,6 +188,11 @@ architecture rtl of attention_ml is
   signal ei_r  : integer := 0;   -- latched exp weight for the current position
   signal sh_r  : integer := 0;   -- latched V-exp shift for the current position
   signal kvh_r : integer := 0;   -- latched kv head
+  -- Weighted-sum sequential-consumption shift registers (fixed-index reads only;
+  -- replace the dynamic-index num_s RMW / v_word_r slice / e_l slice that
+  -- mis-synthesised -> num_s=+806M on HW+funcsim vs sim -83.5M).
+  signal vhead_r : std_logic_vector(HEAD_SIZE*16-1 downto 0) := (others=>'0'); -- head V sub-word, shifted 16/cycle
+  signal e_sh    : std_logic_vector(MAXPOS*32-1 downto 0)    := (others=>'0'); -- e_l shifted 32/position
 
   component softmax is
     generic(NMAX : positive; Q : integer := 12);
@@ -323,6 +339,7 @@ begin
     variable num96    : signed(95 downto 0);
     variable qd96     : signed(95 downto 0);
     variable rem_sh   : unsigned(63 downto 0);   -- (div_rem << 1) | next dividend bit
+    variable qmag     : unsigned(63 downto 0);   -- |num96|/sum_l for the sign-split divide
     variable dbg_acc  : integer;                  -- debug checksum accumulator
     variable amax     : signed(63 downto 0);
     variable gx       : integer;
@@ -391,10 +408,11 @@ begin
             end loop;
             if qmax = 0 then qextra := 0; else qextra := 14 - msb_pos(qmax); end if;
             qe_head := qexp_l + qextra;
+            -- scale the SIGNED mantissa by 2^qextra (qextra>=0) -> signed vector.
             for j in 0 to HEAD_SIZE-1 loop
-              if qextra >= 0 then qhead(j) := qhead(j) * (2**qextra);
-              else                qhead(j) := qhead(j) / (2**(-qextra)); end if;
-              qhead_s(j) <= qhead(j);     -- persist for the sequential score pass
+              qhead_s(j) <= shift_left(
+                resize(signed(qmant_l((hd*HEAD_SIZE+j+1)*16-1 downto (hd*HEAD_SIZE+j)*16)), 32),
+                qextra);
             end loop;
             qe_head_s     <= qe_head;
             smax_s        <= (others => '0');
@@ -410,6 +428,8 @@ begin
             kv_h := hd / KV_MUL;
             if t_idx >= 1 then
               p := t_idx - 1;
+              -- DEBUG: cached K read (KV BRAM out) for position 0, head 0 -> dbg_sc.
+              if hd = 0 and t_idx = 1 then dsc_r <= to_integer(signed(kc_v_do(15 downto 0))); end if;
               -- k-head re-BFP for this position (slice the KVDIM-wide word)
               kmax := 0;
               for j in 0 to HEAD_SIZE-1 loop
@@ -421,9 +441,11 @@ begin
               if kmax = 0 then kextra := 0; else kextra := 14 - msb_pos(kmax); end if;
               ke_head := to_integer(signed(kc_e_do)) + kextra;
               -- (dsc_r/dsum_r now carry att-output chksum / sum_l; see engine_shared + S_SMWAIT.)
+              -- scale the SIGNED k mantissa by 2^kextra (kextra>=0) -> signed vector.
               for j in 0 to HEAD_SIZE-1 loop
-                if kextra >= 0 then khead(j) := khead(j) * (2**kextra);
-                else                khead(j) := khead(j) / (2**(-kextra)); end if;
+                khead_s(j) <= shift_left(
+                  resize(signed(kc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)), 32),
+                  kextra);
               end loop;
               -- integer dot Q.K (int64) using the persisted re-BFP'd q head.
               -- Registered here; the dot*INV_SQRT8 scaling is done in S_SCORE_B so
@@ -443,7 +465,7 @@ begin
 
           -- One q*k multiply-accumulate per cycle (dj = 0..HEAD_SIZE-1).
           when S_DOT =>
-            dot := dot + resize(to_signed(qhead_s(dj), 32) * to_signed(khead(dj), 32), 64);
+            dot := dot + resize(qhead_s(dj) * khead_s(dj), 64);
             if dj = HEAD_SIZE-1 then
               state <= S_SCORE_B;           -- ke_head, dot, p persist
             else
@@ -508,6 +530,7 @@ begin
             for j in 0 to HEAD_SIZE-1 loop
               num_s(j) <= (others => '0');
             end loop;
+            e_sh  <= e_l;          -- prime sequential per-position exp-weight consumption
             t_idx <= 0;
             state <= S_WACC;
 
@@ -517,15 +540,19 @@ begin
           when S_WACC =>
             kv_h := hd / KV_MUL;
             if t_idx >= 1 then
-              -- Latch this position's ei / V word / shift, then accumulate the
-              -- HEAD_SIZE lanes ONE multiply per cycle in S_WACC_L (the 8 combinational
-              -- ei*vval multiplies were a cascaded-DSP cone -> non-deterministic HW
-              -- attention output).  t_idx frozen so vc_v_do stays valid.
+              -- Latch this position's ei / V head-word / shift, then accumulate the
+              -- HEAD_SIZE lanes ONE multiply per cycle in S_WACC_L.  All reads here use
+              -- FIXED indices (e_sh low slice; vhead_r assembled with j UNROLLED to
+              -- constant slices, kv_h a small mux -> the proven-correct S_SCORE k-head
+              -- pattern).  t_idx frozen so vc_v_do stays valid.
               p      := t_idx - 1;
-              ei_r   <= to_integer(signed(e_l((p+1)*32-1 downto p*32)));
+              ei_r   <= to_integer(signed(e_sh(31 downto 0)));   -- was e_l(dynamic p slice)
+              e_sh   <= x"00000000" & e_sh(MAXPOS*32-1 downto 32);
               sh_r   <= to_integer(signed(vc_e_do)) - vref_s;
-              v_word_r <= vc_v_do;
-              kvh_r  <= kv_h;
+              for j in 0 to HEAD_SIZE-1 loop
+                vhead_r((j+1)*16-1 downto j*16) <=
+                  vc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16);
+              end loop;
               wj     <= 0;
               state  <= S_WACC_L;
             else
@@ -534,14 +561,27 @@ begin
 
           -- One weighted-sum lane per cycle: num_s(wj) += (ei*V[wj]) >> sh.
           when S_WACC_L =>
-            vval := to_integer(signed(
-              v_word_r(((kvh_r*HEAD_SIZE+wj)+1)*16-1 downto (kvh_r*HEAD_SIZE+wj)*16)));
-            term := to_signed(ei_r, 32) * to_signed(vval, 32);
+            -- Multiply the V mantissa as a SIGNED VECTOR directly.  Routing it
+            -- through an integer (to_signed(to_integer(signed(vhead_r(15:0))),32))
+            -- mis-synthesised in Vivado: a negative V (-45) was carried as the
+            -- unsigned +131027 (2^17-45), dropping the sign, so ei*V came out
+            -- large-positive (netlist term=+536686592 vs correct -184320).  GHDL
+            -- tolerated it; silicon did not.  This was THE attention bug.
+            term := resize(to_signed(ei_r, 32) * signed(vhead_r(15 downto 0)), 64);
             if sh_r > 0 then
               bias64 := shift_left(to_signed(1, 64), sh_r - 1);
               term   := shift_right(term + bias64, sh_r);
             end if;
-            num_s(wj) <= num_s(wj) + term;
+            -- num_s as a rotating shift register (FIXED indices only): the current
+            -- lane's accumulator is at index 0; add term and rotate down, so after
+            -- HEAD_SIZE cycles the array is realigned and each lane accumulated across
+            -- positions.  Replaces num_s(wj) <= num_s(wj)+term -- the dynamic-index RMW
+            -- E2 funcsim proved mis-synthesises (num_s=+806M vs sim -83.5M).
+            for i in 0 to HEAD_SIZE-2 loop
+              num_s(i) <= num_s(i+1);
+            end loop;
+            num_s(HEAD_SIZE-1) <= num_s(0) + term;
+            vhead_r <= x"0000" & vhead_r(HEAD_SIZE*16-1 downto 16);  -- next lane's V
             if wj = HEAD_SIZE-1 then
               if t_idx = cp + 1 then
                 t_idx <= 0;               -- prime the per-lane S_WDIV counter
@@ -568,15 +608,31 @@ begin
             -- dsum_r=sum_l (denominator) + 0xF0=att-output chksum, this splits whether
             -- the residual non-determinism is the weighted sum or the divide/pack.
             if hd = 0 then dnum_r <= to_integer(resize(num_s(0), 32)); end if;
-            num96 := shift_left(resize(num_s(t_idx), 96), WQ);
+            num96 := shift_left(resize(num_s(0), 96), WQ);   -- lane at index 0 (was num_s(t_idx))
             if num96 >= 0 then num96 := num96 + resize(shift_right(sum_l, 1), 96);
             else               num96 := num96 - resize(shift_right(sum_l, 1), 96);
             end if;
             -- 64-bit divide (num96 < 2^48 always: num_s <= sum_l*2^15 <= ~3.2e9,
             -- <<WQ=16 -> ~2^48).  Bit-exact with the 96-bit divide but ~1/3 the
             -- CARRY -> cuts the u_att routing congestion the wide divide caused.
-            xb_acc(hd*HEAD_SIZE + t_idx) <=
-              resize(resize(num96, 64) / resize(sum_l, 64), 64);
+            -- Signed divide via UNSIGNED magnitude + explicit sign.  sum_l is always
+            -- > 0 and |num96| < 2^48, so 64-bit unsigned is safe and bit-exact with
+            -- signed '/' (both truncate toward zero, positive divisor).  The signed
+            -- '/' with resize was flow-sensitive in the design_2 impl: the board
+            -- attOut collapsed to 0 despite a numerically-correct attNum.
+            if num96 >= 0 then
+              qmag := unsigned(resize(num96, 64)) / unsigned(resize(sum_l, 64));
+              xb_acc(hd*HEAD_SIZE + t_idx) <= signed(qmag);
+            else
+              qmag := unsigned(resize(-num96, 64)) / unsigned(resize(sum_l, 64));
+              xb_acc(hd*HEAD_SIZE + t_idx) <= -signed(qmag);
+            end if;
+            -- rotate num_s so the next lane's accumulator lands at index 0 (fixed-index
+            -- read, no dynamic mux).  Consumed then re-zeroed in the next head's S_WSUM.
+            for i in 0 to HEAD_SIZE-2 loop
+              num_s(i) <= num_s(i+1);
+            end loop;
+            num_s(HEAD_SIZE-1) <= num_s(0);
             if t_idx = HEAD_SIZE-1 then
               t_idx <= 0;
               if hd = NHEADS-1 then

@@ -54,6 +54,15 @@ entity engine_shared is
     NLAYERS    : integer := 5;
     NUM_PROMPT : integer := 5;
     NGEN       : integer := 16;  -- total positions to run: p = 0 .. NGEN-1
+    -- DEBUG_TAPS: when true, the residual-stream observation taps (is_nz OR-trees
+    -- over the full DIM*16 mantissa buses at embed/att-rms/att-out/L0/L4/final,
+    -- plus the rms input/argmax taps) are synthesized and drive the dbg_* ports.
+    -- When false (default) those `if DEBUG_TAPS ...` branches are statically dead,
+    -- so Vivado PRUNES the ~6 wide OR-reductions -> frees ~1.2K LUT of routing
+    -- headroom for the FIT build (the taps do NOT affect the token stream, so the
+    -- result is bit-identical; tb_engine_shared stays 24/24).  Re-enable
+    -- (DEBUG_TAPS=>true) for the on-board residual-stream debug build.
+    DEBUG_TAPS : boolean := false;
     -- Directory of the file-init weight ROMs (matmul_rt/embed/lm_head).  Default
     -- "../mem/rom/" resolves from sim/ for GHDL + OOC Vivado; the design_1
     -- module-reference overrides this to an ABSOLUTE path so the .mem files
@@ -67,7 +76,30 @@ entity engine_shared is
     token_out   : out integer;
     pos_out     : out integer;
     token_valid : out std_logic;
-    run_done    : out std_logic
+    run_done    : out std_logic;
+    -- DEBUG TAPS: for the position p_idx == dbg_pos, latch a summary of the
+    -- residual stream x at 4 points (after embed / after layer 0 / after all 5
+    -- layers / after final rmsnorm = lm_head input) plus that position's argmax.
+    -- nz = OR of all mantissa bits (is x all-zero?), e = block exp, m = x[0].
+    dbg_pos     : in  integer := -1;
+    dbg_emb_nz  : out std_logic; dbg_emb_e : out integer; dbg_emb_m : out std_logic_vector(15 downto 0);
+    dbg_l0_nz   : out std_logic; dbg_l0_e  : out integer; dbg_l0_m  : out std_logic_vector(15 downto 0);
+    -- finer per-layer x taps: x after residual2 of layers 1, 2, 3 (localise collapse)
+    dbg_l1_nz   : out std_logic; dbg_l1_e  : out integer; dbg_l1_m  : out std_logic_vector(15 downto 0);
+    dbg_l2_nz   : out std_logic; dbg_l2_e  : out integer; dbg_l2_m  : out std_logic_vector(15 downto 0);
+    dbg_l3_nz   : out std_logic; dbg_l3_e  : out integer; dbg_l3_m  : out std_logic_vector(15 downto 0);
+    dbg_l4_nz   : out std_logic; dbg_l4_e  : out integer; dbg_l4_m  : out std_logic_vector(15 downto 0);
+    dbg_fin_nz  : out std_logic; dbg_fin_e : out integer; dbg_fin_m : out std_logic_vector(15 downto 0);
+    -- intra-layer-0 taps: after the attention-rmsnorm and after attention itself
+    dbg_rms_nz  : out std_logic; dbg_rms_e : out integer; dbg_rms_m : out std_logic_vector(15 downto 0);
+    dbg_att_nz  : out std_logic; dbg_att_e : out integer; dbg_att_m : out std_logic_vector(15 downto 0);
+    -- inputs the engine feeds the L0 att-rmsnorm: checksums (sum of the 64 int16s)
+    -- of x and w, plus their exps -- to see if x/weights are corrupt on HW.
+    dbg_rxchk   : out integer; dbg_rwchk : out integer;
+    dbg_rxe     : out integer; dbg_rwe   : out integer; dbg_rw0 : out std_logic_vector(15 downto 0);
+    dbg_samptok : out integer;
+    -- attention-internal taps (localise the attention non-determinism)
+    dbg_att_sc  : out integer; dbg_att_sum : out integer; dbg_att_num : out integer
   );
 end entity;
 
@@ -205,6 +237,12 @@ architecture rtl of engine_shared is
   signal att_v_new_exp : integer := 0;
   signal att_xb_mant   : std_logic_vector(DIM*16-1 downto 0);
   signal att_xb_exp    : integer;
+  signal att_dbg_sc    : integer;   -- attention score/sum/num taps (HW debug)
+  signal att_dbg_sum   : integer;
+  signal att_dbg_num   : integer;
+  signal d_att_sc      : integer := 0;
+  signal d_att_sum     : integer := 0;
+  signal d_att_num     : integer := 0;
 
   -- ---- shared swiglu ----------------------------------------------------
   signal sw_start   : std_logic := '0';
@@ -213,7 +251,13 @@ architecture rtl of engine_shared is
   signal sw_hb_exp  : integer := 0;
   signal sw_hb2_mant: std_logic_vector(HIDDEN*16-1 downto 0) := (others => '0');
   signal sw_hb2_exp : integer := 0;
-  signal sw_out_q   : std_logic_vector(HIDDEN*32-1 downto 0);
+  -- swiglu->bfp_pack intermediate now lives in vec_mem BRAM (LUT reduction):
+  -- swiglu writes one element/cycle, bfp_pack reads via a 1-cycle read-ahead.
+  signal sw_o_we    : std_logic;
+  signal sw_o_waddr : std_logic_vector(clog2(HIDDEN)-1 downto 0);
+  signal sw_o_wdata : std_logic_vector(31 downto 0);
+  signal hbp_raddr  : std_logic_vector(clog2(HIDDEN)-1 downto 0);
+  signal vm_dout    : std_logic_vector(31 downto 0);
 
   -- ---- shared lm_head / sampler -----------------------------------------
   signal lm_start  : std_logic := '0';
@@ -280,6 +324,29 @@ architecture rtl of engine_shared is
   signal cur_layer : integer := 0;
   signal prev_next : integer := 0;
 
+  -- DEBUG taps: OR-reduce of a mantissa vector (nonzero if any bit set).
+  function is_nz(v : std_logic_vector) return std_logic is
+    variable r : std_logic := '0';
+  begin
+    for i in v'range loop r := r or v(i); end loop;
+    return r;
+  end function;
+  signal d_emb_nz, d_l0_nz, d_l1_nz, d_l2_nz, d_l3_nz, d_l4_nz, d_fin_nz, d_rms_nz, d_att_nz : std_logic := '0';
+  signal d_emb_e, d_l0_e, d_l1_e, d_l2_e, d_l3_e, d_l4_e, d_fin_e, d_rms_e, d_att_e, d_stok : integer := 0;
+  signal d_emb_m, d_l0_m, d_l1_m, d_l2_m, d_l3_m, d_l4_m, d_fin_m, d_rms_m, d_att_m : std_logic_vector(15 downto 0) := (others=>'0');
+  signal d_rxchk, d_rwchk, d_rxe, d_rwe : integer := 0;
+  signal d_rw0 : std_logic_vector(15 downto 0) := (others=>'0');
+
+  -- sum of the N int16 words of a mant vector (checksum to detect corruption).
+  function chksum(v : std_logic_vector) return integer is
+    variable s : integer := 0;
+  begin
+    for i in 0 to DIM-1 loop
+      s := s + to_integer(signed(v((i+1)*16-1 downto i*16)));
+    end loop;
+    return s;
+  end function;
+
 begin
 
   assert NGEN <= MAXPOS
@@ -328,14 +395,25 @@ begin
              q_mant => att_q_mant, q_exp => att_q_exp,
              k_new_mant => att_k_new_mant, k_new_exp => att_k_new_exp,
              v_new_mant => att_v_new_mant, v_new_exp => att_v_new_exp,
-             done => att_done, xb_mant => att_xb_mant, xb_exp => att_xb_exp);
+             done => att_done, xb_mant => att_xb_mant, xb_exp => att_xb_exp,
+             dbg_sc => att_dbg_sc, dbg_sum => att_dbg_sum, dbg_num => att_dbg_num);
 
   u_sw: entity work.swiglu
     generic map(N => HIDDEN, Q => 12)
     port map(clk => clk, rst => rst, start => sw_start,
              hb_mant => sw_hb_mant, hb_exp => sw_hb_exp,
              hb2_mant => sw_hb2_mant, hb2_exp => sw_hb2_exp,
-             done => sw_done, out_q => sw_out_q);
+             done => sw_done,
+             out_q => open,                 -- wide bus unused here -> demux pruned
+             o_we => sw_o_we, o_waddr => sw_o_waddr, o_wdata => sw_o_wdata);
+
+  -- FFN intermediate BRAM: swiglu writes the N Q12 int32 results one/cycle;
+  -- bfp_pack reads them back (twice: max pass + pack pass) via read-ahead.
+  u_swmem: entity work.vec_mem
+    generic map(WORDS => HIDDEN, W => 32)
+    port map(clk => clk, we => sw_o_we,
+             waddr => sw_o_waddr, raddr => hbp_raddr,
+             din => sw_o_wdata, dout => vm_dout);
 
   u_lm_head: entity work.lm_head
     generic map(DIM => DIM, VOCAB => VOCAB, ROM_DIR => ROM_DIR)
@@ -364,8 +442,17 @@ begin
   u_hbpack: entity work.bfp_pack
     generic map(N => HIDDEN, Q => 12)
     port map(clk => clk, rst => rst, start => hbp_start,
-             in_q => sw_out_q, done => hbp_done,
+             o_raddr => hbp_raddr, i_rdata => vm_dout, done => hbp_done,
              o_mant => hbp_o_mant, o_exp => hbp_o_exp);
+
+  -- FFN staging-register elimination (Task 1): swiglu reads its operands
+  -- combinationally across its sweep and w1_reg/w3_reg are stable for that whole
+  -- window, so feed them directly instead of a wide reg-to-reg staging copy
+  -- (removes the w1_reg->sw_hb_mant / w3_reg->sw_hb2_mant on-silicon hold hazard).
+  sw_hb_mant  <= w1_reg;
+  sw_hb_exp   <= w1_exp_r;
+  sw_hb2_mant <= w3_reg;
+  sw_hb2_exp  <= w3_exp_r;
 
   -- ---------------------------------------------------------------------
   -- Combinational RMSNorm weight mux (small 64-wide constants).
@@ -462,6 +549,7 @@ begin
       res_start   <= '0';
       hbp_start   <= '0';
       token_valid <= '0';
+      run_done    <= '0';   -- one-cycle pulse (E_FIN); was held high -> broke re-run
 
       if rst = '1' then
         state     <= E_IDLE;
@@ -499,6 +587,10 @@ begin
               x_exp_cur  <= embed_x_exp;
               cur_layer  <= 0;
               state <= L_RMS_ATT_S;
+              if DEBUG_TAPS and p_idx = dbg_pos then   -- DEBUG: x after embed
+                d_emb_nz <= is_nz(embed_x_mant); d_emb_e <= embed_x_exp;
+                d_emb_m  <= embed_x_mant(15 downto 0);
+              end if;
             end if;
 
           -- =========================================================
@@ -513,7 +605,18 @@ begin
             rms_start  <= '1';
             state <= L_RMS_ATT_W;
           when L_RMS_ATT_W =>
-            if rms_done = '1' then state <= L_WQ_S; end if;
+            if rms_done = '1' then
+              state <= L_WQ_S;
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention-rmsnorm out + INPUTS (L0)
+                d_rms_nz <= is_nz(rms_o_mant); d_rms_e <= rms_o_exp;
+                d_rms_m  <= rms_o_mant(15 downto 0);
+                -- single-element taps (the full-vector chksum adder-trees cost ~3K
+                -- LUT and are no longer needed -- the non-determinism is fixed).
+                d_rxchk  <= to_integer(signed(rms_x_mant(31 downto 16)));
+                d_rwchk  <= to_integer(signed(rms_o_mant(31 downto 16)));
+                d_rxe    <= rms_x_exp; d_rwe <= rms_w_exp; d_rw0 <= rms_w_mant(15 downto 0);
+              end if;
+            end if;
 
           -- ---- 2. WQ / WK / WV matmuls (input = att-rms output) -----
           when L_WQ_S =>
@@ -567,7 +670,21 @@ begin
             att_v_new_exp  <= v_exp_r;
             att_start <= '1'; state <= L_ATT_W;
           when L_ATT_W =>
-            if att_done = '1' then state <= L_WO_S; end if;
+            if att_done = '1' then
+              state <= L_WO_S;
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then   -- DEBUG: attention output xb (L0)
+                d_att_nz <= is_nz(att_xb_mant); d_att_e <= att_xb_exp;
+                d_att_m  <= att_xb_mant(15 downto 0);
+                -- d_att_sc = FULL attention-output checksum (all 64 elems) -> is the
+                -- WHOLE attention output right, or just element 0 that we tap?
+                -- DETERMINISM PROBE 2: 0xF0 = attention's dbg_sc = the CACHED K read
+                -- (from the KV BRAM, inside attention).  If it varies run-to-run while
+                -- the K INPUT was stable, the KV cache read is the non-det source.
+                d_att_sc  <= att_dbg_sc;
+                d_att_sum <= att_dbg_sum;
+                d_att_num <= att_dbg_num;
+              end if;
+            end if;
 
           -- ---- 5. WO matmul + residual add 1 -----------------------
           when L_WO_S =>
@@ -627,8 +744,8 @@ begin
 
           -- ---- 8. SwiGLU + BFP-pack --------------------------------
           when L_SW_S =>
-            sw_hb_mant  <= w1_reg; sw_hb_exp  <= w1_exp_r;
-            sw_hb2_mant <= w3_reg; sw_hb2_exp <= w3_exp_r;
+            -- sw_hb*/sw_hb2* are now concurrent wires to w1_reg/w3_reg (stable
+            -- through the swiglu sweep); no reg-to-reg staging copy -> no hold hazard.
             sw_start <= '1'; state <= L_SW_W;
           when L_SW_W =>
             if sw_done = '1' then state <= L_HBPACK_S; end if;
@@ -663,6 +780,28 @@ begin
             if res_done = '1' then
               x_mant_cur <= res_o_mant;
               x_exp_cur  <= res_o_exp;
+              if DEBUG_TAPS and p_idx = dbg_pos then   -- DEBUG: x after this layer's residual2
+                if cur_layer = 0 then
+                  d_l0_nz <= is_nz(res_o_mant); d_l0_e <= res_o_exp;
+                  d_l0_m  <= res_o_mant(15 downto 0);
+                end if;
+                if cur_layer = 1 then
+                  d_l1_nz <= is_nz(res_o_mant); d_l1_e <= res_o_exp;
+                  d_l1_m  <= res_o_mant(15 downto 0);
+                end if;
+                if cur_layer = 2 then
+                  d_l2_nz <= is_nz(res_o_mant); d_l2_e <= res_o_exp;
+                  d_l2_m  <= res_o_mant(15 downto 0);
+                end if;
+                if cur_layer = 3 then
+                  d_l3_nz <= is_nz(res_o_mant); d_l3_e <= res_o_exp;
+                  d_l3_m  <= res_o_mant(15 downto 0);
+                end if;
+                if cur_layer = NLAYERS-1 then
+                  d_l4_nz <= is_nz(res_o_mant); d_l4_e <= res_o_exp;
+                  d_l4_m  <= res_o_mant(15 downto 0);
+                end if;
+              end if;
               if cur_layer = NLAYERS-1 then
                 state <= E_RMS_S;
               else
@@ -681,7 +820,13 @@ begin
             rms_start  <= '1';
             state <= E_RMS_W;
           when E_RMS_W =>
-            if rms_done = '1' then state <= E_LM_S; end if;
+            if rms_done = '1' then
+              state <= E_LM_S;
+              if DEBUG_TAPS and p_idx = dbg_pos then   -- DEBUG: x after final rmsnorm (lm_head input)
+                d_fin_nz <= is_nz(rms_o_mant); d_fin_e <= rms_o_exp;
+                d_fin_m  <= rms_o_mant(15 downto 0);
+              end if;
+            end if;
           when E_LM_S =>
             lm_x_mant <= rms_o_mant;
             lm_x_exp  <= rms_o_exp;
@@ -704,6 +849,7 @@ begin
             pos_out     <= p_idx;
             token_valid <= '1';
             prev_next   <= next_tok;
+            if DEBUG_TAPS and p_idx = dbg_pos then d_stok <= samp_token; end if;  -- DEBUG: this pos's argmax
             if p_idx = NGEN - 1 then
               state <= E_FIN;
             else
@@ -712,12 +858,26 @@ begin
             end if;
 
           when E_FIN =>
-            run_done <= '1';
-            state    <= E_FIN;
+            run_done <= '1';     -- one-cycle pulse; then wait idle for a fresh START
+            state    <= E_IDLE;  -- clean re-run: next START re-triggers from E_IDLE
 
         end case;
       end if;
     end if;
   end process;
+
+  -- DEBUG tap outputs (driven from the latched summaries).
+  dbg_emb_nz <= d_emb_nz; dbg_emb_e <= d_emb_e; dbg_emb_m <= d_emb_m;
+  dbg_l0_nz  <= d_l0_nz;  dbg_l0_e  <= d_l0_e;  dbg_l0_m  <= d_l0_m;
+  dbg_l1_nz  <= d_l1_nz;  dbg_l1_e  <= d_l1_e;  dbg_l1_m  <= d_l1_m;
+  dbg_l2_nz  <= d_l2_nz;  dbg_l2_e  <= d_l2_e;  dbg_l2_m  <= d_l2_m;
+  dbg_l3_nz  <= d_l3_nz;  dbg_l3_e  <= d_l3_e;  dbg_l3_m  <= d_l3_m;
+  dbg_l4_nz  <= d_l4_nz;  dbg_l4_e  <= d_l4_e;  dbg_l4_m  <= d_l4_m;
+  dbg_fin_nz <= d_fin_nz; dbg_fin_e <= d_fin_e; dbg_fin_m <= d_fin_m;
+  dbg_rms_nz <= d_rms_nz; dbg_rms_e <= d_rms_e; dbg_rms_m <= d_rms_m;
+  dbg_att_nz <= d_att_nz; dbg_att_e <= d_att_e; dbg_att_m <= d_att_m;
+  dbg_rxchk <= d_rxchk; dbg_rwchk <= d_rwchk; dbg_rxe <= d_rxe; dbg_rwe <= d_rwe; dbg_rw0 <= d_rw0;
+  dbg_samptok <= d_stok;
+  dbg_att_sc <= d_att_sc; dbg_att_sum <= d_att_sum; dbg_att_num <= d_att_num;
 
 end architecture;

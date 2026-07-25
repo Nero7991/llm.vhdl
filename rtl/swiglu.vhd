@@ -25,6 +25,7 @@
 -- version -> out_q is bit-exact.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_pkg.all;
+use work.util_pkg.all;   -- clog2
 
 entity swiglu is
   generic(N : positive; Q : integer := 12);
@@ -37,7 +38,16 @@ entity swiglu is
     hb2_mant : in  std_logic_vector(N*16-1 downto 0);
     hb2_exp  : in  integer;
     done     : out std_logic;
-    out_q    : out std_logic_vector(N*32-1 downto 0)
+    -- Legacy wide parallel result bus.  Still driven so the older layer_fsm/
+    -- layer_ar/layer.vhd instantiations (and tb_swiglu) keep working, but
+    -- engine_shared leaves it => open so synth PRUNES the N-way output demux.
+    out_q    : out std_logic_vector(N*32-1 downto 0);
+    -- Sequential write port to an external vec_mem BRAM (one element/cycle,
+    -- registered so waddr/wdata are aligned).  This replaces the wide out_q
+    -- demux in the FFN datapath (engine_shared wires it to vec_mem).
+    o_we     : out std_logic;
+    o_waddr  : out std_logic_vector(clog2(N)-1 downto 0);
+    o_wdata  : out std_logic_vector(31 downto 0)
   );
 end entity swiglu;
 
@@ -61,10 +71,13 @@ begin
   begin
     if rising_edge(clk) then
       done <= '0';
+      o_we <= '0';
       if rst = '1' then
         state  := S_IDLE;
         idx    := 0;
         out_q <= (others => '0');
+        o_waddr <= (others => '0');
+        o_wdata <= (others => '0');
       else
         case state is
 
@@ -112,6 +125,14 @@ begin
             out_v := resize(shift_right(prod2, Q), 32);
 
             out_q((idx+1)*32-1 downto idx*32) <= std_logic_vector(out_v);
+
+            -- Sequential BRAM write (registered): element idx is committed to
+            -- vec_mem one cycle later; waddr/wdata stay paired.  The master FSM
+            -- waits for `done` before starting bfp_pack, so the final element's
+            -- delayed write lands well before any read.
+            o_we    <= '1';
+            o_waddr <= std_logic_vector(to_unsigned(idx, o_waddr'length));
+            o_wdata <= std_logic_vector(out_v);
 
             if idx = N-1 then
               idx   := 0;

@@ -75,10 +75,10 @@ architecture rtl of llama_engine_axi is
 
   -- debug taps (from engine_shared, for the position dbg_pos_reg)
   signal dbg_pos_reg : integer := -1;
-  signal e_emb_nz, e_l0_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
-  signal e_emb_e, e_l0_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
+  signal e_emb_nz, e_l0_nz, e_l1_nz, e_l2_nz, e_l3_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
+  signal e_emb_e, e_l0_e, e_l1_e, e_l2_e, e_l3_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
   signal e_att_sc, e_att_sum, e_att_num : integer;   -- attention-internal taps
-  signal e_emb_m, e_l0_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
+  signal e_emb_m, e_l0_m, e_l1_m, e_l2_m, e_l3_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
   signal e_rxchk, e_rwchk, e_rxe, e_rwe : integer;
   signal e_rw0 : std_logic_vector(15 downto 0);
 
@@ -101,13 +101,16 @@ begin
   eng_rst <= '1' when (s_axi_aresetn='0' or rst_cnt /= 0) else '0';
 
   u_engine: entity work.engine_shared
-    generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR)
+    generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR, DEBUG_TAPS => true)
     port map(clk => s_axi_aclk, rst => eng_rst, start => eng_start,
              token_out => eng_token, pos_out => eng_pos,
              token_valid => eng_tvalid, run_done => eng_rundone,
              dbg_pos => dbg_pos_reg,
              dbg_emb_nz => e_emb_nz, dbg_emb_e => e_emb_e, dbg_emb_m => e_emb_m,
              dbg_l0_nz  => e_l0_nz,  dbg_l0_e  => e_l0_e,  dbg_l0_m  => e_l0_m,
+             dbg_l1_nz  => e_l1_nz,  dbg_l1_e  => e_l1_e,  dbg_l1_m  => e_l1_m,
+             dbg_l2_nz  => e_l2_nz,  dbg_l2_e  => e_l2_e,  dbg_l2_m  => e_l2_m,
+             dbg_l3_nz  => e_l3_nz,  dbg_l3_e  => e_l3_e,  dbg_l3_m  => e_l3_m,
              dbg_l4_nz  => e_l4_nz,  dbg_l4_e  => e_l4_e,  dbg_l4_m  => e_l4_m,
              dbg_fin_nz => e_fin_nz, dbg_fin_e => e_fin_e, dbg_fin_m => e_fin_m,
              dbg_rms_nz => e_rms_nz, dbg_rms_e => e_rms_e, dbg_rms_m => e_rms_m,
@@ -198,6 +201,10 @@ begin
               when 3 => rdata_r <= std_logic_vector(to_unsigned(NGEN, 16)) &
                                    std_logic_vector(to_unsigned(MAXPOS, 16));   -- CFG
               when 8 => rdata_r <= x"6C6C6D31";                                 -- ID "llm1"
+              -- finer per-layer x taps (same dbgpack format), free reg slots:
+              when 5 => rdata_r <= dbgpack(e_l1_nz, e_l1_e, e_l1_m);            -- 0x14 x after layer 1
+              when 6 => rdata_r <= dbgpack(e_l2_nz, e_l2_e, e_l2_m);            -- 0x18 x after layer 2
+              when 7 => rdata_r <= dbgpack(e_l3_nz, e_l3_e, e_l3_m);            -- 0x1C x after layer 3
               -- DEBUG taps for dbg_pos: {nz[24], exp[23:16], m0[15:0]}
               when 48 => rdata_r <= dbgpack(e_emb_nz, e_emb_e, e_emb_m);        -- x after embed
               when 49 => rdata_r <= dbgpack(e_l0_nz,  e_l0_e,  e_l0_m);         -- x after layer 0

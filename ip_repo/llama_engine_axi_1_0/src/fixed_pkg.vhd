@@ -5,19 +5,20 @@ library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_luts_pkg.all;
 
 package fixed_pkg is
+  -- Named subtypes avoid GHDL 1.0.0 "index constraint not allowed here" on
+  -- inline-constrained array types in subprogram interfaces.  Declared in the
+  -- HEADER so mulshr can be exported (pipelined rsqrt in rmsnorm uses it).
+  subtype s64  is signed(63 downto 0);
+  subtype s96  is signed(95 downto 0);
+  subtype s128 is signed(127 downto 0);
   function rsqrt_q  (mean_sq_q : signed; q : integer) return signed;
+  function mulshr   (a, b : s64; sh : natural) return s64;  -- exported for pipelined rsqrt
   function exp_q    (z_q       : signed; q : integer) return signed;
   function sigmoid_q(z_q       : signed; q : integer) return signed;
   function scale_mul(acc : signed; mult : signed; shift : integer) return signed;
 end package;
 
 package body fixed_pkg is
-
-  -- Named subtypes avoid GHDL 1.0.0 "index constraint not allowed here" on
-  -- inline-constrained array types in subprogram interfaces.
-  subtype s64  is signed(63 downto 0);
-  subtype s96  is signed(95 downto 0);
-  subtype s128 is signed(127 downto 0);
 
   -- ROMs: bit-identical to the former mem/luts/*.mem TEXTIO load, now sourced
   -- from work.fixed_luts_pkg (RSQRT_ROM/EXP_ROM/SIG_ROM) so this package

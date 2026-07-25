@@ -25,3 +25,17 @@ ref/*.tokerr
 mem/weights_l0/
 *.notes
 hw/ip_proj/
+
+# Vivado run noise (logs/journals/lock dirs)
+vivado*.log
+vivado*.jou
+.Xil/
+sim/.Xil/
+sim/xv*.log
+sim/xv*.pb
+sim/*.wdb
+sim/xsim.dir/
+# Build outputs: bitstreams/checkpoints are large + reproducible (reports are kept)
+build_artifacts_*/*.bit
+build_artifacts_*/*.bin
+build_artifacts_*/*.dcp

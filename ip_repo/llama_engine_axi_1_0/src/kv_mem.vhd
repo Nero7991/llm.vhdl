@@ -10,6 +10,13 @@ end;
 architecture rtl of kv_mem is
   type ram_t is array(0 to WORDS-1) of std_logic_vector(W-1 downto 0);
   signal ram : ram_t := (others=>(others=>'0'));
+  -- Canonical Vivado READ_FIRST simple-dual-port template (write-if, then read).
+  -- Forcing block RAM earlier gave an undefined same-address R/W collision on
+  -- silicon (a write-once slot read back DIFFERENT values at different token
+  -- positions).  This canonical order is what Vivado's inference reliably maps to
+  -- a READ_FIRST RAM (old value on collision) -- matching what tb_engine_shared
+  -- validates -- for BOTH the wide value caches and the narrow exp caches.  No
+  -- ram_style override, so each instance picks the right primitive.
 begin
   process(clk) begin
     if rising_edge(clk) then

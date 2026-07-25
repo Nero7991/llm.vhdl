@@ -29,6 +29,7 @@ architecture sim of tb_attn_cmp is
   signal done_b, done_n : std_logic;
   signal xb_b, xb_n : std_logic_vector(DIM*16-1 downto 0);
   signal xe_b, xe_n : integer;
+  signal dsc_b,dsc_n, dsm_b,dsm_n, dnm_b,dnm_n : integer;
 
   -- deterministic small signed value for (pos,index)
   function pv(pos, idx, salt : integer) return integer is
@@ -44,13 +45,15 @@ begin
     generic map(DIM=>DIM, MAXPOS=>MAXPOS)
     port map(clk=>clk,rst=>rst,start=>start,layer=>layer,cur_pos=>cur_pos,
              q_mant=>q_mant,q_exp=>q_exp,k_new_mant=>k_mant,k_new_exp=>k_exp,
-             v_new_mant=>v_mant,v_new_exp=>v_exp,done=>done_b,xb_mant=>xb_b,xb_exp=>xe_b);
+             v_new_mant=>v_mant,v_new_exp=>v_exp,done=>done_b,xb_mant=>xb_b,xb_exp=>xe_b,
+             dbg_sc=>dsc_b,dbg_sum=>dsm_b,dbg_num=>dnm_b);
 
   u_net: entity work.attention_ml_net_ps
     generic map(DIM=>DIM, MAXPOS=>MAXPOS)
     port map(clk=>clk,rst=>rst,start=>start,layer=>layer,cur_pos=>cur_pos,
              q_mant=>q_mant,q_exp=>q_exp,k_new_mant=>k_mant,k_new_exp=>k_exp,
-             v_new_mant=>v_mant,v_new_exp=>v_exp,done=>done_n,xb_mant=>xb_n,xb_exp=>xe_n);
+             v_new_mant=>v_mant,v_new_exp=>v_exp,done=>done_n,xb_mant=>xb_n,xb_exp=>xe_n,
+             dbg_sc=>dsc_n,dbg_sum=>dsm_n,dbg_num=>dnm_n);
 
   process
     variable fails : integer := 0;
@@ -73,6 +76,11 @@ begin
       -- wait for both done
       wait until (done_b = '1' and done_n = '1') for 500 us;
       wait for 1 ns;
+      report "pos=" & integer'image(p) &
+             " | vref b=" & integer'image(dsc_b) & " n=" & integer'image(dsc_n) &
+             " | sum_l b=" & integer'image(dsm_b) & " n=" & integer'image(dsm_n) &
+             " | num_s b=" & integer'image(dnm_b) & " n=" & integer'image(dnm_n) &
+             " | xe b=" & integer'image(xe_b) & " n=" & integer'image(xe_n) severity note;
       if xb_b /= xb_n or xe_b /= xe_n then
         fails := fails + 1;
         report "MISMATCH pos=" & integer'image(p) &

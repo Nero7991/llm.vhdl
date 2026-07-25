@@ -30,6 +30,7 @@
 -- (multi-cycle); consumers already use a start/done handshake.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_pkg.all;
+use work.fixed_luts_pkg.all;   -- RSQRT_ROM for the pipelined rsqrt
 use work.util_pkg.all;
 
 entity rmsnorm is
@@ -49,9 +50,17 @@ entity rmsnorm is
 end entity;
 
 architecture rtl of rmsnorm is
-  -- Array of 64-bit signed, one raw accumulator per element (registers).
-  type raw64_arr is array (natural range <>) of signed(63 downto 0);
-  type state_t is (S_IDLE, S_ACC, S_INV, S_RAW, S_SHIFT, S_EMIT);
+  -- rsqrt is PIPELINED: its 6-7 chained 64x64 multiplies (Newton) were one
+  -- combinational cone of cascaded unregistered DSPs -- the router segments timing
+  -- at each DSP boundary and under-counts the true reg->reg delay, so it "meets"
+  -- timing but the real path exceeds the clock period -> non-deterministic result
+  -- on silicon.  One multiply per state, registered between, kills the cascade.
+  type state_t is (S_IDLE, S_ACC, S_INV,
+                   S_RQ_SEED, S_RQ_I1M1, S_RQ_I1M2, S_RQ_I1M3,
+                   S_RQ_I2M1, S_RQ_I2M2, S_RQ_I2M3, S_RQ_FOLD, S_RQ_FIN,
+                   -- S_RAW/S_EMIT split so xm*inv and (xm*inv)*wm are NOT a
+                   -- cascaded-DSP combinational cone (same fix as rsqrt).
+                   S_RAW, S_RAW_B, S_SHIFT, S_EMIT, S_EMIT_B);
 begin
   process(clk)
     -- Control
@@ -69,7 +78,6 @@ begin
     variable wm_ext      : signed(63 downto 0);
     variable xm_inv      : signed(63 downto 0);   -- xm[j] * inv (fits ~33 bits)
     variable raw_j       : signed(63 downto 0);   -- xm[j]*inv*wm[j] (fits ~48 bits)
-    variable raws        : raw64_arr(0 to N-1);
     -- Magnitude tracking
     variable max_raw     : signed(63 downto 0);
     variable abs_raw_j   : signed(63 downto 0);
@@ -81,6 +89,26 @@ begin
     variable shift_total : integer;
     -- Output
     variable om_32       : signed(31 downto 0);
+    -- Pipelined rsqrt state (one 64x64 multiply per cycle, registered between).
+    variable msq_reg     : signed(63 downto 0);   -- mean_sq_q held into rsqrt
+    variable rq_A        : unsigned(63 downto 0);
+    variable rq_mant     : unsigned(63 downto 0);  -- normalised mantissa (Q30)
+    variable rq_smant    : signed(63 downto 0);
+    variable rq_y        : signed(63 downto 0);
+    variable rq_y2       : signed(63 downto 0);
+    variable rq_my2      : signed(63 downto 0);
+    variable rq_diff     : signed(63 downto 0);
+    variable rq_yfin     : signed(63 downto 0);
+    variable rq_p        : integer;
+    variable rq_d        : integer;
+    variable rq_he       : integer;
+    variable rq_E        : integer;
+    variable rq_sh       : integer;
+    variable rq_bias     : signed(63 downto 0);
+    variable rq_r        : signed(63 downto 0);
+    variable rq_k        : integer;
+    constant THREE_Q30   : signed(63 downto 0) := shift_left(to_signed(3, 64), 30);
+    constant INV_SQRT2_C : signed(63 downto 0) := to_signed(759250125, 64);
   begin
     if rising_edge(clk) then
       done <= '0';
@@ -139,10 +167,66 @@ begin
             end if;
 
             if mean_sq_q < 1 then mean_sq_q := to_signed(1, 64); end if;
+            -- Enter the pipelined rsqrt (replaces inv32 := rsqrt_q(mean_sq_q,Q)).
+            msq_reg := mean_sq_q;
+            state   := S_RQ_SEED;
 
-            inv32   := rsqrt_q(mean_sq_q, Q);
+          -- ---- Pipelined rsqrt (bit-exact with fixed_pkg.rsqrt_q) -------------
+          -- SEED: MSB-find + mantissa normalise to Q30 + ROM seed (no multiply).
+          when S_RQ_SEED =>
+            rq_A := unsigned(msq_reg);            -- msq_reg >= 1 (clamped)
+            rq_p := 0;
+            for i in 0 to 62 loop
+              if rq_A(i) = '1' then rq_p := i; end if;
+            end loop;
+            if rq_p <= 30 then rq_mant := shift_left(rq_A, 30 - rq_p);
+            else               rq_mant := shift_right(rq_A, rq_p - 30);
+            end if;
+            rq_k     := to_integer(rq_mant(29 downto 24));
+            rq_y     := to_signed(RSQRT_ROM(rq_k), 64);
+            rq_smant := signed(rq_mant);
+            state    := S_RQ_I1M1;
+
+          -- Newton iter 1: y2 = y*y ; my2 = smant*y2 ; y = y*(3-my2)  (3 multiplies)
+          when S_RQ_I1M1 => rq_y2  := mulshr(rq_y, rq_y, 30);              state := S_RQ_I1M2;
+          when S_RQ_I1M2 => rq_my2 := mulshr(rq_smant, rq_y2, 30);
+                            rq_diff := THREE_Q30 - rq_my2;                 state := S_RQ_I1M3;
+          when S_RQ_I1M3 => rq_y   := mulshr(rq_y, rq_diff, 31);           state := S_RQ_I2M1;
+          -- Newton iter 2
+          when S_RQ_I2M1 => rq_y2  := mulshr(rq_y, rq_y, 30);              state := S_RQ_I2M2;
+          when S_RQ_I2M2 => rq_my2 := mulshr(rq_smant, rq_y2, 30);
+                            rq_diff := THREE_Q30 - rq_my2;                 state := S_RQ_I2M3;
+          when S_RQ_I2M3 => rq_y   := mulshr(rq_y, rq_diff, 31);           state := S_RQ_FOLD;
+
+          -- Parity fold: 1 conditional multiply.
+          when S_RQ_FOLD =>
+            rq_d := rq_p - Q;
+            if (rq_d mod 2) /= 0 then
+              rq_yfin := mulshr(rq_y, INV_SQRT2_C, 30);
+              rq_he   := (rq_d - 1) / 2;
+            else
+              rq_yfin := rq_y;
+              rq_he   := rq_d / 2;
+            end if;
+            rq_E  := Q - 30 - rq_he;
+            state := S_RQ_FIN;
+
+          -- Final shift + clamp -> inv32 (mean_sq_q>=1 so the <=0 return is moot).
+          when S_RQ_FIN =>
+            if rq_E > 32 then
+              rq_r := to_signed(2147483647, 64);
+            elsif rq_E >= 0 then
+              rq_r := shift_left(rq_yfin, rq_E);
+            else
+              rq_sh   := -rq_E;
+              rq_bias := shift_left(to_signed(1, 64), rq_sh - 1);
+              rq_r    := shift_right(rq_yfin + rq_bias, rq_sh);
+            end if;
+            if    rq_r > to_signed(2147483647, 64) then inv32 := to_signed(2147483647, 32);
+            elsif rq_r < 0                          then inv32 := to_signed(0, 32);
+            else                                         inv32 := resize(rq_r, 32);
+            end if;
             inv_ext := resize(inv32, 64);
-
             max_raw := (others => '0');
             idx     := 0;
             state   := S_RAW;
@@ -150,16 +234,21 @@ begin
           -- ----------------------------------------------------------------
           -- Step 4: raw[j] = xm[j]*inv*wm[j], one element per cycle; track max.
           --   resize(a*b,64) takes the lower 64 bits (values fit in <2^48).
+          --   The per-element raw values are NOT stored (no `raws` array): S_EMIT
+          --   RE-COMPUTES raw[j] from the still-valid x/w ports + inv.  This removes
+          --   a 64x64-bit indexed array that Vivado inferred as UNINITIALIZED
+          --   distributed RAM in the congested engine (-> non-deterministic HW
+          --   output); recompute is bit-identical (same widths/order).
           -- ----------------------------------------------------------------
           when S_RAW =>
             xm_j   := signed(x_mant((idx+1)*16-1 downto idx*16));
             wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
             xm_ext := resize(xm_j, 64);
             wm_ext := resize(wm_j, 64);
-            xm_inv := resize(xm_ext * inv_ext, 64);
-            raw_j  := resize(xm_inv * wm_ext, 64);
-            raws(idx) := raw_j;
-            -- Absolute value for magnitude tracking
+            xm_inv := resize(xm_ext * inv_ext, 64);   -- multiply 1 (registered)
+            state  := S_RAW_B;
+          when S_RAW_B =>
+            raw_j  := resize(xm_inv * wm_ext, 64);     -- multiply 2 (wm_ext from S_RAW)
             if raw_j < 0 then abs_raw_j := -raw_j;
             else               abs_raw_j :=  raw_j;
             end if;
@@ -168,7 +257,8 @@ begin
               idx   := 0;
               state := S_SHIFT;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_RAW;
             end if;
 
           -- ----------------------------------------------------------------
@@ -191,7 +281,16 @@ begin
           --   done pulses on the final element (o_mant fully written by then).
           -- ----------------------------------------------------------------
           when S_EMIT =>
-            om_32 := scale_mul(raws(idx), to_signed(1, 32), shift_total);
+            -- Re-compute raw[idx] (identical to S_RAW) instead of reading a stored
+            -- array -- avoids the LUTRAM the array inferred to under congestion.
+            -- Split multiply 1 / multiply 2 (registered) -- no cascaded DSP cone.
+            xm_j   := signed(x_mant((idx+1)*16-1 downto idx*16));
+            wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
+            xm_inv := resize(resize(xm_j, 64) * inv_ext, 64);   -- multiply 1 (registered)
+            state  := S_EMIT_B;
+          when S_EMIT_B =>
+            raw_j  := resize(xm_inv * resize(wm_j, 64), 64);     -- multiply 2 (wm_j from S_EMIT)
+            om_32  := scale_mul(raw_j, to_signed(1, 32), shift_total);
             -- Saturate to int16 range (should not trigger if shift_total chosen correctly)
             if    om_32 > 32767  then
               o_mant((idx+1)*16-1 downto idx*16) <= std_logic_vector(to_signed( 32767, 16));
@@ -205,7 +304,8 @@ begin
               done  <= '1';
               state := S_IDLE;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_EMIT;
             end if;
 
         end case;

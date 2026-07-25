@@ -13,7 +13,7 @@ set r $llama/rtl
 set rtlfiles [list \
   $r/util_pkg.vhd $r/rom_init_pkg.vhd $r/rms_weights_pkg.vhd $r/wq_l0_rom_pkg.vhd \
   $r/rope_rom_pkg.vhd $r/lmhead_rom_pkg.vhd $r/embed_rom_pkg.vhd $r/fixed_luts_pkg.vhd \
-  $r/fixed_pkg.vhd $r/mac_array.vhd $r/kv_mem.vhd $r/matmul_rt.vhd $r/rmsnorm.vhd \
+  $r/fixed_pkg.vhd $r/mac_array.vhd $r/kv_mem.vhd $r/vec_mem.vhd $r/matmul_rt.vhd $r/rmsnorm.vhd \
   $r/rope.vhd $r/swiglu.vhd $r/embed.vhd $r/lm_head.vhd $r/sampler.vhd \
   $r/sampler_stream.vhd $r/softmax.vhd $r/attention_ml.vhd $r/residual.vhd \
   $r/bfp_pack.vhd $r/engine_shared.vhd $r/llama_engine_axi.vhd ]

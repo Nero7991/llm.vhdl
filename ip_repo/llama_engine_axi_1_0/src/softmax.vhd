@@ -31,6 +31,7 @@
 -- attention_ml S_SMWAIT, attention.vhd -- already wait on `done`).
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_pkg.all;
+use work.fixed_luts_pkg.all;   -- EXP_ROM for the pipelined exp
 
 entity softmax is
   generic(NMAX : positive; Q : integer := 12);
@@ -54,7 +55,15 @@ end entity softmax;
 
 architecture rtl of softmax is
   type s32_arr is array(natural range <>) of signed(31 downto 0);
-  type state_t is (S_IDLE, S_CONVMAX, S_EXP, S_NORM);
+  -- exp is PIPELINED (S_EXP_A/B/C): the exp cone (257-entry EXP_ROM mux -> (hi-lo)
+  -- -> *frac -> normalise shifts) was one deep combinational path whose DSP-multiply
+  -- high bits the timing tool under-counts -> non-deterministic sum on HW (the sum
+  -- swung ~5K vs ~369M = a high bit flipping).  One op-level per state, registered
+  -- between.  e_i is STORED in e_arr (registers) so S_NORM does not re-run the cone.
+  type state_t is (S_IDLE, S_CONVMAX, S_EXP_A, S_EXP_B, S_EXP_C, S_NORM);
+  signal e_arr : s32_arr(0 to NMAX-1) := (others => (others => '0'));
+  attribute ram_style : string;
+  attribute ram_style of e_arr : signal is "registers";
 
   -- score_q[i] = round(mant[i] * 2^(Q - score_exp)) from a raw int16 mantissa.
   -- (round-half-up right shift for sh<0).  Recomputed on demand in both the
@@ -81,7 +90,6 @@ begin
     variable sh      : integer := 0;
     -- Persistent exp-weight storage (registers).  e_i is small (<= exp(0) at
     -- Qq), so 32 bits is exact.
-    variable e_arr   : s32_arr(0 to NMAX-1);   -- exp weight e_i
     -- Reduction accumulators (persist across cycles).
     variable max_q   : signed(63 downto 0);
     variable sum     : signed(63 downto 0);
@@ -92,6 +100,21 @@ begin
     variable e_i     : signed(31 downto 0);
     variable num     : signed(63 downto 0);
     variable p_i     : signed(63 downto 0);
+    -- Pipelined-exp registers (mirror fixed_pkg.exp_q, one op-level per state).
+    variable ex_frac : signed(63 downto 0);
+    variable ex_lo   : signed(63 downto 0);
+    variable ex_hd   : signed(63 downto 0);   -- hi - lo
+    variable ex_prod : signed(127 downto 0);
+    variable ex_uf   : boolean;               -- underflow (z < -16<<q) -> exp=0
+    variable ez      : signed(63 downto 0);
+    variable eoff    : signed(63 downto 0);
+    variable eidx    : signed(63 downto 0);
+    variable ek      : integer;
+    variable einterp : signed(63 downto 0);
+    variable etmp    : signed(127 downto 0);
+    variable er      : signed(63 downto 0);
+    variable ebias   : signed(63 downto 0);
+    variable esh     : integer;
   begin
     if rising_edge(clk) then
       done <= '0';
@@ -132,7 +155,7 @@ begin
             if idx = nreg-1 then
               idx   := 0;
               sum   := (others => '0');
-              state := S_EXP;
+              state := S_EXP_A;
             else
               idx := idx + 1;
             end if;
@@ -141,20 +164,54 @@ begin
           -- Steps 3+4+5: z_q = score_q[idx]-max_q (<=0); e_i = exp_q(z_q,Q);
           -- store e_i; accumulate sum.  ONE shared exp_q instance.
           -- ----------------------------------------------------------------
-          when S_EXP =>
-            sc_raw      := signed(score_mant((idx+1)*16-1 downto idx*16));
-            sq_i        := conv_q(sc_raw, sh);   -- recompute score_q[idx]
-            z_q         := sq_i - max_q;
-            e_i         := exp_q(z_q, Q);
-            e_arr(idx)  := e_i;
-            sum         := sum + resize(e_i, 64);
+          -- exp stage A: score->z_q, then EXP_ROM lookup + frac (no multiply).
+          when S_EXP_A =>
+            sc_raw := signed(score_mant((idx+1)*16-1 downto idx*16));
+            sq_i   := conv_q(sc_raw, sh);        -- recompute score_q[idx]
+            z_q    := sq_i - max_q;
+            ez     := z_q;
+            ex_uf  := ez < shift_left(to_signed(-16, 64), Q);
+            if ez > 0 then ez := to_signed(0, 64); end if;
+            eoff   := ez + shift_left(to_signed(16, 64), Q);
+            eidx   := shift_left(eoff, 4);
+            ek     := to_integer(shift_right(eidx, Q));
+            if ek > 255 then ek := 255; end if;
+            if ek <   0 then ek :=   0; end if;
+            ex_frac := eidx - shift_left(to_signed(ek, 64), Q);
+            ex_lo   := to_signed(EXP_ROM(ek),     64);
+            ex_hd   := to_signed(EXP_ROM(ek + 1), 64) - ex_lo;
+            state   := S_EXP_B;
+          -- exp stage B: the single (hi-lo)*frac multiply (registered).
+          when S_EXP_B =>
+            ex_prod := ex_hd * ex_frac;
+            state   := S_EXP_C;
+          -- exp stage C: normalise -> e_i; store e_arr(idx); accumulate sum.
+          when S_EXP_C =>
+            etmp    := shift_right(ex_prod, Q);
+            einterp := ex_lo + etmp(63 downto 0);
+            if Q <= 30 then
+              esh := 30 - Q;
+              if esh > 0 then
+                ebias := shift_left(to_signed(1, 64), esh - 1);
+                er    := shift_right(einterp + ebias, esh);
+              else er := einterp; end if;
+            else er := shift_left(einterp, Q - 30);
+            end if;
+            if    ex_uf                              then e_i := to_signed(0, 32);
+            elsif er < 0                             then e_i := to_signed(0, 32);
+            elsif er > to_signed(2147483647, 64)     then e_i := to_signed(2147483647, 32);
+            else                                          e_i := resize(er, 32);
+            end if;
+            e_arr(idx) <= e_i;
+            sum        := sum + resize(e_i, 64);
             if idx = nreg-1 then
               if sum <= 0 then sum := to_signed(1, 64); end if;
               sum_out <= std_logic_vector(sum);
               idx     := 0;
               state   := S_NORM;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_EXP_A;
             end if;
 
           -- ----------------------------------------------------------------
@@ -162,12 +219,14 @@ begin
           -- Also expose the raw exp weight e_i for the full-precision path.
           -- ----------------------------------------------------------------
           when S_NORM =>
-            num := shift_left(resize(e_arr(idx), 64), Q);
+            -- read the stored (pipelined) e_i -- no re-run of the exp cone.
+            e_i := e_arr(idx);
+            num := shift_left(resize(e_i, 64), Q);
             p_i := num / sum;
             prob_q((idx+1)*32-1 downto idx*32) <=
               std_logic_vector(resize(p_i, 32));
             e_out((idx+1)*32-1 downto idx*32) <=
-              std_logic_vector(e_arr(idx));
+              std_logic_vector(e_i);
             if idx = nreg-1 then
               done  <= '1';
               idx   := 0;

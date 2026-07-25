@@ -21,6 +21,7 @@ architecture sim of tb_engine_dbg is
   signal emb_e,l0_e,l4_e,fin_e,rms_e,att_e:integer;
   signal emb_m,l0_m,l4_m,fin_m,rms_m,att_m:std_logic_vector(15 downto 0);
   signal rxchk,rwchk,rxe,rwe,stok:integer; signal rw0:std_logic_vector(15 downto 0);
+  signal att_sc,att_sum,att_num:integer;
 
   function h(nz:std_logic; e:integer; m:std_logic_vector(15 downto 0)) return string is
   begin
@@ -32,7 +33,7 @@ begin
   uut: entity work.engine_shared
     generic map(DIM=>DIM,HIDDEN=>HIDDEN,NHEADS=>NHEADS,NKVH=>NKVH,KVDIM=>KVDIM,
       HEAD_SIZE=>HEAD_SIZE,VOCAB=>VOCAB,MAXPOS=>MAXPOS,NLAYERS=>NLAYERS,
-      NUM_PROMPT=>NUM_PROMPT,NGEN=>N)
+      NUM_PROMPT=>NUM_PROMPT,NGEN=>N,DEBUG_TAPS=>true)
     port map(clk=>clk,rst=>rst,start=>start,token_out=>token_out,pos_out=>pos_out,
       token_valid=>token_valid,run_done=>run_done,
       dbg_pos=>d_pos,
@@ -43,7 +44,8 @@ begin
       dbg_rms_nz=>rms_nz,dbg_rms_e=>rms_e,dbg_rms_m=>rms_m,
       dbg_att_nz=>att_nz,dbg_att_e=>att_e,dbg_att_m=>att_m,
       dbg_rxchk=>rxchk,dbg_rwchk=>rwchk,dbg_rxe=>rxe,dbg_rwe=>rwe,dbg_rw0=>rw0,
-      dbg_samptok=>stok);
+      dbg_samptok=>stok,
+      dbg_att_sc=>att_sc,dbg_att_sum=>att_sum,dbg_att_num=>att_num);
 
   process
   begin
@@ -59,6 +61,8 @@ begin
     report "  afterL4   : "&h(l4_nz,l4_e,l4_m) severity note;
     report "  afterFin  : "&h(fin_nz,fin_e,fin_m) severity note;
     report "  argmax    : "&integer'image(stok) severity note;
+    report "  att SC="&integer'image(att_sc)&" SUM="&integer'image(att_sum)&
+           " NUM="&integer'image(att_num) severity note;
     report "  rms_xe="&integer'image(rxe)&" rms_we="&integer'image(rwe)&
            " rms_w0="&integer'image(to_integer(signed(rw0))) severity note;
     finish;

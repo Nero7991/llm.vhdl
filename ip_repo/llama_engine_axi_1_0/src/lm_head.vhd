@@ -125,7 +125,6 @@ begin
     variable state  : state_t := S_IDLE;
     variable v_idx  : integer range 0 to VOCAB := 0;
     variable j_idx  : integer range 0 to DIM   := 0;
-    variable x_v    : intarr(0 to DIM-1);
     variable acc64  : signed(63 downto 0);
     variable x16    : signed(15 downto 0);
     variable prod32 : signed(31 downto 0);
@@ -149,9 +148,10 @@ begin
           when S_IDLE =>
             if start = '1' then
               x_e := x_exp;  -- accepted for interface symmetry (unused, see header)
-              for j in 0 to DIM-1 loop
-                x_v(j) := to_integer(signed(x_mant((j+1)*16-1 downto j*16)));
-              end loop;
+              -- x is read DIRECTLY from the (stable during the call) x_mant port in
+              -- S_MAC; no local x_v copy -> avoids the DIM-wide indexed variable
+              -- array Vivado inferred as uninitialized distributed RAM under
+              -- engine congestion (non-deterministic HW). Bit-identical.
               v_idx     := 0;
               j_idx     := 0;
               acc64     := (others => '0');
@@ -176,7 +176,7 @@ begin
           -- per cycle (it holds flat_idx+2 while consuming flat_idx); guarded so
           -- it never exceeds the ROM's last index.
           when S_MAC =>
-            x16    := to_signed(x_v(j_idx), 16);
+            x16    := signed(x_mant((j_idx+1)*16-1 downto j_idx*16));
             prod32 := w_pipe * x16;
             acc64  := acc64 + resize(prod32, 64);
 

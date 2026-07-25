@@ -6,7 +6,8 @@ entity attention_ml_net_ps is
        q_mant:in std_logic_vector(DIM*16-1 downto 0); q_exp:in integer;
        k_new_mant:in std_logic_vector(KVDIM*16-1 downto 0); k_new_exp:in integer;
        v_new_mant:in std_logic_vector(KVDIM*16-1 downto 0); v_new_exp:in integer;
-       done:out std_logic; xb_mant:out std_logic_vector(DIM*16-1 downto 0); xb_exp:out integer);
+       done:out std_logic; xb_mant:out std_logic_vector(DIM*16-1 downto 0); xb_exp:out integer;
+       dbg_sc:out integer; dbg_sum:out integer; dbg_num:out integer);
 end;
 architecture w of attention_ml_net_ps is
   component attention_ml is
@@ -14,15 +15,20 @@ architecture w of attention_ml_net_ps is
          q_mant:in std_logic_vector(1023 downto 0); q_exp:in std_logic_vector(31 downto 0);
          k_new_mant:in std_logic_vector(511 downto 0); k_new_exp:in std_logic_vector(31 downto 0);
          v_new_mant:in std_logic_vector(511 downto 0); v_new_exp:in std_logic_vector(31 downto 0);
-         done:out std_logic; xb_mant:out std_logic_vector(1023 downto 0); xb_exp:out std_logic_vector(31 downto 0));
+         done:out std_logic; xb_mant:out std_logic_vector(1023 downto 0); xb_exp:out std_logic_vector(31 downto 0);
+         dbg_sc:out std_logic_vector(31 downto 0); dbg_sum:out std_logic_vector(31 downto 0); dbg_num:out std_logic_vector(31 downto 0));
   end component;
   signal xe:std_logic_vector(31 downto 0);
+  signal dsc,dsm,dnm:std_logic_vector(31 downto 0);
 begin
-  xb_exp <= to_integer(signed(xe));
+  xb_exp  <= to_integer(signed(xe));
+  dbg_sc  <= to_integer(signed(dsc));
+  dbg_sum <= to_integer(signed(dsm));
+  dbg_num <= to_integer(signed(dnm));
   u: attention_ml port map(clk=>clk,rst=>rst,start=>start,
      layer=>std_logic_vector(to_signed(layer,32)),cur_pos=>std_logic_vector(to_signed(cur_pos,32)),
      q_mant=>q_mant,q_exp=>std_logic_vector(to_signed(q_exp,32)),
      k_new_mant=>k_new_mant,k_new_exp=>std_logic_vector(to_signed(k_new_exp,32)),
      v_new_mant=>v_new_mant,v_new_exp=>std_logic_vector(to_signed(v_new_exp,32)),
-     done=>done,xb_mant=>xb_mant,xb_exp=>xe);
+     done=>done,xb_mant=>xb_mant,xb_exp=>xe,dbg_sc=>dsc,dbg_sum=>dsm,dbg_num=>dnm);
 end;
