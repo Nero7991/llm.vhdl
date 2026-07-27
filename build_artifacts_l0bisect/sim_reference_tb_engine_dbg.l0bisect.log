@@ -1,0 +1,53 @@
+../tb/tb_engine_dbg.vhd:154:5:@200009676ns:(report note): SIM taps at dbg_pos=4
+../tb/tb_engine_dbg.vhd:155:5:@200009676ns:(report note):   embed     : nz='1' e=14 m0=-7663
+../tb/tb_engine_dbg.vhd:156:5:@200009676ns:(report note):   L0attRMSo : nz='1' e=13 m0=-10894
+../tb/tb_engine_dbg.vhd:157:5:@200009676ns:(report note):   L0attOut  : nz='1' e=15 m0=-12311
+../tb/tb_engine_dbg.vhd:161:5:@200009676ns:(report note):   --- layer-0 stage bisect (dataflow order) ---
+../tb/tb_engine_dbg.vhd:162:5:@200009676ns:(report note):   [0xA0] WO mm out  : nz='1' e=16 m0=-2544
+../tb/tb_engine_dbg.vhd:163:5:@200009676ns:(report note):   [0xA4] residual1  : nz='1' e=14 m0=-8299
+../tb/tb_engine_dbg.vhd:164:5:@200009676ns:(report note):   [0xA8] ffn-rmsnorm: nz='1' e=14 m0=-14812
+../tb/tb_engine_dbg.vhd:165:5:@200009676ns:(report note):   [0xAC] W1 mm out  : nz='1' e=13 m0=4296
+../tb/tb_engine_dbg.vhd:166:5:@200009676ns:(report note):   [0xB0] W3 mm out  : nz='1' e=14 m0=-4065
+../tb/tb_engine_dbg.vhd:167:5:@200009676ns:(report note):   [0xB4] bfp_pack   : nz='1' e=12 m0=-335
+../tb/tb_engine_dbg.vhd:168:5:@200009676ns:(report note):   [0xB8] W2 mm out  : nz='1' e=15 m0=3032
+../tb/tb_engine_dbg.vhd:169:5:@200009676ns:(report note):   --- end stage bisect ---
+../tb/tb_engine_dbg.vhd:170:5:@200009676ns:(report note):   afterL0   : nz='1' e=14 m0=-6783
+../tb/tb_engine_dbg.vhd:171:5:@200009676ns:(report note):   afterL4   : nz='1' e=12 m0=1025
+../tb/tb_engine_dbg.vhd:172:5:@200009676ns:(report note):   afterFin  : nz='1' e=11 m0=795
+../tb/tb_engine_dbg.vhd:173:5:@200009676ns:(report note):   argmax    : 432
+../tb/tb_engine_dbg.vhd:174:5:@200009676ns:(report note):   att SC=-628 SUM=6788 NUM=-51081804
+../tb/tb_engine_dbg.vhd:176:5:@200009676ns:(report note):   rms_xe=14 rms_we=13 rms_w0=7965
+../tb/tb_engine_dbg.vhd:179:5:@200009676ns:(report note): PROBES (L0 attention, dbg_pos=4):
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 0] = 6788  (0x00001A84)  @0xA0
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 1] = 16340  (0x00003FD4)  @0xA4
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 2] = 4741  (0x00001285)  @0xA8
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 3] = 6510  (0x0000196E)  @0xAC
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 4] = 5669  (0x00001625)  @0xB0
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 5] = 5113  (0x000013F9)  @0xB4
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 6] = 10870  (0x00002A76)  @0xB8
+../tb/tb_engine_dbg.vhd:181:7:@200009676ns:(report note):   sum_l[head 7] = 5031  (0x000013A7)  @0xBC
+../tb/tb_engine_dbg.vhd:186:5:@200009676ns:(report note):   amax_s      = 0x000000006C99F7D2  msb=30   [0x24 lo=0x6C99F7D2 0x28 hi=0x00000000]
+../tb/tb_engine_dbg.vhd:190:5:@200009676ns:(report note):   max|num_s|  = 0x000000001367B618  msb=28   [0x30 lo=0x1367B618 0x34 hi=0x00000000]
+../tb/tb_engine_dbg.vhd:194:5:@200009676ns:(report note):   0x2C IDX    = 0x091A  amax lane=26 (head 3)  nmax lane=9 (head 1)
+../tb/tb_engine_dbg.vhd:203:5:@200009676ns:(report note): DIVIDE PROBE (L0 attention, dbg_pos=4):
+../tb/tb_engine_dbg.vhd:204:5:@200009676ns:(report note):   [0xBC] META      = 0x00000000   seen='0' cnt=0 hd=0 t_idx=0 lane=0
+../tb/tb_engine_dbg.vhd:210:5:@200009676ns:(report note):   first-clamp qmag = 0x0000000000000000  msb=0   [0xA0 lo=0x00000000 0xA4 hi=0x00000000]
+../tb/tb_engine_dbg.vhd:214:5:@200009676ns:(report note):   first-clamp nmag = 0x0000000000000000   [0xA8 lo=0x00000000 0xAC hi=0x00000000]
+../tb/tb_engine_dbg.vhd:217:5:@200009676ns:(report note):   first-clamp nsd  = 0x0000000000000000   [0xB0 lo=0x00000000 0xB4 hi=0x00000000]
+../tb/tb_engine_dbg.vhd:220:5:@200009676ns:(report note):   first-clamp sum  = 0   [0xB8 0x00000000]
+../tb/tb_engine_dbg.vhd:222:5:@200009676ns:(report note):   hd0/t1 (lane 1) UNCONDITIONAL capture -- compare THIS to silicon:
+../tb/tb_engine_dbg.vhd:223:5:@200009676ns:(report note):     qmag(pre-clamp) = 0x0000000015A5419F  msb=28   [0x38 lo=0x15A5419F 0x3C hi=0x00000000]
+../tb/tb_engine_dbg.vhd:227:5:@200009676ns:(report note):     ns_dout(num_s)  = 0x00000000023DF1E0 = 37614048 (as int32)   [0xFC lo=0x023DF1E0 0x10 hi=0x00000000]
+../tb/tb_engine_dbg.vhd:231:5:@200009676ns:(report note):     sum_l           = 6788   [0x00 0x00001A84]
+../tb/tb_engine_dbg.vhd:233:5:@200009676ns:(report note):     derived nmag    = |ns_dout*2^16 +/- sum/2| = 0x0000023DF1E00D42
+../tb/tb_engine_dbg.vhd:236:5:@200009676ns:(report note):     nmag (CAPTURED) = 0x0000023DF1E00D42 = 2465074253122  msb=41   [0xDC lo=0xF1E00D42 0xE0 hi=0x0000023D]
+../tb/tb_engine_dbg.vhd:241:5:@200009676ns:(report note):     qmag(dec)       = 363151775   (must equal nmag/sum_l exactly)
+../tb/tb_engine_dbg.vhd:247:5:@200009676ns:(report note): RUNNING-MAX QUOTIENT capture (L0 attention, dbg_pos=4):
+../tb/tb_engine_dbg.vhd:249:5:@200009676ns:(report note):   [0xBC] META     = 0x8003021A   valid='1' clamp_cnt=0 hd=3 t_idx=2 lane=26
+../tb/tb_engine_dbg.vhd:255:5:@200009676ns:(report note):   [0xA0/A4] qmag  = 0x000000006C99F7D2 = 1822029778  msb=30
+../tb/tb_engine_dbg.vhd:258:5:@200009676ns:(report note):   [0xA8/AC] nmag  = 0x00000AC9B35C0CB7 = 11861413858487  msb=43
+../tb/tb_engine_dbg.vhd:261:5:@200009676ns:(report note):   [0xB0/B4] nsd   = 0x000000000AC9B35C = 180990812 (as int32)
+../tb/tb_engine_dbg.vhd:263:5:@200009676ns:(report note):   [0xB8]    sum_l = 6510   (0x0000196E)
+../tb/tb_engine_dbg.vhd:265:5:@200009676ns:(report note):   derived nmag from nsd/sum = 0x00000AC9B35C0CB7   (must equal the CAPTURED nmag above)
+simulation finished @200009676ns
+DBG_DONE

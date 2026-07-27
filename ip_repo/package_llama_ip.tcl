@@ -15,7 +15,7 @@ set rtlfiles [list \
   $r/rope_rom_pkg.vhd $r/lmhead_rom_pkg.vhd $r/embed_rom_pkg.vhd $r/fixed_luts_pkg.vhd \
   $r/fixed_pkg.vhd $r/mac_array.vhd $r/kv_mem.vhd $r/vec_mem.vhd $r/matmul_rt.vhd $r/rmsnorm.vhd \
   $r/rope.vhd $r/swiglu.vhd $r/embed.vhd $r/lm_head.vhd $r/sampler.vhd \
-  $r/sampler_stream.vhd $r/softmax.vhd $r/attention_ml.vhd $r/residual.vhd \
+  $r/sampler_stream.vhd $r/softmax.vhd $r/divider_rs.vhd $r/attention_ml.vhd $r/residual.vhd \
   $r/bfp_pack.vhd $r/engine_shared.vhd $r/llama_engine_axi.vhd ]
 add_files -norecurse $rtlfiles
 foreach f $rtlfiles { set_property file_type {VHDL 2008} [get_files $f] }

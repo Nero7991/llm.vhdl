@@ -50,6 +50,10 @@ entity rmsnorm is
 end entity;
 
 architecture rtl of rmsnorm is
+  -- log2(N) for the mean_sq_q rounded-shift (replaces a 64-bit `/`, see S_INV).
+  -- N must be a power of two; DIM=64 in engine_shared.  Asserted below.
+  constant LOG2N : natural := clog2(N);
+
   -- rsqrt is PIPELINED: its 6-7 chained 64x64 multiplies (Newton) were one
   -- combinational cone of cascaded unregistered DSPs -- the router segments timing
   -- at each DSP boundary and under-counts the true reg->reg delay, so it "meets"
@@ -62,6 +66,12 @@ architecture rtl of rmsnorm is
                    -- cascaded-DSP combinational cone (same fix as rsqrt).
                    S_RAW, S_RAW_B, S_SHIFT, S_EMIT, S_EMIT_B);
 begin
+  -- The rounded-shift form of mean_sq_q is bit-exact with (num+N/2)/N only when
+  -- N is a power of two.  Fail loudly at elaboration otherwise.
+  assert 2**LOG2N = N
+    report "rmsnorm: N must be a power of two for the mean_sq_q shift"
+    severity failure;
+
   process(clk)
     -- Control
     variable state       : state_t := S_IDLE;
@@ -151,7 +161,16 @@ begin
           -- ----------------------------------------------------------------
           when S_INV =>
             num       := shift_left(S, Q);
-            mean_sq_q := (num + to_signed(N/2, 64)) / to_signed(N, 64);
+            -- mean_sq_q = (num + N/2) / N.  N is a power of two (DIM=64) and
+            -- `num` is a sum of SQUARES shifted left, hence always >= 0, so a
+            -- rounded RIGHT SHIFT is bit-exact with the divide.
+            -- The VHDL `/` operator is NOT trustworthy in this design: the same
+            -- construct in attention_ml returned quotients that were wrong (and
+            -- even larger than their own dividend) on silicon while every
+            -- operand was bit-perfect, in an operand-DEPENDENT way -- which is
+            -- exactly what we measured here (RMS_ATT exact, RMS_FFN wrong from
+            -- the same logic).  See rtl/divider_rs.vhd and the project memory.
+            mean_sq_q := shift_right(num + to_signed(N/2, 64), LOG2N);
 
             if xe >= 0 then
               sh := 2 * xe;

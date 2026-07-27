@@ -1,0 +1,51 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Jul 26 17:10:57 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -hierarchical_depth 4 -file /tmp/hier_util_baseline.rpt
+| Design       : design_2_wrapper
+| Device       : xczu3eg-sfvc784-1-e
+| Speed File   : -1
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-----------------------------------+---------------------------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|              Instance             |                                Module                               | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-----------------------------------+---------------------------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| design_2_wrapper                  |                                                               (top) |      51042 |      50672 |     300 |   70 | 54435 |    167 |      3 |    0 |        138 |
+|   (design_2_wrapper)              |                                                               (top) |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|   design_2_i                      |                                                            design_2 |      51042 |      50672 |     300 |   70 | 54435 |    167 |      3 |    0 |        138 |
+|     (design_2_i)                  |                                                            design_2 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     fan_pwm                       |                                                  design_2_fan_pwm_0 |         82 |         82 |       0 |    0 |   203 |      0 |      0 |    0 |          0 |
+|       U0                          |                                     design_2_fan_pwm_0_axi_pwm_v1_0 |         82 |         82 |       0 |    0 |   203 |      0 |      0 |    0 |          0 |
+|         axi_pwm_v1_0_S00_AXI_inst |                             design_2_fan_pwm_0_axi_pwm_v1_0_S00_AXI |         82 |         82 |       0 |    0 |   203 |      0 |      0 |    0 |          0 |
+|     llama_engine_axi_0            |                                       design_2_llama_engine_axi_0_0 |      50386 |      50086 |     300 |    0 | 53456 |    167 |      3 |    0 |        138 |
+|       U0                          |                      design_2_llama_engine_axi_0_0_llama_engine_axi |      50386 |      50086 |     300 |    0 | 53456 |    167 |      3 |    0 |        138 |
+|         (U0)                      |                      design_2_llama_engine_axi_0_0_llama_engine_axi |        416 |        396 |      20 |    0 |    88 |      0 |      0 |    0 |          0 |
+|         u_engine                  |                         design_2_llama_engine_axi_0_0_engine_shared |      49971 |      49691 |     280 |    0 | 53368 |    167 |      3 |    0 |        138 |
+|     ps8_0_axi_periph              |                                         design_2_ps8_0_axi_periph_0 |        557 |        488 |       0 |   69 |   743 |      0 |      0 |    0 |          0 |
+|       s00_couplers                |                                             s00_couplers_imp_HNICRI |        412 |        343 |       0 |   69 |   614 |      0 |      0 |    0 |          0 |
+|         auto_pc                   |                                                  design_2_auto_pc_0 |        412 |        343 |       0 |   69 |   614 |      0 |      0 |    0 |          0 |
+|       xbar                        |                                                     design_2_xbar_0 |        145 |        145 |       0 |    0 |   129 |      0 |      0 |    0 |          0 |
+|         inst                      |                   design_2_xbar_0_axi_crossbar_v2_1_30_axi_crossbar |        145 |        145 |       0 |    0 |   129 |      0 |      0 |    0 |          0 |
+|     rst_ps8_0_2M                  |                                             design_2_rst_ps8_0_2M_0 |         17 |         16 |       0 |    1 |    33 |      0 |      0 |    0 |          0 |
+|       U0                          |                              design_2_rst_ps8_0_2M_0_proc_sys_reset |         17 |         16 |       0 |    1 |    33 |      0 |      0 |    0 |          0 |
+|         (U0)                      |                              design_2_rst_ps8_0_2M_0_proc_sys_reset |          1 |          1 |       0 |    0 |     1 |      0 |      0 |    0 |          0 |
+|         EXT_LPF                   |                                         design_2_rst_ps8_0_2M_0_lpf |          5 |          4 |       0 |    1 |    17 |      0 |      0 |    0 |          0 |
+|         SEQ                       |                                design_2_rst_ps8_0_2M_0_sequence_psr |         11 |         11 |       0 |    0 |    15 |      0 |      0 |    0 |          0 |
+|     zynq_ultra_ps_e_0             |                                        design_2_zynq_ultra_ps_e_0_0 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       inst                        | design_2_zynq_ultra_ps_e_0_0_zynq_ultra_ps_e_v3_5_1_zynq_ultra_ps_e |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
++-----------------------------------+---------------------------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

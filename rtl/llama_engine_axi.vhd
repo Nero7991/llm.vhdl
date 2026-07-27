@@ -12,12 +12,42 @@
 --
 -- Register map (C_S_AXI_ADDR_WIDTH=8, word-addressed reg = addr[7:2]):
 --   0x00 CTRL   : write bit0=1 -> START (reset + run).
+--                 read  L1_SUM  = sum_l[31:0] consumed by the hd0/t1 divide
+--                       (CTRL is write-only, so its read slot carries a probe).
 --   0x04 STATUS : read  bit0=done (run finished), bit1=busy.
 --   0x08 COUNT  : read  number of tokens emitted so far (0..NGEN).
 --   0x0C CFG    : read  {NGEN[31:16], MAXPOS[15:0]}.
+--   0x10 DBG_POS: write which position the debug taps capture (-1 = none).
+--                 read  L1_NSD_H = ns_dout[63:32] at the hd0/t1 divide
+--                       (DBG_POS is write-only, so its read slot carries a probe).
+--   0x14/18/1C  : read  x after layers 1/2/3 (dbgpack).
 --   0x20 ID     : read  0x6C6C6D31  ("llm1").
---   0x40..      : read  TOKEN[i] = i-th generated token id (i=0..MAXTOK-1),
+--   0x24 AMAX_L : read  attention amax_s[31:0]   (sticky |xb_acc| max, L0/dbg_pos)
+--   0x28 AMAX_H : read  attention amax_s[63:32]
+--   0x2C IDX    : read  {nmax lane[15:8], amax lane[7:0]}; head = lane/HEAD_SIZE
+--   0x30 NMAX_L : read  max|num_s| over all 64 lanes [31:0]
+--   0x34 NMAX_H : read  max|num_s| over all 64 lanes [63:32]
+--   0x38/0x3C   : read  0 (SPARE -- were the hd0/t1 lane qmag probes; attention is
+--                 solved on silicon so the lane-1 divide probes are retired).
+--   0x40..0x9C  : read  TOKEN[i] = i-th generated token id (i=0..NGEN-1),
 --                 word index 16+i (byte 0x40 + 4*i).
+--   0xA0..0xB8  : read  INTRA-LAYER-0 STAGE BISECT taps, in DATAFLOW ORDER, all in
+--                 the standard dbgpack format {nz[24], exp[23:16], m0[15:0]}, all
+--                 for cur_layer=0 at position dbg_pos:
+--                 0xA0 WO matmul out        (matmul_rt, mat_sel=WO)
+--                 0xA4 residual-1 out       (residual.vhd: x + WO)
+--                 0xA8 FFN rmsnorm out      (rmsnorm.vhd, RMS_FFN)
+--                 0xAC W1 matmul out        (matmul_rt, mat_sel=W1, HIDDEN-wide)
+--                 0xB0 W3 matmul out        (matmul_rt, mat_sel=W3, HIDDEN-wide)
+--                 0xB4 bfp_pack out         (swiglu -> vec_mem -> bfp_pack)
+--                 0xB8 W2 matmul out        (matmul_rt, mat_sel=W2)
+--                 (REPLACES the running-max-quotient block: the attention divide is
+--                  fixed by divider_rs and reads bit-exact on silicon.)
+--   0xBC        : read  0 (SPARE)
+--   0xC0..0xD8  : read  residual-stream / rmsnorm / attention debug taps.
+--   0xDC/0xE0   : read  0 (SPARE -- were the hd0/t1 DIVIDEND probes).
+--   0xE4..0xF8  : read  rmsnorm exps / attention sc/sum/num taps.
+--   0xFC L1_NSD_L : read  hd0/t1 ns_dout[31:0]
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 
 entity llama_engine_axi is
@@ -79,8 +109,24 @@ architecture rtl of llama_engine_axi is
   signal e_emb_e, e_l0_e, e_l1_e, e_l2_e, e_l3_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
   signal e_att_sc, e_att_sum, e_att_num : integer;   -- attention-internal taps
   signal e_emb_m, e_l0_m, e_l1_m, e_l2_m, e_l3_m, e_l4_m, e_fin_m, e_rms_m, e_att_m : std_logic_vector(15 downto 0);
+  -- intra-layer-0 stage bisect taps (WO / res1 / ffn-rms / W1 / W3 / bfp_pack / W2)
+  signal e_wo_nz, e_r1_nz, e_rf_nz, e_w1_nz, e_w3_nz, e_hb_nz, e_w2_nz : std_logic;
+  signal e_wo_e,  e_r1_e,  e_rf_e,  e_w1_e,  e_w3_e,  e_hb_e,  e_w2_e  : integer;
+  signal e_wo_m,  e_r1_m,  e_rf_m,  e_w1_m,  e_w3_m,  e_hb_m,  e_w2_m  : std_logic_vector(15 downto 0);
   signal e_rxchk, e_rwchk, e_rxe, e_rwe : integer;
   signal e_rw0 : std_logic_vector(15 downto 0);
+  -- per-head / per-lane attention probes (oversized-lane hunt)
+  signal e_att_sums : std_logic_vector(8*32-1 downto 0);
+  signal e_amax_l, e_amax_h, e_nmax_l, e_nmax_h : std_logic_vector(31 downto 0);
+  signal e_att_idx : std_logic_vector(15 downto 0);
+  -- failing-division capture (attention_ml S_WDIV)
+  signal e_cd_qmag_l, e_cd_qmag_h, e_cd_nmag_l, e_cd_nmag_h : std_logic_vector(31 downto 0);
+  signal e_cd_nsd_l, e_cd_nsd_h, e_cd_sum, e_cd_meta        : std_logic_vector(31 downto 0);
+  signal e_l1_qmag_l, e_l1_qmag_h, e_l1_nsd_l, e_l1_nsd_h, e_l1_sum : std_logic_vector(31 downto 0);
+  -- hd0/t1 DIVIDEND + running-max-quotient capture (attention_ml S_WDIV)
+  signal e_l1_nmag_l, e_l1_nmag_h : std_logic_vector(31 downto 0);
+  signal e_qx_qmag_l, e_qx_qmag_h, e_qx_nmag_l, e_qx_nmag_h : std_logic_vector(31 downto 0);
+  signal e_qx_nsd_l, e_qx_nsd_h, e_qx_sum, e_qx_meta        : std_logic_vector(31 downto 0);
 
   -- pack a debug point {nz, exp(int8), m0(int16)} into one 32-bit reg.
   function dbgpack(nz : std_logic; e : integer; m : std_logic_vector(15 downto 0))
@@ -115,9 +161,32 @@ begin
              dbg_fin_nz => e_fin_nz, dbg_fin_e => e_fin_e, dbg_fin_m => e_fin_m,
              dbg_rms_nz => e_rms_nz, dbg_rms_e => e_rms_e, dbg_rms_m => e_rms_m,
              dbg_att_nz => e_att_nz, dbg_att_e => e_att_e, dbg_att_m => e_att_m,
+             dbg_wo_nz => e_wo_nz, dbg_wo_e => e_wo_e, dbg_wo_m => e_wo_m,
+             dbg_r1_nz => e_r1_nz, dbg_r1_e => e_r1_e, dbg_r1_m => e_r1_m,
+             dbg_rf_nz => e_rf_nz, dbg_rf_e => e_rf_e, dbg_rf_m => e_rf_m,
+             dbg_w1_nz => e_w1_nz, dbg_w1_e => e_w1_e, dbg_w1_m => e_w1_m,
+             dbg_w3_nz => e_w3_nz, dbg_w3_e => e_w3_e, dbg_w3_m => e_w3_m,
+             dbg_hb_nz => e_hb_nz, dbg_hb_e => e_hb_e, dbg_hb_m => e_hb_m,
+             dbg_w2_nz => e_w2_nz, dbg_w2_e => e_w2_e, dbg_w2_m => e_w2_m,
              dbg_rxchk => e_rxchk, dbg_rwchk => e_rwchk, dbg_rxe => e_rxe, dbg_rwe => e_rwe, dbg_rw0 => e_rw0,
              dbg_samptok => e_stok,
-             dbg_att_sc => e_att_sc, dbg_att_sum => e_att_sum, dbg_att_num => e_att_num);
+             dbg_att_sc => e_att_sc, dbg_att_sum => e_att_sum, dbg_att_num => e_att_num,
+             dbg_att_sums => e_att_sums,
+             dbg_att_amax_l => e_amax_l, dbg_att_amax_h => e_amax_h,
+             dbg_att_nmax_l => e_nmax_l, dbg_att_nmax_h => e_nmax_h,
+             dbg_att_idx => e_att_idx,
+             dbg_cd_qmag_l => e_cd_qmag_l, dbg_cd_qmag_h => e_cd_qmag_h,
+             dbg_cd_nmag_l => e_cd_nmag_l, dbg_cd_nmag_h => e_cd_nmag_h,
+             dbg_cd_nsd_l  => e_cd_nsd_l,  dbg_cd_nsd_h  => e_cd_nsd_h,
+             dbg_cd_sum    => e_cd_sum,    dbg_cd_meta   => e_cd_meta,
+             dbg_l1_qmag_l => e_l1_qmag_l, dbg_l1_qmag_h => e_l1_qmag_h,
+             dbg_l1_nsd_l  => e_l1_nsd_l,  dbg_l1_nsd_h  => e_l1_nsd_h,
+             dbg_l1_sum    => e_l1_sum,
+             dbg_l1_nmag_l => e_l1_nmag_l, dbg_l1_nmag_h => e_l1_nmag_h,
+             dbg_qx_qmag_l => e_qx_qmag_l, dbg_qx_qmag_h => e_qx_qmag_h,
+             dbg_qx_nmag_l => e_qx_nmag_l, dbg_qx_nmag_h => e_qx_nmag_h,
+             dbg_qx_nsd_l  => e_qx_nsd_l,  dbg_qx_nsd_h  => e_qx_nsd_h,
+             dbg_qx_sum    => e_qx_sum,    dbg_qx_meta   => e_qx_meta);
 
   -- AXI write channel + CTRL decode.
   process(s_axi_aclk)
@@ -192,10 +261,17 @@ begin
         if arready='0' and s_axi_arvalid='1' then
           arready<='1';
           ridx := to_integer(unsigned(s_axi_araddr(7 downto 2)));
-          if ridx >= 16 and ridx < 16+MAXTOK then
+          -- TOKEN[] window narrowed from MAXTOK(32) to NGEN(24) words so the
+          -- never-written tail (words 40..47 = 0xA0..0xBC) is FREE for probe
+          -- registers.  The 8-bit AXI address space only decodes words 0..63.
+          if ridx >= 16 and ridx < 16+NGEN then
             rdata_r <= tok_buf(ridx-16);                                   -- TOKEN[i]
           else
             case ridx is
+              -- CTRL / DBG_POS are WRITE-ONLY registers, so their read slots carry
+              -- probe words (reading them has no side effect).
+              when 0 => rdata_r <= e_l1_sum;                                     -- 0x00 hd0/t1 divisor
+              when 4 => rdata_r <= e_l1_nsd_h;                                   -- 0x10 hd0/t1 ns_dout[63:32]
               when 1 => rdata_r <= (31 downto 2 => '0') & busy & status_done;   -- STATUS
               when 2 => rdata_r <= std_logic_vector(to_unsigned(tok_count, 32));-- COUNT
               when 3 => rdata_r <= std_logic_vector(to_unsigned(NGEN, 16)) &
@@ -205,6 +281,25 @@ begin
               when 5 => rdata_r <= dbgpack(e_l1_nz, e_l1_e, e_l1_m);            -- 0x14 x after layer 1
               when 6 => rdata_r <= dbgpack(e_l2_nz, e_l2_e, e_l2_m);            -- 0x18 x after layer 2
               when 7 => rdata_r <= dbgpack(e_l3_nz, e_l3_e, e_l3_m);            -- 0x1C x after layer 3
+              -- ---- attention per-head / per-lane PROBES (L0, dbg_pos) --------
+              when 9  => rdata_r <= e_amax_l;                                   -- 0x24 amax_s[31:0]
+              when 10 => rdata_r <= e_amax_h;                                   -- 0x28 amax_s[63:32]
+              when 11 => rdata_r <= (31 downto 16 => '0') & e_att_idx;          -- 0x2C {nmax lane[15:8], amax lane[7:0]}
+              when 12 => rdata_r <= e_nmax_l;                                   -- 0x30 max|num_s|[31:0]
+              when 13 => rdata_r <= e_nmax_h;                                   -- 0x34 max|num_s|[63:32]
+              -- 0x38/0x3C: SPARE (retired hd0/t1 qmag probes -- attention solved)
+              -- ---- INTRA-LAYER-0 STAGE BISECT taps, in DATAFLOW ORDER --------
+              -- attOut(0xD8) -> WO -> res1 -> ffn-rms -> W1 -> W3 -> swiglu+pack
+              -- -> W2 -> res2 (= afterL0, 0xC4).  First tap whose exp/value
+              -- diverges from the sim reference names the broken unit.
+              when 40 => rdata_r <= dbgpack(e_wo_nz, e_wo_e, e_wo_m);           -- 0xA0 WO matmul out
+              when 41 => rdata_r <= dbgpack(e_r1_nz, e_r1_e, e_r1_m);           -- 0xA4 residual-1 out
+              when 42 => rdata_r <= dbgpack(e_rf_nz, e_rf_e, e_rf_m);           -- 0xA8 FFN rmsnorm out
+              when 43 => rdata_r <= dbgpack(e_w1_nz, e_w1_e, e_w1_m);           -- 0xAC W1 matmul out
+              when 44 => rdata_r <= dbgpack(e_w3_nz, e_w3_e, e_w3_m);           -- 0xB0 W3 matmul out
+              when 45 => rdata_r <= dbgpack(e_hb_nz, e_hb_e, e_hb_m);           -- 0xB4 bfp_pack out
+              when 46 => rdata_r <= dbgpack(e_w2_nz, e_w2_e, e_w2_m);           -- 0xB8 W2 matmul out
+              -- 0xBC: SPARE
               -- DEBUG taps for dbg_pos: {nz[24], exp[23:16], m0[15:0]}
               when 48 => rdata_r <= dbgpack(e_emb_nz, e_emb_e, e_emb_m);        -- x after embed
               when 49 => rdata_r <= dbgpack(e_l0_nz,  e_l0_e,  e_l0_m);         -- x after layer 0
@@ -213,14 +308,14 @@ begin
               when 52 => rdata_r <= std_logic_vector(to_signed(e_stok, 32));    -- this pos's argmax
               when 53 => rdata_r <= dbgpack(e_rms_nz, e_rms_e, e_rms_m);        -- L0 attention-rmsnorm out
               when 54 => rdata_r <= dbgpack(e_att_nz, e_att_e, e_att_m);        -- L0 attention output xb
-              when 55 => rdata_r <= std_logic_vector(to_signed(e_rxchk, 32));   -- L0 rms x checksum
-              when 56 => rdata_r <= std_logic_vector(to_signed(e_rwchk, 32));   -- L0 rms weight checksum
+              -- 0xDC/0xE0: SPARE (retired hd0/t1 DIVIDEND probes -- attention solved)
               when 57 => rdata_r <= std_logic_vector(to_signed(e_rxe, 32));     -- L0 rms x_exp
               when 58 => rdata_r <= std_logic_vector(to_signed(e_rwe, 32));     -- L0 rms w_exp
               when 59 => rdata_r <= (31 downto 16 => '0') & e_rw0;              -- L0 rms weight[0]
               when 60 => rdata_r <= std_logic_vector(to_signed(e_att_sc, 32));  -- 0xF0 L0 att score chksum
               when 61 => rdata_r <= std_logic_vector(to_signed(e_att_sum, 32)); -- 0xF4 L0 att softmax sum
               when 62 => rdata_r <= std_logic_vector(to_signed(e_att_num, 32)); -- 0xF8 L0 att num_s chksum
+              when 63 => rdata_r <= e_l1_nsd_l;                                 -- 0xFC hd0/t1 ns_dout[31:0]
               when others => rdata_r <= (others=>'0');
             end case;
           end if;

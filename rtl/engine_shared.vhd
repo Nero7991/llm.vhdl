@@ -93,13 +93,77 @@ entity engine_shared is
     -- intra-layer-0 taps: after the attention-rmsnorm and after attention itself
     dbg_rms_nz  : out std_logic; dbg_rms_e : out integer; dbg_rms_m : out std_logic_vector(15 downto 0);
     dbg_att_nz  : out std_logic; dbg_att_e : out integer; dbg_att_m : out std_logic_vector(15 downto 0);
+    -- ---- INTRA-LAYER-0 STAGE BISECT TAPS -----------------------------------
+    -- The attention OUTPUT (dbg_att_*) now reads BIT-EXACT on silicon, yet x after
+    -- layer 0 (dbg_l0_*) is still ~2^20 over-scaled, so a stage between them breaks.
+    -- One tap per stage of the remaining layer-0 chain, same dbgpack summary
+    -- (nz = OR of every mantissa bit, e = block exp, m = element 0), latched in the
+    -- FSM wait-state where that stage's result becomes valid, under the same
+    -- DEBUG_TAPS / p_idx = dbg_pos / cur_layer = 0 gate as every other tap:
+    --   attention out -> [WO] -> [res1] -> [ffn-rms] -> [W1] -> [W3] ->
+    --   swiglu -> [bfp_pack] -> [W2] -> residual2 (= dbg_l0_*)
+    dbg_wo_nz   : out std_logic; dbg_wo_e  : out integer; dbg_wo_m  : out std_logic_vector(15 downto 0);
+    dbg_r1_nz   : out std_logic; dbg_r1_e  : out integer; dbg_r1_m  : out std_logic_vector(15 downto 0);
+    dbg_rf_nz   : out std_logic; dbg_rf_e  : out integer; dbg_rf_m  : out std_logic_vector(15 downto 0);
+    dbg_w1_nz   : out std_logic; dbg_w1_e  : out integer; dbg_w1_m  : out std_logic_vector(15 downto 0);
+    dbg_w3_nz   : out std_logic; dbg_w3_e  : out integer; dbg_w3_m  : out std_logic_vector(15 downto 0);
+    dbg_hb_nz   : out std_logic; dbg_hb_e  : out integer; dbg_hb_m  : out std_logic_vector(15 downto 0);
+    dbg_w2_nz   : out std_logic; dbg_w2_e  : out integer; dbg_w2_m  : out std_logic_vector(15 downto 0);
     -- inputs the engine feeds the L0 att-rmsnorm: checksums (sum of the 64 int16s)
     -- of x and w, plus their exps -- to see if x/weights are corrupt on HW.
     dbg_rxchk   : out integer; dbg_rwchk : out integer;
     dbg_rxe     : out integer; dbg_rwe   : out integer; dbg_rw0 : out std_logic_vector(15 downto 0);
     dbg_samptok : out integer;
     -- attention-internal taps (localise the attention non-determinism)
-    dbg_att_sc  : out integer; dbg_att_sum : out integer; dbg_att_num : out integer
+    dbg_att_sc  : out integer; dbg_att_sum : out integer; dbg_att_num : out integer;
+    -- PER-HEAD / PER-LANE attention probes (oversized-lane hunt).  dbg_att_sum /
+    -- dbg_att_num above are HEAD-0 ONLY and read bit-correct on silicon, yet the
+    -- QCLAMP guard fires -> the oversized xb_acc lane is in another head.  These
+    -- cover all 8 heads / 64 lanes.  Latched, like every other tap, at att_done
+    -- for p_idx = dbg_pos and cur_layer = 0.
+    dbg_att_sums   : out std_logic_vector(NHEADS*32-1 downto 0); -- sum_l per head
+    dbg_att_amax_l : out std_logic_vector(31 downto 0);          -- amax_s(31:0)
+    dbg_att_amax_h : out std_logic_vector(31 downto 0);          -- amax_s(63:32)
+    dbg_att_nmax_l : out std_logic_vector(31 downto 0);          -- max|num_s|(31:0)
+    dbg_att_nmax_h : out std_logic_vector(31 downto 0);          -- max|num_s|(63:32)
+    -- {nmax lane[15:8], amax lane[7:0]}; head = lane/HEAD_SIZE
+    dbg_att_idx    : out std_logic_vector(15 downto 0);
+    -- ---- FAILING-DIVISION taps (attention_ml S_WDIV) -----------------------
+    -- Every divide INPUT reads bit-correct on silicon yet amax_s comes back as
+    -- exactly QCLAMP (2^40-1) -- impossible from those operands.  These expose the
+    -- actual division: the PRE-clamp quotient plus the operands as consumed, for
+    -- (a) the FIRST division that exceeded the guard (event-latched, lane not
+    -- hardcoded) and (b) unconditionally for hd=0/t_idx=1.  Same latch gate as
+    -- every other tap: p_idx = dbg_pos and cur_layer = 0.
+    dbg_cd_qmag_l  : out std_logic_vector(31 downto 0);  -- pre-clamp qmag[31:0]
+    dbg_cd_qmag_h  : out std_logic_vector(31 downto 0);  -- pre-clamp qmag[63:32]
+    dbg_cd_nmag_l  : out std_logic_vector(31 downto 0);  -- dividend mag[31:0]
+    dbg_cd_nmag_h  : out std_logic_vector(31 downto 0);  -- dividend mag[63:32]
+    dbg_cd_nsd_l   : out std_logic_vector(31 downto 0);  -- raw ns_dout[31:0]
+    dbg_cd_nsd_h   : out std_logic_vector(31 downto 0);  -- raw ns_dout[63:32]
+    dbg_cd_sum     : out std_logic_vector(31 downto 0);  -- divisor sum_l[31:0]
+    dbg_cd_meta    : out std_logic_vector(31 downto 0);  -- {seen,cnt[6:0],hd,t,lane}
+    dbg_l1_qmag_l  : out std_logic_vector(31 downto 0);  -- hd0/t1 pre-clamp qmag lo
+    dbg_l1_qmag_h  : out std_logic_vector(31 downto 0);  -- hd0/t1 pre-clamp qmag hi
+    dbg_l1_nsd_l   : out std_logic_vector(31 downto 0);  -- hd0/t1 ns_dout lo
+    dbg_l1_nsd_h   : out std_logic_vector(31 downto 0);  -- hd0/t1 ns_dout hi
+    dbg_l1_sum     : out std_logic_vector(31 downto 0);  -- hd0/t1 sum_l[31:0]
+    -- nmag / running-max-quotient capture (same gating as every other tap:
+    -- p_idx = dbg_pos and cur_layer = 0).  dbg_l1_nmag_* is the DIVIDEND the
+    -- hd0/t1 divide actually consumed -- the operand the old probe set missed,
+    -- since it was only latched on a clamp event and clamps no longer fire.
+    -- dbg_qx_* is the largest-pre-clamp-quotient division of the whole call
+    -- (lane-agnostic), i.e. the one that sets the sticky amax_s / output exp.
+    dbg_l1_nmag_l  : out std_logic_vector(31 downto 0);  -- hd0/t1 nmag[31:0]
+    dbg_l1_nmag_h  : out std_logic_vector(31 downto 0);  -- hd0/t1 nmag[63:32]
+    dbg_qx_qmag_l  : out std_logic_vector(31 downto 0);  -- max pre-clamp qmag lo
+    dbg_qx_qmag_h  : out std_logic_vector(31 downto 0);  -- max pre-clamp qmag hi
+    dbg_qx_nmag_l  : out std_logic_vector(31 downto 0);  -- its dividend lo
+    dbg_qx_nmag_h  : out std_logic_vector(31 downto 0);  -- its dividend hi
+    dbg_qx_nsd_l   : out std_logic_vector(31 downto 0);  -- its ns_dout lo
+    dbg_qx_nsd_h   : out std_logic_vector(31 downto 0);  -- its ns_dout hi
+    dbg_qx_sum     : out std_logic_vector(31 downto 0);  -- its divisor sum_l[31:0]
+    dbg_qx_meta    : out std_logic_vector(31 downto 0)   -- {valid,cnt,hd,t,lane}
   );
 end entity;
 
@@ -243,6 +307,49 @@ architecture rtl of engine_shared is
   signal d_att_sc      : integer := 0;
   signal d_att_sum     : integer := 0;
   signal d_att_num     : integer := 0;
+  -- per-head / per-lane probes straight out of attention_ml ...
+  signal att_p_sums    : std_logic_vector(NHEADS*32-1 downto 0);
+  signal att_p_amax    : std_logic_vector(63 downto 0);
+  signal att_p_nmax    : std_logic_vector(63 downto 0);
+  signal att_p_amaxidx : std_logic_vector(7 downto 0);
+  signal att_p_nmaxidx : std_logic_vector(7 downto 0);
+  -- ... and their latched (dbg_pos, layer 0) snapshots.
+  signal d_att_sums    : std_logic_vector(NHEADS*32-1 downto 0) := (others => '0');
+  signal d_att_amax    : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_att_nmax    : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_att_idx     : std_logic_vector(15 downto 0) := (others => '0');
+  -- failing-division probes out of attention_ml ...
+  signal att_p_cd_qmag : std_logic_vector(63 downto 0);
+  signal att_p_cd_nmag : std_logic_vector(63 downto 0);
+  signal att_p_cd_nsd  : std_logic_vector(63 downto 0);
+  signal att_p_cd_sum  : std_logic_vector(31 downto 0);
+  signal att_p_cd_meta : std_logic_vector(31 downto 0);
+  signal att_p_l1_qmag : std_logic_vector(63 downto 0);
+  signal att_p_l1_nsd  : std_logic_vector(63 downto 0);
+  signal att_p_l1_sum  : std_logic_vector(31 downto 0);
+  -- ... and their latched (dbg_pos, layer 0) snapshots.
+  signal d_cd_qmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_cd_nmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_cd_nsd      : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_cd_sum      : std_logic_vector(31 downto 0) := (others => '0');
+  signal d_cd_meta     : std_logic_vector(31 downto 0) := (others => '0');
+  signal d_l1_qmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_l1_nsd      : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_l1_sum      : std_logic_vector(31 downto 0) := (others => '0');
+  -- nmag / running-max-quotient probes out of attention_ml ...
+  signal att_p_l1_nmag : std_logic_vector(63 downto 0);
+  signal att_p_qx_qmag : std_logic_vector(63 downto 0);
+  signal att_p_qx_nmag : std_logic_vector(63 downto 0);
+  signal att_p_qx_nsd  : std_logic_vector(63 downto 0);
+  signal att_p_qx_sum  : std_logic_vector(31 downto 0);
+  signal att_p_qx_meta : std_logic_vector(31 downto 0);
+  -- ... and their latched (dbg_pos, layer 0) snapshots.
+  signal d_l1_nmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_qx_qmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_qx_nmag     : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_qx_nsd      : std_logic_vector(63 downto 0) := (others => '0');
+  signal d_qx_sum      : std_logic_vector(31 downto 0) := (others => '0');
+  signal d_qx_meta     : std_logic_vector(31 downto 0) := (others => '0');
 
   -- ---- shared swiglu ----------------------------------------------------
   signal sw_start   : std_logic := '0';
@@ -334,6 +441,10 @@ architecture rtl of engine_shared is
   signal d_emb_nz, d_l0_nz, d_l1_nz, d_l2_nz, d_l3_nz, d_l4_nz, d_fin_nz, d_rms_nz, d_att_nz : std_logic := '0';
   signal d_emb_e, d_l0_e, d_l1_e, d_l2_e, d_l3_e, d_l4_e, d_fin_e, d_rms_e, d_att_e, d_stok : integer := 0;
   signal d_emb_m, d_l0_m, d_l1_m, d_l2_m, d_l3_m, d_l4_m, d_fin_m, d_rms_m, d_att_m : std_logic_vector(15 downto 0) := (others=>'0');
+  -- intra-layer-0 stage bisect taps (WO / res1 / ffn-rms / W1 / W3 / bfp_pack / W2)
+  signal d_wo_nz, d_r1_nz, d_rf_nz, d_w1_nz, d_w3_nz, d_hb_nz, d_w2_nz : std_logic := '0';
+  signal d_wo_e,  d_r1_e,  d_rf_e,  d_w1_e,  d_w3_e,  d_hb_e,  d_w2_e  : integer := 0;
+  signal d_wo_m,  d_r1_m,  d_rf_m,  d_w1_m,  d_w3_m,  d_hb_m,  d_w2_m  : std_logic_vector(15 downto 0) := (others=>'0');
   signal d_rxchk, d_rwchk, d_rxe, d_rwe : integer := 0;
   signal d_rw0 : std_logic_vector(15 downto 0) := (others=>'0');
 
@@ -389,14 +500,25 @@ begin
   u_att: entity work.attention_ml
     generic map(DIM => DIM, HEAD_SIZE => HEAD_SIZE, NHEADS => NHEADS,
                 NKVH => NKVH, KVDIM => KVDIM, MAXPOS => MAXPOS,
-                NLAYERS => NLAYERS, Q => 12)
+                NLAYERS => NLAYERS, Q => 12, PROBES => DEBUG_TAPS)
     port map(clk => clk, rst => att_rst, start => att_start,
              layer => att_layer, cur_pos => att_curpos,
              q_mant => att_q_mant, q_exp => att_q_exp,
              k_new_mant => att_k_new_mant, k_new_exp => att_k_new_exp,
              v_new_mant => att_v_new_mant, v_new_exp => att_v_new_exp,
              done => att_done, xb_mant => att_xb_mant, xb_exp => att_xb_exp,
-             dbg_sc => att_dbg_sc, dbg_sum => att_dbg_sum, dbg_num => att_dbg_num);
+             dbg_sc => att_dbg_sc, dbg_sum => att_dbg_sum, dbg_num => att_dbg_num,
+             p_sums => att_p_sums, p_amax => att_p_amax, p_amax_idx => att_p_amaxidx,
+             p_nmax => att_p_nmax, p_nmax_idx => att_p_nmaxidx,
+             p_cd_qmag => att_p_cd_qmag, p_cd_nmag => att_p_cd_nmag,
+             p_cd_nsd  => att_p_cd_nsd,  p_cd_sum  => att_p_cd_sum,
+             p_cd_meta => att_p_cd_meta,
+             p_l1_qmag => att_p_l1_qmag, p_l1_nsd => att_p_l1_nsd,
+             p_l1_sum  => att_p_l1_sum,
+             p_l1_nmag => att_p_l1_nmag,
+             p_qx_qmag => att_p_qx_qmag, p_qx_nmag => att_p_qx_nmag,
+             p_qx_nsd  => att_p_qx_nsd,  p_qx_sum  => att_p_qx_sum,
+             p_qx_meta => att_p_qx_meta);
 
   u_sw: entity work.swiglu
     generic map(N => HIDDEN, Q => 12)
@@ -683,6 +805,31 @@ begin
                 d_att_sc  <= att_dbg_sc;
                 d_att_sum <= att_dbg_sum;
                 d_att_num <= att_dbg_num;
+                -- PER-HEAD/PER-LANE probes: all 8 softmax denominators, the final
+                -- sticky |xb_acc| max + its lane, and max|num_s| + its lane.
+                d_att_sums <= att_p_sums;
+                d_att_amax <= att_p_amax;
+                d_att_nmax <= att_p_nmax;
+                d_att_idx  <= att_p_nmaxidx & att_p_amaxidx;
+                -- FAILING-DIVISION capture: pre-clamp quotient + operands as
+                -- consumed, for the first clamping divide and for hd0/lane1.
+                d_cd_qmag <= att_p_cd_qmag;
+                d_cd_nmag <= att_p_cd_nmag;
+                d_cd_nsd  <= att_p_cd_nsd;
+                d_cd_sum  <= att_p_cd_sum;
+                d_cd_meta <= att_p_cd_meta;
+                d_l1_qmag <= att_p_l1_qmag;
+                d_l1_nsd  <= att_p_l1_nsd;
+                d_l1_sum  <= att_p_l1_sum;
+                -- nmag AS CONSUMED at hd0/t1 (unconditional -- the operand the
+                -- clamp-gated capture can no longer show), plus the running-max
+                -- pre-clamp quotient of the call and its full operand set.
+                d_l1_nmag <= att_p_l1_nmag;
+                d_qx_qmag <= att_p_qx_qmag;
+                d_qx_nmag <= att_p_qx_nmag;
+                d_qx_nsd  <= att_p_qx_nsd;
+                d_qx_sum  <= att_p_qx_sum;
+                d_qx_meta <= att_p_qx_meta;
               end if;
             end if;
 
@@ -696,6 +843,11 @@ begin
               wo_reg   <= mm_o_mant(DIM*16-1 downto 0);
               wo_exp_r <= mm_o_exp;
               state <= L_RES1_S;
+              -- STAGE TAP 1: WO matmul output (the value wo_reg is taking now).
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_wo_nz <= is_nz(mm_o_mant(DIM*16-1 downto 0)); d_wo_e <= mm_o_exp;
+                d_wo_m  <= mm_o_mant(15 downto 0);
+              end if;
             end if;
           when L_RES1_S =>
             res_a_mant <= x_mant_cur; res_a_exp <= x_exp_cur;
@@ -707,6 +859,11 @@ begin
               xm_mant <= res_o_mant;
               xm_exp  <= res_o_exp;
               state <= L_RMS_FFN_S;
+              -- STAGE TAP 2: residual-1 output (x + WO), the value xm_mant takes now.
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_r1_nz <= is_nz(res_o_mant); d_r1_e <= res_o_exp;
+                d_r1_m  <= res_o_mant(15 downto 0);
+              end if;
             end if;
 
           -- ---- 6. FFN RMSNorm --------------------------------------
@@ -718,7 +875,14 @@ begin
             rms_start  <= '1';
             state <= L_RMS_FFN_W;
           when L_RMS_FFN_W =>
-            if rms_done = '1' then state <= L_W1_S; end if;
+            if rms_done = '1' then
+              state <= L_W1_S;
+              -- STAGE TAP 3: FFN rmsnorm output (the W1/W3 matmul input).
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_rf_nz <= is_nz(rms_o_mant); d_rf_e <= rms_o_exp;
+                d_rf_m  <= rms_o_mant(15 downto 0);
+              end if;
+            end if;
 
           -- ---- 7. W1 / W3 matmuls (input = ffn-rms output) ---------
           when L_W1_S =>
@@ -730,6 +894,11 @@ begin
               w1_reg   <= mm_o_mant(HIDDEN*16-1 downto 0);
               w1_exp_r <= mm_o_exp;
               state <= L_W3_S;
+              -- STAGE TAP 4: W1 matmul output (HIDDEN-wide).
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_w1_nz <= is_nz(mm_o_mant(HIDDEN*16-1 downto 0)); d_w1_e <= mm_o_exp;
+                d_w1_m  <= mm_o_mant(15 downto 0);
+              end if;
             end if;
           when L_W3_S =>
             mm_sel <= W3_SEL; mm_layer <= cur_layer;
@@ -740,6 +909,11 @@ begin
               w3_reg   <= mm_o_mant(HIDDEN*16-1 downto 0);
               w3_exp_r <= mm_o_exp;
               state <= L_SW_S;
+              -- STAGE TAP 5: W3 matmul output (HIDDEN-wide).
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_w3_nz <= is_nz(mm_o_mant(HIDDEN*16-1 downto 0)); d_w3_e <= mm_o_exp;
+                d_w3_m  <= mm_o_mant(15 downto 0);
+              end if;
             end if;
 
           -- ---- 8. SwiGLU + BFP-pack --------------------------------
@@ -758,6 +932,12 @@ begin
               mm_xin  <= pad_cols(hbp_o_mant);
               mm_xexp <= hbp_o_exp;
               state <= L_W2_S;
+              -- STAGE TAP 6: bfp_pack output = swiglu result repacked to int16 BFP
+              -- (the W2 matmul input).  Brackets swiglu + the pack shift together.
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_hb_nz <= is_nz(hbp_o_mant); d_hb_e <= hbp_o_exp;
+                d_hb_m  <= hbp_o_mant(15 downto 0);
+              end if;
             end if;
 
           -- ---- 9. W2 matmul + residual add 2 -> output -------------
@@ -770,6 +950,11 @@ begin
               w2_reg   <= mm_o_mant(DIM*16-1 downto 0);
               w2_exp_r <= mm_o_exp;
               state <= L_RES2_S;
+              -- STAGE TAP 7: W2 matmul output (the residual-2 addend).
+              if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+                d_w2_nz <= is_nz(mm_o_mant(DIM*16-1 downto 0)); d_w2_e <= mm_o_exp;
+                d_w2_m  <= mm_o_mant(15 downto 0);
+              end if;
             end if;
           when L_RES2_S =>
             res_a_mant <= xm_mant; res_a_exp <= xm_exp;
@@ -876,8 +1061,45 @@ begin
   dbg_fin_nz <= d_fin_nz; dbg_fin_e <= d_fin_e; dbg_fin_m <= d_fin_m;
   dbg_rms_nz <= d_rms_nz; dbg_rms_e <= d_rms_e; dbg_rms_m <= d_rms_m;
   dbg_att_nz <= d_att_nz; dbg_att_e <= d_att_e; dbg_att_m <= d_att_m;
+  -- intra-layer-0 stage bisect taps, in dataflow order
+  dbg_wo_nz  <= d_wo_nz;  dbg_wo_e  <= d_wo_e;  dbg_wo_m  <= d_wo_m;
+  dbg_r1_nz  <= d_r1_nz;  dbg_r1_e  <= d_r1_e;  dbg_r1_m  <= d_r1_m;
+  dbg_rf_nz  <= d_rf_nz;  dbg_rf_e  <= d_rf_e;  dbg_rf_m  <= d_rf_m;
+  dbg_w1_nz  <= d_w1_nz;  dbg_w1_e  <= d_w1_e;  dbg_w1_m  <= d_w1_m;
+  dbg_w3_nz  <= d_w3_nz;  dbg_w3_e  <= d_w3_e;  dbg_w3_m  <= d_w3_m;
+  dbg_hb_nz  <= d_hb_nz;  dbg_hb_e  <= d_hb_e;  dbg_hb_m  <= d_hb_m;
+  dbg_w2_nz  <= d_w2_nz;  dbg_w2_e  <= d_w2_e;  dbg_w2_m  <= d_w2_m;
   dbg_rxchk <= d_rxchk; dbg_rwchk <= d_rwchk; dbg_rxe <= d_rxe; dbg_rwe <= d_rwe; dbg_rw0 <= d_rw0;
   dbg_samptok <= d_stok;
   dbg_att_sc <= d_att_sc; dbg_att_sum <= d_att_sum; dbg_att_num <= d_att_num;
+  dbg_att_sums   <= d_att_sums;
+  dbg_att_amax_l <= d_att_amax(31 downto 0);
+  dbg_att_amax_h <= d_att_amax(63 downto 32);
+  dbg_att_nmax_l <= d_att_nmax(31 downto 0);
+  dbg_att_nmax_h <= d_att_nmax(63 downto 32);
+  dbg_att_idx    <= d_att_idx;
+  dbg_cd_qmag_l  <= d_cd_qmag(31 downto 0);
+  dbg_cd_qmag_h  <= d_cd_qmag(63 downto 32);
+  dbg_cd_nmag_l  <= d_cd_nmag(31 downto 0);
+  dbg_cd_nmag_h  <= d_cd_nmag(63 downto 32);
+  dbg_cd_nsd_l   <= d_cd_nsd(31 downto 0);
+  dbg_cd_nsd_h   <= d_cd_nsd(63 downto 32);
+  dbg_cd_sum     <= d_cd_sum;
+  dbg_cd_meta    <= d_cd_meta;
+  dbg_l1_qmag_l  <= d_l1_qmag(31 downto 0);
+  dbg_l1_qmag_h  <= d_l1_qmag(63 downto 32);
+  dbg_l1_nsd_l   <= d_l1_nsd(31 downto 0);
+  dbg_l1_nsd_h   <= d_l1_nsd(63 downto 32);
+  dbg_l1_sum     <= d_l1_sum;
+  dbg_l1_nmag_l  <= d_l1_nmag(31 downto 0);
+  dbg_l1_nmag_h  <= d_l1_nmag(63 downto 32);
+  dbg_qx_qmag_l  <= d_qx_qmag(31 downto 0);
+  dbg_qx_qmag_h  <= d_qx_qmag(63 downto 32);
+  dbg_qx_nmag_l  <= d_qx_nmag(31 downto 0);
+  dbg_qx_nmag_h  <= d_qx_nmag(63 downto 32);
+  dbg_qx_nsd_l   <= d_qx_nsd(31 downto 0);
+  dbg_qx_nsd_h   <= d_qx_nsd(63 downto 32);
+  dbg_qx_sum     <= d_qx_sum;
+  dbg_qx_meta    <= d_qx_meta;
 
 end architecture;
