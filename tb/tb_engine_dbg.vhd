@@ -40,6 +40,17 @@ architecture sim of tb_engine_dbg is
   signal wo_nz,r1_nz,rf_nz,w1_nz,w3_nz,hb_nz,w2_nz:std_logic;
   signal wo_e,r1_e,rf_e,w1_e,w3_e,hb_e,w2_e:integer;
   signal wo_m,r1_m,rf_m,w1_m,w3_m,hb_m,w2_m:std_logic_vector(15 downto 0);
+  -- SHARED-RMSNORM INTERNAL BISECT -- sim reference for the 0x24..0x3C / 0xBC /
+  -- 0xDC / 0xE0 (FFN call) and 0xF0..0xF8 (ATT control) board reads.
+  signal rf_xchk,rf_wchk,rf_inv:std_logic_vector(31 downto 0);
+  signal rf_ssq_l,rf_ssq_h,rf_msq_l,rf_msq_h:std_logic_vector(31 downto 0);
+  signal rf_mrw_l,rf_mrw_h:std_logic_vector(31 downto 0);
+  signal ra_xchk,ra_ssq_l,ra_inv:std_logic_vector(31 downto 0);
+  signal rf_sh:integer;
+  -- whole-vector dataflow signatures (unit output vs the staging reg it feeds)
+  signal vc_emb,vc_xcur,vc_wo,vc_woreg:std_logic_vector(31 downto 0);
+  signal vc_res1,vc_xm,vc_rmsx,vc_rmso:std_logic_vector(31 downto 0);
+  signal vc_w1,vc_w3:std_logic_vector(31 downto 0);
 
   -- unsigned 64-bit value assembled from the two AXI halves, as a decimal string.
   function u64s(hi,lo:std_logic_vector(31 downto 0)) return string is
@@ -143,7 +154,18 @@ begin
       dbg_qx_qmag_l=>qx_qmag_l,dbg_qx_qmag_h=>qx_qmag_h,
       dbg_qx_nmag_l=>qx_nmag_l,dbg_qx_nmag_h=>qx_nmag_h,
       dbg_qx_nsd_l=>qx_nsd_l,dbg_qx_nsd_h=>qx_nsd_h,
-      dbg_qx_sum=>qx_sum,dbg_qx_meta=>qx_meta);
+      dbg_qx_sum=>qx_sum,dbg_qx_meta=>qx_meta,
+      dbg_rf_xchk=>rf_xchk,dbg_rf_wchk=>rf_wchk,
+      dbg_rf_ssq_l=>rf_ssq_l,dbg_rf_ssq_h=>rf_ssq_h,
+      dbg_rf_msq_l=>rf_msq_l,dbg_rf_msq_h=>rf_msq_h,
+      dbg_rf_inv=>rf_inv,
+      dbg_rf_mrw_l=>rf_mrw_l,dbg_rf_mrw_h=>rf_mrw_h,dbg_rf_sh=>rf_sh,
+      dbg_ra_xchk=>ra_xchk,dbg_ra_ssq_l=>ra_ssq_l,dbg_ra_inv=>ra_inv,
+      dbg_vc_emb=>vc_emb,dbg_vc_xcur=>vc_xcur,
+      dbg_vc_wo=>vc_wo,dbg_vc_woreg=>vc_woreg,
+      dbg_vc_res1=>vc_res1,dbg_vc_xm=>vc_xm,
+      dbg_vc_rmsx=>vc_rmsx,dbg_vc_rmso=>vc_rmso,
+      dbg_vc_w1=>vc_w1,dbg_vc_w3=>vc_w3);
 
   process
   begin
@@ -167,6 +189,30 @@ begin
     report "  [0xB4] bfp_pack   : "&h(hb_nz,hb_e,hb_m) severity note;
     report "  [0xB8] W2 mm out  : "&h(w2_nz,w2_e,w2_m) severity note;
     report "  --- end stage bisect ---" severity note;
+    report "  --- WHOLE-VECTOR dataflow chain (vchk); first mismatch = the spot ---" severity note;
+    report "    [0x14] embed UNIT out   = 0x"&to_hstring(vc_emb) severity note;
+    report "    [0x18] x_mant_cur stage = 0x"&to_hstring(vc_xcur) severity note;
+    report "    [0x1C] WO matmul UNIT   = 0x"&to_hstring(vc_wo) severity note;
+    report "    [0xC8] wo_reg stage     = 0x"&to_hstring(vc_woreg) severity note;
+    report "    [0x00] residual1 UNIT   = 0x"&to_hstring(vc_res1) severity note;
+    report "    [0x10] xm_mant stage    = 0x"&to_hstring(vc_xm) severity note;
+    report "    [0xFC] rmsnorm x port   = 0x"&to_hstring(vc_rmsx) severity note;
+    report "    [0xCC] ffn-rmsnorm out  = 0x"&to_hstring(vc_rmso) severity note;
+    report "    [0x24] W1 matmul vchk   = 0x"&to_hstring(vc_w1) severity note;
+    report "    [0x28] W3 matmul vchk   = 0x"&to_hstring(vc_w3) severity note;
+    report "  --- shared-rmsnorm internals: FFN call (the divergence) ---" severity note;
+    report "    [0x24] xchk   = "&integer'image(to_integer(signed(rf_xchk))) severity note;
+    report "    [0x28] wchk   = "&integer'image(to_integer(signed(rf_wchk))) severity note;
+    report "    [0x2C/0x30] S = "&u64s(rf_ssq_h,rf_ssq_l)&" ("&u64dec(rf_ssq_h,rf_ssq_l)&")" severity note;
+    report "    [0x34/0x38] msq = "&u64s(rf_msq_h,rf_msq_l)&" ("&u64dec(rf_msq_h,rf_msq_l)&")" severity note;
+    report "    [0x3C] inv32  = "&integer'image(to_integer(signed(rf_inv))) severity note;
+    report "    [0xBC/0xDC] max_raw = "&u64s(rf_mrw_h,rf_mrw_l)&
+           " msb="&integer'image(msbp(rf_mrw_h,rf_mrw_l)) severity note;
+    report "    [0xE0] shift_total = "&integer'image(rf_sh) severity note;
+    report "  --- shared-rmsnorm internals: ATT call (known-good control) ---" severity note;
+    report "    [0xF0] xchk   = "&integer'image(to_integer(signed(ra_xchk))) severity note;
+    report "    [0xF4] S[31:0]= "&integer'image(to_integer(unsigned(ra_ssq_l(30 downto 0)))) severity note;
+    report "    [0xF8] inv32  = "&integer'image(to_integer(signed(ra_inv))) severity note;
     report "  afterL0   : "&h(l0_nz,l0_e,l0_m) severity note;
     report "  afterL4   : "&h(l4_nz,l4_e,l4_m) severity note;
     report "  afterFin  : "&h(fin_nz,fin_e,fin_m) severity note;

@@ -127,6 +127,16 @@ architecture rtl of llama_engine_axi is
   signal e_l1_nmag_l, e_l1_nmag_h : std_logic_vector(31 downto 0);
   signal e_qx_qmag_l, e_qx_qmag_h, e_qx_nmag_l, e_qx_nmag_h : std_logic_vector(31 downto 0);
   signal e_qx_nsd_l, e_qx_nsd_h, e_qx_sum, e_qx_meta        : std_logic_vector(31 downto 0);
+  -- shared-rmsnorm internal bisect (FFN = failing call, ATT = good control)
+  signal e_rf_xchk, e_rf_wchk, e_rf_inv                     : std_logic_vector(31 downto 0);
+  signal e_rf_ssq_l, e_rf_ssq_h, e_rf_msq_l, e_rf_msq_h     : std_logic_vector(31 downto 0);
+  signal e_rf_mrw_l, e_rf_mrw_h                             : std_logic_vector(31 downto 0);
+  signal e_ra_xchk, e_ra_ssq_l, e_ra_inv                    : std_logic_vector(31 downto 0);
+  signal e_rf_sh                                            : integer;
+  -- whole-vector dataflow signatures (unit output vs staging register)
+  signal e_vc_emb, e_vc_xcur, e_vc_wo, e_vc_woreg           : std_logic_vector(31 downto 0);
+  signal e_vc_res1, e_vc_xm, e_vc_rmsx, e_vc_rmso           : std_logic_vector(31 downto 0);
+  signal e_vc_w1, e_vc_w3                                   : std_logic_vector(31 downto 0);
 
   -- pack a debug point {nz, exp(int8), m0(int16)} into one 32-bit reg.
   function dbgpack(nz : std_logic; e : integer; m : std_logic_vector(15 downto 0))
@@ -186,7 +196,20 @@ begin
              dbg_qx_qmag_l => e_qx_qmag_l, dbg_qx_qmag_h => e_qx_qmag_h,
              dbg_qx_nmag_l => e_qx_nmag_l, dbg_qx_nmag_h => e_qx_nmag_h,
              dbg_qx_nsd_l  => e_qx_nsd_l,  dbg_qx_nsd_h  => e_qx_nsd_h,
-             dbg_qx_sum    => e_qx_sum,    dbg_qx_meta   => e_qx_meta);
+             dbg_qx_sum    => e_qx_sum,    dbg_qx_meta   => e_qx_meta,
+             dbg_rf_xchk  => e_rf_xchk,  dbg_rf_wchk  => e_rf_wchk,
+             dbg_rf_ssq_l => e_rf_ssq_l, dbg_rf_ssq_h => e_rf_ssq_h,
+             dbg_rf_msq_l => e_rf_msq_l, dbg_rf_msq_h => e_rf_msq_h,
+             dbg_rf_inv   => e_rf_inv,
+             dbg_rf_mrw_l => e_rf_mrw_l, dbg_rf_mrw_h => e_rf_mrw_h,
+             dbg_rf_sh    => e_rf_sh,
+             dbg_ra_xchk  => e_ra_xchk,  dbg_ra_ssq_l => e_ra_ssq_l,
+             dbg_ra_inv   => e_ra_inv,
+             dbg_vc_emb   => e_vc_emb,   dbg_vc_xcur  => e_vc_xcur,
+             dbg_vc_wo    => e_vc_wo,    dbg_vc_woreg => e_vc_woreg,
+             dbg_vc_res1  => e_vc_res1,  dbg_vc_xm    => e_vc_xm,
+             dbg_vc_rmsx  => e_vc_rmsx,  dbg_vc_rmso  => e_vc_rmso,
+             dbg_vc_w1    => e_vc_w1,    dbg_vc_w3    => e_vc_w3);
 
   -- AXI write channel + CTRL decode.
   process(s_axi_aclk)
@@ -270,24 +293,38 @@ begin
             case ridx is
               -- CTRL / DBG_POS are WRITE-ONLY registers, so their read slots carry
               -- probe words (reading them has no side effect).
-              when 0 => rdata_r <= e_l1_sum;                                     -- 0x00 hd0/t1 divisor
-              when 4 => rdata_r <= e_l1_nsd_h;                                   -- 0x10 hd0/t1 ns_dout[63:32]
+              -- ---- WHOLE-VECTOR DATAFLOW CHAIN (vchk) ------------------------
+              -- Read in this order; the first mismatch vs sim names the exact
+              -- point the residual stream is corrupted.  UNIT-OUTPUT taps are
+              -- paired with the STAGING register each feeds.
+              when 0  => rdata_r <= e_vc_res1;                                   -- 0x00 residual-1 UNIT out
+              when 4  => rdata_r <= e_vc_xm;                                     -- 0x10 -> xm_mant staging
+              when 5  => rdata_r <= e_vc_emb;                                    -- 0x14 embed UNIT out
+              when 6  => rdata_r <= e_vc_xcur;                                   -- 0x18 -> x_mant_cur staging
+              when 7  => rdata_r <= e_vc_wo;                                     -- 0x1C WO matmul UNIT out
+              when 50 => rdata_r <= e_vc_woreg;                                  -- 0xC8 -> wo_reg staging
+              when 51 => rdata_r <= e_vc_rmso;                                   -- 0xCC FFN rmsnorm out
+              when 63 => rdata_r <= e_vc_rmsx;                                   -- 0xFC rmsnorm x port (as read)
               when 1 => rdata_r <= (31 downto 2 => '0') & busy & status_done;   -- STATUS
               when 2 => rdata_r <= std_logic_vector(to_unsigned(tok_count, 32));-- COUNT
               when 3 => rdata_r <= std_logic_vector(to_unsigned(NGEN, 16)) &
                                    std_logic_vector(to_unsigned(MAXPOS, 16));   -- CFG
               when 8 => rdata_r <= x"6C6C6D31";                                 -- ID "llm1"
-              -- finer per-layer x taps (same dbgpack format), free reg slots:
-              when 5 => rdata_r <= dbgpack(e_l1_nz, e_l1_e, e_l1_m);            -- 0x14 x after layer 1
-              when 6 => rdata_r <= dbgpack(e_l2_nz, e_l2_e, e_l2_m);            -- 0x18 x after layer 2
-              when 7 => rdata_r <= dbgpack(e_l3_nz, e_l3_e, e_l3_m);            -- 0x1C x after layer 3
-              -- ---- attention per-head / per-lane PROBES (L0, dbg_pos) --------
-              when 9  => rdata_r <= e_amax_l;                                   -- 0x24 amax_s[31:0]
-              when 10 => rdata_r <= e_amax_h;                                   -- 0x28 amax_s[63:32]
-              when 11 => rdata_r <= (31 downto 16 => '0') & e_att_idx;          -- 0x2C {nmax lane[15:8], amax lane[7:0]}
-              when 12 => rdata_r <= e_nmax_l;                                   -- 0x30 max|num_s|[31:0]
-              when 13 => rdata_r <= e_nmax_h;                                   -- 0x34 max|num_s|[63:32]
-              -- 0x38/0x3C: SPARE (retired hd0/t1 qmag probes -- attention solved)
+              -- (retired: per-layer L1/L2/L3/L4/final dbgpack taps + the solved
+              --  attention hd0/t1 ns_dout probe -- those slots now carry the
+              --  whole-vector vchk chain above, which is what the collapse needs.)
+              -- ---- SHARED-RMSNORM INTERNAL BISECT (the current defect) -------
+              -- Retired the attention per-head/per-lane probes: attention now
+              -- reads bit-exact on silicon, so those slots carry the rmsnorm
+              -- pipeline instead.  FFN = the failing invocation; the ATT copy at
+              -- 0xF0..0xF8 is the known-good control from the SAME run.
+              when 9  => rdata_r <= e_vc_w1;                                    -- 0x24 W1 matmul vchk (whole 172-vector)
+              when 10 => rdata_r <= e_vc_w3;                                    -- 0x28 W3 matmul vchk (whole 172-vector)
+              when 11 => rdata_r <= e_rf_ssq_l;                                 -- 0x2C FFN S[31:0]
+              when 12 => rdata_r <= e_rf_ssq_h;                                 -- 0x30 FFN S[63:32]
+              when 13 => rdata_r <= e_rf_msq_l;                                 -- 0x34 FFN mean_sq_q[31:0]
+              when 14 => rdata_r <= e_rf_msq_h;                                 -- 0x38 FFN mean_sq_q[63:32]
+              when 15 => rdata_r <= e_rf_inv;                                   -- 0x3C FFN inv32 (rsqrt)
               -- ---- INTRA-LAYER-0 STAGE BISECT taps, in DATAFLOW ORDER --------
               -- attOut(0xD8) -> WO -> res1 -> ffn-rms -> W1 -> W3 -> swiglu+pack
               -- -> W2 -> res2 (= afterL0, 0xC4).  First tap whose exp/value
@@ -299,23 +336,22 @@ begin
               when 44 => rdata_r <= dbgpack(e_w3_nz, e_w3_e, e_w3_m);           -- 0xB0 W3 matmul out
               when 45 => rdata_r <= dbgpack(e_hb_nz, e_hb_e, e_hb_m);           -- 0xB4 bfp_pack out
               when 46 => rdata_r <= dbgpack(e_w2_nz, e_w2_e, e_w2_m);           -- 0xB8 W2 matmul out
-              -- 0xBC: SPARE
+              when 47 => rdata_r <= e_rf_mrw_l;                                 -- 0xBC FFN max_raw[31:0]
               -- DEBUG taps for dbg_pos: {nz[24], exp[23:16], m0[15:0]}
               when 48 => rdata_r <= dbgpack(e_emb_nz, e_emb_e, e_emb_m);        -- x after embed
               when 49 => rdata_r <= dbgpack(e_l0_nz,  e_l0_e,  e_l0_m);         -- x after layer 0
-              when 50 => rdata_r <= dbgpack(e_l4_nz,  e_l4_e,  e_l4_m);         -- x after all layers
-              when 51 => rdata_r <= dbgpack(e_fin_nz, e_fin_e, e_fin_m);        -- x after final rmsnorm
               when 52 => rdata_r <= std_logic_vector(to_signed(e_stok, 32));    -- this pos's argmax
               when 53 => rdata_r <= dbgpack(e_rms_nz, e_rms_e, e_rms_m);        -- L0 attention-rmsnorm out
               when 54 => rdata_r <= dbgpack(e_att_nz, e_att_e, e_att_m);        -- L0 attention output xb
-              -- 0xDC/0xE0: SPARE (retired hd0/t1 DIVIDEND probes -- attention solved)
+              when 55 => rdata_r <= e_rf_mrw_h;                                 -- 0xDC FFN max_raw[63:32]
+              when 56 => rdata_r <= std_logic_vector(to_signed(e_rf_sh, 32));   -- 0xE0 FFN shift_total
               when 57 => rdata_r <= std_logic_vector(to_signed(e_rxe, 32));     -- L0 rms x_exp
               when 58 => rdata_r <= std_logic_vector(to_signed(e_rwe, 32));     -- L0 rms w_exp
               when 59 => rdata_r <= (31 downto 16 => '0') & e_rw0;              -- L0 rms weight[0]
-              when 60 => rdata_r <= std_logic_vector(to_signed(e_att_sc, 32));  -- 0xF0 L0 att score chksum
-              when 61 => rdata_r <= std_logic_vector(to_signed(e_att_sum, 32)); -- 0xF4 L0 att softmax sum
-              when 62 => rdata_r <= std_logic_vector(to_signed(e_att_num, 32)); -- 0xF8 L0 att num_s chksum
-              when 63 => rdata_r <= e_l1_nsd_l;                                 -- 0xFC hd0/t1 ns_dout[31:0]
+              -- ATT-invocation control copy (same unit, same run, known bit-exact)
+              when 60 => rdata_r <= e_ra_xchk;                                  -- 0xF0 ATT sum(x mant)
+              when 61 => rdata_r <= e_ra_ssq_l;                                 -- 0xF4 ATT S[31:0]
+              when 62 => rdata_r <= e_ra_inv;                                   -- 0xF8 ATT inv32
               when others => rdata_r <= (others=>'0');
             end case;
           end if;

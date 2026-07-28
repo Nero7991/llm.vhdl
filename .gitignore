@@ -39,3 +39,8 @@ sim/xsim.dir/
 build_artifacts_*/*.bit
 build_artifacts_*/*.bin
 build_artifacts_*/*.dcp
+# build artifacts: keep the RTL snapshots / logs / notes, never the bitstreams
+build_artifacts_*/*.bit
+build_artifacts_*/*.bit.bin
+# cross-compiled on-board CLI (rebuild with aarch64-linux-gnu-gcc -O2 -static)
+hw/llama_hw

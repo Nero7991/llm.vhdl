@@ -52,7 +52,20 @@ entity swiglu is
 end entity swiglu;
 
 architecture rtl of swiglu is
-  type state_t is (S_IDLE, S_CALC);
+  -- S_CALC used to do EVERYTHING for one element in a single clock: two 64-bit
+  -- VARIABLE barrel shifts, sigmoid_q (ROM lookup + its own 64x64 multiply), the
+  -- 32x32 silu multiply and the 32x32 output multiply -- THREE cascaded DSP
+  -- multiplies in one combinational cone.  That is the exact failure mode already
+  -- documented and fixed in rmsnorm.vhd ("the router segments timing at each DSP
+  -- boundary and under-counts the true reg->reg delay, so it 'meets' timing but
+  -- the real path exceeds the clock period -> wrong result on silicon"), and the
+  -- board showed its consequence: with W1/W3 reading bit-exact, bfp_pack's max
+  -- scan over the values swiglu wrote saw ~2^30 where sim sees <=2^14, so
+  -- shift_o came out 16 too large (exp -4 vs +12) and every mantissa was crushed
+  -- to 0.  Split into four registered stages, ONE multiply per state -- the same
+  -- rule rmsnorm's pipelined rsqrt follows.  Bit-identical (same widths, same
+  -- rounding, same order); costs 3 extra cycles per element = ~+0.3% on a run.
+  type state_t is (S_IDLE, S_CALC_A, S_CALC_B, S_CALC_C, S_CALC_D);
 begin
   process(clk)
     variable state    : state_t := S_IDLE;
@@ -85,13 +98,11 @@ begin
           when S_IDLE =>
             if start = '1' then
               idx   := 0;
-              state := S_CALC;
+              state := S_CALC_A;
             end if;
 
-          -- One element per cycle: shared sigmoid + two-multiply chain.
-          when S_CALC =>
-            -- Convert hb BFP mantissa to Qq: v_q = round(mant * 2^(Q - hb_exp))
-            -- Round-half-up: add bias 2^(|sh|-1) then arithmetic right shift.
+          -- Stage A: BFP mantissa -> Qq for both operands (barrel shifts only).
+          when S_CALC_A =>
             mant_raw := signed(hb_mant((idx+1)*16-1 downto idx*16));
             mant64   := resize(mant_raw, 64);
             sh       := Q - hb_exp;
@@ -102,7 +113,6 @@ begin
               v_q    := resize(shift_right(mant64 + bias64, -sh), 32);
             end if;
 
-            -- Convert hb2 BFP mantissa to Qq: h2_q = round(mant * 2^(Q - hb2_exp))
             mant_raw := signed(hb2_mant((idx+1)*16-1 downto idx*16));
             mant64   := resize(mant_raw, 64);
             sh       := Q - hb2_exp;
@@ -112,15 +122,22 @@ begin
               bias64 := shift_left(to_signed(1, 64), (-sh) - 1);
               h2_q   := resize(shift_right(mant64 + bias64, -sh), 32);
             end if;
+            state := S_CALC_B;
 
-            -- sig = sigmoid_q(v_q, Q): Qq value in [0, 2^Q]
-            sig := sigmoid_q(v_q, Q);
+          -- Stage B: sig = sigmoid_q(v_q, Q).  sigmoid_q contains its own 64x64
+          -- interpolation multiply, so it gets a state to itself.
+          when S_CALC_B =>
+            sig   := sigmoid_q(v_q, Q);
+            state := S_CALC_C;
 
-            -- silu = (v_q * sig) >> Q  (32x32->64, plain arithmetic right shift)
+          -- Stage C: silu = (v_q * sig) >> Q   (multiply 1 of 2)
+          when S_CALC_C =>
             prod1  := v_q * sig;
             silu32 := resize(shift_right(prod1, Q), 32);
+            state  := S_CALC_D;
 
-            -- out = (silu * h2_q) >> Q  (32x32->64, plain arithmetic right shift)
+          -- Stage D: out = (silu * h2_q) >> Q  (multiply 2 of 2), then commit.
+          when S_CALC_D =>
             prod2 := silu32 * h2_q;
             out_v := resize(shift_right(prod2, Q), 32);
 
@@ -139,7 +156,8 @@ begin
               done  <= '1';
               state := S_IDLE;
             else
-              idx := idx + 1;
+              idx   := idx + 1;
+              state := S_CALC_A;
             end if;
 
         end case;

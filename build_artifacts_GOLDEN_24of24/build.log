@@ -1,0 +1,38 @@
+=== 1) package IP with FIXED attention_ml 10:31:11 ===
+CRITICAL WARNING: [IP_Flow 19-5655] Packaging a component with a VHDL-2008 top file is not fully supported. Please refer to UG1118 'Creating and Packaging Custom IP'.
+# ipx::check_integrity    $core
+INFO: [Ipptcl 7-1486] check_integrity: Integrity check passed.
+# ipx::save_core          $core
+# puts "AXI_IFS: [ipx::get_bus_interfaces -of_objects $core]"
+AXI_IFS: bus_interface component_1 s_axi bus_interface component_1 s_axi_aresetn bus_interface component_1 s_axi_aclk
+=== 2) build design_2 BD 10:31:24 ===
+# validate_bd_design
+# save_bd_design
+# puts "VALIDATE_DONE"
+VALIDATE_DONE
+=== 3) impl + bitstream 10:31:34 ===
+  Global Horizontal Routing Utilization  = 44.574 %
+  Number of Node Overlaps             = 0
+INFO: [Route 35-20] Post Routing Timing Summary | WNS=316.745| TNS=0.000  | WHS=0.009  | THS=0.000  |
+122 Infos, 77 Warnings, 0 Critical Warnings and 0 Errors encountered.
+132 Infos, 78 Warnings, 0 Critical Warnings and 0 Errors encountered.
+INFO: [runtcl-4] Executing : report_clock_utilization -file design_2_wrapper_clock_utilization_routed.rpt
+INFO: [Vivado 12-3199] DRC finished with 0 Errors, 267 Warnings
+14 Infos, 266 Warnings, 0 Critical Warnings and 0 Errors encountered.
+# puts "IMPL_STATUS: [get_property STATUS [get_runs impl_1]]"
+IMPL_STATUS: write_bitstream Complete!
+# puts "IMPL_PROGRESS: [get_property PROGRESS [get_runs impl_1]]"
+IMPL_PROGRESS: 100%
+# puts "BITFILE: [glob -nocomplain $impldir/*_wrapper.bit]"
+BITFILE: /home/orencollaco/GitHub/AlinxMigrated/axu3eg_trd.runs/impl_1/design_2_wrapper.bit
+# catch { puts "WNS: [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]" }
+WNS: 316.745
+# catch { puts "WHS: [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]" }
+WHS: 0.009
+#   puts "WHS_SRC: [get_property STARTPOINT_PIN $hp]"
+#   puts "WHS_DST: [get_property ENDPOINT_PIN $hp]"
+WHS_SRC: design_2_i/llama_engine_axi_0/U0/u_engine/wo_reg_reg[60]/C
+WHS_DST: design_2_i/llama_engine_axi_0/U0/u_engine/res_b_mant_reg[60]/D
+# puts "BUILD_DONE"
+BUILD_DONE
+BUILD_ALL_DONE 10:45:31

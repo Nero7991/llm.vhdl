@@ -19,6 +19,24 @@
 -- attention_ml's KV scans): at pointer value R>=1, i_rdata holds element R-1.
 -- Both the S_MAX and the S_PACK pass sweep all N elements, so the BRAM is read
 -- twice; semantics (find max over ALL elements, THEN repack) are unchanged.
+--
+-- SIGNED-VECTOR ONLY (2026-07-27) -- this unit used to do
+--     hbq := to_integer(signed(i_rdata));  av := hbq; if av < 0 then av := -av;
+--     r32 := scale_mul(to_signed(hbq, 64), to_signed(1, 32), shift_o);
+-- i.e. it routed the element through a VHDL INTEGER and back.  Vivado has been
+-- observed IN THIS DESIGN to DROP THE SIGN across that round-trip (see the
+-- attention_ml history and the project memory): GHDL evaluates it correctly, so
+-- every simulation passes, and only the netlist/silicon is wrong.  Here a dropped
+-- sign makes |element| astronomically large, so the S_MAX scan over-scales
+-- shift_o and S_PACK crushes every mantissa to ~0.  That is exactly what the
+-- board measured once the units upstream had been made bit-exact: bfp_pack out
+-- read exp -4 with element 0 = 0, where sim gives exp +12 / -335, while its W1
+-- and W3 inputs both read bit-exact.
+-- Fix: keep the element as a SIGNED VECTOR throughout (abs, running max, msb
+-- scan, requantise, saturate) and never call to_signed(<integer>, N).  The
+-- multiply-by-one is also gone -- scale_mul(x,1,sh) is just a round-half-up
+-- arithmetic right shift -- which removes a 64x32 DSP cone from the path for
+-- free.  Bit-identical: tb_engine_shared stays 24/24.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -48,8 +66,20 @@ architecture rtl of bfp_pack is
   -- trailing bubble read at rptr=N stays in range).  At pointer value R the data
   -- for element R-1 is on i_rdata (issued when the pointer was R-1).
   signal rptr    : integer range 0 to N := 0;
-  signal max_abs : integer := 0;   -- persists across S_MAX (running max)
-  signal shift_o : integer := 0;   -- computed at S_MAX->S_PACK, used in S_PACK
+  -- Running max of |element|, held as an UNSIGNED VECTOR, never a VHDL integer.
+  signal max_abs : unsigned(31 downto 0) := (others => '0');
+  signal shift_o : integer range 0 to 63 := 0;  -- S_MAX->S_PACK, always >= 0
+
+  -- Highest set-bit index of an unsigned vector (0 for 0).  Replaces
+  -- util_pkg.msb_pos(integer), which forced the data through an integer.
+  function msb_pos_u(u : unsigned) return integer is
+    variable r : integer := 0;
+  begin
+    for i in 0 to u'length-1 loop
+      if u(i) = '1' then r := i; end if;
+    end loop;
+    return r;
+  end function;
 begin
   -- Combinational read address off the read-ahead pointer.
   o_raddr <= std_logic_vector(to_unsigned(rptr, o_raddr'length)) when rptr <= N-1
@@ -57,20 +87,22 @@ begin
 
   process(clk)
     variable p     : integer;   -- element consumed this cycle (rptr-1)
-    variable hbq   : integer;
-    variable av    : integer;
-    variable mx    : integer;   -- final max over all N elements
+    variable hbq_s : signed(31 downto 0);   -- the element, as a SIGNED VECTOR
+    variable av_u  : unsigned(31 downto 0); -- |element|
+    variable mx_u  : unsigned(31 downto 0); -- final max over all N elements
     variable p_msb : integer;
-    variable r32   : signed(31 downto 0);
-    variable sat   : integer;
     variable sh    : integer;
+    -- requantise intermediates (96-bit, exactly as scale_mul used to be)
+    variable p96    : signed(95 downto 0);
+    variable bias96 : signed(95 downto 0);
+    variable r96    : signed(95 downto 0);
   begin
     if rising_edge(clk) then
       done <= '0';
       if rst = '1' then
         state   <= S_IDLE;
         rptr    <= 0;
-        max_abs <= 0;
+        max_abs <= (others => '0');
         shift_o <= 0;
         o_mant  <= (others => '0');
         o_exp   <= 0;
@@ -79,7 +111,7 @@ begin
 
           when S_IDLE =>
             if start = '1' then
-              max_abs <= 0;
+              max_abs <= (others => '0');
               rptr    <= 0;
               state   <= S_MAX;
             end if;
@@ -89,23 +121,25 @@ begin
           -- compute the shift and move to S_PACK (re-priming the pointer to 0).
           when S_MAX =>
             if rptr >= 1 then
-              hbq := to_integer(signed(i_rdata));
-              av  := hbq; if av < 0 then av := -av; end if;
+              hbq_s := signed(i_rdata);
+              if hbq_s(31) = '1' then av_u := unsigned(-hbq_s);
+              else                    av_u := unsigned( hbq_s);
+              end if;
             else
-              av := 0;
+              av_u := (others => '0');
             end if;
             if rptr = N then
               -- max_abs signal already holds the running max of elements 0..N-2;
-              -- fold in element N-1 (av) locally to get the true max over all N.
-              mx := max_abs; if av > mx then mx := av; end if;
-              p_msb := msb_pos(mx);
+              -- fold in element N-1 (av_u) locally to get the true max over all N.
+              mx_u := max_abs; if av_u > mx_u then mx_u := av_u; end if;
+              p_msb := msb_pos_u(mx_u);
               sh := p_msb - 14; if sh < 0 then sh := 0; end if;
               shift_o <= sh;
               o_exp   <= Q - sh;
               rptr    <= 0;
               state   <= S_PACK;
             else
-              if av > max_abs then max_abs <= av; end if;
+              if av_u > max_abs then max_abs <= av_u; end if;
               rptr <= rptr + 1;
             end if;
 
@@ -114,14 +148,27 @@ begin
           -- and the pack is done.
           when S_PACK =>
             if rptr >= 1 then
-              p   := rptr - 1;
-              hbq := to_integer(signed(i_rdata));
-              r32 := scale_mul(to_signed(hbq, 64), to_signed(1, 32), shift_o);
-              if    r32 >  32767 then sat :=  32767;
-              elsif r32 < -32768 then sat := -32768;
-              else                    sat := to_integer(r32);
+              p     := rptr - 1;
+              hbq_s := signed(i_rdata);
+              -- scale_mul(x, 1, sh) is exactly a round-half-up arithmetic right
+              -- shift, so do it directly: no 64x32 multiply-by-one, and no value
+              -- routed through a VHDL integer.  The old int32 clamp is redundant
+              -- once we clamp to int16 (both clamps are monotone and the int16
+              -- range is inside the int32 range), so this is bit-identical.
+              p96 := resize(hbq_s, 96);
+              if shift_o = 0 then
+                r96 := p96;
+              else
+                bias96 := shift_left(to_signed(1, 96), shift_o - 1);
+                r96    := shift_right(p96 + bias96, shift_o);
               end if;
-              o_mant((p+1)*16-1 downto p*16) <= std_logic_vector(to_signed(sat, 16));
+              if    r96 > to_signed( 32767, 96) then
+                o_mant((p+1)*16-1 downto p*16) <= std_logic_vector(to_signed( 32767, 16));
+              elsif r96 < to_signed(-32768, 96) then
+                o_mant((p+1)*16-1 downto p*16) <= std_logic_vector(to_signed(-32768, 16));
+              else
+                o_mant((p+1)*16-1 downto p*16) <= std_logic_vector(resize(r96, 16));
+              end if;
             end if;
             if rptr = N then
               rptr  <= 0;

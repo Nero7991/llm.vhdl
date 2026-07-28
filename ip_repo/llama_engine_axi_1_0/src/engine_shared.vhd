@@ -163,7 +163,51 @@ entity engine_shared is
     dbg_qx_nsd_l   : out std_logic_vector(31 downto 0);  -- its ns_dout lo
     dbg_qx_nsd_h   : out std_logic_vector(31 downto 0);  -- its ns_dout hi
     dbg_qx_sum     : out std_logic_vector(31 downto 0);  -- its divisor sum_l[31:0]
-    dbg_qx_meta    : out std_logic_vector(31 downto 0)   -- {valid,cnt,hd,t,lane}
+    dbg_qx_meta    : out std_logic_vector(31 downto 0);  -- {valid,cnt,hd,t,lane}
+    -- ---- SHARED-RMSNORM INTERNAL BISECT (the current first divergence) ------
+    -- The SAME rmsnorm instance is bit-exact on its layer-0 ATT invocation and
+    -- wrong on its FFN invocation.  u_rmsnorm exposes its whole pipeline; these
+    -- latch it at BOTH invocations (same p_idx = dbg_pos / cur_layer = 0 gate),
+    -- so one board read says which step first differs -- and the ATT copy is the
+    -- known-good control measured on the same silicon in the same run.
+    --   xchk/ssq -> the WHOLE input vector (the dbgpack taps only see element 0,
+    --               so a wrong element 1..63 is invisible to them yet changes
+    --               ssq -> mean_sq -> inv -> every output mantissa)
+    --   msq      -> S_INV shift math;  inv -> the pipelined rsqrt
+    --   wchk     -> the ATT/FFN weight mux;  maxraw/shift -> S_RAW scan
+    dbg_rf_xchk    : out std_logic_vector(31 downto 0);  -- FFN call: sum(x mant)
+    dbg_rf_wchk    : out std_logic_vector(31 downto 0);  -- FFN call: sum(w mant)
+    dbg_rf_ssq_l   : out std_logic_vector(31 downto 0);  -- FFN call: S[31:0]
+    dbg_rf_ssq_h   : out std_logic_vector(31 downto 0);  -- FFN call: S[63:32]
+    dbg_rf_msq_l   : out std_logic_vector(31 downto 0);  -- FFN call: mean_sq_q lo
+    dbg_rf_msq_h   : out std_logic_vector(31 downto 0);  -- FFN call: mean_sq_q hi
+    dbg_rf_inv     : out std_logic_vector(31 downto 0);  -- FFN call: inv32
+    dbg_rf_mrw_l   : out std_logic_vector(31 downto 0);  -- FFN call: max_raw lo
+    dbg_rf_mrw_h   : out std_logic_vector(31 downto 0);  -- FFN call: max_raw hi
+    dbg_rf_sh      : out integer;                        -- FFN call: shift_total
+    dbg_ra_xchk    : out std_logic_vector(31 downto 0);  -- ATT call: sum(x mant)
+    dbg_ra_ssq_l   : out std_logic_vector(31 downto 0);  -- ATT call: S[31:0]
+    dbg_ra_inv     : out std_logic_vector(31 downto 0);   -- ATT call: inv32
+    -- ---- WHOLE-VECTOR DATAFLOW CHAIN (vchk signatures) ---------------------
+    -- Walked in dataflow order, the first vchk that differs from sim names the
+    -- exact point the residual stream is corrupted.  Each UNIT OUTPUT is paired
+    -- with the STAGING REGISTER the engine copies it into, because a wide
+    -- zero-logic reg-to-reg copy is this design's known on-silicon hold hazard
+    -- (the attention v_reg->att_v_new_mant bug had exactly that shape), and an
+    -- element-0 tap cannot see it.
+    dbg_vc_emb     : out std_logic_vector(31 downto 0);  -- embed unit output
+    dbg_vc_xcur    : out std_logic_vector(31 downto 0);  -- -> x_mant_cur staging
+    dbg_vc_wo      : out std_logic_vector(31 downto 0);  -- WO matmul unit output
+    dbg_vc_woreg   : out std_logic_vector(31 downto 0);  -- -> wo_reg staging
+    dbg_vc_res1    : out std_logic_vector(31 downto 0);  -- residual-1 unit output
+    dbg_vc_xm      : out std_logic_vector(31 downto 0);  -- -> xm_mant staging
+    dbg_vc_rmsx    : out std_logic_vector(31 downto 0);  -- -> rmsnorm x port
+    dbg_vc_rmso    : out std_logic_vector(31 downto 0);  -- FFN rmsnorm output
+    -- W1/W3 are HIDDEN(172)-wide; the dbgpack taps only ever showed element 0,
+    -- so a wrong element 1..171 there is invisible yet drives swiglu -> bfp_pack's
+    -- max scan.  Whole-vector signatures close that gap.
+    dbg_vc_w1      : out std_logic_vector(31 downto 0);
+    dbg_vc_w3      : out std_logic_vector(31 downto 0)
   );
 end entity;
 
@@ -227,6 +271,28 @@ architecture rtl of engine_shared is
     variable r : std_logic_vector(MAXCOLS*16-1 downto 0) := (others => '0');
   begin
     r(v'length-1 downto 0) := v;
+    return r;
+  end function;
+
+  -- ---------------------------------------------------------------------
+  -- vchk: cheap POSITION-SENSITIVE signature of a whole packed vector.
+  -- Every debug tap so far reported only element 0 + the block exponent, which
+  -- is blind to a corrupted element 1..63 -- and that is exactly what the
+  -- rmsnorm bisect found (rmsnorm's own math is faithful, but the x vector it
+  -- consumes has a different sum AND sum-of-squares from sim while element 0
+  -- and the exponent are bit-exact).  A plain sum would alias (two errors can
+  -- cancel), so fold the vector 32 bits at a time with a per-word rotate: the
+  -- rotate makes the signature sensitive to WHICH word changed, and the whole
+  -- thing is just XOR trees + fixed wiring (no adders, no carry chains), so it
+  -- is cheaper than the is_nz OR-trees already used for the taps.
+  function vchk(v : std_logic_vector) return std_logic_vector is
+    variable r : std_logic_vector(31 downto 0) := (others => '0');
+    variable w : std_logic_vector(31 downto 0);
+  begin
+    for i in 0 to v'length/32 - 1 loop
+      w := v(32*i+31 downto 32*i);
+      r := r xor std_logic_vector(rotate_left(unsigned(w), i mod 32));
+    end loop;
     return r;
   end function;
 
@@ -445,6 +511,21 @@ architecture rtl of engine_shared is
   signal d_wo_nz, d_r1_nz, d_rf_nz, d_w1_nz, d_w3_nz, d_hb_nz, d_w2_nz : std_logic := '0';
   signal d_wo_e,  d_r1_e,  d_rf_e,  d_w1_e,  d_w3_e,  d_hb_e,  d_w2_e  : integer := 0;
   signal d_wo_m,  d_r1_m,  d_rf_m,  d_w1_m,  d_w3_m,  d_hb_m,  d_w2_m  : std_logic_vector(15 downto 0) := (others=>'0');
+  -- rmsnorm internal bisect: live taps from u_rmsnorm + their per-invocation
+  -- capture registers (FFN = the failing call, ATT = the known-good control).
+  signal rn_xchk, rn_wchk, rn_inv : std_logic_vector(31 downto 0);
+  signal rn_ssq, rn_msq, rn_mrw   : std_logic_vector(63 downto 0);
+  signal rn_sh                    : integer;
+  signal d_rf_xchk, d_rf_wchk, d_rf_inv : std_logic_vector(31 downto 0) := (others=>'0');
+  signal d_rf_ssq, d_rf_msq, d_rf_mrw   : std_logic_vector(63 downto 0) := (others=>'0');
+  signal d_rf_sh                        : integer := 0;
+  signal d_ra_xchk, d_ra_inv            : std_logic_vector(31 downto 0) := (others=>'0');
+  signal d_ra_ssq                       : std_logic_vector(63 downto 0) := (others=>'0');
+  -- whole-vector dataflow signatures (unit output vs the staging reg it feeds)
+  signal d_vc_emb, d_vc_xcur, d_vc_wo, d_vc_woreg : std_logic_vector(31 downto 0) := (others=>'0');
+  signal d_vc_res1, d_vc_xm, d_vc_rmsx, d_vc_rmso : std_logic_vector(31 downto 0) := (others=>'0');
+  signal d_vc_w1, d_vc_w3                         : std_logic_vector(31 downto 0) := (others=>'0');
+
   signal d_rxchk, d_rwchk, d_rxe, d_rwe : integer := 0;
   signal d_rw0 : std_logic_vector(15 downto 0) := (others=>'0');
 
@@ -474,11 +555,14 @@ begin
   emb_en <= '1' when (state = E_EMB_S or state = E_EMB_W) else '0';
 
   u_rmsnorm: entity work.rmsnorm
-    generic map(N => DIM, Q => 12)
+    generic map(N => DIM, Q => 12, DEBUG => DEBUG_TAPS)
     port map(clk => clk, rst => rst, start => rms_start,
              x_mant => rms_x_mant, x_exp => rms_x_exp,
              w_mant => rms_w_mant, w_exp => rms_w_exp,
-             done => rms_done, o_mant => rms_o_mant, o_exp => rms_o_exp);
+             done => rms_done, o_mant => rms_o_mant, o_exp => rms_o_exp,
+             dbg_xchk => rn_xchk, dbg_wchk => rn_wchk, dbg_ssq => rn_ssq,
+             dbg_msq => rn_msq, dbg_inv => rn_inv, dbg_maxraw => rn_mrw,
+             dbg_shift => rn_sh);
 
   u_matmul: entity work.matmul_rt
     generic map(MAXROWS => MAXROWS, MAXCOLS => MAXCOLS, ROM_DIR => ROM_DIR)
@@ -712,6 +796,7 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos then   -- DEBUG: x after embed
                 d_emb_nz <= is_nz(embed_x_mant); d_emb_e <= embed_x_exp;
                 d_emb_m  <= embed_x_mant(15 downto 0);
+                d_vc_emb <= vchk(embed_x_mant);   -- embed UNIT output
               end if;
             end if;
 
@@ -725,6 +810,11 @@ begin
             rms_x_mant <= x_mant_cur;
             rms_x_exp  <= x_exp_cur;
             rms_start  <= '1';
+            -- x_mant_cur STAGING reg vs the embed unit output captured above:
+            -- a difference here is the wide reg-to-reg copy corrupting bits.
+            if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+              d_vc_xcur <= vchk(x_mant_cur);
+            end if;
             state <= L_RMS_ATT_W;
           when L_RMS_ATT_W =>
             if rms_done = '1' then
@@ -736,6 +826,8 @@ begin
                 -- LUT and are no longer needed -- the non-determinism is fixed).
                 d_rxchk  <= to_integer(signed(rms_x_mant(31 downto 16)));
                 d_rwchk  <= to_integer(signed(rms_o_mant(31 downto 16)));
+                -- rmsnorm INTERNALS for the ATT invocation (known-good control)
+                d_ra_xchk <= rn_xchk; d_ra_ssq <= rn_ssq; d_ra_inv <= rn_inv;
                 d_rxe    <= rms_x_exp; d_rwe <= rms_w_exp; d_rw0 <= rms_w_mant(15 downto 0);
               end if;
             end if;
@@ -847,6 +939,7 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
                 d_wo_nz <= is_nz(mm_o_mant(DIM*16-1 downto 0)); d_wo_e <= mm_o_exp;
                 d_wo_m  <= mm_o_mant(15 downto 0);
+                d_vc_wo <= vchk(mm_o_mant(DIM*16-1 downto 0));  -- matmul UNIT output
               end if;
             end if;
           when L_RES1_S =>
@@ -854,6 +947,9 @@ begin
             res_b_mant <= wo_reg;     res_b_exp <= wo_exp_r;
             res_start  <= '1';
             state <= L_RES1_W;
+            if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+              d_vc_woreg <= vchk(wo_reg);   -- wo_reg STAGING reg
+            end if;
           when L_RES1_W =>
             if res_done = '1' then
               xm_mant <= res_o_mant;
@@ -863,6 +959,7 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
                 d_r1_nz <= is_nz(res_o_mant); d_r1_e <= res_o_exp;
                 d_r1_m  <= res_o_mant(15 downto 0);
+                d_vc_res1 <= vchk(res_o_mant);   -- residual UNIT output
               end if;
             end if;
 
@@ -874,6 +971,9 @@ begin
             rms_x_exp  <= xm_exp;
             rms_start  <= '1';
             state <= L_RMS_FFN_W;
+            if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
+              d_vc_xm <= vchk(xm_mant);   -- xm_mant STAGING reg
+            end if;
           when L_RMS_FFN_W =>
             if rms_done = '1' then
               state <= L_W1_S;
@@ -881,6 +981,13 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
                 d_rf_nz <= is_nz(rms_o_mant); d_rf_e <= rms_o_exp;
                 d_rf_m  <= rms_o_mant(15 downto 0);
+                -- rmsnorm INTERNALS for this (failing) FFN invocation
+                d_rf_xchk <= rn_xchk; d_rf_wchk <= rn_wchk;
+                d_rf_ssq  <= rn_ssq;  d_rf_msq  <= rn_msq;
+                d_rf_inv  <= rn_inv;  d_rf_mrw  <= rn_mrw; d_rf_sh <= rn_sh;
+                -- the vector rmsnorm ACTUALLY read (its port), and its output
+                d_vc_rmsx <= vchk(rms_x_mant);
+                d_vc_rmso <= vchk(rms_o_mant);
               end if;
             end if;
 
@@ -898,6 +1005,7 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
                 d_w1_nz <= is_nz(mm_o_mant(HIDDEN*16-1 downto 0)); d_w1_e <= mm_o_exp;
                 d_w1_m  <= mm_o_mant(15 downto 0);
+                d_vc_w1 <= vchk(mm_o_mant(HIDDEN*16-1 downto 0));
               end if;
             end if;
           when L_W3_S =>
@@ -913,6 +1021,7 @@ begin
               if DEBUG_TAPS and p_idx = dbg_pos and cur_layer = 0 then
                 d_w3_nz <= is_nz(mm_o_mant(HIDDEN*16-1 downto 0)); d_w3_e <= mm_o_exp;
                 d_w3_m  <= mm_o_mant(15 downto 0);
+                d_vc_w3 <= vchk(mm_o_mant(HIDDEN*16-1 downto 0));
               end if;
             end if;
 
@@ -1093,6 +1202,29 @@ begin
   dbg_l1_sum     <= d_l1_sum;
   dbg_l1_nmag_l  <= d_l1_nmag(31 downto 0);
   dbg_l1_nmag_h  <= d_l1_nmag(63 downto 32);
+  dbg_rf_xchk    <= d_rf_xchk;
+  dbg_rf_wchk    <= d_rf_wchk;
+  dbg_rf_ssq_l   <= d_rf_ssq(31 downto 0);
+  dbg_rf_ssq_h   <= d_rf_ssq(63 downto 32);
+  dbg_rf_msq_l   <= d_rf_msq(31 downto 0);
+  dbg_rf_msq_h   <= d_rf_msq(63 downto 32);
+  dbg_rf_inv     <= d_rf_inv;
+  dbg_rf_mrw_l   <= d_rf_mrw(31 downto 0);
+  dbg_rf_mrw_h   <= d_rf_mrw(63 downto 32);
+  dbg_rf_sh      <= d_rf_sh;
+  dbg_ra_xchk    <= d_ra_xchk;
+  dbg_ra_ssq_l   <= d_ra_ssq(31 downto 0);
+  dbg_ra_inv     <= d_ra_inv;
+  dbg_vc_emb     <= d_vc_emb;
+  dbg_vc_xcur    <= d_vc_xcur;
+  dbg_vc_wo      <= d_vc_wo;
+  dbg_vc_woreg   <= d_vc_woreg;
+  dbg_vc_res1    <= d_vc_res1;
+  dbg_vc_xm      <= d_vc_xm;
+  dbg_vc_rmsx    <= d_vc_rmsx;
+  dbg_vc_rmso    <= d_vc_rmso;
+  dbg_vc_w1      <= d_vc_w1;
+  dbg_vc_w3      <= d_vc_w3;
   dbg_qx_qmag_l  <= d_qx_qmag(31 downto 0);
   dbg_qx_qmag_h  <= d_qx_qmag(63 downto 32);
   dbg_qx_nmag_l  <= d_qx_nmag(31 downto 0);

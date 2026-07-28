@@ -1,0 +1,33 @@
+PL CLOCK IS 100 MHz, NOT 3 MHz  (measured 2026-07-27)
+=====================================================
+Two independent measurements agree:
+ (a) CRL_APB registers on the board:
+       PL0_REF_CTRL = 0x01010802 -> SRCSEL=2 (RPLL), DIVISOR0=8, DIVISOR1=1
+       RPLL_CTRL    = 0x00013000 -> FBDIV=48, DIV2=1
+       PS_REF_CLK 33.333 MHz * 48 / 2 = 800 MHz;  800 / 8 = 100 MHz
+ (b) wall-clock: 20,078,247 sim cycles / 0.201 s = 99.9 MHz
+
+WHY the BD says 3 MHz and the board runs 100 MHz:
+  tcl/build_design2_bd.tcl sets PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {3}, but that
+  only affects what the FSBL's psu_init programs -- and we deploy by swapping ONLY
+  /tftpboot/system.bit.bin, keeping the GOLDEN BOOT.BIN.  So the PL clock stays
+  whatever that BOOT.BIN's psu_init set, i.e. 100 MHz.  The BD's 3 MHz only ever
+  changed the timing CONSTRAINT, never the hardware.
+
+WHY THIS EXPLAINS THE ENTIRE BUG HUNT:
+  Implementation was analysed against a 333 ns period while the silicon ran a 10 ns
+  period.  So "WNS +300 ns, timing MET" meant nothing: any logic cone longer than
+  10 ns failed on the board while the tool reported enormous slack.  That is exactly
+  the observed signature -- a unit producing a few wrong bits, deterministic within a
+  build and different in each build (placement moves the cone delay around 10 ns).
+  The three units fixed on 2026-07-27 (residual S_PACK, swiglu S_CALC, bfp_pack) were
+  precisely the longest single-clock cones: splitting them so each stage holds at most
+  ONE multiply brought every stage under the REAL 10 ns period -> bit-exact output.
+
+CONSEQUENCE / RISK (not yet closed):
+  Timing closure has never been verified at the REAL clock.  The design works and is
+  reproducible, but its true margin at 10 ns is UNKNOWN.  Proper follow-up: constrain
+  clk_pl_0 at 10 ns (100 MHz), re-run impl, read the true WNS, and fix whatever fails.
+  Until then treat the current build as empirically-correct rather than timing-closed.
+
+PERFORMANCE AT THE REAL CLOCK: 24 tokens in 0.201 s = ~119 tokens/s.

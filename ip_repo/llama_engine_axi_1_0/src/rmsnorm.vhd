@@ -34,7 +34,11 @@ use work.fixed_luts_pkg.all;   -- RSQRT_ROM for the pipelined rsqrt
 use work.util_pkg.all;
 
 entity rmsnorm is
-  generic(N : positive; Q : integer := 12);
+  generic(N : positive; Q : integer := 12;
+          -- DEBUG: when false (default) every dbg_* driver below is statically
+          -- dead, so synthesis prunes the checksum adders and the wide capture
+          -- registers.  Set true only for the on-board bisect build.
+          DEBUG : boolean := false);
   port(
     clk    : in  std_logic;
     rst    : in  std_logic;
@@ -45,7 +49,26 @@ entity rmsnorm is
     w_exp  : in  integer;
     done   : out std_logic;
     o_mant : out std_logic_vector(N*16-1 downto 0);
-    o_exp  : out integer
+    o_exp  : out integer;
+    -- ---- INTERNAL BISECT TAPS (valid from `done` until the next `start`) ----
+    -- The shared rmsnorm reads BIT-EXACT on its layer-0 ATT invocation but wrong
+    -- on its FFN invocation, from the same logic.  These expose every stage of
+    -- the pipeline so one board read names the broken step:
+    --   x checksum / sum-of-squares  -> is the INPUT vector right (all N, not
+    --                                   just element 0, which the dbgpack taps
+    --                                   are limited to)?
+    --   mean_sq_q                    -> S_INV shift math
+    --   inv32                        -> the pipelined rsqrt
+    --   w checksum                   -> the engine's ATT/FFN weight mux
+    --   max_raw / shift_total        -> S_RAW magnitude scan
+    -- Left `open` by every other instantiator.
+    dbg_xchk   : out std_logic_vector(31 downto 0) := (others => '0');
+    dbg_wchk   : out std_logic_vector(31 downto 0) := (others => '0');
+    dbg_ssq    : out std_logic_vector(63 downto 0) := (others => '0');
+    dbg_msq    : out std_logic_vector(63 downto 0) := (others => '0');
+    dbg_inv    : out std_logic_vector(31 downto 0) := (others => '0');
+    dbg_maxraw : out std_logic_vector(63 downto 0) := (others => '0');
+    dbg_shift  : out integer := 0
   );
 end entity;
 
@@ -99,6 +122,9 @@ begin
     variable shift_total : integer;
     -- Output
     variable om_32       : signed(31 downto 0);
+    -- Debug checksums (pruned when DEBUG=false)
+    variable xchk        : signed(31 downto 0) := (others => '0');
+    variable wchk        : signed(31 downto 0) := (others => '0');
     -- Pipelined rsqrt state (one 64x64 multiply per cycle, registered between).
     variable msq_reg     : signed(63 downto 0);   -- mean_sq_q held into rsqrt
     variable rq_A        : unsigned(63 downto 0);
@@ -139,6 +165,10 @@ begin
               we    := w_exp;
               S     := (others => '0');
               idx   := 0;
+              if DEBUG then
+                xchk := (others => '0');
+                wchk := (others => '0');
+              end if;
               state := S_ACC;
             end if;
 
@@ -148,6 +178,7 @@ begin
           when S_ACC =>
             xm_j := signed(x_mant((idx+1)*16-1 downto idx*16));
             S    := S + resize(xm_j * xm_j, 64);
+            if DEBUG then xchk := xchk + resize(xm_j, 32); end if;
             if idx = N-1 then
               idx   := 0;
               state := S_INV;
@@ -186,6 +217,11 @@ begin
             end if;
 
             if mean_sq_q < 1 then mean_sq_q := to_signed(1, 64); end if;
+            if DEBUG then
+              dbg_xchk <= std_logic_vector(xchk);
+              dbg_ssq  <= std_logic_vector(S);
+              dbg_msq  <= std_logic_vector(mean_sq_q);
+            end if;
             -- Enter the pipelined rsqrt (replaces inv32 := rsqrt_q(mean_sq_q,Q)).
             msq_reg := mean_sq_q;
             state   := S_RQ_SEED;
@@ -246,6 +282,7 @@ begin
             else                                         inv32 := resize(rq_r, 32);
             end if;
             inv_ext := resize(inv32, 64);
+            if DEBUG then dbg_inv <= std_logic_vector(inv32); end if;
             max_raw := (others => '0');
             idx     := 0;
             state   := S_RAW;
@@ -264,6 +301,7 @@ begin
             wm_j   := signed(w_mant((idx+1)*16-1 downto idx*16));
             xm_ext := resize(xm_j, 64);
             wm_ext := resize(wm_j, 64);
+            if DEBUG then wchk := wchk + resize(wm_j, 32); end if;
             xm_inv := resize(xm_ext * inv_ext, 64);   -- multiply 1 (registered)
             state  := S_RAW_B;
           when S_RAW_B =>
@@ -290,6 +328,11 @@ begin
             end loop;
             shift_total := p - 14;
             if shift_total < 0 then shift_total := 0; end if;
+            if DEBUG then
+              dbg_wchk   <= std_logic_vector(wchk);
+              dbg_maxraw <= std_logic_vector(max_raw);
+              dbg_shift  <= shift_total;
+            end if;
             o_exp <= xe + we + Q - shift_total;
             idx   := 0;
             state := S_EMIT;
