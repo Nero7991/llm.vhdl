@@ -66,11 +66,75 @@
  * natural safe operating point: +0.72 ns of worst-case margin, 95.6 tok/s. */
 #define SAFE_MHZ 80
 
+/* Runtime prompt: PROMPT[i] is written at word 40+i (0xA0 + 4i) and the length
+ * at 0x14.  MAXPOS positions total, so prompt + generated <= MAXPOS -- a longer
+ * prompt simply leaves fewer tokens to generate. */
+#define REG_PROMPT_LEN (0x14 / 4)
+#define REG_PROMPT0    (0xA0 / 4)
+#define MAXPOS         24
+
 static double now_s(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+/* Sentencepiece BPE encode, the same merges the C oracle uses: start from single
+ * UTF-8 bytes (byte-fallback ids are byte+3) and greedily apply the
+ * highest-scoring adjacent merge that exists in the vocab.  Returns the number of
+ * ids written, or -1 if the prompt does not fit in MAXPOS. */
+static int encode_prompt(const char *text, int *out, int max)
+{
+    int n = 0, i;
+    char buf[512];
+
+    if (max < 1)
+        return -1;
+    out[n++] = 1;                       /* BOS */
+
+    /* sentencepiece prepends a space to the first real piece */
+    if (text && *text) {
+        while (*text == ' ')
+            text++;
+        snprintf(buf, sizeof buf, " %s", text);
+    } else {
+        buf[0] = 0;
+    }
+
+    for (i = 0; buf[i]; i++) {
+        int id = -1, v;
+        for (v = 0; v < TOK_VOCAB; v++)
+            if (TOK_LEN[v] == 1 && TOK_WORD[v][0] == buf[i]) { id = v; break; }
+        if (n >= max)
+            return -1;
+        out[n++] = (id >= 0) ? id : ((unsigned char)buf[i] + 3);
+    }
+
+    for (;;) {                          /* greedy highest-scoring merge */
+        float best = -1e30f;
+        int at = -1, id = -1, k, v;
+        for (k = 1; k + 1 < n; k++) {   /* never merge across BOS at index 0 */
+            char pair[64];
+            int la = TOK_LEN[out[k]], lb = TOK_LEN[out[k + 1]];
+            if (la + lb >= (int)sizeof pair)
+                continue;
+            memcpy(pair, TOK_WORD[out[k]], (size_t)la);
+            memcpy(pair + la, TOK_WORD[out[k + 1]], (size_t)lb);
+            for (v = 0; v < TOK_VOCAB; v++)
+                if (TOK_LEN[v] == la + lb && !memcmp(TOK_WORD[v], pair, (size_t)(la + lb))) {
+                    if (TOK_SCORE[v] > best) { best = TOK_SCORE[v]; at = k; id = v; }
+                    break;
+                }
+        }
+        if (at < 0)
+            break;
+        out[at] = id;
+        for (k = at + 1; k + 1 < n; k++)
+            out[k] = out[k + 1];
+        n--;
+    }
+    return n;
 }
 
 /* Mirror llama2.c decode(): the token after BOS(1) loses its leading space, and
@@ -102,7 +166,16 @@ static void emit(int tok, int prev)
 
 int main(int argc, char **argv)
 {
-    int show_ids = 0, show_time = 0, set_mhz = 0;
+    /* Default to the in-spec clock.  U-Boot's preboot does set 80 MHz, but
+     * Linux's ZynqMP clock framework reprograms pl0_ref from the device tree
+     * during boot and puts it back to 100 MHz (measured: U-Boot md shows
+     * 0x01000a02, Linux devmem shows 0x01010802).  Making that stick would need
+     * a DT/rootfs rebuild, and image.ub has to stay golden for the U-Boot
+     * rollback path -- so the tool sets the clock itself, every run.
+     * Use -f 0 to leave whatever the system has alone. */
+    int show_ids = 0, show_time = 0, set_mhz = SAFE_MHZ;
+    const char *prompt = NULL;
+    int ptok[MAXPOS], plen = 0, enc_only = 0;
     int fd, i, n, prev;
     volatile uint32_t *r, *crl;
     void *map, *crlmap;
@@ -113,18 +186,35 @@ int main(int argc, char **argv)
         if      (!strcmp(argv[i], "-i")) show_ids  = 1;
         else if (!strcmp(argv[i], "-t")) show_time = 1;
         else if (!strcmp(argv[i], "-f") && i + 1 < argc) set_mhz = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-p") && i + 1 < argc) prompt   = argv[++i];
+        else if (!strcmp(argv[i], "-e")) enc_only = 1;
         else {
             fprintf(stderr,
                     "usage: %s [-i] [-t] [-f MHZ]\n"
                     "  -i      print the raw token ids as well\n"
                     "  -t      print run time and tokens/sec\n"
-                    "  -f MHZ  set the PL clock first (800/round(800/MHZ));\n"
-                    "          %d MHz is the fastest clock that meets worst-case\n"
-                    "          timing.  Without -f the clock is left alone and a\n"
-                    "          warning is printed if it is above that.\n",
-                    argv[0], SAFE_MHZ);
+                    "  -p TEXT set the prompt (BPE-encoded here, written to the\n"
+                    "          engine's prompt registers).  Default: the built-in\n"
+                    "          \"Once upon a time\".  prompt + generated <= %d tokens.\n"
+                    "  -e      just encode -p and print the ids (no hardware needed)\n"
+                    "  -f MHZ  PL clock to run at, default %d MHz -- the fastest\n"
+                    "          clock that meets worst-case timing.  -f 0 leaves the\n"
+                    "          system clock alone (and warns if it is above that).\n",
+                    argv[0], MAXPOS, SAFE_MHZ);
             return 2;
         }
+    }
+
+    /* -e is a pure tokenizer check: no /dev/mem, works on the host too. */
+    if (enc_only) {
+        plen = encode_prompt(prompt ? prompt : "Once upon a time", ptok, MAXPOS);
+        if (plen < 1) {
+            fprintf(stderr, "prompt does not fit in %d tokens\n", MAXPOS);
+            return 1;
+        }
+        for (i = 0; i < plen; i++)
+            printf("%d%s", ptok[i], i + 1 < plen ? " " : "\n");
+        return 0;
     }
 
     fd = open("/dev/mem", O_RDWR | O_SYNC);
@@ -183,6 +273,29 @@ int main(int argc, char **argv)
     ngen = cfg >> 16;
     if (ngen == 0 || ngen > 256)
         ngen = 24;
+
+    /* Load a runtime prompt, if one was given.  Write the tokens first, then the
+     * length, then START -- the engine samples all of it at reset. */
+    if (prompt) {
+        plen = encode_prompt(prompt, ptok, MAXPOS);
+        if (plen < 1) {
+            fprintf(stderr, "prompt does not fit in %d tokens\n", MAXPOS);
+            return 1;
+        }
+        if (plen >= (int)ngen)
+            fprintf(stderr, "note: prompt is %d of the %u positions, so only %d "
+                            "token(s) will be generated\n", plen, ngen,
+                    (int)ngen - plen);
+        for (i = 0; i < plen; i++)
+            r[REG_PROMPT0 + i] = (uint32_t)ptok[i];
+        r[REG_PROMPT_LEN] = (uint32_t)plen;
+        if (show_ids) {
+            printf("prompt ids:");
+            for (i = 0; i < plen; i++)
+                printf(" %d", ptok[i]);
+            printf("\n");
+        }
+    }
 
     /* STATUS.done LATCHES until the next START, so after a previous run it is
      * still 1.  Polling for done straight away would fall through immediately

@@ -105,6 +105,25 @@ architecture rtl of llama_engine_axi is
 
   -- debug taps (from engine_shared, for the position dbg_pos_reg)
   signal dbg_pos_reg : integer := -1;
+
+  -- ---- RUNTIME PROMPT -------------------------------------------------------
+  -- PROMPT[i] is written at word 40+i (0xA0 + 4i), the length at 0x14.  Both
+  -- reset to the prompt the engine used to bake in ("<BOS> Once upon a time"),
+  -- so a bare START with nothing written still produces the golden story -- that
+  -- keeps the on-hardware golden check meaningful as a regression test.
+  -- Only the low 16 bits of each write are kept: ids are 0..VOCAB-1.
+  constant PROMPT_WORD0 : integer := 40;                 -- 0xA0
+  constant DEF_PROMPT   : std_logic_vector(MAXPOS*16-1 downto 0) :=
+      x"0000000000000000000000000000000000000000000000000000000000000000000000000000" &
+      x"017A0105019701930001";
+  signal prompt_reg : std_logic_vector(MAXPOS*16-1 downto 0) := DEF_PROMPT;
+  signal prompt_len_reg : integer range 1 to MAXPOS := 5;
+
+  -- one token out of the packed prompt register (ids are unsigned 0..VOCAB-1)
+  impure function prompt_word(i : integer) return std_logic_vector is
+  begin
+    return prompt_reg((i+1)*16-1 downto i*16);
+  end function;
   signal e_emb_nz, e_l0_nz, e_l1_nz, e_l2_nz, e_l3_nz, e_l4_nz, e_fin_nz, e_rms_nz, e_att_nz : std_logic;
   signal e_emb_e, e_l0_e, e_l1_e, e_l2_e, e_l3_e, e_l4_e, e_fin_e, e_rms_e, e_att_e, e_stok : integer;
   signal e_att_sc, e_att_sum, e_att_num : integer;   -- attention-internal taps
@@ -157,11 +176,15 @@ begin
   eng_rst <= '1' when (s_axi_aresetn='0' or rst_cnt /= 0) else '0';
 
   u_engine: entity work.engine_shared
-    generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR, DEBUG_TAPS => true)
+    -- DEBUG_TAPS off: the silicon bring-up taps have done their job (the engine
+    -- is bit-exact), and dropping them frees both LUT (helping timing) and the
+    -- 0xA0.. address slots now used by the writable prompt.  Re-enable for debug.
+    generic map(MAXPOS => MAXPOS, NGEN => NGEN, ROM_DIR => ROM_DIR, DEBUG_TAPS => false)
     port map(clk => s_axi_aclk, rst => eng_rst, start => eng_start,
              token_out => eng_token, pos_out => eng_pos,
              token_valid => eng_tvalid, run_done => eng_rundone,
              dbg_pos => dbg_pos_reg,
+             prompt_mant => prompt_reg, prompt_len => prompt_len_reg,
              dbg_emb_nz => e_emb_nz, dbg_emb_e => e_emb_e, dbg_emb_m => e_emb_m,
              dbg_l0_nz  => e_l0_nz,  dbg_l0_e  => e_l0_e,  dbg_l0_m  => e_l0_m,
              dbg_l1_nz  => e_l1_nz,  dbg_l1_e  => e_l1_e,  dbg_l1_m  => e_l1_m,
@@ -226,7 +249,25 @@ begin
           case to_integer(unsigned(wr_addr(7 downto 2))) is
             when 0 => if s_axi_wdata(0)='1' then start_pulse<='1'; end if;  -- CTRL START
             when 4 => dbg_pos_reg <= to_integer(signed(s_axi_wdata));        -- DBG_POS
-            when others => null;
+            when 5 =>                                                        -- 0x14 PROMPT_LEN
+              -- clamp into 1..MAXPOS so a bad write cannot wedge the FSM
+              if to_integer(unsigned(s_axi_wdata)) < 1 then
+                prompt_len_reg <= 1;
+              elsif to_integer(unsigned(s_axi_wdata)) > MAXPOS then
+                prompt_len_reg <= MAXPOS;
+              else
+                prompt_len_reg <= to_integer(unsigned(s_axi_wdata));
+              end if;
+            when others =>
+              -- PROMPT[i] at word 40+i (0xA0 + 4i), i = 0 .. MAXPOS-1
+              if to_integer(unsigned(wr_addr(7 downto 2))) >= PROMPT_WORD0 and
+                 to_integer(unsigned(wr_addr(7 downto 2))) <  PROMPT_WORD0 + MAXPOS then
+                for i in 0 to MAXPOS-1 loop
+                  if to_integer(unsigned(wr_addr(7 downto 2))) = PROMPT_WORD0 + i then
+                    prompt_reg((i+1)*16-1 downto i*16) <= s_axi_wdata(15 downto 0);
+                  end if;
+                end loop;
+              end if;
           end case;
           bvalid<='1';
         elsif bvalid='1' and s_axi_bready='1' then
@@ -289,69 +330,26 @@ begin
           -- registers.  The 8-bit AXI address space only decodes words 0..63.
           if ridx >= 16 and ridx < 16+NGEN then
             rdata_r <= tok_buf(ridx-16);                                   -- TOKEN[i]
+          elsif ridx >= PROMPT_WORD0 and ridx < PROMPT_WORD0 + MAXPOS then
+            -- runtime PROMPT readback (written at the same 0xA0+4i addresses).
+            -- Everything else that used to live in this window was silicon
+            -- bring-up debug taps; DEBUG_TAPS is off now, so they are gone rather
+            -- than returning stale garbage.  Restore from git (a5b9888) if the
+            -- engine ever needs bisecting again.
+            rdata_r <= (31 downto 16 => '0') & prompt_word(ridx - PROMPT_WORD0);
           else
             case ridx is
-              -- CTRL / DBG_POS are WRITE-ONLY registers, so their read slots carry
-              -- probe words (reading them has no side effect).
-              -- ---- WHOLE-VECTOR DATAFLOW CHAIN (vchk) ------------------------
-              -- Read in this order; the first mismatch vs sim names the exact
-              -- point the residual stream is corrupted.  UNIT-OUTPUT taps are
-              -- paired with the STAGING register each feeds.
-              when 0  => rdata_r <= e_vc_res1;                                   -- 0x00 residual-1 UNIT out
-              when 4  => rdata_r <= e_vc_xm;                                     -- 0x10 -> xm_mant staging
-              when 5  => rdata_r <= e_vc_emb;                                    -- 0x14 embed UNIT out
-              when 6  => rdata_r <= e_vc_xcur;                                   -- 0x18 -> x_mant_cur staging
-              when 7  => rdata_r <= e_vc_wo;                                     -- 0x1C WO matmul UNIT out
-              when 50 => rdata_r <= e_vc_woreg;                                  -- 0xC8 -> wo_reg staging
-              when 51 => rdata_r <= e_vc_rmso;                                   -- 0xCC FFN rmsnorm out
-              when 63 => rdata_r <= e_vc_rmsx;                                   -- 0xFC rmsnorm x port (as read)
               when 1 => rdata_r <= (31 downto 2 => '0') & busy & status_done;   -- STATUS
               when 2 => rdata_r <= std_logic_vector(to_unsigned(tok_count, 32));-- COUNT
               when 3 => rdata_r <= std_logic_vector(to_unsigned(NGEN, 16)) &
                                    std_logic_vector(to_unsigned(MAXPOS, 16));   -- CFG
+              when 5 => rdata_r <= std_logic_vector(to_unsigned(prompt_len_reg, 32)); -- PROMPT_LEN
               when 8 => rdata_r <= x"6C6C6D31";                                 -- ID "llm1"
-              -- (retired: per-layer L1/L2/L3/L4/final dbgpack taps + the solved
-              --  attention hd0/t1 ns_dout probe -- those slots now carry the
-              --  whole-vector vchk chain above, which is what the collapse needs.)
-              -- ---- SHARED-RMSNORM INTERNAL BISECT (the current defect) -------
-              -- Retired the attention per-head/per-lane probes: attention now
-              -- reads bit-exact on silicon, so those slots carry the rmsnorm
-              -- pipeline instead.  FFN = the failing invocation; the ATT copy at
-              -- 0xF0..0xF8 is the known-good control from the SAME run.
-              when 9  => rdata_r <= e_vc_w1;                                    -- 0x24 W1 matmul vchk (whole 172-vector)
-              when 10 => rdata_r <= e_vc_w3;                                    -- 0x28 W3 matmul vchk (whole 172-vector)
-              when 11 => rdata_r <= e_rf_ssq_l;                                 -- 0x2C FFN S[31:0]
-              when 12 => rdata_r <= e_rf_ssq_h;                                 -- 0x30 FFN S[63:32]
-              when 13 => rdata_r <= e_rf_msq_l;                                 -- 0x34 FFN mean_sq_q[31:0]
-              when 14 => rdata_r <= e_rf_msq_h;                                 -- 0x38 FFN mean_sq_q[63:32]
-              when 15 => rdata_r <= e_rf_inv;                                   -- 0x3C FFN inv32 (rsqrt)
-              -- ---- INTRA-LAYER-0 STAGE BISECT taps, in DATAFLOW ORDER --------
-              -- attOut(0xD8) -> WO -> res1 -> ffn-rms -> W1 -> W3 -> swiglu+pack
-              -- -> W2 -> res2 (= afterL0, 0xC4).  First tap whose exp/value
-              -- diverges from the sim reference names the broken unit.
-              when 40 => rdata_r <= dbgpack(e_wo_nz, e_wo_e, e_wo_m);           -- 0xA0 WO matmul out
-              when 41 => rdata_r <= dbgpack(e_r1_nz, e_r1_e, e_r1_m);           -- 0xA4 residual-1 out
-              when 42 => rdata_r <= dbgpack(e_rf_nz, e_rf_e, e_rf_m);           -- 0xA8 FFN rmsnorm out
-              when 43 => rdata_r <= dbgpack(e_w1_nz, e_w1_e, e_w1_m);           -- 0xAC W1 matmul out
-              when 44 => rdata_r <= dbgpack(e_w3_nz, e_w3_e, e_w3_m);           -- 0xB0 W3 matmul out
-              when 45 => rdata_r <= dbgpack(e_hb_nz, e_hb_e, e_hb_m);           -- 0xB4 bfp_pack out
-              when 46 => rdata_r <= dbgpack(e_w2_nz, e_w2_e, e_w2_m);           -- 0xB8 W2 matmul out
-              when 47 => rdata_r <= e_rf_mrw_l;                                 -- 0xBC FFN max_raw[31:0]
-              -- DEBUG taps for dbg_pos: {nz[24], exp[23:16], m0[15:0]}
-              when 48 => rdata_r <= dbgpack(e_emb_nz, e_emb_e, e_emb_m);        -- x after embed
-              when 49 => rdata_r <= dbgpack(e_l0_nz,  e_l0_e,  e_l0_m);         -- x after layer 0
-              when 52 => rdata_r <= std_logic_vector(to_signed(e_stok, 32));    -- this pos's argmax
-              when 53 => rdata_r <= dbgpack(e_rms_nz, e_rms_e, e_rms_m);        -- L0 attention-rmsnorm out
-              when 54 => rdata_r <= dbgpack(e_att_nz, e_att_e, e_att_m);        -- L0 attention output xb
-              when 55 => rdata_r <= e_rf_mrw_h;                                 -- 0xDC FFN max_raw[63:32]
-              when 56 => rdata_r <= std_logic_vector(to_signed(e_rf_sh, 32));   -- 0xE0 FFN shift_total
-              when 57 => rdata_r <= std_logic_vector(to_signed(e_rxe, 32));     -- L0 rms x_exp
-              when 58 => rdata_r <= std_logic_vector(to_signed(e_rwe, 32));     -- L0 rms w_exp
-              when 59 => rdata_r <= (31 downto 16 => '0') & e_rw0;              -- L0 rms weight[0]
-              -- ATT-invocation control copy (same unit, same run, known bit-exact)
-              when 60 => rdata_r <= e_ra_xchk;                                  -- 0xF0 ATT sum(x mant)
-              when 61 => rdata_r <= e_ra_ssq_l;                                 -- 0xF4 ATT S[31:0]
-              when 62 => rdata_r <= e_ra_inv;                                   -- 0xF8 ATT inv32
+              -- 0x00 CTRL and 0x10 DBG_POS are write-only; everything that used to
+              -- sit in the other read slots was silicon bring-up debug taps.
+              -- DEBUG_TAPS is off now, so those reads are gone rather than
+              -- returning stale garbage; restore from git (a5b9888) if the engine
+              -- ever needs bisecting again.
               when others => rdata_r <= (others=>'0');
             end case;
           end if;

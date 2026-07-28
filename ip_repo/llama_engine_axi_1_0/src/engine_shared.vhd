@@ -82,6 +82,19 @@ entity engine_shared is
     -- layers / after final rmsnorm = lm_head input) plus that position's argmax.
     -- nz = OR of all mantissa bits (is x all-zero?), e = block exp, m = x[0].
     dbg_pos     : in  integer := -1;
+    -- ---- RUNTIME PROMPT ----------------------------------------------------
+    -- The prompt used to be the compile-time constant PROMPT=(1,403,407,261,378)
+    -- ("<BOS> Once upon a time"), so the engine could only ever tell one story.
+    -- It is now an input: prompt_mant packs up to MAXPOS token ids, 16 bits each,
+    -- index i in bits (i+1)*16-1 downto i*16, and prompt_len says how many are
+    -- valid.  The DEFAULTS below reproduce the old baked prompt exactly, so any
+    -- instantiation that leaves these unmapped (tb_engine_shared, tb_engine_dbg,
+    -- ...) is bit-identical to before -- which keeps the 24/24 golden gate honest.
+    --   x"...0000 017A 0105 0197 0193 0001" = 1, 403, 407, 261, 378, then zeros
+    prompt_mant : in  std_logic_vector(MAXPOS*16-1 downto 0) :=
+        x"0000000000000000000000000000000000000000000000000000000000000000000000000000" &
+        x"017A0105019701930001";
+    prompt_len  : in  integer := NUM_PROMPT;
     dbg_emb_nz  : out std_logic; dbg_emb_e : out integer; dbg_emb_m : out std_logic_vector(15 downto 0);
     dbg_l0_nz   : out std_logic; dbg_l0_e  : out integer; dbg_l0_m  : out std_logic_vector(15 downto 0);
     -- finer per-layer x taps: x after residual2 of layers 1, 2, 3 (localise collapse)
@@ -232,7 +245,13 @@ architecture rtl of engine_shared is
   constant RMS_FINAL : integer := 2;
 
   -- Prompt tokens (stories260K "Once upon a time"), compile-time constant.
-  constant PROMPT : intarr(0 to NUM_PROMPT-1) := (1, 403, 407, 261, 378);
+  -- Retired: the prompt is now the runtime `prompt_mant`/`prompt_len` inputs.
+  -- Token ids are 0..VOCAB-1 and unsigned, so a plain unsigned slice is right --
+  -- do NOT route this through a VHDL integer and back (see the bfp_pack history).
+  function ptok(v : std_logic_vector; i : integer) return integer is
+  begin
+    return to_integer(unsigned(v((i+1)*16-1 downto i*16)));
+  end function;
 
   type s64arr is array(natural range <>) of signed(63 downto 0);
 
@@ -781,7 +800,7 @@ begin
           -- ---- pick input token, embed it ---------------------------
           when E_TOKSET =>
             cur_pos_reg <= p_idx;
-            if p_idx = 0 then tok := PROMPT(0);
+            if p_idx = 0 then tok := ptok(prompt_mant, 0);
             else              tok := prev_next; end if;
             embed_token <= tok;
             state <= E_EMB_S;
@@ -1134,8 +1153,9 @@ begin
 
           -- ---- teacher forcing vs argmax, emit, advance ------------
           when E_EMIT =>
-            if p_idx < NUM_PROMPT - 1 then
-              next_tok := PROMPT(p_idx + 1);
+            -- teacher-force while inside the prompt, then greedy argmax
+            if p_idx < prompt_len - 1 then
+              next_tok := ptok(prompt_mant, p_idx + 1);
             else
               next_tok := samp_token;
             end if;

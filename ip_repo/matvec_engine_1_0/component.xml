@@ -2,7 +2,7 @@
 <spirit:component xmlns:xilinx="http://www.xilinx.com" xmlns:spirit="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <spirit:vendor>user.org</spirit:vendor>
   <spirit:library>user</spirit:library>
-  <spirit:name>llama_engine_axi</spirit:name>
+  <spirit:name>matvec_engine</spirit:name>
   <spirit:version>1.0</spirit:version>
   <spirit:busInterfaces>
     <spirit:busInterface>
@@ -237,14 +237,14 @@
         <spirit:displayName>Synthesis</spirit:displayName>
         <spirit:envIdentifier>:vivado.xilinx.com:synthesis</spirit:envIdentifier>
         <spirit:language>VHDL-2008</spirit:language>
-        <spirit:modelName>llama_engine_axi</spirit:modelName>
+        <spirit:modelName>matvec_engine</spirit:modelName>
         <spirit:fileSetRef>
           <spirit:localName>xilinx_anylanguagesynthesis_view_fileset</spirit:localName>
         </spirit:fileSetRef>
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>45eb244b</spirit:value>
+            <spirit:value>2af6ee4d</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -253,14 +253,14 @@
         <spirit:displayName>Simulation</spirit:displayName>
         <spirit:envIdentifier>:vivado.xilinx.com:simulation</spirit:envIdentifier>
         <spirit:language>VHDL-2008</spirit:language>
-        <spirit:modelName>llama_engine_axi</spirit:modelName>
+        <spirit:modelName>matvec_engine</spirit:modelName>
         <spirit:fileSetRef>
           <spirit:localName>xilinx_anylanguagebehavioralsimulation_view_fileset</spirit:localName>
         </spirit:fileSetRef>
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>45eb244b</spirit:value>
+            <spirit:value>2af6ee4d</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -274,7 +274,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>78a420ae</spirit:value>
+            <spirit:value>d5a64baa</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -625,24 +625,29 @@
     </spirit:ports>
     <spirit:modelParameters>
       <spirit:modelParameter xsi:type="spirit:nameValueTypeType" spirit:dataType="integer">
-        <spirit:name>MAXPOS</spirit:name>
-        <spirit:displayName>Maxpos</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.MAXPOS">24</spirit:value>
+        <spirit:name>OUT_DIM</spirit:name>
+        <spirit:displayName>Out Dim</spirit:displayName>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.OUT_DIM" spirit:minimum="0">64</spirit:value>
       </spirit:modelParameter>
       <spirit:modelParameter spirit:dataType="integer">
-        <spirit:name>NGEN</spirit:name>
-        <spirit:displayName>Ngen</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.NGEN">24</spirit:value>
+        <spirit:name>IN_DIM</spirit:name>
+        <spirit:displayName>In Dim</spirit:displayName>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.IN_DIM" spirit:minimum="0">64</spirit:value>
       </spirit:modelParameter>
       <spirit:modelParameter spirit:dataType="integer">
-        <spirit:name>MAXTOK</spirit:name>
-        <spirit:displayName>Maxtok</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.MAXTOK">32</spirit:value>
+        <spirit:name>WW</spirit:name>
+        <spirit:displayName>Ww</spirit:displayName>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.WW" spirit:minimum="0">16</spirit:value>
       </spirit:modelParameter>
-      <spirit:modelParameter spirit:dataType="string">
-        <spirit:name>ROM_DIR</spirit:name>
-        <spirit:displayName>Rom Dir</spirit:displayName>
-        <spirit:value spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.ROM_DIR">../mem/rom/</spirit:value>
+      <spirit:modelParameter spirit:dataType="integer">
+        <spirit:name>XW</spirit:name>
+        <spirit:displayName>Xw</spirit:displayName>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.XW" spirit:minimum="0">16</spirit:value>
+      </spirit:modelParameter>
+      <spirit:modelParameter spirit:dataType="integer">
+        <spirit:name>AW</spirit:name>
+        <spirit:displayName>Aw</spirit:displayName>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.AW" spirit:minimum="0">48</spirit:value>
       </spirit:modelParameter>
       <spirit:modelParameter spirit:dataType="integer">
         <spirit:name>C_S_AXI_DATA_WIDTH</spirit:name>
@@ -672,124 +677,19 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/attention_ml.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/fixed_luts_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/fixed_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/bfp_pack.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/divider_rs.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/embed_rom_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rom_init_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/embed.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rms_weights_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rmsnorm.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
         <spirit:name>src/mac_array.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/matmul_rt.vhd</spirit:name>
+        <spirit:name>src/wq_l0_rom_pkg.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/rope_rom_pkg.vhd</spirit:name>
+        <spirit:name>src/matvec_engine.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rope.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/swiglu.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/vec_mem.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/lmhead_rom_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/lm_head.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/sampler_stream.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/residual.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/engine_shared.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/kv_mem.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/softmax.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/llama_engine_axi.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>CHECKSUM_752134c8</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_7d0a70ef</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -801,122 +701,17 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/attention_ml.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/fixed_luts_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/fixed_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/bfp_pack.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/divider_rs.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/embed_rom_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rom_init_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/embed.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rms_weights_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rmsnorm.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
         <spirit:name>src/mac_array.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/matmul_rt.vhd</spirit:name>
+        <spirit:name>src/wq_l0_rom_pkg.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/rope_rom_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/rope.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/swiglu.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/vec_mem.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/lmhead_rom_pkg.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/lm_head.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/sampler_stream.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/residual.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/engine_shared.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/kv_mem.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/softmax.vhd</spirit:name>
-        <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
-      </spirit:file>
-      <spirit:file>
-        <spirit:name>src/llama_engine_axi.vhd</spirit:name>
+        <spirit:name>src/matvec_engine.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
@@ -924,34 +719,39 @@
     <spirit:fileSet>
       <spirit:name>xilinx_xpgui_view_fileset</spirit:name>
       <spirit:file>
-        <spirit:name>xgui/llama_engine_axi_v1_0.tcl</spirit:name>
+        <spirit:name>xgui/matvec_engine_v1_0.tcl</spirit:name>
         <spirit:fileType>tclSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_78a420ae</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_d5a64baa</spirit:userFileType>
         <spirit:userFileType>XGUI_VERSION_2</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
   </spirit:fileSets>
-  <spirit:description>llama_engine_axi_v1_0</spirit:description>
+  <spirit:description>matvec_engine_v1_0</spirit:description>
   <spirit:parameters>
     <spirit:parameter>
-      <spirit:name>MAXPOS</spirit:name>
-      <spirit:displayName>Maxpos</spirit:displayName>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.MAXPOS">24</spirit:value>
+      <spirit:name>OUT_DIM</spirit:name>
+      <spirit:displayName>Out Dim</spirit:displayName>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.OUT_DIM" spirit:minimum="0" spirit:rangeType="long">64</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
-      <spirit:name>NGEN</spirit:name>
-      <spirit:displayName>Ngen</spirit:displayName>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.NGEN">24</spirit:value>
+      <spirit:name>IN_DIM</spirit:name>
+      <spirit:displayName>In Dim</spirit:displayName>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.IN_DIM" spirit:minimum="0" spirit:rangeType="long">64</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
-      <spirit:name>MAXTOK</spirit:name>
-      <spirit:displayName>Maxtok</spirit:displayName>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.MAXTOK">32</spirit:value>
+      <spirit:name>WW</spirit:name>
+      <spirit:displayName>Ww</spirit:displayName>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.WW" spirit:minimum="0" spirit:rangeType="long">16</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
-      <spirit:name>ROM_DIR</spirit:name>
-      <spirit:displayName>Rom Dir</spirit:displayName>
-      <spirit:value spirit:resolve="user" spirit:id="PARAM_VALUE.ROM_DIR">../mem/rom/</spirit:value>
+      <spirit:name>XW</spirit:name>
+      <spirit:displayName>Xw</spirit:displayName>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.XW" spirit:minimum="0" spirit:rangeType="long">16</spirit:value>
+    </spirit:parameter>
+    <spirit:parameter>
+      <spirit:name>AW</spirit:name>
+      <spirit:displayName>Aw</spirit:displayName>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.AW" spirit:minimum="0" spirit:rangeType="long">48</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>C_S_AXI_DATA_WIDTH</spirit:name>
@@ -965,7 +765,7 @@
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>Component_Name</spirit:name>
-      <spirit:value spirit:resolve="user" spirit:id="PARAM_VALUE.Component_Name" spirit:order="1">llama_engine_axi_v1_0</spirit:value>
+      <spirit:value spirit:resolve="user" spirit:id="PARAM_VALUE.Component_Name" spirit:order="1">matvec_engine_v1_0</spirit:value>
     </spirit:parameter>
   </spirit:parameters>
   <spirit:vendorExtensions>
@@ -1000,20 +800,19 @@
       <xilinx:taxonomies>
         <xilinx:taxonomy>/UserIP</xilinx:taxonomy>
       </xilinx:taxonomies>
-      <xilinx:displayName>llama_engine_axi_v1_0</xilinx:displayName>
+      <xilinx:displayName>matvec_engine</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
-      <xilinx:vendorDisplayName>user</xilinx:vendorDisplayName>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-07-28T02:42:25Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-07-04T11:48:33Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2023.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="64199c7c"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="a13b2e93"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="eb4627e0"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="27b85004"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="5371ece0"/>
-      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="f69a78e9"/>
-      <xilinx:checksum xilinx:scope="parameters" xilinx:value="27131edc"/>
+      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="f4ced354"/>
+      <xilinx:checksum xilinx:scope="parameters" xilinx:value="3cf6d891"/>
     </xilinx:packagingInfo>
   </spirit:vendorExtensions>
 </spirit:component>

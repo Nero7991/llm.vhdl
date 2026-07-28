@@ -20,15 +20,52 @@ VOCAB = 512
 
 
 def load_vocab(path=TOK):
+    return _load(path)[0]
+
+
+def _load(path=TOK):
     with open(path, "rb") as f:
         blob = f.read()
     off = 4  # skip max_token_length
-    words = []
+    words, scores = [], []
     for _ in range(VOCAB):
-        (_score,) = struct.unpack_from("<f", blob, off); off += 4
+        (sc,) = struct.unpack_from("<f", blob, off); off += 4
         (ln,) = struct.unpack_from("<i", blob, off); off += 4
         words.append(blob[off:off + ln]); off += ln
-    return words
+        scores.append(sc)
+    return words, scores
+
+
+def encode(text, path=TOK, bos=True):
+    """llama2.c encode(): sentencepiece BPE over the same tok512.bin the C oracle
+    uses.  Byte-fallback tokens are ids 3..258 (byte + 3).  Returns token ids."""
+    words, scores = _load(path)
+    lookup = {w: i for i, w in enumerate(words)}
+
+    toks = [1] if bos else []
+    if text:
+        # sentencepiece prepends a space to the first real piece
+        text = " " + text.lstrip(" ") if not text.startswith(" ") else text
+    # start from single UTF-8 characters, falling back to raw bytes
+    pieces = []
+    for ch in text:
+        b = ch.encode("utf-8")
+        if b in lookup:
+            pieces.append(lookup[b])
+        else:
+            pieces.extend(by + 3 for by in b)   # byte fallback
+    # greedily apply the highest-scoring adjacent merge until none apply
+    while True:
+        best_score, best_at, best_id = -1e10, -1, -1
+        for i in range(len(pieces) - 1):
+            merged = words[pieces[i]] + words[pieces[i + 1]]
+            j = lookup.get(merged)
+            if j is not None and scores[j] > best_score:
+                best_score, best_at, best_id = scores[j], i, j
+        if best_at < 0:
+            break
+        pieces[best_at:best_at + 2] = [best_id]
+    return toks + pieces
 
 
 def decode(ids, words):
