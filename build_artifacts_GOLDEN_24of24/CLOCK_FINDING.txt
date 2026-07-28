@@ -31,3 +31,32 @@ CONSEQUENCE / RISK (not yet closed):
   Until then treat the current build as empirically-correct rather than timing-closed.
 
 PERFORMANCE AT THE REAL CLOCK: 24 tokens in 0.201 s = ~119 tokens/s.
+
+TIMING CLOSURE RUN AT THE REAL 100 MHz (2026-07-27)
+===================================================
+Re-constrained clk_pl_0 at 10 ns (build_design2_bd.tcl FREQMHZ 3 -> 100) and re-ran impl.
+RESULT: routed WNS = -1.783 ns, WHS = +0.005, route clean (0 errors/overlaps/critical warnings).
+So the engine needs 11.783 ns and 10 ns is not enough -- it is ~15% too slow for 100 MHz.
+It is NOT one hot spot: >=4000 failing endpoints spread across every unit --
+  u_att 2152 (worst -1.780), u_rmsnorm 693 (-1.203), u_embed 684 (-1.351),
+  u_matmul 328 (-1.759), u_sw 62 (-1.747), u_res 49 (-1.606), other 32 (-1.783).
+  worst path: lm_x_mant_reg[709] -> u_lm_head/logit_v_reg[10], 38 logic levels.
+(Full list: timing_100mhz_failing_paths.log)
+
+WHY IT WORKS ANYWAY: STA is the slow corner (slow process, low V, high T); real silicon at
+nominal conditions is materially faster.  Fine on a bench, NOT safe across PVT.
+
+MEASURED FREQUENCY SWEEP (PL0_REF_CTRL DIVISOR0, live via devmem, no rebuild):
+  100 MHz  GOLDEN-OK  119.53 tok/s      <- out of spec (relies on beating the corner)
+   80 MHz  GOLDEN-OK   95.63 tok/s      <- SAFE: 12.5 ns vs 11.783 ns needed, +0.72 ns margin
+   66 MHz  GOLDEN-OK   79.69 tok/s
+   50 MHz  GOLDEN-OK   59.77 tok/s
+   40 MHz  GOLDEN-OK   47.81 tok/s
+tok/s scales exactly linearly => ~20.08M cycles/run, and 24/0.2008 s confirms exactly 100 MHz.
+Deliberately did NOT overclock: a failing AXI read on ZynqMP wedges the CPU with a silent
+console and needs a PHYSICAL power-cycle.
+
+RECOMMENDED OPERATING POINT: 80 MHz.  `hw/llama_hw -f 80` sets it per-run (no rebuild).
+To make it the default: either rebuild BOOT.BIN's psu_init for PL0=80 MHz, or set the divisor
+at boot from the rootfs.  NOTE the fan PWM in the same design scales with the PL clock, so a
+big downclock lowers its 25 kHz carrier (the 2-wire fan needs >~20 kHz to speed-control).

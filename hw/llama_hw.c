@@ -50,6 +50,22 @@
 #define REG_TOKEN0  (0x40 / 4)
 #define ENGINE_ID   0x6C6C6D31UL
 
+/* CRL_APB PL0_REF_CTRL -- the PL clock this core runs on.  SRCSEL=2 is RPLL,
+ * which the golden BOOT.BIN leaves at 800 MHz, so PL0 = 800 / DIVISOR0.
+ * NOTE the BD's PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ does NOT control this: the
+ * FSBL's psu_init does, and we deploy by swapping only system.bit.bin.  Hence
+ * the board runs 100 MHz regardless of what the BD asked for. */
+#define CRL_PL0_REF_CTRL 0xFF5E00C0UL
+#define RPLL_MHZ         800
+
+/* Worst-case-corner timing at 100 MHz is WNS = -1.783 ns, i.e. the engine needs
+ * 11.783 ns and 10 ns is not enough.  It nevertheless computes the golden token
+ * stream because real silicon at nominal voltage/temperature beats the slow
+ * corner -- fine on a bench, NOT something to rely on across PVT.  The fastest
+ * in-spec clock is 1000/11.783 = 84.9 MHz, so 80 MHz (DIVISOR0=10) is the
+ * natural safe operating point: +0.72 ns of worst-case margin, 95.6 tok/s. */
+#define SAFE_MHZ 80
+
 static double now_s(void)
 {
     struct timespec ts;
@@ -86,21 +102,27 @@ static void emit(int tok, int prev)
 
 int main(int argc, char **argv)
 {
-    int show_ids = 0, show_time = 0;
+    int show_ids = 0, show_time = 0, set_mhz = 0;
     int fd, i, n, prev;
-    volatile uint32_t *r;
-    void *map;
-    uint32_t id, cfg, ngen, status;
+    volatile uint32_t *r, *crl;
+    void *map, *crlmap;
+    uint32_t id, cfg, ngen, status, pl0, div0, plmhz;
     double t0, t1;
 
     for (i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "-i")) show_ids  = 1;
         else if (!strcmp(argv[i], "-t")) show_time = 1;
+        else if (!strcmp(argv[i], "-f") && i + 1 < argc) set_mhz = atoi(argv[++i]);
         else {
             fprintf(stderr,
-                    "usage: %s [-i] [-t]\n"
-                    "  -i  print the raw token ids as well\n"
-                    "  -t  print run time and tokens/sec\n", argv[0]);
+                    "usage: %s [-i] [-t] [-f MHZ]\n"
+                    "  -i      print the raw token ids as well\n"
+                    "  -t      print run time and tokens/sec\n"
+                    "  -f MHZ  set the PL clock first (800/round(800/MHZ));\n"
+                    "          %d MHz is the fastest clock that meets worst-case\n"
+                    "          timing.  Without -f the clock is left alone and a\n"
+                    "          warning is printed if it is above that.\n",
+                    argv[0], SAFE_MHZ);
             return 2;
         }
     }
@@ -117,6 +139,36 @@ int main(int argc, char **argv)
         return 1;
     }
     r = (volatile uint32_t *)map;
+
+    /* PL clock: report it, optionally set it, and warn if it is above the
+     * timing-closed maximum (the engine still computes correctly there today,
+     * but only because silicon beats the worst-case corner). */
+    crlmap = mmap(NULL, MAP_SPAN, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                  CRL_PL0_REF_CTRL & ~(MAP_SPAN - 1));
+    crl = NULL;
+    if (crlmap != MAP_FAILED)
+        crl = (volatile uint32_t *)((char *)crlmap +
+                                    (CRL_PL0_REF_CTRL & (MAP_SPAN - 1)));
+    if (crl && set_mhz > 0) {
+        int d = (RPLL_MHZ + set_mhz / 2) / set_mhz;
+        if (d < 1)  d = 1;
+        if (d > 63) d = 63;
+        *crl = 0x01000002UL | ((uint32_t)d << 8);   /* CLKACT, DIV1=1, RPLL */
+    }
+    if (crl) {
+        pl0   = *crl;
+        div0  = (pl0 >> 8) & 0x3F;
+        plmhz = div0 ? (uint32_t)RPLL_MHZ / div0 : 0;
+        if (show_time)
+            fprintf(stderr, "PL clock ~%u MHz (PL0_REF_CTRL=0x%08X)\n", plmhz, pl0);
+        if (plmhz > SAFE_MHZ)
+            fprintf(stderr,
+                    "warning: PL clock ~%u MHz exceeds the %d MHz that meets\n"
+                    "         worst-case timing (WNS -1.783 ns at 100 MHz).  Output is\n"
+                    "         still golden on this board, but that relies on silicon\n"
+                    "         beating the slow corner.  Use -f %d for an in-spec run.\n",
+                    plmhz, SAFE_MHZ, SAFE_MHZ);
+    }
 
     id = r[REG_ID];
     if (id != ENGINE_ID) {

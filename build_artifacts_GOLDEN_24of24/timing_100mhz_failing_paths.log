@@ -1,0 +1,98 @@
+[vivado-mem] MemAvailable=20G  ->  MemoryHigh=12G (reserve 8G, swap absorbs overflow)
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /tmp/timing_probe.tcl
+# open_checkpoint /home/orencollaco/GitHub/AlinxMigrated/axu3eg_trd.runs/impl_1/design_2_wrapper_routed.dcp
+Command: open_checkpoint /home/orencollaco/GitHub/AlinxMigrated/axu3eg_trd.runs/impl_1/design_2_wrapper_routed.dcp
+
+Starting open_checkpoint Task
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 1297.262 ; gain = 0.000 ; free physical = 10961 ; free virtual = 47782
+INFO: [Device 21-403] Loading part xczu3eg-sfvc784-1-e
+Netlist sorting complete. Time (s): cpu = 00:00:00.2 ; elapsed = 00:00:00.2 . Memory (MB): peak = 2239.566 ; gain = 0.000 ; free physical = 10014 ; free virtual = 46836
+INFO: [Netlist 29-17] Analyzing 6930 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 0 CPU seconds
+INFO: [Project 1-479] Netlist was created with Vivado 2023.2
+INFO: [Project 1-570] Preparing netlist for logic optimization
+Read ShapeDB Complete: Time (s): cpu = 00:00:00.08 ; elapsed = 00:00:00.08 . Memory (MB): peak = 2383.535 ; gain = 15.750 ; free physical = 9873 ; free virtual = 46695
+INFO: [Timing 38-478] Restoring timing data from binary archive.
+INFO: [Timing 38-479] Binary timing data restore complete.
+INFO: [Project 1-856] Restoring constraints from binary archive.
+INFO: [Project 1-853] Binary constraint restore complete.
+INFO: [Designutils 20-5722] Start Reading Physical Databases.
+Reading placement.
+Read Netlist Cache: Time (s): cpu = 00:00:00.09 ; elapsed = 00:00:00.09 . Memory (MB): peak = 3010.785 ; gain = 7.594 ; free physical = 9429 ; free virtual = 46251
+Reading placer database...
+Read Device Cache: Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3023.965 ; gain = 13.180 ; free physical = 9421 ; free virtual = 46243
+Read PlaceDB: Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3116.582 ; gain = 92.617 ; free physical = 8715 ; free virtual = 45537
+Read PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3116.582 ; gain = 0.000 ; free physical = 8715 ; free virtual = 45537
+Reading routing.
+Read RouteStorage: Time (s): cpu = 00:00:01 ; elapsed = 00:00:01 . Memory (MB): peak = 3180.715 ; gain = 64.133 ; free physical = 8744 ; free virtual = 45566
+Read Physdb Files: Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 3180.715 ; gain = 177.523 ; free physical = 8744 ; free virtual = 45566
+Restored from archive | CPU: 3.830000 secs | Memory: 138.603264 MB |
+Finished XDEF File Restore: Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 3180.715 ; gain = 177.523 ; free physical = 8744 ; free virtual = 45566
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3514.059 ; gain = 0.000 ; free physical = 8559 ; free virtual = 45382
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 176 instances were transformed.
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 138 instances
+  RAM32M => RAM32M (RAMD32(x6), RAMS32(x2)): 1 instance 
+  RAM32M16 => RAM32M16 (RAMD32(x14), RAMS32(x2)): 2 instances
+  RAM64M8 => RAM64M8 (RAMD64E(x8)): 35 instances
+
+INFO: [Project 1-604] Checkpoint was created with Vivado v2023.2 (64-bit) build 4029153
+open_checkpoint: Time (s): cpu = 00:00:22 ; elapsed = 00:00:22 . Memory (MB): peak = 3514.094 ; gain = 2216.832 ; free physical = 8566 ; free virtual = 45389
+# puts "=== WORST 12 SETUP PATHS ==="
+=== WORST 12 SETUP PATHS ===
+get_timing_paths: Time (s): cpu = 00:00:24 ; elapsed = 00:00:06 . Memory (MB): peak = 3853.055 ; gain = 338.961 ; free physical = 8365 ; free virtual = 45187
+# set paths [get_timing_paths -max_paths 12 -nworst 12 -setup]
+# foreach p $paths {
+#   puts [format "slack %7.3f  levels %4d  %s  ->  %s" \
+#     [get_property SLACK $p] [get_property LOGIC_LEVELS $p] \
+#     [get_property STARTPOINT_PIN $p] [get_property ENDPOINT_PIN $p]]
+# }
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+slack  -1.783  levels   38  design_2_i/llama_engine_axi_0/U0/u_engine/lm_x_mant_reg[709]/C  ->  design_2_i/llama_engine_axi_0/U0/u_engine/u_lm_head/logit_v_reg[10]/D
+# puts "=== FAILING ENDPOINTS GROUPED BY UNIT ==="
+=== FAILING ENDPOINTS GROUPED BY UNIT ===
+# set all [get_timing_paths -max_paths 4000 -nworst 1 -setup -slack_lesser_than 0]
+# puts "total failing endpoints: [llength $all]"
+total failing endpoints: 4000
+# array set cnt {}
+# array set worst {}
+# foreach p $all {
+#   set ep [get_property ENDPOINT_PIN $p]
+#   set u "other"
+#   foreach k {u_att u_matmul u_rmsnorm u_sw u_hbpack u_res u_embed u_lmhead u_rope u_samp u_swmem u_nsmem} {
+#     if {[string match "*/$k/*" $ep]} { set u $k; break }
+#   }
+#   incr cnt($u)
+#   set s [get_property SLACK $p]
+#   if {![info exists worst($u)] || $s < $worst($u)} { set worst($u) $s }
+# }
+# foreach u [array names cnt] {
+#   puts [format "  %-12s failing=%5d  worst=%7.3f" $u $cnt($u) $worst($u)]
+# }
+  u_matmul     failing=  328  worst= -1.759
+  u_embed      failing=  684  worst= -1.351
+  u_att        failing= 2152  worst= -1.780
+  u_rmsnorm    failing=  693  worst= -1.203
+  u_res        failing=   49  worst= -1.606
+  u_sw         failing=   62  worst= -1.747
+  other        failing=   32  worst= -1.783
+INFO: [Common 17-206] Exiting Vivado at Mon Jul 27 20:04:23 2026...
