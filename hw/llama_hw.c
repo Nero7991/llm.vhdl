@@ -38,7 +38,7 @@
 #include <sys/mman.h>
 #include <time.h>
 
-#include "tok512_pkg.h"
+#include "tok512.h"   /* vocab + the shared BPE encode/decode */
 
 #define ENGINE_BASE 0x80110000UL
 #define MAP_SPAN    0x1000UL
@@ -80,88 +80,19 @@ static double now_s(void)
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* Sentencepiece BPE encode, the same merges the C oracle uses: start from single
- * UTF-8 bytes (byte-fallback ids are byte+3) and greedily apply the
- * highest-scoring adjacent merge that exists in the vocab.  Returns the number of
- * ids written, or -1 if the prompt does not fit in MAXPOS. */
+/* encode_prompt/emit now live in hw/tok512.h (tok_encode/tok_piece) so the
+ * on-board CLI and the server's PL backend share ONE implementation. */
 static int encode_prompt(const char *text, int *out, int max)
 {
-    int n = 0, i;
-    char buf[512];
-
-    if (max < 1)
-        return -1;
-    out[n++] = 1;                       /* BOS */
-
-    /* sentencepiece prepends a space to the first real piece */
-    if (text && *text) {
-        while (*text == ' ')
-            text++;
-        snprintf(buf, sizeof buf, " %s", text);
-    } else {
-        buf[0] = 0;
-    }
-
-    for (i = 0; buf[i]; i++) {
-        int id = -1, v;
-        for (v = 0; v < TOK_VOCAB; v++)
-            if (TOK_LEN[v] == 1 && TOK_WORD[v][0] == buf[i]) { id = v; break; }
-        if (n >= max)
-            return -1;
-        out[n++] = (id >= 0) ? id : ((unsigned char)buf[i] + 3);
-    }
-
-    for (;;) {                          /* greedy highest-scoring merge */
-        float best = -1e30f;
-        int at = -1, id = -1, k, v;
-        for (k = 1; k + 1 < n; k++) {   /* never merge across BOS at index 0 */
-            char pair[64];
-            int la = TOK_LEN[out[k]], lb = TOK_LEN[out[k + 1]];
-            if (la + lb >= (int)sizeof pair)
-                continue;
-            memcpy(pair, TOK_WORD[out[k]], (size_t)la);
-            memcpy(pair + la, TOK_WORD[out[k + 1]], (size_t)lb);
-            for (v = 0; v < TOK_VOCAB; v++)
-                if (TOK_LEN[v] == la + lb && !memcmp(TOK_WORD[v], pair, (size_t)(la + lb))) {
-                    if (TOK_SCORE[v] > best) { best = TOK_SCORE[v]; at = k; id = v; }
-                    break;
-                }
-        }
-        if (at < 0)
-            break;
-        out[at] = id;
-        for (k = at + 1; k + 1 < n; k++)
-            out[k] = out[k + 1];
-        n--;
-    }
-    return n;
+    return tok_encode(text, out, max);
 }
 
-/* Mirror llama2.c decode(): the token after BOS(1) loses its leading space, and
- * <0xXX> byte-fallback tokens expand to that raw byte. */
 static void emit(int tok, int prev)
 {
-    const char *p;
-    int len;
-
-    if (tok == 1)                       /* BOS prints nothing */
-        return;
-    if (tok < 0 || tok >= TOK_VOCAB) {
-        printf("<bad:%d>", tok);
-        return;
-    }
-    p   = TOK_WORD[tok];
-    len = TOK_LEN[tok];
-    if (prev == 1 && len > 0 && p[0] == ' ') {
-        p++;
-        len--;
-    }
-    if (len == 6 && p[0] == '<' && p[1] == '0' && p[2] == 'x' && p[5] == '>') {
-        unsigned byte = (unsigned)strtoul((char[]){ p[3], p[4], 0 }, NULL, 16);
-        putchar((int)byte);
-        return;
-    }
-    fwrite(p, 1, (size_t)len, stdout);
+    char piece[64];
+    int n = tok_piece(tok, prev, piece, sizeof piece);
+    if (n > 0)
+        fwrite(piece, 1, (size_t)n, stdout);
 }
 
 int main(int argc, char **argv)

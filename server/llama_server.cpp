@@ -13,8 +13,16 @@
 // prose, it does not follow chat instructions. "Chat" concatenates message
 // contents into a prompt and continues the story. Greedy (temperature 0) is
 // token-identical to the VHDL; temperature>0 uses the C sampler.
+//
+// --pl runs GREEDY requests on the FPGA transformer instead (see pl_backend.h).
+// That is a generation-level offload, not a forward() swap: the core does the
+// whole autoregressive loop and only exposes the chosen token per position, so
+// there is no logits vector for a host-side sampler to work with.  Requests
+// asking for temperature>0 therefore fall back to the CPU rather than silently
+// being served greedily, and prompt+completion is capped at the core's MAXPOS.
 
 #include "llama_fx.h"
+#include "pl_backend.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -163,6 +171,8 @@ static std::string json_escape(const std::string& s) {
 // ----------------------------------------------------------------------------
 static LlamaCtx* g_ctx = nullptr;
 static std::mutex g_gen_mutex;
+// true once the FPGA engine is mapped and usable (see --pl / pl_backend.h)
+static bool g_use_pl = false;
 static const char* MODEL_ID = "stories260k";
 
 static long now_sec() { return (long)time(nullptr); }
@@ -335,10 +345,62 @@ static std::vector<std::string> parse_stops(const JValue* stop) {
     return v;
 }
 
+// ----------------------------------------------------------------------------
+// PL backend: hand the whole prompt to the FPGA and stream its tokens back
+// through the SAME sink callback, so streaming / stop strings / max_tokens all
+// keep working unchanged.
+//
+// The PL is greedy-only and capped at MAXPOS positions, so it can only serve a
+// subset of requests; run_generation() falls back to the CPU otherwise rather
+// than silently ignoring what the client asked for.
+// ----------------------------------------------------------------------------
+static bool pl_try_generate(GenSink& sink, const std::string& prompt) {
+    int ids[64];
+    int nprompt = pl_encode(prompt.c_str(), ids, pl_maxpos());
+    if (nprompt < 1) {
+        fprintf(stderr, "[llama_server] prompt does not fit in %d tokens -> CPU\n",
+                pl_maxpos());
+        return false;
+    }
+
+    int stream[64];
+    int n = pl_generate(ids, nprompt, stream, (int)(sizeof stream / sizeof stream[0]));
+    if (n < 0) {
+        fprintf(stderr, "[llama_server] PL generate failed (%d) -> CPU\n", n);
+        return false;
+    }
+
+    // out[0 .. nprompt-2] echo the prompt (teacher forcing); real generation
+    // starts at nprompt-1.
+    int first = nprompt - 1;
+    int prev  = (nprompt >= 1) ? ids[nprompt - 1] : 1;
+    for (int i = first; i < n; i++) {
+        char piece[64];
+        pl_piece(stream[i], prev, piece, sizeof piece);
+        prev = stream[i];
+        if (piece[0] && piece_cb(piece, &sink))
+            break;                       // stop string / max_tokens / client gone
+    }
+    return true;
+}
+
 // Run generation under the mutex; fills sink. Returns after generation ends.
 static void run_generation(GenSink& sink, const std::string& prompt,
                            float temperature, float top_p, unsigned long long seed) {
     std::lock_guard<std::mutex> lk(g_gen_mutex);
+
+    // The hardware has no sampler -- it is a running argmax -- so a request that
+    // asks for temperature > 0 genuinely cannot be served by the PL.  Fall back
+    // to the CPU (which is token-identical at temperature 0 anyway) instead of
+    // pretending we honoured it.
+    if (g_use_pl) {
+        if (temperature > 0.0f) {
+            fprintf(stderr, "[llama_server] temperature=%.3f requested; the PL is "
+                            "greedy-only -> CPU for this request\n", temperature);
+        } else if (pl_try_generate(sink, prompt)) {
+            return;
+        }
+    }
     // steps = 0 -> llama caps at seq_len; the callback stops at max_tokens/stop.
     llama_generate(g_ctx, prompt.c_str(), 0, temperature, top_p, seed, piece_cb, &sink);
 }
@@ -428,7 +490,13 @@ static void handle_models(int fd) {
         "\",\"object\":\"model\",\"created\":" + std::to_string(now_sec()) +
         ",\"owned_by\":\"llama.vhdl\",\"description\":\"Fixed-point stories260K (TinyStories) — "
         "token-identical to the AXU3EG VHDL engine. Continues children's-story prose; does NOT follow chat instructions. "
-        "Greedy (temperature 0) = hardware-exact.\"}]}";
+        "Greedy (temperature 0) = hardware-exact.\",\"backend\":\"" +
+        std::string(g_use_pl ? "fpga-pl" : "cpu") + "\"" +
+        (g_use_pl ? std::string(",\"backend_detail\":\"") + pl_describe() +
+                    "\",\"max_total_tokens\":" + std::to_string(pl_maxpos()) +
+                    ",\"note\":\"greedy requests run on the FPGA; temperature>0 falls back to the CPU\""
+                  : std::string()) +
+        "}]}";
     send_json(fd, 200, "OK", body);
 }
 
@@ -461,12 +529,25 @@ int main(int argc, char** argv) {
     const char* tokenizer  = "ref/tok512.bin";
     const char* host = "0.0.0.0";
     int port = 8000;
+    bool want_pl = false;
+    int  pl_clock = 80;          // fastest clock that meets worst-case timing
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--checkpoint") && i+1<argc) checkpoint = argv[++i];
         else if (!strcmp(argv[i], "--tokenizer") && i+1<argc) tokenizer = argv[++i];
         else if (!strcmp(argv[i], "--host") && i+1<argc) host = argv[++i];
         else if (!strcmp(argv[i], "--port") && i+1<argc) port = atoi(argv[++i]);
-        else { fprintf(stderr, "usage: %s [--checkpoint f] [--tokenizer f] [--host h] [--port p]\n", argv[0]); return 1; }
+        else if (!strcmp(argv[i], "--pl")) want_pl = true;
+        else if (!strcmp(argv[i], "--pl-clock") && i+1<argc) pl_clock = atoi(argv[++i]);
+        else { fprintf(stderr,
+                "usage: %s [--checkpoint f] [--tokenizer f] [--host h] [--port p]\n"
+                "          [--pl] [--pl-clock MHZ]\n"
+                "  --pl        run greedy (temperature 0) requests on the FPGA engine\n"
+                "              over /dev/mem; needs root and the engine bitstream.\n"
+                "              Sampling requests still use the CPU -- the PL has no\n"
+                "              sampler.  Prompt+completion is capped at the core's\n"
+                "              MAXPOS (24) tokens.\n"
+                "  --pl-clock  PL clock in MHz (default %d; above ~85 is out of spec)\n",
+                argv[0], pl_clock); return 1; }
     }
     signal(SIGPIPE, SIG_IGN);
 
@@ -475,6 +556,22 @@ int main(int argc, char** argv) {
     if (!g_ctx) { fprintf(stderr, "[llama_server] failed to load model\n"); return 1; }
     fprintf(stderr, "[llama_server] model loaded: vocab=%d seq_len=%d\n",
             llama_vocab(g_ctx), llama_seq_len(g_ctx));
+
+    if (want_pl) {
+        int rc = pl_open(pl_clock);
+        if (rc == 0) {
+            g_use_pl = true;
+            fprintf(stderr, "[llama_server] PL backend ENABLED: %s\n", pl_describe());
+            fprintf(stderr, "[llama_server]   greedy requests run on the FPGA; "
+                            "temperature>0 falls back to the CPU\n");
+            fprintf(stderr, "[llama_server]   prompt+completion capped at %d tokens\n",
+                    pl_maxpos());
+        } else {
+            fprintf(stderr, "[llama_server] PL backend UNAVAILABLE (pl_open=%d) -- "
+                            "running on the CPU.  Need root, /dev/mem and the engine "
+                            "bitstream.\n", rc);
+        }
+    }
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     if (srv < 0) { perror("socket"); return 1; }
