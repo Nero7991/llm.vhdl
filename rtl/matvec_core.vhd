@@ -1,4 +1,4 @@
--- rtl/matvec_core.vhd -- subsystem A datapath core.
+-- rtl/matvec_core.vhd -- subsystem A datapath core, ROWS_IF rows wide.
 --
 -- Implements the numeric contract of
 --   docs/superpowers/specs/2026-08-20-int4-streaming-matvec-design.md  7.4
@@ -11,23 +11,48 @@
 -- They are deliberately not hand-written here: every defect found in this
 -- contract so far has been in exactly those functions.
 --
--- Per spec 7.1 this is the CORE only: it consumes weight, scale and activation
--- read ports, not AXI.  weight_streamer sits above it and is device-specific
--- (DDR4 on the AXU3EG, HBM on the FK33); the core is not.
+-- Per spec 7.1 this is the CORE only.  Weights and scales arrive as valid/ready
+-- STREAMS (weight_streamer sits above and is device-specific: DDR4 on the
+-- AXU3EG, HBM on the FK33); activations are read from act_mem_striped, which is
+-- addressed and has 1-cycle read latency.  The core itself is device-independent.
 --
--- Synthesizable: no `real`, no TEXTIO.  Note the datapath rules of 7.8/8:
--- data never travels through a VHDL `integer` (only exponents, descriptor
--- fields and loop counters do), and the scale multiply occupies its own state
--- so it never shares a cycle with the product multiplies.
+-- DATAFLOW.  One weight word per cycle carries ROWS_IF rows' worth of one scale
+-- block, in the packer's tile-major order (spec 6.5): for tile t, for block b,
+-- lane rr holds row t*ROWS_IF + rr.  So all ROWS_IF rows of a tile march through
+-- the blocks together and accumulate in parallel, and the word order the packer
+-- emits is exactly the order this core consumes.
+--
+-- The compute path is a NON-STALLING pipeline: it shifts every cycle carrying a
+-- valid bit, so bubbles cost nothing and there is no backpressure logic inside
+-- the datapath at all.  Backpressure exists only at the accept point.
+-- Stage map, with LVL = log2(BLK):
+--
+--   s0            accept: register word / scales / activations / tag
+--   s1            BLK x ROWS_IF products             (DSP48E2)
+--   s2 .. s1+LVL  pipelined adder tree, spec 7.3  -> partial, s28
+--   s2+LVL        scale multiply                     (DSP48E2, its OWN stage)
+--   s3+LVL        floor_shr 15                    -> contrib, s29
+--   s4+LVL        accumulate                      -> acc, s48
+--
+-- tr(l) pairs with tag tg(l+1); the offsets P_PART/P_CONTRIB/P_ACC below name
+-- the stages so that alignment is stated once rather than open-coded.
+--
+-- Synthesizable: no `real`, no TEXTIO.  Note the datapath rules of 7.8/8: data
+-- never travels through a VHDL `integer` (only exponents, descriptor fields and
+-- loop counters do), and the scale multiply occupies its own pipeline stage so
+-- it never shares one with the product multiplies -- the hazard that broke
+-- residual, swiglu and bfp_pack on silicon in v1.0.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.mv4i_arith_pkg.all;
+use work.util_pkg.all;
 
 entity matvec_core is
   generic(
-    BLK       : positive := 32;     -- weights per scale block, spec 6.1
+    BLK         : positive := 32;     -- weights per scale block, spec 6.1
+    ROWS_IF     : positive := 4;      -- rows in flight, spec 7.2 / 14.4
     MAXCOLS     : positive := 17408;  -- spec 14.1, 27B FFN
     MAXROWS_BFP : positive := 17408
   );
@@ -48,187 +73,369 @@ entity matvec_core is
     cb_addr   : in  std_logic_vector(3 downto 0);
     cb_data   : in  std_logic_vector(7 downto 0);
 
-    -- weight read: one row-block chunk of BLK nibbles
-    w_raddr   : out std_logic_vector(31 downto 0);
-    w_rdata   : in  std_logic_vector(BLK*4-1 downto 0);
-    -- scale read: uint15 in a 16-bit field, MSB must be 0
-    s_raddr   : out std_logic_vector(31 downto 0);
-    s_rdata   : in  std_logic_vector(15 downto 0);
-    -- activation read: one BLK of int16, by BLK index
+    -- weight stream: one tile-block word, ROWS_IF lanes of BLK nibbles
+    w_valid   : in  std_logic;
+    w_data    : in  std_logic_vector(ROWS_IF*BLK*4-1 downto 0);
+    w_ready   : out std_logic;
+    -- scale stream: ROWS_IF uint15 in 16-bit fields, MSB must be 0
+    s_valid   : in  std_logic;
+    s_data    : in  std_logic_vector(ROWS_IF*16-1 downto 0);
+    s_ready   : out std_logic;
+    -- activation read, by BLK index; 1-cycle latency (spec 7.8)
     x_rbaddr  : out std_logic_vector(15 downto 0);
     x_rdata   : in  std_logic_vector(BLK*16-1 downto 0);
 
-    -- result
+    -- Result, ROWS_IF rows per beat, y_addr = BASE row of the tile.
+    -- 64 bits per row because PARTIAL mode carries the UNROUNDED s48 (14.2);
+    -- BFP carries an int16 mantissa and raw an int32, both sign-extended.
     y_we      : out std_logic;
     y_addr    : out std_logic_vector(15 downto 0);
-    y_data    : out std_logic_vector(31 downto 0);  -- int16 mant in BFP mode
+    y_data    : out std_logic_vector(ROWS_IF*64-1 downto 0);
+    y_mask    : out std_logic_vector(ROWS_IF-1 downto 0);  -- 0 = pad row
     y_exp     : out integer;
     done      : out std_logic;                      -- one-cycle pulse
     err       : out std_logic;
     sat_event : out std_logic;                      -- sticky, spec 14.2
 
-    -- STAGE TAPS.  Present so the testbench can localize a divergence to one
-    -- stage on the first failing vector rather than bisecting a wrong output.
-    -- Pruned when TAPS is false.
-    tap_valid   : out std_logic;
-    tap_kind    : out std_logic_vector(2 downto 0); -- 1 part 2 contrib 3 acc 4 ydata 5 ymant
-    tap_r       : out integer;
-    tap_b       : out integer;
-    tap_val     : out std_logic_vector(63 downto 0);
-    tap_ns      : out integer
+    -- STAGE TAPS.  One bus per stage rather than a shared one: stages retire
+    -- concurrently in a pipeline, so a shared bus would drop taps.  Each carries
+    -- ROWS_IF lanes of 64 bits.  Pruned by synthesis when left unconnected.
+    tp_v, tc_v, ta_v, tm_v : out std_logic;
+    tp_r, tc_r, ta_r, tm_r : out integer;           -- BASE row of the tile
+    tp_b, tc_b             : out integer;
+    tp_val, tc_val, ta_val, tm_val : out std_logic_vector(ROWS_IF*64-1 downto 0);
+    tap_ns                 : out integer
   );
 end entity;
 
 architecture rtl of matvec_core is
+  constant LVL   : natural  := clog2(BLK);          -- 5 at BLK = 32
+  constant PIPE  : natural  := LVL + 5;             -- tag stages s0 .. s4+LVL
+  constant P_PART    : natural := LVL + 1;          -- tg index of tr(LVL)
+  constant P_SPROD   : natural := LVL + 2;
+  constant P_CONTRIB : natural := LVL + 3;
+  constant TILES : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
+
   type cb_t is array(0 to 15) of signed(7 downto 0);
   signal cb : cb_t := (others => (others => '0'));
 
-  type ybuf_t is array(0 to MAXROWS_BFP-1) of signed(31 downto 0);
+  -- ybuf is BANKED BY LANE so a whole tile is read in one cycle.  Bank rr holds
+  -- every row congruent to rr mod ROWS_IF, indexed by tile.
+  type bank_t is array(0 to TILES-1) of signed(31 downto 0);
+  type ybuf_t is array(0 to ROWS_IF-1) of bank_t;
   signal ybuf : ybuf_t;
 
-  type st_t is (S_IDLE, S_BLK_ISSUE, S_BLK_WAIT, S_PROD, S_SCALE, S_ACCUM,
-                S_ROW_END, S_SCAN, S_EMIT, S_DONE);
+  type tag_t is record
+    v     : std_logic;
+    tile  : integer;
+    blk   : integer;
+    first : std_logic;   -- first block of its tile
+    last  : std_logic;   -- last block of its tile
+  end record;
+  constant TAG0 : tag_t := ('0', 0, 0, '0', '0');
+  type tag_arr is array(natural range <>) of tag_t;
+  signal tg : tag_arr(0 to PIPE-1) := (others => TAG0);
+
+  type node_arr is array(0 to ROWS_IF*BLK-1) of signed(27 downto 0);
+  type lvl_arr  is array(0 to LVL) of node_arr;
+  signal tr : lvl_arr := (others => (others => (others => '0')));
+
+  type sc_arr  is array(0 to ROWS_IF-1) of unsigned(15 downto 0);
+  type scp_t   is array(0 to PIPE-1) of sc_arr;
+  type sp_arr  is array(0 to ROWS_IF-1) of signed(44 downto 0);
+  type ct_arr  is array(0 to ROWS_IF-1) of signed(28 downto 0);
+  type acc_arr is array(0 to ROWS_IF-1) of signed(47 downto 0);
+
+  signal scp     : scp_t   := (others => (others => (others => '0')));
+  signal sprod   : sp_arr  := (others => (others => '0'));
+  signal contrib : ct_arr  := (others => (others => '0'));
+  signal acc     : acc_arr := (others => (others => '0'));
+
+  signal w_r : std_logic_vector(ROWS_IF*BLK*4-1 downto 0) := (others => '0');
+  signal x_r : std_logic_vector(BLK*16-1 downto 0)        := (others => '0');
+
+  type st_t is (S_IDLE, S_RUN, S_DRAIN, S_SCAN, S_EMIT, S_DONE);
   signal st : st_t := S_IDLE;
 
-  signal r_i, b_i   : integer := 0;
-  signal nb         : integer := 0;
-  signal acc        : signed(47 downto 0) := (others => '0');
-  signal partial    : signed(27 downto 0) := (others => '0');
-  signal contrib    : signed(28 downto 0) := (others => '0');
-  signal scale_r    : unsigned(15 downto 0) := (others => '0');
-  signal amax       : unsigned(35 downto 0) := (others => '0');
-  signal ns_r       : integer := 0;
-  signal sat_r      : std_logic := '0';
-  signal err_r      : std_logic := '0';
+  signal nb_r, tiles_r, lastvalid : integer := 0;
+  signal t_iss, b_iss  : integer := 0;              -- next word to accept
+  signal amax   : unsigned(35 downto 0) := (others => '0');
+  signal ns_r   : integer := 0;
+  signal sat_r, err_r : std_logic := '0';
+  signal emit_t : integer := 0;
+
+  -- Activation prefetch.  The block sequence is deterministic (0..nb-1 repeated
+  -- per tile), so a 2-deep queue run ahead of the accept point keeps the
+  -- pipeline fed at full rate across the memory's 1-cycle read latency.
+  type xq_t is array(0 to 1) of std_logic_vector(BLK*16-1 downto 0);
+  signal xq           : xq_t := (others => (others => '0'));
+  signal xq_wr, xq_rd : integer range 0 to 1 := 0;
+  signal xq_cnt       : integer range 0 to 2 := 0;
+  signal b_pf         : integer := 0;
+  signal pf_out       : std_logic := '0';
+
+  signal accept  : std_logic;
+  signal inflight: std_logic;
 begin
 
-  w_raddr  <= std_logic_vector(to_unsigned(r_i * nb + b_i, 32));
-  s_raddr  <= std_logic_vector(to_unsigned(r_i * nb + b_i, 32));
-  x_rbaddr <= std_logic_vector(to_unsigned(b_i, 16));
+  accept <= '1' when st = S_RUN and w_valid = '1' and s_valid = '1'
+                     and xq_cnt > 0 else '0';
+  w_ready  <= accept;
+  s_ready  <= accept;
+  x_rbaddr <= std_logic_vector(to_unsigned(b_pf, 16));
+
+  -- any beat still in the compute pipeline
+  process(tg)
+    variable o : std_logic;
+  begin
+    o := '0';
+    for i in 0 to PIPE-1 loop o := o or tg(i).v; end loop;
+    inflight <= o;
+  end process;
 
   process(clk)
-    variable p    : signed(27 downto 0);
-    variable prod : signed(24 downto 0);
-    variable k    : integer;
-    variable idx  : integer;
-    variable xw   : signed(15 downto 0);
-    variable sh   : signed(47 downto 0);
-    variable a32  : signed(31 downto 0);
-    variable mag  : unsigned(35 downto 0);
+    variable idx   : integer;
+    variable xw    : signed(15 downto 0);
+    variable k     : integer;
+    variable nxt   : tag_arr(0 to PIPE-1);
+    variable nsc   : scp_t;
+    variable occ   : integer range -1 to 3;
+    variable an    : signed(47 downto 0);
+    variable a32   : signed(31 downto 0);
+    variable shv   : signed(47 downto 0);
+    variable mag, mxv : unsigned(35 downto 0);
+    variable rbase : integer;
+    variable ymn   : signed(15 downto 0);
   begin
     if rising_edge(clk) then
-      y_we      <= '0';
-      done      <= '0';
-      tap_valid <= '0';
+      y_we <= '0'; done <= '0';
+      tp_v <= '0'; tc_v <= '0'; ta_v <= '0'; tm_v <= '0';
 
       if rst = '1' then
         st <= S_IDLE; sat_r <= '0'; err_r <= '0';
+        tg <= (others => TAG0);
+        xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0'; b_pf <= 0;
 
       elsif cb_we = '1' and st = S_IDLE then
         cb(to_integer(unsigned(cb_addr))) <= signed(cb_data);
 
       else
-        case st is
+        ----------------------------------------------------------------
+        -- activation prefetch queue
+        ----------------------------------------------------------------
+        occ := xq_cnt;
+        if pf_out = '1' then                     -- a read lands this edge
+          xq(xq_wr) <= x_rdata;
+          xq_wr     <= (xq_wr + 1) mod 2;
+          occ       := occ + 1;
+        end if;
+        if accept = '1' then
+          x_r   <= xq(xq_rd);
+          xq_rd <= (xq_rd + 1) mod 2;
+          occ   := occ - 1;
+        end if;
+        xq_cnt <= occ;
+        if st = S_RUN and occ < 2 then
+          pf_out <= '1';
+          if b_pf = nb_r - 1 then b_pf <= 0; else b_pf <= b_pf + 1; end if;
+        else
+          pf_out <= '0';
+        end if;
 
+        ----------------------------------------------------------------
+        -- tag + scale shift.  Always advances; `v` gates every effect.
+        ----------------------------------------------------------------
+        nxt := tg;  nsc := scp;
+        for i in PIPE-1 downto 1 loop
+          nxt(i) := tg(i-1);
+          nsc(i) := scp(i-1);
+        end loop;
+        nxt(0) := TAG0;
+        if accept = '1' then
+          w_r <= w_data;
+          for rr in 0 to ROWS_IF-1 loop
+            nsc(0)(rr) := unsigned(s_data(rr*16+15 downto rr*16));
+          end loop;
+          nxt(0).v    := '1';
+          nxt(0).tile := t_iss;
+          nxt(0).blk  := b_iss;
+          if b_iss = 0        then nxt(0).first := '1';
+          else                     nxt(0).first := '0'; end if;
+          if b_iss = nb_r - 1 then nxt(0).last  := '1';
+          else                     nxt(0).last  := '0'; end if;
+          if b_iss = nb_r - 1 then
+            b_iss <= 0;
+            if t_iss = tiles_r - 1 then st <= S_DRAIN;
+            else t_iss <= t_iss + 1; end if;
+          else
+            b_iss <= b_iss + 1;
+          end if;
+        end if;
+        tg <= nxt;  scp <= nsc;
+
+        ----------------------------------------------------------------
+        -- s1: products.  COLUMN MASK (6.2) is required because the IQ4_NL
+        -- codebook has no zero entry -- index 0 decodes to -127, so padding
+        -- must be masked, never zero-filled.
+        ----------------------------------------------------------------
+        if tg(0).v = '1' then
+        for rr in 0 to ROWS_IF-1 loop
+          for j in 0 to BLK-1 loop
+            idx := to_integer(unsigned(
+                     w_r((rr*BLK + j)*4 + 3 downto (rr*BLK + j)*4)));
+            xw  := signed(x_r(j*16+15 downto j*16));
+            k   := tg(0).blk * BLK + j;
+            if k < n_cols then
+              tr(0)(rr*BLK + j) <= resize(cb(idx) * xw, 28);
+            else
+              tr(0)(rr*BLK + j) <= (others => '0');
+            end if;
+          end loop;
+        end loop;
+        end if;
+
+        ----------------------------------------------------------------
+        -- s2..s1+LVL: pipelined adder tree (spec 7.3, NOT a DSP cascade)
+        ----------------------------------------------------------------
+        for l in 1 to LVL loop
+          if tg(l).v = '1' then
+          for rr in 0 to ROWS_IF-1 loop
+            for i in 0 to (BLK / (2**l)) - 1 loop
+              tr(l)(rr*BLK + i) <= tr(l-1)(rr*BLK + 2*i)
+                                 + tr(l-1)(rr*BLK + 2*i + 1);
+            end loop;
+          end loop;
+          end if;
+        end loop;
+
+        ----------------------------------------------------------------
+        -- s2+LVL: scale multiply, ALONE in its stage
+        ----------------------------------------------------------------
+        if tg(P_PART).v = '1' then
+          for rr in 0 to ROWS_IF-1 loop
+            sprod(rr) <= tr(LVL)(rr*BLK) * signed('0' & scp(P_PART)(rr));
+          end loop;
+        end if;
+        if tg(P_PART).v = '1' then
+          tp_v <= '1'; tp_r <= tg(P_PART).tile * ROWS_IF; tp_b <= tg(P_PART).blk;
+          for rr in 0 to ROWS_IF-1 loop
+            tp_val(rr*64+63 downto rr*64)
+              <= std_logic_vector(resize(tr(LVL)(rr*BLK), 64));
+          end loop;
+        end if;
+
+        ----------------------------------------------------------------
+        -- s3+LVL: SITE 1, floor(partial * scale / 2^15)
+        ----------------------------------------------------------------
+        if tg(P_SPROD).v = '1' then
+          for rr in 0 to ROWS_IF-1 loop
+            contrib(rr) <= resize(floor_shr(sprod(rr), 15), 29);
+          end loop;
+        end if;
+
+        ----------------------------------------------------------------
+        -- s4+LVL: accumulate, and row-end on the tile's last block
+        ----------------------------------------------------------------
+        if tg(P_CONTRIB).v = '1' then
+          tc_v <= '1'; tc_r <= tg(P_CONTRIB).tile * ROWS_IF;
+          tc_b <= tg(P_CONTRIB).blk;
+          rbase := tg(P_CONTRIB).tile * ROWS_IF;
+          -- amax must be folded through a VARIABLE: a signal assigned inside
+          -- the lane loop would keep only the last lane's value, silently
+          -- under-reporting the maximum and inflating every mantissa.
+          mxv := amax;
+
+          for rr in 0 to ROWS_IF-1 loop
+            tc_val(rr*64+63 downto rr*64)
+              <= std_logic_vector(resize(contrib(rr), 64));
+            -- `first` restarts the sum in place, so back-to-back tiles need
+            -- no bubble and acc never has to be cleared out of band.
+            if tg(P_CONTRIB).first = '1' then an := resize(contrib(rr), 48);
+            else                              an := acc(rr) + resize(contrib(rr), 48);
+            end if;
+            acc(rr) <= an;
+
+            if tg(P_CONTRIB).last = '1' then
+              ta_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(an, 64));
+              if out_mode = "10" then
+                -- 14.2: PARTIAL emits the accumulator UNROUNDED.  round_shift
+                -- is not additive, so rounding per shard could never reproduce
+                -- the full-K result.  No round, no saturation.
+                y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(an, 64));
+              else
+                shv := round_shift(an, out_shift);          -- SITES 2/3
+                a32 := sat32(shv);
+                if shv /= resize(a32, 48) then sat_r <= '1'; end if;
+                ybuf(rr)(tg(P_CONTRIB).tile) <= a32;
+                y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
+                mag := unsigned(abs(resize(a32, 36)));
+                -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax
+                -- would inflate ns and crush every real mantissa.
+                if rbase + rr < n_rows and mag > mxv then mxv := mag; end if;
+              end if;
+              if rbase + rr < n_rows then y_mask(rr) <= '1';
+              else                        y_mask(rr) <= '0'; end if;
+            end if;
+          end loop;
+
+          amax <= mxv;
+
+          if tg(P_CONTRIB).last = '1' then
+            ta_v <= '1'; ta_r <= rbase;
+            y_addr <= std_logic_vector(to_unsigned(rbase, 16));
+            if out_mode /= "00" then y_we <= '1'; end if;
+          end if;
+        end if;
+
+        ----------------------------------------------------------------
+        -- control
+        ----------------------------------------------------------------
+        case st is
           when S_IDLE =>
-            if start = '1' then
-              -- spec 7.6 descriptor checks
+            if start = '1' then                        -- spec 7.6 checks
               if n_rows <= 0 or n_cols <= 0 or n_cols > MAXCOLS
                  or out_shift < 0 or out_shift > 40
                  or (out_mode = "00" and n_rows > MAXROWS_BFP) then
                 err_r <= '1'; st <= S_DONE;
               else
-                nb    <= (n_cols + BLK - 1) / BLK;   -- ceil, spec 6.3
-                r_i   <= 0; b_i <= 0;
-                acc   <= (others => '0');
-                amax  <= (others => '0');
+                nb_r      <= (n_cols + BLK - 1) / BLK;              -- 6.3 ceil
+                tiles_r   <= (n_rows + ROWS_IF - 1) / ROWS_IF;
+                lastvalid <= n_cols - ((n_cols - 1) / BLK) * BLK;
+                t_iss <= 0; b_iss <= 0; b_pf <= 0;
+                xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0';
+                amax <= (others => '0');
                 sat_r <= '0'; err_r <= '0';
-                st    <= S_BLK_ISSUE;
+                st <= S_RUN;
               end if;
             end if;
 
-          -- read addresses are registered a cycle ahead, exactly as matmul_rt
-          -- does, so the memories can be synchronous.
-          when S_BLK_ISSUE => st <= S_BLK_WAIT;
-          when S_BLK_WAIT  => scale_r <= unsigned(s_rdata); st <= S_PROD;
-
-          -- one state: BLK products and their reduction.  The scale multiply
-          -- is NOT here -- see S_SCALE -- because 7.8 forbids two multiplies
-          -- sharing a state, which is the hazard that broke residual/swiglu/
-          -- bfp_pack on silicon.
-          when S_PROD =>
-            p := (others => '0');
-            for j in 0 to BLK-1 loop
-              k   := b_i * BLK + j;
-              idx := to_integer(unsigned(w_rdata(j*4+3 downto j*4)));
-              xw  := signed(x_rdata(j*16+15 downto j*16));
-              if k < n_cols then                 -- COLUMN MASK, spec 6.2:
-                prod := resize(cb(idx) * xw, 25);  -- codebook has NO zero entry
-              else                               -- entry, so padding must be
-                prod := (others => '0');         -- masked, not zero-filled
-              end if;
-              p := p + resize(prod, 28);
-            end loop;
-            partial <= p;
-            tap_valid <= '1'; tap_kind <= "001"; tap_r <= r_i; tap_b <= b_i;
-            tap_val   <= std_logic_vector(resize(p, 64));
-            st <= S_SCALE;
-
-          -- SITE 1: floor(partial * scale / 2^15).  Its own state.
-          when S_SCALE =>
-            contrib <= resize(floor_shr(partial * signed('0' & scale_r), 15), 29);
-            st <= S_ACCUM;
-
-          when S_ACCUM =>
-            acc <= acc + resize(contrib, 48);
-            tap_valid <= '1'; tap_kind <= "010"; tap_r <= r_i; tap_b <= b_i;
-            tap_val   <= std_logic_vector(resize(contrib, 64));
-            if b_i = nb - 1 then st <= S_ROW_END;
-            else b_i <= b_i + 1; st <= S_BLK_ISSUE; end if;
-
-          when S_ROW_END =>
-            tap_valid <= '1'; tap_kind <= "011"; tap_r <= r_i; tap_b <= 0;
-            tap_val   <= std_logic_vector(resize(acc, 64));
-            -- SITES 2/3 then sat32
-            sh  := round_shift(acc, out_shift);
-            a32 := sat32(sh);
-            if sh /= resize(a32, 48) then sat_r <= '1'; end if;
-            ybuf(r_i) <= a32;
-            mag := unsigned(abs(resize(a32, 36)));
-            if mag > amax then amax <= mag; end if;   -- SCAN r < n_rows only
-            if out_mode /= "00" then                  -- raw / partial emit now
-              y_we   <= '1';
-              y_addr <= std_logic_vector(to_unsigned(r_i, 16));
-              y_data <= std_logic_vector(a32);
-            end if;
-            if r_i = n_rows - 1 then
-              st <= S_SCAN;
-            else
-              r_i <= r_i + 1; b_i <= 0; acc <= (others => '0');
-              st  <= S_BLK_ISSUE;
+          when S_RUN | S_DRAIN =>
+            if st = S_DRAIN and inflight = '0' then
+              if out_mode = "00" then st <= S_SCAN; else st <= S_DONE; end if;
             end if;
 
           when S_SCAN =>
-            if out_mode = "00" then
-              -- ns = max(0, msb_pos(amax) - 14), msb_pos(0) = 0 NORMATIVE
-              if msb_pos_u(amax) > 14 then ns_r <= msb_pos_u(amax) - 14;
-              else ns_r <= 0; end if;
-              r_i <= 0;
-              st  <= S_EMIT;
-            else
-              st <= S_DONE;
-            end if;
+            -- ns = max(0, msb_pos(amax) - 14); msb_pos(0) = 0 is NORMATIVE
+            if msb_pos_u(amax) > 14 then ns_r <= msb_pos_u(amax) - 14;
+            else                         ns_r <= 0; end if;
+            emit_t <= 0;
+            st <= S_EMIT;
 
           when S_EMIT =>
             tap_ns <= ns_r;
-            -- SITE 4: round_shift then sat16
+            rbase := emit_t * ROWS_IF;
             y_we   <= '1';
-            y_addr <= std_logic_vector(to_unsigned(r_i, 16));
-            y_data <= std_logic_vector(resize(sat16(round_shift(ybuf(r_i), ns_r)), 32));
-            tap_valid <= '1'; tap_kind <= "101"; tap_r <= r_i; tap_b <= 0;
-            tap_val   <= std_logic_vector(resize(sat16(round_shift(ybuf(r_i), ns_r)), 64));
-            if r_i = n_rows - 1 then st <= S_DONE;
-            else r_i <= r_i + 1; end if;
+            y_addr <= std_logic_vector(to_unsigned(rbase, 16));
+            tm_v <= '1'; tm_r <= rbase;
+            for rr in 0 to ROWS_IF-1 loop
+              ymn := sat16(round_shift(ybuf(rr)(emit_t), ns_r));   -- SITE 4
+              y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+              tm_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+              if rbase + rr < n_rows then y_mask(rr) <= '1';
+              else                        y_mask(rr) <= '0'; end if;
+            end loop;
+            if emit_t = tiles_r - 1 then st <= S_DONE;
+            else emit_t <= emit_t + 1; end if;
 
           when S_DONE =>
             done <= '1';
@@ -238,7 +445,7 @@ begin
     end if;
   end process;
 
-  -- y_exp: BFP subtracts ns (spec 7.4); partial carries NO out_shift term
+  -- y_exp: BFP subtracts ns (spec 7.4); PARTIAL carries NO out_shift term
   -- (spec 14.2), because its payload was never shifted.
   y_exp <= (w_exp + x_exp)                        when out_mode = "10" else
            (w_exp + x_exp - out_shift - ns_r)     when out_mode = "00" else
