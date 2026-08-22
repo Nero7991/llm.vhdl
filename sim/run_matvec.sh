@@ -12,7 +12,7 @@
 # K a multiple of BLOCK, so it exercised neither pad rows nor the column mask.
 set -e
 cd "$(dirname "$0")/.."
-mkdir -p sim/work_mv sim/work_arith
+mkdir -p sim/work_mv sim/work_arith sim/work_am
 
 echo "== 1. regenerate shared arithmetic (C + VHDL + vectors) =="
 python3 tools/gen_arith.py --check || { python3 tools/gen_arith.py; }
@@ -27,7 +27,20 @@ echo "== 3. VHDL primitives vs golden vectors =="
   && ghdl -e --std=08 --workdir=. tb_arith \
   && ghdl -r --std=08 --workdir=. tb_arith )
 
-echo "== 4. RTL vs C reference, stage by stage, over shapes =="
+echo "== 4. activation memory mapping (7.8) =="
+mkdir -p sim/work_am
+( cd sim/work_am \
+  && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
+        ../../rtl/act_mem_striped.vhd ../tb_act_mem.vhd \
+  && ghdl -e --std=08 --workdir=. tb_act_mem )
+for g in "544 32 4" "17408 32 4" "100 32 4" "64 16 2" "544 32 8"; do
+  set -- $g
+  ( cd sim/work_am && ghdl -r --std=08 --workdir=. tb_act_mem \
+      -gELEMS=$1 -gBLK=$2 -gLANES=$3 --stop-time=500ms ) 2>&1 \
+    | grep -oE 'act_mem_striped: .*' | sed 's/^/  /'
+done
+
+echo "== 5. RTL vs C reference, stage by stage, over shapes =="
 ( cd sim/work_mv \
   && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
         ../../rtl/mv4i_arith_pkg.vhd ../../rtl/matvec_core.vhd \
