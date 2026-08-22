@@ -188,14 +188,29 @@ def calibrate_out_shift(K: int) -> int:
 
 # ---------------------------------------------------------- emission (6.4/6.5)
 
-def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb) -> bytes:
-    NB     = idx.shape[1]
+def packed_layout(M: int, K: int, rows_if: int):
+    """The 6.4/6.5 file layout, as pure arithmetic on the shape.
+
+    SINGLE AUTHORITY for how large a packed tensor is.  pack() below emits it
+    and --audit sums it across a whole model; neither re-derives it, because a
+    second copy of this arithmetic is exactly the drift this project keeps
+    getting bitten by.
+
+    Returns (NB, tiles, nports, sub_sz, scl_sz, total).
+    """
+    NB     = (K + BLOCK - 1) // BLOCK      # 6.3 ceil, K padded to a whole block
     tiles  = (M + rows_if - 1) // rows_if
     nports = rows_if                       # 6.5 invariant at BLOCK=32, AXI_DW=128
     chunk  = BLOCK // 2                    # 16 bytes per row-block chunk
     sub_sz = align4k(tiles * NB * chunk)
     scl_sz = align4k(tiles * NB * rows_if * 2)
     total  = HDR_BYTES + sub_sz * nports + scl_sz
+    return NB, tiles, nports, sub_sz, scl_sz, total
+
+
+def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb) -> bytes:
+    NB, tiles, nports, sub_sz, scl_sz, total = packed_layout(M, K, rows_if)
+    assert NB == idx.shape[1], f"NB mismatch {NB} vs {idx.shape[1]}"
 
     buf = bytearray(total)                 # zero-filled: PAD FILL = 0x00
 
@@ -338,6 +353,104 @@ def crosscheck(path):
 
 # ---------------------------------------------------------------------- main
 
+# --------------------------------------------------------------- model audit
+
+def audit(path: str, rows_if: int, cards: int) -> None:
+    """Sum the packed size of a whole GGUF in this format, exactly.
+
+    WHY: the v3.0 "27B fits 2 x FK33" claim came from 26.896e9 params x 4.5 bpw,
+    which counts only the payload.  The real file carries a 4 KB header per
+    tensor, 4 KB alignment on every one of ROWS_IF weight sub-regions plus the
+    scale region, and K padded up to a whole block.  At ROWS_IF=80 that is 81
+    separately-aligned regions per tensor, so the overhead is not negligible and
+    it grows when a tensor is sharded.  This measures it instead of assuming it.
+
+    Sizes come from packed_layout(), the same function pack() emits with, so an
+    audit can never disagree with a file.
+    """
+    rd = GGUFReader(path, "r")
+    GIB = 1024.0 ** 3
+
+    rows = []
+    for t in rd.tensors:
+        ne = [int(v) for v in t.shape]
+        K = ne[0]
+        M = ne[1] if len(ne) > 1 else 1
+        params = M * K
+        name = t.name
+        # A handles 2D matvec weights.  Norms, biases, ssm_a and the 4-tap
+        # conv1d are 1D or tiny and stay in their native form.
+        is_mv = len(ne) > 1 and M > 1 and K > 1 and name != "blk.0.ssm_conv1d.weight" \
+                and not name.endswith("ssm_conv1d.weight")
+        if is_mv:
+            _, _, _, _, _, whole = packed_layout(M, K, rows_if)
+            # column-parallel: each card holds ceil(M/cards) rows, padded and
+            # aligned on its own, so shard overhead does NOT divide by cards
+            Ms = (M + cards - 1) // cards
+            _, _, _, _, _, shard = packed_layout(Ms, K, rows_if)
+        else:
+            whole = params * 4          # kept as F32
+            shard = whole               # replicated on every card
+        rows.append((name, M, K, params, is_mv, whole, shard))
+
+    mv   = [r for r in rows if r[4]]
+    nonmv = [r for r in rows if not r[4]]
+    p_mv  = sum(r[3] for r in mv)
+    p_all = sum(r[3] for r in rows)
+    s_whole = sum(r[5] for r in rows)
+    s_shard = sum(r[6] for r in rows)
+    payload = p_mv * 4.5 / 8.0
+
+    print(f"model      {path}")
+    print(f"ROWS_IF={rows_if}  cards={cards}  (column-parallel, M split)")
+    print()
+    print(f"  tensors                     {len(rows):>10d}  "
+          f"({len(mv)} matvec, {len(nonmv)} kept F32)")
+    print(f"  params total                {p_all/1e9:>10.3f} B")
+    print(f"  params in matvec weights    {p_mv/1e9:>10.3f} B")
+    print()
+    print(f"  payload only @ 4.5 bpw      {payload/GIB:>10.3f} GiB   "
+          f"<- the figure the plan assumed")
+    print(f"  packed, whole model         {s_whole/GIB:>10.3f} GiB   "
+          f"({s_whole*8.0/p_mv:.3f} bits/matvec-weight)")
+    print(f"  format overhead             {(s_whole-payload)/GIB:>10.3f} GiB   "
+          f"({100.0*(s_whole-payload)/payload:+.1f}%)")
+    print()
+    print(f"  per card, ideal split       {s_whole/cards/GIB:>10.3f} GiB")
+    print(f"  per card, real shards       {s_shard/GIB:>10.3f} GiB")
+    print(f"  shard penalty               {(s_shard-s_whole/cards)/GIB:>10.3f} GiB")
+    print()
+    hbm = 8.0
+    print(f"  FK33 HBM per card                 {hbm:.3f} GiB")
+    print(f"  utilisation                 {100.0*s_shard/GIB/hbm:>10.1f} %"
+          f"   {'FITS' if s_shard/GIB <= hbm else 'DOES NOT FIT'}")
+    print()
+
+    # ---- what is LEFT.  Weights are not the whole residency: subsystem B's
+    # recurrent state is persistent, and the KV cache grows with context.  A
+    # weights-only fit is not a fit.
+    MB = 1024.0 ** 2
+    n_gdn, n_attn = 48, 16
+    d_inner, state_size = 6144, 128
+    kv_heads, head_dim = 4, 256
+    gdn_state = n_gdn * d_inner * state_size * 2 / cards      # int16, split
+    kv_tok    = n_attn * kv_heads * head_dim * 2 * 2 / cards  # K+V, int16, split
+    free      = hbm * GIB - s_shard - gdn_state
+    print("  residency beyond weights, per card:")
+    print(f"    GDN recurrent state (persistent) {gdn_state/MB:>9.1f} MB")
+    print(f"    KV cache per token               {kv_tok/1024:>9.1f} KiB")
+    print(f"    free for KV                      {free/GIB:>9.3f} GiB")
+    if kv_tok > 0:
+        print(f"    => max context                   {free/kv_tok:>9.0f} tokens")
+    print()
+
+    worst = sorted(mv, key=lambda r: r[5] - r[3] * 4.5 / 8.0, reverse=True)[:6]
+    print("  largest absolute overhead (whole-model, unsharded):")
+    for n, M, K, pr, _, wh, _ in worst:
+        print(f"    {n:38s} M={M:<7d} K={K:<7d} "
+              f"{wh/1e6:8.2f} MB  +{wh - pr*4.5/8.0:>10.0f} B")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -350,12 +463,19 @@ def main():
     ap.add_argument("--out-shift", type=int, default=None,
                     help="override the calibrated out_shift")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--audit", action="store_true",
+                    help="sum the packed size of every tensor and exit")
+    ap.add_argument("--cards", type=int, default=2,
+                    help="cards to split across, for --audit")
     ap.add_argument("--crosscheck", action="store_true",
                     help="recompute the C reference output for an existing .mv4i")
     a = ap.parse_args()
 
     if a.list:
         list_tensors(a.gguf)
+        return 0
+    if a.audit:
+        audit(a.gguf, a.rows_if, a.cards)
         return 0
     if a.crosscheck:
         crosscheck(a.gguf)
