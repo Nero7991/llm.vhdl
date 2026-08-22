@@ -916,3 +916,77 @@ ports. The port budget is tight and must be re-derived, not inherited.
 
 `matvec_core` and the packer are unchanged in structure. `weight_streamer` is
 replaced for HBM. The model is re-packed because `ROWS_IF` differs.
+
+## 14. RETARGET to Qwen3.8-27B on FK33 (2026-08-21, NORMATIVE)
+
+**This section supersedes every Qwen3.5-0.8B dimension elsewhere in this
+document.** The project target is now Qwen3.8-27B at INT4 on FK33 hardware:
+v3.0 on 2 cards, v4.0 on 8. Earlier sections are retained for their derivations,
+which remain valid; only the numbers change.
+
+| Parameter | 0.8B (superseded) | **27B (current)** |
+|---|---|---|
+| hidden | 1024 | **5120** |
+| layers | 24 (18 GDN + 6 attn) | **64 (48 GDN + 16 attn)** |
+| FFN dim | 3584 | **17408** |
+| vocab | 248,320 | 248,320 |
+| tied embeddings | true | **FALSE -- separate lm_head** |
+| attention heads / kv | 8 / 2 | **24 / 4** |
+| head_dim | 256 | 256 |
+| GDN key heads / value heads | 16 / 16 | **16 / 48** |
+| GDN state_size / d_inner | 128 / 2048 | **128 / 6144** |
+| Params | 752M | **26.896B** |
+| Size @ 4.5 bpw | 423 MB | **15.13 GB = 14.09 GiB** |
+
+Derivation check: embed 1.271B + lm_head 1.271B + GDN 5.56B + attention 1.68B +
+FFN 17.11B = **26.89B**, against the GGUF's 26.896B. Shapes verified.
+
+### 14.1 Generic changes
+
+| Generic | 0.8B | **27B** | Consequence |
+|---|---|---|---|
+| `MAXCOLS` | 3584 | **17408** | `act_mem_striped` grows 5x, to 34.8 KB striped |
+| `MAXROWS_BFP` | 4096 | **17408** | **dissolves the `wqkv` M=6144 finding** in §7.6 -- it was only a problem against the 4096 bound |
+| `ROWS_IF` | 4 (AXU3EG) | **80** (FK33) | 2,560 MACs, 432 GB/s demand against 460 available |
+| `x_rbaddr` width | 7 b | **10 b** | 17408/32 = 544 blocks |
+
+### 14.2 NEW: partial-sum output mode, required by tensor parallelism
+
+Tensor parallelism splits matvecs two ways. **Column-parallel** (split the
+output dim M) needs nothing new -- it is a different `n_rows` and `w_base` per
+card, which this spec already supports. **Row-parallel** (split the input dim K)
+does: each card computes a partial sum over its K-slice, and those partials must
+be summed across cards *before* the result is meaningful.
+
+**A partial cannot be BFP-normalized.** §7.4's BFP mode scans all M outputs for
+`amax` to derive `ns`, but a partial's true maximum is unknown until after the
+cross-card reduction. So a third mode is required:
+
+| `out_mode` | Behaviour |
+|---|---|
+| `"00"` BFP | as §7.4 |
+| `"01"` raw | as §7.4 |
+| **`"10"` partial** | `y_data[r] = sat32(round_shift(acc[r], out_shift))`, **no BFP normalization**, `y_exp = w_exp + x_exp - out_shift` |
+
+**All cards participating in one row-parallel matvec MUST be programmed with the
+same `out_shift`.** That makes their partials directly summable as s32 integers
+with no per-card alignment, which is what lets subsystem E's collective be a
+plain integer add. The final BFP pack happens once, after the reduction, on the
+summed result.
+
+`out_shift` is chosen offline per matrix as before, but its calibration must now
+account for the **full** K range, not one card's slice, or the partials saturate.
+
+### 14.3 Sharding pattern (Megatron-style)
+
+| Matvec | Split | Collective |
+|---|---|---|
+| FFN gate, up | column (output) | none |
+| FFN down | **row (input)** | all-reduce |
+| attn q, k, v | column (by head) | none |
+| attn o | **row** | all-reduce |
+| GDN wqkv, gate | column (by head) | none |
+| GDN ssm_out | **row** | all-reduce |
+
+Two all-reduces per layer, 64 layers = **128 collectives per token**. Subsystem
+E owns them.

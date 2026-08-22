@@ -1013,3 +1013,69 @@ have already made impossible:
 - An `err` consolidation completing §2.1.6, and bring-up steps mirroring A
   §10, including the **four-concurrent-master efficiency measurement** that
   §2.5's timing depends on.
+
+## 4. RETARGET to Qwen3.8-27B on FK33 (2026-08-21, NORMATIVE)
+
+**This section supersedes every Qwen3.5-0.8B dimension elsewhere in this
+document.** All derivations in §1-2 remain valid; only the numbers change.
+
+| Parameter | 0.8B (superseded) | **27B (current)** |
+|---|---|---|
+| hidden | 1024 | **5120** |
+| GDN layers | 18 of 24 | **48 of 64** |
+| key heads (`ssm_n_group`) | 16 | **16** |
+| **value heads (`ssm_dt_rank`)** | 16 | **48** |
+| `head_k_dim` / `head_v_dim` (`ssm_state_size`) | 128 | **128** |
+| `d_inner` (`ssm_inner_size`) | 2048 | **6144** |
+| key_dim / value_dim | 2048 / 2048 | **2048 / 6144** |
+| conv_dim | 6144 | **10240** |
+| `wqkv` | 1024 -> 6144 | **5120 -> 10240** |
+| `wqkv_gate` (z) | 1024 -> 2048 | **5120 -> 6144** |
+| `ssm_out` | 2048 -> 1024 | **6144 -> 5120** |
+| `ssm_beta` / `ssm_alpha` | 1024 -> 16 | **5120 -> 48** |
+
+**Note `num_k_heads != num_v_heads` at 27B** (16 vs 48), which was not true at
+0.8B. The reference handles this by repeating q and k 3x to match v
+(`qwen35.cpp`: `ggml_repeat_4d` when `num_k_heads != num_v_heads`), so each key
+head serves **3 value heads**. §2.1 and §2.4 must treat the k/q operands as
+shared across a group of 3 heads rather than private to one. **This is the
+single largest structural change from the 0.8B derivation** and it affects the
+column pipeline's operand fetch, not its arithmetic.
+
+### 4.1 State size, the dominant fact
+
+```
+per layer : head_v_dim^2 x num_v_heads = 128 x 128 x 48 = 786,432 elements
+x 48 GDN layers                        = 37.75M elements
+at int16                               = 75.5 MB
+```
+
+| | Total | Per card (2-way, sharded by value head) |
+|---|---|---|
+| Elements | 37.75M | 18.9M (24 of 48 heads) |
+| int16 bytes | 75.5 MB | **37.75 MB** |
+| Traffic per token (read + write) | 151 MB | **75.5 MB** |
+
+Against a 7.57 GB per-card weight read, state traffic is **~1.0%** -- lower than
+the 4.5% at 0.8B scale, because weights grew 36x while the state grew only 8x.
+
+**37.75 MB per card does NOT fit the 14.2 MB of on-chip BRAM+URAM**, so the
+§2.4 column pipeline's DDR/HBM streaming architecture is **required**, not
+optional. At 0.8B residency was a possible optimization; at 27B it is off the
+table, which retroactively validates designing for the streaming case.
+
+### 4.2 Sharding
+
+Value heads shard exactly: **48 / 2 = 24** per card at N=2, **48 / 8 = 6** at
+N=8. Key heads: 16 / 2 = 8, 16 / 8 = 2. Both clean at both topologies.
+
+**The recurrence needs no collective.** State is per-value-head and never
+crosses heads, so each card runs its own heads to completion. Only `ssm_out` is
+row-parallel and needs one all-reduce (subsystem A §14.2), and `wqkv`/`wqkv_gate`
+are column-parallel needing none.
+
+That makes B the **best-sharding subsystem in the design** -- the 3:1 k-to-v
+head grouping of §4 stays entirely within a card provided the shard boundary
+falls on a multiple of 3 value heads. **24 and 6 are both multiples of 3, so
+both topologies are safe**; a shard count that broke that would split a key
+head's group across cards and force a broadcast.

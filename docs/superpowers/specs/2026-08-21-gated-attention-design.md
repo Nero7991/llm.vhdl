@@ -754,3 +754,66 @@ QK-norm (**~0.39 ms**: `rmsnorm.vhd` is ~5 cycles/element -- S_ACC 256 +
 S_RAW/S_RAW_B 512 + S_EMIT/S_EMIT_B 512 = ~1,290 cycles per 256-vector, 10 invocations per layer x 6 layers = ~77K cycles), IMROPE, rescales,
 per-head reciprocals and the gate are all outside it. Section 3 must produce a full per-token budget before the ~20 tok/s
 figure in `docs/fpga-hardware-recon.md` can be trusted for `v3.0`.
+
+## 4. RETARGET to Qwen3.8-27B on FK33 (2026-08-21, NORMATIVE)
+
+**This section supersedes every Qwen3.5-0.8B dimension elsewhere in this
+document.** All derivations in §1-2 remain valid; only the numbers change.
+
+| Parameter | 0.8B (superseded) | **27B (current)** |
+|---|---|---|
+| hidden | 1024 | **5120** |
+| layers | 24 (18 GDN + 6 attn) | **64 (48 GDN + 16 attn)** |
+| FFN dim | 3584 | **17408** |
+| vocab | 248,320 | 248,320 |
+| tied embeddings | true | **FALSE -- separate lm_head** |
+| attention heads / kv | 8 / 2 | **24 / 4** |
+| head_dim | 256 | 256 |
+| GDN key heads / value heads | 16 / 16 | **16 / 48** |
+| GDN state_size / d_inner | 128 / 2048 | **128 / 6144** |
+| Params | 752M | **26.896B** |
+| Size @ 4.5 bpw | 423 MB | **15.13 GB = 14.09 GiB** |
+
+Derivation check: embed 1.271B + lm_head 1.271B + GDN 5.56B + attention 1.68B +
+FFN 17.11B = **26.89B**, against the GGUF's 26.896B. Shapes verified.
+
+### 4.1 What changes for subsystem C
+
+| | 0.8B | **27B** |
+|---|---|---|
+| Attention layers | 6 of 24 | **16 of 64** (indices 3, 7, ... 63) |
+| Query / KV heads | 8 / 2 | **24 / 4** |
+| Query heads per KV head (GQA) | 4 | **6** |
+| `wq` output (Q + fused gate) | 4096 | **12288** |
+| `wo` input | 2048 | **6144** |
+| `MAXLAYERS` | 6 | **16** |
+
+`head_dim` stays 256, so **§2.1's numeric contract is unchanged** -- the per-32
+block structure, the exponent chains, the alignment policy and all six rounding
+sites carry over verbatim. Only counts change.
+
+The GQA head-grouping of §2.4 becomes **6 query heads per KV head** rather than
+4, so the grouped loop carries 6 running maxima, 6 sums and 6 accumulators:
+`6 x 256 x 36 b = 55,296 FF` per group, up from 36,864.
+
+### 4.2 KV cache at 27B scale
+
+Per position: 16 layers x 4 kv heads x 256 x 2 (K,V) = **32,768 values**, or
+34.8 KB at the §2.1.1 format (8.5 bits/value).
+
+| Context | Total | Per card (2-way shard) |
+|---|---|---|
+| 2,048 | 71.3 MB | **35.6 MB** |
+| 8,192 | 285 MB | 143 MB |
+| 32,768 | 1.14 GB | 570 MB |
+
+Against ~890 MB of free HBM per card at v3.0 (8 GiB minus the 7.11 GiB
+resident), **context is capped near 32K by memory, not by bandwidth.**
+
+### 4.3 Sharding
+
+At **N=2** the split is exact: 24 query heads -> 12, and **4 KV heads -> 2**, so
+each card owns whole KV heads and no replication is needed. At **N=8**,
+`4 kv / 8 = 0.5`, so **KV replicates 2x** -- each KV head is held by two cards.
+Costs memory, not bandwidth. `wq`/`wk`/`wv` are column-parallel by head, `wo` is
+row-parallel and needs subsystem A's partial-sum mode (A §14.2).

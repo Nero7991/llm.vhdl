@@ -15,64 +15,78 @@ directly.
 
 ## 0. Milestones
 
-Git tags mark shipped state; unshipped rows are the plan.
+**Retargeted 2026-08-21.** The goal is now **Qwen3.8-27B at INT4 on FK33
+hardware**, reached in two rungs. The earlier 0.8B/9B ladder is superseded: it
+was built around the AXU3EG being the only owned hardware, which is no longer
+the constraint.
 
 | Tag | State | Milestone |
 |---|---|---|
 | `v1.0-silicon` | **done** | stories260K bit-exact on AXU3EG PL, promptable over AXI, ~95.6 tok/s @ 80 MHz |
-| `v1.1-server` | **done** | OpenAI endpoint served from the PL engine; 6 prompts byte-identical to `ref/run_fx`, 0 CPU tokens. **End of the llama2 line.** |
-| `v2.0` | planned | **Subsystem A**: INT4 streaming matvec on AXU3EG, bit-exact vs C reference |
-| `v2.1` | planned | **Subsystem C**: gated attention (GQA 8:2, head_dim 256, QK-norm) |
-| `v2.2` | planned | **Subsystem B**: Gated DeltaNet (conv1d k=4, recurrent state, gating) |
-| `v3.0` | planned | **Qwen3.5-0.8B end-to-end on AXU3EG**, INT4 from DDR4, ~20-30 tok/s. **Requires C at `MACS=32`** -- see the DSP co-fit note below. |
-| `v4.0` | planned | Qwen3.5-9B on one FK33, INT4 from HBM, ~65-92 tok/s |
-| `v5.0` | planned | Qwen3.8-27B on two FK33s, ~45-63 tok/s |
+| `v1.1-server` | **done** | OpenAI endpoint served from the PL engine. **End of the llama2 line.** |
+| `v2.0` | planned | **Subsystem A**: INT4 streaming matvec, bit-exact vs C reference. **Validated on the AXU3EG** (136 of 360 DSP, free Vivado tier) before any FK33 work. |
+| `v2.1` | planned | **Subsystem C**: gated attention (GQA 24:4, head_dim 256, QK-norm, fused gate) |
+| `v2.2` | planned | **Subsystem B**: Gated DeltaNet (48 of 64 layers) |
+| `v2.3` | planned | **Subsystem E**: tensor-parallel collectives over PCIe P2P. New. |
+| `v2.4` | planned | **Subsystem D**: transformer sequencer |
+| **`v3.0`** | **planned** | **Qwen3.8-27B INT4 on 2x FK33 (16 GiB HBM), ~43-61 tok/s.** The FIRST goal. |
+| **`v4.0`** | **planned** | **Qwen3.8-27B INT4 on 8x FK33, ~140-170 tok/s.** The END goal. |
 
-v2.x are the three new subsystems; v3.0 is their integration on hardware already
-owned; v4.0 and v5.0 are ports that change the weight streamer and the generics,
-not the datapath.
+### Why two cards is the first rung
 
-### DSP co-fit on the AXU3EG (finding, 2026-08-21)
+**It is the minimum configuration that runs the model at all.** One FK33 holds
+8 GiB; the 27B at INT4 is 14.09 GiB. Two cards is not an arbitrary step, it is
+the floor.
 
-All three subsystems are now specced, so the v3.0 rung can be costed. At nominal
-widths they do **not** safely co-fit the 360-DSP XCZU3EG:
+Per card, tensor-parallel across 2:
 
-| | DSP | Source |
-|---|---|---|
-| A, `ROWS_IF=4` | 136 | A spec 7.9, derived |
-| C, `MACS=64` | 128 | C spec 2.6, derived |
-| C auxiliary | 15-40 | C spec 2.8, **estimate** |
-| B, `LANES=8` | 42-56 | B spec 2.8, 32 derived + **estimated** aux |
-| **Total** | **321-360 of 360** | **89-100%** |
+| | Per card |
+|---|---|
+| Weight shard | **7.04 GiB** |
+| GDN state, 48 layers sharded by head (24 of 48) | ~38 MB |
+| KV cache @ 2048 ctx, sharded (2 of 4 kv heads) | ~36 MB |
+| **Total** | **~7.11 GiB of 8 GiB = 89%** |
 
-This project has documented congestion-induced non-determinism on this device at
-lower utilization than that (`rmsnorm.vhd:296`, `bfp_pack.vhd` header, the
-`attention_ml` debug history). **Plan of record: C at `MACS=32`**, giving
-**257-296 (71-82%)** with real margin, at the cost of ~7.9 ms of attention
-instead of ~3.9 -- about +8% of the token budget. Restoring `MACS=64` needs only
-a generic change if both auxiliary estimates land low.
+11% headroom: sufficient, not comfortable. **Verify by quantizing the model to
+subsystem A's exact format and measuring the packer output** before committing
+hardware. 4.5 bpw includes the per-32 scale overhead but not real padding and
+alignment.
 
-### Model size resolved: 423 MB, not 450 MB
+**Sharding is exact at N=2 and needs replication at N=8:**
 
-Subsystem B derives the GDN projections exactly (10.55M per layer x 18 =
-189.9M), closing the ~170-240M gap A's spec left open. Qwen3.5-0.8B is
-**752M params = 423 MB at 4.5 bpw**. Throughput figures computed against 450 MB
-are ~6% pessimistic.
+| Quantity | 27B | / 2 | / 8 |
+|---|---|---|---|
+| Query heads | 24 | 12 | 3 |
+| **KV heads** | **4** | **2** | **0.5 -> 2x replication** |
+| GDN value heads | 48 | 24 | 6 |
+| GDN key heads | 16 | 8 | 2 |
+| FFN dim | 17408 | 8704 | 2176 |
 
-### What the AXU3EG rung is for
+So N=2 is the clean case in every dimension, which makes it the right place to
+prove the collective layer before the topology gets harder.
 
-It is a **validation vehicle, not a product.** Qwen3.5-0.8B scores 9 on the
-Intelligence Index against 32 for the 9B; at ~20-30 tok/s it demonstrates the
-datapath rather than doing useful work. Its value is that it proves the numeric
-contracts -- nine review rounds' worth across A, B and C -- on hardware that
-already runs bit-exact, with **free** Vivado tooling, before any of it touches
-orphaned FK33 silicon needing a paid tier and an unproven bring-up.
+### Honest performance expectation for v3.0
 
-**The AXU3EG rung costs almost nothing extra**, because subsystem B's state
-streaming architecture ports to HBM unchanged (residency in the FK33's 14.2 MB
-URAM saves only ~41 us/token, and a 9B state at ~25.3 MB would not fit anyway).
-The only modules written twice are the **streamers**, which A already isolates
-from its core. Plan and abandon v3.0 on that basis.
+Per card reads 7.57 GB per token; at 460 GB/s that is 16.5 ms, a **61 tok/s
+ceiling**, and roughly **43 tok/s at 70% efficiency**. Collectives are
+negligible at N=2 (a single peer exchange, 128 x 2 x ~1.5 us = 0.4 ms).
+
+**That is slower than the 70 tok/s the workstation's two RTX 3090s already
+deliver.** The wins are power (310 W of cards against 700 W at the wall, so
+~1.2-1.6x better J/token) and cost ($650 of cards), plus it being the research
+goal. Rung one is not a speed upgrade and should not be defended as one.
+Tensor-parallel, not pipeline: PP at batch 1 runs cards sequentially and halves
+throughput to ~30 tok/s.
+
+### What the AXU3EG is still for
+
+**Subsystem A validation only.** A alone is 136 of 360 DSP, fits trivially, and
+runs on the **free** Vivado tier. It validates the INT4 matvec numeric contract
+and its C reference on hardware that already produces bit-exact results. That is
+cheap insurance against debugging a nine-review-round contract for the first
+time on orphaned silicon behind a paid toolchain. It does not gate the FK33 path
+and the earlier A+B+C co-fit question is now moot, since the full model never
+runs there.
 
 ---
 
