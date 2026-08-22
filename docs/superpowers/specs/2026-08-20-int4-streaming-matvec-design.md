@@ -1017,7 +1017,7 @@ cross-card reduction. So a third mode is required:
 |---|---|
 | `"00"` BFP | as §7.4 |
 | `"01"` raw | as §7.4 |
-| **`"10"` partial** | `y_data[r] = sat32(round_shift(acc[r], out_shift))`, **no BFP normalization**, `y_exp = w_exp + x_exp - out_shift` |
+| **`"10"` partial** | **`y_acc[r] = acc[r]` UNROUNDED s48**, no requant, no saturation, `y_exp = w_exp + x_exp` |
 
 **CORRECTED 2026-08-22 after subsystem E's review. The original claim here was
 wrong.** Rev 5 asserted that programming all cards with the same `out_shift`
@@ -1055,6 +1055,32 @@ directly summable:
 Equal `out_shift` remains **recommended** (it minimises the exponent spread and
 so the alignment loss) but is no longer a correctness precondition, and a
 consumer that checks only `out_shift` is checking the wrong variable.
+
+**CORRECTED 2026-08-22 by the C reference, which failed on first run.**
+Rev 5 had partial mode emit `sat32(round_shift(acc, out_shift))`, i.e. each card
+rounding **before** the reduction. **`round_shift` is not additive**:
+
+```
+round_shift(a, s) + round_shift(b, s)  !=  round_shift(a + b, s)
+```
+
+so summing N rounded partials accumulates up to N/2 ulp of error and **can never
+reproduce the single-card result**. `ref/matvec_int4.c`'s 14.4 test caught this
+on its first execution; no amount of reading the spec would have.
+
+**Partial mode therefore emits the accumulator UNROUNDED**, as s48. The consumer
+sums (exactly, since integer addition of the same terms is associative) and
+applies `round_shift` + `sat32` **once**, at the end. The sharded path is then
+**bit-identical** to the full-K path, which is verifiable on one card today.
+
+Two consequences:
+
+1. **The sat32-on-partial hazard dissolves.** There is no saturation before the
+   reduction, so a card's slice can no longer clip silently under cancellation.
+   `sat_event` (§5) remains for BFP and raw modes, where the risk is real.
+2. **Transport widens from 4 to 8 bytes per value** (s48 padded for alignment).
+   At N=8 that is 128 collectives x 7 peers x 40 KB = 35.8 MB per card per
+   token, still only **0.47%** of a 7.57 GB weight read.
 
 `out_shift` calibration must still account for the **full** K range, not one
 card's slice. Note also that **`sat32` on a partial is silent**: under
