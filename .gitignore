@@ -44,3 +44,5 @@ build_artifacts_*/*.bit
 build_artifacts_*/*.bit.bin
 # cross-compiled on-board CLI (rebuild with aarch64-linux-gnu-gcc -O2 -static)
 hw/llama_hw
+sim/work_arith/
+sim/work_mv/
