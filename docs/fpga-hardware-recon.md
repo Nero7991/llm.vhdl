@@ -1,7 +1,10 @@
 # FPGA Hardware Recon: on-fabric LLM inference
 
 Recon notes for extending llama.vhdl beyond the AXU3EG (ZU3EG, 0.95 MB on-chip).
-Date: 2026-08-19.
+Date: 2026-08-19. **Revised 2026-08-21**: Jungle Cat re-characterised as a carrier plus
+modules (section 3), Varium C1100 added as a fourth candidate, a standing skip rule
+added for the VU9P/DDR4 class, and section 6 rewritten for AMD's 2026.1 licensing
+tiers (the old $2,995 Enterprise figure was obsolete).
 
 Goal: run a modern transformer with weights resident **on FPGA fabric** (BRAM/URAM)
 rather than streamed from DRAM/HBM, to escape the memory-bandwidth wall that caps
@@ -99,27 +102,242 @@ one 3090 = **76% of peak bandwidth achieved**. Useful when projecting FPGA numbe
 
 ## 3. eBay finds
 
-All three are ex-mining cards. All require **Vivado ML Enterprise** (see section 6).
+Prices updated 2026-08-21 from actual listings. All the SQRL/TUL cards are ex-mining
+and need a paid Vivado tier (see section 6, **rewritten 2026-08-21** - the old
+$2,995 Enterprise figure is obsolete). The Varium C1100 is a new fourth candidate
+added 2026-08-21; it is the only one that is an official, still-documented product.
 
-| | **SQRL Jungle Cat (JC35)** | **TUL BTU9P** | **SQRL Forest Kitten 33** |
+| | **SQRL Jungle Cat (JC35)** | **AMD Varium C1100** | **SQRL Forest Kitten 33** | VU9P/DDR4 class |
+|---|---|---|---|---|
+| **Price** | **$425** | ~$1,000 new | **$300** | $495-500 |
+| What it is | **carrier + 2 modules** | single PCIe card | single PCIe card | single PCIe card |
+| Device(s) | 2x XCVU35P | 1x XCU55N (VU35P class) | 1x XCVU33P | 1x XCVU9P |
+| BRAM | 2x 47.3 Mb | 47.3 Mb | 23.6 Mb | 75.9 Mb |
+| URAM | 2x 180.0 Mb | 180.0 Mb | 90.0 Mb | 270.0 Mb |
+| **On-chip total** | **56.8 MB** | 28.4 MB | **14.2 MB** | 43.2 MB |
+| LUTs | 2x 872K = ~1.74M | 872K | ~440K | 1,182,240 |
+| DSP slices | 11,904 | 5,952 | 2,976 (derived) | 6,840 |
+| **External memory** | **16 GB HBM2** | 8 GB HBM2 | **8 GB HBM2** | 64 GB DDR4 |
+| **Ext. bandwidth** | **920 GB/s** | 460 GB/s | **460 GB/s** (see VCCHBM note) | ~38-77 GB/s |
+| Host interface | **JCC2L Lite: Ethernet only, no PCIe** (confirmed from listing photos). Module reaches host only via BMC UART/I2C | PCIe Gen3 x16 / Gen4 x8 | PCIe (XDC routes x16) | PCIe |
+| Off-card serial | Aurora refclk, no connector found | **2x QSFP28, 8x 25 Gb/s** | **none, PCIe only** | check |
+| Power | 260W TDP **per module** | **75W max** | **~155W** | ~250W |
+| Cooling | liquid / carrier fans | **passive, single slot, HHHL** | passive/liquid variants exist | water block |
+| Availability | one-off listings | distributor stock | **abundant, lots of 100+** | common |
+| Board support | **one XDC file, nothing else; not supported by TeamRedMiner** | DS1003, board files, XRT | **`d953i/SQRL_FK33` (dedicated, `fk33_example.tcl`)** | VCU1525 clone, official Xilinx files mostly apply |
+| Vendor | **bankrupt 2021** | AMD, supported | **bankrupt 2021** | TUL / SQRL |
+| **MB on-chip per $** | **0.134** | 0.028 | 0.047 | 0.087 |
+| **GB/s per $** | **2.16** | 0.46 | 1.53 | 0.16 |
+
+### Standing rule: skip the VU9P + DDR4 class on sight
+
+BCU1525, BTU9P, VCU1525 and every other VU9P-with-DDR4 mining card is the same
+decision, and these listings recur constantly. **The answer is always no**, at any
+price in the $300-600 band, and it takes no re-evaluation:
+
+- ~38-77 GB/s of DDR4 caps batch-1 decode at **~4-6 tok/s**. It is 12-24x short of
+  the HBM cards on the one axis that governs decode.
+- 64 GB sounds generous but is a mining artifact. It holds the model; it cannot feed
+  the datapath.
+- It carries the **same paid Vivado tier** as the HBM cards, so the board price is
+  the small half of the decision either way.
+
+The one thing the class has going for it: the **SQRL BCU1525 is a VCU1525 clone**, so
+official Xilinx board files, XDC and the SDAccel/Vitis shell largely apply - better
+documented than either orphaned SQRL HBM card. It does not matter. Bandwidth is what
+kills it, not bring-up difficulty. Buy an HBM card instead.
+
+### Jungle Cat is a carrier plus modules, not a card (found 2026-08-21)
+
+This reframes the entry above and was not understood when the table was first written.
+The sole file in `d953i/SQRL_JungleCat/constraints/` is named **`JCCL2-JCM35.xdc`**:
+carrier `JCCL2` + module `JCM35`. The XDC confirms the split in its own comments:
+
+```
+sysclk_clk_p       # System Clock (onboard)    <- on the module
+sysclk_ext_clk_p   # System Clock (on carrier)
+sysclk_ext2_clk_p  # System Clock 2 (on carrier)
+jcm_sync           # "GPIO chained across all modules to BMC"
+uart_rx / uart_tx  # UART to BMC
+```
+
+"Chained across all **modules**" plus a BMC means the carrier holds N mezzanine
+modules and a management controller. SQRL sold the same carriers with Intel Stratix 10
+modules (JCM-M2116, JCM-G28), so **JCM is a module family and JCC is a carrier
+family** - and the Jungle Cat name spans both Intel and Xilinx silicon. The 56.8 MB
+and 920 GB/s in the table are therefore **a carrier populated with two VU35P modules**,
+not one PCB.
+
+**Confirmed for the $425 listing:** carrier populated with two
+`XCVU35P-FSVH2104AAZ`. So the silicon figures hold.
+
+**Open question #1 in the old text is now probably answered: yes, there is an
+inter-FPGA path.** The XDC constrains an Aurora reference clock:
+
+```
+set_property PACKAGE_PIN AD38 [get_ports aur_ref_clk_p]
+# MGT- don't need to set constraints- pinout is handled in the IP
+```
+
+A dedicated Aurora refclk means GTY serial links were designed in, so the modules are
+likely linked directly rather than being independent islands. That argues for the full
+**56.8 MB per coherent model**, not 28.4. Not proof - the XDC does not say what the
+link terminates at - but it is the strongest evidence available.
+
+### The carrier family, and why the XDC has no PCIe (resolved 2026-08-21)
+
+Recovered from archived SQRL store pages (the store domain is dead; these came out of
+the Wayback Machine). SQRL shipped **three** carriers:
+
+| Carrier | Capacity | Modules | Host connectivity |
 |---|---|---|---|
-| **Price** | **$450** | **$500** | **$325** |
-| Device(s) | 2x XCVU35P | 1x XCVU9P | 1x XCVU33P |
-| BRAM | 2x 47.3 Mb | 75.9 Mb | 23.6 Mb |
-| URAM | 2x 180.0 Mb | 270.0 Mb | 90.0 Mb |
-| **On-chip total** | **56.8 MB** | **43.2 MB** | **14.2 MB** |
-| LUTs (derived) | ~1.74M | 1,182,240 | ~440K |
-| DSP slices | 11,904 | 6,840 | 2,976 (derived) |
-| **External memory** | **16 GB HBM2** | 64 GB DDR4 | **8 GB HBM2** |
-| **Ext. bandwidth** | **920 GB/s** | ~38-77 GB/s | **460 GB/s** (see VCCHBM note) |
-| Host interface | PCIe | PCIe | PCIe **x8** |
-| Power | check (SQRL designed 300W/chip) | ~250W | **~155W** |
-| Cooling | direct liquid | water block | passive/liquid variants exist |
-| Ethernet / QSFP | check | check | **none, PCIe only** |
-| Availability | one-off listings | one-off listings | **abundant, lots of 100+** |
-| Board support repo | `d953i/SQRL_JungleCat` (4 commits, 3 boards) | community | **`d953i/SQRL_FK33` (dedicated, `fk33_example.tcl`)** |
-| **MB on-chip per $** | **0.126** | 0.086 | 0.044 |
-| **GB/s per $** | **2.04** | ~0.15 | 1.42 |
+| **JCC4P Rev AB** | 1000W | up to 4, **connected in a high-speed ring** | PCIe, Ethernet, or USB. "Recommended for HBM JCMs" |
+| **JCC2P Rev B** | 1000W | 2, connected at high speed | PCIe, Ethernet, or USB. "Recommended for compute intensive JCMs" |
+| **JCC-Lite (JCC2L)** | 960-1000W | up to 2 | **Ethernet only.** "Requires mining computer or Raspberry Pi on network" |
+
+Module spec from the same pages: **260W TDP, VCC up to 300A continuous** (the Stratix
+GX module was 350W/350A, so the carriers are sized for far more than a VU35P draws).
+
+**This explains the missing PCIe constraints.** The only public constraints file is
+named `JCCL2-JCM35.xdc` - JCC-Lite, 2-slot. It has no `PCIE_PERST` and no PCIe refclk
+because **that carrier has no PCIe**. The file is not incomplete; it is complete for an
+Ethernet-only carrier. TeamRedMiner's platform list says the same thing from the other
+direction: "JC33, JC35, JC13 on **JCC2L/F** carriers".
+
+It also confirms the Aurora finding independently: "4 JCMs connected in a **high-speed
+ring**" on the JCC4P is what `aur_ref_clk_p` is for. The inter-module link is real.
+
+**The bind: you get the XDC or you get PCIe, not both.**
+
+- **Listing is a JCC2L (Lite):** you have the one XDC, but the host path is Ethernet.
+  **None of section 4b transfers** - no XDMA, no BAR-mapped HBM, no PCIe P2P. You would
+  be writing a network stack or driving the carrier from a separate machine on the LAN.
+- **Listing is a JCC2P or JCC4P:** you get PCIe (and on the 4P, a 4-module ring), but
+  **no XDC exists for those carriers**. The carrier-side pins - `sysclk_ext`,
+  `sysclk_ext2`, `jcm_sync`, the BMC UART, fan control - are precisely the ones that
+  would differ between carriers.
+
+Identifying the carrier is therefore not a detail; it decides which half of the problem
+you inherit. **Ask for the carrier silkscreen marking and a photo of the rear bracket:
+RJ45 only means Lite, a PCIe card edge means 2P or 4P.**
+
+### CONFIRMED 2026-08-21: the $425 listing is a JCC2L Lite - Ethernet only, no PCIe
+
+Listing photos show an Ethernet port and nothing else. That resolves the fork above to
+the worse branch, and two further findings make this card a **skip**.
+
+**1. The module has no host data path, only a control path.** The complete set of
+module-to-outside connections in the XDC is:
+
+```
+uart_rx / uart_tx     # to BMC
+IIC (local, to PMIC) + GIIC (global chain)
+jcm_sync              # GPIO chained to BMC
+aur_ref_clk_p         # Aurora MGT refclk
+clocks in, LEDs, fan_ctl / fan_sense, err_vccint
+```
+
+No Ethernet pins, no PCIe pins. **The RJ45 is on the carrier, terminated by the BMC,
+which relays to modules over UART and I2C.** That is why the store copy says "requires
+mining computer or Raspberry Pi on network". For mining this is a sound design - an
+ethash job header is ~80 bytes and a nonce is 8, so host bandwidth of ~zero is fine.
+For anything that has to move weights it is a control channel, not a data channel.
+
+**2. TeamRedMiner never supported the Jungle Cat.** TRM's `FPGA_GUIDE.txt` v1.2 (2022)
+lists Varium C1100, FK33, U50C/ECU50, TH53/55 and Osprey E300 - **no Jungle Cat, no
+JC35, no JCC carrier** - and states it "only communicates to FPGAs via the USB JTAG
+ports available on the boards", which the Lite carrier does not have. The
+`todxx/teamredminer` issue asking how to run JC35 on JCC2L is **still unanswered**.
+The original owner's ethash setup ran on SQRL's proprietary stack (SQRL bitstreams,
+SQRL BMC firmware, SQRL host software), all of which died with the company in 2021.
+**No public programming path for this platform exists.**
+
+**What would still work, and what would not.** Bandwidth is not the blocker for the
+headline experiment: the on-fabric ternary path keeps weights in BRAM/URAM, and
+prompt-in / token-out is a few hundred bytes, which a UART handles trivially - the same
+shape as the current AXU3EG design. The **HBM path dies here**, since loading 13.5 GB
+through a BMC UART is not viable.
+
+**You cannot dodge the load by baking weights into the bitstream.** On UltraScale+,
+**URAM cannot be initialized from the bitstream** the way BRAM can (verify against
+UG573 before relying on this). Of 28.4 MB per module only 47.3 Mb (5.9 MB) is BRAM and
+initializable; the 180 Mb (22.5 MB) of URAM must be written at runtime. At ~100 KB/s
+over a 1 Mbaud UART that is ~4 minutes per module per power cycle - survivable, but a
+real constraint, **and it applies to every card in this document, not just this one.**
+
+**The actual blocker is configuring the FPGA at all.** You need JTAG. The BMC
+presumably drives JTAG to each module (that is how SQRL loaded bitstreams over
+Ethernet), but the protocol is undocumented, the firmware is proprietary, the vendor is
+gone, and nobody has reverse-engineered it. The only escape is a **physical JTAG header
+on the module or carrier** - a 2x7 0.1" Xilinx header or a 2x5 ARM 10-pin. If one is
+present this is hard but tractable; if not, it is silicon that cannot be configured.
+
+**Verdict: skip.** Not because the silicon is wrong - $425 for 2x VU35P and 16 GB of
+HBM is the cheapest fabric per dollar in this document - but because the work would be
+reverse-engineering a dead vendor's BMC rather than building a matvec engine. The FK33
+(already ordered) has USB JTAG, a working `fk33_example.tcl`, and `fk33_jtagaxi.tcl`
+for poking HBM with **no PCIe at all**, and it answers both section 4c experiments. Per
+section 7, owned hardware is Stage 3 anyway, so there is no reason to buy a hard board
+now.
+
+**Hazard: the fan is under bitstream control.**
+
+```
+set_property PACKAGE_PIN G9 [get_ports fan_ctl]
+set_property PULLDOWN TRUE  [get_ports fan_ctl]
+set_property PACKAGE_PIN H9 [get_ports fan_sense]
+```
+
+Fan PWM and fan sense are fabric I/O and `fan_ctl` defaults low. A first-light
+bitstream that does not drive `fan_ctl` can leave cooling off on a module rated at
+260W TDP / 300A VCC. There is an `err_vccint` overtemp/overcurrent input from the PMIC
+(marked "A3 only", so board revisions exist) but it is an input to the fabric, not a
+hardware interlock. **Drive the fan and monitor `err_vccint` in the very first
+design.** This is a burn-the-card-in-minutes failure mode, not a nuisance.
+
+**Speed grade is unknown.** Catalog ordering part numbers for this package are
+`XCVU35P-1FSVH2104E`, `-2FSVH2104E`, `-L2FSVH2104E`, `-3FSVH2104E`. The listing's
+`XCVU35P-FSVH2104AAZ` has **no speed grade in the normal position** and a non-catalog
+`AAZ` suffix, so it is either a package top-mark or a custom SKU. Vivado needs the
+exact part including speed grade to close timing. Get a clear photo of the die
+top-mark, or assume `-1` and treat any better result as upside.
+
+**Rest of the board I/O** (complete, from the XDC): local I2C to the PMIC (voltage
+tuning, same lever as the FK33 `vccint` note), a global I2C chain, a secondary SPI
+flash, 4 discrete LEDs plus an RGB LED, and SPIx4 config at 127.5 MHz with
+`SPI_FALL_EDGE` and bitstream compression - the same fast-config trick the FK33 uses so
+the FPGA is up before PCIe enumeration.
+
+### There is no bring-up documentation, and this was checked exhaustively
+
+Searched 2026-08-21. The negative result is solid, so **do not spend time looking
+again**:
+
+| Source | Result |
+|---|---|
+| Wayback sweep of all `*.squirrelsresearch.com` (874 archived URLs) | **Zero PDFs, zero .zip, zero datasheets.** No Jungle Cat page on the main site at all - only Acorn, BCU1525, CVP-13, FK33 |
+| `support.squirrelsresearch.com` (Freshdesk) | Archived but nearly empty: two categories still carrying template text ("A description of the overall category goes here") and **two articles, both about the Acorn** |
+| `d953i/SQRL_JungleCat` | `README.md` (2 lines) + `constraints/JCCL2-JCM35.xdc`. That is the whole repo |
+| GitHub search (JCM35 / JCCL2 / JungleCat) | No other repositories |
+| Archived store product pages | Marketing blurbs only - but they are the source of the carrier table above, which is the single most useful artifact found |
+
+SQRL's documentation was thin while the company was still trading, and it went
+Chapter 11 in November 2021. **There is no manual to find.** The complete set of
+available material is: the one XDC, the archived store blurbs, and TeamRedMiner's
+`FPGA_GUIDE.txt`.
+
+The entire `d953i/SQRL_JungleCat` repo is two files:
+
+```
+README.md                      (2 lines)
+constraints/JCCL2-JCM35.xdc    (for the Ethernet-only Lite carrier)
+```
+
+No board files, no example block design, no build script, no JTAG-AXI helper. Compare
+`d953i/SQRL_FK33`, which ships `board_files/sqrl_fk33/1.1/`, a working
+`projects/fk33_example.tcl` (XDMA to HBM, 64-bit prefetchable BARs, two `jtag_axi`
+masters) and `scripts/fk33_jtagaxi.tcl`. **That gap is the real cost of the Jungle Cat,
+and it dwarfs the $125 price difference against the FK33.**
 
 **FK33 VCCHBM limitation - REVISED 2026-08-20, less severe than first assessed.**
 The HBM2 voltage regulator is rated for only **20A**, and TeamRedMiner caps the HBM
@@ -161,38 +379,72 @@ cost a decoder in the critical path for only 26% more capacity).
 
 | Card | On-fabric ternary params | INT4 model in external mem |
 |---|---|---|
-| Jungle Cat | **227M** (114M per FPGA if no inter-chip link) | **Full Qwen3.8-27B at INT4 (13.5 GB) fits in 16 GB** |
-| BTU9P | 173M | fits, but DDR4 bandwidth makes it useless for speed |
+| Jungle Cat (2 modules) | **227M** (114M per module if the Aurora link is not usable) | **Full Qwen3.8-27B at INT4 (13.5 GB) fits in 16 GB** |
+| Varium C1100 | 114M | 8 GB holds Qwen3.8-27B at 2-bit (6.72 GB) |
 | FK33 | 57M | 8 GB holds Qwen3.8-27B at 2-bit (6.72 GB) |
+| VU9P/DDR4 class | 173M | fits, but DDR4 bandwidth makes it useless for speed |
 
 ### HBM-path throughput ceilings (batch 1, bandwidth-bound)
 
 | Card | Model | Size | Ceiling | Realistic (~70%) |
 |---|---|---|---|---|
 | Jungle Cat | Qwen3.8-27B INT4 | 13.5 GB | 68 tok/s | ~48 |
+| Varium C1100 | Qwen3.8-27B 2-bit | 6.72 GB | 68 tok/s | ~48 |
 | FK33 | Qwen3.8-27B 2-bit | 6.72 GB | 68 tok/s | ~48 |
-| BTU9P | anything | - | ~4-6 tok/s | DDR4-bound |
+| VU9P/DDR4 class | anything | - | ~4-6 tok/s | DDR4-bound |
 
-Both HBM cards land at roughly the same ceiling for their best-fit quantization,
-which is comparable to the current 2x3090 rig but at a fraction of the power.
+All three HBM cards land at roughly the same ceiling for their best-fit quantization,
+which is comparable to the current 2x3090 rig but at a fraction of the power. The
+ceiling is set by bandwidth, so the Jungle Cat's extra silicon buys **capacity and
+compute headroom, not decode speed**, once you are streaming from HBM.
 
 ---
 
-## 4. Verdict on the three cards
+## 4. Verdict on the cards
 
-**Jungle Cat at $450 is the best buy.** Most on-chip SRAM, most LUTs, most DSPs,
-HBM instead of DDR4, and cheapest per MB and per GB/s. It is the only card that can
-run **both** experiments: weight-stationary on fabric, and full Qwen3.8-27B at INT4
-out of HBM for a perf/watt comparison against the 3090s.
+**Revised 2026-08-21.** The earlier verdict called the Jungle Cat "the best buy" on
+per-dollar silicon alone. That still holds on the metrics, but the bring-up cost was
+badly underestimated, and a fourth candidate now exists.
 
-**FK33 at $325 is the best fleet candidate.** Single die (no inter-FPGA problem
-within a card), the best-documented of the three (dedicated `d953i/SQRL_FK33` repo
-with example designs and a build script), lowest power at ~155W, and critically it
-is **abundant** - it sells in lots of 100+, whereas the other two are one-off
-listings. A fabric needs N identical cards and one bring-up effort, so **you cannot
-build a fleet from a card you can only buy once.** Against it: 14.2 MB is only ~57M
-ternary params per card, and the VCCHBM power limitation above directly threatens
-the HBM path.
+**Jungle Cat at $425 has the best silicon per dollar and the worst bring-up story.**
+Most on-chip SRAM, most LUTs, most DSPs, 920 GB/s, and cheapest per MB and per GB/s by
+a wide margin. It is the only option that can run **both** experiments: weight-stationary
+on fabric, and full Qwen3.8-27B at INT4 out of HBM for a perf/watt comparison against
+the 3090s. Against it: a two-line README and a single XDC, a dead vendor, an
+**unconfirmed host interface** that may not be PCIe at all, an unknown speed grade, a
+fan under bitstream control at 260W per module, and a carrier/module architecture with
+no public documentation. This is the highest-ceiling and highest-risk option, and it
+is not a first board.
+
+**FK33 at $300 is the best fleet candidate.** Single die (no inter-FPGA problem
+within a card), the best-documented of the SQRL cards (dedicated `d953i/SQRL_FK33` repo
+with example designs and a build script), lowest power of the mining cards at ~155W,
+and critically it is **abundant** - it sells in lots of 100+, whereas the Jungle Cat is
+a one-off listing. A fabric needs N identical cards and one bring-up effort, so **you
+cannot build a fleet from a card you can only buy once.** Against it: 14.2 MB is only
+~57M ternary params per card, and the VCCHBM power limitation above directly threatens
+the HBM path. **One is already ordered (2026-08-19); see section 4c.**
+
+**Varium C1100 at ~$1,000 is the low-risk option, and the case for it is stronger
+than the price suggests.** Same VU35P-class silicon as one Jungle Cat module
+(`XCU55N-FSVH2892-2L-E`, 872K LUTs, 5,952 DSPs, 28.4 MB on-chip, 8 GB HBM2 at
+460 GB/s), but as an official AMD product with a datasheet (DS1003), board files and
+XRT support. Three things it has that no mining card does:
+
+1. **2x QSFP28 (8x 25 Gb/s).** Section 4b concluded PCIe P2P is workable but needs a
+   PCIe switch and ACS overrides, while noting "QSFP/Aurora would still be lower
+   latency and avoids the switch requirement". The C1100 has exactly that, natively,
+   with documented Aurora IP behind it. It removes the single load-bearing assumption
+   of the whole fleet plan.
+2. **75W max, passive, single-slot HHHL.** It drops into the one free chipset x4 slot
+   on this workstation with no power or cooling project attached. Compare 155W (FK33)
+   or 260W per module (Jungle Cat, liquid).
+3. **A vendor that still exists.** Documentation, errata, forum answers.
+
+Against it: 2-3x the price per card, half the on-chip memory of a Jungle Cat, and its
+device does not always appear in stock Vivado part lists without the board file. Note
+also that the free one-year Vivado Pro (Alveo tier) subscription goes with a **new**
+purchase, not a used card.
 
 ### Correction: PCIe-only does NOT prevent a multi-card fabric
 
@@ -211,22 +463,30 @@ slots. At x8 per card, 8 cards is 64 lanes.
 QSFP/Aurora would still be lower latency and avoids the switch requirement, so it
 remains preferable where available.
 
-**BTU9P at $500 is the weakest.** Its 64 GB of DDR4 sounds generous but at
-~38-77 GB/s it is useless for inference, and it costs more than the Jungle Cat for
-less of everything that matters.
+**The VU9P/DDR4 class is the weakest and needs no further evaluation.** See the
+standing rule in section 3. 64 GB of DDR4 sounds generous but at ~38-77 GB/s it is
+useless for inference, and it costs more than the Jungle Cat for less of everything
+that matters.
 
-### Open questions to resolve before buying
+### Open questions to resolve before buying (updated 2026-08-21)
 
-1. **Jungle Cat: is there a direct FPGA-to-FPGA interconnect?** Mining is
-   embarrassingly parallel, so mining cards usually leave each FPGA independent.
-   If there is no chip-to-chip link, the on-fabric ceiling is **28.4 MB per coherent
-   model (114M ternary params)**, not 56.8 MB, because layer handoff would route
-   through the PCIe switch and host at ~10-20 us per crossing. Check the XDC in
-   `github.com/d953i/SQRL_JungleCat` (covers JC33/JC35/JC13).
-2. **Production silicon or engineering sample?** Some mining cards shipped ES parts;
+1. ~~**Jungle Cat: is there a direct FPGA-to-FPGA interconnect?**~~ **Probably yes.**
+   The XDC constrains an Aurora reference clock (`aur_ref_clk_p`, AD38), so GTY serial
+   links were designed in. Treat the on-fabric ceiling as **56.8 MB**, with 28.4 MB as
+   the downside case if the link turns out to terminate somewhere useless.
+2. ~~**Jungle Cat: which carrier is it?**~~ **ANSWERED: JCC2L Lite, Ethernet only.**
+   Confirmed from listing photos 2026-08-21. This makes the card a skip - see the
+   subsection in section 3. The remaining question, if anyone revisits it, is whether a
+   **physical JTAG header** exists on the module or carrier; without one the FPGA cannot
+   be configured at all.
+3. **Jungle Cat: what speed grade?** `XCVU35P-FSVH2104AAZ` is not a catalog ordering
+   part number and carries no speed grade. Vivado needs it to close timing.
+4. **Production silicon or engineering sample?** Some mining cards shipped ES parts;
    ES errata will hurt during timing closure.
-3. **QSFP present and populated?** Determines whether multi-board scaling is possible
-   at all. FK33 is already ruled out (PCIe only).
+5. **QSFP present and populated?** Determines whether multi-board scaling is possible
+   without a PCIe switch. FK33 is already ruled out (PCIe only). Jungle Cat has an
+   Aurora refclk but **no QSFP connector has been confirmed**. The Varium C1100 is the
+   only candidate with QSFP28 confirmed from a datasheet.
 
 ### Vendor risk
 
@@ -238,9 +498,10 @@ JTAG chain, and HBM controller config. This is the single largest practical risk
 
 ---
 
-### Fleet option: 8x FK33 at $2,600
+### Fleet option: 8x FK33 at $2,400
 
-FK33 abundance makes a fleet realistic in a way the other two cards do not.
+FK33 abundance makes a fleet realistic in a way the other cards do not. (Price updated
+2026-08-21: $300/card, so $2,400 not $2,600.)
 
 | | Value |
 |---|---|
@@ -265,7 +526,7 @@ is **800-1,600 tok/s**. This is the publishable result.
 
 Recommended fleet entry: **buy two FK33s first and prove PCIe P2P between them**
 before committing to eight. That de-risks the single assumption the whole fabric
-rests on, for $650.
+rests on, for **$600**.
 
 ---
 
@@ -507,18 +768,41 @@ not a post-hoc quantization of Qwen3.8-27B.
 
 ---
 
-## 6. The hidden cost: Vivado ML Enterprise
+## 6. The hidden cost: a paid Vivado tier
 
-**All three cards are Virtex UltraScale+, which the free Vivado ML Standard edition
-does not support.** Enterprise is ~**$2,995/yr node-locked** (tier quoted from
-$4,395). The AXU3EG (ZU3EG) is free-tier, so this is a new cost.
+**REWRITTEN 2026-08-21. The old figure in this section ($2,995/yr ML Enterprise) is
+obsolete.** AMD restructured Vivado licensing at the **2026.1** release, replacing
+ML Standard / ML Enterprise with five tiers:
 
-This is structural, not listing-specific: every AMD device with more than ~40 MB of
-on-chip SRAM is Virtex UltraScale+ or Versal. Intel is the same (Quartus Lite covers
+| Tier | Model | Covers |
+|---|---|---|
+| **Basic** | free, annual renewal | 7 Series, Spartan US+, Artix US+, selected Zynq US+ MPSoC, selected Kintex US/US+, Kria |
+| **Core** | paid subscription, **~$1,200-1,800/yr** | adds UltraScale / **UltraScale+**, full simulation, full ChipScope |
+| **Pro** | paid subscription | superset of Core; the Alveo-tier bundle is a Pro variant |
+| **Enterprise** | perpetual | |
+| **Gold** | perpetual + extended support | |
+
+**Every card in section 3 is Virtex UltraScale+, which starts at Core, not Enterprise.**
+So the license line is roughly **half** what this document previously assumed. The
+AXU3EG (ZU3EG) remains free-tier.
+
+This is still structural, not listing-specific: every AMD device with more than ~40 MB
+of on-chip SRAM is Virtex UltraScale+ or Versal. Intel is the same (Quartus Lite covers
 only small devices).
 
 Because the license is a **fixed** cost, it argues for buying several cards at once
 rather than one, if the project proceeds at all.
+
+**Two riders, both worth tracking:**
+
+- **Alveo/Varium cards come with a free one-year Vivado Pro (Alveo tier) subscription**
+  that covers all Alveo devices. It goes with a **new** purchase, so a used card off
+  eBay does not carry it. For a new Varium C1100 this effectively folds the first
+  year's license into the card price, which narrows the gap against the mining cards
+  considerably.
+- **Reporting suggests future free-tier releases are becoming Windows-only.** That does
+  not touch the paid tiers, but it would affect the **current free Linux flow used for
+  the AXU3EG work**. Verify before upgrading Vivado on this workstation.
 
 ### Open source does not cover these devices
 
@@ -575,19 +859,28 @@ transfer directly.
 4. **Stage 4: multi-card**, only if stage 2 efficiency justifies it and the
    interconnect question is resolved favourably.
 
-### Which card, by intent
+### Which card, by intent (revised 2026-08-21)
 
-- **One card to learn on: Jungle Cat ($450).** 4x the fabric, 2x the HBM bandwidth,
-  no known VCCHBM problem. Best single device by a wide margin.
-- **A fabric: standardize on FK33 ($325).** Availability is the deciding factor -
+- **A fabric: standardize on FK33 ($300).** Availability is the deciding factor -
   Jungle Cats are one-off listings, FK33s move in lots of 100. Also the best
-  documented and the lowest power. Buy **two first** and prove PCIe P2P between them
-  before committing to eight.
-- **BTU9P: skip.** More expensive than the Jungle Cat for less of everything.
+  documented of the mining cards and the lowest power. Buy **two first** and prove
+  PCIe P2P between them before committing to eight. One is already ordered.
+- **Lowest-risk single board: Varium C1100 (~$1,000).** Official product, DS1003,
+  board files, XRT, 2x QSFP28, 75W passive single-slot, and a first-year Vivado Pro
+  (Alveo tier) subscription if bought new. The QSFP28 ports directly retire the PCIe
+  switch / ACS-override assumption in section 4b.
+- **Highest ceiling, highest risk: Jungle Cat ($425).** 4x the fabric of an FK33 and
+  2x the HBM bandwidth, no known VCCHBM problem. But: one XDC and nothing else, a
+  bankrupt vendor, an **unconfirmed host interface**, an unknown speed grade, and a
+  fan under bitstream control at 260W per module. **Do not make this the first board.**
+- **VU9P/DDR4 class: skip on sight.** See the standing rule in section 3.
 
-Note that at this point the board price is nearly noise: all three carry the same
-$2,995/yr license, so a $325 FK33 is a $3,325 decision and a $450 Jungle Cat is a
-$3,445 decision. **Pick on capability and availability, not sticker price.**
+Note that the board price is no longer quite noise, but it is still the small half of
+the decision: a Core-tier license at ~$1,200-1,800/yr means a $300 FK33 is a
+~$1,500-2,100 decision and a $425 Jungle Cat is a ~$1,625-2,225 decision. **Pick on
+capability, documentation and availability, not sticker price.** The one case where
+sticker price flips the ranking is the Varium C1100, whose bundled first-year Alveo-tier
+subscription can offset most of its premium if bought new.
 
 Buy now regardless of timing - orphaned mining stock does not get restocked - but do
 not let a purchase start the clock on a license before stage 1 is done.
@@ -608,7 +901,10 @@ training on the 2x3090 rig, is an open question.
 - [DS890 UltraScale Architecture Product Overview](https://www.mouser.com/datasheet/2/903/ds890_ultrascale_overview-1591529.pdf)
 - [Virtex UltraScale+ HBM family](https://www.amd.com/en/products/adaptive-socs-and-fpgas/fpga/virtex-ultrascale-plus-hbm.html)
 - [XCVU35P at DigiKey](https://www.digikey.com/en/products/detail/amd-xilinx/XCVU35P-1FSVH2892E/10445746)
-- [SQRL_JungleCat board files](https://github.com/d953i/SQRL_JungleCat)
+- [SQRL_JungleCat board files](https://github.com/d953i/SQRL_JungleCat) (the whole repo is a README and one XDC)
+- [JCCL2-JCM35.xdc](https://raw.githubusercontent.com/d953i/SQRL_JungleCat/master/constraints/JCCL2-JCM35.xdc) (carrier/module split, Aurora refclk, fan control, no PCIe constraints)
+- [SQRL JCM-M2116 / JCM-G28 Intel Stratix modules](https://store.squirrelsresearch.com/jcm-m2116/) (**source of the JCC4P / JCC2P / JCC-Lite carrier table and the 260W/300A module spec**; store domain is dead, recovered via Wayback)
+- [teamredminer issue #738](https://github.com/todxx/teamredminer/issues/738) ("JC35 on JCC2L carriers")
 - [SQRL_FK33 board files](https://github.com/d953i/SQRL_FK33) (default branch `Vivado_2022_2`)
 - [PG194 AXI Bridge AXIBAR2PCIEBAR registers](https://docs.amd.com/r/en-US/pg194-axi-bridge-pcie-gen3/AXI-Base-Address-Translation-Configuration-Registers-Offset-0x208-0x234)
 - [Understanding the PCIe-to-AXI bridge (AXI_BARS vs PCI_BARS)](https://iriscores.com/2021/07/14/understanding-pcie-to-axi-bridge/)
@@ -617,10 +913,15 @@ training on the 2x3090 rig, is an open question.
 - [Vitis p2p_fpga2fpga example (the slow path, avoid)](https://xilinx.github.io/Vitis_Accel_Examples/2022.1/html/p2p_fpga2fpga.html)
 - [Broadcom PCIe switches](https://www.broadcom.com/products/pcie-switches-retimers/pcie-switches)
 - [FK33 specs](https://www.hashrate.no/fpgas/FK33/specs)
-- [TeamRedMiner FPGA guide](https://github.com/todxx/teamredminer/blob/master/doc/FPGA_GUIDE.txt) (VCCHBM 20A / OC range, USB JTAG, voltage tuning)
+- [TeamRedMiner FPGA guide](https://github.com/todxx/teamredminer/blob/master/doc/FPGA_GUIDE.txt) (VCCHBM 20A / OC range, USB JTAG, voltage tuning; **supported list is C1100 / FK33 / U50C / TH53-55 / Osprey E300 - the Jungle Cat is absent**)
 - [SQRL Chapter 11](https://www.bankruptcyobserver.com/bankruptcy-case/SQUIRRELS-RESEARCH-LABS)
 - [Vivado edition device support](https://pcbsync.com/xilinx-vivado-editions/)
 - [Vivado licensing](https://www.xilinx.com/products/design-tools/vivado/vivado-ml-buy.html)
+- [Vivado 2026.1 licensing tiers](https://bard0.com/insights/vivado-2026-1-licensing.html) (Basic/Core/Pro/Enterprise/Gold; Virtex US+ starts at Core)
+- [AMD Vivado licensing options](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado/vivado-licensing-options.html)
+- [Varium C1100 product brief](https://www.xilinx.com/content/dam/xilinx/publications/product-briefs/varium-c1100-product-brief.pdf)
+- [Varium C1100 data sheet DS1003](https://docs.amd.com/v/u/en-US/ds1003-varium-c1100)
+- [Varium C1100 at DigiKey](https://www.digikey.com/en/products/detail/amd/V-C1100-P00G-PQ-G/15861191)
 - [F4PGA supported architectures](https://symbiflow.readthedocs.io/en/latest/status.html)
 - [Project U-Ray](https://prjuray.readthedocs.io/en/latest/)
 - [nextpnr-xilinx](https://github.com/gatecat/nextpnr-xilinx)
