@@ -225,7 +225,8 @@ entity matvec_int4 is
     n_cols    : in  integer;                        -- K, TRUE value (see 6.3)
     w_exp     : in  integer;                        -- per-matrix weight exponent
     out_shift : in  integer;                        -- output requant shift (7.6)
-    out_mode  : in  std_logic;                      -- '0' = BFP, '1' = raw int32
+    out_mode  : in  std_logic_vector(1 downto 0);   -- "00" BFP, "01" raw,
+                                                    -- "10" partial (14.2) int32
     -- activation read port: BLOCK address, not element address (see 7.8)
     x_rbaddr  : out std_logic_vector(clog2(MAXCOLS/BLOCK)-1 downto 0);
     x_rdata   : in  std_logic_vector(BLOCK*16-1 downto 0);
@@ -241,6 +242,9 @@ entity matvec_int4 is
     y_exp     : out integer;
     done      : out std_logic;                      -- one-cycle pulse
     err       : out std_logic;                      -- job aborted, see 7.6
+    sat_event : out std_logic;                      -- STICKY: sat32 fired at
+                                                    -- least once this job.
+                                                    -- Cleared at start. See 14.2.
     -- AXI4 master read, NPORTS_W + NPORTS_S channels, standard AR/R signal set
     -- per channel. Enumerated in the implementation plan, not here.
     ...
@@ -259,8 +263,14 @@ computed. That requires buffering int32 results, impossible at `M = 248,320`
 
 | Mode | Buffering | `y_addr` | Used by |
 |---|---|---|---|
-| BFP (`'0'`) | int32 into the output buffer, then normalize to int16 + shared exp | valid row index | all layer matvecs, `M <= MAXROWS_BFP` |
-| Raw (`'1'`) | none, emit int32 per row as computed | **undefined, must be ignored** | lm_head |
+| BFP (`"00"`) | int32 into the output buffer, then normalize to int16 + shared exp | valid row index | all non-sharded layer matvecs, `M <= MAXROWS_BFP` |
+| Raw (`"01"`) | none, emit int32 per row as computed | **undefined, must be ignored** | lm_head |
+| **Partial (`"10"`)** | none, emit int32 per row as computed | **valid row index** (unlike raw) | **row-parallel shards, §14.2** |
+
+Partial mode emits like raw but **with valid row addresses and row masking**,
+because its consumer indexes the result for reduction. `n_rows > MAXROWS_BFP` is
+legal in partial mode (no output buffer is used), but the consumer's buffer
+bound applies instead.
 
 In raw mode `M` may exceed `MAXROWS_BFP`, so `y_addr` cannot represent the row
 index and is not driven meaningfully. `sampler_stream` consumes `y_data` on
@@ -312,9 +322,47 @@ of each row. Test 9 exercises this.
 Weights are packed in exactly the order the array consumes them, so address
 generation is a counter and every read is a long sequential burst.
 
+**Header, byte-pinned (NORMATIVE, added 2026-08-22).** Rev 5 listed field names
+only -- no widths, order, endianness, magic value, or signedness -- so a packer
+author and the PS parser would each have guessed. All fields are
+**little-endian**, the header is **4 KB** total (so the first sub-region is
+naturally aligned), and unused bytes are **0x00**:
+
+| Offset | Width | Field |
+|---|---|---|
+| 0x000 | u32 | `magic` = **0x4D563449** ("MV4I") |
+| 0x004 | u16 | `version` = 1 |
+| 0x006 | u16 | `flags` (bit 0: codebook present; others reserved, 0) |
+| 0x008 | u32 | `M` (rows) |
+| 0x00C | u32 | `K` (true columns, see 6.3) |
+| 0x010 | **i32** | `w_exp` -- **signed**, two's complement |
+| 0x014 | i32 | `out_shift` (0..40, §7.4) |
+| 0x018 | u16 | `ROWS_IF` the file was packed for |
+| 0x01A | u16 | `NPORTS_W` the file was packed for |
+| 0x01C | u16 | `BLOCK` (32) |
+| 0x01E | u16 | reserved (0) |
+| 0x020 | **16 x i8** | **`codebook[0..15]`** -- see below |
+| 0x030 | u32 | `scale_offset` |
+| 0x034 | u32 | `n_scale_sub` (scale sub-region count) |
+| 0x038 | **u64[]** | `w_sub_offset[0 .. NPORTS_W-1]` -- **64-bit** |
+| ... | u64[] | `s_sub_offset[0 .. n_scale_sub-1]` |
+
+**The codebook travels IN THE FILE.** Rev 5 made it runtime-loadable and
+per-scheme (§6.1) and had the PS drive `cb_we`, but gave it no carriage, so the
+PS could not know what to load without out-of-band agreement. It is now a header
+field, and `flags` bit 0 asserts its presence.
+
+**Offsets are 64-bit.** Rev 5 deferred widening "at v4.0", but under §14's ladder
+**v3.0 is already 2x FK33 with a 7.57 GB per-card shard**, so 32-bit bases fail
+at the first rung, not the second.
+
+**Pad fill is 0x00** everywhere -- padded rows, padded blocks, and sub-region
+tails. Outputs do not depend on it (§6.2 masks), but pinning it makes two
+conforming packers produce **byte-identical files**, which is the cheapest
+possible cross-implementation check.
+
 ```
-header        : magic, M, K, w_exp, out_shift, ROWS_IF, NPORTS_W,
-                w_sub_offset[0 .. NPORTS_W-1], scale_offset
+header        : 4 KB, layout above
 weight region : for tile t in ceil(M/ROWS_IF):
                   for block b in 0..NB-1:
                     for r in 0..ROWS_IF-1:
@@ -773,11 +821,14 @@ ambiguous between two valid readings.
 | LUT, adder trees | ~3,100 | 70,560 |
 | LUT, codebook LUTRAM | ~1,024 | (SLICEM) |
 | LUT, control/addressing | ~2,000 est. | |
-| BRAM36, activations | 8 | 216 |
+| BRAM36, activations (`act_mem_striped`, 544 words x 64 b per bank exceeds SDP-72's 512 depth, so **2 tiles per bank**) | **16** | 216 |
 | BRAM36, weight FIFOs (4 x 8 KB, 128b wide) | 8 | |
 | BRAM36, scale FIFO | ~2 | |
-| BRAM36, BFP output buffer (4096 x 32b) | 4 | |
-| **BRAM36 total** | **~22** | 216 |
+| BRAM36, BFP output buffer (**17408 x 32 b = 557 Kb**) | **17** | |
+| **BRAM36 total** | **~43** at 27B generics | 216 |
+
+Rev 5's BRAM row was computed at 0.8B generics and is ~2x low under §14.1.
+Corrected above; still comfortable on either device.
 
 The lane-split reassembly of §7.7 is what keeps this at ~22. Rev 3's
 width-converting FIFOs would have cost ~32 BRAM36 for the weight path alone
@@ -823,15 +874,15 @@ and both be wrong.
 |---|---|---|
 | 1 | Dequant | all 16 codebook indices produce the correct int8 |
 | 2 | Single MAC | random weight/activation pairs against C |
-| 3 | Single row | K=32 (one block), then K=3584 (112 blocks) |
+| 3 | Single row | K=32 (one block), then **K=17408 (544 blocks)** |
 | 4 | Small matvec | M=8, K=32, all outputs |
-| 5 | Real shapes | 1024->3584, 3584->1024, 1024->4096, and an lm_head slice |
+| 5 | Real shapes | **5120->17408, 17408->5120, 5120->12288**, and an lm_head slice (5120->248320) |
 | 6 | Backpressure | randomized `valid`/`ready` stalls must not change results |
 | 7 | BFP mode | shared-exponent normalization matches `bfp_pack` semantics |
 | 8 | Raw mode | int32 logit stream matches C |
 | 9 | Column masking | `K` not a multiple of `BLOCK` |
 | 10 | **Row masking** | `M` not a multiple of `ROWS_IF` suppresses padded rows |
-| 11 | **Accumulator bound** | adversarial input: all weights at codebook extremes (+/-127), all activations at **-32768** (not +/-32767: -32768 is the true corner and is reachable because `bfp_pack` saturates there), `scale = 32767`, K=3584. Must stay within s28/s29/s48 and match C |
+| 11 | **Accumulator bound** | adversarial input: all weights at codebook extremes (+/-127), all activations at **-32768** (not +/-32767: -32768 is the true corner and is reachable because `bfp_pack` saturates there), `scale = 32767`, **K=17408**. Must stay within s28/s29/s48 and match C |
 | 12 | **Saturation** | `out_shift` too small drives `sat32`, matching C |
 
 Tests 6, 10, 11 and 12 are not optional. Test 11 in particular is the direct
@@ -855,7 +906,7 @@ reference.
 ## 11. Acceptance criteria for v2.0
 
 - All twelve GHDL test levels pass bit-exact against the C reference
-- A real FFN-shaped matvec (1024 -> 3584) is bit-exact **on hardware**
+- A real FFN-shaped matvec (**5120 -> 17408**) is bit-exact **on hardware**
 - **Sustained bandwidth measured and reported as a percentage of DDR peak** - the
   number every projection in `docs/fpga-hardware-recon.md` depends on
 - Resource report at `ROWS_IF = 4`, compared against the §7.9 budget
@@ -968,14 +1019,55 @@ cross-card reduction. So a third mode is required:
 | `"01"` raw | as §7.4 |
 | **`"10"` partial** | `y_data[r] = sat32(round_shift(acc[r], out_shift))`, **no BFP normalization**, `y_exp = w_exp + x_exp - out_shift` |
 
-**All cards participating in one row-parallel matvec MUST be programmed with the
-same `out_shift`.** That makes their partials directly summable as s32 integers
-with no per-card alignment, which is what lets subsystem E's collective be a
-plain integer add. The final BFP pack happens once, after the reduction, on the
-summed result.
+**CORRECTED 2026-08-22 after subsystem E's review. The original claim here was
+wrong.** Rev 5 asserted that programming all cards with the same `out_shift`
+makes their partials "directly summable as plain s32 integers with no per-card
+alignment". It does not.
 
-`out_shift` is chosen offline per matrix as before, but its calibration must now
-account for the **full** K range, not one card's slice, or the partials saturate.
+The grid is `2^-(w_exp + x_exp - out_shift)`. Equal `out_shift` pins **one of
+three terms**:
+
+| Term | Per-card equality |
+|---|---|
+| `out_shift` | controllable, set by the PS |
+| `w_exp` | controllable by the packer per shard |
+| **`x_exp`** | **NOT controllable** |
+
+In every row-parallel matvec, `x` is the **column-split output of the preceding
+op**, BFP-packed *locally* on each card from that card's own `amax` scan
+(`bfp_pack.vhd:136-138`). So `x_exp` is data-dependent and differs per card.
+This is the rule §8 of this document already states and C §2.1.2 states
+explicitly -- exponent chains are per-invocation and not derivable from
+interface ports -- and rev 5 violated it here.
+
+**Corrected contract.** Partials are **not** on a shared grid and are **not**
+directly summable:
+
+1. Each card's partial carries **its own `y_exp`**, which the existing `y_exp`
+   output port already provides. The consumer must transport it alongside the
+   payload.
+2. The consumer aligns to the **minimum** `y_exp` across the N partials before
+   summing, right-shifting the others -- the same min-reference, right-shift-only
+   policy as C §2.1.4 and B §2.1.4.
+3. The reduction is therefore **not exact**: alignment is a floor-mode rounding
+   site, and the accumulator bound must be derived post-alignment.
+
+Equal `out_shift` remains **recommended** (it minimises the exponent spread and
+so the alignment loss) but is no longer a correctness precondition, and a
+consumer that checks only `out_shift` is checking the wrong variable.
+
+`out_shift` calibration must still account for the **full** K range, not one
+card's slice. Note also that **`sat32` on a partial is silent**: under
+cancellation a card's K-slice partial can exceed the final result's magnitude and
+clip with no error raised, poisoning every card's output undetectably. Either the
+calibration must carry headroom against per-slice magnitude, or the transport
+must carry a saturation-occurred flag. **RESOLVED 2026-08-22: detection belongs to A, not the consumer.** A consumer
+sees a clean s32 and cannot distinguish a genuine 2^31-1 from a clipped value,
+so only A's requant stage can know. A therefore exports a **sticky `sat_event`**
+flag, set whenever `sat32` fires, cleared at `start`, and valid with `done`. It
+costs one comparator. The C reference counts saturation events so the packer's
+`out_shift` calibration can be validated offline, and headroom calibration
+remains policy layered on top of the flag rather than a substitute for it.
 
 ### 14.3 Sharding pattern (Megatron-style)
 
@@ -990,3 +1082,53 @@ account for the **full** K range, not one card's slice, or the partials saturate
 
 Two all-reduces per layer, 64 layers = **128 collectives per token**. Subsystem
 E owns them.
+
+### 14.4 The AXU3EG validation build (NORMATIVE for `v2.0`)
+
+Subsystem A alone is the only rung that runs on hardware already owned, on the
+**free** Vivado tier. This is the exact configuration:
+
+| Generic | Value |
+|---|---|
+| `ROWS_IF` | **4** |
+| `NPORTS_W` / `NPORTS_S` | **4** / 1 |
+| `AXI_DW` | 128 |
+| `MAXCOLS` / `MAXROWS_BFP` | 17408 / 17408 |
+| Clock | 200 MHz |
+
+Resources: **136 of 360 DSP**, ~43 of 216 BRAM36, ~6-7K LUT. Single 27B tensors
+fit the board's 4 GB PS DDR4 -- the largest layer matrix is 50 MB, and lm_head at
+715 MB fits whole.
+
+**This is also the only pack format §6.4-6.5 fully specify** (see the FK33 gap
+below), so the packer can be written and tested against it today.
+
+**Cheapest possible proof of §14.2 before any FK33 exists:** run the same matrix
+as (a) one full-K job and (b) two half-K jobs in partial mode, align the two
+partials in software to the minimum `y_exp`, sum, and compare. That validates the
+partial-sum contract, the per-card `y_exp` correction and the `sat_event` flag on
+a single card with no interconnect at all.
+
+### 14.5 OPEN: the FK33 pack format is undefined at `ROWS_IF=80`
+
+**This blocks FK33 packing only; the AXU3EG path above is unaffected.**
+
+§6.5's invariant `NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4` gives **80 lanes** of
+128 bits at `ROWS_IF=80`. But §13 budgets **27 physical HBM ports**, and
+`27 x 256 b` at the 300 MHz core clock delivers 6,912 bits/cycle against the
+10,240 required. **No assignment satisfies both.** §7.7's architecture -- one FIFO
+per lane, one physical port per FIFO, all popped concurrently -- therefore does
+not transfer to HBM.
+
+What the resolution must contain, deferred until the card is in hand and the
+HBM AXI behaviour can be measured rather than assumed:
+
+1. **Decouple `NPORTS_W` from physical AXI channels.** It becomes a *lane* count;
+   ~3 lanes multiplex onto each physical port, needing a port-to-lane scheduler
+   and more FIFOs than ports.
+2. The **scale region needs multiple sub-regions** too: `80 x 16 = 1,280`
+   bits/cycle against §7.7's single dedicated scale port. The header already
+   carries `n_scale_sub` and `s_sub_offset[]` for this.
+3. The HBM AXI clock (~450 MHz) is **not** the core clock (~300 MHz), so the
+   lockstep concurrent pop of §7.7 needs a CDC discipline that does not exist in
+   the DDR4 design.
