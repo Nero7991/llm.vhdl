@@ -129,13 +129,23 @@ def quantize(W: np.ndarray, cb: np.ndarray, row_chunk: int = 4096):
     idx_out = np.zeros((M, NB, BLOCK), dtype=np.uint8)
     scl_out = np.zeros((M, NB), dtype=np.uint16)
 
+    # spec 6.4 pins pad fill to 0x00, and the least-squares search must not be
+    # biased by padding.  Zero-padded targets quantize to searchsorted(mids,0)=8
+    # (codebook value 1, nibble 0x8), not 0 -- so without this the packer emits
+    # 0x88 bytes in the final block of any K % 32 != 0 tensor, defeating the
+    # byte-identical-files property 6.4 exists to provide, and the pad terms
+    # skew the scale chosen for the real weights sharing that block.
+    valid = np.ones((NB, BLOCK), dtype=np.float32)
+    valid.reshape(-1)[K:] = 0.0
+    pad3 = np.broadcast_to((valid == 0.0)[None, :, :], (1, NB, BLOCK))
+
     for r0 in range(0, M, row_chunk):                    # bound peak memory
         r1 = min(M, r0 + row_chunk)
         Wp = np.zeros((r1 - r0, NB * BLOCK), dtype=np.float32)  # PAD FILL = 0
         Wp[:, :K] = W[r0:r1]
         tgt = Wp.reshape(r1 - r0, NB, BLOCK) * np.float32(2.0 ** w_exp)
 
-        amax = np.abs(tgt).max(axis=2)                   # (rows, NB)
+        amax = (np.abs(tgt) * valid[None]).max(axis=2)   # (rows, NB), pads excluded
         base = amax * np.float32(32768.0 / cb_amax)
 
         best_err = np.full(amax.shape, np.inf, dtype=np.float32)
@@ -148,7 +158,7 @@ def quantize(W: np.ndarray, cb: np.ndarray, row_chunk: int = 4096):
             s_safe = np.where(s > 0.0, s, np.float32(1.0))[:, :, None]
             q = tgt / s_safe
             ix = np.searchsorted(mids, q).astype(np.uint8)
-            err = ((cbf[ix] * s_safe - tgt) ** 2).sum(axis=2)
+            err = (((cbf[ix] * s_safe - tgt) ** 2) * valid[None]).sum(axis=2)
             win = err < best_err
             best_err = np.where(win, err, best_err)
             best_scl = np.where(win, sc, best_scl)
@@ -156,6 +166,7 @@ def quantize(W: np.ndarray, cb: np.ndarray, row_chunk: int = 4096):
             best_idx = np.where(w3, ix, best_idx)
 
         best_idx[np.broadcast_to((best_scl == 0)[:, :, None], best_idx.shape)] = 0
+        best_idx[np.broadcast_to(pad3, best_idx.shape)] = 0      # 6.4 pad fill
         idx_out[r0:r1] = best_idx
         scl_out[r0:r1] = best_scl
 
@@ -315,13 +326,14 @@ def crosscheck(path):
     contrib = (partial * scale) >> 15
     acc = contrib.sum(axis=1)
 
-    y = np.clip(np.array([round_shift(int(v), out_shift) for v in acc]),
-                -2**31, 2**31 - 1)
+    raw = np.array([round_shift(int(v), out_shift) for v in acc], dtype=object)
+    sat = int(any(v > 2**31 - 1 or v < -2**31 for v in raw))
+    y = np.array([min(max(int(v), -2**31), 2**31 - 1) for v in raw], dtype=np.int64)
     amax = int(np.abs(y).max())
     nsh = max(0, (amax.bit_length() - 1 if amax else 0) - 14)
     mant = np.clip(np.array([round_shift(int(v), nsh) for v in y]), -32768, 32767)
     print(f"M={M} K={K} w_exp={w_exp} out_shift={out_shift} ns={nsh} "
-          f"y_exp={w_exp - out_shift - nsh} mant_sum={int(mant.sum())} sat=0")
+          f"y_exp={w_exp - out_shift - nsh} mant_sum={int(mant.sum())} sat={sat}")
 
 
 # ---------------------------------------------------------------------- main

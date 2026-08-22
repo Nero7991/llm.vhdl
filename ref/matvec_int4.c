@@ -27,6 +27,14 @@
 #include <string.h>
 #include <assert.h>
 
+/* The s28/s29/s48 width discipline of 7.4 is enforced by assert() alone, so a
+ * -DNDEBUG build would silently turn every width check into a no-op and still
+ * print all-PASS.  That is precisely the "agrees with itself and is wrong"
+ * failure this file exists to prevent. */
+#ifdef NDEBUG
+#error "matvec_int4.c must be built with assertions enabled (no -DNDEBUG)"
+#endif
+
 /* ---------------------------------------------------------------- 7.4 types */
 
 #define MV4I_MAGIC      0x4D563449u   /* "MV4I" */
@@ -193,6 +201,7 @@ int mv4i_matvec(const mv4i_file *f, const int16_t *x_mant, int x_exp,
 {
     if (n_rows <= 0 || n_cols <= 0)      return -1;   /* 7.6 abort */
     if ((uint32_t)n_cols > f->h.K)       return -2;
+    if ((uint32_t)n_rows > f->h.M)       return -3;   /* else get_widx reads OOB */
 
     g_sat_event = 0;
     g_sat_count = 0;
@@ -267,6 +276,13 @@ int mv4i_matvec(const mv4i_file *f, const int16_t *x_mant, int x_exp,
          * needs exp' = exp - ns.  Matches bfp_pack (o_exp = Q - shift_o) and
          * matmul_rt (o_exp <= xexp_l - sh).  Rev 2 of the spec had this as +ns. */
         out->y_exp = f->h.w_exp + x_exp - f->h.out_shift - ns;
+    } else if (out_mode == MV4I_MODE_PARTIAL) {
+        /* 14.2: the payload is the UNROUNDED accumulator, so its grid carries
+         * no out_shift term.  Reporting w_exp + x_exp - out_shift (as this file
+         * did until 2026-08-22) understates the exponent by exactly out_shift
+         * and would misalign every cross-card reduction whose cards chose
+         * different out_shift values -- which the corrected 14.2 permits. */
+        out->y_exp = f->h.w_exp + x_exp;
     } else {
         out->y_exp = f->h.w_exp + x_exp - f->h.out_shift;
     }
@@ -428,7 +444,19 @@ int main(int argc, char **argv)
             if (r.y_data[row] != sat32(acc)) ok = 0;
         }
         check("9  column masking, K=40 (not a multiple of 32)", ok);
-        check("10 row masking, M=6 (not a multiple of ROWS_IF=4)", M % RI != 0);
+        /* M=6 with ROWS_IF=4 means rows 4-5 live in a partially filled tile,
+         * so this checks that the packer's padded rows do not perturb the real
+         * ones.  y_we suppression itself is RTL-only and not testable here.
+         * The previous form asserted `M % RI != 0`, a constant-true statement
+         * about the test's own parameters that exercised nothing.            */
+        {
+            mv4i_result r2 = { malloc(4*4), malloc(8*4), malloc(2*4), 0,0,0,0 };
+            assert(mv4i_matvec(&f, x, 0, 4, K, MV4I_MODE_RAW, &r2) == 0);
+            int same = 1;
+            for (int i = 0; i < 4; i++) if (r2.y_data[i] != r.y_data[i]) same = 0;
+            check("10 padded tile rows do not perturb real rows", same);
+            free(r2.y_data); free(r2.y_acc); free(r2.y_mant);
+        }
         free(idx); free(scl); free(img); free(x);
         free(r.y_data); free(r.y_acc); free(r.y_mant);
     }
@@ -552,8 +580,11 @@ int main(int argc, char **argv)
             int64_t summed = ra.y_acc[r] + rb.y_acc[r];
             if (sat32(round_shift(summed, 6)) != full.y_data[r]) ok = 0;
         }
+        /* Partial y_exp carries NO out_shift term (14.2), so it sits exactly
+         * out_shift above the full-K raw job's exponent.  Asserting equality
+         * here is what locked in the C1 defect. */
         check("14.4 partial-sum: 2 half-K shards == 1 full-K job, BIT-EXACT",
-              ok && ra.y_exp == rb.y_exp && ra.y_exp == full.y_exp);
+              ok && ra.y_exp == rb.y_exp && ra.y_exp == full.y_exp + 6);
         check("14.4 sat_event clean on this vector",
               !full.sat_event && !ra.sat_event && !rb.sat_event);
 
@@ -562,6 +593,45 @@ int main(int argc, char **argv)
         free(full.y_data); free(full.y_acc); free(full.y_mant);
         free(ra.y_data); free(ra.y_acc); free(ra.y_mant);
         free(rb.y_data); free(rb.y_acc); free(rb.y_mant);
+    }
+
+    /* ---- site 4 known-answer vectors, straight from 7.4's divergence table.
+     * These are the ONLY places the spec hands over concrete expected numbers,
+     * and they are exactly the cases that separate bias-and-saturate from a
+     * bare shift. ---- */
+    {
+        int ok = 1;
+        if (sat16(round_shift( 32769, 1)) !=  16385) ok = 0;   /* bias matters */
+        if (sat16(round_shift(-32769, 1)) != -16384) ok = 0;   /* negative tie */
+        if (sat16(round_shift((1LL << 30) - 1, 15)) != 32767) ok = 0;
+        /* the third needs sat16: the biased path reaches 32768, which without
+         * saturation wraps to -32768 in int16 -- full-scale positive read as
+         * full-scale negative. */
+        check("4  site-4 known answers (7.4 divergence table)", ok);
+        check("4b round_shift has no bias at sh=0", round_shift(-3, 0) == -3);
+        check("4c floor_shr floors, not truncates", floor_shr(-3, 1) == -2);
+    }
+
+    /* ---- 9/12: saturation.  out_shift=0 with extreme weights and activations
+     * drives acc past 2^31 so sat32 must clamp and set the sticky flag. ---- */
+    {
+        const int M = 4, K = 1024, RI = 4, NB = K / MV4I_BLOCK;
+        uint8_t *idx = malloc((size_t)M * K);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        for (int i = 0; i < M * K; i++) idx[i] = 0;          /* cb = -127 */
+        for (int i = 0; i < M * NB; i++) scl[i] = 32767;
+        size_t len; uint8_t *img = pack(M, K, RI, 0, 0, IQ4_NL, idx, scl, &len);
+        mv4i_file f; assert(mv4i_parse(&f, img, len) == 0);
+        int16_t *x = malloc(sizeof(int16_t) * K);
+        for (int k = 0; k < K; k++) x[k] = -32768;
+        mv4i_result r = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        assert(mv4i_matvec(&f, x, 0, M, K, MV4I_MODE_RAW, &r) == 0);
+        int clamped = 1;
+        for (int i = 0; i < M; i++) if (r.y_data[i] != INT32_MAX) clamped = 0;
+        check("12 sat32 clamps and sets sat_event",
+              clamped && r.sat_event && r.sat_count == (uint64_t)M);
+        free(idx); free(scl); free(img); free(x);
+        free(r.y_data); free(r.y_acc); free(r.y_mant);
     }
 
     printf("%s (%d failure%s)\n", fails ? "FAILED" : "OK", fails, fails == 1 ? "" : "s");
