@@ -24,13 +24,55 @@ Git tags mark shipped state; unshipped rows are the plan.
 | `v2.0` | planned | **Subsystem A**: INT4 streaming matvec on AXU3EG, bit-exact vs C reference |
 | `v2.1` | planned | **Subsystem C**: gated attention (GQA 8:2, head_dim 256, QK-norm) |
 | `v2.2` | planned | **Subsystem B**: Gated DeltaNet (conv1d k=4, recurrent state, gating) |
-| `v3.0` | planned | **Qwen3.5-0.8B end-to-end on AXU3EG**, INT4 from DDR4, ~19-28 tok/s |
+| `v3.0` | planned | **Qwen3.5-0.8B end-to-end on AXU3EG**, INT4 from DDR4, ~20-30 tok/s. **Requires C at `MACS=32`** -- see the DSP co-fit note below. |
 | `v4.0` | planned | Qwen3.5-9B on one FK33, INT4 from HBM, ~65-92 tok/s |
 | `v5.0` | planned | Qwen3.8-27B on two FK33s, ~45-63 tok/s |
 
 v2.x are the three new subsystems; v3.0 is their integration on hardware already
 owned; v4.0 and v5.0 are ports that change the weight streamer and the generics,
 not the datapath.
+
+### DSP co-fit on the AXU3EG (finding, 2026-08-21)
+
+All three subsystems are now specced, so the v3.0 rung can be costed. At nominal
+widths they do **not** safely co-fit the 360-DSP XCZU3EG:
+
+| | DSP | Source |
+|---|---|---|
+| A, `ROWS_IF=4` | 136 | A spec 7.9, derived |
+| C, `MACS=64` | 128 | C spec 2.6, derived |
+| C auxiliary | 15-40 | C spec 2.8, **estimate** |
+| B, `LANES=8` | 42-56 | B spec 2.8, 32 derived + **estimated** aux |
+| **Total** | **321-360 of 360** | **89-100%** |
+
+This project has documented congestion-induced non-determinism on this device at
+lower utilization than that (`rmsnorm.vhd:296`, `bfp_pack.vhd` header, the
+`attention_ml` debug history). **Plan of record: C at `MACS=32`**, giving
+**257-296 (71-82%)** with real margin, at the cost of ~7.9 ms of attention
+instead of ~3.9 -- about +8% of the token budget. Restoring `MACS=64` needs only
+a generic change if both auxiliary estimates land low.
+
+### Model size resolved: 423 MB, not 450 MB
+
+Subsystem B derives the GDN projections exactly (10.55M per layer x 18 =
+189.9M), closing the ~170-240M gap A's spec left open. Qwen3.5-0.8B is
+**752M params = 423 MB at 4.5 bpw**. Throughput figures computed against 450 MB
+are ~6% pessimistic.
+
+### What the AXU3EG rung is for
+
+It is a **validation vehicle, not a product.** Qwen3.5-0.8B scores 9 on the
+Intelligence Index against 32 for the 9B; at ~20-30 tok/s it demonstrates the
+datapath rather than doing useful work. Its value is that it proves the numeric
+contracts -- nine review rounds' worth across A, B and C -- on hardware that
+already runs bit-exact, with **free** Vivado tooling, before any of it touches
+orphaned FK33 silicon needing a paid tier and an unproven bring-up.
+
+**The AXU3EG rung costs almost nothing extra**, because subsystem B's state
+streaming architecture ports to HBM unchanged (residency in the FK33's 14.2 MB
+URAM saves only ~41 us/token, and a 9B state at ~25.3 MB would not fit anyway).
+The only modules written twice are the **streamers**, which A already isolates
+from its core. Plan and abandon v3.0 on that basis.
 
 ---
 

@@ -514,12 +514,12 @@ the contiguous region and splits them at 4 KB, exactly as subsystem A does.
 Per position per layer: `N_KVH * (K 272 + V 272)` = 1,088 B; across 6 layers,
 **6,528 B per position**.
 
-| Context | Region total | Per-token read | % of 450 MB |
+| Context | Region total | Per-token read | % of 423 MB |
 |---|---|---|---|
-| 512 | 3.34 MB | 3.34 MB | 0.7% |
-| **2,048** | **13.37 MB** | **13.37 MB** | **3.0%** |
-| 8,192 | 53.48 MB | 53.48 MB | **11.9%** |
-| 262,144 (native) | 1.711 GB | 1.711 GB | **380%** |
+| 512 | 3.34 MB | 3.34 MB | 0.8% |
+| **2,048** | **13.37 MB** | **13.37 MB** | **3.2%** |
+| 8,192 | 53.48 MB | 53.48 MB | **12.6%** |
+| 262,144 (native) | 1.711 GB | 1.711 GB | **404%** |
 
 At native context KV traffic is nearly 4x the weight traffic and throughput
 collapses to roughly 2 tok/s. The cost is linear in `ctx_len` and explicit.

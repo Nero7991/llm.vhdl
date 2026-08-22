@@ -79,7 +79,7 @@ The ladder, all on one codebase (see `docs/fpga-hardware-recon.md`):
 
 | Milestone | Hardware | Model | Size @ 4.5 bpw | Bandwidth | Ceiling | Derated est. |
 |---|---|---|---|---|---|---|
-| `v3.0` | AXU3EG (owned) | Qwen3.5-0.8B | ~450 MB | 8-12 GB/s DDR4 | 27 tok/s | 19-28 |
+| `v3.0` | AXU3EG (owned) | Qwen3.5-0.8B | **~423 MB** | 8-12 GB/s DDR4 | 27 tok/s | 19-28 |
 | `v4.0` | 1x FK33 | Qwen3.5-9B | ~5.1 GB | 460 GB/s HBM | 91 tok/s | 65-92 |
 | `v5.0` | 2x FK33 | Qwen3.8-27B | ~15.1 GB | 2x 460 GB/s | 61 tok/s | 45-63 |
 
@@ -143,9 +143,13 @@ existing streaming-argmax `lm_head` approach is load-bearing, not an optimizatio
 
 `MAXCOLS = 3584`. `MAXROWS_BFP = 4096`.
 
-**Model size is an estimate, not a computation.** Summing known tensors (embed
-254M + FFN 264M + attention ~44M, the latter including the fused q-gate at
-1024->4096) leaves ~170-240M for GDN projections whose
+**Model size, RESOLVED 2026-08-21 by subsystem B.** Rev 5 left this an estimate
+with ~170-240M unaccounted. B's spec derives the GDN projections exactly:
+10.55M per layer x 18 = **189.9M**. Total is therefore embed 254.3M + FFN 264M +
+attention ~44M + GDN 189.9M = **752M params = 423 MB at 4.5 bpw**, not the
+450 MB assumed throughout this document. Every throughput figure here is
+consequently ~6% pessimistic. The superseded text follows for context: it left
+~170-240M for GDN projections whose
 shapes subsystem B has not yet fixed. 450 MB assumes ~800M total params at
 4.5 bpw. If the true count is ~730M the model is ~410 MB and throughput improves
 ~10%. Nothing in this design depends on the exact figure.
