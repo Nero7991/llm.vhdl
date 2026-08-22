@@ -764,6 +764,39 @@ without a flush the next job's word stream would be misaligned by a
 per-port-varying amount - silently, and differently on every matrix. The same
 applies to the scale FIFO.
 
+**CORRECTED 2026-08-22 by `sim/tb_axi_rd_port`, which failed on first run.
+Flushing the FIFO on `start` is NECESSARY BUT NOT SUFFICIENT.** Three separate
+mechanisms deliver stale beats past a flush, and the first version of
+`rtl/axi_rd_port.vhd` implemented only the flush and failed all three:
+
+1. **In-flight AXI transactions outlive the flush.** Bursts the slave has
+   already accepted keep returning R beats *after* `start`, and they land in the
+   freshly-emptied FIFO looking exactly like the new job's first beats. An
+   `arvalid` already asserted cannot be withdrawn either - AXI requires it to
+   hold until `arready` - so that burst must be allowed to complete as well. A
+   `start` must therefore park the port in a **drain** state that accepts and
+   **discards** R beats until every outstanding burst has retired, and only then
+   flush. Draining is bounded by `MAXOUT` bursts, so it costs at most a few
+   hundred cycles once per matrix.
+
+2. **The output must be suppressed until the new job is live.** During the drain
+   the FIFO still holds the abandoned job's residue. A consumer that reads as
+   soon as `q_valid` rises swallows it *before* the flush ever lands. `q_valid`
+   must therefore be gated on the run state, not merely on FIFO occupancy.
+
+3. **A registered flush needs its own state.** `flush` is high during the cycle
+   *after* it is asserted, and the FIFO clears at the end of that cycle. Going
+   straight from drain to run leaves the output live for one cycle over
+   not-yet-cleared contents, and the consumer takes exactly **one** stale beat,
+   shifting the whole stream by one. That is the same silent per-port
+   misalignment this section already warns about, one beat instead of many, and
+   correspondingly harder to see.
+
+All three were found by abandoning a job part-consumed in simulation and
+checking that the *next* job starts at its own first beat. A test that only runs
+jobs to completion cannot see any of them, and neither can one that flushes
+between jobs with no outstanding bursts.
+
 **Pop gate.** The merge pops only when **all** `NPORTS_W` weight FIFOs are
 non-empty, and AR issue is throttled against FIFO free space. Both are obvious;
 so was the rev-2 reassembly, which is why they are written down.
