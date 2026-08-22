@@ -348,8 +348,45 @@ static void check(const char *name, int ok)
     if (!ok) fails++;
 }
 
-int main(void)
+/* Cross-check mode: parse a packer-produced .mv4i, run a deterministic
+ * activation vector through it, and print a checksum.  tools/pack_int4.py
+ * --crosscheck computes the same number independently, so agreement proves the
+ * 6.4/6.5 layout is interpreted identically by packer and reference. */
+static int crosscheck(const char *path)
 {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) { perror(path); return 2; }
+    fseek(fp, 0, SEEK_END); long len = ftell(fp); fseek(fp, 0, SEEK_SET);
+    uint8_t *img = malloc((size_t)len);
+    if (fread(img, 1, (size_t)len, fp) != (size_t)len) return 2;
+    fclose(fp);
+
+    mv4i_file f;
+    int rc = mv4i_parse(&f, img, (size_t)len);
+    if (rc) { fprintf(stderr, "parse failed: %d\n", rc); return 2; }
+
+    int M = (int)f.h.M, K = (int)f.h.K;
+    int16_t *x = malloc(sizeof(int16_t) * (size_t)K);
+    uint32_t st = 2463534242u;                      /* xorshift32, seed fixed */
+    for (int k = 0; k < K; k++) {
+        st ^= st << 13; st ^= st >> 17; st ^= st << 5;
+        x[k] = (int16_t)((int32_t)(st % 20001) - 10000);
+    }
+    mv4i_result r = { malloc(4*(size_t)M), malloc(8*(size_t)M),
+                      malloc(2*(size_t)M), 0,0,0,0 };
+    if (mv4i_matvec(&f, x, 0, M, K, MV4I_MODE_BFP, &r)) return 2;
+
+    int64_t sum = 0;
+    for (int i = 0; i < M; i++) sum += r.y_mant[i];
+    printf("M=%d K=%d w_exp=%d out_shift=%d ns=%d y_exp=%d mant_sum=%lld sat=%d\n",
+           M, K, f.h.w_exp, f.h.out_shift, r.ns, r.y_exp,
+           (long long)sum, r.sat_event);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc >= 2) return crosscheck(argv[1]);
     printf("subsystem A reference self-test\n");
 
     /* ---- test 1: dequant, all 16 codebook indices ---- */
