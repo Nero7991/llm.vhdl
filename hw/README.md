@@ -77,3 +77,63 @@ DDR; results return through the AXI-Lite result buffer.
 See the header of `rtl/matvec_int4_axi.vhd`. `sim/tb_matvec_axi.vhd` executes
 the whole driver sequence against it in simulation and is the specification the
 board-side C driver should follow.
+
+## Reserving the weight buffer (do this before running the driver)
+
+**There is no IOMMU in this path.** The PL masters issue physical addresses
+straight at the HP ports, so a `malloc`'d buffer is useless: it is neither
+physically contiguous nor at an address the PL knows. The weights have to sit
+in a region the kernel does not own.
+
+**Until that region is reserved, do not point `--phys` at it.** The driver maps
+it through `/dev/mem` and writes tens of megabytes; aimed at memory Linux is
+using, that corrupts the kernel silently.
+
+Add a `reserved-memory` node to `system-user.dtsi` in the PetaLinux project and
+rebuild the device tree:
+
+```dts
+/ {
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        mv_weights: buffer@70000000 {
+            no-map;
+            reg = <0x0 0x70000000 0x0 0x10000000>;   /* 256 MB */
+        };
+    };
+};
+```
+
+`no-map` is what keeps the kernel from mapping it at all, which is what makes
+`/dev/mem` access to it safe. 256 MB is ample: the §11 acceptance matrix
+(5120 -> 17408) packs to about **50 MB**, and the largest single 27B layer
+tensor is the same size. `lm_head` at ~715 MB would need a larger reservation.
+
+Confirm after boot with `dmesg | grep -i reserved` and
+`cat /proc/iomem | grep -i 7000`.
+
+## Running it
+
+```
+# on the workstation
+python3 tools/pack_int4.py MODEL.gguf blk.0.ffn_gate.weight ffn.mv4i --rows-if 4
+make -C hw board                       # -> hw/mv_driver_aarch64, static
+
+# on the board
+./mv_driver --mv4i ffn.mv4i --phys 0x70000000
+```
+
+`--dry-run` prints every register value it would write, without touching
+`/dev/mem`. The sub-region bases and beat counts it computes from the file
+header have been checked against `tools/pack_int4.py`'s `packed_layout()`
+computed independently from the shape -- they agree, which is worth knowing
+before a wrong beat count produces a silent wrong answer rather than a crash.
+
+Output reports the §11 numbers: bit-exactness against `ref/matvec_int4.c`
+running on the board's own cores, and sustained weight bandwidth as a
+percentage of the 19.2 GB/s DDR4-2400 peak. Bandwidth is computed from the PL's
+own `BEATS` and `CYCLES` counters rather than wall-clock, so it measures what
+the datapath consumed and does not fold in the AXI-Lite activation load or the
+polling loop.

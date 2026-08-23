@@ -346,6 +346,10 @@ static uint8_t *pack(int M, int K, int rows_if, int w_exp, int out_shift,
     return img;
 }
 
+#ifndef MV4I_LIB
+/* Self-tests and CLI.  Define MV4I_LIB to link this file as a library, which
+ * is what hw/mv_driver.c does: 10 step 5 compares the PL against THIS code
+ * running on the board's own cores, so it has to be the same source. */
 static const int8_t IQ4_NL[16] = { -127,-104,-83,-65,-49,-35,-22,-10,
                                       1, 13, 25, 38, 53, 69, 89,113 };
 
@@ -748,4 +752,6 @@ int main(int argc, char **argv)
     printf("%s (%d failure%s)\n", fails ? "FAILED" : "OK", fails, fails == 1 ? "" : "s");
     return fails != 0;
 }
+#endif /* MV4I_LIB */
+
 #endif /* MV4I_LIB */
