@@ -168,6 +168,21 @@ architecture rtl of matvec_core is
   signal amax   : unsigned(35 downto 0) := (others => '0');
   signal ns_r   : integer := 0;
   signal sat_r, err_r : std_logic := '0';
+
+  -- ROW-END PIPELINE.  Row end runs once per TILE, not once per block, so
+  -- latency here is nearly free while the combinational chain it replaces was
+  -- the critical path: acc+contrib -> round_shift by a VARIABLE out_shift (a
+  -- 48-bit barrel shifter) -> sat32 -> abs -> a ROWS_IF-way max fold -> amax,
+  -- all in one cycle.  Measured at -6.354 ns against a 5 ns period, i.e. 88 MHz
+  -- against the 200 MHz that 14.4 pins.
+  type sh_arr  is array(0 to ROWS_IF-1) of signed(47 downto 0);
+  type mag_arr is array(0 to ROWS_IF-1) of unsigned(35 downto 0);
+  signal re1_v, re2_v, re3_v : std_logic := '0';
+  signal re1_t, re2_t, re3_t : integer := 0;
+  signal re1_acc, re2_acc    : acc_arr := (others => (others => '0'));
+  signal re2_shv             : sh_arr  := (others => (others => '0'));
+  signal re3_mag             : mag_arr := (others => (others => '0'));
+  signal re3_ok              : std_logic_vector(ROWS_IF-1 downto 0) := (others => '0');
   -- emit is a 2-stage read: rd_t is presented, and one cycle later the data
   -- appears in ybuf_q tagged by rd_td.
   signal rd_t, rd_td : integer := 0;
@@ -194,10 +209,10 @@ begin
   x_rbaddr <= std_logic_vector(to_unsigned(b_pf, 16));
 
   -- any beat still in the compute pipeline
-  process(tg)
+  process(tg, re1_v, re2_v, re3_v)
     variable o : std_logic;
   begin
-    o := '0';
+    o := re1_v or re2_v or re3_v;
     for i in 0 to PIPE-1 loop o := o or tg(i).v; end loop;
     inflight <= o;
   end process;
@@ -218,7 +233,7 @@ begin
     variable ynew  : std_logic_vector(ROWS_IF*32-1 downto 0);
   begin
     if rising_edge(clk) then
-      y_we <= '0'; done <= '0';
+      y_we <= '0'; done <= '0'; re1_v <= '0';
       tp_v <= '0'; tc_v <= '0'; ta_v <= '0'; tm_v <= '0';
 
       if rst = '1' then
@@ -350,10 +365,6 @@ begin
           tc_v <= '1'; tc_r <= tg(P_CONTRIB).tile * ROWS_IF;
           tc_b <= tg(P_CONTRIB).blk;
           rbase := tg(P_CONTRIB).tile * ROWS_IF;
-          -- amax must be folded through a VARIABLE: a signal assigned inside
-          -- the lane loop would keep only the last lane's value, silently
-          -- under-reporting the maximum and inflating every mantissa.
-          mxv := amax;
 
           for rr in 0 to ROWS_IF-1 loop
             tc_val(rr*64+63 downto rr*64)
@@ -364,47 +375,75 @@ begin
             else                              an := acc(rr) + resize(contrib(rr), 48);
             end if;
             acc(rr) <= an;
-
             if tg(P_CONTRIB).last = '1' then
               ta_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(an, 64));
-              if out_mode = "10" then
-                -- 14.2: PARTIAL emits the accumulator UNROUNDED.  round_shift
-                -- is not additive, so rounding per shard could never reproduce
-                -- the full-K result.  No round, no saturation.
-                y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(an, 64));
-              else
-                shv := round_shift(an, out_shift);          -- SITES 2/3
-                a32 := sat32(shv);
-                if shv /= resize(a32, 48) then sat_r <= '1'; end if;
-                ynew(rr*32+31 downto rr*32) := std_logic_vector(a32);
-                y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
-                mag := unsigned(abs(resize(a32, 36)));
-                -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax
-                -- would inflate ns and crush every real mantissa.
-                if rbase + rr < n_rows and mag > mxv then mxv := mag; end if;
-              end if;
-              if rbase + rr < n_rows then y_mask(rr) <= '1';
-              else                        y_mask(rr) <= '0'; end if;
+              re1_acc(rr) <= an;          -- hand off to the row-end pipeline
             end if;
           end loop;
 
-          amax <= mxv;
-
-          -- Written as ONE full-width word, not lane by lane.  Lane-by-lane
-          -- slice assignment looks like a partial write, so Vivado tries
-          -- byte-wide write enables and then declines them here --
-          --   [Synth 8-6841] address width (13) is more than optimal
-          --   threshold of 12
-          -- costing extra tiles for a memory that is always written whole.
-          if tg(P_CONTRIB).last = '1' and out_mode /= "10" then
-            ybuf(tg(P_CONTRIB).tile) <= ynew;
-          end if;
-
           if tg(P_CONTRIB).last = '1' then
             ta_v <= '1'; ta_r <= rbase;
-            y_addr <= std_logic_vector(to_unsigned(rbase, 16));
-            if out_mode /= "00" then y_we <= '1'; end if;
+            re1_v <= '1'; re1_t <= tg(P_CONTRIB).tile;
           end if;
+        end if;
+
+        ----------------------------------------------------------------
+        -- row end, stage 2: SITE 2/3, the variable shift, alone
+        ----------------------------------------------------------------
+        re2_v <= re1_v; re2_t <= re1_t;
+        if re1_v = '1' then
+          for rr in 0 to ROWS_IF-1 loop
+            re2_shv(rr) <= round_shift(re1_acc(rr), out_shift);
+            re2_acc(rr) <= re1_acc(rr);        -- PARTIAL emits this, unrounded
+          end loop;
+        end if;
+
+        ----------------------------------------------------------------
+        -- row end, stage 3: saturate, store, emit
+        ----------------------------------------------------------------
+        re3_v <= re2_v; re3_t <= re2_t;
+        if re2_v = '1' then
+          rbase := re2_t * ROWS_IF;
+          for rr in 0 to ROWS_IF-1 loop
+            a32 := sat32(re2_shv(rr));
+            if re2_shv(rr) /= resize(a32, 48) then sat_r <= '1'; end if;
+            ynew(rr*32+31 downto rr*32) := std_logic_vector(a32);
+            re3_mag(rr) <= unsigned(abs(resize(a32, 36)));
+            if out_mode = "10" then
+              -- 14.2: PARTIAL emits the accumulator UNROUNDED.  round_shift is
+              -- not additive, so rounding per shard could never reproduce the
+              -- full-K result.  No round, no saturation.
+              y_data(rr*64+63 downto rr*64)
+                <= std_logic_vector(resize(re2_acc(rr), 64));
+            else
+              y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
+            end if;
+            if rbase + rr < n_rows then
+              y_mask(rr) <= '1'; re3_ok(rr) <= '1';
+            else
+              y_mask(rr) <= '0'; re3_ok(rr) <= '0';
+            end if;
+          end loop;
+          -- written as ONE full-width word: lane-by-lane slice assignment looks
+          -- like a partial write and pushes Vivado into byte-wide write enables
+          if out_mode /= "10" then ybuf(re2_t) <= ynew; end if;
+          y_addr <= std_logic_vector(to_unsigned(rbase, 16));
+          if out_mode /= "00" then y_we <= '1'; end if;
+        end if;
+
+        ----------------------------------------------------------------
+        -- row end, stage 4: the amax fold, alone
+        ----------------------------------------------------------------
+        if re3_v = '1' then
+          -- folded through a VARIABLE: a signal assigned inside the lane loop
+          -- would keep only the last lane, silently under-reporting the maximum
+          mxv := amax;
+          for rr in 0 to ROWS_IF-1 loop
+            -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax would
+            -- inflate ns and crush every real mantissa.
+            if re3_ok(rr) = '1' and re3_mag(rr) > mxv then mxv := re3_mag(rr); end if;
+          end loop;
+          amax <= mxv;
         end if;
 
         -- Registered ybuf read, issued UNCONDITIONALLY: gating it on the state
