@@ -8,6 +8,10 @@
 # Out of context, so the AXI masters and the activation write port become
 # top-level ports with no board pinout; that is the point, since the same core
 # is meant to sit behind DDR4 here and HBM on the FK33.
+# Cap parallelism: the first run forked four ~2.3 GB synthesis helpers on top
+# of a 5.6 GB parent and left the box at 365 MB free.  That was a symptom of the
+# memories not inferring BRAM, now fixed, but the cap costs nothing.
+set_param general.maxThreads 4
 set part xczu3eg-sfvc784-1-e
 # resolve rtl/ from the SCRIPT location, not the cwd: this runs from sim/ooc_mv
 set rtldir [file normalize [file join [file dirname [info script]] ../rtl]]

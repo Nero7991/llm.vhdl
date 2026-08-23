@@ -183,10 +183,24 @@ architecture rtl of matvec_core is
   signal re2_shv             : sh_arr  := (others => (others => '0'));
   signal re3_mag             : mag_arr := (others => (others => '0'));
   signal re3_ok              : std_logic_vector(ROWS_IF-1 downto 0) := (others => '0');
+  -- the amax fold gets its own stage, and is a TREE not a chain.  As a chain it
+  -- was the critical path after row end was split (re3_mag -> amax, -0.159 ns),
+  -- and at the FK33's ROWS_IF=80 an 80-deep compare chain would be hopeless.
+  constant MAXPOW : positive := 2 ** clog2(ROWS_IF);
+  type wide_mag is array(0 to MAXPOW-1) of unsigned(35 downto 0);
+  signal re4_v   : std_logic := '0';
+  signal re4_max : unsigned(35 downto 0) := (others => '0');
   -- emit is a 2-stage read: rd_t is presented, and one cycle later the data
   -- appears in ybuf_q tagged by rd_td.
   signal rd_t, rd_td : integer := 0;
   signal rd_v        : std_logic := '0';
+  -- and one more stage after the BRAM read: SITE 4's round_shift is a variable
+  -- shift by ns, which became the critical path once row end was split
+  -- (ybuf BRAM -> round_shift -> sat16 -> y_data, WNS -0.596 ns).
+  signal em_v        : std_logic := '0';
+  signal em_t        : integer := 0;
+  type   em_arr is array(0 to ROWS_IF-1) of signed(31 downto 0);
+  signal em_shv      : em_arr := (others => (others => '0'));
 
   -- Activation prefetch.  The block sequence is deterministic (0..nb-1 repeated
   -- per tile), so a 2-deep queue run ahead of the accept point keeps the
@@ -209,7 +223,7 @@ begin
   x_rbaddr <= std_logic_vector(to_unsigned(b_pf, 16));
 
   -- any beat still in the compute pipeline
-  process(tg, re1_v, re2_v, re3_v)
+  process(tg, re1_v, re2_v, re3_v, re4_v)
     variable o : std_logic;
   begin
     o := re1_v or re2_v or re3_v;
@@ -231,6 +245,7 @@ begin
     variable rbase : integer;
     variable ymn   : signed(15 downto 0);
     variable ynew  : std_logic_vector(ROWS_IF*32-1 downto 0);
+    variable wm    : wide_mag;
   begin
     if rising_edge(clk) then
       y_we <= '0'; done <= '0'; re1_v <= '0';
@@ -434,16 +449,32 @@ begin
         ----------------------------------------------------------------
         -- row end, stage 4: the amax fold, alone
         ----------------------------------------------------------------
+        re4_v <= re3_v;
         if re3_v = '1' then
-          -- folded through a VARIABLE: a signal assigned inside the lane loop
-          -- would keep only the last lane, silently under-reporting the maximum
-          mxv := amax;
+          -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax would
+          -- inflate ns and crush every real mantissa.  Masked to zero here, so
+          -- the tree below needs no per-node validity.
           for rr in 0 to ROWS_IF-1 loop
-            -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax would
-            -- inflate ns and crush every real mantissa.
-            if re3_ok(rr) = '1' and re3_mag(rr) > mxv then mxv := re3_mag(rr); end if;
+            if re3_ok(rr) = '1' then wm(rr) := re3_mag(rr);
+            else                     wm(rr) := (others => '0'); end if;
           end loop;
-          amax <= mxv;
+          for rr in ROWS_IF to MAXPOW-1 loop     -- pad to a power of two
+            wm(rr) := (others => '0');
+          end loop;
+          for l in 1 to clog2(ROWS_IF) loop
+            for i in 0 to (MAXPOW / (2**l)) - 1 loop
+              if wm(2*i+1) > wm(2*i) then wm(i) := wm(2*i+1);
+              else                        wm(i) := wm(2*i); end if;
+            end loop;
+          end loop;
+          re4_max <= wm(0);
+        end if;
+
+        ----------------------------------------------------------------
+        -- row end, stage 5: accumulate the running maximum
+        ----------------------------------------------------------------
+        if re4_v = '1' and re4_max > amax then
+          amax <= re4_max;
         end if;
 
         -- Registered ybuf read, issued UNCONDITIONALLY: gating it on the state
@@ -485,7 +516,7 @@ begin
             -- ns = max(0, msb_pos(amax) - 14); msb_pos(0) = 0 is NORMATIVE
             if msb_pos_u(amax) > 14 then ns_r <= msb_pos_u(amax) - 14;
             else                         ns_r <= 0; end if;
-            rd_t <= 0; rd_v <= '0';
+            rd_t <= 0; rd_v <= '0'; em_v <= '0';
             st <= S_EMIT;
 
           when S_EMIT =>
@@ -495,20 +526,30 @@ begin
             else
               rd_v <= '0';
             end if;
+
+            -- emit stage 1: SITE 4's shift, alone
+            em_v <= rd_v; em_t <= rd_td;
             if rd_v = '1' then
-              rbase := rd_td * ROWS_IF;
+              for rr in 0 to ROWS_IF-1 loop
+                em_shv(rr) <= resize(round_shift(
+                                signed(ybuf_q(rr*32+31 downto rr*32)), ns_r), 32);
+              end loop;
+            end if;
+
+            -- emit stage 2: saturate and drive the port
+            if em_v = '1' then
+              rbase := em_t * ROWS_IF;
               y_we   <= '1';
               y_addr <= std_logic_vector(to_unsigned(rbase, 16));
               tm_v <= '1'; tm_r <= rbase;
               for rr in 0 to ROWS_IF-1 loop
-                ymn := sat16(round_shift(                          -- SITE 4
-                         signed(ybuf_q(rr*32+31 downto rr*32)), ns_r));
+                ymn := sat16(em_shv(rr));
                 y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
                 tm_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
                 if rbase + rr < n_rows then y_mask(rr) <= '1';
                 else                        y_mask(rr) <= '0'; end if;
               end loop;
-              if rd_td = tiles_r - 1 then st <= S_DONE; end if;
+              if em_t = tiles_r - 1 then st <= S_DONE; end if;
             end if;
 
           when S_DONE =>

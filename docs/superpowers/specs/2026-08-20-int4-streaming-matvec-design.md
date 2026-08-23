@@ -868,6 +868,55 @@ width-converting FIFOs would have cost ~32 BRAM36 for the weight path alone
 (512-bit read ports against RAMB36E2's 72-bit maximum), plus a 512-bit 4:1 merge
 mux, for a total nearer 46.
 
+### 7.9a MEASURED, 2026-08-22 (Vivado 2023.2 OOC, xczu3eg-sfvc784-1-e)
+
+`sim/ooc_matvec_int4.tcl` at the §14.4 configuration -- `ROWS_IF=4`,
+`NPORTS_W=4`, `AXI_DW=128`, `MAXCOLS`/`MAXROWS_BFP` 17408, 200 MHz.
+
+| Resource | Estimated (§7.9) | **Measured** | of device |
+|---|---|---|---|
+| DSP48E2 | 136 | **192** | 53.3% of 360 |
+| CLB LUT | ~6-7K | **11,395** | 16.2% of 70,560 |
+| CLB Register | not estimated | **3,808** | 2.7% of 141,120 |
+| BRAM36 tile | ~43 | **44.5** | 20.6% of 216 |
+| **WNS @ 200 MHz** | -- | **+0.770 ns (MET)** | Fmax ~236 MHz |
+
+BRAM lands on the estimate. LUT is ~1.7x over it, which is the streamer and its
+five FIFOs -- §7.9 was written before §7.7's port structure was settled and does
+not include them.
+
+**DSP is 41% over because Vivado cascaded the adder tree into the DSPs itself.**
+The synthesis log shows nodes such as `tr_reg[1][15]` built as
+`(PCIN + (A2*B)')'`, i.e. the first tree level absorbed into DSP post-adders via
+`PCIN`. This is **not** the cascade §7.3 rejected. §7.3's hazard is a *systolic*
+cascade across successive blocks, where tap *j* would add a block-*b* product
+onto a partial holding block-(*b-j*) products and smear the result diagonally.
+What Vivado built cascades within **one beat's** tree, where every operand comes
+from the same block, so no skew exists and none is needed. §7.3's reasoning was
+about the dataflow, not about `PCIN` as a primitive, and it remains correct.
+
+Four sites had to change to reach these numbers; all are recorded where they
+were fixed, and all were invisible to simulation:
+
+1. `act_mem_striped` wrote through a **variable-offset slice**, which Vivado
+   decomposes into per-bit write enables (`[Synth 8-6841]` *byte width (1) is
+   not a multiple of 8*) and implements as one width-1 block RAM per data bit:
+   **512 RAMB18, 256 tiles**, for a 278 Kb memory. Constant slice bounds with a
+   decoded enable are required.
+2. That overflow pushed the five 8 KB FIFOs out of BRAM into **LUTRAM**, which
+   was essentially all of the 6,692 initial `LUT as Memory`. It was a
+   consequence, not a second defect: `stream_fifo` synthesised standalone gives
+   2 BRAM tiles and 123 LUTs.
+3. Both memories were first declared as **nested arrays**, which does not infer
+   RAM at all (`[Synth 8-11357]` *RAM from Record/Structs*) -- 835K registers
+   against 141K on the device, and a synthesis run that drove the host to
+   365 MB free.
+4. **Row end and emit had to be pipelined.** As single cycles they gave
+   WNS **-6.354 ns** (~88 MHz): accumulate, a *variable* 48-bit shift by
+   `out_shift`, `sat32`, `abs` and a `ROWS_IF`-way max fold, all in one. Row end
+   runs once per TILE, so splitting it into four stages costs no throughput.
+   The `amax` fold is a **tree**, not a chain -- required at `ROWS_IF=80`.
+
 ## 8. Design rules inherited from v1.0-silicon
 
 The `v1.0-silicon` tag names three rules earned through silicon-only failures
