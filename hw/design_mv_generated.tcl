@@ -230,6 +230,7 @@ proc create_root_design { parentCell } {
   # Create interface ports
 
   # Create ports
+  set pwm_out_0 [ create_bd_port -dir O pwm_out_0 ]
 
   # Create instance: ps, and set properties
   set ps [ create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.5 ps ]
@@ -572,6 +573,7 @@ Port;FD4A0000;FD4AFFFF;1|FPD;DPDMA;FD4C0000;FD4CFFFF;1|FPD;DDR_XMPU5_CFG;FD05000
   connect_bd_intf_net -intf_net ps_M_AXI_HPM0_LPD [get_bd_intf_pins ps/M_AXI_HPM0_LPD] [get_bd_intf_pins ctrl_ic/S00_AXI]
 
   # Create port connections
+  connect_bd_net -net fan_pwm_pwm_out [get_bd_pins fan_pwm/pwm_out] [get_bd_ports pwm_out_0]
   connect_bd_net -net ps_pl_clk0 [get_bd_pins ps/pl_clk0] [get_bd_pins rst/slowest_sync_clk] [get_bd_pins mv/s_axi_aclk] [get_bd_pins ps/maxihpm0_lpd_aclk] [get_bd_pins ps/saxihpc0_fpd_aclk] [get_bd_pins ps/saxihp0_fpd_aclk] [get_bd_pins ps/saxihp1_fpd_aclk] [get_bd_pins ps/saxihp2_fpd_aclk] [get_bd_pins ps/saxihp3_fpd_aclk] [get_bd_pins ctrl_ic/aclk] [get_bd_pins fan_pwm/s00_axi_aclk]
   connect_bd_net -net ps_pl_resetn0 [get_bd_pins ps/pl_resetn0] [get_bd_pins rst/ext_reset_in]
   connect_bd_net -net rst_peripheral_aresetn [get_bd_pins rst/peripheral_aresetn] [get_bd_pins mv/s_axi_aresetn] [get_bd_pins ctrl_ic/aresetn] [get_bd_pins fan_pwm/s00_axi_aresetn]

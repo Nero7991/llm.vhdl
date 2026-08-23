@@ -15,8 +15,10 @@
 # THE FAN IS NOT OPTIONAL.  fan_pwm is instantiated at the SAME address
 # (0x80090000) as the running design, so the existing pl-pwm-fan driver and
 # device tree bind unchanged.  Programming a bitstream without it would leave
-# AA11 unconfigured; the fan is active-low, so an undriven pin means the fan
-# stops -- with the thermal governor still reporting healthy.
+# AA11 unconfigured, which MEASURES as the fan running at full speed -- with the
+# thermal governor still reporting healthy, since it writes registers that reach
+# nothing. This build shipped exactly that failure once; see the pin assertions
+# below and hw/README.md.
 #
 # 14.4 pins ROWS_IF=4, NPORTS_W=4, AXI_DW=128, 200 MHz.  Each weight sub-region
 # gets its OWN PS slave port (HP0..HP3) and the scales get HPC0: sharing a port
@@ -131,7 +133,19 @@ if {$fan ne ""} {
                  [get_bd_pins fan_pwm/s00_axi_aresetn]
   connect_bd_intf_net [get_bd_intf_pins ctrl_ic/M01_AXI] \
                       [get_bd_intf_pins fan_pwm/S00_AXI]
-  make_bd_intf_pins_external [get_bd_pins fan_pwm/pwm_out]
+  # make_bd_PINS_external, not make_bd_INTF_pins_external.  pwm_out is a scalar
+  # pin, not an interface, and the intf form applied to it does NOTHING AND
+  # REPORTS NOTHING -- the first build of this design shipped with no external
+  # port at all, so AA11 was left unconfigured and the fan ran flat out on a
+  # floating active-low input.  The two XDC lines then matched nothing:
+  #   WARNING: [Vivado 12-584] No ports matched 'pwm_out_0'
+  # which is a warning, not an error, so the build "succeeded".  Hence the
+  # assertion below rather than trust in the call having worked.
+  make_bd_pins_external [get_bd_pins fan_pwm/pwm_out]
+  if {[llength [get_bd_ports -quiet pwm_out_0]] != 1} {
+    error "fan output was not externalised as pwm_out_0 -- bringup.xdc would\
+           match nothing and the fan would run at full speed"
+  }
 }
 
 # ----------------------------------------- one weight master per slave port
@@ -192,6 +206,22 @@ open_run impl_1
 # this project has been bitten by before.
 report_timing_summary -delay_type min_max -max_paths 5 -file $here/timing_impl.rpt
 report_utilization -file $here/util_impl.rpt
+
+# GATE ON THE PIN.  Both of this design's silent-failure modes are pins, not
+# logic: a bitstream with a perfect datapath and an unconfigured AA11 passes
+# every timing and utilisation check and then runs the fan at full speed, or
+# stops it, depending on which way the input floats.  Timing is checked by
+# report_timing_summary above; nothing checks placement, so check it here.
+set fanport [get_ports -quiet pwm_out_0]
+if {[llength $fanport] != 1} {
+  error "no pwm_out_0 port in the implemented design -- the fan is NOT driven"
+}
+set fanpin [get_property PACKAGE_PIN $fanport]
+if {$fanpin ne "AA11"} {
+  error "pwm_out_0 is on package pin '$fanpin', expected AA11 -- wrong pin means\
+         the fan is not driven and something else is"
+}
+puts "fan: pwm_out_0 placed on $fanpin [get_property IOSTANDARD $fanport]"
 puts "==== implemented timing ===="
 report_timing_summary -delay_type max -max_paths 1
 puts "BITSTREAM_DONE"

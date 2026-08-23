@@ -16,7 +16,7 @@
 #
 # Changes applied, matching the committed system-user.dtsi:
 #   1. fan cooling-levels 70,70,... -> 60,60,...   (7% -> 6% floor)
-#   2. reserved-memory: mv-weights@70000000, 256 MB, no-map
+#   2. reserved-memory: mv-weights@50000000, 256 MB, no-map
 set -e
 PLNX=~/GitHub/zcu106-2023.2-axu3eg
 MKIMAGE=/mnt/storage/petalinux/2023.2/components/yocto/buildtools/sysroots/x86_64-petalinux-linux/usr/bin/mkimage
@@ -53,17 +53,17 @@ else:
 
 # 2. reserved-memory entry, added INSIDE the existing node
 anchor = "\treserved-memory {\n\t\t#address-cells = <0x02>;\n\t\t#size-cells = <0x02>;\n\t\tranges;\n"
-if "mv-weights@70000000" in s:
+if "mv-weights@50000000" in s:
     print("  mv-weights: already present")
 elif anchor not in s:
     sys.exit("reserved-memory node not found in the expected shape")
 else:
     s = s.replace(anchor, anchor +
-                  "\n\t\tmv-weights@70000000 {\n"
+                  "\n\t\tmv-weights@50000000 {\n"
                   "\t\t\tno-map;\n"
-                  "\t\t\treg = <0x00 0x70000000 0x00 0x10000000>;\n"
+                  "\t\t\treg = <0x00 0x50000000 0x00 0x10000000>;\n"
                   "\t\t};\n", 1)
-    print("  mv-weights: reserved 256 MB at 0x70000000")
+    print("  mv-weights: reserved 256 MB at 0x50000000")
 
 open(dst, "w").write(s)
 PYEOF
@@ -74,7 +74,7 @@ echo "  new dtb: $(stat -c%s "$WORK/system-top.dtb") bytes"
 # verify by reading the new blob back, not by trusting the edit
 dtc -I dtb -O dts "$WORK/system-top.dtb" 2>/dev/null > "$WORK/back.dts"
 grep -q "cooling-levels = <0x3c 0x3c" "$WORK/back.dts" || { echo "FAIL: fan"; exit 1; }
-grep -q "mv-weights@70000000" "$WORK/back.dts"          || { echo "FAIL: reserve"; exit 1; }
+grep -q "mv-weights@50000000" "$WORK/back.dts"          || { echo "FAIL: reserve"; exit 1; }
 echo "  verified in the recompiled blob"
 
 # repackage the FIT with the patched dtb
@@ -140,7 +140,7 @@ dts = subprocess.run(["dtc", "-I", "dtb", "-O", "dts", p],
 os.unlink(p)
 if "cooling-levels = <0x3c 0x3c" not in dts:
     sys.exit("packaged image does NOT carry the 6% fan floor")
-if "mv-weights@70000000" not in dts:
+if "mv-weights@50000000" not in dts:
     sys.exit("packaged image does NOT carry the mv-weights reservation")
 print("  packaged image.ub verified: 6% fan floor and mv-weights both present")
 PYVER

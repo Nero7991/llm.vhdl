@@ -65,7 +65,7 @@ static uint8_t *slurp(const char *path, size_t *len)
 int main(int argc, char **argv)
 {
     const char *mv4i_path = NULL, *x_path = NULL;
-    uint64_t phys = 0x70000000ULL;         /* see hw/README.md */
+    uint64_t phys = 0x50000000ULL;         /* see hw/README.md */
     size_t   region = 256UL << 20;
     int      mode = MV4I_MODE_BFP;
     int      dry  = 0;

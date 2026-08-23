@@ -19,8 +19,11 @@ and not checked in.
 `axi_pwm` IP from `~/GitHub/axu3eg-pwm-ip`) is instantiated at **0x80090000**,
 the same address the running design uses, so the existing `pl-pwm-fan` driver
 and device-tree node bind unchanged. A bitstream without it leaves **AA11**
-unconfigured, and the fan is **active-low**: an undriven pin stops the fan while
-the thermal governor still reports everything healthy. If the IP repo is
+unconfigured. **Measured 2026-08-23: an unconfigured AA11 runs the fan at full
+speed**, with the thermal governor reporting healthy the whole time because it
+is writing registers that reach nothing. An earlier version of this file said an
+undriven pin *stops* the fan; that was a guess about which way a floating
+active-low input settles, and it is wrong. If the IP repo is
 missing, the script warns and continues -- do not program that bitstream.
 
 **This replaces whatever is currently loaded**, including the v1.0
@@ -98,9 +101,9 @@ rebuild the device tree:
         #address-cells = <2>;
         #size-cells = <2>;
         ranges;
-        mv_weights: buffer@70000000 {
+        mv_weights: mv-weights@50000000 {
             no-map;
-            reg = <0x0 0x70000000 0x0 0x10000000>;   /* 256 MB */
+            reg = <0x0 0x50000000 0x0 0x10000000>;   /* 256 MB */
         };
     };
 };
@@ -111,8 +114,27 @@ rebuild the device tree:
 (5120 -> 17408) packs to about **50 MB**, and the largest single 27B layer
 tensor is the same size. `lm_head` at ~715 MB would need a larger reservation.
 
-Confirm after boot with `dmesg | grep -i reserved` and
-`cat /proc/iomem | grep -i 7000`.
+**Do not put it at the top of the bank.** The first attempt used 0x70000000 on
+the reasoning that the low DDR bank ends at 0x7FFFFFFF, and the kernel refused
+it. The top of the bank is the most contended part of it: CMA takes 256 MB
+there (`cma: Reserved 256 MiB at 0x0000000065800000`), and the base device tree
+already reserves 0x758f6000-0x7bbf3fff and 0x7bf00000-0x7fefffff. CMA is placed
+dynamically -- size, no `reg` -- and takes the highest free window below the
+static reservations, so it will keep landing near the top wherever this node
+goes. The free window is 0x3EE48000 up to CMA at 0x65800000, about 615 MB, and
+0x50000000 sits in the middle of it.
+
+It must be the **low** bank: the masters are `ADDR_W=32`, so the 2 GB high bank
+at 0x800000000 is not addressable by this design.
+
+**A failed reservation is not a boot failure.** The kernel prints one line and
+carries on, and `/dev/mem` will still write the region -- into memory Linux is
+using. Check it explicitly after every device-tree change:
+
+```
+dmesg | grep -i 'reserved memory'     # must say nothing about failing
+grep -i 5000 /proc/iomem              # must show 50000000-5fffffff
+```
 
 ## Running it
 
@@ -122,7 +144,7 @@ python3 tools/pack_int4.py MODEL.gguf blk.0.ffn_gate.weight ffn.mv4i --rows-if 4
 make -C hw board                       # -> hw/mv_driver_aarch64, static
 
 # on the board
-./mv_driver --mv4i ffn.mv4i --phys 0x70000000
+./mv_driver --mv4i ffn.mv4i --phys 0x50000000
 ```
 
 `--dry-run` prints every register value it would write, without touching
