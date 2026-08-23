@@ -1217,6 +1217,40 @@ partials in software to the minimum `y_exp`, sum, and compare. That validates th
 partial-sum contract, the per-card `y_exp` correction and the `sat_event` flag on
 a single card with no interconnect at all.
 
+### 14.4a The AXU3EG rung is a DETECTOR, not just a smaller rehearsal
+
+Measured 2026-08-23, since this is easy to get backwards. The four defects §7.9a
+records were found on the ZU3EG, and the obvious reading -- "they are artefacts
+of squeezing onto a small part" -- is wrong for three of the four.
+
+| | ZU3EG | VU33P (FK33) | ratio |
+|---|---|---|---|
+| LUT | 70,560 | 439,680 | 6.2x |
+| Flip-flop | 141,120 | 879,360 | 6.2x |
+| BRAM36 | 216 | 672 | 3.1x |
+| URAM | 0 | 320 | -- |
+| DSP | 360 | 2,880 | 8x |
+
+- **Nested arrays -> 835K registers.** 592% of the ZU3EG's flip-flops, so it
+  failed instantly. **95% of the VU33P's** -- it FITS. Synthesis would have
+  reported success while spending almost the whole device on two memories.
+- **Variable-offset slice write -> 512 RAMB18 (256 tiles).** 119% of the ZU3EG's
+  BRAM for one array; **38% of the VU33P's**, which fits with no error. And it
+  does not shrink there: §7.2 pins the activation read width independent of
+  `ROWS_IF`, so `act_mem_striped` is the same 512-bit memory on the FK33 with
+  the same defect, wasting ~240 tiles that 80 lanes of FIFO will need.
+- **Timing.** Device-independent, and strictly WORSE on the FK33: §13 targets
+  ~300 MHz (3.33 ns) against the 5 ns closed here, and the `amax` fold is
+  `ROWS_IF`-deep, so the chain form goes from 4 deep to 80.
+
+Only the FIFOs falling back to LUTRAM was a size artefact, and that was a
+consequence of the BRAM overflow rather than a defect of its own.
+
+**Therefore: keep this build as a gate after the FK33 arrives, do not retire
+it.** A 3x smaller BRAM budget and a 6x smaller register budget convert silent
+waste on the target device into hard build failures here, which is the whole
+value of a constraint that binds tighter than production.
+
 ### 14.5 OPEN: the FK33 pack format is undefined at `ROWS_IF=80`
 
 **This blocks FK33 packing only; the AXU3EG path above is unaffected.**
