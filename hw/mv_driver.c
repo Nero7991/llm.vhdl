@@ -86,6 +86,7 @@ int main(int argc, char **argv)
      * Reads only. The PL masters are read-only and every access stays inside
      * the reserved region, so a wrong base cannot corrupt anything. */
     uint64_t bw_stride = 0;
+    double   ddr_mts   = 1200.0;   /* see the peak note below; NOT 2400 */
     size_t   region = 256UL << 20;
     int      mode = MV4I_MODE_BFP;
     int      dry  = 0;
@@ -99,6 +100,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--dry-run")) dry = 1;
         else if (!strcmp(argv[i], "--bw-stride") && i + 1 < argc)
             bw_stride = strtoull(argv[++i], 0, 0);
+        else if (!strcmp(argv[i], "--ddr-mts") && i + 1 < argc)
+            ddr_mts = atof(argv[++i]);
         else { fprintf(stderr, "usage: %s --mv4i FILE [--x FILE] [--phys A] "
                                "[--size N] [--mode 0|1|2]\n", argv[0]); return 1; }
     }
@@ -191,7 +194,8 @@ int main(int argc, char **argv)
     int nb    = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
     int tiles = (M + f.h.rows_if - 1) / f.h.rows_if;
     wr(R_WBEATS, (uint32_t)(tiles * nb));                    /* 16 B per beat */
-    wr(R_SBEATS, (uint32_t)((tiles * nb * f.h.rows_if * 2 + 15) / 16));
+    uint32_t sbeats = (uint32_t)((tiles * nb * f.h.rows_if * 2 + 15) / 16);
+    wr(R_SBEATS, sbeats);
 
     for (int i = 0; i < 16; i++)
         wr(R_CB, ((uint32_t)i << 8) | (uint8_t)f.h.codebook[i]);
@@ -245,10 +249,39 @@ report: ;
     /* §11: sustained bandwidth as a fraction of DDR peak.  Beats are counted in
      * the PL at the array's own clock, so this is what the datapath actually
      * consumed -- not a wall-clock figure that would fold in the AXI-Lite
-     * activation load and the polling. */
+     * activation load and the polling.
+     *
+     * THE PEAK IS 9.6 GB/s ON THIS BOARD, NOT 19.2.  This originally divided by
+     * 19.2, taken from "DDR4-2400 x64", and reported 44.3% -- which read as the
+     * engine wasting more than half the memory system.  It is not.
+     * PSU__DDRC__SPEED_BIN is DDR4_2400P, but that is the DRAM part's RATING,
+     * not its operating point: PSU__DDR__INTERFACE__FREQMHZ is 600, and DDR is
+     * double data rate, so the bus runs at 1200 MT/s.  Confirmed on hardware
+     * rather than from the config -- dpll is 1,199,999,988 Hz and CRF_APB
+     * DDR_CTRL (0xFD1A0080) reads 0x01000200, so DIVISOR0=2 and the interface
+     * clock is 600 MHz:
+     *
+     *   grep -iE 'ddr|dpll' /sys/kernel/debug/clk/clk_summary
+     *   devmem 0xFD1A0080 32
+     *
+     * 1200 MT/s x 8 B = 9.6 GB/s.  Against that, weights 8.50 plus scales 1.06
+     * is 9.56 GB/s, i.e. 99.6% -- the engine SATURATES this memory system.  The
+     * starvation figure falls out of the same arithmetic: demand is 14.4 GB/s
+     * (4 weight ports + the scale port at 16 B per cycle each, 200 MHz) against
+     * 9.6 GB/s of supply, so 9.6/14.4 = 66.7% predicted occupancy against 66.4%
+     * measured, and 33.3% predicted starvation against 33.6% measured.
+     *
+     * Override with --ddr-mts if the DDR is ever re-clocked. */
     double secs   = cycles / 200e6;
     double bytes  = (double)beats * 16.0 * 4.0;   /* 4 lanes per merged word */
     double gbs    = secs > 0 ? bytes / secs / 1e9 : 0.0;
+    double peak   = ddr_mts * 8.0 / 1000.0;       /* 64-bit bus, MT/s -> GB/s */
+    /* The scale stream has no beat counter in the PL -- only the weight lanes
+     * do -- but it is a fixed, fully-determined count that the driver itself
+     * programmed, and the port runs for the same span as the weight ports, so
+     * this is exact rather than an estimate. */
+    double sbytes = (double)sbeats * 16.0;
+    double sgbs   = secs > 0 ? sbytes / secs / 1e9 : 0.0;
     double wall   = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
 
     if (!bw_stride) {
@@ -263,8 +296,10 @@ report: ;
     printf("cycles   %u   (%.3f ms at 200 MHz)\n", cycles, secs * 1e3);
     printf("beats    %u   starved %u  (%.1f%% of cycles)\n",
            beats, starved, cycles ? 100.0 * starved / cycles : 0.0);
-    printf("weights  %.2f GB/s sustained  = %.1f%% of DDR4-2400 x64 peak (19.2 GB/s)\n",
-           gbs, 100.0 * gbs / 19.2);
+    printf("weights  %.2f GB/s   scales %.2f GB/s   total %.2f GB/s\n",
+           gbs, sgbs, gbs + sgbs);
+    printf("memory   %.1f%% of this board's %.1f GB/s DDR peak (%.0f MT/s x 64 bit)\n",
+           100.0 * (gbs + sgbs) / peak, peak, ddr_mts);
     printf("wall     %.3f ms (includes the AXI-Lite activation load and polling)\n",
            wall * 1e3);
 

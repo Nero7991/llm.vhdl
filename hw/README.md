@@ -68,9 +68,27 @@ mv/m04_axi ── S_AXI_HPC0  scales
 **One master per PS slave port is the point, not tidiness.** Sharing a port
 would halve delivered bandwidth, and sustained bandwidth as a fraction of DDR
 peak is §11's acceptance criterion -- the number every projection in
-`docs/fpga-hardware-recon.md` rests on. DDR4-2400 at 64 bit is **19.2 GB/s**
-peak against this configuration's **14.4 GB/s** demand, so the design sits right
-at the boundary §4 predicted and the measurement is genuinely informative.
+`docs/fpga-hardware-recon.md` rests on.
+
+**This board's DDR peak is 9.6 GB/s, not 19.2.** An earlier version of this file
+said 19.2, reasoning from "DDR4-2400 x 64 bit". `PSU__DDRC__SPEED_BIN` is indeed
+`DDR4_2400P`, but that is the DRAM part's *rating*:
+`PSU__DDR__INTERFACE__FREQMHZ` is **600**, and DDR is double data rate, so the
+bus runs at **1200 MT/s**. Verified on hardware -- `dpll` is 1,199,999,988 Hz and
+`devmem 0xFD1A0080` reads `0x01000200`, so `DIVISOR0=2` and the interface clock
+is 600 MHz.
+
+So against **9.6 GB/s** of supply and this configuration's **14.4 GB/s** of
+demand, the design is memory-bound by a third by construction, and §11's
+measurement of 9.56 GB/s total is **99.6% of what the board can deliver**. Read
+the acceptance number as "saturates the available memory", not as a fraction of
+a peak this board does not have.
+
+Raising the DDR interface to 1200 MHz would put supply above demand and roughly
+double throughput, since the engine is purely memory-bound. That means changing
+the PS configuration that was copied verbatim *because* DDR errors produce a
+board that does not boot with JTAG-only recovery -- so it is a deliberate
+decision, not a tuning knob.
 
 Masters are **read-only** (AR and R channels only). Subsystem A never writes to
 DDR; results return through the AXI-Lite result buffer.

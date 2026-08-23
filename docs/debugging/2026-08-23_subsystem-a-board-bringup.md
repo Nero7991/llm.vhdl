@@ -283,3 +283,70 @@ nominal bandwidth.
 **Still open:** whether raising the outstanding depth actually recovers the
 throughput, and if not, whether the ceiling is the HP port, the FPD
 interconnect, or the coherent scale traffic on HPC0 degrading the others.
+
+## CORRECTION 2026-08-23 (third, and it overturns the framing): the memory was SATURATED all along
+
+Everything above treats 8.50 GB/s as a shortfall to be explained -- "44.3% of
+the 19.2 GB/s DDR4-2400 peak", with the datapath "starved 33.6% of cycles". That
+framing is WRONG and is WITHDRAWN. **This board's DDR peak is 9.6 GB/s, not
+19.2, and the engine was running at 99.6% of it.**
+
+`PSU__DDRC__SPEED_BIN` is `DDR4_2400P`, which is the DRAM part's RATING, not its
+operating point. `PSU__DDR__INTERFACE__FREQMHZ` is **600**, and DDR is double
+data rate, so the bus runs at **1200 MT/s**. Confirmed on the hardware rather
+than from the config file:
+
+```
+dpll        1  1  1  1199999988          0  0  50000  Y
+devmem 0xFD1A0080 32   ->  0x01000200      # CRF_APB DDR_CTRL, DIVISOR0 = 2
+```
+
+1200 MHz / 2 = 600 MHz interface, x2 for DDR, x8 B for the 64-bit bus = 9.6 GB/s.
+
+| | GB/s |
+|---|---|
+| weights (696,320 beats x 64 B) | 8.50 |
+| scales (348,160 beats x 16 B) | 1.06 |
+| **total** | **9.56** |
+| **this board's actual peak** | **9.60** |
+
+**99.6%.** On `ffn_down` it measures 99.9%.
+
+The starvation figure falls out of the same arithmetic and stops being a defect:
+demand is 14.4 GB/s (four weight ports plus the scale port, 16 B per cycle each
+at 200 MHz) against 9.6 GB/s of supply, so occupancy should be 9.6/14.4 = 66.7%
+against 66.4% measured, and starvation 33.3% predicted against 33.6% measured.
+The engine is exactly as fast as the memory allows, and not one cycle slower.
+
+**Why the three earlier hypotheses all died.** DRAM stream contention, row
+geometry, and outstanding-request depth were each measured and refuted, and in
+hindsight none of them could ever have mattered: there was no gap for them to
+explain. `FIFO_DEPTH=2048, MAXOUT=8` -- 4x the depth and 4x the outstanding
+bursts of the shipping config -- changed `cycles` by 20 in 1,048,900. That is
+the signature of a hard supply limit, and it should have prompted the question
+"is the supply what I think it is?" several probes earlier.
+
+**The measurement trap, and it is the most valuable line in this file.** Every
+one of those probes was sound, and every conclusion drawn from them was correct
+in isolation. The error was in the DENOMINATOR, which was never measured at all
+-- it was copied from the DRAM part number into `hw/README.md` and into the
+driver's output string, and then every subsequent result was interpreted against
+it. A constant that no probe questions will survive any number of careful
+experiments. Check the denominator before designing the third experiment to
+explain a gap, not after.
+
+**Consequence for section 4 and hw/README.md.** Both state "DDR4-2400 x64 is
+19.2 GB/s peak against a 14.4 GB/s demand, so the design sits right at the
+boundary". The AXU3EG could never have met that demand: at 9.6 GB/s it was
+always going to be memory-bound by a third, and the section 11 acceptance number
+should be read as "saturates the available memory", not "achieves 44% of peak".
+
+**Open, and now a real opportunity rather than a defect.** The DRAM parts are
+rated DDR4-2400P but are clocked at half that. Raising
+`PSU__DDR__INTERFACE__FREQMHZ` to 1200 would roughly double memory bandwidth and,
+since the engine is purely memory-bound, roughly double its throughput -- 14.4
+GB/s of demand would then sit under a 19.2 GB/s supply and the starvation would
+go to zero. This is NOT a free change: the PS configuration was lifted verbatim
+from the running design precisely because DDR timing errors produce a board that
+does not boot, and recovery is JTAG-only. It needs deliberate sign-off, a
+rollback plan, and DDR training verified before it is trusted.
