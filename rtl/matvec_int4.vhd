@@ -85,7 +85,14 @@ entity matvec_int4 is
     y_exp     : out std_logic_vector(31 downto 0);
     done      : out std_logic;
     err       : out std_logic;
-    sat_event : out std_logic
+    sat_event : out std_logic;
+
+    -- performance taps for the AXI wrapper's counters.  11 requires sustained
+    -- bandwidth reported as a percentage of DDR peak, which needs the beats
+    -- actually consumed and the cycles the array spent starved, not just a
+    -- wall-clock time.
+    dbg_wbeat   : out std_logic;   -- a weight word was accepted this cycle
+    dbg_wstarve : out std_logic    -- no weight word was available this cycle
   );
 end entity;
 
@@ -160,6 +167,9 @@ begin
              tp_b => o_tp_b, tc_b => o_tc_b,
              tp_val => o_tp, tc_val => o_tc, ta_val => o_ta, tm_val => o_tm,
              tap_ns => o_ns);
+
+  dbg_wbeat   <= wv and wr;
+  dbg_wstarve <= not wv;
 
   i_rows   <= to_integer(signed(n_rows));
   i_cols   <= to_integer(signed(n_cols));

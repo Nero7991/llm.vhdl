@@ -110,5 +110,37 @@ for c in $E2E; do
   fi
 done
 
+
+echo "== 7. the PS sequence over AXI-Lite (10 step 5, in simulation) =="
+# Programs the descriptor, codebook and activations through the register map,
+# starts, polls STATUS and reads the results back -- the same sequence the
+# board-side C driver will follow, validated before any hardware exists.
+mkdir -p sim/work_axi
+( cd sim/work_axi \
+  && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
+        ../../rtl/mv4i_arith_pkg.vhd ../../rtl/stream_fifo.vhd \
+        ../../rtl/axi_rd_port.vhd ../../rtl/weight_streamer.vhd \
+        ../../rtl/act_mem_striped.vhd ../../rtl/matvec_core.vhd \
+        ../../rtl/matvec_int4.vhd ../../rtl/matvec_int4_axi.vhd \
+        ../tb_matvec_axi.vhd \
+  && ghdl -e --std=08 --workdir=. tb_matvec_axi )
+
+for c in $E2E; do
+  M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
+  R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)
+  [ "$R" = "4" ] || continue           # the register map is fixed at ROWS_IF=4
+  ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" >/dev/null )
+  out=$( cd sim/work_axi && ghdl -r --std=08 --workdir=. tb_matvec_axi \
+           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=50ms 2>&1 )
+  n=$(echo "$out" | grep -oE 'AXI: [0-9]+ rows read back, [0-9]+ mismatches' || true)
+  if echo "$out" | grep -q "through the AXI-Lite register map"; then
+    printf "  M=%-3s K=%-4s stall=%-2s  OK   %s\n" "$M" "$K" "$S" "$n"
+  else
+    printf "  M=%-3s K=%-4s stall=%-2s  FAIL\n" "$M" "$K" "$S"
+    echo "$out" | grep -iE "error|mismatch|fail" | head -5
+    fail=1
+  fi
+done
+
 [ "$fail" -eq 0 ] || { echo "== FAILED =="; exit 1; }
 echo "== all green =="

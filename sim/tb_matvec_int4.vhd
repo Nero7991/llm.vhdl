@@ -118,7 +118,8 @@ begin
              m_rdata => m_rdata, m_rlast => m_rlast,
              y_we => y_we, y_addr => y_addr, y_data => y_data,
              y_mask => y_mask, y_exp => v_yexp,
-             done => done, err => err, sat_event => sat_event);
+             done => done, err => err, sat_event => sat_event,
+             dbg_wbeat => open, dbg_wstarve => open);
 
   -- ------------------------------------------------- one AXI slave per port
   slaves : for p in 0 to NP generate
