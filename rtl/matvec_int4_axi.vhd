@@ -58,6 +58,7 @@ entity matvec_int4_axi is
     MAXROWS_BFP : positive := 17408;
     FIFO_DEPTH  : positive := 512;
     MAXB        : positive := 256;
+    MAXOUT      : positive := 2;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -168,7 +169,7 @@ begin
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                 MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH,
-                MAXB => MAXB)
+                MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => s_axi_aclk, rst => rst, start => start,
              n_rows => r_rows, n_cols => r_cols, out_shift => r_osh,
              w_exp => r_wexp, x_exp => r_xexp, out_mode => r_mode,

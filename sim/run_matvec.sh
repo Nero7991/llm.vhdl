@@ -67,6 +67,46 @@ for g in "1 64 0" "2 64 3" "4 128 3" "4 128 0" "8 256 5" "2 64 7" "8 256 0"; do
   fi
 done
 
+echo "== 4c. the board-facing wrapper elaborates =="
+# matvec_int4_ip is the top the Vivado build instantiates as a module reference,
+# and NOTHING else in this chain touches it -- so a generic added to the
+# hierarchy but not threaded through it fails only at synthesis, ~2 min into a
+# ~25 min build. That is exactly how MAXOUT broke: plumbed through
+# weight_streamer, matvec_int4 and matvec_int4_ip but not matvec_int4_axi, and
+# the block-design stage passed because the BD cell really does have the
+# generic; the break was one level below it. This costs seconds.
+#
+# Two checks, because GHDL will not mix standards in one library: units
+# analysed under --std=08 are invisible to a --std=93c analysis ("unit
+# matvec_int4_axi not found in library work"), so the wrapper cannot be bound
+# against its own hierarchy in 93 mode.
+#
+#   1. elaborate the whole hierarchy INCLUDING the wrapper under 2008. This is
+#      what catches a generic or port that was not threaded through -- the real
+#      bug class, and the one that cost a build.
+#
+# A standalone VHDL-93 check of the wrapper is NOT possible here and was tried:
+# `ghdl -s --std=93c rtl/matvec_int4_ip.vhd` is documented as a syntax check but
+# still resolves the direct entity instantiation, so it fails with "unit
+# matvec_int4_axi not found in library work" no matter how 93-clean the file is.
+# Binding it properly would need the hierarchy analysed under 93 too, which
+# cannot happen because everything below it uses 2008. The wrapper being VHDL-93
+# (Vivado refuses a 2008 module-reference top, [filemgmt 56-195]) is therefore
+# enforced only by build_bringup.tcl's set_property file_type {VHDL} and by the
+# build failing if it regresses.
+rm -rf sim/work_ip && mkdir -p sim/work_ip
+ipok=1
+( cd sim/work_ip \
+  && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
+        ../../rtl/mv4i_arith_pkg.vhd ../../rtl/stream_fifo.vhd \
+        ../../rtl/axi_rd_port.vhd ../../rtl/weight_streamer.vhd \
+        ../../rtl/act_mem_striped.vhd ../../rtl/matvec_core.vhd \
+        ../../rtl/matvec_int4.vhd ../../rtl/matvec_int4_axi.vhd \
+        ../../rtl/matvec_int4_ip.vhd \
+  && ghdl -e --std=08 --workdir=. matvec_int4_ip ) >/dev/null 2>&1 \
+  || { echo "  matvec_int4_ip FAILED to elaborate over its hierarchy"; ipok=0; fail=1; }
+[ "$ipok" = "1" ] && echo "  matvec_int4_ip elaborates over its full hierarchy"
+
 echo "== 5. RTL vs C reference, stage by stage, over shapes =="
 ( cd sim/work_mv \
   && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
