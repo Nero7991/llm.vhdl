@@ -62,3 +62,4 @@ sim/funcsim_mv/*.pb
 sim/funcsim_mv/tb_matvec_int4_net.vhd
 sim/funcsim_mv/mvnet*
 sim/work_axi/
+sim/ooc_axi/

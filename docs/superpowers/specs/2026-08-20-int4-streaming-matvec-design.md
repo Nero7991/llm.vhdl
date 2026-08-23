@@ -885,6 +885,25 @@ BRAM lands on the estimate. LUT is ~1.7x over it, which is the streamer and its
 five FIFOs -- §7.9 was written before §7.7's port structure was settled and does
 not include them.
 
+With the AXI-Lite wrapper (`matvec_int4_axi`, top for the board build):
+
+| Resource | **Measured** | of device |
+|---|---|---|
+| CLB LUT | **11,751** | 16.7% |
+| CLB Register | **4,464** | 3.2% |
+| BRAM36 tile | **80.5** | 37.3% |
+| **WNS @ 200 MHz** | **+0.770 ns (MET)** | unchanged |
+
+The wrapper costs ~36 BRAM tiles, which is the result buffer: 17,408 rows x
+64 bits, wide enough for PARTIAL's unrounded s48 (§14.2) rather than only a BFP
+mantissa. The critical path does not move, so the control path is not near it.
+
+A post-synthesis **funcsim** of the netlist (`sim/funcsim_mv/run_funcsim.sh`,
+xsim with real UNISIM primitives, following the v1.0 `sim/e2_funcsim` flow)
+reproduces the C reference exactly on five shapes. The RTL was verified against
+the reference; the netlist was only argued equivalent to the RTL, and that gap
+is where v1.0's silicon-only failures lived.
+
 **DSP is 41% over because Vivado cascaded the adder tree into the DSPs itself.**
 The synthesis log shows nodes such as `tr_reg[1][15]` built as
 `(PCIN + (A2*B)')'`, i.e. the first tree level absorbed into DSP post-adders via
