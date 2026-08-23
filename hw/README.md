@@ -70,25 +70,25 @@ would halve delivered bandwidth, and sustained bandwidth as a fraction of DDR
 peak is §11's acceptance criterion -- the number every projection in
 `docs/fpga-hardware-recon.md` rests on.
 
-**This board's DDR peak is 9.6 GB/s, not 19.2.** An earlier version of this file
-said 19.2, reasoning from "DDR4-2400 x 64 bit". `PSU__DDRC__SPEED_BIN` is indeed
-`DDR4_2400P`, but that is the DRAM part's *rating*:
-`PSU__DDR__INTERFACE__FREQMHZ` is **600**, and DDR is double data rate, so the
-bus runs at **1200 MT/s**. Verified on hardware -- `dpll` is 1,199,999,988 Hz and
-`devmem 0xFD1A0080` reads `0x01000200`, so `DIVISOR0=2` and the interface clock
-is 600 MHz.
+DDR4-2400 at 64 bit is **19.2 GB/s** peak against this configuration's **14.4
+GB/s** demand. §11 measures **9.56 GB/s** delivered (8.50 weights + 1.06
+scales), so the engine gets about half the available bandwidth and is starved
+33.6% of cycles.
 
-So against **9.6 GB/s** of supply and this configuration's **14.4 GB/s** of
-demand, the design is memory-bound by a third by construction, and §11's
-measurement of 9.56 GB/s total is **99.6% of what the board can deliver**. Read
-the acceptance number as "saturates the available memory", not as a fraction of
-a peak this board does not have.
+**Do not re-clock the DDR, and do not "correct" the 19.2 figure.** Both were
+tried. An intermediate version of this file argued the peak was 9.6 GB/s,
+because `PSU__DDR__INTERFACE__FREQMHZ` is 600 and `DDR_CTRL` gives a 600 MHz
+clock -- but that is the DDRC/PHY **core** clock, which runs 2:1 to the DRAM
+clock on ZynqMP. The DRAM clock is 1200 MHz and the bus is 2400 MT/s, already
+its rated speed. Settled by measurement rather than by reading the clock tree:
+the PL engine and four PS cores streaming DRAM concurrently (`hw/membw.c`) reach
+**17.06 GB/s together**, which no 9.6 GB/s memory system can produce, and the PL
+slows by 0.02% while the PS takes 7.5 GB/s alongside it.
 
-Raising the DDR interface to 1200 MHz would put supply above demand and roughly
-double throughput, since the engine is purely memory-bound. That means changing
-the PS configuration that was copied verbatim *because* DDR errors produce a
-board that does not boot with JTAG-only recovery -- so it is a deliberate
-decision, not a tuning knob.
+So the starvation is real and it is **not** the DRAM. Stream separation, row
+geometry, and outstanding-request depth have each been measured and ruled out
+(see `docs/debugging/2026-08-23_subsystem-a-board-bringup.md`), which leaves the
+PL-to-DDR path itself: the AFI, the FPD interconnect, or DDRC port arbitration.
 
 Masters are **read-only** (AR and R channels only). Subsystem A never writes to
 DDR; results return through the AXI-Lite result buffer.

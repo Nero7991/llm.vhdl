@@ -350,3 +350,63 @@ go to zero. This is NOT a free change: the PS configuration was lifted verbatim
 from the running design precisely because DDR timing errors produce a board that
 does not boot, and recovery is JTAG-only. It needs deliberate sign-off, a
 rollback plan, and DDR training verified before it is trusted.
+
+## CORRECTION 2026-08-23 (fourth): the third correction was WRONG -- the memory is NOT saturated
+
+The section immediately above claims this board's DDR peak is 9.6 GB/s and that
+the engine runs at 99.6% of it. **That is wrong and is WITHDRAWN.** The peak is
+19.2 GB/s, the original figure, and the engine uses about half of it.
+
+**What killed it.** Run the PL engine and four PS cores streaming DRAM at the
+same instant (`hw/membw.c`, 256 MB working set, far past the 1 MB L2):
+
+| | GB/s |
+|---|---|
+| PL engine | 9.56 |
+| 4 PS cores, concurrently | 7.50 |
+| **total** | **17.06** |
+| 4 PS cores with the PL idle | 7.96 |
+
+17.06 GB/s cannot come out of a 9.6 GB/s memory system. It is 89% of 19.2, an
+ordinary DDR efficiency. And the PL is slowed by 0.02% while the PS takes 7.5
+GB/s alongside it, which is not what saturation looks like.
+
+**Where the reasoning went wrong.** `PSU__DDR__INTERFACE__FREQMHZ` is 600 and
+`DDR_CTRL` (0xFD1A0080) reads 0x01000200, so DIVISOR0=2 against a 1200 MHz DPLL
+gives a 600 MHz clock. All of that is correct. The error was assuming 600 MHz is
+the DRAM clock. It is the DDRC/PHY **core** clock, which on ZynqMP runs 2:1 to
+the DRAM clock -- so the DRAM clock is 1200 MHz and the bus is 2400 MT/s,
+exactly as `PSU__DDRC__SPEED_BIN {DDR4_2400P}` says.
+
+**The DDR re-clock is therefore unnecessary and must not be attempted.** It was
+authorised on the strength of the withdrawn claim. The DRAM is already at its
+rated 2400 MT/s; there is nothing to raise, and the change would have meant
+rebuilding the FSBL and reflashing QSPI boot firmware -- the only irreversible,
+JTAG-recovery-only operation proposed all day -- for no gain.
+
+**Two corrections in a row on the same number, so state the pattern.** The third
+correction replaced a wrong denominator with a *differently* wrong denominator,
+and did it while explicitly congratulating itself for having found an unmeasured
+constant. Both times the denominator came from reading configuration and
+reasoning about it, and both times the fix was to MEASURE the quantity end to
+end instead. The concurrency test is three lines and settles it with no
+knowledge of the clock tree at all; it should have been the first probe, not the
+sixth.
+
+**What still stands, and what is now open again.**
+
+Standing: the engine is bit-exact on two real tensors; stream separation, row
+geometry, and outstanding-request depth are each measured and ruled out as the
+cause of the 33.6% starvation; the pipelined amax fold is validated on silicon.
+
+Open again: the 33.6% starvation is real after all. The engine demands 14.4 GB/s
+and gets 9.56 while the memory system demonstrably has headroom, so the limit
+lies in the PL-to-DDR path -- the AFI, the FPD interconnect, or DDRC port
+arbitration -- and not in the DRAM, the address pattern, or the request pipeline.
+
+**The experiment that would localise it:** rebuild routing two weight masters
+through one HP port so only two PS slave ports carry weights instead of four. If
+delivered bandwidth stays near 9.56 the cap is aggregate across the PL-to-DDR
+path; if it roughly halves, the cap is per-port and four ports were each already
+near their own ceiling. That distinction decides whether more ports would help,
+which is directly relevant to the FK33's many-port HBM topology.

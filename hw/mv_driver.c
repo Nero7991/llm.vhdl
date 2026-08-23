@@ -86,7 +86,7 @@ int main(int argc, char **argv)
      * Reads only. The PL masters are read-only and every access stays inside
      * the reserved region, so a wrong base cannot corrupt anything. */
     uint64_t bw_stride = 0;
-    double   ddr_mts   = 1200.0;   /* see the peak note below; NOT 2400 */
+    double   ddr_mts   = 2400.0;   /* DDR4-2400; see the peak note below */
     size_t   region = 256UL << 20;
     int      mode = MV4I_MODE_BFP;
     int      dry  = 0;
@@ -251,27 +251,36 @@ report: ;
      * consumed -- not a wall-clock figure that would fold in the AXI-Lite
      * activation load and the polling.
      *
-     * THE PEAK IS 9.6 GB/s ON THIS BOARD, NOT 19.2.  This originally divided by
-     * 19.2, taken from "DDR4-2400 x64", and reported 44.3% -- which read as the
-     * engine wasting more than half the memory system.  It is not.
-     * PSU__DDRC__SPEED_BIN is DDR4_2400P, but that is the DRAM part's RATING,
-     * not its operating point: PSU__DDR__INTERFACE__FREQMHZ is 600, and DDR is
-     * double data rate, so the bus runs at 1200 MT/s.  Confirmed on hardware
-     * rather than from the config -- dpll is 1,199,999,988 Hz and CRF_APB
-     * DDR_CTRL (0xFD1A0080) reads 0x01000200, so DIVISOR0=2 and the interface
-     * clock is 600 MHz:
+     * THE PEAK IS 19.2 GB/s.  Read this before "correcting" it again.
      *
-     *   grep -iE 'ddr|dpll' /sys/kernel/debug/clk/clk_summary
-     *   devmem 0xFD1A0080 32
+     * A previous version of this comment argued the peak was 9.6 GB/s, on the
+     * grounds that PSU__DDR__INTERFACE__FREQMHZ is 600 and CRF_APB DDR_CTRL
+     * (0xFD1A0080) reads 0x01000200 so DIVISOR0=2 against a 1200 MHz DPLL --
+     * making the DRAM clock 600 MHz and the bus 1200 MT/s.  That reasoning is
+     * WRONG: 600 MHz is the DDRC/PHY CORE clock, which on ZynqMP runs 2:1 to the
+     * DRAM clock.  The DRAM clock is 1200 MHz and the bus is 2400 MT/s, which is
+     * what PSU__DDRC__SPEED_BIN {DDR4_2400P} says it should be.
      *
-     * 1200 MT/s x 8 B = 9.6 GB/s.  Against that, weights 8.50 plus scales 1.06
-     * is 9.56 GB/s, i.e. 99.6% -- the engine SATURATES this memory system.  The
-     * starvation figure falls out of the same arithmetic: demand is 14.4 GB/s
-     * (4 weight ports + the scale port at 16 B per cycle each, 200 MHz) against
-     * 9.6 GB/s of supply, so 9.6/14.4 = 66.7% predicted occupancy against 66.4%
-     * measured, and 33.3% predicted starvation against 33.6% measured.
+     * MEASURED, because the clock tree was clearly not something to reason about
+     * unaided.  Run the PL engine and four PS cores streaming DRAM at the same
+     * instant (hw/membw.c):
      *
-     * Override with --ddr-mts if the DDR is ever re-clocked. */
+     *   PL engine            9.56 GB/s
+     *   4 PS cores           7.50 GB/s   (7.96 with the PL idle)
+     *   total               17.06 GB/s
+     *
+     * 17.06 cannot come out of a 9.6 GB/s memory system.  It is 89% of 19.2,
+     * which is an ordinary DDR efficiency figure.
+     *
+     * So the engine at 9.56 GB/s is using about HALF the available bandwidth,
+     * and the DDR has demonstrable headroom -- the PS pulls 7.5 GB/s more with
+     * the engine at full tilt and slows it by 0.02%.  The 33.6% starvation is
+     * therefore real and is NOT the memory: it is somewhere in the PL-to-DDR
+     * path (the AFI, the FPD interconnect, or DDRC port arbitration).  Stream
+     * separation, row geometry, and outstanding-request depth have each been
+     * measured and ruled out; see docs/debugging/2026-08-23.
+     *
+     * Override with --ddr-mts only if the DDR is genuinely re-clocked. */
     double secs   = cycles / 200e6;
     double bytes  = (double)beats * 16.0 * 4.0;   /* 4 lanes per merged word */
     double gbs    = secs > 0 ? bytes / secs / 1e9 : 0.0;
