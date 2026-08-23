@@ -37,7 +37,10 @@ architecture sim of tb_matvec_int4 is
   signal clk, rst : std_logic := '0';
   signal start : std_logic := '0';
 
-  signal n_rows, n_cols, out_shift, w_exp, x_exp, y_exp : integer := 0;
+  signal n_rows, n_cols, out_shift, w_exp, x_exp : integer := 0;
+  signal y_exp : integer;
+  signal v_rows, v_cols, v_osh, v_wexp, v_xexp : std_logic_vector(31 downto 0);
+  signal v_wbeats, v_sbeats, v_yexp            : std_logic_vector(31 downto 0);
   signal out_mode : std_logic_vector(1 downto 0) := "00";
   signal cb_we : std_logic := '0';
   signal cb_addr : std_logic_vector(3 downto 0) := (others => '0');
@@ -80,6 +83,15 @@ architecture sim of tb_matvec_int4 is
 begin
   rst <= '1', '0' after 40 ns;
 
+  v_rows   <= std_logic_vector(to_signed(n_rows, 32));
+  v_cols   <= std_logic_vector(to_signed(n_cols, 32));
+  v_osh    <= std_logic_vector(to_signed(out_shift, 32));
+  v_wexp   <= std_logic_vector(to_signed(w_exp, 32));
+  v_xexp   <= std_logic_vector(to_signed(x_exp, 32));
+  v_wbeats <= std_logic_vector(to_signed(w_beats, 32));
+  v_sbeats <= std_logic_vector(to_signed(s_beats, 32));
+  y_exp    <= to_integer(signed(v_yexp));
+
   clkgen : process
   begin
     while not finished loop
@@ -93,10 +105,10 @@ begin
                 ADDR_W => ADDR_W, MAXCOLS => 512, MAXROWS_BFP => MAXR,
                 FIFO_DEPTH => 64, MAXB => 16)
     port map(clk => clk, rst => rst, start => start,
-             n_rows => n_rows, n_cols => n_cols, out_shift => out_shift,
-             w_exp => w_exp, x_exp => x_exp, out_mode => out_mode,
-             w_base => w_base, w_beats => w_beats,
-             s_base => s_base, s_beats => s_beats,
+             n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
+             w_exp => v_wexp, x_exp => v_xexp, out_mode => out_mode,
+             w_base => w_base, w_beats => v_wbeats,
+             s_base => s_base, s_beats => v_sbeats,
              cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
              x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
              m_arvalid => m_arvalid, m_arready => m_arready,
@@ -105,7 +117,7 @@ begin
              m_rvalid => m_rvalid, m_rready => m_rready,
              m_rdata => m_rdata, m_rlast => m_rlast,
              y_we => y_we, y_addr => y_addr, y_data => y_data,
-             y_mask => y_mask, y_exp => y_exp,
+             y_mask => y_mask, y_exp => v_yexp,
              done => done, err => err, sat_event => sat_event);
 
   -- ------------------------------------------------- one AXI slave per port

@@ -40,17 +40,21 @@ entity matvec_int4 is
     clk, rst : in  std_logic;
 
     -- descriptor, from the PS after it has read the header
+    -- All scalars are std_logic_vector, NOT integer.  Vivado converts integer
+    -- ports to vectors when it writes a netlist, so an integer here would make
+    -- the post-synthesis funcsim testbench unable to port-map the very thing it
+    -- is meant to check.  An AXI-Lite wrapper wants vectors regardless.
     start     : in  std_logic;
-    n_rows    : in  integer;
-    n_cols    : in  integer;
-    out_shift : in  integer;
-    w_exp     : in  integer;
-    x_exp     : in  integer;
+    n_rows    : in  std_logic_vector(31 downto 0);
+    n_cols    : in  std_logic_vector(31 downto 0);
+    out_shift : in  std_logic_vector(31 downto 0);
+    w_exp     : in  std_logic_vector(31 downto 0);
+    x_exp     : in  std_logic_vector(31 downto 0);
     out_mode  : in  std_logic_vector(1 downto 0);
     w_base    : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
-    w_beats   : in  integer;
+    w_beats   : in  std_logic_vector(31 downto 0);
     s_base    : in  std_logic_vector(ADDR_W-1 downto 0);
-    s_beats   : in  integer;
+    s_beats   : in  std_logic_vector(31 downto 0);
 
     cb_we     : in  std_logic;
     cb_addr   : in  std_logic_vector(3 downto 0);
@@ -78,7 +82,7 @@ entity matvec_int4 is
     y_addr    : out std_logic_vector(15 downto 0);
     y_data    : out std_logic_vector(ROWS_IF*64-1 downto 0);
     y_mask    : out std_logic_vector(ROWS_IF-1 downto 0);
-    y_exp     : out integer;
+    y_exp     : out std_logic_vector(31 downto 0);
     done      : out std_logic;
     err       : out std_logic;
     sat_event : out std_logic
@@ -86,6 +90,13 @@ entity matvec_int4 is
 end entity;
 
 architecture rtl of matvec_int4 is
+  -- The submodules keep integer scalars; conversion happens once, here.
+  -- INITIALISED: an integer signal with no initial value starts at INTEGER'LOW,
+  -- so before the first delta the core would see -2^31 on both exponents and
+  -- w_exp + x_exp overflows.  Simulation-only in effect, but it aborts the run.
+  signal i_rows, i_cols, i_osh, i_wexp, i_xexp : integer := 0;
+  signal i_wbeats, i_sbeats, i_yexp            : integer := 0;
+
   signal wv, wr, sv, sr : std_logic;
   signal wd : std_logic_vector(ROWS_IF*BLK*4-1 downto 0);
   signal sd : std_logic_vector(ROWS_IF*16-1 downto 0);
@@ -115,8 +126,8 @@ begin
                 ROWS_IF => ROWS_IF, BLK => BLK, DEPTH => FIFO_DEPTH,
                 MAXB => MAXB)
     port map(clk => clk, rst => rst, start => start,
-             w_base => w_base, w_beats => w_beats,
-             s_base => s_base, s_beats => s_beats,
+             w_base => w_base, w_beats => i_wbeats,
+             s_base => s_base, s_beats => i_sbeats,
              m_arvalid => m_arvalid, m_arready => m_arready,
              m_araddr => m_araddr, m_arlen => m_arlen,
              m_arsize => m_arsize, m_arburst => m_arburst,
@@ -135,20 +146,29 @@ begin
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, MAXCOLS => MAXCOLS,
                 MAXROWS_BFP => MAXROWS_BFP)
     port map(clk => clk, rst => rst, start => start,
-             n_rows => n_rows, n_cols => n_cols, out_shift => out_shift,
-             w_exp => w_exp, x_exp => x_exp, out_mode => out_mode,
+             n_rows => i_rows, n_cols => i_cols, out_shift => i_osh,
+             w_exp => i_wexp, x_exp => i_xexp, out_mode => out_mode,
              cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
              w_valid => wv, w_data => wd, w_ready => wr,
              s_valid => sv, s_data => sd, s_ready => sr,
              x_rbaddr => x_rbaddr, x_rdata => x_rdata,
              y_we => y_we, y_addr => y_addr, y_data => y_data,
-             y_mask => y_mask, y_exp => y_exp,
+             y_mask => y_mask, y_exp => i_yexp,
              done => done, err => err, sat_event => sat_event,
              tp_v => o_tp_v, tc_v => o_tc_v, ta_v => o_ta_v, tm_v => o_tm_v,
              tp_r => o_tp_r, tc_r => o_tc_r, ta_r => o_ta_r, tm_r => o_tm_r,
              tp_b => o_tp_b, tc_b => o_tc_b,
              tp_val => o_tp, tc_val => o_tc, ta_val => o_ta, tm_val => o_tm,
              tap_ns => o_ns);
+
+  i_rows   <= to_integer(signed(n_rows));
+  i_cols   <= to_integer(signed(n_cols));
+  i_osh    <= to_integer(signed(out_shift));
+  i_wexp   <= to_integer(signed(w_exp));
+  i_xexp   <= to_integer(signed(x_exp));
+  i_wbeats <= to_integer(signed(w_beats));
+  i_sbeats <= to_integer(signed(s_beats));
+  y_exp    <= std_logic_vector(to_signed(i_yexp, 32));
 
   xw_addr  <= x_waddr(XA-1 downto 0);
   xr_baddr <= x_rbaddr(XB-1 downto 0);

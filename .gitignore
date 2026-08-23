@@ -54,3 +54,10 @@ sim/work_mv/
 sim/work_arith/
 sim/work_ws/
 sim/work_ax/
+sim/ooc_mv/
+sim/funcsim_mv/xsim.dir/
+sim/funcsim_mv/*.log
+sim/funcsim_mv/*.jou
+sim/funcsim_mv/*.pb
+sim/funcsim_mv/tb_matvec_int4_net.vhd
+sim/funcsim_mv/mvnet*

@@ -41,4 +41,11 @@ puts "==== matvec_int4 OOC utilization (14.4 config) ===="
 report_utilization
 puts "==== WNS / critical path ===="
 report_timing -delay_type max -max_paths 1
+# Post-synthesis FUNCSIM netlist.  The RTL is verified against the C reference,
+# but the NETLIST is only argued-equivalent to the RTL -- and this project has a
+# v1.0 history of silicon-only failures, plus four synthesis-driven rewrites in
+# this subsystem alone.  sim/tb_matvec_int4_net.vhd runs the same end-to-end
+# vectors against this.
+write_checkpoint -force mv_synth.dcp
+write_vhdl -force -mode funcsim mv_net.vhd
 puts "OOC_MATVEC_DONE"
