@@ -3,7 +3,11 @@
 **Date:** 2026-08-23
 **Hardware:** Alinx AXU3EG (XCZU3EG-SFVC784-1-E), 4 GB DDR4-2400 x64, PL at 200 MHz
 **Build:** `hw/build_bringup.tcl all`, section 14.4 configuration -- `ROWS_IF=4`,
-`NPORTS_W=4`, `AXI_DW=128`. Bitstream md5 `a1494fb8f73f4b9d2ba6c950abaf4a6f`.
+`NPORTS_W=4`, `AXI_DW=128`. Two bitstreams appear below: the first,
+md5 `a1494fb8f73f4b9d2ba6c950abaf4a6f`, has the fan fault; the fixed rebuild is
+the one to keep. WNS +0.172 ns, WHS +0.013 ns, WPWS +1.000 ns, 0 failing
+endpoints; 12277 LUTs (17.4%), 5401 FF (3.8%), 80.5 BRAM (37.3%), 192 DSP
+(53.3%).
 **Boot:** `image.ub` patched by `hw/patch_dtb.sh`, TFTP from 192.0.2.169.
 
 ## The questions
@@ -198,3 +202,20 @@ Fan, confirming the 6% floor is live on silicon: `period=0x1F40` (8000),
   be revisited against the measured number rather than the peak.
 - **Whether raising `MAXOUT` above 2 helps.** It cannot without also raising `DEPTH`,
   since the FIFO is currently sized to exactly two bursts. Untested.
+
+## Resolution
+
+The rebuild connects `pwm_out` with `make_bd_pins_external` and the implemented
+design reports `fan: pwm_out_0 placed on AA11 LVCMOS33`. Zero
+`No ports matched` warnings. Confirmed by ear on the board: quiet at the same 6%.
+
+Note the fixed build runs the fan at **25 kHz**, not the 12.5 kHz of the 100 MHz
+design, because `period=8000` is interpreted against a doubled PL clock. The duty
+percentages in `cooling-levels` therefore keep their meaning and the fan is
+audibly unchanged, so nothing was adjusted for it. If a future fan does care
+about the frequency, `period=16000` restores 12.5 kHz without touching any
+percentage.
+
+Acceptance re-run on the fixed bitstream is identical to the faulty one --
+bit-exact, 696320 beats, 8.50 GB/s -- so the pin fix does not perturb the
+datapath, as expected.
