@@ -35,7 +35,14 @@ entity weight_streamer is
     ROWS_IF  : positive := 4;
     BLK      : positive := 32;
     DEPTH    : positive := 512;    -- beats per FIFO, 7.7 budgets 8 KB
-    MAXB     : positive := 256     -- beats per burst: 256 x 16 B = 4 KB
+    MAXB     : positive := 256;    -- beats per burst: 256 x 16 B = 4 KB
+    -- Bursts allowed in flight per port. Was hardcoded at axi_rd_port's default
+    -- of 2 because it was never plumbed through, which made it untestable: on
+    -- the AXU3EG every port sustains 0.664 beats/cycle, and 256/(256+L) fits
+    -- that at L~129 cycles of read latency, i.e. the port spends a third of its
+    -- time waiting rather than the FIFO being drained faster than DDR fills it.
+    -- Matters MORE on HBM, whose latency is higher than DDR's.
+    MAXOUT   : positive := 2
   );
   port(
     clk, rst : in  std_logic;
@@ -105,7 +112,7 @@ begin
   gen_w : for p in 0 to NPORTS_W-1 generate
     port_p : entity work.axi_rd_port
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                  MAXB => MAXB)
+                  MAXB => MAXB, MAXOUT => MAXOUT)
       port map(
         clk => clk, rst => rst, start => start,
         base => w_base((p+1)*ADDR_W-1 downto p*ADDR_W), n_beats => w_beats,
@@ -122,7 +129,7 @@ begin
 
   scale_port : entity work.axi_rd_port
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                MAXB => MAXB)
+                MAXB => MAXB, MAXOUT => MAXOUT)
     port map(
       clk => clk, rst => rst, start => start,
       base => s_base, n_beats => s_beats,

@@ -219,3 +219,67 @@ percentage.
 Acceptance re-run on the fixed bitstream is identical to the faulty one --
 bit-exact, 696320 beats, 8.50 GB/s -- so the pin fix does not perturb the
 datapath, as expected.
+
+## CORRECTION 2026-08-23 (later the same day): the DRAM contention hypothesis is WRONG
+
+The "Open, not yet answered" section above named DRAM-side contention as the
+leading explanation for the 8.50 GB/s figure -- four weight streams 11,145,216
+bytes apart plus a fifth 44 MB away, thrashing bank groups and rows. It was
+labelled plausibility rather than measurement, correctly, and the measurement
+now says it is **wrong**. That claim is WITHDRAWN.
+
+**The probe.** `mv_driver --bw-stride N` overrides `W_BASE1..3` to sit N bytes
+from `W_BASE0` instead of at their natural ~11 MB separation, so the four
+streams walk through DRAM together in one small sliding window. The bytes each
+port reads are then wrong and the result is meaningless, so the correctness
+comparison is skipped -- but `BEATS` and `CYCLES` are counted by the PL
+regardless and the beat count is identical either way, so delivered bandwidth
+remains a valid measurement with address separation as the only variable.
+Reads only, all inside the reserved region.
+
+| stream separation | cycles | starved | GB/s |
+|---|---|---|---|
+| 4 KB | 1,048,882 | 33.6% | 8.50 |
+| 16 KB | 1,048,880 | 33.6% | 8.50 |
+| 64 KB | 1,048,895 | 33.6% | 8.50 |
+| 256 KB | 1,048,895 | 33.6% | 8.50 |
+| 1 MB | 1,048,890 | 33.6% | 8.50 |
+| 4 MB | 1,048,925 | 33.6% | 8.50 |
+| ~11.1 MB (natural) | 1,048,895 | 33.6% | 8.50 |
+
+A 2,700x range of separation moves `cycles` by 45 in 1,048,895 -- 0.004%. If row
+and bank locality were the limiter this would be the single most sensitive knob
+available, and it does nothing.
+
+**Row geometry is also not it.** `blk.0.ffn_down.weight` (M=5120, K=17408) packs
+to exactly the same 696,320 beats as `ffn_gate` (M=17408, K=5120) but with 1,280
+tiles of 544 blocks instead of 4,352 tiles of 160 -- rows 4x longer, 3.4x fewer
+tiles. Result: 8.52 GB/s against 8.50, starve 33.4% against 33.6%. The 3,072
+cycles saved is about 1 cycle per tile of end-of-row overhead, i.e. 0.3%, and
+bit-exact on both.
+
+**What that leaves.** Each port sustains 0.664 beats/cycle and every non-transfer
+cycle is a starve cycle, so the ports are waiting on returned data rather than
+the datapath being unable to consume it. With `MAXOUT=2` and `FIFO_DEPTH=512` --
+exactly two 256-beat bursts -- the port can only issue a new AR once a burst's
+worth of space frees, so if only one burst is effectively in flight the
+throughput is `256/(256+L)`. That fits the measurement at L ~ 129 cycles
+(645 ns), a plausible ZynqMP HP-to-DDR read latency under load.
+
+`MAXOUT` was never plumbed past `axi_rd_port`, so it sat at its default of 2 and
+was untestable from the top. It is now a generic through `weight_streamer`,
+`matvec_int4` and `matvec_int4_ip`, and `hw/build_bringup.tcl` takes
+`FIFO_DEPTH` and `MAXOUT` as build arguments so a sweep leaves no diff to
+revert. `sim/tb_axi_rd_port.vhd` existed but was never wired into
+`sim/run_matvec.sh`; it is now stage 4b and sweeps MAXOUT 1/2/4/8 against
+matching depths, because a port that miscounts outstanding bursts corrupts data
+rather than merely running slow.
+
+**This matters more for the FK33 than for the AXU3EG.** HBM read latency is
+higher than DDR4's, so a design that hides latency this poorly will lose more
+there, and the FK33 configuration was already argued to be near-balanced at
+nominal bandwidth.
+
+**Still open:** whether raising the outstanding depth actually recovers the
+throughput, and if not, whether the ceiling is the HP port, the FPD
+interconnect, or the coherent scale traffic on HPC0 degrading the others.

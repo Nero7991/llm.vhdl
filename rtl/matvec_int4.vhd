@@ -34,7 +34,8 @@ entity matvec_int4 is
     MAXCOLS     : positive := 17408;
     MAXROWS_BFP : positive := 17408;
     FIFO_DEPTH  : positive := 512;
-    MAXB        : positive := 256
+    MAXB        : positive := 256;
+    MAXOUT      : positive := 2
   );
   port(
     clk, rst : in  std_logic;
@@ -131,7 +132,7 @@ begin
   streamer : entity work.weight_streamer
     generic map(NPORTS_W => NPORTS_W, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 ROWS_IF => ROWS_IF, BLK => BLK, DEPTH => FIFO_DEPTH,
-                MAXB => MAXB)
+                MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst, start => start,
              w_base => w_base, w_beats => i_wbeats,
              s_base => s_base, s_beats => i_sbeats,

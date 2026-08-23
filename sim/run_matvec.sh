@@ -14,6 +14,7 @@ set -e
 cd "$(dirname "$0")/.."
 mkdir -p sim/work_mv sim/work_arith sim/work_am sim/work_ws sim/work_ax
 
+fail=0
 echo "== 1. regenerate shared arithmetic (C + VHDL + vectors) =="
 python3 tools/gen_arith.py --check || { python3 tools/gen_arith.py; }
 
@@ -40,6 +41,32 @@ for g in "544 32 4" "17408 32 4" "100 32 4" "64 16 2" "544 32 8"; do
     | grep -oE 'act_mem_striped: .*' | sed 's/^/  /'
 done
 
+echo "== 4b. AXI read port, across outstanding depth (7.7) =="
+# tb_axi_rd_port existed but was never wired into this script, so the read
+# port's burst accounting was only ever exercised indirectly. MAXOUT is the
+# reason it matters now: the AXU3EG sustains 0.664 beats/cycle per port with
+# MAXOUT=2, and raising it is the leading candidate for the 33.6% starvation --
+# but a port that miscounts outstanding bursts corrupts data rather than merely
+# running slow, so sweep it here before spending a bitstream on it.
+mkdir -p sim/work_rp
+( cd sim/work_rp \
+  && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
+        ../../rtl/stream_fifo.vhd ../../rtl/axi_rd_port.vhd ../tb_axi_rd_port.vhd \
+  && ghdl -e --std=08 --workdir=. tb_axi_rd_port )
+for g in "1 64 0" "2 64 3" "4 128 3" "4 128 0" "8 256 5" "2 64 7" "8 256 0"; do
+  set -- $g
+  out=$( cd sim/work_rp && ghdl -r --std=08 --workdir=. tb_axi_rd_port \
+           -gMAXOUT=$1 -gDEPTH=$2 -gSTALL=$3 --stop-time=200ms 2>&1 )
+  n=$(echo "$out" | grep -oE 'axi_rd_port: [0-9]+ bad beats' || true)
+  if echo "$out" | grep -q "0 bad beats"; then
+    printf "  MAXOUT=%-2s DEPTH=%-4s stall=%-2s  OK   %s\n" "$1" "$2" "$3" "$n"
+  else
+    printf "  MAXOUT=%-2s DEPTH=%-4s stall=%-2s  FAIL\n" "$1" "$2" "$3"
+    echo "$out" | head -5
+    fail=1
+  fi
+done
+
 echo "== 5. RTL vs C reference, stage by stage, over shapes =="
 ( cd sim/work_mv \
   && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
@@ -62,7 +89,7 @@ echo "== 5. RTL vs C reference, stage by stage, over shapes =="
 #     16   32      4      7     exactly one block per row
 CASES="8:96:4:0 7:100:4:0 9:97:4:0 8:96:1:0 8:96:2:0 13:129:8:0 1:33:4:0
        7:100:4:3 9:97:4:2 13:129:8:5 16:32:4:7"
-fail=0
+# (fail initialised at the top, before stage 4b uses it)
 for c in $CASES; do
   M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
   R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)

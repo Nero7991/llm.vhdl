@@ -19,7 +19,8 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity tb_axi_rd_port is
-  generic(SEED : integer := 1; STALL : natural := 3);
+  generic(SEED : integer := 1; STALL : natural := 3;
+          MAXOUT : positive := 2; DEPTH : positive := 64);
 end entity;
 
 architecture sim of tb_axi_rd_port is
@@ -56,7 +57,8 @@ begin
   end process;
 
   dut : entity work.axi_rd_port
-    generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => 64, MAXB => 16)
+    generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
+                MAXB => 16, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst, start => start, base => base,
              n_beats => n_beats,
              arvalid => arvalid, arready => arready, araddr => araddr,

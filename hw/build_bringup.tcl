@@ -28,6 +28,18 @@
 
 set stage "bd"
 if {$argc > 0} { set stage [lindex $argv 0] }
+# Optional: FIFO_DEPTH and MAXOUT, as build arguments rather than an edit, so a
+# sweep leaves no diff behind to forget to revert.
+#   vivado ... -tclargs all 1024 4
+# Defaults match the RTL. See the bandwidth note in hw/README.md for why these
+# two are the interesting knobs: the AXU3EG sustains 0.664 beats/cycle per port
+# and every non-transfer cycle is a starve cycle, so the ports are waiting, not
+# the datapath.
+set fifo_depth 512
+set maxout     2
+if {$argc > 1} { set fifo_depth [lindex $argv 1] }
+if {$argc > 2} { set maxout     [lindex $argv 2] }
+puts "CONFIG stage=$stage FIFO_DEPTH=$fifo_depth MAXOUT=$maxout"
 
 set here    [file normalize [file dirname [info script]]]
 set repo    [file normalize $here/..]
@@ -88,6 +100,17 @@ set_property -dict [list \
 set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst]
 
 set mv [create_bd_cell -type module -reference matvec_int4_ip mv]
+if {$fifo_depth != 512 || $maxout != 2} {
+  set_property -dict [list CONFIG.FIFO_DEPTH $fifo_depth CONFIG.MAXOUT $maxout] $mv
+  # A module reference exposes its generics as CONFIG.*, but a typo silently
+  # creates nothing rather than erroring -- the same shape of failure as the fan
+  # pin. Read them back.
+  foreach {g want} [list FIFO_DEPTH $fifo_depth MAXOUT $maxout] {
+    set got [get_property CONFIG.$g $mv]
+    if {$got ne $want} { error "generic $g did not take: asked $want, cell reports '$got'" }
+  }
+  puts "generics applied: FIFO_DEPTH=$fifo_depth MAXOUT=$maxout"
+}
 # A module reference's inferred interfaces default to FREQ_HZ 100 MHz, and
 # every connection to a 200 MHz PS port is then a hard validation error -- the
 # clock is right, only the metadata is wrong.  ASSOCIATED_BUSIF is READ-ONLY on

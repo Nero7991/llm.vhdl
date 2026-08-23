@@ -29,7 +29,8 @@ entity matvec_int4_ip is
     MAXCOLS     : positive := 17408;
     MAXROWS_BFP : positive := 17408;
     FIFO_DEPTH  : positive := 512;
-    MAXB        : positive := 256
+    MAXB        : positive := 256;
+    MAXOUT      : positive := 2
   );
   port(
     s_axi_aclk    : in  std_logic;
@@ -144,7 +145,8 @@ begin
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NP,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                 MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH,
-                MAXB => MAXB, C_S_AXI_ADDR_WIDTH => 8)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => s_axi_aclk, s_axi_aresetn => s_axi_aresetn,
       s_axi_awaddr => s_axi_awaddr, s_axi_awprot => s_axi_awprot,
