@@ -164,9 +164,20 @@ write_bd_tcl -force $here/design_mv_generated.tcl
 puts "BD_OK"
 if {$stage eq "bd"} { puts "STAGE_BD_DONE"; return }
 
-make_wrapper -files [get_files design_mv.bd] -top
-add_files -norecurse $outdir/mv_bringup.gen/sources_1/bd/design_mv/hdl/design_mv_wrapper.vhd
+# Take the path make_wrapper REPORTS rather than assuming one: the output tree
+# is .gen or .srcs depending on version, and the wrapper is .v or .vhd
+# depending on what the BD contains.
+set wrp [make_wrapper -files [get_files design_mv.bd] -top -force]
+if {[llength $wrp] == 0} {
+  set wrp [glob -nocomplain \
+    $outdir/mv_bringup.gen/sources_1/bd/design_mv/hdl/design_mv_wrapper.* \
+    $outdir/mv_bringup.srcs/sources_1/bd/design_mv/hdl/design_mv_wrapper.*]
+}
+if {[llength $wrp] == 0} { error "make_wrapper produced no wrapper file" }
+puts "wrapper: $wrp"
+add_files -norecurse $wrp
 set_property top design_mv_wrapper [current_fileset]
+update_compile_order -fileset sources_1
 
 launch_runs synth_1 -jobs 4
 wait_on_run synth_1
@@ -176,7 +187,10 @@ if {$stage eq "synth"} { puts "STAGE_SYNTH_DONE"; return }
 launch_runs impl_1 -to_step write_bitstream -jobs 4
 wait_on_run impl_1
 open_run impl_1
-report_timing_summary -delay_type max -max_paths 5 -file $here/timing_impl.rpt
+# min_max, NOT max.  A max-only summary reports Hold as "NA" and looks clean,
+# and hold violations are a silicon-only failure class -- precisely the kind
+# this project has been bitten by before.
+report_timing_summary -delay_type min_max -max_paths 5 -file $here/timing_impl.rpt
 report_utilization -file $here/util_impl.rpt
 puts "==== implemented timing ===="
 report_timing_summary -delay_type max -max_paths 1

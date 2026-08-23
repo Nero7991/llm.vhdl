@@ -1236,6 +1236,32 @@ partials in software to the minimum `y_exp`, sum, and compare. That validates th
 partial-sum contract, the per-card `y_exp` correction and the `sat_event` flag on
 a single card with no interconnect at all.
 
+### 14.4b BUILT, 2026-08-23: bitstream, timing met after place and route
+
+`hw/build_bringup.tcl` generates the whole §14.4 design from source and carries
+it to a bitstream. Post-**implementation** (real placement and routing), not OOC:
+
+| | measured | note |
+|---|---|---|
+| Setup WNS | **+0.133 ns** | 0 failing of 40,203 endpoints |
+| Hold WHS | **+0.013 ns** | 0 failing of 40,203 endpoints |
+| Pulse width | +1.000 ns | 0 failing |
+| Clock | 200.000 MHz | PS PLL actually 199,998,001 Hz |
+| CLB LUT | 12,255 | 17.4% |
+| CLB Register | 5,367 | 3.8% |
+| BRAM36 tile | 80.5 | 37.3% |
+| DSP48E2 | 192 | 53.3% |
+
+OOC predicted +0.770 ns of setup slack; real routing took most of it, which is
+the expected direction. **Hold at +13 ps is met but thin** -- it is within the
+timing model, which already covers the fast corner, but it leaves no room, so
+any later change to this design should be re-checked against hold and not only
+setup.
+
+Report with `-delay_type min_max`, never `max`. A max-only summary prints Hold
+as `NA` and reads as clean; hold violations are a silicon-only failure class,
+which is the one this project can least afford to miss.
+
 ### 14.4a The AXU3EG rung is a DETECTOR, not just a smaller rehearsal
 
 Measured 2026-08-23, since this is easy to get backwards. The four defects §7.9a
