@@ -63,3 +63,10 @@ sim/funcsim_mv/tb_matvec_int4_net.vhd
 sim/funcsim_mv/mvnet*
 sim/work_axi/
 sim/ooc_axi/
+hw/mv_bringup/
+hw/*.log
+hw/*.out
+hw/*.jou
+hw/design_mv_generated.tcl
+hw/timing_impl.rpt
+hw/util_impl.rpt
