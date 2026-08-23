@@ -53,11 +53,20 @@ architecture rtl of act_mem_striped is
   constant BANKS : positive := BLK / LANES;
   constant WORDS : positive := (ELEMS + BLK - 1) / BLK;
 
-  type word_t is array(0 to BANKS-1) of std_logic_vector(LANES*W-1 downto 0);
-  type mem_t  is array(0 to WORDS-1) of word_t;
-  signal mem : mem_t := (others => (others => (others => '0')));
+  -- FLAT, not an array of arrays.  A nested array here does not infer BRAM:
+  -- Vivado warns [Synth 8-11357] "RAM from Record/Structs" and builds the whole
+  -- thing out of registers -- 278,528 of them at ELEMS=17408, on a device with
+  -- 141K.  Flattening also collapses the mapping arithmetic, because
+  --     bank*(LANES*W) + lane*W  ==  W * (k mod BLK)
+  -- identically once LANES divides BLK.  The bank/lane split of 7.8 is then the
+  -- PHYSICAL arrangement Vivado derives for itself from a BLK*W-wide word; it
+  -- does not need to be, and must not be, spelled out in the type.
+  type mem_t is array(0 to WORDS-1) of std_logic_vector(BLK*W-1 downto 0);
+  signal mem : mem_t := (others => (others => '0'));
+  attribute ram_style : string;
+  attribute ram_style of mem : signal is "block";
 
-  signal rw : word_t := (others => (others => '0'));
+  signal rw : std_logic_vector(BLK*W-1 downto 0) := (others => '0');
 begin
   assert BLK mod LANES = 0
     report "act_mem_striped: BLK must be a whole number of LANES"
@@ -65,17 +74,15 @@ begin
 
   process(clk)
     variable a    : integer;
-    variable bank : integer;
     variable word : integer;
-    variable lane : integer;
+    variable off  : integer;
   begin
     if rising_edge(clk) then
       if we = '1' then
         a    := to_integer(unsigned(waddr));
-        bank := (a mod BLK) / LANES;
         word := a / BLK;
-        lane := a mod LANES;
-        mem(word)(bank)((lane+1)*W-1 downto lane*W) <= wdata;
+        off  := (a mod BLK) * W;      -- == bank*(LANES*W) + lane*W, see above
+        mem(word)(off+W-1 downto off) <= wdata;
       end if;
       rw <= mem(to_integer(unsigned(rbaddr)));
     end if;
@@ -83,8 +90,6 @@ begin
 
   -- reassembly is pure wiring: element j of the block lives in bank j/LANES,
   -- lane j mod LANES, of the one word all BANKS banks were read at.
-  wire : for j in 0 to BLK-1 generate
-    rdata((j+1)*W-1 downto j*W) <=
-      rw(j / LANES)(((j mod LANES)+1)*W-1 downto (j mod LANES)*W);
-  end generate;
+  -- element j of the block is at bit j*W, by the identity above
+  rdata <= rw;
 end architecture;

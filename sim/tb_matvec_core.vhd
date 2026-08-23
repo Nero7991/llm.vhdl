@@ -75,6 +75,7 @@ architecture sim of tb_matvec_core is
 
   signal loaded : boolean := false;
   signal nbad, nchk : integer := 0;
+  signal nmant : integer := 0;   -- rows actually emitted, for coverage
   signal ybad, ychk : integer := 0;   -- own counters: one driver per signal
   signal tiles_s : integer := 0;
   signal finished : boolean := false;
@@ -193,9 +194,10 @@ begin
     variable want, g : signed(63 downto 0);
     variable base    : integer;
     variable nc, nb  : integer;
+    variable nm      : integer;
   begin
     if rising_edge(clk) then
-      nc := nchk; nb := nbad;
+      nc := nchk; nb := nbad; nm := nmant;
       if tp_v = '1' then
         for rr in 0 to RI-1 loop
           base := tp_r + rr;
@@ -256,6 +258,7 @@ begin
         for rr in 0 to RI-1 loop
           base := tm_r + rr;
           if base < n_rows then
+            nm := nm + 1;
             want := e_ymant(base);
             g    := signed(tm_val(rr*64+63 downto rr*64));
             nc := nc + 1;
@@ -269,7 +272,7 @@ begin
           end if;
         end loop;
       end if;
-      nchk <= nc; nbad <= nb;
+      nchk <= nc; nbad <= nb; nmant <= nm;
     end if;
   end process;
 
@@ -380,6 +383,11 @@ begin
       report "YEXP MISMATCH got " & integer'image(y_exp) &
              " want " & integer'image(e_yexp) severity error;
 
+    -- COVERAGE: a dropped tile still emits correct values for the tiles it does
+    -- emit, so a value-only check passes.  Every row must be seen.
+    assert nmant = n_rows
+      report "COVERAGE: YMANT emitted for " & integer'image(nmant) &
+             " rows, expected " & integer'image(n_rows) severity failure;
     report "BFP: " & integer'image(nchk) & " stage values compared, " &
            integer'image(nbad) & " mismatches, ns=" & integer'image(tap_ns) &
            " y_exp=" & integer'image(y_exp) severity note;

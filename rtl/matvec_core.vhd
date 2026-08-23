@@ -119,11 +119,17 @@ architecture rtl of matvec_core is
   type cb_t is array(0 to 15) of signed(7 downto 0);
   signal cb : cb_t := (others => (others => '0'));
 
-  -- ybuf is BANKED BY LANE so a whole tile is read in one cycle.  Bank rr holds
-  -- every row congruent to rr mod ROWS_IF, indexed by tile.
-  type bank_t is array(0 to TILES-1) of signed(31 downto 0);
-  type ybuf_t is array(0 to ROWS_IF-1) of bank_t;
-  signal ybuf : ybuf_t;
+  -- ybuf holds a whole tile per word, so all ROWS_IF rows are written together
+  -- at row-end and read together at emit.  FLAT, not an array of arrays: a
+  -- nested type does not infer BRAM (Vivado [Synth 8-11357] "RAM from
+  -- Record/Structs") and builds registers instead -- 557,056 of them at
+  -- MAXROWS_BFP=17408, against 141K on the ZU3EG.  The read is REGISTERED for
+  -- the same reason, which is why emit is two stages below.
+  type ybuf_t is array(0 to TILES-1) of std_logic_vector(ROWS_IF*32-1 downto 0);
+  signal ybuf   : ybuf_t;
+  attribute ram_style : string;
+  attribute ram_style of ybuf : signal is "block";
+  signal ybuf_q : std_logic_vector(ROWS_IF*32-1 downto 0) := (others => '0');
 
   type tag_t is record
     v     : std_logic;
@@ -162,7 +168,10 @@ architecture rtl of matvec_core is
   signal amax   : unsigned(35 downto 0) := (others => '0');
   signal ns_r   : integer := 0;
   signal sat_r, err_r : std_logic := '0';
-  signal emit_t : integer := 0;
+  -- emit is a 2-stage read: rd_t is presented, and one cycle later the data
+  -- appears in ybuf_q tagged by rd_td.
+  signal rd_t, rd_td : integer := 0;
+  signal rd_v        : std_logic := '0';
 
   -- Activation prefetch.  The block sequence is deterministic (0..nb-1 repeated
   -- per tile), so a 2-deep queue run ahead of the accept point keeps the
@@ -366,7 +375,8 @@ begin
                 shv := round_shift(an, out_shift);          -- SITES 2/3
                 a32 := sat32(shv);
                 if shv /= resize(a32, 48) then sat_r <= '1'; end if;
-                ybuf(rr)(tg(P_CONTRIB).tile) <= a32;
+                ybuf(tg(P_CONTRIB).tile)(rr*32+31 downto rr*32)
+                  <= std_logic_vector(a32);
                 y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
                 mag := unsigned(abs(resize(a32, 36)));
                 -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax
@@ -386,6 +396,14 @@ begin
             if out_mode /= "00" then y_we <= '1'; end if;
           end if;
         end if;
+
+        -- Registered ybuf read, issued UNCONDITIONALLY: gating it on the state
+        -- would stop it inferring a BRAM read port.  rd_v is raised in the
+        -- ISSUE branch below rather than registered from a separate flag,
+        -- because this read and that branch both sample the same pre-edge rd_t
+        -- -- deriving rd_v from a registered rd_go delays it one cycle further
+        -- than the data and silently drops the first tile.
+        ybuf_q <= ybuf(rd_t);
 
         ----------------------------------------------------------------
         -- control
@@ -418,24 +436,31 @@ begin
             -- ns = max(0, msb_pos(amax) - 14); msb_pos(0) = 0 is NORMATIVE
             if msb_pos_u(amax) > 14 then ns_r <= msb_pos_u(amax) - 14;
             else                         ns_r <= 0; end if;
-            emit_t <= 0;
+            rd_t <= 0; rd_v <= '0';
             st <= S_EMIT;
 
           when S_EMIT =>
             tap_ns <= ns_r;
-            rbase := emit_t * ROWS_IF;
-            y_we   <= '1';
-            y_addr <= std_logic_vector(to_unsigned(rbase, 16));
-            tm_v <= '1'; tm_r <= rbase;
-            for rr in 0 to ROWS_IF-1 loop
-              ymn := sat16(round_shift(ybuf(rr)(emit_t), ns_r));   -- SITE 4
-              y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
-              tm_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
-              if rbase + rr < n_rows then y_mask(rr) <= '1';
-              else                        y_mask(rr) <= '0'; end if;
-            end loop;
-            if emit_t = tiles_r - 1 then st <= S_DONE;
-            else emit_t <= emit_t + 1; end if;
+            if rd_t < tiles_r then
+              rd_v <= '1'; rd_td <= rd_t; rd_t <= rd_t + 1;
+            else
+              rd_v <= '0';
+            end if;
+            if rd_v = '1' then
+              rbase := rd_td * ROWS_IF;
+              y_we   <= '1';
+              y_addr <= std_logic_vector(to_unsigned(rbase, 16));
+              tm_v <= '1'; tm_r <= rbase;
+              for rr in 0 to ROWS_IF-1 loop
+                ymn := sat16(round_shift(                          -- SITE 4
+                         signed(ybuf_q(rr*32+31 downto rr*32)), ns_r));
+                y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+                tm_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+                if rbase + rr < n_rows then y_mask(rr) <= '1';
+                else                        y_mask(rr) <= '0'; end if;
+              end loop;
+              if rd_td = tiles_r - 1 then st <= S_DONE; end if;
+            end if;
 
           when S_DONE =>
             done <= '1';
