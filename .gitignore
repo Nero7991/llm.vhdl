@@ -25,6 +25,7 @@ ref/*.tokerr
 mem/weights_l0/
 *.notes
 hw/ip_proj/
+hw/ip_proj_mv/
 
 # Vivado run noise (logs/journals/lock dirs)
 vivado*.log
@@ -68,5 +69,6 @@ hw/*.log
 hw/*.out
 hw/*.jou
 hw/design_mv_generated.tcl
-hw/timing_impl.rpt
-hw/util_impl.rpt
+hw/*.rpt
+hw/mv_driver
+hw/mv_driver_aarch64
