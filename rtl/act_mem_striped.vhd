@@ -75,14 +75,26 @@ begin
   process(clk)
     variable a    : integer;
     variable word : integer;
-    variable off  : integer;
+    variable lane : integer;
   begin
     if rising_edge(clk) then
       if we = '1' then
         a    := to_integer(unsigned(waddr));
         word := a / BLK;
-        off  := (a mod BLK) * W;      -- == bank*(LANES*W) + lane*W, see above
-        mem(word)(off+W-1 downto off) <= wdata;
+        lane := a mod BLK;            -- == bank*LANES + lane, see above
+        -- CONSTANT slice bounds with a decoded enable: this is the byte-write-
+        -- enable pattern Vivado recognises.  A variable-offset slice write --
+        -- mem(word)(off+W-1 downto off) -- is NOT: Vivado decomposes it into
+        -- PER-BIT write enables and reports
+        --   [Synth 8-6841] byte width (1) is not a multiple of 8
+        -- then emits one width-1 block RAM per data bit.  At BLK*W = 512 that
+        -- is 512 RAMB18 for a 278 Kb memory, i.e. 256 of the ZU3EG's 216 tiles
+        -- spent on one array.  Same stored bits, same behaviour in simulation.
+        for j in 0 to BLK-1 loop
+          if lane = j then
+            mem(word)((j+1)*W-1 downto j*W) <= wdata;
+          end if;
+        end loop;
       end if;
       rw <= mem(to_integer(unsigned(rbaddr)));
     end if;

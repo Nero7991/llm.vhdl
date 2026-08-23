@@ -215,6 +215,7 @@ begin
     variable mag, mxv : unsigned(35 downto 0);
     variable rbase : integer;
     variable ymn   : signed(15 downto 0);
+    variable ynew  : std_logic_vector(ROWS_IF*32-1 downto 0);
   begin
     if rising_edge(clk) then
       y_we <= '0'; done <= '0';
@@ -375,8 +376,7 @@ begin
                 shv := round_shift(an, out_shift);          -- SITES 2/3
                 a32 := sat32(shv);
                 if shv /= resize(a32, 48) then sat_r <= '1'; end if;
-                ybuf(tg(P_CONTRIB).tile)(rr*32+31 downto rr*32)
-                  <= std_logic_vector(a32);
+                ynew(rr*32+31 downto rr*32) := std_logic_vector(a32);
                 y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
                 mag := unsigned(abs(resize(a32, 36)));
                 -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax
@@ -389,6 +389,16 @@ begin
           end loop;
 
           amax <= mxv;
+
+          -- Written as ONE full-width word, not lane by lane.  Lane-by-lane
+          -- slice assignment looks like a partial write, so Vivado tries
+          -- byte-wide write enables and then declines them here --
+          --   [Synth 8-6841] address width (13) is more than optimal
+          --   threshold of 12
+          -- costing extra tiles for a memory that is always written whole.
+          if tg(P_CONTRIB).last = '1' and out_mode /= "10" then
+            ybuf(tg(P_CONTRIB).tile) <= ynew;
+          end if;
 
           if tg(P_CONTRIB).last = '1' then
             ta_v <= '1'; ta_r <= rbase;
