@@ -52,3 +52,5 @@ sim/tr.txt
 sim/matvec_trace.txt
 sim/work_mv/
 sim/work_arith/
+sim/work_ws/
+sim/work_ax/

@@ -429,6 +429,35 @@ static int emit_trace(const char *out_path, int M, int K, int RI)
             }
         }
 
+    /* The PACKED IMAGE ITSELF, as AXI_DW=128-bit words, plus the sub-region
+     * geometry the PS would program from the header.  sim/tb_matvec_int4 serves
+     * these bytes over AXI, so the RTL's reassembly (6.5) is checked against
+     * the real packer output rather than against a second derivation of the
+     * layout -- which would agree with a wrong layout just as happily.        */
+    {
+        int    tiles   = (M + RI - 1) / RI;
+        size_t chunk   = MV4I_BLOCK / 2;
+        size_t sub_sz  = (size_t)tiles * NB * chunk;
+        size_t sub_pad = (sub_sz + 4095) & ~(size_t)4095;
+        size_t scl_sz  = (size_t)tiles * NB * RI * 2;
+        for (int i = 0; i < RI; i++)
+            fprintf(g_trace, "WBASE %d %zu\n", i, MV4I_HDR_BYTES + sub_pad * i);
+        fprintf(g_trace, "SBASE %zu\n", MV4I_HDR_BYTES + sub_pad * RI);
+        /* one 128-bit beat is exactly one row-block chunk at BLOCK=32 */
+        fprintf(g_trace, "WBEATS %d\n", tiles * NB);
+        fprintf(g_trace, "SBEATS %zu\n", (scl_sz + 15) / 16);
+        fprintf(g_trace, "IMGWORDS %zu\n", len / 16);
+        for (size_t wd = 0; wd < len / 16; wd++) {
+            const uint8_t *q = img + wd * 16;
+            int nz = 0;
+            for (int i = 0; i < 16; i++) if (q[i]) { nz = 1; break; }
+            if (!nz) continue;               /* zero words are the model default */
+            fprintf(g_trace, "IMG %zu ", wd);
+            for (int i = 15; i >= 0; i--) fprintf(g_trace, "%02X", q[i]);
+            fprintf(g_trace, "\n");
+        }
+    }
+
     mv4i_result res = { malloc(4*(size_t)M), malloc(8*(size_t)M), malloc(2*(size_t)M), 0,0,0,0 };
     int rc = mv4i_matvec(&f, x, x_exp, M, K, MV4I_MODE_BFP, &res);
     fprintf(g_trace, "YEXP %d\n", res.y_exp);

@@ -12,7 +12,7 @@
 # K a multiple of BLOCK, so it exercised neither pad rows nor the column mask.
 set -e
 cd "$(dirname "$0")/.."
-mkdir -p sim/work_mv sim/work_arith sim/work_am
+mkdir -p sim/work_mv sim/work_arith sim/work_am sim/work_ws sim/work_ax
 
 echo "== 1. regenerate shared arithmetic (C + VHDL + vectors) =="
 python3 tools/gen_arith.py --check || { python3 tools/gen_arith.py; }
@@ -78,5 +78,37 @@ for c in $CASES; do
     fail=1
   fi
 done
+
+echo "== 6. subsystem A end to end, from the REAL packed bytes =="
+# Everything above compares one derivation against another.  This serves the
+# packer's actual image over AXI to all NPORTS_W+1 masters and checks the result
+# against the C reference, so a wrong sub-region layout, lane order, nibble
+# order or scale interleave (6.4/6.5) shows up here and nowhere else.
+mkdir -p sim/work_ws
+( cd sim/work_ws \
+  && ghdl -a --std=08 --workdir=. ../../rtl/util_pkg.vhd \
+        ../../rtl/mv4i_arith_pkg.vhd ../../rtl/stream_fifo.vhd \
+        ../../rtl/axi_rd_port.vhd ../../rtl/weight_streamer.vhd \
+        ../../rtl/act_mem_striped.vhd ../../rtl/matvec_core.vhd \
+        ../../rtl/matvec_int4.vhd ../tb_matvec_int4.vhd \
+  && ghdl -e --std=08 --workdir=. tb_matvec_int4 )
+
+E2E="8:96:4:3 7:100:4:3 9:97:4:2 16:32:4:5 1:33:4:0 13:129:8:3 8:96:2:7"
+for c in $E2E; do
+  M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
+  R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)
+  ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" >/dev/null )
+  out=$( cd sim/work_ws && ghdl -r --std=08 --workdir=. tb_matvec_int4 \
+           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=30ms 2>&1 )
+  n=$(echo "$out" | grep -oE 'end to end: [0-9]+ rows compared[^,]*, [0-9]+ mismatches' || true)
+  if echo "$out" | grep -q "from the packed bytes up"; then
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  OK   %s\n" "$M" "$K" "$R" "$S" "$n"
+  else
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  FAIL\n" "$M" "$K" "$R" "$S"
+    echo "$out" | head -5
+    fail=1
+  fi
+done
+
 [ "$fail" -eq 0 ] || { echo "== FAILED =="; exit 1; }
 echo "== all green =="
