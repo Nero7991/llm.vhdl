@@ -183,13 +183,46 @@ architecture rtl of matvec_core is
   signal re2_shv             : sh_arr  := (others => (others => '0'));
   signal re3_mag             : mag_arr := (others => (others => '0'));
   signal re3_ok              : std_logic_vector(ROWS_IF-1 downto 0) := (others => '0');
-  -- the amax fold gets its own stage, and is a TREE not a chain.  As a chain it
-  -- was the critical path after row end was split (re3_mag -> amax, -0.159 ns),
-  -- and at the FK33's ROWS_IF=80 an 80-deep compare chain would be hopeless.
-  constant MAXPOW : positive := 2 ** clog2(ROWS_IF);
+  -- The amax fold is a TREE not a chain, and the tree is now PIPELINED, one
+  -- register stage per level.
+  --
+  -- As a chain it was the critical path after row end was split (re3_mag ->
+  -- amax, -0.159 ns).  Making it a tree fixed that at ROWS_IF=4, but an OOC
+  -- sweep on xcku5p at 300 MHz found the whole tree in ONE stage is the
+  -- critical path at EVERY ROWS_IF, and worsens as ROWS_IF grows:
+  --
+  --   ROWS_IF     4      8     16     24     32
+  --   Fmax      266    287    222    168    180  MHz
+  --
+  --   Source: re3_mag_reg[5][0]/C  Destination: re4_max_reg[0]/D
+  --   Logic Levels: 28 (CARRY8=15 ...)   @ ROWS_IF=24
+  --
+  -- Depth is log2(ROWS_IF) 36-bit compares, and routing was 63-68% of the path
+  -- because the fan-in spreads further across the die as ROWS_IF grows -- which
+  -- registers help with directly, not just the logic depth.  At the FK33's
+  -- ROWS_IF this is the difference between the design closing and not.
+  --
+  -- LATENCY IS FREE HERE, but only because of what consumes amax: it is a
+  -- running maximum over the WHOLE matrix, read once in S_SCAN after the
+  -- pipeline has drained.  Nothing downstream sees the extra cycles.  That does
+  -- mean `inflight` MUST cover these stages -- see the note there.
+  function lvl_of(r : positive) return positive is
+    variable c : natural := clog2(r);
+  begin
+    if c = 0 then return 1; else return c; end if;   -- ROWS_IF=1 still needs one
+  end function;
+  constant LVLR   : positive := lvl_of(ROWS_IF);
+  constant MAXPOW : positive := 2 ** LVLR;
+  constant HALF   : positive := MAXPOW / 2;
   type wide_mag is array(0 to MAXPOW-1) of unsigned(35 downto 0);
-  signal re4_v   : std_logic := '0';
-  signal re4_max : unsigned(35 downto 0) := (others => '0');
+  -- FLAT, not an array of arrays: stage s owns [s*HALF .. s*HALF+HALF-1] and
+  -- only the first MAXPOW/2**(s+1) entries of it are ever written or read, so
+  -- synthesis trims the rest.  Flat deliberately -- nested arrays are what
+  -- blocked RAM inference elsewhere in this file, and there is no reason to
+  -- re-learn that lesson for a register file.
+  type fold_arr is array(0 to LVLR*HALF-1) of unsigned(35 downto 0);
+  signal fold   : fold_arr := (others => (others => '0'));
+  signal fold_v : std_logic_vector(LVLR-1 downto 0) := (others => '0');
   -- emit is a 2-stage read: rd_t is presented, and one cycle later the data
   -- appears in ybuf_q tagged by rd_td.
   signal rd_t, rd_td : integer := 0;
@@ -223,10 +256,19 @@ begin
   x_rbaddr <= std_logic_vector(to_unsigned(b_pf, 16));
 
   -- any beat still in the compute pipeline
-  process(tg, re1_v, re2_v, re3_v, re4_v)
+  -- The fold stages MUST be counted here.  S_DRAIN leaves on inflight='0' and
+  -- S_SCAN reads amax the cycle after; with an unpipelined fold that left
+  -- exactly one cycle of margin, which the pipeline would consume, and the last
+  -- rows' magnitudes would never reach amax.  The result would be an ns too
+  -- small for the true maximum -- so a silently wrong exponent on some shapes,
+  -- not a crash.  Note the previous version listed re4_v in the sensitivity
+  -- list but never used it in the expression; that was harmless only because
+  -- the one-cycle margin happened to cover it.
+  process(tg, re1_v, re2_v, re3_v, fold_v)
     variable o : std_logic;
   begin
     o := re1_v or re2_v or re3_v;
+    for i in 0 to LVLR-1 loop o := o or fold_v(i); end loop;
     for i in 0 to PIPE-1 loop o := o or tg(i).v; end loop;
     inflight <= o;
   end process;
@@ -254,6 +296,7 @@ begin
       if rst = '1' then
         st <= S_IDLE; sat_r <= '0'; err_r <= '0';
         tg <= (others => TAG0);
+        fold_v <= (others => '0');
         xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0'; b_pf <= 0;
 
       elsif cb_we = '1' and st = S_IDLE then
@@ -449,7 +492,8 @@ begin
         ----------------------------------------------------------------
         -- row end, stage 4: the amax fold, alone
         ----------------------------------------------------------------
-        re4_v <= re3_v;
+        -- level 1 of the tree, fed from the masked magnitudes
+        fold_v(0) <= re3_v;
         if re3_v = '1' then
           -- SCAN DOMAIN is r < n_rows ONLY: a pad row folded into amax would
           -- inflate ns and crush every real mantissa.  Masked to zero here, so
@@ -461,20 +505,33 @@ begin
           for rr in ROWS_IF to MAXPOW-1 loop     -- pad to a power of two
             wm(rr) := (others => '0');
           end loop;
-          for l in 1 to clog2(ROWS_IF) loop
-            for i in 0 to (MAXPOW / (2**l)) - 1 loop
-              if wm(2*i+1) > wm(2*i) then wm(i) := wm(2*i+1);
-              else                        wm(i) := wm(2*i); end if;
-            end loop;
+          for i in 0 to HALF-1 loop
+            if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+            else                        fold(i) <= wm(2*i); end if;
           end loop;
-          re4_max <= wm(0);
         end if;
+
+        -- levels 2..LVLR, one register stage each.  Stage s reads stage s-1's
+        -- region and writes its own, halving the live count each time.
+        for sg in 1 to LVLR-1 loop
+          fold_v(sg) <= fold_v(sg-1);
+          if fold_v(sg-1) = '1' then
+            for i in 0 to (MAXPOW / (2**(sg+1))) - 1 loop
+              if fold((sg-1)*HALF + 2*i+1) > fold((sg-1)*HALF + 2*i) then
+                fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i+1);
+              else
+                fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i);
+              end if;
+            end loop;
+          end if;
+        end loop;
 
         ----------------------------------------------------------------
         -- row end, stage 5: accumulate the running maximum
         ----------------------------------------------------------------
-        if re4_v = '1' and re4_max > amax then
-          amax <= re4_max;
+        -- the tree's last stage holds exactly one live entry, at sg=LVLR-1
+        if fold_v(LVLR-1) = '1' and fold((LVLR-1)*HALF) > amax then
+          amax <= fold((LVLR-1)*HALF);
         end if;
 
         -- Registered ybuf read, issued UNCONDITIONALLY: gating it on the state

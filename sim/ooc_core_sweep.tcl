@@ -29,7 +29,13 @@ set rtldir [file normalize [file join $here ../rtl]]
 set outdir [file normalize [file join $here ooc_sweep]]
 file mkdir $outdir
 
-set csv [open [file join $outdir results.csv] a]
+# Append, but write the header if the file is new or empty -- the first version
+# always appended and produced a headerless CSV whenever the file had been moved
+# aside between runs, which silently turned the first data row into the header.
+set csvpath [file join $outdir results.csv]
+set fresh [expr {![file exists $csvpath] || [file size $csvpath] == 0}]
+set csv [open $csvpath a]
+if {$fresh} { puts $csv "part,period_ns,rows_if,dsp,lut,ff,bram,wns_ns,fmax_mhz" }
 
 foreach R $rowlist {
   puts "======== ROWS_IF=$R part=$part period=${period}ns ========"
