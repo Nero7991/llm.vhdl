@@ -267,3 +267,43 @@ at all.
   would test this and is needed for the host-to-HBM path regardless.
 - The ES1 die's speed grade. The package marking would settle it and is worth
   reading whenever the heatsink next comes off.
+
+## ADDENDUM, 2026-08-24: provenance of the "I2C devices exist" claim
+
+Prompted by the right question: *where did we get that info?*
+
+**Originally from ONE source**: SQRL's `scripts/fk33_jtagaxi.tcl`, naming 0x2C
+for the VCCINT regulator and 0x18/0x19/0x1F for temperature sensors. That is
+the same file whose `fk33_read_sysmon` cannot execute (section 5). It was
+over-trusted.
+
+**Independently corroborated since** (community documentation of the board):
+
+- The FK33 has three rails - VCCINT **0.85 V at 120 A** (20x6), HBM_VCC 1.2 V
+  at 20 A, VCCINT_IO 0.85 V at 20 A - and they are *"modifiable using I2C
+  programmable rheostats"*. So I2C-controlled rheostats do exist on the board.
+- The part is **`xcvu33p-fsvh2104-2L-e`**, and FK33s are documented as
+  shipping with **ES0/ES1 engineering samples**, matching our ES1 die. The
+  -2L grade is therefore well supported: dual-rated 0.72 V and 0.85 V, so
+  **0.85 V is in spec for this part, not an overvolt**.
+- SYSCLK is a 200 MHz ASDMPLV oscillator, consistent with the BD's
+  `PRIM_IN_FREQ {200}`.
+
+**Still NOT established**: that those rheostats hang off the FPGA's I2C bus at
+BB24/BA24 rather than a separate segment owned by an onboard controller.
+Nothing we have shows the FPGA was ever intended to reach them.
+
+### CORRECTION: the 12.5 mV/step model is withdrawn
+
+Earlier this session I inferred a VID scale of 12.5 mV/step from SQRL's
+"write 0x44 to reg 0x00 for 0.85 V" (0x44 = 68, and 68 x 12.5 mV = 0.850 V
+exactly), and noted our 0.678 V fits a code of 0x36. **That was a
+coincidence-fit and is withdrawn.** The mechanism is a digital *rheostat*
+setting a regulator feedback divider, so the output follows
+`Vref x (1 + R1/R2)` and is **non-linear in wiper code**. Consequences:
+
+- The exact 0.850 V arithmetic proves nothing about the transfer function.
+- A blind write is **more** dangerous than a VID interface would be: near one
+  end of the pot a single step can move the output a long way. Any future
+  attempt must read the current code back first and step in small increments
+  with a SYSMON read between each, never jump to a target code.
