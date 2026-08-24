@@ -315,6 +315,61 @@ index and is not driven meaningfully. `sampler_stream` consumes `y_data` on
 > Procedure, calibration table, and the traps:
 > `docs/debugging/2026-08-24_subsystem-a-format-perplexity.md`
 
+> **What quality parity with llama.cpp would cost (2026-08-24).**
+>
+> Two different things hide behind "match llama.cpp", with very different prices.
+>
+> **Bit-identical output is not a modification, it is a different engine.**
+> Q4_K and Q6_K are asymmetric 256-weight superblock formats carrying 6-bit
+> packed scales *and mins*, and llama.cpp accumulates in float. This design is a
+> symmetric codebook with integer BFP accumulation. Matching bit-for-bit means
+> three new dequantizers plus float accumulation, which discards §7.4's rounding
+> contract, the amax pipeline and every DSP figure measured for this engine.
+> **Not recommended.**
+>
+> **Quality parity costs bandwidth, and this engine is bandwidth-bound.**
+> Measured parameter split of the real model:
+>
+> | | params | share |
+> |---|---|---|
+> | Q4_K (`ffn_*`, `token_embd`) | 18.38 B | 68.4% |
+> | **Q8_0 (`attn_*`, `ssm_*`)** | **6.73 B** | **25.0%** |
+> | Q6_K (`output`, some `attn`) | 1.77 B | 6.6% |
+>
+> **33.2% of the weights this engine streams are kept above 4.5 bits by
+> llama.cpp.** Carrying them at their original precision:
+>
+> ```
+> uniform  4.469 bits/wt  ->  14.31 GB/token
+> mixed                   ->  18.17 GB/token     1.27x  (+27%)
+> at 460 GB/s HBM:  32.1 tok/s  ->  25.3 tok/s   (-21%)
+> ```
+>
+> The RTL half is the cheap half: Q8_0 is int8 times an fp16 scale per 32, which
+> is *simpler* than the codebook path, so this is a second and easier weight
+> path rather than a harder one. Upgrading only the Q8_0 tensors and leaving
+> Q6_K alone saves almost nothing (+24% against +27%), so there is no useful
+> middle option on that axis.
+>
+> **A third option costs no bandwidth at all and is not yet evaluated.** This
+> format is *symmetric* -- codebook times scale, no offset -- while Q4_K is
+> *asymmetric*, carrying a per-block min. On the `ffn_*` tensors, 63.6% of all
+> parameters and already 4-bit under both schemes, this format still shows 7.6%
+> relative error against Q4_K's own dequantized values. **That gap is format
+> structure, not bit width.** Adding a per-block offset at a comparable bit rate
+> could recover part of the +1.69% for zero bandwidth cost, at the price of an
+> adder in the datapath and superblock unpacking. Unquantified.
+>
+> **Which option is worth taking depends on an attribution not yet measured**:
+> how much of the +1.69% comes from degrading the Q8_0 projections versus from
+> this format underperforming Q4_K on the FFN. `tools/roundtrip_gguf.py
+> --only-q4k` measures exactly that, since applying the format only to
+> already-Q4_K tensors IS the mixed-precision proposal. If it lands near the
+> 7.0016 control, mixed precision buys back essentially all the quality and the
+> decision is a clean speed-for-quality trade. If it lands near 7.1201, paying
+> 21% throughput would be largely wasted and the asymmetric-format route is the
+> one to pursue.
+
 
 - 4-bit index per weight into a **16-entry int8 codebook**
 - One **int16 scale, unsigned Q15** per `BLOCK` consecutive weights within a row
