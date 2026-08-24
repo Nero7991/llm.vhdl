@@ -369,6 +369,38 @@ index and is not driven meaningfully. `sampler_stream` consumes `y_data` on
 > decision is a clean speed-for-quality trade. If it lands near 7.1201, paying
 > 21% throughput would be largely wasted and the asymmetric-format route is the
 > one to pursue.
+>
+> **MEASURED, and it says do NOT buy precision.** `--only-q4k` lands at
+> **7.0931**, i.e. +0.0915 of the +0.1185 total:
+>
+> | | PPL | vs control |
+> |---|---|---|
+> | control | 7.0016 | -- |
+> | **A on FFN only = mixed precision** | **7.0931** | **+1.31%** |
+> | A uniform | 7.1201 | +1.69% |
+>
+> | source of the damage | share |
+> |---|---|
+> | **this format underperforming Q4_K on the FFN** | **77.2%** |
+> | degrading the Q8_0 projections | 22.8% |
+>
+> So mixed precision would cost **+27% bandwidth and 21% of the token rate to
+> recover under a quarter of the gap.** That is a bad trade, and it inverts the
+> conclusion that the Q8_0 story alone would have supported: those tensors were
+> the visible risk and turned out to be the minor term.
+>
+> **The gap is format structure, not bit width.** On identical 4-bit budgets
+> across 63.6% of all parameters, Q4_K's per-block *minimum* -- which this
+> symmetric format does not carry -- is worth +0.0915 PPL. The lever to pursue
+> is therefore the **asymmetric/offset format at zero bandwidth cost**, not
+> precision. Were it to close that term fully the residual would be +0.0270
+> (+0.39%), near parity for free.
+>
+> Two limits on that, neither yet resolved: an offset is not free in bits, so it
+> either eats into the 4.469 bits/weight or needs Q4_K's hierarchical superblock
+> trick to stay in budget; and what is measured is that the gap EXISTS and is
+> worth 0.0915, not that an offset recovers all of it. Both terms sit far above
+> the 0.0025 noise floor.
 
 
 - 4-bit index per weight into a **16-entry int8 codebook**

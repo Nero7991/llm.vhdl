@@ -156,3 +156,42 @@ tensors. Use `tail -f -n 0`.
 - The 48 skipped `ssm_alpha` tensors were not re-measured after the fix; the
   0.04% parameter share makes a rerun hard to justify, but the headline is
   therefore a very slight underestimate.
+
+
+## ATTRIBUTION 2026-08-24: 77% of the loss is format structure, not bit width
+
+`--only-q4k` (this format applied only to already-Q4_K tensors, leaving the
+Q8_0 projections intact -- which IS the mixed-precision design) measures
+**7.0931**, against the 7.0016 control and the 7.1201 uniform run:
+
+```
+control                            7.0016
+A on FFN only = mixed precision    7.0931    +0.0915   (+1.31%)
+A uniform                          7.1201    +0.1185   (+1.69%)
+
+  format underperforming Q4_K on the FFN   +0.0915   77.2%
+  degrading the Q8_0 projections           +0.0270   22.8%
+```
+
+**This inverts the conclusion the earlier evidence supported.** The Q8_0
+projections were the visible risk -- 8 bits dropped to 4.5, ~8% relative error
+added where there had been 0.000% -- and they are the MINOR term. Mixed
+precision would cost +27% bandwidth and 21% of the token rate to recover 22.8%
+of the gap.
+
+The dominant term is this format losing to Q4_K at the SAME bit width, on the
+FFN tensors that are 63.6% of all parameters. The structural difference is that
+Q4_K is asymmetric, carrying a per-block minimum, while this format is symmetric
+(codebook x scale). That is consistent with the earlier calibration, which
+showed 7.6% relative error on `ffn_gate` measured against Q4_K's own dequantized
+values -- an error that bit width alone cannot explain.
+
+**Lesson for the procedure, not just the result:** the calibration table ranked
+the risk by where error was ADDED (0.000% -> 8% on the Q8_0 tensors looked
+alarming; 0.53% -> 7.6% on the Q4_K tensors looked unremarkable). Perplexity
+weights by parameter share and by sensitivity, and it ranked them the other way
+round. Per-tensor error is a screening tool, never an attribution.
+
+**Open:** whether an offset actually recovers the 0.0915, and at what bit cost.
+An offset is not free; keeping 4.469 bits/weight would need Q4_K's hierarchical
+superblock structure rather than a flat per-block min.
