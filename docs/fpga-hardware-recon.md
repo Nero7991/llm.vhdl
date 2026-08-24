@@ -172,7 +172,7 @@ added 2026-08-21; it is the only one that is an official, still-documented produ
 | URAM | 2x 180.0 Mb | 180.0 Mb | 90.0 Mb | 270.0 Mb |
 | **On-chip total** | **56.8 MB** | 28.4 MB | **14.2 MB** | 43.2 MB |
 | LUTs | 2x 872K = ~1.74M | 872K | ~440K | 1,182,240 |
-| DSP slices | 11,904 | 5,952 | 2,976 (derived) | 6,840 |
+| DSP slices | 11,904 | 5,952 | **2,880** (measured) | 6,840 |
 | **External memory** | **16 GB HBM2** | 8 GB HBM2 | **8 GB HBM2** | 64 GB DDR4 |
 | **Ext. bandwidth** | **920 GB/s** | 460 GB/s | **460 GB/s** (see VCCHBM note) | ~38-77 GB/s |
 | Host interface | **JCC2L Lite: Ethernet only, no PCIe** (confirmed from listing photos). Module reaches host only via BMC UART/I2C | PCIe Gen3 x16 / Gen4 x8 | PCIe (XDC routes x16) | PCIe |
@@ -731,13 +731,94 @@ per `sqrl_fk33.xdc`). The repo's `scripts/fk33_jtagaxi.tcl` plus the two `jtag_a
 masters in the example design let you read/write HBM and AXI-Lite over JTAG with **no
 PCIe involvement at all**, which is the safest first step.
 
+### JTAG-only bring-up: confirmed viable (2026-08-22)
+
+Repo cloned to `~/GitHub/SQRL_FK33` (default branch `Vivado_2022_2`; an older
+`Vivado_2019_2` branch also exists). **Both section 4c experiments are reachable over
+JTAG alone**, so first light needs nothing resolved about PCIe, ACS or P2P. Four
+independent confirmations:
+
+**1. The example design has an explicit switch.** Line 5 of `projects/fk33_example.tcl`:
+
+```tcl
+set EnablePCIe 1
+set HBMGlobalSwitch 1
+```
+
+Set `EnablePCIe 0` for a PCIe-free build.
+
+**2. JTAG reaches HBM directly.** Despite the smartconnect being named `pcie2hbm`, its
+only slave is the JTAG master:
+
+```tcl
+create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_hbm
+set_property CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64} ...
+jtag_hbm/M_AXI   -> pcie2hbm/S00_AXI
+pcie2hbm/M00_AXI -> hbm/SAXI_00
+pcie2hbm/M01_AXI -> hbm/SAXI_16
+```
+
+HBM IP is configured `USER_HBM_DENSITY 8GB`, `USER_HBM_STACK 2`, ref clk 200 MHz,
+AXI input clk 250 MHz. Only 2 of 32 AXI ports are used; the rest are free.
+
+**3. `fk33_jtagaxi.tcl` is a complete JTAG-only toolkit**, more than "a helper script":
+
+| Proc | What it gives you |
+|---|---|
+| `axi256_write` / `axi256_read` | 256-bit HBM access at 64-bit addresses (4x 64-bit txns) |
+| `fk33_read_sysmon` | die temp, **VCCINT / VCCHBM / VCCBRAM / VCCAUX / MGTAVCC / MGTAAUX / MGTAVTT volts, per-rail current, and computed watts**, plus LTC3636 regulator temps |
+| `fk33_regulator_temps` | I2C temps at 0x18 / 0x19 / 0x1F |
+| `fk33_set_vccint` | the undervolting lever (I2C 0x2C reg 0x00; 0x44 = 0.85V) |
+| `fk33_set_led`, `axil_read0/write` | LEDs and AXI-Lite poking |
+
+Per-rail current and watts over JTAG is exactly the instrumentation experiment #1
+needs, and it means the VCCHBM 20A question can be measured directly rather than
+inferred.
+
+**4. This is how the card was actually deployed.** TRM talks to these boards only over
+USB JTAG, and mining write-ups describe the FK33 as "installed in a PCIe riser **for
+power delivery**, and only a USB cable has been required for communication."
+
+**The catch is power, not data.** "Without PCIe" means no host link, no XDMA, no
+driver, no BAR - **not** "no slot". The slot supplies at most 75 W and the card draws
+~155 W across VCCINT 120A@0.85V, HBM_VCC 20A@1.2V and 1.8/3.3V aux, so it still needs
+slot power from a real slot or a **powered PCIe riser fed from a PSU**. Upside: if you
+seat it for power only and ignore the lanes, the "is the chipset x4 slot open-ended"
+concern below stops mattering.
+
+**udev gotcha - the existing cable driver rules will NOT match the FK33.** Drivers were
+installed on this workstation in Feb 2024 for the AXU3EG, and the user is in `plugdev`
+and `dialout`, but both FTDI rules gate on the manufacturer string:
+
+```
+# 52-xilinx-ftdi-usb.rules
+ACTION=="add", ATTR{idVendor}=="0403", ATTR{manufacturer}=="Xilinx",   MODE:="666"
+# 52-xilinx-digilent-usb.rules
+ACTION=="add", ATTR{idVendor}=="0403", ATTR{manufacturer}=="Digilent", MODE:="666"
+ATTR{idVendor}=="1443", MODE:="666"
+```
+
+The FK33's onboard FTDI is a third-party board and will report neither, so it comes up
+root-only. **Re-running the Vivado driver installer does not fix this.** Add a rule once
+the real VID/PID is visible:
+
+```bash
+lsusb                       # find the FTDI device the FK33 presents
+echo 'ACTION=="add", ATTR{idVendor}=="0403", ATTR{idProduct}=="XXXX", MODE:="666"' \
+  | sudo tee /etc/udev/rules.d/53-sqrl-fk33.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
 ### Verify on arrival
 
 1. **Cooling variant.** Passive datacenter heatsink, water block, or a modded active
    cooler? A bare passive fin stack at 155 W needs serious forced air and will cook
    in a quiet desktop. Many owners bolt on a Noctua.
-2. **Card edge width.** The XDC routes 16 lanes but listings say x8. Check the
-   physical connector.
+2. **Card edge width.** Genuinely ambiguous, and **SQRL's own board files contradict
+   each other**: `sqrl_fk33.xdc` constrains 16 lanes and `part0_pins.xml` carries 32
+   PCIe RX entries (16 lanes, P and N), but `board.xml` names the edge-connector
+   component **`pcie_8lane_edge`**. Check the physical connector; do not assume x16.
+   Irrelevant for JTAG-only bring-up.
 3. **Aux power connectors.** Confirm count and type before planning the PSU.
 4. **USB JTAG enumerates** on the host.
 5. **PCIe enumeration with factory bitstream**: `lspci -d 1e24:` (vendor 1E24 SQRL,
@@ -769,12 +850,58 @@ Both are single-card, and between them they govern every downstream decision.
    entire on-fabric thesis rests on.** Projections in section 5 assume 5-10% of peak;
    if the real figure is 1%, the fabric plan changes shape entirely.
 
+### Tooling status on this workstation (checked 2026-08-22)
+
+**Nothing needs installing. The only gap is a license.** Vivado **2023.2** is installed
+at `/tools/Xilinx/2023.2` (59 GB, with Vitis and Vitis_HLS), and the `virtexuplusHBM`
+family is already present including the exact FK33 part. Verified by direct test:
+
+```
+get_parts xcvu33p-fsvh2104-2L-e   ->  xcvu33p-fsvh2104-2L-e        (present)
+synth_design -top t (2 gates)     ->  ERROR: [Common 17-345] A valid license was not
+                                      found for feature 'Synthesis' and/or device 'xcvu33p'
+```
+
+`board.xml` confirms the board file targets `xcvu33p-fsvh2104-2L-e`, matching.
+
+Existing `~/.Xilinx/Xilinx-{1,2}.lic` are **IP-level, not tool-level**: ~100 permanent
+free IP features plus ~370 evaluation IP features that expired March-May 2024, and a
+PetaLinux eval lapsed Jan 2025. Nothing there unlocks a Virtex UltraScale+ device, and
+the **Vivado tool evaluation appears unused** - worth confirming on the AMD account.
+
+### Licensing route: AMD University Program (the $0 path)
+
+**AUP is explicitly unchanged by the 2026.1 restructure.** It grants **Vivado Enterprise
+Edition**, which "includes support for all AMD devices" - so VU33P, VU35P and VU9P, i.e.
+every card in this document. Enterprise is **perpetual** under the new tiers, so it is a
+durable asset rather than a renewing cost.
+
+**The advising professor applies, not the student.** AMD's wording is that academics may
+request multiple licenses "for teaching courses and **for their research teams**", so a
+seat is in scope, but the request must come from faculty. Three steps, all faculty-side:
+
+1. Create an AMD account, activate via the emailed token
+2. Complete AUP enrollment: `amd.com/en/corporate/university-program/enroll.html`
+3. On approval, submit a **Donation Request** from the AUP Members site:
+   `amd.com/en/corporate/university-program/donation-program.html`
+
+Portal `www.amd.com/AUP`. The same programme covers **hardware** donations, not only
+software. Note node-locked licenses bind to a host MAC (this box is `5c80b67a481f`).
+
+**Extra justification worth giving the advisor:** since 2026.1 the free Basic tier is
+**Windows-only** and Linux requires a paid tier, so an AUP Enterprise grant is what
+would allow moving past 2023.2 on Linux at all - for the AXU3EG work as much as the
+FK33. See section 6.
+
 ### Do not start the license clock early
 
-Vivado ML Enterprise offers a 30-day evaluation. Do stage 1 on the AXU3EG (free tools)
-and read through `fk33_example.tcl` *before* activating it, so the eval window covers
-real work rather than orientation. Repo default branch is `Vivado_2022_2`; board files
-reference 2019.2 install paths but should port forward.
+A 30-day node-locked evaluation is the fallback if AUP stalls. Do stage 1 on the AXU3EG
+(free tools, and 2023.2 is grandfathered on Linux) and read through `fk33_example.tcl`
+*before* activating it, so the eval window covers real work rather than orientation.
+Board files reference 2019.2 install paths but should port forward to 2023.2.
+
+**Stay on 2023.2.** Upgrading to 2026.1+ on Linux now costs money even for the
+free-tier ZU3EG work.
 
 ---
 
@@ -986,3 +1113,59 @@ training on the 2x3090 rig, is an open question.
 - [Cerebras 2000 tok/s](https://www.businesswire.com/news/home/20250910137362/en/Cerebras-Sets-New-AI-Speed-Record-on-MBZUAI-and-G42%E2%80%99s-K2-Think-at-2000-TokensSecond-Inference-Performance)
 - [FlightLLM](https://arxiv.org/html/2401.03868)
 - [TeLLMe v2 ternary edge FPGA](https://arxiv.org/pdf/2510.15926)
+
+
+## FK33 first light: bitstream built and ready, before the card arrived (2026-08-24)
+
+**`write_bitstream` is licensed for `xcvu33p-fsvh2104-2L-e`.** Verified with a
+trivial design before anything else, because it is a hard blocker that no amount
+of RTL work routes around, and this document had recorded a license warning
+naming that device. It produced a valid bitstream. The warning no longer applies.
+
+**A JTAG-only first-light bitstream now builds and meets timing**, generated by
+`hw/fk33/gen_firstlight.py` from SQRL's `fk33_example.tcl`:
+
+```
+FK33_TIMING WNS=5.063 ns  WHS=0.018 ns
+FK33_BITSTREAM bd_wrapper.bit (9,845,026 bytes)
+utilisation: 8,693 LUT (2.0%), 15,307 FF (1.7%), 10.5 BRAM, 0 DSP
+part:        xcvu33p-fsvh2104-2L-e
+```
+
+The implementation run also **confirms the device has 2,880 DSP**, correcting the
+2,976 figure derived earlier in this document and repeated into subsystem B's
+budget.
+
+**SQRL's `EnablePCIe 0` path was bit-rotted and had never been run.** Four
+breakages, three of them upstream's and all three confined to the non-PCIe
+branch, which is what makes the conclusion firm:
+
+1. a hard version gate rejecting anything but Vivado 2022.2;
+2. `util_ds_buf:2.1` requested in the else branch where the PCIe branch asks for
+   `2.2` -- 2023.2 ships only 2.2, so the request yields a locked IP and the
+   build dies on `Parameter IBUF_OUT.CLK_DOMAIN not found`;
+3. 76 `exclude_bd_addr_seg` calls targeting `xdma/M_AXI`, not guarded by
+   `EnablePCIe`, so with no XDMA the address space is empty and Vivado errors
+   with `Please specify an address space when excluding slave segment`;
+4. (ours) `scriptPath` is derived from `[info script]`, which only works while
+   the script sits inside the upstream repo.
+
+Fixes live in a **generator**, not a fork, so upstream changes are not lost, and
+it aborts loudly if any anchor stops matching rather than emitting a file that
+quietly lacks a change.
+
+**Unresolved, and it needs the physical card: the speed grade is contradicted by
+SQRL's own files.** `fk33_example.tcl` hardcodes `xcvu33p-fsvh2104-2-e`;
+`board_files/sqrl_fk33/1.1/board.xml` says `-2L`. `-2` is the FASTER grade, so
+building for it and deploying on `-2L` silicon signs timing off against hardware
+we do not own. The generator forces `-2L` as the conservative direction.
+**Settle it from the IDCODE**: Vivado's hardware manager reports the real part
+within minutes of connecting. If it is genuinely `-2`, every sizing result in
+`docs/superpowers/specs/` gains free headroom, since all of today's OOC sweeps
+were run on `-2L`.
+
+Note also that the board file's display name is **"Forest Kitten 33 (Active
+Cooling)"**, so an active-cooling variant exists. There are no fan pins in the
+FK33 XDC, so an added fan is not under bitstream control -- which is the safer
+arrangement, and deliberately unlike the AXU3EG, where a fabric-controlled fan
+ran wide open for an entire build because a scalar pin was never externalised.
