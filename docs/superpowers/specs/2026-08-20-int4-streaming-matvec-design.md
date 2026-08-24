@@ -1357,12 +1357,35 @@ alternative.** §13's conclusion that "what blocks closing the gap is HBM ports,
 not DSPs" is **inverted**: at the achievable `ROWS_IF` the port budget is
 comfortable and DSP is the wall.
 
-| `ROWS_IF` | DSP | weight ports | scale ports | total of 32 |
-|---|---|---|---|---|
-| 48 @ 276 MHz | 76.3% | 212 GB/s = 15 | 27 GB/s = 2 | **17** |
-| 56 @ 288 MHz | 90.7% | 258 GB/s = 18 | 32 GB/s = 3 | **21** |
+| `ROWS_IF` | DSP | weight demand | scale demand | ports at 1.3x | of 32 |
+|---|---|---|---|---|---|
+| 48 @ 276 MHz | 76.3% | 212 GB/s | 27 GB/s | 20 + 3 | **23** |
+| 56 @ 288 MHz | 90.7% | 258 GB/s | 32 GB/s | 24 + 3 | **27** |
 
-(HBM AXI port = 256 bit at 450 MHz = 14.4 GB/s.)
+(HBM AXI port = 256 bit at 450 MHz = 14.4 GB/s **interface** peak.)
+
+**PROVISION AT 1.3x DEMAND, NOT AT 1.0x.** The first version of this table
+divided demand by the 14.4 GB/s interface peak and stopped: 212/14.4 = 15 ports
+at `ROWS_IF=48`. That is 216 GB/s of provisioned capacity against 212 GB/s of
+demand -- **98% port utilisation, which assumes every port delivers 100% of its
+interface peak.** Nothing delivers 100% of interface peak. The AXU3EG's DDR
+ports delivered **66%**, for reasons still unlocated (see
+`docs/debugging/2026-08-23_subsystem-a-board-bringup.md`), and at 66% this
+configuration would run about 21 tok/s and be bandwidth-bound -- the opposite of
+what §15.3 concludes.
+
+This is the third instance in one day of treating a datasheet peak as delivered
+bandwidth; the other two are recorded as withdrawn corrections in the debugging
+document. The derate is applied here rather than argued about because the ports
+are available: 23 of 32 at `ROWS_IF=48` still leaves 9 spare.
+
+**The per-port figure must be MEASURED on the card before any projection rests
+on it** -- a traffic-generator bitstream that reads HBM through N ports and
+reports delivered bytes per port per cycle, run before subsystem A is placed on
+it. Note also that the FK33 example design sets `HBMGlobalSwitch 1`: routing
+through the HBM switch rather than pinning each port to its own pseudo-channel
+is a known large efficiency loss, and the port-to-pseudo-channel address mapping
+is a design decision that has not been made.
 
 ### 15.2 The `ROWS_IF` ceiling
 
@@ -1411,7 +1434,90 @@ that cost a day on the AXU3EG**, and it should be measured on the card before
 any projection depends on it. See
 `docs/debugging/2026-08-23_subsystem-a-board-bringup.md`.
 
-### 15.5 64-bit addressing is smaller than §13 implies
+### 15.4a Where the DSP actually goes: a quarter of it is the adder tree
+
+The array costs 46.5 DSP per row but contains only 33 multiplies per row. The
+gap is **measured, not inferred** -- Vivado's synthesis log attributes every DSP
+by the expression it implements. Aggregated over the 164 rows synthesized across
+the whole sweep:
+
+| pattern | count | per row | what it is |
+|---|---|---|---|
+| `(A2*B)` | 5,084 | 31.0 | the product multipliers |
+| `(PCIN+A:B)` | **2,154** | **13.1** | **pure adders in the DSP ALU** |
+| `(A*B)` | 164 | 1.0 | the scale multiply |
+
+The 13.1 per row are **adder-tree nodes**, not arithmetic the design needs a DSP
+for. Level 1 of the tree fuses into the multiply as `(PCIN+(A2*B)')` and rides
+the DSP cascade for free; levels 2 and above spill into standalone DSPs used
+purely as adders. That is roughly a quarter of the DSP budget, and at 2,880 DSP
+a quarter is worth about 20 rows of array.
+
+**Forcing those levels into LUT fabric is the cheapest capacity available**: a
+28-bit add is a short carry chain, and the pure-LUT experiment showed fabric
+arithmetic does not cost Fmax at moderate `ROWS_IF`. Expected effect: 46.5 ->
+~34.5 DSP/row, raising the DSP-only ceiling from `2880/46.5 = 62` rows to about
+83.
+
+**Two implementation constraints, both easy to get wrong:**
+
+1. The products and the tree **share the signal `tr`** (`lvl_arr`). A blanket
+   `use_dsp = "no"` on it removes the multipliers as well as the adders, which
+   is the opposite of the intent. Level-0 products must be split into their own
+   signal so the attribute can target levels >= 2 alone.
+2. **Do not push level 1 into fabric.** It costs zero DSPs today because it
+   fuses onto the PCIN cascade; forcing it out spends LUTs to save nothing.
+
+**This does NOT reach the bandwidth bound**, and an earlier draft of this
+section claimed it did by holding Fmax at 300 MHz while §15.2's own data shows
+Fmax falling with `ROWS_IF`. The decisive measurement is the hybrid point:
+`ROWS_IF=64` delivers 526 GMAC/s against 516 at `ROWS_IF=56` -- **eight more
+rows bought 2%**, because the clock gave back what the rows won. Treat the
+adder-tree reclaim as worth roughly 25-30% over `ROWS_IF=48`, not as a route to
+805 GMAC/s.
+
+### 15.4b §14.2 contradicts itself on exactness, and the test proves the wrong case
+
+**OPEN DEFECT. Blocks subsystem E's datapath width, which cannot be settled
+until this is.**
+
+§14.2 states both of the following, nineteen lines apart:
+
+> 3. The reduction is therefore **not exact**: alignment is a floor-mode
+>    rounding site.
+
+> ... sums (**exactly**, since integer addition of the same terms is
+> associative) ... **bit-identical** to the full-K path.
+
+Both cannot hold. Partials from different cards sit on different grids because
+each card computes its own `x_exp` over its own K-slice; aligning them by
+right-shifting to the minimum `y_exp` discards bits, and that is a rounding
+site, not an identity.
+
+**The C reference validates only the case that cannot occur in production**, and
+says so itself (`ref/matvec_int4.c`, the §14.4 partial-sum test):
+
+> two half-K shards. Each is a SEPARATE job with its own x slice, so in the real
+> system each would carry a different `x_exp` -- which is exactly the defect the
+> E review found. Here both slices share `x_exp`, so the partials happen to be
+> on one grid and sum exactly.
+
+So "bit-exact partial-sum reconstruction" is demonstrated for equal exponents
+only. The differing-`x_exp` case is unvalidated, and under right-shift-to-min
+alignment it cannot be bit-exact by construction.
+
+**Two resolutions, and the choice defines E's accumulator width:**
+
+1. **Accept the loss and bound it normatively.** Align to min `y_exp`, state the
+   worst-case error, and drop the bit-identity claim. Cheapest; E keeps a narrow
+   accumulator.
+2. **Align to MAX `y_exp` with a widened accumulator.** Left shifts are exact,
+   so the reduction stays exact and bit-identity survives. Costs width:
+   `48 + max exponent spread` bits, plus transporting each peer's `y_exp`, which
+   E does not currently carry at all.
+
+Until this is decided, E's §2.1 accumulator bound (`s36`, derived from an s32
+partial that A no longer emits) is wrong on two independent counts.
 
 §13 says `w_base`/`s_base` widen to 64 bits at `v4.0`. The datapath is already
 parameterised: `ADDR_W` threads cleanly through `axi_rd_port`,
