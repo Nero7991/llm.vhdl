@@ -608,6 +608,40 @@ implementation needs ~36 banked tiles; registers have no port limit. Rev 1's
 registers needs roughly **16:1 read muxes per MAC lane, about 10-13K LUT**
 (1,024 x 36-bit).
 
+> **MEASURED 2026-08-23, and this estimate is incomplete.** A single-lane OOC
+> synthesis on the real part (`xcvu33p-fsvh2104-2L-e`, 300 MHz target) gives
+>
+> ```
+> per lane:   LUT = 158 + 10.0 x ACC_N       FF = 182 + 36.4 x ACC_N
+> ```
+>
+> where `ACC_N` is the lane's share of the file. The 36.4 is `ACC_W = 36` -- one
+> FF per accumulator bit -- so the **36,864 FF above is exact**. The LUT figure
+> is not wrong so much as partial: 10-13K matches the *fixed* file term (10,240)
+> and omits a **per-lane** term of 158 LUT that this paragraph never counted,
+> because it prices the read mux and stops before the write side, where every
+> entry needs its own input mux. The two terms scale differently and must not be
+> collapsed, since the file is a fixed 1,024 entries at any `MACS`:
+>
+> | `MACS` | `ACC_N` | LUT | FF |
+> |---|---|---|---|
+> | 64 | 16 | 20,352 | 48,960 |
+> | 192 | 6 | 40,576 | 71,808 |
+> | 288 | 4 | 55,744 | 89,280 |
+>
+> **Do not put more than 16 accumulators behind one lane.** The fit is linear to
+> `ACC_N = 16` and breaks above it (32 measures 543 against a predicted 478):
+> the 32:1 read mux exhausts the F7/F8 chain and needs a third fabric level.
+>
+> **And write the read-modify-write with ONE shared adder.** The obvious form,
+> `for i loop if idx = i then acc(i) <= acc(i) + prod; end if; end loop`, builds
+> a 36-bit adder **per entry** -- Vivado will not share them, since only one
+> branch is ever live but proving the enables one-hot is not something synthesis
+> attempts. Measured 1110 LUT and 80 CARRY8 per lane against 318 and 5 for
+> identical arithmetic: **792 wasted LUT per lane, 152-228K at 192-288 lanes,
+> 35-52% of the device.** Procedure and evidence:
+> `docs/debugging/2026-08-23_bc-lane-micro-synthesis.md`.
+
 **Rescale multipliers are time-shared with the MAC lanes, not added to them.**
 §3 requires up to 1,024 rescale multiplies per position, each a 40-bit
 accumulator times a Q12 factor -- a **36 x 13 product that does not fit one
@@ -616,6 +650,20 @@ DSP48E2** (36 > 27), so it needs 2. But score MACs are 8 x 16 and PV MACs are
 to 2 DSPs and time-sharing them for rescale therefore costs **128 DSPs total**
 rather than 64 MAC + 128 dedicated rescale = 192, with no throughput loss, since
 rescale and MAC never run in the same cycle. Rev 3 priced the dedicated version.
+
+> **MEASURED 2026-08-23: confirmed, 2 DSP48E2 per lane.** OOC synthesis of one
+> lane -- a single multiply expression with operands muxed between the three
+> modes, the mode driven by a free-running counter so synthesis cannot tell
+> which is live -- yields DSP=2, with an independent DSP48E2 census agreeing and
+> `USE_MULT=MULTIPLY` on both (neither is a DSP recruited as a wide adder). At
+> `MACS = 64` that is **exactly** the 128 DSP §2.8 derives. The measurement
+> matters because the alternative was 3 DSP/lane, a 128-288 DSP error on a
+> 2,880-DSP device depending on the final `MACS`.
+>
+> Caveat on timing: the lane closes at **328.6 MHz** in isolation, but that is a
+> single lane with no fanout. `k`, `v_aligned` and the rescale factor broadcast
+> to all lanes, and that net -- not the lane arithmetic -- is what will set the
+> real Fmax. Subsystem A managed 276 MHz on this same part and grade.
 
 **State, corrected. Rev 3 called 115K FF "mandatory"; most of it is not:**
 

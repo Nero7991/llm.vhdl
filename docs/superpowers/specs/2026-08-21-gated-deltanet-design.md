@@ -856,7 +856,7 @@ row is an estimate and unverified**, exactly the caveat C §2.8 carries.
 
 | Resource | B @ LANES=8 | B @ LANES=32 | AXU3EG (XCZU3EG) | FK33 (XCVU33P) |
 |---|---|---|---|---|
-| DSP48E2 | **42-56** | ~138-152 | 360 | 2,976 |
+| DSP48E2 | **42-56** | ~138-152 | 360 | **2,880** |
 | LUT (shifters x4 alignment sites, quantizers, control) | ~10-14K | ~25-35K | 70,560 | ~440K |
 | FF | ~15-20K | ~35-45K | 141,120 | ~880K class |
 | BRAM36 | ~18-20 | ~25-30 | 216 | 23.6 Mb + 90 Mb URAM (14.2 MB) |
@@ -865,6 +865,28 @@ row is an estimate and unverified**, exactly the caveat C §2.8 carries.
 
 LUT/FF/BRAM rows are estimates from the §2.6 table plus alignment barrel
 shifters; none has seen synthesis.
+
+> **MEASURED 2026-08-23: the 4-per-lane term is confirmed; the aux row is not.**
+> OOC synthesis of one lane carrying the full four-stage §2.1.4 chain, on the
+> real part (`xcvu33p-fsvh2104-2L-e`, 300 MHz target), gives **DSP=4, LUT=50,
+> FF=118** -- utilisation and an independent DSP48E2 census agreeing, all four
+> `USE_MULT=MULTIPLY`. So every product does fit a single 27x18 DSP48E2, and the
+> site-6 prescale and site-7 normalize do the job they were introduced for.
+>
+> Two things the census shows that the estimate did not predict. The s41 sk
+> accumulate folded into the DSP's own 48-bit P register (`sk_acc_reg` PREG=1)
+> rather than spilling to fabric, which is why the lane is 50 LUT and not several
+> hundred. And the lane closes at **446 MHz** in isolation -- B's arithmetic is
+> nowhere near the critical path, so if B ever fails timing the cause will be the
+> state feed or the cross-lane reduction, not this chain.
+>
+> At `LANES = 32` the derived part of the budget is therefore **128 DSP, ~1.6K
+> LUT, ~3.8K FF** -- the fabric cost is negligible against the estimated 25-35K
+> LUT row, because that row is dominated by the barrel shifters and control this
+> skeleton does not contain. **The aux(10-24) range remains unverified**, along
+> with the cross-lane sk reduction tree, sigma/silu, the L2 sum-of-squares and
+> the conv MACs, none of which are in the skeleton. Procedure and evidence:
+> `docs/debugging/2026-08-23_bc-lane-micro-synthesis.md`.
 
 **FINDING: A + B + C do NOT safely co-fit the AXU3EG at their current
 nominal widths.** The arithmetic:
