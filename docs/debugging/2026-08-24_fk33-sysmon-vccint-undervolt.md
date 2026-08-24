@@ -307,3 +307,79 @@ setting a regulator feedback divider, so the output follows
   end of the pot a single step can move the output a long way. Any future
   attempt must read the current code back first and step in small increments
   with a SYSMON read between each, never jump to a target code.
+
+---
+
+## RESOLVED, 2026-08-24: the bus is live, the devices are real, axi_iic was the fault
+
+The GPIO probe bitstream (`gen_i2cprobe.py`) settled it. With both balls
+released:
+
+```
+released      -> DATA=0x03   both HIGH
+drive SCL low -> DATA=0x02   SCL follows, SDA stays high
+drive SDA low -> DATA=0x01   SDA follows, SCL stays high
+release both  -> DATA=0x03   both return HIGH immediately
+```
+
+Powered pull-ups, both balls connected and independently controllable, no short.
+The immediate return to high after being driven low distinguishes an active
+pull-up from a floating line holding charge.
+
+**Bit-banging then found devices where `axi_iic` found none.** So the board was
+never at fault, nor our constraints, nor the wiring. `axi_iic` itself is the
+broken link. Cause not yet diagnosed and no longer blocking, since bit-banging
+is entirely adequate for setting a voltage once.
+
+### Bus map
+
+| address | part | evidence |
+|---|---|---|
+| 0x18, 0x19, 0x1f | Microchip JC42.4 temp sensor (MCP9804 family) | manuf ID `0x0054`, device `0x02` rev `0x01` |
+| 0x2c, 0x2d, 0x2e | MCP45X1/46X1-class 257-step digital pot | see below |
+
+Exactly SQRL's `fk33_regulator_temps` list, and exactly three rheostats for the
+three documented rails. Temperatures decode sensibly and differ from each other
+as independent sensors should: 38.38 / 40.19 / 40.06 C, all above the 30 C die,
+consistent with placement near the power stages. That decode validates the whole
+bit-bang stack.
+
+Rheostat identification rests on three independent consistencies:
+
+1. address range 0x2C-0x2E sits inside the MCP45X1/46X1 range 0x2C-0x2F;
+2. plain reads are strictly 2-byte periodic (`00 80 00 80` at length 4), i.e. a
+   9-bit register holding `0x080` = **128**, midscale of 257 steps;
+3. SQRL's byte sequence `[0x58][0x00][0x44]` decodes as a valid MCP45XX write:
+   command `0x00` = volatile wiper 0, data = 68.
+
+### What this changes about the VCCINT question
+
+- **Current wiper is 128. SQRL's target is 68.** Lower wiper gives higher
+  voltage, so the pot is the lower leg of the feedback divider. The direction
+  of travel is now known rather than assumed.
+- **The write is VOLATILE.** Command `0x00` addresses the volatile wiper, so a
+  power cycle restores 128 and 0.678 V. Fully reversible.
+- **Still non-linear**, so any attempt must step from 128 toward 68 in
+  increments with a SYSMON read between each, never jump.
+
+### Measurement trap: an unterminated read makes an I2C scan ORDER-DEPENDENT
+
+The first two bit-banged scans DISAGREED - a shortlist found 0x19 but not
+0x18/0x1f, a full scan found 0x18/0x1f/0x2e but not 0x19, with only 0x2c common
+to both. Cause: the probe sent address+R, took the ACK, then issued STOP
+without clocking out the byte the device had begun driving. The device kept
+holding SDA, so the *next* several probes NAKed spuriously and the result
+depended on scan order.
+
+Fix, both parts needed: terminate the read properly (clock all 8 data bits,
+answer with a master NAK, then STOP), and recover the bus before each probe by
+clocking SCL up to 9 times until SDA releases. After that, two consecutive full
+scans returned identical results.
+
+**Do not trust any I2C scan that has not been run twice in different orders.**
+A scan that silently drops devices looks exactly like a scan that found
+everything.
+
+### Also: Vivado's Tcl is 8.5
+
+`lmap` is 8.6+ and fails with `invalid command name "lmap"`. Use `foreach`.
