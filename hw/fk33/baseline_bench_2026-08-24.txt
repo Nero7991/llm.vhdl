@@ -1,0 +1,56 @@
+# FK33 baseline: BENCH POWER ONLY (external PSU 6-pin, no PCIe slot connection).
+# Captured 2026-08-24 with ./check.sh, immediately before installing the card
+# in a PCIe slot.  Compare the post-install run against this: the hypothesis is
+# that slot 3.3V + PERST# complete the board power sequence, bringing VCCINT up
+# from 0.678 V and waking the I2C bus.  See
+# docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md
+
+=== configuring (xsdb) ===
+FPGA_PROG_OK
+  1* xcvu33p
+     2  Legacy Debug Hub
+        3  JTAG2AXI
+        4  JTAG2AXI
+=== telemetry (vivado) ===
+IDCODE      04B69093
+PART        xcvu33p
+=== SYSMON via JTAG DRP (Vivado native decode) ===
+  TEMPERATURE        29.2
+  VCCINT             0.674
+  VCCBRAM            0.756
+  VCCAUX             1.775
+  VUSER0             0.896
+  VUSER1             1.799
+  VUSER2             1.201
+  VUSER3             0.000
+  MIN_VCCINT         0.671
+  MAX_VCCINT         0.680
+  MIN_TEMPERATURE    26.2
+  MAX_TEMPERATURE    31.2
+=== SYSMON via AXI-Lite (hw_axi_1, base 0x3000) ===
+  TEMP                  29.13 C
+  VCCINT               0.6769 V   (nominal 0.85/0.72)
+  VCCAUX               1.7740 V   (nominal 1.80)
+  VCCBRAM              0.7574 V   (nominal 0.85/0.72)
+  VUSER0_MGTAVCC       0.9011 V   (nominal 0.90)
+  VUSER1_MGTVCCAUX     1.8016 V   (nominal 1.80)
+  VUSER2_MGTAVTT       1.2041 V   (nominal 1.20)
+  VUSER3_VCCO_B64      0.0000 V   (nominal notseq)
+=== board channels (external, via board dividers) ===
+  INP12V       raw=52070  frac=0.79453  x15.2= 12.077 V  temp=  44.66 C   x15.2 -> volts
+  LTC3636_A    raw=50020  frac=0.76324  x15.2= 11.601 V  temp=  32.15 C   x400-273.15 -> C
+  LTC3636_B    raw=49497  frac=0.75526  x15.2= 11.480 V  temp=  28.96 C   x400-273.15 -> C
+  VCCINT_I     raw= 1060  frac=0.01617  x15.2=  0.246 V  temp=-266.68 C   scale UNKNOWN
+  VCCHBM_I     raw= 5682  frac=0.08670  x15.2=  1.318 V  temp=-238.47 C   scale UNKNOWN
+  VCCBRAM_I    raw= 9008  frac=0.13745  x15.2=  2.089 V  temp=-218.17 C   scale UNKNOWN
+=== alarms: FLAG_REG=0x0012 ===
+  bit1  VCCINT             ASSERTED
+  bit2  VCCAUX             clear
+  bit4  VCCBRAM_or_other   ASSERTED
+  limits: VCCINT 0.8900 upper / 0.7000 lower
+=== IIC core liveness (GPO scratch) ===
+  GPO 64 -> wrote 0x2a -> read 42 -> restored 64   (CORE OK)
+=== I2C scan 0x08-0x77 (read probes only) ===
+  NO DEVICES ACKED  (bus silent; on bench power this was the state)
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/153300000607A
+TELEMETRY_DONE
