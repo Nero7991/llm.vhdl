@@ -1419,10 +1419,41 @@ this decides the offline re-pack.
 
 ### 15.4 Caveats, and one warning from the AXU3EG
 
+**Speed grade: the sweep above ran on `xcvu33p-fsvh2104-2-e`; the FK33 is the
+low-power `-2L-e`** (recon, "Device is the low-power speed grade"). Re-running
+the whole sweep on `-2L-e` returns **bit-identical** numbers -- 1,496 / 2,198 /
+2,612 DSP and 317.66 / 276.09 / 287.85 MHz against 317.7 / 276.1 / 287.9 -- so
+the tables above stand as written.
+
+That is not because the speed grade is irrelevant. **Vivado analyses a `-2L` at
+nominal VCCINT by default, where it is a `-2`.** Confirmed by pinning the
+voltage explicitly: `set_operating_conditions -voltage {VCCINT 0.850}` at
+`ROWS_IF=48` reproduces WNS -0.289 ns / 276.1 MHz exactly, i.e. the default
+analysis is the 0.85 V analysis. The `-2L` designation buys lower static power
+at **0.72 V**, at reduced speed, and that only appears if the operating
+condition is set.
+
+**So the variable is the VCCINT operating point, not the part string** -- and on
+the FK33 it is a runtime lever (`fk33_set_vccint`) tied directly to cooling,
+since 0.85 V is also the ~120 A / ~155 W power profile. Recon separately notes
+stock 0.85 V is "much too high" for typical silicon and 0.75-0.80 V is common.
+Timing must be signed off at whatever voltage the cards will actually run at,
+under whatever cooling exists, and that decision is upstream of `ROWS_IF` --
+which in turn sets the pack format.
+
 Fmax figures are **out-of-context synthesis estimates**, not placed results; the
 absolute numbers will move under implementation even though the trend will not.
 The non-monotonicity between `ROWS_IF=32` (317.7) and 48 (276.1) is placement
-noise, not a real cliff.
+noise, not a real cliff -- as is the hybrid `ROWS_IF=64` point at 257 MHz
+against `ROWS_IF=80` at 292 MHz. Do not read a monotonic Fmax decline into this
+data; read a ceiling in the 260-320 MHz band that does not improve with size.
+
+**The hybrid runs also show the synthesis-spill approach is not controllable.**
+At `max_dsp=2880`, `ROWS_IF=64` used 2,665 DSP and 153,181 LUT while
+`ROWS_IF=80` used **fewer** DSPs (1,990) and 350,408 LUT -- 80% of the device
+for the matvec core alone. Which multipliers land in DSP is the tool's choice
+and it does not vary monotonically with the cap, which is the argument for
+explicit lane types (§15.4a) over relying on `-max_dsp`.
 
 **The AXU3EG delivered 9.56 GB/s against a 19.2 GB/s DDR peak** -- 50%, with the
 datapath starved 33.6% of cycles -- and stream separation, row geometry and
