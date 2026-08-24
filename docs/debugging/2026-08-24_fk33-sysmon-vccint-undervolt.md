@@ -184,3 +184,86 @@ is not guaranteed to match production binning.
 - **Every timing sweep so far assumed -2L at its 0.85 V operating point.**
   At 0.678 V the part is below every characterised range, so no Fmax measured
   on this card in its current state is meaningful.
+
+---
+
+## CORRECTION, 2026-08-24 (same day, later)
+
+**The leading hypothesis in section 7 is WITHDRAWN. It was tested and refuted.**
+
+The card was installed in the free chipset x4 slot (`00:1c.0`) with the 6-pin
+fed from the host PSU. Note the card does **not** light up on slot power
+alone - the LEDs stay dark until the 6-pin is connected - so slot power is
+supplementary here, not the primary rail. Re-measured with the same
+`check.sh` that produced `baseline_bench_2026-08-24.txt`:
+
+| | bench, 6-pin only | installed in slot |
+|---|---|---|
+| VCCINT | 0.678 V | **0.678 V** |
+| VCCBRAM | 0.757 V | 0.760 V |
+| FLAG_REG | 0x0012 | **0x0012** |
+| I2C devices ACKing | none | **none** |
+
+PCIe-side 3.3 V and PERST# change nothing. **VCCINT = 0.678 V is the board's
+designed power-up default, not a partial power-up state**, and the silent I2C
+bus is an independent problem after all. The attraction of the withdrawn
+hypothesis was that it explained two symptoms with one cause; that is a
+reason to test a hypothesis, never a reason to believe it.
+
+### Our side of the I2C is now fully exonerated
+
+Ruled out, in this order, each cheaper than the next:
+
+1. **Constraint match.** The build log's only critical warning is
+   `create_clock ... pcie_refclk_clk_p`, expected in a no-PCIe build. The
+   `iic_scl_io` / `iic_sda_io` constraints matched real ports.
+2. **The core.** `axi_iic`'s GPO scratch register reads back every value
+   written (0x2a, 0x15, 0x40).
+3. **The I/O bank, end to end and visually.** The board LEDs hang off the
+   SAME `axi_iic` core (`gpo` -> `led_inv` -> `led`), and the LED balls
+   BB25/BB26/BC25/BD23/BD25/BE26/BF26 sit in the same bank as the I2C balls
+   BB24/BA24 at the same LVCMOS18 standard. Driving `0x9124` over JTAG walked
+   a single LED across all seven, cycled the RGB through red/green/blue, and
+   showed **white on all-on** (`0x7f` = R+G+B lit) - observed and reported
+   independently, which confirms the bit mapping exactly.
+4. **Open-drain structure.** `bd_wrapper.v` declares both pins `inout` and
+   instantiates `IOBUF` with `I`/`IO`/`O`/`T` correctly wired, so SDA is not
+   being driven push-pull. That mattered because push-pull SDA would
+   overpower a device's ACK and produce precisely the NAK-on-every-address
+   symptom we see. The LED test alone could NOT have ruled this out: LEDs are
+   plain outputs and exercise no tristate.
+
+So the fault is on the board: unpowered or absent pull-ups, devices on a
+different bus segment, a different board revision's pinout, or SCL/SDA
+swapped relative to SQRL's XDC. **We have no FK33 schematic**, which is the
+binding constraint on going further by inspection.
+
+### Also refuted
+
+- **The IIC clock.** Our no-PCIe build clocks `axi_iic` from `clk_wiz_0`
+  `clk_out1` at 100 MHz, where SQRL's PCIe build used `xdma/axi_aclk`
+  (typically 250 MHz). Any resulting SCL error is in the *slow* direction
+  (~40 kHz if the IP kept a 250 MHz assumption), and slow I2C is harmless.
+  Do not spend time here.
+
+### What this does and does not block
+
+Resource counts are a synthesis result and are unaffected by VCCINT, so
+sizing work continues normally. What is blocked is **on-hardware timing**:
+Vivado has no speed model at 0.678 V, and the part is below the
+characterised floor of all five grades, so no Fmax measured on this card is
+meaningful until the rail is in spec. Desktop place-and-route needs no card
+at all.
+
+### Still open
+
+- Are the I2C pull-ups powered? Decidable with a small GPIO bitstream on
+  BB24/BA24: release both pins and read them. High means pull-ups are live
+  and the devices are elsewhere; low or floating means the bus is dead.
+  The same bitstream would allow bit-banging with full per-bit observability,
+  which `axi_iic` does not give, and would test the swapped-SCL/SDA theory.
+- Does the board's management wake only when the host enumerates the card?
+  Our bitstream has no PCIe endpoint, so it never does. A PCIe-enabled build
+  would test this and is needed for the host-to-HBM path regardless.
+- The ES1 die's speed grade. The package marking would settle it and is worth
+  reading whenever the heatsink next comes off.
