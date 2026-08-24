@@ -1433,10 +1433,30 @@ analysis is the 0.85 V analysis. The `-2L` designation buys lower static power
 at **0.72 V**, at reduced speed, and that only appears if the operating
 condition is set.
 
-**So the variable is the VCCINT operating point, not the part string** -- and on
-the FK33 it is a runtime lever (`fk33_set_vccint`) tied directly to cooling,
-since 0.85 V is also the ~120 A / ~155 W power profile. Recon separately notes
-stock 0.85 V is "much too high" for typical silicon and 0.75-0.80 V is common.
+**So the variable is the VCCINT operating point, not the part string.** Measured
+at `ROWS_IF=48` by synthesising once and re-analysing timing per voltage:
+
+| VCCINT | WNS | Fmax | |
+|---|---|---|---|
+| 0.850 V | -0.289 ns | **276.1 MHz** | Vivado's default analysis point |
+| 0.825 V | -0.289 ns | 276.1 MHz | low end of the normal range |
+| 0.800 / 0.775 / 0.750 V | -- | -- | **no timing model exists** |
+| 0.720 V | -1.012 ns | **230.1 MHz** | the `-2L` low-power characterisation |
+
+**The low-power point costs 17% of Fmax**, which at `ROWS_IF=48` is 353 GMAC/s
+against 424, i.e. roughly 26 tok/s against 31.5 at N=2. On the FK33 this is a
+runtime lever (`fk33_set_vccint`) and 0.85 V is also the ~120 A / ~155 W power
+profile, so it is a cooling decision with a throughput price attached, on a card
+built for server airflow.
+
+**TRAP: 0.750-0.800 V has no speed files on this part.** Vivado reports the
+valid range as **0.825 to 0.876 V**, with 0.72 V a separate low-power
+characterisation outside it. Recon recommends 0.75-0.80 V as "common" and worth
+7-10 W per card -- and a design run there is not slow, it is **unverified**:
+timing cannot be signed off at a voltage the tool refuses to analyse. Pick 0.85
+(or 0.825) for a timing-closed design, or 0.72 and re-close at 230 MHz. Do not
+pick a value in between on power-saving grounds.
+
 Timing must be signed off at whatever voltage the cards will actually run at,
 under whatever cooling exists, and that decision is upstream of `ROWS_IF` --
 which in turn sets the pack format.
