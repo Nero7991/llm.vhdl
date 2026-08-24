@@ -76,3 +76,6 @@ hw/mv_driver_aarch64
 # subsystem B/C lane micro-synthesis: outputs are reproducible from
 # sim/run_micro.sh; the numbers live in docs/debugging/2026-08-23_bc-lane-*.md
 sim/ooc_micro/
+# place_design/route_design byproducts, written into CWD
+sim/clockInfo.txt
+sim/iter_*_CongestedCLBsAndNets.txt

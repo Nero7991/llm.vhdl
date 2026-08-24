@@ -188,3 +188,24 @@ leaves dead decode in the small configurations and understates the slope.
 - **C's blocking-geometry defect is not fixed by this work.** The table above
   prices `MACS` at 192 and 288 because those are the legal values under the
   corrected geometry, but choosing between them is a separate open decision.
+
+## CORRECTION 2026-08-24: the 328.6 MHz and 446.2 MHz figures are optimistic
+
+Both Fmax numbers in this file are **synthesis-only** (`synth_design` +
+`opt_design`), which uses ESTIMATED interconnect. The same C lane taken all the
+way through `route_design` measures **313.2 MHz**, not 328.6 -- place-and-route
+costs about 5% on a single lane, and much more once there is fanout to route
+(the 4-lane array measures 448.4 MHz at synthesis against 379.4 routed).
+
+The claim this file makes -- that these are lane figures and not subsystem
+figures, and that the broadcast to 64-288 lanes is what will set the real clock
+-- **stands and was confirmed**. What is withdrawn is only the precision of the
+two MHz values; treat any Fmax in this file as an upper bound.
+
+The DSP, LUT and FF results are **unaffected**: those come from utilisation and
+the DSP census, neither of which depends on routing.
+
+Follow-up, with the routed numbers and the fanout decomposition:
+`docs/debugging/2026-08-24_c-array-broadcast-fmax.md`. It also found that the
+lane's DSP48E2 input registers (`AREG`/`BREG`) were unused, and that using them
+is worth +38% Fmax at 64 lanes for the same DSP count and 5% fewer LUT.

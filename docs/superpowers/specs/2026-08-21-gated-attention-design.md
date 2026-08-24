@@ -665,6 +665,39 @@ rescale and MAC never run in the same cycle. Rev 3 priced the dedicated version.
 > to all lanes, and that net -- not the lane arithmetic -- is what will set the
 > real Fmax. Subsystem A managed 276 MHz on this same part and grade.
 
+> **MEASURED 2026-08-24, placed and routed, 64 lanes: C makes 300 MHz -- but
+> only if the lane uses the DSP48E2's own input registers.**
+>
+> | `MACS`=64, routed | DSP | LUT | FF | Fmax |
+> |---|---|---|---|---|
+> | operand muxes combinational | 128 | 20,860 | 46,684 | **246 MHz** |
+> | operand muxes registered | 128 | **19,844** | 48,819 | **340 MHz** |
+>
+> **This is a normative RTL requirement, not an optimisation.** As first written
+> the lane drove the multiplier from combinational muxes and registered only the
+> product, leaving `AREG=0, BREG=0` -- the DSP tile's input registers idle. The
+> routed critical path was then accumulator -> 16:1 read mux -> 3:1 operand mux
+> -> DSP A port, 2.4 ns of logic, and C missed its own 300 MHz assumption by 18%.
+> Registering the operand muxes puts them in `AREG`/`BREG`, which exist in the
+> tile whether used or not, so the stage is free: same 128 DSP, 5% **fewer** LUT,
+> +4.6% FF (that rise is the control pipeline needed to keep the write-back
+> aligned, not the operands). Cost is one cycle of latency, which §3's schedule
+> must absorb.
+>
+> The fanout question that motivated the run is answered too, and the answer is
+> that it was the *second* effect, not the first. Baseline logic delay is flat at
+> 2.38-2.45 ns from 1 lane to 64 -- mux depth, independent of fanout -- while net
+> delay grows 0.66 -> 1.76 ns. Mux depth caps C at ~313 MHz with no fanout at
+> all; broadcast then takes a further 21% by 64 lanes.
+>
+> **Do not extrapolate 340 MHz to `MACS` = 192 or 288.** Only 64 was measured,
+> and `f` fans out as `LANES/4`, so it grows with `MACS`. At 64 lanes the limiter
+> has already moved again, to the DSP-to-DSP cascade the 36-bit operand split
+> requires; `MREG` is still unused and would break that path.
+>
+> Procedure, the routed control that separates PnR realism from fanout, and the
+> traps: `docs/debugging/2026-08-24_c-array-broadcast-fmax.md`.
+
 **State, corrected. Rev 3 called 115K FF "mandatory"; most of it is not:**
 
 | State | Rev 3 | Rev 5 | Why |
