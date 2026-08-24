@@ -79,3 +79,13 @@ sim/ooc_micro/
 # place_design/route_design byproducts, written into CWD
 sim/clockInfo.txt
 sim/iter_*_CongestedCLBsAndNets.txt
+
+# bitstream-license probe artifacts (regenerate with sim/licensecheck/bitgen_check.tcl)
+sim/licensecheck/*.bit
+sim/licensecheck/*.log
+# FK33 first-light build tree (regenerate with hw/fk33/gen_firstlight.py)
+hw/fk33/fk33_example/
+hw/fk33/*.log
+hw/fk33/*.jou
+hw/fk33/*.rpt
+hw/fk33/.Xil/

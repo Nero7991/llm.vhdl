@@ -87,8 +87,17 @@ def a_dequantize(idx, scl, w_exp, K, cb=IQ4_NL):
 #                  default so the headline number is about the transformer body
 #   ssm_conv1d  -- a depthwise convolution, not a matrix multiply
 #   *_norm, ssm_a, ssm_dt.bias -- 1-D parameters, F32, not streamed as weights
-SKIP_SUBSTR = ("_norm.", "norm.weight", "ssm_conv1d", "ssm_a", "ssm_dt",
-               "token_embd")
+# Matched as EXACT name components, never as substrings.  The first version
+# used substring matching with "ssm_a" in this list, intending to skip the 1-D
+# `blk.N.ssm_a` parameter -- and silently also matched `ssm_alpha.weight`,
+# excluding 48 alpha projections (one per GDN layer) from the experiment.  The
+# entry was redundant to begin with, since ssm_a is F32 and already passes
+# through on the F32 rule, so the only thing it did was quietly shrink the
+# measurement.  It cost 0.04% of parameters here; the same bug against a
+# substring like "ffn_" would have gutted the result while still reporting a
+# perfectly plausible perplexity.
+SKIP_EXACT = ("token_embd.weight",)
+SKIP_PARTS = ("ssm_conv1d", "ssm_a", "ssm_dt")
 
 
 def is_a_tensor(name, shape, include_output):
@@ -96,7 +105,12 @@ def is_a_tensor(name, shape, include_output):
         return False
     if name == "output.weight":
         return include_output
-    return not any(s in name for s in SKIP_SUBSTR)
+    if name in SKIP_EXACT:
+        return False
+    if name.endswith("_norm.weight") or ".norm." in name:
+        return False
+    # split on '.' so a component must match WHOLE, not as a substring
+    return not any(part in SKIP_PARTS for part in name.split("."))
 
 
 def copy_metadata(rd, wr, skip=()):

@@ -280,6 +280,42 @@ index and is not driven meaningfully. `sampler_stream` consumes `y_data` on
 
 ### 6.1 Quantization
 
+> **MEASURED 2026-08-24: this format costs +1.69% perplexity, and it is viable.**
+>
+> | full wikitext-2 test, Qwen3.8-27B | PPL | vs control |
+> |---|---|---|
+> | source, Q4_K_M as shipped | 7.0041 | +0.036% |
+> | control, storage round trip only | 7.0016 | -- |
+> | **this format** | **7.1201** | **+0.1185 (+1.69%)** |
+>
+> Until this run, every resource, timing and bandwidth result in this document
+> rested on the untested assumption that this format can run the model. It now
+> rests on a measurement.
+>
+> The risk was specific: **Q4_K_M is not a uniformly 4-bit model.** llama.cpp
+> keeps `attn_qkv`, `attn_gate`, `ssm_out`, `ssm_alpha` and `ssm_beta` at **Q8_0**
+> because those projections are quantization-sensitive, and this format is a flat
+> ~4.5 bits for everything it streams, so it drops them from 8 bits to 4.5 --
+> adding ~8% relative weight error where there had been exactly 0.000%. The
+> end-to-end cost of that is +1.7%, about one quant tier, which does not force a
+> mixed-precision path.
+>
+> **Do not read the +/-0.045 error bars as making this marginal.** They measure
+> chunk-to-chunk variance in the text, not run-to-run reproducibility; the paired
+> control differs from the source by only 0.0025, so the noise floor is 20x
+> tighter than the bars suggest.
+>
+> **Three caveats.** `output.weight` (1.27B params, Q6_K) was excluded, and real
+> hardware would stream it -- llama.cpp keeps it high-precision because it is
+> sensitive, so including it should be worse. This is the cost **on top of**
+> Q4_K_M, not from F16, since no higher-precision GGUF was available; it is the
+> marginal cost of the planned deployment path. And perplexity is not task
+> accuracy.
+>
+> Procedure, calibration table, and the traps:
+> `docs/debugging/2026-08-24_subsystem-a-format-perplexity.md`
+
+
 - 4-bit index per weight into a **16-entry int8 codebook**
 - One **int16 scale, unsigned Q15** per `BLOCK` consecutive weights within a row
 - One `w_exp` per matrix, carried in the descriptor
