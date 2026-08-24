@@ -23,8 +23,8 @@
 set POT      0x2c
 set W_START  128
 set V_TARGET 0.720
-set V_ACCEPT_LO 0.705
-set V_ACCEPT_HI 0.735
+set V_ACCEPT_LO 0.716
+set V_ACCEPT_HI 0.728
 set V_CEILING   0.760   ;# hard abort, well under the 0.825 V floor of -1/-2
 set DV_MAX      0.035   ;# a single step must never move the rail more than this
 set W_STEP_MAX  4
@@ -99,16 +99,21 @@ lines 1 1
 set w0 [pot_read $POT]
 set v0 [vccint]
 puts [format "START   wiper=%d  VCCINT=%.4f V  die=%.1f C" $w0 $v0 [dietemp]]
-if {$w0 != $W_START} {
-    puts "ABORT: wiper reads $w0, expected $W_START. Not touching anything."
+# Resume from wherever the wiper is, but refuse to start from anywhere outside a
+# sane band: below W_FLOOR we would already be in the steep, dangerous region,
+# and above 128 something has gone wrong.
+if {$w0 < $W_FLOOR || $w0 > 128} {
+    puts "ABORT: wiper reads $w0, outside the sane band $W_FLOOR..128. Not touching anything."
     lines 1 1; close_hw_target; exit 1
 }
+set W_REVERT 128
+set W_START $w0
 
 proc revert {why} {
-    global POT W_START
+    global POT W_REVERT
     puts "ABORT: $why"
-    puts "  reverting wiper to $W_START"
-    pot_write $POT $W_START
+    puts "  reverting wiper to the factory default $W_REVERT"
+    pot_write $POT $W_REVERT
     after 200
     puts [format "  wiper now %d, VCCINT %.4f V" [pot_read $POT] [vccint]]
     lines 1 1
@@ -174,13 +179,13 @@ while {1} {
 
 puts ""
 puts "FINAL STATE"
-puts [format "  wiper   = %d  (power-up default %d)" [pot_read $POT] $W_START]
+puts [format "  wiper   = %d  (power-up default 128)" [pot_read $POT]]
 puts [format "  VCCINT  = %.4f V" [vccint]]
 puts [format "  VCCBRAM = %.4f V" [expr {[rdreg 3418] * 3.0 / 65536.0}]]
 puts [format "  die     = %.1f C" [dietemp]]
 set flag [rdreg 34fc]
 puts [format "  SYSMON FLAG_REG = 0x%04x  (bit1 VCCINT alarm = %d)" $flag [expr {($flag >> 1) & 1}]]
-puts "  NOTE: this is the VOLATILE wiper. A power cycle restores $W_START and 0.678 V."
+puts "  NOTE: this is the VOLATILE wiper. A power cycle restores 128 and 0.678 V."
 lines 1 1
 close_hw_target
 puts "STEP_DONE"

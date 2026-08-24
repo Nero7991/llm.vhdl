@@ -458,3 +458,21 @@ were never written and still read 128.
   operating point, so matching the models eventually needs it. Not needed until
   we actually run the engine on the card.
 - **Why axi_iic could not reach this bus** when bit-banging can.
+
+### Settled at wiper 68 / 0.717 V
+
+Continued from 80 to SQRL's own value of 68. Measured **VCCINT = 0.717 V**
+against a predicted 0.720 V, so the fitted curve is accurate to 3 mV out of
+sample. Resting point: 19 mV above the 0.698 V floor and 25 mV below the
+0.742 V ceiling, which leaves real margin for droop under load - the reason not
+to stop at 0.706 V, where only 8 mV separated the rail from going out of spec
+the moment the fabric drew current.
+
+**SQRL's 0x44 = 0.85 V claim is now refuted by direct measurement, not by
+extrapolation.** It is 0.717 V.
+
+Reaching an actual 0.85 V needs wiper ~27, where sensitivity is ~7-10 mV/step
+and wiper 20 would be 0.935 V, past even the -3 absolute maximum. Deferred: it
+is not needed until the engine actually runs on the card, and cooling is still
+unresolved (die idles at 38 C in the case versus 30 C on the open bench, and
+0.85 V would raise VCCINT power roughly 45% by V^2 alone).
