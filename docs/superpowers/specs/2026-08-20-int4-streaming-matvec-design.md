@@ -1319,3 +1319,103 @@ HBM AXI behaviour can be measured rather than assumed:
 3. The HBM AXI clock (~450 MHz) is **not** the core clock (~300 MHz), so the
    lockstep concurrent pop of §7.7 needs a CDC discipline that does not exist in
    the DDR4 design.
+
+## 15. MEASURED on the real part (2026-08-23, NORMATIVE -- supersedes §13's numbers)
+
+§13's FK33 sizing rests on two estimates. Both are wrong, and correcting them
+changes which resource binds. Measured by out-of-context synthesis of
+`matvec_core` on **`xcvu33p-fsvh2104-2-e`** at a 3.333 ns target
+(`sim/ooc_core_sweep.tcl`), after the `amax` fold was pipelined:
+
+| `ROWS_IF` | DSP | DSP/row | % of 2,880 | LUT | % LUT | Fmax | 300 MHz |
+|---|---|---|---|---|---|---|---|
+| 4 | 192 | 48.0 | 6.7% | 9,187 | 2.1% | 266.3 | miss |
+| 8 | 384 | 48.0 | 13.3% | 16,845 | 3.8% | 312.3 | **met** |
+| 16 | 748 | 46.8 | 26.0% | 31,292 | 7.1% | 326.6 | **met** |
+| 32 | 1,496 | 46.8 | 51.9% | 61,413 | 14.0% | 317.7 | **met** |
+| 48 | 2,198 | 45.8 | 76.3% | 94,791 | 21.6% | 276.1 | miss |
+| 56 | 2,612 | 46.6 | 90.7% | 110,410 | 25.1% | 287.9 | miss |
+
+`DSP = 8 + 46.50 x ROWS_IF`. The `ROWS_IF=4` row reads 192 DSP, which is exactly
+what the AXU3EG bitstream uses, so the curve is anchored to silicon and not to
+synthesis alone. The same sweep on `xcku5p` returns **identical** DSP at every
+shared point, confirming the coefficient is a property of the RTL mapped to
+DSP48E2 rather than of the device.
+
+### 15.1 Corrections to §13
+
+| | §13 | measured |
+|---|---|---|
+| VU33P DSP slices | 2,976 | **2,880** (`get_property DSP`) |
+| DSP per row | 34 | **46.5** |
+| `ROWS_IF=80` DSP | 2,720 of 2,976 | **3,728 of 2,880 = 129%** |
+| `ROWS_IF=86` DSP | 2,924 of 2,976 ("fits") | **4,007 of 2,880 = 139%** |
+| Binding resource | HBM ports | **DSP, by a wide margin** |
+
+**`ROWS_IF=80` does not fit the part, and neither does the `ROWS_IF=86`
+alternative.** §13's conclusion that "what blocks closing the gap is HBM ports,
+not DSPs" is **inverted**: at the achievable `ROWS_IF` the port budget is
+comfortable and DSP is the wall.
+
+| `ROWS_IF` | DSP | weight ports | scale ports | total of 32 |
+|---|---|---|---|---|
+| 48 @ 276 MHz | 76.3% | 212 GB/s = 15 | 27 GB/s = 2 | **17** |
+| 56 @ 288 MHz | 90.7% | 258 GB/s = 18 | 32 GB/s = 3 | **21** |
+
+(HBM AXI port = 256 bit at 450 MHz = 14.4 GB/s.)
+
+### 15.2 The `ROWS_IF` ceiling
+
+| criterion | max `ROWS_IF` |
+|---|---|
+| 100% DSP | 61 |
+| 90% DSP | 55 |
+| 85% DSP | 52 |
+| 80% DSP | 49 |
+| closes 300 MHz in OOC | 32 |
+
+**Recommended target: `ROWS_IF=48`** -- 76% DSP, 17 of 32 HBM ports, and enough
+LUT headroom to be uninteresting at 22%. `ROWS_IF=56` is a stretch at 91% DSP,
+which is tight enough that placement and routing, not the resource count, decide
+whether it builds.
+
+### 15.3 Consequence for the throughput projection
+
+§13 assumes `ROWS_IF=80` at 300 MHz, i.e. 2,560 MACs at 300 MHz = 768 GMAC/s.
+
+| configuration | MACs | GMAC/s | of §13 |
+|---|---|---|---|
+| §13 assumed | 2,560 | 768 | 100% |
+| `ROWS_IF=56` @ 288 MHz | 1,792 | 516 | 67% |
+| `ROWS_IF=48` @ 276 MHz | 1,536 | 424 | 55% |
+
+So `v4.0`'s **91 tok/s becomes roughly 50-61 tok/s** if the design is
+array-bound, and §14's per-card and per-context numbers should be re-derived
+against 48 rather than 80. Note `ROWS_IF` also sets the pack format (§6.5), so
+this decides the offline re-pack.
+
+### 15.4 Caveats, and one warning from the AXU3EG
+
+Fmax figures are **out-of-context synthesis estimates**, not placed results; the
+absolute numbers will move under implementation even though the trend will not.
+The non-monotonicity between `ROWS_IF=32` (317.7) and 48 (276.1) is placement
+noise, not a real cliff.
+
+**The AXU3EG delivered 9.56 GB/s against a 19.2 GB/s DDR peak** -- 50%, with the
+datapath starved 33.6% of cycles -- and stream separation, row geometry and
+outstanding-request depth were each measured and ruled out as the cause. The
+limit is somewhere in the PL-to-DDR path itself. That is ZynqMP plumbing and the
+FK33's per-pseudo-channel HBM topology may well not share it, but **§13's
+assumption that HBM delivers near nominal is exactly the class of assumption
+that cost a day on the AXU3EG**, and it should be measured on the card before
+any projection depends on it. See
+`docs/debugging/2026-08-23_subsystem-a-board-bringup.md`.
+
+### 15.5 64-bit addressing is smaller than §13 implies
+
+§13 says `w_base`/`s_base` widen to 64 bits at `v4.0`. The datapath is already
+parameterised: `ADDR_W` threads cleanly through `axi_rd_port`,
+`weight_streamer` and `matvec_int4`. The only layer that hardcodes 32 bits is
+the AXI-Lite register map -- `r_sbase` is declared `31 downto 0` and both bases
+are written straight from the 32-bit `s_axi_wdata`. The change is confined to
+`rtl/matvec_int4_axi.vhd` and `hw/mv_driver.c`.
