@@ -195,3 +195,90 @@ round. Per-tensor error is a screening tool, never an attribution.
 **Open:** whether an offset actually recovers the 0.0915, and at what bit cost.
 An offset is not free; keeping 4.469 bits/weight would need Q4_K's hierarchical
 superblock structure rather than a flat per-block min.
+
+## REVISION 2026-08-24: measured on code, with KL divergence -- the earlier recommendation was metric-dependent
+
+Everything above was measured as **perplexity on wikitext-2**, i.e. Wikipedia
+prose, against a deployment target of agentic software development. Re-measured
+on an agentic/code corpus (2,374 real dsh session fragments interleaved with 648
+repo source files) using llama.cpp's `--kl-divergence`, with the shipped Q4_K_M
+as reference, since matching llama.cpp *means* matching that:
+
+| | Same top p | disagree | 99.9% KLD | RMS dp |
+|---|---|---|---|---|
+| harness self-check | 99.990 +/- 0.010% | 0.010% | 0.000048 | 0.000% |
+| control (storage only) | 98.882 +/- 0.104% | 1.118% | 0.057 | 1.25% |
+| A on FFN only = mixed precision | 96.422 +/- 0.184% | 3.578% | 0.604 | 3.91% |
+| A uniform | 94.951 +/- 0.217% | 5.049% | 1.400 | 5.33% |
+
+**The corpus PPL is 2.4763 against wikitext's 7.0041** -- code is far lower
+entropy, which is exactly why the domain had to change.
+
+### The recommendation above is metric-dependent, and the metric was wrong
+
+What mixed precision buys back, as a fraction of A-uniform's excess over control:
+
+| metric | recovered | cost |
+|---|---|---|
+| wikitext perplexity | 22.8% | -21% tok/s |
+| top-1 disagreement, code | 37.4% | -21% tok/s |
+| **99.9% KLD tail, code** | **59.2%** | -21% tok/s |
+
+The "do NOT buy precision" conclusion rests on the first row. **For agentic work
+the third row is the relevant one**: the tail is where the model is
+*confidently* different, which is what breaks a tool call, while the mean mostly
+reflects reworded comments and renamed locals. By that measure 21% throughput
+buys back nearly 60% of the damage, which is a real trade rather than a clearly
+bad one. **Treat the earlier recommendation as withdrawn pending a decision on
+which failure mode matters**, not as refuted -- both numbers are correct, they
+answer different questions.
+
+### Two controls that make the numbers readable
+
+**Harness floor: 0.010% disagreement** (source against its own logits). Not
+0.000%, because GPU reduction order is not deterministic. Everything measured
+here is far above it.
+
+**Harmless-perturbation floor: 1.118%.** The control disagrees on 1.1% of tokens
+while costing +0.036% perplexity, i.e. nothing. Top-1 is a discrete decision, so
+wherever the top two candidates are near-tied any perturbation flips them, and
+those are the positions where the choice does not matter. **Raw disagreement
+therefore overstates damage and must be read against this floor, not against
+zero.** A-uniform is 4.5x the floor on disagreement and 24.5x on the tail.
+
+### Token-identical acceptance does not scale to 27B
+
+Probability an n-token greedy run matches llama.cpp exactly:
+
+| | n=10 | n=100 | n=1000 |
+|---|---|---|---|
+| control | 89.4% | 32.5% | ~0% |
+| A on FFN only | 69.5% | 2.6% | ~0% |
+| A uniform | 59.6% | 0.6% | ~0% |
+
+The AXU3EG acceptance criterion was **24/24 token-identical output**. That does
+not transfer: at 27B the engine will produce different output from llama.cpp on
+essentially any real agentic step. **Note the control says the same** (32.5% at
+n=100), so this is a property of quantization at this scale, not of subsystem A.
+A different acceptance criterion is needed -- agreement rate against a floor,
+not exact match.
+
+### Why the task benchmarks were skipped, with numbers
+
+HumanEval is n=164, so a single run carries a **+/-7.5 point 95% CI** at
+pass@1~60%. Detecting a 1-point difference at 80% power needs ~37,600 problems;
+2 points needs ~9,400. Running it on both models and comparing would produce
+noise indistinguishable from signal. KL and top-1 agreement are measured per
+token over ~20,000 tokens, roughly 1000x the sample size, on the exact quantity
+that governs greedy decoding. **Cheap task benchmarks are not a weaker version
+of this measurement; for an effect this size they are not a measurement at all.**
+
+### Open, and now the most important gap
+
+**Divergence is not damage.** These metrics count how often the top token
+differs, not how often it matters, and the 1.118% control proves a large share
+of flips are harmless. Distinguishing them needs either greedy first-divergence
+with human or model adjudication of whether the divergence changed the answer,
+or a task-level eval large enough to have power. That is the measurement that
+would actually decide the mixed-precision question, and it has to be designed
+rather than merely run.
