@@ -383,3 +383,78 @@ everything.
 ### Also: Vivado's Tcl is 8.5
 
 `lmap` is 8.6+ and fails with `invalid command name "lmap"`. Use `foreach`.
+
+---
+
+## VCCINT RAISED, 2026-08-24: 0.678 V -> 0.706 V, and the transfer curve
+
+Stepped the pot at 0x2c from its power-up wiper 128 down to 80, verifying on
+SYSMON after every single step. Result: **VCCINT = 0.706 V, stable across 8
+samples, and SYSMON FLAG_REG bit1 (VCCINT alarm) CLEARED** (0x0012 -> 0x0010).
+The rail is now inside 0.698-0.742 V, in spec for both -2L and -2LV, so it is
+safe under every remaining hypothesis about this ES1 die.
+
+### Method, and why it was built this way
+
+The FIRST move was deliberately in the WRONG direction: one step UP (wiper 132),
+which should LOWER the rail. That proves the write path, the readback and the
+sign of dV/dwiper while moving AWAY from overvoltage. It measured -1.1 mV,
+confirming lower wiper = higher voltage, after which the wiper was restored and
+the real descent began. **Do this first on any unknown regulator control.**
+
+Abort conditions, all enforced in code rather than by care: wiper readback must
+equal what was written; VCCINT must not exceed a ceiling; a single step must not
+move the rail more than 35 mV; the rail must not move the wrong way; the wiper
+must not go below a floor. Any trip reverts to 128 and exits.
+
+### The transfer curve
+
+A rheostat in the lower leg of a feedback divider gives `V = Vref (1 + A/w)`,
+linear in 1/w. Least squares on the 13 measured points:
+
+```
+V(w) = 0.6307 * (1 + 9.662 / w)      max residual 1.54 mV, RMS 0.77 mV
+```
+
+| wiper | V | band |
+|---|---|---|
+| 128 (power-up) | 0.678 | below every characterised floor |
+| **80 (now)** | **0.707** | in spec, -2L and -2LV |
+| 68 (SQRL's value) | 0.720 | in spec, dead centre |
+| 50 | 0.753 | uncharacterised gap |
+| 40 | 0.783 | uncharacterised gap |
+| 30 | 0.834 | 0.85 V band, -1/-2/-2L |
+| 27 | 0.856 | 0.85 V band |
+| 22 | 0.908 | ABOVE -1/-2/-2L max 0.876 |
+| 20 | 0.935 | ABOVE even -3 max 0.927 -- DESTRUCTIVE |
+| 10 | 1.240 | would destroy the die |
+
+Sensitivity rises hyperbolically: 0.96 mV/step at wiper 80, 7.0 at 30, **16.0 at
+20**. The gap between a correct 0.85 V setting and a destroyed FPGA is about
+**seven wiper counts**.
+
+### CORRECTION: SQRL's "0x44 gives 0.85 V" is WRONG
+
+Their comment reads *"To set FK33 VCCINT to 0.85V write to I2C address 0x2C, to
+register 0x00, value 0x44"*. Wiper 68 measures/predicts **0.720 V**, not 0.850 V.
+This is the FIFTH defect found in that one file. It is benign in itself - 0.720 V
+is a sensible, in-spec setting - but it is a wrong anchor for anyone
+extrapolating toward 0.85 V, and extrapolating on that curve is exactly where
+the danger is. To actually reach 0.85 V the wiper must go to about **27**.
+
+### Reversibility, confirmed by construction
+
+The write targets command 0x00 = the VOLATILE wiper, so a power cycle restores
+128 and 0.678 V. Nothing done here is permanent. The other two pots (0x2d, 0x2e)
+were never written and still read 128.
+
+### Still open
+
+- **VCCBRAM remains 0.758 V** and FLAG_REG bit4 stays asserted, but that alarm
+  threshold (0.82 V) was set by SQRL for 0.85 V operation. Which rheostat, if
+  any, drives VCCBRAM is unknown; the documented three rails are VCCINT,
+  HBM_VCC and VCCINT_IO.
+- **Whether to go to 0.85 V.** Our Vivado timing work assumes -2L at its 0.85 V
+  operating point, so matching the models eventually needs it. Not needed until
+  we actually run the engine on the card.
+- **Why axi_iic could not reach this bus** when bit-banging can.
