@@ -1570,6 +1570,63 @@ alignment it cannot be bit-exact by construction.
 Until this is decided, E's §2.1 accumulator bound (`s36`, derived from an s32
 partial that A no longer emits) is wrong on two independent counts.
 
+### 15.4c Whole-die DSP: C scales with context, and A must give ground to it
+
+**This supersedes the "reserve ~320 DSP for B and C" figure used earlier.**
+
+`ROWS_IF` cannot be chosen from subsystem A's arithmetic alone. A, B and C are
+**never active simultaneously** (B §2.7) but all three are resident, so their
+times ADD and their DSP costs ADD. The decisive asymmetry:
+
+| | scales with | per card, N=2, ctx 2048 |
+|---|---|---|
+| **B**, Gated DeltaNet | nothing -- fixed 128x128x48 state | ~4 ms, context-independent |
+| **C**, gated attention | **context, linearly** | **11.4 ms at `MACS=64`** |
+
+At 27B, C is `24 qh x 256 x 2 x 2048 x 16 layers` = **402.7M MAC/token**, and
+§4.2's shard is exact at N=2 (12 qh, 2 of 4 KV heads per card), giving 201.3M
+per card = 11.4 ms at `MACS=64` and 276 MHz. That is **36% on top of A's 31.7 ms
+at `ROWS_IF=48`**, and it doubles at 4K context. C's own §2.8 prices the
+AXU3EG-scale case at 50.3M MAC / 3.93 ms; the 27B retarget grows it 4x and
+nothing revisited the sizing. C's KV traffic is ~36 MB/token/card, so C is purely
+compute-bound and `MACS` is the only lever.
+
+**DSP spent on C buys ~10x what DSP spent on A rows buys**, at the margin: a C
+lane costs 2 DSP (time-shared, C §2.6) and saves ~89 us/token at `MACS=64`; an A
+row costs ~34.5 DSP post-reclaim and saves ~8 us at `ROWS_IF=74`. Minimising
+`T_A + T_C` under a 90% occupancy cap (both B §2.8 and C §2.8 record congestion
+nondeterminism above that):
+
+| | `ROWS_IF` | `MACS` | DSP | ms/token N=2 | N=4 |
+|---|---|---|---|---|---|
+| A-maximal (the earlier plan) | 74 | 64 | ~2,850 | ~36 | ~18 |
+| **balanced** | **~58** | **~180** | ~2,590 | **~34** | **~17** |
+| baseline | 48 | 64 | ~2,770 | ~47 | ~24 |
+
+**A-maximal is WORSE than balanced despite 16 more rows**, because it starves C.
+Balanced is ~1.37x over baseline.
+
+**The optimal `ROWS_IF`:`MACS` ratio is INDEPENDENT of the card count.** Both A's
+and C's per-card work scale as `1/N`, so N scales throughput without moving the
+allocation: ~29 tok/s at N=2 and ~58 at N=4, same silicon. What N does change is
+the shard: **at N=4 the KV split is still exact** (4 KV heads, one per card, no
+replication -- replication starts at N=8, C §4.2), and per-card weights fall from
+7.15 GiB to ~3.58 GiB, roughly doubling the context that fits in 8 GB.
+
+So **the adder-tree reclaim of §15.4a funds C's scaling, not more A rows** --
+that is its primary payoff. Without it, `ROWS_IF=48` plus B plus a properly
+scaled C is ~96% of the device, over the congestion line.
+
+**BLOCKING DEFECT in C: the lane geometry does not survive the 27B retarget.**
+§2.6 organises `MACS=64` as "4 query heads x 16 dims per cycle"; §4.1 changes
+GQA to **6 query heads per KV head** and never revisits it. **64 is not divisible
+by 6.** Legal points are multiples of the 6-qh quantum -- `MACS = 96 / 192 / 288`,
+i.e. 192 / 384 / 576 DSP with the time-share -- and Q-buffer striping rescales to
+~43 BRAM36 against the 16 budgeted. `MACS = 64` and `128` cannot be built at 27B,
+so C's §2.8 budget prices a configuration that does not exist.
+
+### 15.5 64-bit addressing is smaller than §13 implies
+
 §13 says `w_base`/`s_base` widen to 64 bits at `v4.0`. The datapath is already
 parameterised: `ADDR_W` threads cleanly through `axi_rd_port`,
 `weight_streamer` and `matvec_int4`. The only layer that hardcodes 32 bits is
