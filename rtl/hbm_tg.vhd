@@ -145,6 +145,46 @@ architecture rtl of hbm_tg is
   signal trip_lim   : std_logic := '0';
   signal tmax0, tmax1 : unsigned(6 downto 0) := (others => '0');
 
+  -- THERMAL CDC.  hbm_temp/hbm_cattrip leave the HBM IP in its APB status
+  -- domain (HBM_SNGLBLI_INTF_APB_INST/PCLK) and were being compared
+  -- COMBINATIONALLY here in the AXI domain, with no synchroniser.  Two
+  -- separate faults in one:
+  --
+  --   * Metastability on a SAFETY signal.  CATTRIP is the stacks' own
+  --     catastrophic-temperature output and it is the only hard protection
+  --     this design has; sampling it asynchronously is the worst possible
+  --     place to accept a metastable capture.
+  --   * A timed path from a slow domain through a 7-bit compare into the
+  --     fast domain.  It made timing at 300 MHz and did NOT at 350: all 34
+  --     failing endpoints in the 350 MHz build were this one structure,
+  --     worst path PCLK -> therm_stop_reg/D.  It read as an HBM AXI
+  --     frequency ceiling and was nothing of the kind.
+  --
+  -- Two flops per bit, ASYNC_REG so the placer keeps each pair together.
+  signal cat0_m, cat0_s, cat1_m, cat1_s : std_logic := '0';
+  signal t0_m, t0_s, t1_m, t1_s : std_logic_vector(6 downto 0)
+                                := (others => '0');
+  attribute ASYNC_REG : string;
+  attribute ASYNC_REG of cat0_m : signal is "TRUE";
+  attribute ASYNC_REG of cat0_s : signal is "TRUE";
+  attribute ASYNC_REG of cat1_m : signal is "TRUE";
+  attribute ASYNC_REG of cat1_s : signal is "TRUE";
+  attribute ASYNC_REG of t0_m   : signal is "TRUE";
+  attribute ASYNC_REG of t0_s   : signal is "TRUE";
+  attribute ASYNC_REG of t1_m   : signal is "TRUE";
+  attribute ASYNC_REG of t1_s   : signal is "TRUE";
+
+  -- A 7-bit code crossing bit-by-bit can TEAR: two flops make each bit
+  -- stable but not the word coherent, so a code stepping 31 -> 32 can be
+  -- sampled as 63 for one cycle.  Against a threshold that is a spurious
+  -- trip, and a spurious trip aborts a run and is reported as a thermal
+  -- event, i.e. it would look exactly like the thing it exists to detect.
+  -- Requiring the compare to hold makes a one-cycle tear harmless; the
+  -- filter costs 0.2 us at 300 MHz against a thermal time constant of
+  -- seconds, so it gives up nothing that matters.
+  constant TEMP_HOLD : natural := 64;
+  signal lim_hold : unsigned(7 downto 0) := (others => '0');
+
   signal awr, wrq, bv, arr, rv : std_logic := '0';
   signal rdata_r : std_logic_vector(31 downto 0) := (others => '0');
   signal wa : unsigned(15 downto 0) := (others => '0');
@@ -233,7 +273,7 @@ begin
             -- first version packed 39 bits into 32 with simulation green.
             rdata_r <= "0000" & std_logic_vector(tmax1)
                        & std_logic_vector(tmax0)
-                       & hbm_temp1 & hbm_temp0;
+                       & t1_s & t0_s;   -- synchronised, not the raw pins
           elsif idx = 5 then
             rdata_r <= (31 downto 4 => '0')
                        & trip_lim & trip_cat & therm_stop & '0';
@@ -272,29 +312,50 @@ begin
   -- The thermal watchdog.  In FABRIC, not in the host: a JTAG poll loop is
   -- milliseconds away and 15 HBM ports at 450 MHz do not wait for it.
   therm : process(clk)
+    variable over : boolean;
   begin
     if rising_edge(clk) then
+      -- the CDC itself, unconditional: a synchroniser that can be held in
+      -- reset is a synchroniser that reports stale data after reset release
+      cat0_m <= hbm_cattrip0; cat0_s <= cat0_m;
+      cat1_m <= hbm_cattrip1; cat1_s <= cat1_m;
+      t0_m   <= hbm_temp0;    t0_s   <= t0_m;
+      t1_m   <= hbm_temp1;    t1_s   <= t1_m;
+
       if rstn = '0' then
         therm_stop <= '0'; trip_cat <= '0'; trip_lim <= '0';
         tmax0 <= (others => '0'); tmax1 <= (others => '0');
+        lim_hold <= (others => '0');
       else
         if clr = '1' then
           therm_stop <= '0'; trip_cat <= '0'; trip_lim <= '0';
           tmax0 <= (others => '0'); tmax1 <= (others => '0');
+          lim_hold <= (others => '0');
         end if;
         -- high-water marks, held across the run
-        if unsigned(hbm_temp0) > tmax0 then tmax0 <= unsigned(hbm_temp0); end if;
-        if unsigned(hbm_temp1) > tmax1 then tmax1 <= unsigned(hbm_temp1); end if;
+        if unsigned(t0_s) > tmax0 then tmax0 <= unsigned(t0_s); end if;
+        if unsigned(t1_s) > tmax1 then tmax1 <= unsigned(t1_s); end if;
         -- CATTRIP is the stacks' own catastrophic signal and needs no
-        -- calibration, so it is always armed.
-        if hbm_cattrip0 = '1' or hbm_cattrip1 = '1' then
+        -- calibration, so it is always armed and is NOT hold-filtered: it is
+        -- a single bit, so it cannot tear, and delaying the only hard
+        -- protection to debounce a fault that cannot occur would be trading
+        -- real safety for none.
+        if cat0_s = '1' or cat1_s = '1' then
           trip_cat <= '1'; therm_stop <= '1';
         end if;
-        -- the soft ceiling, only when a nonzero limit has been programmed
-        if temp_limit /= 0 and
-           (unsigned(hbm_temp0) > temp_limit or
-            unsigned(hbm_temp1) > temp_limit) then
-          trip_lim <= '1'; therm_stop <= '1';
+        -- the soft ceiling, only when a nonzero limit has been programmed,
+        -- and only once the condition has held TEMP_HOLD cycles (see the
+        -- tearing note at the declaration)
+        over := temp_limit /= 0 and
+                (unsigned(t0_s) > temp_limit or unsigned(t1_s) > temp_limit);
+        if over then
+          if lim_hold < TEMP_HOLD then
+            lim_hold <= lim_hold + 1;
+          else
+            trip_lim <= '1'; therm_stop <= '1';
+          end if;
+        else
+          lim_hold <= (others => '0');
         end if;
       end if;
     end if;

@@ -256,8 +256,15 @@ begin
     -- passed simulation and was caught only by synthesis.
     t0 <= std_logic_vector(to_unsigned(11, 7));
     t1 <= std_logic_vector(to_unsigned(22, 7));
-    wait until rising_edge(clk);
-    wait until rising_edge(clk);
+    -- Two cycles for the CDC synchroniser, one more for the high-water
+    -- compare that consumes its output, and slack on top.  This wait used to
+    -- be two cycles, which was exactly right when the thermal inputs were
+    -- sampled combinationally -- and that combinational sampling was the CDC
+    -- bug.  The testbench failing here when the synchroniser was added is the
+    -- check working: the observable timing of a status register genuinely
+    -- changed, and a test that had not noticed would have been asserting
+    -- nothing about the new design.
+    for i in 1 to 6 loop wait until rising_edge(clk); end loop;
     rdreg(16, rd);
     assert to_integer(unsigned(rd(6 downto 0))) = 11
        and to_integer(unsigned(rd(13 downto 7))) = 22
