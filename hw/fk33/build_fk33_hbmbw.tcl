@@ -134,7 +134,7 @@ set_property name led [get_bd_ports Res_0]
 
 #Add AXI interconnect IP
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 pcie2hbm
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2}] [get_bd_cells pcie2hbm]
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} CONFIG.NUM_CLKS {2}] [get_bd_cells pcie2hbm]
 
 connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins pcie2hbm/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins pcie2hbm/M00_AXI] [get_bd_intf_pins hbm/SAXI_00]
@@ -296,6 +296,7 @@ if {$EnablePCIe == 1} {
     set_property -dict [list CONFIG.USE_RESET {false}] [get_bd_cells clk_wiz_0]
     
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins pcie2hbm/aclk]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins pcie2hbm/aclk1]
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins pcie2axil/aclk]
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins jtag_hbm/aclk]
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins jtag_axil/aclk]
@@ -352,6 +353,42 @@ connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_TEMP] [get_bd_pins tg/hbm_temp1]
 connect_bd_net [get_bd_pins hbm/DRAM_0_STAT_CATTRIP] [get_bd_pins tg/hbm_cattrip0]
 connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_CATTRIP] [get_bd_pins tg/hbm_cattrip1]
 
+# Every ENABLED SAXI port exposes its own ACLK and ARESET_N pin, and
+# leaving them dangling fails hdl generation with 41-758.  Setting
+# USER_CLK_SEL_LIST0 to AXI_00_ACLK makes them share one clock DOMAIN;
+# it does not remove the pins.  First light never hit this because it
+# enabled two ports.
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_01_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_01_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_02_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_02_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_03_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_03_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_04_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_04_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_05_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_05_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_06_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_06_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_07_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_07_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_08_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_08_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_09_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_09_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_10_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_10_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_11_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_11_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_12_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_12_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_13_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_13_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_14_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_14_ARESET_N]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_15_ACLK]
+connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_15_ARESET_N]
+
 connect_bd_intf_net [get_bd_intf_pins tg/m00_axi] [get_bd_intf_pins hbm/SAXI_01]
 connect_bd_intf_net [get_bd_intf_pins tg/m01_axi] [get_bd_intf_pins hbm/SAXI_02]
 connect_bd_intf_net [get_bd_intf_pins tg/m02_axi] [get_bd_intf_pins hbm/SAXI_03]
@@ -392,7 +429,7 @@ assign_bd_address -offset 0xC0000000 -range 256M [get_bd_addr_segs {hbm/SAXI_12/
 assign_bd_address -offset 0xD0000000 -range 256M [get_bd_addr_segs {hbm/SAXI_13/HBM_MEM13}]
 assign_bd_address -offset 0xE0000000 -range 256M [get_bd_addr_segs {hbm/SAXI_14/HBM_MEM14}]
 assign_bd_address -offset 0xF0000000 -range 256M [get_bd_addr_segs {hbm/SAXI_15/HBM_MEM15}]
-assign_bd_address -offset 0x0000B000 -range 64K [get_bd_addr_segs {tg/s_axi/reg0}]
+assign_bd_address -offset 0x00010000 -range 64K [get_bd_addr_segs {tg/s_axi/reg0}]
 
 if {$HBMGlobalSwitch == 1} {
     assign_bd_address -offset  0x00000000 -range 256M [get_bd_addr_segs {hbm/SAXI_00/HBM_MEM00 }]

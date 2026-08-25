@@ -190,14 +190,20 @@ begin
           idx := to_integer(unsigned(s_araddr(13 downto 2)));
           if    idx = 0 then rdata_r <= x"48424D31";                 -- "HBM1"
           elsif idx = 1 then rdata_r <= std_logic_vector(cycles);
-          elsif idx = 2 then rdata_r <= (31 downto 1 => '0') & any_act;
+          elsif idx = 2 then
+            rdata_r <= (31 downto 1 => '0') & any_act;   -- 31 + 1, checked
           elsif idx = 3 then rdata_r <= std_logic_vector(to_unsigned(NPORT, 32));
           -- THERMAL status.  Live codes, the high-water marks seen during the
           -- run, and why it stopped.  A host that reads only bandwidth and not
           -- this register is reading a number that may have been produced by a
           -- run that aborted a microsecond in.
           elsif idx = 4 then
-            rdata_r <= (31 downto 21 => '0') & std_logic_vector(tmax1)
+            -- FOUR 7-bit fields plus 4 pad = 32.  Written as an explicit
+            -- 4-bit literal rather than a (31 downto N => '0') aggregate:
+            -- that form's width is inferred from context inside a
+            -- concatenation, GHDL and Vivado inferred it DIFFERENTLY, and the
+            -- first version packed 39 bits into 32 with simulation green.
+            rdata_r <= "0000" & std_logic_vector(tmax1)
                        & std_logic_vector(tmax0)
                        & hbm_temp1 & hbm_temp0;
           elsif idx = 5 then

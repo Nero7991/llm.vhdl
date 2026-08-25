@@ -190,6 +190,30 @@ begin
 
     for n in 1 to NPORT loop run(n); end loop;
 
+    -- ---- THERMAL: the status register's field packing.  Checked because it
+    -- was NOT, and a 39-bit value silently assigned into a 32-bit register
+    -- passed simulation and was caught only by synthesis.
+    t0 <= std_logic_vector(to_unsigned(11, 7));
+    t1 <= std_logic_vector(to_unsigned(22, 7));
+    wait until rising_edge(clk);
+    wait until rising_edge(clk);
+    rdreg(16, rd);
+    assert to_integer(unsigned(rd(6 downto 0))) = 11
+       and to_integer(unsigned(rd(13 downto 7))) = 22
+      report "TEMP REGISTER FIELDS ARE MISPACKED: live codes read back as " &
+             integer'image(to_integer(unsigned(rd(6 downto 0)))) & "," &
+             integer'image(to_integer(unsigned(rd(13 downto 7))))
+      severity failure;
+    assert to_integer(unsigned(rd(20 downto 14))) = 11
+       and to_integer(unsigned(rd(27 downto 21))) = 22
+      report "TEMP high-water fields are mispacked" severity failure;
+    assert rd(31 downto 28) = "0000"
+      report "TEMP register pad bits are not zero" severity failure;
+    report "temperature status register packs four 7-bit fields correctly"
+      severity note;
+    t0 <= (others=>'0'); t1 <= (others=>'0');
+    wr(0, 2);
+
     -- ---- THERMAL: a trip must actually stop a run, not merely be reported.
     -- Checked by starting a run long enough that it CANNOT finish on its own,
     -- pulling CATTRIP, and requiring the busy flag to clear anyway.  Without

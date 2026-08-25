@@ -99,6 +99,22 @@ out = out.replace(anchor, anchor + "\n" +
     "set_property -dict [list CONFIG.CLKOUT3_USED {true} "
     "CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {450.000}] [get_bd_cells clk_wiz_0]")
 
+# pcie2hbm carries jtag_hbm to SAXI_00/16, which are now in the fast domain
+# while jtag_axi stays at 100 MHz.  Without a converter hdl generation fails
+# with 41-237 FREQ_HZ mismatch.  smartconnect does the crossing; this is the
+# same NUM_CLKS 2 pattern used for axil2tg.
+out = out.replace(
+    "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2}] [get_bd_cells pcie2hbm]",
+    "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} "
+    "CONFIG.NUM_CLKS {2}] [get_bd_cells pcie2hbm]")
+n = out.count("connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins pcie2hbm/aclk]")
+if n != 1:
+    sys.exit("FAIL: expected one pcie2hbm/aclk connect, found %d" % n)
+out = out.replace(
+    "connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins pcie2hbm/aclk]",
+    "connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins pcie2hbm/aclk]\n"
+    "connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins pcie2hbm/aclk1]")
+
 # drive the HBM AXI clocks from clk_out3, not clk_out1
 n = out.count("connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins hbm/AXI_00_ACLK]")
 if n != 1:
@@ -149,7 +165,20 @@ tg = ["", "# " + "-"*74,
       "[get_bd_pins tg/hbm_cattrip0]",
       "connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_CATTRIP] "
       "[get_bd_pins tg/hbm_cattrip1]",
-      ""]
+      "",
+      "# Every ENABLED SAXI port exposes its own ACLK and ARESET_N pin, and",
+      "# leaving them dangling fails hdl generation with 41-758.  Setting",
+      "# USER_CLK_SEL_LIST0 to AXI_00_ACLK makes them share one clock DOMAIN;",
+      "# it does not remove the pins.  First light never hit this because it",
+      "# enabled two ports.",
+      ]
+for i in range(1, NPORT + 1):
+    tg.append("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] "
+              "[get_bd_pins hbm/AXI_%02d_ACLK]" % i)
+    tg.append("connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] "
+              "[get_bd_pins hbm/AXI_%02d_ARESET_N]" % i)
+tg.append("")
+
 # generator i drives SAXI_(i+1): see header note 3 on why SAXI_00 is skipped
 for i in range(NPORT):
     tg.append("connect_bd_intf_net [get_bd_intf_pins tg/m%02d_axi] "
@@ -170,7 +199,10 @@ for i in range(NPORT):
     addr.append("assign_bd_address -offset 0x%08X -range 256M "
                 "[get_bd_addr_segs {hbm/SAXI_%02d/HBM_MEM%02d}]"
                 % ((i + 1) * 0x10000000, i + 1, i + 1))
-addr.append("assign_bd_address -offset 0x0000B000 -range 64K "
+# 64K range must be 64K ALIGNED -- Vivado rejects 0x0000B000 outright.  The
+# generator registers therefore live at 0x00010000, clear of the first-light
+# map (SYSMON 0x3000, IIC 0x9000), and the readout script must use that.
+addr.append("assign_bd_address -offset 0x00010000 -range 64K "
             "[get_bd_addr_segs {tg/s_axi/reg0}]")
 anchor2 = "assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_iic_0/S_AXI/Reg}]"
 if anchor2 not in out:
@@ -202,6 +234,8 @@ checks = [
     ("tg regs unmapped", "tg/s_axi/reg0" in body),
     ("CATTRIP not wired", "tg/hbm_cattrip0" in body),
     ("stack temp not wired", "tg/hbm_temp0" in body),
+    ("port clocks unconnected", "hbm/AXI_15_ACLK" in body),
+    ("jtag_hbm CDC missing", "pcie2hbm/aclk1" in body),
 ]
 bad = [n for n, ok in checks if not ok]
 if bad:
