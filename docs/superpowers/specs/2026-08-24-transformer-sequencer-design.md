@@ -245,10 +245,12 @@ attention at blk 3, 7, 11, ... 63), which is the 48/16 split §4 already uses.
 
 Verifying it turned up a real defect in B, in the direction the check was
 looking: **B §1.1(g) said the output norm is shared across 16 heads, and it is
-48** (24/card). 16 is `ssm_n_group`, the key/query group count; the value-head
-count is `ssm_dt_rank = 48`. Both norms are 128 wide, so every shape check
-passed and only the count was wrong. B §2.5's invocation count and latency
-term inherited it. Corrected in B; that term went 0.93 -> 2.48 ms/token.
+48** (24/card). It is a stale 0.8B number that survived the 27B retarget --
+the GDN had 16 value heads at 0.8B and has 48 at 27B, while the KEY heads
+stayed at 16, so the old value remained a plausible head count under a
+different name. Both head types are 128 wide, so no shape check anywhere
+could catch it. B §2.5's invocation count and latency term inherited it.
+Corrected in B; that term went 0.93 -> 2.48 ms/token.
 
 Original finding below.
 

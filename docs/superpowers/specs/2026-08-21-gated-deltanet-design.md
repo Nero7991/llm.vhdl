@@ -128,17 +128,29 @@ the formula.
 **48 value heads (24 per card at N=2)**, gated **after** the norm:
 `rmsnorm(o) * silu(z)` (`build_norm_gated`, `qwen35.cpp:247-255`).
 
-> **CORRECTED 2026-08-25: this said 16 heads.** 16 is `num_k_heads =
-> ssm_n_group`, the KEY/query group count. The output norm runs over VALUE
-> heads, and `num_v_heads = ssm_dt_rank = 48`, with `head_v_dim = d_inner /
-> num_v_heads = 6144/48 = 128` (`qwen35.cpp:347-350`). Both are 128 wide,
-> which is why the confusion survived: the shape checks out either way and
-> only the COUNT is wrong. Confirmed against the shipped 27B GGUF, which
-> carries `ssm_norm.weight [128]` in all 48 GDN layers with
+> **CORRECTED 2026-08-25: this said 16 heads. It is a stale 0.8B number that
+> survived the 27B retarget.** At 0.8B the GDN had 16 key heads and 16 value
+> heads, so "16" was right, and it stayed right-LOOKING at 27B because 16 is
+> still a real head count there -- the KEY heads (`ssm_n_group = 16`). The
+> value heads went 16 -> 48 in the retarget (`ssm_dt_rank`), and this line did
+> not follow. C §4's retarget table records the change explicitly
+> ("GDN key heads / value heads: 16/16 -> 16/48"); B's §1.1(g) did not.
+>
+> The output norm runs over VALUE heads: `num_v_heads = ssm_dt_rank = 48`,
+> `head_v_dim = d_inner / num_v_heads = 6144/48 = 128` (`qwen35.cpp:347-350`,
+> `build_norm_gated` call site line 457). Both head types are 128 wide, so
+> every shape check passes either way and ONLY the count is wrong -- there is
+> no dimensional inconsistency anywhere to catch it. Confirmed against the
+> shipped 27B GGUF: `ssm_norm.weight [128]` in all 48 GDN layers, with
 > `qwen35.ssm.group_count = 16`, `ssm.time_step_rank = 48`,
-> `ssm.inner_size = 6144`. §2.5's invocation count inherited the error; see
-> the correction there. B §4's "24 value heads per card" was right, so this
-> was internally inconsistent within B before it was wrong against source. Contrast subsystem C, whose
+> `ssm.inner_size = 6144`.
+>
+> This is the retarget failure mode to watch for: a number that was correct
+> for the old target and remains a plausible value for the new one, because
+> the quantity it names still exists at that value under a different name.
+> B §4 already carried "24 value heads per card", so B was internally
+> inconsistent before it was wrong against source. §2.5's invocation count
+> inherited the error; see the correction there. Contrast subsystem C, whose
 attention gate is **sigmoid** — two gates, two activations, confirmed in C's
 §1.1(b).
 
@@ -870,9 +882,9 @@ at the 3-cycle-FSM rate of the existing softmax cone), and the scalar path are
 all outside it.
 
 > **CORRECTED 2026-08-25.** The invocation count was 16, inherited from
-> §1.1(g)'s head-count error above: the output norm runs over the 48 value
-> heads (24/card), not the 16 key groups. Three halves the invocations, so
-> this term grows by 1.5x.
+> §1.1(g)'s stale-0.8B head count above: the output norm runs over the 48
+> value heads (24/card), not the 16 key heads. That is 1.5x the invocations
+> per card.
 >
 > The old **0.93 ms does not reproduce from its own stated inputs** and never
 > did: 16 x 645 x 48 GDN layers is 495,360 cycles, which is 1.65 ms at
