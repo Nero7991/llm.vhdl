@@ -38,6 +38,7 @@ set S_BEATS 1024         ;# + 4*i
 set S_STALL 2048
 set S_RETIR 3072
 set S_CBACK 256          ;# control-register READBACK window, + the R_* offset
+set S_RERR  4096         ;# non-OKAY read responses, per port, + 4*i
 
 # The AXI clock the generator runs at.  Every GB/s figure below is
 # beats * 32 * FCLK / cycles, so a wrong FCLK scales the whole result by
@@ -175,8 +176,10 @@ foreach n $POINTS {
 
     set cyc [rd [expr {$TG + $S_CYC}]]
     set tot 0
+    set errs 0
     for {set i 0} {$i < $n} {incr i} {
-        incr tot [rd [expr {$TG + $S_BEATS + 4*$i}]]
+        incr tot  [rd [expr {$TG + $S_BEATS + 4*$i}]]
+        incr errs [rd [expr {$TG + $S_RERR  + 4*$i}]]
     }
     set trip [rd [expr {$TG + $S_TRIP}]]
     # SELF-CHECK.  The expected beat count is EXACT: nburst x (arlen+1) per
@@ -194,6 +197,21 @@ foreach n $POINTS {
     puts [format "%6d %10d %12d %12.1f %9.1f%% %8s %s%s" \
           $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps] $mark]
     lappend results [list $n $gbs]
+    # A beat that came back with SLVERR or DECERR is not a byte of memory
+    # bandwidth, and the interconnect returns those FASTER than HBM does -- so
+    # an address-decode fault inflates the GB/s figure rather than failing.
+    # Checked before anything else: if the data never came from memory then no
+    # other number on this line means anything.
+    if {$errs != 0} {
+        puts ""
+        puts "READ RESPONSE ERRORS at $n ports: $errs non-OKAY beats."
+        puts "  These are SLVERR/DECERR responses, NOT memory traffic.  The"
+        puts "  bandwidth figure on this line is measuring how fast the"
+        puts "  interconnect can refuse a request.  Check the address map"
+        puts "  against the enabled pseudo-channels before anything else."
+        break
+    }
+
     # Order matters: a thermal trip ABORTS the run, so it also leaves the beat
     # count short.  Checking beats first would report a trip as "beats wrong"
     # and send the reader off looking for a routing or timing fault that is

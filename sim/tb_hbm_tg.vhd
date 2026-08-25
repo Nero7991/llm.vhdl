@@ -38,6 +38,10 @@ architecture sim of tb_hbm_tg is
   signal s_awaddr, s_araddr : std_logic_vector(15 downto 0) := (others=>'0');
   signal s_wdata, s_rdata   : std_logic_vector(31 downto 0) := (others=>'0');
 
+  signal m_rresp : std_logic_vector(NPORT*2-1 downto 0) := (others=>'0');
+  -- driven by the model below; the SLVERR injection at the end of the run is
+  -- what proves the error counter is wired to anything at all
+  signal inject_err : std_logic := '0';
   signal m_arvalid, m_arready, m_rvalid, m_rready, m_rlast
        : std_logic_vector(NPORT-1 downto 0) := (others=>'0');
   signal m_araddr  : std_logic_vector(NPORT*ADDR_W-1 downto 0);
@@ -64,7 +68,8 @@ begin
       m_arvalid=>m_arvalid, m_arready=>m_arready, m_araddr=>m_araddr,
       m_arlen=>m_arlen, m_arsize=>m_arsize, m_arburst=>m_arburst,
       hbm_temp0=>t0, hbm_temp1=>t1, hbm_cattrip0=>cat0, hbm_cattrip1=>cat1,
-      m_rvalid=>m_rvalid, m_rready=>m_rready, m_rlast=>m_rlast);
+      m_rvalid=>m_rvalid, m_rready=>m_rready, m_rlast=>m_rlast,
+      m_rresp=>m_rresp);
 
   -- ---------------------------------------------------------- memory model
   -- One outstanding burst per port, served one beat every THROTTLE cycles.
@@ -88,6 +93,8 @@ begin
             if tick = THROTTLE-1 then
               tick <= 0;
               m_rvalid(i) <= '1';
+              m_rresp(2*i+1 downto 2*i) <= "10" when inject_err = '1'
+                                           else "00";
               if left = 1 then m_rlast(i) <= '1'; end if;
               left <= left - 1;
             else
@@ -319,6 +326,36 @@ begin
     assert rd(3) = '1' report "limit trip not reported" severity failure;
     report "programmed temperature ceiling halts the run" severity note;
     t0 <= (others=>'0'); wr(0, 0); wr(0, 2); wr(20, 0);
+
+    -- ---- READ RESPONSE.  The instrument counted beats without ever asking
+    -- whether they were successful reads, and a DECERR returns beats FASTER
+    -- than memory does -- so a mis-decoded address would have reported HIGHER
+    -- bandwidth rather than failing.  Prove the counter is actually wired:
+    -- a clean run must leave it at zero, and an injected SLVERR must be seen.
+    wr(0, 2);
+    rdreg(4096, rd);
+    assert to_integer(unsigned(rd)) = 0
+      report "port 0 logged " & integer'image(to_integer(unsigned(rd))) &
+             " non-OKAY responses on a CLEAN run: the error counter is " &
+             "counting something it should not" severity failure;
+
+    inject_err <= '1';
+    wr(0, 2); wr(4, 1); wr(8, ARLEN); wr(12, 4); wr(16, 16); wr(0, 1);
+    for t in 0 to 100000 loop
+      rdreg(8, rd);
+      exit when rd(0) = '0';
+    end loop;
+    wr(0, 0);
+    rdreg(4096, rd);
+    assert to_integer(unsigned(rd)) = 4*(ARLEN+1)
+      report "SLVERR on every beat logged " &
+             integer'image(to_integer(unsigned(rd))) & " errors, want " &
+             integer'image(4*(ARLEN+1)) &
+             ": the read-response path is NOT connected, which is exactly " &
+             "the state the 144 GB/s run was measured in" severity failure;
+    report "read-response errors are counted, and are zero on a clean run"
+      severity note;
+    inject_err <= '0';
 
     report "hbm_tg recovers a known bandwidth at every port count" severity note;
     done <= true; wait;

@@ -97,7 +97,14 @@ entity hbm_tg is
     m_arburst : out std_logic_vector(NPORT*2-1 downto 0);
     m_rvalid  : in  std_logic_vector(NPORT-1 downto 0);
     m_rready  : out std_logic_vector(NPORT-1 downto 0);
-    m_rlast   : in  std_logic_vector(NPORT-1 downto 0)
+    m_rlast   : in  std_logic_vector(NPORT-1 downto 0);
+    -- READ RESPONSE.  Added after the first 144 GB/s run, which counted beats
+    -- without ever asking whether they were SUCCESSFUL reads.  A DECERR from
+    -- the interconnect returns data beats too, and it returns them FASTER
+    -- than memory does, so a mis-decoded address inflates the bandwidth
+    -- figure instead of failing visibly.  An instrument whose failure mode is
+    -- a better-looking number is the wrong way round.
+    m_rresp   : in  std_logic_vector(NPORT*2-1 downto 0)
   );
 end entity;
 
@@ -130,6 +137,10 @@ architecture rtl of hbm_tg is
   type u32a is array(0 to NPORT-1) of unsigned(31 downto 0);
   type u16a is array(0 to NPORT-1) of unsigned(15 downto 0);
   signal beats, arstall, issued, retired : u32a := (others => (others => '0'));
+  -- Non-OKAY read responses, per port.  OKAY is "00"; EXOKAY "01" cannot
+  -- occur on a normal read, SLVERR "10" and DECERR "11" both mean the data
+  -- is meaningless.  Anything nonzero invalidates that port's beat count.
+  signal rerr : u32a := (others => (others => '0'));
   signal outst   : u16a := (others => (others => '0'));
   signal arv     : std_logic_vector(NPORT-1 downto 0) := (others => '0');
   signal active  : std_logic_vector(NPORT-1 downto 0) := (others => '0');
@@ -336,6 +347,8 @@ begin
             rdata_r <= std_logic_vector(arstall(idx - 512));
           elsif idx >= 768 and idx < 768 + NPORT then
             rdata_r <= std_logic_vector(retired(idx - 768));
+          elsif idx >= 1024 and idx < 1024 + NPORT then
+            rdata_r <= std_logic_vector(rerr(idx - 1024));
           else rdata_r <= (others => '0');
           end if;
           arr <= '0'; rv <= '1';
@@ -413,7 +426,7 @@ begin
     -- still counted, the run is millions of cycles long, and a uniform
     -- one-cycle offset does not bias a ratio.  `outst` may momentarily exceed
     -- its cap by one, which is harmless.
-    signal ev_ar, ev_r, ev_rl : std_logic := '0';
+    signal ev_ar, ev_r, ev_rl, ev_re : std_logic := '0';
   begin
     m_arvalid(i) <= arv(i);
     m_arlen  ((i+1)*8-1 downto i*8) <= std_logic_vector(arlen_r);
@@ -442,15 +455,17 @@ begin
     begin
       if rising_edge(clk) then
         -- one register stage on everything the HBM drives, see the note above
-        ev_ar <= '0'; ev_r <= '0'; ev_rl <= '0';
+        ev_ar <= '0'; ev_r <= '0'; ev_rl <= '0'; ev_re <= '0';
         if rstn_s = '0' then
           arv(i) <= '0'; active(i) <= '0';
           beats(i) <= (others => '0'); arstall(i) <= (others => '0');
+          rerr(i) <= (others => '0');
           issued(i) <= (others => '0'); retired(i) <= (others => '0');
           outst(i) <= (others => '0'); aoff <= (others => '0');
         else
           if clr = '1' then
             beats(i) <= (others => '0'); arstall(i) <= (others => '0');
+            rerr(i) <= (others => '0');
             issued(i) <= (others => '0'); retired(i) <= (others => '0');
             outst(i) <= (others => '0'); aoff <= (others => '0');
             arv(i) <= '0'; active(i) <= '0';
@@ -509,12 +524,21 @@ begin
           if m_rvalid(i) = '1' then
             ev_r <= '1';
             if m_rlast(i) = '1' then ev_rl <= '1'; end if;
+            -- Registered alongside the beat, on the same condition, so an
+            -- errored beat is counted in BOTH places and the two totals stay
+            -- directly comparable: beats == good beats exactly when rerr = 0.
+            ev_re <= m_rresp(2*i+1) or m_rresp(2*i);
+          else
+            ev_re <= '0';
           end if;
 
           -- the registered bookkeeping, one cycle behind the bus
           ar_acc := ev_ar = '1';
           r_end  := ev_rl = '1';
-          if ev_r = '1' then beats(i) <= beats(i) + 1; end if;
+          if ev_r = '1' then
+            beats(i) <= beats(i) + 1;
+            if ev_re = '1' then rerr(i) <= rerr(i) + 1; end if;
+          end if;
           if ar_acc then issued(i) <= issued(i) + 1; end if;
           if r_end then
             retired(i) <= retired(i) + 1;

@@ -513,6 +513,11 @@ architecture rtl of hbm_tg_ip is
   constant ADDR_W : positive := 33;
   signal arvalid, arready, rvalid, rready, rlast
        : std_logic_vector(NPORT-1 downto 0);
+  -- rresp was DECLARED on every port and then dropped on the floor:
+  -- the wrapper accepted it and connected nothing, so the generator
+  -- counted error beats as good ones and a mis-decoded address would
+  -- have reported HIGHER bandwidth, not a failure.  Now carried.
+  signal rresp   : std_logic_vector(NPORT*2-1 downto 0);
   signal araddr  : std_logic_vector(NPORT*ADDR_W-1 downto 0);
   signal arlen   : std_logic_vector(NPORT*8-1 downto 0);
   signal arsize  : std_logic_vector(NPORT*3-1 downto 0);
@@ -535,7 +540,8 @@ begin
       s_rdata   => s_axi_rdata,
       m_arvalid => arvalid, m_arready => arready, m_araddr => araddr,
       m_arlen   => arlen,   m_arsize  => arsize,  m_arburst => arburst,
-      m_rvalid  => rvalid,  m_rready  => rready,  m_rlast   => rlast);
+      m_rvalid  => rvalid,  m_rready  => rready,  m_rlast   => rlast,
+      m_rresp   => rresp);
 
   s_axi_bresp <= "00";
   s_axi_rresp <= "00";
@@ -554,6 +560,7 @@ begin
   m00_axi_rready  <= rready(0);
   rvalid(0) <= m00_axi_rvalid;
   rlast(0)  <= m00_axi_rlast;
+  rresp(1 downto 0) <= m00_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m00_axi_awvalid <= '0';
@@ -582,6 +589,7 @@ begin
   m01_axi_rready  <= rready(1);
   rvalid(1) <= m01_axi_rvalid;
   rlast(1)  <= m01_axi_rlast;
+  rresp(3 downto 2) <= m01_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m01_axi_awvalid <= '0';
@@ -610,6 +618,7 @@ begin
   m02_axi_rready  <= rready(2);
   rvalid(2) <= m02_axi_rvalid;
   rlast(2)  <= m02_axi_rlast;
+  rresp(5 downto 4) <= m02_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m02_axi_awvalid <= '0';
@@ -638,6 +647,7 @@ begin
   m03_axi_rready  <= rready(3);
   rvalid(3) <= m03_axi_rvalid;
   rlast(3)  <= m03_axi_rlast;
+  rresp(7 downto 6) <= m03_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m03_axi_awvalid <= '0';
@@ -666,6 +676,7 @@ begin
   m04_axi_rready  <= rready(4);
   rvalid(4) <= m04_axi_rvalid;
   rlast(4)  <= m04_axi_rlast;
+  rresp(9 downto 8) <= m04_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m04_axi_awvalid <= '0';
@@ -694,6 +705,7 @@ begin
   m05_axi_rready  <= rready(5);
   rvalid(5) <= m05_axi_rvalid;
   rlast(5)  <= m05_axi_rlast;
+  rresp(11 downto 10) <= m05_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m05_axi_awvalid <= '0';
@@ -722,6 +734,7 @@ begin
   m06_axi_rready  <= rready(6);
   rvalid(6) <= m06_axi_rvalid;
   rlast(6)  <= m06_axi_rlast;
+  rresp(13 downto 12) <= m06_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m06_axi_awvalid <= '0';
@@ -750,6 +763,7 @@ begin
   m07_axi_rready  <= rready(7);
   rvalid(7) <= m07_axi_rvalid;
   rlast(7)  <= m07_axi_rlast;
+  rresp(15 downto 14) <= m07_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m07_axi_awvalid <= '0';
@@ -778,6 +792,7 @@ begin
   m08_axi_rready  <= rready(8);
   rvalid(8) <= m08_axi_rvalid;
   rlast(8)  <= m08_axi_rlast;
+  rresp(17 downto 16) <= m08_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m08_axi_awvalid <= '0';
@@ -806,6 +821,7 @@ begin
   m09_axi_rready  <= rready(9);
   rvalid(9) <= m09_axi_rvalid;
   rlast(9)  <= m09_axi_rlast;
+  rresp(19 downto 18) <= m09_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m09_axi_awvalid <= '0';
@@ -834,6 +850,7 @@ begin
   m10_axi_rready  <= rready(10);
   rvalid(10) <= m10_axi_rvalid;
   rlast(10)  <= m10_axi_rlast;
+  rresp(21 downto 20) <= m10_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m10_axi_awvalid <= '0';
@@ -862,6 +879,7 @@ begin
   m11_axi_rready  <= rready(11);
   rvalid(11) <= m11_axi_rvalid;
   rlast(11)  <= m11_axi_rlast;
+  rresp(23 downto 22) <= m11_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m11_axi_awvalid <= '0';
@@ -890,6 +908,7 @@ begin
   m12_axi_rready  <= rready(12);
   rvalid(12) <= m12_axi_rvalid;
   rlast(12)  <= m12_axi_rlast;
+  rresp(25 downto 24) <= m12_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m12_axi_awvalid <= '0';
@@ -918,6 +937,7 @@ begin
   m13_axi_rready  <= rready(13);
   rvalid(13) <= m13_axi_rvalid;
   rlast(13)  <= m13_axi_rlast;
+  rresp(27 downto 26) <= m13_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m13_axi_awvalid <= '0';
@@ -946,6 +966,7 @@ begin
   m14_axi_rready  <= rready(14);
   rvalid(14) <= m14_axi_rvalid;
   rlast(14)  <= m14_axi_rlast;
+  rresp(29 downto 28) <= m14_axi_rresp;
   -- write channel tied off: this design never writes, and leaving
   -- the ports floating would let the tool infer a write path.
   m14_axi_awvalid <= '0';
