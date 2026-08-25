@@ -151,6 +151,30 @@ specified against the A-corrected contract (s48 payload, `y_exp` transported,
 revised before E RTL exists. Until then the E descriptor fields in §6.2 are
 provisional.
 
+> **WITHDRAWN 2026-08-25: this contradiction was already resolved when it was
+> filed, and the resolution is exactly what D specified against.** Both
+> premises are gone:
+>
+> - **E §1.3 and §2.1 are not stale.** Both carry a `CORRECTED 2026-08-24`
+>   block. §1.3 states the s48 unrounded payload and the per-card `y_exp`
+>   verbatim; §2.1 replaces the s32-on-a-shared-grid contract with min-align,
+>   floor, and an accumulator of **`s(48 + clog2(N))`**, keeping the superseded
+>   text beneath it. The equal-`out_shift` claim is withdrawn there too.
+> - **A §15.4b is RESOLVED**, not open. Commit `30a8db8` corrected both
+>   documents together.
+>
+> So D §6.2's collective steps are **not provisional**: they were written
+> against the corrected contract, and the corrected contract is what E now
+> specifies. The accumulator widths agree to the bit. The cross-check that
+> matters is that nothing in §6.2 needs to change.
+>
+> How this happened is worth recording, because with five specs in flight it
+> will happen again. D was written on 2026-08-24 and E was corrected on
+> 2026-08-24, and a cross-spec review necessarily reads a snapshot. **A
+> contradiction filed against another document is only true as of the revision
+> the filer read**, so re-reading the target belongs immediately before acting
+> on the finding, not only before filing it.
+
 **D. A's §5 port list contradicts its own §14.2.** `y_data` is declared
 `31 downto 0`, but partial mode emits the accumulator "UNROUNDED s48" (and
 A's own AXI wrapper already widened its result buffer to 64 bits for exactly
