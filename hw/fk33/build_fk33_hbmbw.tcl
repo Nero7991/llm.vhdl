@@ -91,8 +91,8 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:hbm:1.0 hbm
 set_property -dict [list CONFIG.USER_HBM_DENSITY {8GB} CONFIG.USER_HBM_STACK {2} CONFIG.USER_MEMORY_DISPLAY {8192}] [get_bd_cells hbm]
 set_property -dict [list CONFIG.USER_HBM_REF_CLK_0 {200}] [get_bd_cells hbm]
 set_property -dict [list CONFIG.USER_HBM_REF_CLK_1 {200}] [get_bd_cells hbm]
-set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {300} ] [get_bd_cells hbm]
-set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {300}] [get_bd_cells hbm]
+set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {350} ] [get_bd_cells hbm]
+set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {350}] [get_bd_cells hbm]
 
 if {$HBMGlobalSwitch == 0} {
     set_property -dict [list CONFIG.USER_SWITCH_ENABLE_00 {FALSE} CONFIG.USER_SWITCH_ENABLE_01 {FALSE}] [get_bd_cells hbm]
@@ -112,9 +112,8 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
 set_property CONFIG.RESET_TYPE ACTIVE_LOW [get_bd_cells /clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT1_USED {true} CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100.000}] [get_bd_cells clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
-# hbmbw: the HBM AXI datapath clock.  450 MHz is the ceiling the 460 GB/s
-# premise assumes; measuring below it would confound the memory with the clock.
-set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {300.000}] [get_bd_cells clk_wiz_0]
+# hbmbw: the HBM AXI datapath clock, set by gen_hbmbw.py's fclk_mhz argument.
+set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {350.000}] [get_bd_cells clk_wiz_0]
                                                                                                      
 create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_hbm
 set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]

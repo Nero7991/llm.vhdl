@@ -1,0 +1,225 @@
+bitstream: /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/hbmbw/fk33_hbmbw/fk33_hbmbw.runs/impl_1/bd_wrapper.bit (10428338 bytes, 2026-08-25 15:55:39)
+cable reset: /dev/bus/usb/001/016
+=== configuring (xsdb) ===
+FPGA_PROG_OK
+  1* xcvu33p
+     2  Legacy Debug Hub
+        3  JTAG2AXI
+        4  JTAG2AXI
+=== sweep ===
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source tcl/hbmbw.tcl
+# set TG      0x00010000   ;
+# set R_CTRL  0            ;
+# set R_MASK  4
+# set R_ARLEN 8            ;
+# set R_NBRST 12
+# set R_OUTST 16
+# set R_TLIM  20           ;
+# set S_ID    0
+# set S_CYC   4
+# set S_BUSY  8
+# set S_NPORT 12
+# set S_TEMP  16
+# set S_TRIP  20
+# set S_BEATS 1024         ;
+# set S_STALL 2048
+# set S_RETIR 3072
+# set S_CBACK 256          ;
+# set FCLK 300.0e6
+# if {$argc >= 1} { set FCLK [lindex $argv 0] }
+# set BYTES_PER_BEAT 32    ;
+# proc rd {addr} {
+#     set t [create_hw_axi_txn -force rdtxn [get_hw_axis hw_axi_1] \
+#              -address [format %08x $addr] -type read -len 1]
+#     run_hw_axi -quiet $t
+#     # -t d4 returns DECIMAL even though the INFO line beside it prints hex.
+#     # This cost an afternoon once; see 2026-08-24_fk33-sysmon-vccint-undervolt.md
+#     set v [lindex [report_hw_axi_txn -t d4 $t] 1]
+#     return [expr {$v & 0xffffffff}]
+# }
+# proc wr {addr val} {
+#     set t [create_hw_axi_txn -force wrtxn [get_hw_axis hw_axi_1] \
+#              -address [format %08x $addr] -type write \
+#              -data [format %08x $val] -len 1]
+#     run_hw_axi -quiet $t
+# }
+# proc stack_temps {} {
+#     global TG S_TEMP
+#     set v [rd [expr {$TG + $S_TEMP}]]
+#     return [list [expr {$v & 0x7f}] [expr {($v >> 7) & 0x7f}] \
+#                  [expr {($v >> 14) & 0x7f}] [expr {($v >> 21) & 0x7f}]]
+# }
+# proc die_temp {} {
+#     set sm [lindex [get_hw_sysmons -quiet] 0]
+#     if {$sm eq ""} { return "n/a" }
+#     refresh_hw_sysmon $sm
+#     return [format %.1f [get_property TEMPERATURE $sm]]
+# }
+# open_hw_manager
+# connect_hw_server -allow_non_jtag
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 09 2023-22:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+# open_hw_target [lindex [get_hw_targets] 0]
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/153300000607A
+# set d [lindex [get_hw_devices] 0]
+# current_hw_device $d
+# refresh_hw_device -quiet $d
+# set id [rd $TG]
+# if {$id != 0x48424D31} {
+#     puts "FATAL: generator ID reads [format 0x%08X $id], expected 0x48424D31."
+#     puts "       Either the device is not configured with the hbmbw bitstream,"
+#     puts "       or hw_axi_1 is not jtag_axil.  An unmapped read on this master"
+#     puts "       returns the smartconnect DECERR magic 0xdec0dee3."
+#     return
+# }
+# set NPORT [rd [expr {$TG + $S_NPORT}]]
+# puts "generator OK, NPORT=$NPORT, AXI clock [format %.2f [expr {$FCLK/1e6}]] MHz"
+generator OK, NPORT=15, AXI clock 300.00 MHz
+# puts "ceiling at NPORT ports = [format %.1f \
+#       [expr {$NPORT * $BYTES_PER_BEAT * $FCLK / 1e9}]] GB/s"
+ceiling at NPORT ports = 144.0 GB/s
+# set t0 [die_temp]
+# puts "die temperature before: $t0 C   stack codes: [stack_temps]"
+die temperature before: 28.2 C   stack codes: 29 29 29 29
+# set POINTS {1 2 4 8 15}
+# set ARLEN 15          ;
+# set NBURST 200000     ;
+# set OUTST 16
+# puts ""
+
+# puts [format "%6s %10s %12s %12s %10s %8s %s" \
+#       ports beats cycles GB/s "%ceiling" die_C stacks]
+ ports      beats       cycles         GB/s   %ceiling    die_C stacks
+# set results {}
+# foreach n $POINTS {
+#     if {$n > $NPORT} { continue }
+#     wr [expr {$TG + $R_CTRL}]  2
+#     wr [expr {$TG + $R_MASK}]  [expr {(1 << $n) - 1}]
+#     wr [expr {$TG + $R_ARLEN}] $ARLEN
+#     wr [expr {$TG + $R_NBRST}] $NBURST
+#     wr [expr {$TG + $R_OUTST}] $OUTST
+# 
+#     # Read the control registers back BEFORE starting.  The first hardware run
+#     # of this instrument reported zero beats at every port count and it looked
+#     # like a routing or timing fault; in fact every control write was being
+#     # dropped on the bus and the generator was never told to start.  Reads
+#     # worked throughout, which is exactly why that was hard to see.  Three
+#     # reads here separate "the design was not told" from "the design was told
+#     # and did the wrong thing", which are the two halves of every later
+#     # failure and have completely different fixes.
+#     set gm [rd [expr {$TG + $S_CBACK + $R_MASK}]]
+#     set ga [rd [expr {$TG + $S_CBACK + $R_ARLEN}]]
+#     set gn [rd [expr {$TG + $S_CBACK + $R_NBRST}]]
+#     if {$gm != (1 << $n) - 1 || $ga != $ARLEN || $gn != $NBURST} {
+#         puts ""
+#         puts "CONTROL WRITES DID NOT LAND at $n ports."
+#         puts [format "  mask   wrote %d  reads %d" [expr {(1 << $n) - 1}] $gm]
+#         puts [format "  arlen  wrote %d  reads %d" $ARLEN $ga]
+#         puts [format "  nburst wrote %d  reads %d" $NBURST $gn]
+#         puts "  This is an AXI-Lite WRITE path fault, not a bandwidth result."
+#         puts "  Nothing below this line would be a measurement.  Stopping."
+#         break
+#     }
+# 
+#     wr [expr {$TG + $R_CTRL}]  1
+# 
+#     set spins 0
+#     while {[rd [expr {$TG + $S_BUSY}]] & 1} {
+#         incr spins
+#         if {$spins > 20000} { puts "TIMEOUT at $n ports"; break }
+#     }
+#     wr [expr {$TG + $R_CTRL}] 0
+# 
+#     set cyc [rd [expr {$TG + $S_CYC}]]
+#     set tot 0
+#     for {set i 0} {$i < $n} {incr i} {
+#         incr tot [rd [expr {$TG + $S_BEATS + 4*$i}]]
+#     }
+#     set trip [rd [expr {$TG + $S_TRIP}]]
+#     # SELF-CHECK.  The expected beat count is EXACT: nburst x (arlen+1) per
+#     # port.  This is what makes the instrument trustworthy on hardware rather
+#     # than only in simulation -- if the design is running outside its timing
+#     # envelope, or a port is misrouted, or a burst was dropped, the count will
+#     # not match and the bandwidth figure on that line means nothing.  A
+#     # measurement that cannot detect its own failure is not a measurement.
+#     set want [expr {$n * $NBURST * ($ARLEN + 1)}]
+#     set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
+#     set ceil [expr {$n * $BYTES_PER_BEAT * $FCLK / 1e9}]
+#     set dt   [die_temp]
+#     set mark ""
+#     if {$tot != $want} { set mark "  <-- BEATS WRONG, want $want" }
+#     puts [format "%6d %10d %12d %12.1f %9.1f% %8s %s%s" \
+#           $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps] $mark]
+#     lappend results [list $n $gbs]
+#     # Order matters: a thermal trip ABORTS the run, so it also leaves the beat
+#     # count short.  Checking beats first would report a trip as "beats wrong"
+#     # and send the reader off looking for a routing or timing fault that is
+#     # not there.  Always name the cause that explains the other symptom.
+#     if {$trip & 0x6} {
+#         puts ""
+#         puts "THERMAL TRIP at $n ports (trip reg [format 0x%X $trip]):"
+#         puts "  bit1 CATTRIP  bit2 programmed ceiling"
+#         puts "  The number on this line is NOT a measurement -- the run aborted"
+#         puts "  early, which is also why the beat count is short."
+#         puts "  Sweep stopped."
+#         break
+#     }
+# 
+#     if {$tot != $want} {
+#         puts ""
+#         puts "STOPPING: the generator moved $tot beats where $want are exactly"
+#         puts "  required.  The number on that line is NOT a bandwidth"
+#         puts "  measurement.  Most likely causes, in order: the design is"
+#         puts "  running outside its timing envelope (Vivado signs off at"
+#         puts "  0.85 V, this card runs 0.717 V, measured derate -22.9%), a"
+#         puts "  port is mapped to the wrong pseudo-channel, or a burst was"
+#         puts "  dropped.  Check the routed WNS against 0.229 x period before"
+#         puts "  anything else."
+#         break
+#     }
+#     if {$dt ne "n/a" && $t0 ne "n/a" && $dt - $t0 > 25.0} {
+#         puts ""
+#         puts "STOPPING: die temperature rose ${t0} -> ${dt} C during the sweep."
+#         break
+#     }
+# }
+     1    3200000      3200065          9.6     100.0%     28.7 29 29 29 29
+     2    6400000      3200065         19.2     100.0%     28.7 29 29 29 29
+     4   12800000      3200158         38.4     100.0%     27.7 29 29 29 29
+     8   25600000      3200157         76.8     100.0%     27.7 30 30 30 30
+    15   48000000      3200172        144.0     100.0%     27.7 32 32 32 32
+# puts ""
+
+# puts "die temperature after: [die_temp] C   stack codes: [stack_temps]"
+die temperature after: 28.2 C   stack codes: 32 32 32 32
+# puts ""
+
+# puts "The stack temperature CODES are raw 7-bit values.  Their mapping to"
+The stack temperature CODES are raw 7-bit values.  Their mapping to
+# puts "Celsius has not been verified on this card, which is why the generator's"
+Celsius has not been verified on this card, which is why the generator's
+# puts "soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record"
+soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record
+# puts "them against the die temperature here to calibrate the mapping."
+them against the die temperature here to calibrate the mapping.
+INFO: [Common 17-206] Exiting Vivado at Tue Aug 25 15:57:20 2026...

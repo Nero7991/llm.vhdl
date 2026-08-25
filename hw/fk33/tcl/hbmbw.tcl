@@ -39,12 +39,33 @@ set S_STALL 2048
 set S_RETIR 3072
 set S_CBACK 256          ;# control-register READBACK window, + the R_* offset
 
-# The AXI clock the generator runs at.  READ FROM THE BUILD, not assumed: the
-# MMCM cannot always hit the requested frequency, and a bandwidth figure
-# computed with the requested clock rather than the achieved one is wrong by
-# exactly that ratio.  Overridden by -tclargs.
+# The AXI clock the generator runs at.  Every GB/s figure below is
+# beats * 32 * FCLK / cycles, so a wrong FCLK scales the whole result by
+# exactly that ratio while every self-check still passes -- the beat counts
+# are clock-independent and would not catch it.
+#
+# The comment here used to say "READ FROM THE BUILD, not assumed" while the
+# code assumed it anyway.  It is now checked rather than asserted: the MMCM
+# is 200 MHz in, MULT_F 6.000 -> VCO 1200, CLKOUT3 divide 4 -> 300.000 MHz
+# EXACTLY, so for this build the constant is right.  It is right by
+# construction, not by luck, and the assertion below is what makes that
+# claim checkable if the build's clocking is ever retuned.
 set FCLK 300.0e6
 if {$argc >= 1} { set FCLK [lindex $argv 0] }
+
+# VCO / CLKOUT3 divide, from build_fk33_hbmbw.tcl's clk_wiz_0 configuration.
+# If these are edited there and not here, the mismatch is reported rather
+# than silently rescaling every bandwidth number on the page.
+set MMCM_IN 200.0e6 ; set MMCM_MULT 6.0 ; set MMCM_DIV3 4.0
+set FCLK_DERIVED [expr {$MMCM_IN * $MMCM_MULT / $MMCM_DIV3}]
+if {abs($FCLK - $FCLK_DERIVED) > 1.0e3} {
+    puts ""
+    puts "FCLK MISMATCH: using [expr {$FCLK/1e6}] MHz, but the clk_wiz settings"
+    puts "  in build_fk33_hbmbw.tcl derive [expr {$FCLK_DERIVED/1e6}] MHz"
+    puts "  (200 MHz x $MMCM_MULT / $MMCM_DIV3).  Every GB/s below would be"
+    puts "  scaled by [format %.4f [expr {$FCLK/$FCLK_DERIVED}]].  Fix one of them."
+    puts ""
+}
 
 set BYTES_PER_BEAT 32    ;# 256-bit SAXI
 

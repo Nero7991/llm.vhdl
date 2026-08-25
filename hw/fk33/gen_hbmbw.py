@@ -99,13 +99,44 @@ for i in range(1, 16):
 if out == before:
     sys.exit("FAIL: no USER_SAXI_xx {false} keys found; the upstream branch moved")
 
-# ---- 2. AXI clock 100 -> 450 MHz -------------------------------------------
+# ---- 2. the HBM AXI datapath clock -----------------------------------------
+# Parameterised so the voltage-derate sweep is reproducible rather than a
+# hand-edit: `gen_hbmbw.py <nport> [fclk_mhz]`.  The point of varying it is to
+# find where the design STOPS working on the card at 0.717 V, which converts
+# the derate from a bound into a measurement -- one build per frequency, and
+# the frequency has to appear identically in three places (the HBM IP's two
+# input-clock properties and the clk_wiz output) or the build fails late with
+# a FREQ_HZ mismatch that does not name the cause.
+#
+# The MMCM is 200 MHz in.  Only frequencies of the form 200 * M / D with the
+# VCO (200*M) inside the part's 600-1440 MHz range are EXACT; anything else
+# the MMCM approximates, and then every GB/s number computed from the nominal
+# clock is wrong by that ratio while every self-check still passes.  Checked
+# below rather than assumed.
+FCLK_MHZ = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+
+_exact = None
+for _m in range(3, 65):
+    for _d in range(1, 129):
+        if abs(200.0 * _m / _d - FCLK_MHZ) < 1e-9 and 600 <= 200 * _m <= 1440:
+            _exact = (_m, _d)
+            break
+    if _exact:
+        break
+if _exact is None:
+    sys.exit("FAIL: %d MHz is not exactly synthesisable from a 200 MHz input "
+             "with the VCO in 600-1440 MHz.  Pick one that is, or the "
+             "bandwidth numbers silently inherit the MMCM's rounding error."
+             % FCLK_MHZ)
+print("hbmbw: datapath clock %d MHz (VCO %d MHz = 200 x %d, divide %d)"
+      % (FCLK_MHZ, 200 * _exact[0], _exact[0], _exact[1]))
+
 out = out.replace(
     "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {250} ] [get_bd_cells hbm]",
-    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {300} ] [get_bd_cells hbm]")
+    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {%d} ] [get_bd_cells hbm]" % FCLK_MHZ)
 out = out.replace(
     "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {250}] [get_bd_cells hbm]",
-    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {300}] [get_bd_cells hbm]")
+    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {%d}] [get_bd_cells hbm]" % FCLK_MHZ)
 
 # a third clk_wiz output at 450 MHz for the datapath
 anchor = ("set_property -dict [list CONFIG.CLKOUT2_USED {true} "
@@ -113,10 +144,9 @@ anchor = ("set_property -dict [list CONFIG.CLKOUT2_USED {true} "
 if anchor not in out:
     sys.exit("FAIL: clk_wiz CLKOUT2 line not found")
 out = out.replace(anchor, anchor + "\n" +
-    "# hbmbw: the HBM AXI datapath clock.  450 MHz is the ceiling the 460 GB/s\n"
-    "# premise assumes; measuring below it would confound the memory with the clock.\n"
+    "# hbmbw: the HBM AXI datapath clock, set by gen_hbmbw.py's fclk_mhz argument.\n"
     "set_property -dict [list CONFIG.CLKOUT3_USED {true} "
-    "CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {300.000}] [get_bd_cells clk_wiz_0]")
+    "CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {%d.000}] [get_bd_cells clk_wiz_0]" % FCLK_MHZ)
 
 # pcie2hbm carries jtag_hbm to SAXI_00/16, which are now in the fast domain
 # while jtag_axi stays at 100 MHz.  Without a converter hdl generation fails
@@ -265,7 +295,11 @@ code = [l for l in out.split("\n")
 body = "\n".join(code)
 checks = [
     ("SAXI_01 still disabled", "CONFIG.USER_SAXI_01 {false}" not in body),
-    ("datapath clkout absent", "CLKOUT3_REQUESTED_OUT_FREQ {300.000}" in body),
+    ("datapath clkout absent",
+     "CLKOUT3_REQUESTED_OUT_FREQ {%d.000}" % FCLK_MHZ in body),
+    ("HBM input clock does not match the clk_wiz output",
+     ("USER_AXI_INPUT_CLK_FREQ {%d}" % FCLK_MHZ) in body and
+     ("USER_AXI_INPUT_CLK1_FREQ {%d}" % FCLK_MHZ) in body),
     ("AXI clock not repointed", "clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_00_ACLK" in body),
     ("generator not added", "create_bd_cell -type module -reference hbm_tg_ip tg" in body),
     ("last port not wired", "tg/m14_axi" in body),
