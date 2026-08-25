@@ -125,8 +125,20 @@ the formula.
 
 **(g) The z gate uses silu; the per-head output norm is RMSNorm** over
 `head_v_dim = 128` with the per-layer weight `ssm_norm[128]` shared across all
-16 heads, gated **after** the norm: `rmsnorm(o) * silu(z)`
-(`build_norm_gated`, `qwen35.cpp:247-255`). Contrast subsystem C, whose
+**48 value heads (24 per card at N=2)**, gated **after** the norm:
+`rmsnorm(o) * silu(z)` (`build_norm_gated`, `qwen35.cpp:247-255`).
+
+> **CORRECTED 2026-08-25: this said 16 heads.** 16 is `num_k_heads =
+> ssm_n_group`, the KEY/query group count. The output norm runs over VALUE
+> heads, and `num_v_heads = ssm_dt_rank = 48`, with `head_v_dim = d_inner /
+> num_v_heads = 6144/48 = 128` (`qwen35.cpp:347-350`). Both are 128 wide,
+> which is why the confusion survived: the shape checks out either way and
+> only the COUNT is wrong. Confirmed against the shipped 27B GGUF, which
+> carries `ssm_norm.weight [128]` in all 48 GDN layers with
+> `qwen35.ssm.group_count = 16`, `ssm.time_step_rank = 48`,
+> `ssm.inner_size = 6144`. §2.5's invocation count inherited the error; see
+> the correction there. B §4's "24 value heads per card" was right, so this
+> was internally inconsistent within B before it was wrong against source. Contrast subsystem C, whose
 attention gate is **sigmoid** — two gates, two activations, confirmed in C's
 §1.1(b).
 
@@ -431,7 +443,7 @@ state column              :  se[j], from the header; updated to se_new[j] per 2.
 rmsnorm (output gate)     :  o_exp = xe + we + Q - shift_total    -- rmsnorm.vhd:336,
                              DATA-DEPENDENT per head; xe = e_head[h] (2.1.4),
                              we = sn_exp. NEVER an interface constant (C CR3-2).
-y (to ssm_out)            :  single y_exp across all 16 heads; renorm rule owned by 3
+y (to ssm_out)            :  single y_exp across all 24 value heads/card; owned by 3
 ```
 
 The L2-norm termination is exact, not approximate: `x/norm2(x)` computed on
@@ -689,8 +701,9 @@ o_head[j], e_head = bfp requantize over the 128 o_al  -- amax/msb/round/sat16,
 ```
 
 `o_head/e_head` feeds `rmsnorm` (`x_exp = e_head`, `w_exp = sn_exp`); the
-gated product with `silu(z_h)` and the final renormalization of all 16 heads
-to the single `y_exp` are §3's sites (13), constrained but not fixed here —
+gated product with `silu(z_h)` and the final renormalization of all **24 value
+heads per card** to the single `y_exp` are §3's sites (13), constrained but
+not fixed here —
 the same split C made for its sites 5-6.
 
 #### 2.1.5 Rounding sites
@@ -849,16 +862,41 @@ A's single-stream measurement covers; C recorded the same caveat for its
 two-read-plus-write pattern (C §2.5).
 
 **Latency accounting is incomplete, deliberately.** The 2.95-3.14 ms covers
-the state sweep and conv only. Sixteen `rmsnorm` invocations per layer
-(~645 cycles each at N=128 → ~0.93 ms/token if fully serial), 32 L2 norms per
+the state sweep and conv only. **Twenty-four** `rmsnorm` invocations per layer
+per card (~645 cycles each at N=128 → **~2.48 ms/token at 300 MHz, ~3.22 ms at
+the 231 MHz this card reaches at 0.717 V**, if fully serial), 32 L2 norms per
 layer, ~8,192 silu evaluations per layer (0.74 ms/token at 1/cycle, ~2.2 ms
 at the 3-cycle-FSM rate of the existing softmax cone), and the scalar path are
-all outside it. Serialized worst case is **~6-7 ms/token**; with the §3
-schedule overlapping norms and nonlinearities under the next head's sweep, the
-target is **~3.5-4.5 ms/token**. §3 must produce the real budget before the
-recon throughput figures are re-derived; with A at 35-53 ms (423 MB) and C at
-~4-4.4 ms, B's plausible range puts `v3.0` at **~16-23 tok/s**, i.e. the low
-half of the recon's 19-28 band.
+all outside it.
+
+> **CORRECTED 2026-08-25.** The invocation count was 16, inherited from
+> §1.1(g)'s head-count error above: the output norm runs over the 48 value
+> heads (24/card), not the 16 key groups. Three halves the invocations, so
+> this term grows by 1.5x.
+>
+> The old **0.93 ms does not reproduce from its own stated inputs** and never
+> did: 16 x 645 x 48 GDN layers is 495,360 cycles, which is 1.65 ms at
+> 300 MHz, not 0.93. Some third input was applied and not written down, so the
+> figure could not be corrected by scaling it -- it had to be rebuilt.
+> Rebuilt: 24 x 645 x 48 = 743,040 cycles = 2.48 ms at 300 MHz. Both the
+> count and the arithmetic were wrong, in the same direction, and either alone
+> would have been recoverable from the text. Together they were not.
+
+Serialized worst case is **~7.5-8.5 ms/token** (was ~6-7, before the +1.55 ms
+correction above); with the §3 schedule overlapping norms and nonlinearities
+under the next head's sweep, the target is **~3.5-4.5 ms/token**. §3 must
+produce the real budget before the recon throughput figures are re-derived;
+with A at 35-53 ms (423 MB) and C at ~4-4.4 ms, B's plausible range puts
+`v3.0` at **~16-23 tok/s**, i.e. the low half of the recon's 19-28 band.
+
+The overlapped target and the throughput band are deliberately NOT moved.
+The correction lands entirely on a term the §3 schedule is meant to hide
+under the sweep, and whether it still hides is exactly what §3 has to answer
+with a real budget; scaling the target here would be inventing the answer.
+What the correction does change is the margin: the term §3 must absorb is now
+2.48 ms against a 2.95-3.14 ms sweep it hides under, i.e. it no longer fits
+with room to spare and the overlap has to be near-perfect rather than
+merely good. That is a §3 obligation, recorded, not discharged.
 
 ### 2.6 On-chip state
 

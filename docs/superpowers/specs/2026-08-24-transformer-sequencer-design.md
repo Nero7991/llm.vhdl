@@ -226,7 +226,33 @@ all of the layer-level norm weights (`attn_norm`, pre-FFN norm, final norm --
 129 vectors x 5120 x int16 = 1.29 MB, §6.4) but none of C's. Asymmetric but
 workable; recorded so nobody assumes symmetry.
 
-**I. "attn_post_norm" placement is assumed, not verified.** B §1.3 names
+**I. "attn_post_norm" placement is assumed, not verified.**
+**RESOLVED 2026-08-25 against the shipped 27B GGUF and `qwen35.cpp`.
+D's reading is correct and no step is added.** Every layer carries exactly two
+[5120] norms, `attn_norm` and `post_attention_norm`, in all 64 layers -- the
+standard pre-norm block D assumed. The two additional norms in the file are
+both owned INSIDE a sub-unit and correctly absent from D's microprograms:
+
+| tensor | shape | layers | owner |
+|---|---|---|---|
+| `attn_norm` | [5120] | all 64 | D-vec, step 1 |
+| `post_attention_norm` | [5120] | all 64 | D-vec, the pre-FFN norm (GDN step 12 / attn step 9) |
+| `ssm_norm` | [128] | 48 GDN | **B**, its §1.1(g) gated output norm, inside B's job |
+| `attn_q_norm`, `attn_k_norm` | [256] | 16 attn | **C**, its QK-norm, priced in C §3's aux terms |
+
+Layer type alternates 3 GDN : 1 attention (`full_attention_interval = 4`,
+attention at blk 3, 7, 11, ... 63), which is the 48/16 split §4 already uses.
+
+Verifying it turned up a real defect in B, in the direction the check was
+looking: **B §1.1(g) said the output norm is shared across 16 heads, and it is
+48** (24/card). 16 is `ssm_n_group`, the key/query group count; the value-head
+count is `ssm_dt_rank = 48`. Both norms are 128 wide, so every shape check
+passed and only the count was wrong. B §2.5's invocation count and latency
+term inherited it. Corrected in B; that term went 0.93 -> 2.48 ms/token.
+
+Original finding below.
+
+B §1.3 names
 `attn_norm / attn_post_norm` as D-owned. This document reads
 `attn_post_norm` as the **pre-FFN norm** of a standard pre-norm block
 (x -> norm -> mixer -> +x -> norm -> FFN -> +x), consistent with B §1.1
