@@ -35,6 +35,8 @@ architecture sim of tb_hbm_tg is
   signal m_arvalid, m_arready, m_rvalid, m_rready, m_rlast
        : std_logic_vector(NPORT-1 downto 0) := (others=>'0');
   signal m_araddr  : std_logic_vector(NPORT*ADDR_W-1 downto 0);
+  signal t0, t1    : std_logic_vector(6 downto 0) := (others=>'0');
+  signal cat0, cat1 : std_logic := '0';
   signal m_arlen   : std_logic_vector(NPORT*8-1 downto 0);
   signal m_arsize  : std_logic_vector(NPORT*3-1 downto 0);
   signal m_arburst : std_logic_vector(NPORT*2-1 downto 0);
@@ -55,6 +57,7 @@ begin
       s_rvalid=>s_rvalid, s_rready=>s_rready, s_rdata=>s_rdata,
       m_arvalid=>m_arvalid, m_arready=>m_arready, m_araddr=>m_araddr,
       m_arlen=>m_arlen, m_arsize=>m_arsize, m_arburst=>m_arburst,
+      hbm_temp0=>t0, hbm_temp1=>t1, hbm_cattrip0=>cat0, hbm_cattrip1=>cat1,
       m_rvalid=>m_rvalid, m_rready=>m_rready, m_rlast=>m_rlast);
 
   -- ---------------------------------------------------------- memory model
@@ -186,6 +189,44 @@ begin
     assert rd = x"48424D31" report "ID register wrong" severity failure;
 
     for n in 1 to NPORT loop run(n); end loop;
+
+    -- ---- THERMAL: a trip must actually stop a run, not merely be reported.
+    -- Checked by starting a run long enough that it CANNOT finish on its own,
+    -- pulling CATTRIP, and requiring the busy flag to clear anyway.  Without
+    -- the fabric watchdog this hangs, which is the failure mode on hardware.
+    wr(0, 2); wr(4, 2**NPORT - 1); wr(8, ARLEN); wr(12, 1000000); wr(16, 16);
+    wr(0, 1);
+    for t in 0 to 200 loop rdreg(8, rd); end loop;
+    assert rd(0) = '1' report "run ended early, the trip test proves nothing"
+      severity failure;
+    cat0 <= '1';
+    for t in 0 to 200 loop
+      rdreg(8, rd);
+      exit when rd(0) = '0';
+    end loop;
+    assert rd(0) = '0'
+      report "CATTRIP DID NOT STOP THE RUN: the thermal watchdog is inert"
+      severity failure;
+    rdreg(20, rd);
+    assert rd(1) = '1' and rd(2) = '1'
+      report "trip happened but the reason was not reported" severity failure;
+    report "CATTRIP halts the run in fabric and reports the reason"
+      severity note;
+    cat0 <= '0';
+
+    -- the soft ceiling, on the raw code, only when programmed
+    wr(0, 2); wr(20, 40); wr(4, 1); wr(12, 1000000); wr(0, 1);
+    t0 <= std_logic_vector(to_unsigned(41, 7));
+    for t in 0 to 200 loop
+      rdreg(8, rd);
+      exit when rd(0) = '0';
+    end loop;
+    assert rd(0) = '0'
+      report "TEMP LIMIT DID NOT STOP THE RUN" severity failure;
+    rdreg(20, rd);
+    assert rd(3) = '1' report "limit trip not reported" severity failure;
+    report "programmed temperature ceiling halts the run" severity note;
+    t0 <= (others=>'0'); wr(0, 0); wr(0, 2); wr(20, 0);
 
     report "hbm_tg recovers a known bandwidth at every port count" severity note;
     done <= true; wait;

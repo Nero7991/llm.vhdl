@@ -46,13 +46,31 @@ entity hbm_tg is
     NPORT   : positive := 16;   -- generators, one per HBM SAXI port
     AXI_DW  : positive := 256;  -- HBM SAXI data width
     ADDR_W  : positive := 33;   -- 8 GB
-    -- Bytes each generator owns.  256 MB x 16 = 4 GB, inside the 8 GB device
+    -- Bytes each generator owns.  256 MB per generator, inside the 8 GB device
     -- and large enough that no generator can sit resident in one HBM row.
-    REGION_LOG2 : positive := 28
+    REGION_LOG2 : positive := 28;
+    -- HBM channel index that generator 0 drives.  NOT cosmetic: the HBM IP
+    -- FIXES pseudo-channel n at n * 256 MB and refuses any other offset
+    -- ("must be equivalent to the fixed address"), so a generator whose
+    -- addresses do not carry its own channel index simply cannot be mapped.
+    -- SAXI_00 is already taken by jtag_hbm on this board, so generator 0
+    -- drives SAXI_01 and PORT0 is 1.
+    PORT0 : natural := 0
   );
   port(
     clk    : in std_logic;
     rstn   : in std_logic;
+
+    -- THERMAL.  Straight from the HBM IP's own per-stack outputs.  In the
+    -- stock FK33 design these are left UNCONNECTED, which means the stacks'
+    -- catastrophic-temperature signal is asserted into the void: SYSMON's
+    -- 101 C over-temperature trip watches the FPGA DIE, and the die is not
+    -- the HBM stack.  This unit is the first thing on this card to drive HBM
+    -- hard, so it is the first thing that needs to listen.
+    hbm_temp0    : in std_logic_vector(6 downto 0);
+    hbm_temp1    : in std_logic_vector(6 downto 0);
+    hbm_cattrip0 : in std_logic;
+    hbm_cattrip1 : in std_logic;
 
     -- AXI4-Lite control, from jtag_axi.  32-bit, no burst.
     s_awvalid : in  std_logic;
@@ -100,6 +118,13 @@ architecture rtl of hbm_tg is
   signal arlen_r   : unsigned(7 downto 0) := to_unsigned(15, 8);  -- 16 beats
   signal nburst    : unsigned(31 downto 0) := to_unsigned(65536, 32);
   signal outst_max : unsigned(7 downto 0) := to_unsigned(16, 8);
+  -- Soft temperature ceiling on the RAW 7-bit stack code.  DISABLED (0) by
+  -- default and deliberately so: the code-to-Celsius mapping has NOT been
+  -- verified on this card, and a limit on a scale nobody has calibrated is
+  -- worse than no limit -- it either never fires or fires at random.  Read
+  -- the code at a known idle temperature first, against SYSMON and the board
+  -- sensors, then set this.  CATTRIP needs no calibration and is always on.
+  signal temp_limit : unsigned(6 downto 0) := (others => '0');
 
   -- per generator
   type u32a is array(0 to NPORT-1) of unsigned(31 downto 0);
@@ -110,6 +135,15 @@ architecture rtl of hbm_tg is
   signal active  : std_logic_vector(NPORT-1 downto 0) := (others => '0');
   signal cycles  : unsigned(31 downto 0) := (others => '0');
   signal any_act : std_logic;
+
+  -- Thermal abort, registered so it cannot glitch, and STICKY so a trip that
+  -- lasted one cycle is still visible to a host polling over JTAG milliseconds
+  -- later.  A run that trips is not a measurement and must not be reported as
+  -- one, which is why the reason is readable.
+  signal therm_stop : std_logic := '0';
+  signal trip_cat   : std_logic := '0';
+  signal trip_lim   : std_logic := '0';
+  signal tmax0, tmax1 : unsigned(6 downto 0) := (others => '0');
 
   signal awr, wrq, bv, arr, rv : std_logic := '0';
   signal rdata_r : std_logic_vector(31 downto 0) := (others => '0');
@@ -142,7 +176,8 @@ begin
             when 1 => mask      <= s_wdata;
             when 2 => arlen_r   <= unsigned(s_wdata(7 downto 0));
             when 3 => nburst    <= unsigned(s_wdata);
-            when 4 => outst_max <= unsigned(s_wdata(7 downto 0));
+            when 4 => outst_max  <= unsigned(s_wdata(7 downto 0));
+            when 5 => temp_limit <= unsigned(s_wdata(6 downto 0));
             when others => null;
           end case;
           wrq <= '0'; bv <= '1';
@@ -157,6 +192,17 @@ begin
           elsif idx = 1 then rdata_r <= std_logic_vector(cycles);
           elsif idx = 2 then rdata_r <= (31 downto 1 => '0') & any_act;
           elsif idx = 3 then rdata_r <= std_logic_vector(to_unsigned(NPORT, 32));
+          -- THERMAL status.  Live codes, the high-water marks seen during the
+          -- run, and why it stopped.  A host that reads only bandwidth and not
+          -- this register is reading a number that may have been produced by a
+          -- run that aborted a microsecond in.
+          elsif idx = 4 then
+            rdata_r <= (31 downto 21 => '0') & std_logic_vector(tmax1)
+                       & std_logic_vector(tmax0)
+                       & hbm_temp1 & hbm_temp0;
+          elsif idx = 5 then
+            rdata_r <= (31 downto 4 => '0')
+                       & trip_lim & trip_cat & therm_stop & '0';
           elsif idx >= 256 and idx < 256 + NPORT then
             rdata_r <= std_logic_vector(beats(idx - 256));
           elsif idx >= 512 and idx < 512 + NPORT then
@@ -174,6 +220,37 @@ begin
 
   any_act <= '1' when active /= (active'range => '0') else '0';
 
+  -- The thermal watchdog.  In FABRIC, not in the host: a JTAG poll loop is
+  -- milliseconds away and 15 HBM ports at 450 MHz do not wait for it.
+  therm : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rstn = '0' then
+        therm_stop <= '0'; trip_cat <= '0'; trip_lim <= '0';
+        tmax0 <= (others => '0'); tmax1 <= (others => '0');
+      else
+        if clr = '1' then
+          therm_stop <= '0'; trip_cat <= '0'; trip_lim <= '0';
+          tmax0 <= (others => '0'); tmax1 <= (others => '0');
+        end if;
+        -- high-water marks, held across the run
+        if unsigned(hbm_temp0) > tmax0 then tmax0 <= unsigned(hbm_temp0); end if;
+        if unsigned(hbm_temp1) > tmax1 then tmax1 <= unsigned(hbm_temp1); end if;
+        -- CATTRIP is the stacks' own catastrophic signal and needs no
+        -- calibration, so it is always armed.
+        if hbm_cattrip0 = '1' or hbm_cattrip1 = '1' then
+          trip_cat <= '1'; therm_stop <= '1';
+        end if;
+        -- the soft ceiling, only when a nonzero limit has been programmed
+        if temp_limit /= 0 and
+           (unsigned(hbm_temp0) > temp_limit or
+            unsigned(hbm_temp1) > temp_limit) then
+          trip_lim <= '1'; therm_stop <= '1';
+        end if;
+      end if;
+    end if;
+  end process;
+
   ------------------------------------------------------------- generators
   gen : for i in 0 to NPORT-1 generate
     signal aoff : unsigned(REGION_LOG2-1 downto 0) := (others => '0');
@@ -184,7 +261,7 @@ begin
     m_arburst((i+1)*2-1 downto i*2) <= "01";                       -- INCR
     -- Port-local slice: the high bits are the port index, the low bits sweep.
     m_araddr((i+1)*ADDR_W-1 downto i*ADDR_W) <=
-      std_logic_vector(resize(to_unsigned(i, ADDR_W-REGION_LOG2) &
+      std_logic_vector(resize(to_unsigned(i + PORT0, ADDR_W-REGION_LOG2) &
                               aoff, ADDR_W));
     -- Always ready: a generator that back-pressures its own read data would
     -- measure the generator, not the memory.
@@ -215,8 +292,14 @@ begin
             issued(i) <= (others => '0'); retired(i) <= (others => '0');
             outst(i) <= (others => '0'); aoff <= (others => '0');
             arv(i) <= '0'; active(i) <= '0';
+          elsif therm_stop = '1' then
+            -- Thermal stop wins over everything.  Dropping `active` halts AR
+            -- issue immediately; bursts already accepted still drain, which is
+            -- required -- abandoning them would hang the AXI channel.
+            active(i) <= '0';
+            arv(i)    <= '0';
           elsif go = '1' and active(i) = '0' and mask(i) = '1'
-                and retired(i) < nburst then
+                and retired(i) < nburst and therm_stop = '0' then
             -- `retired < nburst` is the ARM CONDITION, not decoration.  The
             -- host holds `go` high for the whole run, so without it a
             -- generator that has just finished sees go=1 and active=0 on the
