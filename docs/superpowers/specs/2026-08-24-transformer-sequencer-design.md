@@ -784,15 +784,25 @@ includes the seams; it is not a promise.
 > congestion line) if C's QK-norm uses `rmsnorm.vhd` as shipped**, which
 > measures 78 DSP at 138.4 MHz.
 >
-> **The D row below is now the weakest term in that sum, and it is probably
-> low.** At `LANES_V = 8` swiglu needs 8 sigmoid evaluations per cycle, and
-> the only sigmoid this project has synthesised costs **8 DSP per lane**, so
-> that term alone is ~64 against a whole-D-vec estimate of 24-40 that must
-> also cover two norms and two residual adds. The "phases are disjoint, so
-> sharing is expected" argument in the table does not reach it: disjoint
-> phases share multipliers, and the norm phase has no sigmoid interpolator to
-> share with. The lever that would close it is the same narrowing that took
-> `rmsnorm` from 78 DSP to 18, and it has not been built or measured.
+> **The D row below survives, at its ceiling, and only if D-vec is built to
+> share.** MEASURED 2026-08-25 (`sim/micro/micro_silu_narrow.vhd`, verified
+> bit-identical to the verbatim-width cone over 5,769 outputs including both
+> saturation corners):
+>
+> | form | DSP | Fmax |
+> |---|---|---|
+> | sigmoid cone, verbatim widths | 8 | 343 MHz |
+> | narrowed, sigmoid only | **1** | 511 MHz |
+> | narrowed **full swiglu lane**, `silu(g) * u` | **3** | 646 MHz |
+>
+> So **swiglu at `LANES_V = 8` is 24 DSP**, and the narrowing is free in both
+> directions: bit-identical output, and *faster*, because the 64x64 multiply
+> was also the critical path. D-vec totals **~40 DSP if the norm and swiglu
+> phases share one per-lane multiply chain, ~56 if they do not** - so §12's
+> "sharing is expected" is a **design obligation on D-vec, not spare margin**,
+> and it is worth ~16 DSP.
+>
+> Whole-die is unchanged at 87.2-88.2% under sharing, ~88.8% without.
 >
 > Full reconciliation, measurements and rejected readings:
 > `docs/debugging/2026-08-25_whole-die-budget-reconciliation.md`.

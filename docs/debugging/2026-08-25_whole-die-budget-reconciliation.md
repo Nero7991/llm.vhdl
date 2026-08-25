@@ -18,10 +18,13 @@ thinner than any single spec says.** The two conditions are:
 1. **C's QK-norm must use a width-narrowed RMSNorm.** With `rmsnorm.vhd` as
    shipped the die is 89.2-90.3%, at or over the 90% congestion line both
    B §2.8 and C §2.8 cite.
-2. **D's 24-40 DSP row is the weakest term in the sum and is probably low.**
-   It is the only row with no measurement behind it, and the one measured
-   number that bears on it (a sigmoid cone at 8 DSP per lane) implies D's
-   swiglu alone could be ~64 DSP at `LANES_V = 8`.
+2. **D's 24-40 DSP row lands at its ceiling, and only conditionally.**
+   **CORRECTED the same day**: the first version of this section read the
+   measured 8-DSP sigmoid cone as implying ~64 DSP for D's swiglu alone. That
+   was right about the verbatim cone and wrong about the conclusion - the
+   narrowed cone is **1 DSP** and a full swiglu lane is **3**, both measured
+   and bit-identical to the wide form. D-vec is ~40 DSP if the norm and
+   swiglu phases share one multiply chain and ~56 if they do not.
 
 **Timing is the bigger finding, and it is not C's problem alone.**
 `rmsnorm.vhd` as shipped runs at **138.4 MHz**. That is not merely short of
@@ -93,12 +96,52 @@ sigmoid interpolator to share with, so the sigmoid is additive to whatever
 the norm costs, not absorbed into it.
 
 The available lever is the same one that saved C: **narrowing**. C's cone
-copies `fixed_pkg.sigmoid_q` verbatim including its 64/128-bit intermediates,
-and the analogous narrowing took `rmsnorm` from 78 DSP to 18, a 4.3x cut. A
-Q15-in/Q15-out silu with 32-bit intermediates is plausibly 1-2 DSP per lane,
-which would put 8 lanes at 8-16 and D's row back inside its estimate. **This
-has not been built or measured, and D's estimate does not cite it.** Until it
-is, treat 24-40 as a target rather than a budget.
+copies `fixed_pkg.sigmoid_q` verbatim including its 64/128-bit intermediates.
+
+> **MEASURED 2026-08-25, later the same day. The lever works, and D's row
+> survives at its upper bound.** `sim/micro/micro_silu_narrow.vhd`, same part
+> and clock, verified **bit-identical** to the verbatim-width cone over 5,769
+> outputs including both saturation corners (`sim/tb_silu_cone.vhd`).
+>
+> | form | DSP | Fmax | vs verbatim |
+> |---|---|---|---|
+> | `micro_sig_cone`, verbatim widths | 8 | 343.4 MHz | - |
+> | narrowed, sigmoid only (`SILU=0`) | **1** | 510.7 MHz | **8x fewer DSP, 1.5x faster** |
+> | narrowed silu, `x * sigmoid(x)` (`SILU=1`) | 2 | 646.0 MHz | |
+> | narrowed **full swiglu lane**, `silu(g) * u` (`SILU=2`) | **3** | 646.0 MHz | |
+>
+> **The saving is not a tradeoff.** It is not an accuracy change (bit-identical
+> by test, not by argument) and it is not a timing cost (the narrow form is
+> *faster*, because the 64x64 multiply was also the critical path). The one
+> thing that moves is 1 BRAM per lane, which SIG_ROM now infers instead of
+> spending LUTs on; BRAM is not the constrained resource here.
+>
+> Why the bound is exact rather than a guess: over the shipped 513-entry
+> SIG_ROM the table deltas are **monotone positive, min 8, max 16,771,757 <
+> 2^24**, and `frac` is in `[0, 2^Q)` = `[0, 4096)` at Q=12. So the true
+> product needs **2^36**, and a 25x13 multiply holds it exactly in **one
+> DSP48E2** (27x18). The verbatim form declares `signed(64) * signed(64) ->
+> signed(128)`, which is why it burns 8. No value is lost at any input.
+>
+> **So D's swiglu at `LANES_V = 8` is 24 DSP, not the ~64 this section
+> feared.** The revised D-vec arithmetic, with the measured terms marked:
+>
+> | term | DSP | basis |
+> |---|---|---|
+> | 8 swiglu lanes x 3 | 24 | MEASURED per lane |
+> | rsqrt, **shared** across lanes (one per vector, not per element) | ~6-9 | DERIVED from the 18-DSP 1-lane narrowed `rmsnorm` skeleton |
+> | 8 norm per-element chains x ~3 | ~24 | DERIVED, same skeleton |
+> | 2 residual adds | 0 | adders, no multiply |
+>
+> Norm and swiglu are **disjoint phases of the same per-lane multiply
+> chain**, so D's sharing argument does hold for those 24 - the part it does
+> not reach is the sigmoid interpolation, and that is now 1 DSP per lane
+> rather than 8. Sharing: `24 + 8 + 8 = ~40`. No sharing: `24 + 24 + 8 = ~56`.
+>
+> **D's 24-40 therefore lands at its ceiling if the sharing is built, and
+> ~40% over it if it is not.** That is a design obligation on D-vec, not a
+> spare margin. Whole-die at the sharing figure is unchanged at 87.2-88.2%;
+> at the no-sharing figure it is ~88.8%.
 
 ## Measured and REJECTED, do not retry
 
@@ -131,9 +174,14 @@ is, treat 24-40 as a target rather than a budget.
 
 ## Open, not yet answered
 
-- **The narrowed silu has not been measured.** It is the single measurement
-  that would convert D's row from an estimate to a budget, and it is cheap:
-  the same skeleton treatment `micro_rmsn_narrow.vhd` gave RMSNorm.
+- **The rsqrt/per-element split inside D-vec is DERIVED, not measured.** The
+  swiglu lane is measured at 3 DSP; the norm half is decomposed from C's
+  1-lane skeleton by an argument about what is shared per vector versus per
+  element. An 8-lane D-vec skeleton would settle it, and is the obvious next
+  measurement now that the silu one is done.
+- **Whether D-vec can actually share one multiply chain between the norm and
+  swiglu phases.** The whole difference between 40 and 56 DSP rests on it, it
+  is asserted in D §12 and nothing has been built.
 - **`rmsnorm` at N=5120** (D's layer-norm size) was launched and had not
   finished when this was written. The N-independence at 128/256 predicts 78
   again with a larger LUT term, but it is a prediction.
