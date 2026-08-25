@@ -21,6 +21,7 @@ end entity;
 architecture sim of tb_hbm_tg is
   constant AXI_DW : positive := 256;
   constant ADDR_W : positive := 33;
+  constant REGION_LOG2 : positive := 28;
   constant BPB    : natural  := AXI_DW/8;
 
   -- A control write is a handful of cycles.  If one has not completed in this
@@ -58,7 +59,7 @@ begin
 
   dut : entity work.hbm_tg
     generic map(NPORT => NPORT, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                REGION_LOG2 => 28)
+                REGION_LOG2 => REGION_LOG2)
     port map(clk=>clk, rstn=>rstn,
       s_awvalid=>s_awvalid, s_awready=>s_awready, s_awaddr=>s_awaddr,
       s_wvalid=>s_wvalid, s_wready=>s_wready, s_wdata=>s_wdata,
@@ -356,6 +357,46 @@ begin
     report "read-response errors are counted, and are zero on a clean run"
       severity note;
     inject_err <= '0';
+
+    -- ---- ADDRESS MAPPING.  The point of the region registers is to let
+    -- several ports target ONE pseudo-channel, which is the only way to load
+    -- HBM past a single port's 9.6 GB/s at 300 MHz.  If the address did not
+    -- actually move, the oversubscription sweep would quietly measure the
+    -- port-per-channel case again and report the same guaranteed 100%.
+    wr(0, 2);
+    wr(24, 16#0001#);              -- base 1, stride 0: every port on chan 1
+    rdreg(16#100# + 24, rd);
+    assert to_integer(unsigned(rd(7 downto 0))) = 1
+       and to_integer(unsigned(rd(15 downto 8))) = 0
+      report "region register readback wrong: base " &
+             integer'image(to_integer(unsigned(rd(7 downto 0)))) & " stride " &
+             integer'image(to_integer(unsigned(rd(15 downto 8))))
+      severity failure;
+    wr(4, 2**NPORT - 1); wr(8, ARLEN); wr(12, 2); wr(16, 16); wr(0, 1);
+    -- catch the addresses as they are issued
+    for t in 0 to 200 loop
+      wait until rising_edge(clk);
+      exit when m_arvalid(0) = '1' and m_arvalid(NPORT-1) = '1';
+    end loop;
+    assert m_araddr(ADDR_W-1 downto REGION_LOG2) =
+           m_araddr(NPORT*ADDR_W-1 downto (NPORT-1)*ADDR_W + REGION_LOG2)
+      report "stride 0 did NOT collapse the ports onto one channel: port 0 " &
+             "region " &
+             integer'image(to_integer(unsigned(
+               m_araddr(ADDR_W-1 downto REGION_LOG2)))) &
+             ", port " & integer'image(NPORT-1) & " region " &
+             integer'image(to_integer(unsigned(
+               m_araddr(NPORT*ADDR_W-1 downto (NPORT-1)*ADDR_W + REGION_LOG2))))
+      severity failure;
+    assert to_integer(unsigned(m_araddr(ADDR_W-1 downto REGION_LOG2))) = 1
+      report "stride 0 collapsed onto the wrong channel" severity failure;
+    for t in 0 to 100000 loop
+      rdreg(8, rd);
+      exit when rd(0) = '0';
+    end loop;
+    wr(0, 0);
+    report "region stride 0 puts every port on one pseudo-channel" severity note;
+    wr(0, 2); wr(24, 16#0101#);    -- restore base 1, stride 1
 
     report "hbm_tg recovers a known bandwidth at every port count" severity note;
     done <= true; wait;

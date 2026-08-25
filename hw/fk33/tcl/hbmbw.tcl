@@ -39,6 +39,7 @@ set S_STALL 2048
 set S_RETIR 3072
 set S_CBACK 256          ;# control-register READBACK window, + the R_* offset
 set S_RERR  4096         ;# non-OKAY read responses, per port, + 4*i
+set R_RGN   24           ;# [7:0] base channel, [15:8] stride
 
 # The AXI clock the generator runs at.  Every GB/s figure below is
 # beats * 32 * FCLK / cycles, so a wrong FCLK scales the whole result by
@@ -244,6 +245,86 @@ foreach n $POINTS {
         break
     }
 }
+
+# ---- OVERSUBSCRIPTION -------------------------------------------------------
+# Everything above maps port i to its OWN pseudo-channel, and at 300 MHz that
+# CANNOT load the memory: a 256-bit port demands 32 B x 300 MHz = 9.6 GB/s
+# while a pseudo-channel supplies 460.8/32 = 14.4 GB/s.  Reaching 100% of the
+# port ceiling there is arithmetic, not a discovery, and it says nothing about
+# what HBM can deliver.
+#
+# Pointing every port at ONE channel (stride 0) oversubscribes it: two ports
+# demand 19.2 GB/s against 14.4, so the channel becomes the limit.  The rate
+# then STOPS scaling with port count and the plateau is the channel's real
+# delivered bandwidth -- the number the 460.8 GB/s premise rests on.
+#
+# 450 MHz is what ONE port needs to match a channel.  This gets to the same
+# place with more ports instead of a faster clock.
+puts ""
+puts "==== OVERSUBSCRIPTION: all ports -> pseudo-channel 1 ===================="
+puts "the per-port ceiling no longer applies; the PLATEAU is the channel's"
+puts "delivered bandwidth.  Theory says 14.4 GB/s; real DRAM efficiency is"
+puts "what this measures."
+puts ""
+puts [format "%6s %10s %12s %12s %10s %8s" \
+      ports beats cycles GB/s "vs 14.4" die_C]
+
+set OV_NBURST 200000
+foreach n {1 2 3 4 8 15} {
+    if {$n > $NPORT} { continue }
+    wr [expr {$TG + $R_CTRL}]  2
+    wr [expr {$TG + $R_RGN}]   0x0001         ;# base 1, stride 0
+    wr [expr {$TG + $R_MASK}]  [expr {(1 << $n) - 1}]
+    wr [expr {$TG + $R_ARLEN}] $ARLEN
+    wr [expr {$TG + $R_NBRST}] $OV_NBURST
+    wr [expr {$TG + $R_OUTST}] $OUTST
+
+    set gr [rd [expr {$TG + $S_CBACK + $R_RGN}]]
+    if {($gr & 0xFFFF) != 0x0001} {
+        puts "REGION REGISTER DID NOT LAND (reads [format 0x%04X [expr {$gr & 0xFFFF}]])"
+        puts "  Without it every port is still on its own channel and this"
+        puts "  sweep would repeat the guaranteed-100% result.  Stopping."
+        break
+    }
+
+    wr [expr {$TG + $R_CTRL}] 1
+    set spins 0
+    while {[rd [expr {$TG + $S_BUSY}]] & 1} {
+        incr spins
+        if {$spins > 40000} { puts "TIMEOUT at $n ports"; break }
+    }
+    wr [expr {$TG + $R_CTRL}] 0
+
+    set cyc [rd [expr {$TG + $S_CYC}]]
+    set tot 0
+    set errs 0
+    for {set i 0} {$i < $n} {incr i} {
+        incr tot  [rd [expr {$TG + $S_BEATS + 4*$i}]]
+        incr errs [rd [expr {$TG + $S_RERR  + 4*$i}]]
+    }
+    if {$errs != 0} {
+        puts "  READ RESPONSE ERRORS: $errs.  Every port now addresses channel 1,"
+        puts "  so this most likely means the extra address segments are missing"
+        puts "  from the build.  Not a bandwidth result.  Stopping."
+        break
+    }
+    set want [expr {$n * $OV_NBURST * ($ARLEN + 1)}]
+    set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
+    set mark ""
+    if {$tot != $want} { set mark "  <-- BEATS WRONG, want $want" }
+    puts [format "%6d %10d %12d %12.2f %9.1f%% %8s%s" \
+          $n $tot $cyc $gbs [expr {100.0*$gbs/14.4}] [die_temp] $mark]
+    if {$tot != $want} { break }
+}
+puts ""
+puts "READING: the rate should rise with port count and then FLATTEN.  The"
+puts "  flat value is one pseudo-channel's delivered bandwidth.  If it keeps"
+puts "  scaling linearly past 2 ports, the ports are NOT landing on the same"
+puts "  channel and the region register or the address map is wrong."
+puts "  Device ceiling = 32 x that plateau, and the port-per-channel sweep"
+puts "  above is what licenses the multiply: 15 channels ran concurrently at"
+puts "  full port rate with no interference, so there is no shared upstream"
+puts "  limit below 144 GB/s."
 
 puts ""
 puts "die temperature after: [die_temp] C   stack codes: [stack_temps]"

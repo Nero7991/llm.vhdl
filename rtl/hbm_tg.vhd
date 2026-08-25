@@ -193,6 +193,31 @@ architecture rtl of hbm_tg is
   -- Requiring the compare to hold makes a one-cycle tear harmless; the
   -- filter costs 0.2 us at 300 MHz against a thermal time constant of
   -- seconds, so it gives up nothing that matters.
+  -- ADDRESS MAPPING.  Port i targets pseudo-channel `rgn_base + i*rgn_stride`.
+  --
+  -- stride = 1 (the default, and the original hardwired behaviour) gives each
+  -- port its OWN channel, which measures aggregate plumbing: it proves N
+  -- channels run concurrently without a shared upstream limit.
+  --
+  -- stride = 0 points EVERY port at one channel, and that is what makes the
+  -- memory's own ceiling measurable at 300 MHz.  A 256-bit port at 300 MHz
+  -- demands 32 B x 300 MHz = 9.6 GB/s while a pseudo-channel supplies
+  -- 460.8/32 = 14.4 GB/s, so a single port can never saturate one and 100% of
+  -- the port's ceiling is arithmetically guaranteed rather than discovered.
+  -- Two ports on one channel demand 19.2 GB/s against that 14.4 and the
+  -- channel becomes the bottleneck; the rate then STOPS scaling with port
+  -- count, and the plateau is the channel's real delivered bandwidth.
+  --
+  -- This is why the upper bound does not require a 450 MHz datapath: 450 MHz
+  -- is what a single port needs to match a channel, and oversubscription
+  -- reaches the same place with more ports instead of a faster clock.
+  -- Defaults reproduce the ORIGINAL hardwired mapping exactly: base = PORT0,
+  -- stride = 1, so port i addresses channel i + PORT0 as before.  A build that
+  -- never writes register 6 behaves identically to the one that measured
+  -- 144.0 GB/s, which keeps that result comparable.
+  signal rgn_base   : unsigned(7 downto 0) := to_unsigned(PORT0, 8);
+  signal rgn_stride : unsigned(7 downto 0) := to_unsigned(1, 8);
+
   constant TEMP_HOLD : natural := 64;
   signal lim_hold : unsigned(7 downto 0) := (others => '0');
 
@@ -257,6 +282,7 @@ begin
         awr <= '1'; wrq <= '1'; bv <= '0'; arr <= '1'; rv <= '0';
         aw_seen <= '0'; w_seen <= '0';
         go <= '0'; mask <= (others => '0');
+        rgn_base <= to_unsigned(PORT0, 8); rgn_stride <= to_unsigned(1, 8);
       else
         -- WRITE.  AW and W are captured INDEPENDENTLY and the decode fires
         -- when both have arrived.
@@ -299,6 +325,8 @@ begin
             when 3 => nburst     <= unsigned(wd);
             when 4 => outst_max  <= unsigned(wd(7 downto 0));
             when 5 => temp_limit <= unsigned(wd(6 downto 0));
+            when 6 => rgn_base   <= unsigned(wd(7 downto 0));
+                      rgn_stride <= unsigned(wd(15 downto 8));
             when others => null;
           end case;
         end if;
@@ -341,6 +369,9 @@ begin
             rdata_r <= (31 downto 8 => '0') & std_logic_vector(outst_max);
           elsif idx = 69 then
             rdata_r <= (31 downto 7 => '0') & std_logic_vector(temp_limit);
+          elsif idx = 70 then
+            rdata_r <= (31 downto 16 => '0') & std_logic_vector(rgn_stride)
+                       & std_logic_vector(rgn_base);
           elsif idx >= 256 and idx < 256 + NPORT then
             rdata_r <= std_logic_vector(beats(idx - 256));
           elsif idx >= 512 and idx < 512 + NPORT then
@@ -432,10 +463,13 @@ begin
     m_arlen  ((i+1)*8-1 downto i*8) <= std_logic_vector(arlen_r);
     m_arsize ((i+1)*3-1 downto i*3) <= std_logic_vector(to_unsigned(ARSIZE_V, 3));
     m_arburst((i+1)*2-1 downto i*2) <= "01";                       -- INCR
-    -- Port-local slice: the high bits are the port index, the low bits sweep.
+    -- High bits select the pseudo-channel, low bits sweep within it.  The
+    -- channel is `rgn_base + i*rgn_stride`, truncated to the region field, so
+    -- stride 0 puts every port on one channel (see the declaration).
     m_araddr((i+1)*ADDR_W-1 downto i*ADDR_W) <=
-      std_logic_vector(resize(to_unsigned(i + PORT0, ADDR_W-REGION_LOG2) &
-                              aoff, ADDR_W));
+      std_logic_vector(resize(
+        resize(rgn_base + to_unsigned(i, 8) * rgn_stride, ADDR_W-REGION_LOG2) &
+        aoff, ADDR_W));
     -- Always ready: a generator that back-pressures its own read data would
     -- measure the generator, not the memory.
     m_rready(i) <= '1';

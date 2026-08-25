@@ -115,21 +115,30 @@ if out == before:
 # below rather than assumed.
 FCLK_MHZ = int(sys.argv[2]) if len(sys.argv) > 2 else 300
 
+# CLKFBOUT_MULT_F is FRACTIONAL in 0.125 steps; the CLKOUT dividers are
+# integer.  Searching integer multipliers only would reject frequencies that
+# are perfectly reachable -- 325 MHz is 200 x 6.5 / 4, VCO 1300 -- and the
+# useful test points for the derate sweep sit exactly in that gap between the
+# integer-multiplier values 300 (6/4) and 350 (7/4).
 _exact = None
-for _m in range(3, 65):
-    for _d in range(1, 129):
-        if abs(200.0 * _m / _d - FCLK_MHZ) < 1e-9 and 600 <= 200 * _m <= 1440:
-            _exact = (_m, _d)
-            break
-    if _exact:
-        break
+_m8 = 24                      # multiplier in eighths, so 3.000 upward
+while _m8 <= 512 and _exact is None:
+    _mult = _m8 / 8.0
+    _vco = 200.0 * _mult
+    if 600.0 <= _vco <= 1440.0:
+        for _d in range(1, 129):
+            if abs(_vco / _d - FCLK_MHZ) < 1e-9:
+                _exact = (_mult, _d, _vco)
+                break
+    _m8 += 1
 if _exact is None:
     sys.exit("FAIL: %d MHz is not exactly synthesisable from a 200 MHz input "
-             "with the VCO in 600-1440 MHz.  Pick one that is, or the "
-             "bandwidth numbers silently inherit the MMCM's rounding error."
-             % FCLK_MHZ)
-print("hbmbw: datapath clock %d MHz (VCO %d MHz = 200 x %d, divide %d)"
-      % (FCLK_MHZ, 200 * _exact[0], _exact[0], _exact[1]))
+             "with CLKFBOUT_MULT_F in 0.125 steps and the VCO in "
+             "600-1440 MHz.  Pick one that is, or the bandwidth numbers "
+             "silently inherit the MMCM's rounding error while every "
+             "self-check still passes." % FCLK_MHZ)
+print("hbmbw: datapath clock %d MHz (VCO %.1f MHz = 200 x %.3f, divide %d)"
+      % (FCLK_MHZ, _exact[2], _exact[0], _exact[1]))
 
 out = out.replace(
     "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {250} ] [get_bd_cells hbm]",
@@ -262,10 +271,26 @@ addr = ["", "# hbmbw: each generator addresses its OWN pseudo-channel, 256 MB at
 # so the map is not ours to choose: channel i+1 goes at (i+1)*256 MB.  That is
 # why hbm_tg carries a PORT0 generic -- generator i must emit addresses that
 # already carry channel index i+1, or it cannot be mapped at all.
+# EVERY generator port is given EVERY pseudo-channel of the stack, not just
+# its own.  With the global switch on (HBMGlobalSwitch = 1) the HBM IP routes
+# by address, and SAXI_00 already carries all 16 segments, so this only
+# declares what the hardware can already do.
+#
+# It is what makes the memory's ceiling measurable.  One port at 300 MHz
+# demands 9.6 GB/s against a channel's 14.4, so a port-per-channel map can
+# never saturate anything and its 100%-of-ceiling result is guaranteed by
+# arithmetic.  Pointing several ports at ONE channel oversubscribes it, and
+# the rate then plateaus at what the channel really delivers.  Without these
+# extra segments those accesses would DECERR instead.
+#
+# The default mapping is unchanged -- hbm_tg still comes out of reset with
+# base = PORT0, stride = 1, i.e. port i on channel i+1 -- so a build that is
+# never told otherwise reproduces the earlier measurement exactly.
 for i in range(NPORT):
-    addr.append("assign_bd_address -offset 0x%08X -range 256M "
-                "[get_bd_addr_segs {hbm/SAXI_%02d/HBM_MEM%02d}]"
-                % ((i + 1) * 0x10000000, i + 1, i + 1))
+    for j in range(16):
+        addr.append("assign_bd_address -offset 0x%08X -range 256M "
+                    "[get_bd_addr_segs {hbm/SAXI_%02d/HBM_MEM%02d}]"
+                    % (j * 0x10000000, i + 1, j))
 # 64K range must be 64K ALIGNED -- Vivado rejects 0x0000B000 outright.  The
 # generator registers therefore live at 0x00010000, clear of the first-light
 # map (SYSMON 0x3000, IIC 0x9000), and the readout script must use that.
