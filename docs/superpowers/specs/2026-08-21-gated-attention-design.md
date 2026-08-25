@@ -1472,7 +1472,7 @@ obligation on D.
 
 | # | To | Request | Why |
 |---|---|---|---|
-| R-C1 | D | Surface C's `rope_sat` and `rescale_max` in a host-visible register, the way O23/SAT_LOG surfaces A's `sat_event` | §3.3/§3.4 events are calibration-level and host-owned; D owns the register map (D §9.3) |
+| R-C1 | D | Surface C's `rope_sat` and `rescale_max` in a host-visible register, the way O23/SAT_LOG surfaces A's `sat_event` | §3.3/§3.4 events are calibration-level and host-owned; D owns the register map (D §9.3). **DISCHARGED 2026-08-25:** D O27, QUAL_LOG at 0x30 and RESCALE_MAX at 0x34, with the not-an-error rows in D §10 |
 | R-C2 | D | D §11's "A jobs + C" row used C's sweep-only figure; C's full cost is +~1.1 ms at 300 MHz (§3.7) | keep the only whole-token table honest |
 
 Nothing else: `k_base`/`v_base`, `cur_pos`/`ctx_len`, exponent capture and

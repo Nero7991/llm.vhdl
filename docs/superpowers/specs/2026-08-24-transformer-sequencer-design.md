@@ -111,6 +111,7 @@ section of this document that satisfies it.
 | O24 | The whole-model schedule per layer: "per layer: A x6 -> B -> A, or A x3 -> C -> A x3, then FFN" | B §2.7 | §4.2-4.3, but see contradiction §2.2-A |
 | O25 | D's region read ports must present `act_mem_striped` semantics to A (BLOCK-wide data, block address, 1-cycle registered read) and the same BLOCK*16 shape to B and C | A §7.8, B §1.5, C §1.4 | §5.2 |
 | O26 | Transport per-card `y_exp` alongside partials for the E reduction (the corrected A §14.2 contract) | A §14.2 (as corrected 2026-08-22) | §6.2, blocked -- see §2.2-C |
+| O27 | Surface C's sticky `rope_sat` and its per-job `rescale_max` to the host, on the O23/SAT_LOG pattern | C §3.3, §3.4, §3.9 (C's R-C1) | §9.3, §10 |
 
 ### 2.2 Contradictions and ambiguities found during extraction
 
@@ -737,6 +738,8 @@ budget.
 | 0x1C-0x24 | ARGMAX | token index, value, `y_exp` (RO, valid with `token_done`) |
 | 0x28 | SAT_LOG | sticky OR of A `sat_event` + first flagged step index (O23) |
 | 0x2C | WDOG | per-job watchdog bound, cycles |
+| 0x30 | QUAL_LOG | sticky OR of C `rope_sat` + first flagged step index (O27) |
+| 0x34 | RESCALE_MAX | max of C's per-job `rescale_max` over the token, and the step index that produced it (O27) |
 | apertures | X write window; URAM load window (boot only) | |
 
 `abort`: D stops issuing steps, waits for the in-flight unit's `done` or the
@@ -766,6 +769,8 @@ is not discovered on hardware).
 | grant switch blocked (outstanding never reaches 0) | §8.2 counters | abort token, ERR_GRANT |
 | `go` with `cur_pos >= ctx_len` | D | refuse at `go`, ERR_CTX |
 | A `sat_event` at `done` | D | **not an error**: log to SAT_LOG, continue (A §14.2 -- policy on saturation is calibration-level, host-owned) |
+| C `rope_sat` at `done` | D | **not an error**: log to QUAL_LOG, continue (O27; C §3.4 -- same precedent; the clip does not corrupt the §2.1.2 exponent chain and the C reference clips identically, so bit-exactness is unaffected) |
+| C `rescale_max` at `done` | D | **not an event at all**: a counter, always valid. Max-reduce into RESCALE_MAX every job (O27; C §3.3) |
 
 Every descriptor-class check runs at step issue, before the unit starts --
 the same "check at `start`, abort before output" discipline as A §7.6.
