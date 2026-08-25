@@ -223,3 +223,34 @@ soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record
 # puts "them against the die temperature here to calibrate the mapping."
 them against the die temperature here to calibrate the mapping.
 INFO: [Common 17-206] Exiting Vivado at Tue Aug 25 15:57:20 2026...
+
+================================================================================
+CORRECTION appended 2026-08-25.  READ THIS BEFORE QUOTING THE 144.0 GB/s.
+
+1. This run's instrument did NOT check read responses.  hbm_tg had no rresp
+   port and the IP wrapper declared rresp on all 15 masters while connecting
+   none.  SLVERR/DECERR beats were counted as memory traffic, and because the
+   interconnect answers an error FASTER than HBM answers data, a bad address
+   map would have produced a HIGHER number here, not a failure.  Fixed in
+   c98c7cc; this log predates the fix.
+
+   The only independent corroboration that the traffic was real is physical:
+   the stack temperature codes rose 29 -> 32 under the 15-port load and
+   returned to 29 at idle, and an interconnect refusing requests does not heat
+   HBM.  Likely correct, not verified.
+
+2. 100.0% of ceiling at 300 MHz was arithmetically guaranteed, not measured.
+   A 256-bit port at 300 MHz demands 9.6 GB/s; a pseudo-channel supplies
+   14.4 GB/s (460.8 / 32).  The port asks for two thirds of what the channel
+   can give, so a stall was impossible and no other result could have come
+   out.  450 MHz is in the 460.8 GB/s premise precisely because that is where
+   32 B/beat matches 14.4 GB/s.
+
+   So: 144.0 GB/s is a LOWER BOUND established at a clock too slow to load the
+   memory.  HBM's actual ceiling is not measured and is not measurable at
+   300 MHz at any port count.
+
+3. Conditions were the friendliest possible case: read-only, linear
+   sequential addressing, 15 of 32 ports, stack 0 only.  C's 2R+1W concurrent
+   pattern and B's four-master pattern are NOT covered, and both specs carry
+   that as an open obligation.
