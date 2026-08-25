@@ -23,6 +23,12 @@ architecture sim of tb_hbm_tg is
   constant ADDR_W : positive := 33;
   constant BPB    : natural  := AXI_DW/8;
 
+  -- A control write is a handful of cycles.  If one has not completed in this
+  -- many, it never will: the slave has dropped a beat and the master would
+  -- otherwise wait forever, which reads as a hung simulation rather than a
+  -- protocol bug.  Fail loudly instead.
+  constant WR_WATCHDOG : natural := 64;
+
   signal clk  : std_logic := '0';
   signal rstn : std_logic := '0';
   signal done : boolean := false;
@@ -97,16 +103,49 @@ begin
   drv : process
     variable rd : std_logic_vector(31 downto 0);
 
+    -- A REAL AXI master: it drops VALID on the cycle after READY was high,
+    -- because READY is a promise that the beat was taken.  It does NOT
+    -- re-offer the beat.
+    --
+    -- The first version of this procedure held WVALID until it saw WREADY on a
+    -- LATER edge, which quietly re-offered the data and so worked against a
+    -- slave that had dropped the first beat.  That masked a real protocol bug
+    -- all the way to hardware, where smartconnect presents AW and W together,
+    -- and every control write was silently lost while reads worked perfectly.
+    -- A testbench that is more forgiving than the bus it stands in for is
+    -- worse than none, because it converts a protocol error into a mystery.
     procedure wr(a : natural; d : natural) is
+      variable aw_done, w_done : boolean := false;
+      variable wd_cnt          : natural := 0;
     begin
       s_awaddr <= std_logic_vector(to_unsigned(a, 16));
       s_wdata  <= std_logic_vector(to_unsigned(d, 32));
       s_awvalid <= '1'; s_wvalid <= '1'; s_bready <= '1';
-      loop wait until rising_edge(clk); exit when s_awready = '1'; end loop;
-      s_awvalid <= '0';
-      loop wait until rising_edge(clk); exit when s_wready = '1'; end loop;
-      s_wvalid <= '0';
-      loop wait until rising_edge(clk); exit when s_bvalid = '1'; end loop;
+      aw_done := false; w_done := false; wd_cnt := 0;
+      while not (aw_done and w_done) loop
+        wait until rising_edge(clk);
+        if s_awready = '1' and not aw_done then
+          aw_done := true; s_awvalid <= '0';
+        end if;
+        if s_wready = '1' and not w_done then
+          w_done := true; s_wvalid <= '0';
+        end if;
+        wd_cnt := wd_cnt + 1;
+        assert wd_cnt < WR_WATCHDOG
+          report "AXI-Lite write to 0x" & to_hstring(to_unsigned(a, 16)) &
+                 " never handshook: awready and wready did not both go high"
+          severity failure;
+      end loop;
+      wd_cnt := 0;
+      loop
+        wait until rising_edge(clk);
+        exit when s_bvalid = '1';
+        wd_cnt := wd_cnt + 1;
+        assert wd_cnt < WR_WATCHDOG
+          report "AXI-Lite write to 0x" & to_hstring(to_unsigned(a, 16)) &
+                 " handshook but produced no BVALID: the slave lost a beat"
+          severity failure;
+      end loop;
       s_bready <= '0';
       wait until rising_edge(clk);
     end procedure;

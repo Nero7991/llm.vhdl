@@ -148,6 +148,8 @@ architecture rtl of hbm_tg is
   signal awr, wrq, bv, arr, rv : std_logic := '0';
   signal rdata_r : std_logic_vector(31 downto 0) := (others => '0');
   signal wa : unsigned(15 downto 0) := (others => '0');
+  signal wd : std_logic_vector(31 downto 0) := (others => '0');
+  signal aw_seen, w_seen : std_logic := '0';
 begin
   ----------------------------------------------------------------- AXI-Lite
   -- Deliberately the simplest legal slave: one transaction at a time, no
@@ -164,26 +166,52 @@ begin
       clr <= '0';
       if rstn = '0' then
         awr <= '1'; wrq <= '1'; bv <= '0'; arr <= '1'; rv <= '0';
+        aw_seen <= '0'; w_seen <= '0';
         go <= '0'; mask <= (others => '0');
       else
-        -- write
+        -- WRITE.  AW and W are captured INDEPENDENTLY and the decode fires
+        -- when both have arrived.
+        --
+        -- The first version made the W decode conditional on the address
+        -- having already been captured, while holding WREADY high from reset.
+        -- A master that presents AW and W in the SAME cycle -- which
+        -- smartconnect does -- therefore saw WREADY high, considered the data
+        -- beat transferred, and dropped WVALID; the slave meanwhile skipped it
+        -- because the address had not been latched yet.  Every write was
+        -- silently lost.  Reads worked perfectly throughout, which made it
+        -- look like an address-map or a generator problem rather than a
+        -- protocol one.  MEASURED on hardware 2026-08-25: the sweep moved
+        -- zero beats and no control register ever changed.
+        --
+        -- A ready signal is a PROMISE that the beat is being taken this cycle.
+        -- It must not be asserted by a slave that is not yet able to keep it.
         if s_awvalid = '1' and awr = '1' then
-          wa <= unsigned(s_awaddr); awr <= '0';
+          wa <= unsigned(s_awaddr);
+          aw_seen <= '1';
+          awr <= '0';
         end if;
-        if s_wvalid = '1' and wrq = '1' and awr = '0' then
-          case to_integer(wa(7 downto 2)) is
-            when 0 => go  <= s_wdata(0); clr <= s_wdata(1);
-            when 1 => mask      <= s_wdata;
-            when 2 => arlen_r   <= unsigned(s_wdata(7 downto 0));
-            when 3 => nburst    <= unsigned(s_wdata);
-            when 4 => outst_max  <= unsigned(s_wdata(7 downto 0));
-            when 5 => temp_limit <= unsigned(s_wdata(6 downto 0));
-            when others => null;
-          end case;
-          wrq <= '0'; bv <= '1';
+        if s_wvalid = '1' and wrq = '1' then
+          wd <= s_wdata;
+          w_seen <= '1';
+          wrq <= '0';
+        end if;
+        if (aw_seen = '1' or (s_awvalid = '1' and awr = '1')) and
+           (w_seen  = '1' or (s_wvalid  = '1' and wrq = '1')) and bv = '0' then
+          bv <= '1';
         end if;
         if bv = '1' and s_bready = '1' then
           bv <= '0'; awr <= '1'; wrq <= '1';
+          aw_seen <= '0'; w_seen <= '0';
+          -- decode from the CAPTURED address and data, once, at completion
+          case to_integer(wa(7 downto 2)) is
+            when 0 => go  <= wd(0); clr <= wd(1);
+            when 1 => mask       <= wd;
+            when 2 => arlen_r    <= unsigned(wd(7 downto 0));
+            when 3 => nburst     <= unsigned(wd);
+            when 4 => outst_max  <= unsigned(wd(7 downto 0));
+            when 5 => temp_limit <= unsigned(wd(6 downto 0));
+            when others => null;
+          end case;
         end if;
         -- read
         if s_arvalid = '1' and arr = '1' then
