@@ -568,6 +568,14 @@ with no shift of the state term at all. There is no `SE_INIT`.
 > lesson) was right; pinning it to a value that participates in an arithmetic
 > minimum was not.
 >
+> **This spec already states the rule correctly one section earlier.** §2.1.3's
+> conv excludes invalid taps "from both the products **and the `e_ref`
+> minimum**" -- the identical situation, masked by the identical `tk` counter,
+> handled the identical way. So this is not a new rule being introduced; it is
+> §2.1.3's rule that §2.1.4 failed to apply. **Any future masked operand must
+> leave the grid selection as well as the sum**, and the two sites are now the
+> precedent for it.
+>
 > | worst-head relative output error | as written | corrected |
 > |---|---|---|
 > | t = 128, real per-head `exp(g)` | **4.7e-1** | 3.9e-4 |
