@@ -1,0 +1,378 @@
+bitstream: /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/hbm30/fk33_hbmbw/fk33_hbmbw.runs/impl_1/bd_wrapper.bit (10882150 bytes, 2026-08-25 17:43:52)
+cable reset: /dev/bus/usb/001/016
+=== configuring (xsdb) ===
+FPGA_PROG_OK
+  1* xcvu33p
+     2  Legacy Debug Hub
+        3  JTAG2AXI
+        4  JTAG2AXI
+=== sweep ===
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source tcl/hbmbw.tcl
+# set TG      0x00010000   ;
+# set R_CTRL  0            ;
+# set R_MASK  4
+# set R_ARLEN 8            ;
+# set R_NBRST 12
+# set R_OUTST 16
+# set R_TLIM  20           ;
+# set S_ID    0
+# set S_CYC   4
+# set S_BUSY  8
+# set S_NPORT 12
+# set S_TEMP  16
+# set S_TRIP  20
+# set S_BEATS 1024         ;
+# set S_STALL 2048
+# set S_RETIR 3072
+# set S_CBACK 256          ;
+# set S_RERR  4096         ;
+# set R_RGN   24           ;
+# set FCLK 300.0e6
+# if {$argc >= 1} { set FCLK [lindex $argv 0] }
+# set MMCM_IN 200.0e6 ;
+# set MMCM_MULT 6.0 ;
+# set MMCM_DIV3 4.0
+# set FCLK_DERIVED [expr {$MMCM_IN * $MMCM_MULT / $MMCM_DIV3}]
+# if {abs($FCLK - $FCLK_DERIVED) > 1.0e3} {
+#     puts ""
+#     puts "FCLK MISMATCH: using [expr {$FCLK/1e6}] MHz, but the clk_wiz settings"
+#     puts "  in build_fk33_hbmbw.tcl derive [expr {$FCLK_DERIVED/1e6}] MHz"
+#     puts "  (200 MHz x $MMCM_MULT / $MMCM_DIV3).  Every GB/s below would be"
+#     puts "  scaled by [format %.4f [expr {$FCLK/$FCLK_DERIVED}]].  Fix one of them."
+#     puts ""
+# }
+# set BYTES_PER_BEAT 32    ;
+# proc rd {addr} {
+#     set t [create_hw_axi_txn -force rdtxn [get_hw_axis hw_axi_1] \
+#              -address [format %08x $addr] -type read -len 1]
+#     run_hw_axi -quiet $t
+#     # -t d4 returns DECIMAL even though the INFO line beside it prints hex.
+#     # This cost an afternoon once; see 2026-08-24_fk33-sysmon-vccint-undervolt.md
+#     set v [lindex [report_hw_axi_txn -t d4 $t] 1]
+#     return [expr {$v & 0xffffffff}]
+# }
+# proc wr {addr val} {
+#     set t [create_hw_axi_txn -force wrtxn [get_hw_axis hw_axi_1] \
+#              -address [format %08x $addr] -type write \
+#              -data [format %08x $val] -len 1]
+#     run_hw_axi -quiet $t
+# }
+# proc stack_temps {} {
+#     global TG S_TEMP
+#     set v [rd [expr {$TG + $S_TEMP}]]
+#     return [list [expr {$v & 0x7f}] [expr {($v >> 7) & 0x7f}] \
+#                  [expr {($v >> 14) & 0x7f}] [expr {($v >> 21) & 0x7f}]]
+# }
+# proc die_temp {} {
+#     set sm [lindex [get_hw_sysmons -quiet] 0]
+#     if {$sm eq ""} { return "n/a" }
+#     refresh_hw_sysmon $sm
+#     return [format %.1f [get_property TEMPERATURE $sm]]
+# }
+# open_hw_manager
+# connect_hw_server -allow_non_jtag
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 09 2023-22:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+# open_hw_target [lindex [get_hw_targets] 0]
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/153300000607A
+# set d [lindex [get_hw_devices] 0]
+# current_hw_device $d
+# refresh_hw_device -quiet $d
+# set id [rd $TG]
+# if {$id != 0x48424D31} {
+#     puts "FATAL: generator ID reads [format 0x%08X $id], expected 0x48424D31."
+#     puts "       Either the device is not configured with the hbmbw bitstream,"
+#     puts "       or hw_axi_1 is not jtag_axil.  An unmapped read on this master"
+#     puts "       returns the smartconnect DECERR magic 0xdec0dee3."
+#     return
+# }
+# set NPORT [rd [expr {$TG + $S_NPORT}]]
+# puts "generator OK, NPORT=$NPORT, AXI clock [format %.2f [expr {$FCLK/1e6}]] MHz"
+generator OK, NPORT=30, AXI clock 300.00 MHz
+# puts "ceiling at NPORT ports = [format %.1f \
+#       [expr {$NPORT * $BYTES_PER_BEAT * $FCLK / 1e9}]] GB/s"
+ceiling at NPORT ports = 288.0 GB/s
+# set t0 [die_temp]
+# puts "die temperature before: $t0 C   stack codes: [stack_temps]"
+die temperature before: 28.7 C   stack codes: 29 29 29 29
+# set POINTS {1 2 4 8 15 30}
+# set ARLEN 15          ;
+# set NBURST 200000     ;
+# set OUTST 16
+# puts ""
+
+# puts [format "%6s %10s %12s %12s %10s %8s %s" \
+#       ports beats cycles GB/s "%ceiling" die_C stacks]
+ ports      beats       cycles         GB/s   %ceiling    die_C stacks
+# set results {}
+# foreach n $POINTS {
+#     if {$n > $NPORT} { continue }
+#     wr [expr {$TG + $R_CTRL}]  2
+#     wr [expr {$TG + $R_MASK}]  [expr {(1 << $n) - 1}]
+#     wr [expr {$TG + $R_ARLEN}] $ARLEN
+#     wr [expr {$TG + $R_NBRST}] $NBURST
+#     wr [expr {$TG + $R_OUTST}] $OUTST
+# 
+#     # Read the control registers back BEFORE starting.  The first hardware run
+#     # of this instrument reported zero beats at every port count and it looked
+#     # like a routing or timing fault; in fact every control write was being
+#     # dropped on the bus and the generator was never told to start.  Reads
+#     # worked throughout, which is exactly why that was hard to see.  Three
+#     # reads here separate "the design was not told" from "the design was told
+#     # and did the wrong thing", which are the two halves of every later
+#     # failure and have completely different fixes.
+#     set gm [rd [expr {$TG + $S_CBACK + $R_MASK}]]
+#     set ga [rd [expr {$TG + $S_CBACK + $R_ARLEN}]]
+#     set gn [rd [expr {$TG + $S_CBACK + $R_NBRST}]]
+#     if {$gm != (1 << $n) - 1 || $ga != $ARLEN || $gn != $NBURST} {
+#         puts ""
+#         puts "CONTROL WRITES DID NOT LAND at $n ports."
+#         puts [format "  mask   wrote %d  reads %d" [expr {(1 << $n) - 1}] $gm]
+#         puts [format "  arlen  wrote %d  reads %d" $ARLEN $ga]
+#         puts [format "  nburst wrote %d  reads %d" $NBURST $gn]
+#         puts "  This is an AXI-Lite WRITE path fault, not a bandwidth result."
+#         puts "  Nothing below this line would be a measurement.  Stopping."
+#         break
+#     }
+# 
+#     wr [expr {$TG + $R_CTRL}]  1
+# 
+#     set spins 0
+#     while {[rd [expr {$TG + $S_BUSY}]] & 1} {
+#         incr spins
+#         if {$spins > 20000} { puts "TIMEOUT at $n ports"; break }
+#     }
+#     wr [expr {$TG + $R_CTRL}] 0
+# 
+#     set cyc [rd [expr {$TG + $S_CYC}]]
+#     set tot 0
+#     set errs 0
+#     for {set i 0} {$i < $n} {incr i} {
+#         incr tot  [rd [expr {$TG + $S_BEATS + 4*$i}]]
+#         incr errs [rd [expr {$TG + $S_RERR  + 4*$i}]]
+#     }
+#     set trip [rd [expr {$TG + $S_TRIP}]]
+#     # SELF-CHECK.  The expected beat count is EXACT: nburst x (arlen+1) per
+#     # port.  This is what makes the instrument trustworthy on hardware rather
+#     # than only in simulation -- if the design is running outside its timing
+#     # envelope, or a port is misrouted, or a burst was dropped, the count will
+#     # not match and the bandwidth figure on that line means nothing.  A
+#     # measurement that cannot detect its own failure is not a measurement.
+#     set want [expr {$n * $NBURST * ($ARLEN + 1)}]
+#     set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
+#     set ceil [expr {$n * $BYTES_PER_BEAT * $FCLK / 1e9}]
+#     set dt   [die_temp]
+#     set mark ""
+#     if {$tot != $want} { set mark "  <-- BEATS WRONG, want $want" }
+#     puts [format "%6d %10d %12d %12.1f %9.1f% %8s %s%s" \
+#           $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps] $mark]
+#     lappend results [list $n $gbs]
+#     # A beat that came back with SLVERR or DECERR is not a byte of memory
+#     # bandwidth, and the interconnect returns those FASTER than HBM does -- so
+#     # an address-decode fault inflates the GB/s figure rather than failing.
+#     # Checked before anything else: if the data never came from memory then no
+#     # other number on this line means anything.
+#     if {$errs != 0} {
+#         puts ""
+#         puts "READ RESPONSE ERRORS at $n ports: $errs non-OKAY beats."
+#         puts "  These are SLVERR/DECERR responses, NOT memory traffic.  The"
+#         puts "  bandwidth figure on this line is measuring how fast the"
+#         puts "  interconnect can refuse a request.  Check the address map"
+#         puts "  against the enabled pseudo-channels before anything else."
+#         break
+#     }
+# 
+#     # Order matters: a thermal trip ABORTS the run, so it also leaves the beat
+#     # count short.  Checking beats first would report a trip as "beats wrong"
+#     # and send the reader off looking for a routing or timing fault that is
+#     # not there.  Always name the cause that explains the other symptom.
+#     if {$trip & 0x6} {
+#         puts ""
+#         puts "THERMAL TRIP at $n ports (trip reg [format 0x%X $trip]):"
+#         puts "  bit1 CATTRIP  bit2 programmed ceiling"
+#         puts "  The number on this line is NOT a measurement -- the run aborted"
+#         puts "  early, which is also why the beat count is short."
+#         puts "  Sweep stopped."
+#         break
+#     }
+# 
+#     if {$tot != $want} {
+#         puts ""
+#         puts "STOPPING: the generator moved $tot beats where $want are exactly"
+#         puts "  required.  The number on that line is NOT a bandwidth"
+#         puts "  measurement.  Most likely causes, in order: the design is"
+#         puts "  running outside its timing envelope (Vivado signs off at"
+#         puts "  0.85 V, this card runs 0.717 V, measured derate -22.9%), a"
+#         puts "  port is mapped to the wrong pseudo-channel, or a burst was"
+#         puts "  dropped.  Check the routed WNS against 0.229 x period before"
+#         puts "  anything else."
+#         break
+#     }
+#     if {$dt ne "n/a" && $t0 ne "n/a" && $dt - $t0 > 25.0} {
+#         puts ""
+#         puts "STOPPING: die temperature rose ${t0} -> ${dt} C during the sweep."
+#         break
+#     }
+# }
+     1    3200000      3200123          9.6     100.0%     29.7 29 29 29 29
+     2    6400000      3200144         19.2     100.0%     28.2 29 29 29 29
+     4   12800000      3200065         38.4     100.0%     28.7 29 29 29 29
+     8   25600000      3200112         76.8     100.0%     29.2 29 29 30 30
+    15   48000000      3200178        144.0     100.0%     27.2 30 30 31 31
+    30   96000000      3200170        288.0     100.0%     28.2 29 29 31 31
+# puts ""
+
+# puts "==== OVERSUBSCRIPTION: all ports -> pseudo-channel 1 ===================="
+==== OVERSUBSCRIPTION: all ports -> pseudo-channel 1 ====================
+# puts "the per-port ceiling no longer applies; the PLATEAU is the channel's"
+the per-port ceiling no longer applies; the PLATEAU is the channel's
+# puts "delivered bandwidth.  Theory says 14.4 GB/s; real DRAM efficiency is"
+delivered bandwidth.  Theory says 14.4 GB/s; real DRAM efficiency is
+# puts "what this measures."
+what this measures.
+# puts ""
+
+# puts [format "%6s %10s %12s %12s %10s %8s" \
+#       ports beats cycles GB/s "vs 14.4" die_C]
+ ports      beats       cycles         GB/s    vs 14.4    die_C
+# set OV_NBURST 200000
+# foreach n {1 2 3 4 8 15 30} {
+#     if {$n > $NPORT} { continue }
+#     wr [expr {$TG + $R_CTRL}]  2
+#     wr [expr {$TG + $R_RGN}]   0x0001         ;# base 1, stride 0
+#     wr [expr {$TG + $R_MASK}]  [expr {(1 << $n) - 1}]
+#     wr [expr {$TG + $R_ARLEN}] $ARLEN
+#     wr [expr {$TG + $R_NBRST}] $OV_NBURST
+#     wr [expr {$TG + $R_OUTST}] $OUTST
+# 
+#     set gr [rd [expr {$TG + $S_CBACK + $R_RGN}]]
+#     if {($gr & 0xFFFF) != 0x0001} {
+#         puts "REGION REGISTER DID NOT LAND (reads [format 0x%04X [expr {$gr & 0xFFFF}]])"
+#         puts "  Without it every port is still on its own channel and this"
+#         puts "  sweep would repeat the guaranteed-100% result.  Stopping."
+#         break
+#     }
+# 
+#     wr [expr {$TG + $R_CTRL}] 1
+#     set spins 0
+#     while {[rd [expr {$TG + $S_BUSY}]] & 1} {
+#         incr spins
+#         if {$spins > 40000} { puts "TIMEOUT at $n ports"; break }
+#     }
+#     wr [expr {$TG + $R_CTRL}] 0
+# 
+#     set cyc [rd [expr {$TG + $S_CYC}]]
+#     set tot 0
+#     set errs 0
+#     for {set i 0} {$i < $n} {incr i} {
+#         incr tot  [rd [expr {$TG + $S_BEATS + 4*$i}]]
+#         incr errs [rd [expr {$TG + $S_RERR  + 4*$i}]]
+#     }
+#     if {$errs != 0} {
+#         puts "  READ RESPONSE ERRORS: $errs.  Every port now addresses channel 1,"
+#         puts "  so this most likely means the extra address segments are missing"
+#         puts "  from the build.  Not a bandwidth result.  Stopping."
+#         break
+#     }
+#     set want [expr {$n * $OV_NBURST * ($ARLEN + 1)}]
+#     set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
+#     set mark ""
+#     if {$tot != $want} { set mark "  <-- BEATS WRONG, want $want" }
+#     puts [format "%6d %10d %12d %12.2f %9.1f% %8s%s" \
+#           $n $tot $cyc $gbs [expr {100.0*$gbs/14.4}] [die_temp] $mark]
+#     if {$tot != $want} { break }
+# }
+     1    3200000      3200065         9.60      66.7%     28.2
+     2    6400000      6400241         9.60      66.7%     28.2
+     3    9600000      9600154         9.60      66.7%     28.2
+     4   12800000     12800063         9.60      66.7%     28.7
+     8   25600000     25600050         9.60      66.7%     29.7
+    15   48000000     48000052         9.60      66.7%     28.7
+    30   96000000     96000061         9.60      66.7%     27.2
+# puts ""
+
+# puts "READING: the rate should rise with port count and then FLATTEN.  The"
+READING: the rate should rise with port count and then FLATTEN.  The
+# puts "  flat value is one pseudo-channel's delivered bandwidth.  If it keeps"
+  flat value is one pseudo-channel's delivered bandwidth.  If it keeps
+# puts "  scaling linearly past 2 ports, the ports are NOT landing on the same"
+  scaling linearly past 2 ports, the ports are NOT landing on the same
+# puts "  channel and the region register or the address map is wrong."
+  channel and the region register or the address map is wrong.
+# puts "  Device ceiling = 32 x that plateau, and the port-per-channel sweep"
+  Device ceiling = 32 x that plateau, and the port-per-channel sweep
+# puts "  above is what licenses the multiply: 15 channels ran concurrently at"
+  above is what licenses the multiply: 15 channels ran concurrently at
+# puts "  full port rate with no interference, so there is no shared upstream"
+  full port rate with no interference, so there is no shared upstream
+# puts "  limit below 144 GB/s."
+  limit below 144 GB/s.
+# puts ""
+
+# puts "die temperature after: [die_temp] C   stack codes: [stack_temps]"
+die temperature after: 27.7 C   stack codes: 29 29 30 30
+# puts ""
+
+# puts "The stack temperature CODES are raw 7-bit values.  Their mapping to"
+The stack temperature CODES are raw 7-bit values.  Their mapping to
+# puts "Celsius has not been verified on this card, which is why the generator's"
+Celsius has not been verified on this card, which is why the generator's
+# puts "soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record"
+soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record
+# puts "them against the die temperature here to calibrate the mapping."
+them against the die temperature here to calibrate the mapping.
+INFO: [Common 17-206] Exiting Vivado at Tue Aug 25 17:44:44 2026...
+
+================================================================================
+30 PORTS, BOTH STACKS, 300 MHz.  2026-08-25.  Build WNS +0.101 ns.
+
+HEADLINE: 288.0 GB/s, 100.0% of the arithmetic ceiling, 96,000,000 beats,
+zero non-OKAY read responses, exact beat counts at every point.
+
+Sweep A scales perfectly linearly to 30 ports and the CYCLE COUNT STAYS AT
+3.2 M throughout.  That is the result worth keeping: 30 pseudo-channels across
+BOTH stacks run fully in parallel with no measurable interference.  Crossing to
+the second stack could plausibly have introduced contention through shared
+infrastructure and it introduced none.
+
+Sweep B (oversubscription, all ports -> one channel) is flat at 9.60 GB/s from
+1 port through 30, unchanged from the 15-port run.  9.60 = 32 B x 300 MHz.
+Confirms again that the per-channel ACCESS PATH is 32 B/cycle regardless of how
+many masters target it, so HBM's DRAM-level rate stays unobservable from the
+fabric.  See docs/debugging/2026-08-25_hbm-upper-bound-is-the-clock.md.
+
+WHAT THIS IS: usable read bandwidth at 30 of 32 SAXI ports.  SAXI_00 and
+SAXI_16 carry jtag_hbm, one per stack, and that is the host's path to the
+card -- so 32 ports is not available to this instrument at any clock, and
+30 x 32 B x f is its true ceiling.
+
+  288.0 GB/s  =  30 ports x 32 B x 300 MHz          MEASURED
+  336.0 GB/s  =  30 ports x 32 B x 350 MHz          if 350 ever closes
+  460.8 GB/s  =  32 ports x 32 B x 450 MHz          the device paper figure
+
+So this is 62.5% of the device's paper number, and the entire remaining gap is
+two ports we cannot have plus a clock we have not closed.  Nothing here
+suggests the memory is the limit.
+
+STILL NOT COVERED: writes.  hbm_tg has no write channel at all, so C's 2R+1W
+and B's four-master patterns remain untested by any of this.
