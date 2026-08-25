@@ -5,7 +5,7 @@ Design spec, 2026-08-20. Milestone `v2.0`. **Revision 5.**
 ## Revision history
 
 **Rev 6 (2026-08-25)** resolves the two §5 defects subsystem D's cross-spec
-review filed, and one that turned up while checking them. (The dated
+review filed (D-1, D-2, D-3), and one that turned up while checking them. (The dated
 corrections in §14.2 and §15.4b from 2026-08-22 and 2026-08-24 were made in
 place and never given a revision entry; they belong to this one.)
 
@@ -13,6 +13,7 @@ place and never given a revision entry; they belong to this one.)
 |---|---|---|
 | D-1 | **§5 declared `y_data` 32 bits** while §14.2 requires partial mode to emit the UNROUNDED **s48** accumulator, and §5's own `out_mode` comment said "int32". A 32-bit port silently truncates exactly what §14.2's second correction exists to preserve. | §5 replaced with the **as-built** entity (`y_data` is `ROWS_IF*64`). The measured result buffer of §7.9a was already 17,408 x 64, so only the paper was wrong. |
 | D-2 | §5 had drifted from the RTL on five further points: one element per cycle vs `ROWS_IF` rows per beat, no `y_mask`, an activation **read** port where the built one is a **write** port, `integer` scalars where the netlist needs vectors, and no region lengths. | Same replacement, with a divergence table recording each and why it changed. |
+| D-3 | §14.1 said the 27B retarget "dissolves the `wqkv` M=6144 finding", which D read as licence to issue `wqkv` as one A job. It dissolves the **abort**, not the **split**: B §1.3's numeric reason (q, k and v need separate `y_exp`) survives, and B §1.4's ports hardcode three. | §14.1 qualified; `wqkv` is normatively three A jobs at 27B. §14.1 also now points at §15.4c for `ROWS_IF`, which §13 and §14 predate. |
 | **N-1** | Found while checking D-1, not filed by anyone: **`matvec_core` asserted the sticky `sat_event` in partial mode**, from a `sat32` whose result that mode discards. E would have seen saturation on healthy partials. The flag was wired through three testbenches and compared in none. | Guarded on `out_mode`; the reference's adversarial vector added to the trace generator and the regression; `sat_event` now compared in the BFP pass and required 0 in the partial pass. §14.2. |
 
 Rev 6 also **withdraws** §14.2's "`sat32` on a partial is silent" hazard
@@ -1302,9 +1303,37 @@ FFN 17.11B = **26.89B**, against the GGUF's 26.896B. Shapes verified.
 | Generic | 0.8B | **27B** | Consequence |
 |---|---|---|---|
 | `MAXCOLS` | 3584 | **17408** | `act_mem_striped` grows 5x, to 34.8 KB striped |
-| `MAXROWS_BFP` | 4096 | **17408** | **dissolves the `wqkv` M=6144 finding** in §7.6 -- it was only a problem against the 4096 bound |
+| `MAXROWS_BFP` | 4096 | **17408** | dissolves the **abort** in the `wqkv` M=6144 finding of §7.6, which was only a problem against the 4096 bound. **It does not dissolve the three-way split**, see below |
 | `ROWS_IF` | 4 (AXU3EG) | **80** (FK33) | 2,560 MACs, 432 GB/s demand against 460 available |
 | `x_rbaddr` width | 7 b | **10 b** | 17408/32 = 544 blocks |
+
+> **CLARIFIED 2026-08-25, from subsystem D's cross-spec review (its §2.2-B).**
+> The `MAXROWS_BFP` row above previously said the retarget "dissolves the
+> `wqkv` M=6144 finding", full stop. D read that as licence to issue `wqkv` as
+> **one** A job and found it is not.
+>
+> The 4096 bound was only ever the *second* reason for splitting `wqkv`.
+> B §1.3's *first* reason is numeric and survives the retarget untouched: q, k
+> and v need **separate `y_exp` values**, because a single BFP normalization
+> across all three shares one `ns` derived from one `amax`, and their scales
+> have no reason to match. B §1.4's interface hardcodes this -- three ports
+> (`qkvq_exp`, `qkvk_exp`, `qkvv_exp`) and three captured slot exponents per
+> conv slot (B §2.1.1). **A one-job `wqkv` is not representable on B's
+> ports.**
+>
+> Normative: `wqkv` is **three A jobs** at 27B, as it was at 0.8B. What the
+> larger `MAXROWS_BFP` buys is that a job of M=6144 no longer *aborts*, which
+> matters for the other large-M tensors, not for this one.
+>
+> The same caution applies to any reading of this table that treats a raised
+> bound as removing a constraint: a bound removes only the failure it caused.
+
+> **SUPERSEDED 2026-08-24 by §15.4c: `ROWS_IF` is ~58, not 80.** The row above
+> and §13's `ROWS_IF=86` port analysis both predate the whole-die allocation.
+> 80 rows was derived from A's bandwidth alone; §15.4c minimises `T_A + T_C`
+> across the die and finds A-maximal is **worse** than balanced because it
+> starves C. Read §15.4c and §15.4a before using any `ROWS_IF` from §13 or
+> §14. `MACS` is 192 (C), which sets the ratio.
 
 ### 14.2 NEW: partial-sum output mode, required by tensor parallelism
 
