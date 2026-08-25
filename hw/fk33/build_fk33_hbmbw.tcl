@@ -558,6 +558,11 @@ set_property target_constrs_file $scriptPath/fk33_example.xdc [current_fileset -
 make_wrapper -files [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd] -top
 add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v
 update_compile_order -fileset sources_1
+set_property top bd_wrapper [current_fileset]
+update_compile_order -fileset sources_1
+if {[get_property top [current_fileset]] ne "bd_wrapper"} {
+    error "TOP is [get_property top [current_fileset]], not bd_wrapper"
+}
 
 set_property strategy Performance_RefinePlacement [get_runs impl_1]
 
