@@ -118,7 +118,14 @@ section of this document that satisfies it.
 These are stated rather than silently resolved. Where D must pick to make
 progress, the pick is labelled and the losing reading is preserved.
 
-**A. B §2.7 and C §2.7 disagree on the attention-layer job count.** B §2.7
+**A. B §2.7 and C §2.7 disagree on the attention-layer job count.**
+**RESOLVED 2026-08-25: B §2.7 corrected in place; R7 discharged.** B's
+attention arm now reads "A x3 -> C -> A, then FFN's A x3", matching C §2.7
+and D §4.3's count of 7 A jobs. The GDN arm was correct as written. Original
+finding below, kept because it is the restated-rule divergence class C's
+process rules ban and the pattern is worth recognising again.
+
+B §2.7
 says "A x3 -> C -> A x3, then FFN". C §2.7 says "A (`wq`,`wk`,`wv`) -> C ->
 A (`wo`) -> A (FFN)". Only ONE A job (`wo`) sits between C and the FFN, so
 B's "A x3" after C is wrong unless it was meant to fold the FFN's three jobs
@@ -858,7 +865,7 @@ computed it; it says "probably fits with margin", and it says it weakly.
 | R4 | C | Same for the `qg/k/v` pre-quantize reads (are they sequential?) | KIN/VIN could share a region if so. |
 | R5 | E | Carry the sender's `y_exp` (and the s48 payload width) in the transport, and confirm `seq` is supplied externally by D per §6.2 | §2.2-C: E's §2.1/§2.6 predate A's corrected partial contract; E cannot be built, and D's E_COLL descriptor cannot be frozen, until E revises. |
 | R6 | A | Confirm an idle `matvec_int4` issues no ARs before `start` (assumed from the §7.7 state machine) | The §8.2 grant rule relies on it; one sentence in A's spec closes it. |
-| R7 | B §2.7 | Correct "A x3 -> C -> A x3" to C §2.7's order | §2.2-A; editorial but it is exactly the restated-rule divergence class C's process rules ban. |
+| R7 | B §2.7 | Correct "A x3 -> C -> A x3" to C §2.7's order | §2.2-A; editorial but it is exactly the restated-rule divergence class C's process rules ban. **DISCHARGED 2026-08-25:** corrected in B §2.7 in place. |
 
 ## 14. Validation and bring-up (outline)
 

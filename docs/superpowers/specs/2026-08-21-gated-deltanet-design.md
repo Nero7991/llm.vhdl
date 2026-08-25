@@ -889,7 +889,14 @@ reasoning):
 ### 2.7 AXI arbitration with subsystems A and C
 
 A, B and C are **never active simultaneously** — subsystem D runs exactly one
-unit at a time (per layer: A x6 → B → A, or A x3 → C → A x3, then FFN). The
+unit at a time (per layer: A x6 → B → A, or A x3 → C → A, then FFN's A x3).
+**CORRECTED 2026-08-25 (D's R7, its §2.2-A):** the attention arm read
+"A x3 → C → A x3", which double-counts. Exactly ONE A job (`wo`) sits between
+C and the FFN; the other three are the FFN's own gate/up/down, which the
+"then FFN" already covers. C §2.7 is the authoritative order for its layer
+type and reads A (`wq`,`wk`,`wv`) → C → A (`wo`) → A (FFN). D §4.3 counts 7 A
+jobs in an attention layer, not 9. The GDN arm was right as written and is
+unchanged. The
 top-level arbiter grants the HP ports to the active unit; B claims 2 read + 2
 write channels (§2.5). No bandwidth splitting, no starvation case.
 
