@@ -121,10 +121,10 @@ count, i.e. one beat per cycle per port sustained with all 15 concurrent.
 
 ## Secondary results
 
-- **HBM is not the limiter below 144 GB/s.** 100.0% of the per-port
-  arithmetic ceiling at every port count, including 15 concurrent. The 32-B
-  x 450 MHz x 32-port = 460.8 GB/s premise remains an arithmetic ceiling, but
-  the per-port term of it is now measured rather than assumed.
+- **HBM is not the limiter below 144 GB/s** -- but read what that does and
+  does not say. See the CORRECTION section at the end: 100% of ceiling at
+  300 MHz was arithmetically guaranteed rather than discovered, and the
+  460.8 GB/s premise remains untested.
 - **The stack temperature codes track something real.** Flat at 29 through
   4 ports, 30 at 8 ports, 32 at 15 ports, returning to 29 at idle, while the
   die sensor stayed at 27.7-28.7 C. The code-to-Celsius mapping is still
@@ -214,3 +214,72 @@ by the card. The bound in section 2 still stands and is still only a bound.
 - **Whether subsystem A's -22.9% is still right for subsystem A.** Nothing
   here challenges it. What is challenged is its use as a whole-die constant.
 - **The stack temperature code to Celsius mapping.**
+
+
+## CORRECTION, 2026-08-25 (same day), on what the 144 GB/s figure means
+
+Two problems with how this document and `9811d8b` presented the bandwidth
+result. Neither changes a measured number; both change what the number is
+evidence FOR. Recorded here rather than by editing the claims above, so the
+overstatement stays visible.
+
+### 1. 100% of ceiling at 300 MHz was guaranteed, not discovered
+
+A 256-bit AXI port at 300 MHz demands `32 B x 300 MHz = 9.6 GB/s`. An HBM2
+pseudo-channel on this device supplies `460.8 / 32 = 14.4 GB/s`. The port
+therefore asks for **two thirds** of what the channel can deliver, so absent
+port-to-port contention a stall is arithmetically impossible. Every sweep
+point reaching exactly 100.0% is what that predicts; it is not evidence that
+HBM has headroom, because the experiment could not have produced any other
+answer.
+
+This is also why 450 MHz is in the premise at all: `32 B x 450 MHz` is
+14.4 GB/s, i.e. 450 MHz is precisely the clock at which a 256-bit port
+matches one pseudo-channel. **Below ~450 MHz the memory is never under
+pressure at any port count**, and adding ports scales the total linearly
+without testing anything new about the memory.
+
+Consequence: the frequency work is not a side quest to the bandwidth
+question, it IS the bandwidth question. And the practical position is worse
+than it looked -- with both CDCs fixed the design still misses 350 MHz by
+0.467 ns, so the instrument cannot currently be clocked anywhere near the
+frequency at which HBM would start to push back.
+
+What the run does establish, stated correctly:
+- 15 ports sustain one beat per cycle each, concurrently: MEASURED.
+- HBM is not the limiter below 144 GB/s: MEASURED, as a lower bound.
+- HBM's actual ceiling: NOT measured, and not measurable at 300 MHz.
+- The 460.8 GB/s premise: untested.
+
+### 2. The instrument counted beats without checking read responses
+
+`hbm_tg` had no `rresp` port at all, and `hbm_tg_ip.vhd` **declared**
+`m..._axi_rresp` on all 15 masters and connected none of them. SLVERR and
+DECERR beats were counted as memory traffic.
+
+The failure direction is what makes this serious: the interconnect returns an
+error response FASTER than HBM returns data, so a mis-decoded address or a
+disabled pseudo-channel would have reported **higher** bandwidth than a
+working design. An instrument whose failure mode is a better-looking number
+cannot be trusted by inspection of its output.
+
+The 144 GB/s run has one piece of independent corroboration, and it is
+physical rather than logical: the stack temperature codes rose 29 -> 32 under
+the 15-port load and returned to 29 at idle. An interconnect refusing
+requests does not heat HBM stacks. That makes it very likely the traffic was
+real -- but "very likely, on thermal grounds" is not the standard this
+instrument was built to meet.
+
+Fixed in `c98c7cc`: per-port non-OKAY counter at 0x1000, checked by the sweep
+before the beat and thermal checks, and the testbench now proves the counter
+fires (zero on a clean run, exactly `nburst*(arlen+1)` under injected
+SLVERR) rather than assuming it is connected. A counter never made to fire is
+indistinguishable from one wired to nothing, which is the state this design
+was in.
+
+**Also checked and cleared while investigating this:** the build's
+`USER_MC_ENABLE_01..07 {FALSE}` / `09..15 {FALSE}` lines, which would have
+left only one memory controller per stack enabled, are inside the
+`if {$HBMGlobalSwitch == 0}` branch and `HBMGlobalSwitch` is **1**. They are
+dead code in this configuration; the controllers are enabled and the global
+address switch is on. Do not re-raise this from grepping the tcl.
