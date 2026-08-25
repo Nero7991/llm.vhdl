@@ -260,6 +260,18 @@ begin
   ------------------------------------------------------------- generators
   gen : for i in 0 to NPORT-1 generate
     signal aoff : unsigned(REGION_LOG2-1 downto 0) := (others => '0');
+    -- EVENT REGISTERS.  The HBM AXI interface cell has a large clock-to-out,
+    -- and at a 2.1 ns period its outputs cannot cross the fabric AND drive a
+    -- counter's control pins in the same cycle: the first build missed by
+    -- 1.868 ns on 4,597 endpoints, which is 15 generators x their counters,
+    -- i.e. ONE structural problem replicated rather than 4,597 distinct ones.
+    --
+    -- So the HANDSHAKE stays combinational, because AXI requires it, and only
+    -- the BOOKKEEPING is delayed by a cycle.  Nothing is lost: every beat is
+    -- still counted, the run is millions of cycles long, and a uniform
+    -- one-cycle offset does not bias a ratio.  `outst` may momentarily exceed
+    -- its cap by one, which is harmless.
+    signal ev_ar, ev_r, ev_rl : std_logic := '0';
   begin
     m_arvalid(i) <= arv(i);
     m_arlen  ((i+1)*8-1 downto i*8) <= std_logic_vector(arlen_r);
@@ -287,6 +299,8 @@ begin
       variable ar_acc, r_end : boolean;
     begin
       if rising_edge(clk) then
+        -- one register stage on everything the HBM drives, see the note above
+        ev_ar <= '0'; ev_r <= '0'; ev_rl <= '0';
         if rstn = '0' then
           arv(i) <= '0'; active(i) <= '0';
           beats(i) <= (others => '0'); arstall(i) <= (others => '0');
@@ -319,17 +333,24 @@ begin
           ar_acc := false;
           r_end  := false;
 
-          -- issue
+          -- ISSUE.  The handshake itself is combinational because AXI
+          -- requires arvalid/arready to be sampled together; only what it
+          -- RECORDS is registered.
           if active(i) = '1' then
             if arv(i) = '0' then
-              if issued(i) < nburst and outst(i) < resize(outst_max, 16) then
+              -- `issued` is now registered and therefore one cycle stale, so
+              -- the gate must add the accept already in flight or the run
+              -- overshoots by exactly the pipeline depth (measured: 1029 beats
+              -- against 1024).  ev_ar is a LOCAL register, not an HBM signal,
+              -- so adding it here does not put the bus back on this path.
+              if issued(i) + (0 => ev_ar) < nburst
+                 and outst(i) < resize(outst_max, 16) then
                 arv(i) <= '1';
               end if;
             else
               if m_arready(i) = '1' then
-                ar_acc    := true;
-                arv(i)    <= '0';
-                issued(i) <= issued(i) + 1;
+                arv(i) <= '0';
+                ev_ar  <= '1';
                 burst_bytes := resize((resize(arlen_r,32) + 1) *
                                       to_unsigned(BYTES_PER_BEAT, 24),
                                       REGION_LOG2);
@@ -341,16 +362,22 @@ begin
             end if;
           end if;
 
-          -- accept
+          -- ACCEPT.  rready is a constant '1', so there is no handshake to
+          -- preserve here and the whole R channel can be registered.
           if m_rvalid(i) = '1' then
-            beats(i) <= beats(i) + 1;
-            if m_rlast(i) = '1' then
-              r_end      := true;
-              retired(i) <= retired(i) + 1;
-              if retired(i) + 1 = nburst then active(i) <= '0'; end if;
-            end if;
+            ev_r <= '1';
+            if m_rlast(i) = '1' then ev_rl <= '1'; end if;
           end if;
 
+          -- the registered bookkeeping, one cycle behind the bus
+          ar_acc := ev_ar = '1';
+          r_end  := ev_rl = '1';
+          if ev_r = '1' then beats(i) <= beats(i) + 1; end if;
+          if ar_acc then issued(i) <= issued(i) + 1; end if;
+          if r_end then
+            retired(i) <= retired(i) + 1;
+            if retired(i) + 1 = nburst then active(i) <= '0'; end if;
+          end if;
           -- the single outstanding-count update, see the note above
           if ar_acc and not r_end then
             outst(i) <= outst(i) + 1;

@@ -21,14 +21,33 @@ FOUR CHANGES, and each one is load-bearing:
     SAXI_16, which caps the design at two ports and ~29 GB/s -- an order of
     magnitude below the premise under test.
 
- 2. The HBM AXI clock goes 100 MHz -> 450 MHz.  First light drives
+ 2. The HBM AXI clock goes 100 MHz -> 300 MHz.  First light drives
     AXI_00/16_ACLK from clk_out1 at 100 MHz, which is right for poking
     registers over JTAG and useless for bandwidth: 16 ports x 32 B x 100 MHz is
     51.2 GB/s, so a "measurement" there would report the clock, not the memory.
-    450 MHz is the frequency the 460 GB/s claim itself assumes, so measuring at
-    anything less would confound "HBM cannot" with "we clocked it slow".
+
+    450 MHz WAS TRIED FIRST and does not close.  MEASURED 2026-08-25: the
+    MMCM delivered 466.67 MHz (period 2.143 ns, not the 450 requested -- the
+    request is not the achievement), and the routed design missed by
+    WNS = -1.868 ns on 4,597 of 68,237 endpoints.  Two separate reasons not
+    to chase it:
+
+      * 4,597 endpoints is 15 generators x their counters, i.e. ONE structural
+        problem replicated.  That part is fixed (hbm_tg registers the HBM
+        outputs before they reach any counter), but
+      * VIVADO SIGNS OFF AT 0.85 V AND THIS CARD RUNS AT 0.717 V, where the
+        measured fabric derate is -22.9%.  To RUN at F on the card, Vivado must
+        close at 1.30 x F.  450 MHz on the card would need 583 MHz in the tool.
+        That is not a timing problem to be optimised; it is out of reach.
+
+    So 300 MHz, and the acceptance criterion is not "WNS >= 0" but
+    **WNS >= 0.229 x period = 0.763 ns**, which is what makes the design
+    runnable at 0.717 V rather than merely signable at 0.85 V.  Ceiling at 15
+    ports is then 144 GB/s.
+
     NOTE the IP's own USER_AXI_INPUT_CLK_FREQ is moved to match; leaving it at
-    first light's 250 while driving 450 is a silent contract violation.
+    first light's 250 while driving something else is a silent contract
+    violation.
 
  3. hbm_tg_ip (rtl/hbm_tg_ip.vhd, generated) is added with its 15 read masters
     on SAXI_01..15, each addressing its OWN 256 MB pseudo-channel.  Port-local
@@ -83,10 +102,10 @@ if out == before:
 # ---- 2. AXI clock 100 -> 450 MHz -------------------------------------------
 out = out.replace(
     "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {250} ] [get_bd_cells hbm]",
-    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {450} ] [get_bd_cells hbm]")
+    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK_FREQ {300} ] [get_bd_cells hbm]")
 out = out.replace(
     "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {250}] [get_bd_cells hbm]",
-    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {450}] [get_bd_cells hbm]")
+    "set_property -dict [list CONFIG.USER_AXI_INPUT_CLK1_FREQ {300}] [get_bd_cells hbm]")
 
 # a third clk_wiz output at 450 MHz for the datapath
 anchor = ("set_property -dict [list CONFIG.CLKOUT2_USED {true} "
@@ -97,7 +116,7 @@ out = out.replace(anchor, anchor + "\n" +
     "# hbmbw: the HBM AXI datapath clock.  450 MHz is the ceiling the 460 GB/s\n"
     "# premise assumes; measuring below it would confound the memory with the clock.\n"
     "set_property -dict [list CONFIG.CLKOUT3_USED {true} "
-    "CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {450.000}] [get_bd_cells clk_wiz_0]")
+    "CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {300.000}] [get_bd_cells clk_wiz_0]")
 
 # pcie2hbm carries jtag_hbm to SAXI_00/16, which are now in the fast domain
 # while jtag_axi stays at 100 MHz.  Without a converter hdl generation fails
@@ -246,7 +265,7 @@ code = [l for l in out.split("\n")
 body = "\n".join(code)
 checks = [
     ("SAXI_01 still disabled", "CONFIG.USER_SAXI_01 {false}" not in body),
-    ("450 MHz clkout absent", "CLKOUT3_REQUESTED_OUT_FREQ {450.000}" in body),
+    ("datapath clkout absent", "CLKOUT3_REQUESTED_OUT_FREQ {300.000}" in body),
     ("AXI clock not repointed", "clk_wiz_0/clk_out3] [get_bd_pins hbm/AXI_00_ACLK" in body),
     ("generator not added", "create_bd_cell -type module -reference hbm_tg_ip tg" in body),
     ("last port not wired", "tg/m14_axi" in body),

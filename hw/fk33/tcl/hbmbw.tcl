@@ -42,7 +42,7 @@ set S_RETIR 3072
 # MMCM cannot always hit the requested frequency, and a bandwidth figure
 # computed with the requested clock rather than the achieved one is wrong by
 # exactly that ratio.  Overridden by -tclargs.
-set FCLK 450.0e6
+set FCLK 300.0e6
 if {$argc >= 1} { set FCLK [lindex $argv 0] }
 
 set BYTES_PER_BEAT 32    ;# 256-bit SAXI
@@ -134,12 +134,33 @@ foreach n $POINTS {
         incr tot [rd [expr {$TG + $S_BEATS + 4*$i}]]
     }
     set trip [rd [expr {$TG + $S_TRIP}]]
+    # SELF-CHECK.  The expected beat count is EXACT: nburst x (arlen+1) per
+    # port.  This is what makes the instrument trustworthy on hardware rather
+    # than only in simulation -- if the design is running outside its timing
+    # envelope, or a port is misrouted, or a burst was dropped, the count will
+    # not match and the bandwidth figure on that line means nothing.  A
+    # measurement that cannot detect its own failure is not a measurement.
+    set want [expr {$n * $NBURST * ($ARLEN + 1)}]
     set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
     set ceil [expr {$n * $BYTES_PER_BEAT * $FCLK / 1e9}]
     set dt   [die_temp]
-    puts [format "%6d %10d %12d %12.1f %9.1f%% %8s %s" \
-          $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps]]
+    set mark ""
+    if {$tot != $want} { set mark "  <-- BEATS WRONG, want $want" }
+    puts [format "%6d %10d %12d %12.1f %9.1f%% %8s %s%s" \
+          $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps] $mark]
     lappend results [list $n $gbs]
+    if {$tot != $want} {
+        puts ""
+        puts "STOPPING: the generator moved $tot beats where $want are exactly"
+        puts "  required.  The number on that line is NOT a bandwidth"
+        puts "  measurement.  Most likely causes, in order: the design is"
+        puts "  running outside its timing envelope (Vivado signs off at"
+        puts "  0.85 V, this card runs 0.717 V, measured derate -22.9%), a"
+        puts "  port is mapped to the wrong pseudo-channel, or a burst was"
+        puts "  dropped.  Check the routed WNS against 0.229 x period before"
+        puts "  anything else."
+        break
+    }
 
     # A run that tripped is not a measurement.  Say so and stop.
     if {$trip & 0x6} {
