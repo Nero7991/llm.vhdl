@@ -37,6 +37,7 @@ set S_TRIP  20
 set S_BEATS 1024         ;# + 4*i
 set S_STALL 2048
 set S_RETIR 3072
+set S_CBACK 256          ;# control-register READBACK window, + the R_* offset
 
 # The AXI clock the generator runs at.  READ FROM THE BUILD, not assumed: the
 # MMCM cannot always hit the requested frequency, and a bandwidth figure
@@ -119,6 +120,29 @@ foreach n $POINTS {
     wr [expr {$TG + $R_ARLEN}] $ARLEN
     wr [expr {$TG + $R_NBRST}] $NBURST
     wr [expr {$TG + $R_OUTST}] $OUTST
+
+    # Read the control registers back BEFORE starting.  The first hardware run
+    # of this instrument reported zero beats at every port count and it looked
+    # like a routing or timing fault; in fact every control write was being
+    # dropped on the bus and the generator was never told to start.  Reads
+    # worked throughout, which is exactly why that was hard to see.  Three
+    # reads here separate "the design was not told" from "the design was told
+    # and did the wrong thing", which are the two halves of every later
+    # failure and have completely different fixes.
+    set gm [rd [expr {$TG + $S_CBACK + $R_MASK}]]
+    set ga [rd [expr {$TG + $S_CBACK + $R_ARLEN}]]
+    set gn [rd [expr {$TG + $S_CBACK + $R_NBRST}]]
+    if {$gm != (1 << $n) - 1 || $ga != $ARLEN || $gn != $NBURST} {
+        puts ""
+        puts "CONTROL WRITES DID NOT LAND at $n ports."
+        puts [format "  mask   wrote %d  reads %d" [expr {(1 << $n) - 1}] $gm]
+        puts [format "  arlen  wrote %d  reads %d" $ARLEN $ga]
+        puts [format "  nburst wrote %d  reads %d" $NBURST $gn]
+        puts "  This is an AXI-Lite WRITE path fault, not a bandwidth result."
+        puts "  Nothing below this line would be a measurement.  Stopping."
+        break
+    }
+
     wr [expr {$TG + $R_CTRL}]  1
 
     set spins 0
@@ -149,6 +173,20 @@ foreach n $POINTS {
     puts [format "%6d %10d %12d %12.1f %9.1f%% %8s %s%s" \
           $n $tot $cyc $gbs [expr {100.0*$gbs/$ceil}] $dt [stack_temps] $mark]
     lappend results [list $n $gbs]
+    # Order matters: a thermal trip ABORTS the run, so it also leaves the beat
+    # count short.  Checking beats first would report a trip as "beats wrong"
+    # and send the reader off looking for a routing or timing fault that is
+    # not there.  Always name the cause that explains the other symptom.
+    if {$trip & 0x6} {
+        puts ""
+        puts "THERMAL TRIP at $n ports (trip reg [format 0x%X $trip]):"
+        puts "  bit1 CATTRIP  bit2 programmed ceiling"
+        puts "  The number on this line is NOT a measurement -- the run aborted"
+        puts "  early, which is also why the beat count is short."
+        puts "  Sweep stopped."
+        break
+    }
+
     if {$tot != $want} {
         puts ""
         puts "STOPPING: the generator moved $tot beats where $want are exactly"
@@ -159,16 +197,6 @@ foreach n $POINTS {
         puts "  port is mapped to the wrong pseudo-channel, or a burst was"
         puts "  dropped.  Check the routed WNS against 0.229 x period before"
         puts "  anything else."
-        break
-    }
-
-    # A run that tripped is not a measurement.  Say so and stop.
-    if {$trip & 0x6} {
-        puts ""
-        puts "THERMAL TRIP at $n ports (trip reg [format 0x%X $trip]):"
-        puts "  bit1 CATTRIP  bit2 programmed ceiling"
-        puts "  The number on this line is NOT a measurement -- the run aborted."
-        puts "  Sweep stopped."
         break
     }
     if {$dt ne "n/a" && $t0 ne "n/a" && $dt - $t0 > 25.0} {

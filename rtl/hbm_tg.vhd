@@ -237,6 +237,21 @@ begin
           elsif idx = 5 then
             rdata_r <= (31 downto 4 => '0')
                        & trip_lim & trip_cat & therm_stop & '0';
+          -- CONTROL READBACK, at 0x100.  The control registers were
+          -- write-only, so when every write was being silently dropped on the
+          -- bus there was no way to ask the design what it thought it had been
+          -- told, and the fault had to be cornered indirectly.  A register you
+          -- cannot read back is a register you cannot debug.
+          elsif idx = 64 then
+            rdata_r <= (31 downto 2 => '0') & clr & go;
+          elsif idx = 65 then rdata_r <= mask;
+          elsif idx = 66 then
+            rdata_r <= (31 downto 8 => '0') & std_logic_vector(arlen_r);
+          elsif idx = 67 then rdata_r <= std_logic_vector(nburst);
+          elsif idx = 68 then
+            rdata_r <= (31 downto 8 => '0') & std_logic_vector(outst_max);
+          elsif idx = 69 then
+            rdata_r <= (31 downto 7 => '0') & std_logic_vector(temp_limit);
           elsif idx >= 256 and idx < 256 + NPORT then
             rdata_r <= std_logic_vector(beats(idx - 256));
           elsif idx >= 512 and idx < 512 + NPORT then

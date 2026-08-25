@@ -170,6 +170,28 @@ begin
       wr(0, 2);                                     -- clear
       wr(4, 2**nactive - 1);                        -- mask
       wr(8, ARLEN); wr(12, NBURST); wr(16, 16);
+
+      -- Read the control registers straight back before starting.  This is
+      -- the check the hardware run did not have: it proves the write path
+      -- actually landed, independently of whether the traffic that follows
+      -- looks right.  A dropped write and a misrouted port produce the same
+      -- symptom downstream, and this separates them in one read.
+      rdreg(16#100# + 4, v);
+      assert to_integer(unsigned(v)) = 2**nactive - 1
+        report "control readback: mask wrote " &
+               integer'image(2**nactive - 1) & ", reads " &
+               integer'image(to_integer(unsigned(v))) severity failure;
+      rdreg(16#100# + 8, v);
+      assert to_integer(unsigned(v)) = ARLEN
+        report "control readback: arlen wrote " & integer'image(ARLEN) &
+               ", reads " & integer'image(to_integer(unsigned(v)))
+        severity failure;
+      rdreg(16#100# + 12, v);
+      assert to_integer(unsigned(v)) = NBURST
+        report "control readback: nburst wrote " & integer'image(NBURST) &
+               ", reads " & integer'image(to_integer(unsigned(v)))
+        severity failure;
+
       wr(0, 1);                                     -- go
       for t in 0 to 100000 loop
         rdreg(8, v);
