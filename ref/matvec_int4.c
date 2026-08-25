@@ -363,6 +363,52 @@ static void check(const char *name, int ok)
     if (!ok) fails++;
 }
 
+/* ------------------------- 15.4b helpers: the differing-x_exp machinery ---- */
+
+/* bfp_pack semantics (7.4 site 4) applied to raw s32-grid values: what the
+ * PRODUCING op does to x before a row-parallel matvec consumes it.  Values sit
+ * on grid 2^-exp0; returns the packed exponent exp0 - ns.  In production each
+ * card runs this over ITS OWN slice (bfp_pack.vhd scans only local rows), so
+ * ns -- and therefore x_exp -- is per-card and data-dependent.  That is the
+ * mechanism 15.4b is about. */
+static int bfp_pack_vec(const int64_t *u, int n, int exp0, int16_t *mant)
+{
+    uint64_t amax = 0;
+    for (int i = 0; i < n; i++) { uint64_t a = abs64(u[i]); if (a > amax) amax = a; }
+    int ns = msb_pos_u(amax) - 14;
+    if (ns < 0) ns = 0;
+    for (int i = 0; i < n; i++) mant[i] = sat16(round_shift(u[i], ns));
+    return exp0 - ns;
+}
+
+/* 128-bit floor shift and round-half-toward-+infinity.  Needed ONLY by the
+ * option-2 (max-align) emulation: an s48 partial left-shifted by the worst-case
+ * exponent spread of 17 needs 48+17+clog2(N) bits, which does not fit int64.
+ * That the C model needs __int128 here is itself a datum: the RTL analog is a
+ * >64-bit adder and a >64-bit row buffer. */
+static __int128 floor_shr128(__int128 v, int sh)
+{
+    if (sh <= 0) return v;
+    __int128 d = (__int128)1 << sh;
+    __int128 q = v / d;
+    if (v % d != 0 && v < 0) q -= 1;
+    return q;
+}
+static __int128 round_shift128(__int128 v, int sh)
+{
+    if (sh == 0) return v;
+    return floor_shr128(v + ((__int128)1 << (sh - 1)), sh);
+}
+
+/* 2^e as a double without libm (the build line links no -lm). */
+static double pow2i(int e)
+{
+    double r = 1.0;
+    while (e > 0) { r *= 2.0;  e--; }
+    while (e < 0) { r *= 0.5;  e++; }
+    return r;
+}
+
 /* Cross-check mode: parse a packer-produced .mv4i, run a deterministic
  * activation vector through it, and print a checksum.  tools/pack_int4.py
  * --crosscheck computes the same number independently, so agreement proves the
@@ -627,9 +673,12 @@ int main(int argc, char **argv)
         assert(mv4i_matvec(&f0, x, 4, M, K, MV4I_MODE_RAW, &full) == 0);
 
         /* two half-K shards.  Each is a SEPARATE job with its own x slice, so
-         * in the real system each would carry a different x_exp -- which is
-         * exactly the defect the E review found.  Here both slices share x_exp,
-         * so the partials happen to be on one grid and sum exactly.          */
+         * in the real system each would carry a different x_exp.  Here both
+         * slices share x_exp, so the partials happen to be on one grid and sum
+         * exactly -- THE SPECIAL CASE, kept because it is the one that is
+         * bit-exact and so catches round-before-reduce regressions.  The
+         * production case (per-slice packs, differing x_exp, min-align floor
+         * reduction per the resolved 15.4b) is the 15.4b tests below.        */
         uint8_t  *ia = malloc((size_t)M * HK), *ib = malloc((size_t)M * HK);
         uint16_t *sa = malloc(sizeof(uint16_t) * M * (NB / 2));
         uint16_t *sb = malloc(sizeof(uint16_t) * M * (NB / 2));
@@ -673,6 +722,356 @@ int main(int argc, char **argv)
         free(full.y_data); free(full.y_acc); free(full.y_mant);
         free(ra.y_data); free(ra.y_acc); free(ra.y_mant);
         free(rb.y_data); free(rb.y_acc); free(rb.y_mant);
+    }
+
+    /* ---- THE 15.4b MEASUREMENT: differing x_exp across shards, the case
+     * production actually hits and the 14.4 test above deliberately avoids.
+     * Each shard's x slice is BFP-packed LOCALLY (its own amax, its own ns),
+     * exactly as bfp_pack.vhd does on each card, so the two partials arrive on
+     * DIFFERENT grids.  Both candidate E reductions are run on the SAME
+     * partials:
+     *   option 1: align to min y_exp (floor right shift), sum in int64
+     *   option 2: align to max y_exp (exact left shift),  sum in __int128
+     * and both are compared against the exact unquantized-activation oracle
+     * and against the single-card full-K job (which packs x on ONE global
+     * grid).  What this settles: (a) the option-1 alignment error obeys its
+     * derived bound and is measured, (b) option 2 buys no accuracy that
+     * matters, (c) NEITHER option reproduces the single-card result, because
+     * the per-slice x packing upstream already diverged -- bit-identity died
+     * there, not in E. ---- */
+    {
+        const int M = 8, K = 256, RI = 4, NB = K / MV4I_BLOCK, HK = K / 2;
+        const int NBH = NB / 2, w_exp = 2, out_shift = 6, E0 = 20;
+        uint8_t  *idx = malloc((size_t)M * K);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        for (int i = 0; i < M * K; i++)  idx[i] = (uint8_t)(rnd() & 15);
+        for (int i = 0; i < M * NB; i++) scl[i] = (uint16_t)(8000 + (rnd() % 24000));
+
+        /* previous-op raw outputs on grid 2^-E0, with a real magnitude
+         * disparity between the slices: slice 0 ~ 2^27, slice 1 ~ 2^19.
+         * Per-slice packing then gives ns 13 vs 5 -> x_exp spread 8. */
+        int64_t *u = malloc(sizeof(int64_t) * K);
+        for (int k = 0; k < K;  k++) {
+            int64_t span = (k < HK) ? (1LL << 27) : (1LL << 19);
+            u[k] = (int64_t)(rnd() % (2 * span)) - span;
+        }
+
+        /* single-card path: ONE global pack, one full-K job */
+        int16_t *xg = malloc(sizeof(int16_t) * K);
+        int xg_exp = bfp_pack_vec(u, K, E0, xg);
+        size_t l0; uint8_t *i0 = pack(M, K, RI, w_exp, out_shift, IQ4_NL, idx, scl, &l0);
+        mv4i_file f0; assert(mv4i_parse(&f0, i0, l0) == 0);
+        mv4i_result rs = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        assert(mv4i_matvec(&f0, xg, xg_exp, M, K, MV4I_MODE_BFP, &rs) == 0);
+
+        /* sharded path: per-slice packs (production), two PARTIAL jobs.
+         * Same w_exp for both shards -- a packer POLICY the resolution makes
+         * normative; without it the y_exp spread grows by |delta w_exp|.    */
+        int16_t *xa = malloc(sizeof(int16_t) * HK), *xb = malloc(sizeof(int16_t) * HK);
+        int ea = bfp_pack_vec(u,      HK, E0, xa);
+        int eb = bfp_pack_vec(u + HK, HK, E0, xb);
+        uint8_t  *ia = malloc((size_t)M * HK), *ib = malloc((size_t)M * HK);
+        uint16_t *sa = malloc(sizeof(uint16_t) * M * NBH);
+        uint16_t *sb = malloc(sizeof(uint16_t) * M * NBH);
+        for (int r = 0; r < M; r++) {
+            memcpy(ia + (size_t)r * HK, idx + (size_t)r * K,      HK);
+            memcpy(ib + (size_t)r * HK, idx + (size_t)r * K + HK, HK);
+            for (int b = 0; b < NBH; b++) {
+                sa[r * NBH + b] = scl[r * NB + b];
+                sb[r * NBH + b] = scl[r * NB + b + NBH];
+            }
+        }
+        size_t la, lb;
+        uint8_t *pa = pack(M, HK, RI, w_exp, out_shift, IQ4_NL, ia, sa, &la);
+        uint8_t *pb = pack(M, HK, RI, w_exp, out_shift, IQ4_NL, ib, sb, &lb);
+        mv4i_file fa, fb;
+        assert(mv4i_parse(&fa, pa, la) == 0 && mv4i_parse(&fb, pb, lb) == 0);
+        mv4i_result ra = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        mv4i_result rb = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        assert(mv4i_matvec(&fa, xa, ea, M, HK, MV4I_MODE_PARTIAL, &ra) == 0);
+        assert(mv4i_matvec(&fb, xb, eb, M, HK, MV4I_MODE_PARTIAL, &rb) == 0);
+        check("15.4b shards land on DIFFERENT grids (spread 8)",
+              ra.y_exp != rb.y_exp && rb.y_exp - ra.y_exp == 8);
+
+        /* E option 1: min-align (floor), int64 sum, one round, BFP pack */
+        int ymin = ra.y_exp < rb.y_exp ? ra.y_exp : rb.y_exp;
+        int ymax = ra.y_exp > rb.y_exp ? ra.y_exp : rb.y_exp;
+        int D = ymax - ymin;
+        int64_t  *s1  = malloc(sizeof(int64_t) * M);
+        int32_t  *v1  = malloc(sizeof(int32_t) * M);
+        int32_t  *v2  = malloc(sizeof(int32_t) * M);
+        int bound_ok = 1, diff_max = 0;
+        for (int r = 0; r < M; r++) {
+            s1[r] = floor_shr(ra.y_acc[r], ra.y_exp - ymin)
+                  + floor_shr(rb.y_acc[r], rb.y_exp - ymin);
+            v1[r] = sat32(round_shift(s1[r], out_shift));
+
+            /* E option 2: max-align (exact left shift), __int128 sum, then
+             * ONE round by out_shift + D lands on the SAME grid as option 1
+             * (ymin - out_shift), so v1/v2 are directly comparable. */
+            __int128 s2 = ((__int128)ra.y_acc[r] << (ymax - ra.y_exp))
+                        + ((__int128)rb.y_acc[r] << (ymax - rb.y_exp));
+            __int128 w  = round_shift128(s2, out_shift + D);
+            assert(w < (__int128)1 << 62 && w > -((__int128)1 << 62));
+            v2[r] = sat32((int64_t)w);
+
+            /* derived option-1 bound, checked by execution: the floor-aligned
+             * sum sits AT OR BELOW the exact sum by less than (N-1) ulp of the
+             * min grid.  s2 >> D is the exact sum on the min grid.           */
+            __int128 diff = s2 - ((__int128)s1[r] << D);
+            if (diff < 0 || diff >= (__int128)(2 - 1) << D) bound_ok = 0;
+
+            int d = v2[r] - v1[r]; if (d < 0) d = -d;
+            if (d > diff_max) diff_max = d;
+        }
+        check("15.4b option-1 error < (N-1) ulp of min grid", bound_ok);
+        printf("     measured option1-vs-option2 max divergence: %d s32 count(s)\n",
+               diff_max);
+        check("15.4b option1 vs option2 post-round: <= 1 count", diff_max <= 1);
+
+        /* exact oracle: same quantized weights, UNQUANTIZED activations.
+         * O[r] = sum cb*sc*u[k] on grid 2^-(15 + w_exp + E0). */
+        double e_sc = 0, e_o1 = 0, e_o2 = 0;   /* max rel err vs oracle */
+        for (int r = 0; r < M; r++) {
+            __int128 So = 0;
+            for (int k = 0; k < K; k++)
+                So += (__int128)IQ4_NL[idx[(size_t)r * K + k]]
+                    * (__int128)scl[(size_t)r * NB + k / MV4I_BLOCK]
+                    * (__int128)u[k];
+            double O = (double)(int64_t)So * pow2i(-(15 + w_exp + E0));
+            double A = O < 0 ? -O : O;  if (A < 1e-30) continue;
+            double sc_v = (double)rs.y_mant[r] * pow2i(-rs.y_exp);
+            double o1_v = (double)v1[r] * pow2i(-(ymin - out_shift));
+            double o2_v = (double)v2[r] * pow2i(-(ymin - out_shift));
+            double d;
+            d = (sc_v - O) / A; if (d < 0) d = -d; if (d > e_sc) e_sc = d;
+            d = (o1_v - O) / A; if (d < 0) d = -d; if (d > e_o1) e_o1 = d;
+            d = (o2_v - O) / A; if (d < 0) d = -d; if (d > e_o2) e_o2 = d;
+        }
+        printf("     rel err vs exact oracle: single-card %.3g  opt1 %.3g  opt2 %.3g\n",
+               e_sc, e_o1, e_o2);
+        /* the sharded path is NOT bit-identical to the single card -- the
+         * per-slice x pack upstream already diverged (slice 1 kept 8 more
+         * bits of precision than the global pack gave it).  Option 2's
+         * exactness therefore cannot buy back single-card bit-identity; here
+         * the sharded result is CLOSER to the truth than the single card.   */
+        check("15.4b sharded != single-card under EITHER option",
+              !(e_o1 == e_sc && e_o2 == e_sc));
+        check("15.4b opt1 within 2x opt2 error (alignment loss negligible)",
+              e_o1 <= 2 * e_o2 + 1e-12);
+
+        free(idx); free(scl); free(u); free(xg); free(i0);
+        free(xa); free(xb); free(ia); free(ib); free(sa); free(sb);
+        free(pa); free(pb); free(s1); free(v1); free(v2);
+        free(rs.y_data); free(rs.y_acc); free(rs.y_mant);
+        free(ra.y_data); free(ra.y_acc); free(ra.y_mant);
+        free(rb.y_data); free(rb.y_acc); free(rb.y_mant);
+    }
+
+    /* ---- 15.4b error scaling with card count: N = 2, 4, 8.  Same structure
+     * as above but N-way, with a per-slice magnitude ramp (2^27 down by 2^-2
+     * per slice) so every slice packs to a different grid.  This measures how
+     * the option-1 alignment loss grows with N: the bound is (N-1) ulp of the
+     * coarsest grid, i.e. LINEAR in N, and the measured post-round divergence
+     * from the exact (option-2) reduction stays at most 1 count. ---- */
+    {
+        const int M = 8, K = 1024, RI = 4, NB = K / MV4I_BLOCK;
+        const int w_exp = 1, out_shift = 8, E0 = 20;
+        uint8_t  *idx = malloc((size_t)M * K);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        for (int i = 0; i < M * K; i++)  idx[i] = (uint8_t)(rnd() & 15);
+        for (int i = 0; i < M * NB; i++) scl[i] = (uint16_t)(8000 + (rnd() % 24000));
+        int64_t *u = malloc(sizeof(int64_t) * K);
+
+        int all_ok = 1;
+        for (int N = 2; N <= 8; N *= 2) {
+            const int SK = K / N, SNB = NB / N;
+            for (int c = 0; c < N; c++) {
+                int sh = 2 * c * (N == 2 ? 4 : (N == 4 ? 2 : 1));
+                int64_t span = (1LL << 27) >> sh;      /* per-slice ramp */
+                for (int k = c * SK; k < (c + 1) * SK; k++)
+                    u[k] = (int64_t)(rnd() % (2 * span)) - span;
+            }
+            mv4i_result *rr = malloc(sizeof(mv4i_result) * (size_t)N);
+            int ymin = 1 << 30, ymax = -(1 << 30);
+            for (int c = 0; c < N; c++) {
+                int16_t  *xs = malloc(sizeof(int16_t) * SK);
+                int       ec = bfp_pack_vec(u + c * SK, SK, E0, xs);
+                uint8_t  *ic = malloc((size_t)M * SK);
+                uint16_t *sc = malloc(sizeof(uint16_t) * M * SNB);
+                for (int r = 0; r < M; r++) {
+                    memcpy(ic + (size_t)r * SK, idx + (size_t)r * K + c * SK, SK);
+                    for (int b = 0; b < SNB; b++)
+                        sc[r * SNB + b] = scl[r * NB + c * SNB + b];
+                }
+                size_t lc; uint8_t *pc = pack(M, SK, RI, w_exp, out_shift,
+                                              IQ4_NL, ic, sc, &lc);
+                mv4i_file fc; assert(mv4i_parse(&fc, pc, lc) == 0);
+                rr[c].y_data = malloc(4*M); rr[c].y_acc = malloc(8*M);
+                rr[c].y_mant = malloc(2*M);
+                assert(mv4i_matvec(&fc, xs, ec, M, SK, MV4I_MODE_PARTIAL, &rr[c]) == 0);
+                if (rr[c].y_exp < ymin) ymin = rr[c].y_exp;
+                if (rr[c].y_exp > ymax) ymax = rr[c].y_exp;
+                free(xs); free(ic); free(sc); free(pc);
+            }
+            int D = ymax - ymin, ok_b = 1, ok_w = 1, dmax = 0;
+            for (int r = 0; r < M; r++) {
+                int64_t  s1 = 0; __int128 s2 = 0;
+                for (int c = 0; c < N; c++) {
+                    s1 += floor_shr(rr[c].y_acc[r], rr[c].y_exp - ymin);
+                    s2 += (__int128)rr[c].y_acc[r] << (ymax - rr[c].y_exp);
+                }
+                /* option-1 accumulator: s(48 + clog2(N)) */
+                int aw = 48 + (N == 2 ? 1 : (N == 4 ? 2 : 3));
+                if (!(s1 < (1LL << aw) && s1 > -(1LL << aw))) ok_w = 0;
+                __int128 diff = s2 - ((__int128)s1 << D);
+                if (diff < 0 || diff >= (__int128)(N - 1) << D) ok_b = 0;
+                int32_t v1 = sat32(round_shift(s1, out_shift));
+                int32_t v2 = sat32((int64_t)round_shift128(s2, out_shift + D));
+                int d = v2 - v1; if (d < 0) d = -d;
+                if (d > dmax) dmax = d;
+            }
+            printf("     N=%d: y_exp spread %-2d  opt1 err bound %d ulp  "
+                   "measured post-round divergence %d\n", N, D, N - 1, dmax);
+            if (!(ok_b && ok_w && dmax <= 1)) all_ok = 0;
+            for (int c = 0; c < N; c++) {
+                free(rr[c].y_data); free(rr[c].y_acc); free(rr[c].y_mant);
+            }
+            free(rr);
+        }
+        check("15.4b N-scaling: bound, width, <=1 count at N=2/4/8", all_ok);
+        free(idx); free(scl); free(u);
+    }
+
+    /* ---- 15.4b adversarial: the CONTRACTUAL worst-case spread of 17.
+     * x_exp = (upstream exponent) - ns with ns in [0,17] (s32 input to the
+     * pack: amax <= 2^31 -> msb <= 31 -> ns <= 17), so with w_exp and
+     * out_shift pinned equal across the shard group the y_exp spread is
+     * bounded by 17.  One slice carries a full-scale s32 value (ns = 17),
+     * the other stays tiny (ns = 0). ---- */
+    {
+        const int M = 4, K = 64, RI = 4, NB = 2, HK = 32, NBH = 1;
+        const int w_exp = 0, out_shift = 4, E0 = 18;
+        uint8_t  *idx = malloc((size_t)M * K);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        for (int i = 0; i < M * K; i++)  idx[i] = (uint8_t)(rnd() & 15);
+        for (int i = 0; i < M * NB; i++) scl[i] = 30000;
+
+        int64_t *u = malloc(sizeof(int64_t) * K);
+        for (int k = 0; k < HK; k++) u[k] = (int64_t)(rnd() % (1 << 28)) - (1 << 27);
+        u[0] = INT32_MIN;                       /* amax 2^31 -> ns 17 */
+        for (int k = HK; k < K; k++) u[k] = (int64_t)(rnd() % 16384) - 8192;
+
+        int16_t *xa = malloc(sizeof(int16_t) * HK), *xb = malloc(sizeof(int16_t) * HK);
+        int ea = bfp_pack_vec(u,      HK, E0, xa);   /* E0 - 17 */
+        int eb = bfp_pack_vec(u + HK, HK, E0, xb);   /* E0 -  0 */
+        check("15.4b-adv spread reaches the contractual max 17", eb - ea == 17);
+
+        uint8_t  *ia = malloc((size_t)M * HK), *ib = malloc((size_t)M * HK);
+        uint16_t *sa = malloc(sizeof(uint16_t) * M * NBH);
+        uint16_t *sb = malloc(sizeof(uint16_t) * M * NBH);
+        for (int r = 0; r < M; r++) {
+            memcpy(ia + (size_t)r * HK, idx + (size_t)r * K,      HK);
+            memcpy(ib + (size_t)r * HK, idx + (size_t)r * K + HK, HK);
+            sa[r] = scl[r * NB]; sb[r] = scl[r * NB + 1];
+        }
+        size_t la, lb;
+        uint8_t *pa = pack(M, HK, RI, w_exp, out_shift, IQ4_NL, ia, sa, &la);
+        uint8_t *pb = pack(M, HK, RI, w_exp, out_shift, IQ4_NL, ib, sb, &lb);
+        mv4i_file fa, fb;
+        assert(mv4i_parse(&fa, pa, la) == 0 && mv4i_parse(&fb, pb, lb) == 0);
+        mv4i_result ra = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        mv4i_result rb = { malloc(4*M), malloc(8*M), malloc(2*M), 0,0,0,0 };
+        assert(mv4i_matvec(&fa, xa, ea, M, HK, MV4I_MODE_PARTIAL, &ra) == 0);
+        assert(mv4i_matvec(&fb, xb, eb, M, HK, MV4I_MODE_PARTIAL, &rb) == 0);
+
+        int ymin = ra.y_exp < rb.y_exp ? ra.y_exp : rb.y_exp;
+        int ymax = ra.y_exp > rb.y_exp ? ra.y_exp : rb.y_exp;
+        int D = ymax - ymin;
+        int ok_bound = 1, ok_width = 1, diff_max = 0;
+        for (int r = 0; r < M; r++) {
+            int64_t s1 = floor_shr(ra.y_acc[r], ra.y_exp - ymin)
+                       + floor_shr(rb.y_acc[r], rb.y_exp - ymin);
+            /* E option-1 accumulator width at N=2: s49 (48 + clog2(2)) */
+            if (!(s1 < (1LL << 48) && s1 > -(1LL << 48))) ok_width = 0;
+            __int128 s2 = ((__int128)ra.y_acc[r] << (ymax - ra.y_exp))
+                        + ((__int128)rb.y_acc[r] << (ymax - rb.y_exp));
+            __int128 diff = s2 - ((__int128)s1 << D);
+            if (diff < 0 || diff >= (__int128)1 << D) ok_bound = 0;
+            int32_t v1 = sat32(round_shift(s1, out_shift));
+            __int128 w = round_shift128(s2, out_shift + D);
+            int32_t v2 = sat32((int64_t)w);
+            int d = v2 - v1; if (d < 0) d = -d;
+            if (d > diff_max) diff_max = d;
+        }
+        check("15.4b-adv option-1 bound holds at spread 17", ok_bound);
+        check("15.4b-adv option-1 sum fits s49 at N=2", ok_width);
+        printf("     measured divergence at spread 17: %d s32 count(s)\n", diff_max);
+        check("15.4b-adv post-round divergence <= 1 count", diff_max <= 1);
+
+        free(idx); free(scl); free(u); free(xa); free(xb);
+        free(ia); free(ib); free(sa); free(sb); free(pa); free(pb);
+        free(ra.y_data); free(ra.y_acc); free(ra.y_mant);
+        free(rb.y_data); free(rb.y_acc); free(rb.y_mant);
+    }
+
+    /* ---- 15.4b spread statistics at production shapes.  No matvec needed:
+     * the spread is a property of the per-slice packs alone.  Shapes are the
+     * 27B row-parallel inputs (FFN down K=17408 contiguous slices; attn o
+     * K=6144 = 24 heads x 256, split BY HEAD as 14.3 shards it).  The
+     * head-structured case carries a random per-head magnitude (2^0..2^6),
+     * the documented realistic disparity.  This measures TYPICAL spread; the
+     * worst case stays 17 by contract and is not sizeable from statistics. */
+    {
+        enum { TRIALS = 200 };
+        static const int NS[3] = { 2, 4, 8 };
+        int worst = 0;
+        printf("     x_exp spread, %d trials:  shape/dist         N=2 N=4 N=8 (max)\n",
+               TRIALS);
+        for (int shape = 0; shape < 4; shape++) {
+            const int K = (shape == 3) ? 6144 : 17408;
+            int mx[3] = { 0, 0, 0 };
+            int64_t *u = malloc(sizeof(int64_t) * K);
+            for (int t = 0; t < TRIALS; t++) {
+                for (int k = 0; k < K; k++) {
+                    int64_t v;
+                    if (shape == 0)          /* uniform */
+                        v = (int64_t)(rnd() % (1 << 28)) - (1 << 27);
+                    else if (shape == 1) {   /* gaussian-ish: sum of 8 */
+                        v = 0;
+                        for (int j = 0; j < 8; j++)
+                            v += (int64_t)(rnd() % (1 << 25)) - (1 << 24);
+                    } else if (shape == 2) { /* heavy tail: 1/256 are 64x */
+                        v = (int64_t)(rnd() % (1 << 21)) - (1 << 20);
+                        if ((rnd() & 255) == 0) v <<= 6;
+                    } else {                 /* per-head scale 2^0..2^6 */
+                        static int hs; if (k % 256 == 0) hs = (int)(rnd() % 7);
+                        v = ((int64_t)(rnd() % (1 << 21)) - (1 << 20)) << hs;
+                    }
+                    u[k] = v;
+                }
+                for (int ni = 0; ni < 3; ni++) {
+                    int N = NS[ni], lo = 99, hi = -99;
+                    for (int c = 0; c < N; c++) {
+                        uint64_t amax = 0;
+                        for (int k = c * (K / N); k < (c + 1) * (K / N); k++) {
+                            uint64_t a = abs64(u[k]); if (a > amax) amax = a;
+                        }
+                        int ns = msb_pos_u(amax) - 14; if (ns < 0) ns = 0;
+                        if (ns < lo) lo = ns;
+                        if (ns > hi) hi = ns;
+                    }
+                    if (hi - lo > mx[ni]) mx[ni] = hi - lo;
+                    if (hi - lo > worst)  worst  = hi - lo;
+                }
+            }
+            static const char *nm[4] = { "17408 uniform    ", "17408 gaussian   ",
+                                         "17408 heavy-tail ", " 6144 head-scaled" };
+            printf("       %s                  %d   %d   %d\n",
+                   nm[shape], mx[0], mx[1], mx[2]);
+            free(u);
+        }
+        check("15.4b spread stats within contractual bound 17", worst <= 17);
     }
 
     /* ---- site 4 known-answer vectors, straight from 7.4's divergence table.

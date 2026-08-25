@@ -1292,10 +1292,42 @@ so summing N rounded partials accumulates up to N/2 ulp of error and **can never
 reproduce the single-card result**. `ref/matvec_int4.c`'s 14.4 test caught this
 on its first execution; no amount of reading the spec would have.
 
-**Partial mode therefore emits the accumulator UNROUNDED**, as s48. The consumer
-sums (exactly, since integer addition of the same terms is associative) and
-applies `round_shift` + `sat32` **once**, at the end. The sharded path is then
-**bit-identical** to the full-K path, which is verifiable on one card today.
+**Partial mode therefore emits the accumulator UNROUNDED**, as s48. The
+consumer aligns to the minimum `y_exp`, sums, and applies `round_shift` +
+`sat32` **once**, at the end.
+
+**CORRECTED 2026-08-24, resolving §15.4b.** This paragraph previously
+continued: "sums (exactly, since integer addition of the same terms is
+associative)... The sharded path is then bit-identical to the full-K path."
+That contradicted item 3 of the correction nineteen lines up, and it holds
+ONLY when all partials share one grid (equal `x_exp`) -- the case the §14.4
+test constructs and production never hits. Corrected statement:
+
+- With per-card `x_exp` the partials sit on different grids. The consumer
+  aligns to the **minimum** `y_exp` by **floor** right shift and sums; the
+  alignment is a rounding site and the reduction is **not exact**. The loss is
+  bounded and small: less than `N-1` ulp of the coarsest partial's grid,
+  biased toward -infinity, at most 1 count of the final int16 mantissa, and
+  **measured 0** in every sampled case including the worst-case spread of 17
+  (`ref/matvec_int4.c`, the 15.4b tests).
+- **Bit-identity to the single-card full-K job is unattainable under ANY
+  reduction policy, exact or not**, because each card BFP-packs its `x` slice
+  locally: the sharded system consumes a *different quantization of x* than a
+  single card would. Identity died upstream of the reduction. Measured, the
+  sharded path is ~19x CLOSER to the unquantized oracle than the single-card
+  path on slice-disparate data, so the identity is not even desirable. What
+  remains normative is bit-exactness against the C reference, which the floor
+  alignment preserves because it is deterministic.
+- **Packer/PS policy, normative:** all shards of one row-parallel matvec carry
+  the **same `w_exp`**, and every card is programmed the **same `out_shift`**.
+  The `y_exp` spread then equals the `x_exp` spread, which is bounded by
+  **17** (the producer's pack takes s32, so `ns` is 0..17). Measured spread on
+  real activations is <= 5, typically 1-3.
+- The equal-grid special case remains verifiable on one card today; the §14.4
+  test keeps it and now labels it as the special case it is.
+
+Decision, derivation and measurements: §15.4b (RESOLVED) and
+`docs/debugging/2026-08-24_partial-sum-exactness.md`.
 
 Two consequences:
 
@@ -1684,8 +1716,37 @@ adder-tree reclaim as worth roughly 25-30% over `ROWS_IF=48`, not as a route to
 
 ### 15.4b §14.2 contradicts itself on exactness, and the test proves the wrong case
 
+**RESOLVED 2026-08-24: option 1 -- align to min `y_exp`, floor, bound the loss
+normatively. The bit-identity claim is dropped (see the §14.2 correction of the
+same date). E's accumulator is `s(48 + clog2(N))`: s49 at N=2, s51 at N=8, s52
+covers N <= 16.** The decisive measurements
+(`ref/matvec_int4.c` 15.4b tests; full derivation and procedure in
+`docs/debugging/2026-08-24_partial-sum-exactness.md`):
+
+- **Bit-identity was already dead upstream.** Each card BFP-packs its `x`
+  slice locally, so the sharded system consumes a different quantization of
+  `x` than a single card; option 2 preserves only the exactness of the
+  reduction *step*, a property with no observable consequence. Measured, the
+  sharded path lands ~19x closer to the exact unquantized oracle than the
+  single-card path on slice-disparate data (rel err 7.2e-5 vs 1.4e-3).
+- **Option 1's loss against the exact option-2 reduction of the same
+  partials:** bounded below `N-1` ulp of the coarsest partial grid (linear in
+  N), and measured **0 counts** of the post-round s32 at N=2 and N=8, 1 count
+  at N=4, and 0 at the contractual worst-case spread of 17. Against the
+  +1.69%-perplexity cost of this format itself, that is zero.
+- **Option 2's price:** a `48 + 17 + clog2(N)` = s68-at-N=8 accumulator and
+  row buffer -- wider than an int64, so even the C model needs `__int128` --
+  sized by a worst-case spread (17) that measured reality (<= 6 synthetic,
+  <= 5 on real activations) never approaches, and it cannot be sized by the
+  measured typical without recreating exactly the "agrees with itself and is
+  wrong" failure this project exists to prevent.
+- Either option requires transporting each peer's `y_exp`; that cost is common
+  and not a discriminator.
+
+E §2.1 is corrected the same date. The original defect statement follows.
+
 **OPEN DEFECT. Blocks subsystem E's datapath width, which cannot be settled
-until this is.**
+until this is.** *(superseded by the resolution above)*
 
 §14.2 states both of the following, nineteen lines apart:
 
