@@ -126,7 +126,7 @@ puts "die temperature before: $t0 C   stack codes: [stack_temps]"
 
 # ---- the sweep -------------------------------------------------------------
 # Ramped, so the largest load is applied last.
-set POINTS {1 2 4 8 15}
+set POINTS {1 2 4 8 15 30}
 set ARLEN 15          ;# 16 beats, the AXI3 maximum
 set NBURST 200000     ;# ~102 MB per port; ~0.5 ms at ceiling, bounded by design
 set OUTST 16
@@ -270,7 +270,7 @@ puts [format "%6s %10s %12s %12s %10s %8s" \
       ports beats cycles GB/s "vs 14.4" die_C]
 
 set OV_NBURST 200000
-foreach n {1 2 3 4 8 15} {
+foreach n {1 2 3 4 8 15 30} {
     if {$n > $NPORT} { continue }
     wr [expr {$TG + $R_CTRL}]  2
     wr [expr {$TG + $R_RGN}]   0x0001         ;# base 1, stride 0

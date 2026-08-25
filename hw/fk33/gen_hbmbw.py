@@ -84,7 +84,22 @@ import re, sys, os
 
 SRC = os.path.join(os.path.dirname(__file__), "build_fk33_firstlight.tcl")
 DST = os.path.join(os.path.dirname(__file__), "build_fk33_hbmbw.tcl")
-NPORT = 15   # SAXI_01..15; SAXI_00 stays with jtag_hbm, see header
+# Generator ports.  15 = stack 0 only (SAXI_01..15).  30 = both stacks, adding
+# SAXI_17..31 -- SAXI_00 and SAXI_16 stay with jtag_hbm, one per stack.
+#
+# Ports are the big lever on total bandwidth and the clock is the small one:
+# usable GB/s is ports x 32 B x f, so 15 -> 30 ports is 2.00x while 300 -> 350
+# MHz is 1.17x.  Stack 1 sat disabled through several builds spent fighting
+# 350 MHz for +24 GB/s, while enabling it is worth +144.
+NPORT = int(sys.argv[1]) if len(sys.argv) > 1 else 15
+if NPORT not in (15, 30):
+    sys.exit("FAIL: NPORT must be 15 (stack 0) or 30 (both stacks); SAXI_00 "
+             "and SAXI_16 are reserved for jtag_hbm so 16 and 31 are not "
+             "reachable without taking the host's path to the card.")
+
+def saxi(i):
+    """Generator port i -> SAXI index, skipping SAXI_16 (jtag_hbm's)."""
+    return i + 1 if i < 15 else i + 2
 
 src = open(SRC).read()
 out = src
@@ -93,11 +108,15 @@ out = src
 # The global-switch branch turns them all off in one dict.  Strip exactly those
 # keys rather than rewriting the line, so any other setting in it survives.
 before = out
-for i in range(1, 16):
+_en = [saxi(i) for i in range(NPORT)]
+for i in _en:
     out = out.replace("CONFIG.USER_SAXI_%02d {false} " % i, "")
     out = out.replace("CONFIG.USER_SAXI_%02d {false}" % i, "")
 if out == before:
     sys.exit("FAIL: no USER_SAXI_xx {false} keys found; the upstream branch moved")
+for i in _en:
+    if "CONFIG.USER_SAXI_%02d {false}" % i in out:
+        sys.exit("FAIL: SAXI_%02d is still disabled after the strip" % i)
 
 # ---- 2. the HBM AXI datapath clock -----------------------------------------
 # Parameterised so the voltage-derate sweep is reproducible rather than a
@@ -261,17 +280,36 @@ tg = ["", "# " + "-"*74,
 # path AND a short one; either alone would not have been enough, since a
 # single flop feeding fifteen far-apart hard-block pins routes badly whatever
 # domain it comes from.
-for i in range(1, NPORT + 1):
+for i in range(NPORT):
     tg.append("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] "
-              "[get_bd_pins hbm/AXI_%02d_ACLK]" % i)
+              "[get_bd_pins hbm/AXI_%02d_ACLK]" % saxi(i))
     tg.append("connect_bd_net [get_bd_pins tg/aresetn_o] "
-              "[get_bd_pins hbm/AXI_%02d_ARESET_N]" % i)
+              "[get_bd_pins hbm/AXI_%02d_ARESET_N]" % saxi(i))
+
+# AXI_00 and AXI_16 are the two CLK_SEL masters, and both of their ACLKs are
+# already clk_out3 in this build -- so their resets belong in that domain too.
+#
+# AXI_16 matters far more than it looks.  Stack 1's SAXI_17..31 are DISABLED
+# here, but the IP still ties their internal interface resets to the stack's
+# master reset input, so ONE slow-domain net was driving the reset pins of
+# every interface on stack 1.  After the per-port rewire above, those were
+# still the design's worst paths at 350 MHz -- on ports this measurement does
+# not even use.  Rewiring only the 15 enabled ports fixed the ports that were
+# never the problem.
+tg.append("disconnect_bd_net /hbm_reset_peripheral_aresetn "
+          "[get_bd_pins hbm/AXI_00_ARESET_N]")
+tg.append("disconnect_bd_net /hbm_reset_peripheral_aresetn "
+          "[get_bd_pins hbm/AXI_16_ARESET_N]")
+tg.append("connect_bd_net [get_bd_pins tg/aresetn_o] "
+          "[get_bd_pins hbm/AXI_00_ARESET_N]")
+tg.append("connect_bd_net [get_bd_pins tg/aresetn_o] "
+          "[get_bd_pins hbm/AXI_16_ARESET_N]")
 tg.append("")
 
 # generator i drives SAXI_(i+1): see header note 3 on why SAXI_00 is skipped
 for i in range(NPORT):
     tg.append("connect_bd_intf_net [get_bd_intf_pins tg/m%02d_axi] "
-              "[get_bd_intf_pins hbm/SAXI_%02d]" % (i, i + 1))
+              "[get_bd_intf_pins hbm/SAXI_%02d]" % (i, saxi(i)))
 tg.append("")
 out = out.replace("regenerate_bd_layout", "\n".join(tg) + "\nregenerate_bd_layout", 1)
 
@@ -299,11 +337,16 @@ addr = ["", "# hbmbw: each generator addresses its OWN pseudo-channel, 256 MB at
 # The default mapping is unchanged -- hbm_tg still comes out of reset with
 # base = PORT0, stride = 1, i.e. port i on channel i+1 -- so a build that is
 # never told otherwise reproduces the earlier measurement exactly.
+# The global switch is PER STACK: a port on stack 0 reaches channels 0..15 and
+# a port on stack 1 reaches 16..31.  There is no cross-stack path, so the
+# segment list has to follow the port's own stack or the assignment fails.
 for i in range(NPORT):
-    for j in range(16):
-        addr.append("assign_bd_address -offset 0x%08X -range 256M "
+    sx = saxi(i)
+    lo = 0 if sx < 16 else 16
+    for j in range(lo, lo + 16):
+        addr.append("assign_bd_address -offset 0x%09X -range 256M "
                     "[get_bd_addr_segs {hbm/SAXI_%02d/HBM_MEM%02d}]"
-                    % (j * 0x10000000, i + 1, j))
+                    % (j * 0x10000000, sx, j))
 # 64K range must be 64K ALIGNED -- Vivado rejects 0x0000B000 outright.  The
 # generator registers therefore live at 0x00010000, clear of the first-light
 # map (SYSMON 0x3000, IIC 0x9000), and the readout script must use that.
