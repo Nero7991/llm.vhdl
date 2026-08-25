@@ -185,26 +185,64 @@ architecture rtl of hbm_tg is
   constant TEMP_HOLD : natural := 64;
   signal lim_hold : unsigned(7 downto 0) := (others => '0');
 
+  -- RESET CDC.  `rstn` comes from a proc_sys_reset in the 100 MHz control
+  -- domain and is consumed here at the AXI clock, so Vivado times it as a
+  -- data path to the reset input of EVERY flop in this unit.  Two problems:
+  --
+  --   * Functionally, an unsynchronised reset RELEASE lets flops leave reset
+  --     on different cycles.  For counters and an issue FSM that is a
+  --     genuinely wrong start state, not a cosmetic race.
+  --   * For timing, it puts hundreds of endpoints on one slow-domain source.
+  --     At 300 MHz it cost 0.029 ns and looked ignorable.  At 350 MHz it is
+  --     386 of the 400 failing endpoints -- the same "one structure, many
+  --     instances" shape as every other failure this design has produced.
+  --
+  -- Async assert, synchronous deassert: the reset still takes effect
+  -- immediately without waiting for a clock that may not be running, and it
+  -- releases on a single clean edge in THIS domain.  It also collapses those
+  -- hundreds of timed paths to two.
+  signal rstn_m, rstn_s : std_logic := '0';
+  attribute ASYNC_REG of rstn_m : signal is "TRUE";
+  attribute ASYNC_REG of rstn_s : signal is "TRUE";
+
   signal awr, wrq, bv, arr, rv : std_logic := '0';
   signal rdata_r : std_logic_vector(31 downto 0) := (others => '0');
   signal wa : unsigned(15 downto 0) := (others => '0');
   signal wd : std_logic_vector(31 downto 0) := (others => '0');
   signal aw_seen, w_seen : std_logic := '0';
 begin
+  ------------------------------------------------------------- reset CDC
+  rsync : process(clk, rstn)
+  begin
+    if rstn = '0' then
+      rstn_m <= '0'; rstn_s <= '0';
+    elsif rising_edge(clk) then
+      rstn_m <= '1'; rstn_s <= rstn_m;
+    end if;
+  end process;
+
   ----------------------------------------------------------------- AXI-Lite
   -- Deliberately the simplest legal slave: one transaction at a time, no
   -- outstanding, no write strobes.  It carries control and status only and is
   -- never in the measured path, so its performance is irrelevant and its
   -- correctness is worth more than its throughput.
-  s_awready <= awr; s_wready <= wrq; s_bvalid <= bv;
-  s_arready <= arr; s_rvalid <= rv;  s_rdata <= rdata_r;
+  -- READY IS GATED BY RESET.  The reset branch below parks awr/wrq at '1' so
+  -- the slave is ready on the first cycle out of reset -- but that also meant
+  -- it advertised READY *while still in reset*, where the decode is in the
+  -- reset branch and throws the beat away.  A master that takes READY at its
+  -- word therefore loses any transfer issued during the reset window, which
+  -- is the SAME defect as the AW/W one fixed in 8643fcb, arriving by a
+  -- different route.  It was invisible until the reset synchroniser widened
+  -- that window from zero cycles to two.
+  s_awready <= awr and rstn_s; s_wready <= wrq and rstn_s; s_bvalid <= bv;
+  s_arready <= arr and rstn_s; s_rvalid <= rv;  s_rdata <= rdata_r;
 
   lite : process(clk)
     variable idx : natural;
   begin
     if rising_edge(clk) then
       clr <= '0';
-      if rstn = '0' then
+      if rstn_s = '0' then
         awr <= '1'; wrq <= '1'; bv <= '0'; arr <= '1'; rv <= '0';
         aw_seen <= '0'; w_seen <= '0';
         go <= '0'; mask <= (others => '0');
@@ -322,7 +360,7 @@ begin
       t0_m   <= hbm_temp0;    t0_s   <= t0_m;
       t1_m   <= hbm_temp1;    t1_s   <= t1_m;
 
-      if rstn = '0' then
+      if rstn_s = '0' then
         therm_stop <= '0'; trip_cat <= '0'; trip_lim <= '0';
         tmax0 <= (others => '0'); tmax1 <= (others => '0');
         lim_hold <= (others => '0');
@@ -405,7 +443,7 @@ begin
       if rising_edge(clk) then
         -- one register stage on everything the HBM drives, see the note above
         ev_ar <= '0'; ev_r <= '0'; ev_rl <= '0';
-        if rstn = '0' then
+        if rstn_s = '0' then
           arv(i) <= '0'; active(i) <= '0';
           beats(i) <= (others => '0'); arstall(i) <= (others => '0');
           issued(i) <= (others => '0'); retired(i) <= (others => '0');
@@ -497,7 +535,7 @@ begin
   tick : process(clk)
   begin
     if rising_edge(clk) then
-      if rstn = '0' or clr = '1' then cycles <= (others => '0');
+      if rstn_s = '0' or clr = '1' then cycles <= (others => '0');
       elsif any_act = '1' then        cycles <= cycles + 1;
       end if;
     end if;
