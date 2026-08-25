@@ -146,6 +146,9 @@ count, i.e. one beat per cycle per port sustained with all 15 concurrent.
 - **Assuming the requested MMCM frequency is the achieved one.** Not wrong
   here, but unchecked until now, and unfalsifiable by any self-check the
   instrument has (step 5).
+- **"The HBM IP cannot be clocked above ~300 MHz."** Formed on the 350 MHz
+  TNS and refuted by bucketing the endpoints (section 6). The HBM interface
+  was never the limiter. Do not resurrect this from a TNS figure alone.
 
 ## Measurement traps hit
 
@@ -156,9 +159,54 @@ count, i.e. one beat per cycle per port sustained with all 15 concurrent.
 - **The reported WNS and the exercised WNS are different numbers**, and
   nothing in the flow tells you which one you are holding.
 
+## 6. Pushing the frequency up: what the 350 MHz attempt actually found
+
+The plan was to raise the clock until the design broke on the card, turning
+`derate <= 15.8%` into a number. The 350 MHz build did not close at 0.85 V --
+routed WNS **-1.229 ns, TNS -330 ns** -- so it was useless as a card test: a
+failure there could not be attributed to voltage rather than to a netlist
+that never met timing in the first place.
+
+**The tempting conclusion was wrong.** TNS -330 ns spread over many endpoints,
+on a design dominated by HBM hard IP, reads as "the HBM AXI interface has its
+own frequency ceiling". That would have been a significant claim: it would cap
+the 460.8 GB/s premise (32 ports x 32 B x 450 MHz) at roughly 307 GB/s
+regardless of voltage, since the interface simply could not be clocked there.
+
+Bucketing the failing endpoints by structure refuted it in one query:
+
+```
+failing endpoints (placed): 34
+  HBM ACLK -> tg fabric      34
+worst:  slack -0.492 ns
+  from bd_i/hbm/inst/.../HBM_SNGLBLI_INTF_APB_INST/PCLK
+  to   bd_i/tg/inst/u/therm_stop_reg/D
+```
+
+All 34 are **one structure, and it is ours**: `hbm_temp[6:0]` and
+`hbm_cattrip` leave the HBM IP in its **APB status domain** and were being
+compared **combinationally** in the AXI domain with no synchroniser. Not an
+HBM ceiling -- our own unsynchronised status path, which happened to fit at
+300 MHz and did not at 350. Fixed in `72838ca`; see that commit for why the
+7-bit code also needs a hold filter and why CATTRIP deliberately does not.
+
+**The generalisable lesson:** a large TNS spread across many endpoints looks
+like a distributed problem and is usually ONE replicated structure. Bucket the
+failing endpoints by start/end hierarchy before forming any hypothesis about
+the cause; the count is a property of how many instances the structure has,
+not of how hard the problem is. This is the second time this instrument has
+produced that exact pattern -- the earlier 450 MHz attempt failed on 4,597
+endpoints that were 15 generators x their counters, one structural problem.
+
+That also means **the derate sweep never actually reached a voltage-limited
+point.** Both attempts to exceed 300 MHz were stopped by design defects, not
+by the card. The bound in section 2 still stands and is still only a bound.
+
 ## Open, not yet answered
 
-- **The actual derate for this design** -- section 6 / the 350 MHz run.
+- **The actual derate for this design.** Still unmeasured. Two attempts to
+  clock past 300 MHz were both stopped by design defects rather than by the
+  card, so no voltage-limited point has been observed yet.
 - **Whether the derate is path-type dependent.** -22.9% came from DSP and
   carry-chain-heavy matvec logic; this path is HBM-ACLK-to-fabric-CE. Two
   different numbers for two different path mixes is a perfectly ordinary
