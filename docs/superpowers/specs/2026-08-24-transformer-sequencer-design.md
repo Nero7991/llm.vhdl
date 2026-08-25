@@ -753,13 +753,14 @@ Per token per card, N=2, 27B, at the §15.4c "balanced" point
 
 | Component | ms | Basis |
 |---|---|---|
-| A jobs (weights, 7.57 GB/card) + C | ~34 | A §15.4c balanced row (measured-OOC-anchored derivation) |
+| A jobs (weights, 7.57 GB/card) + C | ~34 **-> ~35.1** | A §15.4c balanced row. **CORRECTED 2026-08-25 by C §3 (its R-C2):** the §15.4c figure counts C's attention *sweep* only, which is 76% of C. The aux terms C §3 finally prices (softmax cone, rescale stalls, QK-norm, rope, gate, reciprocal) add **+1.1 ms**, to ~4.59 ms at 300 MHz / ~5.95 ms at the 231 MHz the card reaches at 0.717 V |
 | B state sweeps | ~2.0 | derived: 128 x 128 x 24 vheads x 48 layers / 32 lanes at 300 MHz; B's own §2.5 aux latencies NOT included (B §3 unwritten) |
 | E collectives | ~0.42 | E §2.4, N=2 |
 | D-vec at `LANES_V = 8` | ~1.6 | §7.2 |
 | D-ctrl step overhead | ~0.1 | 1,106 steps x ~20-30 cycles (descriptor decode is prefetched; grant switches are usually free) |
 
-Roughly **~38 ms => ~26 tok/s at N=2**, consistent with the recon ladder's
+Roughly **~39 ms => ~26 tok/s at N=2** (~38 before C §3's correction above),
+consistent with the recon ladder's
 lower band. The B row and the D-vec row are the two entries no other document
 carries; both are derived, unsynthesised, and B's is a floor (its §3
 scheduling may add). This table exists so the whole-token sum finally
@@ -775,6 +776,26 @@ includes the seams; it is not a promise.
 | BRAM36 | **~86 flat map** (80 regions + ~6 scratch), of which ~16 replace A's standalone act mem (§5.1); **~54 packed** | Bank counts derived from the striped geometry; the flat/packed choice is open until whole-die BRAM is summed. C's ~43 and A's FIFOs are separate. |
 | URAM288 | **~44 of 320** | §6.4, derived from table/constant sizes; grows with `NSUB` if A §14.5 lands above 33 bases/job |
 | HBM ports | 0 dedicated (URAM-resident constants); +1 if the §6.4 fallback triggers | |
+
+> **SUPERSEDED 2026-08-25, one day later, by C §3.8.** The sum below predates
+> C's section 3, which priced C's auxiliary DSP row by measurement at **50**
+> against the 15-40 it had been estimated at. Current figure:
+> **2,510-2,540 of 2,880 = 87.2-88.2%**, and **89.2-90.3% (at or over the
+> congestion line) if C's QK-norm uses `rmsnorm.vhd` as shipped**, which
+> measures 78 DSP at 138.4 MHz.
+>
+> **The D row below is now the weakest term in that sum, and it is probably
+> low.** At `LANES_V = 8` swiglu needs 8 sigmoid evaluations per cycle, and
+> the only sigmoid this project has synthesised costs **8 DSP per lane**, so
+> that term alone is ~64 against a whole-D-vec estimate of 24-40 that must
+> also cover two norms and two residual adds. The "phases are disjoint, so
+> sharing is expected" argument in the table does not reach it: disjoint
+> phases share multipliers, and the norm phase has no sigmoid interpolator to
+> share with. The lever that would close it is the same narrowing that took
+> `rmsnorm` from 78 DSP to 18, and it has not been built or measured.
+>
+> Full reconciliation, measurements and rejected readings:
+> `docs/debugging/2026-08-25_whole-die-budget-reconciliation.md`.
 
 **Whole-die context (informative, rough, first time anyone has summed it):**
 DSP: A at `ROWS_IF = 58` post-reclaim 1,914 + C `MACS = 192` 384 + B
