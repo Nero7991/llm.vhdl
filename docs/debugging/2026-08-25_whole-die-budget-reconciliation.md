@@ -182,9 +182,16 @@ copies `fixed_pkg.sigmoid_q` verbatim including its 64/128-bit intermediates.
 - **Whether D-vec can actually share one multiply chain between the norm and
   swiglu phases.** The whole difference between 40 and 56 DSP rests on it, it
   is asserted in D §12 and nothing has been built.
-- **`rmsnorm` at N=5120** (D's layer-norm size) was launched and had not
-  finished when this was written. The N-independence at 128/256 predicts 78
-  again with a larger LUT term, but it is a prediction.
+- **`rmsnorm` at N=5120 will not be measured, and the failure is the answer.**
+  The run was launched and died ~2 minutes into timing optimization having
+  driven free physical memory from 8,396 MB to **243 MB**. At N=5120 the
+  entity declares `x_mant`, `w_mant` and `o_mant` as `N*16` = **81,920 bits
+  each**, three of them, which is precisely the parallel-bus wall A §5
+  prohibits and precisely why D §7.3 refuses to instantiate this entity and
+  specifies a streaming reimplementation instead. Retrying it would spend an
+  hour and the whole box to price a configuration nobody will build. The DSP
+  cost is already known to be N-independent from the N=128 and N=256 points,
+  which is the number that mattered. **Do not retry.**
 - **B's 138-152 has never seen synthesis.** It is the second-weakest row and
   nothing here improved it.
 - **LUT is now the resource that grew and it is still a screening number.**
