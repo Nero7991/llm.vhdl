@@ -320,9 +320,17 @@ the same caveat class as C's write-time `v_ref` min-fold.
 **Zero initialization is by masking, not by zeroing DDR.** The reference
 zero-fills both states at sequence start. B masks instead: with internal token
 counter `tk`, conv taps referring to tokens `< 0` contribute zero (`tk < 3`
-cases), and at `tk = 0` the state read is skipped entirely and `smant = 0`,
-`se[j] = SE_INIT = 0` are substituted (§2.1.4). The PS never initializes B's
-DDR regions.
+cases), and at `tk = 0` the state read is skipped entirely and `smant = 0` is
+substituted. **The masked state has no exponent**, and §2.1.4's `e_u` must
+exclude it from its minimum rather than substitute a constant. The PS never
+initializes B's DDR regions.
+
+> **CORRECTED 2026-08-25. `SE_INIT = 0` was a defect, and a severe one.**
+> This paragraph previously said `se[j] = SE_INIT = 0` is substituted, pinned
+> "because it enters `e_u` below". It does enter `e_u`, and 0 is the worst
+> value it can take: see §2.1.4.
+
+
 
 ## 2. The recurrent state
 
@@ -540,11 +548,54 @@ This is the core contract. One pass per column, in stream order; the whole
 sweep is column-local (nothing in column j depends on any other column of the
 same token — the reason the state can stream, §2.4).
 
-**At `tk = 0`** (first token of a sequence): the state read is skipped;
-`smant[i,j] = 0` and `se[j] = SE_INIT = 0` are substituted. SE_INIT is pinned
-because it enters `e_u` below; zero mantissas make the *values* exact
-regardless, but the update grid must be deterministic (C's MJ5-2 lesson: pin
-inits that survive structural checks).
+**At `tk = 0`** (first token of a sequence): the state read is skipped and
+`smant[i,j] = 0` is substituted. **The state term is then identically zero, so
+it takes no part in stage 4's grid selection**: `e_u = e_kd`, and `u[i] = kd[i]`
+with no shift of the state term at all. There is no `SE_INIT`.
+
+> **CORRECTED 2026-08-25, measured.** Rev 1 substituted `se[j] = SE_INIT = 0`
+> and let it enter `e_u = min(se[j] + 2, e_kd)` unchanged, reasoning that
+> "zero mantissas make the *values* exact regardless". They do. The
+> **exponent** does not: `se[j] + 2 = 2` while `e_kd` is typically ~28-32, so
+> the min pins the whole first write-back to grid 2 and the update is floored
+> right by ~30 bits. `|kd| <= 2^31`, so `kd >> 30` leaves **one or two bits**
+> of the first token's entire state.
+>
+> The rule that makes min-referencing safe is that both operands' exponents
+> describe real values. A masked zero's exponent describes nothing, and
+> `SE_INIT` is a constant unrelated to the update's scale, so including it is
+> not a conservative choice but an arbitrary one. Pinning it (C's MJ5-2
+> lesson) was right; pinning it to a value that participates in an arithmetic
+> minimum was not.
+>
+> | worst-head relative output error | as written | corrected |
+> |---|---|---|
+> | t = 128, real per-head `exp(g)` | **4.7e-1** | 3.9e-4 |
+> | t = 256, `exp(g)` pinned to 1.0 | **4.0e-1** | 4.7e-4 |
+> | t = 2048, real `exp(g)` | 1.0e-3 | 5.0e-4 |
+> | t = 4096, `exp(g)` pinned to 1.0 | 6.1e-4 | 6.0e-4 |
+>
+> **The first token is corrupted by ~1000x and it does not wash out quickly.**
+> Recovery is dilution, not correction: the bad state is a fixed addend that
+> becomes a shrinking fraction of an accumulating sum, so the error falls
+> roughly as 1/t and only reaches the 5e-4 equilibrium floor at t ~ 1900.
+> **Every sequence shorter than that is degraded end to end**, which is most
+> of them. It is not a contraction effect and pinning the gate at `exp(g) = 1`
+> (no contraction at all) does not avoid it.
+>
+> `SE_INIT >= +100` measures digit-identical to the corrected form, because it
+> forces the same `e_u = e_kd`. It is **not** the preferred fix: it leaves a
+> magic constant whose correctness depends on staying above a data-dependent
+> `e_kd`, and it makes `se[j] + 2 - e_u` a large positive shift of a zero
+> rather than no shift at all. State the tk = 0 case structurally instead.
+>
+> Note the corrected form must **not** be written as a negative shift. With
+> `e_u = e_kd > se[j] + 2` the expression `w18[i] >> (se[j] + 2 - e_u)` is a
+> left shift, which is why the tk = 0 case drops the state term rather than
+> shifting it.
+>
+> Tool, procedure and the full sensitivity sweep:
+> `docs/debugging/2026-08-25_gdn-recurrence-error-bound.md`, `ref/gdn_err.c`.
 
 **Stage 1 — decay** (site 6):
 
@@ -589,8 +640,11 @@ subtraction after alignment loses nothing.
 ```
 kd[i] = k_n[i] * d_m               -- s16 x s18, one DSP; |kd| <= 2^31, s33
                                    -- grid e_kd = 15 + e_d
-e_u   = min( se[j] + 2, e_kd )     -- right-shift-only again
-u[i]  = (w18[i] >> (se[j]+2 - e_u)) + (kd[i] >> (e_kd - e_u))   -- floor; s34
+e_u   = ( tk = 0 ) ? e_kd : min( se[j] + 2, e_kd )   -- right-shift-only again;
+                                   -- at tk=0 the state is a MASKED ZERO with no
+                                   -- exponent and must not enter the min
+u[i]  = (tk = 0) ? kd[i]
+                 : (w18[i] >> (se[j]+2 - e_u)) + (kd[i] >> (e_kd - e_u))  -- floor; s34
         -- |u| <= 2^31 + 2^17 < 2^32
 amax  = max over i of |u[i]|, held unsigned
 sh    = max(0, msb_pos(amax) - 14)          -- msb_pos(0) = 0
@@ -965,9 +1019,75 @@ HBM streaming (which, again, costs ~nothing at 460 GB/s). The 27B (48 GDN
 layers, `ssm_group_count=16` confirmed in the recon doc, `dt_rank`
 unconfirmed) is a two-FK33 target and its state partitioning follows the layer
 split. **These dims must be read from the GGUFs before v4.0 planning, not
-assumed** — the same rule the recon doc applies to everything else.
+assumed** - the same rule the recon doc applies to everything else.
 
-### 2.10 Open risk: state precision under recurrence
+> **VERIFIED 2026-08-25 for the 27B**, read directly from
+> `/mnt/storage/llama-models/Qwen3.8-27B-Q4_K_M.gguf` via gguf-py, not
+> inferred:
+>
+> | key | value |
+> |---|---|
+> | `ssm.state_size` | 128 |
+> | `ssm.group_count` | 16 (key heads) |
+> | `ssm.time_step_rank` | 48 (value heads) |
+> | `ssm.inner_size` | 6144 |
+> | `ssm.conv_kernel` | 4 |
+> | `block_count` | 64 |
+> | `full_attention_interval` | 4, so **48 GDN layers** |
+>
+> This closes the `dt_rank` unconfirmed note above for the 27B: it is 48, and
+> the GQA ratio inside GDN is **3 value heads per key head**, not the 1:1 of
+> the 0.8B. The 9B remains unverified.
+
+### 2.10 State precision under recurrence: RESOLVED 2026-08-25, int16 stands
+
+> **MEASURED. The error is bounded, not compounding.** It reaches an
+> equilibrium of ~5e-4 relative output error by token ~1000 and stays flat
+> through 16,384 tokens with the decay gate **pinned at `exp(g) = 1.0`**, the
+> least contractive value the gate can take. That last condition is the one
+> that matters: a recurrence driven by inputs that happen to keep the gate
+> contractive looks stable for reasons that do not hold in production, so the
+> bound was taken at zero contraction rather than at the real per-head decay.
+>
+> | regime | worst-head relative output error |
+> |---|---|
+> | real per-head `exp(g)` from the GGUF, sigmoid beta, iid inputs | 5.2e-4, flat |
+> | `exp(g) = 1.0`, 16,384 tokens | 6.1e-4, flat from t ~ 1024 |
+> | persistent `beta = 0.02` | 5.1e-3 |
+> | 2% of v channels at 30x outliers | 5.6e-3 |
+> | correlated inputs, rho = 0.9 | 1.4e-3 |
+> | **every adversarial knob stacked**, 8192 tokens | **2.27%** |
+>
+> Against this project's own yardstick, that is noise: A's weight format
+> carries ~8% relative weight error for +1.69% perplexity
+> (`2026-08-24_subsystem-a-format-perplexity.md`).
+>
+> **Widening the state does not help in the only regime where the error is
+> large.** Stacked-adversarial measures 2.27% at W16, **2.06% at W18 and 2.04%
+> at W20**. The residual comes from the 16-bit seams this spec pins at sites
+> 7, 9 and 12, not from the state width, so the contingency below would spend
+> traffic and DSP for a ~10% reduction in an error that is already acceptable.
+> The width sweep at the base regime bottoms out at ~2.4e-4 for W >= 18
+> against 5.2e-4 at W16, and 1.4e-2 at W12.
+>
+> **Consequences: none of the contingency fires.** §2.8's four-products-in-one-
+> DSP48E2 co-fit and §2.3's traffic numbers stand as written. `se_new` never
+> left int8 range in any run (0 events); `sat16` events were rare and benign.
+>
+> Two caveats. **No real Qwen3.8 GDN activations exist in this repo** (the
+> golden vectors are stories260K), so the drive is synthetic with sensitivity
+> knobs, and the production bound lies somewhere between 5e-4 and the 2%
+> stacked ceiling. And input quantization alone contributes ~3.3e-3, about 6x
+> the loop's own error, so the recurrence is not the dominant term either way.
+>
+> This measurement is also what found the `SE_INIT` defect in §2.1.4, which
+> was doing ~1000x more damage than the effect it was written to bound.
+> Procedure, raw output and the rejected hypotheses:
+> `docs/debugging/2026-08-25_gdn-recurrence-error-bound.md`; tool
+> `ref/gdn_err.c`.
+
+The original statement of the risk follows, unedited, because it is what the
+measurement was designed against.
 
 **This is a premise of section 2, not a section 3 detail.** The state is
 requantized to int16 **every token**, and the result feeds back through the
@@ -988,6 +1108,12 @@ The error bound is therefore a **gating deliverable for §3**, not an optional
 analysis, and it should be computed before any RTL is written. A cheap
 first check: run the C reference at int16 against an fp32 model of the same
 recurrence over a few thousand tokens and measure divergence.
+
+**That check was run and is the box above. The gate is open.** One correction
+to the plan as stated: the fp32 oracle must eat **dequantized** inputs, not
+the raw ones, or input quantization dominates the measurement and the feedback
+loop's own contribution is never isolated. `ref/gdn_err.c` does this by
+default and `--inq-real` shows the difference.
 
 ## 3. Datapath scheduling, nonlinearities, validation
 
