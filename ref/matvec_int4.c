@@ -231,11 +231,18 @@ int mv4i_matvec(const mv4i_file *f, const int16_t *x_mant, int x_exp,
             /* 14.2 CORRECTED 2026-08-22: partial mode emits the accumulator
              * UNROUNDED.  round_shift is NOT additive, so rounding each shard
              * before the reduction accumulates up to N/2 ulp of error and can
-             * never reproduce the full-K result.  Emitting the raw s48 makes
-             * the sharded path BIT-EXACT with the single-card path, because
-             * integer addition of the same terms is associative.
-             * It also dissolves the sat32-on-partial hazard entirely: there is
-             * no saturation until the single round at the end.               */
+             * never reproduce the full-K result.
+             * WITHDRAWN 2026-08-24 (15.4b): the sentence that stood here
+             * claiming the sharded path is then "BIT-EXACT with the
+             * single-card path, because integer addition is associative"
+             * holds ONLY when every card shares one grid (equal x_exp).  In
+             * production each card BFP-packs its own x slice, so the grids
+             * differ, the consumer must floor-align to the minimum y_exp, and
+             * the reduction is NOT exact.  Bit-identity died upstream of the
+             * reduction and is unattainable under any policy.  See 14.2.
+             * What does survive: no sat32 runs here at all, so the
+             * sat32-on-partial hazard is dissolved and sat_event must stay
+             * clear in this mode.  sim/tb_matvec_core checks that.          */
             out->y_acc[r] = acc;
             continue;
         }
@@ -448,20 +455,35 @@ static int crosscheck(const char *path)
 /* Emit a self-contained stage trace for a small deterministic case: the packed
  * weights, the activation vector, and every intermediate.  sim/tb_matvec_core
  * reads exactly this one file. */
-static int emit_trace(const char *out_path, int M, int K, int RI)
+/* `sat` selects the ADVERSARIAL vector instead of the random one: every
+ * weight at the codebook's -127 extreme, every scale at 32767, every
+ * activation at -32768 and out_shift 0, which is test 12's construction and
+ * drives acc past 2^31 so sat32 clamps on every row.  It exists so the trace
+ * exercises sat_event with a value other than 0.  Without it the flag was
+ * wired through three testbenches and never once compared, which is how the
+ * RTL came to assert it in PARTIAL mode -- where 14.2 runs no sat32 at all
+ * and the reference therefore reports 0 -- undetected. */
+static int emit_trace(const char *out_path, int M, int K, int RI, int sat)
 {
     const int NB = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
-    const int out_shift = 3, w_exp = 2, x_exp = 5;
+    const int out_shift = sat ? 0 : 3;
+    const int w_exp = sat ? 0 : 2, x_exp = sat ? 0 : 5;
     uint8_t  *idx = malloc((size_t)M * K);
     uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
     uint32_t st = 99;
+    if (sat) {
+        for (int i = 0; i < M * K; i++)  idx[i] = 0;         /* cb = -127 */
+        for (int i = 0; i < M * NB; i++) scl[i] = 32767;
+    } else {
     for (int i = 0; i < M * K; i++) { st = st * 1103515245u + 12345u; idx[i] = (st >> 16) & 15; }
     for (int i = 0; i < M * NB; i++) { st = st * 1103515245u + 12345u; scl[i] = (uint16_t)(8000 + ((st >> 12) % 24000)); }
+    }
     size_t len; uint8_t *img = pack(M, K, RI, w_exp, out_shift, IQ4_NL, idx, scl, &len);
     mv4i_file f; if (mv4i_parse(&f, img, len)) return 2;
 
     int16_t *x = malloc(sizeof(int16_t) * K);
-    for (int k = 0; k < K; k++) { st = st * 1103515245u + 12345u; x[k] = (int16_t)((int32_t)((st >> 8) % 40001) - 20000); }
+    if (sat) { for (int k = 0; k < K; k++) x[k] = -32768; }
+    else { for (int k = 0; k < K; k++) { st = st * 1103515245u + 12345u; x[k] = (int16_t)((int32_t)((st >> 8) % 40001) - 20000); } }
 
     g_trace = fopen(out_path, "w");
     if (!g_trace) { perror(out_path); return 2; }
@@ -511,6 +533,10 @@ static int emit_trace(const char *out_path, int M, int K, int RI)
     mv4i_result res = { malloc(4*(size_t)M), malloc(8*(size_t)M), malloc(2*(size_t)M), 0,0,0,0 };
     int rc = mv4i_matvec(&f, x, x_exp, M, K, MV4I_MODE_BFP, &res);
     fprintf(g_trace, "YEXP %d\n", res.y_exp);
+    /* The sticky flag as the reference computes it, for THIS pass (BFP).  The
+     * testbench compares it and additionally requires 0 from the PARTIAL pass,
+     * which needs no expectation from here because 14.2 makes it invariant. */
+    fprintf(g_trace, "SATEV %d\n", res.sat_event ? 1 : 0);
     fclose(g_trace); g_trace = NULL;
     printf("wrote %s (M=%d K=%d NB=%d)\n", out_path, M, K, NB);
     return rc;
@@ -526,7 +552,8 @@ int main(int argc, char **argv)
         int M = argc > 3 ? atoi(argv[3]) : 8;
         int K = argc > 4 ? atoi(argv[4]) : 96;
         int R = argc > 5 ? atoi(argv[5]) : 4;
-        return emit_trace(argv[2], M, K, R);
+        int S = argc > 6 ? atoi(argv[6]) : 0;
+        return emit_trace(argv[2], M, K, R, S);
     }
     if (argc >= 2) return crosscheck(argv[1]);
     printf("subsystem A reference self-test\n");

@@ -497,7 +497,14 @@ begin
           rbase := re2_t * ROWS_IF;
           for rr in 0 to ROWS_IF-1 loop
             a32 := sat32(re2_shv(rr));
-            if re2_shv(rr) /= resize(a32, 48) then sat_r <= '1'; end if;
+            -- 14.2: partial mode emits the UNROUNDED s48 and never applies
+            -- sat32, so a sat here is an artefact of a value this mode
+            -- discards.  Reporting it would make E reject good partials in
+            -- exactly the cancellation cases where a K-slice legitimately
+            -- exceeds the full-K result.  Sticky only where sat32 is real.
+            if out_mode /= "10" and re2_shv(rr) /= resize(a32, 48) then
+              sat_r <= '1';
+            end if;
             ynew(rr*32+31 downto rr*32) := std_logic_vector(a32);
             re3_mag(rr) <= unsigned(abs(resize(a32, 36)));
             if out_mode = "10" then

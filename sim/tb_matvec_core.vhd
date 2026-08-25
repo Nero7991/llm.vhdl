@@ -29,7 +29,10 @@ end entity;
 architecture sim of tb_matvec_core is
   constant BLK  : positive := 32;
   constant MAXR : positive := 64;
-  constant MAXB : positive := 16;
+  -- 32, not 16: the adversarial sat vector needs NB > 16 to push acc past
+  -- 2^31 at all (each block contributes ~1.33e8, so 16 blocks reach 2.13e9,
+  -- just UNDER the s32 limit and nothing saturates).  K=1024 gives NB=32.
+  constant MAXB : positive := 32;
 
   signal clk   : std_logic := '0';
   signal rst   : std_logic := '1';
@@ -72,6 +75,10 @@ architecture sim of tb_matvec_core is
   signal e_part, e_contrib : exp_t := (others => (others => '0'));
   signal e_acc, e_ymant    : row_t := (others => (others => '0'));
   signal e_ns, e_yexp, nb_s, ri_s : integer := 0;
+  -- expected sticky sat_event for the BFP pass, from the trace.  -1 means
+  -- the trace predates SATEV, in which case the check is skipped rather
+  -- than silently comparing against a default.
+  signal e_satev : integer := -1;
 
   signal loaded : boolean := false;
   signal nbad, nchk : integer := 0;
@@ -179,6 +186,8 @@ begin
         read(l, a); e_ns <= a;
       elsif tok(1 to 4) = "YEXP" then
         read(l, a); e_yexp <= a;
+      elsif tok(1 to 5) = "SATEV" then
+        read(l, a); e_satev <= a;
       end if;
       wait for 0 ns;
     end loop;
@@ -383,6 +392,14 @@ begin
       report "YEXP MISMATCH got " & integer'image(y_exp) &
              " want " & integer'image(e_yexp) severity error;
 
+    -- 14.2: the sticky flag is normative output, not debug.  It was wired
+    -- through this testbench from the start and never compared.
+    assert e_satev < 0
+        or (e_satev = 1 and sat_event = '1')
+        or (e_satev = 0 and sat_event = '0')
+      report "SAT_EVENT MISMATCH (BFP) got " & std_logic'image(sat_event) &
+             " want " & integer'image(e_satev) severity failure;
+
     -- COVERAGE: a dropped tile still emits correct values for the tiles it does
     -- emit, so a value-only check passes.  Every row must be seen.
     assert nmant = n_rows
@@ -401,6 +418,17 @@ begin
     wait until done = '1';
     wait until rising_edge(clk);
     wait until rising_edge(clk);
+
+    -- 14.2: PARTIAL applies no requant and no saturation, so sat_event must be
+    -- clear here even on a vector that saturates every row in BFP mode.  This
+    -- is INVARIANT, so it needs no expectation from the trace.  The core used
+    -- to compute sat32 unconditionally and report the flag from a value this
+    -- mode discards, which would make subsystem E reject good partials in
+    -- precisely the cancellation cases where a K-slice legitimately exceeds
+    -- the full-K result.
+    assert sat_event = '0'
+      report "SAT_EVENT SET IN PARTIAL MODE: 14.2 runs no sat32 on this path"
+      severity failure;
 
     report "TOTAL: " & integer'image(nchk) & " stage + " &
            integer'image(ychk) & " output values compared, " &

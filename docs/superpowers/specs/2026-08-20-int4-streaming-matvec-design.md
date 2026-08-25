@@ -4,6 +4,21 @@ Design spec, 2026-08-20. Milestone `v2.0`. **Revision 5.**
 
 ## Revision history
 
+**Rev 6 (2026-08-25)** resolves the two §5 defects subsystem D's cross-spec
+review filed, and one that turned up while checking them. (The dated
+corrections in §14.2 and §15.4b from 2026-08-22 and 2026-08-24 were made in
+place and never given a revision entry; they belong to this one.)
+
+| Ref | Defect | Resolution |
+|---|---|---|
+| D-1 | **§5 declared `y_data` 32 bits** while §14.2 requires partial mode to emit the UNROUNDED **s48** accumulator, and §5's own `out_mode` comment said "int32". A 32-bit port silently truncates exactly what §14.2's second correction exists to preserve. | §5 replaced with the **as-built** entity (`y_data` is `ROWS_IF*64`). The measured result buffer of §7.9a was already 17,408 x 64, so only the paper was wrong. |
+| D-2 | §5 had drifted from the RTL on five further points: one element per cycle vs `ROWS_IF` rows per beat, no `y_mask`, an activation **read** port where the built one is a **write** port, `integer` scalars where the netlist needs vectors, and no region lengths. | Same replacement, with a divergence table recording each and why it changed. |
+| **N-1** | Found while checking D-1, not filed by anyone: **`matvec_core` asserted the sticky `sat_event` in partial mode**, from a `sat32` whose result that mode discards. E would have seen saturation on healthy partials. The flag was wired through three testbenches and compared in none. | Guarded on `out_mode`; the reference's adversarial vector added to the trace generator and the regression; `sat_event` now compared in the BFP pass and required 0 in the partial pass. §14.2. |
+
+Rev 6 also **withdraws** §14.2's "`sat32` on a partial is silent" hazard
+paragraph, which described the pre-2026-08-22 rounded-partial contract and has
+been superseded by the same document's consequence 1 since.
+
 **Rev 5** incorporates a fourth adversarial review. **§7.4's arithmetic core was
 verified sound for the first time** - widths, all four rounding sites against
 `fixed_pkg.scale_mul` and `bfp_pack` source, both `y_exp` derivations and the
@@ -198,62 +213,128 @@ Wide parallel buses are prohibited. At Qwen dimensions an `N*16` bus is 57,344
 bits, the same wall that made the parallel `logits` port cost 39.5K LUT before it
 was replaced with streaming.
 
+> **AS BUILT 2026-08-25.** The block below is the entity as it exists in
+> `rtl/matvec_int4.vhd` and `rtl/matvec_core.vhd`, not the rev-1 sketch. The
+> sketch is kept in the divergence table underneath it, because two of its
+> errors were load-bearing and one of them (`y_data` width) directly
+> contradicted §14.2. Subsystem D's review filed that contradiction; this is
+> its resolution.
+
 ```vhdl
+-- top, rtl/matvec_int4.vhd:  weight_streamer + act_mem_striped + matvec_core
 entity matvec_int4 is
   generic(
-    ROWS_IF     : positive := 4;      -- output rows in flight (the scaling knob)
-    BLOCK       : positive := 32;     -- weights per scale block
-    MAXCOLS     : positive := 3584;
-    MAXROWS_BFP : positive := 4096;   -- BFP-mode row bound
+    BLK         : positive := 32;     -- weights per scale block (6.1)
+    ROWS_IF     : positive := 4;      -- rows in flight, the scaling knob (7.2)
     NPORTS_W    : positive := 4;      -- AXI read channels, weights
-    NPORTS_S    : positive := 1;      -- AXI read channels, scales
-    AXI_DW      : positive := 128
+    AXI_DW      : positive := 128;
+    ADDR_W      : positive := 32;
+    MAXCOLS     : positive := 17408;  -- 14.1, the 27B FFN
+    MAXROWS_BFP : positive := 17408;
+    FIFO_DEPTH  : positive := 512;
+    MAXB        : positive := 256;
+    MAXOUT      : positive := 2
   );
-  -- COLS_PC (columns per cycle) is PINNED to BLOCK, not a generic: see 7.2.
-  -- MAC count is DERIVED: MACS = ROWS_IF * BLOCK.
+  -- COLS_PC (columns per cycle) is PINNED to BLK, not a generic: see 7.2.
+  -- MAC count is DERIVED: MACS = ROWS_IF * BLK.
   port(
     clk, rst : in  std_logic;
-    -- job descriptor
+
+    -- Descriptor, driven by the PS after IT has parsed the 4 KB header (6.4).
+    -- Every scalar is std_logic_vector, NOT integer: Vivado rewrites integer
+    -- ports as vectors when it writes a netlist, so an integer here would make
+    -- the post-synthesis funcsim testbench (9, 7.9a) unable to port-map the
+    -- very netlist it exists to check. An AXI-Lite wrapper wants vectors anyway.
     start     : in  std_logic;
-    -- One base per weight sub-region (7.7 lane-split), 4KB aligned, copied by
-    -- the PS from the header. Flattened: sub-region p occupies bits
-    -- (p+1)*32-1 downto p*32. There is deliberately NO single w_base: the unit
-    -- never reads the header, so sub-region placement must be told to it.
-    w_sub_base : in std_logic_vector(NPORTS_W*32-1 downto 0);
-    s_base    : in  std_logic_vector(31 downto 0);  -- scale region, 4KB aligned
-    n_rows    : in  integer;                        -- M, true value
-    n_cols    : in  integer;                        -- K, TRUE value (see 6.3)
-    w_exp     : in  integer;                        -- per-matrix weight exponent
-    out_shift : in  integer;                        -- output requant shift (7.6)
-    out_mode  : in  std_logic_vector(1 downto 0);   -- "00" BFP, "01" raw,
-                                                    -- "10" partial (14.2) int32
-    -- activation read port: BLOCK address, not element address (see 7.8)
-    x_rbaddr  : out std_logic_vector(clog2(MAXCOLS/BLOCK)-1 downto 0);
-    x_rdata   : in  std_logic_vector(BLOCK*16-1 downto 0);
-    x_exp     : in  integer;
+    n_rows    : in  std_logic_vector(31 downto 0);  -- M, true value
+    n_cols    : in  std_logic_vector(31 downto 0);  -- K, TRUE value (6.3)
+    out_shift : in  std_logic_vector(31 downto 0);  -- 0..40 (7.4, 7.6)
+    w_exp     : in  std_logic_vector(31 downto 0);
+    x_exp     : in  std_logic_vector(31 downto 0);
+    out_mode  : in  std_logic_vector(1 downto 0);   -- 00 BFP, 01 raw,
+                                                    -- 10 partial (14.2), s48
+    -- One base per weight sub-region (7.7 lane-split), 4KB aligned. There is
+    -- deliberately NO single w_base: the unit never reads the header, so
+    -- sub-region placement must be told to it. Beat counts come with them.
+    w_base    : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
+    w_beats   : in  std_logic_vector(31 downto 0);
+    s_base    : in  std_logic_vector(ADDR_W-1 downto 0);
+    s_beats   : in  std_logic_vector(31 downto 0);
+
     -- codebook load, 16 x int8. Illegal while a job is in flight (7.5).
     cb_we     : in  std_logic;
     cb_addr   : in  std_logic_vector(3 downto 0);
     cb_data   : in  std_logic_vector(7 downto 0);
-    -- result write port, one element per cycle
+
+    -- Activation WRITE port, from the producer (rmsnorm, swiglu, ...), one
+    -- element per cycle. The striped read side (7.8) is internal: it is
+    -- act_mem_striped that turns this into BLK elements per cycle, so the
+    -- BLOCK-addressed read port of rev 1 is not on this boundary at all.
+    x_we      : in  std_logic;
+    x_waddr   : in  std_logic_vector(15 downto 0);
+    x_wdata   : in  std_logic_vector(15 downto 0);
+
+    -- AXI4 read masters, flattened. Index NPORTS_W is the scale port, so there
+    -- are NPORTS_W+1 channels. Standard AR/R set; no write channel exists.
+    m_arvalid : out std_logic_vector(NPORTS_W downto 0);
+    m_arready : in  std_logic_vector(NPORTS_W downto 0);
+    m_araddr  : out std_logic_vector((NPORTS_W+1)*ADDR_W-1 downto 0);
+    m_arlen   : out std_logic_vector((NPORTS_W+1)*8-1 downto 0);
+    m_arsize  : out std_logic_vector((NPORTS_W+1)*3-1 downto 0);
+    m_arburst : out std_logic_vector((NPORTS_W+1)*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(NPORTS_W downto 0);
+    m_rready  : out std_logic_vector(NPORTS_W downto 0);
+    m_rdata   : in  std_logic_vector((NPORTS_W+1)*AXI_DW-1 downto 0);
+    m_rlast   : in  std_logic_vector(NPORTS_W downto 0);
+
+    -- Result: ROWS_IF rows PER BEAT, not one element per cycle. y_addr is the
+    -- BASE row of the tile. 64 bits per row because partial mode carries the
+    -- UNROUNDED s48 of 14.2; BFP carries an int16 mantissa and raw an int32,
+    -- both sign-extended into the same 64. y_mask suppresses pad rows (7.6).
     y_we      : out std_logic;
-    y_addr    : out std_logic_vector(clog2(MAXROWS_BFP)-1 downto 0);
-    y_data    : out std_logic_vector(31 downto 0);
-    y_exp     : out integer;
+    y_addr    : out std_logic_vector(15 downto 0);
+    y_data    : out std_logic_vector(ROWS_IF*64-1 downto 0);
+    y_mask    : out std_logic_vector(ROWS_IF-1 downto 0);   -- 0 = pad row
+    y_exp     : out std_logic_vector(31 downto 0);
     done      : out std_logic;                      -- one-cycle pulse
     err       : out std_logic;                      -- job aborted, see 7.6
     sat_event : out std_logic;                      -- STICKY: sat32 fired at
                                                     -- least once this job.
-                                                    -- Cleared at start. See 14.2.
-    -- AXI4 master read, NPORTS_W + NPORTS_S channels, standard AR/R signal set
-    -- per channel. Enumerated in the implementation plan, not here.
-    ...
+                                                    -- Cleared at start. 14.2.
+    -- 11 wants sustained bandwidth as a percentage of peak, which needs beats
+    -- consumed and cycles starved, not a wall-clock time.
+    dbg_wbeat   : out std_logic;
+    dbg_wstarve : out std_logic
   );
 end entity;
 ```
 
-`x_exp`, `y_exp`, `w_exp`, `out_shift`, `n_rows` and `n_cols` are `integer`
-because they are descriptor and exponent values, not datapath signals. See §8.
+`matvec_core` (`rtl/matvec_core.vhd`) is the same descriptor with `integer`
+scalars, no AXI, and `w_valid/w_data/w_ready` + `s_valid/s_data/s_ready` stream
+ports in place of the masters. Conversion happens once, in `matvec_int4`. That
+is what lets the core be driven from file-fed streams with no AXI model at all
+(§7.1, `sim/tb_matvec_core`), and it is why the core is portable between the
+AXU3EG's DDR4 and the FK33's HBM without change. The core additionally exports
+per-stage debug taps (`tp_*`, `tc_*`, `ta_*`, `tm_*`), one bus per stage rather
+than a shared one because stages retire concurrently and a shared bus would drop
+taps; synthesis prunes them when unconnected.
+
+### Where the rev-1 sketch was wrong
+
+| Rev 1 said | As built | Why it matters |
+|---|---|---|
+| `y_data : out std_logic_vector(31 downto 0)`, and `out_mode` commented `"10" partial (14.2) int32` | `y_data : out std_logic_vector(ROWS_IF*64-1 downto 0)` | **The contradiction D filed.** §14.2 requires partial mode to emit the accumulator UNROUNDED as **s48**; a 32-bit port silently truncates it, and truncation is exactly the failure §14.2's second correction was written to prevent. The measured result buffer (§7.9a) is already 17,408 x 64 for this reason. |
+| result port emits **one element per cycle** | **`ROWS_IF` rows per beat**, `y_addr` is the tile's base row, `y_mask` marks pad rows | At `ROWS_IF=58` (FK33) a one-element port would need 58 write cycles per tile against 1, and the array would stall on its own output. `y_mask` is §7.6's row masking, which rev 1 specified in prose but gave no port for. |
+| activation **read** port `x_rbaddr`/`x_rdata`/`x_exp` on the top boundary | activation **write** port `x_we`/`x_waddr`/`x_wdata`; the striped read side is internal to `act_mem_striped` | Rev 1 put §7.8's internal detail on the external boundary and gave the producer nothing to write through. `x_exp` is a descriptor input, not part of the activation port. |
+| scalars are `integer` | scalars are `std_logic_vector(31 downto 0)` | Vivado converts integer ports to vectors in a netlist, which would have made the §9 funcsim unable to port-map the netlist. Discovered building it. |
+| `w_sub_base` only | `w_base` + `w_beats`, `s_base` + `s_beats` | The streamer needs a length as well as an address; rev 1 gave it no way to know when a region ends. |
+| AXI channels "enumerated in the implementation plan, not here" | enumerated above | The plan never enumerated them. |
+
+The rev-1 note that `x_exp`, `y_exp`, `w_exp`, `out_shift`, `n_rows` and
+`n_cols` "are `integer` because they are descriptor values, not datapath
+signals" survives as the **rule** (§8: data never travels through a VHDL
+`integer`) but not as the **port type**. `matvec_core` keeps them as integers;
+`matvec_int4` converts.
 
 ### Two output modes
 
@@ -1339,17 +1420,57 @@ Two consequences:
    token, still only **0.47%** of a 7.57 GB weight read.
 
 `out_shift` calibration must still account for the **full** K range, not one
-card's slice. Note also that **`sat32` on a partial is silent**: under
-cancellation a card's K-slice partial can exceed the final result's magnitude and
-clip with no error raised, poisoning every card's output undetectably. Either the
-calibration must carry headroom against per-slice magnitude, or the transport
-must carry a saturation-occurred flag. **RESOLVED 2026-08-22: detection belongs to A, not the consumer.** A consumer
-sees a clean s32 and cannot distinguish a genuine 2^31-1 from a clipped value,
-so only A's requant stage can know. A therefore exports a **sticky `sat_event`**
-flag, set whenever `sat32` fires, cleared at `start`, and valid with `done`. It
-costs one comparator. The C reference counts saturation events so the packer's
-`out_shift` calibration can be validated offline, and headroom calibration
-remains policy layered on top of the flag rather than a substitute for it.
+card's slice.
+
+**WITHDRAWN 2026-08-25.** This paragraph previously continued with a
+"`sat32` on a partial is silent" hazard: that under cancellation a card's
+K-slice partial could exceed the final result's magnitude, clip undetectably,
+and poison every card's output. That was written when partial mode still
+emitted `sat32(round_shift(acc, out_shift))`. **It no longer applies**, and
+consequence 1 four lines up already says so. Partial mode emits the raw s48
+accumulator: there is no requant and no saturation anywhere on the partial
+path, so there is nothing to be silent about. The hazard was real for exactly
+as long as the rounded-partial contract existed, and both died together.
+
+What survives from it is the `sat_event` port, and its rationale narrows:
+
+- **Detection belongs to A, not the consumer** (RESOLVED 2026-08-22). A
+  consumer sees a clean value and cannot distinguish a genuine 2^31-1 from a
+  clipped one, so only A's requant stage can know. One comparator.
+- `sat_event` is **live in BFP and raw modes only**, where `sat32` and `sat16`
+  genuinely fire. In partial mode it must stay clear: no saturating operator
+  is in the path, so an assertion there reports a value the mode discards.
+  Normative, and it is what the C reference has always done (it `continue`s
+  before reaching `sat32`).
+- The C reference still counts saturation events so `out_shift` calibration
+  can be validated offline. Headroom calibration is policy layered on the
+  flag, not a substitute for it.
+
+> **MEASURED 2026-08-25: the RTL did not do this, and nothing noticed.**
+>
+> `matvec_core.vhd` computed `sat32` unconditionally and set the sticky flag
+> from it in every mode, so partial mode reported saturation on a value it
+> then threw away. The failure it would have produced is specific and
+> unpleasant: a K-slice partial legitimately exceeds the full-K result under
+> cancellation, which is the ordinary case row-parallelism creates, so
+> subsystem E would have seen `sat_event` on healthy partials and had no way
+> to tell them from real clipping.
+>
+> It survived because `sat_event` was **wired through three testbenches and
+> never compared in any of them**, and because the stage trace was only ever
+> emitted for BFP mode with a random vector that does not saturate. Two
+> independent gaps, both invisible to a spec review.
+>
+> Fixed in `matvec_core.vhd` (guard on `out_mode /= "10"`). The regression now
+> carries the adversarial vector from the reference's test 12 as a trace case
+> (`ref/matvec_int4 --trace <path> M K R 1`, weights at the -127 codebook
+> extreme, scales at 32767, activations at -32768, `out_shift` 0) at
+> `K=1024`, which is the smallest K that saturates at all: each block
+> contributes ~1.33e8, so 16 blocks reach 2.13e9 and stay **under** s32.
+> `sim/tb_matvec_core` now compares `sat_event` against the reference in the
+> BFP pass and requires 0 in the partial pass. Reverting the guard makes it
+> fail with `SAT_EVENT SET IN PARTIAL MODE`; `sh sim/run_matvec.sh` is green
+> with it.
 
 ### 14.3 Sharding pattern (Megatron-style)
 

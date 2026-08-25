@@ -127,20 +127,33 @@ echo "== 5. RTL vs C reference, stage by stage, over shapes =="
 #      9   97      4      2     heavier backpressure
 #     13  129      8      5     wide and ragged under backpressure
 #     16   32      4      7     exactly one block per row
+#
+# A 5th field selects the ADVERSARIAL vector (ref --trace ... 1): weights at
+# the -127 codebook extreme, scales at 32767, activations at -32768,
+# out_shift 0.  Every row saturates, so the BFP pass must report sat_event=1
+# and the PARTIAL pass must report 0 on the SAME data -- the only case in the
+# suite where that flag is anything but 0.
 CASES="8:96:4:0 7:100:4:0 9:97:4:0 8:96:1:0 8:96:2:0 13:129:8:0 1:33:4:0
-       7:100:4:3 9:97:4:2 13:129:8:5 16:32:4:7"
+       7:100:4:3 9:97:4:2 13:129:8:5 16:32:4:7
+       4:1024:4:0:1 13:1024:8:5:1"
 # (fail initialised at the top, before stage 4b uses it)
 for c in $CASES; do
   M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
   R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)
-  ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" >/dev/null )
+  A=$(echo "$c" | cut -d: -f5); [ -n "$A" ] || A=0
+  ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" "$A" >/dev/null )
+  # --stop-delta: the trace loader spends one delta per line and the K=1024
+  # adversarial cases are ~5k lines, which trips ghdl's 5000 default and looks
+  # exactly like a zero-delay loop.  It is not one.
   out=$( cd sim/work_mv && ghdl -r --std=08 --workdir=. tb_matvec_core \
-           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=50ms 2>&1 )
+           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=50ms \
+           --stop-delta=1000000 2>&1 )
   n=$(echo "$out" | grep -oE 'TOTAL: [0-9]+ stage \+ [0-9]+ output' || true)
+  [ "$A" = 0 ] && sfx="" || sfx=" sat"
   if echo "$out" | grep -q "matches ref/matvec_int4.c"; then
-    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  OK   %s\n" "$M" "$K" "$R" "$S" "$n"
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s%s  OK   %s\n" "$M" "$K" "$R" "$S" "$sfx" "$n"
   else
-    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  FAIL\n" "$M" "$K" "$R" "$S"
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s%s  FAIL\n" "$M" "$K" "$R" "$S" "$sfx"
     echo "$out" | head -5
     fail=1
   fi
