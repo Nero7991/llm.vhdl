@@ -270,6 +270,15 @@ requests does not heat HBM stacks. That makes it very likely the traffic was
 real -- but "very likely, on thermal grounds" is not the standard this
 instrument was built to meet.
 
+> **RESOLVED the same day.** The 300 MHz sweep was re-run on a rebuild
+> carrying the response counter (`hw/fk33/results/hbmbw_300mhz_validated.txt`,
+> build WNS +0.455 ns): **zero non-OKAY responses at all five port counts**,
+> and the numbers reproduce exactly. The 48,000,000 beats were real memory
+> reads. The thermal inference was right, and is now backed by the direct
+> check rather than standing in for it.
+>
+> Problem 1 below is NOT resolved by this and is not resolvable at 300 MHz.
+
 Fixed in `c98c7cc`: per-port non-OKAY counter at 0x1000, checked by the sweep
 before the beat and thermal checks, and the testbench now proves the counter
 fires (zero on a clean run, exactly `nburst*(arlen+1)` under injected
