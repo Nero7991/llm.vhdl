@@ -1243,7 +1243,7 @@ reference.
 | Activation read | 32/cycle | 32/cycle (unchanged) |
 | Weight source | 4x AXI HP -> DDR4 | HBM AXI ports (32 available) |
 | Demand @ clock | 14.4 GB/s @ 200 MHz | 432 GB/s @ 300 MHz |
-| Available | ~12 GB/s | 460 GB/s |
+| Available | ~12 GB/s | 460 GB/s nominal, **288 GB/s MEASURED** (see below) |
 
 Rev 1 gave "R=16, P=32 or R=4, P=128", which yields 512 MACs against the ~2,730
 required, and `P=128` violated `COLS_PC = BLOCK`. Both are corrected: **scaling
@@ -1255,6 +1255,36 @@ is via `ROWS_IF` only**.
 is the limiter; it becomes memory-bound only once realistic HBM efficiency
 (~70%) is applied. Rev 2 claimed it "preserves the memory-bound regime", which is
 false at nominal numbers.
+
+> **CORRECTED 2026-08-25 BY MEASUREMENT ON THE CARD.** Both inputs above are
+> wrong, in opposite directions, and the conclusion flips.
+>
+> **Supply is 288 GB/s, not 460.** Measured, 30 ports, 300 MHz, 100.0% of the
+> arithmetic ceiling, 96,000,000 beats, zero non-OKAY responses
+> (`hw/fk33/results/hbmbw_30port_300mhz.txt`). 460.8 GB/s is
+> `32 ports x 32 B x 450 MHz` and needs BOTH terms: SAXI_00 and SAXI_16 carry
+> `jtag_hbm`, one per stack, so 32 ports is not available to any design that
+> also has to talk to the host, and 450 MHz has not been closed (350 MHz
+> currently misses by 0.395 ns). Usable supply is `ports x 32 B x f_ACLK`, and
+> at the achieved 30 ports / 300 MHz that is 288.0 GB/s.
+>
+> **The ~70% HBM efficiency derate does not exist.** Measured efficiency is
+> 100.0% at every port count from 1 to 30, and separately 100% under 30-way
+> oversubscription of a single channel -- a near-worst-case interleaved access
+> pattern -- with no measurable degradation. There is no DRAM-efficiency term
+> to apply. The number to apply instead is the port-and-clock ceiling, which
+> the old framing hid inside an efficiency factor that pointed the right way
+> for the wrong reason.
+>
+> **Net: `demand 432 > supply 288`, so the FK33 config IS memory-bound at
+> 300 MHz**, by 1.5x rather than being array-limited. `ROWS_IF=80` would stall
+> the array roughly a third of the time. Balance needs
+> `ROWS_IF ~ 80 x 288/432 ~ 53`, which is close to (and independently
+> corroborates) the §15.4c "balanced" point at `ROWS_IF ~ 58`.
+>
+> This does not change the direction of any §15.4 sizing decision, but it does
+> change WHY: the constraint is how much bandwidth the fabric can request, not
+> how efficiently HBM answers. HBM answers perfectly.
 
 **What blocks closing the gap is HBM ports, not DSPs.** `ROWS_IF=86` needs
 `86 x 34 = 2,924` DSPs, which fits in 2,976, and would demand
