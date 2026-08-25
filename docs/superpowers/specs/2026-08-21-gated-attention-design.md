@@ -239,10 +239,40 @@ The gate shares `qg_exp` with Q, since both are views of one `wq` output.
 | Reused | From | Caveat |
 |---|---|---|
 | RMSNorm for QK-norm | `rmsnorm.vhd`, N=256 | ports are N*16 parallel (4096 b); needs a marshalling buffer from the 512-bit striped read |
-| EXP_ROM (257 entries, domain [-16,0] Q12) | `softmax.vhd` | the cone is a **3-state FSM**, ~1 exp per 3 cycles, not a pipeline; section 3 must schedule it |
+| EXP_ROM (257 entries, domain [-16,0] Q12) | `softmax.vhd` | the cone is a **3-state FSM**, ~1 exp per 3 cycles, not a pipeline; **MEASURED 2026-08-24: pipelining it to 1/cycle costs ONE LUT** -- see below |
 | Reciprocal for `1/s` | `divider_rs.vhd` | see below |
 | BFP quantize (amax -> msb_pos -> shift) | `bfp_pack.vhd` | now the KV write-side quantizer, §2.1.3 |
 | `layer`-selected banked regions | `attention_ml.vhd` concept | moved BRAM -> DDR |
+
+> **MEASURED 2026-08-24: the exp cone is the binding constraint at 27B, and the
+> fix is free.** A position needs 6 exps (one per query head in the GQA group),
+> so 18 cycles at 3 cycles each, against 16 cycles of MAC work at `MACS=192`.
+> Because 18 is fixed, it caps C **independently of lane count**: `MACS=384` at
+> 768 DSP delivers exactly what `MACS=192` delivers at 384 DSP, 3.93 ms either
+> way. Any sizing argument that ignores it is choosing between identical
+> outcomes.
+>
+> The three stages already register between states, so a true pipeline needs one
+> register per stage **boundary**, not per in-flight element -- the staged FSM
+> was already paying for the storage and not using it. Measured on
+> `xcvu33p-fsvh2104-2L-e` at 3.333 ns with the arithmetic copied verbatim
+> (`sim/micro/micro_exp_cone.vhd`, both forms behind a `PIPELINED` generic):
+>
+> | | DSP | LUT | FF | CARRY8 | Fmax |
+> |---|---|---|---|---|---|
+> | staged, as built | 8 | 629 | 138 | 45 | 343.4 MHz |
+> | pipelined | 8 | **630** | 138 | 45 | 343.4 MHz |
+>
+> Simulation, both driven identically with 24 back-to-back inputs: pipelined
+> returns **24**, staged returns **8**, values agreeing on all 8 once aligned.
+> Utilisation alone was NOT treated as proof -- identical numbers are equally
+> consistent with the two generate branches collapsing into one netlist.
+>
+> With the cone fixed, `MACS=192` reaches 3.49 ms and `MACS=384` 1.75 ms, so the
+> two become genuinely different design points. Integration into `softmax.vhd`
+> must still preserve `conv_q`, the `e_arr` store and the sum accumulation,
+> which the micro-benchmark drops; the sum accumulator stays sequential.
+> Procedure and traps: `docs/debugging/2026-08-24_vccint-derate-and-exp-cone.md`.
 
 **The reciprocal-multiply caveat is normative.** `divider_rs.vhd:26-28` warns
 that "a reciprocal-multiply would NOT preserve [the caller's rounding] and is
