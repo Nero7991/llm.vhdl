@@ -21,7 +21,29 @@
 
 set part   [lindex $argv 0]
 set period [lindex $argv 1]
-set rowlist [lrange $argv 2 end]
+# Optional 3rd arg "dsp=<N>": cap DSP inference at N and let everything above it
+# fall into LUT fabric. -1 (default) leaves Vivado's normal inference alone.
+#   dsp=0     every multiplier in LUTs -- gives LUT-per-MAC by difference
+#   dsp=2880  the VU33P's real budget -- the hybrid-array question
+set maxdsp -1
+set rest [lrange $argv 2 end]
+if {[regexp {^dsp=(-?\d+)$} [lindex $rest 0] -> v]} {
+  set maxdsp $v
+  set rest [lrange $rest 1 end]
+}
+# Optional "volt=<V>": analyse timing at a VCCINT other than the part default.
+# Exists because every Fmax figure in every spec is Vivado's default analysis,
+# which for -1/-2/-2L is the 0.85 V point, while the FK33 powers up at 0.678 V
+# and is set by hand to 0.717 V (docs/debugging/2026-08-24_fk33-sysmon-vccint-
+# undervolt.md).  -2L is dual-characterised, so 0.70/0.72 are real speed data,
+# not an extrapolation.  Applied AFTER synthesis so the reported number is the
+# pure voltage derate of one netlist rather than two differently-optimised ones.
+set volt -1
+if {[regexp {^volt=([0-9.]+)$} [lindex $rest 0] -> v]} {
+  set volt $v
+  set rest [lrange $rest 1 end]
+}
+set rowlist $rest
 
 set_param general.maxThreads 4
 set here   [file normalize [file dirname [info script]]]
@@ -35,10 +57,10 @@ file mkdir $outdir
 set csvpath [file join $outdir results.csv]
 set fresh [expr {![file exists $csvpath] || [file size $csvpath] == 0}]
 set csv [open $csvpath a]
-if {$fresh} { puts $csv "part,period_ns,rows_if,dsp,lut,ff,bram,wns_ns,fmax_mhz" }
+if {$fresh} { puts $csv "part,period_ns,max_dsp,volt,rows_if,dsp,lut,ff,bram,wns_ns,fmax_mhz" }
 
 foreach R $rowlist {
-  puts "======== ROWS_IF=$R part=$part period=${period}ns ========"
+  puts "======== ROWS_IF=$R part=$part period=${period}ns max_dsp=$maxdsp ========"
   create_project -in_memory -part $part
   foreach f {util_pkg.vhd mv4i_arith_pkg.vhd matvec_core.vhd} {
     read_vhdl -vhdl2008 [file join $rtldir $f]
@@ -49,20 +71,30 @@ foreach R $rowlist {
   # design that was optimised unconstrained -- fine for a utilisation check,
   # misleading as an Fmax. Here the period is the question, so it has to be an
   # input to synthesis.
-  set xdc [file join $outdir clk_${R}.xdc]
+  set xdc [file join $outdir clk_${R}_${maxdsp}.xdc]
   set fh [open $xdc w]
   puts $fh "create_clock -name clk -period $period \[get_ports clk\]"
   close $fh
   read_xdc -mode out_of_context $xdc
 
-  synth_design -mode out_of_context -top matvec_core -part $part \
+  set synthargs [list -mode out_of_context -top matvec_core -part $part \
     -generic BLK=32 -generic ROWS_IF=$R \
-    -generic MAXCOLS=17408 -generic MAXROWS_BFP=17408
+    -generic MAXCOLS=17408 -generic MAXROWS_BFP=17408]
+  if {$maxdsp >= 0} { lappend synthargs -max_dsp $maxdsp }
+  synth_design {*}$synthargs
 
-  set rpt [file join $outdir util_R$R.rpt]
+  if {$volt > 0} {
+    set_operating_conditions -voltage [list VCCINT $volt]
+    puts "  operating conditions: VCCINT = $volt V"
+  }
+
+  set tag "R$R"
+  if {$maxdsp >= 0} { set tag "R${R}_dsp$maxdsp" }
+  if {$volt > 0}    { set tag "${tag}_v$volt" }
+  set rpt [file join $outdir util_$tag.rpt]
   report_utilization -file $rpt
   report_timing_summary -delay_type max -max_paths 3 \
-    -file [file join $outdir timing_R$R.rpt]
+    -file [file join $outdir timing_$tag.rpt]
 
   # Parse report_utilization rather than counting cells. The first version of
   # this used get_cells -hier -filter {PRIMITIVE_TYPE =~ ARITHMETIC.*} and
@@ -90,7 +122,7 @@ foreach R $rowlist {
   # expected outcome at large ROWS_IF and the useful question is "by how much".
   set fmax [expr {1000.0 / ($period - $wns)}]
 
-  puts $csv "$part,$period,$R,$dsp,$lut,$ff,$bram,$wns,$fmax"
+  puts $csv "$part,$period,$maxdsp,$volt,$R,$dsp,$lut,$ff,$bram,$wns,$fmax"
   flush $csv
   puts [format "RESULT ROWS_IF=%-3s DSP=%-5s LUT=%-7s FF=%-7s BRAM=%-4s WNS=%.3f Fmax=%.1f MHz" \
         $R $dsp $lut $ff $bram $wns $fmax]
