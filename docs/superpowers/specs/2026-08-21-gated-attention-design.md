@@ -1,12 +1,23 @@
 # Subsystem C: Gated Attention
 
-Design spec, 2026-08-21. Milestone `v2.1`. **Revision 6.**
+Design spec, 2026-08-21. Milestone `v2.1`. **Revision 7.**
 
-**STATUS: sections 1-2 only. Section 3 (softmax datapath, gate, IMROPE,
-validation, acceptance criteria) is deliberately unwritten** pending review of
-this foundation, because section 3's arithmetic depends on every decision here.
+**STATUS: sections 1-3 written. Section 3 (added in rev 7, 2026-08-25) has NOT
+yet survived an adversarial review**; sections 1-2 have survived five. Treat
+§3's contracts as first-revision material with D rev 1's warning attached.
 
 ## 0. Revision history
+
+**Rev 7 (2026-08-25)** writes section 3 against the settled §1-2 foundation:
+the softmax datapath and schedule, the rescale error bound owed since rev 2
+(M2), the reciprocal Q-format §1.5 conditions on, IMROPE pinned against ggml
+source and the target GGUF (closing §1.6's list), the sigmoid ROM owed since
+rev 2, the QK-norm synthesis §2.8 gated `MACS` on, validation and acceptance
+criteria. New measurements: `rmsnorm` at N=256 as shipped is **78 DSP at
+138.4 MHz** (disqualifying, §3.6); a width-narrowed skeleton is 18 DSP; the
+sigmoid cone is 8 DSP; `rope.vhd`'s kernel is 8 DSP at 206 MHz. The §2.8
+auxiliary DSP row lands at **50, above its 15-40 estimate** (§3.8). No §1-2
+text is modified; §3.0 lists the §2 figures the FK33 geometry supersedes.
 
 **Rev 6** incorporates a fifth adversarial review. Its finding was that rev 5
 **recorded the lesson from CR4-2 and then repeated it one layer down**: the
@@ -300,6 +311,27 @@ must be read, not assumed), the `sector % 3` mapping, how the t/h/w streams are
 filled in text-only mode, and what fills `theta_e`. Getting this wrong rotates
 correct dimensions against wrong position streams -- a per-dimension error that
 is invisible structurally and very expensive to localize on silicon.
+
+> **ANSWERED in §3.10, verified against source and against the GGUF itself on
+> 2026-08-25.** All four items are pinned there with file:line citations. Two
+> results change what §1-2 assumed, so they are flagged here as well:
+>
+> - **`theta_e` is unreachable for this model.** With `[11, 11, 10, 0]` the 32
+>   sectors enumerate to exactly 11 t + 11 h + 10 w and nothing falls through
+>   the boundary conditions. The sentence above ("a fourth position stream
+>   `theta_e` for sectors falling through") describes the general IMROPE case,
+>   not this one. In text mode `p_t = p_h = p_w = pos`, so all three live
+>   streams carry the same angle and **text-mode IMROPE here is arithmetically
+>   identical to plain NEOX RoPE over the first 64 dims**. The hardware builds
+>   the collapsed form; the C reference keeps the full dispatch so the
+>   divergence surfaces there if multimodal input ever enters scope.
+> - **Pairing is NEOX `(x[j], x[j+32])`, not adjacent.** The diagram above is
+>   about **sector interleaving**, not element adjacency, and reading it as
+>   adjacency is the natural mistake. `rope.vhd`'s adjacent-pair indexing must
+>   be re-indexed.
+>
+> The `[ttyx...]` quotation is `ggml.h`'s illustration for `n_dims = 16` and is
+> reproduced correctly; it just does not depict this model's section vector.
 
 ## 2. The KV cache
 
@@ -829,42 +861,655 @@ real numbers before `MACS` is fixed.**
 
 ## 3. Softmax datapath, gate, IMROPE, validation
 
-**NOT YET WRITTEN**, pending review of sections 1-2.
+Written 2026-08-25 (rev 7) at the **27B / FK33 geometry of §4**, which is the
+build target; 0.8B counts appear only where a contrast is instructive. All
+schedules are stated in cycles; times are given at both **300 MHz (0.85 V
+analysis)** and **231 MHz (0.717 V as the card runs, the measured -22.9% mean
+derate of `docs/debugging/2026-08-24_vccint-derate-and-exp-cone.md`)**.
+Numeric rules here extend §2.1 (sites 5-6 and the new arithmetic §3 owns);
+§2.1's sites 1-4 are referenced, never restated.
 
-Constraints it must satisfy, recorded so review can flag anything sections 1-2
-have already made impossible:
+### 3.0 `MACS` fixed at 192, and the §2 figures the FK33 geometry supersedes
 
-- **Online single-pass softmax.** Rescaling the 256-wide accumulator when the
-  running maximum rises costs **1,024 multiplies per position worst case** (the
-  maxima are per *query* head, so up to 4 of the 4 heads in a group rescale
-  together) -- 4x rev 1's stated figure.
-- **A rescale error bound is required, not just a throughput bound.** Each
-  rescale multiplies the accumulator by `exp(m_old - m_new)` carrying EXP_ROM's
-  interpolation error (~5e-4 relative), and up to `cur_pos` such factors compound
-  multiplicatively on top of progressive LSB loss. This is the harder half of the
-  problem and must appear in section 3's numeric contract.
-- **IMROPE** per §1.6, pinned against ggml source.
-- **A dedicated sigmoid ROM.** Sigmoid at width 2048 per layer via EXP_ROM plus
-  `divider_rs` would cost ~0.5 ms per layer, about **3 ms per token** --
-  comparable to the entire attention sweep.
-- **Rounding sites 5-6 of §2.1.5**: the softmax rescale multiply, the
-  reciprocal-multiply of §1.5, and the final output renormalization to a single
-  `y_exp` across all 8 heads. Sites 1-4 are already fixed in §2.1.5, and
-  `kq_scale` is an exponent adjustment, not a rounding site.
-- **A consolidated `err` table**: range checks on `ctx_len <= MAXCTX`,
-  `cur_pos < ctx_len`, `layer < MAXLAYERS`.
-- Bit-exact C reference, validated against the reference implementation with KV
-  quantized to the **§2.1 format** (int8 mantissas, per-32 exponents), which is
-  `q8_0`-class in granularity and bits/value but uses an exponent rather than an
-  fp16 scale.
-- The three `v1.0-silicon` rules: at most one multiply per state; never route
-  data through a VHDL `integer`; constrain at the real clock.
+**`MACS = 192`, organized as 6 query heads x 32 dims per cycle. NORMATIVE.**
+The sizing rule: `MACS = qh_tile x dim_tile`, where `dim_tile` is set by the
+K feed and `qh_tile` must divide the GQA group of 6 (§4.1). The FK33 HBM AXI
+port is 256 bits (A §6.5's invariant at `AXI_DW = 256`, D §2.2-J), so one
+beat delivers **32 int8 mantissas = exactly one `KV_BLOCK`**: `dim_tile = 32`,
+and a MAC cycle spans exactly one exponent block of §2.1.4, with the §2.1.1
+header-first layout delivering all 8 block exponents before any mantissa.
+`qh_tile = 6` (the whole group).
 
-**Latency accounting is incomplete.** §2.5's 3.93 ms counts only the KV sweep.
-QK-norm (**~0.39 ms**: `rmsnorm.vhd` is ~5 cycles/element -- S_ACC 256 +
-S_RAW/S_RAW_B 512 + S_EMIT/S_EMIT_B 512 = ~1,290 cycles per 256-vector, 10 invocations per layer x 6 layers = ~77K cycles), IMROPE, rescales,
-per-head reciprocals and the gate are all outside it. Section 3 must produce a full per-token budget before the ~20 tok/s
-figure in `docs/fpga-hardware-recon.md` can be trusted for `v3.0`.
+Rejected alternatives, priced:
+
+- **`MACS = 384`** (`dim_tile = 64`): needs a 512-bit K feed (two ports per
+  stream) and 768 MAC+rescale DSPs; whole-die DSP goes to ~2,900+ of 2,880 --
+  **does not fit the device** (§3.8). The 1.75 ms sweep it buys is moot.
+- **`MACS = 96`** (`qh_tile = 3`): 32 cycles/position, sweep 6.98 ms at
+  300 MHz. This replaces §2.8's `MACS = 32` congestion fallback (which was
+  0.8B-shaped); it remains the fallback if routing binds.
+
+Figures in §2 that this geometry supersedes (they were written against the
+AXU3EG's 128-bit DDR masters and the 0.8B head counts; the *decisions* they
+justify stand, per §4's "only the numbers change"):
+
+| Stale figure | Where | Superseded by |
+|---|---|---|
+| "17 beats per master per position", 128-bit masters | §2.2, §2.5 | 272 B = **8.5 beats of 256 bits**; two positions per 17 beats. Odd-numbered records start 16 B into a beat; the stream unpacker carries a 16-byte-granularity realignment mux (~256 LUT/stream). Port duty is 8.5 beats per 16-cycle position = **53%**, unchanged. |
+| "The DDR K feed is 128 b/cycle (16 int8)", "4 query heads x 16 dims" | §2.6 | 256 b/cycle, 6 heads x 32 dims. |
+| Q in "~16 striped BRAM36" | §2.6, §2.8 | §3.1: Q group planes in **registers** (the §2.6 FF-scarcity premise was the AXU3EG's 141K FF; the VU33P has 879K, and registers dodge the 72-bit port ceiling §2.6 fought). BRAM fallback retained. |
+| `MACS = 64`, 3.93 ms sweep | §2.5, §2.6 | §3.1/§3.7: `MACS = 192`, sweep 3.50 ms at 300 MHz with the pipelined exp cone. |
+
+### 3.1 Array geometry and the position schedule
+
+**Lane organization.** 192 lanes = 6 query heads x 32 dims. Each lane is the
+measured 2-DSP time-shared lane of §2.6 with **registered operand muxes into
+`AREG`/`BREG` (normative per the §2.6 MEASURED 2026-08-24 block)**, now with
+the same **three** operand modes (score MAC, q s16 x k s8; PV MAC, e u13 x
+v s8; rescale, acc s36 x f u13). The reciprocal-multiply is deliberately NOT
+a fourth lane mode -- it runs in the output pipeline (§3.5), precisely so
+the lanes and accumulators are free for the next group's sweep. Per-head 32:1 adder trees (fabric, per the A
+adder-tree lesson in `2026-08-24_adder-tree-reclaim.md`) reduce score
+partials; PV products accumulate into the per-lane accumulator files
+(`ACC_N = 1536/192 = 8` per lane, inside the measured <= 16 limit, one shared
+adder per lane per the §2.6 MEASURED 2026-08-23 block).
+
+**Accumulator and state widths** (27B group): `m_g[qh]` s32 (grid-snapped
+running max, §3.2); `s[qh]` **u26** (bound `s <= 2^23`: `e <= 2^12` per
+§2.1.5's EXP_ROM range over `cur_pos+1 <= 2^11` positions at `MAXCTX = 2048`;
+width is `13 + clog2(MAXCTX)` + margin, and grows with `MAXCTX`);
+`o[qh][d]` s36 per §2.6.
+
+**Q storage: two register planes, one per KV head.** Each plane holds its
+group's normed/roped Q: 6 x 256 x 16 b = 24,576 FF; 49,152 FF for both. The
+sweep reads a plane as 8 blocks cycling `b = 0..7`, an 8:1 x 16 b mux per
+lane (~2K LUT total). Two planes exist so group 1's QK-norms can run under
+group 0's sweep (§3.6). Fallback if FF or congestion binds: 43 striped
+RAMB36 (3,072 b/cycle against 72-bit ports), the §2.6 mechanism at this width.
+
+**The position slot.** Steady state is **16 cycles per (position, KV head)**:
+
+```
+cycles 0-7 : score(p)   -- 8 beats of K, one exponent block per cycle;
+                           partial[b] through the tree, aligned to e_min
+                           (site 2) and accumulated. e_min for position p is
+                           computed from the header, which lands before the
+                           mantissas (header-first, 2.1.1).
+cycles 8-15: PV(p-2)    -- 8 beats of V, v_aligned per site 3, e-weighted
+                           into o[qh][.]. The V master runs two positions
+                           behind the K master.
+```
+
+**PV trails score by TWO positions.** The 6 scores of position p complete
+together at its slot end (parallel trees); the shared exp cone then needs
+6 conversions + 3 stages of latency = 9 cycles, which does not fit the 8
+cycles a one-position lag would allow. Two positions of lag give a 16-cycle
+window for 9 cycles of cone work with margin for the site-4 conversion and
+max compare. Cost: 6 x s32 score staging registers per in-flight position
+and two extra drain slots per (group, layer) -- noise. The one-cycle
+`AREG`/`BREG` operand latency (§2.6) is absorbed the same way: it is
+pipeline fill, not throughput.
+
+**Processing order is part of the numeric contract.** Online softmax results
+depend on order. Pinned: **`[cur_pos, 0, 1, ..., cur_pos-1]`** -- the §2.4
+bypass position first (from the quantized bypass registers), then the DDR
+sweep in ascending position. The C reference implements the identical order.
+The first processed position initializes `m_g` (site 5a), `s`, and `o` by
+overwrite (`ns_first`-style, no clear pass -- the `attention_ml` pattern).
+Processing the newest position first also tends to set a high initial max,
+which empirically suppresses later rescales; that is a bonus, not a
+guarantee (§3.3).
+
+**Rescale stalls.** When any of the group's 6 maxima rises at position p
+(detected at p's site-4 conversion, one slot before PV(p) at the two-slot
+lag), one **8-cycle rescale pass** is inserted before PV(p): all 192 lanes
+in rescale mode sweep the 1,536 accumulators (8 cycles at `ACC_N = 8`).
+Heads whose max did not rise use factor `f = 4096` (`k = 0`), which site 5d
+makes an exact identity -- so the pass is uniform across heads and needs no
+per-head masking. The six `s[qh]` rescales ride the same pass on one
+dedicated 26x13 multiplier. Worst case one stall per position (+50% sweep
+time); expected ~8 per (head, sweep) (§3.3).
+
+### 3.2 Online softmax numeric contract (NORMATIVE; completes §2.1.5 sites 5-6)
+
+Scores arrive as `score_q12` per §2.1.4 sites 4/4b. Everything below is new
+arithmetic owned by this section. Modes: "half+inf" = round half toward
++infinity, matching sites 1 and 4; "floor" = arithmetic right shift,
+matching sites 2 and 3.
+
+**Site 5a -- grid-snapped running maximum (exact, no rounding).** The
+reference maximum is kept on the EXP_ROM index grid (256 Q12 counts = 1/16):
+
+```
+m_g' = ((max(m_g, score_q12) + 255) asr 8) sll 8        -- s32, exact
+```
+
+Snapping UP multiplies every weight in the group by the same
+`exp(m - m_g) in (0.939, 1]`, which cancels identically in `o/s`; its only
+effects are a <= 6.2% loss of `s` headroom (covered by the §3.1 width) and a
+1/16 shift of the underflow threshold. What it buys is site 5c.
+
+**Site 5b -- per-position weight.** `z = score_q12 - m_g <= 0`;
+`e_p : u13 = ` the EXP_ROM cone of `softmax.vhd` S_EXP_A/B/C **verbatim**
+(interpolation, underflow-to-zero below `-2^16`, clamps), in the pipelined
+form measured in §1.5 -- fixed by the reused arithmetic per §2.1.5's scope
+rule, not restated. `e_p <= 4096`.
+
+**Site 5c -- rescale factor, table-exact by construction.** On a max rise,
+`k = (m_g_new - m_g_old) asr 8` is an exact positive integer, so the EXP_ROM
+argument lands exactly on entry `256 - k`: **no interpolation, no multiply,
+zero interpolation error**:
+
+```
+f : u13 = 0                                   when k > 256
+        = round_shift(EXP_ROM(256 - k), 18)   otherwise   -- half+inf, the
+                                              -- cone's own S_EXP_C step
+```
+
+`f <= EXP_ROM(255) >> 18 = 3848` for `k >= 1`; `f = 4096` at `k = 0` (the
+§3.1 identity). This is why site 5a exists: an un-snapped max makes every
+rescale factor an interpolated lookup carrying ~4.9e-4 relative error INTO A
+COMPOUNDING PRODUCT (§3.3), and puts an extra multiply in the stall path.
+
+**Site 5d -- the rescale multiply.**
+
+```
+o'[d] = round_shift(o[d] * f, 12)     -- half+inf, per element, 36x13 on the
+                                      -- lane's second DSP (2.6)
+s'    = round_shift(s * f, 12)        -- half+inf, dedicated 26x13 multiplier
+```
+
+At `f = 4096` both are exact identities. Accumulation itself
+(`o += e_p * v_aligned`, `s += e_p`) is exact integer arithmetic inside the
+§2.1.4 bound `|o| <= 2^23 * 2^7 = 2^30`.
+
+**Site 6a -- the reciprocal, Q-format PINNED (discharges §1.5's condition).**
+Per query head, after the sweep:
+
+```
+p = msb_pos(s)                        -- 11 <= p <= 23 at MAXCTX = 2048
+r : u16 = floor( 2^(p+15) / s )       -- divider_rs, NW = 44, DW = 28
+```
+
+`s in [2^p, 2^(p+1))` gives `r in (2^14, 2^15]`, so r is a **Q15 mantissa of
+1/s on the 2^(p+15) grid**; its relative error is `0 <= delta_r < s/2^(p+15)
+<= 2^-14`, floor-mode (one-sided). `s >= 3848` always (the max-scoring
+position contributes `e >= EXP_ROM(255) >> 18`), so the divide is never
+degenerate. `divider_rs` computes exactly this floor (its header's
+exactness contract), and **the C reference is DEFINED as this floor-divide
+reciprocal followed by site 6b** -- not as a true division -- which is the
+§1.5 condition. MEASURED 2026-08-25: `divider_rs` at NW=44/DW=28 on
+`xcvu33p-fsvh2104-2L-e` is 0 DSP, 76 LUT, 152 FF, Fmax 681.7 MHz; one
+instance serves all 12 heads sequentially (12 x ~46 cycles per layer).
+
+**Site 6b -- reciprocal-multiply.**
+
+```
+t[qh][d] : s24 = round_shift( o[qh][d] * r[qh], p[qh] + 1 )   -- half+inf
+```
+
+value = `t * 2^-(v_ref[kvh] + 14)`: t is the attention output in
+`v_aligned` units with a 2^14 precision gain. Bound: `|o/s| <= 127` (convex
+combination of `|v_aligned| <= 127`), so `|t| < 2^21`. The multiply is
+36x16 (2 DSP) in the output pipeline (§3.5), not on the MAC lanes.
+
+**Site 6c -- gate argument conversion.** The gate value `(g_mant, qg_exp)`
+converts to Q12 exactly as scores do (the §2.1.4 two-branch rule, restated
+because the operand differs): `sh = qg_exp - 12`;
+`zg : s32 = round_shift(g_mant, sh)` when `sh >= 0` (half+inf), else
+`sat32(g_mant sll -sh)`.
+
+**Site 6d -- sigmoid, Q15 out.** `g15 : u16 = SIG(zg)`: the
+`fixed_pkg.sigmoid_q` arithmetic **verbatim** (513-entry Q30 `SIG_ROM` over
+[-16, 16) step 1/16, linear interpolation, the same clamp structure), with
+the output stage pinned here as **`round_shift(interp, 15)` half+inf,
+clamped to [0, 32767]** -- Q15 rather than sigmoid_q's Qq, and the
+saturated-high value 32767 rather than `1 << 15` (a deliberate, pinned
+3.1e-5 deviation so g fits u16 and the multiply fits one DSP). Built as a
+3-stage pipeline, 1 element/cycle. MEASURED 2026-08-25
+(`sim/micro/micro_sig_cone.vhd`, GHDL-checked against sigmoid values at 11
+points): **8 DSP, 1,062 LUT, 121 FF, Fmax 343.4 MHz** on the part at
+3.333 ns. This is the "dedicated sigmoid ROM" rev 1 demanded: no EXP_ROM,
+no divider, ~0.16 ms/token of pipeline occupancy instead of ~3 ms.
+
+**Site 6e -- gate multiply.**
+`y_pre[d] : s24 = round_shift(t[d] * g15[d], 15)` -- half+inf, 24x16, 1 DSP.
+`|y_pre| <= |t|`.
+
+**Site 6f -- output renormalization to one `y_exp`.** The card's heads sit
+on two grids (`v_ref` is per KV head): `e_grid[kvh] = v_ref[layer][kvh] +
+14`. Align to `e_min = min(e_grid)` -- the §2.1.4 min-alignment policy --
+with a **floor** shift `y_al = y_pre asr (e_grid - e_min)`, then pack with
+`bfp_pack` semantics (`amax` over all 3,072 `|y_al|`, `msb_pos(0) = 0`,
+`shp = max(0, msb_pos - 14)`, `y_mant = sat16(round_shift(y_al, shp))`
+half+inf, `y_exp = e_min - shp`).
+
+| # | Site | Mode |
+|---|---|---|
+| 5a | max grid-snap | exact |
+| 5b | weight `e_p` (EXP_ROM cone) | fixed by reused unit |
+| 5c | rescale factor `f` from table entry | half+inf (the cone's own >>18) |
+| 5d | rescale multiplies `o*f`, `s*f` | half+inf |
+| 6a | reciprocal `r = floor(2^(p+15)/s)` | floor (one-sided, `< 2^-14`) |
+| 6b | reciprocal-multiply -> `t` | half+inf |
+| 6c | gate argument -> Q12 | half+inf / sat32 (the site-4/4b pair) |
+| 6d | sigmoid interp -> Q15, clamp 32767 | interp fixed by reused unit; output half+inf |
+| 6e | gate multiply -> `y_pre` | half+inf |
+| 6f | grid align + pack -> `y_mant/y_exp` | floor, then half+inf + sat16 (`bfp_pack`) |
+| R1 | twiddle phase `phi = low32(pos * W_j)` | exact (mod 2^32) |
+| R2 | twiddle sin/cos interpolation | floor (matches the cones' interp shift) |
+
+The three `v1.0-silicon` rules hold throughout: every multiplier is one DSP
+op per pipeline stage with operands in `AREG`/`BREG` and no two multiplies
+chained combinationally (the rmsnorm/rsqrt cascade lesson); no datapath
+value transits a VHDL `integer` (exponents, shifts and indices only); all
+synthesis at 3.333 ns on the real part, restated at 0.717 V.
+
+### 3.3 The rescale error bound (the rev 2 M2 deliverable, quantitative)
+
+Errors here are against REAL-VALUED softmax; RTL vs C reference is bit-exact
+by construction and unaffected. Let R = number of rescale events in one
+(group, sweep).
+
+**Per-factor error.** With site 5c, `f_hat = f_true * (1 + delta)` where
+`|delta| <= 0.51 / f_hat` (0.5 from the Q12 rounding of the table entry's
+>>18, ~0.01 from the Q30 table entry's own rounding). For the smallest step
+`k = 1` (`f = 3848`): `|delta| <= 1.33e-4`. Without the grid snap this would
+be the EXP_ROM interpolation error instead, ~4.9e-4 relative
+(`max|exp''| * h^2 / 8` at `h = 1/16`), 3.7x worse per factor -- that is
+what site 5a buys.
+
+**Compounding, bounded two ways.**
+
+1. *Relative mis-weighting.* A factor error multiplies the retained mass of
+   every position before the rescale, identically in `o` and `s`, so it
+   cancels in `o/s` EXCEPT as mis-weighting between positions separated by
+   rescales: positions with J rescales between them are mis-weighted by
+   `prod(1 + delta_j) - 1 <= exp(sum |delta_j|) - 1`.
+2. *Mass attenuation.* The absolute weight-mass error a rescale introduces,
+   as a fraction of the final denominator, is `<= |f_hat - f| / 2^12 *
+   (S_j * prod_later_f) / S_final <= 0.51 * 2^-12 ~= 2^-13` per rescale,
+   because the retained mass never exceeds `S_final`. **Total L1 distortion
+   of the effective softmax weights `<= R * 2^-13`.**
+
+**LSB loss, bounded independently of R.** Each rescale rounds `o` and `s`
+by <= 0.5 ulp, but every earlier rounding is attenuated by later factors
+`<= exp(-1/16)`, so the accumulated additive error is geometric:
+`<= 0.5 / (1 - e^(-1/16)) < 8.3` ulp of the `o` grid per element (and
+<= 8.3 counts on `s`, i.e. <= 8.3/3848 = 0.22% of the denominator worst
+case, or `R/2` counts if smaller). After site 6b this is <= ~35 counts of
+the s24 `t` at the smallest legal `s`, i.e. ~2^-16 of full scale.
+
+**The two regimes, stated honestly:**
+
+| R | L1 weight distortion | Assessment |
+|---|---|---|
+| worst case `R = min(cur_pos, (m_g_final - m_g_first)/256)` = 2,047 at 2K ctx | **0.25** | unacceptable IF HIT; adversarial monotone-rising scores only |
+| expected for exchangeable score sequences, `E[R] = H_n ~= 8.2` at n = 2048 | ~1e-3 | below the KV int8 mantissa quantization (~3.9e-3 per value) and far below A's measured +1.69% ppl format cost |
+
+There is no hard worst-case mitigation in v2.1; there is **observability**:
+a per-job `rescale_max` counter (max R over the job's 32 group-sweeps) is a
+host-readable output (§3.9), and the §3.11 acceptance run records its
+distribution on the eval corpus. If p99 R exceeds ~64 on real data, this
+section must be revisited (candidate fix: per-head two-pass fallback).
+Per-position weight interpolation error (site 5b, ~4.9e-4 relative) applies
+once per weight, does not compound, and is shared with every softmax this
+project has shipped.
+
+### 3.4 IMROPE, pinned against source (closes the §1.6 list)
+
+All items verified against source on 2026-08-25; llama.cpp tree
+`~/GitHub/llama.cpp.upstream`, and the **target GGUF itself**
+(`Qwen3.8-27B-Q4_K_M.gguf`), not inference:
+
+1. **Variant**: `LLM_ARCH_QWEN35 -> LLAMA_ROPE_TYPE_IMROPE`
+   (`src/llama-model.cpp:2727-2732`).
+2. **`rope_sections` READ FROM THE GGUF: `[11, 11, 10, 0]`**
+   (`qwen35.rope.dimension_sections`), with `rope.dimension_count = 64`,
+   `freq_base = 1e7` -- matching §1.4/§4. Sections sum to 32 = `N_ROT/2`
+   sectors (sections count PAIRS).
+3. **Dispatch**: `sector = (i0/2) % 32`; imrope selects `theta_h` when
+   `sector % 3 == 1 && sector < 3*sections[1]`, `theta_w` when
+   `sector % 3 == 2 && sector < 3*sections[2]`, `theta_t` when
+   `sector % 3 == 0 && sector < 3*sections[0]`, else `theta_e`
+   (`ggml/src/ggml-cpu/ops.cpp:5898-5906`). All four theta streams advance
+   by `theta_scale = 1e7^(-1/32)` every pair (`ops.cpp:5924-5928`);
+   `indep_sects` is false for IMROPE (vision only), so no stream ever
+   resets.
+4. **Pairing is NEOX, not adjacent**: IMROPE calls
+   `rotate_pairs(n_dims, n_dims/2, ...)` (`ops.cpp:6073-6078`), so pair j
+   rotates **(x[j], x[j+32])** for j = 0..31. `rope.vhd`'s adjacent-pair
+   indexing must be re-indexed; §1.6's `[ttyx...]` diagram describes sector
+   INTERLEAVING, not element adjacency. Dims 64..255 of each head pass
+   through unrotated. `ext_factor = 0` and `freq_factors = NULL` at the
+   qwen35 call sites (`src/models/qwen35.cpp:303-312`), so the yarn path
+   degenerates to plain `cos/sin(theta)`.
+5. **Text-only fill**: `p_t = p_h = p_w = pos`, **`p_e = 0`**
+   (`src/llama-graph.cpp:130-141`) -- answering §1.6's "what fills
+   `theta_e`".
+
+**The collapse (NORMATIVE for v2.1).** With sections `[11, 11, 10, 0]`,
+enumerate the 32 sectors: `%3==0` gives {0,3,...,30} = 11 sectors, all
+< 3x11 = 33 -> t; `%3==1` gives {1,4,...,31} = 11, all < 33 -> h; `%3==2`
+gives {2,5,...,29} = 10, all < 30 -> w. **`theta_e` is unreachable**, and in
+text mode t = h = w = `pos`, so every sector's angle is
+`theta_j = pos * 1e7^(-j/32)` -- **text-mode IMROPE for this model is
+arithmetically identical to standard NEOX RoPE over the first 64 dims.**
+The v2.1 hardware implements the collapsed form (one angle stream, no
+sector mux). The C reference implements the FULL dispatch (four streams,
+sections from the GGUF, `theta_e` path) and §3.11 asserts the equivalence
+by enumeration -- so if the sections, a multimodal input path, or the MTP
+block ever enter scope, the divergence is caught in the reference, not on
+silicon. This holds only under §1.2's decode-only, text-only scope.
+
+**Twiddle generation (NORMATIVE; sites R1/R2).** Precomputed per-position
+ROMs, `rope.vhd`-style, are REJECTED at this geometry: `MAXCTX x 32` pairs
+x 2 tables x 16 b = 58 RAMB36 at 2K context and ~930 at the §4.2 32K cap
+(derived). Instead, stateless phase generation:
+
+```
+W_j    : u32 = round( 2^32 * 1e7^(-j/32) / (2*pi) ),  j = 0..31   -- ROM, 128 B
+phi_j  : u32 = low32( cur_pos * W_j )                             -- site R1, exact mod 2^32 (turns)
+SIN[i] : s16 = round( 32767 * sin(2*pi*i/1024) ),  i = 0..1023    -- Q15, one table
+sin    = SIN[phi[31:22]] + ( (SIN[(idx+1) mod 1024] - SIN[idx]) * phi[21:0] ) asr 22
+                                                                  -- site R2, floor
+cos    = the same lookup at phi + 2^30                            -- exact quarter turn
+```
+
+One tool (`tools/gen_imrope_pkg.py`, a §3.11 deliverable) emits both the
+VHDL package and the C reference header from a single computation, the A
+§6.4 discipline. Error: W-rounding `<= pos * 2^-33` turns (2.4e-5 rad at
+pos 32K) + interpolation `(2*pi/1024)^2/8 ~= 4.7e-6` + table rounding
+0.5 ulp -> **<= ~2 Q15 ulp total against exact `cos/sin`** -- the same
+order as the float-generated Q15 tables `ref/run_fx.c` already uses, so the
+engine convention is unchanged in kind. Cost: 2 DSP (sin+cos interp) +
+2 DSP (`pos * W_j`, 15x32) + 1 RAMB18-class table.
+
+**Rotation kernel.** `rope.vhd`'s per-pair arithmetic **verbatim**
+(`(x0*fcr - x1*fci + 2^14) asr 15`, saturate int16 -- the rounding §2.1.5
+already fixes to the reused unit) at NEOX indexing, 1 pair/cycle, restaged
+as twiddle -> 4 registered products -> combine/saturate. MEASURED
+2026-08-25: `rope.vhd` as built synthesizes to **8 DSP, 2,330 LUT, Fmax
+206.4 MHz** on the part at 3.333 ns -- the products and combine share one
+state, so the restaging is normative for the 300 MHz clock (the §2.6
+`AREG`/`BREG` lesson; DSP budget stays 8). Throughput: 14 head-invocations
+x (32 pairs + fill) ~= 500 cycles/layer.
+
+**Saturation policy (discharges §2.1.2's "§3 owns the check").** The
+kernel's int16 saturation clips the VALUE but does not corrupt the §2.1.2
+exponent chain (the stored exponent still describes the clipped mantissa's
+scale), and the C reference saturates identically, so bit-exactness is
+unaffected. It is therefore a **sticky quality event `rope_sat`**, not an
+`err` abort -- the A §14.2 `sat_event` precedent -- raised for either the K
+or Q path, cleared at `start`, surfaced per §3.9.
+
+### 3.5 The gate and output stage
+
+One fused element-sequential pipeline, 1 element/cycle, using sites 6a-6f:
+
+- **Per group, immediately after its sweep** (the accumulators are needed by
+  the next group, so this cannot wait): the 6 reciprocal divides (site 6a,
+  ~276 cycles serialized on the single `divider_rs`), then a **t-pass** over
+  6 x 256 elements: read `o[qh][d]` (1/cycle through the existing lane read
+  muxes), site 6b -> `t`; simultaneously read the gate word from `qg_rdata`
+  (the interleaved layout of §1.1(a): G of head qh at offset
+  `512*qh + 256 + d`), sites 6c/6d through the sigmoid cone, site 6e ->
+  `y_pre`, fold the running `|y_al|` amax (site 6f's scan, using the
+  group's grid), and store `y_pre` into a 3,072 x s24 scratch (2 RAMB36).
+  1,536 cycles per group.
+- **At layer end**, one emit pass over 3,072 elements: site 6f align to
+  `e_min`, shift, saturate, write `y_we/y_addr/y_data` at 1 element/cycle
+  (the elementwise 16-bit y port is the floor here regardless) and present
+  `y_exp`. 3,072 cycles.
+
+Per layer: 2 x (276 + 1,536) + 3,072 = **6,696 cycles**. The QG region is
+re-read up to the end of the t-passes, inside the §2.6 rule-1 window (D O7);
+nothing new is asked of D. DSP: sigmoid cone 8 (measured, §3.2) + site 6b
+2 + site 6e 1 = 11.
+
+### 3.6 QK-norm at N=256: measured, disqualifying as shipped, and the mandated fix
+
+> **MEASURED 2026-08-25, OOC on `xcvu33p-fsvh2104-2L-e` at 3.333 ns
+> (`sim/ooc_micro.tcl`, DSP census reconciled):**
+>
+> | | DSP | LUT | FF | Fmax |
+> |---|---|---|---|---|
+> | `rmsnorm.vhd`, N=256, as shipped | **78** | 11,766 | 4,694 | **138.4 MHz** |
+> | width-narrowed skeleton (`sim/micro/micro_rmsn_narrow.vhd`) | **18** | 385 | 248 | 278.9 MHz |
+>
+> As shipped the unit is disqualified twice over: 78 DSP is a fifth of C's
+> entire MAC array for a unit §2.8 budgeted inside "15-40 auxiliary", and
+> 138 MHz misses the clock by 2.2x. The census attributes the damage to the
+> three 64x64 `mulshr` sites of the pipelined rsqrt, the 64-bit-wide
+> RAW/EMIT multiplies, and `scale_mul(raw, 1, shift)` -- a literal
+> multiply-by-ONE, the identical waste `bfp_pack.vhd` removed on 2026-07-27
+> and documented in its header, still present in `rmsnorm.vhd:355`. Procedure,
+> evidence and traps: `docs/debugging/2026-08-25_c-aux-dsp-and-qk-norm.md`.
+
+**The fix is the `attention_ml` narrowing pattern (64/64 -> 52/24 divider
+precedent): lossless width reduction inside proven value bounds, guarded by
+`translate_off` assertions.** The rsqrt operates on a Q30-normalized
+mantissa: `smant`, `y`, `y2`, `my2` all fit s32 and `diff = 3<<30 - my2`
+fits s34, so the three Newton multiplies are 32x32/34x32, not 64x64; the
+RAW/EMIT chain is s16 x s32 then s48 x s16; the multiply-by-one becomes a
+round-half-up shift (bit-identical, proven in `bfp_pack`). The narrowed
+skeleton (multiply shapes real, control a free-running counter so nothing
+folds -- the `micro_b_lane` pricing method) measures **18 DSP**. The
+deliverable is `rmsnorm_rs`: bit-exact against `rmsnorm.vhd` in GHDL over
+the §3.11 vector set; `engine_shared`/AXU3EG keep the original unit
+untouched. Note the skeleton's 278.9 MHz is synthesis-only and still shy of
+300 -- `MREG` on the 34x32 stage is the expected fix; open in §3.13.
+
+**Throughput.** 14 invocations per layer (12 Q heads + 2 K heads) x ~1,296
+cycles (S_ACC 256 + rsqrt ~10 + RAW/RAW_B 512 + EMIT/EMIT_B 512) on ONE
+shared instance = 18.1K cycles/layer. With the two Q planes of §3.1, group
+1's six Q-norms (7.8K cycles) run under group 0's 32.8K-cycle sweep, so the
+exposed cost is ~8 x 1,296 = 10.4K cycles/layer; the serial fallback is
+18.1K. The §3 latency note's 0.8B-era "~0.39 ms" is superseded by §3.7.
+
+### 3.7 The full per-token budget (completes the §2.5/"latency accounting" item)
+
+Per token per card, 27B N=2, `ctx_len = 2048`, `MACS = 192`, exp cone
+pipelined. DERIVED from the measured per-unit numbers above; nothing here is
+a promise of routed silicon.
+
+| Component | cycles | ms @300 MHz | ms @231 MHz | basis |
+|---|---|---|---|---|
+| KV sweep, 16 lyr x 2 kvh x 2048 x 16 | 1,048,576 | 3.50 | 4.54 | §3.1 |
+| rescale stalls, expected (~46 events x 8 x 32 sweeps) | ~12K | 0.04 | 0.05 | §3.3; worst case +524K = +1.75/+2.27 |
+| QK-norm, exposed (group overlap) | 166K | 0.55 | 0.72 | §3.6; serial fallback 290K = 0.97/1.26 |
+| IMROPE | 8K | 0.03 | 0.03 | §3.4 |
+| KV quantize + write | 34K | 0.11 | 0.15 | §2.1.3 two-pass, 4 vectors/layer |
+| gate + output stage | 107K | 0.36 | 0.46 | §3.5 |
+| **C total** | **~1.38M** | **~4.59** | **~5.95** | |
+
+The sweep is 76% of C; the aux terms this section finally prices add
+**+1.1 ms over the sweep-only figure** every earlier document quoted
+(§2.5's 3.93, the derate doc's 3.49). Downstream corrections: D §11's
+"A jobs + C ~34 ms" row used sweep-only C (REQUEST R-C2, §3.12), and the
+recon ladder's v3.0 tok/s inherits the same +1.1 ms (~-2% tok/s at N=2).
+Port duty stays 53% per master during the sweep; the §2.5 obligation to
+re-measure port efficiency for C's 2R+1W pattern stands, now against HBM.
+
+### 3.8 Resource cost: the §2.8 auxiliary DSP row, pinned
+
+**The auxiliary row lands at ~50 DSP -- ABOVE the §2.8 estimate's 15-40
+band -- and only the §3.6 narrowing keeps it there.** Stated loudly, as
+§2.8 demanded: with `rmsnorm` as shipped the row is ~110 and the die
+crosses the 90% congestion line.
+
+| Auxiliary unit | DSP | Status |
+|---|---|---|
+| QK-norm, narrowed (`rmsnorm_rs`) | 18 | MEASURED 2026-08-25 (skeleton; unit unwritten) |
+| exp cone, pipelined | 8 | MEASURED 2026-08-24 |
+| sigmoid cone, Q15 | 8 | MEASURED 2026-08-25 |
+| IMROPE rotation kernel | 8 | MEASURED 2026-08-25 (`rope.vhd` form) |
+| twiddle generation | 4 | DERIVED (2 interp + 2 phase) |
+| gate stage (sites 6b, 6e) | 3 | DERIVED |
+| `s` rescale multiplier | 1 | DERIVED |
+| reciprocal divider, quantizer | 0 | MEASURED 2026-08-25 (divider 0 DSP) |
+| **total** | **50** | |
+
+**C total: 384 (MAC + rescale) + 50 = 434 DSP.** Whole-die, updating the
+§2.8/D §12 sum (A post-reclaim 1,914 at `ROWS_IF = 58`, B 138-152, D
+24-40):
+
+```
+1,914 + 434 + (138..152) + (24..40) = 2,510..2,540 of 2,880 = 87.2-88.2%
+with rmsnorm as shipped:              2,570..2,600           = 89.2-90.3%   -- AT/OVER the line
+```
+
+The narrowing of §3.6 is therefore **mandatory, not an optimization**. The
++1.7-point rise over D §12's 85.4-86.5% must propagate to
+`docs/fpga-hardware-recon.md` and any B sizing that assumed the old sum.
+
+**LUT (derived from measured fits; supersedes the C terms in D §12's
+screening sum):** lanes 192 x (158 + 10 x 8) = 45.7K (the §2.6 measured
+lane fit at `ACC_N = 8`) + score trees ~6K + Q-plane muxes ~2K + stream
+unpackers/aligners ~4K + quantizer/control ~8K + `rmsnorm_rs` ~8K + cones,
+rope, gate ~6K = **~80K** (D §12 carried ~56K for C; whole-die screening
+moves ~245-265K -> ~270-290K of 439.7K, still ~62-66%).
+
+**FF:** lanes 192 x (182 + 36.4 x 8) = 90.8K (measured fit; contains the
+55.3K §4.1 accumulator bits) + Q planes 49.2K + marshalling 8.2K + control
+~10K = **~158K of 879K (18%)**.
+
+**BRAM36:** read-master FIFOs ~8 + bypass 1 + `y_pre` scratch 2 + SIN
+table + norm weights ~2 = **~13** (down from §2.8's ~26: Q moved to
+registers per §3.0).
+
+### 3.9 Errors and events, consolidated
+
+`err` is sticky, cleared at the next `start`; `done` pulses even on abort so
+D's FSM cannot hang (the A §7.6 convention D's O18 consumes).
+
+| Condition | Checked | Action |
+|---|---|---|
+| `ctx_len > MAXCTX`, `cur_pos >= ctx_len`, `layer >= MAXLAYERS` | at `start`, before any AXI or state write | `err` + `done`, abort |
+| header exponent outside int8 (§2.1.5) | at quantize | `err`, abort (cache slot NOT valid; D §10's sequence-replay recovery applies) |
+| AXI `RRESP`/`BRESP /= OKAY` | any beat | `err`, abort after drain-then-flush (§2.7) |
+| IMROPE int16 saturation (K or Q) | per rotation | **`rope_sat` sticky FLAG, not err** (§3.4) |
+| rescale count | per job | `rescale_max` counter output, informational (§3.3) |
+| divider `den = 0` | impossible (`s >= 3848`) | simulation assertion only |
+| accumulator/dividend/width bounds (§3.2, §3.6 narrowings) | `translate_off` assertions | simulation failure, loud |
+
+### 3.10 Port shapes pinned (answers D REQUEST R4), and one §1.4 correction
+
+All three A-side read ports present `act_mem_striped` semantics (D O25):
+**512-bit block read data, block address, 1-cycle registered read.**
+
+| Port | Width | Notes |
+|---|---|---|
+| `qg_rbaddr` / `qg_rdata` | 8 b / 512 b | 6,144 entries = 192 blocks (27B N=2) |
+| `k_rbaddr` / `k_rdata` | 4 b / 512 b | 512 entries = 16 blocks |
+| `v_rbaddr` / `v_rdata` | 4 b / 512 b | 16 blocks |
+| `y_we` / `y_addr` / `y_data` / `y_exp` | 1 / **12 b** / 16 b / int | 3,072 entries; 1 element/cycle |
+| `rope_sat`, `rescale_max[15:0]` | out | §3.9 events, valid from `done` to next `start` |
+
+**Correction to §1.4:** `y_addr` is declared `10 downto 0` there (2,048
+entries, an 0.8B count); at 27B N=2 the y vector is 3,072 entries, so
+`y_addr` is **11 downto 0**. Flagged rather than silently edited; §1.4's
+declaration should be updated with the next §1 edit pass.
+
+**Answer to D's R4 ("are the qg/k/v pre-quantize reads sequential?"):
+YES.** C reads VIN and KIN **sequentially, never concurrently** -- pinned
+order: V first (its quantize has no norm/rope dependency, so the write
+master starts earliest), then K -- each exactly once per layer, in
+ascending block order. **KIN and VIN may therefore share one region.** QG
+is read in two phases: the Q marshalling reads early in the job; the gate
+re-read (§3.5) runs to the end of the t-passes; both are block-sequential.
+The §2.6 rule-1 lock window (O7) already covers the whole span; no new
+obligation on D.
+
+### 3.11 Validation and acceptance criteria
+
+1. **C reference** (`ref/attn_gated_fx.c`): the full §2.1 + §3.2 chain --
+   quantizer, FULL-dispatch IMROPE (four streams, GGUF sections, `theta_e`
+   path), online softmax in the §3.1 processing order, reciprocal-multiply
+   as DEFINED in site 6a/6b, sigmoid Q15, pack. Twiddle constants and both
+   ROMs emitted by `tools/gen_imrope_pkg.py` into the reference and the
+   VHDL from one computation.
+2. **Property tests in the reference:** (a) the §3.4 collapse -- full
+   IMROPE dispatch equals the collapsed NEOX form for sections
+   `[11,11,10,0]`, enumerated over all `pos < MAXCTX` and all 32 pairs,
+   exact; (b) online vs two-pass softmax divergence within the §3.3 bound
+   on random AND adversarial (monotone-rising) score sequences, plus the
+   `k = 0` rescale-identity; (c) `e_v >= v_ref` append-only invariants.
+3. **GHDL unit TBs:** quantizer vs a `bfp_pack`-derived golden; twiddles vs
+   double precision (<= 2 Q15 ulp assertion); both cones back-to-back-input
+   throughput AND value agreement (the `micro_exp_cone` method -- identical
+   utilization alone is NOT accepted as evidence); **`rmsnorm_rs` bit-exact
+   vs `rmsnorm.vhd`** over random vectors plus engine-captured ones;
+   divider bounds. Job-level RTL vs reference: **0 mismatches on every
+   output** for `ctx_len` in {1, 2, 31, 32, 33, 255, 256, 2047, 2048}
+   (block, beat-phase and burst-split boundaries), all layers, both KV
+   heads.
+4. **Token-level co-sim** in the `seq_ctrl`/`run_fx` pattern under D's stub
+   table (D §14). Netlist funcsim of the divider and one MAC lane (project
+   precedent).
+5. **Synthesis gates:** assembled C at `MACS = 192`: DSP <= 440; routed
+   (not synthesis-only -- the broadcast-fanout lesson) Fmax >= 300 MHz at
+   the 0.85 V analysis, with the DSP census showing `AREG/BREG = 1` on
+   every datapath multiplier; the number is then restated at 0.717 V.
+6. **Model quality, measured not asserted, before v2.1 sign-off:** the
+   attention-chain increment -- §2.1 KV format + online softmax + Q15 gate
+   + fixed twiddles, emulated over the reference implementation with the
+   2026-08-24 format-perplexity difference method (control = A weight
+   format only) -- costs **<= +0.5% perplexity** on the same wikitext-2
+   setup. First suspects if exceeded: per-32 V exponents, the Q15 gate.
+   The same run records the `rescale_max` distribution (§3.3's regime
+   check: p99 R <= 64).
+7. **`softmax.vhd` integration note (the §1.5 obligation, discharged):** C
+   does NOT instantiate `softmax.vhd`; it lifts the cone arithmetic
+   verbatim (conv_q, stages A/B/C, underflow and clamps) and keeps the sum
+   accumulation sequential. `e_arr` has no online-form counterpart --
+   scores are consumed as produced -- a deliberate, stated divergence. If
+   the AXU3EG engine's `softmax.vhd` is itself ever pipelined, it must
+   preserve `conv_q`, the `e_arr` store and the sequential sum, per the
+   measured recipe in `sim/micro/micro_exp_cone.vhd`.
+
+### 3.12 REQUESTS to other subsystems (flagged, not assumed)
+
+| # | To | Request | Why |
+|---|---|---|---|
+| R-C1 | D | Surface C's `rope_sat` and `rescale_max` in a host-visible register, the way O23/SAT_LOG surfaces A's `sat_event` | §3.3/§3.4 events are calibration-level and host-owned; D owns the register map (D §9.3) |
+| R-C2 | D | D §11's "A jobs + C" row used C's sweep-only figure; C's full cost is +~1.1 ms at 300 MHz (§3.7) | keep the only whole-token table honest |
+
+Nothing else: `k_base`/`v_base`, `cur_pos`/`ctx_len`, exponent capture and
+the O7 lock window already cover §3's needs, and the twiddle path was kept
+C-internal specifically to avoid a new D obligation.
+
+### 3.13 Open, not yet answered
+
+1. **`rmsnorm_rs` exists only as a priced skeleton** (18 DSP): the real
+   narrowed unit, its bound assertions and its bit-exactness proof are
+   unwritten, and the skeleton's 278.9 MHz (synthesis-only) is still shy
+   of the clock -- `MREG` on the 34x32 Newton stage is the expected fix,
+   unmeasured.
+2. **No Fmax measurement exists at 192 lanes.** The routed 339.6 MHz is at
+   64; broadcast fanout grows with lanes (k/v fan out 6, e/f fan out 32,
+   control 192) and the 64-lane limiter had already moved to the DSP
+   cascade. Do not extrapolate; §3.11 gate 5 is the check.
+3. **HBM port efficiency for C's 2R+1W concurrent pattern is unmeasured**
+   (§2.5's obligation, carried; the 53% duty premise is DERIVED).
+4. **The worst-case rescale regime has observability, not mitigation**
+   (§3.3). If real 27B score dynamics ever approach it, a per-head
+   two-pass fallback must be designed.
+5. **Real 27B attention-score range and rescale statistics are
+   unmeasured** (the stories260K analog in the partial-sum work does not
+   transfer); §3.11 gate 6's corpus run is the first measurement.
+6. **The perplexity acceptance run needs tooling that does not exist**: an
+   instrumented KV-quant/softmax path implementing §2.1 + §3.2 exactly
+   over the reference implementation.
+7. **The group-overlap control** (two Q planes, norm-under-sweep) is
+   priced (§3.6, §3.7) but not designed; the serial fallback costs +0.42
+   ms at 300 MHz.
+8. **The 16-byte record phase realignment** in the stream unpacker (§3.0)
+   is designed but unsimulated; `ctx_len` parity cases are in §3.11 gate 3
+   for exactly this reason.
+9. **`MAXCTX` scaling**: widths for `s`, the reciprocal, and the SIN phase
+   are stated parametrically but every number here is at `MAXCTX = 2048`;
+   the §4.2 32K-context ambition re-derives them (s -> 28 b, NW -> 48).
 
 ## 4. RETARGET to Qwen3.8-27B on FK33 (2026-08-21, NORMATIVE)
 
