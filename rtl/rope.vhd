@@ -17,6 +17,21 @@
 -- Layout: _fx_cos_tbl[pos*(head_size/2) + i/2], where i is i_outer mod head_size.
 -- ROM has 512 * (HEAD/2) entries (HEAD=8 -> 2048 entries).
 --
+-- PAIRING (generic NEOX).  Two conventions exist and they are NOT the same
+-- rotation.  This unit was written for the stories260K model, which is
+-- ggml's GGML_ROPE_TYPE_NORMAL: pair (x[2j], x[2j+1]), ADJACENT elements.
+-- Qwen3.8-27B is GGML_ROPE_TYPE_IMROPE, which dispatches through
+-- rotate_pairs(n_dims, n_dims/2, ...) in ggml-cpu/ops.cpp:6073-6078 and
+-- therefore pairs (x[j], x[j+HEAD/2]) -- HALVES, not neighbours.  Verified
+-- against source and against the target GGUF on 2026-08-25; see subsystem C's
+-- spec 3.10.
+--
+-- NEOX defaults to FALSE, so v1.0 (rtl/engine_shared.vhd, bit-exact against
+-- the C oracle) is untouched by this change.  Only the ELEMENT PAIRING moves;
+-- the twiddle table, its index formula, every product, shift, rounding and
+-- saturation are identical in both modes, which is what sim/tb_rope_pair.vhd
+-- checks rather than assumes.
+--
 -- AREA-EFFICIENT (element-SEQUENTIAL) implementation.
 -- Instead of unrolling all DIM/2 + KVDIM/2 twiddle rotations into one
 -- combinational clock (which infers 4 multipliers per pair * 48 pairs = 192
@@ -31,7 +46,10 @@ entity rope is
   generic(
     DIM   : positive := 64;
     HEAD  : positive := 8;
-    KVDIM : positive := 32
+    KVDIM : positive := 32;
+    -- false = adjacent pairs (ggml NORMAL, v1.0 stories260K)
+    -- true  = (j, j+HEAD/2) pairs (ggml NEOX/IMROPE, Qwen3.8-27B)
+    NEOX  : boolean := false
   );
   port(
     clk     : in  std_logic;
@@ -57,6 +75,40 @@ architecture rtl of rope is
   constant HALF      : integer := HEAD / 2;
   constant ROM_DEPTH : integer := 512 * HALF;
 
+  -- The two pairings, as functions of the PAIR index, so the FSM below is
+  -- identical in both modes and the only thing that varies is which two
+  -- elements a pair names.  `idx` counts pairs within the whole vector; head
+  -- h = idx/HALF and half-frequency j = idx mod HALF.
+  --
+  -- ADJACENT: element a = 2*idx, b = 2*idx+1.
+  -- NEOX:     within head h, a = h*HEAD + j, b = a + HALF.
+  --
+  -- Both give the SAME twiddle index, pos*HALF + j, because j is the
+  -- half-frequency in both conventions.  For ADJACENT, j = idx mod HALF is
+  -- exactly the ((2*idx) mod HEAD)/2 the original code computed.
+  function pair_a(idx : integer) return integer is
+    variable h, j : integer;
+  begin
+    if NEOX then
+      h := idx / HALF; j := idx mod HALF;
+      return h * HEAD + j;
+    else
+      return 2 * idx;
+    end if;
+  end function;
+
+  function pair_b(idx : integer) return integer is
+  begin
+    if NEOX then return pair_a(idx) + HALF;
+    else         return 2 * idx + 1;
+    end if;
+  end function;
+
+  function rom_of(pos_v, idx : integer) return integer is
+  begin
+    return pos_v * HALF + (idx mod HALF);
+  end function;
+
   -- Twiddle ROMs are provided as literal constants by rope_rom_pkg
   -- (generated from mem/luts/rope_{cos,sin}.mem, bit-identical to the former
   -- std.textio load_rom() init). COS_ROM/SIN_ROM come from the package.
@@ -75,6 +127,7 @@ begin
     variable acc_v        : signed(63 downto 0);
     variable r_v          : signed(63 downto 0);
     variable rom_idx      : integer;
+    variable ea, eb       : integer;   -- the pair's two elements
     constant BIAS         : signed(63 downto 0) := to_signed(16384, 64);  -- 1 << 14
   begin
     if rising_edge(clk) then
@@ -104,11 +157,11 @@ begin
           -- Rotate Q: DIM/2 pairs, one pair per cycle (idx = pair index).
           -- ----------------------------------------------------------------
           when S_Q =>
-            q0_v    := signed(q_mant((2*idx+1)*16-1 downto (2*idx)*16));
-            q1_v    := signed(q_mant((2*idx+2)*16-1 downto (2*idx+1)*16));
-            -- twiddle index: POS*(HEAD/2) + (i_raw mod HEAD)/2
-            -- i_raw = 2*idx; (2*idx mod HEAD)/2 = idx mod (HEAD/2)
-            rom_idx := pos_l * HALF + ((2*idx) mod HEAD) / 2;
+            ea      := pair_a(idx);
+            eb      := pair_b(idx);
+            q0_v    := signed(q_mant((ea+1)*16-1 downto ea*16));
+            q1_v    := signed(q_mant((eb+1)*16-1 downto eb*16));
+            rom_idx := rom_of(pos_l, idx);
             fcr_v   := to_signed(COS_ROM(rom_idx), 16);
             fci_v   := to_signed(SIN_ROM(rom_idx), 16);
 
@@ -119,13 +172,13 @@ begin
             r_v   := shift_right(acc_v, 15);
             -- Saturate to int16 (should not trigger for well-formed inputs)
             if    r_v > 32767  then
-              qo_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              qo_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(to_signed( 32767, 16));
             elsif r_v < -32768 then
-              qo_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              qo_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(to_signed(-32768, 16));
             else
-              qo_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              qo_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(resize(r_v, 16));
             end if;
 
@@ -135,13 +188,13 @@ begin
                    + BIAS;
             r_v   := shift_right(acc_v, 15);
             if    r_v > 32767  then
-              qo_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              qo_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(to_signed( 32767, 16));
             elsif r_v < -32768 then
-              qo_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              qo_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(to_signed(-32768, 16));
             else
-              qo_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              qo_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(resize(r_v, 16));
             end if;
 
@@ -157,9 +210,11 @@ begin
           -- Same twiddle ROM, same index formula.
           -- ----------------------------------------------------------------
           when S_K =>
-            k0_v    := signed(k_mant((2*idx+1)*16-1 downto (2*idx)*16));
-            k1_v    := signed(k_mant((2*idx+2)*16-1 downto (2*idx+1)*16));
-            rom_idx := pos_l * HALF + ((2*idx) mod HEAD) / 2;
+            ea      := pair_a(idx);
+            eb      := pair_b(idx);
+            k0_v    := signed(k_mant((ea+1)*16-1 downto ea*16));
+            k1_v    := signed(k_mant((eb+1)*16-1 downto eb*16));
+            rom_idx := rom_of(pos_l, idx);
             fcr_v   := to_signed(COS_ROM(rom_idx), 16);
             fci_v   := to_signed(SIN_ROM(rom_idx), 16);
 
@@ -168,13 +223,13 @@ begin
                    + BIAS;
             r_v   := shift_right(acc_v, 15);
             if    r_v > 32767  then
-              ko_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              ko_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(to_signed( 32767, 16));
             elsif r_v < -32768 then
-              ko_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              ko_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(to_signed(-32768, 16));
             else
-              ko_mant((2*idx+1)*16-1 downto (2*idx)*16) <=
+              ko_mant((ea+1)*16-1 downto ea*16) <=
                 std_logic_vector(resize(r_v, 16));
             end if;
 
@@ -183,13 +238,13 @@ begin
                    + BIAS;
             r_v   := shift_right(acc_v, 15);
             if    r_v > 32767  then
-              ko_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              ko_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(to_signed( 32767, 16));
             elsif r_v < -32768 then
-              ko_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              ko_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(to_signed(-32768, 16));
             else
-              ko_mant((2*idx+2)*16-1 downto (2*idx+1)*16) <=
+              ko_mant((eb+1)*16-1 downto eb*16) <=
                 std_logic_vector(resize(r_v, 16));
             end if;
 
