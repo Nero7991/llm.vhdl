@@ -505,6 +505,8 @@ entity hbm_tg_ip is
     m14_axi_rlast   : in  std_logic;
     m14_axi_rid     : in  std_logic_vector(5 downto 0);
     m14_axi_rresp   : in  std_logic_vector(1 downto 0)
+    ;
+    aresetn_o : out std_logic
   );
 end entity;
 
@@ -541,7 +543,7 @@ begin
       m_arvalid => arvalid, m_arready => arready, m_araddr => araddr,
       m_arlen   => arlen,   m_arsize  => arsize,  m_arburst => arburst,
       m_rvalid  => rvalid,  m_rready  => rready,  m_rlast   => rlast,
-      m_rresp   => rresp);
+      m_rresp   => rresp, aresetn_o => aresetn_o);
 
   s_axi_bresp <= "00";
   s_axi_rresp <= "00";

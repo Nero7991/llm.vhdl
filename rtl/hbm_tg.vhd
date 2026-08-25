@@ -104,7 +104,22 @@ entity hbm_tg is
     -- than memory does, so a mis-decoded address inflates the bandwidth
     -- figure instead of failing visibly.  An instrument whose failure mode is
     -- a better-looking number is the wrong way round.
-    m_rresp   : in  std_logic_vector(NPORT*2-1 downto 0)
+    m_rresp   : in  std_logic_vector(NPORT*2-1 downto 0);
+
+    -- RESET OUT for the HBM IP's own AXI interfaces.  AXI_n_ARESET_N is
+    -- specified synchronous to AXI_n_ACLK, and the build was driving all 15 of
+    -- them straight from a proc_sys_reset in the 100 MHz control domain.  That
+    -- is the same CDC defect fixed inside this unit, left in place on the path
+    -- INTO the hard block, and it is the single worst timing path in the
+    -- design at 350 MHz: zero logic levels and 1.5-1.7 ns of pure routing from
+    -- one far-away source to fifteen hard-block pins.
+    --
+    -- Driving them from the synchronised reset instead makes it a normal
+    -- same-domain path.  MAX_FANOUT lets the tool replicate the driver next to
+    -- the loads, which is what actually removes the route delay -- one flop
+    -- feeding fifteen scattered hard-block pins cannot be routed well no
+    -- matter which domain it comes from.
+    aresetn_o : out std_logic
   );
 end entity;
 
@@ -241,6 +256,12 @@ architecture rtl of hbm_tg is
   attribute ASYNC_REG of rstn_m : signal is "TRUE";
   attribute ASYNC_REG of rstn_s : signal is "TRUE";
 
+  -- Separate flop for the HBM reset fanout, so replicating it cannot disturb
+  -- the synchroniser pair (ASYNC_REG and replication do not mix).
+  signal hbm_rstn : std_logic := '0';
+  attribute MAX_FANOUT : integer;
+  attribute MAX_FANOUT of hbm_rstn : signal is 4;
+
   signal awr, wrq, bv, arr, rv : std_logic := '0';
   signal rdata_r : std_logic_vector(31 downto 0) := (others => '0');
   signal wa : unsigned(15 downto 0) := (others => '0');
@@ -256,6 +277,19 @@ begin
       rstn_m <= '1'; rstn_s <= rstn_m;
     end if;
   end process;
+
+  -- One more stage before it leaves for the hard block: this is the flop the
+  -- tool replicates, and it also guarantees the HBM interfaces come out of
+  -- reset no earlier than this unit's own logic.
+  hbmrst : process(clk, rstn)
+  begin
+    if rstn = '0' then
+      hbm_rstn <= '0';
+    elsif rising_edge(clk) then
+      hbm_rstn <= rstn_s;
+    end if;
+  end process;
+  aresetn_o <= hbm_rstn;
 
   ----------------------------------------------------------------- AXI-Lite
   -- Deliberately the simplest legal slave: one transaction at a time, no

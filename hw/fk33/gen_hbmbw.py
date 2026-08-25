@@ -248,10 +248,23 @@ tg = ["", "# " + "-"*74,
       "# it does not remove the pins.  First light never hit this because it",
       "# enabled two ports.",
       ]
+# AXI_n_ARESET_N is specified SYNCHRONOUS TO AXI_n_ACLK, and this used to be
+# driven straight from hbm_reset, a proc_sys_reset in the 100 MHz clk_out1
+# domain.  Same CDC defect as the one fixed inside hbm_tg, left on the path
+# into the hard block -- and at 350 MHz it was the design's worst path by a
+# clear margin: ZERO logic levels and 1.5-1.7 ns of pure routing, from one
+# distant driver to fifteen scattered hard-block pins.  It survived at 300 MHz
+# only because the period was long enough to absorb the route.
+#
+# hbm_tg now exports the synchronised reset (MAX_FANOUT 4, so the tool
+# replicates the driver next to the loads).  That makes it a same-domain
+# path AND a short one; either alone would not have been enough, since a
+# single flop feeding fifteen far-apart hard-block pins routes badly whatever
+# domain it comes from.
 for i in range(1, NPORT + 1):
     tg.append("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] "
               "[get_bd_pins hbm/AXI_%02d_ACLK]" % i)
-    tg.append("connect_bd_net [get_bd_pins hbm_reset/peripheral_aresetn] "
+    tg.append("connect_bd_net [get_bd_pins tg/aresetn_o] "
               "[get_bd_pins hbm/AXI_%02d_ARESET_N]" % i)
 tg.append("")
 
