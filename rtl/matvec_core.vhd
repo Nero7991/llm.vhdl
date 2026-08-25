@@ -144,7 +144,23 @@ architecture rtl of matvec_core is
 
   type node_arr is array(0 to ROWS_IF*BLK-1) of signed(27 downto 0);
   type lvl_arr  is array(0 to LVL) of node_arr;
-  signal tr : lvl_arr := (others => (others => (others => '0')));
+  -- ADDER-TREE RECLAIM (A section 15.4a).  The array measures 46.5 DSP per row
+  -- while containing only 33 multiplies: the balance is `(PCIN+A:B)` nodes,
+  -- adder-tree levels sitting in DSP ALUs that the design does not need a DSP
+  -- for.  Levels >= 2 are pushed into LUT fabric here.
+  --
+  -- The split into two signals is REQUIRED, and is the first of the two traps
+  -- section 15.4a names.  Levels 0..LVL previously shared one signal `tr`, so a
+  -- blanket `use_dsp = "no"` on it would have stripped the level-0 MULTIPLIERS
+  -- as well as the adders -- the opposite of the intent.
+  --
+  -- The second trap is why level 1 stays on `tr`: it costs zero DSPs today
+  -- because it fuses onto the multiplier as `(PCIN+(A2*B)')` and rides the DSP
+  -- cascade for free.  Forcing it into fabric spends LUTs to save nothing.
+  signal tr  : lvl_arr := (others => (others => (others => '0')));   -- levels 0..1
+  signal trn : lvl_arr := (others => (others => (others => '0')));   -- levels 2..LVL
+  attribute use_dsp : string;
+  attribute use_dsp of trn : signal is "no";
 
   type sc_arr  is array(0 to ROWS_IF-1) of unsigned(15 downto 0);
   type scp_t   is array(0 to PIPE-1) of sc_arr;
@@ -248,6 +264,13 @@ architecture rtl of matvec_core is
   signal accept  : std_logic;
   signal inflight: std_logic;
 begin
+
+  -- The adder-tree reclaim routing assumes at least one fabric level
+  -- exists (BLK >= 4).  BLK = 32 in every configuration used, giving
+  -- LVL = 5, but BLK is a generic, so check rather than assume.
+  assert LVL >= 2
+    report "matvec_core: adder-tree reclaim needs LVL >= 2, i.e. BLK >= 4"
+    severity failure;
 
   accept <= '1' when st = S_RUN and w_valid = '1' and s_valid = '1'
                      and xq_cnt > 0 else '0';
@@ -384,8 +407,18 @@ begin
           if tg(l).v = '1' then
           for rr in 0 to ROWS_IF-1 loop
             for i in 0 to (BLK / (2**l)) - 1 loop
-              tr(l)(rr*BLK + i) <= tr(l-1)(rr*BLK + 2*i)
-                                 + tr(l-1)(rr*BLK + 2*i + 1);
+              if l = 1 then
+                -- stays in the DSP: fuses onto the multiply via PCIN
+                tr(l)(rr*BLK + i)  <= tr(l-1)(rr*BLK + 2*i)
+                                    + tr(l-1)(rr*BLK + 2*i + 1);
+              elsif l = 2 then
+                -- first fabric level, still sourced from the DSP-resident tr(1)
+                trn(l)(rr*BLK + i) <= tr(l-1)(rr*BLK + 2*i)
+                                    + tr(l-1)(rr*BLK + 2*i + 1);
+              else
+                trn(l)(rr*BLK + i) <= trn(l-1)(rr*BLK + 2*i)
+                                    + trn(l-1)(rr*BLK + 2*i + 1);
+              end if;
             end loop;
           end loop;
           end if;
@@ -396,14 +429,14 @@ begin
         ----------------------------------------------------------------
         if tg(P_PART).v = '1' then
           for rr in 0 to ROWS_IF-1 loop
-            sprod(rr) <= tr(LVL)(rr*BLK) * signed('0' & scp(P_PART)(rr));
+            sprod(rr) <= trn(LVL)(rr*BLK) * signed('0' & scp(P_PART)(rr));
           end loop;
         end if;
         if tg(P_PART).v = '1' then
           tp_v <= '1'; tp_r <= tg(P_PART).tile * ROWS_IF; tp_b <= tg(P_PART).blk;
           for rr in 0 to ROWS_IF-1 loop
             tp_val(rr*64+63 downto rr*64)
-              <= std_logic_vector(resize(tr(LVL)(rr*BLK), 64));
+              <= std_logic_vector(resize(trn(LVL)(rr*BLK), 64));
           end loop;
         end if;
 
