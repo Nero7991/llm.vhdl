@@ -1629,9 +1629,41 @@ a quarter is worth about 20 rows of array.
 
 **Forcing those levels into LUT fabric is the cheapest capacity available**: a
 28-bit add is a short carry chain, and the pure-LUT experiment showed fabric
-arithmetic does not cost Fmax at moderate `ROWS_IF`. Expected effect: 46.5 ->
-~34.5 DSP/row, raising the DSP-only ceiling from `2880/46.5 = 62` rows to about
-83.
+arithmetic does not cost Fmax at moderate `ROWS_IF`.
+
+> **MEASURED 2026-08-24: 46.34 -> 33.00 DSP/row, better than the ~34.5
+> predicted, and the ceiling goes 62.2 -> 87.3 rows.** Implemented and swept on
+> `xcvu33p-fsvh2104-2L-e` at 3.333 ns over `ROWS_IF` 8/16/24/32, with a baseline
+> run first **in the same tool session** rather than compared against numbers
+> recorded earlier.
+>
+> | | baseline | reclaim |
+> |---|---|---|
+> | DSP/row | 46.34 | **33.00** |
+> | intercept | 10.0 | **0.0** |
+> | max residual | 3.4 | **0.0** (exactly 33.00 at every point) |
+> | LUT/row | 1,877 | 2,223 (+346) |
+> | FF/row | 721 | 1,088 (+367) |
+> | Fmax | 312-378 MHz | 318-346 MHz (no penalty) |
+>
+> 33 is **exactly** the multiply count of a row (32 products + 1 scale multiply),
+> so the reclaim removes every DSP that was not a multiplier. The 13.34/row
+> removed matches the 13.1 `(PCIN+A:B)` nodes measured above, which is the
+> cross-check that the attribute hit the intended cells and nothing else.
+>
+> Both traps below were real and both are load-bearing; the implementation splits
+> levels >= 2 onto a separate signal `trn` and leaves level 1 in the DSP.
+> `sim/run_matvec.sh` is all green after the change, bit-exact against the C
+> reference over every shape.
+>
+> Whole-die consequence at `ROWS_IF=58`, `MACS=192`: **112-114% (does not fit)
+> -> 85.1-86.5%**. This is what §15.4c's allocation was conditional on.
+>
+> Caveats that survive: these are OOC numbers, not placed and routed, and every
+> Fmax figure is Vivado's 0.85 V analysis while the card runs at 0.717 V, a
+> measured 17% cut. **LUT is now the resource that grew** and its whole-die sum
+> is still uncomputed. Procedure and traps:
+> `docs/debugging/2026-08-24_adder-tree-reclaim.md`.
 
 **Two implementation constraints, both easy to get wrong:**
 
