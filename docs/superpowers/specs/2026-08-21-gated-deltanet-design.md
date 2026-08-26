@@ -1530,8 +1530,52 @@ The phase-schedule bullet is discharged. These are not:
   Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
   the fixed 18 becoming 40).
 
-- **STILL OWED: the L2 norm is a DIFFERENT function and `rmsnorm_rs` does not
-  implement it.** §2.1.3 requires divide by `sqrt(ssq)` not `sqrt(mean)`, TWO
+- **CLOSED 2026-08-25: `rtl/l2norm_rs.vhd` implements the L2 norm, both paths,
+  and pins the recipe §2.1.3 deferred to this section.**
+
+  | `LANES` | DSP | Fmax | cycles at N=128 |
+  |---|---|---|---|
+  | 1 | 21 | 300.8 MHz | 319 |
+  | **2** | **26** | **300.8 MHz** | **191** |
+  | 4 | 36 | 285.8 MHz (does not close) | 127 |
+
+  Recipe pinned: `Q = 18` (forced -- `rsqrt_q` takes s64, `ssq < 2^37`, and the
+  q path's `<<7` fold means `ssq<<7<<Q` must fit s63, so `Q <= 19`; at 18 the
+  output shifts fall out as `>>3` and none). The `1/sqrt(128)` fold is a shift
+  of the rsqrt ARGUMENT, not the output, because `sqrt(128) = 8*sqrt(2)` is not
+  a power of two. `ssq = 0` emits zeros, the documented ggml divergence,
+  asserted explicitly. Checked on 55 cases at every `LANES` in {1,2,4,8}
+  against the recipe computed from `fixed_pkg`'s own `rsqrt_q`.
+
+- **CONSEQUENCE, and it is the uncomfortable one: meeting §3.3's schedule takes
+  the die to the congestion line.** §2.8's measured `DSP_B = 4 x LANES + 20`
+  prices its aux row with **1-lane** units (rmsnorm_rs 18 + silu 2). Those
+  units cannot meet §3.3's schedule -- at 1 lane the norms alone are 740K
+  cycles against a 590K sweep. The aux row that *does* meet it:
+
+  | | 1-lane aux (the 148 figure) | the aux §3.3 needs |
+  |---|---|---|
+  | rmsnorm_rs | 18 (1 lane) | **40** (4 lanes) |
+  | l2norm_rs | -- | **26** (2 lanes) |
+  | silu | 2 (1 lane) | **~12** (4 lanes, from D's measured 3-DSP lane) |
+  | **aux total** | **20** | **78** |
+  | **B total** (`4 x 32` sweep lanes + aux) | **148** | **206** |
+
+  ```
+  A 1,914 + C 434 + B 148 + D 28 = 2,524 of 2,880 = 87.6%   schedule NOT met
+  A 1,914 + C 434 + B 206 + D 28 = 2,582 of 2,880 = 89.7%   schedule met
+  ```
+
+  **89.7% is at the 90% congestion line both B §2.8 and C §2.8 cite**, and the
+  87.6% that every document has been quoting was only comfortable because the
+  aux row was priced with units that do not do the job. The silu term is the
+  one still estimated (~12, scaled from D's measured 3-DSP swiglu lane, which
+  includes a `*u` multiply a bare silu does not need) and is the obvious place
+  to look first. **This is a real finding and it should be treated as one: the
+  die is no longer comfortably under the line.**
+
+- ~~STILL OWED: the L2 norm is a DIFFERENT function~~ **-- closed above.**
+  Retained note: `rmsnorm_rs` alone does not cover it, and §2.1.3 requires divide by `sqrt(ssq)` not `sqrt(mean)`, TWO
   output quantizations per element, the `1/sqrt(128)` fold (not a pure shift,
   since `sqrt(128) = 8*sqrt(2)`), no weight multiply, and a deliberate
   divergence from `ggml_l2_norm` at zero input. §3.3's 109,056-cycle L2 term
