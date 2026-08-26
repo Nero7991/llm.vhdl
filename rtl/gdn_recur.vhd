@@ -59,15 +59,12 @@ entity gdn_recur is
     -- is deliberate -- the pinned form is not a separate branch that could
     -- drift away from the one under test.
     --
-    -- DEFAULT FALSE.  2.1.4 is a pinned contract that gdn_err.c, 2.10's
-    -- precision result and 3.3's schedule all reference; this exists so the
-    -- correction can be MEASURED end to end before anyone decides to adopt it.
-    -- Measured over 224 physically realizable columns, state error in LSB:
-    --                        median      p95       max   worst tk=0
-    --   D_NORM = false        0.632     6.65   1218.04      1218.04
-    --   D_NORM = true         0.600     1.29      3.47         1.11
-    -- docs/debugging/2026-08-26_gdn-first-token-dm-grid.md
-    D_NORM : boolean := false;
+    -- DEFAULT TRUE as of 2026-08-26: the amendment is ADOPTED.  FALSE still
+    -- reproduces the superseded pinned form bit for bit, and is kept only so
+    -- the old contract can be regenerated for comparison -- not as an option.
+    -- See the TK0_ED comment below for the measurements that decided it, and
+    -- docs/debugging/2026-08-26_gdn-first-token-dm-grid.md for the procedure.
+    D_NORM : boolean := true;
     -- TK0_ED: at tk = 0 the sk term is a MASKED ZERO, so ske is derived from a
     -- state that does not exist -- msb_pos(0) = 0 gives ske = se_j + 17 -- and
     -- it must not enter stage 3's grid minimum either.  That is the identical
@@ -80,17 +77,28 @@ entity gdn_recur is
     -- zero is zero.
     --
     -- APPLY IT WITH D_NORM, NOT INSTEAD OF IT.  Measured over 288 physically
-    -- realizable columns, worst state error in LSB and first tokens whose
-    -- entire state is discarded:
-    --                              p95        max   tk0 lost
-    --   pinned                  4768.00    5189.00      3
-    --   D_NORM alone           16558.63   37413.90      3   <- WORSE
-    --   TK0_ED alone               9.92    1218.04      0
-    --   both                       1.20       3.47      0
-    -- D_NORM alone is worse than the pinned recipe: normalizing d amplifies
-    -- the error the phantom grid already introduced.  The two are one
-    -- amendment, not two independent ones.
-    TK0_ED : boolean := false
+    -- realizable columns, with eg drawn from the MEASURED per-head
+    -- distribution (ref/gdn_eg_qwen3_27b.txt), state error in LSB:
+    --
+    --                    median      p95          max   eg=0 mid-seq   eg<0.85
+    --   pinned             0.65    4799         5245          25.55      78.33
+    --   D_NORM alone       0.60   18067   11662306           1.05      12.90
+    --   TK0_ED alone       0.68      26.54      1218          25.55       0.75
+    --   both               0.59       1.27         8.96        1.05       0.71
+    --
+    -- D_NORM alone is 2000x worse than the pinned recipe: normalizing d
+    -- amplifies the error the phantom grid already introduced.  The two are
+    -- ONE amendment, not two independent ones.
+    --
+    -- The eg = 0 column is a THIRD site the same amendment covers: mid-sequence
+    -- a fully shut decay gate makes the decayed state term identically zero for
+    -- a whole column, the same masked operand as tk = 0, but tk0 does not gate
+    -- it so se_j still enters e_u's minimum.  D_NORM handles it (25.55 -> 1.05).
+    -- No further correction is needed, which is what made adopting the pair
+    -- safe rather than a repeat of the D_NORM-alone mistake at the next site.
+    --
+    -- DEFAULT TRUE as of 2026-08-26: ADOPTED.
+    TK0_ED : boolean := true
   );
   port(
     clk    : in  std_logic;

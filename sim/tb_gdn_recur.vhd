@@ -30,8 +30,10 @@ entity tb_gdn_recur is
           -- selects the matching reference.  Mismatching them is a loud
           -- bit-exact failure rather than a silent wrong answer, which is the
           -- intended behaviour.
-          D_NORM : boolean := false;
-          TK0_ED : boolean := false;
+          -- Both TRUE as of 2026-08-26: the 2.1.4 amendment is adopted and
+          -- these now match rtl/gdn_recur.vhd's own defaults.
+          D_NORM : boolean := true;
+          TK0_ED : boolean := true;
           VECS  : string   := "gdn_recur_vec.txt";
           -- Tolerances against the ORACLE.  Set from measurement once the
           -- bit-exact check passes, never guessed: a tolerance looser than the

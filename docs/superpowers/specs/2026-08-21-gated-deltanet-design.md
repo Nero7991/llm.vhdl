@@ -431,7 +431,7 @@ rules in §2.1.3-§2.1.4):
 | `v[j]` | int16 | exp `e_v` = v-segment exponent, §2.1.3 |
 | `beta_h` | uint16, `0..65535` | exp **16** (Q16; sigmoid < 1 strictly) |
 | `eg_h = exp(g_h)` | uint16, `0..32768` | exp **15** (Q15; `eg = 1.0` at `g = 0` is exact: 32768 fits u16) |
-| scalar path (`alpha`, `dt`, `softplus`, `g`) | s32 | exp **12** (Q12, `exp_q`'s native domain) |
+| scalar path (`alpha`, `dt`, `softplus`, `g`) | s32 | exp **18** (AMENDED 2026-08-26, was 12; see §2.1.3's scalar path) |
 
 `q_s`'s bound: after the fold `norm2(q_s) = 1/sqrt(128)`, so
 `abs(q_s[i]) <= 2^18/sqrt(128) = 23170.5`, hence 23171. The exponent 18 (not
@@ -553,16 +553,52 @@ Consequences that §3 must carry, rather than discovering at validation time:
 - §3's test plan must include an `ssq = 0` vector asserting zeros, and must
   document the ggml mismatch rather than treating it as a failure.
 
+> **AMENDED AND ADOPTED 2026-08-26: the scalar path moves from Q12 to Q18.**
+>
+> Measured end to end on the real Qwen3.8-27B `ssm_a` / `ssm_dt_bias` weights
+> (all 2,304 GDN heads, `ref/gdn_eg_qwen3_27b.txt`) against a double oracle, on
+> the slow heads where a per-token error compounds:
+>
+> | scalar grid | slow-band worst rel err | compounded over 4,096 tokens |
+> |---|---|---|
+> | Q12 (superseded) | 1.92e-04 | **2.196** |
+> | Q15 | 5.05e-05 | 1.230 |
+> | **Q18 (adopted)** | **3.06e-05** | **1.133** |
+> | Q20 | 3.01e-05 | 1.131 (saturated) |
+>
+> Q18 reaches the floor set by the exp table's own interpolation error, measured
+> independently by a different route as 3.04e-05, so a finer grid buys nothing;
+> the next move for more accuracy would be a finer exp table.
+>
+> **Two mechanisms made Q12 bad, and the second is the larger.** `g` itself is
+> unrepresentable for the slowest heads (4 of 2,304 lose their decay entirely at
+> Q12), and `softplus`'s output underflows Q12 and is then amplified by
+> `|ssm_a|`, which reaches **139** in this model.
+>
+> **Cost: zero.** 7 DSP, 0 BRAM, 327.9 MHz at Q12, Q15 and Q18 alike -- no
+> datapath width depends on the grid, only constant shift amounts.
+>
+> **This splits what this section presents as one conversion rule into two
+> grids:** silu's `sigma` argument stays at Q12 (site 3 below), the scalar path
+> is Q18. That is deliberate. silu's error does not compound; `eg`'s multiplies
+> the state every token.
+>
+> Reference implementation `rtl/gdn_scalar.vhd`, generic `SP_Q` defaulting to 18.
+> Procedure: `docs/debugging/2026-08-26_gdn-scalar-path.md`.
+
 **Scalar path** (per head; 16 values each): `alpha` and `dt` are converted to
 Q12 (rule above, exponents `al_exp`, `dt_exp`) and added in s32.
-`sp = softplus_q12(.)` (threshold per §1.1(f); internals §3). Then
+`sp = softplus_q18(.)` (threshold per §1.1(f); internals §3). Then
 
 ```
-g_q12 = min( 0, round_shift_bidir( sp * a_mant, a_exp ) )   -- a <= 0 so g <= 0
-        clamped below at -16*2^12 (exp_q's domain; deeper values underflow to
-        eg = 0, which is the mathematically correct limit)
-eg    = exp_q15( g_q12 )        -- uint16, 0..32768
-beta  = sigmoid_q16( Q12(b_mant, b_exp) )   -- uint16 Q16; internals per 3
+g_q18 = min( 0, round_shift_bidir( sp * a_mant, a_exp ) )   -- a <= 0 so g <= 0
+        clamped below at -16*2^18 (exp_q's domain; deeper values underflow to
+        eg = 0, which is the mathematically correct limit).
+        The clamp is applied on the WIDE value, BEFORE any narrowing:
+        narrowing first lets a large negative alias back into (-LIM, 0] and
+        opens a gate this rule exists to shut.
+eg    = exp_q ( g_q18, 18 ) -> requantized to Q15   -- uint16, 0..32768
+beta  = sigmoid_q( Q18(b_mant, b_exp), 18 ) -> Q16   -- uint16, sat 65535
 ```
 
 `round_shift_bidir` = the two-branch rule above with `a_exp` in place of
@@ -570,6 +606,57 @@ beta  = sigmoid_q16( Q12(b_mant, b_exp) )   -- uint16 Q16; internals per 3
 §1.1(b) but a rounding artifact must not amplify the state.
 
 #### 2.1.4 The recurrence, per head h, per column j
+
+> **AMENDED AND ADOPTED 2026-08-26.** Three sites in this section selected a
+> grid from a MASKED ZERO's exponent, which describes nothing. All three are
+> corrected below and the corrected form is now normative. The reference
+> implementation is `rtl/gdn_recur.vhd` / `rtl/gdn_recur_pipe.vhd` with
+> `D_NORM = TK0_ED = true`, which is the default; `false` still regenerates the
+> superseded form bit for bit, for comparison only.
+>
+> Two of them are corrected by an explicit exception (`tk = 0` at stages 3 and
+> 4); the third, `eg = 0` mid-sequence, is **not gated** and is instead rendered
+> harmless by `D_NORM` normalizing `d` onto its own grid. See "the third site"
+> below for why no gate was added.
+>
+> The three sites, and what each cost, measured over 288 physically realizable
+> columns with `eg` drawn from the measured per-head distribution
+> (`ref/gdn_eg_qwen3_27b.txt`), state error in LSB of the unit's own grid:
+>
+> | mode | median | p95 | max | `eg=0` mid-seq | `eg<0.85` median |
+> |---|---|---|---|---|---|
+> | superseded (pinned) | 0.65 | 4,799 | 5,245 | 25.55 | 78.33 |
+> | `D_NORM` alone | 0.60 | 18,067 | **11,662,306** | 1.05 | 12.90 |
+> | `TK0_ED` alone | 0.68 | 26.54 | 1,218 | 25.55 | 0.75 |
+> | **both (adopted)** | **0.59** | **1.27** | **8.96** | **1.05** | **0.71** |
+>
+> **This is ONE amendment, not three.** `D_NORM` applied alone is 2,000x worse
+> than the recipe it replaces, because normalizing `d` amplifies the error the
+> phantom grid has already introduced. Adopting a subset is not a conservative
+> middle path; it is the worst available option.
+>
+> **The third site, and why it has no gate.** At `eg = 0` mid-sequence the
+> decayed state term `w18` is identically zero for a whole column -- structurally
+> the same masked operand as `tk = 0` -- yet `tk0` does not gate it, so
+> `se[j] + 2` still enters `e_u`'s minimum and `ske` still enters `e_d`'s. The
+> value is right; the grid claim is not. Measured, the superseded recipe scores
+> **25.55 LSB** on those columns, which is also its worst steady-state error over
+> all 288 -- so the worst non-first-token error in the whole set is an `eg = 0`
+> column. `D_NORM` alone takes it to **1.05 LSB**, because normalizing `d` onto
+> its own grid removes the dependence on the phantom exponent rather than
+> excluding it.
+>
+> An explicit `eg = 0` exception at both sites would be the structurally
+> consistent move and is probably also correct, but it is **untested and NOT part
+> of this amendment**. It is recorded as open rather than adopted, because this
+> section's own history is that adopting an unmeasured grid change is how the
+> `D_NORM`-alone result happened.
+>
+> Cost of adoption: **zero**. Synthesized at `LANES = 32`, 129 DSP, 24.5 BRAM,
+> 305.6 MHz, identical to the superseded form in DSP and BRAM.
+>
+> Procedure and rejected alternatives:
+> `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`.
 
 This is the core contract. One pass per column, in stream order; the whole
 sweep is column-local (nothing in column j depends on any other column of the
@@ -658,11 +745,17 @@ skm, ske = normalize(sk_acc)              -- site 7: sh_sk = max(0, msb_pos(|sk_
 **Stage 3 — delta** (sites 8, 9):
 
 ```
-e_d   = min(e_v, ske)                          -- coarser grid = larger values =
-                                               -- RIGHT-shift-only alignment
+e_d   = ( tk = 0 ) ? e_v : min(e_v, ske)       -- coarser grid = larger values =
+                                               -- RIGHT-shift-only alignment.
+                                               -- AMENDED 2026-08-26: at tk = 0
+                                               -- ske is a MASKED ZERO's exponent
+                                               -- and must not enter the min
 diff  = (v[j] >> (e_v - e_d)) - (skm >> (ske - e_d))   -- floor shifts; s18
-d_m   = round_shift( diff * beta, 16 )         -- s18 x u16 Q16; |d_m| <= 2^16, s18
-                                               -- grid e_d unchanged (Q16 folded)
+shd   = max(0, msb_pos(|diff * beta|) - 14)    -- AMENDED 2026-08-26
+d_m   = round_shift( diff * beta, shd )        -- s18 x u16 Q16; s18
+e_dm  = e_d + 16 - shd                         -- d's OWN grid, not e_d
+                                               -- shd = 16 reproduces the
+                                               -- superseded form exactly
 ```
 
 The operand on the `e_d` grid shifts by zero; the other shifts right by the
@@ -674,7 +767,7 @@ subtraction after alignment loses nothing.
 
 ```
 kd[i] = k_n[i] * d_m               -- s16 x s18, one DSP; |kd| <= 2^31, s33
-                                   -- grid e_kd = 15 + e_d
+                                   -- grid e_kd = 15 + e_dm
 e_u   = ( tk = 0 ) ? e_kd : min( se[j] + 2, e_kd )   -- right-shift-only again;
                                    -- at tk=0 the state is a MASKED ZERO with no
                                    -- exponent and must not enter the min
@@ -732,7 +825,7 @@ codebase.
 |---|---|---|
 | 1 | conv tap alignment `>> (e_t - e_ref)` | floor, arithmetic right shift |
 | 2 | conv segment requantize | bfp_pack semantics: half+inf, bias only `sh>0`, `sat16` |
-| 3 | Q12 argument conversion (silu/sigmoid/softplus/exp args) | `sh>=0`: half+inf; `sh<0`: `sat32` left, exact |
+| 3 | Q argument conversion (silu's sigma at Q12; the scalar path at **Q18**) | `sh>=0`: half+inf; `sh<0`: saturating left at a 2^45 sentinel, NOT the s32 rail |
 | 4 | silu mantissa multiply `round_shift(sm * sigma_q15, 15)` | half+inf (sigma internals §3) |
 | 5 | L2-norm output quantize (k Q15, q Q18 with fold) | **§3** pins the rsqrt recipe; `sat16` + half+inf required |
 | 6 | decay prescale `round_shift(smant * eg, 13)` | half+inf |
@@ -848,6 +941,19 @@ Multiplies per layer per token, from §2.1.4: 4 per state element (decay, sk,
 kd, output) x 262,144 = **1.049M**, plus conv 24,576, plus ~20K of L2/silu/
 gate/misc — ~1.09M/layer, **~19.7M/token** over 18 layers. Compare A's ~752M
 weight MACs: B is ~2.6% of the multiply work but ~4.9% of the traffic.
+
+> **`LANES = 32` PINNED 2026-08-26.** Measured on `rtl/gdn_recur_pipe.vhd`,
+> which reaches II = NB exactly at every lane count:
+>
+> | `LANES` | DSP | Fmax | BRAM | ms/token |
+> |---|---|---|---|---|
+> | **32 (pinned)** | **129** | **305.6 MHz** | **24.5** | **~1.95** |
+> | 64 | 257 | 301.9 MHz | 48.5 | ~0.98 |
+>
+> 64 halves B's sweep time, but +128 DSP moves the die from the 90.5% floor of
+> the rebuilt whole-die range to roughly 95%, which leaves no room for D, whose
+> RTL does not exist and whose phase sharing is still an unmeasured 0 to +24 DSP.
+> Revisit only once D's row is measured.
 
 **Sweep cycle count** at `LANES` elements/cycle (each element passes the 4
 pipelined stages in parallel DSP groups):

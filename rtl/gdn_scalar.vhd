@@ -58,14 +58,15 @@
 -- docs/debugging/2026-08-25_gdn-recurrence-error-bound.md), so past Q18 the
 -- grid is no longer what limits accuracy.  The cost of moving 12 -> 18 is a
 -- wider shift and nothing else: no extra DSP, no extra ROM, no extra state.
--- DEFAULT IS 12 so the pinned contract is what builds by default; the
--- amendment is a generic flip once someone decides to adopt it.
+-- DEFAULT IS 18 as of 2026-08-26: the amendment is ADOPTED.  12 still
+-- reproduces the superseded pinned grid exactly and is kept for comparison,
+-- not as an option.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_luts_pkg.all;
 
 entity gdn_scalar is
   generic(
-    SP_Q : integer range 8 to 22 := 12   -- scalar-path grid; see above
+    SP_Q : integer range 8 to 22 := 18   -- scalar-path grid; ADOPTED 2026-08-26
   );
   port(
     clk   : in  std_logic;

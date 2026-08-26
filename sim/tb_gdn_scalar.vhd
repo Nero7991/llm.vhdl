@@ -10,7 +10,7 @@ use ieee.math_real.all;
 use std.textio.all;
 
 entity tb_gdn_scalar is
-  generic( SP_Q : integer := 12; VEC : string := "/tmp/gsv12.txt" );
+  generic( SP_Q : integer := 18; VEC : string := "gdn_scalar_vec.txt" );
 end entity;
 
 architecture sim of tb_gdn_scalar is

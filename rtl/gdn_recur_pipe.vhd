@@ -52,9 +52,9 @@ entity gdn_recur_pipe is
     -- recipe exactly, so this generic chooses shd and nothing else, and the
     -- two extra pipeline stages exist in BOTH configurations -- they cost
     -- latency, never issue interval, so the throughput result is unaffected.
-    D_NORM : boolean := false;
+    D_NORM : boolean := true;   -- ADOPTED 2026-08-26, see gdn_recur.vhd
     -- See rtl/gdn_recur.vhd for the full note and the measured table.
-    TK0_ED : boolean := false
+    TK0_ED : boolean := true    -- ADOPTED 2026-08-26, see gdn_recur.vhd
   );
   port(
     clk    : in  std_logic;
