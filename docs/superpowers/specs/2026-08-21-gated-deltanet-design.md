@@ -1872,18 +1872,62 @@ The phase-schedule bullet is discharged. These are not:
   | term | counted as | honest | delta |
   |---|---|---|---|
   | C's QK-norm inside the 434 | 18, a skeleton; C's own aux doc says the unit is unwritten | the real `rmsnorm_rs` is 22 at 1 lane, and **40 at 4** if C's schedule needs 4 -- the exact 1-lane-cannot-do-the-job failure that already moved B's own row from 148 to 202 | +4 to +22 |
-  | conv MACs | absent | 0 time-shared, **32 dedicated**, and §3.3's schedule runs conv at LANES=32 | 0 to +32 |
+  | conv MACs | absent | ~~0 time-shared, **32 dedicated**~~ **MEASURED 2026-08-26: 16** -- see below | **+16** |
   | softplus + scalar | absent | §2.8's own words are "believed cheap ... but believed is not measured" | +2 to +4 |
   | D's 28 | assumes phase sharing | unshared is 52, and the sharing "is a property of how the RTL is written" -- no D RTL exists | 0 to +24 |
 
   **Honest range: 2,584 to 2,670 of 2,880 = 89.7% to 92.7%.** The FLOOR is
   already above the 90% line this document keeps invoking, not at it.
 
+  **Narrowed 2026-08-26 by two measurements:** the conv row is a measured 16
+  (not 0-32), and `gdn_recur`'s `4 x LANES + 1` is measured on a real unit
+  (not a skeleton), which also adds the +1. That removes 16 of the 86-DSP
+  spread; the range is now **2,600 to 2,670 = 90.3% to 92.7%**, and its floor
+  has moved further above the 90% line rather than toward it.
+
   The claim to have measured everything was made in the same document that
   lists the conv sharing decision as open. Worse, it counted
   measured-as-a-skeleton and measured-on-a-broken-unit as measured -- which is
   the same epistemic move that produced the l2norm recipe collapse two items
   above: a number certified by something that shares its assumptions.
+
+- **CLOSED 2026-08-26: `rtl/gdn_conv.vhd` implements §2.1.3's depthwise conv,
+  and the row is 16 DSP, not 32.**
+
+  | `LANES` | DSP | Fmax | BRAM | LUT |
+  |---|---|---|---|---|
+  | **4** | **16** | **447.4 MHz** | 0 | 3,421 |
+  | 8 | 32 | 442.7 MHz | 0 | 6,753 |
+  | 16 | 64 | 427.5 MHz | 0 | 13,334 |
+
+  `DSP = 4 x LANES` exactly, one per tap per lane, and the unit closes **40%
+  above the 300 MHz target at every width** -- it is nowhere near the critical
+  path, which is worth knowing before anyone spends effort optimizing it.
+
+  **Which lane count the schedule needs is now arithmetic rather than
+  guesswork.** Per card the conv is 5,120 channels over 48 GDN layers, two
+  passes each, so `491,520 / LANES` cycles per token:
+
+  | `LANES` | cycles | ms @ 300 MHz | fraction of the 589,824 sweep | DSP |
+  |---|---|---|---|---|
+  | 2 | 245,760 | 0.82 | 41.7% | 8 |
+  | **4** | **122,880** | **0.41** | **20.8%** | **16** |
+  | 8 | 61,440 | 0.21 | 10.4% | 32 |
+
+  **`LANES = 4` hides under the sweep with almost 5x margin at 16 DSP**, so the
+  dedicated-conv figure is 16 and this row moves B by 16 rather than 32.
+  Halving again to 8 DSP still fits at 41.7% if DSP ever becomes tighter than
+  schedule -- so the "time-share or dedicate" question this section has carried
+  open is now moot: dedicating costs 16, and time-sharing saves at most 16 on a
+  die where the honest range spans 86 DSP.
+
+  Verified the same two ways as the recurrence, 128 cases, bit-exact at every
+  `LANES` in {4,8,16,32}, worst 0.4999999 LSB against a double-precision oracle
+  against a 0.75 tolerance. The case set sweeps the valid mask including the
+  sequence-start prefixes `0001`/`0011`/`0111`, because §2.1.3's rule that
+  invalid taps leave the `e_ref` MINIMUM as well as the sum is exactly the rule
+  §2.1.4 violated twice -- here it is implemented and tested rather than
+  assumed.
 
 - **AND THE 90% CONGESTION LINE IS FOLKLORE FOR THIS PART.** Traced 2026-08-25.
   Every citation of it in this repo bottoms out at the gated-attention spec's
