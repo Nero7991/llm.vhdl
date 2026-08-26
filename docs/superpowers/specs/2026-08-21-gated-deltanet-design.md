@@ -1586,6 +1586,46 @@ The phase-schedule bullet is discharged. These are not:
   system, catches a wrong recipe). The second one found a defect -- see the
   next item.
 
+- **REOPENED AND CLOSED, same night: `rtl/gdn_recur_pipe.vhd` reaches one
+  column every `NB` cycles, so §3.1's sweep IS achievable and the 14.5x miss
+  above is a property of the sequential CONTROL, not of the recurrence.**
+
+  | `LANES` | DSP | Fmax | II measured | ideal | BRAM | LUT |
+  |---|---|---|---|---|---|---|
+  | 8 | 33 | 302.5 MHz | **16** | 16 | 6.5 | 8,277 |
+  | 16 | 65 | 302.5 MHz | **8** | 8 | 12.5 | 13,772 |
+  | **32** | **129** | **302.5 MHz** | **4** | **4** | **24.5** | **24,037** |
+
+  Bit-identical to `gdn_recur` on the same 192 vectors at every `LANES`. The
+  issue interval is EXACTLY `NB` at every lane count, which is precisely what
+  §3.1 assumed, so the sweep is **589,824 cycles = 1.95 ms at 302.5 MHz**
+  against the 28.5 ms the sequential unit measures.
+
+  **At the SAME DSP cost.** 129 at `LANES = 32`, identical to the sequential
+  unit, so §2.8's `4 x LANES + 1` stands and B's row does not move. **LUT went
+  DOWN**, 8.59% of the die to 5.47%, because the sequential unit held `w18` and
+  `u` as DIM-element register files behind wide muxes while this one keeps them
+  in BRAM. The new cost is that BRAM: **24.5 tiles, 3.65% of the 672 on this
+  part** -- a resource B's accounting has so far treated as free for this unit.
+  Fmax fell 318.9 -> 302.5, still above 300.
+
+  What makes it work is exactly §2.4's column-locality: engine A works on
+  column c while B works on an earlier one and C on an earlier one still, so
+  all four per-element multiplies are busy every cycle and the per-column
+  scalar chain is occupied by several columns at once rather than paid per
+  column.
+
+  **Remaining overhead, measured and NOT eliminated:** `k_n` and `q_s` are read
+  straight off the ports, so a head boundary needs a ~60-cycle drain. On a
+  128-column head that is **11.7%**, taking 1.95 ms to **2.18 ms**.
+  Double-buffering them with a select bit carried in the column context removes
+  it for about 4 Kbit. Until that is done, **2.18 ms is the honest sweep
+  figure**, not 1.95.
+
+  So §3.3's "the nonlinearities hide under the sweep" and §3.1's port
+  derivation are restored, but against 2.18 ms rather than 1.97, and §3.4's
+  BRAM accounting now has a 24.5-tile entry it did not have.
+
 - **DEFECT FOUND 2026-08-26 in §2.1.4 stage 3, and it is a SECOND first-token
   weakness independent of the one corrected on 2026-08-25.** At `tk = 0`,
   `sk_acc = 0`, so `u[i] = k_n[i] * d_m` exactly: the state IS `d_m` up to a
