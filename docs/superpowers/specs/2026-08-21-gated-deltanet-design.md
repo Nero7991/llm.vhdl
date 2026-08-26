@@ -1336,6 +1336,68 @@ assumed** - the same rule the recon doc applies to everything else.
 >
 > This measurement is also what found the `SE_INIT` defect in §2.1.4, which
 > was doing ~1000x more damage than the effect it was written to bound.
+>
+> ---
+>
+> **RE-DERIVED 2026-08-26 onto the amended §2.1.4. The headline result stands
+> and strengthens; one of the arguments for it does NOT.**
+>
+> `ref/gdn_err.c` had implemented only the superseded recipe, so everything
+> above was measured against a recipe this spec no longer specifies. It now
+> carries the same three flags as the RTL (`d_norm`, `tk0_ed`, `eg0_ed`,
+> all defaulting on) with `--pinned` reproducing the old form.
+>
+> **The control is verified, not assumed.** `--pinned --fix-init` reproduces
+> every row of both tables above to the precision they are quoted at: 5.2e-4,
+> 6.1e-4, 7.1e-4, 1.4e-3, 5.1e-4, 5.1e-3, 5.6e-3, 3.3e-3, and the stacked
+> 2.27e-2 / 2.06e-2 / 2.04e-2. It also reproduces the pre-edit binary
+> byte-for-byte on six configurations, so the re-derivation is behaviour
+> preserving on the old path.
+>
+> | regime | pinned+fix-init | **amended** |
+> |---|---|---|
+> | base, real per-head `exp(g)`, 4096 | 5.151e-4 | **4.933e-4** |
+> | `eg = 1.0`, 16,384 | 6.116e-4 | **5.993e-4** |
+> | eg-worst | 7.074e-4 | 7.949e-4 |
+> | `rho = 0.9`, `eg = 1.0` | 1.366e-3 | **1.273e-3** |
+> | `beta = 0.98`, eg-worst | 5.087e-4 | 5.133e-4 |
+> | `beta = 0.02`, eg-worst | 5.063e-3 | **4.218e-3** |
+> | 2% v outliers 30x, eg-worst | 5.559e-3 | **5.451e-3** |
+> | `--inq-real` | 3.297e-3 | 3.315e-3 |
+> | **stacked adversarial, W16, 8192** | 2.271e-2 | **7.875e-3** |
+> | stacked, W18 | 2.058e-2 | **2.555e-3** |
+> | stacked, W20 | 2.038e-2 | **2.058e-3** |
+>
+> **Read it honestly: the amendment is a wash on the mild regimes and
+> occasionally marginally worse there** (eg-worst, `beta = 0.98`, `--inq-real`
+> all move the wrong way by 1-12%). It is a large win exactly where the error
+> is large, which is the case that sets the bound: the stacked adversarial
+> falls **2.88x, from 2.27% to 0.79%**.
+>
+> **int16 still stands, with more room than before.** W16 under the amended
+> recipe (0.79%) beats **W20** under the pinned one (2.04%), so no contingency
+> fires and §2.8's co-fit and §2.3's traffic are unaffected.
+>
+> **WITHDRAWN: "widening the state does not help in the only regime where the
+> error is large."** That rested on W16 to W20 buying only ~10% (2.27 -> 2.04),
+> and on attributing the residual to the 16-bit seams pinned at sites 7, 9 and
+> 12. Under the amended recipe W16 to W18 buys **3.1x** (0.79% -> 0.26%). The
+> residual was mostly the two defects, not the seams, so the seam explanation
+> was fitted to a number the defects produced. The recommendation does not
+> change, because amended W16 is already comfortable; the stated reason for it
+> was wrong.
+>
+> **COVERAGE GAP, and it limits every number in this section.** `gdn_err.c`
+> draws `eg` per HEAD from the weight table, one constant for the whole run:
+> `min = 0.026763916`, which is `egq = 877` in Q15. It never reaches zero, so
+> **`EG0_ED` is inert in all of the above** and the improvements are `D_NORM`
+> and `TK0_ED` alone. `ref/gdn_recur_vec.c` draws `eg` per TOKEN from the
+> measured distribution with a deliberate zero stratum, which is why the third
+> site was found there and could not have been found here. This section's bound
+> is therefore measured on a distribution that excludes the worst
+> masked-operand case by construction. Whether a fully shut gate occurs in the
+> real model is activation-dependent and no weight table settles it, so it joins
+> the existing open item about `beta`'s rate.
 > Procedure, raw output and the rejected hypotheses:
 > `docs/debugging/2026-08-25_gdn-recurrence-error-bound.md`; tool
 > `ref/gdn_err.c`.
@@ -1874,7 +1936,7 @@ The phase-schedule bullet is discharged. These are not:
   `sim/tb_gdn_recur.vhd` now carries `TOL_S = 12.0` / `TOL_O = 1.0e-4`, set from
   the measured 8.955 state LSB and 6.578e-5 of the output dot's term norm rather
   than from a round number. **`ref/gdn_err.c` still implements only the
-  superseded recipe, so Â§2.10's precision result remains measured against a
+  superseded recipe, so §2.10's precision result remains measured against a
   recipe this spec no longer specifies** -- that re-derivation is the open item.
 
   **AND THERE IS A THIRD, in the same stage, found the same night.** At

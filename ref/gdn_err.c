@@ -117,8 +117,20 @@ typedef struct {
     int    inq_real;     /* 1 = oracle sees true float inputs, 0 = dequantized */
     int    se_init;      /* spec 2.1.4 SE_INIT (default 0, as written) */
     int    fix_init;     /* 1 = at tk=0 exclude the (zero) state from e_u's min,
-                            i.e. e_u = e_kd.  This is the CANDIDATE FIX for the
-                            SE_INIT defect the default run exposes. */
+                            i.e. e_u = e_kd.  Superseded by tk0_ed/eg0_ed below,
+                            which subsume it; kept so the older runs reproduce. */
+    /* ---- the 2026-08-26 amendment to 2.1.4, ADOPTED, all default ON -------
+     * These three are the same generics carried by rtl/gdn_recur.vhd and
+     * ref/gdn_recur_vec.c, with the same names and the same meaning, so this
+     * file measures the recipe the spec actually specifies.  Set all three to
+     * 0 (or pass --pinned) to reproduce the superseded numbers.
+     *   d_norm  quantize d on its own grid instead of the pinned shift of 16
+     *   tk0_ed  a masked operand's phantom exponent must not enter e_d's min
+     *   eg0_ed  extend that rule from tk = 0 to eg = 0 mid-sequence, which is
+     *           the same masked-operand shape and which tk0 does not flag  */
+    int    d_norm;
+    int    tk0_ed;
+    int    eg0_ed;
     uint64_t seed;
     const char *egfile;
     const char *csv;
@@ -186,7 +198,8 @@ int main(int argc, char **argv)
     cfg_t c = { .T = 4096, .HV = 48, .W = 16, .rho_k = 0.0, .rho_v = 0.0,
                 .beta_fix = -1.0, .beta_mu = 0.0, .eg_fix = -1.0, .eg_layer = -1,
                 .eg_worst = 0, .v_scale = 1.0, .outlier_p = 0.0, .inq_real = 0,
-                .se_init = 0, .fix_init = 0, .seed = 12345,
+                .se_init = 0, .fix_init = 0,
+                .d_norm = 1, .tk0_ed = 1, .eg0_ed = 1, .seed = 12345,
                 .egfile = "gdn_eg_qwen3_27b.txt", .csv = NULL };
 
     for (int i = 1; i < argc; i++) {
@@ -206,6 +219,11 @@ int main(int argc, char **argv)
         else if (ARG("--outlier"))   c.outlier_p= atof(argv[++i]);
         else if (strcmp(a, "--inq-real") == 0)  c.inq_real = 1;
         else if (strcmp(a, "--fix-init") == 0)  c.fix_init = 1;
+        else if (ARG("--d-norm"))    c.d_norm   = atoi(argv[++i]) != 0;
+        else if (ARG("--tk0-ed"))    c.tk0_ed   = atoi(argv[++i]) != 0;
+        else if (ARG("--eg0-ed"))    c.eg0_ed   = atoi(argv[++i]) != 0;
+        else if (strcmp(a, "--pinned") == 0)
+            { c.d_norm = 0; c.tk0_ed = 0; c.eg0_ed = 0; }
         else if (ARG("--se-init"))   c.se_init  = atoi(argv[++i]);
         else if (ARG("--seed"))      c.seed     = strtoull(argv[++i], NULL, 10);
         else if (ARG("--egfile"))    c.egfile   = argv[++i];
@@ -273,6 +291,10 @@ int main(int argc, char **argv)
                                        if (eg_real[h] > mx) mx = eg_real[h]; }
       printf("  min=%.9f max=%.9f\n", mn, mx); }
     printf("# se_init=%d fix_init=%d\n", c.se_init, c.fix_init);
+    printf("# recipe: d_norm=%d tk0_ed=%d eg0_ed=%d  (%s)\n",
+           c.d_norm, c.tk0_ed, c.eg0_ed,
+           (c.d_norm && c.tk0_ed && c.eg0_ed) ? "2.1.4 AS AMENDED 2026-08-26"
+                                              : "NON-DEFAULT, not the specified recipe");
     printf("# beta: %s%.4f   rho_k=%.3f rho_v=%.3f v_scale=%.3g outlier_p=%.3g inq=%s\n",
            c.beta_fix >= 0 ? "fixed " : "sigmoid(N(mu,1)) mu=",
            c.beta_fix >= 0 ? c.beta_fix : c.beta_mu,
@@ -377,26 +399,70 @@ int main(int argc, char **argv)
                 int ske = se_j + 17 - sh_sk;
                 assert(llabs(skm) <= 32768);
 
-                /* stage 3, sites 8/9 */
-                int e_d = (e_v_seg < ske) ? e_v_seg : ske;
+                /* stage 3, sites 8/9 -- 2.1.4 as AMENDED 2026-08-26.
+                 * MASKED OPERAND: the decayed state term is identically zero
+                 * either because this is the first token or because the decay
+                 * gate is fully shut.  sk_acc is then 0, msb_pos(0) = 0 and
+                 * ske = se_j + 17 -- an exponent describing a state that does
+                 * not exist.  It must not enter the grid minimum, at EITHER
+                 * selection.  Gating only tk = 0 leaves the eg = 0 columns
+                 * floored right by 25-37 bits; that was measured, on the
+                 * output dot rather than in LSB of the very grid the phantom
+                 * exponent coarsens, which is the metric that could not see
+                 * it. */
+                int tk0 = (t == 0), eg0 = (egq == 0);
+                int mask_ed = (tk0 || (c.eg0_ed && eg0)) && c.tk0_ed;
+                /* The e_u gate differs from the RTL's in ONE respect, and only
+                 * in configurations the RTL cannot express.  rtl/gdn_recur.vhd
+                 * gates e_u on tk0 unconditionally -- it has no generic to turn
+                 * that off, because that half was adopted earlier as --fix-init.
+                 * This file predates that adoption (fix_init defaults to 0), so
+                 * to keep the superseded runs reproducible the tk0 half is tied
+                 * to (tk0_ed || fix_init) here.  At the adopted defaults the two
+                 * agree exactly; --pinned reproduces this file's old default and
+                 * --pinned --fix-init reproduces its old --fix-init runs. */
+                int mask_eu = (tk0 && (c.tk0_ed || c.fix_init))
+                            || (c.eg0_ed && eg0);
+                int e_d;
+                if (mask_ed) e_d = e_v_seg;
+                else         e_d = (e_v_seg < ske) ? e_v_seg : ske;
                 int s1 = e_v_seg - e_d, s2 = ske - e_d;
                 if (s1 > 63) s1 = 63;
                 if (s2 > 63) s2 = 63;
                 int64_t diff = floor_shr(v[j], s1) - floor_shr(skm, s2);
-                int64_t d_m  = round_shift(diff * beq, 16);
+
+                /* D_NORM: quantize d on its own grid.  shd = 16 reproduces the
+                 * pinned form exactly (e_dm = e_d + 16 - 16 = e_d), so the flag
+                 * chooses shd and nothing else -- one code path, not two. */
+                int64_t draw = diff * beq;
+                int shd = 16;
+                if (c.d_norm) {
+                    shd = msb_pos_u((uint64_t)llabs(draw)) - 14;
+                    if (shd < 0) shd = 0;
+                }
+                int64_t d_m  = round_shift(draw, shd);
+                int e_dm = e_d + 16 - shd;
 
                 /* stage 4, sites 10/11 */
-                int e_kd = 15 + e_d;
-                /* Spec 2.1.4: e_u = min(se[j]+2, e_kd).  With --fix-init the
-                 * zero state is excluded from the min at tk = 0, which is the
-                 * only way the min-referenced grid can be wrong: se[j] normally
-                 * tracks the state magnitude, but at tk = 0 the state is zero
-                 * and SE_INIT is a constant unrelated to the update's scale. */
-                int e_u  = (se_j + 2 < e_kd) ? se_j + 2 : e_kd;
-                if (t == 0 && c.fix_init) e_u = e_kd;
+                int e_kd = 15 + e_dm;
+                /* Same masked-operand rule at the second grid selection.  The
+                 * tk = 0 half of this is what --fix-init used to select on its
+                 * own; it is now the default and eg = 0 is included with it. */
+                int e_u;
+                if (mask_eu) e_u = e_kd;
+                else e_u = (se_j + 2 < e_kd) ? se_j + 2 : e_kd;
                 int su = se_j + 2 - e_u, sk2 = e_kd - e_u;
                 if (su > 63) su = 63;
                 if (sk2 > 63) sk2 = 63;
+                /* su can go negative only on the masked path, where e_u = e_kd
+                 * may exceed se_j + 2.  There w18 is identically zero, so the
+                 * shifted value is zero for any shift and clamping cannot
+                 * change a result -- it only avoids a negative shift.  The RTL
+                 * clamps here for the same reason.  sk2 is never negative:
+                 * e_u <= e_kd by construction on both paths.  Note w18 is zero
+                 * at tk = 0 because sm is forced to 0 there, and at eg = 0
+                 * because w = sm * egq = 0; both are the masked cases. */
+                if (su < 0) su = 0;
                 int64_t u[S_DIM]; uint64_t amax = 0;
                 for (int i = 0; i < S_DIM; i++) {
                     int64_t kd = kn[i] * d_m;
