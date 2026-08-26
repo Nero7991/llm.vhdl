@@ -74,19 +74,49 @@ q_s[i] = sat16( round_shift( xm[i] * y_q, 12 + he_q ) )    -- exp 18
 
 where y_k, y_q are the Q30 Newton mantissas normalised to [1,2). No Q generic.
 
-Mutation campaign against the rewritten testbench, 56 cases per run:
+Mutation campaign against the rewritten testbench, 56 cases per run, **each one
+re-run at every `LANES` in {1,2,4,8}** because the emit-gating defect class is
+LANES-sensitive and a campaign at a single lane count would not see it:
 
-| # | Mutation | Result |
+| # | Mutation | Result (cases caught, L1/L2/L4/L8) |
 |---|---|---|
-| M1 | collapse the rsqrt to an integer (the original bug's exact shape) | CAUGHT, 49 cases, worst 2896 LSB |
-| M2 | k-path shift off by one | CAUGHT, 56 cases |
-| M3 | q-path shift off by one | CAUGHT, 56 cases |
-| M4 | parity fold (1/sqrt(2)) dropped | CAUGHT, 31 cases |
-| M5 | rounding bias dropped | CAUGHT, 36 cases (only after TOL was tightened, see below) |
-| M6 | `rq_d := rq_p - 18`, i.e. the withdrawn Q = 18 form | CAUGHT, 56 cases |
+| M1 | collapse the rsqrt to an integer (the original bug's exact shape) | CAUGHT, 49, worst 2896 LSB |
+| M2 | k-path shift off by one | CAUGHT, 56/56/56/56 |
+| M3 | q-path shift off by one | CAUGHT, 56/56/56/56 |
+| M4 | parity fold (1/sqrt(2)) dropped | CAUGHT, 56/56/56/56 |
+| M5 | rounding bias dropped | CAUGHT, 36/36/36/36 (only after TOL was tightened) |
+| M6 | `rq_d := rq_p - 18`, i.e. the withdrawn Q = 18 form | CAUGHT, 56 |
+| M7 | emit gated on `v2/idx2` instead of `v1/idx1` | CAUGHT, 39/38/38/38 |
 
 M6 is the decisive one: the testbench now rejects the exact recipe the previous
-testbench certified.
+testbench certified. M7 is the regression guard for the placement bug that
+actually occurred in this file during development, and the reason the sweep runs
+at four lane counts rather than one.
+
+## Two further defects, found by review AFTER the fix was committed
+
+The correction above was reviewed adversarially once it was already in, and the
+review found two things in the shipped state. Both are recorded here because
+"the fix was reviewed and was clean" would be the false claim:
+
+1. **The testbench header still described the withdrawn golden.** The body had
+   been rewritten to real arithmetic but lines 1-11 still said the golden was
+   "computed directly from `work.fixed_pkg`'s own `rsqrt_q`, which is the
+   sanctioned reference implementation", and the file still imported
+   `work.fixed_pkg` although nothing used it. A reader six months out would have
+   taken the header as the house rule and repeated the bug. The header now states
+   the rule the incident produced, and says explicitly not to restore the old
+   golden.
+
+2. **The `1/sqrt(N)` fold was hardcoded to `<< 7` while `N` was generic.**
+   Instantiating at `N = 256` would have silently computed `1/sqrt(128 * ssq)`,
+   and the u38 assert would have fired on legal input. The shift is now
+   `LOG2N`, the bound is `2^(30 + LOG2N)`, `N` being a power of two is asserted
+   rather than assumed, and the testbench's golden derives `sqrt(N)` from the
+   generic too -- otherwise a hardcoded golden would have agreed with a
+   hardcoded DUT, which is this document's whole subject in miniature. Verified
+   passing at `N` in {64, 128, 256} x `LANES` in {1,2,4}. This also unblocks
+   the N=256 case C's QK-norm needs, which had never been exercised.
 
 ## Measured and REJECTED -- do not retry
 
@@ -133,5 +163,21 @@ testbench certified.
   `k_n` is accurately unit-norm. A k scale error enters the delta rule as k*k^T,
   i.e. squared, so that document needs re-checking against the corrected unit
   rather than the one it was written against.
-- The corrected unit's DSP/Fmax numbers supersede the 21 DSP / 300.8 MHz and
-  36 DSP / 285.8 MHz in `87fc976`; the fix deleted four states.
+- The corrected unit measures 21 DSP / 300.0 MHz / 313 cycles at `LANES=1`,
+  26 / 300.0 / 185 at 2, and 36 / 285.8 / 121 at 4. DSP is unchanged from the
+  broken version; the first synthesis of the CORRECTED unit came in at
+  272.3 MHz because the `1/sqrt(2)` fold multiply and its shift shared a cycle
+  with the lane multiplier's DSP B-input register, and splitting the fold into
+  two states returned the full 300 MHz for 2 cycles of 313.
+- **The same transcription weakness exists elsewhere in this repo and is the
+  more valuable finding.** It is confined to APPROXIMATION kernels, where
+  "correct" means close to a real function: for exact primitives the recipe IS
+  the definition and transcription is legitimate. Named suspects: the A-chain
+  goldens from `ref/run_fx.c` (anchored end-to-end at stories260K's dims only,
+  never against real math at Qwen3.8's operating points), `tb_silu_cone`, and
+  above all B's gating nonlinearities (`softplus_q12`, `exp_q15`,
+  `sigmoid_q16`), which stories260K never exercises at all and whose testbenches
+  do not yet exist. `eg` is the sharp case: the state is multiplied by it every
+  token, so a half-ULP Q15 error becomes a percent-level error in the weighting
+  of old context for the slow heads. That is a compounding term; the k-norm
+  error is not.

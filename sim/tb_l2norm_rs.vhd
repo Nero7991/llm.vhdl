@@ -1,17 +1,30 @@
--- Checks l2norm_rs against B 2.1.3 computed directly from work.fixed_pkg's own
--- rsqrt_q, which is the sanctioned reference implementation of this kernel and
--- the same function rmsnorm.vhd's pipelined rsqrt is asserted bit-exact with.
+-- Checks l2norm_rs against x/||x|| computed in REAL ARITHMETIC: a parallel
+-- real-valued sum of squares, math_real.sqrt, and a real divide, compared to
+-- the unit's output in output LSBs.  It shares no machinery with the DUT and
+-- deliberately does not use work.fixed_pkg.
 --
--- WHY NOT A/B AGAINST AN EXISTING UNIT, the way tb_rmsnorm_rs does.  There is
--- no existing L2 unit -- that is the point of writing this one -- so the golden
--- has to come from the package function plus the recipe, computed here in one
--- unpipelined expression per element.  That is a WEAKER form of golden than
--- tb_rmsnorm_rs's, because the recipe is transcribed twice rather than once,
--- and it is why the ssq = 0 case and the saturation corners are asserted
--- explicitly rather than left to the comparison.
+-- WHY THIS FORM, and it is the whole reason this file was rewritten.  The
+-- first version of this testbench computed its golden from B 2.1.3's recipe
+-- using work.fixed_pkg's own rsqrt_q, on the argument that the package
+-- function was the sanctioned reference.  It is not a reference: the DUT
+-- implements the same recipe, so both sides of the comparison were wrong in
+-- the same direction and agreed.  It certified 55 cases against a recipe that
+-- emitted ALL ZEROS on the q path for every input with ssq >= 2^33.  See
+-- docs/debugging/2026-08-25_l2norm-recipe-collapse.md.
+--
+-- The rule that came out of it, which applies to every approximation kernel in
+-- this repo and not just this one: A/B against an existing UNIT is a valid
+-- golden (that is what tb_rmsnorm_rs does); a second transcription of the same
+-- recipe is NOT, however sanctioned the package function looks.  Where no
+-- prior unit exists, the golden must come from a DIFFERENT NUMBER SYSTEM --
+-- here real arithmetic.  Do not "restore" the fixed_pkg golden.
+--
+-- The tolerance is set from the MEASURED error, not from a round number: see
+-- the TOL generic.  ssq = 0 and the saturation corners are still asserted
+-- explicitly, since those are cases where matching a reference would be the
+-- bug rather than the check.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use ieee.math_real.all;
-use work.fixed_pkg.all;
 
 entity tb_l2norm_rs is
   generic(N : positive := 128; LANES : positive := 4;
@@ -46,7 +59,11 @@ begin
     variable r : real;
     variable ssq : signed(63 downto 0);
     variable nrm, ssqr, rk, rq, ek, eq, worst : real;
-    constant SQRT128 : real := 11.3137084989847603904;
+    -- The 1/sqrt(N) fold, DERIVED from N so the golden tracks the generic the
+    -- same way the DUT now does.  Hardcoding sqrt(128) here would have made
+    -- the testbench agree with a DUT that hardcoded the matching shift, which
+    -- is the transcription failure this file exists to avoid.
+    constant SQRTN : real := sqrt(real(N));
     variable xj : signed(15 downto 0);
     variable ak, aq : signed(15 downto 0);
     variable bad, cyc : natural;
@@ -104,7 +121,7 @@ begin
           if ak /= 0 or aq /= 0 then bad := bad + 1; end if;
         else
           rk := real(to_integer(xj)) / nrm * 32768.0;                -- exp 15
-          rq := real(to_integer(xj)) / (nrm * SQRT128) * 262144.0;   -- exp 18
+          rq := real(to_integer(xj)) / (nrm * SQRTN) * 262144.0;   -- exp 18
           -- saturation is part of the contract, so compare against the
           -- saturated reference rather than calling a clamp a mismatch
           if rk >  32767.0 then rk :=  32767.0; end if;

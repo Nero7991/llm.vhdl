@@ -77,6 +77,7 @@
 -- is what took rmsnorm_rs from 117.2 MHz to 300.8, measured seven times.  See
 -- docs/debugging/2026-08-25_rmsnorm-rs-300mhz.md.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
+use ieee.math_real.all;
 use work.fixed_pkg.all;
 use work.fixed_luts_pkg.all;
 use work.util_pkg.all;
@@ -86,6 +87,15 @@ entity l2norm_rs is
     N     : positive := 128;
     LANES : positive := 4
   );
+  -- LOG2N and the u38 bound below are DERIVED from N, not hardcoded to 128.
+  -- The q path's fold is 1/sqrt(N), applied as a left shift of the rsqrt
+  -- argument by log2(N); writing that as a literal 7 makes the unit silently
+  -- compute 1/sqrt(128) at any other N, which is precisely the kind of latent
+  -- generic that produced rmsnorm_rs's LANES=16 max-reduce bug.  N must be a
+  -- power of two for the fold to be a shift at all, so that is asserted rather
+  -- than assumed.
+  --   ssq <= N * 32768^2 = N * 2^30, so the bound is 2^(30 + log2 N).
+
   port(
     clk    : in  std_logic;
     rst    : in  std_logic;
@@ -114,6 +124,11 @@ architecture rtl of l2norm_rs is
   signal pass  : natural range 0 to 1 := 0;    -- 0 = k path, 1 = q path
   -- The rsqrt result is carried as a Q30 MANTISSA plus a scalar shift, never
   -- collapsed to an integer.  That collapse is what broke the first version.
+  constant LOG2N    : integer := integer(ceil(log2(real(N))));
+  constant SSQ_BITS : integer := 30 + LOG2N;
+  -- 2.1.3's fold is 1/sqrt(N) and this unit applies it as a shift, which is
+  -- only exact when N is a power of two.
+  constant N_POW2_OK : boolean := (2**LOG2N = N);
   signal y_k, y_q   : signed(31 downto 0) := (others => '0');
   -- The 1/sqrt(2) fold product, REGISTERED before it reaches y_k/y_q.  y_k is
   -- absorbed into the lane multiplier's DSP B-input register, so any logic
@@ -218,11 +233,16 @@ begin
 
           -- ---- pick the argument for this rsqrt pass ----------------------
           -- pass 0 (k path): the argument is ssq itself
-          -- pass 1 (q path): ssq << 7 -- the 1/sqrt(128) fold, a SHIFT of the
-          --                              ARGUMENT, no multiply, per 2.1.3
+          -- pass 1 (q path): ssq << LOG2N -- the 1/sqrt(N) fold, a SHIFT of
+          --                                    the ARGUMENT, no multiply, 2.1.3
           when S_ARG =>
-            assert ssq >= 0 and ssq < shift_left(to_signed(1, 64), 38)
-              report "l2norm_rs: ssq outside the u38 bound of 2.1.3"
+            assert N_POW2_OK
+              report "l2norm_rs: N must be a power of two -- the 1/sqrt(N) "
+                     & "fold is applied as a shift of the rsqrt argument"
+              severity failure;
+            assert ssq >= 0 and ssq < shift_left(to_signed(1, 64), SSQ_BITS)
+              report "l2norm_rs: ssq outside the u" & integer'image(SSQ_BITS)
+                     & " bound implied by N"
               severity failure;
             if ssq = 0 then
               -- 2.1.3's deliberate divergence from ggml: zeros, not dust
@@ -232,7 +252,7 @@ begin
               arg_r <= ssq;
               state <= S_SEED1;
             else
-              arg_r <= shift_left(ssq, 7);
+              arg_r <= shift_left(ssq, LOG2N);
               state <= S_SEED1;
             end if;
 

@@ -278,3 +278,48 @@ from the command lines embedded in each log's header lines.
 2. §2.10: mark RESOLVED, int16 confirmed, pointing here.
 3. §2.9: the 27B GDN dims caveat can cite the GGUF verification above.
 4. §2.1.4 stage 2: the skm boundary count (previous section).
+
+## CORRECTION 2026-08-25 (same day): what this document did and did not measure about k
+
+This document's bound assumes `k_n` is accurately unit-norm. Two things about
+that, one reassuring and one not.
+
+**It survives the corrected l2norm, on paper.** `rtl/l2norm_rs.vhd` measures a
+worst per-element error of 0.4995 LSB at exponent 15, so `||k_n||` deviates by
+roughly `sqrt(128) * 0.29 ~ 3.3` LSB RMS, a relative norm error of about 1e-4.
+Squared through `k*k^T` that is ~2e-4 on the transition, equivalently a relative
+perturbation of beta. `1 - beta(1+2eps)` stays strictly inside the contraction
+region, so the perturbation is bounded rather than compounding, at the same
+order as the measured 5e-4 equilibrium. The verdict that int16 stands is
+unchanged, though the equilibrium here may be understated by up to about 2x.
+
+**It would NOT have survived the l2norm this document was written against.**
+That unit's recipe was broken (see
+`2026-08-25_l2norm-recipe-collapse.md`): the k path erred up to 41%, which puts
+`||k||^2` off by up to 2x and is an effective doubling of beta, and the q path
+emitted all zeros for `ssq >= 2^33`, which kills the readout outright. The bound
+in this file was therefore derived against a normalizer that would have made the
+model non-functional. That did not show up here, which is the real point below.
+
+**Why it did not show up: the l2norm error is common-mode and invisible to every
+number in this document.** `gdn_err.c --inq exact` feeds the oracle the same
+dequantized `k` the fixed path uses -- that is exactly the "load-bearing control"
+this document argues for elsewhere, and it is the right control for isolating
+the recurrence, but it means no measurement here can see a normalizer error of
+any size. The paper argument above is currently the ONLY support for "the bound
+still holds"; no run supports it.
+
+**Open, and now explicitly owed:**
+
+- A `gdn_err.c` knob that produces `k` through the ACTUAL fixed recipe while the
+  oracle normalizes in double, re-run on the stacked-adversarial case. Hours of
+  work, and it converts the paragraph above from an argument into a number.
+- The `eg` isolation this document's open list already noted (Q15 vs Q12) is
+  the sharper gap, and should be done in the same pass. `eg` multiplies the
+  state every token, so its error compounds geometrically in a way the k error
+  provably does not: a half-ULP Q15 error (1.5e-5) accumulates to
+  `(1 +/- 1.5e-5)^delta ~ +/-6%` in the weighting of a token 4,096 positions
+  back, and that is worst exactly for the slow heads (eg 0.99966-0.99997) whose
+  old context is the part still alive. Nothing has ever measured it: stories260K
+  does not exercise the gating nonlinearities at all, and this harness feeds
+  `eg`/`beta` in as values.

@@ -1626,10 +1626,48 @@ The phase-schedule bullet is discharged. These are not:
   - **C's row is the spec's 434**, not a measured unit; C's own norm is the
     same shape as `rmsnorm_rs` at N=256, which has never been synthesized.
 
-  The honest figure is a RANGE, **89.5% to 91.0%**, and its top end is over the
-  line rather than at it. The claim to have measured everything was made in the
-  same document that lists the conv sharing decision as open, which should have
-  been caught when it was written.
+  **The range above is itself too narrow -- corrected the same day, after
+  review.** Two more terms are soft, and both were being counted as measured:
+
+  | term | counted as | honest | delta |
+  |---|---|---|---|
+  | C's QK-norm inside the 434 | 18, a skeleton; C's own aux doc says the unit is unwritten | the real `rmsnorm_rs` is 22 at 1 lane, and **40 at 4** if C's schedule needs 4 -- the exact 1-lane-cannot-do-the-job failure that already moved B's own row from 148 to 202 | +4 to +22 |
+  | conv MACs | absent | 0 time-shared, **32 dedicated**, and §3.3's schedule runs conv at LANES=32 | 0 to +32 |
+  | softplus + scalar | absent | §2.8's own words are "believed cheap ... but believed is not measured" | +2 to +4 |
+  | D's 28 | assumes phase sharing | unshared is 52, and the sharing "is a property of how the RTL is written" -- no D RTL exists | 0 to +24 |
+
+  **Honest range: 2,584 to 2,670 of 2,880 = 89.7% to 92.7%.** The FLOOR is
+  already above the 90% line this document keeps invoking, not at it.
+
+  The claim to have measured everything was made in the same document that
+  lists the conv sharing decision as open. Worse, it counted
+  measured-as-a-skeleton and measured-on-a-broken-unit as measured -- which is
+  the same epistemic move that produced the l2norm recipe collapse two items
+  above: a number certified by something that shares its assumptions.
+
+- **AND THE 90% CONGESTION LINE IS FOLKLORE FOR THIS PART.** Traced 2026-08-25.
+  Every citation of it in this repo bottoms out at the gated-attention spec's
+  "high utilization on this device is historically non-deterministic", whose
+  evidence is `rmsnorm.vhd`, `bfp_pack`, and the `attention_ml` history -- all
+  **AXU3EG (XCZU3EG, 360 DSP)** incidents, on a die two orders of magnitude
+  smaller than the VU33P's 2,880. The flagship one was an **uninitialized
+  inferred distributed RAM**, a functional bug whose visibility merely
+  correlated with congestion. Nothing in it says a DSP percentage causes
+  failure on this part, and the LUT document's own open list already concedes
+  the point: "whether 90% is the right congestion line for this part -- still
+  untested by any placed-and-routed run."
+
+  Three reasons it is probably the wrong number here: it came from a different
+  and much smaller die; DSP% is not usually the congestion driver, routing and
+  LUT pressure are, and LUT sits at 60.6%; and what actually binds DSP-heavy
+  UltraScale+ designs is cascade-column geometry (A's 33-DSP rows want
+  contiguous column segments), which can bite well BELOW 90% or not at all.
+
+  So `MACS=64` vs `32`, the conv sharing decision, and every "the die is at the
+  line" alarm in these specs are currently being steered by an unvalidated
+  threshold imported from other silicon. **Until a placed-and-routed fill
+  experiment on this part says otherwise, treat 90% as an unvalidated
+  assumption and not as a constraint.**
 
   **89.5% is at the 90% congestion line both B §2.8 and C §2.8 cite**, and the
   87.6% that every document has been quoting was only comfortable because the
