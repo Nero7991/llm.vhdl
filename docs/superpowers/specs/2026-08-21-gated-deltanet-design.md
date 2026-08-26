@@ -934,7 +934,54 @@ merely good. That is a §3 obligation, recorded, not discharged.
 | `rmsnorm` marshalling (`x_mant`+`w_mant`, 2 x 128 x 16 b) | 4,096 FF | FF (C MJ4-3 precedent) |
 | `ssm_norm`/dt/a constants (18 layers resident) | ~5.8 KB | 2 BRAM36 |
 | AXI FIFOs (2R + 2W state, conv weights) | ~5 x 2 | ~10 BRAM36 |
-| **Total** | | **~18-20 BRAM36, ~15-20K FF** (estimate) |
+| **Total** | | ~~**~18-20 BRAM36, ~15-20K FF** (estimate)~~ **WITHDRAWN, see below** |
+
+> **CORRECTION 2026-08-26: this table is dimensioned for Qwen3.5-0.8B, not for
+> the 27B this project targets.** Every row above carrying a `2048` is the
+> 0.8B's `key_dim`, and the "18 layers resident" rows are the 0.8B's 18 GDN
+> layers of 24. The shipped 27B has **48 GDN layers** and
+> **`ssm.inner_size = 6144`** -- both recorded in this very document, ~100
+> lines above, from the GGUF metadata. The table was never re-derived when the
+> target changed, which is the same failure as the DSP row's "every term
+> measured": a resource total that stopped tracking the thing it totals.
+>
+> Re-derived per card (TP = 2 over heads: 8 k-heads and 24 v-heads per card, so
+> q/k are 1,024 elements and v is 3,072; conv width 5,120 as §3 already states):
+>
+> | row | as written | 27B per card |
+> |---|---|---|
+> | `k_n`, `q_s` | 2 BRAM36 | 1-2 |
+> | `v` (post-silu) | 1 | **2** |
+> | conv segment accumulator (s34) | 2 | **5** (5,120 x 34 b) |
+> | `o_head` staging + `y` | 1-2 | **2** |
+> | `ssm_norm`/dt/a constants, all layers resident | 2 (18 layers) | **4** (48 layers) |
+> | AXI FIFOs | ~10 | ~10 |
+> | **`gdn_recur_pipe` w18/u slot memories** | **absent** | **24.5 measured** |
+> | nonlinearity tables (sigmoid/silu/softplus/exp) | absent | ~2-4 |
+> | elastic column buffer in front of the recurrence (see below) | absent | ~1-2 |
+>
+> **Honest total: ~50-60 BRAM36 per card, 7.4-8.9% of the 672 on this part**,
+> against the ~18-20 written. Not a fit risk on its own, but **no die-wide BRAM
+> sum exists** the way the DSP sum finally got assembled -- A's weight-stream
+> FIFOs and C's KV/score buffers have never been added up, and the same
+> "every subsystem rounds its own tail to zero" error that inflated the DSP
+> confidence is now accumulating in a second resource column.
+>
+> Two notes worth keeping. The recurrence's tiles are **depth-wasted about 8x**
+> (64-deep allocations in 512-deep tiles), so ~1.7K LUTRAM would buy back most
+> of the 24.5 if BRAM ever gets tight. And B needs **zero URAM** at 27B -- the
+> state is 37.75 MB per card and streams from HBM regardless -- so all URAM
+> remains available to A and C, which the accounting has never stated as the
+> asset it is.
+>
+> **`gdn_recur_pipe` is also stall-intolerant by construction:** `dlyB` is a
+> pure delay of the issue pulse, so engines B and C fire on schedule whether or
+> not the input stream stalled mid-column. At `LANES = 32` the ceil-rounding
+> absorbs about 4 stall cycles and then `par1_v` asserts -- loud, not silent --
+> but an AXI R channel inserts bubbles as a matter of course. **The real state
+> feed therefore needs a column-wide elastic buffer and a drain interlock in
+> front of this unit, and that integration piece is written down nowhere.** It
+> should be, before D's sequencer is designed against this port.
 
 **Two normative requirements on subsystem D** (the C §2.6 pattern, same
 reasoning):
