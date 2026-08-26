@@ -1595,6 +1595,12 @@ The phase-schedule bullet is discharged. These are not:
   | 8 | 33 | 302.5 MHz | **16** | 16 | 6.5 | 8,277 |
   | 16 | 65 | 302.5 MHz | **8** | 8 | 12.5 | 13,772 |
   | **32** | **129** | **302.5 MHz** | **4** | **4** | **24.5** | **24,037** |
+  | 64 | -- | -- | **2** | 2 | -- | -- |
+
+  `LANES = 64` -- §3.1's upside row, 0.98 ms -- reaches **II = 2** in
+  simulation with `SLOTS = 32`, so that row is measured rather than projected.
+  It is not yet synthesized, so its DSP/Fmax/BRAM are still open; note the
+  memories double in width, so expect ~49 BRAM.
 
   Bit-identical to `gdn_recur` on the same 192 vectors at every `LANES`. The
   issue interval is EXACTLY `NB` at every lane count, which is precisely what
@@ -1662,6 +1668,40 @@ The phase-schedule bullet is discharged. These are not:
   `TOL_S_TK0` generic whose comment says it is the measured size of an open
   defect rather than slack, and says to delete it when the correction lands.
   Full account: `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`.
+
+  **AND THERE IS A THIRD, in the same stage, found the same night.** At
+  `tk = 0` the state is masked to zero, so `sk_acc = 0`, `msb_pos(0) = 0` and
+  **`ske = se_j + 17`** -- an exponent computed from a state that does not
+  exist. Stage 3 then takes `e_d = min(e_v, ske)` unconditionally, so whenever
+  `e_v > se_j + 17` the first token's `v` is floored on that phantom grid
+  **before `beta` ever multiplies it**, losing the whole state in the worst
+  case. §2.1.3 states the governing rule in its general form -- *"any future
+  masked operand must leave the grid selection as well as the sum"* -- and
+  stage 3's `ske` is a masked operand's exponent that was left in. The fix is
+  stage 4's own move applied one stage earlier: at `tk = 0`, `e_d = e_v`.
+
+  **THE TWO CORRECTIONS ARE ONE AMENDMENT, and this is the load-bearing
+  result.** Over the physically realizable columns:
+
+  | mode | n | median | p95 | max | worst tk=0 | first tokens lost |
+  |---|---|---|---|---|---|---|
+  | pinned | 288 | 0.654 | 4768.00 | 5189.00 | 5189.00 | 3 |
+  | **`D_NORM` alone** | 288 | 0.602 | 16558.63 | **37413.90** | 37413.90 | 3 |
+  | `TK0_ED` alone | 276 | 0.666 | 9.92 | 1218.04 | 1218.04 | 0 |
+  | **both** | 276 | 0.605 | **1.20** | **3.47** | **1.11** | **0** |
+
+  **Applying the `d_m` fix ALONE is seven times WORSE than the pinned recipe**,
+  because normalizing `d` amplifies the error the phantom grid has already
+  introduced. Adopting it on its own -- which the item above argued for, with a
+  measured table supporting it -- would have made the recipe substantially
+  worse while every number in that table said it was improving. **A measured
+  improvement to one site is not evidence that the site is independent of its
+  neighbours.**
+
+  Both are implemented behind generics (`D_NORM`, `TK0_ED`) defaulting FALSE in
+  both units, with `ref/gdn_recur_vec.c` taking both and emitting the matching
+  reference; all four combinations are bit-exact at every `LANES`. **The
+  decision owed is ONE amendment to §2.1.4 covering both sites**, not two.
 
   **RATE UNKNOWN, SIZE MEASURED.** Whether the real model's `beta` reaches this
   range is not established: `ref/gdn_eg_qwen3_27b.txt` carries the measured
