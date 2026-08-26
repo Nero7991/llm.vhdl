@@ -1530,6 +1530,104 @@ The phase-schedule bullet is discharged. These are not:
   Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
   the fixed 18 becoming 40).
 
+- **CLOSED 2026-08-26: `rtl/gdn_recur.vhd` implements 2.1.4 stages 1-5, one
+  column of one head, multi-lane, with the cross-lane reduction and the state
+  feed actually built. It CONFIRMS the DSP figure and REFUTES the schedule.**
+
+  | `LANES` | DSP | Fmax | cycles/column | ideal | ratio |
+  |---|---|---|---|---|---|
+  | 1 | 5 | 318.9 MHz | 416 | 128 | 3.3x |
+  | 4 | 17 | 320.2 MHz | 131 | 32 | 4.1x |
+  | 8 | 33 | 318.9 MHz | 88 | 16 | 5.5x |
+  | 16 | 65 | 318.9 MHz | 67 | 8 | 8.4x |
+  | **32** | **129** | **318.9 MHz** | **58** | **4** | **14.5x** |
+
+  **DSP = `4 x LANES + 1`, so §2.8's 4-per-lane figure is now measured on a
+  unit that computes the right answer** rather than on `micro_b_lane`. At
+  `LANES = 32` that is 129 against the 128 the aux table assumes: +1, the only
+  DSP surprise in the unit.
+
+  **But §3.1's 589,824-cycle sweep assumes 4 cycles per column at
+  `LANES = 32`, and this unit takes 58.** The budget's arithmetic is
+  self-consistent -- 4 cycles for 128 elements at 32 lanes means every one of
+  the 4 multiplies per element is busy every cycle -- and that is exactly what
+  a unit running passes A, B and C SEQUENTIALLY for one column cannot do. Each
+  stage's multiplier is idle while the other stages run, and the per-column
+  scalar chain (two tree reductions, the site-7 normalize, the delta scalar,
+  the `sh` derive) is ~50 of the 58 cycles and does not shrink with `LANES` at
+  all. That is why the ratio gets WORSE as lanes are added: 3.3x at 1 lane,
+  14.5x at 32.
+
+  | `LANES` | measured cycles/token/card | ms @ 300 MHz | §3.1 budget |
+  |---|---|---|---|
+  | 8 | 12,976,128 | 43.3 | 7.86 |
+  | 16 | 9,879,552 | 32.9 | 3.93 |
+  | **32** | **8,552,448** | **28.5** | **1.97** |
+
+  **28.5 ms against a 1.97 ms budget.** §3.3's whole "the nonlinearities hide
+  under the sweep" argument compares against the 1.97, and §3.1's HBM port
+  derivation assumes the sweep is compute-bound at that rate. Neither survives
+  a 14.5x throughput miss, so both are now open pending the item below.
+
+  **What closes it, and it is not a tuning change.** The columns are
+  independent -- §2.4's column-locality, the property the whole streaming
+  design rests on -- so the fix is to software-pipeline COLUMNS through the
+  fixed datapath, keeping several in flight at different stages so the scalar
+  chain is amortized instead of paid per column. That needs per-column
+  replication of the scalar state and double-buffered `w18`/`u`, which is FF
+  and possibly BRAM, not DSP. Until it is built and measured, treat the
+  4-cycles-per-column figure as an ASSUMPTION, not a measurement: it is the
+  arithmetic ideal of the DSP count, and this unit is the first evidence about
+  what a real implementation achieves against it.
+
+  Verified two ways, 192 cases, bit-exact at every `LANES` in {1,2,4,8,16,32}:
+  against `ref/gdn_recur_vec.c` (cross-language, catches transcription) and
+  against a double-precision oracle of the same column (different number
+  system, catches a wrong recipe). The second one found a defect -- see the
+  next item.
+
+- **DEFECT FOUND 2026-08-26 in §2.1.4 stage 3, and it is a SECOND first-token
+  weakness independent of the one corrected on 2026-08-25.** At `tk = 0`,
+  `sk_acc = 0`, so `u[i] = k_n[i] * d_m` exactly: the state IS `d_m` up to a
+  per-element constant, with nothing else in the sum to dilute its error. And
+  `d_m` is quantized on `e_d`, a grid set by `min(e_v, ske)` -- the magnitudes
+  of `v` and `sk` -- and not by `|d|`. With a small `beta`, `d_m` is a small
+  integer and its relative error is large.
+
+  | `beta` | P(`d_m` = 0) | median rel err | max |
+  |---|---|---|---|
+  | 2.4e-4 | **7.0%** | 6.39% | 100% |
+  | 9.8e-4 | 1.4% | 1.60% | 100% |
+  | 3.9e-3 | 0.4% | 0.40% | 100% |
+  | 1.6e-2 | 0.1% | 0.10% | 100% |
+
+  A max of 100% is not rounding: it is `d_m = 0`, **the first token's entire
+  state discarded**. The testbench reports the split directly -- 4.90 LSB worst
+  in steady state against 561.59 LSB at `tk = 0`, on the same unit with the
+  same inputs. By this section's OWN correction note, a corrupted first token
+  dilutes only as `1/t` and is still visible at `t ~ 1900`, so this degrades
+  most sequences end to end.
+
+  **Proposed correction, measured: normalize `d` onto its own grid, exactly as
+  site 7 already normalizes `sk`.** `dm_raw = diff * beta`;
+  `shd = max(0, msb_pos(|dm_raw|) - 14)`; `d_m = round_shift(dm_raw, shd)`;
+  `e_dm = e_d + 16 - shd`; `e_kd = 15 + e_dm`. Drives `P(d_m = 0)` to zero and
+  worst relative error to 1.5e-5 at every `beta`, for **one msb scan and one
+  shift -- no extra multiply and no extra DSP.**
+
+  **NOT APPLIED.** §2.1.4 is a pinned contract that `gdn_err.c`, §2.10's
+  precision result and §3.3's schedule all reference. The evidence is recorded;
+  the decision to change a pinned numerical contract is not one to take
+  silently on a single night's measurement. `sim/tb_gdn_recur.vhd` carries a
+  `TOL_S_TK0` generic whose comment says it is the measured size of an open
+  defect rather than slack, and says to delete it when the correction lands.
+  Full account: `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`.
+
+  **RATE UNKNOWN, SIZE MEASURED.** Whether the real model's `beta` reaches this
+  range is not established: `ref/gdn_eg_qwen3_27b.txt` carries the measured
+  `exp(g)` table but there is no equivalent for `beta`, and `gdn_err.c` feeds
+  `beta` in as a value rather than computing it from `softplus`/`sigmoid`.
+
 - **CORRECTION 2026-08-25, same day: the recipe this item first pinned was
   NUMERICALLY BROKEN, and its testbench certified it. Withdrawn and replaced
   below.** Full account: `docs/debugging/2026-08-25_l2norm-recipe-collapse.md`.
