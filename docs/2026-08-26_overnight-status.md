@@ -11,10 +11,10 @@ else is measured and committed.
 behind generics defaulting FALSE, both units are bit-exact in all four
 combinations, and the corrected form has been synthesized.
 
-| mode | median | p95 | max | `eg = 0` max | `eg < 0.85` median |
+| mode | median | p95 | max | `eg=0` mid-seq max | `eg < 0.85` median |
 |---|---|---|---|---|---|
-| **pinned (today's spec)** | 0.65 | 4,799 | 5,245 | 4,799 | **78.33** |
-| `D_NORM` alone | 0.60 | 18,067 | **11,662,306** | 17,973 | 12.90 |
+| **pinned (today's spec)** | 0.65 | 4,799 | 5,245 | 25.55 | **78.33** |
+| `D_NORM` alone | 0.60 | 18,067 | **11,662,306** | 1.05 | 12.90 |
 | `TK0_ED` alone | 0.68 | 26.54 | 1,218 | 25.55 | 0.75 |
 | **both** | **0.59** | **1.27** | **8.96** | **1.05** | **0.71** |
 
@@ -42,15 +42,37 @@ What it changes is the size of the numbers, in both directions:
   worst case is 8.96 LSB rather than the 3.47 reported earlier. Still two to
   three orders below every alternative.
 
-**The third site the review predicted is real, and the amendment already covers
-it.** At `eg = 0` the decayed state term is identically zero for a whole column
-mid-sequence -- structurally the same masked operand as `tk = 0`, but `tk0`
-does not gate it, so `se_j` still enters `e_u`'s minimum. That case had never
-been generated. Now that it is: the pinned recipe scores 4,799 LSB on those
-columns and both corrections together take it to **1.05**. So the amendment as
-scoped is sufficient, and does NOT need extending to a third site -- which was
-the open worry, since adopting a half-scoped amendment is exactly the
-`D_NORM`-alone mistake.
+**The third site the review predicted is real, it is small, and the amendment
+already covers it.** At `eg = 0` the decayed state term is identically zero for
+a whole column mid-sequence -- structurally the same masked operand as
+`tk = 0`, but `tk0` does not gate it, so `se_j` still enters `e_u`'s minimum.
+That case had never been generated. Isolating it properly (16 columns that are
+both `eg = 0` and mid-sequence):
+
+| mode | median | max |
+|---|---|---|
+| pinned | 1.00 | **25.55** |
+| `TK0_ED` alone | 1.00 | 25.55 |
+| `D_NORM` alone | 0.99 | **1.05** |
+| both | 0.99 | **1.05** |
+
+Three things follow, and the first two correct what I wrote an hour ago:
+
+- **It is 25.55 LSB, not the 4,799 I first reported.** That larger figure was
+  the max over ALL `eg = 0` columns, 8 of which are also `tk = 0` -- so it was
+  the first-token defect's size wearing the new site's label. Two classes,
+  conflated.
+- **It is fixed by `D_NORM`, not `TK0_ED`**, which is what the mechanism
+  predicts: `TK0_ED` only touches `tk = 0`, and these columns are
+  mid-sequence.
+- **It is the pinned recipe's entire steady-state tail.** Pinned's worst
+  steady-state column across all 288 is also 25.55, so the worst non-first-token
+  error in the whole set IS an `eg = 0` column. The site was invisible before
+  because the old draw could not generate it.
+
+So the amendment as scoped is sufficient and does NOT need a third correction
+-- which was the open worry, since adopting a half-scoped amendment is exactly
+the `D_NORM`-alone mistake.
 
 - **`D_NORM`**: quantize `d` on its own grid instead of inheriting `e_d`.
 - **`TK0_ED`**: at `tk = 0`, take `e_d = e_v` instead of `min(e_v, ske)`,
