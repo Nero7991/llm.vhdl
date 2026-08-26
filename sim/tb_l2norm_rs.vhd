@@ -14,7 +14,14 @@ use ieee.math_real.all;
 use work.fixed_pkg.all;
 
 entity tb_l2norm_rs is
-  generic(N : positive := 128; LANES : positive := 4; Q : integer := 18);
+  generic(N : positive := 128; LANES : positive := 4;
+          -- Accuracy tolerance in output LSBs for the INDEPENDENT real-valued
+          -- check.  Correct round-half-up bounds the error at 0.5 LSB and the
+          -- unit measures 0.4995 worst case, so 0.75 leaves headroom for the
+          -- Newton residual while still SEPARATING correct rounding from
+          -- truncation (which reaches 1.0).  At the 2.0 this started at, a
+          -- mutation that dropped the rounding bias entirely went undetected.
+          TOL : real := 0.75);
 end entity;
 
 architecture sim of tb_l2norm_rs is
@@ -30,7 +37,7 @@ begin
   clk <= '0' when fin else not clk after 1 ns;
 
   dut : entity work.l2norm_rs
-    generic map(N => N, LANES => LANES, Q => Q)
+    generic map(N => N, LANES => LANES)
     port map(clk=>clk, rst=>rst, start=>start, x_mant=>xm,
              done=>dn, k_mant=>km, q_mant=>qm);
 
@@ -38,10 +45,9 @@ begin
     variable seed1, seed2 : positive := 3;
     variable r : real;
     variable ssq : signed(63 downto 0);
-    variable invk, invq : signed(31 downto 0);
+    variable nrm, ssqr, rk, rq, ek, eq, worst : real;
+    constant SQRT128 : real := 11.3137084989847603904;
     variable xj : signed(15 downto 0);
-    variable ek, eq : signed(63 downto 0);
-    variable gk, gq : signed(15 downto 0);
     variable ak, aq : signed(15 downto 0);
     variable bad, cyc : natural;
 
@@ -49,22 +55,6 @@ begin
     begin
       xm((i+1)*16-1 downto i*16) <= std_logic_vector(to_signed(v, 16));
     end procedure;
-
-    function sat32(v : signed) return signed is
-    begin
-      if    v > to_signed(2147483647, 64) then return to_signed(2147483647, 32);
-      elsif v < 0                         then return to_signed(0, 32);
-      else                                     return resize(v, 32);
-      end if;
-    end function;
-
-    function sat16(v : signed) return signed is
-    begin
-      if    v >  32767 then return to_signed( 32767, 16);
-      elsif v < -32768 then return to_signed(-32768, 16);
-      else                  return resize(v, 16);
-      end if;
-    end function;
 
     procedure check(tag : string) is
     begin
@@ -78,52 +68,73 @@ begin
       end loop;
       wait until rising_edge(clk);
 
-      -- golden, straight from the recipe
-      ssq := (others => '0');
+      -- ------------------------------------------------------------------
+      -- THE GOLDEN IS REAL-VALUED AND INDEPENDENT OF THE RECIPE.
+      --
+      -- The first version of this testbench computed its golden from the SAME
+      -- fixed-point recipe the DUT implements, and it therefore certified a
+      -- recipe that emitted ZEROS on the whole q path over the normal input
+      -- range: golden and DUT rounded the same collapsed scalar to the same 0
+      -- and agreed perfectly.  Bit-exactness against a twice-transcribed
+      -- recipe proves transcription, not adequacy.
+      --
+      -- So the reference here is the DEFINITION -- x / ||x|| in real
+      -- arithmetic -- and the assertion is an accuracy bound in output LSBs.
+      -- This cannot be fooled by any error shared between the recipe and the
+      -- unit, which is the entire class the first version was blind to.
+      -- ------------------------------------------------------------------
+      -- ssq reaches 128 * 32768^2 = 2^37, which overflows VHDL's 32-bit
+      -- integer, so the real accumulator is kept alongside the exact one
+      -- rather than converted from it.
+      ssq := (others => '0'); ssqr := 0.0;
       for i in 0 to N-1 loop
-        xj  := signed(xm((i+1)*16-1 downto i*16));
-        ssq := ssq + resize(xj * xj, 64);
+        xj   := signed(xm((i+1)*16-1 downto i*16));
+        ssq  := ssq + resize(xj * xj, 64);
+        ssqr := ssqr + real(to_integer(xj)) * real(to_integer(xj));
       end loop;
-      if ssq = 0 then
-        invk := (others => '0'); invq := (others => '0');
-      else
-        -- rsqrt_q returns s64; the recipe clamps it to s32 exactly as
-        -- rmsnorm.vhd's S_RQ_FIN does, so the golden clamps here too.
-        invk := sat32(rsqrt_q(shift_left(ssq, Q),     Q));
-        invq := sat32(rsqrt_q(shift_left(ssq, Q + 7), Q));
-      end if;
+      nrm := sqrt(ssqr);
 
-      bad := 0;
+      bad := 0; worst := 0.0;
       for i in 0 to N-1 loop
         xj := signed(xm((i+1)*16-1 downto i*16));
-        if ssq = 0 then
-          gk := (others => '0'); gq := (others => '0');
-        else
-          ek := shift_right(resize(resize(xj, 17) * invk, 64)
-                            + to_signed(4, 64), 3);
-          eq := resize(resize(xj, 17) * invq, 64);
-          gk := sat16(ek); gq := sat16(eq);
-        end if;
         ak := signed(km((i+1)*16-1 downto i*16));
         aq := signed(qm((i+1)*16-1 downto i*16));
-        if ak /= gk or aq /= gq then
-          if bad < 3 then
-            report tag & ": element " & integer'image(i) &
-                   "  k got " & integer'image(to_integer(ak)) &
-                   " want " & integer'image(to_integer(gk)) &
-                   " | q got " & integer'image(to_integer(aq)) &
-                   " want " & integer'image(to_integer(gq)) severity error;
+        if ssq = 0 then
+          -- 2.1.3's deliberate divergence: zeros, not ggml's amplified dust
+          if ak /= 0 or aq /= 0 then bad := bad + 1; end if;
+        else
+          rk := real(to_integer(xj)) / nrm * 32768.0;                -- exp 15
+          rq := real(to_integer(xj)) / (nrm * SQRT128) * 262144.0;   -- exp 18
+          -- saturation is part of the contract, so compare against the
+          -- saturated reference rather than calling a clamp a mismatch
+          if rk >  32767.0 then rk :=  32767.0; end if;
+          if rk < -32768.0 then rk := -32768.0; end if;
+          if rq >  32767.0 then rq :=  32767.0; end if;
+          if rq < -32768.0 then rq := -32768.0; end if;
+          ek := abs(real(to_integer(ak)) - rk);
+          eq := abs(real(to_integer(aq)) - rq);
+          if ek > worst then worst := ek; end if;
+          if eq > worst then worst := eq; end if;
+          if ek > TOL or eq > TOL then
+            if bad < 3 then
+              report tag & ": element " & integer'image(i) &
+                     "  k got " & integer'image(to_integer(ak)) &
+                     " want " & real'image(rk) &
+                     " | q got " & integer'image(to_integer(aq)) &
+                     " want " & real'image(rq) severity error;
+            end if;
+            bad := bad + 1;
           end if;
-          bad := bad + 1;
         end if;
       end loop;
       if bad /= 0 then
         fails <= fails + 1;
-        report tag & ": MISMATCH in " & integer'image(bad) & " element(s)"
+        report tag & ": OUT OF TOLERANCE in " & integer'image(bad) &
+               " element(s), worst " & real'image(worst) & " LSB"
           severity error;
       else
-        report tag & ": matches the 2.1.3 recipe (" & integer'image(cyc) &
-               " cycles)" severity note;
+        report tag & ": within " & real'image(worst) & " LSB of x/||x|| (" &
+               integer'image(cyc) & " cycles)" severity note;
       end if;
     end procedure;
   begin
@@ -191,9 +202,9 @@ begin
 
     wait until rising_edge(clk);
     if fails = 0 then
-      report "l2norm_rs matches the 2.1.3 recipe on every case" severity note;
+      report "l2norm_rs is within tolerance of x/||x|| on every case" severity note;
     else
-      report "l2norm_rs DIFFERS in " & integer'image(fails) & " case(s)"
+      report "l2norm_rs OUT OF TOLERANCE in " & integer'image(fails) & " case(s)"
         severity failure;
     end if;
     fin <= true; wait;

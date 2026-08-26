@@ -10,21 +10,51 @@
 -- mode would put a scan it never needs in series with a path it does.
 --
 -- THE RECIPE, pinned here because 2.1.3 defers it to section 3 and section 3
--- had not pinned it:
+-- had not pinned it.
 --
---   ssq    = sum xm[i]^2                             -- u38, |xm| <= 32768
---   inv_k  = rsqrt_q(ssq << Q, Q)                    -- = round(2^Q / sqrt(ssq))
---   inv_q  = rsqrt_q((ssq << 7) << Q, Q)             -- = round(2^Q / sqrt(128*ssq))
---   k_n[i] = sat16( round_half_up(xm[i] * inv_k, 3) )   -- exp 15
---   q_s[i] = sat16( xm[i] * inv_q )                     -- exp 18
+-- CORRECTED 2026-08-25, the same night it was first written.  The first
+-- version collapsed the rsqrt to a Q-scaled INTEGER, `inv = rsqrt_q(ssq<<Q,Q)
+-- = round(2^Q/sqrt(ssq))`, and that is numerically broken at this unit's own
+-- operating point.  2.1.3's segment requantizer normalises amax to msb 14, so
+-- post-silu head mantissas sit near 2^13-2^14 BY DESIGN and ssq lands around
+-- 2^33-2^37.  There `2^18/sqrt(ssq)` rounds to 1, and `2^18/sqrt(128*ssq)`
+-- rounds to ZERO:
 --
--- Q = 18, and that is forced, not chosen.  rsqrt_q takes s64, ssq < 2^37, and
--- the q path shifts the argument LEFT BY 7 before scaling, so ssq<<7<<Q must
--- stay inside s63: Q <= 19.  Q = 18 then makes the two output shifts fall out
--- as 2^15/2^18 = >>3 for the k path and 2^18/2^18 = no shift at all for the q
--- path.  A larger Q would carry more of the rsqrt's precision but overflows;
--- Q = 12 (rmsnorm's) would need a LEFT shift on the output, which throws away
--- precision it already has.
+--     |x|     ssq      inv_k  inv_q   k_n got/true      q_s got/true
+--     32768   2^37       1      0     4096/2896  +41%     0/2048  -100%
+--     16384   2^35       1      0     2048/2896  -29%     0/2048  -100%
+--      8192   2^33       3      0     3072/2896   +6%     0/2048  -100%
+--
+-- The whole q path emitted zeros over the normal input range, and the first
+-- testbench CERTIFIED it, because its golden was computed from the same
+-- recipe: golden and DUT rounded the same scalar to the same 0 and agreed
+-- perfectly.  Bit-exactness against a twice-transcribed recipe proves
+-- transcription, not adequacy.  sim/tb_l2norm_rs.vhd now carries an
+-- INDEPENDENT real-valued accuracy assertion for exactly this reason.
+--
+-- The corrected recipe never collapses the rsqrt.  It keeps the Newton
+-- engine's Q30 mantissa and applies its exponent as a per-invocation SCALAR
+-- SHIFT at emit -- which is the shift_total/emit_bias machinery rmsnorm_rs
+-- already closes at 300.8 MHz:
+--
+--   ssq  = sum xm[i]^2                                u38, |xm| <= 32768
+--   -- k path: rsqrt argument is ssq itself
+--   m_k  = msb(ssq)          he_k = m_k / 2      (floor; sqrt2 fold if odd)
+--   y_k  = Q30 Newton rsqrt of ssq normalised to [1,2)
+--   k_n[i] = sat16( round_shift( xm[i] * y_k, 15 + he_k ) )      -- exp 15
+--   -- q path: the 1/sqrt(128) fold is a SHIFT OF THE ARGUMENT
+--   m_q  = msb(ssq << 7)     he_q = m_q / 2      (same rule)
+--   y_q  = Q30 Newton rsqrt of (ssq << 7) normalised to [1,2)
+--   q_s[i] = sat16( round_shift( xm[i] * y_q, 12 + he_q ) )      -- exp 18
+--
+-- because 1/sqrt(v) = (y/2^30) * 2^-he exactly, so
+-- xm * 2^OUT / sqrt(v) = xm * y >> (30 - OUT + he).
+--
+-- **Q CANCELS OUT ENTIRELY**, and the previous version's "Q = 18 is forced by
+-- s64 and the <<7 fold" derivation was an artifact of the broken form, not a
+-- constraint on the problem.  The generic is gone.  Measured against the real
+-- ratio this is exact to 0.0% at every magnitude above, where the old form
+-- was between -100% and +41%.
 --
 -- The exponent CANCELS and that is why none appears here: xm has exponent e,
 -- so x_real = xm*2^-e and sqrt(ssq_real) = sqrt(ssq)*2^-e, and the ratio is
@@ -54,8 +84,7 @@ use work.util_pkg.all;
 entity l2norm_rs is
   generic(
     N     : positive := 128;
-    LANES : positive := 4;
-    Q     : integer  := 18
+    LANES : positive := 4
   );
   port(
     clk    : in  std_logic;
@@ -76,15 +105,26 @@ architecture rtl of l2norm_rs is
 
   type state_t is (S_IDLE, S_ACC,
                    S_ARG,                      -- pick this pass's rsqrt argument
-                   S_SEED1, S_SEED2, S_RQ, S_RQ_FOLD,
-                   S_FIN1, S_FIN2, S_FIN3, S_CLAMP,
+                   S_SEED1, S_SEED2, S_RQ, S_RQ_FOLD, S_RQ_FOLD2,
                    S_NEXT,                     -- second rsqrt pass, or emit
                    S_EMIT, S_ZERO);
   signal state : state_t := S_IDLE;
 
   signal ssq   : signed(63 downto 0) := (others => '0');
   signal pass  : natural range 0 to 1 := 0;    -- 0 = k path, 1 = q path
-  signal inv_k, inv_q : signed(31 downto 0) := (others => '0');
+  -- The rsqrt result is carried as a Q30 MANTISSA plus a scalar shift, never
+  -- collapsed to an integer.  That collapse is what broke the first version.
+  signal y_k, y_q   : signed(31 downto 0) := (others => '0');
+  -- The 1/sqrt(2) fold product, REGISTERED before it reaches y_k/y_q.  y_k is
+  -- absorbed into the lane multiplier's DSP B-input register, so any logic
+  -- feeding it lands between two multiplies: with the fold done in the same
+  -- cycle the path ran arg -> multiply -> ALU -> 3x CARRY8 -> B, 12 levels, and
+  -- the unit closed at 272.3 MHz instead of 300.  Splitting the fold across two
+  -- states costs 2 cycles of 319 and buys the 300 MHz back.
+  signal fold_p     : signed(63 downto 0) := (others => '0');
+  signal fold_odd   : std_logic := '0';
+  signal sh_k, sh_q : integer := 15;
+  signal bias_k, bias_q : signed(63 downto 0) := (others => '0');
 
   -- rsqrt, narrowed exactly as rmsnorm_rs narrows it
   signal rq_y, rq_smant, rq_y2 : signed(31 downto 0) := (others => '0');
@@ -177,9 +217,9 @@ begin
             end if;
 
           -- ---- pick the argument for this rsqrt pass ----------------------
-          -- pass 0 (k path): ssq << Q
-          -- pass 1 (q path): ssq << 7 << Q -- the 1/sqrt(128) fold, a SHIFT of
-          --                                  the argument, no multiply
+          -- pass 0 (k path): the argument is ssq itself
+          -- pass 1 (q path): ssq << 7 -- the 1/sqrt(128) fold, a SHIFT of the
+          --                              ARGUMENT, no multiply, per 2.1.3
           when S_ARG =>
             assert ssq >= 0 and ssq < shift_left(to_signed(1, 64), 38)
               report "l2norm_rs: ssq outside the u38 bound of 2.1.3"
@@ -189,10 +229,10 @@ begin
               idx <= 0;
               state <= S_ZERO;
             elsif pass = 0 then
-              arg_r <= shift_left(ssq, Q);
+              arg_r <= ssq;
               state <= S_SEED1;
             else
-              arg_r <= shift_left(ssq, Q + 7);
+              arg_r <= shift_left(ssq, 7);
               state <= S_SEED1;
             end if;
 
@@ -239,51 +279,50 @@ begin
             end case;
 
           when S_RQ_FOLD =>
-            rq_d := rq_p - Q;
+            -- rq_d is the MSB position itself, NOT p - Q: the exponent of
+            -- 1/sqrt(v) is -m/2 where m = msb(v), and the odd case folds
+            -- 1/sqrt(2) exactly as rmsnorm's rsqrt does.
+            rq_d := rq_p;
+            -- INV_SQRT2_C is s32 and rq_y is s32; multiplying at 32x32 rather
+            -- than resizing to 64 first declares the multiplier the value
+            -- actually needs.  Issued here, CONSUMED in S_RQ_FOLD2.
+            fold_p <= resize(rq_y * INV_SQRT2_C, 64);
             if (rq_d mod 2) /= 0 then
-              rq_yfin <= resize(shift_right(resize(rq_y, 64) * INV_SQRT2_C, 30), 32);
-              rq_he   := (rq_d - 1) / 2;
+              fold_odd <= '1';
+              rq_he    := (rq_d - 1) / 2;
             else
-              rq_yfin <= rq_y;
-              rq_he   := rq_d / 2;
+              fold_odd <= '0';
+              rq_he    := rq_d / 2;
             end if;
-            rq_E  <= Q - 30 - rq_he;
-            state <= S_FIN1;
-
-          when S_FIN1 =>                                     -- one barrel shift
-            if rq_E >= 0 then
-              rq_up_r <= true;  rq_sh_r <= rq_E;
-              rq_bias_r <= (others => '0');
+            -- 1/sqrt(v) = (yfin / 2^30) * 2^-he, so
+            --   out = xm * 2^OUT / sqrt(v) = xm * yfin >> (30 - OUT + he)
+            -- with OUT = 15 on the k path and 18 on the q path.
+            if pass = 0 then
+              sh_k <= 15 + rq_he;
+              if 15 + rq_he > 0 then
+                bias_k <= shift_left(to_signed(1, 64), 15 + rq_he - 1);
+              else
+                bias_k <= (others => '0');
+              end if;
             else
-              rq_up_r <= false; rq_sh_r <= -rq_E;
-              rq_bias_r <= shift_left(to_signed(1, 64), (-rq_E) - 1);
+              sh_q <= 12 + rq_he;
+              if 12 + rq_he > 0 then
+                bias_q <= shift_left(to_signed(1, 64), 12 + rq_he - 1);
+              else
+                bias_q <= (others => '0');
+              end if;
             end if;
-            state <= S_FIN2;
+            state <= S_RQ_FOLD2;
 
-          when S_FIN2 =>                                     -- one 64-bit add
-            rq_sum_r <= resize(rq_yfin, 64) + rq_bias_r;
-            state <= S_FIN3;
-
-          when S_FIN3 =>                                     -- one barrel shift
-            if rq_E > 32 then
-              rq_shifted <= to_signed(2147483647, 64);
-            elsif rq_up_r then
-              rq_shifted <= shift_left(resize(rq_yfin, 64), rq_sh_r);
+          when S_RQ_FOLD2 =>
+            -- y comes from a REGISTER through a constant shift and a 2:1 mux
+            -- and nothing else, so the DSP B-input path is a register hop.
+            if pass = 0 then
+              if fold_odd = '1' then y_k <= resize(shift_right(fold_p, 30), 32);
+              else                   y_k <= rq_y; end if;
             else
-              rq_shifted <= shift_right(rq_sum_r, rq_sh_r);
-            end if;
-            state <= S_CLAMP;
-
-          when S_CLAMP =>                                    -- one compare
-            if    rq_shifted > to_signed(2147483647, 64) then
-              if pass = 0 then inv_k <= to_signed(2147483647, 32);
-              else             inv_q <= to_signed(2147483647, 32); end if;
-            elsif rq_shifted < 0 then
-              if pass = 0 then inv_k <= to_signed(0, 32);
-              else             inv_q <= to_signed(0, 32); end if;
-            else
-              if pass = 0 then inv_k <= resize(rq_shifted, 32);
-              else             inv_q <= resize(rq_shifted, 32); end if;
+              if fold_odd = '1' then y_q <= resize(shift_right(fold_p, 30), 32);
+              else                   y_q <= rq_y; end if;
             end if;
             state <= S_NEXT;
 
@@ -313,8 +352,8 @@ begin
             end if;
             v1 <= vf; idx1 <= idxf;                           -- stage 1: mults
             for k in 0 to LANES-1 loop
-              pk(k) <= resize(xf(k) * inv_k, 64);
-              pq(k) <= resize(xf(k) * inv_q, 64);
+              pk(k) <= resize(xf(k) * y_k, 64);
+              pq(k) <= resize(xf(k) * y_q, 64);
             end loop;
             -- stage 2: place.  Gated on v1/idx1, NOT v2/idx2, and the
             -- difference is one pipeline stage.  rmsnorm_rs has TWO multiply
@@ -327,10 +366,11 @@ begin
             if v1 = '1' then
               base := idx1 * LANES;
               for k in 0 to LANES-1 loop
-                -- k path: 2^15 / 2^Q = >>3 at Q=18, round half up
-                ok := shift_right(pk(k) + to_signed(4, 64), 3);
-                -- q path: 2^18 / 2^Q = no shift at all at Q=18
-                oq := pq(k);
+                -- Both paths: a per-INVOCATION scalar shift, its rounding
+                -- bias precomputed once in S_RQ_FOLD, exactly as rmsnorm_rs
+                -- precomputes emit_bias.  Never a per-element shift amount.
+                ok := shift_right(pk(k) + bias_k, sh_k);
+                oq := shift_right(pq(k) + bias_q, sh_q);
                 k_reg((base+k+1)*16-1 downto (base+k)*16)
                   <= std_logic_vector(sat16(ok));
                 q_reg((base+k+1)*16-1 downto (base+k)*16)

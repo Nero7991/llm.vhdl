@@ -1530,22 +1530,65 @@ The phase-schedule bullet is discharged. These are not:
   Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
   the fixed 18 becoming 40).
 
-- **CLOSED 2026-08-25: `rtl/l2norm_rs.vhd` implements the L2 norm, both paths,
-  and pins the recipe §2.1.3 deferred to this section.**
+- **CORRECTION 2026-08-25, same day: the recipe this item first pinned was
+  NUMERICALLY BROKEN, and its testbench certified it. Withdrawn and replaced
+  below.** Full account: `docs/debugging/2026-08-25_l2norm-recipe-collapse.md`.
+
+  ~~`Q = 18` is forced -- `rsqrt_q` takes s64, `ssq < 2^37`, and the q path's
+  `<<7` fold means `ssq<<7<<Q` must fit s63, so `Q <= 19`; at 18 the output
+  shifts fall out as `>>3` and none.~~ **WITHDRAWN.** That derivation described
+  the collapsed form `inv = round(2^Q/sqrt(ssq))`, which rounds to 1 or to 0
+  across the unit's own operating range: the q path emitted **all zeros for
+  every input with `ssq >= 2^33`** and the k path erred by up to **41%** below
+  it. No value of `Q <= 19` rescues the form; the fault is the collapse to an
+  integer, not the constant. In the corrected algebra **`Q` cancels entirely**
+  and the generic is gone.
+
+  The bug survived 55 passing cases because the golden was computed from the
+  SAME recipe using the same `fixed_pkg.rsqrt_q` -- both sides of the comparison
+  were wrong in the same direction. The commit that introduced it (`87fc976`)
+  names that hazard in its own message and does not act on it.
+
+- **CLOSED 2026-08-25 (corrected): `rtl/l2norm_rs.vhd` implements the L2 norm,
+  both paths, on a recipe that keeps the rsqrt MANTISSA and a scalar shift.**
+
+  ```
+  ssq    = sum xm[i]^2
+  m_k    = msb(ssq)          he_k = m_k/2   (fold by 1/sqrt(2) if m_k odd)
+  k_n[i] = sat16( round_shift( xm[i] * y_k, 15 + he_k ) )    -- exp 15
+  m_q    = msb(ssq << 7)     he_q = m_q/2
+  q_s[i] = sat16( round_shift( xm[i] * y_q, 12 + he_q ) )    -- exp 18
+  ```
+
+  with `y_k`, `y_q` the Q30 Newton mantissas normalised to [1,2). The
+  `1/sqrt(128)` fold stays a shift of the rsqrt ARGUMENT, not the output --
+  that part of the original item survives, since `sqrt(128) = 8*sqrt(2)` is
+  still not a power of two. `ssq = 0` emits zeros, the documented `ggml_l2_norm`
+  divergence, still asserted explicitly.
 
   | `LANES` | DSP | Fmax | cycles at N=128 |
   |---|---|---|---|
-  | 1 | 21 | 300.8 MHz | 319 |
-  | **2** | **26** | **300.8 MHz** | **191** |
-  | 4 | 36 | 285.8 MHz (does not close) | 127 |
+  | 1 | 21 | 300.0 MHz | 313 |
+  | **2** | **26** | **300.0 MHz** | **185** |
+  | 4 | 36 | 285.8 MHz (does not close) | 121 |
 
-  Recipe pinned: `Q = 18` (forced -- `rsqrt_q` takes s64, `ssq < 2^37`, and the
-  q path's `<<7` fold means `ssq<<7<<Q` must fit s63, so `Q <= 19`; at 18 the
-  output shifts fall out as `>>3` and none). The `1/sqrt(128)` fold is a shift
-  of the rsqrt ARGUMENT, not the output, because `sqrt(128) = 8*sqrt(2)` is not
-  a power of two. `ssq = 0` emits zeros, the documented ggml divergence,
-  asserted explicitly. Checked on 55 cases at every `LANES` in {1,2,4,8}
-  against the recipe computed from `fixed_pkg`'s own `rsqrt_q`.
+  DSP is unchanged by the correction; the cycle counts drop by 6 (four states
+  deleted, two added). **The first synthesis of the corrected unit came in at
+  272.3 MHz**, not 300: the `1/sqrt(2)` fold multiply and its shift landed in
+  the cycle that produces `y_k`, and `y_k` is absorbed into the lane
+  multiplier's DSP B-input register, so the path ran arg -> multiply -> ALU ->
+  3x CARRY8 -> B at 12 logic levels. Splitting the fold into `S_RQ_FOLD` /
+  `S_RQ_FOLD2` costs 2 cycles of 313 and returns the full 300 MHz. This is the
+  same rule the `rmsnorm_rs` work produced, applied to a second unit.
+
+  Verified against an **INDEPENDENT real-valued golden** (a parallel `real`
+  sum of squares and `math_real.sqrt`, sharing no machinery with the DUT and
+  not using `fixed_pkg`), 56 cases, passing at every `LANES` in {1,2,4,8,16}
+  with worst error **0.4995 LSB** against a 0.75 LSB tolerance. The testbench
+  was then **mutation-tested**, which is the part that makes the above mean
+  anything: the integer collapse that was the original bug is caught in 49
+  cases at worst 2896 LSB, the withdrawn `Q = 18` form in all 56, and shift,
+  parity-fold and rounding-bias mutations in 31-56 each.
 
 - **CONSEQUENCE, and it is the uncomfortable one: meeting §3.3's schedule takes
   the die to the congestion line.** §2.8's measured `DSP_B = 4 x LANES + 20`
@@ -1573,7 +1616,20 @@ The phase-schedule bullet is discharged. These are not:
   lane** for the sigmoid ROM unless the lanes share one, which is a BRAM
   question and does not move the DSP sum.
 
-  **Every term in the 89.5% is now measured.**
+  ~~**Every term in the 89.5% is now measured.**~~ **RETRACTED 2026-08-25**, by
+  the author, before anyone had to catch it. Three terms are not:
+
+  - the **depthwise conv** MACs, 0 to 32 depending on a sharing decision this
+    section still lists as open, which alone is the difference between 89.5%
+    and 90.6%;
+  - **softplus and the scalar path**, ~2-4 DSP, never priced;
+  - **C's row is the spec's 434**, not a measured unit; C's own norm is the
+    same shape as `rmsnorm_rs` at N=256, which has never been synthesized.
+
+  The honest figure is a RANGE, **89.5% to 91.0%**, and its top end is over the
+  line rather than at it. The claim to have measured everything was made in the
+  same document that lists the conv sharing decision as open, which should have
+  been caught when it was written.
 
   **89.5% is at the 90% congestion line both B §2.8 and C §2.8 cite**, and the
   87.6% that every document has been quoting was only comfortable because the
@@ -1589,8 +1645,12 @@ The phase-schedule bullet is discharged. These are not:
   since `sqrt(128) = 8*sqrt(2)`), no weight multiply, and a deliberate
   divergence from `ggml_l2_norm` at zero input. §3.3's 109,056-cycle L2 term
   assumes the same per-element cost as rmsnorm, which is plausible and
-  unverified. A `l2norm_rs` needs its own golden, which needs the C reference
-  below. **`rmsnorm_rs` closes the rmsnorm half of this line, not the line.**
+  unverified. ~~A `l2norm_rs` needs its own golden, which needs the C reference
+  below.~~ **Superseded 2026-08-25:** the golden did NOT need the C reference,
+  and waiting for it was the wrong instinct -- a golden in real arithmetic is
+  both available immediately and STRONGER than a C reference transcribed into
+  the same fixed-point form, which is exactly the trap that produced the recipe
+  collapse above. **`rmsnorm_rs` closes the rmsnorm half of this line, not the line.**
 
 - ~~The §3.3 norm DSP cost is now MEASURED; its Fmax is the problem.~~
   **Superseded by the two items above; the skeleton numbers are kept for the
