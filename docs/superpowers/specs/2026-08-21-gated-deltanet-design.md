@@ -1557,16 +1557,25 @@ The phase-schedule bullet is discharged. These are not:
   |---|---|---|
   | rmsnorm_rs | 18 (1 lane) | **40** (4 lanes) |
   | l2norm_rs | -- | **26** (2 lanes) |
-  | silu | 2 (1 lane) | **~12** (4 lanes, from D's measured 3-DSP lane) |
-  | **aux total** | **20** | **78** |
-  | **B total** (`4 x 32` sweep lanes + aux) | **148** | **206** |
+  | silu | 2 (1 lane) | **8** (4 lanes, MEASURED) |
+  | **aux total** | **20** | **74** |
+  | **B total** (`4 x 32` sweep lanes + aux) | **148** | **202** |
 
   ```
   A 1,914 + C 434 + B 148 + D 28 = 2,524 of 2,880 = 87.6%   schedule NOT met
-  A 1,914 + C 434 + B 206 + D 28 = 2,582 of 2,880 = 89.7%   schedule met
+  A 1,914 + C 434 + B 202 + D 28 = 2,578 of 2,880 = 89.5%   schedule met
   ```
 
-  **89.7% is at the 90% congestion line both B §2.8 and C §2.8 cite**, and the
+  The silu row is measured, not scaled: `micro_silu_narrow` with `SILU = 1`
+  (the bare `x * sigmoid(x)` B needs, as opposed to D's `silu(g) * u` swiglu
+  lane) is **2 DSP and 646 MHz per lane**, so 4 lanes is 8 rather than the 12
+  a naive scaling from D's 3-DSP lane would give. It also costs **1 BRAM per
+  lane** for the sigmoid ROM unless the lanes share one, which is a BRAM
+  question and does not move the DSP sum.
+
+  **Every term in the 89.5% is now measured.**
+
+  **89.5% is at the 90% congestion line both B §2.8 and C §2.8 cite**, and the
   87.6% that every document has been quoting was only comfortable because the
   aux row was priced with units that do not do the job. The silu term is the
   one still estimated (~12, scaled from D's measured 3-DSP swiglu lane, which
