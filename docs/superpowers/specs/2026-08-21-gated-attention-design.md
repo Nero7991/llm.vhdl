@@ -1340,7 +1340,7 @@ crosses the 90% congestion line.
 
 | Auxiliary unit | DSP | Status |
 |---|---|---|
-| QK-norm, narrowed (`rmsnorm_rs`) | 18 | MEASURED 2026-08-25 (skeleton; unit unwritten) |
+| QK-norm, narrowed (`rmsnorm_rs`) | ~~18~~ **22** | **MEASURED 2026-08-26 on the REAL unit at N=256** -- see the correction below |
 | exp cone, pipelined | 8 | MEASURED 2026-08-24 |
 | sigmoid cone, Q15 | 8 | MEASURED 2026-08-25 |
 | IMROPE rotation kernel | 8 | MEASURED 2026-08-25 (`rope.vhd` form) |
@@ -1350,7 +1350,33 @@ crosses the 90% congestion line.
 | reciprocal divider, quantizer | 0 | MEASURED 2026-08-25 (divider 0 DSP) |
 | **total** | **50** | |
 
-**C total: 384 (MAC + rescale) + 50 = 434 DSP.** Whole-die, updating the
+> **CORRECTION 2026-08-26: the QK-norm row was a SKELETON and the real unit is
+> 22, not 18. And it cannot be widened.** `rtl/rmsnorm_rs.vhd` now exists,
+> is verified bit-exact against `rtl/rmsnorm.vhd`, and was synthesized at
+> **N = 256 -- this section's own head_dim, a shape it had never been run at**:
+>
+> | `LANES` | DSP | Fmax at N=256 |
+> |---|---|---|
+> | **1** | **22** | **300.8 MHz** |
+> | 2 | 28 | 281.8 MHz -- DOES NOT CLOSE |
+> | 4 | 40 | 281.8 MHz -- DOES NOT CLOSE |
+>
+> Two consequences, and the second is the one that matters:
+>
+> 1. The aux row is **+4**, so it lands at **54** and C's total at **438**.
+> 2. **More throughput is not purchasable with DSP here.** At N = 128 this unit
+>    closes 300 MHz through 4 lanes; at N = 256 it closes only at ONE. So if
+>    C's schedule needs the QK-norm faster than 1 lane delivers, that is an
+>    open TIMING problem in `rmsnorm_rs` at this width, not a DSP trade-off
+>    that can be made by spending budget. Nobody has checked whether C's
+>    schedule needs it, because until tonight the unit did not exist to ask.
+>
+> This is the same failure mode as B's aux row, which priced 1-lane units that
+> could not meet B's schedule and moved from 148 to 202 once real ones were
+> measured. C's row should be treated as provisional until its QK-norm
+> throughput requirement is derived.
+
+**C total: 384 (MAC + rescale) + ~~50~~ 54 = ~~434~~ 438 DSP.** Whole-die, updating the
 §2.8/D §12 sum (A post-reclaim 1,914 at `ROWS_IF = 58`, B 138-152, D
 24-40):
 
