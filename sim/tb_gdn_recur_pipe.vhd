@@ -24,8 +24,8 @@ entity tb_gdn_recur_pipe is
           NCASE : positive := 384;
           GRP   : positive := 8;      -- columns per head group in the vectors
           -- Flip together with VECS; a mismatch is a loud bit-exact failure.
-          D_NORM : boolean := false;
-          TK0_ED : boolean := false;
+          D_NORM : boolean := true;   -- ADOPTED 2026-08-26, matches the DUT
+          TK0_ED : boolean := true;   -- ADOPTED 2026-08-26, matches the DUT
           -- Idle cycles inserted BETWEEN columns.  0 is the real case, one
           -- column every NB cycles.  A large value serialises the unit and
           -- isolates arithmetic bugs from overlap bugs.

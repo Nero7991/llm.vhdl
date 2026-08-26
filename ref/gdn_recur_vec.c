@@ -140,8 +140,10 @@ int main(int argc, char **argv)
 {
     load_eg_table();
     const char *out = argc > 1 ? argv[1] : "sim/gdn_recur_vec.txt";
-    int d_norm  = (argc > 2 && atoi(argv[2]) != 0);
-    int tk0_ed  = (argc > 3 && atoi(argv[3]) != 0);
+    /* Default to the ADOPTED recipe (2026-08-26).  Defaulting to 0 emitted the
+       superseded form, which no longer matches either RTL unit's defaults. */
+    int d_norm  = (argc > 2) ? (atoi(argv[2]) != 0) : 1;
+    int tk0_ed  = (argc > 3) ? (atoi(argv[3]) != 0) : 1;
     FILE *f = fopen(out, "w");
     if (!f) { perror("fopen"); return 1; }
     rs_ = 20260825ULL;

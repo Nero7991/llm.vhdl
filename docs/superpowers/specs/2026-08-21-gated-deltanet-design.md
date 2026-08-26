@@ -587,7 +587,10 @@ Consequences that §3 must carry, rather than discovering at validation time:
 > Procedure: `docs/debugging/2026-08-26_gdn-scalar-path.md`.
 
 **Scalar path** (per head; 16 values each): `alpha` and `dt` are converted to
-Q12 (rule above, exponents `al_exp`, `dt_exp`) and added in s32.
+**Q18** (rule above, exponents `al_exp`, `dt_exp`) and summed on a WIDE grid,
+clamped once. **They must NOT be converted to s32 separately and then added:**
+two opposite-sign saturations cancel, and a true argument of -34826 computes as
+-1, turning a shut decay gate into a wide-open one. AMENDED 2026-08-26.
 `sp = softplus_q18(.)` (threshold per §1.1(f); internals §3). Then
 
 ```
@@ -602,7 +605,7 @@ beta  = sigmoid_q( Q18(b_mant, b_exp), 18 ) -> Q16   -- uint16, sat 65535
 ```
 
 `round_shift_bidir` = the two-branch rule above with `a_exp` in place of
-`e - 12`. The `min(0, .)` guard is defensive: `g > 0` is impossible per
+`e - 18`. The `min(0, .)` guard is defensive: `g > 0` is impossible per
 §1.1(b) but a rounding artifact must not amplify the state.
 
 #### 2.1.4 The recurrence, per head h, per column j

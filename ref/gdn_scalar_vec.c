@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-static int SP_Q = 12;
+static int SP_Q = 18;   /* ADOPTED 2026-08-26; was 12 */
 
 /* 2.1.3 site 3: Q conversion of a (mantissa, exp) pair onto the SP_Q grid.
    sh >= 0 -> round half toward +inf ; sh < 0 -> exact saturating left. */
