@@ -36,10 +36,26 @@
 -- mode that cost rmsnorm_rs 257 MHz until its fetch was registered.
 --
 -- The k_n and q_s vectors are per-head-per-token, NOT per column: a head's 128
--- columns all see the same ones, so they are held on the ports and every
--- engine selects a group with an NB:1 mux (4:1 at LANES = 32).  They are
--- deliberately not slotted; slotting them would be 2 Kbit per slot for values
--- that never change within a head.
+-- columns all see the same ones, so every engine selects a group with an NB:1
+-- mux (4:1 at LANES = 32).  They are deliberately not slotted; slotting them
+-- would be 2 Kbit per slot for values that never change within a head.
+--
+-- BUT THEY ARE DOUBLE-BUFFERED, and that is what removes the head-boundary
+-- drain.  Held on the ports alone, the last column of a head is still inside
+-- engine C for DC cycles after issue, so the ports must keep the OLD head's
+-- vectors that whole time and the next head cannot start until the pipe is
+-- empty.  Measured at 11.7% of the sweep on a 128-column head: 1.95 ms became
+-- 2.18 ms.  Two buffers plus a select bit carried with the column let a new
+-- head load while the previous one drains, so issue never stops.
+--
+-- The select bit rides the SAME paths the column's other parameters already
+-- ride -- ctx_t for engine A, par1 for B, par2 for C -- rather than a fourth
+-- delay line, because a separate delay line would have to match DB and DC
+-- exactly and would silently desynchronize if either changed.
+--
+-- eg and beta are per-head too and are buffered with them.  They are 16 bits
+-- each; leaving them on the ports would have reintroduced the same stall for
+-- 32 bits of saving.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use ieee.math_real.all;
 
@@ -66,7 +82,11 @@ entity gdn_recur_pipe is
   port(
     clk    : in  std_logic;
     rst    : in  std_logic;
-    -- per head per token, held stable across the head's columns
+    -- Per head per token.  WRITE side of the double buffer: assert kq_we for
+    -- one cycle to latch these into bank kq_wsel.  The bank must not be one
+    -- that a column still in flight is reading; the unit checks this.
+    kq_we   : in std_logic;
+    kq_wsel : in std_logic;
     eg     : in  unsigned(15 downto 0);
     beta   : in  unsigned(15 downto 0);
     k_n    : in  std_logic_vector(DIM*16-1 downto 0);
@@ -77,6 +97,9 @@ entity gdn_recur_pipe is
     s_data  : in std_logic_vector(LANES*16-1 downto 0);
     -- per-column scalars, sampled on s_first
     c_tk0  : in  std_logic;
+    -- READ side: which bank this column's head lives in.  Sampled on s_first
+    -- with the other per-column scalars.
+    c_hsel : in  std_logic;
     c_se_j : in  signed(7 downto 0);
     c_e_v  : in  signed(7 downto 0);
     c_v_j  : in  signed(15 downto 0);
@@ -161,6 +184,8 @@ architecture rtl of gdn_recur_pipe is
   type ctx_t is record
     v    : std_logic;
     tk0  : std_logic;
+    hsel : std_logic;
+    eg0  : std_logic;
     se_j : signed(7 downto 0);
     e_v  : signed(7 downto 0);
     v_j  : signed(15 downto 0);
@@ -173,7 +198,7 @@ architecture rtl of gdn_recur_pipe is
     slot : integer range 0 to SLOTS-1;
     grp  : integer range 0 to NB-1;
   end record;
-  constant CTX0 : ctx_t := ('0','0',(others=>'0'),(others=>'0'),(others=>'0'),
+  constant CTX0 : ctx_t := ('0','0','0','0',(others=>'0'),(others=>'0'),(others=>'0'),
                             (others=>'0'),(others=>'0'),0,0,0,(others=>'0'),0,0);
   type ctx_arr is array (natural range <>) of ctx_t;
 
@@ -240,9 +265,10 @@ architecture rtl of gdn_recur_pipe is
     su  : integer range 0 to 63;
     sk2 : integer range 0 to 63;
     tk0 : std_logic;
+    hsel : std_logic;
   end record;
   type par1_arr is array (0 to SLOTS-1) of par1_t;
-  constant PAR1_0 : par1_t := ((others=>'0'),(others=>'0'),0,0,'0');
+  constant PAR1_0 : par1_t := ((others=>'0'),(others=>'0'),0,0,'0','0');
   signal par1 : par1_arr := (others => PAR1_0);
   signal par1_v : std_logic_vector(SLOTS-1 downto 0) := (others => '0');
 
@@ -250,9 +276,10 @@ architecture rtl of gdn_recur_pipe is
     shq  : integer range 0 to 63;
     bias : signed(34 downto 0);
     e_u  : signed(15 downto 0);
+    hsel : std_logic;
   end record;
   type par2_arr is array (0 to SLOTS-1) of par2_t;
-  constant PAR2_0 : par2_t := (0,(others=>'0'),(others=>'0'));
+  constant PAR2_0 : par2_t := (0,(others=>'0'),(others=>'0'),'0');
   signal par2 : par2_arr := (others => PAR2_0);
   signal par2_v : std_logic_vector(SLOTS-1 downto 0) := (others => '0');
 
@@ -283,6 +310,48 @@ architecture rtl of gdn_recur_pipe is
   signal slotB, slotC : integer range 0 to SLOTS-1 := 0;
   -- the column currently being fed into engine A, held across its NB groups
   signal gin      : integer range 0 to NB-1 := 0;
+  -- The double buffer.  Registers, not BRAM: every engine reads a different
+  -- LANES-group of them in the same cycle, so a memory would need three read
+  -- ports per bank.
+  -- std_logic to bank index.  Spelled out rather than an inline
+  -- unsigned'("" & b) cast, which is legal but reads as a typo.
+  function b2i(b : std_logic) return integer is
+  begin
+    if b = '1' then return 1; else return 0; end if;
+  end function;
+  type kq_bank_t is array (0 to 1) of std_logic_vector(DIM*16-1 downto 0);
+  signal kbuf : kq_bank_t := (others => (others => '0'));
+  signal qbuf : kq_bank_t := (others => (others => '0'));
+  type sc16_bank_t is array (0 to 1) of unsigned(15 downto 0);
+  signal egbuf   : sc16_bank_t := (others => (others => '0'));
+  -- eg = 0 PRECOMPUTED at bank-write time, one bit per bank.
+  --
+  -- Not an optimization: measured.  With the test written inline as
+  -- "egbuf(hsel) = 0" the worst path was sc1(8).shd -> par1.sk2 at 15 logic
+  -- levels and -0.486 ns, and that stage already carries a wide add (e_kd),
+  -- a wide compare (sej vs e_kd), a mux and a subtract -- the project's own
+  -- rule is never two of {barrel shift, wide add, wide compare, bus mux,
+  -- multiply} in series in one state, and this had four.  Adding a 2:1 16-bit
+  -- mux and a 16-bit zero-compare on top is what pushed it over.
+  --
+  -- eg is constant across a head, so the test belongs where the head is
+  -- loaded, not in a per-column cone.  The gate then costs one OR of two bits.
+  signal eg0buf  : std_logic_vector(1 downto 0) := (others => '0');
+  signal betabuf : sc16_bank_t := (others => (others => '0'));
+  -- Overwriting a bank that still has a live column in it is the ONE way to
+  -- use this wrongly, so it is checked rather than left to the caller.
+  --
+  -- A SHIFT REGISTER, not a counter.  The first version counted issues and
+  -- retirements and underflowed: the retirement bank was read from par2 by
+  -- slot, and a slot is reused by a later column, so a retirement could be
+  -- charged to the wrong bank.  A window of "was anything issued into this
+  -- bank in the last DC + 2*NB cycles" needs no retirement event at all, and
+  -- DC + 2*NB is exactly the depth the SLOTS_MIN derivation above already uses
+  -- for how long a column stays live.
+  constant OCC_W : integer := DC + 2*NB;
+  type occ_t is array (0 to 1) of std_logic_vector(OCC_W downto 0);
+  signal occ : occ_t := (others => (others => '0'));
+  signal cur_hsel : std_logic := '0';
   signal cur_tk0  : std_logic := '0';
   signal cur_se_j : signed(7 downto 0) := (others => '0');
   signal cur_e_v  : signed(7 downto 0) := (others => '0');
@@ -329,6 +398,7 @@ begin
     variable ev_i, ske_i, ed_i, ekd_i, eu_i, sej_i : integer;
     variable base : integer;
     variable gin_v : integer range 0 to NB-1;
+    variable hsel_v : std_logic;
     variable wpk  : std_logic_vector(LANES*19-1 downto 0);
     variable upk  : std_logic_vector(LANES*35-1 downto 0);
   begin
@@ -349,6 +419,7 @@ begin
         redk_c <= (others => CTX0); reda_c <= (others => CTX0);
         redo_c <= (others => CTX0);
         dlyB <= (others => '0'); col_cnt <= (others => '0');
+        occ <= (others => (others => '0'));
         runB <= '0'; runC <= '0'; grpB <= 0; grpC <= 0;
         par1_v <= (others => '0'); par2_v <= (others => '0');
         o_valid <= '0'; o_last <= '0'; o_err_se <= '0'; o_res_valid <= '0';
@@ -364,6 +435,28 @@ begin
         end if;
         dlyB <= dlyB(DC-1 downto 0) & startA;
 
+        -- ---- double buffer occupancy window ----
+        for b in 0 to 1 loop
+          occ(b) <= occ(b)(OCC_W-1 downto 0) & '0';
+        end loop;
+        if s_valid = '1' and s_first = '1' then
+          occ(b2i(c_hsel)) <= occ(b2i(c_hsel))(OCC_W-1 downto 0) & '1';
+        end if;
+
+        -- ---- double buffer write side ----
+        if kq_we = '1' then
+          assert occ(b2i(kq_wsel)) = (occ(0)'range => '0')
+            report "gdn_recur_pipe: kq_we overwrites a bank with columns still "
+                 & "in flight -- the previous head has not drained out of it"
+            severity failure;
+          kbuf(b2i(kq_wsel))    <= k_n;
+          qbuf(b2i(kq_wsel))    <= q_s;
+          egbuf(b2i(kq_wsel))   <= eg;
+          if eg = 0 then eg0buf(b2i(kq_wsel)) <= '1';
+          else           eg0buf(b2i(kq_wsel)) <= '0'; end if;
+          betabuf(b2i(kq_wsel)) <= beta;
+        end if;
+
         -- ============ engine A =========================================
         -- F: capture the incoming group and the matching k group.  The group
         -- index is derived HERE, in a variable, and used in the same cycle for
@@ -376,7 +469,7 @@ begin
         if s_valid = '1' then
           if s_first = '1' then
             gin_v := 0;
-            cur_tk0  <= c_tk0;  cur_se_j <= c_se_j;
+            cur_tk0  <= c_tk0;  cur_se_j <= c_se_j; cur_hsel <= c_hsel;
             cur_e_v  <= c_e_v;  cur_v_j  <= c_v_j;
             cur_slot <= to_integer(col_cnt(LOG2S-1 downto 0));
           else
@@ -388,13 +481,20 @@ begin
           a_ctx(0).grp <= gin_v;
           if s_first = '1' then
             a_ctx(0).tk0  <= c_tk0;  a_ctx(0).se_j <= c_se_j;
+            a_ctx(0).hsel <= c_hsel;  a_ctx(0).eg0 <= eg0buf(b2i(c_hsel));
             a_ctx(0).e_v  <= c_e_v;  a_ctx(0).v_j  <= c_v_j;
             a_ctx(0).slot <= to_integer(col_cnt(LOG2S-1 downto 0));
           else
             a_ctx(0).tk0  <= cur_tk0; a_ctx(0).se_j <= cur_se_j;
+            a_ctx(0).hsel <= cur_hsel; a_ctx(0).eg0 <= eg0buf(b2i(cur_hsel));
             a_ctx(0).e_v  <= cur_e_v; a_ctx(0).v_j  <= cur_v_j;
             a_ctx(0).slot <= cur_slot;
           end if;
+
+          -- Derived HERE from the same s_first decision as the context, not
+          -- read back out of a_ctx(0), which still holds the PREVIOUS cycle's
+          -- column -- the exact mistake the group index note above records.
+          if s_first = '1' then hsel_v := c_hsel; else hsel_v := cur_hsel; end if;
 
           base := gin_v * LANES;
           for k in 0 to LANES-1 loop
@@ -405,13 +505,13 @@ begin
             else
               a_sf(k) <= signed(s_data((k+1)*16-1 downto k*16));
             end if;
-            a_kf(k) <= signed(k_n((base+k+1)*16-1 downto (base+k)*16));
+            a_kf(k) <= signed(kbuf(b2i(hsel_v))((base+k+1)*16-1 downto (base+k)*16));
           end loop;
         end if;
 
         a_ctx(1) <= a_ctx(0);
         for k in 0 to LANES-1 loop
-          a_m1(k) <= resize(a_sf(k) * signed('0' & eg), 33);
+          a_m1(k) <= resize(a_sf(k) * signed('0' & egbuf(b2i(a_ctx(0).hsel))), 33);
           a_k1(k) <= a_kf(k);
         end loop;
 
@@ -489,7 +589,7 @@ begin
         -- (see the port comment), so reading the port here rather than
         -- carrying a bit through the context is safe for every column in
         -- flight, and is what engine A already does at site a_m1.
-        if (sc1(3).c.tk0 = '1' or (EG0_ED and eg = 0)) and TK0_ED then
+        if (sc1(3).c.tk0 = '1' or (EG0_ED and sc1(3).c.eg0 = '1')) and TK0_ED then
                                               ed_i := ev_i;
         elsif ev_i < ske_i then               ed_i := ev_i;
         else                                  ed_i := ske_i; end if;
@@ -513,7 +613,7 @@ begin
                     and (sc1(5).diff >= 131072 or sc1(5).diff <= -131073))
           report "gdn_recur_pipe: diff outside s18 -- v[j] exceeded int16?"
           severity failure;
-        sc1(6).dmul <= resize(sc1(5).diff * signed('0' & beta), 35);
+        sc1(6).dmul <= resize(sc1(5).diff * signed('0' & betabuf(b2i(sc1(5).c.hsel))), 35);
 
         sc1(7) <= sc1(6);
         if sc1(6).dmul < 0 then sc1(7).dabs <= unsigned(-sc1(6).dmul);
@@ -542,7 +642,7 @@ begin
           -- e_kd = 15 + e_dm, and e_dm = e_d + 16 - shd.  With the pinned
           -- shd = 16 this is 15 + e_d, exactly the pinned form.
           ekd_i := 15 + to_integer(sc1(8).ed) + 16 - sc1(8).shd;
-          if sc1(8).c.tk0 = '1' or (EG0_ED and eg = 0) then
+          if sc1(8).c.tk0 = '1' or (EG0_ED and sc1(8).c.eg0 = '1') then
                                      eu_i := ekd_i;  -- masked zero, no exponent
           elsif sej_i < ekd_i then   eu_i := sej_i;
           else                       eu_i := ekd_i; end if;
@@ -554,6 +654,7 @@ begin
           par1(sc1(8).c.slot).su  <= p;
           par1(sc1(8).c.slot).sk2 <= qv;
           par1(sc1(8).c.slot).tk0 <= sc1(8).c.tk0;
+          par1(sc1(8).c.slot).hsel <= sc1(8).c.hsel;
           par1_v(sc1(8).c.slot)   <= '1';
         end if;
 
@@ -587,13 +688,21 @@ begin
           b_ctx(0).slot <= slotB;
           b_ctx(0).grp  <= grpB;
           b_ctx(0).tk0  <= par1(slotB).tk0;
+          -- hsel must ride this path too: engine C's q_s bank is taken from
+          -- par2, which is written from THIS context after the reduction tree.
+          -- b_ctx is populated field by field rather than by whole-record copy,
+          -- so a new ctx field that is not listed here silently keeps CTX0's
+          -- default -- which is what happened, and the signature was distinctive:
+          -- o_acc wrong on every column of every head after the first, state and
+          -- se_new perfect, because only o_acc depends on q_s.
+          b_ctx(0).hsel <= par1(slotB).hsel;
           b_ctx(0).e_u  <= par1(slotB).e_u;
           b_ctx(0).d_m  <= par1(slotB).d_m;
           b_ctx(0).su   <= par1(slotB).su;
           b_ctx(0).sk2  <= par1(slotB).sk2;
           base := grpB * LANES;
           for k in 0 to LANES-1 loop
-            b_kf(k) <= signed(k_n((base+k+1)*16-1 downto (base+k)*16));
+            b_kf(k) <= signed(kbuf(b2i(par1(slotB).hsel))((base+k+1)*16-1 downto (base+k)*16));
             b_wf(k) <= signed(w18_mem(slotB * NB + grpB)((k+1)*19-1 downto k*19));
           end loop;
         end if;
@@ -673,7 +782,8 @@ begin
             par2(sc2(0).c.slot).shq  <= 0;
             par2(sc2(0).c.slot).bias <= (others => '0');
           end if;
-          par2(sc2(0).c.slot).e_u <= sc2(0).c.e_u;
+          par2(sc2(0).c.slot).e_u  <= sc2(0).c.e_u;
+          par2(sc2(0).c.slot).hsel <= sc2(0).c.hsel;
           par2_v(sc2(0).c.slot)   <= '1';
         end if;
 
@@ -701,7 +811,7 @@ begin
           c_ctx(0).e_u  <= par2(slotC).e_u;
           base := grpC * LANES;
           for k in 0 to LANES-1 loop
-            c_qf(k) <= signed(q_s((base+k+1)*16-1 downto (base+k)*16));
+            c_qf(k) <= signed(qbuf(b2i(par2(slotC).hsel))((base+k+1)*16-1 downto (base+k)*16));
             c_uf(k) <= signed(u_mem(slotC * NB + grpC)((k+1)*35-1 downto k*35));
           end loop;
         end if;

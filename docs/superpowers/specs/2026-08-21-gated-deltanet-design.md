@@ -1886,6 +1886,67 @@ The phase-schedule bullet is discharged. These are not:
   it for about 4 Kbit. Until that is done, **2.18 ms is the honest sweep
   figure**, not 1.95.
 
+  > **CLOSED 2026-08-26. The double buffer is built and it is free.** `k_n`,
+  > `q_s`, `eg` and `beta` are held in two banks written through `kq_we` /
+  > `kq_wsel`, with a `c_hsel` bit sampled per column and carried on the paths
+  > the column's other parameters already ride: `ctx_t` for engine A, `par1`
+  > for B, `par2` for C. A fourth delay line was rejected because it would have
+  > to track `DB` and `DC` by hand and would desynchronize silently if either
+  > changed.
+  >
+  > | | DSP | BRAM | WNS at 3.0 ns | Fmax |
+  > |---|---|---|---|---|
+  > | before | 129 | 24.5 | -0.044 | 299.04 MHz |
+  > | **after** | **129** | **24.5** | **-0.044** | **299.04 MHz** |
+  >
+  > Identical on every axis, and bit-identical to `gdn_recur` on all 384
+  > columns with II still exactly `NB`. **So the sweep is 1.95 ms and the 2.18
+  > figure above is withdrawn.**
+  >
+  > **It was NOT free on the first attempt, and the reason is worth keeping.**
+  > Written with the `eg = 0` test inline as `egbuf(hsel) = 0`, Fmax fell to
+  > **286.9 MHz** and missed the 300 target. The failing path was **not** the
+  > new bank mux, which is what I predicted: it was `sc1(8).shd -> par1.sk2`,
+  > 15 logic levels, a stage that already carried a wide add (`e_kd`), a wide
+  > compare (`se_j + 2` vs `e_kd`), a mux and a subtract. §2.1.5's rule is
+  > never two of {barrel shift, wide add, wide compare, bus mux, multiply} in
+  > series in one state; that stage had four before the buffer touched it, and
+  > a 2:1 16-bit mux plus a 16-bit zero-compare pushed it over. `eg` is
+  > constant across a head, so the test now happens once at bank-write time and
+  > the gate costs one OR of two bits. That recovered all 12 MHz.
+  >
+  > Guessing would have cost the clock: the fix was in a different stage from
+  > the change that exposed it, which is the same shape as `rmsnorm_rs`, where
+  > `MREG` was confidently predicted to be the fix and was worth 26 MHz of 183.
+  >
+  > **Cost is 8 Kbit of FF, not the ~4 Kbit estimated above** -- two banks of
+  > (`k_n` 2,048 + `q_s` 2,048) bits, plus 32 bits for `eg`/`beta` and two
+  > occupancy shift registers. The estimate counted one bank, not the pair.
+  >
+  > **Overwriting a live bank is checked, not left to the caller.** The first
+  > version counted issues against engine C retirements and underflowed,
+  > because the retirement bank was read from `par2` **by slot** and slots are
+  > reused by later columns, so a retirement could be charged to the wrong
+  > bank. It is now a shift register asking "was anything issued into this bank
+  > in the last `DC + 2*NB` cycles", which needs no retirement event and reuses
+  > the depth `SLOTS_MIN` already derives.
+  >
+  > **Measured stall, and what still stalls.** Over the vector set's 33 head
+  > boundaries the total bank-free wait is **528 cycles, worst 33**, against
+  > the 200 per boundary the testbench used to drain unconditionally. Worst
+  > after a head of **>= 16 columns is 0**. Heads shorter than the pipe depth
+  > (~15 columns at II = `NB`) genuinely cannot benefit from two banks and
+  > still wait; production heads are 128 columns, so this is zero in the
+  > configuration that matters and the 11.7% is gone.
+  >
+  > One bug found on the way, recorded because the signature is reusable:
+  > `b_ctx` is populated field by field from `par1` rather than by whole-record
+  > copy, so the new `hsel` field silently kept `CTX0`'s default and engine C
+  > always read bank 0. It presented as **`o_acc` wrong on every column of
+  > every head after the first, with the state and `se_new` perfect**, because
+  > only `o_acc` depends on `q_s`. The testbench comment that predicted exactly
+  > that signature made it a two-minute diagnosis.
+
   So §3.3's "the nonlinearities hide under the sweep" and §3.1's port
   derivation are restored, but against 2.18 ms rather than 1.97, and §3.4's
   BRAM accounting now has a 24.5-tile entry it did not have.

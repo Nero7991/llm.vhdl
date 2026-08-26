@@ -43,6 +43,9 @@ architecture sim of tb_gdn_recur_pipe is
   signal s_valid, s_first : std_logic := '0';
   signal s_data : std_logic_vector(LANES*16-1 downto 0) := (others => '0');
   signal c_tk0 : std_logic := '0';
+  signal c_hsel : std_logic := '0';
+  signal kq_we  : std_logic := '0';
+  signal kq_wsel : std_logic := '0';
   signal c_se_j, c_e_v : signed(7 downto 0) := (others => '0');
   signal c_v_j : signed(15 downto 0) := (others => '0');
   signal o_valid, o_last, o_res_valid, o_err_se : std_logic;
@@ -71,6 +74,11 @@ architecture sim of tb_gdn_recur_pipe is
   shared variable ncheck : integer := 0;
   shared variable last_last : integer := -1;
   shared variable ii_min, ii_max : integer := 0;
+  -- Worst gap ACROSS a head boundary, kept separate from ii_max because it is
+  -- the quantity the double buffer exists to remove.  ii_max deliberately
+  -- filters gaps >= 100 so that the within-group number stays meaningful; this
+  -- one filters nothing.
+  shared variable ii_head : integer := 0;
 
   function to_real_s(v : signed) return real is
     variable m : unsigned(v'length-1 downto 0);
@@ -92,10 +100,13 @@ begin
   dut : entity work.gdn_recur_pipe
     generic map(DIM => DIM, LANES => LANES, SLOTS => SLOTS, D_NORM => D_NORM,
                 TK0_ED => TK0_ED, EG0_ED => EG0_ED)
-    port map(clk => clk, rst => rst, eg => eg, beta => beta,
+    port map(clk => clk, rst => rst,
+             kq_we => kq_we, kq_wsel => kq_wsel,
+             eg => eg, beta => beta,
              k_n => k_n, q_s => q_s,
              s_valid => s_valid, s_first => s_first, s_data => s_data,
-             c_tk0 => c_tk0, c_se_j => c_se_j, c_e_v => c_e_v, c_v_j => c_v_j,
+             c_tk0 => c_tk0, c_hsel => c_hsel,
+             c_se_j => c_se_j, c_e_v => c_e_v, c_v_j => c_v_j,
              o_valid => o_valid, o_last => o_last, o_data => o_data,
              o_se_new => o_se_new, o_acc => o_acc, o_e_o => o_e_o,
              o_res_valid => o_res_valid, o_err_se => o_err_se);
@@ -136,6 +147,19 @@ begin
 
   drive : process
     variable base, c : integer;
+    -- bank alternates per head; prev_end / prev2_end are the column counts
+    -- through the previous head and the one before it, which is the head that
+    -- last used the bank about to be overwritten.
+    variable bank : std_logic := '0';
+    variable prev_end, prev2_end : integer := 0;
+    -- Cycles actually spent waiting for a bank to free, which is what the old
+    -- unconditional 200-cycle drain has been replaced by.  Reported as a total
+    -- and as a worst case, split by whether the head that last used the bank
+    -- was long enough to cover the pipe (DC + 2*NB cycles ~ 15 columns at
+    -- II = NB).  Production heads are 128 columns and always are.
+    variable stall, stall_tot, stall_max, stall_max_long : integer := 0;
+    variable nhead : integer := 0;
+    variable prev_len : integer := 0;
   begin
     wait until loaded;
     wait for 40 ns; rst <= '0'; wait until rising_edge(clk);
@@ -145,14 +169,29 @@ begin
       -- a head runs until the group id changes; heads are 8 columns in the
       -- mixed set and 128 in the long one, and the driver must not assume
       base := c;
-      -- DRAIN FIRST, THEN change k_n/q_s.  Doing it the other way round is a
-      -- testbench bug that looks exactly like a unit bug: engines B and C are
-      -- still holding the PREVIOUS head's columns and read k_n/q_s straight off
-      -- the ports, so those columns silently finish against the next head's
-      -- vectors.  The signature is distinctive and worth remembering -- only
+      -- The unit double-buffers k_n/q_s/eg/beta, so this head loads into the
+      -- bank the PREVIOUS head is not using and issue never has to stop.  The
+      -- old version of this loop drained 200 cycles here, which is precisely
+      -- the 11.7% the buffer removes.
+      --
+      -- What still has to be waited for: the head that used THIS bank two heads
+      -- ago must have fully retired, or its columns finish against the new
+      -- vectors.  With production 128-column heads the pipe (DC + NB ~ 56
+      -- cycles) has always drained long before, so the wait is free; it only
+      -- bites in this vector set, whose mixed heads are 8 columns.  The unit
+      -- asserts the same invariant from the inside, so a testbench that got
+      -- this wrong would fail loudly rather than produce wrong numbers -- which
+      -- is the point, because the previous failure mode here was silent: only
       -- o_acc wrong, only on the last column(s) of each head, state perfect,
       -- because the state does not depend on q_s at all.
-      for d in 0 to 199 loop wait until rising_edge(clk); end loop;
+      stall := 0;
+      while ncheck < prev2_end loop
+        wait until rising_edge(clk); stall := stall + 1;
+      end loop;
+      stall_tot := stall_tot + stall;
+      if stall > stall_max then stall_max := stall; end if;
+      if prev_len >= 16 and stall > stall_max_long then stall_max_long := stall; end if;
+      kq_wsel <= bank;
       eg   <= to_unsigned(v_col(base).eg, 16);
       beta <= to_unsigned(v_col(base).beta, 16);
       for i in 0 to DIM-1 loop
@@ -160,6 +199,9 @@ begin
         q_s((i+1)*16-1 downto i*16) <= std_logic_vector(to_signed(v_qs(base)(i), 16));
       end loop;
       wait until rising_edge(clk);
+      kq_we <= '1';
+      wait until rising_edge(clk);
+      kq_we <= '0';
 
       while c < NCASE and v_col(c).gid = v_col(base).gid loop
         for gi in 0 to NB-1 loop
@@ -167,6 +209,7 @@ begin
           if gi = 0 then
             s_first <= '1';
             c_tk0   <= '1' when v_col(c).tk0 = 1 else '0';
+            c_hsel  <= bank;
             c_se_j  <= to_signed(v_col(c).se_j, 8);
             c_e_v   <= to_signed(v_col(c).e_v, 8);
             c_v_j   <= to_signed(v_col(c).v_j, 16);
@@ -186,6 +229,10 @@ begin
         c := c + 1;
       end loop;
       s_valid <= '0'; s_first <= '0';
+      nhead := nhead + 1;
+      prev_len := c - prev_end;
+      prev2_end := prev_end; prev_end := c;
+      bank := not bank;
     end loop;
 
     for d in 0 to 399 loop wait until rising_edge(clk); end loop;
@@ -198,6 +245,13 @@ begin
            & integer'image(ncheck) & " columns; issue interval measured "
            & integer'image(ii_min) & " cycles (NB = " & integer'image(NB)
            & "), worst gap within a head group " & integer'image(ii_max)
+           & ", worst gap ACROSS a head boundary " & integer'image(ii_head)
+           severity note;
+      report "gdn_recur_pipe: bank-free wait totals " & integer'image(stall_tot)
+           & " cycles over " & integer'image(nhead) & " head boundaries, worst "
+           & integer'image(stall_max) & "; worst after a head of >= 16 columns "
+           & integer'image(stall_max_long)
+           & " (the old unconditional drain was 200 per boundary)"
            severity note;
     end if;
     wait;
@@ -230,12 +284,16 @@ begin
                  & integer'image(v_snew(ncol_d)(firstbad)) severity error;
             nfail := nfail + 1;
           end if;
-          -- issue interval: spacing of consecutive column completions.  Gaps
-          -- across a head boundary are the drain, not the II, so only the
-          -- minimum and the within-group maximum are meaningful.
+          -- Issue interval: spacing of consecutive column completions.  The
+          -- within-group max keeps its < 100 filter so it stays comparable with
+          -- the pre-double-buffer runs; the head-boundary gap is now measured
+          -- SEPARATELY and unfiltered, because that gap is the whole point of
+          -- the buffer and hiding it behind a filter is how it went unnoticed.
           if last_last >= 0 then
             if ii_min = 0 or (tick - last_last) < ii_min then ii_min := tick - last_last; end if;
-            if (tick - last_last) > ii_max and (tick - last_last) < 100 then
+            if ncol_d > 0 and v_col(ncol_d).gid /= v_col(ncol_d-1).gid then
+              if (tick - last_last) > ii_head then ii_head := tick - last_last; end if;
+            elsif (tick - last_last) > ii_max and (tick - last_last) < 100 then
               ii_max := tick - last_last;
             end if;
           end if;
