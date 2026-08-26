@@ -1885,6 +1885,42 @@ The phase-schedule bullet is discharged. These are not:
   spread; the range is now **2,600 to 2,670 = 90.3% to 92.7%**, and its floor
   has moved further above the 90% line rather than toward it.
 
+  **CORRECTION, later on 2026-08-26: the line above is wrong twice, and the
+  published ceiling never followed from its own components.**
+
+  1. **Collapsing an interval moves BOTH ends.** conv went from an assumed
+     0-to-32 to a measured 16. That RAISES the floor by 16 and LOWERS the
+     ceiling by 16. The update above moved only the floor and left the ceiling
+     at 2,670, which still has conv counted at 32.
+  2. **The ceiling could not be rebuilt from the delta table even before
+     that.** Base 2,578 plus the published deltas at their maxima gives
+     `2578 + 22 + 32 + 4 + 24 = 2,660`, not 2,670. Ten DSP of the old ceiling
+     have no component behind them. The floor did reconstruct exactly
+     (`2578 + 4 + 0 + 2 + 0 = 2,584`), which is why the error survived review.
+  3. **The scalar path is now measured, and it is above its guessed range.**
+     "softplus + scalar, believed cheap, +2 to +4" is a measured **7**
+     (`rtl/gdn_scalar.vhd`, OOC on xcvu33p, 7 DSP / 0 BRAM / 327.8 MHz), so it
+     enters at 7 on BOTH ends rather than 2 on the floor and 4 on the ceiling.
+
+  Rebuilt from the components, with every measured term entering at its
+  measured value on both ends:
+
+  | term | floor | ceiling | basis |
+  |---|---|---|---|
+  | base (A 1,914 + C 434 + B 202 + D 28) | 2,578 | 2,578 | 3.3 |
+  | C's QK-norm | +4 | +22 | 1 lane vs 4; schedule check says 1 suffices |
+  | conv MACs | +16 | +16 | MEASURED, `gdn_conv` |
+  | softplus + scalar | +7 | +7 | MEASURED, `gdn_scalar` |
+  | D's phase sharing | +0 | +24 | no D RTL exists |
+  | `gdn_recur`'s +1 | +1 | +1 | MEASURED |
+  | **total** | **2,606** | **2,648** | |
+
+  **Honest range: 2,606 to 2,648 of 2,880 = 90.5% to 91.9%.** The floor is
+  slightly higher than published and the ceiling is nearly a full point lower;
+  the spread has narrowed from 86 DSP to 42, of which all but 4 is D's unwritten
+  RTL. Every remaining unmeasured term is now in exactly two places: C's QK-norm
+  lane count and D's phase sharing.
+
   The claim to have measured everything was made in the same document that
   lists the conv sharing decision as open. Worse, it counted
   measured-as-a-skeleton and measured-on-a-broken-unit as measured -- which is

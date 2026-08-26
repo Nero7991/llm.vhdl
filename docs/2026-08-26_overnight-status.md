@@ -19,7 +19,12 @@ combinations, and the corrected form has been synthesized.
 | **both** | 0.605 | **1.20** | **3.47** | **1.11** | **0** |
 
 State error in LSB of the unit's own grid, over the physically realizable
-columns. "Lost entirely" means the first token's state came out identically
+columns. **The denominators differ between rows**: the `TK0_ED` rows exclude 12
+columns that §2.1.6 flags as exponent errors, so those rows are over 276
+columns and the others over 288. The p95 and max are therefore not taken over
+the same set; the ranking is unaffected but the exact numbers are not strictly
+comparable. Disclosed in
+`docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`. "Lost entirely" means the first token's state came out identically
 zero against a non-zero oracle.
 
 - **`D_NORM`**: quantize `d` on its own grid instead of inheriting `e_d`.
@@ -53,16 +58,20 @@ DSP budget is yours.
 
 ## What was built
 
-Four real RTL units, all verified two ways (bit-exact against a C reference in
-a different language, AND real-valued against a double-precision oracle in a
-different number system):
+Five real RTL units. Four are verified two ways -- bit-exact against a C
+reference in a different language, AND real-valued against a double-precision
+oracle in a different number system. **`l2norm_rs` is the exception and the
+blanket claim was false for it:** it has no C reference, and is verified
+against a VHDL `math_real` golden plus a mutation campaign. That is a weaker
+guarantee, and it is the unit whose recipe was found broken in the first place.
 
-| unit | what | headline |
-|---|---|---|
-| `rtl/gdn_recur.vhd` | B §2.1.4 recurrence, sequential | 4·LANES+1 DSP, 318.9 MHz |
-| `rtl/gdn_recur_pipe.vhd` | same, column-pipelined | **II = NB exactly**, same DSP |
-| `rtl/gdn_conv.vhd` | B §2.1.3 depthwise conv | 4·LANES DSP, 447 MHz, 0 BRAM |
-| `rtl/l2norm_rs.vhd` | fixed (see below) | 26 DSP, 300.0 MHz |
+| unit | what | headline | verified by |
+|---|---|---|---|
+| `rtl/gdn_recur.vhd` | §2.1.4 recurrence, sequential | 4·LANES+1 DSP, 318.9 MHz | C + oracle |
+| `rtl/gdn_recur_pipe.vhd` | same, column-pipelined | **II = NB exactly**, same DSP | C + oracle |
+| `rtl/gdn_conv.vhd` | §2.1.3 depthwise conv | 4·LANES DSP, 447 MHz, 0 BRAM | C + oracle |
+| `rtl/gdn_scalar.vhd` | §2.1.3 scalar path (new) | 7 DSP, 0 BRAM, 327.8 MHz | C + oracle |
+| `rtl/l2norm_rs.vhd` | fixed (see below) | 26 DSP, 300.0 MHz | VHDL golden + mutation |
 
 ## What was wrong and is now right
 
