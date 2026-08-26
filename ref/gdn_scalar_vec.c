@@ -38,21 +38,45 @@ static int32_t to_q(int32_t m, int e)
 /* Site 3 on a wide grid: same rounding, but NO saturation.  Values that
    cannot matter (beyond +/-16*2^q) are returned already past the clamp
    rather than wrapped or pinned to the s32 rail. */
+#define SAT_W (1LL << 45)
 static int64_t to_q_wide(int32_t m, int e)
 {
+    if (m == 0) return 0;              /* zero is zero on every grid */
     int sh = e - SP_Q;
     if (sh >= 0) {
         if (sh > 62) return 0;
         return ((int64_t)m + (1LL << sh >> 1)) >> sh;
     }
     int s = -sh;
-    if (s > 40) return (m >= 0) ? (1LL << 45) : -(1LL << 45);
-    return (int64_t)m << s;
+    if (s > 40) return (m > 0) ? SAT_W : -SAT_W;
+    int64_t v = (int64_t)m << s;
+    /* The exact branch must saturate too: 32767 << 36 is ~2^51 per term, and
+       two such terms overflow the RTL's s52 accumulator and wrap NEGATIVE --
+       an open gate where this reference has a shut one.  Bounding every term
+       at 2^45 also keeps sp * a_m (<= 2^61) inside int64 here. */
+    if (v >  SAT_W) v =  SAT_W;
+    if (v < -SAT_W) v = -SAT_W;
+    return v;
 }
 
-static int64_t rshift_r(int64_t v, int s)      /* round half toward +inf */
+/* Round half toward +infinity, with a SATURATING left branch.
+   a_e may be negative, which makes this a left shift of a value already as
+   large as 2^61 (sp <= 2^46 times a_m <= 2^15).  Shifting that left by up to
+   40 overflows int64 here and the s68 accumulator in the RTL, and the two
+   wrap differently -- which is a divergence, not merely an inaccuracy.
+   g is clamped to [-16*2^q, 0] downstream and 16*2^q <= 2^26, so saturating
+   at 2^62 gives the identical clamped result with no possibility of wrap. */
+#define SAT_G (1LL << 62)
+static int64_t rshift_r(int64_t v, int s)
 {
-    if (s <= 0) { if (-s > 40) return 0; return v << (-s); }
+    if (s <= 0) {
+        int k = -s;
+        if (v == 0) return 0;
+        if (k > 62) return (v > 0) ? SAT_G : -SAT_G;
+        if (v >  (SAT_G >> k)) return  SAT_G;
+        if (v < -(SAT_G >> k)) return -SAT_G;
+        return v << k;
+    }
     if (s > 62) return 0;
     return (v + (1LL << s >> 1)) >> s;
 }
@@ -82,11 +106,16 @@ int main(int argc, char **argv)
             a_m  = -(int32_t)(NEXT() % 3000) - 1;     a_e  = 16;
             b_m  = (int32_t)(NEXT() % 60000) - 30000; b_e  = 12;
         } else if (c < 128) {
-            /* wide exponents, both shift directions of site 3 */
-            al_m = (int32_t)(NEXT() % 65535) - 32767; al_e = (int)(NEXT() % 25) - 4;
-            dt_m = (int32_t)(NEXT() % 65535) - 32767; dt_e = (int)(NEXT() % 25) - 4;
-            a_m  = -(int32_t)(NEXT() % 32767) - 1;    a_e  = (int)(NEXT() % 25) - 4;
-            b_m  = (int32_t)(NEXT() % 65535) - 32767; b_e  = (int)(NEXT() % 25) - 4;
+            /* Wide exponents, both shift directions of site 3.
+               This band used to span only [-4, 20], which left EVERY
+               wide-shift guard dead in test: the >62 and >40 cutoffs, the
+               saturation sentinel, and the s52 accumulator's headroom.  Four
+               RTL-vs-reference divergences hid in that gap.  The range is now
+               [-40, 60], which reaches all of them. */
+            al_m = (int32_t)(NEXT() % 65535) - 32767; al_e = (int)(NEXT() % 101) - 40;
+            dt_m = (int32_t)(NEXT() % 65535) - 32767; dt_e = (int)(NEXT() % 101) - 40;
+            a_m  = -(int32_t)(NEXT() % 32767) - 1;    a_e  = (int)(NEXT() % 101) - 40;
+            b_m  = (int32_t)(NEXT() % 65535) - 32767; b_e  = (int)(NEXT() % 101) - 40;
         } else if (c < 192) {
             /* softplus threshold region: |arg| near and beyond 16 */
             al_m = (int32_t)(NEXT() % 65535) - 32767; al_e = 11;
@@ -99,6 +128,30 @@ int main(int argc, char **argv)
             dt_m = (int32_t)(NEXT() % 30000);         dt_e = 10;
             a_m  = -(int32_t)(NEXT() % 24768) - 8000; a_e  = 8;   /* stays inside s16 */
             b_m  = (int32_t)(NEXT() % 65535) - 32767; b_e  = 10;
+        } else if (c < 272) {
+            /* Named corners, deterministic.  Each of these was an actual
+               divergence between this reference and rtl/gdn_scalar.vhd, found
+               by review after the random bands all passed:
+                 0  g overflows s32 and, narrowed before the clamp, aliases
+                    back into (-LIM, 0] -- a shut gate reported as wide open
+                 1  both softplus terms saturate and the s52 sum wraps
+                 2  the shift cutoff differed (36 in RTL vs 40 here)
+                 3  a ZERO mantissa with a big exponent returned the positive
+                    sentinel instead of zero, slamming beta to full scale */
+            int pick = c - 256;
+            al_m = 16384; al_e = -4; dt_m = 25;    dt_e = 12;
+            a_m  = -4;    a_e  = 0;  b_m  = 0;     b_e  = 12;
+            if (pick == 1) { al_m = 32767; al_e = -24; dt_m = 32767; dt_e = -24;
+                             a_m = -1; a_e = 0; }
+            if (pick == 2) { al_m = 1; al_e = -25; dt_m = 0; dt_e = 12;
+                             a_m = -1; a_e = 25; }
+            if (pick == 3) { b_m = 0; b_e = -30; }
+            if (pick >= 4) { /* sweep the cutoff neighbourhood on every port */
+                int k = pick - 4;
+                al_e = (int8_t)(SP_Q - 37 - k); dt_e = (int8_t)(SP_Q - 41 + k);
+                a_e  = (int8_t)(k * 7 - 20);    b_e  = (int8_t)(SP_Q - 39 + k);
+                al_m = 32767; dt_m = -32768; a_m = -32768; b_m = -32768;
+            }
         } else {
             /* degenerate corners: zeros, extremes of every mantissa */
             int pick = c % 8;
@@ -145,8 +198,13 @@ int main(int argc, char **argv)
         if (eg_o > 32768) eg_o = 32768;
         if (eg_o < 0) eg_o = 0;
 
-        int32_t bq     = to_q(b_m, b_e);
-        int32_t beta_sp = fx_sigmoid_q(bq, SP_Q);
+        /* Same converter and same clamp as the RTL, so the two cannot drift.
+           Using the saturating s32 to_q here and to_q_wide there was a
+           divergence in its own right. */
+        int64_t bqw = to_q_wide(b_m, b_e);
+        if (bqw >  lim) bqw =  lim;
+        if (bqw < -lim) bqw = -lim;
+        int32_t beta_sp = fx_sigmoid_q((int32_t)bqw, SP_Q);
         int64_t beta_o = rshift_r(beta_sp, SP_Q - 16);
         /* the recurrence port is unsigned(15 downto 0); Q16 1.0 = 65536 does
            not fit, so the top of the range saturates one LSB low. */

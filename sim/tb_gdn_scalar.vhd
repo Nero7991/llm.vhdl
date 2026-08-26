@@ -40,7 +40,7 @@ begin
     variable v_am, v_ae, v_bm, v_be     : integer;
     variable x_eg, x_beta, x_err        : integer;
     variable o_eg, o_beta               : real;
-    variable bad_eg, bad_beta           : integer := 0;
+    variable bad_eg, bad_beta, bad_err  : integer := 0;
     variable worst_eg, worst_beta       : real := 0.0;
     variable d : real;
   begin
@@ -75,6 +75,15 @@ begin
                  " expected " & integer'image(x_eg) severity error;
         end if;
       end if;
+      -- err_g was read from the vector file and never compared, so tying it
+      -- high passed the entire suite at all three grids.
+      if (err_g = '1') /= (x_err = 1) then
+        bad_err := bad_err + 1;
+        if bad_err <= 6 then
+          report "case " & integer'image(i) & ": err_g " & std_logic'image(err_g) &
+                 " expected " & integer'image(x_err) severity error;
+        end if;
+      end if;
       if to_integer(beta) /= x_beta then
         bad_beta := bad_beta + 1;
         if bad_beta <= 6 then
@@ -94,10 +103,11 @@ begin
     report "=== gdn_scalar, SP_Q=" & integer'image(SP_Q) & ", " &
            integer'image(nc) & " cases ===";
     report "bit-exact vs fixed reference: eg mismatches " & integer'image(bad_eg) &
-           ", beta mismatches " & integer'image(bad_beta);
+           ", beta mismatches " & integer'image(bad_beta) &
+           ", err_g mismatches " & integer'image(bad_err);
     report "vs double oracle: eg worst " & real'image(worst_eg) &
            " LSB(Q15), beta worst " & real'image(worst_beta) & " LSB(Q16)";
-    assert bad_eg = 0 and bad_beta = 0
+    assert bad_eg = 0 and bad_beta = 0 and bad_err = 0
       report "BIT-EXACTNESS FAILED" severity failure;
     report "PASS";
     running <= false;

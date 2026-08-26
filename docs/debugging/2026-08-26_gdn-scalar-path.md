@@ -190,6 +190,76 @@ below the LSB of every grid this model uses, so the function returns exactly
 `x`. Measured worst absolute error 1.35e-4, which is interpolation-bound and
 therefore does not improve with `q` -- it enters `g` multiplied by `|a|`.
 
+## Four MORE divergences, found by review after the 320-vector suite passed
+
+The suite above passed at Q12, Q15 and Q18, and the unit was committed on that
+basis. An adversarial review then ran the RTL against the C path on inputs the
+generator never drew and found **four divergences, every one of them a
+port-legal input**. All are fixed; the point of recording them is that the
+passing suite was not evidence of what it was taken to be.
+
+**The common root cause is width.** Three of the four are a wide value being
+narrowed or shifted at the wrong width, in a unit whose entire header is about
+not letting a shut gate read as an open one.
+
+1. **`g` was narrowed to s32 BEFORE being clamped.** `resize` keeps the sign
+   bit and the low bits, so `g = -(2^32 + 100)` became `-100`, which is inside
+   `(-LIM, 0]` and never clamps. A gate the reference shuts hard reads as
+   `eg = 31992` -- nearly wide open -- and `err_g` is wrong too. The clamp now
+   happens on the s68 value and narrows in the same step, so no intermediate
+   exists that could alias. **Adopting Q18 would have widened this bug's alias
+   window 64x**, since the window is `16*2^SP_Q` out of `2^31`.
+
+2. **`shift_left` on a `wide_t` is performed AT `wide_t`'s width.** The
+   saturation check sat after the shift, so `-27632 << 37` wrapped inside s52
+   and the check never saw the overflow -- while the C reference, working in
+   int64, had the headroom and saturated correctly. The check is now on the
+   mantissa, before the shift. This is the subtlest of the four: the RTL and
+   the C were the *same algorithm*, and differed only in the width the
+   intermediate lived at.
+
+3. **A left shift by a negative `a_e` overflowed both sides, differently.**
+   `sp * a_m` reaches 2^61, and `a_e` may be negative, so `rsh_r` shifts that
+   left by up to 40 -- past s68 in the RTL and past int64 in C. Both wrapped,
+   which makes it a divergence rather than a shared inaccuracy. Both now
+   saturate at 2^62; since `g` is clamped to `[-16*2^q, 0]` and `16*2^q <= 2^26`,
+   saturating there gives the identical clamped result.
+
+4. **A ZERO mantissa with a large exponent returned the positive sentinel.**
+   The `-sh > 40` branch tested `m >= 0`, so `m = 0` took the positive rail and
+   slammed `beta` to 65535 where the reference gives 32768. `to_q_wide` now
+   returns zero for a zero mantissa on every grid, which is also the only
+   defensible reading of the format.
+
+A fifth, smaller one: the beta path used the saturating s32 `to_q` in C and
+`to_q_wide` in the RTL. They agree everywhere the sigmoid's domain guard bites,
+which is why it never showed -- but two converters where the contract says one
+is a divergence waiting for a corner. Both sides now use `to_q_wide` plus the
+same clamp.
+
+### Why the suite missed all of them
+
+**The generator drew exponents in [-4, 20].** Every wide-shift guard in the
+unit -- the `>62` and `>40` cutoffs, the saturation sentinel, and the s52
+accumulator's headroom -- was therefore dead in test, and any mutation of those
+constants passed. The four defects live entirely in that hole. The band now
+spans **[-40, 60]**, and four named deterministic corners reproduce the exact
+counterexamples.
+
+**`err_g` was read from the vector file into a variable and never compared.**
+Tying `err_g` high passed all 320 vectors at all three grids. It is now
+asserted. 103 of 320 cases exercise it.
+
+**The lesson, and it is the same one this project has now learned three
+times.** `tb_l2norm_rs` certified a broken recipe because its golden shared the
+recipe's assumptions. Here the golden is genuinely independent -- a different
+language and, for the oracle, a different number system -- and it *still*
+certified a broken unit, because **the inputs shared the generator's
+assumptions**. An independent oracle over a biased input distribution measures
+only the region you thought to sample. Coverage of the guards is a separate
+obligation from independence of the golden, and passing the second does not
+discharge the first.
+
 ## Measured and REJECTED (do not retry)
 
 - **Symmetric clamp of the softplus argument.** See defect 2. Turns a shut

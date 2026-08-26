@@ -124,48 +124,98 @@ architecture rtl of gdn_scalar is
   signal arg        : wide_t := (others => '0');
   signal sp         : wide_t := (others => '0');
   signal gp         : signed(67 downto 0) := (others => '0');
-  signal g_q        : signed(31 downto 0) := (others => '0');
+  -- g BEFORE narrowing.  Narrowing to s32 first and clamping afterwards
+  -- aliases a large negative back into (-LIM, 0] -- numeric_std resize keeps
+  -- the sign bit and the low bits, so -(2**32 + 100) becomes -100, which never
+  -- clamps and opens a gate the reference shuts.  Clamp wide, then narrow.
+  signal g_w        : signed(67 downto 0) := (others => '0');
   signal eg_r       : signed(31 downto 0) := (others => '0');
   signal sp_tab     : std_logic := '0';   -- softplus came via the table
 
-  -- Site 3 on a wide grid: same rounding, no saturation.  A shift beyond the
-  -- reachable range returns a value already past every clamp downstream.
+  -- Site 3 on a wide grid.  Same rounding as 2.1.3, but SATURATING at a
+  -- sentinel instead of at the s32 rail, so the two terms of the softplus
+  -- argument cannot cancel each other's saturation (defect 1 in the header).
+  --
+  -- Three properties this function must have, all of which it lacked when
+  -- first written and all of which cost a divergence from the C reference:
+  --   * m = 0 is ZERO on every grid.  Returning the positive sentinel for a
+  --     zero mantissa with a large exponent slammed beta's gate to 65535.
+  --   * the sentinel and the shift cutoff must MATCH the C reference exactly
+  --     (SAT = 2**45, cutoff 40).  They were 2**45/36 here against 2**45/40
+  --     there, which diverges for e in [SP_Q-40, SP_Q-37].
+  --   * the exact shift branch must saturate TOO, not just the cutoff branch.
+  --     32767 << 36 is ~2**51 per term, so two terms overflowed the s52
+  --     accumulator and wrapped NEGATIVE -- an open gate where the reference
+  --     has a shut one.
+  -- With every term bounded by 2**45 the sum is bounded by 2**46, sp by 2**46,
+  -- and sp*a_m by 2**61, which is also what keeps the C reference inside
+  -- int64 rather than in undefined behaviour.
+  constant SAT_W : wide_t := shift_left(to_signed(1, wide_t'length), 45);
+
   function to_q_wide(m : signed(15 downto 0); e : signed(7 downto 0))
     return wide_t is
     variable sh : integer;
+    variable k  : natural;
     variable v  : wide_t;
   begin
+    if m = 0 then
+      return (others => '0');          -- zero is zero on every grid
+    end if;
     sh := to_integer(e) - SP_Q;
-    if sh >= 0 then
-      if sh > 40 then
-        return (others => '0');
-      end if;
-      -- round half toward +infinity
-      v := resize(m, wide_t'length);
-      if sh > 0 then
-        v := shift_right(v + to_signed(2**(sh-1), wide_t'length), sh);
-      end if;
-      return v;
+    if sh > 62 then
+      return (others => '0');
+    elsif sh > 0 then
+      k := sh - 1;                     -- 0 <= k <= 61
+      return shift_right(resize(m, wide_t'length)
+                         + shift_left(to_signed(1, wide_t'length), k), sh);
+    elsif sh = 0 then
+      return resize(m, wide_t'length);
+    elsif -sh > 40 then
+      if m > 0 then return SAT_W; else return -SAT_W; end if;
     else
-      if -sh > 36 then
-        -- 2**45 built by shift: the literal is outside VHDL's integer range
-        if m >= 0 then return shift_left(to_signed(1, wide_t'length), 45);
-        else             return -shift_left(to_signed(1, wide_t'length), 45); end if;
-      end if;
-      return shift_left(resize(m, wide_t'length), -sh);
+      -- Saturate BEFORE shifting.  shift_left on a wide_t is performed AT
+      -- wide_t's width, so -27632 << 37 wraps inside s52 and a post-shift
+      -- check never sees the overflow -- while the C reference, working in
+      -- int64, has the headroom and saturates correctly.  That asymmetry was
+      -- a divergence, which is why the check is on m rather than on v.
+      k := -sh;                        -- 1 <= k <= 40
+      v := resize(m, wide_t'length);
+      if v >  shift_right(SAT_W, k) then return  SAT_W; end if;
+      if v < -shift_right(SAT_W, k) then return -SAT_W; end if;
+      return shift_left(v, k);
     end if;
   end function;
 
-  -- round half toward +infinity by a runtime amount
+  -- Round half toward +infinity by a runtime amount, with a SATURATING left
+  -- branch.  a_e may be negative, which makes this a left shift of a value
+  -- already as large as 2**61, and shifting that left by up to 40 overflows
+  -- the s68 accumulator.  The C reference overflows int64 at the same point
+  -- and the two wrap DIFFERENTLY, so this is a divergence rather than an
+  -- inaccuracy.  g is clamped to [-16*2**q, 0] downstream and 16*2**q is at
+  -- most 2**26, so saturating at 2**62 gives the identical clamped result.
   function rsh_r(v : signed; s : integer) return signed is
-    variable t : signed(v'length-1 downto 0) := v;
+    variable t   : signed(v'length-1 downto 0) := v;
+    variable sat : signed(v'length-1 downto 0);
+    variable k   : natural;
   begin
+    sat := shift_left(to_signed(1, t'length), 62);
     if s <= 0 then
-      if -s > 40 then return (t'range => '0'); end if;
-      return shift_left(t, -s);
+      if t = 0 then
+        return (t'range => '0');
+      elsif -s > 62 then
+        if t > 0 then return sat; else return -sat; end if;
+      else
+        k := -s;                       -- 1 <= k <= 62
+        if t >  shift_right(sat, k) then return  sat; end if;
+        if t < -shift_right(sat, k) then return -sat; end if;
+        return shift_left(t, k);
+      end if;
+    elsif s > 62 then
+      return (t'range => '0');
+    else
+      k := s - 1;                      -- 0 <= k <= 61
+      return shift_right(t + shift_left(to_signed(1, t'length), k), s);
     end if;
-    if s > 60 then return (t'range => '0'); end if;
-    return shift_right(t + shift_left(to_signed(1, t'length), s-1), s);
   end function;
 
 begin
@@ -281,17 +331,22 @@ begin
             gp <= resize(sp * a_m, 68);
             st <= S_GSH;
 
+          -- barrel shift only, nothing else this cycle
           when S_GSH =>
-            gg  := rsh_r(gp, to_integer(a_e));
-            g_q <= resize(gg, 32);
+            g_w <= rsh_r(gp, to_integer(a_e));
             st  <= S_GCLAMP;
 
+          -- clamp in the WIDE domain and narrow in the same step, so no
+          -- intermediate ever exists that could alias.  min(0,.) is 2.1.3's
+          -- defensive guard; the lower clamp is exp_q's domain and sets err.
           when S_GCLAMP =>
-            if g_q > 0 then
-              g_q <= (others => '0');
-            elsif g_q < to_signed(-LIM, 32) then
-              g_q  <= to_signed(-LIM, 32);
+            if g_w > 0 then
+              ip_z <= (others => '0');
+            elsif g_w < resize(to_signed(-LIM, 32), 68) then
+              ip_z  <= to_signed(-LIM, 32);
               err_g <= '1';
+            else
+              ip_z <= resize(g_w, 32);
             end if;
             ip_rom <= 1;
             ip_ret <= S_EGOUT;
@@ -322,13 +377,10 @@ begin
 
         end case;
 
-        -- the interpolator's z for the exp and sigmoid calls, registered one
-        -- state ahead so S_IP_IDX never does a mux in series with the add
-        if st = S_GCLAMP then
-          if g_q > 0 then ip_z <= (others => '0');
-          elsif g_q < to_signed(-LIM, 32) then ip_z <= to_signed(-LIM, 32);
-          else ip_z <= g_q; end if;
-        elsif st = S_BCONV then
+        -- the interpolator's z for the sigmoid call, registered one state
+        -- ahead so S_IP_IDX never does a mux in series with the add.  The exp
+        -- call's z is set by S_GCLAMP itself, since it has to clamp anyway.
+        if st = S_BCONV then
           -- clamp before narrowing: sigmoid's own domain guard makes anything
           -- past +/-LIM equivalent, and resize() of a s52 into s32 would wrap.
           if to_q_wide(b_m, b_e) > to_signed(LIM, wide_t'length) then
