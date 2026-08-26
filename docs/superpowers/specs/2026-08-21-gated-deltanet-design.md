@@ -296,7 +296,10 @@ entity gdn_layer is
     y_exp  : out integer;
     done   : out std_logic;   -- one-cycle pulse, gated on BRESP (2.7)
     err    : out std_logic;
-    -- AXI4: TWO read masters + TWO write masters (2.5)
+    -- AXI4: FOUR masters, each BIDIRECTIONAL (2.5 as corrected by 3.4).
+    -- NOT two read plus two write: splitting a port by direction leaves
+    -- its other direction idle, which measured WORSE than paying the
+    -- read/write turnaround.  See 3.4.
     ...
   );
 end entity;
@@ -858,9 +861,16 @@ LANES = 8 :  32,768 cycles/layer ; 589,824/token = 2.95 ms @ 200 MHz
 of state read AND produces 16 B/cycle of write — 3.2 GB/s each way at 200 MHz,
 which is 100% of one 128-bit AXI master in each direction. Against A's
 measured-premise range of 47-70% port efficiency, **one master per direction
-cannot feed the pipeline**. B therefore uses **two read masters and two write
-masters**, striped by head parity (even heads on master 0, odd on master 1);
-each then needs >= 50% sustained:
+cannot feed the pipeline**. B therefore uses **four masters**, striped by head
+parity; each then needs >= 50% sustained:
+
+> **SUPERSEDED 2026-08-25 by §3.4.** This paragraph said "two read masters and
+> two write masters". Measurement says the four masters must each be
+> BIDIRECTIONAL, not split by direction: a port dedicated to one direction
+> leaves the other idle, and that costs more than the read/write turnaround it
+> avoids (47.1 GB/s against 38.4). The count of four is unchanged. The
+> per-master efficiency table below is also 0.8B-era and is superseded by
+> §3.1.
 
 | Port efficiency (per master) | State sweep, 18 layers |
 |---|---|
@@ -1231,23 +1241,46 @@ x 48 GDN layers                   = 18,874,368 elements per token per card
 cycles = 18,874,368 / LANES
 ```
 
-| `LANES` | sweep cycles | ms @ 300 MHz | HBM ports needed | GB/s |
-|---|---|---|---|---|
-| 8 | 2,359,296 | 7.86 | 1 | 9.6 |
-| 16 | 1,179,648 | 3.93 | 2 | 19.2 |
-| **32** | **589,824** | **1.97** | **4** | **38.4** |
-| 64 | 294,912 | 0.98 | 8 | 76.8 |
+| `LANES` | sweep cycles | ms @ 300 MHz | GB/s demanded |
+|---|---|---|---|
+| 8 | 2,359,296 | 7.86 | 9.6 |
+| 16 | 1,179,648 | 3.93 | 19.2 |
+| **32** | **589,824** | **1.97** | **38.4** |
+| 64 | 294,912 | 0.98 | 76.8 |
 
-**`LANES = 32` is not an arbitrary pick, it is the balance point.** The sweep
-reads 2 B and writes 2 B per element, so it demands `4 x LANES` B/cycle, and a
-measured HBM port delivers 32 B/cycle (`docs/debugging/`
-`2026-08-25_fk33-hbm-bandwidth-instrument.md`, 144.0 GB/s on 15 ports and
-288.0 on 30, both exactly ports x 32 B x f). So:
+(Port counts moved below, because deriving them needs §3.4's measurement.)
 
-> **ports = LANES / 8, exactly** -- and at `LANES = 32` B's compute time and
-> its four-master allocation (§2.5) coincide to the cycle. B is simultaneously
-> compute-bound and feed-bound at that point, which is where a design should
-> sit and is not where §2.5's arithmetic put it.
+**`LANES = 32` needs four HBM ports, and B is compute-bound there with
+margin.** The sweep reads 2 B and writes 2 B per element, so it demands
+`4 x LANES` B/cycle = 38.4 GB/s at `LANES = 32` and 300 MHz.
+
+> **CORRECTED 2026-08-25, later the same evening.** This paragraph first
+> derived the port count as `LANES / 8` from "a measured HBM port delivers
+> 32 B/cycle", and then claimed B's compute time and its four-master
+> allocation "coincide to the cycle... simultaneously compute-bound and
+> feed-bound". **Both halves were wrong, and §3.4's own measured table --
+> written ten minutes later -- contradicts the second one.**
+>
+> The 32 B/cycle figure is the READ-ONLY rate. An AXI port carries 32 B/cycle
+> **per direction**, 64 total, so a naive read of the port would give
+> `LANES/16` = 2 ports. The binding constraint is neither: it is the
+> read/write turnaround measured in §3.4, which puts a channel carrying a 1:1
+> R+W mix at **11.77 GB/s**. So:
+>
+> **ports = ceil(4 x LANES x f / 11.77 GB/s)** -- at `LANES = 32`,
+> 38.4 / 11.77 = 3.26, hence **4 ports**. The count is unchanged; the reason
+> is not, and the reason is what generalises.
+>
+> And B is **not** balanced there. Four ports deliver 47.1 GB/s against 38.4
+> demanded: **+23% feed margin**, i.e. compute-bound with room, which is a
+> better position than the one the original text claimed and a different one.
+
+| `LANES` | demand | ports at 11.77 GB/s each | margin |
+|---|---|---|---|
+| 8 | 9.6 GB/s | 1 | +23% |
+| 16 | 19.2 GB/s | 2 | +23% |
+| **32** | **38.4 GB/s** | **4** | **+23%** |
+| 64 | 76.8 GB/s | **7** (not 8) | +7% |
 
 Note this replaces §2.9's FK33 row, which is stale on three counts at 27B: it
 says state traffic is "19 MB/token vs 460 GB/s: ~41 us -- noise", but per-card
@@ -1450,7 +1483,43 @@ different mix and is not covered.
 
 The phase-schedule bullet is discharged. These are not:
 
-- **The §3.3 norm DSP cost is now MEASURED; its Fmax is the problem.**
+- **CLOSED for rmsnorm 2026-08-25: `rtl/rmsnorm_rs.vhd` exists, is bit-exact
+  with `rtl/rmsnorm.vhd`, and reaches 300.8 MHz.**
+
+  | `LANES` | DSP | Fmax | cycles at N=128 |
+  |---|---|---|---|
+  | 1 | 22 | 300.8 MHz | 430 |
+  | **4** | **40** | **300.8 MHz** | **142** |
+  | 8 | 64 | 200.0 MHz (does not close) | 94 |
+
+  `DSP = 16 + 6 x LANES`. Against the shipped unit at N=128: **4.6x fewer
+  cycles and 2.2x the clock, for 40 DSP against 78**. Bit-exact on 64 cases at
+  every `LANES` in {1,2,4,8,16}, `o_mant` and `o_exp`, with the original
+  instantiated side by side as the golden (`sim/tb_rmsnorm_rs.vhd`).
+
+  **`MREG` was not the fix**, contrary to what this item and C §3.13 both
+  predicted -- it is worth 26 MHz of the 183, and a version written with the
+  MREG cadence already in it measured 117.2 MHz. The rest came from splitting
+  fused states, seven measured iterations, each one bucketed from the actual
+  failing path. `docs/debugging/2026-08-25_rmsnorm-rs-300mhz.md`.
+
+  §3.3's budget with the measured 142 cycles: norms + L2 + silu + conv =
+  **401,664 cycles = 1.34 ms against the 589,824-cycle sweep, +47% margin.**
+  Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
+  the fixed 18 becoming 40).
+
+- **STILL OWED: the L2 norm is a DIFFERENT function and `rmsnorm_rs` does not
+  implement it.** §2.1.3 requires divide by `sqrt(ssq)` not `sqrt(mean)`, TWO
+  output quantizations per element, the `1/sqrt(128)` fold (not a pure shift,
+  since `sqrt(128) = 8*sqrt(2)`), no weight multiply, and a deliberate
+  divergence from `ggml_l2_norm` at zero input. §3.3's 109,056-cycle L2 term
+  assumes the same per-element cost as rmsnorm, which is plausible and
+  unverified. A `l2norm_rs` needs its own golden, which needs the C reference
+  below. **`rmsnorm_rs` closes the rmsnorm half of this line, not the line.**
+
+- ~~The §3.3 norm DSP cost is now MEASURED; its Fmax is the problem.~~
+  **Superseded by the two items above; the skeleton numbers are kept for the
+  record.**
   `sim/micro/micro_rmsn_lanes.vhd`, OOC on `xcvu33p-fsvh2104-2L-e` at 3.333 ns:
 
   | `LANES` | DSP | LUT | Fmax |

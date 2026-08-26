@@ -1513,15 +1513,39 @@ C-internal specifically to avoid a new D obligation.
 
 ### 3.13 Open, not yet answered
 
-1. **`rmsnorm_rs` exists only as a priced skeleton** (18 DSP): the real
-   narrowed unit, its bound assertions and its bit-exactness proof are
-   unwritten, and the skeleton's 278.9 MHz (synthesis-only) is still shy
-   of the clock -- `MREG` on the 34x32 Newton stage is the expected fix,
-   unmeasured. **Independently reproduced 2026-08-25** by B's
-   `sim/micro/micro_rmsn_lanes.vhd`, which measures 278.9 MHz at 1, 2 AND 4
-   lanes -- identical across widths, so it is one fixed path and not a fanout
-   effect, which supports the `MREG` diagnosis. B §3.6 depends on the same
-   fix; whoever lands it closes both.
+1. **CLOSED 2026-08-25: `rtl/rmsnorm_rs.vhd` is written, bit-exact and reaches
+   300.8 MHz.** The real narrowed unit now exists, with its bound assertions
+   in the RTL and its bit-exactness proved against `rtl/rmsnorm.vhd`
+   instantiated side by side over 64 cases at every `LANES` in {1,2,4,8,16}
+   (`sim/tb_rmsnorm_rs.vhd`).
+
+   | `LANES` | DSP | Fmax | cycles at N=128 |
+   |---|---|---|---|
+   | 1 | 22 | **300.8 MHz** | 430 |
+   | 4 | 40 | **300.8 MHz** | 142 |
+   | 8 | 64 | 200.0 MHz | 94 |
+
+   **`MREG` was NOT the fix, and this item predicted that it was.** It is
+   worth 26 MHz of the 183; a version written with the MREG cadence already
+   in it measured **117.2 MHz**, worse than `rmsnorm.vhd`'s own 138.4. The
+   real gains came from splitting fused states -- the mean/seed chain was one
+   state doing a divide, an exponent shift, a clamp, a 63-bit MSB scan, a
+   barrel-shift normalise and a ROM lookup -- found by bucketing the actual
+   failing endpoint seven times rather than by pursuing the hypothesis.
+   `docs/debugging/2026-08-25_rmsnorm-rs-300mhz.md`.
+
+   **For C this changes §3.6's throughput line.** C's QK-norm was priced at
+   ~1,296 cycles per invocation on one shared instance; at `LANES = 4` the
+   same work is 142, so the 14 invocations per layer are 1,988 cycles rather
+   than 18.1K, and the group-overlap scheme §3.6/§3.7 needs to hide far less.
+   C §3.7's 166K-cycle QK-norm row and its 0.55/0.72 ms entries should be
+   re-derived; they are NOT updated here because C's own overlap control is
+   §3.6's, not B's, and re-deriving another subsystem's budget from outside it
+   is how the 0.93 ms in B §2.5 happened.
+
+   Cost: 40 DSP for the 4-lane form against the 18 this item assumed, so C's
+   aux row and the whole-die sum both move. Whole-die is **2,546 of 2,880 =
+   88.4%**, still under the line.
 2. **No Fmax measurement exists at 192 lanes.** The routed 339.6 MHz is at
    64; broadcast fanout grows with lanes (k/v fan out 6, e/f fan out 32,
    control 192) and the 64-lane limiter had already moved to the DSP
