@@ -216,8 +216,26 @@ guarantee, and it is the unit whose recipe was found broken in the first place.
 - **`gdn_recur_pipe` is stall-intolerant by construction.** It needs an elastic
   column buffer and a drain interlock in front of it before D's sequencer is
   designed against its port. Nobody has written that piece down.
-- **No die-wide BRAM sum exists** the way the DSP sum finally does.
-- The FK33 is still at wiper 68 / 0.717 V. Nothing was changed on the hardware.
+- **No die-wide BRAM sum exists** the way the DSP sum finally does. Tonight
+  made this worse rather than better: conv's "0 BRAM" became 4, and §2.6's
+  table is 0.8B-dimensioned, so the BRAM side is now known to be wrong in at
+  least two places with no total to check against.
+- **`alpha`'s real distribution is unknown**, and every `eg` number tonight --
+  including the whole basis for decision 3 -- fixes `alpha = 0`, because that
+  is what `ref/gdn_eg_qwen3_27b.txt` extracts from the GGUF. `alpha` is an
+  activation. The weight-only figure is a lower bound on how far `g` can
+  travel, and the same llama.cpp instrumentation that would settle `beta`'s
+  histogram would settle this too. **These are one task, not two, and it is
+  the largest single unknown left in B's numerics.**
+- **`gdn_scalar` has no P&R** and no schedule check against B's per-layer
+  budget. It runs 16 times per layer, so it is almost certainly free, but
+  "almost certainly" is what §2.8 said about its DSP count before it measured
+  7 against a guess of 2 to 4.
+- **§2.1.3's exponent-capture path is out of every unit's scope.** `gdn_conv`
+  and `gdn_scalar` both take their exponents as ports. Nothing has been written
+  that produces them.
+- The FK33 is still at wiper 68 / 0.717 V. Nothing was changed on the hardware,
+  and VCCINT was NOT stepped to 0.85 V.
 
 ## Where to read more
 
@@ -227,3 +245,8 @@ guarantee, and it is the unit whose recipe was found broken in the first place.
   miss, and the GAP-bisect procedure that found the pipelining bugs.
 - `docs/debugging/2026-08-25_l2norm-recipe-collapse.md` -- the broken recipe and
   why its testbench could not see it.
+- `docs/debugging/2026-08-26_gdn-scalar-path.md` -- tonight's unit: the two
+  saturation defects in §2.1.3, the LUT endpoint bug, and where `eg`'s accuracy
+  actually goes.
+- `docs/debugging/2026-08-25_gdn-recurrence-error-bound.md` -- now closed on the
+  `eg` term, which its own open list had twice named as the sharpest gap.
