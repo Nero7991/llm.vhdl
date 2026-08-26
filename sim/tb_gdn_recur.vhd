@@ -132,6 +132,12 @@ begin
     variable exp_oacc, orc_o : real;
     variable c_phys, c_tk0, c_sej, c_ev, c_eg, c_beta, c_vj : integer;
     variable orc_on : real;   -- sum |term| of the oracle output dot
+    -- A "relative" figure is only meaningful if its denominator is.  Carry the
+    -- term norm of the worst case so a huge ratio can be told apart from a
+    -- tiny scale, which is the trap this metric has already sprung twice.
+    variable worst_o_on : real := 0.0;
+    variable worst_o_c  : integer := -1;
+    variable worst_o_eg : integer := -1;
     variable nphys : integer := 0;
     variable n_odeg : integer := 0;   -- columns whose oracle output dot is identically zero
     variable worst_s0, worst_s1 : real := 0.0;   -- tk=0 and steady-state
@@ -290,7 +296,12 @@ begin
         e_o_rel := 0.0;
         n_odeg  := n_odeg + 1;
       end if;
-      if e_o_rel > worst_o then worst_o := e_o_rel; end if;
+      if e_o_rel > worst_o then
+        worst_o    := e_o_rel;
+        worst_o_on := orc_on;      -- the DENOMINATOR at the worst case
+        worst_o_c  := c;
+        worst_o_eg := c_eg;
+      end if;
       if bad_tol /= 0 or e_o_rel > tol_o_here then
         report "case " & integer'image(c) & ": OUT OF TOLERANCE vs ORACLE in "
              & integer'image(bad_tol) & " state element(s), o rel err "
@@ -327,6 +338,9 @@ begin
            & integer'image(nphys) & " physically realizable ones, worst vs the "
            & "double ORACLE is " & real'image(worst_s) & " state LSB and "
            & real'image(worst_o) & " of the output dot's term norm"
+           & " [worst at case " & integer'image(worst_o_c)
+           & ", eg=" & integer'image(worst_o_eg)
+           & ", term norm " & real'image(worst_o_on) & "]"
            severity note;
       report "gdn_recur: worst state error splits by token index -- "
            & real'image(worst_s1) & " LSB in steady state, "

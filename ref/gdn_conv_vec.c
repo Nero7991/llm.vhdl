@@ -58,7 +58,14 @@ int main(int argc, char **argv)
         else if (c < 24) vmask = 0xF;
         else             vmask = rnd_range(1, 15);
 
-        int e_t[K], cw_exp = rnd_range(-30, 30);
+        /* cw_exp is normally modest, but one class in seven is drawn wide
+           enough that e_seg = e_ref + cw_exp - sh_seg can leave int8 and set
+           err.  Without it the err path is structurally UNREACHABLE: with
+           |e_ref| <= 60 and |cw_exp| <= 30, e_seg is confined to [-108, 90]
+           and err was 0 in all 128 cases, so an err_seg tied high passed the
+           whole suite. */
+        int e_t[K], cw_exp = (c % 7 == 0) ? rnd_range(-110, 110)
+                                          : rnd_range(-30, 30);
         for (int t = 0; t < K; t++) e_t[t] = rnd_range(-40, 40);
         /* one case class with a wide tap-exponent spread, so the alignment
          * shifts actually bite rather than all being zero */

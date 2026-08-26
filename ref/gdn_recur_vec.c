@@ -84,8 +84,61 @@ static int32_t rnd_range(int32_t lo, int32_t hi){
  * than by |d|, and at tk = 0 the state is exactly k_n*d_m so it inherits that
  * error whole.
  */
+/* ---------------------------------------------------------------------------
+ * The measured per-head decay gate.
+ *
+ * This used to draw eg from [27853, 32767] on the stated grounds that the
+ * table "ranges over roughly 0.85..0.99997".  The table it cited says
+ * otherwise: 522 of 2304 heads (22.7%) are below 0.85 at alpha = 0, 162 are
+ * below 0.5 and 25 are below 0.05, with a minimum of 1.17e-4.  Every accuracy
+ * number measured with the old draw therefore excluded almost a quarter of the
+ * real model, including the whole region where the state term is small enough
+ * for the update's grid to dominate.  So sample the actual file instead of
+ * asserting a range over it.
+ * ------------------------------------------------------------------------- */
+static int   eg_tab[4096];
+static int   eg_n = 0;
+
+static void load_eg_table(void)
+{
+    FILE *f = fopen("ref/gdn_eg_qwen3_27b.txt", "r");
+    char line[512];
+    if (!f) { fprintf(stderr, "gdn_eg_qwen3_27b.txt missing\n"); exit(1); }
+    while (fgets(line, sizeof line, f) && eg_n < 4096) {
+        int L, H; double e, a, b;
+        if (line[0] == '#') continue;
+        if (sscanf(line, "%d %d %lf %lf %lf", &L, &H, &e, &a, &b) != 5) continue;
+        if (!(e > 0.0 && e <= 1.0)) continue;
+        long q = lround(e * 32768.0);
+        if (q > 32768) q = 32768;
+        if (q < 0) q = 0;
+        eg_tab[eg_n++] = (int)q;
+    }
+    fclose(f);
+    if (eg_n == 0) { fprintf(stderr, "no eg rows parsed\n"); exit(1); }
+}
+
+/* One eg for a head group.  Deliberately stratified rather than uniform, so
+ * the two structural corners are always present instead of appearing by luck:
+ *   sel 0  eg = 32768  gate fully open (alpha drives softplus to ~0)
+ *   sel 5  eg = 0      gate fully SHUT.  Mid-sequence this makes the decayed
+ *                      state term identically zero for the whole column --
+ *                      the same masked-operand shape as tk = 0, but tk0 does
+ *                      not gate it, so se_j still enters e_u's minimum.  That
+ *                      is the one member of the class 2.1.4's corrections do
+ *                      not cover, and it had never been generated.
+ *   else   the measured distribution
+ */
+static int pick_eg(int sel)
+{
+    if (sel == 0) return 32768;
+    if (sel == 5) return 0;
+    return eg_tab[rnd_range(0, eg_n - 1)];
+}
+
 int main(int argc, char **argv)
 {
+    load_eg_table();
     const char *out = argc > 1 ? argv[1] : "sim/gdn_recur_vec.txt";
     int d_norm  = (argc > 2 && atoi(argv[2]) != 0);
     int tk0_ed  = (argc > 3 && atoi(argv[3]) != 0);
@@ -145,7 +198,7 @@ int main(int argc, char **argv)
             if (e_v >  120) e_v =  120;
             if (e_v < -120) e_v = -120;
             if (a % 8 == 0) {
-                g_eg   = rnd_range(27853, 32767);
+                g_eg   = pick_eg((a / 8) % 6);
                 g_beta = rnd_range(1, 65535);
                 double kd[DIM], qd[DIM], nk = 0.0, nq = 0.0;
                 for (int i = 0; i < DIM; i++) {
@@ -177,7 +230,7 @@ int main(int argc, char **argv)
             e_v  = se_j + rnd_range(-8, 8);
             if (a == 0) {
                 g_tk0  = 0;            /* steady state: the common case */
-                g_eg   = rnd_range(27853, 32767);
+                g_eg   = pick_eg(a % 6);
                 g_beta = rnd_range(1, 65535);
                 double kd[DIM], qd[DIM], nk = 0.0, nq = 0.0;
                 for (int i = 0; i < DIM; i++) {
@@ -207,12 +260,12 @@ int main(int argc, char **argv)
             /* v shares the activation scale, so its exponent tracks the
              * state's within a realistic spread rather than roaming freely */
             e_v  = se_j + rnd_range(-8, 8);
-            /* exp(g) for this model sits just under 1; the measured per-head
-             * table (ref/gdn_eg_qwen3_27b.txt) ranges over roughly
-             * 0.85..0.99997, so eg_q15 lives near the top of u16 */
+            /* eg comes from the measured per-head table, tail included --
+             * see load_eg_table above for why the old [0.85, 1.0] draw was
+             * wrong about its own source. */
             if (c % GRP == 0) {
                 g_tk0  = ((c / GRP) % 4 == 0);
-                g_eg   = ((c / GRP) % 3 == 0) ? 32768 : rnd_range(27853, 32767);
+                g_eg   = pick_eg((c / GRP) % 6);
                 /* one group per sweep deliberately lands in the small-beta
                  * range where the tk=0 d_m defect bites */
                 g_beta = ((c / GRP) % 5 == 0) ? rnd_range(1, 256)

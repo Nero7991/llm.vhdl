@@ -11,21 +11,46 @@ is measured and committed.
 behind generics defaulting FALSE, both units are bit-exact in all four
 combinations, and the corrected form has been synthesized.
 
-| mode | median | p95 | max | worst tk=0 | first tokens lost entirely |
+| mode | median | p95 | max | `eg = 0` max | `eg < 0.85` median |
 |---|---|---|---|---|---|
-| **pinned (today's spec)** | 0.654 | 4768.00 | 5189.00 | 5189.00 | **3** |
-| `D_NORM` alone | 0.602 | 16558.63 | **37413.90** | 37413.90 | 3 |
-| `TK0_ED` alone | 0.666 | 9.92 | 1218.04 | 1218.04 | 0 |
-| **both** | 0.605 | **1.20** | **3.47** | **1.11** | **0** |
+| **pinned (today's spec)** | 0.65 | 4,799 | 5,245 | 4,799 | **78.33** |
+| `D_NORM` alone | 0.60 | 18,067 | **11,662,306** | 17,973 | 12.90 |
+| `TK0_ED` alone | 0.68 | 26.54 | 1,218 | 25.55 | 0.75 |
+| **both** | **0.59** | **1.27** | **8.96** | **1.05** | **0.71** |
 
-State error in LSB of the unit's own grid, over the physically realizable
-columns. **The denominators differ between rows**: the `TK0_ED` rows exclude 12
-columns that §2.1.6 flags as exponent errors, so those rows are over 276
-columns and the others over 288. The p95 and max are therefore not taken over
-the same set; the ranking is unaffected but the exact numbers are not strictly
-comparable. Disclosed in
-`docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`. "Lost entirely" means the first token's state came out identically
-zero against a non-zero oracle.
+State error in LSB of the unit's own grid, over the 288 physically realizable
+columns.
+
+**These numbers replace the ones circulated earlier tonight, and the earlier
+ones were measured on a vector set that excluded almost a quarter of the real
+model.** `ref/gdn_recur_vec.c` drew `eg` from [0.85, 1.0] on the stated grounds
+that the measured per-head table "ranges over roughly 0.85..0.99997". The table
+it cited says otherwise: **522 of 2,304 heads (22.7%) are below 0.85** at
+alpha = 0, 162 are below 0.5, 25 are below 0.05, and the minimum is 1.17e-4.
+The generator now samples that file directly instead of asserting a range over
+it. Credit for spotting it goes to the review, not to me.
+
+The correction does not change the ranking, so **decision 1 is unaffected**.
+What it changes is the size of the numbers, in both directions:
+
+- **The pinned recipe is worse than reported where it was never measured.** In
+  the newly included `eg < 0.85` region its median error is **78.33 LSB against
+  0.59** in the region the old draw covered -- a factor of 130.
+- **"Do not adopt `D_NORM` alone" is now a much stronger warning.** Its worst
+  case is 11.7 million LSB, not the 37,414 measured on the narrow draw.
+- **The corrected recipe holds up across the whole distribution**, but its
+  worst case is 8.96 LSB rather than the 3.47 reported earlier. Still two to
+  three orders below every alternative.
+
+**The third site the review predicted is real, and the amendment already covers
+it.** At `eg = 0` the decayed state term is identically zero for a whole column
+mid-sequence -- structurally the same masked operand as `tk = 0`, but `tk0`
+does not gate it, so `se_j` still enters `e_u`'s minimum. That case had never
+been generated. Now that it is: the pinned recipe scores 4,799 LSB on those
+columns and both corrections together take it to **1.05**. So the amendment as
+scoped is sufficient, and does NOT need extending to a third site -- which was
+the open worry, since adopting a half-scoped amendment is exactly the
+`D_NORM`-alone mistake.
 
 - **`D_NORM`**: quantize `d` on its own grid instead of inheriting `e_d`.
 - **`TK0_ED`**: at `tk = 0`, take `e_d = e_v` instead of `min(e_v, ske)`,

@@ -21,7 +21,11 @@ use ieee.math_real.all;
 use std.textio.all;
 
 entity tb_gdn_conv is
-  generic(CH    : positive := 256;
+  -- CH_MAX sizes the instance; NCH is the segment length actually driven, so
+  -- the testbench can run a SHORT segment on a LARGE instance -- the case that
+  -- matters, since B's q/k/v segments are 1,024/1,024/3,072 and must share one
+  -- unit.
+  generic(CH_MAX : positive := 256;
           K     : positive := 4;
           LANES : positive := 8;
           VECS  : string   := "gdn_conv_vec.txt";
@@ -38,6 +42,7 @@ entity tb_gdn_conv is
 end entity;
 
 architecture sim of tb_gdn_conv is
+  constant CH : positive := CH_MAX;   -- vectors are generated at CH_MAX
   constant NB : integer := CH / LANES;
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';
@@ -57,9 +62,9 @@ begin
   clk <= not clk after 5 ns;
 
   dut : entity work.gdn_conv
-    generic map(CH => CH, K => K, LANES => LANES)
+    generic map(CH_MAX => CH_MAX, K => K, LANES => LANES)
     port map(clk => clk, rst => rst, start => start,
-             tvalid => tvalid, e_t => e_t, cw_exp => cw_exp,
+             nch => CH, tvalid => tvalid, e_t => e_t, cw_exp => cw_exp,
              s_valid => s_valid, x_in => x_in, w_in => w_in,
              o_valid => o_valid, o_data => o_data, o_done => o_done,
              e_seg => e_seg, sh_seg => sh_seg, err_seg => err_seg, ready => ready);
@@ -141,6 +146,10 @@ begin
       if c_err = 1 then
         if err_seg /= '1' then bad := bad + 1; end if;
       else
+        -- err_seg must be checked LOW here.  Omitting it left the flag
+        -- unconstrained in every passing case, so a tied-high err_seg was
+        -- indistinguishable from a correct one.
+        if err_seg /= '0' then bad := bad + 1; end if;
         if to_integer(e_seg) /= c_eseg then bad := bad + 1; end if;
         if sh_seg /= c_sh then bad := bad + 1; end if;
       end if;

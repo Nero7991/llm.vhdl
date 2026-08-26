@@ -43,15 +43,24 @@ use ieee.math_real.all;
 
 entity gdn_conv is
   generic(
-    CH    : positive := 256;   -- channels in this segment
+    -- CH_MAX is the LARGEST segment this instance can serve, not the segment
+    -- it does serve.  B's three per-card segments are different sizes -- q
+    -- 1,024, k 1,024, v 3,072 (3.2's derivation of conv width 5,120) -- so a
+    -- compile-time channel count would need three separate instances, and the
+    -- measured 16-DSP row would really be 48.  The actual length arrives on
+    -- `nch` per invocation.  (2.1.3's "over its 2048 acc values" is the 0.8B's
+    -- key_dim, the same stale dimensioning already corrected in 2.6's BRAM
+    -- table; the 27B's segments are 1,024/1,024/3,072.)
+    CH_MAX : positive := 256;  -- max channels in any segment on this instance
     K     : positive := 4;     -- ssm.conv_kernel
-    LANES : positive := 8      -- channels per cycle; must divide CH
+    LANES : positive := 8      -- channels per cycle; must divide CH_MAX
   );
   port(
     clk    : in  std_logic;
     rst    : in  std_logic;
     start  : in  std_logic;
     -- per segment
+    nch    : in  integer range 0 to CH_MAX;        -- channels THIS segment
     tvalid : in  std_logic_vector(K-1 downto 0);   -- tap t valid (1.6)
     e_t    : in  std_logic_vector(K*8-1 downto 0); -- per-slot exponents, int8
     cw_exp : in  signed(7 downto 0);
@@ -73,9 +82,13 @@ end entity;
 
 architecture rtl of gdn_conv is
 
-  constant NB    : integer := CH / LANES;
+  constant NB    : integer := CH_MAX / LANES;    -- storage bound
+  -- Group count for the segment in flight.  Latched at start so a caller
+  -- changing nch mid-pass cannot split the two passes across two lengths --
+  -- the same interface hazard tvalid already has.
+  signal nbr : integer range 0 to NB := 0;
   constant LOG2L : integer := integer(ceil(log2(real(LANES))));
-  constant SHAPE_OK : boolean := (2**LOG2L = LANES) and (NB * LANES = CH);
+  constant SHAPE_OK : boolean := (2**LOG2L = LANES) and (NB * LANES = CH_MAX);
 
   type s34_arr is array (natural range <>) of signed(33 downto 0);
   type s16_arr is array (natural range <>) of signed(15 downto 0);
@@ -153,11 +166,15 @@ begin
           when S_IDLE =>
             if start = '1' then
               assert SHAPE_OK
-                report "gdn_conv: LANES must be a power of two dividing CH"
+                report "gdn_conv: LANES must be a power of two dividing CH_MAX"
                 severity failure;
               assert tvalid /= (tvalid'range => '0')
                 report "gdn_conv: no valid taps -- e_ref would be undefined"
                 severity failure;
+              assert nch > 0 and (nch / LANES) * LANES = nch
+                report "gdn_conv: nch must be a non-zero multiple of LANES"
+                severity failure;
+              nbr <= nch / LANES;          -- latched for BOTH passes
               amp <= (others => (others => '0'));
               err_seg <= '0';
               state <= S_PREP;
@@ -192,7 +209,7 @@ begin
           -- ===== pass A: the MACs =========================================
           -- F: fetch | 1: K multiplies | 2: K aligns | 3: sum, store | 4: amax
           when S_A =>
-            if s_valid = '1' and idx < NB then
+            if s_valid = '1' and idx < nbr then
               for t in 0 to K-1 loop
                 for ln in 0 to LANES-1 loop
                   base := (t*LANES + ln) * 16;
@@ -258,7 +275,7 @@ begin
               end loop;
             end if;
 
-            if idx >= NB and vf = '0' and v1 = '0' and v2 = '0' and v3 = '0'
+            if idx >= nbr and vf = '0' and v1 = '0' and v2 = '0' and v3 = '0'
                and v4 = '0' then
               state <= S_ADR; red_n <= LANES;
             end if;
@@ -293,7 +310,7 @@ begin
           -- ===== pass B: the segment requantizer ==========================
           -- F: fetch | 1: +bias | 2: shift | 3: sat16 out
           when S_B =>
-            if idx < NB then
+            if idx < nbr then
               for ln in 0 to LANES-1 loop
                 uf(ln) <= signed(acc_mem(idx)((ln+1)*34-1 downto ln*34));
               end loop;
@@ -320,7 +337,7 @@ begin
               end loop;
             end if;
 
-            if idx >= NB and vf = '0' and v1 = '0' and v2 = '0' then
+            if idx >= nbr and vf = '0' and v1 = '0' and v2 = '0' then
               state <= S_BDR;
             end if;
 

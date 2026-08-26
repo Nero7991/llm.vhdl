@@ -1934,6 +1934,33 @@ The phase-schedule bullet is discharged. These are not:
   |---|---|---|---|---|
   | **4** | **16** | **447.4 MHz** | 0 | 3,421 |
   | 8 | 32 | 442.7 MHz | 0 | 6,753 |
+
+  **RE-MEASURED AT THE REAL SEGMENT SHAPES, later on 2026-08-26.** The table
+  above is `CH = 256`, which is not a shape B ever runs: the per-card segments
+  are **q 1,024, k 1,024, v 3,072** (§3.2's conv width 5,120). §2.1.3's "over
+  its 2048 `acc` values" is the **0.8B's** `key_dim` -- the same stale
+  dimensioning already corrected in §2.6's BRAM table, in a second place.
+
+  `CH` was an elaboration-time generic, so one instance could not serve three
+  different segment lengths and the honest cost would have been three
+  instances at 48 DSP. It is now `CH_MAX` plus a runtime `nch` port, latched at
+  start so the two passes cannot straddle two lengths. Measured:
+
+  | `CH_MAX` | `LANES` | DSP | BRAM36 | LUT | Fmax |
+  |---|---|---|---|---|---|
+  | 256 (the toy shape) | 4 | 16 | **0** | 3,299 | 451.1 MHz |
+  | 1,024 (q, k) | 4 | 16 | **2** | 3,136 | 426.3 MHz |
+  | **3,072 (v, sizes the instance)** | **4** | **16** | **4** | **3,136** | **425.9 MHz** |
+  | 3,072 | 8 | 32 | 4 | 6,521 | 443.1 MHz |
+
+  **The 16-DSP row survives the real shape**: the DSP count is set by `LANES`
+  alone, so ONE instance sized at `CH_MAX = 3,072` serves all three segments
+  for 16 DSP, not 48.
+
+  **The "0 BRAM" did not survive it.** That was an artifact of `CH = 256`,
+  where the accumulator is 32 x 272b and maps to LUTRAM. At the v segment it is
+  768 x 136b and costs **4 BRAM36**, consistent with §2.6's own corrected row.
+  Anywhere "conv, 0 BRAM" appears, read 4.
   | 16 | 64 | 427.5 MHz | 0 | 13,334 |
 
   `DSP = 4 x LANES` exactly, one per tap per lane, and the unit closes **40%
