@@ -1642,12 +1642,27 @@ The phase-schedule bullet is discharged. These are not:
   | 8 | 33 | 302.5 MHz | **16** | 16 | 6.5 | 8,277 |
   | 16 | 65 | 302.5 MHz | **8** | 8 | 12.5 | 13,772 |
   | **32** | **129** | **302.5 MHz** | **4** | **4** | **24.5** | **24,037** |
-  | 64 | -- | -- | **2** | 2 | -- | -- |
+  | 64 | 257 | 301.9 MHz | **2** | 2 | 48.5 | 50,422 |
 
-  `LANES = 64` -- §3.1's upside row, 0.98 ms -- reaches **II = 2** in
-  simulation with `SLOTS = 32`, so that row is measured rather than projected.
-  It is not yet synthesized, so its DSP/Fmax/BRAM are still open; note the
-  memories double in width, so expect ~49 BRAM.
+  **`LANES = 64` -- §3.1's upside row, 0.98 ms -- is now fully measured**, at
+  `SLOTS = 32`: II = 2, 257 DSP (`4 x LANES + 1` again), 48.5 BRAM, 301.9 MHz.
+  **But it is almost certainly not affordable:** +128 DSP over `LANES = 32`
+  takes B's row from ~202 to ~330 and the die from the 89.7% floor to roughly
+  94%, on top of doubling this unit's BRAM. The row is real; the budget for it
+  is not.
+
+  **AND THE CORRECTED RECIPE COSTS NOTHING.** Synthesized with `D_NORM` and
+  `TK0_ED` both true at `LANES = 32`: **129 DSP, 24.5 BRAM, 305.6 MHz** --
+  identical DSP and BRAM, and slightly BETTER timing than the pinned 302.5,
+  for +81 LUT and +154 FF. So the amendment owed on §2.1.4 has **no resource
+  cost to weigh against its accuracy benefit**; the only thing being traded is
+  the churn of reopening a pinned contract.
+
+  **The guards are proven, not merely present.** `SLOTS = 8` at `LANES = 32`
+  dies with *"SLOTS=8 is below the 15 columns in flight at this LANES; a slot
+  would be reused while its column is still live"*, and `LANES = 24` dies with
+  the shape assertion. Both were run; an assertion never observed firing is
+  unproven, by this project's own standard.
 
   Bit-identical to `gdn_recur` on the same 192 vectors at every `LANES`. The
   issue interval is EXACTLY `NB` at every lane count, which is precisely what
