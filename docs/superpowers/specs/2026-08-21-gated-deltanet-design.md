@@ -1312,19 +1312,45 @@ S_EMIT/S_EMIT_B   2N cycles     two cycles per element
 The fixed part is ~15 cycles, ~2%. Pipelining across invocations saves that and
 nothing else. Two changes do the work instead:
 
-1. **Fuse RAW and EMIT.** `S_EMIT` re-derives what `S_RAW` already computed --
-   the RTL says so in a comment, deliberately, to avoid storing `raw`. That
-   trade buys back N words of storage and costs 2N cycles out of 5N. At
-   N = 128 and int32 `raw`, storing it is 512 B of LUTRAM per unit. Fusing
-   takes 5N to 3N; fusing and emitting in the same cycle takes it to 2N.
-2. **Vectorize.** The element-proportional part divides by the lane count.
+1. **DO NOT fuse RAW and EMIT by storing `raw`.** An earlier draft of this
+   section proposed exactly that, on the reading that `S_EMIT` needlessly
+   re-derives what `S_RAW` already computed. **It is not needless.** The RTL
+   comment at `rtl/rmsnorm.vhd:S_RAW` records why:
+
+   > "This removes a 64x64-bit indexed array that Vivado inferred as
+   > UNINITIALIZED distributed RAM in the congested engine (-> non-deterministic
+   > HW output); recompute is bit-identical (same widths/order)."
+
+   The duplication is a **fix for a measured silicon failure**, not an
+   oversight, and re-introducing the `raw` array re-introduces the bug. The
+   proposal is withdrawn.
+2. **Pipeline RAW and EMIT to one cycle per element.** The shipped unit spends
+   TWO cycles in each (`S_RAW`/`S_RAW_B`, `S_EMIT`/`S_EMIT_B`), split so that
+   `xm*inv` and `(xm*inv)*wm` are not a cascaded-DSP combinational cone -- the
+   same reason the rsqrt is pipelined. Registering between them at one element
+   per cycle keeps that property and costs nothing: 5N becomes **3N**, with no
+   array and no stored `raw`.
+3. **Vectorize.** The element-proportional part divides by the lane count.
+   Only x and w are buffered, at 16 bits each -- not the 64-bit `raw`.
 
 | form | cycles at N=128 | out+L2 cycles | ms |
 |---|---|---|---|
-| `rmsnorm.vhd` as shipped, 5N | 645 | 1,238,400 | 4.13 |
-| fused, 1 element/cycle, 2N | 271 | 520,320 | 1.73 |
-| fused, **4 elements/cycle** | 79 | 151,680 | **0.51** |
-| fused, 8 elements/cycle | 47 | 90,240 | 0.30 |
+| `rmsnorm.vhd` as shipped, 5N, 1 element/cycle | 645 | 1,238,400 | 4.13 |
+| 5N, **4 elements/cycle** -- vectorized only, no other change | 175 | 336,000 | 1.12 |
+| **3N, 4 elements/cycle** -- RAW/EMIT pipelined, recompute KEPT | **111** | **213,120** | **0.71** |
+| 2N by storing `raw`, 4 elements/cycle | 79 | 151,680 | 0.51 (**REJECTED**, see above) |
+
+**Vectorization alone is sufficient**, which is the important line in that
+table. Whole-phase budgets against the 589,824-cycle sweep:
+
+| norm form (4 lanes) | norms + L2 + silu + conv | vs sweep |
+|---|---|---|
+| shipped 5N, serial 1 element/cycle | 1,386,624 cycles, 4.62 ms | **does not hide** |
+| 5N, 4 lanes, no other change | 465,024 cycles, 1.55 ms | hides, +27% margin |
+| **3N, 4 lanes** | **342,144 cycles, 1.14 ms** | **hides, +72% margin** |
+
+So the rejected `raw` array was buying margin the design does not need. 3N at
+4 lanes is the target; 5N at 4 lanes is the fallback and still works.
 
 silu must be **at least 1 per cycle and preferably 4**; the 3-cycle FSM rate of
 the existing softmax cone is 3.93 ms on its own, twice the sweep. That is
@@ -1338,13 +1364,13 @@ outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
 | term | cycles | ms |
 |---|---|---|
 | state sweep, `LANES = 32` | 589,824 | 1.97 |
-| output rmsnorm + L2, fused, 4 lanes | 151,680 | 0.51 |
+| output rmsnorm + L2, **3N, 4 lanes** | 213,120 | 0.71 |
 | silu at 4/cycle | 98,304 | 0.33 |
 | conv, depthwise k=4 over 5,120/layer at `LANES = 32` | 30,720 | 0.10 |
-| **nonlinear + conv, overlapped under the sweep** | 280,704 | 0.94 |
+| **nonlinear + conv, overlapped under the sweep** | 342,144 | 1.14 |
 | **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** |
 
-The nonlinearities now fit under the sweep with 53% margin, which is the
+The nonlinearities now fit under the sweep with 72% margin, which is the
 "merely good" overlap §2.5 wanted and did not have. **B lands at ~2.0 ms/token,
 better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
 throughput, not scheduling.
