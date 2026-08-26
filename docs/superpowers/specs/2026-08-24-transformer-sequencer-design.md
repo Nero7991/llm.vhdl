@@ -644,7 +644,10 @@ The task brief for a "sequencer" implies ~0 DSP. **D-ctrl is 0 DSP.** But B
 orphaned onto D (§2.2-E) -- and those are multiplies: RMSNorm needs
 sum-of-squares, rsqrt, and a per-element `scale_mul`; swiglu needs a sigmoid
 ROM interpolation and two multiplies per element. At `LANES_V = 8` (below)
-D-vec is an estimated **24-40 DSP48E2** (~1-1.4% of the device). This must
+D-vec is **28 DSP48E2 MEASURED** (~1.0% of the device) when built to share, 52
+when not (`sim/micro/micro_d_vec.vhd` + `sim/micro/micro_d_rsqrt.vhd`,
+2026-08-25; supersedes the 24-40 estimate this sentence carried, and the
+40-56 that briefly superseded it). This must
 enter the whole-die DSP sum next to A/B/C -- no current co-fit table (B §2.8,
 A §15.4c) includes it. The alternative -- declaring a fifth arithmetic
 subsystem -- changes the label, not the cost.
@@ -834,7 +837,7 @@ includes the seams; it is not a promise.
 
 | Resource | D estimate | What it is, and what is approximate about it |
 |---|---|---|
-| DSP48E2 | **24-40** (D-ctrl: 0; D-vec: all of it) | §7.1 finding. Depends on `LANES_V` (8 assumed) and on whether swiglu shares the norm lanes (phases are disjoint, so sharing is expected; 40 is the no-sharing bound). |
+| DSP48E2 | **28 MEASURED** (D-ctrl: 0, asserted not measured; D-vec: all of it), 52 if D-vec is not built to share | §7.1. MEASURED 2026-08-25 at `LANES_V = 8`: per-element lane 3/lane -> **24** shared, 5/lane -> 40 not; plus a one-per-vector rsqrt at **4** shared, 12 not. Linear in `LANES_V` with zero intercept over {2,4,8,16}, DSP census reconciled at all ten points. **Sharing is a property of how the RTL is written, not something synthesis provides** -- so "sharing is expected" below is NORMATIVE on D-vec, and the mode mux is also cheaper in LUT (320 vs 448) and slightly faster (444.6 vs 438.8 MHz). `docs/debugging/2026-08-25_d-vec-dsp-measured.md`. |
 | LUT | **~18-28K** (~4-6% of 439,680) | Muxing dominates and is the soft part: A's x-port 512-bit read mux from ~3 regions plus y-route (~4-6K), region write decoders and lock logic (~3-5K), 4 shared-port AXI grant muxes (~2.5K), D-ctrl FSM + descriptor decode (~3-5K), D-vec datapath + shifters (~5-8K). Approximate because port shapes B/C elided ("...") are guessed, and no mux has been synthesised. |
 | FF | ~15-25K | pipeline + capture registers + counters; unsynthesised |
 | BRAM36 | **~86 flat map** (80 regions + ~6 scratch), of which ~16 replace A's standalone act mem (§5.1); **~54 packed** | Bank counts derived from the striped geometry; the flat/packed choice is open until whole-die BRAM is summed. C's ~43 and A's FIFOs are separate. |
@@ -868,17 +871,41 @@ includes the seams; it is not a promise.
 >
 > Whole-die is unchanged at 87.2-88.2% under sharing, ~88.8% without.
 >
+> **CORRECTION 2026-08-25, later the same day. The 40/56 in the paragraph
+> above is WITHDRAWN; D-vec MEASURES 28 shared and 52 not.** The 40/56 was
+> arithmetic over separately-measured pieces -- swiglu's 3/lane was measured,
+> but the norm half was decomposed as "8 chains x ~3 = ~24" and the rsqrt as
+> "~6-9", and both were too high. Synthesising the three phases *together*
+> (`sim/micro/micro_d_vec.vhd`, `mode` a top-level PORT so the mux cannot
+> constant-fold) shows the norm phase needs **2** concurrent multiplies, not
+> 3, and that **both fit inside swiglu's 3 when muxed, so the norm half adds
+> zero**: 3 DSP/lane -> 24 at `LANES_V = 8`. The rsqrt, measured in isolation
+> because it is one per vector rather than per element
+> (`sim/micro/micro_d_rsqrt.vhd`), is **4** shared and 12 not. Summing
+> separately-measured parts systematically overcounts a datapath whose phases
+> are disjoint; only synthesising them together measures the collapse. The
+> *conclusion* of the paragraph above survives unchanged and is if anything
+> stronger: sharing is normative, and it is now worth 24 DSP rather than 16.
+> The whole-die corners are 87.6% (both shared) to 88.5% (neither), so
+> **every corner of D's coding style fits under the 90% line**.
+> `docs/debugging/2026-08-25_d-vec-dsp-measured.md`.
+>
 > Full reconciliation, measurements and rejected readings:
 > `docs/debugging/2026-08-25_whole-die-budget-reconciliation.md`.
 
 **Whole-die context (informative, rough, first time anyone has summed it):**
 DSP: A at `ROWS_IF = 58` post-reclaim 1,914 + C `MACS = 192` 384 + B
 `LANES = 32` 138-152 + D 24-40 = **~2,460-2,490 of 2,880 (85.4-86.5%)**
-(**superseded**: C's aux row lands at 50 not 15-40 and B MEASURED at 148 on
-2026-08-25, giving 2,520-2,536 = 87.5-88.1%; D's 24-40 is now the only
-estimate left in the sum) --
+(**superseded twice, and now CLOSED**: C's aux row lands at 50 not 15-40, B
+MEASURED at 148 and D MEASURED at 28 on 2026-08-25, giving
+**1,914 + 434 + 148 + 28 = 2,524 of 2,880 = 87.6%** with *no estimate left in
+the sum*; the worst corner, D-vec built without any sharing, is 2,548 = 88.5%,
+so the whole spread of D's coding style is 0.9 percentage points and every
+corner fits) --
 D pushes the known ~85-86% up by ~1%, still under the 90% congestion line
-both B §2.8 and C §2.8 cite. LUT: A ~129K (58 x 2,223 measured/row) +
+both B §2.8 and C §2.8 cite. E is absent from this sum: it is 0 DSP by construction, its
+accumulator being an adder tree (A §15.4b). That is a construction argument,
+not a synthesis result. LUT: A ~129K (58 x 2,223 measured/row) +
 streamer (unmeasured at FK33 scale, ~10K?) + C ~41K accumulators (measured
 fit) + C arrays/control (~15K?) + B 25-35K (estimate) + D 18-28K + E ~5K
 (guess) = **~245-265K of 439.7K (~56-60%)** -- but three of those terms have

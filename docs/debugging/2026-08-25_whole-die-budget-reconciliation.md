@@ -202,3 +202,57 @@ copies `fixed_pkg.sigmoid_q` verbatim including its 64/128-bit intermediates.
 - **Whether 90% is the right congestion line for this part.** It is cited by
   B §2.8 and C §2.8 and has been carried forward unexamined ever since; no
   placed-and-routed run on this die has tested it.
+
+---
+
+## CORRECTION 2026-08-25 (later the same day): D-vec is 28, not 40-56; the sum closes at 87.6%
+
+**Withdrawn:** every "D-vec is ~40 shared / ~56 unshared" and every
+"D, `LANES_V = 8` | 24-40" figure above. **Superseded by measurement.**
+
+D-vec synthesised OOC on `xcvu33p-fsvh2104-2L-e` at 3.333 ns
+(`sim/micro/micro_d_vec.vhd` + `sim/micro/micro_d_rsqrt.vhd`):
+
+| term | shared | not shared |
+|---|---|---|
+| per-element lane, `LANES_V = 8` | 3/lane -> **24** | 5/lane -> 40 |
+| rsqrt, one per vector | **4** | 12 |
+| **D-vec** | **28** | 52 |
+
+Linear in `LANES_V` with zero intercept over {2,4,8,16}; DSP census reconciled
+with utilisation at all ten points.
+
+**Corrected whole-die:**
+
+```
+1,914 (A) + 434 (C) + 148 (B, measured 2026-08-25) + 28 (D) = 2,524 of 2,880 = 87.6%
+worst corner, D built with no sharing at all:                 2,548          = 88.5%
+```
+
+Both conditions in the summary above still stand, but condition 2 is now
+resolved rather than open: **every corner of D's coding style fits under the
+90% line**, so D is a 24-DSP efficiency question, not a fit risk. Condition 1
+(C's QK-norm must not use `rmsnorm.vhd` as shipped) is unchanged and remains
+the load-bearing one.
+
+**Why the 40/56 was wrong, and it is a methodological error worth keeping.**
+It was arithmetic over separately-measured parts: swiglu's 3/lane was real,
+but the norm half was decomposed as "8 norm per-element chains x ~3 = ~24" and
+the rsqrt as "~6-9". Synthesising the three phases *together* -- with `mode` as
+a top-level PORT so the mux cannot constant-fold -- shows the norm phase needs
+**2** concurrent multiplies, not 3, and that **both fit inside swiglu's 3 when
+muxed, so the norm half adds zero DSP at all**. The rsqrt is 4, below the 6-9
+low end. Summing separately-measured parts systematically overcounts a datapath
+whose phases are disjoint, because the sum cannot see the collapse; that is
+exactly the error the "open" item below anticipated when it said an 8-lane
+D-vec skeleton would settle it.
+
+The two "open, not yet answered" items above that this closes:
+**"The rsqrt/per-element split inside D-vec is DERIVED, not measured"** and
+**"Whether D-vec can actually share one multiply chain between the norm and
+swiglu phases"** -- it can, and the sharing is a property of how the RTL is
+written rather than something synthesis provides, so D §12's "sharing is
+expected" is now recorded as normative.
+
+Full procedure, evidence and traps:
+`docs/debugging/2026-08-25_d-vec-dsp-measured.md`.

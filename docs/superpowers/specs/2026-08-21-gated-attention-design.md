@@ -1374,6 +1374,23 @@ with rmsnorm as shipped:              2,570..2,600           = 89.2-90.3%   -- A
 > softplus or scalar path.
 > `docs/debugging/2026-08-25_b-lane-dsp-measured.md`
 
+> **D's row MEASURED 2026-08-25, closing the sum: 28, not 24-40.** At
+> `LANES_V = 8`, D-vec is a 3-DSP/lane mode-muxed per-element datapath (24)
+> plus a one-per-vector rsqrt (4). Built without sharing it is 52. Final sum,
+> with **no estimate left in it**:
+>
+> ```
+> 1,914 + 434 + 148 + 28 = 2,524 of 2,880 = 87.6%
+> worst corner (D unshared):       2,548  = 88.5%
+> ```
+>
+> **Sharing is a property of how the RTL is written, not something synthesis
+> provides** -- D §12's "sharing is expected" is normative on D-vec. But the
+> whole spread is 0.9 points, so it is a 24-DSP efficiency question, not a fit
+> one. E is 0 DSP by construction (adder tree, A §15.4b), so the sum is
+> complete.
+> `docs/debugging/2026-08-25_d-vec-dsp-measured.md`
+
 The narrowing of §3.6 is therefore **mandatory, not an optimization**. The
 +1.7-point rise over D §12's 85.4-86.5% must propagate to
 `docs/fpga-hardware-recon.md` and any B sizing that assumed the old sum.
