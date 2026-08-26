@@ -1205,11 +1205,211 @@ default and `--inq-real` shows the difference.
 
 ## 3. Datapath scheduling, nonlinearities, validation
 
-**NOT YET WRITTEN**, pending review of sections 1-2.
+**PARTIALLY WRITTEN 2026-08-25.** §3.1-§3.5 below discharge the phase-schedule
+and per-token-budget bullet. The remaining bullets (fixed-point recipes, the
+error bound, the C reference, the GHDL test list) are listed as still owed in
+§3.6 and are NOT closed.
 
-Constraints it must satisfy, recorded so review can flag anything sections 1-2
-have already made impossible:
+### 3.1 §2.5's headline comparison is not like-for-like, and the sweep is 1.97 ms
 
+§2.5 concludes that the norm term "no longer fits with room to spare and the
+overlap has to be near-perfect". **That conclusion compares a 27B-corrected
+numerator against an 0.8B denominator.** The 2.48 ms norm figure was rebuilt on
+2026-08-25 at 48 GDN layers, 24 value heads per card and 300 MHz -- all §4
+numbers. The 2.95-3.14 ms sweep it is compared against is the §2.5 body's
+0.8B figure: 262,144 elements/layer, 18 layers, 200 MHz. The two cannot be
+divided by one another, and the ratio that was read off them means nothing.
+
+This is the §4-overlay failure mode Fable's review names generally and it has
+now produced a numeric conclusion, not just a stale dimension. The sweep,
+rebuilt at §4 dimensions:
+
+```
+state elements per layer per card = head_v_dim^2 x v_heads/card = 128 x 128 x 24
+                                  = 393,216
+x 48 GDN layers                   = 18,874,368 elements per token per card
+cycles = 18,874,368 / LANES
+```
+
+| `LANES` | sweep cycles | ms @ 300 MHz | HBM ports needed | GB/s |
+|---|---|---|---|---|
+| 8 | 2,359,296 | 7.86 | 1 | 9.6 |
+| 16 | 1,179,648 | 3.93 | 2 | 19.2 |
+| **32** | **589,824** | **1.97** | **4** | **38.4** |
+| 64 | 294,912 | 0.98 | 8 | 76.8 |
+
+**`LANES = 32` is not an arbitrary pick, it is the balance point.** The sweep
+reads 2 B and writes 2 B per element, so it demands `4 x LANES` B/cycle, and a
+measured HBM port delivers 32 B/cycle (`docs/debugging/`
+`2026-08-25_fk33-hbm-bandwidth-instrument.md`, 144.0 GB/s on 15 ports and
+288.0 on 30, both exactly ports x 32 B x f). So:
+
+> **ports = LANES / 8, exactly** -- and at `LANES = 32` B's compute time and
+> its four-master allocation (§2.5) coincide to the cycle. B is simultaneously
+> compute-bound and feed-bound at that point, which is where a design should
+> sit and is not where §2.5's arithmetic put it.
+
+Note this replaces §2.9's FK33 row, which is stale on three counts at 27B: it
+says state traffic is "19 MB/token vs 460 GB/s: ~41 us -- noise", but per-card
+traffic is **75.5 MB/token** (§4.1), the supply is **288 GB/s measured, not
+460**, and B is allocated 4 ports of 30, not the whole device. Against B's
+actual allocation the traffic is 1.97 ms and co-limiting, not noise. §2.9 also
+still claims the state fits on chip; §4.1 already says 37.75 MB per card does
+not fit 14.2 MB, so §2.9 contradicts §4.1 and §4.1 wins.
+
+### 3.2 The nonlinearities dominate the sweep, and no schedule hides them
+
+Rebuilt at §4 dimensions, per card per token, 300 MHz. All three terms use
+`rmsnorm.vhd`'s shipped cost, which §2.5 quotes as 645 cycles at N=128:
+
+| term | invocations/token/card | cycles each | cycles | ms |
+|---|---|---|---|---|
+| state sweep, `LANES = 32` | -- | -- | 589,824 | **1.97** |
+| output `rmsnorm(o_h)` | 24 heads x 48 layers = 1,152 | 645 | 743,040 | 2.48 |
+| `l2_norm(q)`, `l2_norm(k)` | 8 k-heads x 2 x 48 = 768 | 645 | 495,360 | 1.65 |
+<!-- 495,360 collides with the WITHDRAWN 16-invocation output-norm figure in
+     §2.5's correction note, for an unrelated reason: 8 k-heads x 2 operands
+     = 16 L2 invocations per layer, and the withdrawn figure used 16 output
+     norms per layer.  Same count, different quantity.  Not a copy. -->
+| `silu`, 3-cycle FSM rate | 393,216 evaluations | 3 | 1,179,648 | 3.93 |
+| **serial total** | | | **3,007,872** | **10.03** |
+
+The silu count is derived rather than inherited: `silu(conv_out)` runs over the
+per-card conv width (q 1024 + k 1024 + v 3072 = 5,120) and `silu(z_h)` over the
+per-card value width (3,072), so 8,192 per layer x 48 = 393,216. It coincides
+with §2.5's 0.8B figure of 8,192/layer for unrelated reasons -- there the whole
+conv_dim was 6,144 with no sharding -- so it is stated with its derivation to
+stop the coincidence reading as a copy.
+
+**The nonlinearities are 2,418,048 cycles against a 589,824-cycle sweep: 4.10x.
+Overlap cannot hide 4x under 1x.** §2.5 frames this as a scheduling problem
+that a near-perfect overlap might solve. It is not one. A *perfect* schedule
+gives `max(sweep, nonlinear)` = 8.06 ms, which sits inside §2.5's own
+7.5-8.5 ms **serial** worst case: with these unit rates, overlapping everything
+perfectly buys essentially nothing, because the thing being hidden is larger
+than the thing it would hide under. **The units have to get faster; arranging
+the phases only matters afterwards.**
+
+### 3.3 What makes them fast, and why the first hypothesis was wrong
+
+The obvious hypothesis -- the 24 head norms per layer are independent, so
+pipeline them and pay the rsqrt latency once instead of 24 times -- **is
+wrong**, and it was rejected by reading `rtl/rmsnorm.vhd`'s FSM rather than by
+subtracting estimates. The 645 cycles are almost entirely element-proportional:
+
+```
+S_ACC              N cycles     one x*x per element
+S_INV + rsqrt    ~15 cycles     FIXED: seed, 2 Newton iterations x 3 mults, fold
+S_RAW/S_RAW_B     2N cycles     two cycles per element
+S_SHIFT             1 cycle
+S_EMIT/S_EMIT_B   2N cycles     two cycles per element
+                 = 5N + ~15  =  655 at N = 128, against the 645 §2.5 quotes --
+                                 close enough to confirm the structure, and
+                                 645 is used throughout below so the arithmetic
+                                 stays comparable with §2.5's own figures
+```
+
+The fixed part is ~15 cycles, ~2%. Pipelining across invocations saves that and
+nothing else. Two changes do the work instead:
+
+1. **Fuse RAW and EMIT.** `S_EMIT` re-derives what `S_RAW` already computed --
+   the RTL says so in a comment, deliberately, to avoid storing `raw`. That
+   trade buys back N words of storage and costs 2N cycles out of 5N. At
+   N = 128 and int32 `raw`, storing it is 512 B of LUTRAM per unit. Fusing
+   takes 5N to 3N; fusing and emitting in the same cycle takes it to 2N.
+2. **Vectorize.** The element-proportional part divides by the lane count.
+
+| form | cycles at N=128 | out+L2 cycles | ms |
+|---|---|---|---|
+| `rmsnorm.vhd` as shipped, 5N | 645 | 1,238,400 | 4.13 |
+| fused, 1 element/cycle, 2N | 271 | 520,320 | 1.73 |
+| fused, **4 elements/cycle** | 79 | 151,680 | **0.51** |
+| fused, 8 elements/cycle | 47 | 90,240 | 0.30 |
+
+silu must be **at least 1 per cycle and preferably 4**; the 3-cycle FSM rate of
+the existing softmax cone is 3.93 ms on its own, twice the sweep. That is
+already known to be achievable and cheap: D's measured narrowed silu lane is
+**3 DSP at 646 MHz**, bit-identical to the verbatim-width cone over 5,769
+outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
+`micro_silu_narrow` row in D §12).
+
+**Budget with fused 4-lane norms and 4/cycle silu:**
+
+| term | cycles | ms |
+|---|---|---|
+| state sweep, `LANES = 32` | 589,824 | 1.97 |
+| output rmsnorm + L2, fused, 4 lanes | 151,680 | 0.51 |
+| silu at 4/cycle | 98,304 | 0.33 |
+| conv, depthwise k=4 over 5,120/layer at `LANES = 32` | 30,720 | 0.10 |
+| **nonlinear + conv, overlapped under the sweep** | 280,704 | 0.94 |
+| **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** |
+
+The nonlinearities now fit under the sweep with 53% margin, which is the
+"merely good" overlap §2.5 wanted and did not have. **B lands at ~2.0 ms/token,
+better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
+throughput, not scheduling.
+
+### 3.4 The sweep is a read-modify-write on ONE pseudo-channel
+
+§2.4's column pipeline reads column j and writes it back. Read and write
+therefore land in the **same state region**, hence the same 256 MB
+pseudo-channel. That is not the striping §2.5 describes -- striping by head
+parity separates heads across masters, it does not separate a head's read from
+its own write.
+
+This matters because a pseudo-channel that turns its bus around pays tWTR/tRTW,
+and B's sweep turns it around continuously. §2.5's ">= 50% per master"
+premise is stated for four masters but never distinguishes four masters on four
+channels from a read and a write contending for one.
+
+**The escape is a ping-pong, and it is nearly free.** Read token T's state from
+region A and write token T+1's into region B, swapping each token: reads and
+writes then occupy different pseudo-channels and never turn a bus around. Cost
+is a second copy of the state, **37.75 MB per card** (§4.1), against the ~0.89
+GiB left after the 7.11 GiB of resident weights (C §4.2) -- about 4% of the
+free space.
+
+**Whether it is necessary is being measured, not assumed.** `rtl/hbm_tg.vhd`
+gained a write channel on 2026-08-25 specifically for this: `rw_both` with
+`rgn_stride = 0` drives read and write traffic into a single pseudo-channel and
+reports the achieved rate against the 14.4 GB/s that channel supplies. If the
+turnaround costs little, B keeps the simpler in-place sweep; if it costs more
+than ~10%, the ping-pong pays for itself immediately. **This section must be
+revisited when that number lands and must not be cited before it does.**
+
+### 3.5 Consequences for §2.5, §2.8 and the recon ladder
+
+- §2.5's **2.95-3.14 ms sweep and its 47%/50% efficiency table are 0.8B
+  figures** and are superseded by §3.1. The four-master claim survives; the
+  numbers behind it do not.
+- §2.5's **7.5-8.5 ms serial worst case is optimistic**, not pessimistic: at
+  §4 dimensions with shipped units it is 10.09 ms (§3.2).
+- §2.5's **3.5-4.5 ms overlapped target is superseded downward to ~2.0 ms**,
+  conditional on §3.3's unit rates, which are a design obligation and not yet
+  synthesised (§3.6).
+- **§2.8's DSP row is a floor and this section raises it.** The measured 148
+  (`DSP_B = 4 x LANES + 20`) carries `rmsnorm_rs 18 + silu 2` as its fixed 20,
+  i.e. ONE norm unit at 1 element/cycle. §3.3 requires a 4-lane fused norm and
+  a 4/cycle silu, which the fixed 20 does not cover. The increment is not yet
+  measured; §3.6 owns it.
+- The recon tok/s ladder should NOT be re-derived from this section yet. B
+  moving 3.5-4.5 -> ~2.0 ms would move `v3.0` upward, but A dominates at
+  35-53 ms and the §3.3 rates are unmeasured. One unmeasured term is exactly
+  how §2.5's 0.93 ms got into the document.
+
+### 3.6 Still owed by §3 (NOT closed by the above)
+
+The phase-schedule bullet is discharged. These are not:
+
+- **The §3.3 unit rates are a design obligation, not a measurement.** A fused
+  4-lane rmsnorm and a 4/cycle silu are asserted to be buildable; neither has
+  been synthesised, and the DSP increment over §2.8's fixed 20 is unknown.
+  `sim/micro/micro_rmsn_narrow.vhd` prices the 1-lane narrowed form at 18 DSP
+  and is the obvious starting point for a `LANES`-generic version. **Until that
+  measurement exists, ~2.0 ms/token is a target, not a budget**, and it must
+  not enter `docs/fpga-hardware-recon.md`.
+- **The same-channel read/write turnaround (§3.4)** is being measured on the
+  card and is not yet known. It gates the in-place-versus-ping-pong choice.
 - **Pin the fixed-point recipes for sigma (sigmoid), softplus, exp-Q15 and the
   L2-norm rsqrt** — table sizes, interpolation, and every internal rounding —
   as §2.1.3/§2.1.5 sites 5, 13, 14 require. The Q15 regenerations of EXP_ROM
