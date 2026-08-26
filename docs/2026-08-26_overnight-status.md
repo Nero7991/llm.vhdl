@@ -7,9 +7,11 @@ else is measured and committed.
 
 ### 1. Amend B §2.1.4, or keep it as pinned
 
-**One amendment, covering two sites, not two amendments.** Both are implemented
-behind generics defaulting FALSE, both units are bit-exact in all four
-combinations, and the corrected form has been synthesized.
+**One amendment, covering THREE sites, not two or three amendments.** Both
+generics default FALSE, both units are bit-exact in all four combinations, and
+the corrected form has been synthesized. The third site (`eg = 0`
+mid-sequence) was found tonight after the first two and needs no additional
+change -- `D_NORM` already covers it.
 
 | mode | median | p95 | max | `eg=0` mid-seq max | `eg < 0.85` median |
 |---|---|---|---|---|---|
@@ -99,8 +101,8 @@ exist only to hold known defects.
 | 32 | 129 | 302.5 MHz | 4 cyc/col | 1.95 ms (2.18 with the head drain) | 24.5 |
 | 64 | 257 | 301.9 MHz | 2 cyc/col | 0.98 ms | 48.5 |
 
-`LANES = 64` works, but +128 DSP takes the die from its ~90.3% floor to roughly
-94%. My read is that 32 is the right choice and 64 is not affordable, but the
+`LANES = 64` works, but +128 DSP takes the die from its 90.5% floor to roughly
+95%. My read is that 32 is the right choice and 64 is not affordable, but the
 DSP budget is yours.
 
 ### 3. Move B's scalar grid from Q12 to Q18, or keep it pinned
