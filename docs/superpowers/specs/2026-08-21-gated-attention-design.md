@@ -1365,16 +1365,29 @@ crosses the 90% congestion line.
 >
 > 1. The aux row is **+4**, so it lands at **54** and C's total at **438**.
 > 2. **More throughput is not purchasable with DSP here.** At N = 128 this unit
->    closes 300 MHz through 4 lanes; at N = 256 it closes only at ONE. So if
->    C's schedule needs the QK-norm faster than 1 lane delivers, that is an
->    open TIMING problem in `rmsnorm_rs` at this width, not a DSP trade-off
->    that can be made by spending budget. Nobody has checked whether C's
->    schedule needs it, because until tonight the unit did not exist to ask.
+>    closes 300 MHz through 4 lanes; at N = 256 it closes only at ONE. Widening
+>    it costs DSP *and* misses timing, so it would be an open TIMING problem
+>    rather than a budget trade.
 >
-> This is the same failure mode as B's aux row, which priced 1-lane units that
-> could not meet B's schedule and moved from 148 to 202 once real ones were
-> measured. C's row should be treated as provisional until its QK-norm
-> throughput requirement is derived.
+> **But it does not need widening, and that is now measured rather than
+> assumed.** The requirement was derived the same night, because a limit only
+> matters against a demand:
+>
+> - `rmsnorm_rs` at N = 256, `LANES = 1`: **814 cycles** per vector (measured
+>   in simulation, not estimated).
+> - Per card per token at 27B: 24 query heads and 4 KV heads, TP `N = 2`, so
+>   **(12 + 2) x 16 layers = 224 norms**.
+> - **224 x 814 = 182,336 cycles = 0.61 ms at 300 MHz.**
+>
+> §3.7 budgets the QK-norm at 166K cycles / 0.55 ms with a serial fallback of
+> 290K / 0.97 ms. **The real 1-lane unit lands at 182K, a 10% overshoot on the
+> budgeted figure and comfortably inside the fallback**, so the single-lane
+> configuration meets C's schedule and the N = 256 multi-lane timing limit is
+> off the critical path. The row is 22 DSP and it stands.
+>
+> This is the check B's aux row did NOT get before it was priced -- it costed
+> 1-lane units against a schedule nobody had compared them to, and moved from
+> 148 to 202 when someone finally did.
 
 **C total: 384 (MAC + rescale) + ~~50~~ 54 = ~~434~~ 438 DSP.** Whole-die, updating the
 §2.8/D §12 sum (A post-reclaim 1,914 at `ROWS_IF = 58`, B 138-152, D
