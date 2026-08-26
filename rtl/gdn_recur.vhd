@@ -47,7 +47,27 @@ use ieee.math_real.all;
 entity gdn_recur is
   generic(
     DIM   : positive := 128;    -- state dimension; i and j both run over it
-    LANES : positive := 8       -- must be a power of two and divide DIM
+    LANES : positive := 8;      -- must be a power of two and divide DIM
+    -- D_NORM normalizes d onto its OWN grid instead of inheriting e_d:
+    --
+    --   pinned      d_m = round_shift(diff*beta, 16)         e_dm = e_d
+    --   normalized  shd = max(0, msb_pos(|diff*beta|) - 14)
+    --               d_m = round_shift(diff*beta, shd)        e_dm = e_d+16-shd
+    --
+    -- The two are ONE code path: shd = 16 gives e_dm = e_d and reproduces the
+    -- pinned form exactly, so the generic chooses shd and nothing else.  That
+    -- is deliberate -- the pinned form is not a separate branch that could
+    -- drift away from the one under test.
+    --
+    -- DEFAULT FALSE.  2.1.4 is a pinned contract that gdn_err.c, 2.10's
+    -- precision result and 3.3's schedule all reference; this exists so the
+    -- correction can be MEASURED end to end before anyone decides to adopt it.
+    -- Measured over 224 physically realizable columns, state error in LSB:
+    --                        median      p95       max   worst tk=0
+    --   D_NORM = false        0.632     6.65   1218.04      1218.04
+    --   D_NORM = true         0.600     1.29      3.47         1.11
+    -- docs/debugging/2026-08-26_gdn-first-token-dm-grid.md
+    D_NORM : boolean := false
   );
   port(
     clk    : in  std_logic;
@@ -133,19 +153,23 @@ architecture rtl of gdn_recur is
   signal sk_bi  : signed(41 downto 0) := (others => '0');
   signal ske    : signed(15 downto 0) := (others => '0');
   signal e_d    : signed(15 downto 0) := (others => '0');
-  signal e_kd   : signed(15 downto 0) := (others => '0');
+  signal ed_r   : signed(15 downto 0) := (others => '0');
   signal e_u    : signed(15 downto 0) := (others => '0');
   signal su, sk2, shq : integer range 0 to 63 := 0;
   signal bias_q : signed(34 downto 0) := (others => '0');
   signal diff   : signed(17 downto 0) := (others => '0');
   signal dmul   : signed(34 downto 0) := (others => '0');
+  signal dabs   : unsigned(34 downto 0) := (others => '0');
+  -- shd = 16 and dbias = 2^15 ARE the pinned recipe; D_NORM only overrides them
+  signal shd    : integer range 0 to 63 := 16;
+  signal dbias  : signed(34 downto 0) := to_signed(2**15, 35);
   signal d_m    : signed(17 downto 0) := (others => '0');
   signal red_n  : integer range 0 to LANES := LANES;
   signal s_reg  : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
 
   type state_t is (S_IDLE,
                    S_A, S_ADR, S_SKRED, S_SKN1, S_SKN2, S_SKN3, S_SKN4,
-                   S_D1, S_D2, S_D3, S_D4,
+                   S_D1, S_D2, S_D3, S_DN1, S_DN2, S_D4,
                    S_B, S_BDR, S_AMRED, S_SH,
                    S_C, S_CDR, S_ORED,
                    S_FIN);
@@ -311,7 +335,7 @@ begin
             ske_i := to_integer(ske);
             if ev_i < ske_i then ed_i := ev_i; else ed_i := ske_i; end if;
             e_d  <= to_signed(ed_i, 16);
-            e_kd <= to_signed(15 + ed_i, 16);
+            ed_r <= to_signed(ed_i, 16);
             state <= S_D2;
 
           when S_D2 =>
@@ -337,14 +361,34 @@ begin
               report "gdn_recur: diff outside s18 -- v[j] exceeded int16?"
               severity failure;
             dmul <= resize(diff * signed('0' & beta), 35);
+            if D_NORM then state <= S_DN1; else state <= S_D4; end if;
+
+          when S_DN1 =>
+            if dmul < 0 then dabs <= unsigned(-dmul);
+            else             dabs <= unsigned( dmul); end if;
+            state <= S_DN2;
+
+          when S_DN2 =>
+            -- Its own state, like site 7's: an msb scan in series with the
+            -- round-shift that uses it is the pattern that costs the clock.
+            p := msb_pos(dabs);
+            if p - 14 > 0 then
+              shd   <= p - 14;
+              dbias <= shift_left(to_signed(1, 35), p - 15);
+            else
+              shd   <= 0;
+              dbias <= (others => '0');
+            end if;
             state <= S_D4;
 
           when S_D4 =>
-            d_m <= resize(shift_right(dmul + to_signed(2**15, 35), 16), 18);
+            d_m <= resize(shift_right(dmul + dbias, shd), 18);
             -- e_u, and with it every shift pass B needs, is fixed here so the
             -- element loop carries no exponent arithmetic at all.
             sej_i := to_integer(se_j) + 2;
-            ekd_i := to_integer(e_kd);
+            -- e_kd = 15 + e_dm, and e_dm = e_d + 16 - shd.  With the pinned
+            -- shd = 16 this is 15 + e_d, exactly as before.
+            ekd_i := 15 + to_integer(ed_r) + 16 - shd;
             if tk0 = '1' then
               eu_i := ekd_i;                 -- the masked zero has no exponent
             elsif sej_i < ekd_i then

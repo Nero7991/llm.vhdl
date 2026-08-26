@@ -54,9 +54,26 @@ static uint64_t rnd64(void){ uint64_t z=(rs_+=0x9E3779B97F4A7C15ULL);
 static int32_t rnd_range(int32_t lo, int32_t hi){
   return lo + (int32_t)(rnd64() % (uint64_t)(hi - lo + 1)); }
 
+/* D_NORM: normalize d onto its OWN grid instead of inheriting e_d.
+ *
+ *   pinned      d_m = round_shift(diff*beta, 16)          e_dm = e_d
+ *   normalized  shd = max(0, msb_pos(|diff*beta|) - 14)
+ *               d_m = round_shift(diff*beta, shd)         e_dm = e_d + 16 - shd
+ *
+ * The two collapse to ONE code path: shd = 16 gives e_dm = e_d + 16 - 16 = e_d
+ * and reproduces the pinned form exactly, so the flag chooses shd and nothing
+ * else.  That is deliberate -- it means the pinned form is not a separate
+ * branch that could drift away from the one under test.
+ *
+ * See docs/debugging/2026-08-26_gdn-first-token-dm-grid.md for why this
+ * matters: as pinned, d_m is quantized on a grid set by max(|v|,|sk|) rather
+ * than by |d|, and at tk = 0 the state is exactly k_n*d_m so it inherits that
+ * error whole.
+ */
 int main(int argc, char **argv)
 {
     const char *out = argc > 1 ? argv[1] : "sim/gdn_recur_vec.txt";
+    int d_norm = (argc > 2 && atoi(argv[2]) != 0);
     FILE *f = fopen(out, "w");
     if (!f) { perror("fopen"); return 1; }
     rs_ = 20260825ULL;
@@ -237,9 +254,13 @@ int main(int argc, char **argv)
         if (s1 > 63) s1 = 63;
         if (s2 > 63) s2 = 63;
         int64_t diff = floor_shr(v_j, s1) - floor_shr(skm, s2);
-        int64_t d_m  = round_shift(diff * (int64_t)beta, 16);
+        int64_t draw = diff * (int64_t)beta;
+        int shd = 16;
+        if (d_norm) { shd = msb_pos_u((uint64_t)llabs(draw)) - 14; if (shd < 0) shd = 0; }
+        int64_t d_m  = round_shift(draw, shd);
+        int e_dm = e_d + 16 - shd;
 
-        int e_kd = 15 + e_d;
+        int e_kd = 15 + e_dm;
         int e_u  = tk0 ? e_kd : ((se_j + 2 < e_kd) ? se_j + 2 : e_kd);
         int su = se_j + 2 - e_u, sk2 = e_kd - e_u;
         if (su  > 63) su  = 63;
@@ -306,6 +327,6 @@ int main(int argc, char **argv)
         ncase++;
     }
     fclose(f);
-    fprintf(stderr, "gdn_recur_vec: %d cases -> %s\n", ncase, out);
+    fprintf(stderr, "gdn_recur_vec: %d cases -> %s (d_norm=%d)\n", ncase, out, d_norm);
     return 0;
 }

@@ -26,6 +26,11 @@ use std.textio.all;
 entity tb_gdn_recur is
   generic(DIM   : positive := 128;
           LANES : positive := 8;
+          -- Flip BOTH together: D_NORM selects the recipe in the DUT, VECS
+          -- selects the matching reference.  Mismatching them is a loud
+          -- bit-exact failure rather than a silent wrong answer, which is the
+          -- intended behaviour.
+          D_NORM : boolean := false;
           VECS  : string   := "gdn_recur_vec.txt";
           -- Tolerances against the ORACLE.  Set from measurement once the
           -- bit-exact check passes, never guessed: a tolerance looser than the
@@ -94,7 +99,7 @@ begin
   clk <= not clk after 5 ns;
 
   dut : entity work.gdn_recur
-    generic map(DIM => DIM, LANES => LANES)
+    generic map(DIM => DIM, LANES => LANES, D_NORM => D_NORM)
     port map(clk => clk, rst => rst, start => start, tk0 => tk0,
              se_j => se_j, eg => eg, beta => beta, v_j => v_j, e_v => e_v,
              s_in => s_in, k_n => k_n, q_s => q_s,

@@ -47,7 +47,12 @@ entity gdn_recur_pipe is
   generic(
     DIM   : positive := 128;
     LANES : positive := 32;
-    SLOTS : positive := 16        -- power of two, >= columns in flight
+    SLOTS : positive := 16;       -- power of two, >= columns in flight
+    -- See rtl/gdn_recur.vhd for the full note.  shd = 16 reproduces the pinned
+    -- recipe exactly, so this generic chooses shd and nothing else, and the
+    -- two extra pipeline stages exist in BOTH configurations -- they cost
+    -- latency, never issue interval, so the throughput result is unaffected.
+    D_NORM : boolean := false
   );
   port(
     clk    : in  std_logic;
@@ -106,7 +111,7 @@ architecture rtl of gdn_recur_pipe is
   -- each, because the slot handshake makes margin free in correctness terms
   -- and only costs latency -- and because getting it one cycle short is
   -- exactly the failure the par1_v/par2_v assertions below caught.
-  constant DB : integer := ceil_nb(NB + LOG2L + 13);
+  constant DB : integer := ceil_nb(NB + LOG2L + 15);
   constant DC : integer := DB + ceil_nb(NB + LOG2L + 8);
   -- A slot is occupied from its column's issue until engine C has read its u.
   -- Reusing it sooner silently overwrites a column still in flight.
@@ -188,11 +193,15 @@ architecture rtl of gdn_recur_pipe is
     ekd   : signed(15 downto 0);
     diff  : signed(17 downto 0);
     dmul  : signed(34 downto 0);
+    dabs  : unsigned(34 downto 0);
+    shd   : integer range 0 to 63;
+    dbias : signed(34 downto 0);
   end record;
   constant SC1_0 : sc1_t := (CTX0,(others=>'0'),(others=>'0'),0,(others=>'0'),
                              (others=>'0'),(others=>'0'),(others=>'0'),
-                             (others=>'0'),(others=>'0'),(others=>'0'));
-  type sc1_arr is array (0 to 7) of sc1_t;
+                             (others=>'0'),(others=>'0'),(others=>'0'),
+                             (others=>'0'),16,to_signed(2**15, 35));
+  type sc1_arr is array (0 to 9) of sc1_t;
   signal sc1 : sc1_arr := (others => SC1_0);
 
   -- SCAL2, same reasoning
@@ -474,20 +483,44 @@ begin
         sc1(6).dmul <= resize(sc1(5).diff * signed('0' & beta), 35);
 
         sc1(7) <= sc1(6);
-        if sc1(6).c.v = '1' then
-          sej_i := to_integer(sc1(6).c.se_j) + 2;
-          ekd_i := to_integer(sc1(6).ekd);
-          if sc1(6).c.tk0 = '1' then eu_i := ekd_i;
+        if sc1(6).dmul < 0 then sc1(7).dabs <= unsigned(-sc1(6).dmul);
+        else                    sc1(7).dabs <= unsigned( sc1(6).dmul); end if;
+
+        sc1(8) <= sc1(7);
+        -- Its own stage, like site 7's: an msb scan in series with the
+        -- round-shift that uses it is the pattern that costs the clock.
+        if D_NORM then
+          p := msb_pos(sc1(7).dabs);
+          if p - 14 > 0 then
+            sc1(8).shd   <= p - 14;
+            sc1(8).dbias <= shift_left(to_signed(1, 35), p - 15);
+          else
+            sc1(8).shd   <= 0;
+            sc1(8).dbias <= (others => '0');
+          end if;
+        else
+          sc1(8).shd   <= 16;
+          sc1(8).dbias <= to_signed(2**15, 35);
+        end if;
+
+        sc1(9) <= sc1(8);
+        if sc1(8).c.v = '1' then
+          sej_i := to_integer(sc1(8).c.se_j) + 2;
+          -- e_kd = 15 + e_dm, and e_dm = e_d + 16 - shd.  With the pinned
+          -- shd = 16 this is 15 + e_d, exactly the pinned form.
+          ekd_i := 15 + to_integer(sc1(8).ed) + 16 - sc1(8).shd;
+          if sc1(8).c.tk0 = '1' then eu_i := ekd_i;
           elsif sej_i < ekd_i then   eu_i := sej_i;
           else                       eu_i := ekd_i; end if;
           p  := sej_i - eu_i; if p  < 0 then p  := 0; elsif p  > 63 then p  := 63; end if;
           qv := ekd_i - eu_i; if qv < 0 then qv := 0; elsif qv > 63 then qv := 63; end if;
-          par1(sc1(6).c.slot).d_m <= resize(shift_right(sc1(6).dmul + to_signed(2**15, 35), 16), 18);
-          par1(sc1(6).c.slot).e_u <= to_signed(eu_i, 16);
-          par1(sc1(6).c.slot).su  <= p;
-          par1(sc1(6).c.slot).sk2 <= qv;
-          par1(sc1(6).c.slot).tk0 <= sc1(6).c.tk0;
-          par1_v(sc1(6).c.slot)   <= '1';
+          par1(sc1(8).c.slot).d_m <= resize(shift_right(sc1(8).dmul + sc1(8).dbias,
+                                                        sc1(8).shd), 18);
+          par1(sc1(8).c.slot).e_u <= to_signed(eu_i, 16);
+          par1(sc1(8).c.slot).su  <= p;
+          par1(sc1(8).c.slot).sk2 <= qv;
+          par1(sc1(8).c.slot).tk0 <= sc1(8).c.tk0;
+          par1_v(sc1(8).c.slot)   <= '1';
         end if;
 
         -- ============ engine B =========================================
