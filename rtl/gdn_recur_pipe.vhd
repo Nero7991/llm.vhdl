@@ -52,7 +52,9 @@ entity gdn_recur_pipe is
     -- recipe exactly, so this generic chooses shd and nothing else, and the
     -- two extra pipeline stages exist in BOTH configurations -- they cost
     -- latency, never issue interval, so the throughput result is unaffected.
-    D_NORM : boolean := false
+    D_NORM : boolean := false;
+    -- See rtl/gdn_recur.vhd for the full note and the measured table.
+    TK0_ED : boolean := false
   );
   port(
     clk    : in  std_logic;
@@ -111,11 +113,23 @@ architecture rtl of gdn_recur_pipe is
   -- each, because the slot handshake makes margin free in correctness terms
   -- and only costs latency -- and because getting it one cycle short is
   -- exactly the failure the par1_v/par2_v assertions below caught.
-  constant DB : integer := ceil_nb(NB + LOG2L + 15);
-  constant DC : integer := DB + ceil_nb(NB + LOG2L + 8);
+  -- The "+ NB" terms are the margin, and they are EXPLICIT because an earlier
+  -- version claimed margin in a comment while relying on ceil_nb's rounding to
+  -- provide it.  That works at LANES = 32, where the rounding happens to add
+  -- 2 cycles, and provides exactly ZERO at LANES = 64, where NB = 2 divides the
+  -- requirement evenly -- so the one configuration §3.1's upside row depends on
+  -- would have sat on the exact edge.
+  constant DB : integer := ceil_nb(NB + LOG2L + 15 + NB);
+  constant DC : integer := DB + ceil_nb(NB + LOG2L + 8 + NB);
   -- A slot is occupied from its column's issue until engine C has read its u.
   -- Reusing it sooner silently overwrites a column still in flight.
   constant SLOTS_MIN : integer := (DC + 2*NB + NB - 1) / NB;
+  -- The reduction trees halve by two each stage and the slot index is a bit
+  -- slice of the column counter, so both must be powers of two; NB must be
+  -- whole.  gdn_recur asserts this and this unit did not, which would have let
+  -- a non-power-of-two LANES silently drop lanes in the trees.
+  constant SHAPE_OK : boolean :=
+    (2**LOG2L = LANES) and (2**LOG2S = SLOTS) and (NB * LANES = DIM);
 
   type s16_arr is array (natural range <>) of signed(15 downto 0);
   type s19_arr is array (natural range <>) of signed(18 downto 0);
@@ -260,7 +274,7 @@ architecture rtl of gdn_recur_pipe is
   signal col_cnt, colB, colC : unsigned(31 downto 0) := (others => '0');
   signal startA  : std_logic := '0';
   signal dlyB    : std_logic_vector(DC downto 0) := (others => '0');
-  signal slotA, slotB, slotC : integer range 0 to SLOTS-1 := 0;
+  signal slotB, slotC : integer range 0 to SLOTS-1 := 0;
   -- the column currently being fed into engine A, held across its NB groups
   signal gin      : integer range 0 to NB-1 := 0;
   signal cur_tk0  : std_logic := '0';
@@ -313,6 +327,10 @@ begin
     variable upk  : std_logic_vector(LANES*35-1 downto 0);
   begin
     if rising_edge(clk) then
+      assert SHAPE_OK
+        report "gdn_recur_pipe: LANES and SLOTS must be powers of two and "
+             & "LANES must divide DIM"
+        severity failure;
       assert SLOTS >= SLOTS_MIN
         report "gdn_recur_pipe: SLOTS=" & integer'image(SLOTS) & " is below the "
              & integer'image(SLOTS_MIN) & " columns in flight at this LANES; a "
@@ -336,7 +354,6 @@ begin
         startA <= '0';
         if s_valid = '1' and s_first = '1' then
           startA  <= '1';
-          slotA   <= to_integer(col_cnt(LOG2S-1 downto 0));
           col_cnt <= col_cnt + 1;
         end if;
         dlyB <= dlyB(DC-1 downto 0) & startA;
@@ -458,7 +475,9 @@ begin
         sc1(4) <= sc1(3);
         ev_i  := to_integer(sc1(3).c.e_v);
         ske_i := to_integer(sc1(3).ske);
-        if ev_i < ske_i then ed_i := ev_i; else ed_i := ske_i; end if;
+        if sc1(3).c.tk0 = '1' and TK0_ED then ed_i := ev_i;
+        elsif ev_i < ske_i then               ed_i := ev_i;
+        else                                  ed_i := ske_i; end if;
         sc1(4).ed  <= to_signed(ed_i, 16);
         sc1(4).ekd <= to_signed(15 + ed_i, 16);
 
@@ -737,9 +756,21 @@ begin
           o_e_o    <= resize(redo_c(LOG2L).e_u - redo_c(LOG2L).shq + 18, 8);
           -- 2.1.6: the column exponent is int8; out of range is an error to be
           -- reported, never silently wrapped.
+          -- 2.1.6 range-checks the column exponent.  e_o = se_new + 18 is a
+          -- SEPARATE int8 output and was not checked: se_new in [110,127] is
+          -- in range while e_o wraps silently.  Unreachable at the exponent
+          -- ranges these vectors carry, which is exactly why it needs a check
+          -- rather than a test.
+          -- PER COLUMN, not sticky.  A latched flag says only that some
+          -- column somewhere overflowed, which cannot be checked against a
+          -- per-column reference and hides how many did.
           if (redo_c(LOG2L).e_u - redo_c(LOG2L).shq) > 127
-             or (redo_c(LOG2L).e_u - redo_c(LOG2L).shq) < -128 then
+             or (redo_c(LOG2L).e_u - redo_c(LOG2L).shq) < -128
+             or (redo_c(LOG2L).e_u - redo_c(LOG2L).shq + 18) > 127
+             or (redo_c(LOG2L).e_u - redo_c(LOG2L).shq + 18) < -128 then
             o_err_se <= '1';
+          else
+            o_err_se <= '0';
           end if;
         end if;
 

@@ -168,3 +168,128 @@ of an open defect, and says to delete it when the correction lands.
   sites. Site 9 borrows `e_d`; the sweep above shows what that costs when the
   borrowed grid is unrelated to the value's own magnitude. Sites 6 and 10 should
   be checked the same way.
+
+---
+
+# ADDENDUM, same night: there is a THIRD first-token defect, and the two fixes
+# are ONE amendment
+
+Found by: an adversarial review of the direction, then verified independently
+before acting.
+
+## The third defect
+
+`2.1.4` was corrected on 2026-08-25 to keep the masked-zero state out of `e_u`'s
+minimum at stage 4. The d_m grid defect above is at stage 3. **There is a third,
+also at stage 3, and it is the same class as the 2026-08-25 one: a masked
+operand's phantom exponent entering a grid selection.**
+
+At `tk = 0` the state is masked to zero, so `sk_acc = 0`, so `msb_pos(0) = 0`,
+so `sh_sk = 0` and **`ske = se_j + 17`** -- an exponent computed from a state
+that does not exist. Stage 3 then takes `e_d = min(e_v, ske)` unconditionally.
+Whenever `e_v > se_j + 17`, `v` is floored on that phantom grid **before beta
+ever multiplies it**:
+
+```
+  e_v  se_j   ske   e_d  s1    diff    d_fix     d_true   relerr
+   10   -40   -23   -23  33       0        0         32    1.000
+   25     0    17    17   8     127 0.0009689  0.0009765    0.008
+   30     0    17    17  13       3 2.289e-05  3.052e-05    0.250
+   -5   -40   -23   -23  18       0        0  1.049e+06    1.000
+```
+
+Two of those rows lose the first token's entire state. **`D_NORM` cannot
+recover any of it, because normalizing zero is zero.**
+
+The spec states the governing rule itself, one section earlier, and states it
+in the general form: *"any future masked operand must leave the grid selection
+as well as the sum."* Stage 3's `ske` is a masked operand's exponent and it was
+left in the grid selection. The fix is the identical structural move stage 4
+already makes: at `tk = 0`, `e_d = e_v`.
+
+## Why neither review caught it before
+
+**The PHYS/ADV vector split hid it**, and that split is itself a correct fix for
+a different measurement trap. The physical generator ties `e_v = se_j +/- 8`,
+because in steady state both describe the same activation scale -- so
+`ske = se_j + 17 > e_v` always and the minimum is inert. The adversarial cases
+DO span the spread, but adversarial cases are deliberately excluded from the
+oracle check, because holding unphysical inputs to an accuracy bound measures
+the generator.
+
+**And the "+/-8 is physical" premise is false at `tk = 0` specifically.** With no
+state, `se_j` is stale header garbage, so an arbitrary `e_v - se_j` spread is
+physically realizable exactly there and nowhere else. The vector set now
+carries 64 such columns, classified PHYS with that reasoning written next to
+them.
+
+## The decisive measurement: the two fixes are ONE amendment
+
+Over the 288 physically realizable columns, worst state error in LSB of the
+unit's own grid, and the number of first tokens whose state is discarded
+entirely:
+
+| mode | n | median | p95 | max | worst tk=0 | tk=0 lost |
+|---|---|---|---|---|---|---|
+| pinned | 288 | 0.654 | 4768.00 | 5189.00 | 5189.00 | 3 |
+| **`D_NORM` alone** | 288 | 0.602 | 16558.63 | **37413.90** | 37413.90 | 3 |
+| `TK0_ED` alone | 276 | 0.666 | 9.92 | 1218.04 | 1218.04 | 0 |
+| **both** | 276 | 0.605 | **1.20** | **3.47** | **1.11** | **0** |
+
+The two `TK0_ED` rows cover 276 columns rather than 288 because 12 are excluded
+as §2.1.6 exponent errors -- see the note at the end. Widening the grid at
+`tk = 0` widens the exponent range, and at the synthetic spreads these vectors
+sweep (`e_v - se_j` out to +141) the int8 column exponent becomes the binding
+constraint and the error path fires, which is the designed behaviour.
+
+**Applying `D_NORM` alone is SEVEN TIMES WORSE than the pinned recipe.**
+Normalizing `d` amplifies the error the phantom grid has already introduced.
+That is the single most important line in this document: had the d_m fix been
+adopted on its own -- which is exactly what the first half of this file argued
+for, with a measured table supporting it -- the recipe would have got
+substantially worse while every number in that table said it was getting
+better.
+
+The lesson generalises past this stage. **A measured improvement to one site is
+not evidence that the site is independent of the others**, and a fix validated
+against a vector set that cannot see a neighbouring defect will happily
+optimise into it.
+
+## Status
+
+Both corrections are implemented behind generics, `D_NORM` and `TK0_ED`,
+**defaulting FALSE**, in `rtl/gdn_recur.vhd` and `rtl/gdn_recur_pipe.vhd`, with
+`ref/gdn_recur_vec.c` taking both as arguments and emitting the matching
+reference. All four combinations are bit-exact against their own reference.
+Nothing is adopted: `2.1.4` remains as pinned, and the decision is one
+amendment covering both sites, to be taken with the table above in hand.
+
+The testbench asserts an accuracy bound ONLY for the corrected recipe. For the
+pinned one it REPORTS the measured error instead, because the only way to keep
+an assertion green over a known defect is to widen the bound until it measures
+nothing -- which is how `tb_l2norm_rs` let a dropped rounding bias through.
+
+## Also found while doing this
+
+- **`e_o` overflows int8 in reachable cases.** `2.1.6` range-checks the column
+  exponent, and both units checked `se_new` but not `e_o = se_new + 18`, which
+  is a separate int8 output: `se_new = 117` is in range while `e_o = 135` wraps
+  to 7. Predicted as "unreachable at current vector exponent ranges" and then
+  immediately reached by the wide-spread `tk = 0` cases -- 12 of 384 columns.
+  Both units now check it, and the reference emits an error flag so the
+  testbench checks that the unit REPORTS the condition rather than that a
+  wrapped value matches.
+- **`gdn_recur_pipe` had no shape assertion.** The reduction trees halve by two
+  per stage and the slot index is a bit slice of the column counter, so both
+  `LANES` and `SLOTS` must be powers of two. The sequential unit asserts this;
+  the pipelined one did not, so a non-power-of-two `LANES` would have silently
+  dropped lanes from the trees.
+- **The pipelined unit's margin was a comment, not an arithmetic term.** It
+  claimed "one extra interval of margin on each" while relying on `ceil_nb`
+  rounding to supply it -- which happens to give 2 cycles at `LANES = 32` and
+  **exactly zero at `LANES = 64`**, the configuration §3.1's upside row depends
+  on. The margin is now an explicit `+ NB` on both legs, and `LANES = 64` has
+  been run: it reaches **II = 2 cycles per column**, so that row is measured
+  rather than projected.
+- **`o_err_se` was sticky in the pipelined unit**, so it reported only that some
+  column somewhere had overflowed. Per column now.

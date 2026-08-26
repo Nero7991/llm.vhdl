@@ -19,9 +19,13 @@ entity tb_gdn_recur_pipe is
   generic(DIM   : positive := 128;
           LANES : positive := 32;
           SLOTS : positive := 16;
+          -- Case count, checked against the vector file's own header so a
+          -- mismatch is a loud assertion rather than a silent short run.
+          NCASE : positive := 384;
           GRP   : positive := 8;      -- columns per head group in the vectors
           -- Flip together with VECS; a mismatch is a loud bit-exact failure.
           D_NORM : boolean := false;
+          TK0_ED : boolean := false;
           -- Idle cycles inserted BETWEEN columns.  0 is the real case, one
           -- column every NB cycles.  A large value serialises the unit and
           -- isolates arithmetic bugs from overlap bugs.
@@ -50,17 +54,12 @@ architecture sim of tb_gdn_recur_pipe is
 
   type i_arr is array (natural range <>) of integer;
   type col_rec is record
-    tk0, se_j, e_v, v_j, eg, beta, se_new, e_o, gid : integer;
+    tk0, se_j, e_v, v_j, eg, beta, se_new, e_o, gid, err : integer;
     oacc : real;
   end record;
   type col_arr is array (natural range <>) of col_rec;
   type big_arr is array (natural range <>) of i_arr(0 to DIM-1);
 
-  -- 96 physical + 96 adversarial + one FULL-LENGTH 128-column head.  The long
-  -- head is the one that exercises continuous streaming, where every slot is
-  -- reused many times and the engines never idle -- the case an 8-column group
-  -- cannot reach, and the one a real head actually is.
-  constant NCASE : integer := 320;
   shared variable v_col  : col_arr(0 to NCASE-1);
   shared variable v_sm   : big_arr(0 to NCASE-1);
   shared variable v_kn   : big_arr(0 to NCASE-1);
@@ -90,7 +89,7 @@ begin
   end process;
 
   dut : entity work.gdn_recur_pipe
-    generic map(DIM => DIM, LANES => LANES, SLOTS => SLOTS, D_NORM => D_NORM)
+    generic map(DIM => DIM, LANES => LANES, SLOTS => SLOTS, D_NORM => D_NORM, TK0_ED => TK0_ED)
     port map(clk => clk, rst => rst, eg => eg, beta => beta,
              k_n => k_n, q_s => q_s,
              s_valid => s_valid, s_first => s_first, s_data => s_data,
@@ -124,6 +123,7 @@ begin
       read(ln, iv); v_col(c).se_new := iv;
       read(ln, rv); v_col(c).oacc := rv;
       read(ln, iv); v_col(c).e_o := iv;
+      read(ln, iv); v_col(c).err := iv;
       readline(fh, ln);                      -- oracle u, not used here
       readline(fh, ln);                      -- oracle o, not used here
     end loop;
@@ -247,8 +247,14 @@ begin
 
       if o_res_valid = '1' then
         bad := 0;
-        if to_integer(o_se_new) /= v_col(ncol_r).se_new then bad := bad + 1; end if;
-        if to_integer(o_e_o)    /= v_col(ncol_r).e_o    then bad := bad + 1; end if;
+        -- 2.1.6: an out-of-int8 exponent must be REPORTED; the value is then
+        -- meaningless by definition, so the check is that err_se fires.
+        if v_col(ncol_r).err = 1 then
+          if o_err_se /= '1' then bad := bad + 1; end if;
+        else
+          if to_integer(o_se_new) /= v_col(ncol_r).se_new then bad := bad + 1; end if;
+          if to_integer(o_e_o)    /= v_col(ncol_r).e_o    then bad := bad + 1; end if;
+        end if;
         if to_real_s(o_acc)     /= v_col(ncol_r).oacc   then bad := bad + 1; end if;
         if bad /= 0 then
           report "column " & integer'image(ncol_r) & ": scalars differ  se_new "

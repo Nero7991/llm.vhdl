@@ -67,7 +67,30 @@ entity gdn_recur is
     --   D_NORM = false        0.632     6.65   1218.04      1218.04
     --   D_NORM = true         0.600     1.29      3.47         1.11
     -- docs/debugging/2026-08-26_gdn-first-token-dm-grid.md
-    D_NORM : boolean := false
+    D_NORM : boolean := false;
+    -- TK0_ED: at tk = 0 the sk term is a MASKED ZERO, so ske is derived from a
+    -- state that does not exist -- msb_pos(0) = 0 gives ske = se_j + 17 -- and
+    -- it must not enter stage 3's grid minimum either.  That is the identical
+    -- structural move 2.1.4 already makes for e_u at stage 4, applied one
+    -- stage earlier, and the spec's own words demand it: "any future masked
+    -- operand must leave the grid selection as well as the sum".
+    --
+    -- Left in, e_d = min(e_v, se_j + 17) floors v on a phantom grid BEFORE
+    -- beta multiplies it, and D_NORM cannot recover that because normalizing
+    -- zero is zero.
+    --
+    -- APPLY IT WITH D_NORM, NOT INSTEAD OF IT.  Measured over 288 physically
+    -- realizable columns, worst state error in LSB and first tokens whose
+    -- entire state is discarded:
+    --                              p95        max   tk0 lost
+    --   pinned                  4768.00    5189.00      3
+    --   D_NORM alone           16558.63   37413.90      3   <- WORSE
+    --   TK0_ED alone               9.92    1218.04      0
+    --   both                       1.20       3.47      0
+    -- D_NORM alone is worse than the pinned recipe: normalizing d amplifies
+    -- the error the phantom grid already introduced.  The two are one
+    -- amendment, not two independent ones.
+    TK0_ED : boolean := false
   );
   port(
     clk    : in  std_logic;
@@ -333,7 +356,9 @@ begin
           when S_D1 =>
             ev_i  := to_integer(e_v);
             ske_i := to_integer(ske);
-            if ev_i < ske_i then ed_i := ev_i; else ed_i := ske_i; end if;
+            if tk0 = '1' and TK0_ED then       ed_i := ev_i;
+            elsif ev_i < ske_i then             ed_i := ev_i;
+            else                                ed_i := ske_i; end if;
             e_d  <= to_signed(ed_i, 16);
             ed_r <= to_signed(ed_i, 16);
             state <= S_D2;
@@ -346,8 +371,17 @@ begin
             -- yields 0 or -1 -- but the C reference MUST clamp, because there
             -- 1LL << 64 is undefined behaviour, so the clamp is stated on both
             -- sides rather than left implicit on one.
-            p := to_integer(e_v - e_d);  if p > 63 then p := 63; end if;
-            q := to_integer(ske - e_d);  if q > 63 then q := 63; end if;
+            -- Clamped at BOTH ends.  Upper: 2.1.4's rule, and the C reference
+            -- must clamp because 1LL << 64 is undefined behaviour there.
+            -- Lower: with TK0_ED the grid is e_v rather than the minimum, so
+            -- ske - e_d goes NEGATIVE at tk = 0 -- and a negative shift_right
+            -- is a bound-check FAILURE, not a wrong number, so it kills the
+            -- simulation somewhere unrelated.  The C's floor_shr returns its
+            -- operand unshifted for sh <= 0, which is what clamping to 0 does.
+            p := to_integer(e_v - e_d);
+            if p < 0 then p := 0; elsif p > 63 then p := 63; end if;
+            q := to_integer(ske - e_d);
+            if q < 0 then q := 0; elsif q > 63 then q := 63; end if;
             -- |v| <= 2^15 and |skm| <= 2^15, so |diff| <= 2^16 and s18 holds
             -- with a bit to spare.  Asserted rather than trusted: this is the
             -- off-by-one-bit class A's MA-1 documents, and w18 two stages back
@@ -569,7 +603,10 @@ begin
             e_o    <= resize(e_u - shq + 18, 8);
             -- 2.1.6: the column exponent is int8 and an out-of-range value is
             -- an error to be reported, never silently wrapped.
-            if (e_u - shq) > 127 or (e_u - shq) < -128 then
+            -- e_o = se_new + 18 is a separate int8 output and was not
+            -- checked: se_new in [110,127] is in range while e_o wraps.
+            if (e_u - shq) > 127 or (e_u - shq) < -128
+               or (e_u - shq + 18) > 127 or (e_u - shq + 18) < -128 then
               err_se <= '1';
             end if;
             done  <= '1';

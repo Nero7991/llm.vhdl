@@ -45,7 +45,21 @@
 #define NPHYS 96
 #define NADV  96
 #define NLONG 128
-#define NCASE (NPHYS + NADV + NLONG)
+/* tk = 0 columns with a WIDE e_v - se_j spread.
+ *
+ * The other physical groups tie e_v to se_j within +/-8, which is right in
+ * steady state: both describe the same activation scale.  AT tk = 0 IT IS
+ * WRONG, and wrong in the one place it matters.  There is no state, so se_j is
+ * stale header garbage and any spread is physically realizable -- and the
+ * spread is exactly what exposes the stage-3 phantom-exponent defect, because
+ * at tk = 0 sk_acc is zero, msb_pos(0) = 0, ske = se_j + 17, and
+ * e_d = min(e_v, ske) floors v on a grid derived from a state that does not
+ * exist.  With the +/-8 tie the min is inert and the defect is invisible.
+ *
+ * These are PHYS on purpose: they are realizable inputs, so the oracle check
+ * applies to them. */
+#define NTK0  64
+#define NCASE (NPHYS + NADV + NLONG + NTK0)
 
 static uint64_t rs_;
 static uint64_t rnd64(void){ uint64_t z=(rs_+=0x9E3779B97F4A7C15ULL);
@@ -73,7 +87,8 @@ static int32_t rnd_range(int32_t lo, int32_t hi){
 int main(int argc, char **argv)
 {
     const char *out = argc > 1 ? argv[1] : "sim/gdn_recur_vec.txt";
-    int d_norm = (argc > 2 && atoi(argv[2]) != 0);
+    int d_norm  = (argc > 2 && atoi(argv[2]) != 0);
+    int tk0_ed  = (argc > 3 && atoi(argv[3]) != 0);
     FILE *f = fopen(out, "w");
     if (!f) { perror("fopen"); return 1; }
     rs_ = 20260825ULL;
@@ -114,13 +129,48 @@ int main(int argc, char **argv)
      *   other direction.
      */
     for (int c = 0; c < NCASE; c++) {
-        int phys = (c < NPHYS) || (c >= NPHYS + NADV);
-        int longhead = (c >= NPHYS + NADV);
+        int longhead = (c >= NPHYS + NADV) && (c < NPHYS + NADV + NLONG);
+        int widetk0  = (c >= NPHYS + NADV + NLONG);
+        int phys = (c < NPHYS) || longhead || widetk0;
         int tk0, se_j, e_v, eg, beta;
         int16_t smant[DIM], kn[DIM], qs[DIM];
         int32_t v_j;
 
-        if (longhead) {
+        if (widetk0) {
+            /* first token, and the e_v/se_j spread swept across the +17 knee */
+            int a = c - (NPHYS + NADV + NLONG);
+            tk0  = 1;
+            se_j = rnd_range(-40, 40);
+            e_v  = se_j + (a - 16) * 3;      /* -48 .. +141 relative to se_j */
+            if (e_v >  120) e_v =  120;
+            if (e_v < -120) e_v = -120;
+            if (a % 8 == 0) {
+                g_eg   = rnd_range(27853, 32767);
+                g_beta = rnd_range(1, 65535);
+                double kd[DIM], qd[DIM], nk = 0.0, nq = 0.0;
+                for (int i = 0; i < DIM; i++) {
+                    kd[i] = (double)rnd_range(-10000, 10000) / 10000.0;
+                    qd[i] = (double)rnd_range(-10000, 10000) / 10000.0;
+                    nk += kd[i]*kd[i]; nq += qd[i]*qd[i];
+                }
+                nk = sqrt(nk); nq = sqrt(nq);
+                for (int i = 0; i < DIM; i++) {
+                    long kv = lround(kd[i] / nk * 32768.0);
+                    long qv = lround(qd[i] / nq / sqrt((double)DIM) * 262144.0);
+                    if (kv >  32767) { kv =  32767; }
+                    if (kv < -32768) { kv = -32768; }
+                    if (qv >  32767) { qv =  32767; }
+                    if (qv < -32768) { qv = -32768; }
+                    g_kn[i] = (int16_t)kv; g_qs[i] = (int16_t)qv;
+                }
+            }
+            eg = g_eg; beta = g_beta;
+            memcpy(kn, g_kn, sizeof kn); memcpy(qs, g_qs, sizeof qs);
+            int top = rnd_range(16384, 32767);
+            for (int i = 0; i < DIM; i++) smant[i] = (int16_t)rnd_range(-top, top);
+            v_j = rnd_range(-32768, 32767);
+            if (v_j == 0) v_j = 12345;
+        } else if (longhead) {
             /* one head, 128 columns, one k/q/eg/beta/tk0 for all of them */
             int a = c - (NPHYS + NADV);
             se_j = rnd_range(-40, 40);
@@ -244,7 +294,15 @@ int main(int argc, char **argv)
         int ske = se_j + 17 - sh_sk;
         assert(llabs(skm) <= 32768);
 
-        int e_d = (e_v < ske) ? e_v : ske;
+        /* TK0_ED: at tk = 0 the sk term is a masked ZERO, so ske is derived
+         * from a state that does not exist (msb_pos(0) = 0 gives
+         * ske = se_j + 17) and must not enter the grid minimum -- the identical
+         * structural move stage 4 already makes for e_u.  Left in, it floors v
+         * on a phantom grid BEFORE beta multiplies it, and d_norm cannot
+         * recover that because normalizing zero is zero. */
+        int e_d;
+        if (tk0 && tk0_ed) e_d = e_v;
+        else               e_d = (e_v < ske) ? e_v : ske;
         /* Shift counts clamped to 63, exactly as spec 2.1.4 states and as
          * gdn_err.c:383-384 does.  Dropping the clamp when this column was
          * extracted made floor_shr compute 1LL << 64 on wide exponent
@@ -278,6 +336,12 @@ int main(int argc, char **argv)
         int64_t o_acc = 0;
         for (int i = 0; i < DIM; i++) o_acc += (int64_t)snew[i] * (int64_t)qs[i];
         int e_o = se_new + 18;
+        /* 2.1.6: the column exponent is int8 and out of range is an ERROR to
+         * be reported, never silently wrapped.  e_o = se_new + 18 is a
+         * SEPARATE int8 output, so se_new in [110,127] is in range while e_o
+         * is not -- reachable with the wide tk = 0 exponent spreads, and
+         * measured: se_new = 117 gives e_o = 135, which wraps to 7. */
+        int err = (se_new > 127 || se_new < -128 || e_o > 127 || e_o < -128);
 
         /* ---------------- ORACLE: the same column in double --------------
          * Independent of every fixed-point choice above: no grids, no shifts,
@@ -309,15 +373,16 @@ int main(int argc, char **argv)
          * emitted as a real deliberately: it is s38, and every s38 integer is
          * represented EXACTLY by a double, so the bit-exact check survives the
          * round trip while VHDL's 32-bit integer would not hold it. */
-        if (longhead) gid = 1000;
-        else          gid = c / GRP;
+        if (longhead)     gid = 1000;
+        else if (widetk0) gid = 2000 + (c - (NPHYS+NADV+NLONG)) / 8;
+        else              gid = c / GRP;
         fprintf(f, "%d %d %d %d %d %d %d %d\n",
                 phys, tk0, se_j, e_v, eg, beta, v_j, gid);
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", smant[i]); } fprintf(f,"\n");
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", kn[i]); } fprintf(f,"\n");
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", qs[i]); } fprintf(f,"\n");
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", snew[i]); } fprintf(f,"\n");
-        fprintf(f, "%d %.1f %d\n", se_new, (double)o_acc, e_o);
+        fprintf(f, "%d %.1f %d %d\n", se_new, (double)o_acc, e_o, err);
         for (int i=0;i<DIM;i++) { fprintf(f, "%.17e ", ur[i]); } fprintf(f,"\n");
         /* The output dot is a 128-term signed sum and cancels heavily, so a
          * RELATIVE error against |sum| is not a measurement -- it explodes
@@ -327,6 +392,6 @@ int main(int argc, char **argv)
         ncase++;
     }
     fclose(f);
-    fprintf(stderr, "gdn_recur_vec: %d cases -> %s (d_norm=%d)\n", ncase, out, d_norm);
+    fprintf(stderr, "gdn_recur_vec: %d cases -> %s (d_norm=%d tk0_ed=%d)\n", ncase, out, d_norm, tk0_ed);
     return 0;
 }
