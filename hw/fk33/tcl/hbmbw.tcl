@@ -496,3 +496,39 @@ puts "  ports are on INDEPENDENT channels, so no bus turns around; any"
 puts "  shortfall is the HBM switch arbitrating mixed traffic.  W2 minus W3"
 puts "  separates turnaround from arbitration, which a single mixed number"
 puts "  would average together."
+
+# ============================================================================
+# W4  TURNAROUND vs BURST LENGTH
+#
+# W2 measured the read/write turnaround at ARLEN=15, the AXI3 maximum -- 16
+# beats, 512 B.  That is NOT the burst subsystem B actually issues.  B's state
+# sweep works a column at a time and a column is 128 int16 elements = 256 B =
+# EIGHT beats, half the measured burst.  A shorter burst turns the DRAM bus
+# around twice as often for the same bytes, so the 81.8% cannot be assumed to
+# carry, and B 3.4's +23% feed margin rests on it carrying.
+#
+# This costs one register write per point on the bitstream already loaded.
+# ============================================================================
+puts ""
+puts "==== W4  R+W turnaround against burst length ==========================="
+puts "B issues 8-beat bursts (one 128-element column); W2 measured 16."
+puts ""
+puts [format "%-28s %4s %11s %11s %12s %11s"       experiment ports rbeats wbeats cycles GB/s]
+
+set W4_SAVE $ARLEN
+foreach al {15 7 3 1} {
+    set ARLEN $al
+    set nb [expr {100000 * 16 / ($al + 1)}]     ;# equal BYTES at every length
+    set g [report "R+W 1 port, arlen=$al" 1 0 1 $nb 1 1]
+    if {$al == 15} { set w4_ref $g }
+}
+set ARLEN $W4_SAVE
+
+puts ""
+puts "READING: equal BYTES are moved at every burst length, so a flat column"
+puts "  means turnaround does not care about burst size and B's 8-beat column"
+puts "  inherits the 16-beat number.  A FALLING column means it does, and B"
+puts "  3.4's +23% margin shrinks by the same ratio -- at which point B 2.4"
+puts "  must either fetch two or more contiguous columns per burst (they are"
+puts "  contiguous in the 2.2 layout) or batch K reads then K writes, which"
+puts "  reduces turnaround BELOW the measured rate at no DRAM cost."

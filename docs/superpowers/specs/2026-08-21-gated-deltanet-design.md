@@ -1454,8 +1454,30 @@ stays an in-place read-modify-write, and §2.5's four-master allocation stands
 with the masters bidirectional rather than split by direction.**
 
 The 81.8% is not a general HBM efficiency figure and must not be reused as one.
-It is a 1:1 read/write mix at ARLEN=15; C's 2R+1W on a single channel is a
-different mix and is not covered.
+It is a 1:1 read/write mix; C's 2R+1W on a single channel is a different mix
+and is not covered.
+
+**Burst length checked, 2026-08-25.** The 11.77 GB/s was measured at ARLEN=15
+(16 beats), and B does not issue that burst -- §2.4's column pipeline works one
+128-element column at a time, which is 256 B = **8 beats**. A doubled
+turnaround frequency could plausibly have eaten the whole margin, so it was
+measured on the loaded bitstream rather than argued about:
+
+| burst | beats | GB/s | 4 ports vs 38.4 demanded |
+|---|---|---|---|
+| ARLEN=15 | 16 | 11.8 | +23% |
+| **ARLEN=7** | **8 (B's column)** | **11.5** | **+20%** |
+| ARLEN=3 | 4 | 11.0 | +15% |
+| ARLEN=1 | 2 | 8.9 | -7%, does not feed |
+
+**B's real burst costs 2.0%.** The margin is +20%, not +23%, and the in-place
+conclusion is untouched -- the ping-pong sits at 0% margin at *any* burst
+length, because what limits it is dedicating each port to one direction, not
+turnaround.
+
+**But below 4 beats it collapses.** Any B access pattern that would issue
+2-beat bursts must be restructured before it is built; §2.4 should be read as
+requiring at least a full column per burst.
 
 ### 3.5 Consequences for §2.5, §2.8 and the recon ladder
 

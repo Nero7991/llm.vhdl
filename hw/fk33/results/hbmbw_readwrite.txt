@@ -90,3 +90,29 @@ NOT MEASURED, do not infer:
     Shorter bursts turn the bus around more often and must be worse.
   - Anything at 350 MHz.  This build closed at WNS +0.017 ns; there is no
     headroom to raise the clock without re-closing timing.
+
+==================== W4: TURNAROUND vs BURST LENGTH ====================
+Added 2026-08-25 because W2 measured at ARLEN=15 (16 beats, the AXI3
+maximum) and subsystem B does not issue that burst: B's state sweep works
+one 128-element column at a time = 256 B = EIGHT beats.  Equal BYTES are
+moved at every point, so the column is directly comparable.
+
+experiment                   ports      rbeats      wbeats       cycles        GB/s
+R+W 1 port, arlen=15            1     1600000     1600000      2609025        11.8
+R+W 1 port, arlen=7             1     1600000     1600000      2660393        11.5
+R+W 1 port, arlen=3             1     1600000     1600000      2802444        11.0
+R+W 1 port, arlen=1             1     1600000     1600000      3454429         8.9
+
+B's 8-beat column costs 2.0%, NOT the 30-36% a doubled turnaround frequency
+would have implied.  The penalty is graceful to 4 beats (-6.4%) and only
+collapses at 2 beats (-24%), where the address phase stops being amortised.
+
+Consequence for B 3.4: four bidirectional ports deliver 46.0 GB/s at B's real
+burst length against 38.4 GB/s demanded, so the feed margin is +20% rather
+than the +23% quoted from the 16-beat number.  The in-place-beats-ping-pong
+conclusion is unaffected -- the ping-pong's margin is 0% at ANY burst length,
+since it is limited by dedicating each port to one direction, not by turnaround.
+
+DO NOT read this as "burst length does not matter".  It matters below 4 beats,
+sharply.  Any B or C access pattern that would issue 2-beat bursts should be
+restructured before it is built.
