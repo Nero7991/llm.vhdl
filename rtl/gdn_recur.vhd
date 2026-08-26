@@ -98,7 +98,25 @@ entity gdn_recur is
     -- safe rather than a repeat of the D_NORM-alone mistake at the next site.
     --
     -- DEFAULT TRUE as of 2026-08-26: ADOPTED.
-    TK0_ED : boolean := true
+    TK0_ED : boolean := true;
+    -- EG0_ED: the SAME masked-operand rule, applied to the third site.
+    --
+    -- Mid-sequence with eg = 0 the decay gate is fully shut, so w18 is
+    -- identically zero for the whole column -- structurally the same masked
+    -- operand as tk = 0 -- yet tk0 does not gate it, so se_j + 2 still enters
+    -- e_u's minimum and ske still enters e_d's.  e_kd is roughly
+    -- se_j + 31 + spread - shd, so the min pins e_u to se_j + 2 and the entire
+    -- token's update to that column is floored right by ~25-37 bits and
+    -- discarded.
+    --
+    -- THIS WAS INITIALLY AND WRONGLY DECLARED COVERED BY D_NORM.  The state
+    -- error measured 25.55 -> 1.05 LSB and that looked conclusive, but the
+    -- metric is LSB OF THE UNIT'S OWN GRID and that grid is exactly what the
+    -- phantom exponent coarsens, so it structurally cannot see the loss.  The
+    -- output dot, normalised by its term norm, does see it: 7 of the 8 columns
+    -- that fail the oracle check at the adopted defaults are eg = 0 mid-sequence,
+    -- worst 1.098 -- a 110% error on the whole column's contribution.
+    EG0_ED : boolean := true
   );
   port(
     clk    : in  std_logic;
@@ -364,7 +382,13 @@ begin
           when S_D1 =>
             ev_i  := to_integer(e_v);
             ske_i := to_integer(ske);
-            if tk0 = '1' and TK0_ED then       ed_i := ev_i;
+            -- MASKED STATE: the decayed state term is identically zero either
+            -- because this is the first token (tk0) or because the decay gate
+            -- is fully shut (eg = 0).  In both cases ske is msb_pos(0) = 0
+            -- lifted to se_j + 17, an exponent describing nothing, and it must
+            -- not enter the grid minimum.  EG0_ED extends the tk0 rule to the
+            -- eg = 0 case; see the header.
+            if (tk0 = '1' or (EG0_ED and eg = 0)) and TK0_ED then ed_i := ev_i;
             elsif ev_i < ske_i then             ed_i := ev_i;
             else                                ed_i := ske_i; end if;
             e_d  <= to_signed(ed_i, 16);
@@ -431,7 +455,7 @@ begin
             -- e_kd = 15 + e_dm, and e_dm = e_d + 16 - shd.  With the pinned
             -- shd = 16 this is 15 + e_d, exactly as before.
             ekd_i := 15 + to_integer(ed_r) + 16 - shd;
-            if tk0 = '1' then
+            if tk0 = '1' or (EG0_ED and eg = 0) then
               eu_i := ekd_i;                 -- the masked zero has no exponent
             elsif sej_i < ekd_i then
               eu_i := sej_i;

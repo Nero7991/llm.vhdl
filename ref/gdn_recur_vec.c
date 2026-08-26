@@ -356,8 +356,13 @@ int main(int argc, char **argv)
          * on a phantom grid BEFORE beta multiplies it, and d_norm cannot
          * recover that because normalizing zero is zero. */
         int e_d;
-        if (tk0 && tk0_ed) e_d = e_v;
-        else               e_d = (e_v < ske) ? e_v : ske;
+        /* The state term is a MASKED ZERO whenever tk = 0 (first token) OR
+           eg = 0 (decay gate fully shut mid-sequence).  Both make ske an
+           exponent describing nothing.  The eg = 0 arm was added 2026-08-26
+           after the oracle's output-dot check caught it. */
+        int masked = tk0 || (eg == 0);
+        if (masked && tk0_ed) e_d = e_v;
+        else                  e_d = (e_v < ske) ? e_v : ske;
         /* Shift counts clamped to 63, exactly as spec 2.1.4 states and as
          * gdn_err.c:383-384 does.  Dropping the clamp when this column was
          * extracted made floor_shr compute 1LL << 64 on wide exponent
@@ -374,7 +379,7 @@ int main(int argc, char **argv)
         int e_dm = e_d + 16 - shd;
 
         int e_kd = 15 + e_dm;
-        int e_u  = tk0 ? e_kd : ((se_j + 2 < e_kd) ? se_j + 2 : e_kd);
+        int e_u  = masked ? e_kd : ((se_j + 2 < e_kd) ? se_j + 2 : e_kd);
         int su = se_j + 2 - e_u, sk2 = e_kd - e_u;
         if (su  > 63) su  = 63;
         if (sk2 > 63) sk2 = 63;

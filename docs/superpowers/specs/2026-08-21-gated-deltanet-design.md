@@ -833,9 +833,9 @@ codebase.
 | 5 | L2-norm output quantize (k Q15, q Q18 with fold) | **§3** pins the rsqrt recipe; `sat16` + half+inf required |
 | 6 | decay prescale `round_shift(smant * eg, 13)` | half+inf |
 | 7 | sk normalize `round_shift(sk_acc, sh_sk)` | half+inf |
-| 8 | v/sk alignment to `e_d = min(e_v, ske)` | floor, right-shift-only |
-| 9 | beta multiply `round_shift(diff * beta, 16)` | half+inf |
-| 10 | update alignment to `e_u = min(se[j]+2, e_kd)` | floor, right-shift-only |
+| 8 | v/sk alignment to `e_d = masked ? e_v : min(e_v, ske)` | floor, right-shift-only; shift count clamped at BOTH ends, [0, 63] (at `masked` the spread is negative) |
+| 9 | beta multiply `round_shift(diff * beta, shd)`, `shd = max(0, msb_pos(|diff*beta|) - 14)` | half+inf, bias only when `shd > 0` (AMENDED 2026-08-26, was a fixed 16) |
+| 10 | update alignment to `e_u = masked ? e_kd : min(se[j]+2, e_kd)` | floor, right-shift-only; `masked = (tk = 0) or (eg = 0)`, AMENDED 2026-08-26 |
 | 11 | state write-back quantize | bfp_pack semantics, `sat16`; `se_new` range-checked |
 | 12 | head-emit alignment + requantize | floor for alignment; bfp semantics for requantize |
 | 13 | gated-norm product and 16-head renorm to one `y_exp` | **§3** |
