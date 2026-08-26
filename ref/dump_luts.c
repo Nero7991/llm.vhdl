@@ -11,6 +11,7 @@ int main(void){
     dump_arr("mem/luts/rsqrt_seed.mem", _fx_rsqrt_seed, 64);
     dump_arr("mem/luts/exp_lut.mem",    _fx_exp_lut_q, 257);
     dump_arr("mem/luts/sig_lut.mem",    _fx_sig_lut_q, 513);
+    dump_arr("mem/luts/sp_lut.mem",     _fx_sp_lut_q,  257);
     { FILE* fc=fopen("mem/luts/rope_cos.mem","w"); FILE* fs=fopen("mem/luts/rope_sin.mem","w");
       for(int i=0;i<512*4;i++){ fprintf(fc,"%d\n",_fx_cos_tbl[i]); fprintf(fs,"%d\n",_fx_sin_tbl[i]); }
       fclose(fc); fclose(fs); }

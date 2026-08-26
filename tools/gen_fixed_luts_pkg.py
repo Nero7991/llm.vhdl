@@ -14,6 +14,7 @@ TABLES = [
     ("RSQRT_ROM", "rsqrt_seed.mem", 64),
     ("EXP_ROM",   "exp_lut.mem",    257),
     ("SIG_ROM",   "sig_lut.mem",    513),
+    ("SP_ROM",    "sp_lut.mem",     257),
 ]
 
 

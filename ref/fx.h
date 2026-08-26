@@ -35,6 +35,7 @@ static int64_t _fx_exp_lut_q[257];
 
 /* sigmoid: 513 samples over z in [-16,16], stored Q30 (sigmoid in (0,1)). */
 static int64_t _fx_sig_lut_q[513];
+static int64_t _fx_sp_lut_q[257];
 
 /* rope tables: filled by fx_rope_init. Capacity = 512 positions * 4 freqs
  * (head_size=8 -> half=4). head_size=16 (half=8) would need 4096; guarded. */
@@ -64,6 +65,13 @@ static inline void fx_init(void)
     for (int k = 0; k <= 512; k++) {
         double z = -16.0 + (double)k * (32.0 / 512.0);  /* [-16,16] */
         _fx_sig_lut_q[k] = llround((1.0 / (1.0 + exp(-z))) * (double)(1LL << 30));
+    }
+    /* softplus correction term, log(1+exp(z)) on [-16,0]; see fx_softplus_q.
+       Deliberately the SAME geometry as the exp table (257 entries, step
+       1/16, Q30) so the RTL evaluates both with one interpolator. */
+    for (int k = 0; k <= 256; k++) {
+        double z = -16.0 + (double)k * (16.0 / 256.0);  /* [-16,0] */
+        _fx_sp_lut_q[k] = llround(log1p(exp(z)) * (double)(1LL << 30));
     }
 }
 
@@ -275,6 +283,54 @@ static inline int32_t fx_sigmoid_q(int32_t z_q, int q)
     if (r > (int64_t)one_q) r = (int64_t)one_q;
     return (int32_t)r;
 }
+
+/* -----------------------------------------------------------------------
+ * softplus(x) = log(1 + exp(x)), input/output Qq.
+ *
+ * Evaluated by range reduction rather than a table over the whole domain:
+ *
+ *     softplus(x) = max(x, 0) + log(1 + exp(-|x|))
+ *
+ * The correction term is confined to [-16, 0] and to (0, ln 2], so a
+ * 256-interval table carries it to the same absolute accuracy a table over
+ * the full range would need 576 intervals to reach.  It also makes B's
+ * threshold rule (1.1(f), "x > 20 ? x : ...") fall out for free: beyond
+ * |x| = 16 the correction is 1.1e-7, below the LSB of every q this model
+ * uses, so softplus(x) returns exactly x with no branch on 20.
+ *
+ * The index arithmetic is deliberately identical to fx_exp_q's.
+ * --------------------------------------------------------------------- */
+static inline int32_t fx_softplus_q(int32_t x_q, int q)
+{
+    int64_t one_q = 1LL << q;
+    int64_t ax    = (x_q < 0) ? -(int64_t)x_q : (int64_t)x_q;
+    int64_t pos   = (x_q > 0) ?  (int64_t)x_q : 0;
+
+    int64_t corr;
+    if (ax >= 16LL * one_q) {
+        corr = 0;                       /* below the LSB for any q <= 22 */
+    } else {
+        int64_t offset = (16LL * one_q) - ax;        /* z = -|x| , shifted */
+        int64_t idx_fp = offset * 16;
+        int k = (int)(idx_fp >> q);
+        if (k > 255) k = 255;
+        if (k < 0)   k = 0;
+        int64_t frac = idx_fp - ((int64_t)k << q);
+
+        int64_t lo = _fx_sp_lut_q[k];
+        int64_t hi = _fx_sp_lut_q[k + 1];
+        int64_t interp_q30 = lo + (((hi - lo) * frac) >> q);
+
+        int sh = 30 - q;
+        corr = (sh > 0) ? ((interp_q30 + (1LL << (sh - 1))) >> sh) : interp_q30;
+    }
+
+    int64_t r = pos + corr;
+    if (r < 0) r = 0;                   /* softplus > 0 always */
+    if (r > 0x7FFFFFFF) r = 0x7FFFFFFF;
+    return (int32_t)r;
+}
+
 
 /* -----------------------------------------------------------------------
  * RoPE cos/sin tables (Q1.15). +1.0 saturates to 32767.
