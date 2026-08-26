@@ -323,3 +323,77 @@ still holds"; no run supports it.
   old context is the part still alive. Nothing has ever measured it: stories260K
   does not exercise the gating nonlinearities at all, and this harness feeds
   `eg`/`beta` in as values.
+
+## CLOSED 2026-08-26: the `eg` term is measured, and the bound survives
+
+This document's open list has twice named the `eg` isolation as the sharpest
+untested gap: `eg` multiplies the state every token, so unlike the `k` error it
+compounds geometrically, and `gdn_err.c` feeds `eg` in as a VALUE rather than
+computing it from `softplus`/`exp_q` -- so no number in this file has ever seen
+the approximation error of the kernel that produces it.
+
+Measured directly against real math (`exp_q` at Q15, which is `eg`'s format),
+by band of `g`:
+
+```
+g range                   worst abs    worst rel    = LSB Q15       at g
+[-0.001, 0.000]           3.038e-05    3.040e-05         1.00   -0.00052
+[-0.010, -0.001]          2.603e-04    2.628e-04         8.53   -0.00949
+[-0.100, -0.010]          4.878e-04    5.047e-04        15.99   -0.03043
+[-1.000, -0.100]          4.386e-04    5.281e-04        14.37   -0.10004
+[-16.000, -1.000]         1.892e-04    1.001e+00         6.20   -1.03168
+```
+
+**The band that matters is the first one.** The slow heads -- the ones whose old
+context is still alive and therefore the only ones where a per-token error can
+compound -- have `eg` in 0.99966..0.99997, i.e. `g` in [-3.4e-4, -3.0e-5].
+There the worst relative error is **3.04e-5, which is 1.00 LSB of Q15**: the
+quantization floor, not an approximation defect. `exp_q` is doing as well as
+the format allows exactly where it needs to.
+
+Compounding that measured figure:
+
+```
+rel err            128       512      2048      4096
+1.5e-05          1.002     1.008     1.031     1.063     <- this doc's assumption
+3.0e-05          1.004     1.015     1.063     1.131     <- MEASURED
+1.0e-04          1.013     1.053     1.227     1.506
+3.0e-04          1.039     1.166     1.848     3.416
+```
+
+**So the real figure is +13% at 4,096 tokens, against the +6% this document
+assumed from a half-ULP.** Twice the estimate, the same order, and the
+verdict is unchanged: int16 state stands, and `eg` at Q15 is not the term that
+breaks it.
+
+**The 16-LSB errors in the middle bands do not compound and are not a
+problem.** They sit at `g ~ -0.03` and below, where `eg ~ 0.97` -- fast-decaying
+heads that are deliberately forgetting. After 128 tokens a contribution there is
+already down to `0.97^128 = 0.02`, so a 5e-4 relative error on the gate is
+multiplied by something that has nearly vanished. Compounding is only dangerous
+where the gate is near 1, and that is precisely where the error is smallest.
+
+The 1.001 relative error in the `[-16, -1]` band is a metric artifact, not a
+defect: `exp(-16) = 1.1e-7` is below Q15's LSB of 3.1e-5, so it quantizes to
+zero and the relative error is 100% of a value the format cannot represent at
+all.
+
+**Measurement trap hit, and worth recording because it looked like a
+catastrophe:** `fx.h`'s kernels read from LUTs built by `fx_init()`, and a
+probe that forgets to call it gets an all-zero table -- which made
+`fx_sigmoid_q` appear to return 0 across 64% of its input range, a spectacular
+and entirely fictitious defect. If an approximation kernel in this codebase
+looks broken everywhere at once, check `fx_init()` before believing it.
+
+For completeness, the same measurement for the other two kernels, since none of
+them had ever been compared against real math:
+
+```
+sigmoid_q  q=12  worst abs 1.68e-04 = 0.69 LSB    q=16  5.46e-05 = 3.58 LSB
+exp_q      q=12  worst abs 5.86e-04 = 2.40 LSB    q=15  4.88e-04 = 15.99 LSB
+```
+
+Both are absolute-error-bounded by their interpolation step, so the LSB count
+rises with `q` while the real error does not. That is the right way to read
+these: `sigmoid_q16` for `beta` carries 5.5e-5 of absolute error, which enters
+the delta rule linearly and does not compound.
