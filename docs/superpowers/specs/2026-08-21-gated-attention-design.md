@@ -1517,13 +1517,30 @@ C-internal specifically to avoid a new D obligation.
    narrowed unit, its bound assertions and its bit-exactness proof are
    unwritten, and the skeleton's 278.9 MHz (synthesis-only) is still shy
    of the clock -- `MREG` on the 34x32 Newton stage is the expected fix,
-   unmeasured.
+   unmeasured. **Independently reproduced 2026-08-25** by B's
+   `sim/micro/micro_rmsn_lanes.vhd`, which measures 278.9 MHz at 1, 2 AND 4
+   lanes -- identical across widths, so it is one fixed path and not a fanout
+   effect, which supports the `MREG` diagnosis. B §3.6 depends on the same
+   fix; whoever lands it closes both.
 2. **No Fmax measurement exists at 192 lanes.** The routed 339.6 MHz is at
    64; broadcast fanout grows with lanes (k/v fan out 6, e/f fan out 32,
    control 192) and the 64-lane limiter had already moved to the DSP
    cascade. Do not extrapolate; §3.11 gate 5 is the check.
-3. **HBM port efficiency for C's 2R+1W concurrent pattern is unmeasured**
-   (§2.5's obligation, carried; the 53% duty premise is DERIVED).
+3. **HBM port efficiency for mixed traffic is NARROWED by measurement,
+   2026-08-25, but C's specific 2R+1W mix is still unmeasured.** On the card
+   at 30 ports / 300 MHz
+   (`docs/debugging/2026-08-25_hbm-read-write-turnaround.md`):
+   - read and write masters on **independent** pseudo-channels cost
+     **nothing**: 20 readers + 10 writers gave 288.0 GB/s against read-only's
+     288.0, matching to one cycle in 1.6 million. Switch arbitration is free.
+   - a **single master mixing reads and writes into ONE** pseudo-channel gets
+     **81.8%** of that channel's 14.4 GB/s. The entire penalty is DRAM bus
+     turnaround.
+
+   So the risk behind the 53% duty premise is not arbitration, and it only
+   bites where C's reads and writes share a channel. **What is still
+   unmeasured is C's actual mix**: the 81.8% is a 1:1 read/write ratio at
+   ARLEN=15, and 2R+1W is 2:1. It must not be substituted for C's number.
 4. **The worst-case rescale regime has observability, not mitigation**
    (§3.3). If real 27B score dynamics ever approach it, a per-head
    two-pass fallback must be designed.

@@ -1,0 +1,92 @@
+FK33 HBM read/write bandwidth, 30 ports, 300.000 MHz, 2026-08-25
+build WNS +0.017 ns (read-only build was +0.499), card at wiper 68 / 0.717 V
+rtl/hbm_tg.vhd with the write channel; every beat count below is EXACT
+(self-check nburst x (arlen+1) per port, and B responses matched).
+
+==== W1  WRITE-ONLY, one channel per port  (GUARANTEED, NOT A FINDING) =
+experiment                   ports      rbeats      wbeats       cycles        GB/s
+write-only 1 ports              1           0     1600000      1600017         9.6
+write-only 4 ports              4           0     6400000      1600017        38.4
+write-only 15 ports            15           0    24000000      1600017       144.0
+write-only 30 ports            30           0    48000000      1600019       288.0
+READING: this must come out at ports x 9.6 GB/s, i.e. 100% of the port
+  ceiling, for the same arithmetic reason the read sweep did.  It says
+  the write path moves every beat it was asked to and nothing about the
+  memory.  If it is SHORT, that is a write-path or timing fault -- this
+  build closed at WNS +0.017 ns against the read-only build's +0.499,
+  and the card runs 0.717 V where Vivado signed off at 0.85 V.
+==== W2  READ+WRITE CONCURRENT, one channel per port  (THE HEADLINE) ===
+one port demands 19.2 GB/s from a channel that supplies 14.4, so the
+per-port rate here CANNOT be 19.2 and the shortfall is turnaround.
+experiment                   ports      rbeats      wbeats       cycles        GB/s
+R+W both 1 ports                1     1600000     1600000      2609145        11.8
+R+W both 2 ports                2     3200000     3200000      2610205        23.5
+R+W both 4 ports                4     6400000     6400000      2609248        47.1
+R+W both 15 ports              15    24000000    24000000      2610874       176.5
+R+W both 30 ports              30    48000000    48000000      2610491       353.0
+TURNAROUND: one port R+W delivered 11.77 GB/s against 14.4 GB/s
+  of channel supply and 19.2 GB/s of demand -- 81.8% of the
+  channel, and that percentage IS the read/write turnaround
+  efficiency.  It is the number C 3.13 lists as unmeasured behind its
+  53% duty premise, and the one B 3.4 needs to decide whether the
+  state sweep stays an in-place read-modify-write or has to ping-pong
+  between two regions at 37.75 MB per card.
+==== W3  MIXED 2R+1W ACROSS PORTS  (arbitration, not turnaround) =======
+experiment                   ports      rbeats      wbeats       cycles        GB/s
+2R+1W 30 ports                 30    32000000    16000000      1600176       288.0
+READING: compare against the read-only 30-port line at the top.  These
+  ports are on INDEPENDENT channels, so no bus turns around; any
+  shortfall is the HBM switch arbitrating mixed traffic.  W2 minus W3
+  separates turnaround from arbitration, which a single mixed number
+  would average together.
+
+================================ WHAT THIS MEANS ==============================
+
+W1 write-only == read-only, to 0.01%.  30 ports: 288.0 GB/s in 1,600,019
+cycles against the read sweep's 1,600,175 for the same beats.  A write beat
+costs exactly what a read beat costs.  This was arithmetically guaranteed and
+is recorded as a working write path, not as a finding.
+
+W2 IS THE FINDING, and it is the first measurement on this card where the DRAM
+rather than the fabric clock sets the answer.  One port doing reads AND writes
+into one pseudo-channel delivers 11.77 GB/s.  It demanded 19.2 (AXI's two
+directions are independent, 32 B/cycle each) from a channel that supplies 14.4.
+
+    11.77 / 14.4 = 81.8%   <- the read/write bus turnaround, tWTR/tRTW
+
+That is the whole cost, because at ONE port there is no second master to
+arbitrate against.  It scales exactly linearly to 30 ports (353.0 GB/s
+= 30 x 11.77), so nothing upstream saturates.
+
+W3 SEPARATES TURNAROUND FROM ARBITRATION, and arbitration is FREE.  Twenty
+readers and ten writers on INDEPENDENT channels: 288.0 GB/s in 1,600,176
+cycles, against read-only's 1,600,175.  Identical to within one cycle in 1.6
+million.  The HBM switch mixes read and write masters at no cost whatsoever;
+100% of W2's 18.2% loss is the DRAM bus turning around.
+
+353.0 GB/s IS THE HIGHEST FIGURE EVER MEASURED ON THIS CARD, 22.6% above the
+288.0 read-only number, because bidirectional traffic uses both AXI directions
+per port.  It does NOT raise subsystem A's supply: A's weight stream is
+read-only and still gets 32 B/cycle/port = 9.6 GB/s.  Quote 288 for read-only
+workloads and 353 only for genuinely bidirectional ones.
+
+COUNTERINTUITIVE CONSEQUENCE FOR B (see B section 3.4).  B's state sweep is an
+in-place read-modify-write, so it turns the bus around continuously, and the
+obvious fix was a ping-pong between two state regions to separate reads from
+writes.  MEASUREMENT SAYS DO NOT.  At LANES=32 B needs 19.2 GB/s each way:
+
+    in-place, 4 ports doing R+W : 47.1 GB/s (23.5 each way)  +23% margin
+    ping-pong, 2 read + 2 write : 38.4 GB/s (19.2 each way)    0% margin
+
+The turnaround penalty is real, and it is still cheaper than dedicating each
+port to one direction and leaving the other direction idle.  Both need 4 ports;
+in-place has margin and needs no second copy of the state.  The ping-pong is
+withdrawn, and it would have cost 37.75 MB per card to make things worse.
+
+NOT MEASURED, do not infer:
+  - Read/write RATIOS other than 1:1.  W2 issues equal beats each way.  C's
+    2R+1W on ONE channel is a different mix and is not this number.
+  - Turnaround at burst lengths other than ARLEN=15 (16 beats, the AXI3 max).
+    Shorter bursts turn the bus around more often and must be worse.
+  - Anything at 350 MHz.  This build closed at WNS +0.017 ns; there is no
+    headroom to raise the clock without re-closing timing.

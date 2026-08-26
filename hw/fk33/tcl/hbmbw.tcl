@@ -40,6 +40,12 @@ set S_RETIR 3072
 set S_CBACK 256          ;# control-register READBACK window, + the R_* offset
 set S_RERR  4096         ;# non-OKAY read responses, per port, + 4*i
 set R_RGN   24           ;# [7:0] base channel, [15:8] stride
+set R_WMASK 28           ;# per port: 1 = this port WRITES instead of reading
+set R_MODE  32           ;# bit0 rw_both: every enabled port does BOTH
+set S_WBEAT 5120         ;# W-channel beats, per port, + 4*i
+set S_AWSTL 6144         ;# AWVALID held without AWREADY, per port
+set S_WRETR 7168         ;# write bursts retired (B responses), per port
+set S_WERR  8192         ;# non-OKAY write responses, per port
 
 # The AXI clock the generator runs at.  Every GB/s figure below is
 # beats * 32 * FCLK / cycles, so a wrong FCLK scales the whole result by
@@ -333,3 +339,160 @@ puts "The stack temperature CODES are raw 7-bit values.  Their mapping to"
 puts "Celsius has not been verified on this card, which is why the generator's"
 puts "soft ceiling ships DISABLED and CATTRIP does the hard protection.  Record"
 puts "them against the die temperature here to calibrate the mapping."
+
+# ============================================================================
+# WRITE AND MIXED TRAFFIC
+#
+# Everything above is READ-ONLY, and so was every bandwidth number this card
+# has produced.  C 2.5 assumes two reads and one write CONCURRENTLY and B
+# assumes four masters, two of them writing; only subsystem A issues the
+# pattern measured above.
+#
+# READ THE THREE EXPERIMENTS DIFFERENTLY.  They are not three views of one
+# quantity:
+#
+#   W1 write-only, own channels   ARITHMETICALLY GUARANTEED, not a finding.
+#                                 A port demands 9.6 GB/s and a channel
+#                                 supplies 14.4, so 100% is forced the same
+#                                 way the port-per-channel read sweep forced
+#                                 it.  Run to prove the write path WORKS.
+#   W2 R+W both, own channels     THE HEADLINE.  AXI's read and write paths
+#                                 are independent, so ONE port demands
+#                                 9.6 + 9.6 = 19.2 GB/s from a channel that
+#                                 supplies 14.4.  Even at one port the DRAM,
+#                                 not the clock, has to set the answer -- and
+#                                 the shortfall from 14.4 is the read/write
+#                                 bus turnaround (tWTR/tRTW) and nothing else,
+#                                 because there is no second master to
+#                                 arbitrate against.
+#   W3 2R+1W across ports         C 2.5's pattern with the channels
+#                                 INDEPENDENT.  Costs switch arbitration, not
+#                                 turnaround.  Compare against W2 to separate
+#                                 the two.
+# ============================================================================
+
+proc mixrun {n wmask both nburst} {
+    global TG R_CTRL R_MASK R_ARLEN R_NBRST R_OUTST R_RGN R_WMASK R_MODE
+    global S_BUSY S_CYC S_BEATS S_WBEAT S_RERR S_WERR S_WRETR S_CBACK S_TRIP
+    global ARLEN OUTST
+    wr [expr {$TG + $R_CTRL}]  2
+    wr [expr {$TG + $R_RGN}]   0x0101          ;# base 1, stride 1: own channels
+    wr [expr {$TG + $R_WMASK}] $wmask
+    wr [expr {$TG + $R_MODE}]  $both
+    wr [expr {$TG + $R_MASK}]  [expr {(1 << $n) - 1}]
+    wr [expr {$TG + $R_ARLEN}] $ARLEN
+    wr [expr {$TG + $R_NBRST}] $nburst
+    wr [expr {$TG + $R_OUTST}] $OUTST
+
+    # The direction registers get the same readback treatment the mask does,
+    # and for the same reason: a dropped write to R_WMASK leaves the design
+    # doing reads, which produces a PLAUSIBLE number rather than an obvious
+    # failure.  That is the exact shape of the fault that made every control
+    # write vanish while reads worked perfectly.
+    set gw [rd [expr {$TG + $S_CBACK + $R_WMASK}]]
+    set gb [rd [expr {$TG + $S_CBACK + $R_MODE}]]
+    if {$gw != $wmask || ($gb & 1) != $both} {
+        return [list -1 0 0 0 0 "DIRECTION REGISTERS DID NOT LAND: wmask wrote$wmask reads $gw, rw_both wrote $both reads [expr {$gb & 1}]"]
+    }
+
+    wr [expr {$TG + $R_CTRL}] 1
+    set spins 0
+    while {[rd [expr {$TG + $S_BUSY}]] & 1} {
+        incr spins
+        if {$spins > 60000} { return [list -1 0 0 0 0 "TIMEOUT"] }
+    }
+    wr [expr {$TG + $R_CTRL}] 0
+
+    set cyc  [rd [expr {$TG + $S_CYC}]]
+    set rb 0 ; set wb 0 ; set re 0 ; set we 0 ; set wr_ret 0
+    for {set i 0} {$i < $n} {incr i} {
+        incr rb     [rd [expr {$TG + $S_BEATS + 4*$i}]]
+        incr wb     [rd [expr {$TG + $S_WBEAT + 4*$i}]]
+        incr re     [rd [expr {$TG + $S_RERR  + 4*$i}]]
+        incr we     [rd [expr {$TG + $S_WERR  + 4*$i}]]
+        incr wr_ret [rd [expr {$TG + $S_WRETR + 4*$i}]]
+    }
+    set err ""
+    if {$re != 0 || $we != 0} {
+        set err "RESPONSE ERRORS: $re read, $we write -- not memory traffic"
+    }
+    if {[rd [expr {$TG + $S_TRIP}]] & 0x6} { set err "THERMAL TRIP" }
+    return [list $cyc $rb $wb $wr_ret 0 $err]
+}
+
+proc report {label n wmask both nburst expect_r expect_w} {
+    global BYTES_PER_BEAT FCLK ARLEN
+    set r [mixrun $n $wmask $both $nburst]
+    lassign $r cyc rb wb wr_ret _ err
+    if {$cyc < 0} { puts [format "%-28s %s" $label $err] ; return 0 }
+    set tot  [expr {$rb + $wb}]
+    set gbs  [expr {$cyc > 0 ? $tot * $BYTES_PER_BEAT * $FCLK / $cyc / 1e9 : 0}]
+    set wantr [expr {$expect_r * $nburst * ($ARLEN + 1)}]
+    set wantw [expr {$expect_w * $nburst * ($ARLEN + 1)}]
+    set mark ""
+    if {$rb != $wantr || $wb != $wantw} {
+        set mark "  <-- BEATS WRONG, want r=$wantr w=$wantw"
+    }
+    if {$wr_ret != $expect_w * $nburst} {
+        append mark "  <-- B RESPONSES SHORT ($wr_ret of [expr {$expect_w*$nburst}])"
+    }
+    if {$err ne ""} { append mark "  <-- $err" }
+    puts [format "%-28s %4d %11d %11d %12d %11.1f%s"           $label $n $rb $wb $cyc $gbs $mark]
+    return $gbs
+}
+
+set MX_NBURST 100000
+
+puts ""
+puts "==== W1  WRITE-ONLY, one channel per port  (GUARANTEED, NOT A FINDING) ="
+puts [format "%-28s %4s %11s %11s %12s %11s"       experiment ports rbeats wbeats cycles GB/s]
+foreach n {1 4 15 30} {
+    if {$n > $NPORT} { continue }
+    report "write-only $n ports" $n [expr {(1 << $n) - 1}] 0 $MX_NBURST 0 $n
+}
+puts ""
+puts "READING: this must come out at ports x 9.6 GB/s, i.e. 100% of the port"
+puts "  ceiling, for the same arithmetic reason the read sweep did.  It says"
+puts "  the write path moves every beat it was asked to and nothing about the"
+puts "  memory.  If it is SHORT, that is a write-path or timing fault -- this"
+puts "  build closed at WNS +0.017 ns against the read-only build's +0.499,"
+puts "  and the card runs 0.717 V where Vivado signed off at 0.85 V."
+
+puts ""
+puts "==== W2  READ+WRITE CONCURRENT, one channel per port  (THE HEADLINE) ==="
+puts "one port demands 19.2 GB/s from a channel that supplies 14.4, so the"
+puts "per-port rate here CANNOT be 19.2 and the shortfall is turnaround."
+puts ""
+puts [format "%-28s %4s %11s %11s %12s %11s"       experiment ports rbeats wbeats cycles GB/s]
+set rw1 0
+foreach n {1 2 4 15 30} {
+    if {$n > $NPORT} { continue }
+    set g [report "R+W both $n ports" $n 0 1 $MX_NBURST $n $n]
+    if {$n == 1} { set rw1 $g }
+}
+puts ""
+if {$rw1 > 0} {
+    puts [format "TURNAROUND: one port R+W delivered %.2f GB/s against 14.4 GB/s" $rw1]
+    puts [format "  of channel supply and 19.2 GB/s of demand -- %.1f%% of the"           [expr {100.0*$rw1/14.4}]]
+    puts "  channel, and that percentage IS the read/write turnaround"
+    puts "  efficiency.  It is the number C 3.13 lists as unmeasured behind its"
+    puts "  53% duty premise, and the one B 3.4 needs to decide whether the"
+    puts "  state sweep stays an in-place read-modify-write or has to ping-pong"
+    puts "  between two regions at 37.75 MB per card."
+}
+
+puts ""
+puts "==== W3  MIXED 2R+1W ACROSS PORTS  (arbitration, not turnaround) ======="
+puts [format "%-28s %4s %11s %11s %12s %11s"       experiment ports rbeats wbeats cycles GB/s]
+if {$NPORT >= 30} {
+    # every third port writes: ports 2,5,8,... -> 10 writers, 20 readers
+    set wm 0
+    for {set i 2} {$i < 30} {incr i 3} { set wm [expr {$wm | (1 << $i)}] }
+    report "2R+1W 30 ports" 30 $wm 0 $MX_NBURST 20 10
+}
+puts ""
+puts "READING: compare against the read-only 30-port line at the top.  These"
+puts "  ports are on INDEPENDENT channels, so no bus turns around; any"
+puts "  shortfall is the HBM switch arbitrating mixed traffic.  W2 minus W3"
+puts "  separates turnaround from arbitration, which a single mixed number"
+puts "  would average together."

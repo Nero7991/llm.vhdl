@@ -1362,20 +1362,41 @@ and B's sweep turns it around continuously. §2.5's ">= 50% per master"
 premise is stated for four masters but never distinguishes four masters on four
 channels from a read and a write contending for one.
 
-**The escape is a ping-pong, and it is nearly free.** Read token T's state from
-region A and write token T+1's into region B, swapping each token: reads and
-writes then occupy different pseudo-channels and never turn a bus around. Cost
-is a second copy of the state, **37.75 MB per card** (§4.1), against the ~0.89
-GiB left after the 7.11 GiB of resident weights (C §4.2) -- about 4% of the
-free space.
+**MEASURED 2026-08-25, and the answer is: keep the in-place sweep.** The
+turnaround was measured on the card at 30 ports, 300 MHz
+(`docs/debugging/2026-08-25_hbm-read-write-turnaround.md`,
+`hw/fk33/results/hbmbw_readwrite.txt`):
 
-**Whether it is necessary is being measured, not assumed.** `rtl/hbm_tg.vhd`
-gained a write channel on 2026-08-25 specifically for this: `rw_both` with
-`rgn_stride = 0` drives read and write traffic into a single pseudo-channel and
-reports the achieved rate against the 14.4 GB/s that channel supplies. If the
-turnaround costs little, B keeps the simpler in-place sweep; if it costs more
-than ~10%, the ping-pong pays for itself immediately. **This section must be
-revisited when that number lands and must not be cited before it does.**
+| | measured | of the 14.4 GB/s channel |
+|---|---|---|
+| one port, reads AND writes into one pseudo-channel | **11.77 GB/s** | **81.8%** |
+| 30 ports, same | 353.0 GB/s | linear, nothing upstream saturates |
+| 20 readers + 10 writers on INDEPENDENT channels | 288.0 GB/s | identical to read-only within 1 cycle in 1.6M |
+
+So the turnaround costs **18.2%**, and switch arbitration between read and
+write masters costs **nothing at all** -- the mixed-across-ports run matched
+the read-only run to one cycle in 1.6 million. The whole penalty is the DRAM
+bus reversing.
+
+**A ping-pong between two state regions was drafted here and is WITHDRAWN.**
+The reasoning was that separating reads from writes onto different channels
+avoids the 18.2%. It does -- and it costs more than it saves, because a port
+dedicated to one direction leaves its other direction idle, and AXI's two
+directions are independent:
+
+| B at `LANES = 32`, needing 19.2 GB/s each way | delivered | margin |
+|---|---|---|
+| **in-place, 4 ports doing R+W** | **47.1 GB/s** (23.5 each way) | **+23%** |
+| ping-pong, 2 read + 2 write ports | 38.4 GB/s (19.2 each way) | 0% |
+
+Both need four ports, so the ping-pong buys no port back; it would have spent
+37.75 MB per card to arrive with zero margin instead of 23%. **B's state sweep
+stays an in-place read-modify-write, and §2.5's four-master allocation stands
+with the masters bidirectional rather than split by direction.**
+
+The 81.8% is not a general HBM efficiency figure and must not be reused as one.
+It is a 1:1 read/write mix at ARLEN=15; C's 2R+1W on a single channel is a
+different mix and is not covered.
 
 ### 3.5 Consequences for §2.5, §2.8 and the recon ladder
 
@@ -1394,22 +1415,51 @@ revisited when that number lands and must not be cited before it does.**
   measured; §3.6 owns it.
 - The recon tok/s ladder should NOT be re-derived from this section yet. B
   moving 3.5-4.5 -> ~2.0 ms would move `v3.0` upward, but A dominates at
-  35-53 ms and the §3.3 rates are unmeasured. One unmeasured term is exactly
-  how §2.5's 0.93 ms got into the document.
+  35-53 ms, and although §3.3's norm DSP cost is now measured its **Fmax is
+  278.9 MHz, not the 300 this budget is quoted at** (§3.6). One unmeasured
+  term is exactly how §2.5's 0.93 ms got into the document; an unreached clock
+  is the same failure wearing a different hat.
 
 ### 3.6 Still owed by §3 (NOT closed by the above)
 
 The phase-schedule bullet is discharged. These are not:
 
-- **The §3.3 unit rates are a design obligation, not a measurement.** A fused
-  4-lane rmsnorm and a 4/cycle silu are asserted to be buildable; neither has
-  been synthesised, and the DSP increment over §2.8's fixed 20 is unknown.
-  `sim/micro/micro_rmsn_narrow.vhd` prices the 1-lane narrowed form at 18 DSP
-  and is the obvious starting point for a `LANES`-generic version. **Until that
-  measurement exists, ~2.0 ms/token is a target, not a budget**, and it must
-  not enter `docs/fpga-hardware-recon.md`.
-- **The same-channel read/write turnaround (§3.4)** is being measured on the
-  card and is not yet known. It gates the in-place-versus-ping-pong choice.
+- **The §3.3 norm DSP cost is now MEASURED; its Fmax is the problem.**
+  `sim/micro/micro_rmsn_lanes.vhd`, OOC on `xcvu33p-fsvh2104-2L-e` at 3.333 ns:
+
+  | `LANES` | DSP | LUT | Fmax |
+  |---|---|---|---|
+  | 1 | 18 | 385 | 278.9 MHz |
+  | 2 | 24 | 480 | 278.9 MHz |
+  | **4** | **36** | **554** | **278.9 MHz** |
+  | 8 | 60 | 756 | 200.9 MHz |
+
+  **`DSP = 12 + 6 x LANES`, affine with a nonzero intercept**, which is the
+  structural check passing: the rsqrt consumes the accumulated sum of squares,
+  one per vector, and is NOT replicated per lane. `LANES = 1` reproduces
+  `micro_rmsn_narrow`'s 18 exactly, cross-validating both skeletons.
+
+  So §3.3's 4-lane form costs **36 DSP against §2.8's fixed 18** for the 1-lane
+  `rmsnorm_rs`, i.e. **+18 DSP**, and B's row moves 148 -> ~166 plus whatever a
+  4/cycle silu adds over the fixed 2. Whole-die goes 2,524 -> ~2,542 of 2,880
+  = 88.3%, still under the 90% line. **This is affordable.**
+
+  **What is NOT resolved is that none of these forms reaches 300 MHz.** 278.9
+  MHz at 1, 2 and 4 lanes -- identical, so it is one fixed critical path, not a
+  width effect -- and 200.9 MHz at 8 lanes where the accumulator tree takes
+  over. §3.1-§3.3's entire budget is quoted at 300 MHz. Either the norm gets
+  another pipeline stage (the path is not yet bucketed, and every previous
+  Fmax surprise in this project turned out to be one structure replicated), or
+  B's token time scales by 300/278.9 = 1.076 and ~2.0 ms becomes ~2.1 ms.
+
+  **The path is already diagnosed, by C.** C §3.6 hit 278.9 MHz on its own
+  narrowed `rmsnorm_rs` skeleton and C §3.13 item 1 names `MREG` on the 34x32
+  Newton stage as the expected fix. Two independent skeletons landing on the
+  same 278.9 MHz -- and B's landing there at 1, 2 AND 4 lanes identically --
+  says it is one fixed structure, not a width or fanout effect. **B and C
+  share this fix; whoever lands it closes both.**
+- ~~The same-channel read/write turnaround~~ **MEASURED, see §3.4.** 81.8% of
+  channel; the in-place sweep wins and the ping-pong is withdrawn.
 - **Pin the fixed-point recipes for sigma (sigmoid), softplus, exp-Q15 and the
   L2-norm rsqrt** — table sizes, interpolation, and every internal rounding —
   as §2.1.3/§2.1.5 sites 5, 13, 14 require. The Q15 regenerations of EXP_ROM
