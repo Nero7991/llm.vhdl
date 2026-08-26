@@ -1451,7 +1451,32 @@ outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
 | **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** |
 
 The nonlinearities now fit under the sweep with 72% margin, which is the
-"merely good" overlap §2.5 wanted and did not have. **B lands at ~2.0 ms/token,
+"merely good" overlap §2.5 wanted and did not have.
+
+**CORRECTION 2026-08-26: the 72% is stale, and the bundle and the conv decision
+disagree about `LANES`.** The row above prices conv at `LANES = 32`, 30,720
+cycles. §3.6 then chose `LANES = 4` on the strength of its 16-DSP measurement,
+which is **122,880 cycles**. Substituting the decision into the bundle:
+
+```
+342,144 - 30,720 + 122,880 = 434,304 cycles against a 589,824 sweep
+margin = 589,824 / 434,304 = 1.36, i.e. +36%, not +72%
+```
+
+**Still fits, with half the headroom claimed.** And §3.6's separate phrasing,
+"`LANES = 4` hides under the sweep with almost 5x margin", compares conv
+**alone** to the whole sweep (589,824/122,880 = 4.8). That is true and
+misleading: the sweep has to hide the output norm, the L2, silu **and** conv
+together, so conv's share of the budget is not the whole budget. Both figures
+describe the same schedule; only the +36% one is the margin that matters.
+
+**Neither figure is a demonstration.** No schedule has yet been exhibited in
+which any of this actually overlaps, and §2.1.3's two-pass conv resists the
+intra-layer overlap that is the only kind available in decode: `e_seg` -- and
+therefore `e_v` and the L2 inputs -- exists only after a whole segment's pass A
+completes. Cross-layer overlap is impossible by construction, since conv(L+1)
+consumes layer L's output. Treat +36% as an upper bound on the margin, not a
+result. **B lands at ~2.0 ms/token,
 better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
 throughput, not scheduling.
 
