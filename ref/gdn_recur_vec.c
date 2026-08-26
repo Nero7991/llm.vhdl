@@ -50,6 +50,15 @@ int main(int argc, char **argv)
     rs_ = 20260825ULL;
 
     int ncase = 0;
+    /* COLUMNS ARE EMITTED IN HEAD-GROUPS.  k_n, q_s, eg, beta and tk0 are
+     * per-head-per-token, NOT per column: a head's 128 columns all see the same
+     * ones.  Holding them constant across GRP consecutive cases lets a
+     * PIPELINED implementation read them straight off its ports, with no
+     * per-column storage, while the single-column testbench is unaffected --
+     * it simply re-drives identical values.  The file format is unchanged. */
+    static int16_t g_kn[DIM], g_qs[DIM];
+    int g_eg = 0, g_beta = 0, g_tk0 = 0;
+    const int GRP = 8;
     /* header: number of cases, then DIM */
     fprintf(f, "192 %d\n", DIM);
 
@@ -79,7 +88,6 @@ int main(int argc, char **argv)
         int32_t v_j;
 
         if (phys) {
-            tk0  = (c % 16 == 0);
             se_j = rnd_range(-40, 40);
             /* v shares the activation scale, so its exponent tracks the
              * state's within a realistic spread rather than roaming freely */
@@ -87,8 +95,15 @@ int main(int argc, char **argv)
             /* exp(g) for this model sits just under 1; the measured per-head
              * table (ref/gdn_eg_qwen3_27b.txt) ranges over roughly
              * 0.85..0.99997, so eg_q15 lives near the top of u16 */
-            eg   = (c % 9 == 0) ? 32768 : rnd_range(27853, 32767);
-            beta = rnd_range(1, 65535);
+            if (c % GRP == 0) {
+                g_tk0  = ((c / GRP) % 4 == 0);
+                g_eg   = ((c / GRP) % 3 == 0) ? 32768 : rnd_range(27853, 32767);
+                /* one group per sweep deliberately lands in the small-beta
+                 * range where the tk=0 d_m defect bites */
+                g_beta = ((c / GRP) % 5 == 0) ? rnd_range(1, 256)
+                                              : rnd_range(1, 65535);
+            }
+            tk0 = g_tk0; eg = g_eg; beta = g_beta;
 
             /* a real unit-norm k at exp 15: draw, then scale so sum k^2 = 2^30 */
             double kd[DIM], qd[DIM], nk = 0.0, nq = 0.0;
@@ -109,6 +124,8 @@ int main(int argc, char **argv)
                 if (qv < -32768) { qv = -32768; }
                 kn[i] = (int16_t)kv; qs[i] = (int16_t)qv;
             }
+            if (c % GRP == 0) { memcpy(g_kn, kn, sizeof kn); memcpy(g_qs, qs, sizeof qs); }
+            memcpy(kn, g_kn, sizeof kn); memcpy(qs, g_qs, sizeof qs);
             /* a state whose mantissas fill the int16 grid the way a BFP column
              * does: one element at or near full scale, the rest spread below */
             int top = rnd_range(16384, 32767);
@@ -121,12 +138,16 @@ int main(int argc, char **argv)
             v_j = rnd_range(-32768, 32767);
         } else {
             int a = c - 96;
-            tk0   = (a % 8 == 0);
             int smag = 1 + (a % 5);
             se_j  = rnd_range(-40, 40);
             e_v   = rnd_range(-40, 40);
-            eg    = (a % 7 == 0) ? 32768 : (a % 7 == 1) ? 1 : rnd_range(28000, 32768);
-            beta  = (a % 11 == 0) ? 65535 : rnd_range(1, 65535);
+            if (a % GRP == 0) {
+                g_tk0  = ((a / GRP) % 3 == 0);
+                g_eg   = ((a / GRP) % 4 == 0) ? 32768
+                       : ((a / GRP) % 4 == 1) ? 1 : rnd_range(28000, 32768);
+                g_beta = ((a / GRP) % 4 == 0) ? 65535 : rnd_range(1, 65535);
+            }
+            tk0 = g_tk0; eg = g_eg; beta = g_beta;
             for (int i = 0; i < DIM; i++) {
                 int lim = (1 << (3 * smag)) - 1; if (lim > 32767) lim = 32767;
                 smant[i] = (int16_t)rnd_range(-lim, lim);
@@ -134,7 +155,11 @@ int main(int argc, char **argv)
                 qs[i]    = (int16_t)rnd_range(-23170, 23170);
             }
             if (a % 13 == 0) { smant[0] = -32768; smant[1] = 32767; }
-            if (a % 17 == 0) { for (int i = 0; i < DIM; i++) kn[i] = 0; }
+            if (a % GRP == 0) {
+                if ((a / GRP) % 3 == 1) { for (int i = 0; i < DIM; i++) kn[i] = 0; }
+                memcpy(g_kn, kn, sizeof kn); memcpy(g_qs, qs, sizeof qs);
+            }
+            memcpy(kn, g_kn, sizeof kn); memcpy(qs, g_qs, sizeof qs);
             v_j = rnd_range(-32768, 32767);
             if (a % 19 == 0) v_j = 0;
         }
