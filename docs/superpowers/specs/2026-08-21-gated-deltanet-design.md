@@ -973,10 +973,33 @@ internals 2-4, conv MACs 0-8 (time-shared with the decay/sk lanes across
 phases, or dedicated if §3's schedule overlaps conv with the sweep). **The aux
 row is an estimate and unverified**, exactly the caveat C §2.8 carries.
 
+> **MEASURED 2026-08-25 (`sim/micro/micro_b_array.vhd`, OOC at 300 MHz):**
+> **`DSP_B = 4 x LANES + 20`, exact at LANES 4/8/16/32.** So **148 at
+> LANES=32** and 52 at LANES=8, both inside the estimates above. The fixed 20
+> is precisely `rmsnorm_rs 18 + silu 2`, the two instantiated units summed:
+> array integration costs **no** DSP, because the reduction is an XOR tree and
+> the broadcasts are routing.
+>
+> Swept with the shared aux BOTH in and out, so the per-lane and fixed terms
+> separate by direct subtraction rather than only through a fit intercept --
+> which is what shows the aux is CONSTANT rather than merely small.
+>
+> The array had to be measured rather than extrapolated from `micro_b_lane`:
+> subsystem C's array measured **30% above** its own single-lane LUT fit,
+> because an isolated lane has no broadcast, reduction or shared operand
+> registers. For B that inflation is **+16% in LUT and exactly 0% in DSP**.
+>
+> **This is a FLOOR for B, not its total.** The micro covers the state-sweep
+> arithmetic and the §1.1(g) output gate. B's **L2 norms** (32/layer),
+> **softplus** and scalar path are NOT in it. Believed cheap -- C measured its
+> divider at 0 DSP and the rsqrt sits inside `rmsnorm_rs`, already counted --
+> but believed is not measured.
+> Full procedure: `docs/debugging/2026-08-25_b-lane-dsp-measured.md`
+
 | Resource | B @ LANES=8 | B @ LANES=32 | AXU3EG (XCZU3EG) | FK33 (XCVU33P) |
 |---|---|---|---|---|
-| DSP48E2 | **42-56** | ~138-152 | 360 | **2,880** |
-| LUT (shifters x4 alignment sites, quantizers, control) | ~10-14K | ~25-35K | 70,560 | ~440K |
+| DSP48E2 | **42-56** (52 measured) | ~138-152 -> **148 MEASURED** | 360 | **2,880** |
+| LUT (shifters x4 alignment sites, quantizers, control) | ~10-14K (1.8K measured, sweep+gate only) | ~25-35K (3.2K measured, sweep+gate only) | 70,560 | ~440K |
 | FF | ~15-20K | ~35-45K | 141,120 | ~880K class |
 | BRAM36 | ~18-20 | ~25-30 | 216 | 23.6 Mb + 90 Mb URAM (14.2 MB) |
 | State residency | DDR stream (9.5 MB) | URAM option, §2.9 | 0.95 MB on-chip | 14.2 MB on-chip |

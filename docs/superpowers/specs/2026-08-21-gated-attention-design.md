@@ -1359,6 +1359,21 @@ crosses the 90% congestion line.
 with rmsnorm as shipped:              2,570..2,600           = 89.2-90.3%   -- AT/OVER the line
 ```
 
+> **B's row MEASURED 2026-08-25: 148, not 138-152.** `DSP_B = 4 x LANES + 20`
+> exactly, at LANES 4/8/16/32, from a new `micro_b_array` swept with the shared
+> aux both in and out. The 20 is precisely `rmsnorm_rs 18 + silu 2`, so array
+> integration adds no hidden DSP. Updated sum:
+>
+> ```
+> 1,914 + 434 + 148 + (24..40) = 2,520..2,536 of 2,880 = 87.5-88.1%
+> ```
+>
+> Still under the 90% line, and **every subsystem in the sum is now measured
+> except D**, whose 24-40 is the entire remaining uncertainty. Note B's 148 is
+> a FLOOR: the micro covers the state sweep and output gate, not B's L2 norms,
+> softplus or scalar path.
+> `docs/debugging/2026-08-25_b-lane-dsp-measured.md`
+
 The narrowing of §3.6 is therefore **mandatory, not an optimization**. The
 +1.7-point rise over D §12's 85.4-86.5% must propagate to
 `docs/fpga-hardware-recon.md` and any B sizing that assumed the old sum.

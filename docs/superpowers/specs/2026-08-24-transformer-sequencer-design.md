@@ -873,7 +873,10 @@ includes the seams; it is not a promise.
 
 **Whole-die context (informative, rough, first time anyone has summed it):**
 DSP: A at `ROWS_IF = 58` post-reclaim 1,914 + C `MACS = 192` 384 + B
-`LANES = 32` 138-152 + D 24-40 = **~2,460-2,490 of 2,880 (85.4-86.5%)** --
+`LANES = 32` 138-152 + D 24-40 = **~2,460-2,490 of 2,880 (85.4-86.5%)**
+(**superseded**: C's aux row lands at 50 not 15-40 and B MEASURED at 148 on
+2026-08-25, giving 2,520-2,536 = 87.5-88.1%; D's 24-40 is now the only
+estimate left in the sum) --
 D pushes the known ~85-86% up by ~1%, still under the 90% congestion line
 both B §2.8 and C §2.8 cite. LUT: A ~129K (58 x 2,223 measured/row) +
 streamer (unmeasured at FK33 scale, ~10K?) + C ~41K accumulators (measured
