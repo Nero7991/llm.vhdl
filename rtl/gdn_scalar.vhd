@@ -38,8 +38,13 @@
 --      a saturated gate into an open one (eg 30280 against a true 0.0037).
 --      Only the negative tail is clamped, where softplus is below an LSB.
 --
--- WHY SP_Q IS A GENERIC AND DEFAULTS TO 12.  2.1.3 pins the scalar grid at
--- Q12.  Measured on the real Qwen3.8-27B ssm_a / ssm_dt_bias weights (2304
+-- WHY SP_Q IS A GENERIC AND DEFAULTS TO 18.  2.1.3 originally pinned the
+-- scalar grid at Q12; the 2026-08-26 amendment moved it to Q18 on the measured
+-- table below, and the generic is what made that a one-line change.  Q12 is
+-- still reachable by overriding it, and the unit is bit-exact against the C
+-- reference at Q12, Q15 and Q18.
+--
+-- Measured on the real Qwen3.8-27B ssm_a / ssm_dt_bias weights (2304
 -- heads, ref/gdn_eg_qwen3_27b.txt), end to end through this recipe against a
 -- double oracle, the worst relative error on eg for the SLOW heads (those
 -- retaining >= 99.9% per token, where the error compounds) and what it

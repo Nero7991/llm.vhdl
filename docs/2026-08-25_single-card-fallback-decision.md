@@ -75,7 +75,12 @@ unblocks later. Concretely:
    a silent precondition for the main one -- which is what it has been.
 4. It is the honest reading of the resource position. Tonight's work put the
    whole-die DSP at **89.5% of 2,880 with every term measured** (B §3.6), i.e.
-   at the 90% congestion line, for 27B dimensions. The 9B's smaller per-layer
+   at the 90% congestion line, for 27B dimensions. [**Corrected 2026-08-26:
+   89.5% is withdrawn. Rebuilt with B's scalar path measured at 7 DSP rather
+   than guessed, C's QK-norm at its real 22, and conv re-measured at the true
+   segment shapes, the honest range is 2,606 to 2,648 of 2,880 = 90.5% to
+   91.9%. The argument below is unaffected in direction and strengthened in
+   degree: the die is over the congestion line, not at it.**] The 9B's smaller per-layer
    work is the one lever that moves that number without giving up a subsystem.
 
 **What I would NOT do:** try to make 27B fit one card by quantising harder.
@@ -102,5 +107,6 @@ project.
   ~70% for that, which tonight's measurements did not test and which the
   refuted 460 GB/s premise was tangled up with. Treat them as ceilings for
   comparing the two paths, not as predictions.
-- The 9B rung's own resource fit has never been computed. The 89.5% DSP figure
-  is 27B dimensions; 9B has not been summed.
+- The 9B rung's own resource fit has never been computed. The whole-die DSP
+  figure (89.5% as written here, **90.5%-91.9% as corrected 2026-08-26**) is
+  27B dimensions; 9B has not been summed.

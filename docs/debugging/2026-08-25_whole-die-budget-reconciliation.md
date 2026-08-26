@@ -13,7 +13,14 @@ design still fit, and which terms in the sum are actually load-bearing?
 ## The answer
 
 **DSP fits, at 87.2-88.2% of 2,880, but only conditionally and the margin is
-thinner than any single spec says.** The two conditions are:
+thinner than any single spec says.**
+
+> **SUPERSEDED 2026-08-26.** This sum predates three measurements: B's scalar
+> path is 7 DSP (guessed "+2 to +4"), C's QK-norm row is 22 at N=256 (skeleton
+> said 18), and `gdn_conv` was re-measured at the true segment shapes. The
+> current honest range is **2,606 to 2,648 of 2,880 = 90.5% to 91.9%**, i.e.
+> over the congestion line, not under it. Authority: B spec 3.6.
+ The two conditions are:
 
 1. **C's QK-norm must use a width-narrowed RMSNorm.** With `rmsnorm.vhd` as
    shipped the die is 89.2-90.3%, at or over the 90% congestion line both

@@ -26,6 +26,7 @@ entity tb_gdn_recur_pipe is
           -- Flip together with VECS; a mismatch is a loud bit-exact failure.
           D_NORM : boolean := true;   -- ADOPTED 2026-08-26, matches the DUT
           TK0_ED : boolean := true;   -- ADOPTED 2026-08-26, matches the DUT
+          EG0_ED : boolean := true;   -- ADOPTED 2026-08-26, matches the DUT
           -- Idle cycles inserted BETWEEN columns.  0 is the real case, one
           -- column every NB cycles.  A large value serialises the unit and
           -- isolates arithmetic bugs from overlap bugs.
@@ -89,7 +90,8 @@ begin
   end process;
 
   dut : entity work.gdn_recur_pipe
-    generic map(DIM => DIM, LANES => LANES, SLOTS => SLOTS, D_NORM => D_NORM, TK0_ED => TK0_ED)
+    generic map(DIM => DIM, LANES => LANES, SLOTS => SLOTS, D_NORM => D_NORM,
+                TK0_ED => TK0_ED, EG0_ED => EG0_ED)
     port map(clk => clk, rst => rst, eg => eg, beta => beta,
              k_n => k_n, q_s => q_s,
              s_valid => s_valid, s_first => s_first, s_data => s_data,

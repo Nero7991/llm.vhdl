@@ -269,6 +269,59 @@ pinned one it REPORTS the measured error instead, because the only way to keep
 an assertion green over a known defect is to widen the bound until it measures
 nothing -- which is how `tb_l2norm_rs` let a dropped rounding bias through.
 
+## CORRECTION 2026-08-26, later the same day: a THIRD site, and the metric that hid it
+
+**Status above is superseded.** `D_NORM` and `TK0_ED` are ADOPTED and default
+TRUE, and a third generic `EG0_ED` was added and adopted with them. The
+"Status" section's "defaulting FALSE / nothing is adopted" is withdrawn.
+
+**What was wrong.** The ADDENDUM concluded the amendment was sufficient as
+scoped, on a table showing the `eg = 0` site falling from 25.55 to 1.05 LSB.
+That table is measured in **LSB of the unit's own grid**, and that grid is
+exactly what the phantom `ske` coarsens. **The metric is structurally blind to
+the loss it was being used to rule out.** This is the same trap this file's own
+"Measurement traps hit" section warns about, committed while writing the
+warning.
+
+The metric that does see it is the double oracle with the output dot normalized
+by its term norm. At the adopted defaults it failed 8 columns; **7 of the 8 are
+exactly `tk0 = 0, eg = 0`** (cases 40, 42, 44, 46, 88, 91, 95), worst relative
+error 1.098.
+
+**Mechanism.** With `eg = 0` mid-sequence the decayed state term is identically
+zero, so `sk_acc = 0` and `ske = se_j + 17` describes nothing -- structurally
+the same masked operand as `tk = 0`, which `tk0` does not flag. `TK0_ED` gated
+`e_d` only on `tk0`, and stage 4 gated `e_u` only on `tk0`, so `se_j + 2` still
+entered `e_u`'s minimum. Since `e_kd ~ se_j + 31 + spread - shd`, that minimum
+pinned `e_u` to `se_j + 2` and floored the whole token's update right by 25-37
+bits.
+
+**Fix.** `EG0_ED` applies the masked-operand rule to `eg = 0` at BOTH grid
+selections, `e_d` and `e_u`. Failures 8 -> 1; the survivor is case 243, a pure
+tolerance case at `eg = 32768`, not a masked one.
+
+**Measured, corrected recipe, 274 physically realizable columns:**
+
+| quantity | worst | `tk0 = 1` subset | steady state |
+|---|---|---|---|
+| state | 8.955 LSB | 1.111 | 8.955 |
+| output dot / term norm | 6.578e-05 | 7.164e-06 | 6.578e-05 |
+
+`sim/tb_gdn_recur.vhd` now carries `TOL_S = 12.0` and `TOL_O = 1.0e-4`, set
+from those two numbers. `TOL_S_TK0` and `TOL_O_TK0` are deleted, as their own
+comments instructed. Note `tk0 = 1` is no longer the hard class: at 1.111 LSB it
+is now the easy one, which is why keeping a separate looser bound for it would
+have been backwards.
+
+**Process failure, recorded because it is the reusable part.** The `eg = 0`
+gate had been written into the spec draft and then removed, to make the spec
+agree with the RTL. The RTL was the incomplete one. When specification and
+implementation disagree, resolving it by editing the specification destroys the
+only independent record of intent.
+
+**Also corrected:** the checked-in `sim/gdn_recur_vec.txt` was the
+pre-amendment file, so a fresh checkout shipped a red test. Regenerated.
+
 ## Also found while doing this
 
 - **`e_o` overflows int8 in reachable cases.** `2.1.6` range-checks the column

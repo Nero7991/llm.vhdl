@@ -850,6 +850,8 @@ includes the seams; it is not a promise.
 > **2,510-2,540 of 2,880 = 87.2-88.2%**, and **89.2-90.3% (at or over the
 > congestion line) if C's QK-norm uses `rmsnorm.vhd` as shipped**, which
 > measures 78 DSP at 138.4 MHz.
+> [**Superseded 2026-08-26: 2,606-2,648 = 90.5%-91.9% even with the narrowed
+> QK-norm.** See B spec 3.6.]
 >
 > **The D row below survives, at its ceiling, and only if D-vec is built to
 > share.** MEASURED 2026-08-25 (`sim/micro/micro_silu_narrow.vhd`, verified

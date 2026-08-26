@@ -166,8 +166,13 @@ Byte-identical, which is what a silently-ignored generic also looks like, so it
 was checked rather than assumed: the log reports `Parameter SP_Q bound to: 12`
 / `15` / `18` on the three runs, and the LUT count does move. The results are
 identical because no datapath WIDTH depends on `SP_Q` -- only constant shift
-amounts do, and those fold away. `SP_Q` is a generic and **defaults to 12**, so
-the pinned contract is still what builds by default.
+amounts do, and those fold away.
+
+**Updated 2026-08-26: `SP_Q` now defaults to 18, ADOPTED.** At the time this
+section was written it defaulted to 12, so the then-pinned Q12 contract was
+what built by default. The table above is what moved it: Q18 reaches the floor
+set by the exp table's own interpolation error, and the cost is a wider shift
+and nothing else. Q12 remains reachable by overriding the generic.
 
 ## The softplus recipe, now pinned
 

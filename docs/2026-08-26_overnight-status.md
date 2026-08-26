@@ -76,6 +76,35 @@ So the amendment as scoped is sufficient and does NOT need a third correction
 -- which was the open worry, since adopting a half-scoped amendment is exactly
 the `D_NORM`-alone mistake.
 
+> **CORRECTION 2026-08-26 (later the same day): the claim immediately above is
+> WITHDRAWN. The third site did need its own correction, `EG0_ED`.**
+>
+> Every number in the table above is measured in **LSB of the unit's own
+> grid** -- and that grid is precisely what the phantom `ske` coarsens. The
+> metric is structurally blind to the loss it was being used to rule out, so
+> "1.05" was never evidence of coverage. Measured instead against the double
+> oracle with the output dot normalized by its term norm, the adopted defaults
+> failed 8 columns, and **7 of those 8 are exactly `tk0 = 0, eg = 0`** (cases
+> 40, 42, 44, 46, 88, 91, 95), worst 1.098 -- a 110% error on the whole
+> column's contribution.
+>
+> Mechanism: with `eg = 0` the decayed state term is identically zero, so
+> `ske = se_j + 17` describes nothing, exactly as at `tk = 0`. But `se_j + 2`
+> also still entered `e_u`'s minimum, and `e_kd ~ se_j + 31 + spread - shd`, so
+> the min pinned `e_u` to `se_j + 2` and floored the entire token's update
+> right by 25-37 bits.
+>
+> `EG0_ED` extends the masked-operand rule to `eg = 0` at **both** grid
+> selections. Failures 8 -> 1, and the survivor is a pure tolerance case
+> (`eg = 32768`), not a masked one. Worst is then 8.955 state LSB and 6.578e-5
+> of the output dot's term norm, which is where `TOL_S = 12.0` /
+> `TOL_O = 1.0e-4` come from.
+>
+> Second failure worth naming: the `eg = 0` gate had been written into the spec
+> draft and then removed, to make the spec match the RTL. The RTL was the
+> incomplete one. Making the specification agree with the implementation is the
+> wrong direction of fit.
+
 - **`D_NORM`**: quantize `d` on its own grid instead of inheriting `e_d`.
 - **`TK0_ED`**: at `tk = 0`, take `e_d = e_v` instead of `min(e_v, ske)`,
   because `ske` there is `se_j + 17` computed from a state that does not exist.
@@ -192,7 +221,8 @@ guarantee, and it is the unit whose recipe was found broken in the first place.
   real weights Q12 costs 1.92e-4 relative on the slow heads, compounding to
   **2.196x over 4,096 tokens**; Q18 gives 1.133x and reaches the floor set by
   the exp table itself. Free in DSP, BRAM and timing -- measured at all three
-  grids, not argued. Defaulted OFF, so this is a third thing you could decide.
+  grids, not argued. Defaulted OFF at the time of writing; **ADOPTED 2026-08-26,
+  `SP_Q` now defaults to 18.**
 - **§2.1.3's "2048 acc values per segment" is the 0.8B's `key_dim`**, a second
   instance of the stale dimensioning already found in §2.6's BRAM table. The
   real segments are q 1,024 / k 1,024 / v 3,072, so `gdn_conv`'s channel count

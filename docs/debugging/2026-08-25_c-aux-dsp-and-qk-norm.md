@@ -17,7 +17,10 @@ What do the auxiliary units actually cost on `xcvu33p-fsvh2104-2L-e` at
 `rmsnorm` is width-narrowed. As shipped, `rmsnorm` at N=256 is 78 DSP at
 138.4 MHz -- disqualifying on both counts** (a fifth of C's whole 384-DSP MAC
 array, and 2.2x off the clock). With it, the whole-die DSP sum crosses the 90%
-congestion line (89.2-90.3%); narrowed, the die sits at 87.2-88.2%. The
+congestion line (89.2-90.3%); narrowed, the die sits at 87.2-88.2%.
+[**Superseded 2026-08-26: narrowed, the die sits at 90.5%-91.9%** -- over the
+line anyway, on later measurement of B's scalar path and conv. The conclusion
+that narrowing is mandatory is unchanged and reinforced.] The
 narrowing is therefore mandatory, not an optimization. Full roll-up in C spec
 section 3.8.
 

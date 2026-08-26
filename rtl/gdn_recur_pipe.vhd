@@ -54,7 +54,14 @@ entity gdn_recur_pipe is
     -- latency, never issue interval, so the throughput result is unaffected.
     D_NORM : boolean := true;   -- ADOPTED 2026-08-26, see gdn_recur.vhd
     -- See rtl/gdn_recur.vhd for the full note and the measured table.
-    TK0_ED : boolean := true    -- ADOPTED 2026-08-26, see gdn_recur.vhd
+    TK0_ED : boolean := true;   -- ADOPTED 2026-08-26, see gdn_recur.vhd
+    -- EG0_ED: the same masked-operand rule at the third site.  Mid-sequence
+    -- with eg = 0 the decay gate is fully shut, so w18 is identically zero
+    -- for the whole column and ske describes nothing, exactly as at tk = 0.
+    -- See rtl/gdn_recur.vhd for the full note and the measured table; this
+    -- unit is contractually bit-identical to it, so it must gate both sites
+    -- the same way.
+    EG0_ED : boolean := true    -- ADOPTED 2026-08-26, see gdn_recur.vhd
   );
   port(
     clk    : in  std_logic;
@@ -204,7 +211,6 @@ architecture rtl of gdn_recur_pipe is
     ske   : signed(15 downto 0);
     skm   : signed(17 downto 0);
     ed    : signed(15 downto 0);
-    ekd   : signed(15 downto 0);
     diff  : signed(17 downto 0);
     dmul  : signed(34 downto 0);
     dabs  : unsigned(34 downto 0);
@@ -213,7 +219,7 @@ architecture rtl of gdn_recur_pipe is
   end record;
   constant SC1_0 : sc1_t := (CTX0,(others=>'0'),(others=>'0'),0,(others=>'0'),
                              (others=>'0'),(others=>'0'),(others=>'0'),
-                             (others=>'0'),(others=>'0'),(others=>'0'),
+                             (others=>'0'),(others=>'0'),
                              (others=>'0'),16,to_signed(2**15, 35));
   type sc1_arr is array (0 to 9) of sc1_t;
   signal sc1 : sc1_arr := (others => SC1_0);
@@ -475,11 +481,19 @@ begin
         sc1(4) <= sc1(3);
         ev_i  := to_integer(sc1(3).c.e_v);
         ske_i := to_integer(sc1(3).ske);
-        if sc1(3).c.tk0 = '1' and TK0_ED then ed_i := ev_i;
+        -- MASKED STATE: the decayed state term is identically zero either
+        -- because this is the first token (tk0) or because the decay gate is
+        -- fully shut (eg = 0).  ske is then msb_pos(0) = 0 lifted to
+        -- se_j + 17, an exponent describing nothing, and it must not enter
+        -- the grid minimum.  eg is held stable across the head's columns
+        -- (see the port comment), so reading the port here rather than
+        -- carrying a bit through the context is safe for every column in
+        -- flight, and is what engine A already does at site a_m1.
+        if (sc1(3).c.tk0 = '1' or (EG0_ED and eg = 0)) and TK0_ED then
+                                              ed_i := ev_i;
         elsif ev_i < ske_i then               ed_i := ev_i;
         else                                  ed_i := ske_i; end if;
         sc1(4).ed  <= to_signed(ed_i, 16);
-        sc1(4).ekd <= to_signed(15 + ed_i, 16);
 
         sc1(5) <= sc1(4);
         -- Clamped at BOTH ends.  Upper: 2.1.4's rule, and the C reference must
@@ -528,7 +542,8 @@ begin
           -- e_kd = 15 + e_dm, and e_dm = e_d + 16 - shd.  With the pinned
           -- shd = 16 this is 15 + e_d, exactly the pinned form.
           ekd_i := 15 + to_integer(sc1(8).ed) + 16 - sc1(8).shd;
-          if sc1(8).c.tk0 = '1' then eu_i := ekd_i;
+          if sc1(8).c.tk0 = '1' or (EG0_ED and eg = 0) then
+                                     eu_i := ekd_i;  -- masked zero, no exponent
           elsif sej_i < ekd_i then   eu_i := sej_i;
           else                       eu_i := ekd_i; end if;
           p  := sej_i - eu_i; if p  < 0 then p  := 0; elsif p  > 63 then p  := 63; end if;

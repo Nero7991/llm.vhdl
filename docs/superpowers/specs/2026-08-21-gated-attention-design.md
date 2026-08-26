@@ -1398,6 +1398,13 @@ crosses the 90% congestion line.
 with rmsnorm as shipped:              2,570..2,600           = 89.2-90.3%   -- AT/OVER the line
 ```
 
+> **SUPERSEDED 2026-08-26.** This sum predates three measurements: B's scalar
+> path is 7 DSP (guessed "+2 to +4"), C's QK-norm row is 22 at N=256 (skeleton
+> said 18), and `gdn_conv` was re-measured at the true segment shapes. The
+> current honest range is **2,606 to 2,648 of 2,880 = 90.5% to 91.9%**, i.e.
+> over the congestion line, not under it. Authority: B spec 3.6.
+
+
 > **B's row MEASURED 2026-08-25: 148, not 138-152.** `DSP_B = 4 x LANES + 20`
 > exactly, at LANES 4/8/16/32, from a new `micro_b_array` swept with the shared
 > aux both in and out. The 20 is precisely `rmsnorm_rs 18 + silu 2`, so array
@@ -1584,7 +1591,8 @@ C-internal specifically to avoid a new D obligation.
 
    Cost: 40 DSP for the 4-lane form against the 18 this item assumed, so C's
    aux row and the whole-die sum both move. Whole-die is **2,546 of 2,880 =
-   88.4%**, still under the line.
+   88.4%**, still under the line. [**Superseded 2026-08-26: 2,606-2,648 =
+   90.5%-91.9%, over the line.** See B spec 3.6.]
 2. **No Fmax measurement exists at 192 lanes.** The routed 339.6 MHz is at
    64; broadcast fanout grows with lanes (k/v fan out 6, e/f fan out 32,
    control 192) and the 64-lane limiter had already moved to the DSP

@@ -1857,13 +1857,25 @@ The phase-schedule bullet is discharged. These are not:
   worst relative error to 1.5e-5 at every `beta`, for **one msb scan and one
   shift -- no extra multiply and no extra DSP.**
 
-  **NOT APPLIED.** §2.1.4 is a pinned contract that `gdn_err.c`, §2.10's
+  **NOT APPLIED at the time of writing.** §2.1.4 is a pinned contract that `gdn_err.c`, §2.10's
   precision result and §3.3's schedule all reference. The evidence is recorded;
   the decision to change a pinned numerical contract is not one to take
   silently on a single night's measurement. `sim/tb_gdn_recur.vhd` carries a
   `TOL_S_TK0` generic whose comment says it is the measured size of an open
   defect rather than slack, and says to delete it when the correction lands.
   Full account: `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`.
+
+  **SUPERSEDED 2026-08-26: ADOPTED.** The paragraph above is kept as written
+  because it was reported. Its reasoning was sound but its premise was not: the
+  pinned contract was itself the defect, and deferring to it deferred to the
+  wrong authority. `D_NORM`, `TK0_ED` and a third gate `EG0_ED` all now default
+  to true in `rtl/gdn_recur.vhd`, `rtl/gdn_recur_pipe.vhd` and `ref/gdn_recur_vec.c`.
+  `TOL_S_TK0` and `TOL_O_TK0` are deleted as their own comments instructed, and
+  `sim/tb_gdn_recur.vhd` now carries `TOL_S = 12.0` / `TOL_O = 1.0e-4`, set from
+  the measured 8.955 state LSB and 6.578e-5 of the output dot's term norm rather
+  than from a round number. **`ref/gdn_err.c` still implements only the
+  superseded recipe, so Â§2.10's precision result remains measured against a
+  recipe this spec no longer specifies** -- that re-derivation is the open item.
 
   **AND THERE IS A THIRD, in the same stage, found the same night.** At
   `tk = 0` the state is masked to zero, so `sk_acc = 0`, `msb_pos(0) = 0` and
