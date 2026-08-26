@@ -24,9 +24,54 @@
 -- Measuring the access pattern A will actually use is the point; a random or
 -- cross-channel pattern would measure a different machine.
 --
--- READS ONLY.  A's weight path is read-only (rtl/axi_rd_port.vhd has no write
--- channel at all), so a write-capable generator would measure traffic the
--- design never issues, and would risk corrupting whatever else is resident.
+-- READS AND WRITES.  The first version was read-only, on the argument that A's
+-- weight path is read-only (rtl/axi_rd_port.vhd still has no write channel).
+-- That argument was right about A and wrong about the die: C 2.5 assumes two
+-- reads and one write CONCURRENTLY, and B needs four masters.  So every
+-- bandwidth number this instrument had produced -- 144.0 GB/s at 15 ports,
+-- 288.0 at 30 -- described a traffic pattern that only ONE of five subsystems
+-- actually issues, and the specs were quoting it as if it were the memory
+-- system's capability.
+--
+-- WRITE BANDWIDTH ALONE IS NOT A FINDING AT 300 MHz, and building this to
+-- measure it would repeat a mistake this instrument has already made once.  A
+-- port demands 32 B x 300 MHz = 9.6 GB/s; a pseudo-channel supplies 14.4.  A
+-- write-only sweep is therefore guaranteed to report 100% of the port's
+-- ceiling for the same arithmetic reason the oversubscription sweep returned a
+-- flat 9.60 GB/s -- it measures the CLOCK, not the memory.  It is run as one
+-- sanity point and is labelled as guaranteed in the results, not cited.
+--
+-- THE EXPERIMENT WITH INFORMATION IN IT IS CONCURRENT R+W ON ONE CHANNEL.
+-- AXI's read and write paths are independent, so a single port in rw_both mode
+-- demands 64 B/cycle = 19.2 GB/s against that same 14.4 GB/s of DRAM supply.
+-- That is the first configuration reachable from fabric at 300 MHz where the
+-- memory, not the datapath's clock, has to set the answer -- and what it
+-- measures is precisely the read/write bus turnaround (tWTR/tRTW) that C 3.13
+-- lists as unmeasured behind its 53% duty premise and that B 2.5 assumes away
+-- for four concurrent masters.
+--
+-- So the modes exist to separate turnaround from arbitration, which are
+-- different costs that a single aggregate number would average together:
+--
+--   wmask=0                reads only            reproduces the old numbers
+--                                                exactly, and is kept as the
+--                                                regression check that the
+--                                                write path cost nothing
+--   wmask=all              writes only           SANITY ONLY, guaranteed by
+--                                                arithmetic, see above
+--   wmask=every 3rd port   2R+1W across ports    C 2.5's pattern with the
+--                                                channels INDEPENDENT: costs
+--                                                switch arbitration, not
+--                                                turnaround
+--   RW_BOTH=1, stride=0    R and W into ONE      THE HEADLINE.  19.2 GB/s of
+--                          pseudo-channel        demand against 14.4 supply,
+--                                                so the shortfall is the
+--                                                turnaround and nothing else
+--
+-- Nothing on this card holds data worth preserving, so writing over it costs
+-- nothing.  The generator does NOT read back what it wrote: this measures
+-- bandwidth, not memory integrity, and a read-verify would halve the write
+-- rate being measured.
 --
 -- The counters deliberately measure DIFFERENT things so a disagreement is
 -- visible rather than averaged away:
@@ -106,6 +151,28 @@ entity hbm_tg is
     -- a better-looking number is the wrong way round.
     m_rresp   : in  std_logic_vector(NPORT*2-1 downto 0);
 
+    -- NPORT AXI4 WRITE masters, flattened, same shape as the read side.
+    -- WSTRB is all ones and never varies: a partial write is a read-modify-
+    -- write inside the memory controller and would measure a different
+    -- machine than the full-width stores B and C issue.
+    m_awvalid : out std_logic_vector(NPORT-1 downto 0);
+    m_awready : in  std_logic_vector(NPORT-1 downto 0);
+    m_awaddr  : out std_logic_vector(NPORT*ADDR_W-1 downto 0);
+    m_awlen   : out std_logic_vector(NPORT*8-1 downto 0);
+    m_awsize  : out std_logic_vector(NPORT*3-1 downto 0);
+    m_awburst : out std_logic_vector(NPORT*2-1 downto 0);
+    m_wvalid  : out std_logic_vector(NPORT-1 downto 0);
+    m_wready  : in  std_logic_vector(NPORT-1 downto 0);
+    m_wdata   : out std_logic_vector(NPORT*AXI_DW-1 downto 0);
+    m_wstrb   : out std_logic_vector(NPORT*(AXI_DW/8)-1 downto 0);
+    m_wlast   : out std_logic_vector(NPORT-1 downto 0);
+    m_bvalid  : in  std_logic_vector(NPORT-1 downto 0);
+    m_bready  : out std_logic_vector(NPORT-1 downto 0);
+    -- WRITE RESPONSE, carried for the same reason m_rresp is: a write that
+    -- DECERRs completes FASTER than one that reaches memory, so an unchecked
+    -- write path reports its own misconfiguration as higher bandwidth.
+    m_bresp   : in  std_logic_vector(NPORT*2-1 downto 0);
+
     -- RESET OUT for the HBM IP's own AXI interfaces.  AXI_n_ARESET_N is
     -- specified synchronous to AXI_n_ACLK, and the build was driving all 15 of
     -- them straight from a proc_sys_reset in the 100 MHz control domain.  That
@@ -152,13 +219,30 @@ architecture rtl of hbm_tg is
   type u32a is array(0 to NPORT-1) of unsigned(31 downto 0);
   type u16a is array(0 to NPORT-1) of unsigned(15 downto 0);
   signal beats, arstall, issued, retired : u32a := (others => (others => '0'));
+  -- WRITE-side counters, deliberately separate from the read ones rather than
+  -- summed in fabric.  A mixed run whose totals only appear added cannot say
+  -- WHICH direction lost throughput, and that is the whole question.
+  signal wbeats, awstall, wissued, wretired : u32a
+       := (others => (others => '0'));
+  signal werr : u32a := (others => (others => '0'));
   -- Non-OKAY read responses, per port.  OKAY is "00"; EXOKAY "01" cannot
   -- occur on a normal read, SLVERR "10" and DECERR "11" both mean the data
   -- is meaningless.  Anything nonzero invalidates that port's beat count.
   signal rerr : u32a := (others => (others => '0'));
   signal outst   : u16a := (others => (others => '0'));
+  -- woutst: AW accepted minus B returned, the write analogue of `outst`.
+  -- wcred:  AW accepted minus W BURSTS completed.  These are different
+  -- quantities and conflating them is the classic write-path bug -- B can lag
+  -- the data by a long time on DRAM, so gating W data on `woutst` would stall
+  -- the data channel behind the response channel and measure the controller's
+  -- response latency instead of its write bandwidth.
+  signal woutst  : u16a := (others => (others => '0'));
+  signal wcred   : u16a := (others => (others => '0'));
   signal arv     : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal awv     : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal wv      : std_logic_vector(NPORT-1 downto 0) := (others => '0');
   signal active  : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal wactive : std_logic_vector(NPORT-1 downto 0) := (others => '0');
   signal cycles  : unsigned(31 downto 0) := (others => '0');
   signal any_act : std_logic;
 
@@ -232,6 +316,26 @@ architecture rtl of hbm_tg is
   -- 144.0 GB/s, which keeps that result comparable.
   signal rgn_base   : unsigned(7 downto 0) := to_unsigned(PORT0, 8);
   signal rgn_stride : unsigned(7 downto 0) := to_unsigned(1, 8);
+
+  -- DIRECTION.  `wmask` is per port and orthogonal to `mask`: mask enables a
+  -- port at all, wmask says that port writes instead of reads.  Per port
+  -- rather than global because C 2.5's pattern is a MIX -- two readers and one
+  -- writer live at once -- and a global direction bit could only ever measure
+  -- the two pure cases, which are the two least interesting ones.
+  --
+  -- `rw_both` overrides wmask and runs BOTH engines on every enabled port,
+  -- into the same pseudo-channel.  That is the read/write turnaround case, and
+  -- it is separate from the mixed-across-ports case because they stress
+  -- different things: across ports the channels are independent and the switch
+  -- arbitrates; on one port the DRAM bus itself has to turn around.
+  --
+  -- Defaults are wmask = 0 and rw_both = 0, i.e. read-only, so a build that
+  -- never writes these registers behaves EXACTLY as the one that measured
+  -- 288.0 GB/s.  That is deliberate: it keeps the new bitstream's read numbers
+  -- directly comparable to the old one's, and any difference is then the write
+  -- path's cost in placement rather than a change of experiment.
+  signal wmask   : std_logic_vector(31 downto 0) := (others => '0');
+  signal rw_both : std_logic := '0';
 
   constant TEMP_HOLD : natural := 64;
   signal lim_hold : unsigned(7 downto 0) := (others => '0');
@@ -317,6 +421,7 @@ begin
         aw_seen <= '0'; w_seen <= '0';
         go <= '0'; mask <= (others => '0');
         rgn_base <= to_unsigned(PORT0, 8); rgn_stride <= to_unsigned(1, 8);
+        wmask <= (others => '0'); rw_both <= '0';
       else
         -- WRITE.  AW and W are captured INDEPENDENTLY and the decode fires
         -- when both have arrived.
@@ -361,6 +466,8 @@ begin
             when 5 => temp_limit <= unsigned(wd(6 downto 0));
             when 6 => rgn_base   <= unsigned(wd(7 downto 0));
                       rgn_stride <= unsigned(wd(15 downto 8));
+            when 7 => wmask      <= wd;
+            when 8 => rw_both    <= wd(0);
             when others => null;
           end case;
         end if;
@@ -406,6 +513,8 @@ begin
           elsif idx = 70 then
             rdata_r <= (31 downto 16 => '0') & std_logic_vector(rgn_stride)
                        & std_logic_vector(rgn_base);
+          elsif idx = 71 then rdata_r <= wmask;
+          elsif idx = 72 then rdata_r <= (31 downto 1 => '0') & rw_both;
           elsif idx >= 256 and idx < 256 + NPORT then
             rdata_r <= std_logic_vector(beats(idx - 256));
           elsif idx >= 512 and idx < 512 + NPORT then
@@ -414,6 +523,15 @@ begin
             rdata_r <= std_logic_vector(retired(idx - 768));
           elsif idx >= 1024 and idx < 1024 + NPORT then
             rdata_r <= std_logic_vector(rerr(idx - 1024));
+          -- write-side status, mirroring the read blocks
+          elsif idx >= 1280 and idx < 1280 + NPORT then
+            rdata_r <= std_logic_vector(wbeats(idx - 1280));
+          elsif idx >= 1536 and idx < 1536 + NPORT then
+            rdata_r <= std_logic_vector(awstall(idx - 1536));
+          elsif idx >= 1792 and idx < 1792 + NPORT then
+            rdata_r <= std_logic_vector(wretired(idx - 1792));
+          elsif idx >= 2048 and idx < 2048 + NPORT then
+            rdata_r <= std_logic_vector(werr(idx - 2048));
           else rdata_r <= (others => '0');
           end if;
           arr <= '0'; rv <= '1';
@@ -423,7 +541,11 @@ begin
     end if;
   end process;
 
-  any_act <= '1' when active /= (active'range => '0') else '0';
+  -- Wall time counts while EITHER engine is running.  wactive only clears when
+  -- the last B response is in, so a write run's cycle count covers the drain
+  -- and a mixed run's covers whichever direction finishes last.
+  any_act <= '1' when active  /= (active'range  => '0')
+                   or wactive /= (wactive'range => '0') else '0';
 
   -- The thermal watchdog.  In FABRIC, not in the host: a JTAG poll loop is
   -- milliseconds away and 15 HBM ports at 450 MHz do not wait for it.
@@ -478,8 +600,27 @@ begin
   end process;
 
   ------------------------------------------------------------- generators
+  -- mask/wmask are 32 bits, so a build with more than 32 ports would index
+  -- past them silently.  30 is this instrument's ceiling anyway (SAXI_00 and
+  -- SAXI_16 carry jtag_hbm), but a silent wrap is not an acceptable way to
+  -- discover that.
+  assert NPORT <= 32
+    report "hbm_tg: NPORT > 32 exceeds the width of mask/wmask"
+    severity failure;
+
   gen : for i in 0 to NPORT-1 generate
-    signal aoff : unsigned(REGION_LOG2-1 downto 0) := (others => '0');
+    signal aoff  : unsigned(REGION_LOG2-1 downto 0) := (others => '0');
+    -- Separate write cursor.  In rw_both mode the two engines sweep the SAME
+    -- region independently, which is the point: they collide in the DRAM
+    -- pages exactly as two masters on one channel would.
+    signal waoff : unsigned(REGION_LOG2-1 downto 0) := (others => '0');
+    signal wbcnt : unsigned(7 downto 0) := (others => '0');
+    -- Write payload.  Free-running, so no operand is constant: a synthesiser
+    -- given a constant WDATA is free to collapse the 256-bit fanout, and the
+    -- write path would then be cheaper in the bitstream than in the design it
+    -- is standing in for.  The VALUE is meaningless -- nothing reads it back.
+    signal wpat  : unsigned(31 downto 0) := (others => '0');
+    signal rd_en, wr_en : std_logic;
     -- EVENT REGISTERS.  The HBM AXI interface cell has a large clock-to-out,
     -- and at a 2.1 ns period its outputs cannot cross the fabric AND drive a
     -- counter's control pins in the same cycle: the first build missed by
@@ -492,7 +633,11 @@ begin
     -- one-cycle offset does not bias a ratio.  `outst` may momentarily exceed
     -- its cap by one, which is harmless.
     signal ev_ar, ev_r, ev_rl, ev_re : std_logic := '0';
+    signal ev_aw, ev_w, ev_b, ev_be : std_logic := '0';
   begin
+    rd_en <= mask(i) and ((not wmask(i)) or rw_both);
+    wr_en <= mask(i) and (wmask(i) or rw_both);
+
     m_arvalid(i) <= arv(i);
     m_arlen  ((i+1)*8-1 downto i*8) <= std_logic_vector(arlen_r);
     m_arsize ((i+1)*3-1 downto i*3) <= std_logic_vector(to_unsigned(ARSIZE_V, 3));
@@ -508,6 +653,32 @@ begin
     -- measure the generator, not the memory.
     m_rready(i) <= '1';
 
+    ------------------------------------------------------------ write outputs
+    m_awvalid(i) <= awv(i);
+    m_awlen  ((i+1)*8-1 downto i*8) <= std_logic_vector(arlen_r);
+    m_awsize ((i+1)*3-1 downto i*3) <= std_logic_vector(to_unsigned(ARSIZE_V, 3));
+    m_awburst((i+1)*2-1 downto i*2) <= "01";                       -- INCR
+    m_awaddr((i+1)*ADDR_W-1 downto i*ADDR_W) <=
+      std_logic_vector(resize(
+        resize(rgn_base + to_unsigned(i, 8) * rgn_stride, ADDR_W-REGION_LOG2) &
+        waoff, ADDR_W));
+    m_wvalid(i) <= wv(i);
+    -- WLAST from the beat counter, which is a register, so this is one level
+    -- of compare out of a flop and not a path from the HBM cell.
+    m_wlast(i)  <= '1' when wbcnt = arlen_r else '0';
+    m_wstrb((i+1)*(AXI_DW/8)-1 downto i*(AXI_DW/8)) <= (others => '1');
+    -- One 32-bit pattern replicated across the beat.  Replication is fine --
+    -- nothing inspects the data -- and it keeps the payload register 32 bits
+    -- instead of 256 per port, which at 30 ports is the difference between a
+    -- rounding error and 7,680 flops.
+    wrep : for k in 0 to AXI_DW/32 - 1 generate
+      m_wdata(i*AXI_DW + (k+1)*32 - 1 downto i*AXI_DW + k*32)
+        <= std_logic_vector(wpat);
+    end generate;
+    -- Always ready for B: back-pressuring the response channel would stall
+    -- the write engine on our own bookkeeping.
+    m_bready(i) <= '1';
+
     -- OUTSTANDING COUNT: one assignment, never two.  An AR accept and the
     -- LAST beat of the previous burst land on the SAME edge whenever the
     -- memory turns around promptly, and with a separate `+1` and `-1` branch
@@ -520,16 +691,26 @@ begin
     p : process(clk)
       variable burst_bytes : unsigned(REGION_LOG2-1 downto 0);
       variable ar_acc, r_end : boolean;
+      variable wl_hs         : boolean;
     begin
       if rising_edge(clk) then
         -- one register stage on everything the HBM drives, see the note above
         ev_ar <= '0'; ev_r <= '0'; ev_rl <= '0'; ev_re <= '0';
+        ev_aw <= '0'; ev_w <= '0'; ev_b <= '0'; ev_be <= '0';
+        -- free-running payload, never reset to a constant during a run
+        wpat <= wpat + to_unsigned(i, 32) + 1;
         if rstn_s = '0' then
           arv(i) <= '0'; active(i) <= '0';
           beats(i) <= (others => '0'); arstall(i) <= (others => '0');
           rerr(i) <= (others => '0');
           issued(i) <= (others => '0'); retired(i) <= (others => '0');
           outst(i) <= (others => '0'); aoff <= (others => '0');
+          awv(i) <= '0'; wv(i) <= '0'; wactive(i) <= '0';
+          wbeats(i) <= (others => '0'); awstall(i) <= (others => '0');
+          werr(i) <= (others => '0');
+          wissued(i) <= (others => '0'); wretired(i) <= (others => '0');
+          woutst(i) <= (others => '0'); wcred(i) <= (others => '0');
+          waoff <= (others => '0'); wbcnt <= (others => '0');
         else
           if clr = '1' then
             beats(i) <= (others => '0'); arstall(i) <= (others => '0');
@@ -537,14 +718,26 @@ begin
             issued(i) <= (others => '0'); retired(i) <= (others => '0');
             outst(i) <= (others => '0'); aoff <= (others => '0');
             arv(i) <= '0'; active(i) <= '0';
+            awv(i) <= '0'; wv(i) <= '0'; wactive(i) <= '0';
+            wbeats(i) <= (others => '0'); awstall(i) <= (others => '0');
+            werr(i) <= (others => '0');
+            wissued(i) <= (others => '0'); wretired(i) <= (others => '0');
+            woutst(i) <= (others => '0'); wcred(i) <= (others => '0');
+            waoff <= (others => '0'); wbcnt <= (others => '0');
           elsif therm_stop = '1' then
             -- Thermal stop wins over everything.  Dropping `active` halts AR
             -- issue immediately; bursts already accepted still drain, which is
             -- required -- abandoning them would hang the AXI channel.
             active(i) <= '0';
             arv(i)    <= '0';
-          elsif go = '1' and active(i) = '0' and mask(i) = '1'
-                and retired(i) < nburst and therm_stop = '0' then
+            -- Same rule on the write side, with one addition: AW issue stops
+            -- but W data does NOT, because the W engine is gated on `wcred`
+            -- and must finish the bursts whose AW the memory has already
+            -- accepted.  Abandoning write data mid-burst hangs the channel
+            -- permanently -- worse than the thermal event being escaped.
+            wactive(i) <= '0';
+            awv(i)     <= '0';
+          else
             -- `retired < nburst` is the ARM CONDITION, not decoration.  The
             -- host holds `go` high for the whole run, so without it a
             -- generator that has just finished sees go=1 and active=0 on the
@@ -552,7 +745,18 @@ begin
             -- never retire another burst, so it never clears active, so the
             -- busy flag never deasserts and the host polls forever.  `clr`
             -- zeroes `retired`, which is what makes the next run start.
-            active(i) <= '1';
+            --
+            -- The two engines arm INDEPENDENTLY, not in an elsif chain: in
+            -- rw_both mode one port runs both, and a chain would let whichever
+            -- branch came first starve the other for the whole run.
+            if go = '1' and active(i) = '0' and rd_en = '1'
+               and retired(i) < nburst then
+              active(i) <= '1';
+            end if;
+            if go = '1' and wactive(i) = '0' and wr_en = '1'
+               and wretired(i) < nburst then
+              wactive(i) <= '1';
+            end if;
           end if;
 
           ar_acc := false;
@@ -587,6 +791,86 @@ begin
             end if;
           end if;
 
+          ------------------------------------------------------ write issue
+          -- AW, structurally identical to AR.  `woutst` is the AW-to-B
+          -- outstanding count and is what the depth cap applies to; it is NOT
+          -- what gates the data channel (see the wcred note at the
+          -- declaration).
+          if wactive(i) = '1' then
+            if awv(i) = '0' then
+              if wissued(i) + (0 => ev_aw) < nburst
+                 and woutst(i) < resize(outst_max, 16) then
+                awv(i) <= '1';
+              end if;
+            else
+              if m_awready(i) = '1' then
+                awv(i) <= '0';
+                ev_aw  <= '1';
+                waoff <= waoff + resize((resize(arlen_r,32) + 1) *
+                                        to_unsigned(BYTES_PER_BEAT, 24),
+                                        REGION_LOG2);
+              else
+                awstall(i) <= awstall(i) + 1;
+              end if;
+            end if;
+          end if;
+
+          ------------------------------------------------------- write data
+          -- W streams whenever an accepted AW has data still owing.  The
+          -- burst boundary is the part worth being careful about: dropping
+          -- WVALID for one cycle between bursts costs 1 cycle in ARLEN+1,
+          -- which at the AXI3 maximum of 16 beats is 6% -- large enough to be
+          -- mistaken for a property of the memory.  So WVALID is held across
+          -- the boundary whenever another burst is already owed.
+          --
+          -- wcred is DECREMENTED ON THE HANDSHAKE ITSELF, not via an event
+          -- register.  The first version deferred it by a cycle like every
+          -- other counter here, and that is a real bug, not a cosmetic one:
+          -- after the last burst's final beat the idle branch below still saw
+          -- a nonzero credit for one cycle and re-asserted WVALID with no AW
+          -- behind it.  Against this testbench's original model it was
+          -- invisible, because that model refused write data with no address;
+          -- against real HBM, which asserts WREADY freely out of its write
+          -- buffer, it sends an extra burst of data the memory never framed --
+          -- a permanently desynchronised write channel.
+          --
+          -- The AW side stays deferred, which is the safe direction: it makes
+          -- the credit UNDERSTATE what is owed, so the engine can idle a cycle
+          -- but can never over-send.
+          wl_hs := wv(i) = '1' and m_wready(i) = '1' and wbcnt = arlen_r;
+          if wv(i) = '0' then
+            if wcred(i) /= 0 or ev_aw = '1' then
+              wv(i) <= '1';
+              wbcnt <= (others => '0');
+            end if;
+          else
+            if m_wready(i) = '1' then
+              ev_w <= '1';
+              if wbcnt = arlen_r then
+                wbcnt <= (others => '0');
+                -- Continue across the boundary only if another burst is
+                -- already owed.  wcred still counts the one just finished at
+                -- this point (its decrement lands on this same edge), so the
+                -- test is > 1, plus an AW landing on this edge.
+                if wcred(i) > 1 or ev_aw = '1' then
+                  wv(i) <= '1';
+                else
+                  wv(i) <= '0';
+                end if;
+              else
+                wbcnt <= wbcnt + 1;
+              end if;
+            end if;
+          end if;
+
+          -- B response.  Always accepted, so no handshake to preserve.
+          if m_bvalid(i) = '1' then
+            ev_b  <= '1';
+            ev_be <= m_bresp(2*i+1) or m_bresp(2*i);
+          else
+            ev_be <= '0';
+          end if;
+
           -- ACCEPT.  rready is a constant '1', so there is no handshake to
           -- preserve here and the whole R channel can be registered.
           if m_rvalid(i) = '1' then
@@ -617,6 +901,31 @@ begin
             outst(i) <= outst(i) + 1;
           elsif r_end and not ar_acc then
             outst(i) <= outst(i) - 1;
+          end if;
+
+          ------------------------------------------- registered write counters
+          if ev_w = '1' then
+            wbeats(i) <= wbeats(i) + 1;
+          end if;
+          if ev_aw = '1' then wissued(i) <= wissued(i) + 1; end if;
+          if ev_b = '1' then
+            wretired(i) <= wretired(i) + 1;
+            if ev_be = '1' then werr(i) <= werr(i) + 1; end if;
+            if wretired(i) + 1 = nburst then wactive(i) <= '0'; end if;
+          end if;
+          -- Both write counters get the same one-assignment treatment the read
+          -- side needed, and for the same reason: an AW accept and a B return
+          -- land on the same edge routinely, and two branches would silently
+          -- drop the increment and underflow the counter.
+          if ev_aw = '1' and ev_b = '0' then
+            woutst(i) <= woutst(i) + 1;
+          elsif ev_b = '1' and ev_aw = '0' then
+            woutst(i) <= woutst(i) - 1;
+          end if;
+          if ev_aw = '1' and not wl_hs then
+            wcred(i) <= wcred(i) + 1;
+          elsif wl_hs and ev_aw = '0' then
+            wcred(i) <= wcred(i) - 1;
           end if;
         end if;
       end if;
