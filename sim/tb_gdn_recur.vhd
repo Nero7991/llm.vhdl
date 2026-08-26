@@ -32,11 +32,16 @@ entity tb_gdn_recur is
           -- quantity it checks is how a dropped rounding bias went undetected
           -- in tb_l2norm_rs, and it took a mutation campaign to notice.
           -- State mantissa, in LSB of the 2^-se_new grid.  The median case is
-          -- 0.63 LSB; 8.0 covers the small-beta STEADY-STATE cases, which reach
-          -- 6.6.  Those are a milder form of the same d_m grid defect as the
-          -- tk = 0 one below -- diluted by the state term rather than standing
-          -- alone -- so this number will drop when that correction lands too.
-          TOL_S : real := 8.0;
+          -- 0.63 LSB and p95 is 6.65, but the steady-state tail reaches 22.1,
+          -- so 32 is the honest bound.  That tail is the SAME d_m grid defect
+          -- as the tk = 0 one below, diluted by the state term rather than
+          -- standing alone: d_m is quantized on e_d, a grid set by
+          -- max(|v|,|sk|) rather than by |d|, so its half-LSB error is
+          -- multiplied by k_n (up to 2^15) into every element.  Measured over
+          -- 224 physical columns, the proposed correction takes p95 from 6.65
+          -- to 1.29 and the worst case from 1218 to 3.47 -- so this generic
+          -- should become 4.0, not merely shrink, when it lands.
+          TOL_S : real := 32.0;
           -- tk = 0 ONLY.  This is NOT slack, and it must not be treated as a
           -- tolerance that happens to be loose: it is the measured size of an
           -- OPEN DEFECT in the pinned recipe.  At the first token the state is

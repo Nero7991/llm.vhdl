@@ -34,6 +34,18 @@
 #define msb_pos_u(a)       mv4i_msb_pos_u((a))
 
 #define DIM 128
+/* 96 physically-shaped columns + 96 adversarial + one FULL-LENGTH head.
+ *
+ * The long head matters and is not padding: a real head is 128 columns of one
+ * k/q streamed continuously, and a pipelined implementation only ever sees a
+ * head boundary once per 128 columns.  Testing with 8-column groups leaves the
+ * continuous-streaming case -- where every slot is reused many times over and
+ * the engines never idle -- completely unexercised.  Slot reuse is exactly the
+ * defect class a short group cannot reach. */
+#define NPHYS 96
+#define NADV  96
+#define NLONG 128
+#define NCASE (NPHYS + NADV + NLONG)
 
 static uint64_t rs_;
 static uint64_t rnd64(void){ uint64_t z=(rs_+=0x9E3779B97F4A7C15ULL);
@@ -59,8 +71,11 @@ int main(int argc, char **argv)
     static int16_t g_kn[DIM], g_qs[DIM];
     int g_eg = 0, g_beta = 0, g_tk0 = 0;
     const int GRP = 8;
+    /* group id, so a consumer knows where a head begins without assuming a
+     * fixed group size */
+    int gid = 0;
     /* header: number of cases, then DIM */
-    fprintf(f, "192 %d\n", DIM);
+    fprintf(f, "%d %d\n", NCASE, DIM);
 
     /* TWO GROUPS, and the distinction is load-bearing.
      *
@@ -81,13 +96,46 @@ int main(int argc, char **argv)
      *   caught nothing -- the failure mode tb_l2norm_rs already hit from the
      *   other direction.
      */
-    for (int c = 0; c < 192; c++) {
-        int phys = (c < 96);
+    for (int c = 0; c < NCASE; c++) {
+        int phys = (c < NPHYS) || (c >= NPHYS + NADV);
+        int longhead = (c >= NPHYS + NADV);
         int tk0, se_j, e_v, eg, beta;
         int16_t smant[DIM], kn[DIM], qs[DIM];
         int32_t v_j;
 
-        if (phys) {
+        if (longhead) {
+            /* one head, 128 columns, one k/q/eg/beta/tk0 for all of them */
+            int a = c - (NPHYS + NADV);
+            se_j = rnd_range(-40, 40);
+            e_v  = se_j + rnd_range(-8, 8);
+            if (a == 0) {
+                g_tk0  = 0;            /* steady state: the common case */
+                g_eg   = rnd_range(27853, 32767);
+                g_beta = rnd_range(1, 65535);
+                double kd[DIM], qd[DIM], nk = 0.0, nq = 0.0;
+                for (int i = 0; i < DIM; i++) {
+                    kd[i] = (double)rnd_range(-10000, 10000) / 10000.0;
+                    qd[i] = (double)rnd_range(-10000, 10000) / 10000.0;
+                    nk += kd[i]*kd[i]; nq += qd[i]*qd[i];
+                }
+                nk = sqrt(nk); nq = sqrt(nq);
+                for (int i = 0; i < DIM; i++) {
+                    long kv = lround(kd[i] / nk * 32768.0);
+                    long qv = lround(qd[i] / nq / sqrt((double)DIM) * 262144.0);
+                    if (kv >  32767) { kv =  32767; }
+                    if (kv < -32768) { kv = -32768; }
+                    if (qv >  32767) { qv =  32767; }
+                    if (qv < -32768) { qv = -32768; }
+                    g_kn[i] = (int16_t)kv; g_qs[i] = (int16_t)qv;
+                }
+            }
+            tk0 = g_tk0; eg = g_eg; beta = g_beta;
+            memcpy(kn, g_kn, sizeof kn); memcpy(qs, g_qs, sizeof qs);
+            int top = rnd_range(16384, 32767);
+            for (int i = 0; i < DIM; i++) smant[i] = (int16_t)rnd_range(-top, top);
+            smant[rnd_range(0, DIM-1)] = (int16_t)top;
+            v_j = rnd_range(-32768, 32767);
+        } else if (phys) {
             se_j = rnd_range(-40, 40);
             /* v shares the activation scale, so its exponent tracks the
              * state's within a realistic spread rather than roaming freely */
@@ -240,7 +288,10 @@ int main(int argc, char **argv)
          * emitted as a real deliberately: it is s38, and every s38 integer is
          * represented EXACTLY by a double, so the bit-exact check survives the
          * round trip while VHDL's 32-bit integer would not hold it. */
-        fprintf(f, "%d %d %d %d %d %d %d\n", phys, tk0, se_j, e_v, eg, beta, v_j);
+        if (longhead) gid = 1000;
+        else          gid = c / GRP;
+        fprintf(f, "%d %d %d %d %d %d %d %d\n",
+                phys, tk0, se_j, e_v, eg, beta, v_j, gid);
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", smant[i]); } fprintf(f,"\n");
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", kn[i]); } fprintf(f,"\n");
         for (int i=0;i<DIM;i++) { fprintf(f, "%d ", qs[i]); } fprintf(f,"\n");

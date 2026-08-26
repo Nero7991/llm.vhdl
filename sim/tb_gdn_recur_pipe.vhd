@@ -48,13 +48,17 @@ architecture sim of tb_gdn_recur_pipe is
 
   type i_arr is array (natural range <>) of integer;
   type col_rec is record
-    tk0, se_j, e_v, v_j, eg, beta, se_new, e_o : integer;
+    tk0, se_j, e_v, v_j, eg, beta, se_new, e_o, gid : integer;
     oacc : real;
   end record;
   type col_arr is array (natural range <>) of col_rec;
   type big_arr is array (natural range <>) of i_arr(0 to DIM-1);
 
-  constant NCASE : integer := 192;
+  -- 96 physical + 96 adversarial + one FULL-LENGTH 128-column head.  The long
+  -- head is the one that exercises continuous streaming, where every slot is
+  -- reused many times and the engines never idle -- the case an 8-column group
+  -- cannot reach, and the one a real head actually is.
+  constant NCASE : integer := 320;
   shared variable v_col  : col_arr(0 to NCASE-1);
   shared variable v_sm   : big_arr(0 to NCASE-1);
   shared variable v_kn   : big_arr(0 to NCASE-1);
@@ -109,6 +113,7 @@ begin
       read(ln, iv); v_col(c).eg := iv;
       read(ln, iv); v_col(c).beta := iv;
       read(ln, iv); v_col(c).v_j := iv;
+      read(ln, iv); v_col(c).gid := iv;
       readline(fh, ln); for i in 0 to DIM-1 loop read(ln, iv); v_sm(c)(i) := iv; end loop;
       readline(fh, ln); for i in 0 to DIM-1 loop read(ln, iv); v_kn(c)(i) := iv; end loop;
       readline(fh, ln); for i in 0 to DIM-1 loop read(ln, iv); v_qs(c)(i) := iv; end loop;
@@ -126,21 +131,23 @@ begin
   end process;
 
   drive : process
-    variable base : integer;
+    variable base, c : integer;
   begin
     wait until loaded;
     wait for 40 ns; rst <= '0'; wait until rising_edge(clk);
 
-    for g in 0 to (NCASE/GRP)-1 loop
-      -- per-head values, constant across the group
-      base := g * GRP;
+    c := 0;
+    while c < NCASE loop
+      -- a head runs until the group id changes; heads are 8 columns in the
+      -- mixed set and 128 in the long one, and the driver must not assume
+      base := c;
       -- DRAIN FIRST, THEN change k_n/q_s.  Doing it the other way round is a
       -- testbench bug that looks exactly like a unit bug: engines B and C are
       -- still holding the PREVIOUS head's columns and read k_n/q_s straight off
       -- the ports, so those columns silently finish against the next head's
       -- vectors.  The signature is distinctive and worth remembering -- only
-      -- o_acc wrong, only on the last column(s) of each head group, state
-      -- perfect, because the state does not depend on q_s at all.
+      -- o_acc wrong, only on the last column(s) of each head, state perfect,
+      -- because the state does not depend on q_s at all.
       for d in 0 to 199 loop wait until rising_edge(clk); end loop;
       eg   <= to_unsigned(v_col(base).eg, 16);
       beta <= to_unsigned(v_col(base).beta, 16);
@@ -150,7 +157,7 @@ begin
       end loop;
       wait until rising_edge(clk);
 
-      for c in base to base + GRP - 1 loop
+      while c < NCASE and v_col(c).gid = v_col(base).gid loop
         for gi in 0 to NB-1 loop
           s_valid <= '1';
           if gi = 0 then
@@ -172,6 +179,7 @@ begin
           s_valid <= '0'; s_first <= '0';
           for d in 0 to GAP-1 loop wait until rising_edge(clk); end loop;
         end if;
+        c := c + 1;
       end loop;
       s_valid <= '0'; s_first <= '0';
     end loop;
