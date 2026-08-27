@@ -112,7 +112,12 @@
 --   * MREG on the Newton multiplies.  32x32 is a DSP48E2 CASCADE (the
 --     primitive is 27x18) and without a register between partial products it
 --     pinned the narrowed skeletons at 278.9 MHz.  Inferred by `m <= a*b;
---     p <= m;` with no logic between.
+--     p <= m;` with no logic between -- and "no logic between" has to include
+--     the SELECT: one pair shared by all three Newton multiplies is a mux on
+--     the DSP output, which blocks the absorption and puts the partial-product
+--     sum back in fabric.  There is now one pair per multiply.  See the
+--     declarations of mr_m_yy / mr_m_sy / mr_m_dy and
+--     docs/debugging/2026-08-27_rmsnorm-max-tree-measured-worse.md.
 --   * LANES.  Bit-exact under lane-parallel reduction because both element
 --     reductions are order-independent: an exact integer sum and a maximum.
 --   * raw[j] is still RECOMPUTED in the emit pass rather than stored.  Storing
@@ -200,6 +205,19 @@ architecture rtl of rmsnorm_bf is
   --   the ROM seed is 1/sqrt(m) in Q30, m in [1,2) -> y in (0.707*2^30, 2^30]
   --   y2 = y*y >> 30                          -> y2 in (0.5*2^30, 2^30]
   --   diff = 3*2^30 - my2, my2 ~ 2^30         -> |diff| < 3*2^30, needs s34
+  --
+  -- NARROWING rq_diff TO s32 WAS CONSIDERED AND REJECTED, 2026-08-27, twice
+  -- over.  It is not merely tight, it OVERFLOWS: instrumenting
+  -- ref/rmsnorm_bf_vec.c over its 200-case sweep gives diff in
+  -- [2131803105, 2147654557], and the top of that is above s32's 2147483647.
+  -- The bound is structural, not a sampling accident: my2 <= 2^31-1 forces
+  -- diff > 3*2^30 - 2^31 = 2^30 and diff is at its largest exactly where the
+  -- Newton iteration has converged, my2 -> 2^30, giving diff -> 2^31.  It is
+  -- always POSITIVE, so unsigned(31 downto 0) would hold it -- but that buys
+  -- nothing: the DSP48E2 multiplier is 27x18 signed (26x17 unsigned), so 34x32,
+  -- 32x32 and u32xu32 are all TWO A-chunks by TWO B-chunks, four partial
+  -- products, one cascade.  The premise that 32 bits "fits without a cascade"
+  -- is simply not true of this primitive.
   signal rq_y, rq_smant, rq_y2, rq_my2 : signed(31 downto 0) := (others => '0');
   signal rq_diff  : signed(33 downto 0) := (others => '0');
   signal rq_yfin  : signed(31 downto 0) := (others => '0');
@@ -233,8 +251,42 @@ architecture rtl of rmsnorm_bf is
   -- whole pass, so it is computed ONCE rather than per element per lane.
   signal emit_bias : signed(63 downto 0) := (others => '0');
   signal rq_up_r  : boolean := false;
-  -- MREG/PREG pairs: two registers, no logic between, one per Newton multiply
-  signal mr_m, mr_p : signed(65 downto 0) := (others => '0');
+  -- MREG/PREG pairs: two registers, no logic between, ONE PAIR PER DISTINCT
+  -- NEWTON MULTIPLY.
+  --
+  -- MEASURED, 2026-08-27, and the reason these are three pairs and not one.
+  -- They used to be a SINGLE 66-bit `mr_m`/`mr_p` pair written from inside the
+  -- `rq_step` case, so all three products -- y*y, smant*y2 and diff*y -- landed
+  -- in the same register through a 4-way select (three products plus the hold).
+  -- That select is logic between the multiplier and its M register, so Vivado
+  -- could not absorb the M register into the DSP48E2 at all: the whole 32x32 /
+  -- 34x32 partial-product tree (the primitive is 27x18, so every one of these
+  -- is four partial products) had to be summed in FABRIC and then muxed.  The
+  -- post-route critical path of the assembled emit chain was
+  --   u_rms/ARG__20/DSP_A_B_DATA_INST/CLK -> u_rms/mr_m_reg[54]/D,
+  --   logic 2.677 ns, net 1.289 ns  (72% LOGIC)
+  -- i.e. a DSP's own A/B input register, through the multiplier, through the
+  -- fabric partial-product adder, through the result mux, into bit 54 of the
+  -- shared register.  Bit 54 is above anything one DSP48E2's 48-bit P can hold,
+  -- which is the tell that the summation was in fabric rather than in a
+  -- PCOUT->PCIN cascade.
+  --
+  -- With one pair per product each register directly follows its multiply with
+  -- NOTHING between, which is the pattern Vivado requires to build the cascade
+  -- with internal MREG/PREG.  It also removes the write enable: each product is
+  -- recomputed UNCONDITIONALLY on every S_RQ cycle, so there is no select on
+  -- the DSP inputs either.  Costs three multipliers where the shared form left
+  -- resource sharing free to fold them onto one, and takes the declared state
+  -- from 132 to 388 bits -- which is a FABRIC cost only if the absorption
+  -- fails, since that is what these registers exist to become.
+  --
+  -- Widths are the NATURAL product widths, not a uniform 66: s32*s32 is exactly
+  -- s64 and s34*s32 is exactly s66, so every `resize` below is the identity and
+  -- the two redundant sign bits that the old uniform 66 carried do not have to
+  -- be produced by the cascade.
+  signal mr_m_yy, mr_p_yy : signed(63 downto 0) := (others => '0');  -- y * y
+  signal mr_m_sy, mr_p_sy : signed(63 downto 0) := (others => '0');  -- smant*y2
+  signal mr_m_dy, mr_p_dy : signed(65 downto 0) := (others => '0');  -- diff * y
 
   -- ---- element pipeline
   type s17a is array(0 to LANES-1) of signed(16 downto 0);
@@ -474,36 +526,53 @@ begin
           --
           -- So each multiply now gets three steps:
           --   A  derive the operand from mr_p into a REGISTER
-          --   B  issue the multiply from registered operands only  (AREG/BREG)
+          --   B  the multiply, from registered operands only  (AREG/BREG)
           --   C  hop, which is `mr_p <= mr_m` running unconditionally  (PREG)
           -- and the next A reads mr_p two cycles after the issue, which is
           -- what the MREG+PREG pair costs.  Eighteen steps instead of twelve;
           -- against a 3N/LANES element loop that is noise.
+          --
+          -- The three multiplies are no longer ISSUED by the case; each has its
+          -- own MREG/PREG pair (see the declarations) and runs on every S_RQ
+          -- cycle, so the case now only DERIVES operands and CONSUMES results.
+          -- That is what takes the select off the DSP output and lets the M
+          -- register be absorbed into the DSP48E2 cascade.
+          --
+          -- Free-running is bit-identical, not merely equivalent, and the
+          -- argument is per operand: rq_y is written only at steps 9 and 18,
+          -- rq_y2 only at 3 and 12, rq_diff only at 6 and 15, and rq_smant only
+          -- in S_SEED2.  So the operands each multiply reads are CONSTANT
+          -- across the two cycles that separate its old issue step from the
+          -- step that consumes it, and the value latched by the free-running
+          -- pair at the consume step is the same value the issued form latched.
+          -- Worked through:
+          --   step 3  reads mr_p_yy = y*y  with y = the seed         (issued  1)
+          --   step 6  reads mr_p_sy = smant*y2, y2 from step 3       (issued  4)
+          --   step 9  reads mr_p_dy = diff*y, diff from 6, y the seed(issued  7)
+          --   step 12 reads mr_p_yy = y*y  with y from step 9        (issued 10)
+          --   step 15 reads mr_p_sy = smant*y2, y2 from step 12      (issued 13)
+          --   step 18 reads mr_p_dy = diff*y, diff from 15, y from 9 (issued 16)
+          -- The cadence, the step count and therefore the latency are unchanged.
           when S_RQ =>
-            mr_p    <= mr_m;
+            mr_m_yy <= resize(rq_y * rq_y, 64);
+            mr_p_yy <= mr_m_yy;
+            mr_m_sy <= resize(rq_smant * rq_y2, 64);
+            mr_p_sy <= mr_m_sy;
+            mr_m_dy <= resize(rq_diff * rq_y, 66);
+            mr_p_dy <= mr_m_dy;
             rq_step <= rq_step + 1;
             case rq_step is
-              -- M1 = y*y   (y is already registered, so no derive step needed)
-              when 1  => mr_m <= resize(rq_y * rq_y, 66);
-              -- M2 = smant * y2
-              when 3  => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 4  => mr_m  <= resize(rq_smant * rq_y2, 66);
-              -- M3 = diff * y
-              when 6  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 7  => mr_m    <= resize(rq_diff * rq_y, 66);
-              -- end of iteration 1; M4 = y*y
-              when 9  => rq_y <= resize(shift_right(mr_p, 31), 32);
-              when 10 => mr_m <= resize(rq_y * rq_y, 66);
-              -- M5 = smant * y2
-              when 12 => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 13 => mr_m  <= resize(rq_smant * rq_y2, 66);
-              -- M6 = diff * y
-              when 15 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 16 => mr_m    <= resize(rq_diff * rq_y, 66);
-              -- end of iteration 2
-              when 18 => rq_y <= resize(shift_right(mr_p, 31), 32);
+              -- ---- Newton iteration 1
+              when 3  => rq_y2   <= resize(shift_right(mr_p_yy, 30), 32);
+              when 6  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p_sy, 30), 34);
+              when 9  => rq_y    <= resize(shift_right(mr_p_dy, 31), 32);
+              -- ---- Newton iteration 2
+              when 12 => rq_y2   <= resize(shift_right(mr_p_yy, 30), 32);
+              when 15 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p_sy, 30), 34);
+              when 18 => rq_y    <= resize(shift_right(mr_p_dy, 31), 32);
                          state <= S_RQ_FOLD;
-              when others => null;                        -- MREG / PREG hops
+              when others => null;      -- MREG / PREG hops: nothing to derive
+                                        -- and nothing ready to consume
             end case;
 
           when S_RQ_FOLD =>
