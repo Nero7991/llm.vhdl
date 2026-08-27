@@ -62,12 +62,42 @@
 -- cannot be.  It is deliberately different from it in the region where
 -- rmsnorm.vhd is wrong.  So it needs a REAL-VALUED golden of its own rather
 -- than a side-by-side against the original.  ref/rmsnorm_eps_vec.c establishes
--- the GAIN against a double golden, which is what settled the design; the
--- full-path vector golden and sim/tb_rmsnorm_bf.vhd are NOT YET WRITTEN, and
--- until they are this unit is measured but not verified.  Do not instantiate
--- it in the engine before that exists.  A golden that shares machinery with
--- the DUT certifies broken units; that is exactly how the l2norm collapse
--- survived 55 passing cases.
+-- the GAIN against a double golden, which is what settled the design.
+--
+-- VERIFIED, 2026-08-26.  The full-path golden is ref/rmsnorm_bf_vec.c and the
+-- testbench is sim/tb_rmsnorm_bf.vhd.  The golden carries TWO paths that share
+-- nothing: a bit-exact transcription of this datapath (which the testbench
+-- compares against with NO tolerance) and an independent double oracle written
+-- as the definition alone.  Both are needed -- a golden that shares machinery
+-- with the DUT certifies broken units, which is exactly how the l2norm
+-- collapse survived 55 passing cases, and the integer path alone would
+-- reproduce a wrong recipe faithfully.
+--
+--   * bit-exact on 200 cases x 128 elements plus every o_exp, and on 20
+--     generic combinations: LANES in {1,2,4,8,16,32}, Q in {8,12,16,20,22,24},
+--     N in {64,128,256,512}, eps in {1e-5, 1e-6, 5e-7, 1e-8}, several seeds.
+--   * against the double oracle, worst relative gain error is 1.8e-5 over the
+--     model's MEASURED log2(rms) range of [-29.63, -0.54], and worst output
+--     error is 0.77 LSB of the emitted grid.  2.4e-3 over the wider sweep,
+--     which is the 2^-Q output grid of inv32 at gains near 0.06 and not the
+--     block-floating recipe -- the same distinction the design study drew.
+--   * mutation-tested: 14 of 18 deliberate RTL faults are caught, including
+--     a constant rsqrt seed and a dropped Newton iteration, both of which
+--     tb_rmsnorm_rs.vhd needed a magnitude sweep to see at all.
+--
+-- ONE DEFECT WAS FOUND AND FIXED by writing it: the sum-of-squares assert at
+-- S_INV1 was strict where the bound is attained.  See the note there.
+--
+-- What the testbench CANNOT prove, recorded rather than left to be assumed:
+-- the -32768 emit rail and the inv32 low clamp are unreachable by
+-- construction; rq_E > 32 needs Q > 52; the S = 0 guards cannot be observed
+-- at o_mant/o_exp at all (S = 0 forces an all-zero output whatever inv32 is)
+-- and are held only by the S_SEED2 assert; and a one-LSB perturbation of the
+-- mean mantissa -- rounding the alignment instead of truncating it, rounding
+-- the S renormalisation, or moving M_EPS_C by one -- is invisible at every Q
+-- tested, which is the measured form of the design study's claim that the
+-- truncating form costs nothing.  ref/rmsnorm_bf_vec.c prints a branch
+-- coverage table on every run and names what it did not reach.
 --
 -- Subsystems A and C are unaffected and keep rmsnorm_rs.vhd: their goldens
 -- assert bit-exactness with rmsnorm.vhd, and changing the arithmetic under them
@@ -326,11 +356,22 @@ begin
           when S_INV1 =>
             -- The OLD assert here was S < 2^46, and it existed only to keep
             -- `S << Q` inside s64.  There is no such shift any more, so this
-            -- asserts the REAL bound instead: S <= N * 32767^2 < 2^(30+log2 N).
-            -- Asserting what is actually true beats asserting what an since-
-            -- deleted shift needed; the old bound was 512x looser than reality
-            -- and would have permitted a silent s64 overflow the moment Q moved.
-            assert S >= 0 and S < shift_left(to_signed(1, 64), 30 + LOG2N)
+            -- asserts the REAL bound instead.
+            --
+            -- The bound is `<=`, and that is not slack.  The first version of
+            -- this line was `S < 2^(30+log2 N)`, written from a comment that
+            -- said "S <= N * 32767^2" -- but the input is int16, so the
+            -- largest square is (-32768)^2 = 2^30 EXACTLY, not 32767^2.  An
+            -- all -32768 vector therefore attains N * 2^30 = 2^(30+log2 N) on
+            -- the nose, and the strict form failed on legal input.  Caught by
+            -- sim/tb_rmsnorm_bf.vhd, whose generator constructs that vector
+            -- deliberately (ref/rmsnorm_bf_vec.c case 1) precisely because a
+            -- bound that is attained rather than approached is where an
+            -- off-by-one lives.  Nothing in the datapath was wrong: S is s64,
+            -- 2^37 fits, and the renormalisation handles it.  Only the check
+            -- was.  tb_rmsnorm_rs.vhd already drove -32768 for the same
+            -- reason, against the looser 2^46 bound that hid it.
+            assert S >= 0 and S <= shift_left(to_signed(1, 64), 30 + LOG2N)
               report "rmsnorm_bf: sum of squares out of the assumed range"
               severity failure;
             p := 0;                                          -- one wide scan
