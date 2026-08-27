@@ -151,6 +151,57 @@ divide by zero, but it does so at a value set by `Q` rather than by the model,
 and it is applied to the Q-scaled mean-square rather than to the mean square.
 Setting it from the model's `eps` instead of from `Q` is close to the whole fix.
 
+### The epsilon is UNREPRESENTABLE at the current Q, and the existing clamp is 244x too large
+
+Two arithmetic facts that decide how the fix has to be built.
+
+**1. `Q = 12` cannot represent the epsilon at all.** `msq_r` is an integer equal
+to `2^Q * mean(x^2)`, so an epsilon enters it as `2^Q * eps`:
+
+| `Q` | `2^Q * eps` | |
+|---|---|---|
+| 12 (current) | 0.0041 | **below one LSB, rounds to nothing** |
+| 16 | 0.0655 | below one LSB |
+| 18 | 0.2621 | below one LSB |
+| **20** | **1.0486** | representable, but 1 LSB of resolution |
+| 24 | 16.78 | usable |
+| 26 | 67.11 | comfortable |
+
+So "add the epsilon" is not a one-line change at the current grid: **`Q` has to
+move to at least 20, and realistically 24 or more, for the epsilon to exist as a
+number.** The `Q` sweep measured on the BC-250 the same day says that is free up
+to 20 at least: 40 DSP, 0 BRAM, 300.75 MHz and identical WNS at every `Q` in
+{12, 14, 16, 18, 20}, with LUT and FF marginally LOWER at the top. Whether the
+width analysis permits 24 has not been checked; `S < 2^46` and `num_r = S << Q`
+in s64 is the binding relation.
+
+**2. The existing clamp is an epsilon 244x too large.** `if shifted_r < 1 then
+msq_r <= 1` floors the mean-square at `2^-Q`:
+
+```
+Q = 12:  mean_sq floor = 2^-12 = 2.4414e-04   against the model's eps = 1e-06
+                                              -> 244.1x too large
+         equivalently an rms floor of 1.5625e-02
+```
+
+**3. And that floor sits ABOVE the median of the real activations.** The
+measured median `rms(o_h)` is 4.808e-04, i.e. a mean-square of 2.31e-07, which
+is **below the clamp**. So at the median the unit is already clamped and is
+applying a constant gain, but the wrong one:
+
+```
+                     divisor          gain
+  model  sqrt(2.31e-07 + 1e-06) = 1.11e-03    901
+  RTL    sqrt(2.4414e-04)       = 1.5625e-02   64
+                                              -> 14x wrong AT THE MEDIAN
+```
+
+**This is not a tail defect.** The unit is wrong by an order of magnitude on the
+typical sample, not merely on the extremes, and the all-zeros region documented
+above is the far end of the same error rather than a separate bug. The reason no
+test caught it is unchanged: the golden is `rmsnorm.vhd`, which is wrong in
+exactly the same way.
+
 **Scaling caveat, which is where an implementation will go wrong.** `eps` is
 defined in the model's native activation units, so it is NOT scale-free. If the
 fixed-point input vector is scaled by `2^k` relative to the f32 activations, the
