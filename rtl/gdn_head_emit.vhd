@@ -120,6 +120,23 @@ architecture rtl of gdn_head_emit is
   constant W_MEM : integer := 48;
   type mem_t is array (0 to DIM-1) of std_logic_vector(W_MEM-1 downto 0);
   signal mem : mem_t;
+  -- PINNED, not left to inference.  Measured unpinned, Vivado chose
+  -- distributed RAM at DIM = 64 and 128 (63 and 126 RAM cells) and then
+  -- switched to one RAMB36 at DIM = 256.  An inference that changes primitive
+  -- with a generic is a reproducibility problem on its own -- the resource
+  -- table stops being comparable across configurations -- and distributed RAM
+  -- is the specific primitive rmsnorm.vhd's S_RAW comment records producing
+  -- NON-DETERMINISTIC hardware output when inferred UNINITIALIZED in the
+  -- congested engine.
+  --
+  -- This unit does not have that bug: the read is synchronous and pass A
+  -- writes every location before pass B reads any of it, so no location is
+  -- ever read uninitialized.  Block RAM is chosen anyway, because it makes
+  -- that argument structural instead of a property of the FSM that a later
+  -- edit could quietly break, and because BRAM is the budget this design has
+  -- room in -- DSP is at 90.5-91.9% of 2,880 and this unit uses none.
+  attribute ram_style : string;
+  attribute ram_style of mem : signal is "block";
   signal mem_q : std_logic_vector(W_MEM-1 downto 0) := (others => '0');
 
   type state_t is (S_FILL, S_AMAX, S_EMIT, S_DONE);
