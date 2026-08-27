@@ -31,6 +31,17 @@
 -- run would only show that the testbench and the DUT disagree, not that the
 -- skew is what makes them disagree.
 --
+-- PASS/FAIL, since this file is now a REGRESSION test and not only a
+-- demonstration.  When it was written the RTL had the defect, so the SKEW
+-- blocks reported their corruption at severity `note` and only a broken
+-- CONTROL counted as a failure -- the run "passed" while printing 256 wrong
+-- channels.  gdn_conv now latches tvalid at S_PREP, so the correct outcome is
+-- that a mid-pass read changes NOTHING, and every case here, SKEW cases
+-- included, is required to be bit-exact against the S_PREP-latched reference.
+-- The gsplit search is kept: on a fixed unit it must report the CLEAN model,
+-- and if the fix is ever reverted it names the group the mask switched at
+-- instead of merely saying the numbers differ.
+--
 -- The lane loop index is `ln`, not `k`: VHDL is case-insensitive and `for k`
 -- would shadow the generic K.  Same trap as the DUT and the older testbench.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
@@ -94,6 +105,7 @@ architecture sim of tb_gdn_conv_tvalid_skew is
   signal o_data : std_logic_vector(LANES*16-1 downto 0);
   signal e_seg  : signed(7 downto 0);
   signal sh_seg : integer range 0 to 63;
+  signal cfg_taken : std_logic;
 
   type i_arr   is array (natural range <>) of integer;
   type s34_arr is array (natural range <>) of signed(33 downto 0);
@@ -213,7 +225,7 @@ begin
              s_valid => s_valid, x_in => x_in, w_in => w_in,
              o_valid => o_valid, o_data => o_data, o_done => o_done,
              e_seg => e_seg, sh_seg => sh_seg, err_seg => err_seg,
-             ready => ready);
+             ready => ready, cfg_taken => cfg_taken);
 
   -- Purely observational: drives nothing, asserts nothing.  Reports the cycle
   -- at which each group is fetched near the split, and the cycle at which
@@ -230,10 +242,25 @@ begin
     variable g   : integer := 0;
     variable tvp : std_logic_vector(K-1 downto 0) := (others => 'X');
     variable armed : boolean := false;
+    variable ntk : integer := 0;
   begin
     if rising_edge(clk) then
       if armed then c := c + 1; end if;
-      if start = '1' then c := 0; g := 0; armed := true; end if;
+      if start = '1' then
+        assert ntk = 1 or not armed
+          report "MON  previous invocation pulsed cfg_taken " & integer'image(ntk)
+               & " time(s), want exactly 1" severity error;
+        c := 0; g := 0; ntk := 0; armed := true;
+      end if;
+      -- cfg_taken is the instant the config group is taken.  Reading it high
+      -- at an edge means it was ASSERTED on the previous one, the same
+      -- registered-output off-by-one as tvalid below, so the cycle printed is
+      -- the first edge at which a caller could observe it.
+      if armed and cfg_taken = '1' then
+        ntk := ntk + 1;
+        report "MON  cycle " & integer'image(c) & ": cfg_taken (config group "
+             & "sampled; tvalid/e_t/cw_exp are free from here)";
+      end if;
       if tvp /= tvalid then
         if armed then
           report "MON  cycle " & integer'image(c) & ": tvalid " & to_str(tvp)
@@ -455,21 +482,31 @@ begin
         end if;
       end if;
 
-      if expect_clean then
-        if nbad = 0 and sh_obs = ref_sh and es_obs = ref_es then
+      -- The bar is the same for CONTROL and SKEW cases now: bit-exact against
+      -- the reference built from the mask and shifts S_PREP latched.  Only the
+      -- DIAGNOSIS differs, because a CONTROL failure indicts the testbench and
+      -- a SKEW failure indicts the DUT.
+      if nbad = 0 and sh_obs = ref_sh and es_obs = ref_es then
+        if expect_clean then
           report "     CONTROL OK: bit-exact with a quiescent producer";
         else
-          report "     CONTROL FAILED -- the testbench or the reference is "
-               & "wrong, not the DUT" severity error;
-          nfail := nfail + 1;
+          report "     PASS: the mid-pass read changed NOTHING -- the mask and "
+               & "the shifts came from the same instant";
         end if;
       else
-        if nbad = 0 then
-          report "     SKEW produced NO difference" severity note;
+        if expect_clean then
+          report "     CONTROL FAILED -- the testbench or the reference is "
+               & "wrong, not the DUT" severity error;
         else
-          report "     SKEW DEMONSTRATED: " & integer'image(nbad)
-               & " channels wrong" severity note;
+          report "     FAIL (defect B-3 live): " & integer'image(nbad)
+               & " of " & integer'image(CH) & " channels wrong, sh_seg "
+               & integer'image(sh_obs) & " vs " & integer'image(ref_sh)
+               & ", e_seg " & integer'image(es_obs) & " vs "
+               & integer'image(ref_es) & " -- gdn_conv re-read the tvalid PORT "
+               & "during pass A instead of a value latched at S_PREP"
+            severity error;
         end if;
+        nfail := nfail + 1;
       end if;
     end procedure;
 
@@ -546,10 +583,13 @@ begin
     judge("CASE 4 MID-CAPTURE", true);
 
     if nfail = 0 then
-      report "tb_gdn_conv_tvalid_skew: controls clean, see the SKEW blocks above";
+      report "tb_gdn_conv_tvalid_skew: PASS -- all 6 cases bit-exact at "
+           & "RDREQ_AT=" & integer'image(RDREQ_AT)
+           & "; a mid-pass rd_req of a different entry no longer reaches the "
+           & "conv (defect B-3 closed)";
     else
-      report "tb_gdn_conv_tvalid_skew: " & integer'image(nfail)
-           & " CONTROL case(s) failed -- results above are not interpretable"
+      report "tb_gdn_conv_tvalid_skew: FAIL -- " & integer'image(nfail)
+           & " case(s) not bit-exact at RDREQ_AT=" & integer'image(RDREQ_AT)
         severity error;
     end if;
 

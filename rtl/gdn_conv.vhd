@@ -26,6 +26,15 @@
 -- tap's exponent describes nothing, so a minimum over it is arbitrary rather
 -- than conservative.
 --
+-- THE CONFIG GROUP IS SAMPLED ONCE, AT S_PREP, AND cfg_taken SAYS WHEN.
+-- tvalid, e_t and cw_exp are latched together at S_PREP and no port among them
+-- is read again for the rest of the invocation.  cfg_taken pulses on the edge
+-- that leaves S_PREP: after it the caller may change all three.  This is
+-- defect B-3 (and B-3b) of docs/debugging/2026-08-27_B-interface-audit.md,
+-- reproduced against the real gdn_exp_capture in
+-- sim/tb_gdn_conv_tvalid_skew.vhd and written up in
+-- docs/debugging/2026-08-27_gdn-conv-tvalid-skew.md.  See the tv_r declaration.
+--
 -- The unit is two passes because amax cannot be known until every acc exists:
 -- pass A streams the channels and accumulates, pass B requantizes.  acc is
 -- held in a group-wide memory rather than a per-element register file, for the
@@ -76,7 +85,16 @@ entity gdn_conv is
     e_seg   : out signed(7 downto 0);
     sh_seg  : out integer range 0 to 63;
     err_seg : out std_logic;
-    ready   : out std_logic                        -- pass A can accept a group
+    ready   : out std_logic;                       -- pass A can accept a group
+    -- ONE CYCLE, on the edge that leaves S_PREP.  The instant after which the
+    -- per-segment config group (tvalid, e_t, cw_exp) may legally change.
+    -- Before this existed the unit published NO such instant: `ready` is high
+    -- for the whole of pass A, so it means "can accept a group", not "config
+    -- taken", and o_done is a whole invocation late.  A sequencer that wants
+    -- to prefetch the next segment's tap exponents had no observable safe
+    -- edge, which is how B-3 became reachable in the first place.  Safe to
+    -- leave unconnected.
+    cfg_taken : out std_logic
   );
 end entity;
 
@@ -101,6 +119,28 @@ architecture rtl of gdn_conv is
   -- per-invocation scalars, computed once
   signal shf   : integer_vector(0 to K-1) := (others => 0);
   signal e_ref : signed(15 downto 0) := (others => '0');
+  -- THE MASK IS LATCHED, and this is defect B-3.  Pass-A stage 2 used to read
+  -- the `tvalid` PORT combinationally, once per group, for the whole of pass A
+  -- (384 cycles for the v segment) while shf and e_ref were derived once at
+  -- S_PREP.  The natural producer, gdn_exp_capture, drives tvalid as a
+  -- free-running level that is rewritten by any rd_req, so an ordinary
+  -- prefetch of the NEXT segment's tap exponents moved the mask under the
+  -- running conv: a tap invalid at S_PREP carries shf(t) = 0, and if it turned
+  -- valid mid-pass its product was summed UNSHIFTED, on a grid up to 2^8 away.
+  -- Reproduced end-to-end against the real producer in
+  -- sim/tb_gdn_conv_tvalid_skew.vhd and written up in
+  -- docs/debugging/2026-08-27_gdn-conv-tvalid-skew.md: the widening direction
+  -- drags the segment amax, moves sh_seg 11 -> 13 and returns ALL 256 channels
+  -- as the reference divided by four, with err_seg low and a legal e_seg.
+  -- Latching here makes the mask and the shifts come from the same instant BY
+  -- CONSTRUCTION, which is the entire fix.
+  signal tv_r  : std_logic_vector(K-1 downto 0) := (others => '0');
+  -- Same class, B-3b, and cheaper to close here than to argue about: cw_exp
+  -- used to be read at S_FIN, hundreds of cycles after start.  A port read
+  -- once at the END of a long operation is the least visible member of the
+  -- class -- nothing in the unit's own behaviour changes if it moves, only the
+  -- reported exponent.
+  signal cw_r  : signed(7 downto 0) := (others => '0');
   signal amax  : unsigned(33 downto 0) := (others => '0');
   signal amp   : u34_arr(0 to LANES-1) := (others => (others => '0'));
   signal shq   : integer range 0 to 63 := 0;
@@ -123,6 +163,18 @@ architecture rtl of gdn_conv is
 
   type state_t is (S_IDLE, S_PREP, S_A, S_ADR, S_AMRED, S_SH, S_B, S_BDR, S_FIN);
   signal state : state_t := S_IDLE;
+
+  -- synthesis translate_off
+  -- The latch makes the LONG window (start .. last stage-2 read) safe.  It
+  -- cannot make the SHORT one safe: the config group is still sampled across
+  -- two edges, the `start` edge in S_IDLE and the S_PREP edge, and a producer
+  -- that moves tvalid between them still splits the mask from the shifts.  No
+  -- amount of latching fixes that; only a handshake would, and B-6 already
+  -- records that cfg_taken is a pulse with no back-pressure.  So the residual
+  -- window is CHECKED rather than closed, and checked loudly.
+  signal chk_tv : std_logic_vector(K-1 downto 0);
+  signal chk_et : std_logic_vector(K*8-1 downto 0);
+  -- synthesis translate_on
 
   function msb_pos(a : unsigned) return integer is
     variable p : integer := 0;
@@ -157,9 +209,10 @@ begin
     if rising_edge(clk) then
       if rst = '1' then
         state <= S_IDLE; o_valid <= '0'; o_done <= '0'; err_seg <= '0';
+        cfg_taken <= '0';
         vf <= '0'; v1 <= '0'; v2 <= '0'; v3 <= '0'; v4 <= '0';
       else
-        o_valid <= '0'; o_done <= '0';
+        o_valid <= '0'; o_done <= '0'; cfg_taken <= '0';
 
         case state is
 
@@ -177,6 +230,9 @@ begin
               nbr <= nch / LANES;          -- latched for BOTH passes
               amp <= (others => (others => '0'));
               err_seg <= '0';
+              -- synthesis translate_off
+              chk_tv <= tvalid; chk_et <= e_t;
+              -- synthesis translate_on
               state <= S_PREP;
             end if;
 
@@ -185,6 +241,21 @@ begin
           -- once here and held.  A per-element derivation would put a min-tree
           -- and a subtract in front of every multiply.
           when S_PREP =>
+            -- synthesis translate_off
+            assert tvalid = chk_tv
+              report "gdn_conv: tvalid moved between the start edge and "
+                   & "cfg_taken -- the mask and the shifts now come from "
+                   & "different instants (defect B-3's residual window)"
+              severity failure;
+            assert e_t = chk_et
+              report "gdn_conv: e_t moved between the start edge and cfg_taken"
+              severity failure;
+            -- synthesis translate_on
+            -- THE LATCH.  tvalid, e_t and cw_exp are all consumed HERE, at one
+            -- instant, and nothing downstream reads the ports again.
+            tv_r <= tvalid;
+            cw_r <= cw_exp;
+            cfg_taken <= '1';            -- observable on the edge leaving S_PREP
             emin := 0; have := false;
             for t in 0 to K-1 loop
               if tvalid(t) = '1' then
@@ -234,7 +305,9 @@ begin
               for ln in 0 to LANES-1 loop
                 -- INVALID TAPS CONTRIBUTE NOTHING.  Zeroed here rather than
                 -- skipped in the sum so the adder tree is a fixed shape.
-                if tvalid(t) = '1' then
+                -- tv_r, NOT the tvalid PORT: see the tv_r declaration.  This
+                -- one substitution is defect B-3's fix.
+                if tv_r(t) = '1' then
                   p2(t)(ln) <= shift_right(p1(t)(ln), shf(t));
                 else
                   p2(t)(ln) <= (others => '0');
@@ -345,11 +418,12 @@ begin
             state <= S_FIN;
 
           when S_FIN =>
-            e_seg  <= resize(e_ref + cw_exp - shq, 8);
+            -- cw_r, NOT the cw_exp PORT: B-3b.
+            e_seg  <= resize(e_ref + cw_r - shq, 8);
             sh_seg <= shq;
             -- 2.1.6: an out-of-int8 segment exponent is an ERROR to report,
             -- never a silent wrap.
-            if (e_ref + cw_exp - shq) > 127 or (e_ref + cw_exp - shq) < -128 then
+            if (e_ref + cw_r - shq) > 127 or (e_ref + cw_r - shq) < -128 then
               err_seg <= '1';
             end if;
             o_done <= '1';
