@@ -1781,9 +1781,59 @@ outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
 | state sweep, `LANES = 32` | 589,824 | 1.97 |
 | output rmsnorm + L2, **3N, 4 lanes** | 213,120 | 0.71 |
 | silu at 4/cycle | 98,304 | 0.33 |
-| conv, depthwise k=4 over 5,120/layer at `LANES = 32` | 30,720 | 0.10 |
+| conv, depthwise k=4 over 5,120/layer at `LANES = 32` | ~~30,720~~ **18,384** | ~~0.10~~ **0.06** |
 | **nonlinear + conv, overlapped under the sweep** | 342,144 | 1.14 |
 | **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** |
+
+> **CORRECTED 2026-08-26.** The conv row said 30,720 cycles. It is **2.00x**
+> the real rate and **1.67x** the real cost at the `LANES = 32` it names.
+> Measured on `rtl/gdn_conv.vhd`, one invocation costs
+> `2 * (nch / LANES) + 16 + max(1, log2(LANES))` cycles from `start` to
+> `o_done`, exact on 136 points across `LANES` in {1,2,4,8,16,32,64}, `CH_MAX`
+> in {256, 1024, 3072} and group counts 1 to 768 -- so the per-token term is
+> §3.6's `491,520 / LANES`, plus 144 invocations' worth of fixed overhead that
+> neither section counted. At `LANES = 32` that is **18,384**; at the
+> `LANES = 4` §3.6 actually decides, **125,472**.
+> `docs/debugging/2026-08-26_gdn-conv-cycle-model.md`.
+>
+> **The mechanism, because it says how far the error reaches.** 30,720 is
+> `K * 5,120 * 48 / 32`: it charges the KERNEL dimension to TIME, four cycles
+> per channel-group, and counts one pass. The RTL does the opposite on both
+> counts. All `K` products are issued in a single cycle (`p1(t)(ln)` in `S_A`),
+> which is why the synthesized cost is `DSP = 4 x LANES` -- the kernel is paid
+> in silicon, not in time -- and there are **two** passes over the channels,
+> because `amax` cannot be known until every accumulator exists, so the
+> block-floating requantize has to re-stream the segment. `x4` and `/2` net a
+> clean `x2`, which is an accident of `K = 4`; at any other kernel size the two
+> sections would have disagreed by `K/2`.
+>
+> The row's own labels are what identify the wrong unit rather than a
+> transcription slip. A cycle count that does not depend on the kernel size has
+> no reason to name `k = 4`, and a tap-serial unit at `LANES = 32` needs 32
+> multipliers -- exactly the *"32 dedicated"* conv MACs §2.8's aux row assumed
+> before measurement found 16. This row and that one are two views of the same
+> unit that was never built, and the RTL refutes both together. (A tap-parallel
+> unit at `LANES = 32` would need 128 DSP, a number that appears nowhere in B's
+> budget, so this row was unaffordable as well as wrong.)
+>
+> **Effect on the bundle: small, but it is what keeps the conv term small.**
+> The rebuilt bundle in the note below (163,584 + 142,080 + 98,304 + conv) is
+> **529,440** cycles with the measured conv rather than 526,848, so read
+> **+11.4%**, not +12.0% -- and not the +36% or the +72% above it. The reason
+> to settle this anyway is that the two candidate models straddle the fit line:
+> had this row been right, conv at the decided `LANES = 4` would be 245,760
+> cycles, the same bundle would be **649,728 against a 589,824 sweep, margin
+> 0.91**, and the nonlinearities would not fit even before the two emit stages
+> the note below adds.
+>
+> **One error class, checked against the rest of §3.** The distinguishing
+> feature is a row priced from an assumed multiplier count instead of from an
+> FSM. Exactly one other row is of that kind -- the sweep's 4 cycles per column
+> -- and §3.6 already flags it in those words after `gdn_recur` missed it by
+> 14.5x. The rmsnorm and silu rows are not: the first was read state by state
+> off `rmsnorm.vhd` and has since been measured, and `rtl/gdn_silu.vhd`'s
+> header records `II = 1` per `LANES`-group, so 4/cycle at 4 lanes is built
+> rather than assumed.
 
 The nonlinearities now fit under the sweep with 72% margin, which is the
 "merely good" overlap §2.5 wanted and did not have.
@@ -1815,82 +1865,90 @@ result. **B lands at ~2.0 ms/token,
 better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
 throughput, not scheduling.
 
-> **CORRECTED 2026-08-26. The bundle is +12%, not +36%, and it omits site 12
-> entirely. Four separate defects in the two tables above; the fourth is the
-> one that changes the conclusion.**
+> **CORRECTED 2026-08-26, after the conv note above and building on it. The
+> bundle is +11%, not the +35% that note lands on, and BOTH emit stages are
+> missing from it. Three defects; the third is the one that changes the
+> conclusion.**
 >
-> **1. The conv row's cycle model is 2x §3.6's, and §3.6 matches the built
-> unit.** The row prices `5,120/layer at LANES = 32` as 30,720 cycles, which is
-> `5,120 x 48 x 4 / 32`: four taps retired SERIALLY, one pass. §3.6 derives
-> `491,520 / LANES` from `5,120 x 48 x 2`: four taps in PARALLEL, two passes.
-> `rtl/gdn_conv.vhd` is the second one -- `DSP = 4 x LANES exactly, one per tap
-> per lane` (§3.6, measured) and its header states "The unit is two passes
-> because amax cannot be known until every acc exists". At `LANES = 32` the
-> correct figure is **15,360**, not 30,720. The correction note above then
-> subtracts 30,720 (serial model) and adds 122,880 (parallel model) in one
-> expression, mixing the two.
+> **1. The L2 is priced at `rmsnorm_rs`'s rate, and it is a different unit.**
+> The 213,120 row is `1,920 x 111`: all 1,920 invocations at the output norm's
+> per-invocation cost. §3.6's own retained note flags the assumption -- "§3.3's
+> 109,056-cycle L2 term assumes the same per-element cost as rmsnorm, which is
+> plausible and unverified", and `109,056 = 768 x 142`. It is now measured and
+> it is not the same: `l2norm_rs` at `LANES = 4` reaches only 285.8 MHz and
+> **does not close B's 299.04 MHz clock**, so the closing point is `LANES = 2`
+> at **185 cycles**, not 142.
 >
-> **2. The L2 is priced at `rmsnorm_rs`'s rate, and it is a different unit.**
-> The 213,120 is `1,920 x 111`, i.e. all 1,920 invocations at the output
-> norm's per-invocation cost, and §3.6's own retained note flags the assumption
-> ("§3.3's 109,056-cycle L2 term assumes the same per-element cost as rmsnorm,
-> which is plausible and unverified"; `109,056 = 768 x 142`). It is now
-> measured and it is not the same: `l2norm_rs` at `LANES = 4` reaches only
-> 285.8 MHz and **does not close B's 299.04 MHz clock**, so the closing point
-> is `LANES = 2` at **185 cycles**, not 142.
->
-> **3. Rebuilt with every unit at its own measured, closing rate:**
+> **2. Rebuilt with every unit at its own measured, closing rate**, taking the
+> conv term from the measured cycle model in the note above rather than from
+> either section's arithmetic (`2*(nch/LANES) + 16 + max(1, log2 LANES)` per
+> invocation gives 530 for q, 530 for k and 1,554 for v at `LANES = 4`, so
+> 2,614 per layer and 125,472 per token per card, reproducing that note's
+> figure exactly):
 >
 > | term | invocations | cycles each | cycles |
 > |---|---|---|---|
 > | output `rmsnorm_rs`, `LANES = 4` | 1,152 | 142 | 163,584 |
 > | `l2norm_rs`, `LANES = 2` | 768 | 185 | 142,080 |
 > | `gdn_silu`, `LANES = 4` | -- | -- | 98,304 |
-> | `gdn_conv`, `LANES = 4` | -- | -- | 122,880 |
-> | **bundle** | | | **526,848** |
+> | `gdn_conv`, `LANES = 4`, measured model | 144 (48 x 3 segments) | 530 / 530 / 1,554 | 125,472 |
+> | **bundle** | | | **529,440** |
 >
 > ```
-> 589,824 / 526,848 = 1.1195   ->  +12.0%, not +36% and not §3.6's +47%
+> 589,824 / 529,440 = 1.1141   ->  +11.4%, not +35%, +36%, or §3.6's +47%
 > ```
 >
 > §3.6's 401,664 is optimistic twice over: it prices the L2 at 142 AND keeps
 > conv at `LANES = 32` while choosing `LANES = 4` in the same section.
 >
-> **4. And site 12 is in neither table.** §2.1.4 stage 6 and §2.1.5 row 12
-> specify `gdn_head_emit`, which now exists, is bit-exact and mutation-tested,
-> and appears in **no** budget in §3. Its own header prices it at "~270 cycles
-> per head ... ~6,500 per token for 24 value heads per card ... ~1.1%". **That
-> is one LAYER.** There are 48, and the count is the same 1,152 the output
+> **3. And BOTH emit stages are in no budget at all, each priced per LAYER
+> against a per-TOKEN sweep.** §2.1.4 stage 6 and §2.1.5 rows 12 and 13 specify
+> them; both now exist, are bit-exact and mutation-tested, and appear in **no**
+> budget in §3.
+>
+> `rtl/gdn_head_emit.vhd` prices itself at "~270 cycles per head ... ~6,500 per
+> token for 24 value heads per card ... ~1.1%". `rtl/gdn_y_emit.vhd`, written a
+> day later, prices itself at "Passes B and C are HEADS*DIM cycles each, so
+> ~6,150 per token at 24 x 128 ... That is ~1.0%". **Both figures are one
+> LAYER.** There are 48, and site 12's count is the same 1,152 the output
 > rmsnorm row above already uses:
 >
 > ```
-> 1,152 x 270 = 311,040 cycles/token/card = 52.7% of the sweep, not 1.1%
-> 526,848 + 311,040 = 837,888  against a 589,824 sweep  ->  margin 0.70
+> site 12   1,152 x 270   = 311,040   52.7% of the sweep, not 1.1%
+> site 13      48 x 6,144 = 294,912   50.0% of the sweep, not 1.0%
+>                         ---------
+>                           605,952  102.7% of the sweep
+>
+> 529,440 + 605,952 = 1,135,392 against a 589,824 sweep  ->  margin 0.52
 > ```
 >
-> **It is worse than an additive term, because the store is single-buffered.**
-> `rtl/gdn_head_emit.vhd` declares one `mem_t is array (0 to DIM-1)` and one
-> FSM `S_FILL -> S_AMAX -> S_EMIT -> S_DONE`, and pass A is fed directly by
-> `gdn_recur_pipe`'s output stream, so the recurrence stalls ~270 cycles at
+> **Both are worse than additive terms, because both stores are
+> single-buffered.** `rtl/gdn_head_emit.vhd` declares one
+> `mem_t is array (0 to DIM-1)` and `rtl/gdn_y_emit.vhd` one
+> `mem_t is array (0 to NTOT-1)` with `NTOT = 3,072`, and both run the same
+> `S_FILL -> S_AMAX -> S_EMIT -> S_DONE` FSM. Site 12's pass A is fed directly
+> by `gdn_recur_pipe`'s output stream, so the recurrence stalls ~270 cycles at
 > every head boundary against 512 sweep cycles per head: **+52.7% on B's token
-> time**. This is structurally the same defect as the `k_n`/`q_s` head-boundary
-> drain §3.6 closed the same day at 11.7%, it is 4.5x larger, and the same fix
-> (a second bank plus a select bit on the column context) applies and was free
-> there. It also invalidates the design decision the unit's header draws from
-> its own wrong percentage -- "which is why this unit is scalar and has no
-> LANES generic".
+> time**. Site 13's pass A is fed by the `rmsnorm_bf`/`gdn_silu` stream and
+> stalls it once per layer. This is structurally the same defect as the
+> `k_n`/`q_s` head-boundary drain §3.6 closed the same day at 11.7%, it is 4.5x
+> larger, and the same fix (a second bank plus a select bit carried on the
+> context) applies and was free there. It also invalidates the design decision
+> BOTH headers draw from their own wrong percentage -- "which is why this unit
+> is scalar and has no LANES generic".
 >
-> **What does not change:** DSP. `gdn_head_emit` is 0 DSP
-> (`sim/gdn_head_emit.csv`), so the die total stands at §3.6's 2,606-2,648.
+> **What does not change: DSP.** Site 12 is 0 and site 13 is 1
+> (`sim/gdn_head_emit.csv`, `sim/gdn_y_emit.csv`), so the die total stands at
+> §3.6's 2,606-2,648 plus site 13's 1.
 >
-> **One arithmetic slip in the whole-phase table, recorded but harmless:** rows
-> 2 and 3 each add exactly `129,024 = 98,304 + 30,720` to their norm+L2 term;
-> row 1 adds 148,224 to 1,238,400 and should read **1,367,424 = 4.56 ms**, not
-> 1,386,624 = 4.62. 19,200 cycles have no component behind them. The row does
-> not hide either way.
+> **One arithmetic slip in the whole-phase table above, recorded but harmless:**
+> rows 2 and 3 each add exactly `129,024 = 98,304 + 30,720` to their norm+L2
+> term; row 1 adds 148,224 to 1,238,400 and should read **1,367,424 = 4.56 ms**,
+> not 1,386,624 = 4.62. 19,200 cycles have no component behind them. The row
+> does not hide either way.
 >
 > Audit and full arithmetic:
-> `docs/debugging/2026-08-26_gdn-spec-audit.md` F2, F3, F4, F14.
+> `docs/debugging/2026-08-26_gdn-spec-audit.md` F2, F3, F14.
 
 ### 3.4 The sweep is a read-modify-write on ONE pseudo-channel
 
@@ -2592,9 +2650,28 @@ The phase-schedule bullet is discharged. These are not:
 
   | `LANES` | cycles | ms @ 300 MHz | fraction of the 589,824 sweep | DSP |
   |---|---|---|---|---|
-  | 2 | 245,760 | 0.82 | 41.7% | 8 |
-  | **4** | **122,880** | **0.41** | **20.8%** | **16** |
-  | 8 | 61,440 | 0.21 | 10.4% | 32 |
+  | 2 | ~~245,760~~ **248,208** | 0.83 | ~~41.7%~~ **42.1%** | 8 |
+  | **4** | ~~122,880~~ **125,472** | **0.42** | ~~20.8%~~ **21.3%** | **16** |
+  | 8 | ~~61,440~~ **64,176** | 0.21 | ~~10.4%~~ **10.9%** | 32 |
+
+  > **CORRECTED 2026-08-26, and the MODEL is CONFIRMED.** `491,520 / LANES` is
+  > the right model and §3.3's competing `983,040 / LANES` is not; that is
+  > settled by counting edges on `rtl/gdn_conv.vhd`, not by reading either
+  > section. See the corrected conv row in §3.3 for the mechanism and
+  > `docs/debugging/2026-08-26_gdn-conv-cycle-model.md` for the measurement.
+  >
+  > What is corrected here is that the model counts only the two streaming
+  > passes. The measured cost of ONE invocation is
+  > `2 * (nch / LANES) + 16 + max(1, log2(LANES))`, exact on 136 points, and B
+  > issues **144** invocations per token (3 segments x 48 layers), so the fixed
+  > term is 2,448 to 3,024 cycles per token depending on `LANES` -- 2.1% at
+  > `LANES = 4`. The columns above are corrected for it. `LANES = 16` is
+  > 33,600 (5.7%) and `LANES = 32` is 18,384 (3.1%), neither of which is
+  > affordable at `DSP = 4 x LANES`.
+  >
+  > These are still a LOWER bound. They assume a caller that asserts `s_valid`
+  > the cycle after `ready` and never bubbles; the conv's operands come from the
+  > conv-state slots over AXI (§2.6), which will not do that.
 
   **`LANES = 4` hides under the sweep with almost 5x margin at 16 DSP**, so the
   dedicated-conv figure is 16 and this row moves B by 16 rather than 32.
