@@ -118,6 +118,9 @@ architecture sim of tb_attn_softmax is
   signal clr    : std_logic := '0';        -- reset the collectors per case
 
   signal mon_err : integer := 0;
+  -- Its own driver: VHDL allows exactly one process to drive an unresolved
+  -- signal, and mon_err already belongs to `mon`.
+  signal ord_err : integer := 0;
   signal nerr    : integer := 0;
 begin
   clk <= not clk after 5 ns when running else '0';
@@ -175,6 +178,84 @@ begin
   end process;
 
   -- ==================================================================
+  -- ==================================================================
+  -- ORDERING GUARD on rescale_n.  Added 2026-08-27 after subsystem B's
+  -- `gdn_conv` was found publishing its segment exponent in its FINAL state,
+  -- i.e. AFTER every data beat that exponent describes
+  -- (docs/debugging/2026-08-27_gdn-conv-eseg-published-late.md).  Every
+  -- testbench there passed, including a bit-exact double-oracle check over 128
+  -- cases, because they all sample the scalar at or after `done`.  The VALUE
+  -- was right and only its TIME was wrong, and no value check of any strength
+  -- can see that.
+  --
+  -- The general rule: a scalar that qualifies a stream must be assigned in a
+  -- state STRICTLY EARLIER than the state that first raises that stream's
+  -- valid.
+  --
+  -- rescale_n is NOT a per-beat qualifier of `rs_f` -- nothing is scaled by
+  -- it, and the port's declared contract is "valid from done to the next
+  -- start", the same class as s_out and m_out.  So the guard below is not
+  -- "constant across the stream", which would be wrong for a COUNTER that must
+  -- change: it is the same ordering question asked in the form this signal can
+  -- answer.  At the first rising edge on which rs_valid reads high for the
+  -- n-th offer, rescale_n must ALREADY read n -- the event is counted at or
+  -- before it is published, never after.  A DUT that increments the counter in
+  -- any LATER rescale state (S_MUL, S_SB, S_SS, S_RS or S_ZED) reads n-1 here
+  -- and is caught, while its total at `done` is still exactly right and every
+  -- other check in this file still passes.  That asymmetry IS the defect
+  -- class.
+  --
+  -- attn_softmax as shipped is CLEAN: `nrs_r <= nrs_r + 1` and
+  -- `rs_v_r <= '1'` are both assigned in S_F, so they land on the SAME clock
+  -- edge and the count already includes the event in the first cycle the offer
+  -- is visible.
+  --
+  -- VERIFIED to have teeth, and the verification is the point of the guard
+  -- existing: with that increment moved into the `rs_tk = '1'` branch of S_RS
+  -- -- executed exactly once per rescale, so the TOTAL at done is still
+  -- exactly right -- this guard fires at 265 ns on the FIRST offer and every
+  -- offer after it, and the count of every OTHER `report error` in this file
+  -- over the whole 44-head run is ZERO.  Value right, time wrong, and only
+  -- this process sees it.
+  --
+  -- to_string, NOT integer'image(to_integer(...)).  On a DUT with the defect
+  -- the scalar can still be metavalued at the first beat, and to_integer then
+  -- raises INSIDE the report expression, so the run dies at
+  -- numeric_std-body.vhdl with no message at all and the guard looks like a
+  -- testbench bug.
+  -- ==================================================================
+  ord_chk : process
+    variable rs_v_d : std_logic := '0';
+    variable seen   : integer := 0;
+  begin
+    loop
+      wait until rising_edge(clk);
+      exit when not running;
+      if clr = '1' then
+        seen   := 0;
+        rs_v_d := '0';
+      else
+        -- The rising edge of rs_valid is the instant the n-th pass is first
+        -- OFFERED.  Sampled pre-edge, like the monitor above.
+        if rs_v_d = '0' and rs_valid = '1' then
+          seen := seen + 1;
+          if rescale_n /= to_unsigned(seen, rescale_n'length) then
+            report "ORDERING: rescale_n reads " & to_string(rescale_n)
+                 & " at the instant rescale pass " & integer'image(seen)
+                 & " is first offered on rs_valid; it must already read "
+                 & integer'image(seen) & ".  The count is published LATER than "
+                 & "the stream it describes -- the gdn_conv e_seg shape.  Its "
+                 & "total at done can still be correct, which is why no value "
+                 & "check sees this" severity error;
+            ord_err <= ord_err + 1;
+          end if;
+        end if;
+        rs_v_d := rs_valid;
+      end if;
+    end loop;
+    wait;
+  end process;
+
   -- MONITOR.  Samples at the rising edge, which reads the PRE-edge value --
   -- the value the DUT drove for the whole cycle.  Sampling after the edge
   -- would read the post-edge value and, on the last item of a burst, would
@@ -414,7 +495,7 @@ begin
     file_close(fh);
 
     wait until rising_edge(clk);
-    if nerr = 0 and mon_err = 0 then
+    if nerr = 0 and mon_err = 0 and ord_err = 0 then
       report "tb_attn_softmax: PASS -- " & integer'image(NCASE)
            & " heads bit-exact: every e_p, every rescale factor, the rescale "
            & "COUNT, s and m; done and rs_valid both held, sc_ready low across "
@@ -423,7 +504,7 @@ begin
            & integer'image(RS_ACK_LAG)
         severity note;
     else
-      report "tb_attn_softmax: FAIL -- " & integer'image(nerr + mon_err)
+      report "tb_attn_softmax: FAIL -- " & integer'image(nerr + mon_err + ord_err)
            & " mismatches" severity failure;
     end if;
     running <= false;
