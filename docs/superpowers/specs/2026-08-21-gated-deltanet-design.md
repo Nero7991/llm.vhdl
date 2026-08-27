@@ -380,6 +380,30 @@ treatment for uniformity (it scales the correction term, where error is
 self-limiting — Q15 is cheap insurance, not a requirement; §3 may argue it back
 down with an error analysis).
 
+> **MEASURED 2026-08-26, and this paragraph holds on both counts.** The error
+> analysis invited above has been done, isolating each term against a true
+> double oracle (`ref/gdn_err.c --eg-bits/--eg-oracle-real` and
+> `--beta-bits/--beta-oracle-real`; 512 tokens, worst head):
+>
+> | decay `eg_bits` | `out_rel` | | beta `beta_bits` | `out_rel` |
+> |---|---|---|---|---|
+> | 15 | 2.2327e-03 | | 16 (shipped) | 4.5522e-04 |
+> | 12 | 2.1912e-02 (**9.8x**) | | 12 | 5.0690e-04 (**1.11x**) |
+>
+> So **the decay's Q15 is a requirement** -- Q12 costs 9.8x and grows linearly
+> rather than plateauing -- while **beta's is indeed cheap insurance**: Q12
+> costs 11%. That is the asymmetry this paragraph predicted, for the reason it
+> gives. `§3 may argue it back down` is hereby settled: it may, for beta only.
+>
+> Two caveats. The reference quantizes beta at **Q16**, not the Q15 written
+> here (audit finding F8, unresolved). And neither number was measurable until
+> 2026-08-26: both oracles shared the quantized value with the fixed path, so
+> the terms cancelled exactly -- at 256 tokens the old harness reports
+> byte-identical `4.3513e-04` for Q15 and Q12 decay. Any decay or beta
+> precision claim predating that date is uninformative, not merely imprecise.
+>
+> Full account: `docs/debugging/2026-08-26_gdn-state-drift-2048.md`.
+
 ### 1.6 The conv state is a ring buffer, and its ggml equivalence
 
 The reference materializes `conv_input = [state | new]` and copies the last 3
