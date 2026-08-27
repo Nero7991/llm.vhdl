@@ -59,6 +59,13 @@
 -- not merely a throughput one, and nothing in either unit would have reported
 -- it.
 --
+-- MEASURED cost of the second bank: BRAM is UNCHANGED at 1.0 RAMB36, because
+-- 2 x 128 x 48 = 12,288 bits still fits one 36 Kb primitive, and LUT/FF move
+-- by under 0.5%.  What it does cost is clock: 440.9 -> 389.4 MHz, from the
+-- combinational in_ready and the fill running every cycle rather than as a
+-- state.  That is still 30% above B's 299.04 MHz, so it is affordable, but it
+-- is a real reduction and not free.
+--
 -- With two banks the reduce hides completely.  gdn_recur_pipe produces one
 -- column result every S_DIM/LANES = 4 cycles at LANES = 32, so a 128-column
 -- head takes 512 cycles to arrive, against 268 to reduce. `in_ready` is

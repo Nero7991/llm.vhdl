@@ -91,15 +91,27 @@ architecture rtl of gdn_exp_capture is
 
   type mem_t is array (0 to NENT-1) of std_logic_vector(WW-1 downto 0);
   signal mem : mem_t;
-  -- Pinned for the same reason gdn_head_emit and gdn_y_emit pin theirs: an
-  -- inference that changes primitive with the generics makes resource tables
-  -- incomparable, and distributed RAM is the primitive rmsnorm.vhd's S_RAW
-  -- comment records producing non-deterministic output when inferred
-  -- UNINITIALIZED.  Here the uninitialized-read argument is WEAKER than in
-  -- those units -- a tap is only read when tvalid says it was written -- so
-  -- pinning is doing real work rather than only tidying.
-  attribute ram_style : string;
-  attribute ram_style of mem : signal is "block";
+  -- NOT pinned, and that is a measured decision rather than an omission.
+  --
+  -- This started pinned to block RAM, copied from gdn_head_emit and
+  -- gdn_y_emit where the pin works.  Vivado REFUSED it, six times:
+  --
+  --   WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" set
+  --   for RAM "gdn_exp_capture/mem_reg", trying to implement using LUTRAM
+  --
+  -- and mapped it to RAM64M8 x 30 for a 256 x 32 array.  Measured cost is
+  -- 1,090 LUT / 548 FF / ZERO BRAM at LAYERS = 48, closing 577.4 MHz.
+  --
+  -- Leaving an attribute the tool rejects is worse than having none: it warns
+  -- on every build and tells the next reader something false about where the
+  -- storage lives.  LUTRAM is the right answer anyway -- 144 x 32 bits is far
+  -- too shallow for a block RAM to earn its place.
+  --
+  -- The uninitialized-read hazard that motivates pinning in the other two
+  -- units does not apply here, and NOT because the primitive differs: a tap
+  -- is only ever read when tvalid says it was written, so an uninitialised
+  -- location cannot reach the conv.  tvalid is the safety property; the
+  -- choice of RAM is not.
 
   type cnt_t is array (0 to NENT-1) of integer range 0 to K;
   signal cnt : cnt_t := (others => 0);

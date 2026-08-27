@@ -146,9 +146,12 @@ architecture rtl of gdn_y_emit is
   -- that bug -- pass A writes every location before pass B reads any -- but
   -- pinning makes that structural rather than a property of the FSM.
   -- TWO banks, so block L+1 fills while block L reduces.  Bank b occupies
-  -- [b*NTOT, (b+1)*NTOT).  This doubles the store from 4 to 8 RAMB36 at
-  -- 24 x 128, which is 8 of the part's 2,016 -- the cheapest of the three
-  -- resources this design is short of, and DSP is unaffected at 1.
+  -- [b*NTOT, (b+1)*NTOT).  MEASURED cost of the second bank at 24 x 128:
+  -- 4.0 -> 6.5 RAMB36, NOT the 8.0 a doubling would predict, because the
+  -- second bank packs into the granularity the first one was already wasting.
+  -- fmax is unchanged at 488.8 MHz and DSP is unaffected at 1.  6.5 of the
+  -- part's 2,016 BRAM36 is the cheapest of the three resources this design is
+  -- short of.
   type mem_t is array (0 to 2*NTOT-1) of std_logic_vector(31 downto 0);
   signal mem : mem_t;
   attribute ram_style : string;
