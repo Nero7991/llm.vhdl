@@ -151,6 +151,19 @@ variable. **Testing one lane count would have shipped it.**
 | conv | 30,720 | 0.10 |
 | **total, against a 589,824-cycle sweep** | **401,664** | **1.34 (+47% margin)** |
 
+> **CORRECTION 2026-08-26. The conv row is withdrawn and the +47% with it.**
+> 30,720 is B §3.3's conv figure at `LANES = 32`, and it is wrong twice over: it
+> uses a cycle model that charges the kernel dimension to time and omits the
+> block-floating second pass, and it prices a lane count B does not build.
+> `rtl/gdn_conv.vhd` measures `2 * (nch / LANES) + 16 + max(1, log2(LANES))`
+> cycles per invocation, so the per-token conv term at the decided `LANES = 4`
+> is **125,472**, not 30,720. Substituted into the table above the total is
+> 496,416 cycles, +18.8%. The margin then falls further once `l2norm_rs` is
+> priced at its own closing rate rather than at `rmsnorm_rs`'s -- the caveat
+> this document's own open list already raises two sections below.
+> `docs/debugging/2026-08-26_gdn-conv-cycle-model.md` and
+> `docs/debugging/2026-08-26_gdn-spec-audit.md`.
+
 **Whole-die DSP: 2,546 of 2,880 = 88.4%**, from 87.6% -- B's row moves
 148 -> 170 (the fixed 18 for a 1-lane `rmsnorm_rs` becomes 40 for the 4-lane
 form). Still under the 90% congestion line.

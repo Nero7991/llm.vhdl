@@ -58,8 +58,9 @@ architecture sim of tb_gdn_conv is
   signal loaded : boolean := false;
   type i_arr is array (natural range <>) of integer;
   type r_arr is array (natural range <>) of real;
+  constant TCLK : time := 10 ns;
 begin
-  clk <= not clk after 5 ns;
+  clk <= not clk after TCLK/2;
 
   dut : entity work.gdn_conv
     generic map(CH_MAX => CH_MAX, K => K, LANES => LANES)
@@ -68,6 +69,36 @@ begin
              s_valid => s_valid, x_in => x_in, w_in => w_in,
              o_valid => o_valid, o_data => o_data, o_done => o_done,
              e_seg => e_seg, sh_seg => sh_seg, err_seg => err_seg, ready => ready);
+
+  -- Cycle monitor.  Purely additive: it drives nothing and asserts nothing, so
+  -- it cannot change what the correctness checks below see.  It exists because
+  -- the cycle model in the design spec was stated two different ways that
+  -- differ by 2x (§3.3 vs §3.6), and the only way to settle that is to count
+  -- edges on the RTL rather than re-read the prose.
+  --
+  -- It samples the way the DUT samples, which is the whole subtlety: `start`
+  -- read at a rising edge is the value the DUT's S_IDLE sees on that same edge,
+  -- so t0 is the edge that leaves S_IDLE.  `o_done` is REGISTERED in S_FIN, so
+  -- reading it high at an edge means it was asserted on the PREVIOUS one --
+  -- hence the `- TCLK`.  Without that correction every count comes out one
+  -- high, which is small enough to hide inside a 2x argument.
+  cyc_mon : process(clk)
+    variable t0 : time := 0 ns;
+    variable lo : line;
+  begin
+    if rising_edge(clk) then
+      if start = '1' then t0 := now; end if;
+      if o_done = '1' and t0 /= 0 ns then
+        write(lo, string'("CYC,"));
+        write(lo, LANES);  write(lo, string'(","));
+        write(lo, CH);     write(lo, string'(","));
+        write(lo, CH/LANES); write(lo, string'(","));
+        write(lo, (now - TCLK - t0) / TCLK);
+        writeline(output, lo);
+        t0 := 0 ns;
+      end if;
+    end if;
+  end process;
 
   drive : process
     file fh : text; variable ln : line;
