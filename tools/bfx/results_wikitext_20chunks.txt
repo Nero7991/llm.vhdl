@@ -1,0 +1,20 @@
+== chunks=20 ==
+baseline                           ppl 6.949680     hits 0        relRMS -
+identity(all sites)                ppl 6.949680     hits 10560    relRMS -
+identity(z_gate only)              ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 1                  ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 2                  ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 3                  ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 4                  ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 5                  ppl 6.949680     hits 960      relRMS -
+noise 1e-8 seed 6                  ppl 6.949680     hits 960      relRMS -
+noise 1e-6 seed 1                  ppl 6.953502     hits 960      relRMS -
+noise 1e-4 seed 1                  ppl 6.958740     hits 960      relRMS -
+noise 1e-3 seed 1                  ppl 6.967646     hits 960      relRMS -
+noise 1e-2 seed 1                  ppl 6.948231     hits 960      relRMS -
+noise 3e-2 seed 1                  ppl 6.947908     hits 960      relRMS -
+noise 1e-1 seed 1                  ppl 6.964051     hits 960      relRMS -
+emit_dbl (chain control)           ppl 6.964689     hits 3840     relRMS RMS
+emit_fx  fold 24                   ppl 6.953196     hits 3840     relRMS RMS
+emit_fx  fold 48                   ppl 6.954881     hits 3840     relRMS RMS
+done

@@ -273,6 +273,42 @@ State sizes cross-checked against `llama-hparams.cpp:183-205` (`n_embd_r` =
 at 4.5 bpw**, not the 450 MB placeholder. Per-token throughput estimates
 improve ~6%; `docs/fpga-hardware-recon.md` should adopt the number.
 
+> **CORRECTION 2026-08-27: the model shape no longer lives in this section, or
+> in any spec prose. It lives in `rtl/model_cfg_pkg.vhd`, verified by
+> `sim/tb_model_cfg.vhd`.** The table above is Qwen3.5-0.8B, §4 overlays
+> Qwen3.8-27B on top of it, and the two have now produced four separate
+> dimension corrections in this document alone (§1.1(g)'s head count, §2.5's
+> invocation count, §2.6's whole BRAM table, §3.6's 16-head renormalization).
+> That failure mode is structural and not editorial: a constant that is wrong
+> AND plausible survives review, which is exactly what "16" did at 27B, where
+> it is the KEY head count while every quantity wanting it needed the VALUE
+> head count.
+>
+> **Take every count from the package, not from this section.** `MODEL` selects
+> the shape; `val_heads_per_card`, `key_heads_per_card`, `gdn_layers`,
+> `d_inner` and `gdn_sweep_cycles` are functions so that no caller re-derives
+> them differently. `gdn_sweep_cycles` in particular is the single derivation
+> of the figure §2.5 and §3.1 have each derived by hand and each got wrong at
+> least once.
+>
+> **The build target has moved: `MODEL = QWEN35_9B` and `NCARDS = 1`.**
+> Qwen3.5-9B is the bring-up vehicle because it fits ONE FK33 at INT4 (~4.5 GB
+> against 8 GB of HBM), so A, B, C and D can all be validated before any
+> interconnect has to work. **Qwen3.8-27B remains the real target and §4
+> remains normative for it**; nothing in §4 is withdrawn by this. The two are
+> one architecture (`general.architecture = 'qwen35'` in the shipped 27B GGUF)
+> and every generic that sets a datapath WIDTH is identical between them --
+> only counts differ, which is what makes the stepping stone cheap. The 9B
+> shape is 32 blocks, hidden 4096, FFN 12288, 16 key heads, **32** value heads,
+> head dim 128, so 24 GDN layers against the 27B's 48.
+>
+> Note this closes §2.9's "the 9B remains unverified" from the other side: the
+> 9B row is read from `huggingface.co/Qwen/Qwen3.5-9B` `config.json`, not
+> inferred by scaling the 0.8B, and §2.9's speculative "if the 9B mirrors the
+> 0.8B head structure scaled (e.g. H=32)" happens to land on the right value
+> for the wrong reason -- 32 is the 9B's VALUE head count, not a scaled H, and
+> its key head count is 16 exactly as at 0.8B and 27B.
+
 ```vhdl
 entity gdn_layer is
   generic(
@@ -325,6 +361,67 @@ entity gdn_layer is
   );
 end entity;
 ```
+
+> **CORRECTION 2026-08-27: two interface conventions in the port block above
+> are WITHDRAWN. Both were built, both silently destroyed work, and neither
+> was visible to a unit-level bit-exactness test.**
+>
+> **1. `done : out std_logic; -- one-cycle pulse` is withdrawn.** A completion
+> signalled as a one-cycle pulse with no handshake is only correct if the
+> consumer is guaranteed to be looking on that cycle, and nothing in this
+> document establishes that guarantee for any B seam. Measured on
+> `gdn_head_emit`, whose `done` was exactly this shape: if the chain happened
+> to be in `S_GATE`/`S_RMS`/`S_SER` when the pulse landed, the pulse was
+> missed, the bank was cleared, and **the entire head was discarded**. At one
+> column every 2 cycles the whole chain wedged. The replacement convention is
+> **`done` held high until a new `o_ack` input fires**, and the ack is placed
+> where the consumer has finished READING, not where it picked up: `rmsnorm_bf`
+> reads `x_mant` at three separate points across its passes, so the chain acks
+> at `rn_done`. Measured cost of the handshake: one LUT.
+>
+> The worst part of this is the metric it corrupted. Before the fix,
+> `COL_GAP = 3` reported **zero refused columns**; after it, 167. The lossy
+> path scored BETTER than the correct one, because heads were being dropped
+> rather than stalled. **Read a zero back-pressure count as a question, not as
+> a result.** Full account:
+> `docs/debugging/2026-08-27_gdn-head-emit-done-pulse.md`.
+>
+> **2. A per-block weight input read across a long operation must be LATCHED,
+> and the latch instant must be observable.** The `sn_rdata` / `sn_exp` port
+> above (`ssm_norm`, 128 entries, per layer, shared across heads) is precisely
+> this shape, and it is the port that bit. In `gdn_emit_chain`, `w_mant` was a
+> single unlatched input read combinationally by `rmsnorm_bf` once per head for
+> all 24 heads of a block, while blocks OVERLAP by design. Block b's head 23
+> normalizes AFTER the producer has already presented block b+1's `ssm_norm`,
+> so **head 23 of every block was normalized with the wrong weights** and heads
+> 0 through 22 were bit-exact. Fixed by latching w at head 0's pickup and
+> pulsing a `w_taken` output so the producer has an observable safe instant.
+>
+> "Just document the timing contract instead of latching" was considered and
+> REJECTED: the safe window does exist, but it is not observable from outside
+> the unit, and `done` is thousands of cycles too late to mark it. **A contract
+> a producer cannot see is a bug waiting on a schedule change.** "Change w on
+> `done`" is the obvious move and is the specific thing that fails. Full
+> account: `docs/debugging/2026-08-27_gdn-emit-chain-w-latch.md`.
+>
+> **These are two instances of a class, not two bugs.** A read-and-reason audit
+> of the rest of B's RTL against the same three questions (span versus latch,
+> pulse versus level, can the consumer refuse) found **3 CONFIRMED and 5
+> PLAUSIBLE** further instances, the most serious being `gdn_conv` reading
+> `tvalid` combinationally through the whole of pass A while deriving `e_ref`
+> and its four tap shifts from it once at `S_PREP`. That is the `w_mant` defect
+> on a different seam, and there the mask and the shifts can disagree with each
+> other rather than merely being one block stale.
+> `docs/debugging/2026-08-27_B-interface-audit.md` carries the per-unit port
+> tables and the safe-by-construction list; **the port block above should not
+> be treated as a template until those are discharged.**
+>
+> Note also that the third shape named in that audit is not a defect in a port
+> but in the absence of one: `gdn_recur_pipe` has no ready input, so a
+> consumer whose ready falls under it loses data rather than delaying it. §2.6
+> already records this ("stall-intolerant by construction") and calls for an
+> elastic buffer; the emit-chain measurements below turn that from a caution
+> into a sizing constraint.
 
 There is deliberately **no `cur_pos` port**: B derives everything positional
 (conv ring slot, first-token state masking) from an internal token counter
@@ -1667,6 +1764,30 @@ cycles = 18,874,368 / LANES
 
 (Port counts moved below, because deriving them needs §3.4's measurement.)
 
+> **CONFIRMED 2026-08-27, and a withdrawal of a withdrawal.** On 2026-08-26 the
+> 589,824 figure was itself withdrawn, on the grounds that it could not be
+> right for both `LANES = 8` (§2.5's derivation) and `LANES = 32` (this one).
+> **That withdrawal is wrong and is now withdrawn; the figure stands and
+> nothing built on it needs rebuilding.** The two derivations agree by an exact
+> coincidence, because `(24/16) x (48/18) = 4 = 32/8`: §2.5 uses the stale 0.8B
+> shape (16 KEY heads, 18 layers, 8 lanes) and this section uses the §4 shape
+> (24 VALUE heads per card, 48 layers, 32 lanes). §2.5 now carries a
+> stale-derivation marker saying so; its RESULT was never wrong.
+>
+> Settled by a third derivation from an input neither of the first two used --
+> the column arrival rate, `24 heads x 128 columns x (S/LANES = 4) cycles =
+> 12,288 per layer, x 48 = 589,824`. **That is the generalisable part: two
+> correct numbers that disagree in their INPUTS look exactly like an
+> inconsistency, and re-reading either derivation cannot separate the two
+> cases.** Full account:
+> `docs/debugging/2026-08-26_gdn-head-and-y-emit.md`, final correction.
+>
+> The figure now has one derivation rather than three: `gdn_sweep_cycles` in
+> `rtl/model_cfg_pkg.vhd` (§1.4's correction), which returns 589,824 for
+> `QWEN38_27B` at `n = 2, lanes = 32`. Quote it in CYCLES; the ms figure
+> carries whichever Fmax it was computed at, and this document still carries
+> 305.6, 302.5, 300.75 and 299.04 MHz for units in the same clock domain.
+
 **`LANES = 32` needs four HBM ports, and B is compute-bound there with
 margin.** The sweep reads 2 B and writes 2 B per element, so it demands
 `4 x LANES` B/cycle = 38.4 GB/s at `LANES = 32` and 300 MHz.
@@ -2119,6 +2240,144 @@ requiring at least a full column per burst.
 > Details: `docs/debugging/2026-08-26_gdn-head-and-y-emit.md` and
 > `docs/debugging/2026-08-26_rmsnorm-magnitude-window.md`.
 
+> **CORRECTION 2026-08-27: the first bullet above is discharged. The four units
+> ARE wired together, in `rtl/gdn_emit_chain.vhd`, and the chain is verified
+> end to end.** "Compatible by inspection" was withdrawn on 2026-08-26 as
+> stated; the glue for all four seams now exists, plus the sequencer that the
+> bullet said was missing.
+>
+> ```
+> tb_gdn_emit_chain: PASS -- 6 blocks x 24 heads x 128 bit-exact,
+>   OVERLAP=true COL_GAP=4 refused-column cycles=0
+>   SILU_LANES=16 RMS_LANES=4
+> ```
+>
+> Against a double-precision oracle (`ref/gdn_emit_chain_vec.c` computes the
+> chain twice and refuses to emit if the two disagree by more than 8.0 LSB of
+> the output grid; measured 1.21 to 1.53 over 6 blocks), with five
+> non-equivalent mutations killed and a sixth shown to be an equivalent mutant
+> by reading the RTL rather than by assuming commutativity. **Getting there
+> found the two integration defects recorded against §1.4's port block**, and
+> the serialized-then-overlapped bisection is what made the second one
+> readable: the serialized run passed, which established that all four seams
+> and the whole datapath are correct in isolation, so the later failure had to
+> be a concurrency property and not arithmetic.
+>
+> Overlap is worth what it costs: 17,253 cycles per block overlapped against
+> 22,386 serialized, i.e. **23% of wall time**.
+>
+> **SIZING, and it moved. `SILU_LANES` is 16, not the shipped 32.** The chain's
+> resources do not simply add across the 2048-bit bus boundaries, and
+> `gdn_silu` at 32 lanes dominated both area and the critical path
+> (`si_e_seg_reg -> u_silu/xq_reg`, the gate itself). Narrowing it therefore
+> BUYS frequency instead of costing it, which is not the usual direction:
+>
+> | `SILU_LANES` | `SI_BEATS` | DSP | LUT | FF | BRAM | Fmax (synthesis) |
+> |---|---|---|---|---|---|---|
+> | 8 | 16 | 57 | 23,861 | 13,498 | 11.5 | 295.8 -- misses 299.04 |
+> | **16 (adopted)** | 8 | **73** | **33,404** | **14,518** | **15.5** | **300.75** |
+> | 32 (was here) | 4 | 105 | 52,535 | 16,478 | 23.5 | 288.7 |
+> | 64 | 2 | 169 | 91,154 | 20,240 | 39.5 | 266.8 |
+>
+> Net **+12.1 MHz, -32 DSP, -19,131 LUT, -8 BRAM** at once. 32 was
+> simultaneously the most expensive setting and one of only two that miss the
+> clock. The cost is in cycles, not area: `SI_BEATS` 4 -> 8 and `S_GATE` is
+> serial with the norm, so +4 cycles per head = `4 x 24 x 48` = **4,608 cycles
+> per token against a 589,824-cycle sweep, under 0.8%**.
+>
+> **`RMS_LANES` stays 4, and the area sweep says otherwise.** At
+> `SILU_LANES = 16`, `RMS_LANES` 2 and 4 close the IDENTICAL 300.75 MHz and 2
+> saves a further 12 DSP for 247 more LUT, so on synthesis numbers alone 2
+> wins. It is wrong. A narrower norm takes longer, which pushes the chain's
+> per-head service time past the column arrival period, and `gdn_recur_pipe`
+> cannot be stalled, so those columns are DROPPED rather than delayed:
+>
+> ```
+>   SILU=16 RMS=4  ->   0 refused columns
+>   SILU=16 RMS=2  ->  24 refused columns
+>   SILU=8  RMS=2  ->  64 refused columns
+> ```
+>
+> All three are bit-exact. **In a design whose producer cannot be
+> back-pressured, throughput margin is a CORRECTNESS property, and it appears
+> in no static report.** This is the same §2.6 stall-intolerance the spec
+> already records, now with a measured consequence attached, and it is why the
+> elastic buffer §2.6 asks for is not optional at `LANES = 64`: that is
+> `COL_GAP = 2`, where `col_ready` falls. `LANES = 32` shows zero
+> back-pressure and is safe as built.
+>
+> **`gdn_y_emit`'s HEADS-to-1 mux is NOT the scaling term.** Its header
+> justifies giving the exponent lookup its own pipeline stage on the grounds
+> that a mux in front of a barrel shift is what held `rmsnorm_rs` at 117.2 MHz,
+> and that claim had never been tested against a changing head count. Fmax is
+> **identical to 14 significant figures across HEADS 8, 16, 24 and 32**
+> (300.75187969924815 in all four), DSP flat at 73, LUT varying by 32 cells.
+> Only BRAM scales (11.0 to 16.5), which is expected. Read honestly: this does
+> not prove the stage is unnecessary, since it is present in all four builds.
+> It proves the mux is not the scaling term at `HEADS <= 32`, so the split is
+> cheap insurance and nobody needs to revisit it when the head count changes --
+> which matters directly for the 9B, where the value head count is 32 rather
+> than 48.
+>
+> `gdn_head_emit` re-measured after the done/ack handshake: 1,205 LUT and 2,332
+> FF at `DIM = 128` against 1,204 LUT pre-handshake. **The handshake is free.**
+> (It also measured 22.5 MHz faster on that unit; treat that as placement
+> variance, not as an improvement.)
+>
+> Full account, including the rejected settings:
+> `docs/debugging/2026-08-27_gdn-emit-chain-sizing.md`.
+
+> **CORRECTION 2026-08-27: EVERY Fmax IN THIS DOCUMENT IS OUT-OF-CONTEXT
+> SYNTHESIS. The one unit that has been placed and routed MISSES THE CLOCK.**
+>
+> This is the first post-route number subsystem B has, and the spec had none
+> before it. The STATUS table above, §2.5's `LANES = 32` pin box, §3.6's
+> `rmsnorm_rs` / `l2norm_rs` / `gdn_conv` / `gdn_recur_pipe` tables and the
+> whole 299.04 MHz target are **all synthesis estimates**, and should be read
+> as such from here on.
+>
+> | `gdn_emit_chain`, `HEADS=24 DIM=128 SILU_LANES=16 RMS_LANES=4` | synthesis | **post-route** |
+> |---|---|---|
+> | WNS at 3.3 ns | -0.025 ns | **-0.632 ns** |
+> | Fmax | 300.75 MHz | **254.32 MHz** |
+> | logic / route split on the failing path | 84.9% / 15.1% | **33.2% / 66.8%** |
+> | DSP / LUT / FF | 73 / 33,404 / 14,518 | 73 / 29,569 / 14,649 |
+>
+> Against B's 299.04 MHz target that is a **15% miss**, with 1,234 failing
+> endpoints and TNS -158.008 ns. The failing path is inside `rmsnorm_bf` both
+> before and after routing, but it is **not the same path**: synthesis fails on
+> `u_rms/ARG__21/DSP_A_B_DATA_INST/CLK -> u_rms/mr_m_reg[60]/D`, 84.9% logic,
+> while post-route fails on `u_rms/p2_raw_reg[0][9]/C ->
+> u_rms/max_raw_reg[33]/D`, **66.8% routing**. So the synthesis conclusion
+> ("genuine arithmetic depth, splitting that DSP-to-`mr_m` path is the only
+> remaining lever") does not carry: after placement the binding term is a wide
+> fanout into a max reduction, which is a different problem with different
+> fixes. Evidence:
+> `sim/ooc_micro/pnrtiming_gdn_emit_chain_HEADS24_DIM128_SILU_LANES16_RMS_LANES4_Q12.rpt`,
+> `sim/ooc_micro/pnr_results.csv`.
+>
+> **And post-route reverses the `RMS_LANES` ranking.** `RMS_LANES = 2` routes
+> to **260.55 MHz** (WNS -0.538, 61 DSP), i.e. 6.2 MHz FASTER than the adopted
+> 4, where synthesis had them exactly equal. **The resolution is open and this
+> document does not pick a side.** `RMS_LANES = 2` refuses 24 columns at the
+> real arrival rate and `gdn_recur_pipe` cannot be stalled, so 2 is a
+> correctness failure at 300 MHz; but at 254 MHz nothing in this chain meets
+> the clock the arrival rate was derived at, so the arrival rate itself is not
+> the rate that will run. Neither the correct `RMS_LANES` nor the correct
+> column period can be settled until the chain closes timing or the target
+> clock is lowered deliberately, and lowering it moves every ms figure in §3.
+>
+> **What is NOT withdrawn:** the DSP, LUT, FF and BRAM sweeps above, which
+> post-route confirms within 12% on LUT and exactly on DSP; the bit-exactness;
+> the refused-column results, which are a simulation property and independent
+> of Fmax; and the 589,824-cycle sweep, which is a cycle count.
+>
+> **Open:** no other B unit has been placed and routed, so it is not known
+> whether the 15% synthesis-to-route gap is specific to `rmsnorm_bf`'s max
+> reduction or is the general derate for this design on this part. Until a
+> second unit is routed, treat every synthesis Fmax in this document as an
+> upper bound of unknown tightness. Two place-and-route jobs were in flight
+> when this correction was written; their results are not in it.
 
 The phase-schedule bullet is discharged. These are not:
 
@@ -2633,6 +2892,91 @@ The phase-schedule bullet is discharged. These are not:
   RTL. Every remaining unmeasured term is now in exactly two places: C's QK-norm
   lane count and D's phase sharing.
 
+  > **CORRECTION 2026-08-27: the 2,648 ceiling is withdrawn and falls to
+  > 2,630, and three of the six rows above are now known to be wrong in ways
+  > that do not cancel.** Taken in order of how well established each one is.
+  >
+  > **1. C's QK-norm ceiling of +22 is unreachable, so C's row is 438 on both
+  > ends.** The `+22` prices `rmsnorm_rs` at `LANES = 4` (40 DSP) against
+  > `LANES = 1` (22). That branch fails twice over, both already measured: at
+  > `N = 256` it reaches only **281.8 MHz**, so it misses both C's 300 MHz
+  > target and B's 299.04 MHz shared clock, and it is not needed anyway --
+  > `LANES = 1` at `N = 256` is 814 cycles per vector, and at `(12 + 2) x 16 =
+  > 224` norms per card per token that is 182,336 cycles = 0.61 ms at 300 MHz,
+  > inside C's own serial fallback. **The ceiling therefore falls 2,648 ->
+  > 2,630 and the honest range becomes 2,606 to 2,630 = 90.5% to 91.3%.**
+  > Source: `docs/superpowers/specs/2026-08-27-C-gated-attention-skeleton.md`
+  > §3.4. This is the second time a lane count has been priced into a budget
+  > without checking whether it closes the clock, after B's own `LANES = 1`
+  > aux row moved 148 -> 202 for the mirror-image reason.
+  >
+  > **2. C's sigmoid cone is booked at 8 DSP and measures 1, bit-identical.**
+  > The narrowed cone was measured on 2026-08-25 at **1 DSP and 510.7 MHz,
+  > bit-identical to the verbatim-width form over 5,769 outputs including both
+  > saturation corners** (`micro_silu_narrow` with `SILU = 0`,
+  > `docs/debugging/2026-08-25_whole-die-budget-reconciliation.md`), and C's
+  > row was never updated. That is **7 DSP C is booked for and does not need**,
+  > taking C to 431 and the die to 2,599-2,623. **NOT folded into the range
+  > above**, because it is C's row to correct and C spec §3.8 still carries the
+  > 8; recorded here so that B's budget does not keep quoting a ceiling that
+  > two separate C measurements have already undercut.
+  >
+  > There is a documented trap in that narrowing, and it applies to the exp
+  > cone the same way: narrowing the interpolation delta ALONE does not reduce
+  > the DSP count, because the multiplicand has to narrow too. Anyone who
+  > narrows only the delta will measure no change and conclude the lever does
+  > not work (`docs/debugging/2026-08-26_gdn-silu-unit.md`).
+  >
+  > **3. The base row's `A 1,914` is priced at a `ROWS_IF` the memory system
+  > cannot feed, so the whole range is an over-estimate by an amount this
+  > document cannot state.** A's demand at `ROWS_IF = 58` and 300 MHz is
+  > `58 x 18 B x 300e6` = **313.2 GB/s** against a **MEASURED 288.0 GB/s**
+  > device supply (30 usable ports x 32 B x 300 MHz, `hbmbw_30port_300mhz.txt`;
+  > SAXI_00 and SAXI_16 carry `jtag_hbm`). **A is feed-bound by 8.75%, and no
+  > prefetch depth fixes it** -- a prefetch buffer smooths burst structure, it
+  > cannot raise an average, and at batch 1 A's compute rate and A's memory
+  > rate are the same quantity by construction. The bandwidth-balanced point is
+  > `288.0 / (18 x 300e6)` = 53.3, and A §13's own correction reaches the same
+  > 53 and then writes that this "independently corroborates" A §15.4c's 58. It
+  > does not: 58 is 9% PAST the balanced point, and those 5 rows cost
+  > `5 x 46.5` = **233 DSP** of array capacity that memory cannot supply.
+  >
+  > **A parity constraint neither A nor this document notes makes 52, not 53,
+  > the largest legal point.** The port invariant `NPORTS_W x AXI_DW = ROWS_IF x
+  > BLOCK x 4` (cited as §6.5 by D §4.3) gives `53 x 128 / 256 = 26.5`, not an integer, so legal
+  > `ROWS_IF` values are even; `ROWS_IF = 52` demands `52 x 18 x 300e6` =
+  > 280.8 GB/s and fits. Source:
+  > `docs/superpowers/specs/2026-08-27-D-sequencer-skeleton.md` §3.2 and §4.3.
+  >
+  > **The die total is NOT restated here, deliberately.** The 1,914 is A's
+  > post-reclaim measured figure, and this document does not carry the
+  > relationship between A's post-reclaim DSP and `ROWS_IF`, so subtracting
+  > 233-or-more from 1,914 would be arithmetic on two numbers from different
+  > bases. What can be said without inventing anything: **the floor of 2,606 is
+  > an over-estimate**, the reclaim is at least the 233 DSP D quotes for 53 and
+  > larger at 52, and it is bigger than every remaining unmeasured DSP question
+  > in the project combined (the whole spread above is 42). **The alternative
+  > reading is that A's port table is right and the HBM ACLK must reach
+  > 450 MHz, at which point 58 fits with 27% margin. Nothing has closed
+  > 450 MHz, and D's grant mux would then straddle an unspecified clock-domain
+  > crossing. This document does not have the standing to choose between the
+  > two, and the resolution is OPEN.**
+  >
+  > **4. A fourth row is open in the other direction, and it is B's own.** The
+  > aux table two items below books `silu` at **8 DSP (4 lanes, MEASURED)**.
+  > The assembled `gdn_emit_chain` does not close at 4 lanes: `SILU_LANES = 8`
+  > measures 295.8 MHz and misses 299.04, and the closing point is **16 lanes =
+  > 32 DSP** (`gdn_silu` is 2 DSP and 0.5 BRAM per lane, `sim/gdn_silu_sweep.csv`).
+  > If that instance is the same silu the aux row prices, B's row moves **+24
+  > DSP**, 202 -> 226 and the die floor 2,606 -> 2,630, exactly cancelling the
+  > 18 reclaimed in item 1. If the chain's gate silu is a SECOND instance
+  > distinct from the conv-path silu the 98,304-cycle budget row prices, then
+  > both are owed and the move is larger. **This document cannot tell which,
+  > because no B top level exists to say how many `gdn_silu` instances there
+  > are -- `gdn_emit_chain` is the only unit in B that instantiates other B
+  > units. OPEN, and it is a genuine contradiction rather than a stale
+  > number.**
+
   The claim to have measured everything was made in the same document that
   lists the conv sharing decision as open. Worse, it counted
   measured-as-a-skeleton and measured-on-a-broken-unit as measured -- which is
@@ -2884,6 +3228,34 @@ shared across a group of 3 heads rather than private to one. **This is the
 single largest structural change from the 0.8B derivation** and it affects the
 column pipeline's operand fetch, not its arithmetic.
 
+> **NOTE 2026-08-27, recorded because the confusion has bitten this project in
+> BOTH directions. Nothing in this section is withdrawn.** The table above is a
+> GDN table and every number in it is a GDN number. In particular:
+>
+> - `128` here is `ssm.state_size`, the GDN key AND value head dim. **Full
+>   attention's `key_length = value_length` at 27B is 256**, a different
+>   quantity that this document never uses. A `head_v_dim = 256` error
+>   propagated undetected earlier this month in the other direction.
+> - `16` here is `ssm.group_count`, the GDN KEY head count. **Full attention at
+>   27B has 24 query heads and 4 KV heads**, again quantities this document
+>   never uses. The 16-versus-24 confusion already produced a wrong cycle
+>   model, a wrong BRAM table and a wrong norm-overlap conclusion in this very
+>   document, because "16" stayed right-LOOKING at 27B.
+>
+> Both attention figures are read directly from the shipped GGUF's metadata and
+> are recorded in `rtl/model_cfg_pkg.vhd` as `attn_head_dim => 256`,
+> `attn_q_heads => 24`, `attn_kv_heads => 4`. **Do NOT "correct" any 128 or 16
+> in this document to 256 or 24 on the strength of that.** Every occurrence
+> checked on 2026-08-27 is GDN and is right as written; B does not implement
+> full attention and states no attention dimension anywhere. The one place the
+> two touch is §2.2's "comparable to C's 13.4 MB KV at 2048 context", which is
+> an 0.8B-era comparison figure and is out of scope for this note.
+>
+> The 9B differs in exactly one of these: 16 query heads rather than 24. Its
+> `key_length`, KV head count, GDN key head count, GDN head dim, conv kernel
+> and rms epsilon are all identical to the 27B, which is why the bring-up model
+> is a cheap stepping stone. See §1.4's correction.
+
 ### 4.1 State size, the dominant fact
 
 ```
@@ -2921,3 +3293,60 @@ head grouping of §4 stays entirely within a card provided the shard boundary
 falls on a multiple of 3 value heads. **24 and 6 are both multiples of 3, so
 both topologies are safe**; a shard count that broke that would split a key
 head's group across cards and force a broadcast.
+
+> **CORRECTION 2026-08-27: the shipping topology is N=4, not N=2, and it is a
+> CAPACITY requirement rather than an optimisation. The interconnect is now
+> designed and it is NOT PCIe peer-to-peer.** Neither half is withdrawn by the
+> other; §4.1's per-card table is simply computed at the wrong N.
+>
+> **Why 4 cards.** 262,144 context does not fit on two. The KV cache is
+> `262,144 tok x 16 attn layers x 4 KV heads x 256 head_dim x 2 (K,V) x 1 B` =
+> **8.59 GB**, which at N=2 is 7.57 GB of weights plus 4.29 GB of KV = 11.86 GB
+> per card against 8 GB of HBM, and at N=4 is 3.79 + 2.15 = **5.94 GB, fitting
+> with ~2 GB spare**. Note this is entirely C's problem: B's state is ~19 MB per
+> card and constant in context. With only 4 KV heads, N=4 is also the natural
+> TP ceiling without replicating KV.
+>
+> **§4.2's own safety argument survives at N=4, checked rather than assumed.**
+> Value heads 48/4 = **12** per card, and 12 is a multiple of 3, so no key
+> head's group of 3 is split. Key heads 16/4 = **4**, clean. Query heads 24/4 =
+> 6 and KV heads 4/4 = 1, both clean for C. So the sentence above extends: 24,
+> 12 and 6 are all multiples of 3, and all three topologies are safe.
+>
+> **§4.1's per-card column is N=2 and should be read as 12 heads, 9.44M
+> elements, 18.875 MB at int16 for the shipping topology.** The conclusion it
+> draws does not change: 18.875 MB still does not fit 14.2 MB of on-chip
+> BRAM+URAM, so §2.4's streaming architecture remains REQUIRED, not optional.
+> Per-token state traffic per card halves to ~37.75 MB.
+>
+> **The interconnect.** The FK33 has no QSFP, no OCuLink, no FMC and no
+> expansion header; its only external high-speed I/O is the PCIe x16 edge
+> connector, confirmed from the official SQRL board file
+> (`board_files/sqrl_fk33/1.1/part0_pins.xml`, which defines only
+> `pcie_rx/tx[0..15]`, `pcie_mgt_clkp/n`, `pcie_perstn_rst`, the I2C pins, 7
+> LEDs and `sysclk_200_p/n`) and independently from this repo's own
+> `hw/fk33/fk33_i2cprobe.xdc`. **Those 16 pins are GTY transceivers and the
+> PCIe hard block is one possible consumer of them, not a mandatory one.** The
+> design gives **x4 to the host** (one quad, for weight load, tokens and
+> control) and runs the remaining **12 lanes as raw Aurora 64B/66B card to
+> card**. Transceivers come in quads and the PCIe block takes a whole quad
+> regardless of link width, so narrowing the host link below x4 frees nothing;
+> 12 divides as 3 x 4 on clean quad boundaries, which is what a K4 mesh's three
+> equal peer links need.
+>
+> **This withdraws subsystem E's PCIe peer-to-peer premise, and B never carried
+> it**, so nothing in this document changes. Recorded here because §4.2's "one
+> all-reduce for `ssm_out`" is the only place B touches the collective, and the
+> medium under that all-reduce is now Aurora point-to-point with latency as a
+> **design parameter (~0.2 us)** rather than E §3's unmeasured platform
+> property ("P2P must be proven before anything else ... no amount of design
+> compensates if it is 20 us"). It also removes the PCIe switch, the ACS
+> override and the different-root-complex hazard at once. Rejected
+> alternatives, all costed: a bifurcation riser (peer traffic still traverses
+> the root complex), a 4-port NVMe switch AIC, MCIO crossover cables (no vendor
+> stocks one), an MCIO hub PCB. Design and reasoning:
+> `~/GitHub/pcie-llm-hardware`, `README.md` and `docs/00-rationale.md`.
+>
+> **Not on B's critical path.** `NCARDS = 1` for the 9B bring-up (§1.4), which
+> is precisely so that A, B, C and D can be validated before any of this has to
+> work. The backplanes are a parallel track.
