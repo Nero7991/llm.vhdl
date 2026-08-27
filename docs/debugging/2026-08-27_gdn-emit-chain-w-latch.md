@@ -176,9 +176,12 @@ clock. **~23% of wall time, and 17,253 cycles per block against 22,386.**
 - **`w_taken` is a pulse with no back-pressure.** If a producer changes w
   before it fires, nothing complains. An assertion that w is stable from the
   first column of a block to `w_taken` would catch that, and does not exist.
-- **The 2048 FF cost of the latch is an estimate from `DIM*16`.** An OOC run of
-  the assembled chain (`sim/ooc_gdn_emit_chain.tcl`) was launched to measure it
-  along with the chain's Fmax; results not in this file yet.
+- **The 2048 FF cost of the latch remains an estimate from `DIM*16`.** The
+  assembled chain measures 14,518 FF total at the adopted SILU_LANES=16 /
+  RMS_LANES=4, but no pre-latch build exists to difference against, so the
+  latch's share is still inferred rather than measured. The chain's Fmax is
+  now known: **300.75 MHz**, above B's 299.04 MHz target. See
+  `2026-08-27_gdn-head-emit-done-pulse.md` for the sweep that got it there.
 - **`y_sat` is still unconsumed** with no policy, unchanged from `72f5c8d`.
 - **Only 6 blocks and one seed.** The overlap depth exercised is whatever the
   natural rates produce; a producer running faster than `col_ready` allows is

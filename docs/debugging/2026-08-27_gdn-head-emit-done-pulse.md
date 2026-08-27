@@ -150,8 +150,47 @@ does not change the 589,824-cycle figure, which is a LANES=32 result.
   while `consuming = '1'`, and the failure mode leaves the chain idle with
   `consuming = '0'`. A watchdog that fires on "he_done asserted while not in
   S_IDLE" would have caught it on the first run; it does not exist.
-- **HEADS=24 confirmation is still running** at the time of writing. All
-  evidence above is at HEADS=4, which is sound for this race but is not the
-  shipping configuration.
+- ~~HEADS=24 confirmation is still running.~~ **CLOSED 2026-08-27:** 6 blocks
+  x 24 heads x 128, OVERLAP=true, COL_GAP=4 -- PASS bit-exact, **0 refused
+  columns**. The shipping configuration is confirmed.
 - **No assertion covers a producer that ignores `col_ready`.** That is now the
   documented failure mode for LANES=64 and nothing detects it.
+
+## Follow-on 2026-08-27: what the fix made measurable
+
+Turning silent loss into visible back-pressure made `refused-column cycles` a
+usable design metric, and it immediately overturned a sizing decision that the
+OOC numbers alone got wrong.
+
+`gdn_emit_chain`'s critical path at the shipped `SILU_LANES=32` was
+`si_e_seg_reg -> u_silu/xq_reg`: the gate itself. Narrowing it therefore BUYS
+frequency instead of costing it, which is not the usual direction:
+
+| SILU_LANES | DSP | LUT | BRAM | Fmax MHz |
+|---|---|---|---|---|
+| 8 | 57 | 23,861 | 11.5 | 295.8 (misses B's 299.04) |
+| **16** | 73 | 33,404 | 15.5 | **300.8 -- adopted** |
+| 32 | 105 | 52,535 | 23.5 | 288.7 (was here) |
+| 64 | 169 | 91,154 | 39.5 | 266.8 |
+
+Net: +12.1 MHz, -32 DSP, -19,131 LUT, -8 BRAM. DSP is the binding whole-die
+resource at 90.5-91.9% of 2,880, so that is 1.1% of the die recovered.
+
+**The part the area sweep gets wrong.** At `SILU_LANES=16`, `RMS_LANES` 2 and 4
+close the IDENTICAL 300.75 MHz, and 2 saves a further 12 DSP for 247 more LUT.
+On OOC numbers alone, 2 wins. It is wrong:
+
+```
+  SILU=16 RMS=4  ->   0 refused columns
+  SILU=16 RMS=2  ->  24 refused columns
+  SILU=8  RMS=2  ->  64 refused columns
+```
+
+A narrower norm takes longer, pushing the chain's per-head service time past
+the column arrival period, and gdn_recur_pipe cannot be stalled -- so those
+columns are dropped. **All three are bit-exact.** The defect is invisible to a
+value check and invisible to synthesis. `RMS_LANES` stays at 4.
+
+This is the generalisable lesson from the whole episode: in a design whose
+producer cannot be back-pressured, throughput margin is a CORRECTNESS property,
+and it does not appear in any static report.
