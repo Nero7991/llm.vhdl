@@ -88,6 +88,12 @@ entity gdn_y_emit is
     -- in_e is e_p for the head this element belongs to, i.e. that head's
     -- o_exp + z_exp; it is sampled on in_hfirst and held for the head.
     in_valid  : in std_logic;
+    -- Low when the bank about to be written still holds an unreduced block.
+    -- MANDATORY, not a convenience: without it the unit ignores in_valid for
+    -- the whole of its two reduce passes and silently drops whatever arrives.
+    -- Combinational, because a registered ready reports `pending` a cycle late
+    -- and a producer sampling it can still hit a full bank.
+    in_ready  : out std_logic;
     in_hfirst : in std_logic;                  -- first element of a head
     in_o      : in signed(15 downto 0);
     in_z      : in signed(15 downto 0);
@@ -139,7 +145,11 @@ architecture rtl of gdn_y_emit is
   -- inferred UNINITIALIZED in the congested engine.  This unit does not have
   -- that bug -- pass A writes every location before pass B reads any -- but
   -- pinning makes that structural rather than a property of the FSM.
-  type mem_t is array (0 to NTOT-1) of std_logic_vector(31 downto 0);
+  -- TWO banks, so block L+1 fills while block L reduces.  Bank b occupies
+  -- [b*NTOT, (b+1)*NTOT).  This doubles the store from 4 to 8 RAMB36 at
+  -- 24 x 128, which is 8 of the part's 2,016 -- the cheapest of the three
+  -- resources this design is short of, and DSP is unaffected at 1.
+  type mem_t is array (0 to 2*NTOT-1) of std_logic_vector(31 downto 0);
   signal mem : mem_t;
   attribute ram_style : string;
   attribute ram_style of mem : signal is "block";
@@ -149,18 +159,27 @@ architecture rtl of gdn_y_emit is
   -- alongside each product: that would widen the RAM from 32 to 40 bits and
   -- buy nothing, since e_p is constant within a head and the head index is
   -- regenerated for free by the read counters.
-  type ep_t is array (0 to HEADS-1) of signed(7 downto 0);
+  type ep_t is array (0 to 2*HEADS-1) of signed(7 downto 0);
   signal ep : ep_t := (others => (others => '0'));
 
-  type state_t is (S_FILL, S_AMAX, S_EMIT, S_DONE);
-  signal state : state_t := S_FILL;
+  -- The reduce FSM no longer owns the fill; they run concurrently.
+  type state_t is (S_IDLE, S_AMAX, S_EMIT, S_DONE);
+  signal state : state_t := S_IDLE;
+  signal wb, rb : integer range 0 to 1 := 0;
+  type pend_t is array (0 to 1) of std_logic;
+  signal pending : pend_t := (others => '0');
+  type ep_bank_t is array (0 to 1) of signed(7 downto 0);
+  signal e_y_b : ep_bank_t := (others => (others => '0'));
 
   -- write side
   signal w_h, w_j : integer range 0 to NTOT := 0;
   signal w_addr   : integer range 0 to NTOT := 0;
   signal a_v      : std_logic := '0';
   signal a_prod   : signed(31 downto 0) := (others => '0');
-  signal a_addr   : integer range 0 to NTOT-1 := 0;
+  -- Carries the BANK OFFSET as well as the index, so its range is the
+  -- whole two-bank memory, not one bank.  Left at NTOT-1 this is a bound
+  -- check failure the moment the fill moves to bank 1.
+  signal a_addr   : integer range 0 to 2*NTOT-1 := 0;
 
   signal e_y_raw  : signed(7 downto 0) := (others => '0');
   signal sh_r     : integer range 0 to 63 := 0;
@@ -198,6 +217,7 @@ architecture rtl of gdn_y_emit is
   signal done_r    : std_logic := '0';
 
 begin
+  in_ready <= not pending(wb);
   o_valid <= o_valid_r;
   o_mant  <= o_mant_r;
   o_last  <= o_last_r;
@@ -215,7 +235,8 @@ begin
   begin
     if rising_edge(clk) then
       if rst = '1' then
-        state <= S_FILL;
+        state <= S_IDLE;
+        wb <= 0; rb <= 0; pending <= (others => '0');
         w_h <= 0; w_j <= 0; w_addr <= 0;
         r_addr <= 0; r_h <= 0; r_j <= 0; drain <= 0;
         a_v <= '0';
@@ -229,45 +250,53 @@ begin
         o_last_r  <= '0';
 
         -- synchronous read, one cycle, shared by both read passes
+        -- Read addresses the bank being REDUCED; the write below targets the
+        -- bank being FILLED.  Never the same bank, which is what makes this a
+        -- simple dual-port RAM rather than a read-write conflict.
         if r_addr < NTOT then
-          mem_q <= mem(r_addr);
+          mem_q <= mem(rb*NTOT + r_addr);
+        end if;
+
+        -- ================= FILL, concurrent with the reduce ===============
+        -- A proper valid/ready transfer: the element moves on an edge where
+        -- BOTH in_valid and in_ready are high.  Accepting on in_valid alone
+        -- gets the protocol backwards -- holding valid while ready is low is
+        -- exactly what a stalled producer does.
+        a_v <= '0';
+        if in_valid = '1' and pending(wb) = '0' then
+          a_v    <= '1';
+          a_prod <= in_o * in_z;
+          a_addr <= wb*NTOT + w_addr;
+          if in_hfirst = '1' then
+            ep(wb*HEADS + w_h) <= in_e;
+            -- e_y_raw is the running MINIMUM over heads, per bank.
+            if w_h = 0 or in_e < e_y_b(wb) then
+              e_y_b(wb) <= in_e;
+            end if;
+          end if;
+          if w_j = DIM-1 then
+            w_j <= 0; w_h <= w_h + 1;
+          else
+            w_j <= w_j + 1;
+          end if;
+          if w_addr = NTOT-1 then
+            w_addr <= 0; w_h <= 0; w_j <= 0;
+            pending(wb) <= '1';
+            wb <= 1 - wb;
+          else
+            w_addr <= w_addr + 1;
+          end if;
+        end if;
+        if a_v = '1' then
+          mem(a_addr) <= std_logic_vector(a_prod);
         end if;
 
         case state is
 
-          -- ============ pass A: the gated product =========================
-          -- Costs no cycles of its own: it consumes at the rate the norm and
-          -- the gate produce.  The multiply is registered before the store, so
-          -- the DSP drives a register and not the RAM's data input.
-          when S_FILL =>
+          when S_IDLE =>
             sat_r <= '0';
-            -- stage 1: multiply
-            a_v <= in_valid;
-            if in_valid = '1' then
-              a_prod <= in_o * in_z;
-              a_addr <= w_addr;
-              if in_hfirst = '1' then
-                ep(w_h) <= in_e;
-                -- e_y_raw is the running MINIMUM over heads.  Seeded from head
-                -- 0 rather than a sentinel, so no exponent is unrepresentable.
-                if w_h = 0 or in_e < e_y_raw then
-                  e_y_raw <= in_e;
-                end if;
-              end if;
-              if w_j = DIM-1 then
-                w_j <= 0; w_h <= w_h + 1;
-              else
-                w_j <= w_j + 1;
-              end if;
-              w_addr <= w_addr + 1;
-            end if;
-            -- stage 2: store
-            if a_v = '1' then
-              mem(a_addr) <= std_logic_vector(a_prod);
-            end if;
-
-            if w_addr = NTOT and a_v = '0' then
-              w_h <= 0; w_j <= 0; w_addr <= 0;
+            if pending(rb) = '1' then
+              e_y_raw <= e_y_b(rb);
               r_addr <= 0; r_h <= 0; r_j <= 0;
               amax <= (others => '0'); drain <= 0;
               p1_v <= '0'; p2_v <= '0'; p3_v <= '0'; p4_v <= '0'; p5_v <= '0';
@@ -275,6 +304,11 @@ begin
               state <= S_AMAX;
             end if;
 
+
+          -- ============ pass A: the gated product =========================
+          -- Costs no cycles of its own: it consumes at the rate the norm and
+          -- the gate produce.  The multiply is registered before the store, so
+          -- the DSP drives a register and not the RAM's data input.
           -- ============ pass B: align and reduce amax ======================
           when S_AMAX =>
             -- stage 1: address issued above; also carry the head index, which
@@ -292,7 +326,7 @@ begin
             -- stage 2: the HEADS-to-1 exponent mux ALONE, and the RAM unpack
             p2_v <= p1_v; p2_l <= p1_l;
             if p1_v = '1' then
-              p2_ep   <= ep(p1_h);
+              p2_ep   <= ep(rb*HEADS + p1_h);
               p2_prod <= signed(mem_q);
             end if;
 
@@ -360,7 +394,7 @@ begin
 
             p2_v <= p1_v; p2_l <= p1_l;
             if p1_v = '1' then
-              p2_ep   <= ep(p1_h);
+              p2_ep   <= ep(rb*HEADS + p1_h);
               p2_prod <= signed(mem_q);
             end if;
 
@@ -426,8 +460,12 @@ begin
 
           when S_DONE =>
             done_r <= '1';
-            w_h <= 0; w_j <= 0; w_addr <= 0;
-            state <= S_FILL;
+            -- Released HERE, after the stream has fully drained, not at the
+            -- end of pass C: releasing earlier would let the fill overwrite
+            -- elements the emit stage is still reading.
+            pending(rb) <= '0';
+            rb <= 1 - rb;
+            state <= S_IDLE;
 
         end case;
       end if;
