@@ -90,3 +90,5 @@ hw/fk33/*.jou
 hw/fk33/*.rpt
 hw/fk33/.Xil/
 ref/gdn_err
+# compiled reference generators (build artifacts, not sources)
+ref/*_vec
