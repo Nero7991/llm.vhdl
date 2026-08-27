@@ -61,9 +61,24 @@ the real voltage:
   is lower again and has not yet been measured at 0.717 V.
 
 The whole-design clock is therefore set by A at roughly **238 MHz**, which is
-**20.5% below** the figure every cycle budget in the spec is divided by. A
-39 ms token budget derived at 299.04 MHz is a **49 ms** token at 237.8 MHz
-before anything else is counted.
+**20.5% below** the figure every cycle budget in the spec is divided by.
+
+> **CORRECTION, same day: the 49 ms figure below is WITHDRAWN.** It multiplied
+> a 39 ms token by 1.258 as if every term scaled with the core clock. They do
+> not. Subsystem A is **HBM-floor-bound** at the target clock and scales by
+> 1.160; E is **PCIe-bound** and scales by 1.058. HBM ACLK is a separate
+> 300 MHz domain, measured on the card at 0.717 V, so the 288.0 GB/s supply
+> does NOT derate while A's demand does. The re-derivation in
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` gives **26.5 ms for 9B and
+> 41.0 ms for 27B**, not 49. Scaling a sum by the scale factor of one of its
+> terms is the error; each term has to be scaled by what actually binds it.
+>
+> The same correction dissolves the D skeleton's feed-bound finding entirely:
+> at 237.8 MHz A is fed with **13.8% spare**, and the balanced `ROWS_IF` moves
+> from 53.3 to 67.3. A is feed-bound only at the clock it does not reach.
+
+~~A 39 ms token budget derived at 299.04 MHz is a 49 ms token at 237.8 MHz
+before anything else is counted.~~
 
 ## What this does NOT say
 
@@ -82,7 +97,11 @@ before anything else is counted.
   **1.5 MHz**. Whatever the argument for a smaller array, it is not timing.
 - **The claim that `ROWS_IF = 32` reaches 275.3 MHz at 0.717 V**, which appears
   in `docs/2026-08-27_9b-single-card-resource-envelope.md` section 6. Measured
-  here at **236.3 MHz**. That figure should be treated as withdrawn.
+  here at **236.3 MHz**. Treat as withdrawn, but note the comparison is not
+  perfectly clean: the 275.3 figure came from a 3.333 ns constraint at 0.72 V
+  and this one is 3.3 ns at 0.717 V, so the constraint period moved too. The
+  39 MHz gap is far larger than a 1% period change explains, which is why the
+  withdrawal stands, but it is not a single-variable comparison.
 - **Quoting a 0.85 V Fmax as if it were achievable.** Every such number in this
   project carries a hidden 16.5%.
 

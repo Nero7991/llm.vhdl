@@ -20,7 +20,19 @@ set top    [lindex $argv 2]
 set files {}
 set generics {}
 set tag $top
+# Optional "volt=<V>": analyse timing at a VCCINT other than the part default.
+# Exists for the same reason as in ooc_core_sweep.tcl, and matters MORE here:
+# every post-route Fmax this harness has produced is a 0.85 V number, while the
+# FK33 runs at 0.717 V, and one measured pair on matvec_core put that gap at
+# 16.5%.  Applied AFTER route_design so the reported number is a pure voltage
+# derate of one placed-and-routed netlist.
+set volt -1
 foreach a [lrange $argv 3 end] {
+  if {[regexp {^volt=([0-9.]+)$} $a -> v]} {
+    set volt $v
+    append tag "_v$v"
+    continue
+  }
   if {[regexp {^g:([A-Za-z_][A-Za-z0-9_]*)=(.+)$} $a -> n v]} {
     lappend generics -generic $n=$v
     append tag "_${n}$v"
@@ -52,6 +64,11 @@ opt_design -quiet
 place_design
 phys_opt_design -quiet
 route_design
+
+if {$volt > 0} {
+  set_operating_conditions -voltage [list VCCINT $volt]
+  puts "  operating conditions: VCCINT = $volt V"
+}
 
 set rpt [file join $outdir pnrutil_${tag}.rpt]
 report_utilization -file $rpt
