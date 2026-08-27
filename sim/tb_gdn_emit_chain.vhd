@@ -48,6 +48,11 @@ entity tb_gdn_emit_chain is
     -- CORRECTNESS before it is adopted on the strength of an area/Fmax sweep.
     -- SILU_LANES sets SI_BEATS = DIM/SILU_LANES, so it changes the gate's
     -- sequencing, not just its width.
+    -- Cycles the z producer waits before offering each head's gate vector.
+    -- 0 makes it run maximally ahead, which is what MASKED the z_have defect:
+    -- z was always already latched, so a chain that never checked z_have still
+    -- passed. Any positive value makes z arrive late at least once.
+    Z_DELAY : integer := 0;
     SILU_LANES : positive := 16;
     RMS_LANES  : positive := 4;
     -- Head count.  A generic, not a constant, because the back-pressure
@@ -253,6 +258,9 @@ begin
           rdi(l, ti);
           z_mant((j+1)*16-1 downto j*16) <= std_logic_vector(to_signed(ti, 16));
         end loop;
+        if Z_DELAY > 0 then
+          for d in 1 to Z_DELAY loop wait until rising_edge(clk); end loop;
+        end if;
         z_valid <= '1';
         loop
           wait until rising_edge(clk);

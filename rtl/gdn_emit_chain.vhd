@@ -326,8 +326,21 @@ begin
         case state is
 
           when S_IDLE =>
-            -- head_emit signals a folded head is ready in its result register
-            if he_done = '1' then
+            -- head_emit signals a folded head is ready in its result register.
+            --
+            -- `z_have` is part of the condition and must stay part of it.  An
+            -- earlier version fired on he_done alone, which meant that if this
+            -- head's z had not yet been latched, S_GATE gated with `z_held`
+            -- still holding the PREVIOUS head's vector -- and since z_have is
+            -- released at the end of every S_SER, the stream stayed off by one
+            -- for the whole run.  Silent, numerically plausible, and invisible
+            -- to a testbench whose z producer always runs ahead.
+            --
+            -- Waiting here is only safe BECAUSE gdn_head_emit now holds `done`
+            -- until o_ack.  Against the old one-cycle pulse this same wait
+            -- would have discarded the head instead of delaying it.  The two
+            -- fixes compose; neither is correct alone.
+            if he_done = '1' and z_have = '1' then
               consuming <= '1'; consume_cyc <= 0;
               si_wr <= 0; si_rd <= 0;
               -- Head 0 opens the block, so this is the one instant at which w
