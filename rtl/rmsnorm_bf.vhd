@@ -61,10 +61,13 @@
 -- CONSEQUENCE, stated plainly: this unit is NOT bit-exact with rmsnorm.vhd, and
 -- cannot be.  It is deliberately different from it in the region where
 -- rmsnorm.vhd is wrong.  So it needs a REAL-VALUED golden of its own rather
--- than a side-by-side against the original -- sim/tb_rmsnorm_bf.vhd checks it
--- against ref/rmsnorm_eps_vec.c, whose golden is double.  A golden that shares
--- machinery with the DUT certifies broken units; that is exactly how the
--- l2norm collapse survived 55 passing cases.
+-- than a side-by-side against the original.  ref/rmsnorm_eps_vec.c establishes
+-- the GAIN against a double golden, which is what settled the design; the
+-- full-path vector golden and sim/tb_rmsnorm_bf.vhd are NOT YET WRITTEN, and
+-- until they are this unit is measured but not verified.  Do not instantiate
+-- it in the engine before that exists.  A golden that shares machinery with
+-- the DUT certifies broken units; that is exactly how the l2norm collapse
+-- survived 55 passing cases.
 --
 -- Subsystems A and C are unaffected and keep rmsnorm_rs.vhd: their goldens
 -- assert bit-exactness with rmsnorm.vhd, and changing the arithmetic under them
