@@ -108,7 +108,12 @@ entity gdn_emit_chain is
     -- Either emit stage saturating.  Neither is fatal; both mean a head or the
     -- block lost its top end, and no policy exists yet for what to do about it,
     -- so it is surfaced rather than swallowed.
-    y_sat   : out std_logic
+    y_sat   : out std_logic;
+    -- Pulses for one cycle at the instant this block's `w_mant` is latched.
+    -- The producer may change w any time after it and must have w stable
+    -- before it.  Without this the producer has no safe instant at all: see
+    -- the note at the top of the architecture.
+    w_taken : out std_logic
   );
 end entity;
 
@@ -120,6 +125,22 @@ architecture rtl of gdn_emit_chain is
   signal he_mant   : std_logic_vector(DIM*16-1 downto 0);
   signal he_e_head : signed(7 downto 0);
   signal he_sat    : std_logic;
+
+  -- ---- per-block weight latch --------------------------------------------
+  -- WHY THIS REGISTER EXISTS.  rmsnorm_bf reads w combinationally, and it is
+  -- read once per head for all HEADS heads of a block.  Blocks OVERLAP: the
+  -- state machine leaves S_WAITBLK for S_IDLE immediately, so block b+1's head
+  -- 0 reaches its norm roughly (DIM + 268) cycles after its columns start,
+  -- which is thousands of cycles before block b's `done`.
+  --
+  -- The read window is in fact safe -- the chain is never in S_RMS for two
+  -- blocks at once -- but the safe instant was not OBSERVABLE from outside.
+  -- `done` is far too late, and nothing else marked the boundary, so any
+  -- producer driving w from a block counter would silently corrupt the next
+  -- block's norm. Latching costs DIM*16 = 2048 FF, 0.23% of the device, and
+  -- replaces a timing contract with a handshake.
+  signal w_held  : std_logic_vector(DIM*16-1 downto 0) := (others => '0');
+  signal we_held : integer := 0;
 
   -- ---- rmsnorm_bf --------------------------------------------------------
   signal rn_start : std_logic := '0';
@@ -188,7 +209,7 @@ begin
                -- Seam 1: the only conversion the chain needs.  The integer
                -- ban excepts exponents, so this is legal, not a workaround.
                x_mant => he_mant, x_exp => to_integer(he_e_head),
-               w_mant => w_mant,  w_exp => w_exp,
+               w_mant => w_held,  w_exp => we_held,
                done => rn_done, o_mant => rn_mant, o_exp => rn_exp );
 
   u_silu : entity work.gdn_silu
@@ -212,10 +233,11 @@ begin
       if rst = '1' then
         state <= S_IDLE; head <= 0; ser_j <= 0;
         rn_start <= '0'; si_valid <= '0'; ye_valid <= '0'; ye_hfirst <= '0';
-        z_have <= '0'; si_wr <= 0; si_rd <= 0;
+        z_have <= '0'; si_wr <= 0; si_rd <= 0; w_taken <= '0';
         consuming <= '0'; consume_cyc <= 0;
       else
         rn_start <= '0';
+        w_taken  <= '0';
 
         -- ---- latch a head's z whenever one is offered and we have none ----
         if z_valid = '1' and z_have = '0' then
@@ -247,6 +269,15 @@ begin
             if he_done = '1' then
               consuming <= '1'; consume_cyc <= 0;
               si_wr <= 0; si_rd <= 0;
+              -- Head 0 opens the block, so this is the one instant at which w
+              -- belongs to the block about to be normalized.  head_emit needed
+              -- DIM columns plus its reduce to get here, so the producer has
+              -- had that long to present it.
+              if head = 0 then
+                w_held  <= w_mant;
+                we_held <= w_exp;
+                w_taken <= '1';
+              end if;
               state <= S_GATE;
             end if;
 

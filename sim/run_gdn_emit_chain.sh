@@ -28,5 +28,12 @@ ghdl -a --std=08 -frelaxed --workdir="$WORK" sim/tb_gdn_emit_chain.vhd
 # --stop-time is a backstop only; the testbench drops `running` and ends on
 # its own.  Four testbenches in this project once ran forever on an unguarded
 # clock, one of them for 4h58m at 99.5% CPU.
-( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" \
-    tb_gdn_emit_chain --stop-time=200ms )
+# Both modes. OVERLAP=false drains between blocks; OVERLAP=true is how the
+# chain actually runs and is the mode that catches the w_mant hazard -- with
+# the weight latch removed it fails on head 23 of every block, and ONLY head
+# 23, because that is the head whose norm runs after the producer has moved on.
+for ov in false true; do
+  echo "=== OVERLAP=$ov ==="
+  ( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" \
+      tb_gdn_emit_chain "-gOVERLAP=$ov" --stop-time=300ms )
+done
