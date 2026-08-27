@@ -142,13 +142,28 @@ FSM state, with no MREG/PREG -- fixed in commit `3c2789e`.
 
 ## 7. Open, not yet answered
 
-- Whether the post-synthesis derate path (`sim/ooc_core_sweep.tcl`, which
-  applies `set_operating_conditions` AFTER `synth_design` with no placement)
-  also swaps to `-2LV`. If it does not, then every 0.717 V figure in the sweep
-  CSV -- including the 237.812 MHz that the whole budget re-derivation rests on
-  -- was produced against the `-2L` model and is NOT comparable to this one.
-  That is being measured separately and it is the most consequential open
-  question left by this document.
+- ~~Whether the post-synthesis derate path also swaps to `-2LV`.~~
+  **ANSWERED the same day, from logs already in the repo. It does.**
+  `sim/ooc_sweep/volt072.log:2704-2707` carries the identical `[Vivado 12-4441]`
+  warning and `[Device 21-403] Loading part xcvu33p-fsvh2104-2LV-e`, and every
+  report header confirms it:
+  `sim/ooc_sweep/util_R48_v0.717.rpt` says `Device: xcvu33p-fsvh2104-2LV-e`
+  and `Speed File: -2LV`, `timing_R48_v0.717.rpt` says
+  `Speed File: -2LV PRODUCTION 1.30 05-01-2022`. So the 237.812 MHz and the
+  210.26 MHz here are analysed against the SAME timing model and the comparison
+  stands. One difference remains and it favours the P&R run: the sweep
+  synthesises on `-2L` and re-analyses on `-2LV`, so its netlist was optimised
+  for the wrong part, whereas the P&R run optimises for `-2LV` throughout.
+
+- **The comparison that replaces it, and it is worse news.** A's 237.812 MHz is
+  a SYNTHESIS number with no placement or routing. B's 210.26 MHz is
+  POST-ROUTE. Those are not the same kind of measurement, and on this very unit
+  the gap between them is large: `gdn_emit_chain` measured 300.75 MHz at
+  synthesis and 254.32 MHz post-route at 0.85 V, a loss of **15.4%**. A has
+  NEVER been placed and routed at 0.717 V, or at any voltage at
+  `ROWS_IF = 58`. If A loses a comparable fraction, its post-route figure is
+  near 200 MHz and the die clock is lower than either number currently in use.
+  A post-route run at `ROWS_IF = 58`, both voltages, is queued.
 - The die clock is the minimum over subsystems. A is 237.8 MHz and B is now
   210.26 MHz, so the figures just re-derived at 237.8 MHz are optimistic for
   any B-bound term until B's clock is recovered.
