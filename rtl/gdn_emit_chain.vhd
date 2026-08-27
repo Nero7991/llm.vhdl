@@ -300,6 +300,25 @@ begin
         he_ack   <= '0';
         w_taken  <= '0';
 
+        -- THE GATE EXPONENT LEADS THE GATE BY AT LEAST TWO CYCLES, and it is
+        -- assigned here rather than in S_GATE for that reason alone.
+        --
+        -- gdn_silu registers its shift control, so the control a beat uses is
+        -- decoded from e_seg one cycle EARLIER.  The old form assigned
+        -- si_e_seg on the same edge as the first si_valid, which gave zero
+        -- lead: the first beat of every head would have been converted on the
+        -- previous head's exponent.  Measured, not reasoned -- gdn_silu's
+        -- lead assertion fires at 791.5 ns on the old form at HEADS=4.
+        --
+        -- Unconditional, and safe unconditionally: z_e_held cannot change
+        -- while z_have is '1', z_have is a precondition for leaving S_IDLE,
+        -- and it is not cleared until the end of S_SER, which is long after
+        -- the last of this head's SI_BEATS beats has entered S0.  So the
+        -- value is settled from before S_IDLE releases and the lead is the
+        -- whole S_IDLE-to-S_GATE transition plus one, never fewer than two
+        -- cycles.
+        si_e_seg <= z_e_held;
+
         -- ---- latch a head's z whenever one is offered and we have none ----
         if z_valid = '1' and z_have = '0' then
           z_held   <= z_mant;
@@ -357,7 +376,6 @@ begin
 
           -- ---- feed z through the gate, SILU_LANES at a time --------------
           when S_GATE =>
-            si_e_seg <= z_e_held;
             if si_wr < SI_BEATS then
               si_valid <= '1';
               si_data  <= z_held((si_wr+1)*SILU_LANES*16-1
