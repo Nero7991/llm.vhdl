@@ -16,6 +16,55 @@ disagree, both are quoted and the resolution is called open.
 
 ---
 
+## 0.0 UPDATE, later the same day: B's clock is MEASURED now, and it moved
+
+**Everything in section 6.1 below is superseded. It ranked "measure B's emit
+chain at 0.717 V" first, that measurement was taken, and it then drove three
+RTL fixes in the same session.** The estimate it offered was good -- ~212 MHz
+against a first measurement of 210.26 -- but the number is no longer where the
+design sits.
+
+MEASURED, post-route, `gdn_emit_chain` at `HEADS=24 DIM=128 SILU_LANES=16
+RMS_LANES=4 Q=12`, 3.3 ns target, on `xcvu33p-fsvh2104-2LV-e`:
+
+| stage | commit | Fmax | WNS | logic | net | binding path |
+|---|---|---|---|---|---|---|
+| first measurement | pre-`3c2789e` | 210.26 | -1.456 | 3.674 | 0.932 | `u_rms/ARG__18 -> u_rms/rq_yfin_reg[28]/D` |
+| register + narrow the `1/sqrt(2)` fold | `3c2789e` | 216.51 | -1.320 | 1.753 | 2.812 | `si_e_seg_reg[4]_replica/C -> u_silu/xq_reg[7][22]/D` |
+| per-lane shift-control registers | `e9f7e6c` | **232.16** | -1.007 | 3.600 | **0.530** | `u_rms/ARG__21 -> u_rms/p2_raw_reg[2][63]/D` |
+
+**+10.4% in three steps, and the design has stopped being routing-bound**: net
+delay on the binding path fell from 2.812 ns to 0.530 ns.
+
+Four things here matter more than the frequency:
+
+- **A voltage is a PART, not a derate.** At 0.717 V Vivado reloads the die as
+  the `-2LV` variant. `set_operating_conditions` therefore cannot be placed
+  anywhere in a place-and-route flow. Full account in
+  `docs/debugging/2026-08-27_voltage-is-a-part-not-a-derate.md`.
+- **The binding path changes identity with voltage.** At 0.85 V it was
+  route-bound in `gdn_silu`; at 0.717 V it was logic-bound in `rmsnorm_bf`.
+  Section 6.1's argument that "the true post-route derate is probably smaller
+  than 16.5%" reasoned from the 0.85 V logic/net split and is **withdrawn**:
+  the derate is larger, because a different path binds.
+- **An optimisation can be a regression at the nominal voltage.** The fold fix
+  reads 264.8 MHz at 0.85 V against 281.2 before it, while gaining at 0.717 V.
+  Provisional -- one run each -- but it is the direction the path-identity
+  finding predicts.
+- **The comparison in section 2 is not like-for-like.** A's 237.812 MHz is a
+  SYNTHESIS figure with no placement. Every B number above is POST-ROUTE. On
+  this same unit that gap was 15.4% at 0.85 V (300.75 synthesis vs 254.32
+  post-route). **A has never been placed and routed at 0.717 V at
+  `ROWS_IF = 58`.** That run is in flight; until it reports, no statement in
+  this document about which subsystem binds the die clock is settled.
+
+Cycle-count consequences, both MEASURED: `gdn_block` feeding silu straight
+through saves 49,440 cycles/token at 9B (12.6% of a sweep), and the emit
+chain's per-head deadline is 368 dropped / 369 passing, leaving `RECUR_LANES=32`
+a margin of 143 cycles (27.9%).
+
+---
+
 ## 0. The answer, up front
 
 **The clock shortfall is real and it is 20.5%. The token-time shortfall is
