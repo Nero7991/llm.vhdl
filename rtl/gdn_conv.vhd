@@ -205,6 +205,7 @@ begin
     variable et   : integer;
     variable pk   : std_logic_vector(LANES*34-1 downto 0);
     variable sum  : signed(33 downto 0);
+    variable shv  : integer;   -- the segment shift, one cycle before shq holds it
   begin
     if rising_edge(clk) then
       if rst = '1' then
@@ -369,12 +370,39 @@ begin
             amax <= amp(0);
             p := msb_pos(amp(0));
             if p - 14 > 0 then
-              shq  <= p - 14;
+              shv  := p - 14;
               bias <= shift_left(to_signed(1, 34), p - 15);
             else
               -- bfp_pack: no rounding bias at all when sh = 0
-              shq  <= 0;
+              shv  := 0;
               bias <= (others => '0');
+            end if;
+            shq <= shv;
+
+            -- The segment exponent is PUBLISHED HERE, not at S_FIN.
+            --
+            -- Everything it needs is already known: e_ref and cw_r were fixed
+            -- at S_PREP, and shv is decided in this state.  It used to be
+            -- assigned at S_FIN, which is AFTER the whole of pass B, so it
+            -- described data that had already been handed to the consumer.
+            -- gdn_silu needs the exponent for the FIRST beat, so piping conv
+            -- straight into the gate silu'd segment s against segment s-1's
+            -- exponent, silently and with no error flag.  Found by
+            -- gdn_block's skew testbench (2026-08-27_gdn-block-top-level.md),
+            -- which made the exponent depend on the segment and so could see
+            -- it at all.
+            --
+            -- Publishing early is safe because e_seg is a held value and not a
+            -- pulse: pass B's first output beat is three cycles away (F, +bias,
+            -- shift, then sat16 out), so the exponent is stable well before any
+            -- data it describes.  shv is used rather than shq because a signal
+            -- assignment does not take effect until the next cycle.
+            e_seg  <= resize(e_ref + cw_r - shv, 8);
+            sh_seg <= shv;
+            -- 2.1.6: an out-of-int8 segment exponent is an ERROR to report,
+            -- never a silent wrap.
+            if (e_ref + cw_r - shv) > 127 or (e_ref + cw_r - shv) < -128 then
+              err_seg <= '1';
             end if;
             idx <= 0; idxf <= 0; idx1 <= 0; idx2 <= 0;
             vf <= '0'; v1 <= '0'; v2 <= '0'; v3 <= '0';
@@ -418,14 +446,9 @@ begin
             state <= S_FIN;
 
           when S_FIN =>
-            -- cw_r, NOT the cw_exp PORT: B-3b.
-            e_seg  <= resize(e_ref + cw_r - shq, 8);
-            sh_seg <= shq;
-            -- 2.1.6: an out-of-int8 segment exponent is an ERROR to report,
-            -- never a silent wrap.
-            if (e_ref + cw_r - shq) > 127 or (e_ref + cw_r - shq) < -128 then
-              err_seg <= '1';
-            end if;
+            -- e_seg, sh_seg and err_seg are NOT set here any more; they are
+            -- published at S_SH, before the data they describe.  They are
+            -- derived from cw_r and not from the cw_exp PORT, which is B-3b.
             o_done <= '1';
             state  <= S_IDLE;
 

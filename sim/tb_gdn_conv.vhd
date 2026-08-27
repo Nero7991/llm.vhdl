@@ -231,4 +231,45 @@ begin
     running <= false;
     wait;
   end process;
+  -- The ORDERING property, and the reason this file outlives the defect it was
+  -- written for.  gdn_conv used to publish e_seg at S_FIN, after the whole of
+  -- pass B, so the exponent described data the consumer had already taken.  A
+  -- consumer that needs the exponent for its FIRST beat -- gdn_silu does --
+  -- then scaled every segment by the previous segment's exponent, silently and
+  -- with no error flag.  Checking e_seg at o_done cannot see this, because the
+  -- VALUE is right and only the TIME is wrong, which is exactly why the checks
+  -- above passed throughout.  So capture it at the first data beat and require
+  -- it to be that value already.
+  --
+  -- Verified to have teeth: with the S_FIN assignment restored this fails at
+  -- the first segment, and it is the only check in the file that does.
+  ord_chk : process(clk)
+    variable seen  : boolean := false;
+    variable at_ov : signed(7 downto 0) := (others => '0');
+  begin
+    if rising_edge(clk) then
+      if start = '1' then seen := false; end if;
+      if o_valid = '1' and not seen then
+        seen  := true;
+        at_ov := e_seg;
+      end if;
+      if o_done = '1' then
+        assert seen
+          report "tb_gdn_conv: a segment finished with no o_valid at all"
+          severity failure;
+        -- to_string, NOT integer'image(to_integer(...)).  On the pre-fix unit
+        -- e_seg is still all-'U' at the first data beat, so to_integer raises
+        -- a metavalue error INSIDE the report expression and the run dies
+        -- without ever printing why.  A guard whose failure message cannot be
+        -- built is a guard that reports the wrong thing.
+        assert at_ov = e_seg
+          report "tb_gdn_conv: e_seg CHANGED after the first data beat -- "
+               & to_string(at_ov) & " at the first o_valid, "
+               & to_string(e_seg) & " at o_done.  The segment exponent must be "
+               & "published before the data it describes."
+          severity failure;
+      end if;
+    end if;
+  end process;
+
 end architecture;
