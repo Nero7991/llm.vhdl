@@ -658,6 +658,29 @@ beta  = sigmoid_q( Q18(b_mant, b_exp), 18 ) -> Q16   -- uint16, sat 65535
 > Cost of adoption: **zero**. Synthesized at `LANES = 32`, 129 DSP, 24.5 BRAM,
 > 305.6 MHz, identical to the superseded form in DSP and BRAM.
 >
+> **WITHDRAWN 2026-08-26, the same day.** The `eg = 0` exception WAS adopted, as
+> `EG0_ED`, and it defaults true in `rtl/gdn_recur.vhd`, `rtl/gdn_recur_pipe.vhd`
+> and `ref/gdn_recur_vec.c`. The two paragraphs above are kept because they were
+> reported, but the claim that the site is harmless is false, and the evidence
+> said so at the time.
+>
+> **The 1.05 LSB figure is the whole error.** It is measured in LSB of the
+> unit's OWN grid, and that grid is precisely what the phantom exponent
+> coarsens, so the metric is structurally blind to the loss it was being cited
+> to rule out. Measured instead against the double oracle on the output dot
+> normalized by its term norm, **7 of the 8 columns that failed at the two-gate
+> defaults are exactly `tk0 = 0, eg = 0`** (cases 40, 42, 44, 46, 88, 91, 95),
+> worst relative error 1.098. With `EG0_ED` the failures go 8 -> 1, and the
+> survivor is a pure tolerance case at `eg = 32768`, not a masked one.
+>
+> Mechanism: `e_kd ~ se_j + 31 + spread - shd`, so the ungated minimum pins
+> `e_u` to `se_j + 2` and floors the entire token's update right by 25-37 bits.
+>
+> Full account: `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`,
+> CORRECTION section. The caution in the second paragraph was sound in
+> principle and was applied to the wrong side: what went unmeasured was not the
+> proposed gate but the claim that the site did not need one.
+>
 > Procedure and rejected alternatives:
 > `docs/debugging/2026-08-26_gdn-first-token-dm-grid.md`.
 
@@ -748,7 +771,7 @@ skm, ske = normalize(sk_acc)              -- site 7: sh_sk = max(0, msb_pos(|sk_
 **Stage 3 — delta** (sites 8, 9):
 
 ```
-e_d   = ( tk = 0 ) ? e_v : min(e_v, ske)       -- coarser grid = larger values =
+e_d   = masked ? e_v : min(e_v, ske)          -- coarser grid = larger values =
                                                -- RIGHT-shift-only alignment.
                                                -- AMENDED 2026-08-26: at tk = 0
                                                -- ske is a MASKED ZERO's exponent
@@ -771,7 +794,8 @@ subtraction after alignment loses nothing.
 ```
 kd[i] = k_n[i] * d_m               -- s16 x s18, one DSP; |kd| <= 2^31, s33
                                    -- grid e_kd = 15 + e_dm
-e_u   = ( tk = 0 ) ? e_kd : min( se[j] + 2, e_kd )   -- right-shift-only again;
+e_u   = masked ? e_kd : min( se[j] + 2, e_kd )      -- right-shift-only again;
+                                                    -- masked = (tk = 0) or (eg = 0)
                                    -- at tk=0 the state is a MASKED ZERO with no
                                    -- exponent and must not enter the min
 u[i]  = (tk = 0) ? kd[i]
@@ -1900,8 +1924,18 @@ The phase-schedule bullet is discharged. These are not:
   > | **after** | **129** | **24.5** | **-0.044** | **299.04 MHz** |
   >
   > Identical on every axis, and bit-identical to `gdn_recur` on all 384
-  > columns with II still exactly `NB`. **So the sweep is 1.95 ms and the 2.18
-  > figure above is withdrawn.**
+  > columns with II still exactly `NB`. **The sweep is 589,824 cycles, which is
+  > 1.97 ms at the 299.04 MHz measured here, and the 2.18 ms figure above is
+  > withdrawn.**
+  >
+  > **Quote the sweep in CYCLES.** An earlier version of this paragraph said
+  > 1.95 ms, which is 589,824 / 302.5 MHz -- the pre-double-buffer Fmax from a
+  > different session, pasted next to a table reporting 299.04. The cycle count
+  > is exact and Fmax-independent; the ms figure is not, and three other places
+  > in this document still carry 305.6 MHz for this unit (§2.5's pin box at the
+  > `LANES = 32` row, and two §3.6 bullets), which is a third value again. Until
+  > those are reconciled against one run, treat 589,824 cycles as the result and
+  > any ms figure as carrying its Fmax with it.
   >
   > **It was NOT free on the first attempt, and the reason is worth keeping.**
   > Written with the `eg = 0` test inline as `egbuf(hsel) = 0`, Fmax fell to
