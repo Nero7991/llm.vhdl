@@ -862,7 +862,7 @@ codebase.
 | 10 | update alignment to `e_u = masked ? e_kd : min(se[j]+2, e_kd)` | floor, right-shift-only; `masked = (tk = 0) or (eg = 0)`, AMENDED 2026-08-26 |
 | 11 | state write-back quantize | bfp_pack semantics, `sat16`; `se_new` range-checked |
 | 12 | head-emit alignment + requantize | floor for alignment; bfp semantics for requantize |
-| 13 | gated-norm product and 16-head renorm to one `y_exp` | **§3** |
+| 13 | gated-norm product and 24-head renorm to one `y_exp` | **§3** |
 | 14 | softplus / sigmoid / exp internals; `g` clamp | **§3** (formats fixed in §2.1.3) |
 
 Sites 1-2, 3-4, 6-12 are fixed here. All C-reference intermediates are
