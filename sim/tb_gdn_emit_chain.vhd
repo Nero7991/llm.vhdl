@@ -44,6 +44,12 @@ entity tb_gdn_emit_chain is
     -- is a failure rather than a stall, which is what the top level wants
     -- because gdn_recur_pipe cannot be stalled.
     STRICT  : boolean := false;
+    -- Datapath widths, exposed so a proposed re-sizing can be checked for
+    -- CORRECTNESS before it is adopted on the strength of an area/Fmax sweep.
+    -- SILU_LANES sets SI_BEATS = DIM/SILU_LANES, so it changes the gate's
+    -- sequencing, not just its width.
+    SILU_LANES : positive := 16;
+    RMS_LANES  : positive := 4;
     -- Head count.  A generic, not a constant, because the back-pressure
     -- experiments below care only about gdn_head_emit's reduce-versus-arrival
     -- race, which is per-head and independent of how many heads a block has.
@@ -147,7 +153,8 @@ begin
 
   dut : entity work.gdn_emit_chain
     generic map ( HEADS => HEADS, DIM => DIM,
-                  SILU_LANES => 32, RMS_LANES => 4, Q => 12, EPS => 1.0e-6,
+                  SILU_LANES => SILU_LANES, RMS_LANES => RMS_LANES,
+                  Q => 12, EPS => 1.0e-6,
                   STRICT_PRODUCER => STRICT )
     port map ( clk => clk, rst => rst,
                w_mant => w_mant, w_exp => w_exp,
@@ -394,6 +401,8 @@ begin
            & integer'image(DIM) & " bit-exact, OVERLAP="
            & boolean'image(OVERLAP) & " COL_GAP=" & integer'image(COL_GAP)
            & " refused-column cycles=" & integer'image(stall_cyc)
+           & " SILU_LANES=" & integer'image(SILU_LANES)
+           & " RMS_LANES=" & integer'image(RMS_LANES)
         severity note;
     else
       report "tb_gdn_emit_chain: FAIL -- " & integer'image(nbad)

@@ -70,7 +70,41 @@ entity gdn_emit_chain is
   generic(
     HEADS      : positive := 24;   -- VALUE heads per card
     DIM        : positive := 128;  -- head_v_dim
-    SILU_LANES : positive := 32;
+    -- 16, NOT 32.  Measured OOC on xcvu33p 2026-08-27; 16 beats the original
+    -- 32 on every axis at once, which is rare enough to state explicitly:
+    --
+    --   SILU_LANES   DSP    LUT   BRAM   Fmax MHz
+    --            8    57  23861   11.5      295.8   <- misses B's 299.04
+    --           16    73  33404   15.5      300.8   <- adopted
+    --           32   105  52535   23.5      288.7   <- was here
+    --           64   169  91154   39.5      266.8
+    --
+    -- The critical path at 32 was si_e_seg -> u_silu/xq_reg, i.e. the gate
+    -- itself, so narrowing it BUYS frequency instead of costing it.  32 was
+    -- the only setting that both missed the clock target and cost the most.
+    --
+    -- The sequencing cost is real but small: SI_BEATS goes 4 -> 8, and S_GATE
+    -- is serial with the norm, so +4 cycles per head = 4 x 24 x 48 = 4,608
+    -- cycles per token against a 589,824-cycle sweep, under 0.8%.
+    --
+    -- 8 lanes is cheaper still and was NOT taken: 295.8 MHz misses B's
+    -- 299.04 MHz target, and a unit that does not close the clock is not a
+    -- saving.
+    SILU_LANES : positive := 16;
+    -- 4, and NOT the cheaper 2.  At SILU_LANES=16 both close the identical
+    -- 300.75 MHz and RMS_LANES=2 saves 12 DSP (61 vs 73) for 247 more LUT, so
+    -- an area/Fmax sweep alone picks 2.  It is wrong: a narrower norm takes
+    -- longer, which pushes the chain's per-head service time past the column
+    -- arrival period, and the columns are then DROPPED rather than delayed
+    -- because gdn_recur_pipe cannot be stalled.  Measured in simulation at the
+    -- real arrival rate of DIM/LANES = 4 cycles per column:
+    --
+    --   SILU=16 RMS=4  ->   0 refused columns
+    --   SILU=16 RMS=2  ->  24 refused columns
+    --   SILU=8  RMS=2  ->  64 refused columns
+    --
+    -- All three are bit-exact.  The defect is invisible to a value check and
+    -- invisible to synthesis; only STRICT_PRODUCER catches it.
     RMS_LANES  : positive := 4;
     Q          : integer  := 12;
     EPS        : real     := 1.0e-6;
