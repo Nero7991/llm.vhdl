@@ -3,7 +3,8 @@
 **Date:** 2026-08-26
 **Units:** `rtl/rmsnorm.vhd` (shipped) and `rtl/rmsnorm_rs.vhd` (the 300 MHz
 reimplementation). **BOTH, identically.**
-**Status:** OPEN. Not fixed. No RTL changed by this investigation.
+**Status:** ROOT-CAUSED same day, see the RESOLVED section. Not yet fixed in
+RTL. The cause is a missing epsilon, not the `Q` collapse it first looked like.
 **Found by:** a scoping review of B's output stage, which predicted the failure
 from the algebra before any measurement existed.
 
@@ -86,6 +87,80 @@ comparison, so no magnitude it reaches can ever fail.
 - **`wait until done = '1' and done0 = '1'` never fires**, because the two are
   pulses at different times and are never simultaneously high. It hangs rather
   than failing, which reads as a slow simulation.
+
+## RESOLVED 2026-08-26, same day: the missing `eps` IS the defect
+
+The deciding measurement was taken. **2,741,760 samples**, 48 GDN layers x 48
+value heads x 1,190 tokens over 4 prompts, Qwen3.8-27B Q4_K_M, captured through
+`ggml_backend_sched_eval_callback` selecting structurally on
+`op == GGML_OP_RMS_NORM and src[0]->ne[0] == 128` and reading `src[0]`, which is
+the norm's input by definition rather than by name. Confirmed by checking
+`rms(out) = rms(in)/sqrt(rms(in)^2 + eps)` to **2.35e-07** relative across 24
+octaves, which pins the tensor exactly.
+
+**The naive reading is that the design is hopeless:**
+
+| quantity | value |
+|---|---|
+| observed span of `rms(o_h)` | **24.12 octaves** |
+| the unit's window | 19 octaves |
+| worst single layer's own span (layer 0) | **19.28 octaves** |
+
+No global scale fits, and **no per-layer scale fits either**, since layer 0
+alone exceeds the window. Layer 0's median also sits ~8 octaves above the rest
+of the stack.
+
+**But `1/rms` is not the function the model computes.** ggml's `LLM_NORM_RMS`
+computes `x / sqrt(mean(x^2) + eps)`, and this model's
+`qwen35.attention.layer_norm_rms_epsilon` is **1e-6**, which is not small
+relative to these activations:
+
+```
+fraction with mean(x^2) < eps        : 72.57%   eps DOMINATES
+fraction with mean(x^2) < 0.1 * eps  : 38.88%   norm is a CONSTANT gain
+effective gain 1/sqrt(mean+eps): p50 = 901.2, max = 1000.0 = 1/sqrt(eps)
+```
+
+And that collapses the range requirement:
+
+| function | span needed | fits the 19-octave window? |
+|---|---|---|
+| `1 / rms` -- what the RTL computes | **24.12 octaves** | **no** |
+| `1 / sqrt(mean + eps)` -- what the MODEL computes | **8.84 octaves** | **yes, with 10 to spare** |
+
+**So the fix is not a wider `Q` and not a restructured rsqrt. It is to implement
+the epsilon that both units omit.** `grep -in "eps" rtl/rmsnorm.vhd
+rtl/rmsnorm_rs.vhd` returns only the substring inside "steps": there is no
+epsilon anywhere in either unit.
+
+This makes the omission two defects at once, and the second was invisible until
+the first was measured:
+
+1. **Correctness.** The RTL computes a different function from the model on the
+   majority of real inputs. For 38.9% of samples the model's norm is a constant
+   gain of 1000 with the data playing no part, and the RTL instead divides by
+   the data. That is not a rounding difference.
+2. **Dynamic range.** `eps` is what bounds the divider. Without it the required
+   span is the full spread of the activations, 24 octaves and growing with
+   sample count; with it the output is hard-ceilinged at `1/sqrt(eps)` and the
+   span is 8.84 regardless of how small the input gets.
+
+The clamp at `rtl/rmsnorm_rs.vhd:300-302`, `if shifted_r < 1 then msq_r <= 1`,
+is a *degenerate* epsilon: it bounds the divider, which is why the unit does not
+divide by zero, but it does so at a value set by `Q` rather than by the model,
+and it is applied to the Q-scaled mean-square rather than to the mean square.
+Setting it from the model's `eps` instead of from `Q` is close to the whole fix.
+
+**Scaling caveat, which is where an implementation will go wrong.** `eps` is
+defined in the model's native activation units, so it is NOT scale-free. If the
+fixed-point input vector is scaled by `2^k` relative to the f32 activations, the
+implemented epsilon must be scaled by `2^2k`. The absolute log2 figures above
+are in llama.cpp's units and must not be compared directly against the unit's
+rails until the Q-format is pinned; the **spans** and the eps relation are the
+transferable results.
+
+**`z_h` needs nothing.** The silu gate input spans 6.70 octaves total
+(`min 2^-3.40`, `max 2^+3.30`), per-layer spans 2.14 to 3.80. Benign.
 
 ## What is NOT yet established
 
