@@ -315,17 +315,32 @@ begin
               else
                 bias := shift_left(to_signed(1, 40), sh_h - 1);
                 -- Width check, stated because it is not obvious and because
-                -- s40 overflow here would be silent.  |o_acc| < 2^37 (the
-                -- spec's s38 bound), alignment only shrinks it, so
-                -- |o_al| < 2^37; amax < 2^37 gives msb_pos(amax) <= 36 and so
-                -- sh_h <= 22, hence bias <= 2^21.  The sum is under 2^37 +
-                -- 2^21 < 2^39 and fits s40 with a bit to spare.
+                -- s40 overflow here would be silent.  |o_al| <= 2^37, so
+                -- msb_pos(amax) <= 37 and sh_h <= 23, hence bias <= 2^22.
+                -- The sum is at most 2^37 + 2^22 < 2^38 and fits s40.
+                --
+                -- The bound is INCLUSIVE, and that is derived rather than
+                -- transcribed.  The spec's prose gives |o_acc| < 2^37 from
+                -- 128 * 2^15 * 23171, where 23171 is q_s's structural maximum
+                -- 2^18/sqrt(128) = 23170.5 -- the 1/sqrt(N) fold l2norm_rs
+                -- applies on its q path.  That is 2^36.5, so a strict bound
+                -- holds with 29% margin FOR THAT UPSTREAM.  But this unit
+                -- cannot see its upstream, and an o_acc built from an
+                -- unfolded int16 q would reach 128 * 32768 * 32768 = 2^37
+                -- EXACTLY, which s40 handles perfectly well.  A strict assert
+                -- would then fire on legal input.
+                --
+                -- That is not hypothetical: the identical off-by-one was
+                -- written into rmsnorm_bf's sum-of-squares assert on the same
+                -- day, from the same habit of transcribing a bound out of
+                -- prose instead of deriving it.  int16's asymmetric range
+                -- (-32768 has no positive twin) is where the two diverge.
                 -- Written as a shift rather than the literal to_signed
                 -- form: 2^37 is not representable in a VHDL integer (32-bit),
                 -- so the literal is a static bounds violation.  ghdl reports
                 -- it; other tools may accept it and silently wrap.
-                assert p3_al <  shift_left(to_signed(1, 40), 37)
-                   and p3_al > -shift_left(to_signed(1, 40), 37)
+                assert p3_al <=  shift_left(to_signed(1, 40), 37)
+                   and p3_al >= -shift_left(to_signed(1, 40), 37)
                   report "gdn_head_emit: aligned value exceeds the s38 bound "
                        & "the bias width argument depends on"
                   severity failure;
