@@ -234,3 +234,88 @@ transferable results.
   a hard zero, not a precision loss.
 - **Do not treat the bit-exactness of `rmsnorm_rs` against `rmsnorm` as
   reassurance.** It is the reason the defect is invisible.
+
+## CORRECTION 2026-08-26 (later): widening `Q` is the WRONG fix, measured
+
+The open question above, "whether raising `Q` is the right fix", is now answered.
+It is not. Measured with `ref/rmsnorm_eps_vec.c`, which implements both
+structures against a double golden and reports the relative error of the
+resulting gain.
+
+**Withdrawn:** the working plan recorded earlier the same day, that the fix is
+`Q >= 20` (ideally 24) plus tightening the RTL's `S < 2^46` assert to `S < 2^38`
+to keep `S << Q` inside `s64`. That plan is sound arithmetic and still leaves a
+**2% error**. Do not implement it.
+
+### The measurement
+
+Relative error of the gain `1/sqrt(mean + eps)`, worst case over
+`log2(rms) in [-30, +6]`, N = 128, eps = 1e-6. Random mantissas, 400 draws per
+octave, 14,800 vectors total. Golden is `double`.
+
+| structure | worst rel err | where |
+|---|---|---|
+| absolute-grid, `Q = 12` (**as shipped**) | **1.0000e+00** | low tail |
+| absolute-grid, `Q = 24` | 2.0223e-02 | crossover, `log2(rms) ~ -10` |
+| floating, `Q = 12` | 8.7933e-03 | high end |
+| floating, `Q = 16` | 5.1876e-04 | high end |
+
+Read the first row as what it is: on random vectors the shipped unit is not
+merely imprecise in the low range, it is **100% wrong** -- it returns the clamp,
+which carries no information about the input at all.
+
+### Why widening `Q` does not rescue it
+
+The absolute-grid recipe rescales `mean` into a FIXED `2^-Q` grid, via
+`round_shift(msq, 2*xe)`, and only THEN adds epsilon. At the crossover, which is
+`rms ~ 1e-3` where `mean ~ eps` and the sum genuinely needs both terms, `mean`
+has already been shifted down to a fraction of one LSB and rounded away. The
+epsilon add then has nothing left to add to.
+
+Resolving `mean` at `log2(rms) = -13` wants `Q ~ 30`. `Q <= 25` is a hard `s64`
+ceiling at N = 128. The two do not meet, which is why `Q = 24` still shows 2%.
+
+An intermediate that was tried and REJECTED: adding epsilon on a grid `EXB` bits
+finer than `Q` (so that `round(2^(Q+EXB) * eps)` is accurate). This does fix the
+epsilon quantization -- at `Q = 24`, `round(2^24 * 1e-6) = 17` against a true
+16.777, a +1.33% error in eps and -0.66% in the gain -- but the worst-case error
+only falls from 6.6e-3 to 7.4e-3, i.e. not at all. **Epsilon quantization was
+never the dominant term.** Do not retry this; it treats the wrong half of the
+add.
+
+### What actually works
+
+Do not rescale to a fixed grid at all. Carry `mean` in the block-floating form
+it already arrives in, express epsilon in the same form once at build time,
+align to the larger value, and add. Whichever term is negligible is then the one
+that rounds away, which is correct behaviour rather than an artefact.
+
+This is the same move `l2norm_rs` already made on this exact hazard, as the
+superseded section above guessed. The measurement confirms it and adds two
+things that were not obvious:
+
+- **It needs no width change and no assert change.** The floating form is
+  correct at `Q = 12`, the shipped width. `S << Q` never happens, so the
+  `S < 2^46` assert stops being load-bearing rather than needing to be tightened.
+- **Its residual is not the algorithm.** The 8.8e-3 at `Q = 12` is entirely the
+  output grid: at `rms = 2^6` the gain is ~0.0156 and half an LSB of `2^-12` is
+  7.8e-3 of it. Raising `Q` to 16 drops it 16x, exactly as pure output
+  quantization should. Changing `MB` (24, 30, 36) changes nothing at all, which
+  is the check that the internal precision is not the limit.
+
+### Measurement traps hit here
+
+- **The octave sweep with flat mantissas understated the shipped defect by two
+  orders of magnitude.** Flat mantissas make `rms` exactly a power of two and
+  exercise exactly one value of `S` per octave. The shipped unit scored 6.6e-3
+  on that sweep and 1.0 on random vectors. Any sweep over this unit must
+  randomise the mantissas.
+- **A failed `cd` swallowed an entire edit.** `cd ref && python3 - <<'PY'` was
+  run from inside `ref`, so `cd` failed, `&&` short-circuited, and the heredoc
+  was consumed with Python never running. The subsequent build succeeded on the
+  UNEDITED file and the sweep reported a new parameter having no effect --
+  which is also exactly what a genuine null result looks like. Verify an edit
+  landed (`grep -c` for the new symbol) before believing a null.
+- **First floating implementation had sign errors in both exponents and aligned
+  the wrong way**, and reported `rel = 1.0` uniformly. A uniformly perfect
+  failure is a bug in the new path, not evidence about the old one.
