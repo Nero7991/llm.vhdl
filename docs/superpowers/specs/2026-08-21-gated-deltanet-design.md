@@ -2416,8 +2416,18 @@ The phase-schedule bullet is discharged. These are not:
   `docs/fpga-hardware-recon.md`'s tok/s ladder together with the §2.8 co-fit
   decision and the 423 MB model size (§1.4).
 - **The final output stage** (site 13): gated product `rmsnorm(o_h) * silu(z_h)`
-  and the 16-head renormalization to the single `y_exp`, including both shift
-  branches (the C MJ5-1 class).
+  and the **24-head** renormalization to the single `y_exp`, including both
+  shift branches (the C MJ5-1 class).
+
+  > **CORRECTED 2026-08-26.** This read "the 16-head renormalization", which
+  > contradicted §2.1.5's stage 6, where the same renormalization is over
+  > "**24 value heads per card**". 24 is right: the model has 48 GDN value
+  > heads (`num_v_heads = ssm_dt_rank = 48`) and tensor parallelism splits them
+  > by head across 2 cards, so 48/2 = 24. The 16 is the KEY head count
+  > (`ssm_group_count = 16`), which is a different thing and is 8 per card
+  > after the same split. Both head types are 128 wide, so no shape check
+  > catches a confusion between them -- the same reason a `head_v_dim = 256`
+  > error propagated undetected earlier this month.
 - **The conv/sweep DSP time-sharing decision** (§2.8 aux row) with synthesized
   numbers, and the co-fit option 1/2 choice made jointly with C's §3.
 - Bit-exact C reference implementing exactly §2.1 (`int64_t` intermediates,
