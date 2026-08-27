@@ -167,6 +167,27 @@ the conv state and conv weights, which all share it.
 constraint; the 27B has `ssm_group_count = 16` but its `dt_rank` has not been
 read from the GGUF, so v4.0/v5.0 must re-verify (§2.9).
 
+> **CORRECTED 2026-08-26.** The re-verification this paragraph asks for was
+> done (§2.9's VERIFIED box, §4): `dt_rank = 48` against `group_count = 16`, so
+> **`H_k != H_v` at 27B and the `H_k = H_v` pin above is dead.** The
+> `ggml_repeat` path is live, not dead, and §4 records the consequence for the
+> operand fetch. What §4 does NOT reach is the §1.4 interface, which is still
+> written as though one head count served both:
+>
+> | site | as written | 27B, per card |
+> |---|---|---|
+> | §1.4 entity | `H : positive := 16` -- one generic, both head types | needs two: `H_K = 8`, `H_V = 24` |
+> | §1.4 table, §2.1.1 | `ssm_dt`, `ssm_a` -- `[16]` each per layer | `[48]`, 24 per card: they are indexed by VALUE head (`dt_rank`) |
+> | §2.1.3 scalar path | "per head; **16 values** each" | 48, 24 per card |
+> | §1.4 entity | `y_addr ... (10 downto 0)  -- 2048 entries` | `ssm_out` input is 6,144, i.e. 3,072 per card -> 12 bits |
+> | §1.4 entity, §2.1.1 | `MAXLAYERS := 18`; conv slot exponents `18 x 3 x 3 = 162` | 48 layers; `48 x 3 x 3 = 432` |
+>
+> Every one of those passes a shape check, because both head types are 128 wide
+> and 16 is still a real head count at 27B. That is §1.1(g)'s own stated
+> failure mode -- a number that stays plausible because the quantity it names
+> still exists at that value under a different name. Audit:
+> `docs/debugging/2026-08-26_gdn-spec-audit.md` F6.
+
 ### 1.2 Decode-only, single-sequence
 
 The reference decode path asserts `n_tokens == 1`
@@ -323,6 +344,32 @@ lesson: re-check resident invariants, don't trust load-time).
 | BFP quantize (amax -> msb_pos -> shift) | `bfp_pack.vhd` | the conv segment requantizer and the state write-back quantizer (§2.1.3/§2.1.4) |
 | `divider_rs` | `divider_rs.vhd` | only if §3's softplus/log needs a true divide; the VHDL `/` stays banned |
 | Block-wide activation read | A's `act_mem_striped` concept | B's `qkv_rdata` port is the same BLOCK*16 shape |
+
+> **CORRECTED 2026-08-26, two rows of the table above.**
+>
+> **1. beta is Q16, not Q15.** The `sigmoid_q` row says "§2.1 pins beta and the
+> decay factor at **Q15 out**". §2.1 pins only the decay factor at Q15;
+> **beta is Q16** in both places §2.1 states it -- §2.1.1's format table
+> (`beta_h | uint16, 0..65535 | exp 16 (Q16; sigmoid < 1 strictly)`) and
+> §2.1.3's scalar path (`beta = sigmoid_q(...) -> Q16 -- uint16, sat 65535`).
+> §2.1 is normative and Q16 is the grid the arithmetic uses: §2.1.4 stage 3's
+> `e_dm = e_d + 16 - shd` carries the 16. One bit, on a grid, so getting it
+> wrong halves or doubles `d`.
+>
+> **2. Neither table needs regenerating; the deliverable is discharged by
+> construction.** Both rows call for a Q15 regeneration of SIG_ROM and EXP_ROM
+> via `tools/gen_fixed_luts_pkg.py`, and §3.6 repeats it as an owed item. Both
+> built units read the **shipped Q30 tables** directly and round at the output:
+> `rtl/gdn_silu.vhd` indexes `SIG_ROM` at Q12 and rounds to Q15
+> (`docs/debugging/2026-08-26_gdn-silu-unit.md`: "nothing needs regenerating
+> and nothing needs keeping in step"), and `rtl/gdn_scalar.vhd:309-313` reads
+> `EXP_ROM` and `SIG_ROM` directly, emitting `eg` as Q15 and beta as Q16.
+> Reading a wider table at a narrower index is strictly better than
+> regenerating at the narrower grid: it keeps the table's own interpolation
+> error out of the requantization, which is what §2.1.3's Q18 amendment
+> measured as the remaining floor (3.04e-05).
+>
+> Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F8, F9.
 
 **Why Q15 for the decay factor is worth a table regeneration:** `exp(g)`
 multiplies the *entire persistent state* once per token. At Q12 the factor's
@@ -868,6 +915,36 @@ codebase.
 Sites 1-2, 3-4, 6-12 are fixed here. All C-reference intermediates are
 `int64_t` with shift counts clamped to [0, 63] (A §9's width discipline).
 
+> **CORRECTED 2026-08-26, site 3: this table and §2.1.3 give the same rule two
+> different saturation rails, and both shipped units implement one each.**
+>
+> §2.1.3's code block pins `x_q12 : s32 = ... sat32( x << (-sh) )` for "every
+> nonlinearity argument"; site 3 above pins "saturating left at a 2^45
+> sentinel, **NOT the s32 rail**" for the same conversion. They cannot both be
+> normative. **The rule genuinely splits, and neither section says so:**
+>
+> | path | rail | implemented in |
+> |---|---|---|
+> | silu's `sigma` argument, Q12 | the **s32** rail, as §2.1.3 writes it | `rtl/gdn_silu.vhd:105,120` (`signed(31 downto 0)`) |
+> | the scalar path, Q18 | a **2^45 sentinel** on a 68-bit grid, as this table writes it | `rtl/gdn_scalar.vhd:158,174` (`SAT_W = 1 << 45`) |
+>
+> The split is correct and is not a tidiness question. silu's argument only
+> indexes a sigmoid table already clamped to +/-16, so the rail is unreachable
+> in effect. The scalar path **sums two converted terms**, and the s32 rail is
+> precisely the defect §2.1.3's own Q18 amendment exists to remove: "two
+> opposite-sign saturations cancel, and a true argument of -34826 computes as
+> -1, turning a shut decay gate into a wide-open one". `gdn_scalar.vhd`'s
+> header records two further failures of the s32 form, both found by
+> divergence against the C reference: a zero mantissa with a large exponent
+> returning the positive sentinel (which slammed beta's gate to 65535), and
+> `32767 << 36` overflowing the s52 accumulator NEGATIVE.
+>
+> So §2.1.3's block, read literally, still prescribes for the scalar path the
+> exact rail the amendment three paragraphs later removes. Read site 3 as
+> covering silu at s32 and the scalar path at the 2^45 sentinel with a cutoff
+> at 40, both of which must MATCH the C reference exactly.
+> Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F5.
+
 #### 2.1.6 Range checks and `err`
 
 `err` is sticky, cleared by `rst` or a successful `start` (A §7.6 semantics).
@@ -1037,6 +1114,20 @@ all outside it.
 > count and the arithmetic were wrong, in the same direction, and either alone
 > would have been recoverable from the text. Together they were not.
 
+> **CORRECTED 2026-08-26: "the 231 MHz this card reaches at 0.717 V" is
+> refuted, and so is the whole-die derate it comes from.** 231 is
+> `300 x (1 - 0.229)`, the -22.9% VCCINT derate applied as a constant.
+> `docs/debugging/2026-08-25_voltage-derate-on-hardware.md` tested exactly that
+> on the card: a 300 MHz design **closed and ran at 300 MHz at 0.717 V**, so
+> this design's delay increase is `<= 18.8%` and its Fmax derate is **no worse
+> than -15.8%**, i.e. `>= 252.6 MHz`. That file's own trap note is that
+> "-22.9% as a whole-die constant is not safe **in either direction**" -- it was
+> measured out of context on a matvec core with no hard blocks, and a passing
+> test BOUNDS the derate rather than measuring it. The actual derate for a B
+> build is unmeasured. Read the 3.22 ms as an unsupported upper bound; the real
+> figure is between 2.48 and 2.94 ms and is not known more precisely.
+> Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F10.
+
 Serialized worst case is **~7.5-8.5 ms/token** (was ~6-7, before the +1.55 ms
 correction above); with the §3 schedule overlapping norms and nonlinearities
 under the next head's sweep, the target is **~3.5-4.5 ms/token**. §3 must
@@ -1085,13 +1176,28 @@ merely good. That is a §3 obligation, recorded, not discharged.
 > |---|---|---|
 > | `k_n`, `q_s` | 2 BRAM36 | 1-2 |
 > | `v` (post-silu) | 1 | **2** |
-> | conv segment accumulator (s34) | 2 | **5** (5,120 x 34 b) |
+> | conv segment accumulator (s34) | 2 | **5** (5,120 x 34 b) -- see the note below, it is **4** |
 > | `o_head` staging + `y` | 1-2 | **2** |
 > | `ssm_norm`/dt/a constants, all layers resident | 2 (18 layers) | **4** (48 layers) |
 > | AXI FIFOs | ~10 | ~10 |
 > | **`gdn_recur_pipe` w18/u slot memories** | **absent** | **24.5 measured** |
 > | nonlinearity tables (sigmoid/silu/softplus/exp) | absent | ~2-4 |
 > | elastic column buffer in front of the recurrence (see below) | absent | ~1-2 |
+>
+> > **CORRECTED 2026-08-26, the conv accumulator row.** It is re-derived as
+> > `5,120 x 34 b`, which is the SUM of the three per-card segments. The buffer
+> > is sized by the LARGEST segment, not their sum -- the row it corrects says
+> > so itself ("2048 x s34, **reused per segment**") and `rtl/gdn_conv.vhd`
+> > latches `nch` at start so the two passes cannot straddle two lengths. The
+> > segments are q 1,024 / k 1,024 / v 3,072, so the basis is 3,072 x 34 b, and
+> > §3.6's re-measured shapes table gives **4 BRAM36** at `CH_MAX = 3,072`,
+> > `LANES = 4`. Read this row as 4, measured, not 5, derived. The honest total
+> > below is unaffected at its stated precision. Two further rows are now
+> > measured rather than estimated: the nonlinearity tables are `gdn_silu` at
+> > **0.5 BRAM36 per lane** (2.0 at `LANES = 4`, `sim/gdn_silu_sweep.csv`), and
+> > `gdn_head_emit`'s column store is **1** (`sim/gdn_head_emit.csv`), a row
+> > this table does not have at all.
+> > Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F13.
 >
 > **Honest total: ~50-60 BRAM36 per card, 7.4-8.9% of the 672 on this part**,
 > against the ~18-20 written. Not a fit risk on its own, but **no die-wide BRAM
@@ -1139,6 +1245,22 @@ jobs in an attention layer, not 9. The GDN arm was right as written and is
 unchanged. The
 top-level arbiter grants the HP ports to the active unit; B claims 2 read + 2
 write channels (§2.5). No bandwidth splitting, no starvation case.
+
+> **CORRECTED 2026-08-26. B claims FOUR BIDIRECTIONAL masters, not 2 read plus
+> 2 write.** This sentence is the last live copy of the split-by-direction
+> allocation, which §2.5's own box withdrew on 2026-08-25 and §3.4 refuted by
+> measurement on the loaded bitstream: four ports each doing read-modify-write
+> deliver **47.1 GB/s** against the ping-pong's 38.4, because a port dedicated
+> to one direction leaves its other direction idle and that costs more than the
+> 18.2% read/write turnaround it avoids. The COUNT of four is unchanged; the
+> direction split is gone. §1.4's port block already states the corrected form
+> ("FOUR masters, each BIDIRECTIONAL ... NOT two read plus two write").
+>
+> Two more sites still carry the superseded split and were missed by the §2.5
+> supersession: **§2.6's on-chip table** row `AXI FIFOs (2R + 2W state, conv
+> weights)` and **§2.9's device table** row `State backing | PS DDR4, 2R+2W
+> masters`. Both should read four bidirectional.
+> Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F7.
 
 - **`done` gates on the last BRESP** — the inter-token state RAW hazard of
   §2.4, C's MA-3/§2.7 rule, applies identically here and matters MORE: every
@@ -1693,6 +1815,83 @@ result. **B lands at ~2.0 ms/token,
 better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
 throughput, not scheduling.
 
+> **CORRECTED 2026-08-26. The bundle is +12%, not +36%, and it omits site 12
+> entirely. Four separate defects in the two tables above; the fourth is the
+> one that changes the conclusion.**
+>
+> **1. The conv row's cycle model is 2x §3.6's, and §3.6 matches the built
+> unit.** The row prices `5,120/layer at LANES = 32` as 30,720 cycles, which is
+> `5,120 x 48 x 4 / 32`: four taps retired SERIALLY, one pass. §3.6 derives
+> `491,520 / LANES` from `5,120 x 48 x 2`: four taps in PARALLEL, two passes.
+> `rtl/gdn_conv.vhd` is the second one -- `DSP = 4 x LANES exactly, one per tap
+> per lane` (§3.6, measured) and its header states "The unit is two passes
+> because amax cannot be known until every acc exists". At `LANES = 32` the
+> correct figure is **15,360**, not 30,720. The correction note above then
+> subtracts 30,720 (serial model) and adds 122,880 (parallel model) in one
+> expression, mixing the two.
+>
+> **2. The L2 is priced at `rmsnorm_rs`'s rate, and it is a different unit.**
+> The 213,120 is `1,920 x 111`, i.e. all 1,920 invocations at the output
+> norm's per-invocation cost, and §3.6's own retained note flags the assumption
+> ("§3.3's 109,056-cycle L2 term assumes the same per-element cost as rmsnorm,
+> which is plausible and unverified"; `109,056 = 768 x 142`). It is now
+> measured and it is not the same: `l2norm_rs` at `LANES = 4` reaches only
+> 285.8 MHz and **does not close B's 299.04 MHz clock**, so the closing point
+> is `LANES = 2` at **185 cycles**, not 142.
+>
+> **3. Rebuilt with every unit at its own measured, closing rate:**
+>
+> | term | invocations | cycles each | cycles |
+> |---|---|---|---|
+> | output `rmsnorm_rs`, `LANES = 4` | 1,152 | 142 | 163,584 |
+> | `l2norm_rs`, `LANES = 2` | 768 | 185 | 142,080 |
+> | `gdn_silu`, `LANES = 4` | -- | -- | 98,304 |
+> | `gdn_conv`, `LANES = 4` | -- | -- | 122,880 |
+> | **bundle** | | | **526,848** |
+>
+> ```
+> 589,824 / 526,848 = 1.1195   ->  +12.0%, not +36% and not §3.6's +47%
+> ```
+>
+> §3.6's 401,664 is optimistic twice over: it prices the L2 at 142 AND keeps
+> conv at `LANES = 32` while choosing `LANES = 4` in the same section.
+>
+> **4. And site 12 is in neither table.** §2.1.4 stage 6 and §2.1.5 row 12
+> specify `gdn_head_emit`, which now exists, is bit-exact and mutation-tested,
+> and appears in **no** budget in §3. Its own header prices it at "~270 cycles
+> per head ... ~6,500 per token for 24 value heads per card ... ~1.1%". **That
+> is one LAYER.** There are 48, and the count is the same 1,152 the output
+> rmsnorm row above already uses:
+>
+> ```
+> 1,152 x 270 = 311,040 cycles/token/card = 52.7% of the sweep, not 1.1%
+> 526,848 + 311,040 = 837,888  against a 589,824 sweep  ->  margin 0.70
+> ```
+>
+> **It is worse than an additive term, because the store is single-buffered.**
+> `rtl/gdn_head_emit.vhd` declares one `mem_t is array (0 to DIM-1)` and one
+> FSM `S_FILL -> S_AMAX -> S_EMIT -> S_DONE`, and pass A is fed directly by
+> `gdn_recur_pipe`'s output stream, so the recurrence stalls ~270 cycles at
+> every head boundary against 512 sweep cycles per head: **+52.7% on B's token
+> time**. This is structurally the same defect as the `k_n`/`q_s` head-boundary
+> drain §3.6 closed the same day at 11.7%, it is 4.5x larger, and the same fix
+> (a second bank plus a select bit on the column context) applies and was free
+> there. It also invalidates the design decision the unit's header draws from
+> its own wrong percentage -- "which is why this unit is scalar and has no
+> LANES generic".
+>
+> **What does not change:** DSP. `gdn_head_emit` is 0 DSP
+> (`sim/gdn_head_emit.csv`), so the die total stands at §3.6's 2,606-2,648.
+>
+> **One arithmetic slip in the whole-phase table, recorded but harmless:** rows
+> 2 and 3 each add exactly `129,024 = 98,304 + 30,720` to their norm+L2 term;
+> row 1 adds 148,224 to 1,238,400 and should read **1,367,424 = 4.56 ms**, not
+> 1,386,624 = 4.62. 19,200 cycles have no component behind them. The row does
+> not hide either way.
+>
+> Audit and full arithmetic:
+> `docs/debugging/2026-08-26_gdn-spec-audit.md` F2, F3, F4, F14.
+
 ### 3.4 The sweep is a read-modify-write on ONE pseudo-channel
 
 §2.4's column pipeline reads column j and writes it back. Read and write
@@ -1787,6 +1986,39 @@ requiring at least a full column per burst.
   is the same failure wearing a different hat.
 
 ### 3.6 Still owed by §3 (NOT closed by the above)
+
+> **STATUS 2026-08-26.** Several items below are now BUILT. They are left in
+> place rather than struck out, because "built and unit-verified" is not
+> "integrated", and this list is the integration checklist. What exists:
+>
+> | site / item | unit | verification | DSP | BRAM36 | fmax |
+> |---|---|---|---|---|---|
+> | 12, head emit | `rtl/gdn_head_emit.vhd` | bit-exact vs `ref/gdn_head_emit_vec.c`, double oracle, 3 mutations caught | 0 | 1.0 | 440.9 MHz |
+> | 13, gated product + 24-head renorm | `rtl/gdn_y_emit.vhd` | bit-exact vs `ref/gdn_y_emit_vec.c`, double oracle, 5 mutations caught | 1 | 4.0 | 488.8 MHz |
+> | 2.1.2, captured slot exponents | `rtl/gdn_exp_capture.vhd` | independent behavioural model, tk = 0/1/2 masking, 4 mutations caught | 0 | small | -- |
+> | output norm (B only) | `rtl/rmsnorm_bf.vhd` | bit-exact vs `ref/rmsnorm_bf_vec.c` across 20 generic combinations | 40 | 0 | 300.8 MHz |
+> | silu / z gate | `rtl/gdn_silu.vhd` | bit-exact, LANES 1..32 | 2/lane | 0.5/lane | 391.8 MHz |
+>
+> The two emit stages cost **one DSP between them**, which is the figure that
+> matters with the die at 90.5-91.9% of 2,880.
+>
+> **NOT done, and the reason this list stays open:**
+>
+> - **Nothing wires them together.** Site 12's input is
+>   `gdn_recur_pipe.o_res_valid`; site 13's inputs are `rmsnorm_bf` and
+>   `gdn_silu` outputs. The handshakes are compatible BY INSPECTION, which is
+>   not the same as tested. There is no block-level testbench.
+> - **The state-drift bound over a 2,048-token sequence** is untouched. It is
+>   still the hardest deliverable here and still decides whether int16 state
+>   mantissas and Q15 decay survive.
+> - **The phase schedule** is unbuilt.
+> - **`o_sat` outputs exist on both emit units and nothing consumes them.**
+>   Saturation is not fatal but it means a head or block lost its top end, and
+>   there is no policy for what the engine does when it fires.
+>
+> Details: `docs/debugging/2026-08-26_gdn-head-and-y-emit.md` and
+> `docs/debugging/2026-08-26_rmsnorm-magnitude-window.md`.
+
 
 The phase-schedule bullet is discharged. These are not:
 
