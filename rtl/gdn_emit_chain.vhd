@@ -73,7 +73,15 @@ entity gdn_emit_chain is
     SILU_LANES : positive := 32;
     RMS_LANES  : positive := 4;
     Q          : integer  := 12;
-    EPS        : real     := 1.0e-6
+    EPS        : real     := 1.0e-6;
+    -- Set TRUE when the column producer cannot be stalled.  gdn_recur_pipe is
+    -- exactly that case: `o_res_valid` free-runs and the unit has no ready
+    -- input, so a col_ready that falls under it LOSES a column rather than
+    -- delaying one.  Measured 2026-08-27: at DIM/LANES = 4 cycles per column
+    -- col_ready never falls, so this is free at LANES = 32; at LANES = 64 it
+    -- fires, which is the point.  Simulation only -- an assertion synthesizes
+    -- to nothing -- so it costs no area and is worth leaving on.
+    STRICT_PRODUCER : boolean := false
   );
   port(
     clk : in std_logic;
@@ -193,6 +201,22 @@ architecture rtl of gdn_emit_chain is
 begin
 
   col_ready <= he_ready;
+
+  -- The column back-pressure guard.  Holding valid while ready is low is
+  -- perfectly legal for an elastic producer, which is why this is a generic
+  -- and not an unconditional assertion: the testbench drives faster than the
+  -- real producer on purpose, to find where the cliff is.
+  strict_chk : process(clk)
+  begin
+    if rising_edge(clk) and rst = '0' and STRICT_PRODUCER then
+      assert not (col_valid = '1' and col_ready = '0')
+        report "gdn_emit_chain: a column was offered and refused while "
+             & "STRICT_PRODUCER is set.  The producer cannot stall, so this "
+             & "column is LOST, not delayed.  Either widen the arrival period "
+             & "or put an elastic buffer in front of the chain."
+        severity failure;
+    end if;
+  end process;
   z_ready   <= '1' when z_have = '0' else '0';
   y_sat     <= he_sat or ye_sat;
 
