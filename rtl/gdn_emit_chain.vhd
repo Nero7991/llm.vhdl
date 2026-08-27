@@ -125,6 +125,7 @@ architecture rtl of gdn_emit_chain is
   signal he_mant   : std_logic_vector(DIM*16-1 downto 0);
   signal he_e_head : signed(7 downto 0);
   signal he_sat    : std_logic;
+  signal he_ack    : std_logic := '0';
 
   -- ---- per-block weight latch --------------------------------------------
   -- WHY THIS REGISTER EXISTS.  rmsnorm_bf reads w combinationally, and it is
@@ -199,7 +200,7 @@ begin
     generic map ( DIM => DIM )
     port map ( clk => clk, rst => rst,
                in_valid => col_valid, in_acc => col_acc, in_e_o => col_e_o,
-               in_ready => he_ready,
+               in_ready => he_ready, o_ack => he_ack,
                done => he_done, o_mant => he_mant, o_e_head => he_e_head,
                o_sat => he_sat );
 
@@ -234,9 +235,11 @@ begin
         state <= S_IDLE; head <= 0; ser_j <= 0;
         rn_start <= '0'; si_valid <= '0'; ye_valid <= '0'; ye_hfirst <= '0';
         z_have <= '0'; si_wr <= 0; si_rd <= 0; w_taken <= '0';
+        he_ack <= '0';
         consuming <= '0'; consume_cyc <= 0;
       else
         rn_start <= '0';
+        he_ack   <= '0';
         w_taken  <= '0';
 
         -- ---- latch a head's z whenever one is offered and we have none ----
@@ -300,6 +303,10 @@ begin
 
           when S_RMS =>
             if rn_done = '1' and si_rd = SI_BEATS then
+              -- Release head_emit's result register HERE and not at pickup:
+              -- rmsnorm_bf re-reads x_mant across all three of its passes, so
+              -- he_mant has to stand until the norm is finished with it.
+              he_ack <= '1';
               ser_j <= 0;
               -- Seam 4: in_e is o_exp + z_exp.  z_exp is the gate's own e_seg,
               -- because silu preserves the exponent.

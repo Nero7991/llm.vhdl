@@ -125,7 +125,20 @@ entity gdn_head_emit is
 
     -- ---- result ----------------------------------------------------------
     -- The whole head at once, which is the shape rmsnorm's x_mant takes.
+    -- Held HIGH until o_ack, not pulsed.  A one-cycle pulse was silently
+    -- lossy: the reduce runs on whatever is pending regardless of whether the
+    -- consumer is free, so a consumer busy elsewhere when the pulse landed
+    -- lost the entire head, and the unit then went idle with both banks empty
+    -- looking perfectly healthy.  Measured 2026-08-27: at one column every 2
+    -- cycles the emit chain lost 2 heads of 5 this way and deadlocked.
     done     : out std_logic;
+    -- Consumer has finished with o_mant/o_e_head and the next reduce may
+    -- start.  DEFAULTS TO '1', which reproduces the original pulse semantics
+    -- exactly, so an existing testbench that leaves it unconnected is
+    -- unaffected.  The result register must stay stable until this fires:
+    -- rmsnorm_bf re-reads x_mant across all three of its passes, so the chain
+    -- acks at rn_done, not at pickup.
+    o_ack    : in  std_logic := '1';
     o_mant   : out std_logic_vector(DIM*16-1 downto 0);
     o_e_head : out signed(7 downto 0);
     -- Raised for one cycle with done if any column saturated in sat16.  A
@@ -448,12 +461,24 @@ begin
 
           when S_DONE =>
             done_r <= '1';
-            -- Release the bank ONLY here, after the result register is
-            -- complete.  Releasing it at the end of pass C would let the fill
-            -- overwrite columns the emit pass is still draining.
-            pending(rb) <= '0';
-            rb <= 1 - rb;
-            state <= S_IDLE;
+            -- Hold here until the consumer acknowledges.  Everything below
+            -- moves to the next head, so gating it on o_ack is what turns a
+            -- lost head into back-pressure.
+            if o_ack = '1' then
+              -- Release the bank ONLY here, after the result register is
+              -- complete.  Releasing it at the end of pass C would let the
+              -- fill overwrite columns the emit pass is still draining.
+              --
+              -- Do NOT clear done_r in this branch.  The default
+              -- `done_r <= '0'` at the top of the process does it on the first
+              -- cycle state is no longer S_DONE.  An explicit clear here is a
+              -- LATER assignment to the same signal and wins, which destroys
+              -- the pulse outright whenever o_ack is tied high -- that is,
+              -- exactly the default configuration the unit testbench uses.
+              pending(rb) <= '0';
+              rb <= 1 - rb;
+              state <= S_IDLE;
+            end if;
 
         end case;
       end if;
