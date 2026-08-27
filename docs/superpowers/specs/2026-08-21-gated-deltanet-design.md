@@ -1392,6 +1392,19 @@ assumed** - the same rule the recon doc applies to everything else.
 > | stacked, W18 | 2.058e-2 | **2.555e-3** |
 > | stacked, W20 | 2.038e-2 | **2.058e-3** |
 >
+> **CORRECTED 2026-08-26 by adversarial re-measurement: the regression is
+> larger than 12% in one family.** At `rho_k = rho_v = 1.0` with `beta = 0.98`
+> the amended recipe is **1.51x worse on out_rel and 2.37x worse on state_rel**
+> (1.9912e-3 against 1.3230e-3 at T=512, seed 4), and the mean columns move the
+> same way, so it is not one unlucky head. It is `D_NORM` alone, the flag the
+> amendment sells as the win, and it persists at every T from 128 to 4096.
+> Scope: `rho = 1.0` sets `ck = sqrt(1-rho^2) = 0`, so the drive is FROZEN and
+> this is a degenerate regime; at `rho = 0.99` the same effect decays to 1.006x
+> by T=4096. Across 188 further configurations outside that family the worst
+> regression is 1.113x. The headline stacked win reproduces exactly
+> (2.2709e-2 -> 7.8751e-3). So the amendment is right and the word to avoid is
+> "strict".
+>
 > **Read it honestly: the amendment is a wash on the mild regimes and
 > occasionally marginally worse there** (eg-worst, `beta = 0.98`, `--inq-real`
 > all move the wrong way by 1-12%). It is a large win exactly where the error
@@ -1413,8 +1426,13 @@ assumed** - the same rule the recon doc applies to everything else.
 >
 > **COVERAGE GAP, and it limits every number in this section.** `gdn_err.c`
 > draws `eg` per HEAD from the weight table, one constant for the whole run:
-> `min = 0.026763916`, which is `egq = 877` in Q15. It never reaches zero, so
-> **`EG0_ED` is inert in all of the above** and the improvements are `D_NORM`
+> `min = 0.026763916` for a typical random draw of 48 heads, and
+> `0.000116787424` (`egq = 4`) over the whole 2,308-entry table. It never
+> reaches zero on the WEIGHT-TABLE paths, so **`EG0_ED` is inert in all of the
+> above** -- but NOT inert in this tool generally: `--eg` below 1.52588e-5
+> rounds `egq` to 0, and at `--eg 0` the flag changes the grid decision at
+> every one of the 387,072 mid-sequence columns. The inertness is a property of
+> the default driving data, not of the tool and the improvements are `D_NORM`
 > and `TK0_ED` alone. `ref/gdn_recur_vec.c` draws `eg` per TOKEN from the
 > measured distribution with a deliberate zero stratum, which is why the third
 > site was found there and could not have been found here. This section's bound
