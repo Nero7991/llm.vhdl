@@ -115,6 +115,25 @@ typedef struct {
     double v_scale;      /* stdev of the v channels */
     double outlier_p;    /* fraction of v channels that are 30x outliers */
     int    inq_real;     /* 1 = oracle sees true float inputs, 0 = dequantized */
+    /* ---- decay-precision isolation (added 2026-08-26) --------------------
+     * The 2026-08-25 bound could not see the decay factor's own quantization
+     * error at all: with --inq exact the oracle is fed the SAME Q15 eg the
+     * fixed path uses, so the term cancels, and --inq-real bundles it with
+     * every other input.  These two knobs isolate it and nothing else.
+     *   eg_bits        the number of fractional bits the decay factor is
+     *                  produced with (spec 1.5: Q15; the superseded EXP_ROM
+     *                  emitted Q12).  The value is still CARRIED in the Q15
+     *                  field the datapath expects -- eg_q = round(eg*2^N)
+     *                  << (15-N) -- so no shift in the recurrence changes and
+     *                  this measures the ROM's output precision, which is
+     *                  exactly what 1.5 argues about.
+     *   eg_oracle_real the oracle keeps the TRUE double eg while the fixed
+     *                  path gets the quantized one.  Every other input stays
+     *                  exact-dequantized, so the reported divergence is the
+     *                  decay term alone.  This is the control the 2026-08-25
+     *                  document's open list asks for by name. */
+    int    eg_bits;
+    int    eg_oracle_real;
     int    se_init;      /* spec 2.1.4 SE_INIT (default 0, as written) */
     int    fix_init;     /* 1 = at tk=0 exclude the (zero) state from e_u's min,
                             i.e. e_u = e_kd.  Superseded by tk0_ed/eg0_ed below,
@@ -188,6 +207,7 @@ typedef struct {
     float   sf[S_DIM][S_DIM];
     /* running metrics */
     double  err_state, nrm_state, err_out, nrm_out;
+    double  abs_state;          /* ||s_fixed - s_oracle||, absolute */
     double  errf_state, errf_out;
     int     sat_events, se_range_err;
 } head_t;
@@ -198,6 +218,7 @@ int main(int argc, char **argv)
     cfg_t c = { .T = 4096, .HV = 48, .W = 16, .rho_k = 0.0, .rho_v = 0.0,
                 .beta_fix = -1.0, .beta_mu = 0.0, .eg_fix = -1.0, .eg_layer = -1,
                 .eg_worst = 0, .v_scale = 1.0, .outlier_p = 0.0, .inq_real = 0,
+                .eg_bits = 15, .eg_oracle_real = 0,
                 .se_init = 0, .fix_init = 0,
                 .d_norm = 1, .tk0_ed = 1, .eg0_ed = 1, .seed = 12345,
                 .egfile = "gdn_eg_qwen3_27b.txt", .csv = NULL };
@@ -218,6 +239,8 @@ int main(int argc, char **argv)
         else if (ARG("--v-scale"))   c.v_scale  = atof(argv[++i]);
         else if (ARG("--outlier"))   c.outlier_p= atof(argv[++i]);
         else if (strcmp(a, "--inq-real") == 0)  c.inq_real = 1;
+        else if (ARG("--eg-bits"))   c.eg_bits  = atoi(argv[++i]);
+        else if (strcmp(a, "--eg-oracle-real") == 0) c.eg_oracle_real = 1;
         else if (strcmp(a, "--fix-init") == 0)  c.fix_init = 1;
         else if (ARG("--d-norm"))    c.d_norm   = atoi(argv[++i]) != 0;
         else if (ARG("--tk0-ed"))    c.tk0_ed   = atoi(argv[++i]) != 0;
@@ -233,6 +256,7 @@ int main(int argc, char **argv)
     }
     if (c.HV > HV_MAX) { fprintf(stderr, "heads > %d\n", HV_MAX); return 2; }
     if (c.W < 8 || c.W > 32) { fprintf(stderr, "wbits out of range\n"); return 2; }
+    if (c.eg_bits < 1 || c.eg_bits > 15) { fprintf(stderr, "eg-bits out of range (1..15)\n"); return 2; }
 
     rng_s = c.seed;
     eg_load(c.egfile);
@@ -255,10 +279,17 @@ int main(int argc, char **argv)
         for (int h = 0; h < c.HV; h++) eg_real[h] = eg_tab[(int)(rng_next() % (uint64_t)eg_n)];
     }
     for (int h = 0; h < c.HV; h++) {
-        eg_q[h] = llround(eg_real[h] * 32768.0);
+        /* produced at Q<eg_bits>, carried in the Q15 field the datapath uses */
+        int64_t coarse = llround(eg_real[h] * (double)(1 << c.eg_bits));
+        if (coarse > (1 << c.eg_bits)) coarse = (1 << c.eg_bits);
+        if (coarse < 0)                coarse = 0;
+        eg_q[h] = coarse << (15 - c.eg_bits);
         if (eg_q[h] > 32768) eg_q[h] = 32768;      /* uint16 Q15, 1.0 = 32768 */
         if (eg_q[h] < 0)     eg_q[h] = 0;
-        if (!c.inq_real) eg_real[h] = (double)eg_q[h] / 32768.0;
+        /* --eg-oracle-real keeps the oracle on the TRUE eg, so the decay
+         * quantization no longer cancels between the two number systems.
+         * Default (and every pre-2026-08-26 run) dequantizes it for both. */
+        if (!c.inq_real && !c.eg_oracle_real) eg_real[h] = (double)eg_q[h] / 32768.0;
     }
 
     /* ---- persistent driving-input generator state ------------------------ */
@@ -279,8 +310,16 @@ int main(int argc, char **argv)
     FILE *cf = NULL;
     if (c.csv) {
         cf = fopen(c.csv, "w");
+        /* The last two columns are ABSOLUTE, not relative, and they are the
+         * ones that test the "both numerator and denominator grow as sqrt(t)"
+         * mechanism the 2026-08-25 bound argued for but never measured: a flat
+         * RELATIVE error is equally consistent with a bounded absolute error
+         * and with an absolute error growing at exactly the rate the state
+         * norm grows.  Mean over heads of ||s_fixed - s_oracle|| and of
+         * ||s_oracle||. */
         fprintf(cf, "t,state_rel_mean,state_rel_max,out_rel_mean,out_rel_max,"
-                    "f32_state_rel_max,f32_out_rel_max\n");
+                    "f32_state_rel_max,f32_out_rel_max,"
+                    "state_abs_err_mean,state_nrm_mean\n");
     }
 
     printf("# gdn_err: S=%d HV=%d HK=%d W=%d T=%d\n", S_DIM, c.HV, HK, c.W, c.T);
@@ -290,6 +329,10 @@ int main(int argc, char **argv)
       for (int h = 0; h < c.HV; h++) { if (eg_real[h] < mn) mn = eg_real[h];
                                        if (eg_real[h] > mx) mx = eg_real[h]; }
       printf("  min=%.9f max=%.9f\n", mn, mx); }
+    printf("# eg_bits=%d (Q%d decay) eg_oracle=%s\n", c.eg_bits, c.eg_bits,
+           c.inq_real ? "real (--inq-real)"
+                      : c.eg_oracle_real ? "REAL (decay error isolated)"
+                                         : "quantized (decay error cancels)");
     printf("# se_init=%d fix_init=%d\n", c.se_init, c.fix_init);
     printf("# recipe: d_norm=%d tk0_ed=%d eg0_ed=%d  (%s)\n",
            c.d_norm, c.tk0_ed, c.eg0_ed,
@@ -540,6 +583,7 @@ int main(int argc, char **argv)
                 double dd = o_fx[j]-o_d[j]; eo += dd*dd; no += o_d[j]*o_d[j];
                 double df = (double)o_f[j]-o_d[j]; efo += df*df;
             }
+            H_->abs_state = sqrt(es);
             H_->err_state = ns > 0 ? sqrt(es/ns) : 0.0;
             H_->nrm_state = sqrt(ns);
             H_->errf_state = ns > 0 ? sqrt(ef/ns) : 0.0;
@@ -552,16 +596,18 @@ int main(int argc, char **argv)
         int report = (t < 8) || (t < 128 && (t+1)%16 == 0) || ((t+1)%128 == 0) || (t == c.T-1);
         if (report || cf) {
             double sm = 0, sx = 0, om = 0, ox = 0, fsx = 0, fox = 0;
+            double abs_s = 0, nrm_s = 0;
             for (int h = 0; h < c.HV; h++) {
                 sm += H[h].err_state; om += H[h].err_out;
                 if (H[h].err_state > sx) sx = H[h].err_state;
                 if (H[h].err_out  > ox) ox = H[h].err_out;
                 if (H[h].errf_state > fsx) fsx = H[h].errf_state;
                 if (H[h].errf_out  > fox) fox = H[h].errf_out;
+                abs_s += H[h].abs_state; nrm_s += H[h].nrm_state;
             }
-            sm /= c.HV; om /= c.HV;
-            if (cf) fprintf(cf, "%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
-                            t+1, sm, sx, om, ox, fsx, fox);
+            sm /= c.HV; om /= c.HV; abs_s /= c.HV; nrm_s /= c.HV;
+            if (cf) fprintf(cf, "%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
+                            t+1, sm, sx, om, ox, fsx, fox, abs_s, nrm_s);
             if (report)
                 printf("%8d %14.4e %14.4e %14.4e %14.4e %14.4e\n", t+1, sm, sx, om, ox, fox);
         }
