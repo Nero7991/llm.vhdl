@@ -661,4 +661,66 @@ begin
     wait;
   end process;
 
+  -- ======================================================================
+  -- ORDERING GUARD (`ord_chk`).  A SCALAR THAT QUALIFIES A STREAM MUST BE
+  -- PUBLISHED IN A STATE STRICTLY EARLIER THAN THE STATE THAT FIRST RAISES
+  -- THAT STREAM'S VALID.
+  --
+  -- The defect shape this catches was found in `gdn_conv` on 2026-08-27
+  -- (`docs/debugging/2026-08-27_gdn-conv-eseg-published-late.md`): the segment
+  -- exponent was assigned in the unit's FINAL state, so every data beat it
+  -- described had already been handed over.  The VALUE was right and only its
+  -- TIME was wrong, and every existing testbench sampled the scalar at `done`,
+  -- which is exactly the instant at which a late scalar looks correct.
+  --
+  -- Here the scalars are `job_w_exp`, `job_out_shift` and `job_const_exp`.
+  -- They are CONTINUOUS decodes of `lv_w`, which is a concurrent alias of
+  -- `dw(live_bank)`, and `live_bank` is written in `S_ISSUE` on the SAME
+  -- clocked assignment that raises `jvalid_r`.  So the decode is already the
+  -- new descriptor on the FIRST cycle of `job_valid`.  That is the property
+  -- asserted below, and it is not readable off the port map, which is why it
+  -- is asserted rather than argued.
+  --
+  -- The existing per-unit `job_digest` check is stronger in one direction (it
+  -- compares every cycle) and weaker in another (it is gated on `job_valid`,
+  -- so it stops one cycle before `job_cmp`, and it is a digest that names no
+  -- field).  This guard closes that last cycle and names the three scalars.
+  -- ======================================================================
+  ord_chk : process(clk) is
+    variable seen : boolean := false;
+    variable at_v : std_logic_vector(95 downto 0) := (others => '0');
+    -- to_string, NOT integer'image(to_integer(...)).  On a unit that publishes
+    -- the decode late the scalar can be metavalued at the first beat, and
+    -- to_integer then raises INSIDE the report expression: the run dies in
+    -- numeric_std with no message at all.  A guard whose failure message
+    -- cannot be built reports the wrong thing.
+    impure function sc return std_logic_vector is
+    begin
+      return std_logic_vector(job_w_exp) & std_logic_vector(job_out_shift)
+           & std_logic_vector(job_const_exp);
+    end function;
+  begin
+    if rising_edge(clk) then
+      if job_issue = '1' then seen := false; end if;
+      if job_valid = '1' and not seen then
+        seen := true;
+        at_v := sc;
+      end if;
+      if job_cmp = '1' then
+        assert seen
+          report "tb_seq_desc_fetch: a job completed with no cycle of "
+               & "job_valid at all -- the shadow was never published"
+          severity failure;
+        assert at_v = sc
+          report "tb_seq_desc_fetch: a job scalar CHANGED after the first "
+               & "cycle of job_valid -- " & to_string(at_v)
+               & " at the first job_valid, " & to_string(sc)
+               & " at job_cmp.  w_exp/out_shift/const_exp qualify every beat "
+               & "the started unit produces, so they must be final before "
+               & "job_valid rises, not after."
+          severity failure;
+      end if;
+    end if;
+  end process;
+
 end architecture;

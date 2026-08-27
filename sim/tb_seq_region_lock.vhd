@@ -547,6 +547,48 @@ begin
       wait until rising_edge(clk);
       cmp_valid <= '0';
 
+      -- ---- ORDERING GUARD (`ord_chk`, inline) --------------------------
+      -- A SCALAR THAT QUALIFIES A STREAM MUST BE PUBLISHED NO LATER THAN THE
+      -- VALID THAT HANDS THE STREAM ON.  The defect shape is the one found in
+      -- `gdn_conv` on 2026-08-27: the value is right and only its TIME is
+      -- wrong, and a readback taken a cycle or more after the commit -- which
+      -- is what the full sweep below does -- cannot see it.
+      --
+      -- The commit landed on the edge this `wait` just returned from, so the
+      -- capture must be readable NOW, in the very first cycle after it.
+      -- `exp_rd_data` / `exp_rd_valid` are combinational reads of `exp_cap` /
+      -- `exp_vld`, both written on that same edge, so the correct unit answers
+      -- immediately.  A registered read port would answer with whatever slot
+      -- the address held last, which is the previous sweep's last slot.
+      --
+      -- Not a separate `ord_chk` PROCESS, unlike the two sibling testbenches:
+      -- `exp_rd_region` / `exp_rd_seg` already have a driver in this process,
+      -- and a second driver on an unresolved signal is an elaboration error.
+      if PLAN(s).prod = '1' and PLAN(s).dst < NREG then
+        exp_rd_region <= to_unsigned(PLAN(s).dst, 8);
+        exp_rd_seg    <= to_unsigned(PLAN(s).seg, 2);
+        -- 1 ns past the edge, not at it: a `wait until rising_edge(clk)`
+        -- resumes in the SAME delta as the edge, so the address assignment
+        -- above has not propagated yet and the read would be the old slot's.
+        wait for 1 ns;
+        if exp_rd_valid /= '1' then
+          err("region " & integer'image(PLAN(s).dst) & " segment "
+            & integer'image(PLAN(s).seg) & " reads INVALID in the first cycle "
+            & "after its own commit (step " & integer'image(s) & ").  The "
+            & "capture is published later than the instant it is claimed for.");
+        elsif exp_rd_data /= to_signed(((s * 7) mod 61) - 30, EXP_W) then
+          -- to_string, NOT integer'image(to_integer(...)): on a late-publishing
+          -- port the first read is metavalued and to_integer raises INSIDE the
+          -- report expression, killing the run with no message.
+          err("region " & integer'image(PLAN(s).dst) & " segment "
+            & integer'image(PLAN(s).seg) & " reads " & to_string(exp_rd_data)
+            & " in the first cycle after its own commit at step "
+            & integer'image(s) & ", want "
+            & to_string(to_signed(((s * 7) mod 61) - 30, EXP_W))
+            & ".  The exponent is published after the valid that claims it.");
+        end if;
+      end if;
+
       -- ---- the write TAIL: strobes that outlive the job ----------------
       -- "A unit's `done` does NOT imply its AXI transactions have retired"
       -- (D section 8.2).  Every one of these must be dropped AND reported.

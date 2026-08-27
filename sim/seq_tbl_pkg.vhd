@@ -110,14 +110,11 @@ package seq_tbl_pkg is
     dst_off    : natural := 0;
     n_rows     : natural := 0;
     n_cols     : natural := 0;
-    w_exp      : integer := 0;
-    out_shift  : integer := 0;
     out_mode   : natural := 0;
     ordinal    : natural := 0;
     nsub_w     : natural := 0;
     nsub_s     : natural := 0;
-    const_base : natural := 0;
-    const_exp  : integer := 0) return desc_t;
+    const_base : natural := 0) return desc_t;
 
   function build_table return tbl_t;
 
@@ -163,14 +160,11 @@ package body seq_tbl_pkg is
     dst_off    : natural := 0;
     n_rows     : natural := 0;
     n_cols     : natural := 0;
-    w_exp      : integer := 0;
-    out_shift  : integer := 0;
     out_mode   : natural := 0;
     ordinal    : natural := 0;
     nsub_w     : natural := 0;
     nsub_s     : natural := 0;
-    const_base : natural := 0;
-    const_exp  : integer := 0) return desc_t is
+    const_base : natural := 0) return desc_t is
     variable d : desc_t := (others => (others => '0'));
   begin
     d(0)(7 downto 0)   := std_logic_vector(to_unsigned(opcode, 8));
@@ -180,8 +174,9 @@ package body seq_tbl_pkg is
     d(0)(63 downto 32) := std_logic_vector(to_unsigned(dst_off, 32));
     d(1)(31 downto 0)  := std_logic_vector(to_unsigned(n_rows, 32));
     d(1)(63 downto 32) := std_logic_vector(to_unsigned(n_cols, 32));
-    d(2)(31 downto 0)  := std_logic_vector(to_signed(w_exp, 32));
-    d(2)(63 downto 32) := std_logic_vector(to_signed(out_shift, 32));
+    -- d(2) is w_exp | out_shift and d(4)(63:32) is const_exp.  All three are
+    -- STAMPED BY `emit` from the step index, not passed in here; see the
+    -- comment there.
     d(3)(7 downto 0)   := std_logic_vector(to_unsigned(out_mode, 8));
     d(3)(15 downto 8)  := std_logic_vector(to_unsigned(ordinal, 8));
     d(3)(31 downto 16) := std_logic_vector(to_unsigned(nsub_w, 16));
@@ -189,7 +184,6 @@ package body seq_tbl_pkg is
     d(3)(55 downto 48) := std_logic_vector(to_unsigned(src2, 8));
     -- d(3)(63 downto 56) is PAD and stays 0x00.
     d(4)(31 downto 0)  := std_logic_vector(to_unsigned(const_base, 32));
-    d(4)(63 downto 32) := std_logic_vector(to_signed(const_exp, 32));
     -- d(5), d(6) are the codebook, zero unless cb_load; d(7) is PAD.
     return d;
   end function;
@@ -203,10 +197,36 @@ package body seq_tbl_pkg is
     variable nsw : natural := 29;   -- weight bases per A job, D section 2.2-J
     variable nss : natural := 4;    -- scale bases per A job
 
+    -- THE THREE SCALARS THAT QUALIFY A JOB'S OUTPUT ARE STAMPED FROM THE STEP
+    -- INDEX, and that is not decoration.  `w_exp`, `out_shift` and
+    -- `const_exp` are published by `seq_desc_fetch` alongside `job_valid` and
+    -- are read by the started unit for the WHOLE job, so they are exactly the
+    -- gdn_conv `e_seg` shape one level up: a scalar that qualifies a stream.
+    -- They were all identically ZERO in the first version of this table, and a
+    -- zero that is shared by all 491 steps makes every value check on them
+    -- vacuous -- a stale scalar, a scalar published one cycle late, and a
+    -- scalar that was never driven are all indistinguishable from the correct
+    -- one.  `tb_seq_desc_fetch`'s `ord_chk` guard passed against a
+    -- deliberately broken DUT for precisely that reason
+    -- (`sim/ord_teeth_seq.sh`, break D1b).
+    --
+    -- Stamped so that a stale or shared value is a WRONG NUMBER and not merely
+    -- a repeat, which is the discipline `tb_seq_region_lock` already uses for
+    -- `cmp_y_exp`.  The three sequences are coprime-ish and signed, so no two
+    -- adjacent steps agree on all three, and none is a function of the others.
+    -- Nothing in the gateware range-checks these fields, so any value is legal
+    -- table content.
     procedure emit(dd : desc_t) is
+      -- NOT `d`: `build_table` already has a `variable d : desc_t` and VHDL is
+      -- case-insensitive, so that name would hide it for the whole procedure
+      -- (GHDL says so with -Whide, one line above wherever it next goes wrong).
+      variable ds : desc_t := dd;
     begin
+      ds(2)(31 downto 0)  := std_logic_vector(to_signed(((p * 7) mod 61) - 30, 32));
+      ds(2)(63 downto 32) := std_logic_vector(to_signed((p mod 23) - 11, 32));
+      ds(4)(63 downto 32) := std_logic_vector(to_signed(((p * 5) mod 41) - 20, 32));
       for w in 0 to 7 loop
-        t(p*8 + w) := dd(w);
+        t(p*8 + w) := ds(w);
       end loop;
       p := p + 1;
     end procedure;

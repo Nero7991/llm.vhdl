@@ -1060,4 +1060,54 @@ begin
     wait;
   end process;
 
+  -- ======================================================================
+  -- ORDERING GUARD (`ord_chk`).  Same rule as `tb_seq_desc_fetch`'s, at this
+  -- unit's seam: the captured y_exp is the scalar, and `cmp_valid` is the
+  -- instant `seq_region_lock` latches it against a region's data.
+  --
+  -- TWO separate obligations, and only the first has teeth against the
+  -- gdn_conv defect shape:
+  --
+  --   1. ORDER.  `y_exp_taken` must pulse STRICTLY BEFORE `cmp_valid`, never
+  --      at or after it.  A unit that captured at `job_cmp` instead of at the
+  --      first `done` would update its register on the SAME edge as
+  --      `cmp_valid`, so the lock latches the PREVIOUS job's exponent while
+  --      the pulse arrives one cycle late.  Checking only the VALUE cannot
+  --      see this: the stale value the lock takes and the value the guard
+  --      later reads back are then the same wrong number.
+  --   2. VALUE.  Between the capture and the commit the scalar must not move.
+  --      This is the a3 freeze, and it is what mutation O3 attacks.
+  -- ======================================================================
+  ord_chk : process(clk) is
+    variable seen  : boolean := false;
+    variable post  : boolean := false;
+    variable at_tk : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    if rising_edge(clk) then
+      if job_issue = '1' then seen := false; post := false; end if;
+      if y_exp_taken = '1' then
+        assert not post
+          report "tb_seq_opdec: y_exp_taken pulsed AFTER cmp_valid -- the "
+               & "exponent was captured at or after the instant the lock "
+               & "latched it, so the region is qualified by the PREVIOUS "
+               & "job's scale.  Held value at the pulse " & to_string(y_exp_held)
+          severity failure;
+        seen  := true;
+        at_tk := y_exp_held;
+      end if;
+      if cmp_valid = '1' then
+        if seen then
+          assert at_tk = cmp_y_exp
+            report "tb_seq_opdec: the captured exponent CHANGED between "
+                 & "y_exp_taken and cmp_valid -- " & to_string(at_tk)
+                 & " at the capture, " & to_string(cmp_y_exp)
+                 & " at the commit.  The scalar that qualifies a region's "
+                 & "data must be final before the lock latches it."
+            severity failure;
+        end if;
+        post := true;
+      end if;
+    end if;
+  end process;
+
 end architecture;
