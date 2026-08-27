@@ -79,6 +79,16 @@ static int32_t sigma_q15_from_q12(int32_t z_q12)
     return (int32_t)r;
 }
 
+/* ---------------------------------------------------------------------------
+ * Everything below is the STANDALONE generator: its RNG, its case shapes and
+ * its main().  It is guarded so that ref/gdn_emit_chain_vec.c can #include
+ * this file to reuse the verified core above rather than transcribing it.
+ * Transcribing is exactly how a golden drifts from the unit it certifies, and
+ * this project has a documented case of that (the l2norm collapse).
+ * Defining GDN_CHAIN_INCLUDE keeps the core and drops the harness.
+ * ------------------------------------------------------------------------- */
+#ifndef GDN_CHAIN_INCLUDE
+
 static uint64_t rs;
 static uint32_t rnd(void){ rs ^= rs<<13; rs ^= rs>>7; rs ^= rs<<17; return (uint32_t)(rs>>32); }
 
@@ -175,3 +185,5 @@ int main(int argc, char **argv)
     fprintf(stderr, "  Q12 saturations: %ld   nonzero flushed to zero: %ld\n", nsat, nz);
     return 0;
 }
+
+#endif  /* GDN_CHAIN_INCLUDE */

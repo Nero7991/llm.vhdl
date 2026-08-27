@@ -60,6 +60,19 @@ static double EPS = 1.0e-6;
 static int     E_EPS;
 static int64_t M_EPS;
 
+/* Resolving the epsilon is ELABORATION work, and it used to live inline in
+ * main().  That made it invisible to any other caller: ref/gdn_emit_chain_vec.c
+ * includes this file for its core, main() is guarded out, and M_EPS stayed 0 --
+ * an epsilon of ZERO, silently.  The chain's double oracle caught it as a
+ * 1.6e11 LSB divergence, which is the whole reason that oracle exists; without
+ * it the chain would have emitted confidently wrong goldens.
+ * Any caller of rmsnorm_bf_int must call this first. */
+static void bf_resolve_eps(void)
+{
+    E_EPS = 30 - (int)floor(log2(EPS));
+    M_EPS = (int64_t)llround(ldexp(EPS, E_EPS));
+}
+
 /* The seed ROM, copied verbatim from rtl/fixed_luts_pkg.vhd.  It is COPIED
  * rather than shared through a header on purpose: the point of this file is to
  * be an independent transcription of the same specification, and a shared
@@ -371,6 +384,16 @@ static void rmsnorm_bf_dbl(const int16_t *xm, int xe,
 }
 
 /* ------------------------------------------------------------------------ */
+/* ---------------------------------------------------------------------------
+ * Everything below is the STANDALONE generator: its RNG, its case shapes and
+ * its main().  It is guarded so that ref/gdn_emit_chain_vec.c can #include
+ * this file to reuse the verified core above rather than transcribing it.
+ * Transcribing is exactly how a golden drifts from the unit it certifies, and
+ * this project has a documented case of that (the l2norm collapse).
+ * Defining GDN_CHAIN_INCLUDE keeps the core and drops the harness.
+ * ------------------------------------------------------------------------- */
+#ifndef GDN_CHAIN_INCLUDE
+
 static uint64_t rs;
 static uint32_t rnd(void){ rs ^= rs<<13; rs ^= rs>>7; rs ^= rs<<17; return (uint32_t)(rs>>32); }
 
@@ -596,8 +619,7 @@ int main(int argc, char **argv)
     EPS       = (argc > 6) ? atof(argv[6]) : 1.0e-6;
     if (rs == 0) rs = 1;
 
-    E_EPS = 30 - (int)floor(log2(EPS));
-    M_EPS = (int64_t)llround(ldexp(EPS, E_EPS));
+    bf_resolve_eps();
     if (M_EPS > 2147483647LL) {
         fprintf(stderr, "rmsnorm_bf_vec: M_EPS does not fit a VHDL integer\n");
         return 3;
@@ -781,3 +803,5 @@ int main(int argc, char **argv)
      *   is zeros either way. */
     return 0;
 }
+
+#endif  /* GDN_CHAIN_INCLUDE */
