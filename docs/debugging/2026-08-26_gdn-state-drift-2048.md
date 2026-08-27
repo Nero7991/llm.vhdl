@@ -636,3 +636,76 @@ Appended here rather than by editing that file.
 4. **§2.1.1**: record that `exp_q`'s Q15 output is now the tightest format in
    the recurrence, so that any future format review starts there rather than at
    the state width.
+
+## CORRECTION 2026-08-26 (same day): the "cheap insurance" withdrawal is itself withdrawn
+
+This document withdraws §1.5's "Q15 is cheap insurance, not a requirement" on
+the strength of the decay measurement. **That is a misattribution.** Read §1.5
+again with the sentence boundaries:
+
+> **Why Q15 for the decay factor is worth a table regeneration:** `exp(g)`
+> multiplies the *entire persistent state* once per token. ... Q15 cuts it 8x
+> for the cost of regenerating a 257-entry ROM. **beta gets the same treatment
+> for uniformity** (it scales the correction term, where error is
+> self-limiting -- Q15 is cheap insurance, not a requirement; §3 may argue it
+> back down with an error analysis).
+
+The parenthetical sits inside the clause about **beta**, not the decay. So this
+document's decay result does not touch it. Worse, beta's precision could not
+have been measured by the work above at all: no `--beta-bits` flag existed, and
+beta's oracle shares the quantized value by default (`betad[h] = c.inq_real ? b
+: (double)bq / 65536.0`), which is the *identical* cancellation that hid the
+decay term. `--inq-real` bundles beta with k, q and v, so it cannot isolate it
+either.
+
+### So it was measured, with the flags that were missing
+
+Added `--beta-bits` and `--beta-oracle-real`, mirroring the decay pair. The
+edited binary is byte-identical to the pre-edit one on four existing configs
+including `--eg-bits 12 --eg-oracle-real`. Isolated, 512 tokens, oracle keeps
+the true beta:
+
+| `beta_bits` | worst `out_rel` | vs Q16 |
+|---|---|---|
+| 16 (shipped) | 4.5522e-04 | 1.00x |
+| 15 | 4.5649e-04 | 1.00x |
+| 14 | 4.6820e-04 | 1.03x |
+| 12 | 5.0690e-04 | **1.11x** |
+| 10 | 8.0495e-04 | 1.77x |
+| 8 | 3.2939e-03 | 7.24x |
+
+against the decay at the same token count:
+
+| `eg_bits` | worst `out_rel` |
+|---|---|
+| 15 | 2.2327e-03 |
+| 12 | 2.1912e-02 (**9.8x**) |
+
+**§1.5 is CONFIRMED, not withdrawn.** Dropping beta from Q16 to Q12 costs 11%
+more error; dropping the decay from Q15 to Q12 costs 9.8x. That is precisely
+the asymmetry §1.5 predicted and gave the reason for: the decay multiplies the
+entire persistent state every token and compounds, while beta scales the
+correction term where the error is self-limiting. The error analysis §1.5
+invited has now been done, and it comes out the way §1.5 guessed.
+
+What this document DID establish about the decay stands unchanged, and it is
+the more important half: the decay's Q15 is a requirement, Q12 fails, and the
+oracle-cancellation defect that hid this was real. Verified independently at
+t = 256, where the old oracle gives **byte-identical** results at Q15 and Q12
+(4.3513e-04 both, the term cancelling exactly) against 1.6145e-03 and
+1.4432e-02 with a true-double oracle.
+
+### One more discrepancy, not resolved here
+
+The reference quantizes beta at **Q16** (`llround(b * 65536.0)`, `uint16`), not
+the Q15 §1.5 describes. That is the spec audit's finding F8 and is untouched by
+this work; `beta_bits = 16` is the shipped behaviour and 15 is what the spec
+text says.
+
+### The trap, stated generally
+
+**A finding about one quantity was applied to a sentence about another because
+they share a number.** Both are "Q15", both are in §1.5, and both are about
+quantization -- so the decay result read as if it settled the beta claim. It
+does not, and the two go in opposite directions. Before withdrawing a spec
+sentence, check which noun its clause attaches to.

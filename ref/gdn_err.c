@@ -134,6 +134,22 @@ typedef struct {
      *                  document's open list asks for by name. */
     int    eg_bits;
     int    eg_oracle_real;
+    /* ---- beta-precision isolation (added 2026-08-26, same class) ---------
+     * Spec 1.5 says beta "gets the same treatment for uniformity (it scales
+     * the correction term, where error is self-limiting -- Q15 is cheap
+     * insurance, not a requirement; section 3 may argue it back down with an
+     * error analysis)".  That error analysis had never been possible: beta's
+     * oracle shares the QUANTIZED value by default, exactly the cancellation
+     * that hid the decay term, and --inq-real bundles beta with k, q and v so
+     * it cannot be isolated either.  These two knobs isolate beta alone, so
+     * the sentence can be tested rather than inherited.
+     *
+     * Note the reference quantizes beta at Q16 (uint16, b * 65536), not the
+     * Q15 section 1.5 describes.  That discrepancy is the spec audit's F8 and
+     * is NOT resolved here; beta_bits counts fractional bits, so beta_bits=16
+     * is the shipped behaviour and 15 is what the spec text says. */
+    int    beta_bits;
+    int    beta_oracle_real;
     int    se_init;      /* spec 2.1.4 SE_INIT (default 0, as written) */
     int    fix_init;     /* 1 = at tk=0 exclude the (zero) state from e_u's min,
                             i.e. e_u = e_kd.  Superseded by tk0_ed/eg0_ed below,
@@ -219,6 +235,7 @@ int main(int argc, char **argv)
                 .beta_fix = -1.0, .beta_mu = 0.0, .eg_fix = -1.0, .eg_layer = -1,
                 .eg_worst = 0, .v_scale = 1.0, .outlier_p = 0.0, .inq_real = 0,
                 .eg_bits = 15, .eg_oracle_real = 0,
+                .beta_bits = 16, .beta_oracle_real = 0,
                 .se_init = 0, .fix_init = 0,
                 .d_norm = 1, .tk0_ed = 1, .eg0_ed = 1, .seed = 12345,
                 .egfile = "gdn_eg_qwen3_27b.txt", .csv = NULL };
@@ -241,6 +258,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--inq-real") == 0)  c.inq_real = 1;
         else if (ARG("--eg-bits"))   c.eg_bits  = atoi(argv[++i]);
         else if (strcmp(a, "--eg-oracle-real") == 0) c.eg_oracle_real = 1;
+        else if (ARG("--beta-bits")) c.beta_bits = atoi(argv[++i]);
+        else if (strcmp(a, "--beta-oracle-real") == 0) c.beta_oracle_real = 1;
         else if (strcmp(a, "--fix-init") == 0)  c.fix_init = 1;
         else if (ARG("--d-norm"))    c.d_norm   = atoi(argv[++i]) != 0;
         else if (ARG("--tk0-ed"))    c.tk0_ed   = atoi(argv[++i]) != 0;
@@ -257,6 +276,7 @@ int main(int argc, char **argv)
     if (c.HV > HV_MAX) { fprintf(stderr, "heads > %d\n", HV_MAX); return 2; }
     if (c.W < 8 || c.W > 32) { fprintf(stderr, "wbits out of range\n"); return 2; }
     if (c.eg_bits < 1 || c.eg_bits > 15) { fprintf(stderr, "eg-bits out of range (1..15)\n"); return 2; }
+    if (c.beta_bits < 1 || c.beta_bits > 16) { fprintf(stderr, "beta-bits out of range (1..16)\n"); return 2; }
 
     rng_s = c.seed;
     eg_load(c.egfile);
@@ -400,11 +420,27 @@ int main(int argc, char **argv)
         for (int h = 0; h < c.HV; h++) {
             double b = c.beta_fix >= 0.0 ? c.beta_fix
                                          : 1.0/(1.0 + exp(-(c.beta_mu + rng_gauss())));
-            int64_t bq = llround(b * 65536.0);
+            /* Produced with beta_bits fractional bits, then carried in the
+             * Q16 field the datapath expects, so no shift downstream changes
+             * and this measures the PRODUCER's precision -- which is what
+             * section 1.5's claim is about. */
+            int64_t bq;
+            if (c.beta_bits >= 16) {
+                bq = llround(b * 65536.0);
+            } else {
+                double sc = (double)(1LL << c.beta_bits);
+                bq = llround(b * sc) << (16 - c.beta_bits);
+            }
             if (bq > 65535) bq = 65535;
             if (bq < 0)     bq = 0;              /* uint16 Q16 */
             betaq[h] = bq;
-            betad[h] = c.inq_real ? b : (double)bq / 65536.0;
+            /* beta_oracle_real keeps the TRUE beta in the oracle while the
+             * fixed path gets the quantized one, so the divergence reported is
+             * beta's own quantization and nothing else.  Without it the two
+             * number systems share the same quantized beta and the term
+             * cancels exactly -- the identical blindness that hid the decay. */
+            betad[h] = (c.inq_real || c.beta_oracle_real) ? b
+                     : (double)bq / 65536.0;
         }
 
         /* ---------------- the recurrence, per head ------------------------- */
