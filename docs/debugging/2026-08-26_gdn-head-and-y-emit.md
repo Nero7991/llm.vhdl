@@ -25,8 +25,29 @@ site 12 (per head, over 128 columns)      site 13 (per block, over 24 heads)
   e_head  = e_h - sh_h                      y_exp   = e_y_raw - sh
 ```
 
-Both measured DSP-cheap and comfortably above B's 299.04 MHz. Site 12 is
-**0 DSP, 1 BRAM36, 1199 LUT, 440.9 MHz** at DIM=128.
+Both measured DSP-cheap and comfortably above B's 299.04 MHz:
+
+| unit | config | DSP | LUT | FF | BRAM36 | fmax |
+|---|---|---|---|---|---|---|
+| `gdn_head_emit` | DIM=128 | **0** | 1199 | 2328 | 1.0 | 440.92 MHz |
+| `gdn_y_emit` | HEADS=24, DIM=128 | **1** | 639 | 316 | 4.0 | 488.76 MHz |
+
+One DSP between them, for the site-13 gated product, which is the whole
+arithmetic cost of both emit stages. That matters because DSP is the binding
+whole-die constraint at 90.5-91.9% of 2,880.
+
+`gdn_y_emit` across head counts, since the single-card fallback needs 48:
+
+```
+RESULT HEADS=8  dsp=1 lut=622 ff=305 bram=1.0 wns=1.254 fmax=488.76
+RESULT HEADS=24 dsp=1 lut=639 ff=316 bram=4.0 wns=1.254 fmax=488.76
+RESULT HEADS=48 dsp=1 lut=666 ff=324 bram=6.5 wns=1.254 fmax=488.76
+```
+
+DSP and timing are flat in HEADS and only the product store grows, which is
+what a scalar unit with one multiply and an N-entry buffer should do. The 4.0
+BRAM36 at 24 heads is the predicted 98,304 bits (3,072 x 32) plus the
+granularity of the primitive.
 
 ## The procedure
 
@@ -181,9 +202,6 @@ says `(-32768)^2`.
 
 ## Open, not yet answered
 
-- **Site 13's OOC is not in yet.** DSP should be 1 or 2 (one int16 x int16),
-  BRAM about 3 RAMB36 at 24 x 128. Until measured, the cost is asserted, not
-  known.
 - **Neither unit has been integrated.** Site 12's input is
   `gdn_recur_pipe.o_res_valid`, site 13's inputs are `rmsnorm_bf` and
   `gdn_silu` outputs, and no top-level wires them together. The handshakes are
