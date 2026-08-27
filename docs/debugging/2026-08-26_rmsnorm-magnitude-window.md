@@ -427,3 +427,89 @@ fixed shift, a divide-by-N and a clamp for two barrel shifts and an add.
   swallowed-edit trap above, an `assert s.count('KLO') >= 4` was added to catch
   it -- but the symbol occurs three times, so a correct edit was rejected and
   re-debugged. Guard on `!= original`, not on a hand-counted occurrence count.
+
+## VERIFIED 2026-08-26 (later still): and the assert I wrote was wrong
+
+`rmsnorm_bf` is now bit-exact against `ref/rmsnorm_bf_vec.c` on 200 cases x 128
+elements plus every `o_exp`, across 20 generic combinations: LANES {1,2,4,8,16,
+32}, Q {8,12,16,20,22,24}, N {64,128,256,512}, eps {1e-5, 1e-6, 5e-7, 1e-8}.
+`tb_rmsnorm_rs` still passes unchanged, so `rmsnorm_rs` is unregressed.
+
+Double oracle, two paths sharing no helpers:
+
+| metric | value |
+|---|---|
+| worst relative gain error, **model range** | **1.80e-5** |
+| worst output error vs double | 0.77 LSB |
+| worst relative gain error, whole sweep incl. out-of-envelope probes | 2.35e-3 at `log2(rms) = +4.4` |
+| eps-dominated cases in the vectors | 67% (the model's own figure is 77.4%) |
+
+The 2.35e-3 is the `2^-Q` output grid of `inv32` at small gains, not the
+block-floating recipe. Same separation as before, and 1.80e-5 over the model
+range is better than the design study's 1.33e-4 because that sweep was coarser.
+
+### The defect writing the verification found: an off-by-one in MY assert
+
+`S_INV1` asserted
+
+```vhdl
+assert S >= 0 and S < shift_left(to_signed(1, 64), 30 + LOG2N)
+```
+
+written from a comment reading `S <= N * 32767^2 < 2^(30+log2 N)`. The input is
+int16, so the largest square is not `32767^2` but `(-32768)^2 = 2^30` **exactly**,
+and an all-`-32768` vector attains `N * 2^30 = 2^(30+log2 N)` on the nose. The
+strict `<` therefore fails on legal input. Now `<=`.
+
+Three things about this are worth keeping:
+
+- **The datapath was never wrong.** Only the check was, and a check that fires
+  on legal input is a unit that cannot ship.
+- **`tb_rmsnorm_rs` already drives `-32768`.** It never caught this because the
+  bound it ran against was the old `2^46`, 512x looser, which swallowed the
+  off-by-one. Replacing a loose bound with a tight one is what EXPOSED the
+  error in the tight one; the loose bound was hiding a real edge.
+- **It came from a comment, not from the arithmetic.** I transcribed
+  `N * 32767^2` from prose instead of deriving the bound. Asymmetric integer
+  ranges are exactly where prose and arithmetic diverge.
+
+Re-mutating `<=` back to `<` is caught by the testbench.
+
+### Mutation testing: 14 of 18 caught, and the 4 survivors are understood
+
+Caught includes a constant rsqrt seed and a dropped Newton iteration -- the two
+that `tb_rmsnorm_rs` needed a whole magnitude sweep to see -- plus
+`rq_d := rq_p - Q` (i.e. reverting to `rmsnorm_rs`'s fixed grid, the entire
+point of the unit), reversed alignment direction, `e_mean` sign, missing
+1/sqrt2 fold, `shift_total` off by one, unsigned max, `o_exp` off by one, ROM
+index shift, emit bias, and the MSB scan.
+
+The survivors are not testbench weaknesses:
+
+- **The `S = 0` guards are invisible at the output ports.** `S = 0` means every
+  `xm` is zero, so every `raw` is zero and the output is all zeros with
+  `shift_total = 0` no matter what `inv32` became. Deleting all three guards
+  passes the comparison at any `x_exp`. Closed the only way available: a case
+  at `xe = -12` where the ungated path truncates `M_EPS` to zero and trips the
+  `S_SEED2` Q30 assert. **The handle is the assert, not the compare.**
+- **Three one-LSB mutations survive at every Q tested** (rounding the alignment,
+  rounding the S renormalisation, moving `M_EPS_C` by one). A `2^-30`
+  perturbation of a 31-bit mean mantissa cannot resolve through a 31-bit
+  `inv32`. This is the measured confirmation of the truncation decision above,
+  not a gap.
+
+### Still NOT fixed, stated plainly
+
+**The upper rail is unchanged.** `inv32` underflows to zero at
+`log2(rms) = Q`, i.e. `+12` at Q=12. That is 12.5 octaves above the model's
+measured max of `2^-0.54`, so it is not reachable on this model, but
+`rmsnorm_bf` fixed the low end and the epsilon and did **not** move this.
+
+Structurally dead branches, argued rather than merely unreached: the `-32768`
+emit rail (`shift_total` puts `max_raw >> st` inside `[2^14, 2^15)` and the
+bias is non-negative); the `inv32` low clamp (all inputs non-negative);
+`rq_E > 32` (needs Q > 52, since `e_out <= E_EPS` bounds `rq_E <= Q - 20` at
+eps = 1e-6). `rq_E >= 0` and the `inv32` high clamp are NOT dead -- they appear
+at Q >= 20 and Q >= 22 and are covered by the generic sweep, not by the default
+vectors. The generator prints a branch-coverage table naming what it did not
+reach, so this list stays honest as the vectors change.
