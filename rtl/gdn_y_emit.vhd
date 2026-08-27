@@ -56,9 +56,15 @@
 --
 -- COST.  Pass A is free: it consumes elements at the rate the norm and gate
 -- produce them, and its multiply is the only DSP in the unit.  Passes B and C
--- are HEADS*DIM cycles each, so ~6,150 per token at 24 x 128, against a state
--- sweep of 589,824 cycles per token.  That is ~1.0%, which is why this unit is
--- scalar and has no LANES generic.
+-- are HEADS*DIM cycles each, so **~6,150 cycles per GDN layer** at 24 x 128
+-- (this unit runs ONCE per layer, spanning all heads, not once per head).
+--
+-- Deliberately NOT stated as a percentage of the state sweep; see the same
+-- note in rtl/gdn_head_emit.vhd.  The spec's 589,824 figure is quoted for two
+-- different LANES values in two places and its per-layer formula uses H = 16,
+-- the stale KEY head count, so a percentage against it would be arithmetic on
+-- a disputed number.  The design conclusion is unaffected: this unit is
+-- scalar because ~6,150 cycles per layer is small against any candidate.
 --
 -- STRUCTURE.  One operation per state -- never two of {barrel shift, wide add,
 -- wide compare, bus mux, multiply} in series.  Expressed as pipeline stages,

@@ -200,13 +200,38 @@ The general lesson, which cost two defects in one day: **derive the bound from
 the type, do not transcribe it from prose.** Prose says `N * 32767^2`; the type
 says `(-32768)^2`.
 
+## A number I quoted that I could not check
+
+Both unit headers originally stated the cost as a percentage of B's state
+sweep ("~1.1%" and "~1.0%" of 589,824 cycles per token). That percentage is
+withdrawn, because the denominator does not survive checking:
+
+- Section 2.6 derives `cycles/layer = S*S*H / LANES = 262,144 / LANES` and
+  quotes **589,824/token at LANES = 8**.
+- Section 3.1's table quotes **589,824 at LANES = 32**.
+
+Those cannot both hold. Worse, `262,144 = 128 * 128 * 16` uses **H = 16**,
+which is the stale KEY head count. The state is per VALUE head, and there are
+24 per card, giving `128 * 128 * 24 = 393,216`. This is the same 16-versus-24
+confusion already corrected in two places in the spec, except that here it is
+inside a CYCLE MODEL, where it understates the sweep by 1.5x.
+
+The headers now quote cycles per head and per layer, which are measurable and
+not in dispute: **~270 per head** for `gdn_head_emit` (so ~6,480 per layer at
+24 heads) and **~6,150 per layer** for `gdn_y_emit`, which runs once per layer
+across all heads rather than once per head.
+
+The design conclusion is unaffected either way: both units are scalar because
+their cost is small against every candidate value of the denominator.
+
 ## Open, not yet answered
 
 - **Neither unit has been integrated.** Site 12's input is
   `gdn_recur_pipe.o_res_valid`, site 13's inputs are `rmsnorm_bf` and
   `gdn_silu` outputs, and no top-level wires them together. The handshakes are
   compatible by inspection, which is not the same as tested.
-- **Exponent capture is still owed by B** and is not part of either unit.
+- **The 589,824-cycle sweep figure itself** needs resolving before any phase
+  budget built on it can be trusted. See the section above.
 - **The `o_sat` outputs are reported but nothing consumes them.** Saturation is
   not fatal but it means a head or block lost its top end, and no policy exists
   for what the engine should do when it fires.

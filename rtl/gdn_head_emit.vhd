@@ -50,10 +50,21 @@
 --
 -- COST.  Pass A is free: it runs concurrently with gdn_recur_pipe's own output
 -- stream, one column per cycle, which is the rate that stream arrives at.
--- Passes B and C are ~DIM cycles each plus drain, so ~270 cycles per head and
--- ~6,500 per token for 24 value heads per card, against a state sweep of
--- 589,824 cycles per token. That is ~1.1%, which is why this unit is scalar
--- and has no LANES generic: widening it would optimise a rounding error.
+-- Passes B and C are ~DIM cycles each plus drain, so **~270 cycles per head**,
+-- and at 24 value heads per card **~6,480 cycles per GDN layer**.
+--
+-- Deliberately NOT stated as a percentage of the state sweep.  An earlier
+-- version of this comment said "~1.1% of the 589,824-cycle sweep", which
+-- cannot be checked right now: the spec quotes 589,824 for LANES = 8 at
+-- section 2.6 and for LANES = 32 at section 3.1, and those cannot both hold,
+-- and the per-layer formula it derives from (S*S*H/LANES = 262,144/LANES)
+-- uses H = 16, the stale KEY head count, where 24 value heads per card give
+-- 393,216.  Until that is resolved the honest figure is the cycle count, not
+-- a fraction of a number in dispute.
+--
+-- The design conclusion does not depend on it: the unit is scalar and has no
+-- LANES generic because 270 cycles per head is small against ANY of the
+-- candidate sweep figures.
 --
 -- STRUCTURE.  One operation per state -- never two of {barrel shift, wide add,
 -- wide compare, bus mux, multiply} in series.  Here that is expressed as
