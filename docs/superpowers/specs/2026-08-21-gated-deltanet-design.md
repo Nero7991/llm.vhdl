@@ -1091,6 +1091,17 @@ cycles/layer = S*S*H / LANES = 262,144 / LANES
 LANES = 8 :  32,768 cycles/layer ; 589,824/token = 2.95 ms @ 200 MHz
 ```
 
+> **STALE DERIVATION, CORRECT RESULT (marked 2026-08-27).** The `262,144 =
+> 128*128*16` above uses `H = 16`, which is the 0.8B **key** head count, and 18
+> layers at 200 MHz. The §4 shape is 24 **value** heads per card, 48 GDN layers,
+> LANES = 32, and §3.1 rebuilds it properly. **The two land on the identical
+> 589,824 by an exact coincidence**, because `(24/16) * (48/18) = 4 = 32/8`.
+> So the token figure quoted here is right and everything built on it stands;
+> only the derivation and the `2.95 ms @ 200 MHz` are stale (§3.1: 1.97 ms @
+> 300 MHz). Cross-checked a third way, from the column arrival rate rather than
+> the formula: 24 heads x 128 columns x 4 cycles = 12,288/layer x 48 = 589,824.
+> See `docs/debugging/2026-08-26_gdn-head-and-y-emit.md`, final correction.
+
 **Feed and drain requirement, stated honestly.** LANES = 8 consumes 16 B/cycle
 of state read AND produces 16 B/cycle of write — 3.2 GB/s each way at 200 MHz,
 which is 100% of one 128-bit AXI master in each direction. Against A's

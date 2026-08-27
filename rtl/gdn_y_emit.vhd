@@ -59,12 +59,15 @@
 -- are HEADS*DIM cycles each, so **~6,150 cycles per GDN layer** at 24 x 128
 -- (this unit runs ONCE per layer, spanning all heads, not once per head).
 --
--- Deliberately NOT stated as a percentage of the state sweep; see the same
--- note in rtl/gdn_head_emit.vhd.  The spec's 589,824 figure is quoted for two
--- different LANES values in two places and its per-layer formula uses H = 16,
--- the stale KEY head count, so a percentage against it would be arithmetic on
--- a disputed number.  The design conclusion is unaffected: this unit is
--- scalar because ~6,150 cycles per layer is small against any candidate.
+-- Against the state sweep that is **50.0% in OCCUPANCY and 0% in STALL**:
+-- 6,150 x 48 = 295,200 cycles per token against 589,824, but the 6,150 sits
+-- inside 12,288 cycles of arrival per layer, so the double buffer hides all of
+-- it.  Occupancy at half the sweep is why single-banking was untenable.
+--
+-- The 589,824 denominator was briefly recorded here as DISPUTED and that was a
+-- false alarm, now withdrawn.  See the note in rtl/gdn_head_emit.vhd for why
+-- the figure is correct and why section 2.6's stale H = 16 derivation reaches
+-- the identical total by an exact coincidence.
 --
 -- STRUCTURE.  One operation per state -- never two of {barrel shift, wide add,
 -- wide compare, bus mux, multiply} in series.  Expressed as pipeline stages,

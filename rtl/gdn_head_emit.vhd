@@ -74,21 +74,22 @@
 -- than losing data quietly.
 --
 -- COST.  Fill is free, running at the rate results arrive.  Reduce is 268
--- cycles per head and at 24 value heads per card **~6,432 cycles per GDN
+-- cycles per head and at 24 value heads per card **6,432 cycles per GDN
 -- layer**, all of it hidden behind the next head's fill.
 --
--- Deliberately NOT stated as a percentage of the state sweep.  An earlier
--- version of this comment said "~1.1% of the 589,824-cycle sweep", which
--- cannot be checked right now: the spec quotes 589,824 for LANES = 8 at
--- section 2.6 and for LANES = 32 at section 3.1, and those cannot both hold,
--- and the per-layer formula it derives from (S*S*H/LANES = 262,144/LANES)
--- uses H = 16, the stale KEY head count, where 24 value heads per card give
--- 393,216.  Until that is resolved the honest figure is the cycle count, not
--- a fraction of a number in dispute.
+-- Against the state sweep that is **52.3% in OCCUPANCY and 0% in STALL**:
+-- 268 x 24 x 48 = 308,736 cycles per token against 589,824, but per head the
+-- 268 sits inside 512 cycles of column arrival (128 columns at S_DIM/LANES =
+-- 4 cycles each), so the double buffer hides all of it.  Occupancy at half the
+-- sweep is exactly why the single-banked first version was untenable.
 --
--- The design conclusion does not depend on it: the unit is scalar and has no
--- LANES generic because 270 cycles per head is small against ANY of the
--- candidate sweep figures.
+-- The 589,824 denominator was briefly recorded here as DISPUTED and that was a
+-- false alarm, now withdrawn.  It is correct for this model at LANES = 32:
+-- 128 x 128 x 24 / 32 = 12,288 per layer, x 48 layers = 589,824, and the same
+-- number falls out independently of the column arrival rate.  The suspicion
+-- came from section 2.6 deriving it as 262,144/LANES with H = 16, which is the
+-- stale 0.8B shape -- and which reaches the SAME total by an exact
+-- coincidence, because (24/16) x (48/18) = 4 = 32/8.
 --
 -- STRUCTURE.  One operation per state -- never two of {barrel shift, wide add,
 -- wide compare, bus mux, multiply} in series.  Here that is expressed as

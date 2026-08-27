@@ -230,8 +230,8 @@ their cost is small against every candidate value of the denominator.
   `gdn_recur_pipe.o_res_valid`, site 13's inputs are `rmsnorm_bf` and
   `gdn_silu` outputs, and no top-level wires them together. The handshakes are
   compatible by inspection, which is not the same as tested.
-- **The 589,824-cycle sweep figure itself** needs resolving before any phase
-  budget built on it can be trusted. See the section above.
+- ~~**The 589,824-cycle sweep figure itself** needs resolving before any phase~~
+  budget built on it can be trusted.~~ **CLOSED 2026-08-27, see the correction at the end: the figure is correct.**
 - **The `o_sat` outputs are reported but nothing consumes them.** Saturation is
   not fatal but it means a head or block lost its top end, and no policy exists
   for what the engine should do when it fires.
@@ -319,3 +319,75 @@ second bank packs into granularity the first was already wasting.
   phrase; and `'attribute ram_style' not in s` when the new comment quotes
   Vivado's warning verbatim. **Guard on `s != original` plus a structural check
   (is there still a DECLARATION?), never on global absence.**
+
+## CORRECTION 2026-08-27: the 589,824 denominator is CORRECT, the withdrawal was a false alarm
+
+The section "A number I quoted that I could not check" withdrew the two cost
+percentages on the grounds that 589,824 could not be right for both LANES = 8
+and LANES = 32. **That reasoning is wrong and the withdrawal is itself
+withdrawn.** Both quotes are correct, by an exact coincidence.
+
+For this model at LANES = 32, with 24 VALUE heads per card and 48 GDN layers:
+
+```
+  S*S*H/LANES = 128*128*24/32 =  12,288 cycles/layer
+                     x 48 layers = 589,824 cycles/token
+```
+
+Section 2.6 derives the same total from the **stale 0.8B shape** -- 16 heads,
+18 layers, LANES = 8:
+
+```
+  128*128*16/8 = 32,768 cycles/layer x 18 layers = 589,824 cycles/token
+```
+
+The two agree exactly because the scale factors cancel:
+
+```
+  (24/16) * (48/18) = 4.0000     and     32/8 = 4.0
+```
+
+Independent cross-check, from the column arrival rate rather than the formula:
+24 heads x 128 columns x (S_DIM/LANES = 4) cycles = 12,288 per layer, x 48 =
+**589,824**. Three derivations, one number.
+
+So section 2.6's *derivation* is stale and should be updated to the 27B shape,
+but its *result* was never wrong, and nothing downstream of the figure needs
+rebuilding.
+
+**Measurement trap, recorded because it cost real work.** Two correct numbers
+that disagree in their *inputs* look exactly like an inconsistency. The check
+that settles it is not re-reading either derivation -- it is deriving the
+quantity a third way, from something neither derivation used (here: the column
+arrival rate). Had I done that first, the withdrawal would never have happened.
+
+### The corrected percentages, and why they do not mean what they look like
+
+With the denominator restored, both reduces are far larger fractions than the
+"~1.1%" / "~1.0%" originally claimed -- and both are still free:
+
+| unit | reduce cycles/token | % of 589,824 sweep | stall contributed |
+|---|---|---|---|
+| `gdn_head_emit` | 268 x 24 x 48 = 308,736 | **52.3%** | **0%** |
+| `gdn_y_emit` | 6,150 x 48 = 295,200 | **50.0%** | **0%** |
+
+The distinction is occupancy versus stall. `gdn_head_emit`'s 268-cycle reduce
+sits inside 512 cycles of column arrival for the *next* head (128 columns at 4
+cycles); `gdn_y_emit`'s 6,150 sits inside 12,288 cycles of arrival for the next
+layer. In both cases the second bank absorbs the whole reduce, so the measured
+contribution to the token budget is zero.
+
+This also retroactively justifies the double-buffering fix in the previous
+correction on stronger grounds than were available at the time. That fix was
+made for **correctness** (the unit dropped input under back-pressure). At ~50%
+occupancy each, the single-banked versions would additionally have **doubled
+B's state sweep** -- turning 589,824 cycles/token into roughly 1.19M. The
+originally-quoted "~1.1%" made single-banking look like a rounding error. It
+was never close to one.
+
+### Consequence for the open question
+
+The "Open, not yet answered" bullet reading *"The 589,824-cycle sweep figure
+itself needs resolving before any phase budget built on it can be trusted"* is
+**closed**. The figure is trusted. What remains open is only the editorial fix
+to section 2.6's derivation, which changes no result.
