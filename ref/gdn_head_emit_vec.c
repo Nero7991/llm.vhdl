@@ -188,13 +188,30 @@ int main(int argc, char **argv)
     fprintf(stderr, "  worst error vs double oracle: %.4f LSB of the output "
                     "grid (case %d)\n", worst_rel, worst_case);
     fprintf(stderr, "  saturated columns: %ld   all-zero heads: %ld\n", nsat, nzero);
-    /* The requantize rounds, so half an LSB is the floor.  Anything much above
-     * that means the integer path is not computing what the pairs denote. */
-    if (worst_rel > 0.5001) {
-        fprintf(stderr, "  FAIL: exceeds the 0.5 LSB the rounding alone can "
-                        "explain -- the integer recipe is wrong, not the grid\n");
+    /* THE BOUND, derived rather than guessed.  There are TWO error sources,
+     * not one, and the first version of this check counted only the second:
+     *
+     *   1. the alignment FLOOR loses up to (2^shj - 1)/2^shj < 1 LSB of the
+     *      ALIGNED grid, and one aligned LSB is 2^-sh LSB of the output grid
+     *   2. the requantize rounds, contributing <= 0.5 output LSB, and exactly
+     *      0 when sh = 0 because then it is a no-op
+     *
+     * so the total is < 2^-sh + 0.5*[sh > 0], which is < 1.0 output LSB in
+     * every case and reaches it only in the limit.  Measured: the worst case
+     * has sh = 0 and a maximum alignment shift of 2, giving 3/4 of an aligned
+     * LSB with NO requantize rounding at all -- 0.75, entirely source 1.
+     *
+     * A 0.5 threshold therefore does not test the recipe, it tests the seed:
+     * it passes only when the worst element happens to land at shj = 0 or at
+     * a large sh.  gdn_y_emit_vec.c had the same too-tight threshold and
+     * passed by luck.
+     */
+    if (worst_rel >= 1.0) {
+        fprintf(stderr, "  FAIL: reaches 1.0 LSB, which the alignment floor "
+                        "plus the requantize rounding cannot explain -- the "
+                        "integer recipe is wrong, not the grid\n");
         return 1;
     }
-    fprintf(stderr, "  OK: within the 0.5 LSB the requantize rounding explains\n");
+    fprintf(stderr, "  OK: below the 1.0 LSB bound (align floor + requantize round)\n");
     return 0;
 }
