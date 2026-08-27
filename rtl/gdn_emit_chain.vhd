@@ -387,28 +387,55 @@ begin
 
           -- ---- seam 2 and 3: serialize into y_emit -----------------------
           when S_SER =>
-            if ser_j < DIM then
-              ye_valid  <= '1';
-              if ser_j = 0 then ye_hfirst <= '1'; else ye_hfirst <= '0'; end if;
-              ye_o <= signed(rn_mant((ser_j+1)*16-1 downto ser_j*16));
-              ye_z <= signed(z_buf((ser_j+1)*16-1 downto ser_j*16));
-              ye_e <= ep_r;
-              -- A proper valid/ready transfer: advance only on an edge where
-              -- y_emit is also ready.
-              if ye_ready = '1' then
+            -- THE BUS SLOT, not the ready line, is what gates this loop.
+            --
+            -- ye_o is REGISTERED, so what the consumer sees this cycle was
+            -- loaded last cycle.  The slot is free in exactly two situations:
+            -- nothing has been offered yet (ye_valid = '0', the priming cycle
+            -- on entry), or what was offered has just been taken
+            -- (ye_ready = '1').  Loading in any other cycle overwrites an
+            -- element that was never accepted.
+            --
+            -- The previous form advanced on `ye_ready = '1'` alone and so had
+            -- TWO defects, both of which this shape closes:
+            --
+            --   B-1, the audit's finding.  On entry ye_valid is still '0', so
+            --   the first advance is a phantom that exists only to absorb the
+            --   registration delay.  Making it conditional on ye_ready meant
+            --   that if the consumer was stalled at entry the phantom was
+            --   skipped, and elem[0] was then presented and accepted TWICE --
+            --   DIM+1 transfers for a head of DIM.  gdn_y_emit counts accepted
+            --   elements to flip banks, so from that head on every element sat
+            --   one address early and each following block drifted one further.
+            --   A numeric artefact, not a wiring fault, which is why it
+            --   survived.
+            --
+            --   The tail drop, which the audit did NOT name.  ser_j reaching
+            --   DIM meant elem[DIM-1] had just been LOADED, not accepted.  The
+            --   old else-branch dropped ye_valid unconditionally in that
+            --   cycle, so a consumer stalled on exactly that edge lost the
+            --   last element of the head.  The drain now also waits for the
+            --   slot to free.
+            if ye_valid = '0' or ye_ready = '1' then
+              if ser_j < DIM then
+                ye_valid  <= '1';
+                if ser_j = 0 then ye_hfirst <= '1'; else ye_hfirst <= '0'; end if;
+                ye_o <= signed(rn_mant((ser_j+1)*16-1 downto ser_j*16));
+                ye_z <= signed(z_buf((ser_j+1)*16-1 downto ser_j*16));
+                ye_e <= ep_r;
                 ser_j <= ser_j + 1;
-              end if;
-            else
-              ye_valid  <= '0';
-              ye_hfirst <= '0';
-              consuming <= '0';
-              z_have    <= '0';           -- release z for the next head
-              if head = HEADS-1 then
-                head  <= 0;
-                state <= S_WAITBLK;
               else
-                head  <= head + 1;
-                state <= S_IDLE;
+                ye_valid  <= '0';
+                ye_hfirst <= '0';
+                consuming <= '0';
+                z_have    <= '0';         -- release z for the next head
+                if head = HEADS-1 then
+                  head  <= 0;
+                  state <= S_WAITBLK;
+                else
+                  head  <= head + 1;
+                  state <= S_IDLE;
+                end if;
               end if;
             end if;
 

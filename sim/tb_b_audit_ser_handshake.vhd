@@ -68,6 +68,11 @@ architecture sim of tb_b_audit_ser_handshake is
   signal xfer_head : integer := 0;   -- transfers within the current head
   signal worst_head : integer := 0;  -- largest per-head transfer count seen
   signal dup_heads  : integer := 0;  -- heads that moved more than DIM elements
+  -- Short heads were NOT counted before.  Counting only the >DIM direction
+  -- makes the tail-drop defect -- elem(DIM-1) lost when the consumer stalls on
+  -- the drain edge -- invisible, and it lives in the same four lines.
+  signal short_heads : integer := 0; -- heads that moved FEWER than DIM
+  signal heads_seen  : integer := 0;
   signal ready_low_at_entry : integer := 0;
   signal running : boolean := true;
 
@@ -113,25 +118,40 @@ begin
             end if;
 
           when P_SER =>
-            if ser_j < DIM then
-              ye_valid <= '1';
-              if ser_j = 0 then ye_hfirst <= '1'; else ye_hfirst <= '0'; end if;
-              ye_o <= to_signed(ser_j + 1, 16);
-              ye_z <= to_signed(1, 16);
-              ye_e <= to_signed(0, 8);
-              if ye_ready = '1' then
+            -- Transcribed from the FIXED rtl/gdn_emit_chain.vhd S_SER branch,
+            -- 2026-08-27.  The gate is the bus SLOT and not the ready line:
+            -- free when nothing has been offered yet (the priming cycle) or
+            -- when what was offered has just been taken.  The pre-fix form,
+            -- kept here in comment because this file exists to demonstrate it:
+            --
+            --   if ser_j < DIM then
+            --     ye_valid <= '1';  ye_o <= elem(ser_j);
+            --     if ye_ready = '1' then ser_j <= ser_j + 1; end if;
+            --   else
+            --     ye_valid <= '0';  ... next head
+            --
+            -- which delivers DIM+1 elements when ye_ready is low at entry
+            -- (B-1), and drops elem(DIM-1) when ye_ready is low on the drain
+            -- edge.
+            if ye_valid = '0' or ye_ready = '1' then
+              if ser_j < DIM then
+                ye_valid <= '1';
+                if ser_j = 0 then ye_hfirst <= '1'; else ye_hfirst <= '0'; end if;
+                ye_o <= to_signed(ser_j + 1, 16);
+                ye_z <= to_signed(1, 16);
+                ye_e <= to_signed(0, 8);
                 ser_j <= ser_j + 1;
-              end if;
-            else
-              ye_valid  <= '0';
-              ye_hfirst <= '0';
-              if head = HEADS-1 then
-                head <= 0;
-                blk  <= blk + 1;
               else
-                head <= head + 1;
+                ye_valid  <= '0';
+                ye_hfirst <= '0';
+                if head = HEADS-1 then
+                  head <= 0;
+                  blk  <= blk + 1;
+                else
+                  head <= head + 1;
+                end if;
+                pst <= P_GAP;
               end if;
-              pst <= P_GAP;
             end if;
 
         end case;
@@ -153,8 +173,11 @@ begin
           worst_head <= xfer_head + 1;
         end if;
       elsif ye_valid = '0' and xfer_head > 0 then
+        heads_seen <= heads_seen + 1;
         if xfer_head > DIM then
           dup_heads <= dup_heads + 1;
+        elsif xfer_head < DIM then
+          short_heads <= short_heads + 1;
         end if;
         xfer_head <= 0;
       end if;
@@ -173,13 +196,29 @@ begin
          & "  heads that moved more than DIM elements: "
          & integer'image(dup_heads)
          & "  worst per-head transfer count: " & integer'image(worst_head)
+         & "  heads that moved FEWER than DIM: " & integer'image(short_heads)
+         & "  heads seen: " & integer'image(heads_seen)
          & "  S_SER entries with ye_ready low: "
          & integer'image(ready_low_at_entry);
+    -- severity FAILURE, not note.  As written on 2026-08-27 this assertion was
+    -- `severity note`, so the run that demonstrated B-1 printed the defect and
+    -- exited 0.  A check that cannot fail is a report, not a test, and this
+    -- file was cited as evidence that the defect was confirmed.
     assert dup_heads = 0
       report "tb_b_audit_ser_handshake: the S_SER loop delivered MORE than DIM "
            & "elements for at least one head.  gdn_y_emit's element-to-head "
            & "alignment is now permanently offset."
-      severity note;
+      severity failure;
+    assert short_heads = 0
+      report "tb_b_audit_ser_handshake: the S_SER loop delivered FEWER than DIM "
+           & "elements for at least one head -- the tail element was dropped "
+           & "because the consumer was not ready on the drain edge."
+      severity failure;
+    assert heads_seen = BLOCKS * HEADS
+      report "tb_b_audit_ser_handshake: saw " & integer'image(heads_seen)
+           & " heads, expected " & integer'image(BLOCKS * HEADS)
+           & ".  A head that moved ZERO elements is counted nowhere else."
+      severity failure;
     running <= false;
     wait;
   end process;
