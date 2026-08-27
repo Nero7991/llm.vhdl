@@ -109,6 +109,38 @@ the schedule, because `S_SH` already existed and already took one cycle.
 - Nothing consumes `err_seg`, and it now asserts one state earlier. The unused
   error-output policy across B (`y_sat`, `err`, `ovr`, `ovf`, `err_conv`,
   `err_g`, `err_se`) is still unresolved and is tracked as audit item B-10.
-- The other two units that publish a scalar alongside a stream have NOT been
-  audited for the same defect shape. `gdn_conv` was found by accident, not by a
-  sweep, so the sweep is still owed.
+- ~~The other units that publish a scalar alongside a stream have NOT been
+  audited.~~ **The sweep was run the same day. Result below.**
+
+## 8. The sweep, 2026-08-27, same day
+
+Every `rtl/*.vhd` whose entity declares BOTH an exponent- or shift-like output
+and a valid-like output, checked for the assignment site of the scalar relative
+to the state that raises the valid. Eleven units matched the shape.
+
+| unit | scalar | verdict |
+|---|---|---|
+| `gdn_conv` | `e_seg`, `sh_seg` | **was the defect**, fixed here |
+| `gdn_y_emit` | `y_exp` | CLEAN. `y_exp_r` is set in `S_AMAX`, one state before `S_EMIT` raises `o_valid_r`. This is the correct pattern and it was already correct |
+| `gdn_emit_chain` | `y_exp` | CLEAN by inheritance, it wires `gdn_y_emit`'s port straight out |
+| `gdn_block` | `y_exp` | CLEAN by inheritance, same port |
+| `attn_score_q12` | `s_exp` | CLEAN and not at risk: `s_exp <= to_signed(QOUT, EXP_W)` is a compile-time constant, not state |
+| `matvec_int4` | `y_exp` | pass-through of the `i_yexp` INPUT by continuous assignment, so its ordering is the producer's property and not this unit's. Not a defect here; it does mean the obligation moves upstream and is unrecorded there |
+| `tp_collective_skel` | `o_exp` | not implemented, `o_exp <= (others => '0')`. Nothing to check yet, and the obligation should be written into E's spec before it is |
+| `attn_softmax` | `rescale_n` | OPEN, referred to the C owner |
+| `seq_desc_fetch` | `job_w_exp`, `job_out_shift`, `job_const_exp` | OPEN, referred to the D owner |
+| `seq_opdec` | `cmp_y_exp`, `y_exp_taken`, `y_exp_held` | OPEN, referred to the D owner |
+| `seq_region_lock` | `exp_rd_data` | OPEN, referred to the D owner |
+
+The four OPEN rows are all continuous assignments from a register or from a
+combinational function of a latched word, so the answer depends on when that
+register or latch is written relative to the valid. That is exactly the
+question this document is about, and it is not answerable by reading the port
+map alone. They were not edited here because other work owns those files
+concurrently; the check was handed to their owners with the pattern to look for.
+
+**The generalisable rule, which is what should have existed before any of this:**
+a scalar that qualifies a stream must be assigned in a state STRICTLY EARLIER
+than the state that first raises the stream's valid, and a testbench that only
+samples it at `done` cannot tell you whether that holds. Every unit with this
+shape should carry an `ord_chk`-style guard. Four do not yet.
