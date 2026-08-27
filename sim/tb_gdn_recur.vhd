@@ -102,8 +102,15 @@ architecture sim of tb_gdn_recur is
     end loop;
     if v(v'high) = '1' then return -r; else return r; end if;
   end function;
+  -- The clock is GUARDED.  Unguarded, it keeps toggling after the stimulus
+  -- process reaches its final `wait;`, so the simulation never ends: the test
+  -- reports PASS and then spins at 100% CPU forever.  One such run was found
+  -- alive after 4h58m.  It is invisible when output is piped through `tail`,
+  -- because the report has already been printed by then.
+  signal running : boolean := true;
+
 begin
-  clk <= not clk after 5 ns;
+  clk <= not clk after 5 ns when running else '0';
 
   dut : entity work.gdn_recur
     generic map(DIM => DIM, LANES => LANES, D_NORM => D_NORM,
@@ -339,6 +346,7 @@ begin
            & real'image(worst_s0) & " LSB at tk = 0.  The gap is the open "
            & "d_m grid defect, not noise." severity note;
     end if;
+    running <= false;
     wait;
   end process;
 end architecture;

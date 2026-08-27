@@ -59,8 +59,15 @@ architecture sim of tb_gdn_conv is
   type i_arr is array (natural range <>) of integer;
   type r_arr is array (natural range <>) of real;
   constant TCLK : time := 10 ns;
+  -- The clock is GUARDED.  Unguarded, it keeps toggling after the stimulus
+  -- process reaches its final `wait;`, so the simulation never ends: the test
+  -- reports PASS and then spins at 100% CPU forever.  One such run was found
+  -- alive after 4h58m.  It is invisible when output is piped through `tail`,
+  -- because the report has already been printed by then.
+  signal running : boolean := true;
+
 begin
-  clk <= not clk after TCLK/2;
+  clk <= not clk after TCLK/2 when running else '0';
 
   dut : entity work.gdn_conv
     generic map(CH_MAX => CH_MAX, K => K, LANES => LANES)
@@ -221,6 +228,7 @@ begin
            & " cases; worst vs the double ORACLE " & real'image(worst) & " LSB"
            severity note;
     end if;
+    running <= false;
     wait;
   end process;
 end architecture;

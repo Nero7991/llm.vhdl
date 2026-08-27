@@ -35,8 +35,15 @@ architecture sim of tb_gdn_silu is
   shared variable v_sm, v_y : seg_arr;
   shared variable v_e : i_arr(0 to NCASE-1);
   shared variable nfail, ncheck : integer := 0;
+  -- The clock is GUARDED.  Unguarded, it keeps toggling after the stimulus
+  -- process reaches its final `wait;`, so the simulation never ends: the test
+  -- reports PASS and then spins at 100% CPU forever.  One such run was found
+  -- alive after 4h58m.  It is invisible when output is piped through `tail`,
+  -- because the report has already been printed by then.
+  signal running : boolean := true;
+
 begin
-  clk <= not clk after 5 ns;
+  clk <= not clk after 5 ns when running else '0';
 
   dut : entity work.gdn_silu
     generic map(LANES => LANES, ARG_Q => ARG_Q)
@@ -93,6 +100,7 @@ begin
            & " elements), LANES=" & integer'image(LANES)
            & " ARG_Q=" & integer'image(ARG_Q) severity note;
     end if;
+    running <= false;
     wait;
   end process;
 
