@@ -2004,10 +2004,17 @@ requiring at least a full column per burst.
 >
 > **NOT done, and the reason this list stays open:**
 >
-> - **Nothing wires them together.** Site 12's input is
->   `gdn_recur_pipe.o_res_valid`; site 13's inputs are `rmsnorm_bf` and
->   `gdn_silu` outputs. The handshakes are compatible BY INSPECTION, which is
->   not the same as tested. There is no block-level testbench.
+> - **Nothing wires them together, and the seams do NOT all match.**
+>   "Compatible by inspection" was written here earlier the same day and is
+>   WITHDRAWN: checked against the actual port lists, three of the four seams
+>   need glue that does not exist. `rmsnorm_bf` presents its result as a
+>   parallel bus while `gdn_y_emit` takes one element per cycle; `gdn_silu` is
+>   a 32-lane stream against the same one-element port; and nothing computes
+>   `gdn_y_emit.in_e = o_exp + z_exp`, which additionally requires routing
+>   `z_exp` around a unit that deliberately does not carry it. Beyond the
+>   seams, the chain needs a SEQUENCER: the norm and head emit run per head
+>   while `gdn_y_emit` accumulates across all 24. Full account:
+>   `docs/debugging/2026-08-26_gdn-emit-chain-integration.md`.
 > - **The state-drift bound over a 2,048-token sequence** is untouched. It is
 >   still the hardest deliverable here and still decides whether int16 state
 >   mantissas and Q15 decay survive.
@@ -2046,6 +2053,65 @@ The phase-schedule bullet is discharged. These are not:
   **401,664 cycles = 1.34 ms against the 589,824-cycle sweep, +47% margin.**
   Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
   the fixed 18 becoming 40).
+
+  > **CORRECTED 2026-08-26. This item is NOT closed. `rmsnorm_rs` computes a
+  > different function from the model on the majority of real inputs, and the
+  > bit-exactness that closed it is exactly why nobody saw.**
+  >
+  > **B's output RMSNorm has no epsilon.** Not in `rtl/rmsnorm.vhd`, not in
+  > `rtl/rmsnorm_rs.vhd` (`grep -in eps` on both returns only the substring
+  > inside "steps"), and not in §2.1 either -- every one of this document's
+  > epsilon mentions is about the L2 norm, and §2.1.2's rmsnorm chain
+  > (`o_exp = xe + we + Q - shift_total`) carries no epsilon term. But
+  > §1.1(g) sources the operation to `build_norm_gated`, which is
+  > `LLM_NORM_RMS` = `x / sqrt(mean(x^2) + eps)`, and this model's
+  > `qwen35.attention.layer_norm_rms_epsilon` is **1e-6**, which is not small
+  > against these activations.
+  >
+  > Measured on the real model, 2,741,760 samples (48 GDN layers x 48 value
+  > heads x 1,190 tokens, Qwen3.8-27B Q4_K_M):
+  >
+  > ```
+  > fraction with mean(x^2) < eps        : 72.57%   eps DOMINATES
+  > fraction with mean(x^2) < 0.1 * eps  : 38.88%   norm is a CONSTANT gain
+  >
+  >                      divisor          gain
+  >   model  sqrt(2.31e-07 + 1e-06) = 1.11e-03    901
+  >   RTL    sqrt(2.4414e-04)       = 1.5625e-02   64
+  >                                               -> 14x wrong AT THE MEDIAN
+  > ```
+  >
+  > The RTL's `if shifted_r < 1 then msq_r <= 1` is a degenerate epsilon: it
+  > bounds the divider, but at a value set by `Q` rather than by the model,
+  > **244x too large**, and sitting ABOVE the median activation. This is not a
+  > tail defect.
+  >
+  > **Range, as well as correctness.** `1/rms`, which the RTL computes, needs
+  > 24.12 octaves against the unit's 19-octave window, and the unit emits
+  > **all zeros** for `rms_real` in `[2^14, 2^25]` with no error flag.
+  > `1/sqrt(mean + eps)`, which the model computes, needs **8.84**. So the
+  > epsilon is also what bounds the divider and removes the zero region.
+  >
+  > **Why the testbench passes.** Its golden is `rmsnorm.vhd`, which is wrong
+  > in exactly the same way -- at `rms_real = 2^14` both report `o_exp = 24` and
+  > 0/128 nonzero. Same mechanism as the l2norm recipe collapse three items
+  > below, second unit, and the lesson there ("the golden shared
+  > `fixed_pkg.rsqrt_q` with the DUT") was not applied here.
+  >
+  > **Widening `Q` is measured and REJECTED:** `Q = 24` still leaves 2.02e-02,
+  > because the absolute-grid recipe rounds `mean` away before the epsilon is
+  > added. So is adding epsilon on a finer grid (6.6e-3 -> 7.4e-3, i.e. epsilon
+  > quantization was never the dominant term). The fix is block-floating, at
+  > the shipped `Q = 12`, which is what `rtl/rmsnorm_bf.vhd` does.
+  >
+  > **No budget row moves.** `sim/rmsnorm_bf.csv`: `rmsnorm_rs` and
+  > `rmsnorm_bf` are both 40 DSP / 0 BRAM / 300.75 MHz at `LANES = 4`, LUT
+  > +719. The 300.8 MHz and the 40 DSP in the item above survive; the closure
+  > does not.
+  >
+  > Procedure, evidence and the rejected fixes:
+  > `docs/debugging/2026-08-26_rmsnorm-magnitude-window.md`. Audit:
+  > `docs/debugging/2026-08-26_gdn-spec-audit.md` F1.
 
 - **CLOSED 2026-08-26: `rtl/gdn_recur.vhd` implements 2.1.4 stages 1-5, one
   column of one head, multi-lane, with the cross-lane reduction and the state
