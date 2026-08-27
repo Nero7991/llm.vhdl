@@ -319,3 +319,111 @@ things that were not obvious:
 - **First floating implementation had sign errors in both exponents and aligned
   the wrong way**, and reported `rel = 1.0` uniformly. A uniformly perfect
   failure is a bug in the new path, not evidence about the old one.
+
+## RESOLVED 2026-08-26: `rtl/rmsnorm_bf.vhd`, measured
+
+### How much of the real model is actually in the bad region: 77.4%
+
+The open question "whether the real model reaches the bad regions" is answered.
+Instrumented `build_norm_gated`'s input on Qwen3.8-27B-Q4_K_M over **418,180
+tokens / 963,486,720 samples** (GPU, 65/65 layers offloaded, 594.9 tok/s; the
+same probe on CPU reproduces the earlier 1,190-token run bit-for-bit on every
+headline number, which is what licenses the scale-up).
+
+| metric | value |
+|---|---|
+| `rms(o)` range | `2^-29.63` to `2^-0.54` |
+| `1/rms` span | 29.09 octaves |
+| **`1/sqrt(mean+eps)` span** | **9.4282 octaves**, against a 19-octave window |
+| gain range | `[1.45158, 1000]`, upper end hard-bounded |
+| **fraction with `mean(x^2) < eps`** | **0.773712** |
+| fraction with `mean(x^2) < 0.1*eps` | 0.440778 |
+
+**Nearly four samples in five sit where epsilon IS the normaliser**, not the
+data. That is the region the shipped clamp gets wrong by 244x in eps, i.e. a
+gain of 64 where ggml applies 1000. This is not a corner case; it is the
+common case.
+
+`rms_max` saturates rather than growing: it moved 0.5932 octaves across a 351x
+increase in token count, fitting at **0.0037 octaves per doubling**. Reaching
+the window's upper rail would need ~10^780 tokens. The scale test was the right
+test and it did not threaten the design.
+
+An independent confirmation fell out of the probe's `nout` stream (the norm
+output before the weight multiply): max `0.999998987`, min `1.20593984e-06`.
+Since `nout = rms/sqrt(mean+eps)`, a max pinned at 1.0 and a min at exactly
+`rms_min/sqrt(eps)` confirms the model really computes `1/sqrt(mean+eps)` with
+eps = 1e-6.
+
+### Error over the model's real range, not an arbitrary sweep
+
+Correcting a figure from the section above: the floating form's worst error was
+quoted as 8.8e-3 at `Q = 12`. That was measured over `log2(rms)` in `[-30, +6]`,
+and the model never goes above `2^-0.54`. Restricted to the range the model
+actually occupies:
+
+| structure | worst rel err, MODEL range |
+|---|---|
+| absolute-grid `Q = 12` (**as shipped**) | **1.0000e+00** |
+| floating `Q = 12` | **1.3308e-04** |
+| floating `Q = 16` | 7.9347e-06 |
+
+So the fix needs **no width change at all**: it is correct at the shipped
+`Q = 12`, to 0.013%. The earlier conclusion that `Q` must rise to 20 or 24, and
+that the `S < 2^46` assert must be tightened to keep `S << Q` inside `s64`, is
+withdrawn in full. There is no `S << Q` in the new unit.
+
+### What it costs: nothing that matters
+
+OOC on `xcvu33p-fsvh2104-2L-e`, N=128, LANES=4, 3.3 ns target, both units built
+in the same Vivado run against the same part and period:
+
+| unit | Q | DSP | LUT | FF | fmax |
+|---|---|---|---|---|---|
+| `rmsnorm_rs` | 12 | 40 | 9042 | 3653 | 300.75 MHz |
+| **`rmsnorm_bf`** | 12 | **40** | 9761 | 3660 | **300.75 MHz** |
+| `rmsnorm_bf` | 16 | 40 | 9759 | 3660 | 300.75 MHz |
+| `rmsnorm_bf` | 20 | 40 | 9760 | 3660 | 300.75 MHz |
+
+**DSP-neutral and timing-identical**, at +719 LUT (+8.0%) and +7 FF. DSP is the
+binding whole-die constraint at 90.5-91.9% of 2,880; LUT is not. The S_INV
+chain kept its state count (6 either way) and gained no multiply -- it traded a
+fixed shift, a divide-by-N and a clamp for two barrel shifts and an add.
+
+### Measured and REJECTED -- do not retry
+
+- **Raising `Q`.** Still 2.0e-2 worst error at `Q = 24`, because the rescale to
+  a fixed grid happens BEFORE the epsilon add. Q ~ 30 would be needed; `Q <= 25`
+  is a hard `s64` ceiling at N = 128.
+- **Adding epsilon on a grid `EXB` bits finer than `Q`.** Fixes the epsilon
+  quantization and moves the worst case from 6.6e-3 to 7.4e-3, i.e. not at all.
+  Epsilon quantization was never the dominant term.
+- **Rounding the alignment shift.** Rounded and truncated agree to five
+  significant figures over 14,800 random vectors. The truncating form is used,
+  saving a bias state and a 64-bit add state.
+
+### Measurement traps hit
+
+- **Synthesis will not catch this class of error, and now that is on the
+  record.** The `Q` sweep on the BC-250 ran `Q` = 20, 22, 24, 25, **26**. `Q=26`
+  is arithmetically impossible -- above the `s64` ceiling of 25, where `S << Q`
+  overflows silently for `S` near the old assert bound -- and it synthesized
+  **clean, at identical resources and the identical 300.75 MHz**:
+
+  ```
+  RESULT Q=20 dsp=40 lut=9002 ff=3637 wns=-0.025 fmax=300.75
+  RESULT Q=22 dsp=40 lut=8991 ff=3633 wns=-0.025 fmax=300.75
+  RESULT Q=24 dsp=40 lut=8983 ff=3629 wns=-0.025 fmax=300.75
+  RESULT Q=25 dsp=40 lut=8978 ff=3627 wns=-0.025 fmax=300.75
+  RESULT Q=26 dsp=40 lut=8974 ff=3625 wns=-0.025 fmax=300.75
+  ```
+
+  LUT even goes DOWN slightly as `Q` rises. Nothing in the flow pushes back.
+  Resource and timing measurement cannot substitute for the arithmetic.
+- **Sweeping a range the model does not occupy overstated the fix's error by
+  66x** (8.8e-3 vs 1.33e-4). Pick the sweep range from measured data, not from
+  round numbers.
+- **A too-strict edit guard produced a false "edit failed".** After the
+  swallowed-edit trap above, an `assert s.count('KLO') >= 4` was added to catch
+  it -- but the symbol occurs three times, so a correct edit was rejected and
+  re-debugged. Guard on `!= original`, not on a hand-counted occurrence count.

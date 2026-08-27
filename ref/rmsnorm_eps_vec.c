@@ -44,7 +44,8 @@ static double EPS = 1e-6;
 static int    N   = 128;
 static int    EXB = 0;    /* extra fractional bits used ONLY for the eps add */
 static int    MODE = 0;   /* 0 = absolute-grid (the RTL's shape), 1 = floating */
-static int    MB  = 30;   /* mantissa bits kept in the floating form */
+static int    MB  = 30;
+static int    KLO = -30, KHI = 6;   /* stress sweep range, log2(rms) */   /* mantissa bits kept in the floating form */
 
 /* The fixed-point norm, structured exactly as rmsnorm_rs does it, with the
  * clamp REPLACED by the model's epsilon.  Returns the gain 2^Q / sqrt(mean+eps)
@@ -143,18 +144,23 @@ static int64_t gain_float(const int16_t *xm, int xe, int *ovf)
     int64_t m_eps = (int64_t)llround(ldexp(EPS, e_eps));
 
     /* Align to the LARGER VALUE (the smaller e) and let the negligible term
-     * round away.  That is the whole point: at the crossover both survive,
+     * fall off the bottom.  The align uses a TRUNCATING shift, not a rounding
+     * one, because the term being shifted down is by construction the
+     * negligible one: measured over 14,800 random vectors, rounding and
+     * truncating agree to five significant figures at both Q = 12 and Q = 16.
+     * That is worth two FSM states in the RTL (the rounding bias and its
+     * 64-bit add), so the reference truncates to stay the bit-exact golden.  That is the whole point: at the crossover both survive,
      * and outside it the one that vanishes is the one that should. */
     int64_t acc; int e_out;
     if (m_mean == 0)            { acc = m_eps;  e_out = e_eps; }
     else if (e_mean == e_eps)   { acc = m_mean + m_eps; e_out = e_mean; }
     else if (e_mean > e_eps) {                       /* mean is the smaller */
         int d = e_mean - e_eps;
-        acc = (d >= 63 ? 0 : round_shift(m_mean, d)) + m_eps;
+        acc = (d >= 63 ? 0 : (m_mean >> d)) + m_eps;
         e_out = e_eps;
     } else {                                         /* eps is the smaller */
         int d = e_eps - e_mean;
-        acc = m_mean + (d >= 63 ? 0 : round_shift(m_eps, d));
+        acc = m_mean + (d >= 63 ? 0 : (m_eps >> d));
         e_out = e_mean;
     }
     if (acc <= 0) return 0;
@@ -175,7 +181,7 @@ static void stress(int mode)
 {
     int16_t xm[8192];
     double worst = 0; int worst_k = 0; long novf = 0, n = 0;
-    for (int k = -30; k <= 6; k++) {
+    for (int k = KLO; k <= KHI; k++) {
         for (int trial = 0; trial < 400; trial++) {
             /* random mantissas, random amplitude within the octave */
             int amp = 1 + (rnd() % 32767);
@@ -210,6 +216,8 @@ int main(int argc, char **argv)
     if (argc > 4) EXB  = atoi(argv[4]);
     if (argc > 5) MODE = atoi(argv[5]);
     if (argc > 6) MB   = atoi(argv[6]);
+    if (argc > 7) KLO  = atoi(argv[7]);
+    if (argc > 8) KHI  = atoi(argv[8]);
 
     printf("# rmsnorm_eps_vec  Q=%d  eps=%.3e  N=%d  EXB=%d  MODE=%s  MB=%d\n",
            Q, EPS, N, EXB, MODE ? "floating" : "absolute-grid", MB);
