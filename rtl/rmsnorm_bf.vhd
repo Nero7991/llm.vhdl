@@ -178,7 +178,7 @@ architecture rtl of rmsnorm_bf is
   type state_t is (S_IDLE, S_ACC,
                    S_INV1, S_INV2, S_INV3, S_INV4, S_INV5, S_INV6,
                    S_SEED1, S_SEED2,
-                   S_RQ, S_RQ_FOLD, S_RQ_FIN1, S_RQ_FIN2, S_RQ_FIN3, S_RQ_CLAMP,
+                   S_RQ, S_RQ_RT1, S_RQ_RT2, S_RQ_FOLD, S_RQ_FIN1, S_RQ_FIN2, S_RQ_FIN3, S_RQ_CLAMP,
                    S_RAW, S_SHIFT1, S_SHIFT2, S_EMIT);
   signal state : state_t := S_IDLE;
 
@@ -287,6 +287,16 @@ architecture rtl of rmsnorm_bf is
   signal mr_m_yy, mr_p_yy : signed(63 downto 0) := (others => '0');  -- y * y
   signal mr_m_sy, mr_p_sy : signed(63 downto 0) := (others => '0');  -- smant*y2
   signal mr_m_dy, mr_p_dy : signed(65 downto 0) := (others => '0');  -- diff * y
+  -- A FOURTH pair, for the 1/sqrt(2) fold.  Added 2026-08-27 because the
+  -- measured 0.717 V post-route critical path of gdn_emit_chain lands here:
+  --   u_rms/ARG__18/DSP_A_B_DATA_INST/CLK -> u_rms/rq_yfin_reg[28]/D
+  --   slack -1.456 ns, logic 3.674 / net 0.932 ns  (79.8% LOGIC)
+  -- The startpoint is the DSP's own A/B input register, so the path was the
+  -- WHOLE multiply combinationally, then a select, then a mux, then the
+  -- destination flop -- in one state.  That is the project's timing rule
+  -- broken twice over, and it is the same shape the three pairs above were
+  -- created to fix; this multiply was simply never given one.
+  signal mr_m_rt, mr_p_rt : signed(63 downto 0) := (others => '0');  -- y * 1/sqrt2
 
   -- ---- element pipeline
   type s17a is array(0 to LANES-1) of signed(16 downto 0);
@@ -574,6 +584,8 @@ begin
             mr_p_sy <= mr_m_sy;
             mr_m_dy <= resize(rq_diff * rq_y, 66);
             mr_p_dy <= mr_m_dy;
+            mr_m_rt <= resize(rq_y * INV_SQRT2_C, 64);
+            mr_p_rt <= mr_m_rt;
             rq_step <= rq_step + 1;
             case rq_step is
               -- ---- Newton iteration 1
@@ -584,16 +596,45 @@ begin
               when 12 => rq_y2   <= resize(shift_right(mr_p_yy, 30), 32);
               when 15 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p_sy, 30), 34);
               when 18 => rq_y    <= resize(shift_right(mr_p_dy, 31), 32);
-                         state <= S_RQ_FOLD;
+                         state <= S_RQ_RT1;
               when others => null;      -- MREG / PREG hops: nothing to derive
                                         -- and nothing ready to consume
             end case;
+
+          -- Two hop states, for the same reason the Newton steps have them: rq_y
+          -- is ASSIGNED at step 18, so it is not readable until the next
+          -- cycle, and the MREG/PREG pair then needs two more to present the
+          -- product.  Sequence, writing y18 for the value assigned at step 18:
+          --   step 18 : mr_m_rt <= y9  * C          (the previous y)
+          --   S_RQ_RT1: mr_m_rt <= y18 * C          mr_p_rt <= y9  * C
+          --   S_RQ_RT2:                             mr_p_rt <= y18 * C
+          --   S_RQ_FOLD: reads mr_p_rt, which is y18 * C.  Correct.
+          -- Cost is 2 cycles per rmsnorm invocation. rmsnorm runs once per head
+          -- and the emit chain's measured per-head deadline is 367 cycles, so
+          -- this is 0.5% of one head and cannot move the rate limit.
+          when S_RQ_RT1 =>
+            mr_m_rt <= resize(rq_y * INV_SQRT2_C, 64);
+            mr_p_rt <= mr_m_rt;
+            state   <= S_RQ_RT2;
+
+          when S_RQ_RT2 =>
+            mr_m_rt <= resize(rq_y * INV_SQRT2_C, 64);
+            mr_p_rt <= mr_m_rt;
+            state   <= S_RQ_FOLD;
 
           when S_RQ_FOLD =>
             rq_d := rq_p - e_out_r;   -- e_out, NOT Q: msq_r is no
                                       -- longer on a fixed 2^-Q grid
             if (rq_d mod 2) /= 0 then
-              rq_yfin <= resize(shift_right(resize(rq_y, 64) * INV_SQRT2_C, 30), 32);
+              -- Now a REGISTERED product, and a 32x32 one.  The old form was
+              -- `resize(rq_y, 64) * INV_SQRT2_C`, a 64x32 multiply whose upper
+              -- 32 bits are pure sign extension: rq_y and INV_SQRT2_C are both
+              -- s32, so the true product always fits in 64 bits and bits 61
+              -- downto 30 -- the only ones this line keeps -- are identical
+              -- either way. So the narrowing is bit-exact, not an
+              -- approximation. rtl/l2norm_rs.vhd:306-309 already does the same
+              -- operation at 32x32 and says why; rmsnorm_bf did not.
+              rq_yfin <= resize(shift_right(mr_p_rt, 30), 32);
               rq_he   := (rq_d - 1) / 2;
             else
               rq_yfin <= rq_y;
