@@ -40,8 +40,14 @@ factor the fixed path used, so it cancelled exactly. The realistic production
 worst case at t=2048 is **~1e-2 worst-head / ~5e-3 mean**, against A's yardstick
 of 8% relative weight error for +1.69% perplexity. int16 stands; Q15 stands;
 **Q12 does not** (3.2e-2 at the same point, and 1.6e-1 at 8,192 tokens in the
-non-contracting regime), so §1.5's "cheap insurance" framing is withdrawn --
-Q15 is a requirement, and it is the format with the least margin in the loop.
+non-contracting regime). Q15 is a requirement, and it is the format with the
+least margin in the loop.
+
+> **MISATTRIBUTION, withdrawn same day.** This paragraph originally continued
+> "so §1.5's 'cheap insurance' framing is withdrawn". It is not: that clause of
+> §1.5 attaches to **beta**, not to the decay, and it has since been measured
+> and CONFIRMED. §1.5's decay claim was right all along and this measurement
+> agrees with it. See the CORRECTION at the end of this file.
 
 **The shape is a rise-then-plateau in every regime that contracts, and a power
 law in the one regime that does not.** Drift rises with a local log-log slope
@@ -499,9 +505,12 @@ where Q12 takes it to 1.00 and 3.9e-2.
 **Q12 decay: DOES NOT SURVIVE.** 3.2e-2 at slow gates and 7.5e-2 stacked at
 t=2048, growing **linearly** to 1.6e-1 by t=8192 in the non-contracting regime,
 and it destroys 4 of the model's 2,304 heads outright by rounding their
-`exp(g)` up to exactly 1.0. §1.5's characterisation of Q15 as "cheap insurance,
-not a requirement, §3 may argue it back down with an error analysis" is
-**withdrawn by this error analysis**: Q15 is a requirement. Q16 or Q17 would
+`exp(g)` up to exactly 1.0. ~~§1.5's characterisation of Q15 as "cheap
+insurance, not a requirement, §3 may argue it back down with an error analysis"
+is **withdrawn by this error analysis**~~ -- **WITHDRAWN, misattribution: that
+clause is about beta, not the decay; see the CORRECTION at the end.** §1.5's
+own decay claim ("worth a table regeneration", for the compounding reason) is
+CONFIRMED by the numbers above. Q15 is a requirement. Q16 or Q17 would
 still buy 2x per bit if the decay ever needs to be tightened, which is the
 opposite of where §2.10 expected the next bit to be spent.
 
@@ -626,10 +635,12 @@ Appended here rather than by editing that file.
 
 ## Spec edits owed (not made in this task, following the 2026-08-25 precedent)
 
-1. **§1.5**: withdraw "Q15 is cheap insurance, not a requirement; §3 may argue
-   it back down with an error analysis". The error analysis exists and argues
-   the other way: Q12 costs 3.2e-2 at t=2048 and 1.6e-1 at t=8192, and loses 4
-   heads' decay outright. Cite this file.
+1. ~~**§1.5**: withdraw "Q15 is cheap insurance, not a requirement; §3 may
+   argue it back down with an error analysis".~~ **WITHDRAWN, DO NOT DO THIS.**
+   That clause attaches to **beta**, whose Q15 has since been measured as
+   genuinely cheap insurance (Q12 costs 1.11x). Acting on this item would have
+   deleted a correct sentence. What §1.5 owed was the error analysis it invited,
+   and that is now recorded in §1.5 itself. See the CORRECTION at the end.
 2. **§3.6**: the state-drift bullet is discharged; mark it done and point here.
 3. **§2.10**: append the correction that `eg = 1.0` is not the worst gate and
    that the sqrt(t)/sqrt(t) mechanism it records does not hold.
