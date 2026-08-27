@@ -317,8 +317,37 @@ architecture rtl of rmsnorm_bf is
   signal idxf    : natural range 0 to NB := 0;
   signal p1_xinv : s48a := (others => (others => '0'));   -- xm * inv   (s16 x s32)
   signal p1_wm   : s17a := (others => (others => '0'));   -- wm carried alongside
-  signal p2_raw  : s64a := (others => (others => '0'));   -- (xm*inv) * wm
-  signal v1, v2, v3 : std_logic := '0';
+  -- THE MREG/PREG PAIR FOR THE SECOND MULTIPLY.  Measured post-route on
+  -- xcvu33p-fsvh2104-2LV-e at the card's real 0.717 V, gdn_emit_chain at
+  -- HEADS=24 DIM=128 SILU_LANES=16 RMS_LANES=4, 3.3 ns target:
+  --
+  --   u_rms/ARG__21/DSP_A_B_DATA_INST/CLK -> u_rms/p2_raw_reg[2][63]/D
+  --   slack -1.007, logic 3.600 ns, net 0.530 ns, i.e. 87% LOGIC
+  --
+  -- The startpoint is the DSP's own A/B input register, so p1_xinv and p1_wm
+  -- were absorbed into AREG/BREG and then the ENTIRE 48x17 multiply plus the
+  -- resize ran combinationally out to a fabric flop.  The DSP's own MREG and
+  -- PREG sat unused.  That is the same shape the three Newton pairs and the
+  -- 1/sqrt(2) fold pair above were created to fix; this multiply, like the
+  -- fold before it, was simply never given one.
+  --
+  -- p2_m is the MREG, p2_raw stays the PREG.  Back to back with NOTHING
+  -- between them, which is what lets the tool put both inside the DSP48.
+  --
+  -- WHY THE NEW STAGE IS INSERTED BEFORE (p2_raw, v2, idx2) RATHER THAN
+  -- AFTER, and this is the whole reason the change is safe.  p2_raw has TWO
+  -- consumers on different schedules: the pass-2 max tree reads it at stage 2a
+  -- gated by `vt(0) <= v2`, and the pass-3 emit reads it at stage 3 gated by
+  -- `v3 <= v2` with `idx3 <= idx2`.  Both pair the DATA with v2, and pass 3
+  -- also pairs it with idx2.  Keeping those three names on the LAST of the two
+  -- new stages means every consumer keeps the identical pairing it already had
+  -- and shifts by exactly one cycle automatically.  Renaming the far end
+  -- instead, and re-timing each consumer by hand, is how a value from the
+  -- wrong pass reaches a correct-looking consumer -- silent, and the defect
+  -- class this project hit three times on 2026-08-27.
+  signal p2_m    : s64a := (others => (others => '0'));   -- DSP MREG
+  signal p2_raw  : s64a := (others => (others => '0'));   -- DSP PREG
+  signal v1, v2m, v2, v3 : std_logic := '0';
 
   -- ---- max|raw| reduction, PIPELINED.  See the long note at S_RAW.
   -- TLEV is the number of comparison levels in the balanced tree; LANES is a
@@ -336,7 +365,7 @@ architecture rtl of rmsnorm_bf is
   signal vt : std_logic_vector(0 to TLEV) := (others => '0');
   signal p3_sum  : s64a := (others => (others => '0'));
   signal idx     : natural range 0 to NB := 0;
-  signal idx1, idx2, idx3 : natural range 0 to NB := 0;
+  signal idx1, idx2m, idx2, idx3 : natural range 0 to NB := 0;
 
   signal o_reg : std_logic_vector(N*16-1 downto 0) := (others => '0');
 begin
@@ -367,7 +396,7 @@ begin
   begin
     if rising_edge(clk) then
       if rst = '1' then
-        state <= S_IDLE; done <= '0'; v1 <= '0'; v2 <= '0';
+        state <= S_IDLE; done <= '0'; v1 <= '0'; v2m <= '0'; v2 <= '0';
         vt <= (others => '0');
         S <= (others => '0'); max_raw <= (others => '0');
       else
@@ -676,8 +705,8 @@ begin
             elsif rq_shifted < 0                         then inv32 <= to_signed(0, 32);
             else                                              inv32 <= resize(rq_shifted, 32);
             end if;
-            idx <= 0; idxf <= 0; idx1 <= 0; idx2 <= 0; idx3 <= 0;
-            vf <= '0'; v1 <= '0'; v2 <= '0'; v3 <= '0';
+            idx <= 0; idxf <= 0; idx1 <= 0; idx2m <= 0; idx2 <= 0; idx3 <= 0;
+            vf <= '0'; v1 <= '0'; v2m <= '0'; v2 <= '0'; v3 <= '0';
             vt <= (others => '0');
             state <= S_RAW;
 
@@ -710,10 +739,15 @@ begin
               p1_xinv(k) <= resize(xf(k) * inv32, 48);
               p1_wm(k)   <= resize(wf(k), 17);
             end loop;
-            -- stage 2
-            v2 <= v1; idx2 <= idx1;
+            -- stage 2m: the multiply, into the DSP's MREG.  See p2_m.
+            v2m <= v1; idx2m <= idx1;
             for k in 0 to LANES-1 loop
-              p2_raw(k) <= resize(p1_xinv(k) * p1_wm(k), 64);
+              p2_m(k) <= resize(p1_xinv(k) * p1_wm(k), 64);
+            end loop;
+            -- stage 2p: PREG.  Nothing between the two flops, deliberately.
+            v2 <= v2m; idx2 <= idx2m;
+            for k in 0 to LANES-1 loop
+              p2_raw(k) <= p2_m(k);
             end loop;
             -- reduce: max|raw| over all lanes.  Order-independent (max is
             -- associative and commutative on unsigned), hence bit-exact
@@ -795,7 +829,11 @@ begin
             -- the tail is still in flight.  vt all zero means every beat that
             -- entered stage 2a has already been merged, because the merge
             -- commits on the same edge that clears vt(TLEV).
-            if idx = NB and vf = '0' and v1 = '0' and v2 = '0'
+            -- v2m is in this list for the same reason vt is: a beat still
+            -- inside the MREG has not reached the abs stage, so leaving here
+            -- without it truncates the reduction by one beat and reads
+            -- max_raw while the tail is in flight.
+            if idx = NB and vf = '0' and v1 = '0' and v2m = '0' and v2 = '0'
                and vt = (vt'range => '0') then
               state <= S_SHIFT1;
             end if;
@@ -818,8 +856,8 @@ begin
             if st = 0 then emit_bias <= (others => '0');
             else           emit_bias <= shift_left(to_signed(1, 64), st - 1);
             end if;
-            idx <= 0; idxf <= 0; idx1 <= 0; idx2 <= 0; idx3 <= 0;
-            vf <= '0'; v1 <= '0'; v2 <= '0'; v3 <= '0';
+            idx <= 0; idxf <= 0; idx1 <= 0; idx2m <= 0; idx2 <= 0; idx3 <= 0;
+            vf <= '0'; v1 <= '0'; v2m <= '0'; v2 <= '0'; v3 <= '0';
             state <= S_EMIT;
 
           -- ---- pass 3 of 3: recompute raw, round-shift, saturate ----------
@@ -845,9 +883,14 @@ begin
               p1_xinv(k) <= resize(xf(k) * inv32, 48);
               p1_wm(k)   <= resize(wf(k), 17);
             end loop;
-            v2 <= v1; idx2 <= idx1;
+            -- stage 2m / 2p: MREG then PREG, same pair as pass 2.  See p2_m.
+            v2m <= v1; idx2m <= idx1;
             for k in 0 to LANES-1 loop
-              p2_raw(k) <= resize(p1_xinv(k) * p1_wm(k), 64);
+              p2_m(k) <= resize(p1_xinv(k) * p1_wm(k), 64);
+            end loop;
+            v2 <= v2m; idx2 <= idx2m;
+            for k in 0 to LANES-1 loop
+              p2_raw(k) <= p2_m(k);
             end loop;
             -- stage 3: the rounding ADD only.  Splitting it from the shift
             -- and the saturation is what takes this path off the critical
@@ -875,7 +918,8 @@ begin
                 end if;
               end loop;
             end if;
-            if idx = NB and vf = '0' and v1 = '0' and v2 = '0' and v3 = '0' then
+            if idx = NB and vf = '0' and v1 = '0' and v2m = '0' and v2 = '0'
+               and v3 = '0' then
               done  <= '1';
               state <= S_IDLE;
             end if;
