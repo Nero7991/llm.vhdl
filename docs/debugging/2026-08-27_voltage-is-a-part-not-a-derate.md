@@ -171,3 +171,40 @@ FSM state, with no MREG/PREG -- fixed in commit `3c2789e`.
   0.717 V. `-2LV` is a characterised variant with its own guarantees; the FK33
   is a `-2L` part being run at reduced voltage. Those are not the same
   proposition and nothing here settles which way the difference goes.
+
+---
+
+## CORRECTION, 2026-08-27, same day
+
+**Withdrawn: the claim that the 2 cycles added to `rmsnorm_bf` by commit
+`3c2789e` are absorbed by the chain.** That claim was made in `3c2789e`'s
+commit message and in a message to the B owner, on this reasoning:
+
+> tb_gdn_emit_chain's finish time moves 82,058.5 ns -> 82,060.5 ns, which is
+> 2 ns, not the 288 ns that 2 cycles x 144 invocations would cost if rmsnorm
+> sat on the per-head critical chain. It does not; the column bank does.
+
+**It does sit on the per-head chain.** Re-measured directly by moving the
+column arrival period one cycle at a time, the deadline went from **366 drops /
+367 passes** to **368 drops / 369 passes** -- exactly two cycles, one for one,
+which is the opposite of absorbed.
+
+The inference was invalid, not merely unlucky. `tb_gdn_emit_chain` runs 512
+cycles per head, well above the deadline, so it is in the arrival-bound regime
+where per-head service time is hidden entirely and only the final drain is
+visible. In that regime a 2 ns move is what you would observe **whether or not**
+rmsnorm is on the critical chain, so the observation cannot distinguish the two
+cases and never could. **An aggregate finish time taken in the arrival-bound
+regime carries no information about per-head service.** The measurement that
+answers the question is the deadline sweep, and it was available.
+
+What survives: the column bank is still the binding resource, and
+`RECUR_LANES=32` still has margin -- now +143 cycles, 27.9%, down from 28%.
+`RECUR_LANES=64` is short by 113 cycles per head and no finite buffer fixes a
+sustained rate deficit.
+
+The two rmsnorm cycles are therefore a real cost against the per-head budget
+and not free. They are still worth paying while the 0.717 V critical path runs
+through that multiply, but that trade should be re-checked once the matched
+place-and-route set reports, because if the fix does not buy clock it is now
+known to cost schedule.
