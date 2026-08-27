@@ -235,3 +235,87 @@ their cost is small against every candidate value of the denominator.
 - **The `o_sat` outputs are reported but nothing consumes them.** Saturation is
   not fatal but it means a head or block lost its top end, and no policy exists
   for what the engine should do when it fires.
+
+## CORRECTION 2026-08-26 (later): both units silently dropped input
+
+Found by the parallel spec audit (finding F2), confirmed here by measurement.
+Both units, as first committed, were **single banked**: they spent their two
+reduce passes not examining `in_valid` at all, and neither had a back-pressure
+port.
+
+```
+gdn_head_emit, cycle probe on the correctness testbench:
+  fill   128 cycles
+  reduce 268 cycles      <- in_valid ignored for all of it
+  total  396 per head
+```
+
+`gdn_recur_pipe` starts the next head immediately (its own head-boundary double
+buffer measures 0 wait after any head of 16 columns or more), so the next
+head's first ~67 column results would have been **silently dropped**. That is a
+correctness bug at integration, not a throughput one, and nothing in either
+unit would have reported it.
+
+### The fix is TWO things, and a mutation run is what showed they are separate
+
+This is the part worth keeping:
+
+1. **`in_ready` fixes correctness.** Without it, columns are lost. With it, a
+   producer that outruns the unit stalls.
+2. **The second bank fixes throughput.** With a correct valid/ready handshake,
+   a single-banked unit merely stalls the producer and **still returns the
+   right answers**.
+
+So collapsing the two banks back into one **passes every value comparison**.
+It is visible only as cycles:
+
+| unit | test | double buffered | banks collapsed |
+|---|---|---|---|
+| `gdn_head_emit` | 4 heads back-to-back | **1,202** | 1,586 |
+| `gdn_y_emit` | 2 blocks back-to-back | **15,390** | 18,462 |
+
+Both testbenches now carry a cycle bound set between the measured figures
+(1,300 and 17,000). Without those bounds the double buffering is untested.
+
+### Two protocol errors, both mine
+
+- **`in_ready` was REGISTERED**, so it reported `pending` one cycle late and a
+  producer sampling it could still hit a full bank. Now combinational, a
+  2-to-1 mux on one bit.
+- **The DUT accepted on `in_valid` alone and ASSERTED if the bank was full.**
+  That gets the protocol backwards: holding valid while ready is low is
+  precisely what a stalled producer does, so the assert fired on *correct*
+  behaviour. Now a proper transfer on an edge where both are high.
+
+### Measured cost, and neither prediction was right
+
+| unit | before | after |
+|---|---|---|
+| `gdn_head_emit` | 1.0 BRAM36, 440.9 MHz | **1.0** BRAM36, **389.4** MHz |
+| `gdn_y_emit` | 4.0 BRAM36, 488.8 MHz | **6.5** BRAM36, 488.8 MHz |
+
+`gdn_head_emit`'s BRAM does not move at all: two banks of 128 x 48 is 12,288
+bits and still fits one 36 Kb primitive. What it costs is clock, 440.9 to
+389.4 MHz, from the combinational `in_ready` and the fill running every cycle
+rather than as a state. Still 30% above B's 299.04 MHz.
+
+`gdn_y_emit` goes 4.0 to 6.5, not the 8.0 a doubling predicts, because the
+second bank packs into granularity the first was already wasting.
+
+### Measurement traps hit, continued
+
+- **A registered status output cannot be honoured by the thing it is telling.**
+  The overlap test failed with an assertion inside the DUT, which read as a DUT
+  bug; it was the handshake.
+- **`ram_style = "block"` is not always accepted.** `gdn_exp_capture` got
+  `WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" ... trying
+  to implement using LUTRAM`, six times, for a 144 x 32 array. The pin was
+  removed. An attribute the tool rejects is worse than none: it warns on every
+  build and misdescribes where the storage lives.
+- **Guarding an edit on the global absence of a string fails when the
+  replacement quotes that string.** Three times in one night: `'KLO' >= 4` when
+  the symbol occurs 3 times; `'2**37' not in s` when the new comment contains
+  `2**37`; `'16-head renorm' not in s` when a correction note quotes the wrong
+  phrase; and `'attribute ram_style' not in s` when the new comment quotes
+  Vivado's warning verbatim. **Guard on `s != original` plus a structural check
+  (is there still a DECLARATION?), never on global absence.**
