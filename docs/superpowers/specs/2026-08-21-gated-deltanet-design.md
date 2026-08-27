@@ -1,5 +1,18 @@
 # Subsystem B: Gated DeltaNet
 
+> **TIME FIGURES RE-DERIVED 2026-08-27 AT THE MEASURED CLOCK.** Every ms figure
+> in this document was originally a `cycles / f` division at 299.04-305.6 MHz,
+> which is a **0.85 V** analysis clock. The FK33 runs VCCINT at **0.717 V
+> MEASURED**, where the same netlist measures **237.8 MHz**
+> (`sim/ooc_sweep/results.csv:7`). The **cycle counts are unchanged and remain
+> the invariant**; the times that descend from them have been restated at
+> 237.8 MHz, marked as such, with the original 0.85 V figure kept beside them
+> rather than deleted. Clock verdicts ("closes at N MHz") have NOT been flipped:
+> they are restated as **conditional**, because they compare a 0.85 V Fmax
+> against a 0.85 V target and no unit in this document has a 0.717 V
+> measurement. Derivation, method and the full per-figure list:
+> `docs/2026-08-27_budgets-at-the-measured-clock.md`.
+
 Design spec, 2026-08-21. Milestone `v2.2`. **Revision 1.**
 
 **STATUS: sections 1-2 only. Section 3 (datapath scheduling, nonlinearity
@@ -1227,11 +1240,23 @@ two-read-plus-write pattern (C §2.5).
 
 **Latency accounting is incomplete, deliberately.** The 2.95-3.14 ms covers
 the state sweep and conv only. **Twenty-four** `rmsnorm` invocations per layer
-per card (~645 cycles each at N=128 → **~2.48 ms/token at 300 MHz, ~3.22 ms at
-the 231 MHz this card reaches at 0.717 V**, if fully serial), 32 L2 norms per
-layer, ~8,192 silu evaluations per layer (0.74 ms/token at 1/cycle, ~2.2 ms
-at the 3-cycle-FSM rate of the existing softmax cone), and the scalar path are
-all outside it.
+per card (~645 cycles each at N=128 → **~2.48 ms/token at 300 MHz, 3.125 ms at
+the MEASURED 237.8 MHz this card reaches at 0.717 V**, if fully serial), 32 L2
+norms per layer, ~8,192 silu evaluations per layer (0.74 ms/token at 1/cycle,
+~2.2 ms at the 3-cycle-FSM rate of the existing softmax cone), and the scalar
+path are all outside it.
+
+> **RE-DERIVED 2026-08-27 at the measured clock.** The **~3.22 ms at 231 MHz is
+> SUPERSEDED**: 231 MHz is `300 x (1 - 0.229)`, and
+> `docs/debugging/2026-08-25_voltage-derate-on-hardware.md` refuted -22.9% as a
+> die constant. The card measures **237.8 MHz at 0.717 V** on A's netlist
+> (`sim/ooc_sweep/results.csv:7`, a -16.5% derate against the 284.90 MHz 0.85 V
+> analysis of the SAME netlist, `:9`), so 743,040 cycles is **3.125 ms**.
+> **The silu pair (0.74 / ~2.2 ms) is deliberately NOT converted:** it is an
+> 0.8B figure at 18 layers and 200 MHz (147,456 and 442,368 cycles), not a
+> 300 MHz figure, so it does not take the 300 MHz conversion factor. At
+> 237.8 MHz it would be **0.620 / 1.860 ms**.
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 7.1.
 
 > **CORRECTED 2026-08-25.** The invocation count was 16, inherited from
 > §1.1(g)'s stale-0.8B head count above: the output norm runs over the 48
@@ -1259,6 +1284,16 @@ all outside it.
 > build is unmeasured. Read the 3.22 ms as an unsupported upper bound; the real
 > figure is between 2.48 and 2.94 ms and is not known more precisely.
 > Audit: `docs/debugging/2026-08-26_gdn-spec-audit.md` F10.
+>
+> **UPDATED 2026-08-27: the clock is now MEASURED, not bounded, and the range
+> above is superseded.** The `>= 252.6 MHz` bound stands for what it measured
+> (the HBM test bitstream) and is not withdrawn; `matvec_core` separately
+> measures **-16.5%** on one netlist re-analysed at 0.717 V
+> (284.90 -> 237.812 MHz, `sim/ooc_sweep/results.csv:9` and `:7`), which is
+> just OUTSIDE that bound. Both stand -- they measure different designs. At the
+> measured **237.8 MHz** this term is **3.125 ms**, above the top of the
+> 2.48-2.94 ms range this note gives, so that range is SUPERSEDED.
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 7.1.
 
 Serialized worst case is **~7.5-8.5 ms/token** (was ~6-7, before the +1.55 ms
 correction above); with the §3 schedule overlapping norms and nonlinearities
@@ -1266,6 +1301,17 @@ under the next head's sweep, the target is **~3.5-4.5 ms/token**. §3 must
 produce the real budget before the recon throughput figures are re-derived;
 with A at 35-53 ms (423 MB) and C at ~4-4.4 ms, B's plausible range puts
 `v3.0` at **~16-23 tok/s**, i.e. the low half of the recon's 19-28 band.
+
+> **RE-DERIVED 2026-08-27 at the measured 237.8 MHz.** The serialized worst
+> case restates as **~9.5-10.7 ms/token** and the overlapped target as
+> **~4.4-5.7 ms/token**. Both are blanket x1.2616 restatements of ranges whose
+> component terms sit at more than one clock (the sweep half is an 0.8B
+> 200 MHz figure), so carry them as coarse. §3.5 supersedes both anyway: the
+> worst case becomes §3.2's 10.09 ms = **12.73 ms at 237.8 MHz**, and the
+> target becomes ~2.0 ms = **~2.5 ms**. The A and C terms here are superseded
+> outright: at 27B N=2 and 237.8 MHz, **A is 29.25 ms and C is 5.51 ms**, which
+> puts `v3.0` at **~21.5-25.0 tok/s**, not ~16-23.
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` sections 2.1 and 5.1.
 
 The overlapped target and the throughput band are deliberately NOT moved.
 The correction lands entirely on a term the §3 schedule is meant to hide
@@ -1447,10 +1493,15 @@ row is an estimate and unverified**, exactly the caveat C §2.8 carries.
 | FF | ~15-20K | ~35-45K | 141,120 | ~880K class |
 | BRAM36 | ~18-20 | ~25-30 | 216 | 23.6 Mb + 90 Mb URAM (14.2 MB) |
 | State residency | DDR stream (9.5 MB) | URAM option, §2.9 | 0.95 MB on-chip | 14.2 MB on-chip |
-| Sweep time (0.8B shapes, 200 MHz) | 2.95-3.14 ms | ~0.74 ms (0.49 at 300 MHz) | | |
+| Sweep time (0.8B shapes, 200 MHz) | 2.95-3.14 ms | ~0.74 ms (0.49 at 300 MHz, **0.618 at the measured 237.8 MHz**) | | |
 
 LUT/FF/BRAM rows are estimates from the §2.6 table plus alignment barrel
 shifters; none has seen synthesis.
+
+> **2026-08-27:** the `0.49 at 300 MHz` in the sweep-time row restates as
+> **0.618 ms at the measured 237.8 MHz** (147,456 cycles). The `~0.74 ms`
+> beside it is the SAME cycle count at this row's own 200 MHz, not a 300 MHz
+> figure, so it is left alone.
 
 > **MEASURED 2026-08-23: the 4-per-lane term is confirmed; the aux row is not.**
 > OOC synthesis of one lane carrying the full four-stage §2.1.4 chain, on the
@@ -1533,7 +1584,7 @@ BRAM+URAM with ~4.7 MB to spare, so on the FK33 the state need never touch
 external memory at all: the "streamer" becomes a URAM address generator, the
 2R+2W masters disappear, the §2.7 BRESP gate becomes trivial, and the sweep is
 purely compute-bound (`262,144/LANES` cycles/layer; at LANES=32 and 300 MHz,
-~0.49 ms/token for 18 layers). URAM's 72-bit ports stripe naturally at 4
+~0.49 ms/token for 18 layers, **0.618 ms at the measured 237.8 MHz**). URAM's 72-bit ports stripe naturally at 4
 int16 elements per URAM per cycle — 8 URAMs per lane-group of 32.
 
 **But the FK33 rung does not require residency** — that is the important
@@ -1755,12 +1806,16 @@ x 48 GDN layers                   = 18,874,368 elements per token per card
 cycles = 18,874,368 / LANES
 ```
 
-| `LANES` | sweep cycles | ms @ 300 MHz | GB/s demanded |
-|---|---|---|---|
-| 8 | 2,359,296 | 7.86 | 9.6 |
-| 16 | 1,179,648 | 3.93 | 19.2 |
-| **32** | **589,824** | **1.97** | **38.4** |
-| 64 | 294,912 | 0.98 | 76.8 |
+| `LANES` | sweep cycles | ms @ 300 MHz | **ms @ 237.8 MHz** | GB/s demanded @ 300 MHz |
+|---|---|---|---|---|
+| 8 | 2,359,296 | 7.86 | **9.921** | 9.6 |
+| 16 | 1,179,648 | 3.93 | **4.961** | 19.2 |
+| **32** | **589,824** | **1.97** | **2.480** | **38.4** |
+| 64 | 294,912 | 0.98 | **1.240** | 76.8 |
+
+(The 237.8 MHz column added 2026-08-27: same cycles, measured 0.717 V clock.
+The GB/s column is at 300 MHz and scales WITH the core clock -- at 237.8 MHz it
+is 7.6 / 15.2 / **30.4** / 60.9 GB/s.)
 
 (Port counts moved below, because deriving them needs §3.4's measurement.)
 
@@ -1790,7 +1845,8 @@ cycles = 18,874,368 / LANES
 
 **`LANES = 32` needs four HBM ports, and B is compute-bound there with
 margin.** The sweep reads 2 B and writes 2 B per element, so it demands
-`4 x LANES` B/cycle = 38.4 GB/s at `LANES = 32` and 300 MHz.
+`4 x LANES` B/cycle = 38.4 GB/s at `LANES = 32` and 300 MHz, and
+**30.4 GB/s at the measured 237.8 MHz** (2026-08-27).
 
 > **CORRECTED 2026-08-25, later the same evening.** This paragraph first
 > derived the port count as `LANES / 8` from "a measured HBM port delivers
@@ -1820,11 +1876,26 @@ margin.** The sweep reads 2 B and writes 2 B per element, so it demands
 | **32** | **38.4 GB/s** | **4** | **+23%** |
 | 64 | 76.8 GB/s | **7** (not 8) | +7% |
 
+> **RE-DERIVED 2026-08-27 at the measured 237.8 MHz.** Demand scales with
+> `f_core`; the port rate does not. At 237.8 MHz demand becomes
+> **7.6 / 15.2 / 30.4 / 60.9 GB/s** and the margin at the SAME port counts
+> becomes **+55% / +55% / +55%** for `LANES` 8/16/32. B's four-port allocation
+> at `LANES = 32` therefore gains headroom, not loses it.
+> **The `LANES = 64` row is left OPEN.**
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 7.1 states +23%
+> for it; that does not reproduce here at any port count (7 ports give +35%,
+> and a re-minimised 6 ports give +16%), so it is not restated.
+
 Note this replaces §2.9's FK33 row, which is stale on three counts at 27B: it
 says state traffic is "19 MB/token vs 460 GB/s: ~41 us -- noise", but per-card
 traffic is **75.5 MB/token** (§4.1), the supply is **288 GB/s measured, not
 460**, and B is allocated 4 ports of 30, not the whole device. Against B's
-actual allocation the traffic is 1.97 ms and co-limiting, not noise. §2.9 also
+actual allocation the traffic is 1.97 ms and co-limiting, not noise.
+**RE-DERIVED 2026-08-27:** the traffic time is set by the 47.1 GB/s the four
+ports supply and is therefore **clock-invariant at 1.60 ms** (75.5 MB /
+47.1 GB/s), while the sweep moves to **2.480 ms at the measured 237.8 MHz** --
+so B becomes **more** compute-bound there, not co-limited. The "co-limiting"
+reading is superseded; the "not noise" half stands. §2.9 also
 still claims the state fits on chip; §4.1 already says 37.75 MB per card does
 not fit 14.2 MB, so §2.9 contradicts §4.1 and §4.1 wins.
 
@@ -1833,17 +1904,17 @@ not fit 14.2 MB, so §2.9 contradicts §4.1 and §4.1 wins.
 Rebuilt at §4 dimensions, per card per token, 300 MHz. All three terms use
 `rmsnorm.vhd`'s shipped cost, which §2.5 quotes as 645 cycles at N=128:
 
-| term | invocations/token/card | cycles each | cycles | ms |
-|---|---|---|---|---|
-| state sweep, `LANES = 32` | -- | -- | 589,824 | **1.97** |
-| output `rmsnorm(o_h)` | 24 heads x 48 layers = 1,152 | 645 | 743,040 | 2.48 |
-| `l2_norm(q)`, `l2_norm(k)` | 8 k-heads x 2 x 48 = 768 | 645 | 495,360 | 1.65 |
+| term | invocations/token/card | cycles each | cycles | ms @300 | **ms @237.8** |
+|---|---|---|---|---|---|
+| state sweep, `LANES = 32` | -- | -- | 589,824 | **1.97** | **2.480** |
+| output `rmsnorm(o_h)` | 24 heads x 48 layers = 1,152 | 645 | 743,040 | 2.48 | **3.125** |
+| `l2_norm(q)`, `l2_norm(k)` | 8 k-heads x 2 x 48 = 768 | 645 | 495,360 | 1.65 | **2.083** |
 <!-- 495,360 collides with the WITHDRAWN 16-invocation output-norm figure in
      §2.5's correction note, for an unrelated reason: 8 k-heads x 2 operands
      = 16 L2 invocations per layer, and the withdrawn figure used 16 output
      norms per layer.  Same count, different quantity.  Not a copy. -->
-| `silu`, 3-cycle FSM rate | 393,216 evaluations | 3 | 1,179,648 | 3.93 |
-| **serial total** | | | **3,007,872** | **10.03** |
+| `silu`, 3-cycle FSM rate | 393,216 evaluations | 3 | 1,179,648 | 3.93 | **4.961** |
+| **serial total** | | | **3,007,872** | **10.03** | **12.649** |
 
 The silu count is derived rather than inherited: `silu(conv_out)` runs over the
 per-card conv width (q 1024 + k 1024 + v 3072 = 5,120) and `silu(z_h)` over the
@@ -1855,7 +1926,8 @@ stop the coincidence reading as a copy.
 **The nonlinearities are 2,418,048 cycles against a 589,824-cycle sweep: 4.10x.
 Overlap cannot hide 4x under 1x.** §2.5 frames this as a scheduling problem
 that a near-perfect overlap might solve. It is not one. A *perfect* schedule
-gives `max(sweep, nonlinear)` = 8.06 ms, which sits inside §2.5's own
+gives `max(sweep, nonlinear)` = 8.06 ms at 300 MHz (**10.17 ms at the measured
+237.8 MHz**, 2026-08-27), which sits inside §2.5's own
 7.5-8.5 ms **serial** worst case: with these unit rates, overlapping everything
 perfectly buys essentially nothing, because the thing being hidden is larger
 than the thing it would hide under. **The units have to get faster; arranging
@@ -1904,27 +1976,28 @@ nothing else. Two changes do the work instead:
 3. **Vectorize.** The element-proportional part divides by the lane count.
    Only x and w are buffered, at 16 bits each -- not the 64-bit `raw`.
 
-| form | cycles at N=128 | out+L2 cycles | ms |
-|---|---|---|---|
-| `rmsnorm.vhd` as shipped, 5N, 1 element/cycle | 645 | 1,238,400 | 4.13 |
-| 5N, **4 elements/cycle** -- vectorized only, no other change | 175 | 336,000 | 1.12 |
-| **3N, 4 elements/cycle** -- RAW/EMIT pipelined, recompute KEPT | **111** | **213,120** | **0.71** |
-| 2N by storing `raw`, 4 elements/cycle | 79 | 151,680 | 0.51 (**REJECTED**, see above) |
+| form | cycles at N=128 | out+L2 cycles | ms @300 | **ms @237.8** |
+|---|---|---|---|---|
+| `rmsnorm.vhd` as shipped, 5N, 1 element/cycle | 645 | 1,238,400 | 4.13 | **5.208** |
+| 5N, **4 elements/cycle** -- vectorized only, no other change | 175 | 336,000 | 1.12 | **1.413** |
+| **3N, 4 elements/cycle** -- RAW/EMIT pipelined, recompute KEPT | **111** | **213,120** | **0.71** | **0.896** |
+| 2N by storing `raw`, 4 elements/cycle | 79 | 151,680 | 0.51 (**REJECTED**, see above) | **0.638** |
 
 **Vectorization alone is sufficient**, which is the important line in that
 table. Whole-phase budgets against the 589,824-cycle sweep:
 
-| norm form (4 lanes) | norms + L2 + silu + conv | vs sweep |
+| norm form (4 lanes) | norms + L2 + silu + conv (ms @300 / **@237.8**) | vs sweep |
 |---|---|---|
-| shipped 5N, serial 1 element/cycle | 1,386,624 cycles, 4.62 ms | **does not hide** |
-| 5N, 4 lanes, no other change | 465,024 cycles, 1.55 ms | hides, +27% margin |
-| **3N, 4 lanes** | **342,144 cycles, 1.14 ms** | **hides, +72% margin** |
+| shipped 5N, serial 1 element/cycle | 1,386,624 cycles, 4.62 / **5.829** ms | **does not hide** |
+| 5N, 4 lanes, no other change | 465,024 cycles, 1.55 / **1.956** ms | hides, +27% margin |
+| **3N, 4 lanes** | **342,144 cycles, 1.14 / 1.439 ms** | **hides, +72% margin** |
 
 So the rejected `raw` array was buying margin the design does not need. 3N at
 4 lanes is the target; 5N at 4 lanes is the fallback and still works.
 
 silu must be **at least 1 per cycle and preferably 4**; the 3-cycle FSM rate of
-the existing softmax cone is 3.93 ms on its own, twice the sweep. That is
+the existing softmax cone is 3.93 ms on its own at 300 MHz (**4.961 ms at the
+measured 237.8 MHz**), twice the sweep. That is
 already known to be achievable and cheap: D's measured narrowed silu lane is
 **3 DSP at 646 MHz**, bit-identical to the verbatim-width cone over 5,769
 outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
@@ -1932,14 +2005,20 @@ outputs (`docs/debugging/2026-08-25_d-vec-dsp-measured.md`, and the
 
 **Budget with fused 4-lane norms and 4/cycle silu:**
 
-| term | cycles | ms |
-|---|---|---|
-| state sweep, `LANES = 32` | 589,824 | 1.97 |
-| output rmsnorm + L2, **3N, 4 lanes** | 213,120 | 0.71 |
-| silu at 4/cycle | 98,304 | 0.33 |
-| conv, depthwise k=4 over 5,120/layer at `LANES = 32` | ~~30,720~~ **18,384** | ~~0.10~~ **0.06** |
-| **nonlinear + conv, overlapped under the sweep** | 342,144 | 1.14 |
-| **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** |
+| term | cycles | ms @300 | **ms @237.8** |
+|---|---|---|---|
+| state sweep, `LANES = 32` | 589,824 | 1.97 | **2.480** |
+| output rmsnorm + L2, **3N, 4 lanes** | 213,120 | 0.71 | **0.896** |
+| silu at 4/cycle | 98,304 | 0.33 | **0.413** |
+| conv, depthwise k=4 over 5,120/layer at `LANES = 32` | ~~30,720~~ **18,384** | ~~0.10~~ **0.06** | **0.077** |
+| **nonlinear + conv, overlapped under the sweep** | ~~342,144~~ **329,808** | ~~1.14~~ **1.099** | **1.387** |
+| **B token time = max(sweep, overlapped)** | **589,824** | **~1.97** | **~2.480** |
+
+(2026-08-27: the 237.8 MHz column is the same cycles at the measured 0.717 V
+clock. The overlapped row's 342,144 is corrected to **329,808** in the same
+pass -- it summed the struck-through 30,720 conv figure rather than the
+measured 18,384. That correction is independent of the clock;
+`docs/2026-08-27_9b-single-card-resource-envelope.md:880` reaches it too.)
 
 > **CORRECTED 2026-08-26.** The conv row said 30,720 cycles. It is **2.00x**
 > the real rate and **1.67x** the real cost at the `LANES = 32` it names.
@@ -2019,7 +2098,9 @@ completes. Cross-layer overlap is impossible by construction, since conv(L+1)
 consumes layer L's output. Treat +36% as an upper bound on the margin, not a
 result. **B lands at ~2.0 ms/token,
 better than §2.5's 3.5-4.5 ms target**, and the term that moved is unit
-throughput, not scheduling.
+throughput, not scheduling. (**RE-DERIVED 2026-08-27: ~2.5 ms/token at the
+measured 237.8 MHz**, against a target that restates as ~4.4-5.7 ms. The
+comparison survives; only the arithmetic moves.)
 
 > **CORRECTED 2026-08-26, after the conv note above and building on it. The
 > bundle is +11%, not the +35% that note lands on, and BOTH emit stages are
@@ -2034,6 +2115,13 @@ throughput, not scheduling.
 > it is not the same: `l2norm_rs` at `LANES = 4` reaches only 285.8 MHz and
 > **does not close B's 299.04 MHz clock**, so the closing point is `LANES = 2`
 > at **185 cycles**, not 142.
+>
+> > **RE-OPENED 2026-08-27, conditionally.** 285.8 MHz is a 0.85 V synthesis
+> > figure and 299.04 MHz is a 0.85 V target. At 0.717 V the shared clock is
+> > **237.8 MHz MEASURED**, and 285.8 x 0.835 = **238.6 MHz**, which clears it
+> > by 0.8 MHz. **The `LANES = 4` rejection is therefore no longer safe in
+> > either direction** -- 0.8 MHz is inside any reasonable error on a
+> > transferred derate. Restating a 0.85 V Fmax against a 0.85 V target as a 0.717 V Fmax against 237.8 MHz assumes the -16.5% derate measured on `matvec_core` transfers to this unit, which `docs/debugging/2026-08-25_voltage-derate-on-hardware.md:210-215` explicitly declines to license. This is CONDITIONAL and needs its own 0.717 V measurement; do not act on it as written.
 >
 > **2. Rebuilt with every unit at its own measured, closing rate**, taking the
 > conv term from the measured cycle model in the note above rather than from
@@ -2101,7 +2189,8 @@ throughput, not scheduling.
 > rows 2 and 3 each add exactly `129,024 = 98,304 + 30,720` to their norm+L2
 > term; row 1 adds 148,224 to 1,238,400 and should read **1,367,424 = 4.56 ms**,
 > not 1,386,624 = 4.62. 19,200 cycles have no component behind them. The row
-> does not hide either way.
+> does not hide either way. (2026-08-27: at the measured 237.8 MHz that is
+> **5.750 ms** against 5.829.)
 >
 > Audit and full arithmetic:
 > `docs/debugging/2026-08-26_gdn-spec-audit.md` F2, F3, F14.
@@ -2183,10 +2272,11 @@ requiring at least a full column per burst.
   figures** and are superseded by §3.1. The four-master claim survives; the
   numbers behind it do not.
 - §2.5's **7.5-8.5 ms serial worst case is optimistic**, not pessimistic: at
-  §4 dimensions with shipped units it is 10.09 ms (§3.2).
-- §2.5's **3.5-4.5 ms overlapped target is superseded downward to ~2.0 ms**,
-  conditional on §3.3's unit rates, which are a design obligation and not yet
-  synthesised (§3.6).
+  §4 dimensions with shipped units it is 10.09 ms (§3.2) at 300 MHz, and
+  **12.73 ms at the measured 237.8 MHz** (2026-08-27).
+- §2.5's **3.5-4.5 ms overlapped target is superseded downward to ~2.0 ms**
+  (**~2.5 ms at the measured 237.8 MHz**), conditional on §3.3's unit rates,
+  which are a design obligation and not yet synthesised (§3.6).
 - **§2.8's DSP row is a floor and this section raises it.** The measured 148
   (`DSP_B = 4 x LANES + 20`) carries `rmsnorm_rs 18 + silu 2` as its fixed 20,
   i.e. ONE norm unit at 1 element/cycle. §3.3 requires a 4-lane fused norm and
@@ -2279,6 +2369,12 @@ requiring at least a full column per burst.
 > | 32 (was here) | 4 | 105 | 52,535 | 16,478 | 23.5 | 288.7 |
 > | 64 | 2 | 169 | 91,154 | 20,240 | 39.5 | 266.8 |
 >
+> > **RE-OPENED 2026-08-27, conditionally.** The Fmax column is a 0.85 V
+> > synthesis analysis and 299.04 MHz is a 0.85 V target. At 0.717 V the shared
+> > clock is **237.8 MHz MEASURED**, and `SILU_LANES = 8` restates as
+> > 295.8 x 0.835 = **247.0 MHz**, which clears 237.8. **The 32-DSP saving that
+> > was rejected on timing may be available.** Restating a 0.85 V Fmax against a 0.85 V target as a 0.717 V Fmax against 237.8 MHz assumes the -16.5% derate measured on `matvec_core` transfers to this unit, which `docs/debugging/2026-08-25_voltage-derate-on-hardware.md:210-215` explicitly declines to license. This is CONDITIONAL and needs its own 0.717 V measurement; do not act on it as written.
+>
 > Net **+12.1 MHz, -32 DSP, -19,131 LUT, -8 BRAM** at once. 32 was
 > simultaneously the most expensive setting and one of only two that miss the
 > clock. The cost is in cycles, not area: `SI_BEATS` 4 -> 8 and `S_GATE` is
@@ -2344,7 +2440,22 @@ requiring at least a full column per burst.
 > | DSP / LUT / FF | 73 / 33,404 / 14,518 | 73 / 29,569 / 14,649 |
 >
 > Against B's 299.04 MHz target that is a **15% miss**, with 1,234 failing
-> endpoints and TNS -158.008 ns. The failing path is inside `rmsnorm_bf` both
+> endpoints and TNS -158.008 ns.
+>
+> > **2026-08-27: both numbers here are 0.85 V, and the 0.717 V figure has
+> > never been taken.** Applying the -16.5% derate measured on `matvec_core`
+> > gives roughly **212 MHz post-route at 0.717 V**, an **~11% miss against the
+> > measured 237.8 MHz** -- so the miss does not go away, it stays about the
+> > same size. **If that estimate holds, B's emit chain, not A, sets the die
+> > clock**, and every ms figure in this document restated at 237.8 MHz is
+> > ~12% optimistic. That makes this the single most consequential unmeasured
+> > quantity in the project, and it costs one OOC re-analysis at
+> > `set_operating_conditions -voltage {VCCINT 0.717}` on an existing netlist.
+> > It is an ESTIMATE, not a measurement. Two facts argue it is pessimistic
+> > rather than wrong: the synthesis-binding path is 84.9% logic (the class
+> > `matvec_core`'s derate was measured on) but the post-route one is 66.8%
+> > route, and route delay derates less.
+> > `docs/2026-08-27_budgets-at-the-measured-clock.md` section 6.1. The failing path is inside `rmsnorm_bf` both
 > before and after routing, but it is **not the same path**: synthesis fails on
 > `u_rms/ARG__21/DSP_A_B_DATA_INST/CLK -> u_rms/mr_m_reg[60]/D`, 84.9% logic,
 > while post-route fails on `u_rms/p2_raw_reg[0][9]/C ->
@@ -2402,7 +2513,8 @@ The phase-schedule bullet is discharged. These are not:
   failing path. `docs/debugging/2026-08-25_rmsnorm-rs-300mhz.md`.
 
   §3.3's budget with the measured 142 cycles: norms + L2 + silu + conv =
-  **401,664 cycles = 1.34 ms against the 589,824-cycle sweep, +47% margin.**
+  **401,664 cycles = 1.34 ms at 300 MHz (1.689 ms at the measured 237.8 MHz)
+  against the 589,824-cycle sweep, +47% margin.**
   Whole-die DSP moves **2,524 -> 2,546 of 2,880 = 88.4%** (B's row 148 -> 170,
   the fixed 18 becoming 40).
 
@@ -2493,13 +2605,17 @@ The phase-schedule bullet is discharged. These are not:
   all. That is why the ratio gets WORSE as lanes are added: 3.3x at 1 lane,
   14.5x at 32.
 
-  | `LANES` | measured cycles/token/card | ms @ 300 MHz | §3.1 budget |
-  |---|---|---|---|
-  | 8 | 12,976,128 | 43.3 | 7.86 |
-  | 16 | 9,879,552 | 32.9 | 3.93 |
-  | **32** | **8,552,448** | **28.5** | **1.97** |
+  | `LANES` | measured cycles/token/card | ms @ 300 MHz | **ms @ 237.8 MHz** | §3.1 budget @300 |
+  |---|---|---|---|---|
+  | 8 | 12,976,128 | 43.3 | **54.6** | 7.86 |
+  | 16 | 9,879,552 | 32.9 | **41.5** | 3.93 |
+  | **32** | **8,552,448** | **28.5** | **35.96** | **1.97** |
 
-  **28.5 ms against a 1.97 ms budget.** §3.3's whole "the nonlinearities hide
+  (237.8 MHz column added 2026-08-27; the unit is superseded but the table is
+  still printed. The §3.1 budget column restates as 9.921 / 4.961 / **2.480**.)
+
+  **28.5 ms against a 1.97 ms budget** (**35.96 against 2.480** at the measured
+  237.8 MHz; the 14.5x ratio is clock-invariant). §3.3's whole "the nonlinearities hide
   under the sweep" argument compares against the 1.97, and §3.1's HBM port
   derivation assumes the sweep is compute-bound at that rate. Neither survives
   a 14.5x throughput miss, so both are now open pending the item below.
@@ -2532,7 +2648,8 @@ The phase-schedule bullet is discharged. These are not:
   | **32** | **129** | **302.5 MHz** | **4** | **4** | **24.5** | **24,037** |
   | 64 | 257 | 301.9 MHz | **2** | 2 | 48.5 | 50,422 |
 
-  **`LANES = 64` -- §3.1's upside row, 0.98 ms -- is now fully measured**, at
+  **`LANES = 64` -- §3.1's upside row, 0.98 ms at 300 MHz and 1.240 ms at the
+  measured 237.8 MHz -- is now fully measured**, at
   `SLOTS = 32`: II = 2, 257 DSP (`4 x LANES + 1` again), 48.5 BRAM, 301.9 MHz.
   **But it is almost certainly not affordable:** +128 DSP over `LANES = 32`
   takes B's row from ~202 to ~330 and the die from the 89.7% floor to roughly
@@ -2555,6 +2672,7 @@ The phase-schedule bullet is discharged. These are not:
   Bit-identical to `gdn_recur` on the same 192 vectors at every `LANES`. The
   issue interval is EXACTLY `NB` at every lane count, which is precisely what
   §3.1 assumed, so the sweep is **589,824 cycles = 1.95 ms at 302.5 MHz**
+  (**2.480 ms at the measured 237.8 MHz**, 2026-08-27)
   against the 28.5 ms the sequential unit measures.
 
   **At the SAME DSP cost.** 129 at `LANES = 32`, identical to the sequential
@@ -2594,7 +2712,9 @@ The phase-schedule bullet is discharged. These are not:
   > Identical on every axis, and bit-identical to `gdn_recur` on all 384
   > columns with II still exactly `NB`. **The sweep is 589,824 cycles, which is
   > 1.97 ms at the 299.04 MHz measured here, and the 2.18 ms figure above is
-  > withdrawn.**
+  > withdrawn.** (2026-08-27: 299.04 MHz is a 0.85 V analysis clock. At the
+  > **237.8 MHz** the card measures at 0.717 V the same 589,824 cycles is
+  > **2.480 ms**.)
   >
   > **Quote the sweep in CYCLES.** An earlier version of this paragraph said
   > 1.95 ms, which is 589,824 / 302.5 MHz -- the pre-double-buffer Fmax from a
@@ -2900,10 +3020,13 @@ The phase-schedule bullet is discharged. These are not:
   > ends.** The `+22` prices `rmsnorm_rs` at `LANES = 4` (40 DSP) against
   > `LANES = 1` (22). That branch fails twice over, both already measured: at
   > `N = 256` it reaches only **281.8 MHz**, so it misses both C's 300 MHz
-  > target and B's 299.04 MHz shared clock, and it is not needed anyway --
+  > target and B's 299.04 MHz shared clock -- and **this one does NOT flip at
+  > the measured clock**: 281.8 x 0.835 = **235.3 MHz**, which still misses the
+  > 237.8 MHz the card measures at 0.717 V (2026-08-27). It is not needed
+  > anyway --
   > `LANES = 1` at `N = 256` is 814 cycles per vector, and at `(12 + 2) x 16 =
-  > 224` norms per card per token that is 182,336 cycles = 0.61 ms at 300 MHz,
-  > inside C's own serial fallback. **The ceiling therefore falls 2,648 ->
+  > 224` norms per card per token that is 182,336 cycles = 0.61 ms at 300 MHz
+  > (**0.767 ms at the measured 237.8 MHz**), inside C's own serial fallback. **The ceiling therefore falls 2,648 ->
   > 2,630 and the honest range becomes 2,606 to 2,630 = 90.5% to 91.3%.**
   > Source: `docs/superpowers/specs/2026-08-27-C-gated-attention-skeleton.md`
   > §3.4. This is the second time a lane count has been priced into a budget
@@ -2948,6 +3071,21 @@ The phase-schedule bullet is discharged. These are not:
   > 280.8 GB/s and fits. Source:
   > `docs/superpowers/specs/2026-08-27-D-sequencer-skeleton.md` §3.2 and §4.3.
   >
+  > **RE-DERIVED 2026-08-27: at the measured core clock this item inverts, and
+  > the 450 MHz fork below is moot.** A's demand is `ROWS_IF x 18 B x f_core`
+  > and the HBM supply is on a separate ~450 MHz ACLK that does NOT derate with
+  > VCCINT. At **237.8 MHz** (`sim/ooc_sweep/results.csv:7`), `ROWS_IF = 58`
+  > demands **248.3 GB/s against 288.0 GB/s** -- **fed, with 13.8% of the device
+  > spare**, not feed-bound by 8.75%. The bandwidth-balanced point moves from
+  > 53.3 to **67.3**, so the "58 is 9% PAST the balanced point" reading and the
+  > 233 DSP it prices as unusable both fall. The parity constraint still holds
+  > and still forces even values, so the largest legal balanced point is **66**,
+  > which demands **282.5 GB/s** and fits -- `ROWS_IF = 52` is no longer the
+  > ceiling. And **raising the HBM ACLK to 450 MHz is moot**: nothing needs it
+  > at the measured clock. What does NOT change is the port COUNT, which is an
+  > open item in its own right (A §15.4b, D §3.2).
+  > `docs/2026-08-27_budgets-at-the-measured-clock.md` sections 1.2 and 6.3.
+  >
   > **The die total is NOT restated here, deliberately.** The 1,914 is A's
   > post-reclaim measured figure, and this document does not carry the
   > relationship between A's post-reclaim DSP and `ROWS_IF`, so subtracting
@@ -2967,6 +3105,9 @@ The phase-schedule bullet is discharged. These are not:
   > The assembled `gdn_emit_chain` does not close at 4 lanes: `SILU_LANES = 8`
   > measures 295.8 MHz and misses 299.04, and the closing point is **16 lanes =
   > 32 DSP** (`gdn_silu` is 2 DSP and 0.5 BRAM per lane, `sim/gdn_silu_sweep.csv`).
+  > (**2026-08-27, conditionally re-opened:** against the measured 237.8 MHz at
+  > 0.717 V, 295.8 x 0.835 = 247.0 MHz clears the clock and the 4-lane row may
+  > stand after all. Restating a 0.85 V Fmax against a 0.85 V target as a 0.717 V Fmax against 237.8 MHz assumes the -16.5% derate measured on `matvec_core` transfers to this unit, which `docs/debugging/2026-08-25_voltage-derate-on-hardware.md:210-215` explicitly declines to license. This is CONDITIONAL and needs its own 0.717 V measurement; do not act on it as written.)
   > If that instance is the same silu the aux row prices, B's row moves **+24
   > DSP**, 202 -> 226 and the die floor 2,606 -> 2,630, exactly cancelling the
   > 18 reclaimed in item 1. If the chain's gate silu is a SECOND instance
@@ -3027,11 +3168,14 @@ The phase-schedule bullet is discharged. These are not:
   guesswork.** Per card the conv is 5,120 channels over 48 GDN layers, two
   passes each, so `491,520 / LANES` cycles per token:
 
-  | `LANES` | cycles | ms @ 300 MHz | fraction of the 589,824 sweep | DSP |
-  |---|---|---|---|---|
-  | 2 | ~~245,760~~ **248,208** | 0.83 | ~~41.7%~~ **42.1%** | 8 |
-  | **4** | ~~122,880~~ **125,472** | **0.42** | ~~20.8%~~ **21.3%** | **16** |
-  | 8 | ~~61,440~~ **64,176** | 0.21 | ~~10.4%~~ **10.9%** | 32 |
+  | `LANES` | cycles | ms @ 300 MHz | **ms @ 237.8 MHz** | fraction of the 589,824 sweep | DSP |
+  |---|---|---|---|---|---|
+  | 2 | ~~245,760~~ **248,208** | 0.83 | **1.044** | ~~41.7%~~ **42.1%** | 8 |
+  | **4** | ~~122,880~~ **125,472** | **0.42** | **0.528** | ~~20.8%~~ **21.3%** | **16** |
+  | 8 | ~~61,440~~ **64,176** | 0.21 | **0.270** | ~~10.4%~~ **10.9%** | 32 |
+
+  (237.8 MHz column added 2026-08-27. The fraction column is a ratio of cycles
+  and is clock-invariant.)
 
   > **CORRECTED 2026-08-26, and the MODEL is CONFIRMED.** `491,520 / LANES` is
   > the right model and §3.3's competing `983,040 / LANES` is not; that is
@@ -3141,6 +3285,13 @@ The phase-schedule bullet is discharged. These are not:
   another pipeline stage (the path is not yet bucketed, and every previous
   Fmax surprise in this project turned out to be one structure replicated), or
   B's token time scales by 300/278.9 = 1.076 and ~2.0 ms becomes ~2.1 ms.
+
+  > **RE-DERIVED 2026-08-27.** The sentence's logic survives; its arithmetic
+  > does not, because the scaling base is no longer 300 MHz. The card measures
+  > **237.8 MHz at 0.717 V**, so B's ~2.0 ms is already **~2.5 ms** before any
+  > norm-Fmax penalty is applied. **This finding does NOT flip:** 278.9 x 0.835
+  > = **232.9 MHz**, which still misses 237.8, and 200.9 x 0.835 = 167.8 MHz at
+  > 8 lanes misses it by far more. Restating a 0.85 V Fmax against a 0.85 V target as a 0.717 V Fmax against 237.8 MHz assumes the -16.5% derate measured on `matvec_core` transfers to this unit, which `docs/debugging/2026-08-25_voltage-derate-on-hardware.md:210-215` explicitly declines to license. This is CONDITIONAL and needs its own 0.717 V measurement; do not act on it as written.
 
   **The path is already diagnosed, by C.** C §3.6 hit 278.9 MHz on its own
   narrowed `rmsnorm_rs` skeleton and C §3.13 item 1 names `MREG` on the 34x32

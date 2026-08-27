@@ -1,5 +1,16 @@
 # FPGA Hardware Recon: on-fabric LLM inference
 
+> **THROUGHPUT FIGURES RE-DERIVED 2026-08-27.** The `v3.0` and `v4.0` tok/s
+> figures in the roadmap below, and the ceiling they came from, rest on two
+> inputs that have since been **refuted by measurement on the card**: an
+> HBM supply of 460 GB/s (**MEASURED 288.0 GB/s**, 30 usable ports x 32 B x
+> 300 MHz) and a 70% DRAM efficiency derate (**MEASURED 100.0% at every port
+> count from 1 to 30**, so there is no efficiency term to apply). Separately,
+> the clock they assume is a **0.85 V** analysis clock; the card runs VCCINT at
+> **0.717 V MEASURED**, where the design measures **237.8 MHz**. The rows are
+> corrected in place below and the originals are kept beside them. Full
+> derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md`.
+
 Recon notes for extending llama.vhdl beyond the AXU3EG (ZU3EG, 0.95 MB on-chip).
 Date: 2026-08-19. **Revised 2026-08-21**: Jungle Cat re-characterised as a carrier plus
 modules (section 3), Varium C1100 added as a fourth candidate, a standing skip rule
@@ -29,8 +40,17 @@ the constraint.
 | `v2.2` | planned | **Subsystem B**: Gated DeltaNet (48 of 64 layers) |
 | `v2.3` | planned | **Subsystem E**: tensor-parallel collectives over PCIe P2P. New. |
 | `v2.4` | planned | **Subsystem D**: transformer sequencer |
-| **`v3.0`** | **planned** | **Qwen3.8-27B INT4 on 2x FK33 (16 GiB HBM), ~43-61 tok/s.** The FIRST goal. |
-| **`v4.0`** | **planned** | **Qwen3.8-27B INT4 on 8x FK33, ~140-170 tok/s.** The END goal. |
+| **`v3.0`** | **planned** | **Qwen3.8-27B INT4 on 2x FK33 (16 GiB HBM), ~22-24 tok/s** (~~~43-61~~, superseded 2026-08-27). The FIRST goal. |
+| **`v4.0`** | **planned** | **Qwen3.8-27B INT4 on 8x FK33**, ~~~140-170 tok/s~~ **not re-derived** (see the note at the head of this file). The END goal. |
+
+> **2026-08-27.** `v3.0`'s ~22-24 tok/s is DERIVED at the MEASURED 237.8 MHz
+> from the project's own cycle counts, serial across subsystems
+> (`docs/2026-08-27_budgets-at-the-measured-clock.md` section 5.1: 24.4 tok/s
+> by the tile model, 21.5 with the disputed A term, 22.4 with B at its worst
+> case). `v4.0`'s ~140-170 rests on the same two refuted inputs as the old
+> ~43-61 and has **not** been re-derived at any clock, so it is struck rather
+> than replaced. These are the roadmap rows a reader is most likely to quote,
+> which is why they are corrected here rather than only in the budget document.
 
 ### Why two cards is the first rung
 
@@ -70,6 +90,20 @@ prove the collective layer before the topology gets harder.
 Per card reads 7.57 GB per token; at 460 GB/s that is 16.5 ms, a **61 tok/s
 ceiling**, and roughly **43 tok/s at 70% efficiency**. Collectives are
 negligible at N=2 (a single peer exchange, 128 x 2 x ~1.5 us = 0.4 ms).
+
+> **SUPERSEDED 2026-08-27; both inputs to that ceiling are refuted.** The
+> supply is **288.0 GB/s MEASURED** on the card, not 460, and the **70%
+> efficiency derate does not exist** -- measured efficiency is 100.0% at every
+> port count from 1 to 30 (subsystem A spec §13's own correction). Using A's
+> own tile-geometry byte count of **7.2605 GB per card per token** rather than
+> this line's 7.57 GB, the HBM-bound ceiling is
+> `7.2605 GB / 288.0 GB/s` = **25.21 ms, a 39.7 tok/s ceiling**. Note this
+> substitutes BOTH the bandwidth and the byte count: at this line's own
+> 7.57 GB the same division gives 26.28 ms and 38.1 tok/s. Either way it is a
+> **floor on time, not an achievable rate** -- it is clock-invariant (the HBM
+> AXI clock does not derate with VCCINT) and the design's own array time at
+> the measured 237.8 MHz is larger, 29.25 ms.
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` sections 2.1 and 3.
 
 **That is slower than the 70 tok/s the workstation's two RTX 3090s already
 deliver.** The wins are power (310 W of cards against 700 W at the wall, so

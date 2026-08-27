@@ -1,5 +1,18 @@
 # Subsystem A: INT4 Streaming Matrix-Vector Engine
 
+> **TIME FIGURES RE-DERIVED 2026-08-27 AT THE MEASURED CLOCK.** The ms and
+> tok/s figures in this document were derived at 276-300 MHz, which is
+> Vivado's **0.85 V** default analysis point. The FK33 runs VCCINT at
+> **0.717 V MEASURED**, where the same netlist measures **237.8 MHz**
+> (`sim/ooc_sweep/results.csv:7`, against 284.90 MHz at 0.85 V on `:9`, a
+> -16.5% derate). The **cycle counts are unchanged and remain the invariant**;
+> the times that descend from them are restated at 237.8 MHz in place, with the
+> original figure kept beside them rather than deleted. **A's HBM floor is the
+> one term that does NOT move**: the HBM AXI clock is a separate ~450 MHz
+> domain that does not derate, so when the core clock falls A's demand falls
+> and its supply does not. Derivation, method and the full per-figure list:
+> `docs/2026-08-27_budgets-at-the-measured-clock.md`.
+
 Design spec, 2026-08-20. Milestone `v2.0`. **Revision 5.**
 
 ## Revision history
@@ -1282,6 +1295,17 @@ false at nominal numbers.
 > `ROWS_IF ~ 80 x 288/432 ~ 53`, which is close to (and independently
 > corroborates) the §15.4c "balanced" point at `ROWS_IF ~ 58`.
 >
+> > **RE-DERIVED 2026-08-27: at the measured core clock this is no longer
+> > memory-bound.** Demand is `ROWS_IF x 18 B x f_core` and the HBM supply is on
+> > a separate ~450 MHz ACLK that does not derate with VCCINT, so the whole
+> > comparison moves when the core clock does. At the **237.8 MHz MEASURED at
+> > 0.717 V** (`sim/ooc_sweep/results.csv:7`), `ROWS_IF = 58` demands
+> > **248.3 GB/s against 288.0 GB/s supply -- fed, with 13.8% of the device
+> > spare**, and the bandwidth-balanced point moves from **53.3 to 67.3**.
+> > `ROWS_IF = 80` still does not fit at any clock, so the sizing conclusion is
+> > unaffected; what falls is the claim that 58 is past the balanced point.
+> > `docs/2026-08-27_budgets-at-the-measured-clock.md` section 1.2.
+>
 > This does not change the direction of any §15.4 sizing decision, but it does
 > change WHY: the constraint is how much bandwidth the fabric can request, not
 > how efficiently HBM answers. HBM answers perfectly.
@@ -1697,6 +1721,22 @@ comfortable and DSP is the wall.
 | 48 @ 276 MHz | 76.3% | 212 GB/s | 27 GB/s | 20 + 3 | **23** |
 | 56 @ 288 MHz | 90.7% | 258 GB/s | 32 GB/s | 24 + 3 | **27** |
 
+> **2026-08-27: this table is superseded twice over, and its replacement is
+> OPEN, not settled.** First by `docs/superpowers/specs/2026-08-27-D-sequencer-skeleton.md`
+> `:396-403`, which prices a port at the **9.6 GB/s MEASURED** on the card
+> (30 usable ports x 32 B x 300 MHz = 288.0 GB/s) rather than the 14.4 GB/s
+> interface peak assumed here, and counts **30 usable ports, not 32**. Second
+> by the clock: demand scales with `f_core` and the HBM ACLK does not, so at
+> the **237.8 MHz MEASURED** at 0.717 V, `ROWS_IF = 58` demands
+> **220.7 GB/s of weights and 27.6 of scales**, 248.3 GB/s in total.
+> **NOT RESTATED HERE, deliberately:** `docs/2026-08-27_budgets-at-the-measured-clock.md`
+> section 7.3 gives **28 ports at 1.0x and 36 at 1.3x** for this row, but those
+> reproduce only from a **254.32 MHz** demand of 265.5 GB/s, not from 237.8 MHz;
+> recomputing at 237.8 MHz gives **26 at 1.0x and 34 at 1.3x**. Both readings
+> are recorded and neither is applied. **The verdict does not depend on which
+> is right: at 1.3x the port count still does not close against 30**, which is
+> the one A conclusion the lower clock does NOT fix.
+
 (HBM AXI port = 256 bit at 450 MHz = 14.4 GB/s **interface** peak.)
 
 **PROVISION AT 1.3x DEMAND, NOT AT 1.0x.** The first version of this table
@@ -1708,6 +1748,15 @@ ports delivered **66%**, for reasons still unlocated (see
 `docs/debugging/2026-08-23_subsystem-a-board-bringup.md`), and at 66% this
 configuration would run about 21 tok/s and be bandwidth-bound -- the opposite of
 what §15.3 concludes.
+
+> **2026-08-27: the 66% does not transfer to HBM and the 21 tok/s that rests on
+> it is withdrawn.** That figure is the AXU3EG's **DDR** efficiency. §13's own
+> correction records HBM measured at **100.0% at every port count from 1 to
+> 30**, and again under 30-way oversubscription of a single channel. There is
+> no DRAM-efficiency term to apply on this card. The 1.3x provisioning
+> discipline in this section is kept for a different reason: it prices a port
+> at its MEASURED 9.6 GB/s delivered rate rather than its 14.4 GB/s interface
+> peak. `docs/2026-08-27_budgets-at-the-measured-clock.md` section 3.
 
 This is the third instance in one day of treating a datasheet peak as delivered
 bandwidth; the other two are recorded as withdrawn corrections in the debugging
@@ -1749,7 +1798,15 @@ whether it builds.
 
 So `v4.0`'s **91 tok/s becomes roughly 50-61 tok/s** if the design is
 array-bound, and §14's per-card and per-context numbers should be re-derived
-against 48 rather than 80. Note `ROWS_IF` also sets the pack format (§6.5), so
+against 48 rather than 80.
+
+> **2026-08-27: still not re-derived, and the base has moved again.** At the
+> measured 237.8 MHz the single-card **9B** figure is **37.7 tok/s** and the
+> 27B N=2 figure is **24.4 tok/s**
+> (`docs/2026-08-27_budgets-at-the-measured-clock.md` section 5.1). The 27B
+> `v4.0` (8-card) row has **not** been re-derived at the measured clock by
+> that document or this one; treat 50-61 as unsupported rather than as a
+> current estimate. Note `ROWS_IF` also sets the pack format (§6.5), so
 this decides the offline re-pack.
 
 ### 15.4 Caveats, and one warning from the AXU3EG
@@ -1779,7 +1836,21 @@ at `ROWS_IF=48` by synthesising once and re-analysing timing per voltage:
 | 0.720 V | -1.012 ns | **230.1 MHz** | the `-2L` low-power characterisation |
 
 **The low-power point costs 17% of Fmax**, which at `ROWS_IF=48` is 353 GMAC/s
-against 424, i.e. roughly 26 tok/s against 31.5 at N=2. On the FK33 this is a
+against 424, i.e. roughly 26 tok/s against 31.5 at N=2.
+
+> **CONFIRMED 2026-08-27, and this is the one A figure the re-derivation leaves
+> standing.** The table above is **pre-reclaim** `ROWS_IF = 48`; the
+> post-reclaim measurement of the same point is **236.1 MHz at 0.717 V**
+> (`sim/ooc_sweep/results.csv:8`), and at `ROWS_IF = 58` it is **237.8 MHz**
+> against **284.90 MHz** for the identical netlist at 0.85 V (`:7` and `:9`),
+> a **-16.5% derate**. That is within half a point of this row's 17%, measured
+> on a different `ROWS_IF` and a different netlist revision, so the sensitivity
+> stated here holds up. What does NOT hold up is the throughput pair: at the
+> measured clock 27B N=2 is **24.4 tok/s against 28.9**, not 26 against 31.5
+> (`docs/2026-08-27_budgets-at-the-measured-clock.md` section 5.1). The card is
+> operated at 0.717 V by measurement, not by choice -- see
+> `docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md` -- so the
+> low-power point is the operating point, not a lever. On the FK33 this is a
 runtime lever (`fk33_set_vccint`) and 0.85 V is also the ~120 A / ~155 W power
 profile, so it is a cooling decision with a throughput price attached, on a card
 built for server airflow.
@@ -1982,7 +2053,26 @@ times ADD and their DSP costs ADD. The decisive asymmetry:
 At 27B, C is `24 qh x 256 x 2 x 2048 x 16 layers` = **402.7M MAC/token**, and
 §4.2's shard is exact at N=2 (12 qh, 2 of 4 KV heads per card), giving 201.3M
 per card = 11.4 ms at `MACS=64` and 276 MHz. That is **36% on top of A's 31.7 ms
-at `ROWS_IF=48`**, and it doubles at 4K context. C's own §2.8 prices the
+at `ROWS_IF=48`**, and it doubles at 4K context.
+
+> **RE-DERIVED 2026-08-27 at the measured 237.8 MHz.** Every figure in the two
+> paragraphs above moves, and the ratio between them moves most:
+>
+> - **B is ~2.5 to 3.5 ms**, not ~4 ms (589,824 cycles at its sweep-only floor
+>   to 828,144 at its emit-bound estimate; B's emit-chain cycle cost is an
+>   ESTIMATE measured only at HEADS=24, so the range is B's own, not the
+>   clock's).
+> - **C is 5.51 ms at `MACS = 192`**, not 11.4 ms. The 11.4 is a `MACS = 64`
+>   figure at 276 MHz and it is still being quoted next to a `MACS = 180`
+>   recommendation two tables below. C's cycle count at 27B is **1,310,400**
+>   (`docs/superpowers/specs/2026-08-27-C-gated-attention-skeleton.md:527`).
+> - **A at `ROWS_IF = 48` is 35.25 ms** (8,381,664 cycles at 237.8 MHz), not
+>   31.7 ms.
+> - So **C is 15.6% on top of A, not 36%.** The asymmetry this section is built
+>   on shrinks by more than half, which weakens (it does not overturn) the
+>   argument for spending DSP on C rather than on A rows.
+>
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` sections 2.1 and 4. C's own §2.8 prices the
 AXU3EG-scale case at 50.3M MAC / 3.93 ms; the 27B retarget grows it 4x and
 nothing revisited the sizing. C's KV traffic is ~36 MB/token/card, so C is purely
 compute-bound and `MACS` is the only lever.
@@ -1999,12 +2089,27 @@ nondeterminism above that):
 | **balanced** | **~58** | **~180** | ~2,590 | **~34** | **~17** |
 | baseline | 48 | 64 | ~2,770 | ~47 | ~24 |
 
+> **RE-DERIVED 2026-08-27, and this table is the origin of a disputed number.**
+> Its ms column is at the 276-300 MHz band of §15.4c, i.e. a 0.85 V analysis.
+> At the **237.8 MHz MEASURED** at 0.717 V the balanced row is **41.0 ms** by
+> the tile-arithmetic model, or **46.4 ms** if this table's own A term is right
+> -- the two disagree by ~19% and
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 4 declines to pick
+> a side, because §15.4c's balanced row does not decompose into its own stated
+> components and the per-term breakdown is printed nowhere. The N=4 column's
+> ~17 ms restates as **~21 ms** on the same blanket basis. The **ordering** the
+> table exists to establish (A-maximal is worse than balanced) is not affected
+> by the clock.
+
 **A-maximal is WORSE than balanced despite 16 more rows**, because it starves C.
 Balanced is ~1.37x over baseline.
 
 **The optimal `ROWS_IF`:`MACS` ratio is INDEPENDENT of the card count.** Both A's
 and C's per-card work scale as `1/N`, so N scales throughput without moving the
-allocation: ~29 tok/s at N=2 and ~58 at N=4, same silicon. What N does change is
+allocation: ~29 tok/s at N=2 and ~58 at N=4, same silicon. (**2026-08-27: at
+the measured 237.8 MHz the N=2 figure is ~24.4 tok/s**; the N=4 figure has not
+been re-derived at the measured clock and should not be quoted until it is.
+The `1/N` scaling argument itself is unaffected.) What N does change is
 the shard: **at N=4 the KV split is still exact** (4 KV heads, one per card, no
 replication -- replication starts at N=8, C §4.2), and per-card weights fall from
 7.15 GiB to ~3.58 GiB, roughly doubling the context that fits in 8 GB.

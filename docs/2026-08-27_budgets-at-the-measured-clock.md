@@ -672,6 +672,85 @@ first only because rank 1 may make A's clock irrelevant.
 
 **Do not apply these here. This is the list; another pass applies it.**
 
+### 7.0 Application status, updated 2026-08-27
+
+**The list below is NOT deleted as items are applied.** It stays as the record
+of what each figure said before it was changed, which is the only way a reader
+of the edited spec can check the edit.
+
+| subsection | file | status |
+|---|---|---|
+| 7.1 | B, `2026-08-21-gated-deltanet-design.md` | **APPLIED 2026-08-27** (4 items refused or left open, below) |
+| 7.2 | C, `2026-08-21-gated-attention-design.md` | **NOT APPLIED** |
+| 7.3 | A, `2026-08-20-int4-streaming-matvec-design.md` | **APPLIED 2026-08-27** (1 item refused, below) |
+| 7.4 | `2026-08-27-D-sequencer-skeleton.md` | **NOT APPLIED** |
+| 7.5 | `2026-08-24-transformer-sequencer-design.md` | **NOT APPLIED** |
+| 7.6 | `2026-08-27-C-gated-attention-skeleton.md` | **NOT APPLIED** |
+| 7.7 | `2026-08-27_9b-single-card-resource-envelope.md` | **APPLIED 2026-08-27** (1 item left open, below) |
+| 7.8 | `docs/fpga-hardware-recon.md` | **APPLIED 2026-08-27** |
+
+**Why 7.2, 7.4, 7.5 and 7.6 were skipped:** the C spec, the D skeleton, the
+transformer-sequencer spec and the C skeleton were being actively edited by
+other work at the time of the pass, so applying figures into them would have
+raced. **They remain owed.** Nothing about them has been withdrawn.
+
+**Each applied file now carries a dated note at its head** saying its time
+figures were re-derived at the measured 237.8 MHz on 2026-08-27, that the cycle
+counts are unchanged, and pointing back here. Superseded figures were marked
+superseded in place rather than deleted.
+
+**Items REFUSED or left OPEN by the applying pass.** Each was recomputed
+independently and the recomputation disagreed with the target column, so
+nothing was written for them:
+
+1. **7.1 line 1232, silu `0.74 / 2.2 ms -> 0.934 / 2.775`.** REFUSED. That pair
+   is an **0.8B figure at 18 layers and 200 MHz** (147,456 and 442,368 cycles),
+   not a 300 MHz figure -- `2.2 = 3 x 0.737` only at 200 MHz, and §2.5's own
+   §2.8 table labels the identical cycle count "0.8B shapes, 200 MHz". At
+   237.8 MHz it is **0.620 / 1.860 ms**, not 0.934 / 2.775. The B spec records
+   this in place and leaves the figures alone.
+2. **7.1 line 1450, the `~0.74 ms` half.** REFUSED for the same reason; the row
+   header says 200 MHz. The `0.49 at 300 MHz` half in the same cell WAS applied
+   (-> 0.618 ms).
+3. **7.1 lines 1816-1821, the `LANES = 64` margin `+7% -> +23%`.** LEFT OPEN.
+   The `+23% -> +55%` half reproduces for `LANES` 8/16/32 and was applied. The
+   `LANES = 64` target does not reproduce at any port count: at 237.8 MHz
+   demand is 60.9 GB/s, so 7 ports (82.4 GB/s) give **+35%** and a re-minimised
+   6 ports give **+16%**. Neither is +23%.
+4. **7.3 lines 1697-1698, `28 ports at 1.0x, 36 at the spec's 1.3x`.** LEFT
+   OPEN. Those two counts reproduce only from a **254.32 MHz** demand of
+   265.5 GB/s (the 9B envelope's `:69-76` figure), not from 237.8 MHz. At
+   237.8 MHz the demand is 248.3 GB/s, giving **26 at 1.0x and 34 at 1.3x**.
+   **7.4's D-skeleton row carries the same 28/36 and inherits the same defect;
+   fix it there before applying 7.4.** The verdict is unaffected either way:
+   at 1.3x the count still does not close against 30.
+5. **7.7 lines 352-358, `at 237.8 MHz the minimum is ROWS_IF = 34`.** LEFT
+   OPEN. Recomputed from the envelope's own cycle counts the minimum is **36**:
+   the non-A terms sum to 8.462 ms at 237.8 MHz, leaving 30.54 ms for A, and A
+   is 30.78 ms at 34 (total 39.24, a miss) against 29.02 ms at 36 (total 37.48,
+   a fit); `ROWS_IF` must be even, so 35 is unavailable. **34 is right only if
+   B is taken at its sweep-only floor** rather than the emit-bound estimate the
+   envelope's own tables use. The 214.1 MHz row was struck as instructed.
+
+**Rounding-level differences, applied as printed here and recorded for
+completeness.** In each case the target column scaled the rounded ms figure
+while the cycle count printed beside it gives a slightly different result:
+7.1 `:1919-1921` 5.829 against 5.831 from 1,386,624 cycles; 7.1 `:2496-2502`
+54.6 / 41.5 against 54.57 / 41.55 from the printed cycles; 7.1 `:1450` and
+`:1535-1536` 0.618 against 0.620 from 147,456 cycles; 7.1 `:2947-2949` gives
+`ROWS_IF = 66` a demand of 282.6 GB/s where section 6.3 of this document gives
+282.5 (`66 x 18 x 237.8e6` = 282.5, which is what was written). In 7.8 the
+`25.21 ms / 39.7 tok/s` replacement substitutes **both** the bandwidth and the
+byte count (7.2605 GB from A's tile geometry against the recon line's own
+7.57 GB); it was applied with both figures stated, since 7.57 GB / 288.0 GB/s
+is 26.28 ms and 38.1 tok/s.
+
+**One input to section 8 item 1 has since changed.** The `ROWS_IF = 32` and
+`= 40` rows at 0.717 V, recorded there as "not present in any file I could
+find", are now in `sim/ooc_sweep/results.csv:10-11` (236.29 and 240.56 MHz at
+3.3 ns), matching `clock-at-the-real-voltage.md:38-41`. The flatness evidence is
+now reproducible from the repo. The rest of item 1 stands.
+
 The mechanical rule for the bulk: **a figure stated as `cycles / f` at 300 MHz
 is multiplied by 1.26156; at 299.04 MHz by 1.25753; at 302.5 MHz by 1.27208; at
 305.6 MHz by 1.28511; at 254.32 MHz by 1.06947; at 231 MHz by 0.97140.** The

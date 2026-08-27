@@ -1,5 +1,16 @@
 # Qwen3.5-9B on one FK33: parallelism, DSP, and the capacity envelope
 
+> **TIME FIGURES RE-DERIVED 2026-08-27 AT THE MEASURED CLOCK.** This document
+> computes at two clocks and names both, which was the right structure --
+> but **neither of its two clocks is the one the card runs at**. 254.32 MHz is
+> `gdn_emit_chain` post-route at **0.85 V** and is not achievable at 0.717 V;
+> 299.04 MHz is a 0.85 V synthesis target. The card measures **237.8 MHz at
+> 0.717 V** (`sim/ooc_sweep/results.csv:7`). The **cycle counts are unchanged
+> and remain the invariant**; a 237.8 MHz column has been added beside the
+> existing ones in section 2.2 and the findings that depend on it are restated
+> in place rather than deleted. Derivation and method:
+> `docs/2026-08-27_budgets-at-the-measured-clock.md`.
+
 **Date:** 2026-08-27. Branch `fpga`. Part `xcvu33p-fsvh2104-2L-e`, one card, N = 1.
 
 **Status: ANALYSIS ONLY. No Vivado was run for this document** (two place-and-route
@@ -74,11 +85,19 @@ same functions with different constants.
   same `ROWS_IF` demands 312.2 GB/s and is short by 8.4%, exactly as at 27B
   (the D skeleton's 8.75% is the same calculation at a round 300 MHz).
   **The timing miss cured the feed shortfall.** Section 4.
+  **RE-DERIVED 2026-08-27: at the MEASURED 237.8 MHz the demand is 248.3 GB/s
+  and the spare is 13.8%, not 7.8%.** The finding strengthens; only the margin
+  moves.
 
 - **F4. The whole 9B token fits the 39 ms budget with room to spare, at the
   achieved clock, with the 27B parallelism unchanged.** 24.80 ms at
   254.32 MHz, 22.29 ms at 299.04 MHz (section 2). The budget is not the
   constraint at 9B; nothing forces a re-tune.
+  **RE-DERIVED 2026-08-27: 26.52 ms at the MEASURED 237.8 MHz**, so F4's
+  conclusion survives -- but note it survives for the wrong reason, since
+  neither clock it was stated at is reachable, and 39 ms is an inherited
+  assumption rather than a budget
+  (`docs/2026-08-27_budgets-at-the-measured-clock.md` section 3).
 
 - **F5. 262,144 context does not fit, and the real shortfall is worse than the
   parent's estimate.** Weights at 4.5 bpw are **5.036 GB stored, not 4.5**, and
@@ -94,9 +113,16 @@ same functions with different constants.
   4,096 and 8,192. Capacity is not the binding constraint on context; C's linear
   sweep is. Section 5.4.
 
-- **F7. `ROWS_IF = 32` is simultaneously the smallest A that meets the 39 ms
-  budget at 9B and the largest A ever synthesised in the post-reclaim form the
-  1,914 DSP figure prices.** `sim/ooc_sweep/results_reclaim_085.csv` stops at
+- **F7 (BOTH HALVES SUPERSEDED 2026-08-27, and the coincidence is gone).** At
+  the MEASURED **237.8 MHz**, `ROWS_IF = 32` is **41.05 ms and no longer meets
+  39 ms**, so it is not the smallest A that does. And `ROWS_IF = 58`
+  post-reclaim **has now been synthesised** -- `sim/ooc_sweep/results.csv:7`
+  gives 1,914 DSP, exactly as extrapolated, at 237.8 MHz at 0.717 V -- so it is
+  no longer the largest ever synthesised either, and recommendation 1 in
+  section 6 is **discharged**. The original finding is kept below unaltered.
+  **F7 as written:** `ROWS_IF = 32` is simultaneously the smallest A that meets
+  the 39 ms budget at 9B and the largest A ever synthesised in the post-reclaim
+  form the 1,914 DSP figure prices. `sim/ooc_sweep/results_reclaim_085.csv` stops at
   `ROWS_IF = 32` (1,056 DSP, 345.7 MHz at 0.85 V) and `sim/ooc_sweep/results.csv`
   measures the same point at **275.3 MHz at 0.72 V**. Builds above 32 do exist
   but none of them is this configuration: 48 and 56 are **pre-reclaim** (2,198
@@ -317,8 +343,33 @@ measured" (`:816`). The E skeleton restates it at `:255` with the same caveat.
 E is **zero** at N=1: there is no collective. That removes 0.60 to 0.71 ms and,
 more importantly, removes an entire unbuilt subsystem from the critical path.
 
+At **237.8 MHz** (the clock the card actually reaches at its MEASURED 0.717 V
+VCCINT, `sim/ooc_sweep/results.csv:7`; added 2026-08-27, and this is now the
+primary column):
+
+| `ROWS_IF` | DSP_A | die DSP | A demand | A ms | B ms | C ms | D-vec | D-ctrl | **total** | tok/s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 24 | 792 | 1,350 | 102.7 | 43.53 | 2.32 | 5.12 | 0.97 | 0.05 | 51.99 | 19.2 |
+| 32 | 1,056 | 1,614 | 137.0 | 32.59 | 2.32 | 5.12 | 0.97 | 0.05 | **41.05** | 24.4 |
+| 40 | 1,320 | 1,878 | 171.2 | 26.18 | 2.32 | 5.12 | 0.97 | 0.05 | 34.64 | 28.9 |
+| 48 | 1,584 | 2,142 | 205.5 | 21.82 | 2.32 | 5.12 | 0.97 | 0.05 | 30.28 | 33.0 |
+| 53 | 1,749 | 2,307 | 226.9 | 19.78 | 2.32 | 5.12 | 0.97 | 0.05 | 28.24 | 35.4 |
+| **58** | **1,914** | **2,472** | **248.3** | **18.06** | **2.32** | **5.12** | **0.97** | **0.05** | **26.52** | **37.7** |
+| 62 | 2,046 | 2,604 | 265.4 | 16.98 | 2.32 | 5.12 | 0.97 | 0.05 | 25.44 | 39.3 |
+
+DERIVED, same cycle counts as the 254.32 MHz table below, divided by 237.8 MHz
+instead. The A demand column scales with the core clock; the 288.0 GB/s supply
+does not, so **every row is fed at this clock** and A is array-limited
+throughout (the clock-invariant HBM floor is 15.57 ms, below every A row here).
+`ROWS_IF = 32` lands at **41.05 ms and no longer meets 39 ms**.
+
+The two tables below are kept as the **0.85 V reference**, superseded as
+operating points but not deleted. **254.32 MHz is `gdn_emit_chain` post-route
+at 0.85 V and is not achievable at 0.717 V**; 299.04 MHz is a 0.85 V synthesis
+target.
+
 At **254.32 MHz** (the achieved post-route clock, MEASURED,
-`sim/ooc_micro/pnr_results.csv:12`):
+`sim/ooc_micro/pnr_results.csv:12`; **0.85 V, superseded 2026-08-27**):
 
 | `ROWS_IF` | DSP_A | die DSP | A demand | A ms | B ms | C ms | D-vec | D-ctrl | **total** | tok/s |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -331,7 +382,8 @@ At **254.32 MHz** (the achieved post-route clock, MEASURED,
 | 62 | 2,046 | 2,604 | 283.8 | 15.88 | 2.17 | 4.79 | 0.91 | 0.05 | 23.79 | 42.0 |
 
 At **299.04 MHz** (B's target, MEASURED as met by the emit chain in OOC
-synthesis but not post-route):
+synthesis but not post-route; **a 0.85 V analysis clock, kept as the reference
+column, superseded as an operating point 2026-08-27**):
 
 | `ROWS_IF` | DSP_A | die DSP | A demand | A ms | **total** | tok/s |
 |---|---|---|---|---|---|---|
@@ -353,9 +405,32 @@ same rule D skeleton `:202` applies.
 
 | clock | min `ROWS_IF` | `MACS` | A DSP | die DSP | achieved |
 |---|---|---|---|---|---|
-| 299.04 MHz (target) | **26** | 128 | 858 | 1,416 (49.2%) | 38.70 ms |
-| **254.32 MHz (achieved)** | **32** | 128 | 1,056 | **1,614 (56.0%)** | **38.38 ms** |
-| 214.1 MHz (0.717 V bound) | 40 | 128 | 1,320 | 1,878 (65.2%) | 38.48 ms |
+| 299.04 MHz (target, 0.85 V) | **26** | 128 | 858 | 1,416 (49.2%) | 38.70 ms |
+| 254.32 MHz (0.85 V post-route) | **32** | 128 | 1,056 | 1,614 (56.0%) | 38.38 ms |
+| ~~214.1 MHz (0.717 V bound)~~ | ~~40~~ | ~~128~~ | ~~1,320~~ | ~~1,878 (65.2%)~~ | ~~38.48 ms~~ |
+| **237.8 MHz (MEASURED at 0.717 V)** | **DISPUTED, see below** | 128 | | | |
+
+> **RE-DERIVED 2026-08-27.** The **214.1 MHz row is SUPERSEDED and struck**: it
+> is `254.32 x (1 - 0.158)`, a bound built on a derate that a direct
+> measurement has now replaced. The card measures **237.8 MHz**
+> (`sim/ooc_sweep/results.csv:7`).
+>
+> **The minimum `ROWS_IF` at 237.8 MHz is NOT SETTLED and no value is written
+> into the table above.** `docs/2026-08-27_budgets-at-the-measured-clock.md`
+> section 7.7 gives **34**. Recomputing here from this document's own cycle
+> counts gives **36**: the non-A terms sum to 8.462 ms at 237.8 MHz
+> (B 552,096 + C 1,217,484 + D-vec 230,400 + D-ctrl 12,275 cycles), leaving
+> 30.54 ms for A, and A is **30.78 ms at `ROWS_IF = 34`** (total 39.24 ms, a
+> miss) against **29.02 ms at 36** (total 37.48 ms, a fit). `ROWS_IF` must also
+> be **even** (D skeleton `:513-520`, `NPORTS_W = ROWS_IF x 128 / 256` must be
+> an integer), so 35 is not available as a compromise.
+>
+> The two answers can be reconciled: **34 is the minimum if B is taken at its
+> sweep-only floor** (393,216 cycles, 1.653 ms, non-A 7.79 ms), and **36 is the
+> minimum if B is taken at the emit-bound estimate this document's own tables
+> use** (552,096 cycles, 2.32 ms). B's emit-chain cycle cost is an ESTIMATE
+> measured only at HEADS=24, so the difference is B's unresolved range and not
+> an arithmetic error on either side. Recorded as OPEN.
 
 For comparison, the same question at 27B N=2, `MACS = 192`: 46 rows at
 299.04 MHz, **57 rows at 254.32 MHz**, 74 rows at 214.1 MHz. The 27B choice of
@@ -633,7 +708,8 @@ expensive consequence, not the capacity.
 
 ### 5.4 Context is compute-capped, not capacity-capped
 
-C's sweep is linear in context. At 9B, `MACS = 128`, 254.32 MHz:
+C's sweep is linear in context. At 9B, `MACS = 128`, 254.32 MHz (a **0.85 V**
+clock; the **237.8 MHz** restatement follows the table):
 
 | ctx | C ms | token ms | KV read per token | HBM floor |
 |---|---|---|---|---|
@@ -644,6 +720,23 @@ C's sweep is linear in context. At 9B, `MACS = 128`, 254.32 MHz:
 | 32,768 | 66.64 | 86.65 | 0.570 GB | 17.48 ms |
 | 131,072 | 264.55 | 284.56 | 2.282 GB | 23.42 ms |
 | 202,621 (capacity max) | 408.60 | 428.60 | 3.527 GB | 27.75 ms |
+
+> **RE-DERIVED 2026-08-27 at the MEASURED 237.8 MHz** (same cycles, x1.06947).
+> The KV-read and HBM-floor columns are byte counts over a clock-invariant
+> 288.0 GB/s supply and do NOT move:
+>
+> | ctx | C ms @237.8 | token ms @237.8 |
+> |---|---|---|
+> | 2,048 | 5.12 | 26.52 |
+> | 4,096 | 9.53 | 30.93 |
+> | **8,192** | 18.35 | **39.75** |
+> | 16,384 | 35.99 | 57.39 |
+> | 32,768 | 71.27 | 92.67 |
+>
+> The conclusion below survives, and at this clock it becomes strict rather
+> than approximate: 8,192 lands at **39.75 ms, just over 39**, where at
+> 254.32 MHz the same row read 37.17 ms and was just under.
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 5.3.
 
 **The context that fits inside 39 ms is between 4,096 and 8,192.** The context
 that fits in memory is 202,621. The gap is a factor of about 30, and it is C's
@@ -754,6 +847,16 @@ simultaneously the smallest A that meets the 39 ms budget at 9B and the achieved
 clock (38.38 ms). That coincidence is worth naming because it is not a
 coincidence: both quantities are pinned by the same HBM supply.
 
+> **BOTH HALVES SUPERSEDED 2026-08-27; the coincidence is gone.** At the
+> MEASURED **237.8 MHz** `ROWS_IF = 32` is **41.05 ms** and does not meet
+> 39 ms, so it is not the smallest A that does. And it is no longer the largest
+> ever built: `sim/ooc_sweep/results.csv:7` now carries **`ROWS_IF = 58`
+> post-reclaim at 1,914 DSP and 237.8 MHz at 0.717 V**, exactly the DSP figure
+> that had been extrapolated. Note also that the 275.3 MHz quoted here is
+> withdrawn upstream (`docs/debugging/2026-08-27_clock-at-the-real-voltage.md:83-85`);
+> it compares a 3.333 ns / 0.72 V run against a 3.3 ns / 0.717 V run, so the
+> constraint period changed as well as the voltage.
+
 **And the port budget does not close at 58 either, at either clock.** Section 4
 shows `ROWS_IF = 58` wants 36 HBM ports of 30 available at 254.32 MHz with the
 spec's 1.3x provisioning, or 28 of 30 with none, leaving 2 for B's four and C's
@@ -766,11 +869,14 @@ figure alone is not sufficient grounds to keep 58.
 
 **So the concrete recommendation:**
 
-1. **Synthesise `ROWS_IF = 58` out of context before anything else.** It is one
-   OOC run on an existing sweep script, it costs nothing but wall clock, and it
-   is the only thing standing between 1,914 DSP and a figure extrapolated 1.8x
-   past every measurement. Run it when the current place-and-route jobs finish.
-   Until it exists, `ROWS_IF = 58` is a plan, not a configuration.
+1. ~~**Synthesise `ROWS_IF = 58` out of context before anything else.**~~
+   **DISCHARGED 2026-08-27.** It has been run: `sim/ooc_sweep/results.csv:7`
+   gives 1,914 DSP -- exactly `33.00 x 58`, as extrapolated -- 134,675 LUT, and
+   **237.8 MHz at 0.717 V** (`:9` is the same netlist at 0.85 V, 284.90 MHz).
+   It remains out-of-context synthesis: it has not been placed or routed.
+   *Original text:* it is one OOC run on an existing sweep script, it costs
+   nothing but wall clock, and it is the only thing standing between 1,914 DSP
+   and a figure extrapolated 1.8x past every measurement.
 2. **If it closes, build the 9B bring-up at `ROWS_IF = 58`, `LANES = 32`,
    `MACS = 128`.** 2,472 DSP, 85.8%, 24.80 ms per token at the achieved clock.
    This is the parent's position and it is then the right default, because it
@@ -783,6 +889,16 @@ figure alone is not sufficient grounds to keep 58.
    it takes A's port demand to 21 of 30. Write it into the config now as the
    named fallback so a failure at 58 is a switch, not a re-planning exercise.
    Accept, explicitly, that this build then proves nothing about 27B routing.
+
+   > **AMENDED 2026-08-27: the fallback no longer meets the budget it was
+   > chosen for.** At the MEASURED **237.8 MHz**, `ROWS_IF = 32` is
+   > **41.05 ms**, not 38.38, so "it meets the 39 ms budget" is no longer true.
+   > Since 39 ms is an inherited assumption rather than a requirement
+   > (`docs/2026-08-27_budgets-at-the-measured-clock.md` section 3), this is a
+   > re-labelling rather than a failure -- but **"without further analysis" is
+   > withdrawn**: the fallback now needs a stated reason of its own. The
+   > smallest `ROWS_IF` that does meet 39 ms at 237.8 MHz is disputed between
+   > 34 and 36; see the note in section 2.3.
 4. **Do not spend the 128 DSP that C frees.** Raising `ROWS_IF` to 62 to consume
    them buys 1.0 ms of a 14.2 ms surplus and puts A back within 1.5% of the HBM
    supply ceiling. The freed DSP is better left as routing headroom on a die
