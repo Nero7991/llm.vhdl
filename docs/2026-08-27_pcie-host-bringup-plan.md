@@ -4,6 +4,20 @@
 **Hardware:** SQRL FK33, XCVU33P (fsvh2104, ES1 die, built as -2L), on
 `Oren-Dell-Ubuntu` (Z790, kernel 6.8.0-138-generic)
 **Status of the thing being planned:** no FK33 has ever enumerated on PCIe.
+
+> **Addendum, same day.** Three bring-up peripherals were added to the design
+> after this was written -- a read-only identity register at BAR `0xA000`, 8 KB
+> of read/write scratch BRAM at `0x10000`, and a 64 KB BRAM DMA target at
+> `0x2_0000_0000` -- together with a host test program
+> (`hw/fk33/host/fk33_bringup.c`) and a board-free constraint checker
+> (`hw/fk33/check_pcieep_xdc.py`). Section 4.5's address map is superseded by
+> the one in **`docs/2026-08-27_fk33-pcie-bringup-procedure.md`**, which is also
+> now the operational checklist; this document remains the design reasoning.
+> The block design has since been validated in Vivado
+> (`./pcieep_build.sh --bd-only`); see
+> `docs/debugging/2026-08-27_pcieep-bd-critical-warnings.md` for the one
+> surprising thing that came out of it.
+
 Every result in this project to date -- first light, I2C, SYSMON telemetry, the
 288-353 GB/s HBM bandwidth sweeps -- went over JTAG. Every bitstream ever built
 here set `EnablePCIe 0`.

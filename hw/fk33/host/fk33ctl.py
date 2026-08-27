@@ -11,9 +11,16 @@ Two paths into the card, both provided by the XDMA driver:
 Subcommands, in the order they should first be run.  Each does strictly more
 than the last, so a failure localises itself:
 
+  id         MMIO read of the read-only identity register.  The FIRST thing to
+             run: 0x464B3333 ("FK33") cannot be produced by a driver that
+             merely loaded, by an unanswered BAR (0xFFFFFFFF) or by a fabric
+             held in reset (0x00000000).
+  scratch    write and read back the 8 KB of BRAM on the AXI-Lite BAR.  The
+             only thing here that proves MMIO WRITES land.
   sysmon     MMIO read only.  Proves BAR -> AXI-Lite -> peripheral.  No DMA.
-  gpio       MMIO read of the I2C pins.  Proves MMIO WRITES land (SYSMON is
-             read-only, so it cannot show that).  Drives nothing.
+  gpio       MMIO read of the I2C pins.  Confirms a live pull-up on the board
+             bus.  Drives nothing.  (Use `scratch` to prove writes land -- it
+             touches no board pins.)
   vccint     raise VCCINT to ~0.717 V over MMIO.  This is the same volatile
              digital-pot write that tcl/vccint_step.tcl does over JTAG, and it
              is what eventually removes JTAG from the loop: the rail powers up
@@ -43,6 +50,16 @@ SYSMON_TEMP = 0x3400
 SYSMON_VCCINT = 0x3404
 GPIO_DAT = 0x9000                 # channel 1: bit0 = SCL (BB24), bit1 = SDA (BA24)
 GPIO_TRI = 0x9004                 # 1 = released (board pull-up), 0 = driven low
+# Bring-up peripherals.  These must stay in step with hw/fk33/gen_pcieep.py and
+# with host/fk33_bringup.c -- three places that agree is redundancy, three
+# places that disagree is a day lost.
+ID_MAGIC_OFF = 0xA000             # READ-ONLY, fabric constant
+ID_BUILD_OFF = 0xA008             # READ-ONLY, fabric constant
+ID_MAGIC = 0x464B3333             # "FK33" in ASCII
+SCRATCH_BASE = 0x10000            # 8 KB of read/write BRAM
+SCRATCH_SIZE = 0x2000
+DMABRAM_BASE = 0x2_0000_0000      # 64 KB BRAM on the DMA master, above HBM
+DMABRAM_SIZE = 0x10000
 POT_ADDR = 0x2C                   # MCP45XX-class digital pot, VCCINT
 
 # Matches tcl/vccint_step.tcl.  Do not widen these without re-reading the
@@ -211,6 +228,59 @@ def cmd_sysmon(a):
           "\nsame registers over JTAG.  Agreement proves the PCIe MMIO path end"
           "\nto end against a path that is already trusted.")
     m.close()
+
+
+def cmd_id(a):
+    """The single read that distinguishes a working path from a loaded driver.
+
+    0xFFFFFFFF is what a mapped-but-unanswered BAR returns and 0x00000000 is
+    what a fabric held in reset returns, so neither can be mistaken for a pass.
+    """
+    m = Mmio()
+    magic, build = m.rd(ID_MAGIC_OFF), m.rd(ID_BUILD_OFF)
+    print(f"id magic   0x{magic:08x}   expected 0x{ID_MAGIC:08x} (\"FK33\")")
+    print(f"id build   0x{build:08x}   yyyymmdd, BCD")
+    if magic == ID_MAGIC:
+        print("  OK -- link, config space, BAR placement, AXI-Lite clock and "
+              "reset,\n  smartconnect decode and bitstream identity are ALL "
+              "proven by this one read.")
+    elif magic == 0xFFFFFFFF:
+        print("  all-ones: the BAR is mapped but nothing answered.")
+    elif magic == 0:
+        print("  all-zeroes: the BAR exists but the fabric behind it is "
+              "unclocked or in reset.")
+    else:
+        print("  something answers, but it is not this bitstream.")
+    m.close()
+    return 0 if magic == ID_MAGIC else 1
+
+
+def cmd_scratch(a):
+    """Prove MMIO WRITES land.  SYSMON and the id register are both read-only."""
+    m = Mmio()
+    bad = 0
+    for b in range(32):
+        v = 1 << b
+        m.wr(SCRATCH_BASE, v)
+        rb = m.rd(SCRATCH_BASE)
+        if rb != v:
+            print(f"  walking-one bit {b}: wrote 0x{v:08x} read 0x{rb:08x}")
+            bad += 1
+    words = SCRATCH_SIZE // 4
+    for i in range(words):
+        m.wr(SCRATCH_BASE + 4 * i, 0xA5A50000 | i)
+    for i in range(words):
+        rb = m.rd(SCRATCH_BASE + 4 * i)
+        if rb != (0xA5A50000 | i):
+            print(f"  address-in-word {i}: read 0x{rb:08x}")
+            bad += 1
+            if bad > 8:
+                break
+    m.wr(SCRATCH_BASE, ID_MAGIC)
+    m.close()
+    print(f"scratch {SCRATCH_SIZE >> 10} KB at 0x{SCRATCH_BASE:05x}: "
+          f"{'OK' if not bad else str(bad) + ' FAILURES'}")
+    return 1 if bad else 0
 
 
 def cmd_gpio(a):
@@ -399,12 +469,18 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("id").set_defaults(fn=cmd_id)
+    sub.add_parser("scratch").set_defaults(fn=cmd_scratch)
     sub.add_parser("sysmon").set_defaults(fn=cmd_sysmon)
     sub.add_parser("gpio").set_defaults(fn=cmd_gpio)
     sub.add_parser("vccint").set_defaults(fn=cmd_vccint)
 
     s = sub.add_parser("selftest")
-    s.add_argument("--offset", type=lambda x: int(x, 0), default=0x1FFFFF000)
+    # Default to the on-chip DMA BRAM, not HBM.  It is the same descriptor
+    # path, the same M_AXI and the same smartconnect, but it takes HBM out of
+    # the loop -- so a failure here and a failure to HBM point at different
+    # subsystems.  --offset 0x1FFFFF000 for the old HBM-top behaviour.
+    s.add_argument("--offset", type=lambda x: int(x, 0), default=DMABRAM_BASE)
     s.set_defaults(fn=cmd_selftest)
 
     s = sub.add_parser("bench")
@@ -424,7 +500,7 @@ def main():
     s.set_defaults(fn=cmd_verify)
 
     a = p.parse_args()
-    a.fn(a)
+    sys.exit(a.fn(a) or 0)
 
 
 if __name__ == "__main__":

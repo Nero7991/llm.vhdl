@@ -11,8 +11,17 @@
 #                         0x9000  GPIO ch1 DATA  bit0=SCL(BB24) bit1=SDA(BA24)
 #                         0x9004  GPIO ch1 TRI   1 = released, 0 = driven low
 #                         0x9008  GPIO ch2 DATA  the 7 board LEDs, via led_inv
+#                         0xA000  ID magic       READ-ONLY, always 0x464B3333
+#                         0xA008  ID build date  READ-ONLY, 0x20260827 (BCD)
+#                         0x10000 scratch RAM    8 KB, read/write, drives nothing
 #   /dev/xdma0_h2c_0      writes into HBM, file offset == HBM byte address
 #   /dev/xdma0_c2h_0      reads  from HBM, same addressing
+#     0x0_0000_0000 .. 0x1_FFFF_FFFF   HBM, 8 GB
+#     0x2_0000_0000 .. 0x2_0000_FFFF   64 KB BRAM, the DMA loopback target
+#
+# The identity register is the one read that distinguishes "the whole path
+# works" from "a driver loaded".  0x00000000 and 0xFFFFFFFF are what a BAR that
+# is mapped but unanswered returns, and neither can be mistaken for "FK33".
 #
 # HBM is flat and contiguous from the DMA master: 0x0_0000_0000 .. 0x1_FFFF_FFFF,
 # 8 GB, MEM00-15 through SAXI_00 and MEM16-31 through SAXI_16, with the
@@ -434,11 +443,105 @@ if {$EnablePCIe == 1} {
 
 
 
+
+# ---- BRING-UP PERIPHERALS (gen_pcieep.py) ---------------------------------
+# None of this is in SQRL's design.  It exists because the first time this card
+# is in a slot there has to be something testable that is not the inference
+# engine, and because each stage of the host path has to fail distinguishably
+# from the next.  Without these three, the only host-visible things are SYSMON
+# (read-only) and a GPIO wired to real board pins (unsafe to scribble on), and
+# there is no DMA target at all except HBM -- which would make "the DMA engine
+# is broken" and "HBM is broken" produce the same symptom.
+#
+#   fk33_id        READ-ONLY, driven from fabric constants, so no host write
+#                  and no earlier test can change it.  Reading 0x464b3333
+#                  ("FK33" in ASCII) proves, in one access, all of: the link
+#                  trained, config space answered, the BIOS placed the BAR, the
+#                  AXI-Lite master is clocked and out of reset, the smartconnect
+#                  decodes, and the fabric holds THIS bitstream.  A driver that
+#                  merely loaded cannot produce that value, and neither can a
+#                  floating bus -- which reads as 0x00000000 or 0xFFFFFFFF.
+#   fk33_scratch   true read/write BRAM on the same AXI-Lite BAR.  SYSMON is
+#                  read-only and the GPIO drives board pins, so before this
+#                  there was nowhere safe to prove that MMIO WRITES land.
+#   fk33_dmabram   BRAM on the 128-bit DMA master.  A host write-then-read-back
+#                  through here uses the same descriptor path, the same M_AXI
+#                  and the same smartconnect as the weight load, with HBM taken
+#                  out of the loop.
+#
+# Clocks and resets are joined onto the smartconnect nets rather than wired to
+# a named source, because those nets come from xdma when EnablePCIe is 1 and
+# from clk_wiz/hbm_reset when it is 0.  Joining keeps this block correct in
+# both branches with no duplication.
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 id_magic
+set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {1179333427}] [get_bd_cells id_magic]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 id_build
+set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {539363367}] [get_bd_cells id_build]
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 fk33_id
+set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+    CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {1} CONFIG.C_ALL_INPUTS_2 {1} \
+    CONFIG.C_ALL_OUTPUTS {0} CONFIG.C_ALL_OUTPUTS_2 {0} \
+    CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells fk33_id]
+connect_bd_net [get_bd_pins id_magic/dout] [get_bd_pins fk33_id/gpio_io_i]
+connect_bd_net [get_bd_pins id_build/dout] [get_bd_pins fk33_id/gpio2_io_i]
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 fk33_scratch
+set_property -dict [list CONFIG.DATA_WIDTH {32} CONFIG.SINGLE_PORT_BRAM {1} \
+    CONFIG.ECC_TYPE {0}] [get_bd_cells fk33_scratch]
+create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 fk33_scratch_ram
+set_property -dict [list CONFIG.Memory_Type {Single_Port_RAM}] [get_bd_cells fk33_scratch_ram]
+connect_bd_intf_net [get_bd_intf_pins fk33_scratch/BRAM_PORTA] [get_bd_intf_pins fk33_scratch_ram/BRAM_PORTA]
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 fk33_dmabram
+set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} \
+    CONFIG.ECC_TYPE {0}] [get_bd_cells fk33_dmabram]
+create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 fk33_dmabram_ram
+set_property -dict [list CONFIG.Memory_Type {Single_Port_RAM}] [get_bd_cells fk33_dmabram_ram]
+connect_bd_intf_net [get_bd_intf_pins fk33_dmabram/BRAM_PORTA] [get_bd_intf_pins fk33_dmabram_ram/BRAM_PORTA]
+
+# Grow the two smartconnects rather than setting an absolute NUM_MI, so this
+# stays correct if a later edit adds a master port before this point.  Growing
+# is safe; SHRINKING deletes ports and silently orphans whatever was on them,
+# which is exactly the upstream bug fixed above.
+set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]
+set_property CONFIG.NUM_MI [expr {$n + 2}] [get_bd_cells pcie2axil]
+connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \
+                    [get_bd_intf_pins fk33_id/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI [expr {$n + 1}]]] \
+                    [get_bd_intf_pins fk33_scratch/S_AXI]
+
+set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2hbm]]
+set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells pcie2hbm]
+connect_bd_intf_net [get_bd_intf_pins pcie2hbm/[format M%02d_AXI $n]] \
+                    [get_bd_intf_pins fk33_dmabram/S_AXI]
+
+connect_bd_net [get_bd_pins fk33_id/s_axi_aclk]         [get_bd_pins pcie2axil/aclk]
+connect_bd_net [get_bd_pins fk33_id/s_axi_aresetn]      [get_bd_pins pcie2axil/aresetn]
+connect_bd_net [get_bd_pins fk33_scratch/s_axi_aclk]    [get_bd_pins pcie2axil/aclk]
+connect_bd_net [get_bd_pins fk33_scratch/s_axi_aresetn] [get_bd_pins pcie2axil/aresetn]
+connect_bd_net [get_bd_pins fk33_dmabram/s_axi_aclk]    [get_bd_pins pcie2hbm/aclk]
+connect_bd_net [get_bd_pins fk33_dmabram/s_axi_aresetn] [get_bd_pins pcie2hbm/aresetn]
+# ---- end bring-up peripherals ---------------------------------------------
+
 regenerate_bd_layout
 save_bd_design
 
 assign_bd_address -offset 0x00003000 -range 4K [get_bd_addr_segs {system_management_wiz_0/S_AXI_LITE/Reg}]
 assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_gpio_0/S_AXI/Reg}]
+
+# ---- bring-up peripheral address map (gen_pcieep.py) -----------------------
+# On the AXI-Lite BAR, which the XDMA IP sizes at 128 KB.  Everything here must
+# fit in 0x00000..0x1FFFF or address assignment fails.
+assign_bd_address -offset 0x0000A000  -range 4K  [get_bd_addr_segs {fk33_id/S_AXI/Reg}]
+assign_bd_address -offset 0x00010000  -range 8K  [get_bd_addr_segs {fk33_scratch/S_AXI/Mem0}]
+# On the DMA master, deliberately ABOVE the 8 GB of HBM so a bad host offset
+# lands on nothing rather than silently in memory.  Left visible to jtag_hbm as
+# well as to xdma/M_AXI, so the same bytes can be read back over JTAG -- which
+# is what separates "XDMA wrote the wrong thing" from "the readback is wrong".
+assign_bd_address -offset 0x200000000 -range 64K [get_bd_addr_segs {fk33_dmabram/S_AXI/Mem0}]
+
 
 if {$HBMGlobalSwitch == 1} {
     assign_bd_address -offset  0x00000000 -range 256M [get_bd_addr_segs {hbm/SAXI_00/HBM_MEM00 }]
@@ -587,6 +690,56 @@ set_property strategy Performance_RefinePlacement [get_runs impl_1]
 # controller, the smartconnect and xdma; a stale IP either fails to generate or,
 # worse, generates with different defaults.  report_ip_status output is the
 # thing to read if this build misbehaves.
+
+# ---- no-card block-design check (gen_pcieep.py) ----------------------------
+# FK33_STOP_AFTER_BD=1 stops here.  Everything above this line is IP
+# configuration and address assignment, which is the part that can be checked
+# without a card and without an hour of implementation.  It matters more than
+# it sounds: Vivado SILENTLY IGNORES set_property on a CONFIG.* name that does
+# not exist for that IP, so a typo in any of the xdma settings above produces a
+# perfectly clean build of the wrong design.  Reading the parameters back is
+# the only thing that catches it.
+if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
+    puts "==== FK33_BD_CHECK ===="
+    foreach p {pl_link_cap_max_link_width pl_link_cap_max_link_speed \
+               axi_data_width xdma_rnum_chnl xdma_wnum_chnl \
+               axilite_master_en axilite_master_size axilite_master_scale \
+               vendor_id pf0_device_id pf0_subsystem_vendor_id pf0_subsystem_id \
+               pcie_blk_locn axisten_freq} {
+        if {[llength [get_bd_cells -quiet xdma]]} {
+            puts "FK33_CFG xdma.$p = [get_property CONFIG.$p [get_bd_cells xdma]]"
+        }
+    }
+    foreach c {pcie2axil pcie2hbm} {
+        puts "FK33_CFG $c.NUM_SI = [get_property CONFIG.NUM_SI [get_bd_cells $c]]"
+        puts "FK33_CFG $c.NUM_MI = [get_property CONFIG.NUM_MI [get_bd_cells $c]]"
+    }
+    foreach c {fk33_id fk33_scratch fk33_dmabram} {
+        if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING CELL $c" }
+    }
+    puts "FK33_CFG id_magic = [get_property CONFIG.CONST_VAL [get_bd_cells id_magic]]"
+    puts "FK33_CFG id_build = [get_property CONFIG.CONST_VAL [get_bd_cells id_build]]"
+    puts "==== FK33_MAP (address space / segment / offset / range) ===="
+    foreach sp [get_bd_addr_spaces] {
+        foreach sg [get_bd_addr_segs -quiet -of_objects $sp] {
+            catch {
+                puts [format "FK33_MAP %-24s %-42s %-14s %s" \
+                      [get_property PATH $sp] $sg \
+                      [get_property OFFSET $sg] [get_property RANGE $sg]]
+            }
+        }
+    }
+    puts "==== validate_bd_design ===="
+    if {[catch {validate_bd_design -force} verr]} {
+        puts "FK33_BD_VALIDATE FAIL: $verr"
+        puts "FK33_BD_ONLY_DONE"
+        return -code error "block design validation failed"
+    }
+    puts "FK33_BD_VALIDATE OK"
+    puts "FK33_BD_ONLY_DONE"
+    return
+}
+
 puts "==== IP status before upgrade ===="
 report_ip_status
 set stale [get_ips -filter {IS_LOCKED == 1 || UPGRADE_VERSIONS != ""}]

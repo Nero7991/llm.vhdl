@@ -92,3 +92,6 @@ hw/fk33/.Xil/
 ref/gdn_err
 # compiled reference generators (build artifacts, not sources)
 ref/*_vec
+
+# FK33 host bring-up test binary (build with `make -C hw/fk33/host`)
+hw/fk33/host/fk33_bringup

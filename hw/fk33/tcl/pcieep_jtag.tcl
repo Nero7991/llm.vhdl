@@ -77,6 +77,23 @@ if {[catch {
     close_hw_target
     exit 0
 }
+# ---- 1a. Identity register, read over JTAG.  This is the same 0x464B3333 the
+# host reads through the BAR, and reading it BOTH ways is what separates
+# "the fabric holds the wrong bitstream" from "the host path is broken".
+#   JTAG OK + host OK   -> everything works
+#   JTAG OK + host bad  -> the fabric is right; the fault is link, BAR or driver
+#   JTAG bad            -> the FPGA is not running fk33_pcieep at all, and no
+#                          amount of host-side debugging will change that
+set idm [rd $axil A000]
+set idb [rd $axil A008]
+if {[string toupper $idm] eq "464B3333"} {
+    puts "ID_OK magic=0x$idm build=0x$idb  (\"FK33\")"
+} else {
+    puts "PCIEEP_FAIL: id magic reads 0x$idm, expected 0x464B3333."
+    puts "             The AXI-Lite path answers but this is not fk33_pcieep."
+    puts "             Reconfigure before debugging anything on the host side."
+}
+
 set temp [expr {$traw * 507.6 / 65536.0 - 279.43}]
 set vcc  [expr {$vraw * 3.0 / 65536.0}]
 puts [format "SYSMON die=%.1f C  VCCINT=%.4f V  (raw 0x%x 0x%x)" $temp $vcc $traw $vraw]
@@ -131,6 +148,38 @@ if {$ok} {
 } else {
     puts "PCIEEP_WARN: HBM readback mismatched.  HBM init may not have completed;"
     puts "             tcl/hbmdiag.tcl is the instrument for that."
+}
+
+# ---- 4. The DMA BRAM, over JTAG.  Same 64 KB the host reaches through
+# /dev/xdma0_h2c_0 at file offset 0x2_0000_0000.  This is the ONLY way to tell
+# "XDMA wrote the wrong bytes" from "the host read-back path is wrong": write a
+# known pattern here from JTAG, read it from the host, and vice versa.  Unlike
+# the HBM scratch page above it involves no memory controller at all, so a
+# mismatch here cannot be blamed on HBM initialisation.
+set bpat {464B3333 4A544147 12345678 FEDCBA98}
+set bok 1
+for {set i 0} {$i < 4} {incr i} {
+    wr $hbm [format %X [expr {0x200000000 + $i * 4}]] [lindex $bpat $i]
+}
+for {set i 0} {$i < 4} {incr i} {
+    set a [format %X [expr {0x200000000 + $i * 4}]]
+    set got [rd $hbm $a]
+    if {[string toupper $got] ne [string toupper [lindex $bpat $i]]} {
+        puts "DMABRAM_MISMATCH at 0x$a: wrote [lindex $bpat $i] read $got"
+        set bok 0
+    }
+}
+if {$bok} {
+    puts "DMABRAM_OK 0x200000000 holds 464B3333 4A544147 12345678 FEDCBA98"
+    puts "           Read the same four words from the host with:"
+    puts "             dd if=/dev/xdma0_c2h_0 bs=16 count=1 skip=\$((0x200000000/16)) | xxd"
+    puts "           Agreement proves the DMA target; disagreement localises the"
+    puts "           fault to XDMA or the driver rather than to the fabric."
+} else {
+    puts "PCIEEP_WARN: the DMA BRAM did not read back over JTAG.  This is on the"
+    puts "             same smartconnect as HBM but has no memory controller, so"
+    puts "             a failure here and an HBM pass would be an interconnect or"
+    puts "             address-decode fault, not a memory fault."
 }
 
 puts "PCIEEP_DONE"
