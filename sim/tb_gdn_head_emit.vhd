@@ -30,6 +30,7 @@ architecture sim of tb_gdn_head_emit is
   signal in_acc   : signed(39 downto 0) := (others => '0');
   signal in_e_o   : signed(7 downto 0)  := (others => '0');
 
+  signal in_ready : std_logic;
   signal done     : std_logic;
   signal o_mant   : std_logic_vector(DIM*16-1 downto 0);
   signal o_e_head : signed(7 downto 0);
@@ -42,6 +43,34 @@ architecture sim of tb_gdn_head_emit is
   type case_mnt is array(0 to NCASE-1) of acc_arr;
 
   signal running : boolean := true;
+
+  -- Overlap-phase capture.  done for head h fires WHILE head h+1 is filling,
+  -- so the result cannot be read by the stimulus process at its leisure; it
+  -- has to be snapshotted the cycle it appears.
+  type snap_t is array(0 to 3) of std_logic_vector(DIM*16-1 downto 0);
+  type sexp_t is array(0 to 3) of integer;
+  shared variable snap_m : snap_t;
+  shared variable snap_e : sexp_t;
+  shared variable snap_n : integer := 0;
+  signal snapping : boolean := false;
+  -- A shared variable, not a signal: it is written by BOTH the monitor and
+  -- the stimulus, and a signal with two drivers is an unresolved-signal
+  -- elaboration error with no line number.  Same mistake as `cyc` in the
+  -- cycle probe an hour earlier.
+  shared variable ready_fell : boolean := false;
+  -- The overlap phase checks two SEPARATE properties, and it took a mutation
+  -- run to see that they are separate:
+  --   correctness -- no column is lost under back-pressure.  The value
+  --     comparison below covers this, and it is the property the FIRST version
+  --     of this unit violated, because it had no in_ready at all and simply
+  --     ignored in_valid during the reduce.
+  --   throughput  -- the reduce hides behind the next head's fill.  The value
+  --     comparison does NOT cover this: with a correct valid/ready handshake a
+  --     single-banked unit just stalls the producer and still returns the right
+  --     answers.  Collapsing the two banks passes the value check and is only
+  --     visible as CYCLES, so the cycle bound below is the whole test for it.
+  signal ocyc : integer := 0;
+  signal ocount : boolean := false;
 begin
   clk <= not clk after 5 ns when running else '0';
 
@@ -49,8 +78,30 @@ begin
     generic map ( DIM => DIM )
     port map ( clk => clk, rst => rst,
                in_valid => in_valid, in_acc => in_acc, in_e_o => in_e_o,
+               in_ready => in_ready,
                done => done, o_mant => o_mant, o_e_head => o_e_head,
                o_sat => o_sat );
+
+  ocnt : process(clk)
+  begin
+    if rising_edge(clk) then
+      if ocount then ocyc <= ocyc + 1; else ocyc <= 0; end if;
+    end if;
+  end process;
+
+  snapmon : process(clk)
+  begin
+    if rising_edge(clk) then
+      if snapping then
+        if done = '1' and snap_n < 4 then
+          snap_m(snap_n) := o_mant;
+          snap_e(snap_n) := to_integer(o_e_head);
+          snap_n := snap_n + 1;
+        end if;
+        if in_ready = '0' then ready_fell := true; end if;
+      end if;
+    end if;
+  end process;
 
   stim : process
     file fh : text;
@@ -140,9 +191,77 @@ begin
       wait until rising_edge(clk);
     end loop;
 
+    -- ==================================================================
+    -- OVERLAP PHASE.  The reason the unit is double buffered: gdn_recur_pipe
+    -- starts the next head immediately, so head h+1's columns arrive WHILE
+    -- head h is still reducing.  The single-banked first version ignored
+    -- in_valid during the reduce and would have dropped them silently, which
+    -- is why this phase exists and why it drives with NO gap at all.
+    snapping <= true; snap_n := 0; ready_fell := false;
+    ocount <= true;
+    wait until rising_edge(clk);
+    for c in 0 to 3 loop
+      for i in 0 to DIM-1 loop
+        -- Proper valid/ready handshake: hold valid and the data until an edge
+        -- where ready is also high.  Back-pressure WILL assert here: this
+        -- phase fills a head in 128 cycles against a 268-cycle reduce, which
+        -- is far tighter than the real 512-cycle arrival, so it is a harder
+        -- test than the hardware will ever see.  Stalling is correct;
+        -- dropping is not, and the single-banked version dropped.
+        in_valid <= '1';
+        in_acc   <= to_s40(v_acc(c)(i));
+        in_e_o   <= to_signed(v_eo(c)(i), 8);
+        loop
+          wait until rising_edge(clk);
+          exit when in_ready = '1';
+        end loop;
+      end loop;
+      in_valid <= '0';
+    end loop;
+    -- drain the last head
+    while snap_n < 4 loop wait until rising_edge(clk); end loop;
+    snapping <= false;
+    report "overlap phase: 4 heads back-to-back took " & integer'image(ocyc)
+         & " cycles" severity note;
+    -- MEASURED: **1,202** cycles double buffered against **1,586** with the
+    -- two banks collapsed into one, for the same 4 heads and, note, the same
+    -- CORRECT results in both cases.  The bound sits between them rather than
+    -- at either, so it fails on a collapse to one bank while leaving room for
+    -- pipeline changes that do not undo the overlap.
+    if ocyc > 1300 then
+      report "OVERLAP THROUGHPUT: 4 heads took " & integer'image(ocyc)
+           & " cycles, over the 1300 bound -- the reduce is NOT hiding behind "
+           & "the next head's fill, i.e. the double buffer is not working"
+        severity error;
+      nerr := nerr + 1;
+    end if;
+    ocount <= false;
+
+    for c in 0 to 3 loop
+      if snap_e(c) /= v_eh(c) then
+        report "OVERLAP case " & integer'image(c) & ": e_head got "
+             & integer'image(snap_e(c)) & " want " & integer'image(v_eh(c))
+          severity error;
+        nerr := nerr + 1;
+      end if;
+      for i in 0 to DIM-1 loop
+        if to_integer(signed(snap_m(c)((i+1)*16-1 downto i*16))) /= v_mnt(c)(i) then
+          report "OVERLAP case " & integer'image(c) & " col " & integer'image(i)
+               & ": got "
+               & integer'image(to_integer(signed(snap_m(c)((i+1)*16-1 downto i*16))))
+               & " want " & integer'image(v_mnt(c)(i)) severity error;
+          nerr := nerr + 1;
+          exit;
+        end if;
+      end loop;
+    end loop;
+    report "overlap phase: back-pressure asserted at least once: "
+         & boolean'image(ready_fell) severity note;
+
     if nerr = 0 then
       report "tb_gdn_head_emit: PASS -- " & integer'image(NCASE)
-           & " cases x " & integer'image(DIM) & " bit-exact" severity note;
+           & " cases x " & integer'image(DIM)
+           & " bit-exact, plus 4 heads back-to-back with no gap" severity note;
     else
       report "tb_gdn_head_emit: FAIL -- " & integer'image(nerr) & " mismatches"
         severity failure;

@@ -48,10 +48,27 @@
 -- because the shift is one stage of an II=1 pipeline and the storage would be
 -- 40 bits x DIM of extra registers for nothing.
 --
--- COST.  Pass A is free: it runs concurrently with gdn_recur_pipe's own output
--- stream, one column per cycle, which is the rate that stream arrives at.
--- Passes B and C are ~DIM cycles each plus drain, so **~270 cycles per head**,
--- and at 24 value heads per card **~6,480 cycles per GDN layer**.
+-- DOUBLE BUFFERED, and that is not an optimisation.  MEASURED with a cycle
+-- probe on the correctness testbench: fill is 128 cycles and the two reduce
+-- passes are **268**, for 396 total per head.  The first version of this unit
+-- had ONE bank, so during those 268 cycles it did not examine `in_valid` at
+-- all and had no back-pressure port.  gdn_recur_pipe starts the next head
+-- immediately (its own head-boundary double buffer measures 0 wait after any
+-- head of 16 columns or more), so the next head's first ~67 column results
+-- would have been SILENTLY DROPPED.  That is a correctness bug at integration,
+-- not merely a throughput one, and nothing in either unit would have reported
+-- it.
+--
+-- With two banks the reduce hides completely.  gdn_recur_pipe produces one
+-- column result every S_DIM/LANES = 4 cycles at LANES = 32, so a 128-column
+-- head takes 512 cycles to arrive, against 268 to reduce. `in_ready` is
+-- provided anyway: it should never deassert in the intended configuration, and
+-- a producer that sees it deassert has learned something worth knowing rather
+-- than losing data quietly.
+--
+-- COST.  Fill is free, running at the rate results arrive.  Reduce is 268
+-- cycles per head and at 24 value heads per card **~6,432 cycles per GDN
+-- layer**, all of it hidden behind the next head's fill.
 --
 -- Deliberately NOT stated as a percentage of the state sweep.  An earlier
 -- version of this comment said "~1.1% of the 589,824-cycle sweep", which
@@ -92,6 +109,11 @@ entity gdn_head_emit is
     in_valid : in std_logic;
     in_acc   : in signed(39 downto 0);
     in_e_o   : in signed(7 downto 0);
+    -- Low when the bank about to be written still holds an unreduced head.
+    -- In the intended configuration it never falls, because the reduce (268
+    -- cycles) is shorter than a head's arrival (512); it exists so that a
+    -- producer running faster than expected STALLS instead of losing columns.
+    in_ready : out std_logic;
 
     -- ---- result ----------------------------------------------------------
     -- The whole head at once, which is the shape rmsnorm's x_mant takes.
@@ -127,9 +149,10 @@ architecture rtl of gdn_head_emit is
     end if;
   end function;
 
-  -- 48 bits per column: 40 of o_acc and 8 of e_o.
+  -- 48 bits per column: 40 of o_acc and 8 of e_o.  TWO banks, so head h+1
+  -- fills while head h reduces; bank b occupies [b*DIM, (b+1)*DIM).
   constant W_MEM : integer := 48;
-  type mem_t is array (0 to DIM-1) of std_logic_vector(W_MEM-1 downto 0);
+  type mem_t is array (0 to 2*DIM-1) of std_logic_vector(W_MEM-1 downto 0);
   signal mem : mem_t;
   -- PINNED, not left to inference.  Measured unpinned, Vivado chose
   -- distributed RAM at DIM = 64 and 128 (63 and 126 RAM cells) and then
@@ -150,10 +173,17 @@ architecture rtl of gdn_head_emit is
   attribute ram_style of mem : signal is "block";
   signal mem_q : std_logic_vector(W_MEM-1 downto 0) := (others => '0');
 
-  type state_t is (S_FILL, S_AMAX, S_EMIT, S_DONE);
-  signal state : state_t := S_FILL;
+  -- The reduce FSM no longer owns the fill; they run concurrently.
+  type state_t is (S_IDLE, S_AMAX, S_EMIT, S_DONE);
+  signal state : state_t := S_IDLE;
 
   signal wr_idx : integer range 0 to DIM := 0;
+  signal wb     : integer range 0 to 1 := 0;   -- bank being filled
+  signal rb     : integer range 0 to 1 := 0;   -- bank being reduced
+  type pend_t is array (0 to 1) of std_logic;
+  signal pending : pend_t := (others => '0');  -- bank holds a full head
+  type eh_t is array (0 to 1) of signed(7 downto 0);
+  signal e_h_b  : eh_t := (others => (others => '0'));
   signal e_h    : signed(7 downto 0) := (others => '0');
   signal sh_h   : integer range 0 to 63 := 0;
   signal e_head_r : signed(7 downto 0) := (others => '0');
@@ -184,6 +214,13 @@ architecture rtl of gdn_head_emit is
 
 begin
   done     <= done_r;
+  -- COMBINATIONAL, deliberately.  A registered in_ready reports the state of
+  -- `pending` one cycle late, so a producer that samples it and drives on the
+  -- next edge can still hit a full bank -- which is exactly what the overlap
+  -- test caught, as an assertion failure inside the DUT rather than as a
+  -- wrong result.  This is a 2-to-1 mux on one bit and is not a timing risk;
+  -- the unit closes at 440.9 MHz against B's 299.04.
+  in_ready <= not pending(wb);
   o_mant   <= o_reg;
   o_e_head <= e_head_r;
   o_sat    <= sat_r;
@@ -197,44 +234,66 @@ begin
   begin
     if rising_edge(clk) then
       if rst = '1' then
-        state <= S_FILL; wr_idx <= 0; rd_idx <= 0; drain <= 0;
+        state <= S_IDLE; wr_idx <= 0; rd_idx <= 0; drain <= 0;
+        wb <= 0; rb <= 0; pending <= (others => '0');
         p1_v <= '0'; p2_v <= '0'; p3_v <= '0'; p4_v <= '0';
         amax <= (others => '0'); done_r <= '0'; sat_r <= '0';
       else
         done_r <= '0';
 
         -- ---- synchronous read, one cycle, shared by both read passes ------
+        -- Synchronous read, addressed into the bank being REDUCED.  The write
+        -- below targets the bank being FILLED, and the two are never the same
+        -- bank, which is what makes this a simple dual-port RAM rather than a
+        -- read-write conflict.
         if rd_idx < DIM then
-          mem_q <= mem(rd_idx);
+          mem_q <= mem(rb*DIM + rd_idx);
+        end if;
+
+        -- ================= FILL, concurrent with the reduce ===============
+        -- Not a state any more.  It runs every cycle regardless of what the
+        -- reduce FSM is doing, which is the whole point of the second bank.
+        -- A proper valid/ready transfer: the column moves on an edge where
+        -- BOTH in_valid and in_ready are high.  An earlier version accepted on
+        -- in_valid alone and asserted if the bank was full, which gets the
+        -- protocol backwards -- holding valid while ready is low is exactly
+        -- what a stalled producer is supposed to do, so that assert fired on
+        -- correct behaviour.
+        if in_valid = '1' and pending(wb) = '0' then
+          mem(wb*DIM + wr_idx) <= std_logic_vector(in_acc)
+                                & std_logic_vector(in_e_o);
+          -- e_h is the running MINIMUM over the head, per bank.  Seeded from
+          -- column 0 rather than a sentinel, so no exponent is unrepresentable.
+          if wr_idx = 0 or in_e_o < e_h_b(wb) then
+            e_h_b(wb) <= in_e_o;
+          end if;
+          if wr_idx = DIM-1 then
+            wr_idx     <= 0;
+            pending(wb) <= '1';
+            wb         <= 1 - wb;
+          else
+            wr_idx <= wr_idx + 1;
+          end if;
         end if;
 
         case state is
 
+          -- ============ idle: pick up a filled bank ========================
+          when S_IDLE =>
+            sat_r <= '0';
+            if pending(rb) = '1' then
+              e_h    <= e_h_b(rb);
+              rd_idx <= 0;
+              amax   <= (others => '0');
+              drain  <= 0;
+              p1_v <= '0'; p2_v <= '0'; p3_v <= '0'; p4_v <= '0';
+              state  <= S_AMAX;
+            end if;
+
+
           -- ============ pass A: capture the column stream ==================
           -- This costs no cycles of its own: gdn_recur_pipe produces one
           -- column result per column and this consumes them at that rate.
-          when S_FILL =>
-            sat_r <= '0';
-            if in_valid = '1' then
-              mem(wr_idx) <= std_logic_vector(in_acc)
-                           & std_logic_vector(in_e_o);
-              -- e_h is the running MINIMUM.  Seeded from column 0 rather than
-              -- from a sentinel, so no value of e_o is unrepresentable.
-              if wr_idx = 0 or in_e_o < e_h then
-                e_h <= in_e_o;
-              end if;
-              if wr_idx = DIM-1 then
-                wr_idx <= 0;
-                rd_idx <= 0;
-                amax   <= (others => '0');
-                drain  <= 0;
-                p1_v <= '0'; p2_v <= '0'; p3_v <= '0'; p4_v <= '0';
-                state  <= S_AMAX;
-              else
-                wr_idx <= wr_idx + 1;
-              end if;
-            end if;
-
           -- ============ pass B: align and reduce amax ======================
           when S_AMAX =>
             -- stage 1: address issued above, data lands in mem_q next cycle
@@ -381,8 +440,12 @@ begin
 
           when S_DONE =>
             done_r <= '1';
-            wr_idx <= 0;
-            state  <= S_FILL;
+            -- Release the bank ONLY here, after the result register is
+            -- complete.  Releasing it at the end of pass C would let the fill
+            -- overwrite columns the emit pass is still draining.
+            pending(rb) <= '0';
+            rb <= 1 - rb;
+            state <= S_IDLE;
 
         end case;
       end if;
