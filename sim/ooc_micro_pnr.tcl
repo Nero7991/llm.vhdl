@@ -24,8 +24,8 @@ set tag $top
 # Exists for the same reason as in ooc_core_sweep.tcl, and matters MORE here:
 # every post-route Fmax this harness has produced is a 0.85 V number, while the
 # FK33 runs at 0.717 V, and one measured pair on matvec_core put that gap at
-# 16.5%.  Applied AFTER route_design so the reported number is a pure voltage
-# derate of one placed-and-routed netlist.
+# 16.5%.  Applied before the design is created, which is the only point Vivado
+# accepts it in a place-and-route flow; see the note at create_project.
 set volt -1
 foreach a [lrange $argv 3 end] {
   if {[regexp {^volt=([0-9.]+)$} $a -> v]} {
@@ -46,7 +46,27 @@ set here   [file normalize [file dirname [info script]]]
 set outdir [file normalize [file join $here ooc_micro]]
 file mkdir $outdir
 
-create_project -in_memory -part $part
+# At a reduced VCCINT Vivado does not derate the -2L model, it RELOADS the part
+# as the -2LV variant: `[Vivado 12-4441] The operating conditions provided
+# require changing to the -2LV variant ... to ensure that accurate timing and
+# power data is provided`, followed by `[Device 21-403] Loading part
+# xcvu33p-fsvh2104-2LV-e`.  That reload is a speed-grade change, and it is why
+# the constraint is rejected everywhere in a place-and-route flow: wherever it
+# lands, the part underneath the placer is not the part the design was opened
+# on.  So open the design on -2LV directly and the change never happens.
+#
+# This matters beyond making the run complete.  -2LV is a separate
+# characterisation of the same silicon at reduced VCCINT, not a scaling of the
+# -2L numbers, so a -2LV build is the correct model of this card rather than an
+# approximation of it.  It also means a post-synthesis `set_operating_conditions`
+# derate and a -2LV build may not be measuring the same thing; whether they
+# agree is being measured separately.
+set opened_part $part
+if {$volt > 0 && [regexp {^(.*)-2L-e$} $part -> base]} {
+  set opened_part "${base}-2LV-e"
+  puts "VOLT $volt V: opening on $opened_part rather than $part"
+}
+create_project -in_memory -part $opened_part
 foreach f $files { read_vhdl -vhdl2008 [file normalize $f] }
 
 set xdc [file join $outdir pnr_${tag}.xdc]
@@ -56,19 +76,34 @@ puts $fh "create_clock -name clk -period $period \[get_ports clk\]"
 # run.  Set it explicitly so the warning is answered rather than ignored, and so
 # every point in the sweep is judged against the same clocking assumption.
 puts $fh "set_property HD.CLK_SRC BUFGCTRL_X0Y0 \[get_ports clk\]"
+# Operating conditions go in the XDC, which is the ONLY place Vivado 2023.2
+# accepts them in a place-and-route flow.  As a Tcl command it fails three
+# different ways: before create_project there is no open design; between
+# opt_design and place_design the placer refuses with `[Place 46-21] speed
+# grade changed since the design was opened`; and after route_design it
+# re-checks placement, throws `[Constraints 18-11797] cells at RAMB18_*
+# assigned to site type RAMB180` for every block RAM, and terminates with
+# signal 11.  Read in with the clock constraint, the placer and router see it
+# from the start.
+#
+# Consequence when comparing runs: a volt= run is NOT a pure derate of the
+# default run, because the tools optimise FOR the stated voltage.
+# ooc_core_sweep.tcl applies it post-synthesis with no placement and IS a pure
+# derate; use that to ask what voltage alone costs, and this to ask what a real
+# build reaches.
+if {$volt > 0} {
+  puts $fh "set_operating_conditions -voltage {VCCINT $volt}"
+  # -2LV defaults to 0.72 V; this pins the measured 0.717 V within that model,
+  # which is a 3 mV adjustment and NOT a speed-grade change.
+}
 close $fh
 read_xdc -mode out_of_context $xdc
 
-synth_design -mode out_of_context -top $top -part $part {*}$generics
+synth_design -mode out_of_context -top $top -part $opened_part {*}$generics
 opt_design -quiet
 place_design
 phys_opt_design -quiet
 route_design
-
-if {$volt > 0} {
-  set_operating_conditions -voltage [list VCCINT $volt]
-  puts "  operating conditions: VCCINT = $volt V"
-}
 
 set rpt [file join $outdir pnrutil_${tag}.rpt]
 report_utilization -file $rpt
@@ -116,7 +151,7 @@ set csvpath [file join $outdir pnr_results.csv]
 set fresh [expr {![file exists $csvpath] || [file size $csvpath] == 0}]
 set csv [open $csvpath a]
 if {$fresh} { puts $csv "tag,part,period_ns,dsp,lut,ff,carry8,wns_ns,fmax_mhz,logic_ns,net_ns" }
-puts $csv "$tag,$part,$period,$dsp,$lut,$ff,$carry,$wns,$fmax,[get_property DATAPATH_LOGIC_DELAY $path],[get_property DATAPATH_NET_DELAY $path]"
+puts $csv "$tag,$opened_part,$period,$dsp,$lut,$ff,$carry,$wns,$fmax,[get_property DATAPATH_LOGIC_DELAY $path],[get_property DATAPATH_NET_DELAY $path]"
 close $csv
 
 puts [format "PNR %s  DSP=%s LUT=%s FF=%s CARRY8=%s  WNS=%.3f  Fmax=%.1f MHz  (logic %.3f / net %.3f ns)" \
