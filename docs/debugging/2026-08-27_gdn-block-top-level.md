@@ -364,3 +364,48 @@ not run. **This is an open area question, flagged, not answered.**
 * **Audit B-6, B-7, B-9 are untouched.** `w_taken`, `sc_taken` and `cv_taken`
   are all still pulses with no back-pressure, and every B output stream is
   still un-refusable.
+
+---
+
+## CORRECTION 2026-08-27: the 367-cycle deadline is WITHDRAWN, it is now 369
+
+**Superseded:** every statement above that the emit chain's per-head deadline
+is **367 cycles**, that `RECUR_LANES=32` has **145 cycles / 28%** of margin,
+and that `RECUR_LANES=64` is short by **111 cycles**. Those numbers were
+correct for the RTL as it stood when they were taken and are wrong now. They
+are left in place rather than edited, because they were reported and acted on.
+
+**Replace with:** the deadline is **369 cycles per head**, boundary pair
+368 DROPPED / 369 no column refused, same bisection and same shape
+(`DIM=128 SILU_LANES=16 RMS_LANES=4`, `RECUR_LANES=64` plus `HEAD_GAP`).
+`RECUR_LANES=32` has **+143 cycles, 27.9%**; `RECUR_LANES=64` is short by
+**113 cycles**. Every conclusion drawn from the old numbers survives: 32 has
+margin, 64 is short by a sustained per-head amount and no finite elastic
+buffer fixes it.
+
+**Cause:** `3c2789e` gave `rmsnorm_bf`'s 1/sqrt(2) fold its own MREG/PREG pair
+and two hop states, making the unit two cycles longer per invocation. That
+lands on the per-head chain one for one. `1b8baf3` (the `S_SER` bus-slot
+gating) is in the same loop and contributes nothing measurable to the boundary.
+
+**The lesson, and it is the reusable part:** a per-head deadline cannot be
+inferred from an aggregate finish time measured in the arrival-bound regime.
+`tb_gdn_emit_chain` at `COL_GAP=4` runs 512 cycles per head, far above the
+deadline, so per-head service is hidden and only the final drain shows -- 2 ns
+for a 2-cycle change, which is what you would see whether or not rmsnorm sits
+on the chain. Re-run the bisection; do not infer it. Full working in
+`docs/debugging/2026-08-27_gdn-block-silu-straight-through.md`.
+
+## CORRECTION 2026-08-27: SEAM 1 is fixed, and the second pass is gone
+
+**Superseded:** the statement above that `gdn_conv` publishes `e_seg` after the
+data it describes, that silu therefore "cannot" overlap the conv, and that
+`gdn_block` must buffer each segment and make a second pass.
+
+**Replace with:** `b94e2f8` publishes `e_seg`, `sh_seg` and `err_seg` at `S_SH`,
+three cycles ahead of the first `o_valid`. `gdn_block` now feeds
+`u_silu_conv` straight off `gdn_conv`'s output stream. Measured saving, one
+pass over the conv width plus 4 cycles of state per segment, exact at three
+conv widths; 2,060 cycles per layer at 9B. Output bit-identical. The finding
+itself stands as originally written -- it was a real defect and it was found by
+wiring -- only the "not optional" conclusion is withdrawn.

@@ -79,19 +79,41 @@
 -- in the column issue path, and a prefetch in that path is exactly the shape
 -- that produced defect B-3.  Cheap structural safety beats a clever pipeline.
 --
--- SEAM 1, AND IT IS A DEFECT FOUND BY WIRING.  gdn_conv publishes `e_seg` and
--- `sh_seg` in S_FIN, which is TWO STATES AFTER pass B has finished streaming
--- `o_data`.  gdn_silu needs the segment exponent to form its Q12 argument, for
--- the FIRST beat.  So conv's output stream cannot be piped straight into the
--- gate: a straight-through connection silus every beat of segment s against
--- segment s-1's exponent, which is a per-segment power-of-two error with no
--- error flag and a legal-looking e_seg -- the exact signature of the tvalid
--- skew defect one seam upstream.  This block therefore BUFFERS each segment,
--- waits for o_done, and makes a SECOND pass over the buffer through silu.  The
--- cost is one extra pass over the conv width (2,048 cycles per layer at 9B and
--- CONV_LANES=4, against a 16,384-cycle sweep) and it is not optional.  Section
--- 3.6's schedule assumes silu overlaps the conv; it cannot, as gdn_conv is
--- built.  Recorded rather than adapted around.
+-- SEAM 1, AND IT IS NOW A STRAIGHT WIRE.  gdn_conv used to publish `e_seg` in
+-- S_FIN, two states AFTER pass B had finished streaming `o_data`, so the
+-- exponent arrived after the data it described.  gdn_silu needs it for the
+-- FIRST beat, so the stream could not be piped into the gate at all: a
+-- straight-through connection silu'd every beat of segment s against segment
+-- s-1's exponent, a per-segment power-of-two error with a legal-looking e_seg
+-- and no error flag.  This block therefore buffered each segment and made a
+-- SECOND pass over the buffer through silu.
+--
+-- Fixed in gdn_conv at commit b94e2f8: `e_seg`, `sh_seg` and `err_seg` are
+-- published at S_SH, the earliest state in which the expression is computable,
+-- and three cycles ahead of the first `o_valid`.  The second pass is gone and
+-- conv's output stream feeds the gate directly.  MEASURED saving, one token,
+-- from `sim/run_gdn_block.sh`'s cycle report: see
+-- docs/debugging/2026-08-27_gdn-block-silu-straight-through.md.  It is one
+-- pass over the conv width per segment, i.e. 2,048 cycles per layer at 9B and
+-- CONV_LANES=4 against a 16,384-cycle state sweep.  Section 3.6's schedule
+-- assumed this overlap; it is now actually available.
+--
+-- WHAT THE STRAIGHT WIRE COSTS, and it is not nothing.  The exponent is now
+-- read by gdn_silu combinationally for EVERY beat of the segment, i.e. across
+-- the whole of pass B, where the buffered form read it once at a single
+-- instant.  That is the class-1 shape this project has now been bitten by
+-- three times (w_mant, tvalid, cw_exp), so it is LATCHED here rather than
+-- wired: `cs_eseg` tracks `cv_eseg` until the segment's first output beat and
+-- FREEZES on it, `eseg_taken` pulses at that instant, and an assertion fails
+-- the simulation if `cv_eseg` moves while the frozen copy is in use.  Safe by
+-- construction plus a check, not safe by a latency argument.
+--
+-- AND SEGMENT COMPLETION IS NO LONGER `o_done`.  The last silu output lands
+-- gdn_silu's latency AFTER the last conv beat, which is after `o_done` -- a
+-- one-cycle pulse that now fires while the segment is still in flight.  The
+-- FSM waits on the collected-beat count, a level, and captures `o_done` into a
+-- sticky bit so the pulse cannot be missed either.  A completion signal that
+-- stops meaning completion is the other half of the defect class above.
 --
 -- SEAM 2.  gdn_scalar and l2norm_rs latch NOTHING at `start` (audit B-4) and
 -- read their inputs at scattered points across a whole invocation.  Both are
@@ -200,6 +222,12 @@ entity gdn_block is
     -- per cycle, and it exists because the emit chain's per-head deadline is
     -- a function of that period and the deadline had never been measured.
     -- Zero is the shipping configuration.
+    -- Idle cycles between conv tap group requests.  Models a tap memory that
+    -- cannot sustain one group per cycle, and it is the axis that moves
+    -- gdn_conv's internal phase boundaries -- and therefore the instant e_seg
+    -- is published and the instant the first output beat arrives -- relative
+    -- to everything else in the block.  Zero is the shipping configuration.
+    CV_GAP    : natural := 0;
     ISSUE_GAP : natural := 0;
     -- Idle cycles inserted ONCE per value head, between the kq_we and the
     -- head's first column.  It lengthens the head ARRIVAL PERIOD by exactly
@@ -248,6 +276,12 @@ entity gdn_block is
     -- which is defect B-3b and is closed here by holding a register.
     cv_cw_exp : in  signed(7 downto 0);
     cv_taken  : out std_logic;
+    -- ONE CYCLE, on the segment's first conv output beat: the instant the
+    -- segment exponent is frozen for the gate.  gdn_conv may legally change
+    -- e_seg after it, and may NOT before it.  Published for the same reason
+    -- w_taken is: a latch whose instant is not observable is a timing
+    -- contract, not a handshake.
+    eseg_taken : out std_logic;
 
     -- ---- scalar path source, per value head ------------------------------
     -- Presented combinationally for the head named by sc_head; captured on
@@ -366,9 +400,14 @@ architecture rtl of gdn_block is
   signal cv_seg_i  : integer range 0 to SEGS-1 := 0;
 
   -- ---- gdn_silu, the 1.4(e) conv activation.  INSTANCE 1 OF 2. -----------
-  signal cs_valid  : std_logic := '0';
-  signal cs_data   : std_logic_vector(CONV_LANES*16-1 downto 0) := (others => '0');
+  -- Driven concurrently off gdn_conv's output; see the straight-wire note.
+  signal cs_valid  : std_logic;
+  signal cs_data   : std_logic_vector(CONV_LANES*16-1 downto 0);
+  -- The FROZEN segment exponent.  See the SEAM 1 note: gdn_silu reads e_seg
+  -- combinationally for every beat, so it may not be a wire.
   signal cs_eseg   : signed(7 downto 0) := (others => '0');
+  signal eseg_frz  : std_logic := '0';   -- '1' once the segment's copy is held
+  signal cv_done_r : std_logic := '0';   -- o_done captured; it is a pulse
   signal co_valid  : std_logic;
   signal co_data   : std_logic_vector(CONV_LANES*16-1 downto 0);
 
@@ -433,8 +472,7 @@ architecture rtl of gdn_block is
 
   -- ---- the phase machine -------------------------------------------------
   type ph_t is (P_IDLE,
-                P_EXP, P_CVGO, P_CVWAIT, P_CVFEED, P_CVDONE,
-                P_SIFEED, P_SIDRAIN, P_SEGN,
+                P_EXP, P_CVGO, P_CVWAIT, P_CVFEED, P_CVDRAIN, P_SEGN,
                 P_L2GO, P_L2WAIT, P_L2N,
                 P_SCADR, P_SCRD, P_SCLAT, P_SCWAIT, P_SCN,
                 P_HKQ, P_HGAP, P_COL, P_DRAIN, P_WAITY);
@@ -450,6 +488,7 @@ architecture rtl of gdn_block is
   signal col   : integer range 0 to DIM := 0;
   signal grp   : integer range 0 to NB_R := 0;
   signal gapc  : integer range 0 to ISSUE_GAP := 0;
+  signal cgapc : integer range 0 to CV_GAP := 0;
   signal hgapc : integer range 0 to HEAD_GAP := 0;
 
   signal errc_r : std_logic := '0';
@@ -493,6 +532,13 @@ begin
   -- unit is back in S_IDLE and starts a second, redundant read.
   ec_rd_req <= '1' when (ph = P_EXP and ec_rd_ack = '0') else '0';
 
+  -- THE STRAIGHT WIRE.  gdn_conv's pass-B output is gdn_silu's input, with
+  -- nothing between them.  Direct rather than registered: a register would
+  -- cost a cycle for nothing, since gdn_silu has no ready to satisfy and the
+  -- exponent is already frozen by the time the first beat lands.
+  cs_valid <= cv_ovalid;
+  cs_data  <= cv_odata;
+
   cv_ren <= cv_ren_i;
   cv_seg <= cv_seg_i;
   st_ren <= st_ren_i;
@@ -533,9 +579,11 @@ begin
                err_seg => cv_errseg, ready => cv_ready, cfg_taken => open );
 
   -- INSTANCE 1 OF 2.  silu(conv_out), 1.4(e): applied to the whole conv
-  -- output, q and k included, BEFORE the L2 norms.  Same width as the conv so
-  -- there is no rate adapter between them; see SEAM 1 for why it is still a
-  -- second pass rather than a straight-through connection.
+  -- output, q and k included, BEFORE the L2 norms.  Same width as the conv and
+  -- fed STRAIGHT off its output stream -- no adapter, no buffer, no second
+  -- pass.  Rate-safe by construction: gdn_conv emits at most one beat per
+  -- cycle and gdn_silu is II = 1 with a fixed latency and no ready in either
+  -- direction, so neither side can ever refuse the other.
   u_silu_conv : entity work.gdn_silu
     generic map ( LANES => CONV_LANES, ARG_Q => Q )
     port map ( clk => clk, rst => rst, e_seg => cs_eseg,
@@ -596,7 +644,8 @@ begin
       if rst = '1' then
         ph <= P_IDLE;
         cv_start <= '0'; cv_sv <= '0'; cv_ren_i <= '0';
-        cs_valid <= '0'; l2_start <= '0'; sp_start <= '0';
+        l2_start <= '0'; sp_start <= '0';
+        eseg_frz <= '0'; cv_done_r <= '0'; eseg_taken <= '0';
         rp_kq_we <= '0'; rp_svalid <= '0'; rp_sfirst <= '0';
         st_ren_i <= '0'; st_first_i <= '0'; st_wen <= '0'; se_wen <= '0';
         cv_taken <= '0'; sc_taken <= '0';
@@ -610,7 +659,7 @@ begin
         rp_kq_we <= '0'; cv_taken <= '0'; sc_taken <= '0';
         st_wen <= '0'; se_wen <= '0';
         cv_ren_i <= '0'; st_ren_i <= '0'; st_first_i <= '0';
-        cs_valid <= '0';
+        eseg_taken <= '0';
 
         -- The conv tap read has one cycle of latency, so the group offered to
         -- gdn_conv is the one requested on the previous edge.
@@ -618,22 +667,47 @@ begin
 
         -- ================= always-on collectors ==========================
 
-        -- conv pass B output -> the segment's staging buffer
-        if cv_ovalid = '1' then
-          base := obeat*CONV_LANES*16;
-          if    cv_seg_i = 0 then
-            qbuf(base+CONV_LANES*16-1 downto base) <= cv_odata;
-          elsif cv_seg_i = 1 then
-            kbuf(base+CONV_LANES*16-1 downto base) <= cv_odata;
-          else
-            vbuf(base+CONV_LANES*16-1 downto base) <= cv_odata;
+        -- ---- the segment exponent, LATCHED and then FROZEN ---------------
+        -- gdn_conv publishes e_seg at S_SH, three cycles before the first
+        -- output beat, and holds it until the NEXT segment's S_SH.  gdn_silu
+        -- reads it combinationally at stage S0 for every beat.  So the value
+        -- must be stable for the whole of pass B, and the honest way to get
+        -- that is a register that stops following, not an argument about how
+        -- far apart two states are.
+        --
+        -- Tracking until the first beat and freezing on it is what makes the
+        -- copy correct for beat 0 as well: at that edge the register already
+        -- holds what it sampled the cycle before, which is the same value
+        -- e_seg has held since S_SH.
+        if eseg_frz = '0' then
+          cs_eseg <= cv_eseg;
+          if cv_ovalid = '1' then
+            eseg_frz  <= '1';
+            eseg_taken <= '1';
           end if;
-          obeat <= obeat + 1;
+        else
+          -- Checked, not assumed.  If gdn_conv ever republishes e_seg while a
+          -- segment is still streaming through the gate, the frozen copy and
+          -- the live port disagree and every beat after the change is on the
+          -- wrong grid -- silently, with a legal e_seg, which is exactly how
+          -- the original defect presented.
+          assert cv_eseg = cs_eseg
+            report "gdn_block: gdn_conv moved e_seg while the segment it "
+                 & "describes was still streaming through u_silu_conv.  The "
+                 & "frozen copy and the port now disagree and every beat "
+                 & "after the change is on the wrong power-of-two grid."
+            severity failure;
         end if;
 
-        -- silu output -> the SAME buffer, in place.  Safe because the collect
-        -- pointer can never pass the feed pointer: gdn_silu is II=1 with a
-        -- fixed latency and emits exactly one group per group in.
+        -- o_done is a PULSE and it no longer marks segment completion: the
+        -- last silu output lands gdn_silu's latency after the last conv beat,
+        -- which is later.  Captured so the FSM can require both.
+        if cv_odone = '1' then cv_done_r <= '1'; end if;
+
+        -- ---- silu output -> the segment's staging buffer ------------------
+        -- The ONLY writer of these buffers now.  The buffered form wrote conv
+        -- output here and then overwrote it in place on a second pass; there
+        -- is no first copy to overwrite any more.
         if co_valid = '1' and ph /= P_IDLE then
           base := obeat*CONV_LANES*16;
           if    cv_seg_i = 0 then
@@ -643,6 +717,10 @@ begin
           else
             vbuf(base+CONV_LANES*16-1 downto base) <= co_data;
           end if;
+          assert obeat < nbeat
+            report "gdn_block: u_silu_conv produced more beats than the "
+                 & "segment has; the collect pointer would run past the buffer"
+            severity failure;
           obeat <= obeat + 1;
         end if;
 
@@ -718,7 +796,12 @@ begin
               nbeat    <= seg_ch(seg)/CONV_LANES;
               obeat    <= 0;
               beat     <= 0;
-              cv_start <= '1';
+              -- Re-arm the segment exponent latch and the o_done capture.
+              -- Both are per-segment and both are cleared BEFORE the conv is
+              -- started, so neither can carry a value from segment s-1 into s.
+              eseg_frz  <= '0';
+              cv_done_r <= '0';
+              cv_start  <= '1';
               ph <= P_CVGO;
             end if;
 
@@ -733,45 +816,41 @@ begin
           when P_CVWAIT =>
             if cv_ready = '1' then
               cv_ren_i <= '1'; cv_grp <= 0;
-              beat <= 1;
+              beat  <= 1;
+              cgapc <= CV_GAP;
               ph <= P_CVFEED;
             end if;
 
           when P_CVFEED =>
             if beat < nbeat then
-              cv_ren_i <= '1'; cv_grp <= beat;
-              beat <= beat + 1;
-            else
-              ph <= P_CVDONE;
-            end if;
-
-          when P_CVDONE =>
-            if cv_odone = '1' then
-              -- e_seg is only valid HERE, two states after the o_data stream
-              -- ended.  SEAM 1: this is why silu is a second pass.
-              seg_e(seg) <= cv_eseg;
-              cs_eseg    <= cv_eseg;
-              if cv_errseg = '1' then errc_r <= '1'; end if;
-              beat  <= 0;
-              obeat <= 0;
-              ph <= P_SIFEED;
-            end if;
-
-          when P_SIFEED =>
-            if beat < nbeat then
-              cs_valid <= '1';
-              base := beat*CONV_LANES*16;
-              if    seg = 0 then cs_data <= qbuf(base+CONV_LANES*16-1 downto base);
-              elsif seg = 1 then cs_data <= kbuf(base+CONV_LANES*16-1 downto base);
-              else               cs_data <= vbuf(base+CONV_LANES*16-1 downto base);
+              if cgapc > 0 then
+                cgapc <= cgapc - 1;       -- CV_GAP: a slow tap memory
+              else
+                cv_ren_i <= '1'; cv_grp <= beat;
+                beat  <= beat + 1;
+                cgapc <= CV_GAP;
               end if;
-              beat <= beat + 1;
             else
-              ph <= P_SIDRAIN;
+              ph <= P_CVDRAIN;
             end if;
 
-          when P_SIDRAIN =>
-            if obeat = nbeat then ph <= P_SEGN; end if;
+          -- The segment is done when every beat has come OUT of the gate,
+          -- not when gdn_conv says it is done.  o_done fires while the tail of
+          -- the segment is still inside u_silu_conv, so it is necessary and
+          -- not sufficient; both are required here.  Waiting on o_done alone
+          -- would truncate each segment by gdn_silu's latency and leave the
+          -- last beats of q, k and v as whatever the buffer held before.
+          when P_CVDRAIN =>
+            if obeat = nbeat and cv_done_r = '1' then
+              -- Taken from the FROZEN copy, not the live port: by now gdn_conv
+              -- is back in S_IDLE and its e_seg is still the right value, but
+              -- reading the port here would reintroduce exactly the dependency
+              -- on when the next segment starts that this file has already
+              -- paid for twice.
+              seg_e(seg) <= cs_eseg;
+              if cv_errseg = '1' then errc_r <= '1'; end if;
+              ph <= P_SEGN;
+            end if;
 
           when P_SEGN =>
             if seg = SEGS-1 then

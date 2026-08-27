@@ -40,7 +40,7 @@ run () {   # run <name> <extra generics...>
   local name="$1"; shift
   ( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" tb_gdn_block \
       "-gOUTFILE=$name.txt" "$@" --max-stack-alloc=0 --stop-time=200ms ) \
-    2>&1 | sed "s/^/  [$name] /"
+    2>&1 | grep -E "CYCLES|PASS|failure|error" | sed "s/^/  [$name] /"
 }
 
 echo "=== reference: every producer maximally ahead ==="
@@ -55,7 +55,15 @@ run wmove   -gW_MOVE=true
 run scmove  -gSC_MOVE=true
 run cwmove  -gCW_MOVE=true
 run capbusy -gCAP_BUSY=true
-run all     -gZ_DELAY=5 -gW_MOVE=true -gSC_MOVE=true -gCW_MOVE=true -gCAP_BUSY=true
+# CV_GAP is the axis for the STRAIGHT-THROUGH silu path.  gdn_conv's output
+# now feeds u_silu_conv with no buffer between them, so the block depends on
+# where gdn_conv's internal phase boundaries fall: CV_GAP stretches pass A and
+# moves both the S_SH edge that publishes e_seg and the first output beat that
+# freezes the block's copy of it.
+run cvgap1  -gCV_GAP=1
+run cvgap3  -gCV_GAP=3
+run all     -gZ_DELAY=5 -gW_MOVE=true -gSC_MOVE=true -gCW_MOVE=true \
+            -gCAP_BUSY=true -gCV_GAP=2
 
 # A faster column producer, and its dump is compared against its OWN reference:
 # changing RECUR_LANES changes the state memory word shape, so a `ref` diff
@@ -70,7 +78,7 @@ run fastall -gRECUR_LANES=8 -gISSUE_GAP=1 -gZ_DELAY=5 -gW_MOVE=true \
 
 echo "=== diffs against the reference ==="
 fail=0
-for n in z1 z7 z31 wmove scmove cwmove capbusy all; do
+for n in z1 z7 z31 wmove scmove cwmove capbusy cvgap1 cvgap3 all; do
   if diff -q "$WORK/ref.txt" "$WORK/$n.txt" >/dev/null; then
     echo "  $n: identical to ref"
   else
@@ -87,16 +95,29 @@ else
   fail=1
 fi
 
+# ---- what the straight-through silu saved, MEASURED ---------------------
+# The point of removing the second pass is the schedule, so the cost per token
+# is measured rather than estimated.  The saving is one pass over the conv
+# width: `sum over segments of nch/CONV_LANES` beats, plus 4 cycles of state
+# per segment.  Confirmed at three conv widths in
+# docs/debugging/2026-08-27_gdn-block-silu-straight-through.md.
+echo "=== cycles per token, by conv width ==="
+run w1 -gTOKENS=1
+run w2 -gTOKENS=1 -gKEY_HEADS=4 -gVAL_HEADS=8
+
 # ---- the emit chain's per-head deadline, MEASURED -----------------------
 # gdn_recur_pipe cannot be stalled, so the arrival period is a CORRECTNESS
 # parameter, not a performance one.  HEAD_GAP lengthens it by exactly one
 # cycle per step, which turns the deadline into a measurement instead of a sum
 # of three units' documented latencies (that sum over-estimates it by 52).
-# Expect DROP at 366 and PASS at 367 for DIM=128, SILU_LANES=16, RMS_LANES=4.
+# Expect DROP at 368 and PASS at 369 for DIM=128, SILU_LANES=16, RMS_LANES=4.
+# It was 366/367 before 3c2789e made rmsnorm_bf two cycles longer; that lands
+# on the per-head chain one for one.  Re-measure after ANY change inside the
+# emit chain rather than inferring it from an aggregate finish time.
 echo "=== per-head deadline, DIM=128 SILU_LANES=16 RMS_LANES=4 ==="
 DL="-gKEY_HEADS=2 -gVAL_HEADS=4 -gDIM=128 -gTOKENS=1 -gSILU_LANES=16"
 DL="$DL -gRMS_LANES=4 -gL2_LANES=4 -gRECUR_LANES=64 -gRECUR_SLOTS=32"
-for g in 0 109 110 111 256; do
+for g in 0 111 112 113 256; do
   if ( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" tb_gdn_block \
          $DL "-gHEAD_GAP=$g" -gOUTFILE=dl.txt --max-stack-alloc=0 \
          --stop-time=200ms ) >/dev/null 2>&1; then

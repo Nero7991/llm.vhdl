@@ -79,6 +79,12 @@ entity tb_gdn_block is
     TOKENS   : integer := 2;
     -- Extra idle cycles per state column, passed straight to the DUT.  This
     -- is the axis that sets the emit chain's per-head deadline.
+    -- Idle cycles between conv tap group requests, passed to the DUT.  This
+    -- is the axis that stresses the STRAIGHT-THROUGH silu path: it moves
+    -- gdn_conv's internal phase boundaries, so the instant e_seg is published
+    -- and the instant the first output beat arrives both shift relative to
+    -- the block's own sequencing and to every other producer.
+    CV_GAP    : natural := 0;
     ISSUE_GAP : natural := 0;
     -- Idle cycles per value head; lengthens the arrival period by exactly
     -- HEAD_GAP and so measures the emit chain deadline to one cycle.
@@ -166,6 +172,7 @@ architecture sim of tb_gdn_block is
   signal cv_w      : std_logic_vector(KCONV*CONV_LANES*16-1 downto 0) := (others => '0');
   signal cv_cw_exp : signed(7 downto 0) := to_signed(12, 8);
   signal cv_taken  : std_logic;
+  signal eseg_taken : std_logic;
 
   signal sc_head  : integer range 0 to VAL_HEADS-1;
   signal sc_al_m, sc_dt_m, sc_a_m, sc_b_m : signed(15 downto 0) := (others => '0');
@@ -245,6 +252,14 @@ architecture sim of tb_gdn_block is
   signal cvq_grp : integer := 0;
   signal cvq_tok : integer := 0;
 
+  -- THE CYCLE COUNT.  The whole reason the straight-through form exists is
+  -- the schedule, so the block's cost per token is measured rather than
+  -- argued.  Counted from the `start` edge to `busy` falling, which is
+  -- exactly one layer's work for one token.
+  signal cyc      : integer := 0;
+  signal tok_cyc  : tarr_t := (others => 0);
+  signal counting : boolean := false;
+
   signal w_dirty  : boolean := false;
   signal sc_dirty : boolean := false;
   signal sc_head_q : integer := 0;
@@ -267,6 +282,7 @@ begin
                   RECUR_SLOTS => RECUR_SLOTS, L2_LANES => L2_LANES,
                   SILU_LANES => SILU_LANES, RMS_LANES => RMS_LANES,
                   Q => 12, EPS => 1.0e-6, SP_Q => 18,
+                  CV_GAP => CV_GAP,
                   ISSUE_GAP => ISSUE_GAP, HEAD_GAP => HEAD_GAP,
                   STRICT_PRODUCER => STRICT )
     port map ( clk => clk, rst => rst,
@@ -276,7 +292,7 @@ begin
                cap_exp => cap_exp, cap_ready => cap_ready,
                cv_seg => cv_seg, cv_ren => cv_ren, cv_grp => cv_grp,
                cv_x => cv_x, cv_w => cv_w, cv_cw_exp => cv_cw_exp,
-               cv_taken => cv_taken,
+               cv_taken => cv_taken, eseg_taken => eseg_taken,
                sc_head => sc_head,
                sc_al_m => sc_al_m, sc_al_e => sc_al_e,
                sc_dt_m => sc_dt_m, sc_dt_e => sc_dt_e,
@@ -500,6 +516,26 @@ begin
     wait;
   end process;
 
+  cyccnt : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        cyc <= 0; counting <= false;
+      else
+        if blk_start = '1' then
+          cyc <= 0; counting <= true;
+        elsif counting then
+          if busy = '0' and cyc > 1 then
+            counting <= false;
+            tok_cyc(tok) <= cyc;
+          else
+            cyc <= cyc + 1;
+          end if;
+        end if;
+      end if;
+    end if;
+  end process;
+
   -- ======================= collector ====================================
   collect : process(clk)
   begin
@@ -604,6 +640,10 @@ begin
       report "tb_gdn_block: gdn_recur_pipe offered a column that "
            & "gdn_emit_chain refused.  That column is LOST, not delayed."
       severity failure;
+    for t in 0 to TOKENS-1 loop
+      report "tb_gdn_block: CYCLES token " & integer'image(t) & " = "
+           & integer'image(tok_cyc(t));
+    end loop;
     report "tb_gdn_block: err_conv=" & std_logic'image(err_conv)
          & " err_g=" & std_logic'image(err_g)
          & " err_se=" & std_logic'image(err_se)
