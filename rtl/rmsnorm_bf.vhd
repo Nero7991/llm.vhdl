@@ -309,6 +309,21 @@ architecture rtl of rmsnorm_bf is
   signal p1_wm   : s17a := (others => (others => '0'));   -- wm carried alongside
   signal p2_raw  : s64a := (others => (others => '0'));   -- (xm*inv) * wm
   signal v1, v2, v3 : std_logic := '0';
+
+  -- ---- max|raw| reduction, PIPELINED.  See the long note at S_RAW.
+  -- TLEV is the number of comparison levels in the balanced tree; LANES is a
+  -- power of two because it divides N and N is asserted to be one, so the
+  -- halving is exact and TLEV = log2(LANES).  At LANES = 1 it is 0 and the
+  -- tree degenerates to the abs stage alone, which is what that configuration
+  -- should cost.
+  constant TLEV : natural := clog2(LANES);
+  type u63a   is array(0 to LANES-1) of unsigned(62 downto 0);
+  type tree_t is array(0 to TLEV) of u63a;
+  -- mt(0) holds the per-lane |raw|; mt(l) holds level l of the tree, of which
+  -- only the first LANES/2**l entries are ever driven.  The rest are never
+  -- assigned and never read, so they carry no fabric.
+  signal mt : tree_t := (others => (others => (others => '0')));
+  signal vt : std_logic_vector(0 to TLEV) := (others => '0');
   signal p3_sum  : s64a := (others => (others => '0'));
   signal idx     : natural range 0 to NB := 0;
   signal idx1, idx2, idx3 : natural range 0 to NB := 0;
@@ -335,8 +350,6 @@ begin
     variable rq_r       : signed(63 downto 0);
     variable rq_bias    : signed(63 downto 0);
     variable rq_sh      : integer;
-    variable araw       : unsigned(62 downto 0);
-    variable cmax       : unsigned(62 downto 0);
     variable om         : signed(63 downto 0);
     variable ob         : signed(63 downto 0);
     variable base       : natural;
@@ -345,6 +358,7 @@ begin
     if rising_edge(clk) then
       if rst = '1' then
         state <= S_IDLE; done <= '0'; v1 <= '0'; v2 <= '0';
+        vt <= (others => '0');
         S <= (others => '0'); max_raw <= (others => '0');
       else
         done <= '0';
@@ -356,7 +370,7 @@ begin
               max_raw <= (others => '0');
               xe <= x_exp; we <= w_exp;
               idx <= 0; va <= '0'; vb <= '0';
-              v1 <= '0'; v2 <= '0'; vf <= '0';
+              v1 <= '0'; v2 <= '0'; vf <= '0'; vt <= (others => '0');
               state <= S_ACC;
             end if;
 
@@ -623,6 +637,7 @@ begin
             end if;
             idx <= 0; idxf <= 0; idx1 <= 0; idx2 <= 0; idx3 <= 0;
             vf <= '0'; v1 <= '0'; v2 <= '0'; v3 <= '0';
+            vt <= (others => '0');
             state <= S_RAW;
 
           -- ---- pass 2 of 3: raw = (xm*inv)*wm, LANES per cycle ------------
@@ -659,27 +674,88 @@ begin
             for k in 0 to LANES-1 loop
               p2_raw(k) <= resize(p1_xinv(k) * p1_wm(k), 64);
             end loop;
-            -- reduce: max|raw| over all lanes.  Order-independent, hence
-            -- bit-exact against the original's element-at-a-time scan.
-            -- The max is reduced through a VARIABLE, not by assigning the
-            -- signal inside the loop.  A signal keeps its old value for every
-            -- iteration, so `if araw > max_raw then max_raw <= araw` lets the
-            -- LAST qualifying lane win rather than the LARGEST -- the running
-            -- max is invisible to the other lanes in the same cycle.  That is
+            -- reduce: max|raw| over all lanes.  Order-independent (max is
+            -- associative and commutative on unsigned), hence bit-exact
+            -- against the original's element-at-a-time scan AND against the
+            -- linear per-lane chain this replaces.
+            --
+            -- WHY IT IS A PIPELINED TREE AND NOT A CHAIN.  The chain form was
+            --
+            --   cmax := max_raw;
+            --   for k in 0 to LANES-1 loop
+            --     araw := abs(p2_raw(k));  if araw > cmax then cmax := araw;
+            --   end loop;
+            --   max_raw <= cmax;
+            --
+            -- which is LANES 63-bit compares in series, each behind a 63-bit
+            -- negate, in ONE state.  That is exactly the "never two of
+            -- {barrel shift, wide add, wide compare, bus mux, multiply} in
+            -- series" rule this file's header states, and it was the measured
+            -- post-route critical path of gdn_emit_chain:
+            --   p2_raw_reg[0][9]/C -> max_raw_reg[33]/D, slack -0.632 at
+            --   3.3 ns, 1.272 logic + 2.559 net.  254.3 MHz against a
+            --   299.04 MHz target, while synthesis alone reported 300.75.
+            --
+            -- Note the split: 67% of that path is ROUTING, so shortening the
+            -- logic alone would not have been the argument.  The routing is a
+            -- consequence of the same structure.  One 63-bit register bank was
+            -- the sink of a cone fed by ALL LANES*64 bits of p2_raw plus its
+            -- own 63-bit feedback; the placer cannot put max_raw next to every
+            -- p2_raw lane at once, and p2_raw is itself pinned near the DSPs
+            -- that drive it and near the S_EMIT adders it also feeds.  So the
+            -- cone was forced to span distance, and a chain of comparators
+            -- physically occupies fabric, so its length grows with LANES too.
+            -- Splitting it gives every level exactly TWO 63-bit sources, which
+            -- is a constraint the placer can actually satisfy locally, and it
+            -- takes the negate's borrow chain out of series with a compare's
+            -- carry chain -- two CARRY8 chains back to back is a dedicated-route
+            -- hop that cannot be shortened by placement at all.
+            --
+            -- THE SCAR, kept because it is still live in the merge below.  An
+            -- earlier version reduced through a SIGNAL rather than a variable.
+            -- A signal keeps its old value for every iteration, so
+            -- `if araw > max_raw then max_raw <= araw` lets the LAST
+            -- qualifying lane win rather than the LARGEST -- the running max
+            -- is invisible to the other lanes in the same cycle.  That is
             -- wrong at every LANES > 1; it happened to pass at 2, 4 and 8 on
             -- the test vectors and failed at 16, which is the whole argument
-            -- for sweeping the generic instead of testing one value.
-            if v2 = '1' then
-              cmax := max_raw;
-              for k in 0 to LANES-1 loop
-                if p2_raw(k) < 0 then araw := unsigned(resize(-p2_raw(k), 63));
-                else                  araw := unsigned(resize( p2_raw(k), 63));
+            -- for sweeping the generic instead of testing one value.  The tree
+            -- form below cannot reproduce that fault because no stage ever
+            -- reduces more than two values, and the one place a running total
+            -- is still touched -- the merge into max_raw -- takes exactly ONE
+            -- candidate per cycle.
+            --
+            -- stage 2a: the absolute value ONLY, registered.  No compare here.
+            vt(0) <= v2;
+            for k in 0 to LANES-1 loop
+              if p2_raw(k) < 0 then mt(0)(k) <= unsigned(resize(-p2_raw(k), 63));
+              else                  mt(0)(k) <= unsigned(resize( p2_raw(k), 63));
+              end if;
+            end loop;
+            -- stages 2b..2(TLEV+1): balanced max tree, ONE compare per level.
+            for lev in 1 to TLEV loop
+              vt(lev) <= vt(lev-1);
+              for j in 0 to (LANES / 2**lev) - 1 loop
+                if mt(lev-1)(2*j) > mt(lev-1)(2*j+1) then
+                  mt(lev)(j) <= mt(lev-1)(2*j);
+                else
+                  mt(lev)(j) <= mt(lev-1)(2*j+1);
                 end if;
-                if araw > cmax then cmax := araw; end if;
               end loop;
-              max_raw <= cmax;
+            end loop;
+            -- merge: ONE compare against the running max, so the loop-carried
+            -- max_raw -> compare -> max_raw path is one comparator deep
+            -- whatever LANES is.  It was LANES deep before.
+            if vt(TLEV) = '1' then
+              if mt(TLEV)(0) > max_raw then max_raw <= mt(TLEV)(0); end if;
             end if;
-            if idx = NB and vf = '0' and v1 = '0' and v2 = '0' then
+            -- The completion condition has to drain the tree as well, or the
+            -- reduction is truncated by TLEV+1 beats and max_raw is read while
+            -- the tail is still in flight.  vt all zero means every beat that
+            -- entered stage 2a has already been merged, because the merge
+            -- commits on the same edge that clears vt(TLEV).
+            if idx = NB and vf = '0' and v1 = '0' and v2 = '0'
+               and vt = (vt'range => '0') then
               state <= S_SHIFT1;
             end if;
 
