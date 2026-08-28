@@ -17,6 +17,20 @@ Design spec, 2026-08-20. Milestone `v2.0`. **Revision 5.**
 
 ## Revision history
 
+**Rev 7 (2026-08-28)** closes the FK33 pack format. §6.5 pinned the
+lane-to-row mapping at `AXI_DW = 128` only and warned that the `ROWS_IF = 4`
+coincidence was load-bearing; nothing said what the bytes are at 256 bits, and
+`n_scale_sub` was a header field no code read. New **§6.5a** states the general
+rule normatively for arbitrary `AXI_DW` and for `n_scale_sub > 1`, and shows by
+substitution that it reproduces §6.5's existing pinned rows exactly at
+`ROWS_IF = 4, AXI_DW = 128` (so no existing file or the built AXU3EG design is
+invalidated -- confirmed by byte-identical repacks). `tools/pack_int4.py` and
+`rtl/weight_streamer.vhd` implement it; `sim/tb_weight_streamer.vhd` checks
+both geometries. Rev 7 also **withdraws `ROWS_IF = 80`** wherever it appears
+(§6.5, §13, §14.5) in favour of the measured `ROWS_IF = 48` of §15.2/§15.3,
+with dated corrections in place. §14.5 item 3 (HBM AXI clock to core clock CDC)
+stays open.
+
 **Rev 6 (2026-08-25)** resolves the two §5 defects subsystem D's cross-spec
 review filed (D-1, D-2, D-3), and one that turned up while checking them. (The dated
 corrections in §14.2 and §15.4b from 2026-08-22 and 2026-08-24 were made in
@@ -601,6 +615,20 @@ geometry is in that set**, and §14.5 is why. `tools/pack_int4.py` refuses
 anything outside it rather than guessing, and names which of the two limits it
 hit.
 
+> **CORRECTION 2026-08-28 -- the legal set above is superseded.** Both limits
+> named in that paragraph were "not written down yet", not "impossible".
+> **§6.5a** now states the layout normatively for arbitrary `AXI_DW` and for
+> `n_scale_sub > 1`, and both `tools/pack_int4.py` and
+> `rtl/weight_streamer.vhd` implement it. The legal set is now every
+> `(ROWS_IF, BLOCK, AXI_DW)` for which `ROWS_IF*BLOCK*4` is a whole multiple of
+> `AXI_DW` and `AXI_DW` is a power-of-two multiple of 8 in 8..1024 (the AXI4
+> data widths); `n_scale_sub` is then derived, not constrained. In particular
+> the FK33 geometry **`ROWS_IF = 48, BLOCK = 32, AXI_DW = 256`** is packable:
+> `NPORTS_W = 24`, `n_scale_sub = 3`, 27 masters. `ROWS_IF in {1,2,4,8}` at
+> `AXI_DW = 128` still emits **byte-identical** files to the pre-2026-08-28
+> packer, which is the check that this generalisation changed nothing that
+> already worked.
+
 **Pad fill is 0x00** everywhere -- padded rows, padded blocks, and sub-region
 tails. Outputs do not depend on it (§6.2 masks), but pinning it makes two
 conforming packers produce **byte-identical files**, which is the cheapest
@@ -658,9 +686,89 @@ NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4
 At `ROWS_IF = 4, BLOCK = 32, AXI_DW = 128` this gives `NPORTS_W = 4`. **The §4
 bandwidth fallback to `ROWS_IF = 2` therefore also requires `NPORTS_W = 2`** (a
 256-bit word), not `NPORTS_W = 4`; the packer and the wrapper must both follow.
-The FK33 configuration (`ROWS_IF = 80`) gives a 10,240-bit word across
-`NPORTS_W = 80` lanes, so the lane-to-row identity survives but the port count
-does not - see §13.
+
+#### 6.5a The general layout at arbitrary `AXI_DW` (NORMATIVE, added 2026-08-28)
+
+The six rows above pin the layout at `AXI_DW = 128` only. Everything from the
+row-chunk row down was written where one AXI lane is exactly one row's
+`BLOCK*4 = 128`-bit chunk, so it says nothing about the FK33, whose HBM SAXI
+ports are **256 bits** and where one lane spans two rows. The two rules below
+are the general statement. They are **normative**, they subsume the four
+`AXI_DW`-dependent rows above, and the corollary check afterwards shows they
+reproduce those rows exactly at `ROWS_IF = 4, AXI_DW = 128`.
+
+| Item | Rule (general, any `AXI_DW`) |
+|---|---|
+| Tile word | For tile `t` and block `b` the **tile word** `W(t,b)` is `ROWS_IF*BLOCK*4` bits wide and holds row `r` of the tile at bits `(r+1)*BLOCK*4-1 downto r*BLOCK*4`. Row 0 is at the LSB. This is the `weight region` pseudocode of §6.4 read as one little-endian bit string, unchanged. |
+| Weight lane to sub-region | `NPORTS_W = ROWS_IF*BLOCK*4 / AXI_DW` (§6.5's invariant, which must divide exactly). **Weight sub-region `p` carries bit slice `p` of every tile word**, i.e. `W(t,b)[(p+1)*AXI_DW-1 downto p*AXI_DW]`, and its beats run `t`-major then `b`. Reassembly is therefore `W(t,b) = { fifo[NPORTS_W-1], ... , fifo[1], fifo[0] }` with sub-region 0 at the LSB, for every `AXI_DW`. |
+| Scale superword | Let `SW = ROWS_IF*16`. A **scale group** is one tile-block's `ROWS_IF` scales, row `r` at bits `(r+1)*16-1 downto 16r` of the group (equivalently byte offset `2r`, int16 little-endian, as pinned above). `n_scale_sub` is the **smallest** `n >= 1` with `n*AXI_DW mod SW = 0`, i.e. `n_scale_sub = lcm(SW, AXI_DW) / AXI_DW`. The **scale superword** is `n_scale_sub*AXI_DW` bits and holds `GRP = n_scale_sub*AXI_DW / SW` consecutive groups, group `g` of the flat `t`-major-then-`b` group stream at bits `(g mod GRP + 1)*SW-1 downto (g mod GRP)*SW` of superword `floor(g/GRP)`. |
+| Scale lane to sub-region | **Scale sub-region `q` carries bit slice `q` of every superword**, `q` in `0 .. n_scale_sub-1`, same LSB-first convention as the weight side. The final superword is zero-padded to full width with the §6.4 pad fill (0x00). |
+
+Exactly one of `GRP` and `n_scale_sub` exceeds 1 whenever `SW` and `AXI_DW` are
+both powers of two, which they are for every geometry this project targets:
+`SW < AXI_DW` gives `n_scale_sub = 1` and several groups per beat, `SW > AXI_DW`
+gives `GRP = 1` and several sub-regions per group. The rule is written for the
+general case anyway because writing it only for the two clean regimes is how §6.5
+came to be pinned at 128 in the first place.
+
+**Total AXI read masters = `NPORTS_W + n_scale_sub`.**
+
+**Corollary: `ROWS_IF = 4, BLOCK = 32, AXI_DW = 128` (the AXU3EG, already
+built).** Checked against the pinned rows above, not assumed to agree:
+
+- Tile word = `4*32*4 = 512` bits, row `r` at bits `(r+1)*128-1 downto r*128`.
+  This is the pinned "Row-chunk within a 512-bit word" row verbatim.
+- `NPORTS_W = 512/128 = 4`. Slice `p` is bits `(p+1)*128-1 downto p*128`, which
+  at this geometry **is** row `p`, so "lane `p` lives in sub-region `p`",
+  `W_t = { fifo[3], fifo[2], fifo[1], fifo[0] }`, sub-region 0 at bits 127:0,
+  row 0 fed by port 0. This is the pinned "Lane to sub-region" row verbatim.
+- `SW = 64`. Smallest `n` with `128n mod 64 = 0` is `n = 1`, so
+  `n_scale_sub = 1` and `GRP = 128/64 = 2`: one scale sub-region, two groups per
+  beat, group 0 at bits 63:0. That is §7.7's `UNPACK = 2` and leaves the pinned
+  scale-endianness row untouched.
+
+The general rule therefore reproduces the existing normative text exactly, and
+existing packed files and `rtl/weight_streamer.vhd` remain conforming. The
+`ROWS_IF = 4` coincidence is now derived rather than assumed: it is the case
+`AXI_DW = BLOCK*4`.
+
+**Corollary: `ROWS_IF = 48, BLOCK = 32, AXI_DW = 256` (the FK33 target).**
+
+- Tile word = `48*32*4 = 6,144` bits. `NPORTS_W = 6144/256 = 24`.
+- Slice `p` spans **two** rows: row `2p` at bits 127:0 of the slice and row
+  `2p+1` at bits 255:128. The lane-is-a-row identity does not hold, which is
+  what §6.5 warned about.
+- `SW = 48*16 = 768`. `256*1 mod 768 = 256`, `256*2 mod 768 = 512`,
+  `256*3 mod 768 = 0`, so `n_scale_sub = 3` and `GRP = 3*256/768 = 1`: one group
+  per superword, `q = 0` carries rows 0..15, `q = 1` rows 16..31, `q = 2` rows
+  32..47.
+- Total masters `24 + 3 = 27`, inside the 30 usable HBM SAXI ports of §13.
+
+**Burst length is not free at 256 bits.** §6.4 justifies `MAXB = 256` as
+"256 beats x 16 bytes = exactly one 4 KB burst". At `AXI_DW = 256` a beat is 32
+bytes, so `MAXB = 256` would be an 8 KB burst and AXI4 forbids crossing a 4 KB
+boundary. `MAXB * AXI_DW <= 4096*8` is the general form;
+`rtl/weight_streamer.vhd` asserts it, and an `AXI_DW = 256` build must pass
+`MAXB = 128`.
+
+> **CORRECTION 2026-08-28 -- `ROWS_IF = 80` is stale everywhere it appears.**
+> The paragraph this note replaces read: "The FK33 configuration
+> (`ROWS_IF = 80`) gives a 10,240-bit word across `NPORTS_W = 80` lanes, so the
+> lane-to-row identity survives but the port count does not - see §13." That
+> sentence is **withdrawn**. §15.2 measured the ceiling on the real part and
+> §15.3 settled the target at **`ROWS_IF = 48`**. At `AXI_DW = 256` the §6.5
+> invariant already forces `ROWS_IF` **even**, and a `ROWS_IF` that is a
+> multiple of **16** additionally puts the scale path in the clean
+> `GRP = 1` regime instead of the mixed one; 48 is the largest multiple of 16 at
+> or below the 49-row 80%-DSP line of §15.2. The claim
+> that the lane-to-row identity "survives" at 80 was only true at
+> `AXI_DW = 128`, which the FK33's HBM ports are not. For the record at
+> `AXI_DW = 256`: `ROWS_IF = 80` needs `NPORTS_W = 40` plus `n_scale_sub = 5`,
+> **45 masters against 30 available**, and `ROWS_IF = 58` (floated in some
+> `matvec_core` comments) is not a multiple of 16 at all -- `SW = 928`,
+> `lcm(928,256)/256 = 29`, so `NPORTS_W = 29` plus `n_scale_sub = 29` is
+> **58 masters**, or 32.62 ports' worth of raw bandwidth against 30. Neither is
+> buildable. Use 48.
 
 ## 7. Datapath architecture
 
@@ -1285,6 +1393,18 @@ reference.
 | Demand @ clock | 14.4 GB/s @ 200 MHz | 432 GB/s @ 300 MHz |
 | Available | ~12 GB/s | 460 GB/s nominal, **288 GB/s MEASURED** (see below) |
 
+> **CORRECTION 2026-08-28 -- the `ROWS_IF = 80` column is STALE.** The FK33
+> column above, and every derived figure in it (2,560 MACs, 2,720 DSP, ~62,000
+> adder-tree LUT, 432 GB/s), is written for `ROWS_IF = 80`. That value was
+> **withdrawn by §15.2/§15.3**, which measured the real part and settled on
+> **`ROWS_IF = 48`**: 1,536 MACs, 76% DSP, and (with §6.5a) `NPORTS_W = 24`
+> weight masters plus `n_scale_sub = 3` scale masters = **27** of the 30 usable
+> HBM SAXI ports at `AXI_DW = 256`. The row is left in place rather than
+> rewritten because §15's corrections are stated against it; read the numbers
+> in this column as historical. `ROWS_IF = 80` at `AXI_DW = 256` would need 45
+> masters against 30 available and is unbuildable -- see the correction at the
+> end of §6.5a for that arithmetic and for why `ROWS_IF = 58` is worse.
+
 Rev 1 gave "R=16, P=32 or R=4, P=128", which yields 512 MACs against the ~2,730
 required, and `P=128` violated `COLS_PC = BLOCK`. Both are corrected: **scaling
 is via `ROWS_IF` only**.
@@ -1705,6 +1825,28 @@ HBM AXI behaviour can be measured rather than assumed:
 3. The HBM AXI clock (~450 MHz) is **not** the core clock (~300 MHz), so the
    lockstep concurrent pop of §7.7 needs a CDC discipline that does not exist in
    the DDR4 design.
+
+> **PARTLY CLOSED 2026-08-28.** The premise of this section -- `ROWS_IF = 80` --
+> is withdrawn (see the corrections in §6.5a and §13); the settled target is
+> **`ROWS_IF = 48` at `AXI_DW = 256`**, which needs `NPORTS_W = 24` weight
+> masters and `n_scale_sub = 3` scale masters, **27** against the 30 usable
+> ports. The "no assignment satisfies both" impossibility was an artefact of
+> the withdrawn 80.
+>
+> - Item **1 no longer applies**. At 48 rows one lane is one physical port, so
+>   §7.7's architecture transfers to HBM unchanged; no lane multiplexing and no
+>   port-to-lane scheduler is needed. `NPORTS_W` stays a physical port count.
+> - Item **2 is DONE**. §6.5a states the multi-sub-region scale layout
+>   normatively, `tools/pack_int4.py` emits it and writes `n_scale_sub` and
+>   `s_sub_offset[]`, and `rtl/weight_streamer.vhd` implements it behind a new
+>   `NPORTS_S` generic (default 1, so the AXU3EG build is untouched). Covered
+>   by `sim/tb_weight_streamer.vhd` at both geometries.
+> - Item **3 is STILL OPEN.** Nothing here addresses the AXI-clock to
+>   core-clock CDC. The current `weight_streamer` is single-clock and the FK33
+>   integration must still resolve it.
+>
+> One new constraint falls out of `AXI_DW = 256`: `MAXB = 256` becomes an
+> illegal 8 KB burst and must be 128. Asserted in the RTL, see §6.5a.
 
 ## 15. MEASURED on the real part (2026-08-23, NORMATIVE -- supersedes §13's numbers)
 
