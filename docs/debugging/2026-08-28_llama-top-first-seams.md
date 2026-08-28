@@ -1084,13 +1084,41 @@ honest reading of why the default is what it is.
 
 ---
 
-# PART 4 (WIP, INTERRUPTED) -- the swiglu model's exponent is fabricated, and correcting it removes the PART 3 headline result
+# PART 4 -- the swiglu model's exponent is fabricated, and correcting it removes the PART 3 headline result
 
-**Date:** 2026-08-28, later the same session. **This part is an interrupted
-work-in-progress note, written because the session was stopped for a reboot.
-The code change it describes is NOT committed.** It is stashed on branch
-`fpga` as `git stash` message `wip-dvec-exponents-2026-08-28`, touching
-`rtl/llama_top.vhd` only. Nothing in the working tree carries it.
+**Date:** 2026-08-28, later the same session.
+
+**STATUS UPDATE, appended rather than rewritten.** This part was first written
+as an interrupted work-in-progress note, because the session was stopped for a
+reboot with the change stashed and uncommitted. **It is now committed as
+`995125e`**, together with the bench default change PART 4 concluded was
+needed, and the full regression gate is green at 74 PASS / 0 FAIL. The stash
+`wip-dvec-exponents-2026-08-28` is superseded and can be dropped. The original
+WIP text is kept below unedited, because what it said while the outcome was
+still open is the useful part.
+
+**Independently reproduced before commit.** The matrix below was re-measured
+from scratch on a second run, in a workdir built by `sim/regress.sh` itself
+(`REGRESS_SCRATCH=... --only llama_top --keep`) rather than by a hand-rolled
+import, and it agreed digit for digit: unanchored 5/12/27/56 and anchored
+0/0/3/8 at 4/8/16/32 blocks, NRUNS=1.
+
+**The bench default is now `NORM_ANCHOR = true`.** The forcing constraint is
+that NO unanchored configuration passes, not even one block, so there was no
+option that both keeps P6 enforced and runs the design as it actually is. A
+permanently red gate stops being read and then hides the NEXT regression
+behind an expected failure. The accepted cost is that the gate runs a
+configuration the hardware does not implement; what keeps it honest is that
+the unanchored column is measured, is in the bench header, and is repeated in
+the PASS line on every run, so a green run cannot be read as "the scales
+track". Verified at the new default: `R_X(0) = -12049 hash(R_X) = 86767`.
+
+**A trap found while writing that PASS line.** `sim/regress.sh`'s `FAIL_RE` is
+a CASE-SENSITIVE `grep -aqE` carrying six literals, not one: `IS NOT`,
+`IS WRONG`, `MISMATCH`, `FAILED`, `DIVERGES` and `\bFAIL\b`. The bench's own
+comment warned about only one of them. Any `report` string containing any of
+the six is judged red on an otherwise passing run. The comment now lists the
+full set.
 
 **Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed --max-stack-alloc=0`. Every
 number below is a simulation count at the stated `NRUNS`, taken against a
