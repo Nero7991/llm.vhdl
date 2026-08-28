@@ -58,6 +58,28 @@ ID_BUILD_OFF = 0xA008             # READ-ONLY, fabric constant
 ID_MAGIC = 0x464B3333             # "FK33" in ASCII
 SCRATCH_BASE = 0x10000            # 8 KB of read/write BRAM
 SCRATCH_SIZE = 0x2000
+
+# Thermal protection.  Produced by rtl/fk33_thermal.vhd on the free-running aux
+# clock and resynchronised into this clock domain by the module itself, so
+# these reads are coherent rather than torn.  The same five words are readable
+# over JTAG (tcl/aux_probe.tcl) with the PCIe link down.
+THERM_STATUS = 0xB000
+THERM_TEMPS  = 0xB008
+THERM_PEAK   = 0xC000
+THERM_TRIP   = 0xC008
+THERM_CTL    = 0xD000             # write; [31:16] must be the key
+THERM_CANARY = 0xD008
+THERM_KEY    = 0xC1EA
+THERM_CAUSE = {
+    0: "none",
+    1: "SYSMON over-temperature alarm (the armed 101 C backstop)",
+    2: "SYSMON user temperature alarm",
+    3: "die above the halt threshold",
+    4: "die sensor STALE or implausible -- treated as hot",
+    5: "an HBM stack asserted CATTRIP",
+    6: "HBM above the halt threshold",
+    7: "HBM sensor STALE or implausible -- treated as hot",
+}
 DMABRAM_BASE = 0x2_0000_0000      # 64 KB BRAM on the DMA master, above HBM
 DMABRAM_SIZE = 0x10000
 POT_ADDR = 0x2C                   # MCP45XX-class digital pot, VCCINT
@@ -282,6 +304,83 @@ def cmd_sysmon(a):
     print("\nCross-check this against hw/fk33/pcieep.sh --check, which reads the"
           "\nsame registers over JTAG.  Agreement proves the PCIe MMIO path end"
           "\nto end against a path that is already trusted.")
+    m.close()
+
+
+def cmd_thermal(a):
+    """Read the thermal guard.
+
+    Reads the SAME words tcl/aux_probe.tcl reads over JTAG, so agreement
+    between the two proves the PCIe MMIO path against a path that does not
+    depend on the link.
+    """
+    m = Mmio()
+    st = m.rd(THERM_STATUS)
+    tp = m.rd(THERM_TEMPS)
+    pk = m.rd(THERM_PEAK)
+    tr = m.rd(THERM_TRIP)
+    cn = m.rd(THERM_CANARY)
+
+    if st in (0, 0xFFFFFFFF):
+        print(f"THERM_STATUS = {st:#010x} -- that is a dead bus, not a reading.")
+        m.close()
+        return
+    if not st & (1 << 31):
+        print(f"THERM_STATUS = {st:#010x}")
+        print("  BIT 31 IS CLEAR.  This bitstream has NO thermal guard.  The only")
+        print("  protection is SYSMON's armed over-temperature shutdown at 101 C,")
+        print("  which is above the -2LE sustained rating of 100 C, says nothing")
+        print("  about the HBM stacks, and takes the card off the PCIe bus when it")
+        print("  fires.  Do not run a sustained workload on this bitstream.")
+        m.close()
+        return
+
+    def die_c(code):
+        # the exact external-reference transfer function, on the 10-bit bus
+        return code * 507.5921310 / 1024.0 - 279.42657680
+
+    print(f"halted        {'YES' if st & 1 else 'no'}"
+          f"        warn {'YES' if st & 2 else 'no'}"
+          f"        armed {'yes' if st & 4 else 'NO'}")
+    print(f"die   {die_c(tp & 0x3FF):6.1f} C   valid={'yes' if st & 8 else 'NO'}"
+          f"   peak {die_c(pk & 0x3FF):6.1f} C")
+    print(f"HBM   code {(tp >> 10) & 0x7F:3d} / {(tp >> 17) & 0x7F:3d}"
+          f"   valid={'yes' if st & 16 else 'NO'}"
+          f"   peak {(pk >> 10) & 0x7F:3d} / {(pk >> 17) & 0x7F:3d}")
+    print("      (HBM is a RAW stack code.  Its mapping to Celsius is NOT")
+    print("       calibrated on this card; idle codes have measured 25-29 at a")
+    print("       die temperature of 22-28 C.)")
+    print(f"live cause    {THERM_CAUSE.get((st >> 8) & 0xF, '?')}")
+    if st & (1 << 7):
+        print(f"LATCHED TRIP  {THERM_CAUSE.get((st >> 12) & 0xF, '?')}")
+        print(f"              at die {die_c(tr & 0x3FF):.1f} C, HBM code "
+              f"{(tr >> 10) & 0x7F} / {(tr >> 17) & 0x7F}")
+        print(f"              trips since the last clear: {(st >> 16) & 0xFF}")
+    else:
+        print("LATCHED TRIP  none since the last clear")
+    for bit, what in ((25, "SYSMON OT alarm has fired"),
+                      (27, "SYSMON user temperature alarm has fired"),
+                      (28, "HBM stack 0 asserted CATTRIP"),
+                      (29, "HBM stack 1 asserted CATTRIP"),
+                      (30, "the two HBM temperature copies disagreed (a CDC fault)")):
+        if st & (1 << bit):
+            print(f"  STICKY: {what}")
+    print(f"canary        {cn}  (advances only while the compute domain is")
+    print("               running AND the guard has released it; read twice)")
+
+    if a.clear or a.clear_peak:
+        bits = (1 if a.clear else 0) | (2 if a.clear_peak else 0)
+        # Edge triggered: assert, then deassert.  Leaving the word set would do
+        # nothing further, but a stale key in the register is a foot-gun.
+        m.wr(THERM_CTL, (THERM_KEY << 16) | bits)
+        time.sleep(0.01)
+        m.wr(THERM_CTL, 0)
+        st2 = m.rd(THERM_STATUS)
+        print(f"\ncleared; THERM_STATUS now {st2:#010x}")
+        if st2 & 1:
+            print("  still HALTED -- a clear does not release the halt.  The halt")
+            print("  is recomputed from the live sensors every cycle, so the card")
+            print("  is still hot or a sensor is still stale.")
     m.close()
 
 
@@ -544,6 +643,16 @@ def main():
     sub.add_parser("sysmon").set_defaults(fn=cmd_sysmon)
     sub.add_parser("gpio").set_defaults(fn=cmd_gpio)
     sub.add_parser("vccint").set_defaults(fn=cmd_vccint)
+
+    s = sub.add_parser("thermal", help="read the thermal guard, optionally clear it")
+    s.add_argument("--clear", action="store_true",
+                   help="clear the trip latch, the cause and the trip count. "
+                        "Does NOT clear the peak-hold and does NOT release a "
+                        "halt that the live sensors still justify.")
+    s.add_argument("--clear-peak", action="store_true",
+                   help="clear the peak-hold. It re-acquires the live reading "
+                        "on the next cycle, so it does not go to zero.")
+    s.set_defaults(fn=cmd_thermal)
 
     s = sub.add_parser("selftest")
     # Default to the on-chip DMA BRAM, not HBM.  It is the same descriptor

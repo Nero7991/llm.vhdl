@@ -83,12 +83,12 @@ set_property IOSTANDARD LVCMOS18 [get_ports {pcie_clkreq[0]}]
 ########### End PCIe ##################################
 
 ########### System Clock ##############################
-# [gen_pcieep] EnablePCIe=1, port not present: set_property PACKAGE_PIN BC26 [get_ports {sysref_clk_p[0]}]
-# [gen_pcieep] EnablePCIe=1, port not present: set_property PACKAGE_PIN BC27 [get_ports {sysref_clk_n[0]}]
-# [gen_pcieep] EnablePCIe=1, port not present: set_property IOSTANDARD LVDS [get_ports {sysref_clk_p[0]}]
-# [gen_pcieep] EnablePCIe=1, port not present: set_property IOSTANDARD LVDS [get_ports {sysref_clk_n[0]}]
-# [gen_pcieep] EnablePCIe=1, port not present: set_property DIFF_TERM_ADV TERM_100 [get_ports {sysref_clk_p[0]}]
-# [gen_pcieep] EnablePCIe=1, port not present: set_property DIFF_TERM_ADV TERM_100 [get_ports {sysref_clk_n[0]}]
+set_property PACKAGE_PIN BC26 [get_ports {sysref_clk_p[0]}]
+set_property PACKAGE_PIN BC27 [get_ports {sysref_clk_n[0]}]
+set_property IOSTANDARD LVDS [get_ports {sysref_clk_p[0]}]
+set_property IOSTANDARD LVDS [get_ports {sysref_clk_n[0]}]
+set_property DIFF_TERM_ADV TERM_100 [get_ports {sysref_clk_p[0]}]
+set_property DIFF_TERM_ADV TERM_100 [get_ports {sysref_clk_n[0]}]
 
 # DQS_BIAS only supported by DIFF_SSTL18
 #set_property DQS_BIAS TRUE [get_ports hbm_ref_clk_p]
@@ -156,15 +156,55 @@ create_waiver -type CDC -id {CDC-13} -user "Dima" -desc "This is a safe CDC in t
 create_waiver -type CDC -id {CDC-13} -user "Dima" -desc "This is a safe CDC in this design per review with team" -internal -from [get_pins {*/*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_APB_INST/*}] -to [get_pins */*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.u_xsdb_top_1/xsdb2adb_u0/*/CE] -timestamp "Wed Aug 14 14:20:19 GMT 2019"
 create_waiver -type CDC -id {CDC-13} -user "Dima" -desc "This is a safe CDC in this design per review with team" -internal -from [get_pins {*/*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_APB_INST/*}] -to [get_pins */*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.u_xsdb_top_1/xsdb2adb_u0/*/D] -timestamp "Wed Aug 14 14:20:19 GMT 2019"
 create_waiver -type CDC -id {CDC-14} -user "Dima" -desc "This is a safe CDC in this design per review with team" -internal -from [get_pins {*/*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.u_xsdb_top_1/xsdb2adb_u0/*/C}] -to [get_pins */*/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_APB_INST/*] -timestamp "Wed Aug 14 14:20:19 GMT 2019"
-set_property C_CLK_INPUT_FREQ_HZ 100000000 [get_debug_cores dbg_hub]
+# [gen_pcieep] superseded, see the aux domain below: set_property C_CLK_INPUT_FREQ_HZ 100000000 [get_debug_cores dbg_hub]
 set_property C_ENABLE_CLK_DIVIDER false [get_debug_cores dbg_hub]
 set_property C_USER_SCAN_CHAIN 1 [get_debug_cores dbg_hub]
-connect_debug_port dbg_hub/clk [get_nets bd_i/hbm/inst/TWO_STACK.u_hbm_top/APB_0_PCLK]
+# [gen_pcieep] superseded, see the aux domain below: connect_debug_port dbg_hub/clk [get_nets bd_i/hbm/inst/TWO_STACK.u_hbm_top/APB_0_PCLK]
 
 ############ I2C PROBE (gen_i2cprobe.py) ############
 set_property -dict {PACKAGE_PIN BB24 IOSTANDARD LVCMOS18} [get_ports {i2cprobe_tri_io[0]}] ;##was iic_scl
 set_property -dict {PACKAGE_PIN BA24 IOSTANDARD LVCMOS18} [get_ports {i2cprobe_tri_io[1]}] ;##was iic_sda
 
+
+###############################################################################
+# FREE-RUNNING AUX DOMAIN (gen_pcieep.py) -- read rtl/fk33_aux.vhd first
+###############################################################################
+# The 200 MHz board oscillator on BC26/BC27.  In the EnablePCIe == 1 branch it
+# is the ONLY clock in the design that does not stop when the PCIe link is
+# down: xdma/axi_aclk stops, and clk_wiz_0 (hence hbm/APB_0_PCLK, hence the
+# debug hub's old clock) is referenced to it AND held in reset by
+# xdma/axi_aresetn.
+#
+# NOTHING BELOW MAY USE if/foreach/set.  See the note in gen_pcieep.py: the
+# XDC reader silently skips such a block in both synthesis and implementation.
+create_clock -period 5.000 -name sysref_clk [get_ports {sysref_clk_p[0]}]
+
+# Every crossing into this domain is a SINGLE BIT through a two-stage
+# ASYNC_REG synchroniser -- there is deliberately no multi-bit CDC in
+# rtl/fk33_aux.vhd, and the reference-clock counter is reconstructed on this
+# side from a divided single-bit toggle rather than transported.  That is why
+# an asynchronous clock group is a complete constraint here and carries no
+# bus-skew obligation.  A multi-bit crossing would need set_bus_skew and
+# would NOT be allowed to rely on this line.
+set_clock_groups -asynchronous -group [get_clocks -include_generated_clocks sysref_clk]
+
+# The debug hub moves onto the aux clock.  A hub clocked off a stopped MMCM
+# cannot answer either, so leaving it where upstream put it would make the
+# whole aux domain unreadable in exactly the state it exists for.
+#
+# Addressed through the module's PIN, not through an internal net name: the
+# cell name fk33_aux_0 and the port name aux_clk are both set by this
+# generator, whereas the internal net name is whatever synthesis chooses (it
+# is bd_i/fk33_aux_0_aux_clk today, and KEEP/DONT_TOUCH did not preserve the
+# RTL name across the module's out-of-context run).  If either name ever
+# changes, this errors instead of silently matching nothing.
+set_property C_CLK_INPUT_FREQ_HZ 200000000 [get_debug_cores dbg_hub]
+connect_debug_port dbg_hub/clk [get_nets -of_objects [get_pins bd_i/fk33_aux_0/aux_clk]]
+
+# pcie_perstn is a genuinely asynchronous input with no launching clock. It
+# is deliberately left with no input delay, exactly as it already was for
+# xdma/sys_rst_n, so it contributes no timed path; the receiving flip-flops
+# in fk33_aux carry ASYNC_REG.
 
 ###############################################################################
 # PCIe endpoint notes (gen_pcieep.py)

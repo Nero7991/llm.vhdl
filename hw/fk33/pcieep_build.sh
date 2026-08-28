@@ -33,6 +33,24 @@ echo "=== board-free gates ==="
 python3 check_pcieep_xdc.py
 make -C host --no-print-directory check
 ./host/selftest_nocard.sh | tail -1
+# The host-side decoders, including the thermal one.  These were only run by
+# host/fk33_go.sh, which needs a card; the build gate is where they belong
+# because a decoder that misreports a dead bus as a cold, unprotected card is a
+# board-free defect.
+(cd host && python3 tests_fk33ctl.py | tail -1)
+# Two gates in one script.  The autonomous VCCINT controller writes a real power
+# rail with no host in the loop, so simulating it against a behavioural pot is
+# the only thing standing between a typo in an I2C bit order and an ES1 die at
+# the wrong voltage.  The thermal guard is the only thing that stops the part
+# and the HBM stacks cooking during a long run, and every one of its thresholds
+# -- including the stale-sensor and stuck-at-zero paths -- is crossed there.
+./sim_aux.sh | grep -E "PASS|FAIL"
+# The JTAG probe's own decode, against fixed vectors from the RTL simulation and
+# with no hardware.  It is the only path that can read the thermal guard with
+# the PCIe link down, and a Tcl error in it aborts the whole script on its first
+# register -- which reads exactly like a dead card.  One such error was already
+# found this way: `expr {0x$hz}` is not valid Tcl.
+AUXPROBE_SELFTEST=1 tclsh tcl/aux_probe.tcl | tail -1
 
 mkdir -p "$BUILD_ROOT"
 cp build_fk33_pcieep.tcl "$BUILD_ROOT/"
@@ -53,15 +71,65 @@ BIT="$BUILD_ROOT/fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit"
 echo
 echo "=== things in the log that must be read, not assumed ==="
 # Each of these is a way this build can succeed and still be wrong.
-grep -E "FK33_PCIE_IDS" build.log || echo "  MISSING FK33_PCIE_IDS -- the device ID the driver has to match is unknown"
-grep -E "FK33_LNKLED" build.log || echo "  MISSING FK33_LNKLED -- link LED status unknown"
-grep -E "FK33_TIMING" build.log || echo "  MISSING FK33_TIMING"
-grep -E "FK33_BITSTREAM" build.log || echo "  MISSING FK33_BITSTREAM"
+grep -E "^FK33_PCIE_IDS" build.log || echo "  MISSING FK33_PCIE_IDS -- the device ID the driver has to match is unknown"
+grep -E "^FK33_LNKLED" build.log || echo "  MISSING FK33_LNKLED -- link LED status unknown"
+# The aux domain is the only thing in this bitstream that is readable with the
+# PCIe link down.  Every line below is a way it can be silently absent or
+# silently wrong, and each one has to be READ.
+grep -E "^FK33_AUX LNK" build.log || echo "  MISSING FK33_AUX LNK -- user_lnk_up wiring unknown"
+# TRAP, found on 2026-08-28 after the first thermal build: Vivado echoes every
+# line of the sourced Tcl into build.log prefixed with "#".  A plain grep for an
+# alarm string therefore matches the *puts statement that would print it*, not
+# the printed line, so all three alarms below fired on a completely healthy
+# build.  An alarm that fires every time is worse than no alarm: it trains the
+# reader to ignore it.  Every grep that decides something must therefore be
+# anchored to the start of the line, where only real output can be.
+grep -E "^FK33_CFG MISSING AUX CELL" build.log && \
+    echo "  ^^ AN AUX CELL IS MISSING; the bitstream is blind with the link down" || true
+grep -E "^FK33_AUX_CLKCHECK" build.log || \
+    echo "  (only printed by an FK33_STOP_AFTER_BD run)"
+grep -E "^FK33_AUX_VIOLATION" build.log && \
+    echo "  ^^ AN AUX PIN SHARES A NET WITH xdma/axi_aclk. The read path is not independent." || true
+# THERMAL.  Each line below is a way this build can come out with a thermal
+# guard that is present, closes timing, and is blind.  SYSMON's own OT alarm
+# trips at 101 C -- above the -2LE sustained rating, silent about HBM, and its
+# consequence is a shutdown that takes the card off the PCIe bus -- so a blind
+# fabric guard means there is effectively no thermal management at all.
+echo "--- thermal guard (SYSMON config must have TAKEN, not just been asked for) ---"
+grep -E "^FK33_SYSMON" build.log || \
+    echo "  (only printed by an FK33_STOP_AFTER_BD run)"
+grep -E "^FK33_THERM " build.log || \
+    echo "  (only printed by an FK33_STOP_AFTER_BD run)"
+grep -E "^FK33_THERM FAIL" build.log && \
+    echo "  ^^ THE THERMAL GUARD IS BLIND. Do not run a sustained workload on this." || true
+grep -E "^FK33_THERMCLK" build.log || \
+    echo "  (impl-stage check; only printed by a full build)"
+# The thresholds as they exist in the ROUTED NETLIST.  Everything above reads a
+# block-design parameter, which is a request; the SYSMONE4 primitive's INIT_5x
+# attributes are the configuration registers the bitstream actually loads, so
+# these lines are the only proof that the trip points in the artefact are the
+# ones this design asked for.  The OT line also answers, from the artefact
+# rather than from a datasheet, whether SYSMON will power the device down by
+# itself.
+grep -E "^FK33_SYSMONI" build.log || \
+    echo "  (impl-stage check; only printed by a full build)"
+echo "--- the free-running clock and the debug hub (both must be present) ---"
+grep -E "^FK33_AUXCLK" build.log || echo "  MISSING FK33_AUXCLK -- the aux clock may be UNCONSTRAINED"
+grep -E "^FK33_HUBCLK" build.log || echo "  MISSING FK33_HUBCLK -- the debug hub may still be on the dead MMCM output"
+grep -E "^FK33_TIMING" build.log || echo "  MISSING FK33_TIMING"
+grep -E "^FK33_BITSTREAM" build.log || echo "  MISSING FK33_BITSTREAM"
 echo "--- GT and PCIe placement (confirms the x4 link landed in quad 227) ---"
 grep -iE "GTYE4_CHANNEL|GTYE4_COMMON|PCIE4C" fk33_pcieep_util.rpt 2>/dev/null || \
     echo "  no utilization report -- check the impl run"
 echo "--- unmatched constraints (should be ZERO now; any is a real error) ---"
 grep -c "12-584" build.log || true
+# Designutils 20-1307 is "Command 'X' is not supported in the xdc constraint
+# file".  It is a CRITICAL WARNING, not an error, and Vivado then SKIPS THE
+# WHOLE BLOCK -- so a constraint file containing an `if` produces a clean-looking
+# build with those constraints simply absent.  That cost a full build on
+# 2026-08-28.  This must read 0.
+echo "--- XDC commands Vivado silently skipped (must be ZERO) ---"
+grep -c "Designutils 20-1307" build.log || true
 echo "--- address map, read back from the tool rather than assumed ---"
 grep -E "^FK33_MAP .*(xdma/M_AXI|fk33_)" build.log || \
     echo "  (only printed by an FK33_STOP_AFTER_BD run)"
@@ -74,8 +142,18 @@ grep -E "^FK33_MAP .*(xdma/M_AXI|fk33_)" build.log || \
 echo "--- address-overlap warnings AFTER the exclude sequence (must be zero) ---"
 LAST_EXCL=$(grep -n "Excluding slave segment" build.log | tail -1 | cut -d: -f1)
 if [[ -n "${LAST_EXCL:-}" ]]; then
-    awk -v n="$LAST_EXCL" 'NR>n && /^CRITICAL WARNING: \[BD 41-1377\]/' build.log | \
-        tee /dev/stderr | wc -l
+    # NOT `| tee /dev/stderr |`.  When this script's own output is redirected to
+    # a file, /dev/stderr IS that file, and tee opens it with O_TRUNC -- so the
+    # whole captured build report is destroyed at this line and only the few
+    # lines after it survive.  Found on 2026-08-28 after a --bd-only run left a
+    # 13-line log.  Capture into a variable and print it instead.
+    AFTER=$(awk -v n="$LAST_EXCL" 'NR>n && /^CRITICAL WARNING: \[BD 41-1377\]/' build.log)
+    if [[ -n "$AFTER" ]]; then
+        printf '%s\n' "$AFTER"
+        printf '%s\n' "$AFTER" | wc -l
+    else
+        echo 0
+    fi
 else
     echo "  no exclude sequence found -- the HBM address map did not run"
 fi
@@ -90,5 +168,44 @@ fi
 
 [[ -f "$BIT" ]] && echo "BITSTREAM $BIT ($(stat -c %s "$BIT") bytes)" \
                 || { echo "BITSTREAM_MISSING"; exit 1; }
+
+# Configuration time from flash, computed from the bitstream that was actually
+# produced rather than from the one in the last commit.  This is a real budget
+# and it is tight: the PCIe CEM minimum is 100 ms of T_PVPERL plus the ~100 ms
+# the host waits after PERST# deasserts, and everything the FPGA has to do
+# after the last configuration bit -- startup, GT lock, link training -- comes
+# out of what is left.  A build that goes over does not fail visibly: it
+# presents as a root port the BIOS hides, which is indistinguishable from a
+# card that never worked.  AUX_STATUS[1] and PERST_MS in tcl/aux_probe.tcl are
+# what settle it on silicon.
+python3 - "$BIT" <<'PY'
+import struct, sys
+b = open(sys.argv[1], 'rb').read()
+# .bit header: u16 len + that many bytes, then u16 (=1), then keyed fields
+# 'a'..'d' each u16-length strings, then 'e' with a u32 byte count and the raw
+# configuration data.  Parsed rather than searched for 0x65, because 0x65 is a
+# perfectly ordinary byte to find in a design name.
+p = 2 + struct.unpack('>H', b[0:2])[0]
+p += 2
+n = None
+while p < len(b):
+    key = b[p]; p += 1
+    if key == 0x65:
+        n = struct.unpack('>I', b[p:p+4])[0]
+        break
+    ln = struct.unpack('>H', b[p:p+2])[0]
+    p += 2 + ln
+if n is None:
+    sys.exit("FK33_CFGTIME could not parse the bitstream header")
+bits = n * 8
+cclk = bits / 4                          # SPIx4 = 4 bits per CCLK
+print(f"FK33_CFGTIME data={n} bytes ({bits} bits), {cclk:.0f} CCLK cycles at x4")
+for name, f in (("nominal 127.5 MHz", 127.5e6),
+                ("-15%    108.4 MHz", 127.5e6 * 0.85),
+                ("+15%    146.6 MHz", 127.5e6 * 1.15)):
+    print(f"FK33_CFGTIME   {name} -> {cclk / f * 1e3:7.1f} ms")
+print("FK33_CFGTIME budget: 100 ms T_PVPERL + 100 ms host wait = 200 ms, minus"
+      " startup, GT lock and link training")
+PY
 echo
-echo "Next: export FK33_BIT=$BIT  and run ./pcieep.sh"
+echo "Next: ./save_bitstream.sh   then   export EP_BIT=$BIT  and run ./pcieep.sh"

@@ -27,11 +27,72 @@
 # 8 GB, MEM00-15 through SAXI_00 and MEM16-31 through SAXI_16, with the
 # redundant cross-stack routes excluded so there is exactly one path to each.
 #
-# WATCH OUT -- the whole AXI fabric is clocked by xdma/axi_aclk, which is
+# WATCH OUT -- the whole AXI fabric above is clocked by xdma/axi_aclk, which is
 # derived from the PCIe reference clock, and held in reset until the link is
-# up.  On the bench, with no slot, there is no reference clock, so this
-# bitstream is EXPECTED to look completely dead over JTAG.  That is not a
-# broken build.  Use the probe bitstream for bench work.
+# up.  On the bench, with no slot, there is no reference clock, so all of it is
+# EXPECTED to look completely dead over JTAG.  That is not a broken build.
+#
+# THE AUX DOMAIN IS THE EXCEPTION, and the reason this build exists in its
+# current form.  It runs on the FK33's 200 MHz board oscillator (BC26/BC27)
+# through a plain BUFG -- no MMCM, nothing to lock, nothing anyone can hold in
+# reset -- and is readable over a THIRD JTAG-AXI master, jtag_aux, whose entire
+# branch is on that clock.  There is no wire at all between it and xdma:
+#
+#   jtag_aux (its own address space, JTAG only, never on the PCIe BAR)
+#     0x0000  AUX_MAGIC     0x41555831 = "AUX1"
+#     0x0008  AUX_VERSION   0x20260828
+#     0x1000  UCLK_TICKS    free-running; 1 tick per 128 xdma/axi_aclk cycles
+#     0x1008  UCLK_HZ       measured xdma/axi_aclk in Hz.  250000000 = the PCIe
+#                           hard block is clocked, so a down link is a TRAINING
+#                           failure.  0 with PERST# HIGH means the host is not
+#                           driving a reference clock.  0 with PERST# LOW just
+#                           means we are held in reset
+#     0x2000  AUX_STATUS    [0] PERST# level     [1] PERST# level at config
+#                           [2] PERST# ever low  [3] PERST# ever high
+#                           [7:4] PERST# deassertion count, saturating at 15
+#                           [8] xdma axi_aresetn [9] axi_aresetn ever released
+#                           [10] user_lnk_up     [11] user_lnk_up ever
+#                           [12] uclk alive      [13] uclk ever ticked
+#                           [14] PERST_MS valid  [15] aux reset released
+#                           [31:16] 0xA5A5, fixed
+#     0x2008  POT_STATUS    [0] done  [1] failed  [2] bus owned  [3] saw a NACK
+#                           [5:4] transaction  [10:8] failure reason
+#                           [15:12] attempts    [23:16] wiper last read back
+#                           [31:24] the ONLY wiper this bitstream can write.
+#                                   It must read 0x44 (68 = 0.717 V).
+#     0x3000  AUX_MS        milliseconds since configuration
+#     0x3008  PERST_MS      AUX_MS at the FIRST deassertion of PERST#
+#
+# PERST_MS is the flash-boot timing measurement.  AUX_STATUS[1] = 0 with
+# PERST_MS valid means the FPGA was configured and watching BEFORE the host
+# released reset.  AUX_STATUS[1] = 1 means reset had already been released when
+# configuration finished, which is the loss condition and today is
+# indistinguishable from a card that never worked.
+#
+# The aux domain also raises VCCINT on its own, with no host and no JTAG, a few
+# milliseconds after configuration.  See rtl/fk33_aux.vhd.
+#
+# THERMAL PROTECTION.  rtl/fk33_thermal.vhd, also on the aux domain, halts the
+# compute datapath at die 90 C / HBM code 85 and resumes at 75 / 70.  It halts
+# ARITHMETIC ONLY: the link, the AXI fabric, the aux domain and every register
+# below stay alive, because a card that vanishes when it overheats cannot be
+# asked what happened.  SYSMON's own over-temperature alarm is armed at 101 C
+# and is a die-destruction backstop, not management -- above the -2LE sustained
+# rating of 100 C, silent about the HBM stacks' 95 C recommendation, and its
+# consequence is a device shutdown.  The same five words appear twice:
+#
+#   jtag_aux (link down)          AXI-Lite BAR (host)
+#     0x4000 THERM_STATUS           0xB000 THERM_STATUS
+#     0x4008 THERM_TEMPS            0xB008 THERM_TEMPS
+#     0x5000 THERM_PEAK             0xC000 THERM_PEAK
+#     0x5008 THERM_TRIP             0xC008 THERM_TRIP
+#     0x6000 THERM_CTL   (write)    0xD000 THERM_CTL   (write)
+#     0x6008 THERM_CANARY           0xD008 THERM_CANARY
+#
+# THERM_STATUS[31] is a fabric constant 1, so a bitstream WITHOUT the guard
+# reads 0 there and "is this card protected" is one read.  THERM_CTL needs the
+# key 0xC1EA in [31:16]; [0] clears the trip latch, [1] clears the peak-hold,
+# both edge triggered, and neither releases a halt the live sensors justify.
 #
 # GENERATED from build_fk33_firstlight.tcl by hw/fk33/gen_i2cprobe.py
 # -- do not hand-edit; regenerate.
@@ -113,6 +174,15 @@ set sourceRoot "/home/orencollaco/GitHub/SQRL_FK33"
 puts "INFO: building with Vivado [version -short] (upstream targets 2022.2)"
 
 create_project $ProjectName ./$ProjectName -part "xcvu33p-fsvh2104-2L-e"
+
+# ---- aux RTL (gen_pcieep.py) ----------------------------------------------
+# Added before the block design so `create_bd_cell -type module -reference
+# fk33_aux` can find it.  Absolute path because the build runs in a scratch
+# directory, not here.
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_aux.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_thermal.vhd
+update_compile_order -fileset sources_1
+
 #create_project $ProjectName ./$ProjectName -part xcvu33p-fsvh2104-2-e-es1
 
 set_param synth.maxThreads 8
@@ -179,8 +249,11 @@ set_property -dict [list CONFIG.C_GPIO_WIDTH {2} CONFIG.C_IS_DUAL {1} \
     CONFIG.C_ALL_INPUTS_2 {0} CONFIG.C_ALL_OUTPUTS_2 {1} \
     CONFIG.C_TRI_DEFAULT {0xFFFFFFFF} CONFIG.C_DOUT_DEFAULT {0x00000000} \
     CONFIG.C_DOUT_DEFAULT_2 {0x00000040}] [get_bd_cells axi_gpio_0]
-make_bd_intf_pins_external  [get_bd_intf_pins axi_gpio_0/GPIO]
-set_property name i2cprobe [get_bd_intf_ports GPIO_0]
+# [gen_pcieep] axi_gpio_0/GPIO is NOT made external here any more.  Its
+# gpio_io_o / gpio_io_t / gpio_io_i now go into fk33_aux_0, which arbitrates
+# between this GPIO and the autonomous VCCINT controller and instantiates the
+# IOBUFs itself.  The external inout port is created there with the same name,
+# i2cprobe_tri_io, so fk33_pcieep.xdc is unchanged for those two balls.
 
 create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 led_inv
 set_property -dict [list CONFIG.C_SIZE {7} CONFIG.C_OPERATION {not} CONFIG.LOGO_FILE {data/sym_notgate.png}] [get_bd_cells led_inv]
@@ -223,6 +296,10 @@ set_property -dict [list CONFIG.TEMPERATURE_ALARM_OT_TRIGGER {101} CONFIG.TEMPER
 set_property -dict [list CONFIG.VCCINT_ALARM_LOWER {0.70} CONFIG.VCCINT_ALARM_UPPER {0.89}] [get_bd_cells system_management_wiz_0]
 set_property -dict [list CONFIG.VCCAUX_ALARM_UPPER {1.85} CONFIG.VBRAM_ALARM_LOWER {0.82}] [get_bd_cells system_management_wiz_0] 
 set_property -dict [list CONFIG.VBRAM_ALARM_UPPER {0.88} CONFIG.REFERENCE {External}] [get_bd_cells system_management_wiz_0]
+# ---- THERMAL (gen_pcieep.py): see item 11 in the header --------------------
+set_property -dict [list CONFIG.ENABLE_TEMP_BUS {true}] [get_bd_cells system_management_wiz_0]
+set_property -dict [list CONFIG.USER_TEMP_ALARM {true}] [get_bd_cells system_management_wiz_0]
+set_property -dict [list CONFIG.TEMPERATURE_ALARM_TRIGGER {90} CONFIG.TEMPERATURE_ALARM_RESET {75}] [get_bd_cells system_management_wiz_0]
 set_property -dict [list CONFIG.USER_SUPPLY0_ALARM {true} CONFIG.USER_SUPPLY0_BANK {224} CONFIG.SELECT_USER_SUPPLY0 {AVCC}] [get_bd_cells system_management_wiz_0]
 set_property -dict [list CONFIG.USER_SUPPLY1_ALARM {true} CONFIG.USER_SUPPLY1_BANK {224} CONFIG.SELECT_USER_SUPPLY1 {MGTVCCAUX}] [get_bd_cells system_management_wiz_0]
 set_property -dict [list CONFIG.USER_SUPPLY2_ALARM {true} CONFIG.USER_SUPPLY2_BANK {224} CONFIG.SELECT_USER_SUPPLY2 {AVTT}] [get_bd_cells system_management_wiz_0]
@@ -525,6 +602,251 @@ connect_bd_net [get_bd_pins fk33_dmabram/s_axi_aclk]    [get_bd_pins pcie2hbm/ac
 connect_bd_net [get_bd_pins fk33_dmabram/s_axi_aresetn] [get_bd_pins pcie2hbm/aresetn]
 # ---- end bring-up peripherals ---------------------------------------------
 
+
+# ---- FREE-RUNNING AUX DOMAIN (gen_pcieep.py) ------------------------------
+# Read the header of gen_pcieep.py, item 9, before changing anything here.  In
+# short: in this bitstream the clock the debug hub uses is an MMCM output whose
+# reference is xdma/axi_aclk and whose MMCM is held in reset by
+# xdma/axi_aresetn, so NOTHING in the shipped design survives the link being
+# down.  The 200 MHz oscillator on BC26/BC27 does, and is the only clock every
+# EnablePCIe == 0 bitstream in this repository has ever run from.
+if {$EnablePCIe != 1} {
+    error "the aux block assumes EnablePCIe 1, and this generated script is only ever built that way"
+}
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf:2.2 util_ds_buf_1
+set_property -dict [list CONFIG.C_BUF_TYPE {IBUFDS}] [get_bd_cells util_ds_buf_1]
+make_bd_intf_pins_external  [get_bd_intf_pins util_ds_buf_1/CLK_IN_D]
+set_property name sysref [get_bd_intf_ports CLK_IN_D_0]
+set_property -dict [list CONFIG.FREQ_HZ {200000000}] [get_bd_intf_ports sysref]
+
+create_bd_cell -type module -reference fk33_aux fk33_aux_0
+connect_bd_net [get_bd_pins util_ds_buf_1/IBUF_OUT] [get_bd_pins fk33_aux_0/clk_free_in]
+
+# The PCIe USER clock, measured rather than used.  A direct measurement of the
+# raw reference clock was built and REJECTED: it needs a second BUFG_GT on
+# util_ds_buf_0/IBUF_DS_ODIV2, and DRC BFGTL-1 kills route_design because two
+# BUFG_GTs sharing one GT clock source must have identical CE and CLR nets --
+# xdma drives its own from an internal BUFG_GT_SYNC that is not exposed as a
+# pin.  Do not retry that; see the debugging note.  axi_aclk plus the PERST#
+# level answers the same question by elimination.
+connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins fk33_aux_0/xdma_aclk]
+
+# Both of these are already driven; joining a second load changes nothing about
+# what xdma sees, and makes the two states the endpoint cannot currently report
+# visible with the link down.
+connect_bd_net [get_bd_ports pcie_perstn]       [get_bd_pins fk33_aux_0/perstn]
+connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins fk33_aux_0/xdma_aresetn]
+
+# LTSSM is deliberately absent.  xdma 4.1 exposes no LTSSM pin unless
+# CONFIG.enable_ltssm_dbg or CONFIG.en_debug_ports is turned on, both of which
+# change the IP configuration; user_lnk_up is a pin at the current settings and
+# needs nothing.
+set auxlnk [get_bd_pins -quiet xdma/user_lnk_up]
+if {[llength $auxlnk]} {
+    connect_bd_net $auxlnk [get_bd_pins fk33_aux_0/user_lnk_up]
+    puts "FK33_AUX LNK user_lnk_up wired into the aux status word"
+} else {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 aux_lnk_stub
+    set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0}] [get_bd_cells aux_lnk_stub]
+    connect_bd_net [get_bd_pins aux_lnk_stub/dout] [get_bd_pins fk33_aux_0/user_lnk_up]
+    puts "FK33_AUX LNK user_lnk_up ABSENT on this IP version, status bit tied 0"
+}
+
+# The two I2C balls now go through the aux block, which arbitrates.  The GPIO
+# owns them except while the autonomous controller is mid-transaction, and the
+# controller hands them back the moment it finishes, so host/fk33ctl.py vccint
+# and tcl/vccint_step.tcl keep working unchanged.  The external port keeps the
+# name the XDC already constrains, so no pin constraint moves.
+connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins fk33_aux_0/gpio_o]
+connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_t] [get_bd_pins fk33_aux_0/gpio_t]
+connect_bd_net [get_bd_pins fk33_aux_0/gpio_i]    [get_bd_pins axi_gpio_0/gpio_io_i]
+make_bd_pins_external [get_bd_pins fk33_aux_0/i2c_io]
+set_property name i2cprobe_tri_io [get_bd_ports i2c_io_0]
+
+# The aux read path.  A THIRD JTAG-AXI master with its own smartconnect and its
+# own slaves, every one of them clocked by fk33_aux_0/aux_clk.  It is not a
+# branch off pcie2axil and it is not reachable from xdma: that is deliberate,
+# and it is what makes "the read path does not touch xdma/axi_aclk" a property
+# of the netlist rather than a claim about it.
+create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_aux
+set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {32} CONFIG.M_AXI_ADDR_WIDTH {32} \
+    CONFIG.M_HAS_BURST {0}] [get_bd_cells jtag_aux]
+create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 auxconnect
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {6}] [get_bd_cells auxconnect]
+connect_bd_intf_net [get_bd_intf_pins jtag_aux/M_AXI] [get_bd_intf_pins auxconnect/S00_AXI]
+
+set auxi 0
+foreach c {aux_id aux_clkst aux_stat aux_time aux_therm aux_peak} {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 $c
+    set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+        CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {1} CONFIG.C_ALL_INPUTS_2 {1} \
+        CONFIG.C_ALL_OUTPUTS {0} CONFIG.C_ALL_OUTPUTS_2 {0} \
+        CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells $c]
+    connect_bd_intf_net [get_bd_intf_pins auxconnect/[format M%02d_AXI $auxi]] \
+                        [get_bd_intf_pins $c/S_AXI]
+    connect_bd_net [get_bd_pins $c/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]
+    connect_bd_net [get_bd_pins $c/s_axi_aresetn] [get_bd_pins fk33_aux_0/aux_aresetn]
+    incr auxi
+}
+
+connect_bd_net [get_bd_pins jtag_aux/aclk]      [get_bd_pins fk33_aux_0/aux_clk]
+connect_bd_net [get_bd_pins jtag_aux/aresetn]   [get_bd_pins fk33_aux_0/aux_aresetn]
+connect_bd_net [get_bd_pins auxconnect/aclk]    [get_bd_pins fk33_aux_0/aux_clk]
+connect_bd_net [get_bd_pins auxconnect/aresetn] [get_bd_pins fk33_aux_0/aux_aresetn]
+
+connect_bd_net [get_bd_pins fk33_aux_0/stat_magic]    [get_bd_pins aux_id/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_version]  [get_bd_pins aux_id/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_uclkticks] [get_bd_pins aux_clkst/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_uclkhz]    [get_bd_pins aux_clkst/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_status]   [get_bd_pins aux_stat/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_pot]      [get_bd_pins aux_stat/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_ms]       [get_bd_pins aux_time/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_aux_0/stat_perstms]  [get_bd_pins aux_time/gpio2_io_i]
+# ---- end free-running aux domain ------------------------------------------
+
+
+# ---- THERMAL PROTECTION (gen_pcieep.py) -----------------------------------
+# Read rtl/fk33_thermal.vhd before changing anything here.  In short: nothing in
+# this design did ANY thermal management.  SYSMON was a register the host could
+# read, the HBM stacks' own temperature and catastrophic-trip outputs were left
+# dangling, and no comparison against a limit existed anywhere in the fabric.
+#
+# The silicon's own protection is a backstop, not management.  The SYSMONE4
+# primitive accepts a write to the OT upper-limit register 53h only when the low
+# nibble is 0011, which IS the automatic-shutdown enable, and
+# system_management_wiz forces that nibble unconditionally -- so this design's
+# OT shutdown is armed, at the 101 C SQRL programs.  DS890 Table 33 puts
+# sustained Tj for -2LE at 100 C and recommends a maximum of 95 C for the HBM,
+# so OT fires after the part is already out of spec, and its consequence is a
+# shutdown that takes the card off the PCIe bus.  The guard below fires first,
+# inside the datasheet, and halts ARITHMETIC ONLY.
+
+create_bd_cell -type module -reference fk33_thermal fk33_therm_0
+
+# The guard lives on the free-running aux domain, NOT on any PCIe-derived
+# clock.  Both sensors are in PCIe-derived domains, so a guard clocked by
+# either would lose the thermal record exactly when it is wanted -- after an OT
+# shutdown, a host reset or a link drop -- and its staleness watchdogs could
+# themselves go stale.
+connect_bd_net [get_bd_pins fk33_aux_0/aux_clk]     [get_bd_pins fk33_therm_0/aux_clk]
+connect_bd_net [get_bd_pins fk33_aux_0/aux_aresetn] [get_bd_pins fk33_therm_0/aux_aresetn]
+
+# DIE.  system_management_wiz temp_out[9:0] needs CONFIG.ENABLE_TEMP_BUS, and
+# user_temp_alarm_out needs CONFIG.USER_TEMP_ALARM -- upstream sets the latter
+# FALSE, so both are re-set above and both are read back in the BD check.
+# Vivado SILENTLY IGNORES a set_property on a CONFIG name that does not apply,
+# so "we asked for it" is not evidence that it happened.
+connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/sysmon_clk]
+connect_bd_net [get_bd_pins system_management_wiz_0/temp_out] \
+               [get_bd_pins fk33_therm_0/sysmon_temp]
+connect_bd_net [get_bd_pins system_management_wiz_0/ot_out] \
+               [get_bd_pins fk33_therm_0/sysmon_ot]
+connect_bd_net [get_bd_pins system_management_wiz_0/user_temp_alarm_out] \
+               [get_bd_pins fk33_therm_0/sysmon_alarm]
+# eoc_out is the LIVENESS source, and it is the reason a stuck ADC is caught.
+# A value comparison alone cannot tell a frozen sensor from a cold card.
+connect_bd_net [get_bd_pins system_management_wiz_0/eoc_out] \
+               [get_bd_pins fk33_therm_0/sysmon_eoc]
+
+# HBM.  These four pins EXIST on hbm_v1_0 with no reconfiguration:
+# DRAM_0_STAT_TEMP/CATTRIP are unconditional and DRAM_1_* appear whenever
+# USER_HBM_STACK is 2, which this design already sets.  The stock FK33 design
+# simply leaves them dangling, so the stacks' own catastrophic-temperature
+# signal has been asserting into the void.  hw/fk33/gen_hbmbw.py already wires
+# the same four into rtl/hbm_tg.vhd; this is the same wiring in the endpoint.
+#
+# APB_0_PCLK is clk_wiz_0/clk_out1, the 100 MHz clock the IP's internal
+# temperature reader runs on (TEMP_WAIT_PERIOD_0 = 100000 -> a refresh every
+# ~1 ms).  It is the only liveness signal HBM offers: the reader's internal
+# temp_valid_r is not brought out to a pin.
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins fk33_therm_0/hbm_pclk]
+connect_bd_net [get_bd_pins hbm/DRAM_0_STAT_TEMP]    [get_bd_pins fk33_therm_0/hbm_temp0]
+connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_TEMP]    [get_bd_pins fk33_therm_0/hbm_temp1]
+connect_bd_net [get_bd_pins hbm/DRAM_0_STAT_CATTRIP] [get_bd_pins fk33_therm_0/hbm_cattrip0]
+connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_CATTRIP] [get_bd_pins fk33_therm_0/hbm_cattrip1]
+
+# The compute domain.  There is no compute datapath in this bitstream yet, so
+# fk33_therm_0/compute_halt is deliberately left UNCONNECTED: it is the
+# documented plug-in point and its contract is in the module header.  It is not
+# untested for that reason -- the module carries a canary counter in this same
+# domain which the halt gates, and the aux domain counts its toggles into
+# THERM_CANARY, so "is the compute domain running and un-halted" is one JTAG
+# read with no datapath present.
+connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/compute_clk]
+connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/ctl_host_clk]
+
+# ---- thermal registers on the AUX (JTAG) side -----------------------------
+# aux_therm and aux_peak come out of the all-inputs loop above.  aux_ctl is the
+# only aux register with an OUTPUT channel, so it is built here.  Its
+# C_DOUT_DEFAULT is 0, which does NOT match the clear key, so a card coming out
+# of configuration cannot be clearing anything.
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 aux_ctl
+set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+    CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {0} CONFIG.C_ALL_OUTPUTS {1} \
+    CONFIG.C_ALL_INPUTS_2 {1} CONFIG.C_ALL_OUTPUTS_2 {0} \
+    CONFIG.C_DOUT_DEFAULT {0x00000000} \
+    CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells aux_ctl]
+set n [get_property CONFIG.NUM_MI [get_bd_cells auxconnect]]
+set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells auxconnect]
+connect_bd_intf_net [get_bd_intf_pins auxconnect/[format M%02d_AXI $n]] \
+                    [get_bd_intf_pins aux_ctl/S_AXI]
+connect_bd_net [get_bd_pins aux_ctl/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]
+connect_bd_net [get_bd_pins aux_ctl/s_axi_aresetn] [get_bd_pins fk33_aux_0/aux_aresetn]
+
+connect_bd_net [get_bd_pins fk33_therm_0/stat_therm]  [get_bd_pins aux_therm/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/stat_temps]  [get_bd_pins aux_therm/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/stat_peak]   [get_bd_pins aux_peak/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/stat_trip]   [get_bd_pins aux_peak/gpio2_io_i]
+connect_bd_net [get_bd_pins aux_ctl/gpio_io_o]        [get_bd_pins fk33_therm_0/ctl_aux]
+connect_bd_net [get_bd_pins fk33_therm_0/stat_canary] [get_bd_pins aux_ctl/gpio2_io_i]
+
+# ---- thermal registers on the PCIe AXI-Lite BAR ---------------------------
+# The SAME words, resynchronised into the xdma domain inside fk33_thermal.  A
+# 32-bit aux-domain word handed straight to an axi_gpio on this clock would tear
+# under the host's read; the module's agreement filter is what makes these
+# coherent.  These three cells are deliberately NOT part of the aux branch and
+# are excluded from the aux clock-isolation check for that reason.
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 fk33_therm
+set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+    CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {1} CONFIG.C_ALL_INPUTS_2 {1} \
+    CONFIG.C_ALL_OUTPUTS {0} CONFIG.C_ALL_OUTPUTS_2 {0} \
+    CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells fk33_therm]
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 fk33_thermp
+set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+    CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {1} CONFIG.C_ALL_INPUTS_2 {1} \
+    CONFIG.C_ALL_OUTPUTS {0} CONFIG.C_ALL_OUTPUTS_2 {0} \
+    CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells fk33_thermp]
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 fk33_thermc
+set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \
+    CONFIG.C_IS_DUAL {1} CONFIG.C_ALL_INPUTS {0} CONFIG.C_ALL_OUTPUTS {1} \
+    CONFIG.C_ALL_INPUTS_2 {1} CONFIG.C_ALL_OUTPUTS_2 {0} \
+    CONFIG.C_DOUT_DEFAULT {0x00000000} \
+    CONFIG.C_INTERRUPT_PRESENT {0}] [get_bd_cells fk33_thermc]
+
+set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]
+set_property CONFIG.NUM_MI [expr {$n + 3}] [get_bd_cells pcie2axil]
+connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \
+                    [get_bd_intf_pins fk33_therm/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI [expr {$n + 1}]]] \
+                    [get_bd_intf_pins fk33_thermp/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI [expr {$n + 2}]]] \
+                    [get_bd_intf_pins fk33_thermc/S_AXI]
+connect_bd_net [get_bd_pins fk33_therm/s_axi_aclk]     [get_bd_pins pcie2axil/aclk]
+connect_bd_net [get_bd_pins fk33_therm/s_axi_aresetn]  [get_bd_pins pcie2axil/aresetn]
+connect_bd_net [get_bd_pins fk33_thermp/s_axi_aclk]    [get_bd_pins pcie2axil/aclk]
+connect_bd_net [get_bd_pins fk33_thermp/s_axi_aresetn] [get_bd_pins pcie2axil/aresetn]
+connect_bd_net [get_bd_pins fk33_thermc/s_axi_aclk]    [get_bd_pins pcie2axil/aclk]
+connect_bd_net [get_bd_pins fk33_thermc/s_axi_aresetn] [get_bd_pins pcie2axil/aresetn]
+
+connect_bd_net [get_bd_pins fk33_therm_0/host_therm]  [get_bd_pins fk33_therm/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/host_temps]  [get_bd_pins fk33_therm/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/host_peak]   [get_bd_pins fk33_thermp/gpio_io_i]
+connect_bd_net [get_bd_pins fk33_therm_0/host_trip]   [get_bd_pins fk33_thermp/gpio2_io_i]
+connect_bd_net [get_bd_pins fk33_thermc/gpio_io_o]    [get_bd_pins fk33_therm_0/ctl_host]
+connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/gpio2_io_i]
+# ---- end thermal protection -----------------------------------------------
+
 regenerate_bd_layout
 save_bd_design
 
@@ -541,6 +863,45 @@ assign_bd_address -offset 0x00010000  -range 8K  [get_bd_addr_segs {fk33_scratch
 # well as to xdma/M_AXI, so the same bytes can be read back over JTAG -- which
 # is what separates "XDMA wrote the wrong thing" from "the readback is wrong".
 assign_bd_address -offset 0x200000000 -range 64K [get_bd_addr_segs {fk33_dmabram/S_AXI/Mem0}]
+
+# ---- aux register map (gen_pcieep.py) --------------------------------------
+# In jtag_aux's OWN address space.  Nothing here is reachable from xdma, by
+# design: these registers exist precisely for the case where xdma is dead.
+#   0x0000  AUX_MAGIC     0x41555831 = "AUX1", read-only fabric constant
+#   0x0008  AUX_VERSION   0x20260828
+#   0x1000  UCLK_TICKS    free-running, 1 tick per 128 xdma/axi_aclk cycles
+#   0x1008  UCLK_HZ       measured xdma/axi_aclk in Hz.  250000000 = the PCIe
+#                         hard block is clocked; 0 = it is not, and the PERST#
+#                         level says whether that is reset or a missing refclk
+#   0x2000  AUX_STATUS    PERST#, its stickies, axi_aresetn, user_lnk_up
+#   0x2008  POT_STATUS    the VCCINT controller.  [31:24] is the ONLY wiper
+#                         this bitstream is able to write, and must read 0x44
+#   0x3000  AUX_MS        milliseconds since configuration
+#   0x3008  PERST_MS      AUX_MS at the FIRST deassertion of PERST#
+assign_bd_address -offset 0x00000000 -range 4K [get_bd_addr_segs {aux_id/S_AXI/Reg}]
+assign_bd_address -offset 0x00001000 -range 4K [get_bd_addr_segs {aux_clkst/S_AXI/Reg}]
+assign_bd_address -offset 0x00002000 -range 4K [get_bd_addr_segs {aux_stat/S_AXI/Reg}]
+assign_bd_address -offset 0x00003000 -range 4K [get_bd_addr_segs {aux_time/S_AXI/Reg}]
+
+# ---- thermal register map (gen_pcieep.py) ----------------------------------
+# On jtag_aux, readable with the PCIe link DOWN:
+#   0x4000  THERM_STATUS  halt/warn/valid/cause/trip count/stickies, [31]=1
+#   0x4008  THERM_TEMPS   [9:0] die code [16:10] HBM0 [23:17] HBM1 [31:24] die C
+#   0x5000  THERM_PEAK    the same fields, peak-hold
+#   0x5008  THERM_TRIP    the same code fields captured at the trip + cause
+#   0x6000  THERM_CTL     WRITE.  [31:16] must be 0xC1EA, [0] clear trip,
+#                         [1] clear peak.  Edge triggered.
+#   0x6008  THERM_CANARY  count of compute-domain canary toggles
+assign_bd_address -offset 0x00004000 -range 4K [get_bd_addr_segs {aux_therm/S_AXI/Reg}]
+assign_bd_address -offset 0x00005000 -range 4K [get_bd_addr_segs {aux_peak/S_AXI/Reg}]
+assign_bd_address -offset 0x00006000 -range 4K [get_bd_addr_segs {aux_ctl/S_AXI/Reg}]
+# On the PCIe AXI-Lite BAR, the same five words plus the same control:
+#   0xB000/0xB008  THERM_STATUS / THERM_TEMPS
+#   0xC000/0xC008  THERM_PEAK   / THERM_TRIP
+#   0xD000/0xD008  THERM_CTL    / THERM_CANARY
+assign_bd_address -offset 0x0000B000 -range 4K [get_bd_addr_segs {fk33_therm/S_AXI/Reg}]
+assign_bd_address -offset 0x0000C000 -range 4K [get_bd_addr_segs {fk33_thermp/S_AXI/Reg}]
+assign_bd_address -offset 0x0000D000 -range 4K [get_bd_addr_segs {fk33_thermc/S_AXI/Reg}]
 
 
 if {$HBMGlobalSwitch == 1} {
@@ -691,6 +1052,38 @@ set_property strategy Performance_RefinePlacement [get_runs impl_1]
 # worse, generates with different defaults.  report_ip_status output is the
 # thing to read if this build misbehaves.
 
+# ---- thermal sensor availability (gen_pcieep.py) --------------------------
+# Vivado SILENTLY IGNORES set_property on a CONFIG name that does not apply to
+# an IP, so asking for temp_out is not evidence of getting it.  Each check
+# below is a way the thermal guard can be built present, timing-clean, and
+# BLIND: without ENABLE_TEMP_BUS there is no die temperature in the fabric at
+# all, and the guard would then sit permanently halted on a stale die sensor.
+# This runs unconditionally.  It costs a few seconds and it is the difference
+# between a thermal guard and a thermal guard-shaped hole.
+foreach p {ENABLE_TEMP_BUS USER_TEMP_ALARM TEMPERATURE_ALARM_TRIGGER            TEMPERATURE_ALARM_RESET TEMPERATURE_ALARM_OT_TRIGGER            TEMPERATURE_ALARM_OT_RESET REFERENCE INTERFACE_SELECTION} {
+    puts "FK33_SYSMON $p = [get_property CONFIG.$p [get_bd_cells system_management_wiz_0]]"
+}
+if {[get_property CONFIG.ENABLE_TEMP_BUS [get_bd_cells system_management_wiz_0]] ne "true"} {
+    error "FK33_THERM FAIL: CONFIG.ENABLE_TEMP_BUS did not take.  There is no die temperature bus in the fabric, so the thermal guard has no die sensor."
+}
+if {[get_property CONFIG.USER_TEMP_ALARM [get_bd_cells system_management_wiz_0]] ne "true"} {
+    error "FK33_THERM FAIL: CONFIG.USER_TEMP_ALARM did not take, so user_temp_alarm_out does not exist and the die has only ONE comparator instead of two."
+}
+# The four HBM pins the guard needs.  They exist with no reconfiguration --
+# DRAM_0_* unconditionally and DRAM_1_* because USER_HBM_STACK is 2 -- but if a
+# future edit ever drops to one stack they would vanish silently.
+foreach hp {DRAM_0_STAT_TEMP DRAM_1_STAT_TEMP DRAM_0_STAT_CATTRIP DRAM_1_STAT_CATTRIP} {
+    set hpin [get_bd_pins -quiet hbm/$hp]
+    if {![llength $hpin]} {
+        error "FK33_THERM FAIL: hbm/$hp does not exist at this IP configuration"
+    }
+    set hn [get_bd_nets -quiet -of_objects $hpin]
+    if {![llength $hn]} {
+        error "FK33_THERM FAIL: hbm/$hp is UNCONNECTED.  The stacks' own temperature is going nowhere, which is the defect this build exists to fix."
+    }
+    puts "FK33_THERM hbm/$hp connected"
+}
+
 # ---- no-card block-design check (gen_pcieep.py) ----------------------------
 # FK33_STOP_AFTER_BD=1 stops here.  Everything above this line is IP
 # configuration and address assignment, which is the part that can be checked
@@ -710,13 +1103,53 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
             puts "FK33_CFG xdma.$p = [get_property CONFIG.$p [get_bd_cells xdma]]"
         }
     }
-    foreach c {pcie2axil pcie2hbm} {
+    foreach c {pcie2axil pcie2hbm auxconnect} {
         puts "FK33_CFG $c.NUM_SI = [get_property CONFIG.NUM_SI [get_bd_cells $c]]"
         puts "FK33_CFG $c.NUM_MI = [get_property CONFIG.NUM_MI [get_bd_cells $c]]"
     }
     foreach c {fk33_id fk33_scratch fk33_dmabram} {
         if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING CELL $c" }
     }
+    # The aux domain.  A missing cell here means the bitstream is blind with
+    # the link down, which is the exact condition it exists for, so name them.
+    foreach c {fk33_aux_0 util_ds_buf_1 jtag_aux auxconnect aux_id aux_clkst aux_stat aux_time                aux_therm aux_peak aux_ctl fk33_therm_0 fk33_therm fk33_thermp fk33_thermc} {
+        if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING AUX CELL $c" }
+    }
+    # Prove, from the tool rather than from the diagram, that not one pin of the
+    # aux branch is driven by xdma.  This is the check that would catch a future
+    # edit quietly joining the aux clock or reset onto the PCIe domain.
+    # Exactly two aux pins may see something xdma drives, and both are MEASURED
+    # SIGNALS rather than parts of the read path:
+    #   fk33_aux_0/xdma_aclk     clocks a divider whose only output is a single
+    #                            bit through a synchroniser
+    #   fk33_aux_0/xdma_aresetn  is an input to a synchroniser
+    # If axi_aclk reaches anything else in the aux branch, the read path is no
+    # longer independent of the PCIe link and this build is pointless.
+    #
+    # fk33_therm_0 adds three more MEASURED-OR-CONSUMER pins on the PCIe clock,
+    # and each is named individually rather than exempting the cell:
+    #   sysmon_clk    clocks a divider on SYSMON's eoc_out, nothing else
+    #   ctl_host_clk  clocks the host clear qualifier and the publication filter
+    #   compute_clk   the datapath's own clock; the halt is synchronised INTO it
+    # The guard's decision logic, its watchdogs and its latches are all on
+    # fk33_aux_0/aux_clk, which is the point: they must survive the PCIe domain
+    # dying.  If any OTHER thermal pin ever joins xdma/axi_aclk this fails.
+    set auxallow {/fk33_aux_0/xdma_aclk /fk33_aux_0/xdma_aresetn                   /fk33_therm_0/sysmon_clk /fk33_therm_0/ctl_host_clk                   /fk33_therm_0/compute_clk}
+    set auxbad 0
+    foreach c {fk33_aux_0 jtag_aux auxconnect aux_id aux_clkst aux_stat aux_time                aux_therm aux_peak aux_ctl fk33_therm_0} {
+        foreach p [get_bd_pins -quiet $c/*] {
+            if {[lsearch -exact $auxallow $p] >= 0} { continue }
+            foreach n [get_bd_nets -quiet -of_objects $p] {
+                foreach src [get_bd_pins -quiet -of_objects $n] {
+                    if {[string match "/xdma/axi_aclk" $src]} {
+                        puts "FK33_AUX_VIOLATION $p shares a net with $src"
+                        incr auxbad
+                    }
+                }
+            }
+        }
+    }
+    puts "FK33_AUX_CLKCHECK violations=$auxbad"
     puts "FK33_CFG id_magic = [get_property CONFIG.CONST_VAL [get_bd_cells id_magic]]"
     puts "FK33_CFG id_build = [get_property CONFIG.CONST_VAL [get_bd_cells id_build]]"
     puts "==== FK33_MAP (address space / segment / offset / range) ===="
@@ -763,6 +1196,136 @@ if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
 }
 
 open_run impl_1
+puts "==== FK33 aux-domain constraint verification (implemented design) ===="
+# 1. the free-running clock must exist, exactly once, at 5 ns
+set auxclks [get_clocks -quiet -of_objects [get_ports {sysref_clk_p[0]}]]
+puts "FK33_AUXCLK clocks=$auxclks"
+if {[llength $auxclks] != 1} {
+    error "FK33_AUXCLK FAIL: expected exactly one clock on sysref_clk_p\[0\], got [llength $auxclks]. The aux domain would be unconstrained."
+}
+puts "FK33_AUXCLK period=[get_property PERIOD [lindex $auxclks 0]] ns"
+
+# 2. it must be asynchronous to everything else.
+#
+# COUNTING the crossing paths is the WRONG test and gave a false failure once:
+# get_timing_paths still ENUMERATES a path that an asynchronous clock group has
+# excluded, it just reports it with an EMPTY slack and GROUP "(none)".  The real
+# question is whether any crossing path is still ANALYSED.
+#
+# NOT remove_from_collection either: that is a Synopsys-style command Vivado
+# does not have ("invalid command name").  Filter by name.
+set others [get_clocks -quiet -filter {NAME != "sysref_clk"}]
+set xbad 0
+foreach pth [concat [get_timing_paths -quiet -from [lindex $auxclks 0] -to $others -max_paths 8]                     [get_timing_paths -quiet -from $others -to [lindex $auxclks 0] -max_paths 8]] {
+    if {[get_property SLACK $pth] ne ""} {
+        puts "FK33_AUXCLK TIMED-CROSSING [get_property STARTPOINT_CLOCK $pth] -> [get_property ENDPOINT_CLOCK $pth] slack=[get_property SLACK $pth] ep=[get_property ENDPOINT_PIN $pth]"
+        incr xbad
+    }
+}
+puts "FK33_AUXCLK analysed paths crossing the aux boundary: $xbad (must be 0)"
+if {$xbad > 0} {
+    error "FK33_AUXCLK FAIL: set_clock_groups did not apply; the CDC into the aux domain is being timed rather than declared asynchronous."
+}
+
+# 3. the debug hub must be on it.  This is the one that decides whether ANY of
+# this is readable with the link down.
+set hubpins [get_pins -quiet -hierarchical -filter {NAME =~ "*dbg_hub*" && REF_PIN_NAME == "clk"}]
+set hubclks [get_clocks -quiet -of_objects $hubpins]
+puts "FK33_HUBCLK pins=$hubpins clocks=$hubclks"
+if {[llength $hubclks] == 0} {
+    error "FK33_HUBCLK FAIL: no clock reaches the debug hub's clk pin. connect_debug_port did not apply."
+}
+if {[lsearch -exact [get_property NAME $hubclks] "sysref_clk"] < 0} {
+    error "FK33_HUBCLK FAIL: the debug hub is clocked by \"$hubclks\", not sysref_clk. With the PCIe link down it would not answer, which is the whole point of this build."
+}
+puts "FK33_HUBCLK OK dbg_hub is on sysref_clk"
+
+# 4. and nothing in the aux branch may be clocked by the PCIe user clock
+foreach auxcell {fk33_aux_0 jtag_aux auxconnect aux_id aux_clkst aux_stat aux_time                  aux_therm aux_peak aux_ctl fk33_therm_0} {
+    set c [get_cells -quiet bd_i/$auxcell]
+    if {[llength $c] == 0} { error "FK33_AUX FAIL: bd_i/$auxcell is missing from the implemented design" }
+}
+puts "FK33_AUX all aux cells present in the implemented design"
+
+# 5. the thermal guard's decision logic must be on the free-running clock.  A
+# guard clocked by anything the PCIe link can stop is a guard that stops with
+# it, and that is the exact failure this whole domain exists to avoid.
+set tcell [get_cells -quiet bd_i/fk33_therm_0]
+set tclks [get_clocks -quiet -of_objects [get_pins -quiet -of_objects $tcell -filter {REF_PIN_NAME == "aux_clk"}]]
+puts "FK33_THERMCLK fk33_therm_0/aux_clk clocks=$tclks"
+if {[lsearch -exact [get_property NAME $tclks] "sysref_clk"] < 0} {
+    error "FK33_THERMCLK FAIL: the thermal guard's aux_clk is "$tclks", not sysref_clk."
+}
+puts "FK33_THERMCLK OK the thermal guard runs on the free-running oscillator"
+
+# 6. the alarm thresholds as they exist IN THE ROUTED NETLIST, not as they were
+# asked for in the block design.  This is the only check in the build that reads
+# what actually reaches the device: the SYSMONE4 primitive's INIT_4x/INIT_5x
+# attributes ARE the configuration registers, loaded from the bitstream at
+# startup.  A BD CONFIG parameter is a request; these are the answer.
+#
+# Register map (UG580 / the SYSMONE4 primitive):
+#   50h  user temperature upper (alarm trigger)
+#   53h  OT upper -- [15:4] limit, [3:0] must be 0011 to ARM automatic shutdown
+#   54h  user temperature lower (alarm reset, i.e. the hysteresis floor)
+#   57h  OT lower (shutdown reset)
+# External-reference transfer function, from the same source:
+#   T = code * 507.5921310 / 65536 - 279.42657680
+proc sysmon_degc {code} { expr {$code * 507.5921310 / 65536.0 - 279.42657680} }
+
+# Vivado does not promise a format for an INIT attribute.  It has been seen as
+# 16'hBA40, as a bare hex string, and as a binary literal; guessing wrong here
+# would abort a fifty-minute build on a formatting detail rather than on
+# anything about the design, so parse all three and fail loudly only if the
+# value is genuinely unreadable.
+proc sysmon_parse {name raw} {
+    set t [string trim $raw]
+    if {[regexp {^[0-9]+'[bB]([01]+)$} $t -> bits]} {
+        set v 0
+        foreach c [split $bits ""] { set v [expr {$v * 2 + $c}] }
+        return $v
+    }
+    if {[regexp {^[0-9]+'[hH]([0-9a-fA-F]+)$} $t -> hx]} { scan $hx %x v ; return $v }
+    if {[regexp {^0[xX]([0-9a-fA-F]+)$} $t -> hx]}       { scan $hx %x v ; return $v }
+    if {[regexp {^[0-9a-fA-F]+$} $t]}                    { scan $t  %x v ; return $v }
+    error "FK33_SYSMONI FAIL: cannot parse $name = "$raw""
+}
+
+set smc [get_cells -quiet -hierarchical -filter {REF_NAME =~ "SYSMONE4*"}]
+if {[llength $smc] != 1} {
+    error "FK33_SYSMONI FAIL: expected exactly one SYSMONE4 in the routed design, found [llength $smc]: $smc"
+}
+puts "FK33_SYSMONI cell=[get_property NAME $smc]"
+array set smwant {INIT_50 90.0 INIT_54 75.0}
+foreach r {INIT_50 INIT_53 INIT_54 INIT_57} {
+    set raw [get_property $r $smc]
+    if {$raw eq ""} { error "FK33_SYSMONI FAIL: $r is not readable on the SYSMONE4 primitive" }
+    set code [sysmon_parse $r $raw]
+    puts [format "FK33_SYSMONI %s = 0x%04X -> %.2f C" $r $code [sysmon_degc $code]]
+    if {[info exists smwant($r)]} {
+        set d [expr {abs([sysmon_degc $code] - $smwant($r))}]
+        if {$d > 1.0} {
+            error "FK33_SYSMONI FAIL: $r decodes to [format %.2f [sysmon_degc $code]] C, not $smwant($r) C. The threshold in the bitstream is NOT the one this design asked for."
+        }
+    }
+}
+# The OT arming nibble.  This is the Task-1 question answered from the artefact
+# rather than from documentation: 53h[3:0] == 0011 means SYSMON will power the
+# device down by itself at the OT limit.  It is REPORTED, not enforced -- what
+# the nibble should be is a decision for the bench, and the fabric guard exists
+# precisely because the OT shutdown is a die-destruction backstop rather than a
+# thermal-management mechanism.
+set c53 [sysmon_parse INIT_53 [get_property INIT_53 $smc]]
+set otarm [expr {$c53 & 0xF}]
+set otlim [expr {$c53 & 0xFFF0}]
+puts [format "FK33_SYSMONI OT limit  = 0x%04X -> %.2f C" $otlim [sysmon_degc $otlim]]
+puts [format "FK33_SYSMONI OT arming nibble 53h\[3:0\] = 0x%X (0x3 = automatic power-down ARMED)" $otarm]
+if {$otarm == 3} {
+    puts "FK33_SYSMONI OT automatic shutdown is ARMED in this bitstream"
+} else {
+    puts "FK33_SYSMONI OT automatic shutdown is NOT armed; the fabric guard is the only protection"
+}
+
 set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
 set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
 puts [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]

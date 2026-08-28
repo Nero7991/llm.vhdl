@@ -40,6 +40,65 @@
 #define FK33_DMABRAM_SIZE   0x10000ull
 #define FK33_HBM_TOP        0x200000000ull
 
+/* ---- Thermal protection ------------------------------------------------ */
+/* Five status words plus one control word, produced by rtl/fk33_thermal.vhd on
+ * the free-running aux clock and resynchronised into the AXI-Lite clock domain
+ * by the module itself.  The SAME five words are also readable over the
+ * jtag_aux master with the PCIe link DOWN, at a different address space -- so a
+ * card that has halted and dropped off the bus can still be asked why.
+ *
+ * THERM_STATUS bit 31 is a constant 1.  A bitstream WITHOUT the thermal guard
+ * reads 0 there, so "is this card protected" is one read and not a guess. */
+#define FK33_THERM_BASE     0x0000B000u
+#define FK33_THERM_STATUS   (FK33_THERM_BASE  + 0x0u)
+#define FK33_THERM_TEMPS    (FK33_THERM_BASE  + 0x8u)
+#define FK33_THERMP_BASE    0x0000C000u
+#define FK33_THERM_PEAK     (FK33_THERMP_BASE + 0x0u)
+#define FK33_THERM_TRIP     (FK33_THERMP_BASE + 0x8u)
+#define FK33_THERMC_BASE    0x0000D000u
+#define FK33_THERM_CTL      (FK33_THERMC_BASE + 0x0u)   /* write */
+#define FK33_THERM_CANARY   (FK33_THERMC_BASE + 0x8u)
+
+/* THERM_CTL[31:16] must be the key or the write does nothing, and both clears
+ * are EDGE triggered: write the key with the bit set, then write 0. */
+#define FK33_THERM_KEY      0xC1EAu
+#define FK33_THERM_CLR_TRIP 0x1u
+#define FK33_THERM_CLR_PEAK 0x2u
+
+/* THERM_STATUS fields */
+#define FK33_THERM_HALTED   (1u << 0)
+#define FK33_THERM_WARN     (1u << 1)
+#define FK33_THERM_ARMED    (1u << 2)
+#define FK33_THERM_DIE_OK   (1u << 3)
+#define FK33_THERM_HBM_OK   (1u << 4)
+#define FK33_THERM_DIE_HOT  (1u << 5)
+#define FK33_THERM_HBM_HOT  (1u << 6)
+#define FK33_THERM_TRIPPED  (1u << 7)
+#define FK33_THERM_PRESENT  (1u << 31)
+#define FK33_THERM_CAUSE(v)      (((v) >> 8) & 0xFu)
+#define FK33_THERM_TRIP_CAUSE(v) (((v) >> 12) & 0xFu)
+#define FK33_THERM_TRIP_COUNT(v) (((v) >> 16) & 0xFFu)
+
+/* cause codes */
+#define FK33_CAUSE_NONE      0u
+#define FK33_CAUSE_DIE_OT    1u   /* SYSMON's armed over-temperature alarm */
+#define FK33_CAUSE_DIE_ALARM 2u   /* SYSMON user temperature alarm */
+#define FK33_CAUSE_DIE_OVER  3u
+#define FK33_CAUSE_DIE_STALE 4u   /* not live, or an implausible reading */
+#define FK33_CAUSE_HBM_CAT   5u   /* a stack asserted CATTRIP */
+#define FK33_CAUSE_HBM_OVER  6u
+#define FK33_CAUSE_HBM_STALE 7u
+
+/* The thresholds the bitstream enforces, in degrees C.  The HBM ones are in
+ * RAW 7-bit stack-code units: the code-to-Celsius mapping of
+ * DRAM_x_STAT_TEMP is NOT calibrated on this card. */
+#define FK33_THERM_DIE_WARN    80
+#define FK33_THERM_DIE_HALT    90
+#define FK33_THERM_DIE_RESUME  75
+#define FK33_THERM_HBM_WARN    75
+#define FK33_THERM_HBM_HALT    85
+#define FK33_THERM_HBM_RESUME  70
+
 /* ---- PCIe identity ------------------------------------------------------ */
 /* Already carried by dma_ip_drivers, so new_id should not be needed. */
 #define FK33_PCI_VENDOR     0x10EEu

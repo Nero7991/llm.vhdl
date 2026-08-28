@@ -130,6 +130,62 @@ for magic, expect, forbid in (
     check(f"magic 0x{magic:08x} -> '{expect}'", expect in out, out.strip())
     check(f"magic 0x{magic:08x} does not say '{forbid}'", forbid not in out)
 
+print("--- 4. cmd_thermal must not report a dead bus as a cold, unprotected card")
+# The vectors are the ones sim/tb_fk33_thermal.vhd printed, so this checks the
+# host decoder against the RTL rather than against itself.
+THERM_VECTORS = {
+    fk33ctl.THERM_STATUS: 0x8A0377CD,
+    fk33ctl.THERM_TEMPS:  0x1E830670,
+    fk33ctl.THERM_PEAK:   0x1E830670,
+    fk33ctl.THERM_TRIP:   0x57830670,
+    fk33ctl.THERM_CANARY: 0x00001186,
+}
+
+
+def thermal_out(vals, clear=False, clear_peak=False):
+    fake = FakeMmio()
+    fake.rd = lambda off: vals.get(off, 0)
+    args = type("A", (), {"clear": clear, "clear_peak": clear_peak})()
+    buf = io.StringIO()
+    with mock.patch.object(fk33ctl, "Mmio", lambda *a, **k: fake), \
+         mock.patch.object(fake, "close", lambda: None, create=True), \
+         mock.patch("sys.stdout", buf):
+        fk33ctl.cmd_thermal(args)
+    return buf.getvalue(), fake
+
+
+out, _ = thermal_out(THERM_VECTORS)
+check("the RTL's own status word decodes as HALTED", "halted        YES" in out, out)
+check("the die temperature decodes to ~30 C", " 29.9 C" in out, out)
+check("the HBM code decodes to 65", "code  65 /  65" in out, out)
+check("the latched cause is reported", "LATCHED TRIP" in out and "STALE" in out, out)
+check("the sticky SYSMON alarms are reported", out.count("STICKY:") == 2, out)
+
+# All-zeroes is what an unclocked AXI-Lite BAR returns.  Reporting it as a card
+# with no guard, or worse as a cold card, is the failure this check exists for.
+out0, _ = thermal_out({})
+check("all-zeroes is called a dead bus", "dead bus" in out0, out0)
+check("all-zeroes is NOT called an unprotected bitstream",
+      "NO thermal guard" not in out0, out0)
+out1, _ = thermal_out({k: 0xFFFFFFFF for k in THERM_VECTORS})
+check("all-ones is called a dead bus", "dead bus" in out1, out1)
+
+# A real answer with bit 31 clear is a real bitstream without the guard.
+_noguard = dict(THERM_VECTORS)
+_noguard[fk33ctl.THERM_STATUS] = 0x0A0377CD
+outn, _ = thermal_out(_noguard)
+check("bit 31 clear IS called an unprotected bitstream",
+      "NO thermal guard" in outn, outn)
+check("bit 31 clear is not called a dead bus", "dead bus" not in outn, outn)
+
+# A clear must carry the key, and must be edge shaped: assert then deassert.
+_, fk = thermal_out(THERM_VECTORS, clear=True)
+ctl = [(o, v) for o, v in fk.writes if o == fk33ctl.THERM_CTL]
+check("a clear writes the key", len(ctl) == 2 and (ctl[0][1] >> 16) == fk33ctl.THERM_KEY,
+      str(ctl))
+check("a clear is edge shaped (asserted then released)",
+      len(ctl) == 2 and (ctl[0][1] & 1) == 1 and ctl[1][1] == 0, str(ctl))
+
 print()
 if FAILS:
     print(f"FK33CTL_TESTS FAIL ({len(FAILS)})")
