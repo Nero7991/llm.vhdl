@@ -193,7 +193,17 @@ begin
         -- Round-half-toward-+infinity by 12, the site 5d shape.  A shift and
         -- an add, kept out of the multiply stage per the timing rule.
         r_v   := shift_right(p_reg + to_signed(2**11, p_reg'length), 12);
-        dig_r <= dig_r xor std_logic_vector(resize(unsigned(r_v(31 downto 0)), 32));
+        -- resize(unsigned(r_v), 32), NOT r_v(31 downto 0).  The slice is
+        -- hardcoded to a width only the RESCALE_ON_LANE = true branch has: at
+        -- true the A operand is ACC_W = 36 so p_reg is wide enough, but at
+        -- false it is Q_W = 16 and p_reg is 24 bits, so the slice is an
+        -- out-of-range index and synthesis dies with
+        --   [Synth 8-11324] array index 31 out of range
+        -- The false branch is the whole reason this generic exists, so the
+        -- skeleton could only ever price the configuration that was already
+        -- known.  resize on an unsigned drops leftmost bits when narrowing, so
+        -- this is bit-identical to the slice wherever the slice was legal.
+        dig_r <= dig_r xor std_logic_vector(resize(unsigned(r_v), 32));
       end if;
     end if;
   end process;
