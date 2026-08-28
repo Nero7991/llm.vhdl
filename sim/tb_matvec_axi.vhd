@@ -10,20 +10,33 @@
 -- The weight path is served over real AXI4 from the packer's actual image, as
 -- in sim/tb_matvec_int4, so this exercises the whole stack: AXI-Lite control,
 -- AXI4 read masters, reassembly, datapath, result readback.
+--
+-- ADDRESS WIDTH (added 2026-08-27, audit item N5).  ADDR_W and BASE_HI mirror
+-- sim/tb_matvec_int4, and this file additionally covers the three things that
+-- only exist in the register map:
+--
+--   * the LO/HI register pair actually assembles a >4 GB base end to end,
+--   * ADDR_CAP (reg 31) reports the width the build was synthesised with, so a
+--     driver can discover it rather than assume it,
+--   * ERR_ADDR (STATUS bit 4) latches when a HI word carries a bit this build
+--     cannot reach.  That check runs LAST, after the results are compared,
+--     because it deliberately programs a base the hardware must reject and
+--     doing so earlier would poison the run it is meant to protect.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use std.textio.all;
+use work.util_pkg.all;
 
 entity tb_matvec_axi is
-  generic(TRACE : string := "../tr.txt"; RI : positive := 4; STALL : natural := 3);
+  generic(TRACE : string := "../tr.txt"; RI : positive := 4; STALL : natural := 3;
+          ADDR_W : positive := 64; BASE_HI : natural := 0);
 end entity;
 
 architecture sim of tb_matvec_axi is
   constant BLK    : positive := 32;
   constant AXI_DW : positive := 128;
-  constant ADDR_W : positive := 32;
   constant NP     : positive := RI;
   constant MAXW   : positive := 16384;
   constant MAXR   : positive := 64;
@@ -114,6 +127,15 @@ begin
         end if;
         a := unsigned(m_araddr((p+1)*ADDR_W-1 downto p*ADDR_W));
         n := to_integer(unsigned(m_arlen((p+1)*8-1 downto p*8))) + 1;
+        -- see sim/tb_matvec_int4: truncation is invisible without this, because
+        -- the image is served modulo MAXW and a wrapped base reads right.
+        assert to_integer(shift_right(a, 32)) = BASE_HI
+          report "port " & integer'image(p) & ": address high half is " &
+                 integer'image(to_integer(shift_right(a, 32))) &
+                 ", expected " & integer'image(BASE_HI) &
+                 " -- the base was truncated (ADDR_W=" &
+                 integer'image(ADDR_W) & ")"
+          severity failure;
         m_arready(p) <= '1'; tick; m_arready(p) <= '0';
         for i in 0 to n-1 loop
           if STALL > 1 then
@@ -121,7 +143,7 @@ begin
             while (to_integer(lf) mod STALL) = 0 loop tick; end loop;
           end if;
           m_rdata((p+1)*AXI_DW-1 downto p*AXI_DW)
-            <= img(to_integer(a / 16) mod MAXW);
+            <= img(to_integer(a(clog2(MAXW) + 3 downto 4)));
           m_rvalid(p) <= '1';
           if i = n-1 then m_rlast(p) <= '1'; else m_rlast(p) <= '0'; end if;
           loop
@@ -235,11 +257,38 @@ begin
       report "ID register reads " & to_hstring(d) & ", expected 4D563449"
       severity failure;
 
+    -- ADDR_CAP.  A driver reads the width instead of assuming it, and refuses
+    -- a base it can see will not fit rather than letting the hardware take it.
+    rd(31, d);
+    assert to_integer(unsigned(d)) = ADDR_W
+      report "ADDR_CAP reads " & integer'image(to_integer(unsigned(d))) &
+             ", expected " & integer'image(ADDR_W)
+      severity failure;
+    assert BASE_HI = 0 or ADDR_W > 32
+      report "BASE_HI /= 0 needs ADDR_W > 32; this build reports " &
+             integer'image(to_integer(unsigned(d)))
+      severity note;
+
     -- descriptor, exactly the fields the PS takes from the 4 KB header
     wr(2, n_rows); wr(3, n_cols); wr(4, out_shift);
     wr(5, w_exp);  wr(6, x_exp);  wr(7, 0);            -- BFP
     wr(8, wb0); wr(9, wb1); wr(10, wb2); wr(11, wb3);
     wr(12, wbeats); wr(13, sbase); wr(14, sbeats);
+    -- HIGH halves.  Zero is the historical case and costs five writes; a
+    -- driver that omits them entirely still works, because they reset to 0.
+    wr(26, BASE_HI); wr(27, BASE_HI); wr(28, BASE_HI); wr(29, BASE_HI);
+    wr(30, BASE_HI);
+    -- and they must read back, or the LO/HI pair is write-only in one half
+    rd(26, d);
+    assert to_integer(unsigned(d)) = BASE_HI
+      report "W_BASE0_HI reads " & to_hstring(d) severity failure;
+    rd(30, d);
+    assert to_integer(unsigned(d)) = BASE_HI
+      report "S_BASE_HI reads " & to_hstring(d) severity failure;
+    -- programming a base must not have latched ERR_ADDR
+    rd(1, d);
+    assert d(4) = '0'
+      report "ERR_ADDR latched on a base this build can represent" severity failure;
 
     for i in 0 to 15 loop                              -- codebook
       wr(15, i * 256 + (cbv(i) mod 256));
@@ -291,6 +340,29 @@ begin
       report "THE AXI-LITE PATH DIVERGES FROM THE C REFERENCE" severity failure;
     report "subsystem A matches the C reference through the AXI-Lite register map"
       severity note;
+
+    -- ---------------------------------------------- ERR_ADDR, deliberately
+    -- LAST, because it programs a base the hardware is supposed to reject.
+    -- Writing 1 into a HIGH register sets absolute address bit 32, which fits
+    -- iff ADDR_W > 32, so this is a TWO-SIDED check that runs at both widths:
+    -- it must latch at 32 and must NOT latch at 64.  A one-sided version would
+    -- pass on a build where ERR_ADDR was tied high.
+    wr(26, 1);
+    rd(1, d);
+    if ADDR_W <= 32 then
+      assert d(4) = '1'
+        report "ERR_ADDR did NOT latch on a base past ADDR_W=" &
+               integer'image(ADDR_W) & " -- the wrap is silent again"
+        severity failure;
+      report "ERR_ADDR correctly latched on a base past ADDR_W" severity note;
+    else
+      assert d(4) = '0'
+        report "ERR_ADDR latched on a base that fits ADDR_W=" &
+               integer'image(ADDR_W)
+        severity failure;
+      report "ERR_ADDR correctly silent on a base that fits" severity note;
+    end if;
+
     finished <= true;
     wait;
   end process;

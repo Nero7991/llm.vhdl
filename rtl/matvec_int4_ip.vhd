@@ -25,6 +25,13 @@ entity matvec_int4_ip is
     BLK         : positive := 32;
     ROWS_IF     : positive := 4;
     AXI_DW      : positive := 128;
+    -- 32, NOT 64.  This wrapper is pure wiring and works at either width, and
+    -- sim/run_matvec.sh proves the hierarchy below it does too -- but the
+    -- AXU3EG block design takes this generic from the DEFAULT
+    -- (hw/design_mv_generated.tcl overrides only FIFO_DEPTH and MAXOUT) and its
+    -- HP-port address spaces are assigned 32-bit.  Raising the default here
+    -- would silently change that bitstream's master width.  The FK33 passes 64
+    -- explicitly.  See docs/debugging/2026-08-27_addr-w-64-and-packer-geometry.md
     ADDR_W      : positive := 32;
     MAXCOLS     : positive := 17408;
     MAXROWS_BFP : positive := 17408;

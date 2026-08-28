@@ -16,7 +16,37 @@ mkdir -p sim/work_mv sim/work_arith sim/work_am sim/work_ws sim/work_ax
 
 fail=0
 echo "== 1. regenerate shared arithmetic (C + VHDL + vectors) =="
-python3 tools/gen_arith.py --check || { python3 tools/gen_arith.py; }
+# THIS STEP OVERWRITES GENERATED FILES, AND IT HAS DESTROYED A REAL FIX.
+#
+# On 2026-08-27 a hand-added undefined-behaviour guard in ref/mv4i_arith.h
+# (`if (sh >= 63) return (v < 0) ? -1 : 0;`, plus the sh=64 case one shift up)
+# was silently deleted by this line: the file is generated, the generator does
+# not emit that guard, so `--check` reported STALE and the regeneration threw
+# the guard away.  It was recovered from git only because someone read the diff
+# before committing.
+#
+# The real fix belongs in tools/gen_arith.py, which also emits
+# rtl/mv4i_arith_pkg.vhd -- i.e. it changes RTL numeric behaviour and is not a
+# change to make in passing.  Until then: back up first, and say so loudly
+# enough that it cannot scroll past.
+if ! python3 tools/gen_arith.py --check; then
+  echo ""
+  echo "  ####################################################################"
+  echo "  #  GENERATED ARITHMETIC IS STALE AND IS ABOUT TO BE OVERWRITTEN.   #"
+  echo "  #  If you hand-edited any of these files, YOUR EDIT IS BEING LOST. #"
+  echo "  #  Backups: *.prechk next to each file.  Check 'git diff' after.   #"
+  echo "  ####################################################################"
+  for f in ref/mv4i_arith.h rtl/mv4i_arith_pkg.vhd sim/arith_vectors.txt; do
+    [ -f "$f" ] && cp -p "$f" "$f.prechk"
+  done
+  python3 tools/gen_arith.py
+  for f in ref/mv4i_arith.h rtl/mv4i_arith_pkg.vhd sim/arith_vectors.txt; do
+    if [ -f "$f.prechk" ] && ! cmp -s "$f" "$f.prechk"; then
+      echo "  CHANGED: $f   (previous contents in $f.prechk)"
+    fi
+  done
+  echo ""
+fi
 
 echo "== 2. C reference self-test =="
 cc -O2 -Wall -Wextra -o sim/work_mv/mv4i ref/matvec_int4.c
@@ -173,22 +203,50 @@ mkdir -p sim/work_ws
         ../../rtl/matvec_int4.vhd ../tb_matvec_int4.vhd \
   && ghdl -e --std=08 --workdir=. tb_matvec_int4 )
 
+# Fields are M:K:ROWS_IF:STALL[:ADDR_W[:BASE_HI]].  ADDR_W defaults to 32 so the
+# historical rows are unchanged; the two 64-bit rows are appended below rather
+# than replacing anything, because "it still works at 32" is half the claim.
 E2E="8:96:4:3 7:100:4:3 9:97:4:2 16:32:4:5 1:33:4:0 13:129:8:3 8:96:2:7"
-for c in $E2E; do
+E2E_WIDE="8:96:4:3:64:0 8:96:4:3:64:1 7:100:4:3:64:1 13:129:8:3:64:1"
+for c in $E2E $E2E_WIDE; do
   M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
   R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)
+  AW=$(echo "$c" | cut -d: -f5); [ -n "$AW" ] || AW=32
+  BH=$(echo "$c" | cut -d: -f6); [ -n "$BH" ] || BH=0
   ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" >/dev/null )
   out=$( cd sim/work_ws && ghdl -r --std=08 --workdir=. tb_matvec_int4 \
-           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=30ms 2>&1 )
+           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" \
+           -gADDR_W="$AW" -gBASE_HI="$BH" --stop-time=30ms 2>&1 )
   n=$(echo "$out" | grep -oE 'end to end: [0-9]+ rows compared[^,]*, [0-9]+ mismatches' || true)
   if echo "$out" | grep -q "from the packed bytes up"; then
-    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  OK   %s\n" "$M" "$K" "$R" "$S" "$n"
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s aw=%-2s hi=%-1s  OK   %s\n" \
+           "$M" "$K" "$R" "$S" "$AW" "$BH" "$n"
   else
-    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s  FAIL\n" "$M" "$K" "$R" "$S"
+    printf "  M=%-3s K=%-4s ROWS_IF=%-2s stall=%-2s aw=%-2s hi=%-1s  FAIL\n" \
+           "$M" "$K" "$R" "$S" "$AW" "$BH"
     echo "$out" | head -5
     fail=1
   fi
 done
+
+echo "== 6b. the >4 GB base MUST FAIL at ADDR_W=32 (N5 negative control) =="
+# A regression test that has never been seen to fail is not evidence.  This row
+# is the same job as the 64-bit rows above with the address width narrowed, so
+# the ONLY variable is whether the base can be represented.  If it passes, the
+# truncation has become silent again and every 64-bit row above is vacuous.
+( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt 8 96 4 >/dev/null )
+# `set -e` is live and this command is SUPPOSED to fail, so the failure must
+# be absorbed here or the script exits before it can be judged.
+out=$( cd sim/work_ws && ghdl -r --std=08 --workdir=. tb_matvec_int4 \
+         -gTRACE=../tr.txt -gRI=4 -gSTALL=3 -gADDR_W=32 -gBASE_HI=1 \
+         --stop-time=30ms 2>&1 ) || true
+if echo "$out" | grep -q "the base was truncated"; then
+  echo "  ADDR_W=32 BASE_HI=1  correctly REFUSED: $(echo "$out" | grep -oE 'address high half is [0-9]+, expected [0-9]+' | head -1)"
+else
+  echo "  ADDR_W=32 BASE_HI=1  DID NOT FAIL -- the >4 GB wrap is silent again"
+  echo "$out" | tail -3
+  fail=1
+fi
 
 
 echo "== 7. the PS sequence over AXI-Lite (10 step 5, in simulation) =="
@@ -205,19 +263,130 @@ mkdir -p sim/work_axi
         ../tb_matvec_axi.vhd \
   && ghdl -e --std=08 --workdir=. tb_matvec_axi )
 
-for c in $E2E; do
+for c in $E2E $E2E_WIDE; do
   M=$(echo "$c" | cut -d: -f1); K=$(echo "$c" | cut -d: -f2)
   R=$(echo "$c" | cut -d: -f3); S=$(echo "$c" | cut -d: -f4)
+  AW=$(echo "$c" | cut -d: -f5); [ -n "$AW" ] || AW=32
+  BH=$(echo "$c" | cut -d: -f6); [ -n "$BH" ] || BH=0
   [ "$R" = "4" ] || continue           # the register map is fixed at ROWS_IF=4
   ( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt "$M" "$K" "$R" >/dev/null )
   out=$( cd sim/work_axi && ghdl -r --std=08 --workdir=. tb_matvec_axi \
-           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" --stop-time=50ms 2>&1 )
+           -gTRACE=../tr.txt -gRI="$R" -gSTALL="$S" \
+           -gADDR_W="$AW" -gBASE_HI="$BH" --stop-time=50ms 2>&1 )
   n=$(echo "$out" | grep -oE 'AXI: [0-9]+ rows read back, [0-9]+ mismatches' || true)
+  e=$(echo "$out" | grep -oE 'ERR_ADDR correctly (latched|silent)' | head -1 || true)
   if echo "$out" | grep -q "through the AXI-Lite register map"; then
-    printf "  M=%-3s K=%-4s stall=%-2s  OK   %s\n" "$M" "$K" "$S" "$n"
+    printf "  M=%-3s K=%-4s stall=%-2s aw=%-2s hi=%-1s  OK   %s, %s\n" \
+           "$M" "$K" "$S" "$AW" "$BH" "$n" "$e"
   else
-    printf "  M=%-3s K=%-4s stall=%-2s  FAIL\n" "$M" "$K" "$S"
+    printf "  M=%-3s K=%-4s stall=%-2s aw=%-2s hi=%-1s  FAIL\n" \
+           "$M" "$K" "$S" "$AW" "$BH"
     echo "$out" | grep -iE "error|mismatch|fail" | head -5
+    fail=1
+  fi
+done
+
+echo "== 7b. ERR_ADDR must latch when a base does not fit (N5 negative control) =="
+# The register map accepts a 64-bit base at ANY ADDR_W, on purpose, so that a
+# host driver is not a different program per bitstream.  What must never happen
+# is that a base the fabric cannot reach is accepted quietly.  Here the wrapper
+# is asked for a >4 GB base on a 32-bit build and must latch STATUS bit 4
+# BEFORE any AXI transaction is issued.
+( cd ref && ../sim/work_mv/mv4i --trace ../sim/tr.txt 8 96 4 >/dev/null )
+out=$( cd sim/work_axi && ghdl -r --std=08 --workdir=. tb_matvec_axi \
+         -gTRACE=../tr.txt -gRI=4 -gSTALL=3 -gADDR_W=32 -gBASE_HI=1 \
+         --stop-time=50ms 2>&1 ) || true
+if echo "$out" | grep -q "ERR_ADDR latched on a base this build can represent"; then
+  echo "  ADDR_W=32 BASE_HI=1  correctly REFUSED by ERR_ADDR before start"
+else
+  echo "  ADDR_W=32 BASE_HI=1  DID NOT set ERR_ADDR -- a >4 GB base would wrap silently"
+  echo "$out" | tail -3
+  fail=1
+fi
+
+echo "== 8. the PACKER agrees with the C reference on the same bytes (N6) =="
+# tools/pack_int4.py --crosscheck existed and was called from NOWHERE: not from
+# this script, not from the Makefile, not from anything.  It was run by hand
+# once, on 2026-08-27, and agreed exactly.  Nothing would have noticed if that
+# stopped being true, which is the whole reason 6.4/6.5 are byte-pinned.
+#
+# BOTH DIRECTIONS, because each covers a different emitter:
+#   8a  C emits, C and Python both read     -> the C packer's layout
+#   8b  Python emits, C and Python both read -> the Python packer's layout
+# 8a needs no model and always runs.  8b needs a GGUF and is skipped, loudly,
+# when there is not one -- a skip that announces itself is not a silent pass.
+mkdir -p sim/work_pk
+for shape in "8 96 4" "13 129 4" "7 100 4" "1 33 4"; do
+  set -- $shape
+  f=sim/work_pk/c_${1}_${2}_${3}.mv4i
+  sim/work_mv/mv4i --emit "$f" "$1" "$2" "$3" >/dev/null
+  cline=$( sim/work_mv/mv4i "$f" )
+  pline=$( python3 tools/pack_int4.py --crosscheck "$f" )
+  if [ "$cline" = "$pline" ]; then
+    printf "  8a C-packed M=%-3s K=%-4s  OK   %s\n" "$1" "$2" "$cline"
+  else
+    printf "  8a C-packed M=%-3s K=%-4s  FAIL\n" "$1" "$2"
+    echo "     C      : $cline"
+    echo "     python : $pline"
+    fail=1
+  fi
+done
+
+GGUF=${MV4I_GGUF:-/mnt/storage/llama-models/Qwen3.8-27B-Q4_K_M.gguf}
+TENSOR=${MV4I_TENSOR:-blk.0.ssm_alpha.weight}
+if [ -r "$GGUF" ] && python3 -c 'import tools.pack_int4' 2>/dev/null; then
+  f=sim/work_pk/py_tensor.mv4i
+  if python3 tools/pack_int4.py "$GGUF" "$TENSOR" "$f" --rows-if 4 >/dev/null 2>&1; then
+    cline=$( sim/work_mv/mv4i "$f" )
+    pline=$( python3 tools/pack_int4.py --crosscheck "$f" )
+    if [ "$cline" = "$pline" ]; then
+      echo "  8b python-packed $TENSOR  OK   $cline"
+    else
+      echo "  8b python-packed $TENSOR  FAIL"
+      echo "     C      : $cline"
+      echo "     python : $pline"
+      fail=1
+    fi
+  else
+    echo "  8b SKIPPED: $GGUF present but the packer could not read $TENSOR"
+  fi
+else
+  echo "  8b SKIPPED: no readable GGUF at $GGUF (set MV4I_GGUF to run it)."
+  echo "     8a still covers the layout; what 8b adds is the PYTHON emitter,"
+  echo "     which is the one that will pack the real model."
+fi
+
+echo "== 9. the packer REFUSES geometries nothing implements (N6) =="
+# --rows-if 80 used to succeed and emit an 80-sub-region file no design can
+# consume: a plausible wrong file, not an error.  Each row below must exit
+# non-zero AND write nothing.
+for g in "80 128" "58 256" "8 256" "16 128"; do
+  set -- $g
+  out=sim/work_pk/refused.mv4i
+  rm -f "$out"
+  if python3 tools/pack_int4.py /dev/null t "$out" --rows-if "$1" --axi-dw "$2" \
+       >/dev/null 2>&1; then
+    printf "  ROWS_IF=%-3s AXI_DW=%-4s  ACCEPTED -- the foot-gun is back\n" "$1" "$2"
+    fail=1
+  elif [ -f "$out" ]; then
+    printf "  ROWS_IF=%-3s AXI_DW=%-4s  refused but LEFT A FILE behind\n" "$1" "$2"
+    fail=1
+  else
+    printf "  ROWS_IF=%-3s AXI_DW=%-4s  refused, no file written\n" "$1" "$2"
+  fi
+done
+# and the geometries that ARE implemented must still be accepted, or the
+# refusal above is just a broken packer rather than a guard.
+for g in "1 128" "2 128" "4 128" "8 128"; do
+  set -- $g
+  if python3 -c "
+import sys; sys.path.insert(0, 'tools')
+import pack_int4 as P
+P.check_geometry($1, $2, emitting=True)
+" 2>/dev/null; then
+    printf "  ROWS_IF=%-3s AXI_DW=%-4s  accepted, as it must be\n" "$1" "$2"
+  else
+    printf "  ROWS_IF=%-3s AXI_DW=%-4s  REFUSED but is implemented\n" "$1" "$2"
     fail=1
   fi
 done

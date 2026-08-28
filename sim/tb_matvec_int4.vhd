@@ -11,24 +11,50 @@
 --
 -- All NPORTS_W+1 slaves stall independently, because the merge's pop gate (7.7)
 -- is only meaningful when the ports actually run out of step.
+--
+-- ADDRESS WIDTH (added 2026-08-27, spec A 15.5).  ADDR_W is a GENERIC, not a
+-- constant, and BASE_HI lifts every sub-region base by BASE_HI * 4 GB.  The two
+-- exist together because a >4 GB base is the case the FK33 needs and the one
+-- nothing could previously express:
+--
+--   * the base cannot be built through a VHDL `integer`.  A VHDL integer is
+--     32-bit SIGNED, so `to_unsigned(v, ADDR_W)` -- what this file used to do,
+--     and what the natural fix looks like -- cannot represent 0x1_0000_0000 at
+--     any ADDR_W.  Bases are therefore assembled in `unsigned` throughout.
+--   * the slave must not index its image by `to_integer(a / 16)`.  That is a
+--     second integer, and at a 64-bit address it overflows before it can be
+--     wrapped.  The word index is taken as an ADDRESS SLICE instead.
+--   * the slave CHECKS the high half.  Without that, truncation is invisible
+--     here: the image is served modulo MAXW, so a base that silently loses its
+--     top 32 bits reads exactly the right bytes and the test passes.  That is
+--     precisely the silent wrap this generic exists to catch, so the check is
+--     the test, not a nicety.  `shift_right(a, 32)` is 0 at ADDR_W=32 by
+--     numeric_std's own definition, so the assertion is legal at both widths
+--     and fails at the narrow one -- which is the evidence.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use std.textio.all;
+use work.util_pkg.all;
 
 entity tb_matvec_int4 is
   generic(
-    TRACE : string   := "../tr.txt";
-    RI    : positive := 4;
-    STALL : natural  := 3
+    TRACE  : string   := "../tr.txt";
+    RI     : positive := 4;
+    STALL  : natural  := 3;
+    -- 32 reproduces every result from before this generic existed; 64 is the
+    -- FK33 width.  Anything in between is legal and untested.
+    ADDR_W : positive := 64;
+    -- Units of 4 GB added to every sub-region base.  0 is the historical case.
+    -- Non-zero requires ADDR_W > 32 and FAILS loudly at 32.
+    BASE_HI : natural := 0
   );
 end entity;
 
 architecture sim of tb_matvec_int4 is
   constant BLK    : positive := 32;
   constant AXI_DW : positive := 128;
-  constant ADDR_W : positive := 32;
   constant NP     : positive := RI;          -- NPORTS_W, 6.5 invariant
   constant MAXW   : positive := 16384;       -- image words of 128 b
   constant MAXR   : positive := 64;
@@ -67,6 +93,16 @@ architecture sim of tb_matvec_int4 is
   signal y_mask : std_logic_vector(RI-1 downto 0);
   signal done, err, sat_event : std_logic;
 
+  -- Image word index taken as an address SLICE, never as to_integer(a/16):
+  -- the latter is a VHDL integer and overflows at a 64-bit address before the
+  -- `mod MAXW` that was meant to bound it can run.
+  constant WSEL : positive := clog2(MAXW);        -- 14 at MAXW = 16384
+
+  -- What the high half of every emitted address must be.  This is the whole
+  -- point of BASE_HI: with the image served modulo MAXW, a truncated base
+  -- still reads the right bytes, so only an explicit check sees the wrap.
+  constant HI_EXP : natural := BASE_HI;
+
   -- the packed image, defaulting to zero exactly as the packer's calloc does
   type img_t is array(0 to MAXW-1) of std_logic_vector(AXI_DW-1 downto 0);
   signal img : img_t := (others => (others => '0'));
@@ -80,6 +116,18 @@ architecture sim of tb_matvec_int4 is
 
   signal loaded, finished : boolean := false;
   signal nbad, nchk : integer := 0;
+
+  -- Assemble a sub-region base from the trace's byte offset plus BASE_HI * 4 GB.
+  -- The high term is built with shift_left on an `unsigned`, NOT by adding
+  -- BASE_HI * 2**32 as an integer: 2**32 is not representable as a VHDL integer
+  -- and the addition would fail to elaborate, which is why nothing here could
+  -- express a >4 GB base before.  At ADDR_W <= 32 the shift yields 0 and the
+  -- high half is lost silently -- deliberately, so the slave's check sees it.
+  function lift (off : integer) return unsigned is
+  begin
+    return to_unsigned(off, ADDR_W)
+         + shift_left(to_unsigned(BASE_HI, ADDR_W), 32);
+  end function;
 begin
   rst <= '1', '0' after 40 ns;
 
@@ -146,6 +194,16 @@ begin
         assert m_arburst((p+1)*2-1 downto p*2) = "01"
           report "port " & integer'image(p) & ": burst must be INCR"
           severity failure;
+        -- THE ADDRESS-WIDTH CHECK.  shift_right by 32 is defined for any
+        -- length, and yields 0 when ADDR_W <= 32, so this line is legal at
+        -- both widths and is exactly what a truncated base trips.
+        assert to_integer(shift_right(a, 32)) = HI_EXP
+          report "port " & integer'image(p) & ": address high half is " &
+                 integer'image(to_integer(shift_right(a, 32))) &
+                 ", expected " & integer'image(HI_EXP) &
+                 " -- the base was truncated (ADDR_W=" &
+                 integer'image(ADDR_W) & ")"
+          severity failure;
         m_arready(p) <= '1'; tick; m_arready(p) <= '0';
         for i in 0 to n-1 loop
           if STALL > 1 then
@@ -153,7 +211,7 @@ begin
             while (to_integer(lf) mod STALL) = 0 loop tick; end loop;
           end if;
           m_rdata((p+1)*AXI_DW-1 downto p*AXI_DW)
-            <= img(to_integer(a / 16) mod MAXW);
+            <= img(to_integer(a(WSEL + 3 downto 4)));
           m_rvalid(p) <= '1';
           if i = n-1 then m_rlast(p) <= '1'; else m_rlast(p) <= '0'; end if;
           loop
@@ -210,9 +268,9 @@ begin
       elsif tok(1 to 5) = "WBASE" then
         read(l, a); read(l, v);
         w_base((a+1)*ADDR_W-1 downto a*ADDR_W)
-          <= std_logic_vector(to_unsigned(v, ADDR_W));
+          <= std_logic_vector(lift(v));
       elsif tok(1 to 5) = "SBASE" then
-        read(l, v); s_base <= std_logic_vector(to_unsigned(v, ADDR_W));
+        read(l, v); s_base <= std_logic_vector(lift(v));
       elsif tok(1 to 6) = "WBEATS" then
         read(l, v); w_beats <= v;
       elsif tok(1 to 6) = "SBEATS" then

@@ -558,7 +558,7 @@ naturally aligned), and unused bytes are **0x00**:
 | 0x018 | u16 | `ROWS_IF` the file was packed for |
 | 0x01A | u16 | `NPORTS_W` the file was packed for |
 | 0x01C | u16 | `BLOCK` (32) |
-| 0x01E | u16 | reserved (0) |
+| 0x01E | u16 | **`AXI_DW`** -- bits per AXI read master. 0 means "written before this field existed", which can only have been 128. Added 2026-08-27; see below. |
 | 0x020 | **16 x i8** | **`codebook[0..15]`** -- see below |
 | 0x030 | u32 | `scale_offset` |
 | 0x034 | u32 | `n_scale_sub` (scale sub-region count) |
@@ -573,6 +573,33 @@ field, and `flags` bit 0 asserts its presence.
 **Offsets are 64-bit.** Rev 5 deferred widening "at v4.0", but under §14's ladder
 **v3.0 is already 2x FK33 with a 7.57 GB per-card shard**, so 32-bit bases fail
 at the first rung, not the second.
+
+**`AXI_DW` travels in the file (added 2026-08-27, NORMATIVE).** `NPORTS_W` was
+carried and `AXI_DW` was not, so a reader could not evaluate §6.5's own
+invariant -- it could only assume the width and check the reduced form
+`NPORTS_W == ROWS_IF`, which is that invariant already evaluated at
+`AXI_DW = 128`. Two consequences, both observed:
+
+- `tools/pack_int4.py` set `nports = rows_if` directly, so `--rows-if 80`
+  emitted a well-formed 80-sub-region file that no design can consume. Not an
+  error: a **plausible wrong file**.
+- `ref/matvec_int4.c` rejected `nports_w != rows_if` with one code, conflating
+  "this file is self-inconsistent" with "this reference cannot decode this
+  file". Only the second becomes common once the FK33 geometry is settled.
+
+The field is at the byte that was reserved-and-zero, so no existing file or
+reader is invalidated: **0 decodes as 128**. Both packers now write 128
+explicitly, both readers evaluate the invariant in full, and
+`ref/matvec_int4.c` refuses `AXI_DW != 128` with its own code (-7) because
+`get_widx`/`get_scale` decode the lane-is-one-row layout and nothing else.
+
+**The legal geometry set today is `BLOCK = 32`, `AXI_DW = 128`,
+`ROWS_IF` in {1, 2, 4, 8}.** The upper bound is the scale path, not the weight
+path: `rtl/weight_streamer.vhd:107` requires `AXI_DW >= ROWS_IF*16` with the
+division exact, so `ROWS_IF = 16` already needs `n_scale_sub > 1`. **No FK33
+geometry is in that set**, and §14.5 is why. `tools/pack_int4.py` refuses
+anything outside it rather than guessing, and names which of the two limits it
+hit.
 
 **Pad fill is 0x00** everywhere -- padded rows, padded blocks, and sub-region
 tails. Outputs do not depend on it (§6.2 masks), but pinning it makes two

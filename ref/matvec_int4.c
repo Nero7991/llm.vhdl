@@ -45,7 +45,7 @@ enum { MV4I_MODE_BFP = 0, MV4I_MODE_RAW = 1, MV4I_MODE_PARTIAL = 2 };
 
 typedef struct {
     uint32_t magic, M, K, scale_offset, n_scale_sub;
-    uint16_t version, flags, rows_if, nports_w, block;
+    uint16_t version, flags, rows_if, nports_w, block, axi_dw;
     int32_t  w_exp, out_shift;
     int8_t   codebook[16];
     uint64_t w_sub_offset[64];
@@ -111,6 +111,11 @@ int mv4i_parse(mv4i_file *f, const uint8_t *img, size_t len)
     h->rows_if    = rd_u16(p + 0x18);
     h->nports_w   = rd_u16(p + 0x1A);
     h->block      = rd_u16(p + 0x1C);
+    /* 0x1E was "reserved (0)" until 2026-08-27 and now carries AXI_DW.  Zero
+     * therefore means "written before the field existed", which can only have
+     * been 128 because that is the only width the layout was ever defined at. */
+    h->axi_dw     = rd_u16(p + 0x1E);
+    if (h->axi_dw == 0) h->axi_dw = 128;
     memcpy(h->codebook, p + 0x20, 16);          /* codebook TRAVELS IN THE FILE */
     h->scale_offset = rd_u32(p + 0x30);
     h->n_scale_sub  = rd_u32(p + 0x34);
@@ -119,11 +124,22 @@ int mv4i_parse(mv4i_file *f, const uint8_t *img, size_t len)
     for (unsigned i = 0; i < h->n_scale_sub && i < 64; i++)
         h->s_sub_offset[i] = rd_u64(p + 0x38 + 8 * h->nports_w + 8 * i);
 
-    /* 6.5 invariant: NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4.  At AXI_DW=128
-     * and BLOCK=32 this reduces to NPORTS_W == ROWS_IF, and lane r carries
-     * row r of the tile -- which is what the accessors below rely on.        */
-    if (h->block != MV4I_BLOCK)    return -3;
-    if (h->nports_w != h->rows_if) return -4;
+    /* 6.5 invariant: NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4.
+     *
+     * Checked in its GENERAL form (-4), then the decoder's own limit is a
+     * SEPARATE refusal (-7).  The old code tested `nports_w != rows_if`, which
+     * is the invariant already evaluated at AXI_DW=128 -- correct for every
+     * file that existed, but it conflated "this file is self-inconsistent"
+     * with "this reference cannot decode this file", and only the second is
+     * about to become common as the FK33 geometry is settled.                */
+    if (h->block != MV4I_BLOCK) return -3;
+    if ((uint32_t)h->nports_w * (uint32_t)h->axi_dw
+        != (uint32_t)h->rows_if * (uint32_t)h->block * 4u) return -4;
+    /* get_widx/get_scale below assume one lane IS one row's 16-byte chunk,
+     * which holds only at AXI_DW = 128 with BLOCK = 32 (spec 6.5, the
+     * "ROWS_IF = 4 coincidence").  Refuse anything else rather than decode it
+     * wrongly; spec 14.5 has not yet defined what else would mean.           */
+    if (h->axi_dw != 128) return -7;
 
     /* 7.4 normative range constraints.  Violating either overflows a declared
      * width in the RTL, so the reference refuses the file rather than silently
@@ -324,6 +340,7 @@ static uint8_t *pack(int M, int K, int rows_if, int w_exp, int out_shift,
     *(uint16_t *)(void *)(p + 0x18) = (uint16_t)rows_if;
     *(uint16_t *)(void *)(p + 0x1A) = (uint16_t)rows_if;    /* NPORTS_W */
     *(uint16_t *)(void *)(p + 0x1C) = MV4I_BLOCK;
+    *(uint16_t *)(void *)(p + 0x1E) = 128;              /* AXI_DW, see 6.4 */
     memcpy(p + 0x20, cb, 16);
     *(uint32_t *)(void *)(p + 0x34) = 1;                    /* n_scale_sub */
     for (int i = 0; i < rows_if; i++)
@@ -542,6 +559,34 @@ static int emit_trace(const char *out_path, int M, int K, int RI, int sat)
     return rc;
 }
 
+/* --emit OUT [M K ROWS_IF] -- write the packed image itself, nothing else.
+ *
+ * WHY: tools/pack_int4.py --crosscheck and this file's crosscheck() both parse
+ * a .mv4i and print one line, so pointing them at the same file compares two
+ * independent readings of the 6.4/6.5 layout.  That was only ever done by hand,
+ * and only on a file the PYTHON packer wrote.  This mode supplies the other
+ * direction -- a file the C packer wrote -- and needs no GGUF, so
+ * sim/run_matvec.sh can run it on every invocation.                          */
+static int emit_image(const char *out_path, int M, int K, int RI)
+{
+    const int NB = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
+    const int out_shift = 3, w_exp = 2;
+    uint8_t  *idx = malloc((size_t)M * K);
+    uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+    uint32_t st = 99;
+    for (int i = 0; i < M * K; i++) { st = st * 1103515245u + 12345u; idx[i] = (st >> 16) & 15; }
+    for (int i = 0; i < M * NB; i++) { st = st * 1103515245u + 12345u; scl[i] = (uint16_t)(8000 + ((st >> 12) % 24000)); }
+    size_t len; uint8_t *img = pack(M, K, RI, w_exp, out_shift, IQ4_NL, idx, scl, &len);
+    mv4i_file f; if (mv4i_parse(&f, img, len)) { fprintf(stderr, "own file rejected\n"); return 2; }
+    FILE *fp = fopen(out_path, "wb");
+    if (!fp) { perror(out_path); return 2; }
+    if (fwrite(img, 1, len, fp) != len) { perror("write"); return 2; }
+    fclose(fp);
+    free(idx); free(scl); free(img);
+    printf("wrote %s (M=%d K=%d ROWS_IF=%d, %zu bytes)\n", out_path, M, K, RI, len);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     /* --trace OUT [M K ROWS_IF].  Defaults kept for the historical case; the
@@ -554,6 +599,12 @@ int main(int argc, char **argv)
         int R = argc > 5 ? atoi(argv[5]) : 4;
         int S = argc > 6 ? atoi(argv[6]) : 0;
         return emit_trace(argv[2], M, K, R, S);
+    }
+    if (argc >= 3 && !strcmp(argv[1], "--emit")) {
+        int M = argc > 3 ? atoi(argv[3]) : 8;
+        int K = argc > 4 ? atoi(argv[4]) : 96;
+        int R = argc > 5 ? atoi(argv[5]) : 4;
+        return emit_image(argv[2], M, K, R);
     }
     if (argc >= 2) return crosscheck(argv[1]);
     printf("subsystem A reference self-test\n");

@@ -37,7 +37,11 @@ enum {
     R_CTRL = 0, R_STATUS, R_NROWS, R_NCOLS, R_OUTSHIFT, R_WEXP, R_XEXP,
     R_MODE, R_WBASE0, R_WBASE1, R_WBASE2, R_WBASE3, R_WBEATS, R_SBASE,
     R_SBEATS, R_CB, R_XIDX, R_XDATA, R_YIDX, R_YLO, R_YHI, R_YEXP,
-    R_CYCLES, R_BEATS, R_STARVED, R_ID
+    R_CYCLES, R_BEATS, R_STARVED, R_ID,
+    /* 64-bit bases, added 2026-08-27 (audit item N5).  The LOW registers kept
+     * their offsets, so everything above this line is unchanged and a 32-bit
+     * base still needs only those.  See rtl/matvec_int4_axi.vhd. */
+    R_WBASE0_HI, R_WBASE1_HI, R_WBASE2_HI, R_WBASE3_HI, R_SBASE_HI, R_ADDRCAP
 };
 
 static volatile uint32_t *regs;
@@ -188,8 +192,31 @@ int main(int argc, char **argv)
         uint64_t b = bw_stride ? (phys + f.h.w_sub_offset[0] + (uint64_t)p * bw_stride)
                                : (phys + f.h.w_sub_offset[p]);
         wr(R_WBASE0 + p, (uint32_t)b);
+        wr(R_WBASE0_HI + p, (uint32_t)(b >> 32));
     }
     wr(R_SBASE, (uint32_t)(phys + f.h.s_sub_offset[0]));
+    wr(R_SBASE_HI, (uint32_t)((phys + f.h.s_sub_offset[0]) >> 32));
+
+    /* ERR_ADDR (STATUS bit 4) latches if any base needed a bit this bitstream
+     * cannot drive.  Check it BEFORE start: past 4 GB the failure is a silent
+     * wrap that reads plausible-looking wrong weights, so a run that started
+     * would produce a wrong ANSWER rather than an error. */
+    {
+        uint32_t cap = rd(R_ADDRCAP);
+        if (cap != 32 && cap != 64)
+            printf("note: ADDR_CAP reads %u, which is neither 32 nor 64 -- "
+                   "this bitstream predates the 64-bit base registers\n", cap);
+        if (rd(R_STATUS) & (1u << 4)) {
+            fprintf(stderr,
+                "ERR_ADDR: a sub-region base needs more than %u address bits.\n"
+                "  region base 0x%llX, image %zu bytes\n"
+                "  This bitstream cannot reach it and would have read the wrong\n"
+                "  bytes silently.  Rebuild with a wider ADDR_W, or place the\n"
+                "  region lower.\n",
+                cap, (unsigned long long)phys, img_len);
+            return 2;
+        }
+    }
 
     int nb    = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
     int tiles = (M + f.h.rows_if - 1) / f.h.rows_if;

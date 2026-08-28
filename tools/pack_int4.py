@@ -19,6 +19,18 @@ The format, for reference:
 Usage:
   pack_int4.py MODEL.gguf TENSOR_NAME OUT.mv4i [--rows-if 4] [--verify]
   pack_int4.py --list MODEL.gguf
+
+GEOMETRY (2026-08-27).  The port count is DERIVED from the invariant, not
+assumed.  Spec 6.5:
+
+    NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4
+
+This file used to set `nports = rows_if`, which is that identity evaluated at
+BLOCK=32 and AXI_DW=128 and true nowhere else.  It made `--rows-if 80` emit a
+plausible 80-sub-region file that no design can consume -- not an error, a
+WRONG FILE.  AXI_DW is now an explicit input, the port count falls out of it,
+the value is recorded in the header at 0x1E so a consumer can check rather than
+infer, and geometries nothing implements are REFUSED.  See check_geometry().
 """
 
 import argparse
@@ -44,8 +56,92 @@ MAGIC       = 0x4D563449          # "MV4I"
 VERSION     = 1
 BLOCK       = 32                  # spec 6.1
 HDR_BYTES   = 4096                # spec 6.4
-AXI_DW      = 128                 # bits; spec 6.5 invariant
+AXI_DW_DEF  = 128                 # bits, per AXI master; AXU3EG HP port width
 OUT_SHIFT_MAX = 40                # spec 7.4
+
+
+class GeometryError(ValueError):
+    """A (ROWS_IF, BLOCK, AXI_DW) triple this repository cannot pack."""
+
+
+def check_geometry(rows_if: int, axi_dw: int, emitting: bool = True) -> int:
+    """Return NPORTS_W for this geometry, or raise GeometryError.
+
+    THE POINT OF THIS FUNCTION is to refuse rather than to guess.  Three
+    separate conditions, each with its own reason, because collapsing them into
+    one "unsupported" message is what makes the next person guess again:
+
+    1. The 6.5 invariant must divide.  NPORTS_W is a count of AXI masters; a
+       fractional one is not a smaller design, it is no design.
+
+    2. The BYTE LAYOUT is only defined at AXI_DW = 128.  At 128 bits with
+       BLOCK = 32 one lane is exactly one row's 128-bit chunk, which is the
+       "ROWS_IF = 4 coincidence" spec 6.5 calls load-bearing and tells you not
+       to assume elsewhere.  At AXI_DW = 256 -- the FK33's HBM SAXI width -- a
+       lane spans two rows and the interleave inside a sub-region is a
+       different, UNSPECIFIED thing.  Spec 14.5 says so outright and defers it
+       until the HBM streamer is designed.  So we refuse; we do not invent it.
+
+    3. The scale region must fit ONE sub-region.  rtl/weight_streamer.vhd:107
+       asserts `AXI_DW >= ROWS_IF*16 and AXI_DW mod ROWS_IF*16 = 0` and its own
+       comment says the multi-sub-region case "is not implemented".  A file
+       claiming n_scale_sub = 1 for a geometry that needs more is a file whose
+       scale stream silently runs out.
+
+    Rule 1 is ARITHMETIC and always applies: a geometry whose port count does
+    not divide has no size worth reporting either.  Rules 2 and 3 are
+    NOT-IMPLEMENTED-YET limits on this repository, not on the format, so
+    `emitting=False` waives them for --audit, which computes sizes and writes no
+    bytes.  Both waived rules describe the same total number of bytes; they
+    differ only in how those bytes are cut into sub-regions, which is precisely
+    why a size is still meaningful and a FILE is not.
+
+    Use unmet_reasons() to ask which of 2 and 3 a geometry violates without
+    catching an exception.
+    """
+    lane_bits = rows_if * BLOCK * 4
+    if axi_dw <= 0 or lane_bits % axi_dw:
+        raise GeometryError(
+            f"6.5 invariant does not divide: ROWS_IF*BLOCK*4 = {lane_bits} bits "
+            f"is not a whole number of {axi_dw}-bit ports "
+            f"(ROWS_IF={rows_if}, BLOCK={BLOCK})")
+    nports = lane_bits // axi_dw
+
+    if emitting:
+        why = unmet_reasons(rows_if, axi_dw)
+        if why:
+            raise GeometryError(" ".join(why))
+
+    return nports
+
+
+def unmet_reasons(rows_if: int, axi_dw: int):
+    """Which not-implemented-yet limits this geometry runs into, as prose.
+
+    Separate from check_geometry so --audit can REPORT them next to the sizes
+    instead of refusing, and so the emit path can list all of them at once
+    rather than whichever happens to be tested first.
+    """
+    out = []
+    if axi_dw != AXI_DW_DEF:
+        out.append(
+            f"The sub-region BYTE LAYOUT is undefined at AXI_DW={axi_dw}. Only "
+            f"{AXI_DW_DEF} is specified: there one lane is exactly one row's "
+            f"chunk (spec 6.5, the 'ROWS_IF=4 coincidence'), and that is the "
+            f"layout this packer emits. At {axi_dw} bits a lane spans "
+            f"{axi_dw // (BLOCK * 4)} rows and the interleave within a "
+            f"sub-region has never been written down -- spec 14.5 defers it "
+            f"until the HBM weight_streamer exists. I do not know the legal "
+            f"set for the FK33 and will not guess one.")
+    sw = rows_if * 16
+    if axi_dw < sw or axi_dw % sw:
+        out.append(
+            f"The scale region needs more than one sub-region at "
+            f"ROWS_IF={rows_if}: {sw} scale bits per cycle against a "
+            f"{axi_dw}-bit port. rtl/weight_streamer.vhd:104-110 states this "
+            f"is not implemented (spec 14.5 item 2). The header carries "
+            f"n_scale_sub for it; nothing reads it yet.")
+    return out
 
 # spec 6.1 default codebook.  MUST NOT contain -128 (spec 7.4): with cb=-128 and
 # x_mant=-32768 a 32-term block partial reaches exactly 2^27 and overflows s28
@@ -56,6 +152,18 @@ IQ4_NL = np.array([-127, -104, -83, -65, -49, -35, -22, -10,
 
 def align4k(n: int) -> int:
     return (n + 4095) & ~4095
+
+
+def _wrap(text: str, width: int):
+    out, line = [], ""
+    for word in text.split():
+        if line and len(line) + 1 + len(word) > width:
+            out.append(line); line = word
+        else:
+            line = f"{line} {word}".strip()
+    if line:
+        out.append(line)
+    return out
 
 
 # ------------------------------------------------------------------ GGUF input
@@ -188,7 +296,8 @@ def calibrate_out_shift(K: int) -> int:
 
 # ---------------------------------------------------------- emission (6.4/6.5)
 
-def packed_layout(M: int, K: int, rows_if: int):
+def packed_layout(M: int, K: int, rows_if: int,
+                  axi_dw: int = AXI_DW_DEF, emitting: bool = True):
     """The 6.4/6.5 file layout, as pure arithmetic on the shape.
 
     SINGLE AUTHORITY for how large a packed tensor is.  pack() below emits it
@@ -196,28 +305,40 @@ def packed_layout(M: int, K: int, rows_if: int):
     second copy of this arithmetic is exactly the drift this project keeps
     getting bitten by.
 
+    Per-sub-region size is `tiles * NB * (axi_dw/8)`, i.e. the bytes ONE PORT
+    supplies of each consumed word.  At AXI_DW=128 that is the old
+    `BLOCK//2 = 16`, so this generalises rather than changes the AXU3EG
+    numbers; the assertion in pack() checks that it still divides exactly.
+
     Returns (NB, tiles, nports, sub_sz, scl_sz, total).
     """
+    nports = check_geometry(rows_if, axi_dw, emitting=emitting)
     NB     = (K + BLOCK - 1) // BLOCK      # 6.3 ceil, K padded to a whole block
     tiles  = (M + rows_if - 1) // rows_if
-    nports = rows_if                       # 6.5 invariant at BLOCK=32, AXI_DW=128
-    chunk  = BLOCK // 2                    # 16 bytes per row-block chunk
-    sub_sz = align4k(tiles * NB * chunk)
+    port_b = axi_dw // 8                   # bytes of each word this port holds
+    sub_sz = align4k(tiles * NB * port_b)
     scl_sz = align4k(tiles * NB * rows_if * 2)
     total  = HDR_BYTES + sub_sz * nports + scl_sz
     return NB, tiles, nports, sub_sz, scl_sz, total
 
 
-def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb) -> bytes:
-    NB, tiles, nports, sub_sz, scl_sz, total = packed_layout(M, K, rows_if)
+def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb,
+         axi_dw: int = AXI_DW_DEF) -> bytes:
+    NB, tiles, nports, sub_sz, scl_sz, total = packed_layout(M, K, rows_if, axi_dw)
     assert NB == idx.shape[1], f"NB mismatch {NB} vs {idx.shape[1]}"
+    # check_geometry pins axi_dw to 128 on the emit path, so the byte layout
+    # below -- lane == one row's 16-byte chunk -- is the one that applies.
+    assert axi_dw == AXI_DW_DEF and nports == rows_if
 
     buf = bytearray(total)                 # zero-filled: PAD FILL = 0x00
 
     # ---- header, spec 6.4 byte-pinned layout, little-endian
     struct.pack_into("<IHHII", buf, 0x00, MAGIC, VERSION, 1, M, K)
     struct.pack_into("<ii",    buf, 0x10, w_exp, out_shift)
-    struct.pack_into("<HHHH",  buf, 0x18, rows_if, nports, BLOCK, 0)
+    # 0x1E was "reserved (0)" and now carries AXI_DW.  A reader that predates
+    # this sees 0, which is the documented "legacy, assume 128" encoding, so no
+    # existing file or parser is invalidated.
+    struct.pack_into("<HHHH",  buf, 0x18, rows_if, nports, BLOCK, axi_dw)
     buf[0x20:0x30] = cb.astype(np.int8).tobytes()
     scl_off = HDR_BYTES + sub_sz * nports
     struct.pack_into("<II", buf, 0x30, scl_off, 1)
@@ -305,7 +426,13 @@ def crosscheck(path):
     magic, ver, flags, M, K = struct.unpack_from("<IHHII", img, 0x00)
     assert magic == MAGIC, "bad magic"
     w_exp, out_shift = struct.unpack_from("<ii", img, 0x10)
-    rows_if, nports, blk, _ = struct.unpack_from("<HHHH", img, 0x18)
+    rows_if, nports, blk, axi_dw = struct.unpack_from("<HHHH", img, 0x18)
+    if axi_dw == 0:
+        axi_dw = AXI_DW_DEF            # legacy file, predates the field
+    exp_nports = check_geometry(rows_if, axi_dw, emitting=True)
+    assert nports == exp_nports, (
+        f"header says NPORTS_W={nports}, the 6.5 invariant at ROWS_IF={rows_if} "
+        f"BLOCK={blk} AXI_DW={axi_dw} gives {exp_nports}")
     cb = np.frombuffer(img[0x20:0x30], dtype=np.int8).astype(np.int64)
     w_sub = [struct.unpack_from("<Q", img, 0x38 + 8 * p)[0] for p in range(nports)]
     s_sub = struct.unpack_from("<Q", img, 0x38 + 8 * nports)[0]
@@ -355,7 +482,8 @@ def crosscheck(path):
 
 # --------------------------------------------------------------- model audit
 
-def audit(path: str, rows_if: int, cards: int) -> None:
+def audit(path: str, rows_if: int, cards: int,
+          axi_dw: int = AXI_DW_DEF) -> None:
     """Sum the packed size of a whole GGUF in this format, exactly.
 
     WHY: the v3.0 "27B fits 2 x FK33" claim came from 26.896e9 params x 4.5 bpw,
@@ -368,6 +496,12 @@ def audit(path: str, rows_if: int, cards: int) -> None:
     Sizes come from packed_layout(), the same function pack() emits with, so an
     audit can never disagree with a file.
     """
+    # --audit writes no bytes, so the byte-layout rule is relaxed here -- but
+    # only that one.  A geometry whose port count does not divide, or whose
+    # scale region does not fit, has no size worth reporting.
+    nports = check_geometry(rows_if, axi_dw, emitting=False)
+    emit_why = unmet_reasons(rows_if, axi_dw)
+
     rd = GGUFReader(path, "r")
     GIB = 1024.0 ** 3
 
@@ -383,11 +517,13 @@ def audit(path: str, rows_if: int, cards: int) -> None:
         is_mv = len(ne) > 1 and M > 1 and K > 1 and name != "blk.0.ssm_conv1d.weight" \
                 and not name.endswith("ssm_conv1d.weight")
         if is_mv:
-            _, _, _, _, _, whole = packed_layout(M, K, rows_if)
+            _, _, _, _, _, whole = packed_layout(M, K, rows_if, axi_dw,
+                                                 emitting=False)
             # column-parallel: each card holds ceil(M/cards) rows, padded and
             # aligned on its own, so shard overhead does NOT divide by cards
             Ms = (M + cards - 1) // cards
-            _, _, _, _, _, shard = packed_layout(Ms, K, rows_if)
+            _, _, _, _, _, shard = packed_layout(Ms, K, rows_if, axi_dw,
+                                                 emitting=False)
         else:
             whole = params * 4          # kept as F32
             shard = whole               # replicated on every card
@@ -402,7 +538,14 @@ def audit(path: str, rows_if: int, cards: int) -> None:
     payload = p_mv * 4.5 / 8.0
 
     print(f"model      {path}")
-    print(f"ROWS_IF={rows_if}  cards={cards}  (column-parallel, M split)")
+    print(f"ROWS_IF={rows_if}  AXI_DW={axi_dw}  NPORTS_W={nports}  "
+          f"cards={cards}  (column-parallel, M split)")
+    if emit_why:
+        print()
+        print("  *** SIZES ONLY -- this geometry CANNOT BE PACKED ***")
+        for why in emit_why:
+            for i, line in enumerate(_wrap(why, 72)):
+                print(f"      {'- ' if i == 0 else '  '}{line}")
     print()
     print(f"  tensors                     {len(rows):>10d}  "
           f"({len(mv)} matvec, {len(nonmv)} kept F32)")
@@ -459,7 +602,12 @@ def main():
     ap.add_argument("out", nargs="?")
     ap.add_argument("--list", action="store_true", help="list tensors and exit")
     ap.add_argument("--rows-if", type=int, default=4,
-                    help="ROWS_IF the file is packed for (4 AXU3EG, 80 FK33)")
+                    help="ROWS_IF the file is packed for (4 on the AXU3EG; the "
+                         "FK33 value is not settled, see spec 14.5)")
+    ap.add_argument("--axi-dw", type=int, default=AXI_DW_DEF,
+                    help="bits per AXI read master (128 AXU3EG HP; the FK33's "
+                         "HBM SAXI ports are 256, which this packer REFUSES to "
+                         "emit for -- the layout is undefined, spec 14.5)")
     ap.add_argument("--out-shift", type=int, default=None,
                     help="override the calibrated out_shift")
     ap.add_argument("--verify", action="store_true")
@@ -475,7 +623,7 @@ def main():
         list_tensors(a.gguf)
         return 0
     if a.audit:
-        audit(a.gguf, a.rows_if, a.cards)
+        audit(a.gguf, a.rows_if, a.cards, a.axi_dw)
         return 0
     if a.crosscheck:
         crosscheck(a.gguf)
@@ -483,10 +631,27 @@ def main():
     if not a.tensor or not a.out:
         ap.error("TENSOR and OUT are required unless --list")
 
+    # Refuse BEFORE reading a multi-gigabyte tensor.  Failing after ~40 s of
+    # dequantisation teaches the same thing at forty times the cost.
+    try:
+        nports = check_geometry(a.rows_if, a.axi_dw, emitting=True)
+    except GeometryError as e:
+        sys.stderr.write("pack_int4: refusing this geometry.\n")
+        for why in (unmet_reasons(a.rows_if, a.axi_dw) or [str(e)]):
+            for i, line in enumerate(_wrap(why, 72)):
+                sys.stderr.write(f"  {'- ' if i == 0 else '  '}{line}\n")
+        sys.stderr.write(
+            "  Geometries this packer emits today: BLOCK=32, AXI_DW=128,\n"
+            "  ROWS_IF in {1, 2, 4, 8}.  Anything else needs the layout to be\n"
+            "  specified first.\n")
+        return 2
+
     print(f"reading {a.tensor} from {a.gguf}")
     W = read_tensor(a.gguf, a.tensor)
     M, K = W.shape
     print(f"  shape M={M} K={K}  ({M * K / 1e6:.1f}M weights)")
+    print(f"  geometry ROWS_IF={a.rows_if} AXI_DW={a.axi_dw} "
+          f"BLOCK={BLOCK} -> NPORTS_W={nports}")
 
     idx, scale, w_exp = quantize(W, IQ4_NL)
     out_shift = a.out_shift if a.out_shift is not None else calibrate_out_shift(K)
@@ -495,7 +660,7 @@ def main():
     if a.verify:
         verify(W, idx, scale, w_exp, out_shift, IQ4_NL, K)
 
-    blob = pack(idx, scale, w_exp, M, K, a.rows_if, out_shift, IQ4_NL)
+    blob = pack(idx, scale, w_exp, M, K, a.rows_if, out_shift, IQ4_NL, a.axi_dw)
     with open(a.out, "wb") as f:
         f.write(blob)
 
