@@ -209,7 +209,11 @@ entity gdn_block is
     L2_LANES    : positive := 4;
     -- 16, not 32 and not 8.  See gdn_emit_chain's header: 8 misses B's
     -- 299.04 MHz and 32 both costs more and closes slower.
-    SILU_LANES  : positive := 16;
+    -- 8, tracking gdn_emit_chain's default.  See the long note at that
+    -- generic: at 0.717 V the binding path is no longer in the gate, so silu
+    -- width is a die-budget choice and not a timing one, and 8 buys -16 DSP
+    -- and -9,763 LUT for 5 cycles of per-head deadline.
+    SILU_LANES  : positive := 8;
     RMS_LANES   : positive := 4;
     Q           : integer  := 12;
     EPS         : real     := 1.0e-6;

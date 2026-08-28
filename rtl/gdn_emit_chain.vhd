@@ -90,7 +90,39 @@ entity gdn_emit_chain is
     -- 8 lanes is cheaper still and was NOT taken: 295.8 MHz misses B's
     -- 299.04 MHz target, and a unit that does not close the clock is not a
     -- saving.
-    SILU_LANES : positive := 16;
+    --
+    -- 2026-08-27: THAT REASONING IS WITHDRAWN AND 8 IS NOW THE DEFAULT.  Both
+    -- halves of it were artefacts of measuring at Vivado's default 0.85 V.
+    --
+    -- The 299.04 MHz target was a 0.85 V-era number.  The card runs at
+    -- 0.717 V, where Vivado reloads the die as -2LV, and the whole comparison
+    -- has to be redone there.  Measured at 0.717 V, this unit reads
+    -- 227.63487366264513 MHz at SILU_LANES = 8, 16 AND 32, with the IDENTICAL
+    -- critical path at 4.354 ns -- because the binding path is no longer in
+    -- the gate at all.  It is a DSP-to-DSP hop inside rmsnorm_bf's Q30 Newton
+    -- rsqrt, which every norm unit in the project shares
+    -- (docs/2026-08-27_verdicts-at-0.717V.md).  So silu width no longer
+    -- touches the clock, and "narrowing it buys frequency" is no longer true
+    -- either: at the real voltage it buys nothing and costs nothing.
+    --
+    -- That turns this from a timing question into a die-budget one, and the
+    -- die is the scarce thing: B's aux row went +32 DSP when the silu
+    -- double-count was settled, putting the design at 90.6% of 2,880 DSP.
+    -- 16 -> 8 buys -16 DSP, -9,763 LUT, -1,005 FF and -4.0 BRAM.
+    --
+    -- What it costs is the per-head deadline, which no synthesis number can
+    -- show.  MEASURED by bisection: 374 dropped / 375 passing, against
+    -- 369/370 at 16 lanes.  So 5 cycles, leaving +137 cycles of margin at
+    -- RECUR_LANES=32, 26.8% down from 27.8%.  Note 5 and not the 8 that
+    -- doubling SI_BEATS predicts -- three of those eight do not reach the
+    -- boundary, and this is the third time an arithmetic model of this
+    -- deadline has over-predicted it.  Bisect it, do not infer it.
+    --
+    -- Still an OOC SYNTHESIS equality.  Two units measuring the same Fmax at
+    -- synthesis need not stay equal through placement and routing; the
+    -- per-lane replication in gdn_silu moved a post-route path by 2.3 ns that
+    -- synthesis did not predict.  A post-route confirmation at 8 is owed.
+    SILU_LANES : positive := 8;
     -- 4, and NOT the cheaper 2.  At SILU_LANES=16 both close the identical
     -- 300.75 MHz and RMS_LANES=2 saves 12 DSP (61 vs 73) for 247 more LUT, so
     -- an area/Fmax sweep alone picks 2.  It is wrong: a narrower norm takes
