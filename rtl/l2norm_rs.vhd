@@ -147,8 +147,10 @@ architecture rtl of l2norm_rs is
   signal rq_yfin  : signed(31 downto 0) := (others => '0');
   signal rq_p, rq_E, rq_sh_r : integer := 0;
   signal rq_up_r  : boolean := false;
-  signal mr_m, mr_p : signed(65 downto 0) := (others => '0');
-  signal rq_step  : natural range 0 to 19 := 0;
+  -- mr_m = MREG, mr_m2 = the cascade hop between the two DSPs a 34x32
+  -- multiply spans, mr_p = PREG.  See the note at S_RQ.
+  signal mr_m, mr_m2, mr_p : signed(65 downto 0) := (others => '0');
+  signal rq_step  : natural range 0 to 25 := 0;
   signal arg_r, msq_r, rq_bias_r, rq_sum_r, rq_shifted : signed(63 downto 0)
        := (others => '0');
   signal msb_p : integer := 0;
@@ -279,21 +281,54 @@ begin
 
           -- ---- Newton, three steps per multiply (MREG + PREG) -------------
           when S_RQ =>
-            mr_p    <= mr_m;
+            -- THE CASCADE HOP.  Measured at 0.717 V, a 14-configuration
+            -- synthesis sweep: l2norm_rs, rmsnorm_rs, micro_rmsn_lanes and
+            -- gdn_emit_chain are ALL bound by the same path, a
+            -- DSP48E2-internal multiply in this Newton rsqrt,
+            -- ARG__N/DSP_A_B_DATA_INST, at 4.35 to 4.69 ns and 84 to 88%
+            -- LOGIC.  l2norm_rs N=128 measures 224.57 MHz at LANES 1 and 2 and
+            -- 214.18 at LANES 4, against a 237.8 MHz target, and no norm unit
+            -- closes at any lane count until it moves.
+            --
+            -- THE MREG AND THE PREG WERE ALREADY HERE and have been since this
+            -- file was written; `mr_m` is the MREG and `mr_p` the PREG, and
+            -- the three-step cadence exists precisely to buy them.  So the
+            -- residual is NOT a missing MREG.  It is the thing the cadence
+            -- note above already named and only half fixed: a 34x32 multiply
+            -- SPANS TWO DSP48E2s -- the primitive is 27x18 -- and registering
+            -- the operands fixed the logic in FRONT of the first DSP while
+            -- leaving the hop BETWEEN the two with nothing in it.  That hop is
+            -- what a path starting at DSP_A_B_DATA_INST and costing 87% logic
+            -- is made of.
+            --
+            -- mr_m2 is a third level so the tool has a register to put in that
+            -- span.  Narrowing is not an alternative here: both operands are
+            -- Q30 quantities of 31 to 34 bits and neither can be cut to the
+            -- 27x18 a single DSP takes, so the two-DSP span is structural.
+            --
+            -- Cost is one more step per multiply, 4 instead of 3, so 24 steps
+            -- instead of 18: +6 cycles per rsqrt.
+            mr_m2   <= mr_m;
+            mr_p    <= mr_m2;
             rq_step <= rq_step + 1;
+            -- Issue at N, consume at N+3: one more than before, because the
+            -- product now crosses three registers (MREG, cascade, PREG) rather
+            -- than two.  A consumer left at N+2 reads the PREVIOUS multiply's
+            -- result, which is the fault the cadence note above records this
+            -- file already having shipped once.
             case rq_step is
               when 1  => mr_m <= resize(rq_y * rq_y, 66);
-              when 3  => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 4  => mr_m  <= resize(rq_smant * rq_y2, 66);
-              when 6  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 7  => mr_m    <= resize(rq_diff * rq_y, 66);
-              when 9  => rq_y <= resize(shift_right(mr_p, 31), 32);
-              when 10 => mr_m <= resize(rq_y * rq_y, 66);
-              when 12 => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 13 => mr_m  <= resize(rq_smant * rq_y2, 66);
-              when 15 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 16 => mr_m    <= resize(rq_diff * rq_y, 66);
-              when 18 => rq_y <= resize(shift_right(mr_p, 31), 32);
+              when 4  => rq_y2 <= resize(shift_right(mr_p, 30), 32);
+              when 5  => mr_m  <= resize(rq_smant * rq_y2, 66);
+              when 8  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
+              when 9  => mr_m    <= resize(rq_diff * rq_y, 66);
+              when 12 => rq_y <= resize(shift_right(mr_p, 31), 32);
+              when 13 => mr_m <= resize(rq_y * rq_y, 66);
+              when 16 => rq_y2 <= resize(shift_right(mr_p, 30), 32);
+              when 17 => mr_m  <= resize(rq_smant * rq_y2, 66);
+              when 20 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
+              when 21 => mr_m    <= resize(rq_diff * rq_y, 66);
+              when 24 => rq_y <= resize(shift_right(mr_p, 31), 32);
                          state <= S_RQ_FOLD;
               when others => null;
             end case;

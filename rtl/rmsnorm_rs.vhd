@@ -107,7 +107,7 @@ architecture rtl of rmsnorm_rs is
   -- this file did exactly that and would have produced a wrong inv32 with no
   -- structural symptom.  Even steps issue and consume; odd steps are the
   -- register hop that buys the MREG.
-  signal rq_step : natural range 0 to 19 := 0;
+  signal rq_step : natural range 0 to 25 := 0;
 
   -- ---- scalar path.  ONE instance, so it is left at generous widths; the
   -- DSP cost lives in the per-lane multiplies and in the rsqrt, both narrowed.
@@ -143,7 +143,9 @@ architecture rtl of rmsnorm_rs is
   signal emit_bias : signed(63 downto 0) := (others => '0');
   signal rq_up_r  : boolean := false;
   -- MREG/PREG pairs: two registers, no logic between, one per Newton multiply
-  signal mr_m, mr_p : signed(65 downto 0) := (others => '0');
+  -- mr_m = MREG, mr_m2 = the cascade hop between the two DSPs a 34x32
+  -- multiply spans, mr_p = PREG.  See the note at S_RQ.
+  signal mr_m, mr_m2, mr_p : signed(65 downto 0) := (others => '0');
 
   -- ---- element pipeline
   type s17a is array(0 to LANES-1) of signed(16 downto 0);
@@ -345,28 +347,61 @@ begin
           -- what the MREG+PREG pair costs.  Eighteen steps instead of twelve;
           -- against a 3N/LANES element loop that is noise.
           when S_RQ =>
-            mr_p    <= mr_m;
+            -- THE CASCADE HOP.  Measured at 0.717 V, a 14-configuration
+            -- synthesis sweep: l2norm_rs, rmsnorm_rs, micro_rmsn_lanes and
+            -- gdn_emit_chain are ALL bound by the same path, a
+            -- DSP48E2-internal multiply in this Newton rsqrt,
+            -- ARG__N/DSP_A_B_DATA_INST, at 4.35 to 4.69 ns and 84 to 88%
+            -- LOGIC.  rmsnorm_rs N=256 measures 224.57 MHz at LANES 1 and
+            -- 211.46 at LANES 2 and 4, against a 237.8 MHz target, and no norm
+            -- unit closes at any lane count until it moves.
+            --
+            -- THE MREG AND THE PREG WERE ALREADY HERE and have been since this
+            -- file was written; `mr_m` is the MREG and `mr_p` the PREG, and
+            -- the three-step cadence above exists precisely to buy them.  So
+            -- the residual is NOT a missing MREG.  It is the thing the cadence
+            -- note already named and only half fixed: a 34x32 multiply SPANS
+            -- TWO DSP48E2s -- the primitive is 27x18 -- and registering the
+            -- operands fixed the logic in FRONT of the first DSP while leaving
+            -- the hop BETWEEN the two with nothing in it.  That hop is what a
+            -- path starting at DSP_A_B_DATA_INST and costing 87% logic is
+            -- made of.
+            --
+            -- mr_m2 is a third level so the tool has a register to put in that
+            -- span.  Narrowing is not an alternative here: both operands are
+            -- Q30 quantities of 31 to 34 bits and neither can be cut to the
+            -- 27x18 a single DSP takes, so the two-DSP span is structural.
+            --
+            -- Cost is one more step per multiply, 4 instead of 3, so 24 steps
+            -- instead of 18: +6 cycles per rsqrt.
+            mr_m2   <= mr_m;
+            mr_p    <= mr_m2;
             rq_step <= rq_step + 1;
+            -- Issue at N, consume at N+3: one more than before, because the
+            -- product now crosses three registers (MREG, cascade, PREG) rather
+            -- than two.  A consumer left at N+2 reads the PREVIOUS multiply's
+            -- result, which is exactly the fault the cadence note above
+            -- records this file already having shipped once.
             case rq_step is
               -- M1 = y*y   (y is already registered, so no derive step needed)
               when 1  => mr_m <= resize(rq_y * rq_y, 66);
               -- M2 = smant * y2
-              when 3  => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 4  => mr_m  <= resize(rq_smant * rq_y2, 66);
+              when 4  => rq_y2 <= resize(shift_right(mr_p, 30), 32);
+              when 5  => mr_m  <= resize(rq_smant * rq_y2, 66);
               -- M3 = diff * y
-              when 6  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 7  => mr_m    <= resize(rq_diff * rq_y, 66);
+              when 8  => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
+              when 9  => mr_m    <= resize(rq_diff * rq_y, 66);
               -- end of iteration 1; M4 = y*y
-              when 9  => rq_y <= resize(shift_right(mr_p, 31), 32);
-              when 10 => mr_m <= resize(rq_y * rq_y, 66);
+              when 12 => rq_y <= resize(shift_right(mr_p, 31), 32);
+              when 13 => mr_m <= resize(rq_y * rq_y, 66);
               -- M5 = smant * y2
-              when 12 => rq_y2 <= resize(shift_right(mr_p, 30), 32);
-              when 13 => mr_m  <= resize(rq_smant * rq_y2, 66);
+              when 16 => rq_y2 <= resize(shift_right(mr_p, 30), 32);
+              when 17 => mr_m  <= resize(rq_smant * rq_y2, 66);
               -- M6 = diff * y
-              when 15 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
-              when 16 => mr_m    <= resize(rq_diff * rq_y, 66);
+              when 20 => rq_diff <= THREE_Q30 - resize(shift_right(mr_p, 30), 34);
+              when 21 => mr_m    <= resize(rq_diff * rq_y, 66);
               -- end of iteration 2
-              when 18 => rq_y <= resize(shift_right(mr_p, 31), 32);
+              when 24 => rq_y <= resize(shift_right(mr_p, 31), 32);
                          state <= S_RQ_FOLD;
               when others => null;                        -- MREG / PREG hops
             end case;
