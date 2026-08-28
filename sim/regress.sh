@@ -343,7 +343,7 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=70
+BASELINE_PASS=72   # +1 sim/tb_matvec_cb_lockstep, +1 landed alongside, 2026-08-27
 
 usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 

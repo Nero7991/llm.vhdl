@@ -54,7 +54,10 @@ entity matvec_core is
     BLK         : positive := 32;     -- weights per scale block, spec 6.1
     ROWS_IF     : positive := 4;      -- rows in flight, spec 7.2 / 14.4
     MAXCOLS     : positive := 17408;  -- spec 14.1, 27B FFN
-    MAXROWS_BFP : positive := 17408
+    MAXROWS_BFP : positive := 17408;
+    -- Rows served by one codebook replica.  1 = one copy per row, the default.
+    -- See the cb declaration for why this is a generic and not a constant.
+    CB_ROWS_PER_COPY : positive := 1
   );
   port(
     clk, rst  : in  std_logic;
@@ -116,8 +119,68 @@ architecture rtl of matvec_core is
   constant P_CONTRIB : natural := LVL + 3;
   constant TILES : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
 
+  -- THE CODEBOOK, AND WHY THERE ARE MANY OF IT.
+  --
+  -- cb is the 16-entry runtime-loadable IQ4_NL codebook.  Every lane of the
+  -- product stage decodes its 4-bit weight nibble through it, so at the FK33's
+  -- ROWS_IF = 48 and BLK = 32 ONE 16-entry table has 1,536 consumers, each a
+  -- 16:1 8-bit mux feeding a DSP.  Measured post-route at 0.717 V, that made it
+  -- the critical path once the ns broadcast was fixed:
+  --
+  --   cb_reg[4][6]_replica_1/C -> tr_reg[0][1220]/DSP_OUTPUT_INST/ALU_OUT[10]
+  --   slack -2.041   logic 2.212   NET 2.775   (55.6% route)   187.2 MHz
+  --
+  -- `_replica_1` is Vivado replicating the source by itself and still missing,
+  -- the same tell as `ns_r_reg[1]_rep__7` before it and `si_e_seg_reg[4]_replica`
+  -- in gdn_silu before that.  This is the third instance of one shape: a small
+  -- control value with a very large, physically spread set of consumers.
+  --
+  -- GRANULARITY.  One copy per ROW is the default, and the defence is that a
+  -- row is already a physical cluster for a reason that has nothing to do with
+  -- the codebook: the BLK lanes of row rr feed a shared adder tree
+  -- (tr(1)(rr*BLK+i) <= tr(0)(rr*BLK+2i) + tr(0)(rr*BLK+2i+1)), so the placer
+  -- keeps them together whether or not we ask it to.  Replicating on any
+  -- boundary the tree does not respect would put a copy's consumers in two
+  -- clusters and buy less than it costs.  Per row, fanout per codebook bit
+  -- falls from ROWS_IF*BLK to BLK -- 1,536 to 32 at the FK33 shape -- for
+  -- ROWS_IF * 128 flops, 6,144 at ROWS_IF = 48, against 56,100 used and
+  -- 879,360 available.  FF is the right currency here: it sits at 26% while
+  -- LUT is at 65%.
+  --
+  -- It is a GENERIC and not a constant because the right granularity is a
+  -- placement question and this file cannot answer it.  CB_ROWS_PER_COPY = 1
+  -- is one copy per row; = 2 halves the flops and doubles the fanout; =
+  -- ROWS_IF is exactly the pre-fix design and is how you measure what the
+  -- replication was worth without touching anything else.
+  constant CB_COPIES : positive :=
+    (ROWS_IF + CB_ROWS_PER_COPY - 1) / CB_ROWS_PER_COPY;
   type cb_t is array(0 to 15) of signed(7 downto 0);
-  signal cb : cb_t := (others => (others => '0'));
+  type cb_bank_t is array(0 to CB_COPIES-1) of cb_t;
+  signal cb : cb_bank_t := (others => (others => (others => '0')));
+
+  -- THE WRITE PATH IS THE CORRECTNESS RISK, NOT THE READ PATH.  A codebook
+  -- that is half old and half new is a silently wrong answer, not a failure,
+  -- so the replicas are written by ONE command that reaches all of them in the
+  -- SAME cycle.  There is deliberately no master copy that the replicas chase:
+  -- a master-then-broadcast design has a window in which they legitimately
+  -- differ, and that window is the defect.  Here they are peers, they are
+  -- written together, and the only thing that is registered ahead of them is
+  -- the write COMMAND -- which is replicated too, so that cb_data does not
+  -- itself become a 16 x CB_COPIES fanout net (768 flop D-inputs at ROWS_IF =
+  -- 48) in place of the one this change exists to remove.
+  --
+  -- Cost: one cycle of write latency, spent in S_IDLE where the spec already
+  -- confines codebook writes.  Zero cycles anywhere in the multiply path.
+  type cba_arr is array(0 to CB_COPIES-1) of std_logic_vector(3 downto 0);
+  type cbd_arr is array(0 to CB_COPIES-1) of std_logic_vector(7 downto 0);
+  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+  signal cbw_a : cba_arr := (others => (others => '0'));
+  signal cbw_d : cbd_arr := (others => (others => '0'));
+  attribute dont_touch : string;
+  attribute dont_touch of cb    : signal is "true";
+  attribute dont_touch of cbw_v : signal is "true";
+  attribute dont_touch of cbw_a : signal is "true";
+  attribute dont_touch of cbw_d : signal is "true";
 
   -- ybuf holds a whole tile per word, so all ROWS_IF rows are written together
   -- at row-end and read together at emit.  FLAT, not an array of arrays: a
@@ -263,7 +326,6 @@ architecture rtl of matvec_core is
   signal os_r   : os_t := 0;
   type   os_arr is array(0 to ROWS_IF-1) of os_t;
   signal os_rep : os_arr := (others => 0);
-  attribute dont_touch : string;
   attribute dont_touch of ns_rep : signal is "true";
   attribute dont_touch of os_rep : signal is "true";
   signal sat_r, err_r : std_logic := '0';
@@ -355,6 +417,101 @@ begin
     report "matvec_core: adder-tree reclaim needs LVL >= 2, i.e. BLK >= 4"
     severity failure;
 
+  ----------------------------------------------------------------------------
+  -- P_CB: the codebook and its write path, in their OWN process.
+  ----------------------------------------------------------------------------
+  -- Separate from the main process on purpose.  The write is one cycle behind
+  -- the command, so it has to happen on a cycle when cb_we is already low --
+  -- that is, in the arm of the main process's rst/cb_we/else chain where the
+  -- write no longer is.  Rather than duplicate it into two arms, or delete the
+  -- cb_we arm and change when `start` is honoured, cb gets its own process.
+  -- Nothing else drives cb, so there is no shared-driver question.
+  --
+  -- LOCKSTEP IS THE WHOLE POINT.  cbw_v/a/d are per-copy replicas of ONE
+  -- command, all loaded on the same edge from the same source, and every copy
+  -- writes off its own replica on the next edge.  So the copies cannot be
+  -- caught in different states: there is no cycle in which one has taken the
+  -- write and another has not.  P_CB_CHK below asserts exactly that, in every
+  -- testbench that touches this core, rather than in one that was written for
+  -- the purpose.
+  P_CB : process(clk)
+  begin
+    if rising_edge(clk) then
+      for c in 0 to CB_COPIES-1 loop
+        -- stage W1: the write, off this copy's OWN command register
+        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+        end if;
+        -- stage W0: capture the command, one register per copy
+        if cb_we = '1' and st = S_IDLE and rst = '0' then
+          cbw_v(c) <= '1';
+        else
+          cbw_v(c) <= '0';
+        end if;
+        cbw_a(c) <= cb_addr;
+        cbw_d(c) <= cb_data;
+      end loop;
+      -- rst kills a command in flight but deliberately does NOT clear cb: the
+      -- codebook is loaded once and outlives a reset, which is the behaviour
+      -- the previous single-copy version had.
+      if rst = '1' then
+        cbw_v <= (others => '0');
+      end if;
+    end if;
+  end process;
+
+  -- SIMULATION-ONLY INVARIANTS.  No drivers, so synthesis prunes the process.
+  --
+  -- The first is the one that matters: a partially-updated codebook is a wrong
+  -- answer rather than a failure, and it is invisible in the output of any
+  -- single run.  Checking it structurally, every cycle, in all 70 testbenches,
+  -- is strictly stronger than a load-then-read sequence in one of them -- a
+  -- sequence only catches a lagging replica if the timing happens to expose it,
+  -- whereas this catches the divergence itself at the edge it occurs.
+  P_CB_CHK : process(clk)
+  begin
+    if rising_edge(clk) then
+      for c in 1 to CB_COPIES-1 loop
+        assert cb(c) = cb(0)
+          report "matvec_core: codebook replica " & integer'image(c) &
+                 " diverged from replica 0.  The replicas are written by one "
+               & "command in one cycle, so this can only mean the write path "
+               & "has been given a per-copy delay, an unreplicated enable, or "
+               & "a second driver."
+          severity failure;
+      end loop;
+      -- A write landing while a beat is in the compute pipeline would change
+      -- the codebook UNDER an operation: earlier lanes decoded with the old
+      -- table, later ones with the new, and nothing downstream can tell.  The
+      -- tightest legal schedule -- last cb_we, then start on the next edge --
+      -- lands the write on the first S_RUN cycle, when inflight is still '0',
+      -- so this permits that and rejects anything later.
+      -- THE SHARP ONE.  A codebook write must land no later than the edge
+      -- that leaves S_IDLE.  st is read pre-edge here, so the tightest legal
+      -- schedule -- last cb_we, then start on the very next edge, where the
+      -- registered write lands and st goes to S_RUN together -- reads S_IDLE
+      -- and passes, while a write one cycle later than that reads S_RUN and
+      -- fires.  This is what actually has teeth against a UNIFORMLY late
+      -- write path: a delay applied to all copies keeps them in lockstep, so
+      -- the divergence check above cannot see it, and a behavioural testbench
+      -- only sees it if the operation happens to read the codebook before the
+      -- write arrives.  Measured: with the write four cycles late, both
+      -- tb_matvec_core and tb_matvec_cb_lockstep still PASS.  This does not.
+      assert not (cbw_v(0) = '1' and st /= S_IDLE)
+        report "matvec_core: a codebook write landed after the operation had "
+             & "already left idle.  Writes are legal only in idle (spec 6.1); "
+             & "one that lands later changes the table under an operation, so "
+             & "earlier lanes decode with the old codebook and later ones with "
+             & "the new, and nothing downstream can tell."
+        severity failure;
+      assert not (cbw_v(0) = '1' and inflight = '1')
+        report "matvec_core: a codebook write landed while a beat was in the "
+             & "compute pipeline.  Codebook writes are legal only in idle "
+             & "(spec 6.1) and this one was not."
+        severity failure;
+    end if;
+  end process;
+
   accept <= '1' when st = S_RUN and w_valid = '1' and s_valid = '1'
                      and xq_cnt > 0 else '0';
   w_ready  <= accept;
@@ -406,7 +563,12 @@ begin
         xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0'; b_pf <= 0;
 
       elsif cb_we = '1' and st = S_IDLE then
-        cb(to_integer(unsigned(cb_addr))) <= signed(cb_data);
+        -- The BRANCH stays even though its body has moved to P_CB below, and
+        -- that is deliberate: its presence is what makes a codebook-write cycle
+        -- not also a start cycle.  Deleting it would let `start` be honoured on
+        -- the same edge as the last cb_we, which is the one schedule where the
+        -- registered write has not landed yet.  The empty arm IS the interlock.
+        null;
 
       else
         ----------------------------------------------------------------
@@ -475,7 +637,12 @@ begin
             xw  := signed(x_r(j*16+15 downto j*16));
             k   := tg(0).blk * BLK + j;
             if k < n_cols then
-              tr(0)(rr*BLK + j) <= resize(cb(idx) * xw, 28);
+              -- cb(rr / CB_ROWS_PER_COPY): the replica this row owns.  The
+              -- divisor is a constant and rr is a loop constant, so the copy
+              -- select is static per lane -- no mux is added in front of the
+              -- one that was already here.
+              tr(0)(rr*BLK + j) <=
+                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);
             else
               tr(0)(rr*BLK + j) <= (others => '0');
             end if;
