@@ -86,8 +86,19 @@ architecture sim of tb_matvec_fk33 is
   constant PORT_B : positive := AXI_DW / 8;          -- bytes per beat
   constant BSEL   : positive := clog2(MAXBEAT);
   constant LSB    : positive := clog2(PORT_B);       -- 5 at 256 bits
-  -- AXI4 forbids a burst crossing 4 KB, so 128 beats is the cap at 256 bits.
-  constant MAXB   : positive := 128;
+  -- THE 4 KB RULE IS NOT THE BINDING CONSTRAINT HERE.  AXI4 forbids a burst
+  -- crossing 4 KB, which at 256 bits allows 128 beats, and this bench was
+  -- originally written at 128 on that reasoning.  But the FK33's HBM slave is
+  -- **AXI3**, whose ARLEN is FOUR BITS: 16 beats is the hard maximum, and
+  -- rtl/hbm_tg_ip.vhd:1036-1039 already truncates arlen(3 downto 0) at the pin
+  -- "where the protocol is known" because anything above 15 silently wraps.
+  -- At 128 this bench was therefore bit-exact at a burst length the hardware
+  -- cannot issue, and covered 3 bursts per sub-region where silicon needs 24.
+  -- sim/tb_matvec_int4.vhd:61 was already at 16; this file had regressed it.
+  -- MEASURED: both 16 and 128 give "100 rows compared, 0 mismatches, y_exp=6",
+  -- so the streamer's burst splitting is correct at either -- but only 16 is a
+  -- burst the HBM will accept, so 16 is what this bench runs.
+  constant MAXB   : positive := 16;
 
   signal clk, rst : std_logic := '0';
   signal start    : std_logic := '0';

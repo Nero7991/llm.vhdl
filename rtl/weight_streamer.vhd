@@ -174,7 +174,11 @@ begin
   -- moment AXI_DW moves: at 256 bits the same MAXB is an 8 KB burst.
   assert MAXB * (AXI_DW / 8) <= 4096
     report "weight_streamer: MAXB*AXI_DW/8 exceeds 4096, so a burst would " &
-           "cross a 4 KB boundary (AXI4 forbids it); use MAXB=128 at AXI_DW=256"
+           "cross a 4 KB boundary (AXI4 forbids it); use MAXB=128 at AXI_DW=256 " &
+           "on an AXI4 slave -- but note the FK33 HBM slave is AXI3, whose " &
+           "ARLEN is 4 bits, so 16 beats is the real cap there (see " &
+           "rtl/hbm_tg_ip.vhd:1036).  This assert deliberately does NOT enforce " &
+           "16: weight_streamer is generic and may drive an AXI4 slave"
     severity failure;
 
   gen_w : for p in 0 to NPORTS_W-1 generate
