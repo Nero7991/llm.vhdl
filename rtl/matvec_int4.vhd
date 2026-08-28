@@ -3,7 +3,7 @@
 -- Spec: docs/superpowers/specs/2026-08-20-int4-streaming-matvec-design.md 7.1
 --
 --   matvec_int4
---   |- weight_streamer   (NPORTS_W+1 AXI4 masters -> in-order streams)
+--   |- weight_streamer   (NPORTS_W+NPORTS_S AXI4 masters -> in-order streams)
 --   |- act_mem_striped   (one BLK of activations per cycle, 7.8)
 --   `- matvec_core       (MAC array, tree, scale, accumulate, requant, 7.4)
 --
@@ -29,6 +29,13 @@ entity matvec_int4 is
     BLK         : positive := 32;
     ROWS_IF     : positive := 4;      -- 14.4 pins 4 on the AXU3EG
     NPORTS_W    : positive := 4;
+    -- Scale sub-regions, spec 6.5a: lcm(ROWS_IF*16, AXI_DW) / AXI_DW.  1 on
+    -- the AXU3EG, 3 at the FK33's ROWS_IF=48 / AXI_DW=256.  DEFAULT 1, and the
+    -- default is load bearing: at NPORTS_S = 1 every port width below is the
+    -- expression it already was (NPORTS_W+1, (NPORTS_W+1)*X), so no existing
+    -- instantiation moves and none needed editing.  weight_streamer asserts
+    -- that the value is 6.5a's MINIMAL one; this level only carries it.
+    NPORTS_S    : positive := 1;
     AXI_DW      : positive := 128;
     ADDR_W      : positive := 32;
     MAXCOLS     : positive := 17408;
@@ -54,7 +61,8 @@ entity matvec_int4 is
     out_mode  : in  std_logic_vector(1 downto 0);
     w_base    : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
     w_beats   : in  std_logic_vector(31 downto 0);
-    s_base    : in  std_logic_vector(ADDR_W-1 downto 0);
+    -- NPORTS_S scale sub-region bases, s_sub_offset[] of the header (6.4).
+    s_base    : in  std_logic_vector(NPORTS_S*ADDR_W-1 downto 0);
     s_beats   : in  std_logic_vector(31 downto 0);
 
     cb_we     : in  std_logic;
@@ -66,17 +74,19 @@ entity matvec_int4 is
     x_waddr   : in  std_logic_vector(15 downto 0);
     x_wdata   : in  std_logic_vector(15 downto 0);
 
-    -- AXI4 read masters, flattened; index NPORTS_W is the scale port
-    m_arvalid : out std_logic_vector(NPORTS_W downto 0);
-    m_arready : in  std_logic_vector(NPORTS_W downto 0);
-    m_araddr  : out std_logic_vector((NPORTS_W+1)*ADDR_W-1 downto 0);
-    m_arlen   : out std_logic_vector((NPORTS_W+1)*8-1 downto 0);
-    m_arsize  : out std_logic_vector((NPORTS_W+1)*3-1 downto 0);
-    m_arburst : out std_logic_vector((NPORTS_W+1)*2-1 downto 0);
-    m_rvalid  : in  std_logic_vector(NPORTS_W downto 0);
-    m_rready  : out std_logic_vector(NPORTS_W downto 0);
-    m_rdata   : in  std_logic_vector((NPORTS_W+1)*AXI_DW-1 downto 0);
-    m_rlast   : in  std_logic_vector(NPORTS_W downto 0);
+    -- AXI4 read masters, flattened; indices NPORTS_W .. NPORTS_W+NPORTS_S-1
+    -- are the scale ports.  At NPORTS_S = 1 every range below is the one that
+    -- was written here as NPORTS_W downto 0.
+    m_arvalid : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_arready : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_araddr  : out std_logic_vector((NPORTS_W+NPORTS_S)*ADDR_W-1 downto 0);
+    m_arlen   : out std_logic_vector((NPORTS_W+NPORTS_S)*8-1 downto 0);
+    m_arsize  : out std_logic_vector((NPORTS_W+NPORTS_S)*3-1 downto 0);
+    m_arburst : out std_logic_vector((NPORTS_W+NPORTS_S)*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rready  : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rdata   : in  std_logic_vector((NPORTS_W+NPORTS_S)*AXI_DW-1 downto 0);
+    m_rlast   : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
 
     -- result
     y_we      : out std_logic;
@@ -130,7 +140,8 @@ architecture rtl of matvec_int4 is
 begin
 
   streamer : entity work.weight_streamer
-    generic map(NPORTS_W => NPORTS_W, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+    generic map(NPORTS_W => NPORTS_W, NPORTS_S => NPORTS_S,
+                AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 ROWS_IF => ROWS_IF, BLK => BLK, DEPTH => FIFO_DEPTH,
                 MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst, start => start,

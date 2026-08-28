@@ -89,6 +89,13 @@ entity matvec_int4_axi is
     BLK         : positive := 32;
     ROWS_IF     : positive := 4;
     NPORTS_W    : positive := 4;
+    -- Scale sub-regions, spec 6.5a.  DEFAULT 1, which is every range below
+    -- unchanged, and this wrapper ASSERTS 1 -- see the assert in the body: the
+    -- AXI-Lite register map carries exactly one S_BASE / S_BASE_HI pair, so a
+    -- build with more scale sub-regions has nowhere to put their bases.  The
+    -- generic exists so the datapath below is reachable at its real width and
+    -- so the blocker is a named, asserted one rather than a silent 1.
+    NPORTS_S    : positive := 1;
     AXI_DW      : positive := 128;
     ADDR_W      : positive := 32;
     MAXCOLS     : positive := 17408;
@@ -123,16 +130,16 @@ entity matvec_int4_axi is
     s_axi_rready  : in  std_logic;
 
     -- AXI4 read masters to DDR (HP ports), flattened
-    m_arvalid : out std_logic_vector(NPORTS_W downto 0);
-    m_arready : in  std_logic_vector(NPORTS_W downto 0);
-    m_araddr  : out std_logic_vector((NPORTS_W+1)*ADDR_W-1 downto 0);
-    m_arlen   : out std_logic_vector((NPORTS_W+1)*8-1 downto 0);
-    m_arsize  : out std_logic_vector((NPORTS_W+1)*3-1 downto 0);
-    m_arburst : out std_logic_vector((NPORTS_W+1)*2-1 downto 0);
-    m_rvalid  : in  std_logic_vector(NPORTS_W downto 0);
-    m_rready  : out std_logic_vector(NPORTS_W downto 0);
-    m_rdata   : in  std_logic_vector((NPORTS_W+1)*AXI_DW-1 downto 0);
-    m_rlast   : in  std_logic_vector(NPORTS_W downto 0)
+    m_arvalid : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_arready : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_araddr  : out std_logic_vector((NPORTS_W+NPORTS_S)*ADDR_W-1 downto 0);
+    m_arlen   : out std_logic_vector((NPORTS_W+NPORTS_S)*8-1 downto 0);
+    m_arsize  : out std_logic_vector((NPORTS_W+NPORTS_S)*3-1 downto 0);
+    m_arburst : out std_logic_vector((NPORTS_W+NPORTS_S)*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rready  : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rdata   : in  std_logic_vector((NPORTS_W+NPORTS_S)*AXI_DW-1 downto 0);
+    m_rlast   : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0)
   );
 end entity;
 
@@ -184,7 +191,11 @@ architecture rtl of matvec_int4_axi is
     return true;
   end function;
   signal r_wbase : std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
-  signal r_sbase : std_logic_vector(ADDR_W-1 downto 0);
+  -- NPORTS_S*ADDR_W so the port map to matvec_int4 is width-legal at any
+  -- NPORTS_S and the failure is the NAMED assert below rather than an
+  -- elaboration width error that says nothing about why.  Only sub-region 0
+  -- has a register behind it.
+  signal r_sbase : std_logic_vector(NPORTS_S*ADDR_W-1 downto 0);
   -- sticky: a base was written that this build's ADDR_W cannot represent
   signal err_addr : std_logic := '0';
 
@@ -242,6 +253,21 @@ begin
     report "matvec_int4_axi: the register map is fixed at NPORTS_W = 4 " &
            "(spec 14.4); this build has NPORTS_W = " & integer'image(NPORTS_W)
     severity failure;
+  -- Same argument on the scale side, and it is the reason NPORTS_S stops here
+  -- rather than reaching matvec_int4_ip.  The map has ONE S_BASE (reg 12) and
+  -- ONE S_BASE_HI (0x78); 6.5a's FK33 geometry needs THREE of each.  Carrying
+  -- three bases is not a wider register, it is a different register map, and a
+  -- map whose shape moves with a synthesis generic is a map no host driver can
+  -- parse -- which is exactly the objection recorded for NPORTS_W above.  The
+  -- datapath (matvec_int4 -> weight_streamer) is general; this control plane is
+  -- not, and says so at elaboration instead of silently streaming one third of
+  -- the scales.
+  assert NPORTS_S = 1
+    report "matvec_int4_axi: the AXI-Lite register map carries exactly one " &
+           "S_BASE/S_BASE_HI pair, so NPORTS_S must be 1; this build has " &
+           "NPORTS_S = " & integer'image(NPORTS_S) & ". Instantiate " &
+           "matvec_int4 directly, or extend the register map first."
+    severity failure;
 
   rst <= not s_axi_aresetn;
 
@@ -249,7 +275,15 @@ begin
   gen_wb : for p in 0 to NPORTS_W-1 generate
     r_wbase((p+1)*ADDR_W-1 downto p*ADDR_W) <= r_wbase_a(p)(ADDR_W-1 downto 0);
   end generate;
-  r_sbase <= r_sbase_f(ADDR_W-1 downto 0);
+  r_sbase(ADDR_W-1 downto 0) <= r_sbase_f(ADDR_W-1 downto 0);
+  -- A NULL RANGE at NPORTS_S = 1, so the line above is the whole assignment
+  -- and nothing moves.  Above 1 it is unreachable -- the NPORTS_S = 1 assert
+  -- has already failed -- and it is deliberately all-ones rather than a copy
+  -- of sub-region 0: a replica would be a plausible-looking address and would
+  -- read as an implementation, which it is not.
+  gen_sb_unreachable : for q in 1 to NPORTS_S-1 generate
+    r_sbase((q+1)*ADDR_W-1 downto q*ADDR_W) <= (others => '1');
+  end generate;
 
   s_axi_awready <= awready; s_axi_wready  <= wready;
   s_axi_bvalid  <= bvalid;  s_axi_bresp   <= "00";
@@ -258,6 +292,7 @@ begin
 
   dut : entity work.matvec_int4
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
+                NPORTS_S => NPORTS_S,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                 MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH,
                 MAXB => MAXB, MAXOUT => MAXOUT)
