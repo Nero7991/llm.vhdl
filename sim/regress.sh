@@ -700,10 +700,15 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # is a genuine external prerequisite and a missing file is reported as
     # VECTORGEN_RUN_FAILED with the path in the message rather than as a wrong
     # answer.  Override the path with MV4I_FK33_FILE.  n_rows=100 is chosen,
-    # not arbitrary: 100 = 2*48 + 4, so it spans THREE tiles (the burst
-    # generator issues 3 bursts of 128 beats at MAXB=128) and the last tile
-    # carries 44 pad rows.  n_cols is NOT subsettable -- the block stride in a
-    # sub-region is the file's own nb -- so the whole K is used.
+    # not arbitrary: 100 = 2*48 + 4, so it spans THREE tiles -- 384 beats per
+    # sub-region, which at the bench's MAXB=16 is 24 bursts -- and the last
+    # tile carries 44 pad rows.  (CORRECTED 2026-08-28: this comment used to
+    # say "3 bursts of 128 beats at MAXB=128".  The 4 KB rule allows 128 at
+    # 256 bits but the FK33's HBM slave is AXI3, whose ARLEN is four bits, so
+    # 16 is the hard cap.  See 809ada7 and section 10 of
+    # docs/debugging/2026-08-28_fk33-subsystem-a-sim.md.)  n_cols is NOT
+    # subsettable -- the block stride in a sub-region is the file's own nb --
+    # so the whole K is used.
     mv_fk33_tr.txt)         echo "${MV4I_FK33_FILE:-/mnt/storage/llama-models/qwen35-9b-mv4i/blk.11.attn_k.weight.mv4i} 100 5" ;;
     *) : ;;
   esac

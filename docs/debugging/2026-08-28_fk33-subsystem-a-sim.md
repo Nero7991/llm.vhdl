@@ -429,3 +429,71 @@ cd /tmp/run && ghdl -r --std=08 -frelaxed --workdir=/tmp/work tb_matvec_fk33 \
 
 `ghdl -e` is NOT in that list on purpose: this is the mcode backend and it
 would produce no binary while exiting 0.
+
+## 10. CORRECTION 2026-08-28 -- MAXB was 128, and 128 is not a burst this card can issue
+
+**WITHDRAWN from sections 2, 3 and 4: the claim that `n_rows = 100` "exercises
+the address increment" by issuing three bursts of 128 beats.** It did issue
+three bursts, and the arithmetic result was and is right, but 128 is not a
+length the FK33 will accept, so the burst structure the bench covered was not
+the one silicon runs.
+
+Found and fixed by a concurrent workstream in commit `809ada7`, not by this
+one. The reasoning that put 128 there is in section 4 of the file it came
+from and in `rtl/weight_streamer.vhd`'s own assert message: AXI4 forbids a
+burst crossing 4 KB, which at `AXI_DW = 256` allows 128 beats. That rule is
+real and it is **not the binding constraint**. The FK33's HBM slave is
+**AXI3**, whose `ARLEN` is FOUR bits, so **16 beats is the hard maximum**.
+`rtl/hbm_tg_ip.vhd:1036` already truncates `arlen(3 downto 0)` at the pin
+"where the protocol is known" because anything above 15 silently wraps, and
+`rtl/hbm_tg.vhd:822` names the AXI3 16-beat maximum outright -- both of those
+ran on the card at 288 GB/s. `sim/tb_matvec_int4.vhd:61` was already at 16, so
+this bench had **regressed hardware fidelity relative to the older bench it was
+written to extend.**
+
+`sim/tb_matvec_fk33.vhd:101` is now `MAXB := 16`, which is 24 bursts per
+sub-region rather than 3.
+
+Re-measured here, independently of the commit that made the change, against the
+corrected sources:
+
+```
+$ ghdl -r --std=08 -frelaxed tb_matvec_fk33 ...            (MAXB = 16)
+:467:@48175ns:(report note): FK33 geometry ROWS_IF=48 AXI_DW=256 NPORTS_W=24
+  NPORTS_S=3 over 27 AXI masters: 100 rows compared, 0 mismatches, y_exp=6
+:483:@48175ns:(report note): subsystem A is bit-exact with ref/matvec_int4.c
+  from the real .mv4i bytes up, at ROWS_IF=48 / AXI_DW=256          rc=0
+```
+
+48175 ns against 47875 ns at 128: the extra 300 ns is the additional AR
+handshakes and nothing else. **The RTL was never wrong** -- the streamer splits
+bursts correctly at either length. What was wrong was the claim about what had
+been covered.
+
+The teeth were re-run at `MAXB = 16` and are unchanged, to the value:
+
+```
+D1 (transpose two weights, one byte 95 -> 59)
+  END-TO-END MISMATCH r=0 got -1057 want -1073 ... 1 mismatches   rc=1
+M2 (scale sub-region order reversed, re-applied to the CURRENT weight_streamer)
+  END-TO-END MISMATCH r=0 got -4142 want -1073
+  END-TO-END MISMATCH r=1 got -1625 want -5036                    rc=1
+```
+
+`sim/regress.sh`'s `mv_fk33_tr.txt` comment carried the same wrong claim and is
+corrected in place.
+
+**The general trap, and it is the reusable part of this entry.** The bench took
+its burst cap from the assert message of the RTL it was testing
+(`weight_streamer`: "use MAXB=128 at AXI_DW=256"), which states the AXI4 rule
+because that entity is generic and may drive an AXI4 slave. A generic module's
+own guard is a bound on what the MODULE permits, never a statement about what
+the SLAVE on the other end accepts. The card's protocol level was findable
+without a board -- two files in this repo already had it, both of them
+measured on the card -- and was not looked for. **Do not take a testbench's
+hardware-fidelity parameters from the DUT's asserts; take them from the
+interface the DUT will actually be wired to.**
+
+Still not addressed, and both are named in `809ada7` as well: `axi_rd_port`'s
+`MAXOUT` defaults to 2 (32 outstanding beats) where the measured 288 GB/s run
+used 16, and the HBM-AXI-to-core CDC of spec 14.5 item 3 still does not exist.
