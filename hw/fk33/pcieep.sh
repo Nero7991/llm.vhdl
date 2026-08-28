@@ -57,8 +57,17 @@ prog () {   # $1 = bitstream.  xsdb, not Vivado: see tcl/program.tcl.
     pkill -f "[b]in/unwrapped/lnx64.o/hw_server" 2>/dev/null || true
     pkill -f "[b]in/unwrapped/lnx64.o/cs_server" 2>/dev/null || true
     sleep 2
+    # `< /dev/null` IS LOAD-BEARING.  xsdb runs itself under rlwrap, which
+    # holds the terminal waiting on stdin after the Tcl has finished, so a
+    # SUCCESSFUL configure hung until `timeout 300` killed it -- exit 124,
+    # which `set -euo pipefail` turned into a silent abort of the whole
+    # sequence, after FPGA_PROG_OK had already printed.  It only ever worked
+    # when stdin was not a tty, i.e. for every automated caller and for no
+    # human one.  Measured: identical command with and without the redirect,
+    # EXIT=124 vs EXIT=0.  tcl/program.tcl also gained an explicit `exit 0`,
+    # which is correct but is NOT by itself sufficient -- rlwrap outlives it.
     ( source /tools/Xilinx/2023.2/Vitis/2023.2/settings64.sh
-      FK33_BIT="$1" timeout 300 xsdb tcl/program.tcl ) 2>&1 \
+      FK33_BIT="$1" timeout 300 xsdb tcl/program.tcl < /dev/null ) 2>&1 \
         | grep -E "FPGA_PROG|xcvu33p|JTAG2AXI|Debug Hub"
 }
 

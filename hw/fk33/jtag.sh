@@ -30,5 +30,11 @@ print('cable reset:', p)
 PY
 sleep 3
 source /tools/Xilinx/2023.2/Vivado/2023.2/settings64.sh
+# `< /dev/null` for the same reason as in pcieep.sh's prog(): a batch tool
+# that keeps a tty on stdin can block after its script finishes, and the
+# timeout that catches it reports 124, which reads as a hang in the DESIGN
+# rather than in the harness.  Vivado batch is better behaved than xsdb here,
+# but the failure mode costs 7 minutes to observe and the redirect costs
+# nothing.
 exec timeout "${JTAG_TIMEOUT:-420}" vivado -mode batch -nojournal \
-     -log "${1%.tcl}.log" -source "$1"
+     -log "${1%.tcl}.log" -source "$1" < /dev/null
