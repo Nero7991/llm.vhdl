@@ -168,3 +168,53 @@ it every time by replicating the source and still missing.
 
 Still 55.6% route, so this remains a placement and fanout problem rather than a
 logic-depth one.
+
+---
+
+## UPDATE 2, 2026-08-28: the codebook replication measured, and where A now stands
+
+| step | commit | DSP | LUT | Fmax | WNS | logic | net |
+|---|---|---|---|---|---|---|---|
+| `ROWS_IF=58`, pre-fix | -- | 1,914 | 134,874 | 172.6 | -2.495 | 2.543 | 3.045 |
+| `ROWS_IF=48`, pre-fix | -- | 1,584 | 112,989 | 179.7 | -2.265 | 2.487 | 3.032 |
+| + `ns` narrowed and replicated | `0666c90`/`d2b4a6a` | 1,584 | 115,766 | 187.2 | -2.041 | 2.212 | 2.775 |
+| **+ codebook per row** | `fe0d3c8` | 1,584 | 121,162 | **208.8** | -1.490 | **1.313** | 3.170 |
+| codebook per 2 rows | `fe0d3c8` | 1,584 | 117,154 | 198.1 | -1.749 | 1.426 | 3.097 |
+
+**+21.0% overall, 172.6 to 208.8 MHz, and the codebook replication alone is
+worth +21.6 MHz** -- three times what dropping a fifth of the design bought.
+
+**Per row wins, and per two rows is 10.7 MHz worse**, which settles the
+granularity question the generic was left open for. The defence given for per-row
+(the `BLK` lanes of a row already share an adder tree, so the placer keeps a row
+together for reasons unrelated to `cb`) is consistent with the measurement: the
+boundary that respects existing structure is the one that pays.
+
+**The logic term collapsed, 2.212 to 1.313 ns**, which is the 16:1 codebook mux
+leaving the path. Net rose 2.775 to 3.170, so the path is now **70.7% route** and
+the binding constraint has fully migrated from logic depth into wire. That is
+worth stating because it means the next fix is not another narrowing.
+
+For comparison, `ROWS_IF = 32` measured on the BC-250 at the `ns`-fix commit:
+**201.5 MHz**, DSP 1,056, LUT 77,557. So before the codebook fix a 33% smaller
+design was 14 MHz faster; after it, the full-size `ROWS_IF = 48` is 7 MHz faster
+than the smaller one was. The fallback configuration lost its remaining
+justification.
+
+### Subsystem B, the same night
+
+Post-route at 0.717 V, after the `p2_raw` MREG and the `mr_m2` cascade hop:
+
+| `SILU_LANES` | DSP | LUT | FF | Fmax | logic | net |
+|---|---|---|---|---|---|---|
+| 8 | 57 | 22,008 | 14,956 | 231.9 | 3.605 | 0.538 |
+| 16 | 73 | 29,876 | 16,154 | 233.9 | 3.605 | 0.538 |
+
+**This is the post-route confirmation that was recorded as owed.** The synthesis
+equality across 8/16/32 lanes survives routing: 2.0 MHz apart, with an identical
+critical path in both. So `SILU_LANES = 8` costs 2 MHz and returns 16 DSP and
+7,868 LUT, and the decision taken on synthesis evidence holds.
+
+**A still binds, but the gap has closed from 59.6 MHz to 25.1** (208.8 against
+233.9). Every token-time figure in the repo still needs re-deriving, and now
+against 208.8 rather than the 172.6 this document first reported.
