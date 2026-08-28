@@ -13,17 +13,26 @@ set -uo pipefail
 say () { printf '\n=== %s ===\n' "$*"; }
 verdict () { printf '  %-6s %s\n' "$1" "$2"; }
 
-# CORRECTED 2026-08-27.  The default used to be hardcoded to 0000:00:1c.0 and
-# described as "the free chipset x4 port".  Measured on this box it is neither
-# safe nor x4:
-#   0000:00:01.0  CPU   Gen5 x8   RTX 3090 Ti
-#   0000:00:01.1  CPU   Gen5 x8   Samsung root NVMe (trains x4)
-#   0000:00:06.0  CPU   Gen4 x4   Crucial P3 /mnt/storage
-#   0000:00:1c.0  PCH   Gen3 x1   EMPTY            <-- only free port
-#   0000:00:1c.2  PCH   Gen3 x1   Intel I225-V NIC
-#   0000:00:1c.4  PCH   Gen4 x4   RTX 3090
-# So the only free root port visible with no card in is x1, and a second x4
-# port may only appear once a card is present.  Auto-detect instead.
+# WITHDRAWN 2026-08-28.  A hand-written port-to-connector table used to live
+# here.  It listed 0000:00:1c.0 as "EMPTY  <-- only free port", the first
+# attempt at bring-up read that comment as authority, and the FK33 was moved
+# there.  It is not a card slot: `sudo lspci -vv -s 00:1c.0` answers
+# `SltCap: HotPlug+ Surprise+ PwrCtrl- MRL-` and, with the card supposedly in
+# it, `SltSta: PresDet-`.  The move cost a power cycle and tested nothing.
+#
+# The table is deleted rather than corrected, because the defect was the FORM,
+# not the contents: a comment cannot be cross-checked, ages silently, and
+# carries the same authority whether it was measured or guessed.  Every
+# port-to-connector claim now comes from ./fk33_slotmap.sh, which derives it
+# from SMBIOS type 9 and says "unknown" when it cannot.  Read its header before
+# trusting even that: on this board the WIDTH and DESIGNATION fields inside a
+# type 9 record are Intel reference boilerplate and are wrong, and only the
+# presence or absence of a record carries information.
+#
+# There is also no hardcoded default root port any more.  Defaulting to
+# 0000:00:1c.0 meant every stage below silently measured that port whenever
+# auto-detection found nothing, which is precisely how the wrong port came to
+# be measured and reported on.  With no candidate, this script now says so.
 RP="${FK33_RP:-}"
 if [[ -z "$RP" ]]; then
     for b in /sys/bus/pci/devices/*/; do
@@ -31,8 +40,12 @@ if [[ -z "$RP" ]]; then
         n=0; for c in "$b"0000:*; do [[ -e "$c/vendor" ]] && n=$((n+1)); done
         (( n == 0 )) && RP="$(basename "$b")" && break
     done
+    if [[ -n "$RP" ]]; then
+        echo "note: root port not given, and $RP is the first port with nothing"
+        echo "      behind it.  That is a GUESS, not an identification.  The"
+        echo "      identification comes from a baseline diff:  ./fk33_go.sh --diff"
+    fi
 fi
-RP="${RP:-0000:00:1c.0}"
 
 say "STAGE 1  is anything there at all"
 # Isolates: whether the FPGA presented a config space.  Nothing about DMA,
@@ -52,7 +65,18 @@ else
     echo "  failure."
 fi
 
-say "STAGE 2  root port link state ($RP)"
+say "STAGE 2  root port link state (${RP:-NONE IDENTIFIED})"
+if [[ -z "$RP" ]]; then
+    verdict SKIP "no root port identified, and none is assumed"
+    echo "  Every port in config space already has a device behind it, so"
+    echo "  nothing here is a candidate.  This used to default to 0000:00:1c.0"
+    echo "  and measure it regardless, which reports link state about a port"
+    echo "  the card is not in.  Identify the port properly first:"
+    echo "      ./fk33_go.sh --diff        what changed since the baseline"
+    echo "      ./fk33_slotmap.sh          which ports have a connector at all"
+    echo "      FK33_RP=0000:xx:yy.z $0    once you know it"
+fi
+if [[ -n "$RP" ]]; then
 # Isolates: the physical and data link layers, independently of whether any
 # device answered configuration reads.  This is the single most diagnostic
 # thing on the host and it works when stage 1 finds nothing.
@@ -96,14 +120,14 @@ else
         *"Width x1"*|*"Width x2"*)
             if [[ "$CW" == "$MW" ]]; then
                 verdict WARN "trained x$CW, and this port's CAPABILITY is only x$MW"
-                echo "  The lanes that exist all came up.  But the EXPECTED result"
-                echo "  is x4: both x16-length chipset slots on this board"
-                echo "  (PCIEX4_1, PCIEX4_2) are PCIe x4, and one of them is free."
-                echo "  A x$MW capability means the card is most likely in the"
-                echo "  WRONG CONNECTOR -- a physically x1 slot or an M.2 path --"
-                echo "  not that the design is limited.  Check which connector it"
-                echo "  is physically in.  Gen3 x1 is about 0.98 GB/s: usable for"
-                echo "  bring-up, useless for weight loading."
+                echo "  The lanes that exist all came up, so the DESIGN is not the"
+                echo "  limit; the PORT is.  Whether that means the card is in the"
+                echo "  wrong connector is NOT inferable from a link width, and"
+                echo "  inferring it from a width is what cost a power cycle on"
+                echo "  2026-08-28.  Ask the tool that has evidence:"
+                ./fk33_slotmap.sh --lookup "$RP" 2>/dev/null | sed 's/^/  /'
+                echo "  Gen3 x1 is about 0.98 GB/s: usable for bring-up, useless"
+                echo "  for weight loading."
             else
                 verdict FAIL "trained x$CW but the port can do x$MW: LANES ARE DROPPING OUT"
                 echo "  A real fault, not a slot limitation.  Contact and seating"
@@ -121,11 +145,25 @@ else
         *"8GT/s"*)   echo "  Gen3, as designed." ;;
     esac
 fi
+fi
+
+say "STAGE 2b  does this port have a physical connector at all"
+# Isolates: slot choice from everything electrical.  It is the question the
+# first bring-up attempt answered from a comment, and got wrong.
+./fk33_slotmap.sh 2>/dev/null | sed 's/^/  /' || true
 
 if [[ -z "${BDF:-}" ]]; then
     echo
-    echo "Stop here until stage 1 finds a device.  Recovery, in increasing order"
-    echo "of disruption, all ROOT:"
+    echo "Stop here until stage 1 finds a device."
+    if [[ -z "$RP" ]]; then
+        echo "No root port was identified, so no targeted recovery can be given."
+        echo "A blind rescan only finds devices behind bridges that ALREADY"
+        echo "exist; if the card's port is hidden it cannot help.  Run"
+        echo "./fk33_go.sh --diff first -- a bridge that VANISHED since the"
+        echo "baseline is the case where none of the commands below can work."
+        exit 1
+    fi
+    echo "Recovery, in increasing order of disruption, all ROOT:"
     echo "  sudo sh -c 'echo 1 > /sys/bus/pci/rescan'"
     echo "  # secondary bus reset on the root port -- reasserts PERST# to the"
     echo "  # card, which resets the PCIe block.  It should NOT deconfigure the"

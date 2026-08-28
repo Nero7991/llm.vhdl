@@ -1,0 +1,70 @@
+# dmidecode 3.3
+Getting SMBIOS data from sysfs.
+SMBIOS 3.6.0 present.
+# SMBIOS implementations newer than version 3.5.0 are not
+# fully supported by this version of dmidecode.
+
+Handle 0x001C, DMI type 9, 17 bytes
+System Slot Information
+        Designation: J6B2
+        Type: x16 PCI Express
+        Current Usage: In Use
+        Length: Long
+        ID: 0
+        Characteristics:
+                3.3 V is provided
+                Opening is shared
+                PME signal is supported
+        Bus Address: 0000:00:01.0
+
+Handle 0x001D, DMI type 9, 17 bytes
+System Slot Information
+        Designation: J6B1
+        Type: x1 PCI Express
+        Current Usage: In Use
+        Length: Short
+        ID: 1
+        Characteristics:
+                3.3 V is provided
+                Opening is shared
+                PME signal is supported
+        Bus Address: 0000:00:1c.3
+
+Handle 0x001E, DMI type 9, 17 bytes
+System Slot Information
+        Designation: J6D1
+        Type: x1 PCI Express
+        Current Usage: In Use
+        Length: Short
+        ID: 2
+        Characteristics:
+                3.3 V is provided
+                Opening is shared
+                PME signal is supported
+        Bus Address: 0000:00:1c.4
+
+Handle 0x001F, DMI type 9, 17 bytes
+System Slot Information
+        Designation: J7B1
+        Type: x1 PCI Express
+        Current Usage: In Use
+        Length: Short
+        ID: 3
+        Characteristics:
+                3.3 V is provided
+                Opening is shared
+                PME signal is supported
+        Bus Address: 0000:00:1c.5
+
+Handle 0x0020, DMI type 9, 17 bytes
+System Slot Information
+        Designation: J8B4
+        Type: x1 PCI Express
+        Current Usage: In Use
+        Length: Short
+        ID: 4
+        Characteristics:
+                3.3 V is provided
+                Opening is shared
+                PME signal is supported
+        Bus Address: 0000:00:1c.6

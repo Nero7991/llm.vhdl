@@ -62,12 +62,32 @@ DMABRAM_BASE = 0x2_0000_0000      # 64 KB BRAM on the DMA master, above HBM
 DMABRAM_SIZE = 0x10000
 POT_ADDR = 0x2C                   # MCP45XX-class digital pot, VCCINT
 
-# Matches tcl/vccint_step.tcl.  Do not widen these without re-reading the
-# reasoning there; the safety argument is in the code, not in a comment.
+# Do not widen these without re-reading the reasoning in tcl/vccint_step.tcl;
+# the safety argument is in the code, not in a comment.
 V_TARGET, V_LO, V_HI = 0.720, 0.716, 0.728
 V_CEILING = 0.760
-W_FLOOR, W_DEFAULT = 60, 128
+
+# W_FLOOR RAISED 60 -> 68 on 2026-08-28.  68 is the sanctioned maximum for this
+# card: lower wiper means HIGHER voltage, and wiper 68 is ~0.717 V.  Measured
+# reference points: wiper 128 = 0.6786 V, wiper 64 = 0.7203 V, so a step is
+# about 0.00065 V and 68 lands just inside the 0.716..0.728 acceptance band.
+#
+# The standing instruction is explicit: VCCINT must NEVER be taken to 0.850 V,
+# which is what the vendor's own script does.  A floor of 60 left ~5 further
+# steps of headroom below the sanctioned point for no benefit.  This is the
+# enforcement, not the comment: the loop below cannot write a wiper under
+# W_FLOOR by any path.
+#
+# NOTE tcl/vccint_step.tcl still carries W_FLOOR 60.  It is owned by another
+# agent in this session and was deliberately not edited here.  Raise it there
+# too; until then the JTAG path is the looser of the two.
+W_FLOOR, W_DEFAULT = 68, 128
+W_ABSOLUTE_FLOOR = 68             # never raise W_FLOOR above this line's value
 DV_MAX, W_STEP_MAX = 0.035, 4
+
+assert W_FLOOR >= W_ABSOLUTE_FLOOR, (
+    "W_FLOOR must never go below 68 (~0.717 V).  Lower wiper = higher VCCINT, "
+    "and the standing hardware instruction forbids raising VCCINT to 0.85 V.")
 
 
 # ---------------------------------------------------------------- MMIO
@@ -90,6 +110,32 @@ class Mmio:
 
     def close(self):
         os.close(self.fd)
+
+
+def describe_dead_word(v):
+    """Say what a register word MEANS when it is not the expected value.
+
+    The distinction this makes is the point.  A read that never happened must
+    never be reported as a read that returned the wrong data.  Over JTAG-AXI
+    the failure surfaces as -1; over MMIO it surfaces as 0xFFFFFFFF from an
+    unanswered BAR or 0x00000000 from a fabric in reset.  All three are
+    "the path is not working", not "the bitstream is wrong", and conflating
+    them is what sent the 2026-08-28 bring-up down a wrong path.
+    """
+    if v in (-1, 0xFFFFFFFF):
+        return ("NOT A VALUE -- this is a FAILED transaction.\n"
+                "all-ones (or -1 over JTAG-AXI) means the access was issued "
+                "and nothing\nanswered: link down, BAR unmapped, or the AXI "
+                "fabric unclocked.  It is NOT\n'the wrong data came back', so "
+                "do not read it as a bitstream mismatch.")
+    if v == 0:
+        return ("NOT A VALUE -- all-zeroes.\n"
+                "The BAR exists and decodes, but the fabric behind it is "
+                "unclocked or held\nin reset.  Again a path fault, not a "
+                "content mismatch.")
+    return ("something answers with real data, but it is not this bitstream. "
+            "THIS one\nis a genuine value mismatch, unlike the all-ones and "
+            "all-zeroes cases above.")
 
 
 def die_temp(m):
@@ -155,6 +201,15 @@ class I2C:
     def pot_write(self, addr, wiper):
         if not 0 <= wiper <= 255:
             raise ValueError(f"wiper {wiper} out of range")
+        # THE hard clamp, deliberately at the lowest level rather than in the
+        # stepping loop, so that no future caller can route around it.  A lower
+        # wiper is a HIGHER rail; W_FLOOR is the sanctioned maximum voltage.
+        if wiper < W_FLOOR:
+            raise ValueError(
+                f"refusing to write wiper {wiper}: below the floor {W_FLOOR}. "
+                f"Lower wiper means higher VCCINT, and {W_FLOOR} is the "
+                f"sanctioned maximum (~0.717 V).  VCCINT must never be taken "
+                f"to 0.85 V.")
         self.start()
         k = self.wbyte((addr << 1) & 0xFE)
         k += self.wbyte(0x00)     # volatile wiper 0; a power cycle undoes it
@@ -244,13 +299,8 @@ def cmd_id(a):
         print("  OK -- link, config space, BAR placement, AXI-Lite clock and "
               "reset,\n  smartconnect decode and bitstream identity are ALL "
               "proven by this one read.")
-    elif magic == 0xFFFFFFFF:
-        print("  all-ones: the BAR is mapped but nothing answered.")
-    elif magic == 0:
-        print("  all-zeroes: the BAR exists but the fabric behind it is "
-              "unclocked or in reset.")
     else:
-        print("  something answers, but it is not this bitstream.")
+        print("  " + describe_dead_word(magic).replace("\n", "\n  "))
     m.close()
     return 0 if magic == ID_MAGIC else 1
 
@@ -305,9 +355,16 @@ def cmd_vccint(a):
     i2c = I2C(m)
     w = i2c.pot_read(POT_ADDR)
     v = vccint(m)
-    print(f"START   wiper={w}  VCCINT={v:.4f} V  die={die_temp(m):.1f} C")
+    # pot_read returns -1 for a NACK.  That is a FAILED read, not a wiper
+    # value, and printing it in the wiper field invites exactly the confusion
+    # this session was sent to remove.  Report it as its own condition first.
     if w < 0:
-        sys.exit("ABORT: the pot did not acknowledge.  Nothing was written.")
+        print(f"START   wiper=READ FAILED (I2C NACK)  VCCINT={v:.4f} V  "
+              f"die={die_temp(m):.1f} C")
+        sys.exit("ABORT: the pot did not acknowledge.  The -1 is a failed I2C "
+                 "read, not a wiper value; do not compare it against 128.  "
+                 "Nothing was written.")
+    print(f"START   wiper={w}  VCCINT={v:.4f} V  die={die_temp(m):.1f} C")
     if not W_FLOOR <= w <= W_DEFAULT:
         sys.exit(f"ABORT: wiper {w} is outside the sane band {W_FLOOR}..{W_DEFAULT}. "
                  "Not touching anything.")
@@ -341,7 +398,20 @@ def cmd_vccint(a):
         step = max(1, min(W_STEP_MAX, int(abs(need))))
         nw = w - step
         if nw < W_FLOOR:
-            revert(f"next step would take the wiper to {nw}, below the floor {W_FLOOR}")
+            # STOP at the floor rather than reverting to 128.  Reverting puts
+            # the rail back to 0.678 V, BELOW the 0.698 V -2L floor, which is
+            # strictly worse than stopping at the sanctioned maximum of
+            # W_FLOOR (~0.717 V, already in spec).  The revert path exists for
+            # signs of a misunderstanding of the hardware; running out of
+            # sanctioned travel is not that.
+            print(f"STOPPED at the wiper floor {W_FLOOR}: the next step would "
+                  f"be {nw}.\n"
+                  f"  wiper {w}, VCCINT {v:.4f} V.  Left here deliberately:"
+                  f" {W_FLOOR} is the sanctioned\n"
+                  f"  maximum and this rail is above the 0.698 V -2L floor,"
+                  f" whereas reverting to\n"
+                  f"  {W_DEFAULT} would put it back to ~0.678 V and out of spec.")
+            sys.exit(1)
         if i2c.pot_write(POT_ADDR, nw) != 0:
             revert("pot did not acknowledge")
         time.sleep(0.2)
