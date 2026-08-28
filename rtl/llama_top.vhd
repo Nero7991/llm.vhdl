@@ -1,0 +1,1276 @@
+-- rtl/llama_top.vhd
+-- THE INTEGRATION TOP LEVEL.  One token, N transformer blocks, one residual
+-- stream, one sequencer, four unit adapters and a region file.
+--
+-- =====================================================================
+-- WHY THIS FILE EXISTS
+-- =====================================================================
+-- Four subsystems were built and verified in isolation and NONE OF THEM HAD
+-- EVER BEEN CONNECTED TO ANY OTHER:
+--
+--   A  INT4 matvec        matvec_int4 / matvec_core / weight_streamer.
+--                         Verified end to end by sim/run_matvec.sh.
+--   B  Gated DeltaNet     rtl/gdn_block.vhd, a real seven-unit top level,
+--                         bit-identical under five independent producer skews.
+--   C  gated attention    steps 3..8 verified contiguous.  THE LANE ARRAY
+--                         `attn_lane_skel` IS A PRICING SKELETON AND COMPUTES
+--                         NOTHING.  C cannot produce an attention output.
+--   D  sequencer          seq_desc_fetch / seq_region_lock / seq_opdec /
+--                         seq_vec_issue / seq_vec_res, all real.
+--                         `seq_top_skel` is NOT real -- it instantiates
+--                         nothing and has never been simulated.
+--
+-- Every integration defect this project has found came from a seam.  The D
+-- owner demonstrated that two units each verified against a stub of the other
+-- hid four defects between them.  This file is where the remaining seams
+-- become reachable.
+--
+-- =====================================================================
+-- WHAT IS REAL HERE AND WHAT IS NOT.  READ THIS BEFORE BELIEVING A NUMBER.
+-- =====================================================================
+-- REAL RTL, instantiated, not modelled:
+--   seq_desc_fetch   the descriptor walker
+--   seq_opdec        opcode decode, region masks, exponent capture
+--   seq_region_lock  the region locks and the per-region exponent store
+--   seq_vec_issue    the D-ctrl to D-vec adapter
+--   seq_vec_res      the residual add.  THE SPINE OF THE BLOCK LOOP.
+--
+-- BEHAVIOURAL MODELS, selected by generic, every one of them marked in its
+-- own comment block and every one of them reporting what it is at time zero:
+--   the region file          a flat array.  Really 14 BRAM/URAM regions.
+--   unit A when A_BEHAV      a plain integer matvec with synthetic weights.
+--   unit B when B_BEHAV      a first-order recurrence, NOT Gated DeltaNet.
+--   unit C always            *** ATTENTION IS A STUB.  SEE THE BANNER. ***
+--   unit E always            unreachable at NCARDS=1; errors if ever started.
+--   the norm and swiglu      D-vec engines that do not exist as RTL yet.
+--
+-- `A_BEHAV` and `B_BEHAV` exist so that a failure can be BISECTED to a side of
+-- a seam.  They are not an alternative implementation and nothing about them
+-- is a claim.  With both false the top level instantiates the real A and the
+-- real B.
+--
+-- =====================================================================
+-- THE THREE SEAM RULES THIS FILE OBEYS, AND WHY EACH IS HERE
+-- =====================================================================
+-- (1) EVERY DESCRIPTOR FIELD A UNIT NEEDS IS LATCHED ONCE, AT `job_issue`,
+--     AND READ FROM THE LATCH THEREAFTER.
+--
+--     `u_start` and `job_issue` ARE NOT THE SAME INSTANT.  seq_desc_fetch
+--     drives `u_start` combinationally from `state = S_ISSUE`
+--     (seq_desc_fetch.vhd:962) but sets `issue_r`, `live_bank` and `jvalid_r`
+--     in the REGISTERED body of S_ISSUE (:788-794).  So `u_start` is high one
+--     cycle BEFORE `job_issue`, and during that cycle the `job_*` outputs are
+--     still decoding the PREVIOUS live bank.  An adapter that latches its
+--     descriptor on `u_start` latches the previous job's shape.  That is
+--     defect class (a) -- an input read at the wrong instant of a long
+--     operation -- and it is the first thing a new adapter gets wrong.
+--
+--     It matters most for subsystem A, which reads `n_rows`, `n_cols`,
+--     `w_exp`, `x_exp` and `out_mode` LIVE for the whole of a multi-thousand
+--     cycle job (matvec_core.vhd:639, :771, :912, :932-934).  Only
+--     `out_shift` is latched inside A.  So the register that holds A's
+--     descriptor has to live HERE, in the adapter, or A silently computes
+--     with a mixture of two jobs' shapes.
+--
+-- (2) EVERY COMPLETION IS CONVERTED TO A LEVEL HELD UNTIL `u_ack`.
+--
+--     seq_desc_fetch:235 states the contract: "u_done MUST be a level held
+--     until u_ack".  Neither real unit meets it.  `matvec_core`'s `done` is a
+--     one-cycle pulse with no ack (matvec_core.vhd:918-920).  `gdn_block`'s
+--     `done` is a one-cycle pulse with no ack, and its own testbench polls
+--     `busy` instead (tb_gdn_block.vhd:618-621).  That is defect class (b).
+--     D happens to survive it, because its sticky `done_seen` capture is the
+--     sole sampler, but surviving it is not the same as meeting it: D also
+--     refuses to issue while `u_done` is still high (:787), so a unit whose
+--     `done` is a pulse and whose `ready` is synthesised wrong deadlocks.
+--     Both adapters therefore hold `done` themselves and clear it on `u_ack`.
+--
+-- (3) EVERY UN-STALLABLE PRODUCER IS TREATED AS A CORRECTNESS OBLIGATION.
+--
+--     `y_we` in A, and `y_valid` in B, have no ready.  A stall there LOSES a
+--     beat, it does not delay it.  Both sinks in this file accept
+--     unconditionally, every cycle, and `err_lost` is raised if a beat ever
+--     arrives when the sink is not armed.  A region write that the lock drops
+--     (`wr_gate` low) is likewise counted and reported, not ignored.
+--
+-- =====================================================================
+-- WHAT THE TOP LEVEL DOES NOT DO.  STATED SO NOBODY HAS TO FIND OUT.
+-- =====================================================================
+--   * There is no attention.  See the C banner.  A schedule with
+--     `attn_interval` > blocks has no attention step and is the only
+--     configuration whose OUTPUT means anything at all.
+--   * The weight base array past the 64-byte descriptor header is not
+--     fetched.  seq_desc_fetch range-checks `nsub_w`/`nsub_s` against
+--     NSUB_MAX and says in its own header that "fetching it is remaining
+--     work" (:113-115).  So A's weights do not come from the descriptor.
+--   * There is no sampler and no lm_head output.  The final A job is issued
+--     with dst = R_NONE and its result is discarded.
+--   * There is no KV cache, no position, no RoPE at this level.
+--   * NCARDS > 1 is not wired.  OP_E_COLL reaches a unit adapter that raises
+--     an error, deliberately, rather than silently completing.
+--   * The release mask is an INPUT PORT.  seq_opdec finding (3) says it is a
+--     whole-table liveness property with no descriptor field, so the host
+--     computes it.  `sim/llama_sched_pkg.build_plan` is that computation.
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.model_cfg_pkg.all;
+use work.llama_map_pkg.all;
+
+entity llama_top is
+  generic(
+    -- The model shape.  Defaults to the real build target.  A simulation
+    -- passes `mk_shape_scaled(blocks, attn_interval)`.
+    SHAPE   : shape_t := mk_shape(MODEL, NCARDS);
+
+    -- Datapath widths.  These are the D-vec widths and they are the same ones
+    -- sim/tb_seq_vec_seam.vhd closes seq_vec_res at.
+    LANES   : positive := 8;
+    MANT_W  : positive := 16;
+    ACC_W   : positive := 32;
+    EXP_W   : positive := 16;
+    VN_W    : positive := 13;   -- D-vec element-count width
+    ADDR_W  : positive := 16;   -- the lock's element-address width
+    SEGS    : positive := 3;
+    EPOCH_W : positive := 4;
+    STEP_W  : positive := 11;
+
+    -- Elements per region.  Every region is allocated the widest region's
+    -- size, which is what a flat model costs and what a real build would not
+    -- pay.  Stated because it is a model artefact, not a design choice.
+    REGMAX  : positive := 4096;
+
+    WDOG_LIMIT : positive := 200000;
+    STRICT     : boolean  := true;
+
+    -- Bisection switches.  See the header.  Both false = the real units.
+    A_BEHAV : boolean := true;
+    B_BEHAV : boolean := true;
+
+    -- Set false only in a run that is deliberately measuring the banner cost.
+    SHOUT   : boolean := true
+  );
+  port(
+    clk : in std_logic;
+    rst : in std_logic;
+
+    -- ---- host ----------------------------------------------------------
+    go         : in  std_logic;
+    abort      : in  std_logic;
+    tbl_len    : in  unsigned(STEP_W-1 downto 0);
+    host_x_exp : in  signed(EXP_W-1 downto 0);
+    -- The whole-table liveness mask for the step currently being CHECKED.
+    -- The host generator owns it; see seq_opdec finding (3).
+    rel_mask   : in  std_logic_vector(NREGION-1 downto 0);
+
+    busy       : out std_logic;
+    tok_done   : out std_logic;
+    tok_ack    : in  std_logic;
+    err        : out std_logic;
+    err_code   : out std_logic_vector(3 downto 0);
+    err_step   : out unsigned(STEP_W-1 downto 0);
+    steps_done : out unsigned(STEP_W-1 downto 0);
+
+    -- ---- the descriptor table, a host-written URAM ----------------------
+    -- Registered read of arbitrary latency, D is the only master.
+    d_raddr  : out unsigned(15 downto 0);
+    d_ren    : out std_logic;
+    d_rdata  : in  std_logic_vector(63 downto 0);
+    d_rvalid : in  std_logic;
+
+    -- ---- host access to the region file --------------------------------
+    -- The token embedding is written into R_X before `go`; the result is read
+    -- back out of R_X after `tok_done`.
+    hw_we    : in  std_logic;
+    hw_reg   : in  natural range 0 to NREGION-1;
+    hw_addr  : in  natural range 0 to REGMAX-1;
+    hw_data  : in  signed(MANT_W-1 downto 0);
+    hr_reg   : in  natural range 0 to NREGION-1;
+    hr_addr  : in  natural range 0 to REGMAX-1;
+    hr_data  : out signed(MANT_W-1 downto 0);
+
+    -- ---- observability, for the testbench and for the host -------------
+    obs_issue  : out std_logic;                       -- 1 cycle per step
+    obs_unit   : out unsigned(2 downto 0);
+    obs_opcode : out unsigned(3 downto 0);
+    obs_step   : out unsigned(STEP_W-1 downto 0);
+    obs_dst    : out unsigned(7 downto 0);
+    obs_cmp    : out std_logic;                       -- 1 cycle per completion
+    -- The exponent the lock captured for this completion, and a running hash
+    -- over EVERY element write the machine has made.  Together they separate
+    -- "the exponent path is timing-dependent" from "the data path is", which
+    -- is the first question to ask when a skew sweep differs.
+    obs_cmp_exp : out signed(EXP_W-1 downto 0);
+    obs_wsum    : out unsigned(31 downto 0);
+
+    -- Sticky seam-fault counters.  Every one of these is a defect, not a
+    -- statistic, and every one is silent in the arithmetic.
+    err_lost_beat : out std_logic;   -- an un-stallable producer beat dropped
+    err_gate_drop : out std_logic;   -- the lock refused a region write
+    err_unit_stub : out std_logic;   -- a stub unit produced a result
+    err_e_coll    : out std_logic    -- OP_E_COLL issued at NCARDS=1
+  );
+end entity;
+
+architecture rtl of llama_top is
+
+  -- ---- shape, derived once ---------------------------------------------
+  constant SZ      : integer_vector := region_sizes(SHAPE);
+  constant NG      : natural := (REGMAX + LANES - 1) / LANES;
+  function clog2(n : natural) return natural is
+    variable v : natural := 0;
+  begin
+    while (2**v) < n loop v := v + 1; end loop;
+    return v;
+  end function;
+  constant LOG2L   : natural := clog2(LANES);
+  constant GA_W    : natural := VN_W - LOG2L;
+
+  -- ---- D core ----------------------------------------------------------
+  signal go_walk    : std_logic;
+  signal d_ren_i    : std_logic;
+  signal job_valid, job_issue, job_cmp : std_logic;
+  signal job_epoch  : unsigned(EPOCH_W-1 downto 0);
+  signal job_unit   : unsigned(2 downto 0);
+  signal job_opcode : unsigned(3 downto 0);
+  signal job_flags  : std_logic_vector(7 downto 0);
+  signal job_src, job_src2, job_dst : unsigned(7 downto 0);
+  signal job_dst_off, job_n_rows, job_n_cols : unsigned(31 downto 0);
+  signal job_w_exp, job_out_shift, job_const_exp : signed(31 downto 0);
+  signal job_out_mode : std_logic_vector(7 downto 0);
+  signal job_ordinal  : unsigned(7 downto 0);
+  signal job_const_base : unsigned(31 downto 0);
+  signal job_step   : unsigned(STEP_W-1 downto 0);
+
+  signal chk_req, chk_bad : std_logic;
+  signal chk_code : std_logic_vector(3 downto 0);
+  signal chk_opcode : unsigned(3 downto 0);
+  signal chk_src, chk_dst : unsigned(7 downto 0);
+  signal chk_dst_off, chk_n_rows : unsigned(31 downto 0);
+
+  signal u_start, u_ready, u_done, u_ack, u_err
+       : std_logic_vector(NUNIT-1 downto 0) := (others => '0');
+  signal u_done_epoch : std_logic_vector(NUNIT*EPOCH_W-1 downto 0)
+                      := (others => '0');
+  signal u_y_exp      : std_logic_vector(NUNIT*EXP_W-1 downto 0)
+                      := (others => '0');
+
+  signal host_busy : std_logic;
+  signal lock_rst  : std_logic;
+  signal iss_req, iss_commit, iss_prod : std_logic;
+  signal iss_dst   : unsigned(7 downto 0);
+  signal iss_seg   : unsigned(1 downto 0);
+  signal iss_off, iss_n_rows : unsigned(ADDR_W-1 downto 0);
+  signal iss_cons, iss_rel : std_logic_vector(NREGION-1 downto 0);
+  signal iss_ok    : std_logic;
+  signal iss_code  : std_logic_vector(3 downto 0);
+  signal cmp_valid : std_logic;
+  signal cmp_y_exp : signed(EXP_W-1 downto 0);
+  signal viol, viol_ack : std_logic;
+  signal viol_code : std_logic_vector(3 downto 0);
+  signal viol_reg  : unsigned(7 downto 0);
+  signal y_exp_taken : std_logic;
+  signal y_exp_held  : signed(EXP_W-1 downto 0);
+  signal viol_step   : unsigned(STEP_W-1 downto 0);
+  signal viol_seen   : std_logic;
+  signal lock_state  : std_logic_vector(2*NREGION-1 downto 0);
+
+  signal wr_we    : std_logic := '0';
+  signal wr_region: unsigned(7 downto 0) := (others => '0');
+  signal wr_gate  : std_logic;
+  -- THE EXPONENT READ PORT IS A SHARED RESOURCE, AND IT HAS TO BE ARBITRATED.
+  --
+  -- `seq_region_lock` has exactly ONE exponent read port and it is
+  -- combinational (seq_region_lock.vhd:378-383).  `seq_vec_issue` drives it
+  -- for the D-vec ops.  Unit A needs it too: A's `y_exp` is
+  -- `w_exp + x_exp - out_shift`, and `x_exp` is the SOURCE region's captured
+  -- exponent, which lives in the lock because hazard A3's fix made the
+  -- exponent part of the locked object.
+  --
+  -- Wiring seq_vec_issue straight to the port and letting A read whatever it
+  -- happened to be pointing at makes A's exponent a function of the D-vec
+  -- adapter's internal state, i.e. OF TIMING.  That is what the first run of
+  -- sim/tb_llama_top.vhd measured: R_X differed between descriptor-memory
+  -- latency 1 and latency 2.  See docs/debugging/2026-08-28_llama-top-first-seams.md.
+  signal exp_rd_region : unsigned(7 downto 0);
+  signal exp_rd_seg    : unsigned(1 downto 0);
+  signal exp_rd_data   : signed(EXP_W-1 downto 0);
+  signal exp_rd_valid  : std_logic;
+  signal vi_exp_region : unsigned(7 downto 0);
+  signal vi_exp_seg    : unsigned(1 downto 0);
+  signal a_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal a_exp_seg     : unsigned(1 downto 0) := "00";
+
+  -- ---- D-vec -----------------------------------------------------------
+  signal v_start, v_ready, v_taken, v_done, v_ack, v_err
+       : std_logic_vector(NVOP-1 downto 0) := (others => '0');
+  signal v_y_exp : std_logic_vector(NVOP*EXP_W-1 downto 0) := (others => '0');
+  signal v_n     : unsigned(VN_W-1 downto 0);
+  signal v_exp_a, v_exp_b : signed(EXP_W-1 downto 0);
+  signal v_reg_a, v_reg_b, v_reg_d : unsigned(7 downto 0);
+  signal vi_epoch : unsigned(EPOCH_W-1 downto 0);
+  signal vi_yexp  : signed(EXP_W-1 downto 0);
+  signal vi_code  : std_logic_vector(3 downto 0);
+
+  signal r_en   : std_logic;
+  signal r_addr : unsigned(GA_W-1 downto 0);
+  signal x_rdata, e_rdata : std_logic_vector(LANES*MANT_W-1 downto 0)
+                          := (others => '0');
+  signal w_we   : std_logic;
+  signal w_addr : unsigned(GA_W-1 downto 0);
+  signal w_be   : std_logic_vector(LANES-1 downto 0);
+  signal w_data : std_logic_vector(LANES*MANT_W-1 downto 0);
+  signal vres_exp : signed(EXP_W-1 downto 0);
+
+  -- ======================================================================
+  -- THE REGION FILE.
+  --
+  -- BEHAVIOURAL.  A flat array of NREGION*REGMAX 16-bit mantissas with one
+  -- element read port, one element write port, one LANES-wide group read port
+  -- with two operand selects, and one LANES-wide group write port.  Both read
+  -- ports are REGISTERED, one cycle, because that is what a BRAM is and an
+  -- adapter written against a combinational read does not survive the real
+  -- thing.
+  --
+  -- READ_LATENCY IS TWO EDGES, NOT ONE, AND EVERY ADAPTER HERE DEPENDS ON IT.
+  -- An adapter drives `ur_addr` from a clocked process, so the address is
+  -- registered once there; the memory registers the data again.  An element
+  -- whose address is issued at edge k is therefore readable at edge k+2.
+  -- Consuming it at k+1 reads whatever the port held from the PREVIOUS unit's
+  -- last access, which is a function of timing and not of data -- a wrong
+  -- number that changes when a handshake moves.  See
+  -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+  --
+  -- A REAL IMPLEMENTATION would be 14 separately-sized BRAM/URAM regions with
+  -- their own port counts, sized from `region_sizes(SHAPE)` rather than all
+  -- at REGMAX, and the arbitration below would be per-region rather than
+  -- global.  The single element port is not a simplification: subsystem D
+  -- issues at most one unit at a time -- `cur_unit` in seq_desc_fetch is a
+  -- scalar -- so no second unit can be reading.  When D grows overlap, this
+  -- becomes a real arbiter and this comment becomes wrong.
+  -- ======================================================================
+  type buf_t is array (natural range <>) of signed(MANT_W-1 downto 0);
+  subtype mem_t is buf_t(0 to NREGION*REGMAX-1);
+  signal mem : mem_t := (others => (others => '0'));
+
+  -- Per-CLIENT element ports, muxed below.  A client is not a unit: unit V is
+  -- an ADAPTER in front of NVOP engines, and each engine needs its own port
+  -- slot or the two of them are two drivers on one unresolved signal.  Slots
+  -- 0..NUNIT-1 are the units (slot U_V is unused), slots NUNIT+v are the
+  -- D-vec engines.
+  constant NPORT : natural := NUNIT + NVOP;
+  type nat_u  is array (0 to NPORT-1) of natural;
+  type sig_u  is array (0 to NPORT-1) of signed(MANT_W-1 downto 0);
+  signal ur_en   : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal ur_reg  : nat_u := (others => 0);
+  signal ur_addr : nat_u := (others => 0);
+  signal uw_en   : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal uw_reg  : nat_u := (others => 0);
+  signal uw_addr : nat_u := (others => 0);
+  signal uw_data : sig_u := (others => (others => '0'));
+
+  signal el_ren   : std_logic := '0';
+  signal el_reg   : natural range 0 to NREGION-1 := 0;
+  signal el_addr  : natural range 0 to REGMAX-1 := 0;
+  signal el_rdata : signed(MANT_W-1 downto 0) := (others => '0');
+  signal el_we    : std_logic := '0';
+  signal el_wreg  : natural range 0 to NREGION-1 := 0;
+  signal el_waddr : natural range 0 to REGMAX-1 := 0;
+  signal el_wdata : signed(MANT_W-1 downto 0) := (others => '0');
+
+  -- The unit whose element ports are selected.  Latched at `job_issue` and
+  -- held for the whole job, because the mux is read for the DURATION of a
+  -- long operation and `job_unit` is not: it decodes the live bank, which is
+  -- exactly what defect class (a) is about.
+  signal act_unit : natural range 0 to NUNIT-1 := 0;
+  -- Which D-vec engine owns the port while act_unit = U_V.  Latched at
+  -- `v_taken`, which is the engine's own accept instant, not at `v_start`:
+  -- seq_vec_issue holds `v_start` until the engine takes it, so `v_start` is
+  -- high for an arbitrary number of cycles before anything is running.
+  signal act_vop  : natural range 0 to NVOP-1 := 0;
+  signal act_port : natural range 0 to NUNIT+NVOP-1 := 0;
+
+  -- ---- sticky seam faults ----------------------------------------------
+  signal f_lost  : std_logic := '0';
+  signal f_gate  : std_logic := '0';
+  signal f_stub  : std_logic := '0';
+  signal f_ecoll : std_logic := '0';
+
+  -- ---- helpers ---------------------------------------------------------
+  function sat_m(v : integer) return signed is
+    constant HI : integer := 2**(MANT_W-1) - 1;
+    constant LO : integer := -(2**(MANT_W-1));
+  begin
+    if v > HI then return to_signed(HI, MANT_W); end if;
+    if v < LO then return to_signed(LO, MANT_W); end if;
+    return to_signed(v, MANT_W);
+  end function;
+
+  -- The synthetic weight of the behavioural A.  A deterministic function of
+  -- (row, col, ordinal) only.  It is NOT a model of anything; it exists so
+  -- that the residual stream carries a value that DEPENDS on every input and
+  -- therefore cannot be right by accident under a skew sweep.
+  function wsyn(r, c, o : natural) return integer is
+  begin
+    return ((r*13 + c*7 + o*29) mod 15) - 7;
+  end function;
+
+begin
+
+  -- ======================================================================
+  -- THE BANNERS.  Printed once, at time zero, at severity note, so that no
+  -- run of this top level can be mistaken for inference.
+  -- ======================================================================
+  banner : process is
+  begin
+    if SHOUT then
+      report LF
+        & "==========================================================" & LF
+        & " llama_top: THIS IS NOT AN INFERENCE ENGINE YET." & LF
+        & "==========================================================" & LF
+        & " * ATTENTION IS A STUB.  Unit C returns a documented," & LF
+        & "   obviously-wrong, well-formed pattern.  attn_lane_skel" & LF
+        & "   is a pricing skeleton and computes nothing.  Any block" & LF
+        & "   at an attention position produces a MEANINGLESS value" & LF
+        & "   and every later block inherits it through the residual." & LF
+        & " * unit A behavioural : " & boolean'image(A_BEHAV) & LF
+        & " * unit B behavioural : " & boolean'image(B_BEHAV) & LF
+        & " * norm and swiglu are behavioural in every configuration." & LF
+        & " * the region file is a flat behavioural array." & LF
+        & " * no weights are fetched: the descriptor base array past" & LF
+        & "   the header is range-checked and not read." & LF
+        & " What IS real: the schedule, the region locks, the" & LF
+        & " exponent path, the residual add, and every handshake." & LF
+        & "=========================================================="
+        severity note;
+    end if;
+    wait;
+  end process;
+
+  -- ======================================================================
+  -- REGION FILE
+  -- ======================================================================
+  -- Element port mux.  One-hot by construction; the assertion says so.
+  act_port <= act_unit when act_unit /= U_V else NUNIT + act_vop;
+
+  elmux : process(ur_en, ur_reg, ur_addr, uw_en, uw_reg, uw_addr, uw_data,
+                  act_port, hw_we, hw_reg, hw_addr, hw_data) is
+  begin
+    el_ren   <= ur_en(act_port);
+    el_reg   <= ur_reg(act_port);
+    el_addr  <= ur_addr(act_port);
+    if hw_we = '1' then
+      el_we    <= '1';
+      el_wreg  <= hw_reg;
+      el_waddr <= hw_addr;
+      el_wdata <= hw_data;
+    else
+      el_we    <= uw_en(act_port);
+      el_wreg  <= uw_reg(act_port);
+      el_waddr <= uw_addr(act_port);
+      el_wdata <= uw_data(act_port);
+    end if;
+  end process;
+
+  -- A unit that drives a port it does not own is a silent cross-region write,
+  -- which is the worst failure this file can have: it corrupts the residual
+  -- stream and every later block inherits it.  Checked every cycle.
+  onehot : process(clk) is
+    variable n : natural;
+  begin
+    if rising_edge(clk) then
+      n := 0;
+      for u in 0 to NPORT-1 loop
+        if uw_en(u) = '1' and u /= act_port then n := n + 1; end if;
+      end loop;
+      assert n = 0
+        report "llama_top: a unit that is not the active unit drove the "
+             & "region write port.  This is a cross-region write."
+        severity failure;
+    end if;
+  end process;
+
+  memp : process(clk) is
+    variable a : natural;
+  begin
+    if rising_edge(clk) then
+      -- write-first, so an in-place overtake is visible rather than hidden
+      if el_we = '1' then
+        mem(el_wreg*REGMAX + el_waddr) <= el_wdata;
+      end if;
+      if w_we = '1' then
+        for i in 0 to LANES-1 loop
+          if w_be(i) = '1' then
+            a := to_integer(unsigned(v_reg_d(6 downto 0)))*REGMAX
+                 + to_integer(w_addr)*LANES + i;
+            if a < NREGION*REGMAX then
+              mem(a) <= signed(w_data((i+1)*MANT_W-1 downto i*MANT_W));
+            end if;
+          end if;
+        end loop;
+      end if;
+
+      if el_ren = '1' then
+        el_rdata <= mem(el_reg*REGMAX + el_addr);
+      end if;
+
+      -- The D-vec group read: ONE address, TWO operand regions.
+      if r_en = '1' then
+        for i in 0 to LANES-1 loop
+          a := to_integer(unsigned(v_reg_a(6 downto 0)))*REGMAX
+               + to_integer(r_addr)*LANES + i;
+          if a < NREGION*REGMAX then
+            x_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(mem(a));
+          else
+            x_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+          end if;
+          a := to_integer(unsigned(v_reg_b(6 downto 0)))*REGMAX
+               + to_integer(r_addr)*LANES + i;
+          if a < NREGION*REGMAX then
+            e_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(mem(a));
+          else
+            e_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+          end if;
+        end loop;
+      end if;
+    end if;
+  end process;
+
+  hr_data <= mem(hr_reg*REGMAX + hr_addr);
+
+  -- ======================================================================
+  -- SUBSYSTEM D.  Three real units.  This port map is lifted from
+  -- sim/tb_seq_vec_seam.vhd:510-627, which is the only place these three had
+  -- ever been connected, and it is the authoritative reference for it.
+  -- ======================================================================
+  d_ren <= d_ren_i;
+
+  u_fetch : entity work.seq_desc_fetch
+    generic map(
+      NREG => NREGION, EPOCH_W => EPOCH_W, NUNIT => NUNIT,
+      NSUB_MAX => 64, STEP_W => STEP_W,
+      WDOG_LIMIT => WDOG_LIMIT, STRICT_PROTO => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      go => go_walk, tbl_len => tbl_len, abort => abort,
+      busy => busy, tok_done => tok_done, tok_ack => tok_ack,
+      err => err, err_code => err_code, err_step => err_step,
+      steps_done => steps_done,
+      d_raddr => d_raddr, d_ren => d_ren_i, d_rdata => d_rdata,
+      d_rvalid => d_rvalid,
+      job_valid => job_valid, job_issue => job_issue, job_cmp => job_cmp,
+      job_epoch => job_epoch, job_unit => job_unit, job_opcode => job_opcode,
+      job_flags => job_flags, job_src => job_src, job_src2 => job_src2,
+      job_dst => job_dst, job_dst_off => job_dst_off,
+      job_n_rows => job_n_rows, job_n_cols => job_n_cols,
+      job_w_exp => job_w_exp, job_out_shift => job_out_shift,
+      job_out_mode => job_out_mode, job_ordinal => job_ordinal,
+      job_const_base => job_const_base, job_const_exp => job_const_exp,
+      job_step => job_step,
+      chk_req => chk_req, chk_bad => chk_bad, chk_code => chk_code,
+      chk_opcode => chk_opcode, chk_src => chk_src, chk_dst => chk_dst,
+      chk_dst_off => chk_dst_off, chk_n_rows => chk_n_rows,
+      u_start => u_start, u_ready => u_ready, u_done => u_done,
+      u_ack => u_ack, u_err => u_err, u_done_epoch => u_done_epoch);
+
+  u_opdec : entity work.seq_opdec
+    generic map(
+      NREG => NREGION, SEGS => SEGS, ADDR_W => ADDR_W, EXP_W => EXP_W,
+      NUNIT => NUNIT, STEP_W => STEP_W,
+      OPC_CONS => OPC_CONS_MAP,
+      -- The three-way q|k|v exponent split.  R_QKV carries three captured
+      -- exponents because the wqkv split exists precisely so q, k and v do
+      -- not share a scale; the descriptor has no segment field, so the
+      -- segment is inferred from `dst_off` against these two boundaries.
+      MSEG_REG => R_QKV, MSEG_OFF1 => key_dim(SHAPE),
+      MSEG_OFF2 => 2*key_dim(SHAPE),
+      REL_NAIVE => false,
+      HOST_REG => R_X, HOST_ROWS => SHAPE.hidden,
+      STRICT => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      go_in => go, host_x_exp => host_x_exp,
+      go_out => go_walk, host_busy => host_busy,
+      chk_req => chk_req, chk_opcode => chk_opcode, chk_src => chk_src,
+      chk_dst => chk_dst, chk_dst_off => chk_dst_off, chk_n_rows => chk_n_rows,
+      chk_bad => chk_bad, chk_code => chk_code,
+      rel_mask => rel_mask,
+      job_issue => job_issue, job_cmp => job_cmp, job_unit => job_unit,
+      job_src2 => job_src2, job_step => job_step,
+      u_done => u_done, u_y_exp => u_y_exp,
+      lock_rst => lock_rst,
+      iss_req => iss_req, iss_commit => iss_commit, iss_prod => iss_prod,
+      iss_dst => iss_dst, iss_seg => iss_seg, iss_off => iss_off,
+      iss_n_rows => iss_n_rows, iss_cons => iss_cons, iss_rel => iss_rel,
+      iss_ok => iss_ok, iss_code => iss_code,
+      cmp_valid => cmp_valid, cmp_y_exp => cmp_y_exp,
+      viol => viol, viol_code => viol_code, viol_ack => viol_ack,
+      y_exp_taken => y_exp_taken, y_exp_held => y_exp_held,
+      viol_step => viol_step, viol_seen => viol_seen);
+
+  u_lock : entity work.seq_region_lock
+    generic map(
+      REG_SIZE => SZ, SEGS => SEGS, ADDR_W => ADDR_W, EXP_W => EXP_W,
+      STRICT => STRICT)
+    port map(
+      clk => clk, rst => lock_rst,
+      iss_req => iss_req, iss_commit => iss_commit, iss_prod => iss_prod,
+      iss_dst => iss_dst, iss_seg => iss_seg, iss_off => iss_off,
+      iss_n_rows => iss_n_rows, iss_cons => iss_cons, iss_rel => iss_rel,
+      iss_ok => iss_ok, iss_code => iss_code,
+      cmp_valid => cmp_valid, cmp_y_exp => cmp_y_exp,
+      wr_we => wr_we, wr_region => wr_region, wr_gate => wr_gate,
+      -- The exponent write port is unused: exponents reach the lock through
+      -- seq_opdec's `cmp_valid`/`cmp_y_exp` capture, which is the path that
+      -- freezes the exponent as part of the locked object (hazard A3).  A
+      -- second, ungated path would reopen it.
+      xw_we => '0', xw_region => (others => '0'), xw_seg => "00",
+      xw_exp => (others => '0'), xw_gate => open,
+      exp_rd_region => exp_rd_region, exp_rd_seg => exp_rd_seg,
+      exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      lock_state => lock_state,
+      viol => viol, viol_ack => viol_ack, viol_code => viol_code,
+      viol_region => viol_reg);
+
+  -- Every region write in the machine is policed by the lock.  A beat outside
+  -- the window [iss_commit, cmp_valid] of the job that owns the region is
+  -- DROPPED by a real design, so it is counted here rather than ignored.
+  wr_we     <= w_we or el_we;
+  wr_region <= v_reg_d when w_we = '1'
+               else to_unsigned(el_wreg, 8);
+
+  gatechk : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        f_gate <= '0';
+      elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0' then
+        f_gate <= '1';
+        report "llama_top: the region lock DROPPED a write to region "
+             & integer'image(to_integer(wr_region))
+             & ".  A unit is writing outside the window its own job holds."
+          severity error;
+      end if;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- SUBSYSTEM D-VEC.  seq_vec_issue is real; seq_vec_res is real; the norm
+  -- and swiglu engines behind it do not exist as RTL and are modelled.
+  -- ======================================================================
+  u_vissue : entity work.seq_vec_issue
+    generic map(
+      NVOP => NVOP, OP_BASE => OP_VEC_NORM, MY_UNIT => U_V,
+      NREG => NREGION, EXP_W => EXP_W, VN_W => VN_W,
+      EPOCH_W => EPOCH_W, STEP_W => STEP_W, STRICT => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      job_issue => job_issue, job_unit => job_unit, job_opcode => job_opcode,
+      job_epoch => job_epoch, job_src => job_src, job_src2 => job_src2,
+      job_dst => job_dst, job_dst_off => job_dst_off,
+      job_n_rows => job_n_rows, job_step => job_step,
+      u_start => u_start(U_V), u_ack => u_ack(U_V),
+      u_ready => u_ready(U_V), u_done => u_done(U_V), u_err => u_err(U_V),
+      u_done_epoch => vi_epoch, u_y_exp => vi_yexp,
+      exp_rd_region => vi_exp_region, exp_rd_seg => vi_exp_seg,
+      exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      v_start => v_start, v_ready => v_ready, v_taken => v_taken,
+      v_done => v_done, v_ack => v_ack, v_err => v_err, v_y_exp => v_y_exp,
+      v_n => v_n, v_exp_a => v_exp_a, v_exp_b => v_exp_b,
+      v_reg_a => v_reg_a, v_reg_b => v_reg_b, v_reg_d => v_reg_d,
+      iss_lat => open, exp_lat => open, err_code => vi_code);
+
+  u_done_epoch((U_V+1)*EPOCH_W-1 downto U_V*EPOCH_W)
+    <= std_logic_vector(vi_epoch);
+  u_y_exp((U_V+1)*EXP_W-1 downto U_V*EXP_W) <= std_logic_vector(vi_yexp);
+
+  -- The arbiter.  `act_unit` is latched at `job_issue` and held for the whole
+  -- job, so the selection cannot move underneath a reader mid-operation --
+  -- which is the same rule the element port mux obeys, for the same reason.
+  exp_rd_region <= a_exp_region when act_unit = U_A else vi_exp_region;
+  exp_rd_seg    <= a_exp_seg    when act_unit = U_A else vi_exp_seg;
+
+  -- THE RESIDUAL.  Real RTL.  X <- X + ER, in place, twice per block.  This
+  -- is the spine and it is the one arithmetic unit in the block loop that is
+  -- not a model.
+  u_vres : entity work.seq_vec_res
+    generic map(LANES => LANES, MANT_W => MANT_W, ACC_W => ACC_W,
+                EXP_W => EXP_W, ADDR_W => VN_W, STRICT => true)
+    port map(
+      clk => clk, rst => rst,
+      ready => v_ready(V_RES), start => v_start(V_RES), i_n => v_n,
+      i_exp_x => v_exp_a, i_exp_e => v_exp_b, i_taken => v_taken(V_RES),
+      r_en => r_en, r_addr => r_addr, x_rdata => x_rdata, e_rdata => e_rdata,
+      w_we => w_we, w_addr => w_addr, w_be => w_be, w_data => w_data,
+      done => v_done(V_RES), done_ack => v_ack(V_RES),
+      o_exp => vres_exp, o_shift => open, o_sat => open,
+      err => v_err(V_RES));
+
+  v_y_exp((V_RES+1)*EXP_W-1 downto V_RES*EXP_W) <= std_logic_vector(vres_exp);
+
+  -- ======================================================================
+  -- THE TWO D-VEC ENGINES THAT DO NOT EXIST.
+  --
+  -- BEHAVIOURAL MODEL.  rmsnorm and swiglu both have real RTL in this repo
+  -- (rtl/rmsnorm_rs.vhd, rtl/swiglu.vhd) and NEITHER has a D-vec adapter:
+  -- they take their own shapes and handshakes and nothing translates
+  -- seq_vec_issue's by-value protocol to them.  Building those adapters is
+  -- remaining work.  These models produce a well-formed, deterministic,
+  -- input-dependent result over the same handshake, so the SEQUENCING is
+  -- exercised and the arithmetic is not claimed.
+  --
+  -- norm  : out(i) = in(i) - (sum(in) / n)      mean removal, not rmsnorm
+  -- swiglu: out(i) = (a(i) * b(i)) / 64         no gate, not swiglu
+  -- ======================================================================
+  gen_vstub : for vi in 0 to NVOP-1 generate
+    gv : if vi /= V_RES generate
+      signal rdy  : std_logic := '1';
+      signal dn   : std_logic := '0';
+      signal tk   : std_logic := '0';
+      signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+    begin
+      v_ready(vi) <= rdy;
+      v_done(vi)  <= dn;
+      v_taken(vi) <= tk;
+      v_err(vi)   <= '0';
+      v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
+
+      vproc : process(clk) is
+        type st_t is (S_IDLE, S_RD, S_WR, S_DONE);
+        variable st   : st_t := S_IDLE;
+        variable buf  : buf_t(0 to REGMAX-1);
+        variable buf2 : buf_t(0 to REGMAX-1);
+        variable n    : natural := 0;
+        variable k    : natural := 0;
+        variable acc  : integer := 0;
+        variable pass : natural := 0;
+      begin
+        if rising_edge(clk) then
+          tk <= '0';
+          ur_en(NUNIT+vi) <= '0';
+          uw_en(NUNIT+vi) <= '0';
+          if rst = '1' then
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0; pass := 0;
+          else
+            case st is
+              when S_IDLE =>
+                if v_start(vi) = '1' and rdy = '1' then
+                  tk   <= '1';
+                  rdy  <= '0';
+                  n    := to_integer(v_n);
+                  k    := 0;
+                  pass := 0;
+                  acc  := 0;
+                  st   := S_RD;
+                end if;
+
+              when S_RD =>
+                -- TWO cycles of read latency, not one.  See READ_LATENCY in
+                -- the region-file header: the address is registered in this
+                -- process and the data is registered in the memory, so the
+                -- element issued at edge k is readable at edge k+2.  The loop
+                -- therefore runs to n+1 and drains.  Each pass drains fully
+                -- before the next begins, so the (region, address) pair in
+                -- flight always belongs to the pass that issued it.
+                if k < n then
+                  ur_en(NUNIT+vi)   <= '1';
+                  ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)))
+                                  when pass = 0
+                                  else to_integer(unsigned(v_reg_b(6 downto 0)));
+                  ur_addr(NUNIT+vi) <= k;
+                end if;
+                if k >= 2 then
+                  if pass = 0 then buf(k-2) := el_rdata; acc := acc + to_integer(el_rdata);
+                  else                buf2(k-2) := el_rdata; end if;
+                end if;
+                if k = n+1 then
+                  if pass = 0 and vi = V_SWG then
+                    pass := 1; k := 0;
+                  else
+                    k := 0;
+                    st := S_WR;
+                  end if;
+                else
+                  k := k + 1;
+                end if;
+
+              when S_WR =>
+                uw_en(NUNIT+vi)   <= '1';
+                uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                uw_addr(NUNIT+vi) <= k;
+                if vi = V_NORM then
+                  uw_data(NUNIT+vi) <= sat_m(to_integer(buf(k)) - (acc / n));
+                else
+                  uw_data(NUNIT+vi) <= sat_m((to_integer(buf(k))
+                                         * to_integer(buf2(k))) / 64);
+                end if;
+                if k = n-1 then
+                  k  := 0;
+                  st := S_DONE;
+                else
+                  k := k + 1;
+                end if;
+
+              when S_DONE =>
+                dn <= '1';
+                -- A deterministic, input-dependent exponent.  It must not be
+                -- a constant: a shared or stale capture anywhere in the
+                -- exponent path has to become a WRONG NUMBER, not a repeat of
+                -- the right one.
+                yexp <= v_exp_a + to_signed(vi, EXP_W);
+                if v_ack(vi) = '1' then
+                  dn  <= '0';
+                  rdy <= '1';
+                  st  := S_IDLE;
+                end if;
+            end case;
+          end if;
+        end if;
+      end process;
+    end generate;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT A.  BEHAVIOURAL when A_BEHAV.
+  --
+  -- The adapter half is REAL in both configurations and is where the D-to-A
+  -- seam lives: latch the descriptor at `job_issue` (never at `u_start`),
+  -- hold `n_rows`/`n_cols`/`w_exp`/`x_exp`/`out_mode` stable for the whole
+  -- job, convert A's one-cycle `done` pulse into a level held until `u_ack`,
+  -- and synthesise the `u_ready` that A does not have.
+  --
+  -- BEHAVIOURAL MODEL: y(r) = sat16( sum_c x(c)*wsyn(r,c,ord) >> out_shift ).
+  -- The weights are synthetic.  A's arithmetic is verified by
+  -- sim/run_matvec.sh and is NOT what this file is testing.
+  -- ======================================================================
+  ga_behav : if A_BEHAV generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_A) <= rdy;
+    u_done(U_A)  <= dn;
+    u_err(U_A)   <= '0';
+    u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
+
+    ap : process(clk) is
+      type st_t is (S_IDLE, S_XRD, S_EXP, S_MUL, S_DONE);
+      variable st   : st_t := S_IDLE;
+      variable xb   : buf_t(0 to REGMAX-1);
+      -- THE LATCHED DESCRIPTOR.  Seam rule (1).
+      variable j_src, j_dst, j_off, j_rows, j_cols, j_ord : natural := 0;
+      variable j_shift : integer := 0;
+      variable j_wexp  : integer := 0;
+      variable j_live  : boolean := false;
+      variable k, r    : natural := 0;
+      variable acc     : integer := 0;
+      variable xexp    : integer := 0;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_A) <= '0';
+        uw_en(U_A) <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; j_live := false;
+        else
+          -- Latch at job_issue.  NOT at u_start: u_start leads job_issue by
+          -- one cycle and job_* still decodes the previous live bank there.
+          if job_issue = '1' and to_integer(job_unit) = U_A then
+            j_src   := to_integer(job_src(6 downto 0));
+            j_dst   := to_integer(job_dst(6 downto 0));
+            j_off   := to_integer(job_dst_off(15 downto 0));
+            j_rows  := to_integer(job_n_rows(15 downto 0));
+            j_cols  := to_integer(job_n_cols(15 downto 0));
+            j_ord   := to_integer(job_ordinal);
+            j_shift := to_integer(job_out_shift(15 downto 0));
+            j_wexp  := to_integer(job_w_exp(15 downto 0));
+            j_live  := true;
+            ep      <= job_epoch;
+            rdy     <= '0';
+            k       := 0;
+            st      := S_XRD;
+            -- Claim the exponent read port for THIS job's source, at the same
+            -- instant the descriptor is latched.  A's sources are never the
+            -- multi-segment region, so segment 0 is the whole story here; a
+            -- source that could be R_QKV would have to infer the segment from
+            -- the offset the way seq_opdec's MSEG mechanism does.
+            a_exp_region <= job_src;
+            a_exp_seg    <= "00";
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_XRD =>
+              -- Two cycles of read latency; the loop runs to j_cols+1 and
+              -- drains.  Consuming at k-1 reads the PREVIOUS unit's last
+              -- result instead of this region's element 0, which is a
+              -- timing-dependent wrong number and is exactly what
+              -- sim/tb_llama_top.vhd's write-hash trace caught at
+              -- completion 1.
+              if k < j_cols then
+                ur_en(U_A)   <= '1';
+                ur_reg(U_A)  <= j_src;
+                ur_addr(U_A) <= k;
+              end if;
+              if k >= 2 then xb(k-2) := el_rdata; end if;
+              if k = j_cols+1 then
+                k := 0;
+                st := S_EXP;
+              else
+                k := k + 1;
+              end if;
+
+            when S_EXP =>
+              -- x_exp comes out of the LOCK, not out of the descriptor: it is
+              -- the producing job's captured exponent and it is part of the
+              -- locked object.  This is the read half of hazard A3's fix.
+              --
+              -- `a_exp_region` was driven at the LATCH instant and has been
+              -- stable ever since, and the lock's read is combinational, so
+              -- this samples a value that has not moved.  Reading the port
+              -- without owning it is what produced the first skew difference
+              -- this bench found.
+              assert exp_rd_valid = '1'
+                report "llama_top: unit A read region "
+                     & integer'image(to_integer(a_exp_region))
+                     & "'s exponent before anything captured it."
+                severity error;
+              xexp := to_integer(exp_rd_data);
+              r    := 0;
+              st   := S_MUL;
+
+            when S_MUL =>
+              acc := 0;
+              for c in 0 to REGMAX-1 loop
+                if c < j_cols then
+                  acc := acc + to_integer(xb(c)) * wsyn(r, c, j_ord);
+                end if;
+              end loop;
+              if j_dst < NREGION then
+                uw_en(U_A)   <= '1';
+                uw_reg(U_A)  <= j_dst;
+                uw_addr(U_A) <= j_off + r;
+                if j_shift >= 0 and j_shift < 31 then
+                  uw_data(U_A) <= sat_m(acc / (2**j_shift));
+                else
+                  uw_data(U_A) <= sat_m(acc);
+                end if;
+              end if;
+              if r = j_rows-1 then
+                st := S_DONE;
+              else
+                r := r + 1;
+              end if;
+
+            when S_DONE =>
+              -- Seam rule (2): a LEVEL, held until u_ack.
+              dn   <= '1';
+              yexp <= to_signed(j_wexp + xexp - j_shift, EXP_W);
+              if u_ack(U_A) = '1' then
+                dn     <= '0';
+                rdy    <= '1';
+                j_live := false;
+                st     := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+
+  -- ======================================================================
+  -- UNIT B.  BEHAVIOURAL when B_BEHAV.
+  --
+  -- BEHAVIOURAL MODEL, AND IT IS NOT GATED DELTANET.  It reads R_QKV, R_Z,
+  -- R_BETA and R_ALPHA -- the same four regions the real B consumes, which is
+  -- what makes the region-lock consume mask reachable -- and produces
+  --   y(i) = sat16( (qkv(i) + qkv(2*key_dim+i)) * z(i) / 256 + beta(head) )
+  -- which is a first-order function of every one of its inputs and of nothing
+  -- else.  It has no recurrent state, no conv, no L2 norm and no gate.
+  -- ======================================================================
+  gb_behav : if B_BEHAV generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_B) <= rdy;
+    u_done(U_B)  <= dn;
+    u_err(U_B)   <= '0';
+    u_done_epoch((U_B+1)*EPOCH_W-1 downto U_B*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_B+1)*EXP_W-1 downto U_B*EXP_W) <= std_logic_vector(yexp);
+
+    bp : process(clk) is
+      type st_t is (S_IDLE, S_RD, S_WR, S_DONE);
+      variable st  : st_t := S_IDLE;
+      variable qb, zb, bb : buf_t(0 to REGMAX-1);
+      variable j_dst, j_rows, j_ord : natural := 0;
+      variable j_wexp : integer := 0;
+      variable k    : natural := 0;
+      variable pass : natural := 0;
+      constant KD   : natural := key_dim(SHAPE);
+      constant HD   : natural := SHAPE.head_dim;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_B) <= '0';
+        uw_en(U_B) <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_B then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_ord  := to_integer(job_ordinal);
+            j_wexp := to_integer(job_w_exp(15 downto 0));
+            ep     <= job_epoch;
+            rdy    <= '0';
+            k      := 0;
+            pass   := 0;
+            st     := S_RD;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_RD =>
+              -- three passes: qkv value half, z, beta
+              if k < j_rows then
+                ur_en(U_B) <= '1';
+                case pass is
+                  when 0 =>
+                    ur_reg(U_B)  <= R_QKV;
+                    ur_addr(U_B) <= 2*KD + k;
+                  when 1 =>
+                    ur_reg(U_B)  <= R_Z;
+                    ur_addr(U_B) <= k;
+                  when others =>
+                    ur_reg(U_B)  <= R_BETA;
+                    ur_addr(U_B) <= k / HD;
+                end case;
+              end if;
+              if k >= 2 then
+                case pass is
+                  when 0      => qb(k-2) := el_rdata;
+                  when 1      => zb(k-2) := el_rdata;
+                  when others => bb(k-2) := el_rdata;
+                end case;
+              end if;
+              if k = j_rows+1 then
+                k := 0;
+                if pass = 2 then st := S_WR; else pass := pass + 1; end if;
+              else
+                k := k + 1;
+              end if;
+
+            when S_WR =>
+              uw_en(U_B)   <= '1';
+              uw_reg(U_B)  <= j_dst;
+              uw_addr(U_B) <= k;
+              uw_data(U_B) <= sat_m((to_integer(qb(k)) * to_integer(zb(k)))
+                                    / 256 + to_integer(bb(k)));
+              if k = j_rows-1 then
+                st := S_DONE;
+              else
+                k := k + 1;
+              end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= to_signed(j_wexp + j_ord, EXP_W);
+              if u_ack(U_B) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT C.  *** ATTENTION IS A STUB.  THIS COMPUTES NOTHING. ***
+  --
+  -- Subsystem C's steps 3..8 -- twiddle, rope, kv_quant, score, softmax,
+  -- recip, gate, emit -- are verified and contiguous.  THE LANE ARRAY IS NOT.
+  -- `rtl/attn_lane_skel.vhd` is a PRICING SKELETON: it exists to be
+  -- synthesised for area and it produces a 32-bit `digest`, not an attention
+  -- score.  There is therefore no path from Q, K and V to an attention
+  -- output in this repository, and this adapter cannot make one.
+  --
+  -- WHAT IT WRITES, and it is chosen to be impossible to mistake for a
+  -- result: y(i) = -32768 + i, ignoring Q, K and V entirely.  It is
+  -- saturated-negative at element 0, it ramps, and it does not depend on any
+  -- input.  A residual stream that has passed through an attention block
+  -- therefore carries an obviously broken value, on purpose.
+  --
+  -- `err_unit_stub` goes high and STAYS high the first time this runs.  Any
+  -- run whose `err_unit_stub` is set produced no inference.
+  -- ======================================================================
+  gc : block
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_C) <= rdy;
+    u_done(U_C)  <= dn;
+    u_err(U_C)   <= '0';
+    u_done_epoch((U_C+1)*EPOCH_W-1 downto U_C*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_C+1)*EXP_W-1 downto U_C*EXP_W) <= std_logic_vector(yexp);
+
+    cp : process(clk) is
+      type st_t is (S_IDLE, S_WR, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable j_dst, j_rows : natural := 0;
+      variable k : natural := 0;
+      variable said : boolean := false;
+    begin
+      if rising_edge(clk) then
+        uw_en(U_C) <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_C then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            ep     <= job_epoch;
+            rdy    <= '0';
+            k      := 0;
+            st     := S_WR;
+            f_stub <= '1';
+            if not said and SHOUT then
+              report "llama_top: *** UNIT C IS A STUB.  ATTENTION WAS NOT "
+                   & "COMPUTED.  The residual stream from this block onward "
+                   & "is meaningless. ***" severity warning;
+              said := true;
+            end if;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+            when S_WR =>
+              uw_en(U_C)   <= '1';
+              uw_reg(U_C)  <= j_dst;
+              uw_addr(U_C) <= k;
+              uw_data(U_C) <= to_signed(-32768 + (k mod 4096), MANT_W);
+              if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= to_signed(0, EXP_W);
+              if u_ack(U_C) = '1' then
+                dn  <= '0'; rdy <= '1'; st := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end block;
+
+  -- ======================================================================
+  -- UNIT E.  The tensor-parallel collective.  Unreachable at NCARDS = 1: the
+  -- schedule emits no OP_E_COLL.  It is wired to raise `u_err` rather than to
+  -- complete, so a schedule built for NCARDS > 1 and run here STOPS instead
+  -- of quietly producing a number.
+  --
+  -- Note the OPEN hazard it would hit if it ever did run: `e_o_we` into
+  -- D-vec's residual pass has NO ready at all (seq_top_skel.vhd:199-209,
+  -- seq_vec_res.vhd:168-174, both calling it "UNSTALLABLE, AND UNRESOLVED").
+  -- ======================================================================
+  ge : block
+    signal rdy : std_logic := '1';
+    signal dn  : std_logic := '0';
+    signal ep  : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_E) <= rdy;
+    u_done(U_E)  <= dn;
+    u_err(U_E)   <= dn;
+    u_done_epoch((U_E+1)*EPOCH_W-1 downto U_E*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_E+1)*EXP_W-1 downto U_E*EXP_W) <= (others => '0');
+
+    epp : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then
+          dn <= '0'; rdy <= '1';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_E then
+            ep     <= job_epoch;
+            rdy    <= '0';
+            dn     <= '1';
+            f_ecoll <= '1';
+            report "llama_top: OP_E_COLL was issued.  NCARDS = 1 has no "
+                 & "collective and no unit E.  The schedule and the build "
+                 & "disagree." severity error;
+          end if;
+          if dn = '1' and u_ack(U_E) = '1' then
+            dn <= '0'; rdy <= '1';
+          end if;
+        end if;
+      end if;
+    end process;
+  end block;
+
+  -- ======================================================================
+  -- THE ACTIVE-UNIT LATCH, and observability.
+  -- ======================================================================
+  actp : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        act_unit <= 0;
+      elsif job_issue = '1' then
+        act_unit <= to_integer(job_unit);
+      end if;
+      if rst = '1' then
+        act_vop <= 0;
+      else
+        for v in 0 to NVOP-1 loop
+          if v_taken(v) = '1' then act_vop <= v; end if;
+        end loop;
+      end if;
+    end if;
+  end process;
+
+  wsump : process(clk) is
+    variable h : unsigned(31 downto 0);
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        h := (others => '0');
+      elsif el_we = '1' then
+        h := resize(h * 31, 32);
+        h := h + to_unsigned(el_wreg * 8191 + el_waddr, 32)
+               + resize(unsigned(std_logic_vector(el_wdata)), 32);
+      elsif w_we = '1' then
+        for i in 0 to LANES-1 loop
+          if w_be(i) = '1' then
+            h := resize(h * 31, 32);
+            h := h + to_unsigned(to_integer(unsigned(v_reg_d(6 downto 0)))*8191
+                                 + to_integer(w_addr)*LANES + i, 32)
+                   + resize(unsigned(w_data((i+1)*MANT_W-1 downto i*MANT_W)), 32);
+          end if;
+        end loop;
+      end if;
+      obs_wsum <= h;
+    end if;
+  end process;
+
+  obs_cmp_exp <= cmp_y_exp;
+  obs_issue  <= job_issue;
+  obs_unit   <= job_unit;
+  obs_opcode <= job_opcode;
+  obs_step   <= job_step;
+  obs_dst    <= job_dst;
+  obs_cmp    <= cmp_valid;
+
+  err_lost_beat <= f_lost;
+  err_gate_drop <= f_gate;
+  err_unit_stub <= f_stub;
+  err_e_coll    <= f_ecoll;
+
+end architecture;
