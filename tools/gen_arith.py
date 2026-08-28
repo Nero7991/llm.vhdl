@@ -89,6 +89,19 @@ C_SRC = BANNER + """
 static inline int64_t mv4i_floor_shr(int64_t v, int sh)
 {
     if (sh <= 0) return v;
+    /* sh = 63 makes (int64_t)1 << sh overflow, which is UNDEFINED behaviour,
+     * not merely implementation-defined.  It is reachable: this project clamps
+     * every shift count to [0, 63] by convention, so 63 is a value the callers
+     * deliberately produce.  UBSan flags it on gdn_err.c at
+     * --tokens 32 --se-init 127 --eg 0 --wbits 32.
+     *
+     * |v| < 2^63 for any int64_t, so a shift of 63 or more floors to 0 for
+     * v >= 0 and to -1 for v < 0.  Stating that directly is exact and removes
+     * the UB; it is NOT a behaviour change on gcc x86-64, where the overflow
+     * happened to produce INT64_MIN and the division then gave the same
+     * answer.  That coincidence is the whole problem: it is correct today and
+     * unowned by any standard. */
+    if (sh >= 63) return (v < 0) ? -1 : 0;
     int64_t d = (int64_t)1 << sh;
     int64_t q = v / d;
     if (v % d != 0 && v < 0) q -= 1;
@@ -99,6 +112,10 @@ static inline int64_t mv4i_floor_shr(int64_t v, int sh)
 static inline int64_t mv4i_round_shift(int64_t v, int sh)
 {
     if (sh == 0) return v;
+    /* Same hazard one shift up: sh = 64 would make 1 << 63 overflow here.  The
+     * bias is half an LSB of the result, and at sh >= 64 the result is 0 or -1
+     * regardless, so the bias cannot change it. */
+    if (sh >= 64) return (v < 0) ? -1 : 0;
     return mv4i_floor_shr(v + ((int64_t)1 << (sh - 1)), sh);
 }
 
