@@ -125,3 +125,46 @@ For comparison, B's emit chain on the same day, same voltage, same harness:
   no I/O placement and no context, so its routing is not the routing it would
   get in a real design. That cuts both ways and is not evidence in either
   direction on its own.
+
+---
+
+## UPDATE, same day: the buildable configuration, and the first fix measured
+
+Three more place-and-route runs at 0.717 V on `-2LV`, same 3.3 ns target:
+
+| config | commit | DSP | LUT | Fmax | WNS | logic | net | binding path |
+|---|---|---|---|---|---|---|---|---|
+| `ROWS_IF=58` | pre-fix | 1,914 | 134,874 | 172.6 | -2.495 | 2.543 | 3.045 | `ns_r_reg[1]_rep__7/C -> em_shv_reg[54][17]/D` |
+| `ROWS_IF=48` | pre-fix | 1,584 | 112,989 | **179.7** | -2.265 | 2.487 | 3.032 | same shape |
+| `ROWS_IF=48` | **post-fix** | 1,584 | 115,766 | **187.2** | -2.041 | 2.212 | **2.775** | `cb_reg[4][6]_replica_1/C -> tr_reg[0][1220]/DSP_OUTPUT_INST/ALU_OUT[10]` |
+
+**Two findings, and the first one is the more important.**
+
+**1. Dropping from 58 to 48 bought almost nothing: +7.1 MHz for 330 fewer DSP
+and 22,000 fewer LUT.** The critical path barely moved (logic 2.543 to 2.487,
+net 3.045 to 3.032) and kept its identity. **So A's clock problem was never die
+congestion.** A 17% smaller design on the same die runs 4% faster. That is the
+signature of a structural path, not a crowded one, and it is what licensed
+attacking the broadcast rather than the floorplan.
+
+**2. The `ns` fix is worth about the same as removing a fifth of the design:
++7.5 MHz.** Narrowing `ns_r` from a full `integer` to `natural range 0 to 63`
+and giving each of the 48 emit lanes its own registered copy took logic 2.487
+to 2.212 and net 3.032 to 2.775. Both terms improved, which is what a fix that
+removes width AND shortens the haul should do.
+
+**And the path moved, to the same defect shape one level up.** The new binding
+path starts at `cb_reg[4][6]_replica_1/C` -- `replica_1` again, so Vivado is
+again replicating a broadcast source on its own initiative. `cb` is the
+**16-entry runtime-loadable codebook** (`matvec_core.vhd:120`), and every lane
+reads it: `tr(0)(rr*BLK + j) <= resize(cb(idx) * xw, 28)` at `:478`. At
+`ROWS_IF = 48, BLK = 32` that is **1,536 consumers of one 16-entry table**.
+
+So the same shape has now bound the clock three times in one day, in three
+different units: `si_e_seg` into `gdn_silu`'s 16 lanes, `ns_r` into
+`matvec_core`'s 48 emit lanes, and now `cb` into 1,536 multiply lanes. The
+common form is a small shared value read by a wide array, and the tool signals
+it every time by replicating the source and still missing.
+
+Still 55.6% route, so this remains a placement and fanout problem rather than a
+logic-depth one.
