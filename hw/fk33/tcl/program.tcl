@@ -12,3 +12,14 @@ if {[catch {fpga -no-revision-check -file $bit} err]} {
 }
 puts "FPGA_PROG_OK"
 puts [targets]
+
+# xsdb DROPS TO AN INTERACTIVE PROMPT at end of script and waits on stdin.
+# The failure path above exits; this one did not, so a successful configure
+# hung until pcieep.sh's `timeout 300` killed it, and `set -euo pipefail`
+# then aborted the whole sequence with EXIT=124 -- after FPGA_PROG_OK had
+# already printed, so it read as "programming worked, then nothing happened".
+# It only ever appeared to work when stdin was not a tty (xsdb sees EOF and
+# leaves on its own); run by hand from a terminal it hangs every time.
+# `vivado -mode batch` does NOT need this, which is why tcl/vccint_step.tcl
+# and tcl/pcieep_jtag.tcl get away with having no success-path exit.
+exit 0
