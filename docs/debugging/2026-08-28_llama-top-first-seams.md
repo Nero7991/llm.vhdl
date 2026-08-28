@@ -511,6 +511,12 @@ every run -- shared resources, fabricated scales, and operands that shift out.
 
 ## Defect 8 -- the scales do not track across blocks, and it only shows up at scale
 
+> **PARTLY WITHDRAWN 2026-08-28, see PART 3 and its CORRECTION.** The
+> OBSERVATION below stands. The EXPLANATION below -- that subsystem B's
+> fixed-scale stand-in inputs are the cause -- was a hypothesis, it was
+> tested, and it is wrong. So is the claim that the missing token loop blocks
+> the experiment. Read PART 3 before acting on anything in this section.
+
 **Found after the Part 2 fixes were already in, by running more blocks.**
 Real A, real B, `attn_interval` 4, P6 counting residual adds whose two operand
 exponents are more than a mantissa width apart:
@@ -565,3 +571,513 @@ read as a claim about a 32-block token.
   it does so in 46 of 64. Until it is resolved, "the machine sequenced 32
   blocks and produced a value" is true and "the value means anything" is not,
   for a second reason on top of attention being stubbed.
+
+---
+
+# PART 3 -- defect 8 resolved: it is the design, not B's stimulus
+
+**Date:** 2026-08-28, later the same session. Appended in place. This part
+answers the question Part 2 left open and **WITHDRAWS the explanation Part 2
+gave for defect 8**; the correction is at the end of this part.
+
+**Build:** branch `fpga`. Modified: `rtl/llama_top.vhd` (two new generics,
+`B_SRC_REAL` and `NORM_ANCHOR`, both default FALSE, plus the prefetch states
+and the two exponent asserts they need) and `sim/tb_llama_top.vhd` (the two
+generics passed through, and one `RESGAP` observability line behind
+`VERBOSE`). Nothing else. **Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed
+--max-stack-alloc=0`; Vivado 2023.2 for the one synthesis number, part
+`xczu3eg-sfvc784-1-e`.
+
+**Every simulation number below is at `NRUNS = 1`.** P6's counter is
+cumulative across runs and is NOT reset between them, so a count is only
+comparable against another count taken at the same `NRUNS`. See the traps
+section.
+
+## The question, verbatim
+
+> `rtl/llama_top.vhd` runs the 491-descriptor Qwen3.5-9B token schedule with
+> the real `matvec_int4` (subsystem A) and the real `gdn_block` (subsystem B).
+> Property P6 counts residual additions whose two operand exponents are more
+> than a mantissa width apart, so that one operand is silently shifted out
+> entirely. Measured, `attn_interval` 4:
+>
+>     BLOCKS =  4   degenerate residuals =  0   PASS
+>     BLOCKS =  8   degenerate residuals =  3   FAIL
+>     BLOCKS = 32   degenerate residuals = 46   FAIL   (of 64 residual steps)
+>
+> Subsystem B's output exponent is anchored to its OWN inputs. Four of B's six
+> memories are stand-ins at a fixed scale rather than regions subsystem A
+> produced: only `z` (the gate) comes from a real region, R_Z. The residual
+> stream's exponent moves as the token progresses. The two drift apart.
+>
+> **Your job is to determine which of these is true, and to prove it rather
+> than argue it:**
+>
+> - **(a) Stimulus artefact.** B's inputs are fixed-scale stand-ins, so its
+>   output exponent cannot track. Source them for real and the drift
+>   disappears.
+> - **(b) A real hole in the BFP discipline.** Nothing in the design makes the
+>   block-to-block scale track, and no per-unit property can see it because
+>   every unit is internally consistent and every handshake is honoured. It
+>   only appears in composition over many blocks.
+
+## The answer, up front
+
+**It is (b).** Sourcing subsystem B's activations from the real regions makes
+the count slightly WORSE, not better (0/3/10/23 -> 3/5/11/24 at 4/8/16/32
+blocks), and the drift is present in the FFN residual, which contains no
+subsystem B at all. The hole is that **nothing in the block loop ever restores
+the activation scale**: a matvec's output exponent is its source's, minus
+`(out_shift - w_exp)`, minus its own data-driven normalisation shift `ns`
+(`matvec_core.vhd:876, :932-934`), so it only ever FALLS, and the one unit
+whose output is scale-free by construction -- rmsnorm -- is a behavioural
+model here that passes its input exponent straight through. Give the norm
+model rmsnorm's scale property and nothing else, and the degenerate count is
+**0 at 4, 8, 16 AND 32 blocks**, with the residual stream exponent bounded in
+[-4, +8] instead of marching to -387.
+
+## The procedure, in the order it was run
+
+Each step isolates one thing, and each has a control measured in the same
+session against the same GHDL library.
+
+1. **Reproduce the reported numbers before changing anything.** At `NRUNS = 1`:
+   4 -> 0, 8 -> 3, 16 -> 10, 32 -> 23. The 16-block point is new; the 32-block
+   point is 23 and not 46, which is the `NRUNS` accumulation trap, not a
+   disagreement (46 = 2 x 23).
+
+2. **Add ONE observability line, not a property.** `RESGAP`, behind `VERBOSE`:
+   the residual's two operand exponents and their difference at EVERY
+   `v_taken`, not only at the ones that fail. P6 says a residual discarded an
+   operand; the whole series says whether the gap is a step, a random walk or a
+   trend, and that distinction is the whole question.
+
+3. **Run the experiment the question names.** Source B's conv taps from R_QKV,
+   alpha from R_ALPHA and beta from R_BETA, each carrying that region's
+   captured exponent, under a generic `B_SRC_REAL` so the control and the
+   treatment are the same binary.
+
+   **The conv-tap history did NOT block this**, contrary to the warning in
+   Part 2's open list. `gdn_exp_capture` masks every tap older than the number
+   of captures, and `gdn_conv` ZEROES a masked tap rather than skipping it
+   (`gdn_conv.vhd:310-315`), so at `tk0` -- which is all this file has -- only
+   tap `KCONV-1` is ever summed. Tap `KCONV-1` is R_QKV and the older taps are
+   zero, which is what the first token of a sequence actually IS. Nothing was
+   faked.
+
+   The conv WEIGHTS, `ssm_dt_bias`, `ssm_a` and the `ssm_norm` weight were
+   deliberately LEFT at a fixed exponent. They are learned constants, they have
+   no region, and a fixed scale is what a weight has. Sourcing a weight from an
+   activation region would have answered a different question and would have
+   made the result uninterpretable.
+
+4. **When the treatment did not fix it, attribute it.** A mutant with the taps
+   sourced for real and alpha/beta left as stand-ins, to separate the two.
+
+5. **Then test the mechanism the trace pointed at, not the one the earlier
+   text asserted.** The `RESGAP` series showed the FFN residual -- which never
+   touches B -- drifting at the same rate as the mixer residual. That rules B
+   out entirely and points at the residual stream itself. `NORM_ANCHOR` is the
+   probe: it gives the norm model rmsnorm's ONE scale property (mantissas
+   renormalised to full scale, output exponent a constant, scale-free in the
+   input) and nothing else about rmsnorm.
+
+6. **Teeth-check every property relied on**, against a deliberately broken copy
+   of the design, in a configuration where the unbroken design passes.
+
+## The evidence
+
+### The control, and the treatment the question asked for
+
+Degenerate residuals, real A and real B, `attn_interval` 4, `NRUNS = 1`:
+
+| BLOCKS | control (B stand-ins) | `B_SRC_REAL` (taps + alpha + beta) | taps only |
+|---|---|---|---|
+| 1 | -- | 1 | 0 |
+| 2 | -- | 2 | -- |
+| 4 | **0** | **3** | -- |
+| 8 | **3** | **5** | 2 |
+| 16 | **10** | **11** | 8 |
+| 32 | **23** | **24** | 21 |
+
+**The treatment does not fix it. It makes it worse.** Hypothesis (a) is
+refuted by its own experiment.
+
+`B_SRC_REAL` is skew-clean, so the new prefetch states are not themselves a
+defect: at `BLOCKS = 2`, `NRUNS = 4`, four descriptor-memory latencies,
+`schedule mismatches=0 skew differences=0`.
+
+### The trace that killed subsystem B as the cause
+
+The residual stream's own exponent, `ea`, at every residual step, 32 blocks:
+
+```
+control       ea:  3, 7, -2, -9, -21, -21, -31, -40, -50, -63, -63, -83, ...
+                   ..., -352, -352, -361, -361, -372, -387
+B_SRC_REAL    ea:  3, 11, 1, 1, -11, -11, -20, -28, -38, -42, -51, -71, ...
+                   ..., -335, -335, -344, -344, -355, -370
+NORM_ANCHOR   ea:  3, 8, 3, 3, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, ...
+                   ..., -4, -4, -4, -4, -4, -4
+```
+
+Control: **linear, -6.19 per residual step, -12.4 per block, 3 -> -387 over 32
+blocks, unbounded.** `B_SRC_REAL`: -5.92 per step, 3 -> -370. Same slope, same
+shape. Anchored: converges to -4 and stays there for the remaining 25 blocks.
+
+Split by which residual it is (32 blocks, control), the gap between the two
+operands:
+
+```
+FFN residual   gaps: 9,12,10,10,2,2,2,12,11,9,12,10,7,11,9,8,11,9,11,11 ...
+                     max 12 over all 32 blocks, ZERO degenerate
+mixer residual gaps: 4,7,0,9,28,35,203,7,188,180,173,15,137,130,120,12,89, ...
+                     max 448, ALL 23 degenerate residuals are here
+```
+
+**The FFN residual contains no subsystem B and it drifts too.** Its `ea` is the
+same series. That is what rules B out; the treatment merely confirms it.
+
+Within the mixer residuals, every fourth one has a small gap -- 9, 7, 15, 12,
+11, 8, 11, 15 for the eight of them -- and those are exactly the ATTENTION
+blocks at `attn_interval = 4`. The attention stub reports its SOURCE region's
+exponent, Part 2's defect-7 fix, so it very nearly tracks: two of the eight
+still land at 15 against a threshold of 14, so 2 of the 23 degenerate
+residuals are attention mixers and the other 21 are GDN mixers. Every gap
+above 20 is a GDN block.
+
+### The probe, and what it establishes
+
+`NORM_ANCHOR`, degenerate residuals, `NRUNS = 1`:
+
+| BLOCKS | control | NORM_ANCHOR | NORM_ANCHOR + taps only | NORM_ANCHOR + full `B_SRC_REAL` |
+|---|---|---|---|---|
+| 4 | 0 | **0** | -- | -- |
+| 8 | 3 | **0** | -- | 5 |
+| 16 | 10 | **0** | -- | -- |
+| 32 | 23 | **0** | **0** | 5 |
+
+```
+tb_llama_top: schedule mismatches=0 skew differences=0 degenerate residuals=0
+tb_llama_top RESULT: PASS -- 491 descriptors, 32 blocks, 1 descriptor-latency
+              points, R_X bit-identical across all of them, R_X(0) = 29261
+              hash(R_X) = 90742
+```
+
+That is the whole 491-descriptor token, 32 blocks, real A and real B, with
+every residual add having both operands inside a mantissa width. The last four
+residuals of that run:
+
+```
+RESGAP issue 469 ea -4 eb  6 gap 10
+RESGAP issue 475 ea -4 eb  1 gap  5
+RESGAP issue 482 ea -4 eb -3 gap  1
+RESGAP issue 488 ea -4 eb  1 gap  5
+```
+
+against the control's
+
+```
+RESGAP issue 469 ea -361 eb   71 gap 432
+RESGAP issue 482 ea -372 eb -387 gap  15
+```
+
+**With the norm anchored AND B's conv taps sourced from R_QKV, 32 blocks is
+also clean (0).** The only configuration that still fails with the anchor in is
+the one that also sources alpha and beta, and that is an artefact of the
+experiment, not of the design -- see the next section.
+
+### Why sourcing alpha and beta made it worse -- an experiment limitation
+
+With the norm anchored, the GDN mixer residual is a CONSTANT ~88 binary places
+off, at every block, with no drift at all:
+
+```
+NORM_ANCHOR + B_SRC_REAL, 8 blocks:
+RESGAP issue  10 ea 3 eb 91 gap 88     <- GDN mixer
+RESGAP issue  16 ea 11 eb 2 gap 9      <- FFN
+RESGAP issue  26 ea 2 eb 88 gap 86     <- GDN mixer
+RESGAP issue  32 ea 2 eb 0 gap 2       <- FFN
+```
+
+A constant offset is not a drift, and the cause is a VALUE, not an exponent.
+`gdn_scalar` computes `arg = Q(alpha) + Q(dt)`, `sp = softplus(arg)`,
+`g = min(0, sp*a)` clamped at -16, `eg = exp(g)`. R_ALPHA here is subsystem A's
+output through SYNTHETIC weights, so its value is order 2^15 rather than order
+1; softplus is the identity in the positive tail by deliberate design
+(`gdn_scalar.vhd`, defect 2 of its header), so `g` slams into the -16 clamp,
+`eg` goes to nearly zero, the recurrence decays to nothing, and B's internal
+rmsnorm renormalises the tiny result to a very fine exponent. The attribution
+mutant confirms it: taps alone, alpha and beta left as stand-ins, gives 0
+degenerate at 1 block against the full treatment's 1, and 21 at 32 blocks
+against the control's 23.
+
+**So `B_SRC_REAL` defaults FALSE, and the reason is not conservatism.** Until
+subsystem A's weights are real, R_ALPHA does not contain a physically possible
+alpha, and feeding it to a saturating nonlinearity produces a second failure
+that has nothing to do with the question.
+
+### The 8-bit exponent wrap, found on the way
+
+The very large gaps -- 203, 188, 327, 448 -- are not a bigger version of the
+small ones. **Subsystem B's exponent ports are 8-bit signed**
+(`gdn_block.vhd:266, 281, 331, 339`: `cap_exp`, `cv_cw_exp`, `z_exp`, `y_exp`),
+so once the token's scale passes -128 they WRAP. Every large gap is exactly
+256 off:
+
+```
+block 12: ea  -83  eb  120   gap 203     eb-256 = -136
+block 16: ea  -87  eb  101   gap 188     eb-256 = -155
+block 24: ea -144  eb   -7   gap 137     eb-256 = -263
+block 56: ea -343  eb  105   gap 448     eb-256 = -151  (two wraps)
+```
+
+Unwrapped, the GDN mixer gap grows roughly linearly -- 4, 7, 0, 9, 28, 35, 53,
+68, 76, 83, ..., 119 -- and crosses the 14-bit threshold at block 4. So the
+wrap is a real second defect, it is silent, and it is NOT what makes the design
+fail: the gap has already crossed the threshold before the first wrap.
+
+### Teeth checks -- both results, as required
+
+**P6.** A copy of `llama_top` with ONE change, the norm model's published
+exponent offset by 20 (`yexp <= v_exp_a + to_signed(vi + 20, EXP_W)`), run at
+`BLOCKS = 4` where the unbroken design gives ZERO degenerate residuals:
+
+```
+tb_llama_top: the residual at step 10 has operand exponents 3 and 38, 35 apart
+against a 16-bit mantissa.  One operand shifts out ENTIRELY: this add ignores
+half its input.
+tb_llama_top: the residual at step 16 has operand exponents 11 and 41, 30 apart
+...  (fires on every residual)
+```
+
+**PASS unbroken, FAIL broken.** P6 has teeth in exactly the configuration this
+part relies on.
+
+**The two new `exp_rd_valid` asserts** (unit B reading R_BETA's and R_ALPHA's
+captured exponent). A copy with the R_ALPHA claim pointed at R_KIN, which no
+GDN block ever writes, run with `B_SRC_REAL`:
+
+```
+llama_top: unit B read R_ALPHA's exponent before anything captured it.
+llama_top: unit B read R_ALPHA's exponent before anything captured it.
+llama_top: unit B read R_ALPHA's exponent before anything captured it.
+tb_llama_top RESULT: FAIL
+```
+
+and zero occurrences of that string in all four unbroken `B_SRC_REAL` runs
+(4, 8, 16, 32 blocks). **Fires broken, silent unbroken.**
+
+`RESGAP` is an observability line and not a property; it needs no teeth check,
+and it was cross-checked against P6 -- every `RESGAP` line with `gap > 14` has a
+matching P6 report and there are no others.
+
+## What the design would need, costed
+
+Four candidates. One is cheap and already planned, one is necessary but not
+sufficient, two are measured and rejected.
+
+### 1. A REAL rmsnorm on the D-vec norm op. RECOMMENDED.
+
+This is not a new architectural element. `rtl/rmsnorm_rs.vhd` exists,
+`OP_VEC_NORM` exists in the schedule and is issued 129 times per token, and the
+only missing piece is a `seq_vec_issue` adapter -- already on Part 2's open
+list as remaining work for a completely different reason. A real rmsnorm is
+scale-free in its input by construction (`out = (x/rms(x)) * w`), so its output
+exponent is fixed by the WEIGHT scale and carries no memory of the input's.
+That is the entire fix.
+
+Measured effect of the probe that models exactly that one property: degenerate
+residuals 23 -> 0 at 32 blocks, stream exponent -387 -> -4.
+
+Cost: `rmsnorm_rs` is measured at **385 LUT and 18 DSP** for the narrowed
+QK-norm instance (`docs/debugging/2026-08-25_lut-budget-measured.md` line 37,
+`docs/debugging/2026-08-25_b-lane-dsp-measured.md` line 24). **Treat that as a
+floor, not a quote**: the D-vec instance is a different width and a different
+lane count, and it was measured for subsystem C. Cycles: the norm is already in
+the schedule and already costs a pass over the vector, so the marginal cycle
+cost against the model it replaces is the rsqrt latency, not a new pass. **This
+is the one to pick**, because it removes the cause rather than raising a
+threshold, and because the budget already carries it.
+
+### 2. Widen subsystem B's exponent ports from 8 bits to 16. NECESSARY, NOT SUFFICIENT.
+
+Removes the wrap. Does not remove the gap: unwrapped, the gap crosses the
+14-bit threshold at block 4, before the first wrap at block 12. Do it anyway --
+a wrap is a silent wrong number of exactly the class this file has now paid for
+four times.
+
+**NOT MEASURED, estimated and labelled as such.** `gdn_exp_capture`'s store is
+`LAYERS*SEGS*K*8` = 4,608 bits at 48 GDN layers, going to 9,216 bits; that is
+under one RAMB18 either way. The rest of B's exponent path is a handful of
+8-bit adds, compares and a min-tree in `gdn_conv`'s `S_PREP`, so the LUT delta
+should be low hundreds. The exponent width is hardcoded and not a generic, so
+this is a multi-file edit rather than a sweep, which is why it was not measured.
+
+### 3. Widen the residual accumulator. MEASURED AND REJECTED.
+
+`seq_vec_res` clamps the alignment grid at `min(ex,ee) + SHMAX` with
+`SHMAX = ACC_W - MANT_W - 1`, so widening `ACC_W` buys alignment range
+directly. Synthesised out of context, `xczu3eg-sfvc784-1-e`, `LANES=8`,
+`MANT_W=16`, `EXP_W=16`, `ADDR_W=13`:
+
+| ACC_W | SHMAX | CLB LUT | CLB FF | CARRY8 | DSP | BRAM |
+|---|---|---|---|---|---|---|
+| 32 (today) | 15 | 4,820 | 2,854 | 217 | 0 | 0 |
+| 48 | 31 | 7,423 | 3,833 | 297 | 0 | 0 |
+| 64 | 47 | 10,020 | 4,894 | 361 | 0 | 0 |
+
+No clock constraint was applied, so these are AREA numbers only and say
+nothing about whether the wider shifters still close timing -- which, on a
+unit whose own header says the pipeline exists because a barrel shift and a
+wide add must not be in series, is the question a real evaluation would have
+to answer next.
+
+**+5,200 LUT to double `ACC_W`, and it buys about 2.6 blocks.** The drift is
+6.19 exponent per residual step and 12.4 per block, and it is linear and
+unbounded, so 32 extra binary places is two and a half blocks of headroom on a
+32-block model, and the 27B target is 64 blocks. Any finite accumulator loses
+this race. Rejected.
+
+### 4. A global exponent broadcast. REJECTED ON THE EVIDENCE, NOT COSTED.
+
+The units do not disagree about the exponent. Every exponent in the trace is
+correct: A's `y_exp` is exactly `w_exp + x_exp - out_shift - ns`, the lock
+captures it, the residual reads it, and the arithmetic is right. What has gone
+wrong is the MAGNITUDE, and broadcasting a number everybody already agrees on
+changes nothing. There is nothing to cost.
+
+## Measured and REJECTED -- do not retry (Part 3)
+
+* **Sourcing subsystem B's activations from R_QKV / R_ALPHA / R_BETA as a fix
+  for defect 8.** It is the experiment the question named and it is the right
+  experiment; the result is that it does NOT fix it. 0/3/10/23 -> 3/5/11/24 at
+  4/8/16/32 blocks. Do not re-run it hoping for a different answer; re-run it
+  only after subsystem A's weights are real, because until then R_ALPHA's
+  VALUES are the limiting factor and not its scale.
+
+* **Sourcing alpha and beta from R_ALPHA and R_BETA while A's weights are
+  synthetic.** A constant ~88-place offset in B's output exponent at every GDN
+  block, because `gdn_scalar`'s softplus tail and -16 clamp turn an
+  order-2^15 alpha into a shut gate. Taps alone are neutral (0 at 1 block, 21
+  at 32 against the control's 23); alpha and beta are the whole difference.
+
+* **Widening `seq_vec_res`'s `ACC_W`.** +54% LUT for 16 more places, +108% for
+  32. Buys 2.6 blocks against an unbounded linear drift. Numbers in the table
+  above.
+
+* **A global exponent broadcast.** The exponents are already correct and
+  already agreed. Nothing to broadcast.
+
+* **Blaming the missing token loop for the conv taps.** The tap history is
+  masked by `tvalid` and zeroed inside `gdn_conv`, so at `tk0` only the newest
+  tap is summed and the missing loop is not an obstacle to sourcing it. Part
+  2's open list said it was. It is not.
+
+## Measurement traps hit (Part 3)
+
+* **P6's counter is CUMULATIVE ACROSS `NRUNS` and is never reset.** `n_bad_res`
+  is only initialised at declaration, so a 4-latency sweep reports four times
+  the per-run count. That is why Part 2's 32-block figure is 46 and this
+  part's is 23. 46 = 2 x 23, which the accumulation explains exactly, but the
+  `NRUNS` of that earlier run was not recorded, so this is an inference and
+  not a reconstruction. **A degenerate count is
+  meaningless without its `NRUNS`.** Every number in this part is at
+  `NRUNS = 1`. Fixing the reset was deliberately NOT done, because the P6
+  counts already published would then mean something different again; stating
+  the `NRUNS` is the cheaper and more honest fix.
+
+* **`obs_cmp_exp`'s per-step trace is offset by one against `PLAN(i)`.** The
+  trace is indexed by COMPLETION and the plan by ISSUE, and there is one more
+  completion than issue (END_TOKEN starts nobody), so reading
+  `tr_exp(i)` as step `i`'s exponent is off by one throughout. Two attempts to
+  reconstruct the exponent chain from that trace produced arithmetic that did
+  not close before the offset was noticed. The `RESGAP` line was added
+  precisely so nothing has to be reconstructed.
+
+* **A negative exponent here means a LARGER value, not a smaller one.** The
+  convention is `value = mantissa * 2^-exponent`, stated in
+  `seq_vec_res.vhd:13-15` and `gdn_scalar.vhd:80`. The stream marching from +3
+  to -387 is the activation magnitude EXPLODING by 2^390, not decaying. Getting
+  this backwards inverts the entire diagnosis, and it inverts which operand
+  the residual discards.
+
+* **Another agent re-analysed `rtl/weight_streamer.vhd` mid-session**, which
+  invalidated the GHDL library and made every run die with
+  `has changed and must be reanalysed` -- eight parallel runs all failed
+  instantly and looked like a broken edit. Re-analyse and re-take the CONTROL,
+  not just the treatment: a control measured against a different library is not
+  a control. All the numbers in this part were re-measured after that point.
+
+* **A `for` loop over `REGMAX` inside a clocked process is fine in simulation
+  and is not RTL.** The `NORM_ANCHOR` probe folds the magnitude of the whole
+  vector in one cycle. It is a probe, in a behavioural model, guarded by a
+  generic that defaults false, and it is labelled as such in the source. It is
+  not a proposal for how to build the unit.
+
+## CORRECTION to Part 2
+
+Part 2's defect-8 section, and the header of `sim/tb_llama_top.vhd` that
+repeated it, said:
+
+> Subsystem B's output exponent is anchored to ITS OWN inputs, and its conv
+> taps, conv weights and scalars are stand-ins at a fixed scale rather than
+> regions subsystem A produced. [...] The two drift apart
+
+**That explanation is WITHDRAWN.** It named subsystem B as the cause. It is
+not: the FFN residual, which never touches B, drifts at the same rate, and
+sourcing B's activations for real makes the count slightly worse. The
+observation that the scales do not track was right and the mechanism was wrong.
+
+Part 2 also said "the conv tap memory in particular is a per-token HISTORY,
+KCONV deep, which needs a token loop this file does not have", as a reason the
+experiment might not be runnable. **Also withdrawn**: masked taps are zeroed
+inside `gdn_conv`, so at `tk0` the history is not needed and the experiment ran
+in full.
+
+Part 2's statement that the bench default of 4 blocks is "the largest
+configuration whose numeric behaviour is currently defensible" **stands, but
+only for the DEFAULT configuration**. With B's activations sourced for real it
+is smaller: `BLOCKS = 1` already has one degenerate residual. That is the
+honest reading of why the default is what it is.
+
+## Open, not yet answered (Part 3)
+
+* **The recommendation is not implemented.** No `seq_vec_issue` adapter for
+  `rmsnorm_rs` was written. `NORM_ANCHOR` is a probe in a behavioural model and
+  proves only that anchoring the norm's SCALE bounds the drift. It does not
+  prove that `rmsnorm_rs` as written produces the right scale over this
+  schedule, and it says nothing at all about `rmsnorm_rs`'s arithmetic.
+
+* **The swiglu model's exponent is still fabricated.** It publishes
+  `v_exp_a + 2` while computing `(a*b)/64`, and in this Q-format a product's
+  exponent is the SUM of the operands', not one of them plus a constant. That
+  is defect 7's class -- a stub correct in its values-are-wrong intent and
+  wrong in its contract -- in the one place Part 2 did not look. It did not
+  show up here because the FFN residual's gap stays at 7 to 12, but 12 against
+  a threshold of 14 is not margin, and a real swiglu will move it.
+
+* **The 8-bit exponent wrap is diagnosed and NOT fixed.** No port was widened.
+
+* **The unwrapped GDN mixer gap growth rate is estimated, not measured.** The
+  series 4, 7, 0, 9, 28, 35, 53, 68, ... is reconstructed by adding 256 to the
+  wrapped values. That reconstruction is arithmetically forced but it was not
+  taken from an unwrapped run, because no such run exists until the ports are
+  widened.
+
+* **Whether the drift is bounded once A's weights are real is unknown.** With
+  synthetic weights every matvec's `ns` is about 10 because the accumulator is
+  full-scale by construction. Real INT4 weights against real activations will
+  give a different `ns`, and it could be smaller. The mechanism does not change
+  -- there is still nothing that restores the scale -- but the RATE would.
+
+* **`NRUNS = 1` throughout.** Every number in this part is one
+  descriptor-memory latency. P2 was checked separately at `NRUNS = 4` for
+  `B_SRC_REAL` and passed, but the 32-block anchored PASS is a single-latency
+  result and is not a skew claim.
+
+* **No synthesis of anything but `seq_vec_res`.** The `NORM_ANCHOR` probe and
+  the `B_SRC_REAL` prefetch are simulation-only constructs and were never
+  synthesised. The prefetch adds `qkv_dim + 2*val_heads + 4` region reads per
+  GDN block ahead of `start`, about 270 cycles at the scaled shape and 8,260
+  at the real 9B shape (`qkv_dim` 8,192 + 2 x 32 + 4), which is a real
+  serialisation cost that nobody has priced.

@@ -43,9 +43,20 @@
 --                     not fetched (seq_desc_fetch.vhd:113-115), so the
 --                     adapter computes a per-step address block and whatever
 --                     the memory returns there is what A multiplies.
---   B's conv taps,    deterministic functions of index, NOT yet read from
---   conv weights,     R_QKV / R_BETA / R_ALPHA.  Only `z`, the output gate,
---   scalars, w_mant   comes from a real region (R_Z).
+--   B's conv taps,    deterministic functions of index by DEFAULT.  With
+--   conv weights,     B_SRC_REAL the newest conv tap comes from R_QKV,
+--   scalars, w_mant   alpha from R_ALPHA and beta from R_BETA; the conv
+--                     weights, ssm_dt_bias, ssm_a and the ssm_norm weight
+--                     stay fixed-scale because they are learned WEIGHTS.
+--                     `z`, the output gate, always comes from R_Z.
+--                     B_SRC_REAL defaults FALSE and the reason is measured,
+--                     not conservatism: with it TRUE the degenerate-residual
+--                     count RISES, 0/3/10/23 -> 3/5/11/24 at 4/8/16/32
+--                     blocks, because A's synthetic weights make R_ALPHA's
+--                     VALUES physically impossible and gdn_scalar's gate
+--                     saturates shut.  Sourcing the taps ALONE is neutral.
+--                     See PART 3 of
+--                     docs/debugging/2026-08-28_llama-top-first-seams.md.
 --
 -- BEHAVIOURAL MODELS, selected by generic, every one of them marked in its
 -- own comment block and every one of them reporting what it is at time zero:
@@ -162,6 +173,46 @@ entity llama_top is
     -- the real one.  Set either true to bisect a failure to a side of a seam.
     A_BEHAV : boolean := false;
     B_BEHAV : boolean := false;
+
+    -- WHERE SUBSYSTEM B'S ACTIVATION INPUTS COME FROM.  Not a bisection
+    -- switch and not a behavioural model: with it TRUE the real `gdn_block`
+    -- reads the SAME data either way, only the source changes.
+    --
+    --   false  the conv taps, alpha and beta are deterministic functions of
+    --          their index at a FIXED exponent, as in `tb_gdn_block`.
+    --   true   the newest conv tap comes from region R_QKV, alpha from
+    --          R_ALPHA and beta from R_BETA, each carrying THAT REGION'S
+    --          captured exponent, so B's inputs sit on the token's own scale.
+    --
+    -- Only the ACTIVATIONS move.  The conv weights, the two learned per-head
+    -- scalars (ssm_dt_bias, ssm_a) and the ssm_norm weight stay at a fixed
+    -- exponent, because that is what a learned weight IS: a constant whose
+    -- scale does not move with the token.  Sourcing a weight from an
+    -- activation region would answer a different question.
+    --
+    -- The tap HISTORY is not faked.  `gdn_exp_capture` masks every tap older
+    -- than the number of captures, so at `tk0` only tap KCONV-1 is valid and
+    -- the older ones are read but never summed.  This file has no token loop,
+    -- so tap KCONV-1 is R_QKV and the rest are zero, which is what the first
+    -- token of a sequence actually is.
+    B_SRC_REAL : boolean := false;
+
+    -- A PROBE, NOT A FIX, AND NOT AN ARCHITECTURAL CHANGE.  It exists to
+    -- measure ONE question: is the block-to-block exponent drift caused by
+    -- the norm never restoring the activation scale?
+    --
+    -- The norm model is `out(i) = in(i) - mean` and it publishes
+    -- `y_exp = x_exp`, i.e. it passes the input scale straight through.  A
+    -- REAL rmsnorm does not: `out = (x / rms(x)) * w` is scale-free in x, so
+    -- its output exponent is fixed by the WEIGHT scale and carries no memory
+    -- of the input's.  With NORM_ANCHOR true the model reproduces that ONE
+    -- property -- mantissas renormalised to full scale, exponent published as
+    -- the constant NORM_EXP -- and nothing else about rmsnorm.
+    --
+    -- Default FALSE.  The measured numbers are in
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md, PART 3.
+    NORM_ANCHOR : boolean := false;
+    NORM_EXP    : integer := 12;
 
     -- Set false only in a run that is deliberately measuring the banner cost.
     SHOUT   : boolean := true;
@@ -871,6 +922,8 @@ begin
         variable k    : natural := 0;
         variable acc  : integer := 0;
         variable pass : natural := 0;
+        -- NORM_ANCHOR only.
+        variable mx, pmsb, nsh, d : integer := 0;
       begin
         if rising_edge(clk) then
           tk <= '0';
@@ -915,6 +968,26 @@ begin
                     pass := 1; k := 0;
                   else
                     k := 0;
+                    -- THE PROBE.  One pass over the mean-removed vector to
+                    -- find the shift that puts its largest element at
+                    -- MANT_W-2 bits.  Behavioural: a real unit folds the
+                    -- magnitude as it streams, exactly as seq_vec_res does.
+                    if NORM_ANCHOR and vi = V_NORM then
+                      mx := 0;
+                      for i in 0 to REGMAX-1 loop
+                        if i < n then
+                          d := to_integer(buf(i)) - (acc / n);
+                          if d < 0 then d := -d; end if;
+                          if d > mx then mx := d; end if;
+                        end if;
+                      end loop;
+                      pmsb := -1;
+                      for i in 0 to 30 loop
+                        if mx >= 2**i then pmsb := i; end if;
+                      end loop;
+                      if pmsb < 0 then nsh := 0;
+                      else               nsh := pmsb - (MANT_W-2); end if;
+                    end if;
                     st := S_WR;
                   end if;
                 else
@@ -925,7 +998,12 @@ begin
                 uw_en(NUNIT+vi)   <= '1';
                 uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
                 uw_addr(NUNIT+vi) <= k;
-                if vi = V_NORM then
+                if NORM_ANCHOR and vi = V_NORM then
+                  d := to_integer(buf(k)) - (acc / n);
+                  if    nsh > 0 then d := d / (2**nsh);
+                  elsif nsh < 0 then d := d * (2**(-nsh)); end if;
+                  uw_data(NUNIT+vi) <= sat_m(d);
+                elsif vi = V_NORM then
                   uw_data(NUNIT+vi) <= sat_m(to_integer(buf(k)) - (acc / n));
                 else
                   uw_data(NUNIT+vi) <= sat_m((to_integer(buf(k))
@@ -944,7 +1022,14 @@ begin
                 -- a constant: a shared or stale capture anywhere in the
                 -- exponent path has to become a WRONG NUMBER, not a repeat of
                 -- the right one.
-                yexp <= v_exp_a + to_signed(vi, EXP_W);
+                if NORM_ANCHOR and vi = V_NORM then
+                  -- SCALE-FREE, like the unit this models.  The output
+                  -- exponent is the weight scale and carries no memory of
+                  -- the input's, which is the whole point of the probe.
+                  yexp <= to_signed(NORM_EXP, EXP_W);
+                else
+                  yexp <= v_exp_a + to_signed(vi, EXP_W);
+                end if;
                 if v_ack(vi) = '1' then
                   dn  <= '0';
                   rdy <= '1';
@@ -1520,12 +1605,20 @@ begin
   --     produced.  That is one real A-to-B data path.
   --
   -- WHAT IS STILL A STAND-IN, stated plainly:
-  --   the CONTENTS of the conv taps, the conv weights, the four scalars and
-  --   the ssm_norm weight.  They are deterministic functions of their index,
-  --   as in `tb_gdn_block`, and they are NOT yet sourced from R_QKV, R_BETA
-  --   and R_ALPHA.  Wiring them is what remains before the GDN path carries
-  --   real numbers.  The conv tap memory in particular is a per-token
-  --   HISTORY, KCONV deep, and this file has no token loop yet.
+  --   the conv WEIGHTS, ssm_dt_bias, ssm_a and the ssm_norm weight, always:
+  --   they are learned constants, they have no region, and a fixed exponent
+  --   is what a weight HAS.  Sourcing one from an activation region would
+  --   answer a different question.
+  --
+  --   the conv TAPS, alpha and beta, unless B_SRC_REAL.  With B_SRC_REAL they
+  --   are read from R_QKV, R_ALPHA and R_BETA and carry those regions'
+  --   captured exponents.  The tap HISTORY is not faked either way: a tap
+  --   older than the number of `gdn_exp_capture` captures is masked out by
+  --   `tvalid` and ZEROED inside `gdn_conv` (gdn_conv.vhd:310-315), so at
+  --   `tk0` -- which is all this file has, there being no token loop -- only
+  --   tap KCONV-1 is ever summed.  That is why the missing token loop did not
+  --   block the experiment in PART 3 of
+  --   docs/debugging/2026-08-28_llama-top-first-seams.md.
   -- ======================================================================
   gb_real : if not B_BEHAV generate
     constant KH  : positive := SHAPE.key_heads;
@@ -1582,6 +1675,15 @@ begin
     signal w_mant : std_logic_vector(DM*16-1 downto 0);
     signal w_exp  : integer := 12;
     signal w_taken : std_logic;
+
+    -- The prefetched ACTIVATION inputs, used only when B_SRC_REAL.  They are
+    -- signals and not process variables because the conv-tap and scalar
+    -- producers are separate processes: `cv_x` has to be combinational in the
+    -- registered address, which is what the port contract demands.
+    constant QKVN : positive := qkv_dim(SHAPE);
+    signal qkv_b  : buf_t(0 to QKVN-1) := (others => (others => '0'));
+    signal bet_b, alp_b : buf_t(0 to VH-1) := (others => (others => '0'));
+    signal bet_e, alp_e : signed(7 downto 0) := to_signed(12, 8);
 
     signal z_mant : std_logic_vector(DM*16-1 downto 0) := (others => '0');
     signal z_exp  : signed(7 downto 0) := to_signed(12, 8);
@@ -1691,19 +1793,51 @@ begin
       end if;
     end process;
 
-    cvdata_p : process(cvq_seg, cvq_grp) is
+    cvdata_p : process(cvq_seg, cvq_grp, qkv_b) is
       variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
-      variable b : integer;
+      variable b, ch, sbase : integer;
     begin
+      -- The conv WEIGHTS are learned constants in every configuration.
       for t in 0 to KC-1 loop
         for ln in 0 to B_CONV_LANES-1 loop
           b := (t*B_CONV_LANES + ln)*16;
-          xv(b+15 downto b) :=
-            std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
           wv(b+15 downto b) :=
             std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
         end loop;
       end loop;
+
+      if B_SRC_REAL then
+        -- q | k | v in that channel order, the same two boundaries
+        -- `seq_opdec`'s MSEG mechanism and this file's `last_seg` use.
+        if    cvq_seg = 0 then sbase := 0;
+        elsif cvq_seg = 1 then sbase := KH*DM;
+        else                   sbase := 2*KH*DM; end if;
+        for t in 0 to KC-1 loop
+          for ln in 0 to B_CONV_LANES-1 loop
+            b := (t*B_CONV_LANES + ln)*16;
+            if t = KC-1 then
+              ch := sbase + cvq_grp*B_CONV_LANES + ln;
+              if ch < QKVN then
+                xv(b+15 downto b) := std_logic_vector(qkv_b(ch));
+              else
+                xv(b+15 downto b) := (others => '0');
+              end if;
+            else
+              -- Older than the first token.  `gdn_exp_capture`'s tvalid mask
+              -- excludes these; zero is what they are, not a stand-in.
+              xv(b+15 downto b) := (others => '0');
+            end if;
+          end loop;
+        end loop;
+      else
+        for t in 0 to KC-1 loop
+          for ln in 0 to B_CONV_LANES-1 loop
+            b := (t*B_CONV_LANES + ln)*16;
+            xv(b+15 downto b) :=
+              std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+          end loop;
+        end loop;
+      end if;
       cv_x <= xv;
       cv_w <= wv;
     end process;
@@ -1724,21 +1858,33 @@ begin
       end if;
     end process;
 
-    scdrv : process(sc_head_q) is
+    scdrv : process(sc_head_q, alp_b, bet_b, alp_e, bet_e) is
       variable ix : integer;
     begin
       ix      := sc_head_q;
-      sc_al_m <= m12(ix*31 + 1, 2);
+      -- ssm_dt_bias and ssm_a are LEARNED per-head weights.  They have no
+      -- region and their scale does not move with the token.
       sc_dt_m <= m12(ix*31 + 2, 3);
       -- ssm_a is -exp(A_log), so `a` is always <= 0 and the decay never
       -- amplifies.  A positive one would exercise a case the model cannot
       -- produce.
       sc_a_m  <= -abs(m12(ix*31 + 3, 4));
-      sc_b_m  <= m12(ix*31 + 4, 5);
-      sc_al_e <= to_signed(12, 8);
       sc_dt_e <= to_signed(12, 8);
       sc_a_e  <= to_signed(12, 8);
-      sc_b_e  <= to_signed(12, 8);
+      if B_SRC_REAL then
+        -- alpha and beta ARE per-token activations: subsystem A projects them
+        -- into R_ALPHA and R_BETA, one element per value head, which is
+        -- exactly `sc_head`'s index.
+        sc_al_m <= alp_b(ix);
+        sc_b_m  <= bet_b(ix);
+        sc_al_e <= alp_e;
+        sc_b_e  <= bet_e;
+      else
+        sc_al_m <= m12(ix*31 + 1, 2);
+        sc_b_m  <= m12(ix*31 + 4, 5);
+        sc_al_e <= to_signed(12, 8);
+        sc_b_e  <= to_signed(12, 8);
+      end if;
     end process;
 
     -- ---- memory 5: the ssm_norm weight.  A level. ----------------------
@@ -1751,8 +1897,8 @@ begin
 
     -- ---- the adapter, the z producer and the y sink --------------------
     bp : process(clk) is
-      type st_t is (S_IDLE, S_ZRD, S_CAPW, S_CAPR, S_GO, S_ARM, S_RUN,
-                    S_DRAIN, S_DONE);
+      type st_t is (S_IDLE, S_QRD, S_BRD, S_ARD, S_ZRD, S_CAPW, S_CAPR,
+                    S_GO, S_ARM, S_RUN, S_DRAIN, S_DONE);
       variable st : st_t := S_IDLE;
       variable zb : buf_t(0 to A_MAXROWS-1);
       variable yb : buf_t(0 to A_MAXROWS-1);
@@ -1785,9 +1931,15 @@ begin
             seg      := 0;
             h        := 0;
             zi       := 0;
-            st       := S_ZRD;
-            b_exp_region <= to_unsigned(R_Z, 8);
-            b_exp_seg    <= "00";
+            if B_SRC_REAL then
+              st := S_QRD;
+              b_exp_region <= to_unsigned(R_QKV, 8);
+              b_exp_seg    <= "00";
+            else
+              st := S_ZRD;
+              b_exp_region <= to_unsigned(R_Z, 8);
+              b_exp_seg    <= "00";
+            end if;
           end if;
 
           -- The un-refusable y stream.  Outside the FSM: a beat that arrives
@@ -1805,6 +1957,67 @@ begin
 
           case st is
             when S_IDLE => null;
+
+            -- ---- B_SRC_REAL only: the three activation prefetches --------
+            -- Same two-edge region-read discipline as every other adapter in
+            -- this file: the address is registered here and the memory
+            -- registers the data, so an address issued at k is consumed at
+            -- k-2 and the loop runs to n+1 to drain.  Consuming at k-1 is
+            -- defect 3 and it is silent.
+            when S_QRD =>
+              if k < QKVN then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_QKV;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then qkv_b(k-2) <= el_rdata; end if;
+              if k = QKVN+1 then
+                k := 0;
+                b_exp_region <= to_unsigned(R_BETA, 8);
+                st := S_BRD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_BRD =>
+              if k < VH then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_BETA;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then bet_b(k-2) <= el_rdata; end if;
+              if k = VH+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit B read R_BETA's exponent before "
+                       & "anything captured it."
+                  severity error;
+                bet_e <= resize(exp_rd_data, 8);
+                k := 0;
+                b_exp_region <= to_unsigned(R_ALPHA, 8);
+                st := S_ARD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_ARD =>
+              if k < VH then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_ALPHA;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then alp_b(k-2) <= el_rdata; end if;
+              if k = VH+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit B read R_ALPHA's exponent before "
+                       & "anything captured it."
+                  severity error;
+                alp_e <= resize(exp_rd_data, 8);
+                k := 0;
+                b_exp_region <= to_unsigned(R_Z, 8);
+                st := S_ZRD;
+              else
+                k := k + 1;
+              end if;
 
             -- Read the whole gate region into a buffer BEFORE starting, so
             -- the z handshake never has to wait on a region read while the

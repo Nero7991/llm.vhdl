@@ -52,28 +52,41 @@
 -- =====================================================================
 -- THE DEFAULT IS 4 BLOCKS AND THAT IS NOT AN ARBITRARY CHOICE.  READ THIS.
 -- =====================================================================
--- The default `BLOCKS = 4` passes.  `BLOCKS = 8` and above do not yet pass
--- P6, and the default was not chosen to hide that.  Measured, real A and B,
--- attn_interval 4:
+-- The default `BLOCKS = 4` passes.  `BLOCKS = 8` and above do not pass P6,
+-- and the default was not chosen to hide that.  Measured, real A and B,
+-- attn_interval 4, NRUNS = 1 (P6's counter is cumulative across runs, so a
+-- count is only comparable against another count at the same NRUNS):
 --
---     BLOCKS =  4   degenerate residuals = 0    green
---     BLOCKS =  8   degenerate residuals = 3    red
---     BLOCKS = 32   degenerate residuals = 46   red   (of 64 residual steps)
+--     BLOCKS =  4   degenerate residuals =  0    green
+--     BLOCKS =  8   degenerate residuals =  3    red
+--     BLOCKS = 16   degenerate residuals = 10    red
+--     BLOCKS = 32   degenerate residuals = 23    red   (of 64 residual steps)
 --
--- The trend is the finding, not the failure.  Subsystem B's output exponent
--- is anchored to ITS OWN inputs, and its conv taps, conv weights and scalars
--- are stand-ins at a fixed scale rather than regions subsystem A produced.
--- The residual stream's exponent, meanwhile, moves as the token progresses.
--- The two therefore drift apart, and once they are more than a mantissa width
--- apart the residual silently discards one operand.  Nothing in the design
--- makes the block-to-block SCALE track, and nothing was ever going to notice
--- that except a whole-token integration run.
+-- The trend is the finding, not the failure.
+--
+-- WHY, established 2026-08-28 and NOT the reason this header gave before.
+-- The earlier text blamed subsystem B's fixed-scale stand-in inputs.  That
+-- was a hypothesis, it was tested by sourcing B's activations from the real
+-- regions, and it is WITHDRAWN: the count went 0/3/10/23 -> 3/5/11/24, i.e.
+-- slightly WORSE.  The residual stream's own exponent falls linearly at
+-- about 6.2 per residual step, 3 -> -387 over 32 blocks, in BOTH
+-- configurations and in the FFN residual too, which contains no B at all.
+--
+-- The cause is that nothing in the block loop ever restores the activation
+-- scale.  A matvec's output exponent is its source's, minus
+-- (out_shift - w_exp), minus its own data-driven normalisation shift `ns`
+-- (matvec_core.vhd:876, :932-934), so it only ever FALLS; the one unit that
+-- would put it back is rmsnorm, which is scale-free by construction, and
+-- rmsnorm here is a behavioural model that passes its input exponent
+-- straight through.  Measured fall: 6.19 per residual step, 12.4 per block.
+-- With `NORM_ANCHOR` -- a probe that gives the norm model rmsnorm's ONE scale
+-- property and nothing else -- the stream exponent stays inside [-4, +8] and
+-- the degenerate count is 0 at 4, 8, 16 AND 32 blocks.
 --
 -- So: 4 blocks is the largest configuration in which the numeric behaviour is
 -- currently defensible, and it is the one the regression gate runs.  A green
 -- run of this bench at the default is NOT a statement that the machine can do
--- 32 blocks.  See docs/debugging/2026-08-28_llama-top-first-seams.md, PART 2,
--- "open, not yet answered".
+-- 32 blocks.  See docs/debugging/2026-08-28_llama-top-first-seams.md, PART 3.
 --
 -- =====================================================================
 -- WHY THE DESCRIPTOR MEMORY LATENCY IS THE SKEW AXIS
@@ -107,6 +120,13 @@ entity tb_llama_top is
     -- D-to-A seam.
     A_BEHAV   : boolean  := false;
     B_BEHAV   : boolean  := false;
+    -- Where subsystem B's ACTIVATION inputs come from.  See the generic of
+    -- the same name in `rtl/llama_top.vhd`.  false = the fixed-exponent
+    -- stand-ins; true = the newest conv tap from R_QKV, alpha from R_ALPHA
+    -- and beta from R_BETA, each with that region's captured exponent.
+    B_SRC_REAL : boolean := false;
+    -- A PROBE.  See the generic of the same name in `rtl/llama_top.vhd`.
+    NORM_ANCHOR : boolean := false;
     MAXCYC    : natural  := 4000000;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
@@ -279,7 +299,9 @@ begin
       SHAPE => SHAPE, LANES => LANES, MANT_W => MANT_W, EXP_W => EXP_W,
       REGMAX => REGMAX, STEP_W => STEP_W,
       WDOG_LIMIT => 200000, STRICT => true,
-      A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV, SHOUT => true)
+      A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
+      B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
+      SHOUT => true)
     port map(
       clk => clk, rst => rst,
       go => go, abort => abort, tbl_len => tbl_len,
@@ -504,6 +526,18 @@ begin
       if rst = '0' and tb_reset = '0' and obs_res_take = '1' then
         d := to_integer(obs_res_ea) - to_integer(obs_res_eb);
         if d < 0 then d := -d; end if;
+        -- THE GAP AT EVERY RESIDUAL, NOT ONLY THE ONES THAT FAIL.  The
+        -- failing ones say a residual discarded an operand; the whole series
+        -- says whether the gap is a step, a random walk or a trend, and that
+        -- is the difference between a stimulus artefact and a design hole.
+        -- One line per residual, so it is behind VERBOSE like the rest.
+        if VERBOSE then
+          report "tb_llama_top: RESGAP issue " & integer'image(n_issue)
+               & " ea " & integer'image(to_integer(obs_res_ea))
+               & " eb " & integer'image(to_integer(obs_res_eb))
+               & " gap " & integer'image(d)
+            severity note;
+        end if;
         if d > MANT_W-2 then
           n_bad_res <= n_bad_res + 1;
           report "tb_llama_top: the residual at step " & integer'image(n_issue)
