@@ -182,7 +182,59 @@ architecture rtl of matvec_core is
   signal nb_r, tiles_r, lastvalid : integer := 0;
   signal t_iss, b_iss  : integer := 0;              -- next word to accept
   signal amax   : unsigned(35 downto 0) := (others => '0');
-  signal ns_r   : integer := 0;
+  -- NS, THE BFP OUTPUT SHIFT, AND WHY IT IS DECLARED AND REPLICATED LIKE THIS.
+  --
+  -- ns is one small control value that steers the VARIABLE shift of every one
+  -- of the ROWS_IF emit lanes (SITE 4, in S_EMIT below).  At the FK33's
+  -- ROWS_IF = 58 that is a single register driving 58 lanes of 32-bit barrel
+  -- shifter, spread across whatever the placer does with 1,914 DSPs and 135k
+  -- LUTs.  First place-and-route at the card's real 0.717 V put the resulting
+  -- net at the top of the design:
+  --
+  --   ns_r_reg[1]_rep__7/C -> em_shv_reg[54][17]/D
+  --   slack -2.495   logic 2.543   NET 3.045   (54.5% route)   172.6 MHz
+  --
+  -- `_rep__7` is Vivado having already replicated it seven times by itself and
+  -- still not making timing.  Two things are wrong and they are independent:
+  --
+  -- (1) WIDTH.  ns was declared plain `integer`, so a value whose range is 0
+  --     to 22 was broadcast as 32 bits.  msb_pos_u of a 36-bit amax is 0..36
+  --     and ns = max(0, that - 14), so 0..22 is the true range and six bits
+  --     hold it with room to spare.  `natural range 0 to 63` is what the
+  --     synthesiser needs to see; it cannot infer the range from the two
+  --     assignments in S_SCAN.  This cuts the broadcast by 5.3x before any
+  --     replication, and it is the cheaper of the two fixes by a distance.
+  --
+  -- (2) FANOUT.  One driver, ROWS_IF sinks, placed apart.  The remedy is the
+  --     one measured on gdn_silu's shift control, where the same shape cost
+  --     2.812 ns of net delay and per-lane registered copies took it to
+  --     0.530 ns: give each lane its OWN register holding the same value, so
+  --     the placer can put the copy next to the lane it feeds instead of
+  --     routing one net to all of them.  DONT_TOUCH is what makes that stick:
+  --     the copies are functionally identical and equivalent-register-removal
+  --     merges them straight back into one net otherwise.
+  --
+  -- THE COST IS ZERO CYCLES, and that is a property of the state machine, not
+  -- an accident.  ns_r is written in S_SCAN, S_SCAN unconditionally enters
+  -- S_EMIT, and S_EMIT also clears rd_v so its FIRST cycle never writes
+  -- em_shv.  So the first read of the shift amount is two cycles after ns_r is
+  -- written, and a replica that tracks ns_r with one cycle of delay is already
+  -- correct by then.  The margin is exactly one cycle -- it is sufficient, not
+  -- generous, and anything that makes S_EMIT start emitting a cycle earlier
+  -- eats it.  tb_matvec_core checks the emitted y against ref/matvec_int4.c
+  -- bit for bit, so that boundary is covered by the existing suite.
+  --
+  -- tap_ns and y_exp deliberately keep reading the MASTER ns_r, not a replica.
+  -- Both are single-sink and neither is on this path, and a control value that
+  -- is one cycle late in one consumer and not another is exactly the silent
+  -- defect this file has been bitten by before.  ns_r is constant for the
+  -- whole of S_EMIT, so master and replica agree everywhere either is read.
+  subtype ns_t is natural range 0 to 63;
+  signal ns_r   : ns_t := 0;
+  type   ns_arr is array(0 to ROWS_IF-1) of ns_t;
+  signal ns_rep : ns_arr := (others => 0);
+  attribute dont_touch : string;
+  attribute dont_touch of ns_rep : signal is "true";
   signal sat_r, err_r : std_logic := '0';
 
   -- ROW-END PIPELINE.  Row end runs once per TILE, not once per block, so
@@ -582,6 +634,14 @@ begin
         -- than the data and silently drops the first tile.
         ybuf_q <= ybuf(rd_t);
 
+        -- Per-lane copies of the emit shift, updated UNCONDITIONALLY so they
+        -- are always exactly ns_r delayed by one cycle -- see the declaration.
+        -- No state test here on purpose: a gated replica would only track ns_r
+        -- while the gate is true, which is the version of this that is wrong.
+        for rr in 0 to ROWS_IF-1 loop
+          ns_rep(rr) <= ns_r;
+        end loop;
+
         ----------------------------------------------------------------
         -- control
         ----------------------------------------------------------------
@@ -628,8 +688,12 @@ begin
             em_v <= rd_v; em_t <= rd_td;
             if rd_v = '1' then
               for rr in 0 to ROWS_IF-1 loop
+                -- ns_rep(rr), not ns_r: the per-lane replica.  To attribute
+                -- the two fixes separately, put ns_r back HERE and nowhere
+                -- else -- that measures the width narrowing on its own.
                 em_shv(rr) <= resize(round_shift(
-                                signed(ybuf_q(rr*32+31 downto rr*32)), ns_r), 32);
+                                signed(ybuf_q(rr*32+31 downto rr*32)),
+                                ns_rep(rr)), 32);
               end loop;
             end if;
 
