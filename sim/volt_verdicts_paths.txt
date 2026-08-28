@@ -1,0 +1,113 @@
+# Critical path at each voltage for every point in the 0.717 V verdict campaign.
+# Source: Vivado report_timing, 2026-08-27, BC-250.  See docs/2026-08-27_verdicts-at-0.717V.md
+
+== timing_l2norm_rs_v0.717_N128_LANES1.rpt
+  Source:                 msb_p_reg[2]/C
+  Destination:            bias_q_reg[0]/R
+  Data Path Delay:        3.216ns  (logic 1.369ns (42.568%)  route 1.847ns (57.432%))
+
+== timing_l2norm_rs_v0.717_N128_LANES1_v0.717.rpt
+  Source:                 ARG__9/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[65]/D
+  Data Path Delay:        4.414ns  (logic 3.866ns (87.585%)  route 0.548ns (12.415%))
+
+== timing_l2norm_rs_v0.717_N128_LANES2.rpt
+  Source:                 msb_p_reg[2]/C
+  Destination:            bias_q_reg[0]/R
+  Data Path Delay:        3.216ns  (logic 1.369ns (42.568%)  route 1.847ns (57.432%))
+
+== timing_l2norm_rs_v0.717_N128_LANES2_v0.717.rpt
+  Source:                 ARG__9/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[65]/D
+  Data Path Delay:        4.414ns  (logic 3.866ns (87.585%)  route 0.548ns (12.415%))
+
+== timing_l2norm_rs_v0.717_N128_LANES4.rpt
+  Source:                 ARG__5/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[61]/D
+  Data Path Delay:        3.449ns  (logic 2.813ns (81.560%)  route 0.636ns (18.440%))
+
+== timing_l2norm_rs_v0.717_N128_LANES4_v0.717.rpt
+  Source:                 ARG__5/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[61]/D
+  Data Path Delay:        4.630ns  (logic 3.931ns (84.903%)  route 0.699ns (15.097%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES1.rpt
+  Source:                 ARG__9/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[60]/D
+  Data Path Delay:        3.275ns  (logic 2.782ns (84.947%)  route 0.493ns (15.053%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES1_v0.717.rpt
+  Source:                 ARG__9/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[65]/D
+  Data Path Delay:        4.414ns  (logic 3.866ns (87.585%)  route 0.548ns (12.415%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES2.rpt
+  Source:                 ARG__14/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[60]/D
+  Data Path Delay:        3.498ns  (logic 2.820ns (80.617%)  route 0.678ns (19.383%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES2_v0.717.rpt
+  Source:                 ARG__14/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[65]/D
+  Data Path Delay:        4.690ns  (logic 3.924ns (83.667%)  route 0.766ns (16.333%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES4.rpt
+  Source:                 ARG__24/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[60]/D
+  Data Path Delay:        3.498ns  (logic 2.820ns (80.617%)  route 0.678ns (19.383%))
+
+== timing_rmsnorm_rs_v0.717_N256_LANES4_v0.717.rpt
+  Source:                 ARG__24/DSP_A_B_DATA_INST/CLK
+  Destination:            mr_m_reg[65]/D
+  Data Path Delay:        4.690ns  (logic 3.924ns (83.667%)  route 0.766ns (16.333%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES1.rpt
+  Source:                 ARG__3/DSP_A_B_DATA_INST/CLK
+  Destination:            m_yy_reg/DSP_A_B_DATA_INST/A[23]
+  Data Path Delay:        3.248ns  (logic 2.704ns (83.251%)  route 0.544ns (16.749%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES1_v0.717.rpt
+  Source:                 ARG__3/DSP_A_B_DATA_INST/CLK
+  Destination:            m_yy_reg/DSP_A_B_DATA_INST/A[23]
+  Data Path Delay:        4.382ns  (logic 3.808ns (86.901%)  route 0.574ns (13.099%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES4.rpt
+  Source:                 ARG__3/DSP_A_B_DATA_INST/CLK
+  Destination:            m_yy_reg/DSP_A_B_DATA_INST/A[23]
+  Data Path Delay:        3.248ns  (logic 2.704ns (83.251%)  route 0.544ns (16.749%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES4_v0.717.rpt
+  Source:                 ARG__3/DSP_A_B_DATA_INST/CLK
+  Destination:            m_yy_reg/DSP_A_B_DATA_INST/A[23]
+  Data Path Delay:        4.382ns  (logic 3.808ns (86.901%)  route 0.574ns (13.099%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES8.rpt
+  Source:                 s_acc0/DSP_M_DATA_INST/CLK
+  Destination:            s_acc0__5/DSP_OUTPUT_INST/ALU_OUT[0]
+  Data Path Delay:        4.940ns  (logic 4.856ns (98.300%)  route 0.084ns (1.700%))
+
+== timing_micro_rmsn_lanes_v0.717_LANES8_v0.717.rpt
+  Source:                 s_acc0/DSP_M_DATA_INST/CLK
+  Destination:            s_acc0__5/DSP_OUTPUT_INST/ALU_OUT[0]
+  Data Path Delay:        6.585ns  (logic 6.501ns (98.724%)  route 0.084ns (1.276%))
+
+== path_emit_SL8_default.rpt
+  Source:                 si_e_seg_reg[2]/C
+  Destination:            u_silu/xq_reg[1][29]/D
+  Data Path Delay:        3.363ns  (logic 0.927ns (27.565%)  route 2.436ns (72.435%))
+
+== path_emit_SL8_v0.717.rpt
+  Source:                 u_rms/ARG__18/DSP_A_B_DATA_INST/CLK
+  Destination:            u_rms/rq_yfin_reg[27]/D
+  Data Path Delay:        4.354ns  (logic 3.812ns (87.552%)  route 0.542ns (12.448%))
+
+== path_emit_SL16_default.rpt
+  Source:                 u_rms/ARG__16/DSP_A_B_DATA_INST/CLK
+  Destination:            u_rms/rq_yfin_reg[27]/D
+  Data Path Delay:        3.223ns  (logic 2.693ns (83.556%)  route 0.530ns (16.444%))
+
+== path_emit_SL16_v0.717.rpt
+  Source:                 u_rms/ARG__18/DSP_A_B_DATA_INST/CLK
+  Destination:            u_rms/rq_yfin_reg[27]/D
+  Data Path Delay:        4.354ns  (logic 3.812ns (87.552%)  route 0.542ns (12.448%))
+

@@ -23,11 +23,26 @@ set top    [lindex $argv 2]
 # source file.  Generics are needed because the interesting question about C's
 # register file is how it SCALES, and a scaling question cannot be asked with a
 # hardcoded size.
+#
+# "volt=<V>" is a third form.  It re-analyses the SAME synthesized netlist at a
+# VCCINT other than the part default, exactly as ooc_core_sweep.tcl does and for
+# exactly the same reason: every Fmax this harness has ever printed is Vivado's
+# default 0.85 V analysis of a -1/-2/-2L part, while the FK33 is set by hand to
+# 0.717 V (docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md).  Applied
+# AFTER synth_design and opt_design and with no placement, so the pair of
+# numbers this prints is a pure voltage derate of one netlist rather than a
+# comparison of two differently-optimised builds.  Contrast ooc_micro_pnr.tcl,
+# which must put the conditions in the XDC before create_project and therefore
+# lets the tools optimise FOR the low voltage -- a different question.
 set files {}
 set generics {}
+set volt -1
 set tag $top
 foreach a [lrange $argv 3 end] {
-  if {[regexp {^g:([A-Za-z_][A-Za-z0-9_]*)=(.+)$} $a -> n v]} {
+  if {[regexp {^volt=([0-9.]+)$} $a -> v]} {
+    set volt $v
+    append tag "_v$v"
+  } elseif {[regexp {^g:([A-Za-z_][A-Za-z0-9_]*)=(.+)$} $a -> n v]} {
     lappend generics -generic $n=$v
     append tag "_${n}$v"
   } else {
@@ -100,5 +115,57 @@ puts [format "MICRO %s  DSP=%s (census %s)  LUT=%s  FF=%s  CARRY8=%s  BRAM=%s  W
 if {$dsp != [llength $cells]} {
   puts "WARNING: utilisation DSP=$dsp disagrees with the census [llength $cells] -- do not trust either"
 }
+
+# Every row goes to one CSV so a sweep is a file rather than a hand transcription
+# out of console scrollback.  The `volt` column carries the literal string
+# "default" for the part's own analysis point, because writing 0.85 there would
+# be an assumption about what the default IS, and the whole point of the
+# exercise is that that assumption was never checked.
+set csvpath [file join $outdir volt_results.csv]
+set fresh [expr {![file exists $csvpath] || [file size $csvpath] == 0}]
+set csvfh [open $csvpath a]
+if {$fresh} {
+  puts $csvfh "tag,top,part_opened,part_analysed,period_ns,volt,dsp,lut,ff,bram,carry8,wns_ns,fmax_mhz"
+}
+proc part_now {} { return [get_property PART [current_project]] }
+puts $csvfh "$tag,$top,$part,[part_now],$period,default,$dsp,$lut,$ff,$bram,$carry,$wns,$fmax"
+
+if {$volt > 0} {
+  # Dump the conditions on both sides.  The reason is a real hazard, not
+  # thoroughness: in a place-and-route flow the same constraint makes Vivado
+  # RELOAD the part as the -2LV variant ([Vivado 12-4441]), which is a speed
+  # grade change and not a derate.  If it also happens here then the "pure
+  # derate" claim above is false and the two harnesses are not comparable.  So
+  # record what the part is called before and after, and report the conditions
+  # themselves, rather than trusting that nothing moved.
+  set fh [open [file join $outdir opcond_${tag}_before.rpt] w]
+  puts $fh [report_operating_conditions -return_string]
+  close $fh
+  set part_before [part_now]
+
+  set_operating_conditions -voltage [list VCCINT $volt]
+
+  set fh [open [file join $outdir opcond_${tag}_after.rpt] w]
+  puts $fh [report_operating_conditions -return_string]
+  close $fh
+  set part_after [part_now]
+  # MEASUREMENT TRAP, hit 2026-08-27: this property does NOT move.  It still
+  # reads xcvu33p-fsvh2104-2L-e after the constraint, while the log one line
+  # earlier says `[Vivado 12-4441] ... require changing to the -2LV variant`
+  # followed by `[Device 21-403] Loading part xcvu33p-fsvh2104-2LV-e`.  The
+  # device under the timing engine changed and the project property did not.
+  # Believe the log, not this line.
+  puts "VOLTCHECK project PART property before=$part_before after=$part_after"
+  puts "VOLTCHECK the authority is the log: grep for 12-4441 and 21-403"
+
+  report_timing_summary -delay_type max -max_paths 3 \
+    -file [file join $outdir timing_${tag}_v${volt}.rpt]
+  set wns_v  [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
+  set fmax_v [expr {1000.0 / ($period - $wns_v)}]
+  puts $csvfh "$tag,$top,$part,$part_after,$period,$volt,$dsp,$lut,$ff,$bram,$carry,$wns_v,$fmax_v"
+  puts [format "MICROVOLT %s  VCCINT=%s  WNS=%.3f  Fmax=%.1f MHz  (derate %.2f%% from %.1f MHz)" \
+        $tag $volt $wns_v $fmax_v [expr {100.0*($fmax-$fmax_v)/$fmax}] $fmax]
+}
+close $csvfh
 puts "MICRO_DONE"
 close_project

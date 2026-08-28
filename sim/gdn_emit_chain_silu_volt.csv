@@ -1,0 +1,3 @@
+silu_lanes,si_beats,dsp,lut,ff,bram,part_default,wns_default,fmax_default,part_volt,volt,wns_volt,fmax_volt,derate_pct
+8,16,57,23910,14005,11.5,xcvu33p-fsvh2104-2L-e,-0.081,295.77048210588583,xcvu33p-fsvh2104-2L-e,0.717,-1.093,227.63487366264513,23.03664921465968
+16,8,73,33673,15010,15.5,xcvu33p-fsvh2104-2L-e,0.027,305.5300947143294,xcvu33p-fsvh2104-2L-e,0.717,-1.093,227.63487366264513,25.49510585021625
