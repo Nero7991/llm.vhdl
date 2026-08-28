@@ -6,7 +6,8 @@ and emits the packed file that ref/matvec_int4.c parses and the RTL streams.
 
 Implements exactly:
   docs/superpowers/specs/2026-08-20-int4-streaming-matvec-design.md
-  6.1 quantization, 6.4 file layout, 6.5 bit ordering (NORMATIVE), 14.1 generics
+  6.1 quantization, 6.4 file layout, 6.5 / 6.5a bit ordering (NORMATIVE),
+  14.1 generics
 
 The format, for reference:
 
@@ -31,6 +32,23 @@ plausible 80-sub-region file that no design can consume -- not an error, a
 WRONG FILE.  AXI_DW is now an explicit input, the port count falls out of it,
 the value is recorded in the header at 0x1E so a consumer can check rather than
 infer, and geometries nothing implements are REFUSED.  See check_geometry().
+
+GENERAL LAYOUT (2026-08-28, spec 6.5a).  The byte layout used to be pinned at
+AXI_DW=128, where one AXI lane is exactly one row's BLOCK*4 = 128-bit chunk.
+That is the "ROWS_IF=4 coincidence" 6.5 calls load-bearing, and it does not hold
+on the FK33, whose HBM SAXI ports are 256 bits and where one lane spans two
+rows.  6.5a states the general rule and this file emits it:
+
+  * the TILE WORD for (tile t, block b) is ROWS_IF*BLOCK*4 bits with row r of
+    the tile at bits (r+1)*BLOCK*4-1 downto r*BLOCK*4, row 0 at the LSB;
+  * weight sub-region p carries bit slice p of every tile word, t-major then b;
+  * n_scale_sub = lcm(ROWS_IF*16, AXI_DW) / AXI_DW, the SCALE SUPERWORD is
+    n_scale_sub*AXI_DW bits and holds GRP = n_scale_sub*AXI_DW/(ROWS_IF*16)
+    consecutive scale groups, and scale sub-region q carries bit slice q of it.
+
+At ROWS_IF=4, AXI_DW=128 slice p IS row p and n_scale_sub is 1, so this
+generalises the old code rather than changing it: repacking the {1,2,4,8} x 128
+set produces BYTE-IDENTICAL files (checked, see docs/debugging/).
 """
 
 import argparse
@@ -64,40 +82,61 @@ class GeometryError(ValueError):
     """A (ROWS_IF, BLOCK, AXI_DW) triple this repository cannot pack."""
 
 
+AXI4_WIDTHS = (8, 16, 32, 64, 128, 256, 512, 1024)   # AXI4 legal data widths
+
+
+def n_scale_sub(rows_if: int, axi_dw: int) -> int:
+    """Scale sub-region count, spec 6.5a: lcm(ROWS_IF*16, AXI_DW) / AXI_DW.
+
+    Equivalently the SMALLEST n >= 1 for which n whole beats hold a whole
+    number of scale groups.  Minimality is not cosmetic: a larger n that also
+    divides describes a DIFFERENT file, so packer and RTL have to agree on
+    which one, and "the smallest" is the only choice that needs no extra field.
+
+    n = 1 whenever the group fits a beat (ROWS_IF*16 <= AXI_DW and divides),
+    which is every AXU3EG geometry, so this is a generalisation and not a
+    change.
+    """
+    sw = rows_if * 16
+    return math.lcm(sw, axi_dw) // axi_dw
+
+
+def scale_groups_per_super(rows_if: int, axi_dw: int) -> int:
+    """GRP of spec 6.5a: scale groups carried by one superword."""
+    return n_scale_sub(rows_if, axi_dw) * axi_dw // (rows_if * 16)
+
+
 def check_geometry(rows_if: int, axi_dw: int, emitting: bool = True) -> int:
     """Return NPORTS_W for this geometry, or raise GeometryError.
 
-    THE POINT OF THIS FUNCTION is to refuse rather than to guess.  Three
-    separate conditions, each with its own reason, because collapsing them into
-    one "unsupported" message is what makes the next person guess again:
+    THE POINT OF THIS FUNCTION is to refuse rather than to guess.  It used to
+    refuse three things.  Spec 6.5a (2026-08-28) settled two of them -- the
+    byte layout at AXI_DW != 128, and n_scale_sub > 1 -- so those are now
+    IMPLEMENTED rather than refused, and this file emits them.  What is left is
+    the set that is still genuinely undefined:
 
     1. The 6.5 invariant must divide.  NPORTS_W is a count of AXI masters; a
-       fractional one is not a smaller design, it is no design.
+       fractional one is not a smaller design, it is no design.  ARITHMETIC,
+       always applies, so --audit cannot waive it either: a geometry with no
+       port count has no size worth reporting.
 
-    2. The BYTE LAYOUT is only defined at AXI_DW = 128.  At 128 bits with
-       BLOCK = 32 one lane is exactly one row's 128-bit chunk, which is the
-       "ROWS_IF = 4 coincidence" spec 6.5 calls load-bearing and tells you not
-       to assume elsewhere.  At AXI_DW = 256 -- the FK33's HBM SAXI width -- a
-       lane spans two rows and the interleave inside a sub-region is a
-       different, UNSPECIFIED thing.  Spec 14.5 says so outright and defers it
-       until the HBM streamer is designed.  So we refuse; we do not invent it.
+    2. AXI_DW must be an AXI4 data width.  6.5a's slice rule is happy with any
+       multiple of 8, but axi_rd_port derives ARSIZE as clog2(AXI_DW/8) and
+       AXI4 defines no other width, so a 96-bit "port" is a file for a bus that
+       cannot exist.  Also arithmetic, also unwaivable.
 
-    3. The scale region must fit ONE sub-region.  rtl/weight_streamer.vhd:107
-       asserts `AXI_DW >= ROWS_IF*16 and AXI_DW mod ROWS_IF*16 = 0` and its own
-       comment says the multi-sub-region case "is not implemented".  A file
-       claiming n_scale_sub = 1 for a geometry that needs more is a file whose
-       scale stream silently runs out.
+    3. The sub-region offset table must fit the 4 KB header.  It starts at 0x38
+       and carries NPORTS_W + n_scale_sub u64 entries (6.4).  This one IS
+       waived by emitting=False: the byte count is still well defined, only the
+       FILE is not, which is exactly the distinction --audit wants.
 
-    Rule 1 is ARITHMETIC and always applies: a geometry whose port count does
-    not divide has no size worth reporting either.  Rules 2 and 3 are
-    NOT-IMPLEMENTED-YET limits on this repository, not on the format, so
-    `emitting=False` waives them for --audit, which computes sizes and writes no
-    bytes.  Both waived rules describe the same total number of bytes; they
-    differ only in how those bytes are cut into sub-regions, which is precisely
-    why a size is still meaningful and a FILE is not.
+    Use unmet_reasons() to ask what a geometry violates without catching an
+    exception.
 
-    Use unmet_reasons() to ask which of 2 and 3 a geometry violates without
-    catching an exception.
+    DELIBERATELY NOT REFUSED: a master count larger than the target board has
+    ports.  That is a property of the board, not of the format, and the packer
+    has no business knowing it -- the emit path PRINTS the master count so the
+    caller can check it against spec 13's 30 usable HBM ports.
     """
     lane_bits = rows_if * BLOCK * 4
     if axi_dw <= 0 or lane_bits % axi_dw:
@@ -105,6 +144,10 @@ def check_geometry(rows_if: int, axi_dw: int, emitting: bool = True) -> int:
             f"6.5 invariant does not divide: ROWS_IF*BLOCK*4 = {lane_bits} bits "
             f"is not a whole number of {axi_dw}-bit ports "
             f"(ROWS_IF={rows_if}, BLOCK={BLOCK})")
+    if axi_dw not in AXI4_WIDTHS:
+        raise GeometryError(
+            f"AXI_DW={axi_dw} is not an AXI4 data width "
+            f"({', '.join(str(w) for w in AXI4_WIDTHS)})")
     nports = lane_bits // axi_dw
 
     if emitting:
@@ -116,31 +159,29 @@ def check_geometry(rows_if: int, axi_dw: int, emitting: bool = True) -> int:
 
 
 def unmet_reasons(rows_if: int, axi_dw: int):
-    """Which not-implemented-yet limits this geometry runs into, as prose.
+    """Which emit-path limits this geometry runs into, as prose.
 
     Separate from check_geometry so --audit can REPORT them next to the sizes
     instead of refusing, and so the emit path can list all of them at once
     rather than whichever happens to be tested first.
+
+    Only rule 3 lives here now.  Rules 1 and 2 are arithmetic and raise from
+    check_geometry on both paths; the byte-layout and single-scale-sub-region
+    refusals that used to live here were closed by spec 6.5a and are gone.
     """
     out = []
-    if axi_dw != AXI_DW_DEF:
+    if axi_dw <= 0 or axi_dw not in AXI4_WIDTHS or (rows_if * BLOCK * 4) % axi_dw:
+        return out                      # check_geometry raises on these first
+    nports = rows_if * BLOCK * 4 // axi_dw
+    nss = n_scale_sub(rows_if, axi_dw)
+    need = 0x38 + 8 * (nports + nss)
+    if need > HDR_BYTES:
         out.append(
-            f"The sub-region BYTE LAYOUT is undefined at AXI_DW={axi_dw}. Only "
-            f"{AXI_DW_DEF} is specified: there one lane is exactly one row's "
-            f"chunk (spec 6.5, the 'ROWS_IF=4 coincidence'), and that is the "
-            f"layout this packer emits. At {axi_dw} bits a lane spans "
-            f"{axi_dw // (BLOCK * 4)} rows and the interleave within a "
-            f"sub-region has never been written down -- spec 14.5 defers it "
-            f"until the HBM weight_streamer exists. I do not know the legal "
-            f"set for the FK33 and will not guess one.")
-    sw = rows_if * 16
-    if axi_dw < sw or axi_dw % sw:
-        out.append(
-            f"The scale region needs more than one sub-region at "
-            f"ROWS_IF={rows_if}: {sw} scale bits per cycle against a "
-            f"{axi_dw}-bit port. rtl/weight_streamer.vhd:104-110 states this "
-            f"is not implemented (spec 14.5 item 2). The header carries "
-            f"n_scale_sub for it; nothing reads it yet.")
+            f"The sub-region offset table does not fit the 4 KB header: "
+            f"NPORTS_W={nports} plus n_scale_sub={nss} is {nports + nss} u64 "
+            f"entries from 0x38, ending at {need} bytes against "
+            f"{HDR_BYTES} (spec 6.4). Widening the header is a format change, "
+            f"not a packer change.")
     return out
 
 # spec 6.1 default codebook.  MUST NOT contain -128 (spec 7.4): with cb=-128 and
@@ -310,25 +351,49 @@ def packed_layout(M: int, K: int, rows_if: int,
     `BLOCK//2 = 16`, so this generalises rather than changes the AXU3EG
     numbers; the assertion in pack() checks that it still divides exactly.
 
-    Returns (NB, tiles, nports, sub_sz, scl_sz, total).
+    The SCALE region is now n_scale_sub equally sized sub-regions (6.5a), each
+    one beat wide, and is rounded up to a whole SUPERWORD rather than to a
+    whole group.  At AXI_DW=128 that rounding is invisible: n_scale_sub is 1,
+    the superword is one beat, and the old formula
+    `align4k(tiles*NB*ROWS_IF*2)` already rounded past it to 4 KB.  It is only
+    written this way because the RTL pops whole superwords, so a file whose
+    last one is short would starve the scale stream on the final tile.
+
+    Returns (NB, tiles, nports, sub_sz, nss, scl_sub_sz, total).
     """
     nports = check_geometry(rows_if, axi_dw, emitting=emitting)
     NB     = (K + BLOCK - 1) // BLOCK      # 6.3 ceil, K padded to a whole block
     tiles  = (M + rows_if - 1) // rows_if
     port_b = axi_dw // 8                   # bytes of each word this port holds
     sub_sz = align4k(tiles * NB * port_b)
-    scl_sz = align4k(tiles * NB * rows_if * 2)
-    total  = HDR_BYTES + sub_sz * nports + scl_sz
-    return NB, tiles, nports, sub_sz, scl_sz, total
+
+    nss    = n_scale_sub(rows_if, axi_dw)
+    grp    = scale_groups_per_super(rows_if, axi_dw)
+    nsuper = (tiles * NB + grp - 1) // grp
+    scl_sub_sz = align4k(nsuper * port_b)
+
+    total  = HDR_BYTES + sub_sz * nports + scl_sub_sz * nss
+    return NB, tiles, nports, sub_sz, nss, scl_sub_sz, total
 
 
 def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb,
          axi_dw: int = AXI_DW_DEF) -> bytes:
-    NB, tiles, nports, sub_sz, scl_sz, total = packed_layout(M, K, rows_if, axi_dw)
+    """Emit the 6.4 file with the 6.5a byte layout.  See the module docstring.
+
+    Written as slicing on ONE tile-word array rather than as a per-row loop,
+    because the general rule IS a slice: the word is the rows concatenated with
+    row 0 at the LSB, and sub-region p is its p'th AXI_DW-wide piece.  The old
+    per-row loop was that same slice evaluated where a piece happens to be a
+    row, and it could not express the FK33 case where a piece is two rows.
+    """
+    NB, tiles, nports, sub_sz, nss, scl_sub_sz, total = \
+        packed_layout(M, K, rows_if, axi_dw)
     assert NB == idx.shape[1], f"NB mismatch {NB} vs {idx.shape[1]}"
-    # check_geometry pins axi_dw to 128 on the emit path, so the byte layout
-    # below -- lane == one row's 16-byte chunk -- is the one that applies.
-    assert axi_dw == AXI_DW_DEF and nports == rows_if
+
+    port_b = axi_dw // 8                   # bytes per beat, per sub-region
+    row_b  = BLOCK // 2                    # bytes of one row-chunk, 16 at BLK=32
+    word_b = rows_if * row_b               # bytes of one tile word
+    assert word_b == nports * port_b, "6.5a: the tile word must slice exactly"
 
     buf = bytearray(total)                 # zero-filled: PAD FILL = 0x00
 
@@ -341,31 +406,50 @@ def pack(idx, scale, w_exp, M, K, rows_if, out_shift, cb,
     struct.pack_into("<HHHH",  buf, 0x18, rows_if, nports, BLOCK, axi_dw)
     buf[0x20:0x30] = cb.astype(np.int8).tobytes()
     scl_off = HDR_BYTES + sub_sz * nports
-    struct.pack_into("<II", buf, 0x30, scl_off, 1)
+    # 0x34 is n_scale_sub.  It was hardcoded to 1, which was true of every
+    # geometry the old packer would emit and is false at ROWS_IF=48/AXI_DW=256.
+    struct.pack_into("<II", buf, 0x30, scl_off, nss)
+    assert 0x38 + 8 * (nports + nss) <= HDR_BYTES   # checked by unmet_reasons
     for p in range(nports):
         struct.pack_into("<Q", buf, 0x38 + 8 * p, HDR_BYTES + sub_sz * p)
-    struct.pack_into("<Q", buf, 0x38 + 8 * nports, scl_off)
+    for q in range(nss):
+        struct.pack_into("<Q", buf, 0x38 + 8 * (nports + q),
+                         scl_off + scl_sub_sz * q)
 
-    # ---- weights.  Sub-region p holds lane p of every 512-bit word, and at
-    # ROWS_IF=4 one lane is exactly one row's 128-bit chunk (spec 6.5).
-    # Nibble order: weight j even -> low nibble of byte j/2, odd -> high.
+    # ---- weights.  Nibble order: weight j even -> low nibble of byte j/2, odd
+    # -> high.  Then the tile word is the ROWS_IF row-chunks concatenated with
+    # row 0 at the LSB, i.e. at the LOWEST byte offset, and sub-region p is
+    # bytes [p*port_b, (p+1)*port_b) of it.
     idx_pad = np.zeros((tiles * rows_if, NB, BLOCK), dtype=np.uint8)
     idx_pad[:M] = idx
     lanes = idx_pad.reshape(tiles, rows_if, NB, BLOCK)          # (t, rr, b, j)
     lo = lanes[:, :, :, 0::2]
     hi = lanes[:, :, :, 1::2]
     packed = (lo | (hi << 4)).astype(np.uint8)                  # (t, rr, b, 16)
-    for rr in range(rows_if):
-        blob = packed[:, rr].reshape(-1).tobytes()              # t-major, then b
-        base = HDR_BYTES + sub_sz * rr
+    # (t, b, rr, row_b) -> the word, flattened rr-major so row 0 is at byte 0
+    word = np.ascontiguousarray(packed.transpose(0, 2, 1, 3)) \
+             .reshape(tiles, NB, nports, port_b)
+    for p in range(nports):
+        blob = np.ascontiguousarray(word[:, :, p, :]).tobytes()  # t-major, then b
+        base = HDR_BYTES + sub_sz * p
         buf[base:base + len(blob)] = blob
 
-    # ---- scales: for tile t, for block b, for rr in 0..ROWS_IF-1, uint16 LE
+    # ---- scales: groups of ROWS_IF uint16 LE in (t, b) order, packed into
+    # superwords of nss beats, then sliced across the nss sub-regions.
+    grp    = scale_groups_per_super(rows_if, axi_dw)
+    nsuper = (tiles * NB + grp - 1) // grp
     scl_pad = np.zeros((tiles * rows_if, NB), dtype=np.uint16)
     scl_pad[:M] = scale
     s = scl_pad.reshape(tiles, rows_if, NB).transpose(0, 2, 1)  # (t, b, rr)
-    blob = np.ascontiguousarray(s).astype("<u2").tobytes()
-    buf[scl_off:scl_off + len(blob)] = blob
+    gb = np.frombuffer(np.ascontiguousarray(s).astype("<u2").tobytes(),
+                       dtype=np.uint8)
+    flat = np.zeros(nsuper * nss * port_b, dtype=np.uint8)      # PAD FILL 0x00
+    flat[:gb.size] = gb
+    sup = flat.reshape(nsuper, nss, port_b)
+    for q in range(nss):
+        blob = np.ascontiguousarray(sup[:, q, :]).tobytes()
+        base = scl_off + scl_sub_sz * q
+        buf[base:base + len(blob)] = blob
 
     return bytes(buf)
 
@@ -433,9 +517,15 @@ def crosscheck(path):
     assert nports == exp_nports, (
         f"header says NPORTS_W={nports}, the 6.5 invariant at ROWS_IF={rows_if} "
         f"BLOCK={blk} AXI_DW={axi_dw} gives {exp_nports}")
+    _, nss_hdr = struct.unpack_from("<II", img, 0x30)
+    nss = n_scale_sub(rows_if, axi_dw)
+    assert nss_hdr == nss, (
+        f"header says n_scale_sub={nss_hdr}, spec 6.5a at ROWS_IF={rows_if} "
+        f"AXI_DW={axi_dw} gives {nss}")
     cb = np.frombuffer(img[0x20:0x30], dtype=np.int8).astype(np.int64)
     w_sub = [struct.unpack_from("<Q", img, 0x38 + 8 * p)[0] for p in range(nports)]
-    s_sub = struct.unpack_from("<Q", img, 0x38 + 8 * nports)[0]
+    s_sub = [struct.unpack_from("<Q", img, 0x38 + 8 * (nports + q))[0]
+             for q in range(nss)]
 
     NB = (K + BLOCK - 1) // BLOCK
     tiles = (M + rows_if - 1) // rows_if
@@ -448,14 +538,33 @@ def crosscheck(path):
         st ^= (st << 5) & 0xFFFFFFFF; st &= 0xFFFFFFFF
         x[k] = (st % 20001) - 10000
 
+    # Decode by INVERTING 6.5a rather than by re-implementing it: rebuild the
+    # tile word from its nports slices, then read rows out of the word.  At
+    # AXI_DW=128 a slice is a row and this reduces to the old per-row loop.
+    port_b = axi_dw // 8
+    row_b  = BLOCK // 2
+    nbytes = tiles * NB * port_b
+    word = np.zeros((tiles, NB, nports, port_b), dtype=np.uint8)
+    for p in range(nports):
+        word[:, :, p, :] = np.frombuffer(
+            img[w_sub[p]:w_sub[p] + nbytes], dtype=np.uint8
+        ).reshape(tiles, NB, port_b)
+    word = word.reshape(tiles, NB, rows_if, row_b)          # (t, b, rr, bytes)
+
+    grp    = scale_groups_per_super(rows_if, axi_dw)
+    nsuper = (tiles * NB + grp - 1) // grp
+    sup = np.zeros((nsuper, nss, port_b), dtype=np.uint8)
+    for q in range(nss):
+        sup[:, q, :] = np.frombuffer(
+            img[s_sub[q]:s_sub[q] + nsuper * port_b], dtype=np.uint8
+        ).reshape(nsuper, port_b)
+    sc_all = sup.reshape(-1).view("<u2")[:tiles * NB * rows_if] \
+                .reshape(tiles, NB, rows_if).astype(np.int64)
+
     idx = np.zeros((M, NB, BLOCK), dtype=np.int64)
     scale = np.zeros((M, NB), dtype=np.int64)
-    nbytes = tiles * NB * (BLOCK // 2)
-    sc_all = np.frombuffer(img[s_sub:s_sub + tiles * NB * rows_if * 2],
-                           dtype="<u2").reshape(tiles, NB, rows_if).astype(np.int64)
-    for rr in range(nports):
-        raw = np.frombuffer(img[w_sub[rr]:w_sub[rr] + nbytes], dtype=np.uint8)
-        raw = raw.reshape(tiles, NB, BLOCK // 2).astype(np.int64)
+    for rr in range(rows_if):
+        raw = word[:, :, rr, :].astype(np.int64)
         rows = np.arange(tiles) * rows_if + rr
         keep = rows < M
         idx[rows[keep], :, 0::2] = raw[keep] & 0x0F
@@ -517,13 +626,11 @@ def audit(path: str, rows_if: int, cards: int,
         is_mv = len(ne) > 1 and M > 1 and K > 1 and name != "blk.0.ssm_conv1d.weight" \
                 and not name.endswith("ssm_conv1d.weight")
         if is_mv:
-            _, _, _, _, _, whole = packed_layout(M, K, rows_if, axi_dw,
-                                                 emitting=False)
+            whole = packed_layout(M, K, rows_if, axi_dw, emitting=False)[-1]
             # column-parallel: each card holds ceil(M/cards) rows, padded and
             # aligned on its own, so shard overhead does NOT divide by cards
             Ms = (M + cards - 1) // cards
-            _, _, _, _, _, shard = packed_layout(Ms, K, rows_if, axi_dw,
-                                                 emitting=False)
+            shard = packed_layout(Ms, K, rows_if, axi_dw, emitting=False)[-1]
         else:
             whole = params * 4          # kept as F32
             shard = whole               # replicated on every card
@@ -537,8 +644,10 @@ def audit(path: str, rows_if: int, cards: int,
     s_shard = sum(r[6] for r in rows)
     payload = p_mv * 4.5 / 8.0
 
+    nss = n_scale_sub(rows_if, axi_dw)
     print(f"model      {path}")
     print(f"ROWS_IF={rows_if}  AXI_DW={axi_dw}  NPORTS_W={nports}  "
+          f"n_scale_sub={nss}  masters={nports + nss}  "
           f"cards={cards}  (column-parallel, M split)")
     if emit_why:
         print()
@@ -602,12 +711,12 @@ def main():
     ap.add_argument("out", nargs="?")
     ap.add_argument("--list", action="store_true", help="list tensors and exit")
     ap.add_argument("--rows-if", type=int, default=4,
-                    help="ROWS_IF the file is packed for (4 on the AXU3EG; the "
-                         "FK33 value is not settled, see spec 14.5)")
+                    help="ROWS_IF the file is packed for (4 on the AXU3EG, "
+                         "48 on the FK33 per spec 15.2/15.3)")
     ap.add_argument("--axi-dw", type=int, default=AXI_DW_DEF,
-                    help="bits per AXI read master (128 AXU3EG HP; the FK33's "
-                         "HBM SAXI ports are 256, which this packer REFUSES to "
-                         "emit for -- the layout is undefined, spec 14.5)")
+                    help="bits per AXI read master (128 AXU3EG HP, 256 FK33 "
+                         "HBM SAXI). The byte layout at any width is spec "
+                         "6.5a; NPORTS_W and n_scale_sub are derived from it")
     ap.add_argument("--out-shift", type=int, default=None,
                     help="override the calibrated out_shift")
     ap.add_argument("--verify", action="store_true")
@@ -641,17 +750,21 @@ def main():
             for i, line in enumerate(_wrap(why, 72)):
                 sys.stderr.write(f"  {'- ' if i == 0 else '  '}{line}\n")
         sys.stderr.write(
-            "  Geometries this packer emits today: BLOCK=32, AXI_DW=128,\n"
-            "  ROWS_IF in {1, 2, 4, 8}.  Anything else needs the layout to be\n"
-            "  specified first.\n")
+            "  Geometries this packer emits: any (ROWS_IF, AXI_DW) for which\n"
+            "  ROWS_IF*BLOCK*4 is a whole multiple of AXI_DW, AXI_DW is an\n"
+            "  AXI4 data width, and the offset table fits the 4 KB header.\n"
+            "  Layout: spec 6.5a.  Known-good: ROWS_IF 4 / AXI_DW 128 (AXU3EG,\n"
+            "  built) and ROWS_IF 48 / AXI_DW 256 (FK33, 24+3 masters).\n")
         return 2
 
     print(f"reading {a.tensor} from {a.gguf}")
     W = read_tensor(a.gguf, a.tensor)
     M, K = W.shape
     print(f"  shape M={M} K={K}  ({M * K / 1e6:.1f}M weights)")
+    nss = n_scale_sub(a.rows_if, a.axi_dw)
     print(f"  geometry ROWS_IF={a.rows_if} AXI_DW={a.axi_dw} "
-          f"BLOCK={BLOCK} -> NPORTS_W={nports}")
+          f"BLOCK={BLOCK} -> NPORTS_W={nports} n_scale_sub={nss} "
+          f"({nports + nss} AXI read masters)")
 
     idx, scale, w_exp = quantize(W, IQ4_NL)
     out_shift = a.out_shift if a.out_shift is not None else calibrate_out_shift(K)
