@@ -192,6 +192,11 @@
 #   tb_gdn_conv_cycles          CH_MAX=3072 cycle accounting
 #   tb_b_audit_ser_handshake    serialiser handshake audit over 3 blocks
 #   tb_hbm_tg                   HBM traffic generator, long burst program
+#   tb_llama_top                the integration top level: the whole D core,
+#                               the real matvec_int4 over five AXI masters and
+#                               the real gdn_block, 4 blocks x 4 descriptor-
+#                               memory latencies.  MEASURED 86 s, which would
+#                               nearly triple --quick on its own.
 #   tb_seq_desc_fetch           491-descriptor walk
 #   tb_seq_opdec                491-step walk through three units
 #   tb_seq_region_lock          491-step plan
@@ -383,7 +388,7 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_emit_chain sim:tb_gdn_recur_pipe
           sim:tb_gdn_y_emit sim:tb_engine_dump sim:tb_matvec_int4
           sim:tb_matvec_axi sim:tb_matvec_core sim:tb_gdn_conv_cycles
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
-          sim:tb_seq_opdec sim:tb_seq_region_lock
+          sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
