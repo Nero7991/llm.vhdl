@@ -37,6 +37,22 @@ below may be edited by a track that does not own it.
 | `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | TRACK TOK-C | |
 | `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c`, matvec benches | TRACK A-CTRL | decision taken 2026-08-28, see below |
 
+**A COMPLETED AGENT CAN STILL WAKE UP AND COMMIT.** Observed 2026-08-28: the
+subsystem-A-sim track reported done, was superseded, and then woke hours later
+and committed `2b12a7b` while TRACK A-CTRL already owned those files. It landed
+clean (a doc correction plus a comment in `sim/regress.sh`, `BASELINE_PASS`
+untouched, the bench itself not touched) so nothing was lost, but that was
+luck rather than design. Consequences:
+
+- "Completed" is not "released". A track's ownership row stays until its files
+  are verified quiescent, not merely until its report arrives.
+- After any late commit, re-run the affected tests yourself rather than
+  trusting either agent's report. That agent explicitly said its own
+  confirmation run never returned and declined to claim it, which was the right
+  call; the run was completed separately and all three passed.
+- Prefer giving a superseded track NO further instructions. Sending it a
+  follow-up is what turns a harmless late commit into a genuine collision.
+
 **Standing rule for every track: no hardware.** No `xsdb`, `hw_server`,
 `vivado ... program`, `pcieep.sh`, `jtag.sh`, `flash.sh`, `program.tcl`, and
 nothing that opens `/dev/xdma*`. A live FK33 is in this session, and an agent
@@ -224,4 +240,5 @@ format being settled.
 | HBM port feasibility | 27 masters fit; 30 already measured at 288.0 GB/s, 100% of ceiling. Design note only. | doc only |
 | Qwen3.5 tokenizer | Bit-exact vs llama.cpp, 53,411 strings x 2 + 1.1M codepoints. 7 of 9 mutations bite. | `4123bd8` |
 | Full gate re-measured | 77 PASS / 0 FAIL, matches the recorded floor. Verified independently after `3246046`. | n/a |
+| A-sim MAXB correction | The original A agent woke, independently confirmed the AXI3 defect in its own bench, and appended a dated CORRECTION rather than editing the wrong claim out. Confirmation run completed separately: matvec_fk33, weight_streamer, axi_rd_port all PASS. | `2b12a7b` |
 | Magnitude blocker | Explosion was the STIMULUS (synthetic row norm 2^4.87 vs real 2^-0.03). PART 5 withdrawn, PART 3 reinstated. `attn_block` wired behind `C_REAL`. | `3246046` |
