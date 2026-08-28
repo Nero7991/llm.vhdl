@@ -348,8 +348,10 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=74   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
+BASELINE_PASS=76   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
                    # +1 sim/tb_weight_streamer, 6.5a reassembly, 2026-08-28
+                   # +1 sim/tb_attn_mac_array, subsystem C's MAC array, 2026-08-28
+                   # +1 sim/tb_attn_block, subsystem C's top level, 2026-08-28
 
 usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
