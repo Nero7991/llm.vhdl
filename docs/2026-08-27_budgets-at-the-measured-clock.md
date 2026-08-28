@@ -730,18 +730,19 @@ of the edited spec can check the edit.
 | subsection | file | status |
 |---|---|---|
 | 7.1 | B, `2026-08-21-gated-deltanet-design.md` | **APPLIED 2026-08-27** (4 items refused or left open, below) |
-| 7.2 | C, `2026-08-21-gated-attention-design.md` | **NOT APPLIED** |
+| 7.2 | C, `2026-08-21-gated-attention-design.md` | **APPLIED 2026-08-27, second pass** (see below) |
 | 7.3 | A, `2026-08-20-int4-streaming-matvec-design.md` | **APPLIED 2026-08-27** (1 item refused, below) |
-| 7.4 | `2026-08-27-D-sequencer-skeleton.md` | **NOT APPLIED** |
-| 7.5 | `2026-08-24-transformer-sequencer-design.md` | **NOT APPLIED** |
-| 7.6 | `2026-08-27-C-gated-attention-skeleton.md` | **NOT APPLIED** |
+| 7.4 | `2026-08-27-D-sequencer-skeleton.md` | **APPLIED 2026-08-27, second pass** (2 items refused, below) |
+| 7.5 | `2026-08-24-transformer-sequencer-design.md` | **APPLIED 2026-08-27, second pass** |
+| 7.6 | `2026-08-27-C-gated-attention-skeleton.md` | **APPLIED 2026-08-27, second pass** |
 | 7.7 | `2026-08-27_9b-single-card-resource-envelope.md` | **APPLIED 2026-08-27** (1 item left open, below) |
 | 7.8 | `docs/fpga-hardware-recon.md` | **APPLIED 2026-08-27** |
 
-**Why 7.2, 7.4, 7.5 and 7.6 were skipped:** the C spec, the D skeleton, the
-transformer-sequencer spec and the C skeleton were being actively edited by
-other work at the time of the pass, so applying figures into them would have
-raced. **They remain owed.** Nothing about them has been withdrawn.
+**Why 7.2, 7.4, 7.5 and 7.6 were skipped by the FIRST pass:** the C spec, the D
+skeleton, the transformer-sequencer spec and the C skeleton were being actively
+edited by other work at the time, so applying figures into them would have
+raced. **They were applied by a second pass later the same day**, recorded in
+7.0b below. Nothing about them has been withdrawn.
 
 **Each applied file now carries a dated note at its head** saying its time
 figures were re-derived at the measured 237.8 MHz on 2026-08-27, that the cycle
@@ -799,6 +800,174 @@ is 26.28 ms and 38.1 tok/s.
 find", are now in `sim/ooc_sweep/results.csv:10-11` (236.29 and 240.56 MHz at
 3.3 ns), matching `clock-at-the-real-voltage.md:38-41`. The flatness evidence is
 now reproducible from the repo. The rest of item 1 stands.
+
+### 7.0b Second pass, 2026-08-27: 7.2, 7.4, 7.5 and 7.6 applied
+
+The four subsections the first pass left owed are now applied. **The table below
+was written before four later findings, and the second pass did not apply it
+blindly.** Where a finding changed what the correct correction IS, the finding
+won and the change is recorded here.
+
+**The four findings, and what each did to this table:**
+
+1. **The `x0.835` derate rule is WITHDRAWN**
+   (`docs/2026-08-27_verdicts-at-0.717V.md`,
+   `docs/debugging/2026-08-27_derate-is-not-a-constant.md`). Measured across 14
+   configurations it runs 16.5% to 28.0% between unit classes and 16.5% to 24.4%
+   within `matvec_core` alone, against a measurement spread of exactly zero.
+   16.5% was the smallest value in the set, so every scaled estimate here is
+   optimistic, by 17 to 32 MHz on the five checked, and two landed on the wrong
+   side of their verdict. **No scaled number was written into any file.** Where
+   a spec carried a scaled verdict, it was restated as measured-or-unknown.
+2. **`ROWS_IF = 58` IS NOT BUILDABLE**
+   (`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`). HBM ports
+   are a WIDTH budget, `NPORT = ROWS_IF x 9/16`, an exact integer identity with
+   no clock in it. 58 needs 32.62 ports, not an integer, and 33 once the scale
+   lane pads, against 30 available. `ROWS_IF` must be a multiple of 16 and at
+   most 48; **48 is forced**. Every figure at `ROWS_IF = 58` in these four files
+   was **marked as an unbuildable configuration**, not merely rescaled.
+3. **Two published port tables are wrong at the root, and one was in scope.**
+   D skeleton §3.3 (`x1.3 / 9.6`) prices ports in GB/s and provisions at 1.3x,
+   a category error against a count that must be an exact width divisor.
+   **The method was replaced, not the numbers.** Restating 43/33 as 34/26 would
+   have preserved the error, and 26 at 1.0x is actively dangerous: it makes
+   `ROWS_IF = 58` look as though it fits in 30 ports when it needs 33.
+4. **At 0.717 V every norm unit is bound by the same DSP-to-DSP hop in the Q30
+   Newton rsqrt.** `SILU_LANES` 8, 16 and 32 all measure 227.63 MHz;
+   `rmsnorm_rs` at N=256 `LANES` 2 and 4 both measure 211.46 MHz. Spec text
+   attributing a norm's clock miss to lane count was corrected on **cause** as
+   well as on number.
+
+**Applied, per file:**
+
+| subsection | file | listed items applied | additional findings from the sweep |
+|---|---|---|---|
+| 7.2 | C spec `2026-08-21-gated-attention-design.md` | 16 of 16 | 2 |
+| 7.4 | `2026-08-27-D-sequencer-skeleton.md` | 11 of 13 (2 refused) | 5 |
+| 7.5 | `2026-08-24-transformer-sequencer-design.md` | 7 of 7 | 4 |
+| 7.6 | `2026-08-27-C-gated-attention-skeleton.md` | 5 of 5 | 2 |
+
+Each of the four files now carries a dated head note saying its time figures
+were re-derived at the measured 237.812 MHz on 2026-08-27, that the cycle counts
+are unchanged, and pointing back here. Superseded figures were marked superseded
+in place, never deleted.
+
+**Items REFUSED by the second pass.** Each was recomputed independently and the
+recomputation disagreed with the target column, so nothing was written from it:
+
+1. **7.4, the C row of the §1.6 token table, `4.59 -> 5.51`.** REFUSED. 5.51 is
+   not a rescaling of that row: the row's own cycle count is **1,377,600**
+   (16 x 86,100), which at 237.812 MHz is **5.793 ms**. 5.510 comes from the C
+   skeleton's corrected **1,310,400** cycles, so the target column substitutes a
+   cycle count as well as a clock, and this pass changes no cycle counts.
+   **Both figures were printed in place with the substitution named.**
+2. **7.4, the §1.6 totals `34.00-37.82 -> 39.97-44.74`.** REFUSED as printed.
+   From the file's own cycle counts the total is **40.21 to 45.03 ms**; adopting
+   the C skeleton's cycle count instead gives **39.93 to 44.75**. Neither
+   reproduces 39.97-44.74 to better than 0.04 ms, which is rounding in the
+   intermediate rows. The recomputed pair was written, with the disagreement
+   recorded beside it.
+
+**Items where the target column was superseded by a finding rather than
+refused:**
+
+3. **7.4 `396-403`, `43 of 30 at 1.3x -> 36 of 30 at 1.3x, 28 of 30 at 1.0x`.**
+   The first pass had already left the matching 7.3 row open on the grounds that
+   28/36 reproduces only from a 254.32 MHz demand, and recomputed 26/34 at
+   237.8 MHz. **Neither pair was written.** Finding 2 says the whole method is
+   wrong: the count is `ROWS_IF x 9/16`, giving **33 at 58 and 27 at 48**, with
+   no clock and no provisioning factor. §3.3 now carries the identity, the
+   corrected table, and an explicit instruction not to restate 43/33 as 34/26.
+4. **7.4 `41-47` (F2), "it closes at 237.8 MHz with 13.8% spare; F2 is dissolved
+   by the undervolt".** The arithmetic is right and the conclusion is not. F2's
+   *verdict* stands, for a stronger reason: `ROWS_IF = 58` is unbuildable at any
+   clock. Written as "F2's arithmetic is superseded, F2's verdict stands", with
+   the "aggregate headroom is not port headroom" trap stated.
+5. **7.4 `439-443`, "the percentages are 0.03% and 0.67%".** APPLIED as
+   **0.03% and 0.68%**, and the target column is right for a reason it does not
+   state. A cycle cost over a cycle token is clock-invariant, so at first sight
+   these should not move at all. They move because **the binding A row changes**:
+   the D skeleton's own 10,200,665-cycle token sums A at its feed-limited
+   7,563,049, and at 237.812 MHz the array-limited 6,954,528 binds instead,
+   giving a 9,592,144-cycle token. 65,000/9,592,144 = 0.678%, and the ms route
+   agrees at 0.273/40.21 = 0.679%. The ms values 0.013 and 0.273 were applied
+   alongside. **This also exposed an inconsistency in this document's own 7.4
+   row**: it pairs a ms total derived from array-limited A with the file's
+   printed cycle total derived from feed-limited A. Corrected in the file.
+
+**Rounding-level differences, recorded for completeness.** In 7.2 the target
+column scales the rounded `@231 MHz` entry rather than re-dividing the cycle
+count, which gives 0.049 against **0.050** from ~12K cycles, and 0.451 against
+**0.450** from 107K. The cycle-derived figures were written. 7.2's C-total row
+already offers three values in this document; **~5.80 ms** from the row's own
+~1.38M cycles was written, with 5.510 from the C skeleton's corrected 1,310,400
+stated beside it and labelled as a cycle-count change this pass did not make.
+
+**One citation in the source documents is wrong and was not propagated.**
+`docs/2026-08-27_verdicts-at-0.717V.md` §6 and
+`docs/debugging/2026-08-27_derate-is-not-a-constant.md` §7 both state that "C
+spec 3.13 item 1 already names `MREG` on the 34x32 Newton stage as the expected
+fix". **C spec §3.13 item 1 says the opposite**: "`MREG` was NOT the fix, and
+this item predicted that it was", worth 26 MHz of 183, with an MREG-cadence
+version measuring 117.2 MHz against 138.4. The real diagnosis is in
+`docs/debugging/2026-08-27_newton-rsqrt-cascade-hop.md`: MREG and PREG were
+already present, and what was unregistered is the **DSP-to-DSP hop** inside the
+34x32 span. A third register level `mr_m2` landed on 2026-08-27 in
+`rtl/rmsnorm_rs.vhd` and `rtl/l2norm_rs.vhd` at a MEASURED cost of +6 cycles per
+rsqrt (+12 for `l2norm_rs`, which runs the Newton twice), and **its Fmax effect
+at 0.717 V has not been measured**. Both specs were annotated with this rather
+than with the bad citation. The two source documents still carry it.
+
+### 7.0c What the `ROWS_IF = 58` sweep of those four files found
+
+Beyond the listed figures, every occurrence of `ROWS_IF = 58` as a settled value
+was checked. Nine load-bearing statements were found and marked:
+
+1. **D skeleton §1.2, "all tables below use `ROWS_IF = 58`".** The root of every
+   A cycle count in that document. Marked; the model is fine, its instantiation
+   is not. At 48 the 27B A total is 8,381,664 cycles, not 6,954,528.
+2. **D skeleton §1.6, the whole token table.** Marked as an upper bound no build
+   can reach. At the forced 48 and its own measured 236.128 MHz the 27B N=2
+   token is **~47.3 ms, ~21.1 tok/s** (DERIVED), against the 40.21-45.03 at 58.
+3. **D skeleton §3.2, "the bandwidth-balanced `ROWS_IF` is 67.3".** Marked
+   explicitly as **not** a design point: 67 would need 38 ports. The buildable
+   ceiling is 48 at 27 ports.
+4. **D skeleton §3.3 and §0 F3.** Method replaced, above. F3's conclusion is
+   half right: A's "~23-27 dedicated" is affordable at its top end, 27; the "4
+   muxed" for B and C is not, because 30 - 27 = 3.
+5. **D skeleton §3.4, "a design that is already 8.75% short".** There is no
+   bandwidth shortfall at the measured clock (13.8% spare at 58, 29.2% at 48).
+   The rule that activation re-reads stay off HBM survives on the stronger
+   ground that they would need ports.
+6. **D spec §2.2 item J** already computes the killing number and does not draw
+   the conclusion: "at `ROWS_IF = 58` ... gives 29 lanes ... 33 total bases
+   (29 weight + 4 scale)". **33 lanes is 33 ports and only 30 exist.** The
+   identity that rules out `ROWS_IF = 58` has been sitting in D's own obligations
+   table since 2026-08-24. Flagged in place.
+7. **D spec §8.1's static port assignment.** A's row is priced by A §15.1's
+   `x1.3 / 14.4 GB/s`, the same category error. Corrected to the width identity;
+   the "4, muxed" allocation does not fit.
+8. **D spec §12's whole-die DSP sum, `1,914 + 434 + 148 + 28 = 2,524 = 87.6%`.**
+   At the forced 48 it is **2,194 = 76.2%**, worst corner 2,218 = 77.0%.
+9. **C spec §3.8 and C skeleton §3.5, both whole-die sums.** C spec's
+   "2,606 to 2,648 = 90.5% to 91.9%, over the congestion line" becomes
+   **2,276 to 2,318 = 79.0% to 80.5%**, under it. **C was never the term that
+   put the die over the line; the unbuildable A row was.** In the C skeleton the
+   same substitution takes C's headroom from 688-712 to **1,018-1,042**, which
+   **voids the "`MACS = 384` DOES NOT FIT" verdict on DSP grounds** -- 815 of
+   1,018 fits. That rejection now rests entirely on ports: `MACS = 384` runs at
+   106% port duty and needs two ports per stream, and A at `ROWS_IF = 48` has
+   already taken 27 of the 30. The rejection stands; its reason changed.
+
+**The through-line.** Correcting `ROWS_IF` 58 to 48 costs **+21.6% on A's time**
+and returns **330 DSP, 11.5% of the die**. Every DSP-scarcity conclusion in
+these four documents was drawn against the 58 figure and is loosened by the
+correction; every time conclusion is tightened by it. **No document in the
+project has yet re-run the `ROWS_IF` versus `MACS` allocation at 48**, and A
+§15.4c, which owns that trade, chose 58 by an optimisation whose per-term
+breakdown is printed nowhere.
+
+---
 
 The mechanical rule for the bulk: **a figure stated as `cycles / f` at 300 MHz
 is multiplied by 1.26156; at 299.04 MHz by 1.25753; at 302.5 MHz by 1.27208; at

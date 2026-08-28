@@ -3,6 +3,21 @@
 **Date:** 2026-08-27. Branch `fpga`. Part `xcvu33p-fsvh2104-2L-e` (SQRL FK33),
 two cards, N = 2 tensor parallel.
 
+> **Time figures re-derived at the measured clock, 2026-08-27.** Every ms in
+> this document was computed at 300 MHz or 299.04 MHz, both of which are
+> **0.85 V analysis clocks**. The card runs VCCINT 0.717 V, where `matvec_core`
+> at `ROWS_IF = 58` measures **237.812 MHz** (MEASURED,
+> `sim/ooc_sweep/results.csv:7`). **The cycle counts are unchanged and remain
+> the invariant**; only the divisor moves. Corrections are marked in place
+> rather than overwritten, so the superseded figure stays readable. Three later
+> findings also bite and are called out where they do: the `x0.835` derate rule
+> is **WITHDRAWN** (`docs/2026-08-27_verdicts-at-0.717V.md`); `ROWS_IF = 58` is
+> **NOT BUILDABLE** (`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`);
+> and at 0.717 V every norm unit is bound by the same DSP-to-DSP hop in the Q30
+> Newton rsqrt, not by its lane count
+> (`docs/debugging/2026-08-27_derate-is-not-a-constant.md`). Full derivation:
+> `docs/2026-08-27_budgets-at-the-measured-clock.md` section 7.6.
+
 **Status: ANALYSIS AND SKELETON ONLY.** No Vivado was run for this document.
 Every DSP figure is either transcribed from a prior measurement with its date
 and source named, or derived from operand widths against the DSP48E2's
@@ -414,6 +429,50 @@ recorded in C spec 3.8's own correction block:
    per card per token, so `224 x 814 = 182,336` cycles = 0.61 ms at 300 MHz,
    comfortably inside C spec 3.7's own 290K-cycle serial fallback.
 
+**CORRECTION 2026-08-27 -- reason 1's constant is wrong, its conclusion is
+right, and reason 1 now disqualifies the fallback it chose.** The 300 MHz and
+299.04 MHz constants are 0.85 V analysis clocks; the shared achieved clock at
+the card's VCCINT of 0.717 V is at most **237.812 MHz** (MEASURED,
+`sim/ooc_sweep/results.csv:7`). `rmsnorm_rs` at N = 256 has since been measured
+at 0.717 V (`docs/2026-08-27_verdicts-at-0.717V.md` section 2.2, MEASURED, run
+twice bit-identical):
+
+| `LANES` | Fmax @0.85 V | **Fmax @0.717 V** | vs 237.812 |
+|---|---|---|---|
+| 1 | 300.75 | **224.57** | **MISS by 13.2** |
+| 2 | 281.85 | **211.46** | **MISS by 26.4** |
+| 4 | 281.85 | **211.46** | **MISS by 26.4** |
+
+So `LANES = 4` is still rejected, but **`LANES = 1` does not close either**, and
+reason 1's own rule -- "a unit that misses the clock is not a budget option" --
+applied consistently disqualifies C's chosen fallback as well. There is no
+closing configuration of this unit at 0.717 V at any lane count.
+
+**And the cause is not the lane count.** At 0.717 V every one of these forms is
+bound by the same path, a DSP48E2-internal multiply in the Q30 Newton rsqrt
+(`ARG__N/DSP_A_B_DATA_INST/CLK -> mr_m_reg[65]/D`, 4.414 ns, 87.6% logic), which
+is why `LANES = 1` here and `l2norm_rs` at `LANES = 1/2` all report exactly
+224.57 MHz. Widening or narrowing lanes does not move it. See
+`docs/debugging/2026-08-27_derate-is-not-a-constant.md`.
+
+**On the fix, and a citation to distrust.** `docs/2026-08-27_verdicts-at-0.717V.md`
+§6 and the derate note §7 both say "C spec 3.13 item 1 already names `MREG` on
+the 34x32 Newton stage as the expected fix". **C spec §3.13 item 1 says the
+opposite**: "`MREG` was NOT the fix, and this item predicted that it was". What
+the path actually needed is in
+`docs/debugging/2026-08-27_newton-rsqrt-cascade-hop.md`: the MREG and the PREG
+were already present, and the unregistered part was the **DSP-to-DSP hop**
+inside the 34x32 span. A third register level `mr_m2` landed on 2026-08-27 in
+`rtl/rmsnorm_rs.vhd` and `rtl/l2norm_rs.vhd`, MEASURED at **+6 cycles per
+rsqrt** (`rmsnorm_rs` N=256, 142 -> 148) and **+12 for `l2norm_rs`**. **Its
+effect on Fmax at 0.717 V has NOT been measured**, so the figures in the table
+above are for the pre-`mr_m2` netlists.
+
+**Do not re-derive this by scaling.** The `x0.835` rule that the earlier budget
+pass offered is WITHDRAWN: the measured derate runs 16.5% to 28.0% and 16.5% is
+its minimum, so a scaled estimate is optimistic in every case checked. Scaling
+put `LANES = 4` at 235.3 MHz against a measured 211.5.
+
 So C's row is **438 DSP on both ends** (384 + 54 as booked), not 438-456, and
 **the published die ceiling should fall from 2,648 to 2,630.** Applying the
 sigmoid narrowing as well takes C to **431** and the die to **2,599-2,623**.
@@ -445,6 +504,45 @@ non-C total                    2,168 floor .. 2,192 ceiling
 booked), which is 61% to 64% of every DSP the rest of the design leaves
 unclaimed, and puts the die at 90.2% to 91.3% of 2,880.**
 
+**CORRECTION 2026-08-27 -- the A row above is an unbuildable configuration, and
+correcting it moves this whole table in C's favour.** `ROWS_IF = 58` cannot be
+built. The HBM port count is a WIDTH budget, `NPORT = ROWS_IF x 9 / 16`, an
+exact integer identity with no clock in it; `ROWS_IF = 58` needs **33 ports of
+the 30 available** and is not an integer number of ports either. `ROWS_IF` must
+be a multiple of 16 and at most 48, so **48 is forced**
+(`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`). A at
+`ROWS_IF = 48` is **1,584 DSP** (MEASURED, `sim/ooc_sweep/results.csv:8`), not
+1,914. Re-running the block above with that one substitution, DERIVED:
+
+```
+A, ROWS_IF = 48 post-reclaim   1,584   MEASURED, results.csv:8
+B, LANES = 32 + conv 16 + scalar 7 + recur 1   226   MEASURED
+D, LANES_V = 8                    28   floor (phase sharing), 52 unshared
+E                                  0   by construction
+non-C total                    1,838 floor .. 1,862 ceiling
+headroom to C                  1,018 .. 1,042      (was 688 .. 712)
+```
+
+Consequences, and the second one is the one that matters:
+
+- C at `MACS = 192` and 431 DSP falls from **61-64% of the remaining headroom to
+  41-42%**, and the die from 90.2-91.3% to **2,269-2,300 of 2,880, 78.8-79.9%**.
+- **`MACS = 384`'s "DOES NOT FIT" verdict no longer holds on DSP.** 815 DSP
+  against 1,018-1,042 available is 78-80%, and the die total is
+  **2,653-2,677, 92.1-93.0%**. It still fails, but on **ports**: at 106% port
+  duty it needs two ports per stream, and A at `ROWS_IF = 48` has already taken
+  27 of the 30, leaving 3 for B, C, D and E combined. **The reason for the
+  rejection changes from DSP to ports, and the rejection stands.** The
+  `MACS = 384` row of the table above and the "384 does not fit ... exceeds the
+  die by itself" bullet later in this section are superseded on that specific
+  ground, and only on that ground.
+
+Not corrected here: this substitution costs A time. `ROWS_IF = 48` is
+5,187,328 A cycles at 9B against 4,293,888 at 58, **+3.91 ms per token, +21.6%
+on A alone** (DERIVED, port-count note section 4.5). That is a whole-die
+allocation question of the kind A spec section 15.4c owns, and this document
+does not settle it.
+
 **Sensitivity, stated as the parent asked.** `DSP_C = 2 x MACS + 47`. The
 array term is 89% of C's total at `MACS = 192` and is the only term that moves
 with a design choice. Because the ladder is quantised to
@@ -455,9 +553,17 @@ smooth curve but four rungs, and the choice is effectively binary:
   die by itself, and additionally needs a second HBM port per stream because
   its port duty is 106%. The 1.75 ms sweep it buys is unreachable. This is an
   independent confirmation of C spec 3.0's rejection, by different arithmetic.
+  (**Superseded in part, 2026-08-27:** with A forced to `ROWS_IF = 48` and 1,584
+  DSP, headroom is 1,018-1,042 and 815 DSP **does** fit. The rejection now rests
+  entirely on the port half of this bullet, which is stronger than it was: A
+  takes 27 of the 30 HBM ports at `ROWS_IF = 48`, leaving 3 for B, C, D and E.
+  See the correction earlier in this section, under "the headline number".)
 - **96 fits with 200 DSP to spare and doubles the sweep** from 3.51 to 7.01 ms
   at 299.04 MHz, which is +3.5 ms on a ~4.4 ms subsystem. It is the correct
   fallback if routing binds at 192, and it is the only fallback.
+  (**At the MEASURED 237.812 MHz: 4.41 to 8.82 ms, +4.4 ms on a ~5.5 ms
+  subsystem.** DERIVED 2026-08-27; the cycle counts and the 2x ratio are
+  unchanged.)
 - **192 is the unique choice.** It is the largest legal rung that fits.
 
 ### 3.6 The one lever that could still move the array term, priced and not taken
@@ -467,16 +573,20 @@ The lane is 2 DSP **only because of the rescale mode**. A two-mode lane
 dedicated array of `R` multipliers at 2 DSP each, sweeping the 1,536
 accumulators in `1536/R` cycles:
 
-| `R` | `DSP_array` | rescale pass | extra cycles per token | extra ms @299.04 | accumulators per rescale unit |
-|---|---|---|---|---|---|
-| on-lane (spec) | **384** | 8 cyc | 9,728 | 0.033 | 8 |
-| 96 | 384 | 16 | 19,456 | 0.065 | 16 |
-| 48 | **288** | 32 | 38,912 | 0.130 | 32 |
-| 24 | **240** | 64 | 77,824 | 0.260 | 64 |
-| 8 | **208** | 192 | 233,472 | 0.781 | 192 |
+| `R` | `DSP_array` | rescale pass | extra cycles per token | extra ms @299.04 | **extra ms @237.812** | accumulators per rescale unit |
+|---|---|---|---|---|---|---|
+| on-lane (spec) | **384** | 8 cyc | 9,728 | 0.033 | **0.041** | 8 |
+| 96 | 384 | 16 | 19,456 | 0.065 | **0.082** | 16 |
+| 48 | **288** | 32 | 38,912 | 0.130 | **0.163** | 32 |
+| 24 | **240** | 64 | 77,824 | 0.260 | **0.327** | 64 |
+| 8 | **208** | 192 | 233,472 | 0.781 | **0.982** | 192 |
+
+The `@237.812` column is DERIVED 2026-08-27 from the same cycle counts at the
+MEASURED operating clock; the `@299.04` column is a 0.85 V analysis figure and
+is kept for traceability.
 
 At `R = 48` this is **96 DSP -- 3.3% of the whole die -- for +0.13 ms**, on a
-die that is at 90-92%.
+die that is at 90-92%. (**+0.163 ms at the measured clock.**)
 
 **It is not recommended without a measurement, for a stated reason.** C spec
 2.6 measured the accumulator read mux going non-linear above 16 entries: at
@@ -530,6 +640,31 @@ spec's state-sweep model. Every row shows its arithmetic.
 
 **The sweep is 80% of C.** Every other term together is 0.87 ms.
 
+**CORRECTION 2026-08-27 -- the ms columns above are 0.85 V analysis clocks.**
+The two columns are kept as printed for traceability. At the MEASURED operating
+clock of **237.812 MHz** (`sim/ooc_sweep/results.csv:7`, VCCINT 0.717 V) the
+same cycle counts give, DERIVED:
+
+| Component | cycles | **ms @237.812** |
+|---|---|---|
+| KV sweep | 1,048,576 | **4.409** |
+| rescale stalls, expected | 9,728 | **0.041** |
+| QK-norm, exposed | 104,192 | **0.438** |
+| IMROPE | 8,000 | **0.034** |
+| KV quantize + write | 32,768 | **0.138** |
+| gate + output stage | 107,136 | **0.451** |
+| **C total per token** | **1,310,400** | **5.511** |
+
+The "80% of C" split is a cycle ratio and is unaffected. The 0.87 ms of aux
+terms becomes **1.10 ms**.
+
+**237.812 MHz is itself an upper bound for C, not a promise.** It is
+`matvec_core`'s number. Every norm unit measured at 0.717 V is below it, and
+C's own QK-norm unit `rmsnorm_rs` at N = 256 measures **211.46 MHz** at
+`LANES = 2/4` and **224.57 MHz** at `LANES = 1`
+(`docs/2026-08-27_verdicts-at-0.717V.md` section 2.2, MEASURED). If C's own
+clock binds the die, every ms above scales again by `237.812 / f_actual`.
+
 Notes on the rows that are not simple products:
 
 - **KV sweep, 16 cycles per (position, KV head).** Cycles 0-7 are score(p): 8
@@ -555,7 +690,9 @@ Notes on the rows that are not simple products:
   norms run under group 0's 32,768-cycle sweep, so only the FIRST group's norms
   are exposed: 6 Q heads + 2 K heads = 8 per layer. If the overlap control is
   not built -- C spec 3.13 item 7 says it is priced but not designed -- the row
-  is 182,336 and C's total is **1,388,544 cycles = 4.643 ms @299.04**.
+  is 182,336 and C's total is **1,388,544 cycles = 4.643 ms @299.04**
+  (**5.839 ms at the MEASURED 237.812 MHz**, DERIVED 2026-08-27; the exposed
+  row alone is 182,336 cycles = **0.767 ms** there).
 
 - **This is 0.2 ms below C spec 3.7's ~4.59 ms @300 MHz** and the entire
   difference is the QK-norm row: 3.7 carries 166K cycles, derived before
@@ -753,6 +890,8 @@ Required section. Each item says what is unknown and what would settle it.
    of 104K cycles assumes it. C spec 3.13 item 7 says it is priced but not
    designed. If it is not built the row is 182,336 and C's total moves from
    4.382 to 4.643 ms at 299.04 MHz. That is a 6% cost, not a fit question.
+   (**At the MEASURED 237.812 MHz: 5.511 to 5.839 ms.** DERIVED 2026-08-27. The
+   6% is a ratio of two figures at one clock and survives unchanged.)
 
 8. **Real 27B attention score dynamics, and therefore the rescale regime.** The
    expected `R = 37.6` derived in section 4 assumes exchangeable score

@@ -2,6 +2,19 @@
 
 Design spec, 2026-08-24. Milestone `v2.4`. **Revision 1.**
 
+> **Time figures re-derived at the measured clock, 2026-08-27.** §11's timing
+> budget was derived at **276-300 MHz**, which is a 0.85 V analysis band. The
+> card runs VCCINT 0.717 V, where `matvec_core` at `ROWS_IF = 58` measures
+> **237.812 MHz** (MEASURED, `sim/ooc_sweep/results.csv:7`). **The cycle counts
+> are unchanged and remain the invariant**; only the divisor moves. Corrections
+> are marked in place rather than overwritten, so the superseded figure stays
+> readable. Two later findings also bite and are called out where they do: the
+> `x0.835` derate rule offered by the first budget pass is **WITHDRAWN**
+> (`docs/2026-08-27_verdicts-at-0.717V.md`), and §11's `ROWS_IF ~ 58` operating
+> point is **NOT BUILDABLE**
+> (`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`). Full
+> derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md` section 7.5.
+
 **STATUS: no adversarial review has run against this document yet.** A's §7.4
 survived a review on its fifth revision, C's §2.1 on its sixth, and B's rev 1
 carries the same warning as this one. Expect the same here. The obligations
@@ -271,6 +284,14 @@ descriptor, sized `NSUB_MAX = 64` (§6.1). At `ROWS_IF = 58`, A §6.5's
 invariant (`NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4`) gives 29 lanes at
 `AXI_DW = 256`; the table sizing in §6.1 uses
 33 total bases (29 weight + 4 scale) as the working estimate.
+
+> **2026-08-27: those 33 lanes are 33 HBM ports, and only 30 exist.** The
+> invariant quoted here IS the port-count identity, `NPORT = ROWS_IF x 9 / 16`,
+> and evaluating it at `ROWS_IF = 58` is what rules that operating point out.
+> `ROWS_IF` must be a multiple of 16 (or the scale lane pads) and at most 48;
+> **48 is forced**, giving 24 weight + 3 scale = **27 bases**. See the
+> correction in §8.1 and
+> `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
 
 **K. E §2.5's overlap requirement cannot be discharged by D scheduling
 alone.** E demands D "issue the next layer's weight streaming concurrently
@@ -664,6 +685,18 @@ Per layer D-vec touches: 2 norms (2 passes x 5120 each), 2 residuals (2 x
 | 4 | 934 K | 3.1 | +9% |
 | **8** | **467 K** | **1.56** | **+4.6%** |
 
+**Re-derived 2026-08-27 at the measured 237.812 MHz.** Cycle counts unchanged;
+the reference token is 41.0 ms, not 34 (see the §11 correction). DERIVED:
+
+| `LANES_V` | cycles/token | **ms/token @237.812** | **vs a ~41.0 ms token** |
+|---|---|---|---|
+| 1 | 3,735,552 | **15.71** | **+38% -- unacceptable** |
+| 4 | 933,888 | 3.93 | +9.6% |
+| **8** | **468,224** | **1.97** | **+4.8%** |
+
+The conclusion is unchanged: the fractions barely move, because both the row
+and the token scale with the same clock. Only the absolute ms move.
+
 A 1-element/cycle unit -- the natural port of the existing `rmsnorm`-class
 FSMs -- would silently cost more than subsystem C's entire attention sweep.
 `LANES_V = 8` is chosen; the region read ports already deliver 32 elements
@@ -710,6 +743,40 @@ arbitration exists anywhere in this design. On the FK33's 32 HBM AXI ports:
 | B (2R + 2W) / C (2R + 1W) | **4, muxed** two ways | B §2.5, C §2.7; B and C are never both active |
 | D | 0 | descriptors and constants are URAM-resident (§6.4) |
 | E | 0 | PCIe, on-chip buffers (E §2.3) |
+
+**CORRECTION 2026-08-27 -- A's row uses a method that cannot produce the right
+answer, and the corrected answer breaks this table.** A §15.1 prices ports in
+GB/s and multiplies by a 1.3x provisioning factor. That is a **category error**:
+a port is not a quantity of bandwidth here, it is a 256-bit slice of A's
+`ROWS_IF x 144`-bit core word, so the count is an exact integer identity
+
+```
+NPORT = ROWS_IF x 144 / 256 = ROWS_IF x 9 / 16
+```
+
+with no clock in it and nothing to provision against (measured HBM efficiency
+is 100.0% at every port count from 1 to 30). Restating the row's numbers as
+"23-27 at a different clock" would preserve the error. The corrected counts,
+DERIVED (`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`):
+
+| `ROWS_IF` | weight lanes | scale lanes | **ports** | of 30 |
+|---|---|---|---|---|
+| 32 | 16 | 2 | **18** | fits, 12 spare |
+| **48** | **24** | **3** | **27** | **fits, 3 spare** |
+| 52 | 26 | 4 | **30** | fits, 0 spare |
+| 58 | 29 | 4 | **33** | **-3, NOT BUILDABLE** |
+
+`ROWS_IF` must be a multiple of 16 for the identity to be integral, and at most
+48 to fit, so **48 is forced**. This document's own §2.2 item J already computes
+the killing number and does not draw the conclusion: it reads "at `ROWS_IF =
+58` ... gives 29 lanes ... 33 total bases (29 weight + 4 scale)". 33 lanes is
+33 ports, and only 30 exist.
+
+**Consequence for this table: A takes 27 of the 30, leaving 3, not 4.** The
+"4, muxed" allocation for B and C does not fit as written. The D skeleton
+reaches the same verdict -- "D §8.1's static port assignment does not survive"
+-- by a bandwidth argument that is now also superseded; the width argument is
+the binding one and it does not depend on the clock.
 
 A's ports are physically dedicated -- no mux, no cost. The four shared ports
 carry a 2:1 grant mux (~600 LUT/port estimated) selected by D's grant
@@ -818,6 +885,10 @@ the same "check at `start`, abort before output" discipline as A §7.6.
 Per token per card, N=2, 27B, at the §15.4c "balanced" point
 (`ROWS_IF ~ 58`, C `MACS = 192`, 276-300 MHz):
 
+**Read the correction block after the table before quoting any number from it.**
+`ROWS_IF ~ 58` is not buildable and 276-300 MHz is a 0.85 V analysis band; the
+card runs 237.812 MHz at `ROWS_IF = 58` and 236.128 MHz at the forced 48.
+
 | Component | ms | Basis |
 |---|---|---|
 | A jobs (weights, 7.57 GB/card) + C | ~34 **-> ~35.1** | A §15.4c balanced row. **CORRECTED 2026-08-25 by C §3 (its R-C2):** the §15.4c figure counts C's attention *sweep* only, which is 76% of C. The aux terms C §3 finally prices (softmax cone, rescale stalls, QK-norm, rope, gate, reciprocal) add **+1.1 ms**, to ~4.59 ms at 300 MHz / ~5.95 ms at the 231 MHz the card reaches at 0.717 V |
@@ -832,6 +903,54 @@ lower band. The B row and the D-vec row are the two entries no other document
 carries; both are derived, unsynthesised, and B's is a floor (its §3
 scheduling may add). This table exists so the whole-token sum finally
 includes the seams; it is not a promise.
+
+**CORRECTION 2026-08-27 -- this table is at the wrong clock AND at an
+unbuildable operating point.** The table above is kept as printed; every figure
+in it is superseded as follows. Sources for the clock:
+`docs/2026-08-27_budgets-at-the-measured-clock.md` sections 2.1 and 4. For the
+port count: `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
+
+**(a) The clock.** 276-300 MHz is a 0.85 V analysis band. The card runs
+0.717 V, where the design's largest block measures **237.812 MHz** MEASURED
+(`sim/ooc_sweep/results.csv:7`). Restating each row from its own cycle count,
+DERIVED, and holding the assumptions the row was written with:
+
+| Component | as printed | **at 237.812 MHz** |
+|---|---|---|
+| A jobs + C | ~35.1 ms | **34.76 ms** by the tile model (A 29.24 + C 5.51), or **40.21 ms** if §15.4c's own A term is right. The 17-24% disagreement between them is a real, unresolved ~16% once both are put at one clock; the *range* was the clock, the *gap* is not |
+| C alone | ~4.59 / ~5.95 | **4.37 ms at 300 MHz** (C skeleton's corrected 1,310,400 cycles) and **5.51 ms at 237.812 MHz** |
+| B state sweeps | ~2.0 ms | **~2.5 to 3.5 ms** (sweep-only floor 589,824 cycles = 2.48; emit-bound estimate 828,144 = 3.48) |
+| E collectives | ~0.42 ms | **no source.** D skeleton §1.6 books 0.60 ms and E's own §2.4 model gives 0.73-5.64 ms. 0.42 is cited to a line that does not exist in E. Unrelated to the clock, but it is in this sum |
+| D-vec at `LANES_V = 8` | ~1.6 ms | **1.97 ms** (468,224 cycles) |
+| D-ctrl step overhead | ~0.1 ms | **0.09 to 0.14 ms** (22,000 to 33,000 cycles) |
+| **the total** | **~39 ms => ~26 tok/s** | **~41.0 ms => ~24.4 tok/s** by the tile model, **~46.4 ms => ~21.5 tok/s** by this table's own A term |
+
+The `-22.9%` derate that produced the "231 MHz" in the C row is superseded by a
+direct measurement, and **the `x0.835` rule that replaced it is itself now
+WITHDRAWN**: measured across 14 configurations the VCCINT derate runs 16.5% to
+28.0% against a measurement spread of exactly zero, and 16.5% is its *minimum*
+(`docs/2026-08-27_verdicts-at-0.717V.md`). Do not scale any Fmax in this
+document. Where a number is needed and no 0.717 V measurement exists, say so.
+
+**(b) The operating point.** `ROWS_IF ~ 58` **cannot be built.** The HBM port
+count is a width budget, `NPORT = ROWS_IF x 9 / 16`, an exact integer identity
+with no clock in it. 58 needs 32.62 ports, which is not an integer, and rounds
+up to 33 against the 30 that exist. `ROWS_IF` must be a multiple of 16 and at
+most 48, so **48 is forced**. Every figure in the table above, and every figure
+in (a), is therefore a figure for a configuration that does not exist.
+
+At the forced `ROWS_IF = 48` and its own measured clock of **236.128 MHz**
+(`sim/ooc_sweep/results.csv:8`), DERIVED: A is 8,381,664 cycles = **35.50 ms**,
+and the 27B N=2 token is **~47.3 ms => ~21.1 tok/s**. At 9B N=1 the published
+figure is 30.43 ms / 32.9 tok/s (port-count note §4.5); recomputing every
+core-clock term at 236.128 MHz gives 30.49 ms / 32.8 tok/s.
+
+**(c) 39 ms is not a requirement.** It is the self-sum of this very table,
+printed under a heading that says "informative, derived -- nothing here is
+measured" and closed by a sentence that says "it is not a promise". No external
+latency or throughput requirement exists anywhere in the repo. It should stop
+being quoted as a budget; see `docs/2026-08-27_budgets-at-the-measured-clock.md`
+section 3.
 
 ## 12. Resource cost (ESTIMATES -- no D RTL has been synthesised)
 
@@ -904,6 +1023,13 @@ MEASURED at 148 and D MEASURED at 28 on 2026-08-25, giving
 the sum*; the worst corner, D-vec built without any sharing, is 2,548 = 88.5%,
 so the whole spread of D's coding style is 0.9 percentage points and every
 corner fits) --
+(**2026-08-27: the A term is an unbuildable configuration.** `ROWS_IF = 58`
+needs 33 HBM ports of 30; 48 is forced and measures **1,584 DSP**
+(`sim/ooc_sweep/results.csv:8`). Substituting it, DERIVED:
+**1,584 + 434 + 148 + 28 = 2,194 of 2,880 = 76.2%**, worst corner
+2,218 = 77.0%. The die is not near the 90% congestion line at the buildable
+operating point, and the 330 DSP that come back are the compensation for the
++21.6% this costs on A's time.) --
 D pushes the known ~85-86% up by ~1%, still under the 90% congestion line
 both B §2.8 and C §2.8 cite. E is absent from this sum: it is 0 DSP by construction, its
 accumulator being an adder tree (A §15.4b). That is a construction argument,

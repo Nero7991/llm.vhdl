@@ -6,6 +6,30 @@ Design spec, 2026-08-21. Milestone `v2.1`. **Revision 7.**
 yet survived an adversarial review**; sections 1-2 have survived five. Treat
 §3's contracts as first-revision material with D rev 1's warning attached.
 
+> **Time figures re-derived at the measured clock, 2026-08-27.** §3 states every
+> time at **300 MHz (0.85 V analysis)** and at **231 MHz**, the latter obtained
+> by applying a `-22.9%` "mean VCCINT derate". **Both constants are wrong.**
+> 300 MHz is an analysis clock the card does not run at, and the -22.9% was
+> refuted as a die constant. The card runs VCCINT 0.717 V, where the design's
+> largest block measures **237.812 MHz** MEASURED
+> (`sim/ooc_sweep/results.csv:7`). **The cycle counts are unchanged and remain
+> the invariant**; only the divisor moves. Corrections are marked in place
+> rather than overwritten, so the superseded figure stays readable.
+>
+> **Do not replace -22.9% with any other single ratio either.** Measured across
+> 14 configurations at 0.717 V the derate runs **16.5% to 28.0%** against a
+> measurement spread of exactly zero, and 16.5% is its *minimum*, so the
+> `x0.835` rule an earlier pass offered is **WITHDRAWN** and was optimistic by
+> 17 to 32 MHz on all five verdicts checked against it. The mechanism: at
+> 0.717 V every norm unit in this project is bound by the **same** path, a
+> DSP48E2-internal multiply in the Q30 Newton rsqrt at 84-88% logic delay, and
+> logic derates x1.507 with this undervolt while routing derates only x1.134.
+> `docs/2026-08-27_verdicts-at-0.717V.md`,
+> `docs/debugging/2026-08-27_derate-is-not-a-constant.md`.
+>
+> Full derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md` section
+> 7.2.
+
 ## 0. Revision history
 
 **Rev 7 (2026-08-25)** writes section 3 against the settled §1-2 foundation:
@@ -280,7 +304,10 @@ The gate shares `qg_exp` with Q, since both are views of one `wq` output.
 > consistent with the two generate branches collapsing into one netlist.
 >
 > With the cone fixed, `MACS=192` reaches 3.49 ms and `MACS=384` 1.75 ms, so the
-> two become genuinely different design points. Integration into `softmax.vhd`
+> two become genuinely different design points.
+> (**2026-08-27: both are 300 MHz figures. At the MEASURED 237.812 MHz they are
+> 4.40 ms and 2.21 ms**, DERIVED; cycle counts unchanged, and the 2:1 ratio that
+> makes the point survives.) Integration into `softmax.vhd`
 > must still preserve `conv_q`, the `e_arr` store and the sum accumulation,
 > which the micro-benchmark drops; the sum accumulator stays sequential.
 > Procedure and traps: `docs/debugging/2026-08-24_vccint-derate-and-exp-cone.md`.
@@ -869,6 +896,25 @@ derate of `docs/debugging/2026-08-24_vccint-derate-and-exp-cone.md`)**.
 Numeric rules here extend §2.1 (sites 5-6 and the new arithmetic §3 owns);
 §2.1's sites 1-4 are referenced, never restated.
 
+> **CORRECTION 2026-08-27 -- the second column's clock is wrong.** 231 MHz was
+> obtained by applying a `-22.9%` derate that
+> `docs/debugging/2026-08-25_voltage-derate-on-hardware.md` refuted as a die
+> constant. **The measured figure at 0.717 V is 237.812 MHz** for `matvec_core`
+> at `ROWS_IF = 58` (`sim/ooc_sweep/results.csv:7`, MEASURED, a pure voltage
+> re-analysis of one netlist). Every "@231 MHz" entry in §3 is superseded; the
+> ones that carry a cycle count are restated in place from that cycle count.
+> The two-column form itself is right, and it is the only reason this
+> correction is mechanical rather than a rewrite.
+>
+> **237.812 MHz is an upper bound for C, not C's own number.** It is subsystem
+> A's. C's QK-norm unit `rmsnorm_rs` at N = 256 measures **211.46 MHz** at
+> `LANES = 2/4` and **224.57 MHz** at `LANES = 1` when timed at 0.717 V
+> (`docs/2026-08-27_verdicts-at-0.717V.md` §2.2, MEASURED, run twice
+> bit-identical). **No configuration of C's norm closes 237.812 MHz**, and the
+> cause is a shared Q30 Newton rsqrt path, not the lane count. If C's own clock
+> binds the die, every ms in §3 scales again by `237.812 / f_actual`, a further
+> x1.12 at 211.46 MHz.
+
 ### 3.0 `MACS` fixed at 192, and the §2 figures the FK33 geometry supersedes
 
 **`MACS = 192`, organized as 6 query heads x 32 dims per cycle. NORMATIVE.**
@@ -886,7 +932,8 @@ Rejected alternatives, priced:
   stream) and 768 MAC+rescale DSPs; whole-die DSP goes to ~2,900+ of 2,880 --
   **does not fit the device** (§3.8). The 1.75 ms sweep it buys is moot.
 - **`MACS = 96`** (`qh_tile = 3`): 32 cycles/position, sweep 6.98 ms at
-  300 MHz. This replaces §2.8's `MACS = 32` congestion fallback (which was
+  300 MHz (**8.81 ms at the MEASURED 237.812 MHz**, DERIVED 2026-08-27; cycles
+  unchanged). This replaces §2.8's `MACS = 32` congestion fallback (which was
   0.8B-shaped); it remains the fallback if routing binds.
 
 Figures in §2 that this geometry supersedes (they were written against the
@@ -898,7 +945,7 @@ justify stand, per §4's "only the numbers change"):
 | "17 beats per master per position", 128-bit masters | §2.2, §2.5 | 272 B = **8.5 beats of 256 bits**; two positions per 17 beats. Odd-numbered records start 16 B into a beat; the stream unpacker carries a 16-byte-granularity realignment mux (~256 LUT/stream). Port duty is 8.5 beats per 16-cycle position = **53%**, unchanged. |
 | "The DDR K feed is 128 b/cycle (16 int8)", "4 query heads x 16 dims" | §2.6 | 256 b/cycle, 6 heads x 32 dims. |
 | Q in "~16 striped BRAM36" | §2.6, §2.8 | §3.1: Q group planes in **registers** (the §2.6 FF-scarcity premise was the AXU3EG's 141K FF; the VU33P has 879K, and registers dodge the 72-bit port ceiling §2.6 fought). BRAM fallback retained. |
-| `MACS = 64`, 3.93 ms sweep | §2.5, §2.6 | §3.1/§3.7: `MACS = 192`, sweep 3.50 ms at 300 MHz with the pipelined exp cone. |
+| `MACS = 64`, 3.93 ms sweep | §2.5, §2.6 | §3.1/§3.7: `MACS = 192`, sweep 3.50 ms at 300 MHz with the pipelined exp cone. (**2026-08-27: 4.42 ms at the MEASURED 237.812 MHz**, DERIVED; 1,048,576 cycles unchanged.) |
 
 ### 3.1 Array geometry and the position schedule
 
@@ -1071,6 +1118,8 @@ saturated-high value 32767 rather than `1 << 15` (a deliberate, pinned
 points): **8 DSP, 1,062 LUT, 121 FF, Fmax 343.4 MHz** on the part at
 3.333 ns. This is the "dedicated sigmoid ROM" rev 1 demanded: no EXP_ROM,
 no divider, ~0.16 ms/token of pipeline occupancy instead of ~3 ms.
+(**2026-08-27: ~0.20 ms/token at the MEASURED 237.812 MHz**, DERIVED; cycles
+unchanged, and the ~20x argument the sentence makes is a ratio and survives.)
 
 **Site 6e -- gate multiply.**
 `y_pre[d] : s24 = round_shift(t[d] * g15[d], 15)` -- half+inf, 24x16, 1 DSP.
@@ -1104,6 +1153,15 @@ op per pipeline stage with operands in `AREG`/`BREG` and no two multiplies
 chained combinationally (the rmsnorm/rsqrt cascade lesson); no datapath
 value transits a VHDL `integer` (exponents, shifts and indices only); all
 synthesis at 3.333 ns on the real part, restated at 0.717 V.
+
+> **2026-08-27: "restated at 0.717 V" is the right rule and the constant it was
+> applied with is wrong.** It was applied by scaling a 0.85 V Fmax by a fixed
+> derate (-22.9%, later -16.5%). Neither is a constant: measured across 14
+> configurations the derate runs **16.5% to 28.0%** against a measurement spread
+> of exactly zero. **Restate by re-timing at 0.717 V, never by scaling.**
+> `set_operating_conditions -voltage {VCCINT 0.717}` after `synth_design` and
+> `opt_design` costs nothing and reloads the `-2LV` speed model, which is what
+> the place-and-route path does too. `docs/2026-08-27_verdicts-at-0.717V.md`.
 
 ### 3.3 The rescale error bound (the rev 2 M2 deliverable, quantitative)
 
@@ -1323,6 +1381,37 @@ a promise of routed silicon.
 | gate + output stage | 107K | 0.36 | 0.46 | §3.5 |
 | **C total** | **~1.38M** | **~4.59** | **~5.95** | |
 
+**CORRECTION 2026-08-27 -- the `@231 MHz` column is at a clock the card does not
+run at.** The table is kept as printed. Cycle counts are unchanged. At the
+MEASURED **237.812 MHz**, DERIVED from each row's own cycle count:
+
+| Component | cycles | **ms @237.812 MHz** |
+|---|---|---|
+| KV sweep | 1,048,576 | **4.409** |
+| rescale stalls, expected | ~12K | **0.050** (worst case +524K = **+2.20**) |
+| QK-norm, exposed | 166K | **0.698** (serial fallback 290K = **1.219**) |
+| IMROPE | 8K | **0.034** |
+| KV quantize + write | 34K | **0.143** |
+| gate + output stage | 107K | **0.450** |
+| **C total** | **~1.38M** | **~5.80** |
+
+**Two of C's own cycle counts have since been superseded, independently of the
+clock, and both make C cheaper.** The C skeleton's §4 model measures the QK-norm
+row at **104,192** cycles rather than 166K (the 166K assumed 1,296 cycles per
+`rmsnorm_rs` invocation before that unit existed; the measured figure is 814),
+and the rescale row at 9,728 rather than ~12K. With those the total is
+**1,310,400 cycles = 4.368 ms at 300 MHz and 5.510 ms at 237.812 MHz**. **This
+pass changed no cycle counts**, so the table above is the pure clock
+restatement; the 5.510 is stated here so both are visible. C skeleton §4 says
+this row "should be updated to 104K" and that update is still owed.
+
+Recorded rounding differences, for completeness. The budget document's
+correction table scaled the rounded `@231` entries by 0.97140 instead of
+re-dividing the cycle counts, which gives 0.049 for the rescale row against
+0.050 here, and 0.451 for the gate row against 0.450. Both are last-digit
+artefacts of the `~12K` / `107K` rounding, not disagreements about the
+arithmetic. The figures printed above are from the cycle counts.
+
 The sweep is 76% of C; the aux terms this section finally prices add
 **+1.1 ms over the sweep-only figure** every earlier document quoted
 (§2.5's 3.93, the derate doc's 3.49). Downstream corrections: D §11's
@@ -1361,6 +1450,49 @@ crosses the 90% congestion line.
 > | 2 | 28 | 281.8 MHz -- DOES NOT CLOSE |
 > | 4 | 40 | 281.8 MHz -- DOES NOT CLOSE |
 >
+> > **FURTHER CORRECTION 2026-08-27: those three figures are 0.85 V analysis
+> > numbers, and at the operating voltage NONE of the three closes.** The same
+> > netlists timed at VCCINT 0.717 V, MEASURED and reproduced bit-identically in
+> > two runs (`docs/2026-08-27_verdicts-at-0.717V.md` §2.2):
+> >
+> > | `LANES` | Fmax @0.85 V | **Fmax @0.717 V** | vs the 237.812 MHz target |
+> > |---|---|---|---|
+> > | 1 | 300.75 | **224.57** | **MISS by 13.2** |
+> > | 2 | 281.85 | **211.46** | **MISS by 26.4** |
+> > | 4 | 281.85 | **211.46** | **MISS by 26.4** |
+> >
+> > **`LANES = 1` was chosen because it closes, and it does not close.** The
+> > rejection of 2 and 4 stands; the fallback that justified it does not. There
+> > is no closing configuration of this unit at 0.717 V.
+> >
+> > **And consequence 2 below misreads the cause.** At 0.717 V the binding path
+> > is the same in all three: a DSP48E2-internal multiply in the Q30 Newton
+> > rsqrt, `ARG__N/DSP_A_B_DATA_INST/CLK -> mr_m_reg[65]/D`, 4.414 ns at 87.6%
+> > logic. That is why `LANES = 1` at N=256 reports **exactly** the same
+> > 224.57 MHz as `l2norm_rs` at `LANES = 1` and `2`, a different top level.
+> > Lane count does not move it in either direction, so "more throughput is not
+> > purchasable with DSP here" is true for a reason that has nothing to do with
+> > width. That one path binds `l2norm_rs`, `rmsnorm_rs`, `rmsnorm_bf` and
+> > `gdn_emit_chain` simultaneously, so lifting it is the highest-value RTL
+> > change available. `docs/debugging/2026-08-27_derate-is-not-a-constant.md`.
+> >
+> > **On the fix, and a citation to distrust.**
+> > `docs/2026-08-27_verdicts-at-0.717V.md` §6 and
+> > `docs/debugging/2026-08-27_derate-is-not-a-constant.md` §7 both say "C spec
+> > 3.13 item 1 already names `MREG` on the 34x32 Newton stage as the expected
+> > fix". **§3.13 item 1 says the opposite**: "`MREG` was NOT the fix, and this
+> > item predicted that it was", worth 26 MHz of 183, with an MREG-cadence
+> > version measuring 117.2 MHz against 138.4. Do not act on that citation.
+> > What the path actually needed is recorded in
+> > `docs/debugging/2026-08-27_newton-rsqrt-cascade-hop.md`: `mr_m` (MREG) and
+> > `mr_p` (PREG) were **already present**; the unregistered part was the
+> > **DSP-to-DSP hop** inside the 34x32 span, which needs a third register
+> > level. That landed on 2026-08-27 as `mr_m2` in `rtl/rmsnorm_rs.vhd` and
+> > `rtl/l2norm_rs.vhd`, at a MEASURED cost of **+6 cycles per rsqrt**
+> > (`rmsnorm_rs` N=256 142 -> 148) and **+12 for `l2norm_rs`**, which runs the
+> > Newton twice. **Its effect on Fmax at 0.717 V has NOT been measured**, so
+> > the 224.57 / 211.46 figures above are for the pre-`mr_m2` netlists.
+>
 > Two consequences, and the second is the one that matters:
 >
 > 1. The aux row is **+4**, so it lands at **54** and C's total at **438**.
@@ -1378,6 +1510,9 @@ crosses the 90% congestion line.
 > - Per card per token at 27B: 24 query heads and 4 KV heads, TP `N = 2`, so
 >   **(12 + 2) x 16 layers = 224 norms**.
 > - **224 x 814 = 182,336 cycles = 0.61 ms at 300 MHz.**
+>   (**0.767 ms at the MEASURED 237.812 MHz**, DERIVED 2026-08-27; cycles
+>   unchanged. The 10% overshoot against the budgeted row below is a ratio of
+>   cycle counts and is unaffected by the clock.)
 >
 > §3.7 budgets the QK-norm at 166K cycles / 0.55 ms with a serial fallback of
 > 290K / 0.97 ms. **The real 1-lane unit lands at 182K, a 10% overshoot on the
@@ -1403,6 +1538,18 @@ with rmsnorm as shipped:              2,570..2,600           = 89.2-90.3%   -- A
 > said 18), and `gdn_conv` was re-measured at the true segment shapes. The
 > current honest range is **2,606 to 2,648 of 2,880 = 90.5% to 91.9%**, i.e.
 > over the congestion line, not under it. Authority: B spec 3.6.
+
+> **SUPERSEDED AGAIN 2026-08-27, in C's favour: the A term is an unbuildable
+> configuration.** `ROWS_IF = 58` needs **33 HBM ports of the 30 available**, by
+> the exact width identity `NPORT = ROWS_IF x 9 / 16` -- ports are a width
+> budget, not a bandwidth budget, and the identity has no clock in it.
+> `ROWS_IF` must be a multiple of 16 and at most 48, so **48 is forced**, where
+> A measures **1,584 DSP** (`sim/ooc_sweep/results.csv:8`), not 1,914.
+> Substituting that one number into the 2,606-2,648 range gives
+> **2,276 to 2,318 of 2,880 = 79.0% to 80.5%**, comfortably under the 90%
+> congestion line. **C is not the term that puts the die over the line; the
+> unbuildable A row was.** The 330 DSP come at a cost of +21.6% on A's own
+> time. `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
 
 
 > **B's row MEASURED 2026-08-25: 148, not 138-152.** `DSP_B = 4 x LANES + 20`
@@ -1529,6 +1676,22 @@ obligation on D.
    (not synthesis-only -- the broadcast-fanout lesson) Fmax >= 300 MHz at
    the 0.85 V analysis, with the DSP census showing `AREG/BREG = 1` on
    every datapath multiplier; the number is then restated at 0.717 V.
+   > **CORRECTION 2026-08-27 -- the gate is expressed at a voltage the card
+   > does not run at, which is the exact failure this correction pass exists
+   > to fix.** A gate of ">= 300 MHz at 0.85 V, then restated at 0.717 V" can
+   > be passed by a netlist that misses the operating clock: `gdn_emit_chain`
+   > reads **305.4 MHz with positive slack at 0.85 V and 232.2 MHz at 0.717 V**
+   > on the identical netlist, post-route
+   > (`docs/debugging/2026-08-27_tuning-at-the-wrong-voltage.md`). **The gate
+   > must be `routed Fmax >= 237.812 MHz MEASURED at VCCINT 0.717 V`**, not a
+   > 0.85 V figure restated afterwards. Restating is what a derate does, and
+   > there is no derate to restate with: measured 16.5% to 28.0% across 14
+   > configurations. Set `set_operating_conditions -voltage {VCCINT 0.717}`, or
+   > build against `-2LV`, and read the number the tool gives.
+   > **Related: do not RANK fixes by a 0.85 V critical path either.** The
+   > binding path changes identity with voltage -- at 0.85 V it was route-bound
+   > in `gdn_silu`, at 0.717 V logic-bound in `rmsnorm_bf` -- and one measured
+   > fix gained 6.25 MHz at 0.717 V while LOSING 16.42 MHz at 0.85 V.
 6. **Model quality, measured not asserted, before v2.1 sign-off:** the
    attention-chain increment -- §2.1 KV format + online softmax + Q15 gate
    + fixed twiddles, emulated over the reference implementation with the
@@ -1623,7 +1786,8 @@ C-internal specifically to avoid a new D obligation.
    over the reference implementation.
 7. **The group-overlap control** (two Q planes, norm-under-sweep) is
    priced (§3.6, §3.7) but not designed; the serial fallback costs +0.42
-   ms at 300 MHz.
+   ms at 300 MHz (**+0.530 ms at the MEASURED 237.812 MHz**, DERIVED
+   2026-08-27; cycles unchanged).
 8. **The 16-byte record phase realignment** in the stream unpacker (§3.0)
    is designed but unsimulated; `ctx_len` parity cases are in §3.11 gate 3
    for exactly this reason.

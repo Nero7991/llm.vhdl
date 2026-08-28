@@ -4,6 +4,37 @@ Skeleton spec, 2026-08-27. **Analysis and a documented skeleton, not a verified
 implementation.** No RTL in this document has been simulated; the only tool run
 against it is `ghdl -a` on `rtl/seq_top_skel.vhd`.
 
+> **Time figures re-derived at the measured clock, 2026-08-27.** Every ms in
+> this document was computed at 300 MHz, a **0.85 V analysis clock**. The card
+> runs VCCINT 0.717 V, where `matvec_core` at `ROWS_IF = 58` measures
+> **237.812 MHz** (MEASURED, `sim/ooc_sweep/results.csv:7`) and at
+> `ROWS_IF = 48` measures **236.128 MHz** (`:8`). **The cycle counts are
+> unchanged and remain the invariant**; only the divisor moves. Corrections are
+> marked in place rather than overwritten, so the superseded figure stays
+> readable. Three later findings also bite, and each changes a conclusion rather
+> than only a number:
+>
+> 1. **The `x0.835` derate rule is WITHDRAWN.** Measured across 14
+>    configurations the VCCINT derate runs 16.5% to 28.0% against a measurement
+>    spread of exactly zero, and 16.5% is its minimum, so every scaled estimate
+>    is optimistic. Do not scale an Fmax anywhere in this document.
+>    `docs/2026-08-27_verdicts-at-0.717V.md`,
+>    `docs/debugging/2026-08-27_derate-is-not-a-constant.md`.
+> 2. **`ROWS_IF = 58` is NOT BUILDABLE.** HBM ports are a WIDTH budget,
+>    `NPORT = ROWS_IF x 9 / 16`, an exact integer identity with no clock in it.
+>    58 needs 32.62 ports, which is not an integer, and rounds to 33 against the
+>    30 that exist. `ROWS_IF` must be a multiple of 16 and at most 48, so **48
+>    is forced**. Every figure below at `ROWS_IF = 58` is a figure for a
+>    configuration that cannot be built.
+>    `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
+> 3. **§3.3's port table is wrong at the root, not merely at the clock.**
+>    Pricing ports in GB/s and provisioning at 1.3x is a category error against
+>    a count that must be an exact width divisor. Restating 43/33 as 34/26 would
+>    preserve the error. See the correction in §3.3.
+>
+> Full derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md` section
+> 7.4.
+
 **Relationship to the existing D document.** `2026-08-24-transformer-sequencer-
 design.md` already exists and is the authority for D's obligations table,
 descriptor format, region map, lock states, error semantics and register map.
@@ -46,6 +77,28 @@ section named.
   corroborates)" `ROWS_IF ~ 58`. It does not corroborate it; 53 < 58 and the
   gap is the stall.
 
+  > **CORRECTION 2026-08-27. F2's ARITHMETIC is superseded; F2's VERDICT stands,
+  > for a different and stronger reason.** The 313.2 GB/s demand was computed at
+  > 300 MHz, a 0.85 V analysis clock. At the MEASURED 237.812 MHz the demand is
+  > `58 x 18 B x 237.812e6` = **248.3 GB/s** against 288.0 supply, so on
+  > **bandwidth** A is fed with **13.8% spare** and the bandwidth-balanced
+  > `ROWS_IF` moves from 53.3 to 67.3. Read alone that would dissolve F2.
+  >
+  > **It does not dissolve F2, because bandwidth was never the binding
+  > constraint.** HBM ports are a WIDTH budget: one 256-bit port feeds one lane
+  > of A's `ROWS_IF x 144`-bit core word, so `NPORT = ROWS_IF x 9 / 16` exactly,
+  > with no clock in it. `ROWS_IF = 58` needs 32.62 ports, which is not an
+  > integer, and 33 once the scale lane is padded -- against **30 available**.
+  > **`ROWS_IF = 58` is not buildable at any clock**, and lowering the clock
+  > does not lower the port count, it only lowers each port's duty cycle
+  > (79.3% at 237.812 MHz against a 300 MHz ACLK). `ROWS_IF` must be a multiple
+  > of 16 and at most 48; **48 is forced**, at 27 ports of 30.
+  >
+  > "288 GB/s of supply against 248 GB/s of demand, therefore A is fed" is true
+  > and irrelevant: the spare bandwidth is spread across ports A cannot use.
+  > **Aggregate headroom is not port headroom.**
+  > `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
+
 - **F3. A §15.1's HBM port-count table is stale by a factor of 1.5 (§3.3).** It
   divides demand by **14.4 GB/s per port**, which is `32 B x 450 MHz`. The
   achieved ACLK is 300 MHz, where a port carries **9.6 GB/s** (MEASURED, flat
@@ -53,6 +106,20 @@ section named.
   1.3x provisioning wants **33 ports against 30 available**. D §8.1's "A gets
   ~23-27 dedicated ports, B and C share 4 muxed" is therefore not affordable as
   written.
+
+  > **CORRECTION 2026-08-27. F3 replaced one wrong divisor with another; the
+  > 1.3x provisioning is the real defect.** Ports must be an exact divisor of
+  > A's core word width, `NPORT = ROWS_IF x 9 / 16`, so there is nothing to
+  > provision and no GB/s in the calculation. At `ROWS_IF = 48` the answer is
+  > **27 ports of 30, which fits** -- not the 33 F3 computes. A §15.1's table
+  > is indeed stale, but redoing it at 9.6 GB/s does not fix it.
+  >
+  > **F3's conclusion is half right.** D §8.1's "~23-27 dedicated" for A is
+  > exactly affordable at its top end, 27. What does not survive is the "4
+  > muxed" for B and C: 30 - 27 = **3**. And the operating point F3 was written
+  > against, `ROWS_IF = 58`, needs 33 ports and is **not buildable at any
+  > clock**. See the §3.3 correction and
+  > `docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
 
 - **F4. D §5.4's exponent capture is protected by nothing (§5.2, hazard A3).**
   The region lock freezes a region's DATA in HELD. Nothing in D §5.3 or §5.4
@@ -97,6 +164,16 @@ cycles_A(M, K) = ceil(M / ROWS_IF) * ceil(K / BLOCK)
 DERIVED, from A §7.2's geometry. It excludes per-job start, drain and
 descriptor-abort checks, which D §11 lumps into its ~20-30 cycles per step. All
 tables below use `ROWS_IF = 58` (A §15.4c "balanced") and `BLOCK = 32`.
+
+> **2026-08-27: `ROWS_IF = 58` is not buildable, so every cycle count below is
+> for a configuration that cannot be built.** It needs 33 HBM ports of the 30
+> available, by the exact width identity `NPORT = ROWS_IF x 9 / 16` (§3.3
+> correction). **`ROWS_IF = 48` is forced.** The model itself is unaffected --
+> `cycles_A(M, K) = ceil(M / ROWS_IF) x ceil(K / BLOCK)` holds at any
+> `ROWS_IF` -- but its instantiation is not. At 48 the 27B A total is
+> **8,381,664 cycles** against 6,954,528 at 58, and the padding waste changes
+> too: `ceil(8704/48) = 182` and `ceil(24/48) = 1`. Nothing below has been
+> re-tabulated at 48; the totals that matter are in the §1.6 correction.
 
 The ceilings are not decoration. `ceil(24/58) = 1` is what makes `ssm_beta` and
 `ssm_alpha` cost a full 160 cycles each to produce 24 numbers, and
@@ -179,6 +256,16 @@ cycles per block**, DERIVED. It scales linearly with context: 4.59 ms is
 ctx 2048, and 4K doubles it (A §15.4c). D's schedule is indifferent to the
 value; the token budget is not.
 
+> **2026-08-27: this cycle count was back-derived from a ms figure, which is the
+> anti-pattern §1.6 warns about one section later.** It happens to be
+> clock-neutral -- 4.59 ms was itself `cycles / 300 MHz`, so dividing by
+> 300 MHz recovers cycles -- but it inherits whatever cycle count produced the
+> 4.59. **C's cycle count has since moved.** The C skeleton's §4 model gives
+> **1,310,400 cycles per token = 81,900 per block**, against the 86,100 here,
+> the whole difference being a QK-norm row that 4.59 carried at 166K cycles and
+> the measured `rmsnorm_rs` puts at 104,192. Not changed here, because this pass
+> changes no cycle counts. Quote C in cycles, not in ms.
+
 ### 1.5 Token tail
 
 | step | unit | cycles | basis |
@@ -207,6 +294,49 @@ Per card, N=2, `ROWS_IF = 58`, `LANES = 32`, `LANES_V = 8`, `MACS = 192`,
 | D-ctrl | 22,000 to 33,000 | 0.07 to 0.11 | 1,106 steps x 20-30 |
 | **total** | **10,200,665 to 11,347,057** | **34.00 to 37.82** | |
 
+**CORRECTION 2026-08-27 -- the ms column is at a 0.85 V analysis clock, and the
+whole table is at an unbuildable operating point.** The table is kept as printed.
+Cycle counts are unchanged. At the MEASURED **237.812 MHz**, DERIVED from the
+same cycle counts:
+
+| unit | cycles/token | **ms @237.812** | note |
+|---|---|---|---|
+| A, array-limited | 6,954,528 | **29.244** | |
+| A, HBM floor | -- | **25.210** | `7.2605 GB / 288.0 GB/s`, **clock-invariant**; it no longer binds, see the §3.2 correction |
+| **A = max of the two** | | **29.244** | |
+| C | 1,377,600 | **5.793** | this row's own cycle count; see the disagreement note below |
+| B | 589,824 to 1,725,216 | **2.480 to 7.255** | |
+| D-vec | 468,224 | **1.969** | |
+| E | 179,968 | **0.636** | **only 0.036 of the change is the clock**; E is PCIe-bound and only its 320-cycle `t_tail` per collective is core-clock work |
+| D-ctrl | 22,000 to 33,000 | **0.093 to 0.139** | |
+| **total** | **9,592,144 to 10,738,536** | **40.21 to 45.03** | |
+
+**Note on the total's cycle column.** The printed 10,200,665 to 11,347,057 sums
+A at its **feed-limited** 7,563,049, which was the binding row at 300 MHz. At
+237.812 MHz the array-limited 6,954,528 binds instead, so the correct cycle
+total is **9,592,144 to 10,738,536**. The ms total is not a division of it in any
+case: E's 0.636 ms is almost entirely PCIe and does not come from its cycle
+count, so cycles and milliseconds cannot be converted into each other at the
+token level. Quote whichever one the argument needs, never both as if they were
+the same statement.
+
+**Recorded disagreement, C's row.** The budget document's correction table gives
+this row as **5.51 ms**, which is not a rescaling of 1,377,600 cycles -- it is
+1,310,400 cycles, the C skeleton's corrected count, divided by 237.812 MHz. That
+substitutes a cycle count as well as a clock, and this pass changes no cycle
+counts. **Both are printed: 5.793 ms from this table's own 1,377,600 cycles, and
+5.510 ms if the C skeleton's 1,310,400 is adopted.** With the latter the total
+is **39.93 to 44.75 ms**. The budget document prints 39.97 to 44.74 for that
+case; neither figure reproduces here to better than 0.04 ms and the difference
+is rounding in the intermediate rows. Nothing was written from it.
+
+**And the operating point does not exist.** This table is at `ROWS_IF = 58`,
+which needs 33 HBM ports against 30 available (§3.3 correction). At the forced
+`ROWS_IF = 48` and its own measured clock of 236.128 MHz, A is 8,381,664 cycles
+= **35.50 ms**, and the 27B N=2 token is **~47.3 ms, ~21.1 tok/s** (DERIVED).
+The table above is therefore an upper bound on performance that no build can
+reach, not a projection.
+
 Against the project's **~39 ms reference**: that reference is the sum of
 D §11's own table and is **verified as a sum**, but it is not an independent
 check on this one. Three of its five rows (C, E, D-vec) are quoted here rather
@@ -217,11 +347,29 @@ array-limited and 25.21 ms feed-limited. **That is a 17 to 24% disagreement on
 the largest term in the token and this document cannot resolve it**; see §7
 item 1.
 
+**CORRECTION 2026-08-27 -- most of the RANGE was the clock; the GAP was not.**
+The two derivations were made at different clocks. D §11's A term descends from
+A §15.4c, whose own anchors are stated at **276 MHz**; the tile arithmetic above
+is at **300 MHz**; and the feed-limited figure is clock-invariant. Normalised to
+a single clock the two comparisons collapse onto each other at 18.6-18.7%,
+which expressed the way this paragraph expresses it -- as a fraction of the
+larger figure -- is **~16%, not a 17-to-24% range**. The range was an artefact
+of comparing figures derived at different clocks. **The residual ~16% is real
+and is still unresolved**, and this correction does not resolve it either.
+Derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md` section 4.
+
 The **1.97 ms** figure for B's sweep checks out at both clocks quoted in B's
 own document: `589,824 / 300.0 MHz = 1.966 ms` and
 `589,824 / 299.04 MHz = 1.972 ms`. Both round to 1.97, which is a coincidence
 of rounding rather than agreement, and B §3.1 quotes the number against both
 clocks without saying so.
+
+> **2026-08-27: `589,824 / 237.812 MHz = 2.480 ms`.** The lesson of this
+> paragraph is the durable part and it survives: two clocks 0.32% apart cannot
+> be told apart through two-decimal rounding, so a figure must be quoted in
+> cycles with its clock named. The two clocks it compares are both 0.85 V
+> analysis clocks, and the gap that actually mattered was the 20.5% to the
+> operating voltage, which no amount of rounding hides.
 
 ### 1.7 What D overlaps
 
@@ -387,6 +535,32 @@ Since A/B/C are never simultaneously active (D O13), this is a comparison of A
 alone against the whole device, which is the most favourable form. It still
 fails.
 
+**CORRECTION 2026-08-27 -- the demand row and the shortfall are at the wrong
+clock, and the shortfall disappears without the conclusion changing.** The
+`313.2 GB/s` and the `1.0875` are computed at `f_core = 300 MHz`, a 0.85 V
+analysis clock. Every other row in the table above is MEASURED and unaffected:
+the 30 ports, the 300 MHz ACLK, the 9.6 GB/s per port and the 288.0 GB/s device
+supply all stand. Restated at the MEASURED `f_core = 237.812 MHz`, DERIVED:
+
+| | at 300 MHz (as printed) | **at 237.812 MHz** |
+|---|---|---|
+| A demand at `ROWS_IF = 58` | 313.2 GB/s | **248.3 GB/s** |
+| shortfall against 288.0 | **1.0875** | **none; 13.8% spare** |
+| bandwidth-balanced `ROWS_IF` | 53.3 | **67.3** |
+
+**The `x1.0875` multiplier applied to A's feed-limited row in §1.6 is therefore
+1.0 at the operating clock.** A's HBM floor of 25.21 ms survives as a
+clock-invariant lower bound -- it is `7.2605 GB / 288.0 GB/s` with both inputs
+MEASURED -- but it stops being the binding term, because the array-limited
+figure at 237.812 MHz is 29.24 ms.
+
+**None of this licenses `ROWS_IF = 58`, and the "balanced 67.3" must not be read
+as a design point.** The bandwidth-balanced `ROWS_IF` is not the buildable
+`ROWS_IF`. Ports are a width budget, `NPORT = ROWS_IF x 9 / 16`; 58 needs 33 of
+30 and 67 would need 38. The buildable ceiling is **48, at 27 ports of 30**, and
+`ROWS_IF` must be a multiple of 16. See the F2 correction in §0 and
+`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`.
+
 ### 3.3 The port-count table is stale by 1.5x
 
 A §15.1 sizes ports as `demand x 1.3 / 14.4 GB/s`. The 14.4 figure is
@@ -405,6 +579,61 @@ pseudo-channel. At the achieved 300 MHz ACLK a port carries 9.6 GB/s. Redone:
 A §15.1 is dated 2026-08-23; the HBM clock measurement is 2026-08-25. The table
 predates its input. This is exactly the failure mode D §2.2-C records against
 itself: a cross-spec figure is only true as of the revision it was read at.
+
+**CORRECTION 2026-08-27 -- the METHOD is wrong, not just the divisor, and this
+section inherits the error it is correcting.** F3 is right that 14.4 GB/s is
+stale and 9.6 GB/s is the measured per-port rate. It is wrong that swapping the
+divisor fixes the table, because **pricing a port in GB/s and provisioning it at
+1.3x is a category error.**
+
+A port is not a quantity of bandwidth here. One HBM SAXI port delivers 256 bits
+per ACLK cycle into one lane of A's `ROWS_IF x 144`-bit core word, so the count
+is an exact integer identity:
+
+```
+NPORT = ROWS_IF x 144 / 256 = ROWS_IF x 9 / 16      (BLK = 32, AXI_DW = 256)
+```
+
+**with no clock in it and nothing to provision against.** Measured HBM
+efficiency is 100.0% at every port count from 1 to 30, and 100% under 30-way
+oversubscription, so the 1.3x has nothing to absorb. The identity is a **lower
+bound the bandwidth answer can drop below**, which is the whole failure: a
+bandwidth calculation at a lower `f_core` returns a smaller number and licenses
+a configuration that cannot be wired.
+
+The corrected counts, DERIVED
+(`docs/debugging/2026-08-27_hbm-port-count-is-a-width-budget.md`):
+
+| `ROWS_IF` | weight lanes | scale lanes | **ports** | of 30 |
+|---|---|---|---|---|
+| 32 | 16 | 2 | **18** | fits, 12 spare |
+| **48** | **24** | **3** | **27** | **fits, 3 spare** |
+| 52 | 26 | 4 | **30** | fits, 0 spare |
+| 58 | 29 | 4 | **33** | **-3, NOT BUILDABLE** |
+| 64 | 32 | 4 | **36** | -6, impossible |
+
+`ROWS_IF x 144 / 256` is integral only when `ROWS_IF mod 16 = 0`; otherwise the
+scale lane pads (58 wastes 96 bits per word, 9.4%). So `ROWS_IF` must be a
+multiple of 16 and at most 48: **48 is forced.**
+
+**Do NOT restate the 43/33 and 30/23 counts above as 34/26.** Those are the
+numbers a 237.812 MHz bandwidth calculation returns, and they are wrong in the
+dangerous direction: 26 at 1.0x would look like `ROWS_IF = 58` fits in 30 ports
+when it needs 33. **The 1.0x column's 33 at `ROWS_IF = 58` is numerically right
+by accident** -- it was evaluated at `f_core = f_ACLK = 300 MHz`, the one point
+where the bandwidth method and the width identity are the same calculation.
+Re-evaluating that same formula at the measured core clock gives 26 and would
+have licensed an unbuildable design. **A method that is right only at one clock
+is not a method.**
+
+**Both of the two readings offered below are therefore void as written.** The
+first ("the port table is right and ACLK must reach 450 MHz") rests on the
+bandwidth method; raising ACLK does not reduce a width divisor, it only raises
+the lanes-per-port ratio `K = floor(f_ACLK / f_core)`, and reaching `K = 2` at a
+300 MHz ACLK would need `f_core <= 150 MHz`, which is a net loss. The second
+("`ROWS_IF` drops to ~53") lands one short of 52 and is not a multiple of 16.
+**The surviving answer is `ROWS_IF = 48` at 27 ports of 30**, which costs
++3.91 ms per token on A at 9B, +21.6% on A alone, and returns 330 DSP.
 
 Two readings, and this document does not have the standing to choose:
 
@@ -446,12 +675,41 @@ What D **is** responsible for is not making it worse:
   and `hbm_tg` has no write channel at all, so the write-side drain is
   unmeasured in principle. This is the reason to keep counting at the port
   rather than trusting `done`.
+
+  > **2026-08-27: the cycle counts are unchanged; the ms and the percentages
+  > both move slightly.** In milliseconds at the MEASURED 237.812 MHz the two
+  > costs are **0.013 ms** and **0.273 ms** (DERIVED), against 0.011 and 0.217
+  > at 300 MHz. The percentages move for a reason that is easy to miss: the
+  > printed 0.03% and 0.6% are fractions of §1.6's 10,200,665-cycle token, which
+  > sums A at its **feed-limited** 7,563,049. At 237.812 MHz the array-limited
+  > 6,954,528 binds instead, so the token is 9,592,144 cycles and the same costs
+  > are **0.03%** and **0.68%** (0.68% either way: 65,000 / 9,592,144 = 0.678%,
+  > and 0.273 / 40.21 ms = 0.679%). The order-of-magnitude gap between the two
+  > cases, which is the point of the bullet, is unchanged.
+  >
+  > **The second case is now the live one.** It is conditioned on "if §3.3 forces
+  > A onto the shared pool". §3.3's corrected answer is that A takes 27 of the 30
+  > ports at the forced `ROWS_IF = 48`, leaving 3 rather than the 4 D §8.1
+  > allocates, so the static assignment does not survive as written.
+  >
+  > **The second case is now the live one.** It is conditioned on "if §3.3 forces
+  > A onto the shared pool". §3.3's corrected answer is that A takes 27 of the 30
+  > ports at the forced `ROWS_IF = 48`, leaving 3 rather than the 4 D §8.1
+  > allocates, so the static assignment does not survive as written.
 - **D must not put its own traffic on A's ports.** D §6.4's URAM residency for
   the descriptor table, the norm weights and B's constants is worth ~1.53 MB
   per token of HBM traffic avoided and, more importantly, zero ports. Keep it.
 - **The 445 MB/token of activation re-reads must stay off HBM** (§2.3). At
   5.89% of the weight read it would push a design that is already 8.75% short
   to 15% short.
+  > **2026-08-27: there is no 8.75% shortfall at the measured clock.** At
+  > 237.812 MHz and `ROWS_IF = 58` the demand is 248.3 GB/s against 288.0
+  > supply, 13.8% spare, and at the forced `ROWS_IF = 48` and 236.128 MHz it is
+  > 204.0 GB/s, 29.2% spare (DERIVED). The 445 MB/token would consume 5.89% of
+  > that spare rather than deepening a deficit. **The rule still holds and the
+  > reason is now the stronger one:** those re-reads would need PORTS, and at
+  > `ROWS_IF = 48` A already takes 27 of the 30. Bandwidth headroom is not port
+  > headroom.
 
 ### 3.5 E's collective traffic, for completeness
 
@@ -646,7 +904,7 @@ pulse convention"*. That sentence must be withdrawn.
 | B4 | `sat_event`, `rope_sat`, `rescale_max` | a quality log entry is lost | sticky in the unit, max-reduced in D. Not fatal |
 | B5 | `token_done` to the host | host hangs | W1C status bit, not a pulse. Already correct in D §9.3 |
 | B6 | A's `y_we` strobes into a region | a silently wrong activation element | the write port cannot stall (§5.1). Structural: one writer, no arbitration. This is an obligation on the region bank RTL |
-| B7 | **E's `o_we` beats into D-vec residual pass 1** | **a silently wrong residual element, and the whole point of the optimisation was to avoid the landing buffer that would have caught it** | **UNRESOLVED.** E §2 gives `o_we/o_addr/o_data` no ready. D §4.5 pipelines it straight into D-vec. Three exits: (i) E gains a ready, (ii) D-vec pass 1 is proven to consume one element per cycle with no arbitration against the region ports, (iii) drop the pipelining, land in ER, pay ~5,120 cycles per collective = 655,360 cycles/token = **2.18 ms**, which is 6% of the token and not affordable. Exit (i) or (ii). This must be settled before D-vec RTL |
+| B7 | **E's `o_we` beats into D-vec residual pass 1** | **a silently wrong residual element, and the whole point of the optimisation was to avoid the landing buffer that would have caught it** | **UNRESOLVED.** E §2 gives `o_we/o_addr/o_data` no ready. D §4.5 pipelines it straight into D-vec. Three exits: (i) E gains a ready, (ii) D-vec pass 1 is proven to consume one element per cycle with no arbitration against the region ports, (iii) drop the pipelining, land in ER, pay ~5,120 cycles per collective = 655,360 cycles/token = **2.18 ms** (**2.756 ms at the MEASURED 237.812 MHz**, DERIVED 2026-08-27; cycles unchanged), which is 6% of the token (**6.1 to 6.9% of the 40.21-45.03 ms token at the measured clock**) and not affordable. Exit (i) or (ii). This must be settled before D-vec RTL |
 | B8 | D's `start` pulse into a unit that is not listening | the unit never runs; watchdog fires | `start` is qualified by the unit's `ready`/idle, and D asserts it until accepted. Symmetric with B1 |
 
 **The generalisable rule, stated the way the head-emit document states it:**
@@ -720,10 +978,26 @@ number in this document.
    the 48-row point closes at, or an error in either derivation. **This is the
    single most consequential unknown in the document**, because everything in
    §1.6 and §3 rests on it.
+   > **2026-08-27: partly answered, and the answer is "the clock, but only the
+   > range".** The two derivations were at different clocks -- D §11's A term
+   > descends from A §15.4c's 276 MHz anchors, the tile arithmetic here is at
+   > 300 MHz, and the feed-limited figure is clock-invariant. Normalised, the
+   > 17-to-24% *range* collapses to a single **~16%**. The ~16% *gap* remains
+   > unresolved and is still the most consequential unknown here.
+   > `docs/2026-08-27_budgets-at-the-measured-clock.md` section 4.
 2. **Whether ACLK can reach 450 MHz.** The entire §3.3 fork hangs on it. What
    is MEASURED is that 350 MHz misses by 0.395 to 0.467 ns with the CDC bugs
    fixed, and that 450 MHz "needs real pipelining of the HBM-to-fabric paths"
    that does not exist. Nobody has attempted it.
+   > **2026-08-27: the §3.3 fork no longer hangs on it, because §3.3's method
+   > was wrong.** Port count is a width divisor, not a bandwidth quotient, so a
+   > faster ACLK does not reduce it -- it only raises the lanes-per-port ratio
+   > `K = floor(f_ACLK / f_core)`, which is 1 at any ACLK below twice the core
+   > clock. A 450 MHz ACLK against a 237.8 MHz core is still `K = 1` and still
+   > 33 ports at `ROWS_IF = 58`. **What ACLK >= 2 x f_core would buy is real**
+   > (it would halve the port count and let `ROWS_IF = 64` fit in 18 ports), and
+   > it remains unmeasured and unattempted. That is the question worth keeping;
+   > the fork it was framed as is void.
 3. **The die-wide BRAM sum.** D is ~86 flat, B ~50-60, C ~43, E ~10 at N=2
    (E §2.3 prices 280 KB as ~70 BRAM36 at N=8, so 40 KB scales to ~10), A's
    weight-stream FIFOs unquantified (~30 ports x 8 KB = 240 KB = ~54 RAMB36 if
