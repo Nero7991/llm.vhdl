@@ -60,11 +60,26 @@
 -- earlier revision of this header quoted a 32-block figure of 46, which was
 -- the same 23 counted twice at NRUNS = 2:
 --
---     BLOCKS   NORM_ANCHOR=false   NORM_ANCHOR=true
---         4         5   red              0   green
---         8        12   red              0   green
---        16        27   red              3   red
---        32        56   red              8   red
+--     BLOCKS   NORM_ANCHOR=false   NORM_ANCHOR=true   NORM_REAL=true
+--         4         5   red              0   green        6   red
+--         8        12   red              0   green       14   red
+--        16        27   red              3   red         28   red
+--        32        56   red              8   red         59   red
+--
+-- THE THIRD COLUMN IS THE REAL `rmsnorm_rs`, MEASURED 2026-08-28, AND IT IS
+-- THE WORST OF THE THREE.  Read this before assuming the probe is standing in
+-- for something better than itself.  The unit's exponent bookkeeping is
+-- exactly the scale-free behaviour the probe models -- it publishes o_exp 13
+-- or 14 for input exponents of 3, 10, -1, -5, -6 and -7 alike -- but the unit
+-- also has a HARD 19-octave INPUT MAGNITUDE window, rms(x_real) in
+-- [2^-6, 2^12], with a SILENT all-zeros rail above it, measured independently
+-- in docs/debugging/2026-08-26_rmsnorm-magnitude-window.md.  The residual
+-- stream leaves that window during the SECOND block (log2 rms 3.20, 3.36,
+-- then 15.10 and stuck), and from the third norm onward every output element
+-- is zero: R_XN is a zero vector, ER is zero, the stream freezes.  The probe
+-- folds the magnitude in unbounded integer arithmetic and so has no window,
+-- which is precisely the idealisation.  See PART 5 of
+-- docs/debugging/2026-08-28_llama-top-first-seams.md.
 --
 -- TWO THINGS FOLLOW, AND THE SECOND IS THE UNCOMFORTABLE ONE.
 --
@@ -159,6 +174,13 @@ entity tb_llama_top is
     -- `rtl/llama_top.vhd`, and the measured table at the head of this file
     -- for why the gate has no unanchored option at any depth.
     NORM_ANCHOR : boolean := true;
+    -- THE REAL `rmsnorm_rs` ON THE D-VEC NORM OP.  See the generic of the
+    -- same name in `rtl/llama_top.vhd`, and the third column of the measured
+    -- table at the head of this file.  DEFAULT FALSE, and that is a MEASURED
+    -- choice: the real unit emits an all-zero vector from the third norm
+    -- onward, so it is worse at every depth than the probe and no better
+    -- than having no norm at all.
+    NORM_REAL   : boolean := false;
     MAXCYC    : natural  := 4000000;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
@@ -333,6 +355,7 @@ begin
       WDOG_LIMIT => 200000, STRICT => true,
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
+      NORM_REAL => NORM_REAL,
       SHOUT => true)
     port map(
       clk => clk, rst => rst,
@@ -898,6 +921,11 @@ begin
            & "yet pass P6, and unanchored no depth passes at all.  The "
            & "scales do not track across blocks; this pass says nothing "
            & "about a 32-block token."
+           & LF & "        NOTE: the real rmsnorm_rs is available as "
+           & "NORM_REAL and is measured WORSE than the probe at every "
+           & "depth, 6/14/28/59, because it emits an all-zero vector once "
+           & "the residual stream leaves its 19-octave input magnitude "
+           & "window, which happens in the second block."
         severity note;
     else
       report "tb_llama_top RESULT: FAIL" severity failure;

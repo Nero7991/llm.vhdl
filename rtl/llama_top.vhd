@@ -65,7 +65,11 @@
 --   unit B when B_BEHAV      a first-order recurrence, NOT Gated DeltaNet.
 --   unit C always            *** ATTENTION IS A STUB.  SEE THE BANNER. ***
 --   unit E always            unreachable at NCARDS=1; errors if ever started.
---   the norm and swiglu      D-vec engines that do not exist as RTL yet.
+--   the norm when not        `out(i) = in(i) - mean(in)`, NOT rmsnorm.  With
+--     NORM_REAL              NORM_REAL the real `rmsnorm_rs` runs instead --
+--                            see that generic, and read the MEASURED result
+--                            there before assuming it is an improvement.
+--   swiglu always            `out(i) = (a(i)*b(i)) / 2**MANT_W`, no gate.
 --
 -- `A_BEHAV` and `B_BEHAV` exist so that a failure can be BISECTED to a side of
 -- a seam.  They are not an alternative implementation and nothing about them
@@ -213,6 +217,67 @@ entity llama_top is
     -- docs/debugging/2026-08-28_llama-top-first-seams.md, PART 3.
     NORM_ANCHOR : boolean := false;
     NORM_EXP    : integer := 12;
+
+    -- THE REAL UNIT, NOT A PROBE.  With NORM_REAL true the D-vec norm op is
+    -- computed by `rtl/rmsnorm_rs.vhd` -- the same instance subsystem C's
+    -- budget already carries -- behind an adapter that translates
+    -- seq_vec_issue's by-value protocol to its flat-vector one.  With it
+    -- false the behavioural mean-removal model above runs and the default
+    -- path is bit-identical to what it was before this generic existed.
+    --
+    -- `rmsnorm_rs` takes the WHOLE vector on one port, so N is fixed at
+    -- elaboration.  Every OP_VEC_NORM in the schedule is `n_rows =>
+    -- s.hidden` (llama_sched_pkg.vhd:185, :202, :216, :242), so one instance
+    -- at N = SHAPE.hidden covers all of them, and the adapter ASSERTS the
+    -- issued `v_n` against it rather than padding: a padded vector changes
+    -- the mean square, so a shorter norm would be a wrong number and not a
+    -- wasted cycle.
+    --
+    -- THE NORM WEIGHT IS A FIXED-SCALE STAND-IN, and that is what a learned
+    -- weight IS -- a constant whose scale does not move with the token.  It
+    -- is the same rule B_SRC_REAL applies to the conv weights and the two
+    -- learned per-head scalars.  There is no weight region, no descriptor
+    -- field naming one, and no packing for it; inventing one would answer a
+    -- different question.
+    --
+    -- MEASURED 2026-08-28, AND IT DOES NOT FIX THE SCALE DRIFT.  Real A,
+    -- real B, attn_interval 4, NRUNS = 1, degenerate residuals (P6):
+    --
+    --     BLOCKS               1    2    4    8   16   32
+    --     NORM_REAL true       0    2    6   14   28   59
+    --     NORM_ANCHOR probe    -    -    0    0    3    8
+    --     neither              -    -    5   12   27   56
+    --
+    -- The real unit is about as bad as no norm at all, and the reason is NOT
+    -- its exponent bookkeeping: that part is exactly the scale-free
+    -- behaviour the probe models, and it was observed directly -- the
+    -- published `o_exp` is 13 or 14 for input exponents of 3, 10, -1, -5, -6
+    -- and -7 alike.  The reason is that `rmsnorm_rs` has a HARD 19-octave
+    -- INPUT MAGNITUDE window, `rms(x_real)` in [2^-6, 2^12], with a SILENT
+    -- all-zeros rail above it.  That window was measured independently in
+    -- docs/debugging/2026-08-26_rmsnorm-magnitude-window.md and this file
+    -- did not re-derive it.  The residual stream crosses 2^12 during the
+    -- SECOND block: measured log2 rms 3.20, then 3.36, then 15.10 and stuck.
+    -- From the third norm onward every output element is zero, so R_XN is a
+    -- zero vector, every matvec below it produces zero, ER is zero and the
+    -- residual stream freezes.  The probe cannot show this, because it folds
+    -- the magnitude in unbounded integer arithmetic and so has no window.
+    --
+    -- Raising NORM_Q is a DELAY, not a fix, and that is measured too: at
+    -- Q = 20 the count is 0/0/6/38 at 4/8/16/32 blocks, and at 32 blocks 39
+    -- of the 65 norms are emitting zeros again because the stream has
+    -- drifted on to x_exp -8.  See PART 5 of
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+    NORM_REAL  : boolean  := false;
+    NORM_LANES : positive := 4;      -- must divide SHAPE.hidden
+    -- rmsnorm_rs's internal Q, left at ITS OWN default.  Do not raise it to
+    -- move the P6 count: measured above, it moves the count and does not
+    -- remove the mechanism.
+    NORM_Q     : integer  := 12;
+    -- The stand-in weight's exponent.  The weight mantissas sit around
+    -- 2**NORM_W_EXP, i.e. a value near 1.0, which is what an RMSNorm gain is
+    -- initialised to.
+    NORM_W_EXP : integer  := 12;
 
     -- Set false only in a run that is deliberately measuring the banner cost.
     SHOUT   : boolean := true;
@@ -609,7 +674,9 @@ begin
         & "   and every later block inherits it through the residual." & LF
         & " * unit A behavioural : " & boolean'image(A_BEHAV) & LF
         & " * unit B behavioural : " & boolean'image(B_BEHAV) & LF
-        & " * norm and swiglu are behavioural in every configuration." & LF
+        & " * the D-vec norm is the REAL rmsnorm_rs : "
+        & boolean'image(NORM_REAL) & LF
+        & " * swiglu is behavioural in every configuration." & LF
         & " * the region file is a flat behavioural array." & LF
         & " * no weights are fetched: the descriptor base array past" & LF
         & "   the header is range-checked and not read." & LF
@@ -908,7 +975,7 @@ begin
   -- at S_DONE for the derivation of each one.
   -- ======================================================================
   gen_vstub : for vi in 0 to NVOP-1 generate
-    gv : if vi /= V_RES generate
+    gv : if vi /= V_RES and not (NORM_REAL and vi = V_NORM) generate
       signal rdy  : std_logic := '1';
       signal dn   : std_logic := '0';
       signal tk   : std_logic := '0';
@@ -1109,6 +1176,189 @@ begin
                     severity error;
                   yexp <= v_exp_a + v_exp_b - to_signed(MANT_W, EXP_W);
                 end if;
+                if v_ack(vi) = '1' then
+                  dn  <= '0';
+                  rdy <= '1';
+                  st  := S_IDLE;
+                end if;
+            end case;
+          end if;
+        end if;
+      end process;
+    end generate;
+
+    -- ====================================================================
+    -- THE REAL rmsnorm ON THE D-VEC NORM OP.  NORM_REAL only.
+    --
+    -- This is not a new architectural element and it is not a probe.
+    -- `rtl/rmsnorm_rs.vhd` is real RTL, bit-exact against `rtl/rmsnorm.vhd`
+    -- and already carried by subsystem C's budget; `OP_VEC_NORM` is already
+    -- in the schedule.  The only piece that was missing is this adapter,
+    -- which translates seq_vec_issue's by-value protocol -- a start held
+    -- until `v_taken`, a completion held until `v_ack`, one element port
+    -- into the region file -- to rmsnorm_rs's, which is a flat N*16 vector
+    -- in, a flat N*16 vector out and a one-cycle `done`.
+    --
+    -- WHY A REAL RMSNORM CHANGES THE SCALE BEHAVIOUR.  rmsnorm_rs computes
+    -- `out = (x / rms(x)) * w` and publishes `o_exp = x_exp + w_exp + Q - st`
+    -- with `st` the data-driven shift that puts max|raw| at bit 14
+    -- (rmsnorm_rs.vhd:S_SHIFT2).  Because `raw` already carries a factor
+    -- 2**(x_exp + w_exp + Q), that `st` cancels the x_exp term: the output
+    -- exponent is a function of the SHAPE of x, not of its scale.  That is
+    -- the property `NORM_ANCHOR` models and nothing else in the block loop
+    -- has -- every matvec's exponent only ever FALLS.
+    --
+    -- AND IT IS NOT ENOUGH.  Measured, and the numbers are at the NORM_REAL
+    -- generic: the exponent bookkeeping behaves exactly as above, and the
+    -- unit still emits an ALL-ZERO vector from the third norm onward,
+    -- because its Q-format reciprocal has a 19-octave input magnitude window
+    -- and the residual stream leaves it during the second block.  Read that
+    -- generic before treating this instance as a fix for anything.
+    --
+    -- THE ADAPTER OBEYS THE THREE SEAM RULES AT THE HEAD OF THIS FILE:
+    --   (1) `v_n` and `v_exp_a` are latched at the accept instant, never
+    --       re-read during the operation.
+    --   (2) `done` is held as a level until `v_ack`, and `v_ready` stays low
+    --       while it is held -- seq_vec_issue asserts on the alternative.
+    --   (3) the region read consumes at k-2, not k-1.  Two edges, always.
+    -- ====================================================================
+    gvr : if NORM_REAL and vi = V_NORM generate
+      constant NN : positive := SHAPE.hidden;
+
+      -- THE LEARNED GAIN, a fixed-scale stand-in.  Deterministic in the
+      -- element index and centred on 1.0 at NORM_W_EXP, which is what an
+      -- RMSNorm gain is initialised to.  It is a WEIGHT: its scale does not
+      -- move with the token, and there is no region, descriptor field or
+      -- packing that would let it.  Same rule the conv weights and the two
+      -- learned per-head scalars follow under B_SRC_REAL.
+      function norm_w_const return std_logic_vector is
+        variable r : std_logic_vector(NN*MANT_W-1 downto 0);
+        variable v : integer;
+      begin
+        for i in 0 to NN-1 loop
+          v := 2**NORM_W_EXP + ((i * 37) mod 512) - 256;
+          r((i+1)*MANT_W-1 downto i*MANT_W)
+            := std_logic_vector(to_signed(v, MANT_W));
+        end loop;
+        return r;
+      end function;
+      constant W_CONST : std_logic_vector(NN*MANT_W-1 downto 0) := norm_w_const;
+
+      signal rdy  : std_logic := '1';
+      signal dn   : std_logic := '0';
+      signal tk   : std_logic := '0';
+      signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+      signal xv     : std_logic_vector(NN*MANT_W-1 downto 0) := (others => '0');
+      signal ov     : std_logic_vector(NN*MANT_W-1 downto 0);
+      signal r_go   : std_logic := '0';
+      signal r_done : std_logic;
+      signal r_xe   : integer := 0;
+      signal r_oe   : integer;
+    begin
+      v_ready(vi) <= rdy;
+      v_done(vi)  <= dn;
+      v_taken(vi) <= tk;
+      v_err(vi)   <= '0';
+      v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
+
+      -- rmsnorm_rs's element width is hardcoded 16 throughout, in its ports
+      -- and in the value bounds its narrowing assertions rest on.  This is
+      -- an elaboration-time stop, not a run-time one, because a mismatch
+      -- would be a silent slice error rather than a wrong number.
+      assert MANT_W = 16
+        report "llama_top: NORM_REAL needs MANT_W = 16.  rmsnorm_rs's ports "
+             & "and its lossless-narrowing bounds are 16-bit."
+        severity failure;
+
+      u_rms : entity work.rmsnorm_rs
+        generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
+        port map(
+          clk => clk, rst => rst, start => r_go,
+          x_mant => xv,      x_exp => r_xe,
+          w_mant => W_CONST, w_exp => NORM_W_EXP,
+          done => r_done, o_mant => ov, o_exp => r_oe);
+
+      nproc : process(clk) is
+        type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);
+        variable st : st_t := S_IDLE;
+        variable n  : natural := 0;
+        variable k  : natural := 0;
+        variable oe : integer := 0;
+      begin
+        if rising_edge(clk) then
+          tk   <= '0';
+          r_go <= '0';
+          ur_en(NUNIT+vi) <= '0';
+          uw_en(NUNIT+vi) <= '0';
+          if rst = '1' then
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0;
+          else
+            case st is
+              when S_IDLE =>
+                if v_start(vi) = '1' and rdy = '1' then
+                  tk  <= '1';
+                  rdy <= '0';
+                  n   := to_integer(v_n);
+                  -- NOT PADDED.  Zero-padding a short vector changes the mean
+                  -- square, so it would be a wrong number and not a wasted
+                  -- cycle.  Every OP_VEC_NORM in the schedule is `s.hidden`.
+                  assert n = NN
+                    report "llama_top: the norm op was issued with n = "
+                         & integer'image(n) & ", but the rmsnorm_rs instance "
+                         & "is elaborated at N = " & integer'image(NN)
+                         & ".  A norm of a different length needs its own "
+                         & "instance; padding this one changes the mean "
+                         & "square."
+                    severity failure;
+                  r_xe <= to_integer(v_exp_a);
+                  k    := 0;
+                  st   := S_RD;
+                end if;
+
+              -- Two edges of read latency, and the loop runs to n+1 so the
+              -- pipeline drains.  See READ_LATENCY in the region-file header.
+              when S_RD =>
+                if k < n then
+                  ur_en(NUNIT+vi)   <= '1';
+                  ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)));
+                  ur_addr(NUNIT+vi) <= k;
+                end if;
+                if k >= 2 then
+                  xv((k-1)*MANT_W-1 downto (k-2)*MANT_W)
+                    <= std_logic_vector(el_rdata);
+                end if;
+                if k = n+1 then k := 0; st := S_GO; else k := k + 1; end if;
+
+              -- One cycle of `start`.  rmsnorm_rs samples x_exp here, and
+              -- `xv` has been stable since the read pass ended.
+              when S_GO =>
+                r_go <= '1';
+                st   := S_RUN;
+
+              when S_RUN =>
+                if r_done = '1' then
+                  -- `o_exp` is set in S_SHIFT2 and held; captured at the
+                  -- completion instant anyway, so nothing downstream depends
+                  -- on how long the unit holds it.
+                  oe := r_oe;
+                  k  := 0;
+                  st := S_WR;
+                end if;
+
+              -- `ov` is rmsnorm_rs's output REGISTER and the unit is idle,
+              -- so reading it across this pass is not a live read of a
+              -- moving value.
+              when S_WR =>
+                uw_en(NUNIT+vi)   <= '1';
+                uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                uw_addr(NUNIT+vi) <= k;
+                uw_data(NUNIT+vi) <= signed(ov((k+1)*MANT_W-1 downto k*MANT_W));
+                if k = n-1 then k := 0; st := S_DONE; else k := k + 1; end if;
+
+              when S_DONE =>
+                dn   <= '1';
+                yexp <= to_signed(oe, EXP_W);
                 if v_ack(vi) = '1' then
                   dn  <= '0';
                   rdy <= '1';

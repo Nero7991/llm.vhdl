@@ -1290,3 +1290,416 @@ taking. `sim/regress.sh`'s floor of 74 PASS would otherwise drop to 73.
   unfixed. `A_BEHAV` (`j_wexp + xexp - j_shift`) and the unit C stub
   (`exp_rd_data`, its source region's exponent) were audited and are both
   contractually right.
+
+---
+
+# PART 5 -- the real `rmsnorm_rs` on the D-vec norm op: it is scale-free and it still emits ZEROS
+
+**Date:** 2026-08-28, later the same session. Appended in place. This part
+IMPLEMENTS the recommendation PART 3 made and PART 4 called more important,
+measures it, and reports that it does not work -- for a reason neither part
+could have predicted, because the probe that motivated it has no analogue of
+the failing mechanism.
+
+**Build:** branch `fpga`. Modified: `rtl/llama_top.vhd` (four new generics,
+`NORM_REAL`, `NORM_LANES`, `NORM_Q`, `NORM_W_EXP`, and one new generate branch
+holding the adapter and the `rmsnorm_rs` instance) and `sim/tb_llama_top.vhd`
+(the `NORM_REAL` generic passed through, plus the measured column in the
+header and in the PASS line). Nothing else. `NORM_REAL` defaults FALSE and the
+default path is verified bit-identical: `R_X(0) = -12049 hash(R_X) = 86767` at
+the bench default, before and after.
+
+**Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed --max-stack-alloc=0`. Every
+count is at the stated `NRUNS`. No synthesis was run.
+
+## The question, verbatim
+
+> PART 3's recommendation is to put the real `rtl/rmsnorm_rs.vhd` on the D-vec
+> norm op. [...] **The success criterion is the one the probe demonstrated:
+> degenerate residuals 0 at BLOCKS = 4, 8, 16 AND 32, with the REAL unit
+> rather than the probe.** [...] If the real unit does NOT achieve that, this
+> is a genuine finding and is worth more than a fix. Report what its output
+> exponent actually does over the schedule and why it differs from the probe's
+> idealisation. **Do not tune the unit to make the number come out.**
+
+## The answer, up front
+
+**It does not achieve it, and it is the worst of the three configurations.**
+At `NRUNS = 1`, real A, real B, `attn_interval` 4:
+
+| BLOCKS | 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|
+| **`NORM_REAL` (real `rmsnorm_rs`)** | **0** | **2** | **6** | **14** | **28** | **59** |
+| `NORM_ANCHOR` (the probe) | -- | -- | 0 | 0 | 3 | 8 |
+| neither | -- | -- | 5 | 12 | 27 | 56 |
+
+**The unit's exponent bookkeeping is right, and is exactly what the probe
+models.** Measured directly at the unit's own port: it publishes `o_exp` of 13
+or 14 for input exponents of 3, 10, -1, -5, -6 and -7 alike. Its output
+exponent genuinely carries no memory of its input's, which is the property
+PART 3 identified as missing from the block loop.
+
+**What kills it is a property the probe has no analogue of.** `rmsnorm_rs`
+collapses the reciprocal square root to a Q-format 32-bit integer,
+`inv32 ~ 2**Q / rms_real`, and therefore has a HARD INPUT MAGNITUDE WINDOW of
+19 octaves, `rms(x_real)` in `[2^-6, 2^12]`, with a **silent all-zeros rail**
+above it. That window is not a finding of this part: it was measured
+independently on 2026-08-26 and is in
+`docs/debugging/2026-08-26_rmsnorm-magnitude-window.md`. What this part adds is
+that **the D-vec norm op drives the unit out of that window during the SECOND
+block** and never comes back. Measured `log2 rms` of the norm's actual input,
+in order: **3.20, 3.36, 15.10, 15.10, 15.10, ...**. From the third norm onward
+every output element is zero, R_XN is a zero vector, every matvec below it
+produces zero, ER is zero, and the residual stream FREEZES -- the same input
+mantissas are read by every subsequent norm.
+
+So the honest one-line statement is: **a real rmsnorm is scale-free in its
+exponent and is not scale-free in its arithmetic, and this design leaves the
+range where its arithmetic works before the norm has run three times.**
+
+## The procedure, in the order it was run
+
+1. **Reproduce all three published baselines before touching anything**, in a
+   workdir built by `sim/regress.sh --only llama_top --keep`. `BLOCKS=32
+   NRUNS=1 NORM_ANCHOR=true` -> 8. `NORM_ANCHOR=false` -> 56. The bench
+   default -> PASS, `R_X(0) = -12049 hash(R_X) = 86767`. All three agreed
+   exactly, so the starting point is the committed one.
+
+2. **Read the unit's contract before writing the adapter**, the same rule
+   PART 1 opened with. Three things decided the adapter's shape and each of
+   them is a defect if got wrong: `x_mant` is a FLAT `N*16` port so `N` is
+   fixed at elaboration and cannot follow `v_n`; `done` is a one-cycle pulse;
+   and `x_exp` is sampled once, at `start`, into `xe`.
+
+3. **Put it behind a generic that defaults to the existing behaviour**, so the
+   control and the treatment are the same binary and no other instantiation
+   changes. `NORM_REAL`, false by default, following `B_SRC_REAL` and
+   `NORM_ANCHOR`. Verified bit-identical at the default before measuring
+   anything.
+
+4. **Measure the block sweep.** 1, 2, 4, 8, 16, 32, all at `NRUNS = 1`.
+
+5. **When it failed, instrument the UNIT, not the residual.** P6 says a
+   residual discarded an operand; it cannot say why. One `report` at the
+   adapter's completion instant carrying the input exponent, the published
+   output exponent and the first three output mantissas answered it in one
+   run: the output mantissas were `0 0 0`.
+
+6. **Quantify the input in the unit's own terms**, because the published
+   window is in `rms(x_real)` and the trace was in exponents. A second probe
+   folds `log2 rms` of the assembled input vector in `ieee.math_real` -- a
+   simulation-only measurement, not RTL.
+
+7. **Test the mechanism by moving the one parameter it depends on.**
+   `NORM_Q` is `rmsnorm_rs`'s own generic and it sets where the window sits.
+   This is a DIAGNOSTIC and is labelled as one: the committed default is left
+   at the unit's own 12, because the task was explicit that tuning the unit to
+   move the number is not the point, and because the result below shows it
+   would not have been a fix anyway.
+
+8. **Teeth-check every guard relied on**, against deliberately broken copies,
+   in a configuration where the unbroken design passes.
+
+## The evidence
+
+### The unit's own ports, at every norm of a 4-block token
+
+`xe` is the input exponent, `oe` the published output exponent, `out0..2` the
+first three output mantissas, `in0/in1` the first two input mantissas.
+
+```
+NORMRMS log2rms 3.200506407691405
+NORMPROBE xe   3 oe 14 out0 -26133 out1 -18575 out2 -10868 in0  -125 in1   -88
+NORMRMS log2rms 3.3623114929039053
+NORMPROBE xe  10 oe 13 out0  -8279 out1  -3881 out2   6271 in0 -11360 in1 -5274
+NORMRMS log2rms 1.5100272275107358e1
+NORMPROBE xe  -1 oe 23 out0      0 out1      0 out2      0 in0  -9360 in1 -16877
+NORMRMS log2rms 1.5100272275107358e1
+NORMPROBE xe  -1 oe 23 out0      0 out1      0 out2      0 in0  -9360 in1 -16877
+   ... identical for every remaining norm of the token ...
+```
+
+Three things are in that block and each one matters.
+
+* `log2 rms` goes 3.20, 3.36, **15.10**. The published upper rail is `2^14`.
+  The stream crosses it between the second and third norm, i.e. inside block 1
+  of a 32-block model.
+* The output is **identically zero** from the third norm onward, with no error
+  flag anywhere. `o_exp = 23` is what `xe + we + Q - st` evaluates to when
+  `st = 0`, and `st = 0` because `max|raw| = 0`. The exponent is arithmetically
+  correct and describes a zero vector.
+* `in0` and `in1` never change again. The stream is frozen: with R_XN zero,
+  every matvec below it produces zero, so ER is zero and `X + ER = X`.
+
+### The residual trace, and why `ea` looks bounded
+
+```
+NORMPROBE xe  3 oe 14
+RESGAP issue 10 ea  3 eb 11 gap  8
+NORMPROBE xe 10 oe 13
+RESGAP issue 16 ea 10 eb -2 gap 12
+NORMPROBE xe -1 oe 23
+RESGAP issue 26 ea -1 eb 46 gap 47
+NORMPROBE xe -1 oe 23
+RESGAP issue 32 ea -1 eb 24 gap 25
+NORMPROBE xe -1 oe 23
+RESGAP issue 42 ea -1 eb 46 gap 47
+```
+
+`ea` -- the residual stream's own exponent -- pins at -1 and stays there for
+the rest of the token, which read alone looks like the bounded series PART 3
+was after. **It is bounded for the wrong reason: the stream has stopped
+moving.** `eb` is then whatever exponent the matvec chain publishes for a
+zero input, and the gap is large because nothing constrains it. This is a
+measurement trap and it is recorded as one below: a bounded `ea` is necessary
+and nowhere near sufficient.
+
+### The `NORM_Q` diagnostic -- the mechanism, and why widening is not the fix
+
+`BLOCKS = 4`, `NRUNS = 1`, everything else identical, `NORM_Q` swept by
+rebuilding the design with a different default in a private tree:
+
+| `NORM_Q` | 3rd norm `oe` | 3rd norm output | degenerate residuals |
+|---|---|---|---|
+| **12 (the unit's own default)** | 23 | **all zero** | **6** |
+| 16 | 13 | non-zero | 4 |
+| 20 | 14 | non-zero | **0** |
+| 24 | 14 | non-zero | **0** |
+| 28 | 14 | non-zero | 2 |
+
+That is a causal proof of the mechanism: the only thing that changed is where
+`inv32`'s fixed grid sits, and the zeros appear and disappear with it.
+
+**And it is not a fix, it is a delay.** Taking `Q = 20` to depth:
+
+| BLOCKS | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|
+| `NORM_REAL`, `NORM_Q = 20` | 0 | 0 | **6** | **38** |
+
+At 32 blocks, **39 of the 65 norms are emitting zeros again**, at input
+exponent -8: the stream simply drifts on until it re-enters the dead band from
+the other side of a wider window. The non-monotonicity at `Q = 28` says the
+same thing from the other end -- it is a WINDOW with two rails, not a floor.
+This agrees with the 2026-08-26 document's own conclusion, reached from real
+model activations rather than from this schedule: "the fix is not a wider `Q`
+and not a restructured rsqrt".
+
+### The adapter itself is skew-clean, so the new states are not the defect
+
+`BLOCKS = 2`, `NRUNS = 4`, four descriptor-memory latencies, `NORM_REAL`:
+
+```
+schedule mismatches=0 skew differences=0 degenerate residuals=8
+```
+
+`8 = 4 x 2`, the `NRUNS = 1` count of 2 counted once per run, which is the
+cumulative-counter behaviour PART 3 recorded and is the expected value rather
+than a new number. P1, P2 and P3 all hold with the real unit in: the failure is
+arithmetic, not a handshake.
+
+### What the real unit does that the probe does not, stated as the difference
+
+| | `NORM_ANCHOR` probe | real `rmsnorm_rs` |
+|---|---|---|
+| output exponent | constant `NORM_EXP` | `x_exp + w_exp + Q - st`, and `st` cancels the `x_exp` term |
+| scale-free in the input? | yes, by fiat | **yes, measured** -- `o_exp` is 13 or 14 for `x_exp` in {3, 10, -1, -5, -6, -7} |
+| input magnitude range | **unbounded** -- it folds the max in integer arithmetic with no grid | **19 octaves**, `rms(x_real)` in `[2^-6, 2^12]` |
+| behaviour outside that range | n/a | **all-zero output, silently** |
+| arithmetic | mean removal, then a renormalising shift | the real three-pass rsqrt datapath |
+
+The probe modelled ONE property and modelled it correctly. The property it did
+not model is the one that decides the outcome.
+
+### Teeth checks -- both results, as required
+
+All at `BLOCKS = 1`, `ATTN_INT = 8`, `NRUNS = 4`, `NORM_REAL = true`, which is
+a configuration the unbroken design PASSES:
+
+```
+control (unbroken)   skew differences=0 degenerate residuals=0 RESULT: PASS
+                     R_X(0) = -9360 hash(R_X) = 51735
+```
+
+**P6, in this configuration.** A copy with the adapter's published exponent
+offset by 20 (`yexp <= to_signed(oe + 20, EXP_W)`):
+
+```
+skew differences=0 degenerate residuals=8 RESULT: FAIL
+```
+
+**PASS unbroken, FAIL broken.** PART 4 recorded that P6's teeth had not been
+re-established since PART 3; they now have been, against this part's
+configuration and against a mutation of this part's own code.
+
+**The `n = NN` guard**, which refuses to run a norm whose length is not the
+elaborated `N` rather than zero-padding it. A copy with
+`NN := SHAPE.hidden/2`:
+
+```
+llama_top: the norm op was issued with n = 64, but the rmsnorm_rs instance is
+elaborated at N = 32.  A norm of a different length needs its own instance;
+padding this one changes the mean square.
+(assertion failure)
+```
+
+**Fires broken, silent unbroken** -- zero occurrences in every run above.
+
+**The two-edge region read.** A copy consuming at `k-1` instead of `k-2`:
+
+```
+skew differences=0 degenerate residuals=0 RESULT: PASS
+R_X(0) = -6792 hash(R_X) = 25244        against the control's -9360 / 51735
+```
+
+**This one PASSES broken, and that is the result, not a gap in the report.**
+The mutation is load-bearing -- it changes the answer -- but no property in the
+bench can see it, because this engine owns the region port exclusively for the
+whole pass, so the stale value is the previous element of the SAME pass and the
+vector merely comes out shifted by one. Its `rms` is almost unchanged, so even
+the norm still works. **This is defect 2's family again, for the third time in
+this file: a deterministic wrong number that the skew sweep cannot reach.** The
+only instrument that catches it is reading the code, and the only defence is
+the READ_LATENCY comment the region file already carries.
+
+### The gate
+
+`sim/regress.sh`, full run, with the change in and `NORM_REAL` at its default
+FALSE:
+
+```
+ suite sim   PASS 49   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 75   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5
+PASS       sim:tb_llama_top    106s   ... RESULT: PASS -- 64 descriptors, 4 blocks ...
+```
+
+75 PASS against the stated floor of 74. The single failure is
+`sim:tb_attn_block`, which is another agent's in-flight subsystem C work:
+both `rtl/attn_block.vhd` and `sim/tb_attn_block.vhd` are UNTRACKED in git and
+`rtl/attn_block.vhd` was rewritten ten minutes into this gate run. Neither
+file changed here appears in its closure, and its only mentions of them are in
+comments. It is recorded rather than left out, because a gate result with an
+unexplained red line in it is not a gate result.
+
+## Measured and REJECTED -- do not retry (Part 5)
+
+* **`rmsnorm_rs` on the D-vec norm op as a fix for defect 8, as built.** It is
+  the experiment PART 3 recommended and it is the right experiment; the result
+  is 0/2/6/14/28/59 at 1/2/4/8/16/32 blocks, worse than the probe at every
+  depth and worse than no norm at all at 32. Do not re-run it hoping for a
+  different answer. Re-run it only after something bounds the residual
+  stream's MAGNITUDE, not merely its exponent.
+
+* **Raising `NORM_Q`.** Measured: 0/0/6/38 at 4/8/16/32 with `Q = 20`, and 39
+  of 65 norms back to emitting zeros at 32 blocks. It moves the window; it
+  does not remove the mechanism. `Q = 28` is worse than `Q = 24` at 4 blocks,
+  which is the upper rail of the same window showing itself.
+
+* **Zero-padding a short norm to the elaborated `N`.** Padding changes the
+  mean square, so it is a wrong number and not a wasted cycle. The adapter
+  asserts instead. Every `OP_VEC_NORM` in `llama_sched_pkg` is `s.hidden`, so
+  one instance covers the schedule as it stands.
+
+* **Sourcing the norm's gain from an activation region.** Not tried, and
+  deliberately: the RMSNorm gain is a learned WEIGHT, its scale does not move
+  with the token, and there is no region, descriptor field or packing for it.
+  Same rule `B_SRC_REAL` applies to the conv weights and the two learned
+  per-head scalars, and PART 3 already recorded what happens when an
+  activation region is fed to something that expects a weight.
+
+## Measurement traps hit (Part 5)
+
+* **A bounded `ea` is not evidence that anything is working.** With the real
+  unit in, the residual stream's exponent pins at -1 and holds for 30 blocks,
+  which is the shape PART 3's anchored run has and looks like success in the
+  `RESGAP` series. It is bounded because the stream is FROZEN: R_XN is zero,
+  so ER is zero, so `X + ER = X`. The trap is that the instrument PART 3 built
+  reports the exponent and not the magnitude, and a dead machine has a very
+  stable exponent. **Always read `ea` next to something that says the data
+  moved.** P4 does say so, but P4 compares R_X before and after the WHOLE
+  token, so two blocks of real movement satisfy it.
+
+* **The unit reports no error when it emits an all-zero vector.** There is no
+  flag, no assertion and no saturation count. The only way this was visible at
+  all was printing the output mantissas. If a unit has a documented silent
+  rail, instrument the rail before instantiating it, not after the count comes
+  out wrong.
+
+* **`ghdl -a` on the entity obsoletes the architecture of every instantiator,
+  and it is silent until you run.** Re-analysing `rtl/llama_top.vhd` after a
+  generic change left `tb_llama_top` reporting `architecture "tb" of
+  "tb_llama_top" is obsoleted by entity "llama_top"`, which reads as a broken
+  testbench. PART 1 recorded this trap; it cost time again. Re-analyse the
+  testbench in the SAME command, every time.
+
+* **A read-latency mutant that indexes off the end of the vector aborts with
+  `overflow detected` rather than failing the property.** The first attempt at
+  the `k-1` teeth check wrote to slice `(k-1)` at `k = 0`. That is a broken
+  mutant and not a result; the useful mutant keeps the guard and moves only
+  the destination index.
+
+* **A private snapshot of the closure is still the only way to measure while
+  other agents are editing `rtl/`.** Same trap as PARTS 3 and 4. The snapshot
+  here was verified to reproduce `R_X(0) = -12049 hash(R_X) = 86767` before
+  anything was changed in it.
+
+## Open, not yet answered (Part 5)
+
+* **Nothing bounds the residual stream's MAGNITUDE.** PART 3 established that
+  nothing restores the exponent; this part establishes that fixing the
+  exponent alone is not enough, because the magnitude leaves every real unit's
+  arithmetic window anyway. What would bound it has not been identified, and
+  it is now the largest open item in this file.
+
+* **`rtl/rmsnorm_bf.vhd` was NOT measured.** It exists, it has the same port
+  list as `rmsnorm_rs` so it would drop into this adapter unchanged, and it
+  was written specifically because `rmsnorm_rs` "is WRONG in a region the real
+  model occupies". Its `inv32` is still on a `2**-Q` grid, so the reasoning
+  above suggests the upper rail is unchanged and only the LOWER end is fixed
+  by the epsilon -- but that is an inference from reading, not a measurement,
+  and it should be measured before it is believed.
+
+* **Whether the stream would reach `rms 2^15` with REAL weights is unknown.**
+  A's weights are still synthetic and every matvec's `ns` is about 10 because
+  the accumulator is full-scale by construction. The mechanism does not
+  change; the rate, and therefore which block the window is left in, would.
+
+* **The area of the D-vec `rmsnorm_rs` instance is not measured.** No
+  synthesis was run, deliberately. What would be run: an out-of-context
+  synthesis of `rmsnorm_rs` at `N = SHAPE.hidden`, `LANES = 4`, `Q = 12`,
+  part `xczu3eg-sfvc784-1-e`, against the 385 LUT / 18 DSP figure the narrowed
+  QK-norm instance measured, which is a floor and not a quote because the
+  D-vec instance is a different width.
+
+* **The adapter's cycle cost is not measured either.** It is a read pass of
+  `n+2`, the unit's own `3N/LANES` plus roughly 40 fixed cycles, and a write
+  pass of `n`, all serialised. Against the behavioural model's `n+2` plus `n`
+  that is roughly a doubling of the norm step, and the norm is issued 129
+  times per token.
+
+* **`NORM_REAL` was measured at `NRUNS = 1` only**, like everything since
+  PART 3, except the teeth checks and the 1-block control, which are at
+  `NRUNS = 4`. It is not a skew claim.
+
+## CORRECTION to PART 3
+
+PART 3's costed recommendation said, of putting a real rmsnorm on the D-vec
+norm op:
+
+> **This is the one to pick**, because it removes the cause rather than
+> raising a threshold, and because the budget already carries it.
+
+**That recommendation is WITHDRAWN as stated.** It was built, and it does not
+remove the cause: it removes the exponent half of the cause and leaves the
+magnitude half, which then fails harder and more silently than what it
+replaced. The reasoning PART 3 gave for it -- that a real rmsnorm's output
+exponent is fixed by the weight scale and carries no memory of the input's --
+is CORRECT and was confirmed at the unit's own port. What was missing from it
+is that `rmsnorm_rs` is scale-free only in its bookkeeping, and its arithmetic
+has a 19-octave window that this design leaves in the second block. PART 3's
+own open list came close to this in the sentence "it does not prove that
+`rmsnorm_rs` as written produces the right scale over this schedule, and it
+says nothing at all about `rmsnorm_rs`'s arithmetic". It is the arithmetic.
+
+The claim that the drift is a design property and not a stimulus artefact is
+NOT withdrawn and is unaffected.
