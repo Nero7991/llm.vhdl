@@ -44,10 +44,12 @@
 --       wrote nothing would pass P1, P2 and P3.  R_X after the token must
 --       differ from R_X before it.
 --
---   P5  THE STUB IS ANNOUNCED.  When the schedule contains an attention
---       block, `err_unit_stub` MUST be set at the end.  This bench FAILS if
---       an attention block ran and the stub flag did NOT rise, because that
---       would mean the loudest marker in the design had stopped working.
+--   P5  THE STUB IS ANNOUNCED, OR THE STUB IS GONE.  With `C_REAL` false and
+--       an attention block in the schedule, `err_unit_stub` MUST be set at
+--       the end: a stub marker that stops working is worse than the stub.
+--       With `C_REAL` true it MUST be clear, because a marker that stays set
+--       is indistinguishable from a marker nobody cleared and would make
+--       every later run unreadable.
 --
 -- =====================================================================
 -- THE DEFAULT IS 4 BLOCKS WITH NORM_ANCHOR ON, AND NEITHER HALF OF THAT IS
@@ -80,6 +82,81 @@
 -- folds the magnitude in unbounded integer arithmetic and so has no window,
 -- which is precisely the idealisation.  See PART 5 of
 -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+--
+-- =====================================================================
+-- CORRECTED 2026-08-28, SAME DAY: THAT WHOLE TABLE IS A MEASUREMENT OF THE
+-- STIMULUS.  READ THIS BEFORE QUOTING IT.
+-- =====================================================================
+-- Every count above was taken with `wword`, the arithmetic weight image.  Its
+-- rms ROW NORM is 2**4.87 over the 297 A jobs of a 32-block token; the real
+-- Qwen3.5-9B weights, packed into this same geometry, are 2**-0.03 (every
+-- tensor kind, every layer, 0.52 to 1.57).  A matvec multiplies the
+-- activation magnitude by its row norm, so the synthetic image ALONE pushes
+-- the stream up about five octaves per matvec.  Measured with the real
+-- weights served through the `W_IMAGE` generic below, NRUNS = 1,
+-- attn_interval 4, real A and real B:
+--
+--     BLOCKS                             1   2   4   8  16  32
+--     NORM_REAL true,  REAL weights      0   0   0   0   0   0   <-- PASS
+--     NORM_REAL true,  synthetic         0   2   6  14  28  59
+--     no anchor,       REAL weights      0   1   3   9  23  51
+--     no anchor,       synthetic         1   2   5  12  27  56
+--
+-- log2 rms of the norm's INPUT, at norms 0, 8, 16, 24, 32, 40, 48, 56, 64:
+--
+--     NORM_REAL + real   3.20  3.72  4.10  4.33  4.62  5.07  5.22  5.28  5.24
+--     NORM_REAL + synth  3.20 15.10 15.10 15.10 15.10 15.10 15.10 15.10 15.10
+--     no norm   + real   3.20 51.07  808  1.3e4 2.6e4 2.6e4 2.6e4 2.6e4 2.6e4
+--     no norm   + synth  3.20  389  6495 2.6e4 2.6e4 2.6e4 2.6e4 2.6e4 2.6e4
+--
+-- The 15.10 column is the all-zeros rail, NOT a bounded stream: the machine
+-- has stopped.  The 3.20 -> 5.24 row is the design working -- 65 DISTINCT
+-- magnitudes over 65 norms, so the stream is still moving, and every value is
+-- inside the unit's [2^-6, 2^12] window with ten octaves to spare.
+--
+-- So: `rmsnorm_rs` on the D-vec norm op DOES restore the activation scale,
+-- PART 3's recommendation stands, and PART 5 measured the stimulus rather
+-- than the design.  What is NOT withdrawn is the other half: with real
+-- weights and NO real norm the stream still explodes (3.20 -> 25875 octaves
+-- over 32 blocks), so the block loop really does have nothing else that
+-- restores the scale.  See PART 6.
+--
+-- The DEFAULT stays synthetic, because the image is a 5 MB file generated
+-- from an 18 GB GGUF that is not in this repository.
+--
+-- =====================================================================
+-- THE REAL SUBSYSTEM C, `C_REAL`, MEASURED 2026-08-28.  NRUNS = 1.
+-- =====================================================================
+-- `rtl/attn_block.vhd` replaces the `-32768 + i` ramp.  It needs a shape with
+-- `attn_head_dim = 16` (`-gATTN_HD=16`), for reasons in the generic below;
+-- only the head SPLIT changes, so att_q, att_qg, att_kv and every descriptor
+-- are identical at 16 and at 32 and the columns are directly comparable.
+--
+--     BLOCKS                          1   2   4   8  16  32
+--     stub C, NORM_ANCHOR             0   0   0   0   3   8
+--     REAL C, NORM_ANCHOR             0   0   0   0   3   8     <-- identical
+--     stub C, unanchored              1   2   5  12  27  56
+--     REAL C, unanchored              1   2   P4 fails from 4 blocks up
+--
+-- Swapping ten real units in for a ramp moves P6 by NOTHING, which is what it
+-- should do: P6 measures the residual's SCALE, and defect 7's fix already had
+-- the stub publishing its source region's exponent.  The unanchored path now
+-- ends with R_X all zeros instead of ending wrong, because attn_block carries
+-- `rmsnorm_rs` instances of its own for the QK-norm and therefore the same
+-- 19-octave window.
+--
+-- EVERYTHING REAL -- A, B, C, the norm and the weights -- passes at EVERY
+-- depth including 32, with the norm's input magnitude flat at log2 rms 3.20
+-- to 3.34 across the whole token:
+--
+--     -gC_REAL=true -gATTN_HD=16 -gNORM_REAL=true -gNORM_ANCHOR=false
+--     -gW_IMAGE=<real image>   ->  0 degenerate at 1/2/4/8/16/32, PASS,
+--                                  R_X(0) = -14110 hash(R_X) = 52347 at 32
+--
+-- AND NOTHING HERE SAYS THE BLOCK COMPUTES ATTENTION.  C spec 3.11's
+-- `ref/attn_gated_fx.c` does not exist, so `sim/tb_attn_block.vhd` checks
+-- seams and not values, and this bench checks the schedule and the scale.
+-- See PART 7.
 --
 -- TWO THINGS FOLLOW, AND THE SECOND IS THE UNCOMFORTABLE ONE.
 --
@@ -149,6 +226,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use std.textio.all;
+use ieee.math_real.all;
 use work.model_cfg_pkg.all;
 use work.llama_map_pkg.all;
 use work.llama_sched_pkg.all;
@@ -181,6 +259,37 @@ entity tb_llama_top is
     -- onward, so it is worse at every depth than the probe and no better
     -- than having no norm at all.
     NORM_REAL   : boolean := false;
+    -- ==================================================================
+    -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
+    -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
+    -- `wword` and every published number unchanged.
+    --
+    -- WHY IT EXISTS.  `wword` is an arithmetic weight image: uniform INT4
+    -- nibbles against per-block scales masked into [16384, 32767].  Its rms
+    -- ROW NORM is about 2**4.8, and a trained matrix's is about 2**0
+    -- (measured over Qwen3.5-9B: every tensor kind, every layer, 0.52 to
+    -- 1.57).  A matvec multiplies the activation magnitude by its row norm,
+    -- so the synthetic image drives the residual stream up about five octaves
+    -- PER MATVEC, and every magnitude conclusion drawn from it is a
+    -- conclusion about the stimulus.  See PART 6 of
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+    --
+    -- THE IMAGE MUST MATCH `BLOCKS` AND `ATTN_INT`.  It is indexed by STEP,
+    -- and the step sequence is a function of both.  The bench checks the line
+    -- count and REFUSES a mismatched image rather than serving a shifted one.
+    W_IMAGE   : string   := "";
+    -- THE REAL SUBSYSTEM C.  See the generic of the same name in
+    -- `rtl/llama_top.vhd`.  DEFAULT FALSE, and the default path is
+    -- bit-identical with it false.  It cannot be set on its own: the real
+    -- `attn_block` refuses to elaborate at ATTN_HD = 32, so a C_REAL run
+    -- needs `-gATTN_HD=16` as well, and every number it produces is at a
+    -- DIFFERENT SHAPE from every published landmark in this file.
+    C_REAL    : boolean  := false;
+    -- The attention head dim of the scaled shape.  32 is `mk_shape_scaled`'s
+    -- own default and every published number here is at it.  16 is the only
+    -- other value the real C accepts, and it changes att_q, att_qg and att_kv
+    -- and therefore R_X.
+    ATTN_HD   : positive := 32;
     MAXCYC    : natural  := 4000000;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
@@ -190,7 +299,7 @@ end entity;
 
 architecture tb of tb_llama_top is
 
-  constant SHAPE  : shape_t := mk_shape_scaled(BLOCKS, ATTN_INT);
+  constant SHAPE  : shape_t := mk_shape_scaled(BLOCKS, ATTN_INT, ATTN_HD);
   constant NSTEP  : natural := n_steps(SHAPE);
   constant TBL    : sched_tbl_t := build_table(SHAPE);
   constant PLAN   : plan_t := build_plan(SHAPE);
@@ -284,6 +393,130 @@ architecture tb of tb_llama_top is
     end if;
     return v;
   end function;
+  -- ======================================================================
+  -- THE REAL-WEIGHT MEMORY IMAGE.  Empty unless W_IMAGE names a file.
+  --
+  -- The two address constants are passed to the DUT rather than assumed, so
+  -- the image's step stride and the top level's cannot drift apart.
+  -- ======================================================================
+  constant A_MEM_BASE_C   : natural := 16#100000#;
+  constant A_JOB_STRIDE_C : natural := 16#8000#;
+  constant A_SUB_BYTES    : natural := 4096;    -- port p is at base + p*4096
+  -- Beats EMITTED per sub-region.  No job at this shape reads past beat 63:
+  -- tiles*NB is at most 64 and the scale region needs 32 superwords.  The
+  -- slave REFUSES a read past this rather than wrapping.
+  constant A_WBEATS       : natural := 64;
+
+  constant A_WWORDS : natural := NSTEP*A_NPORTS*A_WBEATS;
+
+  type wimg_t is array (natural range <>) of std_logic_vector(127 downto 0);
+  type wimg_p is access wimg_t;
+
+  -- THE IMAGE LIVES ON THE HEAP, AND THAT IS NOT A STYLE CHOICE.  At 32 blocks
+  -- it is 491*5*64 = 157,120 words of 128 bits, and GHDL stores one std_logic
+  -- per byte, so the array is about 20 MB.  A function-local variable of that
+  -- size is on the C stack and the run SEGFAULTS AT ELABORATION with no output
+  -- at all -- which reads as a broken testbench and is a stack limit.  The
+  -- `--max-stack-alloc=0` this project already passes does not cover it.
+  -- A protected type with an access-type member allocates with `new`, so
+  -- nothing large is ever on the stack.
+  type wmem_t is protected
+    procedure load(fn : string; nwords : natural);
+    impure function get(i : natural) return std_logic_vector;
+  end protected wmem_t;
+
+  type wmem_t is protected body
+    variable m : wimg_p := null;
+
+    procedure load(fn : string; nwords : natural) is
+      file     fh : text;
+      variable ok : file_open_status;
+      variable l  : line;
+      variable v  : std_logic_vector(127 downto 0);
+      variable i  : natural := 0;
+    begin
+      m := new wimg_t(0 to nwords-1);
+      for k in m'range loop m(k) := (others => '0'); end loop;
+      if fn = "" then return; end if;
+      file_open(ok, fh, fn, read_mode);
+      assert ok = open_ok
+        report "tb_llama_top: cannot open the weight image " & fn
+        severity failure;
+      -- A SHORT OR LONG IMAGE IS A REFUSAL, NOT A TRUNCATION.  The array is
+      -- indexed by STEP, so an image built for a different BLOCKS/ATTN_INT
+      -- would serve every job the weights of some other job -- silently, and
+      -- with a perfectly plausible result.
+      while not endfile(fh) loop
+        readline(fh, l);
+        assert i < nwords
+          report "tb_llama_top: the weight image " & fn & " is LONGER than "
+               & "the " & integer'image(nwords) & " words this shape needs.  "
+               & "It was built for a different BLOCKS or ATTN_INT."
+          severity failure;
+        hread(l, v);
+        m(i) := v;
+        i := i + 1;
+      end loop;
+      assert i = nwords
+        report "tb_llama_top: the weight image " & fn & " has "
+             & integer'image(i) & " words, this shape needs "
+             & integer'image(nwords)
+             & ".  It was built for a different BLOCKS or ATTN_INT."
+        severity failure;
+      file_close(fh);
+    end procedure;
+
+    impure function get(i : natural) return std_logic_vector is
+    begin
+      return m(i);
+    end function;
+  end protected body wmem_t;
+
+  shared variable WMEM : wmem_t;
+
+  impure function wmem_boot return boolean is
+  begin
+    WMEM.load(W_IMAGE, A_WWORDS);
+    return true;
+  end function;
+
+  -- Elaboration order, not a process: the slaves may be read before any
+  -- process has run.
+  constant WMEM_READY : boolean := wmem_boot;
+
+  -- ONE address decode for both memories, so a real run and a synthetic run
+  -- cannot see different addresses.  `wword` is declared above and keeps its
+  -- own comment about why it is a function.
+  impure function wword_at(p : natural; addr : natural)
+    return std_logic_vector is
+    variable off, stp, rmn, sub, beat : natural;
+  begin
+    if W_IMAGE = "" then
+      -- `idx` is the 16-byte word index, reduced before any multiply.  See
+      -- the note in wword.
+      return wword(p, (addr / 16) mod 16777216);
+    end if;
+    assert addr >= A_MEM_BASE_C
+      report "tb_llama_top: weight read below A_MEM_BASE" severity failure;
+    off  := addr - A_MEM_BASE_C;
+    stp  := off / A_JOB_STRIDE_C;
+    rmn := off mod A_JOB_STRIDE_C;
+    sub  := rmn / A_SUB_BYTES;
+    beat := (rmn mod A_SUB_BYTES) / 16;
+    assert stp < NSTEP and sub = p and beat < A_WBEATS and WMEM_READY
+      report "tb_llama_top: weight read outside the image -- step "
+           & integer'image(stp) & " sub " & integer'image(sub) & " port "
+           & integer'image(p) & " beat " & integer'image(beat)
+      severity failure;
+    return WMEM.get(stp*A_NPORTS*A_WBEATS + p*A_WBEATS + beat);
+  end function;
+
+  signal obs_norm_pub : std_logic;
+  signal obs_norm_exp : signed(EXP_W-1 downto 0);
+  signal obs_norm_ssq : unsigned(63 downto 0);
+  signal obs_norm_n   : unsigned(15 downto 0);
+  signal n_norm       : natural := 0;
+
   signal obs_res_take : std_logic;
   signal obs_res_ea, obs_res_eb : signed(EXP_W-1 downto 0);
   signal n_bad_res : natural := 0;
@@ -355,7 +588,8 @@ begin
       WDOG_LIMIT => 200000, STRICT => true,
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
-      NORM_REAL => NORM_REAL,
+      NORM_REAL => NORM_REAL, C_REAL => C_REAL,
+      A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
       SHOUT => true)
     port map(
       clk => clk, rst => rst,
@@ -376,6 +610,8 @@ begin
       m_rlast => m_rlast,
       obs_res_take => obs_res_take, obs_res_ea => obs_res_ea,
       obs_res_eb => obs_res_eb,
+      obs_norm_pub => obs_norm_pub, obs_norm_exp => obs_norm_exp,
+      obs_norm_ssq => obs_norm_ssq, obs_norm_n => obs_norm_n,
       obs_cmp_exp => obs_cmp_exp, obs_wsum => obs_wsum,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
@@ -421,7 +657,7 @@ begin
           if m_rvalid(p) = '0' or m_rready(p) = '1' then
             if beats > 0 then
               m_rdata((p+1)*128-1 downto p*128)
-                <= wword(p, to_integer(aw(27 downto 4)));
+                <= wword_at(p, to_integer(aw));
               m_rvalid(p) <= '1';
               if beats = 1 then m_rlast(p) <= '1';
               else              m_rlast(p) <= '0'; end if;
@@ -602,6 +838,64 @@ begin
                & integer'image(MANT_W) & "-bit mantissa.  One operand shifts "
                & "out ENTIRELY: this add ignores half its input."
             severity error;
+        end if;
+      end if;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- THE MAGNITUDE SERIES.  Observability, NOT a property -- there is no
+  -- threshold here and nothing fails because of it.
+  --
+  -- It exists because the exponent series alone is misleading in the one
+  -- direction that matters.  With the real `rmsnorm_rs` on the norm op the
+  -- residual stream's exponent pins at -1 and holds for thirty blocks, which
+  -- is exactly the bounded series a working design would show, and it is
+  -- bounded because R_XN is all zeros and the machine has stopped computing.
+  -- `log2 rms` of the norm's INPUT is the quantity every real normaliser's
+  -- window is stated in, so it is the one that says whether the design is
+  -- inside the range its arithmetic works over.  PART 5 and PART 6 of
+  -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+  --
+  -- `ieee.math_real` here and NOT in the RTL: the top level publishes the
+  -- integer sum of squares and this turns it into an octave count.
+  -- ======================================================================
+  normmag : process(clk) is
+    -- `to_integer` would OVERFLOW here.  The sum of squares reaches
+    -- 64 * 2**30 = 2**36 and VHDL's integer is 32-bit, so the conversion has
+    -- to go bit by bit into a real.  Same class as the `idx*7919` overflow in
+    -- PART 2's traps: a run-time abort from inside the stimulus, which reads
+    -- like broken RTL.
+    function ureal(u : unsigned) return real is
+      variable r : real := 0.0;
+    begin
+      for i in u'range loop
+        if u(i) = '1' then r := r + 2.0**i; end if;
+      end loop;
+      return r;
+    end function;
+    variable q : real;
+  begin
+    if rising_edge(clk) then
+      if rst = '0' and tb_reset = '0' and obs_norm_pub = '1' then
+        n_norm <= n_norm + 1;
+        if VERBOSE then
+          if obs_norm_ssq = 0 then
+            report "tb_llama_top: NORMMAG norm " & integer'image(n_norm)
+                 & " run " & integer'image(cur_run)
+                 & " xe " & integer'image(to_integer(obs_norm_exp))
+                 & " log2rms -inf  THE NORM INPUT IS ALL ZEROS"
+              severity note;
+          else
+            q := 0.5 * log2(ureal(obs_norm_ssq)
+                            / real(to_integer(obs_norm_n)))
+                 - real(to_integer(obs_norm_exp));
+            report "tb_llama_top: NORMMAG norm " & integer'image(n_norm)
+                 & " run " & integer'image(cur_run)
+                 & " xe " & integer'image(to_integer(obs_norm_exp))
+                 & " log2rms " & real'image(q)
+              severity note;
+          end if;
         end if;
       end if;
     end if;
@@ -822,19 +1116,36 @@ begin
     end loop;
     wait for 0 ns;
 
-    -- ---- P5: the stub is announced --------------------------------------
+    -- ---- P5: the stub is announced, or the stub is GONE ------------------
+    -- Both halves are checked, and the second is the one that matters once
+    -- C_REAL exists: a run with the real block MUST NOT set the stub marker,
+    -- because a marker that stays set is indistinguishable from a marker
+    -- nobody cleared and would make every later run unreadable.
     if n_attn_blocks(SHAPE) > 0 then
-      assert err_unit_stub = '1'
-        report "tb_llama_top: the schedule contains "
+      if C_REAL then
+        assert err_unit_stub = '0'
+          report "tb_llama_top: C_REAL is set and the schedule ran "
+               & integer'image(n_attn_blocks(SHAPE))
+               & " attention block(s), but err_unit_stub is HIGH.  Some unit "
+               & "still took the stub path."
+          severity failure;
+        report "tb_llama_top: NOTE -- attention was computed by the REAL "
+             & "attn_block.  There is no block-level reference for subsystem "
+             & "C, so nothing here says the result is attention."
+          severity warning;
+      else
+        assert err_unit_stub = '1'
+          report "tb_llama_top: the schedule contains "
+               & integer'image(n_attn_blocks(SHAPE))
+               & " attention block(s) but err_unit_stub is LOW.  The stub "
+               & "marker has stopped working, which is worse than the stub."
+          severity failure;
+        report "tb_llama_top: NOTE -- this schedule contains "
              & integer'image(n_attn_blocks(SHAPE))
-             & " attention block(s) but err_unit_stub is LOW.  The stub "
-             & "marker has stopped working, which is worse than the stub."
-        severity failure;
-      report "tb_llama_top: NOTE -- this schedule contains "
-           & integer'image(n_attn_blocks(SHAPE))
-           & " attention block(s).  ATTENTION IS A STUB.  The residual "
-           & "stream is well-formed and MEANINGLESS."
-        severity warning;
+             & " attention block(s).  ATTENTION IS A STUB.  The residual "
+             & "stream is well-formed and MEANINGLESS."
+          severity warning;
+      end if;
     end if;
 
     -- The exponent the lock captured at every completion of the LAST run.

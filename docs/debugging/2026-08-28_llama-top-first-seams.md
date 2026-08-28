@@ -1703,3 +1703,747 @@ says nothing at all about `rmsnorm_rs`'s arithmetic". It is the arithmetic.
 
 The claim that the drift is a design property and not a stimulus artefact is
 NOT withdrawn and is unaffected.
+
+---
+
+# PART 6 -- the magnitude explosion is the STIMULUS, and with real weights the real `rmsnorm_rs` works
+
+**Date:** 2026-08-28, later the same session. Appended in place. This part
+answers the question PART 5 left as the largest open item in this file, and it
+**WITHDRAWS PART 5's headline conclusion** and **REINSTATES PART 3's
+recommendation**. Both corrections are at the end of this part.
+
+**Build:** branch `fpga`. Modified: `rtl/llama_top.vhd` (four observability
+ports `obs_norm_pub` / `obs_norm_exp` / `obs_norm_ssq` / `obs_norm_n`, and the
+integer sum-of-squares that feeds them, in BOTH norm branches),
+`sim/tb_llama_top.vhd` (a `W_IMAGE` generic that serves subsystem A's five AXI
+read slaves from a real packed weight image instead of the arithmetic `wword`,
+plus the `NORMMAG` observability line), and one new file
+`tools/gen_llama_top_weights.py`. `W_IMAGE` defaults to `""` and the default
+path is verified bit-identical: `R_X(0) = -12049 hash(R_X) = 86767`, before and
+after.
+
+**Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed --max-stack-alloc=0`. Every
+count is at `NRUNS = 1` unless stated. No synthesis was run. No hardware was
+touched.
+
+## The question, verbatim
+
+> PART 5 established that the real `rtl/rmsnorm_rs.vhd` makes the residual
+> WORSE, not better [...] What kills it is the unit's hard 19-octave INPUT
+> MAGNITUDE window [...] Measured `log2 rms` of the residual stream, per norm:
+> **3.20, 3.36, then 15.10 and stuck**. [...] **Twelve octaves of growth in a
+> single block is not obviously physical.** Subsystem A's weights in this bench
+> are SYNTHETIC. [...] **Your job: feed REAL weights into the bench and
+> re-measure `log2 rms` per block.**
+>
+> - **(a) The stimulus was never physical.** [...] real weights do not, the
+>   stream stays inside the window, and the real `rmsnorm_rs` works after all.
+> - **(b) The BFP discipline has an architectural hole.** [...] nothing bounds
+>   the stream's magnitude, and the design needs something that does not exist
+>   yet.
+
+## The answer, up front
+
+**It is (a) for the RATE and (b) for the MECHANISM, and the two together make
+the design work.**
+
+The bench's arithmetic weight image has an rms **row norm** of `2**4.87`; the
+real Qwen3.5-9B weights packed into the same geometry have `2**-0.03`. A matvec
+multiplies the activation magnitude by its row norm, so the synthetic image
+alone is worth about five octaves per matvec. Twelve octaves per block is not
+physical.
+
+With real weights fed through the bench and the real `rmsnorm_rs` on the D-vec
+norm op, the whole 491-descriptor 32-block token **PASSES**: zero degenerate
+residuals, and the norm's input magnitude stays at `log2 rms` **3.20 rising to
+5.24** across all 65 norms -- ten octaves clear of the unit's `2^12` rail, with
+**65 distinct magnitudes over 65 norms**, so the stream is demonstrably still
+moving and not frozen.
+
+But (b) is not an artefact. With real weights and the BEHAVIOURAL mean-removal
+norm the stream still explodes, `log2 rms` 3.20 -> 25875 over 32 blocks. Real
+weights slow the explosion; they do not stop it. **The only thing in the block
+loop that restores the activation scale is a real rmsnorm**, exactly as PART 3
+said, and PART 5's failure to demonstrate that was a property of the stimulus.
+
+## The procedure, in the order it was run
+
+1. **Reproduce all three published baselines before touching anything**, in a
+   private snapshot of the 33-file closure built by
+   `sim/regress.sh --only llama_top --keep`. Bench default -> PASS,
+   `R_X(0) = -12049 hash(R_X) = 86767`. `BLOCKS=32 NRUNS=1 NORM_ANCHOR=true`
+   -> 8. `NORM_ANCHOR=false` -> 56. All three exact.
+
+2. **Measure the row norms first, in software, before building anything.**
+   The whole hypothesis reduces to one number per matrix, and if the real and
+   synthetic row norms had been within an octave of each other there would
+   have been nothing to build. They are five octaves apart.
+
+3. **Pack real weights into the BENCH's geometry, not the FK33's.** The
+   published `.mv4i` set is at `ROWS_IF=48 / AXI_DW=256`; `llama_top`
+   instantiates `matvec_int4` at `ROWS_IF=4 / AXI_DW=128 / NPORTS_S=1`. The
+   weights are therefore re-quantized and re-packed from the BF16 GGUF through
+   `tools/pack_int4.py`'s OWN `pack()`, so the 6.5a byte layout is not written
+   a second time.
+
+4. **Prove the packing before believing any number it produces.** Two
+   independent readers, then a value-level oracle for the whole chain.
+
+5. **Measure the depth sweep in four configurations**, so that "real weights"
+   and "real norm" can be attributed separately: synthetic/real weights times
+   behavioural/real norm.
+
+6. **Teeth-check every guard**, against deliberately broken copies, in a
+   configuration where the unbroken design passes.
+
+## The evidence
+
+### Step 2 -- the row norms, which is the whole finding in one table
+
+Real weights, read from `/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf`:
+
+```
+tensor                                M      K   elem_rms rownorm_rms    log2
+output.weight                    248320   4096  1.548e-02      0.9904   -0.01
+blk.0.ffn_down.weight              4096  12288  1.097e-02      1.2157    0.28
+blk.0.ffn_gate.weight             12288   4096  1.123e-02      0.7184   -0.48
+blk.0.ffn_up.weight               12288   4096  1.055e-02      0.6749   -0.57
+blk.16.ffn_down.weight             4096  12288  1.106e-02      1.2264    0.29
+blk.31.ffn_down.weight             4096  12288  1.143e-02      1.2670    0.34
+blk.0.attn_qkv.weight              8192   4096  1.714e-02      1.0969    0.13
+blk.3.attn_q.weight                8192   4096  1.851e-02      1.1849    0.24
+blk.0.ssm_alpha.weight               32   4096  2.456e-02      1.5720    0.65
+blk.0.ssm_beta.weight                32   4096  8.180e-03      0.5235   -0.93
+blk.0.attn_gate.weight             4096   4096  1.677e-02      1.0730    0.10
+blk.0.ssm_out.weight               4096   4096  1.542e-02      0.9869   -0.02
+blk.3.attn_k.weight                1024   4096  1.630e-02      1.0433    0.06
+blk.3.attn_output.weight           4096   4096  1.569e-02      1.0038    0.01
+blk.3.attn_v.weight                1024   4096  1.618e-02      1.0358    0.05
+```
+
+Every tensor kind, first layer, middle layer, last layer, and the lm head: the
+rms row norm is **1.0 to within a factor of two**, i.e. `log2` in
+`[-0.93, +0.65]`. That is what a trained transformer looks like and it is why a
+residual stream does not explode.
+
+The bench's `wword`, reconstructed as a matrix at the geometries its A jobs
+actually use, over the same 297 A jobs of a 32-block token:
+
+```
+SYNTHETIC   mean log2 row norm  4.867   min 2.316   max 7.689
+REAL pooled mean log2 row norm -0.034   min -0.975  max 0.827
+REAL sliced mean log2 row norm -3.013   min -3.992  max -2.051
+```
+
+**Five octaves per matvec, from the stimulus alone.** The mechanism is not
+subtle once it is stated: `wword` draws INT4 nibbles uniformly over the whole
+codebook and masks the per-block scale into `[16384, 32767]`, i.e. into the top
+octave of the uint15 range, so `|w|` is order `2**2` where a trained weight is
+order `2**-6`.
+
+### Step 3 -- the dimension reduction, which is the one modelling choice
+
+`mk_shape_scaled` runs `hidden = 64` against the model's 4096 and `ffn = 128`
+against 12288. A real weight matrix cannot be used at that width unchanged, and
+the choice of how to shrink it DECIDES the answer, so both were built and both
+are reported:
+
+| `--reduce` | what it does | rms row norm |
+|---|---|---|
+| `slice` | `W[:n_rows, :n_cols]` -- the literal real weights, 1/64 the width | `2**-3.01` |
+| `pool` | sum adjacent groups of `K/n_cols` columns | `2**-0.03` |
+
+`slice` is honest and biased LOW by exactly `sqrt(n_cols/K)`, three octaves at
+`K=4096`, and its measured -3.013 is that arithmetic and nothing else. `pool`
+preserves the l2 row norm of the real layer, which is the quantity that decides
+magnitude propagation, and it lands on the real model's own -0.03. **`pool` is
+the primary result and `slice` is reported beside it**; neither was chosen to
+make a number come out, and the third possibility -- scaling the slice by 8 --
+was deliberately NOT used because that IS tuning.
+
+### Step 4 -- the packing, proved twice and then proved again end to end
+
+**(i) Layout, double oracle.** `ref/matvec_int4.c` and `tools/pack_int4.py
+--crosscheck` are independent readers of the 6.4/6.5a layout. On a packed real
+submatrix:
+
+```
+=== C reference ===
+M=128 K=64 w_exp=-1 out_shift=3 ns=0 y_exp=-4 mant_sum=4401 sat=0
+=== python oracle ===
+M=128 K=64 w_exp=-1 out_shift=3 ns=0 y_exp=-4 mant_sum=4401 sat=0
+```
+
+**(ii) Quantization.** Dequantizing `(idx, scale, w_exp)` back to float and
+comparing against the source submatrix: max relative error 1.19e-1 per element
+(int4), **cosine 0.995705**, consistent with the 0.9967 the FK33 pack reported
+for the same model at a different geometry.
+
+**(iii) THE CHAIN, end to end, at the value level.** The two checks above say
+nothing about the bench's own step/port/beat address decode, which is new code.
+So region R_QKV after a 1-block `NORM_ANCHOR=false` token -- 256 elements, the
+outputs of the three A jobs that write it -- was recomputed entirely outside
+the simulator: `R_XN` from the behavioural norm's definition, then
+`mv4i_matvec` from `ref/matvec_int4.c` on the three packed files, then the same
+positional hash the bench uses.
+
+```
+step 1 rows 64  cols 64 w_exp -1 out_shift 1: y_exp 1 ns 0
+step 2 rows 64  cols 64 w_exp  0 out_shift 2: y_exp 1 ns 0
+step 3 rows 128 cols 64 w_exp  1 out_shift 3: y_exp 1 ns 0
+R_QKV positional hash from ref/matvec_int4.c = 26889
+
+tb_llama_top: region 2 hash 26889
+```
+
+**Bit-exact on all 256 values.** The quantizer, the 6.5a layout, the bench's
+address decode and `matvec_int4`'s consumption of it all agree. This is the
+check that licenses calling the run "real weights" rather than "weights of
+about the right size".
+
+### Step 5 -- the depth sweep, all four configurations
+
+Degenerate residuals (P6), `NRUNS = 1`, real A, real B, `attn_interval` 4:
+
+| BLOCKS | synthetic, no real norm | REAL, no real norm | synthetic + `NORM_REAL` | **REAL + `NORM_REAL`** |
+|---|---|---|---|---|
+| 1  | 1  | 0  | 0  | **0** |
+| 2  | 2  | 1  | 2  | **0** |
+| 4  | 5  | 3  | 6  | **0** |
+| 8  | 12 | 9  | 14 | **0** |
+| 16 | 27 | 23 | 28 | **0** |
+| 32 | 56 | 51 | 59 | **0** |
+
+Columns 1 and 3 reproduce the published 5/12/27/56 and 0/2/6/14/28/59 exactly,
+so the harness did not move.
+
+```
+tb_llama_top: schedule mismatches=0 skew differences=0 degenerate residuals=0
+tb_llama_top RESULT: PASS -- 491 descriptors, 32 blocks, 1 descriptor-latency
+              points, R_X bit-identical across all of them, R_X(0) = -6317
+              hash(R_X) = 83458
+```
+
+That is the whole 491-descriptor token, 32 blocks, real A, real B, real
+`rmsnorm_rs`, real weights, and **no probe of any kind**. It is the first time
+this bench has passed at 32 blocks without `NORM_ANCHOR`.
+
+### The magnitude series, which is the deliverable
+
+`log2 rms` of the norm's INPUT, at norms 0, 8, 16, 24, 32, 40, 48, 56, 64 of a
+32-block token:
+
+| configuration | 0 | 8 | 16 | 24 | 32 | 40 | 48 | 56 | 64 |
+|---|---|---|---|---|---|---|---|---|---|
+| synthetic, no real norm | 3.20 | 388.7 | 6495 | 26038 | 26051 | 26063 | 26072 | 26084 | 26099 |
+| REAL (pool), no real norm | 3.20 | 51.07 | 808.3 | 12929 | 25860 | 25863 | 25867 | 25871 | 25875 |
+| REAL (slice), no real norm | 3.20 | 4.20 | 8.46 | 29.04 | 325.2 | **-inf** | 19591 | 19592 | 19594 |
+| synthetic + `NORM_REAL` | 3.20 | **15.10** | 15.10 | 15.10 | 15.10 | 15.10 | 15.10 | 15.10 | 15.10 |
+| **REAL (pool) + `NORM_REAL`** | **3.20** | **3.72** | **4.10** | **4.33** | **4.62** | **5.07** | **5.22** | **5.28** | **5.24** |
+
+and the first thirteen of the two extreme rows, per norm rather than per eight,
+because the shape matters:
+
+```
+REAL + NORM_REAL   3.201 3.201 3.214 3.214 3.214 3.214 3.205 3.716 3.715
+                   3.715 3.708 3.708 3.710
+synthetic, none    3.201 6.350 27.81 27.81 70.76 ZEROS ZEROS 187.1 388.7
+                   388.7 795.1 795.1 1605
+```
+
+Read the last row of the table as the answer: **2.04 octaves of growth over 32
+blocks, 0.032 per norm.** That is the `sqrt(n)` accumulation a residual stream
+is supposed to show (`sqrt(64) = 8` would be 3 octaves), and it sits at
+`rms(x_real)` between `2**3.2` and `2**5.3` against a window of
+`[2**-6, 2**12]` -- ten octaves of headroom at the top and nine at the bottom.
+
+**The stream is NOT frozen, and this was checked rather than assumed**, because
+PART 5's trap is exactly a bounded series produced by a dead machine: the run
+reports **65 distinct `log2 rms` values over 65 norms**, zero occurrences of
+the all-zeros rail, and P4 passes.
+
+The `-inf` in the `slice` row is the same trap firing in the OTHER direction
+and is worth keeping: the sliced weights are three octaves too small, so that
+stream drifts DOWN through the window, hits the low rail, and the norm starts
+emitting zeros at norm 40 (15 all-zero norms in that run). A weight image that
+is too small fails as silently as one that is too large.
+
+### The new instrument, and its oracle
+
+`obs_norm_pub` / `obs_norm_exp` / `obs_norm_ssq` / `obs_norm_n` publish the
+norm's input exponent, the integer sum of squares of its input mantissas and
+the element count, once per norm op, from BOTH norm branches. The testbench
+turns them into `log2 rms`; `ieee.math_real` stays out of `rtl/`.
+
+It has an independent oracle at norm 0, whose input is the token embedding and
+therefore known in closed form:
+
+```
+numpy over ((i*37) mod 251) - 125, i = 0..63, at x_exp 3 :  3.200506407691405
+tb_llama_top: NORMMAG norm 0 run 0 xe 3 log2rms  3.200506407691405
+```
+
+### Teeth checks -- both results, as required
+
+All at `BLOCKS = 4`, `NRUNS = 1`, `NORM_ANCHOR=false`, `NORM_REAL=true`, real
+weights, a configuration the unbroken design PASSES:
+
+```
+control (unbroken)  degenerate residuals=0  RESULT: PASS
+                    R_X(0) = -7263 hash(R_X) = 31328
+```
+
+| mutation | result |
+|---|---|
+| the bench's step decode reads `step+1` | **FAIL**, degenerate residuals 1 |
+| the beat index computed with `/8` instead of `/16` | **assertion failure: weight read outside the image -- step 3 sub 3 port 3 beat 64** |
+| a 1-block image handed to a 4-block run | **assertion failure: the weight image has 6080 words, this shape needs 20480. It was built for a different BLOCKS or ATTN_INT.** |
+| the `NORM_REAL` adapter publishes `oe + 20` | **FAIL**, P6 fires: `the residual at step 10 has operand exponents 3 and 57, 54 apart` |
+
+**Every one PASSES unbroken and FAILS broken.** The first is the important one:
+it says the step decode is load-bearing, so the run really is fetching a
+different matrix per step rather than the same bytes everywhere.
+
+Skew, with the real weights in, `BLOCKS = 4`, `NRUNS = 4`, four
+descriptor-memory latencies:
+
+```
+schedule mismatches=0 skew differences=0 degenerate residuals=0  RESULT: PASS
+R_X(0) = -7263 hash(R_X) = 31328
+```
+
+Bit-identical to the single-latency run, so the file-backed slave introduces no
+timing dependence.
+
+## Measured and REJECTED -- do not retry (Part 6)
+
+* **Blaming the BFP discipline for the twelve-octave-per-block growth.** It is
+  the weight row norm and nothing else: 2**4.87 synthetic against 2**-0.03
+  real, measured on both sides at the same geometry. Do not design a bounding
+  mechanism for a growth rate that only the stimulus produces.
+
+* **Reading PART 5's `NORM_Q` sweep as a statement about the unit.** 0/0/6/38
+  at `Q = 20` was measured against the synthetic stream, which leaves the
+  window whatever `Q` is. At the real stream's `log2 rms` of 3.2 to 5.3, `Q`'s
+  default 12 has ten octaves of headroom and the sweep is answering a question
+  that does not arise. The 2026-08-26 conclusion that a wider `Q` is not the
+  fix STANDS for the low rail and for `rmsnorm_bf`; it is simply not what
+  PART 5 was hitting.
+
+* **The column SLICE as the dimension reduction, on its own.** It is the
+  literal real weights and it is biased low by exactly `sqrt(n_cols/K)`, three
+  octaves, which is enough to drive the stream through the LOWER rail by norm
+  40 and produce 15 all-zero norms. Reported here, and not used as the primary
+  result, for that reason. A reduction that does not preserve the row norm is
+  measuring the reduction.
+
+* **Trusting a layout crosscheck as evidence that the weights reached the
+  unit.** The C-reference/Python agreement proves the FILE is right and says
+  nothing about the bench's address decode, which is where the new code is.
+  The R_QKV hash is the check that closes it, and the `step+1` mutant is what
+  says that check has teeth.
+
+## Measurement traps hit (Part 6)
+
+* **A 20 MB array in a VHDL FUNCTION LOCAL segfaults GHDL at elaboration with
+  no output whatsoever.** The image is `491*5*64` words of 128 bits and GHDL
+  stores one `std_logic` per byte, so the first version -- a
+  `constant WIMG : wimg_t := load_wimg(...)` -- died instantly at
+  `BLOCKS = 32` while working perfectly at `BLOCKS = 4`. It reads as a broken
+  testbench. `--max-stack-alloc=0`, which this project already passes, does
+  NOT cover it; `ulimit -s unlimited` does, which is how the cause was
+  identified, and is not a fix because `sim/regress.sh` does not set it. The
+  storage is now a protected type holding an ACCESS-type array allocated with
+  `new`, so nothing large is ever on the stack.
+
+* **`to_integer` on the sum of squares OVERFLOWS.** 64 elements of a 16-bit
+  mantissa reach `2**36` and VHDL's integer is 32-bit, so the conversion to
+  `real` has to go bit by bit. Same class as PART 2's `idx*7919`: a run-time
+  abort from inside the stimulus, which reads like broken RTL.
+
+* **The attention layers have no `attn_gate` tensor.** `att_qg = 2*att_q`
+  looks like "Q and a gate", i.e. two tensors, and it is ONE: this model's
+  `blk.N.attn_q.weight` has 8192 rows against `attn_q_heads*attn_head_dim =
+  4096`. Only the 24 GDN layers have `attn_gate`. Assuming the split cost a
+  full regeneration of the 32-block image.
+
+* **A private snapshot of the closure is STILL the only way to measure.**
+  Same trap as PARTS 3, 4 and 5. The snapshot here was verified to reproduce
+  all three published baselines before anything was changed in it.
+
+* **A `pool`-reduced image and a `slice`-reduced image are both "real
+  weights", and they disagree by three octaves.** Whichever is quoted, the
+  reduction has to be quoted with it. A result stated as "with real weights"
+  and no reduction named is not reproducible.
+
+## Open, not yet answered (Part 6)
+
+* **Everything above is at the SCALED shape.** `hidden = 64`, `ffn = 128`, one
+  token, `tk0` hardwired. The row norms are the real model's, the values are
+  the real model's to `cosine 0.9957`, and the WIDTH is not. Nothing here says
+  what the stream does at `hidden = 4096`, where every matvec sums 64 times as
+  many terms and `ns` will differ.
+
+* **The `rmsnorm_rs` low rail and the missing epsilon are UNTOUCHED.**
+  `docs/debugging/2026-08-26_rmsnorm-magnitude-window.md` measured that the
+  real model spends 77.4% of its samples where epsilon IS the normaliser, and
+  that `rmsnorm_rs` is wrong by 244x in eps and 14x in gain AT THE MEDIAN. The
+  stream measured here sits at `log2 rms` 3.2 to 5.3, comfortably inside the
+  clamp-free region, so this schedule never exercises that defect. `NORM_REAL`
+  passing at 32 blocks is NOT a statement that `rmsnorm_rs` computes the right
+  function -- `rtl/rmsnorm_bf.vhd` exists precisely because it does not, and
+  it was not measured here either.
+
+* **There is still no block-level arithmetic oracle.** The R_QKV check is a
+  value-level oracle for THREE A jobs of one block. Every property beyond that
+  is still a property and not a comparison.
+
+* **The swiglu is still a model with a fixed `MANT_W` shift**, and the FFN
+  residual is still the one PART 4 named. It no longer fails at any depth with
+  real weights and a real norm, which is a measurement and not a fix.
+
+* **`NRUNS = 1` for the depth sweep.** The 4-block real-weight point was taken
+  at `NRUNS = 4` and is skew-clean; the 32-block point is single-latency and
+  is not a skew claim.
+
+* **B_SRC_REAL was not re-tested with real weights**, and it is the obvious
+  next experiment: PART 3 rejected it because A's synthetic weights made
+  R_ALPHA's VALUES physically impossible and `gdn_scalar`'s gate saturated
+  shut. That reason has now been removed. PART 3's own rejection note said to
+  re-run it "only after subsystem A's weights are real". They are.
+
+## CORRECTION to PART 5
+
+PART 5 concluded:
+
+> **`rmsnorm_rs` on the D-vec norm op as a fix for defect 8, as built.** [...]
+> the result is 0/2/6/14/28/59 at 1/2/4/8/16/32 blocks, worse than the probe at
+> every depth and worse than no norm at all at 32. Do not re-run it hoping for
+> a different answer.
+
+**WITHDRAWN.** With real weights it is 0 at every one of those depths and the
+32-block token PASSES. The measurement PART 5 reported is correct and
+reproduces exactly; what is withdrawn is its attribution. The 19-octave window
+is real, the all-zeros rail is real, and the design does not go near either of
+them once the weights are. PART 5's own closing sentence -- "Re-run it only
+after something bounds the residual stream's MAGNITUDE" -- named the right
+condition and assumed it needed new hardware. It needed a physical stimulus.
+
+PART 5's measurement traps and its teeth checks are NOT withdrawn, and the
+first of them is the reason this part checked for a frozen stream before
+believing a bounded one.
+
+## CORRECTION to PART 3
+
+PART 3's costed recommendation, that a real rmsnorm on the D-vec norm op is
+"the one to pick", was **WITHDRAWN by PART 5**. It is now **REINSTATED**, with
+the measurement PART 3 asked for and PART 5 could not obtain: real unit, real
+weights, no probe, 0 degenerate residuals at 1, 2, 4, 8, 16 and 32 blocks.
+
+PART 3's mechanism was right throughout and is confirmed independently here:
+with real weights and NO real norm the stream still runs away, `log2 rms` 3.20
+to 25875 over 32 blocks. Nothing else in the block loop restores the scale.
+
+---
+
+# PART 7 -- `attn_block` wired into `llama_top`, and the whole token with A, B, C, the norm and the weights all real
+
+**Date:** 2026-08-28, later the same session. Appended in place.
+
+**Build:** branch `fpga`. Modified: `rtl/llama_top.vhd` (a `C_REAL` generic and
+the generate branch it selects: the `attn_block` instance, three activation
+prefetches, a KV-cache memory model and the y sink), `sim/tb_llama_top.vhd`
+(the `C_REAL` and `ATTN_HD` generics, and P5 given its second half), and
+`rtl/llama_map_pkg.vhd` (one defaulted parameter on `mk_shape_scaled`).
+`rtl/attn_block.vhd` and `rtl/attn_mac_array.vhd` were **NOT modified**.
+`C_REAL` defaults FALSE and the default path is verified bit-identical:
+`R_X(0) = -12049 hash(R_X) = 86767`.
+
+**Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed --max-stack-alloc=0`. No
+synthesis, no hardware.
+
+## The question, verbatim
+
+> `rtl/attn_block.vhd` and `rtl/attn_mac_array.vhd` now exist (commit
+> `1719ae3`, gate 76 PASS). `llama_top` still drives the attention stub [...]
+> Replace it, behind a generic that DEFAULTS to the existing stub so the
+> default path stays bit-identical [...] **there is no block-level arithmetic
+> oracle for C.** [...] Do not let the integration imply otherwise.
+>
+> Success criterion: the 491-descriptor schedule runs with real A, real B and
+> real C, and you report the degenerate-residual counts by depth WITH `NRUNS`
+> stated, next to today's numbers.
+
+## The answer, up front
+
+**It runs, and with PART 6's real weights and the real `rmsnorm_rs` alongside
+it, the whole 491-descriptor 32-block token PASSES with zero degenerate
+residuals.** That is the first configuration in this file in which every
+computing unit in the block loop is real RTL and no probe is enabled.
+
+Swapping the stub for the real block changes nothing about P6, which is the
+useful negative result: anchored, `NRUNS = 1`, synthetic weights, the counts
+are **identical** to the stub's at every depth.
+
+**And it says nothing about whether the block computes attention.** There is
+no block-level reference for C; the bench's own PASS line now says so.
+
+## What had to change in the SHAPE, and why it costs nothing
+
+`attn_block` will not elaborate at `mk_shape_scaled`'s attention shape. Three
+separate refusals, each read out of the RTL rather than discovered by running:
+
+| constraint | source | the old shape |
+|---|---|---|
+| `HEAD_DIM` must be an EVEN power of two | `attn_block.vhd:616` -- `kq_scale = 1/sqrt(HEAD_DIM)` is folded into an exponent | 32 = 2**5, **fails** |
+| `HEAD_DIM/KV_BLOCK >= 2` | `attn_block.vhd:610` | fine |
+| GQA group `N_QH/N_KVH >= 2` | `attn_block.vhd:607`, `attn_mac_array` | 2/1 = 2, fine |
+| `NGRP >= 2` | **NOT asserted anywhere.** `attn_emit.vhd:400` assigns `grp <= 1` at S_IDLE with `grp` ranged `0 to NGRP-1` | 1 KV head, **bound check failure** |
+
+The last one is a latent defect in a unit that is verified and is not mine to
+edit; it is recorded here and NOT fixed. It is found only at run time, deep
+inside the block, as `bound check failure at attn_emit.vhd:400`.
+
+**The fix costs nothing measurable because only the SPLIT moves.**
+`mk_shape_scaled` gained one defaulted parameter, `attn_hd`, and derives
+`attn_q_heads = 64/attn_hd` and `attn_kv_heads = 32/attn_hd`, so
+`att_q = 64`, `att_qg = 128` and `att_kv = 32` at every legal value:
+
+| `attn_hd` | q heads | kv heads | att_q | att_qg | att_kv |
+|---|---|---|---|---|---|
+| 32 (default) | 2 | 1 | 64 | 128 | 32 |
+| 16 (C_REAL)  | 4 | 2 | 64 | 128 | 32 |
+
+Every descriptor, every region size and every published landmark is therefore
+unchanged, and the two configurations are directly comparable. Verified: the
+bench default still gives `R_X(0) = -12049 hash(R_X) = 86767`.
+
+## What the adapter owns, and the three contracts it had to honour
+
+1. **The activation ports are PREFETCHED, not arbitrated.** `attn_block` is
+   the master of three independent one-cycle read ports (`qg`, `kin`, `vin`)
+   and may drive any of them in any cycle; the region file has ONE element
+   port per client. All three regions are copied into local planes before
+   `start`, with the same two-edge discipline every other adapter here uses,
+   and the ports are then served with the exact hold contract
+   `attn_kv_quant.vhd:103-104` states.
+
+2. **The three source exponents are claimed ONE AT A TIME.** The lock has one
+   combinational exponent port, arbitrated on `act_unit`. The prefetch claims
+   R_QG, then R_KIN, then R_VIN, and captures each at the end of its own
+   phase. Reading all three from one claim is defect 2's family.
+
+3. **The KV cache is a memory, and one token means it is never read.**
+   `attn_kv_axi` does not exist. `llama_top` runs ONE token with `tk0`
+   hardwired, so `cur_pos = 0` and `ctx_len = 1`: the block takes its bypass
+   path, which is `tb_attn_block`'s JOB_POS = 0 case. **The cache read path in
+   this file is written and unexercised**, and that is stated in the RTL
+   because a wired-looking path nobody runs is worse than an absent one.
+
+## The evidence
+
+### Degenerate residuals by depth, `NRUNS = 1`, next to today's numbers
+
+Synthetic weights, `attn_interval` 4, real A and real B throughout:
+
+| BLOCKS | stub C, anchored | **real C, anchored** | stub C, unanchored | **real C, unanchored** |
+|---|---|---|---|---|
+| 1  | 0 | **0** | 1  | **1** |
+| 2  | 0 | **0** | 2  | **2** |
+| 4  | 0 | **0** | 5  | P4 fails, R_X is all zero |
+| 8  | 0 | **0** | 12 | P4 fails |
+| 16 | 3 | **3** | 27 | P4 fails |
+| 32 | 8 | **8** | 56 | P4 fails |
+
+**The anchored column is identical, depth for depth.** Replacing a `-32768 + i`
+ramp with ten real units moves P6 by nothing, which is what it should do:
+P6 measures the residual's SCALE and PART 2's defect-7 fix already had the stub
+publishing its source region's exponent.
+
+The unanchored column is where the real block differs, and it differs by
+failing harder: from 4 blocks on, R_X ends as a vector of zeros and P4 -- "the
+residual actually moved" -- fires. That is the same mechanism PART 6 measured
+from the other side. `attn_block` contains `rmsnorm_rs` instances of its own
+for the QK-norm, so it carries the same 19-octave input window, and the
+unanchored stream leaves it. **A configuration that was merely wrong is now
+visibly dead, which is an improvement in the instrument, not a regression.**
+
+### Everything real: A, B, C, the norm AND the weights
+
+`C_REAL`, `NORM_REAL`, `NORM_ANCHOR=false`, `W_IMAGE` = the PART 6 pooled real
+Qwen3.5-9B image, `NRUNS = 1`, `attn_interval` 4:
+
+| BLOCKS | degenerate | verdict | landmark |
+|---|---|---|---|
+| 1  | 0 | PASS | `R_X(0) = -16525 hash(R_X) = 32918` |
+| 2  | 0 | PASS | `R_X(0) = -16058 hash(R_X) = 43635` |
+| 4  | 0 | PASS | `R_X(0) = -16339 hash(R_X) = 92903` |
+| 8  | 0 | PASS | `R_X(0) = -18752 hash(R_X) = 16447` |
+| 16 | 0 | PASS | `R_X(0) = -21515 hash(R_X) = 16209` |
+| **32** | **0** | **PASS** | `R_X(0) = -14110 hash(R_X) = 52347` |
+
+```
+tb_llama_top: schedule mismatches=0 skew differences=0 degenerate residuals=0
+tb_llama_top RESULT: PASS -- 491 descriptors, 32 blocks, 1 descriptor-latency
+              points, R_X bit-identical across all of them, R_X(0) = -14110
+              hash(R_X) = 52347
+```
+
+`log2 rms` of the norm's input over that run, at norms 0, 8, 16, 24, 32, 40,
+48, 56, 64:
+
+```
+3.20  3.24  3.22  3.22  3.23  3.23  3.30  3.33  3.34
+```
+
+**Flat to a third of an octave over 32 blocks**, 65 distinct magnitudes over 65
+norms, zero all-zero norms. Flatter than PART 6's stub run (3.20 -> 5.24),
+which is the expected direction: the stub was writing a saturated `-32768`
+ramp into the stream and the real block is not.
+
+Skew, same configuration at `BLOCKS = 4`, `NRUNS = 4`, four descriptor-memory
+latencies: `schedule mismatches=0 skew differences=0 degenerate residuals=0`,
+PASS. The three prefetch phases and the y sink are not timing-dependent.
+
+### Teeth checks -- both results, as required
+
+Control: `BLOCKS=4 ATTN_INT=4 NRUNS=1 C_REAL ATTN_HD=16 NORM_REAL` with the
+real weights, `PASS`, 0 degenerate, `R_X(0) = -16339 hash(R_X) = 92903`.
+
+| mutation | result |
+|---|---|
+| the C_REAL branch sets `f_stub` | **FIRES**: "C_REAL is set and the schedule ran 1 attention block(s), but err_unit_stub is HIGH. Some unit still took the stub path." |
+| the y sink drops one beat | **FIRES**: "unit C emitted 63 y elements, the job needs 64", then P3's "an un-stallable producer beat was lost" -> assertion failure |
+| `C_REAL` with `ATTN_HD = 32` | **FIRES** at elaboration: "HEAD_DIM is not an even power of two" |
+| the R_VIN exponent claim pointed at R_X | **PASSES BROKEN.** `R_X(0) = -16565 hash(R_X) = 74876` against the control's `-16339 / 92903` |
+| the R_QG prefetch consumes at k-3 instead of k-2 | **PASSES BROKEN.** `R_X(0) = -15999 hash(R_X) = 28361` |
+
+One more guard was added after the first pass and it fires on a REAL
+configuration rather than on a mutant. Subsystem C's exponent ports are 8-bit
+signed by spec and the residual stream's exponent is 16-bit here, so the
+narrowing on the way in would WRAP silently -- the same defect class PART 3
+found in subsystem B's ports. Free-running, the check fires **175,313 times**
+in the unanchored 32-block real-C run and is silent in every configuration
+that passes; it is now sticky, reports once and sets `f_lost`.
+
+The first three have teeth. **The last two do not, and that is the result, not
+a gap in the report.** Both mutations are load-bearing -- each changes every
+element of the residual -- and no property in this bench can see either,
+because both are deterministic wrong numbers that every latency reproduces
+identically. **This is defect 2's family for the fourth and fifth time in this
+file.** The only instrument that catches them is reading the code.
+
+**The three `exp_rd_valid` asserts on R_QG, R_KIN and R_VIN have NEVER FIRED
+and could not be made to.** Every attention block in a legal schedule is
+preceded by a GDN block that captures every region, so no reachable
+configuration reaches a C job with an uncaptured claim. An all-attention
+schedule would, and `BLOCKS=2 ATTN_INT=1` does not elaborate at all -- a
+pre-existing bound check inside `matvec_int4`'s declarative elaboration, not
+caused by this work and not chased here. **The three asserts are wired and
+unproven.**
+
+### The gate
+
+`sim/regress.sh`, full both-suite run on the final tree, with `W_IMAGE` at its
+default `""` and `C_REAL` at its default FALSE:
+
+```
+ suite sim   PASS 51   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 77   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5
+ baseline: 77 passing, matches the recorded floor of 77
+ REGRESSION: PASS
+```
+
+No bench was added here.  The floor moved 76 -> 77 during this session because
+another agent added one and raised it; the run above is against that floor and
+matches it.
+
+## Measured and REJECTED -- do not retry (Part 7)
+
+* **One KV head.** `attn_emit.vhd:400` assigns `grp <= 1` with `grp` ranged
+  `0 to NGRP-1`, so `N_KVH = 1` is a run-time bound check failure inside a
+  verified unit. Do not build a shape with one KV head expecting the block to
+  refuse cleanly; it aborts halfway through the first attention block.
+
+* **`attn_head_dim = 32` with the real C.** `2**5` is not an even power of
+  two, `kq_scale` cannot be folded, and the block refuses at elaboration. It
+  is the DEFAULT of `mk_shape_scaled` and every published landmark in this
+  file is at it, which is why the parameter exists rather than the constant
+  being changed.
+
+* **Expressions in a port map, on GHDL 1.0 mcode.** `qg_exp => resize(qg_e, 8)`
+  as an actual raised `Exception TYPES.INTERNAL_ERROR : trans.adb:553` -- a
+  GHDL bug report, not a diagnostic, which reads as a broken design. Every
+  actual is now a plain signal or constant and the intermediate assignments
+  are concurrent statements.
+
+* **A read-latency mutant that indexes off the end.** `qg_buf(k-1)` at
+  `k = QGN+1` aborts with `index (128) out of bounds`, which is a broken
+  mutant and not a result. PART 5 recorded this exact trap; it cost time
+  again. The useful mutant moves the index the OTHER way, `k-3`, which stays
+  in range.
+
+## Measurement traps hit (Part 7)
+
+* **`clog2(1) = 0` makes a port a NULL VECTOR**, and every `to_integer` on it
+  prints `NUMERIC_STD.TO_INTEGER: null detected, returning 0`. Thousands of
+  them, mixed into the metavalue warnings, and they are harmless and correct.
+  They are also the only visible symptom that a shape has one KV head.
+
+* **A `report ... severity error` is not a verdict.** The y-element-count
+  check was written as a bare report; the mutant that drops a beat printed it
+  and the run still said PASS, because `sim/regress.sh`'s `FAIL_RE` carries
+  six specific literals and that string contains none of them. It now sets
+  `f_lost`, which P3 reads, so the run FAILS.
+
+* **A mutant that changes nothing is not a passing teeth check.** Pointing the
+  R_VIN claim at R_ALPHA left the hash bit-identical -- the two regions happen
+  to carry the same captured exponent in that run -- which reads as "the guard
+  has no teeth" and is really "the mutation was a no-op". Re-aimed at R_X,
+  whose exponent is far away, it changes every element.
+
+* **The regression runner prints its summary TWICE without `--keep`**, and the
+  second copy reads a scratch directory it has already deleted, so it reports
+  `PASS 0 FAIL 81` under the genuine `REGRESSION: PASS`. Read the FIRST
+  summary; it is the one with a baseline line under it.
+
+## Open, not yet answered (Part 7)
+
+* **Nothing establishes that the block computes attention.** This is the
+  headline open item and it is unchanged: `ref/attn_gated_fx.c` does not
+  exist, `sim/tb_attn_block.vhd` checks seams, and `sim/tb_llama_top.vhd`
+  checks the schedule and the scale. The integration replaced a unit that was
+  deliberately, visibly wrong with one that is plausibly right and unverified
+  at block level.
+
+* **`attn_kv_axi` is still absent**, and one token means the cache read path
+  in this file has never executed. Everything the AXI unit would provide --
+  4 KB burst splitting, record-phase realignment, drain-then-flush on `start`,
+  `done` gated on BRESP -- is still missing, and now it is missing behind a
+  port that looks connected.
+
+* **The KV cache write path IS exercised and its contents are never read
+  back**, so a wrong record layout would be invisible.
+
+* **One token, `cur_pos = 0`.** `v_ref` is a per-SEQUENCE fold and its
+  multi-token behaviour -- the whole reason the fold is per sequence -- is not
+  exercised. `kv_seq_rst` is driven as a level held until `seq_rst_taken`, and
+  taken once after reset.
+
+* **The QK-norm gains are fixed-scale stand-ins**, like the D-vec norm's and
+  B's conv weights, for the same reason: they are learned weights with no
+  region and no packing.
+
+* **The unanchored real-C path fails P4 from 4 blocks up** and the mechanism
+  is inferred from PART 6 rather than instrumented: `attn_block`'s own
+  `rmsnorm_rs` instances presumably hit their zero rail. No probe was put
+  inside the block to confirm it.
+
+* **`NRUNS = 1` for the depth sweep.** The 4-block point is skew-clean at
+  `NRUNS = 4`; the 32-block point is single-latency.
+
+* **No synthesis.** The `G`-cone DSP cost the subsystem C write-up derived
+  (C aux 47 -> 87, C total 431 -> 471) is still arithmetic on a skeleton's
+  rows, and now there is an integration to price as well.

@@ -127,7 +127,25 @@ package llama_map_pkg is
   -- -- attention every `attn_interval` blocks, q|k|v contiguous in that order,
   -- FFN wider than hidden -- and only the counts shrink.  `blocks` is an
   -- explicit argument so a 4-block run and a 32-block run differ in ONE place.
-  function mk_shape_scaled(blocks : positive; attn_interval : positive)
+  -- `attn_hd` exists ONLY because `rtl/attn_block.vhd` and `rtl/attn_emit.vhd`
+  -- refuse to run at the 2 query heads / 1 KV head / head dim 32 this function
+  -- used to hardcode.  Three separate constraints, each of which produces a
+  -- failure rather than a wrong number:
+  --   * attn_block folds `kq_scale = 1/sqrt(HEAD_DIM)` into an exponent, which
+  --     is exact only for an EVEN power of two.  32 is 2**5.
+  --   * attn_mac_array needs a GQA group of at least 2, which holds either way.
+  --   * attn_emit assigns `grp <= 1` at S_IDLE with `grp` ranged 0 to NGRP-1,
+  --     so NGRP = 1 -- one KV head -- is a bound check failure.  That is a
+  --     latent defect in a verified unit and it is NOT fixed here; the shape
+  --     avoids it.
+  --
+  -- THE ATTENTION REGION SIZES DO NOT MOVE, and that is the point.  Only the
+  -- SPLIT changes: `attn_q_heads * attn_head_dim` stays 64 and
+  -- `attn_kv_heads * attn_head_dim` stays 32 at every legal `attn_hd`, so
+  -- att_q, att_qg and att_kv -- and therefore every descriptor, every region
+  -- size and every published landmark -- are IDENTICAL at 32 and at 16.
+  function mk_shape_scaled(blocks : positive; attn_interval : positive;
+                           attn_hd : positive := 32)
     return shape_t;
 
   -- derived widths.  Every caller uses these; nobody re-derives them.
@@ -171,7 +189,8 @@ package body llama_map_pkg is
             vocab_shard   => m.vocab / ncards);
   end function;
 
-  function mk_shape_scaled(blocks : positive; attn_interval : positive)
+  function mk_shape_scaled(blocks : positive; attn_interval : positive;
+                           attn_hd : positive := 32)
     return shape_t is
   begin
     -- THE GDN NUMBERS ARE NOT ARBITRARY.  key_heads 2, val_heads 4,
@@ -184,8 +203,11 @@ package body llama_map_pkg is
     -- of shortcut is a wrong number, not an elaboration error.
     --
     --   key_dim 64, val_dim 128, qkv_dim 256, hidden 64, ffn 128.
-    --   attention: 2 q heads, 1 kv head, head dim 32
-    --              -> att_q 64, att_qg 128, att_kv 32.
+    --   attention: att_q 64, att_qg 128, att_kv 32, at EVERY legal attn_hd.
+    --              attn_hd = 32 -> 2 q heads, 1 kv head (the default, and the
+    --              shape every published landmark was measured at).
+    --              attn_hd = 16 -> 4 q heads, 2 kv heads (what the real
+    --              `attn_block` needs; see the declaration).
     return (blocks        => blocks,
             attn_interval => attn_interval,
             hidden        => 64,
@@ -194,9 +216,9 @@ package body llama_map_pkg is
             val_heads     => 4,
             head_dim      => 32,
             conv_kernel   => 4,
-            attn_q_heads  => 2,
-            attn_kv_heads => 1,
-            attn_head_dim => 32,
+            attn_q_heads  => 64 / attn_hd,
+            attn_kv_heads => 32 / attn_hd,
+            attn_head_dim => attn_hd,
             vocab_shard   => 128);
   end function;
 
