@@ -186,7 +186,20 @@ proc rd {ax addr} {
     } err]} {
         return "-1"
     }
-    return $v
+    # `-t d4` returns a SIGNED DECIMAL string.  Every comparison in this file
+    # is against a HEX string, so this proc used to hand back e.g. 1096112177
+    # and the caller compared it to "41555831" and concluded no master had
+    # answered -- while printing "0x1096112177", a decimal with an 0x glued on,
+    # which is not a number in any base.  The aux domain was alive and correct
+    # the whole time.  Normalise here, once, rather than at every call site.
+    #
+    # -1 is kept as the distinguished NO ANSWER token even though it is also
+    # 0xFFFFFFFF, because that is the convention the rest of this file and
+    # docs/2026-08-28_fk33-first-fit-handoff.md already use: a failed AXI
+    # transaction reports as -1 rather than raising.
+    if {![string is integer -strict $v]} { return "-1" }
+    if {$v == -1} { return "-1" }
+    return [format "%08X" [expr {$v & 0xFFFFFFFF}]]
 }
 
 # Find the aux master by ASKING, not by index.  get_hw_axis returns the masters

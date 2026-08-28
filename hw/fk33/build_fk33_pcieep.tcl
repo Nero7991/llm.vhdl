@@ -554,7 +554,7 @@ if {$EnablePCIe == 1} {
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 id_magic
 set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {1179333427}] [get_bd_cells id_magic]
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 id_build
-set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {539363367}] [get_bd_cells id_build]
+set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {539363368}] [get_bd_cells id_build]
 
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 fk33_id
 set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_GPIO2_WIDTH {32} \

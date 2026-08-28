@@ -204,7 +204,26 @@ NO_PCIE_ONLY_PORTS = ()
 # of a "0x..." string in it is not something worth finding out on a build that
 # costs an hour.
 ID_MAGIC = 0x464B3333          # "FK33"
-ID_BUILD = 0x20260827          # yyyymmdd, BCD
+ID_BUILD = 0x20260828          # yyyymmdd, BCD.  SEE THE CHECK BELOW.
+
+# THE TWO BUILD STAMPS MUST AGREE, AND ON 2026-08-28 THEY DID NOT.
+#
+# `ID_BUILD` here feeds the id_build constant at AXI-Lite 0xA008, which is what
+# `host/fk33ctl.py id` prints as the bitstream's identity.  `C_VERSION` in
+# rtl/fk33_aux.vhd feeds AUX_VERSION at the aux base, which is what
+# tcl/aux_probe.tcl prints.  They are set independently, and the aux work
+# updated one and not the other, so a card running the THERMAL bitstream
+# reported `id build 0x20260827` over PCIe and `AUX_VERSION 0x20260828` over
+# JTAG at the same moment.
+#
+# That is not cosmetic.  Three bitstreams were in play that day
+# (fk33_pcieep, _aux, _therm) and the id stamp read identically for all of
+# them, so the one register whose job is to say WHICH bitstream is loaded
+# would have answered wrongly if it had been asked.
+#
+# Rather than keep two hand-maintained dates in step by discipline, the
+# generator now REFUSES to emit a build when they disagree.  Bump both, or
+# neither.
 
 # AXI-Lite BAR is 128 KB (0x00000 .. 0x1FFFF).  Existing occupants: SYSMON at
 # 0x3000 and the I2C/LED GPIO at 0x9000, both 4 KB.
@@ -1388,6 +1407,18 @@ def main():
         sys.exit("ABORT: rtl/fk33_aux.vhd no longer defaults G_POT_WIPER to 68. "
                  "Refusing to emit a build whose autonomous controller may move "
                  "VCCINT somewhere else.")
+    m = re.search(r'constant\s+C_VERSION\s*:\s*std_logic_vector\(31 downto 0\)\s*:=\s*x"([0-9A-Fa-f]{8})"', aux_src)
+    if not m:
+        sys.exit("ABORT: rtl/fk33_aux.vhd no longer declares C_VERSION as an 8-digit "
+                 "hex constant, so the two build stamps cannot be compared. "
+                 "See the ID_BUILD comment.")
+    if int(m.group(1), 16) != ID_BUILD:
+        sys.exit("ABORT: the two build stamps disagree. "
+                 "gen_pcieep.py ID_BUILD = 0x%08X (AXI-Lite 0xA008, what "
+                 "fk33ctl.py id prints) but rtl/fk33_aux.vhd C_VERSION = 0x%s "
+                 "(AUX_VERSION, what aux_probe.tcl prints). A card would report "
+                 "two different identities for one bitstream. Bump both, or "
+                 "neither." % (ID_BUILD, m.group(1).upper()))
     if "assert G_POT_WIPER = 68" not in aux_src:
         sys.exit("ABORT: rtl/fk33_aux.vhd lost its elaboration-time assertion "
                  "that the wiper is 68.")
