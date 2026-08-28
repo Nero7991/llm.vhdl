@@ -279,3 +279,40 @@ unlimited margin.**
   and `gdn_emit_chain` at once.
 - Whether 237.8 MHz should remain the die target. It is `matvec_core`'s number
   and every other unit measured is below it.
+
+---
+
+## CORRECTION, 2026-08-27, same day
+
+**The citation "C spec 3.13 item 1 already names `MREG` on the 34x32 Newton
+stage as the expected fix" is WRONG and is withdrawn. C spec section 3.13 item 1
+says the opposite.** Its own words are that "`MREG` was NOT the fix, and this
+item predicted that it was" -- worth 26 MHz of 183, with an MREG-cadence version
+measuring **117.2 MHz against 138.4**. So the citation recommended, on this
+document's authority, the one change that spec had already measured and
+rejected. It was repeated from here into two work assignments before anyone
+checked it.
+
+**The real diagnosis, which is better than the one this document offered:**
+`mr_m` (MREG) and `mr_p` (PREG) were ALREADY present in both `l2norm_rs` and
+`rmsnorm_rs`, and the three-step cadence exists precisely to buy them -- both
+file headers say so. A DSP48E2 multiplier is 27x18, so the 34x32 Newton
+multiply spans TWO tiles, and what was unregistered was the **hop between
+them**. That is why the path starts at `DSP_A_B_DATA_INST` and reads 84-88%
+logic. `rmsnorm_rs:333-346` had already written down the residual in as many
+words: "its 34x32 form spans two DSPs with nothing between them."
+
+The fix that landed is a third register level, `mr_m -> mr_m2 -> mr_p`, giving
+the tool somewhere to put a flop inside that span. It costs +6 cycles per
+rsqrt, and `l2norm_rs` pays it twice because `S_NEXT` returns to `S_ARG` for a
+second rsqrt on the q path. Full account in
+`docs/debugging/2026-08-27_newton-rsqrt-cascade-hop.md`.
+
+**Consequence for the numbers in this document: they are PRE-`mr_m2`.** The
+224.57 and 211.46 MHz figures were measured before that change, so they are the
+floor this fix is meant to lift, not a result that includes it. Its Fmax effect
+at 0.717 V is UNMEASURED.
+
+The lesson is narrower than "check citations": a spec item that names a fix and
+a spec item that names a *rejected* fix read almost identically when quoted at
+one line of context, and this one was quoted at one line of context.
