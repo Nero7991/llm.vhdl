@@ -101,3 +101,6 @@ hw/fk33/host/fk33_bringup
 # source is one careless glob away from being compiled instead of it.
 *.orig
 *.rej
+
+# Saved FK33 bitstreams (large, reproducible from the build scripts)
+hw/fk33/bit/

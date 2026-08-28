@@ -27,9 +27,26 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Prefer the SAVED copies under hw/fk33/bit/.  The build writes into a
+# per-session scratchpad under /tmp, and /tmp on this box is emptied at every
+# boot (`D /tmp` in /usr/lib/tmpfiles.d/tmp.conf, and systemd-tmpfiles-setup
+# runs with --remove --boot; verified 2026-08-27).  Fitting the card requires
+# a power-off, so a bitstream left in /tmp does not survive to the moment it
+# is needed.  ./save_bitstream.sh copies them here.
+BITDIR="${FK33_BITDIR:-$PWD/bit}"
 BUILD_ROOT="${BUILD_ROOT:-/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pcieep}"
+if [[ -z "${EP_BIT:-}" && -f "$BITDIR/fk33_pcieep.bit" ]]; then
+    EP_BIT="$BITDIR/fk33_pcieep.bit"
+fi
 EP_BIT="${EP_BIT:-$BUILD_ROOT/fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit}"
+if [[ -z "${PROBE_BIT:-}" && -f "$BITDIR/fk33_i2cprobe.bit" ]]; then
+    PROBE_BIT="$BITDIR/fk33_i2cprobe.bit"
+fi
 PROBE_BIT="${PROBE_BIT:-$PWD/fk33_i2cprobe/fk33_i2cprobe.runs/impl_1/bd_wrapper.bit}"
+case "$EP_BIT" in /tmp/*)
+    echo "WARNING: the endpoint bitstream is under /tmp, which this box clears"
+    echo "         at every boot.  Run ./save_bitstream.sh before powering off." ;;
+esac
 
 MODE="${1:-full}"
 

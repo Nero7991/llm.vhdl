@@ -13,9 +13,26 @@ set -uo pipefail
 say () { printf '\n=== %s ===\n' "$*"; }
 verdict () { printf '  %-6s %s\n' "$1" "$2"; }
 
-# The slot the card has been seated in before is the free chipset x4 port
-# 00:1c.0.  That is the default guess; override with FK33_RP.
-RP="${FK33_RP:-0000:00:1c.0}"
+# CORRECTED 2026-08-27.  The default used to be hardcoded to 0000:00:1c.0 and
+# described as "the free chipset x4 port".  Measured on this box it is neither
+# safe nor x4:
+#   0000:00:01.0  CPU   Gen5 x8   RTX 3090 Ti
+#   0000:00:01.1  CPU   Gen5 x8   Samsung root NVMe (trains x4)
+#   0000:00:06.0  CPU   Gen4 x4   Crucial P3 /mnt/storage
+#   0000:00:1c.0  PCH   Gen3 x1   EMPTY            <-- only free port
+#   0000:00:1c.2  PCH   Gen3 x1   Intel I225-V NIC
+#   0000:00:1c.4  PCH   Gen4 x4   RTX 3090
+# So the only free root port visible with no card in is x1, and a second x4
+# port may only appear once a card is present.  Auto-detect instead.
+RP="${FK33_RP:-}"
+if [[ -z "$RP" ]]; then
+    for b in /sys/bus/pci/devices/*/; do
+        [[ -e "$b/secondary_bus_number" ]] || continue
+        n=0; for c in "$b"0000:*; do [[ -e "$c/vendor" ]] && n=$((n+1)); done
+        (( n == 0 )) && RP="$(basename "$b")" && break
+    done
+fi
+RP="${RP:-0000:00:1c.0}"
 
 say "STAGE 1  is anything there at all"
 # Isolates: whether the FPGA presented a config space.  Nothing about DMA,
@@ -42,13 +59,27 @@ say "STAGE 2  root port link state ($RP)"
 if ! lspci -s "$RP" >/dev/null 2>&1; then
     verdict SKIP "no such root port; find it with: lspci -tv"
 else
-    if [[ $EUID -ne 0 ]]; then
-        echo "  (LnkSta needs root for the full capability dump; re-run with sudo"
-        echo "   for this stage only)"
+    # LnkSta lives past the 64 config bytes an unprivileged reader may see, so
+    # `lspci -vvv` yields "Capabilities: <access denied>" and this stage -- the
+    # single most diagnostic one -- used to print NOTHING for a normal user.
+    # The kernel exports the same two fields world-readable.  Use those, and
+    # treat lspci as enrichment for the root case only.
+    MW="$(cat /sys/bus/pci/devices/$RP/max_link_width 2>/dev/null)"
+    MS="$(cat /sys/bus/pci/devices/$RP/max_link_speed 2>/dev/null)"
+    CW="$(cat /sys/bus/pci/devices/$RP/current_link_width 2>/dev/null)"
+    CS="$(cat /sys/bus/pci/devices/$RP/current_link_speed 2>/dev/null)"
+    echo "  sysfs  capability $MS x$MW   current $CS x$CW"
+    STA="LnkSta: Speed $CS, Width x$CW"
+    if [[ $EUID -eq 0 ]]; then
+        lspci -vvv -s "$RP" 2>/dev/null | grep -E 'LnkCap:|LnkSta:|SltSta:' | sed 's/^/  /' || true
     fi
-    LNK="$(lspci -vvv -s "$RP" 2>/dev/null | grep -E 'LnkCap:|LnkSta:|SltSta:' || true)"
-    echo "${LNK:-  (no link capability lines readable)}"
-    STA="$(echo "$LNK" | grep 'LnkSta:' || true)"
+    for sl in /sys/bus/pci/slots/*; do
+        [[ -d "$sl" ]] || continue
+        [[ "$(cat "$sl/address" 2>/dev/null)" == *":$(printf '%02x' "$(cat /sys/bus/pci/devices/$RP/secondary_bus_number)")":* ]] || continue
+        echo "  slot $(basename "$sl")  presence detect = $(cat "$sl/adapter")  power = $(cat "$sl/power")"
+        echo "  (presence detect is the ONLY signal that separates 'not seated"
+        echo "   or unpowered' from 'seated but the link will not train')"
+    done
     case "$STA" in
         *"Width x0"*)
             verdict FAIL "width x0: LINK TRAINING FAILED"
@@ -63,10 +94,19 @@ else
             ;;
         *"Width x4"*)  verdict PASS "width x4, as designed" ;;
         *"Width x1"*|*"Width x2"*)
-            verdict WARN "link trained NARROWER than x4"
-            echo "  Lanes 1-3 are not making it through.  On a bare slot that is"
-            echo "  a solder or contact problem; through the MCIO adapters it is"
-            echo "  the cable or the adapter's lane mapping.  Not a design fault."
+            if [[ "$CW" == "$MW" ]]; then
+                verdict WARN "trained x$CW, which is ALL this port has (max x$MW)"
+                echo "  NOT lanes dropping out.  The root port is only x$MW wide."
+                echo "  Gen3 x1 is about 0.98 GB/s.  The design is fine; the slot"
+                echo "  is the limit.  On this board 0000:00:1c.0 is a Gen3 x1"
+                echo "  port and 0000:00:1c.4 (Gen4 x4) is occupied by the RTX"
+                echo "  3090, so a full-width link needs a card moved."
+            else
+                verdict WARN "trained x$CW but the port can do x$MW: lanes ARE dropping out"
+                echo "  On a bare slot that is a solder or contact problem;"
+                echo "  through the MCIO adapters it is the cable or the"
+                echo "  adapter's lane mapping.  Not a design fault."
+            fi
             ;;
         *) verdict INFO "read LnkSta above by hand" ;;
     esac
