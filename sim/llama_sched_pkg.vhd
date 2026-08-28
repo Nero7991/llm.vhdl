@@ -294,11 +294,28 @@ package body llama_sched_pkg is
                    nsub_w  => 29,
                    nsub_s  => 4,
                    const_base => p(i).blk);
-      -- w_exp / out_shift / const_exp, derived from the step index exactly as
-      -- seq_tbl_pkg does, so a stale or shared capture is a WRONG NUMBER and
-      -- not a repeat of the right one.
+      -- w_exp / out_shift / const_exp, derived from the step index so that a
+      -- stale or shared capture is a WRONG NUMBER and not a repeat of the
+      -- right one.
+      --
+      -- `out_shift` IS NOT FREE TO VARY THE WAY seq_tbl_pkg's IS.
+      -- `matvec_core.vhd:850-867` rejects `out_shift < 0` or `out_shift > 40`
+      -- at `start` and raises `err` instead of computing.  seq_tbl_pkg emits
+      -- `(p mod 23) - 11`, which is negative for eleven steps in every
+      -- twenty-three -- fine for a walker testbench that never starts a real
+      -- matvec, and an immediate ERR_UNIT for a top level that does.  This
+      -- table is walked by the real unit, so the host emits a legal shift.
+      -- Stated here rather than clamped in the adapter, because clamping a
+      -- descriptor field in gateware is how a schedule and a build come to
+      -- disagree silently.
+      --
+      -- The RANGE is `i mod 5` and not `i mod 17` for a second reason,
+      -- measured: at `mod 17` a shift of 16 drives every element of the
+      -- scaled shape to zero, and a residual stream of zeros passes a
+      -- skew-invariance test perfectly.  A test whose data is all zero is not
+      -- a test.
       d(2)(31 downto 0)  := std_logic_vector(to_signed(((i * 7) mod 61) - 30, 32));
-      d(2)(63 downto 32) := std_logic_vector(to_signed((i mod 23) - 11, 32));
+      d(2)(63 downto 32) := std_logic_vector(to_signed(i mod 5, 32));
       d(4)(63 downto 32) := std_logic_vector(to_signed(((i * 5) mod 41) - 20, 32));
       for w in 0 to 7 loop
         t(i*8 + w) := d(w);

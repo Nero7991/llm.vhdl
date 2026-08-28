@@ -76,7 +76,10 @@ entity tb_llama_top is
     ATTN_INT  : positive := 4;
     -- The descriptor-memory latencies to sweep.  Run 0 is the reference.
     NRUNS     : positive := 4;
-    A_BEHAV   : boolean  := true;
+    -- The DEFAULT configuration is the most real one available: the real
+    -- `matvec_int4`.  Set A_BEHAV true to bisect a failure to a side of the
+    -- D-to-A seam.
+    A_BEHAV   : boolean  := false;
     B_BEHAV   : boolean  := true;
     MAXCYC    : natural  := 4000000
   );
@@ -129,6 +132,55 @@ architecture tb of tb_llama_top is
   signal obs_dst : unsigned(7 downto 0);
 
   signal err_lost_beat, err_gate_drop, err_unit_stub, err_e_coll : std_logic;
+
+  -- ---- subsystem A's weight ports -------------------------------------
+  signal m_arvalid, m_arready, m_rvalid, m_rready, m_rlast
+       : std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+  signal m_araddr  : std_logic_vector(A_NPORTS*32-1 downto 0);
+  signal m_arlen   : std_logic_vector(A_NPORTS*8-1 downto 0);
+  signal m_arsize  : std_logic_vector(A_NPORTS*3-1 downto 0);
+  signal m_arburst : std_logic_vector(A_NPORTS*2-1 downto 0);
+  signal m_rdata   : std_logic_vector(A_NPORTS*128-1 downto 0)
+                   := (others => '0');
+
+  -- THE WEIGHT MEMORY IS A FUNCTION, NOT AN ARRAY.  The real 9B weights are
+  -- 4.5 GB and the addresses this bench generates span megabytes, so the
+  -- model answers every address arithmetically.  Ports 0..A_NPORTS-2 carry
+  -- packed INT4 weight nibbles; the last port carries per-block scales, which
+  -- the spec constrains to uint15 -- 32768 does not fit and a codebook entry
+  -- of -128 is forbidden -- so that lane is masked into [16384, 32767].
+  --
+  -- WHAT THIS DOES AND DOES NOT ESTABLISH.  It does NOT establish that A
+  -- computes the right dot product: that is `sim/run_matvec.sh`'s job, it has
+  -- an independent C oracle and a packer, and it passes.  What it establishes
+  -- is that the SEAM works -- that A is fed a coherent descriptor, that its
+  -- un-refusable output is never dropped, that its one-cycle `done` is
+  -- converted to the level D requires, and that all of that is invariant
+  -- under handshake timing.  A synthetic weight image is sufficient for that
+  -- and an incorrect packing would be caught by run_matvec.sh, not here.
+  function wword(p : natural; idx : natural) return std_logic_vector is
+    variable v : std_logic_vector(127 downto 0);
+    variable x, i2 : natural;
+  begin
+    -- `idx` is reduced BEFORE the multiply.  It is a 24-bit word index and
+    -- the bench addresses megabytes, so `idx*7919` overflows VHDL's 32-bit
+    -- universal integer at 491 steps and aborts the run with
+    -- "overflow detected" from inside this function -- which reads like a
+    -- broken AXI slave and is arithmetic in the stimulus.
+    i2 := idx mod 65536;
+    if p = A_NPORTS-1 then
+      for l in 0 to 7 loop
+        x := 16384 + ((i2*13 + l*7 + 3) mod 16384);
+        v(l*16+15 downto l*16) := std_logic_vector(to_unsigned(x, 16));
+      end loop;
+    else
+      for b in 0 to 15 loop
+        x := (i2*7919 + p*104729 + b*31 + 17) mod 251;
+        v(b*8+7 downto b*8) := std_logic_vector(to_unsigned(x, 8));
+      end loop;
+    end if;
+    return v;
+  end function;
   signal obs_cmp_exp : signed(EXP_W-1 downto 0);
   signal obs_wsum    : unsigned(31 downto 0);
 
@@ -207,6 +259,10 @@ begin
       hr_reg => hr_reg, hr_addr => hr_addr, hr_data => hr_data,
       obs_issue => obs_issue, obs_unit => obs_unit, obs_opcode => obs_opcode,
       obs_step => obs_step, obs_dst => obs_dst, obs_cmp => obs_cmp,
+      m_arvalid => m_arvalid, m_arready => m_arready, m_araddr => m_araddr,
+      m_arlen => m_arlen, m_arsize => m_arsize, m_arburst => m_arburst,
+      m_rvalid => m_rvalid, m_rready => m_rready, m_rdata => m_rdata,
+      m_rlast => m_rlast,
       obs_cmp_exp => obs_cmp_exp, obs_wsum => obs_wsum,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
@@ -220,6 +276,54 @@ begin
       end if;
     end if;
   end process;
+
+  -- ======================================================================
+  -- THE AXI READ SLAVES, one per weight port.  INCR bursts only, one burst in
+  -- flight per port, `rvalid` held until `rready`.
+  -- ======================================================================
+  slaves : for p in 0 to A_NPORTS-1 generate
+    signal aw    : unsigned(31 downto 0) := (others => '0');
+    signal beats : natural := 0;
+    signal act   : std_logic := '0';
+  begin
+    m_arready(p) <= not act;
+
+    slv : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then
+          act <= '0'; beats <= 0; m_rvalid(p) <= '0'; m_rlast(p) <= '0';
+        elsif act = '0' then
+          m_rvalid(p) <= '0';
+          m_rlast(p)  <= '0';
+          if m_arvalid(p) = '1' then
+            assert m_arburst((p+1)*2-1 downto p*2) = "01"
+              report "tb_llama_top: port " & integer'image(p)
+                   & " issued a burst that is not INCR" severity failure;
+            aw    <= unsigned(m_araddr((p+1)*32-1 downto p*32));
+            beats <= to_integer(unsigned(m_arlen((p+1)*8-1 downto p*8))) + 1;
+            act   <= '1';
+          end if;
+        else
+          if m_rvalid(p) = '0' or m_rready(p) = '1' then
+            if beats > 0 then
+              m_rdata((p+1)*128-1 downto p*128)
+                <= wword(p, to_integer(aw(27 downto 4)));
+              m_rvalid(p) <= '1';
+              if beats = 1 then m_rlast(p) <= '1';
+              else              m_rlast(p) <= '0'; end if;
+              aw    <= aw + 16;
+              beats <= beats - 1;
+            else
+              m_rvalid(p) <= '0';
+              m_rlast(p)  <= '0';
+              act         <= '0';
+            end if;
+          end if;
+        end if;
+      end if;
+    end process;
+  end generate;
 
   -- ======================================================================
   -- THE DESCRIPTOR MEMORY.  `d_rdata` is 'X' whenever `d_rvalid` is low, so a
@@ -488,6 +592,23 @@ begin
     assert nz > 0
       report "tb_llama_top: R_X is unchanged after a whole token.  The "
            & "machine sequenced the schedule and computed nothing."
+      severity failure;
+
+    -- ---- P4b: the residual is not a constant -----------------------------
+    -- A stream that saturated everywhere, or that was overwritten by one
+    -- broadcast value, passes P1 through P4 and is worthless.  Count distinct
+    -- values.  This is the check that caught `out_shift` = 16 driving every
+    -- element of the scaled shape to zero.
+    nz := 0;
+    for i in 1 to SHAPE.hidden-1 loop
+      if results(0)(i) /= results(0)(0) then nz := nz + 1; end if;
+    end loop;
+    assert nz >= SHAPE.hidden/4
+      report "tb_llama_top: only " & integer'image(nz) & " of "
+           & integer'image(SHAPE.hidden-1) & " R_X elements differ from "
+           & "R_X(0) = " & integer'image(results(0)(0))
+           & ".  The residual stream is very nearly a constant, which passes "
+           & "every determinism property and means nothing."
       severity failure;
 
     -- ---- the trace: where did two timings first diverge, and in what ----

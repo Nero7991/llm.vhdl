@@ -145,11 +145,29 @@ entity llama_top is
     STRICT     : boolean  := true;
 
     -- Bisection switches.  See the header.  Both false = the real units.
-    A_BEHAV : boolean := true;
+    -- A_BEHAV defaults FALSE because the real `matvec_int4` is instantiated
+    -- and the default configuration of a top level should be the real one.
+    -- B_BEHAV defaults TRUE because the real `gdn_block` is not wired yet.
+    A_BEHAV : boolean := false;
     B_BEHAV : boolean := true;
 
     -- Set false only in a run that is deliberately measuring the banner cost.
-    SHOUT   : boolean := true
+    SHOUT   : boolean := true;
+
+    -- SUBSYSTEM A's GEOMETRY IS NOT FREE.  `weight_streamer.vhd:100-103`
+    -- asserts NPORTS_W * AXI_DW = ROWS_IF * BLK * 4, and the packed byte
+    -- layout is only defined at AXI_DW = 128 with BLK = 32, so BLK = 32,
+    -- AXI_DW = 128 and NPORTS_W = ROWS_IF is the whole legal family.
+    A_BLK      : positive := 32;
+    A_ROWS_IF  : positive := 4;
+    A_FIFO     : positive := 64;
+    A_MAXB     : positive := 16;
+    -- Bytes of address space per A job, and where the first one starts.  Each
+    -- job gets its own aligned block so two jobs cannot alias, and each port
+    -- gets a 4 KB-aligned sub-region inside it because `axi_rd_port` requires
+    -- a 4 KB-aligned base and pads sub-regions to whole bursts.
+    A_JOB_STRIDE : natural := 16#8000#;
+    A_MEM_BASE   : natural := 16#100000#
   );
   port(
     clk : in std_logic;
@@ -189,6 +207,23 @@ entity llama_top is
     hr_reg   : in  natural range 0 to NREGION-1;
     hr_addr  : in  natural range 0 to REGMAX-1;
     hr_data  : out signed(MANT_W-1 downto 0);
+
+    -- ---- subsystem A's weight ports ------------------------------------
+    -- NPORTS_W+1 = 5 AXI4 read-only masters: four weight sub-regions and one
+    -- dedicated scale sub-region.  They leave the top level because the
+    -- weights live in HBM and the memory model belongs to whoever is driving
+    -- the top level, not inside it.  Tied off when A_BEHAV.
+    m_arvalid : out std_logic_vector(A_NPORTS-1 downto 0);
+    m_arready : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+    m_araddr  : out std_logic_vector(A_NPORTS*32-1 downto 0);
+    m_arlen   : out std_logic_vector(A_NPORTS*8-1 downto 0);
+    m_arsize  : out std_logic_vector(A_NPORTS*3-1 downto 0);
+    m_arburst : out std_logic_vector(A_NPORTS*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+    m_rready  : out std_logic_vector(A_NPORTS-1 downto 0);
+    m_rdata   : in  std_logic_vector(A_NPORTS*128-1 downto 0)
+              := (others => '0');
+    m_rlast   : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
 
     -- ---- observability, for the testbench and for the host -------------
     obs_issue  : out std_logic;                       -- 1 cycle per step
@@ -407,6 +442,32 @@ architecture rtl of llama_top is
     return to_signed(v, MANT_W);
   end function;
 
+  -- Subsystem A's shape limits, derived from SHAPE so nobody re-derives them.
+  -- `n_cols` is the SOURCE width of an A job and `n_rows` the destination
+  -- width.  The lm_head step's `n_rows` is the vocabulary shard, which is far
+  -- larger than any region -- it is issued with dst = R_NONE and in raw mode,
+  -- so `MAXROWS_BFP` (checked only in BFP mode) does not have to cover it and
+  -- the y buffer does not have to hold it.
+  function amax_cols(sh : shape_t) return positive is
+    variable m : positive := sh.hidden;
+  begin
+    if sh.ffn      > m then m := sh.ffn;      end if;
+    if val_dim(sh) > m then m := val_dim(sh); end if;
+    if att_q(sh)   > m then m := att_q(sh);   end if;
+    return m;
+  end function;
+  constant A_MAXCOLS : positive := amax_cols(SHAPE);
+  constant A_MAXROWS : positive := region_max(SHAPE);
+
+  -- The identity signed-int4 codebook: nibble value v selects cb(v), and the
+  -- table makes cb(v) the two's-complement 4-bit integer that v encodes.  The
+  -- production codebook is IQ4_NL; this one is chosen so that a wrong nibble
+  -- order is a wrong number rather than a differently-scaled right one.
+  function cb_int4(i : natural) return integer is
+  begin
+    if i < 8 then return i; else return i - 16; end if;
+  end function;
+
   -- The synthetic weight of the behavioural A.  A deterministic function of
   -- (row, col, ordinal) only.  It is NOT a model of anything; it exists so
   -- that the residual stream carries a value that DEPENDS on every input and
@@ -427,7 +488,7 @@ begin
     if SHOUT then
       report LF
         & "==========================================================" & LF
-        & " llama_top: THIS IS NOT AN INFERENCE ENGINE YET." & LF
+        & " llama_top: THIS DOES NOT PERFORM INFERENCE YET." & LF
         & "==========================================================" & LF
         & " * ATTENTION IS A STUB.  Unit C returns a documented," & LF
         & "   obviously-wrong, well-formed pattern.  attn_lane_skel" & LF
@@ -981,6 +1042,277 @@ begin
     end process;
   end generate;
 
+
+  -- With the behavioural A there is no weight streamer, so the AXI masters
+  -- are tied off rather than left floating.
+  ga_tie : if A_BEHAV generate
+    m_arvalid <= (others => '0');
+    m_araddr  <= (others => '0');
+    m_arlen   <= (others => '0');
+    m_arsize  <= (others => '0');
+    m_arburst <= (others => '0');
+    m_rready  <= (others => '0');
+  end generate;
+
+  -- ======================================================================
+  -- UNIT A.  THE REAL `matvec_int4`, and the D-to-A seam.
+  --
+  -- This adapter is the seam.  Everything it does is one of the three rules
+  -- in the header, applied to a unit that meets none of D's conventions:
+  --
+  --  * A HAS NO `ready`.  seq_desc_fetch holds `u_start` until it sees one
+  --    (:787) and refuses to issue while `u_done` is high.  The adapter
+  --    synthesises `ready` from its own idle state.
+  --
+  --  * A's `done` IS A ONE-CYCLE PULSE WITH NO ACK (matvec_core.vhd:918-920).
+  --    D's contract is a LEVEL held until `u_ack` (seq_desc_fetch.vhd:235).
+  --    The adapter converts.
+  --
+  --  * A READS `n_rows`, `n_cols`, `w_exp`, `x_exp` AND `out_mode` LIVE for
+  --    the whole job (matvec_core.vhd:639, :771, :912, :932-934).  Only
+  --    `out_shift` is latched inside A.  So the adapter holds all six in its
+  --    own registers, written once at `job_issue` and never again while the
+  --    job runs.  Driving them from `job_*` would be defect class (a) with a
+  --    multi-thousand-cycle exposure window.
+  --
+  --  * A's `y_we` HAS NO READY.  A stall LOSES a beat.  The sink below
+  --    accepts every beat unconditionally into a buffer and drains afterwards,
+  --    and raises `err_lost_beat` if a beat ever arrives outside the window
+  --    or past the end of the buffer.  A beat cannot be refused, so the only
+  --    honest design is one that cannot refuse.
+  --
+  --  * `cb_we` AND `start` MUST NOT SHARE AN EDGE.  matvec_core.vhd:565-571
+  --    keeps an empty branch specifically as that interlock, and a `start` on
+  --    the same edge as the last codebook write is silently DROPPED, not
+  --    flagged.  S_CBGAP exists for that and for nothing else.
+  --
+  -- WHAT IS STILL SYNTHETIC: the weights.  The descriptor's base array past
+  -- the 64-byte header is not fetched by `seq_desc_fetch` (its header,
+  -- :113-115, "fetching it is remaining work"), so the adapter computes a
+  -- per-step address block instead.  Whatever the memory returns at those
+  -- addresses is what A multiplies.  A's ARITHMETIC is verified by
+  -- sim/run_matvec.sh against its own oracle; what is verified HERE is the
+  -- seam.
+  -- ======================================================================
+  ga_real : if not A_BEHAV generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal uerr : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+    signal mv_start : std_logic := '0';
+    signal mv_done, mv_err, mv_sat : std_logic;
+    signal r_rows, r_cols, r_shift, r_wexp, r_xexp : std_logic_vector(31 downto 0)
+         := (others => '0');
+    signal r_mode  : std_logic_vector(1 downto 0) := "00";
+    signal r_wbase : std_logic_vector(A_ROWS_IF*32-1 downto 0) := (others => '0');
+    signal r_wbeat : std_logic_vector(31 downto 0) := (others => '0');
+    signal r_sbase : std_logic_vector(31 downto 0) := (others => '0');
+    signal r_sbeat : std_logic_vector(31 downto 0) := (others => '0');
+
+    signal cb_we   : std_logic := '0';
+    signal cb_addr : std_logic_vector(3 downto 0) := (others => '0');
+    signal cb_data : std_logic_vector(7 downto 0) := (others => '0');
+    signal x_we    : std_logic := '0';
+    signal x_waddr : std_logic_vector(15 downto 0) := (others => '0');
+    signal x_wdata : std_logic_vector(15 downto 0) := (others => '0');
+
+    signal y_we    : std_logic;
+    signal y_addr  : std_logic_vector(15 downto 0);
+    signal y_data  : std_logic_vector(A_ROWS_IF*64-1 downto 0);
+    signal y_mask  : std_logic_vector(A_ROWS_IF-1 downto 0);
+    signal y_expv  : std_logic_vector(31 downto 0);
+  begin
+    u_ready(U_A) <= rdy;
+    u_done(U_A)  <= dn;
+    u_err(U_A)   <= uerr;
+    u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
+
+    u_mv : entity work.matvec_int4
+      generic map(
+        BLK => A_BLK, ROWS_IF => A_ROWS_IF, NPORTS_W => A_ROWS_IF,
+        AXI_DW => 128, ADDR_W => 32,
+        MAXCOLS => A_MAXCOLS, MAXROWS_BFP => A_MAXROWS,
+        FIFO_DEPTH => A_FIFO, MAXB => A_MAXB, MAXOUT => 2)
+      port map(
+        clk => clk, rst => rst,
+        start => mv_start,
+        n_rows => r_rows, n_cols => r_cols, out_shift => r_shift,
+        w_exp => r_wexp, x_exp => r_xexp, out_mode => r_mode,
+        w_base => r_wbase, w_beats => r_wbeat,
+        s_base => r_sbase, s_beats => r_sbeat,
+        cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+        x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+        m_arvalid => m_arvalid, m_arready => m_arready, m_araddr => m_araddr,
+        m_arlen => m_arlen, m_arsize => m_arsize, m_arburst => m_arburst,
+        m_rvalid => m_rvalid, m_rready => m_rready, m_rdata => m_rdata,
+        m_rlast => m_rlast,
+        y_we => y_we, y_addr => y_addr, y_data => y_data, y_mask => y_mask,
+        y_exp => y_expv, done => mv_done, err => mv_err, sat_event => mv_sat,
+        dbg_wbeat => open, dbg_wstarve => open);
+
+    ap : process(clk) is
+      type st_t is (S_IDLE, S_CB, S_CBGAP, S_XRD, S_EXP, S_GO, S_RUN,
+                    S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable yb : buf_t(0 to A_MAXROWS-1);
+      -- THE LATCHED DESCRIPTOR.  Seam rule (1).  Nothing below reads `job_*`.
+      variable j_src, j_dst, j_off, j_rows, j_cols, j_step : natural := 0;
+      variable j_shift, j_wexp : integer := 0;
+      variable j_mode : std_logic_vector(1 downto 0) := "00";
+      variable k, r   : natural := 0;
+      variable tiles, nb, base : natural := 0;
+      variable a  : natural;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_A) <= '0';
+        uw_en(U_A) <= '0';
+        cb_we      <= '0';
+        x_we       <= '0';
+        mv_start   <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_A then
+            j_src   := to_integer(job_src(6 downto 0));
+            j_dst   := to_integer(job_dst(6 downto 0));
+            j_off   := to_integer(job_dst_off(15 downto 0));
+            j_rows  := to_integer(job_n_rows(15 downto 0));
+            j_cols  := to_integer(job_n_cols(15 downto 0));
+            j_shift := to_integer(job_out_shift(15 downto 0));
+            j_wexp  := to_integer(job_w_exp(15 downto 0));
+            j_mode  := job_out_mode(1 downto 0);
+            j_step  := to_integer(job_step);
+            ep      <= job_epoch;
+            uerr    <= '0';
+            rdy     <= '0';
+            k       := 0;
+            st      := S_CB;
+            a_exp_region <= job_src;
+            a_exp_seg    <= "00";
+          end if;
+
+          -- ---- the un-refusable y sink.  Outside the FSM on purpose: a
+          -- beat that arrives in a state that did not expect it must still be
+          -- ACCEPTED and then reported, never dropped.
+          if y_we = '1' then
+            if st /= S_RUN then
+              f_lost <= '1';
+              report "llama_top: unit A emitted a y beat outside its run "
+                   & "window.  y_we has no ready, so this beat is LOST."
+                severity error;
+            end if;
+            for rr in 0 to A_ROWS_IF-1 loop
+              if y_mask(rr) = '1' then
+                a := to_integer(unsigned(y_addr)) + rr;
+                if j_dst < NREGION then
+                  if a < A_MAXROWS then
+                    yb(a) := signed(y_data(rr*64+MANT_W-1 downto rr*64));
+                  else
+                    f_lost <= '1';
+                    report "llama_top: unit A produced row "
+                         & integer'image(a) & " past the y buffer ("
+                         & integer'image(A_MAXROWS) & ")." severity error;
+                  end if;
+                end if;
+              end if;
+            end loop;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_CB =>
+              cb_we   <= '1';
+              cb_addr <= std_logic_vector(to_unsigned(k, 4));
+              cb_data <= std_logic_vector(to_signed(cb_int4(k), 8));
+              if k = 15 then k := 0; st := S_CBGAP; else k := k + 1; end if;
+
+            when S_CBGAP =>
+              -- ONE dead cycle, so `start` can never share an edge with the
+              -- last `cb_we`.  matvec_core drops such a start silently.
+              st := S_XRD;
+
+            when S_XRD =>
+              if k < j_cols then
+                ur_en(U_A)   <= '1';
+                ur_reg(U_A)  <= j_src;
+                ur_addr(U_A) <= k;
+              end if;
+              if k >= 2 then
+                x_we    <= '1';
+                x_waddr <= std_logic_vector(to_unsigned(k-2, 16));
+                x_wdata <= std_logic_vector(el_rdata);
+              end if;
+              if k = j_cols+1 then
+                k := 0;
+                st := S_EXP;
+              else
+                k := k + 1;
+              end if;
+
+            when S_EXP =>
+              assert exp_rd_valid = '1'
+                report "llama_top: unit A read region "
+                     & integer'image(to_integer(a_exp_region))
+                     & "'s exponent before anything captured it."
+                severity error;
+              nb    := (j_cols + A_BLK - 1) / A_BLK;
+              tiles := (j_rows + A_ROWS_IF - 1) / A_ROWS_IF;
+              base  := A_MEM_BASE + j_step * A_JOB_STRIDE;
+              r_rows  <= std_logic_vector(to_signed(j_rows, 32));
+              r_cols  <= std_logic_vector(to_signed(j_cols, 32));
+              r_shift <= std_logic_vector(to_signed(j_shift, 32));
+              r_wexp  <= std_logic_vector(to_signed(j_wexp, 32));
+              r_xexp  <= std_logic_vector(resize(exp_rd_data, 32));
+              r_mode  <= j_mode;
+              for p in 0 to A_ROWS_IF-1 loop
+                r_wbase((p+1)*32-1 downto p*32)
+                  <= std_logic_vector(to_unsigned(base + p*4096, 32));
+              end loop;
+              r_sbase <= std_logic_vector(
+                           to_unsigned(base + A_ROWS_IF*4096, 32));
+              r_wbeat <= std_logic_vector(to_signed(tiles*nb, 32));
+              -- one uint16 scale per (tile, block, row), 16 bytes per beat
+              r_sbeat <= std_logic_vector(
+                           to_signed((tiles*nb*A_ROWS_IF*2 + 15) / 16, 32));
+              st := S_GO;
+
+            when S_GO =>
+              mv_start <= '1';
+              r        := 0;
+              st       := S_RUN;
+
+            when S_RUN =>
+              if mv_done = '1' then
+                uerr <= mv_err;
+                r    := 0;
+                if j_dst < NREGION then st := S_DRAIN; else st := S_DONE; end if;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_A)   <= '1';
+              uw_reg(U_A)  <= j_dst;
+              uw_addr(U_A) <= j_off + r;
+              uw_data(U_A) <= yb(r);
+              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= resize(signed(y_expv), EXP_W);
+              if u_ack(U_A) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
 
   -- ======================================================================
   -- UNIT B.  BEHAVIOURAL when B_BEHAV.

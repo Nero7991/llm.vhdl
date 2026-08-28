@@ -62,6 +62,12 @@ package llama_map_pkg is
   constant V_SWG  : natural := 2;
   constant NVOP   : positive := 3;
 
+  -- Subsystem A's AXI master count: NPORTS_W weight ports plus one dedicated
+  -- scale port.  A build-time constant rather than a generic because the port
+  -- LIST of `llama_top` depends on it, and because `weight_streamer.vhd`
+  -- pins NPORTS_W = ROWS_IF = 4 at BLK 32 / AXI_DW 128 anyway.
+  constant A_NPORTS : positive := 5;
+
   -- ---- regions.  MUST equal sim/seq_tbl_pkg.vhd -------------------------
   constant R_X     : natural := 0;   -- residual stream.  THE SPINE.
   constant R_XN    : natural := 1;   -- post-norm activations
