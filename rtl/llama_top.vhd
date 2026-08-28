@@ -28,12 +28,24 @@
 -- =====================================================================
 -- WHAT IS REAL HERE AND WHAT IS NOT.  READ THIS BEFORE BELIEVING A NUMBER.
 -- =====================================================================
--- REAL RTL, instantiated, not modelled:
+-- REAL RTL, instantiated, not modelled (the DEFAULT configuration):
 --   seq_desc_fetch   the descriptor walker
 --   seq_opdec        opcode decode, region masks, exponent capture
 --   seq_region_lock  the region locks and the per-region exponent store
 --   seq_vec_issue    the D-ctrl to D-vec adapter
 --   seq_vec_res      the residual add.  THE SPINE OF THE BLOCK LOOP.
+--   matvec_int4      subsystem A, streaming weights over five AXI4 masters
+--   gdn_block        subsystem B, seven units, with its six memories
+--
+-- REAL UNIT, SYNTHETIC INPUT.  Worth separating from both lists, because it
+-- is the easiest thing here to overstate:
+--   A's WEIGHTS       the descriptor base array past the 64-byte header is
+--                     not fetched (seq_desc_fetch.vhd:113-115), so the
+--                     adapter computes a per-step address block and whatever
+--                     the memory returns there is what A multiplies.
+--   B's conv taps,    deterministic functions of index, NOT yet read from
+--   conv weights,     R_QKV / R_BETA / R_ALPHA.  Only `z`, the output gate,
+--   scalars, w_mant   comes from a real region (R_Z).
 --
 -- BEHAVIOURAL MODELS, selected by generic, every one of them marked in its
 -- own comment block and every one of them reporting what it is at time zero:

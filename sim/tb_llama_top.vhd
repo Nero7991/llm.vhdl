@@ -50,6 +50,32 @@
 --       would mean the loudest marker in the design had stopped working.
 --
 -- =====================================================================
+-- THE DEFAULT IS 4 BLOCKS AND THAT IS NOT AN ARBITRARY CHOICE.  READ THIS.
+-- =====================================================================
+-- The default `BLOCKS = 4` passes.  `BLOCKS = 8` and above do not yet pass
+-- P6, and the default was not chosen to hide that.  Measured, real A and B,
+-- attn_interval 4:
+--
+--     BLOCKS =  4   degenerate residuals = 0    green
+--     BLOCKS =  8   degenerate residuals = 3    red
+--     BLOCKS = 32   degenerate residuals = 46   red   (of 64 residual steps)
+--
+-- The trend is the finding, not the failure.  Subsystem B's output exponent
+-- is anchored to ITS OWN inputs, and its conv taps, conv weights and scalars
+-- are stand-ins at a fixed scale rather than regions subsystem A produced.
+-- The residual stream's exponent, meanwhile, moves as the token progresses.
+-- The two therefore drift apart, and once they are more than a mantissa width
+-- apart the residual silently discards one operand.  Nothing in the design
+-- makes the block-to-block SCALE track, and nothing was ever going to notice
+-- that except a whole-token integration run.
+--
+-- So: 4 blocks is the largest configuration in which the numeric behaviour is
+-- currently defensible, and it is the one the regression gate runs.  A green
+-- run of this bench at the default is NOT a statement that the machine can do
+-- 32 blocks.  See docs/debugging/2026-08-28_llama-top-first-seams.md, PART 2,
+-- "open, not yet answered".
+--
+-- =====================================================================
 -- WHY THE DESCRIPTOR MEMORY LATENCY IS THE SKEW AXIS
 -- =====================================================================
 -- Subsystem D prefetches: the next descriptor is fetched while the current
@@ -789,6 +815,13 @@ begin
            & " descriptor-latency points, R_X bit-identical across all of "
            & "them, R_X(0) = " & integer'image(results(0)(0))
            & " hash(R_X) = " & integer'image(xsum)
+           -- Wording note: this string must not contain the bare word that
+           -- sim/regress.sh's FAIL_RE matches, or a passing run is judged
+           -- red.  "does not yet pass" says the same thing and is safe.
+           & LF & "        NOTE: " & integer'image(SHAPE.blocks)
+           & " blocks.  8 blocks and above do not yet pass P6 -- the "
+           & "residual discards an operand as the scales drift -- so this "
+           & "pass is not a statement about a 32-block token."
         severity note;
     else
       report "tb_llama_top RESULT: FAIL" severity failure;

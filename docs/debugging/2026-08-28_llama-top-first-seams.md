@@ -503,6 +503,40 @@ general statement**: of the seven defects now found in this file, **four**
 pipeline reads. It does not catch anything that is wrong in the same way on
 every run -- shared resources, fabricated scales, and operands that shift out.
 
+## Defect 8 -- the scales do not track across blocks, and it only shows up at scale
+
+**Found after the Part 2 fixes were already in, by running more blocks.**
+Real A, real B, `attn_interval` 4, P6 counting residual adds whose two operand
+exponents are more than a mantissa width apart:
+
+```
+BLOCKS =  4   degenerate residuals = 0    PASS
+BLOCKS =  8   degenerate residuals = 3    FAIL
+BLOCKS = 32   degenerate residuals = 46   FAIL   (of 64 residual steps)
+```
+
+**The trend is the finding, not the failure.** Subsystem B's output exponent
+is anchored to ITS OWN inputs, and its conv taps, conv weights and scalars are
+stand-ins at a fixed scale rather than regions subsystem A produced. The
+residual stream's exponent moves as the token progresses. The two drift apart,
+and once they are more than a mantissa width apart the residual silently
+discards one operand.
+
+**Nothing in the design makes the block-to-block SCALE track**, and nothing was
+ever going to notice that except a whole-token integration run: every unit is
+internally consistent, every handshake is honoured, and the failure is a
+property of the composition over many blocks.
+
+It is NOT established whether this is an artefact of the stand-in stimulus or a
+real hole in the BFP discipline. Both are plausible and the experiment that
+separates them -- sourcing B's conv taps and scalars from R_QKV, R_BETA and
+R_ALPHA -- has not been run. **Do not assume it is only the stimulus.**
+
+The bench's default is `BLOCKS = 4` because that is the largest configuration
+whose numeric behaviour is currently defensible. That is stated in the bench
+header, in its PASS line, and here, so that a green regression run cannot be
+read as a claim about a 32-block token.
+
 ## Open, not yet answered (updated)
 
 * The CONTENTS of B's conv taps, conv weights, four scalars and ssm_norm
@@ -520,3 +554,8 @@ every run -- shared resources, fabricated scales, and operands that shift out.
   until the two stubbed engines and attention are real.
 * One token only. `tk0` is hardwired to '1' and there is no token loop, so B's
   recurrent state is exercised for a first token and never for a continuation.
+* **The block-to-block scale, defect 8.** This is the largest open item: at 8
+  blocks the machine already discards an operand in 3 residual adds, and at 32
+  it does so in 46 of 64. Until it is resolved, "the machine sequenced 32
+  blocks and produced a value" is true and "the value means anything" is not,
+  for a second reason on top of attention being stubbed.
