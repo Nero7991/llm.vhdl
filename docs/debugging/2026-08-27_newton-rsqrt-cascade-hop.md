@@ -204,10 +204,23 @@ in this file is doubled. Measured 121 -> 133, not 121 -> 127.
   the wrong direction from the 370 measured at 16 lanes and looked like the
   harness had silently stopped exercising anything. Adding arrival 256, which
   must drop, confirmed the harness was live and the boundary was simply below
-  the window swept. It was: 374 drops, 376 passes.
+  the window swept. It was: 374 drops, 375 passes.
 * **`tb_gdn_block`'s default `SILU_LANES` is 8, not 16.** Every deadline figure
   quoted for "16" was taken with `-gSILU_LANES=16` passed explicitly. A run
   that forgets the flag silently measures the other configuration.
+* **The git index is SHARED between the agents working this repo, and
+  `git add <explicit paths>` then `git commit` does NOT protect you.** `git add`
+  adds to a common index, and a plain `git commit` commits everything in that
+  index, not only what you just added. This bit twice in one afternoon in both
+  directions: a commit made here swept up 13 files another agent had staged, and
+  the `git restore --staged` that unstaged them then left that agent's own commit
+  carrying THIS task's three files under its message. Both were recovered with
+  `git reset --soft HEAD~1`, but the second recovery was only possible because
+  nothing had been pushed. **Use the pathspec form, `git commit -- <path> ...`.**
+  It builds the commit from the working-tree content of exactly those paths and
+  leaves the index alone, so another agent's staged work stays staged. Verify
+  after every commit with `git show --stat --format="" HEAD`, and never assume
+  the index is yours because you were the last to touch it.
 * `tb_rmsnorm_rs` instantiates `rmsnorm` as its reference model, so
   `rms_weights_pkg` and `rmsnorm` must be analysed first or the testbench fails
   to elaborate with `unit "rmsnorm" not found`.
