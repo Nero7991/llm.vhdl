@@ -43,6 +43,10 @@ build_artifacts_*/*.dcp
 # build artifacts: keep the RTL snapshots / logs / notes, never the bitstreams
 build_artifacts_*/*.bit
 build_artifacts_*/*.bit.bin
+# tokenizer artefacts: 9 MB of vocab + the oracle binary, both regenerated
+# by tools/extract_tokenizer.py / the g++ line in tools/tok_oracle_batch.cpp
+build_artifacts_tok/*.qtk
+build_artifacts_tok/tok_oracle_batch
 # cross-compiled on-board CLI (rebuild with aarch64-linux-gnu-gcc -O2 -static)
 hw/llama_hw
 sim/work_arith/
