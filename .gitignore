@@ -95,3 +95,9 @@ ref/*_vec
 
 # FK33 host bring-up test binary (build with `make -C hw/fk33/host`)
 hw/fk33/host/fk33_bringup
+
+# Editor and mutation-script backups.  A stale rtl/*.vhd.orig was found in the
+# tree on 2026-08-27; the live file was clean, but a backup sitting beside the
+# source is one careless glob away from being compiled instead of it.
+*.orig
+*.rej
