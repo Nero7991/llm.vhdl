@@ -57,6 +57,22 @@ fi
 SRC_ROOT="${SRC_ROOT:-$TARGET_HOME/GitHub/dma_ip_drivers}"
 KO="$SRC_ROOT/XDMA/linux-kernel/xdma/xdma.ko"
 
+# `cmd | grep -q` IS A LANDMINE UNDER `set -o pipefail`, AND IT BIT THIS FILE.
+# grep -q exits the instant it matches, the producer gets SIGPIPE and dies with
+# 141, and pipefail takes the rightmost non-zero status -- so the pipeline
+# reports FAILURE precisely BECAUSE the match succeeded.  `--status` therefore
+# printed "module : NOT loaded" while listing the very char devices that only
+# exist because the module IS loaded.  Confidently, reproducibly backwards.
+# Every predicate below is now pipeline-free.
+
+module_loaded () { [[ -d /sys/module/xdma ]]; }
+
+in_group () {   # $1 = user (empty for the current process), $2 = group
+    local g
+    if [[ -n "${1:-}" ]]; then g="$(id -nG "$1")"; else g="$(id -nG)"; fi
+    [[ " $g " == *" $2 "* ]]
+}
+
 need_root () {
     [[ $EUID -eq 0 ]] || { echo "ERROR: $ACTION needs root.  Re-run with sudo." >&2; exit 1; }
 }
@@ -75,7 +91,7 @@ find_dev () {   # echo the FK33's PCI address, or nothing
 case "$ACTION" in
 --unbind)
     need_root
-    if lsmod | grep -q '^xdma'; then
+    if module_loaded; then
         echo "removing xdma"
         rmmod xdma || { echo "rmmod refused -- something still holds it:"; lsof /dev/xdma* 2>/dev/null || true; exit 1; }
     else
@@ -98,7 +114,7 @@ case "$ACTION" in
     [[ -n "$DEV" ]] || { echo "ERROR: no $VENDOR:$DEVICE after rescan.  The FPGA is not configured as an endpoint, or the link did not train." >&2; exit 1; }
     echo "found $DEV"
     [[ -f "$KO" ]] || { echo "ERROR: $KO missing.  Run ./build_xdma_driver.sh first." >&2; exit 1; }
-    lsmod | grep -q '^xdma' || insmod "$KO" poll_mode=1
+    module_loaded || insmod "$KO" poll_mode=1
     sleep 1
     ls -l /dev/xdma* 2>/dev/null || { echo "ERROR: driver loaded but created no /dev/xdma*.  Check dmesg." >&2; exit 1; }
     echo "REBIND OK"
@@ -110,12 +126,12 @@ case "$ACTION" in
     # matches, which under `set -e` would kill the script mid-report.
     DEV="$(find_dev)"
     echo "PCI device : ${DEV:-<absent>}"
-    if lsmod | grep -q '^xdma'; then echo "module     : loaded"; else echo "module     : NOT loaded"; fi
+    if module_loaded; then echo "module     : loaded"; else echo "module     : NOT loaded"; fi
     if [[ -f $RULE ]]; then echo "udev rule  : present ($RULE)"; else echo "udev rule  : ABSENT"; fi
     if getent group "$GROUP" >/dev/null; then echo "group      : $GROUP exists"; else echo "group      : $GROUP ABSENT"; fi
     if compgen -G "/dev/xdma*" >/dev/null; then ls -l /dev/xdma*; else echo "char devs  : none"; fi
     echo "your groups: $(id -nG)"
-    if id -nG | tr ' ' '\n' | grep -qx "$GROUP"; then
+    if in_group "" "$GROUP"; then
         echo "membership : yes, this shell has $GROUP"
     else
         echo "membership : NO -- this shell lacks $GROUP (groups are read at login)"
@@ -127,7 +143,7 @@ install)
     [[ -n "$TARGET_USER" ]] || { echo "ERROR: run this with sudo from your own account, not from a root shell -- I need to know who to add to the group." >&2; exit 1; }
 
     getent group "$GROUP" >/dev/null || { echo "creating group $GROUP"; groupadd "$GROUP"; }
-    if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx "$GROUP"; then
+    if in_group "$TARGET_USER" "$GROUP"; then
         echo "$TARGET_USER already in $GROUP"
     else
         echo "adding $TARGET_USER to $GROUP"
@@ -166,7 +182,7 @@ RULE
         exit 1
     fi
 
-    lsmod | grep -q '^xdma' || { echo "loading xdma (poll_mode=1)"; insmod "$KO" poll_mode=1; sleep 1; }
+    module_loaded || { echo "loading xdma (poll_mode=1)"; insmod "$KO" poll_mode=1; sleep 1; }
     # The rule applies to devices created AFTER it is loaded, so fix up any
     # that already exist rather than telling the user to reload the module.
     if compgen -G "/dev/xdma*" >/dev/null; then
