@@ -21,6 +21,51 @@
 
 ---
 
+## BLOCKER as of 2026-08-27 21:30: there is no endpoint bitstream
+
+The `fk33_pcieep` **bitstream has not been built**, and nothing is building it.
+What ran was the cheap block-design gate, not the full flow:
+
+```
+$ tail -3 .../scratchpad/pcieep/build.log
+FK33_BD_VALIDATE OK
+FK33_BD_ONLY_DONE
+INFO: [Common 17-206] Exiting Vivado at Thu Aug 27 21:05:36 2026...
+
+$ ls .../scratchpad/pcieep/fk33_pcieep/fk33_pcieep.runs/
+ls: cannot access ...: No such file or directory
+
+$ find .../scratchpad/pcieep -name '*.bit' -o -name '*.dcp'
+(no output)
+```
+
+The only Vivado running is an unrelated OOC sweep:
+
+```
+$ tr '\0' ' ' < /proc/862010/cmdline
+.../vivado -mode batch -source sim/ooc_micro_pnr.tcl -tclargs xcvu33p-fsvh2104-2L-e
+  3.3 matvec_core volt=0.717 g:ROWS_IF=48 g:BLK=32 ... rtl/matvec_core.vhd
+```
+
+So the full build still has to happen, it costs **1 to 1.5 hours and 12 to
+20 GB peak RSS**, and the box has 32 GB with a 7.4 GB Vivado already resident.
+Two Vivados of that size is the exact shape of the 2026-07-04 systemd-oomd
+kill. Start it only once the sweep is done, and under
+`claude-tmux --mem 20G`:
+
+```bash
+cd hw/fk33 && ./pcieep_build.sh
+# then, BEFORE powering off to fit the card:
+./save_bitstream.sh
+```
+
+Until `hw/fk33/bit/fk33_pcieep.bit` exists, `./fk33_go.sh --selftest` reports
+FAIL on purpose, and stages C onward tomorrow cannot pass no matter what the
+card does. The probe bitstream (for the VCCINT step) is already saved and
+intact.
+
+---
+
 ## The one command
 
 Tonight, with the card OUT and before shutting down, in this order:

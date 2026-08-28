@@ -2,8 +2,9 @@
 
 **Date:** 2026-08-27, evening, the night before the FK33 goes into the slot
 **Host:** `Oren-Dell-Ubuntu`, Z790 AERO G, kernel 6.8.0-138-generic
-**Constraint:** a Vivado `fk33_pcieep` build was running throughout (7.4 GB
-RSS), so nothing here touched Vivado. Everything is host-side.
+**Constraint:** a Vivado job was running throughout (7.4 GB RSS), so nothing
+here touched Vivado. Everything is host-side. That job turned out NOT to be
+the `fk33_pcieep` build; see "Late finding" below.
 
 ## The question
 
@@ -14,8 +15,9 @@ hardware that is already here?
 
 ## The answer
 
-Six real defects, four of which would have cost time tomorrow and one of which
-would have destroyed the bitstream being built tonight.
+Seven real defects. Four would have cost time tomorrow, one would have
+destroyed the bitstream once it is built, and the seventh is that the
+bitstream is not being built at all.
 
 1. **`/tmp` is emptied at every boot and the bitstream is built into `/tmp`.**
    Fitting the card requires a power-off. The hour-long build would have been
@@ -32,6 +34,8 @@ would have destroyed the bitstream being built tonight.
 5. **`modprobe xdma` loads the wrong module.** The kernel ships an unrelated
    in-tree `xdma` with zero PCI IDs.
 6. **Nothing autoloads on `10EE:9034`**, so an explicit `insmod` is mandatory.
+7. **The `fk33_pcieep` bitstream does not exist and nothing is building it.**
+   The only run was the three-minute `--bd-only` gate. See "Late finding".
 
 Everything else in the procedure that could be executed tonight was executed
 and passed.
@@ -244,6 +248,31 @@ tool must give tomorrow if the card is not seated or has no aux power.
 | `hw/fk33/host/fk33_pcie_check.sh` | stage 2 reads sysfs instead of `lspci -vvv`; root port auto-discovered; x1 no longer misdiagnosed |
 | `hw/fk33/pcieep.sh` | prefers `hw/fk33/bit/`, warns when the bitstream is under `/tmp` |
 | `docs/2026-08-27_fk33-pcie-bringup-procedure.md` | aux-lead warning promoted to line one; the one command; corrected topology; pre-power-on checklist; explicit card-only list; verified table extended with eleven measured rows |
+
+## Late finding: the endpoint bitstream does not exist
+
+The session brief said the workstation was building `fk33_pcieep` tonight. It
+is not. Checked at 21:30:
+
+```
+$ tail -3 .../scratchpad/pcieep/build.log
+FK33_BD_VALIDATE OK
+FK33_BD_ONLY_DONE
+INFO: [Common 17-206] Exiting Vivado at Thu Aug 27 21:05:36 2026...
+$ ls .../scratchpad/pcieep/fk33_pcieep/fk33_pcieep.runs/
+ls: cannot access ...: No such file or directory
+$ tr '\0' ' ' < /proc/862010/cmdline
+.../vivado -mode batch -source sim/ooc_micro_pnr.tcl -tclargs ... matvec_core ...
+```
+
+What ran was `pcieep_build.sh --bd-only`, the three-minute gate. The two live
+Vivado processes are an unrelated `ooc_micro_pnr` matvec_core sweep. There is
+no `.runs` directory, no checkpoint and no bitstream anywhere under the
+scratchpad.
+
+This is a trap worth naming: `build.log` in the pcieep scratchpad looks like a
+build log for the build, and it is 112 KB of real Vivado output. Only the last
+two lines say which flow it was. Check for the artifact, not the log.
 
 ## Open, not yet answered
 
