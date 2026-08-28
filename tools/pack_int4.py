@@ -218,18 +218,54 @@ def read_tensor(path: str, name: str) -> np.ndarray:
     """
     rd = GGUFReader(path, "r")
     for t in rd.tensors:
-        if t.name != name:
-            continue
-        raw = t.data
-        qt = t.tensor_type
-        if str(qt).endswith("F32"):
-            flat = raw.astype(np.float32)
-        else:
-            flat = quants.dequantize(raw, qt).astype(np.float32)
-        ne = [int(x) for x in t.shape]
-        K, M = ne[0], (ne[1] if len(ne) > 1 else 1)
-        return flat.reshape(M, K)
+        if t.name == name:
+            return tensor_as_mk(t)
     raise KeyError(f"tensor {name!r} not in {path}")
+
+
+def tensor_as_mk(t) -> np.ndarray:
+    """The same thing for an ALREADY-OPEN GGUF tensor object.
+
+    A model-wide packer opens the file once and walks `rd.tensors`; re-opening
+    a GGUFReader per tensor re-parses the whole metadata block, which is
+    seconds each and minutes over 250 tensors.  read_tensor() is now a thin
+    lookup in front of this so both paths cannot drift on the (M, K)
+    convention, which is the part that is easy to get backwards.
+    """
+    raw = t.data
+    qt = t.tensor_type
+    # copy=False on both paths.  Nothing downstream mutates W, and on
+    # token_embd / output (1.017e9 weights) the defensive copy is a 4 GB
+    # transient on top of the 4 GB result, which is the difference between
+    # a job that runs beside a Vivado build and one that OOMs the box.
+    if str(qt).endswith("F32"):
+        flat = raw.astype(np.float32, copy=False)
+    else:
+        flat = quants.dequantize(raw, qt).astype(np.float32, copy=False)
+    ne = [int(x) for x in t.shape]
+    K, M = ne[0], (ne[1] if len(ne) > 1 else 1)
+    return flat.reshape(M, K)
+
+
+def is_matvec(name: str, ne) -> bool:
+    """Does subsystem A pack this tensor, or does it stay F32?
+
+    SINGLE AUTHORITY for the split, the way packed_layout() is the single
+    authority for the size.  --audit reports totals from this and the model
+    packer emits from it, so a packed set and its audit cannot classify a
+    tensor differently -- which is the only way the two can ever disagree
+    about how big the model is.
+
+    A handles 2D matvec weights.  Norms, biases, ssm_a and the 4-tap conv1d
+    are 1D or tiny and stay in their native form.
+
+    `ne` is the GGUF shape, ne0-fastest, i.e. ne[0] = K and ne[1] = M.
+    """
+    ne = [int(v) for v in ne]
+    K = ne[0]
+    M = ne[1] if len(ne) > 1 else 1
+    return (len(ne) > 1 and M > 1 and K > 1
+            and not name.endswith("ssm_conv1d.weight"))
 
 
 def list_tensors(path: str) -> None:
@@ -621,10 +657,7 @@ def audit(path: str, rows_if: int, cards: int,
         M = ne[1] if len(ne) > 1 else 1
         params = M * K
         name = t.name
-        # A handles 2D matvec weights.  Norms, biases, ssm_a and the 4-tap
-        # conv1d are 1D or tiny and stay in their native form.
-        is_mv = len(ne) > 1 and M > 1 and K > 1 and name != "blk.0.ssm_conv1d.weight" \
-                and not name.endswith("ssm_conv1d.weight")
+        is_mv = is_matvec(name, ne)
         if is_mv:
             whole = packed_layout(M, K, rows_if, axi_dw, emitting=False)[-1]
             # column-parallel: each card holds ceil(M/cards) rows, padded and
