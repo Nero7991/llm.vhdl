@@ -302,6 +302,12 @@ blocks and produced a value.
 * The region file is one flat array with one element port. That is correct
   *today* only because `seq_desc_fetch`'s `cur_unit` is a scalar and D cannot
   overlap two units. When D grows overlap it becomes a real arbiter.
+  **CORRECTED in Part 2:** "one port per UNIT" was already too coarse before
+  any overlap existed. Unit V is an ADAPTER in front of `NVOP` engines, and
+  two of those engines driving one port slot is two drivers on one signal --
+  which GHDL reported as `several sources for unresolved signal` at
+  elaboration, the one member of this defect family that does stop a build.
+  The port array is indexed by CLIENT (`NUNIT + NVOP` slots), not by unit.
 
 ---
 
