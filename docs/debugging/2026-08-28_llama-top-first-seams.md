@@ -1081,3 +1081,184 @@ honest reading of why the default is what it is.
   GDN block ahead of `start`, about 270 cycles at the scaled shape and 8,260
   at the real 9B shape (`qkv_dim` 8,192 + 2 x 32 + 4), which is a real
   serialisation cost that nobody has priced.
+
+---
+
+# PART 4 (WIP, INTERRUPTED) -- the swiglu model's exponent is fabricated, and correcting it removes the PART 3 headline result
+
+**Date:** 2026-08-28, later the same session. **This part is an interrupted
+work-in-progress note, written because the session was stopped for a reboot.
+The code change it describes is NOT committed.** It is stashed on branch
+`fpga` as `git stash` message `wip-dvec-exponents-2026-08-28`, touching
+`rtl/llama_top.vhd` only. Nothing in the working tree carries it.
+
+**Tools:** GHDL 1.0.0 mcode, `--std=08 -frelaxed --max-stack-alloc=0`. Every
+number below is a simulation count at the stated `NRUNS`, taken against a
+private snapshot of the 32-file `tb_llama_top` closure (copied out of the repo
+into a scratch tree and analysed into its own library) so that another agent's
+concurrent edits to `rtl/matvec_int4*.vhd` could not invalidate the library
+mid-run. The snapshot was verified to reproduce the committed baseline exactly
+before anything was changed.
+
+## The question, verbatim
+
+> `rtl/llama_top.vhd:1031`, in the behavioural D-vec engine's S_DONE state:
+> `yexp <= v_exp_a + to_signed(vi, EXP_W);`
+> Every D-vec op takes its output exponent as the input exponent plus `vi`,
+> the OP INDEX. [...] For the swiglu op this is wrong in a way that matters.
+> Swiglu computes a PRODUCT, and in this block-floating-point format a
+> product's exponent is the SUM of its operands' exponents, so it should be
+> `v_exp_a + v_exp_b`. [...] Go through EVERY D-vec op, not just swiglu, and
+> state for each whether its modelled exponent is contractually right.
+
+## The answer, up front
+
+Of the three D-vec ops, one is real RTL, one (`V_NORM`) was accidentally right
+because its op index is 0, and one (`V_SWG`) was wrong: it published
+`v_exp_a + 2` for a product. Correcting it to `v_exp_a + v_exp_b - MANT_W`
+**removes PART 3's headline result**: with the correct swiglu exponent,
+`NORM_ANCHOR` no longer gives 0 degenerate residuals at 32 blocks, it gives 8,
+and the DEFAULT path fails at every block count including 1. The fabricated
+`+2` was masking roughly half the FFN-side scale excursion.
+
+## The audit, op by op
+
+| op | model | published exponent, before | contractually right? | after |
+|---|---|---|---|---|
+| `V_NORM` (vi=0) | `out(i) = in(i) - mean(in)` | `v_exp_a + 0` | **YES, by accident.** A difference of two quantities already on the input grid is on the input grid, so the constant genuinely is zero. It is right for the MODEL and wrong for the OP: a real rmsnorm is scale-free and publishes the WEIGHT scale. | `v_exp_a`, unchanged in value, with the reasoning written down |
+| `V_RES` (vi=1) | real `seq_vec_res` | `o_exp` from the unit | not fabricated, out of scope | unchanged |
+| `V_SWG` (vi=2) | `out(i) = (a(i)*b(i))/64` | `v_exp_a + 2` | **NO.** A product's exponent is the SUM of its operands', and a right shift of the mantissa by s subtracts s. `v_exp_b` was already read by `seq_vec_issue` and wired in, and was simply discarded. | `v_exp_a + v_exp_b - MANT_W` |
+
+Convention confirmed against `seq_vec_res.vhd:13-15` (`value = mantissa *
+2^-exponent`, a larger exponent is a FINER scale) and independently against
+`matvec_core`'s `y_exp = w_exp + x_exp - out_shift - ns`, which is a real unit
+publishing the same two rules.
+
+## A second, measured defect in the same stub: it saturated 128 of 128 outputs
+
+The `/64` shift was also wrong, and measurably so. Two MANT_W-wide mantissas
+multiply to up to `2**(2*MANT_W-2)`, so a 6-place right shift cannot hold the
+product. Instrumented copy, `BLOCKS=1`:
+
+```
+SWGSAT sat=128 unsat=0
+```
+
+Every element of every swiglu output saturated, so R_H was a CONSTANT vector
+and the FFN carried no information from R_G or R_U. A saturated mantissa also
+makes the published exponent false regardless of the formula. The stashed
+change therefore uses `/(2**MANT_W)`, the smallest fixed shift under which the
+product cannot saturate.
+
+**Measured and it does NOT matter for P6.** A mutant with the shift at
+`MANT_W` and one at `/64`, both with the corrected exponent, give **identical**
+degenerate counts (1 / 5 / 12 / 27 / 56 at 1 / 4 / 8 / 16 / 32 blocks). The
+downstream matvec's data-driven `ns` absorbs the shift exactly. The shift
+change is for the VALUES being input-dependent again, not for the scale.
+
+## The evidence
+
+All at `NRUNS = 1` unless stated. Real A, real B, `attn_interval` 4.
+
+Degenerate residuals, DEFAULT path (`NORM_ANCHOR` false):
+
+| BLOCKS | 1 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|
+| committed (`v_exp_a + vi`) | -- | **0** | **3** | **10** | **23** |
+| stashed (`v_exp_a + v_exp_b - MANT_W`) | **1** | **5** | **12** | **27** | **56** |
+
+Degenerate residuals, `NORM_ANCHOR = true`:
+
+| BLOCKS | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|
+| committed | **0** | **0** | **0** | **0** |
+| stashed | **0** | **0** | **3** | **8** |
+
+Landmarks: committed, `BLOCKS=32 NRUNS=1 NORM_ANCHOR=true` gives
+`R_X(0) = 29261 hash(R_X) = 90742` (reproduced exactly, twice, before any
+edit). Stashed, the same command gives 8 degenerate and FAILs; stashed
+`BLOCKS=4 NRUNS=4 NORM_ANCHOR=true` PASSes with
+`R_X(0) = -12049 hash(R_X) = 86767`; stashed `BLOCKS=8 NRUNS=1
+NORM_ANCHOR=true` PASSes with `R_X(0) = -10475 hash(R_X) = 52433`.
+
+The anchored 32-block `RESGAP` series with the correction in shows why: `ea`
+is bounded at -9 exactly as PART 3 reported, but the FFN operand `eb` now
+swings to +7 and +8, so the gap reaches 16 and 17 against a threshold of 14.
+The eight failures are all FFN residuals, which is the residual the swiglu
+feeds.
+
+```
+RESGAP issue 164 ea -9 eb  7 gap 16
+RESGAP issue 209 ea -9 eb  7 gap 16
+RESGAP issue 225 ea -9 eb  8 gap 17
+RESGAP issue 270 ea -9 eb  8 gap 17
+```
+
+## CORRECTION to PART 3
+
+PART 3 said, of the `NORM_ANCHOR` probe:
+
+> the degenerate count is **0 at 4, 8, 16 AND 32 blocks**
+
+**That is WITHDRAWN as stated.** It is 0 at 4, 8, 16 and 32 only while the
+swiglu model publishes a fabricated exponent that understates the FFN-side
+excursion by roughly half. With the swiglu's contract corrected it is
+0 / 0 / 3 / 8. The mechanism PART 3 identified -- nothing in the block loop
+restores the activation scale, and the norm is the unit that should -- is NOT
+withdrawn and is unaffected: `ea` is still bounded at -9 with the anchor and
+still marches to -387 without it. What is withdrawn is the claim that
+anchoring the norm ALONE is sufficient at 32 blocks. PART 3's own open list
+anticipated this in as many words ("a real swiglu will move it"); it moves it
+further than that sentence implies.
+
+## The bench gate, and why nothing was committed
+
+The bench default is `BLOCKS = 4, NRUNS = 4` with `NORM_ANCHOR` false, and
+with the correction in it FAILS with 20 degenerate residuals (5 per run,
+cumulative). **No unanchored block count passes any more, including
+`BLOCKS = 1`**, measured: 4 degenerate at `NRUNS = 4`. So the correction
+cannot be committed without also moving the bench's defensible default, and
+choosing that default is the decision the session was interrupted before
+taking. `sim/regress.sh`'s floor of 74 PASS would otherwise drop to 73.
+
+## Measured and REJECTED -- do not retry (Part 4)
+
+* **Lowering the bench's default `BLOCKS` to keep the gate green with the
+  corrected swiglu exponent.** There is no such value: 1 block already has one
+  degenerate residual per run. Numbers above.
+* **Changing the swiglu model's normalisation shift as a way to move the
+  degenerate count.** `/64` and `/(2**MANT_W)` give bit-identical degenerate
+  counts at every block count measured. The downstream matvec's data-driven
+  `ns` cancels it exactly. Do it for the saturation, not for the scale.
+
+## Measurement traps hit (Part 4)
+
+* **The regression library points at the REPO files by path and hash**, so a
+  concurrent agent editing `rtl/matvec_int4*.vhd` invalidates it mid-run. This
+  bit PART 3 too. The fix used here is a private snapshot of the 32-file
+  closure (`grep -o '"/home/.*"' work-obj08.cf` lists it) analysed into its own
+  library, verified to reproduce the committed baseline before use.
+* **A degenerate count is still meaningless without its `NRUNS`.** The
+  cumulative counter is unchanged. Every count above states it.
+
+## Open, not yet answered (Part 4)
+
+* **Task 2 was never started.** No `seq_vec_issue` adapter for `rmsnorm_rs`
+  was written, and nothing is known about whether the real unit reaches 0
+  degenerate residuals over this schedule. The PART 3 recommendation stands
+  and is now MORE important, not less: with the swiglu corrected, anchoring
+  the norm alone is measurably not enough at 16 and 32 blocks.
+* **What the FFN residual needs is not established.** The eight remaining
+  anchored failures are all FFN residuals and all driven by the swiglu's
+  output scale. Whether a real `swiglu` unit with a data-driven normalisation
+  bounds `eb` is untested.
+* **The teeth check for the corrected exponent was not run.** P6's teeth were
+  re-established in PART 3 against a different mutation and were not re-run
+  here.
+* **`B_BEHAV`'s output exponent is fabricated in the same way** and was NOT
+  changed: it publishes `j_wexp + j_ord`, which depends on no source region's
+  captured exponent at all. It is a bisection stand-in, default false, so it
+  never affects the default path, but it is defect 7's class and it is
+  unfixed. `A_BEHAV` (`j_wexp + xexp - j_shift`) and the unit C stub
+  (`exp_rd_data`, its source region's exponent) were audited and are both
+  contractually right.
