@@ -233,8 +233,39 @@ architecture rtl of matvec_core is
   signal ns_r   : ns_t := 0;
   type   ns_arr is array(0 to ROWS_IF-1) of ns_t;
   signal ns_rep : ns_arr := (others => 0);
+  -- OUT_SHIFT GETS THE SAME TREATMENT, AND FOR A THIRD REASON AS WELL.
+  --
+  -- SITE 2/3's row-end shift at `re2_shv(rr) <= round_shift(re1_acc(rr), ...)`
+  -- is the identical shape to SITE 4's: one small control value steering a
+  -- VARIABLE shift in all ROWS_IF lanes.  It is worse on two counts.  The
+  -- datapath is 48 bits rather than 32, so each lane is a bigger shifter and a
+  -- 49-bit one-hot bias decoder.  And the control value is an input PORT
+  -- declared `integer`, so the 32-bit broadcast starts wherever the wrapper's
+  -- register was placed, outside this module entirely.
+  --
+  -- It was not the reported critical path -- ns was -- so this is a prediction,
+  -- not a measurement: once ns is fixed, this is the same defect waiting in the
+  -- same place.  The file header already records that round_shift by a variable
+  -- out_shift WAS the critical path once, at -6.354 ns, which is what forced
+  -- row end to be split into stages in the first place.
+  --
+  -- The third reason is not about timing at all.  out_shift was read LIVE, in
+  -- every lane, at every tile's row end, across an operation that runs for
+  -- thousands of cycles.  That is an unlatched input read across a long
+  -- operation, which is defect class 1 in
+  -- docs/debugging/2026-08-27_B-interface-audit.md, and it means a caller that
+  -- moved out_shift mid-operation would get DIFFERENT tiles rounded by
+  -- DIFFERENT shifts with nothing detecting it.  os_r latches it once, in the
+  -- arm of the S_IDLE check that has just proved 0 <= out_shift <= 40, so the
+  -- narrow subtype cannot be violated by a caller the check is about to reject.
+  -- y_exp reads os_r for the same reason: one operation, one shift, everywhere.
+  subtype os_t is natural range 0 to 63;
+  signal os_r   : os_t := 0;
+  type   os_arr is array(0 to ROWS_IF-1) of os_t;
+  signal os_rep : os_arr := (others => 0);
   attribute dont_touch : string;
   attribute dont_touch of ns_rep : signal is "true";
+  attribute dont_touch of os_rep : signal is "true";
   signal sat_r, err_r : std_logic := '0';
 
   -- ROW-END PIPELINE.  Row end runs once per TILE, not once per block, so
@@ -536,7 +567,9 @@ begin
         re2_v <= re1_v; re2_t <= re1_t;
         if re1_v = '1' then
           for rr in 0 to ROWS_IF-1 loop
-            re2_shv(rr) <= round_shift(re1_acc(rr), out_shift);
+            -- os_rep(rr), not out_shift: latched, narrowed, per-lane.  To
+            -- attribute, put out_shift back HERE and nowhere else.
+            re2_shv(rr) <= round_shift(re1_acc(rr), os_rep(rr));
             re2_acc(rr) <= re1_acc(rr);        -- PARTIAL emits this, unrounded
           end loop;
         end if;
@@ -640,6 +673,7 @@ begin
         -- while the gate is true, which is the version of this that is wrong.
         for rr in 0 to ROWS_IF-1 loop
           ns_rep(rr) <= ns_r;
+          os_rep(rr) <= os_r;
         end loop;
 
         ----------------------------------------------------------------
@@ -659,6 +693,7 @@ begin
                 t_iss <= 0; b_iss <= 0; b_pf <= 0;
                 xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0';
                 amax <= (others => '0');
+                os_r      <= out_shift;      -- checked 0..40 immediately above
                 sat_r <= '0'; err_r <= '0';
                 st <= S_RUN;
               end if;
@@ -723,9 +758,13 @@ begin
 
   -- y_exp: BFP subtracts ns (spec 7.4); PARTIAL carries NO out_shift term
   -- (spec 14.2), because its payload was never shifted.
+  -- os_r, not out_shift: the shift the datapath ACTUALLY applied.  With a
+  -- caller that holds out_shift for the operation, as the contract requires,
+  -- these are the same value; with one that does not, this is the only version
+  -- that cannot report an exponent for a rounding the payload never had.
   y_exp <= (w_exp + x_exp)                        when out_mode = "10" else
-           (w_exp + x_exp - out_shift - ns_r)     when out_mode = "00" else
-           (w_exp + x_exp - out_shift);
+           (w_exp + x_exp - os_r - ns_r)          when out_mode = "00" else
+           (w_exp + x_exp - os_r);
 
   err       <= err_r;
   sat_event <= sat_r;

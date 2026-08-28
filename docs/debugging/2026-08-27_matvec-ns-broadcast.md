@@ -237,3 +237,92 @@ Flagged separately because they carry less weight than the section above.
   A to roughly the constraint and no further, and the next move is pipelining
   SITE 4's shift into two stages -- which DOES cost a cycle, and which the
   one-cycle `S_EMIT` lead measured above will not pay for.
+
+
+---
+
+## ADDENDUM, same day, after the ns fix was committed as `0666c90`
+
+### There is a second site, it is worse, and it was not on the report
+
+`rtl/matvec_core.vhd:539`, SITE 2/3, row end:
+
+```vhdl
+re2_shv(rr) <= round_shift(re1_acc(rr), out_shift);
+```
+
+The identical shape to SITE 4: one small control value steering a VARIABLE
+shift in all `ROWS_IF` lanes. It is worse than the ns site on two counts.
+
+* **The datapath is 48 bits, not 32.** Each lane is a larger barrel shifter and
+  a 49-bit one-hot bias decoder rather than a 33-bit one.
+* **The control value is an input PORT declared `integer`.** So the 32-bit
+  broadcast does not even start inside this module -- it starts at whichever
+  register the wrapper placed, and the placer has less freedom about it than it
+  had about `ns_r`.
+
+It was not the reported critical path because ns was. This is therefore a
+PREDICTION and not a measurement: once ns is fixed, the same defect is waiting
+in the same file. It is not a blind prediction -- the file's own header records
+that `round_shift` by a variable `out_shift` WAS the critical path once, at
+**-6.354 ns, 88 MHz against a 200 MHz target**, and that is what forced row end
+to be split into stages in the first place. The split fixed the depth. It did
+not touch the broadcast.
+
+### And a third reason, which is not about timing
+
+`out_shift` was read **live**, in every lane, at every tile's row end, across an
+operation that runs for thousands of cycles. That is an unlatched input read
+across a long operation, **defect class 1** in
+`docs/debugging/2026-08-27_B-interface-audit.md`. A caller that moved
+`out_shift` mid-operation would get different tiles rounded by different shifts,
+with nothing detecting it -- not a crash, a quietly wrong result on some shapes.
+
+`os_r` latches it once, in the arm of the `S_IDLE` check that has just proved
+`0 <= out_shift <= 40`. That ordering is load-bearing for a second reason: it
+means the narrow `natural range 0 to 63` subtype cannot be violated in
+simulation by exactly the caller the check is about to reject. Latching in the
+`start` branch unconditionally, before the check, would turn a rejected
+descriptor into a range-check failure.
+
+`y_exp` moved to `os_r` as well. It reports the exponent for a payload the
+datapath shifted by `os_r`; with a compliant caller the two are the same value,
+and with a non-compliant one this is the only version that cannot report an
+exponent for a rounding the payload never had. **This is a behaviour change, and
+only under a contract violation** -- it is called out here rather than buried
+because "bit-exact" was a requirement and this is the one place the change is
+not literally a no-op.
+
+Lead time: `os_r` is latched at `start`, the replicas one cycle later, and
+`re1_v` cannot rise until a beat has crossed the compute pipeline, which is
+`P_CONTRIB = LVL + 3 = 8` stages at `BLK = 32` and 5 at the minimum legal
+`BLK = 4`. Against a required 2, that is ample rather than exact -- unlike the
+ns site, this one has real slack. **Zero cycles.**
+
+### What this does to the attribution
+
+There are now THREE independent changes and they are in two commits, so the
+coordinator can measure at either point:
+
+| point | ns width | ns replicas | out_shift latch + width + replicas |
+|---|---|---|---|
+| `bbb9d98` (before) | no | no | no |
+| `0666c90` | yes | yes | no |
+| this commit | yes | yes | yes |
+
+To split the ns pair further, put `ns_r` back at the single marked line in
+`S_EMIT`; to split this one, put `out_shift` back at the single marked line in
+row-end stage 2. Each marked line says so in the source.
+
+### Verification
+
+`sim/regress.sh --only matvec`: 5 PASS, 0 FAIL, unchanged. Full suite recorded
+in the commit message.
+
+### Rejected here too, NOT measured
+
+* **Narrowing the `out_shift` PORT itself.** It is `in integer` and is driven by
+  `matvec_int4.vhd:177` from a 32-bit register field, plus three testbenches.
+  Changing the port type spreads the diff across files owned by other work for
+  no gain the internal latch does not already give: after `os_r`, the port's
+  width exists only between the wrapper register and one flop.
