@@ -897,8 +897,15 @@ begin
   -- input-dependent result over the same handshake, so the SEQUENCING is
   -- exercised and the arithmetic is not claimed.
   --
-  -- norm  : out(i) = in(i) - (sum(in) / n)      mean removal, not rmsnorm
-  -- swiglu: out(i) = (a(i) * b(i)) / 64         no gate, not swiglu
+  -- norm  : out(i) = in(i) - (sum(in) / n)          mean removal, not rmsnorm
+  -- swiglu: out(i) = (a(i) * b(i)) / 2**MANT_W       no gate, not swiglu
+  --
+  -- THE VALUES ARE MODELS; THE PUBLISHED EXPONENTS ARE NOT.  Every D-vec op's
+  -- output exponent below is the arithmetically correct one for the mantissa
+  -- operation the model performs, because a wrong exponent is not a wrong
+  -- value -- it is a wrong SCALE, and the residual silently discards an
+  -- operand whose scale is more than a mantissa width away.  See the comment
+  -- at S_DONE for the derivation of each one.
   -- ======================================================================
   gen_vstub : for vi in 0 to NVOP-1 generate
     gv : if vi /= V_RES generate
@@ -1006,8 +1013,22 @@ begin
                 elsif vi = V_NORM then
                   uw_data(NUNIT+vi) <= sat_m(to_integer(buf(k)) - (acc / n));
                 else
+                  -- THE NORMALISATION SHIFT IS MANT_W AND THAT IS NOT
+                  -- ARBITRARY.  Two MANT_W-wide mantissas multiply to at most
+                  -- 2**(2*MANT_W-2), so a right shift of MANT_W is the
+                  -- smallest FIXED shift under which the product CANNOT
+                  -- saturate.  It was /64, and at /64 every one of the 128
+                  -- outputs of every swiglu in this schedule saturated:
+                  -- measured `sat=128 unsat=0`, i.e. R_H was a CONSTANT vector
+                  -- and the FFN carried no information from R_G or R_U at all.
+                  -- A saturated mantissa also makes the published exponent a
+                  -- lie, because the stored value is no longer the one the
+                  -- exponent describes.  A real engine picks this shift from
+                  -- the data, exactly as seq_vec_res does; a fixed MANT_W is
+                  -- the stand-in that is never wrong in the unsafe direction.
                   uw_data(NUNIT+vi) <= sat_m((to_integer(buf(k))
-                                         * to_integer(buf2(k))) / 64);
+                                         * to_integer(buf2(k)))
+                                         / (2**MANT_W));
                 end if;
                 if k = n-1 then
                   k  := 0;
@@ -1018,17 +1039,75 @@ begin
 
               when S_DONE =>
                 dn <= '1';
-                -- A deterministic, input-dependent exponent.  It must not be
-                -- a constant: a shared or stale capture anywhere in the
-                -- exponent path has to become a WRONG NUMBER, not a repeat of
-                -- the right one.
+                -- THE PUBLISHED OUTPUT EXPONENT.  A stub must be wrong in its
+                -- VALUES and RIGHT IN ITS CONTRACT, and an exponent is part of
+                -- the contract, not part of the values.  A fabricated exponent
+                -- puts a stub's output on a grid nothing else in the token
+                -- shares, and the next residual then shifts one of its two
+                -- operands out entirely: a second, invisible failure layered
+                -- on top of the intended, visible one.  That is defect 7 of
+                -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+                --
+                -- The convention is `value = mantissa * 2^-exponent`
+                -- (seq_vec_res.vhd:13-15), so a right shift of the mantissa by
+                -- s SUBTRACTS s from the exponent, and a PRODUCT's exponent is
+                -- the SUM of its operands'.  `matvec_core` publishes
+                -- `w_exp + x_exp - out_shift - ns` for exactly that reason and
+                -- is the independent confirmation of both rules.
+                --
+                -- The exponent must also stay DETERMINISTIC AND
+                -- INPUT-DEPENDENT, so that a stale or shared capture anywhere
+                -- in the exponent path becomes a WRONG number rather than a
+                -- repeat of the right one.  Both formulae below are; the
+                -- swiglu one now depends on BOTH source captures instead of
+                -- one, so it is a stronger detector than the `+ vi` it
+                -- replaces, not a weaker one.
+                --
+                -- WITHDRAWN: `yexp <= v_exp_a + to_signed(vi, EXP_W)`, i.e.
+                -- the input exponent plus the OP INDEX.  Deterministic and
+                -- input-dependent, and arithmetically wrong for the swiglu:
+                -- it published `v_exp_a + 2` for a product, discarding
+                -- `v_exp_b` entirely even though seq_vec_issue had already
+                -- read it and wired it in.  It was accidentally RIGHT for the
+                -- norm, because the op index there is 0.
                 if NORM_ANCHOR and vi = V_NORM then
                   -- SCALE-FREE, like the unit this models.  The output
                   -- exponent is the weight scale and carries no memory of
                   -- the input's, which is the whole point of the probe.
                   yexp <= to_signed(NORM_EXP, EXP_W);
+                elsif vi = V_NORM then
+                  -- MODEL: out(i) = in(i) - mean(in).  A difference of two
+                  -- quantities that are already on the input's grid is on the
+                  -- input's grid, so the output exponent IS the input
+                  -- exponent, with no constant at all.  This is the one case
+                  -- where "input exponent plus a constant" is the correct
+                  -- answer, and the constant is zero.
+                  --
+                  -- It is correct for the MODEL and it is NOT what the OP
+                  -- would publish: a real rmsnorm is scale-free in its input
+                  -- and its output exponent is the WEIGHT scale.  That gap is
+                  -- what NORM_ANCHOR probes and what a real `rmsnorm_rs` on
+                  -- this op would close.
+                  yexp <= v_exp_a;
                 else
-                  yexp <= v_exp_a + to_signed(vi, EXP_W);
+                  -- MODEL: out(i) = (a(i) * b(i)) / 2**MANT_W.  A PRODUCT,
+                  -- so the exponent is the SUM of the two operands'
+                  -- exponents, and the normalisation shift is a MANT_W-place
+                  -- right shift of the mantissa, so MANT_W comes back off.
+                  --
+                  -- `v_exp_b` is the exponent seq_vec_issue read for `src2`.
+                  -- Every OP_VEC_SWG descriptor in the schedule names one
+                  -- (llama_sched_pkg.vhd:190, src2 => R_U).  seq_vec_issue
+                  -- publishes 0 for a descriptor that does NOT
+                  -- (seq_vec_issue.vhd:440), which would silently degrade this
+                  -- back to the fabricated form, so the absence is an error
+                  -- and not a default.
+                  assert v_reg_b /= x"FF"
+                    report "llama_top: an OP_VEC_SWG descriptor named no "
+                         & "src2, so the product's second exponent is a "
+                         & "fabricated 0."
+                    severity error;
+                  yexp <= v_exp_a + v_exp_b - to_signed(MANT_W, EXP_W);
                 end if;
                 if v_ack(vi) = '1' then
                   dn  <= '0';

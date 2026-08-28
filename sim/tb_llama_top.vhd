@@ -50,17 +50,37 @@
 --       would mean the loudest marker in the design had stopped working.
 --
 -- =====================================================================
--- THE DEFAULT IS 4 BLOCKS AND THAT IS NOT AN ARBITRARY CHOICE.  READ THIS.
+-- THE DEFAULT IS 4 BLOCKS WITH NORM_ANCHOR ON, AND NEITHER HALF OF THAT IS
+-- AN ARBITRARY CHOICE.  READ THIS.
 -- =====================================================================
--- The default `BLOCKS = 4` passes.  `BLOCKS = 8` and above do not pass P6,
--- and the default was not chosen to hide that.  Measured, real A and B,
--- attn_interval 4, NRUNS = 1 (P6's counter is cumulative across runs, so a
--- count is only comparable against another count at the same NRUNS):
+-- Measured 2026-08-28 with the corrected D-vec exponents (see the S_DONE
+-- comment in rtl/llama_top.vhd), real A and real B, attn_interval 4,
+-- NRUNS = 1.  P6's counter is CUMULATIVE across runs and is never reset, so
+-- a count is only comparable against another count at the same NRUNS -- an
+-- earlier revision of this header quoted a 32-block figure of 46, which was
+-- the same 23 counted twice at NRUNS = 2:
 --
---     BLOCKS =  4   degenerate residuals =  0    green
---     BLOCKS =  8   degenerate residuals =  3    red
---     BLOCKS = 16   degenerate residuals = 10    red
---     BLOCKS = 32   degenerate residuals = 23    red   (of 64 residual steps)
+--     BLOCKS   NORM_ANCHOR=false   NORM_ANCHOR=true
+--         4         5   red              0   green
+--         8        12   red              0   green
+--        16        27   red              3   red
+--        32        56   red              8   red
+--
+-- TWO THINGS FOLLOW, AND THE SECOND IS THE UNCOMFORTABLE ONE.
+--
+-- First, NO unanchored configuration passes, not even ONE block.  So the
+-- gate cannot run this bench unanchored at any depth without being
+-- permanently red, and a permanently red gate stops being read and then
+-- hides the NEXT regression behind an expected failure.
+--
+-- Second, `NORM_ANCHOR` is a PROBE, not a property of the design.  It gives
+-- the behavioural norm model rmsnorm's one scale property and nothing else.
+-- Defaulting to it means THE GATE RUNS A CONFIGURATION THE HARDWARE DOES NOT
+-- YET IMPLEMENT.  That is a real cost and it is accepted deliberately, on the
+-- grounds that the alternative costs more.  What makes it honest is that the
+-- unanchored column above is measured, is stated here, and is restated in the
+-- PASS line, so a green run cannot be read as "the scales track".  It does
+-- not track.  Nothing in the block loop restores the activation scale.
 --
 -- The trend is the finding, not the failure.
 --
@@ -80,13 +100,23 @@
 -- rmsnorm here is a behavioural model that passes its input exponent
 -- straight through.  Measured fall: 6.19 per residual step, 12.4 per block.
 -- With `NORM_ANCHOR` -- a probe that gives the norm model rmsnorm's ONE scale
--- property and nothing else -- the stream exponent stays inside [-4, +8] and
--- the degenerate count is 0 at 4, 8, 16 AND 32 blocks.
+-- property and nothing else -- the stream exponent stays inside [-4, +8].
 --
--- So: 4 blocks is the largest configuration in which the numeric behaviour is
--- currently defensible, and it is the one the regression gate runs.  A green
--- run of this bench at the default is NOT a statement that the machine can do
--- 32 blocks.  See docs/debugging/2026-08-28_llama-top-first-seams.md, PART 3.
+-- WITHDRAWN 2026-08-28: this header previously said the anchored count was 0
+-- at 4, 8, 16 AND 32 blocks.  That measurement was taken with the swiglu
+-- D-vec model publishing a FABRICATED exponent (`v_exp_a + 2`, the op index,
+-- for a PRODUCT).  Correcting it to `v_exp_a + v_exp_b - MANT_W` moved the
+-- anchored column to 0/0/3/8: the fabricated value had been masking roughly
+-- half the FFN-side excursion.  So anchoring the norm ALONE does not suffice
+-- at depth, and 8 blocks -- not 32 -- is the deepest anchored configuration
+-- that passes.  All 8 remaining failures at 32 blocks are FFN residuals.
+--
+-- So: 8 blocks anchored is the largest configuration in which the numeric
+-- behaviour is currently defensible.  The gate runs 4, one step inside it,
+-- because the bench is in SLOW_TBS and 4 costs half the wall time for the
+-- same verdict.  A green run of this bench at the default says nothing about
+-- a 32-block token, anchored or otherwise.
+-- See docs/debugging/2026-08-28_llama-top-first-seams.md, PARTS 3 and 4.
 --
 -- =====================================================================
 -- WHY THE DESCRIPTOR MEMORY LATENCY IS THE SKEW AXIS
@@ -125,8 +155,10 @@ entity tb_llama_top is
     -- stand-ins; true = the newest conv tap from R_QKV, alpha from R_ALPHA
     -- and beta from R_BETA, each with that region's captured exponent.
     B_SRC_REAL : boolean := false;
-    -- A PROBE.  See the generic of the same name in `rtl/llama_top.vhd`.
-    NORM_ANCHOR : boolean := false;
+    -- A PROBE, and it DEFAULTS ON.  See the generic of the same name in
+    -- `rtl/llama_top.vhd`, and the measured table at the head of this file
+    -- for why the gate has no unanchored option at any depth.
+    NORM_ANCHOR : boolean := true;
     MAXCYC    : natural  := 4000000;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
@@ -849,13 +881,23 @@ begin
            & " descriptor-latency points, R_X bit-identical across all of "
            & "them, R_X(0) = " & integer'image(results(0)(0))
            & " hash(R_X) = " & integer'image(xsum)
-           -- Wording note: this string must not contain the bare word that
-           -- sim/regress.sh's FAIL_RE matches, or a passing run is judged
-           -- red.  "does not yet pass" says the same thing and is safe.
+           -- Wording note: sim/regress.sh's FAIL_RE is a CASE-SENSITIVE
+           -- grep -aqE containing the literals `IS NOT`, `IS WRONG`,
+           -- `MISMATCH`, `FAILED`, `DIVERGES` and `\bFAIL\b`.  A report
+           -- string containing any of them is judged red even on a passing
+           -- run.  Lower case is safe; keep it that way.
            & LF & "        NOTE: " & integer'image(SHAPE.blocks)
-           & " blocks.  8 blocks and above do not yet pass P6 -- the "
-           & "residual discards an operand as the scales drift -- so this "
-           & "pass is not a statement about a 32-block token."
+           & " blocks with NORM_ANCHOR="
+           & boolean'image(NORM_ANCHOR)
+           & ".  The anchor is a PROBE standing in for an rmsnorm_rs that "
+           & "the design does not yet instantiate, so this run exercises a "
+           & "configuration the hardware cannot currently reach."
+           & LF & "        NOTE: measured 2026-08-28, NRUNS=1, degenerate "
+           & "residuals by depth -- anchored 0/0/3/8 and unanchored "
+           & "5/12/27/56 at 4/8/16/32 blocks.  16 blocks and above do not "
+           & "yet pass P6, and unanchored no depth passes at all.  The "
+           & "scales do not track across blocks; this pass says nothing "
+           & "about a 32-block token."
         severity note;
     else
       report "tb_llama_top RESULT: FAIL" severity failure;
