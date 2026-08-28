@@ -35,7 +35,7 @@ below may be edited by a track that does not own it.
 | `rtl/attn_*.vhd`, `sim/tb_attn_block.vhd`, `ref/attn_*` | TRACK C-ORACLE | |
 | `rtl/gdn_*.vhd`, `rtl/l2norm_rs.vhd`, `sim/tb_gdn_*.vhd`, `sim/tb_l2norm_rs.vhd`, `ref/gdn_*`, `ref/l2norm*` | TRACK B-ACCURACY | |
 | `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | TRACK TOK-C | |
-| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c` | UNOWNED, see Open issues | the A control plane. Blocked on a decision. |
+| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c`, matvec benches | TRACK A-CTRL | decision taken 2026-08-28, see below |
 
 **Standing rule for every track: no hardware.** No `xsdb`, `hw_server`,
 `vivado ... program`, `pcieep.sh`, `jtag.sh`, `flash.sh`, `program.tcl`, and
@@ -126,11 +126,48 @@ oracle. Port the `llamacpp` state-machine backend, not the `regex` one.
   and ask before adding a dependency. `llama_server.cpp` being zero-dep is a
   deliberate property, not an accident.
 
+### TRACK A-CTRL -- the descriptor control plane, the CDC, and MAXOUT
+
+**Status:** RUNNING (dispatched 2026-08-28, after the OI-1 decision below)
+**Owns:** `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c`, the matvec benches
+
+**The decision, taken and not to be relitigated.** Oren chose **descriptor in
+memory**: the AXI-Lite map stays constant at roughly five registers
+(`DESC_PTR_LO/HI`, `CTRL.go`, `STATUS.busy/err`, `ERR_ADDR`) and the 24 `W_BASE`
+plus 3 `S_BASE` entries move into a descriptor block the host DMAs in. The map
+therefore does not grow with geometry, so `ROWS_IF` can change later without
+touching the driver; it unifies with subsystem D, which already fetches
+descriptors through `rtl/seq_desc_fetch.vhd`; and the 3.27 GB/s H2C path that
+delivers the descriptor is already proven on silicon.
+
+Rejected: a generated fixed map (about 60 registers, reshapes whenever
+`ROWS_IF` or `AXI_DW` moves, driver and bitstream must be version-locked), and
+an indexed window (81 stateful writes at 1 to 2 us per PCIe round trip, and the
+existing header's "a map no driver could parse" objection applies to it most
+strongly).
+
+**Pre-written next steps:**
+
+- **If it lands bit-exact through the new control path at `MAXB=16`** -> mark
+  off. Next: the shell integration, which needs `gen_pcieep.py` to enable the
+  HBM ports AND `llama_top` instantiated, and is the first build that could put
+  arithmetic on the card.
+- **If the descriptor format collides with subsystem D's conventions** -> do
+  NOT invent a second dialect. Report the collision; unifying the two is worth
+  more than shipping A's own.
+- **If the CDC cannot be closed at the chosen depth** -> report the depth and
+  the arithmetic. Duty is 78.7% at 27 ports and 300 MHz, so there is real
+  margin; a failure here means the analysis is wrong somewhere and that is the
+  finding.
+- **If a mutation passes silently** (a corrupt descriptor that computes
+  something wrong instead of raising `STATUS.err`) -> that is a safety property
+  failing, not a test gap. Report it as a defect.
+
 ---
 
 ## Open issues
 
-### OI-1: the subsystem A control plane needs a design decision (BLOCKED-DECISION)
+### OI-1: RESOLVED 2026-08-28 -- descriptor in memory
 
 A is bit-exact at the FK33 geometry and the HBM can serve its 27 masters
 (30 already measured at 288.0 GB/s, 100% of ceiling). Three things stand
@@ -147,7 +184,10 @@ between that and arithmetic on silicon, and the first is a decision:
 3. **`axi_rd_port`'s `MAXOUT` defaults to 2** (32 outstanding beats); the
    measured 288 GB/s run used 16.
 
-Items 2 and 3 are determined work. Item 1 is Oren's call.
+Items 2 and 3 are determined work. **Item 1 was Oren's call and is now
+answered: descriptor in memory.** All three are dispatched as TRACK A-CTRL
+above. This issue is closed; the record is kept because the rejected options
+and their costs are the part worth re-reading.
 
 ### OI-2: `attn_emit.vhd:400` is a bound violation at `NGRP = 1` (latent)
 
@@ -183,4 +223,5 @@ format being settled.
 | AXI3 burst cap | HBM is AXI3, 16 beats not 128. Bit-exact at both; bench now runs the legal one. | `809ada7` |
 | HBM port feasibility | 27 masters fit; 30 already measured at 288.0 GB/s, 100% of ceiling. Design note only. | doc only |
 | Qwen3.5 tokenizer | Bit-exact vs llama.cpp, 53,411 strings x 2 + 1.1M codepoints. 7 of 9 mutations bite. | `4123bd8` |
+| Full gate re-measured | 77 PASS / 0 FAIL, matches the recorded floor. Verified independently after `3246046`. | n/a |
 | Magnitude blocker | Explosion was the STIMULUS (synthetic row norm 2^4.87 vs real 2^-0.03). PART 5 withdrawn, PART 3 reinstated. `attn_block` wired behind `C_REAL`. | `3246046` |
