@@ -315,17 +315,27 @@ echo "== 8. the PACKER agrees with the C reference on the same bytes (N6) =="
 #   8b  Python emits, C and Python both read -> the Python packer's layout
 # 8a needs no model and always runs.  8b needs a GGUF and is skipped, loudly,
 # when there is not one -- a skip that announces itself is not a silent pass.
+#
+# The AXI_DW column was added 2026-08-28.  Before then every row here was 128,
+# which is the ONE width whose layout was never in doubt -- so the check could
+# not have caught a disagreement about the FK33 geometry, which is the case the
+# two implementations were most likely to read differently.  ROWS_IF=48/AXI_DW
+# =256 is the FK33 target; 24/256 and 6/256 are the mixed regime where BOTH
+# n_scale_sub and GRP exceed 1, which neither of the two production geometries
+# reaches.
 mkdir -p sim/work_pk
-for shape in "8 96 4" "13 129 4" "7 100 4" "1 33 4"; do
+for shape in "8 96 4 128" "13 129 4 128" "7 100 4 128" "1 33 4 128" \
+             "100 1024 48 256" "50 320 24 256" "13 129 6 256" "9 64 4 64"; do
   set -- $shape
-  f=sim/work_pk/c_${1}_${2}_${3}.mv4i
-  sim/work_mv/mv4i --emit "$f" "$1" "$2" "$3" >/dev/null
+  f=sim/work_pk/c_${1}_${2}_${3}_${4}.mv4i
+  sim/work_mv/mv4i --emit "$f" "$1" "$2" "$3" "$4" >/dev/null
   cline=$( sim/work_mv/mv4i "$f" )
   pline=$( python3 tools/pack_int4.py --crosscheck "$f" )
   if [ "$cline" = "$pline" ]; then
-    printf "  8a C-packed M=%-3s K=%-4s  OK   %s\n" "$1" "$2" "$cline"
+    printf "  8a C-packed M=%-3s K=%-4s RI=%-3s DW=%-4s  OK   %s\n" \
+           "$1" "$2" "$3" "$4" "$cline"
   else
-    printf "  8a C-packed M=%-3s K=%-4s  FAIL\n" "$1" "$2"
+    printf "  8a C-packed M=%-3s K=%-4s RI=%-3s DW=%-4s  FAIL\n" "$1" "$2" "$3" "$4"
     echo "     C      : $cline"
     echo "     python : $pline"
     fail=1
@@ -358,35 +368,54 @@ fi
 
 echo "== 9. the packer REFUSES geometries nothing implements (N6) =="
 # --rows-if 80 used to succeed and emit an 80-sub-region file no design can
-# consume: a plausible wrong file, not an error.  Each row below must exit
-# non-zero AND write nothing.
-for g in "80 128" "58 256" "8 256" "16 128"; do
+# consume: a plausible wrong file, not an error.
+#
+# THE REFUSAL SET MOVED on 2026-08-28.  Spec 6.5a defines the byte layout at
+# any AXI_DW, so "AXI_DW != 128" and "n_scale_sub > 1" stopped being refusals
+# and became implemented cases; 80/128, 58/256, 8/256 and 16/128 are all legal
+# FILES now (whether a board has that many ports is a board fact, not a format
+# fact, and the packer prints the master count rather than judging it).  What
+# survives is arithmetic: the 6.5 invariant must divide, AXI_DW must be an AXI4
+# data width, and the offset table must fit the 4 KB header.
+#
+# TRAP THIS ROW USED TO SIT IN.  The old version drove the refusal through the
+# full CLI with /dev/null as the GGUF.  Once the geometry stopped being refused
+# the CLI still exited non-zero -- because /dev/null is not a GGUF -- and the
+# row still printed "refused".  It had been vacuous since 0f44da2 and said so
+# to nobody.  Both directions therefore call check_geometry directly now, where
+# the only thing that can decide the outcome is the geometry.
+refuse_ok() {   # ROWS_IF AXI_DW -- must RAISE
+  python3 -c "
+import sys; sys.path.insert(0, 'tools')
+import pack_int4 as P
+try:
+    P.check_geometry($1, $2, emitting=True)
+except P.GeometryError:
+    sys.exit(0)
+sys.exit(1)
+" 2>/dev/null
+}
+for g in "1 256" "5 256" "3 512" "3 384" "6 96" "1000 8"; do
   set -- $g
-  out=sim/work_pk/refused.mv4i
-  rm -f "$out"
-  if python3 tools/pack_int4.py /dev/null t "$out" --rows-if "$1" --axi-dw "$2" \
-       >/dev/null 2>&1; then
-    printf "  ROWS_IF=%-3s AXI_DW=%-4s  ACCEPTED -- the foot-gun is back\n" "$1" "$2"
-    fail=1
-  elif [ -f "$out" ]; then
-    printf "  ROWS_IF=%-3s AXI_DW=%-4s  refused but LEFT A FILE behind\n" "$1" "$2"
-    fail=1
+  if refuse_ok "$1" "$2"; then
+    printf "  ROWS_IF=%-4s AXI_DW=%-4s  refused, as it must be\n" "$1" "$2"
   else
-    printf "  ROWS_IF=%-3s AXI_DW=%-4s  refused, no file written\n" "$1" "$2"
+    printf "  ROWS_IF=%-4s AXI_DW=%-4s  ACCEPTED -- the foot-gun is back\n" "$1" "$2"
+    fail=1
   fi
 done
 # and the geometries that ARE implemented must still be accepted, or the
 # refusal above is just a broken packer rather than a guard.
-for g in "1 128" "2 128" "4 128" "8 128"; do
+for g in "1 128" "2 128" "4 128" "8 128" "48 256" "24 256" "6 256" "4 64"; do
   set -- $g
   if python3 -c "
 import sys; sys.path.insert(0, 'tools')
 import pack_int4 as P
 P.check_geometry($1, $2, emitting=True)
 " 2>/dev/null; then
-    printf "  ROWS_IF=%-3s AXI_DW=%-4s  accepted, as it must be\n" "$1" "$2"
+    printf "  ROWS_IF=%-4s AXI_DW=%-4s  accepted, as it must be\n" "$1" "$2"
   else
-    printf "  ROWS_IF=%-3s AXI_DW=%-4s  REFUSED but is implemented\n" "$1" "$2"
+    printf "  ROWS_IF=%-4s AXI_DW=%-4s  REFUSED but is implemented\n" "$1" "$2"
     fail=1
   fi
 done

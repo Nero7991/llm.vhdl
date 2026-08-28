@@ -40,6 +40,11 @@
 #define MV4I_MAGIC      0x4D563449u   /* "MV4I" */
 #define MV4I_BLOCK      32            /* weights per scale block          6.1  */
 #define MV4I_HDR_BYTES  4096          /* header is 4 KB                   6.4  */
+/* Sub-region offset tables are FIXED-SIZE arrays here.  The old code looped
+ * `i < h->nports_w && i < 64`, which silently left offsets 64.. at whatever was
+ * on the stack for a file declaring more, and then read through them.  The
+ * bound is now a refusal (-8), not a truncation. */
+#define MV4I_MAX_SUB    64
 
 enum { MV4I_MODE_BFP = 0, MV4I_MODE_RAW = 1, MV4I_MODE_PARTIAL = 2 };
 
@@ -48,14 +53,19 @@ typedef struct {
     uint16_t version, flags, rows_if, nports_w, block, axi_dw;
     int32_t  w_exp, out_shift;
     int8_t   codebook[16];
-    uint64_t w_sub_offset[64];
-    uint64_t s_sub_offset[64];
+    uint64_t w_sub_offset[MV4I_MAX_SUB];
+    uint64_t s_sub_offset[MV4I_MAX_SUB];
 } mv4i_hdr;
 
 typedef struct {
     mv4i_hdr        h;
     const uint8_t  *base;   /* whole file image */
     int             nb;     /* ceil(K / BLOCK) */
+    /* 6.5a derived geometry, computed once in mv4i_parse so the accessors read
+     * as the spec rule rather than as arithmetic.  All redundant with the
+     * header fields; none of them is a degree of freedom. */
+    int             port_b; /* AXI_DW/8, bytes per beat of one sub-region     */
+    int             grp;    /* scale groups per superword                     */
 } mv4i_file;
 
 /* ------------------------------------------------- arithmetic primitives 7.4 */
@@ -85,6 +95,60 @@ static int32_t sat32(int64_t v)
 }
 
 static uint64_t abs64(int64_t v) { return v < 0 ? (uint64_t)(-v) : (uint64_t)v; }
+
+/* ------------------------------------------- 6.5a general geometry helpers */
+
+/* Spec 6.5a (2026-08-28) states the byte layout at ARBITRARY AXI_DW.  Until
+ * then 6.5 pinned it only at AXI_DW = 128, where one AXI lane is exactly one
+ * row's BLOCK*4 = 128-bit chunk -- the "ROWS_IF = 4 coincidence" 6.5 itself
+ * warns is load-bearing.  The FK33's HBM SAXI ports are 256 bits and a lane
+ * there spans two rows, so this file used to REFUSE such a file (-7) rather
+ * than misread it.  The three rules it now implements are:
+ *
+ *   TILE WORD.    For (tile t, block b) the word is ROWS_IF*BLOCK*4 bits with
+ *                 row r at bits (r+1)*BLOCK*4-1 downto r*BLOCK*4, row 0 at the
+ *                 LSB, i.e. at the LOWEST byte offset.
+ *   WEIGHT SLICE. NPORTS_W = ROWS_IF*BLOCK*4 / AXI_DW, and weight sub-region p
+ *                 carries bit slice p of every tile word, beats t-major then b.
+ *   SCALE SLICE.  SW = ROWS_IF*16 bits per group; n_scale_sub is the smallest
+ *                 n with n*AXI_DW a whole number of groups, the SUPERWORD is
+ *                 n_scale_sub*AXI_DW bits and holds GRP = n*AXI_DW/SW
+ *                 consecutive groups, and scale sub-region q carries bit slice
+ *                 q of every superword.
+ *
+ * At ROWS_IF = 4, AXI_DW = 128 slice p IS row p and n_scale_sub is 1, so every
+ * expression below reduces to the code it replaced.  That is checked by
+ * byte-identity, not asserted.                                              */
+
+static uint32_t u32_gcd(uint32_t a, uint32_t b)
+{ while (b) { uint32_t t = a % b; a = b; b = t; } return a; }
+
+/* n_scale_sub = lcm(SW, AXI_DW) / AXI_DW = SW / gcd(SW, AXI_DW).
+ * Written as the division form because lcm() overflows for no reason. */
+static uint32_t mv4i_n_scale_sub(uint32_t rows_if, uint32_t axi_dw)
+{
+    uint32_t sw = rows_if * 16u;
+    if (!sw || !axi_dw) return 0;
+    return sw / u32_gcd(sw, axi_dw);
+}
+
+/* GRP of 6.5a: scale groups carried by one superword. */
+static uint32_t mv4i_grp(uint32_t rows_if, uint32_t axi_dw)
+{
+    uint32_t sw = rows_if * 16u;
+    if (!sw) return 0;
+    return mv4i_n_scale_sub(rows_if, axi_dw) * axi_dw / sw;
+}
+
+/* AXI4 defines exactly these data widths.  6.5a's slice rule is happy with any
+ * multiple of 8, but rtl/axi_rd_port.vhd derives ARSIZE as clog2(AXI_DW/8) and
+ * a 96-bit "port" is a file for a bus that cannot exist.  Same list as
+ * tools/pack_int4.py:AXI4_WIDTHS -- the two must agree. */
+static int mv4i_is_axi4_width(uint32_t w)
+{
+    return w == 8 || w == 16 || w == 32 || w == 64
+        || w == 128 || w == 256 || w == 512 || w == 1024;
+}
 
 /* --------------------------------------------------------- file access 6.4/6.5 */
 
@@ -119,27 +183,64 @@ int mv4i_parse(mv4i_file *f, const uint8_t *img, size_t len)
     memcpy(h->codebook, p + 0x20, 16);          /* codebook TRAVELS IN THE FILE */
     h->scale_offset = rd_u32(p + 0x30);
     h->n_scale_sub  = rd_u32(p + 0x34);
-    for (unsigned i = 0; i < h->nports_w && i < 64; i++)
-        h->w_sub_offset[i] = rd_u64(p + 0x38 + 8 * i);
-    for (unsigned i = 0; i < h->n_scale_sub && i < 64; i++)
-        h->s_sub_offset[i] = rd_u64(p + 0x38 + 8 * h->nports_w + 8 * i);
 
     /* 6.5 invariant: NPORTS_W * AXI_DW = ROWS_IF * BLOCK * 4.
      *
-     * Checked in its GENERAL form (-4), then the decoder's own limit is a
-     * SEPARATE refusal (-7).  The old code tested `nports_w != rows_if`, which
-     * is the invariant already evaluated at AXI_DW=128 -- correct for every
-     * file that existed, but it conflated "this file is self-inconsistent"
-     * with "this reference cannot decode this file", and only the second is
-     * about to become common as the FK33 geometry is settled.                */
+     * Checked in its GENERAL form (-4).  The old code tested
+     * `nports_w != rows_if`, which is the invariant already evaluated at
+     * AXI_DW=128 -- correct for every file that existed, but it conflated
+     * "this file is self-inconsistent" with "this reference cannot decode this
+     * file", and only the second is about to become common as the FK33
+     * geometry is settled.                                                   */
     if (h->block != MV4I_BLOCK) return -3;
+    if (h->rows_if == 0) return -3;
     if ((uint32_t)h->nports_w * (uint32_t)h->axi_dw
         != (uint32_t)h->rows_if * (uint32_t)h->block * 4u) return -4;
-    /* get_widx/get_scale below assume one lane IS one row's 16-byte chunk,
-     * which holds only at AXI_DW = 128 with BLOCK = 32 (spec 6.5, the
-     * "ROWS_IF = 4 coincidence").  Refuse anything else rather than decode it
-     * wrongly; spec 14.5 has not yet defined what else would mean.           */
-    if (h->axi_dw != 128) return -7;
+
+    /* The GEOMETRY REFUSALS.  Generalising the byte layout to spec 6.5a
+     * (2026-08-28) retired the blanket `axi_dw != 128` refusal, but it did NOT
+     * turn this into a pass-through.  What survives is what is still either
+     * unrepresentable or self-contradictory:
+     *
+     *  -7  AXI_DW is not an AXI4 data width.  6.5a's slice rule would happily
+     *      cut a 96-bit sub-region; no AXI4 bus can carry one.
+     *  -8  more sub-regions than the fixed offset tables hold, or an offset
+     *      table that does not fit the 4 KB header (6.4).  The old code
+     *      truncated the read at 64 and carried on.
+     *  -9  n_scale_sub disagrees with 6.5a.  Minimality is not cosmetic: a
+     *      larger n that also divides describes a DIFFERENT file, so a
+     *      mismatch means the writer and this reader do not agree on where the
+     *      scales are, and reading it anyway is exactly the silent misread
+     *      this refusal exists to prevent.  n_scale_sub == 0 is the one
+     *      accepted deviation -- 0x34 was written as a literal 1 by every
+     *      emitter that ever ran, and 0 can only mean a file older than the
+     *      field, which can only have been the single contiguous sub-region.
+     *
+     * Note AXI_DW < BLOCK*4 is NOT refused: a sub-region narrower than a row
+     * chunk is a perfectly well defined slice under 6.5a (ROWS_IF=4/AXI_DW=64
+     * gives NPORTS_W=8, two sub-regions per row), and refusing it would be
+     * refusing the general rule this file now implements.                    */
+    if (!mv4i_is_axi4_width(h->axi_dw)) return -7;
+    if (h->nports_w == 0 || h->nports_w > MV4I_MAX_SUB) return -8;
+
+    if (h->n_scale_sub == 0) {
+        /* Legacy file: one contiguous scale region at scale_offset. */
+        h->n_scale_sub    = 1;
+        h->s_sub_offset[0] = h->scale_offset;
+    }
+    if (h->n_scale_sub > MV4I_MAX_SUB) return -8;
+    if (h->n_scale_sub != mv4i_n_scale_sub(h->rows_if, h->axi_dw)) return -9;
+    if (0x38u + 8u * ((uint32_t)h->nports_w + h->n_scale_sub) > MV4I_HDR_BYTES)
+        return -8;
+
+    for (unsigned i = 0; i < h->nports_w; i++)
+        h->w_sub_offset[i] = rd_u64(p + 0x38 + 8 * i);
+    if (rd_u32(p + 0x34) != 0)
+        for (unsigned i = 0; i < h->n_scale_sub; i++)
+            h->s_sub_offset[i] = rd_u64(p + 0x38 + 8 * h->nports_w + 8 * i);
+
+    f->port_b = (int)(h->axi_dw / 8u);
+    f->grp    = (int)mv4i_grp(h->rows_if, h->axi_dw);
 
     /* 7.4 normative range constraints.  Violating either overflows a declared
      * width in the RTL, so the reference refuses the file rather than silently
@@ -154,26 +255,55 @@ int mv4i_parse(mv4i_file *f, const uint8_t *img, size_t len)
 }
 
 /* 6.5 bit ordering: weight j of a block sits at bits 4j+3..4j of the chunk,
- * so j even -> low nibble of byte j/2, j odd -> high nibble.                 */
+ * so j even -> low nibble of byte j/2, j odd -> high nibble.
+ *
+ * 6.5a: the byte holding that nibble sits at offset `rr*(BLOCK/2) + j/2` of
+ * the TILE WORD, and the tile word is cut into NPORTS_W sub-regions of port_b
+ * bytes each, so the byte lives in sub-region wb/port_b at offset wb%port_b of
+ * that sub-region's (t*nb+b)'th beat.
+ *
+ * At AXI_DW=128, BLOCK=32 this is port_b = 16 = one row chunk, so wb/port_b is
+ * rr and wb%port_b is j/2 -- character for character the code it replaced.   */
 static int get_widx(const mv4i_file *f, int r, int k)
 {
     int RI = f->h.rows_if, t = r / RI, rr = r % RI;
     int b = k / MV4I_BLOCK, j = k % MV4I_BLOCK;
-    const uint8_t *sub = f->base + f->h.w_sub_offset[rr];
-    const uint8_t *c   = sub + (size_t)(t * f->nb + b) * (MV4I_BLOCK / 2);
-    uint8_t byte = c[j >> 1];
+    size_t wb  = (size_t)rr * (MV4I_BLOCK / 2) + (size_t)(j >> 1);
+    size_t p   = wb / (size_t)f->port_b;             /* weight sub-region     */
+    size_t off = wb % (size_t)f->port_b;             /* byte within the beat  */
+    const uint8_t *sub = f->base + f->h.w_sub_offset[p];
+    uint8_t byte = sub[(size_t)(t * f->nb + b) * (size_t)f->port_b + off];
     return (j & 1) ? (byte >> 4) : (byte & 0x0F);
 }
 
+/* One byte of scale superword `super`, at bit-slice-flattened offset `bo`.
+ *
+ * Byte-at-a-time rather than a 16-bit read because at AXI_DW = 8 a scale
+ * STRADDLES two sub-regions (port_b = 1), and the whole point of writing 6.5a
+ * generally was to stop special-casing the widths that happen to be tidy. */
+static uint8_t scale_byte(const mv4i_file *f, size_t super, size_t bo)
+{
+    size_t q   = bo / (size_t)f->port_b;             /* scale sub-region      */
+    size_t off = bo % (size_t)f->port_b;
+    return f->base[f->h.s_sub_offset[q] + super * (size_t)f->port_b + off];
+}
+
 /* Scale for row r, block b.  Little-endian int16; row r of a tile-block group
- * sits at byte offset 2r within that group (6.5).                            */
+ * sits at byte offset 2r within that group (6.5).
+ *
+ * 6.5a: group g = t*nb + b of the flat t-major-then-b stream is chunk g%GRP of
+ * superword g/GRP, and the superword is sliced across n_scale_sub sub-regions.
+ * At n_scale_sub = 1 the superword is one beat of GRP groups, and
+ * (g/GRP)*port_b + (g%GRP)*RI*2 + rr*2 collapses to (g*RI + rr)*2, which is
+ * the contiguous offset this replaced.                                       */
 static uint16_t get_scale(const mv4i_file *f, int r, int b)
 {
     int RI = f->h.rows_if, t = r / RI, rr = r % RI;
-    const uint8_t *s = f->base + (f->h.n_scale_sub ? f->h.s_sub_offset[0]
-                                                   : f->h.scale_offset);
-    size_t off = ((size_t)(t * f->nb + b) * RI + rr) * 2;
-    return rd_u16(s + off);
+    size_t g  = (size_t)(t * f->nb + b);
+    size_t bo = (g % (size_t)f->grp) * (size_t)RI * 2u + (size_t)rr * 2u;
+    size_t su = g / (size_t)f->grp;
+    return (uint16_t)(scale_byte(f, su, bo)
+                      | ((uint16_t)scale_byte(f, su, bo + 1) << 8));
 }
 
 /* ------------------------------------------------------------- the matvec 7.4 */
@@ -314,19 +444,40 @@ int mv4i_matvec(const mv4i_file *f, const int16_t *x_mant, int x_exp,
 #ifndef MV4I_LIB
 
 /* Minimal packer, sufficient to exercise the reference.  Emits exactly the
- * 6.4/6.5 layout so that packer -> C -> RTL bit-identity is testable. */
-static uint8_t *pack(int M, int K, int rows_if, int w_exp, int out_shift,
-                     const int8_t cb[16], const uint8_t *idx /*M*K*/,
-                     const uint16_t *scl /*M*NB*/, size_t *out_len)
+ * 6.4/6.5a layout so that packer -> C -> RTL bit-identity is testable.
+ *
+ * GENERALISED 2026-08-28 from AXI_DW = 128 to any AXI4 width.  It is written as
+ * a byte-offset computation on the TILE WORD (6.5a) rather than as a per-row
+ * loop over sub-regions, because the general rule IS a slice and a per-row loop
+ * can only express the case where a slice happens to be a row.  Substituting
+ * AXI_DW = 128, BLOCK = 32 gives port_b = 16 = one row chunk and nports =
+ * rows_if, so this reduces to the code it replaced; that is checked by
+ * byte-identity against the pre-change binary, not asserted here.            */
+static size_t align4k(size_t v) { return (v + 4095) & ~(size_t)4095; }
+
+static uint8_t *pack_geom(int M, int K, int rows_if, int axi_dw,
+                          int w_exp, int out_shift,
+                          const int8_t cb[16], const uint8_t *idx /*M*K*/,
+                          const uint16_t *scl /*M*NB*/, size_t *out_len)
 {
     int NB     = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
     int tiles  = (M + rows_if - 1) / rows_if;
-    size_t chunk   = MV4I_BLOCK / 2;                        /* 16 B */
-    size_t sub_sz  = (size_t)tiles * NB * chunk;
-    size_t sub_pad = (sub_sz + 4095) & ~(size_t)4095;       /* 4 KB aligned */
-    size_t scl_sz  = (size_t)tiles * NB * rows_if * 2;
-    size_t scl_pad = (scl_sz + 4095) & ~(size_t)4095;
-    size_t len     = MV4I_HDR_BYTES + sub_pad * rows_if + scl_pad;
+    int row_b  = MV4I_BLOCK / 2;                            /* 16 B */
+    int word_b = rows_if * row_b;                           /* the tile word  */
+    int port_b = axi_dw / 8;
+    int nports = word_b / port_b;
+    int nss    = (int)mv4i_n_scale_sub((uint32_t)rows_if, (uint32_t)axi_dw);
+    int grp    = (int)mv4i_grp((uint32_t)rows_if, (uint32_t)axi_dw);
+    assert(nports * port_b == word_b);       /* 6.5 invariant must divide     */
+    assert(0x38 + 8 * (nports + nss) <= MV4I_HDR_BYTES);    /* 6.4 offset tbl */
+
+    size_t sub_pad = align4k((size_t)tiles * NB * port_b);
+    size_t nsuper  = ((size_t)tiles * NB + grp - 1) / grp;
+    /* rounded up to a whole SUPERWORD, not to a whole group: the RTL pops
+     * whole superwords and a short last one would starve the final tile. */
+    size_t scl_pad = align4k(nsuper * port_b);
+    size_t scl_off = MV4I_HDR_BYTES + sub_pad * nports;
+    size_t len     = scl_off + scl_pad * nss;
 
     uint8_t *img = calloc(1, len);                          /* PAD FILL = 0x00 */
     uint8_t *p = img;
@@ -338,36 +489,52 @@ static uint8_t *pack(int M, int K, int rows_if, int w_exp, int out_shift,
     *(int32_t  *)(void *)(p + 0x10) = w_exp;
     *(int32_t  *)(void *)(p + 0x14) = out_shift;
     *(uint16_t *)(void *)(p + 0x18) = (uint16_t)rows_if;
-    *(uint16_t *)(void *)(p + 0x1A) = (uint16_t)rows_if;    /* NPORTS_W */
+    *(uint16_t *)(void *)(p + 0x1A) = (uint16_t)nports;     /* NPORTS_W */
     *(uint16_t *)(void *)(p + 0x1C) = MV4I_BLOCK;
-    *(uint16_t *)(void *)(p + 0x1E) = 128;              /* AXI_DW, see 6.4 */
+    *(uint16_t *)(void *)(p + 0x1E) = (uint16_t)axi_dw; /* AXI_DW, see 6.4 */
     memcpy(p + 0x20, cb, 16);
-    *(uint32_t *)(void *)(p + 0x34) = 1;                    /* n_scale_sub */
-    for (int i = 0; i < rows_if; i++)
+    *(uint32_t *)(void *)(p + 0x34) = (uint32_t)nss;        /* n_scale_sub */
+    for (int i = 0; i < nports; i++)
         *(uint64_t *)(void *)(p + 0x38 + 8 * i) = MV4I_HDR_BYTES + sub_pad * i;
-    *(uint64_t *)(void *)(p + 0x38 + 8 * rows_if) =
-        MV4I_HDR_BYTES + sub_pad * rows_if;
-    *(uint32_t *)(void *)(p + 0x30) = (uint32_t)(MV4I_HDR_BYTES + sub_pad * rows_if);
+    for (int q = 0; q < nss; q++)
+        *(uint64_t *)(void *)(p + 0x38 + 8 * (nports + q)) = scl_off + scl_pad * q;
+    *(uint32_t *)(void *)(p + 0x30) = (uint32_t)scl_off;
 
     for (int r = 0; r < M; r++) {
         int t = r / rows_if, rr = r % rows_if;
-        uint8_t *sub = img + MV4I_HDR_BYTES + sub_pad * rr;
         for (int k = 0; k < K; k++) {
             int b = k / MV4I_BLOCK, j = k % MV4I_BLOCK;
-            uint8_t *c = sub + (size_t)(t * NB + b) * chunk;
+            size_t wb  = (size_t)rr * row_b + (size_t)(j >> 1);
+            size_t sr  = wb / (size_t)port_b, off = wb % (size_t)port_b;
+            uint8_t *c = img + MV4I_HDR_BYTES + sub_pad * sr
+                       + (size_t)(t * NB + b) * (size_t)port_b + off;
             uint8_t v = idx[(size_t)r * K + k] & 0x0F;
-            if (j & 1) c[j >> 1] = (uint8_t)((c[j >> 1] & 0x0F) | (v << 4));
-            else       c[j >> 1] = (uint8_t)((c[j >> 1] & 0xF0) | v);
+            if (j & 1) *c = (uint8_t)((*c & 0x0F) | (v << 4));
+            else       *c = (uint8_t)((*c & 0xF0) | v);
         }
         for (int b = 0; b < NB; b++) {
-            uint8_t *s = img + MV4I_HDR_BYTES + sub_pad * rows_if;
-            size_t off = ((size_t)(t * NB + b) * rows_if + rr) * 2;
+            size_t g  = (size_t)(t * NB + b);
+            size_t bo = (g % (size_t)grp) * (size_t)rows_if * 2u + (size_t)rr * 2u;
+            size_t su = g / (size_t)grp;
             uint16_t v = scl[(size_t)r * NB + b];
-            s[off] = (uint8_t)(v & 0xFF); s[off + 1] = (uint8_t)(v >> 8);
+            for (int by = 0; by < 2; by++) {
+                size_t q = (bo + by) / (size_t)port_b;
+                size_t o = (bo + by) % (size_t)port_b;
+                img[scl_off + scl_pad * q + su * (size_t)port_b + o] =
+                    (uint8_t)(v >> (8 * by));
+            }
         }
     }
     *out_len = len;
     return img;
+}
+
+/* The AXU3EG geometry, which is what every existing call site wants. */
+static uint8_t *pack(int M, int K, int rows_if, int w_exp, int out_shift,
+                     const int8_t cb[16], const uint8_t *idx /*M*K*/,
+                     const uint16_t *scl /*M*NB*/, size_t *out_len)
+{
+    return pack_geom(M, K, rows_if, 128, w_exp, out_shift, cb, idx, scl, out_len);
 }
 
 #ifndef MV4I_LIB
@@ -559,15 +726,18 @@ static int emit_trace(const char *out_path, int M, int K, int RI, int sat)
     return rc;
 }
 
-/* --emit OUT [M K ROWS_IF] -- write the packed image itself, nothing else.
+/* --emit OUT [M K ROWS_IF AXI_DW] -- write the packed image itself, nothing else.
  *
  * WHY: tools/pack_int4.py --crosscheck and this file's crosscheck() both parse
  * a .mv4i and print one line, so pointing them at the same file compares two
  * independent readings of the 6.4/6.5 layout.  That was only ever done by hand,
  * and only on a file the PYTHON packer wrote.  This mode supplies the other
  * direction -- a file the C packer wrote -- and needs no GGUF, so
- * sim/run_matvec.sh can run it on every invocation.                          */
-static int emit_image(const char *out_path, int M, int K, int RI)
+ * sim/run_matvec.sh can run it on every invocation.
+ *
+ * AXI_DW became an argument on 2026-08-28: without it this direction could
+ * only ever exercise the one width whose layout was never in doubt.          */
+static int emit_image(const char *out_path, int M, int K, int RI, int DW)
 {
     const int NB = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
     const int out_shift = 3, w_exp = 2;
@@ -576,14 +746,18 @@ static int emit_image(const char *out_path, int M, int K, int RI)
     uint32_t st = 99;
     for (int i = 0; i < M * K; i++) { st = st * 1103515245u + 12345u; idx[i] = (st >> 16) & 15; }
     for (int i = 0; i < M * NB; i++) { st = st * 1103515245u + 12345u; scl[i] = (uint16_t)(8000 + ((st >> 12) % 24000)); }
-    size_t len; uint8_t *img = pack(M, K, RI, w_exp, out_shift, IQ4_NL, idx, scl, &len);
-    mv4i_file f; if (mv4i_parse(&f, img, len)) { fprintf(stderr, "own file rejected\n"); return 2; }
+    size_t len;
+    uint8_t *img = pack_geom(M, K, RI, DW, w_exp, out_shift, IQ4_NL, idx, scl, &len);
+    mv4i_file f;
+    int prc = mv4i_parse(&f, img, len);
+    if (prc) { fprintf(stderr, "own file rejected: %d\n", prc); return 2; }
     FILE *fp = fopen(out_path, "wb");
     if (!fp) { perror(out_path); return 2; }
     if (fwrite(img, 1, len, fp) != len) { perror("write"); return 2; }
     fclose(fp);
     free(idx); free(scl); free(img);
-    printf("wrote %s (M=%d K=%d ROWS_IF=%d, %zu bytes)\n", out_path, M, K, RI, len);
+    printf("wrote %s (M=%d K=%d ROWS_IF=%d AXI_DW=%d, %zu bytes)\n",
+           out_path, M, K, RI, DW, len);
     return 0;
 }
 
@@ -604,7 +778,8 @@ int main(int argc, char **argv)
         int M = argc > 3 ? atoi(argv[3]) : 8;
         int K = argc > 4 ? atoi(argv[4]) : 96;
         int R = argc > 5 ? atoi(argv[5]) : 4;
-        return emit_image(argv[2], M, K, R);
+        int D = argc > 6 ? atoi(argv[6]) : 128;
+        return emit_image(argv[2], M, K, R, D);
     }
     if (argc >= 2) return crosscheck(argv[1]);
     printf("subsystem A reference self-test\n");
@@ -1189,6 +1364,132 @@ int main(int argc, char **argv)
               clamped && r.sat_event && r.sat_count == (uint64_t)M);
         free(idx); free(scl); free(img); free(x);
         free(r.y_data); free(r.y_acc); free(r.y_mant);
+    }
+
+    /* ---- 13: spec 6.5a, the byte layout at ARBITRARY AXI_DW.
+     *
+     * One set of logical weights and scales, packed at ten different
+     * (ROWS_IF, AXI_DW) geometries, must decode to the SAME numbers.  That is
+     * what "a sub-region is a bit slice of one tile word" means operationally:
+     * WHICH sub-region a byte lands in is a property of the bus, never of the
+     * matrix, so the arithmetic cannot move when the bus width does.
+     *
+     * The shape is deliberately awkward on both axes -- K = 200 is not a whole
+     * number of blocks so the column mask runs, and M = 100 is not a multiple
+     * of any ROWS_IF in the table so every geometry has pad rows.
+     *
+     * ROWS_IF=4/AXI_DW=128 is the control: it is the geometry that is already
+     * in a bitstream, so if it moved, the generalisation broke something real.
+     * The rows below it each add exactly one thing the control cannot see:
+     * a sub-region NARROWER than a row chunk, GRP > 1 at a width other than
+     * 128, n_scale_sub > 1, and the mixed regime where BOTH exceed 1. ---- */
+    {
+        static const struct { int ri, dw, nports, nss, grp; } G[] = {
+            {  4, 128,  4, 1, 2 },   /* AXU3EG, built.  THE CONTROL.          */
+            {  1, 128,  1, 1, 8 },
+            {  2, 128,  2, 1, 4 },
+            {  8, 128,  8, 1, 1 },
+            {  4,  64,  8, 1, 1 },   /* sub-region NARROWER than a row chunk  */
+            {  2,  32,  8, 1, 1 },
+            {  8, 256,  4, 1, 2 },   /* GRP > 1 away from 128                 */
+            { 48, 256, 24, 3, 1 },   /* FK33: 24 + 3 = 27 AXI read masters    */
+            { 24, 256, 12, 3, 2 },   /* MIXED: n_scale_sub AND GRP both > 1   */
+            {  6, 256,  3, 3, 8 },   /* MIXED, SW = 96 is not a power of two  */
+        };
+        const int NG = (int)(sizeof G / sizeof G[0]);
+        const int M = 100, K = 200, NB = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
+        uint8_t  *idx = malloc((size_t)M * K);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        uint32_t st = 4242;
+        for (int i = 0; i < M * K; i++)  { st = st*1103515245u + 12345u; idx[i] = (st >> 16) & 15; }
+        for (int i = 0; i < M * NB; i++) { st = st*1103515245u + 12345u; scl[i] = (uint16_t)(1 + ((st >> 12) % 32767)); }
+        int16_t *x = malloc(sizeof(int16_t) * K);
+        for (int k = 0; k < K; k++) { st = st*1103515245u + 12345u; x[k] = (int16_t)((int32_t)((st >> 8) % 40001) - 20000); }
+
+        int32_t *ref0 = NULL;
+        int same = 1, geom = 1, parsed = 1;
+        for (int g = 0; g < NG; g++) {
+            size_t len;
+            uint8_t *img = pack_geom(M, K, G[g].ri, G[g].dw, 2, 3, IQ4_NL,
+                                     idx, scl, &len);
+            mv4i_file f;
+            int rc = mv4i_parse(&f, img, len);
+            if (rc) { parsed = 0; free(img); continue; }
+            /* the header numbers, against 6.5a evaluated by hand in the table
+             * above rather than by calling the same helper the packer used */
+            if (f.h.nports_w != G[g].nports ||
+                (int)f.h.n_scale_sub != G[g].nss || f.grp != G[g].grp) geom = 0;
+            mv4i_result r = { malloc(4*(size_t)M), malloc(8*(size_t)M),
+                              malloc(2*(size_t)M), 0,0,0,0 };
+            assert(mv4i_matvec(&f, x, 5, M, K, MV4I_MODE_RAW, &r) == 0);
+            if (!ref0) { ref0 = r.y_data; r.y_data = NULL; }
+            else if (memcmp(ref0, r.y_data, sizeof(int32_t) * (size_t)M)) same = 0;
+            free(r.y_data); free(r.y_acc); free(r.y_mant); free(img);
+        }
+        check("13 6.5a every geometry parses", parsed);
+        check("13b 6.5a NPORTS_W/n_scale_sub/GRP as specified", geom);
+        check("13c 6.5a same result at 10 (ROWS_IF, AXI_DW) geometries", same);
+        free(ref0); free(idx); free(scl); free(x);
+    }
+
+    /* ---- 14: the geometry refusals still refuse.
+     *
+     * Generalising the layout retired the blanket `AXI_DW != 128` refusal.  It
+     * did NOT make mv4i_parse a pass-through, and a refusal path nobody
+     * exercises is indistinguishable from one that was deleted -- so each
+     * surviving code is driven here by patching one header field of an
+     * otherwise valid image.  A file that violates any of these is a file
+     * whose weights are somewhere other than where this reader would look, and
+     * misreading it produces plausible numbers, which is the worst outcome
+     * available. ---- */
+    {
+        const int M = 100, K = 200, NB = (K + MV4I_BLOCK - 1) / MV4I_BLOCK;
+        uint8_t  *idx = calloc((size_t)M * K, 1);
+        uint16_t *scl = malloc(sizeof(uint16_t) * M * NB);
+        for (int i = 0; i < M * NB; i++) scl[i] = 1000;
+        size_t len;
+        uint8_t *good = pack_geom(M, K, 48, 256, 2, 3, IQ4_NL, idx, scl, &len);
+        uint8_t *bad  = malloc(len);
+        mv4i_file f;
+
+        check("14 the FK33 image itself parses",
+              mv4i_parse(&f, good, len) == 0 && f.h.nports_w == 24
+              && f.h.n_scale_sub == 3);
+
+        /* -7: AXI_DW not an AXI4 width, at a geometry where the 6.5 invariant
+         * still divides (ROWS_IF=3 -> 384 bits = 4 x 96), so -4 cannot mask it */
+        memcpy(bad, good, len);
+        *(uint16_t *)(void *)(bad + 0x18) = 3;      /* rows_if  */
+        *(uint16_t *)(void *)(bad + 0x1A) = 4;      /* nports_w */
+        *(uint16_t *)(void *)(bad + 0x1E) = 96;     /* axi_dw   */
+        check("14a AXI_DW=96 refused (-7, not an AXI4 width)",
+              mv4i_parse(&f, bad, len) == -7);
+
+        /* -9: n_scale_sub that is not 6.5a's minimal value.  3 is right here;
+         * 6 also divides, and describes a different file. */
+        memcpy(bad, good, len);
+        *(uint32_t *)(void *)(bad + 0x34) = 6;
+        check("14b n_scale_sub=6 refused (-9, 6.5a minimality)",
+              mv4i_parse(&f, bad, len) == -9);
+        memcpy(bad, good, len);
+        *(uint32_t *)(void *)(bad + 0x34) = 1;
+        check("14c n_scale_sub=1 refused (-9, the OLD assumption)",
+              mv4i_parse(&f, bad, len) == -9);
+
+        /* -8: more weight sub-regions than the offset tables hold. */
+        memcpy(bad, good, len);
+        *(uint16_t *)(void *)(bad + 0x18) = 1024;   /* rows_if  */
+        *(uint16_t *)(void *)(bad + 0x1A) = 512;    /* nports_w */
+        check("14d NPORTS_W=512 refused (-8, offset table bound)",
+              mv4i_parse(&f, bad, len) == -8);
+
+        /* -4: the 6.5 invariant itself, still the first thing checked. */
+        memcpy(bad, good, len);
+        *(uint16_t *)(void *)(bad + 0x1A) = 23;
+        check("14e NPORTS_W=23 refused (-4, 6.5 invariant)",
+              mv4i_parse(&f, bad, len) == -4);
+
+        free(idx); free(scl); free(good); free(bad);
     }
 
     /* ---- the generated primitives against the generated golden vectors.
