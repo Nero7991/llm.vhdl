@@ -382,17 +382,27 @@ else
          info "  presence 0 + width 0 -> not seated, or no aux power."
          info "  LED 6 has NOT changed -> the PCIe block never left reset,"
          info "                          i.e. no reference clock." ;;
-      1|2) if [[ "$MW" == "$CW" ]]; then
-             warn C "width x$CW, which is ALL this port has (max x$MW)"
-             info "This is NOT lanes dropping out.  The port is only x$MW wide."
-             info "Gen3 x1 is about 0.98 GB/s; the design is fine, the slot is"
-             info "the limit.  Move the card to a x4 port for full bandwidth."
+      1|2|3) if [[ "$CW" -lt "$MW" ]]; then
+             fail C "width x$CW but this port can do x$MW -- LANES ARE DROPPING OUT"
+             info "This is a real fault, not a slot limitation.  The port"
+             info "advertises x$MW and only x$CW came up.  Contact or seating"
+             info "first, then solder on the fingers, then signal integrity;"
+             info "through the MCIO adapters it is the cable or the adapter's"
+             info "lane mapping.  Reseat and re-run before anything else."
            else
-             warn C "width x$CW but the port can do x$MW -- lanes ARE dropping out"
-             info "Contact, solder, or (through MCIO) cable and adapter lane"
-             info "mapping.  Not a design fault; the link works."
+             warn C "width x$CW, and this port's CAPABILITY is only x$MW"
+             info "The link is running at the port's full width, so the lanes"
+             info "that exist all came up.  But x$MW is NOT what an x16-length"
+             info "chipset slot on this board should advertise -- both PCIEX4_1"
+             info "and PCIEX4_2 are PCIe x4.  A x$MW capability means the card"
+             info "is probably in the WRONG CONNECTOR (a physically x1 slot, or"
+             info "an M.2/adapter path), not that the design is limited."
+             info "Check which connector the card is actually in before"
+             info "accepting this.  Gen3 x1 is about 0.98 GB/s: usable for"
+             info "bring-up, useless for weight loading."
            fi ;;
-      4) pass C "width x4 at $CS, as designed" ;;
+      4) pass C "width x4 at $CS -- the expected and correct result" ;;
+      8|16) pass C "width x$CW at $CS -- wider than the x4 endpoint needs" ;;
       *) warn C "width x$CW -- read it by hand" ;;
     esac
     case "$CS" in

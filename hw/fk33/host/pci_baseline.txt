@@ -1,4 +1,4 @@
-# fk33 PCI baseline -- 2026-08-27T21:22:03-06:00 -- kernel 6.8.0-138-generic
+# fk33 PCI baseline -- 2026-08-27T21:25:45-06:00 -- kernel 6.8.0-138-generic
 # columns: BRIDGE maxspeed maxwidth curspeed curwidth secbus nchildren
 BRIDGE 0000:00:01.0 32.0GT/sPCIe 8 2.5GT/sPCIe 8 1 2
 BRIDGE 0000:00:01.1 32.0GT/sPCIe 8 8.0GT/sPCIe 4 2 1

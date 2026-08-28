@@ -92,20 +92,24 @@ else
             echo "      rescan.  If it hangs, the two agree and the fault is"
             echo "      upstream of the fabric."
             ;;
-        *"Width x4"*)  verdict PASS "width x4, as designed" ;;
+        *"Width x4"*)  verdict PASS "width x4 -- the expected and correct result" ;;
         *"Width x1"*|*"Width x2"*)
             if [[ "$CW" == "$MW" ]]; then
-                verdict WARN "trained x$CW, which is ALL this port has (max x$MW)"
-                echo "  NOT lanes dropping out.  The root port is only x$MW wide."
-                echo "  Gen3 x1 is about 0.98 GB/s.  The design is fine; the slot"
-                echo "  is the limit.  On this board 0000:00:1c.0 is a Gen3 x1"
-                echo "  port and 0000:00:1c.4 (Gen4 x4) is occupied by the RTX"
-                echo "  3090, so a full-width link needs a card moved."
+                verdict WARN "trained x$CW, and this port's CAPABILITY is only x$MW"
+                echo "  The lanes that exist all came up.  But the EXPECTED result"
+                echo "  is x4: both x16-length chipset slots on this board"
+                echo "  (PCIEX4_1, PCIEX4_2) are PCIe x4, and one of them is free."
+                echo "  A x$MW capability means the card is most likely in the"
+                echo "  WRONG CONNECTOR -- a physically x1 slot or an M.2 path --"
+                echo "  not that the design is limited.  Check which connector it"
+                echo "  is physically in.  Gen3 x1 is about 0.98 GB/s: usable for"
+                echo "  bring-up, useless for weight loading."
             else
-                verdict WARN "trained x$CW but the port can do x$MW: lanes ARE dropping out"
-                echo "  On a bare slot that is a solder or contact problem;"
-                echo "  through the MCIO adapters it is the cable or the"
-                echo "  adapter's lane mapping.  Not a design fault."
+                verdict FAIL "trained x$CW but the port can do x$MW: LANES ARE DROPPING OUT"
+                echo "  A real fault, not a slot limitation.  Contact and seating"
+                echo "  first, then solder on the fingers, then signal integrity;"
+                echo "  through the MCIO adapters it is the cable or the adapter's"
+                echo "  lane mapping.  Reseat and re-run before anything else."
             fi
             ;;
         *) verdict INFO "read LnkSta above by hand" ;;

@@ -258,19 +258,12 @@ BDF            max speed  max width  current    occupant
 0000:00:1c.4   16.0 GT/s  x4         2.5 x4     RTX 3090             (PCH)
 ```
 
-Two things follow, and both would have cost time tomorrow.
+Three things follow, and the order matters because the first two are easy to
+run together into a wrong prediction.
 
-**1. The only root port visible with no card in is Gen3 x1, not x4.** If the
-card lands there, `LnkSta` will read `Width x1` -- and the old procedure
-diagnosed exactly that as "lanes are dropping out. Contact, solder, or cable."
-It would have sent you looking for a hardware fault that does not exist. Both
-scripts now compare `current_link_width` against `max_link_width` and say
-"this port is only x1 wide, the design is fine, the slot is the limit" when
-they are equal. Gen3 x1 is about 0.98 GB/s, so it is usable for bring-up and
-useless for weight loading.
-
-**2. The root port BDF is not knowable tonight.** The ACPI namespace declares
-`RP01` through `RP19`, but only three of them have a PCI device:
+**1. The root port the card will use is NOT in that list, and its width cannot
+be known tonight.** The ACPI namespace declares `RP01` through `RP19`, but only
+three of them have a PCI device:
 
 ```
 \_SB_.PC00.RP01 -> 0000:00:1c.0
@@ -279,10 +272,41 @@ useless for weight loading.
 \_SB_.PC00.RP02, RP04, RP06 ... RP19  ->  no physical_node
 ```
 
-The BIOS **hides** a PCH root port with nothing attached. So if the FK33 goes
-into a slot wired to any of the sixteen hidden ports, a brand new bridge
-appears at a BDF that could not have been predicted tonight, and every
-hardcoded `-s 0000:00:1c.0` in the procedure points at the wrong thing.
+The BIOS **hides** a PCH root port with nothing attached. This board has three
+x16-length slots: PCIEX16 (CPU, holding the RTX 3090 Ti at `00:01.0`), and
+PCIEX4_1 and PCIEX4_2, both chipset PCIe **x4**. One of those two holds the
+RTX 3090 at `00:1c.4`. **The other one is free and its root port is not in the
+list above** -- it is one of the sixteen hidden ones, and it will appear at an
+unpredictable BDF the moment a powered card is in it. Every hardcoded
+`-s 0000:00:1c.0` in the old procedure therefore pointed at the wrong thing.
+
+**2. `0000:00:1c.0` at x1 is almost certainly NOT the FK33's slot.** It is a
+Gen3 x1 root port, which is not what either x16-length chipset slot advertises.
+It is far more likely a physically x1 connector or an unused M.2 path. An
+x16-length card cannot seat in an x1 connector at all unless that connector is
+open-ended, so predicting "the FK33 will train at x1" would in fact have been
+predicting that it does not physically fit.
+
+**Do not expect x1.** An earlier draft of this note said so and it was wrong in
+the expensive direction: a user told to expect x1 who then gets x1 will accept
+a real link-training fault as normal.
+
+**3. The expected and correct result is x4.** The five signatures, plainly:
+
+| reading | meaning |
+|---|---|
+| `current x4`, `max x4` | **expected.** The x4 endpoint has all its lanes on a x4 slot. |
+| `current x8` or `x16`, `max` the same | fine. The slot is wider than the endpoint needs. |
+| `current < max` (x1 or x2 on a x4 port) | **a real fault.** Lanes are dropping out: contact and seating first, then solder on the fingers, then signal integrity; through the MCIO adapters, cable and lane mapping. Reseat and re-run before anything else. |
+| `current == max`, and `max` is x1 or x2 | the link is at that port's full width, but the port's **capability** is wrong for an x16-length chipset slot. The card is probably in the wrong connector. Check which connector it is actually in. Gen3 x1 is about 0.98 GB/s: usable for bring-up, useless for weight loading. |
+| `current x0` | **the link never trained.** Combine with presence detect: presence 1 means seated, powered and dead; presence 0 means not seated or no aux power. |
+
+Both scripts now compare `current_link_width` against the **discovered** port's
+own `max_link_width` and print exactly those verdicts. The old procedure called
+any x1 "lanes are dropping out, contact or solder" with no comparison at all,
+which is wrong when the port really is x1; an earlier fix here over-corrected
+into calling it fine, which is wrong when the port is x4. The comparison now
+decides, so neither error is reachable.
 
 That is also good news, and it is the reason for the baseline: **a root port
 appearing that was not there before is itself proof that a powered card is in
@@ -333,8 +357,9 @@ failure tomorrow can be attributed correctly rather than re-litigated.
 | 3 | **IOMMU** | **off** -- `/sys/kernel/iommu_groups` empty, no `intel_iommu=on` | none. Leave it off: XDMA scatter-gather then uses plain physical addresses and there is no DMA remapping to misconfigure |
 | 4 | **MMIO headroom** | fine -- the highest address in use is about 352 GB, the card needs 192 KB | none |
 | 5 | **The 6-pin aux lead** | -- | **plug it in.** See the top of this file |
-| 6 | **Which slot** | the only visible free port is Gen3 **x1**. A x4 port may exist behind a hidden RP | decide deliberately; expect x1 and do not read it as a fault |
-| 7 | **The GPU that has to move**, if you want x4 | `0000:00:1c.4` is the only free-able Gen4 x4 port and the RTX 3090 is in it | optional, and it costs the second GPU |
+| 6 | **Which slot** | this board has three x16-length slots: PCIEX16 (CPU, RTX 3090 Ti), PCIEX4_1 and PCIEX4_2 (both chipset x4). One x4 slot holds the RTX 3090 at `00:1c.4`; **the other is free and its root port is hidden until a card is in it** | put the FK33 in the free **x16-length** slot, not the x1 connector. `0000:00:1c.0` at x1 is a different connector and not the target |
+| 7 | **What width to expect** | **x4.** Not x1 | `x4` is the pass. `current < max` is a real lane fault to investigate. `x0` is no link at all. Do not accept a narrow link as normal |
+| 7b | **Moving the RTX 3090: probably NOT needed** | the free x16-length slot should give x4 on its own | only if the FK33 physically fouls the 3090's cooler or the PSU cabling, or if the free slot turns out to be dead, does the 3090 at `00:1c.4` have to come out. **Decide this with the case open and the card offered up to the slot, before screwing anything down.** It costs the second GPU while the FK33 is in |
 | 8 | **Baseline snapshot** | -- | `./fk33_go.sh --baseline` **before** shutting down. It cannot be taken afterwards |
 | 8b | **The bitstream is in `/tmp`, and `/tmp` is emptied at every boot** | `pcieep_build.sh` writes to a scratchpad under `/tmp` | **`cd hw/fk33 && ./save_bitstream.sh`** after the build finishes and before powering off. Without it the hour-long build is gone at exactly the moment the card is in the slot |
 | 9 | **`xdma` will not autoload** | verified: nothing in `/lib/modules` claims `10EE:9034` | plan on an explicit `insmod` |
@@ -402,12 +427,18 @@ cat /sys/bus/pci/slots/*/{address,adapter,power}
   the link layer is up and **config space is not answering**. This is a rarer
   and quite different fault. Rescan first; if that does not help, the endpoint
   is trained but its configuration space logic is wedged.
-- `Width x1` or `x2` -- **compare against `max_link_width` before concluding
-  anything.** The only free port on this board is Gen3 **x1**, so `x1` there is
-  the port's full width and not a fault at all. Only if `current < max` are
-  lanes actually dropping out, and then it is contact, solder, or (through
-  MCIO) cable and adapter lane mapping. Either way **not a design fault; the
-  link works.**
+- `Width x1` or `x2` -- **compare against the discovered port's own
+  `max_link_width` before concluding anything.** The expected result on the
+  free x16-length chipset slot is **x4**.
+  - `current < max`, e.g. x1 on a x4 port: **a real fault.** Lanes are dropping
+    out. Contact and seating first, then solder on the fingers, then signal
+    integrity; through the MCIO adapters, cable and lane mapping. Reseat and
+    re-run before anything else. Not a *design* fault, but not something to
+    accept either.
+  - `current == max` and `max` is x1 or x2: the link is at that port's full
+    width, but an x16-length chipset slot on this board should advertise x4.
+    A x1 capability means the card is most likely in the **wrong connector**.
+    Check which connector it is physically in.
 - `Speed 2.5GT/s` or `5GT/s` -- trained but downshifted. Signal integrity, not
   configuration. Costs proportional bandwidth and nothing else.
 
@@ -719,9 +750,12 @@ one measurement that closes it.
 3. **Whether the link trains at the power-on VCCINT of 0.678 V**, which is
    below the 0.698 V floor of every characterised speed grade. The first link
    attempt necessarily happens before anything can raise the rail.
-4. **Which root port the card lands on, and its width.** The only port visible
-   with the slot empty is Gen3 x1. Sixteen more are hidden by the BIOS and one
-   of them may be the x4 port. Expect x1 and do not read it as a fault.
+4. **Which root port the card lands on, and its width.** Sixteen ports are
+   hidden by the BIOS until something is attached, and one of them is the free
+   x16-length PCIEX4 slot. **The expected result is x4.** `current < max` is a
+   lane fault to investigate, `x0` is no link at all, and `max` itself reading
+   x1 means the card is in the wrong connector. `fk33_go.sh` discovers the port
+   by diffing `pci_baseline.txt` rather than guessing at it.
 5. **Whether PERST is also strapped to `PROG_B` in copper.** Not knowable from
    any file we hold. It decides whether a secondary bus reset costs you the
    bitstream. One JTAG re-read after the first reset settles it permanently.

@@ -288,3 +288,73 @@ procedure. In particular, and deliberately not upgraded to verified:
   `00:1c.0`; the hidden ports' hotplug state is unknown.
 - Whether the endpoint bitstream builds, meets timing, and places the x4 link
   in quad 227. The build was still running when this was written.
+
+---
+
+## CORRECTION 2026-08-27, later the same evening: "expect x1" was wrong
+
+**Withdrawn:** the guidance in the original version of this note, and in the
+pre-power-on checklist, that the FK33 should be expected to train at **x1**
+because "the only visible free port is Gen3 x1".
+
+**Why it was wrong.** It contradicts the finding directly above it. If the BIOS
+hides sixteen of the nineteen PCH root ports until a card is attached, then the
+port the card will actually use is by definition not in the visible list, and
+nothing about its width can be inferred from `00:1c.0`. I reported both facts
+and then predicted from the wrong one.
+
+The board is a Gigabyte Z790 AERO G, which has **three** x16-length slots:
+PCIEX16 (CPU, holding the RTX 3090 Ti at `00:01.0`), and PCIEX4_1 and PCIEX4_2,
+both chipset PCIe x4. One of those two x4 slots holds the RTX 3090 at
+`00:1c.4`. **The other is free, and its root port is one of the hidden
+sixteen.** `00:1c.0` at x1 is a different connector entirely, most likely a
+physically x1 slot or an unused M.2 path. An x16-length card cannot even seat
+in an x1 connector unless it is open-ended, so "expect x1" was implicitly
+predicting that the card does not fit, which would have been a far larger
+warning than the one written.
+
+**Why it matters more than a cosmetic error.** It is wrong in the expensive
+direction. A user told to expect x1 who then reads x1 will file a genuine
+link-training or lane fault as normal and stop investigating. The whole point
+of this rehearsal was to stop exactly that class of mistake.
+
+**Corrected position.** The expected and correct result is **x4**. The width
+cannot be predicted with certainty tonight, and does not need to be: the tool
+compares `current_link_width` against the **discovered** port's own
+`max_link_width` and reports one of five signatures.
+
+Verified by driving stage C's case block with synthetic values:
+
+```
+### current x4 / capability x4
+  PASS  C    width x4 at 8.0 GT/s PCIe -- the expected and correct result
+### current x1 / capability x4
+  FAIL  C    width x1 but this port can do x4 -- LANES ARE DROPPING OUT
+### current x2 / capability x4
+  FAIL  C    width x2 but this port can do x4 -- LANES ARE DROPPING OUT
+### current x1 / capability x1
+  WARN  C    width x1, and this port's CAPABILITY is only x1
+      ... A x1 capability means the card is probably in the WRONG CONNECTOR
+### current x0 / capability x4
+  FAIL  C    width x0 -- LINK TRAINING FAILED
+### current x8 / capability x8
+  PASS  C    width x8 at 8.0 GT/s PCIe -- wider than the x4 endpoint needs
+```
+
+Note that `current < max` is now a **FAIL**, not a WARN. It was a WARN in the
+first pass, which is too soft for a genuine lane fault.
+
+**Second correction, smaller.** The original checklist listed "the GPU that has
+to move, if you want x4" as an optional item. That was also downstream of the
+same mistake: the free x16-length slot should give x4 on its own, so moving the
+RTX 3090 out of `00:1c.4` is **not** expected to be necessary. It becomes a
+physical-work item only if the FK33 fouls the 3090's cooler or the PSU cabling,
+or if the free slot turns out to be dead. Either way it is a decision to make
+with the case open and the card offered up to the slot, before anything is
+screwed down, not after.
+
+**Trap for next time.** Two correct findings can compose into a wrong
+conclusion when one of them is "this thing is unobservable". "The only visible
+X is narrow" plus "the relevant X is invisible" does not yield "expect narrow";
+it yields "do not predict". Prefer publishing the decision rule the tool
+applies over publishing a prediction the tool will check.
