@@ -348,7 +348,8 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=73   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
+BASELINE_PASS=74   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
+                   # +1 sim/tb_weight_streamer, 6.5a reassembly, 2026-08-28
 
 usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
@@ -692,6 +693,9 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
 tb_pass_marker() {
   case "$1" in
     sim:tb_axi_rd_port)  echo '0 bad beats' ;;                                   # sim/run_matvec.sh 4b
+    # Two geometries in one run (ROWS_IF=4/AXI_DW=128 and ROWS_IF=48/AXI_DW=256,
+    # spec 6.5a), so the verdict is one counter over both.
+    sim:tb_weight_streamer) echo '0 reassembly errors across both geometries' ;;
     sim:tb_hbm_tg)       echo 'recovers a known bandwidth at every port count' ;;
     # The tb/ suite states its verdict as "PASS:<unit>" almost everywhere and
     # \bPASS\b already matches that.  These two phrase it differently.

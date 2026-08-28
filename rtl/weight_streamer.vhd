@@ -22,6 +22,32 @@
 -- leave (NPORTS_W-1)*AXI_DW + ROWS_IF*16 bits/cycle for weights, below what the
 -- array consumes, and interleaving scales into the weight region would break
 -- the 4 KB alignment the sub-region layout depends on.
+--
+-- GENERALISED 2026-08-28 to spec 6.5a.  Two things here were pinned at
+-- AXI_DW = 128 and blocked the FK33, whose HBM SAXI ports are 256 bits:
+--
+--   1. The WEIGHT merge was already general and only its comments were not.
+--      6.5a says weight sub-region p carries bit slice p of the tile word, and
+--      `w_data((p+1)*AXI_DW-1 downto p*AXI_DW) <= qd(p)` is exactly that for
+--      every AXI_DW.  What was pinned at 128 was the CLAIM that a lane is a
+--      row.  At ROWS_IF=48/AXI_DW=256 slice p carries rows 2p and 2p+1, and
+--      this merge delivers them without change; the packer had to move, not
+--      the RTL.  Only the assert stayed, and it stays.
+--
+--   2. The SCALE path assumed one sub-region, i.e. that a whole group of
+--      ROWS_IF scales fits one beat.  At ROWS_IF=48 a group is 768 bits
+--      against a 256-bit port, so it needs three.  NPORTS_S is now a generic,
+--      the scale ports are popped in the same all-valid lockstep as the weight
+--      ports, and the holding register is the SUPERWORD of NPORTS_S*AXI_DW
+--      bits that 6.5a defines.  GRP = NPORTS_S*AXI_DW / SW groups come out of
+--      it one per cycle.
+--
+-- NPORTS_S defaults to 1, at which the superword is one beat, GRP is the old
+-- UNPACK, and the lockstep pop over one port is the old single-port pop -- so
+-- the AXU3EG build and every instantiation of this entity are untouched.
+--
+-- STILL OPEN (spec 14.5 item 3): this entity is SINGLE-CLOCK.  The FK33's HBM
+-- AXI clock is not the core clock, and nothing here addresses that CDC.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -30,12 +56,22 @@ use ieee.numeric_std.all;
 entity weight_streamer is
   generic(
     NPORTS_W : positive := 4;      -- 7.7; spec 14.4 pins 4 on the AXU3EG
+    -- Scale sub-regions, spec 6.5a: lcm(ROWS_IF*16, AXI_DW) / AXI_DW, which is
+    -- 1 on the AXU3EG and 3 at ROWS_IF=48 / AXI_DW=256.  Asserted below rather
+    -- than derived, because deriving it needs an lcm at elaboration and an
+    -- assert that the caller and the PACKED FILE agree is the thing that
+    -- actually matters.
+    NPORTS_S : positive := 1;
     AXI_DW   : positive := 128;
     ADDR_W   : positive := 32;
     ROWS_IF  : positive := 4;
     BLK      : positive := 32;
     DEPTH    : positive := 512;    -- beats per FIFO, 7.7 budgets 8 KB
-    MAXB     : positive := 256;    -- beats per burst: 256 x 16 B = 4 KB
+    -- Beats per burst.  MAXB*AXI_DW/8 must not exceed 4096: AXI4 forbids a
+    -- burst crossing a 4 KB boundary and the sub-regions are 4 KB aligned, so
+    -- 256 beats is exactly one burst at 128 bits and TWICE the legal size at
+    -- 256.  An AXI_DW=256 build must pass MAXB=128.  Asserted below.
+    MAXB     : positive := 256;
     -- Bursts allowed in flight per port. Was hardcoded at axi_rd_port's default
     -- of 2 because it was never plumbed through, which made it untestable: on
     -- the AXU3EG every port sustains 0.664 beats/cycle, and 256/(256+L) fits
@@ -53,20 +89,23 @@ entity weight_streamer is
     start    : in  std_logic;
     w_base   : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
     w_beats  : in  integer;        -- beats per weight sub-region
-    s_base   : in  std_logic_vector(ADDR_W-1 downto 0);
-    s_beats  : in  integer;
+    -- NPORTS_S scale sub-region bases, s_sub_offset[] of the header (6.4).
+    -- At the default NPORTS_S=1 this is the single ADDR_W vector it always was.
+    s_base   : in  std_logic_vector(NPORTS_S*ADDR_W-1 downto 0);
+    s_beats  : in  integer;        -- beats per scale sub-region
 
-    -- NPORTS_W+1 AXI4 read masters, flattened; index NPORTS_W is the scale port
-    m_arvalid : out std_logic_vector(NPORTS_W downto 0);
-    m_arready : in  std_logic_vector(NPORTS_W downto 0);
-    m_araddr  : out std_logic_vector((NPORTS_W+1)*ADDR_W-1 downto 0);
-    m_arlen   : out std_logic_vector((NPORTS_W+1)*8-1 downto 0);
-    m_arsize  : out std_logic_vector((NPORTS_W+1)*3-1 downto 0);
-    m_arburst : out std_logic_vector((NPORTS_W+1)*2-1 downto 0);
-    m_rvalid  : in  std_logic_vector(NPORTS_W downto 0);
-    m_rready  : out std_logic_vector(NPORTS_W downto 0);
-    m_rdata   : in  std_logic_vector((NPORTS_W+1)*AXI_DW-1 downto 0);
-    m_rlast   : in  std_logic_vector(NPORTS_W downto 0);
+    -- NPORTS_W+NPORTS_S AXI4 read masters, flattened; indices
+    -- NPORTS_W .. NPORTS_W+NPORTS_S-1 are the scale ports
+    m_arvalid : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_arready : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_araddr  : out std_logic_vector((NPORTS_W+NPORTS_S)*ADDR_W-1 downto 0);
+    m_arlen   : out std_logic_vector((NPORTS_W+NPORTS_S)*8-1 downto 0);
+    m_arsize  : out std_logic_vector((NPORTS_W+NPORTS_S)*3-1 downto 0);
+    m_arburst : out std_logic_vector((NPORTS_W+NPORTS_S)*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rready  : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+    m_rdata   : in  std_logic_vector((NPORTS_W+NPORTS_S)*AXI_DW-1 downto 0);
+    m_rlast   : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
 
     -- to matvec_core
     w_valid : out std_logic;
@@ -80,19 +119,36 @@ end entity;
 
 architecture rtl of weight_streamer is
   constant SW     : positive := ROWS_IF * 16;        -- scale bits per cycle
-  constant UNPACK : positive := AXI_DW / SW;
+  -- Spec 6.5a.  SUPER is the scale superword; GRP is how many cycles' worth of
+  -- scales it carries.  Exactly one of NPORTS_S and GRP exceeds 1 for any
+  -- power-of-two geometry, but nothing below depends on that.
+  constant SUPER  : positive := NPORTS_S * AXI_DW;
+  constant GRP    : positive := SUPER / SW;
+  constant NP_ALL : positive := NPORTS_W + NPORTS_S;
 
-  signal qv, qr : std_logic_vector(NPORTS_W downto 0);
-  type qd_t is array(0 to NPORTS_W) of std_logic_vector(AXI_DW-1 downto 0);
+  -- The MINIMAL NPORTS_S of 6.5a, computed so the assert below can check the
+  -- caller against the packed file rather than trusting the generic.  n = SW
+  -- always satisfies the condition, so the loop always returns.
+  function nss_min(sw_bits, dw : positive) return positive is
+  begin
+    for n in 1 to sw_bits loop
+      if (n * dw) mod sw_bits = 0 then return n; end if;
+    end loop;
+    return sw_bits;
+  end function;
+
+  signal qv, qr : std_logic_vector(NP_ALL-1 downto 0);
+  type qd_t is array(0 to NP_ALL-1) of std_logic_vector(AXI_DW-1 downto 0);
   signal qd : qd_t;
 
   signal all_v : std_logic;
   signal pop_w : std_logic;
 
   -- scale unpack
-  signal s_hold  : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  signal s_allv  : std_logic;
+  signal s_hold  : std_logic_vector(SUPER-1 downto 0) := (others => '0');
   signal s_hv    : std_logic := '0';
-  signal s_chunk : integer range 0 to UNPACK-1 := 0;
+  signal s_chunk : integer range 0 to GRP-1 := 0;
   signal s_take  : std_logic;
 begin
   -- 6.5 invariant.  Break it and the packed file no longer describes what this
@@ -101,12 +157,24 @@ begin
     report "weight_streamer: 6.5 invariant NPORTS_W*AXI_DW = ROWS_IF*BLK*4 is " &
            "violated; the packed file does not match this reassembly"
     severity failure;
-  -- 14.5: at ROWS_IF=80 the scale path needs SW = 1,280 bits/cycle against one
-  -- 256-bit HBM port, so it must become several sub-regions.  The header
-  -- already carries n_scale_sub for that; this build does not implement it.
-  assert AXI_DW >= SW and AXI_DW mod SW = 0
-    report "weight_streamer: scale path needs multiple sub-regions at this " &
-           "ROWS_IF (spec 14.5); not implemented"
+  -- 6.5a: the superword must hold a whole number of scale groups, and it must
+  -- be the SMALLEST such superword, because a larger one that also divides
+  -- describes a different file.  This replaces the old "AXI_DW >= SW and
+  -- AXI_DW mod SW = 0", which was that same condition at NPORTS_S = 1.
+  assert SUPER mod SW = 0
+    report "weight_streamer: 6.5a superword NPORTS_S*AXI_DW does not hold a " &
+           "whole number of ROWS_IF*16-bit scale groups"
+    severity failure;
+  assert NPORTS_S = nss_min(SW, AXI_DW)
+    report "weight_streamer: NPORTS_S is not the minimal n_scale_sub of 6.5a; " &
+           "the packed file's scale sub-regions are cut differently"
+    severity failure;
+  -- AXI4 forbids a burst crossing a 4 KB boundary.  MAXB was justified in 6.4
+  -- as "256 beats x 16 bytes = one 4 KB burst", which stops being true the
+  -- moment AXI_DW moves: at 256 bits the same MAXB is an 8 KB burst.
+  assert MAXB * (AXI_DW / 8) <= 4096
+    report "weight_streamer: MAXB*AXI_DW/8 exceeds 4096, so a burst would " &
+           "cross a 4 KB boundary (AXI4 forbids it); use MAXB=128 at AXI_DW=256"
     severity failure;
 
   gen_w : for p in 0 to NPORTS_W-1 generate
@@ -127,21 +195,26 @@ begin
         q_valid => qv(p), q_data => qd(p), q_ready => qr(p));
   end generate;
 
-  scale_port : entity work.axi_rd_port
-    generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                MAXB => MAXB, MAXOUT => MAXOUT)
-    port map(
-      clk => clk, rst => rst, start => start,
-      base => s_base, n_beats => s_beats,
-      arvalid => m_arvalid(NPORTS_W), arready => m_arready(NPORTS_W),
-      araddr  => m_araddr((NPORTS_W+1)*ADDR_W-1 downto NPORTS_W*ADDR_W),
-      arlen   => m_arlen((NPORTS_W+1)*8-1 downto NPORTS_W*8),
-      arsize  => m_arsize((NPORTS_W+1)*3-1 downto NPORTS_W*3),
-      arburst => m_arburst((NPORTS_W+1)*2-1 downto NPORTS_W*2),
-      rvalid  => m_rvalid(NPORTS_W), rready => m_rready(NPORTS_W),
-      rdata   => m_rdata((NPORTS_W+1)*AXI_DW-1 downto NPORTS_W*AXI_DW),
-      rlast   => m_rlast(NPORTS_W),
-      q_valid => qv(NPORTS_W), q_data => qd(NPORTS_W), q_ready => qr(NPORTS_W));
+  -- One port per scale sub-region.  All NPORTS_S read the same number of beats
+  -- from their own 4 KB-aligned region, exactly like the weight ports.
+  gen_s : for q in 0 to NPORTS_S-1 generate
+    scale_port : entity work.axi_rd_port
+      generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
+                  MAXB => MAXB, MAXOUT => MAXOUT)
+      port map(
+        clk => clk, rst => rst, start => start,
+        base => s_base((q+1)*ADDR_W-1 downto q*ADDR_W), n_beats => s_beats,
+        arvalid => m_arvalid(NPORTS_W+q), arready => m_arready(NPORTS_W+q),
+        araddr  => m_araddr((NPORTS_W+q+1)*ADDR_W-1 downto (NPORTS_W+q)*ADDR_W),
+        arlen   => m_arlen((NPORTS_W+q+1)*8-1 downto (NPORTS_W+q)*8),
+        arsize  => m_arsize((NPORTS_W+q+1)*3-1 downto (NPORTS_W+q)*3),
+        arburst => m_arburst((NPORTS_W+q+1)*2-1 downto (NPORTS_W+q)*2),
+        rvalid  => m_rvalid(NPORTS_W+q), rready => m_rready(NPORTS_W+q),
+        rdata   => m_rdata((NPORTS_W+q+1)*AXI_DW-1 downto (NPORTS_W+q)*AXI_DW),
+        rlast   => m_rlast(NPORTS_W+q),
+        q_valid => qv(NPORTS_W+q), q_data => qd(NPORTS_W+q),
+        q_ready => qr(NPORTS_W+q));
+  end generate;
 
   -- ------------------------------------------------------------ weight merge
   -- POP GATE: pop only when EVERY weight FIFO is non-empty, so the lanes can
@@ -157,19 +230,41 @@ begin
   pop_w   <= all_v and w_ready;
   w_valid <= all_v;
 
+  -- 6.5a: weight sub-region p carries bit slice p of the tile word, so the
+  -- merge is the same slice assignment at every AXI_DW.  At AXI_DW = BLK*4 a
+  -- slice is one row; at 256 bits with BLK=32 it is rows 2p and 2p+1.  Nothing
+  -- here needs to know which, and that is the point.
   wire : for p in 0 to NPORTS_W-1 generate
     w_data((p+1)*AXI_DW-1 downto p*AXI_DW) <= qd(p);
     qr(p) <= pop_w;
   end generate;
 
   -- ------------------------------------------------------------- scale unpack
-  -- One AXI beat carries UNPACK cycles' worth of scales (7.7: two at ROWS_IF=4).
-  -- Refill is allowed in the SAME cycle the last chunk is consumed, otherwise
-  -- the scale path would bubble every UNPACK cycles and stall the array.
-  s_take <= '1' when qv(NPORTS_W) = '1'
-                 and (s_hv = '0' or (s_ready = '1' and s_chunk = UNPACK-1))
+  -- 6.5a: the NPORTS_S scale sub-regions are the slices of one SUPERWORD, and
+  -- the superword carries GRP cycles' worth of scales (7.7's UNPACK, which is
+  -- this at NPORTS_S=1: two at ROWS_IF=4/AXI_DW=128).  At ROWS_IF=48/AXI_DW=256
+  -- it is the other way round -- three slices, GRP=1 -- and the same code
+  -- serves both because the superword is assembled before it is chunked.
+  --
+  -- The pop is the SAME all-valid lockstep as the weight side, for the same
+  -- reason: pop a scale FIFO on its own and the slices of one superword would
+  -- come from different superwords.  Refill is allowed in the SAME cycle the
+  -- last chunk is consumed, otherwise the scale path bubbles every GRP cycles
+  -- and stalls the array.
+  s_agg : process(qv)
+    variable a : std_logic;
+  begin
+    a := '1';
+    for q in 0 to NPORTS_S-1 loop a := a and qv(NPORTS_W+q); end loop;
+    s_allv <= a;
+  end process;
+
+  s_take <= '1' when s_allv = '1'
+                 and (s_hv = '0' or (s_ready = '1' and s_chunk = GRP-1))
             else '0';
-  qr(NPORTS_W) <= s_take;
+  gen_sr : for q in 0 to NPORTS_S-1 generate
+    qr(NPORTS_W+q) <= s_take;
+  end generate;
 
   s_valid <= s_hv;
   s_data  <= s_hold((s_chunk+1)*SW-1 downto s_chunk*SW);
@@ -181,7 +276,7 @@ begin
         s_hv <= '0'; s_chunk <= 0;
       else
         if s_hv = '1' and s_ready = '1' then
-          if s_chunk = UNPACK-1 then
+          if s_chunk = GRP-1 then
             s_chunk <= 0;
             s_hv    <= '0';
           else
@@ -189,7 +284,10 @@ begin
           end if;
         end if;
         if s_take = '1' then
-          s_hold  <= qd(NPORTS_W);
+          -- slice q of the superword comes from scale sub-region q, LSB first
+          for q in 0 to NPORTS_S-1 loop
+            s_hold((q+1)*AXI_DW-1 downto q*AXI_DW) <= qd(NPORTS_W+q);
+          end loop;
           s_hv    <= '1';
           s_chunk <= 0;
         end if;
