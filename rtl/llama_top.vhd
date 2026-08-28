@@ -145,11 +145,11 @@ entity llama_top is
     STRICT     : boolean  := true;
 
     -- Bisection switches.  See the header.  Both false = the real units.
-    -- A_BEHAV defaults FALSE because the real `matvec_int4` is instantiated
-    -- and the default configuration of a top level should be the real one.
-    -- B_BEHAV defaults TRUE because the real `gdn_block` is not wired yet.
+    -- Both default FALSE: the real `matvec_int4` and the real `gdn_block` are
+    -- instantiated, and the default configuration of a top level should be
+    -- the real one.  Set either true to bisect a failure to a side of a seam.
     A_BEHAV : boolean := false;
-    B_BEHAV : boolean := true;
+    B_BEHAV : boolean := false;
 
     -- Set false only in a run that is deliberately measuring the banner cost.
     SHOUT   : boolean := true;
@@ -167,7 +167,20 @@ entity llama_top is
     -- gets a 4 KB-aligned sub-region inside it because `axi_rd_port` requires
     -- a 4 KB-aligned base and pads sub-regions to whole bursts.
     A_JOB_STRIDE : natural := 16#8000#;
-    A_MEM_BASE   : natural := 16#100000#
+    A_MEM_BASE   : natural := 16#100000#;
+
+    -- SUBSYSTEM B's LANE COUNTS.  These are the exact set `sim/tb_gdn_block.vhd`
+    -- defaults to and `sim/run_gdn_block.sh` runs, which matters: the minimum
+    -- legal `RECUR_SLOTS` in `gdn_recur_pipe` is SHAPE-DEPENDENT, so a smaller
+    -- DIM or RECUR_LANES can silently need a larger slot count, and this
+    -- project's stated failure mode for that shortcut is a wrong number rather
+    -- than an elaboration error.
+    B_CONV_LANES  : positive := 4;
+    B_RECUR_LANES : positive := 4;
+    B_RECUR_SLOTS : positive := 16;
+    B_L2_LANES    : positive := 4;
+    B_SILU_LANES  : positive := 8;
+    B_RMS_LANES   : positive := 4
   );
   port(
     clk : in std_logic;
@@ -238,6 +251,13 @@ entity llama_top is
     -- is the first question to ask when a skew sweep differs.
     obs_cmp_exp : out signed(EXP_W-1 downto 0);
     obs_wsum    : out unsigned(31 downto 0);
+    -- The residual's two operand exponents, valid on `obs_res_take`.  Exposed
+    -- because a BFP add whose operands are far apart in scale DISCARDS one of
+    -- them, silently and deterministically, and no sequencing property can
+    -- see it.  See P6 in sim/tb_llama_top.vhd.
+    obs_res_take : out std_logic;
+    obs_res_ea   : out signed(EXP_W-1 downto 0);
+    obs_res_eb   : out signed(EXP_W-1 downto 0);
 
     -- Sticky seam-fault counters.  Every one of these is a defect, not a
     -- statistic, and every one is silent in the arithmetic.
@@ -334,8 +354,37 @@ architecture rtl of llama_top is
   signal exp_rd_valid  : std_logic;
   signal vi_exp_region : unsigned(7 downto 0);
   signal vi_exp_seg    : unsigned(1 downto 0);
+  -- Claimed by whichever NON-D-vec unit is active, at the same instant it
+  -- latches its descriptor.  Units A and B both need a source exponent out of
+  -- the lock; the lock has one port and D runs one unit at a time.
+  -- ONE SIGNAL PER CLAIMANT, NOT ONE SHARED SIGNAL.  A first version had A
+  -- and B both driving a single `ux_exp_region`, one signal for both.  `unsigned` is built on the
+  -- RESOLVED type `std_logic`, so two drivers is not an elaboration error: the
+  -- bits resolve to 'X', `to_integer` reports a metavalue and returns 0, and
+  -- unit A silently reads region 0's exponent.  It is deterministic, so the
+  -- skew sweep passed; the `exp_rd_valid` assertion below is what caught it.
+  -- That is the second time in this file that a shared-resource defect
+  -- survived a determinism property -- see defect 2 in
+  -- docs/debugging/2026-08-28_llama-top-first-seams.md.
   signal a_exp_region  : unsigned(7 downto 0) := (others => '0');
   signal a_exp_seg     : unsigned(1 downto 0) := "00";
+  signal b_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal b_exp_seg     : unsigned(1 downto 0) := "00";
+  signal c_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal c_exp_seg     : unsigned(1 downto 0) := "00";
+
+  -- The three q/k/v exponents subsystem A published for R_QKV this block,
+  -- recorded so unit B can hand them to `gdn_exp_capture` before it starts.
+  -- THIS IS A REAL CROSS-SUBSYSTEM OBLIGATION AND NOTHING CARRIED IT BEFORE:
+  -- `gdn_block`'s conv path reads its tap exponents out of `gdn_exp_capture`,
+  -- and the values that belong there are A's `y_exp` for the three wqkv
+  -- projections.  No descriptor field says so; the schedule only guarantees
+  -- the ordering.
+  type qexp_t is array (0 to 2) of signed(7 downto 0);
+  signal qkv_exp : qexp_t := (others => (others => '0'));
+  signal last_dst : natural range 0 to 255 := 255;
+  signal last_seg : natural range 0 to 2 := 0;
+  signal b_seq_rst : std_logic := '0';
 
   -- ---- D-vec -----------------------------------------------------------
   signal v_start, v_ready, v_taken, v_done, v_ack, v_err
@@ -749,8 +798,12 @@ begin
   -- The arbiter.  `act_unit` is latched at `job_issue` and held for the whole
   -- job, so the selection cannot move underneath a reader mid-operation --
   -- which is the same rule the element port mux obeys, for the same reason.
-  exp_rd_region <= a_exp_region when act_unit = U_A else vi_exp_region;
-  exp_rd_seg    <= a_exp_seg    when act_unit = U_A else vi_exp_seg;
+  exp_rd_region <= a_exp_region when act_unit = U_A else
+                   b_exp_region when act_unit = U_B else
+                   c_exp_region when act_unit = U_C else vi_exp_region;
+  exp_rd_seg    <= a_exp_seg    when act_unit = U_A else
+                   b_exp_seg    when act_unit = U_B else
+                   c_exp_seg    when act_unit = U_C else vi_exp_seg;
 
   -- THE RESIDUAL.  Real RTL.  X <- X + ER, in place, twice per block.  This
   -- is the spine and it is the one arithmetic unit in the block loop that is
@@ -1425,6 +1478,419 @@ begin
   end generate;
 
   -- ======================================================================
+  -- UNIT B.  THE REAL `gdn_block`, its six memories, and the D-to-B seam.
+  --
+  -- WHAT IS REAL HERE:
+  --   * `gdn_block` itself, seven units, at the exact generic set
+  --     `sim/tb_gdn_block.vhd` defaults to and `sim/run_gdn_block.sh` runs.
+  --   * the six memories it needs, at the LATENCIES ITS PORT CONTRACT
+  --     SPECIFIES, which are not all the same and getting one wrong is a
+  --     silent wrong number:
+  --        st_*   registered address, data one cycle later   (BRAM)
+  --        se_*   COMBINATIONAL, address to data in one cycle (LUTRAM)
+  --        cv_*   registered address, combinational data      (BRAM)
+  --        sc_*   registered, one cycle, indexed by sc_head   (regfile)
+  --        w_*    a level, latched inside B at head 0's pickup
+  --        z_*    a real valid/ready handshake, one per value head
+  --     Building `se_*` as a one-cycle BRAM by analogy with `st_*` is the
+  --     obvious mistake and the port comment says so in as many words.
+  --   * the EXPONENT CAPTURE OBLIGATION.  Before B may be started for a
+  --     layer, exactly one `cap_req` per q/k/v segment must have been issued
+  --     carrying A's `y_exp` for that projection.  Nothing carried that
+  --     before this file: it is a contract between subsystem A and subsystem
+  --     B that no descriptor field expresses.
+  --   * COMPLETION IS `busy` FALLING, NOT `done`.  `gdn_block`'s `done` is a
+  --     one-cycle pulse with no ack; `busy` is a level that falls one cycle
+  --     later, and `sim/tb_gdn_block.vhd:618-621` polls `busy` for exactly
+  --     this reason.  Defect class (b), avoided by using the level.
+  --   * the y stream has NO ready.  Accepted unconditionally into a buffer.
+  --   * z, the output gate, IS READ FROM REGION R_Z, which subsystem A
+  --     produced.  That is one real A-to-B data path.
+  --
+  -- WHAT IS STILL A STAND-IN, stated plainly:
+  --   the CONTENTS of the conv taps, the conv weights, the four scalars and
+  --   the ssm_norm weight.  They are deterministic functions of their index,
+  --   as in `tb_gdn_block`, and they are NOT yet sourced from R_QKV, R_BETA
+  --   and R_ALPHA.  Wiring them is what remains before the GDN path carries
+  --   real numbers.  The conv tap memory in particular is a per-token
+  --   HISTORY, KCONV deep, and this file has no token loop yet.
+  -- ======================================================================
+  gb_real : if not B_BEHAV generate
+    constant KH  : positive := SHAPE.key_heads;
+    constant VH  : positive := SHAPE.val_heads;
+    constant DM  : positive := SHAPE.head_dim;
+    constant KC  : positive := SHAPE.conv_kernel;
+    constant NLY : positive := n_gdn_blocks(SHAPE);
+    constant NBR : positive := DM / B_RECUR_LANES;
+
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+    signal b_start, b_busy, b_done, b_tk0 : std_logic := '0';
+    signal b_layer : integer range 0 to NLY-1 := 0;
+    signal cap_req, cap_ready : std_logic := '0';
+    signal cap_layer : integer range 0 to NLY-1 := 0;
+    signal cap_seg   : integer range 0 to 2 := 0;
+    signal cap_exp   : signed(7 downto 0) := (others => '0');
+
+    signal cv_seg   : integer range 0 to 2;
+    signal cv_ren   : std_logic;
+    signal cv_grp   : integer range 0 to (VH*DM)/B_CONV_LANES-1;
+    signal cv_x, cv_w : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
+    signal cv_cw_exp  : signed(7 downto 0);
+    signal cv_taken, eseg_taken : std_logic;
+    signal cvq_seg : integer range 0 to 2 := 0;
+    signal cvq_grp : integer range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+
+    signal sc_head : integer range 0 to VH-1;
+    signal sc_head_q : integer range 0 to VH-1 := 0;
+    signal sc_al_m, sc_dt_m, sc_a_m, sc_b_m : signed(15 downto 0);
+    signal sc_al_e, sc_dt_e, sc_a_e, sc_b_e : signed(7 downto 0);
+    signal sc_taken : std_logic;
+
+    signal st_ren, st_wen : std_logic;
+    signal st_rhead, st_whead : integer range 0 to VH-1;
+    signal st_rcol, st_wcol : integer range 0 to DM-1;
+    signal st_rgrp, st_wgrp : integer range 0 to NBR-1;
+    signal st_rdata, st_wdata, st_rq
+         : std_logic_vector(B_RECUR_LANES*16-1 downto 0);
+    type stmem_t is array (0 to VH*DM*NBR-1)
+                    of std_logic_vector(B_RECUR_LANES*16-1 downto 0);
+    signal stmem : stmem_t := (others => (others => '0'));
+
+    signal se_rhead, se_whead : integer range 0 to VH-1;
+    signal se_rcol, se_wcol : integer range 0 to DM-1;
+    signal se_rdata, se_wdata : signed(7 downto 0);
+    signal se_wen : std_logic;
+    type semem_t is array (0 to VH*DM-1) of signed(7 downto 0);
+    signal semem : semem_t := (others => (others => '0'));
+
+    signal w_mant : std_logic_vector(DM*16-1 downto 0);
+    signal w_exp  : integer := 12;
+    signal w_taken : std_logic;
+
+    signal z_mant : std_logic_vector(DM*16-1 downto 0) := (others => '0');
+    signal z_exp  : signed(7 downto 0) := to_signed(12, 8);
+    signal z_valid : std_logic := '0';
+    signal z_ready : std_logic;
+
+    signal y_valid, y_last : std_logic;
+    signal y_mant : signed(15 downto 0);
+    signal b_yexp : signed(7 downto 0);
+
+    -- Deterministic stand-in stimulus, a function of the index and NOTHING
+    -- else, so that changing a handshake cannot change one input value.  That
+    -- is the whole basis of the cross-skew comparison.  Range is a 12-bit
+    -- signed centred on zero, matching `tb_gdn_block`'s m12: full-scale int16
+    -- would make every comparison a comparison of clamps.
+    function m12(a, b : integer) return signed is
+      variable x : unsigned(31 downto 0);
+      variable t : unsigned(63 downto 0);
+    begin
+      t := to_unsigned(a mod 1048576, 32) * to_unsigned(1103515245, 32);
+      x := t(31 downto 0) + to_unsigned((b mod 100000) * 12345, 32);
+      x := x xor shift_right(x, 15);
+      t := x * to_unsigned(668265261, 32);
+      x := t(31 downto 0);
+      x := x xor shift_right(x, 13);
+      return to_signed(to_integer(x(11 downto 0)) - 2048, 16);
+    end function;
+  begin
+    u_ready(U_B) <= rdy;
+    u_done(U_B)  <= dn;
+    u_err(U_B)   <= '0';
+    u_done_epoch((U_B+1)*EPOCH_W-1 downto U_B*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_B+1)*EXP_W-1 downto U_B*EXP_W) <= std_logic_vector(yexp);
+
+    u_gdn : entity work.gdn_block
+      generic map(
+        KEY_HEADS => KH, VAL_HEADS => VH, DIM => DM, KCONV => KC,
+        LAYERS => NLY, CONV_LANES => B_CONV_LANES,
+        RECUR_LANES => B_RECUR_LANES, RECUR_SLOTS => B_RECUR_SLOTS,
+        L2_LANES => B_L2_LANES, SILU_LANES => B_SILU_LANES,
+        RMS_LANES => B_RMS_LANES, STRICT_PRODUCER => STRICT)
+      port map(
+        clk => clk, rst => rst,
+        start => b_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
+        seq_rst => b_seq_rst,
+        cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
+        cap_exp => cap_exp, cap_ready => cap_ready,
+        cv_seg => cv_seg, cv_ren => cv_ren, cv_grp => cv_grp,
+        cv_x => cv_x, cv_w => cv_w, cv_cw_exp => cv_cw_exp,
+        cv_taken => cv_taken, eseg_taken => eseg_taken,
+        sc_head => sc_head,
+        sc_al_m => sc_al_m, sc_al_e => sc_al_e,
+        sc_dt_m => sc_dt_m, sc_dt_e => sc_dt_e,
+        sc_a_m => sc_a_m, sc_a_e => sc_a_e,
+        sc_b_m => sc_b_m, sc_b_e => sc_b_e, sc_taken => sc_taken,
+        st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
+        st_rgrp => st_rgrp, st_rdata => st_rdata,
+        st_wen => st_wen, st_whead => st_whead, st_wcol => st_wcol,
+        st_wgrp => st_wgrp, st_wdata => st_wdata,
+        se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
+        se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
+        se_wdata => se_wdata,
+        w_mant => w_mant, w_exp => w_exp, w_taken => w_taken,
+        z_mant => z_mant, z_exp => z_exp,
+        z_valid => z_valid, z_ready => z_ready,
+        y_valid => y_valid, y_mant => y_mant, y_last => y_last,
+        y_exp => b_yexp, done => b_done,
+        err_conv => open, err_g => open, err_se => open, y_sat => open,
+        dbg_col_ready => open, dbg_col_drop => open);
+
+    -- ---- memory 1: the recurrent state.  Registered, one cycle. ---------
+    st_rdata <= st_rq;
+    stmem_p : process(clk) is
+      variable a : integer;
+    begin
+      if rising_edge(clk) then
+        if st_wen = '1' then
+          a := st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+          stmem(a) <= st_wdata;
+        end if;
+        if st_ren = '1' then
+          a := st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+          st_rq <= stmem(a);
+        end if;
+      end if;
+    end process;
+
+    -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
+    se_rdata <= semem(se_rhead*DM + se_rcol);
+    semem_p : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if se_wen = '1' then
+          semem(se_whead*DM + se_wcol) <= se_wdata;
+        end if;
+      end if;
+    end process;
+
+    -- ---- memory 3: conv taps and weights.  Registered ADDRESS, ---------
+    -- combinational DATA, which is what a BRAM with a registered address
+    -- port gives and what the port comment demands.
+    cvaddr_p : process(clk) is
+    begin
+      if rising_edge(clk) then
+        cvq_seg <= cv_seg;
+        cvq_grp <= cv_grp;
+      end if;
+    end process;
+
+    cvdata_p : process(cvq_seg, cvq_grp) is
+      variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
+      variable b : integer;
+    begin
+      for t in 0 to KC-1 loop
+        for ln in 0 to B_CONV_LANES-1 loop
+          b := (t*B_CONV_LANES + ln)*16;
+          xv(b+15 downto b) :=
+            std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+          wv(b+15 downto b) :=
+            std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+        end loop;
+      end loop;
+      cv_x <= xv;
+      cv_w <= wv;
+    end process;
+
+    -- Per SEGMENT, published one cycle behind `cv_seg` like a register file.
+    cvsq : process(clk) is
+    begin
+      if rising_edge(clk) then
+        cv_cw_exp <= to_signed(12 + cv_seg, 8);
+      end if;
+    end process;
+
+    -- ---- memory 4: the four scalars.  Registered, one cycle. -----------
+    scq : process(clk) is
+    begin
+      if rising_edge(clk) then
+        sc_head_q <= sc_head;
+      end if;
+    end process;
+
+    scdrv : process(sc_head_q) is
+      variable ix : integer;
+    begin
+      ix      := sc_head_q;
+      sc_al_m <= m12(ix*31 + 1, 2);
+      sc_dt_m <= m12(ix*31 + 2, 3);
+      -- ssm_a is -exp(A_log), so `a` is always <= 0 and the decay never
+      -- amplifies.  A positive one would exercise a case the model cannot
+      -- produce.
+      sc_a_m  <= -abs(m12(ix*31 + 3, 4));
+      sc_b_m  <= m12(ix*31 + 4, 5);
+      sc_al_e <= to_signed(12, 8);
+      sc_dt_e <= to_signed(12, 8);
+      sc_a_e  <= to_signed(12, 8);
+      sc_b_e  <= to_signed(12, 8);
+    end process;
+
+    -- ---- memory 5: the ssm_norm weight.  A level. ----------------------
+    wdrv : process(all) is
+    begin
+      for j in 0 to DM-1 loop
+        w_mant((j+1)*16-1 downto j*16) <= std_logic_vector(m12(4242, j));
+      end loop;
+    end process;
+
+    -- ---- the adapter, the z producer and the y sink --------------------
+    bp : process(clk) is
+      type st_t is (S_IDLE, S_ZRD, S_CAPW, S_CAPR, S_GO, S_ARM, S_RUN,
+                    S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable zb : buf_t(0 to A_MAXROWS-1);
+      variable yb : buf_t(0 to A_MAXROWS-1);
+      variable j_dst, j_rows, j_blk : natural := 0;
+      variable k, seg, h, ycnt : natural := 0;
+      variable zi : natural := 0;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_B) <= '0';
+        uw_en(U_B) <= '0';
+        cap_req    <= '0';
+        b_start    <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; z_valid <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_B then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_blk  := to_integer(job_ordinal);
+            -- The GDN LAYER ORDINAL, not the block index.  `job_ordinal`
+            -- carries the block index; B's `layer` port and the exponent
+            -- capture are indexed by the GDN layer, which is the block index
+            -- minus the attention blocks before it.
+            b_layer  <= j_blk - (j_blk + 1) / SHAPE.attn_interval;
+            ep       <= job_epoch;
+            rdy      <= '0';
+            k        := 0;
+            ycnt     := 0;
+            seg      := 0;
+            h        := 0;
+            zi       := 0;
+            st       := S_ZRD;
+            b_exp_region <= to_unsigned(R_Z, 8);
+            b_exp_seg    <= "00";
+          end if;
+
+          -- The un-refusable y stream.  Outside the FSM: a beat that arrives
+          -- where it was not expected must still be ACCEPTED, then reported.
+          if y_valid = '1' then
+            if st /= S_RUN then
+              f_lost <= '1';
+              report "llama_top: unit B emitted a y element outside its run "
+                   & "window.  y_valid has no ready, so this element is LOST."
+                severity error;
+            end if;
+            if ycnt < A_MAXROWS then yb(ycnt) := y_mant; end if;
+            ycnt := ycnt + 1;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            -- Read the whole gate region into a buffer BEFORE starting, so
+            -- the z handshake never has to wait on a region read while the
+            -- block is running.
+            when S_ZRD =>
+              if k < VH*DM then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_Z;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then zb(k-2) := el_rdata; end if;
+              if k = VH*DM+1 then
+                z_exp <= resize(exp_rd_data, 8);
+                k := 0;
+                st := S_CAPW;
+              else
+                k := k + 1;
+              end if;
+
+            -- One capture per q/k/v segment, carrying A's y_exp for that
+            -- projection.  Hold-until-ready on both sides: wait for
+            -- cap_ready with cap_req low, pulse for one cycle, then wait for
+            -- cap_ready again before the next.
+            when S_CAPW =>
+              if cap_ready = '1' and cap_req = '0' then
+                cap_layer <= b_layer;
+                cap_seg   <= seg;
+                cap_exp   <= qkv_exp(seg);
+                cap_req   <= '1';
+                st        := S_CAPR;
+              end if;
+
+            when S_CAPR =>
+              if cap_ready = '1' then
+                if seg = 2 then st := S_GO; else seg := seg + 1; st := S_CAPW; end if;
+              end if;
+
+            when S_GO =>
+              b_start <= '1';
+              b_tk0   <= '1';   -- one token only; there is no token loop yet
+              st      := S_ARM;
+
+            -- `busy` does not rise on the same edge as `start`, so waiting
+            -- for it to FALL without first seeing it RISE completes instantly.
+            when S_ARM =>
+              if b_busy = '1' then st := S_RUN; end if;
+
+            when S_RUN =>
+              -- COMPLETION IS `busy` FALLING.  `done` is a one-cycle pulse
+              -- with no ack and this adapter never reads it.
+              if b_busy = '0' then
+                k    := 0;
+                yexp <= resize(b_yexp, EXP_W);
+                assert ycnt = VH*DM
+                  report "llama_top: unit B produced " & integer'image(ycnt)
+                       & " y elements, expected " & integer'image(VH*DM)
+                       & ".  An un-stallable stream lost or gained beats."
+                  severity error;
+                if j_dst < NREGION then st := S_DRAIN; else st := S_DONE; end if;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_B)   <= '1';
+              uw_reg(U_B)  <= j_dst;
+              uw_addr(U_B) <= k;
+              if k < A_MAXROWS then uw_data(U_B) <= yb(k); end if;
+              if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
+
+            when S_DONE =>
+              dn <= '1';
+              if u_ack(U_B) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+
+          -- The z handshake, one offer per value head, running alongside.
+          if st = S_RUN or st = S_ARM or st = S_GO then
+            if z_valid = '0' and h < VH then
+              for j in 0 to DM-1 loop
+                z_mant((j+1)*16-1 downto j*16) <=
+                  std_logic_vector(zb(h*DM + j));
+              end loop;
+              z_valid <= '1';
+            elsif z_valid = '1' and z_ready = '1' then
+              z_valid <= '0';
+              h := h + 1;
+            end if;
+          else
+            z_valid <= '0';
+          end if;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
   -- UNIT C.  *** ATTENTION IS A STUB.  THIS COMPUTES NOTHING. ***
   --
   -- Subsystem C's steps 3..8 -- twiddle, rope, kv_quant, score, softmax,
@@ -1475,6 +1941,17 @@ begin
             k      := 0;
             st     := S_WR;
             f_stub <= '1';
+            -- THE STUB'S VALUES ARE GARBAGE; ITS SCALE IS NOT.  A stub that
+            -- also fabricates an exponent puts its output on a scale nothing
+            -- else in the token shares, and the next residual then shifts one
+            -- of its two operands out entirely -- which is a SECOND, invisible
+            -- failure layered on top of the intended, visible one.  Measured:
+            -- with a fabricated exponent of 0 the attention block produced a
+            -- residual whose operands were 25 binary places apart.  So the
+            -- stub reports its SOURCE region's exponent, and the damage stays
+            -- confined to the numbers.
+            c_exp_region <= job_src;
+            c_exp_seg    <= "00";
             if not said and SHOUT then
               report "llama_top: *** UNIT C IS A STUB.  ATTENTION WAS NOT "
                    & "COMPUTED.  The residual stream from this block onward "
@@ -1493,7 +1970,7 @@ begin
               if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
             when S_DONE =>
               dn   <= '1';
-              yexp <= to_signed(0, EXP_W);
+              yexp <= exp_rd_data;
               if u_ack(U_C) = '1' then
                 dn  <= '0'; rdy <= '1'; st := S_IDLE;
               end if;
@@ -1591,6 +2068,43 @@ begin
       obs_wsum <= h;
     end if;
   end process;
+
+  -- The q/k/v exponent recorder.  `cmp_valid` is the completing job, and D
+  -- runs one job at a time, so the job latched at the last `job_issue` IS the
+  -- one completing.  Segment comes from `dst_off` against the same two
+  -- boundaries `seq_opdec`'s MSEG mechanism uses, so the two cannot disagree
+  -- about which of q, k and v a job produced.
+  qexpp : process(clk) is
+    variable off : natural;
+  begin
+    if rising_edge(clk) then
+      b_seq_rst <= '0';
+      if rst = '1' then
+        last_dst <= 255;
+        qkv_exp  <= (others => (others => '0'));
+      else
+        if go = '1' then
+          -- One sequence reset per token, issued while everything is idle.
+          -- `gdn_exp_capture` asserts failure if this arrives mid-capture.
+          b_seq_rst <= '1';
+        end if;
+        if job_issue = '1' then
+          last_dst <= to_integer(job_dst(6 downto 0));
+          off := to_integer(job_dst_off(15 downto 0));
+          if    off = key_dim(SHAPE)   then last_seg <= 1;
+          elsif off = 2*key_dim(SHAPE) then last_seg <= 2;
+          else                              last_seg <= 0; end if;
+        end if;
+        if cmp_valid = '1' and last_dst = R_QKV then
+          qkv_exp(last_seg) <= resize(cmp_y_exp, 8);
+        end if;
+      end if;
+    end if;
+  end process;
+
+  obs_res_take <= v_taken(V_RES);
+  obs_res_ea   <= v_exp_a;
+  obs_res_eb   <= v_exp_b;
 
   obs_cmp_exp <= cmp_y_exp;
   obs_issue  <= job_issue;

@@ -80,8 +80,11 @@ entity tb_llama_top is
     -- `matvec_int4`.  Set A_BEHAV true to bisect a failure to a side of the
     -- D-to-A seam.
     A_BEHAV   : boolean  := false;
-    B_BEHAV   : boolean  := true;
-    MAXCYC    : natural  := 4000000
+    B_BEHAV   : boolean  := false;
+    MAXCYC    : natural  := 4000000;
+    -- Per-step exponents and per-region fingerprints.  Off by default: at 32
+    -- blocks it is 490 lines and the regression runner reads every line.
+    VERBOSE   : boolean  := false
   );
 end entity;
 
@@ -181,6 +184,9 @@ architecture tb of tb_llama_top is
     end if;
     return v;
   end function;
+  signal obs_res_take : std_logic;
+  signal obs_res_ea, obs_res_eb : signed(EXP_W-1 downto 0);
+  signal n_bad_res : natural := 0;
   signal obs_cmp_exp : signed(EXP_W-1 downto 0);
   signal obs_wsum    : unsigned(31 downto 0);
 
@@ -213,6 +219,8 @@ architecture tb of tb_llama_top is
 
   signal n_bad_skew : natural := 0;
   signal fail       : natural := 0;
+  signal xsum       : integer := 0;
+  signal rsum       : integer := 0;
 
   -- The token embedding.  Deterministic, non-trivial, and not symmetric: a
   -- residual stream that is accidentally zeroed or accidentally copied has to
@@ -263,6 +271,8 @@ begin
       m_arlen => m_arlen, m_arsize => m_arsize, m_arburst => m_arburst,
       m_rvalid => m_rvalid, m_rready => m_rready, m_rdata => m_rdata,
       m_rlast => m_rlast,
+      obs_res_take => obs_res_take, obs_res_ea => obs_res_ea,
+      obs_res_eb => obs_res_eb,
       obs_cmp_exp => obs_cmp_exp, obs_wsum => obs_wsum,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
@@ -441,6 +451,43 @@ begin
           n_issue <= n_issue + 1;
         end if;
         if obs_cmp = '1' then n_cmp <= n_cmp + 1; end if;
+      end if;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- P6: NEITHER OPERAND OF THE RESIDUAL MAY SHIFT OUT.
+  --
+  -- The residual is a BFP add.  `seq_vec_res` aligns X and ER by exponent, so
+  -- if the two exponents differ by more than the mantissa width the smaller
+  -- operand is shifted entirely away and the sum IGNORES it.  The machine
+  -- then sequences the whole token, every handshake is honoured, every
+  -- determinism property holds, and half the arithmetic never happened.
+  --
+  -- This is not hypothetical.  With the wide synthetic `w_exp` the schedule
+  -- originally carried, subsystem A published exponent 19 for the step that
+  -- produces ER while the residual stream sat at 3.  It was found by
+  -- swapping subsystem B's implementation and seeing region R_Y's fingerprint
+  -- change while region R_X's did not, which is a much more roundabout
+  -- instrument than this one.
+  -- ======================================================================
+  resexp : process(clk) is
+    variable d : integer;
+  begin
+    if rising_edge(clk) then
+      if rst = '0' and tb_reset = '0' and obs_res_take = '1' then
+        d := to_integer(obs_res_ea) - to_integer(obs_res_eb);
+        if d < 0 then d := -d; end if;
+        if d > MANT_W-2 then
+          n_bad_res <= n_bad_res + 1;
+          report "tb_llama_top: the residual at step " & integer'image(n_issue)
+               & " has operand exponents " & integer'image(to_integer(obs_res_ea))
+               & " and " & integer'image(to_integer(obs_res_eb))
+               & ", " & integer'image(d) & " apart against a "
+               & integer'image(MANT_W) & "-bit mantissa.  One operand shifts "
+               & "out ENTIRELY: this add ignores half its input."
+            severity error;
+        end if;
       end if;
     end if;
   end process;
@@ -675,20 +722,73 @@ begin
         severity warning;
     end if;
 
+    -- The exponent the lock captured at every completion of the LAST run.
+    -- The residual is a BFP add: if two operands' exponents are far apart the
+    -- smaller one shifts out entirely and contributes nothing, and the result
+    -- is a perfectly deterministic number that ignores half its inputs.
+    if VERBOSE then
+    for i in 0 to NSTEP-2 loop
+      report "tb_llama_top: step " & integer'image(i)
+           & " opcode " & integer'image(PLAN(i).opcode)
+           & " dst " & integer'image(PLAN(i).dst)
+           & " captured y_exp " & integer'image(tr_exp(NRUNS-1)(i))
+        severity note;
+    end loop;
+    end if;
+
+    -- Per-region fingerprints, taken after the token.  R_X alone cannot say
+    -- whether a unit's output reached the stream: if the step that CONSUMES
+    -- that region produces zeros, R_X is identical whatever the unit did.
+    if VERBOSE then
+    for rg in 0 to NREGION-1 loop
+      rsum <= 0;
+      wait for 0 ns;
+      for i in 0 to REGMAX-1 loop
+        hr_reg  <= rg;
+        hr_addr <= i;
+        wait until rising_edge(clk);
+        wait for 0.1 ns;
+        -- A POSITIONAL HASH, NOT A SUM.  A sum is not a fingerprint: the
+        -- behavioural norm removes the mean, so every post-norm region sums
+        -- to nearly zero BY CONSTRUCTION and two completely different vectors
+        -- give the same total.  That cost a wrong conclusion once -- see the
+        -- measurement traps in
+        -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+        rsum <= (rsum * 31 + to_integer(hr_data) + 40000) mod 100003;
+      end loop;
+      wait for 0 ns;
+      report "tb_llama_top: region " & integer'image(rg) & " hash "
+           & integer'image(rsum) severity note;
+    end loop;
+    end if;
+
+    -- A checksum over the whole residual, not just element 0.  Element 0
+    -- alone can coincide between two configurations that differ everywhere
+    -- else, which makes it useless as the thing you eyeball when comparing
+    -- a real unit against its behavioural model.
+    xsum <= 0;
+    wait for 0 ns;
+    for i in 0 to SHAPE.hidden-1 loop
+      xsum <= (xsum * 31 + results(0)(i) + 40000) mod 100003;
+      wait for 0 ns;
+    end loop;
+
     -- ---- verdict ---------------------------------------------------------
-    fail <= n_bad_sched + n_bad_skew;
+    fail <= n_bad_sched + n_bad_skew + n_bad_res;
     wait for 0 ns;
 
     report "tb_llama_top: schedule mismatches=" & integer'image(n_bad_sched)
          & " skew differences=" & integer'image(n_bad_skew)
+         & " degenerate residuals=" & integer'image(n_bad_res)
       severity note;
 
-    if n_bad_sched = 0 and n_bad_skew = 0 then
+    if n_bad_sched = 0 and n_bad_skew = 0 and n_bad_res = 0 then
       report "tb_llama_top RESULT: PASS -- " & integer'image(NSTEP)
            & " descriptors, " & integer'image(SHAPE.blocks)
            & " blocks, " & integer'image(NRUNS)
            & " descriptor-latency points, R_X bit-identical across all of "
            & "them, R_X(0) = " & integer'image(results(0)(0))
+           & " hash(R_X) = " & integer'image(xsum)
         severity note;
     else
       report "tb_llama_top RESULT: FAIL" severity failure;

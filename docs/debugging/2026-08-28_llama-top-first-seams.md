@@ -302,3 +302,221 @@ blocks and produced a value.
 * The region file is one flat array with one element port. That is correct
   *today* only because `seq_desc_fetch`'s `cur_unit` is a scalar and D cannot
   overlap two units. When D grows overlap it becomes a real arbiter.
+
+---
+
+# PART 2 -- the real matvec_int4 and the real gdn_block, same day
+
+**Date:** 2026-08-28, later the same session. Appended in place rather than
+filed separately, because two of the four new findings are corrections to the
+"open, not yet answered" list above and one of them REVERSES a claim made in
+Part 1's summary table.
+
+## The answer, up front
+
+Both real units are now instantiated. `matvec_int4` streams weights over five
+AXI4 read masters brought out of the top level; `gdn_block` runs with the six
+memories its port contract requires, at three different latencies. The whole
+491-descriptor token runs with both.
+
+Four more defects, and the pattern from Part 1 held: **two of the four were
+invisible to the skew sweep and one was invisible to every property the bench
+had until a new one was written for it.**
+
+| # | defect | found by | caught by the skew sweep? |
+|---|---|---|---|
+| 4 | two generates driving one shared exponent-claim signal | the `exp_rd_valid` assertion added for defect 2 | **NO** -- 'X' resolves deterministically |
+| 5 | `out_shift` must be 0..40 or `matvec_core` refuses the job | the run stopping with ERR_UNIT | n/a, it is a hard error |
+| 6 | the residual add was discarding one whole operand on exponent grounds | swapping B's implementation and diffing per-region fingerprints | **NO** |
+| 7 | the attention stub fabricated an exponent and so caused defect 6 in every attention block | the property written for defect 6 | **NO** |
+
+## Defect 4 -- one claim signal, two drivers, and 'X' that behaves itself
+
+Unit A and unit B both need a source exponent out of `seq_region_lock`, which
+has ONE combinational exponent read port. The first version had both generates
+driving one `ux_exp_region` signal.
+
+`unsigned` is built on `std_logic`, which is a RESOLVED type. Two drivers is
+therefore not an elaboration error and not a simulation error: the bits resolve
+to `'X'`, `to_integer` reports a metavalue and returns 0, and unit A reads
+region 0's exponent for every job. Deterministically. **The skew sweep passed.**
+
+What caught it was the `assert exp_rd_valid = '1'` added when defect 2 was
+fixed:
+
+```
+llama_top.vhd:1289:(assertion error): llama_top: unit A read region 0's
+exponent before anything captured it.
+```
+
+Fixed with one claim signal per claimant (`a_exp_region`, `b_exp_region`,
+`c_exp_region`) and a mux on `act_unit`, which is latched at `job_issue` and
+held for the whole job.
+
+**This is the second time a shared-resource defect survived a determinism
+property in this file.** Defect 2 was the first. Treat "two things can drive
+this" as a class that determinism testing does not cover, and put an assertion
+on the resource instead.
+
+## Defect 5 -- a descriptor field that is legal to WALK and illegal to EXECUTE
+
+`matvec_core.vhd:850-867` rejects `out_shift < 0` or `out_shift > 40` at
+`start`, raises `err`, and goes straight to `S_DONE`. `sim/seq_tbl_pkg.vhd`
+emits `(p mod 23) - 11`, which is negative for eleven steps in every
+twenty-three.
+
+That is not a bug in `seq_tbl_pkg`: its table is walked by testbenches that
+never start a real matvec, so any bit pattern is as good as another. It becomes
+a bug the moment a top level executes the table. `sim/llama_sched_pkg.vhd` now
+emits a legal shift.
+
+**Not clamped in the adapter.** Clamping a descriptor field in gateware is how
+a schedule and a build come to disagree silently, which is the failure mode
+`seq_opdec`'s own header spends three findings on.
+
+## Defect 6 -- the residual was ignoring half its input, and nothing could see it
+
+**Symptom.** With subsystem B swapped between its real and behavioural
+implementations, region R_Y's fingerprint changed and region R_X's did not.
+Every other property passed: schedule identity, skew invariance across four
+descriptor-memory latencies, no dropped writes, no lock violations.
+
+**Cause.** The residual is a BFP add. `seq_vec_res` aligns X and ER by
+exponent, so if the two exponents differ by more than the mantissa width the
+smaller operand shifts out ENTIRELY. The per-step exponent trace:
+
+```
+step 0  opcode 4 dst 1  captured y_exp 3      <- the residual stream, X
+...
+step 7  opcode 1 dst 9  captured y_exp 14     <- subsystem B's output
+step 8  opcode 0 dst 13 captured y_exp 19     <- A's projection of it, into ER
+step 9  opcode 5 dst 0  captured y_exp 42     <- the residual X + ER -> X
+```
+
+X at 3 and ER at 19 is sixteen binary places apart against a 16-bit mantissa.
+The whole of A's and B's contribution vanished into the alignment shift. The
+machine sequenced the token perfectly and computed with one operand.
+
+**The cause is the STIMULUS, not the RTL.** `w_exp` came from the same
+step-index formula `seq_tbl_pkg` uses, `((p*7) mod 61) - 30`, which spans sixty
+binary places. Narrowed to `(p mod 5) - 2`. The cost is stated in the source:
+a stale `w_exp` capture is now wrong by at most 4 instead of by up to 60, so
+this stimulus is a weaker mutation detector than `seq_tbl_pkg`'s. That is the
+right trade for a table that is EXECUTED rather than walked.
+
+**After the fix, R_X's fingerprint changes when B's implementation changes**
+(38682 vs 52685 at one GDN block), which is the property that says the GDN path
+carries data end to end.
+
+**A NEW PROPERTY, because the roundabout instrument that found it is not one
+anybody will re-run.** P6 in `sim/tb_llama_top.vhd` watches the residual's two
+operand exponents at every `v_taken`, and fails the run if they are more than
+`MANT_W-2` apart. Verified to FIRE on the original stimulus, which is the only
+way to know a property is load-bearing:
+
+```
+tb_llama_top: the residual at step 10 has operand exponents 3 and 42, 39 apart
+against a 16-bit mantissa.  One operand shifts out ENTIRELY: this add ignores
+half its input.
+```
+
+## Defect 7 -- a stub with a fabricated scale is two failures, not one
+
+With P6 in place and both real units in, four residuals were still degenerate,
+all in attention blocks: `operand exponents -31 and -6, 25 apart`.
+
+The attention stub wrote `y_exp = 0` by fiat. Its VALUES are meant to be
+obviously wrong -- that is the point of the stub -- but a fabricated EXPONENT
+puts its output on a scale nothing else in the token shares, so the next
+residual discards one of its two operands. That is a second, invisible failure
+layered on top of the intended, visible one, and it contaminates the numeric
+behaviour of every later block for reasons that have nothing to do with
+attention being missing.
+
+Fixed: the stub reports its SOURCE region's exponent, read from the lock like
+any other unit. Its values remain the deliberately impossible `-32768 + i`
+ramp. Degenerate residuals went 4 -> 0.
+
+**Rule worth keeping: a stub must be wrong in its VALUES and correct in its
+CONTRACT.** Scale is part of the contract.
+
+## What subsystem B needed that nothing had ever provided
+
+Three things, none of which any descriptor field expresses:
+
+1. **Six memories at three different latencies.** `st_*` is a registered-read
+   BRAM; `se_*` is **combinational**, address to data in one cycle; `cv_*` is
+   registered ADDRESS with combinational DATA. Building `se_*` as a one-cycle
+   BRAM by analogy with `st_*` is the obvious mistake and `gdn_block`'s own
+   port comment warns about it.
+2. **The exponent-capture obligation.** Before B may be started for a layer,
+   exactly one `cap_req` per q/k/v segment must have been issued carrying
+   subsystem A's `y_exp` for that projection. This is a contract between A and
+   B that the descriptor format has no field for; `llama_top` records the
+   three exponents at `cmp_valid` and replays them into `gdn_exp_capture`
+   before `start`, using the segment inferred from `dst_off` against the same
+   two boundaries `seq_opdec`'s MSEG mechanism uses.
+3. **Completion is `busy` falling, not `done`.** `gdn_block`'s `done` is a
+   one-cycle pulse with no ack. `busy` is a level that falls one cycle later,
+   and `tb_gdn_block.vhd:618-621` polls `busy` for exactly this reason. The
+   adapter also has to wait for `busy` to RISE first: waiting for it to fall
+   without that completes instantly.
+
+## Measured and REJECTED -- do not retry (Part 2)
+
+* **A SUM as a region fingerprint.** The behavioural norm removes the mean, so
+  every post-norm region sums to nearly zero BY CONSTRUCTION and two completely
+  different vectors give the same total. Region R_XN summed to -45 in both
+  configurations under test while its contents differed. Use a positional hash
+  (`h := h*31 + v`), not a sum. This directly produced a wrong intermediate
+  conclusion during defect 6.
+* **Element 0 as a fingerprint.** `R_X(0)` was identical (-24349) between two
+  configurations that differed across the region. It is fine in the PASS line
+  as a human-readable landmark; it is useless as the thing you compare.
+* **Clamping `out_shift` in the adapter.** See defect 5.
+* **Giving a stub a fabricated exponent.** See defect 7.
+
+## Measurement traps hit (Part 2)
+
+* **`unsigned` is a resolved type, so two drivers is silent.** No elaboration
+  error, no simulation error, just `'X'` and a metavalue warning buried in
+  thousands of identical `numeric_std` warnings.
+* **VHDL's universal integer is 32-bit and overflows at run time, not at
+  analysis.** `idx*7919` in the AXI slave model with a 24-bit word index
+  aborted the 491-step run with `overflow detected` pointing INSIDE the
+  stimulus function, which reads like a broken AXI slave. Reduce the index
+  before the multiply.
+* **A string in a report can fail a regression run.** `sim/regress.sh`'s
+  `FAIL_RE` includes the literal `IS NOT`, and the banner said "THIS IS NOT AN
+  INFERENCE ENGINE YET". The testbench passed and the runner called it FAIL.
+  Check new report text against `FAIL_RE` before adding it.
+* **A property that has never fired is not evidence.** P6 was deliberately
+  re-run against the original wide-exponent stimulus to confirm it fires, with
+  the expected numbers, before being trusted.
+
+## CORRECTION to Part 1
+
+Part 1's table said defect 2 was the only one the skew sweep could not see.
+That was true of the three defects known at the time and is **withdrawn as a
+general statement**: of the seven defects now found in this file, **four**
+(2, 4, 6, 7) were invisible to it. The skew sweep catches lost beats and stale
+pipeline reads. It does not catch anything that is wrong in the same way on
+every run -- shared resources, fabricated scales, and operands that shift out.
+
+## Open, not yet answered (updated)
+
+* The CONTENTS of B's conv taps, conv weights, four scalars and ssm_norm
+  weight are still deterministic stand-ins, NOT sourced from R_QKV, R_BETA and
+  R_ALPHA. Only `z`, the output gate, is read from a real region (R_Z). Wiring
+  the rest is what remains before the GDN path carries real numbers, and the
+  conv tap memory in particular is a per-token HISTORY `KCONV` deep, which
+  needs a token loop this file does not have.
+* A's weights are synthetic: the descriptor base array past the 64-byte header
+  is still not fetched (`seq_desc_fetch.vhd:113-115`).
+* Attention still has no lane array.
+* The norm and swiglu D-vec engines are still behavioural. Real `rmsnorm_rs`
+  and `swiglu` exist in rtl/ and neither has a `seq_vec_issue` adapter.
+* There is still no block-level arithmetic oracle, and there cannot be one
+  until the two stubbed engines and attention are real.
+* One token only. `tk0` is hardwired to '1' and there is no token loop, so B's
+  recurrent state is exercised for a first token and never for a continuation.

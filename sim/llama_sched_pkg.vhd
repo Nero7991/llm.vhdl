@@ -314,7 +314,27 @@ package body llama_sched_pkg is
       -- scaled shape to zero, and a residual stream of zeros passes a
       -- skew-invariance test perfectly.  A test whose data is all zero is not
       -- a test.
-      d(2)(31 downto 0)  := std_logic_vector(to_signed(((i * 7) mod 61) - 30, 32));
+      --
+      -- `w_exp` IS NOT FREE TO RANGE OVER +/-30 EITHER, and this one is not a
+      -- legality constraint but a NUMERIC one that was measured.  The
+      -- residual is a BFP add: `seq_vec_res` aligns X and ER by exponent, so
+      -- if their exponents differ by more than the mantissa width the smaller
+      -- operand shifts out ENTIRELY and the sum ignores it.  With
+      -- `((p*7) mod 61) - 30`, subsystem A published y_exp = 19 for the step
+      -- that produces ER while the residual stream sat at 3, sixteen binary
+      -- places apart, and the whole of A's and B's contribution to the token
+      -- vanished into the shift -- deterministically, and while every
+      -- sequencing property still passed.  Measured by toggling B's
+      -- implementation and finding region R_Y's fingerprint changed and
+      -- region R_X's did not.
+      --
+      -- So the range is narrow enough that both operands survive alignment.
+      -- The COST is stated: a stale or shared w_exp capture is now wrong by
+      -- at most 4 instead of by up to 60, so this stimulus is weaker at
+      -- catching an exponent mix-up than seq_tbl_pkg's is.  seq_tbl_pkg's
+      -- table is walked and never executed, so it can afford the wide range;
+      -- this one is executed.
+      d(2)(31 downto 0)  := std_logic_vector(to_signed((i mod 5) - 2, 32));
       d(2)(63 downto 32) := std_logic_vector(to_signed(i mod 5, 32));
       d(4)(63 downto 32) := std_logic_vector(to_signed(((i * 5) mod 41) - 20, 32));
       for w in 0 to 7 loop
