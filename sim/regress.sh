@@ -348,7 +348,9 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=76   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
+BASELINE_PASS=77   # +1 sim/tb_matvec_fk33, subsystem A at ROWS_IF=48 /
+                   #    AXI_DW=256 from a real .mv4i file, 2026-08-28
+                   # +1 sim/tb_llama_top, the integration top level, 2026-08-28
                    # +1 sim/tb_weight_streamer, 6.5a reassembly, 2026-08-28
                    # +1 sim/tb_attn_mac_array, subsystem C's MAC array, 2026-08-28
                    # +1 sim/tb_attn_block, subsystem C's top level, 2026-08-28
@@ -651,6 +653,12 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_matvec_core)      echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=0 --stop-time=50ms --stop-delta=1000000" ;;
     sim:tb_matvec_int4)      echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=3 --stop-time=30ms --stop-delta=1000000" ;;
     sim:tb_matvec_axi)       echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=3 --stop-time=50ms --stop-delta=1000000" ;;
+    # The FK33 geometry.  Its trace is a BARE name, not ../tr.txt, so it is
+    # generated into the test's own workdir by the vector machinery below
+    # rather than symlinked from sim/ -- see the mv_fk33_tr.txt row.  Every
+    # generic defaults to the FK33 configuration, so none is passed here; the
+    # trace's own GEOM line is asserted against them.
+    sim:tb_matvec_fk33)      echo "--stop-time=50ms --stop-delta=1000000" ;;
     # sim/run_matvec.sh stages 4 and 4b, first row of each sweep.
     sim:tb_act_mem)          echo "-gELEMS=544 -gBLK=32 -gLANES=4 --stop-time=500ms" ;;
     sim:tb_axi_rd_port)      echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 --stop-time=200ms" ;;
@@ -685,6 +693,18 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # the vector file's shape header, so a mismatch here is loud, not silent.
     seq_vec_chain_vec.txt)  echo "250 8 20260827" ;; # sim/run_seq_vec_seam.sh
     gdn_emit_chain_vec.txt) echo "3 24 128" ;;     # sim/run_gdn_emit_chain.sh
+    # sim/tb_matvec_fk33.  ref/mv_fk33_tr reads a REAL packed tensor and dumps
+    # the sub-region bytes its 27 AXI masters will read, plus the expected
+    # result from ref/matvec_int4.c.  The file is one of the 250 .mv4i written
+    # for the FK33 by tools/pack_int4.py; the model set is NOT in git, so this
+    # is a genuine external prerequisite and a missing file is reported as
+    # VECTORGEN_RUN_FAILED with the path in the message rather than as a wrong
+    # answer.  Override the path with MV4I_FK33_FILE.  n_rows=100 is chosen,
+    # not arbitrary: 100 = 2*48 + 4, so it spans THREE tiles (the burst
+    # generator issues 3 bursts of 128 beats at MAXB=128) and the last tile
+    # carries 44 pad rows.  n_cols is NOT subsettable -- the block stride in a
+    # sub-region is the file's own nb -- so the whole K is used.
+    mv_fk33_tr.txt)         echo "${MV4I_FK33_FILE:-/mnt/storage/llama-models/qwen35-9b-mv4i/blk.11.attn_k.weight.mv4i} 100 5" ;;
     *) : ;;
   esac
 }
@@ -698,6 +718,11 @@ tb_pass_marker() {
     # Two geometries in one run (ROWS_IF=4/AXI_DW=128 and ROWS_IF=48/AXI_DW=256,
     # spec 6.5a), so the verdict is one counter over both.
     sim:tb_weight_streamer) echo '0 reassembly errors across both geometries' ;;
+    # PASS_RE would already match this bench's 'bit-exact', but an explicit
+    # marker is what makes a TRUNCATED run a NOVERDICT instead of a pass: the
+    # phrase is only printed after the row count, y_exp and sat_event have all
+    # been checked, so nothing earlier in the log can produce it.
+    sim:tb_matvec_fk33)  echo 'bit-exact with ref/matvec_int4.c from the real .mv4i bytes up' ;;
     sim:tb_hbm_tg)       echo 'recovers a known bandwidth at every port count' ;;
     # The tb/ suite states its verdict as "PASS:<unit>" almost everywhere and
     # \bPASS\b already matches that.  These two phrase it differently.
