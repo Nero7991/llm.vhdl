@@ -375,6 +375,12 @@ static int16_t rnd_mant(int mode)
     }
 }
 
+/* The whole file is also used AS A LIBRARY by ref/seq_vec_chain_vec.c, which
+ * needs `recipe` and all six oracles and must not get a second `main`.
+ * Defining SEQ_VEC_RES_AS_LIB before including this file suppresses only the
+ * driver below; every mutation point and every oracle is shared, so a
+ * mutation of this file is a mutation of BOTH programs. */
+#ifndef SEQ_VEC_RES_AS_LIB
 int main(int argc, char **argv)
 {
     const char *out = argc > 1 ? argv[1] : "seq_vec_res_vec.txt";
@@ -513,3 +519,4 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+#endif /* SEQ_VEC_RES_AS_LIB */

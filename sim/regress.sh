@@ -177,6 +177,10 @@
 #   tb_seq_opdec                491-step walk through three units
 #   tb_seq_region_lock          491-step plan
 #
+# tb_seq_vec_seam is deliberately NOT on that list even though it is a seam
+# test: five real units, but a short synthetic schedule, so it runs in about
+# two seconds and there is no reason to lose the seam coverage in --quick.
+#
 # and from the tb/ suite:
 #
 #   tb_e2e                      seq_ctrl over 16 tokens, all layers
@@ -535,6 +539,9 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_seq_region_lock)  echo "-gWR_N=6 -gWR_GAP=0 -gJOB_LAT=12 -gSTRICT=true --stop-time=400ms" ;;
     # sim/run_seq_vec_res.sh: ACK_LAG=0 is NOT the weak case, see that header.
     sim:tb_seq_vec_res)      echo "-gNCASE=64 -gACK_LAG=0 --stop-time=900ms" ;;
+    # sim/run_seq_vec_seam.sh row 1: the D-ctrl/D-vec seam with five real units
+    # in the loop, at the skew that gets the descriptor prefetch furthest ahead.
+    sim:tb_seq_vec_seam)     echo "-gURAM_LAT=1 -gJOB_LAT=40 -gLAT_SKEW=7 -gSTRICT=true --stop-time=900ms" ;;
     *)                   echo "--stop-time=900ms" ;;
   esac
 }
@@ -552,6 +559,9 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     attn_softmax_vec.txt)   echo "44 24" ;;        # sim/mutate_attn_softmax.sh
     attn_twiddle_vec.txt)   echo "24 32" ;;        # sim/mutate_attn_twiddle.sh
     seq_vec_res_vec.txt)    echo "64 12345" ;;     # sim/run_seq_vec_res.sh
+    # n nres seed.  n and nres are asserted against the testbench's generics by
+    # the vector file's shape header, so a mismatch here is loud, not silent.
+    seq_vec_chain_vec.txt)  echo "250 8 20260827" ;; # sim/run_seq_vec_seam.sh
     gdn_emit_chain_vec.txt) echo "3 24 128" ;;     # sim/run_gdn_emit_chain.sh
     *) : ;;
   esac

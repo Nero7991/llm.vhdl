@@ -58,6 +58,19 @@ run "polite memory: no 'X' between reads"        -gRD_POISON=false
 run "out of place: the source must be untouched" -gIN_PLACE=false -gACK_LAG=0
 run "out of place, ack lagged"                   -gIN_PLACE=false -gACK_LAG=20
 
+echo "################ the padding poison, BOTH SIGNS #########################"
+# THE SIGN OF THE POISON IS A CONFIGURATION, not a cosmetic constant.  A lane
+# masked out of the final partial group takes no part in the magnitude fold, so
+# the chosen shift says nothing about its accumulator and it can overrun the
+# int16 clamp in EITHER direction.  With the historical +21845 it always
+# overran POSITIVELY, so the unit's negative-saturation branch was never once
+# executed by this bench in any configuration -- it was first reached by
+# sim/tb_seq_vec_seam.sh, and it contained an out-of-range `to_signed` that
+# emitted a numeric_std truncation warning on every execution.
+run "padding poison NEGATIVE (reaches the negative clamp)" -gPOISON=-21846
+run "padding poison negative, out of place, ack lagged" \
+    -gPOISON=-21846 -gIN_PLACE=false -gACK_LAG=20
+
 echo "################ the lane count, same vectors ###########################"
 run "LANES = 4"   -gLANES=4  -gACK_LAG=0
 run "LANES = 16"  -gLANES=16 -gACK_LAG=4

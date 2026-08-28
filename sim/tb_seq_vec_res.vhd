@@ -74,6 +74,15 @@ entity tb_seq_vec_res is
     -- separate one.  In-place is the case whose safety is an invariant.
     IN_PLACE   : boolean := true;
     HEARTBEAT_US : natural := 0;
+    -- The value loaded into every lane past `n` and into the out-of-place
+    -- destination.  A GENERIC and not a constant since 2026-08-27, and the
+    -- SIGN is the point.  With the default +21845 a masked padding lane whose
+    -- accumulator overruns the chosen shift saturates POSITIVELY, so the
+    -- negative clamp in the DUT was never once executed by this bench; it was
+    -- first reached by `tb_seq_vec_seam`, where the poison is negative, and
+    -- the branch turned out to contain an out-of-range `to_signed`.  Run the
+    -- sweep at both signs.
+    POISON : integer := 21845;   -- 0x5555, not 0 and not full scale
     VECS   : string := "seq_vec_res_vec.txt" );
 end entity;
 
@@ -81,7 +90,6 @@ architecture sim of tb_seq_vec_res is
   constant LOG2L : natural := clog2(LANES);
   constant GA_W  : natural := ADDR_W - LOG2L;
   constant NMAX  : natural := 4096;
-  constant POISON : integer := 21845;   -- 0x5555, not 0 and not full scale
 
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';

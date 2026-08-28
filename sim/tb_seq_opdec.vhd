@@ -1085,6 +1085,20 @@ begin
   begin
     if rising_edge(clk) then
       if job_issue = '1' then seen := false; post := false; end if;
+      -- THE TOKEN-START HOST PUBLISH IS NOT A JOB COMPLETION, and treating it
+      -- as one is how this guard passed for two tokens against a coincidence.
+      -- `seq_opdec` raises `cmp_valid` in T_PUB carrying the HOST's exponent
+      -- for region X: no unit ran, so there is no `y_exp_taken` to pair it
+      -- with, and the guard was still holding the LAST job of the PREVIOUS
+      -- token.  It compared that against `host_x_exp` and agreed only because
+      -- `exp_of(489) = 4` happens to equal `3 + t` at `t = 1`.  Measured: the
+      -- same suite FAILS at TOKENS = 3, where the host exponent is 5.
+      -- `host_busy` is high for the whole publish sequence and is the DUT's
+      -- own statement that no job is being completed.
+      if host_busy = '1' then
+        seen := false;
+        post := false;
+      else
       if y_exp_taken = '1' then
         assert not post
           report "tb_seq_opdec: y_exp_taken pulsed AFTER cmp_valid -- the "
@@ -1106,6 +1120,7 @@ begin
             severity failure;
         end if;
         post := true;
+        end if;
       end if;
     end if;
   end process;

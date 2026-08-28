@@ -50,9 +50,21 @@
 --       - at sh = 0 the result is EXACT, out[i] = acc[i], no rounding at all;
 --       - at sh > 0 at most one element can saturate, by exactly one LSB, and
 --         only when the maximum's rounding crosses 2^15.  Negative saturation
---         is UNREACHABLE by construction (round-half-toward-+infinity of
---         -(2^(p+1)-1) is exactly -2^15, never below).  The clamp is kept and
---         reported in `o_sat`, not hidden.
+--         is unreachable FOR A PARTICIPATING LANE (round-half-toward-+infinity
+--         of -(2^(p+1)-1) is exactly -2^15, never below).  The clamp is kept
+--         and reported in `o_sat`, not hidden.
+--
+--         CORRECTION 2026-08-27, from `tb_seq_vec_seam`: that statement was
+--         written without the word PARTICIPATING and is too strong as it
+--         stood.  A lane MASKED OUT of the final partial group takes no part
+--         in the magnitude fold, so `sh` says nothing about its accumulator
+--         and a masked lane carrying a large negative value CAN drive the
+--         negative clamp.  The unit is right -- `o_sat` is guarded by `m6(i)`
+--         and the write by `w_be`, so neither the summary flag nor the region
+--         is affected -- but the BRANCH executes, and until the seam bench ran
+--         it never had: `tb_seq_vec_res` poisons its padding lanes with
+--         +21845, which saturates POSITIVELY.  One sign of one testbench
+--         constant was the whole difference.
 --
 --  4. THE MAXIMUM IS FOUND WITH AN OR, NOT A COMPARE.  msb_pos is monotone and
 --     OR preserves the highest set bit, so msb_pos(a or b) = max(msb_pos a,
@@ -444,8 +456,17 @@ begin
                   std_logic_vector(to_signed(2**(MANT_W-1) - 1, MANT_W));
                 if m6(i) = '1' then satx := '1'; end if;
               elsif rv < -to_signed(2**(MANT_W-1), ACC_W) then
+                -- SPELLED `to_signed(-(2**(MANT_W-1)), MANT_W)` AND NOT
+                -- `-to_signed(2**(MANT_W-1), MANT_W)`.  The second form asks
+                -- numeric_std to convert +32768 into 16 signed bits, which
+                -- does not fit: it emits `TO_SIGNED: vector truncated` on
+                -- EVERY execution and is correct only because the truncation
+                -- and the negation each overflow and the two cancel.  The
+                -- first form is -32768, which fits exactly.  Found by
+                -- `tb_seq_vec_seam`, which is the first test ever to execute
+                -- this branch -- see the note below.
                 wd_r((i+1)*MANT_W-1 downto i*MANT_W) <=
-                  std_logic_vector(-to_signed(2**(MANT_W-1), MANT_W));
+                  std_logic_vector(to_signed(-(2**(MANT_W-1)), MANT_W));
                 if m6(i) = '1' then satx := '1'; end if;
               else
                 wd_r((i+1)*MANT_W-1 downto i*MANT_W) <=
