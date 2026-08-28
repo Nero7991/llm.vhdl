@@ -147,7 +147,26 @@
 #    know.  It is also what caught the SLOW_SET bug -- --quick was running a
 #    408 s testbench it was documented as excluding.
 #
-# 9. PARALLELISM IS CONSERVATIVE BY DEFAULT.  --jobs defaults to 2 because this
+# 9. THE SCRIPT RUNS FROM A PRIVATE COPY OF ITSELF.  bash reads a script by
+#    byte offset as it executes, so an edit to sim/regress.sh corrupts any run
+#    already in flight -- and with several agents in this repo, the one who
+#    gets hit is not the one who edited it.  It happened three times during
+#    this script's own development, once to a third party.  A comment could
+#    not fix that, so section 0 copies the file to a private temp path and
+#    re-execs it; from then on the running process reads a file nobody else
+#    can name.  Arguments pass through, the exit status is the payload's
+#    because `exec` replaces the process, the repo root is resolved BEFORE the
+#    re-exec and exported, and the copy is syntax-checked first in case it was
+#    taken mid-write.  Editing sim/regress.sh during a run is now merely
+#    pointless rather than destructive.
+#
+# 10. THE PASS COUNT HAS A FLOOR.  Every other check here watches for a test
+#    going RED; a test that goes MISSING makes the suite GREENER and nothing
+#    would have noticed.  BASELINE_PASS is checked on full unfiltered runs and
+#    fails the run when the count DROPS, saying in as many words that this is
+#    a disappearance and not a failure.
+#
+# 11. PARALLELISM IS CONSERVATIVE BY DEFAULT.  --jobs defaults to 2 because this
 #    workstation regularly has a Vivado synthesis running, and Vivado is the
 #    memory hog that has already triggered a systemd-oomd kill of the whole
 #    session cgroup.  Raise it when the box is idle.
@@ -219,8 +238,80 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ===========================================================================
+# 0. SELF-ISOLATION.  Run from a PRIVATE COPY, so an edit to sim/regress.sh
+#    cannot corrupt a run that is already in flight.
+# ===========================================================================
+# bash reads a script lazily, by BYTE OFFSET, as it executes.  Editing the file
+# under a running instance shifts every offset after the edit and the shell
+# resumes mid-token.  The symptom is a full, correct-looking set of per-test
+# results followed by "syntax error" at a line that is perfectly valid, with
+# the summary silently missing -- results without a conclusion, which is the
+# worst of the possible failures.
+#
+# A comment warning about it was not enough, and could not be: with several
+# agents sharing this repo, the one who gets hit is not the one who edited the
+# file.  So the script copies itself somewhere private and re-execs that copy.
+# From then on the running process is reading a file nobody else can name.
+#
+# Four things this has to get right, all easy to get subtly wrong:
+#
+#   * ARGUMENTS.  `exec ... "$@"` passes them through unchanged, including
+#     empty ones and ones containing spaces.  --list, --only, --suite and the
+#     rest behave identically either side of the re-exec.
+#   * EXIT STATUS.  `exec` REPLACES this process, so the payload's status is
+#     the status the caller sees.  There is no wrapper left to mask it.  That
+#     matters more here than usual: the whole value of this runner is that a
+#     non-zero exit means something.
+#   * PATHS.  Everything below derives from $REPO, and $REPO derives from
+#     ${BASH_SOURCE[0]}, which after the re-exec points at /tmp.  So the repo
+#     root is resolved HERE, from the original location, and exported.  Get
+#     this wrong and the copy resolves rtl/ and sim/ somewhere they are not.
+#   * A HALF-WRITTEN SOURCE.  If the copy happens to be taken while somebody
+#     is mid-write, the copy is garbage and re-execing it would produce
+#     exactly the failure this guard exists to prevent.  `bash -n` on the copy
+#     refuses that case loudly instead.
+#
+# REGRESS_NO_REEXEC=1 disables the guard, for debugging the guard itself.
+if [ -z "${REGRESS_REPO:-}" ]; then
+  REGRESS_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export REGRESS_REPO
+fi
+
+if [ -z "${REGRESS_SELF:-}" ] && [ -z "${REGRESS_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t regress-self.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "regress.sh: could not take a private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "regress.sh: the private copy does not parse -- sim/regress.sh was" >&2
+    echo "  probably being written at the instant it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"
+  export REGRESS_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+  # Only reached if exec itself failed.
+  rm -f "$_self"
+  echo "regress.sh: could not re-exec the private copy" >&2
+  exit 2
+fi
+
+REPO="$REGRESS_REPO"
 SIM="$REPO/sim"
+
+# The cleanup trap is armed HERE, before option parsing, not later next to the
+# scratch directory.  --help and an unknown option both exit during parsing,
+# and a trap armed after that point leaks a private copy into /tmp every time
+# somebody types --help.  ${SCRATCH:-} and ${KEEP:-0} are not yet set at this
+# point, hence the defaults.
+cleanup() {
+  [ -n "${REGRESS_SELF:-}" ] && rm -f "$REGRESS_SELF"
+  [ "${KEEP:-0}" = 0 ] && [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
+  return 0
+}
+trap cleanup EXIT
 GHDL="${GHDL:-ghdl}"
 STD="--std=08"
 RELAX="-frelaxed"
@@ -234,7 +325,27 @@ COVERAGE_ONLY=0
 KEEP=0
 SUITES="sim tb"
 
-usage() { sed -n '2,214p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+# ---------------------------------------------------------------------------
+# THE BASELINE FLOOR.  A test that DISAPPEARS makes the suite greener.
+# ---------------------------------------------------------------------------
+# Everything else in this script watches for a test going RED.  Nothing watched
+# for a test going MISSING, and the two are different failures: a testbench
+# deleted, renamed out of the tb_*.vhd glob, or newly unresolvable and so
+# reported SKIPPED, REMOVES a red line rather than adding one.  The headline
+# then reads greener than the day before while covering less, which is the one
+# way this runner could mislead the project it gates.
+#
+# So the gate has a floor.  It is a FLOOR, not an equality: adding a testbench
+# must not fail the run, it prints a note asking for the floor to be raised.
+# Dropping below it fails the run, and says explicitly that this is a
+# disappearance rather than a failure, because the fix is completely different.
+#
+# Raise this whenever a testbench is added.  It is checked ONLY on a full,
+# unfiltered both-suite run -- --quick, --only and --suite all legitimately
+# pass fewer, and a floor that fired on those would be noise inside a week.
+BASELINE_PASS=70
+
+usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -259,7 +370,10 @@ command -v "$GHDL" >/dev/null 2>&1 || { echo "regress.sh: ghdl not found on PATH
 
 SCRATCH="${REGRESS_SCRATCH:-$(mktemp -d -t regress.XXXXXX)}"
 mkdir -p "$SCRATCH"
-if [ "$KEEP" = 0 ]; then trap 'rm -rf "$SCRATCH"' EXIT; else echo "scratch: $SCRATCH"; fi
+# The trap is already armed (see cleanup() above).  --keep governs the per-test
+# scratch tree, which is evidence; it never keeps the private copy, which is
+# not.
+[ "$KEEP" = 1 ] && echo "scratch: $SCRATCH"
 
 # --quick's exclusion list, keyed <suite>:<name>.  Suite-qualified because the
 # two suites share SEVEN testbench names: tb_embed, tb_lm_head, tb_matmul_rt,
@@ -894,6 +1008,20 @@ fi
 
 [ "$COVERAGE_ONLY" = 1 ] && exit 0
 
+# ---- the baseline floor, full unfiltered runs only ------------------------
+baseline_note=""
+baseline_drop=0
+if [ "$QUICK" = 0 ] && [ -z "$ONLY" ] && [ "$(echo $SUITES)" = "sim tb" ]; then
+  if [ "$npass" -lt "$BASELINE_PASS" ]; then
+    baseline_drop=1
+    baseline_note="BASELINE DROP: $npass passing, expected at least $BASELINE_PASS"
+  elif [ "$npass" -gt "$BASELINE_PASS" ]; then
+    baseline_note="baseline: $npass passing, above the recorded floor of $BASELINE_PASS -- raise BASELINE_PASS in this script"
+  else
+    baseline_note="baseline: $npass passing, matches the recorded floor of $BASELINE_PASS"
+  fi
+fi
+
 echo
 echo "================================================================================"
 for q in $SUITES; do
@@ -903,12 +1031,25 @@ done
 printf ' OVERALL     PASS %d   FAIL %d   NOVERDICT %d   TIMEOUT %d   BUILD-ERROR %d   NOCHECK %d   SKIPPED %d\n' \
   "$npass" "$nfail" "$nnov" "$ntime" "$nerr" "$nnoc" "${#skipped_names[@]}"
 echo "================================================================================"
-if [ "${#failed_list[@]}" -gt 0 ]; then
-  echo " NOT GREEN:"
-  for f in "${failed_list[@]}"; do echo "   - $f"; done
-  echo
+if [ -n "$baseline_note" ]; then
+  echo " $baseline_note"
+  if [ "$baseline_drop" = 1 ]; then
+    echo "   Nothing went red.  Something went MISSING: a testbench was deleted,"
+    echo "   renamed out of the tb_*.vhd glob, or has become unresolvable and is"
+    echo "   now being reported SKIPPED.  Check the SKIPPED list above against"
+    echo "   git, then either restore the test or lower BASELINE_PASS on purpose."
+  fi
+  echo "================================================================================"
+fi
+if [ "${#failed_list[@]}" -gt 0 ] || [ "$baseline_drop" = 1 ]; then
+  if [ "${#failed_list[@]}" -gt 0 ]; then
+    echo " NOT GREEN:"
+    for f in "${failed_list[@]}"; do echo "   - $f"; done
+    echo
+  fi
   echo " REGRESSION: FAIL"
   exit 1
 fi
+
 echo " REGRESSION: PASS"
 exit 0
