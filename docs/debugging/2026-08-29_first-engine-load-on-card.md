@@ -231,3 +231,58 @@ The read returned exactly that text. **The round trip was still proved** -- what
 went in came out -- but the pattern was not the intended one, and a less careful
 reading would have called it a data-integrity failure. Rewritten with
 `struct.pack` to write exact bytes.
+
+---
+
+## ADDENDUM 2: the 9B weight image is resident in HBM
+
+MEASURED, `hw/fk33/host/fk33_load_weights.py` (TRACK WEIGHTS, `9d7a9e5`),
+against `/mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json`:
+
+```
+plan    250 objects, 4,487,442,432 B = 4.1793 GiB, HBM 0x0..0x10c006000
+        DROPPED token_embd.weight: 572,207,104 B not placed
+        PASS every object aligned, in range, in one stack, disjoint,
+             present at its manifest size, and carrying a digest
+
+load    wrote 4,487,442,432 bytes in 8.76 s = 0.51 GB/s
+        PASS every object written and its source bytes match the manifest digest
+
+verify  read 4,488,462,336 bytes in 5.76 s = 0.78 GB/s
+        249 headers parsed and matched, 250 payload digests matched
+        PASS the image on the card is the image the manifest describes
+```
+
+**Why the verify is worth something.** It does not re-read what it just wrote
+through the same path and call that agreement. It judges the read-back against
+the manifest's **pack-time `blake2b_128`** and against an **independently
+written header parse** that deliberately does not import `pack_int4.py`. The
+re-derivation was cross-checked against the packer over 249 tensors and 21
+geometries with 0 mismatches. TRACK WEIGHTS teeth-checked it on the real image
+by swapping `blk.14.ffn_gate` and `blk.14.ffn_up` in place: `--headers-only`
+PASSES and the full verify FAILS, naming both with transposed digests.
+
+That header-only blind spot is itself worth carrying: **246 of 249 tensors
+share their entire header with a sibling** (21 distinct `(M,K,w_exp,out_shift)`
+classes, largest 37), so a header check is a 33 ms screen and never a verdict.
+
+### What this does and does not establish
+
+**Does:** the right bytes are at the right addresses in HBM, verified against an
+artefact the loader did not produce, and the host-to-HBM path sustains
+0.51 GB/s write and 0.78 GB/s read at 4.5 GB scale.
+
+**Does NOT:** anything about computation. The card carries **subsystem A only**
+(`fk33_engine.vhd` instantiates `matvec_int4_desc_axi` and nothing else), so
+there is no engine present that could consume these weights as a model. This is
+a loaded magazine, not a fired shot.
+
+### The known live defect this did NOT touch
+
+TRACK WEIGHTS found three allocators carve the 8 GiB independently and two
+COLLIDE: the A descriptor arena against the host logits writeback, 153,664 B =
+38,416 float32 logit slots, the top 15.47% of the vocabulary, with a wrong
+token as the silent symptom. **That collision is at the TOP of the map; the
+4.18 GiB weight image sits at the bottom (0x0..0x1_0B78_F000) and is
+unaffected**, which is why this load was safe to do before the fix. TRACK
+ARENA-MANIFEST is implementing Oren's decision that the manifest owns the map.
