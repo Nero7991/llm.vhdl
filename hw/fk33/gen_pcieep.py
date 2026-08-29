@@ -177,6 +177,8 @@ SRC = os.path.join(HERE, "build_fk33_i2cprobe.tcl")
 DST = os.path.join(HERE, "build_fk33_pcieep.tcl")
 XDC_SRC = os.path.join(HERE, "fk33_i2cprobe.xdc")
 XDC_DST = os.path.join(HERE, "fk33_pcieep.xdc")
+# Implementation-only floorplan.  Hand-written, NOT generated -- see its header.
+PBLOCK_XDC = os.path.join(HERE, "fk33_pblock.xdc")
 AUX_RTL = os.path.join(HERE, "rtl", "fk33_aux.vhd")
 THERM_RTL = os.path.join(HERE, "rtl", "fk33_thermal.vhd")
 
@@ -1326,7 +1328,36 @@ puts [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]
 report_timing_summary -no_detailed_paths -file fk33_pcieep_timing.rpt
 report_clock_interaction -file fk33_pcieep_clkint.rpt
 report_design_analysis -congestion -file fk33_pcieep_congestion.rpt
-report_clock_utilization -file fk33_pcieep_clkutil.rpt"""
+report_clock_utilization -file fk33_pcieep_clkutil.rpt
+
+# ---- THE FLOORPLAN, verified on the implemented design (gen_pcieep.py) -----
+# Two things have to be true and neither is visible from the source files.
+#
+#   1. `pb_core` EXISTS with the range fk33_pblock.xdc asked for.  Vivado's XDC
+#      reader downgrades a lot to a warning, and a pblock that was silently
+#      skipped looks exactly like a pblock that did not help.  GRID_RANGES is
+#      read back from the design, not from the file.
+#
+#   2. `pblock_bd_i` is GONE.  It is the SQRL shell floorplan the probe XDC
+#      inherits, it is IS_SOFT, and with the engine present it is
+#      oversubscribed by half on LUTs and by 3x on DSPs.  Leaving it in is what
+#      made the first engine build unroutable.  gen_pcieep.py comments it out
+#      of the emitted XDC; this is the check that the comment-out worked.
+set pbs [lsort [get_property NAME [get_pblocks -quiet *]]]
+puts "FK33_PBLK pblocks in the implemented design: $pbs"
+if {[lsearch $pbs pblock_bd_i] >= 0} {
+    error "FK33_PBLK FAIL: pblock_bd_i is in the implemented design. It is a soft pblock covering SLICE_X0Y0:X218Y50 plus the right-hand columns, it cannot hold the engine, and it is what caused the global congestion level 7 that stopped the router. See docs/debugging/2026-08-29_shell-pblock.md."
+}
+if {[llength [get_pblocks -quiet pb_core]] != 1} {
+    error "FK33_PBLK FAIL: pb_core is not in the implemented design. The engine would be free to pack into clock-region column X7, which Tandem PCIe reserves, and the floorplan this build was measured with is not in effect."
+}
+set pbr [get_property GRID_RANGES [get_pblocks pb_core]]
+if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
+    error "FK33_PBLK FAIL: pb_core range is '$pbr', not CLOCKREGION_X0Y0:CLOCKREGION_X6Y3."
+}
+puts "FK33_PBLK pb_core $pbr"
+report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
+puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt\""""
 
 SAXI0_OLD = ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK} "
              + " ".join("CONFIG.USER_SAXI_%02d {false}" % i for i in range(1, 16))
@@ -1648,6 +1679,33 @@ if {$otarm == 3} {
     # sets the top once; it does not defend it.
     ('add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v\nupdate_compile_order -fileset sources_1',
      'add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v\nupdate_compile_order -fileset sources_1\nset_property top bd_wrapper [current_fileset]\nupdate_compile_order -fileset sources_1\nif {[get_property top [current_fileset]] ne "bd_wrapper"} {\n    error "FK33_TOP FAIL: top is [get_property top [current_fileset]], not bd_wrapper. The engine\'s 28 AXI masters would become top-level I/O."\n}\nputs "FK33_TOP [get_property top [current_fileset]]"'),
+
+    # ---- THE FLOORPLAN.  An implementation-only constraints file, added next
+    # to the strategy because it is part of the same decision.
+    #
+    # `used_in_synthesis false` is load-bearing.  The pblock addresses
+    # `bd_i/eng/inst/eng/dut/core`, a path that exists only in the LINKED
+    # design; during synthesis get_cells returns nothing and
+    # add_cells_to_pblock errors on an empty object.
+    #
+    # The placer directive is NOT changed.  `Performance_RefinePlacement` gives
+    # place_design -directive ExtraPostPlacementOpt, and that is the directive
+    # every measurement in docs/debugging/2026-08-29_shell-pblock.md that
+    # produced a good result used.  MEASURED there and recorded so nobody
+    # re-runs it: switching to `AltSpreadLogic_high`, Vivado's own
+    # congestion-spreading directive, WITHOUT removing pblock_bd_i moves the
+    # core's clock-region distribution by about six points and does not make
+    # the design routable.  The constraint was the problem, not the directive.
+    ("set_property strategy Performance_RefinePlacement [get_runs impl_1]",
+     "set_property strategy Performance_RefinePlacement [get_runs impl_1]\n"
+     f"add_files -fileset constrs_1 -norecurse {PBLOCK_XDC}\n"
+     f"set_property used_in_synthesis false [get_files {PBLOCK_XDC}]\n"
+     f"set_property used_in_implementation true [get_files {PBLOCK_XDC}]\n"
+     f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC}]]}} {{\n'
+     '    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. '
+     'It addresses a linked-design cell path and would error out synthesis."\n'
+     "}\n"
+     'puts "FK33_PBLK fk33_pblock.xdc added, implementation only"'),
 
     # ---- 7. our own XDC
     (f"add_files -fileset constrs_1 -norecurse {XDC_SRC}",
@@ -2038,7 +2096,7 @@ def main():
     #     referenced to xdma/axi_aclk with the MMCM held in reset by
     #     xdma/axi_aresetn -- i.e. dead exactly when it is needed.
     xdc = open(XDC_SRC).read()
-    out, n_lane, n_sysref, n_hub = [], 0, 0, 0
+    out, n_lane, n_sysref, n_hub, n_pblock = [], 0, 0, 0, 0
     for line in xdc.splitlines():
         drop_lane = any(f"{sig}[{i}]" in line
                         for i in range(4, 16)
@@ -2047,6 +2105,11 @@ def main():
         drop_sysref = any(p in line for p in NO_PCIE_ONLY_PORTS)
         drop_hub = ("connect_debug_port dbg_hub/clk" in line
                     or "C_CLK_INPUT_FREQ_HZ" in line)
+        drop_pblock = "pblock_bd_i" in line
+        if drop_pblock:
+            out.append("# [gen_pcieep] REMOVED, see fk33_pblock.xdc: " + line)
+            n_pblock += 1
+            continue
         if drop_lane:
             out.append("# [gen_pcieep] x4 endpoint, lane not present: " + line)
             n_lane += 1
@@ -2074,6 +2137,42 @@ def main():
                  f"(C_CLK_INPUT_FREQ_HZ and connect_debug_port), found {n_hub}. "
                  "Refusing to emit an XDC that may leave the debug hub on a "
                  "clock that stops when the PCIe link is down.")
+    # ---- pblock_bd_i.  THIS IS WHY THE FIRST ENGINE BUILD DID NOT ROUTE.
+    #
+    # The probe XDC inherits SQRL's shell floorplan: it assigns the WHOLE block
+    # design, `[get_cells bd_i]`, to a pblock covering SLICE_X0Y0:X218Y50 plus
+    # the rightmost 14 SLICE columns.  On the probe that was harmless -- there
+    # was almost nothing in bd_i.  With subsystem A in it, TRACK SHELL's own
+    # place log said, and nobody read it at the time:
+    #
+    #   WARNING: [Place 30-640] Pblock pblock_bd_i has 173441 Slice LUTs
+    #   assigned to it, but only 115752 Slice LUTs are available in the area
+    #   range defined.
+    #   WARNING: [Place 30-640] This design requires 1585 DSPs but only 524
+    #   compatible sites are available in Pblock 'pblock_bd_i'.
+    #   WARNING: [Place 30-640] Pblock pblock_bd_i IS_SOFT property set.
+    #   Ignoring capacity requirements for cells assigned to Pblock.
+    #
+    # IS_SOFT is why it did not fail outright: the placer crams what it can into
+    # an area holding 67% of the assigned LUTs and 33% of the assigned DSPs and
+    # spills the rest.  That spill is the 96%-in-the-bottom-half distribution
+    # TRACK CONGEST measured, and it is why the router hit global congestion
+    # level 7 and `ERROR: [Route 35-3]`.
+    #
+    # MEASURED, docs/debugging/2026-08-29_shell-pblock.md: deleting this pblock
+    # and changing NOTHING else takes the placed core clock from WNS -0.759 to
+    # +0.416 with zero failing endpoints, and congestion from 23 windows with a
+    # level 7 to 5 windows with a worst of 6.
+    #
+    # Commented out rather than deleted, so `diff` against the probe XDC still
+    # lines up and so the next reader sees what was there.
+    if n_pblock != 13:
+        sys.exit(f"ABORT: expected exactly 13 pblock_bd_i lines in "
+                 f"{XDC_SRC} (create + add_cells + 6 resize + 5 already "
+                 f"commented), found {n_pblock}. The probe's shell floorplan "
+                 "has changed shape; re-read it before emitting an XDC that "
+                 "may silently reintroduce a soft pblock that cannot hold the "
+                 "engine.")
 
     out += AUX_XDC
     out += ENG_XDC

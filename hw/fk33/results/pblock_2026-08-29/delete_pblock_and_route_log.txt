@@ -1,0 +1,40 @@
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 13:32:09 route session TAG=DX DCP=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/out/DX_placed.dcp
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 13:33:35 opened
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 13:34:09 phys_opt done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 14:32:03 route_design done ok=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-PROOF routed GRID_RANGES=CLOCKREGION_X0Y0:CLOCKREGION_X6Y3 pblocks=pb_core
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 14:35:24 write_bitstream start
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 14:38:18 write_bitstream done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeDX/stdout.txt:PBLOCK-STAMP 14:38:18 ALL DONE DX
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-STAMP 12:06:06 === BEGIN D ===
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-STAMP 12:07:18 D opened
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-PROOF D pblocks_before=pblock_bd_i
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-PROOF D IS_SOFT=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-PROOF D GRID=URAM288_X0Y0:URAM288_X4Y11 RAMB36_X13Y0:RAMB36_X13Y47 RAMB36_X0Y0:RAMB36_X12Y9 RAMB18_X13Y0:RAMB18_X13Y95 RAMB18_X0Y0:RAMB18_X12Y19 LAGUNA_X30Y0:LAGUNA_X31Y119 DSP48E2_X31Y0:DSP48E2_X31Y89 DSP48E2_X0Y0:DSP48E2_X30Y13 SLICE_X226Y0:SLICE_X232Y239 SLICE_X225Y0:SLICE_X225Y179 SLICE_X219Y0:SLICE_X224Y239 SLICE_X0Y0:SLICE_X218Y50
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-PROOF D cells=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-PROOF D pblocks_after=
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-STAMP 12:07:18 D place_design start
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-STAMP 12:18:31 D place_design done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-HIST D slice_leaves=218541
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-HIST D Yrow3    57575  26.35%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-HIST D Yrow2    71683  32.80%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-HIST D Yrow1    69261  31.69%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-HIST D Yrow0    20022   9.16%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_del/stdout.txt:PBLOCK-STAMP 12:19:36 ALL DONE
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-STAMP 12:20:15 === BEGIN DX ===
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-STAMP 12:21:23 DX opened
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX pblocks_before=pblock_bd_i
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX IS_SOFT=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX GRID=URAM288_X0Y0:URAM288_X4Y11 RAMB36_X13Y0:RAMB36_X13Y47 RAMB36_X0Y0:RAMB36_X12Y9 RAMB18_X13Y0:RAMB18_X13Y95 RAMB18_X0Y0:RAMB18_X12Y19 LAGUNA_X30Y0:LAGUNA_X31Y119 DSP48E2_X31Y0:DSP48E2_X31Y89 DSP48E2_X0Y0:DSP48E2_X30Y13 SLICE_X226Y0:SLICE_X232Y239 SLICE_X225Y0:SLICE_X225Y179 SLICE_X219Y0:SLICE_X224Y239 SLICE_X0Y0:SLICE_X218Y50
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX cells=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX GRID_RANGES=CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX DERIVED=CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-PROOF DX pblocks_after=pb_core
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-STAMP 12:21:24 DX place_design start
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-STAMP 13:22:32 DX place_design done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-HIST DX slice_leaves=218573
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-HIST DX Yrow3    67875  31.05%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-HIST DX Yrow2    66671  30.50%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-HIST DX Yrow1    62822  28.74%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-HIST DX Yrow0    21205   9.70%
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_dx/stdout.txt:PBLOCK-STAMP 13:31:44 ALL DONE

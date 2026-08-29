@@ -130,19 +130,19 @@ set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
 ###############################################################################
 # PBlocks
 ###############################################################################
-create_pblock pblock_bd_i
-add_cells_to_pblock [get_pblocks pblock_bd_i] [get_cells -quiet [list bd_i]]
-resize_pblock [get_pblocks pblock_bd_i] -add {SLICE_X219Y0:SLICE_X232Y239 SLICE_X0Y0:SLICE_X218Y50}
-resize_pblock [get_pblocks pblock_bd_i] -add {DSP48E2_X31Y0:DSP48E2_X31Y89 DSP48E2_X0Y0:DSP48E2_X30Y13}
-resize_pblock [get_pblocks pblock_bd_i] -add {LAGUNA_X30Y0:LAGUNA_X31Y119}
-resize_pblock [get_pblocks pblock_bd_i] -add {RAMB18_X13Y0:RAMB18_X13Y95 RAMB18_X0Y0:RAMB18_X12Y19}
-resize_pblock [get_pblocks pblock_bd_i] -add {RAMB36_X13Y0:RAMB36_X13Y47 RAMB36_X0Y0:RAMB36_X12Y9}
-resize_pblock [get_pblocks pblock_bd_i] -add {URAM288_X0Y0:URAM288_X4Y11}
-#resize_pblock [get_pblocks pblock_bd_i] -add {SLICE_X0Y0:SLICE_X232Y50}
-#resize_pblock [get_pblocks pblock_bd_i] -add {DSP48E2_X0Y0:DSP48E2_X31Y13}
-#resize_pblock [get_pblocks pblock_bd_i] -add {RAMB18_X0Y0:RAMB18_X13Y19}
-#resize_pblock [get_pblocks pblock_bd_i] -add {RAMB36_X0Y0:RAMB36_X13Y9}
-#resize_pblock [get_pblocks pblock_bd_i] -add {URAM288_X0Y0:URAM288_X4Y11}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: create_pblock pblock_bd_i
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: add_cells_to_pblock [get_pblocks pblock_bd_i] [get_cells -quiet [list bd_i]]
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {SLICE_X219Y0:SLICE_X232Y239 SLICE_X0Y0:SLICE_X218Y50}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {DSP48E2_X31Y0:DSP48E2_X31Y89 DSP48E2_X0Y0:DSP48E2_X30Y13}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {LAGUNA_X30Y0:LAGUNA_X31Y119}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {RAMB18_X13Y0:RAMB18_X13Y95 RAMB18_X0Y0:RAMB18_X12Y19}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {RAMB36_X13Y0:RAMB36_X13Y47 RAMB36_X0Y0:RAMB36_X12Y9}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: resize_pblock [get_pblocks pblock_bd_i] -add {URAM288_X0Y0:URAM288_X4Y11}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: #resize_pblock [get_pblocks pblock_bd_i] -add {SLICE_X0Y0:SLICE_X232Y50}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: #resize_pblock [get_pblocks pblock_bd_i] -add {DSP48E2_X0Y0:DSP48E2_X31Y13}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: #resize_pblock [get_pblocks pblock_bd_i] -add {RAMB18_X0Y0:RAMB18_X13Y19}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: #resize_pblock [get_pblocks pblock_bd_i] -add {RAMB36_X0Y0:RAMB36_X13Y9}
+# [gen_pcieep] REMOVED, see fk33_pblock.xdc: #resize_pblock [get_pblocks pblock_bd_i] -add {URAM288_X0Y0:URAM288_X4Y11}
 
 
 ###############################################################################

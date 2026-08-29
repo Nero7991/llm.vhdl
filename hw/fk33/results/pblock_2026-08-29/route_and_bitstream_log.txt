@@ -1,0 +1,35 @@
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 11:57:43 open routed
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 11:59:07 opened
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-PROOF routed pblocks=1 GRID_RANGES=CLOCKREGION_X0Y1:CLOCKREGION_X6Y3
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-PROOF routed cells=1
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE slice_row0_leaves=1077
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref MUXF8 111
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref LUT3 36
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref CARRY8 10
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref LUT4 37
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref FDRE 141
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref LUT5 3
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref MUXF7 222
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref LUT2 37
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE ref LUT6 480
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/busy_i_1 @ SLICE_X115Y52
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/busy_i_2 @ SLICE_X115Y52
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][11][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][12][4]_i_1 @ SLICE_X34Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][13][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][14][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][1][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][2][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][5][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][6][4]_i_1 @ SLICE_X33Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[0][9][4]_i_1 @ SLICE_X34Y59
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE eg bd_i/eng/inst/eng/dut/core/cb[46][0][1]_i_1 @ SLICE_X111Y58
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-OUTSIDE site SLICE_X115Y52 CLOCK_REGION=X3Y0
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 11:59:11 report_drc
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 12:02:03 write_bitstream start
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 12:03:55 write_bitstream done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_finish/stdout.txt:PBLOCK-STAMP 12:03:55 ALL DONE
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeASX/stdout.txt:PBLOCK-STAMP 11:06:50 route session TAG=ASX DCP=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/out/ASX_placed.dcp
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeASX/stdout.txt:PBLOCK-STAMP 11:08:12 opened
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeASX/stdout.txt:PBLOCK-STAMP 11:10:50 phys_opt done
+/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/run_routeASX/stdout.txt:PBLOCK-STAMP 11:51:40 route_design done ok=1

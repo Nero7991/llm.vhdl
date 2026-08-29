@@ -1,0 +1,33 @@
+WARNING: [Route 35-447] Congestion is preventing the router from routing all nets. The router will prioritize the successful completion of routing all nets over timing optimizations.
+Phase 3 Initial Routing | Checksum: 6a5b61bb
+
+Time (s): cpu = 00:12:29 ; elapsed = 00:03:12 . Memory (MB): peak = 9881.988 ; gain = 405.734 ; free physical = 691 ; free virtual = 47344
+
+INFO: [Route 35-449] Initial Estimated Congestion
+ ________________________________________________________________________
+|           | Global Congestion | Long Congestion   | Short Congestion  |
+|           |___________________|___________________|___________________|
+| Direction | Size   | % Tiles  | Size   | % Tiles  | Size   | % Tiles  |
+|___________|________|__________|________|__________|________|__________|
+|      NORTH|     8x8|      0.75|   16x16|      3.25|     8x8|      0.65|
+|___________|________|__________|________|__________|________|__________|
+|      SOUTH|   64x64|      8.29| 128x128|     21.07|   32x32|      4.06|
+|___________|________|__________|________|__________|________|__________|
+|       EAST|   64x64|      7.31| 128x128|     17.37|   16x16|      3.23|
+|___________|________|__________|________|__________|________|__________|
+|       WEST|   32x32|      3.51|   64x64|     10.27|   16x16|      2.33|
+|___________|________|__________|________|__________|________|__________|
+Congestion Report
+GLOBAL Congestion bounded by tiles (Lower Left Tile -> Upper Right Tile):
+SOUTH
+	INT_X32Y58->INT_X95Y121 (CLEM_X32Y58->DSP_X95Y120)
+	INT_X64Y80->INT_X95Y111 (CLEM_X64Y80->DSP_X95Y110)
+	INT_X64Y79->INT_X95Y110 (CLEM_X64Y79->DSP_X95Y110)
+	INT_X32Y78->INT_X63Y109 (CLEM_X32Y78->CLEL_R_X63Y109)
+	INT_X64Y78->INT_X95Y109 (CLEM_X64Y78->DSP_X95Y105)
+EAST
+	INT_X32Y121->INT_X95Y168 (CLEM_X32Y121->DSP_X95Y165)
+	INT_X64Y144->INT_X95Y175 (CLEM_X64Y144->DSP_X95Y175)
+	INT_X64Y143->INT_X95Y174 (CLEM_X64Y143->DSP_X95Y170)
+	INT_X64Y142->INT_X95Y173 (CLEM_X64Y142->DSP_X95Y170)
+	INT_X64Y141->INT_X95Y172 (CLEM_X64Y141->DSP_X95Y170)

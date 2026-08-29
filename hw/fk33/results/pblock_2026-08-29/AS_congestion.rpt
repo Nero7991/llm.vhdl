@@ -1,0 +1,43 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 10:40:53 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_design_analysis -congestion -file /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pblock/out/AS_congestion.rpt
+| Design       : bd_wrapper
+| Device       : xcvu33p
+| Design State : Fully Placed
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------+
+| Direction |  Type  | Level |              Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM |  DSP | CARRY | SRL |                              Cell Names                             |
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------+
+| South     | Global |     5 | (CLEM_X48Y86,CLEL_R_X63Y117)    |            0% |         3.393 | 65% | 9%     |  13% |  39% | 100% | NA   | 100% |   14% |  0% | bd_i/eng/inst/eng/dut/core(93%),bd_i/eng/inst/eng/dut/streamer(6%)  |
+| South     | Global |     6 | (CLEL_R_X44Y70,CLEL_R_X75Y133)  |            0% |         2.862 | 56% | 15%    |  15% |  32% | 92%  | 0%   | 100% |   14% |  0% | bd_i/eng/inst/eng/dut/core(88%),bd_i/eng/inst/eng/dut/streamer(11%) |
+| North     | Long   |     5 | (CLEL_R_X70Y136,CLEL_R_X85Y167) |            0% |         2.095 | 49% | 17%    |  19% |  20% | 41%  | 0%   | 100% |   26% |  1% | bd_i/eng/inst/eng/dut/core(88%),bd_i/eng/inst/eng/dut/streamer(11%) |
+| North     | Long   |     6 | (CLEL_R_X44Y124,CLEL_R_X75Y187) |            0% |         2.915 | 57% | 13%    |  13% |  33% | 76%  | 0%   | 99%  |   14% |  0% | bd_i/eng/inst/eng/dut/core(91%),bd_i/eng/inst/eng/dut/streamer(8%)  |
+| South     | Long   |     5 | (CLEL_R_X50Y78,CLEL_R_X66Y109)  |            0% |         3.260 | 63% | 7%     |  12% |  37% | 100% | 0%   | 100% |   15% |  0% | bd_i/eng/inst/eng/dut/core(94%),bd_i/eng/inst/eng/dut/streamer(5%)  |
+| South     | Long   |     6 | (CLEL_R_X43Y73,CLEL_R_X74Y136)  |            0% |         2.852 | 56% | 13%    |  14% |  32% | 89%  | 0%   | 100% |   15% |  0% | bd_i/eng/inst/eng/dut/core(89%),bd_i/eng/inst/eng/dut/streamer(9%)  |
+| East      | Long   |     5 | (CLEL_R_X53Y89,CLEL_R_X69Y120)  |            0% |         3.642 | 74% | 14%    |  17% |  43% | 100% | 0%   | 100% |   22% |  0% | bd_i/eng/inst/eng/dut/core(91%),bd_i/eng/inst/eng/dut/streamer(8%)  |
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------+
+
+
+2. SLR Net Crossing Reporting
+-----------------------------
+
++------------+-----------------------------+
+| Cell Names | Number of Nets crossing SLR |
++------------+-----------------------------+
+* The current part is not an SSI device
+
+

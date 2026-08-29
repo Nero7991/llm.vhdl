@@ -1277,6 +1277,13 @@ if {[get_property top [current_fileset]] ne "bd_wrapper"} {
 puts "FK33_TOP [get_property top [current_fileset]]"
 
 set_property strategy Performance_RefinePlacement [get_runs impl_1]
+add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc
+set_property used_in_synthesis false [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
+set_property used_in_implementation true [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
+if {[get_property used_in_synthesis [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]]} {
+    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses a linked-design cell path and would error out synthesis."
+}
+puts "FK33_PBLK fk33_pblock.xdc added, implementation only"
 
 #open_hw
 #create_hw_cfgmem -hw_device [lindex [get_hw_devices xcvu33p_0] 0] [lindex [get_cfgmem_parts {mt25qu256-spi-x1_x2_x4}] 0]
@@ -1669,6 +1676,35 @@ report_timing_summary -no_detailed_paths -file fk33_pcieep_timing.rpt
 report_clock_interaction -file fk33_pcieep_clkint.rpt
 report_design_analysis -congestion -file fk33_pcieep_congestion.rpt
 report_clock_utilization -file fk33_pcieep_clkutil.rpt
+
+# ---- THE FLOORPLAN, verified on the implemented design (gen_pcieep.py) -----
+# Two things have to be true and neither is visible from the source files.
+#
+#   1. `pb_core` EXISTS with the range fk33_pblock.xdc asked for.  Vivado's XDC
+#      reader downgrades a lot to a warning, and a pblock that was silently
+#      skipped looks exactly like a pblock that did not help.  GRID_RANGES is
+#      read back from the design, not from the file.
+#
+#   2. `pblock_bd_i` is GONE.  It is the SQRL shell floorplan the probe XDC
+#      inherits, it is IS_SOFT, and with the engine present it is
+#      oversubscribed by half on LUTs and by 3x on DSPs.  Leaving it in is what
+#      made the first engine build unroutable.  gen_pcieep.py comments it out
+#      of the emitted XDC; this is the check that the comment-out worked.
+set pbs [lsort [get_property NAME [get_pblocks -quiet *]]]
+puts "FK33_PBLK pblocks in the implemented design: $pbs"
+if {[lsearch $pbs pblock_bd_i] >= 0} {
+    error "FK33_PBLK FAIL: pblock_bd_i is in the implemented design. It is a soft pblock covering SLICE_X0Y0:X218Y50 plus the right-hand columns, it cannot hold the engine, and it is what caused the global congestion level 7 that stopped the router. See docs/debugging/2026-08-29_shell-pblock.md."
+}
+if {[llength [get_pblocks -quiet pb_core]] != 1} {
+    error "FK33_PBLK FAIL: pb_core is not in the implemented design. The engine would be free to pack into clock-region column X7, which Tandem PCIe reserves, and the floorplan this build was measured with is not in effect."
+}
+set pbr [get_property GRID_RANGES [get_pblocks pb_core]]
+if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
+    error "FK33_PBLK FAIL: pb_core range is '$pbr', not CLOCKREGION_X0Y0:CLOCKREGION_X6Y3."
+}
+puts "FK33_PBLK pb_core $pbr"
+report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
+puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt"
 report_utilization -file fk33_pcieep_util.rpt
 
 set bit [glob -nocomplain ./$ProjectName/$ProjectName.runs/impl_1/*.bit]
