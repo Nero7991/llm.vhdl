@@ -176,10 +176,78 @@ begin
       nerr := nerr + 1;
     end if;
 
+    m_cnt := (others => 0);
+
+    -- ---- PHASE 2: read an entry that is NOT the one just captured ----------
+    -- The token loop above always reads back the entry it has just written, so
+    -- cap_addr_r and rd_addr_r are equal at EVERY read, and a unit that built
+    -- tvalid from the CAPTURE address instead of the READ address would be
+    -- indistinguishable from a correct one.  It is not a hypothetical: MEASURED
+    -- 2026-08-29, mutation M8 of sim/mutate_gdn_exp_capture.sh (tvalid <=
+    -- mask_of(cnt(cap_addr_r), K)) SURVIVED the loop above and is killed here.
+    --
+    -- The counters have just been cleared by seq_rst, which is what makes the
+    -- two addresses distinguishable at all: with every entry saturated at K the
+    -- masks are identical whichever address is used.
+    do_capture(0, 0, 42, cap_req, cap_layer, cap_seg, cap_exp);
+    m_tap(0, K-1) := 42; m_cnt(0) := 1;
+
+    rd_req <= '1'; rd_layer <= 1; rd_seg <= SEGS-1;
+    wait until rising_edge(clk); rd_req <= '0';
+    while rd_ack /= '1' loop wait until rising_edge(clk); end loop;
+    if tvalid /= (tvalid'range => '0') then
+      report "a NEVER-captured entry must report no valid tap, whatever the "
+           & "entry captured last did" severity error;
+      nerr := nerr + 1;
+    end if;
+
+    rd_req <= '1'; rd_layer <= 0; rd_seg <= 0;
+    wait until rising_edge(clk); rd_req <= '0';
+    while rd_ack /= '1' loop wait until rising_edge(clk); end loop;
+    for t in 0 to K-1 loop
+      if (t = K-1 and tvalid(t) /= '1') or (t /= K-1 and tvalid(t) /= '0') then
+        report "after one capture exactly one tap must be valid" severity error;
+        nerr := nerr + 1;
+      end if;
+    end loop;
+    if tvalid(K-1) = '1'
+    and to_integer(signed(e_t(K*8-1 downto (K-1)*8))) /= 42 then
+      report "the captured exponent did not land in the newest tap"
+        severity error;
+      nerr := nerr + 1;
+    end if;
+
+    -- ---- PHASE 3: a capture and a read requested in the SAME cycle ---------
+    -- The unit's header states the arbitration as a correctness property: "a
+    -- capture that is DROPPED loses an exponent permanently and is exactly the
+    -- failure this unit exists to prevent", so capture wins and the caller
+    -- retries the read.  Nothing exercised it -- cap_req and rd_req were never
+    -- high together -- and MEASURED, mutation M15 (read wins) SURVIVED.
+    cap_req <= '1'; cap_layer <= 2; cap_seg <= 1; cap_exp <= to_signed(-7, 8);
+    rd_req  <= '1'; rd_layer  <= 0; rd_seg  <= 0;
+    wait until rising_edge(clk);
+    cap_req <= '0'; rd_req <= '0';
+    wait until rising_edge(clk);
+    while cap_ready /= '1' loop wait until rising_edge(clk); end loop;
+    m_tap(2*SEGS + 1, K-1) := -7; m_cnt(2*SEGS + 1) := 1;
+
+    rd_req <= '1'; rd_layer <= 2; rd_seg <= 1;
+    wait until rising_edge(clk); rd_req <= '0';
+    while rd_ack /= '1' loop wait until rising_edge(clk); end loop;
+    if tvalid(K-1) /= '1' then
+      report "a capture requested in the same cycle as a read was DROPPED"
+        severity error;
+      nerr := nerr + 1;
+    elsif to_integer(signed(e_t(K*8-1 downto (K-1)*8))) /= -7 then
+      report "the colliding capture stored the wrong exponent" severity error;
+      nerr := nerr + 1;
+    end if;
+
     if nerr = 0 then
       report "tb_gdn_exp_capture: PASS -- 6 tokens x "
            & integer'image(LAYERS) & " layers x " & integer'image(SEGS)
-           & " segments, e_t and tvalid exact" severity note;
+           & " segments, e_t and tvalid exact, plus a cross-entry read and a "
+           & "same-cycle capture/read collision" severity note;
     else
       report "tb_gdn_exp_capture: FAIL -- " & integer'image(nerr)
            & " mismatches" severity failure;

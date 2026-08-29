@@ -37,40 +37,69 @@ entity tb_gdn_recur is
           -- EG0_ED: the third masked-operand site (eg = 0 mid-sequence).
           EG0_ED : boolean := true;
           VECS  : string   := "gdn_recur_vec.txt";
-          -- Tolerances against the ORACLE.  Set from measurement once the
-          -- bit-exact check passes, never guessed: a tolerance looser than the
-          -- quantity it checks is how a dropped rounding bias went undetected
-          -- in tb_l2norm_rs, and it took a mutation campaign to notice.
-          -- State mantissa, in LSB of the 2^-se_new grid.  The median case is
-          -- 0.63 LSB and p95 is 6.65, but the steady-state tail reaches 22.1,
-          -- so 32 is the honest bound.  That tail is the SAME d_m grid defect
-          -- as the tk = 0 one below, diluted by the state term rather than
-          -- standing alone: d_m is quantized on e_d, a grid set by
-          -- max(|v|,|sk|) rather than by |d|, so its half-LSB error is
-          -- multiplied by k_n (up to 2^15) into every element.  Measured over
-          -- 224 physical columns, the proposed correction takes p95 from 6.65
-          -- to 1.29 and the worst case from 1218 to 3.47 -- so this generic
-          -- should become 4.0, not merely shrink, when it lands.
           -- Tolerances against the ORACLE, SET FROM MEASUREMENT.  A tolerance
           -- looser than the quantity it checks is how a dropped rounding bias
           -- went undetected in tb_l2norm_rs, and it took a mutation campaign
           -- to notice.
           --
-          -- Measured over the 288 physically realizable columns with the fully
-          -- corrected recipe (D_NORM + TK0_ED + EG0_ED) and eg drawn from the
-          -- real per-head distribution:
+          -- THESE ARE SET FROM A SEED SWEEP, NOT FROM THE COMMITTED SEED, and
+          -- that is the whole reason they moved on 2026-08-29.
+          -- ref/gdn_recur_vec.c hardcodes rs_ = 20260825, at which this unit
+          -- measures 8.955 state LSB and 6.578e-05 of the output dot's term
+          -- norm.  MEASURED over 52 seeds of the same generator with the same
+          -- adopted recipe (a patched copy taking the seed as argv[4]; see
+          -- docs/debugging/2026-08-29_gdn-recur-coverage-and-dm.md):
           --
-          --                       state LSB      output dot / term norm
-          --   overall               8.955               6.578e-05
-          --   tk = 0                1.111               7.164e-06
-          --   steady state          8.955               6.578e-05
+          --                       min        median        max
+          --   state LSB          1.512        5.030       15.429
+          --   output / termnorm  8.12e-06     3.06e-05     7.94e-04
+          --   columns > 1 LSB        7           29           44
+          --   columns > 4 LSB        0            1            5
+          --   columns checked      271          276          279
           --
-          -- so tk = 0 is no longer the hard case and needs no separate bound.
-          -- The former TOL_S_TK0 = 6000.0 and TOL_O_TK0 = 50.0 existed ONLY to
-          -- hold the sizes of the two defects the 2026-08-26 amendment removed,
-          -- and are DELETED, exactly as their own comments instructed.
-          TOL_S : real := 12.0;      -- 8.955 measured, ~34% margin
-          TOL_O : real := 1.0e-4);   -- 6.578e-05 measured, ~52% margin
+          -- The FORMER bounds, TOL_S = 12.0 and TOL_O = 1.0e-4, were derived
+          -- from the committed seed alone and therefore FIRED ON THE HONEST
+          -- UNIT at 5 of those 52 seeds (state at 2, output at 3).  A gate that
+          -- goes red when somebody regenerates the vectors is not a gate.
+          -- The bounds below are 1.5x the 52-seed MAXIMUM, which is what a
+          -- max-only figure is worth here.
+          --
+          -- A MAX ALONE IS NOT ENOUGH, and that is measured too: three
+          -- recipe mutations sit inside the honest max range and are caught
+          -- only by the counts (see sim/mutate_gdn_recur.sh, rows B3 and B6).
+          -- So the counts below are gates in their own right, and N_MIN is a
+          -- FLOOR so the checked set cannot silently empty -- the failure mode
+          -- TRACK B-GATE measured on rmsnorm_bf, where a mutation that
+          -- saturated every element read BETTER than the honest unit on every
+          -- figure except a floor.
+          --
+          -- tk = 0 is no longer the hard class -- it is 1.00 to 1.12 LSB across
+          -- all 52 seeds against a steady-state 1.51 to 15.43 -- so it needs no
+          -- separate bound.  The former TOL_S_TK0 = 6000.0 and TOL_O_TK0 = 50.0
+          -- held the sizes of the two defects the 2026-08-26 amendment removed
+          -- and are deleted.
+          TOL_S : real := 24.0;      -- 52-seed max 15.429, 1.56x
+          -- TOL_O IS DOMINATED BY A SMALL DENOMINATOR, NOT BY ACCURACY, and
+          -- knowing that is what stops the next reader tightening it and
+          -- turning the gate red on an honest seed.  MEASURED, worst case and
+          -- the TERM NORM under it, which is why that norm is printed:
+          --   committed seed  6.578e-05   term norm 3.853e+04
+          --   seed 135        6.990e-05   term norm 2.200e-06
+          --   seed 130        7.942e-04   term norm 7.974e-08
+          -- Twelve orders of magnitude of denominator.  The honest fix is a
+          -- FLOOR on the term norm, not a looser bound; choosing that floor
+          -- needs its own sweep and has not been done.  VERIFIED that this
+          -- looseness costs no kill: the smallest output figure among the
+          -- mutations sim/mutate_gdn_recur.sh kills is 5.70e-3, still 4.75x
+          -- above the bound.
+          TOL_O : real := 1.2e-3;    -- 52-seed max 7.942e-04, 1.51x
+          -- Physical columns whose WORST state element exceeds one LSB, and
+          -- four LSB.  52-seed maxima 44 and 5.
+          N_GT1_MAX : natural := 66;
+          N_GT4_MAX : natural := 12;
+          -- Floor on the number of columns the oracle check actually ran on.
+          -- 52-seed minimum 271.
+          N_MIN     : natural := 240);
 end entity;
 
 architecture sim of tb_gdn_recur is
@@ -140,6 +169,12 @@ begin
     variable worst_o_eg : integer := -1;
     variable nphys : integer := 0;
     variable n_odeg : integer := 0;   -- columns whose oracle output dot is identically zero
+    -- Per-COLUMN worst element, and the counts built from it.  A max over
+    -- every element of every column cannot distinguish one bad column from a
+    -- hundred, and three of the recipe mutations in sim/mutate_gdn_recur.sh
+    -- move only the counts.
+    variable col_ws : real := 0.0;
+    variable n_gt1, n_gt4 : integer := 0;
     variable worst_s0, worst_s1 : real := 0.0;   -- tk=0 and steady-state
     variable tol_here, tol_o_here : real;
     -- The tolerance tracks the RECIPE, because two of the four generic
@@ -266,11 +301,13 @@ begin
       -- is within bounds.  Bit-exactness is asserted in every mode.
       tol_here := TOL_S; tol_o_here := TOL_O;
       if not CORRECTED then tol_here := 1.0e12; tol_o_here := 1.0e12; end if;
+      col_ws := 0.0;
       for i in 0 to DIM-1 loop
         got_s := to_integer(signed(s_out((i+1)*16-1 downto i*16)));
         gsr   := orc_u(i) * 2.0 ** real(to_integer(se_new));
         e_s   := abs(real(got_s) - gsr);
         if e_s > worst_s then worst_s := e_s; end if;
+        if e_s > col_ws  then col_ws  := e_s; end if;
         if c_tk0 = 1 then
           if e_s > worst_s0 then worst_s0 := e_s; end if;
         else
@@ -278,6 +315,8 @@ begin
         end if;
         if e_s > tol_here then bad_tol := bad_tol + 1; end if;
       end loop;
+      if col_ws > 1.0 then n_gt1 := n_gt1 + 1; end if;
+      if col_ws > 4.0 then n_gt4 := n_gt4 + 1; end if;
       -- Output dot: normalised by the sum of |terms|, NOT by |sum|.  It is a
       -- 128-term signed sum that cancels heavily, so dividing by the sum
       -- itself reports an enormous error wherever the sum lands near zero
@@ -331,20 +370,84 @@ begin
            & " columns had an identically-zero oracle dot and were skipped "
            & "for that check)." severity note;
     end if;
-    if nexact = 0 and (ntol = 0 or not CORRECTED) then
+    -- THE COUNT GATES.  A max over every element of every column is one
+    -- number out of 35,072, and three of the BOTH-class mutations in
+    -- sim/mutate_gdn_recur.sh leave it untouched while moving these counts by
+    -- 4x to 7x.  MEASURED 2026-08-29: B3 (the final requantize truncates
+    -- instead of rounding, in the RTL and the C alike) moves the worst case
+    -- 8.955 -> 9.270, which no honest bound could separate, and n_gt1
+    -- 29 -> 199.  B6 (D_NORM keeps 11 bits of d instead of 15) moves the worst
+    -- case 8.955 -> 10.452 and n_gt4 1 -> 62.
+    assert n_gt1 <= N_GT1_MAX or not CORRECTED
+      report "gdn_recur: " & integer'image(n_gt1) & " physical columns are "
+           & "past 1 state LSB, over the gate of " & integer'image(N_GT1_MAX)
+           & ".  The worst case can be inside its bound and the DISTRIBUTION "
+           & "still be wrong; that is what this counts." severity error;
+    assert n_gt4 <= N_GT4_MAX or not CORRECTED
+      report "gdn_recur: " & integer'image(n_gt4) & " physical columns are "
+           & "past 4 state LSB, over the gate of " & integer'image(N_GT4_MAX)
+           severity error;
+    -- THE FLOOR.  Every gate above gets HAPPIER as columns leave the checked
+    -- set, and columns leave it silently: c_phys = 0 excludes them, and so
+    -- does exp_err = 1.  A mutation that drove every column out of int8 range
+    -- would pass all four bounds while checking nothing.
+    assert nphys >= N_MIN
+      report "gdn_recur: only " & integer'image(nphys) & " columns reached the "
+           & "oracle check, under the floor of " & integer'image(N_MIN)
+           & ".  The accuracy figures above are measuring almost nothing."
+           severity error;
+
+    -- The summary is a MEASUREMENT and is printed unconditionally.  It used to
+    -- sit behind `nexact = 0 and ntol = 0`, so the moment anything went red the
+    -- numbers that would say HOW red vanished from the log -- which is the
+    -- worst time to lose them, and it made every mutation row in
+    -- sim/mutate_gdn_recur.sh report the figures as unavailable.
+    -- NOTE the wording: this line deliberately does NOT contain the phrase
+    -- sim/regress.sh's PASS_RE looks for.  It is printed even on a red run, so
+    -- if it carried the success phrase a failing run would still show a
+    -- success marker, and a run truncated after this point would read as a
+    -- pass.  The success sentence is the LAST thing printed, and only when
+    -- every gate is clean.
+    report "gdn_recur: " & integer'image(ncase) & " cases, "
+         & integer'image(nexact) & " with a mismatch; over the "
+         & integer'image(nphys) & " physically realizable ones, worst vs the "
+         & "double ORACLE is " & real'image(worst_s) & " state LSB and "
+         & real'image(worst_o) & " of the output dot's term norm"
+         & " [worst at case " & integer'image(worst_o_c)
+         & ", eg=" & integer'image(worst_o_eg)
+         & ", term norm " & real'image(worst_o_on) & "]"
+         severity note;
+    report "gdn_recur: columns past 1 LSB " & integer'image(n_gt1)
+         & " (gate " & integer'image(N_GT1_MAX) & "), past 4 LSB "
+         & integer'image(n_gt4) & " (gate " & integer'image(N_GT4_MAX)
+         & "), columns checked " & integer'image(nphys) & " (floor "
+         & integer'image(N_MIN) & ")" severity note;
+    -- WHAT THE STEADY-STATE FIGURE IS, corrected 2026-08-29.  This line used
+    -- to call the gap "the open d_m grid defect".  That is WRONG at the
+    -- adopted defaults and the claim is WITHDRAWN.  d_m has its own grid since
+    -- D_NORM was adopted, and ablating its rounding entirely moves the worst
+    -- case the WRONG WAY (8.955 -> 9.182 at the committed seed).  MEASURED by
+    -- stagewise ablation on a bit-exact model of the same recipe, at the
+    -- worst case of each of twelve seeds: 87% to 97% of the figure is stage
+    -- 3's FLOOR of skm onto e_d = min(e_v, ske).  Replacing that one floor
+    -- with exact arithmetic takes the worst case from 6.6-15.4 LSB to
+    -- 0.50-1.06 LSB; every other quantization in the column is worth under
+    -- 0.31 LSB.  Full derivation, and the candidate correction that was
+    -- measured and REJECTED, in
+    -- docs/debugging/2026-08-29_gdn-recur-coverage-and-dm.md.
+    report "gdn_recur: worst state error splits by token index -- "
+         & real'image(worst_s1) & " LSB in steady state, "
+         & real'image(worst_s0) & " LSB at tk = 0.  The steady-state figure is "
+         & "stage 3's alignment floor of skm onto e_d, NOT the d_m grid."
+         severity note;
+
+    if nexact = 0 and (ntol = 0 or not CORRECTED)
+       and (n_gt1 <= N_GT1_MAX or not CORRECTED)
+       and (n_gt4 <= N_GT4_MAX or not CORRECTED)
+       and nphys >= N_MIN then
       report "gdn_recur: bit-exact with the C recipe on all "
-           & integer'image(ncase) & " cases; over the "
-           & integer'image(nphys) & " physically realizable ones, worst vs the "
-           & "double ORACLE is " & real'image(worst_s) & " state LSB and "
-           & real'image(worst_o) & " of the output dot's term norm"
-           & " [worst at case " & integer'image(worst_o_c)
-           & ", eg=" & integer'image(worst_o_eg)
-           & ", term norm " & real'image(worst_o_on) & "]"
+           & integer'image(ncase) & " cases, and inside every oracle gate"
            severity note;
-      report "gdn_recur: worst state error splits by token index -- "
-           & real'image(worst_s1) & " LSB in steady state, "
-           & real'image(worst_s0) & " LSB at tk = 0.  The gap is the open "
-           & "d_m grid defect, not noise." severity note;
     end if;
     running <= false;
     wait;
