@@ -33,7 +33,14 @@ entity axi_rd_fsm is
     BYTES  : positive := 16;    -- AXI_DW/8, bytes per beat
     DEPTH  : positive := 512;
     MAXB   : positive := 256;
-    MAXOUT : positive := 16
+    MAXOUT : positive := 16;
+    -- Beats the FIFO may report ON TOP OF the raw pointer difference.  It is
+    -- not decoration: with LVL_MARGIN it fixes the declared range of `f_level`
+    -- and therefore the width of the throttle comparator.  Both FIFO flavours
+    -- add a fixed output-stage term -- async_fifo's OUT_MARGIN (default 3,
+    -- rtl/async_fifo.vhd:64) and stream_fifo's `mcnt + ocnt + inflight` with
+    -- ocnt <= 2 and inflight <= 1 (rtl/stream_fifo.vhd:67) -- so 3 bounds both.
+    LVL_MARGIN : natural := 3
   );
   port(
     clk, rst : in  std_logic;
@@ -56,7 +63,25 @@ entity axi_rd_fsm is
     rlast    : in  std_logic;
 
     -- FIFO occupancy, in THIS domain, and the clear handshake
-    f_level  : in  integer;
+    -- f_level is RANGED, and the range is load-bearing: unconstrained it is a
+    -- 32-bit integer, so the throttle compare below is built 32 bits wide for
+    -- a value that needs 11.  MEASURED 2026-08-28: that was 5 of the 6 CARRY8
+    -- on a 16-level, 5.115 ns critical path.
+    --
+    -- WHY 2*DEPTH AND NOT DEPTH.  In steady state the level cannot exceed
+    -- DEPTH+LVL_MARGIN, and it is that value the throttle reasons about.  But
+    -- async_fifo drives this port with `to_integer(wp - rp_bin_w) + OUT_MARGIN`
+    -- computed from a pointer pair that is DELIBERATELY inconsistent during the
+    -- four-phase clear: rtl/async_fifo.vhd:167 parks wp at 0 while the read
+    -- pointer reaches the write domain two synchroniser stages later, so for
+    -- that window the subtraction wraps and the reported level is the full
+    -- range of an (AW+1)-bit unsigned, 0 .. 2*DEPTH-1, plus the margin.  The
+    -- FSM never USES the value there -- the AR branch is guarded by st = S_RUN
+    -- and the clear runs in S_CLR/S_CLR2 -- but a range must bound what is
+    -- DRIVEN, not what is read, or simulation dies on a legal transient.
+    -- Declaring the arithmetic bound rather than the steady-state one costs
+    -- exactly one bit of comparator and no logic at all.
+    f_level  : in  integer range 0 to 2*DEPTH + LVL_MARGIN;
     clr      : out std_logic;
     clr_done : in  std_logic;
 
@@ -71,7 +96,16 @@ architecture rtl of axi_rd_fsm is
 
   signal ar_addr  : unsigned(ADDR_W-1 downto 0) := (others => '0');
   signal ar_left  : integer := 0;    -- beats not yet requested
-  signal promised : integer := 0;    -- requested but not yet in the FIFO
+  -- RANGED, and the bound is derived, not chosen.  `promised` only ever grows
+  -- through `pr := pr + this_len` on arready, and the guard that allowed that
+  -- burst was `f_level + pr + want <= DEPTH` with f_level >= 0, so
+  -- pr + this_len <= DEPTH held at the guard; between the guard and arready no
+  -- second burst can be issued (arv is high, so the elsif is not taken) and pr
+  -- can only fall as beats retire.  Hence promised <= DEPTH.  The +MAXB is
+  -- free headroom: -1..DEPTH and -1..DEPTH+MAXB are both 11 signed bits at
+  -- DEPTH=512, so the slack costs nothing and a bound that is merely SAFE
+  -- beats one that is exactly tight.
+  signal promised : integer range 0 to DEPTH + MAXB := 0;
   signal outst    : integer range 0 to MAXOUT+1 := 0;
   signal arv      : std_logic := '0';
   -- starts at 1, never 0: arlen carries this_len-1 and to_unsigned(-1) traps
@@ -88,9 +122,17 @@ begin
   run     <= '1' when st = S_RUN else '0';
 
   process(clk)
-    variable pr   : integer;
-    variable os   : integer;
-    variable want : integer;
+    -- The variables carry the SAME ranges as the signals they fold into, plus
+    -- the one transient the code already relies on: `pr` dips to -1 when a
+    -- beat retires against an empty promise count, which the `if pr < 0` clamp
+    -- at the bottom of the process exists to absorb.  `os` dips the same way
+    -- and has always been assigned into a 0..MAXOUT+1 signal, so -1 was
+    -- already asserted to be unreachable at the assignment; that is unchanged.
+    variable pr   : integer range -1 to DEPTH + MAXB;
+    variable os   : integer range -1 to MAXOUT + 1;
+    -- want is min(ar_left, MAXB) and is only computed inside `ar_left > 0`,
+    -- so 1..MAXB; 0..MAXB keeps the reset value legal.
+    variable want : integer range 0 to MAXB;
   begin
     if rising_edge(clk) then
       if rst = '1' then

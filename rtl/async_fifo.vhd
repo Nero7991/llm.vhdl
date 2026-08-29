@@ -45,6 +45,57 @@
 -- an over-estimate is safe; one that believes it is exact overruns the FIFO by
 -- up to three beats.
 --
+-- REGISTERED LEVEL (added 2026-08-28).  `w_level` is a REGISTER, one wclk
+-- behind the pointer pair, and it carries OUT_MARGIN + 1 rather than
+-- OUT_MARGIN.  WHY, and WHICH WAY THE ERROR GOES.
+--
+-- Why: combinationally, w_level was gray2bin(rp_g_s2) -> subtract -> add, and
+-- the consumer's AR throttle compared it against DEPTH in the same cycle.
+-- MEASURED 2026-08-28 (docs/debugging/2026-08-28_subsystem-a-ooc-synthesis-at-
+-- fk33-geometry.md 5.1): that made one 16-level, 5.115 ns combinational chain
+-- from this flop to axi_rd_fsm's `this_len`, and it was subsystem A's critical
+-- path in every one of the 27 ports, holding the HBM ACLK to 189.4 MHz.
+--
+-- Which way the error goes -- PESSIMISTIC, never optimistic, and the +1 is the
+-- proof, not decoration.  Writing at most one beat per wclk means
+-- wp(n+1) <= wp(n) + 1, and rp_bin_w is a gray-synchronised view of a monotone
+-- counter so it never moves backwards.  Hence
+--
+--     used_w(n+1) = wp(n+1) - rp_bin_w(n+1) <= used_w(n) + 1
+--
+-- and therefore the value this port presents at cycle n+1,
+--
+--     w_level(n+1) = used_w(n) + OUT_MARGIN + 1 >= used_w(n+1) + OUT_MARGIN
+--
+-- which is EXACTLY the guarantee the combinational version gave: at least the
+-- true occupancy, plus OUT_MARGIN.  The staleness is paid for in full by the
+-- +1, so the throttle above is no less safe than it was; it is one beat of 512
+-- more conservative.  Going the other way -- registering without the +1 --
+-- would let the throttle believe in a beat of space that a write in the
+-- shadowed cycle had already taken, and async_fifo asserts on write-into-full.
+--
+-- REGISTERED FULL FLAG (added 2026-08-28, same run as the level above).
+-- `w_ready` used to be `used_w /= DEPTH` evaluated combinationally, and that is
+-- the SECOND consumer of the gray-decode-and-subtract, the one the 5.1
+-- write-up did not name.  MEASURED: registering w_level alone moved the AXI
+-- clock 189.4 -> 192.4 MHz and left the path starting at the same flop,
+-- because it now ran rp_g_s2 -> gray2bin -> subtract -> the full compare ->
+-- w_ready -> axi_rd_port's `rready` -> the FSM's `beat` -> `pr := pr - 1` ->
+-- the same throttle comparator.  Both consumers have to go.
+--
+-- `full_r` is computed one cycle ahead and INCLUDES the write being performed
+-- in the cycle it is computed, so it is not merely a delayed copy:
+--
+--     full_r(n+1) = ( used_w(n) + wr(n) >= DEPTH )
+--
+-- and since rp_bin_w only ever advances, used_w(n+1) = used_w(n) + wr(n) -
+-- (beats retired) <= used_w(n) + wr(n).  So used_w(n+1) = DEPTH implies
+-- full_r(n+1) = '1': the flag NEVER claims space that does not exist.  The
+-- only error is the other way -- it can hold '1' for one extra cycle after the
+-- reader frees a slot -- which delays a beat and cannot drop one.  That
+-- one-cycle stall is unreachable in any case, because the AR throttle above
+-- exists precisely so the FIFO never reaches DEPTH.
+--
 -- 0 DSP, and the memory is a simple dual-port array so it infers BRAM.
 
 library ieee;
@@ -70,7 +121,15 @@ entity async_fifo is
     w_valid  : in  std_logic;
     w_data   : in  std_logic_vector(W-1 downto 0);
     w_ready  : out std_logic;
-    w_level  : out integer;             -- conservative occupancy, see header
+    -- Conservative occupancy, see header, and REGISTERED -- see the
+    -- REGISTERED LEVEL block below, which is the whole reason this port is not
+    -- the combinational `to_integer(wp - rp_bin_w) + OUT_MARGIN` it used to be.
+    -- RANGED so that the consumer's comparator is 11 bits and not 32.
+    -- The bound is 2*DEPTH and not DEPTH because `used_w` is a wrapping
+    -- (AW+1)-bit difference and the clear deliberately parks wp at 0 while
+    -- rp_g_s2 still holds the old read pointer, so during the clear window the
+    -- difference is any value the width can hold.  See axi_rd_fsm's f_level.
+    w_level  : out integer range 0 to 2*DEPTH + OUT_MARGIN;
     clr      : in  std_logic;           -- LEVEL; hold until clr_done, then drop
     clr_done : out std_logic;           -- LEVEL; falls after clr falls
 
@@ -139,6 +198,12 @@ architecture rtl of async_fifo is
   signal empty_r  : std_logic;
   signal do_rd    : std_logic;
   signal inflight : integer range 0 to 1;
+
+  -- the registered occupancy actually presented on w_level; see the header
+  signal w_level_r : integer range 0 to 2*DEPTH + OUT_MARGIN := OUT_MARGIN + 1;
+  -- the registered full flag behind w_ready; see the header
+  signal full_r    : std_logic := '0';
+  signal wr_now    : std_logic;
 begin
   assert 2**AW = DEPTH
     report "async_fifo: DEPTH must be a power of two (gray coding is not a " &
@@ -149,13 +214,45 @@ begin
   -- ===================================================== write domain
   rp_bin_w <= gray2bin(rp_g_s2);
   used_w   <= wp - rp_bin_w;
-  w_level  <= to_integer(used_w) + OUT_MARGIN;
-  w_ready  <= '0' when clr = '1' or used_w = to_unsigned(DEPTH, AW+1) else '1';
+  w_level  <= w_level_r;
+  -- `clr` stays COMBINATIONAL here.  It is already a register in the caller
+  -- (axi_rd_fsm's clr_r), it is one LUT input away from full_r, and delaying it
+  -- would move w_ready's deassertion LATER, which is the unsafe direction for a
+  -- flush; full_r is the term that had to be pulled out of the cycle.
+  w_ready  <= '0' when clr = '1' or full_r = '1' else '1';
+  -- The ONE write-enable term.  w_ready, the memory write and full_r's own
+  -- next state are all expressed through it, and that is not tidiness: while
+  -- w_ready was `used_w /= DEPTH` it was by construction the same condition the
+  -- write used, but full_r can hold '1' for one cycle after the reader frees a
+  -- slot, and a FIFO that writes on a cycle it is refusing on w_ready would
+  -- write the beat AND leave the AXI handshake incomplete -- so the same beat
+  -- arrives again next cycle and is stored TWICE.  One expression, no seam.
+  wr_now   <= '1' when w_valid = '1' and clr = '0' and wrst = '0'
+                   and full_r = '0' else '0';
   clr_done <= clr_a_s2;
 
   wproc : process(wclk)
   begin
     if rising_edge(wclk) then
+      -- UNCONDITIONAL, and outside every branch below on purpose: the level
+      -- must track the pointer pair through reset and through the clear as
+      -- well, and in both of those the pointers only ever move DOWN, which is
+      -- the conservative direction for a value the throttle reads as "how full
+      -- am I".  See the REGISTERED LEVEL block in the header for the +1.
+      w_level_r <= to_integer(used_w) + OUT_MARGIN + 1;
+      -- full_r(n+1) = ( used_w(n) + wr_now(n) >= DEPTH ), written out.  Note
+      -- wr_now itself is gated by full_r, so `used_w >= DEPTH` is reachable
+      -- only inside the clear window, where wp is parked at 0 against a read
+      -- pointer that has not arrived yet and the difference wraps; asserting
+      -- full there is the conservative reading of a value that means nothing.
+      if used_w >= to_unsigned(DEPTH, AW+1) then
+        full_r <= '1';
+      elsif used_w = to_unsigned(DEPTH-1, AW+1) and wr_now = '1' then
+        full_r <= '1';
+      else
+        full_r <= '0';
+      end if;
+
       rp_g_s1 <= rp_g;  rp_g_s2 <= rp_g_s1;
       clr_a_s1 <= clr_ack_r; clr_a_s2 <= clr_a_s1;
 
@@ -167,7 +264,7 @@ begin
         wp   <= (others => '0');
         wp_g <= (others => '0');
       else
-        if w_valid = '1' and used_w /= to_unsigned(DEPTH, AW+1) then
+        if wr_now = '1' then
           mem(to_integer(wp(AW-1 downto 0))) <= w_data;
           wp   <= wp + 1;
           wp_g <= bin2gray(wp + 1);

@@ -128,10 +128,18 @@ end entity;
 architecture rtl of axi_rd_port is
   constant BYTES : positive := AXI_DW / 8;
 
+  -- Beats the FIFO reports on top of the raw pointer difference.  Stated once
+  -- here and passed to BOTH the FIFO and the FSM, so the async_fifo generic and
+  -- the axi_rd_fsm f_level range cannot drift apart -- if they did, the drift
+  -- would show up as a simulation range error inside a clear window and
+  -- nowhere else.  3 is async_fifo's own default and also bounds stream_fifo's
+  -- `ocnt + inflight`.
+  constant LVL_MARGIN : natural := 3;
+
   signal f_iv, f_ir : std_logic;
   signal f_qv, f_qr : std_logic;
   signal f_qd : std_logic_vector(AXI_DW-1 downto 0);
-  signal f_level : integer;
+  signal f_level : integer range 0 to 2*DEPTH + LVL_MARGIN;
 
   -- clear handshake, in the AXI domain
   signal clr, clr_done : std_logic;
@@ -183,7 +191,7 @@ begin
 
     fsm : entity work.axi_rd_fsm
       generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT)
+                  MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => LVL_MARGIN)
       port map(clk => clk, rst => rst, start => start_f,
                base => base, n_beats => n_beats,
                arvalid => arvalid, arready => arready,
@@ -255,7 +263,7 @@ begin
 
     fsm : entity work.axi_rd_fsm
       generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT)
+                  MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => LVL_MARGIN)
       port map(clk => aclk, rst => frst, start => start_f,
                base => base, n_beats => n_beats,
                arvalid => arvalid, arready => arready,
@@ -265,7 +273,7 @@ begin
                run => run_f);
 
     fifo : entity work.async_fifo
-      generic map(W => AXI_DW, DEPTH => DEPTH)
+      generic map(W => AXI_DW, DEPTH => DEPTH, OUT_MARGIN => LVL_MARGIN)
       port map(wclk => aclk, wrst => frst,
                w_valid => f_iv, w_data => rdata, w_ready => f_ir,
                w_level => f_level, clr => clr, clr_done => clr_done,
