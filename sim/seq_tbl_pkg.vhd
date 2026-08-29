@@ -22,6 +22,32 @@
 -- is the design property that makes N = 1 a configuration rather than a
 -- variant: the schedule is data, so a single card is a shorter table and not
 -- different gateware.  18 -> 16 steps for a GDN block, 15 -> 13 for attention.
+--
+-- THE TOKEN IS 505 STEPS, NOT 491.  It was 491 until 2026-08-29, and 491 was
+-- wrong: the tail encoded the lm_head as ONE 248,320-row A job, which
+-- `matvec_int4_desc_axi`'s S_CHECK refuses in every out_mode.  It is 15 row
+-- windows at a stride of 17,376.  See the LM_WINDOWS block below for the
+-- derivation and `docs/debugging/2026-08-29_token-input-and-table.md` for the
+-- measurement.  Comments and documents elsewhere that say 491 predate this and
+-- are describing a table the gateware would not execute.
+--
+-- WHAT FILLS R_X, AND WHY NO STEP HERE DOES.  The first step of the token is
+-- `OP_VEC_NORM` reading R_X, and nothing in this table produces R_X.  That is
+-- deliberate and it is the settled design point, not a gap: the HOST writes
+-- the embedding row into R_X before releasing the token, and the descriptor
+-- program never sees the lookup.  The RTL exists on both halves of that seam
+-- -- `rtl/llama_top.vhd:544-547` is the host write port, `:1054-1058` is the
+-- write path that overrides every unit and `:1239` exempts it from the region
+-- lock, and `rtl/seq_opdec.vhd:611-665` is a whole FSM whose only job is to
+-- publish that write into the lock and exponent plane so the first norm does
+-- not consume a FREE region.  `rtl/seq_opdec.vhd:128-150` states the reason in
+-- its own words.  The alternative -- an `OP_EMBED` opcode and an on-card
+-- gather unit -- is recorded as REJECTED, with its costs, in
+-- `docs/debugging/2026-08-29_token-input-and-table.md`; the short version is
+-- that A already holds 27 of the engine's 30 HBM read ports.  A reader looking
+-- for the missing first step should stop looking: there is no opcode for it
+-- and there is not meant to be one.
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -82,6 +108,39 @@ package seq_tbl_pkg is
   constant ATT_KV   : natural := AKV_H * AHD;
   constant VOCAB_SH : natural := MODEL.vocab / NCARDS;  -- lm_head shard
 
+  -- ---- the lm_head does NOT fit one A job --------------------------------
+  -- This table used to encode the lm_head as a single VOCAB_SH-row job, and
+  -- the gateware REFUSES exactly that descriptor.  `matvec_int4_desc_axi`'s
+  -- S_CHECK bounds `n_rows` against `MAXROWS_BFP` with NO out_mode test
+  -- (`rtl/matvec_int4_desc_axi.vhd:721-726`), because `sh_rows` is
+  -- `integer range 0 to MAXROWS_BFP` (`:309`).  A 248,320-row descriptor is
+  -- answered `err_code 0x3 err_info 1` in raw AND in BFP, MEASURED with the
+  -- RTL as judge in `docs/debugging/2026-08-29_lmhead-window-schedule.md`
+  -- section 4.3.  So a one-job lm_head is not a schedule choice; it is an RTL
+  -- change nobody has made.
+  --
+  -- THE STRIDE IS NOT MAXROWS_BFP.  A row window is expressed as a byte offset
+  -- on all 27 bases and a sub-region's beats run tile-major, so a window may
+  -- only begin on a ROWS_IF tile boundary -- and 17408 mod 48 = 32, so
+  -- MAXROWS_BFP is not one.  Flooring to a tile is what makes the two
+  -- constraints compatible, and it is also what keeps every job one tile below
+  -- OI-8's corner (STRIDE/ROWS_IF = 362 < TILES = 363).  The derivation lives
+  -- in `tools/gen_lmhead_windows.py::plan` and is restated, not re-invented,
+  -- here.
+  --
+  -- Both numbers are the FK33 descriptor plane's generics
+  -- (`rtl/matvec_int4_desc_axi.vhd:102,108`).  They are literals here because
+  -- this package's whole point is to derive the schedule from the MODEL and
+  -- from nothing else, and these two are properties of the BUILD, not of the
+  -- model.  If the build changes them, this is the line to change.
+  constant A_ROWS_IF     : natural := 48;
+  constant A_MAXROWS_BFP : natural := 17408;
+  -- `positive`, not `natural`: a MAXROWS_BFP below one tile leaves no legal
+  -- window at all, and a constraint error at elaboration is a better answer
+  -- than an infinite loop or a silent zero-row job.
+  constant LM_STRIDE  : positive := (A_MAXROWS_BFP / A_ROWS_IF) * A_ROWS_IF;
+  constant LM_WINDOWS : positive := (VOCAB_SH + LM_STRIDE - 1) / LM_STRIDE;
+
   -- ---- region capacities, used by the lock manager -----------------------
   -- Sized to the largest tenant of each region across both block types.
   function region_sizes return integer_vector;
@@ -90,9 +149,13 @@ package seq_tbl_pkg is
   -- 18 and 15 at NCARDS > 1; the two E_COLL steps per block vanish at N = 1.
   constant NSTEP_GDN  : natural := 16 + (2 * boolean'pos(NCARDS > 1));
   constant NSTEP_ATTN : natural := 13 + (2 * boolean'pos(NCARDS > 1));
+  -- The tail is the final norm, the lm_head, and END_TOKEN -- but the lm_head
+  -- is LM_WINDOWS A jobs, not one, so the tail is 2 + LM_WINDOWS and not 3.
+  -- At the 9B vocabulary on the FK33 build that is 16, and TBL_STEPS is 505.
+  -- It was 491 while the table encoded the one job the gateware refuses.
   constant TBL_STEPS  : natural := gdn_layers(MODEL)  * NSTEP_GDN
                                  + attn_layers(MODEL) * NSTEP_ATTN
-                                 + 3;   -- final norm, lm_head, END_TOKEN
+                                 + 2 + LM_WINDOWS;
   constant TBL_WORDS  : natural := TBL_STEPS * 8;
 
   type desc_t is array (0 to 7) of std_logic_vector(63 downto 0);
@@ -203,7 +266,7 @@ package body seq_tbl_pkg is
     -- are read by the started unit for the WHOLE job, so they are exactly the
     -- gdn_conv `e_seg` shape one level up: a scalar that qualifies a stream.
     -- They were all identically ZERO in the first version of this table, and a
-    -- zero that is shared by all 491 steps makes every value check on them
+    -- zero that is shared by all 505 steps makes every value check on them
     -- vacuous -- a stale scalar, a scalar published one cycle late, and a
     -- scalar that was never driven are all indistinguishable from the correct
     -- one.  `tb_seq_desc_fetch`'s `ord_chk` guard passed against a
@@ -333,14 +396,44 @@ package body seq_tbl_pkg is
       end if;
     end loop;
 
-    -- Token tail: final norm, lm_head in raw mode straight into the sampler,
-    -- then END_TOKEN.  lm_head is the one job whose destination is 0xFF with
-    -- the sampler route flag, which is exactly the case the decoder checks.
+    -- Token tail: final norm, the lm_head in raw mode straight into the
+    -- sampler, then END_TOKEN.  The lm_head steps are the ones whose
+    -- destination is 0xFF with the sampler route flag, which is exactly the
+    -- case the decoder checks.
     emit(mk_desc(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => HID,
                  const_base => MODEL.blocks, ordinal => 0));
-    emit(mk_desc(OP_A_JOB, flags => FLG_TO_SMP, src => R_XN, dst => R_NONE,
-                 n_rows => VOCAB_SH, n_cols => HID,
-                 nsub_w => nsw, nsub_s => nss, out_mode => 1));
+
+    -- ONE A JOB PER ROW WINDOW, ascending, and every field below is the same
+    -- on every window except `n_rows`.
+    --
+    --   `dst` is R_NONE and `FLG_TO_SMP` is set on EVERY window, not only the
+    --   first or the last: each window streams its own slice of the logits and
+    --   there is no region write to attribute to one of them.
+    --
+    --   `dst_off` stays 0 for the same reason.  `seq_opdec` infers an exponent
+    --   SEGMENT from a non-zero `dst_offset`, and a stream into the sampler has
+    --   no segments; giving the windows offsets would manufacture 15 of them.
+    --
+    --   `out_mode` is RAW (1) on every window, and that is load-bearing rather
+    --   than inherited.  Raw's `y_exp = w_exp + x_exp - out_shift`
+    --   (`rtl/matvec_core.vhd:959-961`) carries no per-job term, so all
+    --   LM_WINDOWS jobs publish ONE exponent and their s32 payloads are
+    --   directly comparable by a running argmax.  BFP's `ns` is a max over the
+    --   JOB's rows, so windowing in BFP would hand a sampler whose only input
+    --   is a bare 32-bit integer (`rtl/sampler_stream.vhd:27`) fifteen
+    --   different exponents.
+    --
+    -- The last window is the remainder, VOCAB_SH - (LM_WINDOWS-1)*LM_STRIDE,
+    -- which is 5,056 at the 9B vocabulary.  Written as a min so a vocabulary
+    -- that happens to be a whole multiple of the stride does not emit a
+    -- zero-row job, which S_CHECK also refuses.
+    for w in 0 to LM_WINDOWS-1 loop
+      emit(mk_desc(OP_A_JOB, flags => FLG_TO_SMP, src => R_XN, dst => R_NONE,
+                   n_rows => minimum(LM_STRIDE, VOCAB_SH - w*LM_STRIDE),
+                   n_cols => HID,
+                   nsub_w => nsw, nsub_s => nss, out_mode => 1));
+    end loop;
+
     emit(mk_desc(OP_END_TOKEN));
 
     assert p = TBL_STEPS

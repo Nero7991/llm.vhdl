@@ -4,10 +4,10 @@
 --
 -- WHY THIS EXISTS ALONGSIDE sim/seq_tbl_pkg.vhd, WHICH ALREADY BUILDS A TABLE.
 --
--- `seq_tbl_pkg.build_table` emits the real 491-descriptor Qwen3.5-9B token and
+-- `seq_tbl_pkg.build_table` emits the real 505-descriptor Qwen3.5-9B token and
 -- every dimension in it is a constant folded off `model_cfg_pkg.MODEL`.  That
 -- is exactly right for what it is for, and it is unusable for an integration
--- simulation: 491 steps at hidden 4096 and FFN 12288 is tens of millions of
+-- simulation: 505 steps at hidden 4096 and FFN 12288 is tens of millions of
 -- element-cycles, which GHDL will not finish inside a working day.
 --
 -- So this package emits the SAME STEP SEQUENCE from a `shape_t`, which can be
@@ -45,11 +45,17 @@ use ieee.numeric_std.all;
 use work.llama_map_pkg.all;
 use work.seq_tbl_pkg.mk_desc;
 use work.seq_tbl_pkg.desc_t;
+-- SELECTED names, not `.all`: `seq_tbl_pkg` and `llama_map_pkg` both export
+-- OP_END_TOKEN and NREGION, and GHDL reports the collision as
+-- `no declaration for "op_end_token"`, which reads as a missing declaration
+-- rather than an ambiguity.
+use work.seq_tbl_pkg.LM_STRIDE;
 
 package llama_sched_pkg is
 
-  -- Big enough for the real 9B token (491) with room; the table is sized once
-  -- and the live length is `n_steps(shape)`.
+  -- Big enough for the real 9B token (505, and 491 before the lm_head was
+  -- windowed) with room; the table is sized once and the live length is
+  -- `n_steps(shape) - 1 + lm_windows(shape)`.
   constant SCHED_MAX_STEPS : natural := 640;
   constant SCHED_MAX_WORDS : natural := SCHED_MAX_STEPS * 8;
 
@@ -81,6 +87,11 @@ package llama_sched_pkg is
 
   function unit_of(opcode : natural) return natural;
 
+  -- The number of A jobs this shape's lm_head is split into.  1 for every
+  -- shape whose `vocab_shard` fits one window, which is every scaled shape;
+  -- 15 at the 9B vocabulary on the FK33 build.
+  function lm_windows(s : shape_t) return positive;
+
   -- The plan first; the table is an encoding of the plan.
   function build_plan (s : shape_t) return plan_t;
   function build_table(s : shape_t) return sched_tbl_t;
@@ -88,6 +99,11 @@ package llama_sched_pkg is
 end package;
 
 package body llama_sched_pkg is
+
+  function lm_windows(s : shape_t) return positive is
+  begin
+    return (s.vocab_shard + LM_STRIDE - 1) / LM_STRIDE;
+  end function;
 
   function unit_of(opcode : natural) return natural is
   begin
@@ -240,14 +256,38 @@ package body llama_sched_pkg is
 
     blk := s.blocks;
     emit(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => s.hidden);
-    emit(OP_A_JOB,    src => R_XN, dst => R_NONE, n_rows => s.vocab_shard,
-         n_cols => s.hidden);
+    -- ONE A JOB PER lm_head ROW WINDOW.  A `vocab_shard` above the descriptor
+    -- plane's MAXROWS_BFP is refused by S_CHECK in every out_mode, so the
+    -- lm_head is `lm_windows(s)` jobs and not one.  The window rule and the
+    -- reason the stride is not MAXROWS_BFP live in `seq_tbl_pkg`; this reuses
+    -- that derivation rather than restating it, so the two generators cannot
+    -- come to disagree about the schedule.
+    --
+    -- EVERY SCALED SHAPE TAKES ONE WINDOW.  `mk_shape_scaled` sets
+    -- `vocab_shard = 128` and one stride is 17,376, so `lm_windows` is 1 and
+    -- the emitted step sequence is bit-for-bit what it was before this loop
+    -- existed.  MEASURED over ten shapes: see the write-up.
+    for w in 0 to lm_windows(s)-1 loop
+      emit(OP_A_JOB, src => R_XN, dst => R_NONE,
+           n_rows => minimum(LM_STRIDE, s.vocab_shard - w*LM_STRIDE),
+           n_cols => s.hidden);
+    end loop;
     emit(OP_END_TOKEN);
 
-    assert n = n_steps(s)
+    -- `llama_map_pkg.n_steps` counts the tail as 3, which assumes a one-job
+    -- lm_head.  That assumption holds for every shape whose `vocab_shard` fits
+    -- one window -- which is every shape any bench in this tree elaborates --
+    -- and it is stated rather than silently relied on.  The correction below
+    -- is identically zero at `lm_windows(s) = 1`.
+    --
+    -- Deliberately NOT fixed inside `n_steps` itself: `rtl/llama_map_pkg.vhd`
+    -- is RTL that `rtl/llama_top.vhd` reads, and the windowing constants are a
+    -- property of the descriptor plane's build, not of the shape.  Recorded as
+    -- an open item in the write-up instead.
+    assert n = n_steps(s) - 1 + lm_windows(s)
       report "llama_sched_pkg: emitted " & integer'image(n)
-           & " steps but llama_map_pkg.n_steps says "
-           & integer'image(n_steps(s))
+           & " steps but llama_map_pkg.n_steps + windowing says "
+           & integer'image(n_steps(s) - 1 + lm_windows(s))
            & ".  The two disagree about the block schedule."
       severity failure;
 
@@ -257,7 +297,12 @@ package body llama_sched_pkg is
 
   function build_table(s : shape_t) return sched_tbl_t is
     constant p : plan_t  := build_plan(s);
-    constant n : natural := n_steps(s);
+    -- The SAME corrected count `build_plan` asserts against, and not
+    -- `n_steps(s)`: with a windowed lm_head the plan is longer than
+    -- `llama_map_pkg.n_steps` believes, and encoding only `n_steps(s)` of it
+    -- would silently drop the last LM_WINDOWS-1 descriptors.  Identical at
+    -- `lm_windows(s) = 1`.
+    constant n : natural := n_steps(s) - 1 + lm_windows(s);
     variable t : sched_tbl_t := (others => (others => '0'));
     variable d : desc_t;
     variable fl : natural;
