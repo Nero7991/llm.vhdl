@@ -120,27 +120,16 @@ unchecked.
 
 ### TRACK TOK-C -- the tokenizer in C, so the server can link it
 
-**Status:** RUNNING (dispatched 2026-08-28)
-**Owns:** `server/**`, `tools/*tokenizer*`
-
-**The question.** `tools/qwen35_tokenizer.py` is verified bit-exact against
-llama.cpp over 53,411 strings and a 1.1M-codepoint sweep, but
-`server/llama_server.cpp` is zero-dependency C++ and cannot link Python.
-
-**The trap, already measured and NOT to be rediscovered:** Python's
-`unicodedata` is Unicode 13.0.0 here and disagrees with llama.cpp on 4,704 of
-1,112,064 codepoints. Category tables must come from the SAME UCD as the
-oracle. Port the `llamacpp` state-machine backend, not the `regex` one.
-
-**Pre-written next steps:**
-
-- **If C matches the oracle over the same corpus and sweep** -> mark off. Next:
-  the server seam itself, which is `BLOCKED-DEP` on the descriptor format.
-- **If it matches the Python but not llama.cpp** -> the Python is the suspect,
-  not the C. Report both.
-- **If the Unicode tables balloon the binary or the build** -> report the size
-  and ask before adding a dependency. `llama_server.cpp` being zero-dep is a
-  deliberate property, not an accident.
+**Status:** LANDED 2026-08-28. The first pre-written branch fired: the C
+matches the oracle over the same corpus and the same sweep, and over two checks
+that did not exist before (all 248,320 token ids; malformed-byte fuzz). Tables
+came from llama.cpp's own `src/unicode-data.cpp`, not from a UCD download, so
+the version skew cannot recur. Size reported before committing: +42,704 bytes
+(+28.3%) on the native `llama_server` link, no new dependency, so the
+third branch did not fire. Two findings raised as OI-5 and OI-6 below. Next, as
+written: the server seam itself, still `BLOCKED-DEP` on the descriptor format
+AND on rendering the chat template, which nothing implements in any language.
+See `docs/debugging/2026-08-28_qwen35-tokenizer-c.md`.
 
 ### TRACK A-CTRL -- the descriptor control plane, the CDC, and MAXOUT
 
@@ -221,6 +210,38 @@ every element and no property in the bench can observe either. Fourth and fifth
 instance of the same family. This is the honest ceiling on what `tb_llama_top`
 proves, and it is not closed by any track above.
 
+### OI-5: the PYTHON tokenizer's decoder is wrong on 243 token ids
+
+Found by TRACK TOK-C while verifying the C port, and deliberately NOT fixed
+there. `tools/extract_tokenizer.py`'s `TOKEN_TYPE` table has `5: BYTE,
+6: UNUSED`; llama.cpp has it the other way round (`5 = UNUSED`, `6 = BYTE`).
+The 243 tokens with `token_type == 5` are ids 248,077..248,319, text
+`[PAD248077]`..`[PAD248319]` -- vocabulary padding, not byte-map characters.
+llama.cpp decodes them to the **empty string**;
+`qwen35_tokenizer.py::piece_bytes` returns their literal text. MEASURED against
+the oracle: 243 of 248,320 ids mismatch.
+
+Unreachable from `encode`, so every corpus number in
+`docs/debugging/2026-08-28_qwen35-tokenizer.md` stands. Reachable from a
+sampler, so a server using the Python would emit text llama.cpp does not.
+`server/qwen35_tok.c` is correct. The fix is one line in `piece_bytes` plus the
+label swap in `extract_tokenizer.py`, but it needs a re-run of that file's
+numbers, so it is an issue rather than a drive-by edit. This also withdraws
+that file's claim that "13 byte-mapped characters carry NORMAL type": this
+vocabulary has ZERO tokens of type BYTE. Write-up:
+`docs/debugging/2026-08-28_qwen35-tokenizer-c.md` section 8.1.
+
+### OI-6: llama.cpp aborts on some malformed UTF-8 (upstream, informational)
+
+`unicode_cpt_from_utf8` masks a 4-byte UTF-8 lead with `0x07` and applies no
+upper bound, so the bytes `F4 BF BF BF` decode to U+13FFFF;
+`unicode_cpt_to_utf8` then throws `std::invalid_argument` and nothing between
+there and `llama_tokenize` catches it. The process dies with SIGABRT.
+Reproduced against `llama.cpp.upstream@1692f9e5`. Only reachable from a host
+that feeds raw bytes; a JSON parser rejects them first. Recorded so nobody
+re-derives it while fuzzing, and because it is why the byte fuzz excludes lead
+bytes `0xF0..0xFF` -- there is no oracle answer to compare against.
+
 ### OI-4: no descriptor-program generator exists, in any language
 
 Subsystem D's control core is integrated and mutation-tested, but nothing emits
@@ -239,6 +260,7 @@ format being settled.
 | AXI3 burst cap | HBM is AXI3, 16 beats not 128. Bit-exact at both; bench now runs the legal one. | `809ada7` |
 | HBM port feasibility | 27 masters fit; 30 already measured at 288.0 GB/s, 100% of ceiling. Design note only. | doc only |
 | Qwen3.5 tokenizer | Bit-exact vs llama.cpp, 53,411 strings x 2 + 1.1M codepoints. 7 of 9 mutations bite. | `4123bd8` |
+| Qwen3.5 tokenizer in C | Bit-exact vs llama.cpp: 53,409 strings x 2, ALL 248,320 token ids, 1.1M codepoints, 20,051 malformed-byte strings. 7 of 7 mutations bite. +42,704 bytes linked, no new dependency. Found OI-5 and OI-6. | `TOKC-COMMIT` |
 | Full gate re-measured | 77 PASS / 0 FAIL, matches the recorded floor. Verified independently after `3246046`. | n/a |
 | A-sim MAXB correction | The original A agent woke, independently confirmed the AXI3 defect in its own bench, and appended a dated CORRECTION rather than editing the wrong claim out. Confirmation run completed separately: matvec_fk33, weight_streamer, axi_rd_port all PASS. | `2b12a7b` |
 | Magnitude blocker | Explosion was the STIMULUS (synthetic row norm 2^4.87 vs real 2^-0.03). PART 5 withdrawn, PART 3 reinstated. `attn_block` wired behind `C_REAL`. | `3246046` |

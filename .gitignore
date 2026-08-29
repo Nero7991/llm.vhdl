@@ -47,6 +47,7 @@ build_artifacts_*/*.bit.bin
 # by tools/extract_tokenizer.py / the g++ line in tools/tok_oracle_batch.cpp
 build_artifacts_tok/*.qtk
 build_artifacts_tok/tok_oracle_batch
+build_artifacts_tok/tokenizer_c_batch
 # cross-compiled on-board CLI (rebuild with aarch64-linux-gnu-gcc -O2 -static)
 hw/llama_hw
 sim/work_arith/

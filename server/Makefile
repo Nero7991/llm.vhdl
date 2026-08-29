@@ -33,7 +33,41 @@ board: $(DEPS)
 	$(ARM_CC)  -O2 -c pl_backend.c -o pl_backend_arm.o
 	$(ARM_CXX) -O2 -std=c++17 -static $(INC) llama_server.cpp run_fx_lib_arm.o pl_backend_arm.o -o llama_server_arm -lm -lpthread
 
-clean:
-	rm -f llama_server llama_server_arm run_fx_lib.o run_fx_lib_arm.o pl_backend.o pl_backend_arm.o
+# ---------------------------------------------------------------------------
+# Qwen3.5 tokenizer (qwen35_tok.c + the generated qwen35_unicode_data.c).
+#
+# DELIBERATELY NOT LINKED INTO llama_server YET.  Nothing in llama_server.cpp
+# calls it: that server serves the fixed-point stories260K model with its own
+# tok512 vocabulary, and the Qwen3.5 /v1/chat/completions seam is blocked on the
+# descriptor format and on rendering the chat template (see the big comment at
+# the top of qwen35_tok.h -- the generation prompt is NOT just
+# "<|im_start|>assistant\n").  These rules exist so that seam is a one-line
+# change to the link, and so the C is compiled by BOTH toolchains the server
+# uses, including the static aarch64 cross-build, before anyone needs it.
+#
+#   make tok        -> qwen35_tok.o qwen35_unicode_data.o          (native)
+#   make tok-board  -> qwen35_tok_arm.o qwen35_unicode_data_arm.o  (aarch64)
+#
+# It adds libc only; nothing about "zero-dependency" changes.  MEASURED cost of
+# adding both objects to the native llama_server link: 151,144 -> 193,848 bytes,
+# +42,704 (+28.3%), of which 25,352 is the Unicode category table.
+TOKFLAGS ?= -O2 -std=c99 -Wall -Wextra
+TOK_HDR  := qwen35_tok.h qwen35_unicode_data.h
 
-.PHONY: board clean
+tok: qwen35_tok.o qwen35_unicode_data.o
+qwen35_tok.o: qwen35_tok.c $(TOK_HDR)
+	$(CC) $(TOKFLAGS) -c qwen35_tok.c -o $@
+qwen35_unicode_data.o: qwen35_unicode_data.c qwen35_unicode_data.h
+	$(CC) $(TOKFLAGS) -c qwen35_unicode_data.c -o $@
+
+tok-board: qwen35_tok_arm.o qwen35_unicode_data_arm.o
+qwen35_tok_arm.o: qwen35_tok.c $(TOK_HDR)
+	$(ARM_CC) $(TOKFLAGS) -c qwen35_tok.c -o $@
+qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
+	$(ARM_CC) $(TOKFLAGS) -c qwen35_unicode_data.c -o $@
+
+clean:
+	rm -f llama_server llama_server_arm run_fx_lib.o run_fx_lib_arm.o pl_backend.o pl_backend_arm.o \
+	      qwen35_tok.o qwen35_unicode_data.o qwen35_tok_arm.o qwen35_unicode_data_arm.o
+
+.PHONY: board clean tok tok-board
