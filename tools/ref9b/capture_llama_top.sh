@@ -57,6 +57,15 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/matvec_int4.vhd rtl/sampler_stream.vhd rtl/llama_top.vhd
        sim/tb_llama_top.vhd"
 
+# LIST_FILES=1 prints the analysis closure and exits, so tools/ref9b/
+# golden_status.sh can ask "did any file this capture READ change?" without
+# owning a second copy of the list.  Two copies of a file list is how a
+# staleness check ends up blind to the one file that moved.
+if [ "${LIST_FILES:-0}" = "1" ]; then
+  echo $FILES sim/llama_top_w_b4_pool.hex
+  exit 0
+fi
+
 case "$CFG" in
   real) G="-gBLOCKS=4 -gATTN_INT=4 -gC_REAL=true -gATTN_HD=16
            -gNORM_REAL=true -gNORM_ANCHOR=false

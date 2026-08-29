@@ -40,6 +40,7 @@ next token on all five positions of the reference prompt.
 | `check_token.py` | the automatic verdict on the DECIDED TOKEN across streams, with the margin that decision had |
 | `mutate_token.py` | teeth for `check_token.py`, applied to the stream bytes rather than to the RTL |
 | `lmhead_window_check.py` | the 15 lm_head windows as a SET: tiling, per-window relations, and the fields all 15 must agree on |
+| `golden_status.sh` | is a committed golden capture provably current, and if not, WHICH file in its closure moved |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
@@ -133,6 +134,30 @@ the records present, and names anything in only one stream.
 mode located 6 and exact mode located 8, and for one of them exact mode named a
 seam a whole block earlier. A float oracle can say the algorithm is wrong; only
 a same-format oracle can say which cycle to look at.
+
+## The committed goldens rot, and that is checkable in a second
+
+`tools/ref9b/golden/llama_top_*.txt` are dated landmarks. **Nothing gates on
+them**, deliberately: a byte-identity gate on the real-path capture would go red
+on every legitimate `rtl/` change that reaches that path, which moves the "are
+these new numbers right?" judgement into the gate and blocks everybody instead
+of one reader. Subsystems B and C are still landing recipes that legitimately
+move it.
+
+So before diffing anything against a golden, ask whether it is current:
+
+```sh
+bash tools/ref9b/golden_status.sh          # ~1 s, no simulation
+```
+
+It reads the capture's own provenance stamp and asks git whether any file in
+the capture's analysis closure has changed since -- the closure coming from
+`capture_llama_top.sh` itself (`LIST_FILES=1`), never from a copy. MEASURED
+2026-08-29: the `real` golden regenerated hours earlier at `d1d1e95` was
+already not provably current, with `rtl/llama_top.vhd`, `sim/llama_sched_pkg.vhd`,
+`sim/seq_tbl_pkg.vhd` and `sim/tb_llama_top.vhd` all moved and the last of them
+edited in the working tree. **STALE here means "not provably current", not
+"wrong"** -- most `rtl/` edits do not reach this configuration.
 
 ## What this does NOT cover
 
