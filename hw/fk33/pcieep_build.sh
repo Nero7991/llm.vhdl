@@ -24,6 +24,10 @@ BUILD_ROOT="${BUILD_ROOT:-/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/3
 
 echo "=== regenerating the build script from the probe build ==="
 python3 gen_i2cprobe.py
+# The subsystem-A wrapper.  Generated, not committed-and-forgotten, because the
+# HBM port map in gen_pcieep.py and the master count in gen_fk33_engine.py have
+# to agree and there is no way to check that at build time cheaply.
+python3 gen_fk33_engine.py
 python3 gen_pcieep.py
 
 # Board-free gates, cheapest first.  Each has caught something that would
@@ -133,6 +137,16 @@ grep -c "Designutils 20-1307" build.log || true
 echo "--- address map, read back from the tool rather than assumed ---"
 grep -E "^FK33_MAP .*(xdma/M_AXI|fk33_)" build.log || \
     echo "  (only printed by an FK33_STOP_AFTER_BD run)"
+echo "--- the synthesis top (must be bd_wrapper, NOT fk33_engine) ---"
+grep -E "^FK33_TOP" build.log || echo "  MISSING FK33_TOP -- automatic top detection may have picked the engine"
+echo "--- subsystem A: ports enabled, clocked, reset and connected ---"
+grep -E "^FK33_ENG " build.log || \
+    echo "  (only printed by an FK33_STOP_AFTER_BD run)"
+grep -E "^FK33_ENG portcheck bad=0" build.log > /dev/null || \
+    echo "  ^^ AN ENGINE PORT IS NOT ENABLED, NOT DRIVEN OR NOT CONNECTED"
+echo "--- subsystem A after place and route (full build only) ---"
+grep -E "^FK33_ENGI" build.log || \
+    echo "  (impl-stage check; only printed by a full build)"
 # BD 41-1377 is EXPECTED here and is NOT a fault.  32 of them are emitted
 # during the 64-call exclude_seg_if sequence, while the HBM map is momentarily
 # inconsistent, and none after it.  Counting them and demanding zero would fail

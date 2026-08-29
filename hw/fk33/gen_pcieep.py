@@ -253,12 +253,77 @@ THERM_CTL_KEY   = 0xC1EA
 # The reviewed thresholds, repeated here ONLY so the host can report what the
 # bitstream is enforcing.  rtl/fk33_thermal.vhd is the authority: these are
 # checked against it in main() and the build aborts if they disagree.
+# ---------------------------------------------------------------------------
+# SUBSYSTEM A ON THE CARD (gen_pcieep.py, 2026-08-29).
+#
+# Everything from here to ENGINE_ADDR exists to answer one question that no
+# out-of-context run can: what does subsystem A cost, and what does it close
+# at, WITH the HBM IP, the XDMA shell, the aux domain and the thermal guard
+# present and after place and route.
+#
+# THE PORT ASSIGNMENT.  28 masters -- 24 weight lanes, 3 scale lanes and the
+# descriptor fetch -- one per HBM SAXI port:
+#
+#     m00..m14  ->  SAXI_01..SAXI_15   (stack 0, 15 ports)
+#     m15..m27  ->  SAXI_17..SAXI_29   (stack 1, 13 ports)
+#
+# SAXI_00 and SAXI_16 stay with the host, one per stack, exactly as before.
+# SAXI_30 and SAXI_31 are left DISABLED: they are the two spare engine ports
+# docs/2026-08-27_hbm-port-contention.md budgets for B and C.
+#
+# This split is forced, not chosen.  A stack offers at most 15 engine ports
+# after the host takes one, and A needs 28, so no assignment of A's masters
+# fits inside one stack.  TRACK HBM-PLACE established the consequence
+# (docs/debugging/2026-08-28_hbm-stack-boundary-straddle.md section 3): under
+# the FLAT packed layout every one of a tensor's 27 sub-regions sits within a
+# few hundred MB of the others, i.e. in ONE stack, so at least 13 of the 28
+# masters read cross-stack on every tensor.  The 27-lane arena layout is the
+# answer to that and it needs a build-time lane -> port -> pseudo-channel
+# table that no bitstream in this repo has.  THAT IS A DECISION FOR OREN AND
+# IS NOT MADE HERE.  What this build does is the only thing that keeps both
+# options open: every engine port is given all 32 segments, so the flat layout
+# works today and an arena layout would only ever REMOVE segments.
+#
+# THE CLOCKS.  Two, and the choice is the whole measurement:
+#
+#   HBM AXI  xdma/axi_aclk, 250 MHz, the same net that already clocks SAXI_00
+#            and SAXI_16.  Using one clock for the entire HBM AXI side means
+#            this build asks no new question about mixed per-port clocks.
+#   core     clk_wiz_0/clk_out3, 200 MHz.
+#
+# Because 27 x 256 bits is 864 B exactly, the duty identity has no efficiency
+# term: duty = f_core / f_axi = 200/250 = 80.0%.  Running the core at the HBM
+# clock would be 100% with zero margin, which
+# docs/2026-08-28_can-27-read-masters-be-served.md section 4.3 already
+# rejected.  The OOC ceilings this is measured against are 257.33 MHz (AXI)
+# and 230.73 MHz (core), so 250/200 sits 2.8% and 13.3% below them.  If the
+# AXI side misses, the fix direction is a dedicated slower HBM clock through
+# pcie2hbm with NUM_CLKS 2 -- which build_fk33_hbmbw.tcl:136 already does --
+# and it is deliberately NOT pre-applied here, because a build that misses at
+# 250 MHz measures the routing cost and a build that is pre-slowed does not.
+ENG_CELL       = "eng"
+ENG_NMAST      = 28
+ENG_CTL_BASE   = 0x00012000    # 4 KB, the engine's own register map.
+ENG_XW_BASE    = 0x00013000    # 4 KB, the activation writer
+ENG_CORE_MHZ   = 200.000
+# m00..m27 -> HBM SAXI port index.  Written out rather than computed so the
+# mapping is greppable and a future arena table has one place to change.
+ENG_PORT_MAP   = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                  17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+
 THERM_DIE_WARN_C   = 80
 THERM_DIE_HALT_C   = 90
 THERM_DIE_RESUME_C = 75
 THERM_HBM_WARN_C   = 75
 THERM_HBM_HALT_C   = 85
 THERM_HBM_RESUME_C = 70
+
+
+assert len(ENG_PORT_MAP) == ENG_NMAST, "port map length"
+assert len(set(ENG_PORT_MAP)) == ENG_NMAST, "port map has a duplicate"
+assert 0 not in ENG_PORT_MAP and 16 not in ENG_PORT_MAP, \
+    "SAXI_00 and SAXI_16 belong to the host"
+assert all(1 <= x <= 31 for x in ENG_PORT_MAP), "port index out of range"
 
 ID_BASE_H = "0x%08X" % ID_BASE
 SCRATCH_BASE_H = "0x%08X" % SCRATCH_BASE
@@ -562,14 +627,25 @@ connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_TEMP]    [get_bd_pins fk33_therm_0/h
 connect_bd_net [get_bd_pins hbm/DRAM_0_STAT_CATTRIP] [get_bd_pins fk33_therm_0/hbm_cattrip0]
 connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_CATTRIP] [get_bd_pins fk33_therm_0/hbm_cattrip1]
 
-# The compute domain.  There is no compute datapath in this bitstream yet, so
-# fk33_therm_0/compute_halt is deliberately left UNCONNECTED: it is the
-# documented plug-in point and its contract is in the module header.  It is not
-# untested for that reason -- the module carries a canary counter in this same
-# domain which the halt gates, and the aux domain counts its toggles into
-# THERM_CANARY, so "is the compute domain running and un-halted" is one JTAG
-# read with no datapath present.
-connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/compute_clk]
+# The compute domain.  compute_halt IS CONNECTED as of 2026-08-29: it reaches
+# subsystem A in ENGINE_BLOCK below.  The canary stays and is now doubly
+# useful, because it counts toggles of THE ENGINE'S OWN CORE CLOCK -- so
+# THERM_CANARY answers "is the compute domain clocked and un-halted" over JTAG
+# with the PCIe link down, about the real datapath rather than about a stand-in.
+#
+# What the halt does to the engine, stated here because the contract is in this
+# module's header and the implementation is in rtl/fk33_engine.vhd: it masks
+# the GO bit of an AXI-Lite write, so no NEW job can start.  A job already
+# running is not disturbed and runs to completion, which is what retires every
+# AXI burst it has already issued.  Abandoning an accepted burst would hang
+# that HBM channel permanently.
+# compute_clk is the ENGINE'S CORE CLOCK (clk_wiz_0/clk_out3), not
+# xdma/axi_aclk.  It was xdma/axi_aclk only because there was no compute
+# datapath; now there is, and fk33_thermal's contract is that compute_halt is
+# SYNCHRONOUS TO compute_clk.  Driving it from a clock the datapath does not
+# use would hand the engine an unsynchronised halt, which is precisely the
+# torn-word failure this module's own host_* outputs exist to avoid.
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins fk33_therm_0/compute_clk]
 connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/ctl_host_clk]
 
 # ---- thermal registers on the AUX (JTAG) side -----------------------------
@@ -644,6 +720,186 @@ connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/g
 # ---- end thermal protection -----------------------------------------------
 
 '''
+
+# ---------------------------------------------------------------------------
+# The engine RTL, and the block-design wiring.  Both are generated so the port
+# map above is the single source of truth for which master lands on which
+# pseudo-channel.
+ENG_RTL = os.path.join(HERE, "rtl", "fk33_engine.vhd")
+ENG_SRC_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "rtl"))
+# Listed explicitly, in dependency order, and NOT globbed.  A glob would pull
+# in whichever half-edited file another track has open; sim/ooc_fk33_a.tcl
+# makes the same choice for the same reason, and this list is that script's
+# `matvec_int4_desc_axi` list plus the wrapper.
+ENG_SRCS = [
+    "util_pkg.vhd", "mv4i_arith_pkg.vhd", "matvec_int4_desc_pkg.vhd",
+    "stream_fifo.vhd", "async_fifo.vhd", "axi_rd_fsm.vhd", "axi_rd_port.vhd",
+    "weight_streamer.vhd", "act_mem_striped.vhd", "matvec_core.vhd",
+    "matvec_int4.vhd", "matvec_int4_desc_axi.vhd",
+]
+
+ENG_RTL_ADD = "\n".join(
+    ["", "# ---- subsystem A RTL (gen_pcieep.py) --------------------------------------"]
+    + ["add_files -norecurse %s" % os.path.join(ENG_SRC_DIR, f) for f in ENG_SRCS]
+    + ["add_files -norecurse %s" % ENG_RTL,
+       "update_compile_order -fileset sources_1", ""])
+
+
+def _eng_block():
+    L = []
+    a = L.append
+    a("")
+    a("# ---- SUBSYSTEM A (gen_pcieep.py) ------------------------------------------")
+    a("# rtl/fk33_engine.vhd wraps rtl/matvec_int4_desc_axi.vhd and exposes its 28")
+    a("# read masters as named AXI interfaces, because a flattened std_logic_vector")
+    a("# is not something the block designer can connect to hbm/SAXI_nn.  Read")
+    a("# hw/fk33/gen_fk33_engine.py's docstring for what that wrapper adds beyond")
+    a("# wiring: the thermal halt, the activation write port and the 40 -> 33 bit")
+    a("# address truncation.")
+    a("create_bd_cell -type module -reference fk33_engine %s" % ENG_CELL)
+    a("")
+    a("# WHICH CLOCK OWNS WHICH INTERFACE.  A module-reference cell with ONE clock")
+    a("# port gets this for free -- which is why rtl/hbm_tg_ip.vhd never needed it")
+    a("# and build_fk33_hbmbw.tcl has no line like this.  This wrapper has TWO, so")
+    a("# Vivado cannot infer the association and every inferred interface defaults")
+    a("# to 100 MHz.  MEASURED: without these lines HDL generation dies with 30")
+    a("# separate BD 41-237 'FREQ_HZ does not match' errors, one per interface, and")
+    a("# not one of them names the missing association as the cause.")
+    a("#")
+    a("# Read back below rather than assumed: Vivado silently ignores set_property")
+    a("# on a CONFIG name an object does not have, which is the project-wide trap")
+    a("# that the SYSMON read-back exists for.")
+    a("set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins %s/core_clk]" % ENG_CELL)
+    a("set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins %s/core_clk]" % ENG_CELL)
+    a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/core_aresetn]" % ENG_CELL)
+    a("set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins %s/hbm_aclk]"
+      % (":".join("m%02d_axi" % i for i in range(ENG_NMAST)), ENG_CELL))
+    a("foreach {pin want} [list %s/core_clk {s_axi:s_axix} %s/hbm_aclk {%s}] {"
+      % (ENG_CELL, ENG_CELL, ":".join("m%02d_axi" % i for i in range(ENG_NMAST))))
+    a("    set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]")
+    a("    if {$got ne $want} {")
+    a("        error \"FK33_ENG FAIL: $pin ASSOCIATED_BUSIF is \\\"$got\\\", not \\\"$want\\\". Every AXI interface would default to 100 MHz.\"")
+    a("    }")
+    a("    puts \"FK33_ENG ASSOCIATED_BUSIF $pin = $got\"")
+    a("}")
+    a("")
+    a("# THE CORE CLOCK.  A third MMCM output rather than a reuse of clk_out2:")
+    a("# clk_out2 is HBM_REF_CLK_0/1, and sharing the HBM reference clock net with")
+    a("# a fabric datapath clock would tie two unrelated requirements together for")
+    a("# no gain.  clk_wiz_0's reference is xdma/axi_aclk in this branch, so the")
+    a("# core clock stops with the PCIe link -- which is correct: with no host")
+    a("# there is no job, and the thermal guard is on the aux domain and does not")
+    a("# stop with it.")
+    a("create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset")
+    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins core_reset/slowest_sync_clk]")
+    a("connect_bd_net [get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]")
+    a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]")
+    a("")
+    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/core_clk]" % ENG_CELL)
+    a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/core_aresetn]" % ENG_CELL)
+    a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins %s/hbm_aclk]" % ENG_CELL)
+    a("")
+    a("# THE THERMAL HALT.  fk33_thermal's contract requires compute_halt to be")
+    a("# SYNCHRONOUS TO compute_clk, so compute_clk is moved onto the engine's core")
+    a("# clock above; it used to be xdma/axi_aclk because there was no datapath.")
+    a("# The wrapper consumes the halt by masking the GO bit of an AXI-Lite write.")
+    a("# It does NOT gate a clock, does NOT touch a reset, and does NOT interrupt a")
+    a("# job that has already started -- so no accepted HBM burst is ever")
+    a("# abandoned, which would hang that channel permanently.")
+    a("connect_bd_net [get_bd_pins fk33_therm_0/compute_halt] [get_bd_pins %s/compute_halt]" % ENG_CELL)
+    a("")
+    a("# CONTROL.  A dedicated smartconnect because the engine's AXI-Lite slave is")
+    a("# in the CORE clock domain (matvec_int4_desc_axi's s_axi_aclk IS the core")
+    a("# clock) while pcie2axil is in xdma's.  NUM_CLKS 2 with aclk on the incoming")
+    a("# side and aclk1 on the outgoing side is exactly the shape")
+    a("# build_fk33_hbmbw.tcl:334-341 used for axil2tg, which built, routed and ran.")
+    a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axil2eng")
+    a("set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} CONFIG.NUM_CLKS {2}] [get_bd_cells axil2eng]")
+    a("set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]")
+    a("set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells pcie2axil]")
+    a("connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \\")
+    a("                    [get_bd_intf_pins axil2eng/S00_AXI]")
+    a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins axil2eng/aclk]")
+    a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins axil2eng/aresetn]")
+    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins axil2eng/aclk1]")
+    a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
+    a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M01_AXI] [get_bd_intf_pins %s/s_axix]" % ENG_CELL)
+    a("")
+    a("# THE 28 HBM MASTERS.  Every ENABLED SAXI port exposes its own ACLK and")
+    a("# ARESET_N pin and leaving them dangling fails HDL generation with 41-758;")
+    a("# build_fk33_hbmbw.tcl:373-376 records that, and it is why enabling the")
+    a("# ports was never a change that could be made ahead of having an engine.")
+    for i, port in enumerate(ENG_PORT_MAP):
+        a("connect_bd_intf_net [get_bd_intf_pins %s/m%02d_axi] [get_bd_intf_pins hbm/SAXI_%02d]"
+          % (ENG_CELL, i, port))
+        a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_%02d_ACLK]" % port)
+        a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_%02d_ARESET_N]" % port)
+    a("# ---- end subsystem A ------------------------------------------------------")
+    a("")
+    return "\n".join(L)
+
+
+ENGINE_BLOCK = _eng_block()
+
+ENGINE_ADDR = """
+# ---- subsystem A address map (gen_pcieep.py) -------------------------------
+# On the PCIe AXI-Lite BAR:
+#   0x12000  the engine's own map (DESC_PTR, CTRL/GO, STATUS, ERR_INFO, ID,
+#            ADDR_CAP, CAPS, DESC_WORDS, Y_IDX/Y_LO/Y_HI/Y_EXP, CYCLES, BEATS,
+#            STARVED).  Documented in rtl/matvec_int4_desc_axi.vhd; it does not
+#            change shape with geometry, which is the whole point of the
+#            descriptor-in-memory decision.
+#   0x13000  the activation writer (X_ADDR, X_DATA, ENG_STAT, ENG_ID).
+#            Documented in rtl/fk33_engine.vhd.
+# Both fit under the 128 KB the XDMA IP sizes the BAR at.  They start at
+# 0x12000 and not at 0x11000: fk33_scratch is 8 KB at 0x10000, so it occupies
+# 0x10000..0x11FFF, and 0x11000 collides with its second 4 KB.  MEASURED -- the
+# --bd-only gate refused it with BD 41-1075 in 90 seconds, which is what that
+# gate is for.
+"""
+ENGINE_ADDR += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axi/reg0}]\n"
+                % (ENG_CTL_BASE, ENG_CELL))
+ENGINE_ADDR += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axix/reg0}]\n"
+                % (ENG_XW_BASE, ENG_CELL))
+ENGINE_ADDR += """
+# EVERY engine master sees ALL 32 pseudo-channel segments, i.e. the whole 8 GiB.
+#
+# That is not laziness and it is not a bandwidth claim.  Under the flat packed
+# layout the 27 sub-regions of one tensor are contiguous, so a given lane's
+# bytes for different tensors are scattered across the whole address space; a
+# master restricted to its own stack's 16 segments would DECERR on more than
+# half the tensors.  Giving every master the full decode is what makes the
+# layout that exists today work at all, and it is a superset of anything the
+# residency map's 27-lane arena scheme would later want -- that scheme only
+# ever REMOVES segments.  It also costs nothing in the fabric: the engine
+# connects DIRECTLY to the HBM IP with no interconnect in the path, so
+# assign_bd_address here constrains Vivado's address editor and the IP's own
+# switch decode, not a decoder we pay for.
+#
+# MEASURED, from the IP, docs/2026-08-28_can-27-read-masters-be-served.md 2.1:
+# with USER_SWITCH_ENABLE_00/01 TRUE -- which this design sets -- every one of
+# the 32 SAXI ports already exposes all 32 HBM_MEM segments.  The stack rule in
+# the residency map is a build discipline, not a property of the silicon.
+"""
+# NOT "%02d" for the port index.  Tcl reads a leading-zero literal as OCTAL, so
+# {m07 08} makes `format ... $sx` fail with `expected integer but got "08"` --
+# MEASURED, it killed the --bd-only gate after 7 of 28 masters had been mapped.
+# The zero padding belongs in the format string on the Tcl side, where it is
+# applied to an integer, and nowhere else.
+ENGINE_ADDR += ("foreach pair {"
+                + " ".join("{m%02d %d}" % (i, p) for i, p in enumerate(ENG_PORT_MAP))
+                + "} {\n")
+ENGINE_ADDR += """    set m  [lindex $pair 0]
+    set sx [lindex $pair 1]
+    for {set s 0} {$s < 32} {incr s} {
+        assign_bd_address \\
+            -target_address_space [get_bd_addr_spaces ENGCELL/${m}_axi] \\
+            -offset [format 0x%X [expr {$s * 0x10000000}]] -range 256M \\
+            [get_bd_addr_segs [format "hbm/SAXI_%02d/HBM_MEM%02d" $sx $s]]
+    }
+}
+""".replace("ENGCELL", ENG_CELL)
+
 
 THERM_ADDR = '''
 # ---- thermal register map (gen_pcieep.py) ----------------------------------
@@ -749,8 +1005,48 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         puts "FK33_CFG $c.NUM_SI = [get_property CONFIG.NUM_SI [get_bd_cells $c]]"
         puts "FK33_CFG $c.NUM_MI = [get_property CONFIG.NUM_MI [get_bd_cells $c]]"
     }
-    foreach c {fk33_id fk33_scratch fk33_dmabram} {
+    foreach c {fk33_id fk33_scratch fk33_dmabram eng core_reset axil2eng} {
         if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING CELL $c" }
+    }
+    # SUBSYSTEM A.  Three ways this build can come out looking healthy and be
+    # wrong, each read back from the tool rather than assumed:
+    #   * a SAXI port that should be enabled is not, so a master is dangling
+    #   * an enabled port's ACLK or ARESET_N is undriven (41-758 catches that at
+    #     HDL generation, but only if it is still undriven THEN)
+    #   * an engine master interface never got connected to an HBM port
+    set engbad 0
+    foreach i {01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 \
+               17 18 19 20 21 22 23 24 25 26 27 28 29} {
+        set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
+        if {[string tolower $v] ne "true"} {
+            puts "FK33_ENG SAXI_$i IS NOT ENABLED (USER_SAXI_$i = $v)"
+            incr engbad
+        }
+        foreach pin [list hbm/AXI_${i}_ACLK hbm/AXI_${i}_ARESET_N] {
+            if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $pin]]]} {
+                puts "FK33_ENG $pin IS UNDRIVEN"
+                incr engbad
+            }
+        }
+    }
+    foreach i {30 31} {
+        set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
+        puts "FK33_ENG SAXI_$i = $v (must be false: spare for B and C)"
+        if {[string tolower $v] ne "false"} { incr engbad }
+    }
+    for {set m 0} {$m < 28} {incr m} {
+        set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
+        if {![llength $ip]} { puts "FK33_ENG eng/m${m}_axi MISSING"; incr engbad; continue }
+        if {![llength [get_bd_intf_nets -quiet -of_objects $ip]]} {
+            puts [format "FK33_ENG eng/m%02d_axi IS NOT CONNECTED" $m]
+            incr engbad
+        }
+    }
+    puts "FK33_ENG portcheck bad=$engbad (must be 0)"
+    puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
+    if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
+        puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"
+        incr engbad
     }
     # The aux domain.  A missing cell here means the bitstream is blind with
     # the link down, which is the exact condition it exists for, so name them.
@@ -935,6 +1231,110 @@ AUX_XDC = [
     "# in fk33_aux carry ASYNC_REG.",
 ]
 
+
+ENG_XDC = [
+    "",
+    "###############################################################################",
+    "# SUBSYSTEM A's CLOCK BOUNDARY (gen_pcieep.py)",
+    "###############################################################################",
+    "# The engine's core clock and its HBM AXI clock are DIFFERENT DOMAINS by",
+    "# design.  27 x 256 bits is 864 B exactly, so duty = f_core / f_axi with no",
+    "# efficiency term, and running both at one clock is 100% duty with zero",
+    "# margin -- rejected in docs/2026-08-28_can-27-read-masters-be-served.md 4.3.",
+    "# The crossing is a gray-pointer FIFO per port (rtl/async_fifo.vhd), one for",
+    "# each of the 28 masters, with a four-phase clear handshake.",
+    "#",
+    "# WHY THIS LINE IS NEEDED HERE AND WAS NOT NEEDED OUT OF CONTEXT.  In the",
+    "# OOC runs the two clocks were created independently and were unrelated by",
+    "# construction, and sim/ooc_fk33_a.tcl:143 declares them asynchronous",
+    "# anyway.  In this build clk_out3 is an MMCM output whose reference IS",
+    "# xdma/axi_aclk, so without this the tool would TIME every gray pointer and",
+    "# every clear-handshake bit against a 200/250 MHz common period and report",
+    "# failures on a crossing that is handled in RTL.",
+    "#",
+    "# It is addressed through the ENGINE'S OWN PINS, whose names this generator",
+    "# controls, rather than through an auto-generated clk_wiz clock name.  The",
+    "# impl-stage check in the build script FAILS THE BUILD if this matched",
+    "# nothing -- a set_clock_groups with an empty group is a warning, not an",
+    "# error, so an unchecked constraint here would be a silent no-op.",
+    "#",
+    "# NOTHING BELOW MAY USE if/foreach/set.",
+    "set_clock_groups -asynchronous \\",
+    "    -group [get_clocks -of_objects [get_pins bd_i/eng/core_clk]] \\",
+    "    -group [get_clocks -of_objects [get_pins bd_i/eng/hbm_aclk]]",
+]
+
+IMPL_ENG_OLD = 'set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]\nset whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]\nputs [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]'
+IMPL_ENG_NEW = """# ---- SUBSYSTEM A, on the implemented design (gen_pcieep.py) ---------------
+# The deliverable of the shell-integration track: the quantities the
+# out-of-context runs reported, measured with the HBM IP, the XDMA shell, the
+# aux domain and the thermal guard present, after place and route.  The OOC
+# ceilings to compare against, both at VCCINT 0.717 V:
+#     AXI  257.33 MHz   core  230.73 MHz
+#     LUT 134,534   FF 64,067   DSP 1,585   BRAM36 192.5
+# (docs/debugging/2026-08-28_ar-throttle-timing-close.md and
+#  docs/debugging/2026-08-28_matvec-divide-by-48-core-clock.md.)
+puts "==== FK33 subsystem A (implemented design) ===="
+if {[llength [get_cells -quiet bd_i/eng]] == 0} {
+    error "FK33_ENGI FAIL: bd_i/eng is not in the implemented design"
+}
+
+# THE TWO CLOCKS, read off the engine's own pins rather than assumed from the
+# clk_wiz request -- a clk_wiz cannot always synthesise what it was asked for.
+#
+# This is ALSO the check that the XDC's set_clock_groups matched something.
+# The XDC addresses the two groups through these exact pins, so if either
+# lookup is empty here it was empty there, and a set_clock_groups with an empty
+# group is a WARNING rather than an error -- the silent no-op this guards
+# against.
+#
+# WHAT IT DOES NOT PROVE, stated because a stronger check was WRITTEN, RUN AND
+# REMOVED: it does not prove the group was APPLIED.  The stronger form is the
+# one FK33_AUXCLK uses, enumerating crossing paths and demanding that none has
+# a slack -- and on THIS design it does not terminate.  MEASURED 2026-08-29:
+# `get_timing_paths -from <core> -to <axi> -max_paths 8` ran over 20 minutes on
+# the post-phys_opt checkpoint without returning, because an asynchronous group
+# does not stop the enumeration and 28 gray-pointer FIFOs plus their
+# four-phase clear handshakes is an enormous one.  The aux-domain check is
+# cheap for the opposite reason: that domain is a handful of single-bit
+# crossings.  A check that hangs a fifty-minute build is worse than a weaker
+# check that runs, so the pair is reported in clkint.rpt below for a human to
+# read instead.
+set ecore [get_clocks -quiet -of_objects [get_pins bd_i/eng/core_clk]]
+set eaxi  [get_clocks -quiet -of_objects [get_pins bd_i/eng/hbm_aclk]]
+if {[llength $ecore] != 1 || [llength $eaxi] != 1} {
+    error "FK33_ENGI FAIL: expected one clock on each of eng/core_clk and eng/hbm_aclk, got [llength $ecore] and [llength $eaxi]. The XDC clock group matched nothing and the per-port CDC is being timed."
+}
+foreach cn [list $ecore $eaxi] {
+    puts [format "FK33_ENGI clock %-30s period %.3f ns (%.2f MHz)" \
+          [get_property NAME $cn] [get_property PERIOD $cn] \
+          [expr {1000.0 / [get_property PERIOD $cn]}]]
+}
+
+# AREA OF THE ENGINE ALONE, so it can be compared with the OOC figure without
+# the shell in it.  report_utilization -cells is the only honest way:
+# subtracting a remembered shell number from a design total is how the
+# 1,200-LUT error in the previous area comparison happened.
+report_utilization -cells [get_cells bd_i/eng] -file fk33_pcieep_engine_util.rpt
+puts "FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt"
+
+set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
+set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
+puts [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]
+# -no_detailed_paths: the per-clock table is what the duty identity needs and
+# the detailed paths are what make this report expensive.
+report_timing_summary -no_detailed_paths -file fk33_pcieep_timing.rpt
+report_clock_interaction -file fk33_pcieep_clkint.rpt
+report_design_analysis -congestion -file fk33_pcieep_congestion.rpt
+report_clock_utilization -file fk33_pcieep_clkutil.rpt"""
+
+SAXI0_OLD = ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK} "
+             + " ".join("CONFIG.USER_SAXI_%02d {false}" % i for i in range(1, 16))
+             + "] [get_bd_cells hbm]")
+SAXI1_OLD = ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST1 {AXI_16_ACLK} "
+             + " ".join("CONFIG.USER_SAXI_%02d {false}" % i for i in range(17, 32))
+             + "] [get_bd_cells hbm]")
+
 SUBS = [
     # ---- 7. separate project + artifacts
     ("set ProjectName fk33_i2cprobe",
@@ -943,7 +1343,7 @@ SUBS = [
     # ---- 9a. the aux RTL, before anything that references it
     ('create_project $ProjectName ./$ProjectName -part "xcvu33p-fsvh2104-2L-e"',
      'create_project $ProjectName ./$ProjectName -part "xcvu33p-fsvh2104-2L-e"\n'
-     + AUX_RTL_ADD),
+     + AUX_RTL_ADD + ENG_RTL_ADD),
 
     # ---- 9b. the AXI GPIO's I2C pins stop being an external interface here and
     # are taken over by the aux block, which arbitrates and owns the IOBUFs.
@@ -1052,11 +1452,12 @@ set_property -dict [list CONFIG.TEMPERATURE_ALARM_TRIGGER {90} CONFIG.TEMPERATUR
     # EnablePCIe if/else has wired the smartconnect clocks, so the block can
     # join those nets and be correct in both branches.
     ("regenerate_bd_layout\nsave_bd_design",
-     BRINGUP_BLOCK + AUX_BLOCK + THERM_BLOCK + "regenerate_bd_layout\nsave_bd_design"),
+     BRINGUP_BLOCK + AUX_BLOCK + THERM_BLOCK + ENGINE_BLOCK
+     + "regenerate_bd_layout\nsave_bd_design"),
 
     ("assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_gpio_0/S_AXI/Reg}]",
      "assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_gpio_0/S_AXI/Reg}]\n"
-     + BRINGUP_ADDR + AUX_ADDR + THERM_ADDR),
+     + BRINGUP_ADDR + AUX_ADDR + THERM_ADDR + ENGINE_ADDR),
 
     # ---- 9c. verify the aux constraints on the IMPLEMENTED design.
     # This has to live here and not in the XDC, because the XDC reader forbids
@@ -1201,6 +1602,52 @@ if {$otarm == 3} {
     # ---- 9. the no-card stopping point
     ('puts "==== IP status before upgrade ===="',
      THERM_BD_CHECK + BD_CHECK_BLOCK + '\nputs "==== IP status before upgrade ===="'),
+
+
+    # ---- the engine's core clock.  A THIRD clk_wiz output; ENGINE_BLOCK says
+    # why it is not a reuse of clk_out2, which is HBM_REF_CLK_0/1.
+    ("set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]",
+     "set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]\n"
+     "set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {%.3f}] [get_bd_cells clk_wiz_0]" % ENG_CORE_MHZ),
+
+    # ---- HBM ENGINE PORTS.  The IP defaults all 32 USER_SAXI_nn to true and
+    # upstream turns 30 off.  That was CORRECT for every build before this one:
+    # an enabled port exposes its own ACLK and ARESET_N pin and HDL generation
+    # fails with 41-758 if they dangle (build_fk33_hbmbw.tcl:373-376), and there
+    # was no engine to drive them.  There is now.  SAXI_01..15 (stack 0) and
+    # SAXI_17..29 (stack 1) stay ENABLED and every one of them gets its clock
+    # and reset in ENGINE_BLOCK.  SAXI_30/31 stay off: they are the two spare
+    # engine ports docs/2026-08-27_hbm-port-contention.md reserves for B and C.
+    (SAXI0_OLD,
+     "    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK}] [get_bd_cells hbm]"),
+    (SAXI1_OLD,
+     "    set_property -dict [list CONFIG.USER_CLK_SEL_LIST1 {AXI_16_ACLK} "
+     "CONFIG.USER_SAXI_30 {false} CONFIG.USER_SAXI_31 {false}] [get_bd_cells hbm]"),
+
+    (IMPL_ENG_OLD, IMPL_ENG_NEW),
+
+    # ---- MEMORY.  -jobs 8 on SYNTHESIS launches up to 8 concurrent
+    # out-of-context IP runs, each its own Vivado process, on a 31 GB box that
+    # has OOM-killed unrelated services before (the 2026-07-04 systemd-oomd
+    # incident took down the whole code-server cgroup).  The engine adds a
+    # ~135 kLUT module to the main run, so this build is materially heavier
+    # than every pcieep build before it.  Implementation is left at 8: its
+    # -jobs is threads inside ONE process and does not multiply the footprint.
+    ("launch_runs synth_1 -jobs 8", "launch_runs synth_1 -jobs 4"),
+
+    # ---- FORCE THE TOP.  This is gen_hbmbw.py:360's trap, reproduced exactly.
+    # add_files on the engine RTL puts a SECOND root module in the fileset, and
+    # update_compile_order re-runs Vivado's automatic top detection, which picks
+    # fk33_engine over bd_wrapper.  Synthesis then SUCCEEDS -- on the wrong
+    # design -- and the only symptom is in the placer, as
+    #   ERROR: [Place 30-415] IO Placement failed due to overutilization.
+    #   This design contains 18348 I/O ports
+    # because the engine's 28 AXI masters became top-level pins instead of
+    # internal connections to the HBM IP.  MEASURED here on 2026-08-29, an hour
+    # after the note in gen_hbmbw.py said it would happen.  `make_wrapper -top`
+    # sets the top once; it does not defend it.
+    ('add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v\nupdate_compile_order -fileset sources_1',
+     'add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v\nupdate_compile_order -fileset sources_1\nset_property top bd_wrapper [current_fileset]\nupdate_compile_order -fileset sources_1\nif {[get_property top [current_fileset]] ne "bd_wrapper"} {\n    error "FK33_TOP FAIL: top is [get_property top [current_fileset]], not bd_wrapper. The engine\'s 28 AXI masters would become top-level I/O."\n}\nputs "FK33_TOP [get_property top [current_fileset]]"'),
 
     # ---- 7. our own XDC
     (f"add_files -fileset constrs_1 -norecurse {XDC_SRC}",
@@ -1629,6 +2076,7 @@ def main():
                  "clock that stops when the PCIe link is down.")
 
     out += AUX_XDC
+    out += ENG_XDC
     out += [
         "",
         "###############################################################################",

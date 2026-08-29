@@ -207,6 +207,35 @@ connect_debug_port dbg_hub/clk [get_nets -of_objects [get_pins bd_i/fk33_aux_0/a
 # in fk33_aux carry ASYNC_REG.
 
 ###############################################################################
+# SUBSYSTEM A's CLOCK BOUNDARY (gen_pcieep.py)
+###############################################################################
+# The engine's core clock and its HBM AXI clock are DIFFERENT DOMAINS by
+# design.  27 x 256 bits is 864 B exactly, so duty = f_core / f_axi with no
+# efficiency term, and running both at one clock is 100% duty with zero
+# margin -- rejected in docs/2026-08-28_can-27-read-masters-be-served.md 4.3.
+# The crossing is a gray-pointer FIFO per port (rtl/async_fifo.vhd), one for
+# each of the 28 masters, with a four-phase clear handshake.
+#
+# WHY THIS LINE IS NEEDED HERE AND WAS NOT NEEDED OUT OF CONTEXT.  In the
+# OOC runs the two clocks were created independently and were unrelated by
+# construction, and sim/ooc_fk33_a.tcl:143 declares them asynchronous
+# anyway.  In this build clk_out3 is an MMCM output whose reference IS
+# xdma/axi_aclk, so without this the tool would TIME every gray pointer and
+# every clear-handshake bit against a 200/250 MHz common period and report
+# failures on a crossing that is handled in RTL.
+#
+# It is addressed through the ENGINE'S OWN PINS, whose names this generator
+# controls, rather than through an auto-generated clk_wiz clock name.  The
+# impl-stage check in the build script FAILS THE BUILD if this matched
+# nothing -- a set_clock_groups with an empty group is a warning, not an
+# error, so an unchecked constraint here would be a silent no-op.
+#
+# NOTHING BELOW MAY USE if/foreach/set.
+set_clock_groups -asynchronous \
+    -group [get_clocks -of_objects [get_pins bd_i/eng/core_clk]] \
+    -group [get_clocks -of_objects [get_pins bd_i/eng/hbm_aclk]]
+
+###############################################################################
 # PCIe endpoint notes (gen_pcieep.py)
 ###############################################################################
 # Lanes 0-3 are edge lanes 0-3, which are GTY quad 227 channels 3,2,1,0.
