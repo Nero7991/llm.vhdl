@@ -323,6 +323,30 @@ to detect.
 **Added cost: 210 s of wall time** across three rows, all three in `SLOW_TBS` so
 `--quick` skips them. DERIVED: 38 + 29 + 143.
 
+### The no-false-positive claim, measured against a real concurrent change
+
+Unplanned, and the best evidence here. MEASURED by file mtime: TRACK REALFIX's
+uncommitted edits to `rtl/llama_top.vhd` (17:12:27) and `rtl/attn_kv_axi.vhd`
+(17:11:58) were already in the working tree when the three seam rows of the full
+gate ran (17:24:24, 17:24:53, 17:27:16). `git diff --stat` at that moment:
+226 insertions, 21 deletions across those two files, including `REGMAX` and
+`VN_W` becoming shape-derived expressions rather than constants.
+
+**All three rows passed anyway**, and so did `sim:tb_llama_top_real` and its
+siblings in the same run. So the six real-shape elaboration fixes move no
+modelled seam at any of the three scaled configurations, and the gate said so
+without anybody having to decide whether new numbers were right.
+
+That is the property the golden diff could not have. It was demonstrated here
+against a real, large, concurrent `rtl/` change rather than a constructed one --
+which is worth more than the constructed demonstration would have been, and was
+entirely luck of timing.
+
+**Caveat, stated because it cuts the other way too.** It means the full-gate
+numbers above are a measurement of "the tree as it stood", not of any commit.
+The authoritative clean measurement remains the `git archive 5578132` run at the
+top of this document, taken on a tree nobody else could touch.
+
 ## Measured and REJECTED -- do not retry
 
 **A VHDL-shaped row.** The comparison's models are `tools/ref9b/*.py` and
