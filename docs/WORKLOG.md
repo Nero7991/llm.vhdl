@@ -408,6 +408,39 @@ stays below the trap, so **the top corner of the row range is unverified**, and
 that is precisely where an off-by-one in `tiles` would show. Closing OI-8
 unblocks that verification too.
 
+### OI-10: `matvec_core:779` writes `ybuf` past the end in `out_mode = "01"`
+
+Found by TRACK RANGE while fixing OI-8, **not reproduced and not fixed**, and
+it is the same family as the one it was fixing.
+
+`:779` writes `ybuf(re2_t)` whenever `out_mode /= "10"`, but `S_IDLE` bounds
+`n_rows` against `MAXROWS_BFP` **only when `out_mode = "00"`**. So `out_mode =
+"01"` can write past `TILES-1` on exactly the argument that produced OI-8, where
+the read side did the same thing.
+
+**Not reproduced because no bench drives that mode.** That is the finding as much
+as the code is: `out_mode` 1 and 2 descriptors are byte-checked by
+`tools/verify_mv4i_desc.py` and **never run**. A mode nothing exercises is a mode
+whose bounds nobody has tested, and OI-8 showed what that costs.
+
+Closing this needs a bench that drives `out_mode = "01"` first. Fixing the
+bound without a bench that reaches it would repeat the mistake that made OI-8
+survive: a guard nobody has watched fail.
+
+### OI-11: the FK33 shape sweep scores a HANG as an acceptance
+
+Pre-existing, found by TRACK RANGE while lifting the sweep ceilings, not
+introduced by that work.
+
+The FK33 arm of `sim/tb_matvec_fk33_desc.vhd` judges a legal shape by checking
+`err` after a bounded poll. A shape that **hangs** therefore scores as accepted,
+which is the same silent-success shape as OI-3 and case 19.
+
+What actually proved the newly-reachable top-corner shapes completed was
+incidental: the OI-8 defect killed the whole process, so the run finishing at
+all was the evidence. That is luck, not a check, and it stops being available
+now that OI-8 is fixed.
+
 ### OI-9: the descriptor error-code space is FULL
 
 `EC_SHAPE = 0xF` (`rtl/matvec_int4_desc_pkg.vhd:52-57`) took the last free
