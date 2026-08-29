@@ -205,3 +205,64 @@ understanding the source risks masking a genuine HBM sensor fault.
   correspondingly dramatic conclusion, all of it wrong; the scripted decode
   against the field offsets in the RTL gives 635 / 38 / 38, healthy. Decode
   packed words with the packing statement open, in a script, or not at all.
+
+---
+
+## CORRECTION 2, 2026-08-29 ~16:30, on the ENGINE bitstream
+
+The first CORRECTION replaced "1 per 3 min" with "~10 trips/min" and warned
+that a saturating counter divided by elapsed time is a floor divided by an
+assumption. That warning was right and the number happened to be close, but
+**neither figure was a measurement, because the counter had always been read
+saturated at 255.** `fk33ctl.py thermal --clear` clears the latch, the cause
+and the count, so the rate can simply be measured. It now has been, on card 1
+running the routed engine bitstream (`ed1ffe2`).
+
+### MEASURED: the rate is not constant, it DECAYS
+
+Cleared at 16:11:59, sampled by `fk33ctl.py thermal` at 300 s intervals:
+
+| interval | trips in interval | rate | die C | HBM code |
+|---|---|---|---|---|
+| 0 to 300 s | 53 | 10.6 / min | 36.8 | **37** |
+| 300 to 600 s | 30 | 6.0 / min | 37.3 | 36 |
+| 600 to 900 s | 11 | 2.2 / min | 34.8 | 36 |
+| **total 900 s** | **94** | **6.3 / min** | peak 39.8 | peak 37 |
+
+An earlier, separate 180 s window taken while the card was quiet recorded
+**1 trip**, i.e. 0.33 / min.
+
+### The hypothesis this supports, stated as a hypothesis
+
+The sticky cause is "the two HBM temperature copies disagreed (a CDC fault)".
+The trip rate tracks the HBM code being at **37** and decays as it settles at
+**36**. That is what a **code-boundary** effect looks like: when the true
+temperature sits between two codes, two copies sampled at different instants
+straddle the boundary and disagree; when it sits solidly inside one code, they
+agree. It predicts the rate should spike whenever HBM temperature CROSSES a
+code boundary, i.e. under changing load, and fall to near zero when thermally
+settled -- which is exactly the 1-trip quiet window.
+
+**NOT ESTABLISHED.** Two windows under different conditions is not a controlled
+comparison, and no experiment here varied HBM load deliberately. The test that
+would settle it: drive sustained HBM traffic (`fk33ctl.py bench`) to move the
+code across a boundary on purpose, and see whether the rate follows the
+crossing rather than the absolute temperature.
+
+### Measurement trap hit, by the author of the previous correction
+
+On seeing **1 trip in 180 s** I told Oren the derived ~10 / min was "roughly
+30x too high" and "simply wrong". The very next window measured 53 trips in
+300 s and corroborated the original figure. **A single event in a short window
+bounds nothing**, and I made a confident claim from a sample of one immediately
+after criticising an earlier estimate for resting on an assumption. Two windows
+disagreeing 30x on a rate means neither bounds it; that is the same lesson this
+project already recorded for seed calibration, where two sweeps disagreeing
+2.08x on a maximum meant no feasible seed count bounded the tail. **Counts over
+a long window, not a rate from a short one.**
+
+### Not in doubt
+
+Across all 900 s: `halted no`, `warn no`, `armed yes`, and the canary advanced
+throughout (1,270,735 to 1,348,756 over an earlier 4 min sample). The guard
+never halted the compute domain during any window on this bitstream.
