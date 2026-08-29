@@ -85,6 +85,21 @@ could not rule out damage. There was none, and there could not have been. The
 disclosure was still the right call: reporting a suspected collision you cannot
 disprove is worth more than a silent hope, and the answer only took one grep.
 
+**CORRECTION, appended: commit `4891c6d` mixes two authors' work.** Its
+message describes only my `regress.sh` note; everything else in it is TRACK
+A-CTRL's own worklog update, swept in by a pathspec commit while A-CTRL was
+editing the same file. Nothing was lost and A-CTRL's content is intact; the
+defect is a message that described half its contents. It could not be amended,
+because another track committed on top within the minute -- which is the
+failure mode recorded two paragraphs above, reproduced against its own author
+inside an hour.
+
+The root cause is worth more than the incident. I ran the prescribed check,
+saw it print DIRTY, and committed anyway, because I had chained the check and
+the commit into one command so the check merely PRECEDED the action instead of
+GATING it. **A check whose result you do not branch on is decoration.** Run the
+check as its own step, read it, then act.
+
 **Standing rule for every track: no hardware.** No `xsdb`, `hw_server`,
 `vivado ... program`, `pcieep.sh`, `jtag.sh`, `flash.sh`, `program.tcl`, and
 nothing that opens `/dev/xdma*`. A live FK33 is in this session, and an agent
