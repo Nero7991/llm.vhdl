@@ -37,6 +37,22 @@ choosing its own.  out_shift is likewise the schedule's `i mod 5`.
 The CODEBOOK is `rtl/llama_top.vhd`'s `cb_int4`, the two's-complement int4
 identity (i for i<8, i-16 otherwise), NOT IQ4_NL.  It is not ascending, so the
 value-to-index step is `code & 15` and not a searchsorted.
+
+THE RMSNorm GAIN IMAGE, `--norm-out`, ADDED 2026-08-29 BY TRACK NORMW.
+Until then `rtl/llama_top.vhd:1615-1626` built the top-level norm weight as
+`2**NORM_W_EXP + ((i*37) mod 512) - 256`, a synthetic ramp, and `attn_norm`
+appeared nowhere in the file.  TRACK REF9B's D2 and TRACK SPECREC found that
+independently, and its consequence is that the `R_XN-L` and `R_XN.ffn-L` seams
+could not be compared against the 9B reference at all.  With `--norm-out` this
+tool also writes the REAL gains -- `blk.L.attn_norm.weight` before the
+attention/GDN half, `blk.L.post_attention_norm.weight` before the FFN half and
+`output_norm.weight` at the tail, which is exactly the mapping
+`tools/ref9b/seam_map.py` names -- one norm op per OP_VEC_NORM in schedule
+order.  The gain has its OWN reduction rule; see `reduce_gain`.
+
+Without `--norm-out` nothing about this tool changes: no extra tensor is read
+and `--out` is byte-identical (MEASURED: md5 8cd88f10114e3a74a586c8a382d0889c
+for `--blocks 4 --attn-interval 4 --reduce pool`, unchanged).
 """
 
 import argparse, os, sys
@@ -90,7 +106,7 @@ def build_plan(blocks, attn_interval):
         plan.append(dict(op=op, **kw))
 
     def ffn(b):
-        emit(OP_NORM)
+        emit(OP_NORM, tens=f"blk.{b}.post_attention_norm.weight")
         emit(OP_A, rows=FFN, cols=HIDDEN, tens=f"blk.{b}.ffn_gate.weight", r0=0)
         emit(OP_A, rows=FFN, cols=HIDDEN, tens=f"blk.{b}.ffn_up.weight", r0=0)
         emit(OP_SWG)
@@ -99,7 +115,7 @@ def build_plan(blocks, attn_interval):
 
     for b in range(blocks):
         if (b + 1) % attn_interval == 0:
-            emit(OP_NORM)
+            emit(OP_NORM, tens=f"blk.{b}.attn_norm.weight")
             # att_qg is Q AND the gate, and in this model they are ONE tensor:
             # `blk.N.attn_q.weight` has 8192 rows against attn_q_heads *
             # attn_head_dim = 4096, i.e. exactly the 2*att_q the schedule
@@ -115,7 +131,7 @@ def build_plan(blocks, attn_interval):
                  tens=f"blk.{b}.attn_output.weight", r0=0)
             emit(OP_RES)
         else:
-            emit(OP_NORM)
+            emit(OP_NORM, tens=f"blk.{b}.attn_norm.weight")
             emit(OP_A, rows=KEY_DIM, cols=HIDDEN,
                  tens=f"blk.{b}.attn_qkv.weight", r0=0)
             emit(OP_A, rows=KEY_DIM, cols=HIDDEN,
@@ -134,7 +150,7 @@ def build_plan(blocks, attn_interval):
             emit(OP_RES)
         ffn(b)
 
-    emit(OP_NORM)
+    emit(OP_NORM, tens="output_norm.weight")
     emit(OP_A, rows=VOCAB_SHARD, cols=HIDDEN, tens="output.weight", r0=0)
     emit(OP_END)
     return plan
@@ -148,6 +164,51 @@ def reduce_cols(W, cols, mode):
         return W[:, :cols]
     assert K % cols == 0, f"pool needs cols|K, got {cols} and {K}"
     return W.reshape(W.shape[0], cols, K // cols).sum(axis=2)
+
+
+def reduce_gain(w, n, mode):
+    """The RMSNorm GAIN's reduction, and it is NOT `reduce_cols`.
+
+    THE ARITHMETIC, because this is the one place the two rules must differ and
+    a copied `sum` here would be silently wrong by a factor of K/n = 64.
+
+    The real block is  out_m = sum_j W[m,j] * xhat_j * g_j  over K = 4096.
+    `reduce_cols(..., "pool")` replaces W by  Wp[m,c] = sum_{j in grp(c)} W[m,j],
+    which is what preserves the l2 row norm, and the scaled block computes
+    out_m = sum_c Wp[m,c] * xhat_c * gp_c.  Matching the two term by term with
+    xhat treated as constant inside a group gives
+
+        sum_{j in grp(c)} W[m,j] * g_j  ==  (sum_{j in grp(c)} W[m,j]) * gp_c
+
+    which is solved by  gp_c = MEAN of g over the group, not the sum.  A sum
+    would multiply every scaled activation by 64 and move the whole residual
+    stream six octaves, which is exactly the class of stimulus error that
+    produced three false alarms on 2026-08-28.
+
+    `slice` takes g[:n], to pair with `reduce_cols`'s `slice`.
+    """
+    K = w.size
+    if K == n:
+        return w
+    if mode == "slice":
+        return w[:n]
+    assert K % n == 0, f"mean needs n|K, got {n} and {K}"
+    return w.reshape(n, K // n).mean(axis=1)
+
+
+def quantize_gain(w, w_exp):
+    """A gain vector -> int16 mantissas at a FIXED exponent.
+
+    `rmsnorm_rs`'s `w_mant` is a flat N*16 signed vector at a single `w_exp`,
+    so this is a plain round-and-clip with NO per-block scale.  Overflow is an
+    ASSERT and not a clip: a clipped gain is a wrong number that looks like a
+    working one.
+    """
+    q = np.rint(np.asarray(w, dtype=np.float64) * (2.0 ** w_exp))
+    assert (np.abs(q) <= 32767).all(), (
+        "norm gain does not fit int16 at w_exp=%d: max |q| = %.1f.  Lower "
+        "--norm-w-exp." % (w_exp, float(np.abs(q).max())))
+    return q.astype(np.int64)
 
 
 def quantize_fixed(W, w_exp):
@@ -186,6 +247,23 @@ def main():
     ap.add_argument("--reduce", choices=["pool", "slice"], default="pool")
     ap.add_argument("--out", required=True)
     ap.add_argument("--stats", default=None)
+    # ---- the RMSNorm GAIN image.  Additive: without --norm-out nothing below
+    # runs, no extra tensor is read and --out is byte-identical to what this
+    # tool produced before these options existed.
+    ap.add_argument("--norm-out", default=None,
+                    help="also write the per-OP_VEC_NORM gain image that "
+                         "rtl/llama_top.vhd's NORM_W_IMAGE reads: one "
+                         "4-hex-digit int16 per line, element 0 first, "
+                         "hidden elements per norm op, norm ops in schedule "
+                         "order (2*blocks+1 of them).")
+    ap.add_argument("--norm-reduce", choices=["mean", "slice"], default="mean",
+                    help="how a 4096-element gain becomes a 64-element one.  "
+                         "`mean` is the partner of --reduce pool; see "
+                         "reduce_gain() for the arithmetic that fixes it.")
+    ap.add_argument("--norm-w-exp", type=int, default=12,
+                    help="rtl/llama_top.vhd's NORM_W_EXP (:317, default 12).  "
+                         "The gain mantissas are round(g * 2**this).")
+    ap.add_argument("--norm-stats", default=None)
     a = ap.parse_args()
 
     plan = build_plan(a.blocks, a.attn_interval)
@@ -206,12 +284,26 @@ def main():
             for nm, o, n in t:
                 want(nm, st["cols"], o + n)
 
+    # ---- the norm gains, collected on their own path.  A gain is a VECTOR
+    # with its own reduction rule, so it deliberately does not share `need`.
+    need_norm = []
+    if a.norm_out:
+        for st in plan:
+            if st["op"] == OP_NORM:
+                need_norm.append(st["tens"])
+        assert len(need_norm) == 2 * a.blocks + 1, \
+            f"expected 2*blocks+1 norm ops, plan has {len(need_norm)}"
+
     sys.stderr.write(f"reading {len(need)} tensors from {a.gguf}\n")
     rd = GGUFReader(a.gguf, "r")
     # Reduce EVERY needed tensor to the small shapes it is used at, one at a
     # time, so the 200 MB f32 transient never coexists with another.
     small = {}
+    gains = {}
+    want_norm = set(need_norm)
     for t in rd.tensors:
+        if t.name in want_norm:
+            gains[t.name] = P.tensor_as_mk(t).reshape(-1).astype(np.float64)
         if t.name not in need:
             continue
         cols_set, rowcap = need[t.name]
@@ -223,6 +315,8 @@ def main():
         del W
     missing = set(need) - set(small)
     assert not missing, f"tensors not in the gguf: {sorted(missing)[:5]}"
+    missing_n = want_norm - set(gains)
+    assert not missing_n, f"norm gains not in the gguf: {sorted(missing_n)[:5]}"
 
     cb = np.array([i if i < 8 else i - 16 for i in range(16)], dtype=np.int8)
 
@@ -277,6 +371,37 @@ def main():
             f.write("step,rows,cols,w_exp,out_shift,rownorm,log2_rownorm\n")
             for s in stats:
                 f.write(",".join(str(x) for x in s) + "\n")
+    # ---- the gain image ------------------------------------------------
+    if a.norm_out:
+        nstats = []
+        with open(a.norm_out, "w") as f:
+            for k, nm in enumerate(need_norm):
+                g = reduce_gain(gains[nm], HIDDEN, a.norm_reduce)
+                assert g.size == HIDDEN, (nm, g.size)
+                q = quantize_gain(g, a.norm_w_exp)
+                for v in q:
+                    # 4 hex digits, two's complement, ELEMENT 0 FIRST.  One
+                    # value per line rather than one packed word per norm op:
+                    # a packed word would have to be written MSB-first, i.e.
+                    # element N-1 first, which is the ordering it is easiest
+                    # to get silently backwards.
+                    f.write("%04x\n" % (int(v) & 0xFFFF))
+                nstats.append((k, nm, float(g.min()), float(g.max()),
+                               float(np.sqrt((g ** 2).mean())),
+                               int(np.abs(q).max())))
+        sys.stderr.write(
+            f"wrote {a.norm_out}: {len(need_norm)} norm ops x {HIDDEN} "
+            f"elements, reduce={a.norm_reduce} w_exp={a.norm_w_exp}\n")
+        rmss = [x[4] for x in nstats]
+        sys.stderr.write(
+            f"gain rms over the {len(nstats)} ops: min {min(rmss):.4f} "
+            f"max {max(rmss):.4f}  (the synthetic ramp's is 1.0043)\n")
+        if a.norm_stats:
+            with open(a.norm_stats, "w") as f:
+                f.write("norm_op,tensor,min,max,rms,max_abs_mant\n")
+                for x in nstats:
+                    f.write(",".join(str(y) for y in x) + "\n")
+
     ln = [s[6] for s in stats]
     sys.stderr.write(f"A jobs {len(ln)}  mean log2 row norm "
                      f"{np.mean(ln):.3f}  min {min(ln):.3f}  max {max(ln):.3f}\n")

@@ -223,6 +223,13 @@
 #                               Until this row existed the gate ran ONLY the
 #                               generic defaults, which are the attention STUB
 #                               and the probe norm.
+#   tb_llama_top_normw          tb_llama_top_real plus the REAL RMSNorm gain,
+#                               sim/llama_top_nw_b4_mean.hex, in place of
+#                               rtl/llama_top.vhd's synthetic ramp.  The pair
+#                               is a controlled comparison: the only
+#                               difference between the two rows is the norm
+#                               weight.  Same cost as _real, so it is in
+#                               SLOW_TBS for the same reason.
 #   tb_seq_desc_fetch           491-descriptor walk
 #   tb_seq_opdec                491-step walk through three units
 #   tb_seq_region_lock          491-step plan
@@ -376,7 +383,31 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=86   # +1 sim/tb_seq_tbl_shape, 2026-08-29.  The real 9B
+BASELINE_PASS=88   # +1 sim/tb_llama_top_normw, 2026-08-29.  The top-level
+                   #    RMSNorm gain was a synthetic ramp and `attn_norm`
+                   #    appeared ZERO times in rtl/llama_top.vhd, so the nine
+                   #    R_XN seams of a token could not be compared against
+                   #    anything derived from the model.  This row runs the
+                   #    real gains.  It is tb_llama_top_real's generic set
+                   #    plus NORM_W_IMAGE and nothing else, so the two rows
+                   #    differ in exactly one thing.  Its vector
+                   #    sim/llama_top_nw_b4_mean.hex is COMMITTED for the same
+                   #    reason the weight image is (the generator needs an
+                   #    18 GB GGUF that is not in git), so it needs no row in
+                   #    the vector tables.  MEASURED 78 s.
+                   # +1 sim/tb_a_geom, 2026-08-29.  seq_tbl_pkg states
+                   #    A_ROWS_IF and A_MAXROWS_BFP as literals and
+                   #    matvec_int4_desc_axi states them again as generic
+                   #    defaults, with NOTHING checking they agree; a
+                   #    divergence is a descriptor table the gateware refuses
+                   #    at run time on the card, which is the defect
+                   #    80d3a61 spent a track repairing.  The DUT is
+                   #    instantiated with NO generic map, so ROWS_IF is
+                   #    checked by port width at elaboration and again from
+                   #    CAPS, and MAXROWS_BFP is BRACKETED behaviourally by
+                   #    two descriptors that differ in one field.  Under a
+                   #    second.
+                   # +1 sim/tb_seq_tbl_shape, 2026-08-29.  The real 9B
                    #    descriptor table encoded the lm_head as ONE
                    #    248,320-row A job, which matvec_int4_desc_axi's
                    #    S_CHECK refuses in EVERY out_mode, and the four
@@ -493,7 +524,7 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_emit_chain sim:tb_gdn_recur_pipe
           sim:tb_matvec_axi sim:tb_matvec_core sim:tb_gdn_conv_cycles
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
           sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
-          sim:tb_llama_top_seq sim:tb_llama_top_real
+          sim:tb_llama_top_seq sim:tb_llama_top_real sim:tb_llama_top_normw
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
@@ -1009,6 +1040,8 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   local f
   # `.hex` was added 2026-08-29 for sim/llama_top_w_b4_pool.hex, the committed
   # real Qwen3.5-9B weight image sim/tb_llama_top_real.vhd opens by bare name.
+  # sim/llama_top_nw_b4_mean.hex, the real RMSNorm gain image
+  # sim/tb_llama_top_normw.vhd opens the same way, rides on the same rule.
   # Without it that row fails with "cannot open the weight image", which reads
   # like a missing file and is a missing GLOB.
   for f in "$SIM"/*.txt "$SIM"/*.dat "$SIM"/*.csv "$SIM"/*.mem "$SIM"/*.bin \

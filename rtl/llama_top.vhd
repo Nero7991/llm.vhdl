@@ -151,6 +151,12 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+-- textio is here for ONE thing: NORM_W_IMAGE, the real RMSNorm gain image.
+-- It is read at elaboration and only when that generic is non-empty; nothing
+-- in the default path touches a file.  This file is not in any synthesis flow
+-- (`grep -rn llama_top hw/` is empty), so the elaboration-time read costs
+-- nothing there either.
+use std.textio.all;
 use work.model_cfg_pkg.all;
 use work.llama_map_pkg.all;
 use work.util_pkg.clog2;
@@ -315,6 +321,39 @@ entity llama_top is
     -- 2**NORM_W_EXP, i.e. a value near 1.0, which is what an RMSNorm gain is
     -- initialised to.
     NORM_W_EXP : integer  := 12;
+
+    -- ==================================================================
+    -- THE REAL NORM GAIN, `NORM_W_IMAGE`.  Added 2026-08-29, TRACK NORMW.
+    --
+    -- WHY.  Two tracks found the same thing on 2026-08-29 without knowing of
+    -- each other.  TRACK REF9B, building the whole-model 9B reference, had to
+    -- record finding D2: "the top-level norm weight is synthetic ... those two
+    -- seams cannot be compared against this reference at all".  TRACK SPECREC,
+    -- reconciling the specs against the RTL, observed that `attn_norm` appears
+    -- ZERO times in this file.  `R_XN-L`, `R_XN.ffn-L` and `R_XN.final` are 9
+    -- of the 63 seams a token captures, and they are the outputs of the one
+    -- operation the whole residual stream's scale depends on.
+    --
+    -- WHAT IT IS.  A file of the real gains, one entry per OP_VEC_NORM of a
+    -- token in schedule order, written by
+    -- `tools/gen_llama_top_weights.py --norm-out`.  Empty (the DEFAULT) keeps
+    -- the synthetic ramp and the default path is bit-identical to what it was
+    -- before this generic existed -- MEASURED, not asserted: the
+    -- `tb_llama_top_real` landmark `R_X(0) = -16339 hash 92903` is unchanged.
+    --
+    -- WHAT IT IS NOT, and this is the part not to overstate.  It does NOT add
+    -- a weight region, a descriptor field, or a packing for a norm gain.  The
+    -- design still has no path by which a gain reaches this unit from HBM, and
+    -- that gap is exactly as open as it was.  This is STIMULUS, in the same
+    -- sense `W_IMAGE` is stimulus for subsystem A -- and, as with A, replacing
+    -- a fabricated constant with the real numbers is what makes the arithmetic
+    -- judgeable at all.  A gain is a learned weight whose scale does not move
+    -- with the token, so serving it from an elaboration-time image rather than
+    -- a token-varying region misrepresents nothing about the operation.
+    --
+    -- NORM_REAL only.  With NORM_REAL false the behavioural mean-removal model
+    -- runs, it has no weight at all, and this generic is not read.
+    NORM_W_IMAGE : string := "";
 
     -- ==================================================================
     -- THE REAL SUBSYSTEM C, NOT THE STUB.  With C_REAL true `OP_C_JOB` is
@@ -1612,6 +1651,16 @@ begin
       -- move with the token, and there is no region, descriptor field or
       -- packing that would let it.  Same rule the conv weights and the two
       -- learned per-head scalars follow under B_SRC_REAL.
+      --
+      -- IT IS ALSO SYNTHETIC, AND THAT COST A COMPARISON.  Two tracks found
+      -- this independently on 2026-08-29: REF9B's finding D2 and SPECREC's
+      -- observation that `attn_norm` appears ZERO times in this file.  Its
+      -- consequence is not cosmetic -- `R_XN-L` and `R_XN.ffn-L` are 9 of the
+      -- 63 captured seams and NEITHER can be compared against a reference
+      -- built from the model, because the model's gain is not what normalises
+      -- them.  `NORM_W_IMAGE` below is that fix; this ramp is what runs when
+      -- it is empty, and the empty path is bit-identical to what it was
+      -- before that generic existed.
       function norm_w_const return std_logic_vector is
         variable r : std_logic_vector(NN*MANT_W-1 downto 0);
         variable v : integer;
@@ -1624,6 +1673,89 @@ begin
         return r;
       end function;
       constant W_CONST : std_logic_vector(NN*MANT_W-1 downto 0) := norm_w_const;
+
+      -- ================================================================
+      -- THE REAL GAIN IMAGE.  `NORM_W_IMAGE`, added 2026-08-29 (TRACK NORMW).
+      --
+      -- One entry per OP_VEC_NORM of the token, in SCHEDULE ORDER, which is
+      -- what `tools/gen_llama_top_weights.py --norm-out` writes:
+      -- `blk.L.attn_norm.weight` before the attention/GDN half,
+      -- `blk.L.post_attention_norm.weight` before the FFN half, and
+      -- `output_norm.weight` at the tail.  That is exactly the mapping
+      -- `tools/ref9b/seam_map.py` names for `R_XN-L`, `R_XN.ffn-L` and
+      -- `R_XN.final`, so a seam captured here is comparable against the
+      -- reference element for element.
+      --
+      -- WHAT THIS IS NOT.  It is NOT a weight region, a descriptor field or a
+      -- packing.  The design still has no way for a norm gain to reach this
+      -- unit from HBM, and that gap is unchanged and is NOT closed here -- see
+      -- the write-up.  This is stimulus, in the same sense `W_IMAGE` is
+      -- stimulus for subsystem A: it replaces a fabricated constant with the
+      -- real numbers so the arithmetic can be judged.  A gain is a learned
+      -- weight, so serving it from an elaboration-time image rather than a
+      -- token-varying region does not misrepresent anything about it.
+      --
+      -- THE FILE FORMAT is one 4-hex-digit two's-complement int16 per line,
+      -- ELEMENT 0 FIRST, NN elements per norm op, norm ops back to back.  One
+      -- value per line rather than one packed word per op is deliberate: a
+      -- packed word has to be written MSB-first, i.e. element NN-1 first,
+      -- which is the ordering easiest to get silently backwards, and a
+      -- reversed gain vector is a wrong number with no structural symptom.
+      --
+      -- A SHORT OR LONG IMAGE IS A REFUSAL, not a truncation: the table is
+      -- indexed by NORM OP, so an image built for a different BLOCKS would
+      -- serve every norm the gain of some other norm, silently.
+      impure function nw_count return natural is
+        file     fh : text;
+        variable ok : file_open_status;
+        variable l  : line;
+        variable n  : natural := 0;
+      begin
+        if NORM_W_IMAGE = "" then return 1; end if;
+        file_open(ok, fh, NORM_W_IMAGE, read_mode);
+        assert ok = open_ok
+          report "llama_top: cannot open the norm gain image "
+               & NORM_W_IMAGE severity failure;
+        while not endfile(fh) loop
+          readline(fh, l);
+          n := n + 1;
+        end loop;
+        file_close(fh);
+        assert n > 0 and n mod NN = 0
+          report "llama_top: the norm gain image " & NORM_W_IMAGE & " has "
+               & integer'image(n) & " lines, which is not a positive multiple "
+               & "of the norm length " & integer'image(NN) & "."
+          severity failure;
+        return n / NN;
+      end function;
+      constant NW_N : positive := nw_count;
+
+      type nw_t is array (0 to NW_N-1)
+        of std_logic_vector(NN*MANT_W-1 downto 0);
+
+      impure function nw_load return nw_t is
+        file     fh : text;
+        variable ok : file_open_status;
+        variable l  : line;
+        variable v  : std_logic_vector(MANT_W-1 downto 0);
+        variable r  : nw_t := (others => W_CONST);
+      begin
+        if NORM_W_IMAGE = "" then return r; end if;
+        file_open(ok, fh, NORM_W_IMAGE, read_mode);
+        assert ok = open_ok
+          report "llama_top: cannot open the norm gain image "
+               & NORM_W_IMAGE severity failure;
+        for k in 0 to NW_N-1 loop
+          for i in 0 to NN-1 loop
+            readline(fh, l);
+            hread(l, v);
+            r(k)((i+1)*MANT_W-1 downto i*MANT_W) := v;
+          end loop;
+        end loop;
+        file_close(fh);
+        return r;
+      end function;
+      constant NW_TBL : nw_t := nw_load;
 
       signal rdy  : std_logic := '1';
       signal dn   : std_logic := '0';
@@ -1643,6 +1775,23 @@ begin
       signal p_pub : std_logic := '0';
       signal p_ssq : unsigned(63 downto 0) := (others => '0');
       signal p_n   : unsigned(15 downto 0) := (others => '0');
+
+      -- WHICH norm op this is.  Counted, not decoded: `seq_vec_issue` carries
+      -- no step index to this adapter, and the ONE thing the schedule fixes is
+      -- the ORDER of the norm ops in a token.  Reset on `go`, which is the
+      -- token start, so a run of NTOK tokens serves each token the same gains
+      -- -- a gain is per LAYER, not per position.
+      --
+      -- `nidx` is PINNED for the whole of the operation it names and advances
+      -- only at its completion; see `nsel` below for why the obvious place --
+      -- the accept -- is off by one.  That pinning is seam rule (1) in this
+      -- file's header applied to the gain: rmsnorm_rs reads `w_mant` in TWO
+      -- separate element passes several hundred cycles apart, so a `w_mant`
+      -- that moved mid-operation would mix two gains into one plausible wrong
+      -- vector.
+      signal nidx : natural range 0 to NW_N-1 := 0;
+      signal novf : boolean := false;
+      signal wsel : std_logic_vector(NN*MANT_W-1 downto 0) := NW_TBL(0);
     begin
       v_ready(vi) <= rdy;
       v_done(vi)  <= dn;
@@ -1654,6 +1803,25 @@ begin
       obs_norm_ssq <= p_ssq;
       obs_norm_n   <= p_n;
       obs_norm_exp <= v_exp_a;
+
+      -- The banner, on the same rule as every other model in this file: a
+      -- configuration that is not the default says so at time zero.
+      nwsay : if SHOUT generate
+        process is
+        begin
+          if NORM_W_IMAGE = "" then
+            report "llama_top: the D-vec norm gain is the SYNTHETIC RAMP "
+                 & "(NORM_W_IMAGE empty).  R_XN is not comparable against a "
+                 & "model-derived reference."
+              severity note;
+          else
+            report "llama_top: the D-vec norm gain is REAL, "
+                 & integer'image(NW_N) & " norm ops from " & NORM_W_IMAGE
+              severity note;
+          end if;
+          wait;
+        end process;
+      end generate;
 
       -- rmsnorm_rs's element width is hardcoded 16 throughout, in its ports
       -- and in the value bounds its narrowing assertions rest on.  This is
@@ -1669,8 +1837,52 @@ begin
         port map(
           clk => clk, rst => rst, start => r_go,
           x_mant => xv,      x_exp => r_xe,
-          w_mant => W_CONST, w_exp => NORM_W_EXP,
+          w_mant => wsel,    w_exp => NORM_W_EXP,
           done => r_done, o_mant => ov, o_exp => r_oe);
+
+      -- The norm-op counter.  Separate from `nproc` so that the two instants
+      -- it keys off are the ones `nproc` PUBLISHES (`tk`, `dn`) rather than a
+      -- second decode of `v_start` that could disagree with them.
+      --
+      -- IT ADVANCES AT THE COMPLETION, NOT AT THE ACCEPT, and that is the one
+      -- subtlety here.  Advancing at the accept was the first version and it
+      -- is off by one: `tk` fires in S_IDLE, hundreds of cycles before
+      -- rmsnorm_rs's pass 2 reads `w_mant`, so norm op k would have been
+      -- computed with gain k+1 -- every seam wrong, none of them structurally
+      -- so.  Advancing at `dn and v_ack` leaves `nidx` pinned at k for the
+      -- whole of op k and moves it while no unit is reading.
+      nsel : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if rst = '1' or go = '1' then
+            nidx <= 0;
+            novf <= false;
+          elsif dn = '1' and v_ack(vi) = '1' then
+            if nidx + 1 < NW_N then
+              nidx <= nidx + 1;
+            else
+              -- ONE PAST THE END.  Not an error yet: the LAST norm of a token
+              -- completes here and nothing more is coming.  It becomes an
+              -- error only if another norm is then accepted, which is what
+              -- the assert below catches.  Wrapping instead would serve the
+              -- tail of a token the gains of its head, silently.
+              novf <= true;
+            end if;
+          end if;
+
+          -- One cycle behind `nidx`, which is ample: the earliest `w_mant`
+          -- read is pass 2, after the n+2 region reads, S_GO and the whole
+          -- rsqrt.
+          wsel <= NW_TBL(nidx);
+
+          assert not (tk = '1' and novf and NORM_W_IMAGE /= "")
+            report "llama_top: the token issued more OP_VEC_NORMs than the "
+                 & "norm gain image " & NORM_W_IMAGE & " holds ("
+                 & integer'image(NW_N) & ").  It was built for a different "
+                 & "BLOCKS."
+            severity failure;
+        end if;
+      end process;
 
       nproc : process(clk) is
         type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);

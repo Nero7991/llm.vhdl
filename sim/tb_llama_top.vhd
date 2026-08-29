@@ -325,6 +325,16 @@ entity tb_llama_top is
     -- than having no norm at all.
     NORM_REAL   : boolean := false;
     -- ==================================================================
+    -- THE REAL NORM GAIN.  A PASS-THROUGH AND NOTHING ELSE: see the generic
+    -- of the same name in `rtl/llama_top.vhd` for what it is and, more
+    -- importantly, what it is not.  Added 2026-08-29 by TRACK NORMW, which
+    -- does NOT own this file -- it is one generic defaulting to "" and one
+    -- line in the generic map below, and with it empty every landmark this
+    -- bench publishes is unchanged (MEASURED, not assumed).  It is here
+    -- because `llama_top`'s norm gain has no other way in: there is no port
+    -- and no region for it.
+    NORM_W_IMAGE : string := "";
+    -- ==================================================================
     -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
     -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
     -- `wword` and every published number unchanged.
@@ -978,7 +988,8 @@ begin
       WDOG_LIMIT => 200000, STRICT => true,
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
-      NORM_REAL => NORM_REAL, C_REAL => C_REAL,
+      NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
+      C_REAL => C_REAL,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
       C_K_BASE => KV_K_BASE, C_V_BASE => KV_V_BASE,
