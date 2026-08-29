@@ -408,7 +408,7 @@ BASELINE_PASS=93   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
                    #    than forbidding it: an operation started after a
                    #    PARTIAL load consumes a mixed table and reports
                    #    success.  MEASURED 0.46 s.  Teeth:
-                   #    sim/mutate_matvec_cb.sh, 13 of 19 over six columns,
+                   #    sim/mutate_matvec_cb.sh, 14 of 20 over six columns,
                    #    with a control and an assert-neutered column; the six
                    #    survivors and the one row only P_CB_CHK catches are
                    #    named there and in

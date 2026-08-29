@@ -514,6 +514,28 @@ mutate K8b "SURVIVE: same reason as K8a, and the pair is the evidence that NO fu
 "                resize(cb((rr / CB_ROWS_PER_COPY + 1) mod CB_COPIES)(idx) * xw, 28);"
 
 echo
+echo "---- class K9: PER-LANE STALENESS -- the lever-C failure mode, MODELLED --"
+echo "     Today there is one replica per ROW, so a single LANE cannot hold a"
+echo "     stale table.  Lever C gives every lane its own copy and makes that"
+echo "     the primary failure mode.  This row models the RESULT of it -- one"
+echo "     lane decoding one entry differently from every other lane -- so the"
+echo "     claim that the oracle is ready for lever C is demonstrated rather"
+echo "     than argued.  The N column is the one that matters: it says the"
+echo "     lane-equality oracle catches it WITHOUT P_CB_CHK."
+
+mutate K9a "KILL(v) in BOTH modes on C: the lane-equality oracle localises to the single lane, with no help from P_CB_CHK" \
+  "lane (rr=1, j=0) decodes one entry one step off -- what a single stale per-lane replica looks like at the read" \
+"              tr(0)(rr*BLK + j) <=
+                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);" \
+"              if rr = 1 and j = 0 then
+                tr(0)(rr*BLK + j) <=
+                  resize((cb(rr / CB_ROWS_PER_COPY)(idx) + 1) * xw, 28);
+              else
+                tr(0)(rr*BLK + j) <=
+                  resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);
+              end if;"
+
+echo
 echo "---- CANNOT BITE YET -- becomes live only under the LUTRAM fallback ----"
 cat <<'LEVERC'
      These are NOT runnable rows.  Each names a mutation that the current

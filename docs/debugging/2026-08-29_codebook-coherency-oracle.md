@@ -157,11 +157,20 @@ every run identically and NO comparison between runs can see it. Only
 `P_CB_CHK` can. With identical rows, `K3b` is killed by the value oracle alone
 (`NC:KILL(v)`).
 
-**That is what makes the oracle lever-C ready.** Under per-lane replicas a stale
-lane `(rr,j)` corrupts row `rr`'s tree sum and nothing else, so the same
-lane-equality check catches it with no change to the bench. What it still cannot
-see is a divergence that is transient across a load; that is `K3c`, and it stays
-`P_CB_CHK`'s job.
+**That is what makes the oracle lever-C ready, and it is DEMONSTRATED rather
+than argued.** Row `K9a` corrupts the codebook value seen by exactly one lane,
+`(rr=1, j=0)` -- which is what a single stale per-lane replica looks like at the
+read, and a thing the current one-replica-per-row structure cannot express.
+MEASURED: `AC:KILL(v)` and `NC:KILL(v)`, so the lane-equality oracle catches it
+**with and without `P_CB_CHK`**, and its message names the offending lane:
+
+```
+tb_matvec_cb_contract: FAIL -- emitted lane 1 differs from lane 0 on a beat
+whose rows carry IDENTICAL weights, scale and activations.
+```
+
+What it still cannot see is a divergence that is transient across a load; that
+is `K3c`, and it stays `P_CB_CHK`'s job.
 
 MEASURED, the bench passes at every granularity offered:
 
@@ -235,7 +244,7 @@ $ REGRESS_SCRATCH=... bash sim/regress.sh --only matvec_cb
  REGRESSION: PASS
 ```
 
-### 7.2 `sim/mutate_matvec_cb.sh`, 19 rows plus a control, 6 columns each
+### 7.2 `sim/mutate_matvec_cb.sh`, 20 rows plus a control, 6 columns each
 
 Columns are `<mode><bench>`. Mode `A` = `P_CB_CHK` live, `N` = its three
 assertions demoted to `severity note`. Bench `C` = `tb_matvec_cb_contract`,
@@ -273,7 +282,9 @@ K7b    KILLED    AC:surv    AL:surv    AM:KILL(v) NC:surv    NL:surv    NM:KILL(
 K8a    SURVIVED  AC:surv    AL:surv    AM:surv    NC:surv    NL:surv    NM:surv     -- every row reads replica 0
 K8b    SURVIVED  AC:surv    AL:surv    AM:surv    NC:surv    NL:surv    NM:surv     -- the replica select is rotated by one
 
-kill ratio: 13 KILLED + 0 ABORTED = 13 of 19;  6 SURVIVED
+K9a    KILLED    AC:KILL(v) AL:surv    AM:KILL(v) NC:KILL(v) NL:surv    NM:KILL(v)  -- lane (1,0) decodes one entry one step off (a single stale PER-LANE replica)
+
+kill ratio: 14 KILLED + 0 ABORTED = 14 of 20;  6 SURVIVED
 survivors (nothing in the closure watches these): K1b K2b K2c K3d K8a K8b
 killed ONLY with P_CB_CHK live (the assertion is the sole witness): K3c
 ```
@@ -288,11 +299,12 @@ AC (K5a):  tb_matvec_cb_contract: FAIL -- an operation run before any codebook w
 AC (K6a):  tb_matvec_cb_contract: FAIL -- a codebook write offered while rst was asserted took effect
 AM (K7a):  STAGE MISMATCH PARTIAL r=0 b=0 got -4805852 want -5989552
 AM (K7b):  STAGE MISMATCH PARTIAL r=0 b=0 got -5984756 want -5989552
+NC (K9a):  tb_matvec_cb_contract: FAIL -- emitted lane 1 differs from lane 0 ...
 ```
 
 ### 7.3 What each column is FOR, DERIVED from the table
 
-* Column `C` alone kills 11 of 19; `L` alone kills 4; `M` alone kills 6.
+* Column `C` alone kills 12 of 20; `L` alone kills 4; `M` alone kills 7.
   (Counted from the `A` columns of the table above.)
 * `M` is the ONLY column that kills `K7a` and `K7b`. Both corrupt every load in
   the same way, so a relational bench sees a self-consistent world. **The two
