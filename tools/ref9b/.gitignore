@@ -1,0 +1,4 @@
+# Build product of dump_llamacpp.cpp, plus Python bytecode.  Directory-local
+# for the same reason as ref/.gitignore: the root .gitignore is shared.
+dump_llamacpp
+__pycache__/

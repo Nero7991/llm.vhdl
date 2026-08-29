@@ -1,0 +1,93 @@
+# tools/ref9b -- the whole-model 9B reference and its bisect
+
+Makes a first token FALSIFIABLE. Before this, `ref/` held one whole-model
+reference and it was stories260K, so the card could emit *a* token and nothing
+in the repository could say whether it was the right one.
+
+Design, decisions, measured numbers, mutation table and the "do not retry" list:
+`docs/debugging/2026-08-29_9b-whole-model-reference.md`.
+
+## Three rungs, and what each one isolates
+
+| rung | what | isolates |
+|---|---|---|
+| 1 | llama.cpp on the BF16 GGUF (`dump_llamacpp`) | the ALGORITHM. Nobody here wrote it, so it is the defence against the m7 mutant |
+| 2 | `ref/run9b --acts f32` | the INT4 **weight** format, and nothing else |
+| 3 | `ref/run9b --acts bfp` | the int16 BFP **activation** format on top of it. This is the hardware model |
+
+MEASURED 2026-08-29 at the logits: the weight format costs 0.1252 relative RMS,
+the activation format 0.00313 on top of it, and all three rungs pick the same
+next token on all five positions of the reference prompt.
+
+## Files
+
+| file | what it is |
+|---|---|
+| `seam_stream.h` | the `.r9bs` format. Every producer writes it: the anchor, the reference, and (when it exists) a simulation or hardware capture |
+| `dump_llamacpp.cpp` | rung 1, via llama.cpp's public `cb_eval` hook |
+| `build.sh` | builds it against a PREBUILT llama.cpp, writing nothing into that tree |
+| `make_index.py` | `manifest.json` -> the flat index `ref/run9b.c` reads |
+| `r9bs.py` | stream reader. Run it on a file for per-seam statistics |
+| `seam_map.py` | RTL seam name -> llama.cpp node name, with the slices |
+| `seam_bisect.py` | the bisect: first diverging seam, with the magnitude |
+
+`seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
+that name here shadows the Python standard library for every script run from
+this directory.
+
+## Build and run
+
+```sh
+python3 tools/ref9b/make_index.py /mnt/storage/llama-models/qwen35-9b-mv4i-qkvpad
+gcc -O2 -Wall -Wextra -I ref -o ref/run9b ref/run9b.c -lm
+LLAMA_SRC=/mnt/storage/llama-dflash2-src bash tools/ref9b/build.sh
+```
+
+**Use `/mnt/storage/llama-dflash2-src`, not `~/GitHub/llama.cpp.upstream`.** The
+upstream tree's headers and its prebuilt `libllama.so` are two months apart; the
+mismatch is silent at link time and surfaces as `Unsupported ctx type`.
+
+```sh
+# rung 1.  -ngl 0 and CUDA_VISIBLE_DEVICES= are deliberate: the GPUs carry a service.
+CUDA_VISIBLE_DEVICES= ./tools/ref9b/dump_llamacpp \
+  -m /mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf \
+  -o anchor.r9bs --tokens 760,6511,314,9338,369 -ngl 0 --selfcheck
+
+# rung 3.  ~30 s and 4.5 GB per token.  Always run --selftest first.
+./ref/run9b --packed /mnt/storage/llama-models/qwen35-9b-mv4i-qkvpad --selftest
+./ref/run9b --packed /mnt/storage/llama-models/qwen35-9b-mv4i-qkvpad \
+            --tokens 760,6511,314,9338,369 --out ref.r9bs
+```
+
+## Reading a comparison
+
+```sh
+cd tools/ref9b
+# once, on a clean run: record the per-seam profile
+python3 seam_bisect.py ../../ref.r9bs ../../anchor.r9bs --tok 4 --write-baseline base4.txt
+# then gate anything else against it
+python3 seam_bisect.py suspect.r9bs ../../anchor.r9bs --tok 4 --baseline base4.txt
+# and against a same-format capture, which is the sharper instrument
+python3 seam_bisect.py ../../ref.r9bs capture.r9bs --mode exact --tok 4
+```
+
+**Two rules for reading any output from this tool.**
+
+**A flat threshold is meaningless in `--mode cross`.** The clean reference sits
+at rel_rms 0.105 against the anchor at the very first seam, because that is what
+INT4 weights cost. At threshold 0.05, 483 of 491 seams "diverge" on a clean run.
+Always pass `--baseline`.
+
+**`--mode exact` finds things `--mode cross` cannot.** Of nine mutants, cross
+mode located 6 and exact mode located 8, and for one of them exact mode named a
+seam a whole block earlier. A float oracle can say the algorithm is wrong; only
+a same-format oracle can say which cycle to look at.
+
+## What this does NOT cover
+
+The interior of every block -- the conv, the L2 norm, the delta-rule recurrence,
+the attention kernel, the SwiGLU, the residual add -- is computed in double and
+re-packed at the region boundary. Only the subsystem A matvecs are bit-exact.
+Those stages are marked `FX-HOOK` in `ref/run9b.c`; each fixed-point recipe that
+lands should replace one and be measured on the way in. The full "NOT verified"
+list is section 9 of the write-up.

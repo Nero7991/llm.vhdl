@@ -1,0 +1,8 @@
+# Build product of ref/run9b.c.
+#
+# Deliberately HERE and not in the root .gitignore: the root file was being
+# staged by another track at the moment this landed, and a pathspec commit on a
+# shared file takes the WORKING TREE, so committing it would have swept that
+# track's staged hunk into a commit whose message described neither.  A
+# directory-local ignore file is owned by exactly one track and cannot collide.
+run9b
