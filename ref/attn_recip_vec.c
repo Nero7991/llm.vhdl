@@ -80,6 +80,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -136,6 +137,7 @@ int main(int argc, char **argv)
     const char *out = (argc > 1) ? argv[1] : "attn_recip_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 24;
     int nhead = (argc > 3) ? atoi(argv[3]) : 12;   /* 12 query heads per card */
+    rs = vec_seed(argc, argv, 4, 20260830ULL);
     if (nhead > MAXHEAD) nhead = MAXHEAD;
 
     FILE *f = fopen(out, "w");

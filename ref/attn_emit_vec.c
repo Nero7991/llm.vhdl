@@ -112,6 +112,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -188,6 +189,7 @@ int main(int argc, char **argv)
     int ncase = (argc > 2) ? atoi(argv[2]) : 40;
     int ngrp  = (argc > 3) ? atoi(argv[3]) : 2;    /* KV heads per card      */
     int grp_n = (argc > 4) ? atoi(argv[4]) : 48;   /* G x D in the real build */
+    es = vec_seed(argc, argv, 5, 20260901ULL);
     if (ngrp > MAXG) ngrp = MAXG;
     if (ngrp * grp_n > MAXN) grp_n = MAXN / ngrp;
     int n = ngrp * grp_n;

@@ -106,6 +106,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -210,6 +211,7 @@ int main(int argc, char **argv)
     const char *out = (argc > 1) ? argv[1] : "attn_twiddle_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 24;
     int npair = (argc > 3) ? atoi(argv[3]) : ATTN_TW_NPAIR;
+    ts = vec_seed(argc, argv, 4, 20260902ULL);
     if (npair > ATTN_TW_NPAIR) npair = ATTN_TW_NPAIR;
 
     attn_tw_init();

@@ -79,6 +79,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it --------
  * Same convention as ref/gdn_head_emit_vec.c and ref/rmsnorm_bf_vec.c: define
@@ -155,6 +156,7 @@ int main(int argc, char **argv)
                                                      * identical in 9B and 27B */
     int KVB   = (argc > 4) ? atoi(argv[4]) : 32;    /* C spec 2.1.1, and one
                                                      * 256-bit HBM beat        */
+    rs = vec_seed(argc, argv, 5, 20260827ULL);
     if (DIM % KVB != 0) {
         fprintf(stderr, "dim %d is not a multiple of kv_block %d\n", DIM, KVB);
         return 2;

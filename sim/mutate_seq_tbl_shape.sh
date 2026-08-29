@@ -19,15 +19,55 @@
 # Usage:  bash sim/mutate_seq_tbl_shape.sh            # all rows
 #         SCRATCH=/path bash sim/mutate_seq_tbl_shape.sh
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# ---------------------------------------------------------------------------
+# SELF-ISOLATION.  bash reads a script by BYTE OFFSET as it runs, so editing
+# this file while an instance of it is running corrupts that run silently.
+# Several agents share this repo and the one who gets hit is not the one who
+# edited the file.  So take a private copy, refuse it if it does not parse
+# (which is what a half-written source looks like), and re-exec that.  Same
+# guard, same reasons, as sim/regress.sh:307.  MUT_NO_REEXEC=1 disables it.
+if [ -z "${MUT_REPO:-}" ]; then
+  MUT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export MUT_REPO
+fi
+if [ -z "${MUT_SELF:-}" ] && [ -z "${MUT_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t mutself.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "could not take a private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "the private copy does not parse -- this script was probably being" >&2
+    echo "  written at the instant it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"; export MUT_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+fi
+trap 'if [ -n "${MUT_SELF:-}" ]; then rm -f "$MUT_SELF"; fi' EXIT
+
+# THREE VERDICTS, NOT TWO.  This harness used to judge a mutation with
+#   ghdl -r ... && grep -q PASS
+# under which a run that DIED -- an elaboration error, a language bound check,
+# the DUT's own assert, a wedge to --stop-time -- scored as a KILL even though
+# the checker never ran.  sim/mutverdict.py separates the two: KILLED means the
+# CHECKER noticed and said so, ABORT means the run never reached a verdict the
+# checker owns.  An ABORT is reported under its own name and counted apart.
+# Read the header of sim/mutverdict.py for the full rule.
+MUTV="$MUT_REPO/sim/mutverdict.py"
+NKILL=0; NABORT=0; NSURV=0; NTOT=0
+cd "$MUT_REPO"
 SRC=sim/seq_tbl_pkg.vhd
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 mkdir -p "$SCRATCH"
 
 npass=0; nkill=0; nsurv=0; nbad=0; nlang=0
+lang_why=""
 
 mutate() {
   local tag="$1" branch="$2" desc="$3" old="$4" new="$5" expect="$6"
+  lang_why=""
   local dir="$SCRATCH/$tag"
   rm -rf "$dir"; mkdir -p "$dir"
   python3 - "$SRC" "$dir/seq_tbl_pkg.vhd" "$old" "$new" <<'PY'
@@ -56,16 +96,21 @@ PY
        >> "$dir/analyze.log" 2>&1
   ghdl -r --std=08 -frelaxed --workdir="$dir" tb_seq_tbl_shape \
        --max-stack-alloc=0 > "$dir/run.log" 2>&1
-  if grep -q "tb_seq_tbl_shape: PASS" "$dir/run.log"; then
-    got=SURVIVED
-  elif grep -qE "bound check failure|error during elaboration" "$dir/run.log"; then
-    # THE LANGUAGE CAUGHT IT, NOT THE CHECKER.  Reported under its own name
-    # because it says nothing about the bench's resolution: the same mutation
-    # against a checker that could not see it would read identically.
-    got=KILLED-LANG
-  else
-    got=KILLED
-  fi
+  local rcv=$? v
+  # THE LANGUAGE CATCHING IT IS NOT THE CHECKER CATCHING IT.  This script was
+  # already the only one in the tree that said so, but it recognised exactly
+  # two spellings, "bound check failure" and "error during elaboration".  It is
+  # now delegated to sim/mutverdict.py, which recognises the rest of them --
+  # index, range, overflow and null-access checks, an assert inside the DUT
+  # rather than the bench, a wedge to --stop-time, an external timeout -- and
+  # reports WHICH.  The verdict name KILLED-LANG is kept so the expected-result
+  # column in the mutation table below does not have to be rewritten.
+  v=$(python3 "$MUTV" "$dir/run.log" tb_seq_tbl_shape "$rcv")
+  case "$v" in
+    PASS)   got=SURVIVED ;;
+    KILLED) got=KILLED ;;
+    *)      got=KILLED-LANG; lang_why="${v#ABORT:}" ;;
+  esac
   local mark="  "
   if [ "$got" != "$expect" ]; then mark="<-"; fi
   printf '%-4s %-7s %-58s %-9s %s\n' "$tag" "$branch" "$desc" "$got" "$mark"
@@ -77,6 +122,8 @@ PY
   if [ "$got" = KILLED ]; then
     grep -m1 "report error" "$dir/run.log" \
       | sed 's/.*report error.: /       first: /' | cut -c1-118
+  elif [ "$got" = KILLED-LANG ]; then
+    echo "       stopped by: $lang_why  (the checker never reached a verdict)"
   fi
 }
 
@@ -186,5 +233,7 @@ mutate N9 "N>1" "the collective FFN down-projection's row count (DEAD BRANCH)" \
                      dst => R_NONE, n_rows => HID + 1, n_cols => FFN,' SURVIVED
 
 echo
-echo "killed-by-checker $nkill   killed-by-language $nlang   survived $nsurv   not-a-measurement $nbad"
+echo "killed-by-checker $nkill   ABORTED-before-the-checker $nlang   survived $nsurv   not-a-measurement $nbad"
+echo "  (the middle column is the old KILLED-LANG: the run never reached a"
+echo "   verdict the checker owns, so it is NOT a checker kill)"
 echo "scratch: $SCRATCH"

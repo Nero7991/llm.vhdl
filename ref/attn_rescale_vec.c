@@ -102,6 +102,7 @@
 #include <string.h>
 #include <math.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 #define ATTN_RS_ACC_W  36
 #define ATTN_RS_F_W    13
@@ -137,6 +138,7 @@ int main(int argc, char **argv)
 {
     const char *out = (argc > 1) ? argv[1] : "attn_rescale_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 512;
+    rs = vec_seed(argc, argv, 3, 0x5eed5eedULL);
 
     int64_t *ov = malloc(sizeof(int64_t) * (size_t)ncase);
     int64_t *fv = malloc(sizeof(int64_t) * (size_t)ncase);

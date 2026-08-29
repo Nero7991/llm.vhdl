@@ -28,6 +28,7 @@
 #include <math.h>
 #include <assert.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 #define floor_shr(v, sh)   mv4i_floor_shr((v), (sh))
 #define round_shift(v, sh) mv4i_round_shift((v), (sh))
@@ -146,7 +147,7 @@ int main(int argc, char **argv)
     int tk0_ed  = (argc > 3) ? (atoi(argv[3]) != 0) : 1;
     FILE *f = fopen(out, "w");
     if (!f) { perror("fopen"); return 1; }
-    rs_ = 20260825ULL;
+    rs_ = vec_seed(argc, argv, 4, 20260825ULL);
 
     int ncase = 0;
     /* COLUMNS ARE EMITTED IN HEAD-GROUPS.  k_n, q_s, eg, beta and tk0 are

@@ -40,7 +40,45 @@
 # Usage: bash sim/mutate_seq_vec_issue.sh
 # Env:   SCRATCH=<dir>  NELEM=<n>  NRES=<k>  SEED=<n>
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# ---------------------------------------------------------------------------
+# SELF-ISOLATION.  bash reads a script by BYTE OFFSET as it runs, so editing
+# this file while an instance of it is running corrupts that run silently.
+# Several agents share this repo and the one who gets hit is not the one who
+# edited the file.  So take a private copy, refuse it if it does not parse
+# (which is what a half-written source looks like), and re-exec that.  Same
+# guard, same reasons, as sim/regress.sh:307.  MUT_NO_REEXEC=1 disables it.
+if [ -z "${MUT_REPO:-}" ]; then
+  MUT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export MUT_REPO
+fi
+if [ -z "${MUT_SELF:-}" ] && [ -z "${MUT_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t mutself.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "could not take a private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "the private copy does not parse -- this script was probably being" >&2
+    echo "  written at the instant it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"; export MUT_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+fi
+trap 'if [ -n "${MUT_SELF:-}" ]; then rm -f "$MUT_SELF"; fi' EXIT
+
+# THREE VERDICTS, NOT TWO.  This harness used to judge a mutation with
+#   ghdl -r ... && grep -q PASS
+# under which a run that DIED -- an elaboration error, a language bound check,
+# the DUT's own assert, a wedge to --stop-time -- scored as a KILL even though
+# the checker never ran.  sim/mutverdict.py separates the two: KILLED means the
+# CHECKER noticed and said so, ABORT means the run never reached a verdict the
+# checker owns.  An ABORT is reported under its own name and counted apart.
+# Read the header of sim/mutverdict.py for the full rule.
+MUTV="$MUT_REPO/sim/mutverdict.py"
+NKILL=0; NABORT=0; NSURV=0; NTOT=0
+cd "$MUT_REPO"
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 NELEM="${NELEM:-250}"
 NRES="${NRES:-8}"
@@ -179,7 +217,7 @@ for tag, desc, pairs in M:
 man.close()
 PY
 
-NKILL=0; NSURV=0; NTOT=0
+NKILL=0; NABORT=0; NSURV=0; NTOT=0
 echo "======= mutations of rtl/seq_vec_issue.vhd, 7 configurations ==========="
 
 while IFS='|' read -r tag state desc; do
@@ -203,22 +241,29 @@ while IFS='|' read -r tag state desc; do
     echo "$tag  DID NOT ANALYSE -- a mutation that will not build has tested nothing"
     continue
   fi
-  killed=""; survived=""
+  killed=""; survived=""; aborted=""
   for n in $NAMES; do
     eval "cfg=\$CFG_$n"
     # shellcheck disable=SC2086
     ( cd "$dir" && timeout 400 ghdl -r --std=08 -frelaxed --workdir="$dir" \
         tb_seq_vec_seam -gNELEM="$NELEM" -gNRES="$NRES" $cfg \
         --max-stack-alloc=0 --stop-time=900ms ) >"$dir/run_$n.log" 2>&1
-    if grep -q "tb_seq_vec_seam: PASS" "$dir/run_$n.log"; then
-      survived="$survived $n"
-    else
-      killed="$killed $n"
-    fi
+    rcv=$?
+    v=$(python3 "$MUTV" "$dir/run_$n.log" tb_seq_vec_seam "$rcv")
+    case "$v" in
+      PASS)   survived="$survived $n" ;;
+      KILLED) killed="$killed $n" ;;
+      *)      aborted="$aborted $n(${v#ABORT:})" ;;
+    esac
   done
   if [ -n "$killed" ]; then
     NKILL=$((NKILL+1))
-    echo "$tag  KILLED by$killed   (survived:${survived:- --})  -- $desc"
+    echo "$tag  KILLED by$killed   (aborted:${aborted:- --}  survived:${survived:- --})  -- $desc"
+  elif [ -n "$aborted" ]; then
+    NABORT=$((NABORT+1))
+    echo "$tag  ABORT  aborted:$aborted  (survived:${survived:- --})  -- $desc"
+    echo "      the run DIED before the checker reached a verdict, so the checker"
+    echo "      was NOT shown to catch this.  Not counted as a kill."
   else
     NSURV=$((NSURV+1))
     echo "$tag  SURVIVED ALL  -- $desc"
@@ -226,5 +271,11 @@ while IFS='|' read -r tag state desc; do
 done < "$SCRATCH/manifest"
 
 echo
-echo "kill ratio: $NKILL killed, $NSURV survived all, of $NTOT"
+echo
+echo "--------------------------------------------------------------------"
+echo "verdicts: $NKILL killed by the checker, $NABORT aborted before the"
+echo "  checker reached a verdict, $NSURV survived all, of $NTOT attempted."
+echo "  An ABORT is NOT a kill: the run died and the checker never spoke."
+echo "  $(( NTOT - NKILL - NABORT - NSURV )) mutation(s) never ran at all"
+echo "  (anchor failure or did-not-analyse); those are printed above."
 echo "scratch dir with every mutant and every log: $SCRATCH"

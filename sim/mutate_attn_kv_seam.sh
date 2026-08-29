@@ -24,7 +24,45 @@
 # Usage:  bash sim/mutate_attn_kv_seam.sh
 # Env:    SCRATCH=<dir>
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# ---------------------------------------------------------------------------
+# SELF-ISOLATION.  bash reads a script by BYTE OFFSET as it runs, so editing
+# this file while an instance of it is running corrupts that run silently.
+# Several agents share this repo and the one who gets hit is not the one who
+# edited the file.  So take a private copy, refuse it if it does not parse
+# (which is what a half-written source looks like), and re-exec that.  Same
+# guard, same reasons, as sim/regress.sh:307.  MUT_NO_REEXEC=1 disables it.
+if [ -z "${MUT_REPO:-}" ]; then
+  MUT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export MUT_REPO
+fi
+if [ -z "${MUT_SELF:-}" ] && [ -z "${MUT_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t mutself.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "could not take a private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "the private copy does not parse -- this script was probably being" >&2
+    echo "  written at the instant it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"; export MUT_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+fi
+trap 'if [ -n "${MUT_SELF:-}" ]; then rm -f "$MUT_SELF"; fi' EXIT
+
+# THREE VERDICTS, NOT TWO.  This harness used to judge a mutation with
+#   ghdl -r ... && grep -q PASS
+# under which a run that DIED -- an elaboration error, a language bound check,
+# the DUT's own assert, a wedge to --stop-time -- scored as a KILL even though
+# the checker never ran.  sim/mutverdict.py separates the two: KILLED means the
+# CHECKER noticed and said so, ABORT means the run never reached a verdict the
+# checker owns.  An ABORT is reported under its own name and counted apart.
+# Read the header of sim/mutverdict.py for the full rule.
+MUTV="$MUT_REPO/sim/mutverdict.py"
+NKILL=0; NABORT=0; NSURV=0; NTOT=0
+cd "$MUT_REPO"
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 mkdir -p "$SCRATCH"
 VECARGS="64 4 2 16 16 4 2"
@@ -53,6 +91,7 @@ cc -O2 -w -I ref -o "$SCRATCH/genseq" ref/attn_block_seq_vec.c -lm || exit 2
 run_case() {
   local tag="$1" desc="$2" mutdir="$3"; shift 3
   local dir="$SCRATCH/$tag"
+  NTOT=$((NTOT+1))
   rm -rf "$dir"; mkdir -p "$dir/run"
   ( cd "$dir/run" && "$SCRATCH/genseq" attn_block_seq_vec.txt $VECARGS ) \
       >/dev/null 2>&1 || { echo "$tag  VECGEN FAILED"; return; }
@@ -70,17 +109,35 @@ run_case() {
   ( cd "$dir/run" && timeout -k 5 900 ghdl -r --std=08 -frelaxed \
       --workdir=.. tb_attn_kv_seam "$@" --max-stack-alloc=0 \
       --stop-time="$STOP" > run.log 2>&1 )
-  if grep -q "tb_attn_kv_seam: PASS" "$dir/run/run.log"; then
+  local rcv=$?
+  local v
+  v=$(python3 "$MUTV" "$dir/run/run.log" tb_attn_kv_seam "$rcv")
+  # The HANG row is kept and is NOT folded into ABORT.  It is the BENCH's own
+  # residency watchdog firing, at severity failure, from sim/tb_attn_kv_seam.vhd
+  # -- the checker noticing, not the run dying underneath it.  mutverdict.py
+  # classifies it KILLED for exactly that reason (the diagnostic's source file
+  # is the testbench); the extra grep here only says WHICH check bit.
+  if [ "$v" = PASS ]; then
+    NSURV=$((NSURV+1))
     echo "$tag  SURVIVED   -- $desc"
-  elif grep -q "cycles with the block busy" "$dir/run/run.log"; then
+  elif [ "$v" = KILLED ] \
+       && grep -q "cycles with the block busy" "$dir/run/run.log"; then
+    NKILL=$((NKILL+1))
     echo "$tag  KILLED(HANG) -- $desc"
     grep -vE "metavalue" "$dir/run/run.log" | grep -E "seam is stalled|WDOG" \
       | head -1 | sed 's/^/        /' | cut -c1-170
-  else
+  elif [ "$v" = KILLED ]; then
+    NKILL=$((NKILL+1))
     echo "$tag  KILLED     -- $desc"
     grep -vE "metavalue" "$dir/run/run.log" \
       | grep -E "MISMATCH|Q1 --|Q2 --|Q5 --|sweep read pos|kr_en was|vr_en was|record write beat|beat \(head|was read|RESULT bad" \
       | head -1 | sed 's/^/        /' | cut -c1-170
+  else
+    NABORT=$((NABORT+1))
+    echo "$tag  ABORT (${v#ABORT:})   -- $desc"
+    echo "        the run DIED before the checker reached a verdict, so the"
+    echo "        checker was NOT shown to catch this.  Not counted as a kill."
+    tail -2 "$dir/run/run.log" | sed 's/^/        /' | cut -c1-170
   fi
 }
 
@@ -291,4 +348,13 @@ D=$(mutate_rtl R4b rtl/attn_block.vhd \
 if [ -n "$D" ]; then run_case R4b "the kv_wr_idle gate removed in the RTL, at a 4000-cycle BRESP latency" "$D" -gWR_LAT=4000 -gWDOG=200000
 else echo "R4b  ANCHOR FAILED"; fi
 
+echo
+echo "--------------------------------------------------------------------"
+echo "verdicts: $NKILL killed by the checker, $NABORT aborted before the"
+echo "  checker reached a verdict, $NSURV survived, of $NTOT attempted."
+echo "  An ABORT is NOT a kill: the run died and the checker never spoke."
+echo "  Note the CONTROL rows C1..C4 are counted in NSURV, where SURVIVED is"
+echo "  the correct answer: the clean design survives because it is clean."
+echo "  $(( NTOT - NKILL - NABORT - NSURV )) row(s) never ran at all"
+echo "  (anchor failure, vecgen failure or did-not-analyze); printed above."
 echo "SCRATCH=$SCRATCH"

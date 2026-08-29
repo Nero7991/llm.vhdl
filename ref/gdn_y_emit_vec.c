@@ -34,6 +34,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 #define floor_shr(v, s)   mv4i_floor_shr((v), (s))
 #define round_shift(v, s) mv4i_round_shift((v), (s))
@@ -59,6 +60,7 @@ int main(int argc, char **argv)
     int ncase = (argc > 2) ? atoi(argv[2]) : 48;
     int H     = (argc > 3) ? atoi(argv[3]) : 24;
     int D     = (argc > 4) ? atoi(argv[4]) : 128;
+    rs = vec_seed(argc, argv, 5, 20260827ULL);
     int N     = H * D;
 
     int16_t *om = malloc(sizeof(int16_t) * N);

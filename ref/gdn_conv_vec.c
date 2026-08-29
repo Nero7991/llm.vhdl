@@ -25,6 +25,7 @@
 #include <math.h>
 #include <assert.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 #define floor_shr(v, sh)   mv4i_floor_shr((v), (sh))
 #define round_shift(v, sh) mv4i_round_shift((v), (sh))
@@ -46,7 +47,7 @@ int main(int argc, char **argv)
     const char *out = argc > 1 ? argv[1] : "sim/gdn_conv_vec.txt";
     FILE *f = fopen(out, "w");
     if (!f) { perror("fopen"); return 1; }
-    rs_ = 20260826ULL;
+    rs_ = vec_seed(argc, argv, 2, 20260826ULL);
     fprintf(f, "%d %d %d\n", NCASE, CH, K);
 
     for (int c = 0; c < NCASE; c++) {

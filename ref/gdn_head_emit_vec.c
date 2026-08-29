@@ -29,6 +29,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 #define floor_shr(v, s)   mv4i_floor_shr((v), (s))
 #define round_shift(v, s) mv4i_round_shift((v), (s))
@@ -50,6 +51,7 @@ int main(int argc, char **argv)
     const char *out = (argc > 1) ? argv[1] : "gdn_head_emit_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 64;
     int DIM   = (argc > 3) ? atoi(argv[3]) : 128;
+    rs = vec_seed(argc, argv, 4, 20260826ULL);
 
     int64_t *o_acc = malloc(sizeof(int64_t) * DIM);
     int     *e_o   = malloc(sizeof(int)     * DIM);

@@ -18,7 +18,45 @@
 # Usage:  bash sim/mutate_attn_kv_axi.sh
 # Env:    SCRATCH=<dir>  VECS=<vector file>
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# ---------------------------------------------------------------------------
+# SELF-ISOLATION.  bash reads a script by BYTE OFFSET as it runs, so editing
+# this file while an instance of it is running corrupts that run silently.
+# Several agents share this repo and the one who gets hit is not the one who
+# edited the file.  So take a private copy, refuse it if it does not parse
+# (which is what a half-written source looks like), and re-exec that.  Same
+# guard, same reasons, as sim/regress.sh:307.  MUT_NO_REEXEC=1 disables it.
+if [ -z "${MUT_REPO:-}" ]; then
+  MUT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export MUT_REPO
+fi
+if [ -z "${MUT_SELF:-}" ] && [ -z "${MUT_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t mutself.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "could not take a private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "the private copy does not parse -- this script was probably being" >&2
+    echo "  written at the instant it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"; export MUT_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+fi
+trap 'if [ -n "${MUT_SELF:-}" ]; then rm -f "$MUT_SELF"; fi' EXIT
+
+# THREE VERDICTS, NOT TWO.  This harness used to judge a mutation with
+#   ghdl -r ... && grep -q PASS
+# under which a run that DIED -- an elaboration error, a language bound check,
+# the DUT's own assert, a wedge to --stop-time -- scored as a KILL even though
+# the checker never ran.  sim/mutverdict.py separates the two: KILLED means the
+# CHECKER noticed and said so, ABORT means the run never reached a verdict the
+# checker owns.  An ABORT is reported under its own name and counted apart.
+# Read the header of sim/mutverdict.py for the full rule.
+MUTV="$MUT_REPO/sim/mutverdict.py"
+NKILL=0; NABORT=0; NSURV=0; NTOT=0
+cd "$MUT_REPO"
 SRC=rtl/attn_kv_axi.vhd
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 VECS="${VECS:-$SCRATCH/attn_kv_axi_vec.txt}"
@@ -39,6 +77,7 @@ STOP=3ms
 mutate() {
   local tag="$1" desc="$2" old="$3" new="$4"
   local dir="$SCRATCH/$tag"
+  NTOT=$((NTOT+1))
   rm -rf "$dir"; mkdir -p "$dir"
   python3 - "$SRC" "$dir/attn_kv_axi.vhd" "$old" "$new" <<'PY'
 import sys
@@ -61,22 +100,52 @@ PY
        sim/tb_attn_kv_axi.vhd >/dev/null 2>&1
   ( cd "$dir" && ln -sf "$(cd "$(dirname "$VECS")" && pwd)/$(basename "$VECS")" \
         attn_kv_axi_vec.txt )
-  if ( cd "$dir" && ghdl -r --std=08 -frelaxed --workdir=. tb_attn_kv_axi \
-        --max-stack-alloc=0 --stop-time="$STOP" > run.log 2>&1 ) \
-     && grep -q "tb_attn_kv_axi: PASS" "$dir/run.log"; then
-    echo "$tag  SURVIVED   -- $desc"
-  else
-    echo "$tag  KILLED     -- $desc"
-    grep -vE "metavalue" "$dir/run.log" \
-      | grep -E "MISMATCH|assertion|report error|ABANDONED|CROSSES|AXI3|WITHDREW|never|vacuous|HIGH while" \
-      | head -1 | sed 's/^/        /' | cut -c1-190
-  fi
+  ( cd "$dir" && ghdl -r --std=08 -frelaxed --workdir=. tb_attn_kv_axi \
+        --max-stack-alloc=0 --stop-time="$STOP" > run.log 2>&1 )
+  local rcv=$?
+  local v
+  # sim/kv_axi_harness.vhd is named as a SECOND checker file, and it is not
+  # optional: sim/tb_attn_kv_axi.vhd is a verdict wrapper and every protocol
+  # check -- the AXI3 burst cap, the 4 KB rule, beat alignment, the
+  # burst-completion rule, the sub-region bound, the write strobes -- asserts
+  # from inside the harness.  Without this, 13 of the 28 rows below read
+  # ABORT:DUTASSERT when the assert that fired belonged to the checker.
+  v=$(python3 "$MUTV" "$dir/run.log" tb_attn_kv_axi "$rcv" kv_axi_harness)
+  case "$v" in
+    PASS)
+      NSURV=$((NSURV+1))
+      echo "$tag  SURVIVED   -- $desc" ;;
+    KILLED)
+      NKILL=$((NKILL+1))
+      echo "$tag  KILLED     -- $desc"
+      grep -vE "metavalue" "$dir/run.log" \
+        | grep -E "MISMATCH|assertion|report error|ABANDONED|CROSSES|AXI3|WITHDREW|never|vacuous|HIGH while" \
+        | head -1 | sed 's/^/        /' | cut -c1-190 ;;
+    *)
+      NABORT=$((NABORT+1))
+      echo "$tag  ABORT (${v#ABORT:})   -- $desc"
+      echo "        the run DIED before the checker reached a verdict, so the"
+      echo "        checker was NOT shown to catch this.  Not counted as a kill."
+      tail -2 "$dir/run.log" | sed 's/^/        /' | cut -c1-190 ;;
+  esac
 }
 
 echo "==================== mutations of attn_kv_axi ===================="
 echo "golden: $VECS"
 
 # ---- address generation, C spec 2.2 ---------------------------------------
+# ---- THE CONTROL, run BEFORE any mutation ---------------------------------
+# A mutation table read against a bench that fails on the CLEAN design measures
+# nothing.  This harness had no control row; sim/mutate_attn_emit.sh had none
+# either and MEASURED 2026-08-29 its config B wedges on the unmutated design,
+# so every "kill" in that column was unearned.  The control goes through the
+# SAME mutate() path as every other row, with the substitution deliberately an
+# identity, so it exercises the same analyze, the same generics and the same
+# classifier.  SURVIVED is its correct answer.
+mutate CTL "CONTROL: the UNMUTATED design.  Must say SURVIVED" \
+"entity attn_kv_axi is" \
+"entity attn_kv_axi is"
+
 mutate A1 "the LAYER term is dropped from the record index" \
 "    idx := (lay*N_KVH + hd)*MAXCTX + ps;" \
 "    idx := hd*MAXCTX + ps;"
@@ -244,3 +313,11 @@ D3  "the flush completes without waiting for the drain"
     are two independent defences of the same property.  D4 removes the P_JOB
     side and IS killed; D1 and D2 remove the protocol side and ARE killed.
 NOTE
+
+echo
+echo "--------------------------------------------------------------------"
+echo "verdicts: $NKILL killed by the checker, $NABORT aborted before the"
+echo "  checker reached a verdict, $NSURV survived, of $NTOT attempted."
+echo "  An ABORT is NOT a kill: the run died and the checker never spoke."
+echo "  $(( NTOT - NKILL - NABORT - NSURV )) mutation(s) never ran at all"
+echo "  (anchor failure or did-not-analyze); those are printed above."

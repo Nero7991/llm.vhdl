@@ -109,6 +109,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -267,6 +268,7 @@ int main(int argc, char **argv)
     const char *out = (argc > 1) ? argv[1] : "attn_softmax_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 40;
     int npos  = (argc > 3) ? atoi(argv[3]) : 24;
+    rs = vec_seed(argc, argv, 4, 20260829ULL);
     if (npos > MAXPOS) npos = MAXPOS;
 
     sm_rom_init();

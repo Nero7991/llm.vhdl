@@ -115,6 +115,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- parameters, defaults matched to sim/tb_attn_mac_array.vhd ---------- */
 static int QH   = 2;    /* query heads per tile; 6 at 27B (the GQA group)    */
@@ -132,7 +133,8 @@ static int NPOS = 6;    /* positions swept per case                          */
 static int M1,M2,M3,M4,M5,M6,M7,M8;
 
 /* ---- deterministic PRNG, xorshift; no libc rand ------------------------ */
-static uint32_t rs = 0xC0FFEEu;
+static uint32_t rs  = 0xC0FFEEu;
+static uint32_t rs0 = 0xC0FFEEu;   /* the seed, kept for the mutant loop */
 static uint32_t rnd32(void){ rs^=rs<<13; rs^=rs>>17; rs^=rs<<5; return rs; }
 
 /* ---- the golden arithmetic ------------------------------------------- */
@@ -173,6 +175,13 @@ int main(int argc, char **argv)
     if (argc > ai+3) DT    = atoi(argv[ai+3]);
     if (argc > ai+4) ACCN  = atoi(argv[ai+4]);
     if (argc > ai+5) NPOS  = atoi(argv[ai+5]);
+    /* The seed is captured into rs0 and NOT only into rs, because the mutant
+     * loop below re-seeds rs on every pass so that every mutant sees the same
+     * stimulus.  Resetting to the literal there would silently discard the
+     * seed argument -- exactly the inert-knob defect sim/mutate_gdn_recur.sh
+     * carried, where a SEED knob was declared, printed and never delivered. */
+    rs0 = vec_seed32(argc, argv, ai+6, 0xC0FFEEu);
+    rs  = rs0;
 
     int N = ACCN * DT;               /* elements per head vector            */
 
@@ -217,7 +226,7 @@ int main(int argc, char **argv)
             default: break;
         }
 
-        rs = 0xC0FFEEu;                 /* same stimulus for every mutant   */
+        rs = rs0;                       /* same stimulus for every mutant   */
         long o1=0,o2=0,o3=0,o4=0,o5=0;  /* per-oracle kill counts           */
         long n_ovr = 0, n_rs = 0;
 

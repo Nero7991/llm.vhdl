@@ -124,6 +124,7 @@
 
 #define ATTN_RECIP_INCLUDE
 #include "attn_recip_vec.c"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -268,6 +269,7 @@ int main(int argc, char **argv)
     const char *out = (argc > 1) ? argv[1] : "attn_gate_vec.txt";
     int ncase = (argc > 2) ? atoi(argv[2]) : 32;
     int N     = (argc > 3) ? atoi(argv[3]) : 64;
+    gs = vec_seed(argc, argv, 4, 20260831ULL);
     if (N > MAXN) N = MAXN;
 
     sig_rom_init();

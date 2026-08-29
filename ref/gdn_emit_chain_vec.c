@@ -31,6 +31,7 @@
 #define GDN_CHAIN_INCLUDE
 #include "rmsnorm_bf_vec.c"
 #include "gdn_silu_vec.c"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 static uint64_t crs = 20260827ULL;
 static uint32_t crnd(void){ crs ^= crs<<13; crs ^= crs>>7; crs ^= crs<<17; return (uint32_t)(crs>>32); }
@@ -44,6 +45,7 @@ int main(int argc, char **argv)
     int NB = (argc > 2) ? atoi(argv[2]) : 6;
     int H  = (argc > 3) ? atoi(argv[3]) : 24;
     int D  = (argc > 4) ? atoi(argv[4]) : 128;
+    crs = vec_seed(argc, argv, 5, 20260827ULL);
     N = D;                                    /* rmsnorm_bf_vec.c's global */
     /* INITIALISATION THAT LIVES IN THE INCLUDED FILES' main().
      *

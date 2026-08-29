@@ -93,6 +93,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "mv4i_arith.h"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -180,6 +181,7 @@ int main(int argc, char **argv)
     int ncase = (argc > 2) ? atoi(argv[2]) : 64;
     int NBLK  = (argc > 3) ? atoi(argv[3]) : 8;    /* 256 / 32, both models   */
     int KQ    = (argc > 4) ? atoi(argv[4]) : 4;    /* 1/sqrt(256) = 2^-4      */
+    rs = vec_seed(argc, argv, 5, 20260828ULL);
 
     int32_t *partial = malloc(sizeof(int32_t) * NBLK);
     int8_t  *e_k     = malloc(sizeof(int8_t)  * NBLK);

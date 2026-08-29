@@ -100,6 +100,7 @@
 
 #define ATTN_TWIDDLE_INCLUDE
 #include "attn_twiddle_vec.c"
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 /* ---- the core, guarded so a later chain reference can #include it -------- */
 
@@ -147,6 +148,7 @@ int main(int argc, char **argv)
     int ncase    = (argc > 2) ? atoi(argv[2]) : 28;
     int head_dim = (argc > 3) ? atoi(argv[3]) : 96;
     int n_rot    = (argc > 4) ? atoi(argv[4]) : 64;
+    rp = vec_seed(argc, argv, 5, 20260903ULL);
     if (head_dim > MAXD) head_dim = MAXD;
     if (n_rot > head_dim) n_rot = head_dim;
     int npair = n_rot / 2;

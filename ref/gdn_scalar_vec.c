@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include "vec_seed.h"   /* the seed convention; see that header */
 
 static int SP_Q = 18;   /* ADOPTED 2026-08-26; was 12 */
 
@@ -87,7 +88,7 @@ int main(int argc, char **argv)
     if (argc > 1) SP_Q = atoi(argv[1]);
 
     /* deterministic LCG so the vector set is reproducible */
-    uint64_t st = 0x9E3779B97F4A7C15ULL;
+    uint64_t st = vec_seed(argc, argv, 2, 0x9E3779B97F4A7C15ULL);
     #define NEXT() (st = st * 6364136223846793005ULL + 1442695040888963407ULL, \
                     (uint32_t)(st >> 33))
 
