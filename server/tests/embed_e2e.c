@@ -28,6 +28,7 @@
 #include "../fk33_seam.h"
 #include "../fk33_manifest.h"
 #include "../embed_mv4i.h"
+#include "../embed_bf16.h"
 
 static int fails;
 #define CK(cond, ...) do { if (!(cond)) { \
@@ -40,7 +41,7 @@ static int fails;
 
 int main(int argc, char **argv)
 {
-    const char *mv4i = NULL, *manifest = NULL;
+    const char *mv4i = NULL, *manifest = NULL, *gguf = NULL;
     fk33_manifest man;
     pl_hbm_bases b;
     char mbuf[700];
@@ -49,7 +50,9 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--mv4i") && i + 1 < argc) mv4i = argv[++i];
         else if (!strcmp(argv[i], "--manifest") && i + 1 < argc) manifest = argv[++i];
-        else { fprintf(stderr, "usage: embed_e2e --mv4i F.mv4i --manifest M.json\n");
+        else if (!strcmp(argv[i], "--gguf") && i + 1 < argc) gguf = argv[++i];
+        else { fprintf(stderr, "usage: embed_e2e --mv4i F.mv4i --manifest M.json "
+                               "[--gguf G.gguf]\n");
                return 2; }
     }
     if (!mv4i || !manifest) {
@@ -101,6 +104,7 @@ int main(int argc, char **argv)
         int ids[5] = { 760, 6511, 314, 9338, 369 };   /* run9b's reference prompt */
         int argmax = -1;
         int32_t lexp = 0;
+        unsigned long long h2c_mv4i = 0;
 
         printf("D  the real provider driving the real seam (simulated card)\n");
         CK(pl_embed_mv4i_open(mv4i, PL_EMBED_RECIPE_WIDE, &e) == 0,
@@ -144,7 +148,82 @@ int main(int argc, char **argv)
            "H2C was %llu B, want 5 * %llu",
            (unsigned long long)pl_bytes_to_card(c),
            (unsigned long long)fk33_x_stride(4096));
+        h2c_mv4i = (unsigned long long)pl_bytes_to_card(c);
         pl_close(c); c = NULL;
+
+        printf("D2 the BF16 provider driving the SAME seam, on the SAME tokens\n");
+        if (!gguf) {
+            printf("   SKIPPED: no --gguf given.  The BF16 provider is the one the\n"
+                   "   reference now uses (ref/run9b --embed gguf, the default), so a\n"
+                   "   run without it exercises only the superseded INT4 path.\n");
+        } else {
+            pl_embed_bf16_t *g = NULL;
+            pl_ctx *c2 = NULL;
+            fk33_sim_opts s2;
+            pl_open_opts o2;
+            int argmax2 = -1;
+            int32_t lexp2 = 0;
+            CK(pl_embed_bf16_open(gguf, NULL, &g) == 0,
+               "the BF16 embedding would not open");
+            if (g) {
+                printf("   %s\n", pl_embed_bf16_describe(g));
+                fk33_sim_opts_default(&s2);
+                pl_open_opts_default(&o2);
+                o2.sim_opts = &s2;
+                o2.manifest_path = manifest;
+                o2.embed = pl_embed_bf16;
+                o2.embed_user = g;
+                o2.max_chunk = 8;
+                CK(pl_open(&o2, &c2) == 0, "pl_open refused the BF16 provider");
+                if (c2) {
+                    CK(pl_n_embd(c2) == pl_embed_bf16_n_embd(g),
+                       "the card's n_embd %d and the tensor's ne0 %d disagree",
+                       pl_n_embd(c2), pl_embed_bf16_n_embd(g));
+                    CK(pl_n_vocab(c2) == pl_embed_bf16_n_vocab(g),
+                       "the card's n_vocab %d and the tensor's ne1 %d disagree",
+                       pl_n_vocab(c2), pl_embed_bf16_n_vocab(g));
+                    rc = pl_prefill(c2, ids, 5, NULL, &lexp2, &argmax2);
+                    CK(rc == 5, "BF16 prefill returned %d", rc);
+                    printf("   prefilled 5, pos %d, argmax %d (SYNTHETIC logits: "
+                           "meaningless)\n", pl_seq_pos(c2), argmax2);
+                    printf("   H2C %llu B for %llu GOs; the provider read %llu B "
+                           "in %llu gathers\n",
+                           (unsigned long long)pl_bytes_to_card(c2),
+                           (unsigned long long)pl_go_count(c2),
+                           (unsigned long long)pl_embed_bf16_bytes_read(g),
+                           (unsigned long long)pl_embed_bf16_gathers(g));
+                    /* ONE contiguous read per token against the INT4 path's two,
+                     * and the SAME number of bytes: 8,192 either way.  The H2C
+                     * side is identical because the activation format did not
+                     * change; only its accuracy did. */
+                    CK(pl_embed_bf16_gathers(g) == 5,
+                       "5 tokens produced %llu gathers, want 5 (one contiguous "
+                       "read per token)",
+                       (unsigned long long)pl_embed_bf16_gathers(g));
+                    CK(pl_embed_bf16_bytes_read(g) == 5ull * 2ull * 4096ull,
+                       "5 tokens read %llu bytes, want 5 * 2 * 4096",
+                       (unsigned long long)pl_embed_bf16_bytes_read(g));
+                    CK(pl_bytes_to_card(c2) == 5ull * fk33_x_stride(4096),
+                       "H2C was %llu B, want 5 * %llu",
+                       (unsigned long long)pl_bytes_to_card(c2),
+                       (unsigned long long)fk33_x_stride(4096));
+                    CK(pl_bytes_to_card(c2) == h2c_mv4i,
+                       "the two providers moved different H2C byte counts: "
+                       "%llu vs %llu",
+                       (unsigned long long)pl_bytes_to_card(c2), h2c_mv4i);
+                    /* AND THE ARGMAXES MUST DIFFER.  fk33_sim's logits are a
+                     * function of the activation, so if the two providers
+                     * produced the same argmax on all five positions this test
+                     * would not be able to tell them apart at all, and every
+                     * check above would be measuring plumbing only. */
+                    CK(argmax2 != argmax,
+                       "both providers gave argmax %d: this test cannot "
+                       "distinguish them", argmax2);
+                    pl_close(c2);
+                }
+                pl_embed_bf16_close(g);
+            }
+        }
 
         printf("E  the OLD x_base, offered to pl_open with this manifest\n");
         fk33_sim_opts_default(&s);

@@ -174,8 +174,14 @@ def main():
         if not os.path.exists(exe):
             print("SKIP: server/llama_server not built")
             return 0
+        # --embed synthetic is EXPLICIT and load-bearing.  This script's own
+        # oracle (synthetic_embed below) models pl_embed_synthetic, so it can
+        # only check the request path against that provider.  llama_server's
+        # default became the BF16 GGUF on 2026-08-29; leaving the default here
+        # would make every case fail with the server right and the oracle wrong,
+        # which is the most convincing kind of wrong reference.
         proc = subprocess.Popen([exe, "--model", "qwen35", "--port", str(a.port),
-                                 "--qtk", a.qtk],
+                                 "--qtk", a.qtk, "--embed", "synthetic"],
                                 cwd=ROOT, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
         url = f"http://127.0.0.1:{a.port}"

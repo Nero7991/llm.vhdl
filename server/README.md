@@ -57,6 +57,27 @@ PCIe) and the lm_head. Per position, an 8,208-byte BFP-packed activation row
 goes in and a 993,296-byte int32 logits row plus one shared block exponent
 comes back -- or, for a greedy caller, four bytes of argmax and no C2H at all.
 
+### Which copy of the embedding the host gathers
+
+Two providers ship, and they are NOT numerically equivalent:
+
+| provider | source | per token | mean relerr at the activation |
+|---|---|---|---|
+| `embed_bf16.c` | `Qwen3.5-9B-BF16.gguf`, BF16 | ONE 8,192 B `pread` | **0.000040** |
+| `embed_mv4i.c` | `token_embd.weight.mv4i`, INT4 | TWO 4,096 B `pread`s | 0.086123 |
+
+`llama_server --embed auto|gguf|mv4i|synthetic` selects; `auto` (the default)
+takes the BF16 copy when its file is present and PRINTS which it chose. An
+explicit `gguf` or `mv4i` whose file will not open is a REFUSAL, never a quiet
+downgrade to a ~2,000x coarser activation.
+
+The BF16 copy is the one `ref/run9b.c` evaluates by default since 2026-08-29,
+and the host's packed row is bit-identical to that reference's own `R_X.embed`
+seam. The INT4 provider is retained because every 9B number published before
+that date was measured with it and has to stay reproducible. The whole move,
+with the re-established headline figures beside the old ones, is
+`docs/debugging/2026-08-29_embedding-bf16-upgrade.md`.
+
 `server/pl_backend_axu3eg.{h,c}` is v1, retained unchanged for the AXU3EG with
 its symbols renamed `plv1_*`. It handed the card a prompt and got a token
 stream back, which was right for a board with a PS on the same die and is wrong

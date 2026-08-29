@@ -38,6 +38,18 @@
  *           `ref/matvec_int4.c` run BIT-EXACTLY on those bytes.  rung2 ->
  *           rung3 is the cost of the ACTIVATION format.
  *
+ * WHICH COPY OF THE EMBEDDING THE RUNGS EVALUATE -- CHANGED 2026-08-29.
+ * The embedding row is an ACTIVATION, not a weight, and it was read from the
+ * packed INT4 set only because `token_embd.weight` happened to be packed
+ * alongside the weight tensors.  It is now read from the BF16 GGUF by default
+ * (`--embed gguf`), which is roughly 2,000x more accurate at the activation.
+ * MEASURED, that buys 2.3% at the logits on the token the headline quotes
+ * (0.12524 -> 0.12237 relative RMS for the weight format), 0.7% averaged over
+ * the five reference positions, and it makes TWO OF THE FIVE slightly worse.
+ * Every next token and every top-5 is unchanged.  `--embed mv4i` still
+ * reproduces the pre-2026-08-29 stream BYTE FOR BYTE.  See `embed()` below and
+ * docs/debugging/2026-08-29_embedding-bf16-upgrade.md.
+ *
  * WHAT IS BIT-EXACT HERE AND WHAT IS NOT.  Say it plainly, because a reference
  * that overstates itself is worse than none:
  *
@@ -91,6 +103,7 @@
 
 #define MV4I_LIB
 #include "matvec_int4.c"          /* mv4i_parse, mv4i_matvec, get_widx, get_scale */
+#include "embed_bf16.c"           /* the BF16 embedding row, straight from the GGUF */
 
 #include <math.h>
 #include <time.h>
@@ -775,14 +788,71 @@ static void layer_attn(int il, state_t *S, reg_t *RX, int pos)
 }
 
 /* -------------------------------------------------------------- embedding */
-/* The embedding is a GATHER, not a matvec, and `token_embd.weight` is packed
- * as a matvec only so that the same loader can carry it.  Row `tok` decodes
- * through the SAME accessors, so the bytes are read once here too. */
+/* THE EMBEDDING ROW IS AN ACTIVATION, NOT A WEIGHT, AND IT HAS TWO SOURCES.
+ *
+ * It is the input to the whole model.  Until 2026-08-29 this file read it from
+ * the PACKED INT4 set, and it did so for one reason only: `token_embd.weight`
+ * happened to be packed alongside the weight tensors, so the same loader
+ * carried it.  MEASURED by TRACK HOSTEMB over 48 corner-forced rows, both
+ * packed to int16 BFP by the same `reg_put` rule and both scored against the
+ * BF16 GGUF row:
+ *
+ *     packed INT4 -> BFP int16   mean relerr 0.086295   worst 0.126667
+ *     GGUF BF16   -> BFP int16   mean relerr 0.000048   worst 0.000425
+ *
+ * a factor of 1,803, against the 0.1252 relative RMS that the INT4 *weight*
+ * format costs at the logits.  Oren took the decision to upgrade, and the ORDER
+ * is the safety property: this file moves FIRST and the host second, because a
+ * host that switched first would be feeding the card an activation no rung of
+ * this reference had ever evaluated.
+ *
+ * BOTH SOURCES STAY SELECTABLE.  `--embed gguf` (the DEFAULT) reads the BF16
+ * row out of `Qwen3.5-9B-BF16.gguf`; `--embed mv4i` reads the packed row, which
+ * is what every number published before 2026-08-29 was measured with.  Those
+ * numbers must stay re-derivable, so the old path is a flag and not a comment.
+ *
+ * WHAT THE SOURCE DOES AND DOES NOT CHANGE ABOUT THE THREE RUNGS.  Nothing
+ * about the rung structure: rung 2 (`--acts f32`) still isolates the INT4
+ * WEIGHT format and rung 3 (`--acts bfp`) still adds the int16 BFP ACTIVATION
+ * format.  What changes is that under `--embed gguf` the embedding is no longer
+ * one of the INT4-quantized tensors, so `rung1 -> rung2` at `R_X.embed` becomes
+ * a pure BF16-vs-f64 comparison and is essentially zero.  That is the point of
+ * the upgrade and it is measured in
+ * docs/debugging/2026-08-29_embedding-bf16-upgrade.md.
+ *
+ * `--embed gguf` also lets this reference run against a packed set that has no
+ * `token_embd.weight` at all, which is what TRACK EMBDROP's `noembd` set is. */
+#define EMBED_SRC_GGUF 0
+#define EMBED_SRC_MV4I 1
+
+static int         g_embed_src = EMBED_SRC_GGUF;
+static const char *g_gguf =
+    "/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf";
+static emb_bf16_t *g_eb = NULL;
+
 static void embed(int tok, reg_t *RX)
 {
-    mvw_t *m = mv("token_embd.weight");
     double *t = malloc(sizeof(double) * HIDDEN);
-    for (int k = 0; k < HIDDEN; k++) t[k] = w_deq(&m->f, tok, k);
+    if (!t) die("out of memory");
+    if (g_embed_src == EMBED_SRC_GGUF) {
+        if (!g_eb) {
+            if (emb_bf16_open(g_gguf, EMB_BF16_TENSOR, &g_eb))
+                die("the BF16 embedding could not be opened.  Give --gguf PATH,\n"
+                    "  or ask for the old packed embedding with --embed mv4i "
+                    "(which is\n  what every number published before 2026-08-29 "
+                    "was measured with).\n  It is NOT silently substituted: an "
+                    "unannounced fallback to a 1,803x\n  coarser activation is "
+                    "exactly the failure this flag exists to prevent");
+            if (emb_bf16_ne0(g_eb) != HIDDEN)
+                die("the GGUF embedding row length is not HIDDEN");
+            if (emb_bf16_ne1(g_eb) != VOCAB)
+                die("the GGUF embedding row count is not VOCAB");
+        }
+        if (emb_bf16_row(g_eb, tok, t, HIDDEN)) die("embedding row refused");
+    } else {
+        mvw_t *m = mv("token_embd.weight");
+        for (int k = 0; k < HIDDEN; k++) t[k] = w_deq(&m->f, tok, k);
+    }
     reg_put(RX, t);
     free(t);
 }
@@ -829,6 +899,16 @@ static void usage(void)
       "  --out F.r9bs     write the seam stream\n"
       "  --acts bfp|f32   region format: bfp = the hardware model (default),\n"
       "                   f32 = INT4 weights with float activations\n"
+      "  --embed gguf|mv4i  which copy of the EMBEDDING to gather.\n"
+      "                   gguf = the BF16 row from --gguf (DEFAULT since\n"
+      "                          2026-08-29; 1,803x more accurate at the\n"
+      "                          activation, and the basis of the current\n"
+      "                          headline numbers)\n"
+      "                   mv4i = the packed INT4 row from the packed set,\n"
+      "                          which is what every number published BEFORE\n"
+      "                          2026-08-29 was measured with.  Kept so those\n"
+      "                          stay reproducible.\n"
+      "  --gguf PATH      the BF16 checkpoint --embed gguf reads\n"
       "  --layers N       stop after N layers (a cheap partial run)\n"
       "  --selftest       check a_job against MV4I_MODE_BFP and exit\n"
       "  --top K          print the top-K logits of the last token\n");
@@ -847,6 +927,13 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--top"))      topk = atoi(NEXT());
         else if (!strcmp(a, "--selftest")) do_self = 1;
         else if (!strcmp(a, "--acts"))     g_bfp = strcmp(NEXT(), "f32") != 0;
+        else if (!strcmp(a, "--gguf"))     g_gguf = NEXT();
+        else if (!strcmp(a, "--embed")) {
+            const char *s = NEXT();
+            if      (!strcmp(s, "gguf")) g_embed_src = EMBED_SRC_GGUF;
+            else if (!strcmp(s, "mv4i")) g_embed_src = EMBED_SRC_MV4I;
+            else { usage(); return 1; }
+        }
         else if (!strcmp(a, "--tokens")) {
             char *s = strdup(NEXT()), *p = s;
             while (p && *p) { toks[ntok++] = atoi(p); p = strchr(p, ','); if (p) p++; }
@@ -857,6 +944,22 @@ int main(int argc, char **argv)
     if (!ntok) { int d[] = {760,6511,314,9338,369}; ntok = 5; memcpy(toks, d, sizeof d); }
 
     load_index(packed);
+
+    /* Open the embedding source NOW, not lazily inside the first token: a bad
+     * --gguf path should cost a second, not thirty.  And PRINT which copy is in
+     * use on every run, because the whole hazard this flag guards against is a
+     * number quoted without its basis. */
+    if (g_embed_src == EMBED_SRC_GGUF) {
+        reg_t probe = reg_new(HIDDEN);
+        embed(0, &probe);
+        printf("EMBED gguf  %s\n", emb_bf16_describe(g_eb));
+        free(probe.m); free(probe.v);
+    } else {
+        printf("EMBED mv4i  %s/%s  (the PRE-2026-08-29 basis)\n",
+               g_dir, mv("token_embd.weight")->file);
+    }
+    fflush(stdout);
+
     if (do_self) return selftest() ? 1 : 0;
 
     state_t S;

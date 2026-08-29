@@ -45,6 +45,8 @@
 #include "fk33_seam.h"
 #include "qwen35_tok.h"
 #include "qwen35_chat.h"
+#include "embed_mv4i.h"
+#include "embed_bf16.h"
 
 #include <cmath>
 #include <algorithm>
@@ -878,6 +880,17 @@ int main(int argc, char** argv) {
     const char* qtk   = "build_artifacts_tok/qwen35_9b.qtk";
     const char* card  = "sim";
     const char* card_dir = "fk33_file_backend";
+    // WHICH COPY OF THE EMBEDDING THE HOST GATHERS.  "auto" means the BF16
+    // GGUF if it is present, else the synthetic provider, and the choice is
+    // PRINTED either way -- an embedding silently 1,803x coarser than the one
+    // the reference evaluated is the exact failure this flag exists to name.
+    // See docs/debugging/2026-08-29_embedding-bf16-upgrade.md.
+    const char* embed_kind = "auto";
+    const char* embed_path = nullptr;
+    const char* embed_gguf_default =
+        "/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf";
+    const char* embed_mv4i_default =
+        "/mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i";
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i+1<argc) model = argv[++i];
         else if (!strcmp(argv[i], "--qtk") && i+1<argc) qtk = argv[++i];
@@ -889,10 +902,27 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--port") && i+1<argc) port = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--pl")) want_pl = true;
         else if (!strcmp(argv[i], "--pl-clock") && i+1<argc) pl_clock = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--embed") && i+1<argc) embed_kind = argv[++i];
+        else if (!strcmp(argv[i], "--embed-path") && i+1<argc) embed_path = argv[++i];
         else { fprintf(stderr,
                 "usage: %s [--model stories260k|qwen35] [--host h] [--port p]\n"
                 "          [--checkpoint f] [--tokenizer f] [--pl] [--pl-clock MHZ]\n"
                 "          [--qtk f] [--card sim|file] [--card-dir d]\n"
+                "          [--embed auto|gguf|mv4i|synthetic] [--embed-path f]\n"
+                "  --embed     which copy of the EMBEDDING the host gathers.\n"
+                "              gguf      the BF16 row from the original GGUF.  This\n"
+                "                        is what ref/run9b.c evaluates by default\n"
+                "                        since 2026-08-29 and is far more\n"
+                "                        accurate at the activation than mv4i\n"
+                "                        (roughly 2,000x; see the write-up).\n"
+                "              mv4i      the packed INT4 row.  The PRE-2026-08-29\n"
+                "                        basis; kept so old results stay\n"
+                "                        reproducible.\n"
+                "              synthetic NOT A MODEL OF ANYTHING.\n"
+                "              auto      (default) gguf if its file is present,\n"
+                "                        else synthetic.  The choice is printed.\n"
+                "              An EXPLICIT gguf or mv4i whose file will not open is\n"
+                "              a refusal, never a quiet downgrade.\n"
                 "  --model qwen35\n"
                 "              serve Qwen3.5-9B through the FK33 host seam v2:\n"
                 "              the C chat template, the C tokenizer and\n"
@@ -926,7 +956,49 @@ int main(int argc, char** argv) {
                             "  hardware boundary in CLAUDE.md.\n", card);
             return 1;
         }
-        o.embed = pl_embed_synthetic;
+        // ---- the embedding provider.  See --embed in the usage above.
+        pl_embed_mv4i_t *emb_mv4i = nullptr;
+        pl_embed_bf16_t *emb_bf16 = nullptr;
+        const char *chosen = nullptr, *why = "";
+
+        if (!strcmp(embed_kind, "auto")) {
+            FILE *probe = fopen(embed_path ? embed_path : embed_gguf_default, "rb");
+            if (probe) { fclose(probe); embed_kind = "gguf"; why = " (auto: the BF16 checkpoint is present)"; }
+            else       { embed_kind = "synthetic"; why = " (auto: no BF16 checkpoint at the default path)"; }
+        }
+
+        if (!strcmp(embed_kind, "gguf")) {
+            const char *path = embed_path ? embed_path : embed_gguf_default;
+            if (pl_embed_bf16_open(path, nullptr, &emb_bf16) != 0) {
+                fprintf(stderr, "[llama_server] --embed gguf could not open %s.\n"
+                        "  REFUSED rather than downgraded: falling back to the INT4\n"
+                        "  copy would serve an activation ~2,000x coarser than the one\n"
+                        "  the reference evaluates, with nothing in the log to say so.\n"
+                        "  Pass --embed-path, --embed mv4i, or --embed synthetic.\n", path);
+                return 1;
+            }
+            o.embed = pl_embed_bf16;
+            o.embed_user = emb_bf16;
+            chosen = pl_embed_bf16_describe(emb_bf16);
+        } else if (!strcmp(embed_kind, "mv4i")) {
+            const char *path = embed_path ? embed_path : embed_mv4i_default;
+            if (pl_embed_mv4i_open(path, PL_EMBED_RECIPE_WIDE, &emb_mv4i) != 0) {
+                fprintf(stderr, "[llama_server] --embed mv4i could not open %s\n", path);
+                return 1;
+            }
+            o.embed = pl_embed_mv4i;
+            o.embed_user = emb_mv4i;
+            chosen = pl_embed_mv4i_describe(emb_mv4i);
+        } else if (!strcmp(embed_kind, "synthetic")) {
+            o.embed = pl_embed_synthetic;
+            chosen = "SYNTHETIC -- not a model of anything";
+        } else {
+            fprintf(stderr, "[llama_server] --embed %s is not one of "
+                            "auto|gguf|mv4i|synthetic\n", embed_kind);
+            return 1;
+        }
+        fprintf(stderr, "[llama_server] embedding: %s%s\n    %s\n",
+                embed_kind, why, chosen);
 
         g_tok = qwen35_tok_open(qtk);
         if (!g_tok) {
