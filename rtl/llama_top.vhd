@@ -2715,7 +2715,20 @@ begin
     signal st_rgrp, st_wgrp : integer range 0 to NBR-1;
     signal st_rdata, st_wdata, st_rq
          : std_logic_vector(B_RECUR_LANES*16-1 downto 0);
-    type stmem_t is array (0 to VH*DM*NBR-1)
+    -- PER LAYER, and the layer term is the whole point.  gdn_block's st_*
+    -- port carries (head, col, group) and NO layer index, so the memory OWNER
+    -- is what has to fold `layer` in -- and this file did not, while driving
+    -- b_layer across every GDN layer.  That is defect C1's shape exactly: one
+    -- time-shared block, per-layer state with no layer dimension.
+    --
+    -- It was LATENT rather than live when it was found, because b_tk0 is
+    -- hardwired '1' below and gdn_recur_pipe masks the state read at tk0
+    -- (TK0_ED, rtl/gdn_recur_pipe.vhd:503,722), so the shared region was
+    -- written and never read back.  It becomes a wrong number on the first
+    -- day there is a token loop, which is what this file is heading for.
+    -- docs/debugging/2026-08-29_b-layer-dimension.md.
+    constant STLY : positive := VH*DM*NBR;   -- state words per layer
+    type stmem_t is array (0 to NLY*STLY-1)
                     of std_logic_vector(B_RECUR_LANES*16-1 downto 0);
     signal stmem : stmem_t := (others => (others => '0'));
 
@@ -2723,7 +2736,9 @@ begin
     signal se_rcol, se_wcol : integer range 0 to DM-1;
     signal se_rdata, se_wdata : signed(7 downto 0);
     signal se_wen : std_logic;
-    type semem_t is array (0 to VH*DM-1) of signed(7 downto 0);
+    -- Per layer for the same reason as stmem; se_* carries (head, col) only.
+    constant SELY : positive := VH*DM;       -- state exponents per layer
+    type semem_t is array (0 to NLY*SELY-1) of signed(7 downto 0);
     signal semem : semem_t := (others => (others => '0'));
 
     signal w_mant : std_logic_vector(DM*16-1 downto 0);
@@ -2814,24 +2829,26 @@ begin
       variable a : integer;
     begin
       if rising_edge(clk) then
+        -- b_layer is registered at job issue and held for the whole
+        -- invocation, so it is stable across every access the block makes.
         if st_wen = '1' then
-          a := st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
           stmem(a) <= st_wdata;
         end if;
         if st_ren = '1' then
-          a := st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+          a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
           st_rq <= stmem(a);
         end if;
       end if;
     end process;
 
     -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
-    se_rdata <= semem(se_rhead*DM + se_rcol);
+    se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
     semem_p : process(clk) is
     begin
       if rising_edge(clk) then
         if se_wen = '1' then
-          semem(se_whead*DM + se_wcol) <= se_wdata;
+          semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
         end if;
       end if;
     end process;

@@ -365,3 +365,60 @@ full-gate run was NOT attempted; see below.
 - **The property is checked at `TOKENS=2` and `NLAYER=2`.**  Two layers is
   the smallest number at which interleaving exists; whether a three-layer
   rotation could expose something two cannot was not measured.
+
+---
+
+## CORRECTION, 2026-08-29 (same day, later): llama_top is now fixed
+
+Nothing above is withdrawn.  The one item on the "open, not yet answered" list
+that said the fold in `rtl/llama_top.vhd` was left alone because the file was
+dirty is now **closed**: TRACKS C1, NORMW, REF9B, CB-ORACLE, B-GATE and PBLOCK
+all landed, `git status -- rtl/llama_top.vhd` came back clean, and the fix went
+in on this track.
+
+`gb_real` now carries the layer term on both memories:
+
+```
+    constant STLY : positive := VH*DM*NBR;   -- state words per layer
+    type stmem_t is array (0 to NLY*STLY-1) of std_logic_vector(...);
+    constant SELY : positive := VH*DM;       -- state exponents per layer
+    type semem_t is array (0 to NLY*SELY-1) of signed(7 downto 0);
+
+    a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+    a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+    se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
+    semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+```
+
+`b_layer` is registered at job issue and held for the whole B invocation, so
+it is stable across every access the block makes, including the COMBINATIONAL
+`se_*` read.
+
+**THE LATENCY DISTINCTION STANDS AND MUST NOT BE READ AWAY.**  This was NOT a
+live miscomputation before the fix and it is not a numerical correction now.
+`b_tk0` is still hardwired `'1'`, `gdn_recur_pipe` still masks both the state
+read and `se_j` at `tk0`, so the shared regions were written and never read
+back: every number `llama_top` produced yesterday was the number it produces
+today.  What changed is that the defect can no longer become live by accident.
+It would have become a wrong number on the first commit that added a token
+loop, silently, in a file six tracks touch.
+
+**What this fix is NOT verified by.**  There is no top-level check that can see
+it, for exactly the reason it was latent: with one token the state is never
+read back, so a bench at `llama_top` cannot distinguish the folded memory from
+the layered one.  The six `sim/regress.sh --only llama_top` rows were run and
+show no regression, which is the only claim available at that level.  The
+claim that the SHAPE of the defect is detectable at all rests on measurement
+T3 above, in `tb_gdn_block`: injecting exactly this fold into the bench's own
+memory model passes at `NLAYER=1` and fails at `NLAYER=2` with 256 of 512 y
+elements wrong.  When `llama_top` grows a token loop, the check it will need
+is the same one: run a layer's tokens with another layer's interleaved and
+require the outputs to be unchanged.
+
+**Memory cost, DERIVED.**  `stmem` and `semem` grow by a factor of `NLY`.  At
+`mk_shape_scaled(4, 4)` that is `NLY = 4 - 4/4 = 3`, against `VH=4`, `DM=32`,
+so `stmem` goes from `4*32*NBR` to `3*4*32*NBR` words.  `rtl/llama_top.vhd` is
+referenced by no `.tcl` in the repo, so this is a simulation model only and
+nothing is synthesised at the shipping shape, where the same arrays would be
+`NLY * VAL_HEADS * DIM * DIM` int16 of model state and belong in HBM by spec
+section 2.4 rather than in a signal array.
