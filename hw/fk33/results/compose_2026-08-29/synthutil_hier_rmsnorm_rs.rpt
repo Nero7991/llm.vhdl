@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 17:14:41 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/compose_2026-08-29/synthutil_hier_rmsnorm_rs.rpt
+| Design       : rmsnorm_rs
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|  Instance  | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| rmsnorm_rs |  (top) |     169746 |     169746 |       0 |    0 | 67320 |      0 |      0 |    0 |         40 |
++------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+
+

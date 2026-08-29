@@ -1,0 +1,578 @@
+== ooc_compose_run gdn_silu : 2026-08-29T17:03:14-06:00
+               total        used        free      shared  buff/cache   available
+Mem:              31          12           0           0          18          18
+Swap:             31           4          27
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/orencollaco/GitHub/llama.vhdl/sim/ooc_compose_bcd.tcl -notrace
+COMPOSE_BEGIN target=gdn_silu part=xcvu33p-fsvh2104-2L-e period=5.0 rtl=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl
+COMPOSE_GENERICS gdn_silu : LANES=4 ARG_Q=12
+Command: synth_design -mode out_of_context -top gdn_silu -part xcvu33p-fsvh2104-2L-e -generic LANES=4 -generic ARG_Q=12
+Starting synth_design
+Attempting to get a license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2650269
+---------------------------------------------------------------------------------
+Starting Synthesize : Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 1766.176 ; gain = 415.621 ; free physical = 262 ; free virtual = 44941
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'gdn_silu' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:69]
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter ARG_Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_silu' (0#1) [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:69]
+WARNING: [Synth 8-6014] Unused sequential element v6_reg was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:218]
+WARNING: [Synth 8-6014] Unused sequential element eseg_r_reg was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:248]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[0] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[1] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[2] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[3] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[0] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[1] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[2] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[3] was removed.  [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/gdn_silu.vhd:350]
+---------------------------------------------------------------------------------
+Finished Synthesize : Time (s): cpu = 00:00:03 ; elapsed = 00:00:03 . Memory (MB): peak = 1911.145 ; gain = 560.590 ; free physical = 275 ; free virtual = 44796
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Constraint Validation : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 1911.145 ; gain = 560.590 ; free physical = 275 ; free virtual = 44796
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Loading Part and Timing Information
+---------------------------------------------------------------------------------
+Loading part: xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-6742] Reading net delay rules and data
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+---------------------------------------------------------------------------------
+Finished Loading Part and Timing Information : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 1919.148 ; gain = 568.594 ; free physical = 275 ; free virtual = 44796
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 2 : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 1927.156 ; gain = 576.602 ; free physical = 256 ; free virtual = 44789
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start RTL Component Statistics 
+---------------------------------------------------------------------------------
+Detailed RTL Component Info : 
++---Adders : 
+	   2 Input   64 Bit       Adders := 8     
+	   3 Input   64 Bit       Adders := 4     
+	   3 Input   31 Bit       Adders := 4     
+	   2 Input   17 Bit       Adders := 4     
+	   2 Input   10 Bit       Adders := 1     
+	   2 Input    7 Bit       Adders := 4     
+	   2 Input    6 Bit       Adders := 5     
++---Registers : 
+	               64 Bit    Registers := 1     
+	               32 Bit    Registers := 12    
+	               16 Bit    Registers := 16    
+	               13 Bit    Registers := 4     
+	               12 Bit    Registers := 4     
+	                9 Bit    Registers := 12    
+	                6 Bit    Registers := 4     
+	                3 Bit    Registers := 4     
+	                2 Bit    Registers := 12    
+	                1 Bit    Registers := 7     
++---ROMs : 
+	                    ROMs := 4     
++---Muxes : 
+	   2 Input   64 Bit        Muxes := 8     
+	   3 Input   32 Bit        Muxes := 4     
+	   4 Input   32 Bit        Muxes := 4     
+	   2 Input   32 Bit        Muxes := 12    
+	   3 Input   18 Bit        Muxes := 4     
+	   2 Input   18 Bit        Muxes := 8     
+	   4 Input   12 Bit        Muxes := 4     
+	   2 Input    6 Bit        Muxes := 11    
+	   2 Input    3 Bit        Muxes := 7     
+	   3 Input    2 Bit        Muxes := 4     
+	   4 Input    2 Bit        Muxes := 4     
+---------------------------------------------------------------------------------
+Finished RTL Component Statistics 
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Part Resource Summary
+---------------------------------------------------------------------------------
+Part Resources:
+DSPs: 2880 (col length:90)
+BRAMs: 1344 (col length: RAMB18 96 RAMB36 48)
+---------------------------------------------------------------------------------
+Finished Part Resource Summary
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Cross Boundary and Area Optimization
+---------------------------------------------------------------------------------
+WARNING: [Synth 8-7080] Parallel synthesis criteria is not met
+DSP Report: Generating DSP pr_reg[0], operation Mode is: (A2*B2)'.
+DSP Report: register pr_reg[0] is absorbed into DSP pr_reg[0].
+DSP Report: register dl_reg[0] is absorbed into DSP pr_reg[0].
+DSP Report: register pr_reg[0] is absorbed into DSP pr_reg[0].
+DSP Report: operator ARG is absorbed into DSP pr_reg[0].
+DSP Report: Generating DSP prod_reg[0], operation Mode is: (A2*B'')'.
+DSP Report: register sm3_reg[0] is absorbed into DSP prod_reg[0].
+DSP Report: register sm4_reg[0] is absorbed into DSP prod_reg[0].
+DSP Report: register sig_reg[0] is absorbed into DSP prod_reg[0].
+DSP Report: register prod_reg[0] is absorbed into DSP prod_reg[0].
+DSP Report: operator ARG is absorbed into DSP prod_reg[0].
+DSP Report: Generating DSP pr_reg[1], operation Mode is: (A2*B2)'.
+DSP Report: register pr_reg[1] is absorbed into DSP pr_reg[1].
+DSP Report: register dl_reg[1] is absorbed into DSP pr_reg[1].
+DSP Report: register pr_reg[1] is absorbed into DSP pr_reg[1].
+DSP Report: operator ARG is absorbed into DSP pr_reg[1].
+DSP Report: Generating DSP prod_reg[1], operation Mode is: (A2*B'')'.
+DSP Report: register sm3_reg[1] is absorbed into DSP prod_reg[1].
+DSP Report: register sm4_reg[1] is absorbed into DSP prod_reg[1].
+DSP Report: register sig_reg[1] is absorbed into DSP prod_reg[1].
+DSP Report: register prod_reg[1] is absorbed into DSP prod_reg[1].
+DSP Report: operator ARG is absorbed into DSP prod_reg[1].
+DSP Report: Generating DSP pr_reg[2], operation Mode is: (A2*B2)'.
+DSP Report: register pr_reg[2] is absorbed into DSP pr_reg[2].
+DSP Report: register dl_reg[2] is absorbed into DSP pr_reg[2].
+DSP Report: register pr_reg[2] is absorbed into DSP pr_reg[2].
+DSP Report: operator ARG is absorbed into DSP pr_reg[2].
+DSP Report: Generating DSP prod_reg[2], operation Mode is: (A2*B'')'.
+DSP Report: register sm3_reg[2] is absorbed into DSP prod_reg[2].
+DSP Report: register sm4_reg[2] is absorbed into DSP prod_reg[2].
+DSP Report: register sig_reg[2] is absorbed into DSP prod_reg[2].
+DSP Report: register prod_reg[2] is absorbed into DSP prod_reg[2].
+DSP Report: operator ARG is absorbed into DSP prod_reg[2].
+DSP Report: Generating DSP pr_reg[3], operation Mode is: (A2*B2)'.
+DSP Report: register pr_reg[3] is absorbed into DSP pr_reg[3].
+DSP Report: register dl_reg[3] is absorbed into DSP pr_reg[3].
+DSP Report: register pr_reg[3] is absorbed into DSP pr_reg[3].
+DSP Report: operator ARG is absorbed into DSP pr_reg[3].
+DSP Report: Generating DSP prod_reg[3], operation Mode is: (A2*B'')'.
+DSP Report: register sm3_reg[3] is absorbed into DSP prod_reg[3].
+DSP Report: register sm4_reg[3] is absorbed into DSP prod_reg[3].
+DSP Report: register sig_reg[3] is absorbed into DSP prod_reg[3].
+DSP Report: register prod_reg[3] is absorbed into DSP prod_reg[3].
+DSP Report: operator ARG is absorbed into DSP prod_reg[3].
+---------------------------------------------------------------------------------
+Finished Cross Boundary and Area Optimization : Time (s): cpu = 00:00:26 ; elapsed = 00:00:27 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 271 ; free virtual = 43925
+---------------------------------------------------------------------------------
+ Sort Area is  pr_reg[0]_0 : 0 0 : 2248 2248 : Used 1 time 0
+ Sort Area is  pr_reg[1]_4 : 0 0 : 2248 2248 : Used 1 time 0
+ Sort Area is  pr_reg[2]_6 : 0 0 : 2248 2248 : Used 1 time 0
+ Sort Area is  pr_reg[3]_8 : 0 0 : 2248 2248 : Used 1 time 0
+ Sort Area is  prod_reg[0]_2 : 0 0 : 2210 2210 : Used 1 time 0
+ Sort Area is  prod_reg[1]_5 : 0 0 : 2210 2210 : Used 1 time 0
+ Sort Area is  prod_reg[2]_7 : 0 0 : 2210 2210 : Used 1 time 0
+ Sort Area is  prod_reg[3]_9 : 0 0 : 2210 2210 : Used 1 time 0
+---------------------------------------------------------------------------------
+Start ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+
+ROM: Preliminary Mapping Report
++------------+------------+---------------+----------------+
+|Module Name | RTL Object | Depth x Width | Implemented As | 
++------------+------------+---------------+----------------+
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | lo_reg[0]  | 512x32        | Block RAM      | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | lo_reg[1]  | 512x32        | Block RAM      | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | lo_reg[2]  | 512x32        | Block RAM      | 
+|gdn_silu    | SIG_ROM[0] | 512x31        | LUT            | 
+|gdn_silu    | SIG_ROM[1] | 512x31        | LUT            | 
+|gdn_silu    | lo_reg[3]  | 512x32        | Block RAM      | 
+|gdn_silu    | lo_reg[0]  | 512x32        | Block RAM      | 
+|gdn_silu    | lo_reg[1]  | 512x32        | Block RAM      | 
+|gdn_silu    | lo_reg[2]  | 512x32        | Block RAM      | 
+|gdn_silu    | lo_reg[3]  | 512x32        | Block RAM      | 
++------------+------------+---------------+----------------+
+
+
+DSP: Preliminary Mapping Report (see note below. The ' indicates corresponding REG is set)
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name | DSP Mapping | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|gdn_silu    | (A2*B2)'    | 25     | 13     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B'')'   | 18     | 16     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B2)'    | 25     | 13     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B'')'   | 18     | 16     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B2)'    | 25     | 13     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B'')'   | 18     | 16     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B2)'    | 25     | 13     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|gdn_silu    | (A2*B'')'   | 18     | 16     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 1    | 0    | 
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+Note: The table above is a preliminary report that shows the DSPs inferred at the current stage of the synthesis flow. Some DSP may be reimplemented as non DSP primitives later in the synthesis flow. Multiple instantiated DSPs are reported only once.
+---------------------------------------------------------------------------------
+Finished ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Timing Optimization
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Timing Optimization : Time (s): cpu = 00:00:27 ; elapsed = 00:00:27 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 391 ; free virtual = 43910
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Technology Mapping
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Technology Mapping : Time (s): cpu = 00:00:27 ; elapsed = 00:00:28 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 292 ; free virtual = 43854
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Flattening Before IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Flattening Before IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished IO Insertion : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 366 ; free virtual = 43813
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Instances
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Instances : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 351 ; free virtual = 43801
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Rebuilding User Hierarchy
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Rebuilding User Hierarchy : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 291 ; free virtual = 43753
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Ports
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Ports : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 291 ; free virtual = 43754
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 271 ; free virtual = 43738
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Nets
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Nets : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 271 ; free virtual = 43738
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+
+Static Shift Register Report:
++------------+----------------+--------+-------+--------------+--------------------+-------------------+--------+---------+
+|Module Name | RTL Name       | Length | Width | Reset Signal | Pull out first Reg | Pull out last Reg | SRL16E | SRLC32E | 
++------------+----------------+--------+-------+--------------+--------------------+-------------------+--------+---------+
+|gdn_silu    | rl2_reg[0][1]  | 3      | 4     | NO           | NO                 | YES               | 4      | 0       | 
+|gdn_silu    | sm2_reg[0][15] | 3      | 64    | NO           | NO                 | YES               | 64     | 0       | 
++------------+----------------+--------+-------+--------------+--------------------+-------------------+--------+---------+
+
+---------------------------------------------------------------------------------
+Finished ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Writing Synthesis Report
+---------------------------------------------------------------------------------
+
+DSP Final Report (the ' indicates corresponding REG is set)
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name | DSP Mapping | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|gdn_silu    | (A'*B')'    | 30     | 12     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B'')'   | 17     | 18     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B')'    | 30     | 12     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B'')'   | 17     | 18     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B')'    | 30     | 12     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B'')'   | 17     | 18     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B')'    | 30     | 12     | -      | -      | 38     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|gdn_silu    | (A'*B'')'   | 17     | 18     | -      | -      | 34     | 1    | 2    | -    | -    | -     | 0    | 1    | 
++------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+
+Report BlackBoxes: 
++-+--------------+----------+
+| |BlackBox name |Instances |
++-+--------------+----------+
++-+--------------+----------+
+
+Report Cell Usage: 
++------+----------------+------+
+|      |Cell            |Count |
++------+----------------+------+
+|1     |CARRY8          |   158|
+|2     |DSP_ALU         |     8|
+|3     |DSP_A_B_DATA    |     8|
+|4     |DSP_C_DATA      |     8|
+|5     |DSP_MULTIPLIER  |     8|
+|6     |DSP_M_DATA      |     8|
+|7     |DSP_OUTPUT      |     8|
+|8     |DSP_PREADD      |     8|
+|9     |DSP_PREADD_DATA |     8|
+|10    |LUT1            |   193|
+|11    |LUT2            |   564|
+|12    |LUT3            |   117|
+|13    |LUT4            |   482|
+|14    |LUT5            |   564|
+|15    |LUT6            |  2675|
+|16    |MUXF7           |   644|
+|17    |MUXF8           |    52|
+|18    |RAMB18E2        |     4|
+|19    |SRL16E          |    68|
+|20    |FDRE            |   455|
++------+----------------+------+
+
+Report Instance Areas: 
++------+----------------+------------------------+------+
+|      |Instance        |Module                  |Cells |
++------+----------------+------------------------+------+
+|1     |top             |                        |  6040|
+|2     |  \pr_reg[0]    |\pr_reg[3]_funnel__3    |     8|
+|3     |  \prod_reg[0]  |\prod_reg[3]_funnel__3  |     8|
+|4     |  \pr_reg[1]    |\pr_reg[3]_funnel__2    |     8|
+|5     |  \prod_reg[1]  |\prod_reg[3]_funnel__2  |     8|
+|6     |  \pr_reg[2]    |\pr_reg[3]_funnel__1    |     8|
+|7     |  \prod_reg[2]  |\prod_reg[3]_funnel__1  |     8|
+|8     |  \pr_reg[3]    |\pr_reg[3]_funnel       |     8|
+|9     |  \prod_reg[3]  |\prod_reg[3]_funnel     |     8|
++------+----------------+------------------------+------+
+---------------------------------------------------------------------------------
+Finished Writing Synthesis Report : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 270 ; free virtual = 43738
+---------------------------------------------------------------------------------
+Synthesis finished with 0 errors, 0 critical warnings and 11 warnings.
+Synthesis Optimization Runtime : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.398 ; gain = 1635.844 ; free physical = 270 ; free virtual = 43737
+Synthesis Optimization Complete : Time (s): cpu = 00:00:29 ; elapsed = 00:00:29 . Memory (MB): peak = 2986.406 ; gain = 1635.844 ; free physical = 270 ; free virtual = 43737
+INFO: [Project 1-571] Translating synthesized netlist
+Netlist sorting complete. Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 2986.406 ; gain = 0.000 ; free physical = 390 ; free virtual = 43867
+INFO: [Netlist 29-17] Analyzing 862 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 0 CPU seconds
+WARNING: [Netlist 29-101] Netlist 'gdn_silu' is not ideal for floorplanning, since the cellview 'gdn_silu' contains a large number of primitives.  Please consider enabling hierarchy in synthesis if you want to do floorplanning.
+INFO: [Project 1-570] Preparing netlist for logic optimization
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+INFO: [Opt 31-422] The CLOCK_DOMAINS attribute on the BRAM cell lo_reg[0] has been changed from INDEPENDENT to COMMON to match the clocking topology used for the BRAM.
+INFO: [Opt 31-422] The CLOCK_DOMAINS attribute on the BRAM cell lo_reg[1] has been changed from INDEPENDENT to COMMON to match the clocking topology used for the BRAM.
+INFO: [Opt 31-422] The CLOCK_DOMAINS attribute on the BRAM cell lo_reg[2] has been changed from INDEPENDENT to COMMON to match the clocking topology used for the BRAM.
+INFO: [Opt 31-422] The CLOCK_DOMAINS attribute on the BRAM cell lo_reg[3] has been changed from INDEPENDENT to COMMON to match the clocking topology used for the BRAM.
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3042.426 ; gain = 0.000 ; free physical = 294 ; free virtual = 43616
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 8 instances were transformed.
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 8 instances
+
+Synth Design complete | Checksum: 8e8ffea0
+INFO: [Common 17-83] Releasing license: Synthesis
+19 Infos, 12 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:00:37 ; elapsed = 00:00:36 . Memory (MB): peak = 3042.461 ; gain = 1709.816 ; free physical = 265 ; free virtual = 43883
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 2350.032; main = 2171.044; forked = 322.443
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 3886.691; main = 3042.430; forked = 1017.273
+Command: opt_design
+Attempting to get a license for feature 'Implementation' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xcvu33p'
+Running DRC as a precondition to command opt_design
+
+Starting DRC Task
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Project 1-461] DRC finished with 0 Errors
+INFO: [Project 1-462] Please refer to the DRC report (report_drc) for more information.
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.7 . Memory (MB): peak = 3106.457 ; gain = 63.996 ; free physical = 323 ; free virtual = 46582
+
+Starting Cache Timing Information Task
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Ending Cache Timing Information Task | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:01 . Memory (MB): peak = 3134.145 ; gain = 27.688 ; free physical = 263 ; free virtual = 47432
+
+Starting Logic Optimization Task
+
+Phase 1 Initialization
+
+Phase 1.1 Core Generation And Design Setup
+Phase 1.1 Core Generation And Design Setup | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2131 ; free virtual = 52086
+
+Phase 1.2 Setup Constraints And Sort Netlist
+Phase 1.2 Setup Constraints And Sort Netlist | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2128 ; free virtual = 52086
+Phase 1 Initialization | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2127 ; free virtual = 52085
+
+Phase 2 Timer Update And Timing Data Collection
+
+Phase 2.1 Timer Update
+Phase 2.1 Timer Update | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00.22 ; elapsed = 00:00:00.05 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2107 ; free virtual = 52085
+
+Phase 2.2 Timing Data Collection
+Phase 2.2 Timing Data Collection | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00.23 ; elapsed = 00:00:00.06 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2106 ; free virtual = 52084
+Phase 2 Timer Update And Timing Data Collection | Checksum: 14e031bcd
+
+Time (s): cpu = 00:00:00.23 ; elapsed = 00:00:00.06 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2106 ; free virtual = 52084
+
+Phase 3 Retarget
+INFO: [Opt 31-138] Pushed 1 inverter(s) to 8 load pin(s).
+INFO: [Opt 31-49] Retargeted 0 cell(s).
+Phase 3 Retarget | Checksum: d7b17337
+
+Time (s): cpu = 00:00:00.3 ; elapsed = 00:00:00.13 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2075 ; free virtual = 52054
+Retarget | Checksum: d7b17337
+INFO: [Opt 31-389] Phase Retarget created 0 cells and removed 0 cells
+INFO: [Opt 31-1021] In phase Retarget, 40 netlist objects are constrained preventing optimization. Please run opt_design with -debug_log to get more detail. 
+
+Phase 4 Constant propagation
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Phase 4 Constant propagation | Checksum: 1a1824a88
+
+Time (s): cpu = 00:00:00.34 ; elapsed = 00:00:00.17 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2067 ; free virtual = 52053
+Constant propagation | Checksum: 1a1824a88
+INFO: [Opt 31-389] Phase Constant propagation created 0 cells and removed 0 cells
+INFO: [Opt 31-1021] In phase Constant propagation, 36 netlist objects are constrained preventing optimization. Please run opt_design with -debug_log to get more detail. 
+
+Phase 5 Sweep
+Phase 5 Sweep | Checksum: c497126a
+
+Time (s): cpu = 00:00:00.38 ; elapsed = 00:00:00.22 . Memory (MB): peak = 3294.145 ; gain = 0.000 ; free physical = 2071 ; free virtual = 52057
+Sweep | Checksum: c497126a
+INFO: [Opt 31-389] Phase Sweep created 0 cells and removed 0 cells
+INFO: [Opt 31-1021] In phase Sweep, 72 netlist objects are constrained preventing optimization. Please run opt_design with -debug_log to get more detail. 
+
+Phase 6 BUFG optimization
+INFO: [Opt 31-1077] Phase BUFG optimization inserted 0 global clock buffer(s) for CLOCK_LOW_FANOUT.
+Phase 6 BUFG optimization | Checksum: c497126a
+
+Time (s): cpu = 00:00:00.4 ; elapsed = 00:00:00.24 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2082 ; free virtual = 52069
+BUFG optimization | Checksum: c497126a
+INFO: [Opt 31-662] Phase BUFG optimization created 0 cells of which 0 are BUFGs and removed 0 cells.
+
+Phase 7 Shift Register Optimization
+INFO: [Opt 31-1064] SRL Remap converted 0 SRLs to 0 registers and converted 0 registers of register chains to 0 SRLs
+Phase 7 Shift Register Optimization | Checksum: c497126a
+
+Time (s): cpu = 00:00:00.4 ; elapsed = 00:00:00.24 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2082 ; free virtual = 52069
+Shift Register Optimization | Checksum: c497126a
+INFO: [Opt 31-389] Phase Shift Register Optimization created 0 cells and removed 0 cells
+
+Phase 8 Post Processing Netlist
+Phase 8 Post Processing Netlist | Checksum: c497126a
+
+Time (s): cpu = 00:00:00.42 ; elapsed = 00:00:00.26 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2073 ; free virtual = 52059
+Post Processing Netlist | Checksum: c497126a
+INFO: [Opt 31-389] Phase Post Processing Netlist created 0 cells and removed 0 cells
+INFO: [Opt 31-1021] In phase Post Processing Netlist, 36 netlist objects are constrained preventing optimization. Please run opt_design with -debug_log to get more detail. 
+
+Phase 9 Finalization
+
+Phase 9.1 Finalizing Design Cores and Updating Shapes
+Phase 9.1 Finalizing Design Cores and Updating Shapes | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00.48 ; elapsed = 00:00:00.32 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2081 ; free virtual = 52068
+
+Phase 9.2 Verifying Netlist Connectivity
+
+Starting Connectivity Check Task
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 3326.160 ; gain = 0.000 ; free physical = 2080 ; free virtual = 52066
+Phase 9.2 Verifying Netlist Connectivity | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00.49 ; elapsed = 00:00:00.33 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2080 ; free virtual = 52066
+Phase 9 Finalization | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00.49 ; elapsed = 00:00:00.33 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2080 ; free virtual = 52066
+Opt_design Change Summary
+=========================
+
+
+-------------------------------------------------------------------------------------------------------------------------
+|  Phase                        |  #Cells created  |  #Cells Removed  |  #Constrained objects preventing optimizations  |
+-------------------------------------------------------------------------------------------------------------------------
+|  Retarget                     |               0  |               0  |                                             40  |
+|  Constant propagation         |               0  |               0  |                                             36  |
+|  Sweep                        |               0  |               0  |                                             72  |
+|  BUFG optimization            |               0  |               0  |                                              0  |
+|  Shift Register Optimization  |               0  |               0  |                                              0  |
+|  Post Processing Netlist      |               0  |               0  |                                             36  |
+-------------------------------------------------------------------------------------------------------------------------
+
+
+Ending Logic Optimization Task | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00.49 ; elapsed = 00:00:00.33 . Memory (MB): peak = 3326.160 ; gain = 32.016 ; free physical = 2080 ; free virtual = 52066
+INFO: [Constraints 18-11670] Building netlist checker database with flags, 0x8
+Done building netlist checker database: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3326.160 ; gain = 0.000 ; free physical = 2080 ; free virtual = 52066
+
+Starting Power Optimization Task
+INFO: [Pwropt 34-132] Skipping clock gating for clocks with a period < 2.00 ns.
+INFO: [Pwropt 34-9] Applying IDT optimizations ...
+INFO: [Pwropt 34-10] Applying ODC optimizations ...
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Running Vector-less Activity Propagation...
+
+Finished Running Vector-less Activity Propagation
+
+
+Starting PowerOpt Patch Enables Task
+INFO: [Pwropt 34-162] WRITE_MODE attribute of 0 BRAM(s) out of a total of 4 has been updated to save power. Run report_power_opt to get a complete listing of the BRAMs updated.
+INFO: [Pwropt 34-201] Structural ODC has moved 0 WE to EN ports
+Number of BRAM Ports augmented: 0 newly gated: 0 Total Ports: 8
+Ending PowerOpt Patch Enables Task | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3545.859 ; gain = 0.000 ; free physical = 1981 ; free virtual = 52069
+Ending Power Optimization Task | Checksum: 18286f259
+
+Time (s): cpu = 00:00:05 ; elapsed = 00:00:03 . Memory (MB): peak = 3545.859 ; gain = 219.699 ; free physical = 1983 ; free virtual = 52071
+
+Starting Final Cleanup Task
+Ending Final Cleanup Task | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3545.859 ; gain = 0.000 ; free physical = 1983 ; free virtual = 52071
+
+Starting Netlist Obfuscation Task
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3545.859 ; gain = 0.000 ; free physical = 1983 ; free virtual = 52071
+Ending Netlist Obfuscation Task | Checksum: 18286f259
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3545.859 ; gain = 0.000 ; free physical = 1983 ; free virtual = 52071
+INFO: [Common 17-83] Releasing license: Implementation
+49 Infos, 12 Warnings, 0 Critical Warnings and 0 Errors encountered.
+opt_design completed successfully
+opt_design: Time (s): cpu = 00:00:09 ; elapsed = 00:00:07 . Memory (MB): peak = 3545.859 ; gain = 503.398 ; free physical = 1983 ; free virtual = 52071
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "clk" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+report_timing_summary: Time (s): cpu = 00:00:10 ; elapsed = 00:00:09 . Memory (MB): peak = 4203.164 ; gain = 657.305 ; free physical = 1899 ; free virtual = 53419
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+COMPOSE_RESULT target=gdn_silu dsp=8 lut=4191 lut_logic=4123  lut_mem=68 ff=455 ramb36=0 ramb18=4 bram=2 uram=0  carry8=158 f7=644 f8=52 wns=2.448 fmax=391.84952978056424 synth_s=35 opt_s=7
+COMPOSE_SYNTH_VS_OPT target=gdn_silu synth_lut=4191 opt_lut=4191  synth_ff=455 opt_ff=455 synth_dsp=8 opt_dsp=8  synth_bram=2 opt_bram=2
+COMPOSE_DONE gdn_silu
+INFO: [Common 17-206] Exiting Vivado at Sat Aug 29 17:04:18 2026...

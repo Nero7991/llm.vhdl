@@ -1,0 +1,2 @@
+target,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+seq_region_lock,0,736,736,0,1033,0,0,0,0,6,98,36,2.991,497.7600796416128,22,2,736,1033,0,0

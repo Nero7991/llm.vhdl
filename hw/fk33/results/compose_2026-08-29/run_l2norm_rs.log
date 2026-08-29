@@ -1,0 +1,862 @@
+== ooc_compose_run l2norm_rs : 2026-08-29T17:01:39-06:00
+               total        used        free      shared  buff/cache   available
+Mem:              31           3           0           0          27          27
+Swap:             31           4          27
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/orencollaco/GitHub/llama.vhdl/sim/ooc_compose_bcd.tcl -notrace
+COMPOSE_BEGIN target=l2norm_rs part=xcvu33p-fsvh2104-2L-e period=5.0 rtl=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl
+COMPOSE_GENERICS l2norm_rs : N=128 LANES=4
+Command: synth_design -mode out_of_context -top l2norm_rs -part xcvu33p-fsvh2104-2L-e -generic N=128 -generic LANES=4
+Starting synth_design
+Attempting to get a license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2541665
+---------------------------------------------------------------------------------
+Starting Synthesize : Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 1765.750 ; gain = 418.957 ; free physical = 395 ; free virtual = 55009
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'l2norm_rs' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:110]
+	Parameter N bound to: 128 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:456]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:457]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:456]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:457]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:456]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:457]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:456]
+INFO: [Synth 8-6054] Found Dynamic range expression with variable size [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:457]
+INFO: [Synth 8-256] done synthesizing module 'l2norm_rs' (0#1) [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:110]
+---------------------------------------------------------------------------------
+Finished Synthesize : Time (s): cpu = 00:00:03 ; elapsed = 00:00:03 . Memory (MB): peak = 1974.156 ; gain = 627.363 ; free physical = 306 ; free virtual = 54783
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Constraint Validation : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 1974.156 ; gain = 627.363 ; free physical = 294 ; free virtual = 54770
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Cross Boundary and Area Optimization
+---------------------------------------------------------------------------------
+INFO: [Synth 8-5546] ROM "p_0_out" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5546] ROM "p_0_out" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-4471] merging register 'idx_reg[5:0]' into 'idx_reg[5:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:216]
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port P[8] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port P[1] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port P[0] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[31] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[30] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[29] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[28] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[27] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[26] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[25] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[24] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[23] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[22] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[21] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[20] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[19] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[18] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[17] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[16] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[15] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[14] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[13] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[12] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[5] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[4] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[3] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[2] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[1] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB9 has port O2[0] driven by constant 1
+INFO: [Synth 8-4471] merging register 'idx_reg[5:0]' into 'idx_reg[5:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:216]
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[5] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[4] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[3] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[2] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[1] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB19 has port P[0] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[28] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[27] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[26] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[25] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[24] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[23] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[22] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[21] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[20] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[19] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[18] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[17] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[16] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[15] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[14] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[13] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[12] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[11] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[10] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[9] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[8] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[1] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB20 has port P[0] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[28] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[27] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[26] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[25] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[24] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[23] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[22] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[21] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[20] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[19] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[18] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[17] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[16] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[15] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[14] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[13] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[12] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[11] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[10] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[9] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[8] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[1] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB22 has port p_1_out[0] driven by constant 0
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[28] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[27] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[26] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[25] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[24] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[23] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[22] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[21] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[20] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[19] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[18] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[17] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[16] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[15] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[14] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[13] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[12] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[11] driven by constant 1
+WARNING: [Synth 8-3917] design l2norm_rs__GB24 has port p_1_out[10] driven by constant 1
+INFO: [Common 17-14] Message 'Synth 8-3917' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+INFO: [Synth 8-4471] merging register 'xa_reg[0][15:0]' into 'xa_reg[0][15:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:225]
+INFO: [Synth 8-4471] merging register 'xa_reg[3][15:0]' into 'xa_reg[3][15:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:225]
+INFO: [Synth 8-4471] merging register 'xa_reg[2][15:0]' into 'xa_reg[2][15:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:225]
+INFO: [Synth 8-4471] merging register 'xa_reg[1][15:0]' into 'xa_reg[1][15:0]' [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:225]
+WARNING: [Synth 8-3936] Found unconnected internal register 'sh_q_reg' and it is trimmed from '32' to '31' bits. [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:375]
+WARNING: [Synth 8-3936] Found unconnected internal register 'sh_k_reg' and it is trimmed from '32' to '31' bits. [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:368]
+INFO: [Synth 8-5546] ROM "rq_y" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5587] ROM size for "mr_m" is below threshold of ROM address width. It will be mapped to LUTs
+INFO: [Synth 8-5546] ROM "rq_y2" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5546] ROM "rq_diff" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5546] ROM "state" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 4 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:356]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:422]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:422]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:422]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:422]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:423]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:423]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:423]
+INFO: [Synth 8-5845] Not enough pipeline registers after wide multiplier. Recommended levels of pipeline registers is 2 [/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/compose_tree/rtl/l2norm_rs.vhd:423]
+INFO: [Synth 8-5546] ROM "rq_y" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5587] ROM size for "mr_m" is below threshold of ROM address width. It will be mapped to LUTs
+INFO: [Synth 8-5546] ROM "rq_y2" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5546] ROM "rq_diff" won't be mapped to RAM because it is too sparse
+INFO: [Synth 8-5546] ROM "state" won't be mapped to RAM because it is too sparse
+DSP Report: Generating DSP sq_reg[1], operation Mode is: (A2*B2)'.
+DSP Report: register xa_reg[1] is absorbed into DSP sq_reg[1].
+DSP Report: register xa_reg[1] is absorbed into DSP sq_reg[1].
+DSP Report: register sq_reg[1] is absorbed into DSP sq_reg[1].
+DSP Report: operator ARG is absorbed into DSP sq_reg[1].
+DSP Report: Generating DSP sq_reg[2], operation Mode is: (A2*B2)'.
+DSP Report: register xa_reg[2] is absorbed into DSP sq_reg[2].
+DSP Report: register xa_reg[2] is absorbed into DSP sq_reg[2].
+DSP Report: register sq_reg[2] is absorbed into DSP sq_reg[2].
+DSP Report: operator ARG is absorbed into DSP sq_reg[2].
+DSP Report: Generating DSP sq_reg[3], operation Mode is: (A2*B2)'.
+DSP Report: register xa_reg[3] is absorbed into DSP sq_reg[3].
+DSP Report: register xa_reg[3] is absorbed into DSP sq_reg[3].
+DSP Report: register sq_reg[3] is absorbed into DSP sq_reg[3].
+DSP Report: operator ARG is absorbed into DSP sq_reg[3].
+DSP Report: Generating DSP sq_reg[0], operation Mode is: (A2*B2)'.
+DSP Report: register xa_reg[0] is absorbed into DSP sq_reg[0].
+DSP Report: register xa_reg[0] is absorbed into DSP sq_reg[0].
+DSP Report: register sq_reg[0] is absorbed into DSP sq_reg[0].
+DSP Report: operator ARG is absorbed into DSP sq_reg[0].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: A''*B2.
+DSP Report: register rq_smant_reg is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B''.
+DSP Report: register rq_smant_reg is absorbed into DSP ARG.
+DSP Report: register mr_p_reg is absorbed into DSP ARG.
+DSP Report: register rq_y2_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: A2*B''.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B''.
+DSP Report: register mr_p_reg is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register rq_y2_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register rq_diff_reg is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register rq_diff_reg is absorbed into DSP ARG.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP ARG, operation Mode is: (A:0x13ccd)*B2.
+DSP Report: register rq_y_reg is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP fold_p_reg, operation Mode is: (PCIN>>17)+A2*B.
+DSP Report: register rq_y_reg is absorbed into DSP fold_p_reg.
+DSP Report: register fold_p_reg is absorbed into DSP fold_p_reg.
+DSP Report: operator ARG is absorbed into DSP fold_p_reg.
+DSP Report: operator ARG is absorbed into DSP fold_p_reg.
+DSP Report: Generating DSP ARG, operation Mode is: A2*(B:0x13ccd).
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP fold_p_reg, operation Mode is: (PCIN>>17)+A2*B.
+DSP Report: register fold_p_reg is absorbed into DSP fold_p_reg.
+DSP Report: register fold_p_reg is absorbed into DSP fold_p_reg.
+DSP Report: operator ARG is absorbed into DSP fold_p_reg.
+DSP Report: operator ARG is absorbed into DSP fold_p_reg.
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register xf_reg[0] is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pk_reg[0], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[0] is absorbed into DSP pk_reg[0].
+DSP Report: register y_k_reg is absorbed into DSP pk_reg[0].
+DSP Report: register pk_reg[0] is absorbed into DSP pk_reg[0].
+DSP Report: operator ARG is absorbed into DSP pk_reg[0].
+DSP Report: operator ARG is absorbed into DSP pk_reg[0].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register xf_reg[1] is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pk_reg[1], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[1] is absorbed into DSP pk_reg[1].
+DSP Report: register y_k_reg is absorbed into DSP pk_reg[1].
+DSP Report: register pk_reg[1] is absorbed into DSP pk_reg[1].
+DSP Report: operator ARG is absorbed into DSP pk_reg[1].
+DSP Report: operator ARG is absorbed into DSP pk_reg[1].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register xf_reg[2] is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pk_reg[2], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[2] is absorbed into DSP pk_reg[2].
+DSP Report: register y_k_reg is absorbed into DSP pk_reg[2].
+DSP Report: register pk_reg[2] is absorbed into DSP pk_reg[2].
+DSP Report: operator ARG is absorbed into DSP pk_reg[2].
+DSP Report: operator ARG is absorbed into DSP pk_reg[2].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register xf_reg[3] is absorbed into DSP ARG.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pk_reg[3], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[3] is absorbed into DSP pk_reg[3].
+DSP Report: register y_k_reg is absorbed into DSP pk_reg[3].
+DSP Report: register pk_reg[3] is absorbed into DSP pk_reg[3].
+DSP Report: operator ARG is absorbed into DSP pk_reg[3].
+DSP Report: operator ARG is absorbed into DSP pk_reg[3].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register xf_reg[0] is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pq_reg[0], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[0] is absorbed into DSP pq_reg[0].
+DSP Report: register y_q_reg is absorbed into DSP pq_reg[0].
+DSP Report: register pq_reg[0] is absorbed into DSP pq_reg[0].
+DSP Report: operator ARG is absorbed into DSP pq_reg[0].
+DSP Report: operator ARG is absorbed into DSP pq_reg[0].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register xf_reg[1] is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pq_reg[1], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[1] is absorbed into DSP pq_reg[1].
+DSP Report: register y_q_reg is absorbed into DSP pq_reg[1].
+DSP Report: register pq_reg[1] is absorbed into DSP pq_reg[1].
+DSP Report: operator ARG is absorbed into DSP pq_reg[1].
+DSP Report: operator ARG is absorbed into DSP pq_reg[1].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register xf_reg[2] is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pq_reg[2], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[2] is absorbed into DSP pq_reg[2].
+DSP Report: register y_q_reg is absorbed into DSP pq_reg[2].
+DSP Report: register pq_reg[2] is absorbed into DSP pq_reg[2].
+DSP Report: operator ARG is absorbed into DSP pq_reg[2].
+DSP Report: operator ARG is absorbed into DSP pq_reg[2].
+DSP Report: Generating DSP ARG, operation Mode is: A2*B2.
+DSP Report: register ARG is absorbed into DSP ARG.
+DSP Report: register xf_reg[3] is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: operator ARG is absorbed into DSP ARG.
+DSP Report: Generating DSP pq_reg[3], operation Mode is: (PCIN>>17)+A2*B2.
+DSP Report: register xf_reg[3] is absorbed into DSP pq_reg[3].
+DSP Report: register y_q_reg is absorbed into DSP pq_reg[3].
+DSP Report: register pq_reg[3] is absorbed into DSP pq_reg[3].
+DSP Report: operator ARG is absorbed into DSP pq_reg[3].
+DSP Report: operator ARG is absorbed into DSP pq_reg[3].
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[6]' (FDE) to 'msb_p_reg[7]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[7]' (FDE) to 'msb_p_reg[8]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[8]' (FDE) to 'msb_p_reg[9]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[9]' (FDE) to 'msb_p_reg[10]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[10]' (FDE) to 'msb_p_reg[11]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[11]' (FDE) to 'msb_p_reg[12]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[12]' (FDE) to 'msb_p_reg[13]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[13]' (FDE) to 'msb_p_reg[14]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[14]' (FDE) to 'msb_p_reg[15]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[15]' (FDE) to 'msb_p_reg[16]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[16]' (FDE) to 'msb_p_reg[17]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[17]' (FDE) to 'msb_p_reg[18]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[18]' (FDE) to 'msb_p_reg[19]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[19]' (FDE) to 'msb_p_reg[20]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[20]' (FDE) to 'msb_p_reg[21]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[21]' (FDE) to 'msb_p_reg[22]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[22]' (FDE) to 'msb_p_reg[23]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[23]' (FDE) to 'msb_p_reg[24]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[24]' (FDE) to 'msb_p_reg[25]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[25]' (FDE) to 'msb_p_reg[26]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[26]' (FDE) to 'msb_p_reg[27]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[27]' (FDE) to 'msb_p_reg[28]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[28]' (FDE) to 'msb_p_reg[29]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[29]' (FDE) to 'msb_p_reg[30]'
+INFO: [Synth 8-3886] merging instance 'msb_p_reg[30]' (FDE) to 'msb_p_reg[31]'
+INFO: [Synth 8-3333] propagating constant 0 across sequential element (\msb_p_reg[31] )
+---------------------------------------------------------------------------------
+Finished Cross Boundary and Area Optimization : Time (s): cpu = 00:00:26 ; elapsed = 00:00:37 . Memory (MB): peak = 3059.328 ; gain = 1712.535 ; free physical = 248 ; free virtual = 45442
+---------------------------------------------------------------------------------
+ Sort Area is l2norm_rs__GB25 ARG_1b : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_1b : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_1e : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_1e : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_1f : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_1f : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_20 : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_20 : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_21 : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_21 : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_22 : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_22 : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_23 : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_23 : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_24 : 0 0 : 2793 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_24 : 0 1 : 2622 5415 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_b : 0 0 : 2755 4963 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_b : 0 1 : 2208 4963 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_11 : 0 0 : 2737 4933 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_11 : 0 1 : 2196 4933 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_5 : 0 0 : 2737 4933 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_5 : 0 1 : 2196 4933 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_8 : 0 0 : 2584 4606 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_8 : 0 1 : 2022 4606 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_e : 0 0 : 2209 4054 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_e : 0 1 : 1845 4054 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_12 : 0 0 : 2191 4021 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_12 : 0 1 : 1830 4021 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_15 : 0 0 : 1616 3681 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_15 : 0 1 : 2065 3681 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_18 : 0 0 : 1187 2974 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 ARG_18 : 0 1 : 1787 2974 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 sq_reg[0]_0 : 0 0 : 2001 2001 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 sq_reg[1]_4 : 0 0 : 2001 2001 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 sq_reg[2]_3 : 0 0 : 2001 2001 : Used 1 time 0
+ Sort Area is l2norm_rs__GB25 sq_reg[3]_2 : 0 0 : 2001 2001 : Used 1 time 0
+---------------------------------------------------------------------------------
+Start ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+
+ROM: Preliminary Mapping Report
++------------+--------------+---------------+----------------+
+|Module Name | RTL Object   | Depth x Width | Implemented As | 
++------------+--------------+---------------+----------------+
+|l2norm_rs   | RSQRT_ROM[0] | 64x32         | LUT            | 
++------------+--------------+---------------+----------------+
+
+
+DSP: Preliminary Mapping Report (see note below. The ' indicates corresponding REG is set)
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name     | DSP Mapping       | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|l2norm_rs       | (A2*B2)'          | 16     | 16     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|l2norm_rs       | (A2*B2)'          | 16     | 16     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|l2norm_rs       | (A2*B2)'          | 16     | 16     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|l2norm_rs       | (A2*B2)'          | 16     | 16     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 1    | 0    | 
+|l2norm_rs       | A2*B2             | 18     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | (PCIN>>17)+A2*B2  | 15     | 15     | -      | -      | 30     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 18     | 15     | -      | -      | 47     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | A''*B2            | 18     | 15     | -      | -      | 48     | 2    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | (PCIN>>17)+A2*B'' | 15     | 15     | -      | -      | 30     | 1    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A2*B''            | 18     | 18     | -      | -      | 48     | 1    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | (PCIN>>17)+A2*B'' | 18     | 15     | -      | -      | 47     | 1    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | A2*B2             | 18     | 17     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | (PCIN>>17)+A2*B2  | 17     | 15     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | (PCIN>>17)+A2*B2  | 18     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (A:0x13ccd)*B2    | 18     | 15     | -      | -      | 48     | 0    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B   | 15     | 14     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*(B:0x13ccd)    | 18     | 18     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B   | 18     | 14     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A2*B2             | 18     | 16     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17)+A2*B2  | 16     | 15     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+Note: The table above is a preliminary report that shows the DSPs inferred at the current stage of the synthesis flow. Some DSP may be reimplemented as non DSP primitives later in the synthesis flow. Multiple instantiated DSPs are reported only once.
+---------------------------------------------------------------------------------
+Finished ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Timing Optimization
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Timing Optimization : Time (s): cpu = 00:00:27 ; elapsed = 00:00:39 . Memory (MB): peak = 3059.328 ; gain = 1712.535 ; free physical = 338 ; free virtual = 45488
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Technology Mapping
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Technology Mapping : Time (s): cpu = 00:00:29 ; elapsed = 00:00:41 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 286 ; free virtual = 45414
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Flattening Before IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Flattening Before IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished IO Insertion : Time (s): cpu = 00:00:33 ; elapsed = 00:00:45 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 283 ; free virtual = 45220
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Instances
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Instances : Time (s): cpu = 00:00:33 ; elapsed = 00:00:45 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 283 ; free virtual = 45221
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Rebuilding User Hierarchy
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Rebuilding User Hierarchy : Time (s): cpu = 00:00:33 ; elapsed = 00:00:45 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 275 ; free virtual = 45218
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Ports
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Ports : Time (s): cpu = 00:00:33 ; elapsed = 00:00:45 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 275 ; free virtual = 45217
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:00:35 ; elapsed = 00:00:47 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 263 ; free virtual = 45087
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Nets
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Nets : Time (s): cpu = 00:00:35 ; elapsed = 00:00:47 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 263 ; free virtual = 45087
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Writing Synthesis Report
+---------------------------------------------------------------------------------
+
+DSP Final Report (the ' indicates corresponding REG is set)
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name     | DSP Mapping       | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|l2norm_rs       | (A'*B')'          | 30     | 18     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs       | (A'*B')'          | 30     | 18     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs       | (A'*B')'          | 30     | 18     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs       | (A'*B')'          | 30     | 18     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs       | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | PCIN>>17+A'*B'    | 30     | 18     | -      | -      | 30     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 17     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | PCIN>>17+A'*B'    | 17     | 18     | -      | -      | 47     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | A''*B'            | 17     | 18     | -      | -      | 48     | 2    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | PCIN>>17+A'*B''   | 30     | 18     | -      | -      | 30     | 1    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A'*B''            | 17     | 17     | -      | -      | 48     | 1    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | PCIN>>17+A*B''    | 0      | 18     | -      | -      | 47     | 0    | 2    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | PCIN>>17+A'*B'    | 30     | 18     | -      | -      | 32     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 17     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs       | PCIN>>17+A'*B'    | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | A*B'              | 17     | 18     | -      | -      | 48     | 0    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B)'  | 30     | 13     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B              | 17     | 17     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B)'  | 17     | 13     | -      | -      | 48     | 1    | 0    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
+|l2norm_rs__GB25 | A'*B'             | 17     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 0    | 
+|l2norm_rs__GB25 | (PCIN>>17+A'*B')' | 30     | 18     | -      | -      | 48     | 1    | 1    | -    | -    | -     | 0    | 1    | 
++----------------+-------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+
+Report BlackBoxes: 
++-+--------------+----------+
+| |BlackBox name |Instances |
++-+--------------+----------+
++-+--------------+----------+
+
+Report Cell Usage: 
++------+----------------+------+
+|      |Cell            |Count |
++------+----------------+------+
+|1     |CARRY8          |   222|
+|2     |DSP_ALU         |    36|
+|3     |DSP_A_B_DATA    |    36|
+|4     |DSP_C_DATA      |    36|
+|5     |DSP_MULTIPLIER  |    36|
+|6     |DSP_M_DATA      |    36|
+|7     |DSP_OUTPUT      |    36|
+|8     |DSP_PREADD      |    36|
+|9     |DSP_PREADD_DATA |    36|
+|10    |LUT1            |    62|
+|11    |LUT2            |  1087|
+|12    |LUT3            |  3940|
+|13    |LUT4            |   433|
+|14    |LUT5            |  3005|
+|15    |LUT6            |  8425|
+|16    |MUXF7           |   256|
+|17    |FDRE            |  4826|
++------+----------------+------+
+
+Report Instance Areas: 
++------+----------------+----------------------+------+
+|      |Instance        |Module                |Cells |
++------+----------------+----------------------+------+
+|1     |top             |                      | 22544|
+|2     |  \sq_reg[1]    |\sq_reg[1]_funnel     |     8|
+|3     |  \sq_reg[2]    |\sq_reg[1]_funnel__1  |     8|
+|4     |  \sq_reg[3]    |\sq_reg[1]_funnel__2  |     8|
+|5     |  \sq_reg[0]    |\sq_reg[1]_funnel__3  |     8|
+|6     |  ARG           |ARG__14_funnel__3     |     8|
+|7     |  ARG__0        |ARG__14_funnel__5     |     8|
+|8     |  ARG__1        |ARG__14_funnel__8     |     8|
+|9     |  ARG__2        |ARG__14_funnel__10    |     8|
+|10    |  ARG__3        |ARG__3_funnel         |     8|
+|11    |  ARG__4        |ARG__4_funnel         |     8|
+|12    |  ARG__5        |ARG__4_funnel__1      |     8|
+|13    |  ARG__6        |ARG__6_funnel         |     8|
+|14    |  ARG__7        |ARG__14_funnel__2     |     8|
+|15    |  ARG__8        |ARG__14_funnel__4     |     8|
+|16    |  ARG__9        |ARG__14_funnel__6     |     8|
+|17    |  ARG__10       |ARG__14_funnel__7     |     8|
+|18    |  ARG__11       |ARG__11_funnel        |     8|
+|19    |  fold_p_reg    |fold_p_reg_funnel     |     8|
+|20    |  ARG__12       |ARG__12_funnel        |     8|
+|21    |  fold_p_reg__0 |fold_p_reg_funnel__1  |     8|
+|22    |  ARG__13       |ARG__14_funnel__11    |     8|
+|23    |  \pk_reg[0]    |\pq_reg[1]_funnel__7  |     8|
+|24    |  ARG__14       |ARG__14_funnel        |     8|
+|25    |  \pk_reg[1]    |\pq_reg[1]_funnel__4  |     8|
+|26    |  ARG__15       |ARG__14_funnel__13    |     8|
+|27    |  \pk_reg[2]    |\pq_reg[1]_funnel__3  |     8|
+|28    |  ARG__16       |ARG__14_funnel__12    |     8|
+|29    |  \pk_reg[3]    |\pq_reg[1]_funnel__1  |     8|
+|30    |  ARG__17       |ARG__14_funnel__9     |     8|
+|31    |  \pq_reg[0]    |\pq_reg[1]_funnel__6  |     8|
+|32    |  ARG__18       |ARG__14_funnel__15    |     8|
+|33    |  \pq_reg[1]    |\pq_reg[1]_funnel     |     8|
+|34    |  ARG__19       |ARG__14_funnel__1     |     8|
+|35    |  \pq_reg[2]    |\pq_reg[1]_funnel__5  |     8|
+|36    |  ARG__20       |ARG__14_funnel__14    |     8|
+|37    |  \pq_reg[3]    |\pq_reg[1]_funnel__2  |     8|
++------+----------------+----------------------+------+
+---------------------------------------------------------------------------------
+Finished Writing Synthesis Report : Time (s): cpu = 00:00:35 ; elapsed = 00:00:47 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 263 ; free virtual = 45087
+---------------------------------------------------------------------------------
+Synthesis finished with 0 errors, 0 critical warnings and 106 warnings.
+Synthesis Optimization Runtime : Time (s): cpu = 00:00:37 ; elapsed = 00:00:51 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 7023 ; free virtual = 52932
+Synthesis Optimization Complete : Time (s): cpu = 00:00:37 ; elapsed = 00:00:51 . Memory (MB): peak = 3080.223 ; gain = 1733.430 ; free physical = 7023 ; free virtual = 52921
+INFO: [Project 1-571] Translating synthesized netlist
+Netlist sorting complete. Time (s): cpu = 00:00:00.08 ; elapsed = 00:00:00.09 . Memory (MB): peak = 3080.223 ; gain = 0.000 ; free physical = 6845 ; free virtual = 52763
+INFO: [Netlist 29-17] Analyzing 514 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 0 CPU seconds
+WARNING: [Netlist 29-101] Netlist 'l2norm_rs' is not ideal for floorplanning, since the cellview 'l2norm_rs' contains a large number of primitives.  Please consider enabling hierarchy in synthesis if you want to do floorplanning.
+INFO: [Project 1-570] Preparing netlist for logic optimization
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 3124.332 ; gain = 0.000 ; free physical = 6141 ; free virtual = 52165
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 36 instances were transformed.
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 36 instances
+
+Synth Design complete | Checksum: e7d281ab
+INFO: [Common 17-83] Releasing license: Synthesis
+77 Infos, 103 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:00:44 ; elapsed = 00:00:59 . Memory (MB): peak = 3124.367 ; gain = 1791.211 ; free physical = 5918 ; free virtual = 52011
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 10365.629; main = 2204.074; forked = 8453.925
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 15971.379; main = 3124.336; forked = 12895.066
+Command: opt_design
+Attempting to get a license for feature 'Implementation' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xcvu33p'
+Running DRC as a precondition to command opt_design
+
+Starting DRC Task
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Project 1-461] DRC finished with 0 Errors
+INFO: [Project 1-462] Please refer to the DRC report (report_drc) for more information.
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:00.76 . Memory (MB): peak = 3188.363 ; gain = 63.996 ; free physical = 5556 ; free virtual = 51712
+
+Starting Cache Timing Information Task
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Ending Cache Timing Information Task | Checksum: 18602918b
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:01 . Memory (MB): peak = 3230.895 ; gain = 42.531 ; free physical = 5668 ; free virtual = 51965
+
+Starting Logic Optimization Task
+
+Phase 1 Initialization
+
+Phase 1.1 Core Generation And Design Setup
+Phase 1.1 Core Generation And Design Setup | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5162 ; free virtual = 51501
+
+Phase 1.2 Setup Constraints And Sort Netlist
+Phase 1.2 Setup Constraints And Sort Netlist | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5162 ; free virtual = 51501
+Phase 1 Initialization | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5154 ; free virtual = 51494
+
+Phase 2 Timer Update And Timing Data Collection
+
+Phase 2.1 Timer Update
+Phase 2.1 Timer Update | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00.86 ; elapsed = 00:00:00.19 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5131 ; free virtual = 51473
+
+Phase 2.2 Timing Data Collection
+Phase 2.2 Timing Data Collection | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00.88 ; elapsed = 00:00:00.21 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5128 ; free virtual = 51472
+Phase 2 Timer Update And Timing Data Collection | Checksum: 18602918b
+
+Time (s): cpu = 00:00:00.88 ; elapsed = 00:00:00.21 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5128 ; free virtual = 51472
+
+Phase 3 Retarget
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+INFO: [Opt 31-49] Retargeted 0 cell(s).
+Phase 3 Retarget | Checksum: 169483fd8
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.46 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5117 ; free virtual = 51461
+Retarget | Checksum: 169483fd8
+INFO: [Opt 31-389] Phase Retarget created 626 cells and removed 962 cells
+
+Phase 4 Constant propagation
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Phase 4 Constant propagation | Checksum: 845967a3
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:00.82 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 5017 ; free virtual = 51362
+Constant propagation | Checksum: 845967a3
+INFO: [Opt 31-389] Phase Constant propagation created 3904 cells and removed 4181 cells
+
+Phase 5 Sweep
+Phase 5 Sweep | Checksum: b36f8626
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:00.96 . Memory (MB): peak = 3417.895 ; gain = 0.000 ; free physical = 4978 ; free virtual = 51326
+Sweep | Checksum: b36f8626
+INFO: [Opt 31-389] Phase Sweep created 0 cells and removed 0 cells
+
+Phase 6 BUFG optimization
+INFO: [Opt 31-1077] Phase BUFG optimization inserted 0 global clock buffer(s) for CLOCK_LOW_FANOUT.
+Phase 6 BUFG optimization | Checksum: b36f8626
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4971 ; free virtual = 51318
+BUFG optimization | Checksum: b36f8626
+INFO: [Opt 31-662] Phase BUFG optimization created 0 cells of which 0 are BUFGs and removed 0 cells.
+
+Phase 7 Shift Register Optimization
+INFO: [Opt 31-1064] SRL Remap converted 0 SRLs to 0 registers and converted 0 registers of register chains to 0 SRLs
+Phase 7 Shift Register Optimization | Checksum: b36f8626
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4963 ; free virtual = 51310
+Shift Register Optimization | Checksum: b36f8626
+INFO: [Opt 31-389] Phase Shift Register Optimization created 0 cells and removed 0 cells
+
+Phase 8 Post Processing Netlist
+Phase 8 Post Processing Netlist | Checksum: b36f8626
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4955 ; free virtual = 51302
+Post Processing Netlist | Checksum: b36f8626
+INFO: [Opt 31-389] Phase Post Processing Netlist created 0 cells and removed 0 cells
+
+Phase 9 Finalization
+
+Phase 9.1 Finalizing Design Cores and Updating Shapes
+Phase 9.1 Finalizing Design Cores and Updating Shapes | Checksum: af7da230
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4900 ; free virtual = 51248
+
+Phase 9.2 Verifying Netlist Connectivity
+
+Starting Connectivity Check Task
+
+Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4900 ; free virtual = 51248
+Phase 9.2 Verifying Netlist Connectivity | Checksum: af7da230
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4900 ; free virtual = 51248
+Phase 9 Finalization | Checksum: af7da230
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4900 ; free virtual = 51248
+Opt_design Change Summary
+=========================
+
+
+-------------------------------------------------------------------------------------------------------------------------
+|  Phase                        |  #Cells created  |  #Cells Removed  |  #Constrained objects preventing optimizations  |
+-------------------------------------------------------------------------------------------------------------------------
+|  Retarget                     |             626  |             962  |                                              0  |
+|  Constant propagation         |            3904  |            4181  |                                              0  |
+|  Sweep                        |               0  |               0  |                                              0  |
+|  BUFG optimization            |               0  |               0  |                                              0  |
+|  Shift Register Optimization  |               0  |               0  |                                              0  |
+|  Post Processing Netlist      |               0  |               0  |                                              0  |
+-------------------------------------------------------------------------------------------------------------------------
+
+
+Ending Logic Optimization Task | Checksum: af7da230
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:01 . Memory (MB): peak = 3449.910 ; gain = 32.016 ; free physical = 4892 ; free virtual = 51240
+INFO: [Constraints 18-11670] Building netlist checker database with flags, 0x8
+Done building netlist checker database: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00.01 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4892 ; free virtual = 51240
+
+Starting Power Optimization Task
+INFO: [Pwropt 34-132] Skipping clock gating for clocks with a period < 2.00 ns.
+Ending Power Optimization Task | Checksum: af7da230
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4876 ; free virtual = 51224
+
+Starting Final Cleanup Task
+Ending Final Cleanup Task | Checksum: af7da230
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4876 ; free virtual = 51224
+
+Starting Netlist Obfuscation Task
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4876 ; free virtual = 51224
+Ending Netlist Obfuscation Task | Checksum: af7da230
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3449.910 ; gain = 0.000 ; free physical = 4876 ; free virtual = 51224
+INFO: [Common 17-83] Releasing license: Implementation
+98 Infos, 103 Warnings, 0 Critical Warnings and 0 Errors encountered.
+opt_design completed successfully
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "clk" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+report_timing_summary: Time (s): cpu = 00:00:16 ; elapsed = 00:00:13 . Memory (MB): peak = 4345.586 ; gain = 895.676 ; free physical = 1037 ; free virtual = 43941
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+COMPOSE_RESULT target=l2norm_rs dsp=36 lut=14321 lut_logic=14321  lut_mem=0 ff=4826 ramb36=0 ramb18=0 bram=0 uram=0  carry8=214 f7=256 f8=0 wns=1.663 fmax=299.6703626011388 synth_s=59 opt_s=5
+COMPOSE_SYNTH_VS_OPT target=l2norm_rs synth_lut=14920 opt_lut=14321  synth_ff=4826 opt_ff=4826 synth_dsp=36 opt_dsp=36  synth_bram=0 opt_bram=0
+COMPOSE_DONE l2norm_rs
+INFO: [Common 17-206] Exiting Vivado at Sat Aug 29 17:03:06 2026...

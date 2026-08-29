@@ -1,0 +1,2 @@
+target,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+gdn_silu,8,4191,4123,68,455,0,4,2,0,158,644,52,2.448,391.84952978056424,35,7,4191,455,8,2
