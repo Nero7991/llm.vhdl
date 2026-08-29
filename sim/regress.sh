@@ -339,7 +339,9 @@ SIM="$REPO/sim"
 # point, hence the defaults.
 cleanup() {
   [ -n "${REGRESS_SELF:-}" ] && rm -f "$REGRESS_SELF"
-  [ "${KEEP:-0}" = 0 ] && [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
+  # SCRATCH_OURS: only remove a tree this invocation created. See the note at
+  # the SCRATCH assignment for the run this lost.
+  [ "${KEEP:-0}" = 0 ] && [ "${SCRATCH_OURS:-0}" = 1 ] && [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
   return 0
 }
 trap cleanup EXIT
@@ -374,7 +376,17 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=85   # +2 sim/tb_llama_top_smp and sim/tb_llama_top_smp_beh, THE
+BASELINE_PASS=86   # +1 sim/tb_seq_tbl_shape, 2026-08-29.  The real 9B
+                   #    descriptor table encoded the lm_head as ONE
+                   #    248,320-row A job, which matvec_int4_desc_axi's
+                   #    S_CHECK refuses in EVERY out_mode, and the four
+                   #    benches that walk that table all take TBL_STEPS from
+                   #    the package itself, so the table was its own oracle
+                   #    for every one of them.  This row asks the question
+                   #    they cannot: is what was walked legal, and do the
+                   #    lm_head's row windows cover the vocabulary exactly
+                   #    once.  Under a second, no clock and no DUT.
+                   # +2 sim/tb_llama_top_smp and sim/tb_llama_top_smp_beh, THE
                    #    LOGITS EGRESS SEAM: rtl/llama_top.vhd routing a
                    #    FLG_TO_SMP job's raw s32 rows into
                    #    rtl/sampler_stream.vhd instead of discarding them.
@@ -439,7 +451,33 @@ done
 
 command -v "$GHDL" >/dev/null 2>&1 || { echo "regress.sh: ghdl not found on PATH" >&2; exit 2; }
 
-SCRATCH="${REGRESS_SCRATCH:-$(mktemp -d -t regress.XXXXXX)}"
+# NEVER DELETE A DIRECTORY WE DID NOT CREATE.
+#
+# This used to be one line, and the EXIT trap below removed $SCRATCH whatever
+# its origin.  MEASURED 2026-08-29: a run whose scratch tree vanished UNDER IT
+# emitted `grep: <SCRATCH>/tb_tb_engine/log: No such file or directory`, then
+# 63 rows of "the runner produced no result file for this test", and finished
+# with a SECOND report block -- so the log held `OVERALL PASS 85 FAIL 0 ...
+# REGRESSION: PASS` followed by `OVERALL PASS 20 FAIL 70 ... REGRESSION: FAIL`.
+# An agent grepped the verdict and read the FIRST match. Both blocks were
+# worthless: files were disappearing while the first one was being measured.
+#
+# The default is `mktemp -d`, which is unique per invocation, so two ordinary
+# concurrent runs never collided and this stayed hidden.  It bites only when
+# two runs are handed the SAME REGRESS_SCRATCH -- which is exactly what happens
+# when several agents share this repo and pick the same obvious path.
+#
+# The fix is ownership, not locking: a directory the CALLER named belongs to
+# the caller, and a tree we created is ours to remove.  That also means an
+# explicit REGRESS_SCRATCH now accumulates between runs, which is the correct
+# trade: leaked evidence is recoverable, deleted evidence is not.
+if [ -n "${REGRESS_SCRATCH:-}" ]; then
+  SCRATCH="$REGRESS_SCRATCH"
+  SCRATCH_OURS=0
+else
+  SCRATCH="$(mktemp -d -t regress.XXXXXX)"
+  SCRATCH_OURS=1
+fi
 mkdir -p "$SCRATCH"
 # The trap is already armed (see cleanup() above).  --keep governs the per-test
 # scratch tree, which is evidence; it never keeps the private copy, which is
