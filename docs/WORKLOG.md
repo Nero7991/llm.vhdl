@@ -148,12 +148,25 @@ landed, the table is the defect.
 
 | track | question | owns |
 |---|---|---|
-| **PBLOCK** | Get the shell build to ROUTE. Levers A (spread `matvec_core` into the empty Y2/Y3 clock regions) and F (replicate the fanout-8,448 enables) only: both cost zero throughput. Forbidden from C/D/E/G, which cost throughput or correctness surface and are Oren's. Asked to avoid Tandem's reserved column X7 if it is cheap, and explicitly told NOT to sacrifice routability for that. | `hw/fk33/**` |
-| **NORMW** | The top-level RMS norm uses a SYNTHETIC RAMP, not a model weight (`2**NORM_W_EXP + ((i*37) mod 512) - 256`), and `attn_norm` appears zero times in `llama_top`. So `R_XN` is structurally uncomparable, which is why the bisect reaches 59 of 63 and not more. Found independently by REF9B (its D2) and SPECREC. | `rtl/llama_top.vhd`, `tools/gen_llama_top_weights.py` |
+| **PBLOCK** | Get the shell build to ROUTE. Levers A (spread `matvec_core` into the empty Y2/Y3 clock regions) and F (replicate the fanout-8,448 enables) only: both cost zero throughput. Forbidden from C/D/E/G, which cost throughput or correctness surface and are Oren's. | `hw/fk33/**` |
 | **C1** | **A real defect in shipping RTL.** `attn_block.vhd`'s `vref_r` is per KV head with no layer index, while two adjacent comments say C spec 2.1.4 requires one per (layer, KV head). One `attn_block` is time-shared across all attention layers, so every layer folds its `v_ref` into every other layer's. Live at the real shape's 8 attention layers. No bench could see it: `tb_attn_block` hardwires `layer => 0`. | `rtl/attn_block.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_llama_top*.vhd`, `ref/attn_*`, `tools/ref9b/**` |
-| **ATTN-HARNESS** | `sim/mutate_attn_*.sh` judge with `ghdl -r ... && grep -q PASS`, so **a run that DIED scores as a KILL** and subsystem C's published kill ratios are unsafe to read. Re-measure them. Plus one seed convention for the sixteen `ref/` generators two audits have now patched in scratch. | `sim/mutate_attn_*.sh`, `sim/mutate_seq_*.sh`, `ref/**` |
-| **CDC-BENCH** | `async_fifo.vhd` and `axi_rd_fsm.vhd` have **no dedicated bench at all** and are reached only through `axi_rd_port`. `async_fifo` is the CDC in the weight path feeding the whole array, and its FULL flag was already restructured for +123.88 MHz -- which is exactly where an off-by-one hides. Plus closing the eight `matvec_core` mutations the committed trace cannot see. | `sim/tb_async_fifo.vhd`, `sim/tb_axi_rd_fsm.vhd`, `sim/tb_matvec_core.vhd`, `sim/mutate_matvec_*`, `sim/mutate_weight_streamer.sh` |
-| **HOSTEMB** | The real C embedding provider (only a synthetic stub exists), the `pl_open_opts` base addresses that point INSIDE the weight image in both packed sets, and which copy of the embedding the host holds: packed INT4 (572 MB) or source BF16 (2.03 GB). Those are not numerically equivalent and the card was verified against INT4. | `server/**` |
+| **DESC-MUT** | Mutation coverage for the descriptor decode. | `sim/mutate_*desc*`, `tools/mv4i_desc_cases.py` |
+| **B-BLOCK** | A block-level oracle for `gdn_block`, at the level of the thing's OUTPUT rather than its units. | `sim/tb_gdn_block*`, `ref/gdn_*` |
+| **CDC-STATIC** | What `report_cdc` can see that simulation structurally cannot. | `hw/` report scripts, `docs/` |
+| **CB-ORACLE** | A codebook coherency oracle, the precondition for lever C (codebook to LUTRAM). | `tools/cb_*`, `ref/cb_*` |
+| **REF9B** | **Backlog 12. Nothing in the repo can say whether a token is the right token.** `ref/` holds one whole-model reference and it is stories260K; every 9B claim is per-unit or per-seam. Until a fixed-point 9B reference stream exists, "first token" is unfalsifiable and on-card numeric debugging has no stream to diff against. | new `ref/ref9b_*`, new `tools/ref9b_*`, own `docs/debugging/` note |
+
+Four rows were removed on 2026-08-29 when this table was rewritten: **NORMW**,
+**ATTN-HARNESS**, **CDC-BENCH**, **HOSTEMB**. They are not among the tracks
+running at that moment. They are recorded here as REMOVED rather than deleted
+silently because this session did not confirm where each of them ended, and a
+row quietly vanishing is the same failure as a row quietly persisting. Confirm
+against the Landed table before treating any of them as done.
+
+**TRACK C-DONE landed** 2026-08-29, `e2457ab` + `1dc765c`: the `done_r` wedge
+was NOT the mechanism in the brief (instrumented, not reasoned), `sim/hsk_chk.vhd`
+adds three clauses beyond the timeout across six benches, and the sibling H1 is
+the teeth-check that shows they bite. Gate `OVERALL PASS 92 FAIL 0`.
 
 **Standing instruction to every track: nothing may be run against the card.**
 There is no bitstream at present in any case (see OI-12), and a SECOND FK33
