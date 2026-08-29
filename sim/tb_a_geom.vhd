@@ -38,6 +38,22 @@
 --   `seq_tbl_pkg` believes.  A DUT bound below it fails the first; a DUT bound
 --   above it fails the second.  `matvec_int4_desc_axi.vhd:721-726` is the site.
 --
+--   NPORTS_W / NPORTS_S, added 2026-08-29 by TRACK SCHED-FIX, at ELABORATION
+--   (the 27 weight/scale port vectors are sized `A_NPORTS_W + A_NPORTS_S`) and
+--   BEHAVIOURALLY, bracketed the same way at `matvec_int4_desc_axi.vhd:695-698`:
+--
+--     nsub = (A_NPORTS_W,   A_NPORTS_S)     must NOT be refused EC_GEOM
+--     nsub = (A_NPORTS_W+1, A_NPORTS_S)     must be refused EC_GEOM, err_info 3
+--     nsub = (A_NPORTS_W,   A_NPORTS_S+1)   must be refused EC_GEOM, err_info 3
+--     nsub = (29, 4)                        must be refused EC_GEOM, err_info 3
+--
+--   The last is not a neighbourhood probe: it is the pair BOTH schedule
+--   generators wrote into descriptor word 3 until 2026-08-29, taken from the
+--   superseded ROWS_IF=58 port budget.  Nothing refused it, because
+--   `seq_desc_fetch` only range-checks the field against NSUB_MAX = 64 and
+--   `rtl/llama_top.vhd:2280` binds `matvec_int4`, which has no descriptor
+--   plane, so no `tb_llama_top*` row contains an EC_GEOM check at all.
+--
 -- WHY "must NOT be refused at word 1" AND NOT "must be accepted".  The order
 -- of S_CHECK's tests is: magic, version, ext flags, NPORTS, op, two pad words,
 -- extension pads, out_mode, THEN the shape bound at word 1, then w_beats,
@@ -66,17 +82,27 @@ use ieee.numeric_std.all;
 use work.matvec_int4_desc_pkg.all;
 use work.seq_tbl_pkg.A_ROWS_IF;
 use work.seq_tbl_pkg.A_MAXROWS_BFP;
+use work.seq_tbl_pkg.A_NPORTS_W;
+use work.seq_tbl_pkg.A_NPORTS_S;
 
 entity tb_a_geom is
 end entity;
 
 architecture sim of tb_a_geom is
-  -- The DUT's OTHER defaults.  These are restated because the port widths
-  -- cannot be written without them, and they are NOT what this bench is about
-  -- -- CAPS and DESC_WORDS are read below so a restatement that has drifted
-  -- fails loudly rather than quietly sizing the ports wrong.
-  constant NPW    : positive := 24;
-  constant NPS    : positive := 3;
+  -- NPORTS_W / NPORTS_S ARE NOW SCHEDULE CONSTANTS TOO, and that is the
+  -- 2026-08-29 change.  They used to be `24` and `3` written here, which made
+  -- this bench check the DUT against its own restatement for those two fields
+  -- -- the shape of a check that cannot fail.  Meanwhile BOTH schedule
+  -- generators wrote `nsub_w = 29`, `nsub_s = 4` into descriptor word 3, the
+  -- superseded ROWS_IF=58 port counts, and `matvec_int4_desc_axi.vhd:695-698`
+  -- refuses exactly that with EC_GEOM before `start`.  Taking them from
+  -- `seq_tbl_pkg` is what turns this row into the judge of that number:
+  -- at 29 the DUT's ports are 27 lanes wide and `m_arvalid` here is 32, so
+  -- the ANALYSIS fails, and the behavioural bracket below fails too.
+  constant NPW    : positive := A_NPORTS_W;
+  constant NPS    : positive := A_NPORTS_S;
+  -- Still a restatement, and still not what this bench is about; CAPS is read
+  -- below so a drifted restatement fails loudly rather than sizing ports wrong.
   constant AXI_DW : positive := 256;
   constant ADDR_W : positive := 40;
 
@@ -258,7 +284,12 @@ begin
     -- The one descriptor this bench builds, with `rows` the only thing that
     -- moves between the two runs.  Everything else is the minimum that gets
     -- S_CHECK as far as the word-1 shape test; see the header.
-    procedure build(rows : natural) is
+    -- `npw_f` / `nps_f` default to the build's own counts, so every existing
+    -- call is unchanged; the EC_GEOM bracket below is the only caller that
+    -- moves them.
+    procedure build(rows  : natural;
+                    npw_f : natural := NPW;
+                    nps_f : natural := NPS) is
       variable w : dimg_t := (others => (others => '0'));
     begin
       -- word 0: op = OP_A_JOB, flags bit 2 (bit 10 of the word) = cb_load, so
@@ -271,8 +302,8 @@ begin
       w(1) := u32(4096) & u32(rows);
       -- word 3: out_mode 0, NPORTS_W, NPORTS_S, pad byte zero
       w(3) := (others => '0');
-      w(3)(31 downto 16) := std_logic_vector(to_unsigned(NPW, 16));
-      w(3)(47 downto 32) := std_logic_vector(to_unsigned(NPS, 16));
+      w(3)(31 downto 16) := std_logic_vector(to_unsigned(npw_f, 16));
+      w(3)(47 downto 32) := std_logic_vector(to_unsigned(nps_f, 16));
       -- word 7 is a pad and must be zero; it already is.
       -- the extension: magic, version, then non-zero w_beats / s_beats
       w(EXT0) := (others => '0');
@@ -361,11 +392,70 @@ begin
          & " -> err_code " & integer'image(ec) & " err_info "
          & integer'image(ei) severity note;
 
+    -- ---- NPORTS_W / NPORTS_S, bracketed the same way -------------------
+    -- The CAPS read above already compares the numbers, but CAPS is a
+    -- register and the thing that decides whether the card runs the schedule
+    -- is S_CHECK.  These four let the RTL judge instead, exactly as the
+    -- MAXROWS bracket does.  `err_info` is 3 because the refusal names
+    -- descriptor WORD 3 (`matvec_int4_desc_axi.vhd:695-698`).
+    --
+    -- `+1` in the wrong direction is not tested, and that is deliberate: a
+    -- descriptor with FEWER bases than the build expects is the same word-3
+    -- comparison and would only re-measure this check's own arithmetic.
+    build(A_MAXROWS_BFP, npw_f => A_NPORTS_W, nps_f => A_NPORTS_S);
+    run_desc(ec, ei);
+    chk(ec /= to_integer(unsigned(EC_GEOM)),
+        "nsub_w = A_NPORTS_W (" & integer'image(A_NPORTS_W)
+        & "), nsub_s = A_NPORTS_S (" & integer'image(A_NPORTS_S)
+        & ") was refused EC_GEOM, so the descriptor plane's NPORTS are NOT "
+        & "what seq_tbl_pkg believes and EVERY A job in the schedule is "
+        & "refused before `start`.");
+    report "tb_a_geom: nsub = (" & integer'image(A_NPORTS_W) & ","
+         & integer'image(A_NPORTS_S) & ") -> err_code " & integer'image(ec)
+         & " err_info " & integer'image(ei) severity note;
+
+    build(A_MAXROWS_BFP, npw_f => A_NPORTS_W + 1, nps_f => A_NPORTS_S);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+        "nsub_w = A_NPORTS_W+1 (" & integer'image(A_NPORTS_W + 1)
+        & ") was NOT refused EC_GEOM at word 3 (err_code "
+        & integer'image(ec) & " err_info " & integer'image(ei)
+        & "), so this bracket has no teeth and a wrong nsub_w would pass.");
+    report "tb_a_geom: nsub_w+1 -> err_code " & integer'image(ec)
+         & " err_info " & integer'image(ei) severity note;
+
+    build(A_MAXROWS_BFP, npw_f => A_NPORTS_W, nps_f => A_NPORTS_S + 1);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+        "nsub_s = A_NPORTS_S+1 (" & integer'image(A_NPORTS_S + 1)
+        & ") was NOT refused EC_GEOM at word 3 (err_code "
+        & integer'image(ec) & " err_info " & integer'image(ei) & ").");
+    report "tb_a_geom: nsub_s+1 -> err_code " & integer'image(ec)
+         & " err_info " & integer'image(ei) severity note;
+
+    -- THE VALUE THAT WAS ACTUALLY THERE.  Both schedule generators wrote
+    -- (29, 4) into descriptor word 3 until 2026-08-29 and nothing refused it,
+    -- because `seq_desc_fetch` only range-checks the field against
+    -- NSUB_MAX = 64 and `rtl/llama_top.vhd:2280` binds `matvec_int4`, which
+    -- has no descriptor plane at all.  This is the one line in the file that
+    -- names the historical defect rather than a neighbourhood of it.
+    build(A_MAXROWS_BFP, npw_f => 29, nps_f => 4);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+        "the pre-2026-08-29 nsub pair (29,4) was NOT refused EC_GEOM at "
+        & "word 3 (err_code " & integer'image(ec) & " err_info "
+        & integer'image(ei) & ").");
+    report "tb_a_geom: nsub = (29,4), the superseded ROWS_IF=58 counts"
+         & " -> err_code " & integer'image(ec) & " err_info "
+         & integer'image(ei) severity note;
+
     wait for 0 ns;
     if nbad = 0 then
       report "tb_a_geom RESULT: PASS -- " & integer'image(nchk)
            & " checks, A_ROWS_IF = " & integer'image(A_ROWS_IF)
-           & " and A_MAXROWS_BFP = " & integer'image(A_MAXROWS_BFP)
+           & ", A_MAXROWS_BFP = " & integer'image(A_MAXROWS_BFP)
+           & ", A_NPORTS_W = " & integer'image(A_NPORTS_W)
+           & " and A_NPORTS_S = " & integer'image(A_NPORTS_S)
            & " agree with the descriptor plane's own generic defaults"
         severity note;
     else

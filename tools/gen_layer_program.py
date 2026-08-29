@@ -569,6 +569,33 @@ def make_stamp_manifest(w_exp_of, shift_of):
 STAMPS = {"seq_tbl": stamp_seq_tbl, "sched": stamp_sched}
 
 
+def vhdl_nports(src=None):
+    """`A_NPORTS_W` / `A_NPORTS_S` as `sim/seq_tbl_pkg.vhd` declares them.
+
+    Both VHDL generators take their `nsub_w` / `nsub_s` from those two
+    constants, and `--stamp seq_tbl` / `--stamp sched` claim to reproduce those
+    generators byte for byte.  Reading the declaration is the only version of
+    that claim which cannot quietly become false.
+    """
+    import re
+    if src is None:
+        src = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "sim", "seq_tbl_pkg.vhd")
+    txt = open(src).read()
+    out = []
+    for name in ("A_NPORTS_W", "A_NPORTS_S"):
+        m = re.search(r"constant\s+%s\s*:\s*natural\s*:=\s*(\d+)\s*;" % name,
+                      txt)
+        if not m:
+            raise SystemExit(
+                "gen_layer_program: %s not found in %s.  The --stamp modes "
+                "mirror the VHDL generators and cannot mirror a declaration "
+                "they cannot read; fix the pattern rather than defaulting."
+                % (name, src))
+        out.append(int(m.group(1)))
+    return out[0], out[1]
+
+
 # ============================================================== A descriptors
 def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                check_hash=True, build=None):
@@ -823,7 +850,11 @@ def main(argv=None):
     ap.add_argument("--nsub-w", type=int, default=None,
                     help="D header nsub_w.  Default: the manifest geometry's "
                          "nports_w (24 on the FK33).  The VHDL generators "
-                         "write 29 and D only range-checks it")
+                         "wrote 29 until 2026-08-29 -- the superseded "
+                         "ROWS_IF=58 count -- and D only range-checks the "
+                         "field, so nothing refused it; the A wrapper does, "
+                         "with EC_GEOM.  Both now take it from "
+                         "seq_tbl_pkg.A_NPORTS_W")
     ap.add_argument("--nsub-s", type=int, default=None)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--d-table", default=None, help="write the D table here")
@@ -865,10 +896,18 @@ def main(argv=None):
     nsub_s = a.nsub_s if a.nsub_s is not None else geom.get("n_scale_sub", 3)
     if a.stamp in STAMPS:
         stamp = STAMPS[a.stamp]
+        # READ the VHDL, do not restate it.  `--stamp seq_tbl` / `--stamp
+        # sched` exist to be BYTE-IDENTICAL to the two VHDL generators, so a
+        # literal here is a second copy of the number that was wrong in the
+        # first place: while the packages carried 29/4 this line carried 29/4
+        # too, and the two agreeing proved nothing about either.  Scraped from
+        # the package instead, and a scrape that stops matching is a hard
+        # failure rather than a silent default.
+        vnw, vns = vhdl_nports()
         if a.nsub_w is None:
-            nsub_w = 29        # what both VHDL generators write
+            nsub_w = vnw
         if a.nsub_s is None:
-            nsub_s = 4
+            nsub_s = vns
     else:
         wex, shf = {}, {}
         if mani:

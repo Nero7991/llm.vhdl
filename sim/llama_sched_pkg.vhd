@@ -24,6 +24,33 @@
 -- elements at 9B moves 32 here.  That is a deliberate and stated limitation:
 -- this table exercises SEQUENCING, not throughput.
 --
+-- THIS IS STIMULUS, NOT THE PROGRAM.  Stated here because the distinction was
+-- implicit for a fortnight and the project's strongest evidence about the
+-- descriptor plane -- byte identity between two independent VHDL generators --
+-- was being read as evidence about the program the card will run.  It is not.
+--
+-- MEASURED 2026-08-29 (TRACK SCHED-FIX, `tools/dprog_oracle.py` against a
+-- whole 9B token, this table transcribed by
+-- `tools/gen_layer_program.py --stamp sched`, which was verified byte-identical
+-- to what GHDL elaborates here, 4,040 of 4,040 words):
+--
+--     this table          2,401 FAIL  (before the nsub fix below)
+--                         1,157 FAIL  (after it)
+--     --stamp manifest        0 FAIL   of 39,330 checks
+--
+-- The residue is deliberate and must NOT be "fixed" to the model's numbers:
+-- `w_exp` and `out_shift` here are index-derived on purpose (see the long note
+-- at the bottom of `build_table`), this package emits at an ARBITRARY shape
+-- where no packed tensor exists to take them from, and `rtl/llama_top.vhd`
+-- :128-132 says A's weights do not come from the descriptor at all.  A table
+-- whose exponents all came from the manifest would be a WEAKER stimulus, not a
+-- program.  **The host program is `tools/gen_layer_program.py --stamp
+-- manifest`, checked by `tools/dprog_oracle.py`; run `tools/dprog_check.sh`.**
+--
+-- What was a real defect and is fixed: `nsub_w` / `nsub_s`.  Those are the
+-- BUILD's port counts, not stimulus, and the descriptor plane refuses a
+-- mismatch with EC_GEOM.  See the note at the `mk_desc` call.
+--
 -- THE ENCODING IS NOT REIMPLEMENTED.  Every descriptor is built by
 -- `seq_tbl_pkg.mk_desc`, the same function the real table uses, so every field
 -- lands in the byte `rtl/seq_desc_fetch.vhd` reads.  A change to the wire
@@ -50,6 +77,11 @@ use work.seq_tbl_pkg.desc_t;
 -- `no declaration for "op_end_token"`, which reads as a missing declaration
 -- rather than an ambiguity.
 use work.seq_tbl_pkg.LM_STRIDE;
+-- The BUILD's descriptor-plane port counts.  Selected from `seq_tbl_pkg` and
+-- NOT restated, because a restatement is what let this table carry 29/4 for a
+-- fortnight while every other artefact said 24/3.
+use work.seq_tbl_pkg.A_NPORTS_W;
+use work.seq_tbl_pkg.A_NPORTS_S;
 
 package llama_sched_pkg is
 
@@ -334,10 +366,19 @@ package body llama_sched_pkg is
                    ordinal => p(i).blk mod 64,
                    -- The base array past the header is range-checked against
                    -- NSUB_MAX by seq_desc_fetch and NOT yet fetched (see its
-                   -- header, "Fetching it is remaining work").  The counts are
-                   -- the real ones so the check is exercised.
-                   nsub_w  => 29,
-                   nsub_s  => 4,
+                   -- header, "Fetching it is remaining work").
+                   --
+                   -- THESE WERE 29 AND 4 UNTIL 2026-08-29, with a comment
+                   -- claiming they were "the real ones so the check is
+                   -- exercised".  They were the superseded ROWS_IF=58 port
+                   -- counts, the check they exercised was only
+                   -- `<= NSUB_MAX`, and `matvec_int4_desc_axi:695-698` refuses
+                   -- anything but the build's own NPORTS_W / NPORTS_S with
+                   -- EC_GEOM.  Taken from `seq_tbl_pkg` now so the two
+                   -- generators cannot drift apart, and so `sim/tb_a_geom.vhd`
+                   -- is judging a number this table actually emits.
+                   nsub_w  => A_NPORTS_W,
+                   nsub_s  => A_NPORTS_S,
                    const_base => p(i).blk);
       -- w_exp / out_shift / const_exp, derived from the step index so that a
       -- stale or shared capture is a WRONG NUMBER and not a repeat of the
@@ -385,6 +426,26 @@ package body llama_sched_pkg is
       for w in 0 to 7 loop
         t(i*8 + w) := d(w);
       end loop;
+    end loop;
+
+    -- ---- the base-array counts, read back out of the EMITTED WORD --------
+    -- The same read-back `seq_tbl_pkg.build_table` ends with, and for the same
+    -- reason: an assert on the argument to `mk_desc` would be a tautology, and
+    -- what the gateware reads is the WORD.  See that comment for which half of
+    -- the pair `sim/tb_a_geom.vhd` holds down.  This table writes nsub on
+    -- EVERY step, not only on an A_JOB, so every step is checked.
+    for i in 0 to n-1 loop
+      assert to_integer(unsigned(t(i*8 + 3)(31 downto 16))) = A_NPORTS_W
+         and to_integer(unsigned(t(i*8 + 3)(47 downto 32))) = A_NPORTS_S
+        report "llama_sched_pkg: step " & integer'image(i)
+             & " carries nsub_w="
+             & integer'image(to_integer(unsigned(t(i*8+3)(31 downto 16))))
+             & " nsub_s="
+             & integer'image(to_integer(unsigned(t(i*8+3)(47 downto 32))))
+             & ", not the build's (" & integer'image(A_NPORTS_W) & ","
+             & integer'image(A_NPORTS_S)
+             & ").  matvec_int4_desc_axi refuses that with EC_GEOM at word 3."
+        severity failure;
     end loop;
     return t;
   end function;

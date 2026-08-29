@@ -48,6 +48,16 @@
 -- for the missing first step should stop looking: there is no opcode for it
 -- and there is not meant to be one.
 
+-- THIS IS STIMULUS, NOT THE PROGRAM, and the same caveat `sim/llama_sched_pkg
+-- .vhd`'s header now carries applies here.  `w_exp`, `out_shift` and
+-- `const_exp` are stamped from the step index on purpose (see `build_table`),
+-- and this table is WALKED by decoder benches, never executed: MEASURED
+-- 2026-08-29, 146 of its 311 A jobs carry an `out_shift` outside the [0,40]
+-- `matvec_core.vhd:850-867` accepts, which is fine for a walker and would be an
+-- immediate ERR_UNIT for anything that started a real matvec on it.  The host
+-- program is `tools/gen_layer_program.py --stamp manifest`, checked by
+-- `tools/dprog_oracle.py`; run `tools/dprog_check.sh`.
+--
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -135,6 +145,39 @@ package seq_tbl_pkg is
   -- model.  If the build changes them, this is the line to change.
   constant A_ROWS_IF     : natural := 48;
   constant A_MAXROWS_BFP : natural := 17408;
+
+  -- ---- the descriptor's base-array counts --------------------------------
+  -- THESE TWO ARE THE SAME KIND OF NUMBER AND THEY WERE WRONG UNTIL
+  -- 2026-08-29.  `nsub_w` / `nsub_s` in descriptor word 3 are not free
+  -- annotations: `rtl/matvec_int4_desc_axi.vhd:695-698` refuses a descriptor
+  -- whose word 3 does not carry EXACTLY the build's `NPORTS_W` / `NPORTS_S`,
+  -- with `EC_GEOM` (0x9), BEFORE `start`.  So the schedule does not get to
+  -- choose them; the build does.
+  --
+  -- The build says 24 and 3, and four independent artefacts agree:
+  --   * `rtl/matvec_int4_desc_axi.vhd:103,104` generic defaults;
+  --   * `hw/fk33/rtl/fk33_engine.vhd:964,965`, which is what the card carries;
+  --   * `manifest.json`'s `geometry.nports_w` / `geometry.n_scale_sub`;
+  --   * every packed `.mv4i` file's own header, `nports_w` at 0x1A and
+  --     `n_scale_sub` at 0x34, which is the one artefact no generator wrote.
+  --
+  -- This package and `sim/llama_sched_pkg.vhd` both carried 29 and 4, cited
+  -- as "D section 2.2-J" and as "the real ones so the check is exercised".
+  -- They are the SUPERSEDED `ROWS_IF = 58` port count -- see
+  -- `docs/2026-08-27_weight-path-audit.md:459` ("at ROWS_IF = 58 weights need
+  -- 29 ports") and `docs/2026-08-27_budgets-at-the-measured-clock.md:943-944`,
+  -- which already recorded that 29 + 4 = 33 lanes against 30 that exist.  The
+  -- geometry settled at `ROWS_IF = 48` and these two numbers did not follow.
+  --
+  -- Nothing caught it, and the reasons are worth keeping: `seq_desc_fetch`
+  -- only RANGE-checks the field against `NSUB_MAX = 64` (`:516`), the base
+  -- array itself is not fetched yet (`:113-115`), `rtl/llama_top.vhd:2280`
+  -- binds `matvec_int4` and not the descriptor plane so no `tb_llama_top*`
+  -- row contains an `EC_GEOM` check at all, and `sim/tb_a_geom.vhd` -- the one
+  -- bench that binds a schedule constant to the descriptor plane -- restated
+  -- `NPW`/`NPS` as its own constants instead of taking them from here.
+  constant A_NPORTS_W    : natural := 24;
+  constant A_NPORTS_S    : natural := 3;
   -- `positive`, not `natural`: a MAXROWS_BFP below one tile leaves no legal
   -- window at all, and a constraint error at elaboration is a better answer
   -- than an infinite loop or a silent zero-row job.
@@ -257,8 +300,11 @@ package body seq_tbl_pkg is
     variable d   : desc_t;
     variable go  : natural;         -- GDN ordinal, 0 .. gdn_layers-1
     variable ao  : natural;         -- attention ordinal
-    variable nsw : natural := 29;   -- weight bases per A job, D section 2.2-J
-    variable nss : natural := 4;    -- scale bases per A job
+    -- The BUILD's port counts, not a schedule choice: word 3 must carry
+    -- exactly these or `matvec_int4_desc_axi` answers EC_GEOM before `start`.
+    -- Were 29 / 4, the superseded ROWS_IF=58 numbers.  See A_NPORTS_W above.
+    variable nsw : natural := A_NPORTS_W;   -- weight bases per A job
+    variable nss : natural := A_NPORTS_S;   -- scale bases per A job
 
     -- THE THREE SCALARS THAT QUALIFY A JOB'S OUTPUT ARE STAMPED FROM THE STEP
     -- INDEX, and that is not decoration.  `w_exp`, `out_shift` and
@@ -440,6 +486,36 @@ package body seq_tbl_pkg is
       report "seq_tbl_pkg: emitted " & integer'image(p) & " descriptors but "
            & "TBL_STEPS says " & integer'image(TBL_STEPS)
       severity failure;
+
+    -- ---- the base-array counts, read back out of the EMITTED WORD --------
+    -- NOT `assert nsw = A_NPORTS_W`, which would be a tautology one line
+    -- below the assignment.  This decodes descriptor word 3 of every A job in
+    -- the finished table, so the property is "the byte the gateware will read
+    -- carries the build's port count", and a literal reintroduced anywhere on
+    -- the emit path is caught rather than only a changed initialiser.
+    --
+    -- WHAT THE OTHER HALF IS.  `A_NPORTS_W` itself is judged against the RTL
+    -- by `sim/tb_a_geom.vhd`, which sizes the descriptor plane's 27 port
+    -- vectors from it and then brackets it behaviourally at EC_GEOM.  Neither
+    -- half alone is an oracle: this one would pass with both numbers wrong
+    -- together, and that is exactly the state the tree was in until
+    -- 2026-08-29, when `nsw` was 29 and nothing anywhere held it to 24.
+    for i in 0 to TBL_STEPS-1 loop
+      if to_integer(unsigned(t(i*8)(7 downto 0))) = OP_A_JOB then
+        assert to_integer(unsigned(t(i*8 + 3)(31 downto 16))) = A_NPORTS_W
+           and to_integer(unsigned(t(i*8 + 3)(47 downto 32))) = A_NPORTS_S
+          report "seq_tbl_pkg: step " & integer'image(i)
+               & " is an A_JOB whose descriptor word 3 carries nsub_w="
+               & integer'image(to_integer(unsigned(t(i*8+3)(31 downto 16))))
+               & " nsub_s="
+               & integer'image(to_integer(unsigned(t(i*8+3)(47 downto 32))))
+               & ", not the build's (" & integer'image(A_NPORTS_W) & ","
+               & integer'image(A_NPORTS_S)
+               & ").  matvec_int4_desc_axi refuses that with EC_GEOM at "
+               & "word 3, before start."
+          severity failure;
+      end if;
+    end loop;
     return t;
   end function;
 
