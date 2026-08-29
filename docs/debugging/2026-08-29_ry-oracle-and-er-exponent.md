@@ -505,6 +505,9 @@ neither is a proof about eight attention layers.
   minimum over 8 layers' V exponents, so the loss could be several bits at every
   layer. Nothing here measures that, because no GHDL configuration in the
   repository runs 8 attention layers.
+  **SUPERSEDED, see section 11**: the cross-layer exponent spread at the real
+  shape is MEASURED at 4 to 5, so the toy's one bit is the number to discard.
+  Section 12 records why the end-to-end figure is still not obtainable here.
 * **Whether C1 can produce a WRONG answer rather than a less precise one.** The
   invariant `e_v[b] >= v_ref` that the site-3 shift depends on still holds --
   more strongly, since a smaller `v_ref` only makes the right shift larger -- so
