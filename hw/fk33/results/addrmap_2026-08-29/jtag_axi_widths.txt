@@ -1,0 +1,13 @@
+# MEASURED from the .xci the block design generated (not CONFIG.* requests).
+== bd_jtag_aux_0.xci
+"M_HAS_BURST": [ { "value": "0"
+"M_AXI_DATA_WIDTH": [ { "value": "32"
+"M_AXI_ADDR_WIDTH": [ { "value": "32"
+== bd_jtag_axil_0.xci
+"M_HAS_BURST": [ { "value": "1"
+"M_AXI_DATA_WIDTH": [ { "value": "32"
+"M_AXI_ADDR_WIDTH": [ { "value": "32"
+== bd_jtag_hbm_0.xci
+"M_HAS_BURST": [ { "value": "0"
+"M_AXI_DATA_WIDTH": [ { "value": "64"
+"M_AXI_ADDR_WIDTH": [ { "value": "64"

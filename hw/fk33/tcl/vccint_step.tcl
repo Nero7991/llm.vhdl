@@ -20,7 +20,28 @@
 #     moves the wrong way;
 #   * step size is capped, and shrinks as we approach the target.
 
+#   * the JTAG-AXI master is IDENTIFIED, never assumed.  This used to be
+#     `get_hw_axis hw_axi_1`, which was right on the two-master bitstreams and
+#     WRONG on the engine bitstream (MEASURED, tcl/pcieep_jtag.log: the
+#     AXI-Lite master there is hw_axi_2, and hw_axi_1 returns the decode
+#     sentinel 0xDEC0DEE3).  That matters more here than anywhere else in this
+#     directory, because EVERY safety check above is fed by reads through this
+#     one object: the wiper readback, the SYSMON rail, the sign of dV/dstep and
+#     the per-step limit.  A voltage stepper whose feedback path is silently
+#     disconnected has no safety logic at all, only the appearance of it.
+#
+#     Two honest qualifications, because overstating this would be its own
+#     defect.  The pot WRITES go through the same object as the reads, so a
+#     wrong master means the pot does not move either -- the failure is inert
+#     rather than destructive.  And on the value actually measured (0xDEC0DEE3,
+#     whose bit 1 is 1) `sda_in` reads a permanent NACK, so `pot_write` returns
+#     non-zero and the script aborts on its first transaction.  Both of those
+#     are luck, not design: a sentinel with bit 1 clear would read as ACK on
+#     every byte.  The point is that the selection was never checked, and every
+#     guard sits downstream of it, so all the guards fail together.
+
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 set POT      0x2c
 set W_START  128
@@ -38,7 +59,10 @@ fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d
-set ax [get_hw_axis hw_axi_1]
+
+# REFUSE rather than guess.  fk33_axi_pick errors out unless exactly one master
+# classifies as the AXI-Lite one, and prints every master's answer either way.
+set ax [fk33_axi_pick axil]
 
 proc wr {addr data} {
     global ax
@@ -94,6 +118,51 @@ proc vccint {} {
     return [lindex [lsort -real $s] 1]
 }
 proc dietemp {} { return [expr {[rdreg 3400] * 507.6 / 65536.0 - 279.43}] }
+
+# ---- PRE-FLIGHT, before a single bit is driven onto the board's I2C bus.
+#
+# fk33_axi_pick has already established that this master DECERRs at address 0
+# and therefore is not jtag_aux or jtag_hbm.  That is a statement about the
+# address decoder.  It is NOT yet a statement that the two peripherals this
+# script's safety logic reads -- the GPIO at 0x9000 and SYSMON at 0x3400 --
+# are the ones at those addresses in THIS bitstream, and every abort condition
+# below depends on both.  So read them and refuse on anything implausible.
+#
+# The die temperature is the cross-check that costs nothing: a stale or
+# unclocked SYSMON reports a number, and an implausible one is the tell.
+proc preflight_abort {why} {
+    puts "PREFLIGHT ABORT: $why"
+    puts "  Nothing was written.  The board I2C bus was never driven."
+    catch {close_hw_target}
+    exit 1
+}
+# rdreg returns report_hw_axi_txn's raw field, which is not always a number
+# (tcl/aux_probe.tcl:195 records "0x" coming back from a failed transaction).
+# Normalise here rather than letting `expr` raise something unreadable.
+proc pf_u32 {addr} {
+    set v [rdreg $addr]
+    if {![string is integer -strict $v]} { preflight_abort "read of 0x$addr returned '$v', not a number" }
+    return [expr {$v & 0xFFFFFFFF}]
+}
+set pf_tri [pf_u32 $TRI]
+set pf_dat [pf_u32 $DAT]
+set pf_v   [expr {([pf_u32 3404] & 0xFFFF) * 3.0 / 65536.0}]
+set pf_t   [expr {([pf_u32 3400] & 0xFFFF) * 507.6 / 65536.0 - 279.43}]
+puts [format "PREFLIGHT master=%s  TRI=0x%08X DAT=0x%08X  VCCINT=%.4f V  die=%.1f C" \
+      [get_property NAME $ax] $pf_tri $pf_dat $pf_v $pf_t]
+if {$pf_tri == 0xDEC0DEE3 || $pf_dat == 0xDEC0DEE3} {
+    preflight_abort "the GPIO at 0x9000 answers with the DECERR sentinel, so this\n  master does not reach it and every I2C readback below would be that sentinel."
+}
+if {($pf_tri & 0x3) != 0x3} {
+    preflight_abort [format "GPIO TRI reads 0x%08X; bits 1:0 must both be 1 at reset\n  (C_TRI_DEFAULT is all-ones, so SCL and SDA come up as inputs).  Something\n  else already owns the bus, or this is not the I2C GPIO." $pf_tri]
+}
+if {$pf_v < 0.55 || $pf_v > 0.95} {
+    preflight_abort [format "SYSMON reads VCCINT %.4f V, outside 0.55..0.95 V.  Either\n  0x3400 is not SYSMON in this bitstream or SYSMON is not being clocked, and\n  the rail feedback this script aborts on would be meaningless." $pf_v]
+}
+if {$pf_t < 5.0 || $pf_t > 95.0} {
+    preflight_abort [format "SYSMON die temperature %.1f C is implausible, so the same\n  register block that supplies the rail reading is stale or unclocked." $pf_t]
+}
+puts "PREFLIGHT OK -- master identified, GPIO reachable and released, SYSMON live."
 
 wr $DAT 0x00000000
 lines 1 1

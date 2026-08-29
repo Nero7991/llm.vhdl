@@ -8,6 +8,7 @@
 # led_inv is a NOT gate, so GPO bit set -> led pin low -> LED lit (active low).
 #   bit0..3 = four green LEDs,  bit4 = RGB red, bit5 = RGB green, bit6 = RGB blue
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
@@ -15,7 +16,12 @@ fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d
-set ax [get_hw_axis hw_axi_1]
+# The JTAG-AXI master is IDENTIFIED, not assumed.  `get_hw_axis hw_axi_1` was
+# right on the two-master bitstreams and is WRONG on the engine bitstream --
+# MEASURED, tcl/pcieep_jtag.log: the AXI-Lite master there is hw_axi_2 and
+# hw_axi_1 returns the decode sentinel 0xDEC0DEE3.  The failure is SILENT: an
+# unmapped read returns a sentinel rather than erroring.  See tcl/axi_select.tcl.
+set ax [fk33_axi_pick axil]
 proc gpo {ax v} {
     create_hw_axi_txn -quiet -force t $ax -address 00009124 -data [format 0x%08x $v] -type write
     run_hw_axi -quiet [get_hw_axi_txns t]

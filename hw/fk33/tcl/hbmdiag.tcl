@@ -8,17 +8,18 @@
 # The control registers are write-only, which is itself the reason this needs a
 # trick rather than a readback.
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 set TG 0x00010000
 proc rd {addr} {
-    set t [create_hw_axi_txn -force rdtxn [get_hw_axis hw_axi_1] \
+    set t [create_hw_axi_txn -force rdtxn $::FK33_AX \
              -address [format %08x $addr] -type read -len 1]
     run_hw_axi -quiet $t
     set v [lindex [report_hw_axi_txn -t d4 $t] 1]
     return [expr {$v & 0xffffffff}]
 }
 proc wr {addr val} {
-    set t [create_hw_axi_txn -force wrtxn [get_hw_axis hw_axi_1] \
+    set t [create_hw_axi_txn -force wrtxn $::FK33_AX \
              -address [format %08x $addr] -type write \
              -data [format %08x $val] -len 1]
     run_hw_axi -quiet $t
@@ -28,8 +29,26 @@ connect_hw_server -allow_non_jtag
 fk33_open_target
 current_hw_device [lindex [get_hw_devices] 0]
 refresh_hw_device -quiet [lindex [get_hw_devices] 0]
+set ::FK33_AX [fk33_axi_pick axil]
 
-puts "ID     [format 0x%08X [rd $TG]]"
+# THIS SCRIPT IS FOR THE hbmbw BITSTREAM AND NOTHING ELSE, and it used to say so
+# nowhere.  $TG = 0x00010000 is build_fk33_hbmbw.tcl's traffic generator.  In
+# the fk33_pcieep family that same address is fk33_scratch, an 8 KB BRAM
+# (MEASURED, --bd-only FK33_MAP: SEG_fk33_scratch_Mem0 at 0x00010000, range
+# 0x2000), so every register below would read and WRITE a scratch RAM and the
+# whole run would report plausible-looking nonsense.  Refuse instead.
+set diag_id [rd $TG]
+puts "ID     [format 0x%08X $diag_id]"
+if {$diag_id != 0x48424D31} {
+    puts "HBMDIAG REFUSING: the traffic generator's ID at 0x[format %08X $TG] reads"
+    puts [format "                  0x%08X, expected 0x48424D31.  This is not the hbmbw" $diag_id]
+    puts "                  bitstream.  On the endpoint/engine bitstream that address is"
+    puts "                  fk33_scratch and there is no traffic generator to diagnose;"
+    puts "                  use tcl/pcieep_jtag.tcl there instead."
+    puts "HBMDIAG_DONE"
+    close_hw_target
+    exit 0
+}
 puts "NPORT  [rd [expr {$TG+12}]]"
 puts "TEMP   [format 0x%08X [rd [expr {$TG+16}]]]"
 puts "TRIP   [format 0x%08X [rd [expr {$TG+20}]]]"

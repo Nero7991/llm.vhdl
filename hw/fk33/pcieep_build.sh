@@ -55,6 +55,14 @@ make -C host --no-print-directory check
 # register -- which reads exactly like a dead card.  One such error was already
 # found this way: `expr {0x$hz}` is not valid Tcl.
 AUXPROBE_SELFTEST=1 tclsh tcl/aux_probe.tcl | tail -1
+# The JTAG-AXI master selector, against stubs.  Ten scripts used to pick the
+# master by ordinal; hw_axi_1 was jtag_axil on the first-light build and
+# jtag_aux on the thermal build, from this same source tree, and an unmapped
+# read returns a decode sentinel rather than erroring -- so the wrong pick is
+# SILENT.  Two of these scripts write a power rail and four bit-bang the board
+# I2C bus.  The cases that matter are the REFUSALS, which is exactly why they
+# need a gate: a refusal path nobody has made fire is not a refusal path.
+AXISEL_SELFTEST=1 tclsh tcl/axi_select.tcl | tail -1
 
 mkdir -p "$BUILD_ROOT"
 cp build_fk33_pcieep.tcl "$BUILD_ROOT/"

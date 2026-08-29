@@ -22,6 +22,7 @@
 
 # ---- register map, from rtl/hbm_tg.vhd -------------------------------------
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 set TG      0x00010000   ;# 64K-aligned, see gen_hbmbw.py
 set R_CTRL  0            ;# bit0 go, bit1 clear
@@ -80,7 +81,7 @@ if {abs($FCLK - $FCLK_DERIVED) > 1.0e3} {
 set BYTES_PER_BEAT 32    ;# 256-bit SAXI
 
 proc rd {addr} {
-    set t [create_hw_axi_txn -force rdtxn [get_hw_axis hw_axi_1] \
+    set t [create_hw_axi_txn -force rdtxn $::FK33_AX \
              -address [format %08x $addr] -type read -len 1]
     run_hw_axi -quiet $t
     # -t d4 returns DECIMAL even though the INFO line beside it prints hex.
@@ -89,7 +90,7 @@ proc rd {addr} {
     return [expr {$v & 0xffffffff}]
 }
 proc wr {addr val} {
-    set t [create_hw_axi_txn -force wrtxn [get_hw_axis hw_axi_1] \
+    set t [create_hw_axi_txn -force wrtxn $::FK33_AX \
              -address [format %08x $addr] -type write \
              -data [format %08x $val] -len 1]
     run_hw_axi -quiet $t
@@ -116,11 +117,18 @@ set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d
 
+# Pick the AXI-Lite master by what it ANSWERS.  This was `get_hw_axis hw_axi_1`,
+# which the FATAL message below already half-suspected ("or hw_axi_1 is not
+# jtag_axil").  It is not a suspicion any more: MEASURED, hw_axi_1 is jtag_aux
+# on the thermal build and jtag_axil on the first-light build, from the same
+# source tree.  See tcl/axi_select.tcl.
+set ::FK33_AX [fk33_axi_pick axil]
+
 set id [rd $TG]
 if {$id != 0x48424D31} {
     puts "FATAL: generator ID reads [format 0x%08X $id], expected 0x48424D31."
     puts "       Either the device is not configured with the hbmbw bitstream,"
-    puts "       or hw_axi_1 is not jtag_axil.  An unmapped read on this master"
+    puts "       or [get_property NAME $::FK33_AX] is not the generator's master.  An unmapped read"
     puts "       returns the smartconnect DECERR magic 0xdec0dee3."
     return
 }

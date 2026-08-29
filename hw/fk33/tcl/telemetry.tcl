@@ -7,12 +7,20 @@
 # docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md):
 #   * report_hw_axi_txn -t d4 returns DECIMAL, not hex, even though the
 #     "READ DATA is:" INFO line printed beside it is hex;
-#   * hw_axi_1 is jtag_axil (SYSMON at 0x3000, IIC at 0x9000) and hw_axi_2 is
-#     jtag_hbm.  An unmapped read on hw_axi_1 returns the smartconnect DECERR
-#     magic 0xdec0dee3 (-557785373 signed), which identifies the master
-#     positively rather than looking like a failure.
+#   * an unmapped read on the AXI-Lite master returns the smartconnect DECERR
+#     magic 0xdec0dee3 (-557785373 signed), which identifies that master
+#     POSITIVELY rather than looking like a failure.
+#
+# CORRECTION 2026-08-29.  This header used to say "hw_axi_1 is jtag_axil and
+# hw_axi_2 is jtag_hbm".  That was true of the two-master first-light bitstream
+# and is FALSE on the three-master builds: MEASURED in tcl/aux_probe.log:178
+# (thermal build) hw_axi_1 is jtag_aux and hw_axi_2 is jtag_axil, and in
+# tcl/pcieep_jtag.log (engine build) the AXI-Lite master is hw_axi_2 again.
+# Enumeration order is an implementation result, not a contract.  The master is
+# now picked by what it ANSWERS -- see tcl/axi_select.tcl.
 
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 set BIT [file normalize [file join [file dirname [info script]] .. \
           fk33_example fk33_example.runs impl_1 bd_wrapper.bit]]
@@ -49,7 +57,7 @@ if {$sm ne ""} {
 
 set axis [get_hw_axis -quiet]
 if {[llength $axis] == 0} { puts "NO_AXI_MASTERS"; close_hw_target; exit 0 }
-set ax [get_hw_axis hw_axi_1]
+set ax [fk33_axi_pick axil]
 
 proc r {ax addr} {
     create_hw_axi_txn -quiet -force t $ax -address $addr -type read
@@ -64,7 +72,7 @@ proc w {ax addr data} {
 }
 proc drp {ax a} { return [r $ax [format %04x [expr {0x3400 + 4*$a}]]] }
 
-puts "=== SYSMON via AXI-Lite (hw_axi_1, base 0x3000) ==="
+puts "=== SYSMON via AXI-Lite ([get_property NAME $ax], base 0x3000) ==="
 foreach {a name nom} {0x00 TEMP - 0x01 VCCINT 0.85/0.72 0x02 VCCAUX 1.80
                       0x06 VCCBRAM 0.85/0.72 0x80 VUSER0_MGTAVCC 0.90
                       0x81 VUSER1_MGTVCCAUX 1.80 0x82 VUSER2_MGTAVTT 1.20
