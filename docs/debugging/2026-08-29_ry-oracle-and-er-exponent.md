@@ -674,3 +674,43 @@ loss of half the V mantissa at the shallow attention layers", which is the
 difference between a cleanup and a priority. It is still not a proof: no GHDL
 configuration in this repository runs eight attention layers, and the
 `--attn-fold shared` model would have to be driven at that shape to settle it.
+
+---
+
+## 12. Appended: why C1 cannot be simulated at more than two attention layers
+
+Section 11's number is a proxy because no GHDL configuration runs the eight
+attention layers the real shape has. That is not an oversight of this track; it
+is a hard stop in the bench, and naming it is more useful than repeating the
+caveat.
+
+MEASURED. Running the `seq` row at `BLOCKS = 8, ATTN_INT = 2`, which is four
+attention layers rather than two, and changing nothing else:
+
+```
+rtl/llama_top.vhd:3409:7:@0ms:(assertion failure):
+  llama_top: the K and V KV regions overlap.  Each is 5120 bytes.
+/usr/bin/ghdl-mcode:error: simulation failed
+in process .tb_llama_top(tb).dut@llama_top(rtl).gcr.gkvaxi.P3
+```
+
+`sim/tb_llama_top.vhd:802-803` fixes the two region bases as **constants**, not
+generics:
+
+```vhdl
+constant KV_K_BASE : natural := 16;
+constant KV_V_BASE : natural := 4064;
+```
+
+4048 bytes apart, which fits two attention layers at
+`C_LAY*C_NKVH*C_MAXPOS*REC_B` and not four. The elaboration assert at
+`llama_top.vhd:3409` catches it correctly and loudly, which is the right
+behaviour and the reason this took one run to find rather than producing a
+plausible wrong answer.
+
+**So the honest position on C1's magnitude is:** the mechanism is proven, the
+direction is proven, the cross-layer exponent spread at the real shape is
+MEASURED at 4 to 5, and the end-to-end number is not obtainable in this
+repository until those two constants become generics. That change belongs to
+whoever owns `sim/tb_llama_top.vhd`; this track did not make it, having been
+asked not to touch that file.
