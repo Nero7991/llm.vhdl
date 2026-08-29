@@ -54,11 +54,14 @@ SCRATCH="${SCRATCH:-$(mktemp -d)}"
 NB="${NB:-2}"
 HEADS="${HEADS:-24}"
 DIM="${DIM:-128}"
-# Z_DELAY defaults to 0 because that is what sim/regress.sh runs (its row
-# passes OVERLAP/COL_GAP/STRICT/SILU_LANES/RMS_LANES and leaves Z_DELAY at the
-# bench default).  It is a knob here because R6 below is only killable with it
-# raised, which is the single most consequential result in this file.
-Z_DELAY="${Z_DELAY:-0}"
+# Z_DELAY defaults to 640 because that is what sim/regress.sh runs AS OF
+# 2026-08-29.  It used to default to 0 here for the same reason -- the gate row
+# passed OVERLAP/COL_GAP/STRICT/SILU_LANES/RMS_LANES and left Z_DELAY at the
+# bench default of 0, which is the ONE setting at which R6 below cannot be
+# killed.  TRACK B-FIX added -gZ_DELAY=640 to that row, so R6 now dies in the
+# main table rather than only in the cross-check at the bottom.  Set
+# Z_DELAY=0 in the environment to reproduce the old, blind configuration.
+Z_DELAY="${Z_DELAY:-640}"
 # Z_LATE is the value R6 is re-run at.  MEASURED reason for 600: head_emit
 # needs DIM columns at COL_GAP=4, i.e. 512 cycles, before it raises done, so
 # any z delay under that still arrives early and masks the defect.
@@ -265,11 +268,21 @@ mutate R5 "the gate exponent is read LIVE, losing gdn_silu'''s one-cycle lead" -
 "        si_e_seg <= z_e_held;" \
 "        si_e_seg <= z_exp;"
 
-# R6 IS THE HEADLINE RESULT OF THIS FILE.  It SURVIVES at the configuration
-# sim/regress.sh runs and is KILLED by raising one generic.  MEASURED:
+# R6 WAS THE HEADLINE RESULT OF THIS FILE: it survived at the configuration
+# sim/regress.sh ran and was killed by raising one generic.  FIXED 2026-08-29
+# -- the gate row now carries -gZ_DELAY=640 and R6 dies in the main table.
+# The measurement that produced that number is kept here because it is what
+# justifies 640 and what a future COL_GAP change would have to redo.
 #
-#   Z_DELAY    0     PASS     7   PASS    40   PASS
-#   Z_DELAY  600     FAIL   2000   FAIL
+# MEASURED at the gate's own generics, 3 blocks x 24 heads, COL_GAP=4:
+#
+#   Z_DELAY    0 PASS    7 PASS   40 PASS  520 PASS
+#             540 FAIL  560 FAIL 580 FAIL  600 FAIL  640 FAIL  1024 FAIL
+#
+# so the kill threshold is in (520, 540].  The higher the delay the earlier
+# the mutant diverges -- head 10 at 540, head 8 at 560, head 6 at 580, head 5
+# at 600, head 4 at 640, head 0 at 1024 -- because the lag accumulates per
+# head, which is why 540 is not a safe gate value even though it kills.
 #
 #   at Z_DELAY = 600: "block 0 element 640 head 5 lane 0 got -6541 expected 179"
 #
@@ -415,5 +428,5 @@ fi
 echo
 echo "kill ratio: $NKILL killed, $NSURV survived, of $NTOT"
 echo "  (scored at Z_DELAY=$Z_DELAY, the configuration sim/regress.sh runs;"
-echo "   R6 is killable only at Z_DELAY >= ~512, see the cross-check above)"
+echo "   R6 is killable only at Z_DELAY >= 540, MEASURED -- see the R6 note)"
 echo "scratch dir with every mutant, its vectors and its log: $SCRATCH"

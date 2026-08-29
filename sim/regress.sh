@@ -655,7 +655,32 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     # sim/run_gdn_emit_chain.sh.  OVERLAP=true is how the chain actually runs
     # and is the mode that catches the w_mant hazard; --stop-time is a backstop
     # only, the testbench drops `running` itself.
-    sim:tb_gdn_emit_chain)   echo "-gOVERLAP=true -gCOL_GAP=4 -gSTRICT=false -gSILU_LANES=16 -gRMS_LANES=4 --stop-time=300ms" ;;
+    #
+    # Z_DELAY=640 IS LOAD BEARING AND WAS ADDED 2026-08-29.  The bench defaults
+    # it to 0 and this row used to leave it there, which is the ONE setting at
+    # which the chain's own z_have handshake cannot be checked -- the bench's
+    # header says so in as many words ("0 makes it run maximally ahead, which
+    # is what MASKED the z_have defect").  MEASURED with the mutation that
+    # drops z_have from S_IDLE's condition, at exactly the generics on this
+    # line, 3 blocks x 24 heads:
+    #
+    #   Z_DELAY    0 PASS    7 PASS   40 PASS  520 PASS
+    #             540 FAIL  560 FAIL 580 FAIL  600 FAIL  640 FAIL  1024 FAIL
+    #   CONTROL, unmutated, at 640: PASS
+    #
+    # So the kill threshold is in (520, 540] and 640 sits 18.5% above it.  It
+    # is DERIVED rather than picked: the measured per-head period is 44394
+    # cycles / 72 heads = 616, so 640 makes z late for every head, and the
+    # mutant then diverges at head 4 instead of head 10 as it does at 540.
+    # Cost, MEASURED: the unmutated run goes 52 s -> 61 s.  Do not lower it;
+    # 512 is the column pass alone and is not enough.
+    #
+    # It does move "refused-column cycles" from 0 to 7255, because making z
+    # late is exactly what backs the column path up.  That counter is REPORTED
+    # and never asserted at STRICT=false, so nothing that was being gated stops
+    # being gated; the refusal-is-a-failure property lives at STRICT=true and
+    # is a separate manual run either way.
+    sim:tb_gdn_emit_chain)   echo "-gOVERLAP=true -gCOL_GAP=4 -gSTRICT=false -gSILU_LANES=16 -gRMS_LANES=4 -gZ_DELAY=640 --stop-time=300ms" ;;
     # sim/run_gdn_block.sh reference point: every producer maximally ahead.
     sim:tb_gdn_block)        echo "-gOUTFILE=gdn_block_out.txt --stop-time=200ms" ;;
     # sim/run_matvec.sh stage 5/6/7 baselines.  --stop-delta is raised because
