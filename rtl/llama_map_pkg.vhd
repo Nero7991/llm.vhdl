@@ -222,6 +222,33 @@ package body llama_map_pkg is
     -- att_q 256, att_qg 512, att_kv 128.  Every landmark measured at
     -- attn_hd 16 or 32 is at a DIFFERENT SHAPE from one measured at 64 and
     -- the two are not comparable.
+    --
+    -- DIVERGENCE, 2026-08-29, DELIBERATE AND NOT YET CLOSED.
+    -- `tools/gen_layer_program.py`'s `mk_shape_scaled` is the Python mirror of
+    -- THIS function and it has NO `attn_hd > 32` branch as of a781326.  It
+    -- still evaluates the formula, and at `attn_hd = 64` that is not an error
+    -- there: Python has no `positive` subtype, so `32 // 64` is 0 and the
+    -- generator emits a plan with TWO ZERO-SIZED REGIONS instead of refusing.
+    -- MEASURED on both sides, same call `mk_shape_scaled(4, 2, hd)`:
+    --
+    --      attn_hd   q_heads  kv_heads   att_q  att_qg  att_kv
+    --   py    16        4         2        64     128      32
+    --   vhd   16        4         2        64     128      32     agree
+    --   py    32        2         1        64     128      32
+    --   vhd   32        2         1        64     128      32     agree
+    --   py    64        1         0        64     128       0
+    --   vhd   64        4         2       256     512     128     DIVERGE
+    --
+    -- So the ten shapes anyone has measured (all at attn_hd 16 or 32) are
+    -- byte-identical between the two, and the D-table byte-identity argument
+    -- that rests on them is unaffected.  What is NOT safe is
+    -- `gen_layer_program.py --shape sim --attn-hd 64`: it runs, emits the same
+    -- 61 steps, and gets R_KIN and R_VIN wrong (0 instead of 128).  Nothing in
+    -- the repository generates at attn_hd 64 today -- `sim/tb_llama_top_seq`
+    -- builds its plan from THIS package, not from the generator -- so this is
+    -- a trap laid for the next person rather than a live fault.  The fix
+    -- belongs in the Python and is NOT made here; see
+    -- docs/debugging/2026-08-29_llama-top-kv-seam-multitoken.md section 9.
     if attn_hd > 32 then
       return (blocks        => blocks,
               attn_interval => attn_interval,

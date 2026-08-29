@@ -689,3 +689,79 @@ read the warning.
 - **Two attention layers, not more.** `ATTN_INT = 2` at `BLOCKS = 4` gives
   two, which is what makes the `layer` term of the address equation
   observable at all. Four or eight layers interleaving is untested.
+
+---
+
+## 10. APPENDED 2026-08-29: the shape function diverged from its Python mirror
+
+Raised by TRACK LMHEAD after `5d0253f` landed, so it could not go in that
+commit's message. It goes here and in a comment at the branch itself.
+
+**The finding.** `rtl/llama_map_pkg.vhd`'s `mk_shape_scaled` grew an
+`attn_hd > 32` branch in `5d0253f`. `tools/gen_layer_program.py`'s
+`mk_shape_scaled`, which is its Python mirror and carries the docstring
+"rtl/llama_map_pkg.vhd's `mk_shape_scaled`, so a program emitted here can be
+executed by `llama_top` in simulation", has no such branch as of `a781326`.
+
+**MEASURED, both sides, same call `mk_shape_scaled(4, 2, hd)`.** Python by
+importing the module and reading the `Shape` properties; VHDL by a throwaway
+GHDL process reporting the record fields.
+
+| attn_hd | side | q_heads | kv_heads | att_q | att_qg | att_kv |
+|---|---|---|---|---|---|---|
+| 16 | py  | 4 | 2 | 64  | 128 | 32  |
+| 16 | vhd | 4 | 2 | 64  | 128 | 32  |
+| 32 | py  | 2 | 1 | 64  | 128 | 32  |
+| 32 | vhd | 2 | 1 | 64  | 128 | 32  |
+| 64 | py  | 1 | **0** | 64  | 128 | **0**   |
+| 64 | vhd | 4 | 2 | 256 | 512 | 128 |
+
+`region_sizes()` on the Python side at `attn_hd = 64`:
+
+```
+[64, 64, 256, 128, 4, 4, 128, 0, 0, 128, 128, 128, 128, 64]
+                                ^  ^  R_KIN and R_VIN, 0 instead of 128
+```
+
+**What is and is not at risk.**
+
+- NOT at risk: every shape anyone has measured. All ten are at `attn_hd` 16 or
+  32, and the table above shows the two implementations agree exactly there --
+  including that 16 and 32 give the SAME region table as each other, which is
+  the property the VHDL comment already claimed and is now measured. LMHEAD's
+  D-table byte-identity result across the 15-window `lm_head` schedule, the
+  491-step `blocks=32` shape included, is untouched.
+- AT RISK: `tools/gen_layer_program.py --shape sim --attn-hd 64`. It does not
+  error. MEASURED: it emits 61 steps and a 488-line `d_table.hex`, the same
+  STEP COUNT as the VHDL, with two regions sized 0. A step-count comparison
+  would call that agreement.
+- Nothing generates at `attn_hd = 64` today. `sim/tb_llama_top_seq` builds its
+  plan from `llama_map_pkg` in VHDL, not from the generator, and no committed
+  vector was produced at that shape. This is a trap for the next person, not a
+  live fault.
+
+**Does the Python need the branch? Yes, and refusing is better than mirroring.**
+The reason the VHDL needed a branch at all is that `attn_kv_heads` is a
+`positive` field, so `32 / 64 = 0` is a hard error there -- the language caught
+it. Python has no such subtype and silently produced a plan. Whichever way it
+is closed, the important half is that `attn_hd = 64` must stop being a value
+the generator accepts quietly. Two options, in preference order:
+
+1. **Refuse.** Raise in `mk_shape_scaled` when `64 // attn_hd` or
+   `32 // attn_hd` is 0. One line, cannot drift, and turns the trap into a
+   message. It also leaves the generator honest about the fact that it has
+   never been validated at this shape.
+2. **Mirror the branch.** Needed only if someone actually wants a generated
+   program at `attn_hd = 64`. Then the Python must return q_heads 4,
+   kv_heads 2 above 32, matching the table above, and the result should be
+   diffed against the VHDL plan rather than assumed.
+
+**NOT done here, deliberately.** `tools/` is not this track's file and LMHEAD
+landed in `gen_layer_program.py` at `a781326`; two tracks in one file is how
+the next mystery gets made. Reported for dispatch.
+
+**What was NOT verified.** That the VHDL and Python D tables agree BYTE FOR
+BYTE at `attn_hd` 16 and 32 -- only the shape records and region tables were
+compared here, which is the input to the D table and not the D table itself.
+LMHEAD's byte-identity measurement is the evidence for the latter and it was
+not re-run in this track.
