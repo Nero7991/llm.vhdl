@@ -254,6 +254,24 @@ only completion-class statement available on an arm where completion cannot
 happen, and it is exactly the one that separates "accepted and running" from
 "accepted and inert".
 
+**TEETH, MEASURED.** An RTL mutant that never raises `busy` on the accepted
+path (`busy <= '1'` -> `busy <= '0'` in `matvec_int4_desc_axi`'s `S_IDLE` GO
+branch), compiled from a scratch override so the repo file was never touched:
+
+```
+# HEAD's bench, mutant RTL -- the whole thing passes
+tb_matvec_fk33_desc.vhd:1205: shape sweep, FK33 arm (ROWS_IF=48, GRP=1): 10 legal shapes accepted, 38 one-off beat-count mutations refused
+tb_matvec_fk33_desc.vhd:1283: shape sweep, AXU3EG arm (ROWS_IF=4, GRP=2): 9 legal shapes accepted, 32 one-off beat-count mutations refused
+tb_matvec_fk33_desc.vhd:1476: tb_matvec_fk33_desc: 22 cases run, 0 failures
+GHDL_EXIT=0
+
+# the new check, same mutant -- 9 of 9 legal AXU3EG shapes fail
+tb_matvec_fk33_desc.vhd:1283:13:(report error): AXU3EG SHAPE n_rows=1 n_cols=32 w_beats=1 s_beats=1 was neither refused nor left RUNNING: busy='0' done='0' ...
+```
+
+Both shape sweeps and all 22 descriptor cases were blind to it. That is the
+measurement that says the gap was real rather than theoretical.
+
 ## 8. Not determined
 
 - **Whether any real `lm_head` descriptor reaches `n_rows > MAXROWS_BFP` in

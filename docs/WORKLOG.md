@@ -408,38 +408,71 @@ stays below the trap, so **the top corner of the row range is unverified**, and
 that is precisely where an off-by-one in `tiles` would show. Closing OI-8
 unblocks that verification too.
 
-### OI-10: `matvec_core:779` writes `ybuf` past the end in `out_mode = "01"`
+### OI-10: RESOLVED 2026-08-29 (`0ff6828`) -- `matvec_core` wrote `ybuf` past the end in raw mode
 
-Found by TRACK RANGE while fixing OI-8, **not reproduced and not fixed**, and
-it is the same family as the one it was fixing.
+Filed by TRACK RANGE, reproduced and fixed by TRACK OUTMODE. Write-up:
+`docs/debugging/2026-08-29_out_mode-raw-oracle-and-oi10.md`.
 
-`:779` writes `ybuf(re2_t)` whenever `out_mode /= "10"`, but `S_IDLE` bounds
-`n_rows` against `MAXROWS_BFP` **only when `out_mode = "00"`**. So `out_mode =
-"01"` can write past `TILES-1` on exactly the argument that produced OI-8, where
-the read side did the same thing.
+Reproduced exactly as filed. `ybuf(re2_t)` was written whenever `out_mode /=
+"10"`, while `S_IDLE` bounds `n_rows` against `MAXROWS_BFP` only when
+`out_mode = "00"` -- and spec 7.6 makes `n_rows > MAXROWS_BFP` **legal** in raw
+("in raw mode `M` may exceed `MAXROWS_BFP`", `lm_head` being the caller).
+MEASURED at `MAXROWS_BFP = 64 / ROWS_IF = 4`, `out_mode = "01"`, `n_rows = 65`:
+`index (16) out of bounds (0 to 15) at rtl/matvec_core.vhd:839`, with the SAME
+65 rows in partial mode passing in the pass immediately before it.
 
-**Not reproduced because no bench drives that mode.** That is the finding as much
-as the code is: `out_mode` 1 and 2 descriptors are byte-checked by
-`tools/verify_mv4i_desc.py` and **never run**. A mode nothing exercises is a mode
-whose bounds nobody has tested, and OI-8 showed what that costs.
+**Two corrections to the filing, both worth carrying.**
 
-Closing this needs a bench that drives `out_mode = "01"` first. Fixing the
-bound without a bench that reaches it would repeat the mistake that made OI-8
-survive: a guard nobody has watched fail.
+1. **It is NOT reachable "on exactly the argument that produced OI-8".** That
+   argument is `n_rows` in the top `ROWS_IF` rows *of* the range, and raw mode
+   at exactly `MAXROWS_BFP` passes on unfixed RTL (measured). The write pointer
+   stops at `tiles - 1`; only OI-8's read pointer runs one past. OI-10 needs
+   `n_rows` **above** the range. Do not look for it at the top corner.
+2. **`out_mode = "10"` was NOT unexercised.** `sim/tb_matvec_core` PASS 2 has
+   been running partial and comparing `y_data` against the reference's `ACC`
+   line all along. `out_mode = "01"` was driven, too, by
+   `sim/tb_matvec_cb_lockstep` -- but that bench compares four runs **against
+   each other** at one tile and never against `ref/matvec_int4.c`, so raw had
+   no oracle. "Never run" was wrong; "never checked against the reference" was
+   right, and it is the half that mattered.
 
-### OI-11: the FK33 shape sweep scores a HANG as an acceptance
+Fixed by narrowing the write ENABLE to `out_mode = "00"`, not by clamping the
+address as OI-8 did: OI-8 clamped because that access is a READ that must stay
+unconditional to infer the BRAM read port, while this is a WRITE whose
+condition already IS the write enable. `ybuf` is the BFP output buffer and
+nothing else, so the raw write was dead as well as out of range.
 
-Pre-existing, found by TRACK RANGE while lifting the sweep ceilings, not
-introduced by that work.
+`sim/tb_matvec_core` now drives all three modes against the reference and needed
+no new vector -- `ref/matvec_int4.c` already writes the `YDATA` line and that IS
+the raw payload; the loader was dropping it. 343 output values compared, up from
+24. Six mutations; the one that does NOT bite is the alternative address-clamp
+fix, which is the bench's permanent resolution floor here because nothing reads
+`ybuf` in raw mode at all.
 
-The FK33 arm of `sim/tb_matvec_fk33_desc.vhd` judges a legal shape by checking
-`err` after a bounded poll. A shape that **hangs** therefore scores as accepted,
-which is the same silent-success shape as OI-3 and case 19.
+### OI-11: WITHDRAWN for the FK33 arm, RESOLVED 2026-08-29 for the AXU3EG arm
 
-What actually proved the newly-reachable top-corner shapes completed was
-incidental: the OI-8 defect killed the whole process, so the run finishing at
-all was the evidence. That is luck, not a check, and it stops being available
-now that OI-8 is fixed.
+Filed by TRACK RANGE against `sim/tb_matvec_fk33_desc.vhd`; examined by TRACK
+OUTMODE.
+
+**The FK33 arm does not have this defect and did not have it when the issue was
+written.** Its `k = 0` branch is `if st(2) = '1' ... elsif st(0) /= '1' then
+"is LEGAL and never completed (timeout N)"`, so a hang exits the bounded poll
+with both bits clear and is scored as a failure. `git log -S"is LEGAL and never
+completed"` puts that line in `f693faf`, which predates `7ccc239`, the commit
+under which OI-11 was filed. Withdrawn for that arm.
+
+**The gap is real on the AXU3EG arm**, which the filing did not name. That arm
+ties off the weight masters, so an accepted descriptor can never complete by
+construction and there is no `done` to poll; its verdict was `err` alone after a
+fixed window. A design that silently did nothing -- never started, never errored
+-- scored as an acceptance.
+
+Closed by requiring the accepted descriptor to be RUNNING: STATUS bit 1 (`busy`)
+set and bit 0 (`done`) clear after the window. That is the only completion-class
+statement available where completion cannot happen. TEETH, MEASURED: an RTL
+mutant that never raises `busy` on the accepted path passes the ENTIRE bench at
+HEAD -- both shape sweeps, all 22 cases, `GHDL_EXIT=0` -- and fails 9 of 9 legal
+AXU3EG shapes with the check in place. Nothing else in the tree saw it.
 
 ### OI-9: the descriptor error-code space is FULL
 

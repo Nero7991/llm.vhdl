@@ -1264,6 +1264,31 @@ begin
                    " s_beats=" & integer'image(sbx) &
                    " is LEGAL and was REFUSED, err_code = " &
                    integer'image(ec) severity error;
+          -- ACCEPTED IS NOT THE SAME AS `err` STAYED LOW.  Worklog OI-11.
+          --
+          -- This arm ties off the weight masters, so an accepted descriptor
+          -- can NEVER complete -- see the window comment above -- and the
+          -- FK33 arm's `st(0) /= '1'` completion check has no counterpart
+          -- here.  So a design that silently did NOTHING at all, never
+          -- started and never errored, scored as an acceptance, which is the
+          -- same silent-success shape as OI-3 and case 19.
+          --
+          -- The one completion-class statement available on an arm where
+          -- completion cannot happen is that the job is RUNNING: STATUS bit 1
+          -- (busy) set and bit 0 (done) clear, after a window four times the
+          -- ~180 cycles the accepted path needs to reach the core.  It cannot
+          -- be done: the core is stalled on weight words that never arrive.
+          elsif bst(1) /= '1' or bst(0) = '1' then
+            nerr := nerr + 1;
+            report "AXU3EG SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) & " w_beats=" & integer'image(wbx) &
+                   " s_beats=" & integer'image(sbx) &
+                   " was neither refused nor left RUNNING: busy=" &
+                   std_logic'image(bst(1)) & " done=" &
+                   std_logic'image(bst(0)) &
+                   " -- an inert design scores as an acceptance here unless " &
+                   "this is checked, because this arm cannot poll for done"
+              severity error;
           end if;
         else
           n_teeth := n_teeth + 1;
