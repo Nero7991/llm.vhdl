@@ -700,6 +700,13 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # the vector file's shape header, so a mismatch here is loud, not silent.
     seq_vec_chain_vec.txt)  echo "250 8 20260827" ;; # sim/run_seq_vec_seam.sh
     gdn_emit_chain_vec.txt) echo "3 24 128" ;;     # sim/run_gdn_emit_chain.sh
+    # ref/l2norm_rs_vec.c, subsystem B 2.1.3's fixed-point reference.  Args are
+    # N and the LCG seed; the vector file carries an N header that
+    # sim/tb_l2norm_rs.vhd asserts against its own generic, so a mismatch is
+    # loud.  Pinned here rather than left to the generator's defaults so that
+    # committing sim/l2norm_rs_vec.txt later cannot silently freeze a stale
+    # golden: with a row present regress.sh regenerates unconditionally.
+    l2norm_rs_vec.txt)      echo "128 20260828" ;;
     # sim/tb_matvec_fk33.  ref/mv_fk33_tr reads a REAL packed tensor and dumps
     # the sub-region bytes its 27 AXI masters will read, plus the expected
     # result from ref/matvec_int4.c.  The file is one of the 250 .mv4i written

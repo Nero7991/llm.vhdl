@@ -1,6 +1,23 @@
--- Checks gdn_recur_pipe against the SAME vectors as tb_gdn_recur, and measures
--- the achieved issue interval -- which is the whole reason the pipelined unit
--- exists.  Section 3.1's 589,824-cycle sweep assumes one column every
+-- Checks gdn_recur_pipe TWO ways and measures the achieved issue interval --
+-- the last of which is the whole reason the pipelined unit exists.
+--
+--   1. BIT-EXACT against ref/gdn_recur_vec.c's fixed path, the same vectors
+--      tb_gdn_recur uses.
+--   2. REAL-VALUED against the double-precision ORACLE carried in the same
+--      vector file, on the physically realizable columns.
+--
+-- WHY CHECK 2 IS HERE AS OF 2026-08-28.  Until today this file READ the
+-- oracle's u and o columns and threw them away with two bare `readline`s, so
+-- the only thing it asserted was that the pipelined unit reproduces
+-- gdn_recur's recipe.  That is a transcription check, and gdn_recur_pipe --
+-- NOT gdn_recur -- is the unit gdn_block instantiates and llama_top ships.  A
+-- shared error in the recipe was therefore invisible in the shipping unit,
+-- which is exactly the class that let the l2norm recipe collapse survive 55
+-- passing cases (docs/debugging/2026-08-25_l2norm-recipe-collapse.md).
+-- gdn_recur asserts its own oracle accuracy; the unit that ships did not.
+-- Do not reinstate the discard.
+--
+-- Section 3.1's 589,824-cycle sweep assumes one column every
 -- NB = DIM/LANES cycles; gdn_recur measures 58 at LANES = 32 against an NB of
 -- 4.  This testbench reports what the pipelined unit actually sustains, so the
 -- figure is measured rather than argued.
@@ -31,6 +48,12 @@ entity tb_gdn_recur_pipe is
           -- column every NB cycles.  A large value serialises the unit and
           -- isolates arithmetic bugs from overlap bugs.
           GAP   : natural := 0;
+          -- ORACLE tolerances, in the SAME units and with the SAME values as
+          -- tb_gdn_recur's, because the two units are required to be
+          -- bit-identical and a different bound here would be a second
+          -- standard for one recipe.  Measured, not guessed: see that file.
+          TOL_S : real := 12.0;      -- state mantissa, LSB of the 2^-se_new grid
+          TOL_O : real := 1.0e-4;    -- output dot, relative to the term norm
           VECS  : string   := "gdn_recur_vec.txt");
 end entity;
 
@@ -57,18 +80,31 @@ architecture sim of tb_gdn_recur_pipe is
   signal loaded : boolean := false;
 
   type i_arr is array (natural range <>) of integer;
+  type r_arr is array (natural range <>) of real;
   type col_rec is record
-    tk0, se_j, e_v, v_j, eg, beta, se_new, e_o, gid, err : integer;
+    phys, tk0, se_j, e_v, v_j, eg, beta, se_new, e_o, gid, err : integer;
     oacc : real;
+    -- the oracle's output dot, and the sum of |term| that is the scale it
+    -- lives on.  Normalising by |sum| is not a measurement here: it is a
+    -- 128-term signed sum that cancels heavily.
+    orr, onorm : real;
   end record;
   type col_arr is array (natural range <>) of col_rec;
   type big_arr is array (natural range <>) of i_arr(0 to DIM-1);
+  type rbig_arr is array (natural range <>) of r_arr(0 to DIM-1);
 
   shared variable v_col  : col_arr(0 to NCASE-1);
   shared variable v_sm   : big_arr(0 to NCASE-1);
   shared variable v_kn   : big_arr(0 to NCASE-1);
   shared variable v_qs   : big_arr(0 to NCASE-1);
   shared variable v_snew : big_arr(0 to NCASE-1);
+  -- the ORACLE's state vector, in real arithmetic on the 2^0 scale
+  shared variable v_u    : rbig_arr(0 to NCASE-1);
+  -- what the DUT actually emitted, kept per column so the accuracy check can
+  -- be done against the DUT's own bits rather than against v_snew.  Checking
+  -- the C model's output for accuracy and calling that a DUT result is the
+  -- same substitution this file exists to stop making.
+  shared variable v_got  : big_arr(0 to NCASE-1);
 
   shared variable nfail  : integer := 0;
   shared variable ncheck : integer := 0;
@@ -79,6 +115,15 @@ architecture sim of tb_gdn_recur_pipe is
   -- filters gaps >= 100 so that the within-group number stays meaningful; this
   -- one filters nothing.
   shared variable ii_head : integer := 0;
+
+  -- accuracy accounting (check 2)
+  shared variable ntol   : integer := 0;   -- columns outside an oracle bound
+  shared variable nphys  : integer := 0;   -- columns the oracle check applied to
+  shared variable n_odeg : integer := 0;   -- columns whose oracle dot is identically 0
+  shared variable worst_s, worst_o : real := 0.0;
+  shared variable worst_o_on : real := 0.0;
+  shared variable worst_o_c  : integer := -1;
+  shared variable worst_s0, worst_s1 : real := 0.0;   -- tk = 0 / steady state
 
   function to_real_s(v : signed) return real is
     variable m : unsigned(v'length-1 downto 0);
@@ -127,7 +172,7 @@ begin
     assert nc = NCASE and dv = DIM report "vector file shape" severity failure;
     for c in 0 to NCASE-1 loop
       readline(fh, ln);
-      read(ln, iv);                          -- phys, unused here
+      read(ln, iv); v_col(c).phys := iv;
       read(ln, iv); v_col(c).tk0 := iv;
       read(ln, iv); v_col(c).se_j := iv;
       read(ln, iv); v_col(c).e_v := iv;
@@ -144,8 +189,12 @@ begin
       read(ln, rv); v_col(c).oacc := rv;
       read(ln, iv); v_col(c).e_o := iv;
       read(ln, iv); v_col(c).err := iv;
-      readline(fh, ln);                      -- oracle u, not used here
-      readline(fh, ln);                      -- oracle o, not used here
+      -- The ORACLE columns.  These were read and DISCARDED until 2026-08-28;
+      -- see the note at the top of this file.
+      readline(fh, ln); for i in 0 to DIM-1 loop read(ln, rv); v_u(c)(i) := rv; end loop;
+      readline(fh, ln);
+      read(ln, rv); v_col(c).orr := rv;
+      read(ln, rv); v_col(c).onorm := rv;
     end loop;
     file_close(fh);
     loaded <= true;
@@ -247,6 +296,22 @@ begin
     assert nfail = 0
       report "gdn_recur_pipe: " & integer'image(nfail) & " mismatch(es) in "
            & integer'image(ncheck) & " columns" severity error;
+    assert ntol = 0
+      report "gdn_recur_pipe: OUT OF TOLERANCE vs the double ORACLE in "
+           & integer'image(ntol) & " of " & integer'image(nphys)
+           & " physically realizable column(s)" severity error;
+    if nfail = 0 and ntol = 0 then
+      report "gdn_recur_pipe: within the oracle bounds on all "
+           & integer'image(nphys) & " physically realizable columns -- worst "
+           & real'image(worst_s) & " state LSB (TOL_S " & real'image(TOL_S)
+           & ") and " & real'image(worst_o) & " of the output dot's term norm "
+           & "(TOL_O " & real'image(TOL_O) & ") [worst dot at column "
+           & integer'image(worst_o_c) & ", term norm " & real'image(worst_o_on)
+           & "; " & integer'image(n_odeg) & " columns had an identically-zero "
+           & "oracle dot and were skipped for that check].  State error splits "
+           & real'image(worst_s1) & " LSB steady state / " & real'image(worst_s0)
+           & " LSB at tk = 0." severity note;
+    end if;
     if nfail = 0 then
       report "gdn_recur_pipe: bit-identical to the reference on all "
            & integer'image(ncheck) & " columns; issue interval measured "
@@ -270,6 +335,7 @@ begin
     variable ncol_d, ncol_r, gcnt : integer := 0;
     variable got : i_arr(0 to DIM-1);
     variable bad, firstbad : integer;
+    variable gsr, e_s, gs_val, e_o_rel : real;
   begin
     if rising_edge(clk) and rst = '0' then
       if o_valid = '1' then
@@ -284,6 +350,7 @@ begin
               if firstbad < 0 then firstbad := i; end if;
             end if;
           end loop;
+          for i in 0 to DIM-1 loop v_got(ncol_d)(i) := got(i); end loop;
           if bad /= 0 then
             report "column " & integer'image(ncol_d) & ": state differs in "
                  & integer'image(bad) & " element(s), first at i="
@@ -332,6 +399,63 @@ begin
                severity error;
           nfail := nfail + 1;
         end if;
+
+        -- ---- check 2: REAL-VALUED, against the double ORACLE -------------
+        -- Same standard, same bounds and same exclusions as tb_gdn_recur:
+        --   * PHYS columns only.  The adversarial group carries inputs this
+        --     recurrence cannot receive (k that is not a unit vector above
+        --     all), and holding those to an accuracy bound would measure the
+        --     recipe against inputs it was never designed for.  They are
+        --     still checked bit-exactly above, which is what corners are for.
+        --   * err = 1 columns excluded: by 2.1.6 se_new is meaningless there,
+        --     and the oracle comparison scales by 2^se_new.  The unit is
+        --     still required to REPORT them, checked above.
+        -- The scalars land AFTER the data stream, so the state for this
+        -- column is already in v_got.  Asserted rather than assumed, because
+        -- if that ordering ever changed this check would silently grade the
+        -- previous column.
+        if v_col(ncol_r).phys = 1 and v_col(ncol_r).err = 0 then
+          assert ncol_d > ncol_r
+            report "column " & integer'image(ncol_r)
+                 & ": scalars arrived BEFORE the state stream -- the oracle "
+                 & "check would grade the wrong column" severity failure;
+          nphys := nphys + 1;
+          bad := 0;
+          for i in 0 to DIM-1 loop
+            gsr := v_u(ncol_r)(i) * 2.0 ** real(to_integer(o_se_new));
+            e_s := abs(real(v_got(ncol_r)(i)) - gsr);
+            if e_s > worst_s then worst_s := e_s; end if;
+            if v_col(ncol_r).tk0 = 1 then
+              if e_s > worst_s0 then worst_s0 := e_s; end if;
+            else
+              if e_s > worst_s1 then worst_s1 := e_s; end if;
+            end if;
+            if e_s > TOL_S then bad := bad + 1; end if;
+          end loop;
+          -- The output dot is normalised by the sum of |terms|, NOT by |sum|:
+          -- it is a 128-term signed sum that cancels heavily, so dividing by
+          -- the sum reports an enormous error wherever the sum lands near
+          -- zero while every term is accurate.
+          gs_val := to_real_s(o_acc) * 2.0 ** real(-to_integer(o_e_o));
+          if v_col(ncol_r).onorm > 1.0e-300 then
+            e_o_rel := abs(gs_val - v_col(ncol_r).orr) / v_col(ncol_r).onorm;
+          else
+            e_o_rel := 0.0;
+            n_odeg  := n_odeg + 1;
+          end if;
+          if e_o_rel > worst_o then
+            worst_o := e_o_rel; worst_o_on := v_col(ncol_r).onorm;
+            worst_o_c := ncol_r;
+          end if;
+          if bad /= 0 or e_o_rel > TOL_O then
+            report "column " & integer'image(ncol_r)
+                 & ": OUT OF TOLERANCE vs ORACLE in " & integer'image(bad)
+                 & " state element(s), o rel err " & real'image(e_o_rel)
+                 severity error;
+            ntol := ntol + 1;
+          end if;
+        end if;
+
         ncol_r := ncol_r + 1;
         ncheck := ncol_r;
       end if;
