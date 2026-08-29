@@ -25,7 +25,8 @@
  * five registers plus read-only identity and does not grow with the geometry;
  * everything that does grow lives in an in-memory descriptor.  The format is
  * docs/2026-08-28_matvec-descriptor-format.md and the host-side generator for
- * it does not exist yet (worklog OI-4).  Do not extend this file to cover the
+ * it is tools/gen_mv4i_desc.py (CORRECTED 2026-08-28: this line used to say it
+ * did not exist yet, worklog OI-4).  Do not extend this file to cover the
  * FK33: the two control planes are different maps, not one map with options.
  */
 #define _GNU_SOURCE
