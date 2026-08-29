@@ -433,3 +433,77 @@ map, the CDC and the burst-length fix, not ahead of them.
 
 None yet. Append here with a date; mark superseded claims withdrawn in place rather than deleting
 them.
+
+---
+
+## CORRECTION, appended 2026-08-28 evening: the 300 MHz does not hold
+
+**This document's headline answer is WITHDRAWN in its quantitative part.** The
+structural answer stands: 27 masters can be served, 32 SAXI ports exist, and a
+30-port design really did measure 288.0 GB/s on this card. What does not stand
+is the margin.
+
+Every bandwidth figure here rests on **ACLK = 300 MHz**, taken from an
+`hbm_tg` build that closed at WNS +0.101 ns **with no engine present**. That
+assumption is now measured with the engine present, by out-of-context synthesis
+of the real subsystem A at the FK33 geometry
+(`docs/debugging/2026-08-28_subsystem-a-ooc-synthesis-at-fk33-geometry.md`,
+commit `bbe5e92`):
+
+| | this document | MEASURED |
+|---|---|---|
+| ACLK | 300 MHz | **189.50 MHz** |
+| core | 236.128 MHz | **221.83 MHz** |
+| supply | 259.2 GB/s | **163.7 GB/s** |
+| demand | 204.0 GB/s | **191.7 GB/s** |
+| duty | 78.7%, "27.1% margin" | **117.1%** |
+
+**The array cannot be fed at the measured clocks.** The weight-read phase is
+1.246x longer than every figure in this document assumes.
+
+**The design FITS**: 31.65% LUT, 55.03% DSP, 28.65% BRAM, 0 URAM. Area was
+never the risk, and this document was right not to treat it as one.
+
+### The reframing that matters
+
+Because `27 x 256 bits = 864 B` exactly, the duty expression has no efficiency
+term and reduces to **`duty = f_core / f_axi`**. So there is no absolute ACLK
+requirement at all. The requirement is that **ACLK reach the CORE clock**, which
+at the measured 221.83 MHz means **221.8 MHz, not 300**. That is 32.3 MHz above
+what was measured, a 17.1% gap rather than the 58% that 300 MHz implied.
+
+Chasing 300 MHz would have been over-engineering a safety-critical AR throttle
+for headroom the design cannot use, because above `f_core` the core becomes the
+binding constraint.
+
+### Where the time goes (MEASURED)
+
+The critical path is `async_fifo/rp_g_s2` -> gray2bin -> subtract -> the
+throttle compare `f_level + promised + want <= DEPTH` -> `axi_rd_fsm/this_len`:
+16 logic levels, 6 CARRY8, 5.115 ns, 45% logic so the level count is a floor
+rather than a routing estimate. **The 6 CARRY8 exist because `f_level` and
+`promised` are unconstrained 32-bit `integer`s** (`rtl/axi_rd_fsm.vhd:73-74`,
+where `outst` on the very next line IS ranged). Single-clock is 11 levels /
+3.095 ns, so the CDC costs 2.02 ns of it.
+
+At 0.85 V it would still be only 243.6 MHz, so **0.773 ns of the miss is logic
+depth rather than the undervolt** -- and raising VCCINT is forbidden on this
+board regardless.
+
+### Also withdrawn: two area estimates that cancelled
+
+`docs/2026-08-27_die-allocation-at-rows-if-48.md` estimated the streamer at
+~7,400 LUT (measured 15,076, **low by 2.04x**) and ~19,700 FF (measured 8,474,
+**high by 2.32x**). The two errors nearly cancel, +7,676 LUT against -11,226 FF,
+**which is why no total ever looked wrong.** Its BRAM 108 and DSP 0 were exact.
+
+Also wrong in mechanism: `FIFO_DEPTH` is not a BRAM lever. A 256-bit port needs
+`ceil(256/72) = 4` RAMB36E2 in SDP and depth is then free, so `DEPTH` 256 and
+512 both cost 4 RAMB36.
+
+### What OOC does not settle
+
+No `opt_design`, `place_design` or `route_design`; no other subsystem, no HBM
+IP, no XDMA shell, no congestion, no I/O. Congestion only makes timing worse, so
+**189.50 MHz is an upper bound on the full build at this ACLK, not a prediction
+of it.**
