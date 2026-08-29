@@ -52,8 +52,8 @@
 # supplies them.  Whether that band is physically reachable in the 27B weights
 # is NOT determined here.
 #
-# CONSEQUENCE FOR THE GATE: a threshold on the printed eg worst-case is
-# VACUOUS, because it is already pinned at the maximum a 16-bit output can
+# CONSEQUENCE FOR THE GATE: a threshold on the printed WHOLE-SET eg worst-case
+# is VACUOUS, because it is already pinned at the maximum a 16-bit output can
 # reach.  So this script gates on
 #   * the printed BETA worst-case, which is tight and meaningful (3.088), and
 #   * an AGGREGATE it computes itself over the SAME two oracle columns the
@@ -63,6 +63,34 @@
 # is a statement about the RTL only because the bench has separately proved
 # the RTL bit-exact with that fixed column, so it is reported alongside the
 # bit-exactness verdict and is meaningless without it.
+#
+# CORRECTION AND UPDATE, 2026-08-29, TRACK B-FIX.  Two things changed.
+#
+# 1. The diagnosis above is INCOMPLETE and the incomplete half is the
+#    interesting half.  "Both terms saturate and cancel" explains 14 of the 17
+#    cases past 100 LSB, but MEASURED with a per-case saturation probe on a
+#    copy of the generator, the JOINT-WORST case has no saturation at all:
+#      case  70  nsat=0  opp=0  err=32767.9963   |a| = 3.09e14, arg = -30.43
+#    There the softplus negative tail is flushed to exactly 0 below arg = -16,
+#    where the truth is exp(arg), and an enormous |a| multiplies the difference
+#    back up.  A third mechanism is the sentinel firing with the SAME signs,
+#    truncating arg from ~1e12 to 2^45/2^18 (cases 69 and 258).  So the eg
+#    error is |a| times the softplus error, and the case set sweeps |a| over
+#    2^-40..2^40 on purpose, to reach the guard branches.  Accuracy and guard
+#    coverage cannot be gated from one number over one case set.
+# 2. sim/tb_gdn_scalar.vhd NOW GATES eg, on a DOMAIN, at severity error, so
+#    sim/regress.sh can fail it.  In-domain means neither softplus input
+#    reaches to_q_wide's sentinel and |a| <= 256, both DERIVED (see that
+#    file's header).  MEASURED: 259 of 320 cases in domain, worst 15.3271
+#    LSB(Q15), gate 23.0 = 1.5x.  It also gates the COUNT of in-domain cases
+#    past one output LSB at 100 = 1.5x the measured 67, because a max alone is
+#    blind to B5 below (that mutation leaves the in-domain max at 15.3271
+#    exactly and moves the count 67 -> 151); gates beta over all 320 at 4.65 =
+#    1.5x its measured 3.0880; and asserts a FLOOR on the in-domain count so
+#    the domain cannot silently empty.
+#    The `bench` column below is that gate.  It is the one that is a real gate:
+#    the `oracle` column is this script's own aggregate and regress.sh has
+#    never run it.
 #
 # THREE CLASSES:
 #   RTL  -- rtl/gdn_scalar.vhd only.  Must fail bit-exactness.
@@ -164,15 +192,28 @@ mutate() {
         "$BETA_TOL" "$EG_MED_TOL" "$EG_N100_TOL" <<'PY'
 import re, sys, statistics
 log = open(sys.argv[1], errors="replace").read()
-# (a) bit-exactness, as the bench states it
+# (a) bit-exactness, as the bench states it.  NOTE the bench now states PASS
+# only when its accuracy gates are also clean, so PASS is no longer usable as
+# the bit-exactness marker on its own -- the three counters are.
 m = re.search(r"eg mismatches (\d+), beta mismatches (\d+), err_g mismatches (\d+)", log)
-if m and "PASS" in log and all(int(x) == 0 for x in m.groups()):
+if m and all(int(x) == 0 for x in m.groups()):
     bx = "pass"
 elif m:
     bx = "FAIL(%s/%s/%s)" % m.groups()
 else:
     e = re.search(r"ghdl[^:]*:error: (.+)", log)
     bx = "DEAD:" + (e.group(1)[:28] if e else "no verdict")
+# (a2) the BENCH's own accuracy gate, added 2026-08-29.  This is the only one
+# of the three verdicts that sim/regress.sh can actually fail.
+bench_in = re.search(r"IN DOMAIN \((\d+) of (\d+) cases\): eg worst ([0-9.eE+-]+)", log)
+if "OUT OF TOLERANCE" in log or "DOMAIN COLLAPSED" in log:
+    bench = "FAIL"
+elif bench_in:
+    bench = "pass"
+else:
+    bench = "DEAD"
+egin = float(bench_in.group(3)) if bench_in else float("nan")
+nin  = int(bench_in.group(1)) if bench_in else -1
 # (b) the oracle the bench prints and does not gate
 o = re.search(r"eg worst ([0-9.eE+-]+) LSB\(Q15\), beta worst ([0-9.eE+-]+) LSB\(Q16\)", log)
 egw, bew = (float(o.group(1)), float(o.group(2))) if o else (float("nan"),)*2
@@ -186,31 +227,36 @@ for ln in open(sys.argv[2]).read().split("\n")[1:]:
 med = statistics.median(ds) if ds else float("nan")
 n100 = sum(1 for d in ds if d > 100)
 bad = (bew > float(sys.argv[3])) or (med > float(sys.argv[4])) or (n100 > int(sys.argv[5]))
-print("%s|%s|beta %.4f  eg med %.4f  eg>100 %d  (eg max %.0f)" %
-      (bx, "FAIL" if bad else "pass", bew, med, n100, egw))
+print("%s|%s|%s|eg_in %8.4f/%3d  beta %.4f  eg med %.4f  eg>100 %d  (eg max %.0f)" %
+      (bx, bench, "FAIL" if bad else "pass", egin, nin, bew, med, n100, egw))
 PY
 )
   local bx="${res%%|*}"; local rest="${res#*|}"
+  local bench="${rest%%|*}";  rest="${rest#*|}"
   local acc="${rest%%|*}"; local fig="${rest#*|}"
 
-  if [ "$bx" != pass ] || [ "$acc" != pass ]; then
+  if [ "$bx" != pass ] || [ "$bench" != pass ] || [ "$acc" != pass ]; then
     NKILL=$((NKILL+1))
-    printf '%-4s %-4s KILLED   bit-exact %-22s oracle %-4s  %s  -- %s\n' \
-      "$tag" "$cls" "$bx" "$acc" "$fig" "$desc"
+    printf '%-4s %-4s KILLED   bit-exact %-16s bench %-4s oracle %-4s  %s  -- %s\n' \
+      "$tag" "$cls" "$bx" "$bench" "$acc" "$fig" "$desc"
   else
     NSURV=$((NSURV+1))
-    printf '%-4s %-4s SURVIVED bit-exact %-22s oracle %-4s  %s  -- %s\n' \
-      "$tag" "$cls" "$bx" "$acc" "$fig" "$desc"
+    printf '%-4s %-4s SURVIVED bit-exact %-16s bench %-4s oracle %-4s  %s  -- %s\n' \
+      "$tag" "$cls" "$bx" "$bench" "$acc" "$fig" "$desc"
   fi
 }
 
 echo "=================== mutations of gdn_scalar ========================="
 echo "SP_Q = $SP_Q, 320 cases"
 echo "bit-exactness is the BENCH's gate (severity failure)."
-echo "the oracle gate is supplied by THIS SCRIPT: beta <= $BETA_TOL LSB(Q16),"
-echo "eg median <= $EG_MED_TOL LSB, eg cases past 100 LSB <= $EG_N100_TOL."
-echo "the bench's own printed eg worst-case is 32768 = full scale even when"
-echo "the unit is CORRECT, so a threshold on it would be vacuous."
+echo "the BENCH gate (the only one sim/regress.sh can fail) is eg <= 23.0"
+echo "LSB(Q15) IN DOMAIN, at most 100 in-domain cases past 1 LSB, beta <= 4.65"
+echo "LSB(Q16) over all cases, and a floor of 250 in-domain cases so the domain"
+echo "cannot empty.  eg_in/n below is what it measured.  The oracle gate is"
+echo "supplied by THIS SCRIPT: beta <="
+echo "$BETA_TOL LSB(Q16), eg median <= $EG_MED_TOL LSB, eg past 100 LSB <= $EG_N100_TOL."
+echo "the WHOLE-SET eg worst-case is 32768 = full scale even when the unit is"
+echo "CORRECT, so a threshold on THAT would be vacuous.  See the header."
 echo
 echo "---- class RTL: rtl/gdn_scalar.vhd alone.  Must fail bit-exactness ----"
 
