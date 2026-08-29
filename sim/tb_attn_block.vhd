@@ -4,20 +4,32 @@
 -- WHAT THIS CAN AND CANNOT CHECK, said first because the answer is not
 -- "everything".
 --
--- THERE IS NO BLOCK-LEVEL ARITHMETIC ORACLE FOR C AND THIS BENCH DOES NOT
--- PRETEND OTHERWISE.  C spec 3.11 item 1 names `ref/attn_gated_fx.c` -- the
--- full chain: quantizer, full-dispatch IMROPE, online softmax in the pinned
--- processing order, the reciprocal-multiply as DEFINED, the Q15 sigmoid, the
--- pack -- as a deliverable.  It does not exist.  Writing a block oracle now
--- would mean modelling rmsnorm, IMROPE, the BFP quantizer, the online softmax
--- and the BFP pack at once, and it would be checked against the same RTL it
--- was derived from, which is the failure `sim/tb_llama_top.vhd`'s header calls
--- worse than no reference because it looks like coverage.  So: every UNIT
--- inside this block is already bit-exact against a double-oracled C reference,
--- individually, and this bench checks the SEAMS, which is where every one of
--- this project's recent confirmed defects lived.
+-- THERE IS NOW A BLOCK-LEVEL ARITHMETIC ORACLE, AND P8 IS IT.
+-- `ref/attn_block_vec.c` computes gated grouped-query attention for one layer
+-- and one token end to end in fixed point, writes the STIMULUS and the
+-- expected y stream to `attn_block_vec.txt`, and this bench drives that
+-- stimulus and compares BIT-EXACTLY.  Its independence argument is in its own
+-- header and is not restated here beyond the two load-bearing sentences: it
+-- shares no code with anything -- not `ref/fx.h`, not the per-unit
+-- `ref/attn_*_vec.c` -- and its five constant tables are recomputed from their
+-- defining formulas rather than read out of the RTL packages.  What it does
+-- necessarily share is the per-site fixed-point NUMERICS, because the block
+-- does not compute attention in the reals and no float model of it is
+-- bit-exact.  So P8 checks the COMPOSITION -- which head reads which K, that V
+-- is neither normed nor roped, that the gate is the second half of wq, the
+-- sweep order, the bypass, the exponent chains -- and the per-site rounding
+-- remains the business of the ten unit benches.
 --
--- THE SEVEN PROPERTIES, and what each one would catch.
+-- Until 2026-08-28 this header said "THERE IS NO BLOCK-LEVEL ARITHMETIC ORACLE
+-- FOR C AND THIS BENCH DOES NOT PRETEND OTHERWISE", and P1 to P7 below were
+-- the whole of it.  They are all properties of the PLUMBING.  Correct units
+-- wired to each other wrongly -- K and V transposed, a head misaligned, RoPE
+-- dropped, the gate read from the Q half -- passed every one of them, because
+-- not one looked at a number.  Every UNIT inside this block was already
+-- bit-exact against a double-oracled C reference individually; nothing checked
+-- that they were connected in the order attention requires.
+--
+-- THE EIGHT PROPERTIES, and what each one would catch.
 --
 --   P1  ELEMENT COUNT.  Exactly N_QH*HEAD_DIM y elements per job, with
 --       contiguous ascending indices.  A lost beat anywhere in the emit path
@@ -75,8 +87,23 @@
 --       silicon.  A memory model cannot reproduce the race, so the property is
 --       stated over the ADDRESSES instead, where it is decidable.
 --
--- WHAT IS DELIBERATELY NOT CHECKED: the VALUES.  See the first paragraph.
+--   P8  THE VALUES, BIT-EXACTLY, against `ref/attn_block_vec.c`.  No
+--       tolerance: every one of the N_QH*HEAD_DIM output mantissas and the
+--       single y_exp must equal the oracle's exactly.  The stimulus is READ
+--       FROM THE ORACLE'S OWN FILE rather than regenerated here, so the two
+--       sides cannot differ in their inputs and a mismatch can only be
+--       arithmetic or structural.  P8 is checked on every run whose descriptor
+--       matches the oracle's, i.e. every run except P5's deliberately rescaled
+--       one.
+--
+-- WHAT IS STILL NOT CHECKED, now that the values are: the KV cache is a
+-- MEMORY MODEL here, so nothing about `attn_kv_axi` -- burst splitting, record
+-- realignment, drain-then-flush, BRESP gating -- is exercised, because that
+-- unit does not exist.  Nor is anything about a multi-token sequence: v_ref is
+-- a per-SEQUENCE minimum and this bench writes exactly one token per sequence,
+-- so the fold is checked at its first value and not across an append.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
+use std.textio.all;
 use work.util_pkg.all;
 
 entity tb_attn_block is
@@ -108,6 +135,60 @@ architecture sim of tb_attn_block is
   constant NY     : integer  := N_QH*HEAD_DIM;
   constant AW_Y   : integer  := clog2(NY);
 
+  -- ======================= the oracle's vector file =====================
+  -- ONE flat integer stream, in the order ref/attn_block_vec.c writes it.  The
+  -- offsets are DERIVED from the generics, and the file's own shape header is
+  -- asserted against those generics below, so a file written for a different
+  -- geometry is a loud failure and not a silent misread.
+  type int_arr is array (natural range <>) of integer;
+
+  constant OFF_EXPS : integer := 7;
+  constant OFF_QG   : integer := OFF_EXPS + 5;
+  constant OFF_KIN  : integer := OFF_QG  + 2*HEAD_DIM*N_QH;
+  constant OFF_VIN  : integer := OFF_KIN + HEAD_DIM*N_KVH;
+  constant OFF_QNW  : integer := OFF_VIN + HEAD_DIM*N_KVH;
+  constant OFF_KNW  : integer := OFF_QNW + HEAD_DIM;
+  constant OFF_CKM  : integer := OFF_KNW + HEAD_DIM;
+  constant OFF_CKH  : integer := OFF_CKM + N_KVH*JOB_POS*HEAD_DIM;
+  constant OFF_CVM  : integer := OFF_CKH + N_KVH*JOB_POS*NBLK;
+  constant OFF_CVH  : integer := OFF_CVM + N_KVH*JOB_POS*HEAD_DIM;
+  constant OFF_YEXP : integer := OFF_CVH + N_KVH*JOB_POS*NBLK;
+  constant OFF_YM   : integer := OFF_YEXP + 1;
+  constant NVEC     : integer := OFF_YM + NY;
+
+  impure function load_vec(fn : string; n : integer) return int_arr is
+    file     fh : text;
+    variable st : file_open_status;
+    variable ln : line;
+    variable v  : int_arr(0 to n-1) := (others => 0);
+    variable iv : integer;
+    variable ok : boolean;
+    variable i  : integer := 0;
+  begin
+    file_open(st, fh, fn, read_mode);
+    assert st = open_ok
+      report "tb_attn_block: cannot open " & fn
+           & " -- ref/attn_block_vec.c did not run" severity failure;
+    while i < n loop
+      assert not endfile(fh)
+        report "tb_attn_block: the oracle vector file is short; expected "
+             & integer'image(n) & " integers, got " & integer'image(i)
+        severity failure;
+      readline(fh, ln);
+      loop
+        read(ln, iv, ok);
+        exit when not ok;
+        v(i) := iv;
+        i := i + 1;
+        exit when i = n;
+      end loop;
+    end loop;
+    file_close(fh);
+    return v;
+  end function;
+
+  constant VEC : int_arr(0 to NVEC-1) := load_vec("attn_block_vec.txt", NVEC);
+
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';
   signal running : boolean := true;
@@ -131,7 +212,7 @@ architecture sim of tb_attn_block is
   signal vin_raddr : unsigned(clog2(HEAD_DIM*N_KVH)-1 downto 0);
   signal vin_re    : std_logic;
   signal vin_rdata : signed(MANT_W-1 downto 0) := (others => '0');
-  signal vin_exp   : signed(EXP_W-1 downto 0) := to_signed(10, EXP_W);
+  signal vin_exp   : signed(EXP_W-1 downto 0) := to_signed(VEC(OFF_EXPS+2), EXP_W);
 
   signal qn_mant : std_logic_vector(HEAD_DIM*MANT_W-1 downto 0);
   signal kn_mant : std_logic_vector(HEAD_DIM*MANT_W-1 downto 0);
@@ -200,36 +281,62 @@ architecture sim of tb_attn_block is
   end function;
 
   -- ---- the KV cache model.  Positions below cur_pos are PREVIOUS TOKENS and
-  -- are initialised deterministically; the block writes only cur_pos.
+  -- come from the ORACLE'S file; the block writes only cur_pos.  They are not
+  -- generated here, because a bench that generated its own cache would be a
+  -- second source of truth for the inputs and a divergence between the two
+  -- would read as an arithmetic failure.  Positions at or above cur_pos are
+  -- left at zero; P7 asserts they are never read.
   type mem_t is array (0 to 2*N_KVH*(2**POS_W)*NBLK-1)
                 of std_logic_vector(KV_BLOCK*CM_W-1 downto 0);
   type hdr_t is array (0 to 2*N_KVH*(2**POS_W)-1)
                 of std_logic_vector(NBLK*EXP_W-1 downto 0);
   function mem_init return mem_t is
-    variable m : mem_t;
+    variable m : mem_t := (others => (others => '0'));
+    variable a : integer;
   begin
-    for i in m'range loop
-      for t in 0 to KV_BLOCK-1 loop
-        m(i)((t+1)*CM_W-1 downto t*CM_W)
-          := std_logic_vector(to_signed(
-               to_integer(hsh(i, t)(7 downto 0)) - 128, CM_W));
+    for h in 0 to N_KVH-1 loop
+      for p in 0 to JOB_POS-1 loop
+        for b in 0 to NBLK-1 loop
+          a := ((h*(2**POS_W)) + p)*NBLK + b;
+          for t in 0 to KV_BLOCK-1 loop
+            m(a)((t+1)*CM_W-1 downto t*CM_W)
+              := std_logic_vector(to_signed(
+                   VEC(OFF_CKM + (h*JOB_POS + p)*HEAD_DIM + b*KV_BLOCK + t),
+                   CM_W));
+          end loop;
+          a := (((N_KVH + h)*(2**POS_W)) + p)*NBLK + b;
+          for t in 0 to KV_BLOCK-1 loop
+            m(a)((t+1)*CM_W-1 downto t*CM_W)
+              := std_logic_vector(to_signed(
+                   VEC(OFF_CVM + (h*JOB_POS + p)*HEAD_DIM + b*KV_BLOCK + t),
+                   CM_W));
+          end loop;
+        end loop;
       end loop;
     end loop;
     return m;
   end function;
   function hdr_init return hdr_t is
-    variable h : hdr_t;
+    variable m : hdr_t := (others => (others => '0'));
+    variable a : integer;
   begin
-    for i in h'range loop
-      for b in 0 to NBLK-1 loop
-        -- A narrow spread on purpose: e_v below v_ref is impossible by
-        -- construction and a wide spread would shift every V block out.
-        h(i)((b+1)*EXP_W-1 downto b*EXP_W)
-          := std_logic_vector(to_signed(
-               8 + (to_integer(hsh(i, b)(2 downto 0)) mod 3), EXP_W));
+    for h in 0 to N_KVH-1 loop
+      for p in 0 to JOB_POS-1 loop
+        a := (h*(2**POS_W)) + p;
+        for b in 0 to NBLK-1 loop
+          m(a)((b+1)*EXP_W-1 downto b*EXP_W)
+            := std_logic_vector(to_signed(
+                 VEC(OFF_CKH + (h*JOB_POS + p)*NBLK + b), EXP_W));
+        end loop;
+        a := ((N_KVH + h)*(2**POS_W)) + p;
+        for b in 0 to NBLK-1 loop
+          m(a)((b+1)*EXP_W-1 downto b*EXP_W)
+            := std_logic_vector(to_signed(
+                 VEC(OFF_CVH + (h*JOB_POS + p)*NBLK + b), EXP_W));
+        end loop;
       end loop;
     end loop;
-    return h;
+    return m;
   end function;
   signal kvmem : mem_t := mem_init;
   signal kvhdr : hdr_t := hdr_init;
@@ -333,19 +440,23 @@ begin
           <= std_logic_vector(m12(900101 + pois_v, i));
       else
         qn_mant((i+1)*MANT_W-1 downto i*MANT_W)
-          <= std_logic_vector(abs(m12(31337, i)) + 256);
+          <= std_logic_vector(to_signed(VEC(OFF_QNW + i), MANT_W));
         kn_mant((i+1)*MANT_W-1 downto i*MANT_W)
-          <= std_logic_vector(abs(m12(51501, i)) + 256);
+          <= std_logic_vector(to_signed(VEC(OFF_KNW + i), MANT_W));
       end if;
     end loop;
   end process;
 
   -- The exponent ports, poisoned the same way.  qn_exp/kn_exp/qg_exp/kin_exp
   -- are all read across a job that is thousands of cycles long.
-  qn_exp  <= to_signed(-40 - pois_v, EXP_W) when poison else to_signed(12, EXP_W);
-  kn_exp  <= to_signed(-50 - pois_v, EXP_W) when poison else to_signed(12, EXP_W);
-  qg_exp  <= to_signed(-60 - pois_v, EXP_W) when poison else to_signed(12, EXP_W);
-  kin_exp <= to_signed(-70 - pois_v, EXP_W) when poison else to_signed(11, EXP_W);
+  qn_exp  <= to_signed(-40 - pois_v, EXP_W) when poison
+             else to_signed(VEC(OFF_EXPS+3), EXP_W);
+  kn_exp  <= to_signed(-50 - pois_v, EXP_W) when poison
+             else to_signed(VEC(OFF_EXPS+4), EXP_W);
+  qg_exp  <= to_signed(-60 - pois_v, EXP_W) when poison
+             else to_signed(VEC(OFF_EXPS+0), EXP_W);
+  kin_exp <= to_signed(-70 - pois_v, EXP_W) when poison
+             else to_signed(VEC(OFF_EXPS+1), EXP_W);
 
   -- ======================= A's activation memories =======================
   -- Registered read WITH ENABLE: data holds mem[addr] the cycle after an edge
@@ -356,9 +467,15 @@ begin
   amem : process(clk)
   begin
     if rising_edge(clk) then
-      if qg_re  = '1' then qg_rdata  <= m12(7919,  to_integer(qg_raddr));  end if;
-      if kin_re = '1' then kin_rdata <= m12(104729, to_integer(kin_raddr)); end if;
-      if vin_re = '1' then vin_rdata <= m12(65537, to_integer(vin_raddr)); end if;
+      if qg_re  = '1' then
+        qg_rdata  <= to_signed(VEC(OFF_QG  + to_integer(qg_raddr)),  MANT_W);
+      end if;
+      if kin_re = '1' then
+        kin_rdata <= to_signed(VEC(OFF_KIN + to_integer(kin_raddr)), MANT_W);
+      end if;
+      if vin_re = '1' then
+        vin_rdata <= to_signed(VEC(OFF_VIN + to_integer(vin_raddr)), MANT_W);
+      end if;
     end if;
   end process;
 
@@ -532,7 +649,23 @@ begin
   drive : process
     variable nerr : integer := 0;
     variable base0, baser : integer;
+    variable p8_n   : integer := 0;
+    variable p8_cmp : integer := 0;
   begin
+    -- The oracle's own shape header, asserted against this bench's generics.
+    -- A vector file written for a different geometry would otherwise be read
+    -- at the wrong offsets and fail as an arithmetic mismatch, which is the
+    -- most expensive way to discover a wrong -g flag.
+    assert VEC(0) = HEAD_DIM and VEC(1) = N_QH and VEC(2) = N_KVH
+       and VEC(3) = KV_BLOCK and VEC(4) = N_ROT and VEC(5) = JOB_POS
+       and VEC(6) = JOB_LEN
+      report "tb_attn_block: attn_block_vec.txt shape "
+           & integer'image(VEC(0)) & "/" & integer'image(VEC(1)) & "/"
+           & integer'image(VEC(2)) & "/" & integer'image(VEC(3)) & "/"
+           & integer'image(VEC(4)) & "/" & integer'image(VEC(5)) & "/"
+           & integer'image(VEC(6)) & " does not match this bench's generics"
+      severity failure;
+
     rst <= '1';
     for i in 1 to 8 loop wait until rising_edge(clk); end loop;
     rst <= '0';
@@ -575,10 +708,10 @@ begin
       cfg_sel <= r mod 3;
       -- P5: the last run raises vin_exp by 3.  Everything else is identical.
       if r = NRUNS-1 and NRUNS >= 3 then
-        vin_exp <= to_signed(13, EXP_W);
+        vin_exp <= to_signed(VEC(OFF_EXPS+2) + 3, EXP_W);
         v_bias  <= 3;
       else
-        vin_exp <= to_signed(10, EXP_W);
+        vin_exp <= to_signed(VEC(OFF_EXPS+2), EXP_W);
         v_bias  <= 0;
       end if;
       -- A FRESH SEQUENCE per run.  v_ref is a per-SEQUENCE minimum and is
@@ -674,6 +807,46 @@ begin
       end if;
     end loop;
 
+    -- ---- P8: the VALUES, bit-exactly, against ref/attn_block_vec.c -------
+    -- No tolerance and no first-mismatch-only summary: the count of
+    -- disagreeing elements is reported, because "one element wrong" and "every
+    -- element wrong" are different defects and a bench that exits on the first
+    -- one cannot tell them apart.  P5's run raises vin_exp deliberately and is
+    -- therefore not the oracle's descriptor; it is covered by P2 and P5.
+    for r in 0 to NRUNS-1 loop
+      if not (r = NRUNS-1 and NRUNS >= 3) then
+        baser := r*NY;
+        p8_n  := 0;
+        for i in 0 to NY-1 loop
+          if y_got(baser+i) /= VEC(OFF_YM+i) then
+            if p8_n = 0 then
+              report "tb_attn_block: P8 -- run " & integer'image(r)
+                   & " element " & integer'image(i) & " = "
+                   & integer'image(y_got(baser+i)) & ", the oracle says "
+                   & integer'image(VEC(OFF_YM+i))
+                   & ".  MISMATCH against ref/attn_block_vec.c."
+                severity error;
+            end if;
+            p8_n := p8_n + 1;
+          end if;
+        end loop;
+        if p8_n /= 0 then
+          nerr := nerr + 1;
+          report "tb_attn_block: P8 -- run " & integer'image(r) & ", "
+               & integer'image(p8_n) & " of " & integer'image(NY)
+               & " mantissas differ from the oracle" severity error;
+        end if;
+        if ye_got(r) /= VEC(OFF_YEXP) then
+          nerr := nerr + 1;
+          report "tb_attn_block: P8 -- run " & integer'image(r) & " y_exp is "
+               & integer'image(ye_got(r)) & ", the oracle says "
+               & integer'image(VEC(OFF_YEXP)) & ".  MISMATCH."
+            severity error;
+        end if;
+        p8_cmp := p8_cmp + NY + 1;
+      end if;
+    end loop;
+
     -- P4
     if dbg_ep_lost /= '0' then
       nerr := nerr + 1;
@@ -722,7 +895,9 @@ begin
            & " consumer configurations, " & integer'image(NY)
            & " elements each, y stream bit-identical across all of them, "
            & "y_exp tracks vin_exp exactly, the current position was never "
-           & "read back, y_exp(run 0) = " & integer'image(ye_got(0));
+           & "read back, y_exp(run 0) = " & integer'image(ye_got(0))
+           & ", and BIT-EXACT against ref/attn_block_vec.c over "
+           & integer'image(p8_cmp) & " compared values";
     else
       report "tb_attn_block: RESULT bad, " & integer'image(nerr)
            & " properties violated" severity failure;

@@ -971,7 +971,33 @@ begin
 
         -- the quantizer's record.  hdr_valid lands strictly before the first
         -- mantissa, which is the order the read side needs.
-        if kq_hdrv = '1' then
+        --
+        -- DEFECT 1, found 2026-08-28 by ref/attn_block_vec.c and fixed here.
+        -- attn_kv_quant's `hdr_valid` is a LEVEL, not a pulse: hdr_r is raised
+        -- when the last block exponent settles and is cleared only at the next
+        -- `start` (rtl/attn_kv_quant.vhd:572 against :432).  Unguarded, this
+        -- capture therefore re-executed on EVERY CYCLE of the whole sweep with
+        -- kq_isv still '1' from the V quantization, and it sits EARLIER in this
+        -- process than the cache-read capture below -- so `vhdr <= vr_hdr` won
+        -- for the one cycle it ran and was overwritten by the CURRENT token's
+        -- V header on the very next one.  By the time P_PV built its operands,
+        -- every cached position's V block exponents had been replaced by the
+        -- current record's, so the site-3 alignment shift e_v[b] - v_ref came
+        -- out as 0 for every earlier token instead of its true value: every
+        -- cached V was attended at up to 2^8 times its real magnitude.
+        --
+        -- Nothing structural could see it.  The mantissas were right, the
+        -- record lengths were right, the exponents were legal int8s, `err`
+        -- stayed clear, and the SHIFT stayed non-negative so `vsh_neg` never
+        -- fired.  All seven of tb_attn_block's structural properties passed --
+        -- including P5, because the substituted header moves with vin_exp
+        -- exactly as the real one does.  It took a value oracle.
+        --
+        -- The phase gate is the fix rather than an edge detector because the
+        -- quantizer is the ONLY producer of these two registers and P_KQW /
+        -- P_VQW are the only states in which it runs, so the guard states the
+        -- contract instead of re-deriving it from a waveform.
+        if kq_hdrv = '1' and (ph = P_KQW or ph = P_VQW) then
           if kq_isv = '1' then vhdr <= kq_eblk; else khdr <= kq_eblk; end if;
         end if;
         if kq_mv = '1' then
@@ -1007,7 +1033,27 @@ begin
             ep_val(gg)  <= sm_ep(gg);
             ep_have(gg) <= '1';
           end if;
-          if sm_rsv(gg) = '1' then
+          -- DEFECT 2, found 2026-08-28 by ref/attn_block_vec.c and fixed here.
+          -- `sm_rsack = '0'` is load-bearing.  attn_softmax holds rs_valid
+          -- until the ack and drops it on the edge AFTER the ack is presented
+          -- (rtl/attn_softmax.vhd:612) -- which is the correct handshake and
+          -- not a fault there.  P_RSACK clears rs_have in the same edge that
+          -- raises sm_rsack, so without this guard the collector, which runs
+          -- unconditionally and EARLIER in this process than the case
+          -- statement, re-latched rs_have from the still-standing rs_valid on
+          -- the ack cycle.  The risen head has produced no e_p yet at that
+          -- instant, so P_EPW then saw anyrs and okrs again and ran a SECOND
+          -- uniform rescale pass: every accumulator in the group was
+          -- multiplied by f TWICE per rise, once for real and once for the
+          -- handshake.
+          --
+          -- It was invisible to everything that existed.  `s` is rescaled
+          -- inside attn_softmax and is rescaled exactly once, so the
+          -- denominator was right; only the numerators were small by a factor
+          -- of f per rise, which is a data-dependent value in (0, 1] and never
+          -- leaves a range.  `rescale_max` counts the SOFTMAX's rises, not the
+          -- array's passes, so it read correctly too.
+          if sm_rsv(gg) = '1' and sm_rsack = '0' then
             rs_val(gg)  <= sm_f(gg);
             rs_have(gg) <= '1';
           end if;

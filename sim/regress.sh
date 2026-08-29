@@ -683,6 +683,13 @@ tb_args() {   # extra `ghdl -r` arguments for $1
 # A vector with no row here falls back to the generator's own defaults.
 tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
   case "$1" in
+    # ref/attn_block_vec.c, subsystem C's BLOCK-level oracle.  The argument
+    # order is HEAD_DIM N_QH N_KVH KV_BLOCK N_ROT cur_pos ctx_len seed and it
+    # must match sim/tb_attn_block.vhd's generic defaults; the vector file
+    # carries a shape header the bench asserts against them, so a mismatch here
+    # is loud rather than a wrong answer.  N_KVH >= 2 is REQUIRED: NGRP = 1 is
+    # an immediate bound violation at rtl/attn_emit.vhd:400 (worklog OI-2).
+    attn_block_vec.txt)     echo "16 4 2 4 8 3 4 0" ;;
     attn_emit_vec.txt)      echo "40 2 48" ;;      # sim/mutate_attn_emit.sh
     attn_gate_vec.txt)      echo "35 64" ;;        # sim/mutate_attn_gate.sh
     attn_recip_vec.txt)     echo "24 12" ;;        # sim/mutate_attn_recip.sh
