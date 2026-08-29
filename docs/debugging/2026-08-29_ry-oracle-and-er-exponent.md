@@ -557,3 +557,79 @@ made the scope error findable.
 largest remaining gap". Two of them (`R_Y-3` at `real`, `R_Y-1` and `R_Y-3` at
 `seq`) are now modelled. The remaining gap is subsystem B's, and it is
 structurally harder, not merely unbuilt.
+
+---
+
+## 10. CORRECTION, same day, appended: R7's detectability RUNS THROUGH C1
+
+Written after section 2 and not folded into it, because section 2's claim was
+already reported and the correction narrows it rather than reversing it.
+
+**What was tested.** A candidate fix for C1 was applied to a SCRATCH copy only
+-- `rtl/attn_block.vhd` is not modified in the repository and this track changed
+no RTL. The fix gives `vref_r` the missing dimension, five sites:
+
+```vhdl
+-- :421 already says "the per-(layer, KV head) write-time min fold (SEAM 2)"
+-  signal vref_r : e8_arr(0 to N_KVH-1)        := (others => to_signed(127, EXP_W));
++  signal vref_r : e8_arr(0 to LAYERS*N_KVH-1) := (others => to_signed(127, EXP_W));
+   :943   vref_r(kvh)  ->  vref_r(lay_r*N_KVH + kvh)
+   :1305  vref_r(kvh)  ->  vref_r(lay_r*N_KVH + kvh)
+   :1309  vref_r(kvh)  ->  vref_r(lay_r*N_KVH + kvh)
+   :1609  vref_r(h)    ->  vref_r(lay_r*N_KVH + h)
+```
+
+**Result 1, and it settles C1.** MEASURED, the fixed design against the SPEC
+fold:
+
+```
+=== C1-FIXED clean, fold=perlayer
+# 6 of 6 R_Y seams match the model bit for bit
+EVERY MODELLED R_Y MATCHES ITS MODEL BIT FOR BIT
+```
+
+Six of six against the model the unfixed design failed at two. **C1 is the only
+divergence between `rtl/attn_block.vhd` and `ref/attn_block_vec.c` at this
+shape**, which is a much stronger statement than "the shared fold happens to
+match". It also changes the design's published numbers --
+`R_X(0) = -8079 hash(R_X) = 41907` against the unfixed `-8060 / 28506` -- so the
+fix is a behaviour change and a decision for whoever owns subsystem C, not
+something to slip in.
+
+**Result 2, and it corrects section 2.** MEASURED, the R7 mutant applied ON TOP
+of the C1 fix:
+
+```
+$ cmp cap_seq_C1FIX.txt cap_seq_C1FIX_R7.txt
+IDENTICAL
+```
+
+**Byte-identical captures. With C1 fixed, R7 is a bit-exact no-op at this
+stimulus**, and the R_Y oracle scores it 6 of 6 exactly like the clean design.
+
+The reason is visible in the `v_ref` trace: with a per-layer fold, each layer's
+minimum is reached at token 0 and never moves again (layer 0 stays `0 0`, layer
+1 stays `-1 -1` across all three tokens), so resetting it per token re-folds to
+the same value. R7 only becomes observable because C1's cross-layer carry gives
+it something to disturb.
+
+**So the corrected claim is:**
+
+* R7 IS killed on the numbers, by the R_Y value oracle, against the design as it
+  stands today (clean 6 of 6, R7 5 of 6, divergence named at `R_Y-1` token 1
+  element 12). Section 2 stands as a statement about the current design.
+* R7 is **NOT** killed by this oracle on a design with C1 fixed, at this
+  stimulus. Killing it there needs a stimulus where some later token's V records
+  carry a HIGHER per-block minimum than an earlier token's, so that a per-token
+  reset raises `v_ref` where a per-sequence fold would have held it down.
+  Nothing in the repository generates such a stimulus today, and
+  `sim/tb_llama_top.vhd`'s `seq` row does not.
+* The two defects are therefore ENTANGLED, and a fix for C1 that lands without a
+  new stimulus would silently return R7 to the unkillable list.
+
+**The measurement trap this is, named.** A mutation that is killed only because
+of another defect looks exactly like a mutation that is killed. The tell was
+cheap and general: apply the candidate fix and re-run the mutant. That step is
+worth making routine, because "the harness now kills X" and "the harness kills X
+on a correct design" are different claims and only the second is the one anyone
+wants.
