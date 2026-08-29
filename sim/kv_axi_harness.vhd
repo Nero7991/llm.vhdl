@@ -530,8 +530,12 @@ begin
       if cap_rst = '1' then
         kn := 0; vn := 0; ke := '0'; ve := '0';
       else
-        if ke = '1' then cap_k(kn) <= kr_mant; cap_kh <= kr_hdr; kn := kn + 1; end if;
-        if ve = '1' then cap_v(vn) <= vr_mant; cap_vh <= vr_hdr; vn := vn + 1; end if;
+        if ke = '1' then
+          cap_k(kn) <= kr_mant; cap_kh <= kr_hdr; kn := kn + 1;
+        end if;
+        if ve = '1' then
+          cap_v(vn) <= vr_mant; cap_vh <= vr_hdr; vn := vn + 1;
+        end if;
         ke := kr_en; ve := vr_en;
       end if;
       cap_kn <= kn; cap_vn <= vn;
@@ -588,8 +592,11 @@ begin
       -- compare, bit for bit, against the oracle's structured record
       for b in 0 to NBLK-1 loop
         e := r_hdr(ri)(b);
-        if sel = 0 then g := to_integer(signed(cap_kh((b+1)*8-1 downto b*8)));
-        else            g := to_integer(signed(cap_vh((b+1)*8-1 downto b*8))); end if;
+        if sel = 0 then
+          g := to_integer(signed(cap_kh((b+1)*8-1 downto b*8)));
+        else
+          g := to_integer(signed(cap_vh((b+1)*8-1 downto b*8)));
+        end if;
         if e /= g then
           nbad := nbad + 1;
           if nbad < 12 then
@@ -602,8 +609,11 @@ begin
         end if;
         for k in 0 to KV_BLOCK-1 loop
           e := r_mnt(ri)(b*KV_BLOCK + k);
-          if sel = 0 then g := to_integer(signed(cap_k(b)((k+1)*8-1 downto k*8)));
-          else            g := to_integer(signed(cap_v(b)((k+1)*8-1 downto k*8))); end if;
+          if sel = 0 then
+            g := to_integer(signed(cap_k(b)((k+1)*8-1 downto k*8)));
+          else
+            g := to_integer(signed(cap_v(b)((k+1)*8-1 downto k*8)));
+          end if;
           if e /= g then
             nbad := nbad + 1;
             if nbad < 12 then
@@ -940,7 +950,8 @@ begin
          & integer'image(n_4k(1)) & " wr " & integer'image(n_w4k)
          & "; phase-shifted run starts rd " & integer'image(n_ph(0)) & "/"
          & integer'image(n_ph(1)) & " wr " & integer'image(n_wph)
-         & "; ARVALID-pending-under-flush cycles " & integer'image(n_arflush(0) + n_arflush(1));
+         & "; ARVALID-pending-under-flush cycles "
+         & integer'image(n_arflush(0) + n_arflush(1));
 
     report TAG & ": " & integer'image(v_nr) & " records, "
          & integer'image(v_nr*NBLK) & " headers-with-beat, "

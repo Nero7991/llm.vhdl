@@ -77,7 +77,8 @@ begin
       report "tb_attn_kv_axi: PASS -- 2 AXI widths, records and memory image "
            & "BIT-EXACT against ref/attn_kv_axi_vec.c, no burst crossed 4 KB, "
            & "no ARLEN/AWLEN exceeded the AXI3 16-beat cap, every accepted "
-           & "burst completed, and no read reached the current position";
+           & "burst completed, and no read burst reached past the current "
+           & "position by more than the one beat the record length forces";
     else
       report "tb_attn_kv_axi: FAIL -- see the mismatches above" severity error;
     end if;
