@@ -9,7 +9,12 @@ GHDL 1.0.0 mcode for the simulation half.
 `sim/tb_axi_rd_port_dual.vhd`, `sim/mutate_axi_rd_port_dual.sh`
 **Files changed:** `rtl/async_fifo.vhd` and `rtl/axi_rd_port.vhd` (ASYNC_REG,
 see section 2.2), `sim/regress.sh` (one row, its stop-time, BASELINE_PASS
-92 -> 93)
+93 -> 94)
+**Where it landed:** all nine files are in commit `d570899`, which is ANOTHER
+TRACK'S commit. See trap 6.9 -- this track staged them and a concurrent agent's
+pathspec-less `git commit` swept them up in the two seconds before this one
+ran. The content is intact and was verified file by file; only the commit
+message is that track's rather than this one's.
 
 ---
 
@@ -732,7 +737,18 @@ post-fix, and their signatures differ for two unrelated reasons at once. The
 whole table was re-run against one baseline. **Stage the sources for a whole
 table at one instant, or record which instant each row used.**
 
-**6.8 Vivado's OOC mode warns about `HD.CLK_SRC` on every clock port.** It
+**6.8 A staged file can be committed by SOMEBODY ELSE, and that is not
+hypothetical.** `CLAUDE.md` says that on a shared file you stage your hunk and
+commit with no pathspec. This track did exactly that -- `git add` of nine
+files, then `git commit` -- and the commit reported "no changes added to
+commit", because in the gap between the two a concurrent agent ran its own
+pathspec-less `git commit` and took all nine with it into `d570899`. Nothing
+was lost and every file was verified present and correct at HEAD afterwards,
+but the work is described by another track's message. **Verify with
+`git log --oneline -- <your file>` after every commit rather than trusting the
+commit's own exit,** and keep the add-to-commit gap as short as possible.
+
+**6.9 Vivado's OOC mode warns about `HD.CLK_SRC` on every clock port.** It
 appears twice in every run here and is not a fault: out of context there is no
 clock buffer to point at, so clock delay/skew is not estimated. It is noise in
 the log, and it looks like a missing constraint.
