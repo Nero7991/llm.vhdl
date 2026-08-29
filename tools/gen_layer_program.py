@@ -1,0 +1,838 @@
+#!/usr/bin/env python3
+"""tools/gen_layer_program.py -- emit subsystem D's descriptor PROGRAM for one
+transformer layer, and subsystem A's per-job descriptors for the matvecs in it.
+
+Worklog backlog item 6.  `tools/gen_mv4i_desc.py` emits ONE matvec job; nothing
+emitted a LAYER.  A layer needs job SEQUENCING, REGION ROUTING and the D header
+fields subsystem A reads none of.
+
+============================================================================
+THE TWO MEMORY OBJECTS, AND WHY THEY ARE NOT ONE
+============================================================================
+`docs/2026-08-28_matvec-descriptor-format.md` section 2 says A's descriptor is
+D's 64-byte header plus a base array at 0x40 plus a four-word extension, and
+that "a descriptor written to this specification is accepted by
+`seq_desc_fetch` unchanged".  That is true of ONE descriptor read in isolation
+and it is FALSE of a TABLE, which is what D walks:
+
+    rtl/seq_desc_fetch.vhd:574   d_raddr <= fetch_idx & "000" + f_beat
+
+so step i's header is at 64-bit word 8*i.  D's table is DENSE at a 64-byte
+stride, and step i+1's header occupies exactly the bytes where step i's base
+array would have to live.  The two cannot be the same block of memory.
+
+This tool therefore emits TWO things:
+
+  * `d_table.hex`   the D step table.  8 words per step, dense, in the form
+                    the URAM model in `sim/tb_llama_top.vhd:705` reads
+                    (one 64-bit word per line, hex, index order).
+  * `a<NN>_<tensor>.hex`  one 312-byte / 39-word subsystem A descriptor per
+                    A_JOB step, at the FK33 geometry, in the form
+                    `sim/tb_mv4i_desc_image.vhd` reads.
+
+WHAT NOTHING SUPPLIES: the pointer from a D step to its A descriptor.  D's
+header has no field for it, `matvec_int4_desc_axi` takes `DESC_PTR` over
+AXI-Lite, and `rtl/llama_top.vhd:1913` synthesises A's bases arithmetically
+(`A_MEM_BASE + step*A_JOB_STRIDE`) precisely because the base array is not
+fetched.  So the A descriptor ADDRESSES this tool emits are a host-side
+allocation (see `--desc-base`), and which mechanism delivers them to the card
+is an open integration decision, not a derivation.  Stated, not invented.
+
+============================================================================
+WHERE EVERY D HEADER FIELD COMES FROM
+============================================================================
+  opcode, src_region, dst_region, dst_offset, src_region2, n_rows, n_cols
+        DERIVED, from the region map (`rtl/llama_map_pkg.vhd`) and the block
+        structure.  These are NOT underivable: they are underivable from the
+        MANIFEST, and fully determined by the SCHEDULE, which is this file.
+  ordinal
+        DERIVED, but the two VHDL generators DISAGREE about it (see --stamp).
+  w_exp, out_shift
+        For an A_JOB: MANIFEST (`w_exp`, `out_shift` of the packed tensor).
+        For a D-vec op: NOTHING SUPPLIES THEM.  `seq_vec_*` publishes its own
+        exponents; the fields are read by `seq_desc_fetch` and handed on, and
+        no unit in `llama_top` consumes them on a D-vec step.  Written 0 in
+        `--stamp manifest`, and that is a finding, not a computation.
+  const_base
+        DERIVED as the block index (it is the norm-weight selector), but
+        NOTHING CONSUMES IT: there is no weight region, no packed norm weight,
+        and `llama_top`'s norm uses a fixed-scale stand-in (its NORM_W_EXP
+        generic).  So the value is conventional.
+  const_exp
+        NOT DERIVABLE.  No owner, no consumer, no packing.  Written 0.
+  flags
+        DERIVED: 0 everywhere except the lm_head step (FLG_TO_SMP).  Note that
+        the format document calls bit 2 `cb_load`, and NEITHER VHDL generator
+        ever sets it -- the codebook load is expressed in A's OWN descriptor,
+        which is where A reads it.  `--d-cb-load` sets it in the D header too.
+
+`rel_mask` is not a descriptor field at all.  `rtl/seq_opdec.vhd` finding (3)
+says it is a whole-TABLE liveness property with no field in the format, so it
+arrives on a port and the host computes it.  This tool computes it, over the
+whole token, and slices out the layer -- because "is this the last step that
+reads region R" is not answerable from one layer's steps alone.
+
+============================================================================
+USAGE
+============================================================================
+    # the deliverable: one real Qwen3.5-9B layer at the FK33 geometry
+    tools/gen_layer_program.py --layer 0 --x-exp 5 --outdir OUT --print
+
+    # the whole 491-step token's D table, in the VHDL generators' own field
+    # stamping, for byte comparison against them
+    tools/gen_layer_program.py --token --stamp seq_tbl --d-table OUT/t.hex
+    tools/gen_layer_program.py --token --shape sim --blocks 4 --attn-int 4 \\
+        --stamp sched --d-table OUT/s.hex --rel-file OUT/s_rel.txt
+"""
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import gen_mv4i_desc as G          # noqa: E402  the ONE matvec job, reused
+
+# --------------------------------------------------------------- the opcodes
+# rtl/llama_map_pkg.vhd, which sim/seq_tbl_pkg.vhd asserts equality with.
+OP_A_JOB, OP_B_JOB, OP_C_JOB, OP_E_COLL = 0, 1, 2, 3
+OP_VEC_NORM, OP_VEC_RES, OP_VEC_SWG, OP_END_TOKEN = 4, 5, 6, 7
+OPNAME = {0: "A_JOB", 1: "B_JOB", 2: "C_JOB", 3: "E_COLL",
+          4: "VEC_NORM", 5: "VEC_RES", 6: "VEC_SWG", 7: "END_TOKEN"}
+
+U_A, U_B, U_C, U_E, U_V = 0, 1, 2, 3, 4
+
+FLG_TO_E, FLG_TO_SMP, FLG_CB, FLG_E_NEXT = 1, 2, 4, 8
+
+# --------------------------------------------------------------- the regions
+R_X, R_XN, R_QKV, R_Z, R_BETA, R_ALPHA = 0, 1, 2, 3, 4, 5
+R_QG, R_KIN, R_VIN, R_Y, R_G, R_U, R_H, R_ER = 6, 7, 8, 9, 10, 11, 12, 13
+NREGION = 14
+R_NONE = 255
+RNAME = ["X", "XN", "QKV", "Z", "BETA", "ALPHA", "QG", "KIN", "VIN",
+         "Y", "G", "U", "H", "ER"]
+
+# The per-opcode EXTRA consume mask, `seq_opdec`'s OPC_CONS generic.
+# rtl/llama_map_pkg.vhd: (0, 56, 384, 0, 0, 8192, 2048, 0)
+OPC_CONS_MAP = (0, 56, 384, 0, 0, 8192, 2048, 0)
+
+NSTEP_GDN_N1, NSTEP_ATTN_N1 = 16, 13
+
+
+class LayerError(Exception):
+    pass
+
+
+# ============================================================== the shape
+class Shape(object):
+    """Everything the schedule needs.  The 9B row is `rtl/model_cfg_pkg.vhd`'s
+    QWEN35_9B; it is CROSS-CHECKED against the manifest's tensor shapes by
+    `check_against_manifest`, which is the only independent source for it that
+    exists in this repository."""
+
+    def __init__(self, blocks, attn_interval, hidden, ffn, key_heads,
+                 val_heads, head_dim, attn_q_heads, attn_kv_heads,
+                 attn_head_dim, vocab_shard):
+        self.blocks = blocks
+        self.attn_interval = attn_interval
+        self.hidden = hidden
+        self.ffn = ffn
+        self.key_heads = key_heads
+        self.val_heads = val_heads
+        self.head_dim = head_dim
+        self.attn_q_heads = attn_q_heads
+        self.attn_kv_heads = attn_kv_heads
+        self.attn_head_dim = attn_head_dim
+        self.vocab_shard = vocab_shard
+
+    key_dim = property(lambda s: s.key_heads * s.head_dim)
+    val_dim = property(lambda s: s.val_heads * s.head_dim)
+    qkv_dim = property(lambda s: 2 * s.key_dim + s.val_dim)
+    att_q = property(lambda s: s.attn_q_heads * s.attn_head_dim)
+    att_qg = property(lambda s: 2 * s.att_q)
+    att_kv = property(lambda s: s.attn_kv_heads * s.attn_head_dim)
+
+    def is_attn(self, i):
+        return ((i + 1) % self.attn_interval) == 0
+
+    def n_attn(self):
+        return self.blocks // self.attn_interval
+
+    def n_gdn(self):
+        return self.blocks - self.n_attn()
+
+    def n_steps(self):
+        return (self.n_gdn() * NSTEP_GDN_N1
+                + self.n_attn() * NSTEP_ATTN_N1 + 3)
+
+    def region_sizes(self):
+        r = [0] * NREGION
+        r[R_X] = r[R_XN] = r[R_ER] = self.hidden
+        r[R_QKV] = self.qkv_dim
+        r[R_Z] = self.val_dim
+        r[R_BETA] = r[R_ALPHA] = self.val_heads
+        r[R_QG] = self.att_qg
+        r[R_KIN] = r[R_VIN] = self.att_kv
+        r[R_Y] = max(self.val_dim, self.att_q)
+        r[R_G] = r[R_U] = r[R_H] = self.ffn
+        return r
+
+
+# rtl/model_cfg_pkg.vhd QWEN35_9B, NCARDS = 1.
+QWEN35_9B = Shape(blocks=32, attn_interval=4, hidden=4096, ffn=12288,
+                  key_heads=16, val_heads=32, head_dim=128,
+                  attn_q_heads=16, attn_kv_heads=4, attn_head_dim=256,
+                  vocab_shard=248320)
+
+
+def mk_shape_scaled(blocks, attn_interval, attn_hd=32):
+    """rtl/llama_map_pkg.vhd's `mk_shape_scaled`, so a program emitted here can
+    be executed by `llama_top` in simulation."""
+    return Shape(blocks=blocks, attn_interval=attn_interval,
+                 hidden=64, ffn=128, key_heads=2, val_heads=4, head_dim=32,
+                 attn_q_heads=64 // attn_hd, attn_kv_heads=32 // attn_hd,
+                 attn_head_dim=attn_hd, vocab_shard=128)
+
+
+# ============================================================== the plan
+class Step(object):
+    __slots__ = ("opcode", "src", "src2", "dst", "dst_off", "n_rows",
+                 "n_cols", "blk", "ordinal", "const_base", "tensor",
+                 "row_start", "flags", "out_mode", "w_exp", "out_shift",
+                 "rel", "idx", "note")
+
+    def __init__(self, **kw):
+        for s in self.__slots__:
+            setattr(self, s, kw.get(s, 0))
+        self.rel = kw.get("rel", 0)
+        self.tensor = kw.get("tensor", None)
+        self.note = kw.get("note", "")
+
+    @property
+    def unit(self):
+        return {OP_A_JOB: U_A, OP_B_JOB: U_B, OP_C_JOB: U_C,
+                OP_E_COLL: U_E, OP_END_TOKEN: U_A}.get(self.opcode, U_V)
+
+
+def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False):
+    """The step sequence, per block, in order.  Independently written from the
+    same D design spec sections 4.2 / 4.3 that `sim/seq_tbl_pkg.vhd` and
+    `sim/llama_sched_pkg.vhd` implement; agreement with BOTH of those is the
+    check, not the construction."""
+    steps = []
+
+    def emit(**kw):
+        kw.setdefault("src", R_NONE)
+        kw.setdefault("src2", R_NONE)
+        kw.setdefault("dst", R_NONE)
+        kw.setdefault("const_base", kw.get("blk", 0))
+        st = Step(**kw)
+        st.idx = len(steps)
+        steps.append(st)
+
+    def emit_ffn(b):
+        p = tensor_prefix % b
+        emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
+             blk=b, const_base=b, ordinal=b % 64)
+        emit(opcode=OP_A_JOB, src=R_XN, dst=R_G, n_rows=s.ffn,
+             n_cols=s.hidden, blk=b, tensor=p + "ffn_gate.weight")
+        emit(opcode=OP_A_JOB, src=R_XN, dst=R_U, n_rows=s.ffn,
+             n_cols=s.hidden, blk=b, tensor=p + "ffn_up.weight")
+        emit(opcode=OP_VEC_SWG, src=R_G, src2=R_U, dst=R_H, n_rows=s.ffn,
+             blk=b)
+        emit(opcode=OP_A_JOB, src=R_H, dst=R_ER, n_rows=s.hidden,
+             n_cols=s.ffn, blk=b, tensor=p + "ffn_down.weight")
+        emit(opcode=OP_VEC_RES, src=R_X, src2=R_ER, dst=R_X, n_rows=s.hidden,
+             blk=b)
+
+    for b in range(s.blocks):
+        p = tensor_prefix % b
+        if s.is_attn(b):
+            ao = (b - (s.attn_interval - 1)) // s.attn_interval
+            emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
+                 blk=b, const_base=b, ordinal=b % 64)
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_QG, n_rows=s.att_qg,
+                 n_cols=s.hidden, blk=b, tensor=p + "attn_q.weight")
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_KIN, n_rows=s.att_kv,
+                 n_cols=s.hidden, blk=b, tensor=p + "attn_k.weight")
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_VIN, n_rows=s.att_kv,
+                 n_cols=s.hidden, blk=b, tensor=p + "attn_v.weight")
+            emit(opcode=OP_C_JOB, src=R_QG, dst=R_Y, n_rows=s.att_q,
+                 blk=b, ordinal=ao)
+            emit(opcode=OP_A_JOB, src=R_Y, dst=R_ER, n_rows=s.hidden,
+                 n_cols=s.att_q, blk=b, tensor=p + "attn_output.weight")
+            emit(opcode=OP_VEC_RES, src=R_X, src2=R_ER, dst=R_X,
+                 n_rows=s.hidden, blk=b)
+            emit_ffn(b)
+        else:
+            go = b - (b + 1) // s.attn_interval
+            emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
+                 blk=b, const_base=b, ordinal=b % 64)
+            # THE THREE-WAY qkv SPLIT.  q | k | v at three offsets in ONE
+            # region, so each segment gets its own y_exp -- that is what
+            # `seq_opdec`'s MSEG mechanism infers from `dst_offset`.  The
+            # packed tensor is FUSED (M = 2*key_dim + val_dim), so each of
+            # these is a ROW WINDOW of it; see `a_jobs_for` for the geometry
+            # constraint that makes two of the three inexpressible at
+            # ROWS_IF = 48.
+            if qkv_fused:
+                # THE FALLBACK, and it is a DIFFERENT PROGRAM, not a repair.
+                # One job for the whole fused tensor is expressible at any
+                # ROWS_IF, and it costs the three exponent SEGMENTS: seq_opdec
+                # infers the segment from `dst_offset`, so a single job at
+                # offset 0 gives R_QKV one y_exp for q, k and v together.  It
+                # also changes the STEP COUNT, so it is not interchangeable
+                # with the split form and `n_steps()` no longer holds.
+                emit(opcode=OP_A_JOB, src=R_XN, dst=R_QKV, dst_off=0,
+                     n_rows=s.qkv_dim, n_cols=s.hidden, blk=b,
+                     tensor=p + "attn_qkv.weight", row_start=0,
+                     note="fused qkv: ONE exponent segment, not three")
+            else:
+                emit(opcode=OP_A_JOB, src=R_XN, dst=R_QKV, dst_off=0,
+                     n_rows=s.key_dim, n_cols=s.hidden, blk=b,
+                     tensor=p + "attn_qkv.weight", row_start=0)
+                emit(opcode=OP_A_JOB, src=R_XN, dst=R_QKV, dst_off=s.key_dim,
+                     n_rows=s.key_dim, n_cols=s.hidden, blk=b,
+                     tensor=p + "attn_qkv.weight", row_start=s.key_dim)
+                emit(opcode=OP_A_JOB, src=R_XN, dst=R_QKV,
+                     dst_off=2 * s.key_dim,
+                     n_rows=s.val_dim, n_cols=s.hidden, blk=b,
+                     tensor=p + "attn_qkv.weight", row_start=2 * s.key_dim)
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_Z, n_rows=s.val_dim,
+                 n_cols=s.hidden, blk=b, tensor=p + "attn_gate.weight")
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_BETA, n_rows=s.val_heads,
+                 n_cols=s.hidden, blk=b, tensor=p + "ssm_beta.weight")
+            emit(opcode=OP_A_JOB, src=R_XN, dst=R_ALPHA, n_rows=s.val_heads,
+                 n_cols=s.hidden, blk=b, tensor=p + "ssm_alpha.weight")
+            emit(opcode=OP_B_JOB, src=R_QKV, dst=R_Y, n_rows=s.val_dim,
+                 blk=b, ordinal=go)
+            emit(opcode=OP_A_JOB, src=R_Y, dst=R_ER, n_rows=s.hidden,
+                 n_cols=s.val_dim, blk=b, tensor=p + "ssm_out.weight")
+            emit(opcode=OP_VEC_RES, src=R_X, src2=R_ER, dst=R_X,
+                 n_rows=s.hidden, blk=b)
+            emit_ffn(b)
+
+    # The TAIL norm's ordinal is 0, not `blocks % 64`.  sim/seq_tbl_pkg.vhd
+    # passes it explicitly; sim/llama_sched_pkg.vhd stamps `blk % 64` on every
+    # step and therefore writes `blocks % 64` here.  The two disagree.
+    emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
+         blk=s.blocks, const_base=s.blocks, ordinal=0)
+    emit(opcode=OP_A_JOB, flags=FLG_TO_SMP, src=R_XN, dst=R_NONE,
+         n_rows=s.vocab_shard, n_cols=s.hidden, out_mode=1, blk=s.blocks,
+         tensor="output.weight")
+    emit(opcode=OP_END_TOKEN, blk=s.blocks)
+
+    if not qkv_fused and len(steps) != s.n_steps():
+        raise LayerError("emitted %d steps, n_steps() says %d"
+                         % (len(steps), s.n_steps()))
+    build_rel(steps)
+    return steps
+
+
+def cons_mask(st):
+    """The regions a step CONSUMES: its two region bytes plus the per-opcode
+    extra mask, which is exactly what `seq_opdec` computes."""
+    if st.opcode == OP_END_TOKEN:
+        return 0
+    m = OPC_CONS_MAP[st.opcode]
+    if st.src < NREGION:
+        m |= 1 << st.src
+    if st.src2 < NREGION:
+        m |= 1 << st.src2
+    return m
+
+
+def prod_mask(st):
+    if st.opcode != OP_END_TOKEN and st.dst < NREGION:
+        return 1 << st.dst
+    return 0
+
+
+def build_rel(steps):
+    """THE LIVENESS PASS.  For step i and region R that i consumes, set rel(R)
+    iff no LATER step consumes R before some step re-produces it.  The in-place
+    residual (R_X in both sets) is handled by starting the scan at i+1."""
+    n = len(steps)
+    cons = [cons_mask(s) for s in steps]
+    prod = [prod_mask(s) for s in steps]
+    for i in range(n):
+        rel = 0
+        for r in range(NREGION):
+            bit = 1 << r
+            if not (cons[i] & bit):
+                continue
+            for j in range(i + 1, n):
+                if cons[j] & bit:
+                    break
+                if prod[j] & bit:
+                    rel |= bit
+                    break
+            else:
+                rel |= bit
+        steps[i].rel = rel
+
+
+# ============================================================== the encoder
+def u32(v):
+    return v & 0xFFFFFFFF
+
+
+def encode_header(st, stamp, nsub_w, nsub_s, d_cb_load=False,
+                  nsub_every_step=False, const_base_every_step=False):
+    """The 64-byte header, D design spec section 6.1, byte-pinned,
+    little-endian.  Word layout from `rtl/seq_desc_fetch.vhd:93-101`, which is
+    the source both the gateware and the two VHDL generators compute from."""
+    d = [0] * 8
+    flags = st.flags | (FLG_CB if d_cb_load and st.opcode == OP_A_JOB else 0)
+    d[0] = ((st.opcode & 0xFF)
+            | ((flags & 0xFF) << 8)
+            | ((st.src & 0xFF) << 16)
+            | ((st.dst & 0xFF) << 24)
+            | ((st.dst_off & 0xFFFFFFFF) << 32))
+    d[1] = (st.n_rows & 0xFFFFFFFF) | ((st.n_cols & 0xFFFFFFFF) << 32)
+
+    w_exp, out_shift, const_exp, ordinal = stamp(st)
+
+    # `nsub_w` / `nsub_s` describe A's base array and are meaningless on any
+    # other opcode; both VHDL generators leave them 0 off an A_JOB and
+    # `seq_desc_fetch` only range-checks them against NSUB_MAX.
+    # `sim/seq_tbl_pkg.vhd` passes them only on an A_JOB; `sim/llama_sched_pkg
+    # .vhd` passes them on EVERY step.  The two VHDL generators disagree, and
+    # `seq_desc_fetch` only range-checks the field, so both are accepted.
+    if nsub_every_step or st.opcode == OP_A_JOB:
+        nw, ns = nsub_w, nsub_s
+    else:
+        nw, ns = 0, 0
+
+    d[2] = u32(w_exp) | (u32(out_shift) << 32)
+    d[3] = ((st.out_mode & 0xFF)
+            | ((ordinal & 0xFF) << 8)
+            | ((nw & 0xFFFF) << 16)
+            | ((ns & 0xFFFF) << 32)
+            | ((st.src2 & 0xFF) << 48))          # 63:56 is D's PAD, stays 0
+    # `const_base` is the norm-weight selector.  `sim/seq_tbl_pkg.vhd` passes
+    # it only on a VEC_NORM; `sim/llama_sched_pkg.vhd` passes the block index
+    # on EVERY step.  Third disagreement between the two VHDL generators.
+    cb = st.const_base if (const_base_every_step
+                           or st.opcode == OP_VEC_NORM) else 0
+    d[4] = (cb & 0xFFFFFFFF) | (u32(const_exp) << 32)
+    d[5] = 0                                     # codebook, D's copy
+    d[6] = 0
+    d[7] = 0                                     # D's reserved word, PAD
+    return d
+
+
+# ---- the three field stampings ------------------------------------------
+# The routing fields are identical in all three.  Only w_exp / out_shift /
+# const_exp / ordinal move, and they move because the two VHDL generators
+# stamp them from the STEP INDEX on purpose (so a stale capture is a wrong
+# number rather than a repeat), while a real program takes them from the
+# packed tensor.
+def stamp_seq_tbl(st):
+    """sim/seq_tbl_pkg.vhd's `emit`.  `p` is the step index."""
+    p = st.idx
+    return (((p * 7) % 61) - 30, (p % 23) - 11, ((p * 5) % 41) - 20,
+            st.ordinal)
+
+
+def stamp_sched(st):
+    """sim/llama_sched_pkg.vhd's `build_table`.  Narrower ranges, and `ordinal`
+    is the BLOCK index on EVERY step -- which is where the two VHDL generators
+    disagree."""
+    i = st.idx
+    return ((i % 5) - 2, i % 5, ((i * 5) % 41) - 20, st.blk % 64)
+
+
+def make_stamp_manifest(w_exp_of, shift_of):
+    """The real one.  `w_exp` and `out_shift` come from the packed tensor for
+    an A_JOB, and NOTHING SUPPLIES THEM for a D-vec op."""
+    def f(st):
+        if st.opcode == OP_A_JOB and st.tensor in w_exp_of:
+            return (w_exp_of[st.tensor], shift_of[st.tensor], 0, st.ordinal)
+        return (0, 0, 0, st.ordinal)
+    return f
+
+
+STAMPS = {"seq_tbl": stamp_seq_tbl, "sched": stamp_sched}
+
+
+# ============================================================== A descriptors
+def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
+               check_hash=True, build=None):
+    """Build one subsystem A descriptor per A_JOB step, from the manifest.
+
+    THE ROW-WINDOW CONSTRAINT IS WHERE THIS BITES.  A sub-region's beats run
+    tile-major, so a job that does not start at row 0 is expressed by advancing
+    every base by whole TILES -- `gen_mv4i_desc.build_descriptor` refuses a
+    `row_start` that is not a multiple of ROWS_IF.  The GDN block's three-way
+    qkv split asks for windows at rows `key_dim` and `2*key_dim`, and at the
+    9B shape those are 2048 and 4096 while ROWS_IF is 48:
+
+        2048 mod 48 = 32,  4096 mod 48 = 16
+
+    so TWO OF THE THREE ARE NOT EXPRESSIBLE against the fused packed tensor.
+    They are reported, not fudged."""
+    build = build or G.FK33
+    m, by_file = G.load_manifest(manifest_path)
+    root = os.path.dirname(os.path.abspath(manifest_path))
+    out = []
+    addr = desc_base
+    align = build["desc_maxb"] * (build["axi_dw"] // 8)
+    for st in steps:
+        if st.opcode != OP_A_JOB:
+            continue
+        name = st.tensor + ".mv4i"
+        ent = by_file.get(name)
+        if ent is None:
+            out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                            reason="not in the manifest"))
+            continue
+        path = os.path.join(root, name)
+        try:
+            h = G.Mv4iHeader(path)
+        except (G.DescError, OSError) as e:
+            out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                            reason=str(e)))
+            continue
+        if check_hash:
+            got, want, ok = G.verify_image(path, ent)
+            if not ok:
+                out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                                reason="blake2b_128 %s, manifest says %s"
+                                       % (got, want)))
+                continue
+        try:
+            d = G.build_descriptor(
+                h, int(ent["hbm_offset"]), st.n_rows, x_exp,
+                out_mode=(st.out_mode if out_mode is None else out_mode),
+                cb_load=True, addr_w=build["addr_w"], row_start=st.row_start,
+                src_region=st.src, dst_region=st.dst,
+                dst_offset=st.dst_off, ordinal=st.ordinal,
+                src_region2=st.src2, const_base=st.const_base, const_exp=0)
+        except G.DescError as e:
+            out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                            reason=str(e)))
+            continue
+        bad = G.rtl_would_reject(d, build=build, desc_addr=addr)
+        out.append(dict(step=st.idx, tensor=st.tensor, ok=not bad,
+                        reason="; ".join(n for _, n in bad),
+                        desc=d, desc_addr=addr,
+                        w_exp=h.w_exp, out_shift=h.out_shift,
+                        M=h.M, K=h.K, row_start=st.row_start,
+                        n_rows=st.n_rows,
+                        w_beats=d.fields["w_beats"],
+                        s_beats=d.fields["s_beats"]))
+        addr += ((d.fields["desc_bytes"] + align - 1) // align) * align
+    return out, m
+
+
+# ============================================================== manifest check
+def check_against_manifest(s, manifest_path, layer=0):
+    """The 9B shape constants are copied from `rtl/model_cfg_pkg.vhd`.  The ONE
+    independent source for them in this repository is the packed tensors'
+    own shapes, so they are checked against those rather than trusted."""
+    m, by_file = G.load_manifest(manifest_path)
+
+    def shp(name):
+        e = by_file.get(name + ".mv4i")
+        return None if e is None else (e["M"], e["K"])
+
+    p = "blk.%d." % layer
+    checks = []
+    g = shp(p + "ffn_gate.weight")
+    if g:
+        checks.append(("hidden", s.hidden, g[1]))
+        checks.append(("ffn", s.ffn, g[0]))
+    d = shp(p + "ffn_down.weight")
+    if d:
+        checks.append(("hidden (ffn_down M)", s.hidden, d[0]))
+        checks.append(("ffn (ffn_down K)", s.ffn, d[1]))
+    q = shp(p + "attn_qkv.weight")
+    if q:
+        checks.append(("qkv_dim", s.qkv_dim, q[0]))
+    z = shp(p + "attn_gate.weight")
+    if z:
+        checks.append(("val_dim", s.val_dim, z[0]))
+    b = shp(p + "ssm_beta.weight")
+    if b:
+        checks.append(("val_heads", s.val_heads, b[0]))
+    o = shp(p + "ssm_out.weight")
+    if o:
+        checks.append(("val_dim (ssm_out K)", s.val_dim, o[1]))
+    aq = shp(p + "attn_q.weight")
+    if aq:
+        checks.append(("att_qg", s.att_qg, aq[0]))
+    ak = shp(p + "attn_k.weight")
+    if ak:
+        checks.append(("att_kv", s.att_kv, ak[0]))
+    ao = shp(p + "attn_output.weight")
+    if ao:
+        checks.append(("att_q (attn_output K)", s.att_q, ao[1]))
+    ow = shp("output.weight")
+    if ow:
+        checks.append(("vocab_shard", s.vocab_shard, ow[0]))
+    return checks, m
+
+
+# ============================================================== output
+def write_hex(path, words):
+    with open(path, "w") as fp:
+        for w in words:
+            fp.write("%016X\n" % w)
+
+
+def write_rel(path, steps, nreg=NREGION):
+    with open(path, "w") as fp:
+        for st in steps:
+            fp.write("".join("1" if (st.rel >> b) & 1 else "0"
+                             for b in range(nreg - 1, -1, -1)) + "\n")
+
+
+def rname(r):
+    return RNAME[r] if r < NREGION else "-"
+
+
+def print_plan(steps, first=0):
+    print("  # step  opcode     src  src2 dst  off      n_rows  n_cols  "
+          "ord  rel            tensor")
+    for st in steps:
+        print("  %5d  %-9s %-4s %-4s %-4s %-8d %-7d %-7d %-4d %-14s %s"
+              % (st.idx, OPNAME[st.opcode], rname(st.src), rname(st.src2),
+                 rname(st.dst), st.dst_off, st.n_rows, st.n_cols, st.ordinal,
+                 "".join("1" if (st.rel >> b) & 1 else "0"
+                         for b in range(NREGION - 1, -1, -1)),
+                 st.tensor or ""))
+
+
+def layer_slice(steps, layer):
+    return [st for st in steps if st.blk == layer]
+
+
+# ============================================================== CLI
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--manifest",
+                    default="/mnt/storage/llama-models/qwen35-9b-mv4i/manifest.json")
+    ap.add_argument("--layer", type=int, default=None,
+                    help="emit the program for this transformer block only")
+    ap.add_argument("--token", action="store_true",
+                    help="emit the whole token's D table instead of one layer")
+    ap.add_argument("--shape", choices=("9b", "sim"), default="9b")
+    ap.add_argument("--blocks", type=int, default=4, help="--shape sim only")
+    ap.add_argument("--attn-int", type=int, default=4, help="--shape sim only")
+    ap.add_argument("--attn-hd", type=int, default=32, help="--shape sim only")
+    ap.add_argument("--close-token", action="store_true",
+                    help="append an END_TOKEN so a LAYER SLICE is a runnable "
+                         "table.  seq_desc_fetch enforces END_TOKEN-last in "
+                         "hardware, so without this a layer is a fragment")
+    ap.add_argument("--qkv-fused", action="store_true",
+                    help="emit the GDN qkv as ONE job over the fused packed "
+                         "tensor instead of three row windows.  Expressible "
+                         "at ROWS_IF = 48, and it collapses R_QKV's three "
+                         "exponent segments into one")
+    ap.add_argument("--stamp", choices=("manifest", "seq_tbl", "sched"),
+                    default="manifest",
+                    help="where w_exp/out_shift/const_exp/ordinal come from")
+    ap.add_argument("--nsub-every-step", action="store_true", default=None,
+                    help="write nsub_w/nsub_s on every step, not only on an "
+                         "A_JOB.  Default follows --stamp: seq_tbl no, "
+                         "sched yes")
+    ap.add_argument("--d-cb-load", action="store_true",
+                    help="also set flags bit 2 (cb_load) in the D header")
+    ap.add_argument("--x-exp", type=int, default=None,
+                    help="the activation BFP exponent.  NOT DERIVABLE; it is a "
+                         "per-token runtime value from the previous stage")
+    ap.add_argument("--desc-base", type=G.parse_int, default=None,
+                    help="HBM byte address of the first A descriptor.  Nothing "
+                         "in the manifest reserves descriptor space")
+    ap.add_argument("--nsub-w", type=int, default=None,
+                    help="D header nsub_w.  Default: the manifest geometry's "
+                         "nports_w (24 on the FK33).  The VHDL generators "
+                         "write 29 and D only range-checks it")
+    ap.add_argument("--nsub-s", type=int, default=None)
+    ap.add_argument("--outdir", default=None)
+    ap.add_argument("--d-table", default=None, help="write the D table here")
+    ap.add_argument("--rel-file", default=None)
+    ap.add_argument("--json", default=None)
+    ap.add_argument("--no-hash", action="store_true")
+    ap.add_argument("--no-a", action="store_true",
+                    help="D table only; do not touch the packed tensors")
+    ap.add_argument("--print", action="store_true")
+    a = ap.parse_args(argv)
+
+    if a.shape == "sim":
+        s = mk_shape_scaled(a.blocks, a.attn_int, a.attn_hd)
+        a.no_a = True
+    else:
+        s = QWEN35_9B
+
+    steps = build_plan(s, qkv_fused=a.qkv_fused)
+
+    # ---- the shape, checked against the packed tensors -------------------
+    mani = None
+    geom = {}
+    if a.shape == "9b" and os.path.exists(a.manifest):
+        checks, mani = check_against_manifest(s, a.manifest,
+                                              layer=a.layer or 0)
+        bad = [(n, w, g) for (n, w, g) in checks if w != g]
+        if bad:
+            raise SystemExit(
+                "gen_layer_program: the model shape and the packed tensors "
+                "DISAGREE:\n" + "\n".join(
+                    "  %-24s shape says %d, manifest says %d" % b for b in bad))
+        geom = mani.get("geometry", {})
+        if a.print:
+            print("shape cross-checked against %d packed-tensor dimensions"
+                  % len(checks))
+
+    nsub_w = a.nsub_w if a.nsub_w is not None else geom.get("nports_w", 24)
+    nsub_s = a.nsub_s if a.nsub_s is not None else geom.get("n_scale_sub", 3)
+    if a.stamp in STAMPS:
+        stamp = STAMPS[a.stamp]
+        if a.nsub_w is None:
+            nsub_w = 29        # what both VHDL generators write
+        if a.nsub_s is None:
+            nsub_s = 4
+    else:
+        wex, shf = {}, {}
+        if mani:
+            for f in mani["files"]:
+                if f.get("kind") == "mv4i":
+                    wex[f["tensor"]] = f["w_exp"]
+                    shf[f["tensor"]] = f["out_shift"]
+        stamp = make_stamp_manifest(wex, shf)
+
+    nsub_every = (a.stamp == "sched") if a.nsub_every_step is None \
+        else a.nsub_every_step
+    cbase_every = (a.stamp == "sched")
+
+    sel = steps if (a.token or a.layer is None) else layer_slice(steps, a.layer)
+    if not sel:
+        raise SystemExit("gen_layer_program: no steps for layer %r" % a.layer)
+
+    if a.close_token and (sel and sel[-1].opcode != OP_END_TOKEN):
+        # `rtl/seq_desc_fetch.vhd:526-533` enforces the counting identity in
+        # hardware: END_TOKEN must be the LAST descriptor and the last
+        # descriptor must be END_TOKEN.  A LAYER SLICE IS THEREFORE NOT A
+        # RUNNABLE TABLE -- MEASURED: the 16-step layer 0 slice is refused
+        # with ERR_DESC at its last step.  This appends the END_TOKEN that
+        # closes it, so one layer can be executed on its own.
+        term = Step(opcode=OP_END_TOKEN, src=R_NONE, src2=R_NONE, dst=R_NONE,
+                    blk=sel[-1].blk)
+        term.idx = sel[-1].idx + 1
+        term.rel = 0
+        sel = sel + [term]
+
+    words = []
+    for st in sel:
+        words.extend(encode_header(st, stamp, nsub_w, nsub_s, a.d_cb_load,
+                                   nsub_every, cbase_every))
+
+    outdir = a.outdir
+    if outdir:
+        if not os.path.isdir(outdir):
+            os.makedirs(outdir)
+    d_table = a.d_table or (os.path.join(outdir, "d_table.hex")
+                            if outdir else None)
+    rel_file = a.rel_file or (os.path.join(outdir, "rel_mask.txt")
+                              if outdir else None)
+    if d_table:
+        write_hex(d_table, words)
+    if rel_file:
+        write_rel(rel_file, sel)
+
+    # ---- subsystem A ------------------------------------------------------
+    ajobs = []
+    if not a.no_a:
+        if a.x_exp is None:
+            raise SystemExit(
+                "gen_layer_program: --x-exp is required for the A descriptors."
+                "  It is the activation vector's BFP exponent, a per-token "
+                "runtime value the previous stage produces; nothing in the "
+                "manifest supplies it.  Use --no-a for the D table alone.")
+        desc_base = a.desc_base
+        if desc_base is None and mani:
+            # Nothing in the manifest reserves descriptor space.  Take it from
+            # the TOP of HBM, aligned down, and state the cost.
+            hbm = mani.get("hbm", {})
+            size = int(hbm.get("size", 1 << 33))
+            need = 512 * max(1, sum(1 for st in sel
+                                    if st.opcode == OP_A_JOB))
+            desc_base = (size - need) & ~0xFFF
+        ajobs, mani = a_jobs_for(sel, a.manifest, a.x_exp, desc_base,
+                                 check_hash=not a.no_hash)
+        if outdir:
+            for j in ajobs:
+                if j.get("desc") is None:
+                    continue
+                write_hex(os.path.join(
+                    outdir, "a%02d_%s.hex" % (j["step"], j["tensor"])),
+                    j["desc"].words)
+
+    # ---- report -----------------------------------------------------------
+    if a.print:
+        print("model     blocks=%d attn_interval=%d hidden=%d ffn=%d "
+              "key_dim=%d val_dim=%d att_q=%d att_kv=%d"
+              % (s.blocks, s.attn_interval, s.hidden, s.ffn, s.key_dim,
+                 s.val_dim, s.att_q, s.att_kv))
+        print("token     %d steps (%d GDN x %d, %d attn x %d, +3)"
+              % (s.n_steps(), s.n_gdn(), NSTEP_GDN_N1, s.n_attn(),
+                 NSTEP_ATTN_N1))
+        if a.layer is not None and not a.token:
+            print("layer %-3d %s, %d steps, D table %d bytes"
+                  % (a.layer, "ATTENTION" if s.is_attn(a.layer) else "GDN",
+                     len(sel), 64 * len(sel)))
+        print("D header  nsub_w=%d nsub_s=%d  stamp=%s" % (nsub_w, nsub_s,
+                                                           a.stamp))
+        print()
+        print_plan(sel)
+        if ajobs:
+            print()
+            print("subsystem A descriptors, FK33 geometry "
+                  "(ROWS_IF=%d AXI_DW=%d nsub_w=%d nsub_s=%d):"
+                  % (G.FK33["rows_if"], G.FK33["axi_dw"],
+                     G.FK33["nports_w"], G.FK33["nports_s"]))
+            for j in ajobs:
+                if not j["ok"]:
+                    print("  step %-4d %-28s REFUSED: %s"
+                          % (j["step"], j["tensor"], j["reason"]))
+                else:
+                    print("  step %-4d %-28s rows %d..%d of %d  w_exp=%d "
+                          "out_shift=%d w_beats=%d s_beats=%d  @0x%X"
+                          % (j["step"], j["tensor"], j["row_start"],
+                             j["row_start"] + j["n_rows"] - 1, j["M"],
+                             j["w_exp"], j["out_shift"], j["w_beats"],
+                             j["s_beats"], j["desc_addr"]))
+            nref = sum(1 for j in ajobs if not j["ok"])
+            print("  %d of %d A jobs emitted, %d refused"
+                  % (len(ajobs) - nref, len(ajobs), nref))
+
+    if a.json:
+        blob = dict(
+            shape=dict(blocks=s.blocks, attn_interval=s.attn_interval,
+                       hidden=s.hidden, ffn=s.ffn, key_dim=s.key_dim,
+                       val_dim=s.val_dim, att_q=s.att_q, att_kv=s.att_kv,
+                       n_steps=s.n_steps()),
+            stamp=a.stamp, nsub_w=nsub_w, nsub_s=nsub_s,
+            layer=a.layer, n_emitted=len(sel),
+            steps=[dict(idx=st.idx, opcode=st.opcode,
+                        opname=OPNAME[st.opcode], unit=st.unit,
+                        src=st.src, src2=st.src2, dst=st.dst,
+                        dst_off=st.dst_off, n_rows=st.n_rows,
+                        n_cols=st.n_cols, blk=st.blk, ordinal=st.ordinal,
+                        const_base=st.const_base, rel=st.rel,
+                        tensor=st.tensor, row_start=st.row_start)
+                   for st in sel],
+            a_jobs=[dict((k, v) for k, v in j.items() if k != "desc")
+                    for j in ajobs])
+        with open(a.json, "w") as fp:
+            json.dump(blob, fp, indent=1)
+
+    if ajobs and any(not j["ok"] for j in ajobs):
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
