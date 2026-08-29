@@ -53,7 +53,17 @@ luck rather than design. Consequences:
 - Prefer giving a superseded track NO further instructions. Sending it a
   follow-up is what turns a harmless late commit into a genuine collision.
 
-**`git commit -m msg -- <paths>` COMMITS THE WORKING TREE, NOT THE INDEX.**
+**`git commit -m msg -- <paths>` COMMITS THE WORKING TREE, NOT THE INDEX.
+THREE INDEPENDENT TRACKS HIT THIS ON THE SAME DAY** -- C-ORACLE, B-ACCURACY,
+and me, the last of them one commit after documenting it. B-ACCURACY hit it in
+its most deceptive form: it staged a single hunk of the shared `regress.sh`
+with `git apply --cached` and then named the file on the commit line, which
+discarded the careful staging entirely. It caught this only because the
+committed `--stat` disagreed with the staged one, 22 lines against 7.
+
+Three instances in a day means this is not an advisory to be more careful; it
+is a property of the command that has to be worked around structurally. **On a
+shared file: stage the hunk, then commit with NO pathspec.**
 Observed 2026-08-28: TRACK C-ORACLE's first commit swept in TRACK A-CTRL's
 uncommitted `sim/regress.sh` edits (`BASELINE_PASS=78`, rows for tests whose
 files were not committed yet) purely because they were sitting in the working
@@ -318,6 +328,37 @@ every one a `[PAD*]` token with `type=5`.
 **Generalise this before the next tokenizer-shaped thing:** when a check is
 driven by generated inputs, ask what part of the output space those inputs
 cannot reach, and enumerate it separately.
+
+### OI-7: `l2norm_rs` rejects a legal input, at `severity failure`
+
+Found by TRACK B-ACCURACY and deliberately not fixed, because `l2norm_rs` sits
+under `gdn_block` and `llama_top` as of `3246046`.
+
+`rtl/l2norm_rs.vhd:97` states the bound INCLUSIVELY: `ssq <= N * 2^30`, i.e.
+`2^37` at `N = 128`. `:245` asserts it STRICTLY: `ssq < 2^SSQ_BITS` with
+`SSQ_BITS = 30 + LOG2N = 37` (`:128`). The vector `x[i] = -32768` for all `i`
+is a legal int16 input whose `ssq` is exactly `128 * 2^30 = 2^37`, so the
+maximum legal input trips the assert. MEASURED on untouched RTL:
+
+    rtl/l2norm_rs.vhd:245: (assertion failure):
+        l2norm_rs: ssq outside the u37 bound implied by N
+
+`severity failure`, so it kills the run rather than saturating.
+
+**Corroboration the finder did not cite:** `:90` calls this "the u38 bound",
+and representing `2^37` inclusively does require 38 bits, while the constant
+computes 37. The author's comment disagrees with the author's constant, which
+is what an off-by-one looks like from the outside. Fix is `SSQ_BITS = 31 +
+LOG2N`, or make the compare `<=`.
+
+**Not determined: whether `ssq = 2^37` is reachable from `gdn_block`'s real
+activations.** Spec 2.1.3's requantizer argues against it. That is an argument,
+not a measurement, and the distinction is the whole issue: an unreachable
+defect is a latent trap, a reachable one is a crash. `msb(ssq) = 37` is also
+the single exponent the new 182-case sweep cannot reach, so adding it to the
+vector set would turn the regression red, which is not the same thing as
+reporting the defect. The generator carries it as a comment naming the
+measurement.
 
 ### OI-6: llama.cpp aborts on some malformed UTF-8 (upstream, informational)
 
