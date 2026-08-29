@@ -114,9 +114,29 @@ mkdir -p "$SCRATCH"
 
 # MEASURED baselines with headroom.  These are BASELINES, not bounds derived
 # from the recipe.
-BETA_TOL="${BETA_TOL:-4.0}"      # baseline 3.0880
-EG_MED_TOL="${EG_MED_TOL:-0.10}" # baseline 0.0553
-EG_N100_TOL="${EG_N100_TOL:-17}" # baseline 17
+#
+# AUDITED 2026-08-29 (TRACK B-SEED) over 40 generator seeds, honest unit:
+#   BETA_TOL    4.0   honest 2.6427 .. 3.6787   fires 0 of 40, real margin 1.09x
+#   EG_MED_TOL  0.10  honest 0.0196 .. 0.0928   fires 0 of 40, real margin 1.08x
+#   EG_N100_TOL 17    honest 12 .. 20           FIRED 4 of 40 (10%)
+# EG_N100_TOL was set EQUAL to the committed seed's own value, which is the
+# 90th percentile of the honest range, so it had zero headroom by
+# construction.  RETUNED 17 -> 30, which is 1.5x the 40-seed maximum.
+#
+# WHAT THAT COSTS, MEASURED: this figure stops being load bearing.  It fired
+# on B1 (23), B2 (25) and B3 (20) and on nothing else, and B3's 20 is exactly
+# the honest 40-seed maximum, so no value of this threshold can separate B3
+# from an honest seed.  All three are killed by the BENCH gate anyway
+# (eg_in 19046, 26491 and 352.7 against 23.0), so the kill ratio is unchanged
+# at 15 of 19 and this column was already redundant at 17.  It is kept as a
+# printed diagnostic, not deleted, because the number is worth reading.
+#
+# BETA_TOL and EG_MED_TOL are NOT changed: they do not fire on an honest seed.
+# Their margins are thin enough (1.09x and 1.08x) that a shape change to the
+# generator would put them over, so re-measure before changing NC or SP_Q.
+BETA_TOL="${BETA_TOL:-4.0}"      # baseline 3.0880, 40-seed max 3.6787
+EG_MED_TOL="${EG_MED_TOL:-0.10}" # baseline 0.0553, 40-seed max 0.0928
+EG_N100_TOL="${EG_N100_TOL:-30}" # baseline 17,     40-seed max 20
 
 NKILL=0; NSURV=0; NTOT=0
 

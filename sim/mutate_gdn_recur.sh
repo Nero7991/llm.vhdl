@@ -45,23 +45,48 @@
 # COUNT as well, for the reason B-GATE measured on rmsnorm_bf: a real defect
 # can sit inside the honest max range while moving the count by 10x.
 #
+#
+# CORRECTED 2026-08-29 (TRACK B-SEED).  A SECOND sweep, 30 seeds and a
+# different seed set, puts the honest worst state error at 32.12 LSB at seed
+# 20260101 -- 2.08x the 52-seed maximum of 15.43 quoted above.  Two sweeps
+# disagreeing by 2.08x on the maximum is the finding: this statistic has a
+# heavy tail, no feasible seed count bounds it, and the COUNT is the figure
+# that carries the gate.  AGG_WS was raised accordingly, below.
+#
 # Usage: bash sim/mutate_gdn_recur.sh
-# Env:   SCRATCH=<dir>  SEED=<n>
+# Env:   SCRATCH=<dir>
+#
+# THERE IS NO SEED KNOB, and there was never a working one.  A `SEED` variable
+# used to be declared here and printed in the header, but ref/gdn_recur_vec.c
+# takes no seed argument and this script never passed it one, so every run was
+# the hardcoded 20260825 while the header claimed otherwise.  Removed
+# 2026-08-29 rather than left to mislead.  To sweep, patch a COPY of the
+# generator in a scratch directory (replace the `rs_ = 20260825ULL;`
+# assignment), verify it is byte-identical to sim/gdn_recur_vec.txt at the
+# default seed BEFORE trusting anything it produces, and sweep that.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 RTL=rtl/gdn_recur.vhd
 REF=ref/gdn_recur_vec.c
 TB=sim/tb_gdn_recur.vhd
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
-SEED="${SEED:-20260825}"
 mkdir -p "$SCRATCH"
 
 # MEASURED baselines for THIS script's own aggregate, at the committed seed,
 # with headroom.  Baselines, not bounds derived from the recipe:
 #   worst state 8.955 LSB, median 0.577, 29 physical columns past 1 LSB.
-AGG_WS="${AGG_WS:-24.0}"     # baseline 8.955, seed-max over 52 seeds 15.43
-AGG_MED="${AGG_MED:-0.90}"   # baseline 0.577, seed-max 0.659
-AGG_N1="${AGG_N1:-66}"       # baseline 29,    seed-max 44
+# RETUNED 2026-08-29 (TRACK B-SEED).  AGG_WS 24.0 -> 48.0: over a SECOND
+# 40-seed sweep the honest aggregate maximum is 32.12 LSB (seed 20260101), so
+# 24.0 fired on the HONEST unit at 1 of 40.  48.0 is 1.49x that.  MEASURED
+# BOTH WAYS: kill ratio unchanged at 24 of 33, because no mutation's aggregate
+# max lands between 24 and 48 -- the agg-FAIL rows read 32660.6, 32660.6,
+# 2600.3, 9.27, 10.45, 1.166e7 and 2261.7, and the two under 48 are caught by
+# AGG_N1 (199 and 130 against a gate of 66), not by AGG_WS.
+# AGG_MED and AGG_N1 are NOT changed: over the same 40 seeds they range
+# 0.5303 .. 0.6362 and 12 .. 44 and fire on 0 of 40.
+AGG_WS="${AGG_WS:-48.0}"     # baseline 8.955, 40-seed max 32.12
+AGG_MED="${AGG_MED:-0.90}"   # baseline 0.577, 40-seed max 0.6362
+AGG_N1="${AGG_N1:-66}"       # baseline 29,    40-seed max 44
 
 NKILL=0; NSURV=0; NABORT=0; NTOT=0
 
@@ -218,7 +243,8 @@ PY
 }
 
 echo "===================== mutations of gdn_recur ========================"
-echo "seed $SEED, 384 cases, 274 of them physically realizable and checked"
+echo "seed 20260825 (ref/gdn_recur_vec.c hardcodes it; there is no knob),"
+echo "384 cases, 274 of them physically realizable and checked"
 echo "against the double oracle.  columns:"
 echo "  exact = the bench's bit-exact verdict (severity error, gated)"
 echo "  bench = the bench's ORACLE gate, the only one sim/regress.sh can fail"

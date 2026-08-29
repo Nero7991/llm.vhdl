@@ -103,7 +103,14 @@ entity tb_rmsnorm_bf is
            -- without rescaling it changes what it means.
            ACC_MAXLSB_M  : integer := 20000;  -- honest worst 9.999, B3 38.5
            ACC_NEAR_M    : integer := 500;
-           ACC_NEAR_MAX  : integer := 800;    -- honest worst 465, B5 2572
+           -- CORRECTED 2026-08-29 (TRACK B-SEED), 800 -> 1300.  The 800 was
+           -- 1.7x the NINE-seed honest maximum of 465.  At FORTY seeds the
+           -- honest count reaches 866, so 800 fired on the HONEST unit at 2
+           -- of the 40 (5%): seeds 99 (819) and 20240229 (866).  1300 is
+           -- 1.50x the 40-seed maximum.  VERIFIED both ways: B5, the only
+           -- mutation this count catches on its own, reads 2572 and is still
+           -- killed with a 1.98x margin.
+           ACC_NEAR_MAX  : integer := 1300;   -- honest worst 866, B5 2572
            ACC_MEAN_M    : integer := 300;    -- honest worst 0.232, B6 0.403
            ACC_MIN_CHECK : integer := 24000;
            VECS  : string   := "rmsnorm_bf_vec.txt" );

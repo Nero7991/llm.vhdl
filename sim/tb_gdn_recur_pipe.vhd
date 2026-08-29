@@ -52,8 +52,37 @@ entity tb_gdn_recur_pipe is
           -- tb_gdn_recur's, because the two units are required to be
           -- bit-identical and a different bound here would be a second
           -- standard for one recipe.  Measured, not guessed: see that file.
-          TOL_S : real := 12.0;      -- state mantissa, LSB of the 2^-se_new grid
-          TOL_O : real := 1.0e-4;    -- output dot, relative to the term norm
+          --
+          -- CORRECTED 2026-08-29 (TRACK B-SEED).  This file HAD TOL_S = 12.0
+          -- and TOL_O = 1.0e-4 for a day after tb_gdn_recur was retuned away
+          -- from them, so the comment above was false and this bench was the
+          -- second standard it forbids.  MEASURED on the honest unit over 30
+          -- generator seeds, this bench and tb_gdn_recur print the SAME two
+          -- figures to every printed digit, and at 12.0 / 1.0e-4 this bench
+          -- went red at 5 of those 30 seeds (17%): seeds 17, 99, 777777,
+          -- 20260101 and 31415926.  The honest state figure ranges 2.68 to
+          -- 32.12 LSB and the honest output figure 1.01e-05 to 2.20e-04.
+          --
+          -- TOL_S is 48.0, which is 1.5x the 30-seed MAXIMUM of 32.12 rather
+          -- than 1.5x the 52-seed maximum of 15.43 that set the former 24.0.
+          -- Two independent sweeps at 52 and 30 seeds therefore disagree by
+          -- 2.1x on the maximum of this statistic: its tail is heavy and a
+          -- max-only bound on it is worth very little.  That is why the two
+          -- COUNTS below matter more than TOL_S does.
+          TOL_S : real := 48.0;      -- state mantissa, LSB of the 2^-se_new grid
+          TOL_O : real := 1.2e-3;    -- output dot, relative to the term norm
+          -- Ported from tb_gdn_recur 2026-08-29.  This bench had NO count and
+          -- NO floor, which made its oracle gate strictly WEAKER than
+          -- tb_gdn_recur's on the same vectors: MEASURED, mutations B3 and B6
+          -- of sim/mutate_gdn_recur.sh reach only 9.27 and 10.45 state LSB
+          -- and are caught by the count alone, so this bench could not see
+          -- them at ANY honest value of TOL_S.  30-seed maxima 44 and 3.
+          N_GT1_MAX : natural := 66;
+          N_GT4_MAX : natural := 12;
+          -- Floor on the columns the oracle check actually ran on, so an
+          -- emptied check is loud instead of reporting 0.0000 and passing.
+          -- 30-seed minimum 271.
+          N_MIN     : natural := 240;
           VECS  : string   := "gdn_recur_vec.txt");
 end entity;
 
@@ -124,6 +153,10 @@ architecture sim of tb_gdn_recur_pipe is
   shared variable worst_o_on : real := 0.0;
   shared variable worst_o_c  : integer := -1;
   shared variable worst_s0, worst_s1 : real := 0.0;   -- tk = 0 / steady state
+  -- Per-COLUMN worst element, and the counts built from it.  A max over the
+  -- whole file is blind to a mutation that moves the BULK of the distribution
+  -- without moving its worst case; these are what catch B3 and B6.
+  shared variable n_gt1, n_gt4 : integer := 0;
 
   function to_real_s(v : signed) return real is
     variable m : unsigned(v'length-1 downto 0);
@@ -300,7 +333,35 @@ begin
       report "gdn_recur_pipe: OUT OF TOLERANCE vs the double ORACLE in "
            & integer'image(ntol) & " of " & integer'image(nphys)
            & " physically realizable column(s)" severity error;
-    if nfail = 0 and ntol = 0 then
+    -- The two COUNTS and the FLOOR, ported from tb_gdn_recur 2026-08-29.  The
+    -- wording is copied so sim/mutate_gdn_recur.sh's markers match on either
+    -- bench.  A count is not decoration here: B3 and B6 of that script move
+    -- the worst case only 8.955 -> 9.270 and -> 10.452 while moving the count
+    -- past 1 LSB 29 -> 199 and 29 -> 130.
+    assert n_gt1 <= N_GT1_MAX
+      report "gdn_recur_pipe: " & integer'image(n_gt1) & " physical columns "
+           & "are past 1 state LSB, over the gate of "
+           & integer'image(N_GT1_MAX) & ".  The worst case can be inside its "
+           & "bound and the DISTRIBUTION still be wrong; that is what this "
+           & "counts." severity error;
+    assert n_gt4 <= N_GT4_MAX
+      report "gdn_recur_pipe: " & integer'image(n_gt4) & " physical columns "
+           & "are past 4 state LSB, over the gate of "
+           & integer'image(N_GT4_MAX) severity error;
+    -- Every bound above gets HAPPIER as columns leave the checked set, and
+    -- they leave it silently (c_phys = 0, or exp_err = 1).
+    assert nphys >= N_MIN
+      report "gdn_recur_pipe: only " & integer'image(nphys) & " columns "
+           & "reached the oracle check, under the floor of "
+           & integer'image(N_MIN) & ".  The accuracy figures above are "
+           & "measuring almost nothing." severity error;
+    report "gdn_recur_pipe: columns past 1 LSB " & integer'image(n_gt1)
+         & " (gate " & integer'image(N_GT1_MAX) & "), past 4 LSB "
+         & integer'image(n_gt4) & " (gate " & integer'image(N_GT4_MAX)
+         & "), columns checked " & integer'image(nphys) & " (floor "
+         & integer'image(N_MIN) & ")" severity note;
+    if nfail = 0 and ntol = 0 and n_gt1 <= N_GT1_MAX
+       and n_gt4 <= N_GT4_MAX and nphys >= N_MIN then
       report "gdn_recur_pipe: within the oracle bounds on all "
            & integer'image(nphys) & " physically realizable columns -- worst "
            & real'image(worst_s) & " state LSB (TOL_S " & real'image(TOL_S)
@@ -312,7 +373,13 @@ begin
            & real'image(worst_s1) & " LSB steady state / " & real'image(worst_s0)
            & " LSB at tk = 0." severity note;
     end if;
-    if nfail = 0 then
+    -- The success sentence carries sim/regress.sh's PASS_RE phrase
+    -- ("bit-identical"), so it is gated on EVERY verdict and not on
+    -- bit-exactness alone.  FAIL_RE does win over PASS_RE, so this is belt
+    -- and braces rather than the only defence, but a bench that prints a
+    -- success marker on a red run is one grep-pattern change from lying.
+    if nfail = 0 and ntol = 0 and n_gt1 <= N_GT1_MAX
+       and n_gt4 <= N_GT4_MAX and nphys >= N_MIN then
       report "gdn_recur_pipe: bit-identical to the reference on all "
            & integer'image(ncheck) & " columns; issue interval measured "
            & integer'image(ii_min) & " cycles (NB = " & integer'image(NB)
@@ -336,6 +403,7 @@ begin
     variable got : i_arr(0 to DIM-1);
     variable bad, firstbad : integer;
     variable gsr, e_s, gs_val, e_o_rel : real;
+    variable wcol : real;   -- worst element of THIS column, for the counts
   begin
     if rising_edge(clk) and rst = '0' then
       if o_valid = '1' then
@@ -421,9 +489,11 @@ begin
                  & "check would grade the wrong column" severity failure;
           nphys := nphys + 1;
           bad := 0;
+          wcol := 0.0;
           for i in 0 to DIM-1 loop
             gsr := v_u(ncol_r)(i) * 2.0 ** real(to_integer(o_se_new));
             e_s := abs(real(v_got(ncol_r)(i)) - gsr);
+            if e_s > wcol then wcol := e_s; end if;
             if e_s > worst_s then worst_s := e_s; end if;
             if v_col(ncol_r).tk0 = 1 then
               if e_s > worst_s0 then worst_s0 := e_s; end if;
@@ -432,6 +502,8 @@ begin
             end if;
             if e_s > TOL_S then bad := bad + 1; end if;
           end loop;
+          if wcol > 1.0 then n_gt1 := n_gt1 + 1; end if;
+          if wcol > 4.0 then n_gt4 := n_gt4 + 1; end if;
           -- The output dot is normalised by the sum of |terms|, NOT by |sum|:
           -- it is a 128-term signed sum that cancels heavily, so dividing by
           -- the sum reports an enormous error wherever the sum lands near

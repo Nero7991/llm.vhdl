@@ -75,8 +75,30 @@ mkdir -p "$SCRATCH"
 # quantization and not the block-floating recipe, and gating it would report a
 # correct unit as broken.  Both numbers below are BASELINES with headroom, not
 # bounds derived from the recipe.
-ACC_GAIN="${ACC_GAIN:-3.0e-5}"
-ACC_LSB="${ACC_LSB:-1.0}"
+#
+# RETUNED 2026-08-29 (TRACK B-SEED).  Both numbers above were fitted to the
+# committed seed and MEASURED over 40 generator seeds they fire on the HONEST
+# unit:
+#   ACC_LSB  = 1.0     honest range 0.7704 .. 12.0688 LSB   fires 39 of 40
+#   ACC_GAIN = 3.0e-5  honest range 8.03e-06 .. 7.76e-05    fires 23 of 40
+# The committed seed 20260826 is the MINIMUM of the first range and the 18th
+# percentile of the second.  New values:
+#   ACC_LSB  = 20.0    the SAME standard as the bench's ACC_MAXLSB_M, so the
+#                      two gates cannot drift apart.  1.66x the 40-seed max.
+#   ACC_GAIN = 1.2e-4  1.55x the 40-seed max.
+# MEASURED BOTH WAYS.  The kill ratio is unchanged at 18 of 24: every row the
+# old values killed is still killed.  Two rows lose this column's redundancy
+# and are killed by the BENCH instead -- B5 (gain 7.953e-05, killed by the
+# bench's count, 2572 against a cap of 1300) and B6 (1.344 LSB, killed by the
+# bench's mean, 0.4027 against 0.300).
+#
+# AND THE GAIN FIGURE CANNOT BE MADE BOTH HONEST AND SHARP.  B5's gain is
+# 7.953e-05 and the honest 40-seed maximum is 7.759e-05: a 2.5% separation.
+# Any ACC_GAIN that catches B5 fires on honest seeds, and any value that
+# clears the honest range misses B5.  Do not "tighten this back up" -- the
+# resolution is not there.  B5 is caught by the bench count, with margin.
+ACC_GAIN="${ACC_GAIN:-1.2e-4}"
+ACC_LSB="${ACC_LSB:-20.0}"
 
 # The BENCH-side gate.  Default deliberately EMPTY so the bench runs at its own
 # committed generic defaults and this script measures the gate sim/regress.sh

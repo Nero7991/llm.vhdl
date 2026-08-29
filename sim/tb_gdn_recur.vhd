@@ -78,7 +78,22 @@ entity tb_gdn_recur is
           -- separate bound.  The former TOL_S_TK0 = 6000.0 and TOL_O_TK0 = 50.0
           -- held the sizes of the two defects the 2026-08-26 amendment removed
           -- and are deleted.
-          TOL_S : real := 24.0;      -- 52-seed max 15.429, 1.56x
+          -- CORRECTED 2026-08-29 (TRACK B-SEED), 24.0 -> 48.0.  A SECOND
+          -- sweep, 30 seeds and a different seed set, found the honest unit
+          -- at 32.12 state LSB at seed 20260101 -- 2.08x the 52-seed maximum
+          -- of 15.429 that set the 24.0, so 24.0 fired on the HONEST unit at
+          -- 1 of those 30 (3%).  Two sweeps disagreeing by 2.08x on the
+          -- maximum is the measurement that matters here: this statistic has
+          -- a heavy tail and NO max-only bound on it can be trusted from any
+          -- feasible number of seeds.  48.0 is 1.5x the larger observed
+          -- maximum and is expected to be exceeded again eventually; the two
+          -- COUNTS below are the gates that actually carry this bench.
+          -- VERIFIED that 24.0 -> 48.0 costs no kill: over
+          -- sim/mutate_gdn_recur.sh's 33 rows, no mutation's state figure
+          -- lands between 24 and 48 (the BOTH class reads 2600.271, 9.270,
+          -- 10.452, 8.955, 1.166e7 and 2261.704), and the two that sit under
+          -- 48 are caught by the counts, not by this bound.
+          TOL_S : real := 48.0;      -- 30-seed max 32.122, 1.49x
           -- TOL_O IS DOMINATED BY A SMALL DENOMINATOR, NOT BY ACCURACY, and
           -- knowing that is what stops the next reader tightening it and
           -- turning the gate red on an honest seed.  MEASURED, worst case and

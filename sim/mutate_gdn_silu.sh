@@ -68,7 +68,26 @@ mkdir -p "$SCRATCH"
 # is caught and the baseline itself is not marginal.  These are BASELINES, not
 # bounds derived from the recipe: the Q12 argument grid is coarse and 4.9% is
 # what it costs.
-ACC_LSB="${ACC_LSB:-2.0}"
+#
+# RETUNED 2026-08-29 (TRACK B-SEED): ACC_LSB 2.0 -> 3.5.  "The gate sits just
+# above each" was true of the committed seed only.  MEASURED over 40 generator
+# seeds the honest worst abs error ranges 1.8158 .. 2.7271 LSB and the
+# committed 1.8442 is its 5th percentile, so 2.0 fired on the HONEST unit at
+# 33 of 40 seeds (82%).  3.5 is the SAME standard as the bench's
+# ACC_MAXLSB_M = 3500, so the two gates cannot drift apart, and it is 1.28x
+# the 40-seed maximum.
+# MEASURED BOTH WAYS: kill ratio unchanged at 15 of 19.  One row, C2 (2.7431
+# LSB), loses this column and is still killed by bit-exactness; B4 (2.5702
+# LSB) keeps its kill through ACC_REL, whose figure moves 4.9488e-2 ->
+# 5.7289e-2.
+#
+# ACC_REL IS LEFT AT 5.5e-2 ON PURPOSE.  MEASURED over the same 40 seeds the
+# honest range is 4.159e-2 .. 4.971e-2, so it fires on 0 of 40 -- but the real
+# margin is 1.11x, not the comfortable figure the text above implies, and B4
+# is killed at 5.7289e-2, only 15% above the honest maximum.  Widening it
+# would delete B4's only remaining detection; tightening it would go red on an
+# honest seed.  It is left exactly where it is, with the margin recorded.
+ACC_LSB="${ACC_LSB:-3.5}"
 ACC_REL="${ACC_REL:-5.5e-2}"
 
 # The BENCH-side gate.  Default deliberately EMPTY so the bench runs at its own
