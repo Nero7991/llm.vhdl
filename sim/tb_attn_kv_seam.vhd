@@ -101,9 +101,50 @@
 --   * NOT the real HBM.  The slaves below are a fixed-latency in-order model
 --     with a single ID.  Reordering across IDs, refresh, and bank conflicts
 --     are not modelled, and no hardware was touched.
---   * NOT more than one layer at a time.  LAYER_SEL is one layer; the address
---     equation's `layer` term is exercised only in that it is non-trivially
---     multiplied, not by two layers interleaving.
+--   * NOT more than NLAY layers.  NLAY is 2 by default.  Two is enough to
+--     make every per-layer quantity contended (see THE SCHEDULE below) and
+--     nothing here is quadratic in the layer count, but a defect that needs
+--     three distinct layers to appear would not be seen.
+--   * NOT a per-layer ctx_len.  Every layer runs the same sequence length,
+--     which is what a transformer does; a design that latched ctx_len from
+--     the wrong layer's job would be invisible here.
+--
+-- ======================================================================
+-- THE SCHEDULE: TWO LAYERS, INTERLEAVED
+-- ======================================================================
+--
+-- The run is NTOK*NLAY jobs in TOKEN-major, LAYER-minor order,
+--
+--     step s -> token t = s/NLAY, layer l = s mod NLAY
+--
+-- so it goes (tok 0, lay 0), (tok 0, lay 1), (tok 1, lay 0), ... -- the
+-- order a transformer actually runs, and the only order in which the
+-- per-layer state is genuinely contended.  Layer 0's whole sequence
+-- followed by layer 1's would leave layer 0 untouched by layer 1, so half
+-- of any layer-crossing defect would be invisible and the other half would
+-- look like a first-token effect.
+--
+-- What ONLY the interleave can falsify, and what a one-layer stream was
+-- bit-exact under:
+--
+--   L1  THE `v_ref` FOLD IS PER (LAYER, KV HEAD).  C spec 2.1.4, and defect
+--       C1 (docs/debugging/2026-08-29_c1-vref-layer.md).  `attn_block` holds
+--       ONE fold array and time-shares it across every attention layer, so a
+--       fold indexed by head alone lets each layer's write-time minimum leak
+--       into every other layer's alignment shift.  With one layer in the
+--       stream there is nothing to leak from.
+--   L2  THE ADDRESS EQUATION'S `layer` TERM.  At a single layer 0 a design that
+--       dropped the term entirely is byte-identical.  With two layers the
+--       write master and the read master must agree on it, and they are
+--       different masters over different AXI channels.
+--   L3  THE QK-NORM WEIGHTS ARE LATCHED PER LAYER.  `attn_block` samples
+--       them at `start` (SEAM 1).  One weight set for the whole run cannot
+--       tell a latch from a wire, nor a latch that sampled the PREVIOUS
+--       job's weights.
+--   L4  `kv_layer` TRACKS THE CONFIGURED LAYER.  `rtl/llama_top.vhd` asserts
+--       this because the block's own latch putting a whole layer's records
+--       at another layer's addresses would still be SERVED by every read.
+--       At one layer the assert is a tautology.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use std.textio.all;
 use work.util_pkg.all;
@@ -118,7 +159,9 @@ entity tb_attn_kv_seam is
     LAYERS   : positive := 2;
     MAXCTX   : positive := 8;
     NTOK     : positive := 4;
-    LAYER_SEL: natural  := 0;
+    -- How many attention layers the schedule interleaves.  MUST be >= 2 and
+    -- <= LAYERS; both are asserted at elaboration.  See THE SCHEDULE.
+    NLAY     : positive := 2;
     POS_W    : positive := 16;
     AXI_DW   : positive := 256;
     ADDR_W   : positive := 16;
@@ -148,6 +191,22 @@ entity tb_attn_kv_seam is
     -- point the mutant is a different design rather than a mutation.
     MUT_CACHE_CPOS_HI : boolean := false;
     MUT_SEQRST_TOK  : boolean := false;  -- reset v_ref per TOKEN, not sequence
+    -- Hands the CACHE layer 0 for every job while the BLOCK runs the
+    -- schedule's layer.  A pure SEAM mutation: neither file is wrong on its
+    -- own, they merely disagree about which layer's region the records
+    -- belong in, and every read is still served -- which is precisely why
+    -- `rtl/llama_top.vhd` carries an assert for it.
+    MUT_KV_LAY0     : boolean := false;
+    -- Drives the BLOCK layer 0 for every job while the cache runs the
+    -- schedule's layer.  The mirror of MUT_KV_LAY0, and the one that also
+    -- collapses the per-layer v_ref fold and the QK-norm latch.
+    MUT_BLK_LAY0    : boolean := false;
+    -- Hands the block the OTHER layer's QK-norm weights while everything
+    -- else about the job is correct.  It exists to give the per-layer weight
+    -- axis its own teeth check: without it the weights could have been wired
+    -- to layer 0 for every job and L3 would still kill, so the axis would be
+    -- dead and nothing would say so.
+    MUT_WN_SWAP     : boolean := false;
     WDOG     : positive := 20000;-- cycles of dead air that count as a hang
     HEARTBEAT_US : integer := 0
   );
@@ -176,14 +235,28 @@ architecture sim of tb_attn_kv_seam is
   -- loud failure rather than a silent misread at the wrong offsets.
   type int_arr is array (natural range <>) of integer;
 
-  constant OFF_EXPS : integer := 7;
+  -- The vector file is indexed by STEP, not by token: one step is one
+  -- (token, layer) job.  `s_of` is the schedule, written here ONCE, and it
+  -- is the inverse the Q3 and Q5 checks need -- they know a LAYER and a
+  -- POSITION and must find the step whose record that is.
+  constant NSTEP    : integer := NTOK*NLAY;
+  function s_of (lay, ps : integer) return integer is
+  begin return ps*NLAY + lay; end function;
+
+  constant OFF_EXPS : integer := 8;      -- 8: the shape header gained NLAY
   constant OFF_QNW  : integer := OFF_EXPS + 5;
-  constant OFF_KNW  : integer := OFF_QNW + HEAD_DIM;
+  constant OFF_KNW  : integer := OFF_QNW + NLAY*HEAD_DIM;
   constant RECH     : integer := 2*NBLK + 2*HEAD_DIM;   -- one head's record
   constant TOKB     : integer := 2*HEAD_DIM*N_QH + 2*HEAD_DIM*N_KVH
                                + 1 + NY + N_KVH*RECH;
-  constant OFF_TOK0 : integer := OFF_KNW + HEAD_DIM;
-  constant NVEC     : integer := OFF_TOK0 + NTOK*TOKB;
+  constant OFF_TOK0 : integer := OFF_KNW + NLAY*HEAD_DIM;
+  constant NVEC     : integer := OFF_TOK0 + NSTEP*TOKB;
+
+  -- The per-layer norm weight blocks.
+  function o_qnw (lay : integer) return integer is
+  begin return OFF_QNW + lay*HEAD_DIM; end function;
+  function o_knw (lay : integer) return integer is
+  begin return OFF_KNW + lay*HEAD_DIM; end function;
 
   function o_tok (t : integer) return integer is
   begin return OFF_TOK0 + t*TOKB; end function;
@@ -281,7 +354,18 @@ architecture sim of tb_attn_kv_seam is
   signal cfg_taken : std_logic;
   signal kv_seq_rst : std_logic := '0';
   signal seq_rst_taken : std_logic;
-  signal tok_i : integer range 0 to NTOK := 0;
+  -- The schedule, held for the whole of a job.  `tok_i` is the STEP index
+  -- (the vector-file row); `pos_i` and `lay_i` are the token position and
+  -- the layer that step runs.  They were one number while NLAY was 1, and
+  -- keeping them one number is exactly how a bench stops being able to see
+  -- a layer defect.
+  signal tok_i : integer range 0 to NSTEP := 0;
+  signal pos_i : integer range 0 to NTOK  := 0;
+  signal lay_i : integer range 0 to NLAY-1 := 0;
+  -- What each DUT is actually told, after the two layer mutation hooks.
+  signal lay_blk : integer range 0 to LAYERS-1 := 0;
+  signal lay_kv  : integer range 0 to LAYERS-1 := 0;
+  signal q8_bad  : integer := 0;
 
   signal qg_raddr : unsigned(clog2(2*HEAD_DIM*N_QH)-1 downto 0);
   signal qg_re    : std_logic;
@@ -369,10 +453,10 @@ architecture sim of tb_attn_kv_seam is
   signal w_bresp   : std_logic_vector(1 downto 0) := "00";
 
   -- collectors
-  signal y_got  : int_arr(0 to NTOK*NY-1) := (others => 0);
-  signal yi_got : int_arr(0 to NTOK*NY-1) := (others => 0);
-  signal ye_got : int_arr(0 to NTOK-1) := (others => 0);
-  signal yn_got : int_arr(0 to NTOK-1) := (others => 0);
+  signal y_got  : int_arr(0 to NSTEP*NY-1) := (others => 0);
+  signal yi_got : int_arr(0 to NSTEP*NY-1) := (others => 0);
+  signal ye_got : int_arr(0 to NSTEP-1) := (others => 0);
+  signal yn_got : int_arr(0 to NSTEP-1) := (others => 0);
   signal y_idx  : integer := 0;
   signal q4_bad, q3_bad, q6_bad, q5_bad : integer := 0;
   -- One counter per SLAVE PROCESS.  Two processes on one integer signal
@@ -382,16 +466,22 @@ architecture sim of tb_attn_kv_seam is
   -- hard.  Two plain integers is the form that cannot do either.
   signal slv_bad_r : integer := 0;   -- the two read slaves
   signal slv_bad_w : integer := 0;   -- the write slave
-  signal cov    : int_arr(0 to 2*N_KVH*MAXCTX*NBLK-1) := (others => 0);
+  -- Coverage carries the LAYER as its outermost index.  Without it a read
+  -- that went to the wrong layer's region would still land in the right
+  -- (head, pos, block) bucket and the counts would balance.
+  signal cov    : int_arr(0 to 2*NLAY*N_KVH*MAXCTX*NBLK-1) := (others => 0);
 
   signal rnd_r : unsigned(31 downto 0) := x"1234ABCD";
 
   -- Q3's one-cycle pipeline: what was asked for, to be compared with what
   -- arrives on the next cycle.
+  -- `q3_kl` / `q3_vl` carry the LAYER the request was made under, because
+  -- the vector row that holds the expected record is s_of(layer, pos) and
+  -- the position alone no longer identifies it.
   signal q3_kv : std_logic := '0';
-  signal q3_kh, q3_kp, q3_kb : integer := 0;
+  signal q3_kh, q3_kp, q3_kb, q3_kl : integer := 0;
   signal q3_vv : std_logic := '0';
-  signal q3_vh, q3_vp, q3_vb : integer := 0;
+  signal q3_vh, q3_vp, q3_vb, q3_vl : integer := 0;
 
   -- MUT_DROP_RDY's counter
   signal mut_beat : integer := 0;
@@ -399,6 +489,12 @@ architecture sim of tb_attn_kv_seam is
 begin
 
   clk <= not clk after 5 ns when running else '0';
+
+  -- The two layer ports, after the mutation hooks.  In the shipping bench
+  -- both are `lay_i` and `rtl/llama_top.vhd` drives them from one signal for
+  -- the same reason.
+  lay_blk <= 0 when MUT_BLK_LAY0 else lay_i;
+  lay_kv  <= 0 when MUT_KV_LAY0  else lay_i;
 
   -- ======================= the DUTs =====================================
   u_blk : entity work.attn_block
@@ -408,7 +504,7 @@ begin
                   EXP_W => EXP_W, NORM_LANES => 1,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
-               start => blk_start, layer => LAYER_SEL,
+               start => blk_start, layer => lay_blk,
                cur_pos => cur_pos, ctx_len => ctx_len, busy => busy,
                cfg_taken => cfg_taken,
                kv_seq_rst => kv_seq_rst, seq_rst_taken => seq_rst_taken,
@@ -446,7 +542,7 @@ begin
                   ADDR_W => ADDR_W, MAXB => MAXB, MAXOUT => MAXOUT,
                   RBUF => RBUF )
     port map ( clk => clk, rst => rst,
-               start => kv_start, layer => LAYER_SEL,
+               start => kv_start, layer => lay_kv,
                cur_pos => kv_cpos, ctx_len => kv_clen,
                k_base => std_logic_vector(to_unsigned(K_BASE, ADDR_W)),
                v_base => std_logic_vector(to_unsigned(V_BASE, ADDR_W)),
@@ -542,13 +638,23 @@ begin
   end process;
 
   -- ======================= the norm weights =============================
+  -- PER LAYER, and they follow `lay_i`, which the driver sets before it
+  -- raises `blk_start`.  `attn_block` LATCHES them at start (SEAM 1), so a
+  -- design that read them combinationally, or latched the previous job's,
+  -- now computes different numbers.  Under MUT_BLK_LAY0 the block is told
+  -- layer 0, so it must be given layer 0's weights too -- otherwise the
+  -- mutant would be killed by a weight mismatch the mutation did not name.
   wgen : process(all)
+    variable wl : integer;
   begin
+    if MUT_BLK_LAY0 then wl := 0;
+    elsif MUT_WN_SWAP then wl := (lay_i + 1) mod NLAY;
+    else wl := lay_i; end if;
     for i in 0 to HEAD_DIM-1 loop
       qn_mant((i+1)*MANT_W-1 downto i*MANT_W)
-        <= std_logic_vector(to_signed(VEC(OFF_QNW + i), MANT_W));
+        <= std_logic_vector(to_signed(VEC(o_qnw(wl) + i), MANT_W));
       kn_mant((i+1)*MANT_W-1 downto i*MANT_W)
-        <= std_logic_vector(to_signed(VEC(OFF_KNW + i), MANT_W));
+        <= std_logic_vector(to_signed(VEC(o_knw(wl) + i), MANT_W));
     end loop;
   end process;
 
@@ -836,7 +942,7 @@ begin
       else
         -- ---- Q1's collector ----------------------------------------
         if y_valid = '1' and y_ready = '1' then
-          assert y_idx < NTOK*NY
+          assert y_idx < NSTEP*NY
             report "tb_attn_kv_seam: more output than the sequence expects"
             severity failure;
           y_got(y_idx)  <= to_integer(y_mant);
@@ -844,6 +950,24 @@ begin
           y_idx <= y_idx + 1;
           yn_got(tok_i) <= yn_got(tok_i) + 1;
           ye_got(tok_i) <= to_integer(y_exp);
+        end if;
+
+        -- ---- Q8: `kv_layer` tracks the configured layer (L4) ---------
+        -- `rtl/llama_top.vhd` carries this assert because the block's own
+        -- layer latch putting a whole layer's records at another layer's
+        -- addresses would still be SERVED by every read, so nothing
+        -- downstream complains.  Checked only while a record write is
+        -- actually offered, which is when the value is used.
+        if (kw_en = '1' or kw_hen = '1')
+           and to_integer(kv_layer) /= lay_blk then
+          q8_bad <= q8_bad + 1;
+          report "tb_attn_kv_seam: Q8 -- attn_block is writing layer "
+               & integer'image(to_integer(kv_layer))
+               & " and it was configured for layer "
+               & integer'image(lay_blk)
+               & ".  A whole layer's records would land at another layer's "
+               & "addresses and every read would still be served."
+            severity error;
         end if;
 
         -- ---- Q4: the handshake -------------------------------------
@@ -878,8 +1002,8 @@ begin
                  & "master in this same job and AXI orders nothing between "
                  & "masters." severity error;
           else
-            ci := ((to_integer(kr_head))*MAXCTX + to_integer(kr_pos))*NBLK
-                  + to_integer(kr_blk);
+            ci := ((lay_i*N_KVH + to_integer(kr_head))*MAXCTX
+                   + to_integer(kr_pos))*NBLK + to_integer(kr_blk);
             cov(ci) <= cov(ci) + 1;
           end if;
         end if;
@@ -889,9 +1013,9 @@ begin
             report "tb_attn_kv_seam: the sweep read the current position's V "
                  & "record; see the K message" severity error;
           else
-            ci := N_KVH*MAXCTX*NBLK
-                  + ((to_integer(vr_head))*MAXCTX + to_integer(vr_pos))*NBLK
-                  + to_integer(vr_blk);
+            ci := NLAY*N_KVH*MAXCTX*NBLK
+                  + ((lay_i*N_KVH + to_integer(vr_head))*MAXCTX
+                     + to_integer(vr_pos))*NBLK + to_integer(vr_blk);
             cov(ci) <= cov(ci) + 1;
           end if;
         end if;
@@ -903,16 +1027,19 @@ begin
           q3_kh <= to_integer(kr_head);
           q3_kp <= to_integer(kr_pos);
           q3_kb <= to_integer(kr_blk);
+          q3_kl <= lay_i;
         end if;
         if vr_en = '1' and vr_pos < cur_pos then
           q3_vv <= '1';
           q3_vh <= to_integer(vr_head);
           q3_vp <= to_integer(vr_pos);
           q3_vb <= to_integer(vr_blk);
+          q3_vl <= lay_i;
         end if;
         if q3_kv = '1' then
           for i in 0 to KV_BLOCK-1 loop
-            exp_m := VEC(o_km(q3_kp, q3_kh) + q3_kb*KV_BLOCK + i);
+            exp_m := VEC(o_km(s_of(q3_kl, q3_kp), q3_kh)
+                         + q3_kb*KV_BLOCK + i);
             if to_integer(signed(kr_mant((i+1)*CM_W-1 downto i*CM_W)))
                /= exp_m then
               q3_bad <= q3_bad + 1;
@@ -929,7 +1056,7 @@ begin
           end loop;
           for b in 0 to NBLK-1 loop
             if to_integer(signed(kr_hdr((b+1)*EXP_W-1 downto b*EXP_W)))
-               /= VEC(o_ke(q3_kp, q3_kh) + b) then
+               /= VEC(o_ke(s_of(q3_kl, q3_kp), q3_kh) + b) then
               q3_bad <= q3_bad + 1;
               report "tb_attn_kv_seam: the K header returned with pos "
                    & integer'image(q3_kp) & " is not that position's header"
@@ -940,7 +1067,8 @@ begin
         end if;
         if q3_vv = '1' then
           for i in 0 to KV_BLOCK-1 loop
-            exp_m := VEC(o_vm(q3_vp, q3_vh) + q3_vb*KV_BLOCK + i);
+            exp_m := VEC(o_vm(s_of(q3_vl, q3_vp), q3_vh)
+                         + q3_vb*KV_BLOCK + i);
             if to_integer(signed(vr_mant((i+1)*CM_W-1 downto i*CM_W)))
                /= exp_m then
               q3_bad <= q3_bad + 1;
@@ -954,7 +1082,7 @@ begin
           end loop;
           for b in 0 to NBLK-1 loop
             if to_integer(signed(vr_hdr((b+1)*EXP_W-1 downto b*EXP_W)))
-               /= VEC(o_ve(q3_vp, q3_vh) + b) then
+               /= VEC(o_ve(s_of(q3_vl, q3_vp), q3_vh) + b) then
               q3_bad <= q3_bad + 1;
               report "tb_attn_kv_seam: the V header returned with pos "
                    & integer'image(q3_vp) & " is not that position's header"
@@ -988,14 +1116,25 @@ begin
   begin
     assert VEC(0) = HEAD_DIM and VEC(1) = N_QH and VEC(2) = N_KVH
        and VEC(3) = KV_BLOCK and VEC(4) = N_ROT and VEC(5) = NTOK
+       and VEC(7) = NLAY
       report "tb_attn_kv_seam: attn_block_seq_vec.txt shape "
            & integer'image(VEC(0)) & "/" & integer'image(VEC(1)) & "/"
            & integer'image(VEC(2)) & "/" & integer'image(VEC(3)) & "/"
            & integer'image(VEC(4)) & "/" & integer'image(VEC(5))
+           & " NLAY " & integer'image(VEC(7))
            & " does not match this bench's generics" severity failure;
     assert NTOK <= MAXCTX
       report "tb_attn_kv_seam: NTOK must not exceed MAXCTX" severity failure;
-    assert rec_a(V_BASE, LAYER_SEL, N_KVH-1, MAXCTX-1) + REC_B <= NB
+    assert NLAY >= 2
+      report "tb_attn_kv_seam: NLAY must be at least 2.  At one layer the "
+           & "per-layer v_ref fold, the address equation's layer term, the "
+           & "QK-norm latch and the kv_layer property are all unfalsifiable "
+           & "-- which is the state this bench was in before 2026-08-29."
+      severity failure;
+    assert NLAY <= LAYERS
+      report "tb_attn_kv_seam: NLAY exceeds LAYERS, so the schedule names a "
+           & "layer neither DUT will accept" severity failure;
+    assert rec_a(V_BASE, NLAY-1, N_KVH-1, MAXCTX-1) + REC_B <= NB
       report "tb_attn_kv_seam: the modelled memory is too small for this "
            & "geometry" severity failure;
 
@@ -1016,8 +1155,13 @@ begin
     kv_seq_rst <= '0';
     wait until rising_edge(clk);
 
+    -- THE SCHEDULE.  Token-major, layer-minor: every layer sees token t
+    -- before any layer sees token t+1.  See the header.
     for t in 0 to NTOK-1 loop
-      tok_i   <= t;
+     for l in 0 to NLAY-1 loop
+      tok_i   <= s_of(l, t);
+      pos_i   <= t;
+      lay_i   <= l;
       cur_pos <= to_unsigned(t, POS_W);
       ctx_len <= to_unsigned(NTOK, POS_W);
       wait until rising_edge(clk);
@@ -1046,28 +1190,31 @@ begin
       -- t+1 is entitled to read these records now; they must be in memory
       -- NOW, not merely on their way.
       for h in 0 to N_KVH-1 loop
-        a := rec_a(K_BASE, LAYER_SEL, h, t);
+        a := rec_a(K_BASE, l, h, t);
         for b in 0 to NBLK-1 loop
           ev := to_integer(signed(mem.rdb(a + b)));
-          if ev /= VEC(o_ke(t, h) + b) then
+          if ev /= VEC(o_ke(s_of(l, t), h) + b) then
             q5_bad <= q5_bad + 1;
             report "tb_attn_kv_seam: Q5 -- token " & integer'image(t)
+                 & " layer " & integer'image(l)
                  & " signalled done, but its K record (head "
                  & integer'image(h) & ") block exponent " & integer'image(b)
                  & " is not in memory yet: read " & integer'image(ev)
-                 & ", expected " & integer'image(VEC(o_ke(t, h) + b))
+                 & ", expected "
+                 & integer'image(VEC(o_ke(s_of(l, t), h) + b))
                  & ".  C spec 2.7: token t+1 reads this through a DIFFERENT "
                  & "master and AXI orders nothing between masters."
               severity error;
             exit;
           end if;
         end loop;
-        a := rec_a(V_BASE, LAYER_SEL, h, t);
+        a := rec_a(V_BASE, l, h, t);
         for d in 0 to HEAD_DIM-1 loop
           ev := to_integer(signed(mem.rdb(a + CH_B + d)));
-          if ev /= VEC(o_vm(t, h) + d) then
+          if ev /= VEC(o_vm(s_of(l, t), h) + d) then
             q5_bad <= q5_bad + 1;
             report "tb_attn_kv_seam: Q5 -- token " & integer'image(t)
+                 & " layer " & integer'image(l)
                  & " signalled done with its V record (head "
                  & integer'image(h) & ") not yet in memory at element "
                  & integer'image(d) severity error;
@@ -1077,17 +1224,19 @@ begin
       end loop;
 
       for i in 1 to 8 loop wait until rising_edge(clk); end loop;
+     end loop;
     end loop;
 
     all_done <= true;
     wait until rising_edge(clk);
 
     -- ======================= the checks ================================
-    -- Q1: the values, per token, no tolerance.
-    for t in 0 to NTOK-1 loop
+    -- Q1: the values, per STEP, no tolerance.  A step is one (token,
+    -- layer) job and the oracle emits one row per step.
+    for t in 0 to NSTEP-1 loop
       if yn_got(t) /= NY then
         nerr := nerr + 1;
-        report "tb_attn_kv_seam: token " & integer'image(t) & " emitted "
+        report "tb_attn_kv_seam: step " & integer'image(t) & " emitted "
              & integer'image(yn_got(t)) & " elements, expected "
              & integer'image(NY) severity error;
       end if;
@@ -1129,46 +1278,58 @@ begin
       q1_cmp := q1_cmp + NY + 1;
     end loop;
 
-    -- Q2: the record image, at the address C spec 2.2's equation gives.
+    -- Q2: the record image, at the address C spec 2.2's equation gives, for
+    -- EVERY (layer, position).  The layer loop is what makes the equation's
+    -- `layer` term falsifiable: at one layer a design that dropped the term
+    -- writes to exactly the same bytes.
     q2_n := 0;
-    for t in 0 to NTOK-1 loop
+    for l in 0 to NLAY-1 loop
+     for p in 0 to NTOK-1 loop
       for h in 0 to N_KVH-1 loop
-        a := rec_a(K_BASE, LAYER_SEL, h, t);
+        a := rec_a(K_BASE, l, h, p);
         for b in 0 to NBLK-1 loop
-          if to_integer(signed(mem.rdb(a + b))) /= VEC(o_ke(t, h) + b) then
+          if to_integer(signed(mem.rdb(a + b)))
+             /= VEC(o_ke(s_of(l, p), h) + b) then
             if q2_n = 0 then
-              report "tb_attn_kv_seam: Q2 -- K record (token "
-                   & integer'image(t) & ", head " & integer'image(h)
+              report "tb_attn_kv_seam: Q2 -- K record (layer "
+                   & integer'image(l) & ", pos "
+                   & integer'image(p) & ", head " & integer'image(h)
                    & ") block exponent " & integer'image(b) & " at byte "
                    & integer'image(a + b) & " = "
                    & integer'image(to_integer(signed(mem.rdb(a + b))))
                    & ", the oracle says "
-                   & integer'image(VEC(o_ke(t, h) + b)) severity error;
+                   & integer'image(VEC(o_ke(s_of(l, p), h) + b))
+                severity error;
             end if;
             q2_n := q2_n + 1;
           end if;
         end loop;
         for d in 0 to HEAD_DIM-1 loop
-          if to_integer(signed(mem.rdb(a + CH_B + d))) /= VEC(o_km(t, h) + d)
+          if to_integer(signed(mem.rdb(a + CH_B + d)))
+             /= VEC(o_km(s_of(l, p), h) + d)
           then
             if q2_n = 0 then
-              report "tb_attn_kv_seam: Q2 -- K record (token "
-                   & integer'image(t) & ", head " & integer'image(h)
+              report "tb_attn_kv_seam: Q2 -- K record (layer "
+                   & integer'image(l) & ", pos "
+                   & integer'image(p) & ", head " & integer'image(h)
                    & ") mantissa " & integer'image(d) & " at byte "
                    & integer'image(a + CH_B + d) & " = "
                    & integer'image(to_integer(signed(mem.rdb(a + CH_B + d))))
                    & ", the oracle says "
-                   & integer'image(VEC(o_km(t, h) + d)) severity error;
+                   & integer'image(VEC(o_km(s_of(l, p), h) + d))
+                severity error;
             end if;
             q2_n := q2_n + 1;
           end if;
         end loop;
-        a := rec_a(V_BASE, LAYER_SEL, h, t);
+        a := rec_a(V_BASE, l, h, p);
         for b in 0 to NBLK-1 loop
-          if to_integer(signed(mem.rdb(a + b))) /= VEC(o_ve(t, h) + b) then
+          if to_integer(signed(mem.rdb(a + b)))
+             /= VEC(o_ve(s_of(l, p), h) + b) then
             if q2_n = 0 then
-              report "tb_attn_kv_seam: Q2 -- V record (token "
-                   & integer'image(t) & ", head " & integer'image(h)
+              report "tb_attn_kv_seam: Q2 -- V record (layer "
+                   & integer'image(l) & ", pos "
+                   & integer'image(p) & ", head " & integer'image(h)
                    & ") block exponent " & integer'image(b) & " mismatches"
                 severity error;
             end if;
@@ -1176,11 +1337,13 @@ begin
           end if;
         end loop;
         for d in 0 to HEAD_DIM-1 loop
-          if to_integer(signed(mem.rdb(a + CH_B + d))) /= VEC(o_vm(t, h) + d)
+          if to_integer(signed(mem.rdb(a + CH_B + d)))
+             /= VEC(o_vm(s_of(l, p), h) + d)
           then
             if q2_n = 0 then
-              report "tb_attn_kv_seam: Q2 -- V record (token "
-                   & integer'image(t) & ", head " & integer'image(h)
+              report "tb_attn_kv_seam: Q2 -- V record (layer "
+                   & integer'image(l) & ", pos "
+                   & integer'image(p) & ", head " & integer'image(h)
                    & ") mantissa " & integer'image(d) & " mismatches"
                 severity error;
             end if;
@@ -1188,6 +1351,7 @@ begin
           end if;
         end loop;
       end loop;
+     end loop;
     end loop;
     if q2_n /= 0 then
       nerr := nerr + 1;
@@ -1197,22 +1361,30 @@ begin
 
     -- Q6's coverage half.  Token t reads positions 0..t-1, so over the whole
     -- sequence position p is read by tokens p+1..NTOK-1, i.e. NTOK-1-p times.
-    for h in 0 to N_KVH-1 loop
+    -- Each LAYER runs the same sequence independently, so the count is the
+    -- same per layer.  A read that went to the wrong layer's region shows up
+    -- as one bucket over and one bucket under, which no per-layer-blind
+    -- count could distinguish from a correct run.
+    for l in 0 to NLAY-1 loop
+     for h in 0 to N_KVH-1 loop
       for p in 0 to NTOK-1 loop
         for b in 0 to NBLK-1 loop
-          if cov((h*MAXCTX + p)*NBLK + b) /= NTOK-1-p then
+          if cov(((l*N_KVH + h)*MAXCTX + p)*NBLK + b) /= NTOK-1-p then
             nerr := nerr + 1;
-            report "tb_attn_kv_seam: K record (head " & integer'image(h)
+            report "tb_attn_kv_seam: K record (layer " & integer'image(l)
+                 & ", head " & integer'image(h)
                  & ", pos " & integer'image(p) & ", block "
                  & integer'image(b) & ") was read "
-                 & integer'image(cov((h*MAXCTX + p)*NBLK + b))
+                 & integer'image(cov(((l*N_KVH + h)*MAXCTX + p)*NBLK + b))
                  & " times over the sequence, expected "
                  & integer'image(NTOK-1-p) severity error;
             exit;
           end if;
-          if cov(N_KVH*MAXCTX*NBLK + (h*MAXCTX + p)*NBLK + b) /= NTOK-1-p then
+          if cov(NLAY*N_KVH*MAXCTX*NBLK
+                 + ((l*N_KVH + h)*MAXCTX + p)*NBLK + b) /= NTOK-1-p then
             nerr := nerr + 1;
-            report "tb_attn_kv_seam: V record (head " & integer'image(h)
+            report "tb_attn_kv_seam: V record (layer " & integer'image(l)
+                 & ", head " & integer'image(h)
                  & ", pos " & integer'image(p) & ", block "
                  & integer'image(b) & ") was read the wrong number of times"
               severity error;
@@ -1220,8 +1392,10 @@ begin
           end if;
         end loop;
       end loop;
+     end loop;
     end loop;
 
+    if q8_bad /= 0 then nerr := nerr + 1; end if;
     if q3_bad /= 0 then nerr := nerr + 1; end if;
     if q4_bad /= 0 then nerr := nerr + 1; end if;
     if q5_bad /= 0 then nerr := nerr + 1; end if;
@@ -1250,13 +1424,17 @@ begin
     if nerr = 0 then
       report "tb_attn_kv_seam: PASS -- " & integer'image(NTOK)
            & " tokens at cur_pos 0.." & integer'image(NTOK-1)
-           & " through rtl/attn_kv_axi.vhd over AXI at " & integer'image(RD_LAT)
+           & " x " & integer'image(NLAY)
+           & " layers INTERLEAVED token-major (" & integer'image(NSTEP)
+           & " jobs) through rtl/attn_kv_axi.vhd over AXI at "
+           & integer'image(RD_LAT)
            & "-cycle read latency, BIT-EXACT against "
            & "ref/attn_block_seq_vec.c over " & integer'image(q1_cmp)
            & " output values and "
-           & integer'image(NTOK*N_KVH*2*(NBLK+HEAD_DIM))
+           & integer'image(NSTEP*N_KVH*2*(NBLK+HEAD_DIM))
            & " record bytes in HBM, every returned beat matched to the "
-           & "position it was requested for, k_base=" & integer'image(K_BASE)
+           & "layer and position it was requested for, k_base="
+           & integer'image(K_BASE)
            & " v_base=" & integer'image(V_BASE)
            & " (neither 4 KB aligned), MAXCTX=" & integer'image(MAXCTX)
            & ", longest quiet stretch " & integer'image(wd_max)

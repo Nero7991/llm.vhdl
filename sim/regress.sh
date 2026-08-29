@@ -1022,8 +1022,9 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     attn_kv_axi_vec.txt)    echo "256 32 2 2 32 1 20 20260828" ;;
     # ref/attn_block_seq_vec.c, the MULTI-TOKEN oracle for the attn_block <->
     # attn_kv_axi seam.  Argument order is HEAD_DIM N_QH N_KVH KV_BLOCK N_ROT
-    # NTOK SEED and it must match sim/tb_attn_kv_seam.vhd's generic defaults;
-    # the vector file carries a shape header the bench asserts against them.
+    # NTOK NLAY SEED and it must match sim/tb_attn_kv_seam.vhd's generic
+    # defaults; the vector file carries a shape header, NLAY included, that
+    # the bench asserts against them.
     # KV_BLOCK 16 is the SMALLEST legal value: rtl/attn_kv_axi.vhd's record is
     # a byte layout on a 16-byte granule, so KV_BLOCK*CM_W/8 must be a
     # multiple of 16, and HEAD_DIM 64 then gives REC_B = 80, which is not a
@@ -1034,10 +1035,30 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # minimum, and at most seeds every token's own record already carries the
     # sequence minimum, so resetting the fold per TOKEN changes nothing -- the
     # oracle itself is byte-identical under that mutation at seeds 1, 3, 7, 11,
-    # 42, 123, 999, 20260828 and 31337.  At seed 2 it moves 358 of the vector
-    # file's 5,328 integers, so the mutation is observable and the bench's
-    # v_ref property has teeth.  Do not "tidy" this back to a round number.
-    attn_block_seq_vec.txt) echo "64 4 2 16 16 4 2" ;;
+    # 42, 123, 999, 20260828 and 31337.  At seed 2 it moves 358 integers, so
+    # the mutation is observable and the bench's v_ref property has teeth.
+    # Do not "tidy" this back to a round number.
+    #
+    # RE-MEASURED 2026-08-29 at NLAY = 2, where the file is 10,645 integers
+    # (it was 5,328 at one layer).  Both v_ref mutations still bite and they
+    # bite in DISJOINT places, which is why both rows are kept:
+    #   per-TOKEN reset  moves 358 integers, ALL of them layer 0's outputs at
+    #                    tokens 1..3.  Layer 1 does not move at all: at this
+    #                    seed its token-0 record already carries its sequence
+    #                    minimum, so the property is carried by ONE layer.
+    #   SHARED-across-layers fold (defect C1) moves 371, ALL of them layer 1's
+    #                    outputs, at every token INCLUDING token 0.  Layer 0
+    #                    runs first at each token so nothing leaks into it.
+    # Neither moves a single RECORD byte, so Q2 cannot see either one; the
+    # value oracle Q1 is the only check with teeth here.
+    #
+    # NLAY is 2 and it must not go back to 1.  The schedule interleaves the
+    # layers token-major, and it is the ONLY thing in this repo that can
+    # falsify the per-(layer, KV head) v_ref fold (defect C1), the address
+    # equation's `layer` term, the per-layer QK-norm latch, or `kv_layer`.
+    # At NLAY = 1 all four are bit-exact under their own defects; the
+    # generator refuses NLAY < 2 for that reason.
+    attn_block_seq_vec.txt) echo "64 4 2 16 16 4 2 2" ;;
     # attn_kv_quant_vec.txt and attn_score_q12_vec.txt are COMMITTED in sim/.
     # Without a row here the `[ -e "$SIM/$v" ] && [ -z "$args" ]` test above
     # skips generation entirely, so their generators never ran on a gate run

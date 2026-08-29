@@ -13,6 +13,14 @@
 #       every other mutate_*.sh in this tree works.  These test the half of
 #       the fix that lives in the block: the gate, and the request being
 #       driven a state earlier than the issue.
+#   Lx  the LAYER dimension, added 2026-08-29 with the interleaved schedule.
+#       Mixed flavour: L2/L3 are seam wires, L1/L6 edit the block and L4/L5
+#       edit the cache.  EVERY ONE of them is bit-exact green on the
+#       single-layer stream this bench ran until then -- MEASURED for L1, the
+#       restored defect C1, which the pre-change bench passes while reporting
+#       "BIT-EXACT ... 1028 output values".  They are grouped because what
+#       they have in common is not where they live but what makes them
+#       visible.
 #
 # Same discipline as sim/mutate_attn_kv_axi.sh: every mutation is well-formed
 # VHDL and in bounds, so a KILL is the checker noticing and not the language
@@ -65,7 +73,7 @@ NKILL=0; NABORT=0; NSURV=0; NTOT=0
 cd "$MUT_REPO"
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 mkdir -p "$SCRATCH"
-VECARGS="64 4 2 16 16 4 2"
+VECARGS="64 4 2 16 16 4 2 2"   # ... NTOK NLAY SEED; NLAY=2 is load bearing
 
 FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_emit.vhd rtl/attn_gate.vhd rtl/attn_kv_quant.vhd
@@ -74,11 +82,15 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/rmsnorm_rs.vhd rtl/attn_recip.vhd rtl/attn_twiddle.vhd
        rtl/attn_kv_axi.vhd rtl/attn_block.vhd sim/tb_attn_kv_seam.vhd"
 
-# The clean run is 229 us.  --stop-time 20 ms is an 88x margin; the bench's own
-# WDOG (20,000 cycles of dead air, against a measured worst legitimate stretch
-# of 2,137) fires long before that in every stall seen so far, so a larger stop
-# time buys nothing and every hung run pays for it.
-STOP=20ms
+# The clean run is 458 us -- it was 229 us until 2026-08-29, when the schedule
+# gained a second interleaved LAYER and so twice the jobs.  --stop-time 40 ms
+# keeps the same 87x margin the 20 ms figure bought at the old length; the
+# bench's own WDOG (20,000 cycles of dead air, against a measured worst
+# legitimate stretch of 2,137) fires long before that in every stall seen so
+# far, so a larger stop time buys nothing and every hung run pays for it.
+# The rows that raise RD_LAT to 2000 or AW_LAT to 4000 are the ones this
+# actually protects: doubling the job count doubled their sim time too.
+STOP=40ms
 
 cc -O2 -w -I ref -o "$SCRATCH/genseq" ref/attn_block_seq_vec.c -lm || exit 2
 
@@ -130,7 +142,7 @@ run_case() {
     NKILL=$((NKILL+1))
     echo "$tag  KILLED     -- $desc"
     grep -vE "metavalue" "$dir/run/run.log" \
-      | grep -E "MISMATCH|Q1 --|Q2 --|Q5 --|sweep read pos|kr_en was|vr_en was|record write beat|beat \(head|was read|RESULT bad" \
+      | grep -E "MISMATCH|Q1 --|Q2 --|Q5 --|Q8 --|sweep read pos|kr_en was|vr_en was|record write beat|beat \(head|was read|RESULT bad" \
       | head -1 | sed 's/^/        /' | cut -c1-170
   else
     NABORT=$((NABORT+1))
@@ -206,6 +218,36 @@ if n != 1:
     sys.exit(2)
 open(dst, "w").write(s.replace(old, new))
 PY
+}
+
+# ---------------------------------------------------------------------------
+# mutate_rtl_n <tag> <file> <count> <old> <new>   -- like mutate_rtl, but the
+# anchor is expected EXACTLY <count> times and every one is replaced.
+# ---------------------------------------------------------------------------
+# Needed because defect C1 is not a single site: `attn_block` indexes its
+# v_ref fold at FOUR places, and a mutation that removed the layer term from
+# only one of them would be a design neither correct nor the defect, so a kill
+# would say nothing about whether the bench can see C1.  The count is required
+# rather than "replace all" so that a future edit which adds or removes a site
+# turns this into a loud anchor failure instead of a quietly partial mutation.
+mutate_rtl_n() {
+  local tag="$1" file="$2" cnt="$3" old="$4" new="$5"
+  local dir="$SCRATCH/${tag}_src"
+  rm -rf "$dir"; mkdir -p "$dir"
+  python3 - "$file" "$dir/$(basename "$file")" "$cnt" "$old" "$new" <<'PY'
+import sys
+src, dst, cnt, old, new = (sys.argv[1], sys.argv[2], int(sys.argv[3]),
+                           sys.argv[4], sys.argv[5])
+s = open(src).read()
+n = s.count(old)
+if n != cnt:
+    sys.stderr.write("MUTATION ANCHOR MATCHED %d TIMES, expected %d\n"
+                     % (n, cnt))
+    sys.exit(2)
+open(dst, "w").write(s.replace(old, new))
+PY
+  if [ $? -ne 0 ]; then echo ""; return; fi
+  echo "$dir"
 }
 
 echo "============ mutations of the attn_block <-> attn_kv_axi seam ============"
@@ -328,6 +370,57 @@ D=$(mutate_rtl R7c rtl/attn_kv_axi.vhd \
 if [ -n "$D" ]; then run_case R7c "kw_rdy tied high: neither the record buffer nor the flush holds the writer off" "$D"
 else echo "R7c  ANCHOR FAILED"; fi
 if [ -n "$D" ]; then run_case R7d "the same, with the write slave refusing AW for 4000 cycles so the record buffer really does back up" "$D" -gAW_LAT=4000 -gWDOG=200000; fi
+
+# ---- the LAYER dimension.  Every row below is bit-exact green on the
+# ---- single-layer stream this bench ran until 2026-08-29, so each one
+# ---- measures the interleaved schedule and nothing else.
+run_case L2 "the CACHE is configured for layer 0 while the block runs the schedule's layer: the two masters agree with each other and disagree with the block" "" -gMUT_KV_LAY0=true
+run_case L3 "the BLOCK is run at layer 0 while the cache is configured for the schedule's layer" "" -gMUT_BLK_LAY0=true
+
+# DEFECT C1 ITSELF, put back.  rtl/attn_block.vhd holds ONE v_ref fold array
+# and time-shares it across every attention layer; indexing it by head alone
+# lets each layer's write-time minimum leak into every other layer's alignment
+# shift.  Four sites, mutated together -- see mutate_rtl_n.
+D=$(mutate_rtl_n L1a rtl/attn_block.vhd 3 \
+    'vref_r(lay_r*N_KVH + kvh)' 'vref_r(kvh)')
+if [ -n "$D" ]; then
+  add_mut "$D" rtl/attn_block.vhd 'vref_r(lay_r*N_KVH + h)' 'vref_r(h)'
+  run_case L1 "defect C1 restored: the v_ref fold indexed by KV HEAD ALONE, with no layer term, at all four sites" "$D"
+else echo "L1 ANCHOR FAILED"; NTOT=$((NTOT+1)); fi
+
+# The address equation's layer term, in the CACHE, where both masters share
+# it.  L4 drops it; L5 keeps it and mirrors the layer.  L5 is the one that
+# only Q2 can catch: every read is served, every returned beat matches the
+# record the bench asked for, and the records are simply in the wrong region.
+D=$(mutate_rtl L4 rtl/attn_kv_axi.vhd \
+    'idx := (lay*N_KVH + hd)*MAXCTX + ps;' \
+    'idx := hd*MAXCTX + ps;')
+if [ -n "$D" ]; then run_case L4 "the address equation's layer term DROPPED in attn_kv_axi, for both masters at once (C spec 2.2)" "$D"
+else echo "L4 ANCHOR FAILED"; NTOT=$((NTOT+1)); fi
+
+D=$(mutate_rtl L5 rtl/attn_kv_axi.vhd \
+    'lay_r    <= layer;' \
+    'lay_r    <= LAYERS-1-layer;')
+if [ -n "$D" ]; then run_case L5 "attn_kv_axi MIRRORS the layer: both masters agree, every read is served, and every record is in the wrong layer's region" "$D"
+else echo "L5 ANCHOR FAILED"; NTOT=$((NTOT+1)); fi
+
+# L6 exists because L2..L5 all die on Q5 before Q8 is ever consulted, so
+# without it Q8 would be a check never shown to fail.  This is the one shape
+# Q8 owns: the block's records go to the right place, its own arithmetic is
+# right, and only the layer ordinal it PUBLISHES is wrong -- which is exactly
+# what rtl/llama_top.vhd's assert watches for, because a cache that believed
+# it would put a whole layer's records at another layer's addresses and every
+# read would still be served.
+D=$(mutate_rtl L6 rtl/attn_block.vhd \
+    'kv_layer    <= to_unsigned(lay_r, clog2(LAYERS));' \
+    'kv_layer    <= to_unsigned(0, clog2(LAYERS));')
+if [ -n "$D" ]; then run_case L6 "attn_block publishes kv_layer = 0 regardless of the layer it was configured for (Q8's own shape)" "$D"
+else echo "L6 ANCHOR FAILED"; NTOT=$((NTOT+1)); fi
+
+# L7 is the teeth check for the per-layer QK-norm weight AXIS itself, not for
+# a defect.  If the bench had wired layer 0's weights to every job, L3 would
+# still kill, the axis would be dead and nothing in this harness would say so.
+run_case L7 "the block is handed the OTHER layer's QK-norm weights, everything else correct (does the per-layer weight axis reach the DUT at all?)" "" -gMUT_WN_SWAP=true
 
 # ---- controls.  A mutation that is only killed under an unusual slave
 # setting has proved nothing unless the CLEAN design passes under that same
