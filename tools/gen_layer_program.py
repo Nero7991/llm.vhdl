@@ -121,6 +121,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gen_mv4i_desc as G          # noqa: E402  the ONE matvec job, reused
 import gen_lmhead_windows as W     # noqa: E402  the ONE window derivation
+import hbm_map as HM               # noqa: E402  the ONE HBM address space
 
 # --------------------------------------------------------------- the opcodes
 # rtl/llama_map_pkg.vhd, which sim/seq_tbl_pkg.vhd asserts equality with.
@@ -724,6 +725,75 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
     return out, m
 
 
+# ====================================================== the descriptor arena
+def place_desc_arena(a, mani, all_steps, sel):
+    """Where the subsystem A descriptors go, DECIDED BY `tools/hbm_map.py`.
+
+    THIS USED TO BE FOUR LINES OF LOCAL ARITHMETIC AND IT PRODUCED A SILENT
+    WRONG TOKEN.  It read:
+
+        size = int(mani["hbm"].get("size", 1 << 33))
+        need = 512 * max(1, sum(1 for st in sel if st.opcode == OP_A_JOB))
+        desc_base = (size - need) & ~0xFFF
+
+    which anchors at the TOP of the device -- and so does
+    `server/pl_backend.c::pl_derive_bases()`, which puts the host's logits
+    writeback and D program there.  Neither could see the other.  MEASURED at
+    the 9B shape (TRACK WEIGHTS, 2026-08-29): the arena landed at
+    0x1_FFFD_9000 and took 153,664 B out of the logits row, which is 38,416
+    float32 slots, the top 15.47% of the 248,320-entry vocabulary.  Whichever
+    master wrote last won, and the symptom is a wrong token with no fault.
+
+    Two other things were wrong with those four lines and are fixed here:
+
+      * `need` was sized from `sel`, the SELECTED steps.  So `--layer 3` and
+        `--token` put the descriptors at DIFFERENT addresses out of the same
+        program.  The arena is now sized from the whole token program, so the
+        base is a property of the model and not of the command line.
+      * the per-job stride 512 was a literal.  It is
+        `desc_maxb * axi_dw/8` from `gen_mv4i_desc.FK33`, and `hbm_map` takes
+        it from there.
+
+    The check is not advisory.  If the resulting map has ANY overlap this
+    raises SystemExit, so a colliding arena cannot be emitted at all.  That is
+    the point: a detector run by hand is not what failed here, mutual
+    blindness between two producers is."""
+    if a.desc_base is not None and not mani:
+        return a.desc_base
+    if not mani:
+        raise SystemExit(
+            "gen_layer_program: the A descriptors need an address and there is "
+            "no manifest to place them against.  Pass --manifest (note its "
+            "default is the PRE-QKV-PAD set) or --desc-base, and if you pass "
+            "--desc-base without a manifest NOTHING checks it for overlap.")
+
+    n_full = max(1, sum(1 for st in all_steps if st.opcode == OP_A_JOB))
+    n_sel = sum(1 for st in sel if st.opcode == OP_A_JOB)
+    # strict_arena=True: a PRODUCER may not guess.  If the host blocks cannot
+    # be modelled there is no floor for 'below-host' to sit under, and emitting
+    # descriptors at an unchecked address is the defect, not a fallback.
+    m = HM.plan(mani, desc_jobs=n_full, desc_base=a.desc_base,
+                policy=a.desc_policy, max_chunk=a.max_chunk,
+                strict_arena=True)
+    fails = m.check()
+    if fails:
+        raise SystemExit(
+            "gen_layer_program: REFUSING to emit A descriptors -- the HBM map "
+            "has %d overlap/placement fault(s).  See tools/hbm_map.py.\n"
+            % len(fails) + "\n".join("  " + s for s in fails))
+    arena = [r for r in m.regions if r.kind == "desc"]
+    if not arena:
+        raise SystemExit("gen_layer_program: hbm_map placed no arena")
+    if a.print:
+        print("A descriptor arena %s .. %s (%d B, %d jobs in the full token "
+              "program, %d selected here); checked disjoint against %d regions "
+              "from %d allocators"
+              % (HM.h(arena[0].base), HM.h(arena[0].end), arena[0].nbytes,
+                 n_full, n_sel, len(m.regions),
+                 len({r.owner for r in m.regions})))
+    return arena[0].base
+
+
 # ============================================================== manifest check
 def check_against_manifest(s, manifest_path, layer=0):
     """The 9B shape constants are copied from `rtl/model_cfg_pkg.vhd`.  The ONE
@@ -858,7 +928,21 @@ def main(argv=None):
                          "per-token runtime value from the previous stage")
     ap.add_argument("--desc-base", type=G.parse_int, default=None,
                     help="HBM byte address of the first A descriptor.  Nothing "
-                         "in the manifest reserves descriptor space")
+                         "in the manifest reserves descriptor space, so this "
+                         "is CHECKED by tools/hbm_map.py against the host's "
+                         "blocks and the weight image and REFUSED on overlap")
+    ap.add_argument("--desc-policy", choices=("below-host", "top-down"),
+                    default="below-host",
+                    help="how tools/hbm_map.py places the arena when "
+                         "--desc-base is not given.  'top-down' is the "
+                         "HISTORIC default of this file and it COLLIDES with "
+                         "pl_derive_bases(); it is kept only so the refusal "
+                         "can be demonstrated")
+    ap.add_argument("--max-chunk", type=int, default=512,
+                    help="pl_open()'s max_chunk.  It sets the host R_X span, "
+                         "which is what the arena is placed below, so it "
+                         "MOVES the arena.  Not a manifest field: it comes "
+                         "from the card's CAPS at open time")
     ap.add_argument("--nsub-w", type=int, default=None,
                     help="D header nsub_w.  Default: the manifest geometry's "
                          "nports_w (24 on the FK33).  The VHDL generators "
@@ -977,15 +1061,7 @@ def main(argv=None):
                 "  It is the activation vector's BFP exponent, a per-token "
                 "runtime value the previous stage produces; nothing in the "
                 "manifest supplies it.  Use --no-a for the D table alone.")
-        desc_base = a.desc_base
-        if desc_base is None and mani:
-            # Nothing in the manifest reserves descriptor space.  Take it from
-            # the TOP of HBM, aligned down, and state the cost.
-            hbm = mani.get("hbm", {})
-            size = int(hbm.get("size", 1 << 33))
-            need = 512 * max(1, sum(1 for st in sel
-                                    if st.opcode == OP_A_JOB))
-            desc_base = (size - need) & ~0xFFF
+        desc_base = place_desc_arena(a, mani, steps, sel)
         ajobs, mani = a_jobs_for(sel, a.manifest, a.x_exp, desc_base,
                                  check_hash=not a.no_hash)
         if outdir:

@@ -58,7 +58,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     char *buf = NULL;
     long n = 0, i, hbm_depth = -1;
     int depth = 0, rc = -1, k;
-    field f[10];
+    field f[12];      /* [10] and [11] are OPTIONAL; see the header */
 
     if (!path || !m) return -1;
     memset(m, 0, sizeof *m);
@@ -74,7 +74,12 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     f[7].name = "kv_base";            f[7].slot = &m->kv_base;
     f[8].name = "kv_bytes_per_token"; f[8].slot = &m->kv_bytes_per_token;
     f[9].name = "max_context_tokens"; f[9].slot = &m->max_context_tokens;
-    for (k = 0; k < 10; k++) f[k].seen = 0;
+    /* OPTIONAL from here on -- a set packed before the descriptor arena
+     * existed is still a valid set.  See the header for why these two are
+     * not required and why absence is reported rather than defaulted. */
+    f[10].name = "desc_arena_base";   f[10].slot = &m->desc_arena_base;
+    f[11].name = "desc_arena_bytes";  f[11].slot = &m->desc_arena_bytes;
+    for (k = 0; k < 12; k++) f[k].seen = 0;
 
     fp = fopen(path, "rb");
     if (!fp) { fprintf(stderr, "fk33_manifest: %s: %s\n", path, strerror(errno));
@@ -111,7 +116,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
                 continue;
             }
             if (depth != hbm_depth) continue;   /* nested: not our key */
-            for (k = 0; k < 10; k++) {
+            for (k = 0; k < 12; k++) {
                 size_t len = strlen(f[k].name);
                 if ((size_t)(q1 - q0 - 1) != len) continue;
                 if (strncmp(buf + q0 + 1, f[k].name, len)) continue;
@@ -143,6 +148,16 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
                 "reads as \"no constraint\".\n", path, f[k].name, f[k].seen);
         return -1;
     }
+    for (k = 10; k < 12; k++) {
+        if (f[k].seen <= 1) continue;
+        fprintf(stderr, "fk33_manifest: %s: hbm.%s appears %d times, want 0 "
+                "or 1.\n", path, f[k].name, f[k].seen);
+        return -1;
+    }
+    if ((f[10].seen != 0) != (f[11].seen != 0))
+        return fail(path, "hbm.desc_arena_base and hbm.desc_arena_bytes must "
+                          "be given together or not at all; one alone is a "
+                          "region with no length or a length with no place");
 
     /* Structural sanity, so a manifest that parses but cannot be true is
      * refused here rather than producing a base that looks derived. */

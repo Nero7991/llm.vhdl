@@ -89,6 +89,22 @@ import sys
 import tempfile
 import time
 
+# THE WHOLE-MAP CHECK.  This file's own preflight sees the packed objects and
+# nothing else, so it would happily load an image under a top of HBM where the
+# subsystem A descriptor arena is sitting on the logits writeback -- MEASURED
+# 2026-08-29, 153,664 B of it, the top 15.47% of the vocabulary, and the
+# symptom is a wrong token.  `tools/hbm_map.py` is the one model of the whole
+# 8 GiB and is consulted here before a byte moves.  Absent (a stripped
+# checkout), the per-object checks below still run and the gap is STATED, not
+# swallowed: silence about a check that did not run is how this got here.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "..", "..", "tools"))
+try:
+    import hbm_map as HM
+except Exception as _e:                                   # pragma: no cover
+    HM = None
+    _HM_WHY = str(_e)
+
 HBM_SIZE = 0x2_0000_0000
 CHUNK = 8 << 20
 ALIGN = 4096
@@ -250,7 +266,8 @@ def select(mani, only):
     return sorted(ents, key=lambda e: int(e["hbm_offset"]))
 
 
-def preflight(mani, ents, root, need_files):
+def preflight(mani, ents, root, need_files, desc_jobs=311,
+              max_chunk=512):
     """Everything that can be wrong BEFORE a byte moves.  A load is minutes; a
     refusal is a second."""
     bad = []
@@ -281,6 +298,25 @@ def preflight(mani, ents, root, need_files):
         if b0 < a1:
             bad.append(f"OVERLAP: {an} {a0:#x}..{a1:#x} and {bn} "
                        f"{b0:#x}..{b1:#x}")
+
+    # ---- the WHOLE map, not just the objects this command was given.
+    #
+    # The three allocators are pack_model_fk33.py (these objects), the A
+    # descriptor arena and pl_derive_bases()'s host blocks.  A load that places
+    # perfect weights under a colliding top is still a wrong token, and it is
+    # the same manifest that determines both, so it is checked here.
+    if HM is None:
+        bad.append("tools/hbm_map.py could not be imported (%s), so the "
+                   "descriptor arena and the host blocks were NOT checked "
+                   "against this image.  That is the check the 2026-08-29 "
+                   "collision needed." % _HM_WHY)
+    else:
+        try:
+            m = HM.plan(mani, desc_jobs=desc_jobs, max_chunk=max_chunk)
+            for msg in m.check():
+                bad.append("WHOLE MAP: " + msg)
+        except SystemExit as e:
+            bad.append("WHOLE MAP: hbm_map refused to build a map: %s" % e)
     return bad
 
 

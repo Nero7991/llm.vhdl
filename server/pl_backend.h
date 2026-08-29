@@ -135,6 +135,22 @@ typedef struct {
     uint64_t l_base;              /* logits block;     0 -> derive */
     uint64_t desc_ptr;            /* per-token D program, 512-B aligned; 0 -> derive */
 
+    /* The subsystem A descriptor arena, which `tools/gen_layer_program.py`
+     * places and which used to be invisible here.  See pl_hbm_bases.
+     *
+     *   desc_arena_bytes  0  -> no arena is declared.  pl_open WARNS once:
+     *                           the three blocks above are then checked
+     *                           against each other and the image and against
+     *                           NOTHING ELSE, and the arena is free to land
+     *                           on the logits row exactly as it did.
+     *                     >0 -> checked, and placed by pl_place_desc_arena()
+     *                           if desc_arena_base is 0.
+     *   desc_arena_base   an explicit base (from the manifest's
+     *                     hbm.desc_arena_base, or from whatever ran
+     *                     gen_layer_program.py).  Checked, never trusted. */
+    uint64_t desc_arena_base;
+    uint64_t desc_arena_bytes;
+
     /* Where the card's own bytes end.  Two ways to say it, and either is
      * enough; the manifest is preferred because it is the artefact the loader
      * actually used.
@@ -200,11 +216,47 @@ typedef struct {
     uint64_t desc_ptr, desc_span;
     uint64_t hbm_top, reserved_end;
     uint64_t kv_tokens_cost;
+
+    /* THE FOURTH REGION, AND THE ONE THIS STRUCT USED NOT TO KNOW ABOUT.
+     *
+     * `tools/gen_layer_program.py` places subsystem A's per-job descriptor
+     * arena, and it too anchored at the TOP of HBM.  MEASURED 2026-08-29 at
+     * the 9B shape: the arena landed at 0x1_FFFD_9000 and took 153,664 B out
+     * of the logits row -- 38,416 float32 slots, the top 15.47% of the
+     * 248,320-entry vocabulary -- plus 3,584 B of the D program page.
+     * Whichever master wrote last won, and the symptom is a wrong token with
+     * no fault raised anywhere.  Neither allocator could see the other:
+     * pl_check_bases() had no concept of an arena, and gen_layer_program.py
+     * has no concept of these three blocks.
+     *
+     * ZERO SPAN MEANS "NOT DECLARED", and pl_open then says so once on stderr
+     * rather than pretending the three blocks are the whole story.  That is
+     * deliberate: silence would read as "checked and clean", which is exactly
+     * how this defect survived.
+     *
+     * WHICH ALLOCATOR OWNS THE TOP OF HBM IS AN OPEN DECISION.  Two mechanisms
+     * are on the table -- a region declared in the manifest that both
+     * consumers read, or a fourth block allocated here by
+     * pl_place_desc_arena().  Both are supported below; neither is chosen. */
+    uint64_t arena_base, arena_span;
 } pl_hbm_bases;
 
 int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
                     uint64_t hbm_top, uint64_t reserved_end,
                     uint64_t kv_bytes_per_token, pl_hbm_bases *out);
+
+/* Place the subsystem A descriptor arena in the first 4 KB-aligned block below
+ * `x_base`, and re-run pl_check_bases().  `arena_bytes` 0 clears the arena.
+ *
+ * This is mechanism (b): pl_derive_bases() owns the arena too.  It is offered,
+ * not imposed -- a caller that gets the arena from a manifest sets
+ * `arena_base`/`arena_span` directly and never calls this.  Either way
+ * pl_check_bases() is the single gate.
+ *
+ * The placement mirrors `tools/hbm_map.py --policy below-host`, and that
+ * file's own C cross-check compiles this translation unit and requires the
+ * two to agree address for address.  Returns 0, or a FK33_SEAM_ERR_* code. */
+int pl_place_desc_arena(pl_hbm_bases *b, uint64_t arena_bytes);
 
 /* The check the derivation is not allowed to skip, exported so a caller that
  * supplies its own bases can run it first.  `reserved_end` 0 disables only the

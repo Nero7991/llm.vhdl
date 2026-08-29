@@ -179,14 +179,57 @@ int pl_check_bases(const pl_hbm_bases *b)
     if (b->desc_ptr < b->l_base + b->l_span && b->l_base < b->desc_ptr + b->desc_span)
         return FK33_SEAM_ERR_POS;
 
+    /* THE FOURTH REGION.  `tools/gen_layer_program.py` places subsystem A's
+     * descriptor arena, top-down from the same end of the device, and until
+     * 2026-08-29 this function had no concept of it.  MEASURED at the 9B
+     * shape: 153,664 B of the logits row and 3,584 B of the D program page,
+     * under the arena.  A span of zero means the caller declared no arena,
+     * and pl_open says so out loud rather than leaving the silence to read as
+     * "checked".  It is checked here on exactly the same terms as the other
+     * three, because there is no version of this where one region gets a
+     * weaker rule than its neighbours. */
+    if (b->arena_span) {
+        if (b->arena_base % 512ull) return FK33_SEAM_ERR_ALIGN;
+        if (b->arena_base + b->arena_span > top) return FK33_SEAM_ERR_POS;
+        if (b->arena_base < FK33_HBM_STACK_LINE &&
+            b->arena_base + b->arena_span > FK33_HBM_STACK_LINE)
+            return FK33_SEAM_ERR_STACK;
+        if (b->arena_base < b->x_base + b->x_span &&
+            b->x_base < b->arena_base + b->arena_span)
+            return FK33_SEAM_ERR_POS;
+        if (b->arena_base < b->l_base + b->l_span &&
+            b->l_base < b->arena_base + b->arena_span)
+            return FK33_SEAM_ERR_POS;
+        if (b->arena_base < b->desc_ptr + b->desc_span &&
+            b->desc_ptr < b->arena_base + b->arena_span)
+            return FK33_SEAM_ERR_POS;
+    }
+
     /* THE CHECK THIS WHOLE FILE EXISTS FOR.  Anything below `reserved_end`
      * belongs to the card: the weight image, the GDN state, the KV cache. */
     if (b->reserved_end) {
         if (b->x_base    < b->reserved_end) return FK33_SEAM_ERR_POS;
         if (b->l_base    < b->reserved_end) return FK33_SEAM_ERR_POS;
         if (b->desc_ptr  < b->reserved_end) return FK33_SEAM_ERR_POS;
+        if (b->arena_span && b->arena_base < b->reserved_end)
+            return FK33_SEAM_ERR_POS;
     }
     return 0;
+}
+
+int pl_place_desc_arena(pl_hbm_bases *b, uint64_t arena_bytes)
+{
+    uint64_t need;
+    if (!b) return FK33_SEAM_ERR_POS;
+    if (!arena_bytes) {
+        b->arena_base = b->arena_span = 0;
+        return pl_check_bases(b);
+    }
+    need = (arena_bytes + 4095ull) / 4096ull * 4096ull;
+    if (b->x_base < need) return FK33_SEAM_ERR_POS;
+    b->arena_base = align_down(b->x_base - need, 4096ull);
+    b->arena_span = need;
+    return pl_check_bases(b);
 }
 
 int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
@@ -326,6 +369,8 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
         fk33_manifest man;
         pl_hbm_bases b, want;
         uint64_t hbm_top, reserved_end = 0, kv_bpt = 0;
+        uint64_t arena_base = o->desc_arena_base;
+        uint64_t arena_bytes = o->desc_arena_bytes;
         int have_manifest = 0, e;
         char mbuf[700];
 
@@ -338,6 +383,13 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
             have_manifest = 1;
             reserved_end = man.reserved_end;
             kv_bpt = man.kv_bytes_per_token;
+            /* Mechanism (a): the arena declared once, in the manifest, read by
+             * both consumers.  An explicit option still wins, because a caller
+             * that knows where it put the descriptors outranks a file. */
+            if (man.desc_arena_bytes && !arena_bytes) {
+                arena_base  = man.desc_arena_base;
+                arena_bytes = man.desc_arena_bytes;
+            }
             fprintf(stderr, "[pl_backend] %s\n",
                     fk33_manifest_describe(&man, mbuf, sizeof mbuf));
         } else if (o->hbm_reserved_end) {
@@ -366,6 +418,25 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
         if (o->x_base)   want.x_base   = o->x_base;
         if (o->l_base)   want.l_base   = o->l_base;
         if (o->desc_ptr) want.desc_ptr = o->desc_ptr;
+
+        /* The subsystem A descriptor arena.  An explicit base is CHECKED, not
+         * trusted; with a size but no base we place it ourselves, below
+         * x_base, which is `tools/hbm_map.py --policy below-host`. */
+        if (arena_bytes && arena_base) {
+            want.arena_base = arena_base;
+            want.arena_span = (arena_bytes + 4095ull) / 4096ull * 4096ull;
+        } else if (arena_bytes) {
+            e = pl_place_desc_arena(&want, arena_bytes);
+            if (e) {
+                fprintf(stderr,
+                    "pl_open: no room for a %llu B subsystem A descriptor "
+                    "arena below x_base 0x%011llX: %s\n",
+                    (unsigned long long)arena_bytes,
+                    (unsigned long long)want.x_base,
+                    fk33_seam_strerror((unsigned)e));
+                pl_close(c); return -3;
+            }
+        }
 
         e = pl_check_bases(&want);
         if (e) {
@@ -397,9 +468,31 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                     fprintf(stderr, "  -> l_base is INSIDE the loaded image\n");
                 if (want.desc_ptr < want.reserved_end)
                     fprintf(stderr, "  -> desc_ptr is INSIDE the loaded image\n");
+                if (want.arena_span && want.arena_base < want.reserved_end)
+                    fprintf(stderr, "  -> the A descriptor arena is INSIDE the "
+                                    "loaded image\n");
             }
+            if (want.arena_span)
+                fprintf(stderr,
+                    "  arena    = 0x%011llX  span %llu   "
+                    "(subsystem A descriptors, tools/gen_layer_program.py)\n",
+                    (unsigned long long)want.arena_base,
+                    (unsigned long long)want.arena_span);
             pl_close(c); return -3;
         }
+        /* NO ARENA DECLARED IS NOT THE SAME AS NO ARENA.  Something has to
+         * place subsystem A's descriptors, and until 2026-08-29 the thing that
+         * did anchored at the top of HBM and landed on the logits row.  Say so
+         * every time, because a silent open is what made that survivable. */
+        if (!want.arena_span)
+            fprintf(stderr,
+                "[pl_backend] NOTE: no subsystem A descriptor arena was declared\n"
+                "  (desc_arena_bytes = 0), so the blocks above were checked against\n"
+                "  each other and the image and against NOTHING ELSE.  The arena is\n"
+                "  real: tools/gen_layer_program.py places 311 descriptors for the 9B\n"
+                "  token program and its historic default put them at 0x1FFFD9000,\n"
+                "  over 153,664 B of this logits row.  Run\n"
+                "  `python3 tools/hbm_map.py <manifest>` for the whole map.\n");
         if (!want.reserved_end)
             fprintf(stderr,
                 "[pl_backend] NOTE: neither manifest_path nor hbm_reserved_end was\n"

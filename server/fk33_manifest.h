@@ -49,6 +49,25 @@ typedef struct {
     uint64_t kv_bytes_per_token;
     uint64_t max_context_tokens;
 
+    /* OPTIONAL, and zero means ABSENT rather than zero-length.
+     *
+     * The subsystem A descriptor arena, if the packed set declares one.  This
+     * is mechanism (a) for the collision TRACK WEIGHTS measured on 2026-08-29:
+     * `tools/gen_layer_program.py` and `pl_derive_bases()` both anchored at the
+     * top of the device and neither could see the other, so 153,664 B of the
+     * logits writeback sat under the A descriptors and the symptom was a wrong
+     * token with no fault.  A region declared once, in the manifest, and read
+     * by both consumers is one of the two ways out; the other is
+     * `pl_place_desc_arena()`.  WHICH ONE IS OREN'S DECISION and neither is
+     * assumed here -- this reader only makes (a) expressible.
+     *
+     * Unlike every field above, these two are NOT required: a set packed
+     * before the keys existed is still a valid set, and refusing it would
+     * break the load path to fix an address-space question.  `absent` is
+     * therefore reported honestly and pl_open warns rather than pretending. */
+    uint64_t desc_arena_base;
+    uint64_t desc_arena_bytes;
+
     /* DERIVED here, not read: the first address the host may place a block at
      * without landing on something the card owns.  max of the three ends. */
     uint64_t reserved_end;
