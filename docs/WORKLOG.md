@@ -157,6 +157,22 @@ rather than appended to.
 There is no bitstream at present in any case (see OI-12).
 
 
+## Decisions taken, with their triggers
+
+**Why this section exists.** An independent review on 2026-08-29 named
+"decisions deferred so long they have quietly become decisions" as a failure
+mode of this project. A deferral with no recorded trigger is indistinguishable
+from having forgotten. Each row below says what was decided, by whom, on what
+evidence, and **what event should reopen it**.
+
+| decision | by | on what evidence | trigger to revisit |
+|---|---|---|---|
+| **Congestion fallback is lever C (IQ4_NL codebook to LUTRAM)**, pre-authorised: I may take it without asking if the floorplan falls short. | Oren, 2026-08-29 | CONGEST measured the codebook at 86,992 primitives, 39.5% of `matvec_core`, and 97.7%/98.8% of the design's MUXF7/MUXF8. ~7.1x win, zero throughput cost. Risk is a 32x write-coherency surface. | If TRACK PBLOCK routes the design, the fallback is not needed. If lever C is taken, its oracle work must be dispatched ALONGSIDE, not after: the correctness surface is the whole risk. |
+| **Tandem PCIe Field Updates: DEFER the three-partition hierarchy decision until the design routes.** Do NOT restructure the shell for it now. | Oren, 2026-08-29 | TANDEM (`abbd2ed`) calls Tandem "unevaluable now, not merely later": its stage-1 pblock excludes `SLICE_X216Y0:SLICE_X232Y239` at DRC severity Error, 50,135 placed cells sit inside it, and they can only move LEFT into the congested half. The number that decides the whole case, the stage-1 bitstream size, is unmeasured. | **Two events, either one:** (a) the design routes AND the stage-1 bitstream size is measured; (b) the cold-boot `lspci` on card 2 shows the factory image enumerating at power-on, which would falsify the DERIVED 225.7 ms budget and remove much of the Tandem case outright. Accepted cost: retrofitting the hierarchy later is the expensive path. |
+| **Logits egress is the full writeback, NOT on-card top-k.** Not a judgement call in the end. | evidence, confirmed by dispatcher 2026-08-29 | EGRESS measured writeback at 124 us, **0.32% of the 38.27 ms budget** and 32x oversupplied vs the 300 MB/s A can produce logits at, on two already-reserved idle pseudo-channels. The fabric direction is INVERTED from the intuition: top-k's logic lands inside `matvec_core`, which is 72-81% of every level-6/7 congestion window, while the writeback lands at the die edge. Top-k also loses repetition/frequency penalties, `logit_bias` outside k, speculative verification, and the oracle at the seam that decides a token, and makes `top_p` an approximation whose error the host CANNOT DETECT. | If the writeback is ever measured to add materially to `matvec_core`'s congestion. Two unexplored options are recorded in `docs/debugging/2026-08-29_logits-egress.md`: top-k plus the exact normaliser, and C2H from the existing 43-BRAM36 result buffer. |
+| **Cross-stack read measurement on the card: NOT taken.** Needs a JTAG reconfiguration; raised with Oren and never confirmed. | pending | 12 of 27 masters read cross-stack; a stack offers at most 15 engine ports. | Still open. Lower priority now: the design does not route, so there is no engine bitstream to measure with. |
+
+
 ## Open issues
 
 ### OI-1: RESOLVED 2026-08-28 -- descriptor in memory
