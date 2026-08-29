@@ -519,4 +519,4 @@ here -- `docs/WORKLOG.md` is not this track's to edit.
 | `tools/ref9b/mutate_seamgate.sh` | NEW. The teeth, S1..S7, including the survivors. |
 | `tools/ref9b/capture_llama_top.sh` | `LIST_BISECT=1`, so the bisect args live one line under the generics they must agree with. |
 | `tools/ref9b/bisect_scaled.py` | `MV_STEP_ORACLE` env override, so a gate row need not write a binary into the repository. |
-| `sim/regress.sh` | SHARED. Three appended plan rows, `run_seam`, a two-line dispatch in `run_one`, three names in `SLOW_TBS`, `BASELINE_PASS` 94 -> 97. |
+| `sim/regress.sh` | SHARED. Three appended plan rows, `run_seam`, a two-line dispatch in `run_one`, three names in `SLOW_TBS`, `BASELINE_PASS` 94 -> 99 (only 3 of the +5 are this track's; see the full-gate section). |
