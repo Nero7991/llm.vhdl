@@ -38,9 +38,9 @@ Verbatim, from the dispatch:
 
 ## 2. The answer
 
-**Twenty-six accuracy thresholds exist in subsystem B.  Seven of them fire on
-the HONEST unit, and two of the seven were introduced or left in place TODAY by
-the two tracks that discovered this class of defect.**
+**Thirty-five accuracy thresholds exist in subsystem B.  NINE of them fire on
+the HONEST unit, and three of the nine were set or left in place TODAY by the
+two tracks that discovered this class of defect.**
 
 | threshold | file | honest false-red |
 |---|---|---|
@@ -54,9 +54,11 @@ the two tracks that discovered this class of defect.**
 | `TOL_S = 24.0` | `sim/tb_gdn_recur.vhd` | **1 of 30 (3%)** |
 | `AGG_WS = 24.0` | `sim/mutate_gdn_recur.sh` | **1 of 40 (3%)** |
 
-The other seventeen are clean at 0 of 30-to-40 seeds and are listed by name in
+The other twenty-six are clean at 0 of 30-to-40 seeds and are listed by name in
 section 4, because a report listing only the broken ones cannot be
-distinguished from an incomplete audit.
+distinguished from an incomplete audit.  The nine and the twenty-six are 21
+bench-side, 11 harness-side and 3 generator-side; sections 4.1, 4.2 and 4.3
+enumerate them in that order.
 
 **Three findings that are worth more than the table.**
 
@@ -578,4 +580,13 @@ reader would otherwise assume were covered.
 
 ## 9. Corrections
 
-None yet.  Append here, dated, rather than editing anything above.
+**2026-08-29, appended the same day, arithmetic in section 2.**  The first
+version of this document, and commit `81297ee`'s message with it, said
+"twenty-six accuracy thresholds exist" and "the other seventeen are clean".
+**Twenty-six is the count of CLEAN thresholds, not the total.**  The total is
+THIRTY-FIVE: 21 bench-side (4.1), 11 harness-side (4.2) and 3 generator-side
+(4.3), of which NINE fire on the honest unit.  Section 2 is corrected in place
+above; the commit message cannot be and is wrong on this one number.  Nothing
+else changes -- the nine firing rows, their false-red rates and every retune
+are as measured, and the per-threshold tables in section 4 were always the
+authoritative list.
