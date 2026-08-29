@@ -671,6 +671,72 @@ needs a producer of its own in `sim/tb_llama_top.vhd`'s capture process rather
 than the `hr_*` read every other seam uses. That is the one remaining seam
 between this harness and a whole-token comparison on hardware.
 
+**2026-08-29, appended. CORRECTION: the gate verdict I first reported was wrong,
+and the run behind it was invalid.**
+
+I reported `OVERALL PASS 85 FAIL 0 ... REGRESSION: PASS`. That line is in the
+log. It is not the log's verdict: the file ends with a SECOND report block,
+`OVERALL PASS 20 FAIL 70`, and `REGRESSION: FAIL`. I ran
+`grep "OVERALL\|REGRESSION:"` and read the FIRST match. **A grep over a log
+returns every candidate verdict; only the last one is the verdict.** This is
+the same shape as the `--only` trap this project already records -- a verdict
+read without checking that it is THE verdict.
+
+The run was also invalid in itself, in both directions. **Its scratch tree was
+deleted while it was still running.** MEASURED, from the first lines after the
+banner, before any test could have finished:
+
+```
+grep: <SCRATCH>/tb_tb_engine/log: No such file or directory
+/tmp/regress-self.Xe5JcirY.sh: line 1019: <SCRATCH>/res.tb_tb_engine: No such file or directory
+```
+
+and all 63 sim rows of the second block read `the runner produced no result
+file for this test`, with `coverage.txt` missing too. `sim/regress.sh:342` is
+`[ "${KEEP:-0}" = 0 ] && rm -rf "$SCRATCH"` on an EXIT trap, so any instance
+sharing a `REGRESS_SCRATCH` wipes another's tree on exit -- but the log carries
+only ONE banner, so **what removed it is NOT DETERMINED** and is recorded here
+as open rather than guessed at. The consequence is symmetric and worth stating:
+the `PASS 85` block cannot be trusted EITHER, because files were vanishing
+underneath the run that produced it.
+
+**The re-run, on a fresh directory outside the session scratchpad and with
+`--keep` so the cleanup path cannot fire at all.** Two other `ghdl-mcode`
+processes were on the box; the gate is 900 s per test and the slowest row came
+in at 298 s, so the load did not bind. One banner, one report, and the last
+line of the file is the verdict:
+
+```
+ suite sim   PASS 60   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 86   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 86 passing, matches the recorded floor of 86
+ REGRESSION: PASS
+```
+
+`grep "^FAIL\|^TIMEOUT\|^NOVERDICT\|^BUILD-ERROR"` over that log returns
+nothing. The floor is 86 rather than 85 because a concurrent track landed
+`sim/tb_seq_tbl_shape` and raised it; this track added no gate row and did not
+touch `sim/regress.sh`. The five integration rows:
+
+```
+PASS  sim:tb_llama_top        114s
+PASS  sim:tb_llama_top_real    78s
+PASS  sim:tb_llama_top_seq    298s
+PASS  sim:tb_llama_top_smp      2s
+PASS  sim:tb_llama_top_smp_beh  1s
+```
+
+114 s / 78 s / 298 s are the recorded `SLOW_TBS` figures, so the `CAPTURE`
+generic costs nothing when it is off, which is the claim it was written to
+support.
+
+**Procedural note for the next track, because it is the reusable part.** Run
+the gate with `--keep` and a scratch path nothing else can name. Without
+`--keep` the EXIT trap makes a shared `REGRESS_SCRATCH` destructive, and the
+damage does not announce itself as a collision -- it announces itself as
+seventy tests failing in files you did not touch.
+
 
 **2026-08-29, appended by TRACK RY-ORACLE. Section 5.6's closing claim is
 WITHDRAWN as a statement about the design.** That section says, DERIVED from two
