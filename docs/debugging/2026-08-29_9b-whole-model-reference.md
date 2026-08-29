@@ -433,7 +433,32 @@ unaffected, and `R_QKV.k-0` is the **first** seam that could possibly move.
   the RoPE pairing convention. Do not treat a passing 4-token run as evidence
   about RoPE.**
 
-### 5.8 The exact mode is the sharper instrument, and by how much
+### 5.8 The exact mode resolves one LSB, MEASURED
+
+`--mode exact` was useless until something other than `ref/run9b.c` could write
+the format, because neither a GHDL testbench nor the FK33 host driver is going
+to emit a binary struct.  `tools/ref9b/capture_to_r9bs.py` is that bridge: a
+line-oriented text format either can emit, converted to `.r9bs`.
+
+Its `--selftest` is a ROUND TRIP and is labelled as one -- it prices the
+parser, not the capture, and a round trip is not an oracle.  The teeth-check
+that means something is a deliberate single-LSB corruption of one mantissa in
+one seam, converted and compared:
+
+```
+round trip: 491 records bit-identical.  This prices the PARSER; it says
+nothing about whether a capture is right.
+
+perturbed one mantissa of R_XN-0
+# exact compare, token 0: 490 seams identical, 1 differ
+FIRST DIVERGENCE: R_XN-0 at element 3 -- exp 10 vs 10, 1 of 4096 mantissas differ
+```
+
+**One LSB in 4096 values, named to the element.** That is the resolution the
+card will be debugged at, and it is three to four orders of magnitude finer
+than anything the float anchor can offer.
+
+### 5.9 The exact mode is the sharper instrument, and by how much
 
 Cross mode locates 6 of 9; exact mode locates 8 of 9 and, for mutant 7,
 localises it one seam EARLIER -- `R_XN-0`, the very first norm of the model,
@@ -595,9 +620,13 @@ itself, not about the thing under test.**
 
 - **Nothing here has been compared against hardware or against GHDL.** No
   simulation capture in `.r9bs` format exists. The `--mode exact` path is
-  exercised only by mutant-vs-reference, which is the same format and the same
-  producer. Producing an `.r9bs` from `sim/tb_llama_top*` is the obvious next
-  step and is NOT done.
+  exercised only by mutant-vs-reference and by a synthetic single-LSB
+  corruption, both of which come from the same producer.
+  `tools/ref9b/capture_to_r9bs.py` now removes the format as an obstacle -- a
+  GHDL bench or the host driver can emit text -- but **emitting that text from
+  `sim/tb_llama_top*` is NOT done**, and that file belongs to TRACK TOP-KV. It
+  is the obvious next step and it is the only step between this reference and
+  an actual bisect of the machine.
 - **`R_XN-L` and `R_XN.ffn-L` cannot be compared against the RTL at all today**,
   because of D2 (synthetic norm weight).
 - **`LOGITS` has no RTL counterpart**, because of D1.
@@ -618,10 +647,11 @@ itself, not about the thing under test.**
 - **The KV cache in the reference is a plain float array, not the packed
   per-block int8 BFP records `attn_kv_axi` writes.** So `R_KIN`/`R_VIN` can be
   compared but the cache contents cannot.
-- **Only 3 of 250 packed tensors had their `blake2b_128` checked** -- in fact
-  none did; `ref/run9b.c` checks the index against each file's own header
-  (M, K, w_exp, out_shift) and nothing more. The manifest carries hashes and
-  they are not verified.
+- ~~**The manifest hashes are not verified.**~~ **WITHDRAWN, see 11.1:**
+  `tools/check_mv4i_set.py --full` hashed all 251 payloads (5,059,649,536
+  bytes) against the manifest with 0 mismatches. Note that `ref/run9b.c` itself
+  still checks only the index against each file's own header (M, K, w_exp,
+  out_shift); the hash check is a separate tool that has to be run.
 - **Multi-card (`NCARDS > 1`) is not modelled**, and `MV4I_MODE_PARTIAL` is
   never exercised.
 - **`tools/gen_layer_program.py` was not read**, so whether the three `attn_qkv`
@@ -641,6 +671,7 @@ itself, not about the thing under test.**
 | `tools/ref9b/r9bs.py` | stream reader; run it on a file to dump per-seam statistics |
 | `tools/ref9b/seam_map.py` | RTL seam name -> llama.cpp node, with the slices |
 | `tools/ref9b/seam_bisect.py` | the bisect. `--mode cross` / `--mode exact`, `--baseline` |
+| `tools/ref9b/capture_to_r9bs.py` | a line-oriented TEXT capture -> `.r9bs`, and back with `--from-r9bs`. This is what lets a GHDL bench or the FK33 driver feed `--mode exact` |
 
 Reproduce:
 
@@ -671,7 +702,36 @@ stays at 83. The full-gate result is in section 11.
 
 ## 11. Full gate
 
-(appended after the run -- see below)
+Full unfiltered run, `REGRESS_SCRATCH=<scratch> bash sim/regress.sh`, no
+`--only`, started 09:09:05 on 2026-08-29 and run under heavy contention (up to
+seven concurrent `ghdl-mcode` processes from other tracks, against this run's
+two jobs).
+
+```
+ suite sim   PASS 57   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 83   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 83 passing, matches the recorded floor of 83
+ REGRESSION: PASS
+```
+
+**`OVERALL PASS 83`, `FAIL 0`, matching the recorded floor.** This track adds no
+`sim/tb_*.vhd`, so `BASELINE_PASS` was neither raised nor touched.
+
+### 11.1 The packed set itself, re-verified
+
+The claim that this reference reads "the card's own bytes" is worth only as much
+as the bytes being the ones the packer wrote. `tools/check_mv4i_set.py --full`
+already existed for this and was run rather than duplicated:
+
+```
+250 packed tensors + 1 F32 side file, 5059649536 bytes total, 251 payloads hashed and matched
+PASS  every header, size, sub-region offset and HBM placement is as spec 6.4/6.5a requires
+```
+
+All 251 blake2b-128 digests match the manifest. This supersedes the "only 3 of
+250 packed tensors had their hash checked -- in fact none did" line that stood
+in section 9 while the run was pending; that line is withdrawn.
 
 ---
 

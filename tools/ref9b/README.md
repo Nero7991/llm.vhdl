@@ -30,6 +30,7 @@ next token on all five positions of the reference prompt.
 | `r9bs.py` | stream reader. Run it on a file for per-seam statistics |
 | `seam_map.py` | RTL seam name -> llama.cpp node name, with the slices |
 | `seam_bisect.py` | the bisect: first diverging seam, with the magnitude |
+| `capture_to_r9bs.py` | a line-oriented TEXT capture (what a GHDL bench or the host driver can emit) -> `.r9bs`, and back with `--from-r9bs` |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
@@ -77,6 +78,10 @@ python3 seam_bisect.py ../../ref.r9bs capture.r9bs --mode exact --tok 4
 at rel_rms 0.105 against the anchor at the very first seam, because that is what
 INT4 weights cost. At threshold 0.05, 483 of 491 seams "diverge" on a clean run.
 Always pass `--baseline`.
+
+**`--mode exact` resolves one LSB.** MEASURED: a single-mantissa perturbation
+in one of 491 seams is located to the element index. That is the resolution the
+card will be debugged at.
 
 **`--mode exact` finds things `--mode cross` cannot.** Of nine mutants, cross
 mode located 6 and exact mode located 8, and for one of them exact mode named a
