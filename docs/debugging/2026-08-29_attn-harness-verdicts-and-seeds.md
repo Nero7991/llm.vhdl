@@ -43,7 +43,8 @@
 
 **PART 1.** The defect is real, it is in all nine `sim/mutate_attn_*.sh` and in
 four of six `sim/mutate_seq_*.sh`, and it cost **11 rows across 8 harnesses**
-their status as checker kills. No published ratio was off by more than 2, but
+their status as checker kills. **(WITHDRAWN, see the CORRECTION in section 10:
+the figure is 10 rows across 7 harnesses.)** No published ratio was off by more than 2, but
 two of the moves matter far more than their size:
 
 - **`sim/mutate_attn_rope.sh` P18 is killed by the LANGUAGE, in all three
@@ -559,4 +560,34 @@ this log would have had to be re-run on a quiet box before being believed.
 
 ## 10. Corrections
 
-None yet. Append dated CORRECTION sections here rather than editing the above.
+### CORRECTION 2026-08-29, same day: the count is 10 rows across 7 harnesses, not 11 across 8
+
+**WITHDRAWN:** section 2's opening sentence and the commit message of `ec1ec41`
+both say the fix "cost **11 rows across 8 harnesses** their status as checker
+kills". That is wrong. The correct figure, counted directly off the fifteen
+final logs, is **10 rows across 7 harnesses**:
+
+```
+attn_emit: 2      (E18, E19)
+attn_gate: 1      (M21)
+attn_twiddle: 1   (N19)
+attn_softmax: 1   (M5)
+attn_rope: 2      (P18, P25)
+attn_recip: 1     (N14)
+attn_kv_axi: 2    (B1, B4)
+```
+
+The error was including `sim/mutate_seq_tbl_shape.sh`'s M5. M5 is an ABORT, and
+it is reported as one -- but it was **already** scored apart from a checker kill
+before this track touched anything: `seq_tbl_shape` was the only harness in the
+tree that already had a third verdict, `KILLED-LANG`. Its verdict did not move,
+only its name and its reason string did. Counting it as a move double-counts the
+one harness that had got this right all along, which is the opposite of the
+point.
+
+Nothing else in the file depends on the total: the per-harness table in 4.5 was
+always correct, and it is what should be read. `ec1ec41`'s message cannot be
+amended -- another track committed on top of it -- so it stands with this
+correction against it.
+
+Append further dated CORRECTION sections here rather than editing the above.
