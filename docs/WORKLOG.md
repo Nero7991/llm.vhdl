@@ -35,7 +35,7 @@ below may be edited by a track that does not own it.
 | `rtl/attn_*.vhd`, `sim/tb_attn_block.vhd`, `ref/attn_*` | TRACK C-ORACLE | |
 | `rtl/gdn_*.vhd`, `rtl/l2norm_rs.vhd`, `sim/tb_gdn_*.vhd`, `sim/tb_l2norm_rs.vhd`, `ref/gdn_*`, `ref/l2norm*` | TRACK B-ACCURACY | |
 | `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | TRACK TOK-C | |
-| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c`, matvec benches | TRACK A-CTRL | decision taken 2026-08-28, see below |
+| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `rtl/axi_rd_fsm.vhd`, `rtl/async_fifo.vhd`, `hw/mv_driver.c`, matvec benches | TRACK A-CTRL | landed 2026-08-28, see Landed. `axi_rd_fsm.vhd` and `async_fifo.vhd` are new files from that track and belong to it. |
 
 **A COMPLETED AGENT CAN STILL WAKE UP AND COMMIT.** Observed 2026-08-28: the
 subsystem-A-sim track reported done, was superseded, and then woke hours later
@@ -70,6 +70,20 @@ still the default.
 
 An amend is only available while the bad commit is still the tip. Two tracks
 committing within a minute of each other would have made it permanent.
+
+**Editing `sim/regress.sh` under a running instance is ALREADY SAFE, and you
+do not need to `pgrep` first.** bash reads a script lazily by byte offset, so
+in general editing a script mid-run resumes the shell mid-token and the process
+that dies is not the one that edited it. `sim/regress.sh` was bitten by exactly
+this three times during its own development, once to a third party, so section
+0 now copies the file to a private temp path, syntax-checks the copy in case
+the original was mid-write, and re-execs that (`:287`, `:299`). From then on
+the running process reads a file nobody else can name.
+
+Recorded because a track disclosed having edited it during another run and
+could not rule out damage. There was none, and there could not have been. The
+disclosure was still the right call: reporting a suspected collision you cannot
+disprove is worth more than a silent hope, and the answer only took one grep.
 
 **Standing rule for every track: no hardware.** No `xsdb`, `hw_server`,
 `vivado ... program`, `pcieep.sh`, `jtag.sh`, `flash.sh`, `program.tcl`, and
@@ -151,17 +165,16 @@ See `docs/debugging/2026-08-28_qwen35-tokenizer-c.md`.
 
 ### TRACK A-CTRL -- the descriptor control plane, the CDC, and MAXOUT
 
-**Status:** RUNNING (dispatched 2026-08-28, after the OI-1 decision below)
-**Owns:** `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `hw/mv_driver.c`, the matvec benches
+**Status:** LANDED (2026-08-28)
+**Owns:** `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `rtl/axi_rd_fsm.vhd`, `rtl/async_fifo.vhd`, `hw/mv_driver.c`, the matvec benches
 
 **The decision, taken and not to be relitigated.** Oren chose **descriptor in
-memory**: the AXI-Lite map stays constant at roughly five registers
-(`DESC_PTR_LO/HI`, `CTRL.go`, `STATUS.busy/err`, `ERR_ADDR`) and the 24 `W_BASE`
-plus 3 `S_BASE` entries move into a descriptor block the host DMAs in. The map
-therefore does not grow with geometry, so `ROWS_IF` can change later without
-touching the driver; it unifies with subsystem D, which already fetches
-descriptors through `rtl/seq_desc_fetch.vhd`; and the 3.27 GB/s H2C path that
-delivers the descriptor is already proven on silicon.
+memory**: the AXI-Lite map stays constant and the 24 `W_BASE` plus 3 `S_BASE`
+entries move into a descriptor block the host DMAs in. The map therefore does
+not grow with geometry, so `ROWS_IF` can change later without touching the
+driver; it unifies with subsystem D, which already fetches descriptors through
+`rtl/seq_desc_fetch.vhd`; and the 3.27 GB/s H2C path that delivers the
+descriptor is already proven on silicon.
 
 Rejected: a generated fixed map (about 60 registers, reshapes whenever
 `ROWS_IF` or `AXI_DW` moves, driver and bitstream must be version-locked), and
@@ -169,22 +182,29 @@ an indexed window (81 stateful writes at 1 to 2 us per PCIe round trip, and the
 existing header's "a map no driver could parse" objection applies to it most
 strongly).
 
-**Pre-written next steps:**
+**Which branch fired.** The first one: bit-exact through the new control path
+at `MAXB=16`. Format at `docs/2026-08-28_matvec-descriptor-format.md`, RTL at
+`rtl/matvec_int4_desc_axi.vhd`, bench at `sim/tb_matvec_fk33_desc.vhd`.
+**Next, per the pre-written step: the shell integration** -- `gen_pcieep.py`
+enabling the HBM ports AND `llama_top` instantiated, the first build that could
+put arithmetic on the card.
 
-- **If it lands bit-exact through the new control path at `MAXB=16`** -> mark
-  off. Next: the shell integration, which needs `gen_pcieep.py` to enable the
-  HBM ports AND `llama_top` instantiated, and is the first build that could put
-  arithmetic on the card.
-- **If the descriptor format collides with subsystem D's conventions** -> do
-  NOT invent a second dialect. Report the collision; unifying the two is worth
-  more than shipping A's own.
-- **If the CDC cannot be closed at the chosen depth** -> report the depth and
-  the arithmetic. Duty is 78.7% at 27 ports and 300 MHz, so there is real
-  margin; a failure here means the analysis is wrong somewhere and that is the
-  finding.
-- **If a mutation passes silently** (a corrupt descriptor that computes
-  something wrong instead of raising `STATUS.err`) -> that is a safety property
-  failing, not a test gap. Report it as a defect.
+**The other three branches, answered:**
+
+- The descriptor format did NOT collide with D. It IS D's: D's 64-byte header,
+  D's base array at `0x40`, and a four-word A extension placed AFTER the base
+  array -- the one region `seq_desc_fetch` never reads. A descriptor written to
+  A's spec is still a valid D descriptor. What D's header genuinely cannot
+  carry (`w_beats`, `s_beats`, `x_exp`) is what went into the extension, and
+  why is written down.
+- The CDC closed. `rtl/async_fifo.vhd` + `DUAL_CLK` on `axi_rd_port`, per-port,
+  `DEPTH = 256` beats at `AXI_DW = 256` (8 KB/port, spec 7.7's budget, and
+  exactly `MAXOUT*MAXB = 256` in-flight beats). Bit-exact at four AXI/core
+  ratios including a non-integer one.
+- **Two mutations pass without an error, and both are reported as defects
+  rather than as test gaps.** See OI-1 below. Neither is a silent wrong answer
+  presented as success in the way OI-3's are: one is wrong output with no way
+  to know, the other is a hang.
 
 ---
 
@@ -208,9 +228,25 @@ between that and arithmetic on silicon, and the first is a decision:
    measured 288 GB/s run used 16.
 
 Items 2 and 3 are determined work. **Item 1 was Oren's call and is now
-answered: descriptor in memory.** All three are dispatched as TRACK A-CTRL
+answered: descriptor in memory.** All three landed 2026-08-28 as TRACK A-CTRL
 above. This issue is closed; the record is kept because the rejected options
 and their costs are the part worth re-reading.
+
+**Two gaps opened by that work, both MEASURED by
+`sim/tb_matvec_fk33_desc.vhd`'s mutation table, both deliberately NOT closed:**
+
+- **A well-formed base pointing at the WRONG sub-region is undetectable.**
+  Case 19 aims weight sub-region 7's base at sub-region 8's bytes. The design
+  accepts, computes and reports success, and 4 of 100 result elements are wrong
+  -- exactly the two rows that bit slice 7 carries, in each of the two live
+  tiles. Nothing in the descriptor says what a sub-region should CONTAIN, so
+  only the weight store's own hash can catch this. Same family as OI-3.
+- **A `w_beats` that is too small HANGS.** Case 20 halves it; the array starves
+  and the job never completes and never errors, because `WDOG_LIMIT` covers the
+  descriptor FETCH only. Not a wrong answer, but a driver polling for
+  `done or err` waits forever. Closing it needs a compute-phase watchdog whose
+  limit is a per-geometry number, which is a decision rather than an
+  implementation, so it was left for Oren.
 
 ### OI-2: `attn_emit.vhd:400` is a bound violation at `NGRP = 1` (latent)
 
@@ -283,8 +319,10 @@ bytes `0xF0..0xFF` -- there is no oracle answer to compare against.
 
 Subsystem D's control core is integrated and mutation-tested, but nothing emits
 the descriptor program it executes. This is **host software** and it is on the
-critical path for both the card and the server. Blocked on the descriptor
-format being settled.
+critical path for both the card and the server. **UNBLOCKED 2026-08-28:** the
+descriptor format is settled and byte-pinned in
+`docs/2026-08-28_matvec-descriptor-format.md`, whose section 7 carries a
+reference builder in C for the A job. Still nothing emits it.
 
 ---
 
