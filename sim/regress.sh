@@ -394,7 +394,7 @@ BASELINE_PASS=88   # +1 sim/tb_llama_top_normw, 2026-08-29.  The top-level
                    #    sim/llama_top_nw_b4_mean.hex is COMMITTED for the same
                    #    reason the weight image is (the generator needs an
                    #    18 GB GGUF that is not in git), so it needs no row in
-                   #    the vector tables.  MEASURED 78 s.
+                   #    the vector tables.  MEASURED 77 s.
                    # +1 sim/tb_a_geom, 2026-08-29.  seq_tbl_pkg states
                    #    A_ROWS_IF and A_MAXROWS_BFP as literals and
                    #    matvec_int4_desc_axi states them again as generic
@@ -405,8 +405,8 @@ BASELINE_PASS=88   # +1 sim/tb_llama_top_normw, 2026-08-29.  The top-level
                    #    instantiated with NO generic map, so ROWS_IF is
                    #    checked by port width at elaboration and again from
                    #    CAPS, and MAXROWS_BFP is BRACKETED behaviourally by
-                   #    two descriptors that differ in one field.  Under a
-                   #    second.
+                   #    two descriptors that differ in one field.  MEASURED
+                   #    3 s.
                    # +1 sim/tb_seq_tbl_shape, 2026-08-29.  The real 9B
                    #    descriptor table encoded the lm_head as ONE
                    #    248,320-row A job, which matvec_int4_desc_axi's
