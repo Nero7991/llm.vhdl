@@ -64,8 +64,10 @@ RESPONSIBILITY.
 | the other seven | present under their own names, all instantiated by `rtl/attn_block.vhd` at `:779, 790, 806, 823, 861, 875, 885, 901` |
 | **not on the spec's list** | `rtl/attn_score_q12.vhd`, 504 lines, bit-exact against three double oracles. It is half of `attn_score_tree` |
 
-**Part 2. Eight documented claims were false at `abbd2ed`**, corrected in place
-in four files with dated CORRECTION sections. The four highest-blast-radius:
+**Part 2. Fourteen documented claims were false at `abbd2ed`**, corrected in
+place across **five** files with dated CORRECTION sections (twelve in the audit,
+one in the C design spec, one carried by two port-budget documents). The four
+highest-blast-radius:
 `attn_kv_axi` does not exist (it does); nothing emits a descriptor program (two
 tools do); the regression floor is 72/78 (it is 85); subsystem A needs 27 AXI
 read masters (the shipping entity needs **28**, which takes the free HBM port
