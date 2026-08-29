@@ -88,6 +88,13 @@ from extract_tokenizer import read_qtk                # noqa: E402
 # token_type values that make a token "special" for partitioning purposes,
 # matching llama.cpp's LLAMA_TOKEN_ATTR_{UNKNOWN,CONTROL,USER_DEFINED}
 ATTR_UNKNOWN, ATTR_CONTROL, ATTR_USER_DEFINED = 2, 3, 4
+# 5 is UNUSED and 6 is BYTE (llama.h:97-98).  UNUSED matters to the DECODER:
+# llama.cpp emits nothing for such a token, and this file used to fall through
+# to the byte-map path and emit its literal text instead.  Wrong on 243 of
+# 248,320 ids, all of them [PAD*] padding.  Unreachable from encode, which is
+# why no corpus of any size could find it -- see --all-ids in
+# tools/verify_tokenizer.py, added with this fix.
+ATTR_UNUSED = 5
 SPECIAL_ATTRS = (ATTR_UNKNOWN, ATTR_CONTROL, ATTR_USER_DEFINED)
 
 # NORMATIVE pattern, from the HF tokenizer.json, quoted verbatim in
@@ -449,6 +456,8 @@ class Qwen35Tokenizer:
             return self.tokens[tid].encode("utf-8") if render_special else b""
         if tt == ATTR_USER_DEFINED:
             return self.tokens[tid].encode("utf-8")
+        if tt == ATTR_UNUSED:
+            return b""            # llama.cpp emits nothing at all for these
         # NORMAL and BYTE alike: undo the GPT-2 byte map, codepoint by codepoint
         return bytes(UNI_TO_BYTE[c] for c in self.tokens[tid] if c in UNI_TO_BYTE)
 

@@ -411,6 +411,14 @@ def main():
                                      "byte-map | decode-special | decode-bytemap")
     ap.add_argument("--max-report", type=int, default=12)
     ap.add_argument("--no-detok", action="store_true")
+    ap.add_argument("--all-ids", action="store_true",
+                    help="also decode EVERY id in the vocabulary, one per "
+                         "string, and compare against the oracle.  The corpus "
+                         "can only reach ids that encoding produces, so any "
+                         "token unreachable from text -- UNUSED padding above "
+                         "all -- is invisible to it at any corpus size.  That "
+                         "is not hypothetical: it hid a real decoder bug on "
+                         "243 of 248,320 ids until the C port found it.")
     ap.add_argument("--sweep-codepoints", action="store_true",
                     help="instead of the corpus, put EVERY Unicode codepoint through two "
                          "contexts and compare.  Exhaustive over the pre-tokenizer's "
@@ -465,7 +473,28 @@ def main():
             print(f"       ours  ={show(tk.decode_bytes(theirs[i]))}")
             print(f"       oracle={show(det[i])}")
 
-    total_bad = len(enc_bad) + len(dec_bad)
+    # Every id, individually.  See --all-ids: the corpus reaches only ids that
+    # encoding produces, so this is the ONLY check here that can see a token
+    # unreachable from text.
+    ids_bad = []
+    if a.all_ids:
+        n = len(tk.tokens)
+        singles = [[i] for i in range(n)]
+        _, det_all = run_oracle(a.oracle, a.gguf, [""] * n,
+                                id_lists=singles, parse_special=True)
+        for i in range(n):
+            if tk.decode_bytes([i], render_special=True) != det_all[i]:
+                ids_bad.append(i)
+        print(f"token ids compared: {n}")
+        print(f"id mismatches     : {len(ids_bad)}")
+        for i in ids_bad[:a.max_report]:
+            print(f"  [{i}] tok={show(tk.tokens[i])} type={tk.token_type[i]}")
+            print(f"       ours  ={show(tk.decode_bytes([i]))}")
+            print(f"       oracle={show(det_all[i])}")
+        if len(ids_bad) > a.max_report:
+            print(f"  ... {len(ids_bad) - a.max_report} more")
+
+    total_bad = len(enc_bad) + len(dec_bad) + len(ids_bad)
     print(f"\nRESULT: {'PASS' if total_bad == 0 else 'FAIL'} "
           f"({total_bad} mismatch{'' if total_bad == 1 else 'es'} over "
           f"{len(corpus)} strings x {'2' if not a.no_detok else '1'} directions)")

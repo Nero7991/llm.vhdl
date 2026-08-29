@@ -83,8 +83,12 @@ TOKEN_TYPE = {
     2: "UNKNOWN",
     3: "CONTROL",
     4: "USER_DEFINED",
-    5: "BYTE",
-    6: "UNUSED",
+    # llama.h:97-98 -- UNUSED IS 5 AND BYTE IS 6, not the other way round.
+    # These two were swapped here, which is how the summary reported "243 BYTE
+    # tokens" for a vocabulary that has ZERO of them.  The 243 are UNUSED
+    # padding, [PAD248077]..[PAD248319].
+    5: "UNUSED",
+    6: "BYTE",
 }
 
 
