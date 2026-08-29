@@ -46,7 +46,13 @@ WHERE EVERY D HEADER FIELD COMES FROM
         structure.  These are NOT underivable: they are underivable from the
         MANIFEST, and fully determined by the SCHEDULE, which is this file.
   ordinal
-        DERIVED, but the two VHDL generators DISAGREE about it (see --stamp).
+        DERIVED: the PER-KIND layer index, `gdn_ord` on a B_JOB and `attn_ord`
+        on a C_JOB, D spec 4.1.  The two VHDL generators DISAGREED about this
+        until 2026-08-29 -- `sim/llama_sched_pkg.vhd` stamped the BLOCK index
+        on every step, and `rtl/llama_top.vhd` re-derived a layer from it to
+        match.  That was defect ORD-1; see
+        `docs/debugging/2026-08-29_ordinal-two-meanings.md`.  All three
+        generators now agree, and `--stamp sched` follows the fixed VHDL.
   w_exp, out_shift
         For an A_JOB: MANIFEST (`w_exp`, `out_shift` of the packed tensor).
         For a D-vec op: NOTHING SUPPLIES THEM.  `seq_vec_*` publishes its own
@@ -549,11 +555,17 @@ def stamp_seq_tbl(st):
 
 
 def stamp_sched(st):
-    """sim/llama_sched_pkg.vhd's `build_table`.  Narrower ranges, and `ordinal`
-    is the BLOCK index on EVERY step -- which is where the two VHDL generators
-    disagree."""
+    """sim/llama_sched_pkg.vhd's `build_table`.  Narrower `w_exp` /
+    `out_shift` ranges, because that table is EXECUTED by a real matvec and
+    `matvec_core.vhd:850-867` refuses a shift outside [0,40].
+
+    `ordinal` used to be the BLOCK index on every step here, which is where
+    the two VHDL generators disagreed (defect ORD-1, fixed 2026-08-29).  It is
+    the per-kind ordinal now, identical to every other stamping, so this
+    control still FAILS the oracle -- on w_exp and out_shift, which is what it
+    was ever meant to be measuring."""
     i = st.idx
-    return ((i % 5) - 2, i % 5, ((i * 5) % 41) - 20, st.blk % 64)
+    return ((i % 5) - 2, i % 5, ((i * 5) % 41) - 20, st.ordinal)
 
 
 def make_stamp_manifest(w_exp_of, shift_of):

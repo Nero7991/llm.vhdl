@@ -545,11 +545,19 @@ class Oracle(object):
         """C5: `ordinal` and `const_base` against the LAYER the seam belongs
         to, which comes from `seam_map`'s own `-L` suffix.
 
-        Both fields are inert in `llama_top` today (mutations 4b and 11 of
+        `const_base` is inert in `llama_top` today (mutations 4b and 11 of
         the layer-program write-up pass silently), so nothing else in the
-        repository can see them.  `ordinal` is NOT inert on a B or C job --
-        it reaches the unit as the layer index, and mutation 4 changed the
-        answer."""
+        repository can see it.
+
+        `ordinal` is NOT inert on a B or C job -- it reaches the unit as the
+        layer index, and mutation 4 changed the answer.  Until 2026-08-29 it
+        reached a consumer that read it as the BLOCK index and re-derived a
+        layer (`rtl/llama_top.vhd:2992`, `:3799`), so THIS CHECK WAS THE ONLY
+        SITE IN THE TREE THAT AGREED WITH THE SPEC: the RTL and
+        `sim/llama_sched_pkg.vhd` agreed with each other on the other
+        convention and the disagreement was invisible from either.  Defect
+        ORD-1, `docs/debugging/2026-08-29_ordinal-two-meanings.md`; the RTL
+        now takes the ordinal and derives nothing."""
         # A B/C job's ordinal is its index among blocks OF THAT KIND, which
         # is a property of the block sequence and not of the step: derived
         # here by counting, from seam_map's layer numbering alone.

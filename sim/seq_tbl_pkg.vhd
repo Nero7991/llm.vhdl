@@ -298,6 +298,13 @@ package body seq_tbl_pkg is
     variable t   : tbl_t := (others => (others => '0'));
     variable p   : natural := 0;    -- descriptor index
     variable d   : desc_t;
+    -- THE PER-KIND LAYER ORDINALS, D spec 4.1, and they are the descriptor's
+    -- `ordinal` field verbatim: a consumer takes them and derives nothing.
+    -- `rtl/llama_top.vhd` used to re-derive a layer from a block index here
+    -- instead, agreeing only with `sim/llama_sched_pkg.vhd`, which stamped the
+    -- block index.  That was defect ORD-1, fixed 2026-08-29; see
+    -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.  This file was
+    -- always on the spec's side and is unchanged by the fix.
     variable go  : natural;         -- GDN ordinal, 0 .. gdn_layers-1
     variable ao  : natural;         -- attention ordinal
     -- The BUILD's port counts, not a schedule choice: word 3 must carry

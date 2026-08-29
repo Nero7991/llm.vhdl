@@ -2973,7 +2973,7 @@ begin
       variable st : st_t := S_IDLE;
       variable zb : buf_t(0 to A_MAXROWS-1);
       variable yb : buf_t(0 to A_MAXROWS-1);
-      variable j_dst, j_rows, j_blk : natural := 0;
+      variable j_dst, j_rows, j_lay : natural := 0;
       variable k, seg, h, ycnt : natural := 0;
       variable zi : natural := 0;
     begin
@@ -2989,12 +2989,38 @@ begin
           if job_issue = '1' and to_integer(job_unit) = U_B then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
-            j_blk  := to_integer(job_ordinal);
-            -- The GDN LAYER ORDINAL, not the block index.  `job_ordinal`
-            -- carries the block index; B's `layer` port and the exponent
-            -- capture are indexed by the GDN layer, which is the block index
-            -- minus the attention blocks before it.
-            b_layer  <= j_blk - (j_blk + 1) / SHAPE.attn_interval;
+            j_lay  := to_integer(job_ordinal);
+            -- `job_ordinal` IS the GDN layer ordinal, 0 .. gdn_layers-1.  It
+            -- is taken, not derived.  D spec 4.1 and 6.1: the field is
+            -- per-KIND ("B: 0..47, C: 0..15" at the 27B shape), the host
+            -- generator computes `gdn_ord(i) = i - (i+1)/attn_interval`, and
+            -- `rtl/seq_top_skel.vhd:403` wires the latched ordinal straight
+            -- into `b_w_sel` with no arithmetic at all -- which is the point
+            -- of the field and the reason spec 4.1 says D does not compute
+            -- these (a divide by a generic `attn_interval` is not free).
+            --
+            -- THIS LINE USED TO RE-DERIVE THE ORDINAL FROM A BLOCK INDEX, and
+            -- that was defect ORD-1: the only generator that agreed was
+            -- `sim/llama_sched_pkg.vhd`, which stamped `blk mod 64`, while
+            -- `sim/seq_tbl_pkg.vhd` and `tools/gen_layer_program.py` both
+            -- stamp the per-kind ordinal the spec defines.  MEASURED at the
+            -- 9B shape: driving the manifest-stamped program into the old
+            -- code addressed the wrong layer on 29 of 32 blocks.  See
+            -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+            --
+            -- SIMULATION ONLY, and BEFORE the assignment on purpose: the
+            -- signal's own range would abort first and print only
+            -- "bound check failure", which says nothing about why.  A VHDL
+            -- integer range is a WIDTH in synthesis and not a check, so
+            -- nothing here or on the card catches this on silicon -- see the
+            -- write-up's section on what -1 actually does.
+            assert j_lay < NLY
+              report "llama_top: unit B was issued ordinal "
+                   & integer'image(j_lay) & " but this shape has only "
+                   & integer'image(NLY) & " GDN layers.  `ordinal` is the "
+                   & "PER-KIND layer index (D spec 4.1), not the block index."
+              severity failure;
+            b_layer  <= j_lay;
             ep       <= job_epoch;
             rdy      <= '0';
             k        := 0;
@@ -3780,7 +3806,7 @@ begin
       type st_t is (S_IDLE, S_QGRD, S_KRD, S_VRD, S_GO, S_RUN, S_DRAIN, S_DONE);
       variable st : st_t := S_IDLE;
       variable yb : buf_t(0 to YN-1);
-      variable j_dst, j_rows, j_blk : natural := 0;
+      variable j_dst, j_rows, j_lay : natural := 0;
       variable k, r, ycnt : natural := 0;
       variable e_said : boolean := false;
     begin
@@ -3796,12 +3822,31 @@ begin
           if job_issue = '1' and to_integer(job_unit) = U_C then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
-            j_blk  := to_integer(job_ordinal);
-            -- The ATTENTION-layer ordinal, not the block index.  Same
-            -- arithmetic subsystem B needs for its GDN layer ordinal, from
-            -- the other side: attention blocks are the ones at
-            -- (b+1) mod attn_interval = 0.
-            c_layer <= (j_blk + 1) / SHAPE.attn_interval - 1;
+            j_lay  := to_integer(job_ordinal);
+            -- `job_ordinal` IS the attention-layer ordinal, 0 .. attn-1.  It
+            -- is taken, not derived: D spec 4.1 gives the host generator
+            -- `attn_ord(i) = (i - (attn_interval-1)) / attn_interval` and
+            -- spec 6.1 fixes the field as per-KIND ("B: 0..47, C: 0..15").
+            --
+            -- THIS LINE USED TO RE-DERIVE IT FROM A BLOCK INDEX, defect
+            -- ORD-1, and it was the worse of the two halves: at the 9B shape
+            -- the manifest-stamped ordinals 0, 1 and 2 (attention blocks 3,
+            -- 7 and 11) each produced c_layer = -1.  MEASURED on this RTL --
+            -- `ghdl-mcode:error: bound check failure at
+            -- rtl/llama_top.vhd:3804` at `-gBLOCKS=8 -gC_REAL=true`.  On the
+            -- card there is no bound check: -1 truncates to the declared
+            -- width and aliases onto a legal KV layer.  See
+            -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+            --
+            -- SIMULATION ONLY, and before the assignment; see `b_layer`.
+            assert j_lay < C_LAY
+              report "llama_top: unit C was issued ordinal "
+                   & integer'image(j_lay) & " but this shape has only "
+                   & integer'image(C_LAY) & " attention layers.  `ordinal` "
+                   & "is the PER-KIND layer index (D spec 4.1), not the "
+                   & "block index."
+              severity failure;
+            c_layer <= j_lay;
             -- THE SEQUENCE POSITION, not a constant 0.  See `tok_pos`.
             c_cpos  <= to_unsigned(tok_pos, POSW);
             c_ctx   <= to_unsigned(C_CTXLEN, POSW);

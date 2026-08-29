@@ -390,6 +390,32 @@ compute these: the descriptor table (§6) carries `layer_type` and `ordinal`
 per step, and the formulas are the generator-side check. B receives
 `gdn_ord`, C receives `attn_ord` (O6).
 
+**NORMATIVE, and stated here because leaving it implicit cost a defect.**
+The two clauses below are requirements, not description:
+
+1. **`ordinal` is the PER-KIND layer index. It is never the block index.**
+   On a `B_JOB` it is `gdn_ord(i)`; on a `C_JOB` it is `attn_ord(i)`. The
+   generator computes it; nothing downstream recomputes it.
+2. **A consumer takes `ordinal` and MUST NOT derive a layer from it.** Both
+   formulas above divide by `attn_interval`, which is a build generic, so a
+   consumer that re-derives has put a divider in the gateware -- exactly what
+   §4.1's "D does not compute these" and §7.1's "D-ctrl is 0 DSP" forbid.
+   `rtl/seq_top_skel.vhd:403` is the reference shape: it wires the latched
+   ordinal straight into `b_w_sel` with no arithmetic at all.
+
+**DEFECT ORD-1, 2026-08-29, recorded because clause 1 was previously only
+implied by the `(B: 0..47, C: 0..15)` annotation in §6.1.**
+`rtl/llama_top.vhd:2992` and `:3799` read the field as the BLOCK index and
+re-derived the layer from it, while `sim/seq_tbl_pkg.vhd` and
+`tools/gen_layer_program.py` stamped the per-kind ordinal above.
+MEASURED at the 9B shape (32 blocks, `attn_interval = 4`): driving the
+manifest-stamped program into that consumer addressed the wrong layer on
+**29 of 32 blocks**, and produced `c_layer = -1` on blocks 3, 7 and 11.
+The defect survived because the one generator the consumer was checked
+against, `sim/llama_sched_pkg.vhd`, stamped the block index too -- the pair
+agreed with each other and with nothing else.
+Write-up: `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+
 ### 4.2 GDN layer: 18 steps, 10 A jobs
 
 Per card at N=2 (dims from B §4: 8 key heads and 24 value heads per card,
@@ -599,7 +625,7 @@ conforming generators must produce byte-identical tables).
 | 0x10 | i32 | `w_exp` |
 | 0x14 | i32 | `out_shift` |
 | 0x18 | u8 | `out_mode` (A §5 encoding) |
-| 0x19 | u8 | `ordinal` (B: 0..47, C: 0..15) |
+| 0x19 | u8 | `ordinal`, PER-KIND layer index -- see below |
 | 0x1A | u16 | `nsub_w` (weight base count following) |
 | 0x1C | u16 | `nsub_s` (scale base count following) |
 | 0x1E | u8 | `src_region2` (vec: second operand, e.g. U for swiglu, ER for residual) |
@@ -613,6 +639,28 @@ conforming generators must produce byte-identical tables).
 All external-memory bases are 64-bit (the A §6.4 lesson: 32-bit bases fail at
 the first FK33 rung, not the second). `nsub_w` is bounded by
 `NSUB_MAX = 64`, pending A §14.5 (§2.2-J).
+
+**`ordinal` (0x19), NORMATIVE, per opcode.** The field is u8 in the header and
+6 bits in the job shadow (`rtl/seq_top_skel.vhd:125`, `:304`), so a generator
+writes it modulo 64. Every value below fits 6 bits at both the 9B and the 27B
+shape.
+
+| opcode | value | consumed? |
+|---|---|---|
+| `B_JOB` | `gdn_ord(block)` -- 0..47 at 64 blocks, 0..23 at 32 | **YES.** It IS B's layer index: `b_layer` in `rtl/llama_top.vhd`, `b_w_sel` into the B-constants URAM in `rtl/seq_top_skel.vhd:403` |
+| `C_JOB` | `attn_ord(block)` -- 0..15 at 64 blocks, 0..7 at 32 | **YES.** It IS C's layer index (`c_layer`), and therefore the KV-cache layer |
+| `VEC_NORM` belonging to block b | `b mod 64` | **NO.** The norm-weight selector is `const_base` (0x20), not this. Conventional, and required only so that conforming generators stay byte-identical |
+| the tail `VEC_NORM`, and every other opcode | `0` | **NO** |
+
+A consumer MUST NOT read `ordinal` on any opcode marked NO, and MUST NOT
+derive anything from it on an opcode marked YES -- see the two normative
+clauses in §4.1 and defect ORD-1 recorded there.
+
+**Do not read "not consumed" as "free to vary."** §6's byte-identity
+requirement covers the whole 64-byte header, this field included. An inert
+field whose value is fixed by convention is checkable
+(`tools/dprog_oracle.py`'s `C5-ordinal-NORM`); an inert field left to the
+generator's discretion is not checkable by anything, ever.
 
 ### 6.2 What D supplies at run time (not in the table)
 

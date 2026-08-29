@@ -339,6 +339,7 @@ package body llama_sched_pkg is
     variable d : desc_t;
     variable fl : natural;
     variable om : natural;
+    variable orv : natural;
   begin
     assert n <= SCHED_MAX_STEPS
       report "llama_sched_pkg: shape needs " & integer'image(n)
@@ -354,6 +355,38 @@ package body llama_sched_pkg is
         fl := FLG_TO_SMP;
         om := 1;
       end if;
+      -- `ordinal` IS PER-KIND, and this used to stamp `blk mod 64` on every
+      -- step -- the one generator in the tree that did.  `sim/seq_tbl_pkg
+      -- .vhd` and `tools/gen_layer_program.py` both stamp the D spec 4.1
+      -- ordinals, and `rtl/llama_top.vhd` used to re-derive a layer from the
+      -- block index to match THIS table, so the pair agreed with each other
+      -- and with nothing else.  That was defect ORD-1; see
+      -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+      --
+      -- The rewrite is VALUE-PRESERVING at every shape: the old consumer
+      -- computed `blk - (blk+1)/attn_interval` from `blk`, which is exactly
+      -- the `gdn_ord` stamped here, so every landmark hash in
+      -- `sim/tb_llama_top.vhd` must be unchanged.  A moved hash means
+      -- something else moved.
+      --
+      -- Every other opcode keeps `blk mod 64`: the field is inert there (no
+      -- RTL in the tree reads it outside a B or C job) and D spec 6.1 now
+      -- says so normatively.
+      if p(i).opcode = OP_B_JOB then
+        orv := p(i).blk - (p(i).blk + 1) / s.attn_interval;
+      elsif p(i).opcode = OP_C_JOB then
+        orv := (p(i).blk + 1) / s.attn_interval - 1;
+      elsif p(i).blk >= s.blocks then
+        -- The TAIL: `build_plan` parks `blk` at `s.blocks`, one past the last
+        -- block.  0, which is what `sim/seq_tbl_pkg.vhd:450` and
+        -- `tools/gen_layer_program.py:411` both write.  This table used to say
+        -- `blocks mod 64` and was the only generator that did;
+        -- `tools/dprog_oracle.py`'s C5 note calls the tail "contested" and it
+        -- is now settled, on an inert byte, in favour of the other two.
+        orv := 0;
+      else
+        orv := p(i).blk mod 64;
+      end if;
       d := mk_desc(opcode  => p(i).opcode,
                    flags   => fl,
                    src     => p(i).src,
@@ -363,7 +396,7 @@ package body llama_sched_pkg is
                    n_rows  => p(i).n_rows,
                    n_cols  => p(i).n_cols,
                    out_mode=> om,
-                   ordinal => p(i).blk mod 64,
+                   ordinal => orv,
                    -- The base array past the header is range-checked against
                    -- NSUB_MAX by seq_desc_fetch and NOT yet fetched (see its
                    -- header, "Fetching it is remaining work").
