@@ -14,37 +14,65 @@ connect
 # REFUSE RATHER THAN GUESS.  With one matching target, proceed.  With more than
 # one and no FK33_XSDB_TARGET, abort and print the list.  No fallback to index,
 # because a fallback is what makes the hazard silent.
-set _rows [split [targets] "\n"]
-set _dev {}
-foreach _r $_rows {
-    if {[regexp {^\s*(\d+)\*?\s+(xcvu\S*)} $_r -> _n _name]} {
-        lappend _dev [list $_n $_name $_r]
-    }
-}
-if {[llength $_dev] == 0} {
+# SELECT BY CABLE SERIAL, VIA -filter.  REFUSE RATHER THAN GUESS.
+#
+# THE FIRST VERSION OF THIS BLOCK COULD NEVER MATCH.  It scanned the rows of
+# `targets` for the serial, but xsdb's DEBUG target names are just "xcvu33p" /
+# "Legacy Debug Hub" / "JTAG2AXI" -- the serial lives on the JTAG CABLE, which
+# `targets` does not print at all.  So FK33_XSDB_TARGET=153300000607A matched
+# 0 of 2 rows and refused every run.  MEASURED 2026-08-29 against both cards.
+# The guard failing safe is the only reason that was merely annoying.
+#
+# `jtag targets` does carry it ("Xilinx SQRL FK 153300000607A"), and the two
+# lists are in corresponding order -- but relying on that ordinal
+# correspondence is exactly the guess this file exists to remove.  xsdb exposes
+# the cable on every debug target as `jtag_cable_name`, so filter on it.
+#
+# Teeth-checked on real hardware, both cards plus a negative:
+#   *0607A* -> [3 xcvu33p]   (the card with 3 JTAG2AXI, i.e. the endpoint)
+#   *1366A* -> [1 xcvu33p]
+#   *999999999* -> []        (empty, so the refusal below fires)
+set _want ""
+if {[info exists ::env(FK33_XSDB_TARGET)]} { set _want [string trim $::env(FK33_XSDB_TARGET)] }
+
+set _all [targets -filter {name =~ "xcvu33p"}]
+set _nall [llength [split [string trim $_all] "\n"]]
+if {[string trim $_all] eq ""} {
     puts "FPGA_PROG_FAIL: no xcvu target in the xsdb target list:\n[targets]"
     exit 1
 }
-set _want ""
-if {[info exists ::env(FK33_XSDB_TARGET)]} { set _want [string trim $::env(FK33_XSDB_TARGET)] }
+
 if {$_want ne ""} {
-    set _hit {}
-    foreach _d $_dev { if {[string first $_want [lindex $_d 2]] >= 0} { lappend _hit $_d } }
-    if {[llength $_hit] != 1} {
-        puts "FPGA_PROG_FAIL: FK33_XSDB_TARGET=$_want matches [llength $_hit] target(s):\n[targets]"
+    if {[catch {targets -filter "name =~ \"xcvu33p\" && jtag_cable_name =~ \"*$_want*\""} _hit]} {
+        puts "FPGA_PROG_FAIL: target filter failed: $_hit"
         exit 1
     }
-    set _dev $_hit
-} elseif {[llength $_dev] > 1} {
-    puts "FPGA_PROG_FAIL: REFUSING TO GUESS -- [llength $_dev] configurable targets present"
-    puts "  and FK33_XSDB_TARGET is not set.  Configuring the wrong card is how this"
-    puts "  project already lost one factory flash image.  Target list:"
-    puts [targets]
-    exit 1
+    set _rows [split [string trim $_hit] "\n"]
+    if {[string trim $_hit] eq "" || [llength $_rows] != 1} {
+        puts "FPGA_PROG_FAIL: FK33_XSDB_TARGET=$_want matches [expr {[string trim $_hit] eq "" ? 0 : [llength $_rows]}] of $_nall xcvu targets."
+        puts "  Cables present (the serial lives here, not in `targets`):"
+        puts [jtag targets]
+        exit 1
+    }
+    if {![regexp {^\s*(\d+)} [lindex $_rows 0] -> _n]} {
+        puts "FPGA_PROG_FAIL: could not parse a target id from: [lindex $_rows 0]"
+        exit 1
+    }
+} else {
+    if {$_nall > 1} {
+        puts "FPGA_PROG_FAIL: REFUSING TO GUESS -- $_nall configurable targets present"
+        puts "  and FK33_XSDB_TARGET is not set.  Configuring the wrong card is how this"
+        puts "  project already lost one factory flash image.  Cables:"
+        puts [jtag targets]
+        exit 1
+    }
+    if {![regexp {^\s*(\d+)} [string trim $_all] -> _n]} {
+        puts "FPGA_PROG_FAIL: could not parse a target id from: $_all"
+        exit 1
+    }
 }
-set _sel [lindex $_dev 0]
-puts "JTAG target: [lindex $_sel 2]"
-targets [lindex $_sel 0]
+puts "JTAG target: id $_n  (selector '${_want}')"
+targets $_n
 
 set bit $::env(FK33_BIT)
 if {[catch {fpga -no-revision-check -file $bit} err]} {
