@@ -160,8 +160,20 @@ if [[ -z "$LSMOD_OUT" ]]; then
     echo "  WARNING: '$LSMOD' produced NO output. Cannot tell if xdma is loaded."
 fi
 if [[ -n "$(printf '%s\n' "$LSMOD_OUT" | grep -E '^xdma ' || true)" ]]; then
-    echo "--- rmmod xdma (refcnt now $(cat /sys/module/xdma/refcnt 2>/dev/null || echo '?')) ---"
-    if ! "$RMMOD" xdma; then
+    # Wait for the refcount to actually drop.  MEASURED 2026-08-29: it was
+    # still 1 immediately after the device removal, so the single `sleep 1`
+    # above was not enough on its own.  Bounded, and skipped entirely if it
+    # never reaches 0, because a stale driver is not worth failing the run for.
+    for _i in 1 2 3 4 5 6 7 8 9 10; do
+        _rc=$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)
+        [[ "$_rc" == "0" ]] && break
+        sleep 1
+    done
+    echo "--- rmmod xdma (refcnt now ${_rc:-?}) ---"
+    if [[ "${_rc:-1}" != "0" ]]; then
+        echo "  refcount never reached 0; SKIPPING rmmod rather than forcing it."
+        echo "  The driver re-binds on rescan, which is MEASURED to work."
+    elif ! "$RMMOD" xdma; then
         echo "  RMMOD_FAILED -- continuing with the driver still loaded."
         echo "  It will re-bind on rescan; the insmod below will be skipped."
     fi
