@@ -153,9 +153,20 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 -- textio is here for ONE thing: NORM_W_IMAGE, the real RMSNorm gain image.
 -- It is read at elaboration and only when that generic is non-empty; nothing
--- in the default path touches a file.  This file is not in any synthesis flow
+-- in the default path touches a file.  This file is in no BUILD flow
 -- (`grep -rn llama_top hw/` is empty), so the elaboration-time read costs
 -- nothing there either.
+--
+-- CORRECTED 2026-08-29 (TRACK REALFIX): "not in any synthesis flow" was too
+-- strong and it matters for the elaboration checks below.  `hw/` is indeed
+-- empty of this file, but `sim/ooc_compose_bcd.tcl` has
+-- `set GEN(llama_top) {}` and synthesises this entity OUT OF CONTEXT at its
+-- own defaults for area.  So Vivado DOES read this file, which is exactly
+-- why the guards here are out-of-range `natural` constants and not
+-- `assert ... severity failure`: MEASURED 2026-08-29 on Vivado 2023.2, an
+-- out-of-range constant is `ERROR: [Synth 8-11323] assigned value '-48' out
+-- of range` and stops the run, while a failing severity-failure assert is
+-- ignored in synthesis.
 use std.textio.all;
 use work.model_cfg_pkg.all;
 use work.llama_map_pkg.all;
@@ -173,7 +184,16 @@ entity llama_top is
     MANT_W  : positive := 16;
     ACC_W   : positive := 32;
     EXP_W   : positive := 16;
-    VN_W    : positive := 13;   -- D-vec element-count width
+    -- D-VEC ELEMENT-COUNT WIDTH.  `seq_vec_issue` refuses a job with
+    -- `job_n_rows >= 2**VN_W` (rtl/seq_vec_issue.vhd:376, EC_NROWS), and the
+    -- widest D-vec job a schedule issues is `region_max(SHAPE)` elements --
+    -- at 9B that is `ffn` = 12288, so the old fixed 13 refused EVERY FFN of
+    -- EVERY block at run time and nothing rejected the combination at
+    -- elaboration.  `maximum(13, ...)` and not the bare `clog2`, so that a
+    -- scaled shape keeps exactly the 13 it has always had rather than
+    -- silently narrowing to 8: this change must move no existing number.
+    -- 9B needs 14; 27B's ffn 17408 will make it 15 on its own.
+    VN_W    : positive := maximum(13, clog2(region_max(SHAPE) + 1));
     ADDR_W  : positive := 16;   -- the lock's element-address width
     SEGS    : positive := 3;
     EPOCH_W : positive := 4;
@@ -182,7 +202,17 @@ entity llama_top is
     -- Elements per region.  Every region is allocated the widest region's
     -- size, which is what a flat model costs and what a real build would not
     -- pay.  Stated because it is a model artefact, not a design choice.
-    REGMAX  : positive := 4096;
+    --
+    -- IT DEFAULTS FROM THE SHAPE, and it did not before.  The old default was
+    -- a bare 4096 while `region_max(mk_shape(MODEL,1))` -- the default SHAPE
+    -- -- is 12288.  Nothing asserted it, so the real shape elaborated clean
+    -- and then produced a bound-check error on the first FFN write in
+    -- simulation.  Both benches that instantiate this file already compute
+    -- `region_max(SHAPE)` themselves (sim/tb_llama_top.vhd:606,
+    -- sim/tb_llama_top_smp.vhd:112), so this makes the default agree with
+    -- every caller rather than inventing a new value.  `CHK_REGMAX` below
+    -- bites if it is overridden too small.
+    REGMAX  : positive := region_max(SHAPE);
 
     WDOG_LIMIT : positive := 200000;
     STRICT     : boolean  := true;
@@ -339,7 +369,19 @@ entity llama_top is
     -- `tools/gen_llama_top_weights.py --norm-out`.  Empty (the DEFAULT) keeps
     -- the synthetic ramp and the default path is bit-identical to what it was
     -- before this generic existed -- MEASURED, not asserted: the
-    -- `tb_llama_top_real` landmark `R_X(0) = -16339 hash 92903` is unchanged.
+    -- `tb_llama_top_real` landmark pair `R_X(0) = -16364 hash 91622` is
+    -- unchanged.
+    --
+    -- CORRECTED 2026-08-29 (TRACK REALFIX).  This comment carried
+    -- `-16339 hash 92903` from the day it was written and had been WRONG
+    -- since `a77d181`, the B-BLK-1 key-head mapping fix, which moved the
+    -- landmark and did not move the comment.  TRACK OI3B and TRACK CAPTURE
+    -- measured the current pair independently; it is re-measured here as
+    -- `EXP_X0 => -16364, EXP_XSUM => 91622` on a pristine `git archive`
+    -- 5578132 tree.  The CLAIM the comment makes -- that the default path is
+    -- bit-identical with the generic empty -- is unaffected; only the
+    -- witness numbers were stale.  Since `5578132` these four numbers reach
+    -- the bench's verdict, so a stale pair here can no longer outlive a run.
     --
     -- WHAT IT IS NOT, and this is the part not to overstate.  It does NOT add
     -- a weight region, a descriptor field, or a packing for a norm gain.  The
@@ -746,6 +788,30 @@ architecture rtl of llama_top is
   constant LOG2L   : natural := clog2(LANES);
   constant GA_W    : natural := VN_W - LOG2L;
 
+  -- ---- ELABORATION CHECKS THAT BITE IN SYNTHESIS TOO --------------------
+  -- These are `natural` constants that go NEGATIVE when the invariant is
+  -- broken, not `assert ... severity failure`.  The reason is on record:
+  -- Vivado silently IGNORES a failing severity-failure assert in synthesis,
+  -- so an assert-only check is a simulation check wearing a build check's
+  -- clothes.  An out-of-range `natural` is a hard error in both tools, and
+  -- it fires during DECLARATION elaboration, which is before any concurrent
+  -- assert runs and before any statement part is elaborated.
+  --
+  -- Each is written so the legal case is >= 0 and the message is the name.
+  --
+  -- CHK_REGMAX: every region is REGMAX elements, so REGMAX below the widest
+  -- region silently truncates a region address.  At the default 9B shape the
+  -- old REGMAX 4096 was 8192 elements short of `ffn` 12288.
+  constant CHK_REGMAX : natural := REGMAX - region_max(SHAPE);
+  -- CHK_VN_W: `seq_vec_issue` refuses `job_n_rows >= 2**VN_W`, and the
+  -- widest D-vec job is `region_max(SHAPE)` elements.  This is a RUN-TIME
+  -- refusal in that file (EC_NROWS) with nothing rejecting the combination
+  -- at elaboration, which is how VN_W 13 survived alongside ffn 12288.
+  -- Stated as a width and not as `2**VN_W - 1 - region_max`, because the
+  -- latter overflows a 32-bit integer at VN_W = 31 and would then fail on a
+  -- legal width.  `2**VN_W > n` and `VN_W >= clog2(n+1)` are the same claim.
+  constant CHK_VN_W   : natural := VN_W - clog2(region_max(SHAPE) + 1);
+
   -- ---- D core ----------------------------------------------------------
   signal go_walk    : std_logic;
   -- `tok_done` is a PORT and this file has to act on it, so the driver is an
@@ -1051,17 +1117,38 @@ begin
   -- run of this top level can be mistaken for inference.
   -- ======================================================================
   banner : process is
+    -- THE ATTENTION LINE HAS TO AGREE WITH `C_REAL`, and it did not.  It was
+    -- printed unconditionally, including in the runs where the real
+    -- `attn_block` is instantiated -- and the two `gcr` reports below it
+    -- ("llama_top: unit C is the REAL attn_block", grep for that string)
+    -- said the opposite, so the same log stated both.  A banner whose job is
+    -- to stop a run being mistaken for inference cannot itself be wrong
+    -- about which units are real.
+    function c_line return string is
+    begin
+      if C_REAL then
+        return " * unit C is the REAL attn_block.  KV cache is AXI : "
+             & boolean'image(C_KV_AXI) & LF
+             & "   Its OUTPUT still has no value oracle at this level;" & LF
+             & "   see the C report below for what that does and does not"
+             & LF & "   establish.";
+      else
+        return " * ATTENTION IS A STUB.  Unit C returns a documented," & LF
+             & "   obviously-wrong, well-formed pattern.  attn_lane_skel" & LF
+             & "   is a pricing skeleton and computes nothing.  Any block"
+             & LF
+             & "   at an attention position produces a MEANINGLESS value"
+             & LF
+             & "   and every later block inherits it through the residual.";
+      end if;
+    end function;
   begin
     if SHOUT then
       report LF
         & "==========================================================" & LF
         & " llama_top: THIS DOES NOT PERFORM INFERENCE YET." & LF
         & "==========================================================" & LF
-        & " * ATTENTION IS A STUB.  Unit C returns a documented," & LF
-        & "   obviously-wrong, well-formed pattern.  attn_lane_skel" & LF
-        & "   is a pricing skeleton and computes nothing.  Any block" & LF
-        & "   at an attention position produces a MEANINGLESS value" & LF
-        & "   and every later block inherits it through the residual." & LF
+        & c_line & LF
         & " * unit A behavioural : " & boolean'image(A_BEHAV) & LF
         & " * unit B behavioural : " & boolean'image(B_BEHAV) & LF
         & " * the D-vec norm is the REAL rmsnorm_rs : "
@@ -2727,10 +2814,31 @@ begin
     -- written and never read back.  It becomes a wrong number on the first
     -- day there is a token loop, which is what this file is heading for.
     -- docs/debugging/2026-08-29_b-layer-dimension.md.
+    --
+    -- IT IS A PROCESS VARIABLE, NOT A SIGNAL, AND THAT IS A MODELLING
+    -- CHOICE WITH A MEASURED PRICE ATTACHED.  At the real 9B shape this
+    -- array is NLY*VH*DM*NBR words of B_RECUR_LANES*16 bits, i.e.
+    -- 24*32*128*128*16 = 201,326,592 scalars; the lane count cancels, so no
+    -- generic can shrink it.  ghdl-mcode costs ~228 bytes per scalar SIGNAL
+    -- (MEASURED, TRACK REALSHAPE), so as a signal this one declaration wants
+    -- ~46 GB and `ghdl -r llama_top` -- the DEFAULT generic set, which is the
+    -- real shape -- died with STORAGE_ERROR at 24.9 GB.  The same bits as a
+    -- variable cost 206 MB and 0.17 s.
+    --
+    -- WHY IT IS BEHAVIOUR-PRESERVING, which is the part that is not obvious.
+    -- `stmem` had exactly two accesses in the whole file, both inside this
+    -- one clocked process, and no concurrent statement read it.  So the only
+    -- observable difference a signal-to-variable conversion can make is
+    -- read-during-write at the SAME address on the SAME edge: with a signal
+    -- the read always sees the pre-edge value, because the write is not
+    -- applied until the following delta.  A variable applies immediately, so
+    -- the READ IS ORDERED BEFORE THE WRITE below and the same pre-edge value
+    -- is read.  That ordering is load-bearing; write-first would be a
+    -- different memory.  `st_rq` stays a signal, so the port timing at
+    -- `st_rdata` is untouched.  docs/debugging/2026-08-29_realfix-9b-shape.md.
     constant STLY : positive := VH*DM*NBR;   -- state words per layer
     type stmem_t is array (0 to NLY*STLY-1)
                     of std_logic_vector(B_RECUR_LANES*16-1 downto 0);
-    signal stmem : stmem_t := (others => (others => '0'));
 
     signal se_rhead, se_whead : integer range 0 to VH-1;
     signal se_rcol, se_wcol : integer range 0 to DM-1;
@@ -2827,17 +2935,22 @@ begin
     st_rdata <= st_rq;
     stmem_p : process(clk) is
       variable a : integer;
+      variable stmem : stmem_t := (others => (others => '0'));
     begin
       if rising_edge(clk) then
         -- b_layer is registered at job issue and held for the whole
         -- invocation, so it is stable across every access the block makes.
-        if st_wen = '1' then
-          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
-          stmem(a) <= st_wdata;
-        end if;
+        --
+        -- READ FIRST.  See the declaration comment: with `stmem` a variable
+        -- the statement order IS the read-during-write policy, and read-old
+        -- is what the signal form gave.  Do not reorder these two blocks.
         if st_ren = '1' then
           a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
           st_rq <= stmem(a);
+        end if;
+        if st_wen = '1' then
+          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+          stmem(a) := st_wdata;
         end if;
       end if;
     end process;
@@ -3384,7 +3497,19 @@ begin
     constant QGN    : positive := att_qg(SHAPE);   -- 2*HEAD_DIM*N_QH
     constant KVN    : positive := att_kv(SHAPE);   -- HEAD_DIM*N_KVH
     constant YN     : positive := att_q(SHAPE);    -- HEAD_DIM*N_QH
-    constant POSW   : positive := clog2(C_MAXPOS);
+    -- POSITION WIDTH.  `clog2(C_MAXPOS + 1)` and NOT `clog2(C_MAXPOS)`.
+    -- POS_W has to carry two different quantities: a POSITION, which runs
+    -- 0 .. C_MAXPOS-1, and `ctx_len`, which is a COUNT and runs 1 .. C_MAXPOS.
+    -- `attn_kv_axi` range-checks the count with `to_integer(ctx_len) > MAXCTX`
+    -- (rtl/attn_kv_axi.vhd:542), so the count must be representable.  At a
+    -- power-of-two cache depth the old width could not hold it: MAXPOS 256
+    -- gave POSW 8, `to_unsigned(256, 8)` is 0, and the guard below -- which
+    -- demanded BOTH `C_CTXLEN <= C_MAXPOS` and `C_CTXLEN < 2**POSW` -- became
+    -- self-contradictory at exactly `C_CTXLEN = C_MAXPOS`.  MEASURED: 256
+    -- failed and 255 passed, i.e. the last cache position could never be
+    -- used and the assert blamed the caller for it.  One extra bit fixes the
+    -- count and costs nothing the position cares about.
+    constant POSW   : positive := clog2(C_MAXPOS + 1);
 
     -- THE QK-NORM GAINS.  Deterministic in the element index and centred on
     -- 1.0 at C_QKN_EXP, which is what an RMSNorm gain is initialised to.
@@ -3476,14 +3601,17 @@ begin
                      := std_logic_vector(to_unsigned(C_V_BASE, C_KV_ADDR_W));
     constant REC_B_C : natural := 16 + C_HD*C_CM_W/8;
 
+    -- The behavioural cache's storage.  The TYPES stay here because the
+    -- `gkvmem` generate is the only user and a type is free; the two ARRAYS
+    -- moved INTO that generate.  They used to be declared at this level, so
+    -- they were elaborated even with C_KV_AXI true, i.e. with the real AXI
+    -- cache in their place and nothing reading them.  MEASURED at the real
+    -- attention geometry, C_KV_AXI on throughout: 29.8 MB of GHDL signal
+    -- storage per cache position, 8.9 GB at C_MAXPOS 256, all of it dead.
     type hdr_arr is array (natural range <>) of
          std_logic_vector(C_NBLK*8-1 downto 0);
     type man_arr is array (natural range <>) of
          std_logic_vector(C_KV_BLOCK*C_CM_W-1 downto 0);
-    signal kvhdr : hdr_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS-1)
-                 := (others => (others => '0'));
-    signal kvmem : man_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS*C_NBLK-1)
-                 := (others => (others => '0'));
 
     -- the y stream
     signal y_valid, y_last, y_hdrv : std_logic;
@@ -3593,6 +3721,15 @@ begin
     -- visible until BRESP.  The four handshakes are what make that legal.
     -- ======================================================================
     gkvmem : if not C_KV_AXI generate
+      -- DECLARED HERE AND NOT ONE LEVEL UP.  These are the behavioural
+      -- cache's storage and nothing outside this generate touches them; at
+      -- the outer level they cost 29.8 MB of elaboration per cache position
+      -- even when `gkvaxi` had replaced them.
+      signal kvhdr : hdr_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS-1)
+                   := (others => (others => '0'));
+      signal kvmem : man_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS*C_NBLK-1)
+                   := (others => (others => '0'));
+    begin
       kw_rdy_s  <= '1';
       kr_rdy_s  <= '1';
       vr_rdy_s  <= '1';
@@ -3640,6 +3777,40 @@ begin
 
     -- ---- the real cache ---------------------------------------------------
     gkvaxi : if C_KV_AXI generate
+      -- ---- CHECKS THAT RUN DURING DECLARATION ELABORATION ----------------
+      -- Everything below the `begin` is a concurrent assert, and a concurrent
+      -- assert runs only after the WHOLE design has elaborated.  That is too
+      -- late for two of these: at HEAD_DIM 256 with a too-small C_KV_BLOCK,
+      -- `attn_kv_axi`'s P_WR overflows while its statement part is being
+      -- elaborated and GHDL prints `overflow detected` with no file and no
+      -- line, so the named asserts never get to speak.  A `natural` constant
+      -- that goes negative is evaluated HERE, before `u_kv` is elaborated at
+      -- all, and it also survives Vivado, which ignores a failing
+      -- severity-failure assert in synthesis.  The asserts are kept: where
+      -- they are reachable their message is better than a range error.
+      --
+      -- The legal case is >= 0 in every one; the name is the diagnostic.
+
+      -- The block exponents must fit the 16-byte header chunk of the record.
+      -- This is `attn_kv_axi`'s own :455 assert, mirrored here so the CALLER
+      -- is named.  C_NBLK = attn_head_dim / C_KV_BLOCK, and EXP_W is 8.
+      constant CHK_KV_NBLK : natural := 16 - C_NBLK*8/8;
+      -- One KV block must be a whole number of 16-byte record granules.
+      constant CHK_KV_GRAN : natural := 0 - ((C_KV_BLOCK*C_CM_W/8) mod 16);
+      -- `ctx_len` is a COUNT, 1 .. C_MAXPOS.  POSW is now wide enough to
+      -- hold C_MAXPOS itself (see its declaration), so this is the whole
+      -- constraint and the old second clause is gone rather than restated.
+      constant CHK_KV_CTX  : natural := C_MAXPOS - C_CTXLEN;
+      -- THE K AND V REGIONS MUST FIT THE ADDRESS SPACE, not merely miss each
+      -- other.  Nothing checked this before: MEASURED, two 34,816-byte
+      -- regions based at 0 and 34,816 in a 16-bit space need 69,632 bytes,
+      -- elaborated clean, and the top 4,096 bytes of V wrapped onto the
+      -- first records of K.  Written with clog2 rather than 2**C_KV_ADDR_W
+      -- so a 32-bit address width does not overflow the check itself.
+      constant KVREG_B     : natural := C_LAY*C_NKVH*C_MAXPOS*REC_B_C;
+      constant CHK_KV_FIT  : natural :=
+        C_KV_ADDR_W - clog2(maximum(C_K_BASE, C_V_BASE) + KVREG_B);
+    begin
       -- ELABORATION CHECKS.  The three-way geometry constraint is stated in
       -- the C_KV_AXI generic's header; these name the caller rather than
       -- letting `attn_kv_axi`'s own asserts read as a bug in that file.
@@ -3654,8 +3825,18 @@ begin
              & "HEAD_DIM an even power of two the smallest legal head dim is "
              & "64.  Build the shape with attn_head_dim => 64."
         severity failure;
-      assert C_CTXLEN <= C_MAXPOS and C_CTXLEN < 2**POSW
-        report "llama_top: C_CTXLEN must fit in the cache and in POS_W."
+      assert C_CTXLEN <= C_MAXPOS
+        report "llama_top: C_CTXLEN must fit in the cache."
+        severity failure;
+      -- clog2, not 2**C_KV_ADDR_W: the right-hand side would overflow a
+      -- 32-bit integer at C_KV_ADDR_W = 32, so the check would fail on the
+      -- widest legal address space rather than on an illegal layout.
+      assert clog2(maximum(C_K_BASE, C_V_BASE) + KVREG_B) <= C_KV_ADDR_W
+        report "llama_top: the KV regions do not fit C_KV_ADDR_W.  The pair "
+             & "ends at byte " & integer'image(maximum(C_K_BASE, C_V_BASE)
+                                               + KVREG_B)
+             & " and the address space is " & integer'image(C_KV_ADDR_W)
+             & " bits.  The high end wraps onto the low region."
         severity failure;
       -- The two regions must not overlap.  Nothing else checks this: both
       -- masters would work perfectly and the V records would be K records.

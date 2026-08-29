@@ -373,6 +373,30 @@ architecture rtl of attn_kv_axi is
   constant AW_B   : integer := clog2(NBLK);
   constant AW_H   : integer := clog2(N_KVH);
 
+  -- THE HEADER-CHUNK BOUND, AS A DECLARATION AND NOT ONLY AS AN ASSERT.
+  -- The concurrent `assert NBLK*EXP_W/8 <= CH_B` below states the same
+  -- invariant, and at the shipping geometry it is UNREACHABLE: GHDL
+  -- elaborates every declaration and every statement part before it runs a
+  -- single concurrent assert, and at HEAD_DIM 256 the static slice
+  -- `wbuf(0)(NBLK*EXP_W-1 downto 0)` in P_WR (:829, a CH_W = 128-bit
+  -- element) overflows during statement elaboration first.  The result was
+  -- `ghdl: error: overflow detected` with no file, no line and no message,
+  -- while the SAME illegal KV_BLOCK at HEAD_DIM 32 or 64 printed the named
+  -- assert -- which is why no simulation ever saw this (MEASURED, TRACK
+  -- REALSHAPE).  A `natural` constant that goes negative is evaluated in the
+  -- declarative part, so it names the file and the line, and unlike the
+  -- assert it also survives Vivado.  MEASURED 2026-08-29, Vivado 2023.2,
+  -- three OOC runs of THIS file on xczu3eg: with HEAD_DIM 256 / KV_BLOCK 4
+  -- the constant is `ERROR: [Synth 8-11323] assigned value '-48' out of
+  -- range` and synthesis FAILS; with HEAD_DIM 64 / KV_BLOCK 4, which
+  -- violates only the `assert ... severity failure` two declarations down,
+  -- synthesis COMPLETES.  Same file, same tool, same invocation shape.
+  --
+  -- ZERO MARGIN AT THE SHIPPING SHAPE, and that is not an accident of this
+  -- check: attn_head_dim is 256 for both 9B and 27B, so KV_BLOCK 16 puts
+  -- NBLK at exactly 16 and one step past it the diagnostic used to vanish.
+  constant CHK_HDR_FITS : natural := CH_B - NBLK*EXP_W/8;
+
   type ch_arr is array (natural range <>) of std_logic_vector(CH_W-1 downto 0);
 
   -- addr = base + ((layer*N_KVH + head)*MAXCTX + pos) * REC_B   (C spec 2.2)
