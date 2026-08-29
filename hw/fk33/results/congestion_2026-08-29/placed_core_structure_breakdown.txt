@@ -1,0 +1,67 @@
+tr             total=88654    LUT=50128 MUXF=36864 DSP=1536 CARRY=126
+trn            total=40330    LUT=18821 FF=18819 CARRY=2688 OTH=2
+re2_shv        total=16324    LUT=13684 FF=2304 CARRY=336
+cb             total=12288    FF=6144 LUT=6144
+em_shv         total=10378    LUT=8601 FF=1536 CARRY=240 OTH=1
+y_data         total=8072     LUT=5575 FF=2304 CARRY=192 OTH=1
+w_r            total=6146     FF=6144 LUT=2
+re3_mag        total=6135     LUT=4230 FF=1584 CARRY=320 OTH=1
+re1_acc        total=5760     LUT=3168 FF=2304 CARRY=288
+fold           total=4974     LUT=3249 FF=1584 CARRY=141
+acc            total=4897     LUT=2305 FF=2304 CARRY=288
+scp            total=3024     FF=2256 MEM=768
+re2_acc        total=2306     FF=2304 LUT=1 OTH=1
+ybuf           total=2162     LUT=2076 CARRY=64 MEM=22
+re3_ok         total=1976     LUT=1499 CARRY=429 FF=48
+sprod          total=1587     LUT=1347 CARRY=192 DSP=48
+contrib        total=1420     FF=1419 LUT=1
+sat_r          total=879      LUT=782 CARRY=96 FF=1
+os_rep         total=423      FF=288 LUT=134 OTH=1
+cbw_d          total=384      FF=384
+ns_rep         total=318      FF=288 LUT=30
+t_iss          total=273      LUT=219 FF=32 CARRY=22
+tg             total=237      FF=167 LUT=40 MEM=30
+cbw_a          total=192      FF=192
+rdata_r        total=157      LUT=149 CARRY=8
+nb_r           total=127      LUT=88 FF=27 CARRY=12
+rows_left      total=95       LUT=59 FF=32 CARRY=4
+b_pf           total=84       LUT=46 FF=32 CARRY=6
+amax           total=74       LUT=38 FF=33 CARRY=3
+st             total=72       LUT=63 CARRY=6 FF=3
+rd_t           total=55       LUT=44 FF=9 CARRY=2
+cbw_v          total=49       FF=48 LUT=1
+re2_t          total=47       FF=45 LUT=2
+y_we           total=45       FF=44 LUT=1
+y_we_rep       total=43       LUT=43
+b_iss          total=40       FF=32 CARRY=4 LUT=4
+tiles_r        total=39       FF=32 CARRY=4 LUT=3
+xq             total=38       MEM=37 LUT=1
+re1_t          total=30       FF=28 LUT=1 OTH=1
+ns_r           total=24       LUT=19 FF=5
+rd_td          total=10       FF=9 LUT=1
+em_t           total=10       FF=9 LUT=1
+err_info       total=8        LUT=8
+xq_cnt         total=6        LUT=4 FF=2
+os_r           total=6        FF=6
+fold_v         total=6        FF=6
+xq_rd          total=4        FF=2 LUT=2
+rd_v           total=3        LUT=2 FF=1
+done           total=3        LUT=2 FF=1
+xq_wr          total=2        FF=1 LUT=1
+re1_v          total=2        FF=1 LUT=1
+pf_out         total=2        FF=1 LUT=1
+err_r          total=2        FF=1 LUT=1
+em_v           total=2        FF=1 LUT=1
+busy           total=2        LUT=2
+w_tile         total=1        LUT=1
+VCC            total=1        OTH=1
+VCC_3          total=1        OTH=1
+VCC_1          total=1        OTH=1
+sat_l          total=1        LUT=1
+re3_v          total=1        FF=1
+re2_v          total=1        FF=1
+GND            total=1        OTH=1
+GND_3          total=1        OTH=1
+GND_1          total=1        OTH=1
+err_code       total=1        LUT=1
+done_l         total=1        LUT=1

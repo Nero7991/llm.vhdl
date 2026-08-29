@@ -1,0 +1,10 @@
+matvec_core: 218,611 placed leaf cells bucketed by clock region
+(from per-leaf get_clock_regions on bd_wrapper_placed.dcp, 2026-08-29)
+
+        X0     X1     X2     X3     X4     X5     X6     X7
+Y3:      0      0      0      0      0      0     60    273
+Y2:      0     15    189    840    275    547   4274   2035
+Y1:   8375  10090  15826   8267  11124  13379  14680   7420
+Y0:  11738  13811  22435  14344  17548  18099  13884   9083
+
+TOTAL 218611

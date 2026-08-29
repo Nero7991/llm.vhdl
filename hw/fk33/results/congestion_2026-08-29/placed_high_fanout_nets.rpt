@@ -1,0 +1,81 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 09:25:34 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_high_fanout_nets -max_nets 60 -file congest_fanout.rpt
+| Design       : bd_wrapper
+| Device       : xcvu33p
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+High Fan-out Nets Information
+
+1. Summary
+----------
+
++-------------------------------------------------------------------------------------------+--------+-------------+
+| Net Name                                                                                  | Fanout | Driver Type |
++-------------------------------------------------------------------------------------------+--------+-------------+
+| bd_i/eng/inst/eng/dut/core/trn[2][835][27]_i_1_n_0                                        |   9408 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/w_r[6143]_i_1_n_0                                              |   8448 | LUT6        |
+| bd_i/eng/inst/eng/dut/core/re2_acc[17][47]_i_1_n_0                                        |   4333 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/trn[3][1379][27]_i_1_n_0                                       |   4300 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/trn[4][1377][27]_i_1_n_0                                       |   2688 | LUT2        |
+| bd_i/eng/inst/eng/dut/core/re1_acc[0]_71                                                  |   2332 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/acc[26][0]_i_1_n_0                                             |   2304 | LUT2        |
+| bd_i/eng/inst/eng/dut/core/tr_reg[0][980]_i_1_n_0                                         |   2304 | LUT2        |
+| bd_i/eng/inst/eng/dut/core/os_rep[37][5]_i_1_n_0                                          |   2090 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/y_data[3071]_i_1_n_0                                           |   1800 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/re3_mag[4][35]_i_1_n_0                                         |   1632 | BUFGCE      |
+| bd_i/eng/inst/eng/dut/core/contrib[24][28]_i_1_n_0                                        |   1392 | LUT2        |
+| bd_i/eng/inst/eng/dut/core/trn[2][835][27]_i_1_n_0_bufg_place                             |   1345 | LUT2        |
+| bd_i/eng/inst/eng/dut/core/em_shv[9][31]_i_1_n_0                                          |   1333 | BUFGCE      |
+| bd_i/eng/inst/eng/dw_reg_n_0_[3][1]                                                       |   1177 | FDRE        |
+| bd_i/eng/inst/eng/dut/core/trn[3][1379][27]_i_1_n_0_bufg_place                            |   1077 | LUT2        |
+| bd_i/eng/inst/eng/dut/streamer/gen_w[21].port_p/rst_s2                                    |    885 | FDRE        |
+| bd_i/hbm_reset/U0/peripheral_aresetn[0]                                                   |    862 | FDRE        |
+| bd_i/eng/inst/eng/dut/core/fold[2][35]_i_1_n_0                                            |    792 | LUT2        |
+| bd_i/xdma/inst/udma_wrapper/dma_top/user_rst_n_3ff_reg[1]_rep__1_n_0                      |    791 | FDCE        |
+| bd_i/eng/inst/eng/dut/streamer/gen_s[0].scale_port/g_dc.fifo/core_aresetn_0[0]            |    768 | LUT3        |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_126_139/DOA1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_140_153/DOB1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_14_27/DOA1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_154_167/DOC1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_168_181/DOD1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_182_195/DOE1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_196_209/DOF1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_210_223/DOG1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_238_251/DOA1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_252_265/DOB1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_266_279/DOC1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_280_293/DOD1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_28_41/DOB1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_294_307/DOE1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_308_321/DOF1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_322_335/DOG1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_350_363/DOA1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_364_377/DOB1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_378_391/DOC1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_392_405/DOD1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_406_419/DOE1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_420_433/DOF1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_42_55/DOC1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_434_447/DOG1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_462_475/DOA1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_476_489/DOB1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_490_503/DOC1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_504_511/DOD1                                        |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_56_69/DOD1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_70_83/DOE1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_84_97/DOF1                                          |    720 | RAMD32      |
+| bd_i/eng/inst/eng/dut/core/xq_reg_0_1_98_111/DOG1                                         |    720 | RAMD32      |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/user_reset                                                |    710 | FDPE        |
+| bd_i/eng/inst/eng/dfetch/rst_s2                                                           |    697 | FDRE        |
+| bd_i/xdma/inst/udma_wrapper/dma_top/dma_enable.vul_dma/pcie_c2h_rst_3ff_reg[0]_rep__0_n_0 |    603 | FDPE        |
+| bd_i/eng/inst/eng/dut/core/xq_wr                                                          |    593 | FDRE        |
+| bd_i/eng/inst/eng/dut/core/p_0_in__11                                                     |    592 | LUT3        |
+| bd_i/core_reset/U0/peripheral_aresetn[0]                                                  |    526 | FDRE        |
+| bd_i/eng/inst/eng/dut/core/y_data[3071]_i_1_n_0_bufg_place                                |    505 | LUT5        |
++-------------------------------------------------------------------------------------------+--------+-------------+
+
+
