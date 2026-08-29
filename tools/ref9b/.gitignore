@@ -2,3 +2,6 @@
 # for the same reason as ref/.gitignore: the root .gitignore is shared.
 dump_llamacpp
 __pycache__/
+
+# Build product of mv_step_oracle.c
+mv_step_oracle

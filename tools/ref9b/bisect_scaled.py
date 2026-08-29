@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""The bisect, at the SCALED shape a GHDL run can actually reach.
+
+WHY THIS EXISTS AND WHY IT IS NOT `seam_bisect.py`.  `seam_bisect.py` compares
+a capture against the whole-model 9B reference.  MEASURED 2026-08-29: that
+comparison stops at the FIRST seam with `length 4096 vs 64`, because
+`sim/tb_llama_top.vhd` runs `mk_shape_scaled` -- hidden 64 against the model's
+4096 -- and a 9B token in GHDL is DERIVED at about 35,000x the work of a scaled
+one.  So the 9B reference bisects a CARD; it cannot bisect a simulation, and no
+amount of format plumbing changes that.
+
+WHAT THIS DOES INSTEAD.  A STEPWISE oracle.  For every step whose op has an
+independent model, it takes the machine's OWN captured inputs, recomputes the
+output, and compares bit-for-bit.  The first step that disagrees is the answer.
+
+That structure buys two things a whole-model reference cannot:
+
+  * it needs a model of ONE op, not of the whole token, so it exists today;
+  * it can check `R_XN`, which the 9B reference explicitly CANNOT (finding D2:
+    the top-level norm weight is a synthetic ramp, so those seams have no
+    counterpart in the model).  Locally the ramp is known exactly.
+
+AND WHAT IT CANNOT DO, WHICH IS THE HALF THAT MATTERS.  A stepwise oracle is
+blind wherever it has no model.  Subsystem B's and subsystem C's outputs
+(`R_Y`) have no integration-level model here, so a wrong `R_Y` is fed to the
+next step AS GIVEN and every later comparison still passes.  A clean run of
+this tool therefore does NOT mean the token is right.  It means: no step that
+has a model computed something other than what its model says, given the
+machine's own inputs.  The coverage table is printed for exactly that reason
+and should be read before the verdict.
+
+usage:
+  bisect_scaled.py capture.txt --blocks 4 --attn-int 4 --attn-hd 16 \
+      [--tok 0] [--norm real|anchor|mean] [--w-image sim/llama_top_w_b4_pool.hex]
+      [--no-a] [-v]
+"""
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+
+import scaled_plan as SP
+import vec_oracle as VO
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+NPORTS_W = 4
+BEATS = 64
+SUB_BYTES = 4096
+A_MEM_BASE = 0x100000
+A_JOB_STRIDE = 0x8000
+
+
+# ------------------------------------------------------------------ the capture
+class Rec:
+    __slots__ = ("name", "tok", "layer", "kind", "exp", "v")
+
+    def __init__(self, name, tok, layer, kind, exp, v):
+        self.name, self.tok, self.layer = name, tok, layer
+        self.kind, self.exp, self.v = kind, exp, v
+
+
+def read_capture(path):
+    """The text format `tools/ref9b/capture_to_r9bs.py` defines, in order."""
+    out, pend, want = [], None, 0
+    with open(path) as fp:
+        for lineno, line in enumerate(fp, 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            f = line.split()
+            if f[0] == "SEAM":
+                if pend is not None and len(pend.v) != want:
+                    raise SystemExit("line %d: %s declared %d values, got %d"
+                                     % (lineno, pend.name, want, len(pend.v)))
+                if len(f) != 7:
+                    raise SystemExit("line %d: malformed SEAM" % lineno)
+                pend = Rec(f[1], int(f[2]), int(f[3]), f[4], int(f[5]), [])
+                want = int(f[6])
+                out.append(pend)
+            else:
+                if pend is None:
+                    raise SystemExit("line %d: values before any SEAM" % lineno)
+                pend.v.extend(int(x) for x in f)
+    if pend is not None and len(pend.v) != want:
+        raise SystemExit("%s declared %d values, got %d"
+                         % (pend.name, want, len(pend.v)))
+    return out
+
+
+# ------------------------------------------------------------------ the weights
+def wword_synth(p, idx):
+    """`sim/tb_llama_top.vhd`'s `wword`, byte for byte.
+
+    `idx` is REDUCED before the multiply, exactly as the VHDL does it, because
+    `idx*7919` overflows VHDL's 32-bit universal integer at 491 steps and the
+    bench aborts.  A Python model without the reduction would silently disagree
+    with the bench on every step past that point.
+    """
+    i2 = idx % 65536
+    b = bytearray(16)
+    if p == NPORTS_W:
+        for l in range(8):
+            x = 16384 + ((i2 * 13 + l * 7 + 3) % 16384)
+            b[2 * l] = x & 0xFF
+            b[2 * l + 1] = (x >> 8) & 0xFF
+    else:
+        for j in range(16):
+            b[j] = (i2 * 7919 + p * 104729 + j * 31 + 17) % 251
+    return bytes(b)
+
+
+class Weights:
+    def __init__(self, hex_path=None):
+        self.img = None
+        if hex_path:
+            with open(hex_path) as fp:
+                self.img = [ln.strip() for ln in fp if ln.strip()]
+
+    def sub(self, step, p):
+        """Sub-region `p` for `step`, as the bench's AXI slaves serve it.
+
+        HOW MANY BEATS IS NOT A FREE CHOICE, AND GETTING IT WRONG LOOKS LIKE A
+        DEFECT.  MEASURED 2026-08-29: supplying a fixed 64 beats made the
+        oracle read zero weights for every row past 128, so `R_QG-1` at
+        ATTN_HD = 64 (512 rows, 256 beats) reported "384 of 512 mantissas
+        differ, first at 128" -- a perfect, plausible, and entirely
+        self-inflicted divergence.
+
+        The COMMITTED IMAGE really does hold only `A_WBEATS = 64` beats per
+        sub-region; `tools/gen_llama_top_weights.py` asserts `tiles*NB <= 64`
+        and refuses to emit a shape that needs more.  The SYNTHETIC `wword`
+        has no such bound, so the scaled shapes that need more (ATTN_HD = 64)
+        are exactly the ones that run without an image.
+        """
+        nbeat = BEATS if self.img is not None else SUB_BYTES // 16
+        out = bytearray()
+        for beat in range(nbeat):
+            if self.img is None:
+                addr = A_MEM_BASE + step * A_JOB_STRIDE + p * 4096 + beat * 16
+                out += wword_synth(p, (addr // 16) % 16777216)
+            else:
+                ln = self.img[step * (NPORTS_W + 1) * BEATS + p * BEATS + beat]
+                # The generator writes MSB byte first
+                # (gen_llama_top_weights.py:269 `[::-1]`), so undo that to
+                # recover the packed body bytes.
+                out += bytes.fromhex(ln)[::-1]
+        return bytes(out)
+
+
+def run_a_oracle(step, M, K, w_exp, out_shift, x, x_exp, w):
+    exe = os.path.join(HERE, "mv_step_oracle")
+    if not os.path.exists(exe):
+        raise SystemExit("build it first:\n  cc -O2 -Wall -I ref -o "
+                         "tools/ref9b/mv_step_oracle tools/ref9b/mv_step_oracle.c -lm")
+    fd, jp = tempfile.mkstemp(suffix=".job")
+    with os.fdopen(fd, "w") as fp:
+        fp.write("%d %d %d %d %d\nX\n" % (M, K, w_exp, out_shift, x_exp))
+        fp.write(" ".join(str(v) for v in x) + "\n")
+        for p in range(NPORTS_W + 1):
+            body = w.sub(step, p)
+            fp.write("SUB %d %d\n%s\n" % (p, len(body), body.hex()))
+    try:
+        r = subprocess.run([exe, jp], capture_output=True, text=True)
+    finally:
+        os.unlink(jp)
+    if r.returncode:
+        raise SystemExit("mv_step_oracle failed on step %d: %s" % (step, r.stderr))
+    lines = r.stdout.split()
+    assert lines[0] == "Y"
+    y_exp, _ns, n = int(lines[1]), int(lines[2]), int(lines[3])
+    return [int(v) for v in lines[4:4 + n]], y_exp
+
+
+# ----------------------------------------------------------------------- driver
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("capture")
+    ap.add_argument("--blocks", type=int, default=4)
+    ap.add_argument("--attn-int", type=int, default=4)
+    ap.add_argument("--attn-hd", type=int, default=32)
+    ap.add_argument("--tok", type=int, default=0)
+    ap.add_argument("--norm", choices=("real", "anchor", "mean"), default="anchor",
+                    help="which OP_VEC_NORM the run elaborated.  The capture "
+                         "does NOT record this and guessing it wrong makes "
+                         "every norm seam diverge, which looks like a defect.")
+    ap.add_argument("--norm-exp", type=int, default=12,
+                    help="rtl/llama_top.vhd's NORM_EXP (:220, default 12), "
+                         "used by --norm anchor")
+    ap.add_argument("--norm-w-exp", type=int, default=12)
+    ap.add_argument("--norm-q", type=int, default=12)
+    ap.add_argument("--w-image", default=None,
+                    help="the bench's W_IMAGE hex; omit for the synthetic wword")
+    ap.add_argument("--no-a", action="store_true",
+                    help="skip the subsystem A seams (they cost one process each)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    a = ap.parse_args()
+
+    recs = read_capture(a.capture)
+    by = {}
+    for r in recs:
+        k = (r.name, r.tok)
+        if k in by:
+            raise SystemExit("duplicate record %s tok %d" % k)
+        by[k] = r
+
+    shape = SP.Shape(a.blocks, a.attn_int, a.attn_hd)
+    steps = SP.build(shape)
+    prod = SP.producers(steps)
+
+    drift = SP.check_against_capture(steps, {k: len(v.v) for k, v in by.items()},
+                                     a.tok)
+    if drift:
+        print("# THE PLAN MIRROR DOES NOT DESCRIBE THIS CAPTURE.  Refusing to "
+              "compare, because a shifted plan reports a divergence at the "
+              "wrong seam, and the seam is the whole output of a bisect.")
+        for m in drift[:10]:
+            print("  " + m)
+        return 2
+
+    w = Weights(a.w_image)
+    checked, skipped, diverged = [], [], []
+
+    for st in steps:
+        if st.op == SP.OP_END or st.dst is None:
+            if st.op != SP.OP_END:
+                skipped.append((st.seam, "destination is R_NONE: the lm_head "
+                                         "job discards its result (finding D1)"))
+            continue
+        got = by[(st.seam, a.tok)]
+        src = prod[st.i]["src"]
+        src2 = prod[st.i]["src2"]
+
+        if st.op == SP.OP_A:
+            if a.no_a:
+                skipped.append((st.seam, "--no-a"))
+                continue
+            x = by[(src, a.tok)]
+            if len(x.v) != st.n_cols:
+                skipped.append((st.seam, "source %s has %d values, the job "
+                                         "reads %d" % (src, len(x.v), st.n_cols)))
+                continue
+            exp_v, exp_e = run_a_oracle(st.i, st.n_rows, st.n_cols, st.w_exp,
+                                        st.out_shift, x.v, x.exp, w)
+            why = "ref/matvec_int4.c on the bench's own weight bytes"
+        elif st.op == SP.OP_RES:
+            x, e = by[(src, a.tok)], by[(src2, a.tok)]
+            exp_v, exp_e, _sh, _sat = VO.res(x.v, e.v, x.exp, e.exp)
+            why = "ref/seq_vec_res_vec.c recipe (REAL RTL on the other side)"
+        elif st.op == SP.OP_SWG:
+            g, u = by[(src, a.tok)], by[(src2, a.tok)]
+            exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
+            why = "the behavioural stand-in: sequencing and exponent only"
+        elif st.op == SP.OP_NORM:
+            x = by[(src, a.tok)]
+            if a.norm == "real":
+                wv = VO.norm_w_const(len(x.v), a.norm_w_exp)
+                exp_v, exp_e, diag = VO.norm_rs(x.v, x.exp, wv, a.norm_w_exp,
+                                                a.norm_q)
+                why = ("rmsnorm_rs, bit-exact, rel_rms vs the double ideal "
+                       "%.4g" % diag["rel_rms_vs_ideal"])
+            elif a.norm == "anchor":
+                exp_v, exp_e = VO.norm_anchor(x.v, x.exp, a.norm_exp)
+                why = "the NORM_ANCHOR probe: sequencing and scale only"
+            else:
+                exp_v, exp_e = VO.norm_mean(x.v, x.exp)
+                why = "the behavioural mean-removal stand-in"
+        else:
+            skipped.append((st.seam, "subsystem %s has no integration-level "
+                                     "model" % st.op))
+            continue
+
+        nbad = sum(1 for i in range(len(exp_v)) if exp_v[i] != got.v[i]) \
+            if len(exp_v) == len(got.v) else -1
+        ebad = (exp_e != got.exp)
+        checked.append((st.seam, why))
+        if nbad or ebad:
+            first = -1
+            if nbad > 0:
+                first = next(i for i in range(len(exp_v)) if exp_v[i] != got.v[i])
+            diverged.append((st.seam, first, exp_e, got.exp, nbad, len(got.v),
+                             (exp_v[first] if first >= 0 else None),
+                             (got.v[first] if first >= 0 else None)))
+        if a.verbose:
+            print("  %-14s %-6s %s" % (st.seam, "DIFFERS" if (nbad or ebad)
+                                       else "ok", why))
+
+    print("# stepwise oracle, token %d, shape blocks=%d attn_interval=%d "
+          "attn_hd=%d hidden=%d ffn=%d"
+          % (a.tok, shape.blocks, shape.attn_interval, shape.attn_hd,
+             shape.hidden, shape.ffn))
+    print("# %d seams checked against a model, %d NOT checked"
+          % (len(checked), len(skipped)))
+    for nm, why in skipped:
+        print("    NOT CHECKED  %-14s %s" % (nm, why))
+    if diverged:
+        for (nm, i, ee, ge, nb, n, ev, gv) in diverged[:8]:
+            if nb < 0:
+                print("  %-14s LENGTH mismatch" % nm)
+            else:
+                print("  %-14s exp %d expected vs %d captured, %d of %d "
+                      "mantissas differ, first at %d (expected %s, captured %s)"
+                      % (nm, ee, ge, nb, n, i, ev, gv))
+        nm, i, ee, ge, nb, n, ev, gv = diverged[0]
+        print("\nFIRST DIVERGENCE: %s at element %d -- expected %s, captured %s "
+              "(exponent %d vs %d, %d of %d mantissas differ)"
+              % (nm, i, ev, gv, ee, ge, nb, n))
+        return 1
+    print("\nEVERY MODELLED SEAM MATCHES ITS MODEL BIT FOR BIT, given the "
+          "machine's own inputs.")
+    print("That is NOT a statement that the token is right: read the NOT "
+          "CHECKED list above, and note that a wrong value at an unmodelled "
+          "seam is passed forward AS GIVEN and every later seam still agrees.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

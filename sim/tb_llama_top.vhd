@@ -399,6 +399,30 @@ entity tb_llama_top is
     EMBED_VARY      : boolean := true;
     MUT_KV_NO_BRESP : boolean := false;  -- commit at W, not at BVALID
     MAXCYC    : natural  := 4000000;
+    -- ==================================================================
+    -- THE SEAM CAPTURE.  "" (the DEFAULT) captures nothing and costs nothing.
+    --
+    -- A path name turns run 0 into a producer of the LINE-ORIENTED TEXT that
+    -- `tools/ref9b/capture_to_r9bs.py` parses, one record per seam per token:
+    --
+    --     SEAM <name> <tok> <layer> bfp16 <exp> <n>
+    --     <mantissa> ...
+    --
+    -- The names are `tools/ref9b/seam_map.py`'s RTL seam names, and they are
+    -- DERIVED FROM THE PLAN, not typed in: `seam_of` walks the same block
+    -- structure `llama_sched_pkg.build_plan` emits, so a change to the
+    -- schedule moves both together or neither.
+    --
+    -- THE EXPONENT IS THE ONE THE REGION LOCK CAPTURED (`obs_cmp_exp` at
+    -- `obs_cmp`), and the convention is `value = mant * 2^-exp`, which is
+    -- `rtl/seq_vec_res.vhd:11`'s and `ref/fx.h:88`'s and
+    -- `tools/pack_int4.py`'s.  Getting that sign backwards produces a stream
+    -- that is wrong by 2^(2*exp) and looks structurally perfect.
+    --
+    -- ONLY RUN 0 IS CAPTURED.  `r9bs.index` keys a record by (name, token)
+    -- and REFUSES a duplicate, so a second run at the same token indices
+    -- would make the file unreadable rather than merely larger.
+    CAPTURE   : string   := "";
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
     VERBOSE   : boolean  := false
@@ -412,6 +436,75 @@ architecture tb of tb_llama_top is
   constant TBL    : sched_tbl_t := build_table(SHAPE);
   constant PLAN   : plan_t := build_plan(SHAPE);
   constant REGMAX : positive := region_max(SHAPE);
+
+  -- ======================================================================
+  -- THE SEAM NAME OF A STEP.  Not a table typed out by hand: it walks the
+  -- SAME block structure `llama_sched_pkg.build_plan` emits, in the same
+  -- order, so the two cannot drift.
+  --
+  -- The names and their order are `tools/ref9b/seam_map.py`'s, and the
+  -- correspondence is exact rather than approximate: a GDN block emits 16
+  -- steps and seam_map lists 16 GDN seams in that order; an attention block
+  -- emits 13 and seam_map lists 13.  The two disambiguating suffixes are
+  -- seam_map's own -- `R_XN.ffn` and `R_ER.ffn` are the FFN half's uses of
+  -- regions the block already used once.
+  --
+  -- WHERE THIS CAN PRODUCE A NAME seam_map DOES NOT KNOW.  seam_map fixes the
+  -- attention interval at 4 (`ATTN_INT = 4`, `(il+1) mod 4 = 0`), because that
+  -- is the real model's.  A bench configuration with `ATTN_INT = 2` puts an
+  -- attention block at index 1, so this function emits `R_QG-1`, which is a
+  -- GDN layer on the reference side and is NOT in seam_map.SEAMS.  That is a
+  -- real limitation and it is why `capture_to_r9bs.py --check-names` exists:
+  -- a name the map does not know is carried through and never compared, which
+  -- is silent.  Run `--check-names` on every capture.
+  function blk_seam(attn : boolean; k : natural) return string is
+  begin
+    if attn then
+      case k is
+        when 0 => return "R_XN";      when 1 => return "R_QG";
+        when 2 => return "R_KIN";     when 3 => return "R_VIN";
+        when 4 => return "R_Y";       when 5 => return "R_ER";
+        when 6 => return "R_X.attn";  when 7 => return "R_XN.ffn";
+        when 8 => return "R_G";       when 9 => return "R_U";
+        when 10 => return "R_H";      when 11 => return "R_ER.ffn";
+        when 12 => return "R_X";      when others => return "?";
+      end case;
+    else
+      case k is
+        when 0 => return "R_XN";      when 1 => return "R_QKV.q";
+        when 2 => return "R_QKV.k";   when 3 => return "R_QKV.v";
+        when 4 => return "R_Z";       when 5 => return "R_BETA";
+        when 6 => return "R_ALPHA";   when 7 => return "R_Y";
+        when 8 => return "R_ER";      when 9 => return "R_X.attn";
+        when 10 => return "R_XN.ffn"; when 11 => return "R_G";
+        when 12 => return "R_U";      when 13 => return "R_H";
+        when 14 => return "R_ER.ffn"; when 15 => return "R_X";
+        when others => return "?";
+      end case;
+    end if;
+  end function;
+
+  function seam_of(s : shape_t; step : natural) return string is
+    variable n  : natural := 0;
+    variable ns : natural;
+  begin
+    for b in 0 to s.blocks-1 loop
+      if is_attn_block(s, b) then ns := NSTEP_ATTN_N1;
+      else                        ns := NSTEP_GDN_N1; end if;
+      if step < n + ns then
+        return blk_seam(is_attn_block(s, b), step - n)
+             & "-" & integer'image(b);
+      end if;
+      n := n + ns;
+    end loop;
+    -- The tail.  `R_XN.final` is the last norm; the step after it is the
+    -- lm_head A job, whose destination is R_NONE, so there is NO region to
+    -- read and `LOGITS` is the one seam of the reference this design cannot
+    -- produce.  See D1 of docs/debugging/2026-08-29_9b-whole-model-reference.
+    if step = n then return "R_XN.final"; end if;
+    if step = n + 1 then return "LOGITS"; end if;
+    return "END_TOKEN";
+  end function;
 
   constant LANES  : positive := 8;
   constant MANT_W : positive := 16;
@@ -441,6 +534,20 @@ architecture tb of tb_llama_top is
   signal hw_reg : natural range 0 to NREGION-1 := 0;
   signal hw_addr : natural range 0 to REGMAX-1 := 0;
   signal hw_data : signed(MANT_W-1 downto 0) := (others => '0');
+  -- THE HOST READ PORT HAS TWO CLIENTS AND ONE WIRE.  `rtl/llama_top.vhd`
+  -- exposes exactly one `hr_reg`/`hr_addr`/`hr_data` (`:483-485`), the driver
+  -- reads R_X through it between tokens, and the seam capture reads the
+  -- destination region at every completion DURING a token.  Two processes
+  -- driving one unresolved signal is an elaboration error, so each has its
+  -- own pair and a mux picks between them.  They never overlap in time -- the
+  -- driver reads only when no job is in flight -- but `cap_own` decides
+  -- rather than the schedule, because a rule that depends on a timing
+  -- coincidence is not a rule.
+  signal dhr_reg  : natural range 0 to NREGION-1 := 0;
+  signal dhr_addr : natural range 0 to REGMAX-1 := 0;
+  signal chr_reg  : natural range 0 to NREGION-1 := 0;
+  signal chr_addr : natural range 0 to REGMAX-1 := 0;
+  signal cap_own  : std_logic := '0';
   signal hr_reg : natural range 0 to NREGION-1 := 0;
   signal hr_addr : natural range 0 to REGMAX-1 := 0;
   signal hr_data : signed(MANT_W-1 downto 0);
@@ -660,6 +767,15 @@ architecture tb of tb_llama_top is
   type runs_t is array (0 to NRUNS-1) of toks_t;
   signal results : runs_t := (others => (others => (others => 0)));
   signal x0      : res_t := (others => 0);
+
+  -- The capture's own copy of the LAST R_X seam of the token, and the record
+  -- count.  The copy exists to be compared against the driver's independent
+  -- `dump()` -- see the check after `dump(rv)`.  A capture that read the
+  -- region file through a different discipline than every other reader in
+  -- this file would be a second, unchecked reader.
+  signal cap_lastx : res_t := (others => 0);
+  signal cap_nrec  : natural := 0;
+  signal n_bad_cap : natural := 0;
 
   -- ======================================================================
   -- THE KV CACHE'S SIDE OF THE WORLD.
@@ -1737,8 +1853,8 @@ begin
     procedure dump(variable r : out res_t) is
     begin
       for i in 0 to REGMAX-1 loop
-        hr_reg  <= R_X;
-        hr_addr <= i;
+        dhr_reg  <= R_X;
+        dhr_addr <= i;
         wait until rising_edge(clk);
         wait for 0.1 ns;
         r(i) := to_integer(hr_data);
@@ -1746,6 +1862,7 @@ begin
     end procedure;
 
     variable rv : res_t;
+    variable ncap : natural := 0;
     variable nz : natural;
     variable full : boolean;
     variable ncov : natural := 0;
@@ -1859,6 +1976,30 @@ begin
         dump(rv);
         results(run)(t) <= rv;
         wait until rising_edge(clk);
+
+        -- ---- P13: THE CAPTURE IS THE SAME REGION FILE THE DRIVER READS ----
+        -- The capture snapshots R_X in ZERO simulation time through delta
+        -- cycles, at the completion of the last residual; `dump` reads it one
+        -- clock per element after `tok_done`.  Two different disciplines, two
+        -- different instants, and no step between them writes R_X -- the only
+        -- steps left are the final norm (into R_XN) and the lm_head job (into
+        -- R_NONE).  So they must agree ELEMENT FOR ELEMENT.  This is the one
+        -- check that prices the capture mechanism itself: a snapshot that
+        -- tore, or that read one delta too early, fails here and nowhere else.
+        if CAPTURE /= "" and run = 0 then
+          ncap := 0;
+          for i in 0 to SHAPE.hidden-1 loop
+            if rv(i) /= cap_lastx(i) then ncap := ncap + 1; end if;
+          end loop;
+          assert ncap = 0
+            report "tb_llama_top: the seam capture and the driver's own dump "
+                 & "of R_X disagree on " & integer'image(ncap) & " of "
+                 & integer'image(SHAPE.hidden) & " elements at token "
+                 & integer'image(t) & ".  The capture is torn or mistimed."
+            severity error;
+          n_bad_cap <= n_bad_cap + ncap;
+          wait for 0 ns;
+        end if;
 
         -- ---- P9/P10: the cache's coverage for THIS token ---------------
         -- Checked here rather than at the end, because the read mask is
@@ -2218,8 +2359,8 @@ begin
       rsum <= 0;
       wait for 0 ns;
       for i in 0 to REGMAX-1 loop
-        hr_reg  <= rg;
-        hr_addr <= i;
+        dhr_reg  <= rg;
+        dhr_addr <= i;
         wait until rising_edge(clk);
         wait for 0.1 ns;
         -- A POSITIONAL HASH, NOT A SUM.  A sum is not a fingerprint: the
@@ -2249,9 +2390,15 @@ begin
 
     -- ---- verdict ---------------------------------------------------------
     fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
-          + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp;
+          + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp
+          + n_bad_cap;
     wait for 0 ns;
 
+    if CAPTURE /= "" then
+      report "tb_llama_top: seam capture wrote " & integer'image(cap_nrec)
+           & " records to " & CAPTURE & ", capture/dump disagreements="
+           & integer'image(n_bad_cap) severity note;
+    end if;
     report "tb_llama_top: schedule mismatches=" & integer'image(n_bad_sched)
          & " skew differences=" & integer'image(n_bad_skew)
          & " degenerate residuals=" & integer'image(n_bad_res)
@@ -2318,6 +2465,138 @@ begin
 
     running <= false;
     wait;
+  end process;
+
+  -- ======================================================================
+  -- THE SEAM CAPTURE.  Silent and free unless `CAPTURE` names a file.
+  --
+  -- WHAT IT IS FOR.  Until now this bench could compare a run against ITSELF
+  -- at another timing, and against nothing else.  That is a consistency
+  -- check, and a consistency check passes for a wrong-but-consistent machine;
+  -- it is exactly why the `v_ref`-per-token and the norm-drops-its-last-
+  -- element mutations both survived `sim/mutate_llama_top_kv.sh`.  This
+  -- writes the run out in the format `tools/ref9b/` reads, so a run can be
+  -- compared against something that is not itself.
+  --
+  -- WHAT IT IS NOT.  It is a CAPTURE, not an oracle.  It makes a comparison
+  -- possible; it does not perform one and it does not certify anything.
+  -- ======================================================================
+  hr_reg  <= chr_reg  when cap_own = '1' else dhr_reg;
+  hr_addr <= chr_addr when cap_own = '1' else dhr_addr;
+
+  cap : process is
+    file     fh : text;
+    variable ok : file_open_status;
+    variable hl : line;
+    variable stp, dstr, off, nv : natural;
+    variable rx : res_t := (others => 0);
+    -- A COMPLETION IS NOT ALWAYS A JOB.  `rtl/seq_opdec.vhd:664` drives
+    --     cmp_valid <= '1' when tstate = T_PUB else job_cmp;
+    -- so the token-start publication of `host_x_exp` into R_X's exponent
+    -- raises the same pulse with no job behind it.  MEASURED: without this
+    -- guard the capture emits a spurious all-zero `R_XN-0` at the step index
+    -- left over from the previous token, and `r9bs.index` then REFUSES the
+    -- whole file as a duplicate (name, token) -- loudly, which is the only
+    -- reason it was noticed rather than silently averaged in.
+    variable pend : boolean := false;
+
+    -- THE SNAPSHOT TAKES ZERO SIMULATION TIME, AND THAT IS THE WHOLE POINT.
+    -- `hr_data` is a combinational read of the region file
+    -- (rtl/llama_top.vhd:1005) and every region write lands on a RISING clock
+    -- edge, so a snapshot taken strictly between two rising edges is atomic.
+    -- A snapshot that spent one clock per element -- which is what the
+    -- driver's own `dump` does, correctly, because it runs when nothing is in
+    -- flight -- would straddle the next job's writes and TEAR.  A torn
+    -- capture is not a loud failure; it is a plausible vector.
+    procedure snap(reg : natural; o : natural; n : natural) is
+    begin
+      cap_own <= '1';
+      chr_reg <= reg;
+      for i in 0 to n-1 loop
+        chr_addr <= o + i;
+        wait for 0 ns; wait for 0 ns; wait for 0 ns;
+        rx(i) := to_integer(hr_data);
+      end loop;
+      cap_own <= '0';
+      wait for 0 ns;
+    end procedure;
+
+    procedure emit(nm : string; tk : integer; lay : integer;
+                   ex : integer; n : natural) is
+      variable l : line;
+    begin
+      write(l, string'("SEAM "));
+      write(l, nm);
+      write(l, ' '); write(l, tk);
+      write(l, ' '); write(l, lay);
+      write(l, string'(" bfp16 "));
+      write(l, ex);
+      write(l, ' '); write(l, n);
+      writeline(fh, l);
+      for i in 0 to n-1 loop
+        write(l, rx(i));
+        if (i mod 16) = 15 or i = n-1 then writeline(fh, l);
+        else                                write(l, ' '); end if;
+      end loop;
+      cap_nrec <= cap_nrec + 1;
+      wait for 0 ns;
+    end procedure;
+  begin
+    if CAPTURE = "" then wait; end if;
+    file_open(ok, fh, CAPTURE, write_mode);
+    assert ok = open_ok
+      report "tb_llama_top: cannot open the capture file " & CAPTURE
+      severity failure;
+    write(hl, string'("# sim/tb_llama_top.vhd seam capture, run 0.  "
+                    & "value = mant * 2^-exp."));
+    writeline(fh, hl);
+    write(hl, string'("# blocks=") );
+    write(hl, SHAPE.blocks);
+    write(hl, string'(" attn_interval="));
+    write(hl, SHAPE.attn_interval);
+    write(hl, string'(" hidden="));
+    write(hl, SHAPE.hidden);
+    write(hl, string'(" ffn="));
+    write(hl, SHAPE.ffn);
+    write(hl, string'("  -- A SCALED SHAPE, not the 9B one."));
+    writeline(fh, hl);
+    loop
+      wait until rising_edge(clk);
+      if rst = '1' or tb_reset = '1' then
+        pend := false;
+      end if;
+      if obs_issue = '1' then
+        pend := true;
+      end if;
+      if cur_run = 0 and rst = '0' and tb_reset = '0' then
+        if go = '1' then
+          -- The embedding, before any job has run.  `host_x_exp` is the
+          -- exponent the driver declares for it and the one the top level
+          -- seeds the lock with.
+          wait for 0.4 ns;
+          snap(R_X, 0, SHAPE.hidden);
+          emit("R_X.embed", to_integer(obs_tok_pos), -1,
+               to_integer(host_x_exp), SHAPE.hidden);
+        elsif obs_cmp = '1' and pend then
+          pend := false;
+          stp  := to_integer(obs_step);
+          dstr := PLAN(stp).dst;
+          off  := PLAN(stp).dst_off;
+          nv   := PLAN(stp).n_rows;
+          -- 0.4 ns is inside the 0.5 ns half period, so every delta of this
+          -- edge has settled and the next edge is 0.6 ns away.
+          wait for 0.4 ns;
+          if dstr /= R_NONE and nv > 0 and nv <= REGMAX then
+            snap(dstr, off, nv);
+            emit(seam_of(SHAPE, stp), to_integer(obs_tok_pos),
+                 PLAN(stp).blk, to_integer(obs_cmp_exp), nv);
+            if dstr = R_X then
+              cap_lastx <= rx;
+            end if;
+          end if;
+        end if;
+      end if;
+    end loop;
   end process;
 
   -- ======================================================================
