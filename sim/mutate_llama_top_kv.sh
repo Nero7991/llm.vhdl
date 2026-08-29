@@ -38,7 +38,46 @@
 # selecting R2b and R2c.  It exists so the matrix can be split across several
 # shells -- one case is about six minutes and there are 23 of them.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# ---------------------------------------------------------------------------
+# SELF-ISOLATION.  Run from a PRIVATE COPY, exactly as sim/regress.sh:287 does.
+#
+# NOT a precaution: MEASURED 2026-08-29.  This script was edited (one filename
+# added to FILES) while an instance of it was running, and bash -- which reads
+# a script by BYTE OFFSET as it executes -- resumed mid-token and died with
+# `syntax error near unexpected token '('` at a line that is perfectly valid.
+# The run had already completed two cases and looked healthy up to that point,
+# so the failure reads as a defect in the last case rather than as an edit.
+#
+# The copy is syntax-checked before it is re-execed, because a copy taken
+# mid-write is garbage and re-execing it reproduces the very failure this
+# guards against.  MUTKV_NO_REEXEC=1 disables it, for debugging the guard.
+# ---------------------------------------------------------------------------
+if [ -z "${MUTKV_REPO:-}" ]; then
+  MUTKV_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+  export MUTKV_REPO
+fi
+if [ -z "${MUTKV_SELF:-}" ] && [ -z "${MUTKV_NO_REEXEC:-}" ]; then
+  _self="$(mktemp -t mutkv-self.XXXXXXXX.sh)" || exit 2
+  if ! cat "${BASH_SOURCE[0]}" > "$_self"; then
+    rm -f "$_self"; echo "mutate_llama_top_kv.sh: no private copy" >&2; exit 2
+  fi
+  if ! "${BASH:-/bin/bash}" -n "$_self" 2>/dev/null; then
+    rm -f "$_self"
+    echo "mutate_llama_top_kv.sh: the private copy does not parse -- the" >&2
+    echo "  script was probably being written as it was copied.  Try again." >&2
+    exit 2
+  fi
+  chmod 0700 "$_self"
+  export MUTKV_SELF="$_self"
+  exec "${BASH:-/bin/bash}" "$_self" "$@"
+  rm -f "$_self"
+  echo "mutate_llama_top_kv.sh: could not re-exec the private copy" >&2
+  exit 2
+fi
+trap 'rm -f "${MUTKV_SELF:-}"' EXIT
+
+cd "$MUTKV_REPO"
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
 mkdir -p "$SCRATCH"

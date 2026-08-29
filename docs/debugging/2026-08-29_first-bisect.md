@@ -63,12 +63,15 @@ and compares bit for bit:
 
 | what | model | seams |
 |---|---|---|
-| the 26 subsystem A jobs | `ref/matvec_int4.c`, on the bench's own weight bytes | 26 |
+| the 37 subsystem A jobs | `ref/matvec_int4.c`, on the bench's own weight bytes | 37 |
 | the 9 norms | a bit-exact `rmsnorm_rs` model, new in `tools/ref9b/vec_oracle.py` | 9 |
 | the 8 residuals | `ref/seq_vec_res_vec.c`'s recipe (REAL RTL on the other side) | 8 |
 | the 4 swiglu ops | the behavioural stand-in's own arithmetic | 4 |
-| the embedding | the stimulus | 1 |
-| **not covered** | `R_Y` (subsystems B and C) and `LOGITS` | **5** |
+| **not covered** | `R_Y` (3 GDN, 1 attention) and `LOGITS` | **5** |
+
+37 + 9 + 8 + 4 = 58, and 58 + 5 = 63, which is the 62 steps with a real
+destination plus the lm_head step; `R_X.embed` is the stimulus and is the
+capture's 63rd record rather than a checked seam.
 
 **58 of 63 seams, and the healthy run is CLEAN in all three gate
 configurations.** MEASURED, `tools/ref9b/bisect_scaled.py`:
@@ -284,7 +287,7 @@ The five not checked, every time:
     NOT CHECKED  LOGITS         destination is R_NONE: the lm_head job discards its result (finding D1)
 ```
 
-**This is a real result and it is the first of its kind here.** 26 A jobs
+**This is a real result and it is the first of its kind here.** 37 A jobs
 against `ref/matvec_int4.c` on the bench's own weight bytes, 9 norms against a
 bit-exact `rmsnorm_rs` model, 8 residuals against `ref/seq_vec_res_vec.c`'s
 recipe -- all bit-identical, in the configuration with the real
@@ -607,4 +610,64 @@ disagree, the RTL wins.
 
 ## 10. Corrections
 
-None yet. Append here, dated, rather than editing anything above.
+**2026-08-29, same day. The A-job count was 26 in the first draft and in commit
+`ecfd178`'s message. It is 37.** MEASURED by
+`python3 -c "import scaled_plan; Counter(...)"` on the 4-block ATTN_INT=4
+plan: `A 37, NORM 9, RES 8, SWG 4, B 3, C 1`, total 62 steps with a
+destination. 26 was a hand count that missed the FFN's three A jobs per block.
+Every other number in this document is unaffected -- the tool always reported
+"58 seams checked", which is 37+9+8+4, and that is the figure the verdicts rest
+on. Recorded rather than silently fixed because the wrong number is in a commit
+message and cannot be withdrawn from there.
+
+**2026-08-29, appended. `sim/mutate_llama_top_kv.sh`'s V rows, run end to end.**
+MEASURED, against the HEAD snapshot:
+
+```
+V0r  SURVIVED   -- CONTROL: the clean design, real-path configuration
+        CAPTURE clean
+        ORACLE  clean
+V0s  SURVIVED   -- CONTROL: the clean design, KV-cache configuration
+        CAPTURE clean
+        ORACLE  clean
+VN2  KILLED     -- N2 again: the real rmsnorm's writeback drops its last element
+        CAPTURE tok 0: FIRST DIVERGENCE: R_XN-0 tok 0 at element 63 -- exp 14 vs 14,
+                       1 of 64 mantissas differ, max |delta| 11897
+        ORACLE  tok 0: FIRST DIVERGENCE: R_XN-0 at element 63 -- expected -11897,
+                       captured 0 (exponent 14 vs 14, 1 of 64 mantissas differ)
+VR7  KILLED     -- R7 again: the v_ref sequence reset is issued per TOKEN
+        CAPTURE tok 1: FIRST DIVERGENCE: R_Y-1 tok 1 at element 12 -- exp 8 vs 8,
+                       82 of 256 mantissas differ, max |delta| 256
+        ORACLE  clean
+VA1  KILLED     -- subsystem A's spec 7.4 site 2 truncates instead of rounding
+        CAPTURE tok 0: FIRST DIVERGENCE: R_QKV.q-0 tok 0 at element 1 -- exp 12 vs 12,
+                       31 of 64 mantissas differ, max |delta| 1
+        ORACLE  tok 0: FIRST DIVERGENCE: R_QKV.q-0 at element 1 -- expected 7066,
+                       captured 7065 (exponent 12 vs 12, 31 of 64 mantissas differ)
+```
+
+Both controls clean on both scorers, which is the row that says a kill is a
+detection and not a permanently red harness.
+
+**2026-08-29, appended. T8: editing this script during its own run broke the
+run, and it is the hazard `sim/regress.sh` already guards against.** MEASURED:
+one filename was added to `FILES` while an instance was executing, and bash --
+which reads a script by BYTE OFFSET -- resumed mid-token and died with
+`syntax error near unexpected token '('` at a line that is perfectly valid.
+Two cases had already reported cleanly, so it read as a defect in the third.
+`sim/mutate_llama_top_kv.sh` now takes a private copy of itself, syntax-checks
+it and re-execs it, exactly as `sim/regress.sh:287` does, and resolves the repo
+root before the re-exec so `$0` moving to `/tmp` does not move the working
+directory with it.
+
+**2026-08-29, appended. A concurrent track is closing finding D1 while this was
+written.** `sim/tb_llama_top_smp.vhd` and `sim/tb_llama_top_smp_beh.vhd` are new
+in the working tree, `rtl/llama_top.vhd` now instantiates `rtl/sampler_stream.vhd`
+behind an `SMP_EN` generic, and `BASELINE_PASS` has moved 83 -> 85. So the
+statement "the design cannot produce `LOGITS`" is true of commit `0da1912` and
+is about to stop being true. **When that lands, the capture should learn to emit
+`LOGITS`**: the sampler route carries RAW s32 rows rather than a region, so it
+needs a producer of its own in `sim/tb_llama_top.vhd`'s capture process rather
+than the `hr_*` read every other seam uses. That is the one remaining seam
+between this harness and a whole-token comparison on hardware.
+

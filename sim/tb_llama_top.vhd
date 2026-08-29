@@ -511,6 +511,9 @@ architecture tb of tb_llama_top is
   constant EXP_W  : positive := 16;
   constant STEP_W : positive := 11;
 
+  constant CLK_HALF   : time := 0.5 ns;
+  constant CAP_SETTLE : time := 0.4 ns;   -- see the seam capture
+
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';
   signal running : boolean := true;
@@ -947,7 +950,12 @@ architecture tb of tb_llama_top is
 
 begin
 
-  clk <= not clk after 0.5 ns when running else '0';
+  -- THE HALF PERIOD IS A NAMED CONSTANT because the seam capture depends on
+  -- it: it settles for CAP_SETTLE after a rising edge and then snapshots a
+  -- region in ZERO time, which is only atomic while CAP_SETTLE is strictly
+  -- inside the half period.  An unnamed literal here and an unnamed literal
+  -- there is how those two come to disagree.
+  clk <= not clk after CLK_HALF when running else '0';
 
   cycles : process(clk) is
   begin
@@ -2543,6 +2551,12 @@ begin
     end procedure;
   begin
     if CAPTURE = "" then wait; end if;
+    assert CAP_SETTLE < CLK_HALF
+      report "tb_llama_top: the seam capture settles for CAP_SETTLE and then "
+           & "snapshots a region in zero time.  That is only atomic while "
+           & "CAP_SETTLE is strictly inside the clock's half period; it is "
+           & "not, so a capture would straddle a clock edge and TEAR."
+      severity failure;
     file_open(ok, fh, CAPTURE, write_mode);
     assert ok = open_ok
       report "tb_llama_top: cannot open the capture file " & CAPTURE
@@ -2573,7 +2587,7 @@ begin
           -- The embedding, before any job has run.  `host_x_exp` is the
           -- exponent the driver declares for it and the one the top level
           -- seeds the lock with.
-          wait for 0.4 ns;
+          wait for CAP_SETTLE;
           snap(R_X, 0, SHAPE.hidden);
           emit("R_X.embed", to_integer(obs_tok_pos), -1,
                to_integer(host_x_exp), SHAPE.hidden);
@@ -2583,9 +2597,10 @@ begin
           dstr := PLAN(stp).dst;
           off  := PLAN(stp).dst_off;
           nv   := PLAN(stp).n_rows;
-          -- 0.4 ns is inside the 0.5 ns half period, so every delta of this
-          -- edge has settled and the next edge is 0.6 ns away.
-          wait for 0.4 ns;
+          -- CAP_SETTLE is inside the half period, so every delta of this
+          -- edge has settled and the next rising edge is still
+          -- 2*CLK_HALF - CAP_SETTLE away.
+          wait for CAP_SETTLE;
           if dstr /= R_NONE and nv > 0 and nv <= REGMAX then
             snap(dstr, off, nv);
             emit(seam_of(SHAPE, stp), to_integer(obs_tok_pos),
