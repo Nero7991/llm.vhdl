@@ -53,6 +53,24 @@ luck rather than design. Consequences:
 - Prefer giving a superseded track NO further instructions. Sending it a
   follow-up is what turns a harmless late commit into a genuine collision.
 
+**`git commit -m msg -- <paths>` COMMITS THE WORKING TREE, NOT THE INDEX.**
+Observed 2026-08-28: TRACK C-ORACLE's first commit swept in TRACK A-CTRL's
+uncommitted `sim/regress.sh` edits (`BASELINE_PASS=78`, rows for tests whose
+files were not committed yet) purely because they were sitting in the working
+tree at that path. It caught this and amended them out, and HEAD is clean, but
+the pathspec form is the exact form this project's standing instruction
+mandates in order to AVOID `git add -A`, so the two rules fight each other on
+shared files.
+
+The rule that resolves it: **for a SHARED file, run `git diff -- <file>` and
+confirm every hunk is yours BEFORE committing.** If it is not, stage only your
+hunks with `git add -p` and then commit with no pathspec so the index is what
+lands. For files only your track owns, the pathspec form is still correct and
+still the default.
+
+An amend is only available while the bad commit is still the tip. Two tracks
+committing within a minute of each other would have made it permanent.
+
 **Standing rule for every track: no hardware.** No `xsdb`, `hw_server`,
 `vivado ... program`, `pcieep.sh`, `jtag.sh`, `flash.sh`, `program.tcl`, and
 nothing that opens `/dev/xdma*`. A live FK33 is in this session, and an agent
@@ -281,5 +299,6 @@ format being settled.
 | Qwen3.5 tokenizer | Bit-exact vs llama.cpp, 53,411 strings x 2 + 1.1M codepoints. 7 of 9 mutations bite. | `4123bd8` |
 | Qwen3.5 tokenizer in C | Bit-exact vs llama.cpp: 53,409 strings x 2, ALL 248,320 token ids, 1.1M codepoints, 20,051 malformed-byte strings. 7 of 7 mutations bite. +42,704 bytes linked, no new dependency. Found OI-5 and OI-6. | `0181cc3` |
 | Full gate re-measured | 77 PASS / 0 FAIL, matches the recorded floor. Verified independently after `3246046`. | n/a |
+| **C-ORACLE: `attn_block` did NOT compute attention** | First block-level oracle for subsystem C. 64 of 64 mantissas wrong on first comparison; bisected to TWO independent defects in `rtl/attn_block.vhd` (cached V exponents overwritten by the current token's, because `hdr_valid` is a level not a pulse; and every accumulator rescaled twice per rise, because `rs_have` re-latched from a still-standing `rs_valid`). Both fixed, oracle never adjusted. 17 wiring mutations, 17 killed. Regression 77, unchanged: a property was added to an existing test, not a test. | `8baa413` |
 | A-sim MAXB correction | The original A agent woke, independently confirmed the AXI3 defect in its own bench, and appended a dated CORRECTION rather than editing the wrong claim out. Confirmation run completed separately: matvec_fk33, weight_streamer, axi_rd_port all PASS. | `2b12a7b` |
 | Magnitude blocker | Explosion was the STIMULUS (synthetic row norm 2^4.87 vs real 2^-0.03). PART 5 withdrawn, PART 3 reinstated. `attn_block` wired behind `C_REAL`. | `3246046` |
