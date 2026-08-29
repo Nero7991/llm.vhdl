@@ -2,8 +2,26 @@
 #
 # IMPLEMENTATION ONLY.  The build sets `used_in_synthesis false` on this file
 # and asserts that it took, because `bd_i/eng/inst/eng/dut/core` is a path in
-# the LINKED design and does not exist during synthesis; get_cells would return
-# nothing and add_cells_to_pblock errors on an empty object.
+# the LINKED design and does not exist during synthesis.
+#
+# CORRECTION 2026-08-29 (TRACK BUILD-E2E,
+# docs/debugging/2026-08-29_build-e2e-project-run.md).  These four lines used
+# to end "get_cells would return nothing and add_cells_to_pblock errors on an
+# empty object".  MEASURED, running the CONTROL -- this file with
+# used_in_synthesis left at its default of 1, on a trivial top -- synthesis
+# COMPLETED and the sole consequence was:
+#
+#   WARNING: [Vivado 12-180] No cells matched 'bd_i/eng/inst/eng/dut/core'.
+#   [hw/fk33/fk33_pblock.xdc:73]
+#
+# (`:73` was the add_cells_to_pblock line when that was captured; adding this
+# very note pushed it down, which is the stale-line-number trap this repo has
+# already been bitten by.  Find it by name, not by number.)
+#
+# add_cells_to_pblock does NOT error on an empty object.  Keep the property --
+# it is the default that is wrong, and an unmatched constraint leaving an empty
+# pb_core behind is the silent class everything else in this build guards
+# against -- but it buys a clean log, not a rescued build.
 #
 # ---------------------------------------------------------------------------
 # THIS FILE IS NOT WHAT MADE THE DESIGN ROUTE.  READ THIS FIRST.

@@ -1,0 +1,8 @@
+=== bus skew, TRACK BUILD-E2E, from bd_wrapper_bus_skew_routed.rpt ===
+constraints MET      : 31
+constraints VIOLATED : 0
+worst MET slack (ns) : 2.718
+
+TRAP: do NOT take the last numeric field of each line as the slack.
+Doing so returns -5.958, which is a 'Reference Relative Delay' line at
+report line 3771 and not a slack at all.  Grep the verdict token.

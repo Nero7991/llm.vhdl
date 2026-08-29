@@ -1,0 +1,10 @@
+TEETH_UIS default used_in_synthesis   = 1
+TEETH_UIS default used_in_implementation = 1
+TEETH_UIS === control: synthesising WITH the pblock XDC in synthesis ===
+TEETH_UIS control PROGRESS=100% STATUS=synth_design Complete!
+TEETH_UIS control| WARNING: [Vivado 12-180] No cells matched 'bd_i/eng/inst/eng/dut/core'. [/home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc:73]
+TEETH_UIS === treatment: used_in_synthesis false, same design ===
+TEETH_UIS treatment used_in_synthesis = 0
+TEETH_UIS treatment PROGRESS=100% STATUS=synth_design Complete!
+TEETH_UIS_DONE
+TEETH_UIS_WRAPPER_RC=0

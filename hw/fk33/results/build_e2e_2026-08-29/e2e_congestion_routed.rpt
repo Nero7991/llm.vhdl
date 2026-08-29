@@ -1,0 +1,58 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 15:47:11 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_design_analysis -congestion -file fk33_pcieep_congestion.rpt
+| Design       : bd_wrapper
+| Device       : xcvu33p
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. Router Initial Congestion
+3. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+--------------------------------------------------------------------------------------------+
+| Direction |  Type  | Level |              Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM |  DSP | CARRY | SRL |                                         Cell Names                                         |
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+--------------------------------------------------------------------------------------------+
+| South     | Global |     5 | (CLEL_R_X65Y46,CLEM_X80Y77)     |            3% |         3.634 | 65% | 13%    |  18% |  39% | 58%  | NA   | 100% |    9% |  0% | bd_i/eng/inst/eng/dut/core(81%),bd_i/eng/inst/eng/dut/streamer(8%),bd_i/pcie2hbm/inst(7%)  |
+| South     | Long   |     5 | (CLEL_R_X65Y48,CLEM_X80Y79)     |            3% |         3.664 | 66% | 14%    |  18% |  40% | 58%  | NA   | 100% |    9% |  0% | bd_i/eng/inst/eng/dut/core(80%),bd_i/eng/inst/eng/dut/streamer(9%),bd_i/pcie2hbm/inst(7%)  |
+| South     | Long   |     6 | (CLEL_R_X53Y37,CLEM_X85Y100)    |            5% |         3.398 | 65% | 13%    |  19% |  34% | 55%  | 0%   | 100% |   16% |  0% | bd_i/eng/inst/eng/dut/core(77%),bd_i/pcie2hbm/inst(12%),bd_i/eng/inst/eng/dut/streamer(8%) |
+| South     | Short  |     5 | (CLEM_X67Y136,CLEM_X82Y167)     |            0% |         4.193 | 77% | 11%    |  19% |  46% | 66%  | 0%   | 100% |   11% |  1% | bd_i/eng/inst/eng/dut/core(86%),bd_i/eng/inst/eng/dut/streamer(5%),bd_i(4%)                |
+| East      | Short  |     5 | (CLEL_R_X78Y136,CLEL_R_X94Y167) |            0% |         4.468 | 80% | 8%     |  12% |  52% | 83%  | 0%   | 100% |   11% |  1% | bd_i/eng/inst/eng/dut/core(87%),bd_i/eng/inst/eng(4%),bd_i/eng/inst/eng/dut/streamer(4%)   |
+| West      | Short  |     5 | (CLEM_X77Y60,CLEM_X93Y91)       |            0% |         2.774 | 63% | 43%    |  29% |  27% | 71%  | 0%   | 100% |   31% |  0% | bd_i/eng/inst/eng/dut/core(75%),bd_i/eng/inst/eng/dut/streamer(22%)                        |
++-----------+--------+-------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+--------------------------------------------------------------------------------------------+
+
+
+2. Router Initial Congestion
+----------------------------
+
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+-------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+| Direction |  Type  | Level |             Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM |  DSP | CARRY | SRL |                                         Cell Names                                        |                                                  Sub Windows                                                  |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+-------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+| South     | Global |     6 | (CLEM_X64Y20,CLEM_X95Y147)     |            2% |         4.417 | 70% |    17% |  17% |  33% |  66% |   0% | 100% |   20% |  0% | bd_i/eng/inst/eng/dut/core(90%),bd_i/pcie2hbm/inst(3%),bd_i/eng/inst/eng/dut(3%)          | (CLEM_X64Y116,CLEM_X95Y147), (CLEM_X64Y84,CLEM_X95Y115), (CLEM_X64Y52,CLEM_X95Y83), (CLEM_X64Y20,CLEM_X95Y51) |
+| West      | Global |     5 | (CLEM_X90Y63,CLEM_X105Y94)     |            2% |         4.408 | 83% |    15% |  23% |  38% |  75% |   0% | 100% |   25% |  0% | bd_i/eng/inst/eng/dut/core(89%),bd_i/eng/inst/eng/dut/streamer(5%),bd_i/pcie2hbm/inst(3%) | (CLEM_X90Y79,CLEL_R_X105Y94), (CLEM_X90Y63,CLEL_R_X105Y78)                                                    |
+| South     | Long   |     7 | (CLEM_X64Y5,CLEL_L_X127Y132)   |            3% |         4.614 | 63% |    10% |  19% |  23% |  73% |   0% |  93% |   18% |  0% | bd_i/eng/inst/eng/dut/core(73%),bd_i(15%),bd_i/eng/inst/eng/dut(7%)                       | (CLEM_X64Y69,CLEL_R_X127Y132), (CLEM_X64Y5,CLEL_R_X127Y68)                                                    |
+| East      | Long   |     5 | (CLEM_X87Y125,CLEL_L_X102Y156) |            0% |         4.956 | 82% |     1% |  13% |  41% |  92% |   0% | 100% |   25% |  3% | bd_i/eng/inst/eng/dut/core(93%),bd_i/eng/inst/eng(5%),dbg_hub(0%)                         | (CLEM_X87Y141,CLEL_R_X102Y156), (CLEM_X87Y125,CLEL_R_X102Y140)                                                |
+| West      | Long   |     5 | (CLEL_R_X76Y65,CLEM_X107Y96)   |            1% |         3.817 | 81% |    28% |  26% |  31% |  64% |   0% | 100% |   29% |  0% | bd_i/eng/inst/eng/dut/core(92%),bd_i/eng/inst/eng/dut/streamer(3%),bd_i/pcie2hbm/inst(2%) | (CLEL_R_X76Y65,CLEL_R_X107Y96)                                                                                |
+| West      | Long   |     5 | (CLEM_X92Y49,CLEM_X107Y96)     |            2% |         4.589 | 82% |    10% |  22% |  37% |  80% |   0% | 100% |   23% |  0% | bd_i/eng/inst/eng/dut/core(88%),bd_i/eng/inst/eng/dut/streamer(5%),bd_i/pcie2hbm/inst(4%) | (CLEM_X92Y81,CLEL_R_X107Y96), (CLEM_X92Y65,CLEL_R_X107Y80), (CLEM_X92Y49,CLEL_R_X107Y64)                      |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+-------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------+
+
+
+3. SLR Net Crossing Reporting
+-----------------------------
+
++------------+-----------------------------+
+| Cell Names | Number of Nets crossing SLR |
++------------+-----------------------------+
+* The current part is not an SSI device
+
+

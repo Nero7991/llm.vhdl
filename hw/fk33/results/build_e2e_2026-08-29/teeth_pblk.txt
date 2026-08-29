@@ -1,0 +1,16 @@
+TEETH_PBLK opened /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/e2e/build/fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper_routed.dcp
+TEETH_PBLK pblocks present: pb_core
+TEETH_PBLK reports written
+TEETH_PBLK M0_as_built expect=PASSED got=PASSED OK
+TEETH_PBLK M0_as_built detail: pblocks=pb_core pb_core=CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+TEETH_PBLK M1_wrong_range expect=FIRED got=FIRED OK
+TEETH_PBLK M1_wrong_range detail: FK33_PBLK FAIL: pb_core range is 'CLOCKREGION_X0Y0:CLOCKREGION_X6Y3', not CLOCKREGION_X0Y0:CLOCKREGION_X5Y3.
+TEETH_PBLK M2_missing_pblock expect=FIRED got=FIRED OK
+TEETH_PBLK M2_missing_pblock detail: FK33_PBLK FAIL: pb_core_typo is not in the implemented design.
+TEETH_PBLK M3_bd_i_reintroduced expect=FIRED got=FIRED OK
+TEETH_PBLK M3_bd_i_reintroduced detail: FK33_PBLK FAIL: pblock_bd_i is in the implemented design.
+TEETH_PBLK after cleanup: pb_core
+TEETH_PBLK M4_restored expect=PASSED got=PASSED OK
+TEETH_PBLK M4_restored detail: pblocks=pb_core pb_core=CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+TEETH_PBLK_DONE
+TEETH_PBLK_WRAPPER_RC=0

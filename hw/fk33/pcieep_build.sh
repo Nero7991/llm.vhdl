@@ -142,8 +142,30 @@ grep -E "^FK33_TOP" build.log || echo "  MISSING FK33_TOP -- automatic top detec
 echo "--- subsystem A: ports enabled, clocked, reset and connected ---"
 grep -E "^FK33_ENG " build.log || \
     echo "  (only printed by an FK33_STOP_AFTER_BD run)"
-grep -E "^FK33_ENG portcheck bad=0" build.log > /dev/null || \
-    echo "  ^^ AN ENGINE PORT IS NOT ENABLED, NOT DRIVEN OR NOT CONNECTED"
+# TRAP, MEASURED on 2026-08-29 by the first FULL build ever run from this
+# script (TRACK BUILD-E2E, docs/debugging/2026-08-29_build-e2e-project-run.md).
+# This alarm used to be UNCONDITIONAL, and it therefore fired on every healthy
+# full build.  `FK33_ENG portcheck bad=` is emitted from inside the
+# `if {[info exists ::env(FK33_STOP_AFTER_BD)]}` block of the build script, so a
+# full build never prints it at all and the `|| echo` arm was reached by ABSENCE
+# rather than by a fault.  MEASURED both directions on the same tree: the full
+# build raised the alarm, and `--bd-only` on the identical sources printed
+# `FK33_ENG portcheck bad=0 (must be 0)`.
+#
+# It is the same class of defect this file already documents two blocks above --
+# an alarm that fires every time is worse than no alarm, because it trains the
+# reader to ignore it -- reached by a different route.  Anchoring to `^` was not
+# enough; the condition also has to be reachable in the run being checked.
+#
+# So: alarm only when the line EXISTS and is non-zero, and otherwise say which
+# run does emit it.  The teeth are unchanged for the run that can produce it.
+if grep -qE "^FK33_ENG portcheck bad=" build.log; then
+    grep -E "^FK33_ENG portcheck bad=0" build.log > /dev/null || \
+        echo "  ^^ AN ENGINE PORT IS NOT ENABLED, NOT DRIVEN OR NOT CONNECTED"
+else
+    echo "  (portcheck is emitted only by an FK33_STOP_AFTER_BD run;" \
+         "run ./pcieep_build.sh --bd-only for it)"
+fi
 echo "--- subsystem A after place and route (full build only) ---"
 grep -E "^FK33_ENGI" build.log || \
     echo "  (impl-stage check; only printed by a full build)"

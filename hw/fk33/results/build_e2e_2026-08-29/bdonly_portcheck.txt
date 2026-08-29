@@ -1,0 +1,2 @@
+FK33_BD_ONLY_DONE
+FK33_ENG portcheck bad=0 (must be 0)

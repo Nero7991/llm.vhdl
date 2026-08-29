@@ -1,0 +1,86 @@
+add_files: Time (s): cpu = 00:00:06 ; elapsed = 00:00:06 . Memory (MB): peak = 1483.004 ; gain = 150.812 ; free physical = 6911 ; free virtual = 53333
+get_clocks: Time (s): cpu = 00:01:15 ; elapsed = 00:00:13 . Memory (MB): peak = 6193.133 ; gain = 1761.953 ; free physical = 2525 ; free virtual = 49261
+set_switching_activity: Time (s): cpu = 00:01:44 ; elapsed = 00:00:24 . Memory (MB): peak = 7570.254 ; gain = 1217.043 ; free physical = 1184 ; free virtual = 48084
+link_design: Time (s): cpu = 00:04:35 ; elapsed = 00:01:41 . Memory (MB): peak = 7570.254 ; gain = 6087.250 ; free physical = 1161 ; free virtual = 48087
+Done building netlist checker database: Time (s): cpu = 00:00:00.13 ; elapsed = 00:00:00.14 . Memory (MB): peak = 7578.258 ; gain = 0.000 ; free physical = 3467 ; free virtual = 47717
+get_clocks: Time (s): cpu = 00:01:12 ; elapsed = 00:00:12 . Memory (MB): peak = 7578.258 ; gain = 0.000 ; free physical = 3534 ; free virtual = 47839
+Done building netlist checker database: Time (s): cpu = 00:00:00.11 ; elapsed = 00:00:00.11 . Memory (MB): peak = 7578.258 ; gain = 0.000 ; free physical = 2607 ; free virtual = 47685
+Done building netlist checker database: Time (s): cpu = 00:00:00.12 ; elapsed = 00:00:00.12 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 259 ; free virtual = 45117
+all_fanout: Time (s): cpu = 00:01:11 ; elapsed = 00:00:12 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 481 ; free virtual = 45335
+opt_design: Time (s): cpu = 00:10:20 ; elapsed = 00:03:09 . Memory (MB): peak = 10267.508 ; gain = 2697.254 ; free physical = 490 ; free virtual = 45344
+report_drc: Time (s): cpu = 00:00:18 ; elapsed = 00:00:07 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 432 ; free virtual = 45271
+Wrote PlaceDB: Time (s): cpu = 00:00:00.18 ; elapsed = 00:00:00.04 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 421 ; free virtual = 45268
+Wrote PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 421 ; free virtual = 45268
+Write ShapeDB Complete: Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.3 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 290 ; free virtual = 45178
+Wrote RouteStorage: Time (s): cpu = 00:00:04 ; elapsed = 00:00:00.93 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 376 ; free virtual = 45215
+Wrote Netlist Cache: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 376 ; free virtual = 45215
+Wrote Device Cache: Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.01 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 373 ; free virtual = 45216
+Write Physdb Complete: Time (s): cpu = 00:00:04 ; elapsed = 00:00:00.99 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 372 ; free virtual = 45216
+write_checkpoint: Time (s): cpu = 00:00:24 ; elapsed = 00:00:15 . Memory (MB): peak = 10267.508 ; gain = 0.000 ; free physical = 552 ; free virtual = 44971
+INFO: [Place 30-611] Multithreading enabled for place_design using a maximum of 12 CPUs
+INFO: [Place 30-3162] Check ILP status : ILP-based clock placer completed successfully.
+INFO: [Physopt 32-619] Estimated Timing Summary | WNS=-0.241 | TNS=-2.684 |
+INFO: [Place 30-746] Post Placement Timing Summary WNS=0.103. For the most accurate timing information please run report_timing.
+INFO: [Physopt 32-619] Estimated Timing Summary | WNS=0.103 | TNS=0.000 |
+INFO: [Place 30-746] Post Placement Timing Summary WNS=0.103. For the most accurate timing information please run report_timing.
+INFO: [Place 30-612] Post-Placement Estimated Congestion 
+place_design: Time (s): cpu = 00:31:27 ; elapsed = 00:10:37 . Memory (MB): peak = 10281.312 ; gain = 13.805 ; free physical = 2044 ; free virtual = 44536
+report_io: Time (s): cpu = 00:00:00.27 ; elapsed = 00:00:00.45 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1883 ; free virtual = 44409
+report_control_sets: Time (s): cpu = 00:00:00.4 ; elapsed = 00:00:00.58 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1633 ; free virtual = 44234
+Write ShapeDB Complete: Time (s): cpu = 00:00:02 ; elapsed = 00:00:00.56 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1529 ; free virtual = 44236
+Wrote PlaceDB: Time (s): cpu = 00:00:27 ; elapsed = 00:00:09 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1722 ; free virtual = 44117
+Wrote PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1722 ; free virtual = 44117
+Wrote RouteStorage: Time (s): cpu = 00:00:02 ; elapsed = 00:00:00.9 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1727 ; free virtual = 44128
+Wrote Netlist Cache: Time (s): cpu = 00:00:00.45 ; elapsed = 00:00:00.29 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1748 ; free virtual = 44200
+Wrote Device Cache: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1746 ; free virtual = 44200
+Write Physdb Complete: Time (s): cpu = 00:00:29 ; elapsed = 00:00:10 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1746 ; free virtual = 44200
+report_design_analysis: Time (s): cpu = 00:00:21 ; elapsed = 00:00:08 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1656 ; free virtual = 44181
+write_checkpoint: Time (s): cpu = 00:00:59 ; elapsed = 00:00:28 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 2193 ; free virtual = 44264
+phys_opt_design: Time (s): cpu = 00:02:03 ; elapsed = 00:00:22 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 2388 ; free virtual = 44485
+Write ShapeDB Complete: Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.54 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 2269 ; free virtual = 44469
+Wrote PlaceDB: Time (s): cpu = 00:00:26 ; elapsed = 00:00:09 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1719 ; free virtual = 44399
+Wrote PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1719 ; free virtual = 44399
+Wrote RouteStorage: Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.75 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1724 ; free virtual = 44408
+Wrote Netlist Cache: Time (s): cpu = 00:00:00.36 ; elapsed = 00:00:00.27 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1669 ; free virtual = 44403
+Wrote Device Cache: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1661 ; free virtual = 44398
+Write Physdb Complete: Time (s): cpu = 00:00:28 ; elapsed = 00:00:10 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 1667 ; free virtual = 44404
+write_checkpoint: Time (s): cpu = 00:00:37 ; elapsed = 00:00:19 . Memory (MB): peak = 10281.312 ; gain = 0.000 ; free physical = 2087 ; free virtual = 44364
+INFO: [Route 35-270] Using Router directive 'Explore'.
+INFO: [Route 35-254] Multithreading enabled for route_design using a maximum of 12 CPUs
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.380  | TNS=0.000  | WHS=-0.482 | THS=-500.112|
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.380  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+WARNING: [Route 35-447] Congestion is preventing the router from routing all nets. The router will prioritize the successful completion of routing all nets over timing optimizations.
+INFO: [Route 35-449] Initial Estimated Congestion
+INFO: [Route 35-448] Estimated Global/Short routing congestion is level 6 (64x64). Congestion levels of 5 and greater can reduce routability and impact timing closure.
+INFO: [Route 35-581] Estimated Timing congestion is level 7 (128x128). Congestion levels of 5 and greater may impact timing closure.
+INFO: [Route 35-443] CLB routing congestion detected. Several CLBs have high routing utilization, which can impact timing closure. Congested CLBs and Nets are dumped in: iter_100_CongestedCLBsAndNets.txt
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-0.372 | TNS=-67.848| WHS=-0.041 | THS=-4.206 |
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-0.192 | TNS=-33.388| WHS=N/A    | THS=N/A    |
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-0.142 | TNS=-12.729| WHS=N/A    | THS=N/A    |
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-0.134 | TNS=-11.792| WHS=N/A    | THS=N/A    |
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.063  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.063  | TNS=0.000  | WHS=0.010  | THS=0.000  |
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/GTREFCLK0 to physical pin GTYE4_CHANNEL_X1Y12/NORTHREFCLK1
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[1].GTYE4_CHANNEL_PRIM_INST/GTREFCLK0 to physical pin GTYE4_CHANNEL_X1Y13/NORTHREFCLK1
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[2].GTYE4_CHANNEL_PRIM_INST/GTREFCLK0 to physical pin GTYE4_CHANNEL_X1Y14/NORTHREFCLK1
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[3].GTYE4_CHANNEL_PRIM_INST/GTREFCLK0 to physical pin GTYE4_CHANNEL_X1Y15/NORTHREFCLK1
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/gtye4_common_gen.GTYE4_COMMON_PRIM_INST/GTREFCLK00 to physical pin GTYE4_COMMON_X1Y3/COM0_REFCLKOUT3
+INFO: [Route 35-467] Router swapped GT pin bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/gtye4_common_gen.GTYE4_COMMON_PRIM_INST/GTREFCLK01 to physical pin GTYE4_COMMON_X1Y3/COM2_REFCLKOUT3
+INFO: [Route 35-20] Post Routing Timing Summary | WNS=0.069  | TNS=0.000  | WHS=0.009  | THS=0.000  |
+INFO: [Route 35-61] The design met the timing requirement.
+INFO: [Route 35-16] Router Completed Successfully
+route_design: Time (s): cpu = 00:58:38 ; elapsed = 00:19:50 . Memory (MB): peak = 10605.035 ; gain = 323.723 ; free physical = 485 ; free virtual = 43436
+report_drc: Time (s): cpu = 00:00:28 ; elapsed = 00:00:10 . Memory (MB): peak = 10638.680 ; gain = 33.645 ; free physical = 437 ; free virtual = 43068
+report_methodology: Time (s): cpu = 00:03:32 ; elapsed = 00:00:35 . Memory (MB): peak = 10670.695 ; gain = 32.016 ; free physical = 508 ; free virtual = 42869
+report_power: Time (s): cpu = 00:02:45 ; elapsed = 00:00:39 . Memory (MB): peak = 10694.707 ; gain = 24.012 ; free physical = 612 ; free virtual = 42805
+report_timing_summary: Time (s): cpu = 00:00:35 ; elapsed = 00:00:08 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 436 ; free virtual = 42359
+report_clock_utilization: Time (s): cpu = 00:00:10 ; elapsed = 00:00:12 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 279 ; free virtual = 42134
+Write ShapeDB Complete: Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.77 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 257 ; free virtual = 41936
+Wrote PlaceDB: Time (s): cpu = 00:00:38 ; elapsed = 00:00:13 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 468 ; free virtual = 42158
+Wrote PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 468 ; free virtual = 42158
+Wrote RouteStorage: Time (s): cpu = 00:00:05 ; elapsed = 00:00:03 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 298 ; free virtual = 42108
+Wrote Netlist Cache: Time (s): cpu = 00:00:00.27 ; elapsed = 00:00:00.29 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 278 ; free virtual = 42137
+Wrote Device Cache: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 278 ; free virtual = 42141
+Write Physdb Complete: Time (s): cpu = 00:00:44 ; elapsed = 00:00:17 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 278 ; free virtual = 42141
+write_checkpoint: Time (s): cpu = 00:00:56 ; elapsed = 00:00:30 . Memory (MB): peak = 10694.707 ; gain = 0.000 ; free physical = 1049 ; free virtual = 42111
+write_bitstream: Time (s): cpu = 00:02:55 ; elapsed = 00:01:39 . Memory (MB): peak = 10958.836 ; gain = 0.000 ; free physical = 369 ; free virtual = 41870

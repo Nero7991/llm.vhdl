@@ -1683,10 +1683,29 @@ if {$otarm == 3} {
     # ---- THE FLOORPLAN.  An implementation-only constraints file, added next
     # to the strategy because it is part of the same decision.
     #
-    # `used_in_synthesis false` is load-bearing.  The pblock addresses
-    # `bd_i/eng/inst/eng/dut/core`, a path that exists only in the LINKED
-    # design; during synthesis get_cells returns nothing and
-    # add_cells_to_pblock errors on an empty object.
+    # `used_in_synthesis false` is doing real work: MEASURED 2026-08-29, the
+    # DEFAULT for an added constraints file is used_in_synthesis = 1, so
+    # without this line the pblock file WOULD be read during synthesis.
+    #
+    # CORRECTION, MEASURED the same day (TRACK BUILD-E2E,
+    # docs/debugging/2026-08-29_build-e2e-project-run.md).  This comment used
+    # to say the file "would error out synthesis" because
+    # `bd_i/eng/inst/eng/dut/core` exists only in the LINKED design and
+    # `add_cells_to_pblock errors on an empty object`.  THAT IS NOT WHAT
+    # VIVADO DOES.  Run as the control -- the same XDC, used_in_synthesis left
+    # at its default, on a trivial top -- synthesis COMPLETED
+    # (`PROGRESS=100% STATUS=synth_design Complete!`) and the only consequence
+    # was one line:
+    #
+    #   WARNING: [Vivado 12-180] No cells matched 'bd_i/eng/inst/eng/dut/core'.
+    #   [hw/fk33/fk33_pblock.xdc:73]
+    #
+    # So the property is still right and still wanted -- an unmatched
+    # constraint that leaves an EMPTY pb_core behind is exactly the silent
+    # class this build's other checks exist to catch, and a warning in a
+    # Vivado log is a warning nobody reads -- but it buys a clean log, not a
+    # rescued build.  Do not describe it as the thing standing between this
+    # design and a synthesis failure.
     #
     # The placer directive is NOT changed.  `Performance_RefinePlacement` gives
     # place_design -directive ExtraPostPlacementOpt, and that is the directive
@@ -1703,7 +1722,9 @@ if {$otarm == 3} {
      f"set_property used_in_implementation true [get_files {PBLOCK_XDC}]\n"
      f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC}]]}} {{\n'
      '    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. '
-     'It addresses a linked-design cell path and would error out synthesis."\n'
+     'It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the '
+     'LINKED design, so synthesis would read it, match nothing, leave an empty '
+     'pb_core behind and say so only as a Vivado 12-180 warning."\n'
      "}\n"
      'puts "FK33_PBLK fk33_pblock.xdc added, implementation only"'),
 

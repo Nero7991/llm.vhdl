@@ -1281,7 +1281,7 @@ add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/f
 set_property used_in_synthesis false [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
 set_property used_in_implementation true [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
 if {[get_property used_in_synthesis [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]]} {
-    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses a linked-design cell path and would error out synthesis."
+    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the LINKED design, so synthesis would read it, match nothing, leave an empty pb_core behind and say so only as a Vivado 12-180 warning."
 }
 puts "FK33_PBLK fk33_pblock.xdc added, implementation only"
 

@@ -1,0 +1,144 @@
+E2E_WRAPPER_START 2026-08-29T14:51:56-06:00
+E2E_HOST Oren-Dell-Ubuntu  load: 6.57 6.91 10.18 5/2004 2354741
+E2E_GIT_HEAD f0645b83ebbff1983bf5f3ba5054eafa21e415f1
+E2E_GIT_DESC f0645b8 worklog: the shell routes, and four rows that had gone stale
+E2E_BUILD_ROOT /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/e2e/build
+FK33_XDC_CHECK OK
+FK33_HOST_COMPILE OK
+FK33_HOST_SELFTEST OK
+FK33_PCIE_IDS vendor=10EE device=9034
+FK33_LNKLED OK: LED 6 follows NOT(user_lnk_up)
+CRITICAL WARNING: [IP_Flow 19-4751] Bus Interface 'aux_clk': FREQ_HZ bus parameter is missing for output clock interface.
+FK33_AUX LNK user_lnk_up wired into the aux status word
+CRITICAL WARNING: [BD 41-737] Cannot set the parameter ASSOCIATED_RESET on /eng/core_clk. It is read-only.
+CRITICAL WARNING: [BD 41-737] Cannot set the parameter POLARITY on /eng/core_aresetn. It is read-only.
+FK33_ENG ASSOCIATED_BUSIF eng/core_clk = s_axi:s_axix
+FK33_ENG ASSOCIATED_BUSIF eng/hbm_aclk = m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi
+CRITICAL WARNING: [BD 41-1377] Network address <0x0000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM00> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM00> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM01> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM01> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x2000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM02> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM02> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x3000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM03> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM03> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x4000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM04> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM04> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x5000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM05> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM05> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x6000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM06> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM06> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x7000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM07> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM07> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x8000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM08> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM08> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x9000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM09> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM09> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xA000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM10> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM10> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xB000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM11> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM11> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xC000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM12> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM12> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xD000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM13> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM13> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xE000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM14> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM14> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0xF000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_00/HBM_MEM15> in </jtag_hbm/Data> and by </hbm/SAXI_16/HBM_MEM15> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_0000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM16> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM16> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_1000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM17> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM17> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_2000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM18> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM18> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_3000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM19> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM19> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_4000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM20> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM20> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_5000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM21> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM21> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_6000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM22> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM22> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_7000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM23> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM23> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_8000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM24> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM24> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_9000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM25> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM25> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_A000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM26> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM26> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_B000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM27> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM27> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_C000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM28> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM28> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_D000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM29> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM29> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_E000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM30> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM30> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+CRITICAL WARNING: [BD 41-1377] Network address <0x1_F000_0000 [ 256M ]> is occupied by different slave segments, </hbm/SAXI_16/HBM_MEM31> in </jtag_hbm/Data> and by </hbm/SAXI_00/HBM_MEM31> in </xdma/M_AXI>. This is illegal and must be resolved before passing validation
+FK33_TOP bd_wrapper
+FK33_PBLK fk33_pblock.xdc added, implementation only
+FK33_SYSMON ENABLE_TEMP_BUS = true
+FK33_SYSMON USER_TEMP_ALARM = true
+FK33_SYSMON TEMPERATURE_ALARM_TRIGGER = 90
+FK33_SYSMON TEMPERATURE_ALARM_RESET = 75
+FK33_SYSMON TEMPERATURE_ALARM_OT_TRIGGER = 101
+FK33_SYSMON TEMPERATURE_ALARM_OT_RESET = 99
+FK33_SYSMON REFERENCE = External
+FK33_SYSMON INTERFACE_SELECTION = Enable_AXI
+FK33_THERM hbm/DRAM_0_STAT_TEMP connected
+FK33_THERM hbm/DRAM_1_STAT_TEMP connected
+FK33_THERM hbm/DRAM_0_STAT_CATTRIP connected
+FK33_THERM hbm/DRAM_1_STAT_CATTRIP connected
+FK33_AUXCLK clocks=sysref_clk
+FK33_AUXCLK period=5.000 ns
+FK33_AUXCLK analysed paths crossing the aux boundary: 0 (must be 0)
+FK33_HUBCLK pins=dbg_hub/clk dbg_hub/inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_ADDRESS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BURST_WD_LEN_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_MSTR2SL_PORT_IFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_ABORT_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_REQ_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_TIMER/clk clocks=sysref_clk
+FK33_HUBCLK OK dbg_hub is on sysref_clk
+FK33_AUX all aux cells present in the implemented design
+FK33_THERMCLK fk33_therm_0/aux_clk clocks=sysref_clk
+FK33_THERMCLK OK the thermal guard runs on the free-running oscillator
+FK33_SYSMONI cell=bd_i/system_management_wiz_0/inst/AXI_SYSMON_CORE_I/inst_sysmon
+FK33_SYSMONI INIT_50 = 0xBA51 -> 90.00 C
+FK33_SYSMONI INIT_53 = 0xBFD3 -> 100.92 C
+FK33_SYSMONI INIT_54 = 0xB2C0 -> 75.00 C
+FK33_SYSMONI INIT_57 = 0xBEDA -> 98.99 C
+FK33_SYSMONI OT limit  = 0xBFD0 -> 100.90 C
+FK33_SYSMONI OT arming nibble 53h[3:0] = 0x3 (0x3 = automatic power-down ARMED)
+FK33_SYSMONI OT automatic shutdown is ARMED in this bitstream
+FK33_ENGI clock clk_out3_bd_clk_wiz_0_0        period 5.000 ns (200.00 MHz)
+FK33_ENGI clock fk33_dmabram_BRAM_PORTA_CLK    period 4.000 ns (250.00 MHz)
+FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt
+FK33_TIMING WNS=0.069 ns  WHS=0.009 ns
+FK33_PBLK pblocks in the implemented design: pb_core
+FK33_PBLK pb_core CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt
+FK33_BITSTREAM ./fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit (20654242 bytes)
+FK33_BUILD_DONE
+FK33_PCIE_IDS vendor=10EE device=9034
+FK33_LNKLED OK: LED 6 follows NOT(user_lnk_up)
+FK33_AUX LNK user_lnk_up wired into the aux status word
+FK33_SYSMON ENABLE_TEMP_BUS = true
+FK33_SYSMON USER_TEMP_ALARM = true
+FK33_SYSMON TEMPERATURE_ALARM_TRIGGER = 90
+FK33_SYSMON TEMPERATURE_ALARM_RESET = 75
+FK33_SYSMON TEMPERATURE_ALARM_OT_TRIGGER = 101
+FK33_SYSMON TEMPERATURE_ALARM_OT_RESET = 99
+FK33_SYSMON REFERENCE = External
+FK33_SYSMON INTERFACE_SELECTION = Enable_AXI
+FK33_SYSMONI cell=bd_i/system_management_wiz_0/inst/AXI_SYSMON_CORE_I/inst_sysmon
+FK33_SYSMONI INIT_50 = 0xBA51 -> 90.00 C
+FK33_SYSMONI INIT_53 = 0xBFD3 -> 100.92 C
+FK33_SYSMONI INIT_54 = 0xB2C0 -> 75.00 C
+FK33_SYSMONI INIT_57 = 0xBEDA -> 98.99 C
+FK33_SYSMONI OT limit  = 0xBFD0 -> 100.90 C
+FK33_SYSMONI OT arming nibble 53h[3:0] = 0x3 (0x3 = automatic power-down ARMED)
+FK33_SYSMONI OT automatic shutdown is ARMED in this bitstream
+FK33_THERM hbm/DRAM_0_STAT_TEMP connected
+FK33_THERM hbm/DRAM_1_STAT_TEMP connected
+FK33_THERM hbm/DRAM_0_STAT_CATTRIP connected
+FK33_THERM hbm/DRAM_1_STAT_CATTRIP connected
+FK33_THERMCLK fk33_therm_0/aux_clk clocks=sysref_clk
+FK33_THERMCLK OK the thermal guard runs on the free-running oscillator
+FK33_SYSMONI cell=bd_i/system_management_wiz_0/inst/AXI_SYSMON_CORE_I/inst_sysmon
+FK33_SYSMONI INIT_50 = 0xBA51 -> 90.00 C
+FK33_SYSMONI INIT_53 = 0xBFD3 -> 100.92 C
+FK33_SYSMONI INIT_54 = 0xB2C0 -> 75.00 C
+FK33_SYSMONI INIT_57 = 0xBEDA -> 98.99 C
+FK33_SYSMONI OT limit  = 0xBFD0 -> 100.90 C
+FK33_SYSMONI OT arming nibble 53h[3:0] = 0x3 (0x3 = automatic power-down ARMED)
+FK33_SYSMONI OT automatic shutdown is ARMED in this bitstream
+FK33_AUXCLK clocks=sysref_clk
+FK33_AUXCLK period=5.000 ns
+FK33_AUXCLK analysed paths crossing the aux boundary: 0 (must be 0)
+FK33_HUBCLK pins=dbg_hub/clk dbg_hub/inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_ADDRESS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BURST_WD_LEN_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_MSTR2SL_PORT_IFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_ABORT_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_REQ_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_TIMER/clk clocks=sysref_clk
+FK33_HUBCLK OK dbg_hub is on sysref_clk
+FK33_TIMING WNS=0.069 ns  WHS=0.009 ns
+FK33_BITSTREAM ./fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit (20654242 bytes)
+FK33_TOP bd_wrapper
+FK33_ENG ASSOCIATED_BUSIF eng/core_clk = s_axi:s_axix
+FK33_ENG ASSOCIATED_BUSIF eng/hbm_aclk = m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi
+FK33_ENGI clock clk_out3_bd_clk_wiz_0_0        period 5.000 ns (200.00 MHz)
+FK33_ENGI clock fk33_dmabram_BRAM_PORTA_CLK    period 4.000 ns (250.00 MHz)
+FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt
+FK33_CFGTIME data=20654112 bytes (165232896 bits), 41308224 CCLK cycles at x4
+FK33_CFGTIME   nominal 127.5 MHz ->   324.0 ms
+FK33_CFGTIME   -15%    108.4 MHz ->   381.2 ms
+FK33_CFGTIME   +15%    146.6 MHz ->   281.7 ms
+FK33_CFGTIME budget: 100 ms T_PVPERL + 100 ms host wait = 200 ms, minus startup, GT lock and link training
+E2E_INPUTS_STABLE yes -- no input file changed under the build
+E2E_FK33_BUILD_DONE_count=1
+E2E_LOG_LAST3:
+FK33_BUILD_DONE
+E2E_CGROUP_MEMORY_PEAK_BYTES 26844352512
+E2E_WRAPPER_DONE rc=0 2026-08-29T15:47:32-06:00
