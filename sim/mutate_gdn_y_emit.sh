@@ -166,6 +166,17 @@ mutate() {
     elif grep -q "o_sat mismatch"     "$dir/run.log"; then why="o_sat"
     elif grep -q "y_exp got"          "$dir/run.log"; then why="y_exp"
     elif grep -q ": got .* want "     "$dir/run.log"; then why="y value"
+    # The bench's accuracy gate, added 2026-08-29.  Listed AFTER the bit-exact
+    # claims deliberately: when both fire, the bit-exact one is the sharper
+    # diagnosis, and the accuracy gate is the one that matters only when the
+    # bit-exact check is green by construction, i.e. the BOTH class.
+    # The bench's NORMALISATION check, added 2026-08-29.  It is listed BEFORE
+    # the accuracy gate because when both fire it is the sharper diagnosis: it
+    # names an output-grid error, which is the one class no error measured in
+    # LSB of that grid can see.
+    elif grep -q "NORMALISATION failed" "$dir/run.log"; then why="normalisation"
+    elif grep -q "OUT OF TOLERANCE"   "$dir/run.log"; then
+      why="accuracy: $(sed -n 's/.*OUT OF TOLERANCE -- \(worst\|mean\|the oracle saw\|[0-9]* elements\).*/\1/p' "$dir/run.log" | head -1)"
     elif grep -q "assertion failure"  "$dir/run.log"; then why="RTL assert"
     else why="no verdict (hang/timeout)"
     fi
@@ -191,8 +202,14 @@ PY
 
 echo "===================== mutations of gdn_y_emit ======================"
 echo "cases $NCASE x $HEADS heads x $DIM, stop-time $STOP"
-echo "bench gate: count + o_last + y_exp + o_sat + bit-exact y + a 17000-cycle bound"
-echo "oracle gate: ref/gdn_y_emit_vec.c's own 1.0 output-LSB bound (baseline 0.7500)"
+echo "bench gate: count + o_last + y_exp + o_sat + bit-exact y, a 17000-cycle bound,"
+echo "            and (since 2026-08-29) FOUR accuracy figures against the bench's"
+echo "            own real-valued oracle, which excludes NOTHING: max 1.5 LSB,"
+echo "            <=12000 elements past 0.5 LSB, mean 0.350 LSB, floor 147456."
+echo "oracle gate: ref/gdn_y_emit_vec.c's own 1.0 output-LSB bound (baseline 0.7500)."
+echo "            NOTE this column EXCLUDES a whole case when any element saturated,"
+echo "            which is what empties it on B4 and makes it read 0.0000 and pass."
+echo "            The bench column is the one to read for the BOTH class."
 echo
 echo "---- class RTL: rtl/gdn_y_emit.vhd alone.  Must fail the bench -------"
 
@@ -461,6 +478,38 @@ mutate B4 "the output rail drops from 16 bits to 15, in BOTH" \
     if (v < -16384) return -16384;" \
 "            if (r > 32767 || r < -32768) { sat_any = 1; nsat++; }" \
 "            if (r > 16383 || r < -16384) { sat_any = 1; nsat++; }"
+
+
+# B5 IS THE MUTATION THAT MOTIVATED THE BENCH'S FIFTH CHECK, and it is here
+# rather than only in sim/mutate_gdn_emit_chain.sh (where it is that script's
+# B4) because this is the unit it edits.  It coarsens the output grid by a
+# whole octave: sh keeps 13 mantissa bits instead of 14, so every mantissa
+# loses a bit and y_exp drops by one.
+#
+# EVERY LSB-NORMALISED FIGURE MOVES THE SAFE WAY.  MEASURED, bench oracle:
+#   worst        0.750000 -> 0.500000
+#   n past 0.5   3492     -> 0
+#   mean         0.155923 -> 0.158819
+# and the GENERATOR'S own oracle goes 0.7500 -> 0.5000 and prints OK.  Both
+# oracles measure error in LSB of the OUTPUT grid; the absolute error doubles
+# and the LSB doubles with it.  A metric normalised by the quantity being
+# mutated cannot see the mutation, and adding digits to it never will.
+#
+# It is killed by the bench's NORMALISATION check, which is not a tolerance at
+# all: sh > 0 implies amax >= 2^(sh+14), hence the largest |y| must be at least
+# 2^14.  MEASURED: it fires on 41 of 48 cases and on NOTHING else -- the
+# bit-exact comparison stays green, which is what makes this a BOTH-class row.
+mutate B5 "site 13 keeps one bit less headroom (msb-13), in BOTH" \
+  --rtl \
+"                if msb_pos(amax) - 14 > 0 then
+                  sh_r    <= msb_pos(amax) - 14;
+                  y_exp_r <= e_y_raw - to_signed(msb_pos(amax) - 14, 8);" \
+"                if msb_pos(amax) - 13 > 0 then
+                  sh_r    <= msb_pos(amax) - 13;
+                  y_exp_r <= e_y_raw - to_signed(msb_pos(amax) - 13, 8);" \
+  --c \
+"        int sh = msb_pos_u(amax) - 14; if (sh < 0) sh = 0;" \
+"        int sh = msb_pos_u(amax) - 13; if (sh < 0) sh = 0;"
 
 echo
 echo "kill ratio: $NKILL killed, $NSURV survived, of $NTOT"

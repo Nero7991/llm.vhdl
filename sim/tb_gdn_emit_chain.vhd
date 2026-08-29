@@ -34,6 +34,11 @@ use std.textio.all;
 
 entity tb_gdn_emit_chain is
   generic(
+    -- Floor on max|y| per block.  DERIVED, not fitted: site 13 shifts by
+    -- sh = max(0, msb_pos(amax) - 14), so sh > 0 implies amax >= 2^(sh+14) and
+    -- hence max|y| >= 2^14.  A generic so it can be teeth-checked by raising
+    -- it; ghdl-mcode CAN override an integer, and cannot override a real.
+    NORM_FLOOR : integer := 16384;
     OVERLAP : boolean := true;
     -- Cycles between successive column offers.  The real producer emits one
     -- column result every DIM/LANES cycles -- 4 at DIM=128, LANES=32.  Values
@@ -295,7 +300,9 @@ begin
     variable eo   : yarr_t;
     variable yexp_all : yall_t;
     variable ye_ref   : barr_t;
-    variable nbad : integer := 0;
+    variable nbad   : integer := 0;
+    variable nnorm  : integer := 0;
+    variable ymax_v : integer := 0;
   begin
     file_open(ok, vf, "gdn_emit_chain_vec.txt", read_mode);
     assert ok = open_ok
@@ -385,6 +392,52 @@ begin
              & "block by a power of two and still looks plausible."
         severity failure;
 
+      -- THE NORMALISATION HEADROOM, and it is the one claim this bench makes
+      -- that is NOT expressible as an error in LSB of the output grid.
+      --
+      -- WHY IT IS HERE.  sim/mutate_gdn_emit_chain.sh's B4 takes site 13's
+      -- requantize from msb_pos(amax)-14 to -13, which coarsens the whole
+      -- block's grid by an octave and throws away one bit of every mantissa.
+      -- MEASURED at NB=3: the generator's end-to-end double oracle went
+      -- 1.2057 -> 0.8505 LSB -- BETTER, not worse -- because the absolute
+      -- error and the LSB it is divided by double together.  gdn_y_emit's own
+      -- generator misses the same change for a different reason, its
+      -- whole-case sat_any exclusion.  A metric normalised by the quantity
+      -- being mutated cannot see the mutation, at any tolerance.
+      --
+      -- The claim below is on the OUTPUT SCALE instead.  Site 13 chooses sh so
+      -- the largest aligned element fills the grid: sh > 0 implies
+      -- amax >= 2^(sh+14), hence max|y| >= 2^14.  DERIVED from the recipe's
+      -- purpose, not fitted to a seed.
+      --
+      -- MEASURED, 20 generator seeds (100003*i + 13) x 6 blocks = 120 blocks
+      -- of the unmutated chain: min over all of them of max|y| is 18383, and
+      -- y_exp is 10 on every single block.  Under B4 the same figure is
+      -- 11620..12675.  So 16384 sits between them with 12% honest margin, and
+      -- it is the derived bound rather than the midpoint of the two.
+      --
+      -- The all-zero block is the case this would get wrong, and it cannot
+      -- arise here: this generator draws every mantissa with an explicit msb
+      -- in [20, 33], so no block is degenerate.  The guard is stated anyway.
+      ymax_v := 0;
+      for i in 0 to HEADS*DIM-1 loop
+        if abs(y_got(b*HEADS*DIM + i)) > ymax_v then
+          ymax_v := abs(y_got(b*HEADS*DIM + i));
+        end if;
+      end loop;
+      if ymax_v > 0 and ymax_v < NORM_FLOOR then
+        report "tb_gdn_emit_chain: block " & integer'image(b)
+             & " NORMALISATION -- the largest |y| is only "
+             & integer'image(ymax_v) & ", under the floor of "
+             & integer'image(NORM_FLOOR)
+             & ".  Site 13 shifts so that the largest aligned element fills"
+             & " the grid, so a block that does not reach 2^14 has an output"
+             & " grid an octave too coarse.  That defect is INVISIBLE to any"
+             & " error measured in LSB of that same grid, which is why this"
+             & " check is not a tolerance." severity error;
+        nnorm := nnorm + 1;
+      end if;
+
       for i in 0 to HEADS*DIM-1 loop
         if y_got(b*HEADS*DIM + i) /= yexp_all(b*HEADS*DIM + i) then
           nbad := nbad + 1;
@@ -403,7 +456,7 @@ begin
 
     file_close(vf);
 
-    if nbad = 0 then
+    if nbad = 0 and nnorm = 0 then
       report "tb_gdn_emit_chain: PASS -- " & integer'image(NB)
            & " blocks x " & integer'image(HEADS) & " heads x "
            & integer'image(DIM) & " bit-exact, OVERLAP="
@@ -413,8 +466,14 @@ begin
            & " RMS_LANES=" & integer'image(RMS_LANES)
         severity note;
     else
+      -- Counted and named separately: "N mismatched elements" would be a
+      -- misleading verdict on a run where every element matched the golden and
+      -- only the output GRID was wrong, which is exactly the case this check
+      -- exists to catch.
       report "tb_gdn_emit_chain: FAIL -- " & integer'image(nbad)
-           & " mismatched elements, COL_GAP=" & integer'image(COL_GAP)
+           & " mismatched elements and " & integer'image(nnorm)
+           & " blocks failing the normalisation floor, COL_GAP="
+           & integer'image(COL_GAP)
            & " refused-column cycles=" & integer'image(stall_cyc)
         severity failure;
     end if;

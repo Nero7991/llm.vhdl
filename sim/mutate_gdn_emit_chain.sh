@@ -379,6 +379,17 @@ mutate B3 "seam 3: the gate argument grid is one octave off in both" \
 # gdn_y_emit's own generator gates its oracle at 1.0 LSB while the chain gates
 # at 8.0, so whether the CHAIN can still see a site-13 headroom error is a
 # genuine question about this bench and not a duplicate of the unit test.
+# CORRECTION, 2026-08-29 (TRACK B-GATE): B4 IS NO LONGER A SURVIVOR.  The
+# paragraph below stands as written -- it is still true that neither oracle can
+# see this, and it is still true for the reason it gives.  What changed is that
+# sim/tb_gdn_emit_chain.vhd gained a check that is NOT an error measured in LSB
+# of the output grid: max|y| per block must reach 2^14, because site 13 shifts
+# so the largest aligned element fills the grid.  MEASURED: honest 18383 at the
+# worst of 20 seeds x 6 blocks, this mutant 11620..12675, floor 16384.  The
+# same claim is now sim/mutate_gdn_y_emit.sh's B5 at the unit level.  The
+# original text follows unedited, because it is the record of WHY a tolerance
+# could never have done this.
+#
 # B4 IS AN EXPECTED SURVIVOR AND IT IS A BLIND SPOT OF THE ORACLE'''S UNITS, not
 # of the stimulus.  MEASURED: the mutation takes y_exp from 10 to 9 on BOTH
 # blocks, i.e. it makes the output grid one octave COARSER, and the oracle

@@ -149,6 +149,17 @@ mutate() {
     elif grep -q "o_sat mismatch"      "$dir/run.log"; then why="o_sat"
     elif grep -q "e_head got"          "$dir/run.log"; then why="e_head"
     elif grep -q "mant got"            "$dir/run.log"; then why="o_mant"
+    # The bench's accuracy gate, added 2026-08-29.  It is listed AFTER the
+    # bit-exact claims deliberately: when both fire, the bit-exact one is the
+    # sharper diagnosis, and the accuracy gate is the one that matters only
+    # when the bit-exact check is green by construction, i.e. the BOTH class.
+    # The bench's NORMALISATION check, added 2026-08-29.  It is listed BEFORE
+    # the accuracy gate because when both fire it is the sharper diagnosis: it
+    # names an output-grid error, which is the one class no error measured in
+    # LSB of that grid can see.
+    elif grep -q "NORMALISATION failed" "$dir/run.log"; then why="normalisation"
+    elif grep -q "OUT OF TOLERANCE"    "$dir/run.log"; then
+      why="accuracy: $(sed -n 's/.*OUT OF TOLERANCE -- \(worst\|mean\|the oracle saw\|[0-9]* elements\).*/\1/p' "$dir/run.log" | head -1)"
     elif grep -q "assertion failure"   "$dir/run.log"; then why="RTL assert"
     else why="no verdict (hang/timeout)"
     fi
@@ -176,8 +187,14 @@ PY
 
 echo "=================== mutations of gdn_head_emit ====================="
 echo "cases $NCASE x DIM $DIM, stop-time $STOP"
-echo "bench gate: bit-exact o_mant + e_head + o_sat + a 1300-cycle overlap bound"
-echo "oracle gate: ref/gdn_head_emit_vec.c's own 1.0 output-LSB bound (baseline 0.5000)"
+echo "bench gate: bit-exact o_mant + e_head + o_sat, a 1300-cycle overlap bound,"
+echo "            and (since 2026-08-29) FOUR accuracy figures against the bench's"
+echo "            own real-valued oracle, which excludes NOTHING: max 1.5 LSB,"
+echo "            <=120 elements past 0.5 LSB, mean 0.200 LSB, floor 8192 elements."
+echo "oracle gate: ref/gdn_head_emit_vec.c's own 1.0 output-LSB bound (baseline 0.5000)."
+echo "            NOTE this column EXCLUDES a whole case when any column saturated,"
+echo "            which is what makes it read 0.0000 and pass on B4.  The bench"
+echo "            column is the one to read for the BOTH class."
 echo
 echo "---- class RTL: rtl/gdn_head_emit.vhd alone.  Must fail the bench ----"
 
@@ -397,6 +414,37 @@ mutate B4 "the output rail drops from 16 bits to 15, in BOTH" \
     if (v < -16384) return -16384;" \
 "            if (r > 32767 || r < -32768) { sat_any = 1; nsat++; }" \
 "            if (r > 16383 || r < -16384) { sat_any = 1; nsat++; }"
+
+
+# B5 IS THE MUTATION THAT MOTIVATED THE BENCH'S FIFTH CHECK.  It coarsens the
+# output grid by a whole octave: sh_h keeps 13 mantissa bits instead of 14, so
+# every column loses a bit and e_head drops by one.
+#
+# EVERY LSB-NORMALISED FIGURE MOVES THE SAFE WAY.  MEASURED, bench oracle:
+#   worst        0.999985 -> 0.500000
+#   n past 0.5   14       -> 0
+#   mean         0.059422 -> 0.055006
+# and the GENERATOR'S own oracle goes 0.5000 -> 0.5000 and prints OK.  Both
+# oracles measure error in LSB of the OUTPUT grid; the absolute error doubles
+# and the LSB doubles with it.  A metric normalised by the quantity being
+# mutated cannot see the mutation, and adding digits to it never will.  The
+# same edit on gdn_y_emit is that script'''s B5 and sim/mutate_gdn_emit_chain.sh'''s
+# B4, where it is recorded as an expected survivor of both oracles.
+#
+# It is killed by the bench'''s NORMALISATION check, which is not a tolerance at
+# all: sh_h > 0 implies oamax >= 2^(sh_h+14), hence the largest |o_mant| must be
+# at least 2^14.  MEASURED honest floor: exactly 16384 at all 40 seeds swept.
+mutate B5 "site 12 keeps one bit less headroom (msb-13), in BOTH" \
+  --rtl \
+"                if msb_pos(amax) - 14 > 0 then
+                  sh_h <= msb_pos(amax) - 14;
+                  e_head_r <= e_h - to_signed(msb_pos(amax) - 14, 8);" \
+"                if msb_pos(amax) - 13 > 0 then
+                  sh_h <= msb_pos(amax) - 13;
+                  e_head_r <= e_h - to_signed(msb_pos(amax) - 13, 8);" \
+  --c \
+"        int sh_h = msb_pos_u(oamax) - 14; if (sh_h < 0) sh_h = 0;" \
+"        int sh_h = msb_pos_u(oamax) - 13; if (sh_h < 0) sh_h = 0;"
 
 echo
 echo "kill ratio: $NKILL killed, $NSURV survived, of $NTOT"
