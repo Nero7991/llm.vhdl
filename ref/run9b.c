@@ -361,6 +361,47 @@ static void seam_f32(const char *name, int layer, const double *v, int n)
     g_recs++;
 }
 
+/* The argmax, written out rather than inlined, because the TIE RULE is the
+ * part a second implementation gets wrong silently.  `rtl/sampler_stream.vhd`
+ * seeds its candidate with index 0 and displaces it only on a STRICT `>`, so
+ * the FIRST maximum wins.  `tools/ref9b/bisect_scaled.py:argmax_first` is the
+ * same rule again on the scaled side.  NOTE the rule is UNEXERCISED wherever
+ * the logits are all distinct, which they are on the reference prompt -- so
+ * agreement between the three rungs is not evidence about ties. */
+static int argmax_first(const double *v, int n)
+{
+    int bi = 0;
+    for (int i = 1; i < n; i++) if (v[i] > v[bi]) bi = i;
+    return bi;
+}
+
+/* The TOKEN seam: the argmax this reference itself picked.
+ *
+ * WHY IT IS A RECORD AND NOT A printf.  Until 2026-08-29 run9b computed the
+ * argmax and PRINTED it, so the one quantity that decides a token was the only
+ * one in the whole stream that could not be compared without a human reading
+ * stdout.  A card capture emits `TOKEN` as S32 (tools/ref9b/seam_stream.h, and
+ * sim/tb_llama_top.vhd's stream collector), so this side emits S32 too and
+ * `seam_bisect --mode exact` compares it bit-for-bit.
+ *
+ * AND IT IS EXACT EVEN THOUGH `LOGITS` HERE CANNOT BE.  This reference writes
+ * LOGITS as F32 while the design publishes raw s32, so those two kinds will
+ * never compare exactly; a token INDEX has no such problem.  So the seam that
+ * decides the token is exactly comparable even where the vector behind it is
+ * not.  What that buys is bounded, and section 5.7 of
+ * docs/debugging/2026-08-29_logits-seam-model.md measured the bound: an argmax
+ * moves only when a logit crosses the runner-up, so a TOKEN agreement is
+ * silent about every smaller error, and a LOGITS agreement is silent about a
+ * sampler that reduced the right values wrongly. */
+static void seam_token(int best)
+{
+    if (!g_seam) return;
+    int32_t v = (int32_t)best;
+    if (r9bs_write_s32(g_seam, "TOKEN", g_tok, -1, &v, 1, 0))
+        die("seam write failed");
+    g_recs++;
+}
+
 /* --------------------------------------------------------------- matvec */
 /* Dequantized weight, for rung 2.  get_widx/get_scale are matvec_int4.c's own
  * accessors, so the BYTE LAYOUT is read by exactly one implementation and this
@@ -973,7 +1014,17 @@ int main(int argc, char **argv)
     if (out) {
         g_seam = fopen(out, "wb");
         if (!g_seam) { perror(out); return 1; }
-        if (r9bs_write_header(g_seam)) die("header write failed");
+        /* THE VERSION IS DECIDED BY WHAT THE RUN WILL CONTAIN, and it can be
+         * decided here because only the full-model path emits the S32 TOKEN
+         * record.  Declaring version 1 on a file that carries S32 is the
+         * silent failure the format's version gate exists to stop: an older
+         * reader would decode 32-bit values as int16 and mis-frame every
+         * record after it.  Over-declaring is the fail-safe direction (a v1
+         * reader stops loudly), under-declaring is not, so a partial run
+         * declaring 1 is a deliberate choice and not an oversight. */
+        if (r9bs_write_header_ver(g_seam, nlayer == N_LAYER ? R9BS_VERSION_S32
+                                                           : R9BS_VERSION))
+            die("header write failed");
     }
 
     reg_t RX = reg_new(HIDDEN), RXN = reg_new(HIDDEN);
@@ -997,8 +1048,8 @@ int main(int argc, char **argv)
             seam("R_XN.final", -1, &RXN);
             lm_head(&RXN, logits);
             seam_f32("LOGITS", -1, logits, VOCAB);
-            int best = 0;
-            for (int v = 1; v < VOCAB; v++) if (logits[v] > logits[best]) best = v;
+            int best = argmax_first(logits, VOCAB);
+            seam_token(best);
             clock_gettime(CLOCK_MONOTONIC, &t1);
             printf("TOKEN %d id=%d  argmax=%d logit=%.6f  %.2f s\n", p, toks[p],
                    best, logits[best],

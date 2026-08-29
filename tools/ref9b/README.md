@@ -37,6 +37,8 @@ next token on all five positions of the reference prompt.
 | `mv_step_oracle.c` | one subsystem-A job through `ref/matvec_int4.c`, emitting both the BFP mantissas and the RAW s32 payload |
 | `mutate_capture.sh` | teeth for the region seams |
 | `mutate_logits.sh` | teeth for the LOGITS seam and the argmax |
+| `check_token.py` | the automatic verdict on the DECIDED TOKEN across streams, with the margin that decision had |
+| `mutate_token.py` | teeth for `check_token.py`, applied to the stream bytes rather than to the RTL |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
@@ -77,6 +79,28 @@ python3 seam_bisect.py suspect.r9bs ../../anchor.r9bs --tok 4 --baseline base4.t
 # and against a same-format capture, which is the sharper instrument
 python3 seam_bisect.py ../../ref.r9bs capture.r9bs --mode exact --tok 4
 ```
+
+**The token itself is compared automatically, and it is the only whole-model
+seam that can be compared EXACTLY between `ref/run9b` and a card.** `run9b`
+writes `LOGITS` as F32 while the design publishes raw s32, so those two kinds
+never compare exactly -- but a token INDEX has no such problem, and `run9b`
+now emits a `TOKEN` record (S32, exp 0, n = 1) carrying its own argmax:
+
+```sh
+cd tools/ref9b
+python3 check_token.py ../../ref.r9bs ../../anchor.r9bs        # rung 3 vs rung 1
+python3 check_token.py ../../ref.r9bs capture.r9bs --expect 2614
+```
+
+A row is **REPORTED** when the file carries `TOKEN` (the producer's own argmax)
+and **DERIVED** when this script had to take the argmax itself. A DERIVED row is
+a ROUND TRIP for that producer and the output says so; the llama.cpp anchor can
+only ever be DERIVED, because sampling happens outside the graph `cb_eval` sees.
+The verdict prints the **margin** -- the gap to the runner-up, absolutely and in
+units of the logits' own RMS -- because an argmax agreement is an agreement
+about a decision with a margin and is blind to every error below it. MEASURED on
+the reference prompt: position 0 has a margin of 2.134 (0.551 of RMS) and
+position 1 only 0.263 (0.089), so the two positions are not equally informative.
 
 **THREE numeric kinds, not two.** A record is F32, BFP16 (int16 mantissas plus
 a shared exponent) or **S32** (raw 32-bit values plus a shared exponent). S32 is
