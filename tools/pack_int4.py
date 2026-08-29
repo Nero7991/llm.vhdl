@@ -358,6 +358,79 @@ def quantize(W: np.ndarray, cb: np.ndarray, row_chunk: int = 4096):
     return idx_out, scl_out, w_exp
 
 
+def segment_row_plan(seg_rows, rows_if: int):
+    """Pad each row SEGMENT up to a whole number of ROWS_IF tiles.
+
+    WHY THIS EXISTS.  A fused tensor whose rows are several logically separate
+    matrices -- the GDN block's `attn_qkv`, which is q | k | v -- is issued as
+    one matvec JOB PER SEGMENT, so that each segment gets its own BFP block
+    exponent (`seq_opdec` infers the exponent segment from `dst_offset`).  A
+    job that does not start at row 0 is a ROW WINDOW, and a window can only
+    begin on a TILE boundary, because a sub-region's beats run tile-major and
+    the window is expressed by advancing every base by whole tiles
+    (`tools/gen_mv4i_desc.py:build_descriptor`).  At the 9B shape the segments
+    are 2048 | 2048 | 4096 and ROWS_IF is 48:
+
+        2048 mod 48 = 32     4096 mod 48 = 16
+
+    so neither of the last two segments starts on a tile boundary and neither
+    window is expressible.  Padding each segment up to the next multiple of
+    ROWS_IF moves the starts to 0, 2064 and 4128, all multiples of 48.
+
+    WHAT THE PAD ROWS CONTAIN: nothing.  They are zero rows, which `quantize`
+    turns into scale = 0 and idx = 0 -- the same bytes `pack` already writes
+    for the trailing tile padding of any M not divisible by ROWS_IF.  They are
+    numerically inert twice over: a pad row sits at an index >= the job's
+    `n_rows`, and BOTH the reference (`ref/matvec_int4.c`, "SCAN DOMAIN is
+    r < n_rows ONLY") and the gateware (`rtl/matvec_core.vhd`, the `re3_ok`
+    mask on the amax fold) exclude such a row from the BFP amax scan and from
+    the emitted result.  And even if some future consumer did fold them in, a
+    magnitude of zero cannot change a MAX, so the shared exponent is unmoved in
+    either direction.  There is no per-tile shared exponent in this format --
+    `scale` is per row per BLOCK of 32 and `w_exp` is per matrix -- so a tile
+    of mostly zeros has nothing to shift.
+
+    `seg_rows` is the LOGICAL segment lengths, in order.  Returns
+    (m_padded, plan) where plan is one dict per segment with `row_start` (in
+    the padded matrix), `n_rows` (the logical length, unchanged), `pad` and
+    `src_start` (in the unpadded matrix).  The LAST segment is NOT padded here:
+    nothing follows it, and `pack` already rounds the file up to a whole tile.
+    """
+    if rows_if <= 0:
+        raise ValueError("rows_if must be positive")
+    if not seg_rows or any(int(n) <= 0 for n in seg_rows):
+        raise ValueError("seg_rows must be a non-empty list of positive ints")
+    plan = []
+    dst = src = 0
+    last = len(seg_rows) - 1
+    for i, n in enumerate(seg_rows):
+        n = int(n)
+        pad = 0 if i == last else (-n) % rows_if
+        plan.append(dict(index=i, src_start=src, row_start=dst,
+                         n_rows=n, pad=pad))
+        dst += n + pad
+        src += n
+    return dst, plan
+
+
+def apply_segment_padding(W: np.ndarray, m_padded: int, plan):
+    """Insert the pad rows of `segment_row_plan` into an (M, K) float array.
+
+    The pad rows are left at 0.0.  `quantize` maps an all-zero row to scale 0
+    and idx 0 (its `best_scl == 0` branch), which is the exact byte pattern
+    `pack` already writes for trailing tile padding, so the padded file and the
+    unpadded one agree byte-for-byte wherever a real row lands.
+    """
+    if W.shape[0] != sum(p["n_rows"] for p in plan):
+        raise ValueError("segment plan covers %d rows, tensor has %d"
+                         % (sum(p["n_rows"] for p in plan), W.shape[0]))
+    out = np.zeros((m_padded, W.shape[1]), dtype=W.dtype)
+    for p in plan:
+        out[p["row_start"]:p["row_start"] + p["n_rows"]] = \
+            W[p["src_start"]:p["src_start"] + p["n_rows"]]
+    return out
+
+
 def calibrate_out_shift(K: int) -> int:
     """spec 7.4: pick out_shift so sat32 cannot fire on the worst-case acc.
 
@@ -759,6 +832,13 @@ def main():
                     help="cards to split across, for --audit")
     ap.add_argument("--crosscheck", action="store_true",
                     help="recompute the C reference output for an existing .mv4i")
+    ap.add_argument("--seg-rows", default=None,
+                    help="comma-separated LOGICAL row segments of a fused "
+                         "tensor (e.g. 2048,2048,4096 for a GDN attn_qkv). "
+                         "Each segment but the last is padded with zero rows "
+                         "up to a whole ROWS_IF tile so the next segment "
+                         "starts on a tile boundary and is expressible as a "
+                         "row window; see segment_row_plan()")
     a = ap.parse_args()
 
     if a.list:
@@ -798,6 +878,18 @@ def main():
     print(f"  geometry ROWS_IF={a.rows_if} AXI_DW={a.axi_dw} "
           f"BLOCK={BLOCK} -> NPORTS_W={nports} n_scale_sub={nss} "
           f"({nports + nss} AXI read masters)")
+
+    if a.seg_rows:
+        seg = [int(t) for t in a.seg_rows.split(",")]
+        if sum(seg) != M:
+            sys.stderr.write("pack_int4: --seg-rows sums to %d, the tensor "
+                             "has %d rows\n" % (sum(seg), M))
+            return 2
+        m_pad, plan = segment_row_plan(seg, a.rows_if)
+        W = apply_segment_padding(W, m_pad, plan)
+        print(f"  segment padding: M {M} -> {m_pad}, starts "
+              + ", ".join(str(p["row_start"]) for p in plan))
+        M = m_pad
 
     idx, scale, w_exp = quantize(W, IQ4_NL)
     out_shift = a.out_shift if a.out_shift is not None else calibrate_out_shift(K)

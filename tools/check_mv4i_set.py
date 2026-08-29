@@ -170,6 +170,48 @@ def check(outdir: str, full: bool = False) -> int:
             fail(f"{e['file']}: out_shift {out_shift}, spec 7.4 at K={K} "
                  f"gives {P.calibrate_out_shift(K)}")
 
+        # ---- the fused-tensor row segments, when the manifest declares them.
+        # A window can only begin on a TILE boundary, so a `row_start` that is
+        # not a multiple of ROWS_IF is a segment no descriptor can express and
+        # is the whole reason the pad exists.  Re-derived here from ROWS_IF and
+        # the declared lengths, not copied from the packer.
+        segs = e.get("segments")
+        if segs is not None:
+            m_log = e.get("M_logical")
+            if m_log is None:
+                fail(f"{e['file']}: declares segments but no M_logical")
+                m_log = 0
+            if sum(x["n_rows"] for x in segs) != m_log:
+                fail(f"{e['file']}: segments cover "
+                     f"{sum(x['n_rows'] for x in segs)} rows, M_logical is "
+                     f"{m_log}")
+            if m_log > M:
+                fail(f"{e['file']}: M_logical {m_log} exceeds the packed "
+                     f"M {M}")
+            want_start, want_src = 0, 0
+            for si, x in enumerate(segs):
+                if x["row_start"] % rows_if:
+                    fail(f"{e['file']}: segment {x['name']!r} starts at row "
+                         f"{x['row_start']}, which is not a multiple of "
+                         f"ROWS_IF={rows_if}; no row window can express it")
+                if x["row_start"] != want_start:
+                    fail(f"{e['file']}: segment {x['name']!r} starts at "
+                         f"{x['row_start']}, the pad rule gives {want_start}")
+                if x.get("logical_row", want_src) != want_src:
+                    fail(f"{e['file']}: segment {x['name']!r} logical_row "
+                         f"{x.get('logical_row')}, want {want_src}")
+                if x["row_start"] + x["n_rows"] > M:
+                    fail(f"{e['file']}: segment {x['name']!r} ends past the "
+                         f"packed M {M}")
+                want_src += x["n_rows"]
+                want_start += x["n_rows"] + x["pad_rows"]
+                if si != len(segs) - 1 and want_start % rows_if:
+                    fail(f"{e['file']}: segment {x['name']!r} pad_rows "
+                         f"{x['pad_rows']} does not reach a tile boundary")
+            if want_start > M:
+                fail(f"{e['file']}: padded segments need {want_start} rows, "
+                     f"the packed M is {M}")
+
         w_sub = [struct.unpack_from("<Q", hdr, 0x38 + 8 * p)[0]
                  for p in range(nports)]
         s_sub = [struct.unpack_from("<Q", hdr, 0x38 + 8 * (nports + q))[0]

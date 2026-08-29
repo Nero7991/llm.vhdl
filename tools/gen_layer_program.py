@@ -471,8 +471,18 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
 
         2048 mod 48 = 32,  4096 mod 48 = 16
 
-    so TWO OF THE THREE ARE NOT EXPRESSIBLE against the fused packed tensor.
-    They are reported, not fudged."""
+    so against an UNPADDED fused tensor two of the three are not expressible.
+    They are reported, not fudged.
+
+    THE PADDED SET closes this.  `tools/pack_model_fk33.py` pads each segment
+    of a fused tensor up to a whole tile and records the resulting windows in
+    the manifest as `segments`; the packed starts become 0, 2064 and 4128.  A
+    step carries the LOGICAL row (`st.row_start`, which is also what R_QKV's
+    `dst_offset` uses, because `seq_opdec` infers the exponent segment from
+    the DESTINATION offset and that must not move), and this function maps it
+    through the manifest to the PACKED row.  The mapping is a lookup, never an
+    arithmetic re-derivation: if the manifest declares segments and none of
+    them matches the step, nothing is emitted for it and the reason says so."""
     build = build or G.FK33
     m, by_file = G.load_manifest(manifest_path)
     root = os.path.dirname(os.path.abspath(manifest_path))
@@ -502,11 +512,46 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                                 reason="blake2b_128 %s, manifest says %s"
                                        % (got, want)))
                 continue
+        # LOGICAL row -> PACKED row, through the manifest's segment table.
+        packed_start, seg_note = st.row_start, None
+        segs = ent.get("segments")
+        if segs:
+            hit = [q for q in segs
+                   if q.get("logical_row", q["row_start"]) == st.row_start
+                   and q["n_rows"] == st.n_rows]
+            if len(hit) != 1:
+                out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                                reason="the manifest declares %d row segments "
+                                       "and %d of them is the window "
+                                       "(logical row %d, %d rows) this step "
+                                       "asks for"
+                                       % (len(segs), len(hit), st.row_start,
+                                          st.n_rows)))
+                continue
+            packed_start = hit[0]["row_start"]
+            seg_note = hit[0]["name"]
+        elif st.row_start and int(ent.get("M_logical", ent["M"])) != ent["M"]:
+            out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                            reason="tensor is padded but declares no segments"))
+            continue
+        # A window that runs past the packed rows is NOT caught anywhere else:
+        # `row_start` is not a descriptor field (it is folded into the bases),
+        # so the gateware cannot see it, and `rtl_would_reject` only bounds
+        # `n_rows` against MAXROWS_BFP.  MEASURED as a silent pass before this
+        # check existed: a `row_start` one tile too high was emitted, accepted
+        # by the RTL, and would have read past the tensor's own sub-regions.
+        if packed_start + st.n_rows > h.M:
+            out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
+                            reason="window rows %d..%d runs past the packed "
+                                   "M = %d" % (packed_start,
+                                               packed_start + st.n_rows - 1,
+                                               h.M)))
+            continue
         try:
             d = G.build_descriptor(
                 h, int(ent["hbm_offset"]), st.n_rows, x_exp,
                 out_mode=(st.out_mode if out_mode is None else out_mode),
-                cb_load=True, addr_w=build["addr_w"], row_start=st.row_start,
+                cb_load=True, addr_w=build["addr_w"], row_start=packed_start,
                 src_region=st.src, dst_region=st.dst,
                 dst_offset=st.dst_off, ordinal=st.ordinal,
                 src_region2=st.src2, const_base=st.const_base, const_exp=0)
@@ -519,7 +564,8 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                         reason="; ".join(n for _, n in bad),
                         desc=d, desc_addr=addr,
                         w_exp=h.w_exp, out_shift=h.out_shift,
-                        M=h.M, K=h.K, row_start=st.row_start,
+                        M=h.M, K=h.K, row_start=packed_start,
+                        logical_row=st.row_start, segment=seg_note,
                         n_rows=st.n_rows,
                         w_beats=d.fields["w_beats"],
                         s_beats=d.fields["s_beats"]))
@@ -535,8 +581,15 @@ def check_against_manifest(s, manifest_path, layer=0):
     m, by_file = G.load_manifest(manifest_path)
 
     def shp(name):
+        """The LOGICAL shape.  `M` in the manifest is the PACKED row count,
+        which for a fused tensor with padded segments is larger than the
+        model's dimension by the pad rows; `M_logical` is the model's.  A check
+        against `M` would fail on a padded set and would be checking the
+        packing, not the shape."""
         e = by_file.get(name + ".mv4i")
-        return None if e is None else (e["M"], e["K"])
+        if e is None:
+            return None
+        return (int(e.get("M_logical", e["M"])), e["K"])
 
     p = "blk.%d." % layer
     checks = []

@@ -59,6 +59,25 @@ check without parsing a header.  When the next object would straddle, the
 allocator SKIPS to the boundary and records the hole; it never reorders, so the
 manifest stays a function of the GGUF's tensor order alone.
 
+THE qkv SEGMENT PAD.  The GDN block's `attn_qkv` is a FUSED matrix: its rows
+are q | k | v, and the layer program issues one matvec JOB PER SEGMENT so each
+gets its own BFP block exponent.  A job that does not start at row 0 is a row
+WINDOW, and a window can only begin on a TILE boundary.  At the 9B shape the
+segments are 2048 | 2048 | 4096 and ROWS_IF is 48, so `2048 mod 48 = 32` and
+`4096 mod 48 = 16`: two of the three windows are not expressible, and MEASURED
+by `tools/gen_layer_program.py`, 48 of a token's 297 subsystem A jobs are
+refused for exactly that reason.
+
+So each segment but the last is padded with ZERO ROWS up to a whole tile
+(`pack_int4.segment_row_plan`), moving the starts to 0, 2064 and 4128.  M in
+the header and in the manifest becomes the PADDED row count; the logical count
+and the per-segment windows are recorded alongside it as `M_logical` and
+`segments`, which is where a program generator reads the windows from rather
+than re-deriving them.  Cost: 48 dead rows in 8,192, one extra tile per file,
+110,592 B per tensor and 2,654,208 B over the 24.  `--no-qkv-pad` reproduces
+the historic unpadded set; `manifest["geometry"]["qkv_segment_pad"]` says which
+one a set is.
+
 WHAT THIS RULE DOES NOT DO, stated so it is not mistaken for a solved problem:
 it puts each tensor wholly in ONE stack, and subsystem A reads every tensor with
 27 masters that CANNOT all be on one stack (a stack offers at most 15 engine
@@ -161,6 +180,40 @@ def dequant_f32(t) -> np.ndarray:
     return np.ascontiguousarray(P.tensor_as_mk(t).reshape(-1), dtype="<f4")
 
 
+def gguf_kv(rd, suffix: str):
+    """One GGUF metadata value, addressed by key SUFFIX so the architecture
+    prefix (`qwen35.`) does not have to be assumed.  Raises if it is missing or
+    ambiguous: a fused-tensor split guessed from a default is exactly the kind
+    of silent wrong number this repository keeps paying for."""
+    hits = [k for k in rd.fields if k == suffix or k.endswith("." + suffix)]
+    if len(hits) != 1:
+        raise KeyError(f"GGUF metadata key {suffix!r}: {len(hits)} matches")
+    return rd.fields[hits[0]].contents()
+
+
+def qkv_segments(rd, M: int):
+    """The q | k | v row segments of a fused GDN `attn_qkv`, DERIVED from the
+    GGUF's own metadata and CHECKED against the tensor's row count.
+
+        key_dim = ssm.state_size * ssm.group_count      (lin_head_dim * lin_key_heads)
+        val_dim = ssm.inner_size
+        M       = 2 * key_dim + val_dim
+
+    `rtl/model_cfg_pkg.vhd:32-33` states the first two identities; the third is
+    `gen_layer_program.Shape.qkv_dim`.  If the identity does not hold the split
+    is unknown and nothing is padded -- the caller raises rather than assuming
+    2048/2048/4096, which is a per-model number, not a constant.
+    """
+    key_dim = int(gguf_kv(rd, "ssm.state_size")) * int(gguf_kv(rd, "ssm.group_count"))
+    val_dim = int(gguf_kv(rd, "ssm.inner_size"))
+    if 2 * key_dim + val_dim != M:
+        raise ValueError(
+            f"attn_qkv has {M} rows but the GGUF metadata gives "
+            f"2*{key_dim} + {val_dim} = {2 * key_dim + val_dim}; the fused "
+            f"split is not what this model says it is")
+    return [key_dim, key_dim, val_dim], ["q", "k", "v"]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -172,6 +225,12 @@ def main():
                     help="pack only tensors whose name contains this substring")
     ap.add_argument("--force", action="store_true",
                     help="repack even when an output of the right size exists")
+    ap.add_argument("--no-qkv-pad", dest="qkv_pad", action="store_false",
+                    default=True,
+                    help="do NOT pad the fused attn_qkv row segments up to a "
+                         "whole ROWS_IF tile. Reproduces the historic set, in "
+                         "which two of the three qkv row windows per GDN block "
+                         "are not expressible at ROWS_IF=48")
     a = ap.parse_args()
 
     rows_if, axi_dw = a.rows_if, a.axi_dw
@@ -245,6 +304,22 @@ def main():
             continue
         ne = [int(v) for v in t.shape]
         K, M = ne[0], ne[1]
+
+        # THE qkv SEGMENT PAD.  See the module docstring.  `M` from here on is
+        # the PADDED row count -- it is what the header, the file size and the
+        # manifest all have to agree on -- and `m_logical`/`segs` carry the
+        # real rows and the windows a program generator issues.
+        seg_plan, segs, m_logical = None, None, M
+        if a.qkv_pad and name.endswith("attn_qkv.weight"):
+            seg_rows, seg_names = qkv_segments(rd, M)
+            M, seg_plan = P.segment_row_plan(seg_rows, rows_if)
+            segs = [dict(name=nm, row_start=q["row_start"], n_rows=q["n_rows"],
+                         pad_rows=q["pad"], logical_row=q["src_start"])
+                    for nm, q in zip(seg_names, seg_plan)]
+            for q in segs:
+                assert q["row_start"] % rows_if == 0, (name, q)
+            assert M >= m_logical
+
         size = P.packed_layout(M, K, rows_if, axi_dw)[-1]
         out = os.path.join(a.outdir, name + ".mv4i")
 
@@ -252,10 +327,11 @@ def main():
             w_exp, out_shift = struct.unpack_from(
                 "<ii", open(out, "rb").read(0x18), 0x10)
             recs.append(dict(name=name, M=M, K=K, w_exp=w_exp,
-                             out_shift=out_shift, nbytes=size))
+                             out_shift=out_shift, nbytes=size,
+                             m_logical=m_logical, segments=segs))
             logf.write(f"{name}\t{M}\t{K}\t{w_exp}\t{out_shift}\t"
                        f"{(K + P.BLOCK - 1)//P.BLOCK}\t{size}\t"
-                       f"{size*8.0/(M*K):.4f}\t0.0\tKEPT\n")
+                       f"{size*8.0/(m_logical*K):.4f}\t0.0\tKEPT\n")
             logf.flush()
             print(f"[{i+1}/{len(mv)}] {name} kept ({size} B)")
             sys.stdout.flush()
@@ -263,6 +339,9 @@ def main():
 
         t0 = time.perf_counter()
         W = P.tensor_as_mk(t)
+        assert W.shape == (m_logical, K), (W.shape, m_logical, K)
+        if seg_plan is not None:
+            W = P.apply_segment_padding(W, M, seg_plan)
         assert W.shape == (M, K), (W.shape, M, K)
         idx, scale, w_exp = P.quantize(W, P.IQ4_NL)
         del W                                   # 4 GB on the two 1.0e9 tensors
@@ -279,14 +358,15 @@ def main():
         dt = time.perf_counter() - t0
 
         recs.append(dict(name=name, M=M, K=K, w_exp=w_exp,
-                         out_shift=out_shift, nbytes=size))
+                         out_shift=out_shift, nbytes=size,
+                         m_logical=m_logical, segments=segs))
         logf.write(f"{name}\t{M}\t{K}\t{w_exp}\t{out_shift}\t"
                    f"{(K + P.BLOCK - 1)//P.BLOCK}\t{size}\t"
-                   f"{size*8.0/(M*K):.4f}\t{dt:.1f}\tPACKED\n")
+                   f"{size*8.0/(m_logical*K):.4f}\t{dt:.1f}\tPACKED\n")
         logf.flush()
         print(f"[{i+1}/{len(mv)}] {name} M={M} K={K} w_exp={w_exp} "
               f"out_shift={out_shift} {size} B "
-              f"{size*8.0/(M*K):.3f} bpw {dt:.1f} s")
+              f"{size*8.0/(m_logical*K):.3f} bpw {dt:.1f} s")
         sys.stdout.flush()
 
     logf.close()
@@ -306,13 +386,21 @@ def main():
         if hole:
             holes.append(dict(offset=off, nbytes=hole,
                               why=f"stack boundary before {r['name']}.mv4i"))
-        files.append(dict(file=r["name"] + ".mv4i", kind="mv4i",
-                          tensor=r["name"], M=r["M"], K=r["K"],
-                          w_exp=r["w_exp"], out_shift=r["out_shift"],
-                          nbytes=r["nbytes"], hbm_offset=base,
-                          stack=stack_of(base),
-                          blake2b_128=digest(
-                              os.path.join(a.outdir, r["name"] + ".mv4i"))))
+        ent = dict(file=r["name"] + ".mv4i", kind="mv4i",
+                   tensor=r["name"], M=r["M"], K=r["K"],
+                   w_exp=r["w_exp"], out_shift=r["out_shift"],
+                   nbytes=r["nbytes"], hbm_offset=base,
+                   stack=stack_of(base),
+                   blake2b_128=digest(
+                       os.path.join(a.outdir, r["name"] + ".mv4i")))
+        if r.get("segments"):
+            # M is the PADDED row count everywhere a size is derived from it.
+            # These two fields are the only place the LOGICAL shape and the
+            # per-segment row windows are written down, and they exist so that
+            # a program generator reads them instead of re-deriving 2064/4128.
+            ent["M_logical"] = r["m_logical"]
+            ent["segments"] = r["segments"]
+        files.append(ent)
         assert r["nbytes"] % ALIGN == 0, r["name"]
         off = base + r["nbytes"]
     nm_base, hole = place(off, nm_size)
@@ -383,7 +471,8 @@ def main():
         generated=time.strftime("%Y-%m-%dT%H:%M:%S"),
         geometry=dict(rows_if=rows_if, axi_dw=axi_dw, block=P.BLOCK,
                       nports_w=nports, n_scale_sub=nss,
-                      axi_read_masters=nports + nss),
+                      axi_read_masters=nports + nss,
+                      qkv_segment_pad=bool(a.qkv_pad)),
         hbm=dict(size=HBM_SIZE, align=ALIGN, stack_bytes=STACK_BYTES,
                  weights_bytes=total, weights_end=weights_end,
                  stack_holes=holes, stack_hole_bytes=hole_bytes,
@@ -405,6 +494,8 @@ def main():
           f"({100.0*total/HBM_SIZE:.1f} % of 8 GiB)")
     print(f"  GDN state        {GDN_STATE_BYTES/1024**2:.1f} MB at "
           f"{gdn_base:#x}")
+    print(f"  qkv segment pad  {'on' if a.qkv_pad else 'OFF'}, "
+          f"{sum(1 for f in files if f.get('segments'))} fused tensor(s) padded")
     print(f"  stack holes      {hole_bytes} B  {hole_bytes/1024**2:.1f} MiB "
           f"in {len(holes)} hole(s)")
     for h in holes:
