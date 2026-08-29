@@ -15,6 +15,9 @@ ref/run_i8fq
 server/llama_server
 server/llama_server_arm
 server/*.o
+server/seam_selftest
+server/chat_batch
+server/fk33_file_backend/
 ref/dump_luts
 ref/test_fx
 ref/test_rmsnorm

@@ -214,7 +214,36 @@ QWEN35_9B = Shape(blocks=32, attn_interval=4, hidden=4096, ffn=12288,
 
 def mk_shape_scaled(blocks, attn_interval, attn_hd=32):
     """rtl/llama_map_pkg.vhd's `mk_shape_scaled`, so a program emitted here can
-    be executed by `llama_top` in simulation."""
+    be executed by `llama_top` in simulation.
+
+    REFUSES above attn_hd 32 rather than mirroring the VHDL's third branch.
+    The VHDL declares `attn_q_heads`/`attn_kv_heads` as `positive`, so at
+    `attn_hd = 64` the shared formula's `32/64 = 0` is a hard elaboration
+    error and the language catches it; that is why `llama_map_pkg.vhd` grew an
+    explicit 64 branch (4 q heads, 2 kv heads, region widths growing instead).
+    Python has no such subtype: without this raise, `--shape sim --attn-hd 64`
+    runs, emits the SAME 61 steps and the SAME 488-line d_table.hex line
+    count, and silently sizes R_KIN and R_VIN 0 instead of 128 -- so a
+    step-count comparison against the VHDL calls that agreement.
+
+    Refusing is deliberately not the same as mirroring. Nothing in the
+    repository generates at attn_hd 64 today, the VHDL branch above 32 is a
+    DIFFERENT shape from the one every published landmark was measured at, and
+    an unverified Python transcription of it would be a second unchecked
+    claim. A loud refusal is the honest state: when a caller genuinely needs
+    attn_hd > 32, transcribe the VHDL branch and check it against the VHDL,
+    then remove this raise."""
+    if attn_hd <= 0 or 64 // attn_hd == 0 or 32 // attn_hd == 0:
+        raise ValueError(
+            "gen_layer_program: mk_shape_scaled has no shape at attn_hd=%r. "
+            "64//attn_hd=%d and 32//attn_hd=%d, and a head count of 0 is not "
+            "a shape -- the VHDL's `positive` subtype rejects it outright. "
+            "rtl/llama_map_pkg.vhd carries a separate attn_hd>32 branch "
+            "(4 q heads, 2 kv heads, att_q/att_qg/att_kv growing with the "
+            "head dim); it is NOT transcribed here. Use attn_hd 16 or 32, or "
+            "transcribe that branch and verify it against the VHDL first."
+            % (attn_hd, 64 // attn_hd if attn_hd > 0 else 0,
+               32 // attn_hd if attn_hd > 0 else 0))
     return Shape(blocks=blocks, attn_interval=attn_interval,
                  hidden=64, ffn=128, key_heads=2, val_heads=4, head_dim=32,
                  attn_q_heads=64 // attn_hd, attn_kv_heads=32 // attn_hd,
