@@ -55,6 +55,14 @@ Subsystem A needs three values that D's 64-byte header has no field for:
 | `s_beats` | same | same, further divided by `GRP` |
 | `x_exp` | it is a **per-token runtime** value in the integrated system (the BFP exponent of the activation vector the previous stage produced), not a per-matrix table constant | the standalone bring-up path has no previous stage, so it must come from somewhere |
 
+**`w_beats` and `s_beats` are carried AND checked, and those are different
+things.** As of the 2026-08-28 revision the wrapper verifies both against
+`n_rows`/`n_cols` before starting anything (section 5.2). That does not make
+the fields redundant: the check runs once per job in its own state and costs
+`max(tiles, nblk)` cycles, whereas deriving the values would put a divide by
+`ROWS_IF` on the path that issues them. Carrying the number is the cheap thing;
+verifying it is the safe thing; deriving it is the expensive thing.
+
 They are therefore placed in an **A extension block that begins immediately
 after D's base array**, i.e. at
 
@@ -261,10 +269,15 @@ the code.
 | `0xC` | `ERR_ALIGN` | `DESC_PTR` not aligned to `DESC_MAXB*AXI_DW/8`, or a base has `[11:0] /= 0` | `0xFFFF` for the pointer, else the base's word index |
 | `0xD` | `ERR_ADDR` | `DESC_PTR` or a base has a bit set at or above `ADDR_W` | as above |
 | `0xE` | `ERR_CORE` | `matvec_int4` raised `err` after a clean descriptor | `0xFFFF` |
+| `0xF` | `ERR_SHAPE` | `w_beats` or `s_beats` does not match the shape in `n_rows`/`n_cols` -- see section 5.2 | ext word 1 index |
 
 Codes `0x1, 0x2, 0x5..0x8` are left unused so that D's own `ERR_UNIT`,
 `ERR_LOCK`, `ERR_GRANT`, `ERR_CTX`, `ERR_EPOCH`, `ERR_ABORT` keep their
 meanings if the two error spaces are ever merged.
+
+**The 4-bit field is now FULL.** `0x0`, `0x3`, `0x4` and `0x9..0xF` are all
+assigned and `0x1, 0x2, 0x5..0x8` are D's. A further A-specific code needs the
+field widened, not another value found.
 
 `ERR_ADDR` also keeps the old map's **write-time** behaviour for the one
 address register that survives: writing `DESC_PTR_HI` with a bit at or above
@@ -281,21 +294,111 @@ Stated so the next reader does not assume coverage that is not there:
   aligned, inside `ADDR_W`). Nothing in the descriptor says what a sub-region
   should contain, so the fabric cannot tell. This is detectable only by the
   weight store's own hash, which is a different mechanism at a different time.
-* **`w_beats` / `s_beats` too small or too large** for the `n_rows`/`n_cols`
-  they accompany. Checking would need the `ceil(n_rows/ROWS_IF)` divide that
-  section 2.1 explains is why the fields exist at all. A too-small value
-  starves the array; a too-large one reads padding. Both produce a wrong
-  answer, not an error.
+  `sim/tb_matvec_fk33_desc.vhd` case 19 is this, in executable form: it aims
+  weight sub-region 7's base at sub-region 8's bytes, and the design accepts,
+  computes and reports success with 4 of 100 elements wrong.
 * `dst_region`, `dst_offset`, `src_region` -- A does not route its own result.
 
-**And one liveness gap, measured rather than argued.** `WDOG_LIMIT` covers the
-descriptor FETCH only. A `w_beats` that is too small starves the array, and the
-design then waits forever: `sim/tb_matvec_fk33_desc.vhd` case 20 halves
-`w_beats` and the job never completes and never errors. That is not a silent
-wrong answer -- which is why it is not a correctness defect -- but a driver
-polling `STATUS` for `done or err` hangs. Extending the watchdog over the
-compute phase would close it; the limit is a per-geometry number and is
-deliberately not chosen here.
+**CORRECTION, 2026-08-28.** This section used to carry a third bullet --
+"`w_beats` / `s_beats` too small or too large ... Checking would need the
+`ceil(n_rows/ROWS_IF)` divide that section 2.1 explains is why the fields exist
+at all" -- and a closing paragraph naming the resulting hang as an accepted
+liveness gap. **Both are WITHDRAWN.** The claim that the fields cannot be
+checked without a divide was wrong: the divide is only one way to compare a
+quotient against a dividend, and multiplying up is another. The check is now
+implemented and is section 5.2. What was right in that paragraph, and is worth
+keeping, is why it mattered more than the other undetectable case: a too-small
+`w_beats` is not a silent wrong answer, it is a **hang** -- the array starves,
+`WDOG_LIMIT` covers the descriptor FETCH only, and a driver polling `STATUS`
+for `done or err` waits for ever.
+
+Three alternatives were weighed and rejected before the check was written:
+
+* **A compute-phase watchdog.** Needs a per-geometry cycle limit, i.e. a tuned
+  constant, and reports that something starved without saying why.
+* **Both.** Doubles the verification surface for a defect the exact check makes
+  unreachable.
+* **A host-side timeout only.** A starved core still holds accepted AXI reads,
+  and abandoning an accepted burst hangs the HBM channel permanently, which is
+  worse than the bug.
+
+### 5.2 The shape identity, and how it is checked without a divide
+
+The identity, stated once, in the form the checker uses:
+
+```
+tiles   = ceil(n_rows / ROWS_IF)
+nblk    = ceil(n_cols / BLK)
+GRP     = NPORTS_S * AXI_DW / (ROWS_IF * 16)     synthesis constant
+w_beats = tiles * nblk                           beats per WEIGHT sub-region
+s_beats = ceil(tiles * nblk / GRP)               beats per SCALE  sub-region
+```
+
+**Where it comes from, and what it assumes.** Not from this document: from the
+RTL and from the two independent host-side implementations that already agree
+with it.
+
+* `matvec_core.vhd:857-858` computes `nb_r = ceil(n_cols/BLK)` and
+  `tiles_r = ceil(n_rows/ROWS_IF)`, and its issue FSM (`:617-620`) accepts
+  exactly one weight word per `(tile, block)` step. So the core consumes
+  `tiles * nblk` weight words, full stop.
+* `matvec_core.vhd:517-518` drives `w_ready` and `s_ready` from the **same**
+  signal, so exactly one scale GROUP is consumed per weight word.
+* `weight_streamer.vhd` pops one beat from **every** weight port per delivered
+  word (all-valid lockstep), so each weight sub-region owes one beat per word.
+* `weight_streamer.vhd` pops one beat from **every** scale port per SUPERWORD,
+  and a superword carries `GRP` groups, so each scale sub-region owes one beat
+  per `GRP` words.
+* `GRP` is an integer because `NPORTS_S*AXI_DW mod ROWS_IF*16 = 0` is asserted
+  at elaboration (spec 6.5a). `matvec_int4_desc_axi` restates that assert AND
+  gates it with a `natural` constant that goes negative if it is violated,
+  because Vivado silently ignores `assert ... severity failure` and a
+  truncated `GRP` would refuse every legal descriptor on the card.
+* `tools/pack_int4.py:406-411` (`sub_sz`, `nsuper`) and `ref/mv_fk33_tr.c:136,138`
+  compute the same two numbers independently. Three implementations, one
+  identity.
+
+**MULTIPLY UP, NEVER DIVIDE.** The check must not divide by `ROWS_IF`, which is
+48 on the FK33 and is the whole reason the fields are carried. There is no
+closed form that avoids it: the two inequalities
+
+```
+ROWS_IF * w_beats      >= n_rows * nblk
+ROWS_IF * (w_beats - nblk) <  n_rows * nblk
+```
+
+are necessary but pin `w_beats` only to an interval of `nblk` consecutive
+integers, of which exactly one is the right multiple of `nblk`; recovering
+*which* is a divide again. So `tiles` and `nblk` are instead found by repeated
+addition of the two synthesis constants -- a multiply written out longhand:
+
+```
+smallest t with t*ROWS_IF >= n_rows      accumulate ROWS_IF
+smallest b with b*BLK     >= n_cols      accumulate BLK
+```
+
+both accumulators advancing in the same state, then **one** multiply
+`prod = t*b`, then two verdicts:
+
+```
+w_beats = prod
+(s_beats - 1) * GRP  <  prod  <=  s_beats * GRP
+```
+
+The `s_beats` bracket is the ceil expressed by multiplying the synthesis
+constant `GRP`, so no divide appears there either.
+
+**Cost, stated rather than hidden.** The loop runs `max(tiles, nblk)` cycles:
+544 at `MAXCOLS = 17408 / BLK = 32`, 128 in `sim/tb_matvec_fk33_desc`. It gates
+a job that is at least `tiles*nblk` cycles long and `nblk >= 1`, so the loop can
+never exceed the compute it precedes; at a real shape (4096 x 4096 at
+`ROWS_IF = 48`) it is 128 cycles against 11,008, under 1.2%. Two adders, two
+comparators, one multiplier. No divider, no magic reciprocal, no tuned
+constant.
+
+**What it does NOT cover.** It says nothing about whether the bases point at
+the right bytes -- that is still section 5.1's first bullet and still needs a
+hash over the weight store.
 
 ---
 
@@ -347,6 +450,22 @@ d[E + 2] = (uint32_t)x_exp;
 d[E + 3] = 0;
 ```
 
+**`w_beats` and `s_beats` are not free parameters.** The gateware refuses the
+descriptor with `ERR_SHAPE` unless
+
+```c
+int tiles   = (n_rows + ROWS_IF - 1) / ROWS_IF;
+int nblk    = (n_cols + BLK     - 1) / BLK;
+int GRP     = NPORTS_S * AXI_DW / (ROWS_IF * 16);   /* 1 on the FK33 */
+    w_beats = tiles * nblk;
+    s_beats = (tiles * nblk + GRP - 1) / GRP;
+```
+
+`ROWS_IF`, `BLK`, `NPORTS_S` and `AXI_DW` all come from the `CAPS` register, so
+a generator can compute this from the build it is actually talking to rather
+than from a constant it was compiled with. Section 5.2 is why this is a check
+and not merely a convention.
+
 `src_region2 = 0xFF` ("no region") in word 3 bits `[55:48]` is written because
 A ignores the field but `seq_desc_fetch` range-checks it (`:509`); `0xFF` and
 any value below `NREG` are both legal there, so this is a convention, not a
@@ -364,8 +483,26 @@ to whatever that token's schedule actually needs. **A reads none of them.**
   stale by construction. The wrapper therefore also exposes an `x_exp` port
   and a `USE_XEXP_PORT` generic; which one the FK33 build uses is an
   integration decision, not this document's.
-* **Merging the two error spaces.** A's `0x9..0xE` and D's `0x1..0x8` are
-  disjoint by construction but nothing enforces it across the two files.
+* **Merging the two error spaces.** A's `0x9..0xF` and D's `0x1..0x8` are
+  disjoint by construction but nothing enforces it across the two files, and
+  the 4-bit field is now full on A's side (section 5).
+* **`rtl/matvec_core.vhd:835` reads `ybuf(TILES)` at the top of the row
+  range.** Found 2026-08-28 by the section 5.2 shape sweep, deliberately NOT
+  fixed here because `matvec_core` is not this track's file. `ybuf` is indexed
+  `0 to TILES-1` (`:191`), `rd_t` is an unconstrained integer (`:389`) that
+  `S_EMIT` advances to `tiles_r` (`:883-884`), and `:835` reads `ybuf(rd_t)`
+  unconditionally every cycle. So whenever `ceil(n_rows/ROWS_IF) = TILES` --
+  that is, whenever `n_rows` is in the top `ROWS_IF` rows of the declared
+  `MAXROWS_BFP` range -- the last emit cycle indexes one past the array.
+  MEASURED at `MAXROWS_BFP = 192 / ROWS_IF = 48`: `n_rows = 145` and
+  `n_rows = 192` each abort with
+  `index (4) out of bounds (0 to 3) at rtl/matvec_core.vhd:835`.
+  Synthesis-benign (`rd_v` is `'0'` that cycle, so nothing consumes `ybuf_q`)
+  and simulation-fatal, which is the same shape as worklog OI-7. **It bites
+  hardest for a build that sets `MAXROWS_BFP` to the exact `n_rows` it needs
+  in order to save BRAM, because then EVERY job trips it.** The shape sweep
+  stays below the trap and says so in its own comment rather than routing
+  around it silently.
 * **`seq_desc_fetch` fetching the base array.** Still remaining work in D. Once
   it does, the base array has exactly one reader in the integrated system, and
   this document's section 4.2 is where the layout is written down.

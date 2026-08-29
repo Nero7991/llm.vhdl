@@ -74,11 +74,21 @@
 -- rather than reading stale results.
 --
 -- What is NOT checked, stated so nobody assumes coverage that is not there:
--- a base that is well-formed but points at the WRONG sub-region (nothing in
--- the descriptor says what a sub-region should contain), and w_beats/s_beats
--- inconsistent with n_rows/n_cols (checking needs the ceil(n_rows/ROWS_IF)
--- divide that is the whole reason those fields are carried).  Both produce a
--- wrong answer rather than an error.  Section 5.1 of the spec document.
+-- a base that is well-formed but points at the WRONG sub-region.  Nothing in
+-- the descriptor says what a sub-region should CONTAIN, so only a hash over
+-- the weight store can see it; it produces a wrong answer rather than an
+-- error.  Section 5.1 of the spec document.
+--
+-- w_beats/s_beats INCONSISTENT WITH n_rows/n_cols USED TO BE ON THAT LIST AND
+-- IS NOT ANY MORE.  It was the worse of the two, because a w_beats that is too
+-- small does not produce a wrong answer -- it STARVES the array, and the job
+-- then never completes and never errors, because WDOG_LIMIT covers the
+-- descriptor FETCH only.  A driver polling for `done or err` waits forever.
+-- S_SHAPE / S_SHAPE_C below refuse it with EC_SHAPE before `start`, which
+-- makes the hang UNREACHABLE rather than merely detectable.  The reason it was
+-- left out originally -- "checking needs the ceil(n_rows/ROWS_IF) divide that
+-- is the whole reason those fields are carried" -- was right about the divide
+-- and wrong that a divide is the only way: the check MULTIPLIES UP instead.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -105,9 +115,12 @@ entity matvec_int4_desc_axi is
     DESC_MAXB   : positive := 16;
     -- Cycles the descriptor fetch may take before ERR_WDOG.  It covers a slave
     -- that never answers as well as one that answers slowly, so it is a
-    -- liveness bound on the whole fetch, not a latency budget.  It does NOT
-    -- cover the COMPUTE phase: see the note on w_beats in section 5.1 of the
-    -- spec document, and the CASE 20 result in sim/tb_matvec_fk33_desc.
+    -- liveness bound on the whole fetch, not a latency budget.  It still does
+    -- NOT cover the COMPUTE phase, and deliberately so: the one way an
+    -- ACCEPTED descriptor could starve the array was a w_beats/s_beats that
+    -- did not match the shape, and S_SHAPE now refuses that before `start`.
+    -- A compute-phase watchdog would need a per-geometry limit -- a tuned
+    -- constant -- and would report that something starved without saying why.
     WDOG_LIMIT  : positive := 65536;
     -- Take x_exp from the `x_exp_in` PORT rather than from the descriptor.
     -- In the integrated system the activation vector's block exponent is a
@@ -214,6 +227,38 @@ architecture rtl of matvec_int4_desc_axi is
   -- page because DESC_MAXB*BYTES divides 4096 (asserted below).
   constant DESC_ALIGN : positive := DESC_MAXB * (AXI_DW / 8);
 
+  -- ---------------------------------------------------- the shape identity
+  -- What w_beats and s_beats MUST be for a given n_rows / n_cols.  Derived,
+  -- and the same three-way agreement the packer and the C reference already
+  -- have:
+  --
+  --   tiles   = ceil(n_rows / ROWS_IF)            matvec_core.vhd:858
+  --   nblk    = ceil(n_cols / BLK)                matvec_core.vhd:857
+  --   w_beats = tiles * nblk                      per WEIGHT sub-region
+  --   s_beats = ceil(tiles * nblk / GRP)          per SCALE  sub-region
+  --
+  -- Why those are the right numbers, rather than a plausible reading of the
+  -- packer.  matvec_core's issue FSM walks t_iss over tiles and b_iss over
+  -- nblk (:617-620) and accepts exactly one weight word per step; w_ready and
+  -- s_ready are THE SAME signal (`accept`, :517-518), so one scale GROUP is
+  -- consumed per weight word.  weight_streamer pops one beat from EVERY
+  -- weight port per delivered word and one beat from EVERY scale port per
+  -- SUPERWORD, and a superword carries GRP groups.  So a weight sub-region
+  -- owes one beat per word and a scale sub-region owes one beat per GRP
+  -- words.  Anything less STARVES the array, which is a hang and not an
+  -- error; anything more reads padding.
+  constant SW_BITS : positive := ROWS_IF * 16;                 -- scale group
+  constant GRP     : positive := (NPORTS_S * AXI_DW) / SW_BITS;
+  -- The same condition as the assert below, in a form Vivado CANNOT ignore.
+  -- Vivado silently drops `assert ... severity failure`, and if GRP were
+  -- truncated the card would refuse every legal descriptor instead of failing
+  -- the build.  This constant is 0 when NPORTS_S*AXI_DW is a whole number of
+  -- scale groups and NEGATIVE otherwise, which no `natural` can hold.
+  constant GRP_EXACT : natural := 0 - ((NPORTS_S * AXI_DW) mod SW_BITS);
+  -- Bounds, so the checker's counters are range-declared rather than trusted.
+  -- Reachable only because n_rows/n_cols are range-checked FIRST.
+  constant NBMAX   : positive := (MAXCOLS + BLK - 1) / BLK;
+
   type word_arr is array(0 to DWORDS-1) of std_logic_vector(63 downto 0);
   signal dw : word_arr := (others => (others => '0'));
 
@@ -242,9 +287,32 @@ architecture rtl of matvec_int4_desc_axi is
   signal err_info : std_logic_vector(15 downto 0) := (others => '0');
 
   -- fetch / control FSM
-  type st_t is (S_IDLE, S_FETCH, S_R, S_CHECK, S_CB, S_START, S_WAIT, S_DONE,
-                S_ERR);
+  type st_t is (S_IDLE, S_FETCH, S_R, S_CHECK, S_SHAPE, S_SHAPE_C, S_CB,
+                S_START, S_WAIT, S_DONE, S_ERR);
   signal st : st_t := S_IDLE;
+
+  -- ------------------------------------------------- the shape checker
+  -- MULTIPLY UP, NEVER DIVIDE.  ROWS_IF is 48 on the FK33 and a divide by it
+  -- is exactly what this control plane refused to own -- it is why w_beats is
+  -- carried in the descriptor at all.  So tiles and nblk are found by
+  -- REPEATED ADDITION of the two synthesis constants until each accumulator
+  -- covers its dimension, which is a multiply written out longhand: two
+  -- adders and two comparators, no divider and no magic reciprocal.
+  --
+  -- COST, stated rather than hidden: the loop runs max(tiles, nblk) cycles,
+  -- bounded by max(TILES, NBMAX) -- 544 at the FK33's MAXCOLS=17408/BLK=32,
+  -- 128 in sim/tb_matvec_fk33_desc.  The job it gates is w_beats = tiles*nblk
+  -- cycles at an absolute minimum, and nblk >= 1, so the loop can never
+  -- exceed the compute it precedes and is under 1.2% of it at any real shape
+  -- (max(86, 128) = 128 cycles against 86*128 = 11,008 for a 4096x4096 tensor
+  -- at ROWS_IF=48/BLK=32).
+  signal sh_rows : integer range 0 to MAXROWS_BFP := 0;
+  signal sh_cols : integer range 0 to MAXCOLS     := 0;
+  signal sh_t    : integer range 0 to TILES       := 0;   -- tiles so far
+  signal sh_nb   : integer range 0 to NBMAX       := 0;   -- blocks so far
+  signal sh_racc : integer range 0 to TILES*ROWS_IF := 0; -- sh_t * ROWS_IF
+  signal sh_cacc : integer range 0 to NBMAX*BLK     := 0; -- sh_nb * BLK
+  signal sh_prod : integer range 0 to TILES*NBMAX   := 0; -- sh_t * sh_nb
 
   -- THE DESCRIPTOR FETCH IS AN axi_rd_port, NOT A HAND-ROLLED MASTER.
   -- It was hand-rolled first, in this clock domain, and MEASURED to fail the
@@ -370,6 +438,15 @@ begin
     report "matvec_int4_desc_axi: DESC_FIFO must hold a whole descriptor and " &
            "a whole burst"
     severity failure;
+  -- GRP must be exact or the s_beats identity is not an identity.  This is
+  -- weight_streamer's own 6.5a superword condition restated where the check
+  -- that USES it lives, so a geometry that violates it fails here rather than
+  -- silently refusing every legal descriptor.
+  assert (NPORTS_S * AXI_DW) mod SW_BITS = 0
+    report "matvec_int4_desc_axi: NPORTS_S*AXI_DW must be a whole number of " &
+           "ROWS_IF*16-bit scale groups (spec 6.5a); s_beats has no identity " &
+           "otherwise"
+    severity failure;
 
   rst <= not s_axi_aresetn;
 
@@ -486,6 +563,8 @@ begin
         st <= S_IDLE; busy <= '0'; done_l <= '0'; err_l <= '0';
         err_code <= EC_NONE; err_info <= (others => '0');
         f_got <= 0; wdog <= 0; cb_cnt <= 0;
+        sh_rows <= 0; sh_cols <= 0; sh_t <= 0; sh_nb <= 0;
+        sh_racc <= 0; sh_cacc <= 0; sh_prod <= 0;
         cb_valid <= '0'; sat_l <= '0'; go_p <= '0';
         dw <= (others => (others => '0'));
 
@@ -626,7 +705,56 @@ begin
               err_info <= std_logic_vector(to_unsigned(0, 16));
               st <= S_ERR;
             else
-              cb_cnt <= 0;
+              -- Everything above passed, so n_rows and n_cols are inside
+              -- 1..MAXROWS_BFP / 1..MAXCOLS and the accumulators below are
+              -- bounded by TILES and NBMAX.  Latching them as integers here
+              -- is what makes that true: to_integer on a 32-bit field is only
+              -- ever evaluated on a value the range check has already passed.
+              cb_cnt  <= 0;
+              sh_rows <= to_integer(unsigned(lo32(dw(1))));
+              sh_cols <= to_integer(unsigned(hi32(dw(1))));
+              sh_t    <= 0; sh_nb   <= 0;
+              sh_racc <= 0; sh_cacc <= 0;
+              st <= S_SHAPE;
+            end if;
+
+          -- ----------------------------------------------- the shape gate
+          -- MULTIPLY UP.  One cycle per tile and per block, in parallel, until
+          -- each accumulator covers its dimension.  On exit sh_t is
+          -- ceil(n_rows/ROWS_IF) and sh_nb is ceil(n_cols/BLK), by the
+          -- definition of "smallest t with t*ROWS_IF >= n_rows".
+          when S_SHAPE =>
+            if sh_racc >= sh_rows and sh_cacc >= sh_cols then
+              sh_prod <= sh_t * sh_nb;         -- the ONE multiply
+              st <= S_SHAPE_C;
+            else
+              if sh_racc < sh_rows then
+                sh_racc <= sh_racc + ROWS_IF;
+                sh_t    <= sh_t + 1;
+              end if;
+              if sh_cacc < sh_cols then
+                sh_cacc <= sh_cacc + BLK;
+                sh_nb   <= sh_nb + 1;
+              end if;
+            end if;
+
+          -- ------------------------------------------------- the verdict
+          -- w_beats must be EXACTLY tiles*nblk, and s_beats exactly
+          -- ceil(tiles*nblk / GRP) -- stated as a bracket so that GRP, a
+          -- synthesis constant, is multiplied rather than divided.  s_beats
+          -- is known nonzero here (the check above rejects 0), so the
+          -- `sb - 1` cannot underflow.  Both operands are widened to 64 bits
+          -- because a garbage 32-bit s_beats times GRP overflows 32.
+          when S_SHAPE_C =>
+            if unsigned(lo32(dw(EXT0 + 1))) /= to_unsigned(sh_prod, 32)
+               or unsigned(hi32(dw(EXT0 + 1))) * GRP
+                    < to_unsigned(sh_prod, 64)
+               or (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP
+                    >= to_unsigned(sh_prod, 64) then
+              err_code <= EC_SHAPE;
+              err_info <= std_logic_vector(to_unsigned(EXT0 + 1, 16));
+              st <= S_ERR;
+            else
               st <= S_CB;
             end if;
 

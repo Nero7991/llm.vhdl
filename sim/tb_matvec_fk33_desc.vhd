@@ -37,6 +37,29 @@
 -- two things this design cannot see -- a base that is well formed but points
 -- at the wrong sub-region, and a beat count that does not match the shape.
 --
+-- THE SHAPE SWEEP IS THE OTHER HALF OF THE TEETH.  Case 20 (w_beats halved)
+-- used to HANG and is now refused with EC_SHAPE, which is only half a result:
+-- a shape check that is too strict is WORSE than the hang, because it refuses
+-- work that is legal.  So BEFORE the case table (case 21 leaves the descriptor
+-- slave holding an AR it was told to ignore, so the two must not be adjacent)
+-- this bench sweeps a table of
+-- LEGAL (n_rows, n_cols) shapes -- including n_rows that are not multiples of
+-- ROWS_IF, an n_cols that is not a multiple of BLK, and the single-tile and
+-- single-block corners -- computes w_beats and s_beats for each by an
+-- INDEPENDENT divide (the bench divides; the RTL is forbidden to, which is
+-- the whole point of the identity), and requires every one to be ACCEPTED.
+-- Each legal shape is then mutated four ways -- w_beats +/- 1, s_beats +/- 1
+-- -- and every mutant must be REFUSED with EC_SHAPE.
+--
+-- A SECOND DUT AT THE AXU3EG GEOMETRY IS INSTANTIATED FOR ONE REASON: GRP.
+-- GRP = NPORTS_S*AXI_DW/(ROWS_IF*16) is 1 at the FK33 shape, where
+-- s_beats = w_beats and the ceil in s_beats = ceil(w_beats/GRP) is invisible.
+-- At ROWS_IF=4 / AXI_DW=128 / NPORTS_S=1 -- the AXU3EG build -- GRP is 2 and
+-- the ceil is load-bearing.  That DUT has NO weight slaves: its masters are
+-- tied off, so an ACCEPTED descriptor leaves it busy forever and a REFUSED
+-- one raises err.  That is exactly the property under test and it needs no
+-- weight data to observe.
+--
 -- DUAL CLOCK.  With -gDUAL=true the 27 weight masters, the descriptor master
 -- and the whole AXI side run on a SEPARATE, FASTER clock, and axi_rd_port's
 -- CDC (rtl/async_fifo.vhd) carries every weight word across.  The arithmetic
@@ -101,6 +124,70 @@ architecture sim of tb_matvec_fk33_desc is
   -- impossible by address rather than by luck.
   constant DESC_OFF : natural := 16#300000#;
 
+  -- GRP of spec 6.5a for THIS geometry: how many scale groups one superword
+  -- carries, and therefore the divisor in s_beats = ceil(w_beats / GRP).
+  -- 1 at the FK33 shape.  Computed here rather than read from the trace's
+  -- GEOM line so the sweep's expectation is independent of the trace.
+  constant GRP_A : positive := (NPS * AXI_DW) / (RI * 16);
+
+  -- ------------------------------------------------- the AXU3EG arm (GRP=2)
+  -- ROWS_IF=4 / AXI_DW=128 / NPORTS_S=1 is spec 14.4's AXU3EG pinning, and it
+  -- is the geometry at which GRP is 2.  Only the shape gate is exercised here,
+  -- so the weight masters are tied off and MAXROWS_BFP is kept small.
+  constant B_RI     : positive := 4;
+  constant B_NPW    : positive := 4;
+  constant B_NPS    : positive := 1;
+  constant B_DW     : positive := 128;
+  constant B_ROWS   : positive := 64;      -- MAXROWS_BFP: TILES = 16
+  constant B_COLS   : positive := 4096;    -- MAXCOLS
+  constant B_NPALL  : positive := B_NPW + B_NPS;
+  constant B_WORDS  : positive := desc_words(B_NPW, B_NPS);
+  constant B_BEATS  : positive := desc_beats(B_NPW, B_NPS, B_DW);
+  constant B_EXT0   : natural  := desc_ext0(B_NPW, B_NPS);
+  constant B_WPB    : positive := B_DW / 64;
+  constant B_PORTB  : positive := B_DW / 8;
+  constant B_GRP    : positive := (B_NPS * B_DW) / (B_RI * 16);
+  -- DESC_MAXB * AXI_DW/8 = 16 * 16 = 256, so the pointer must be 256-aligned.
+  constant B_DOFF   : natural  := 16#400000#;
+
+  -- ------------------------------------------------------ the shape sweep
+  -- LEGAL shapes.  Chosen, not arbitrary: rows that are and are not multiples
+  -- of ROWS_IF, the one-row and one-block corners, an n_cols that is not a
+  -- multiple of BLK, and the largest shape the served image can back.  For
+  -- the FK33 arm w_beats = tiles*nblk must stay within MAXBEAT, because the
+  -- weight slaves police it and only MAXBEAT beats of image exist; the
+  -- AXU3EG arm serves no weights at all and is unconstrained.
+  --
+  -- THE UPPER LIMIT ON n_rows HERE IS NOT MAXROWS_BFP, AND THAT IS A DEFECT
+  -- ELSEWHERE, NOT A CHOICE.  rtl/matvec_core.vhd:835 reads `ybuf(rd_t)`
+  -- unconditionally, and :883-884 lets rd_t reach tiles_r; ybuf is indexed
+  -- `0 to TILES-1` (:191), so index TILES is an out-of-bounds read whenever
+  -- ceil(n_rows/ROWS_IF) = TILES.  MEASURED: n_rows = 145 and n_rows = 192
+  -- each abort this bench with
+  --   index (4) out of bounds (0 to 3) at rtl/matvec_core.vhd:835
+  -- at MAXROWS_BFP = 192 / ROWS_IF = 48.  The read is harmless in synthesis
+  -- (rd_v is '0' in that cycle, so nothing consumes ybuf_q) but it is fatal
+  -- in simulation, so the top ROWS_IF rows of the declared range cannot be
+  -- exercised.  matvec_core is not this track's file: the sweep stays below
+  -- the trap and the defect is written up rather than worked around silently.
+  constant NSHAPE : integer := 10;
+  type shp_t is array(0 to NSHAPE-1) of integer;
+  --                       six of the ten have an n_rows that is NOT a multiple
+  --                       of ROWS_IF (1, 47, 49, 97, 100, 49), which is the
+  --                       case a floor-instead-of-ceil check gets wrong.
+  constant SH_ROWS : shp_t := (  1,  47,  48,  49,  96,  97, 100, 144, 144,  49);
+  constant SH_COLS : shp_t := ( 32, 128, 4095, 33, 1024, 64, 4096, 1024, 32, 4096);
+
+  -- The AXU3EG arm's shapes.  THREE of the nine give an ODD w_beats -- 1, 1
+  -- and 3 -- and those are the only ones where ceil(w_beats/2) differs from
+  -- floor(w_beats/2), so they are what pins the ceil rather than the divide.
+  -- At the FK33 arm's GRP = 1 s_beats and w_beats are equal and neither is
+  -- observable.
+  constant NSHAPB : integer := 9;
+  type shpb_t is array(0 to NSHAPB-1) of integer;
+  constant BS_ROWS : shpb_t := (   1,  3,    4,  5,  8,  9,   33, 57,   60);
+  constant BS_COLS : shpb_t := (  32, 32, 4096, 96, 33, 32, 1024, 64, 4095);
+
   -- ------------------------------------------------------------ the cases
   constant EXP_OK    : integer := -1;
   constant EXP_WRONG : integer := -2;
@@ -155,7 +242,14 @@ architecture sim of tb_matvec_fk33_desc is
     17 => 16#C#,   -- EC_ALIGN, on the pointer
     18 => 16#D#,   -- EC_ADDR, on the pointer
     19 => EXP_WRONG,
-    20 => EXP_WRONG,
+    20 => 16#F#,   -- EC_SHAPE.  Was EXP_WRONG, and specifically was the one
+                   -- EXP_WRONG row that HUNG: the array starved and the job
+                   -- never completed and never errored.  The shape gate in
+                   -- matvec_int4_desc_axi's S_SHAPE now refuses it before
+                   -- `start`, so the hang is unreachable rather than merely
+                   -- observable.  Case 19 is still EXP_WRONG and still is
+                   -- not this track's: nothing in the descriptor says what a
+                   -- sub-region should CONTAIN.
     21 => 16#4#);  -- EC_WDOG
 
   -- ------------------------------------------------------------- clocking
@@ -270,6 +364,39 @@ architecture sim of tb_matvec_fk33_desc is
   begin
     return std_logic_vector(to_signed(v, 32));
   end function;
+
+  -- ------------------------------------------------- the AXU3EG arm's wires
+  signal b_awaddr, b_araddr : std_logic_vector(7 downto 0) := (others => '0');
+  signal b_wdata, b_rdata   : std_logic_vector(31 downto 0) := (others => '0');
+  signal b_awvalid, b_awready, b_wvalid, b_wready : std_logic := '0';
+  signal b_bvalid, b_bready : std_logic := '0';
+  signal b_arvalid, b_arready, b_rvalid, b_rready : std_logic := '0';
+  signal b_bresp, b_rresp : std_logic_vector(1 downto 0);
+
+  signal bd_arvalid, bd_arready, bd_rvalid, bd_rready, bd_rlast : std_logic := '0';
+  signal bd_araddr  : std_logic_vector(ADDR_W-1 downto 0);
+  signal bd_arlen   : std_logic_vector(7 downto 0);
+  signal bd_arsize  : std_logic_vector(2 downto 0);
+  signal bd_arburst : std_logic_vector(1 downto 0);
+  signal bd_rdata   : std_logic_vector(B_DW-1 downto 0) := (others => '0');
+
+  -- Weight/scale masters, TIED OFF.  An accepted descriptor therefore leaves
+  -- this DUT busy for ever and a refused one raises err, which is precisely
+  -- the distinction the shape sweep is asking about.
+  signal bm_arvalid, bm_rready : std_logic_vector(B_NPALL-1 downto 0);
+  signal bm_araddr  : std_logic_vector(B_NPALL*ADDR_W-1 downto 0);
+  signal bm_arlen   : std_logic_vector(B_NPALL*8-1 downto 0);
+  signal bm_arsize  : std_logic_vector(B_NPALL*3-1 downto 0);
+  signal bm_arburst : std_logic_vector(B_NPALL*2-1 downto 0);
+  signal b_ywe      : std_logic;
+  signal b_yaddr    : std_logic_vector(15 downto 0);
+  signal b_ydata    : std_logic_vector(B_RI*64-1 downto 0);
+  signal b_ymask    : std_logic_vector(B_RI-1 downto 0);
+  signal b_yexp     : std_logic_vector(31 downto 0);
+  signal b_done, b_err : std_logic;
+
+  type bword_arr is array(0 to B_WORDS-1) of std_logic_vector(63 downto 0);
+  signal bimg : bword_arr := (others => (others => '0'));
 begin
   -- =====================================================================
   -- Clocks.  Two generate arms, never a clock through a signal assignment.
@@ -470,6 +597,94 @@ begin
   end generate;
 
   -- =====================================================================
+  -- THE AXU3EG ARM.  Same entity, ROWS_IF=4 / AXI_DW=128 / NPORTS_S=1, which
+  -- is the geometry where GRP = 2.  It exists ONLY so the shape sweep can
+  -- exercise the ceil in s_beats = ceil(w_beats/GRP); it is never given a
+  -- weight byte and never expected to compute anything.
+  -- =====================================================================
+  dutb : entity work.matvec_int4_desc_axi
+    generic map(BLK => BLK, ROWS_IF => B_RI, NPORTS_W => B_NPW,
+                NPORTS_S => B_NPS, AXI_DW => B_DW, ADDR_W => ADDR_W,
+                MAXCOLS => B_COLS, MAXROWS_BFP => B_ROWS,
+                FIFO_DEPTH => 64, MAXB => MAXB, MAXOUT => 2,
+                DESC_MAXB => 16, WDOG_LIMIT => 4096,
+                DUAL_CLK => false, C_S_AXI_ADDR_WIDTH => 8)
+    port map(
+      s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => clk,
+      s_axi_awaddr => b_awaddr, s_axi_awprot => "000",
+      s_axi_awvalid => b_awvalid, s_axi_awready => b_awready,
+      s_axi_wdata => b_wdata, s_axi_wstrb => "1111",
+      s_axi_wvalid => b_wvalid, s_axi_wready => b_wready,
+      s_axi_bresp => b_bresp, s_axi_bvalid => b_bvalid, s_axi_bready => b_bready,
+      s_axi_araddr => b_araddr, s_axi_arprot => "000",
+      s_axi_arvalid => b_arvalid, s_axi_arready => b_arready,
+      s_axi_rdata => b_rdata, s_axi_rresp => b_rresp,
+      s_axi_rvalid => b_rvalid, s_axi_rready => b_rready,
+
+      d_arvalid => bd_arvalid, d_arready => bd_arready, d_araddr => bd_araddr,
+      d_arlen => bd_arlen, d_arsize => bd_arsize, d_arburst => bd_arburst,
+      d_rvalid => bd_rvalid, d_rready => bd_rready, d_rdata => bd_rdata,
+      d_rlast => bd_rlast,
+
+      m_arvalid => bm_arvalid, m_arready => (others => '0'),
+      m_araddr => bm_araddr, m_arlen => bm_arlen,
+      m_arsize => bm_arsize, m_arburst => bm_arburst,
+      m_rvalid => (others => '0'), m_rready => bm_rready,
+      m_rdata => (others => '0'), m_rlast => (others => '0'),
+
+      x_we => '0', x_waddr => (others => '0'), x_wdata => (others => '0'),
+      x_exp_in => (others => '0'),
+
+      y_we => b_ywe, y_addr => b_yaddr, y_data => b_ydata, y_mask => b_ymask,
+      y_exp_o => b_yexp, job_done => b_done, job_err => b_err);
+
+  -- The AXU3EG arm's descriptor slave.  Same structure and the same three
+  -- structural checks as the FK33 one above, at B_DW and B_BEATS.
+  bdslv : process
+    variable a  : unsigned(ADDR_W-1 downto 0);
+    variable n, idx : integer;
+    variable b  : std_logic_vector(B_DW-1 downto 0);
+  begin
+    bd_arready <= '0'; bd_rvalid <= '0'; bd_rlast <= '0';
+    wait until aresetn = '1';
+    loop
+      bd_arready <= '0';
+      while bd_arvalid = '0' loop wait until rising_edge(clk); end loop;
+      a := unsigned(bd_araddr);
+      n := to_integer(unsigned(bd_arlen)) + 1;
+      assert bd_arburst = "01"
+        report "AXU3EG arm descriptor master: burst IS NOT INCR"
+        severity failure;
+      assert to_integer(shift_right(a, 32)) = BASE_HI
+        report "AXU3EG arm descriptor master: address high half IS WRONG"
+        severity failure;
+      idx := to_integer(a - lift(B_DOFF)) / B_PORTB;
+      assert idx >= 0 and idx + n <= B_BEATS
+        report "AXU3EG arm descriptor master: burst of " & integer'image(n) &
+               " from beat " & integer'image(idx) & " runs outside the " &
+               integer'image(B_BEATS) & "-beat descriptor -- MISMATCH"
+        severity failure;
+      bd_arready <= '1'; wait until rising_edge(clk); bd_arready <= '0';
+      for i in 0 to n-1 loop
+        b := (others => '0');
+        for j in 0 to B_WPB-1 loop
+          if (idx + i) * B_WPB + j < B_WORDS then
+            b((j+1)*64-1 downto j*64) := bimg((idx + i) * B_WPB + j);
+          end if;
+        end loop;
+        bd_rdata  <= b;
+        bd_rvalid <= '1';
+        if i = n-1 then bd_rlast <= '1'; else bd_rlast <= '0'; end if;
+        loop
+          wait until rising_edge(clk);
+          exit when bd_rready = '1';
+        end loop;
+      end loop;
+      bd_rvalid <= '0'; bd_rlast <= '0';
+    end loop;
+  end process;
+
+  -- =====================================================================
   -- The trace loader.  Identical parse to sim/tb_matvec_fk33.vhd, except the
   -- codebook and the sub-region offsets are STORED rather than driven: they
   -- are descriptor fields now, not ports.
@@ -602,6 +817,10 @@ begin
     variable lo, hi : std_logic_vector(31 downto 0);
     variable got, want : std_logic_vector(63 downto 0);
     variable nrb, nrbad : integer;
+    -- the shape sweep
+    variable rw, cl, wbx, sbx, wbm, sbm : integer;
+    variable n_legal, n_teeth : integer := 0;
+    variable bst : std_logic_vector(31 downto 0);
 
     procedure awr(addr : natural; d : std_logic_vector(31 downto 0)) is
     begin
@@ -637,7 +856,91 @@ begin
     -- Build the descriptor image for case `mut`, and set up whatever the
     -- SLAVE side of that mutation needs.  Everything the DUT is told comes
     -- from here; nothing is passed to it any other way.
-    procedure build(mut : integer) is
+    -- AXI-Lite to the AXU3EG arm.  A second pair rather than a parameterised
+    -- one: the two DUTs have separate signal sets and VHDL has no signal
+    -- parameters, so this is the honest way to write it.
+    procedure bawr(addr : natural; d : std_logic_vector(31 downto 0)) is
+    begin
+      wait until rising_edge(clk);
+      b_awaddr <= std_logic_vector(to_unsigned(addr, 8));
+      b_wdata  <= d; b_awvalid <= '1'; b_wvalid <= '1'; b_bready <= '1';
+      loop
+        wait until rising_edge(clk);
+        exit when b_awready = '1' and b_wready = '1';
+      end loop;
+      b_awvalid <= '0'; b_wvalid <= '0';
+      loop
+        wait until rising_edge(clk);
+        exit when b_bvalid = '1';
+      end loop;
+      b_bready <= '0';
+    end procedure;
+
+    procedure bard(addr : natural; d : out std_logic_vector(31 downto 0)) is
+    begin
+      wait until rising_edge(clk);
+      b_araddr  <= std_logic_vector(to_unsigned(addr, 8));
+      b_arvalid <= '1'; b_rready <= '1';
+      loop
+        wait until rising_edge(clk);
+        exit when b_rvalid = '1';
+      end loop;
+      d := b_rdata;
+      b_arvalid <= '0'; b_rready <= '0';
+      wait until rising_edge(clk);
+    end procedure;
+
+    -- The AXU3EG arm's descriptor.  Clean in every respect except the shape
+    -- and the beat counts, which are what the sweep varies.
+    procedure bbuild(o_rows, o_cols, o_wb, o_sb : integer) is
+      variable w : std_logic_vector(63 downto 0);
+    begin
+      for i in 0 to B_WORDS-1 loop bimg(i) <= (others => '0'); end loop;
+
+      w := (others => '0');
+      w(7 downto 0)   := x"00";                       -- OP_A_JOB
+      w(15 downto 8)  := x"04";                       -- flags bit 2 = cb_load
+      w(23 downto 16) := x"FF";
+      bimg(0) <= w;
+      bimg(1) <= u32(o_cols) & u32(o_rows);
+      bimg(2) <= u32(t_osh) & u32(t_wexp);
+
+      w := (others => '0');
+      w(7 downto 0)   := x"00";                       -- out_mode BFP
+      w(31 downto 16) := std_logic_vector(to_unsigned(B_NPW, 16));
+      w(47 downto 32) := std_logic_vector(to_unsigned(B_NPS, 16));
+      w(55 downto 48) := x"FF";
+      bimg(3) <= w;
+
+      for j in 0 to 7 loop
+        bimg(5)(8*j+7 downto 8*j) <= cbv(j);
+        bimg(6)(8*j+7 downto 8*j) <= cbv(j+8);
+      end loop;
+
+      for p in 0 to B_NPALL-1 loop
+        bimg(DESC_BASE0 + p)
+          <= std_logic_vector(resize(lift(16#800000# + p*16#10000#), 64));
+      end loop;
+
+      w := (others => '0');
+      w(31 downto 0)  := MV4I_MAGIC;
+      w(47 downto 32) := x"0001";
+      bimg(B_EXT0)     <= w;
+      bimg(B_EXT0 + 1) <= u32(o_sb) & u32(o_wb);
+      w := (others => '0');
+      w(31 downto 0) := u32(t_xexp);
+      bimg(B_EXT0 + 2) <= w;
+      bimg(B_EXT0 + 3) <= (others => '0');
+    end procedure;
+
+    -- `ovr` replaces the trace's shape and beat counts, for the shape sweep.
+    -- Everything else -- bases, codebook, magic, pads -- stays exactly as the
+    -- clean case builds it, so a refusal during the sweep can only be about
+    -- the shape.
+    procedure build(mut : integer;
+                    ovr : boolean := false;
+                    o_rows : integer := 0; o_cols : integer := 0;
+                    o_wb   : integer := 0; o_sb   : integer := 0) is
       variable w : std_logic_vector(63 downto 0);
       variable flags : std_logic_vector(7 downto 0);
       variable nw, ns : integer;
@@ -667,6 +970,10 @@ begin
       wb := t_wbeats; sb := t_sbeats;
       if mut = 11 then wb := 0; end if;
       if mut = 20 then wb := t_wbeats / 2; end if;
+
+      if ovr then
+        rows := o_rows; cols := o_cols; wb := o_wb; sb := o_sb;
+      end if;
 
       -- word 0: opcode, flags, src/dst regions, dst_offset
       w := (others => '0');
@@ -793,6 +1100,179 @@ begin
     assert to_integer(unsigned(rd)) = DWORDS
       report "DESC_WORDS reports " & integer'image(to_integer(unsigned(rd))) &
              ", package says " & integer'image(DWORDS) severity failure;
+
+    -- ==================================================== the shape sweep
+    -- It runs FIRST, and not for a stylistic reason: case 21 leaves the
+    -- descriptor slave holding an AR it was told to ignore, and restarting
+    -- the fetch port on top of that dangling burst is a testbench artefact,
+    -- not a design property.  Sweeping before the case table keeps them apart.
+    --
+    -- The teeth on the OTHER side of case 20.  Refusing a bad w_beats is only
+    -- half a result; a check that also refuses LEGAL work is worse than the
+    -- hang it replaced.  Every legal shape here must be ACCEPTED, and every
+    -- one-off mutation of its beat counts must be REFUSED with EC_SHAPE.
+    --
+    -- The expectation is computed by DIVIDING -- ceil(rows/RI)*ceil(cols/BLK)
+    -- -- which is exactly what the RTL is forbidden to do.  That asymmetry is
+    -- the point: the bench divides down, the design multiplies up, and the
+    -- sweep is the statement that the two agree.
+    for i in 0 to NSHAPE-1 loop
+      rw  := SH_ROWS(i); cl := SH_COLS(i);
+      wbx := ((rw + RI - 1) / RI) * ((cl + BLK - 1) / BLK);
+      sbx := (wbx + GRP_A - 1) / GRP_A;
+
+      for k in 0 to 4 loop
+        wbm := wbx; sbm := sbx;
+        if    k = 1 then wbm := wbx - 1;
+        elsif k = 2 then wbm := wbx + 1;
+        elsif k = 3 then sbm := sbx - 1;
+        elsif k = 4 then sbm := sbx + 1; end if;
+        -- w_beats/s_beats = 0 is a DIFFERENT check (EC_DESC) and is already
+        -- case 11, so a one-off that lands on zero is skipped rather than
+        -- being judged against the wrong code.
+        next when wbm = 0 or sbm = 0;
+
+        aresetn <= '0';
+        for j in 0 to 7 loop wait until rising_edge(clk); end loop;
+        aresetn <= '1';
+        wait until rising_edge(clk);
+        cap_en <= '0'; cap_clr <= '1';
+        build(0, true, rw, cl, wbm, sbm);
+        wait until rising_edge(clk);
+        cap_clr <= '0';
+        wait until rising_edge(clk);
+
+        ptr := resize(lift(DESC_OFF), 64);
+        awr(16#00#, std_logic_vector(ptr(31 downto 0)));
+        awr(16#04#, std_logic_vector(ptr(63 downto 32)));
+        cap_en <= '1';
+        awr(16#08#, x"00000001");
+
+        tmo := 0;
+        loop
+          ard(16#0C#, st);
+          exit when st(0) = '1' or st(2) = '1';
+          tmo := tmo + 1;
+          exit when tmo > 40000;
+        end loop;
+        ec := to_integer(unsigned(st(11 downto 8)));
+
+        if k = 0 then
+          n_legal := n_legal + 1;
+          if st(2) = '1' then
+            nerr := nerr + 1;
+            report "SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) & " w_beats=" & integer'image(wbx) &
+                   " s_beats=" & integer'image(sbx) &
+                   " is LEGAL and was REFUSED, err_code = " &
+                   integer'image(ec) severity error;
+          elsif st(0) /= '1' then
+            nerr := nerr + 1;
+            report "SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) &
+                   " is LEGAL and never completed (timeout " &
+                   integer'image(tmo) & ")" severity error;
+          end if;
+        else
+          n_teeth := n_teeth + 1;
+          if st(2) /= '1' or ec /= 16#F# then
+            nerr := nerr + 1;
+            report "SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) & " with w_beats=" &
+                   integer'image(wbm) & " s_beats=" & integer'image(sbm) &
+                   " (correct is " & integer'image(wbx) & "/" &
+                   integer'image(sbx) & ") was NOT refused with EC_SHAPE: " &
+                   "err=" & std_logic'image(st(2)) & " code=" &
+                   integer'image(ec) severity error;
+          end if;
+        end if;
+        cap_en <= '0';
+        wait until rising_edge(clk);
+      end loop;
+    end loop;
+    report "shape sweep, FK33 arm (ROWS_IF=" & integer'image(RI) &
+           ", GRP=" & integer'image(GRP_A) & "): " &
+           integer'image(n_legal) & " legal shapes accepted, " &
+           integer'image(n_teeth) & " one-off beat-count mutations refused"
+      severity note;
+
+    -- ------------------------------------------- the same sweep at GRP = 2
+    -- The FK33 arm cannot see the ceil in s_beats = ceil(w_beats/GRP),
+    -- because GRP is 1 there and the two are equal.  This arm has GRP = 2, so
+    -- a check that dropped the ceil refuses every shape with w_beats > 1, and
+    -- one that used floor refuses the three shapes whose w_beats is odd.
+    n_legal := 0; n_teeth := 0;
+    for i in 0 to NSHAPB-1 loop
+      rw  := BS_ROWS(i); cl := BS_COLS(i);
+      wbx := ((rw + B_RI - 1) / B_RI) * ((cl + BLK - 1) / BLK);
+      sbx := (wbx + B_GRP - 1) / B_GRP;
+
+      for k in 0 to 4 loop
+        wbm := wbx; sbm := sbx;
+        if    k = 1 then wbm := wbx - 1;
+        elsif k = 2 then wbm := wbx + 1;
+        elsif k = 3 then sbm := sbx - 1;
+        elsif k = 4 then sbm := sbx + 1; end if;
+        next when wbm = 0 or sbm = 0;
+        -- Belt and braces.  A one-off on s_beats provably leaves the
+        -- bracket at any GRP >= 1 -- (sb-1)*GRP <= w-1 < w kills sb-1, and
+        -- sb*GRP >= w kills sb+1 -- so this guard is not expected to fire.
+        -- It is here so that a future GRP cannot turn a NON-error into an
+        -- expected error and be scored as a pass.
+        next when k = 3 and (sbm * B_GRP >= wbx) and ((sbm-1) * B_GRP < wbx);
+        next when k = 4 and (sbm * B_GRP >= wbx) and ((sbm-1) * B_GRP < wbx);
+
+        aresetn <= '0';
+        for j in 0 to 7 loop wait until rising_edge(clk); end loop;
+        aresetn <= '1';
+        wait until rising_edge(clk);
+        bbuild(rw, cl, wbm, sbm);
+        wait until rising_edge(clk);
+
+        ptr := resize(lift(B_DOFF), 64);
+        bawr(16#00#, std_logic_vector(ptr(31 downto 0)));
+        bawr(16#04#, std_logic_vector(ptr(63 downto 32)));
+        bawr(16#08#, x"00000001");
+        -- An ACCEPTED descriptor starts a core with no weight slaves, so it
+        -- stays busy for ever: the verdict is read after a fixed, generous
+        -- window rather than by polling for done.  The window covers the
+        -- 9-beat fetch, the shape loop's max(TILES, NBMAX) = 128 cycles and
+        -- the 16-cycle codebook load -- about 180 cycles in all -- four times
+        -- over.
+        for j in 0 to 800 loop wait until rising_edge(clk); end loop;
+        bard(16#0C#, bst);
+        ec := to_integer(unsigned(bst(11 downto 8)));
+
+        if k = 0 then
+          n_legal := n_legal + 1;
+          if bst(2) = '1' then
+            nerr := nerr + 1;
+            report "AXU3EG SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) & " w_beats=" & integer'image(wbx) &
+                   " s_beats=" & integer'image(sbx) &
+                   " is LEGAL and was REFUSED, err_code = " &
+                   integer'image(ec) severity error;
+          end if;
+        else
+          n_teeth := n_teeth + 1;
+          if bst(2) /= '1' or ec /= 16#F# then
+            nerr := nerr + 1;
+            report "AXU3EG SHAPE n_rows=" & integer'image(rw) & " n_cols=" &
+                   integer'image(cl) & " with w_beats=" &
+                   integer'image(wbm) & " s_beats=" & integer'image(sbm) &
+                   " (correct is " & integer'image(wbx) & "/" &
+                   integer'image(sbx) & ") was NOT refused with EC_SHAPE: " &
+                   "err=" & std_logic'image(bst(2)) & " code=" &
+                   integer'image(ec) severity error;
+          end if;
+        end if;
+      end loop;
+    end loop;
+    report "shape sweep, AXU3EG arm (ROWS_IF=" & integer'image(B_RI) &
+           ", GRP=" & integer'image(B_GRP) & "): " &
+           integer'image(n_legal) & " legal shapes accepted, " &
+           integer'image(n_teeth) & " one-off beat-count mutations refused"
+      severity note;
 
     -- ======================================================= the case loop
     for mut in 0 to NCASE loop

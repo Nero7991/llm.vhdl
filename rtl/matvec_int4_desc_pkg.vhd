@@ -49,6 +49,12 @@ package matvec_int4_desc_pkg is
   constant EC_ALIGN : std_logic_vector(3 downto 0) := x"C";
   constant EC_ADDR  : std_logic_vector(3 downto 0) := x"D";
   constant EC_CORE  : std_logic_vector(3 downto 0) := x"E";
+  -- w_beats or s_beats does not match the shape in n_rows/n_cols.  This is
+  -- the LAST free value in the 4-bit field: 0x1,0x2,0x5..0x8 are reserved for
+  -- D's ERR_UNIT/ERR_LOCK/ERR_GRANT/ERR_CTX/ERR_EPOCH/ERR_ABORT so the two
+  -- spaces can still be merged, and 0x0,0x3,0x4,0x9..0xE are taken above.
+  -- A further A-specific code needs the field widened, not another value.
+  constant EC_SHAPE : std_logic_vector(3 downto 0) := x"F";
 
   -- ERR_INFO's "the pointer itself, not a descriptor word" sentinel.
   constant EI_PTR : natural := 16#FFFF#;
