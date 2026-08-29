@@ -360,6 +360,47 @@ vector set would turn the regression red, which is not the same thing as
 reporting the defect. The generator carries it as a comment naming the
 measurement.
 
+### OI-8: `matvec_core` reads `ybuf` one past the end at the top of its row range
+
+Found by TRACK A-SHAPE while sweeping legal shapes, and not fixed because
+`rtl/matvec_core.vhd` is not that track's file.
+
+`ybuf` is declared `array(0 to TILES-1)` (`:191`), `rd_t` is an
+**unconstrained** integer (`:389`) that `S_EMIT` advances to `tiles_r`
+(`:883-884`), and `:835` reads `ybuf(rd_t)` **unconditionally every cycle**.
+So whenever `ceil(n_rows / ROWS_IF) = TILES` -- that is, whenever `n_rows`
+falls in the top `ROWS_IF` rows of the declared `MAXROWS_BFP` range -- the last
+emit cycle indexes one past the array. Verified here by inspection of all three
+lines.
+
+MEASURED by the finder at `MAXROWS_BFP=192 / ROWS_IF=48`: `n_rows = 145` and
+`n_rows = 192` each abort with
+`index (4) out of bounds (0 to 3) at rtl/matvec_core.vhd:835`.
+
+**Synthesis-benign, simulation-fatal**, the same shape as OI-7: `rd_v` is `'0'`
+that cycle so nothing consumes `ybuf_q`, but GHDL kills the run. **It bites
+hardest for exactly the build you would want to ship**: one that sets
+`MAXROWS_BFP` to the precise `n_rows` it needs in order to save BRAM, because
+then every job trips it.
+
+Consequence for the shape check that found it: A-SHAPE's sweep deliberately
+stays below the trap, so **the top corner of the row range is unverified**, and
+that is precisely where an off-by-one in `tiles` would show. Closing OI-8
+unblocks that verification too.
+
+### OI-9: the descriptor error-code space is FULL
+
+`EC_SHAPE = 0xF` (`rtl/matvec_int4_desc_pkg.vhd:52-57`) took the last free
+value. `0x0, 0x3, 0x4, 0x9..0xE` were already taken and `0x1, 0x2, 0x5..0x8`
+stay reserved for subsystem D, whose header this format shares verbatim. The
+field is 4 bits and it is now full.
+
+Not urgent, and deliberately not pre-solved: the next error condition anyone
+wants to report has nowhere to go, and the options (widen the field, subdivide
+a code using `ERR_INFO`, or take a reserved D value) all have consequences for
+D. Whoever needs the next code decides. Recorded now so that decision is not
+discovered at the worst moment.
+
 ### OI-6: llama.cpp aborts on some malformed UTF-8 (upstream, informational)
 
 `unicode_cpt_from_utf8` masks a 4-byte UTF-8 lead with `0x07` and applies no
