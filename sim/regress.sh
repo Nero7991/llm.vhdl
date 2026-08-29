@@ -701,8 +701,11 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # order is HEAD_DIM N_QH N_KVH KV_BLOCK N_ROT cur_pos ctx_len seed and it
     # must match sim/tb_attn_block.vhd's generic defaults; the vector file
     # carries a shape header the bench asserts against them, so a mismatch here
-    # is loud rather than a wrong answer.  N_KVH >= 2 is REQUIRED: NGRP = 1 is
-    # an immediate bound violation at rtl/attn_emit.vhd:400 (worklog OI-2).
+    # is loud rather than a wrong answer.  N_KVH stays 2 because
+    # ref/attn_block_vec.c refuses fewer, NOT because attn_emit cannot take it:
+    # OI-2, the bound violation at rtl/attn_emit.vhd:400 that made NGRP = 1
+    # abort, is FIXED, and sim/tb_attn_emit.vhd now runs a second instance at
+    # NGRP = 1 on every gate run.
     attn_block_vec.txt)     echo "16 4 2 4 8 3 4 0" ;;
     attn_emit_vec.txt)      echo "40 2 48" ;;      # sim/mutate_attn_emit.sh
     attn_gate_vec.txt)      echo "35 64" ;;        # sim/mutate_attn_gate.sh

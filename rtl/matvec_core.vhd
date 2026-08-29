@@ -119,6 +119,17 @@ architecture rtl of matvec_core is
   constant P_CONTRIB : natural := LVL + 3;
   constant TILES : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
 
+  -- The emit pointer rd_t runs to tiles_r INCLUSIVE and tiles_r can equal
+  -- TILES, so the unconditional ybuf read below has to be held inside the
+  -- array.  Clamping the ADDRESS rather than gating the read keeps the read
+  -- unconditional, which is what infers the BRAM read port -- see the note at
+  -- the read itself.  The clamped cycle is always one on which rd_v is '0',
+  -- so no consumer ever sees the substituted word.
+  function ybuf_addr(t : integer) return integer is
+  begin
+    if t >= TILES then return TILES - 1; else return t; end if;
+  end function;
+
   -- THE CODEBOOK, AND WHY THERE ARE MANY OF IT.
   --
   -- cb is the 16-entry runtime-loadable IQ4_NL codebook.  Every lane of the
@@ -386,7 +397,16 @@ architecture rtl of matvec_core is
   signal fold_v : std_logic_vector(LVLR-1 downto 0) := (others => '0');
   -- emit is a 2-stage read: rd_t is presented, and one cycle later the data
   -- appears in ybuf_q tagged by rd_td.
-  signal rd_t, rd_td : integer := 0;
+  --
+  -- rd_t COUNTS TO tiles_r, one PAST the last tile, and stops there -- see
+  -- S_EMIT.  tiles_r = ceil(n_rows / ROWS_IF) and TILES = ceil(MAXROWS_BFP /
+  -- ROWS_IF), so the two are EQUAL whenever n_rows lands in the top ROWS_IF
+  -- rows of the declared range, and rd_t then reaches TILES itself.  The
+  -- range is stated here rather than left unconstrained so that is visible
+  -- at the declaration; S_EMIT is reachable only through S_SCAN, i.e. only in
+  -- out_mode = "00", where S_IDLE has already rejected n_rows > MAXROWS_BFP,
+  -- so tiles_r <= TILES holds and this range cannot be exceeded.
+  signal rd_t, rd_td : integer range 0 to TILES := 0;
   signal rd_v        : std_logic := '0';
   -- and one more stage after the BRAM read: SITE 4's round_shift is a variable
   -- shift by ns, which became the critical path once row end was split
@@ -832,7 +852,14 @@ begin
         -- because this read and that branch both sample the same pre-edge rd_t
         -- -- deriving rd_v from a registered rd_go delays it one cycle further
         -- than the data and silently drops the first tile.
-        ybuf_q <= ybuf(rd_t);
+        -- ybuf_addr(rd_t), NOT rd_t.  rd_t advances to tiles_r and STOPS
+        -- there, and tiles_r = TILES whenever n_rows falls in the top ROWS_IF
+        -- rows of MAXROWS_BFP -- which is exactly the shape a build that sizes
+        -- MAXROWS_BFP to the n_rows it needs presents on EVERY job.  The read
+        -- is unconditional by design, so on that last cycle it indexed one
+        -- past the array: harmless in hardware (rd_v is '0', nothing consumes
+        -- ybuf_q) and fatal in simulation, which is where it was found.
+        ybuf_q <= ybuf(ybuf_addr(rd_t));
 
         -- Per-lane copies of the emit shift, updated UNCONDITIONALLY so they
         -- are always exactly ns_r delayed by one cycle -- see the declaration.

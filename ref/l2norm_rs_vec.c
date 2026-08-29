@@ -251,28 +251,39 @@ int main(int argc, char **argv)
     for (int cnt = 1; cnt <= N; cnt = (cnt < 4) ? cnt + 1 : cnt * 2) {
         ZERO(); for (int i = 0; i < cnt; i++) x[i] = 23170; EMIT();  /* ~2^14.5 */
     }
-    /* msb(ssq) = 30 + log2(N) = 37 IS DELIBERATELY ABSENT, and that absence is
-     * a recorded DEFECT in the DUT, not a gap in this sweep.
-     *
+    /* ---- 6b. msb(ssq) = 30 + log2(N), THE MAXIMUM LEGAL INPUT ------------
      * x[i] = -32768 for all i is a legal int16 vector and gives
-     * ssq = N * 2^30 = 2^37 exactly.  rtl/l2norm_rs.vhd:97 states the bound as
-     * "ssq <= N * 32768^2 = N * 2^30, so the bound is 2^(30 + log2 N)", but
-     * the assertion at :245 is
-     *     assert ssq >= 0 and ssq < shift_left(to_signed(1,64), SSQ_BITS)
-     * -- a STRICT <, which excludes the maximum the comment says is included.
-     * MEASURED 2026-08-28: driving that vector aborts the simulation with
-     *     l2norm_rs.vhd:245: (assertion failure): ssq outside the u37 bound
-     * at severity FAILURE, i.e. the unit kills the run rather than saturating.
-     * It is off by one: SSQ_BITS should be 31 + LOG2N, or the compare should
-     * be <=.
+     * ssq = N * 2^30 = 2^37 exactly at N = 128 -- the largest ssq the unit can
+     * ever be handed, and the single exponent every other case above misses.
+     * The single-element and cnt sweeps reach msb(ssq) 0..36 with both
+     * parities; this is 37, and it is also the top of the q path's argument
+     * range, msb(ssq << log2 N) = 44.
      *
-     * NOT FIXED HERE ON PURPOSE.  l2norm_rs is instantiated under gdn_block
-     * and llama_top as of 3246046, and an RTL change under a just-integrated
-     * top is not something a verification track lands silently.  Adding the
-     * case to this file instead would make the regression FAIL, which is not
-     * the same thing as reporting the defect.  The single-element and
-     * cnt-sweep cases above cover msb(ssq) 0..36 with both parities, so the
-     * only exponent this file cannot reach is the one the DUT rejects. */
+     * IT WAS DELIBERATELY ABSENT UNTIL THE DUT WAS FIXED, and the reason is
+     * worth keeping.  rtl/l2norm_rs.vhd:97 states the bound INCLUSIVELY --
+     * "ssq <= N * 32768^2 = N * 2^30" -- while the assertion at :245 compared
+     * STRICTLY against 2^SSQ_BITS with SSQ_BITS = 30 + log2 N, so the maximum
+     * the comment admits was the one value the assert rejected.  MEASURED
+     * 2026-08-28 on the untouched RTL, driving exactly this case:
+     *     l2norm_rs.vhd:245:13:@30969ns:(assertion failure):
+     *         l2norm_rs: ssq outside the u37 bound implied by N
+     * at severity FAILURE, i.e. the unit killed the run rather than
+     * saturating.  Worklog OI-7.  Adding the case before fixing the DUT would
+     * have turned the regression red, which is not the same thing as reporting
+     * a defect, so it was carried here as a comment naming the measurement
+     * until the compare became <=.  It is a live case now.
+     *
+     * This vector is UNIQUE: ssq = 2^37 is the maximum, so msb(ssq) = 37
+     * forces ssq = 2^37 exactly, which forces |x[i]| = 32768 for every i.
+     * There is no second vector at this exponent, hence one case and not a
+     * family.  The case after it is the one immediately BELOW the rail --
+     * a single element pulled in by one -- so the sweep brackets the compare
+     * from both sides rather than only touching it from the top. */
+    for (int i = 0; i < N; i++) x[i] = -32768;
+    EMIT();
+    for (int i = 0; i < N; i++) x[i] = -32768;
+    x[0] = -32767;
+    EMIT();
 
     /* ---- 7. extreme dynamic range within one head ----------------------
      * One large element and 127 tiny ones: the tiny elements' outputs land at

@@ -38,7 +38,13 @@ architecture sim of tb_matvec_core is
   signal rst   : std_logic := '1';
   signal start : std_logic := '0';
 
-  signal n_rows, n_cols, out_shift, w_exp, x_exp, y_exp : integer := 0;
+  signal n_cols, out_shift, w_exp, x_exp, y_exp : integer := 0;
+  -- n_rows and tiles_s have TWO sources -- the trace's DIMS line, and the
+  -- top-of-range pass below -- and a signal may have only one driver, so the
+  -- loader writes the _tr pair and the driver only raises top_pass.
+  signal n_rows_tr, tiles_tr : integer := 0;
+  signal top_pass : boolean := false;
+  signal n_rows, tiles_s : integer;
   signal out_mode : std_logic_vector(1 downto 0) := "00";
   signal cb_we    : std_logic := '0';
   signal cb_addr  : std_logic_vector(3 downto 0) := (others => '0');
@@ -83,8 +89,9 @@ architecture sim of tb_matvec_core is
   signal loaded : boolean := false;
   signal nbad, nchk : integer := 0;
   signal nmant : integer := 0;   -- rows actually emitted, for coverage
+  signal nemit  : integer := 0;  -- y_mask'd rows out of the port, UNGATED
+  signal nm_top : integer := 0;  -- nemit as it stood entering PASS 3
   signal ybad, ychk : integer := 0;   -- own counters: one driver per signal
-  signal tiles_s : integer := 0;
   signal finished : boolean := false;
 begin
   -- The clock STOPS at the end of the run.  A free-running clock would make the
@@ -98,6 +105,12 @@ begin
     end loop;
     wait;
   end process;
+
+  -- THE TOP OF THE ROW RANGE.  n_rows = MAXR makes ceil(n_rows / RI) equal
+  -- the core's own TILES = ceil(MAXROWS_BFP / RI) exactly, at every RI, which
+  -- is the shape the emit pointer walks one word past.  See PASS 3.
+  n_rows  <= MAXR                  when top_pass else n_rows_tr;
+  tiles_s <= (MAXR + RI - 1) / RI  when top_pass else tiles_tr;
 
   -- stand-in for act_mem_striped: registered read, 1-cycle latency (7.8)
   actmem : process(clk)
@@ -159,8 +172,8 @@ begin
         assert R = RI
           report "trace was packed for ROWS_IF=" & integer'image(R) &
                  " but the DUT is " & integer'image(RI) severity failure;
-        n_rows <= M; n_cols <= K; nb_s <= NB; ri_s <= R;
-        tiles_s <= (M + R - 1) / R;
+        n_rows_tr <= M; n_cols <= K; nb_s <= NB; ri_s <= R;
+        tiles_tr <= (M + R - 1) / R;
         out_shift <= osh; w_exp <= wev; x_exp <= xev;
       elsif tok(1 to 2) = "CB" then
         read(l, a); read(l, v);
@@ -210,7 +223,7 @@ begin
       if tp_v = '1' then
         for rr in 0 to RI-1 loop
           base := tp_r + rr;
-          if base < n_rows then          -- pad rows have no expectation
+          if base < n_rows_tr then          -- pad rows have no expectation
             want := e_part(base*nb_s + tp_b);
             g    := signed(tp_val(rr*64+63 downto rr*64));
             nc := nc + 1;
@@ -229,7 +242,7 @@ begin
       if tc_v = '1' then
         for rr in 0 to RI-1 loop
           base := tc_r + rr;
-          if base < n_rows then
+          if base < n_rows_tr then
             want := e_contrib(base*nb_s + tc_b);
             g    := signed(tc_val(rr*64+63 downto rr*64));
             nc := nc + 1;
@@ -248,7 +261,7 @@ begin
       if ta_v = '1' then
         for rr in 0 to RI-1 loop
           base := ta_r + rr;
-          if base < n_rows then
+          if base < n_rows_tr then
             want := e_acc(base);
             g    := signed(ta_val(rr*64+63 downto rr*64));
             nc := nc + 1;
@@ -266,7 +279,7 @@ begin
       if tm_v = '1' then
         for rr in 0 to RI-1 loop
           base := tm_r + rr;
-          if base < n_rows then
+          if base < n_rows_tr then
             nm := nm + 1;
             want := e_ymant(base);
             g    := signed(tm_val(rr*64+63 downto rr*64));
@@ -346,14 +359,20 @@ begin
   ycap : process(clk)
     variable want, g : signed(63 downto 0);
     variable r       : integer;
-    variable nc, nb  : integer;
+    variable nc, nb, ne : integer;
   begin
     if rising_edge(clk) then
-      nc := ychk; nb := ybad;
+      nc := ychk; nb := ybad; ne := nemit;
       if y_we = '1' then
         for rr in 0 to RI-1 loop
           if y_mask(rr) = '1' then
+            -- Counted BEFORE the expectation gate: PASS 3 raises n_rows above
+            -- anything the trace scored, and the property that pass turns on
+            -- is that every row still comes OUT.  A counter that only ticked
+            -- where an expectation exists could not see a dropped tile there.
+            ne := ne + 1;
             r := to_integer(unsigned(y_addr)) + rr;
+            if r >= n_rows_tr then next; end if;   -- no expectation above it
             if out_mode = "10" then want := e_acc(r);
             else                    want := e_ymant(r); end if;
             g := signed(y_data(rr*64+63 downto rr*64));
@@ -369,7 +388,7 @@ begin
           end if;
         end loop;
       end if;
-      ychk <= nc; ybad <= nb;
+      ychk <= nc; ybad <= nb; nemit <= ne;
     end if;
   end process;
 
@@ -430,9 +449,56 @@ begin
       report "SAT_EVENT SET IN PARTIAL MODE: 14.2 runs no sat32 on this path"
       severity failure;
 
+    -- ---------------------------------------------------------------------
+    -- PASS 3: THE TOP OF THE ROW RANGE.  The trace shapes are all well below
+    -- MAXROWS_BFP, so nothing above ever exercised the LAST tile the core can
+    -- hold, and that is precisely where the emit pointer overruns: S_EMIT
+    -- advances rd_t to tiles_r and stops, and tiles_r = TILES exactly when
+    -- n_rows lands in the top RI rows of MAXROWS_BFP.  The core then read
+    -- ybuf(TILES) on its final emit cycle -- harmless in hardware, since rd_v
+    -- is '0' and nothing consumes the word, and an immediate abort in
+    -- simulation.  MEASURED before the fix at MAXR=64/RI=4, n_rows = 61 and
+    -- 64: "index (16) out of bounds (0 to 15) at rtl/matvec_core.vhd:835".
+    -- Worklog OI-8.
+    --
+    -- The stimulus needs no new trace.  Rows at and above the trace's M carry
+    -- index 0 and SCALE 0, exactly as the feeder already zero-fills pad rows,
+    -- so their contribution is identically zero: acc, amax, ns and y_exp are
+    -- all unchanged from PASS 1, and e_acc/e_ymant are zero there too.  So the
+    -- existing checkers score this pass as well, and the assertions below are
+    -- the ones that would notice a tile going missing rather than wrong.
+    top_pass <= true;
+    out_mode <= "00";
+    wait until rising_edge(clk);
+    nm_top <= nemit;
+    wait until rising_edge(clk);
+    start <= '1'; wait until rising_edge(clk); start <= '0';
+    wait until done = '1';
+    wait until rising_edge(clk);
+    wait until rising_edge(clk);
+
+    assert err = '0'
+      report "TOP OF RANGE: err fired at n_rows = MAXROWS_BFP, which 7.6 "
+             & "admits" severity failure;
+    assert nemit - nm_top = MAXR
+      report "TOP OF RANGE COVERAGE: y_data emitted for " &
+             integer'image(nemit - nm_top) & " rows, expected " &
+             integer'image(MAXR) & " -- the last tile was dropped, not wrong"
+      severity failure;
+    -- The pad tiles contribute zero, so neither the shared shift nor the
+    -- exponent may move.  A core that let them into the magnitude scan would
+    -- change ns here and nowhere else.
+    assert tap_ns = e_ns and y_exp = e_yexp
+      report "TOP OF RANGE: ns/y_exp moved when the row count was raised to "
+             & "MAXROWS_BFP -- got ns=" & integer'image(tap_ns) & " y_exp="
+             & integer'image(y_exp) & ", want ns=" & integer'image(e_ns)
+             & " y_exp=" & integer'image(e_yexp) severity failure;
+    top_pass <= false;
+
     report "TOTAL: " & integer'image(nchk) & " stage + " &
            integer'image(ychk) & " output values compared, " &
-           integer'image(nbad + ybad) & " mismatches (BFP and PARTIAL)"
+           integer'image(nbad + ybad) & " mismatches (BFP, PARTIAL and the "
+           & "top of the row range at n_rows = " & integer'image(MAXR) & ")"
            severity note;
     assert nbad = 0 and ybad = 0
       report "RTL DIVERGES FROM THE C REFERENCE" severity failure;

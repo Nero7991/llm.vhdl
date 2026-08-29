@@ -397,15 +397,25 @@ begin
               -- exponent is unrepresentable.  A sentinel of 0 would be wrong
               -- for an all-positive e_grid, which is the common case.
               e_min  <= signed(e_grid(EXP_W-1 downto 0));
-              grp    <= 1;
               amax   <= (others => '0');
               sat_r  <= '0'; err_r <= '0'; hdr_r <= '0';
               i_idx <= 0; i_grp <= 0; i_abs <= 0; drain <= 0;
               a1_v <= '0'; a2_v <= '0'; a3_v <= '0'; a4_v <= '0'; a5_v <= '0';
               raddr_r <= (others => '0');
+              -- grp is set INSIDE the branch, not before it.  S_EMIN starts at
+              -- group 1 because group 0 already seeded e_min above, but
+              -- S_SHIFTS starts at group 0 -- it has to write sh_a for every
+              -- group including the first.  With NGRP = 1 there is no S_EMIN
+              -- pass at all and the seed is already the minimum, so an
+              -- unconditional grp <= 1 both violates `range 0 to NGRP-1` and,
+              -- had the range been wider, would have made S_SHIFTS read e_l(1)
+              -- of a one-element array.  NGRP = 1 is one KV head, a legal
+              -- value of a `positive` generic.
               if NGRP = 1 then
+                grp   <= 0;
                 state <= S_SHIFTS;
               else
+                grp   <= 1;
                 state <= S_EMIN;
               end if;
             end if;

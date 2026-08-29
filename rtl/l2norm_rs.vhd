@@ -125,6 +125,17 @@ architecture rtl of l2norm_rs is
   -- The rsqrt result is carried as a Q30 MANTISSA plus a scalar shift, never
   -- collapsed to an integer.  That collapse is what broke the first version.
   constant LOG2N    : integer := integer(ceil(log2(real(N))));
+  -- SSQ_BITS is the EXPONENT of the exact maximum, not a width: ssq reaches
+  -- N * 32768^2 = N * 2^30 = 2^(30 + log2 N), so the bound at S_ARG is
+  -- INCLUSIVE and the compare there is <=, matching the statement at :97.
+  -- Written as a strict < it rejected x[i] = -32768 for all i -- the largest
+  -- legal int16 input -- at severity failure.  Widening the constant to
+  -- 31 + LOG2N would also have admitted that vector, but it would have
+  -- admitted everything up to 2^38 - 1 with it, i.e. thrown away a factor of
+  -- two of overflow detection to fix an off-by-one.  Representing the
+  -- inclusive bound does take SSQ_BITS + 1 bits, which is what :90 calls the
+  -- u38 bound at N = 128, so the report below names that width and not this
+  -- exponent.
   constant SSQ_BITS : integer := 30 + LOG2N;
   -- 2.1.3's fold is 1/sqrt(N) and this unit applies it as a shift, which is
   -- only exact when N is a power of two.
@@ -242,8 +253,9 @@ begin
               report "l2norm_rs: N must be a power of two -- the 1/sqrt(N) "
                      & "fold is applied as a shift of the rsqrt argument"
               severity failure;
-            assert ssq >= 0 and ssq < shift_left(to_signed(1, 64), SSQ_BITS)
-              report "l2norm_rs: ssq outside the u" & integer'image(SSQ_BITS)
+            assert ssq >= 0 and ssq <= shift_left(to_signed(1, 64), SSQ_BITS)
+              report "l2norm_rs: ssq outside the u"
+                     & integer'image(SSQ_BITS + 1)
                      & " bound implied by N"
               severity failure;
             if ssq = 0 then

@@ -122,6 +122,57 @@ architecture sim of tb_attn_emit is
   signal ord_hdr  : std_logic := '0';
   signal nerr    : integer := 0;
   signal tick    : integer := 0;
+
+  -- ==================================================================
+  -- THE ONE-GROUP CONFIGURATION, run alongside the main DUT.
+  --
+  -- NGRP is a `positive` generic and NGRP = 1 -- a card holding one KV head --
+  -- is a legal value of it.  It was ALSO an immediate bound violation:
+  -- rtl/attn_emit.vhd's S_IDLE assigned `grp <= 1` unconditionally into a
+  -- signal declared `range 0 to NGRP-1`, and had the range been wider the
+  -- NGRP = 1 path would then have entered S_SHIFTS reading e_l(1) of a
+  -- one-element array.  MEASURED before the fix, driving this bench at
+  -- -gNGRP=1:
+  --     ghdl:error: bound check failure at rtl/attn_emit.vhd:400
+  --     in process .tb_attn_emit(sim).dut@attn_emit(rtl).P13
+  -- Worklog OI-2.  Nothing hit it because every configuration anywhere in the
+  -- tree uses NGRP >= 2, and regress.sh's own vector row carries the comment
+  -- "N_KVH >= 2 is REQUIRED" naming this defect as the reason.
+  --
+  -- WHY A SECOND INSTANCE RATHER THAN A SECOND VECTOR FILE.  ref/attn_emit_vec
+  -- gates its own output on a coverage table that includes "e_grid values that
+  -- DIFFER", and at one group that counter is structurally zero -- there is
+  -- only one exponent -- so the generator exits non-zero at ngrp = 1 and
+  -- regress.sh would read that as a failed vector generation.  Its GOLDEN at
+  -- ngrp = 1 is correct (checked directly: 40 layers x 48 elements bit-exact);
+  -- it is the coverage gate, not the model, that cannot be met.  So the
+  -- one-group case rides on the vectors already here.
+  --
+  -- WHAT IT PROVES.  Every case: NTOT mantissas come out, in index order, with
+  -- err low -- which is enough for the bound violation, since it aborts the
+  -- run outright.  Additionally, on every case whose e_grid entries are all
+  -- EQUAL, the one-group answer must be bit-identical to the golden: e_min is
+  -- that common exponent, every alignment shift is zero on both sides, and
+  -- pass A scans the same NTOT elements, so grouping cannot change amax, shp,
+  -- any mantissa, or y_exp.  That subset is checked against the same file.
+  signal start1   : std_logic := '0';
+  signal e_grid1  : std_logic_vector(EXP_W-1 downto 0) := (others => '0');
+  signal cfg_tk1  : std_logic;
+  signal busy1    : std_logic;
+  signal x_raddr1 : std_logic_vector(AW-1 downto 0);
+  signal x_re1    : std_logic;
+  signal x_rdata1 : std_logic_vector(IN_W-1 downto 0) := (others => '0');
+  signal hdr_v1   : std_logic;
+  signal y_exp1   : signed(EXP_W-1 downto 0);
+  signal m_valid1 : std_logic;
+  signal m_data1  : std_logic_vector(MANT_W-1 downto 0);
+  signal m_index1 : std_logic_vector(AW-1 downto 0);
+  signal done1    : std_logic;
+  signal o_sat1, err1 : std_logic;
+  signal m_got1 : int_arr(0 to 4095) := (others => 0);
+  signal i_got1 : int_arr(0 to 4095) := (others => 0);
+  signal m_cnt1 : integer := 0;
+  signal n_eqc  : integer := 0;   -- cases with an all-equal e_grid
 begin
   clk <= not clk after 5 ns when running else '0';
 
@@ -139,6 +190,55 @@ begin
                m_ready => m_ready,
                done => done, done_ack => done_ack,
                o_sat => o_sat, err => err );
+
+  -- The one-group instance.  GRP_N is the FLAT length, so both instances see
+  -- the same NTOT elements and the same address width.
+  dut1 : entity work.attn_emit
+    generic map ( NGRP => 1, GRP_N => NTOT, IN_W => IN_W,
+                  MANT_W => MANT_W, EXP_W => EXP_W,
+                  TARGET_MSB => TARGET_MSB, SH_MAX => 63,
+                  STRICT_PRODUCER => true )
+    port map ( clk => clk, rst => rst,
+               start => start1, e_grid => e_grid1, cfg_taken => cfg_tk1,
+               busy => busy1,
+               x_raddr => x_raddr1, x_re => x_re1, x_rdata => x_rdata1,
+               hdr_valid => hdr_v1, y_exp => y_exp1,
+               m_valid => m_valid1, m_data => m_data1, m_index => m_index1,
+               m_ready => m_ready,
+               done => done1, done_ack => done_ack,
+               o_sat => o_sat1, err => err1 );
+
+  memp1 : process(clk)
+  begin
+    if rising_edge(clk) then
+      if x_re1 = '1' then
+        x_rdata1 <= std_logic_vector(
+                      to_signed(mem(to_integer(unsigned(x_raddr1))), IN_W));
+      end if;
+    end if;
+  end process;
+
+  -- Accepted-beat capture for the one-group instance.  Deliberately thinner
+  -- than mon below: the handshake properties are the SAME RTL and are already
+  -- proved on the main instance, so this one carries only what the grouping
+  -- can change -- how many elements come out, in what order, and their values.
+  mon1 : process
+  begin
+    loop
+      wait until rising_edge(clk);
+      exit when not running;
+      if clr = '1' then
+        m_cnt1 <= 0;
+      elsif m_valid1 = '1' and m_ready = '1' then
+        if m_cnt1 < 4096 then
+          m_got1(m_cnt1) <= to_integer(signed(m_data1));
+          i_got1(m_cnt1) <= to_integer(unsigned(m_index1));
+        end if;
+        m_cnt1 <= m_cnt1 + 1;
+      end if;
+    end loop;
+    wait;
+  end process;
 
   -- THE MEMORY IMPLEMENTS x_re.  A model that ignored the enable would make
   -- mutation "x_re tied high" an EQUIVALENT MUTANT, which is exactly what
@@ -323,6 +423,7 @@ begin
     variable v_e : int_arr(0 to 15);
     variable v_m : int_arr(0 to 4095);
     variable ok  : boolean;
+    variable eq_grid, ok1 : boolean;
   begin
     file_open(fh, VECS, read_mode);
     readline(fh, ln);
@@ -358,8 +459,16 @@ begin
         e_grid((g+1)*EXP_W-1 downto g*EXP_W)
           <= std_logic_vector(to_signed(v_e(g), EXP_W));
       end loop;
+      -- the one-group instance takes the SAME elements under group 0's
+      -- exponent; see its declaration for why that is the golden's answer
+      -- exactly when every entry of e_grid is the same value
+      eq_grid := true;
+      for g in 1 to NGRP-1 loop
+        if v_e(g) /= v_e(0) then eq_grid := false; end if;
+      end loop;
+      e_grid1 <= std_logic_vector(to_signed(v_e(0), EXP_W));
       wait until rising_edge(clk);
-      start <= '1';
+      start <= '1'; start1 <= '1';
       wait until rising_edge(clk);
       -- 1 ns past the edge, not at it: `wait until rising_edge(clk)` resumes
       -- in the SAME delta as the edge, so a pulse the DUT assigns on that edge
@@ -369,13 +478,15 @@ begin
       assert cfg_taken = '1'
         report "case " & integer'image(c)
              & ": cfg_taken did not pulse at start" severity error;
-      start <= '0';
+      start <= '0'; start1 <= '0';
       -- RULE 2: poison e_grid the instant it has been taken.  It is read
       -- across BOTH passes; a DUT that reads it live aligns pass B by the
       -- poison and pass A by the truth, which leaves every value in range.
-      e_grid <= (others => '1');
+      e_grid  <= (others => '1');
+      e_grid1 <= (others => '1');
 
       while done /= '1' loop wait until rising_edge(clk); end loop;
+      while done1 /= '1' loop wait until rising_edge(clk); end loop;
       for k in 1 to ACK_LAG loop
         wait until rising_edge(clk);
         if done /= '1' then
@@ -461,6 +572,58 @@ begin
              & integer'image(c_nsat) & " mantissas saturated" severity error;
         nerr <= nerr + 1;
       end if;
+      -- ---- the one-group instance ------------------------------------
+      -- Count, order and err on EVERY case; values only where the grouping
+      -- provably cannot change them.  See the declaration block.
+      ok1 := true;
+      if m_cnt1 /= NTOT then
+        report "case " & integer'image(c) & ": NGRP=1 emitted "
+             & integer'image(m_cnt1) & " mantissas, want "
+             & integer'image(NTOT) severity error;
+        nerr <= nerr + 1; ok1 := false;
+      end if;
+      if err1 /= '0' then
+        report "case " & integer'image(c) & ": NGRP=1 raised err -- with one "
+             & "group e_min IS the only exponent, so no alignment shift can "
+             & "be negative" severity error;
+        nerr <= nerr + 1; ok1 := false;
+      end if;
+      for i in 0 to NTOT-1 loop
+        if i < m_cnt1 and i_got1(i) /= i and ok1 then
+          report "case " & integer'image(c) & " beat " & integer'image(i)
+               & ": NGRP=1 m_index got " & integer'image(i_got1(i))
+               & " want " & integer'image(i) severity error;
+          nerr <= nerr + 1; ok1 := false;
+        end if;
+      end loop;
+      if eq_grid then
+        n_eqc <= n_eqc + 1;
+        if to_integer(y_exp1) /= c_yexp then
+          report "case " & integer'image(c) & ": NGRP=1 y_exp got "
+               & integer'image(to_integer(y_exp1)) & " want "
+               & integer'image(c_yexp) & " -- every e_grid entry is equal "
+               & "here, so grouping cannot move the exponent" severity error;
+          nerr <= nerr + 1;
+        end if;
+        if (c_nsat > 0 and o_sat1 /= '1') or (c_nsat = 0 and o_sat1 /= '0') then
+          report "case " & integer'image(c) & ": NGRP=1 o_sat is "
+               & std_logic'image(o_sat1) & " but the golden says "
+               & integer'image(c_nsat) & " mantissas saturated" severity error;
+          nerr <= nerr + 1;
+        end if;
+        for i in 0 to NTOT-1 loop
+          if i < m_cnt1 and m_got1(i) /= v_m(i) and ok1 then
+            report "case " & integer'image(c) & " elem " & integer'image(i)
+                 & ": NGRP=1 mant got " & integer'image(m_got1(i)) & " want "
+                 & integer'image(v_m(i)) & " -- all e_grid entries equal, so "
+                 & "one group of " & integer'image(NTOT) & " must give the "
+                 & "same answer as " & integer'image(NGRP) & " groups of "
+                 & integer'image(GRP_N) severity error;
+            nerr <= nerr + 1; ok1 := false;
+          end if;
+        end loop;
+      end if;
+
       if err /= '0' then
         report "case " & integer'image(c) & ": err fired -- an alignment shift "
              & "came out negative, which e_min being the minimum of the same "
@@ -470,11 +633,18 @@ begin
 
       done_ack <= '1';
       wait until rising_edge(clk);
-      while busy = '1' loop wait until rising_edge(clk); end loop;
+      while busy = '1' or busy1 = '1' loop wait until rising_edge(clk); end loop;
     end loop;
     file_close(fh);
 
     wait until rising_edge(clk);
+    -- The one-group value check is only as good as the number of cases whose
+    -- e_grid entries happen to be equal.  If a future vector set has none, the
+    -- check silently becomes a count-and-order test, so say so loudly instead.
+    assert n_eqc > 0
+      report "tb_attn_emit: no case in this vector set has an all-equal "
+           & "e_grid, so the NGRP=1 instance was never value-checked -- only "
+           & "its element count and ordering were" severity failure;
     if nerr = 0 and mon_err = 0 and ord_err = 0 then
       report "tb_attn_emit: PASS -- " & integer'image(NCASE) & " layers x "
            & integer'image(NTOT) & " elements bit-exact on the mantissas AND "
@@ -483,7 +653,13 @@ begin
            & "after cfg_taken, m_valid and its data held across a blocked "
            & "ready with x_re low throughout, indices in order, done raised "
            & "only after the last mantissa was accepted, and o_sat matching "
-           & "the golden.  M_GAP=" & integer'image(M_GAP) & " ACK_LAG="
+           & "the golden.  A second instance at NGRP=1 -- one KV head, a legal "
+           & "generic that used to be an immediate bound violation -- ran the "
+           & "same " & integer'image(NCASE) & " layers as ONE group of "
+           & integer'image(NTOT) & ", in order and with err low on every one, "
+           & "and matched the golden exactly on the "
+           & integer'image(n_eqc) & " of them whose e_grid entries are all "
+           & "equal.  M_GAP=" & integer'image(M_GAP) & " ACK_LAG="
            & integer'image(ACK_LAG) severity note;
     else
       report "tb_attn_emit: FAIL -- "
