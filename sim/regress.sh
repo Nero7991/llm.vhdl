@@ -348,7 +348,7 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=79   # +1 sim/tb_mv4i_desc_image, the gateware judging a
+BASELINE_PASS=80   # +1 sim/tb_mv4i_desc_image, the gateware judging a
                    #    descriptor image written by tools/gen_mv4i_desc.py.
                    #    Its vector sim/mv4i_desc_image.txt is COMMITTED, so it
                    #    needs no row in this script and no model set, 2026-08-28
@@ -361,6 +361,8 @@ BASELINE_PASS=79   # +1 sim/tb_mv4i_desc_image, the gateware judging a
                    # +1 sim/tb_weight_streamer, 6.5a reassembly, 2026-08-28
                    # +1 sim/tb_attn_mac_array, subsystem C's MAC array, 2026-08-28
                    # +1 sim/tb_attn_block, subsystem C's top level, 2026-08-28
+                   # +1 sim/tb_attn_kv_axi, subsystem C's KV cache in HBM at
+                   #    two AXI widths, 2026-08-28
 
 usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
@@ -707,6 +709,15 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # abort, is FIXED, and sim/tb_attn_emit.vhd now runs a second instance at
     # NGRP = 1 on every gate run.
     attn_block_vec.txt)     echo "16 4 2 4 8 3 4 0" ;;
+    # ref/attn_kv_axi_vec.c, the KV-cache-in-HBM oracle for rtl/attn_kv_axi.vhd.
+    # Argument order is HEAD_DIM KV_BLOCK N_KVH LAYERS MAXCTX LAYER CUR_POS SEED
+    # and it must match sim/tb_attn_kv_axi.vhd's generic defaults; the vector
+    # file carries a shape header the harness asserts against them, so a
+    # mismatch here is loud rather than a wrong answer.  HEAD_DIM 256 /
+    # KV_BLOCK 32 is the BUILD geometry and is not reduced for the bench: the
+    # 272-byte record is what makes REC_B indivisible by the 32-byte beat, and
+    # that indivisibility is the 16-byte record phase the unit exists to handle.
+    attn_kv_axi_vec.txt)    echo "256 32 2 2 32 1 20 20260828" ;;
     attn_emit_vec.txt)      echo "40 2 48" ;;      # sim/mutate_attn_emit.sh
     attn_gate_vec.txt)      echo "35 64" ;;        # sim/mutate_attn_gate.sh
     attn_recip_vec.txt)     echo "24 12" ;;        # sim/mutate_attn_recip.sh
