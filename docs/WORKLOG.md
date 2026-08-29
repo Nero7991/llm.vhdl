@@ -148,10 +148,10 @@ landed, the table is the defect.
 
 | track | question | owns |
 |---|---|---|
-| **BUILD-E2E** | PBLOCK's own top NOT-verified item: the routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end and `used_in_synthesis false` plus the new `FK33_PBLK` gate are unproven in a project run. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
-| **CAPTURE** | The artefact backlog 12 named and does not have: **there is no `llama_top` capture in `.r9bs`**, so the 9B reference cannot be diffed against anything the design produces. Must handle the BFP repack divergence first: 193 of 490 records per token are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect. | `tools/ref9b/**`, new `ref/ref9b_*` |
-| **D-PROG** | Backlog 6. One matvec job is emitted and verified; a LAYER needs job sequencing, region routing and the D fields subsystem A does not read. Needs an oracle at the level of the SEQUENCE, since a column of verified jobs and a green integration test are jointly compatible with a wrong layer. | `rtl/seq_*`, new `tools/dprog_*`, new `sim/tb_seq_*` |
-| **C-SEAM** | Backlog 1, unblocked by C1 releasing `attn_block`. Wire the KV interface into the block and prove MULTI-TOKEN attention. `tb_attn_block` hardwiring `layer => 0` is exactly what hid C1, so the bench must vary token, layer AND KV block. | `rtl/attn_block.vhd`, `rtl/attn_kv_axi.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_attn_kv_seam.vhd`, `ref/attn_*` |
+| **BUILD-E2E** | The routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
+| **CAPTURE** | **There is no `llama_top` capture in `.r9bs`**, so the 9B reference cannot be diffed against anything the design produces. Must handle the BFP repack divergence first: 193 of 490 records per token are on the unclamped rule, so `--mode exact` reports a FALSE first divergence. | `tools/ref9b/**`, new `ref/ref9b_*` |
+| **C-SEAM** | Backlog 1. Wire the KV interface into `attn_block` and prove MULTI-TOKEN attention. `tb_attn_block` hardwiring `layer => 0` is exactly what hid C1. | `rtl/attn_block.vhd`, `rtl/attn_kv_axi.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_attn_kv_seam.vhd`, `ref/attn_*` |
+| **SCHED-FIX** | **The schedule `llama_top` actually executes fails an independent oracle 2,401 times** (311 `w_exp`, 253 `out_shift`, and `nsub_w = 29` on every step, a value the FK33's A wrapper refuses with `ERR_GEOM`). Confirm or refute independently, fix the source, and make the oracle a standing check. | `sim/llama_sched_pkg.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `rtl/seq_*` |
 
 **Landed since the last rewrite:** C-DONE, B-BLOCK, CDC-STATIC, CB-ORACLE, C1,
 B-LAYER (twice: the layer benches, then the B-BLK-1 fix and the `llama_top`
@@ -176,6 +176,47 @@ the hardware boundary itself, not the absence of anything to load.
 | **BFP repack rule** | The 9B reference's float-to-BFP repack always normalises (`reg_put`, `exp = 14 - floor(log2(amax))`, no clamp); every shipping unit on the path clamps (`sh = max(0, msb_pos(amax) - 14)`) and so stays under-normalised on quiet blocks. MEASURED by RUNNING `rtl/bfp_pack.vhd`: 341 of 760 exponents differ, all quiet blocks, none loud, reconstructed VALUES exact. **193 of 490 BFP records per token (39.4%) are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect.** Three routes scoped in section 6 of REF9B's write-up; they are not equivalent. | **OREN'S CALL.** TRACK CAPTURE told to work around it and report which route the capture work says is needed, NOT to pick one |
 | **`matvec_int4_axi` register 15** | No completeness guard and no idle interlock, so a partial codebook load through that plane is silently consumed. It is the standalone register-mapped plane; the FK33 path uses `matvec_int4_desc_axi.vhd`, which loads all sixteen atomically and rejects an unloaded codebook with `EC_DESC`. | Left as a decision, not a fix. Not on the FK33 path |
 | **OI-9 error-code space** | Full. Widen, subdivide via `ERR_INFO`, or take a reserved D value, with consequences for D. | **OREN'S CALL.** TRACK D-PROG told to STOP and report rather than choose |
+
+### Raised by TRACK D-PROG, 2026-08-29 -- the most serious of the day
+
+**Every check on the layer program was an agreement check against the schedule
+itself.** Two were further transcriptions of it (`seq_tbl_pkg`,
+`llama_sched_pkg`), one asked only whether a descriptor is well FORMED (the
+gateware has no idea which tensor a job should have used), and the fourth
+diffed a run against a run driven by the second. That column is jointly
+compatible with a program that is internally perfect and computes the wrong
+model, and the earlier write-up said so itself.
+
+`tools/dprog_oracle.py` is the first check that is not: it decodes the EMITTED
+BYTES against artefacts from other sources -- llama.cpp's execution order via
+`tools/ref9b/seam_map.py`, the packed `manifest.json`, and decisively each
+`.mv4i` file's own 4 KB header, whose sub-region offset table at `0x38` pins
+every weight base exactly. On the generated program: **39,330 checks, 0 FAIL**,
+whole token, 505 steps. Teeth: 25 of 27 mutations killed, including **all six
+that the earlier table recorded as RTL-silent**.
+
+**Then the same oracle was run against `--stamp sched`, byte-identical to
+`sim/llama_sched_pkg.vhd`, the table `llama_top` actually executes: 2,401
+FAILS.** 311 `w_exp`, 253 `out_shift`, and `nsub_w = 29` on every step, which
+the FK33's A wrapper refuses with `ERR_GEOM`. Byte-identity against a walker
+test proves the step SEQUENCE agrees and says nothing about the numbers a real
+run needs. **TRACK SCHED-FIX is confirming and fixing this.**
+
+**OI-4 is STALE at HEAD and should be closed.** `tools/gen_layer_program.py`
+(1,015 lines) landed at `a2b20f3`: job sequencing, region routing and the D
+fields A does not read all exist. Backlog 6's items 1 to 3 were already done.
+
+Two corrections worth carrying: **`token_embd.weight` needs ZERO descriptor
+jobs, not 15** (host-side gather into `R_X`; the 505-step program contains no A
+job on it), and "one matvec job is emitted" understates it by 310 -- **311 are
+emitted and all pass**. `output.weight`'s 15 windows are confirmed.
+
+**Trap to propagate:** `gen_layer_program.py` defaults to the PRE-QKV-PAD packed
+set, where 48 of 311 A jobs are refused. **Always pass `--manifest`.**
+
+**OI-9 preference, asked for and not acted on:** subdivide via `ERR_INFO`. It
+already carries a word index, so it costs neither a format change nor a
+reserved D value. Still Oren's call.
 
 ### Raised by TRACK DESC-MUT, 2026-08-29
 
