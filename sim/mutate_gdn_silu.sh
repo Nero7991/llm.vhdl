@@ -15,9 +15,24 @@
 # whole suite.  That is the same shape the audit records for gdn_scalar
 # ("reported, not asserted") and it is true here too.
 #
-# THIS SCRIPT SUPPLIES THAT GATE, in the harness, not in the RTL and not in
-# the bench.  ACC_LSB / ACC_REL below are MEASURED baselines with headroom,
-# not derived bounds, and they are stated as such.  Nothing in rtl/ or sim/ is
+# SUPERSEDED, 2026-08-29, AND KEPT AS THE SECOND OPINION.  The two paragraphs
+# above describe the state before this date and are left standing because they
+# are what the ACC_LSB / ACC_REL numbers were measured against.
+# sim/tb_gdn_silu.vhd now carries its OWN real-valued oracle and gates on it at
+# severity error, so the accuracy claim is reachable from sim/regress.sh
+# instead of only from this script.  Two columns are printed per mutation:
+#
+#   oracle  -- the GENERATOR's figures, parsed from its stderr.  A claim about
+#              the C's y column.  This is the pre-2026-08-29 gate.
+#   bench   -- the BENCH's figures, parsed from the run log.  A claim about the
+#              DUT's own o_data.  This is what regress.sh now fails on.
+#
+# They are not the same claim: the generator's column cannot see an RTL-only
+# accuracy defect at all, because the generator never runs the RTL.  Where the
+# two disagree, the disagreement IS the measurement.
+#
+# ACC_LSB / ACC_REL are MEASURED baselines with headroom, not derived bounds,
+# and so are the bench's own generic defaults.  Nothing in rtl/ or sim/ is
 # edited to make a mutation bite; every mutation runs against a COPY.
 #
 # THREE CLASSES, and the third is the only one that can reach a shared recipe
@@ -55,6 +70,14 @@ mkdir -p "$SCRATCH"
 # what it costs.
 ACC_LSB="${ACC_LSB:-2.0}"
 ACC_REL="${ACC_REL:-5.5e-2}"
+
+# The BENCH-side gate.  Default deliberately EMPTY so the bench runs at its own
+# committed generic defaults and this script measures the gate sim/regress.sh
+# actually applies, rather than a private one that could drift away from it.
+# Widen it for a measurement pass with, e.g.
+#   BACC="-gACC_MAXLSB_M=2000000000 -gACC_NEAR_MAX=1000000 -gACC_MIN_CHECK=0"
+# which is the form the raw figures in the write-up were collected with.
+BACC="${BACC:-}"
 
 NKILL=0; NSURV=0; NTOT=0
 
@@ -125,16 +148,41 @@ mutate() {
   fi
   ghdl -a --std=08 -frelaxed --workdir="$dir" sim/tb_gdn_silu.vhd >/dev/null 2>&1
 
+  # shellcheck disable=SC2086
   ( cd "$dir" && timeout 900 ghdl -r --std=08 -frelaxed --workdir="$dir" \
       tb_gdn_silu -gVECS=v.txt -gNCASE="$NCASE" -gN="$NELEM" -gARG_Q="$ARGQ" \
-      --max-stack-alloc=0 --stop-time=900ms ) >"$dir/run.log" 2>&1
+      $BACC --max-stack-alloc=0 --stop-time=900ms ) >"$dir/run.log" 2>&1
 
-  local bx acc
-  if grep -q "bit-exact with the C reference on all" "$dir/run.log"; then
-    bx=PASS
-  else
+  local bx acc bench
+  # Bit-exactness is judged on the MISMATCH report and not on the presence of
+  # the success line: since 2026-08-29 the bench withholds that line when the
+  # ACCURACY check fails too, so keying on it would report every accuracy kill
+  # as a bit-exactness kill and hide which check did the work.
+  #
+  # THE THIRD STATE IS NOT OPTIONAL.  Keying on the success line used to make a
+  # run that DIED -- the DUT's own assert firing, a timeout -- read as FAIL by
+  # accident.  Keying on the mismatch alone makes the same run read as PASS,
+  # which is worse.  So a run that never reached its own verdict is ABORT and
+  # is counted as a kill in its own right.  MEASURED: R11 lands here, killed by
+  # rtl/rmsnorm_bf.vhd's Q30 normalisation assert at severity failure, which
+  # sim/regress.sh's FAIL_RE also matches.
+  if grep -qE "mismatch\\(es\\) in" "$dir/run.log"; then
     bx=FAIL
+  elif ! grep -qF "gdn_silu accuracy vs the real-valued oracle" "$dir/run.log"; then
+    bx=ABORT
+  else
+    bx=PASS
   fi
+  bench=$(python3 - "$dir/run.log" <<'PYB'
+import re, sys
+t = open(sys.argv[1], errors="replace").read()
+m = re.search(r"worst ([0-9.eE+-]+) LSB at case (-?\d+).*?; (\d+) of (\d+) elem", t, re.S)
+if not m:
+    print("NOFIG"); sys.exit()
+tag = "FAIL " if "OUT OF TOLERANCE" in t else "pass "
+print(tag + "%.4g LSB / %s past / n=%s" % (float(m.group(1)), m.group(3), m.group(4)))
+PYB
+)
   # The accuracy gate this suite does not have.  Both figures come from the
   # generator's own double path, which shares no code with either integer
   # transcription.
@@ -150,22 +198,31 @@ bad = (l > float(sys.argv[2])) or (r > float(sys.argv[3]))
 print(("FAIL " if bad else "pass ") + "%.4f LSB / %.4e rel" % (l, r))
 PY
 )
-  if [ "$bx" = FAIL ] || [ "${acc%% *}" = FAIL ]; then
+  if [ "$bx" != PASS ] || [ "${acc%% *}" = FAIL ] || [ "${bench%% *}" = FAIL ]; then
     NKILL=$((NKILL+1))
-    printf '%-4s KILLED   bit-exact %-4s  oracle %s   -- %s\n' "$tag" "$bx" "$acc" "$desc"
-    if [ "$bx" = FAIL ]; then
-      grep -m1 -E "mismatch\(es\)|error" "$dir/run.log" | cut -c1-150 | sed 's/^/       /'
+    printf '%-4s KILLED   bit-exact %-4s  oracle %s  bench %s  -- %s\n' \
+        "$tag" "$bx" "$acc" "$bench" "$desc"
+    if [ "$bx" != PASS ]; then
+      grep -m1 -E "mismatch\(es\) in|assertion (error|failure)|simulation failed" \
+        "$dir/run.log" | cut -c1-160 | sed 's/^/       /'
+    fi
+    if [ "${bench%% *}" = FAIL ]; then
+      grep -m1 -E "OUT OF TOLERANCE" "$dir/run.log" | cut -c1-160 | sed 's/^/       /'
     fi
   else
     NSURV=$((NSURV+1))
-    printf '%-4s SURVIVED bit-exact %-4s  oracle %s   -- %s\n' "$tag" "$bx" "$acc" "$desc"
+    printf '%-4s SURVIVED bit-exact %-4s  oracle %s  bench %s  -- %s\n' \
+        "$tag" "$bx" "$acc" "$bench" "$desc"
   fi
 }
 
 echo "===================== mutations of gdn_silu ========================"
 echo "cases $NCASE x $NELEM elements, seed $SEED, ARG_Q $ARGQ"
-echo "accuracy gate supplied by THIS SCRIPT: <= $ACC_LSB LSB and <= $ACC_REL rel"
-echo "(the committed bench gates bit-exactness only)"
+echo "oracle column: gate supplied by THIS SCRIPT from the generator's stderr,"
+echo "  <= $ACC_LSB LSB and <= $ACC_REL rel."
+echo "bench column:  gate supplied by sim/tb_gdn_silu.vhd itself, at its own"
+echo "  generic defaults unless BACC overrides them.  This is the gate"
+echo "  sim/regress.sh fails on.  BACC='$BACC'"
 echo
 echo "---- class RTL: rtl/gdn_silu.vhd alone.  Must fail bit-exactness ------"
 

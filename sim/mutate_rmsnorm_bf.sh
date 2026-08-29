@@ -19,9 +19,25 @@
 # RTL faults are caught"; that was prose with no harness behind it, and this
 # file is the harness.
 #
-# THIS SCRIPT SUPPLIES THE ACCURACY GATE, in the harness -- not in the RTL,
-# not in the bench, not in the generator.  Nothing under rtl/, ref/ or
-# sim/tb_*.vhd is edited; every mutation is applied to a COPY.
+# SUPERSEDED, 2026-08-29, AND KEPT AS THE SECOND OPINION.  The paragraph above
+# describes the state before this date and is left standing because it is what
+# the numbers below were measured against.  sim/tb_rmsnorm_bf.vhd now carries
+# its OWN real-valued oracle and gates on it at severity error, so the accuracy
+# claim is reachable from sim/regress.sh instead of only from this script.  Two
+# columns are therefore printed per mutation:
+#
+#   oracle  -- the GENERATOR's figures, parsed from its stderr.  A claim about
+#              the C's array.  This is the pre-2026-08-29 gate.
+#   bench   -- the BENCH's figures, parsed from the run log.  A claim about the
+#              DUT's own o_mant.  This is what regress.sh now fails on.
+#
+# They are not the same claim and the difference is the point: the generator's
+# column cannot see an RTL-only accuracy defect at all, because the generator
+# does not run the RTL.  Where the two columns disagree, that disagreement is
+# the measurement.
+#
+# Nothing under rtl/, ref/ or sim/tb_*.vhd is edited; every mutation is applied
+# to a COPY.
 #
 # THREE CLASSES:
 #   RTL  -- rtl/rmsnorm_bf.vhd only.  Must fail bit-exactness.
@@ -61,6 +77,14 @@ mkdir -p "$SCRATCH"
 # bounds derived from the recipe.
 ACC_GAIN="${ACC_GAIN:-3.0e-5}"
 ACC_LSB="${ACC_LSB:-1.0}"
+
+# The BENCH-side gate.  Default deliberately EMPTY so the bench runs at its own
+# committed generic defaults and this script measures the gate sim/regress.sh
+# actually applies, rather than a private one that could drift away from it.
+# Widen it for a measurement pass with, e.g.
+#   BACC="-gACC_MAXLSB_M=2000000000 -gACC_NEAR_MAX=1000000 -gACC_MIN_CHECK=0"
+# which is the form the raw figures in the write-up were collected with.
+BACC="${BACC:-}"
 
 NKILL=0; NSURV=0; NTOT=0
 
@@ -139,16 +163,41 @@ mutate() {
   # 900ms is a backstop only: the honest run takes 61 us of simulated time and
   # 7 s of wall time.  A mutant that DEADLOCKS runs to the stop time, so the
   # timeout, not the stop time, is what bounds the cost of a hang.
+  # shellcheck disable=SC2086
   ( cd "$dir" && timeout 300 ghdl -r --std=08 -frelaxed --workdir="$dir" \
       tb_rmsnorm_bf -gVECS=v.txt -gNCASE="$NCASE" -gN="$NELEM" -gQ="$QQ" \
-      --max-stack-alloc=0 --stop-time=900ms ) >"$dir/run.log" 2>&1
+      $BACC --max-stack-alloc=0 --stop-time=900ms ) >"$dir/run.log" 2>&1
 
-  local bx acc
-  if grep -q "bit-exact with the C reference on all" "$dir/run.log"; then
-    bx=PASS
-  else
+  local bx acc bench
+  # Bit-exactness is judged on the MISMATCH report and not on the presence of
+  # the success line: since 2026-08-29 the bench withholds that line when the
+  # ACCURACY check fails too, so keying on it would report every accuracy kill
+  # as a bit-exactness kill and hide which check did the work.
+  #
+  # THE THIRD STATE IS NOT OPTIONAL.  Keying on the success line used to make a
+  # run that DIED -- the DUT's own assert firing, a timeout -- read as FAIL by
+  # accident.  Keying on the mismatch alone makes the same run read as PASS,
+  # which is worse.  So a run that never reached its own verdict is ABORT and
+  # is counted as a kill in its own right.  MEASURED: R11 lands here, killed by
+  # rtl/rmsnorm_bf.vhd's Q30 normalisation assert at severity failure, which
+  # sim/regress.sh's FAIL_RE also matches.
+  if grep -qE "MISMATCH in|DIFFERS from the C reference" "$dir/run.log"; then
     bx=FAIL
+  elif ! grep -qF "rmsnorm_bf accuracy vs the real-valued oracle" "$dir/run.log"; then
+    bx=ABORT
+  else
+    bx=PASS
   fi
+  bench=$(python3 - "$dir/run.log" <<'PYB'
+import re, sys
+t = open(sys.argv[1], errors="replace").read()
+m = re.search(r"worst ([0-9.eE+-]+) LSB at case (-?\d+).*?; (\d+) of (\d+) unsat", t, re.S)
+if not m:
+    print("NOFIG"); sys.exit()
+tag = "FAIL " if "OUT OF TOLERANCE" in t else "pass "
+print(tag + "%.4g LSB / %s past / n=%s" % (float(m.group(1)), m.group(3), m.group(4)))
+PYB
+)
   acc=$(python3 - "$dir/gen.err" "$ACC_GAIN" "$ACC_LSB" <<'PY'
 import re, sys
 t = open(sys.argv[1]).read()
@@ -161,23 +210,32 @@ bad = (gv > float(sys.argv[2])) or (lv > float(sys.argv[3]))
 print(("FAIL " if bad else "pass ") + "%.4e gain / %.4f LSB" % (gv, lv))
 PY
 )
-  if [ "$bx" = FAIL ] || [ "${acc%% *}" = FAIL ]; then
+  if [ "$bx" != PASS ] || [ "${acc%% *}" = FAIL ] || [ "${bench%% *}" = FAIL ]; then
     NKILL=$((NKILL+1))
-    printf '%-4s KILLED   bit-exact %-4s  oracle %s   -- %s\n' "$tag" "$bx" "$acc" "$desc"
-    if [ "$bx" = FAIL ]; then
-      grep -m1 -E "MISMATCH|DIFFERS|assertion|error" "$dir/run.log" \
-        | cut -c1-150 | sed 's/^/       /'
+    printf '%-4s KILLED   bit-exact %-4s  oracle %s  bench %s  -- %s\n' \
+        "$tag" "$bx" "$acc" "$bench" "$desc"
+    if [ "$bx" != PASS ]; then
+      grep -m1 -E "MISMATCH|DIFFERS|assertion (error|failure)|simulation failed" \
+        "$dir/run.log" | cut -c1-160 | sed 's/^/       /'
+    fi
+    if [ "${bench%% *}" = FAIL ]; then
+      grep -m1 -E "OUT OF TOLERANCE" "$dir/run.log" \
+        | cut -c1-160 | sed 's/^/       /'
     fi
   else
     NSURV=$((NSURV+1))
-    printf '%-4s SURVIVED bit-exact %-4s  oracle %s   -- %s\n' "$tag" "$bx" "$acc" "$desc"
+    printf '%-4s SURVIVED bit-exact %-4s  oracle %s  bench %s  -- %s\n' \
+        "$tag" "$bx" "$acc" "$bench" "$desc"
   fi
 }
 
 echo "==================== mutations of rmsnorm_bf ======================="
 echo "cases $NCASE x $NELEM, seed $SEED, Q $QQ, eps $EPS"
-echo "accuracy gate supplied by THIS SCRIPT: model-range gain <= $ACC_GAIN,"
-echo "output <= $ACC_LSB LSB.  The committed bench gates bit-exactness only."
+echo "oracle column: gate supplied by THIS SCRIPT from the generator's stderr,"
+echo "  model-range gain <= $ACC_GAIN, output <= $ACC_LSB LSB."
+echo "bench column:  gate supplied by sim/tb_rmsnorm_bf.vhd itself, at its own"
+echo "  generic defaults unless BACC overrides them.  This is the gate"
+echo "  sim/regress.sh fails on.  BACC='$BACC'"
 echo
 echo "---- class RTL: rtl/rmsnorm_bf.vhd alone.  Must fail bit-exactness ----"
 
@@ -380,6 +438,26 @@ mutate B6 "the emit round-half-up bias is dropped in BOTH (truncate)" \
   --c \
 "    int64_t emit_bias = (st == 0) ? 0 : vsll64(1, st - 1);" \
 "    int64_t emit_bias = 0;"
+
+# B7 EXISTS TO GIVE ACC_MIN_CHECK TEETH, and it is the only mutation in this
+# file aimed at the FLOOR rather than at an error figure.  Every other
+# BOTH-class entry moves the numbers; this one DELETES them.  Keeping 30 bits
+# of headroom instead of 14 puts max_raw >> shift_total at ~2^30, so every
+# element clips at +32767, every element is excluded from the oracle as
+# saturated, and max / mean / count are all computed over an EMPTY set and
+# report 0.  Without the floor this reads as a perfect unit.
+#
+# It is exactly the shape the completeness audit flagged for gdn_head_emit and
+# gdn_y_emit, where 41 of 48 cases saturate and 7 are all-zero, so the oracle
+# is EMPTIED rather than made insensitive.  Having it here means the mechanism
+# is measured on a unit that works before it is ported to two that do not.
+mutate B7 "30 bits of emit headroom in BOTH: every element saturates" \
+  --rtl \
+"            if msb_p - 14 < 0 then st := 0; else st := msb_p - 14; end if;" \
+"            if msb_p - 30 < 0 then st := 0; else st := msb_p - 30; end if;" \
+  --c \
+"    int st    = msb_p - 14; if (st < 0) st = 0;" \
+"    int st    = msb_p - 30; if (st < 0) st = 0;"
 
 echo
 echo "kill ratio: $NKILL killed, $NSURV survived, of $NTOT"
