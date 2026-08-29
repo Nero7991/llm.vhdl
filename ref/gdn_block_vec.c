@@ -748,12 +748,13 @@ int main(int argc, char **argv)
      * bound caught: an uninitialised shared LUT or epsilon, which produced
      * 9.4e8 and 1.6e11 LSB there.  MEASURED here: see the writeup; the bound
      * is set an order above the measured worst over nine seeds. */
-    /* THREE gates, not one.  A max alone is blind to a distribution shift:
-     * a mutation that destroys a unit can read BETTER than the correct design
-     * on a maximum while moving the whole distribution.  So the count of
-     * elements past 64 LSB is gated as well, and the number of elements
-     * actually COMPARED is gated with a floor -- a run that compares nothing
-     * must not be able to pass, which is the failure a max and a count share.
+    /* FOUR gates, not one.  A max alone is blind to a distribution shift: a
+     * mutation that destroys a unit can read BETTER than the correct design on
+     * a maximum while moving the whole distribution.  So the COUNT of elements
+     * past 0.05 is gated as well, the bare-LSB max is kept as an unbounded
+     * blow-up detector, and the number of elements actually COMPARED is gated
+     * with a floor -- a run that compares nothing must not be able to pass,
+     * which is the failure a max and a count share.
      *
      * MEASURED over 29 seeds at KH=2 VH=4 D=32 tokens=2, kmap=div:
      *
@@ -765,7 +766,8 @@ int main(int argc, char **argv)
      * the old LSB-only denominator the same figure ran 9.97 at
      * (2,4,32,2 tokens) to 26481 at (1,3,16,4 tokens), so a bound calibrated
      * on one shape fired spuriously on another.  With this denominator the six
-     * shapes measured span 0.135 to 0.491.
+     * shapes measured span 0.135 to 0.544, the top of that range being the
+     * real 9B shape (16 key heads, 32 value heads, DIM 128).
      *
      * FOUR GATES, AND THE MAX IS THE WEAKEST OF THEM.  MEASURED: with
      * fx_init() removed, or with bf_resolve_eps() removed -- the two failures
@@ -775,9 +777,9 @@ int main(int argc, char **argv)
      * can produce while the design was destroyed, because a term-norm
      * denominator structurally caps the ratio near 1 when the output collapses
      * to zero.  So the count is what carries this bench, the bare-LSB figure
-     * is kept as an unbounded blow-up detector, and the floor on elements
-     * compared stops a run that checks nothing from passing.  A max alone
-     * would have missed both. */
+     * is kept as an unbounded blow-up detector -- it reads 3.2e7 and 9.6e30 on
+     * those same two -- and the floor on elements compared stops a run that
+     * checks nothing from passing.  A max alone would have missed both. */
     int bad = 0;
     if (worst > 2.0) {
         fprintf(stderr, "  FAIL: end-to-end error is far larger than the "
@@ -794,7 +796,7 @@ int main(int argc, char **argv)
      * shape-sensitive -- 9.97 at (2,4,32,2 tokens) against 26481 at
      * (1,3,16,4 tokens) on identical, correct code -- so it cannot be tight,
      * but it is the only one of the four that grows without bound, and the
-     * two uninitialised-global failures reach 2.6e7 and 7.9e30 on it. */
+     * two uninitialised-global failures reach 3.2e7 and 9.6e30 on it. */
     if (worst_lsb > 1.0e6) {
         fprintf(stderr, "  FAIL: worst bare-LSB error %.4g is a blow-up, not "
                         "quantization\n", worst_lsb);
