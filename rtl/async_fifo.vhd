@@ -273,7 +273,35 @@ begin
         -- per-port stream misalignment, which is the exact defect 7.7's flush
         -- rule exists to prevent.  The throttle above axi_rd_port makes it
         -- unreachable; this says so out loud if it ever is not.
-        assert not (w_valid = '1' and used_w = to_unsigned(DEPTH, AW+1))
+        --
+        -- THE CONDITION IS `wr_now`, NOT `w_valid`, AND THAT IS A FIX, NOT A
+        -- TIDY-UP (2026-08-29, TRACK CDC-BENCH).  It used to read
+        -- `w_valid = '1' and used_w = DEPTH`, which is not "a beat was
+        -- dropped" -- it is "a producer is OFFERING while the FIFO is full",
+        -- i.e. ordinary backpressure.  A conforming stream producer holds
+        -- `w_valid` until `w_ready`, so filling this FIFO from one killed the
+        -- simulation at severity failure with nothing wrong.  MEASURED by
+        -- sim/tb_async_fifo.vhd on the FIRST run it ever made: the guard fired
+        -- at 172500 ps, and with it downgraded to a probe it fired 34,362
+        -- times across 8 clock ratios with `w_ready = '0'`, `full_r = '1'` and
+        -- `wr_now = '0'` EVERY time.  No beat was ever dropped.
+        --
+        -- DERIVED, and this is why the old form could never be right:
+        -- used_w(n) = DEPTH implies used_w(n-1) >= DEPTH-1, and either
+        -- used_w(n-1) >= DEPTH or used_w(n-1) = DEPTH-1 with a write at n-1;
+        -- both arms of the full_r assignment above set full_r(n) = '1'.  So
+        -- w_ready is ALWAYS low when used_w = DEPTH, and `w_valid` at that
+        -- moment carries no information at all.  `wr_now` is the one write
+        -- enable term (see the comment at its declaration), so it is the only
+        -- signal that means "a beat was taken".
+        --
+        -- Nothing in hardware changes: synthesis ignores asserts.  What
+        -- changes is that the FIFO can now be FILLED in simulation, which is
+        -- the one state the +123.88 MHz flag restructuring above most needed
+        -- a bench to reach.  Teeth: sim/mutate_async_fifo.sh rows F1 and F2,
+        -- which break full_r in the two possible directions so that a write
+        -- really does land at used_w = DEPTH; both are caught HERE.
+        assert not (wr_now = '1' and used_w = to_unsigned(DEPTH, AW+1))
           report "async_fifo: WRITE INTO A FULL FIFO -- a beat was dropped"
           severity failure;
       end if;

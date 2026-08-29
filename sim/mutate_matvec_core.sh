@@ -182,7 +182,7 @@ REF=ref/matvec_int4.c
 TB=sim/tb_matvec_core.vhd
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
-TRACES="${TRACES:-A P S}"
+TRACES="${TRACES:-A P S X}"
 GHDL="${GHDL:-ghdl}"
 mkdir -p "$SCRATCH"
 
@@ -207,6 +207,16 @@ gen_trace() {  # gen_trace <name> <M> <K> <RI> <sat>
 gen_trace A 8   96 4 0
 gen_trace P 6  100 4 0
 gen_trace S 8 1024 4 1
+# X -- RAGGED *AND* SATURATING, added 2026-08-29 by TRACK CDC-BENCH.  A and P
+# and S between them leave EIGHT mutations invisible to the committed gate,
+# four needing a ragged shape and four needing saturation, and the obvious
+# reading is that closing the gap costs two new gate rows.  It does not: M = 6
+# is not a multiple of RI = 4 and K = 1000 = 31*32 + 8 is not a multiple of
+# BLK = 32, while sat mode 1 still reaches SATEV 1 because NB = 32 > 16.  One
+# trace, both properties.  MEASURED: X alone kills 44 of the 57, all eight of
+# the gate's blind spots included.  See section 4.6 of
+# docs/debugging/2026-08-29_cdc-and-fifo-coverage.md.
+gen_trace X 6 1000 4 1
 
 if ! cmp -s "$SCRATCH/tr_A.txt" sim/tr.txt; then
   echo "REFUSING TO RUN: trace A is not byte-identical to sim/tr.txt."
@@ -215,7 +225,19 @@ if ! cmp -s "$SCRATCH/tr_A.txt" sim/tr.txt; then
   exit 2
 fi
 echo "trace A byte-identical to sim/tr.txt  (MEASURED, this run)"
-for t in A P S; do
+
+# X IS ALSO COMMITTED, and for the same reason A is checked: it is the vector
+# behind the sim/tb_matvec_core_ragsat.vhd gate row, and a golden that nothing
+# regenerates is a golden that anything can replace in silence.
+if ! cmp -s "$SCRATCH/tr_X.txt" sim/tr_ragsat.txt; then
+  echo "REFUSING TO RUN: trace X is not byte-identical to sim/tr_ragsat.txt."
+  echo "That file is the vector sim/tb_matvec_core_ragsat.vhd gates on, so the"
+  echo "X column would not be a statement about the gate.  Regenerate it with"
+  echo "  ./mv4i --trace sim/tr_ragsat.txt 6 1000 4 1"
+  exit 2
+fi
+echo "trace X byte-identical to sim/tr_ragsat.txt  (MEASURED, this run)"
+for t in $TRACES; do
   printf 'trace %s  %s  %s\n' "$t" \
     "$(grep -m1 '^DIMS' "$SCRATCH/tr_$t.txt")" \
     "$(grep -m1 '^SATEV' "$SCRATCH/tr_$t.txt")"
@@ -389,6 +411,8 @@ echo " mutations of rtl/matvec_core.vhd, judged by sim/tb_matvec_core.vhd"
 echo " columns: A = the committed gate trace (sim/tr.txt, 8x96, SATEV 0)"
 echo "          P = ragged, 6x100 (ragged BFP tile AND 28 masked columns)"
 echo "          S = adversarial, 8x1024 sat (NB=32, SATEV 1)"
+echo "          X = ragged AND saturating, 6x1000 sat -- the one trace that"
+echo "              closes the gate gap on its own (TRACK CDC-BENCH)"
 echo " KILL = the checker fired.  ABRT = ghdl stopped the run (counted as a"
 echo " kill, worth less).  surv = the bench printed its final match line."
 echo "======================================================================="

@@ -383,7 +383,40 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=88   # +1 sim/tb_llama_top_normw, 2026-08-29.  The top-level
+BASELINE_PASS=91   # +1 sim/tb_matvec_core_ragsat, 2026-08-29.  TRACK A-MUT
+                   #    measured EIGHT mutations of rtl/matvec_core.vhd that
+                   #    the committed gate cannot see, because sim/tr.txt has
+                   #    K = 96 = 3*32 exactly, M = 8 = 2*4 exactly and
+                   #    SATEV 0, so spec 6.2's column mask, the nb_r ceiling,
+                   #    the BFP emit mask and EVERY saturation rail are
+                   #    unexercised -- D16 is the sat32 clamp that keeps a
+                   #    48-bit accumulator inside an int32 output.  Four of the
+                   #    eight need a ragged shape and four need saturation,
+                   #    which reads as two new rows; MEASURED, it is ONE.
+                   #    `--trace t 6 1000 4 1` is ragged in both dimensions and
+                   #    still reaches SATEV 1, and it kills all eight.  A union
+                   #    X is 44 of 57, identical to A union P union S.  Its
+                   #    vector sim/tr_ragsat.txt is COMMITTED for the same
+                   #    reason sim/tr.txt is, and sim/mutate_matvec_core.sh
+                   #    regenerates and cmp's BOTH on every run.  MEASURED 3 s.
+                   # +2 sim/tb_async_fifo and sim/tb_axi_rd_fsm, 2026-08-29.
+                   #    THE FIRST GATE COVERAGE EITHER UNIT HAS EVER HAD.
+                   #    rtl/async_fifo.vhd and rtl/axi_rd_fsm.vhd are the CDC
+                   #    and the AR-issue FSM of all 27 FK33 read masters, and
+                   #    both were reached ONLY through rtl/axi_rd_port.vhd --
+                   #    which every gate row instantiates at DUAL_CLK = false,
+                   #    selecting rtl/stream_fifo.vhd instead, so async_fifo's
+                   #    architecture was never elaborated on a gate run at all.
+                   #    tb_async_fifo runs EIGHT clock ratios concurrently and
+                   #    fills, empties, clears and resets each one; tb_axi_rd_fsm
+                   #    runs the throttle against a FIFO model that deliberately
+                   #    does NOT backpressure, so an overrun is visible rather
+                   #    than absorbed.  Neither needs a vector file.  MEASURED
+                   #    0.4 s and 0.1 s standalone, 0 s and 1 s as gate rows, so
+                   #    neither belongs in SLOW_TBS.  Teeth:
+                   #    sim/mutate_async_fifo.sh (24 of 33) and
+                   #    sim/mutate_axi_rd_fsm.sh (25 of 33).
+                   # +1 sim/tb_llama_top_normw, 2026-08-29.  The top-level
                    #    RMSNorm gain was a synthetic ramp and `attn_norm`
                    #    appeared ZERO times in rtl/llama_top.vhd, so the nine
                    #    R_XN seams of a token could not be compared against
@@ -807,6 +840,20 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     # the trace loader spends one delta per line, which trips ghdl's 5000
     # default and looks exactly like a zero-delay loop.  It is not one.
     sim:tb_matvec_core)      echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=0 --stop-time=50ms --stop-delta=1000000" ;;
+    # The RAGGED-AND-SATURATING second stimulus.  Its generics are pinned in
+    # sim/tb_matvec_core_ragsat.vhd, not here, because regress keys a test by
+    # name and cannot run one testbench at two generic sets -- so the ONLY
+    # thing this row supplies is the delta budget.  It is NOT optional:
+    # tb_matvec_core's trace loader spends one delta per line and
+    # sim/tr_ragsat.txt is 7,805 lines, so on ghdl's 5000 default the run stops
+    # at 205 ns having loaded nothing and is scored NOVERDICT.  MEASURED, that
+    # is exactly what happened the first time this row was added.
+    #
+    # Deliberately NOT in SLOW_TBS: MEASURED 3 s as a gate row, against
+    # tb_matvec_core's 1 s.  --quick therefore runs the ragged-and-saturating
+    # stimulus even though it skips the plain one, which is the right way round
+    # -- this is the row that covers the eight mutations the plain one cannot.
+    sim:tb_matvec_core_ragsat) echo "--stop-time=50ms --stop-delta=2000000" ;;
     sim:tb_matvec_int4)      echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=3 --stop-time=30ms --stop-delta=1000000" ;;
     sim:tb_matvec_axi)       echo "-gTRACE=../tr.txt -gRI=4 -gSTALL=3 --stop-time=50ms --stop-delta=1000000" ;;
     # The FK33 geometry.  Its trace is a BARE name, not ../tr.txt, so it is
@@ -825,6 +872,14 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     # sim/run_matvec.sh stages 4 and 4b, first row of each sweep.
     sim:tb_act_mem)          echo "-gELEMS=544 -gBLK=32 -gLANES=4 --stop-time=500ms" ;;
     sim:tb_axi_rd_port)      echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 --stop-time=200ms" ;;
+    # The two CDC benches.  Both drop `running` and call std.env.stop
+    # themselves, so --stop-time is a BACKSTOP only -- but it is the backstop
+    # that turns a hang into a fast failure instead of burning the whole
+    # $TIMEOUT.  MEASURED honest end times: tb_async_fifo 76.03 us across its
+    # eight concurrent clock ratios, tb_axi_rd_fsm 27.25 us across its two
+    # acknowledgement latencies.  2 ms and 40 ms are 26x and 1500x those.
+    sim:tb_async_fifo)       echo "--stop-time=2ms --stop-delta=2000000" ;;
+    sim:tb_axi_rd_fsm)       echo "--stop-time=40ms --stop-delta=2000000" ;;
     # sim/run_seq_*.sh named configuration: the one the real system runs
     # closest to (memory fast, units slow, so the prefetch gets far ahead).
     sim:tb_seq_desc_fetch)   echo "-gURAM_LAT=1 -gJOB_LAT=120 -gLAT_SKEW=11 -gSTRICT=true --stop-time=400ms" ;;
