@@ -461,6 +461,38 @@ CLEANLY -- and note the state figure it prints, 9.2697, is inside `TOL_S` at
 this defect was invisible to that bench at every honest tolerance.  It is the
 count, not the bound, that sees it.
 
+### 5.8 Full unfiltered gate run, after every edit
+
+`bash sim/regress.sh`, no `--only`, no `--quick`, both suites:
+
+```
+ OVERALL     PASS 85   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 85 passing, matches the recorded floor of 85
+ REGRESSION: PASS
+```
+
+Every subsystem B row green, including the two that were retuned:
+
+```
+PASS  sim:tb_gdn_conv               4s
+PASS  sim:tb_gdn_conv_tvalid_skew   1s
+PASS  sim:tb_gdn_recur              6s
+PASS  sim:tb_gdn_recur_pipe         9s
+PASS  sim:tb_gdn_scalar             0s
+PASS  sim:tb_gdn_silu               3s
+PASS  sim:tb_l2norm_rs              2s
+PASS  sim:tb_rmsnorm_bf             7s
+NOCHECK sim:tb_gdn_conv_cycles      0s   (measurement only, by design)
+```
+
+**Read the 85 correctly.**  This track added NO gate row and did not touch
+`sim/regress.sh`; `BASELINE_PASS` was 83 at HEAD and reads 85 here because
+ANOTHER track's uncommitted working-tree edit adds `tb_llama_top_smp` and
+`tb_llama_top_smp_beh` and raises the floor to match.  The run therefore
+measures a mixed tree, which is the honest state of the box while four tracks
+are live.  What it establishes for this track is FAIL 0 with the retuned
+thresholds in place, not the value of the counter.
+
 ## 6. Measured and REJECTED -- do not retry
 
 - **Do NOT tighten `sim/mutate_rmsnorm_bf.sh`'s `ACC_GAIN` back below
