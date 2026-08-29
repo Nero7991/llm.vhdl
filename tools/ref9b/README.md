@@ -41,6 +41,8 @@ next token on all five positions of the reference prompt.
 | `mutate_token.py` | teeth for `check_token.py`, applied to the stream bytes rather than to the RTL |
 | `lmhead_window_check.py` | the 15 lm_head windows as a SET: tiling, per-window relations, and the fields all 15 must agree on |
 | `golden_status.sh` | is a committed golden capture provably current, and if not, WHICH file in its closure moved |
+| `seamgate.sh` | THE GATE ROW. One verdict per configuration: capture, then the stepwise oracle, then a coverage floor. `sim:seamgate_{real,stub,seq}` in `sim/regress.sh` |
+| `mutate_seamgate.sh` | teeth for `seamgate.sh`, S1..S7, including the two that deliberately do not bite |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
@@ -134,6 +136,25 @@ the records present, and names anything in only one stream.
 mode located 6 and exact mode located 8, and for one of them exact mode named a
 seam a whole block earlier. A float oracle can say the algorithm is wrong; only
 a same-format oracle can say which cycle to look at.
+
+## The seam comparison IS a gate row, and the golden diff still is not
+
+`sim/regress.sh` carries three rows -- `sim:seamgate_real`, `sim:seamgate_stub`,
+`sim:seamgate_seq` -- that run `bash tools/ref9b/seamgate.sh <cfg>`. Each one
+captures `sim/tb_llama_top.vhd` and then asks `bisect_scaled.py` whether every
+modelled step IS what its model says, given the machine's own inputs. A failure
+names the SEAM and the ELEMENT, in the summary line.
+
+That does NOT contradict the paragraph below. A golden diff compares against a
+COMMITTED artefact and so goes red on every legitimate change; this compares
+against a model RECOMPUTED at gate time from the same tree, so a correct change
+that moves every number stays green. The two are different instruments with
+different failure modes, and the row exists because the landmarks in
+`sim/tb_llama_top_real.vhd` are change detectors: MEASURED 2026-08-29, re-pinning
+them to a defective design's own values makes that row PASS while the seam
+comparison still fails at `R_X.attn-0`. Full table, including the two mutants the
+seam comparison CANNOT see:
+`docs/debugging/2026-08-29_seamgate-regression-row.md`.
 
 ## The committed goldens rot, and that is checkable in a second
 

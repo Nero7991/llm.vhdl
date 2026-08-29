@@ -162,7 +162,12 @@ def run_a_oracle_full(step, M, K, w_exp, out_shift, x, x_exp, w):
     before the out_mode branch; only the reported exponent differs by `ns`.
     The RAW pair is what the LOGITS seam carries.
     """
-    exe = os.path.join(HERE, "mv_step_oracle")
+    # MV_STEP_ORACLE lets a caller point at a binary OUTSIDE the repository.
+    # tools/ref9b/seamgate.sh builds it into its own scratch directory, because
+    # a gate row that writes a binary into the working tree violates
+    # sim/regress.sh's "nothing is ever written into sim/" rule in spirit and
+    # makes a concurrent run of the same gate race over one file in practice.
+    exe = os.environ.get("MV_STEP_ORACLE") or os.path.join(HERE, "mv_step_oracle")
     if not os.path.exists(exe):
         raise SystemExit("build it first:\n  cc -O2 -Wall -DMV4I_LIB -I ref -o "
                          "tools/ref9b/mv_step_oracle tools/ref9b/mv_step_oracle.c -lm")

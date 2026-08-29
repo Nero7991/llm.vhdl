@@ -384,7 +384,27 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=94   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
+BASELINE_PASS=99   # 2026-08-29, TRACK SEAMGATE, and only THREE of the +5 are
+                   #    this track's.  MEASURED on a full unfiltered both-suite
+                   #    run at a802780: OVERALL PASS 99, FAIL 0.  The floor said
+                   #    94 and the tree was already at 96 before these rows
+                   #    existed -- `git diff --diff-filter=A d570899 HEAD --
+                   #    'sim/tb_*.vhd' 'tb/tb_*.vhd'` is EMPTY, so no testbench
+                   #    was added; two rows that were red when 94 was recorded
+                   #    (its own commit message says "why its one red row is not
+                   #    this track's") have since been fixed by other tracks and
+                   #    nobody raised the floor.  Recorded rather than quietly
+                   #    absorbed: a floor two below the truth cannot detect the
+                   #    disappearance of two testbenches, which is the only
+                   #    thing it exists to detect.
+                   # +3 sim:seamgate_{real,stub,seq}.  The first rows in this
+                   #    script whose oracle is an INDEPENDENT MODEL of the value
+                   #    rather than a pinned landmark or the testbench's own
+                   #    assertion.  MEASURED: 61 seams for real, 60 for stub, 59
+                   #    per token over three tokens for seq, all bit-exact.  See
+                   #    the block that appends them to $PLAN for why they are
+                   #    rows and the golden diff is not.
+                   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
                    #    CB-ORACLE.  THE CODEBOOK'S WRITE CONTRACT, written
                    #    BEFORE the pre-authorised LUTRAM fallback that
                    #    multiplies its replica count by 32.  TRACK A-MUT
@@ -629,6 +649,7 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
           sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
           sim:tb_llama_top_seq sim:tb_llama_top_real sim:tb_llama_top_normw
+          sim:seamgate_real sim:seamgate_stub sim:seamgate_seq
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
@@ -864,6 +885,49 @@ with open(cover_out, 'w') as fh:
 PYEOF
 
 [ -s "$PLAN" ] || { echo "regress.sh: plan generation failed" >&2; exit 2; }
+
+# ---------------------------------------------------------------------------
+# THE SEAM ROWS.  Appended to the plan, not produced by the planner above.
+# ---------------------------------------------------------------------------
+# WHAT THEY ARE.  Every other row in this script is a GHDL run judged on its
+# own printed output, so its oracle is whatever the testbench asserts.  For the
+# `tb_llama_top` family that oracle is four PINNED LANDMARKS, and a landmark is
+# a change detector: it says a number moved from a value somebody wrote down.
+# When a legitimate `rtl/` change moves it, the operator re-pins it and the gate
+# is green again having learned nothing about whether the NEW numbers are right.
+#
+# These three rows are the other instrument.  Each runs `sim/tb_llama_top.vhd`
+# with its seam capture on and then asks `tools/ref9b/bisect_scaled.py`, for
+# every step of the descriptor plan that has an independent model, whether the
+# machine's output IS what the model says given the machine's own inputs.  A
+# failure names the SEAM and the ELEMENT.  MEASURED 2026-08-29: 61 seams for
+# `real`, 60 for `stub`, 59 per token over three tokens for `seq`.
+#
+# WHY THEY ARE A ROW AND THE GOLDEN DIFF IS NOT.  `tools/ref9b/golden_status.sh`
+# rejected a byte-identity row against `tools/ref9b/golden/llama_top_*.txt`, and
+# it was right to: a committed artefact goes red on every legitimate `rtl/`
+# change on that path, and that golden was MEASURED not provably current hours
+# after being written.  These rows read NOTHING committed.  Both sides are
+# recomputed at gate time from the tree as it stands, so a correct change that
+# moves every number stays green and only an RTL-versus-model DISAGREEMENT is
+# red.
+#
+# WHY THEY ARE APPENDED HERE RATHER THAN EMITTED BY THE PLANNER.  The planner
+# globs `sim/tb_*.vhd` and derives an analysis closure; these rows have no
+# testbench file of their own, and giving the planner a special case for them
+# would put a non-VHDL concept inside the part of this script whose whole job is
+# resolving VHDL design units.  They are `sim`-suite rows and that is not a
+# fiction: what they run is `sim/tb_llama_top.vhd`.
+#
+# The 7 tab-separated fields are the planner's own: name, suite, status, reason,
+# file list, top entity, vectors.  `-` is the empty-field placeholder (a truly
+# empty field collapses under IFS=tab and shifts every field after it).  The
+# CONFIGURATION is carried in the name and `run_one` dispatches on it, so no
+# field changes meaning and no existing row can take a different path.
+for _sg in real stub seq; do
+  printf 'seamgate_%s\tsim\tRUN\t-\t-\t-\t-\n' "$_sg" >> "$PLAN"
+done
+unset _sg
 
 # ===========================================================================
 # 2. EXTRAS.  Per-testbench generics, stop-time, vector generation and success
@@ -1209,8 +1273,57 @@ FAIL_RE='\(assertion (error|failure)\)|\(report (error|failure)\)|:error:|MISMAT
 # A bare "OK" is deliberately NOT a marker: it is too easy to hit in prose.
 PASS_RE='\bPASS\b|\bALL OK\b|all green|0 mismatches|no mismatch|matches ref|bit-exact|bit-identical|within tolerance'
 
+# run_seam -- the seam-comparison rows.  See the block that appends them to
+# $PLAN.  It is deliberately NOT part of run_one: run_one's contract is `ghdl -a`
+# over a file list then `ghdl -r` on a top entity, and widening that contract to
+# take a shell command would put every existing row on a new code path for the
+# sake of three that are not GHDL rows at all.  This writes the same
+# $SCRATCH/res.<suite>_<name> record, in the same 4 tab-separated fields, so the
+# summary, the per-suite tallies, --only, --quick and BASELINE_PASS all work on
+# it without knowing it exists.
+run_seam() {   # run_seam <suite:name>
+  local key="$1" cfg="${1##*seamgate_}"
+  local tb="${key#*:}" suite="${key%%:*}"
+  local dir="$SCRATCH/${suite}_${tb}" log="$SCRATCH/${suite}_${tb}/log"
+  local t0; t0=$(date +%s)
+  mkdir -p "$dir"
+  # KEEP=1 so tools/ref9b/seamgate.sh leaves its own scratch behind for a
+  # post-mortem; this directory is inside ours and dies with --keep's rules.
+  ( KEEP=1 SEAMGATE_SCRATCH="$dir/sg" timeout -k 5 "$TIMEOUT" \
+      bash "$REPO/tools/ref9b/seamgate.sh" "$cfg" ; echo "SEAMGATE_EXIT=$?" ) \
+      > "$log" 2>&1
+  local rc; rc=$(grep -oE '^SEAMGATE_EXIT=[0-9]+' "$log" | tail -1 | cut -d= -f2)
+  [ -n "${rc:-}" ] || rc=1
+  local rv rd
+  if [ "$rc" = "124" ] || [ "$rc" = "137" ]; then
+    rv=TIMEOUT
+    rd="no result within ${TIMEOUT}s -- the capture is a full GHDL run of sim/tb_llama_top.vhd and seq is three tokens"
+  elif [ "$rc" = "0" ]; then
+    rv=PASS
+    rd="$(grep -am1 '^SEAMGATE PASS' "$log" | cut -c1-140)"
+  else
+    # The first SEAMGATE FAIL line carries the CLASS -- DIVERGENCE, COVERAGE,
+    # PLAN DRIFT or HARNESS -- and they mean different things.  The FIRST
+    # DIVERGENCE line carries the seam and the element.  Both go in the
+    # summary, because a verdict that says only "failed" sends the reader back
+    # to a log they may not have kept.
+    rv=FAIL
+    rd="$(grep -am1 '^SEAMGATE FAIL' "$log" | cut -c1-96)$(grep -am1 'FIRST DIVERGENCE' "$log" | sed 's/^ *//;s/^/ | /' | cut -c1-130)"
+    [ -n "$rd" ] || rd="seamgate.sh exited $rc without a verdict line; log: $log"
+  fi
+  # The same four tab-separated fields run_one's verdict() writes, in the same
+  # order, so the summary and the tallies need no knowledge of this row type.
+  printf '%s\t%s\t%s\t%s\n' "$key" "$rv" "$(( $(date +%s) - t0 ))" "$rd" \
+      > "$SCRATCH/res.${suite}_${tb}"
+}
+
 run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   local key="$1" top="$2" vecs="$3"; shift 3
+  # The seam rows are dispatched HERE, on the name, so that the driver loop
+  # below is untouched and no existing row can reach a different code path.
+  case "${key#*:}" in
+    seamgate_*) run_seam "$key"; return ;;
+  esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
   # The scratch directory is keyed by the SUITE-QUALIFIED name: tb/tb_rope and

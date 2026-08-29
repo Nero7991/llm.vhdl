@@ -66,15 +66,34 @@ if [ "${LIST_FILES:-0}" = "1" ]; then
   exit 0
 fi
 
+# EVERY ROW CARRIES ITS GENERICS **AND** THE MATCHING bisect_scaled.py ARGS,
+# because those two are one fact written twice and the second copy is where a
+# gate goes quietly wrong.  `tools/ref9b/bisect_scaled.py` re-derives the plan
+# from --blocks/--attn-int/--attn-hd and REFUSES a capture the plan does not
+# describe (`check_against_capture`), so a drift in those three is caught -- but
+# --norm is NOT checkable that way.  Guessing --norm wrong makes every norm seam
+# read as a defect; that is first-bisect trap T5, already paid for once.  So the
+# `B` string lives here, one line under the `G` string it must agree with, and
+# `LIST_BISECT=1` is how tools/ref9b/seamgate.sh reads it instead of holding a
+# second copy -- the same rule LIST_FILES=1 exists for.
 case "$CFG" in
   real) G="-gBLOCKS=4 -gATTN_INT=4 -gC_REAL=true -gATTN_HD=16
            -gNORM_REAL=true -gNORM_ANCHOR=false
-           -gW_IMAGE=llama_top_w_b4_pool.hex" ;;
+           -gW_IMAGE=llama_top_w_b4_pool.hex"
+        B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
+           --w-image sim/llama_top_w_b4_pool.hex" ;;
   seq)  G="-gBLOCKS=4 -gATTN_INT=2 -gNTOK=3 -gC_REAL=true -gATTN_HD=64
-           -gKV_BLOCK=16 -gN_ROT=16 -gMAXPOS=8 -gKV_AXI=true" ;;
-  stub) G="" ;;
+           -gKV_BLOCK=16 -gN_ROT=16 -gMAXPOS=8 -gKV_AXI=true"
+        B="--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor
+           --kv-block 16 --n-rot 16" ;;
+  stub) G=""
+        B="--blocks 4 --attn-int 4 --attn-hd 32 --norm anchor" ;;
   *) echo "unknown configuration $CFG (real|seq|stub)"; exit 2 ;;
 esac
+if [ "${LIST_BISECT:-0}" = "1" ]; then
+  echo $B
+  exit 0
+fi
 GSMP=""
 [ "${SMP:-0}" = "1" ] && GSMP="-gSMP_EN=true"
 [ -z "$OUT" ] && OUT="$PWD/tools/ref9b/golden/llama_top_${CFG}.txt"
