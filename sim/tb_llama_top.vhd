@@ -1,7 +1,7 @@
 -- sim/tb_llama_top.vhd
--- THE INTEGRATION BENCH.  One token, N transformer blocks, through
--- `rtl/llama_top.vhd`, run several times with different handshake timings and
--- compared against itself.
+-- THE INTEGRATION BENCH.  NTOK tokens of one sequence, N transformer blocks
+-- each, through `rtl/llama_top.vhd`, run several times with different
+-- handshake timings and compared against itself.
 --
 -- =====================================================================
 -- WHAT THIS BENCH CAN CHECK, AND WHAT IT DELIBERATELY DOES NOT CLAIM
@@ -50,6 +50,71 @@
 --       With `C_REAL` true it MUST be clear, because a marker that stays set
 --       is indistinguishable from a marker nobody cleared and would make
 --       every later run unreadable.
+--
+-- =====================================================================
+-- THE KV SEAM, AND WHAT A MULTI-TOKEN RUN ADDS (added 2026-08-29)
+-- =====================================================================
+-- Until today this file ran ONE token per reset.  Every attention job it has
+-- ever issued therefore ran at `cur_pos = 0`, where `attn_block` takes its
+-- bypass path and NEVER READS THE KV CACHE.  That is the whole reason neither
+-- of the two real defects TRACK C-ORACLE found in `attn_block` was visible
+-- here, and it is why a green run of this bench said nothing at all about the
+-- cache.  `rtl/llama_top.vhd` also left `attn_block`'s four seam handshakes
+-- open, so the block was talking to a memory that can never refuse.
+--
+-- With `KV_AXI` and `NTOK > 1` the cache is `rtl/attn_kv_axi.vhd`, it leaves
+-- the top level over three AXI masters, and this file models them.  Six more
+-- properties, and each says what it can see:
+--
+--   P7  WRITE PLACEMENT.  Every byte the write master commits is decoded to
+--       a (region, layer, head, position) by THIS FILE'S OWN evaluation of C
+--       spec 2.2's address equation, and must land at the position the DUT
+--       says it is at and the layer this file counted independently.  Two
+--       masters agreeing on a WRONG address produce a perfect answer, which
+--       is why the equation is written twice and not shared.
+--
+--   P8  READ PLACEMENT.  Every byte fetched lies inside a KV region (or in
+--       the at-most-one-beat of alignment padding at either end), and every
+--       record from an earlier position that it touches belongs to the layer
+--       in flight.
+--
+--   P9  READ COVERAGE.  After token t, the records this file saw FULLY read
+--       are exactly {every region, every head, every layer} x {0..t-1}.  Not
+--       fewer -- the sweep is [cur_pos, 0, 1, ... cur_pos-1] and every
+--       earlier position is in it.  Not more -- the readable bound is
+--       `pos < cur_pos`, because the record AT cur_pos is the one this job
+--       is writing through a different master.
+--
+--   P10 THE SERVED BYTES.  Every byte handed to the cache for a record from
+--       an earlier position equals the byte that record was written with,
+--       and no byte of a record that was never written is ever served.
+--
+--   P11 C SPEC 2.7 AT THE INTEGRATION LEVEL.  At the instant subsystem C
+--       reports a completion, this token's own records must be IN MEMORY,
+--       not merely accepted on W.  The write slave holds accepted beats and
+--       commits them at BVALID, which is what AXI promises; a slave that
+--       committed at W would make this untestable.  See MUT_KV_NO_BRESP.
+--
+--   P12 THE SEQUENCE IS A SEQUENCE.  The same embedding is preloaded for
+--       every token, so a machine with no cross-token state would produce a
+--       bit-identical R_X every time.  It must not.
+--
+-- AND WHAT NONE OF THEM SAY.  There is still no value oracle for a token, so
+-- nothing here says the numbers are attention -- that claim belongs to
+-- `ref/attn_block_seq_vec.c` through `sim/tb_attn_kv_seam.vhd`, at the BLOCK
+-- level.  P12 in particular says only that SOMETHING crossed the token
+-- boundary: subsystem B's recurrent state is a second cross-token channel and
+-- P12 cannot separate it from the cache.  MUT_KV_ZERO is the control for
+-- that and its result is in the mutation table.
+--
+-- THE SHAPE IS FORCED, and it is not the shape any earlier landmark in this
+-- file was measured at.  `attn_kv_axi` needs CM_W = 8, a 16-byte record
+-- granule (KV_BLOCK >= 16) and N_KVH >= 2; `attn_block` needs an even
+-- power-of-two HEAD_DIM, HEAD_DIM/KV_BLOCK >= 2 and a GQA group >= 2.  The
+-- smallest shape satisfying all six is ATTN_HD = 64, KV_BLOCK = 16,
+-- N_ROT = 16, which `mk_shape_scaled` had to learn.  It quadruples att_q,
+-- att_qg and att_kv, so R_X and every hash differ from the ATTN_HD 16 and 32
+-- landmarks and the three are not comparable.
 --
 -- =====================================================================
 -- THE DEFAULT IS 4 BLOCKS WITH NORM_ANCHOR ON, AND NEITHER HALF OF THAT IS
@@ -290,6 +355,49 @@ entity tb_llama_top is
     -- other value the real C accepts, and it changes att_q, att_qg and att_kv
     -- and therefore R_X.
     ATTN_HD   : positive := 32;
+    -- Subsystem C's cache geometry.  Defaults are `rtl/llama_top.vhd`'s own.
+    KV_BLOCK  : positive := 4;
+    N_ROT     : positive := 8;
+    MAXPOS    : positive := 4;
+    -- ==================================================================
+    -- THE MULTI-TOKEN SEQUENCE, AND THE REAL KV CACHE.
+    --
+    -- NTOK = 1 is what this bench has always run, and every landmark above
+    -- is at it.  A "run" was a RESET followed by one token, so `cur_pos` was
+    -- 0 for every attention job that has ever executed here and the cache
+    -- READ PATH NEVER RAN: `attn_block` bypasses at position 0.  That is
+    -- exactly why neither of the two real defects TRACK C-ORACLE found in
+    -- `attn_block` was visible to this bench.
+    --
+    -- NTOK > 1 makes a run a reset followed by NTOK `go`/`tok_done`
+    -- handshakes, with the DUT's own `tok_pos` advancing across them.  Token
+    -- t therefore attends over the records tokens 0..t-1 wrote.
+    NTOK      : positive := 1;
+    -- `rtl/attn_kv_axi.vhd` instead of the behavioural KV memory.  See the
+    -- generic of the same name in `rtl/llama_top.vhd` for the three-way
+    -- geometry constraint: it needs ATTN_HD = 64, KV_BLOCK = 16, N_ROT = 16.
+    KV_AXI    : boolean  := false;
+    KV_RD_LAT : natural  := 100;  -- AR accepted -> first beat, cycles
+    KV_WR_LAT : natural  := 12;   -- WLAST -> BVALID, cycles
+    KV_AW_LAT : natural  := 0;    -- cycles the write slave refuses AWVALID
+    KV_STALL  : natural  := 5;    -- 0 = never stall; else 1-in-STALL gaps
+    -- Mutation hooks for the SEAM AT THE INTEGRATION LEVEL.  Every one is
+    -- false in the shipping bench.  They live here rather than in a scratch
+    -- copy of the RTL because what they break is a property of llama_top and
+    -- attn_kv_axi TOGETHER and of nothing in either.
+    MUT_KV_STALE    : boolean := false;  -- serve the previous position's bytes
+    MUT_KV_DROP_REC : boolean := false;  -- drop one record's write burst
+    MUT_KV_ZERO     : boolean := false;  -- read slaves return zeros
+    -- RESET THE DUT BETWEEN TOKENS, so every token runs at cur_pos 0 again.
+    -- That is EXACTLY what this bench did before NTOK existed, and it is the
+    -- most valuable mutation in the table: a bench that cannot tell an
+    -- N-token sequence from N one-token runs has not tested a sequence.
+    MUT_TOK_RESET   : boolean := false;
+    -- The token index enters the embedding, so each position writes a
+    -- DIFFERENT KV record.  See the `embed` function for the measurement
+    -- that forced this on.
+    EMBED_VARY      : boolean := true;
+    MUT_KV_NO_BRESP : boolean := false;  -- commit at W, not at BVALID
     MAXCYC    : natural  := 4000000;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
@@ -544,13 +652,151 @@ architecture tb of tb_llama_top is
   signal n_bad_sched : natural := 0;
   signal tb_reset : std_logic := '0';
 
-  -- results
+  -- results.  Indexed [run][token]: a run is a reset plus NTOK tokens, and
+  -- the skew comparison is per TOKEN, not per run, or a sequence that diverges
+  -- at token 1 and reconverges at token 3 would read as identical.
   type res_t is array (0 to REGMAX-1) of integer;
-  type runs_t is array (0 to NRUNS-1) of res_t;
-  signal results : runs_t := (others => (others => 0));
+  type toks_t is array (0 to NTOK-1) of res_t;
+  type runs_t is array (0 to NRUNS-1) of toks_t;
+  signal results : runs_t := (others => (others => (others => 0)));
   signal x0      : res_t := (others => 0);
 
+  -- ======================================================================
+  -- THE KV CACHE'S SIDE OF THE WORLD.
+  --
+  -- Three modelled AXI slaves over one address space, plus a SHADOW of the
+  -- records keyed by (region, layer, head, position) using THIS FILE'S OWN
+  -- implementation of C spec 2.2's address equation.  The shadow is what
+  -- makes the checks independent: `attn_kv_axi` writes and reads through the
+  -- same equation, so a memory alone would agree with a WRONG equation.  Two
+  -- masters agreeing on a wrong address produce a perfect answer.
+  --
+  -- The bases are deliberately awkward.  16 is 16-byte aligned and not 4 KB
+  -- aligned; 4064 straddles the 4 KB boundary, so the burst splitter is
+  -- exercised.  C spec 2.2 asks for 4 KB alignment and TRACK C-SEAM measured
+  -- that it is not needed.
+  -- ======================================================================
+  constant KV_ADDR_W : positive := 16;
+  constant KV_DW     : positive := 256;
+  constant KV_BEAT_B : natural  := KV_DW/8;
+  constant KV_CH_B   : natural  := 16;              -- the record granule
+  constant KV_K_BASE : natural  := 16;
+  constant KV_V_BASE : natural  := 4064;
+  constant KV_NB     : natural  := 8192;            -- bytes of modelled HBM
+  constant KV_REC_B  : natural  := KV_CH_B + ATTN_HD;   -- CM_W is 8
+  constant KV_NBLK   : natural  := ATTN_HD / KV_BLOCK;
+  constant KV_NKVH   : natural  := SHAPE.attn_kv_heads;
+  function nlay_f(s : shape_t) return positive is
+    variable n : natural := n_attn_blocks(s);
+  begin
+    if n = 0 then return 1; else return n; end if;
+  end function;
+  constant KV_LAY    : positive := nlay_f(SHAPE);
+  -- Slot index: ((region*LAY + layer)*NKVH + head)*MAXPOS + pos
+  constant KV_NSLOT  : natural  := 2*KV_LAY*KV_NKVH*MAXPOS;
+  constant KV_RGN_B  : natural  := KV_LAY*KV_NKVH*MAXPOS*KV_REC_B;
+
+  function kv_slot(r, l, h, ps : natural) return natural is
+  begin
+    return ((r*KV_LAY + l)*KV_NKVH + h)*MAXPOS + ps;
+  end function;
+  function kv_addr(r, l, h, ps : natural) return natural is
+    variable b : natural;
+  begin
+    if r = 0 then b := KV_K_BASE; else b := KV_V_BASE; end if;
+    return b + ((l*KV_NKVH + h)*MAXPOS + ps)*KV_REC_B;
+  end function;
+
+  -- The modelled HBM and the shadow, in ONE protected type: the two read
+  -- slaves, the write slave and the checkers are several processes over one
+  -- address space, and a plain shared variable is illegal in VHDL-2008.
+  --
+  -- ONE PROCESS DRIVES BOTH READ SLAVES, and that is not tidiness.  GHDL
+  -- mcode reports "several sources for unresolved signal" for a SCALAR and
+  -- reports NOTHING for a COMPOSITE: two processes driving disjoint slices of
+  -- one std_logic_vector elaborate silently and deliver 'U' on one half and
+  -- '0' on the other.  Measured by TRACK C-SEAM; it cost that track an hour.
+  type kvm_t is protected
+    procedure wrb(i : natural; v : std_logic_vector(7 downto 0));
+    impure function rdb(i : natural) return std_logic_vector;
+    procedure shw(i : natural; v : std_logic_vector(7 downto 0));
+    impure function shr(i : natural) return std_logic_vector;
+    impure function shhas(i : natural) return boolean;
+    procedure rdmk(i : natural);
+    impure function rdmq(i : natural) return boolean;
+    procedure rdclr;
+  end protected;
+  type kvm_t is protected body
+    type ba_t is array (0 to KV_NB-1) of std_logic_vector(7 downto 0);
+    type sa_t is array (0 to KV_NSLOT*KV_REC_B-1) of std_logic_vector(7 downto 0);
+    type sw_t is array (0 to KV_NSLOT*KV_REC_B-1) of boolean;
+    variable a  : ba_t := (others => (others => '0'));
+    variable sh : sa_t := (others => (others => '0'));
+    variable sv : sw_t := (others => false);
+    procedure wrb(i : natural; v : std_logic_vector(7 downto 0)) is
+    begin a(i) := v; end procedure;
+    impure function rdb(i : natural) return std_logic_vector is
+    begin return a(i); end function;
+    procedure shw(i : natural; v : std_logic_vector(7 downto 0)) is
+    begin sh(i) := v; sv(i) := true; end procedure;
+    impure function shr(i : natural) return std_logic_vector is
+    begin return sh(i); end function;
+    impure function shhas(i : natural) return boolean is
+    begin return sv(i); end function;
+    variable rm : sw_t := (others => false);
+    procedure rdmk(i : natural) is
+    begin rm(i) := true; end procedure;
+    impure function rdmq(i : natural) return boolean is
+    begin return rm(i); end function;
+    procedure rdclr is
+    begin rm := (others => false); end procedure;
+  end protected body;
+  shared variable kvm : kvm_t;
+
+  signal kv_arvalid, kv_arready, kv_rvalid, kv_rready, kv_rlast
+       : std_logic_vector(1 downto 0) := (others => '0');
+  signal kv_araddr  : std_logic_vector(2*KV_ADDR_W-1 downto 0);
+  signal kv_arlen   : std_logic_vector(15 downto 0);
+  signal kv_arsize  : std_logic_vector(5 downto 0);
+  signal kv_arburst : std_logic_vector(3 downto 0);
+  signal kv_rdata   : std_logic_vector(2*KV_DW-1 downto 0) := (others => '0');
+  signal kv_rresp   : std_logic_vector(3 downto 0) := (others => '0');
+  signal kv_awvalid, kv_awready, kv_wvalid, kv_wready, kv_wlast : std_logic := '0';
+  signal kv_bvalid, kv_bready : std_logic := '0';
+  signal kv_awaddr  : std_logic_vector(KV_ADDR_W-1 downto 0);
+  signal kv_awlen   : std_logic_vector(7 downto 0);
+  signal kv_awsize  : std_logic_vector(2 downto 0);
+  signal kv_awburst : std_logic_vector(1 downto 0);
+  signal kv_wdata   : std_logic_vector(KV_DW-1 downto 0);
+  signal kv_wstrb   : std_logic_vector(KV_DW/8-1 downto 0);
+  signal kv_bresp   : std_logic_vector(1 downto 0) := "00";
+  signal kv_err     : std_logic;
+  signal obs_tok_pos : unsigned(15 downto 0);
+
+  -- The attention layer of the C job currently in flight.  Derived by
+  -- counting OP_C_JOB issues within the token, which is the same arithmetic
+  -- `rtl/llama_top.vhd` does from the job ordinal, done independently here.
+  signal cur_lay : natural := 0;
+  signal n_cjob  : natural := 0;
+
+  -- fault counters, one per property
+  signal kv_bad_wr, kv_bad_rd, kv_bad_dat, kv_bad_cov, kv_bad_bresp
+       : natural := 0;
+  signal kv_n_wrec, kv_n_rbeat : natural := 0;
+  -- THE LIVE KV READ LATENCY.  A SIGNAL, not a generic, so one elaboration
+  -- sweeps it alongside the descriptor-memory latency.  P2 is only a check on
+  -- the KV seam if the KV timing is one of the things that moves.
+  signal kv_lat : natural := KV_RD_LAT;
+
   signal n_bad_skew : natural := 0;
+  -- Driven ONLY by the driver process.  n_bad_sched belongs to `sched`, and
+  -- a second driver on an integer signal is an elaboration error rather than
+  -- a resolution.
+  signal n_bad_pos  : natural := 0;
+  -- `kv_err` is a VERDICT, not a log line.  It was checked with a bare assert
+  -- and did not reach `fail`, so a run could report the fault and still print
+  -- PASS.  A check whose result you do not branch on is decoration.
+  signal n_bad_kverr : natural := 0;
   signal fail       : natural := 0;
   signal xsum       : integer := 0;
   signal rsum       : integer := 0;
@@ -558,9 +804,29 @@ architecture tb of tb_llama_top is
   -- The token embedding.  Deterministic, non-trivial, and not symmetric: a
   -- residual stream that is accidentally zeroed or accidentally copied has to
   -- be distinguishable from one that was computed.
-  function embed(i : natural) return integer is
+  --
+  -- IT VARIES WITH THE TOKEN, AND THAT WAS MEASURED, NOT ASSUMED.  The first
+  -- version of the token loop preloaded the SAME embedding every time, so
+  -- that "R_X differs from token 0" would mean "something crossed the token
+  -- boundary".  MEASURED at NTOK = 3: token 1 differed from token 0 in 62 of
+  -- 64 elements and **token 2 was BIT-IDENTICAL to token 1, 0 of 64**.  The
+  -- mechanism is the stimulus, not a defect: with an identical input every
+  -- token, every K and V record in the cache is identical, and an attention
+  -- output that is a convex combination of identical vectors does not depend
+  -- on how many of them there are.  A sequence whose cache holds one distinct
+  -- record is not a sequence, and every mutation of the read path would have
+  -- been measuring that rather than the check -- C-SEAM's trap 7.4 exactly.
+  --
+  -- With `EMBED_VARY` the token index enters the embedding, so each position
+  -- writes a DIFFERENT record and reading position 0 is distinguishable from
+  -- reading position 1.  `false` reproduces the degenerate stimulus above.
+  function embed(i : natural; t : natural) return integer is
   begin
-    return ((i * 37) mod 251) - 125;
+    if EMBED_VARY then
+      return ((i * 37 + t * 101) mod 251) - 125;
+    else
+      return ((i * 37) mod 251) - 125;
+    end if;
   end function;
 
 begin
@@ -589,6 +855,10 @@ begin
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, C_REAL => C_REAL,
+      C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
+      C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
+      C_K_BASE => KV_K_BASE, C_V_BASE => KV_V_BASE,
+      C_KV_ADDR_W => KV_ADDR_W, C_KV_AXI_DW => KV_DW,
       A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
       SHOUT => true)
     port map(
@@ -613,8 +883,518 @@ begin
       obs_norm_pub => obs_norm_pub, obs_norm_exp => obs_norm_exp,
       obs_norm_ssq => obs_norm_ssq, obs_norm_n => obs_norm_n,
       obs_cmp_exp => obs_cmp_exp, obs_wsum => obs_wsum,
+      kv_arvalid => kv_arvalid, kv_arready => kv_arready,
+      kv_araddr => kv_araddr, kv_arlen => kv_arlen, kv_arsize => kv_arsize,
+      kv_arburst => kv_arburst, kv_rvalid => kv_rvalid,
+      kv_rready => kv_rready, kv_rdata => kv_rdata, kv_rlast => kv_rlast,
+      kv_rresp => kv_rresp,
+      kv_awvalid => kv_awvalid, kv_awready => kv_awready,
+      kv_awaddr => kv_awaddr, kv_awlen => kv_awlen, kv_awsize => kv_awsize,
+      kv_awburst => kv_awburst, kv_wvalid => kv_wvalid,
+      kv_wready => kv_wready, kv_wdata => kv_wdata, kv_wstrb => kv_wstrb,
+      kv_wlast => kv_wlast, kv_bvalid => kv_bvalid, kv_bready => kv_bready,
+      kv_bresp => kv_bresp, kv_err => kv_err, obs_tok_pos => obs_tok_pos,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
+
+  -- ======================================================================
+  -- THE THREE KV AXI SLAVES.
+  --
+  -- One in-order server per read master with a MAXOUT-deep AR queue and a
+  -- fixed KV_RD_LAT from acceptance to the first beat.  100 cycles is not
+  -- HBM's real latency; it is far more than the TWO the pre-seam attn_block
+  -- allowed, which is the only thing that has to be true.
+  --
+  -- ONE PROCESS FOR BOTH READ SLAVES.  See the note on kvm_t.
+  -- ======================================================================
+  kvrd : process(clk) is
+    type na_t is array (0 to 15) of integer;
+    type ia_t is array (0 to 1) of integer;
+    type ba_t is array (0 to 1) of boolean;
+    variable qa, ql : na_t := (others => 0);
+    variable qh, qt, qn, tmr, beat : ia_t := (others => 0);
+    variable act : ba_t := (others => false);
+    variable a, l, ad, sa, off, rg, lay, hd, ps, sl : integer;
+    variable byt : std_logic_vector(7 downto 0);
+    variable lfsr : unsigned(15 downto 0) := x"ACE1";
+    -- ACCUMULATED IN VARIABLES, published once per cycle.  A signal
+    -- incremented several times inside one clock edge takes the LAST
+    -- assignment, so a per-byte counter written as a signal counts CYCLES
+    -- with a fault and reads as a much smaller number than the truth.
+    variable nbadr, nbadd, nrb : natural := 0;
+  begin
+    if rising_edge(clk) then
+      lfsr := lfsr(14 downto 0)
+              & (lfsr(15) xor lfsr(13) xor lfsr(12) xor lfsr(10));
+      if rst = '1' or tb_reset = '1' then
+        qh := (others => 0); qt := (others => 0); qn := (others => 0);
+        tmr := (others => 0); beat := (others => 0);
+        -- NOTE the fault and traffic counters are NOT cleared here.  `rst`
+        -- is asserted once per RUN, and clearing them would erase run 0's
+        -- faults the moment run 1 started -- a fault counter that a later
+        -- reset zeroes reports a clean run.
+        act := (others => false);
+        kv_arready <= "11"; kv_rvalid <= "00"; kv_rlast <= "00";
+        kvm.rdclr;
+      else
+        -- The read mask is PER TOKEN: P9's expected set is a function of
+        -- the position, so a mask carried across tokens would report token
+        -- t-1's reads as token t's.
+        if go = '1' then
+          kvm.rdclr;
+        end if;
+        kv_rvalid <= "00"; kv_rlast <= "00";
+        for sv in 0 to 1 loop
+          -- ---- AR ----------------------------------------------------
+          if kv_arvalid(sv) = '1' and kv_arready(sv) = '1' then
+            a := to_integer(unsigned(
+                   kv_araddr((sv+1)*KV_ADDR_W-1 downto sv*KV_ADDR_W)));
+            l := to_integer(unsigned(kv_arlen((sv+1)*8-1 downto sv*8))) + 1;
+            -- The FK33's HBM slave is AXI3: ARLEN is 4 bits, so a 17-beat
+            -- burst does not fail, it silently becomes a 1-beat burst.  A
+            -- slave that did not check would report a wrong ANSWER rather
+            -- than a protocol error.
+            if l > 16 then
+              nbadr := nbadr + 1;
+              report "tb_llama_top: KV read burst of " & integer'image(l)
+                   & " beats exceeds the AXI3 cap of 16" severity error;
+            end if;
+            if (a mod 4096) + l*KV_BEAT_B > 4096 then
+              nbadr := nbadr + 1;
+              report "tb_llama_top: KV read burst at " & integer'image(a)
+                   & " for " & integer'image(l) & " beats crosses 4 KB"
+                severity error;
+            end if;
+            if a mod KV_BEAT_B /= 0 then
+              nbadr := nbadr + 1;
+              report "tb_llama_top: KV read address " & integer'image(a)
+                   & " is not beat aligned" severity error;
+            end if;
+            if a + l*KV_BEAT_B > KV_NB then
+              nbadr := nbadr + 1;
+              report "tb_llama_top: KV read burst at " & integer'image(a)
+                   & " runs past the modelled memory" severity error;
+            else
+              qa(sv*8 + qt(sv)) := a; ql(sv*8 + qt(sv)) := l;
+              qt(sv) := (qt(sv) + 1) mod 8; qn(sv) := qn(sv) + 1;
+              if qn(sv) = 1 then tmr(sv) := kv_lat; end if;
+            end if;
+          end if;
+          if qn(sv) < 4 then kv_arready(sv) <= '1';
+          else kv_arready(sv) <= '0'; end if;
+
+          -- ---- the in-order server -----------------------------------
+          if not act(sv) and qn(sv) > 0 then
+            if tmr(sv) > 0 then tmr(sv) := tmr(sv) - 1;
+            else act(sv) := true; beat(sv) := 0; end if;
+          end if;
+          if act(sv) then
+            if KV_STALL /= 0
+               and (to_integer(lfsr(7 downto 0)) + sv) mod KV_STALL = 0 then
+              null;                      -- a gap, RVALID stays low
+            else
+              for c in 0 to KV_BEAT_B-1 loop
+                ad := qa(sv*8 + qh(sv)) + beat(sv)*KV_BEAT_B + c;
+                -- MUT_KV_STALE serves the byte one RECORD earlier: the
+                -- cache is handed a plausible, well-formed record for the
+                -- WRONG position.  Nothing in the AXI protocol can see it.
+                if MUT_KV_STALE and ad >= KV_REC_B then sa := ad - KV_REC_B;
+                else sa := ad; end if;
+                if MUT_KV_ZERO then byt := (others => '0');
+                else byt := kvm.rdb(sa); end if;
+                kv_rdata(sv*KV_DW + (c+1)*8-1 downto sv*KV_DW + c*8) <= byt;
+
+                -- ---- P8/P10: placement, and the served byte -----------
+                -- SUB-BEAT ALIGNMENT PADDING IS LEGITIMATE AND IS EXEMPT.
+                -- The bases are 16-byte aligned and a beat is 32 bytes, so
+                -- the first burst of a region necessarily starts BELOW the
+                -- base and the last one ends above it.  Those bytes are
+                -- discarded by the realignment mux.  Exempting them is not
+                -- weakening the check: a wild address is still more than one
+                -- beat outside, and MEASURED, the exemption is at most 16
+                -- bytes at each end here.
+                rg := -1;
+                if ad >= KV_K_BASE and ad < KV_K_BASE + KV_RGN_B then
+                  rg := 0; off := ad - KV_K_BASE;
+                elsif ad >= KV_V_BASE and ad < KV_V_BASE + KV_RGN_B then
+                  rg := 1; off := ad - KV_V_BASE;
+                end if;
+                if rg < 0
+                   and ((ad + KV_BEAT_B > KV_K_BASE and ad < KV_K_BASE)
+                        or (ad >= KV_K_BASE + KV_RGN_B
+                            and ad < KV_K_BASE + KV_RGN_B + KV_BEAT_B)
+                        or (ad + KV_BEAT_B > KV_V_BASE and ad < KV_V_BASE)
+                        or (ad >= KV_V_BASE + KV_RGN_B
+                            and ad < KV_V_BASE + KV_RGN_B + KV_BEAT_B))
+                then
+                  rg := -2;              -- alignment padding, not a fault
+                end if;
+                if rg = -1 then
+                  nbadr := nbadr + 1;
+                  report "tb_llama_top: the KV cache read byte address "
+                       & integer'image(ad) & ", which is inside neither the "
+                       & "K region nor the V region, and is more than one "
+                       & "beat outside both" severity error;
+                elsif rg >= 0 then
+                  ps  := (off / KV_REC_B) mod MAXPOS;
+                  hd  := ((off / KV_REC_B) / MAXPOS) mod KV_NKVH;
+                  lay := ((off / KV_REC_B) / MAXPOS) / KV_NKVH;
+                  sl  := kv_slot(rg, lay, hd, ps);
+                  -- A record at or past the CURRENT position is legitimately
+                  -- OVER-FETCHED: REC_B is 80 and a beat is 32, so the tail
+                  -- beat of a run reaches into the next record.  Those bytes
+                  -- are discarded by the engine and are being written by this
+                  -- same job, so comparing them would be a race.  Only bytes
+                  -- of a record from an EARLIER token are checked.
+                  -- WHICH MASTER FETCHED IT.  Index 0 is the K stream and
+                  -- index 1 is the V stream (rtl/attn_kv_axi.vhd's port
+                  -- comment), and K and V are separate regions with separate
+                  -- bases.  Without this a swap of the two bases is a pure
+                  -- relabelling that every other check here agrees with.
+                  if rg /= sv then
+                    nbadr := nbadr + 1;
+                    report "tb_llama_top: KV read master " & integer'image(sv)
+                         & " (0 is K, 1 is V) fetched byte "
+                         & integer'image(ad) & ", which is in the "
+                         & integer'image(rg) & " region." severity error;
+                  end if;
+                  -- THE COVERAGE MASK IS MARKED FOR EVERY DECODED BYTE,
+                  -- INCLUDING RECORDS AT OR PAST cur_pos.  An earlier version
+                  -- marked it only for `ps < cur_pos`, which made P9's second
+                  -- half -- "the sweep must NOT fully read the record at
+                  -- cur_pos" -- unable to fire at all: the slots it tests
+                  -- were the only ones never marked.  A dead branch in a
+                  -- checker is worse than no branch, because it reads as
+                  -- coverage.  Over-fetch marks at most one beat of the next
+                  -- record, so a FULL record at cur_pos is still a genuine
+                  -- read of it.
+                  kvm.rdmk(sl*KV_REC_B + (off mod KV_REC_B));
+                  if ps < to_integer(obs_tok_pos) then
+                    if lay /= cur_lay then
+                      nbadr := nbadr + 1;
+                      report "tb_llama_top: the KV cache read layer "
+                           & integer'image(lay) & " while the attention job "
+                           & "in flight is layer " & integer'image(cur_lay)
+                        severity error;
+                    end if;
+                    -- P10b: a record byte from an EARLIER position that was
+                    -- never written must never be served.  Only the format's
+                    -- real bytes are checked -- the NBLK block exponents and
+                    -- the HEAD_DIM mantissas -- because the record's 16-byte
+                    -- header chunk is zero-PADDED and the padding may or may
+                    -- not carry a write strobe.
+                    if ((off mod KV_REC_B) < KV_NBLK
+                        or (off mod KV_REC_B) >= KV_CH_B)
+                       and not kvm.shhas(sl*KV_REC_B + (off mod KV_REC_B))
+                    then
+                      nbadd := nbadd + 1;
+                      report "tb_llama_top: the KV cache was served byte "
+                           & integer'image(off mod KV_REC_B) & " of the "
+                           & "record at (region " & integer'image(rg)
+                           & ", layer " & integer'image(lay) & ", head "
+                           & integer'image(hd) & ", pos " & integer'image(ps)
+                           & "), and no token ever wrote that byte."
+                        severity error;
+                    end if;
+                    if kvm.shhas(sl*KV_REC_B + (off mod KV_REC_B))
+                       and byt /= kvm.shr(sl*KV_REC_B + (off mod KV_REC_B))
+                    then
+                      nbadd := nbadd + 1;
+                      report "tb_llama_top: the KV cache was served byte "
+                           & integer'image(off mod KV_REC_B) & " of the "
+                           & "record (region " & integer'image(rg)
+                           & ", layer " & integer'image(lay) & ", head "
+                           & integer'image(hd) & ", pos " & integer'image(ps)
+                           & ") and it is not the byte that record was "
+                           & "written with." severity error;
+                    end if;
+                  end if;
+                end if;
+              end loop;
+              nrb := nrb + 1;
+              kv_rvalid(sv) <= '1';
+              if beat(sv) = ql(sv*8 + qh(sv))-1 then kv_rlast(sv) <= '1'; end if;
+              beat(sv) := beat(sv) + 1;
+              if beat(sv) = ql(sv*8 + qh(sv)) then
+                act(sv) := false;
+                qh(sv) := (qh(sv) + 1) mod 8; qn(sv) := qn(sv) - 1;
+                tmr(sv) := kv_lat;
+              end if;
+            end if;
+          end if;
+        end loop;
+      end if;
+      kv_bad_rd  <= nbadr;
+      kv_bad_dat <= nbadd;
+      kv_n_rbeat <= nrb;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- THE KV WRITE SLAVE, AND THE ONE MODELLING DECISION THAT MATTERS.
+  --
+  -- Beats are NOT committed when they are accepted on W.  They are held and
+  -- committed at the instant BVALID is returned, which is what AXI actually
+  -- promises and the whole reason C spec 2.7 says `done` must wait for it.
+  -- A slave that committed at W time makes the write visible to the read
+  -- masters early and the `kv_wr_idle` gate becomes untestable: MEASURED by
+  -- TRACK C-SEAM, whose first slave did exactly that and whose mutation of
+  -- that gate SURVIVED for the wrong reason.  MUT_KV_NO_BRESP reinstates the
+  -- weak slave ON PURPOSE, as the control for that claim.
+  -- ======================================================================
+  kvwr : process(clk) is
+    type na_t is array (0 to 7) of integer;
+    type pa_t is array (0 to 127) of integer;
+    type pd_t is array (0 to 127) of std_logic_vector(KV_DW-1 downto 0);
+    type ps_t is array (0 to 127) of std_logic_vector(KV_DW/8-1 downto 0);
+    variable a, l, beat : integer := 0;
+    variable inw : boolean := false;
+    variable btm, bct : na_t := (others => 0);
+    variable bn, awt : integer := 0;
+    variable lfsr : unsigned(15 downto 0) := x"BEEF";
+    variable p_a : pa_t := (others => 0);
+    variable p_d : pd_t := (others => (others => '0'));
+    variable p_s : ps_t := (others => (others => '0'));
+    variable p_h, p_t, p_n : integer := 0;
+    -- NOT `nb`: VHDL is case-insensitive and KV_NB is the memory size.  A
+    -- process variable spelled `nb` would shadow a constant spelled `NB`.
+    variable wbeats : integer := 0;
+    variable ndrop  : integer := 0;
+    variable ad, off, rg, lay, hd, ps2, sl : integer;
+    -- Accumulated in a variable and published once per cycle; see the note
+    -- in the read slave.
+    variable nbadw : natural := 0;
+
+    -- TWO PROCEDURES, AND THE SPLIT IS THE WHOLE POINT.
+    --
+    -- `note_beat` runs when the master's W beat is ACCEPTED.  At that instant
+    -- the record's content is known: the master has handed it over.  It goes
+    -- into the SHADOW, and the placement check (P7) runs there.
+    --
+    -- `mem_beat` runs when BVALID is returned, and it is the only thing that
+    -- writes the modelled memory.  That is what AXI promises -- a write is
+    -- ordered against nothing until its BRESP.
+    --
+    -- The FIRST version of this bench did both in one procedure at BVALID,
+    -- and P11 was BLIND because of it: with `kv_wr_idle` ungated the record
+    -- is neither in memory NOR in the shadow when `done` fires, so comparing
+    -- them found two zeros and agreed.  A check whose two sides move together
+    -- cannot see the thing between them.  Same family as C-SEAM's 7.5, one
+    -- level up: model the ordering the spec gives you, on BOTH sides.
+    procedure mem_beat(pa : integer;
+                       pdv : std_logic_vector(KV_DW-1 downto 0);
+                       psv : std_logic_vector(KV_DW/8-1 downto 0)) is
+    begin
+      for c in 0 to KV_BEAT_B-1 loop
+        if psv(c) = '1' then
+          kvm.wrb(pa + c, pdv((c+1)*8-1 downto c*8));
+        end if;
+      end loop;
+    end procedure;
+
+    procedure note_beat(pa : integer;
+                        pdv : std_logic_vector(KV_DW-1 downto 0);
+                        psv : std_logic_vector(KV_DW/8-1 downto 0)) is
+      variable ad2, off2, rg2, lay2, hd2, ps3, sl2 : integer;
+    begin
+      for c in 0 to KV_BEAT_B-1 loop
+        if psv(c) = '1' then
+          ad2 := pa + c;
+          rg2 := -1;
+          if ad2 >= KV_K_BASE and ad2 < KV_K_BASE + KV_RGN_B then
+            rg2 := 0; off2 := ad2 - KV_K_BASE;
+          elsif ad2 >= KV_V_BASE and ad2 < KV_V_BASE + KV_RGN_B then
+            rg2 := 1; off2 := ad2 - KV_V_BASE;
+          end if;
+          if rg2 < 0 then
+            nbadw := nbadw + 1;
+            report "tb_llama_top: a KV record byte was written to address "
+                 & integer'image(ad2) & ", inside neither region"
+              severity error;
+          else
+            ps3  := (off2 / KV_REC_B) mod MAXPOS;
+            hd2  := ((off2 / KV_REC_B) / MAXPOS) mod KV_NKVH;
+            lay2 := ((off2 / KV_REC_B) / MAXPOS) / KV_NKVH;
+            sl2  := kv_slot(rg2, lay2, hd2, ps3);
+            if ps3 /= to_integer(obs_tok_pos) or lay2 /= cur_lay then
+              nbadw := nbadw + 1;
+              report "tb_llama_top: a KV record byte landed at (region "
+                   & integer'image(rg2) & ", layer " & integer'image(lay2)
+                   & ", head " & integer'image(hd2) & ", pos "
+                   & integer'image(ps3) & ") while token position "
+                   & integer'image(to_integer(obs_tok_pos))
+                   & " of attention layer " & integer'image(cur_lay)
+                   & " was running.  C spec 2.2's address equation, "
+                   & "evaluated independently here." severity error;
+            end if;
+            kvm.shw(sl2*KV_REC_B + (off2 mod KV_REC_B),
+                    pdv((c+1)*8-1 downto c*8));
+          end if;
+        end if;
+      end loop;
+    end procedure;
+  begin
+    if rising_edge(clk) then
+      lfsr := lfsr(14 downto 0)
+              & (lfsr(15) xor lfsr(13) xor lfsr(12) xor lfsr(10));
+      if rst = '1' or tb_reset = '1' then
+        inw := false; beat := 0; bn := 0; wbeats := 0; awt := 0;
+        p_h := 0; p_t := 0; p_n := 0; ndrop := 0;   -- nbadw is NOT cleared
+        kv_awready <= '1'; kv_wready <= '0'; kv_bvalid <= '0';
+      else
+        kv_bvalid <= '0';
+        -- ---- AW ------------------------------------------------------
+        if KV_AW_LAT /= 0 and not inw then
+          if awt < KV_AW_LAT then awt := awt + 1; kv_awready <= '0';
+          else kv_awready <= '1'; end if;
+        end if;
+        if kv_awvalid = '1' and kv_awready = '1' then
+          a := to_integer(unsigned(kv_awaddr));
+          l := to_integer(unsigned(kv_awlen)) + 1;
+          if l > 16 then
+            nbadw := nbadw + 1;
+            report "tb_llama_top: KV write burst of " & integer'image(l)
+                 & " beats exceeds the AXI3 cap" severity error;
+          end if;
+          if (a mod 4096) + l*KV_BEAT_B > 4096 then
+            nbadw := nbadw + 1;
+            report "tb_llama_top: KV write burst at " & integer'image(a)
+                 & " crosses 4 KB" severity error;
+          end if;
+          if a mod KV_BEAT_B /= 0 or a + l*KV_BEAT_B > KV_NB then
+            nbadw := nbadw + 1;
+            report "tb_llama_top: KV write address " & integer'image(a)
+                 & " is misaligned or out of range" severity error;
+          end if;
+          inw := true; beat := 0; wbeats := 0; awt := 0;
+          kv_awready <= '0'; kv_wready <= '1';
+        end if;
+        -- ---- W -------------------------------------------------------
+        if inw then
+          if KV_STALL /= 0
+             and to_integer(lfsr(7 downto 0)) mod KV_STALL = 0 then
+            kv_wready <= '0';
+          else
+            kv_wready <= '1';
+          end if;
+          if kv_wvalid = '1' and kv_wready = '1' then
+            p_a(p_t) := a + beat*KV_BEAT_B;
+            p_d(p_t) := kv_wdata;
+            p_s(p_t) := kv_wstrb;
+            -- The record's content is known HERE, at W acceptance.
+            note_beat(p_a(p_t), p_d(p_t), p_s(p_t));
+            if MUT_KV_NO_BRESP then
+              mem_beat(p_a(p_t), p_d(p_t), p_s(p_t));
+            end if;
+            p_t := (p_t + 1) mod 128; p_n := p_n + 1;
+            wbeats := wbeats + 1;
+            assert p_n <= 128
+              report "tb_llama_top: the uncommitted-write ring overflowed"
+              severity failure;
+            beat := beat + 1;
+            if kv_wlast = '1' then
+              inw := false; kv_wready <= '0';
+              if KV_AW_LAT = 0 then kv_awready <= '1'; end if;
+              assert bn < 8
+                report "tb_llama_top: more than 8 KV write bursts outstanding"
+                severity failure;
+              btm(bn) := KV_WR_LAT; bct(bn) := wbeats; bn := bn + 1;
+              kv_n_wrec <= kv_n_wrec + 1;
+            end if;
+          end if;
+        end if;
+        -- ---- B, and the COMMIT that goes with it ----------------------
+        if bn > 0 then
+          if btm(0) > 0 then
+            btm(0) := btm(0) - 1;
+          else
+            kv_bvalid <= '1';
+            -- MUT_KV_DROP_REC discards the SECOND write burst of the run.
+            -- BRESP is still returned, so the master is told the record
+            -- landed.  That is the shape of a record that vanishes.
+            ndrop := ndrop + 1;
+            for k in 0 to 15 loop
+              if k < bct(0) then
+                if not (MUT_KV_DROP_REC and ndrop = 2) then
+                  if not MUT_KV_NO_BRESP then
+                    mem_beat(p_a(p_h), p_d(p_h), p_s(p_h));
+                  end if;
+                end if;
+                p_h := (p_h + 1) mod 128; p_n := p_n - 1;
+              end if;
+            end loop;
+            for i in 0 to 6 loop btm(i) := btm(i+1); bct(i) := bct(i+1); end loop;
+            bn := bn - 1;
+          end if;
+        end if;
+      end if;
+      kv_bad_wr <= nbadw;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- P11 -- C spec 2.7 AT THE INTEGRATION LEVEL.  At the instant subsystem C
+  -- reports a completion, token t+1 is entitled to read this token's records
+  -- through a DIFFERENT master, and AXI orders nothing between masters.  So
+  -- they must be IN MEMORY now, not merely accepted on W.
+  -- ======================================================================
+  kvbr : process(clk) is
+    variable lu : integer := -1;
+    variable ad : integer;
+    variable nbr : natural := 0;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' or tb_reset = '1' then
+        lu := -1;   -- nbr is NOT cleared; see the read slave
+      else
+        if obs_issue = '1' then lu := to_integer(obs_unit); end if;
+        if obs_cmp = '1' and lu = U_C and KV_AXI then
+          for rg in 0 to 1 loop
+            for h in 0 to KV_NKVH-1 loop
+              for b in 0 to KV_NBLK-1 loop
+                ad := kv_addr(rg, cur_lay, h, to_integer(obs_tok_pos)) + b;
+                if kvm.rdb(ad)
+                   /= kvm.shr(kv_slot(rg, cur_lay, h,
+                                      to_integer(obs_tok_pos))*KV_REC_B + b)
+                then
+                  nbr := nbr + 1;
+                  report "tb_llama_top: subsystem C reported a completion "
+                       & "for position "
+                       & integer'image(to_integer(obs_tok_pos))
+                       & " with its record (region " & integer'image(rg)
+                       & ", head " & integer'image(h) & ") block exponent "
+                       & integer'image(b) & " not yet in memory.  C spec "
+                       & "2.7: the next token reads it through another master."
+                    severity error;
+                end if;
+              end loop;
+            end loop;
+          end loop;
+        end if;
+      end if;
+      kv_bad_bresp <= nbr;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- THE ATTENTION LAYER OF THE JOB IN FLIGHT, derived independently.
+  -- `rtl/llama_top.vhd` computes it from the descriptor's block ordinal;
+  -- this counts OP_C_JOB issues within the token.  Two derivations of the
+  -- same quantity from two different sources, which is what makes the write
+  -- placement check below a check rather than a restatement.
+  -- ======================================================================
+  layp : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '1' or tb_reset = '1' or go = '1' then
+        n_cjob  <= 0;
+        cur_lay <= 0;
+      elsif obs_issue = '1' and to_integer(obs_unit) = U_C then
+        cur_lay <= n_cjob;
+        n_cjob  <= n_cjob + 1;
+      end if;
+    end if;
+  end process;
 
   trace : process(clk) is
   begin
@@ -720,10 +1500,15 @@ begin
   -- ======================================================================
   rel_mask <= PLAN(n_chk).rel when n_chk < NSTEP else (others => '0');
 
+  -- The per-STEP counters are per TOKEN, not per RUN.  `go` clears them.
+  -- Before NTOK existed a run was one token and `tb_reset` was enough; with
+  -- a token loop, leaving `n_chk` running past NSTEP publishes an all-zero
+  -- release mask for token 1 and the walker refuses at err_code 3, which
+  -- reads exactly like a DUT fault and is the bench's own bookkeeping.
   chkcnt : process(clk) is
   begin
     if rising_edge(clk) then
-      if rst = '1' or tb_reset = '1' then
+      if rst = '1' or tb_reset = '1' or go = '1' then
         n_chk <= 0;
       elsif d_ren = '0' and busy = '1' then
         null;
@@ -746,7 +1531,7 @@ begin
     variable p : plan_step_t;
   begin
     if rising_edge(clk) then
-      if rst = '1' or tb_reset = '1' then
+      if rst = '1' or tb_reset = '1' or go = '1' then
         n_issue <= 0;
         n_cmp   <= 0;
       else
@@ -933,7 +1718,7 @@ begin
   drv : process is
     variable lat : natural;
 
-    procedure preload is
+    procedure preload(t : natural) is
     begin
       -- The token embedding into R_X.  Written through the host port, which
       -- is the only writer the region lock does not police -- the lock's
@@ -943,7 +1728,7 @@ begin
         hw_we   <= '1';
         hw_reg  <= R_X;
         hw_addr <= i;
-        hw_data <= to_signed(embed(i), MANT_W);
+        hw_data <= to_signed(embed(i, t), MANT_W);
       end loop;
       wait until rising_edge(clk);
       hw_we <= '0';
@@ -962,6 +1747,8 @@ begin
 
     variable rv : res_t;
     variable nz : natural;
+    variable full : boolean;
+    variable ncov : natural := 0;
   begin
     report "tb_llama_top: shape blocks=" & integer'image(SHAPE.blocks)
          & " attn_interval=" & integer'image(SHAPE.attn_interval)
@@ -982,6 +1769,15 @@ begin
         when others => lat := 3 + 4*run;
       end case;
       uram_lat <= lat;
+      -- The KV read latency moves with the run too.  A skew sweep that
+      -- varied only the descriptor memory would leave the whole cache path
+      -- at one timing and P2 would say nothing about it.
+      case run is
+        when 0 => kv_lat <= KV_RD_LAT;
+        when 1 => kv_lat <= 7;
+        when 2 => kv_lat <= 4*KV_RD_LAT + 3;
+        when others => kv_lat <= 11 + 37*run;
+      end case;
       cur_run  <= run;
 
       rst      <= '1';
@@ -993,57 +1789,174 @@ begin
       tb_reset <= '0';
       wait until rising_edge(clk);
 
-      preload;
-      if run = 0 then
+      -- ================= THE TOKEN LOOP ==============================
+      -- A run is a RESET followed by NTOK tokens.  The DUT's own `tok_pos`
+      -- advances on each `tok_done`/`tok_ack`, so token t attends over the
+      -- records tokens 0..t-1 wrote.  At NTOK = 1 this is exactly what the
+      -- bench did before and every landmark above still holds.
+      --
+      -- THE SAME EMBEDDING IS PRELOADED FOR EVERY TOKEN, on purpose.  With
+      -- identical input, any difference between token 0's R_X and token t's
+      -- is cross-token state and nothing else.  See P8 below for what that
+      -- does and does not isolate.
+      for t in 0 to NTOK-1 loop
+        if MUT_TOK_RESET and t > 0 then
+          rst      <= '1';
+          tb_reset <= '1';
+          for i in 0 to 9 loop wait until rising_edge(clk); end loop;
+          rst      <= '0';
+          tb_reset <= '0';
+          wait until rising_edge(clk);
+        end if;
+        preload(t);
+        if run = 0 and t = 0 then
+          dump(rv);
+          x0 <= rv;
+        end if;
+
+        -- The DUT's own position counter, read back.  NOT guarded by any
+        -- mutation flag: a mutation that switches its own detector off has
+        -- tested nothing.
+        assert to_integer(obs_tok_pos) = t
+          report "tb_llama_top: run " & integer'image(run) & " token "
+               & integer'image(t) & " started with the DUT at position "
+               & integer'image(to_integer(obs_tok_pos))
+               & ".  A run is a reset plus NTOK tokens, and the position "
+               & "advances on tok_done/tok_ack." severity error;
+        if to_integer(obs_tok_pos) /= t then
+          n_bad_pos <= n_bad_pos + 1;
+          wait for 0 ns;
+        end if;
+
+        wait until rising_edge(clk);
+        go <= '1';
+        wait until rising_edge(clk);
+        go <= '0';
+
+        wait until tok_done = '1' for 1 ms;
+        assert tok_done = '1'
+          report "tb_llama_top: run " & integer'image(run) & " token "
+               & integer'image(t) & " (descriptor latency "
+               & integer'image(lat)
+               & ") never reached tok_done.  It stopped at issue "
+               & integer'image(n_issue) & " of " & integer'image(NSTEP)
+          severity failure;
+
+        assert n_issue = NSTEP-1
+          report "tb_llama_top: run " & integer'image(run) & " token "
+               & integer'image(t) & " issued " & integer'image(n_issue)
+               & " jobs; a " & integer'image(NSTEP)
+               & "-step table has " & integer'image(NSTEP-1)
+               & " startable steps (END_TOKEN starts nobody)."
+          severity error;
+        assert steps_done = to_unsigned(NSTEP, STEP_W)
+          report "tb_llama_top: run " & integer'image(run) & " token "
+               & integer'image(t) & " walked "
+               & integer'image(to_integer(steps_done)) & " of "
+               & integer'image(NSTEP) & " descriptors."
+          severity error;
+
         dump(rv);
-        x0 <= rv;
-      end if;
+        results(run)(t) <= rv;
+        wait until rising_edge(clk);
 
-      wait until rising_edge(clk);
-      go <= '1';
-      wait until rising_edge(clk);
-      go <= '0';
+        -- ---- P9/P10: the cache's coverage for THIS token ---------------
+        -- Checked here rather than at the end, because the read mask is
+        -- per token and the expected set is a function of the position.
+        if KV_AXI then
+          for rg in 0 to 1 loop
+            for l in 0 to KV_LAY-1 loop
+              for h in 0 to KV_NKVH-1 loop
+                for q in 0 to MAXPOS-1 loop
+                  full := true;
+                  for b in 0 to KV_NBLK-1 loop
+                    if not kvm.rdmq(kv_slot(rg,l,h,q)*KV_REC_B + b) then
+                      full := false;
+                    end if;
+                  end loop;
+                  for d in 0 to ATTN_HD-1 loop
+                    if not kvm.rdmq(kv_slot(rg,l,h,q)*KV_REC_B
+                                    + KV_CH_B + d) then
+                      full := false;
+                    end if;
+                  end loop;
+                  if q < t and not full then
+                    ncov := ncov + 1;
+                    report "tb_llama_top: token " & integer'image(t)
+                         & " did NOT read the whole record at (region "
+                         & integer'image(rg) & ", layer " & integer'image(l)
+                         & ", head " & integer'image(h) & ", pos "
+                         & integer'image(q) & ").  The sweep is "
+                         & "[cur_pos, 0, 1, ... cur_pos-1] and every earlier "
+                         & "position is in it." severity error;
+                  end if;
+                  if q >= t and full then
+                    ncov := ncov + 1;
+                    report "tb_llama_top: token " & integer'image(t)
+                         & " read the WHOLE record at pos "
+                         & integer'image(q) & " (region " & integer'image(rg)
+                         & ", layer " & integer'image(l) & ", head "
+                         & integer'image(h) & ").  The readable bound is "
+                         & "pos < cur_pos: the record at cur_pos is the one "
+                         & "this job writes." severity error;
+                  end if;
+                  -- ---- and the WRITE side, for this token's own record
+                  if q = t then
+                    for b in 0 to KV_NBLK-1 loop
+                      if not kvm.shhas(kv_slot(rg,l,h,q)*KV_REC_B + b) then
+                        ncov := ncov + 1;
+                        report "tb_llama_top: token " & integer'image(t)
+                             & " never wrote block exponent "
+                             & integer'image(b) & " of its record at "
+                             & "(region " & integer'image(rg) & ", layer "
+                             & integer'image(l) & ", head "
+                             & integer'image(h) & ")" severity error;
+                        exit;
+                      end if;
+                    end loop;
+                    for d in 0 to ATTN_HD-1 loop
+                      if not kvm.shhas(kv_slot(rg,l,h,q)*KV_REC_B
+                                       + KV_CH_B + d) then
+                        ncov := ncov + 1;
+                        report "tb_llama_top: token " & integer'image(t)
+                             & " never wrote mantissa " & integer'image(d)
+                             & " of its record at (region "
+                             & integer'image(rg) & ", layer "
+                             & integer'image(l) & ", head "
+                             & integer'image(h) & ")" severity error;
+                        exit;
+                      end if;
+                    end loop;
+                  end if;
+                end loop;
+              end loop;
+            end loop;
+          end loop;
+          kv_bad_cov <= ncov;
+          wait for 0 ns;
+        end if;
 
-      wait until tok_done = '1' for 1 ms;
-      assert tok_done = '1'
-        report "tb_llama_top: run " & integer'image(run)
-             & " (descriptor latency " & integer'image(lat)
-             & ") never reached tok_done.  It stopped at issue "
-             & integer'image(n_issue) & " of " & integer'image(NSTEP)
-        severity failure;
+        tok_ack <= '1';
+        wait until rising_edge(clk);
+        tok_ack <= '0';
+        wait until rising_edge(clk);
 
-      assert n_issue = NSTEP-1
-        report "tb_llama_top: run " & integer'image(run) & " issued "
-             & integer'image(n_issue) & " jobs; a " & integer'image(NSTEP)
-             & "-step table has " & integer'image(NSTEP-1)
-             & " startable steps (END_TOKEN starts nobody)."
-        severity error;
-      assert steps_done = to_unsigned(NSTEP, STEP_W)
-        report "tb_llama_top: run " & integer'image(run) & " walked "
-             & integer'image(to_integer(steps_done)) & " of "
-             & integer'image(NSTEP) & " descriptors."
-        severity error;
-
-      dump(rv);
-      results(run) <= rv;
-      wait until rising_edge(clk);
-
-      tok_ack <= '1';
-      wait until rising_edge(clk);
-      tok_ack <= '0';
-
-      report "tb_llama_top: run " & integer'image(run)
-           & " descriptor latency " & integer'image(lat)
-           & ": " & integer'image(n_issue) & " jobs issued, "
-           & integer'image(n_cmp) & " completions, "
-           & integer'image(cyc) & " cycles elapsed"
-        severity note;
+        report "tb_llama_top: run " & integer'image(run) & " token "
+             & integer'image(t)
+             & " descriptor latency " & integer'image(lat)
+             & ": " & integer'image(n_issue) & " jobs issued, "
+             & integer'image(n_cmp) & " completions, "
+             & integer'image(cyc) & " cycles elapsed, KV records written "
+             & integer'image(kv_n_wrec) & ", KV beats read "
+             & integer'image(kv_n_rbeat)
+          severity note;
+      end loop;
     end loop;
 
     -- ---- P4: the residual moved -----------------------------------------
     nz := 0;
     for i in 0 to SHAPE.hidden-1 loop
-      if results(0)(i) /= x0(i) then nz := nz + 1; end if;
+      if results(0)(0)(i) /= x0(i) then nz := nz + 1; end if;
     end loop;
     assert nz > 0
       report "tb_llama_top: R_X is unchanged after a whole token.  The "
@@ -1057,12 +1970,12 @@ begin
     -- element of the scaled shape to zero.
     nz := 0;
     for i in 1 to SHAPE.hidden-1 loop
-      if results(0)(i) /= results(0)(0) then nz := nz + 1; end if;
+      if results(0)(0)(i) /= results(0)(0)(0) then nz := nz + 1; end if;
     end loop;
     assert nz >= SHAPE.hidden/4
       report "tb_llama_top: only " & integer'image(nz) & " of "
            & integer'image(SHAPE.hidden-1) & " R_X elements differ from "
-           & "R_X(0) = " & integer'image(results(0)(0))
+           & "R_X(0) = " & integer'image(results(0)(0)(0))
            & ".  The residual stream is very nearly a constant, which passes "
            & "every determinism property and means nothing."
       severity failure;
@@ -1096,25 +2009,160 @@ begin
       end loop;
     end loop;
 
-    -- ---- P2: bit-identical under skew -----------------------------------
+    -- ---- P2: bit-identical under skew, PER TOKEN ------------------------
+    -- Per token, not per run.  A sequence that diverges at token 1 and
+    -- reconverges by the last one would otherwise read as identical, and
+    -- divergence-then-reconvergence is exactly what a KV race looks like:
+    -- the record either was or was not there when it was read.
     for run in 1 to NRUNS-1 loop
-      for i in 0 to REGMAX-1 loop
-        if results(run)(i) /= results(0)(i) then
-          n_bad_skew <= n_bad_skew + 1;
-          wait for 0 ns;
-          if n_bad_skew < 8 then
-            report "tb_llama_top: SKEW DIFFERENCE.  run " & integer'image(run)
-                 & " R_X(" & integer'image(i) & ") = "
-                 & integer'image(results(run)(i)) & ", run 0 = "
-                 & integer'image(results(0)(i))
-                 & ".  A handshake timing changed the result, which means a "
-                 & "beat, a latch or a completion was lost."
-              severity error;
+      for t in 0 to NTOK-1 loop
+        for i in 0 to REGMAX-1 loop
+          if results(run)(t)(i) /= results(0)(t)(i) then
+            n_bad_skew <= n_bad_skew + 1;
+            wait for 0 ns;
+            if n_bad_skew < 8 then
+              report "tb_llama_top: SKEW DIFFERENCE.  run "
+                   & integer'image(run) & " token " & integer'image(t)
+                   & " R_X(" & integer'image(i) & ") = "
+                   & integer'image(results(run)(t)(i)) & ", run 0 = "
+                   & integer'image(results(0)(t)(i))
+                   & ".  A handshake timing changed the result, which means "
+                   & "a beat, a latch or a completion was lost."
+                severity error;
+            end if;
           end if;
-        end if;
+        end loop;
       end loop;
     end loop;
     wait for 0 ns;
+
+    -- ---- P12b: the cache holds DISTINCT content per position -------------
+    -- Read out of this file's own shadow, which is keyed by (region, layer,
+    -- head, position) from the WRITE addresses.  If every position's record
+    -- were the same bytes, P9 and P10 would still pass and the read path
+    -- would be verifying nothing: an attention output that is a convex
+    -- combination of identical vectors does not depend on which of them are
+    -- in the sum.  This is the property that says the SEQUENCE has content,
+    -- and it is the one the `embed` comment's measurement forced into
+    -- existence.
+    -- NOT guarded on EMBED_VARY.  Turning the varying stimulus off IS the
+    -- degenerate sequence, and a property that switches itself off for the
+    -- stimulus it exists to reject has tested nothing.  `EMBED_VARY=false`
+    -- is a row in sim/mutate_llama_top_kv.sh and this is what kills it.
+    if KV_AXI and NTOK > 1 then
+      for rg in 0 to 1 loop
+        for l in 0 to KV_LAY-1 loop
+          for h in 0 to KV_NKVH-1 loop
+            for t in 1 to NTOK-1 loop
+              nz := 0;
+              for d in 0 to ATTN_HD-1 loop
+                if kvm.shr(kv_slot(rg,l,h,t)*KV_REC_B + KV_CH_B + d)
+                   /= kvm.shr(kv_slot(rg,l,h,t-1)*KV_REC_B + KV_CH_B + d)
+                then nz := nz + 1; end if;
+              end loop;
+              if nz = 0 then
+                n_bad_pos <= n_bad_pos + 1;
+                wait for 0 ns;
+                report "tb_llama_top: P12b -- the record at (region "
+                     & integer'image(rg) & ", layer " & integer'image(l)
+                     & ", head " & integer'image(h) & ", pos "
+                     & integer'image(t) & ") is byte-identical to the one at "
+                     & "pos " & integer'image(t-1) & ".  The cache holds one "
+                     & "distinct record and the read path is verifying "
+                     & "nothing." severity error;
+              end if;
+            end loop;
+          end loop;
+        end loop;
+      end loop;
+    end if;
+
+    -- ---- P12: the sequence is a SEQUENCE ---------------------------------
+    -- WITH `EMBED_VARY` FALSE the same embedding is preloaded for every
+    -- token, so a machine with no cross-token state at all would produce an
+    -- identical R_X every time and this assertion is the whole property.
+    -- With it TRUE (the default) the inputs differ, so the assertion is only
+    -- a floor -- a machine that computed nothing at all -- and the numbers
+    -- reported beside it are the measurement that matters.
+    --
+    -- WHAT THIS DOES AND DOES NOT ISOLATE, said here because it is easy to
+    -- over-read.  The KV cache is not the only cross-token channel: subsystem
+    -- B's `gdn_block` carries recurrent state too.  So P12 firing says "some
+    -- state crossed the token boundary" and NOT "attention read the cache".
+    -- The claim that the cache was read is P9/P10's, which count the records
+    -- actually fetched and compare every byte served against the record that
+    -- was written.  MUT_KV_ZERO is the control: it neuters the cache's data
+    -- and leaves B's state alone, and it is reported in the mutation table.
+    if NTOK > 1 then
+      nz := 0;
+      for i in 0 to SHAPE.hidden-1 loop
+        if results(0)(NTOK-1)(i) /= results(0)(0)(i) then nz := nz + 1; end if;
+      end loop;
+      assert nz > 0
+        report "tb_llama_top: token " & integer'image(NTOK-1)
+             & " produced a bit-identical R_X to token 0.  With EMBED_VARY "
+             & "false that means nothing crossed the token boundary; with it "
+             & "true it means the machine computed nothing at all."
+        severity error;
+      report "tb_llama_top: P12 -- " & integer'image(nz) & " of "
+           & integer'image(SHAPE.hidden) & " R_X elements differ between "
+           & "token 0 and token " & integer'image(NTOK-1)
+           & ", EMBED_VARY=" & boolean'image(EMBED_VARY) severity note;
+      -- CONSECUTIVE tokens, reported because "token N differs from token 0"
+      -- is compatible with a stream that moved once and then stopped, and
+      -- that is not a sequence either.  This is a MEASUREMENT and not an
+      -- assertion: a converging residual is a property of this stimulus, and
+      -- calling it a failure would be asserting something nothing here has
+      -- established.  Read it before quoting P12.
+      for t in 1 to NTOK-1 loop
+        nz := 0;
+        for i in 0 to SHAPE.hidden-1 loop
+          if results(0)(t)(i) /= results(0)(t-1)(i) then nz := nz + 1; end if;
+        end loop;
+        report "tb_llama_top: P12 -- token " & integer'image(t) & " vs token "
+             & integer'image(t-1) & ": " & integer'image(nz) & " of "
+             & integer'image(SHAPE.hidden) & " R_X elements differ"
+          severity note;
+      end loop;
+    end if;
+
+    -- ---- P13: the KV seam's own counters ---------------------------------
+    if KV_AXI then
+      assert kv_bad_wr = 0
+        report "tb_llama_top: " & integer'image(kv_bad_wr)
+             & " KV record bytes landed at an address C spec 2.2's equation "
+             & "does not put them at." severity error;
+      assert kv_bad_rd = 0
+        report "tb_llama_top: " & integer'image(kv_bad_rd)
+             & " KV read placement or AXI protocol faults." severity error;
+      assert kv_bad_dat = 0
+        report "tb_llama_top: " & integer'image(kv_bad_dat)
+             & " bytes served to the cache are not the bytes the record was "
+             & "written with." severity error;
+      assert kv_bad_cov = 0
+        report "tb_llama_top: " & integer'image(kv_bad_cov)
+             & " KV record coverage faults." severity error;
+      assert kv_bad_bresp = 0
+        report "tb_llama_top: " & integer'image(kv_bad_bresp)
+             & " completions reported with the token's own records not yet "
+             & "in memory." severity error;
+      if kv_err = '1' then
+        n_bad_kverr <= 1;
+        wait for 0 ns;
+        report "tb_llama_top: the KV cache path raised its sticky error -- "
+             & "either attn_kv_axi's own (C spec 3.9) or llama_top's seam "
+             & "handshake check.  The reason is in the log above."
+          severity error;
+      end if;
+      -- The read path must actually have RUN.  Zero beats at NTOK > 1 is the
+      -- pre-seam state of this file wearing a green PASS line.
+      if NTOK > 1 then
+        assert kv_n_rbeat > 0
+          report "tb_llama_top: NTOK = " & integer'image(NTOK)
+               & " and the KV read masters moved ZERO beats.  Attention did "
+               & "not read the cache." severity error;
+      end if;
+    end if;
 
     -- ---- P5: the stub is announced, or the stub is GONE ------------------
     -- Both halves are checked, and the second is the one that matters once
@@ -1195,26 +2243,52 @@ begin
     xsum <= 0;
     wait for 0 ns;
     for i in 0 to SHAPE.hidden-1 loop
-      xsum <= (xsum * 31 + results(0)(i) + 40000) mod 100003;
+      xsum <= (xsum * 31 + results(0)(NTOK-1)(i) + 40000) mod 100003;
       wait for 0 ns;
     end loop;
 
     -- ---- verdict ---------------------------------------------------------
-    fail <= n_bad_sched + n_bad_skew + n_bad_res;
+    fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
+          + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp;
     wait for 0 ns;
 
     report "tb_llama_top: schedule mismatches=" & integer'image(n_bad_sched)
          & " skew differences=" & integer'image(n_bad_skew)
          & " degenerate residuals=" & integer'image(n_bad_res)
+         & " token position faults=" & integer'image(n_bad_pos)
+         & " KV sticky errors=" & integer'image(n_bad_kverr)
+         & " KV faults=" & integer'image(kv_bad_wr + kv_bad_rd + kv_bad_dat
+                                         + kv_bad_cov + kv_bad_bresp)
+         & " (write placement " & integer'image(kv_bad_wr)
+         & ", read placement " & integer'image(kv_bad_rd)
+         & ", served bytes " & integer'image(kv_bad_dat)
+         & ", coverage " & integer'image(kv_bad_cov)
+         & ", bresp ordering " & integer'image(kv_bad_bresp) & ")"
       severity note;
 
-    if n_bad_sched = 0 and n_bad_skew = 0 and n_bad_res = 0 then
+    if fail = 0 then
       report "tb_llama_top RESULT: PASS -- " & integer'image(NSTEP)
            & " descriptors, " & integer'image(SHAPE.blocks)
-           & " blocks, " & integer'image(NRUNS)
+           & " blocks, " & integer'image(NTOK)
+           & " tokens per run, " & integer'image(NRUNS)
            & " descriptor-latency points, R_X bit-identical across all of "
-           & "them, R_X(0) = " & integer'image(results(0)(0))
+           & "them, R_X(0) = " & integer'image(results(0)(NTOK-1)(0))
            & " hash(R_X) = " & integer'image(xsum)
+           & LF & "        KV: attn_kv_axi instantiated = "
+           & boolean'image(KV_AXI) & ", " & integer'image(kv_n_wrec)
+           & " record write bursts retired and " & integer'image(kv_n_rbeat)
+           & " read beats served, run 0 at " & integer'image(KV_RD_LAT)
+           & "-cycle read latency and the other runs at swept ones, every "
+           & "beat checked against this file's own evaluation of C spec "
+           & "2.2's address equation."
+           -- The phrase below deliberately avoids the literals sim/regress.sh
+           -- greps for.  `IS NOT` is one of them and an earlier draft of this
+           -- line contained it, which would have turned every passing gate
+           -- run red.
+           & LF & "        what this does NOT establish: there is no value "
+           & "oracle for a whole token, so nothing here says the numbers are "
+           & "attention.  That claim belongs to ref/attn_block_seq_vec.c and "
+           & "sim/tb_attn_kv_seam.vhd, at the BLOCK level."
            -- Wording note: sim/regress.sh's FAIL_RE is a CASE-SENSITIVE
            -- grep -aqE containing the literals `IS NOT`, `IS WRONG`,
            -- `MISMATCH`, `FAILED`, `DIVERGES` and `\bFAIL\b`.  A report

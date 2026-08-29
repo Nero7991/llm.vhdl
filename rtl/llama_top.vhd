@@ -324,11 +324,13 @@ entity llama_top is
     -- that is plausibly right and unverified at block level.  That is
     -- progress and it is not a result.
     --
-    -- `attn_kv_axi` does not exist either.  The KV cache is a one-cycle
-    -- memory port here, the same boundary `gdn_block` draws around the
-    -- recurrent state, and it does NOT cover 4 KB burst splitting, the
-    -- record-phase realignment, drain-then-flush on `start`, or `done` gated
-    -- on BRESP.
+    -- The KV cache is a one-cycle behavioural memory port here UNLESS
+    -- `C_KV_AXI` is set -- see that generic.  With it false the model does
+    -- NOT cover 4 KB burst splitting, the record-phase realignment,
+    -- drain-then-flush on `start`, or `done` gated on BRESP, and it cannot
+    -- refuse, so `attn_block`'s four seam handshakes sit at their '1'
+    -- defaults.  (CORRECTED 2026-08-29: this used to say `attn_kv_axi` does
+    -- not exist.  It does, and it is instantiated below.)
     --
     -- MEASURED 2026-08-28, NRUNS = 1, real A and real B, attn_interval 4.
     -- Degenerate residuals (P6), the real block against the stub:
@@ -368,6 +370,46 @@ entity llama_top is
     C_N_ROT     : positive := 8;    -- even, and at most HEAD_DIM
     C_CM_W      : positive := 8;    -- KV cache mantissa
     C_MAXPOS    : positive := 4;    -- cache positions modelled here
+
+    -- ==================================================================
+    -- THE KV CACHE IN HBM, `rtl/attn_kv_axi.vhd`, C_REAL only.
+    --
+    -- With C_KV_AXI FALSE the KV cache is the one-cycle behavioural memory
+    -- below and `attn_block`'s four handshake inputs are left at their '1'
+    -- defaults.  That is correct for THAT memory and SILENTLY WRONG for any
+    -- cache with latency: TRACK C-SEAM measured it by adding ONE cycle of
+    -- read latency to the same model and got 64 of 64 output mantissas wrong
+    -- with `err` clear.  See docs/debugging/2026-08-28_attn-block-kv-seam.md.
+    --
+    -- With it TRUE `attn_kv_axi` is instantiated, the four handshakes are
+    -- connected, and the cache leaves this file over three AXI masters.
+    --
+    -- THE GEOMETRY IS NOT FREE, and the constraint is a THREE-WAY one that
+    -- no single unit states.  `attn_kv_axi` demands CM_W = 8, a record on a
+    -- 16-byte granule (so KV_BLOCK*CM_W/8 must be a multiple of 16, i.e.
+    -- KV_BLOCK >= 16) and N_KVH >= 2; `attn_block` demands HEAD_DIM an EVEN
+    -- power of two, HEAD_DIM/KV_BLOCK >= 2 and a GQA group of at least 2.
+    -- The SMALLEST shape satisfying all of them is HEAD_DIM 64, KV_BLOCK 16,
+    -- 4 query heads and 2 KV heads -- which is why `mk_shape_scaled` had to
+    -- learn attn_hd = 64, and why C_KV_AXI cannot run at the attn_hd = 16
+    -- shape every C_REAL landmark before today was measured at.
+    C_KV_AXI    : boolean  := false;
+    -- The sequence length published as `ctx_len`.  `attn_block` and
+    -- `attn_kv_axi` both range-check `cur_pos < ctx_len <= MAXCTX` and
+    -- NEITHER uses the value for anything else (`clen_r` is latched and dead
+    -- in both), so this bounds the run and does not enter the arithmetic.
+    C_CTXLEN    : positive := 1;
+    -- The two KV regions.  DELIBERATELY NOT 4 KB ALIGNED: C spec 2.2 asks
+    -- for that and `attn_kv_axi` does not need it, which TRACK C-SEAM
+    -- measured.  Keeping the awkward bases here means this file exercises
+    -- the same splitter path.
+    C_K_BASE    : natural  := 16;
+    C_V_BASE    : natural  := 4064;
+    C_KV_ADDR_W : positive := 16;
+    C_KV_AXI_DW : positive := 256;
+    C_KV_MAXB   : positive := 16;   -- AXI3: ARLEN is 4 bits.  16 is the cap.
+    C_KV_MAXOUT : positive := 4;
+    C_KV_RBUF   : positive := 4;
     -- The QK-norm gains.  LEARNED WEIGHTS, so fixed-scale stand-ins, exactly
     -- as NORM_W_EXP is for the D-vec norm and the conv weights are for B.
     C_QKN_EXP   : integer  := 12;
@@ -459,6 +501,46 @@ entity llama_top is
               := (others => '0');
     m_rlast   : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
 
+    -- ---- subsystem C's KV cache masters, C_KV_AXI only -----------------
+    -- Two AXI read masters (index 0 = K, 1 = V) and one write master, exactly
+    -- `rtl/attn_kv_axi.vhd`'s port shapes.  They leave the top level for the
+    -- same reason A's do: the cache lives in HBM and the memory model belongs
+    -- to whoever drives the top level.  EVERY INPUT HAS A DEFAULT and every
+    -- output is driven (tied off when not C_KV_AXI), so an instantiation that
+    -- predates this block still elaborates.
+    kv_arvalid : out std_logic_vector(1 downto 0);
+    kv_arready : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_araddr  : out std_logic_vector(2*C_KV_ADDR_W-1 downto 0);
+    kv_arlen   : out std_logic_vector(15 downto 0);
+    kv_arsize  : out std_logic_vector(5 downto 0);
+    kv_arburst : out std_logic_vector(3 downto 0);
+    kv_rvalid  : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_rready  : out std_logic_vector(1 downto 0);
+    kv_rdata   : in  std_logic_vector(2*C_KV_AXI_DW-1 downto 0)
+               := (others => '0');
+    kv_rlast   : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_rresp   : in  std_logic_vector(3 downto 0) := (others => '0');
+    kv_awvalid : out std_logic;
+    kv_awready : in  std_logic := '0';
+    kv_awaddr  : out std_logic_vector(C_KV_ADDR_W-1 downto 0);
+    kv_awlen   : out std_logic_vector(7 downto 0);
+    kv_awsize  : out std_logic_vector(2 downto 0);
+    kv_awburst : out std_logic_vector(1 downto 0);
+    kv_wvalid  : out std_logic;
+    kv_wready  : in  std_logic := '0';
+    kv_wdata   : out std_logic_vector(C_KV_AXI_DW-1 downto 0);
+    kv_wstrb   : out std_logic_vector(C_KV_AXI_DW/8-1 downto 0);
+    kv_wlast   : out std_logic;
+    kv_bvalid  : in  std_logic := '0';
+    kv_bready  : out std_logic;
+    kv_bresp   : in  std_logic_vector(1 downto 0) := (others => '0');
+    -- `attn_kv_axi`'s sticky error (C spec 3.9), and the position this token
+    -- ran at.  Both are observability: the bench needs to know which token it
+    -- is looking at, and a cache error that only appeared in `err` would be
+    -- indistinguishable from a schedule fault.
+    kv_err     : out std_logic;
+    obs_tok_pos : out unsigned(15 downto 0);
+
     -- ---- observability, for the testbench and for the host -------------
     obs_issue  : out std_logic;                       -- 1 cycle per step
     obs_unit   : out unsigned(2 downto 0);
@@ -525,6 +607,36 @@ architecture rtl of llama_top is
 
   -- ---- D core ----------------------------------------------------------
   signal go_walk    : std_logic;
+  -- `tok_done` is a PORT and this file has to act on it, so the driver is an
+  -- internal signal and the port is a copy of it.  VHDL-2008 permits reading
+  -- an output port, but doing so makes the file's meaning depend on the
+  -- standard revision the tool was invoked with.
+  signal tok_done_i : std_logic;
+  -- THE POSITION OF THE TOKEN IN THE SEQUENCE.  Reset clears it and every
+  -- completed token advances it, so a sequence is a reset followed by N
+  -- `go`/`tok_done` handshakes and NOT N resets.  Before this existed the
+  -- position was hardwired to 0 in the C adapter, which is why neither of
+  -- `attn_block`'s two real defects was visible here: at cur_pos 0 the block
+  -- takes its bypass path and never reads the cache at all.
+  signal tok_pos    : natural range 0 to C_MAXPOS-1 := 0;
+  -- `attn_kv_axi`'s sticky error, hoisted to the architecture so the C
+  -- adapter can fold it into `u_err` and the port can be a single copy.
+  signal kv_err_i   : std_logic := '0';
+  -- THE SEAM HANDSHAKE, AS A STICKY FAULT.  MEASURED 2026-08-29: leaving
+  -- `kr_rdy` unconnected -- which is exactly the PRE-SEAM design one level up,
+  -- and the defect TRACK C-SEAM proved makes 64 of 64 output mantissas wrong
+  -- with `err` clear -- SURVIVED the whole integration bench, including the
+  -- KV read-latency sweep.  Nothing at this level has a value oracle, and
+  -- `attn_kv_axi` raises no error for a read that is in RANGE but not
+  -- RESIDENT: it simply does not update `kr_mant`, so the block captures a
+  -- stale beat, deterministically, at every latency.
+  --
+  -- `sim/tb_attn_kv_seam.vhd`'s Q4 catches it at the BLOCK level because it
+  -- can see both wires.  Inside this file they are both visible too, so the
+  -- property is asserted HERE and published as a sticky fault, the same shape
+  -- `err_lost_beat` already uses.  NOT cleared on `rst`: `rst` is asserted
+  -- once per run and clearing it would erase run 0's fault when run 1 starts.
+  signal kv_seam_bad : std_logic := '0';
   signal d_ren_i    : std_logic;
   signal job_valid, job_issue, job_cmp : std_logic;
   signal job_epoch  : unsigned(EPOCH_W-1 downto 0);
@@ -907,7 +1019,7 @@ begin
     port map(
       clk => clk, rst => rst,
       go => go_walk, tbl_len => tbl_len, abort => abort,
-      busy => busy, tok_done => tok_done, tok_ack => tok_ack,
+      busy => busy, tok_done => tok_done_i, tok_ack => tok_ack,
       err => err, err_code => err_code, err_step => err_step,
       steps_done => steps_done,
       d_raddr => d_raddr, d_ren => d_ren_i, d_rdata => d_rdata,
@@ -2740,15 +2852,30 @@ begin
   --     then R_KIN, then R_VIN, and captures each at the end of its own phase.
   --     Reading all three from one claim is defect 2's family.
   --
-  -- (3) THE KV CACHE IS A MEMORY, AND IT IS ONE TOKEN DEEP IN PRACTICE.
-  --     `attn_kv_axi` does not exist; the cache is a write port and two read
-  --     ports, the same boundary `gdn_block` draws around the recurrent
-  --     state.  `llama_top` runs ONE token with `tk0` hardwired, so `cur_pos`
-  --     is 0 and `ctx_len` is 1: the block takes its bypass path and NEVER
-  --     READS THE CACHE.  That is `tb_attn_block`'s JOB_POS = 0 case, it is
-  --     the one this file exercises, and the cache read path below is
-  --     therefore written and unexercised.  Said here because an unexercised
-  --     path that looks wired is worse than one that looks absent.
+  -- (3) THE KV CACHE IS EITHER A MEMORY OR `attn_kv_axi`, AND WHICH ONE IS
+  --     `C_KV_AXI`.  CORRECTED 2026-08-29; this paragraph used to say
+  --     "`attn_kv_axi` does not exist" and "`llama_top` runs ONE token with
+  --     `tk0` hardwired, so `cur_pos` is 0 and `ctx_len` is 1", and both are
+  --     now false in one configuration.
+  --
+  --     With `C_KV_AXI` FALSE the cache is the behavioural memory below -- a
+  --     write port and two read ports, the same boundary `gdn_block` draws
+  --     around the recurrent state -- and it can never refuse, so
+  --     `attn_block`'s four seam handshakes are tied high.  That is correct
+  --     for THIS memory and silently wrong for any cache with latency:
+  --     TRACK C-SEAM added ONE cycle of read latency to the equivalent model
+  --     and got 64 of 64 output mantissas wrong with `err` clear.
+  --
+  --     With it TRUE the cache is `rtl/attn_kv_axi.vhd` over three AXI
+  --     masters, the four handshakes are connected, and the read path runs
+  --     from the second token of a sequence onward.
+  --
+  --     EITHER WAY, the position comes from `tok_pos` and not from a
+  --     hardwired 0, so a run of N tokens between resets attends over the
+  --     records the earlier tokens wrote.  At `cur_pos = 0` the block still
+  --     takes its bypass path and never reads -- that is `tb_attn_block`'s
+  --     JOB_POS = 0 case and it is why a one-token run proves nothing about
+  --     the cache.
   --
   -- The QK-norm gains are fixed-scale stand-ins.  They are LEARNED WEIGHTS:
   -- their scale does not move with the token, there is no region, descriptor
@@ -2799,7 +2926,7 @@ begin
     signal c_start  : std_logic := '0';
     signal c_layer  : integer range 0 to C_LAY-1 := 0;
     signal c_cpos   : unsigned(POSW-1 downto 0) := (others => '0');
-    signal c_ctx    : unsigned(POSW-1 downto 0) := to_unsigned(1, POSW);
+    signal c_ctx    : unsigned(POSW-1 downto 0) := to_unsigned(C_CTXLEN, POSW);
     signal c_busy, c_cfgtk, c_wntk : std_logic;
     signal c_seqrst : std_logic := '1';
     signal c_srtk   : std_logic;
@@ -2843,6 +2970,24 @@ begin
                             := (others => '0');
     signal kr_mant, vr_mant : std_logic_vector(C_KV_BLOCK*C_CM_W-1 downto 0)
                             := (others => '0');
+
+    -- THE FOUR HANDSHAKES `attn_block` GAINED AT THE SEAM.  Every one of them
+    -- defaults to '1' on the block's port, which is a memory that can never
+    -- refuse -- correct for the behavioural cache below, and a SILENT WRONG
+    -- ANSWER for any cache with latency.  They are signals here rather than
+    -- open, so both cache branches have to say what they are.
+    signal kw_rdy_s  : std_logic;
+    signal kr_rdy_s  : std_logic;
+    signal vr_rdy_s  : std_logic;
+    signal wr_idle_s : std_logic;
+    signal kv_busy_s, kv_cfgt_s : std_logic;
+
+    -- NO EXPRESSIONS IN THE PORT MAP, same rule as qg_e8 below.
+    constant KBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
+                     := std_logic_vector(to_unsigned(C_K_BASE, C_KV_ADDR_W));
+    constant VBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
+                     := std_logic_vector(to_unsigned(C_V_BASE, C_KV_ADDR_W));
+    constant REC_B_C : natural := 16 + C_HD*C_CM_W/8;
 
     type hdr_arr is array (natural range <>) of
          std_logic_vector(C_NBLK*8-1 downto 0);
@@ -2904,12 +3049,25 @@ begin
     cbanner : process is
     begin
       if SHOUT then
-        report "llama_top: unit C is the REAL attn_block.  It sequences ten "
-             & "real units; NOTHING establishes that it computes attention, "
-             & "because C has no block-level reference.  attn_kv_axi is "
-             & "absent -- the KV cache is a memory port -- and one token "
-             & "means cur_pos = 0, so the cache read path never runs."
-          severity note;
+        if C_KV_AXI then
+          report "llama_top: unit C is the REAL attn_block against the REAL "
+               & "attn_kv_axi, over three AXI masters.  The cache read path "
+               & "runs from the second token of a sequence onward.  NOTHING "
+               & "here establishes that what the block computes is "
+               & "attention: that claim belongs to ref/attn_block_seq_vec.c "
+               & "and sim/tb_attn_kv_seam.vhd, at the BLOCK level."
+            severity note;
+        else
+          report "llama_top: unit C is the REAL attn_block.  It sequences "
+               & "ten real units; NOTHING establishes that it computes "
+               & "attention, because C has no block-level reference.  "
+               & "attn_kv_axi is NOT instantiated (C_KV_AXI is false) -- the "
+               & "KV cache is a behavioural memory port that can never "
+               & "refuse, and attn_block's four handshake inputs are "
+               & "therefore held high.  That is correct for THIS memory and "
+               & "silently wrong for any cache with latency."
+            severity note;
+        end if;
       end if;
       wait;
     end process;
@@ -2935,9 +3093,25 @@ begin
       end if;
     end process;
 
-    -- ---- the KV cache.  One-cycle synchronous, exactly the shape
-    -- `sim/tb_attn_block.vhd` models, which is the only definition of this
-    -- boundary that exists.
+    -- ======================================================================
+    -- THE KV CACHE, TWO WAYS.
+    --
+    -- `gkvmem` is the one-cycle behavioural memory this file has always had:
+    -- exactly the shape `sim/tb_attn_block.vhd` models, and the shape
+    -- `attn_block` was written against.  It can never refuse, so all four
+    -- handshakes are tied high, and THAT IS ONLY CORRECT FOR THIS MEMORY.
+    --
+    -- `gkvaxi` is `rtl/attn_kv_axi.vhd`, the real cache in HBM.  It refuses,
+    -- it has O(100) cycles of read latency, and it does not make a write
+    -- visible until BRESP.  The four handshakes are what make that legal.
+    -- ======================================================================
+    gkvmem : if not C_KV_AXI generate
+      kw_rdy_s  <= '1';
+      kr_rdy_s  <= '1';
+      vr_rdy_s  <= '1';
+      wr_idle_s <= '1';
+      kv_busy_s <= '0';
+      kv_cfgt_s <= '0';
     kvp : process(clk) is
       variable a : integer;
     begin
@@ -2975,6 +3149,123 @@ begin
         end if;
       end if;
     end process;
+    end generate;
+
+    -- ---- the real cache ---------------------------------------------------
+    gkvaxi : if C_KV_AXI generate
+      -- ELABORATION CHECKS.  The three-way geometry constraint is stated in
+      -- the C_KV_AXI generic's header; these name the caller rather than
+      -- letting `attn_kv_axi`'s own asserts read as a bug in that file.
+      assert C_CM_W = 8
+        report "llama_top: C_KV_AXI needs C_CM_W = 8.  attn_kv_axi's record "
+             & "is an int8 byte layout and it asserts CM_W = 8 itself."
+        severity failure;
+      assert (C_KV_BLOCK*C_CM_W/8) mod 16 = 0
+        report "llama_top: C_KV_AXI needs KV_BLOCK*CM_W/8 to be a multiple of "
+             & "16, the record granule.  At CM_W = 8 that means C_KV_BLOCK "
+             & "at least 16, and with attn_block's HEAD_DIM/KV_BLOCK >= 2 and "
+             & "HEAD_DIM an even power of two the smallest legal head dim is "
+             & "64.  Build the shape with attn_head_dim => 64."
+        severity failure;
+      assert C_CTXLEN <= C_MAXPOS and C_CTXLEN < 2**POSW
+        report "llama_top: C_CTXLEN must fit in the cache and in POS_W."
+        severity failure;
+      -- The two regions must not overlap.  Nothing else checks this: both
+      -- masters would work perfectly and the V records would be K records.
+      -- K and V are SEPARATE regions with separate bases (C spec 2.2), so
+      -- each is LAYERS*N_KVH*MAXCTX*REC_B and there is no factor of two.
+      assert C_K_BASE + C_LAY*C_NKVH*C_MAXPOS*REC_B_C <= C_V_BASE
+          or C_V_BASE + C_LAY*C_NKVH*C_MAXPOS*REC_B_C <= C_K_BASE
+        report "llama_top: the K and V KV regions overlap.  Each is "
+             & integer'image(C_LAY*C_NKVH*C_MAXPOS*REC_B_C) & " bytes."
+        severity failure;
+      assert C_K_BASE mod 16 = 0 and C_V_BASE mod 16 = 0
+        report "llama_top: the KV bases must be 16-byte aligned; that is the "
+             & "record granule, and it is the ONLY alignment attn_kv_axi "
+             & "needs -- 4 KB alignment is not required."
+        severity failure;
+
+      u_kv : entity work.attn_kv_axi
+        generic map(
+          HEAD_DIM => C_HD, KV_BLOCK => C_KV_BLOCK, N_KVH => C_NKVH,
+          LAYERS => C_LAY, MAXCTX => C_MAXPOS, POS_W => POSW,
+          CM_W => C_CM_W, EXP_W => 8,
+          AXI_DW => C_KV_AXI_DW, ADDR_W => C_KV_ADDR_W,
+          MAXB => C_KV_MAXB, MAXOUT => C_KV_MAXOUT, RBUF => C_KV_RBUF)
+        port map(
+          clk => clk, rst => rst,
+          start => c_start, layer => c_layer,
+          cur_pos => c_cpos, ctx_len => c_ctx,
+          k_base => KBASE_C, v_base => VBASE_C,
+          cfg_taken => kv_cfgt_s, busy => kv_busy_s, wr_idle => wr_idle_s,
+          err => kv_err_i,
+          kw_sel => kw_sel, kw_head => kw_head, kw_pos => kw_pos,
+          kw_hen => kw_hen, kw_hdr => kw_hdr, kw_en => kw_en,
+          kw_blk => kw_blk, kw_mant => kw_mant, kw_rdy => kw_rdy_s,
+          kr_head => kr_head, kr_pos => kr_pos, kr_rdy => kr_rdy_s,
+          kr_en => kr_en, kr_blk => kr_blk, kr_hdr => kr_hdr,
+          kr_mant => kr_mant,
+          vr_head => vr_head, vr_pos => vr_pos, vr_rdy => vr_rdy_s,
+          vr_en => vr_en, vr_blk => vr_blk, vr_hdr => vr_hdr,
+          vr_mant => vr_mant,
+          r_arvalid => kv_arvalid, r_arready => kv_arready,
+          r_araddr => kv_araddr, r_arlen => kv_arlen, r_arsize => kv_arsize,
+          r_arburst => kv_arburst, r_rvalid => kv_rvalid,
+          r_rready => kv_rready, r_rdata => kv_rdata, r_rlast => kv_rlast,
+          r_rresp => kv_rresp,
+          w_awvalid => kv_awvalid, w_awready => kv_awready,
+          w_awaddr => kv_awaddr, w_awlen => kv_awlen, w_awsize => kv_awsize,
+          w_awburst => kv_awburst, w_wvalid => kv_wvalid,
+          w_wready => kv_wready, w_wdata => kv_wdata, w_wstrb => kv_wstrb,
+          w_wlast => kv_wlast, w_bvalid => kv_bvalid, w_bready => kv_bready,
+          w_bresp => kv_bresp);
+
+      -- The three handshakes, as properties.  A beat offered while its gate
+      -- is low is a SILENT WRONG ANSWER on the read side -- the cache does
+      -- not update its output, so the block captures whatever it last held --
+      -- and a vanished record on the write side, because attn_kv_axi drops
+      -- an unaccepted header and every following beat of that record with it.
+      seamchk : process(clk) is
+        variable said : boolean := false;
+      begin
+        if rising_edge(clk) then
+          if (kr_en = '1' and kr_rdy_s = '0')
+             or (vr_en = '1' and vr_rdy_s = '0')
+             or ((kw_en = '1' or kw_hen = '1') and kw_rdy_s = '0') then
+            kv_seam_bad <= '1';
+            if not said then
+              said := true;
+              report "llama_top: a KV cache beat was offered while its "
+                   & "handshake was low.  On a read that is a silent wrong "
+                   & "answer -- attn_kv_axi leaves kr_mant/vr_mant at their "
+                   & "last value and the block captures it -- and on a write "
+                   & "the whole record vanishes.  Reported once; the fault "
+                   & "is sticky on kv_err." severity error;
+            end if;
+          end if;
+        end if;
+      end process;
+
+      -- THE TWO SIDES MUST AGREE ABOUT WHICH LAYER THIS IS.  `attn_block`
+      -- publishes `kv_layer` with every write; `attn_kv_axi` takes `layer`
+      -- once, at `start`.  Nothing connects them, so a skew between the job
+      -- ordinal and the block's own latch would put a whole layer's records
+      -- at another layer's addresses and every read would still be served.
+      glchk : if C_LAY > 1 generate
+        lchk : process(clk) is
+        begin
+          if rising_edge(clk) then
+            if kw_en = '1' or kw_hen = '1' then
+              assert to_integer(kv_layer) = c_layer
+                report "llama_top: attn_block is writing layer "
+                     & integer'image(to_integer(kv_layer))
+                     & " and attn_kv_axi was configured for layer "
+                     & integer'image(c_layer) severity error;
+            end if;
+          end if;
+        end process;
+      end generate;
+    end generate;
 
     -- THE INT8 NARROWING IS A REAL RAIL, NOT A CAST.  Subsystem C's exponent
     -- ports are 8-bit signed by spec, and the residual stream's exponent is
@@ -3010,10 +3301,13 @@ begin
         kv_layer => kv_layer, kw_sel => kw_sel, kw_head => kw_head,
         kw_pos => kw_pos, kw_hen => kw_hen, kw_hdr => kw_hdr,
         kw_en => kw_en, kw_blk => kw_blk, kw_mant => kw_mant,
+        kw_rdy => kw_rdy_s,
         kr_en => kr_en, kr_head => kr_head, kr_pos => kr_pos,
         kr_blk => kr_blk, kr_hdr => kr_hdr, kr_mant => kr_mant,
+        kr_rdy => kr_rdy_s,
         vr_en => vr_en, vr_head => vr_head, vr_pos => vr_pos,
         vr_blk => vr_blk, vr_hdr => vr_hdr, vr_mant => vr_mant,
+        vr_rdy => vr_rdy_s, kv_wr_idle => wr_idle_s,
         y_valid => y_valid, y_mant => y_mant, y_index => y_index,
         y_last => y_last, y_exp => c_yexp, y_ready => Y_RDY,
         y_hdr_valid => y_hdrv,
@@ -3047,8 +3341,9 @@ begin
             -- the other side: attention blocks are the ones at
             -- (b+1) mod attn_interval = 0.
             c_layer <= (j_blk + 1) / SHAPE.attn_interval - 1;
-            c_cpos  <= (others => '0');
-            c_ctx   <= to_unsigned(1, POSW);
+            -- THE SEQUENCE POSITION, not a constant 0.  See `tok_pos`.
+            c_cpos  <= to_unsigned(tok_pos, POSW);
+            c_ctx   <= to_unsigned(C_CTXLEN, POSW);
             ep      <= job_epoch;
             uerr    <= '0';
             rdy     <= '0';
@@ -3163,7 +3458,11 @@ begin
             when S_RUN =>
               if c_done = '1' then
                 c_dack <= '1';
-                uerr   <= c_err;
+                -- The CACHE's sticky error is subsystem C's error too.  A
+                -- cache fault that only reached its own port would leave the
+                -- schedule reporting success on a token whose records were
+                -- never written.
+                uerr   <= c_err or kv_err_i or kv_seam_bad;
                 -- A REPORT IS NOT A VERDICT.  This sets `f_lost`, which P3
                 -- in the bench reads, so a short y stream FAILS the run
                 -- instead of printing a line nobody greps for.
@@ -3320,6 +3619,75 @@ begin
       end if;
     end if;
   end process;
+
+  -- ---- the sequence position -------------------------------------------
+  -- Advanced on the `tok_done`/`tok_ack` handshake, which is the only point
+  -- at which the machine is idle and the token is finished.  A sequence that
+  -- runs past the cache's depth is an ERROR and not a wrap: wrapping would
+  -- overwrite position 0's record with position C_MAXPOS's and every
+  -- subsequent read would be served a plausible wrong answer.
+  tokp : process(clk) is
+    variable said : boolean := false;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        tok_pos <= 0;
+      elsif tok_done_i = '1' and tok_ack = '1' then
+        if tok_pos = C_MAXPOS-1 then
+          if not said then
+            said := true;
+            report "llama_top: token " & integer'image(tok_pos)
+                 & " completed and the KV cache is only "
+                 & integer'image(C_MAXPOS) & " positions deep.  The next "
+                 & "token would overwrite position 0." severity error;
+          end if;
+        else
+          tok_pos <= tok_pos + 1;
+        end if;
+      end if;
+    end if;
+  end process;
+
+  tok_done    <= tok_done_i;
+  obs_tok_pos <= to_unsigned(tok_pos, 16);
+  kv_err      <= kv_err_i or kv_seam_bad;
+
+  -- The KV masters when there is no cache to drive them.  ONE driver each:
+  -- the `gkvaxi` branch inside the C adapter drives the same ports from
+  -- `attn_kv_axi`'s port map and this branch does not elaborate then.
+  -- C_KV_AXI LIVES INSIDE THE C_REAL BRANCH, so with C_REAL false there is
+  -- nothing to drive the KV masters and the tie-off below has to cover that
+  -- case too.  The assert makes the configuration an elaboration refusal
+  -- rather than a top level whose AXI outputs are 'U'.
+  kvcfg : process is
+  begin
+    assert C_REAL or not C_KV_AXI
+      report "llama_top: C_KV_AXI is set and C_REAL is not.  attn_kv_axi is "
+           & "instantiated inside the real subsystem C, so there is no cache "
+           & "to connect and the KV master ports would have no driver."
+      severity failure;
+    wait;
+  end process;
+
+  gkvtie : if not (C_REAL and C_KV_AXI) generate
+    kv_arvalid <= (others => '0');
+    kv_araddr  <= (others => '0');
+    kv_arlen   <= (others => '0');
+    kv_arsize  <= (others => '0');
+    kv_arburst <= (others => '0');
+    kv_rready  <= (others => '0');
+    kv_awvalid <= '0';
+    kv_awaddr  <= (others => '0');
+    kv_awlen   <= (others => '0');
+    kv_awsize  <= (others => '0');
+    kv_awburst <= (others => '0');
+    kv_wvalid  <= '0';
+    kv_wdata   <= (others => '0');
+    kv_wstrb   <= (others => '0');
+    kv_wlast   <= '0';
+    kv_bready  <= '0';
+    kv_err_i   <= '0';
+  end generate;
 
   obs_res_take <= v_taken(V_RES);
   obs_res_ea   <= v_exp_a;

@@ -197,6 +197,23 @@
 #                               the real gdn_block, 4 blocks x 4 descriptor-
 #                               memory latencies.  MEASURED 86 s, which would
 #                               nearly triple --quick on its own.
+#   tb_llama_top_seq            the same integration top level at the
+#                               multi-token KV-cache configuration: four
+#                               tokens of one sequence through the real
+#                               rtl/attn_kv_axi.vhd over three modelled AXI
+#                               slaves, two attention layers, two latency
+#                               points.  MEASURED 302 s through this runner.
+#   tb_llama_top_real           the same integration top level with EVERY
+#                               computing unit real AND real Qwen3.5-9B
+#                               weights: real matvec_int4, real gdn_block,
+#                               real attn_block, real rmsnorm_rs on the D-vec
+#                               norm op, weights from the committed
+#                               sim/llama_top_w_b4_pool.hex.  MEASURED 75 s
+#                               through this runner (127 s standalone on a
+#                               box that was running nine other simulations).
+#                               Until this row existed the gate ran ONLY the
+#                               generic defaults, which are the attention STUB
+#                               and the probe norm.
 #   tb_seq_desc_fetch           491-descriptor walk
 #   tb_seq_opdec                491-step walk through three units
 #   tb_seq_region_lock          491-step plan
@@ -348,7 +365,20 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=81   # +1 sim/tb_attn_kv_seam, rtl/attn_block.vhd joined to
+BASELINE_PASS=83   # +1 sim/tb_llama_top_real, the integration top level with
+                   #    C_REAL, NORM_REAL and the committed real-weight image
+                   #    all on.  Before it, EVERY tb_llama_top gate row
+                   #    elaborated with the attention stub and the probe norm,
+                   #    so a regression in the real path left the gate green.
+                   #    Its vector sim/llama_top_w_b4_pool.hex is COMMITTED --
+                   #    the generator needs an 18 GB GGUF that is not in git --
+                   #    so it needs no row in the vector tables, 2026-08-29
+                   # +1 sim/tb_llama_top_seq, rtl/llama_top.vhd joined to
+                   #    rtl/attn_kv_axi.vhd over a multi-token sequence.  It
+                   #    is a WRAPPER around sim/tb_llama_top.vhd, because this
+                   #    script keys a test by name and cannot run one
+                   #    testbench at two generic sets, 2026-08-29
+                   # +1 sim/tb_attn_kv_seam, rtl/attn_block.vhd joined to
                    #    rtl/attn_kv_axi.vhd over a 4-token sequence, 2026-08-28
                    # +1 sim/tb_mv4i_desc_image, the gateware judging a
                    #    descriptor image written by tools/gen_mv4i_desc.py.
@@ -405,6 +435,7 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_emit_chain sim:tb_gdn_recur_pipe
           sim:tb_matvec_axi sim:tb_matvec_core sim:tb_gdn_conv_cycles
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
           sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
+          sim:tb_llama_top_seq sim:tb_llama_top_real
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
@@ -899,7 +930,12 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   # golden fixtures live in sim/; symlinking keeps them read-only in practice
   # and means nothing is ever written back into the repo.
   local f
-  for f in "$SIM"/*.txt "$SIM"/*.dat "$SIM"/*.csv "$SIM"/*.mem "$SIM"/*.bin; do
+  # `.hex` was added 2026-08-29 for sim/llama_top_w_b4_pool.hex, the committed
+  # real Qwen3.5-9B weight image sim/tb_llama_top_real.vhd opens by bare name.
+  # Without it that row fails with "cannot open the weight image", which reads
+  # like a missing file and is a missing GLOB.
+  for f in "$SIM"/*.txt "$SIM"/*.dat "$SIM"/*.csv "$SIM"/*.mem "$SIM"/*.bin \
+           "$SIM"/*.hex; do
     [ -e "$f" ] && ln -sfn "$f" "$run/$(basename "$f")"
   done
   # tb_matvec_* address their trace one level up, as ../tr.txt.

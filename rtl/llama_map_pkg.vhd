@@ -208,6 +208,34 @@ package body llama_map_pkg is
     --              shape every published landmark was measured at).
     --              attn_hd = 16 -> 4 q heads, 2 kv heads (what the real
     --              `attn_block` needs; see the declaration).
+    --
+    -- attn_hd = 64 IS A THIRD POINT AND IT IS NOT A CONTINUATION OF THE
+    -- FORMULA.  64/attn_hd and 32/attn_hd give ONE q head and ZERO kv heads
+    -- at attn_hd = 64, which is not a shape.  The reason 64 has to exist at
+    -- all is `rtl/attn_kv_axi.vhd`: its record is a byte layout on a 16-byte
+    -- granule, so `KV_BLOCK*CM_W/8` must be a multiple of 16 -- KV_BLOCK >= 16
+    -- at the mandatory CM_W = 8 -- while `attn_block` needs
+    -- HEAD_DIM/KV_BLOCK >= 2 and HEAD_DIM an EVEN power of two.  The smallest
+    -- head dim satisfying all three is 64.  So above 32 the HEAD COUNTS are
+    -- pinned at the minimum both blocks accept (4 q, 2 kv, GQA group 2) and
+    -- the ATTENTION REGION WIDTHS grow with the head dim instead:
+    -- att_q 256, att_qg 512, att_kv 128.  Every landmark measured at
+    -- attn_hd 16 or 32 is at a DIFFERENT SHAPE from one measured at 64 and
+    -- the two are not comparable.
+    if attn_hd > 32 then
+      return (blocks        => blocks,
+              attn_interval => attn_interval,
+              hidden        => 64,
+              ffn           => 128,
+              key_heads     => 2,
+              val_heads     => 4,
+              head_dim      => 32,
+              conv_kernel   => 4,
+              attn_q_heads  => 4,
+              attn_kv_heads => 2,
+              attn_head_dim => attn_hd,
+              vocab_shard   => 128);
+    end if;
     return (blocks        => blocks,
             attn_interval => attn_interval,
             hidden        => 64,
