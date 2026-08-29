@@ -61,10 +61,28 @@ WHERE EVERY D HEADER FIELD COMES FROM
   const_exp
         NOT DERIVABLE.  No owner, no consumer, no packing.  Written 0.
   flags
-        DERIVED: 0 everywhere except the lm_head step (FLG_TO_SMP).  Note that
+        DERIVED: 0 everywhere except the lm_head steps (FLG_TO_SMP).  Note that
         the format document calls bit 2 `cb_load`, and NEITHER VHDL generator
         ever sets it -- the codebook load is expressed in A's OWN descriptor,
         which is where A reads it.  `--d-cb-load` sets it in the D header too.
+
+============================================================================
+THE LM HEAD DOES NOT FIT ONE JOB, AND RAW MODE DOES NOT CHANGE THAT
+============================================================================
+`output.weight` is 248,320 x 4,096 and `MAXROWS_BFP` is 17,408, so the lm_head
+is 15 A jobs, not one.  `rtl/matvec_core.vhd:947` bounds `n_rows` only when
+`out_mode = "00"`, and spec 7.6 does say M may exceed `MAXROWS_BFP` in raw --
+but NOTHING REACHES `matvec_core` EXCEPT THROUGH THE DESCRIPTOR PLANE, and
+`rtl/matvec_int4_desc_axi.vhd:721-726` bounds it in EVERY mode:
+
+    elsif unsigned(lo32(dw(1))) = 0
+       or unsigned(lo32(dw(1))) > MAXROWS_BFP        -- no out_mode test
+
+and it must, because `sh_rows` is `integer range 0 to MAXROWS_BFP` (:309).
+MEASURED with the RTL as judge (`sim/tb_mv4i_desc_image`): a 248,320-row
+descriptor is refused `err_code 0x3 err_info 1` in raw AND in BFP, and each of
+the 15 windows is accepted.  So a one-job lm_head is not a schedule choice, it
+is an RTL change.
 
 `rel_mask` is not a descriptor field at all.  `rtl/seq_opdec.vhd` finding (3)
 says it is a whole-TABLE liveness property with no field in the format, so it
@@ -78,9 +96,12 @@ USAGE
     # the deliverable: one real Qwen3.5-9B layer at the FK33 geometry
     tools/gen_layer_program.py --layer 0 --x-exp 5 --outdir OUT --print
 
-    # the whole 491-step token's D table, in the VHDL generators' own field
-    # stamping, for byte comparison against them
-    tools/gen_layer_program.py --token --stamp seq_tbl --d-table OUT/t.hex
+    # the whole token's D table, in the VHDL generators' own field stamping,
+    # for byte comparison against them.  --one-lmhead-job is required for that
+    # comparison at the 9B vocabulary: both generators encode the lm_head as
+    # ONE 248,320-row job, which the gateware REFUSES (see THE LM HEAD below).
+    tools/gen_layer_program.py --token --stamp seq_tbl --one-lmhead-job \\
+        --d-table OUT/t.hex
     tools/gen_layer_program.py --token --shape sim --blocks 4 --attn-int 4 \\
         --stamp sched --d-table OUT/s.hex --rel-file OUT/s_rel.txt
 """
@@ -93,6 +114,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gen_mv4i_desc as G          # noqa: E402  the ONE matvec job, reused
+import gen_lmhead_windows as W     # noqa: E402  the ONE window derivation
 
 # --------------------------------------------------------------- the opcodes
 # rtl/llama_map_pkg.vhd, which sim/seq_tbl_pkg.vhd asserts equality with.
@@ -162,9 +184,13 @@ class Shape(object):
     def n_gdn(self):
         return self.blocks - self.n_attn()
 
-    def n_steps(self):
+    def n_steps(self, lm_windows=1):
+        """`lm_windows` is the number of A jobs the lm_head is split into.
+        It is 1 for every shape whose `vocab_shard` fits one job, which is
+        every SCALED shape, and 15 at the 9B vocabulary on the FK33 build --
+        see `lmhead_windows` below."""
         return (self.n_gdn() * NSTEP_GDN_N1
-                + self.n_attn() * NSTEP_ATTN_N1 + 3)
+                + self.n_attn() * NSTEP_ATTN_N1 + 2 + lm_windows)
 
     def region_sizes(self):
         r = [0] * NREGION
@@ -215,12 +241,48 @@ class Step(object):
                 OP_E_COLL: U_E, OP_END_TOKEN: U_A}.get(self.opcode, U_V)
 
 
-def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False):
+def lmhead_windows(s, build=None):
+    """The lm_head's row windows, as [(row_start, n_rows), ...].
+
+    `output.weight` is `vocab_shard` x `hidden` and the FK33 build's
+    `MAXROWS_BFP` is 17,408, so at the 9B vocabulary (248,320) it is not one
+    job.  The stride is NOT MAXROWS_BFP: a window can only begin on a tile
+    boundary, so it is `floor(MAXROWS_BFP / ROWS_IF) * ROWS_IF` = 17,376.
+
+    THE DERIVATION IS NOT REPEATED HERE.  `tools/gen_lmhead_windows.plan` owns
+    it, along with the byte-cover and acceptance checks that go with it; this
+    calls it so there is exactly one place for the arithmetic to be wrong.
+    For every scaled shape `vocab_shard` is below one stride, `plan` returns a
+    single window at row 0, and the step sequence is bit-for-bit what it was
+    before this function existed."""
+    build = build or G.FK33
+    _, wins = W.plan(s.vocab_shard, build["rows_if"], build["maxrows_bfp"])
+    return wins
+
+
+def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
     """The step sequence, per block, in order.  Independently written from the
     same D design spec sections 4.2 / 4.3 that `sim/seq_tbl_pkg.vhd` and
     `sim/llama_sched_pkg.vhd` implement; agreement with BOTH of those is the
-    check, not the construction."""
+    check, not the construction.
+
+    `lm_windows` is the lm_head's row-window list; default is the single
+    whole-tensor window the two VHDL generators encode, which is CORRECT only
+    where `vocab_shard <= floor(MAXROWS_BFP/ROWS_IF)*ROWS_IF`."""
     steps = []
+    lmw = list(lm_windows) if lm_windows else [(0, s.vocab_shard)]
+    # Checked here rather than trusted, because a window list that does not
+    # tile the vocabulary emits a program that is accepted by the gateware and
+    # computes a partial argmax -- a silent wrong token, not an error.
+    end = 0
+    for rs, nr in lmw:
+        if rs != end or nr <= 0:
+            raise LayerError("lm_head windows do not tile: window at row %d "
+                             "with %d rows follows row %d" % (rs, nr, end))
+        end = rs + nr
+    if end != s.vocab_shard:
+        raise LayerError("lm_head windows cover %d rows, vocab_shard is %d"
+                         % (end, s.vocab_shard))
 
     def emit(**kw):
         kw.setdefault("src", R_NONE)
@@ -318,14 +380,35 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False):
     # step and therefore writes `blocks % 64` here.  The two disagree.
     emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
          blk=s.blocks, const_base=s.blocks, ordinal=0)
-    emit(opcode=OP_A_JOB, flags=FLG_TO_SMP, src=R_XN, dst=R_NONE,
-         n_rows=s.vocab_shard, n_cols=s.hidden, out_mode=1, blk=s.blocks,
-         tensor="output.weight")
+    # THE LM HEAD, one A job per row window.
+    #
+    # `dst` is R_NONE and FLG_TO_SMP on EVERY window, not only the first or
+    # the last: each window streams its own slice of the logits to the
+    # sampler, and there is no region write to attribute to one of them.
+    # `dst_off` stays 0 for the same reason -- `seq_opdec` infers an exponent
+    # SEGMENT from `dst_offset`, and a stream has no segments.  Commit
+    # 706a2a4 MEASURED on the real `rtl/sampler_stream.vhd` that the windows
+    # share one running argmax with NO offset arithmetic, provided `clr` is
+    # pulsed once per token and they are issued ascending; they are emitted
+    # ascending here, and nothing in the descriptor format expresses `clr`
+    # (see the write-up's open list).
+    #
+    # `out_mode` is RAW (1) on every window and that is load-bearing, not
+    # inherited: raw's `y_exp = w_exp + x_exp - out_shift`
+    # (ref/matvec_int4.c:436) carries no per-job term, so 15 windows report
+    # ONE exponent and their s32 payloads are directly comparable.  BFP's
+    # `ns` is a max over the JOB's rows (:403-413), so 15 BFP windows would
+    # carry 15 different exponents into a sampler whose only input is a
+    # 32-bit integer (rtl/sampler_stream.vhd:27).
+    for rs, nr in lmw:
+        emit(opcode=OP_A_JOB, flags=FLG_TO_SMP, src=R_XN, dst=R_NONE,
+             n_rows=nr, n_cols=s.hidden, out_mode=1, blk=s.blocks,
+             tensor="output.weight", row_start=rs)
     emit(opcode=OP_END_TOKEN, blk=s.blocks)
 
-    if not qkv_fused and len(steps) != s.n_steps():
+    if not qkv_fused and len(steps) != s.n_steps(len(lmw)):
         raise LayerError("emitted %d steps, n_steps() says %d"
-                         % (len(steps), s.n_steps()))
+                         % (len(steps), s.n_steps(len(lmw))))
     build_rel(steps)
     return steps
 
@@ -684,6 +767,15 @@ def main(argv=None):
                          "tensor instead of three row windows.  Expressible "
                          "at ROWS_IF = 48, and it collapses R_QKV's three "
                          "exponent segments into one")
+    ap.add_argument("--one-lmhead-job", action="store_true",
+                    help="emit the lm_head as ONE A job over the whole "
+                         "vocabulary instead of tile-aligned row windows.  "
+                         "This is what both VHDL generators encode and it is "
+                         "REFUSED by the gateware at the 9B vocabulary "
+                         "(n_rows > MAXROWS_BFP, matvec_int4_desc_axi:722, "
+                         "checked in EVERY out_mode).  Kept so the byte "
+                         "comparison against those generators stays "
+                         "reproducible")
     ap.add_argument("--stamp", choices=("manifest", "seq_tbl", "sched"),
                     default="manifest",
                     help="where w_exp/out_shift/const_exp/ordinal come from")
@@ -720,7 +812,8 @@ def main(argv=None):
     else:
         s = QWEN35_9B
 
-    steps = build_plan(s, qkv_fused=a.qkv_fused)
+    lmw = [(0, s.vocab_shard)] if a.one_lmhead_job else lmhead_windows(s)
+    steps = build_plan(s, qkv_fused=a.qkv_fused, lm_windows=lmw)
 
     # ---- the shape, checked against the packed tensors -------------------
     mani = None
@@ -829,9 +922,10 @@ def main(argv=None):
               "key_dim=%d val_dim=%d att_q=%d att_kv=%d"
               % (s.blocks, s.attn_interval, s.hidden, s.ffn, s.key_dim,
                  s.val_dim, s.att_q, s.att_kv))
-        print("token     %d steps (%d GDN x %d, %d attn x %d, +3)"
-              % (s.n_steps(), s.n_gdn(), NSTEP_GDN_N1, s.n_attn(),
-                 NSTEP_ATTN_N1))
+        print("token     %d steps (%d GDN x %d, %d attn x %d, +2, "
+              "+%d lm_head window%s)"
+              % (s.n_steps(len(lmw)), s.n_gdn(), NSTEP_GDN_N1, s.n_attn(),
+                 NSTEP_ATTN_N1, len(lmw), "" if len(lmw) == 1 else "s"))
         if a.layer is not None and not a.token:
             print("layer %-3d %s, %d steps, D table %d bytes"
                   % (a.layer, "ATTENTION" if s.is_attn(a.layer) else "GDN",
@@ -866,7 +960,8 @@ def main(argv=None):
             shape=dict(blocks=s.blocks, attn_interval=s.attn_interval,
                        hidden=s.hidden, ffn=s.ffn, key_dim=s.key_dim,
                        val_dim=s.val_dim, att_q=s.att_q, att_kv=s.att_kv,
-                       n_steps=s.n_steps()),
+                       n_steps=s.n_steps(len(lmw)),
+                       lm_windows=lmw),
             stamp=a.stamp, nsub_w=nsub_w, nsub_s=nsub_s,
             layer=a.layer, n_emitted=len(sel),
             steps=[dict(idx=st.idx, opcode=st.opcode,
