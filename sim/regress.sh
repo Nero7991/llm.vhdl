@@ -814,6 +814,25 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # file's 5,328 integers, so the mutation is observable and the bench's
     # v_ref property has teeth.  Do not "tidy" this back to a round number.
     attn_block_seq_vec.txt) echo "64 4 2 16 16 4 2" ;;
+    # attn_kv_quant_vec.txt and attn_score_q12_vec.txt are COMMITTED in sim/.
+    # Without a row here the `[ -e "$SIM/$v" ] && [ -z "$args" ]` test above
+    # skips generation entirely, so their generators never ran on a gate run
+    # and FIVE checks that only the generator can make were dead: kv_quant's
+    # 0.5-LSB residual bound and its [64, 128) peak window, score_q12's
+    # whole-chain derived bound, and score_q12's right/left/saturating
+    # coverage gate.  MEASURED 2026-08-29: no gen_attn_kv_quant_vec or
+    # gen_attn_score_q12_vec binary was built in either run directory.  The
+    # arguments below are the generators' own defaults and the testbenches'
+    # generic defaults at once, so the regenerated file is BYTE-IDENTICAL to
+    # the COMMITTED one -- verified with cmp against `git show HEAD:` for both,
+    # deliberately not against the working tree, because on 2026-08-29 a stray
+    # generator run with cwd = sim/ overwrote both working-tree copies and the
+    # skip above would have fed that foreign file straight to the bench.  That
+    # is the second reason for these rows: a golden nothing regenerates is a
+    # golden anything can replace in silence.
+    # Honest false-red rate over 40 stimulus seeds: 0 for all five checks.
+    attn_kv_quant_vec.txt)  echo "64 256 32" ;;    # ncase DIM KV_BLOCK
+    attn_score_q12_vec.txt) echo "64 8 4" ;;       # ncase NBLK KQ
     attn_emit_vec.txt)      echo "40 2 48" ;;      # sim/mutate_attn_emit.sh
     attn_gate_vec.txt)      echo "35 64" ;;        # sim/mutate_attn_gate.sh
     attn_recip_vec.txt)     echo "24 12" ;;        # sim/mutate_attn_recip.sh
