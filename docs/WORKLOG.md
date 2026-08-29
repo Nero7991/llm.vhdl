@@ -139,119 +139,23 @@ has already destroyed its factory flash image by crossing that line.
 
 ## In flight
 
-### TRACK C-ORACLE -- does `attn_block` compute attention?
+**Refreshed 2026-08-29 by the dispatcher.** The previous contents of this
+section listed TRACK C-ORACLE and TRACK B-ACCURACY as RUNNING; both landed
+2026-08-28. An independent review caught the staleness before I did. On a board
+whose entire purpose is stopping concurrent agents from colliding, a stale row
+is the next collision, so this section is now rewritten at every dispatch
+rather than appended to.
 
-**Status:** RUNNING (dispatched 2026-08-28)
-**Owns:** `ref/attn_block_vec.c` (new), `sim/tb_attn_block.vhd`, `rtl/attn_*.vhd`
+| track | question | owns | dispatched |
+|---|---|---|---|
+| **REF9B** | A whole-model 9B numeric reference. `ref/` holds one whole-model reference and it is stories260K, so nothing here can currently say whether a token is the RIGHT token. Must choose float vs fixed-point and defend the choice against the failure mode of the one it picks. Backlog 12. | `ref/**` (new), `tools/` (new) | 2026-08-29 |
+| **CONGEST** | WHERE is the shell build congested, and what does each lever cost. Measurement only: it is explicitly forbidden from implementing a fix, because every lever changes arithmetic parallelism and re-floors the cycle budgets, which is Oren's decision. | `hw/fk33/**` | 2026-08-29 |
+| **B-RECUR** | Mutation coverage for `gdn_recur` and `gdn_exp_capture`, and root-cause the open `d_m` grid defect behind the 8.955 LSB worst case. Part 2 outranks Part 1. Backlog 8. | `sim/tb_gdn_recur.vhd`, `sim/tb_gdn_exp_capture.vhd`, `sim/mutate_gdn_recur*`, `sim/mutate_gdn_exp*` | 2026-08-29 |
+| **SERVER** | The host seam from whole-loop-in-hardware to prefill plus decode-returning-logits; `pl_backend` v2 against a SIMULATED transport; the C tokenizer wired in. Plus the one-line `mk_shape_scaled` refusal in the Python. Backlog 5. | `server/**`, `tools/gen_layer_program.py` | 2026-08-29 |
 
-**The question.** `attn_block` is wired into `llama_top` and a 32-block token
-passes, but the integration bench says in its own PASS line that **nothing
-establishes it computes attention**. Subsystem C has no block-level reference
-anywhere. Eight units are individually excellent and the composition is
-unchecked.
+**Standing instruction to every track: nothing may be run against the card.**
+There is no bitstream at present in any case (see OI-12).
 
-**Pre-written next steps:**
-
-- **If bit-exact against a new independent C oracle** -> mark off. Next: raise
-  C from "auxiliary path verified" to "block verified" in the audit, and open
-  `attn_kv_axi` (the HBM KV interface, still absent) as the remaining C gap.
-- **If it diverges** -> this is the most valuable outcome available today and
-  must NOT be worked around. Write the divergence down with the failing case,
-  bisect to the unit, and report. Do not adjust the oracle to agree.
-- **If a block-level oracle proves impractical** (e.g. the block's schedule is
-  not reproducible outside the simulator) -> say so plainly, and fall back to
-  checking the ARRAY (`attn_mac_array`) against `ref/attn_mac_array_vec.c`
-  under the block's real schedule. Partial coverage honestly labelled beats a
-  block-level claim that is not real.
-- **If it hits `attn_emit.vhd:400`** (the `NGRP=1` bound violation) -> that is
-  a known latent defect, recorded below. Do not fix it inside this track
-  without saying so; note it and route around with `NGRP >= 2`.
-
-### TRACK B-ACCURACY -- the two places B checks transcription but not arithmetic
-
-**Status:** RUNNING (dispatched 2026-08-28)
-**Owns:** `rtl/gdn_recur_pipe.vhd`, `rtl/l2norm_rs.vhd`, their benches, `ref/gdn_*`, `ref/l2norm*`
-
-**The question.** Two measured holes from the completeness audit:
-1. `gdn_recur_pipe` is the SHIPPING recurrence and its bench **explicitly
-   discards the oracle's accuracy columns** (`sim/tb_gdn_recur_pipe.vhd:147-148`
-   reads and drops oracle `u` and `o`). It is checked only for equality with
-   `gdn_recur`'s recipe, so a shared recipe error is invisible.
-2. `l2norm_rs` is tolerance-checked against `math_real` at 0.75 LSB and
-   **`ref/` contains no l2norm model at all**.
-
-**Pre-written next steps:**
-
-- **If both close bit-exactly** -> mark off, and B moves from "most complete"
-  to genuinely oracle-covered. Next: B still has **zero** mutation coverage;
-  open that as the follow-on.
-- **If `gdn_recur_pipe` diverges from the accuracy oracle** -> that is a real
-  finding about the shipping unit. Report it, do not relax the check, and do
-  not "fix" it by reinstating the discard.
-- **If `l2norm_rs` cannot be made bit-exact** (e.g. it is genuinely an
-  approximation with a specified error bound) -> then the deliverable changes
-  to: state the bound, prove it holds over an adversarial input sweep, and say
-  so. A documented bound is a real result; a silent tolerance is not.
-- **If either needs an RTL change** -> stop and report before changing RTL that
-  `llama_top` now depends on.
-
-### TRACK TOK-C -- the tokenizer in C, so the server can link it
-
-**Status:** LANDED 2026-08-28. The first pre-written branch fired: the C
-matches the oracle over the same corpus and the same sweep, and over two checks
-that did not exist before (all 248,320 token ids; malformed-byte fuzz). Tables
-came from llama.cpp's own `src/unicode-data.cpp`, not from a UCD download, so
-the version skew cannot recur. Size reported before committing: +42,704 bytes
-(+28.3%) on the native `llama_server` link, no new dependency, so the
-third branch did not fire. Two findings raised as OI-5 and OI-6 below. Next, as
-written: the server seam itself, still `BLOCKED-DEP` on the descriptor format
-AND on rendering the chat template, which nothing implements in any language.
-See `docs/debugging/2026-08-28_qwen35-tokenizer-c.md`.
-
-### TRACK A-CTRL -- the descriptor control plane, the CDC, and MAXOUT
-
-**Status:** LANDED (2026-08-28)
-**Owns:** `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `rtl/axi_rd_fsm.vhd`, `rtl/async_fifo.vhd`, `hw/mv_driver.c`, the matvec benches
-
-**The decision, taken and not to be relitigated.** Oren chose **descriptor in
-memory**: the AXI-Lite map stays constant and the 24 `W_BASE` plus 3 `S_BASE`
-entries move into a descriptor block the host DMAs in. The map therefore does
-not grow with geometry, so `ROWS_IF` can change later without touching the
-driver; it unifies with subsystem D, which already fetches descriptors through
-`rtl/seq_desc_fetch.vhd`; and the 3.27 GB/s H2C path that delivers the
-descriptor is already proven on silicon.
-
-Rejected: a generated fixed map (about 60 registers, reshapes whenever
-`ROWS_IF` or `AXI_DW` moves, driver and bitstream must be version-locked), and
-an indexed window (81 stateful writes at 1 to 2 us per PCIe round trip, and the
-existing header's "a map no driver could parse" objection applies to it most
-strongly).
-
-**Which branch fired.** The first one: bit-exact through the new control path
-at `MAXB=16`. Format at `docs/2026-08-28_matvec-descriptor-format.md`, RTL at
-`rtl/matvec_int4_desc_axi.vhd`, bench at `sim/tb_matvec_fk33_desc.vhd`.
-**Next, per the pre-written step: the shell integration** -- `gen_pcieep.py`
-enabling the HBM ports AND `llama_top` instantiated, the first build that could
-put arithmetic on the card.
-
-**The other three branches, answered:**
-
-- The descriptor format did NOT collide with D. It IS D's: D's 64-byte header,
-  D's base array at `0x40`, and a four-word A extension placed AFTER the base
-  array -- the one region `seq_desc_fetch` never reads. A descriptor written to
-  A's spec is still a valid D descriptor. What D's header genuinely cannot
-  carry (`w_beats`, `s_beats`, `x_exp`) is what went into the extension, and
-  why is written down.
-- The CDC closed. `rtl/async_fifo.vhd` + `DUAL_CLK` on `axi_rd_port`, per-port,
-  `DEPTH = 256` beats at `AXI_DW = 256` (8 KB/port, spec 7.7's budget, and
-  exactly `MAXOUT*MAXB = 256` in-flight beats). Bit-exact at four AXI/core
-  ratios including a non-integer one.
-- **Two mutations pass without an error, and both are reported as defects
-  rather than as test gaps.** See OI-1 below. Neither is a silent wrong answer
-  presented as success in the way OI-3's are: one is wrong output with no way
-  to know, the other is a hang.
-
----
 
 ## Open issues
 
@@ -586,6 +490,12 @@ reference builder in C for the A job. Still nothing emits it.
 
 | track | result | commit |
 |---|---|---|
+| **SHELL: the composed design does NOT route** | First FK33 build containing real arithmetic (subsystem A's descriptor plane as `fk33_engine`, 28 AXI masters). Places, then `[Route 35-3] Design is not routable as its global congestion level is 7` after six attempts over 7:47. **No bitstream exists.** NOT a timing miss (WNS -0.260) and NOT an area blowout (39.50% LUT, 55.03% DSP, 38.91% BRAM36). The engine SHRANK in the shell vs OOC (134,534 -> 132,113 LUT), so the OOC figures were honest. Corrected its brief three times: 192.5 vs 145.5 BRAM36 are different builds, masters are 28 not 27, and backlog 2's `llama_top` is a sim top with stories260K ROMs and no HBM interface. Found a combinational halt mask that did not block a GO, caught by a scratch bench with a firing negative control rather than by inspection. Peak RSS 22.81 GB. Filed OI-12 and OI-13. | `928ad9f`, `70c35db`, `d807a1c` |
+| **LMHEAD: the whole token's A program is expressible** | `311 of 311 A jobs emitted, 0 refused` (was 296 of 297). 15 raw row windows at stride 17,376. **Route 2 refuted with the RTL as judge:** `matvec_int4_desc_axi`'s `S_CHECK` bounds `n_rows` in EVERY `out_mode`, so a 248,320-row descriptor is refused `err_code 0x3` in raw and BFP alike -- answering OUTMODE's open question NO. Raw over BFP is load-bearing: in BFP 832 of 1024 mantissas move and every value is exactly 2x, feeding a sampler whose only input is a bare 32-bit integer. 248,320 of 248,320 logits bit-identical, 9 of 10 mutations killed, m10 named a permanent structural non-biter. The 'destination region nobody has decided' does NOT exist: `dst = R_NONE` + `FLG_TO_SMP` was always there. Found a defect in `seq_tbl_pkg`, which encodes the job the gateware refuses. | `a781326` |
+| **B-GATE: the flagship mutation now fails the gate** | `gdn_silu` and `rmsnorm_bf` had oracles that were PRINTED, not gated. Route B (in-bench real-valued oracle) chosen and Route A killed with one line: an RTL-only mutation leaves the generator reading the UNMUTATED 0.7704 LSB while the bench reads 1.68e10. Flagship closed WITH a control (same tree, only the bench swapped: FAIL new, PASS old). Gates max/count/mean/floor. **Warning for all of subsystem B: the committed `rmsnorm_bf` seed is the benign extreme of a 13x range** (honest worst 0.770 -> 9.999 LSB over nine seeds), so the pre-existing `ACC_LSB=1.0` fires on the HONEST unit at eight of nine seeds. Any B threshold calibrated on one seed is suspect. Also: a max-only gate could not have been made honest for either unit, and a mutation that destroys a unit reads BETTER than the correct one on every figure but the floor. 33 of 43 mutations killed, all 11 BOTH-class killed, 10 survivors named. | `728fcfe` |
+| **QKV-PAD: 49 refused A jobs became 1** | Each fused row segment padded with ZERO rows to a whole `ROWS_IF` tile: starts 0/2064/4128, M = 8224 vs M_logical 8192, uniform across all 24 tensors and derived from GGUF metadata rather than the brief. Zero is the fill BECAUSE it is the only one also invisible under a WRONG scan domain (measured: a full-scale pad shifts ns 5 -> 8). 33,554,432 nibbles and 1,048,576 scales identical; 5 of 5 equivalence mutants bite. Found a silent pass in the tooling: a tile-aligned but WRONG `row_start` makes a descriptor the RTL accepts whose bases read past the tensor, and the gateware can never see it because `row_start` is not a descriptor field. | `e28083f` |
+| **OUTMODE: raw mode had no oracle and wrote past the end of ybuf** | `out_mode=01` was already DRIVEN, by `tb_matvec_cb_lockstep` -- but that bench compares four runs against EACH OTHER and never against the reference. A round trip, not an oracle. With a real oracle attached, raw needed no new vector (`ref/matvec_int4.c` already emits `YDATA`; the loader dropped the line). Coverage 184/24 -> 464/343 values, masked rows now scored against zero rather than skipped. OI-10 fixed by narrowing the write ENABLE, not clamping the address as OI-8 did, with the reason in the code. **M6, the alternative fix form, DOES NOT BITE and is reported as a permanent floor:** nothing reads `ybuf` in raw mode, so no bench can separate the two forms. OI-11 WITHDRAWN for the arm it named (`f693faf` predates the filing, verified by ancestry) and closed on the AXU3EG arm it missed, where a `busy <= '0'` mutant passed all 22 cases. | `0ff6828`, `b65d9ad` |
+| **B-FIX: three verification defects, and a corrected diagnosis** | Fixed D1 (golden two days behind its generator), D2 (the chain gate ran at the one `Z_DELAY` that hides the defect; bisection put the threshold at (520,540], corrected from '~512', and 640 is DERIVED from 616 cycles per head), and D3. **Corrected B-MUT's diagnosis on D3:** the sentinel-cancellation story explains only 14 of 17 cases past 100 LSB and the joint-worst case has NO saturation. The unifying statement is that the error is |a| times the softplus error, so the gate became a DOMAIN PREDICATE on inputs rather than a threshold. BOTH-class score 0 of 5 -> 4 of 5. Trap recorded: ghdl-mcode cannot override a `real` generic. | `ebcca86`, `6332abe`, `6e20668` |
 | **TRACK TOP-KV: the KV seam at the INTEGRATION level** | `llama_top` instantiates `attn_kv_axi`, connects `attn_block`'s four seam handshakes, and advances a sequence position on `tok_done`/`tok_ack` instead of hardwiring 0. Four tokens of one sequence, TWO attention layers, three KV read latencies (100/7/403), R_X bit-identical per token, 0 KV faults. 26 mutation rows, 13 killed, 9 survivors all analysed. **Also closes backlog 14:** the gate had NO row with the real path on, and now has two. The 32-block real-weight landmark is byte-identical (`R_X(0) = -14110 hash 52347`, all 65 `log2 rms` samples). Regression 81 -> 83. `docs/debugging/2026-08-29_llama-top-kv-seam-multitoken.md` | see git log |
 | Thermal guard synthetic trip | Guard halts, latches, freezes compute, releases. Teeth-checked. | `0b8831c` |
 | Subsystem A at FK33 geometry | Bit-exact from real `.mv4i` bytes, 27 masters. Regression 76 -> 77. | `055b6ed` |
