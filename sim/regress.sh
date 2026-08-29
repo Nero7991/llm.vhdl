@@ -182,6 +182,7 @@
 # and it is NOT a substitute for a full run.  It deliberately omits, by name:
 #
 #   tb_gdn_block                the six-unit top level, minutes per skew point
+#   tb_gdn_block_vec            the same six units against the block oracle
 #   tb_gdn_emit_chain           four units and four seams
 #   tb_gdn_recur_pipe           384 cases at DIM=128
 #   tb_gdn_y_emit               24 heads x 128 elements over two blocks
@@ -568,7 +569,8 @@ mkdir -p "$SCRATCH"
 # two suites share SEVEN testbench names: tb_embed, tb_lm_head, tb_matmul_rt,
 # tb_rmsnorm, tb_rope, tb_softmax and tb_swiglu are each declared by a tb/ file
 # AND by a sim/tb_*_ps.vhd file.  A bare name would match both.
-SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_emit_chain sim:tb_gdn_recur_pipe
+SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
+          sim:tb_gdn_recur_pipe
           sim:tb_gdn_y_emit sim:tb_engine_dump sim:tb_matvec_int4
           sim:tb_matvec_axi sim:tb_matvec_core sim:tb_gdn_conv_cycles
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
