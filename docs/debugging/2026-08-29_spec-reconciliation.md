@@ -519,4 +519,49 @@ An "unverified" marker is worth more than a confident sentence nobody checked.
 
 ## 10. Corrections
 
-Appended in place, never by editing history. None yet.
+Appended in place, never by editing history.
+
+### 2026-08-29: this track's six files landed inside another track's commit
+
+**`686fd97`, "subsystem C's R_Y gets an oracle, and its v_ref fold is missing a
+dimension", contains all six of this track's documents.** Its message describes
+only TRACK C-ORACLE's R_Y work. Nothing was lost: MEASURED, all six files in
+`686fd97` are byte-identical to what this track wrote (`md5sum` against
+`git show 686fd97:<path>`, six of six IDENTICAL). The defect is a commit message
+that describes half its contents, and it is recorded here rather than fixed by
+an amend, because amending would rewrite another track's tip and re-run the same
+race.
+
+**The mechanism is the mirror image of the one the worklog already records**,
+and it is worth stating because the worklog's version has only ever been
+described from the sweeping side. The recorded trap is
+`git commit -m msg -- <path>`, which commits the WORKING TREE at that path. This
+was the other half: I ran `git add <my six paths>`, which is the prescribed safe
+form, and then `git diff --cached --name-only` as its own gating step, exactly
+as CLAUDE.md requires. **The gate fired.** It printed twelve paths, six of them
+mine and six belonging to a track editing `ref/` and `tools/ref9b/`. Before I
+could act on that reading, that track committed, and a pathspec-free commit
+takes the whole index.
+
+**So the lesson is not "run the check".** I ran it, and it worked, and it was
+still too late. **The index is shared mutable state between concurrent agents,
+and there is no atomic read-then-commit through it.** The only forms that do not
+have this race are ones that never put a file in the shared index:
+`git commit -m msg -- <paths>` on files ONLY your track owns (its documented
+danger, that it commits the working tree at those paths, is harmless when the
+paths are yours and clean), or `git stash` plus a private index. Between the two
+traps, **the pathspec form is the safer one for files you exclusively own, and
+the `git add` form is the safer one for a shared file** -- which is the opposite
+of how the two rules read in isolation, and is why they keep fighting.
+
+**Corollary for the dispatcher, not for me to act on:** the WORKLOG's rule
+"stage the hunk, then commit with NO pathspec" is correct for a SHARED FILE and
+is actively harmful for an exclusively-owned one while other agents are running,
+because it parks your work in a structure any of them can commit. Four instances
+of the pathspec trap and now one of its inverse.
+
+**Also superseded by this:** section 6.2's note that HEAD moved from `abbd2ed`
+to `0db9034` during the session. It moved twice more, to `e27a9ad` and then
+`686fd97`. MEASURED: none of those touches a path cited in this document except
+the six this track wrote, so every `file:line` above still resolves at
+`abbd2ed`, which remains the correct citation commit.
