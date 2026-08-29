@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Emit the REFERENCE side of a `--mode exact` comparison, at the SCALED shape.
+
+WHY THIS EXISTS.  `tools/ref9b/capture_to_r9bs.py` turns a `sim/tb_llama_top.vhd`
+seam capture into `.r9bs`, and `seam_bisect.py --mode exact` compares two
+`.r9bs` streams bit for bit.  Until this file there was nothing to put on the
+other side of that comparison:
+
+  * the whole-model 9B reference (`ref/run9b`) is the WRONG SHAPE.  MEASURED
+    2026-08-29 by running it: `seam_bisect.py --mode exact ref_bfp.r9bs
+    llama_top_real.r9bs` reports `FIRST DIVERGENCE: R_X.embed at element -1 --
+    length 4096 vs 64` and 0 of 63 seams identical.  Every seam differs, none
+    of them for a reason about the design.  That is not a plumbing problem and
+    no format work fixes it: `sim/tb_llama_top.vhd` runs `mk_shape_scaled`
+    (hidden 64) and the model is hidden 4096.
+  * a second GHDL run is not a reference, it is the same implementation.
+
+So the reference side has to be built from the INDEPENDENT models that already
+exist -- `vec_oracle.py`, `attn_oracle.py`, `ref/matvec_int4.c` via
+`mv_step_oracle` -- which is exactly what `bisect_scaled.py` compares against.
+This file emits those same expectations as a stream instead of as a verdict.
+
+WHAT IS AND IS NOT INDEPENDENT HERE, because this is the whole value of the
+artefact.  Each expectation is computed from the capture's OWN inputs for that
+step, by a model written separately from the RTL.  It is a STEPWISE reference,
+not a whole-model one: a wrong value at step k is fed to step k+1 as given, so
+a clean comparison says "no step that has a model computed something other than
+what its model says", and does NOT say the token is right.
+
+SEAMS WITH NO MODEL ARE OMITTED, NOT COPIED.  Copying the capture into the
+reference for an unmodelled seam would make `--mode exact` report agreement it
+has not established -- a round trip wearing an oracle's clothes, which is the
+`m7` mutant this project has on record.  `seam_bisect.exact()` skips a seam
+absent from either stream, so omission is the honest encoding.  The omitted
+list is printed to stderr on every run and written into the sidecar
+`<out>.coverage`.
+
+usage:
+  ref_stream_scaled.py capture.txt -o ref.r9bs \\
+      --blocks 4 --attn-int 4 --attn-hd 16 --norm real \\
+      --w-image sim/llama_top_w_b4_pool.hex
+  seam_bisect.py ref.r9bs capture.r9bs --mode exact --tok 0 -v
+"""
+import argparse
+import os
+import struct
+import sys
+
+import bisect_scaled as BS
+import attn_oracle as AO
+import scaled_plan as SP
+import vec_oracle as VO
+
+MAGIC = b"R9BS"
+VERSION = 1
+KIND_BFP16 = 1
+_HDR = struct.Struct("<IIiiii")
+
+
+def _write_rec(fp, name, tok, layer, exp, values):
+    nm = name.encode("utf-8")
+    fp.write(_HDR.pack(len(nm), len(values), tok, layer, KIND_BFP16, exp))
+    fp.write(nm)
+    fp.write(struct.pack("<%dh" % len(values), *values))
+
+
+def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
+          norm_q, w_image, kv_block, n_rot, qkn_exp, attn_fold, no_a):
+    """(list of (name, layer, exp, values), list of (name, why-omitted))."""
+    recs = BS.read_capture(capture)
+    by = {}
+    for r in recs:
+        k = (r.name, r.tok)
+        if k in by:
+            raise SystemExit("duplicate record %s tok %d" % k)
+        by[k] = r
+
+    shape = SP.Shape(blocks, attn_int, attn_hd)
+    steps = SP.build(shape)
+    prod = SP.producers(steps)
+
+    # THE SAME REFUSAL `bisect_scaled.py` MAKES, AND FOR THE SAME REASON.  A
+    # plan that has drifted from the RTL emits a reference whose seams are
+    # offset by one step, which reports a divergence at the wrong place -- the
+    # one output a bisect exists to produce.  Refuse rather than emit.
+    drift = SP.check_against_capture(steps, {k: len(v.v) for k, v in by.items()},
+                                     tok)
+    if drift:
+        for m in drift[:10]:
+            sys.stderr.write("  " + m + "\n")
+        raise SystemExit("the plan mirror does not describe this capture; "
+                         "refusing to emit a reference stream")
+
+    w = BS.Weights(w_image)
+    out, omitted = [], []
+
+    def _is_stub_ramp(r):
+        return all(r.v[i] == -32768 + (i % 4096) for i in range(len(r.v)))
+
+    stub_c = [b for b in range(shape.blocks) if shape.is_attn(b)
+              and ("R_Y-%d" % b, tok) in by
+              and _is_stub_ramp(by[("R_Y-%d" % b, tok)])]
+    stub_named = set("R_Y-%d" % b for b in stub_c)
+    for b in stub_c:
+        omitted.append(("R_Y-%d" % b,
+                        "this run elaborated the ATTENTION STUB, not "
+                        "attn_block; there is no attention to model"))
+
+    cpred = {}
+    if not stub_c and any(shape.is_attn(b) for b in range(shape.blocks)):
+        ctoks = sorted(set(r.tok for r in recs))
+        try:
+            cpred, _b, _v = AO.predict(by, shape, ctoks, kv_block, n_rot,
+                                       qkn_exp, False, attn_fold)
+        except SystemExit as e:
+            cpred = {}
+            omitted.append(("(subsystem C)",
+                            "the R_Y model refused this capture: %s" % e))
+
+    for st in steps:
+        if st.op == SP.OP_END or st.dst is None:
+            if st.op != SP.OP_END:
+                omitted.append((st.seam, "destination is R_NONE: the lm_head "
+                                         "job discards its result"))
+            continue
+        if (st.seam, tok) not in by:
+            omitted.append((st.seam, "not present in the capture"))
+            continue
+        got = by[(st.seam, tok)]
+        src, src2 = prod[st.i]["src"], prod[st.i]["src2"]
+
+        if st.op == SP.OP_A:
+            if no_a:
+                omitted.append((st.seam, "--no-a"))
+                continue
+            x = by[(src, tok)]
+            if len(x.v) != st.n_cols:
+                omitted.append((st.seam, "source %s has %d values, the job "
+                                         "reads %d" % (src, len(x.v), st.n_cols)))
+                continue
+            exp_v, exp_e = BS.run_a_oracle(st.i, st.n_rows, st.n_cols, st.w_exp,
+                                           st.out_shift, x.v, x.exp, w)
+        elif st.op == SP.OP_RES:
+            x, e = by[(src, tok)], by[(src2, tok)]
+            exp_v, exp_e, _sh, _sat = VO.res(x.v, e.v, x.exp, e.exp)
+        elif st.op == SP.OP_SWG:
+            g, u = by[(src, tok)], by[(src2, tok)]
+            exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
+        elif st.op == SP.OP_NORM:
+            x = by[(src, tok)]
+            if norm == "real":
+                wv = VO.norm_w_const(len(x.v), norm_w_exp)
+                exp_v, exp_e, _d = VO.norm_rs(x.v, x.exp, wv, norm_w_exp, norm_q)
+            elif norm == "anchor":
+                exp_v, exp_e = VO.norm_anchor(x.v, x.exp, norm_exp)
+            else:
+                exp_v, exp_e = VO.norm_mean(x.v, x.exp)
+        elif st.op == SP.OP_C and (st.seam, tok) in cpred:
+            exp_e, exp_v = cpred[(st.seam, tok)]
+        elif st.op == SP.OP_C and st.seam in stub_named:
+            continue
+        else:
+            omitted.append((st.seam, "subsystem %s has no integration-level "
+                                     "model" % st.op))
+            continue
+        out.append((st.seam, got.layer, exp_e, [int(v) for v in exp_v]))
+
+    # The embedding is the bench's own input, not a computed seam.  It has no
+    # model here and is deliberately NOT carried across from the capture.
+    if ("R_X.embed", tok) in by and not any(n == "R_X.embed" for n, _, _, _ in out):
+        omitted.append(("R_X.embed", "the bench writes it; it is an INPUT to "
+                                     "the model, not an output of one"))
+    return out, omitted
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("capture")
+    ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("--tok", default="0",
+                    help="a token index, or 'all' to emit every token the "
+                         "capture contains into one stream, which is what "
+                         "capture_to_r9bs.py produces on the other side")
+    ap.add_argument("--blocks", type=int, default=4)
+    ap.add_argument("--attn-int", type=int, default=4)
+    ap.add_argument("--attn-hd", type=int, default=32)
+    ap.add_argument("--norm", choices=("real", "anchor", "mean"), default="anchor")
+    ap.add_argument("--norm-exp", type=int, default=12)
+    ap.add_argument("--norm-w-exp", type=int, default=12)
+    ap.add_argument("--norm-q", type=int, default=12)
+    ap.add_argument("--w-image", default=None)
+    ap.add_argument("--kv-block", type=int, default=4)
+    ap.add_argument("--n-rot", type=int, default=8)
+    ap.add_argument("--qkn-exp", type=int, default=12)
+    ap.add_argument("--attn-fold", default="perlayer",
+                    choices=("perlayer", "shared", "pertoken"))
+    ap.add_argument("--no-a", action="store_true")
+    a = ap.parse_args()
+
+    if a.tok == "all":
+        toks = sorted(set(r.tok for r in BS.read_capture(a.capture)))
+    else:
+        toks = [int(a.tok)]
+
+    out, omitted = [], []
+    for t in toks:
+        o, om = build(a.capture, t, a.blocks, a.attn_int, a.attn_hd,
+                      a.norm, a.norm_exp, a.norm_w_exp, a.norm_q, a.w_image,
+                      a.kv_block, a.n_rot, a.qkn_exp, a.attn_fold, a.no_a)
+        out += [(n, t, l, e, v) for (n, l, e, v) in o]
+        omitted += [("tok %d %s" % (t, n), why) for n, why in om]
+
+    with open(a.out, "wb") as fp:
+        fp.write(MAGIC)
+        fp.write(struct.pack("<I", VERSION))
+        for name, t, layer, exp, vals in out:
+            _write_rec(fp, name, t, layer, exp, vals)
+
+    cov = a.out + ".coverage"
+    with open(cov, "w") as fp:
+        fp.write("# reference stream %s, tokens %s\n"
+                 % (a.out, ",".join(str(t) for t in toks)))
+        fp.write("# %d seams MODELLED, %d seams OMITTED (no model).\n"
+                 % (len(out), len(omitted)))
+        fp.write("# An omitted seam is absent from the stream, so "
+                 "seam_bisect.py --mode exact\n# SKIPS it.  A clean compare "
+                 "says nothing whatever about these:\n")
+        for n, why in omitted:
+            fp.write("OMITTED %-14s %s\n" % (n, why))
+    sys.stderr.write("wrote %s: %d seams modelled, %d omitted (see %s)\n"
+                     % (a.out, len(out), len(omitted), os.path.basename(cov)))
+    for n, why in omitted:
+        sys.stderr.write("  OMITTED %-14s %s\n" % (n, why))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
