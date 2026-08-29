@@ -42,10 +42,18 @@ entity matvec_int4 is
     MAXROWS_BFP : positive := 17408;
     FIFO_DEPTH  : positive := 512;
     MAXB        : positive := 256;
-    MAXOUT      : positive := 2
+    -- Bursts in flight per AXI read port.  RAISED FROM 2 TO 16 on 2026-08-28;
+    -- the reasoning and the resource cost are in rtl/axi_rd_port.vhd.
+    MAXOUT      : positive := 16;
+    -- Run the AXI read masters on `aclk` rather than `clk` (spec 14.5 item 3).
+    -- The CDC is inside axi_rd_port; nothing else in subsystem A moves.
+    DUAL_CLK    : boolean := false
   );
   port(
     clk, rst : in  std_logic;
+    -- HBM AXI clock.  IGNORED when DUAL_CLK = false; defaulted so that no
+    -- existing instantiation of this entity needs an edit.
+    aclk     : in  std_logic := '0';
 
     -- descriptor, from the PS after it has read the header
     -- All scalars are std_logic_vector, NOT integer.  Vivado converts integer
@@ -143,8 +151,8 @@ begin
     generic map(NPORTS_W => NPORTS_W, NPORTS_S => NPORTS_S,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 ROWS_IF => ROWS_IF, BLK => BLK, DEPTH => FIFO_DEPTH,
-                MAXB => MAXB, MAXOUT => MAXOUT)
-    port map(clk => clk, rst => rst, start => start,
+                MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
+    port map(clk => clk, rst => rst, aclk => aclk, start => start,
              w_base => w_base, w_beats => i_wbeats,
              s_base => s_base, s_beats => i_sbeats,
              m_arvalid => m_arvalid, m_arready => m_arready,

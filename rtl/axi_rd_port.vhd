@@ -19,6 +19,47 @@
 -- beats that stay resident when the job ends.  The residue differs per port, so
 -- without a flush the next job's word stream would be misaligned by a
 -- per-port-varying amount -- silently, and differently on every matrix.
+--
+-- ======================================================================
+-- DUAL CLOCK (added 2026-08-28, spec 14.5 item 3)
+-- ======================================================================
+-- The FK33's HBM AXI clock is not the core clock, and the 27-master
+-- feasibility note only clears because it is FASTER: at ACLK = f_core the duty
+-- is exactly 100% with zero margin.  So the CDC is mandatory, and this is where
+-- it goes -- there is already a FIFO between the R channel and the consumer,
+-- and it is the only point in the weight path where a word crosses.
+--
+--   DUAL_CLK = false  (default)  everything runs on `clk`, `aclk` is ignored,
+--                                and the FIFO is rtl/stream_fifo.vhd.  Every
+--                                existing instantiation and testbench lands
+--                                here.
+--   DUAL_CLK = true              the AXI side (AR issue, burst accounting,
+--                                R capture, FIFO write) runs on `aclk`; the
+--                                stream output runs on `clk`.  The FIFO is
+--                                rtl/async_fifo.vhd.
+--
+-- Three things cross, and each is crossed the way its shape requires:
+--
+--   * `start` is a one-cycle PULSE in the core domain -> toggle synchroniser.
+--     A level would be missed or seen twice depending on the clock ratio.
+--   * `base` and `n_beats` are LEVELS held stable by the descriptor engine
+--     around `start` -> sampled in the AXI domain after the toggle lands.
+--     They are not synchronised bit by bit and must not be changed between
+--     `start` and the job completing.
+--   * the FLUSH is a two-sided handshake, because a synchronous flush means
+--     nothing across two clocks.  See rtl/async_fifo.vhd's header; the FSM in
+--     rtl/axi_rd_fsm.vhd is the caller that runs all four phases.
+--
+-- `rst` stays a core-domain input and is synchronised into the AXI domain
+-- here.  It is a long level at power-on, so a two-flop delay on assertion is
+-- not a hazard; deassertion is synchronous in each domain, which is the part
+-- that matters.
+--
+-- THE FSM IS A SEPARATE ENTITY ON PURPOSE.  It is instantiated once, under a
+-- generate, with `clk` or with `aclk` -- never with an `fclk` signal carrying
+-- one or the other.  A signal assignment costs a delta and the resulting clock
+-- skew is a simulation artefact that MEASURABLY broke sim/tb_matvec_int4_ip;
+-- see rtl/axi_rd_fsm.vhd's header for the measurement.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -31,17 +72,41 @@ entity axi_rd_port is
     ADDR_W  : positive := 32;
     DEPTH   : positive := 512;   -- beats; 7.7 budgets 8 KB at AXI_DW=128
     MAXB    : positive := 256;   -- beats per burst; 256 x 16 B = one 4 KB burst
-    MAXOUT  : positive := 2      -- bursts allowed in flight
+    -- Bursts allowed in flight.  RAISED FROM 2 TO 16 on 2026-08-28.
+    --
+    -- 2 was never a decision: it was the default of a generic that
+    -- weight_streamer did not plumb through, and it was left in place after the
+    -- plumbing landed.  The AXU3EG measurement behind it (0.664 beats/cycle per
+    -- port, consistent with ~129 cycles of read latency) is a DDR number, and
+    -- HBM's latency is higher, not lower.  The 288.0 GB/s run in
+    -- docs/2026-08-28_can-27-read-masters-be-served.md -- 100% of the
+    -- arithmetic ceiling -- used 16.
+    --
+    -- COST, stated so it is not mistaken for free: `outst` widens from 2 bits
+    -- to clog2(MAXOUT+2) bits and its comparator with it, so ~3 FF and a
+    -- slightly wider compare PER PORT, times 27 ports.  Nothing else moves.
+    -- The binding resource is unchanged: the AR throttle is against FIFO FREE
+    -- SPACE including beats already requested, so MAXOUT can never make the
+    -- FIFO overrun -- it simply stops being reachable once MAXOUT*MAXB > DEPTH,
+    -- at which point DEPTH is the limit and MAXOUT is inert.  At the FK33's
+    -- DEPTH=512 / MAXB=16 that boundary is MAXOUT=32.
+    MAXOUT  : positive := 16;
+    -- See the DUAL CLOCK block in the header.
+    DUAL_CLK : boolean := false
   );
   port(
     clk, rst : in  std_logic;
+    -- AXI clock.  IGNORED when DUAL_CLK = false; defaulted so that every
+    -- existing single-clock instantiation and testbench needs no edit.
+    aclk     : in  std_logic := '0';
 
     -- job.  base must be 4 KB aligned; n_beats is the whole sub-region.
+    -- Both are core-domain and must be stable from `start` to completion.
     start    : in  std_logic;
     base     : in  std_logic_vector(ADDR_W-1 downto 0);
     n_beats  : in  integer;
 
-    -- AXI4 read address / read data
+    -- AXI4 read address / read data.  In the AXI domain when DUAL_CLK.
     arvalid  : out std_logic;
     arready  : in  std_logic;
     araddr   : out std_logic_vector(ADDR_W-1 downto 0);
@@ -53,7 +118,7 @@ entity axi_rd_port is
     rdata    : in  std_logic_vector(AXI_DW-1 downto 0);
     rlast    : in  std_logic;
 
-    -- stream out
+    -- stream out, always in the `clk` domain
     q_valid  : out std_logic;
     q_data   : out std_logic_vector(AXI_DW-1 downto 0);
     q_ready  : in  std_logic
@@ -63,139 +128,148 @@ end entity;
 architecture rtl of axi_rd_port is
   constant BYTES : positive := AXI_DW / 8;
 
-  signal f_iv, f_ir, f_flush : std_logic := '0';
-  signal f_qv, f_qr : std_logic := '0';
+  signal f_iv, f_ir : std_logic;
+  signal f_qv, f_qr : std_logic;
   signal f_qd : std_logic_vector(AXI_DW-1 downto 0);
   signal f_level : integer;
 
-  type st_t is (S_IDLE, S_DRAIN, S_FLUSH, S_RUN);
-  signal st : st_t := S_IDLE;
+  -- clear handshake, in the AXI domain
+  signal clr, clr_done : std_logic;
 
-  signal ar_addr  : unsigned(ADDR_W-1 downto 0) := (others => '0');
-  signal ar_left  : integer := 0;    -- beats not yet requested
-  signal promised : integer := 0;    -- requested but not yet in the FIFO
-  signal outst    : integer range 0 to 3 := 0;
-  signal arv      : std_logic := '0';
-  -- starts at 1, never 0: arlen carries this_len-1 and to_unsigned(-1) traps
-  signal this_len : integer range 1 to MAXB := 1;
+  -- FSM interface, all in the AXI domain
+  signal start_f : std_logic;
+  signal beat_f  : std_logic;
+  signal run_f   : std_logic;
+  signal rready_i : std_logic;
 
-  signal p_base   : std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
-  signal p_beats  : integer := 0;
+  -- `run`, in the core domain (it gates the stream output)
+  signal run_c   : std_logic;
+  signal run_s1, run_s2 : std_logic := '0';
+  signal rst_s1, rst_s2 : std_logic := '1';
+  signal frst    : std_logic;
+
+  signal s_tog   : std_logic := '0';
+  signal s_t1, s_t2, s_t3 : std_logic := '0';
 begin
-  arvalid <= arv;
-  araddr  <= std_logic_vector(ar_addr);
-  arlen   <= std_logic_vector(to_unsigned(this_len - 1, 8));
   arsize  <= std_logic_vector(to_unsigned(clog2(BYTES), 3));
   arburst <= "01";                                  -- INCR
 
   -- In S_DRAIN the R channel is accepted and DISCARDED, so it must not be
   -- backpressured by the FIFO; in S_RUN the FIFO owns the backpressure.
-  rready <= f_ir when st = S_RUN else '1';
-  f_iv   <= rvalid when st = S_RUN else '0';
+  rready_i <= f_ir when run_f = '1' else '1';
+  rready   <= rready_i;
+  f_iv     <= rvalid when run_f = '1' else '0';
+  beat_f   <= rvalid and rready_i;
 
   -- The output is SUPPRESSED outside S_RUN.  Flushing alone is not enough: a
   -- start does not take effect until the drain completes, and in that window
   -- the FIFO still holds the abandoned job's residue.  A consumer that reads
   -- as soon as q_valid rises would swallow it before the flush ever lands --
   -- which is exactly what happened the first time this was simulated.
-  q_valid <= f_qv when st = S_RUN else '0';
+  -- Under DUAL_CLK the gate is the SYNCHRONISED run level, so it rises two
+  -- core cycles late.  Late is the safe direction: the consumer waits, it does
+  -- not read early.
+  q_valid <= f_qv when run_c = '1' else '0';
   q_data  <= f_qd;
-  f_qr    <= q_ready when st = S_RUN else '0';
+  f_qr    <= q_ready when run_c = '1' else '0';
 
-  fifo : entity work.stream_fifo
-    generic map(W => AXI_DW, DEPTH => DEPTH)
-    port map(clk => clk, rst => rst, flush => f_flush,
-             i_valid => f_iv, i_data => rdata, i_ready => f_ir,
-             q_valid => f_qv, q_data => f_qd, q_ready => f_qr,
-             level => f_level);
-
-  process(clk)
-    variable pr   : integer;
-    variable os   : integer;
-    variable want : integer;
+  -- =============================================== single-clock configuration
+  g_sc : if not DUAL_CLK generate
+    signal ack : std_logic := '0';
   begin
-    if rising_edge(clk) then
-      f_flush <= '0';
+    frst    <= rst;
+    start_f <= start;
+    run_c   <= run_f;
 
-      if rst = '1' then
-        st <= S_IDLE;
-        ar_left <= 0; promised <= 0; outst <= 0; arv <= '0';
-        f_flush <= '1';
+    fsm : entity work.axi_rd_fsm
+      generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
+                  MAXB => MAXB, MAXOUT => MAXOUT)
+      port map(clk => clk, rst => rst, start => start_f,
+               base => base, n_beats => n_beats,
+               arvalid => arvalid, arready => arready,
+               araddr => araddr, arlen => arlen,
+               beat => beat_f, rlast => rlast,
+               f_level => f_level, clr => clr, clr_done => clr_done,
+               run => run_f);
 
-      else
-        pr := promised;
-        os := outst;
+    -- stream_fifo's `flush` is a synchronous LEVEL clear; holding it for the
+    -- cycles the S_CLR/S_CLR2 handshake takes is the same thing the old
+    -- single-cycle S_FLUSH state did, two cycles later.
+    fifo : entity work.stream_fifo
+      generic map(W => AXI_DW, DEPTH => DEPTH)
+      port map(clk => clk, rst => rst, flush => clr,
+               i_valid => f_iv, i_data => rdata, i_ready => f_ir,
+               q_valid => f_qv, q_data => f_qd, q_ready => f_qr,
+               level => f_level);
 
-        -- a beat landing retires one promise; in S_DRAIN it is discarded, but
-        -- the burst accounting is identical
-        if rvalid = '1' and rready = '1' then
-          if st = S_RUN then pr := pr - 1; end if;
-          if rlast = '1' then os := os - 1; end if;
-        end if;
-
-        if start = '1' then
-          -- 7.7 says flush the FIFO on start.  That is NECESSARY BUT NOT
-          -- SUFFICIENT: bursts already accepted by the slave keep returning
-          -- beats AFTER the flush, and they land looking exactly like the new
-          -- job's first beats.  So a start parks the port in S_DRAIN and it
-          -- discards R beats until every outstanding burst has retired.  An
-          -- AR already asserted cannot be withdrawn -- AXI requires arvalid to
-          -- hold until arready -- so it is allowed to complete and drained too.
-          p_base  <= base;
-          p_beats <= n_beats;
-          ar_left <= 0;              -- issue nothing more for the old job
-          pr := 0;
-          st <= S_DRAIN;
-        end if;
-
-        case st is
-          when S_DRAIN =>
-            if arv = '0' and os = 0 then
-              f_flush <= '1';
-              st <= S_FLUSH;
-            end if;
-
-          -- S_FLUSH exists because f_flush is REGISTERED: it is high during the
-          -- cycle after it is set, and the FIFO clears at the end of that
-          -- cycle.  Entering S_RUN directly would leave the output live for one
-          -- cycle over not-yet-cleared contents, and a consumer reading the
-          -- instant q_valid rises takes exactly one stale beat -- shifting the
-          -- entire stream by one, which is the silent per-port misalignment
-          -- 7.7 warns about, just one beat instead of many.
-          when S_FLUSH =>
-            ar_addr <= unsigned(p_base);
-            ar_left <= p_beats;
-            pr := 0;
-            st <= S_RUN;
-
-          when others => null;
-        end case;
-
-        -- AR channel.  Throttled against FIFO free space INCLUDING beats
-        -- already requested, so an accepted burst can never overrun the FIFO.
-        -- `outst` and `promised` are folded through VARIABLES because a burst
-        -- can be issued in the same cycle a beat retires, and two signal
-        -- assignments in one process would silently keep only the last.
-        if arv = '1' then
-          if arready = '1' then
-            arv     <= '0';
-            ar_addr <= ar_addr + to_unsigned(this_len * BYTES, ADDR_W);
-            ar_left <= ar_left - this_len;
-            pr := pr + this_len;
-            os := os + 1;
-          end if;
-        elsif st = S_RUN and ar_left > 0 and os < MAXOUT then
-          if ar_left > MAXB then want := MAXB; else want := ar_left; end if;
-          if f_level + pr + want <= DEPTH then
-            this_len <= want;
-            arv      <= '1';
-          end if;
-        end if;
-
-        if pr < 0 then pr := 0; end if;      -- drained promises never go negative
-        promised <= pr;
-        outst    <= os;
+    -- one-cycle acknowledgement, so the four-phase handshake in the FSM is the
+    -- same code in both configurations
+    ackp : process(clk)
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then ack <= '0'; else ack <= clr; end if;
       end if;
-    end if;
-  end process;
+    end process;
+    clr_done <= ack;
+  end generate;
+
+  -- ================================================= dual-clock configuration
+  g_dc : if DUAL_CLK generate
+    frst  <= rst_s2;
+    run_c <= run_s2;
+
+    -- reset into the AXI domain
+    rsync : process(aclk)
+    begin
+      if rising_edge(aclk) then
+        rst_s1 <= rst; rst_s2 <= rst_s1;
+      end if;
+    end process;
+
+    -- `start` pulse -> toggle -> pulse
+    stog : process(clk)
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then s_tog <= '0';
+        elsif start = '1' then s_tog <= not s_tog;
+        end if;
+      end if;
+    end process;
+    ssyn : process(aclk)
+    begin
+      if rising_edge(aclk) then
+        s_t1 <= s_tog; s_t2 <= s_t1; s_t3 <= s_t2;
+      end if;
+    end process;
+    start_f <= s_t2 xor s_t3;
+
+    -- `run` level back into the core domain
+    rsyn : process(clk)
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then run_s1 <= '0'; run_s2 <= '0';
+        else run_s1 <= run_f; run_s2 <= run_s1;
+        end if;
+      end if;
+    end process;
+
+    fsm : entity work.axi_rd_fsm
+      generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
+                  MAXB => MAXB, MAXOUT => MAXOUT)
+      port map(clk => aclk, rst => frst, start => start_f,
+               base => base, n_beats => n_beats,
+               arvalid => arvalid, arready => arready,
+               araddr => araddr, arlen => arlen,
+               beat => beat_f, rlast => rlast,
+               f_level => f_level, clr => clr, clr_done => clr_done,
+               run => run_f);
+
+    fifo : entity work.async_fifo
+      generic map(W => AXI_DW, DEPTH => DEPTH)
+      port map(wclk => aclk, wrst => frst,
+               w_valid => f_iv, w_data => rdata, w_ready => f_ir,
+               w_level => f_level, clr => clr, clr_done => clr_done,
+               rclk => clk, rrst => rst,
+               q_valid => f_qv, q_data => f_qd, q_ready => f_qr);
+  end generate;
 end architecture;

@@ -16,6 +16,17 @@
  *
  * Register map: rtl/matvec_int4_axi.vhd.  The sequence below is the one
  * sim/tb_matvec_axi.vhd already executes in simulation.
+ *
+ * THIS DRIVER IS THE AXU3EG / DDR PATH ONLY, AND DELIBERATELY STAYS THAT WAY.
+ * The FK33 geometry (ROWS_IF=48, AXI_DW=256, 24 weight sub-regions plus 3
+ * scale sub-regions) does not fit this register map -- matvec_int4_axi asserts
+ * NPORTS_W = 4 and NPORTS_S = 1 at elaboration and says why.  The FK33 build
+ * instantiates rtl/matvec_int4_desc_axi.vhd instead, whose AXI-Lite map is
+ * five registers plus read-only identity and does not grow with the geometry;
+ * everything that does grow lives in an in-memory descriptor.  The format is
+ * docs/2026-08-28_matvec-descriptor-format.md and the host-side generator for
+ * it does not exist yet (worklog OI-4).  Do not extend this file to cover the
+ * FK33: the two control planes are different maps, not one map with options.
  */
 #define _GNU_SOURCE
 #include <fcntl.h>

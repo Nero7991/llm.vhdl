@@ -348,7 +348,10 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=77   # +1 sim/tb_matvec_fk33, subsystem A at ROWS_IF=48 /
+BASELINE_PASS=78   # +1 sim/tb_matvec_fk33_desc, subsystem A through the
+                   #    descriptor control plane plus its mutation matrix,
+                   #    2026-08-28
+                   # +1 sim/tb_matvec_fk33, subsystem A at ROWS_IF=48 /
                    #    AXI_DW=256 from a real .mv4i file, 2026-08-28
                    # +1 sim/tb_llama_top, the integration top level, 2026-08-28
                    # +1 sim/tb_weight_streamer, 6.5a reassembly, 2026-08-28
@@ -659,6 +662,13 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     # generic defaults to the FK33 configuration, so none is passed here; the
     # trace's own GEOM line is asserted against them.
     sim:tb_matvec_fk33)      echo "--stop-time=50ms --stop-delta=1000000" ;;
+    # The same trace and the same geometry, driven through the descriptor
+    # control plane, plus 21 descriptor mutations in one run.  Every generic
+    # defaults to the FK33 configuration; -gDUAL=true additionally runs the
+    # whole AXI side on a faster clock through axi_rd_port's CDC and is a
+    # separate manual run rather than a second gate row, because regress keys
+    # a test by name and cannot run one testbench twice.
+    sim:tb_matvec_fk33_desc) echo "--stop-time=200ms --stop-delta=1000000" ;;
     # sim/run_matvec.sh stages 4 and 4b, first row of each sweep.
     sim:tb_act_mem)          echo "-gELEMS=544 -gBLK=32 -gLANES=4 --stop-time=500ms" ;;
     sim:tb_axi_rd_port)      echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 --stop-time=200ms" ;;
@@ -742,6 +752,9 @@ tb_pass_marker() {
     # phrase is only printed after the row count, y_exp and sat_event have all
     # been checked, so nothing earlier in the log can produce it.
     sim:tb_matvec_fk33)  echo 'bit-exact with ref/matvec_int4.c from the real .mv4i bytes up' ;;
+    # Printed only after all 22 cases have been judged and the failure count
+    # asserted to zero, so a truncated run is a NOVERDICT rather than a pass.
+    sim:tb_matvec_fk33_desc) echo 'every checked mutation is refused' ;;
     sim:tb_hbm_tg)       echo 'recovers a known bandwidth at every port count' ;;
     # The tb/ suite states its verdict as "PASS:<unit>" almost everywhere and
     # \bPASS\b already matches that.  These two phrase it differently.

@@ -46,8 +46,14 @@
 -- UNPACK, and the lockstep pop over one port is the old single-port pop -- so
 -- the AXU3EG build and every instantiation of this entity are untouched.
 --
--- STILL OPEN (spec 14.5 item 3): this entity is SINGLE-CLOCK.  The FK33's HBM
--- AXI clock is not the core clock, and nothing here addresses that CDC.
+-- CLOSED 2026-08-28 (spec 14.5 item 3): this entity used to be SINGLE-CLOCK,
+-- and the FK33's HBM AXI clock is not the core clock.  The CDC now lives one
+-- level down, in rtl/axi_rd_port.vhd, because that is where the only FIFO in
+-- the weight path already is and it is the only point where a word crosses.
+-- Set DUAL_CLK and drive `aclk`; everything below this line stays in the core
+-- domain, so the merge, the scale unpack and the assert set are unchanged.
+-- The default is false, at which `aclk` is ignored and every existing
+-- instantiation is bit-identical to before.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -78,10 +84,17 @@ entity weight_streamer is
     -- that at L~129 cycles of read latency, i.e. the port spends a third of its
     -- time waiting rather than the FIFO being drained faster than DDR fills it.
     -- Matters MORE on HBM, whose latency is higher than DDR's.
-    MAXOUT   : positive := 2
+    -- RAISED TO 16 on 2026-08-28 to match axi_rd_port's new default and the
+    -- 288.0 GB/s measurement; see that file's MAXOUT comment for the cost.
+    MAXOUT   : positive := 16;
+    -- Run the AXI masters on `aclk` instead of `clk`.  See the header.
+    DUAL_CLK : boolean := false
   );
   port(
     clk, rst : in  std_logic;
+    -- HBM AXI clock.  IGNORED when DUAL_CLK = false, and defaulted so that no
+    -- existing instantiation or testbench needs an edit.
+    aclk     : in  std_logic := '0';
 
     -- job.  Sub-region bases come from the packed header (6.4), which carries
     -- NPORTS_W of them precisely because the file is tied to NPORTS_W as well
@@ -184,9 +197,9 @@ begin
   gen_w : for p in 0 to NPORTS_W-1 generate
     port_p : entity work.axi_rd_port
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT)
+                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
       port map(
-        clk => clk, rst => rst, start => start,
+        clk => clk, rst => rst, aclk => aclk, start => start,
         base => w_base((p+1)*ADDR_W-1 downto p*ADDR_W), n_beats => w_beats,
         arvalid => m_arvalid(p), arready => m_arready(p),
         araddr  => m_araddr((p+1)*ADDR_W-1 downto p*ADDR_W),
@@ -204,9 +217,9 @@ begin
   gen_s : for q in 0 to NPORTS_S-1 generate
     scale_port : entity work.axi_rd_port
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT)
+                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
       port map(
-        clk => clk, rst => rst, start => start,
+        clk => clk, rst => rst, aclk => aclk, start => start,
         base => s_base((q+1)*ADDR_W-1 downto q*ADDR_W), n_beats => s_beats,
         arvalid => m_arvalid(NPORTS_W+q), arready => m_arready(NPORTS_W+q),
         araddr  => m_araddr((NPORTS_W+q+1)*ADDR_W-1 downto (NPORTS_W+q)*ADDR_W),
