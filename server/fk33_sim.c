@@ -209,10 +209,11 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
         uint64_t xa = xb + xs * (uint64_t)k;
         uint32_t rsv_lo = 1, rsv_hi = 1;
         int32_t  x_exp = 0;
-        uint32_t tok = 0;
+        uint32_t tok = 0, xe = 0;
         int32_t  lexp = 0;
 
-        rd_u32(s, xa + 0, (uint32_t *)&x_exp);
+        rd_u32(s, xa + 0, &xe);
+        memcpy(&x_exp, &xe, 4);          /* no int32 vs uint32 pointer aliasing */
         rd_u32(s, xa + 4, &tok);
         rd_u32(s, xa + 8, &rsv_lo);
         rd_u32(s, xa + 12, &rsv_hi);
@@ -385,7 +386,7 @@ const char *fk33_seam_strerror(unsigned code)
 {
     switch (code) {
     case FK33_SEAM_ERR_NONE:  return "no error";
-    case FK33_SEAM_ERR_POS:   return "SEQ_POS + N_STEP exceeds the KV capacity";
+    case FK33_SEAM_ERR_POS:   return "out of range: SEQ_POS + N_STEP past the KV capacity, or a block past the top of HBM";
     case FK33_SEAM_ERR_NSTEP: return "N_STEP is zero or above the chunk cap";
     case FK33_SEAM_ERR_ALIGN: return "a block base is not 64-byte aligned";
     case FK33_SEAM_ERR_STACK: return "a block straddles the HBM stack boundary";

@@ -307,6 +307,8 @@ int pl_seq_reset(pl_ctx *c)
 {
     uint32_t st = 0;
     if (!c) return -1;
+    c->last_err = FK33_SEAM_ERR_NONE;
+    c->last_err_info = 0;
     if (wr(c, FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET)) return -2;
     if (rd(c, FK33_SEAM_STATUS, &st)) return -2;
     if (st & FK33_ST_ERR) { c->last_err = FK33_ST_ERRCODE(st); return -3; }

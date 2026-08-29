@@ -225,7 +225,15 @@ extern "C" {
  * because A's is FULL (OI-9) and a shared field with two meanings per value is
  * how an error report becomes fiction.  These live in their own register. */
 #define FK33_SEAM_ERR_NONE        0x0u
-#define FK33_SEAM_ERR_POS         0x1u  /* SEQ_POS + N_STEP > KV capacity */
+#define FK33_SEAM_ERR_POS         0x1u  /* OUT OF RANGE.  Two senses, deliberately
+                                        * one code: SEQ_POS + N_STEP past the KV
+                                        * capacity, and a block extending past
+                                        * the top of HBM.  Both mean "the host
+                                        * asked for an address or a position the
+                                        * card does not have", and splitting
+                                        * them would spend a code from a 4-bit
+                                        * field for no host-visible difference:
+                                        * the fix is the same. */
 #define FK33_SEAM_ERR_NSTEP       0x2u  /* N_STEP = 0, or above the chunk cap */
 #define FK33_SEAM_ERR_ALIGN       0x3u  /* X_BASE or L_BASE not 64-B aligned */
 #define FK33_SEAM_ERR_STACK       0x4u  /* a block straddles the HBM stack line */
