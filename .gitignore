@@ -109,3 +109,5 @@ hw/fk33/host/fk33_bringup
 
 # Saved FK33 bitstreams (large, reproducible from the build scripts)
 hw/fk33/bit/
+sim/ooc_fk33a/*.rpt
+sim/ooc_fk33a/*.xdc
