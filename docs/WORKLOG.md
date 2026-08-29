@@ -149,9 +149,9 @@ landed, the table is the defect.
 | track | question | owns |
 |---|---|---|
 | **BUILD-E2E** | The routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
-| **C-SEAM** | Backlog 1. Wire the KV interface into `attn_block` and prove MULTI-TOKEN attention. `tb_attn_block` hardwiring `layer => 0` is exactly what hid C1. | `rtl/attn_block.vhd`, `rtl/attn_kv_axi.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_attn_kv_seam.vhd`, `ref/attn_*` |
 | **LOGITS** | **`LOGITS` has no model on either side, and it is the one seam that decides a token.** Plus backlog 4's LM head half, and a silent coverage loss where `seam_bisect` compared 54 of 57 modelled seams while its verdict line read like full coverage. | `tools/ref9b/**`, new `ref/logits_*`, `tools/ref9b/golden/llama_top_real.txt` |
-| **ORDINAL** | **One field, two incompatible meanings.** `llama_top` reads `ordinal` as the BLOCK index and derives the layer; `seq_tbl_pkg` and `gen_layer_program.py` stamp the PER-KIND ordinal. DERIVED at the 9B shape: the wrong layer on 29 of 32 blocks, and `c_layer = -1` on blocks 3, 7, 11, out of range for `integer range 0 to C_LAY-1`. | `rtl/llama_top.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `tools/dprog_oracle.py`, D spec |
+| **ORDINAL** | **One field, two incompatible meanings.** `llama_top` reads `ordinal` as the BLOCK index and derives the layer; `seq_tbl_pkg` and `gen_layer_program.py` stamp the PER-KIND ordinal. DERIVED at 9B: wrong layer on 29 of 32 blocks, `c_layer = -1` on blocks 3, 7, 11. | `rtl/llama_top.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `tools/dprog_oracle.py`, D spec |
+| **OI3B** | **The top-level benches cannot fail.** Backlog 7 plus C-SEAM's OI-3b. Give the `tb_llama_top*` family value gates that can go red, and audit all six. | `sim/tb_llama_top*.vhd`, `sim/mutate_llama_top*.sh` |
 
 **Landed since the last rewrite:** C-DONE, B-BLOCK, CDC-STATIC, CB-ORACLE, C1,
 B-LAYER (twice: the layer benches, then the B-BLK-1 fix and the `llama_top`
@@ -176,6 +176,45 @@ the hardware boundary itself, not the absence of anything to load.
 | **BFP repack rule** | The 9B reference's float-to-BFP repack always normalises (`reg_put`, `exp = 14 - floor(log2(amax))`, no clamp); every shipping unit on the path clamps (`sh = max(0, msb_pos(amax) - 14)`) and so stays under-normalised on quiet blocks. MEASURED by RUNNING `rtl/bfp_pack.vhd`: 341 of 760 exponents differ, all quiet blocks, none loud, reconstructed VALUES exact. **193 of 490 BFP records per token (39.4%) are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect.** Three routes scoped in section 6 of REF9B's write-up; they are not equivalent. | **OREN'S CALL.** TRACK CAPTURE told to work around it and report which route the capture work says is needed, NOT to pick one |
 | **`matvec_int4_axi` register 15** | No completeness guard and no idle interlock, so a partial codebook load through that plane is silently consumed. It is the standalone register-mapped plane; the FK33 path uses `matvec_int4_desc_axi.vhd`, which loads all sixteen atomically and rejects an unloaded codebook with `EC_DESC`. | Left as a decision, not a fix. Not on the FK33 path |
 | **OI-9 error-code space** | Full. Widen, subdivide via `ERR_INFO`, or take a reserved D value, with consequences for D. | **OREN'S CALL.** TRACK D-PROG told to STOP and report rather than choose |
+
+### OI-3b, raised by TRACK C-SEAM 2026-08-29 -- the purest instance yet
+
+**`sim/tb_llama_top_seq.vhd` PASSES with defect C1 fully restored** (299 s,
+`OVERALL PASS 1 FAIL 0`). As a negative control -- because a PASS is otherwise
+indistinguishable from a mutant that never reached the checker -- `v_ref` was
+collapsed to a SINGLE register shared across every layer AND every KV head,
+strictly worse than C1. **It PASSES again** (319 s).
+
+Cause: the `R_X` landmark is `report`ed, never `assert`ed. Its actual gate is
+self-consistency across KV read latencies, and **a deterministic defect is
+consistent with itself.** The bench's own header already said "still PASS"
+before and after C1's fix; the same fact sat in the file, unread as a gap.
+
+MEASURED by the dispatcher, and stronger than reported: four of the six
+`tb_llama_top*` benches carry NO assert at all, and `_seq` carries neither
+assert nor report.
+
+    tb_llama_top       45 asserts    tb_llama_top_seq        0
+    tb_llama_top_smp   16 asserts    tb_llama_top_real       0
+                                     tb_llama_top_normw      0
+                                     tb_llama_top_smp_beh    0
+
+**That is a lead, NOT a verdict**, and the distinction must be kept: `regress.sh`
+judges rows TEXTUALLY via `FAIL_RE`/`PASS_RE` (`:1207`), so a bench with zero
+asserts can still fail correctly by PRINTING `MISMATCH`, and one with many
+asserts can still be decoration if they do not cover the value. C-SEAM's
+empirical negative control is the real evidence. **TRACK OI3B owns this.**
+
+Generalisation from C-SEAM, worth keeping: interleaving the layers is necessary
+and nowhere near sufficient. Only schedule **plus an independent value oracle at
+the output** kills the mutant.
+
+### The BACKLOG table is not being maintained
+
+Three landed rows were found still open today (1, 12, and OI-4), and one of them
+caused a track to be dispatched onto finished work. The In flight section has a
+rule about exactly this and the BACKLOG table has none. **Strike a row in the
+same action that lands it.**
 
 ### Raised by TRACK D-PROG, 2026-08-29 -- the most serious of the day
 
@@ -663,7 +702,7 @@ Keep this list fed: when a track lands, add whatever it unblocked.
 
 | # | task | depends on | owns |
 |---|---|---|---|
-| 1 | **`attn_block` <-> `attn_kv_axi` seam.** Wire the KV interface into the block and prove multi-token attention. | TRACK C-KV | `rtl/attn_block.vhd`, `sim/tb_attn_block.vhd` |
+| ~~1~~ | **LANDED 2026-08-28 in `e7e7ae5`**, with `sim/tb_attn_kv_seam.vhd`, `ref/attn_block_seq_vec.c` and `sim/mutate_attn_kv_seam.sh`. **This row was never struck, and TRACK C-SEAM was dispatched onto already-finished work because of it -- the THIRD such instance today** (row 12 was the second, found by TRACK REF9B). The dispatch was not wasted: it found OI-3b. Original text: **`attn_block` <-> `attn_kv_axi` seam.** Wire the KV interface into the block and prove multi-token attention. | TRACK C-KV | `rtl/attn_block.vhd`, `sim/tb_attn_block.vhd` |
 | 2 | ~~**FK33 shell integration.**~~ **DONE and NEGATIVE, `928ad9f` / `70c35db`.** 28 HBM ports enabled and driven, subsystem A connected, the thermal halt reaching it. ~~**route_design terminates: global congestion level 7.**~~ **RESOLVED 2026-08-29, TRACK PBLOCK, `ed1ffe2`.** Area was never the reason and neither was the placer: `hw/fk33/fk33_pcieep.xdc:133-140`, an **inherited SQRL constraint**, assigned the whole block design to a pblock holding 67% of the assigned LUTs and 33% of the assigned DSPs. It is `IS_SOFT`, so the placer crammed and spilled rather than failing, and SHELL's own `runme.log` said so in nine `Place 30-640` lines nobody read. Deleting it plus a small pblock at `CLOCKREGION_X0Y0:X6Y3` gives 282,090 of 282,090 nets routed, setup and hold MET (WNS +0.045, WHS +0.010, 0 failing of 576,171), `report_drc` 0 errors. **Nothing has verified what it computes; it was never loaded.** | -- | `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl` |
 | ~~3~~ | **LANDED 2026-08-29, TRACK TOP-KV.** `llama_top` instantiates `attn_kv_axi`, connects `attn_block`'s four seam handshakes, and carries a sequence position. Four tokens, two attention layers, three KV read latencies. See the Landed table. | -- | -- |
 | 4 | **Token I/O: embedding and LM head.** Still 512-entry / 64-dim stories260K ROMs. The residency map gives the embedding an HBM home and says the lookup path has no owner. Note `MAXROWS_BFP = 17408` means `output.weight` and `token_embd.weight` need 15 descriptor jobs each. | none | `rtl/`(new), `tools/` |
