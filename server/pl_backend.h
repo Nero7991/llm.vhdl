@@ -42,6 +42,16 @@
  * NULL, which is an error.  When item 4 lands, one function is written and
  * passed in.  That is the whole integration.
  *
+ * THE EMBEDDING PROVIDER NOW EXISTS.  `server/embed_mv4i.c` reads a packed
+ * `.mv4i` embedding tensor with two contiguous reads per token and BFP-packs
+ * the row; pass `pl_embed_mv4i` and a `pl_embed_mv4i_t *` opened by
+ * `pl_embed_mv4i_open()`.  The paragraph above describing this file as
+ * shipping "two implementations of nothing" was true until 2026-08-29 and is
+ * kept because the interface argument it makes is still the reason the seam
+ * takes a callback at all.  Which COPY of the embedding it reads, and the
+ * evidence for that choice, is in embed_mv4i.h and in
+ * docs/debugging/2026-08-29_host-embedding-gather.md.
+ *
  * NOT VERIFIED, and this list is the honest state of the file:
  *   * nothing here has been run against the card, and nothing in this tree may
  *     open /dev/xdma* (see the tripwire in fk33_transport.h);
@@ -66,7 +76,14 @@ extern "C" {
 typedef struct pl_ctx pl_ctx;
 
 /* Fill `mant` with n_embd int16 BFP mantissas for `token_id` and set `*exp` to
- * the row's shared block exponent.  Return 0, or negative on failure. */
+ * the row's shared block exponent.  Return 0, or negative on failure.
+ *
+ * THE SIGN OF `*exp` IS THIS REPOSITORY'S, NOT THE OTHER ONE:
+ * `value[j] = mant[j] * 2^(-*exp)`.  `tools/pack_int4.py` fixes it,
+ * `rtl/bfp_pack.vhd` implements it and `ref/run9b.c`'s `reg_t` restates it.  A
+ * provider that returned the negated exponent would be wrong by a factor of
+ * 2^(2*exp) and every structural check in this tree would still pass; that is
+ * mutant c11 in tools/check_embed_c.py, and only a value-level oracle sees it. */
 typedef int (*pl_embed_fn)(void *user, int token_id,
                            int16_t *mant, int n_embd, int32_t *exp);
 
@@ -96,14 +113,45 @@ typedef struct {
     /* BAR offset of the seam register block.  0 -> FK33_SEAM_BASE_PROPOSED. */
     uint32_t seam_base;
 
-    /* HBM addresses.  Defaults are chosen inside the LOWER stack, above the
-     * shipped weight image's 5,056,995,328 bytes would be OUT of the lower
-     * stack -- so these must be revisited when the residency map and the
-     * shipped manifest are reconciled (they currently disagree; see
-     * docs/2026-08-28_token-io-path.md section 7.2).  0 -> the default. */
-    uint64_t x_base;              /* activation block */
-    uint64_t l_base;              /* logits block */
-    uint64_t desc_ptr;            /* the per-token D program, 512-B aligned */
+    /* HBM addresses.  ZERO MEANS DERIVE, and derived is the intended path.
+     *
+     * These used to be three hardcoded constants -- 0x00E0000000 /
+     * 0x00E1000000 / 0x00E2000000 -- and all three sat INSIDE the weight
+     * image: 0xE0000000 is 3.5 GiB, and `weights_end` is 0x12F203000 in the
+     * shipped `qkvpad` set and 0x10C006000 in the post-drop `noembd` set.
+     * TRACK EMBDROP found it; it was never caused by the drop, the drop only
+     * changed the number they had to clear.  A replacement constant would be
+     * the same defect with a different number: `kv_base` moved
+     * 0x1_33A0_3000 -> 0x1_1080_6000 when the image shrank, so every address
+     * downstream of the image moves whenever the image does.
+     *
+     * So a zero here means "allocate me one", and pl_derive_bases() below does
+     * it top-down from the top of HBM out of the shape alone (n_embd, n_vocab,
+     * max_chunk).  A NON-zero value is taken as given and CHECKED: alignment,
+     * the stack line, mutual overlap, and -- when `manifest_path` or
+     * `hbm_reserved_end` says where the image ends -- overlap with the image,
+     * which is refused at open time rather than found by a wrong token. */
+    uint64_t x_base;              /* activation block; 0 -> derive */
+    uint64_t l_base;              /* logits block;     0 -> derive */
+    uint64_t desc_ptr;            /* per-token D program, 512-B aligned; 0 -> derive */
+
+    /* Where the card's own bytes end.  Two ways to say it, and either is
+     * enough; the manifest is preferred because it is the artefact the loader
+     * actually used.
+     *
+     *   manifest_path      a packed set's manifest.json.  hbm.size,
+     *                      hbm.weights_end, hbm.gdn_state_base/_bytes and
+     *                      hbm.kv_base are read from it and the host's blocks
+     *                      are placed above all of them.
+     *   hbm_reserved_end   the same answer as one number, for a caller with no
+     *                      manifest (the simulated card has no weight image at
+     *                      all, so 0 is honest there).
+     *
+     * With NEITHER, no overlap check is possible and pl_open says so once, on
+     * stderr, rather than pretending the derived address is safe. */
+    const char *manifest_path;
+    uint64_t    hbm_reserved_end;
+    uint64_t    hbm_size;         /* 0 -> the manifest's, else FK33_HBM_TOP */
 
     /* The embedding provider.  NULL is an error; pass pl_embed_synthetic
      * explicitly to say you meant the nonsense one. */
@@ -125,8 +173,44 @@ typedef struct {
 } pl_open_opts;
 
 /* Fill `o` with the defaults: simulated transport, 9B shape, synthetic
- * embedding, block addresses inside the lower HBM stack. */
+ * embedding, and x_base/l_base/desc_ptr = 0, meaning DERIVE them. */
 void pl_open_opts_default(pl_open_opts *o);
+
+/* ---------------------------------------------------------------------------
+ * Where the host's three blocks go, and why it is a derivation.
+ *
+ * Allocated TOP-DOWN from the top of HBM, 4 KB-aligned, in the order
+ * desc / logits / activations.  Top-down because the only thing growing from
+ * the bottom is the card's own image, and the only thing growing from
+ * `kv_base` upward is the KV cache: coming down from the top means the host's
+ * blocks are the first thing an image growth collides with, and that collision
+ * is a refusal at open time, not a corruption.
+ *
+ * `kv_tokens_cost` is what those blocks cost the KV cache, at the manifest's
+ * own kv_bytes_per_token.  It is reported rather than hidden because it is the
+ * real price of this placement.
+ *
+ * hbm_top == 0 means FK33_HBM_TOP.  reserved_end == 0 means "unknown", and
+ * then no overlap check is performed and none is claimed.  Returns 0, or a
+ * FK33_SEAM_ERR_* code.
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    uint64_t x_base, x_span;
+    uint64_t l_base, l_span;
+    uint64_t desc_ptr, desc_span;
+    uint64_t hbm_top, reserved_end;
+    uint64_t kv_tokens_cost;
+} pl_hbm_bases;
+
+int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
+                    uint64_t hbm_top, uint64_t reserved_end,
+                    uint64_t kv_bytes_per_token, pl_hbm_bases *out);
+
+/* The check the derivation is not allowed to skip, exported so a caller that
+ * supplies its own bases can run it first.  `reserved_end` 0 disables only the
+ * image-overlap half; alignment, the stack line, the top of HBM and mutual
+ * overlap are always checked.  Returns 0, or a FK33_SEAM_ERR_* code. */
+int pl_check_bases(const pl_hbm_bases *b);
 
 /* Open, read CAPS, and check them.  Returns 0, or negative.  On success
  * *out is a context the caller frees with pl_close. */

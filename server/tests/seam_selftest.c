@@ -224,11 +224,22 @@ static void t6_layout_refusals(void)
     fk33_sim_opts s; pl_open_opts o; pl_ctx *c = NULL;
     printf("T6  the four layout refusals, at open\n");
 
-    small_opts(&s, &o); o.x_base = 0x00E0000000ull + 8;
+    /* The bases are DERIVED as of 2026-08-29, so these perturbations are taken
+     * from the derivation rather than from the three constants that used to be
+     * typed in (and that sat inside the weight image; see pl_backend.h). */
+    pl_hbm_bases b;
+    CK(pl_derive_bases(TE, TV, 8, 0, 0, 0, &b) == 0,
+       "the derivation refused a legal shape");
+    CK(b.x_base + b.x_span <= b.l_base, "derived x and l overlap");
+    CK(b.l_base + b.l_span <= b.desc_ptr, "derived l and desc overlap");
+    CK(b.desc_ptr + b.desc_span <= FK33_HBM_TOP, "derived desc runs off HBM");
+    CK(b.x_base >= FK33_HBM_STACK_LINE, "the derived blocks are not in one stack");
+
+    small_opts(&s, &o); o.x_base = b.x_base + 8;
     CK(pl_open(&o, &c) < 0, "a 8-byte-misaligned x_base was accepted");
     if (c) { pl_close(c); c = NULL; }
 
-    small_opts(&s, &o); o.desc_ptr = 0x00E2000000ull + 64;
+    small_opts(&s, &o); o.desc_ptr = b.desc_ptr + 64;
     CK(pl_open(&o, &c) < 0, "a 64-byte-aligned desc_ptr was accepted "
                             "(the FK33 needs 512)");
     if (c) { pl_close(c); c = NULL; }
@@ -239,9 +250,37 @@ static void t6_layout_refusals(void)
     CK(pl_open(&o, &c) < 0, "a block straddling the stack line was accepted");
     if (c) { pl_close(c); c = NULL; }
 
-    small_opts(&s, &o); o.l_base = o.x_base + 128;   /* inside the x span */
+    small_opts(&s, &o); o.l_base = b.x_base + 128;   /* inside the x span */
     CK(pl_open(&o, &c) < 0, "overlapping x and l blocks were accepted");
     if (c) { pl_close(c); c = NULL; }
+
+    /* THE REFUSAL THIS TRACK ADDED: a base inside the loaded weight image.
+     * 0x00E0000000 is the address that shipped, and 0x110806000 is the
+     * post-drop `noembd` set's kv_base, i.e. the first byte the card does not
+     * own.  Without a reserved_end this half of the check cannot run, which is
+     * exactly why the old constant survived. */
+    small_opts(&s, &o);
+    o.hbm_reserved_end = 0x110806000ull;
+    o.x_base = 0x00E0000000ull;
+    CK(pl_open(&o, &c) < 0, "an x_base inside the weight image was accepted");
+    if (c) { pl_close(c); c = NULL; }
+
+    small_opts(&s, &o);
+    o.hbm_reserved_end = 0x110806000ull;
+    o.desc_ptr = 0x00E2000000ull;
+    CK(pl_open(&o, &c) < 0, "a desc_ptr inside the weight image was accepted");
+    if (c) { pl_close(c); c = NULL; }
+
+    /* ...and the control: the SAME reserved_end with the bases left at 0 must
+     * OPEN, or the refusal above would be measuring nothing. */
+    small_opts(&s, &o);
+    o.hbm_reserved_end = 0x110806000ull;
+    CK(pl_open(&o, &c) == 0, "the derived layout was refused above a real image");
+    if (c) { pl_close(c); c = NULL; }
+
+    /* And the derivation itself must refuse when nothing fits. */
+    CK(pl_derive_bases(TE, TV, 8, 0, FK33_HBM_TOP - 4096, 0, &b) != 0,
+       "a reserved_end 4 KB below the top of HBM was accommodated");
 
     /* And the direct check, so the codes are pinned and not merely "negative". */
     CK(fk33_seam_check_blocks(FK33_HBM_STACK_LINE - 64, 128, 0x1000, 64)

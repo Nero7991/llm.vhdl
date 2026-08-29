@@ -10,6 +10,7 @@
 #include "pl_backend.h"
 #include "fk33_transport.h"
 #include "fk33_seam.h"
+#include "fk33_manifest.h"
 
 /* How long to wait for a GO.  The token budget is 38.27 ms
  * (docs/2026-08-28_token-io-path.md); a prefill chunk of 512 is 512 of those,
@@ -121,19 +122,113 @@ static int seam_wait(pl_ctx *c, uint32_t *status_out)
 
 /* --------------------------------------------------------------- lifecycle */
 
+/* --------------------------------------------------- where the blocks go
+ *
+ * The three bases used to be typed in: 0x00E0000000 / 0x00E1000000 /
+ * 0x00E2000000.  0xE0000000 is 3.5 GiB and the weight image ends at
+ * 0x12F203000 (shipped) or 0x10C006000 (post-drop), so all three were INSIDE
+ * the weights in both sets.  The comment that stood here said they were "below
+ * the stack line at 0x1_0000_0000", which was true and was not the binding
+ * constraint.
+ *
+ * What replaces them is a derivation, not a bigger number.  Top-down from the
+ * top of HBM: desc (one 4 KB page), then the logits block, then the activation
+ * block for max_chunk steps, each 4 KB-aligned.  Every term comes from the
+ * shape the card itself reported in CAPS, so the addresses move when the model
+ * moves; and when a manifest says where the card's own bytes end, the result is
+ * checked against it and an overlap is REFUSED.
+ *
+ * Why top-down.  The image grows from 0 and the KV cache grows from `kv_base`;
+ * coming down from the top makes the host's blocks the first thing either
+ * growth meets, and that meeting is a refusal at open time rather than a
+ * silently overwritten weight. */
+
+static uint64_t align_down(uint64_t v, uint64_t a) { return v / a * a; }
+
+int pl_check_bases(const pl_hbm_bases *b)
+{
+    uint64_t top;
+    if (!b) return FK33_SEAM_ERR_POS;
+    top = b->hbm_top ? b->hbm_top : FK33_HBM_TOP;
+
+    if ((b->x_base % FK33_BLOCK_ALIGN) || (b->l_base % FK33_BLOCK_ALIGN))
+        return FK33_SEAM_ERR_ALIGN;
+    if (b->desc_ptr % 512ull) return FK33_SEAM_ERR_ALIGN;
+
+    if (b->x_base + b->x_span > top ||
+        b->l_base + b->l_span > top ||
+        b->desc_ptr + b->desc_span > top)
+        return FK33_SEAM_ERR_POS;
+
+    /* The stack rule, applied to all THREE blocks.  fk33_seam_check_blocks
+     * covers x and l; the descriptor is read by an engine port too. */
+    {
+        int e = fk33_seam_check_blocks(b->x_base, b->x_span,
+                                       b->l_base, b->l_span);
+        if (e) return e;
+    }
+    if (b->desc_ptr < FK33_HBM_STACK_LINE &&
+        b->desc_ptr + b->desc_span > FK33_HBM_STACK_LINE)
+        return FK33_SEAM_ERR_STACK;
+
+    /* The descriptor against the other two.  fk33_seam_check_blocks knows
+     * nothing about it, and a D program landing under the logits row is a wrong
+     * answer rather than a fault. */
+    if (b->desc_ptr < b->x_base + b->x_span && b->x_base < b->desc_ptr + b->desc_span)
+        return FK33_SEAM_ERR_POS;
+    if (b->desc_ptr < b->l_base + b->l_span && b->l_base < b->desc_ptr + b->desc_span)
+        return FK33_SEAM_ERR_POS;
+
+    /* THE CHECK THIS WHOLE FILE EXISTS FOR.  Anything below `reserved_end`
+     * belongs to the card: the weight image, the GDN state, the KV cache. */
+    if (b->reserved_end) {
+        if (b->x_base    < b->reserved_end) return FK33_SEAM_ERR_POS;
+        if (b->l_base    < b->reserved_end) return FK33_SEAM_ERR_POS;
+        if (b->desc_ptr  < b->reserved_end) return FK33_SEAM_ERR_POS;
+    }
+    return 0;
+}
+
+int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
+                    uint64_t hbm_top, uint64_t reserved_end,
+                    uint64_t kv_bytes_per_token, pl_hbm_bases *out)
+{
+    uint64_t cur;
+    if (!out || n_embd <= 0 || n_vocab <= 0 || max_chunk <= 0)
+        return FK33_SEAM_ERR_POS;
+    memset(out, 0, sizeof *out);
+    out->hbm_top = hbm_top ? hbm_top : FK33_HBM_TOP;
+    out->reserved_end = reserved_end;
+
+    out->x_span    = fk33_x_stride(n_embd) * (uint64_t)max_chunk;
+    out->l_span    = fk33_l_stride(n_vocab);
+    out->desc_span = 4096ull;     /* the D program is <= DESC_MAXB*AXI_DW/8 =
+                                   * 512 B; a page keeps the whole run aligned */
+
+    cur = align_down(out->hbm_top, 4096ull);
+    if (cur < out->desc_span) return FK33_SEAM_ERR_POS;
+    out->desc_ptr = align_down(cur - out->desc_span, 4096ull);
+    if (out->desc_ptr < out->l_span) return FK33_SEAM_ERR_POS;
+    out->l_base = align_down(out->desc_ptr - out->l_span, 4096ull);
+    if (out->l_base < out->x_span) return FK33_SEAM_ERR_POS;
+    out->x_base = align_down(out->l_base - out->x_span, 4096ull);
+
+    if (kv_bytes_per_token && out->hbm_top > out->x_base)
+        out->kv_tokens_cost = (out->hbm_top - out->x_base) / kv_bytes_per_token;
+
+    return pl_check_bases(out);
+}
+
 void pl_open_opts_default(pl_open_opts *o)
 {
     memset(o, 0, sizeof *o);
     o->transport = PL_TRANSPORT_SIM;
     o->seam_base = FK33_SEAM_BASE_PROPOSED;
-    /* Inside the LOWER HBM stack, well above anything the bring-up program
-     * touches and below the stack line at 0x1_0000_0000.  These are
-     * placeholders in the sense that the residency map and the shipped
-     * manifest disagree about the whole layout; they are NOT placeholders in
-     * the sense of being unchecked -- fk33_seam_check_blocks runs on them. */
-    o->x_base   = 0x00E0000000ull;
-    o->l_base   = 0x00E1000000ull;
-    o->desc_ptr = 0x00E2000000ull;
+    /* ZERO MEANS DERIVE.  See pl_derive_bases above and the note in
+     * pl_backend.h about the three constants this replaces. */
+    o->x_base   = 0;
+    o->l_base   = 0;
+    o->desc_ptr = 0;
     o->embed    = pl_embed_synthetic;
     o->max_chunk = 0;
 }
@@ -220,30 +315,117 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
     c->x_stride = fk33_x_stride(c->n_embd);
     c->l_stride = fk33_l_stride(c->n_vocab);
 
-    /* The explicit host-side stack assertion the residency map asks for.  Run
-     * ONCE at open, at the largest extent either block can reach, so a layout
-     * that would straddle the line is refused before any DMA rather than after
-     * a run of silently wrong tokens. */
+    /* ---------------------------------------------------------------- bases
+     *
+     * Derive whatever the caller left at zero, then check ALL THREE, including
+     * against the loaded image's extent when we know it.  This is the check
+     * that would have caught the shipped defect: x_base/l_base/desc_ptr at
+     * 0x00E0000000..0x00E2000000 are 3.5 GiB, inside a weight image that ends
+     * at 0x12F203000 (shipped set) or 0x10C006000 (post-drop set). */
     {
-        int e = fk33_seam_check_blocks(c->x_base,
-                                       c->x_stride * (uint64_t)c->max_chunk,
-                                       c->l_base, c->l_stride);
+        fk33_manifest man;
+        pl_hbm_bases b, want;
+        uint64_t hbm_top, reserved_end = 0, kv_bpt = 0;
+        int have_manifest = 0, e;
+        char mbuf[700];
+
+        if (o->manifest_path) {
+            if (fk33_manifest_read(o->manifest_path, &man)) {
+                fprintf(stderr, "pl_open: the manifest was refused; refusing to "
+                                "guess where the card's bytes end.\n");
+                pl_close(c); return -3;
+            }
+            have_manifest = 1;
+            reserved_end = man.reserved_end;
+            kv_bpt = man.kv_bytes_per_token;
+            fprintf(stderr, "[pl_backend] %s\n",
+                    fk33_manifest_describe(&man, mbuf, sizeof mbuf));
+        } else if (o->hbm_reserved_end) {
+            reserved_end = o->hbm_reserved_end;
+        }
+        hbm_top = o->hbm_size ? o->hbm_size
+                              : (have_manifest ? man.size : FK33_HBM_TOP);
+
+        e = pl_derive_bases(c->n_embd, c->n_vocab, c->max_chunk,
+                            hbm_top, reserved_end, kv_bpt, &b);
         if (e) {
-            fprintf(stderr, "pl_open: block layout refused: %s\n"
-                            "  x_base=0x%llX span=%llu  l_base=0x%llX span=%llu\n",
+            fprintf(stderr, "pl_open: no derived layout fits: %s\n"
+                            "  hbm_top=0x%llX reserved_end=0x%llX x_span=%llu "
+                            "l_span=%llu\n",
                     fk33_seam_strerror((unsigned)e),
-                    (unsigned long long)c->x_base,
-                    (unsigned long long)(c->x_stride * (uint64_t)c->max_chunk),
-                    (unsigned long long)c->l_base,
-                    (unsigned long long)c->l_stride);
+                    (unsigned long long)hbm_top,
+                    (unsigned long long)reserved_end,
+                    (unsigned long long)b.x_span,
+                    (unsigned long long)b.l_span);
             pl_close(c); return -3;
         }
-    }
-    if (c->desc_ptr % 512ull) {
-        fprintf(stderr, "pl_open: desc_ptr 0x%llX is not 512-byte aligned "
-                        "(DESC_MAXB * AXI_DW/8 on the FK33)\n",
-                (unsigned long long)c->desc_ptr);
-        pl_close(c); return -3;
+
+        /* A caller-supplied base overrides the derived one and is checked the
+         * same way.  Zero means "use the derivation". */
+        want = b;
+        if (o->x_base)   want.x_base   = o->x_base;
+        if (o->l_base)   want.l_base   = o->l_base;
+        if (o->desc_ptr) want.desc_ptr = o->desc_ptr;
+
+        e = pl_check_bases(&want);
+        if (e) {
+            fprintf(stderr,
+                "pl_open: block layout refused: %s\n"
+                "  x_base   = 0x%011llX  span %llu\n"
+                "  l_base   = 0x%011llX  span %llu\n"
+                "  desc_ptr = 0x%011llX  span %llu\n"
+                "  hbm_top  = 0x%011llX\n"
+                "  the card owns everything below 0x%011llX%s\n"
+                "  Leave x_base/l_base/desc_ptr at 0 to have them derived.\n",
+                fk33_seam_strerror((unsigned)e),
+                (unsigned long long)want.x_base, (unsigned long long)want.x_span,
+                (unsigned long long)want.l_base, (unsigned long long)want.l_span,
+                (unsigned long long)want.desc_ptr, (unsigned long long)want.desc_span,
+                (unsigned long long)want.hbm_top,
+                (unsigned long long)want.reserved_end,
+                want.reserved_end ? "" : "  (UNKNOWN: no manifest, no "
+                                         "hbm_reserved_end -- this half of the "
+                                         "check did not run)");
+            /* Name the offending block.  FK33_SEAM_ERR_POS's generic text talks
+             * about KV capacity, which is one of its two senses and not this
+             * one, and a reader should not have to compare six hex numbers by
+             * eye to find out which base landed on the weights. */
+            if (want.reserved_end) {
+                if (want.x_base < want.reserved_end)
+                    fprintf(stderr, "  -> x_base is INSIDE the loaded image\n");
+                if (want.l_base < want.reserved_end)
+                    fprintf(stderr, "  -> l_base is INSIDE the loaded image\n");
+                if (want.desc_ptr < want.reserved_end)
+                    fprintf(stderr, "  -> desc_ptr is INSIDE the loaded image\n");
+            }
+            pl_close(c); return -3;
+        }
+        if (!want.reserved_end)
+            fprintf(stderr,
+                "[pl_backend] NOTE: neither manifest_path nor hbm_reserved_end was\n"
+                "  given, so the blocks at 0x%llX / 0x%llX / 0x%llX were checked for\n"
+                "  alignment, the stack line and overlap with each other, but NOT\n"
+                "  against the loaded weight image.  That is the check that the old\n"
+                "  hardcoded 0x00E0000000 needed and did not have.\n",
+                (unsigned long long)want.x_base,
+                (unsigned long long)want.l_base,
+                (unsigned long long)want.desc_ptr);
+        else if (have_manifest && b.kv_tokens_cost)
+            fprintf(stderr,
+                "[pl_backend] the host's three blocks take the top %llu B of HBM,\n"
+                "  which is %llu tokens of KV at %llu B/token (max_context_tokens\n"
+                "  %llu -> %llu).  That is the price of this placement, stated.\n",
+                (unsigned long long)(want.hbm_top - b.x_base),
+                (unsigned long long)b.kv_tokens_cost,
+                (unsigned long long)kv_bpt,
+                (unsigned long long)man.max_context_tokens,
+                (unsigned long long)(man.max_context_tokens > b.kv_tokens_cost
+                                     ? man.max_context_tokens - b.kv_tokens_cost
+                                     : 0));
+
+        c->x_base = want.x_base;
+        c->l_base = want.l_base;
+        c->desc_ptr = want.desc_ptr;
     }
 
     c->xbuf = (unsigned char *)calloc(1, (size_t)c->x_stride);

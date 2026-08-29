@@ -31,12 +31,14 @@ ARM_CC    ?= aarch64-linux-gnu-gcc
 ARM_CXX   ?= aarch64-linux-gnu-g++
 
 CSRC := pl_backend_axu3eg.c pl_backend.c fk33_transport.c fk33_sim.c \
+        fk33_manifest.c embed_mv4i.c \
         qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 COBJ := $(CSRC:.c=.o)
 CARM := $(CSRC:.c=_arm.o)
 
 DEPS := llama_server.cpp $(CSRC) pl_backend.h pl_backend_axu3eg.h \
-        fk33_transport.h fk33_seam.h qwen35_chat.h qwen35_tok.h \
+        fk33_transport.h fk33_seam.h fk33_manifest.h embed_mv4i.h \
+        qwen35_chat.h qwen35_tok.h \
         qwen35_unicode_data.h ../hw/tok512.h ../hw/tok512_pkg.h \
         ../ref/run_fx.c ../ref/llama_fx.h ../ref/fx.h
 
@@ -58,8 +60,50 @@ board: $(DEPS)
 # The seam self-test.  No card, no driver, no FPGA; see tests/seam_selftest.c
 # for what it can and cannot prove.
 seam_selftest: tests/seam_selftest.c pl_backend.c fk33_transport.c fk33_sim.c \
-               pl_backend.h fk33_transport.h fk33_seam.h
-	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c fk33_transport.c fk33_sim.c
+               fk33_manifest.c pl_backend.h fk33_transport.h fk33_seam.h \
+               fk33_manifest.h
+	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c fk33_transport.c \
+	      fk33_sim.c fk33_manifest.c
+
+# ---------------------------------------------------------------------------
+# The host embedding gather (server/embed_mv4i.c), and its checks.
+#
+#   embed_dump        the C gather, as parseable text.  Built WITH the mutation
+#                     hooks, because tools/check_embed_c.py drives them; a
+#                     shipped build has none and pl_embed_mv4i_set_mutant fails.
+#   embed_ref_oracle  ref/matvec_int4.c's own accessors, reproducing
+#                     ref/run9b.c's embed() + reg_put().  Nothing in ref/ is
+#                     edited; it is included.
+#   embed_e2e         the provider driving the real seam against the SIMULATED
+#                     card, plus the base-address refusal on a real manifest.
+#
+# `make embed-check` needs the packed tensor and the BF16 GGUF and SKIPS
+# cleanly when either is absent, rather than failing.
+EMBED_MV4I ?= /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i
+EMBED_MANIFEST ?= /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json
+EMBED_N ?= 64
+
+embed_dump: tests/embed_dump.c embed_mv4i.c embed_mv4i.h
+	$(CC) $(CBACK) -DEMBED_MV4I_MUTANTS -o $@ tests/embed_dump.c embed_mv4i.c
+
+embed_ref_oracle: tests/embed_ref_oracle.c ../ref/matvec_int4.c ../ref/mv4i_arith.h
+	$(CC) $(CBACK) -o $@ tests/embed_ref_oracle.c -lm
+
+embed_e2e: tests/embed_e2e.c embed_mv4i.c pl_backend.c fk33_transport.c \
+           fk33_sim.c fk33_manifest.c
+	$(CC) $(CBACK) -o $@ tests/embed_e2e.c embed_mv4i.c pl_backend.c \
+	      fk33_transport.c fk33_sim.c fk33_manifest.c
+
+embed-check: embed_dump embed_ref_oracle embed_e2e
+	@if [ ! -f "$(EMBED_MV4I)" ]; then \
+	   echo "SKIP embed-check: $(EMBED_MV4I) is not present"; exit 0; fi
+	python3 ../tools/check_embed_c.py --mv4i $(EMBED_MV4I) \
+	    --dump ./embed_dump --ref-oracle ./embed_ref_oracle --n $(EMBED_N)
+	python3 ../tools/check_embed_c.py --mv4i $(EMBED_MV4I) \
+	    --dump ./embed_dump --ref-oracle ./embed_ref_oracle --n $(EMBED_N) --mutate
+	@if [ ! -f "$(EMBED_MANIFEST)" ]; then \
+	   echo "SKIP embed_e2e: $(EMBED_MANIFEST) is not present"; exit 0; fi
+	./embed_e2e --mv4i $(EMBED_MV4I) --manifest $(EMBED_MANIFEST)
 
 # The chat-template batch driver, for server/verify_chat_template.py.  That
 # script builds it itself with --build; this rule exists so `make check` can
@@ -70,7 +114,10 @@ chat_batch: tests/chat_batch.c qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 # Compile-only gate: every C file under both toolchains, plus the C++.  This is
 # what a no-card CI runs.
 check:
-	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c
+	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c \
+	      tests/embed_dump.c tests/embed_e2e.c
+	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c embed_mv4i.c 2>/dev/null \
+	  || echo "  (no aarch64 toolchain; the SBC-side syntax check was skipped)" 
 	$(CXX) $(CXXFLAGS) $(INC) -fsyntax-only llama_server.cpp
 	@echo "SERVER_COMPILE OK"
 
@@ -119,7 +166,8 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 
 clean:
 	rm -f llama_server llama_server_arm seam_selftest chat_batch \
+	      embed_dump embed_ref_oracle embed_e2e \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
-.PHONY: board clean tok tok-board check test test-e2e
+.PHONY: board clean tok tok-board check test test-e2e embed-check

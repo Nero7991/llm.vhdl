@@ -17,6 +17,9 @@ server/llama_server_arm
 server/*.o
 server/seam_selftest
 server/chat_batch
+server/embed_dump
+server/embed_ref_oracle
+server/embed_e2e
 server/fk33_file_backend/
 ref/dump_luts
 ref/test_fx
