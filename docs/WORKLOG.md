@@ -295,6 +295,13 @@ and their costs are the part worth re-reading.
 
 ### OI-2: `attn_emit.vhd:400` is a bound violation at `NGRP = 1` (latent)
 
+**RESOLVED at HEAD, 2026-08-29.** `rtl/attn_emit.vhd` no longer assigns
+`grp <= 1` anywhere; `:410` is now a comment documenting the old defect, and
+the `NGRP = 1` case takes an explicit `grp <= 0; state <= S_SHIFTS`. VERIFIED
+by reading the file at HEAD, not by trusting this entry. The description below
+is kept for the record and is no longer the state of the tree.
+
+
 `grp` is declared `integer range 0 to NGRP-1` (`:263`) and line 400 assigns
 `grp <= 1` unconditionally. `NGRP` is `positive`, so `NGRP = 1` (one KV head)
 is a legal generic value that is an immediate bound violation. Default is 2,
@@ -351,6 +358,12 @@ cannot reach, and enumerate it separately.
 
 ### OI-7: `l2norm_rs` rejects a legal input, at `severity failure`
 
+**RESOLVED at HEAD, 2026-08-29.** `rtl/l2norm_rs.vhd:256` now states the bound
+INCLUSIVELY (`ssq <= shift_left(...)`), matching `:97`. Fixed by RANGE rather
+than by widening `SSQ_BITS`, which would have admitted up to `2^38-1` and
+thrown away half the overflow detection. VERIFIED at HEAD.
+
+
 Found by TRACK B-ACCURACY and deliberately not fixed, because `l2norm_rs` sits
 under `gdn_block` and `llama_top` as of `3246046`.
 
@@ -381,6 +394,13 @@ reporting the defect. The generator carries it as a comment naming the
 measurement.
 
 ### OI-8: `matvec_core` reads `ybuf` one past the end at the top of its row range
+
+**RESOLVED at HEAD, 2026-08-29** (`7ccc239`). `rtl/matvec_core.vhd:928` reads
+`ybuf(ybuf_addr(rd_t))` through the clamping function at `:128`, which bounds
+the ADDRESS rather than gating the read, so the BRAM read port still infers.
+The same buffer's WRITE side was a separate defect, OI-10, fixed at `:865`.
+VERIFIED at HEAD.
+
 
 Found by TRACK A-SHAPE while sweeping legal shapes, and not fixed because
 `rtl/matvec_core.vhd` is not that track's file.
@@ -546,4 +566,7 @@ Keep this list fed: when a track lands, add whatever it unblocked.
 | 9 | **Subsystem C spec reconciliation.** Six spec-named units (`attn_lane`, `attn_score_tree`, `attn_acc`, `attn_qk_norm`, `attn_ctrl`, and `attn_kv_axi` until C-KV lands) do not exist; the design took a different decomposition and the spec was never updated. The spec and the RTL now disagree. | TRACK C-KV | `docs/` spec files |
 | 10 | **OI-9: the descriptor error-code space is full.** A decision (widen, subdivide via `ERR_INFO`, or take a reserved D value), with consequences for D. **Ask Oren rather than choosing.** | none | decision |
 | 11 | **The five B units with no accuracy gate `regress.sh` can fail.** `gdn_silu` and `rmsnorm_bf` PRINT their oracle figures from the generator; `gdn_head_emit`, `gdn_y_emit` and `gdn_emit_chain` assert inside a generator the gate never runs, because their vectors are committed. The flagship: the `rmsnorm_bf` mutation reintroducing exactly the defect that unit exists to fix is bit-exact-green and 1.7e10 output LSB wrong. Two routes, scoped in section 7 of `docs/debugging/2026-08-29_b-verification-defects-d1-d3.md`, and they are NOT equivalent: Route A adds a `tb_vector_args` row per unit so the gate regenerates and consults the generator's exit code (cheap, also kills the D1 staleness class for good, but moves the claim out of the bench so it cannot see an RTL-only accuracy defect); Route B moves the gate into the bench, as `tb_gdn_scalar` now does (~60 lines per unit plus a measurement pass). **Do `gdn_silu` and `rmsnorm_bf` first**: the other three have oracle blind spots that must be answered before a tolerance means anything -- head_emit/y_emit exclude on an OUTPUT property and EMPTY their oracle at a narrowed rail (41 saturating + 7 all-zero = 48 of 48), and emit_chain's metric is normalised by the very quantity one BOTH mutation changes, so it moved the WRONG WAY (1.1280 -> 0.8505). | TRACK B-FIX (landed) | `sim/tb_gdn_silu.vhd`, `sim/tb_rmsnorm_bf.vhd`, then the other three |
+| 12 | **A whole-model 9B numeric reference. NOTHING IN THE REPO CAN CURRENTLY SAY WHETHER A TOKEN IS THE RIGHT TOKEN.** `ref/` holds exactly one whole-model reference and it is stories260K. Every 9B claim to date is per-unit or per-seam. Until a fixed-point 9B reference stream exists, "first token" is unfalsifiable: the card will emit *a* token and no artefact here can distinguish success from failure, and on-card numeric debugging has no stream to diff against. The 9B GGUF now exists (it did not when the audit was written), so the `cb_eval` epsilon-class harness can be re-run on the real model. **Raised by the 2026-08-29 independent review; it had never been a backlog item, only a line in audit section 5.1/5.2, which is why it fell through.** Building this AFTER the card produces wrong tokens is the expensive order. | none | `ref/`, `tools/` |
+| 13 | **A composed synthesis at the real shape, with stubs where a subsystem is not ready.** All composition evidence today is at `mk_shape_scaled`; the real 9B shape has never elaborated in ANY simulator, and the first full-shape elaboration is currently scheduled to happen inside Vivado on the critical path. The project's own defect record (OI-7, OI-8, OI-10: unconstrained integers, index bounds, off-by-one at maxima) is precisely the class that appears only at real dimensions, and the synthesis-fatal siblings of those have no bench that can see them. Separately, A alone MEASURED 1,585 DSP (55.0%) and the modeled B+C+D adds ~558 more, so ~74% before the shell, on a device the envelope doc calls historically non-deterministic at high DSP. **Both risks retire in one stubbed composed run.** | none | `sim/`(new), `hw/` |
+| 14 | **A gate row that turns the REAL path on in `tb_llama_top`.** MEASURED 2026-08-29: `C_REAL`, `NORM_REAL` and `B_SRC_REAL` all default false (`rtl/llama_top.vhd:311,299,203`) and `sim/regress.sh` sets NONE of them (zero hits). So every integration gate row elaborates the stub C, the probe norm and the synthetic conv-tap source, and the flagship 32-block real-weights result was a one-off manual run at NRUNS=1. **A regression in the real path tomorrow leaves the gate green.** Sent to TRACK TOP-KV, which already owns these files. `C_REAL` additionally needs ATTN_HD=16, so a `NORM_REAL` row is the cheap first step. | TRACK TOP-KV (in flight) | `sim/regress.sh`, `sim/tb_llama_top.vhd` |
 
