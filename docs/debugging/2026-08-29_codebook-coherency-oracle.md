@@ -248,6 +248,29 @@ $ REGRESS_SCRATCH=... bash sim/regress.sh --only matvec_cb
  REGRESSION: PASS
 ```
 
+Full unfiltered both-suite run, MEASURED, started 13:35:11 and finished with
+three other tracks' gate runs sharing the box (load average 21):
+
+```
+ suite sim   PASS 68   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 94   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 94 passing, matches the recorded floor of 94
+ REGRESSION: PASS
+```
+
+The 19 skips are the standing `library beh` and `*_ps` rows that need xsim and
+UNISIM; the 5 NOCHECK rows are pre-existing. The floor reads 94 because TRACK
+CDC-STATIC's `+1` landed alongside this track's; both are in the comment block.
+The four rows this track touches or depends on:
+
+```
+PASS  sim:tb_matvec_cb_contract   1s  9 runs, 0 failures
+PASS  sim:tb_matvec_cb_lockstep   0s
+PASS  sim:tb_matvec_core          1s  0 mismatches
+PASS  sim:tb_matvec_core_ragsat   3s  0 mismatches
+```
+
 ### 7.2 `sim/mutate_matvec_cb.sh`, 20 rows plus a control, 6 columns each
 
 Columns are `<mode><bench>`. Mode `A` = `P_CB_CHK` live, `N` = its three
