@@ -134,21 +134,40 @@ trap '[[ $BUS_IS_DOWN = 1 ]] && bring_bus_up' EXIT
 
 echo
 echo "=== bus down ==="
+# ORDER IS LOAD-BEARING: REMOVE THE DEVICE FIRST, THEN rmmod.
+#
+# MEASURED 2026-08-29: rmmod-then-remove fails with "Module xdma is in use",
+# because the module's refcount is held by the bound device itself
+# (/sys/module/xdma/refcnt = 1, /sys/bus/pci/drivers/xdma/0000:06:00.0).
+# Removing the device unbinds it and drops the refcount to 0, after which the
+# rmmod succeeds.  Doing it the other way round can never work with the card
+# present, which is the only case that matters.
+if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
+    echo "--- removing $DEV (this also unbinds the driver) ---"
+    echo 1 > "/sys/bus/pci/devices/$DEV/remove"
+    sleep 1
+else
+    echo "  $DEV already absent from sysfs"
+fi
+BUS_IS_DOWN=1
+
+# Now the module is idle, so it can be unloaded and reloaded cleanly against
+# the new bitstream.  A failure here is NOT fatal: the first run of this script
+# proved the driver re-binds correctly on rescan while staying loaded, so a
+# stuck rmmod costs a stale driver, not a broken card.  Report and continue.
 LSMOD_OUT="$($LSMOD 2>&1 || true)"
 if [[ -z "$LSMOD_OUT" ]]; then
     echo "  WARNING: '$LSMOD' produced NO output. Cannot tell if xdma is loaded."
 fi
 if [[ -n "$(printf '%s\n' "$LSMOD_OUT" | grep -E '^xdma ' || true)" ]]; then
-    echo "--- rmmod xdma ---"; "$RMMOD" xdma
+    echo "--- rmmod xdma (refcnt now $(cat /sys/module/xdma/refcnt 2>/dev/null || echo '?')) ---"
+    if ! "$RMMOD" xdma; then
+        echo "  RMMOD_FAILED -- continuing with the driver still loaded."
+        echo "  It will re-bind on rescan; the insmod below will be skipped."
+    fi
 else
     echo "  xdma not loaded, per $LSMOD (nothing to rmmod)"
 fi
-if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
-    echo "--- removing $DEV ---"
-    echo 1 > "/sys/bus/pci/devices/$DEV/remove"
-    sleep 1
-fi
-BUS_IS_DOWN=1
 lspci -d 10ee: || echo "  Xilinx device gone from the bus (expected)"
 
 # ------------------------------------------------------------- configure
