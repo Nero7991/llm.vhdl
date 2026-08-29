@@ -203,6 +203,15 @@
 #                               rtl/attn_kv_axi.vhd over three modelled AXI
 #                               slaves, two attention layers, two latency
 #                               points.  MEASURED 302 s through this runner.
+#   tb_llama_top_smp            the logits egress seam: rtl/llama_top.vhd with
+#                               SMP_EN, routing a FLG_TO_SMP job into
+#                               rtl/sampler_stream.vhd.  NOT slow -- 0.7 s --
+#                               because its table is four A jobs and not a
+#                               491-step token.  Listed here only so the
+#                               tb_llama_top* family reads as one group.
+#   tb_llama_top_smp_beh        the same, with the behavioural A, which is the
+#                               configuration that has an independent value
+#                               oracle for every logit.  0.45 s.
 #   tb_llama_top_real           the same integration top level with EVERY
 #                               computing unit real AND real Qwen3.5-9B
 #                               weights: real matvec_int4, real gdn_block,
@@ -365,7 +374,18 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=83   # +1 sim/tb_llama_top_real, the integration top level with
+BASELINE_PASS=85   # +2 sim/tb_llama_top_smp and sim/tb_llama_top_smp_beh, THE
+                   #    LOGITS EGRESS SEAM: rtl/llama_top.vhd routing a
+                   #    FLG_TO_SMP job's raw s32 rows into
+                   #    rtl/sampler_stream.vhd instead of discarding them.
+                   #    TWO rows because they check DISJOINT things -- the
+                   #    _beh row runs the behavioural A and has a full
+                   #    independent value oracle, the default row runs the
+                   #    real matvec_int4 in raw out_mode and checks the route
+                   #    against the same job written to a region.  Neither
+                   #    needs a vector file.  MEASURED 0.45 s and 0.70 s
+                   #    standalone, so neither belongs in SLOW_TBS, 2026-08-29
+                   # +1 sim/tb_llama_top_real, the integration top level with
                    #    C_REAL, NORM_REAL and the committed real-weight image
                    #    all on.  Before it, EVERY tb_llama_top gate row
                    #    elaborated with the attention stub and the probe norm,

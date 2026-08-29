@@ -132,6 +132,15 @@
 --     work" (:113-115).  So A's weights do not come from the descriptor.
 --   * There is no sampler and no lm_head output.  The final A job is issued
 --     with dst = R_NONE and its result is discarded.
+--     CORRECTED 2026-08-29: true only with SMP_EN false, which is still the
+--     DEFAULT.  With SMP_EN the A adapter routes a FLG_TO_SMP job's RAW s32
+--     rows into `rtl/sampler_stream.vhd` and publishes them on the `smp_*`
+--     ports.  See that generic.  What is STILL true either way: there is no
+--     writeback of the logits to memory, so the only egress is the streaming
+--     argmax and the `smp_*` observation ports -- the costed comparison
+--     between a y-to-HBM writeback and on-card top-k is section 7 of
+--     docs/debugging/2026-08-29_logits-egress.md and is a decision nobody has
+--     taken.
 --   * There is no KV cache, no position, no RoPE at this level.
 --   * NCARDS > 1 is not wired.  OP_E_COLL reaches a unit adapter that raises
 --     an error, deliberately, rather than silently completing.
@@ -414,6 +423,62 @@ entity llama_top is
     -- as NORM_W_EXP is for the D-vec norm and the conv weights are for B.
     C_QKN_EXP   : integer  := 12;
 
+    -- ==================================================================
+    -- THE LOGITS EGRESS SEAM.  `FLG_TO_SMP`, AND THE ONE OUTPUT THIS FILE
+    -- USED TO THROW AWAY.
+    --
+    -- `llama_map_pkg.vhd:102` defines FLG_TO_SMP = 2 and both schedule
+    -- generators set it on the lm_head step (`sim/llama_sched_pkg.vhd:277`,
+    -- `sim/seq_tbl_pkg.vhd:341`).  `rtl/seq_desc_fetch.vhd:495` and :504
+    -- CHECK it -- dst = 0xFF is legal only when a route flag says where the
+    -- output went -- and NOTHING ROUTES IT.  Until this generic existed the
+    -- flag reached `job_flags` (:1029), was read by nobody, and the A adapter
+    -- discarded the result on `j_dst < NREGION` alone, which the banner at
+    -- :134 said in as many words.
+    --
+    -- With SMP_EN TRUE the A adapter, on a job whose flags carry FLG_TO_SMP,
+    -- serialises A's RAW s32 result rows into a one-logit-per-cycle stream,
+    -- publishes it on the `smp_*` ports, and folds it into an instance of
+    -- `rtl/sampler_stream.vhd` -- the streaming argmax that
+    -- `rtl/engine_shared.vhd:652` already uses on the AXU3EG, whose only
+    -- input is a bare 32-bit integer, which is exactly what RAW `out_mode`
+    -- produces (`rtl/matvec_core.vhd:829`, a sign-extended `sat32`).
+    --
+    -- DEFAULT FALSE, and the default path is bit-identical to what it was
+    -- before this generic existed: with it false nothing below elaborates,
+    -- `job_flags` is still read by nobody, and the discard at :1968/:2048 is
+    -- unchanged.  The same precedent C_KV_AXI set.
+    --
+    -- WHY THE ACCUMULATION IS PER TOKEN AND NOT PER JOB.  The real lm_head is
+    -- 248,320 rows against a `MAXROWS_BFP` of 17,408 and
+    -- `rtl/matvec_int4_desc_axi.vhd`'s S_CHECK bounds `n_rows` in EVERY
+    -- out_mode, so TRACK LMHEAD's answer is 15 raw WINDOWS at stride 17,376,
+    -- not one job (docs/debugging/2026-08-29_lmhead-window-schedule.md).  A
+    -- sampler cleared per job would return the argmax of the last window.  So
+    -- `smp_clr` fires on `go` -- the token start -- and the window base
+    -- accumulates across every FLG_TO_SMP job of the token, which is what
+    -- makes `smp_idx` a VOCABULARY index and not a row index.
+    --
+    -- THE FIFO IS A RATE ARTEFACT OF SMALL SHAPES, NOT OF THE DESIGN.  A
+    -- emits ROWS_IF rows per beat and one beat per row-tile, i.e. one beat
+    -- every ceil(n_cols/BLK) cycles.  At the FK33 geometry that is 48 rows
+    -- per 128 cycles = 0.375 logits/cycle, comfortably under the sampler's
+    -- 1/cycle.  At the scaled simulation shape it is 4 rows per 2 cycles =
+    -- 2 logits/cycle, so the stream MUST be buffered there or beats are lost,
+    -- and `y_we` has no ready (seam rule 3), so losing one is silent.  The
+    -- FIFO holds BEATS, not logits.  Overflow is a sticky fault, never a drop.
+    --
+    -- THE DEFAULT DEPTH IS NOT MEASURED TO BE NECESSARY, and saying so is
+    -- worth more than the eight beats.  `sim/mutate_llama_top_smp.sh` row M10
+    -- sets SMP_FIFO = 1 and BOTH gate rows still pass with `err_smp_ovf`
+    -- clear, so the peak occupancy at the simulated shape is ONE beat: the
+    -- real `matvec_int4` does not in fact deliver a row-tile every two
+    -- cycles, whatever `ceil(n_cols/BLK)` says it could.  8 is margin for a
+    -- shape whose rate this bench does not produce, not a measured
+    -- requirement, and a build that needs the area back can take it.
+    SMP_EN   : boolean  := false;
+    SMP_FIFO : positive := 8;
+
     -- Set false only in a run that is deliberately measuring the banner cost.
     SHOUT   : boolean := true;
 
@@ -582,8 +647,45 @@ entity llama_top is
     obs_norm_ssq : out unsigned(63 downto 0);         -- sum of x_mant squared
     obs_norm_n   : out unsigned(15 downto 0);         -- elements summed
 
+    -- ---- the logits stream, SMP_EN only --------------------------------
+    -- ALL OUTPUTS, DELIBERATELY.  An instantiation that predates this block
+    -- leaves them unassociated, which VHDL permits for an output port and
+    -- does not permit for an input without a default, so no existing bench
+    -- has to change.  Tied off when not SMP_EN.
+    --
+    -- `smp_valid` is one logit per cycle.  `smp_v` is A's RAW s32 result for
+    -- vocabulary row `smp_idx`, which is the WINDOW BASE plus the row inside
+    -- the window, so it is a vocabulary index across all of a token's
+    -- FLG_TO_SMP jobs and not a per-job row.  `smp_exp` is the ONE exponent
+    -- the whole token's logits share -- raw `out_mode` publishes
+    -- `w_exp + x_exp - out_shift` with no per-job term
+    -- (`rtl/matvec_core.vhd:1032`), which is the property that lets 15
+    -- windows feed one sampler at all.
+    smp_valid : out std_logic;
+    smp_v     : out std_logic_vector(31 downto 0);
+    smp_idx   : out unsigned(31 downto 0);
+    smp_exp   : out signed(EXP_W-1 downto 0);
+    -- The streaming argmax and its liveness.  `smp_token` is the RUNNING
+    -- argmax across every FLG_TO_SMP job of the token so far.
+    --
+    -- `smp_done` pulses ONCE PER FLG_TO_SMP JOB, when that job's last logit
+    -- has been folded -- NOT once per token.  The distinction is not
+    -- cosmetic and it is not an oversight: the descriptor plane has no field
+    -- saying "this is the last window", and the machine cannot know it is
+    -- looking at window 15 of 15 rather than window 3.  So the token's argmax
+    -- is final at the LAST such pulse before `tok_done`, and `tok_done` is
+    -- the event a host should read `smp_token` on.  A `smp_done` that claimed
+    -- to be per-token would be a claim this file cannot support.
+    smp_token : out unsigned(31 downto 0);
+    smp_done  : out std_logic;
+    -- How many logits have been folded since `go`.  Observability, and the
+    -- only thing that can tell "the argmax is wrong" from "the argmax is
+    -- right over the wrong number of rows".
+    smp_n     : out unsigned(31 downto 0);
+
     -- Sticky seam-fault counters.  Every one of these is a defect, not a
     -- statistic, and every one is silent in the arithmetic.
+    err_smp_ovf   : out std_logic;   -- the logits FIFO overflowed: beats LOST
     err_lost_beat : out std_logic;   -- an un-stallable producer beat dropped
     err_gate_drop : out std_logic;   -- the lock refused a region write
     err_unit_stub : out std_logic;   -- a stub unit produced a result
@@ -827,6 +929,30 @@ architecture rtl of llama_top is
   -- high for an arbitrary number of cycles before anything is running.
   signal act_vop  : natural range 0 to NVOP-1 := 0;
   signal act_port : natural range 0 to NUNIT+NVOP-1 := 0;
+
+  -- ---- the logits egress seam ------------------------------------------
+  -- The A adapter is the producer and there are TWO of it (`ga_real` and
+  -- `ga_behav`), so the beat interface lives at the architecture level and
+  -- whichever branch elaborates drives it.  Exactly one does.
+  --
+  -- A beat is up to A_ROWS_IF s32 rows with a per-row validity mask, plus the
+  -- VOCABULARY index of row 0 of the beat -- the window base already added,
+  -- so the drain side never has to know about jobs.
+  signal smp_be_we   : std_logic := '0';
+  signal smp_be_dat  : std_logic_vector(A_ROWS_IF*32-1 downto 0)
+                     := (others => '0');
+  signal smp_be_msk  : std_logic_vector(A_ROWS_IF-1 downto 0)
+                     := (others => '0');
+  signal smp_be_idx  : unsigned(31 downto 0) := (others => '0');
+  -- The adapter raises this for the whole of a FLG_TO_SMP job's run window.
+  -- Its FALLING edge, once the FIFO is empty, is `smp_done`.
+  signal smp_run     : std_logic := '0';
+  signal smp_yexp_i  : signed(EXP_W-1 downto 0) := (others => '0');
+  -- Driven by the drain side, read by the adapter: a FLG_TO_SMP job does not
+  -- report `done` until every logit it produced has been folded, so `u_done`
+  -- means "the sampler has seen this job" and not merely "A stopped".
+  signal smp_empty   : std_logic := '1';
+  signal f_smp_ovf   : std_logic := '0';
 
   -- ---- sticky seam faults ----------------------------------------------
   signal f_lost  : std_logic := '0';
@@ -1670,6 +1796,11 @@ begin
     signal dn   : std_logic := '0';
     signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
     signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+    -- THE LOGITS EGRESS SEAM, producer half.  See the same two signals in
+    -- `ga_real`.  This branch has no `y_we`, so it emits ONE row per beat
+    -- with mask "0..01" and the FIFO's serialiser is the same code.
+    signal j_smp    : std_logic := '0';
+    signal smp_base : unsigned(31 downto 0) := (others => '0');
   begin
     u_ready(U_A) <= rdy;
     u_done(U_A)  <= dn;
@@ -1678,7 +1809,7 @@ begin
     u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
 
     ap : process(clk) is
-      type st_t is (S_IDLE, S_XRD, S_EXP, S_MUL, S_DONE);
+      type st_t is (S_IDLE, S_XRD, S_EXP, S_MUL, S_SDRAIN, S_DONE);
       variable st   : st_t := S_IDLE;
       variable xb   : buf_t(0 to REGMAX-1);
       -- THE LATCHED DESCRIPTOR.  Seam rule (1).
@@ -1688,14 +1819,18 @@ begin
       variable j_live  : boolean := false;
       variable k, r    : natural := 0;
       variable acc     : integer := 0;
+      variable sh      : integer := 0;
       variable xexp    : integer := 0;
     begin
       if rising_edge(clk) then
         ur_en(U_A) <= '0';
         uw_en(U_A) <= '0';
+        smp_be_we  <= '0';
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0'; j_live := false;
+          smp_run <= '0'; smp_base <= (others => '0'); j_smp <= '0';
         else
+          if go = '1' then smp_base <= (others => '0'); end if;
           -- Latch at job_issue.  NOT at u_start: u_start leads job_issue by
           -- one cycle and job_* still decodes the previous live bank there.
           if job_issue = '1' and to_integer(job_unit) = U_A then
@@ -1712,6 +1847,11 @@ begin
             rdy     <= '0';
             k       := 0;
             st      := S_XRD;
+            if SMP_EN then
+              j_smp <= job_flags(1);          -- FLG_TO_SMP, llama_map_pkg:102
+            else
+              j_smp <= '0';
+            end if;
             -- Claim the exponent read port for THIS job's source, at the same
             -- instant the descriptor is latched.  A's sources are never the
             -- multi-segment region, so segment 0 is the whole story here; a
@@ -1770,21 +1910,47 @@ begin
                   acc := acc + to_integer(xb(c)) * wsyn(r, c, j_ord);
                 end if;
               end loop;
+              if j_shift >= 0 and j_shift < 31 then
+                sh := acc / (2**j_shift);
+              else
+                sh := acc;
+              end if;
               if j_dst < NREGION then
                 uw_en(U_A)   <= '1';
                 uw_reg(U_A)  <= j_dst;
                 uw_addr(U_A) <= j_off + r;
-                if j_shift >= 0 and j_shift < 31 then
-                  uw_data(U_A) <= sat_m(acc / (2**j_shift));
-                else
-                  uw_data(U_A) <= sat_m(acc);
-                end if;
+                uw_data(U_A) <= sat_m(sh);
+              end if;
+              -- THE LOGITS ROUTE.  The behavioural A has no `y_we`, so the
+              -- beat is synthesised here: one row, s32, NOT the s16 the
+              -- region write saturates to.  RAW `out_mode` emits s32 and
+              -- narrowing the logit to 16 bits would change which row wins.
+              if j_smp = '1' then
+                smp_run    <= '1';
+                smp_be_we  <= '1';
+                smp_be_msk <= (0 => '1', others => '0');
+                smp_be_idx <= smp_base + r;
+                smp_be_dat <= (others => '0');
+                smp_be_dat(31 downto 0)
+                  <= std_logic_vector(to_signed(sh, 32));
+                smp_yexp_i <= to_signed(j_wexp + xexp - j_shift, EXP_W);
               end if;
               if r = j_rows-1 then
-                st := S_DONE;
+                if j_smp = '1' then
+                  smp_base <= smp_base + j_rows;
+                  st := S_SDRAIN;
+                else
+                  st := S_DONE;
+                end if;
               else
                 r := r + 1;
               end if;
+
+            when S_SDRAIN =>
+              -- See the same state in `ga_real`: `done` on a FLG_TO_SMP job
+              -- means the sampler has seen every logit, not that A stopped.
+              smp_run <= '0';
+              if smp_empty = '1' then st := S_DONE; end if;
 
             when S_DONE =>
               -- Seam rule (2): a LEVEL, held until u_ack.
@@ -1883,6 +2049,15 @@ begin
     signal y_data  : std_logic_vector(A_ROWS_IF*64-1 downto 0);
     signal y_mask  : std_logic_vector(A_ROWS_IF-1 downto 0);
     signal y_expv  : std_logic_vector(31 downto 0);
+    -- THE LOGITS EGRESS SEAM, producer half.  `j_smp` is this job's copy of
+    -- FLG_TO_SMP, latched with the rest of the descriptor at `job_issue` --
+    -- seam rule (1) applies to a ROUTE exactly as it applies to a shape, and
+    -- reading `job_flags` live during a multi-thousand-cycle job would route
+    -- the tail of one job by the flags of the next.
+    signal j_smp   : std_logic := '0';
+    -- The vocabulary index of row 0 of THIS job.  Zeroed on `go` and advanced
+    -- by `n_rows` per FLG_TO_SMP job, so 15 windows produce one index space.
+    signal smp_base : unsigned(31 downto 0) := (others => '0');
   begin
     u_ready(U_A) <= rdy;
     u_done(U_A)  <= dn;
@@ -1915,7 +2090,7 @@ begin
 
     ap : process(clk) is
       type st_t is (S_IDLE, S_CB, S_CBGAP, S_XRD, S_EXP, S_GO, S_RUN,
-                    S_DRAIN, S_DONE);
+                    S_SDRAIN, S_DRAIN, S_DONE);
       variable st : st_t := S_IDLE;
       variable yb : buf_t(0 to A_MAXROWS-1);
       -- THE LATCHED DESCRIPTOR.  Seam rule (1).  Nothing below reads `job_*`.
@@ -1932,10 +2107,15 @@ begin
         cb_we      <= '0';
         x_we       <= '0';
         mv_start   <= '0';
+        smp_be_we  <= '0';
 
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
+          smp_run <= '0'; smp_base <= (others => '0'); j_smp <= '0';
         else
+          -- The vocabulary index space is per TOKEN.  `go` is the only
+          -- instant at which the machine is idle and a new one begins.
+          if go = '1' then smp_base <= (others => '0'); end if;
           if job_issue = '1' and to_integer(job_unit) = U_A then
             j_src   := to_integer(job_src(6 downto 0));
             j_dst   := to_integer(job_dst(6 downto 0));
@@ -1953,11 +2133,36 @@ begin
             st      := S_CB;
             a_exp_region <= job_src;
             a_exp_seg    <= "00";
+            -- THE ROUTE, LATCHED WITH THE SHAPE.  Seam rule (1).
+            if SMP_EN then
+              j_smp <= job_flags(1);          -- FLG_TO_SMP, llama_map_pkg:102
+            else
+              j_smp <= '0';
+            end if;
           end if;
 
           -- ---- the un-refusable y sink.  Outside the FSM on purpose: a
           -- beat that arrives in a state that did not expect it must still be
           -- ACCEPTED and then reported, never dropped.
+          if y_we = '1' and j_smp = '1' then
+            -- THE LOGITS ROUTE.  RAW `out_mode` puts a sign-extended s32 in
+            -- the low half of each 64-bit lane (`matvec_core.vhd:829`), so the
+            -- logit is bits 31..0 and the upper half is sign extension, not
+            -- payload.  The whole beat goes to the FIFO with its mask; the
+            -- serialiser below drops the pad rows.
+            smp_be_we  <= '1';
+            smp_be_msk <= y_mask;
+            -- A's OWN published exponent, not a re-derivation of it.  RAW is
+            -- `w_exp + x_exp - os_r` and carries no per-job term, so every
+            -- window of a token reports the same value and 15 windows can
+            -- feed one comparator.
+            smp_yexp_i <= resize(signed(y_expv), EXP_W);
+            smp_be_idx <= smp_base + to_integer(unsigned(y_addr));
+            for rr in 0 to A_ROWS_IF-1 loop
+              smp_be_dat(rr*32+31 downto rr*32)
+                <= y_data(rr*64+31 downto rr*64);
+            end loop;
+          end if;
           if y_we = '1' then
             if st /= S_RUN then
               f_lost <= '1';
@@ -2044,12 +2249,39 @@ begin
             when S_GO =>
               mv_start <= '1';
               r        := 0;
+              -- The logits run window opens with the job and closes when
+              -- A stops, which is NOT when the sampler has seen the last
+              -- logit.  See S_SDRAIN.
+              if j_smp = '1' then smp_run <= '1'; end if;
               st       := S_RUN;
 
             when S_RUN =>
               if mv_done = '1' then
                 uerr <= mv_err;
                 r    := 0;
+                if j_smp = '1' then
+                  -- The next FLG_TO_SMP job's rows start where this one's
+                  -- ended.  Advanced HERE, after the last beat has been
+                  -- pushed with the old base, so a window boundary cannot
+                  -- renumber a window boundary
+                  smp_base <= smp_base + j_rows;
+                  st := S_SDRAIN;
+                elsif j_dst < NREGION then
+                  st := S_DRAIN;
+                else
+                  st := S_DONE;
+                end if;
+              end if;
+
+            when S_SDRAIN =>
+              -- WAIT FOR THE SAMPLER, NOT FOR A.  `u_done` on a FLG_TO_SMP
+              -- job means "every logit this job produced has been folded",
+              -- so a token that reaches END_TOKEN has a final argmax.  A
+              -- `done` raised at `mv_done` would let the next job's `go`
+              -- clear the FIFO with beats still in it -- a LOST result that
+              -- no counter would show, because nothing was refused.
+              smp_run <= '0';
+              if smp_empty = '1' then
                 if j_dst < NREGION then st := S_DRAIN; else st := S_DONE; end if;
               end if;
 
@@ -3688,6 +3920,199 @@ begin
     kv_bready  <= '0';
     kv_err_i   <= '0';
   end generate;
+
+  -- ======================================================================
+  -- THE LOGITS EGRESS SEAM.  SMP_EN only.
+  --
+  -- Beat FIFO -> one-logit-per-cycle serialiser -> `rtl/sampler_stream.vhd`.
+  --
+  -- WHY A BEAT FIFO AND NOT A LOGIT FIFO.  A's `y_we` presents A_ROWS_IF rows
+  -- in ONE cycle and has no ready (seam rule 3), so a sink that could take
+  -- only one row per cycle would LOSE the other three, silently.  The FIFO
+  -- therefore accepts a whole beat per cycle and the serialiser walks its
+  -- lanes.  Depth is in BEATS, so SMP_FIFO = 64 is 64*(A_ROWS_IF*32 + 32 +
+  -- A_ROWS_IF) bits, not 64 logits.
+  --
+  -- WHY THE MASK IS OBEYED AND NOT ASSUMED.  `matvec_core.vhd:832-835` sets
+  -- `y_mask(rr)` from `rbase + rr < n_rows`, so the LAST beat of a job whose
+  -- row count is not a multiple of A_ROWS_IF carries pad rows.  Folding a pad
+  -- row into the argmax would let a value that is not a logit win, and it
+  -- would do it only at row counts that are not a multiple of four -- which
+  -- is every real vocabulary shard except by accident.
+  --
+  -- THE SERIALISER EMITS LANES IN INDEX ORDER and the argmax's tie-break is
+  -- "first max wins" (`rtl/sampler_stream.vhd:57`), so lane order is not a
+  -- presentation choice: reversing it changes the answer on a tie.
+  -- ======================================================================
+  gsmp : if SMP_EN generate
+    type sfd_t is array (0 to SMP_FIFO-1)
+                  of std_logic_vector(A_ROWS_IF*32-1 downto 0);
+    type sfm_t is array (0 to SMP_FIFO-1)
+                  of std_logic_vector(A_ROWS_IF-1 downto 0);
+    type sfi_t is array (0 to SMP_FIFO-1) of unsigned(31 downto 0);
+    signal fd : sfd_t := (others => (others => '0'));
+    signal fm : sfm_t := (others => (others => '0'));
+    signal fi : sfi_t := (others => (others => '0'));
+    signal wp, rp, occ : natural range 0 to SMP_FIFO := 0;
+    signal lane        : natural range 0 to A_ROWS_IF := 0;
+    signal s_iv   : std_logic := '0';
+    signal s_v    : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_idx  : unsigned(31 downto 0) := (others => '0');
+    signal s_clr  : std_logic := '0';
+    signal s_tok  : integer;
+    signal n_fold : unsigned(31 downto 0) := (others => '0');
+    signal run_q  : std_logic := '0';
+    signal arm    : std_logic := '0';
+    signal dn_p   : std_logic := '0';
+  begin
+    -- VOCAB is declared by `sampler_stream` and read by nothing in its
+    -- architecture -- it keeps a running index, not an array -- so the value
+    -- is documentation.  Passing the shard rather than the unit's 512 default
+    -- keeps it from reading as a claim about this build.
+    u_smp : entity work.sampler_stream
+      generic map(VOCAB => SHAPE.vocab_shard)
+      port map(clk => clk, rst => rst, clr => s_clr,
+               in_valid => s_iv, in_v => s_v, token => s_tok);
+
+    smp_empty <= '1' when occ = 0 and lane = 0 else '0';
+
+    fifo : process(clk) is
+      variable o        : integer;
+      variable nxt, nx2 : integer;
+    begin
+      if rising_edge(clk) then
+        s_iv  <= '0';
+        s_clr <= '0';
+        dn_p  <= '0';
+        if rst = '1' then
+          wp <= 0; rp <= 0; occ <= 0; lane <= 0; arm <= '0';
+          n_fold <= (others => '0');
+          run_q  <= '0';
+        else
+          o := occ;
+
+          -- ---- the token boundary.  `go` is the only instant at which the
+          -- machine is idle and a new token's logits begin.  Clearing the
+          -- sampler per JOB instead would return the last WINDOW's argmax.
+          if go = '1' then
+            s_clr  <= '1';
+            wp <= 0; rp <= 0; lane <= 0; o := 0; arm <= '0';
+            n_fold <= (others => '0');
+          end if;
+
+          -- ---- POP BEFORE PUSH, and the ORDER IS THE WHOLE CORRECTNESS
+          -- ARGUMENT.  `fd`/`fm`/`fi` are SIGNALS, so a beat written this
+          -- cycle is not readable until the next one.  Popping off an
+          -- occupancy that had already counted this cycle's push therefore
+          -- reads the array's PREVIOUS contents at that slot.
+          --
+          -- MEASURED, because it is not a hypothetical: with push first, the
+          -- first token folded ZERO logits (the stale slot's mask was all
+          -- zeros, so the serialiser retired the beat without folding
+          -- anything) and the SECOND token folded 64 logits carrying the
+          -- FIRST token's values.  Both tokens completed, `err` stayed clear,
+          -- no counter moved, and the argmax was a plausible number.
+          -- ---- pop one VALID LANE per cycle, in index order.
+          --
+          -- MASKED-OFF LANES COST NO CYCLE, and that is a rate property and
+          -- not a tidiness one.  `ga_behav` emits one row per beat with
+          -- mask "0..01"; a serialiser that spent A_ROWS_IF cycles per beat
+          -- regardless would consume at 1/A_ROWS_IF of the production rate
+          -- and overflow any depth.  So the next valid lane is FOUND, and a
+          -- beat with no valid lane at all is retired without folding
+          -- anything -- which is also what a whole pad tile is.
+          if o > 0 then
+            nxt := A_ROWS_IF;
+            for l in A_ROWS_IF-1 downto 0 loop
+              if l >= lane and fm(rp)(l) = '1' then nxt := l; end if;
+            end loop;
+            if nxt < A_ROWS_IF then
+              s_iv  <= '1';
+              s_v   <= fd(rp)(nxt*32+31 downto nxt*32);
+              s_idx <= fi(rp) + nxt;
+              n_fold <= n_fold + 1;
+              nx2 := A_ROWS_IF;
+              for l in A_ROWS_IF-1 downto 0 loop
+                if l > nxt and fm(rp)(l) = '1' then nx2 := l; end if;
+              end loop;
+            else
+              nx2 := A_ROWS_IF;
+            end if;
+            if nx2 < A_ROWS_IF then
+              lane <= nx2;
+            else
+              lane <= 0;
+              if rp = SMP_FIFO-1 then rp <= 0; else rp <= rp + 1; end if;
+              o := o - 1;
+            end if;
+          end if;
+
+          -- ---- push, AFTER the pop.  Unconditional: `y_we` cannot be
+          -- refused, so the only honest sink is one that cannot refuse.
+          if smp_be_we = '1' then
+            if o < SMP_FIFO then
+              fd(wp) <= smp_be_dat;
+              fm(wp) <= smp_be_msk;
+              fi(wp) <= smp_be_idx;
+              if wp = SMP_FIFO-1 then wp <= 0; else wp <= wp + 1; end if;
+              o := o + 1;
+            else
+              f_smp_ovf <= '1';
+              report "llama_top: the logits FIFO overflowed at depth "
+                   & integer'image(SMP_FIFO) & ".  A's y_we has no ready, so "
+                   & "this beat is LOST." severity error;
+            end if;
+          end if;
+
+          occ <= o;
+
+          -- ---- `smp_done`: the job's run window has closed AND the FIFO has
+          -- drained.  Both halves are load bearing: A's `done` fires with
+          -- beats still in flight, and an empty FIFO before the job started
+          -- is not a finished token.  ARMED on the falling edge and fired
+          -- later, because the two events are not the same cycle: the falling
+          -- edge is one cycle wide and the drain is not.
+          run_q <= smp_run;
+          if run_q = '1' and smp_run = '0' then
+            arm <= '1';
+          end if;
+          if (arm = '1' or (run_q = '1' and smp_run = '0'))
+             and o = 0 and lane = 0 then
+            dn_p <= '1';
+            arm  <= '0';
+          end if;
+        end if;
+      end if;
+    end process;
+
+    smp_valid <= s_iv;
+    smp_v     <= s_v;
+    smp_idx   <= s_idx;
+    smp_exp   <= smp_yexp_i;
+    -- GUARDED, and the guard is not defensive style.  `sampler_stream`'s
+    -- `token` is an unconstrained `integer` output whose default initial
+    -- value is `integer'left`, i.e. NEGATIVE, until its first `rst` edge --
+    -- and `to_unsigned` of a negative is a bound check failure that aborts
+    -- the run before time zero.  MEASURED: "bound check failure at
+    -- rtl/llama_top.vhd" from inside this concurrent assignment.
+    smp_token <= to_unsigned(s_tok, 32) when s_tok >= 0
+                 else (others => '0');
+    smp_done  <= dn_p;
+    smp_n     <= n_fold;
+  end generate;
+
+  gsmptie : if not SMP_EN generate
+    smp_empty <= '1';
+    smp_valid <= '0';
+    smp_v     <= (others => '0');
+    smp_idx   <= (others => '0');
+    smp_exp   <= (others => '0');
+    smp_token <= (others => '0');
+    smp_done  <= '0';
+    smp_n     <= (others => '0');
+  end generate;
+
+  err_smp_ovf <= f_smp_ovf;
 
   obs_res_take <= v_taken(V_RES);
   obs_res_ea   <= v_exp_a;
