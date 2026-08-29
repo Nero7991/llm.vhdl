@@ -149,9 +149,9 @@ landed, the table is the defect.
 | track | question | owns |
 |---|---|---|
 | **BUILD-E2E** | The routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
-| **CAPTURE** | **There is no `llama_top` capture in `.r9bs`**, so the 9B reference cannot be diffed against anything the design produces. Must handle the BFP repack divergence first: 193 of 490 records per token are on the unclamped rule, so `--mode exact` reports a FALSE first divergence. | `tools/ref9b/**`, new `ref/ref9b_*` |
 | **C-SEAM** | Backlog 1. Wire the KV interface into `attn_block` and prove MULTI-TOKEN attention. `tb_attn_block` hardwiring `layer => 0` is exactly what hid C1. | `rtl/attn_block.vhd`, `rtl/attn_kv_axi.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_attn_kv_seam.vhd`, `ref/attn_*` |
-| **SCHED-FIX** | **The schedule `llama_top` actually executes fails an independent oracle 2,401 times** (311 `w_exp`, 253 `out_shift`, and `nsub_w = 29` on every step, a value the FK33's A wrapper refuses with `ERR_GEOM`). Confirm or refute independently, fix the source, and make the oracle a standing check. | `sim/llama_sched_pkg.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `rtl/seq_*` |
+| **LOGITS** | **`LOGITS` has no model on either side, and it is the one seam that decides a token.** Plus backlog 4's LM head half, and a silent coverage loss where `seam_bisect` compared 54 of 57 modelled seams while its verdict line read like full coverage. | `tools/ref9b/**`, new `ref/logits_*`, `tools/ref9b/golden/llama_top_real.txt` |
+| **ORDINAL** | **One field, two incompatible meanings.** `llama_top` reads `ordinal` as the BLOCK index and derives the layer; `seq_tbl_pkg` and `gen_layer_program.py` stamp the PER-KIND ordinal. DERIVED at the 9B shape: the wrong layer on 29 of 32 blocks, and `c_layer = -1` on blocks 3, 7, 11, out of range for `integer range 0 to C_LAY-1`. | `rtl/llama_top.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `tools/dprog_oracle.py`, D spec |
 
 **Landed since the last rewrite:** C-DONE, B-BLOCK, CDC-STATIC, CB-ORACLE, C1,
 B-LAYER (twice: the layer benches, then the B-BLK-1 fix and the `llama_top`
@@ -200,7 +200,38 @@ that the earlier table recorded as RTL-silent**.
 FAILS.** 311 `w_exp`, 253 `out_shift`, and `nsub_w = 29` on every step, which
 the FK33's A wrapper refuses with `ERR_GEOM`. Byte-identity against a walker
 test proves the step SEQUENCE agrees and says nothing about the numbers a real
-run needs. **TRACK SCHED-FIX is confirming and fixing this.**
+run needs. **TRACK SCHED-FIX confirmed the numbers and CORRECTED the framing (`78e2f5a`).**
+It reproduced the dump independently, without D-PROG's tool, and byte-compared:
+0 mismatches of 4,040 words, so the transcription is faithful.
+
+**But the 2,401 is three different things and only one is a defect, and the
+headline was wrong in a way that matters.** `sim/llama_sched_pkg.vhd` is NOT
+"the table `llama_top` actually executes" in any shipping sense: it is
+`sim/`-only, consumed solely by `sim/tb_llama_top.vhd:484`, and in no synthesis
+flow. VERIFIED INDEPENDENTLY by the dispatcher: `llama_top` appears nowhere
+under `hw/`, and `hw/fk33/rtl/fk33_engine.vhd` wraps `matvec_int4_desc_axi`,
+i.e. **subsystem A only, no D on the card today.** That is not a quibble that
+shrinks the finding; it is WHY the finding was invisible.
+
+**The real defect, fixed:** `nsub_w`/`nsub_s` were 29/4, the superseded
+`ROWS_IF=58` budget, carried in under comments claiming they were "the real
+ones". Right values 24/3, confirmed from an artefact no generator wrote: every
+packed `.mv4i` header's own bytes (`nports_w` at `0x1A`, `n_scale_sub` at
+`0x34`). All 311 A jobs would have been refused before `start` with `EC_GEOM`
+(NOT `ERR_GEOM`, which does not exist) and a polling driver would hang.
+
+**Seven independent reasons it went unnoticed**, the last being the one to
+generalise: `seq_desc_fetch` only range-checks against `NSUB_MAX=64`; the base
+array is not fetched yet; `llama_top:2280` binds `matvec_int4`, which has no
+descriptor plane, so no `tb_llama_top*` row can contain an `EC_GEOM` check;
+`tb_a_geom` restated the constants itself; `check_a_geometry.py` covered two of
+four numbers; no D on the card; and **the two generators agreed with each
+other.** Producer-versus-producer agreement is not evidence.
+
+**Deliberately NOT "fixed": `w_exp`/`out_shift`.** `llama_sched_pkg` emits at an
+arbitrary shape with no tensor to take a value from, and the ranges are
+measured constraints. The 1,157 residual failures are the CORRECT result and
+are now asserted to stay.
 
 **OI-4 is STALE at HEAD and should be closed.** `tools/gen_layer_program.py`
 (1,015 lines) landed at `a2b20f3`: job sequencing, region routing and the D
