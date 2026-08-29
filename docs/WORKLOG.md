@@ -148,10 +148,14 @@ landed, the table is the defect.
 
 | track | question | owns |
 |---|---|---|
-| **B-LAYER** (resumed) | Fix **B-BLK-1** (`gdn_block:958` groups value heads contiguously where the model tiles, 30 of 32 value heads wrong at the 9B shape) plus the normative sentence B spec section 4 is missing, and the **`llama_top` GDN layer fold** it found itself. Oren chose to fold this in here because B-LAYER is already inside those files. | `rtl/gdn_block.vhd`, `rtl/llama_top.vhd`, B spec section 4 |
 | **BUILD-E2E** | PBLOCK's own top NOT-verified item: the routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end and `used_in_synthesis false` plus the new `FK33_PBLK` gate are unproven in a project run. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
-| **CAPTURE** | The artefact backlog 12 named and does not have: **there is no `llama_top` capture in `.r9bs`**, so the 9B reference cannot be diffed against anything the design produces. Must handle REF9B's finding first: 193 of 490 BFP records per token are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect. | `tools/ref9b/**`, new `ref/ref9b_*`, `/mnt/storage/ref9b*` |
-| **D-PROG** | Backlog 6. One matvec job is emitted and verified; a LAYER needs job sequencing, region routing, and the D fields subsystem A does not read. Needs an oracle at the level of the SEQUENCE, since a column of verified jobs and a green integration test are jointly compatible with a wrong layer. | `rtl/seq_*`, new `tools/dprog_*`, new `sim/tb_seq_*` |
+| **CAPTURE** | The artefact backlog 12 named and does not have: **there is no `llama_top` capture in `.r9bs`**, so the 9B reference cannot be diffed against anything the design produces. Must handle the BFP repack divergence first: 193 of 490 records per token are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect. | `tools/ref9b/**`, new `ref/ref9b_*` |
+| **D-PROG** | Backlog 6. One matvec job is emitted and verified; a LAYER needs job sequencing, region routing and the D fields subsystem A does not read. Needs an oracle at the level of the SEQUENCE, since a column of verified jobs and a green integration test are jointly compatible with a wrong layer. | `rtl/seq_*`, new `tools/dprog_*`, new `sim/tb_seq_*` |
+| **C-SEAM** | Backlog 1, unblocked by C1 releasing `attn_block`. Wire the KV interface into the block and prove MULTI-TOKEN attention. `tb_attn_block` hardwiring `layer => 0` is exactly what hid C1, so the bench must vary token, layer AND KV block. | `rtl/attn_block.vhd`, `rtl/attn_kv_axi.vhd`, `sim/tb_attn_block.vhd`, `sim/tb_attn_kv_seam.vhd`, `ref/attn_*` |
+
+**Landed since the last rewrite:** C-DONE, B-BLOCK, CDC-STATIC, CB-ORACLE, C1,
+B-LAYER (twice: the layer benches, then the B-BLK-1 fix and the `llama_top`
+layer fold), B-GATE, REF9B, PBLOCK, DESC-MUT. Gate floor moved 88 to **94**.
 
 **Standing instruction to every track: nothing may be run against the card.**
 A SECOND FK33 arrived 2026-08-29; its factory flash image was backed up the
@@ -172,6 +176,27 @@ the hardware boundary itself, not the absence of anything to load.
 | **BFP repack rule** | The 9B reference's float-to-BFP repack always normalises (`reg_put`, `exp = 14 - floor(log2(amax))`, no clamp); every shipping unit on the path clamps (`sh = max(0, msb_pos(amax) - 14)`) and so stays under-normalised on quiet blocks. MEASURED by RUNNING `rtl/bfp_pack.vhd`: 341 of 760 exponents differ, all quiet blocks, none loud, reconstructed VALUES exact. **193 of 490 BFP records per token (39.4%) are on the unclamped rule, so `--mode exact` reports a FALSE first divergence before reaching any real defect.** Three routes scoped in section 6 of REF9B's write-up; they are not equivalent. | **OREN'S CALL.** TRACK CAPTURE told to work around it and report which route the capture work says is needed, NOT to pick one |
 | **`matvec_int4_axi` register 15** | No completeness guard and no idle interlock, so a partial codebook load through that plane is silently consumed. It is the standalone register-mapped plane; the FK33 path uses `matvec_int4_desc_axi.vhd`, which loads all sixteen atomically and rejects an unloaded codebook with `EC_DESC`. | Left as a decision, not a fix. Not on the FK33 path |
 | **OI-9 error-code space** | Full. Widen, subdivide via `ERR_INFO`, or take a reserved D value, with consequences for D. | **OREN'S CALL.** TRACK D-PROG told to STOP and report rather than choose |
+
+### Raised by TRACK DESC-MUT, 2026-08-29
+
+* **Two weakening mutations are stopped only by a declared VHDL integer range.**
+  `S5` and `F3` accept a descriptor that should be refused, and the only thing
+  preventing it is a range declaration, **which is a bit width in synthesis and
+  not a check**. So they are caught in simulation and would NOT be caught on the
+  card. Recorded as ABORT rather than counted as kills, which is the honest
+  reading. No owner.
+* **`EC_CORE` (0xE) is reachable by no bench in the tree.** Mutation `R1` deletes
+  the `core_err -> EC_CORE` path and survives both judges. Closing it needs a
+  stimulus no bench currently produces.
+* **"Refused for the right reason" is recoverable for only 6 of 9 error codes**,
+  and this is now MEASURED rather than suspected. `EC_DESC` (0x3) is raised at
+  nine sites with two confirmed collisions even with `ERR_INFO` pinned. Not
+  fixable by renumbering: `EC_SHAPE` took the last 4-bit value, which is OI-9,
+  and `ERR_INFO` is a word index by construction.
+* **Subsystem A coverage gaps:** `rtl/matvec_int4.vhd` and `rtl/axi_rd_port.vhd`
+  have no mutation script; `USE_XEXP_PORT=true` appears in NO bench at all; and
+  `DUAL_CLK=true` is a manual run, so the descriptor-path CDC, whose absence
+  once broke 17 of 22 cases, has no automatic coverage.
 
 ### Two blind spots recorded, with no owner
 
