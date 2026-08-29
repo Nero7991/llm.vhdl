@@ -125,23 +125,25 @@
 -- look like a first-token effect.
 --
 -- What ONLY the interleave can falsify, and what a one-layer stream was
--- bit-exact under:
+-- bit-exact under.  These are PROPERTIES, tagged LPn; the MUTATIONS that kill
+-- them are tagged Ln in sim/mutate_attn_kv_seam.sh and the numbers do not
+-- line up between the two lists.
 --
---   L1  THE `v_ref` FOLD IS PER (LAYER, KV HEAD).  C spec 2.1.4, and defect
+--   LP1 THE `v_ref` FOLD IS PER (LAYER, KV HEAD).  C spec 2.1.4, and defect
 --       C1 (docs/debugging/2026-08-29_c1-vref-layer.md).  `attn_block` holds
 --       ONE fold array and time-shares it across every attention layer, so a
 --       fold indexed by head alone lets each layer's write-time minimum leak
 --       into every other layer's alignment shift.  With one layer in the
 --       stream there is nothing to leak from.
---   L2  THE ADDRESS EQUATION'S `layer` TERM.  At a single layer 0 a design that
+--   LP2 THE ADDRESS EQUATION'S `layer` TERM.  At a single layer 0 a design that
 --       dropped the term entirely is byte-identical.  With two layers the
 --       write master and the read master must agree on it, and they are
 --       different masters over different AXI channels.
---   L3  THE QK-NORM WEIGHTS ARE LATCHED PER LAYER.  `attn_block` samples
+--   LP3 THE QK-NORM WEIGHTS ARE LATCHED PER LAYER.  `attn_block` samples
 --       them at `start` (SEAM 1).  One weight set for the whole run cannot
 --       tell a latch from a wire, nor a latch that sampled the PREVIOUS
 --       job's weights.
---   L4  `kv_layer` TRACKS THE CONFIGURED LAYER.  `rtl/llama_top.vhd` asserts
+--   LP4 `kv_layer` TRACKS THE CONFIGURED LAYER.  `rtl/llama_top.vhd` asserts
 --       this because the block's own latch putting a whole layer's records
 --       at another layer's addresses would still be SERVED by every read.
 --       At one layer the assert is a tautology.

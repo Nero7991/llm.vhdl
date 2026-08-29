@@ -14,6 +14,8 @@
 #       the fix that lives in the block: the gate, and the request being
 #       driven a state earlier than the issue.
 #   Lx  the LAYER dimension, added 2026-08-29 with the interleaved schedule.
+#       NOTE the tags Ln here and the PROPERTY tags LPn in the header of
+#       sim/tb_attn_kv_seam.vhd are different lists and do not line up.
 #       Mixed flavour: L2/L3 are seam wires, L1/L6 edit the block and L4/L5
 #       edit the cache.  EVERY ONE of them is bit-exact green on the
 #       single-layer stream this bench ran until then -- MEASURED for L1, the
