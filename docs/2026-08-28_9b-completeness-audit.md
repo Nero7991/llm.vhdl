@@ -835,3 +835,79 @@ Recorded here rather than by editing history, per the project's convention.
    "69 PASS / 0 FAIL".** It is now **72 PASS / 0 FAIL** (MEASURED today). The
    file's own note that promoting it to `sim/tb_seq_abc_exclusive.vhd` is "the
    whole of the promotion" still stands, and would take the suite to 73.
+
+---
+
+## 8. CORRECTION, appended 2026-08-28 evening: 56 commits later
+
+This audit was written at `b66c4b4`. It is now 56 commits stale and several of
+its headline verdicts are wrong. Nothing above is edited out; this section says
+what changed and, more usefully, **what the audit's METHOD got wrong.**
+
+### 8.1 The method correction, which matters more than any verdict
+
+The audit classifies each unit by evidence class (V, V-, B, S, E, P, X) and
+sums those into a subsystem verdict. Subsystem C was rated *"Auxiliary path
+only, verified to the highest standard in the repo"*, and every one of its
+eight existing units genuinely was.
+
+**Those units were then composed into `attn_block`, and the block did not
+compute attention.** The first block-level oracle (`ref/attn_block_vec.c`,
+commit `8baa413`) found 64 of 64 mantissas wrong and bisected to two
+independent defects. The bench that existed at the time ran seven properties
+and passed all of them; its own header said the quiet part outright,
+*"WHAT IS DELIBERATELY NOT CHECKED: the VALUES"*, and **of 17 wiring mutations,
+13 passed all seven.**
+
+So: **a per-unit evidence class says nothing about the composition.** A column
+of V- entries and a green integration test are jointly compatible with a block
+that computes wrong numbers. Any future audit in this shape needs a separate
+column for "is there an oracle at the level of this thing's OUTPUT", and X in
+that column should outrank every V beneath it.
+
+The same shape recurred four more times today, which is why it is stated as a
+rule rather than an anecdote:
+
+- `gdn_recur_pipe`, the SHIPPING recurrence, was checked only for equality with
+  `gdn_recur`'s recipe; its bench read the oracle's accuracy columns and threw
+  them away. Restored (`d64c0b6`): it passes, to the same sixteen digits as the
+  unit that was already asserted. The hole was in the checking, not the maths.
+- `l2norm_rs` was tolerance-checked with no C model at all. Now bit-exact over
+  182 cases and 46,592 elements, and the sweep found `l2norm_rs` **rejects its
+  own maximum legal input** (worklog OI-7).
+- The Python tokenizer was verified over 53,411 strings AND an exhaustive
+  1.1M-codepoint sweep, and was still wrong on 243 of 248,320 token ids,
+  because every one of those checks drives it from the INPUT side and UNUSED
+  tokens are unreachable from encode. Coverage of the input space is not
+  coverage of the output space (`c8a57d8`).
+- Subsystem A was bit-exact at the FK33 geometry **at a burst length the
+  hardware cannot issue**: the bench used AXI4's 4 KB rule, but the HBM slave
+  is AXI3 with a 4-bit ARLEN, so 16 beats is the cap, not 128 (`809ada7`). A
+  module's own assert bounds what THAT MODULE permits and says nothing about
+  what the slave on the other end accepts.
+
+### 8.2 Verdicts that are now wrong
+
+| audit said | now |
+|---|---|
+| **A** "built for the WRONG DEVICE", `ROWS_IF = 48` exists in no RTL, "no `tb_weight_streamer.vhd`" | Bit-exact at `ROWS_IF=48 / AXI_DW=256` over 27 AXI masters from real `.mv4i` bytes (`055b6ed`), at the legal AXI3 burst (`809ada7`). `tb_weight_streamer` exists. Descriptor control plane, HBM-to-core CDC and `MAXOUT` 2 -> 16 all landed (`a4f7e17`) |
+| **C** "no multiply array at all", 6 of 13 units absent | `attn_mac_array` and `attn_block` exist and the block is bit-exact against a new independent oracle **after two real defects were fixed** (`1719ae3`, `8baa413`). The six spec-named units are still absent BY THOSE NAMES: the design took a different decomposition and the spec was never updated |
+| **D** "`seq_top_skel` instantiates nothing", no descriptor program | `seq_top_skel` still instantiates nothing and `llama_top` is the de-facto top. But the descriptor format is settled and byte-pinned, and it is D's own descriptor plus an extension in the one region `seq_desc_fetch` never reads (`a4f7e17`) |
+| "**seven of the eight subsystem pairs have never met**" | `llama_top` now instantiates A, B, C and D's control core together, and a 32-block token passes with real weights |
+| "no packed image exists in FK33 geometry" | 250 tensors, 4.7099 GiB, packed, DMA'd to HBM and verified hash-identical **on silicon** |
+| "the FK33 has never enumerated on PCIe" | It enumerates at Gen3 x4, `EqualizationComplete+`, and its thermal guard has been observed to halt, latch and release |
+| Token I/O "stories260K placeholders" | Still true for embedding and LM head. But the tokenizer now exists in Python AND C, bit-exact against llama.cpp over the corpus, every one of 248,320 ids, a 1.1M-codepoint sweep and 20,051 malformed-byte strings |
+| Regression floor | 73 at audit time, **78 now** |
+
+### 8.3 What the audit got RIGHT and is worth repeating
+
+Its central claim survives intact: **"the dominant category of remaining work is
+units that do not exist rather than units that are unverified."** Still true.
+`attn_kv_axi` (the HBM KV interface) does not exist, so subsystem C cannot read
+a KV cache. Nothing emits a descriptor program. The embedding and LM head are
+still 512-entry ROMs. And its verdict on E, that it is correctly out of scope at
+`NCARDS = 1`, needed no revision.
+
+Its insistence that **where a document and the RTL disagree, the RTL wins** is
+what made today's corrections findable, and it should be read as applying to
+this audit too.
