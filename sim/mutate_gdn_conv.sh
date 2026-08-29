@@ -23,40 +23,51 @@
 # better position and it is worth saying which of the seven units are in it.
 #
 # ---------------------------------------------------------------------------
-# THE COMMITTED GOLDEN IS STALE, AND THAT IS WHY EVERY MUTATION RUNS TWICE
+# THE COMMITTED GOLDEN WAS STALE.  IT IS NOT ANY MORE, AND THE TWO COLUMNS ARE
+# WHAT KEEPS IT THAT WAY
 # ---------------------------------------------------------------------------
 # sim/gdn_conv_vec.txt was committed at c3d2fea.  Commit 9cfdbd2 then changed
 # ref/gdn_conv_vec.c -- it added the `c % 7 == 0` wide-cw_exp case class whose
 # stated purpose was to make the err_seg path reachable, because "err was 0 in
 # all 128 cases ... so an err_seg tied high passed the whole suite".  The
-# generator was fixed.  The committed golden was never regenerated.
+# generator was fixed.  The committed golden was not regenerated for two days.
 #
-# MEASURED, both directions:
+# MEASURED at the time, both directions:
 #   $ cmp fresh.txt sim/gdn_conv_vec.txt
 #     differ: byte 13, line 2
 #   err column, committed:  128 cases with err = 0, none with err = 1
 #   err column, fresh:      126 cases with err = 0,    2 with err = 1
 #
-# sim/regress.sh regenerates a vector file only when it is absent, so the gate
-# runs tb_gdn_conv against the OLD golden and the err_seg-high branch is
-# unreachable in it to this day.  The fix landed in the generator and never
-# reached the gate.
+# sim/regress.sh regenerates a vector file only when it is ABSENT, so for those
+# two days the gate ran tb_gdn_conv against the OLD golden and the err_seg-high
+# branch was unreachable in it.  R13 below -- deleting the int8 overflow test
+# outright -- was caught on FRESH and passed on CMTD, and it was the only
+# mutation of the twenty whose two columns disagreed, which is what identified
+# the staleness as an err_seg coverage loss rather than general drift.
 #
-# This script therefore runs EVERY mutation against BOTH vector sets and
-# prints both verdicts side by side.  Reading the two columns:
-#   FRESH -- ref/gdn_conv_vec.c as it stands today, regenerated privately.
+# FIXED 2026-08-29 by TRACK B-FIX: sim/gdn_conv_vec.txt is now the output of
+# ref/gdn_conv_vec.c as it stands.  The regeneration moved 19 of 641 lines, all
+# of them case headers, all of them at c % 7 == 0, and only the cw_exp, e_seg
+# and err fields within them; no x, w, sm or oracle line moved at all, and the
+# bench's reported worst-vs-oracle figure is unchanged at 4.99999999998181e-1.
+# Cases 56 and 126 now carry err = 1, so the err_seg-high branch is reachable
+# from the gate for the first time.
+#
+# THE TWO COLUMNS ARE KEPT, because they are now the standing staleness check
+# rather than a report of one incident:
+#   FRESH -- ref/gdn_conv_vec.c regenerated privately, right now.
 #   CMTD  -- sim/gdn_conv_vec.txt exactly as committed, which is what
 #            sim/regress.sh actually uses.
-# For an RTL-class mutation the two columns are directly comparable and a
-# disagreement is a coverage statement about the stale golden.  For a C-class
-# or BOTH-class mutation the CMTD column is the MUTATED RTL against the
-# UNMUTATED stale golden, so it degenerates to an RTL-only run; it is printed
-# anyway because a BOTH mutation showing green on FRESH and red on CMTD is a
-# direct demonstration that the two goldens are not the same golden.
+# For an RTL-class mutation the two columns are directly comparable and ANY
+# disagreement means the committed golden has drifted from its generator again.
+# All fourteen RTL rows agree as of this commit.  For a C-class or BOTH-class
+# mutation the CMTD column is the MUTATED RTL against the UNMUTATED golden, so
+# it degenerates to an RTL-only run and a disagreement there is structural, not
+# staleness: those rows carry no banner.
 #
 # Nothing under rtl/, ref/ or sim/tb_*.vhd is edited.  Every mutation is
 # applied to a COPY in a private scratch directory, and sim/gdn_conv_vec.txt
-# is READ, never rewritten: the staleness is reported here, not fixed here.
+# is READ by this script, never rewritten.
 #
 # Usage: bash sim/mutate_gdn_conv.sh
 # Env:   SCRATCH=<dir>
@@ -202,9 +213,13 @@ mutate() {
   local word; [ $killed = 1 ] && word=KILLED || word=SURVIVED
   printf '%-4s %-4s %-8s FRESH bx/orc %-9s  CMTD bx/orc %-9s  -- %s\n' \
     "$tag" "$cls" "$word" "$vf" "$vc" "$desc"
-  if [ "$vf" != "$vc" ]; then
-    echo "        ^^ THE TWO GOLDENS DISAGREE.  This mutation is visible on one"
-    echo "           vector set and not the other; see the staleness note above."
+  # Only an RTL-class row can say anything about staleness.  On a C or BOTH
+  # row the CMTD column is the mutated RTL against the UNMUTATED golden, so a
+  # disagreement is guaranteed by construction and means nothing.
+  if [ "$vf" != "$vc" ] && [ "$cls" = RTL ]; then
+    echo "        ^^ THE TWO GOLDENS DISAGREE ON AN RTL-CLASS MUTATION."
+    echo "           sim/gdn_conv_vec.txt has drifted from ref/gdn_conv_vec.c."
+    echo "           Regenerate it; see the staleness note at the top of this file."
   fi
 }
 
