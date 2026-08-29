@@ -20,14 +20,16 @@
  *
  * THE PLUMBING ORACLE, AND WHY IT IS NOT A ROUND TRIP
  * --------------------------------------------------
- * The simulated card's argmax is a published closed form:
- *     pick = (token_id*31 + position*7 + fnv1a(x_mant)) mod n_vocab
- * The host never sends `pick`; it sends an activation row, and the card folds
- * THAT ROW, as it found it in HBM at its own computed address.  So the test
- * computes the expected argmax from the row it generated locally and compares
- * against what came back through the register and through the DMA'd header.
- * A wrong stride, a wrong header size, a wrong slot offset, an endianness slip
- * or a truncated write all change the fold and move the argmax.
+ * The simulated card's argmax is a published closed form over the WHOLE
+ * sequence since the last reset:
+ *     hist  = fnv1a chain over (token_id, position, fnv1a(x_mant)) per step
+ *     pick  = (hist*31 + position*7 + fnv1a(x_mant)) mod n_vocab
+ * The host never sends `pick`; it sends activation rows, and the card folds
+ * THOSE ROWS, as it found them in HBM at its own computed addresses.  So the
+ * test replays the same chain locally and compares against what came back
+ * through the register and through the DMA'd header.  A wrong stride, a wrong
+ * header size, a wrong slot offset, an endianness slip, a truncated write, a
+ * dropped step or a reordered one all move the argmax.
  *
  * That is not a round trip: nothing decodes what this encoded.  It is a check
  * that two independently computed values of one quantity agree, where one path
@@ -82,13 +84,24 @@ static uint32_t fnv1a_i16(const int16_t *x, int n)
     return h;
 }
 
-static int expect_argmax(int token_id, int position, int n_embd, int n_vocab)
+/* Replay the card's history chain over a whole sequence and return the argmax
+ * of its LAST step.  `ids[i]` occupies position `first_pos + i`. */
+static int expect_argmax_seq(const int *ids, int n, int first_pos,
+                             int n_embd, int n_vocab)
 {
-    int16_t mant[TE];
-    int32_t exp = 0;
-    pl_embed_synthetic(NULL, token_id, mant, n_embd, &exp);
-    return (int)(((uint32_t)token_id * 31u + (uint32_t)position * 7u
-                  + fnv1a_i16(mant, n_embd)) % (uint32_t)n_vocab);
+    uint32_t hist = 2166136261u, fx = 0;
+    int i;
+    for (i = 0; i < n; i++) {
+        int16_t mant[TE];
+        int32_t exp = 0;
+        pl_embed_synthetic(NULL, ids[i], mant, n_embd, &exp);
+        fx = fnv1a_i16(mant, n_embd);
+        hist = (hist ^ (uint32_t)ids[i])          * 16777619u;
+        hist = (hist ^ (uint32_t)(first_pos + i)) * 16777619u;
+        hist = (hist ^ fx)                        * 16777619u;
+    }
+    return (int)((hist * 31u + (uint32_t)(first_pos + n - 1) * 7u + fx)
+                 % (uint32_t)n_vocab);
 }
 
 /* ------------------------------------------------------------------ tests */
@@ -133,9 +146,10 @@ static void t3_prefill_decode(void)
 
     CK(pl_prefill(c, ids, 5, log, &lexp, &am) == 5, "prefill did not advance 5");
     CK(pl_seq_pos(c) == 5, "seq_pos %d != 5", pl_seq_pos(c));
-    /* The last prefill step is token 55 at position 4. */
-    CK(am == expect_argmax(55, 4, TE, TV),
-       "prefill argmax %d != expected %d", am, expect_argmax(55, 4, TE, TV));
+    /* The whole 5-token prefix, replayed.  Note this is NOT a function of the
+     * last token alone: a prefill that dropped ids[2] would land here. */
+    CK(am == expect_argmax_seq(ids, 5, 0, TE, TV),
+       "prefill argmax %d != expected %d", am, expect_argmax_seq(ids, 5, 0, TE, TV));
     {
         int v, best = 0;
         for (v = 1; v < TV; v++) if (log[v] > log[best]) best = v;
@@ -143,26 +157,27 @@ static void t3_prefill_decode(void)
     }
 
     {
-        int t, expect_pos = 5;
-        int seq[3] = { 7, 8, 9 };
+        /* The running sequence, so the expectation is the whole prefix each
+         * time.  A decode that reset the card's history would fail here. */
+        int all[9] = { 11, 22, 33, 44, 55, 7, 8, 9, 12 };
+        int t;
         for (t = 0; t < 3; t++) {
-            CK(pl_decode(c, seq[t], log, &lexp, &am) == 1, "decode %d", t);
-            CK(pl_seq_pos(c) == expect_pos + 1, "seq_pos after decode %d", t);
-            CK(am == expect_argmax(seq[t], expect_pos, TE, TV),
+            CK(pl_decode(c, all[5 + t], log, &lexp, &am) == 1, "decode %d", t);
+            CK(pl_seq_pos(c) == 6 + t, "seq_pos after decode %d", t);
+            CK(am == expect_argmax_seq(all, 6 + t, 0, TE, TV),
                "decode %d argmax %d != %d", t, am,
-               expect_argmax(seq[t], expect_pos, TE, TV));
-            expect_pos++;
+               expect_argmax_seq(all, 6 + t, 0, TE, TV));
         }
-    }
 
-    /* The greedy fast path: no logits buffer, so no C2H at all. */
-    {
-        uint64_t before = pl_bytes_from_card(c);
-        CK(pl_decode(c, 12, NULL, NULL, &am) == 1, "greedy decode");
-        CK(pl_bytes_from_card(c) == before,
-           "the greedy path moved %llu bytes back; it must move none",
-           (unsigned long long)(pl_bytes_from_card(c) - before));
-        CK(am == expect_argmax(12, 8, TE, TV), "greedy argmax %d", am);
+        /* The greedy fast path: no logits buffer, so no C2H at all. */
+        {
+            uint64_t before = pl_bytes_from_card(c);
+            CK(pl_decode(c, 12, NULL, NULL, &am) == 1, "greedy decode");
+            CK(pl_bytes_from_card(c) == before,
+               "the greedy path moved %llu bytes back; it must move none",
+               (unsigned long long)(pl_bytes_from_card(c) - before));
+            CK(am == expect_argmax_seq(all, 9, 0, TE, TV), "greedy argmax %d", am);
+        }
     }
 
     CK(pl_seq_reset(c) == 0, "seq_reset");
@@ -178,12 +193,15 @@ static void t4_chunking(void)
     for (i = 0; i < 20; i++) ids[i] = 100 + i;
     small_opts(&s, &o);
     if (pl_open(&o, &c)) { CK(0, "open"); return; }
+    CK(pl_seq_reset(c) == 0, "seq_reset");
     CK(pl_prefill(c, ids, 20, NULL, NULL, &am) == 20, "prefill 20");
     CK(pl_seq_pos(c) == 20, "seq_pos %d != 20", pl_seq_pos(c));
     CK(pl_go_count(c) == 3, "20 tokens at chunk 8 should be 3 GOs, was %llu",
        (unsigned long long)pl_go_count(c));
-    /* Last step is token 119 at position 19. */
-    CK(am == expect_argmax(119, 19, TE, TV), "chunked argmax %d", am);
+    /* THE POINT OF THIS CASE: 20 tokens split across 3 GOs must give exactly
+     * what 20 tokens in one GO would, so the chunk boundaries are invisible in
+     * the answer.  Only a whole-prefix expectation can check that. */
+    CK(am == expect_argmax_seq(ids, 20, 0, TE, TV), "chunked argmax %d", am);
     pl_close(c);
 }
 
@@ -293,15 +311,15 @@ static void t8_stride_mutation(void)
     small_opts(&s, &o);
     if (pl_open(&o, &c)) { CK(0, "open"); return; }
     CK(pl_decode(c, 5, NULL, NULL, &am) == 1, "decode");
-    CK(am == expect_argmax(5, 0, TE, TV), "control argmax");
+    { int one[1] = { 5 }; CK(am == expect_argmax_seq(one, 1, 0, TE, TV), "control argmax"); }
     pl_close(c); c = NULL;
 
     /* Now a card whose row is 8 elements shorter.  Same host code. */
     small_opts(&s, &o); s.n_embd = TE - 8;
     if (pl_open(&o, &c)) { CK(0, "open (short embd)"); return; }
     CK(pl_decode(c, 5, NULL, NULL, &am) == 1, "decode (short embd)");
-    CK(am != expect_argmax(5, 0, TE, TV),
-       "an 8-element shape difference did NOT move the argmax -- the check is blind");
+    { int one[1] = { 5 }; CK(am != expect_argmax_seq(one, 1, 0, TE, TV),
+       "an 8-element shape difference did NOT move the argmax -- the check is blind"); }
     pl_close(c);
 }
 
@@ -314,7 +332,7 @@ static void t9_header_mutation(void)
     small_opts(&s, &o);
     if (pl_open(&o, &c)) { CK(0, "open"); return; }
     CK(pl_decode(c, 5, NULL, NULL, &am) == 1, "control decode");
-    CK(am == expect_argmax(5, 0, TE, TV), "control argmax");
+    { int one[1] = { 5 }; CK(am == expect_argmax_seq(one, 1, 0, TE, TV), "control argmax"); }
     pl_close(c); c = NULL;
 
     /* Same run, but a byte of the activation row is flipped between the DMA
@@ -345,8 +363,9 @@ static void t9_header_mutation(void)
         t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_STATUS, &st);
         CK((st & FK33_ST_DONE) && !(st & FK33_ST_ERR), "mutated run status 0x%X", st);
         t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_ARGMAX, &got);
-        CK((int)got != expect_argmax(5, 0, TE, TV),
-           "one flipped activation byte did NOT move the argmax");
+        { int one[1] = { 5 };
+          CK((int)got != expect_argmax_seq(one, 1, 0, TE, TV),
+             "one flipped activation byte did NOT move the argmax"); }
         t->close(t->ctx); free(t);
     }
 }

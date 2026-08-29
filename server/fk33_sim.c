@@ -95,6 +95,7 @@ typedef struct {
     sparse        mem;
     uint32_t      reg[FK33_SEAM_SPAN / 4];
     int           next_pos;         /* the card's own KV position */
+    uint32_t      hist;             /* FNV-1a over every step since SEQ_RESET */
     int           kv_valid;
     uint32_t      status;
     uint32_t      err_info;
@@ -112,11 +113,22 @@ typedef struct {
  *
  *     logit[v] = ((position * 2654435761 + token_id * 40503 + v * 97) & 0xFFFF)
  *                 - 32768  + (v == pick ? 1 << 20 : 0)
- *     pick     = (token_id * 31 + position * 7 + fold(x_mant)) mod n_vocab
+ *     pick     = (hist * 31 + position * 7 + fold(x_mant)) mod n_vocab
  *
- * so the argmax is `pick`, exactly, and `pick` depends on the activation row
- * the host DMA'd in.  A host that sends the wrong row gets the wrong token.
- */
+ * so the argmax is `pick`, exactly.
+ *
+ * `hist` IS THE POINT AND IT WAS NOT THERE AT FIRST.  The first version used
+ * `token_id` where `hist` now is, so the answer depended only on the LAST
+ * step's token and its position.  MEASURED consequence: in
+ * server/tests/server_e2e.py, two different 25-id prompts ending in the same
+ * token produced the same expected token, so the check could not have seen a
+ * prefill that dropped, duplicated or reordered any earlier token.  Coverage
+ * of the input space was not coverage of the output space.
+ *
+ * `hist` is an FNV-1a chain over (token_id, position, fold(x_mant)) for every
+ * step since the last SEQ_RESET -- which is, crudely, the one structural
+ * property a transformer prefill actually has: the answer depends on the whole
+ * prefix.  It is still not a model of anything. */
 static uint32_t fold_x(const int16_t *x, int n)
 {
     uint32_t h = 2166136261u;
@@ -131,8 +143,13 @@ static int default_logits(void *user, int position, int token_id,
 {
     sim_ctx *s = (sim_ctx *)user;
     int nv = s->o.n_vocab, v;
-    uint32_t pick = ((uint32_t)token_id * 31u + (uint32_t)position * 7u
-                     + fold_x(x_mant, s->o.n_embd)) % (uint32_t)nv;
+    uint32_t fx = fold_x(x_mant, s->o.n_embd);
+    uint32_t pick;
+
+    s->hist = (s->hist ^ (uint32_t)token_id) * 16777619u;
+    s->hist = (s->hist ^ (uint32_t)position) * 16777619u;
+    s->hist = (s->hist ^ fx)                 * 16777619u;
+    pick = ((uint32_t)s->hist * 31u + (uint32_t)position * 7u + fx) % (uint32_t)nv;
     for (v = 0; v < nv; v++) {
         uint32_t r = ((uint32_t)position * 2654435761u
                       + (uint32_t)token_id * 40503u + (uint32_t)v * 97u) & 0xFFFFu;
@@ -293,7 +310,7 @@ static int sim_reg_write32(void *c, uint32_t off, uint32_t v)
     o = off - FK33_SEAM_BASE_PROPOSED;
     if (o == FK33_SEAM_CTRL) {
         if (v & FK33_CTRL_SEQ_RESET) {
-            s->next_pos = 0; s->kv_valid = 0;
+            s->next_pos = 0; s->kv_valid = 0; s->hist = 2166136261u;
             s->status = FK33_ST_DONE; s->err_info = 0;
         }
         if (v & FK33_CTRL_GO)
@@ -339,6 +356,7 @@ fk33_transport *fk33_transport_open_sim(const void *opts_v)
     s->x_buf     = (int16_t *)calloc((size_t)s->o.n_embd, 2);
     if (!s->logit_buf || !s->x_buf) { sim_close(s); return NULL; }
 
+    s->hist   = 2166136261u;
     s->status = FK33_ST_DONE;   /* idle looks like "the last job finished" */
     snprintf(s->desc, sizeof s->desc,
              "SIMULATED card (NOT hardware, NOT a numeric reference) "

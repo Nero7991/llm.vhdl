@@ -77,6 +77,12 @@ check:
 test: seam_selftest
 	./seam_selftest
 
+# The end-to-end check of the server's OWN request path.  Needs the .qtk
+# artefact (9 MB, not committed) and builds its own reference driver; it SKIPS
+# cleanly when either is absent rather than failing.
+test-e2e: llama_server
+	python3 tests/server_e2e.py
+
 # ---------------------------------------------------------------------------
 # Qwen3.5 tokenizer (qwen35_tok.c + the generated qwen35_unicode_data.c).
 #
@@ -116,4 +122,4 @@ clean:
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
-.PHONY: board clean tok tok-board check test
+.PHONY: board clean tok tok-board check test test-e2e

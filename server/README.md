@@ -36,6 +36,9 @@ field, and in a `pl_backend` warning on every open.
 - the **seam**: byte layouts, strides, polling discipline, KV position
   bookkeeping, and every refusal the contract states, all exercised by
   `tests/seam_selftest.c` and mutation-tested;
+- the **server's own request path** -- `build_chat_msgs`, HTTP, prefill,
+  argmax, detokenize -- against an independently computed expected token
+  (`tests/server_e2e.py`);
 - the **host sampler**: temperature, `top_p`, seeds, reproducible per seed.
 
 Nothing in this directory has ever been run against the card, and
@@ -123,6 +126,9 @@ python3 server/verify_chat_template.py --build --mutate think-default
 
 # the seam, no card
 make -C server test
+
+# the server's own request path, end to end, no card
+python3 server/tests/server_e2e.py
 ```
 
 ## Notes / limits
