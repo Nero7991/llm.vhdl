@@ -210,7 +210,7 @@ every element and no property in the bench can observe either. Fourth and fifth
 instance of the same family. This is the honest ceiling on what `tb_llama_top`
 proves, and it is not closed by any track above.
 
-### OI-5: the PYTHON tokenizer's decoder is wrong on 243 token ids
+### OI-5: RESOLVED 2026-08-28 (`c8a57d8`) -- the Python decoder was wrong on 243 ids
 
 Found by TRACK TOK-C while verifying the C port, and deliberately NOT fixed
 there. `tools/extract_tokenizer.py`'s `TOKEN_TYPE` table has `5: BYTE,
@@ -230,6 +230,25 @@ numbers, so it is an issue rather than a drive-by edit. This also withdraws
 that file's claim that "13 byte-mapped characters carry NORMAL type": this
 vocabulary has ZERO tokens of type BYTE. Write-up:
 `docs/debugging/2026-08-28_qwen35-tokenizer-c.md` section 8.1.
+
+**RESOLVED, `c8a57d8`.** The label swap and the decoder case are both fixed,
+but the part worth keeping is the third change. **No corpus of any size could
+ever have caught this**, because UNUSED tokens are unreachable from `encode`,
+so the only ids the corpus can decode are the ids encoding produced. The
+Python's verifier had no way to look anywhere else, which is why the C found it
+and the Python did not, despite the Python having been checked over 53,411
+strings AND a 1.1M-codepoint sweep. Coverage of the input space is not coverage
+of the output space.
+
+So `tools/verify_tokenizer.py` gained `--all-ids`, decoding every id in the
+vocabulary one per string against the oracle -- the check the C's verifier had
+and the Python's lacked. MEASURED after the fix: 248,320 ids, 0 mismatches,
+corpus still 0/0. Teeth-checked by removing the fix again: 243 mismatches,
+every one a `[PAD*]` token with `type=5`.
+
+**Generalise this before the next tokenizer-shaped thing:** when a check is
+driven by generated inputs, ask what part of the output space those inputs
+cannot reach, and enumerate it separately.
 
 ### OI-6: llama.cpp aborts on some malformed UTF-8 (upstream, informational)
 
