@@ -49,12 +49,30 @@ does otherwise; it is wrong for this board.
 
 ## TRAPS THAT HAVE ALREADY COST REAL TIME
 
-**`git commit -m msg -- <path>` commits the WORKING TREE, not the index.** On a
-shared file this silently captures another track's in-flight edits. It caught
-FOUR tracks in one day. On a shared file: `git diff -- <file>` as its own step,
-read it, then stage your hunk and commit with **NO pathspec**. A check whose
-result you do not branch on is decoration. An amend only works while your commit
-is still the tip. Never `git add -A` or `git add .`.
+**Which git form is safe DEPENDS ON WHO OWNS THE FILE, and the two cases want
+opposite commands.** Getting this backwards has now cost tracks in both
+directions on the same day.
+
+*Shared file.* `git commit -m msg -- <path>` commits the WORKING TREE, not the
+index, so on a shared file it silently captures another track's in-flight edits.
+It caught FOUR tracks in one day. So: `git diff -- <file>` as its own step, read
+it, stage your hunk, commit with **NO pathspec**.
+
+*File your track exclusively owns.* The pathspec form is the **SAFER** one while
+other agents are running, because it does not go through the index at all.
+**The index is shared mutable state and there is no atomic read-then-commit
+through it.** Measured 2026-08-29: a track ran `git add` on only its own paths,
+then ran `git diff --cached --name-only` as a separate gating step exactly as
+prescribed. The gate FIRED, showing twelve paths of which six were foreign --
+and before it could act, another track committed and a pathspec-free commit took
+the whole index. Six of that track's documents landed under a message describing
+someone else's work. Nothing was lost, and it was recorded rather than amended,
+because amending rewrites another track's tip and re-runs the race.
+
+So "run the check" is not the lesson here; the check ran and was correct. A
+check whose result you do not branch on is decoration, but a check you cannot
+act on atomically is not a guarantee either. An amend only works while your
+commit is still the tip. Never `git add -A` or `git add .`.
 
 **GHDL here is the mcode backend.** `ghdl -e` produces no binary and silently
 succeeds; run `ghdl -r`. `ghdl -m` can return rc=0 while printing hard errors.
