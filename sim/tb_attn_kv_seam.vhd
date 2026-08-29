@@ -920,7 +920,12 @@ begin
       v := v xor shift_right(v, 17);
       v := v xor shift_left(v, 5);
       rnd_r <= v;
-      if tok_i mod 2 = 0 then
+      -- POSITION, not step.  With `tok_i` here and NLAY = 2 the parity is the
+      -- LAYER, so layer 0 would get the never-stall consumer for the whole run
+      -- and layer 1 the stalling one, and neither layer would ever see the
+      -- other configuration.  `pos_i` keeps the per-token alternation this
+      -- always had and gives BOTH layers both consumers across the sequence.
+      if pos_i mod 2 = 0 then
         y_ready <= '1';
       elsif rnd_r(3 downto 0) < 6 then
         y_ready <= '0';
