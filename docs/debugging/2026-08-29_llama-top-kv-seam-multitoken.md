@@ -765,3 +765,33 @@ BYTE at `attn_hd` 16 and 32 -- only the shape records and region tables were
 compared here, which is the input to the D table and not the D table itself.
 LMHEAD's byte-identity measurement is the evidence for the latter and it was
 not re-run in this track.
+
+---
+
+## CORRECTION, 2026-08-29, appended by TRACK C1: two landmarks here have moved
+
+Section 6.4's preserved configuration and section 6.2's `seq` figure both
+record numbers taken from a design whose `v_ref` fold had no layer index
+(defect C1). The fold was given its missing `LAYERS` dimension on 2026-08-29 and
+**both numbers moved, correctly.** MEASURED, same generics, same weight image:
+
+| configuration | attention layers | here | after the C1 fix |
+|---|---|---|---|
+| `BLOCKS=32 ATTN_INT=4 C_REAL NORM_REAL ATTN_HD=16 NORM_ANCHOR=false` + the pooled real image | 8 | `R_X(0) = -14110 hash 52347` | `R_X(0) = -14035 hash 43861` |
+| the `seq` KV row, `BLOCKS=4 ATTN_INT=2 NTOK=3 ATTN_HD=64 KV_BLOCK=16 N_ROT=16 MAXPOS=8 KV_AXI` | 2 | `R_X(0) = -8060 hash 28506` | `R_X(0) = -8079 hash 41907` |
+
+`tb_llama_top_real` (one attention layer) is UNCHANGED at `-16339 / 92903`,
+capture and all, which is what attributes the two moves to C1 and nothing else.
+
+**Section 6.5's mutation table also changes in one row, and it is a LOSS that
+is recorded rather than hidden. R7 now SURVIVES.** It was only ever observable
+through C1's cross-layer carry; with a correct per-layer fold the R7 capture is
+byte-identical to the clean one at NTOK 3, 5 and 8. Two measured reasons: R7's
+`or tok_done_i = '1'` makes `c_seqrst` sticky-high, so the reset fires ONCE and
+not per token, and even that one reset lands where each layer's own minimum
+already equals the running minimum. A replacement row **R7b** (and **VR7b**),
+added to `sim/mutate_llama_top_kv.sh`, implements the defect R7's description
+actually names -- an edge-detected reset at every token boundary -- and is
+KILLED(ABORT) at the existing stimulus by `rtl/attn_block.vhd:1493`'s `vsh_neg`.
+
+`docs/debugging/2026-08-29_c1-vref-layer.md` has the whole chain.

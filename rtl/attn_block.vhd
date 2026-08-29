@@ -111,8 +111,11 @@
 -- SEAM 2: v_ref.  attn_kv_quant folds the write-time minimum internally, but
 -- it has ONE fold register and C spec 2.1.4 requires one per (layer, KV head).
 -- With a single shared quantizer instance its own `v_ref` output would mix the
--- heads, so this block folds v_ref PER HEAD from the record header the unit
--- publishes, and leaves the unit's own output open.  The init value is +127 and
+-- heads, so this block folds v_ref PER (LAYER, HEAD) from the record header the
+-- unit publishes, and leaves the unit's own output open.  The LAYER half of
+-- that index was missing until 2026-08-29 (defect C1): this block is
+-- time-shared across every attention layer, so a head-only fold let each
+-- layer's write-time minimum leak into every other layer's alignment shift.  The init value is +127 and
 -- IS NOT NEUTRAL: an init of 0 right-shifts every V block by its full exponent
 -- and silently destroys the cache's precision while passing every structural
 -- check (C spec MJ5-2).  It is reset by `kv_seq_rst`, which is per SEQUENCE and
@@ -418,8 +421,14 @@ architecture rtl of attn_block is
   signal kbh,  vbh  : std_logic_vector(NBLK*EXP_W-1 downto 0)
                     := (others => '0');
 
-  -- the per-(layer, KV head) write-time min fold (SEAM 2)
-  signal vref_r : e8_arr(0 to N_KVH-1) := (others => to_signed(127, EXP_W));
+  -- The per-(layer, KV head) write-time min fold (SEAM 2).  The layer index is
+  -- part of the SHAPE, not a nicety: ONE attn_block is time-shared across every
+  -- attention layer, so a fold with only a head index makes each layer's
+  -- minimum visible to every other layer (defect C1,
+  -- docs/debugging/2026-08-29_c1-vref-layer.md).  Indexed lay_r*N_KVH + kvh;
+  -- `lay_r` is the LATCHED layer (RULE 2), never the live `layer` port.
+  signal vref_r : e8_arr(0 to LAYERS*N_KVH-1)
+                := (others => to_signed(127, EXP_W));
 
   -- ---- rmsnorm_rs --------------------------------------------------------
   signal rn_start : std_logic := '0';
@@ -940,7 +949,7 @@ begin
       -- the fold exists, and it is why the accumulator bound is 2^30 and not
       -- rev 4's 2^38.  Rev 4 printed this shift the other way round and three
       -- things in its own text contradicted it.
-      s := to_integer(e_of(vhdr, opb)) - to_integer(vref_r(kvh));
+      s := to_integer(e_of(vhdr, opb)) - to_integer(vref_r(lay_r*N_KVH + kvh));
       if s < 0 then s := 0; neg := '1'; end if;
       if s > CM_W then s := CM_W; end if;
       v8 := signed(vrec((opb*KV_BLOCK + t + 1)*CM_W-1 downto
@@ -1302,11 +1311,11 @@ begin
               kw_hdr  <= vhdr;
               kw_hen  <= '1';
               -- SEAM 2: the per-head write-time min fold.
-              ev := vref_r(kvh);
+              ev := vref_r(lay_r*N_KVH + kvh);
               for b in 0 to NBLK-1 loop
                 if e_of(vhdr, b) < ev then ev := e_of(vhdr, b); end if;
               end loop;
-              vref_r(kvh) <= ev;
+              vref_r(lay_r*N_KVH + kvh) <= ev;
               wr_isv <= '1';
               blk <= 0;
               ph <= P_WREC;
@@ -1606,7 +1615,8 @@ begin
               -- t * 2^-(v_ref + R_Q - 1), so the grid is v_ref + 14 at Q15.
               for h in 0 to N_KVH-1 loop
                 em_grid((h+1)*EXP_W-1 downto h*EXP_W)
-                  <= std_logic_vector(vref_r(h) + to_signed(R_Q-1, EXP_W));
+                  <= std_logic_vector(vref_r(lay_r*N_KVH + h)
+                                      + to_signed(R_Q-1, EXP_W));
               end loop;
               ph <= P_EMITGO;
             else

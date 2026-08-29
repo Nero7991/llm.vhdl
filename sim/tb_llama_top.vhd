@@ -218,6 +218,23 @@
 --     -gW_IMAGE=<real image>   ->  0 degenerate at 1/2/4/8/16/32, PASS,
 --                                  R_X(0) = -14110 hash(R_X) = 52347 at 32
 --
+-- THAT 32-BLOCK LANDMARK MOVED ON 2026-08-29 AND THE MOVE IS THE FIX, NOT A
+-- REGRESSION.  `BLOCKS=32 ATTN_INT=4` is EIGHT attention layers, and until
+-- that day `rtl/attn_block.vhd`'s v_ref fold had no layer index, so all eight
+-- shared one fold per KV head (defect C1).  With the fold given its missing
+-- `LAYERS` dimension the same configuration reads
+--
+--                                  R_X(0) = -14035 hash(R_X) = 43861 at 32
+--
+-- and NOTHING ELSE about the run changes: still 491 descriptors, still 0
+-- degenerate residuals, still PASS.  The two rows that have ONE attention
+-- layer are byte-identical across the fix and are the control that says so:
+-- `tb_llama_top_real` stays at `R_X(0) = -16339 hash 92903` and its committed
+-- capture `tools/ref9b/golden/llama_top_real.txt` is unchanged record for
+-- record.  A landmark without its configuration is unreadable; quote the
+-- generic set with the number.  Full chain, including the R_Y value oracle
+-- going 4 of 6 to 6 of 6, in docs/debugging/2026-08-29_c1-vref-layer.md.
+--
 -- AND NOTHING HERE SAYS THE BLOCK COMPUTES ATTENTION.  C spec 3.11's
 -- `ref/attn_gated_fx.c` does not exist, so `sim/tb_attn_block.vhd` checks
 -- seams and not values, and this bench checks the schedule and the scale.
@@ -435,7 +452,28 @@ entity tb_llama_top is
     CAPTURE   : string   := "";
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
-    VERBOSE   : boolean  := false
+    VERBOSE   : boolean  := false;
+    -- ==================================================================
+    -- THE MODELLED KV HBM'S GEOMETRY.  Generics, not constants, and the
+    -- reason is a measured hard stop: with these fixed at 16 / 4064 / 8192
+    -- the two regions are 4048 bytes apart, which holds TWO attention layers
+    -- and not four, so `KV_AXI=true` at `BLOCKS=8 ATTN_INT=2` aborts
+    -- elaboration at `rtl/llama_top.vhd:3409` with "the K and V KV regions
+    -- overlap".  That is what stopped defect C1's magnitude being measured on
+    -- the AXI path (see docs/debugging/2026-08-29_ry-oracle-and-er-exponent.md
+    -- section 12).  The DEFAULTS are exactly the old constants, so every
+    -- landmark measured before this generic existed is unchanged.
+    --
+    -- The bases stay deliberately awkward: 16 is 16-byte aligned and not 4 KB
+    -- aligned, and 4064 straddles the 4 KB boundary, so the burst splitter is
+    -- exercised.  Keep that property when overriding: pick a K base that is
+    -- 16-byte but not 4 KB aligned, and a V base that straddles a 4 KB line.
+    -- `rtl/llama_top.vhd` asserts the regions do not overlap and this bench
+    -- asserts they fit inside KV_NB, so a bad triple aborts rather than
+    -- aliasing.
+    KV_K_BASE_G : natural := 16;
+    KV_V_BASE_G : natural := 4064;
+    KV_NB_G     : natural := 8192
   );
 end entity;
 
@@ -809,9 +847,9 @@ architecture tb of tb_llama_top is
   constant KV_DW     : positive := 256;
   constant KV_BEAT_B : natural  := KV_DW/8;
   constant KV_CH_B   : natural  := 16;              -- the record granule
-  constant KV_K_BASE : natural  := 16;
-  constant KV_V_BASE : natural  := 4064;
-  constant KV_NB     : natural  := 8192;            -- bytes of modelled HBM
+  constant KV_K_BASE : natural  := KV_K_BASE_G;
+  constant KV_V_BASE : natural  := KV_V_BASE_G;
+  constant KV_NB     : natural  := KV_NB_G;         -- bytes of modelled HBM
   constant KV_REC_B  : natural  := KV_CH_B + ATTN_HD;   -- CM_W is 8
   constant KV_NBLK   : natural  := ATTN_HD / KV_BLOCK;
   constant KV_NKVH   : natural  := SHAPE.attn_kv_heads;
@@ -835,6 +873,14 @@ architecture tb of tb_llama_top is
     if r = 0 then b := KV_K_BASE; else b := KV_V_BASE; end if;
     return b + ((l*KV_NKVH + h)*MAXPOS + ps)*KV_REC_B;
   end function;
+
+  -- The modelled HBM has to CONTAIN both regions.  `rtl/llama_top.vhd:3409`
+  -- asserts they do not overlap each other; nothing there knows how big this
+  -- bench's memory is, so a KV_NB_G left at 8192 while the bases were raised
+  -- would write past the array and abort with an index error a long way from
+  -- the cause.  Checked at elaboration instead, with the numbers printed.
+  constant KV_FIT_OK : boolean :=
+    (KV_K_BASE + KV_RGN_B <= KV_NB) and (KV_V_BASE + KV_RGN_B <= KV_NB);
 
   -- The modelled HBM and the shadow, in ONE protected type: the two read
   -- slaves, the write slave and the checkers are several processes over one
@@ -959,6 +1005,14 @@ architecture tb of tb_llama_top is
   end function;
 
 begin
+
+  assert KV_FIT_OK
+    report "tb_llama_top: the modelled KV HBM is too small.  K base "
+         & integer'image(KV_K_BASE) & ", V base " & integer'image(KV_V_BASE)
+         & ", each region " & integer'image(KV_RGN_B) & " bytes, KV_NB_G "
+         & integer'image(KV_NB) & ".  Raise KV_NB_G (and the V base) or "
+         & "lower MAXPOS."
+    severity failure;
 
   -- THE HALF PERIOD IS A NAMED CONSTANT because the seam capture depends on
   -- it: it settles for CAP_SETTLE after a rising edge and then snapshots a

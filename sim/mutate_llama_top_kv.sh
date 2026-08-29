@@ -335,6 +335,53 @@ D=$(mutate_rtl R7 rtl/llama_top.vhd \
         elsif c_srtk = '1' then c_seqrst <= '0'; end if;")
 [ -n "$D" ] && run_case R7 "the v_ref sequence reset is issued per TOKEN, not per sequence (C spec 2.1.4)" "$D"
 
+# R7b.  R7 DOES NOT DO WHAT ITS DESCRIPTION SAYS, MEASURED 2026-08-29 by
+# TRACK C1 with a `report` on attn_block's fold and on its kv_seq_rst edge:
+#
+#   R7  as written  ->  VREFPROBE seqrst fires TWICE in a 3-token run: once
+#                       from `rst`, once at the token 0->1 boundary, and never
+#                       again.  `tok_done_i` is a LEVEL held until `tok_ack`,
+#                       so `or tok_done_i = '1'` takes priority over the
+#                       `elsif c_srtk = '1'` clear for the whole done window;
+#                       c_seqrst never returns to '0', and attn_block's reset
+#                       is a RISING-EDGE detect (`kv_seq_rst = '1' and
+#                       seqrst_q = '0'`).  R7 is therefore "reset ONCE", not
+#                       "reset per token".
+#
+# That mattered the day rtl/attn_block.vhd's v_ref fold gained its missing
+# LAYER dimension: with a correct per-layer fold, the one reset R7 does issue
+# lands where each layer's own minimum already equals the running minimum, so
+# R7 produces a BYTE-IDENTICAL capture and SURVIVES.  Removing a defect must
+# not silently remove a mutation's teeth, so R7b is the defect R7's own
+# description names -- a genuine per-token-boundary reset, edge-detected so it
+# cannot go sticky.
+#
+# R7b is KILLED at the existing 3-token stimulus and needs no new one.  It is
+# killed by the DESIGN, not by a checker: a v_ref reset mid-sequence leaves
+# cached V records from earlier tokens whose block exponents sit BELOW the
+# re-folded reference, site 3's `e_v[b] - v_ref` goes negative,
+# rtl/attn_block.vhd:1493 raises `err` on `vsh_neg`, and the walker reports
+# ERR_UNIT (x1).  Verdict KILLED(ABORT), which run_case labels honestly.
+D=$(mutate_rtl R7b rtl/llama_top.vhd \
+  "    srp : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then      c_seqrst <= '1';
+        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+      end if;
+    end process;" \
+  "    srp : process(clk) is
+      variable tdq : std_logic := '0';
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then      c_seqrst <= '1';
+        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if tok_done_i = '1' and tdq = '0' then c_seqrst <= '1'; end if;
+        tdq := tok_done_i;
+      end if;
+    end process;")
+[ -n "$D" ] && run_case R7b "R7's DESCRIPTION, actually implemented: the v_ref fold is reset at EVERY token boundary (edge-detected, so it cannot go sticky the way R7 does)" "$D"
+
 # ---------------------------------------------------------------------------
 # mutate_rtl_pair <tag> <fileA> <oldA> <newA> <fileB> <oldB> <newB>
 # ---------------------------------------------------------------------------
@@ -496,7 +543,14 @@ cap_oracle_args() {
   case "$1" in
     real) echo "--blocks 4 --attn-int 4 --attn-hd 16 --norm real
                 --w-image ../../sim/llama_top_w_b4_pool.hex" ;;
-    seq)  echo "--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor" ;;
+    # --kv-block and --n-rot are NOT recorded in the capture and a wrong
+    # LEGAL value is a small wrong answer rather than an error (RY-ORACLE's
+    # trap T7).  They were omitted here while bisect_scaled.py had no R_Y
+    # model, which made them harmless; with the model in place the defaults
+    # (4 and 8) made the CLEAN control V0s report a divergence at R_Y-1.
+    # These two numbers are `cap_generics seq`'s own -gKV_BLOCK / -gN_ROT.
+    seq)  echo "--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor
+                --kv-block 16 --n-rot 16" ;;
     *) echo "" ;;
   esac
 }
@@ -585,6 +639,33 @@ D=$(mutate_rtl VR7 rtl/llama_top.vhd \
   "        if rst = '1' or tok_done_i = '1' then c_seqrst <= '1';
         elsif c_srtk = '1' then c_seqrst <= '0'; end if;")
 [ -n "$D" ] && run_cap VR7 "R7 again: the v_ref sequence reset is issued per TOKEN, not per sequence" "$D" seq
+
+# VR7 SURVIVES on the shipping design and that is CORRECT, not a regression of
+# this file.  Until 2026-08-29 rtl/attn_block.vhd's v_ref fold had no layer
+# index (defect C1), every attention layer folded into every other one, and
+# R7's single reset disturbed that carry.  With C1 fixed there is nothing for
+# it to disturb: MEASURED, `cmp` of the clean and the R7 capture is IDENTICAL,
+# at NTOK 3, 5 and 8.  See the R7b comment above for why R7 only ever resets
+# once, and docs/debugging/2026-08-29_c1-vref-layer.md for the whole chain.
+D=$(mutate_rtl VR7b rtl/llama_top.vhd \
+  "    srp : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then      c_seqrst <= '1';
+        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+      end if;
+    end process;" \
+  "    srp : process(clk) is
+      variable tdq : std_logic := '0';
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then      c_seqrst <= '1';
+        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if tok_done_i = '1' and tdq = '0' then c_seqrst <= '1'; end if;
+        tdq := tok_done_i;
+      end if;
+    end process;")
+[ -n "$D" ] && run_cap VR7b "R7's description actually implemented: a genuine per-token-boundary v_ref reset" "$D" seq
 
 D=$(mutate_rtl VA1 rtl/matvec_core.vhd \
   "            re2_shv(rr) <= round_shift(re1_acc(rr), os_rep(rr));" \

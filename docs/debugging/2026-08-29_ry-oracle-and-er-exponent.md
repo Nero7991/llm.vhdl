@@ -747,3 +747,52 @@ signature. Here there is no signature at all. The mitigation is procedural and
 it is now in the tool's own help text: take `--kv-block` and `--n-rot` from the
 run's generics, never from the defaults. `bisect_scaled.py` inherits the same
 hazard and the same defaults.
+
+---
+
+## 14. CORRECTION, 2026-08-29, appended by TRACK C1: sections 11 and 12 are settled, and one of them was wrong about what is reachable
+
+Section 12 says C1's end-to-end magnitude "is not obtainable in this repository
+until those two constants become generics", the constants being
+`sim/tb_llama_top.vhd`'s `KV_K_BASE` / `KV_V_BASE`. **That is true of the AXI
+cache path and NOT true of the design as a whole, and the distinction was
+missed here.** `C_KV_AXI` defaults FALSE, and `rtl/llama_top.vhd:3409`'s
+region-overlap assert only guards the AXI branch. The already-published
+`BLOCKS=32 ATTN_INT=4` real-weight configuration therefore runs **eight**
+attention layers on the behavioural cache with no region constraint at all --
+it is the very configuration section 11 wanted and it was sitting in the
+landmark table.
+
+MEASURED, that configuration, same weight image, `git archive HEAD` at `a3dc2f4`
+against the same tree with `rtl/attn_block.vhd` fixed:
+
+```
+before: PASS -- 491 descriptors, 32 blocks, R_X(0) = -14110 hash(R_X) = 52347
+after:  PASS -- 491 descriptors, 32 blocks, R_X(0) = -14035 hash(R_X) = 43861
+both:   degenerate residuals=0
+```
+
+The two constants were made generics anyway (`KV_K_BASE_G`, `KV_V_BASE_G`,
+`KV_NB_G`, defaults preserving 16 / 4064 / 8192), which unblocks the AXI path at
+four attention layers -- `BLOCKS=8 ATTN_INT=2` moves `-8162 / 33155` to
+`-8251 / 93838` -- and an 8-token run at `MAXPOS=16`.
+
+**Section 2's PART 1 result reproduces exactly.** Independent implementation of
+the fix, `-8060 / 28506` to `-8079 / 41907`, and `attn_oracle.py --fold
+perlayer` 4 of 6 to 6 of 6.
+
+**Section 10's correction is confirmed, and its mechanism is now measured
+rather than inferred.** R7 gives a byte-identical capture on the fixed design,
+at NTOK 3, 5 and 8. A `report` probe adds a second reason section 10 did not
+have: `tok_done_i` is a LEVEL, so `or tok_done_i = '1'` holds `c_seqrst` high
+through the ack window and it never falls again -- **R7 resets ONCE, not per
+token**, whatever its description says. `sim/mutate_llama_top_kv.sh` now carries
+R7b/VR7b, which implement the described defect and are KILLED(ABORT) at the
+existing stimulus.
+
+**Section 5's deferral of a `bisect_scaled.py` gate row can be revisited.** Its
+decisive reason was that the row "would be RED on the day it landed, because the
+`seq` configuration has defect C1". C1 is fixed and that configuration is clean
+at all three tokens, 57 modelled seams each.
+
+Full chain: `docs/debugging/2026-08-29_c1-vref-layer.md`.

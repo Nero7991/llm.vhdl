@@ -2447,3 +2447,32 @@ matches it.
 * **No synthesis.** The `G`-cone DSP cost the subsystem C write-up derived
   (C aux 47 -> 87, C total 431 -> 471) is still arithmetic on a skeleton's
   rows, and now there is an integration to price as well.
+
+---
+
+## CORRECTION, 2026-08-29, appended by TRACK C1: the 32-block landmark moved
+
+The table in "Everything real: A, B, C, the norm AND the weights" ends with
+
+| **32** | **0** | **PASS** | `R_X(0) = -14110 hash(R_X) = 52347` |
+
+**That row is superseded, and the move is a FIX rather than a regression.**
+`BLOCKS=32 ATTN_INT=4` is EIGHT attention layers, and until 2026-08-29
+`rtl/attn_block.vhd`'s `v_ref` fold had no layer index, so all eight shared one
+fold per KV head (defect C1, found by TRACK RY-ORACLE, fixed here). With the
+fold given its missing `LAYERS` dimension the same configuration MEASURES
+
+```
+tb_llama_top RESULT: PASS -- 491 descriptors, 32 blocks, 1 descriptor-latency
+  points, R_X bit-identical across all of them, R_X(0) = -14035
+  hash(R_X) = 43861
+tb_llama_top: schedule mismatches=0 skew differences=0 degenerate residuals=0
+```
+
+The **1, 2 and 4 block rows of that same table are UNCHANGED** -- they have one
+attention layer, where a per-layer fold and a shared fold are the same object --
+and the 4-block row's whole 63-record seam capture is byte-identical across the
+fix. That contrast is the attribution. The 8 and 16 block rows were not re-run.
+
+Full chain, including the R_Y value oracle going 4 of 6 to 6 of 6 and the OOC
+resource cost: `docs/debugging/2026-08-29_c1-vref-layer.md`.
