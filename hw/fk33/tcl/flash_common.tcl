@@ -27,6 +27,8 @@
 # variant of it anywhere in that zip.  So the check is EXPECTED to bite, and
 # load_programmer tries the waiver automatically and reports which path worked.
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 proc envdef {name default} {
     if {[info exists ::env($name)] && $::env($name) ne ""} { return $::env($name) }
     return $default
@@ -38,7 +40,7 @@ proc envdef {name default} {
 proc fk33_open_device {} {
     open_hw_manager
     connect_hw_server -allow_non_jtag
-    if {[catch {open_hw_target [lindex [get_hw_targets] 0]} err]} {
+    if {[catch {fk33_open_target} err]} {
         puts "FLASH_NO_TARGET: $err"
         puts "  No JTAG target.  The card is unpowered, or a stale hw_server"
         puts "  still holds the FTDI."

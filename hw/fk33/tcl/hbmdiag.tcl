@@ -7,6 +7,8 @@
 #   3. it arms but HBM never asserts ARREADY, in which case arstall climbs.
 # The control registers are write-only, which is itself the reason this needs a
 # trick rather than a readback.
+source [file join [file dirname [info script]] target_select.tcl]
+
 set TG 0x00010000
 proc rd {addr} {
     set t [create_hw_axi_txn -force rdtxn [get_hw_axis hw_axi_1] \
@@ -23,7 +25,7 @@ proc wr {addr val} {
 }
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 current_hw_device [lindex [get_hw_devices] 0]
 refresh_hw_device -quiet [lindex [get_hw_devices] 0]
 

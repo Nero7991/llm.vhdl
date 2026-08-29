@@ -24,11 +24,13 @@
 # Nothing here writes to the board's I2C bus, and the HBM write is confined to
 # a 4 KB scratch page at the very top of the address map.
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 puts "PCIEEP_CHECK begin"
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d

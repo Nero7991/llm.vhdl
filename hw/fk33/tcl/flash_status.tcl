@@ -38,11 +38,13 @@
 #
 # Markers out: STATUS_BEGIN / STATUS_DONE, plus CFG_* lines.
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 puts "STATUS_BEGIN"
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
-if {[catch {open_hw_target [lindex [get_hw_targets] 0]} err]} {
+if {[catch {fk33_open_target} err]} {
     puts "CFG_NO_TARGET: $err"
     puts "  No JTAG target.  The card is unpowered, or the FTDI is held by a"
     puts "  stale hw_server (flash.sh resets the cable before every run)."

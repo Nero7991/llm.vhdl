@@ -58,6 +58,8 @@
 # unchanged rather than throwing.
 #
 # A failed JTAG-AXI transaction reports as -1, NOT as an error.
+source [file join [file dirname [info script]] target_select.tcl]
+
 proc isbad {v} { return [expr {$v eq "-1" || $v eq "" || [string match "*-1*" $v]}] }
 
 proc diec {code} { return [expr {$code * 507.5921310 / 1024.0 - 279.42657680}] }
@@ -164,7 +166,7 @@ puts "AUXPROBE begin"
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 # NOT get_property REGISTER.IDCODE: that property does not exist on this

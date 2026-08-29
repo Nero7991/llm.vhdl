@@ -13,9 +13,11 @@
 #     unambiguously a register pointer and registers 0x06/0x07 are the
 #     Manufacturer and Device ID.  Reading those identifies the part outright.
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d

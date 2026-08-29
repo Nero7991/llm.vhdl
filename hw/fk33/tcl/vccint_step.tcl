@@ -20,6 +20,8 @@
 #     moves the wrong way;
 #   * step size is capped, and shrinks as we approach the target.
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 set POT      0x2c
 set W_START  128
 set V_TARGET 0.720
@@ -32,7 +34,7 @@ set W_FLOOR     60      ;# never go below this wiper, whatever the readings say
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d

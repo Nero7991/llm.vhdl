@@ -11,9 +11,11 @@
 #   0x9004  GPIO_TRI    ch1, 1 = released/input, 0 = driven
 #   0x9008  GPIO2_DATA  ch2, 7 LEDs via led_inv (active low)
 
+source [file join [file dirname [info script]] target_select.tcl]
+
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d

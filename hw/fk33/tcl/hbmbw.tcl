@@ -21,6 +21,8 @@
 # with a smaller load still applied.
 
 # ---- register map, from rtl/hbm_tg.vhd -------------------------------------
+source [file join [file dirname [info script]] target_select.tcl]
+
 set TG      0x00010000   ;# 64K-aligned, see gen_hbmbw.py
 set R_CTRL  0            ;# bit0 go, bit1 clear
 set R_MASK  4
@@ -109,7 +111,7 @@ proc die_temp {} {
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
-open_hw_target [lindex [get_hw_targets] 0]
+fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
 refresh_hw_device -quiet $d
