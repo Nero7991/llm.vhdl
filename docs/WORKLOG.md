@@ -9,6 +9,26 @@ fresh result is how scope drifts and how a negative result gets talked into
 being a positive one. If the branch was written before the answer was known,
 the answer only has to be classified, not argued with.
 
+## THE REFILL RULE (read this first, every time)
+
+**Standing instruction from Oren, 2026-08-28: the parallel slots must not go
+empty while the backlog is non-empty, and this runs overnight.**
+
+So: **every time an agent completes, before writing the report, check the
+BACKLOG below and dispatch the next ready item.** Closing a track and refilling
+its slot are one action, not two. It is easy to land a result, write it up well,
+and only then notice that four slots have been idle for the whole write-up --
+that happened once already today and Oren caught it, not me.
+
+Target **four concurrent tracks**. Fewer only when the backlog genuinely has
+nothing whose dependencies are met. If that ever happens, say so explicitly
+rather than quietly running one agent.
+
+A backlog item is READY when its file ownership does not collide with a running
+track and its listed dependency has landed. If nothing is ready, the right move
+is to look for what the last few results NEWLY unblocked, because every landing
+today opened at least one new item.
+
 **Discipline for closing a track.** When an agent lands, do exactly one of:
 
 - **MARK OFF** the branch that fired, move the row to the Landed table with its
@@ -438,3 +458,24 @@ reference builder in C for the A job. Still nothing emits it.
 | A-sim MAXB correction | The original A agent woke, independently confirmed the AXI3 defect in its own bench, and appended a dated CORRECTION rather than editing the wrong claim out. Confirmation run completed separately: matvec_fk33, weight_streamer, axi_rd_port all PASS. | `2b12a7b` |
 | **A-CTRL: the descriptor control plane, the CDC, and MAXOUT** (OI-1) | Descriptor format is D's, byte for byte, plus a four-word A extension AFTER the base array where D never reads. `matvec_int4_desc_axi` fetches and checks it before starting anything; `matvec_int4_axi` retained unchanged for the AXU3EG. Per-port async FIFO closes the HBM-to-core CDC; MAXOUT 2 -> 16. MEASURED: 100 of 100 elements bit-exact against `ref/matvec_int4.c` on the core bus AND 100 of 100 rows bit-exact through the AXI-Lite map, at `MAXB=16`, at four AXI/core clock ratios including a non-integer one. 22-case mutation table: 19 refused with the right code, 2 named as undetectable (see OI-1), 1 is the clean case. Found and fixed two of its own defects: a delta-skewed clock signal (broke `tb_matvec_int4_ip`) and a descriptor fetch left in the wrong clock domain (broke 17 of 22 cases under `DUAL_CLK`). Full gate 78 PASS / 0 FAIL, matches the raised floor. | `a4f7e17` |
 | Magnitude blocker | Explosion was the STIMULUS (synthetic row norm 2^4.87 vs real 2^-0.03). PART 5 withdrawn, PART 3 reinstated. `attn_block` wired behind `C_REAL`. | `3246046` |
+
+---
+
+## BACKLOG, ordered, ready-to-dispatch
+
+Dependencies are named. An item with no dependency is dispatchable now.
+Keep this list fed: when a track lands, add whatever it unblocked.
+
+| # | task | depends on | owns |
+|---|---|---|---|
+| 1 | **`attn_block` <-> `attn_kv_axi` seam.** Wire the KV interface into the block and prove multi-token attention. | TRACK C-KV | `rtl/attn_block.vhd`, `sim/tb_attn_block.vhd` |
+| 2 | **FK33 shell integration.** Instantiate subsystem A into `gen_pcieep.py`, enable the HBM ports, build. **This is the first build that could put arithmetic on the card.** Needs the port enable AND a top to connect them to, which is why it was blocked all day. | TRACK SYNTH (need real area/timing first) | `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl` |
+| 3 | **Multi-token verification at `cur_pos > 0`.** `llama_top` runs ONE token at `cur_pos = 0`, which is exactly why both `attn_block` defects were invisible to it. Until a second token runs, the KV path is unexercised end to end. | items 1 and 2 partially | `sim/tb_llama_top.vhd` |
+| 4 | **Token I/O: embedding and LM head.** Still 512-entry / 64-dim stories260K ROMs. The residency map gives the embedding an HBM home and says the lookup path has no owner. Note `MAXROWS_BFP = 17408` means `output.weight` and `token_embd.weight` need 15 descriptor jobs each. | none | `rtl/`(new), `tools/` |
+| 5 | **`pl_backend` v2 and the server seam.** `server/llama_server.cpp` is zero-dep C++ and the C tokenizer now links. The seam must move from the AXU3EG's whole-loop-in-hardware to prefill plus decode-returning-logits. | item 4 for a real vocab path | `server/**` |
+| 6 | **Subsystem D: the layer-level descriptor program.** One matvec job is emitted and verified; a LAYER needs job sequencing, region routing and the D fields subsystem A does not read. | none (format is settled) | `tools/`, `rtl/seq_*` |
+| 7 | **OI-3: the two defect classes `tb_llama_top` cannot see.** An exponent claim re-aimed at R_X and a prefetch consuming at k-3 both change every element and no property can observe either. Needs a property that can. | none | `sim/tb_llama_top.vhd` |
+| 8 | **`gdn_recur` and `gdn_exp_capture` mutation coverage**, plus the open `d_m` grid defect behind the 8.955 LSB worst case. | TRACK B-MUT (avoid overlap) | `sim/tb_gdn_recur.vhd`, `sim/mutate_*` |
+| 9 | **Subsystem C spec reconciliation.** Six spec-named units (`attn_lane`, `attn_score_tree`, `attn_acc`, `attn_qk_norm`, `attn_ctrl`, and `attn_kv_axi` until C-KV lands) do not exist; the design took a different decomposition and the spec was never updated. The spec and the RTL now disagree. | TRACK C-KV | `docs/` spec files |
+| 10 | **OI-9: the descriptor error-code space is full.** A decision (widen, subdivide via `ERR_INFO`, or take a reserved D value), with consequences for D. **Ask Oren rather than choosing.** | none | decision |
+
