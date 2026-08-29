@@ -143,6 +143,9 @@ Each step says what it controls for.
 
 ### The first comparison, raw
 
+Captured before the denominator change below, so the generator's own two
+figures are in the superseded bare-LSB form; the RTL comparison is unaffected.
+
 ```
 $ ./gen_gdn_block_vec gdn_block_vec.txt 2 4 32 2 2 mod
 seed 20260829  [committed default]
@@ -463,7 +466,9 @@ is suspect.
   written and called measured was 1.2x above the observed worst. Corrected to
   35% with the real numbers in the file. The lesson is narrow and exact: the
   seed sweep that produced 1.17% was sorted by the WRONG COLUMN, and I read the
-  bad-fraction off the row that was worst by maximum error.
+  bad-fraction off the row that was worst by maximum error. (The 35% figure
+  was itself superseded when the denominator changed; the current gates are in
+  the evidence section. The trap was the process, not the number.)
 
 - **`ref/gdn_conv_vec.c`'s comment says the sequence-start masks are
   `0001, 0011, 0111`, and `rtl/gdn_exp_capture.vhd`'s header says the current
