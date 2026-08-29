@@ -93,7 +93,53 @@ architecture sim of tb_matvec_core is
   type xm_t  is array(0 to MAXB-1) of std_logic_vector(BLK*16-1 downto 0);
   signal widx : idx_t := (others => (others => 0));
   signal wscl : scl_t := (others => (others => (others => '0')));
-  signal xmem : xm_t  := (others => (others => '0'));
+
+  -- xmem IS POISONED, NOT ZEROED, AND THAT IS LOAD-BEARING.
+  --
+  -- The trace emits an `X k <value>` line only for k < K, so with the old
+  -- `(others => '0')` default every PAD column -- the lanes of the last scale
+  -- block at k >= n_cols -- carried a ZERO ACTIVATION.  Spec 6.2's COLUMN
+  -- MASK (`if k < n_cols` in rtl/matvec_core.vhd) exists precisely because
+  -- the IQ4_NL codebook has NO zero entry: index 0 decodes to -127, so a pad
+  -- column that is not masked contributes cb(0) * x(k), which is nonzero
+  -- ONLY IF x(k) is.  With a zero default the mask was multiplying a zero by
+  -- a nonzero and removing it changed nothing, so the mask was UNTESTABLE by
+  -- any trace shape.
+  --
+  -- MEASURED, sim/mutate_matvec_core.sh before this changed: mutations D1
+  -- ("the column mask is removed") and D2 ("k <= n_cols") BOTH SURVIVED all
+  -- three traces, including the 6x100 trace whose last block carries 28 pad
+  -- columns.  With the poison below both are killed on every trace that has
+  -- a pad column at all.
+  --
+  -- Zero was also the WRONG model of the hardware.  x comes from
+  -- act_mem_striped, a plain RAM that nothing clears between operations, so
+  -- in a real build the tail of the last block holds whatever the previous
+  -- layer left there.  Poison is the honest stand-in for that; zero quietly
+  -- assumed the one value that makes the defect invisible.
+  --
+  -- The pattern is per-block and per-lane so that a lane- or block-ordering
+  -- error in the pad region is distinguishable from a magnitude error.  The
+  -- magnitude is bounded on purpose: the worst case an unmasked block can
+  -- reach is 127 * 5646 * 32 = 2.29e7, inside the s28 partial the contract
+  -- allows (2^27 = 1.34e8), so a mutation that breaks the mask produces a
+  -- WRONG NUMBER the checker compares, not a bound-check abort that tells
+  -- us less.
+  --
+  -- Rows at and above the trace's M are unaffected: their scales are zero, so
+  -- sprod is zero whatever the activations are.
+  function xpoison return xm_t is
+    variable r : xm_t;
+  begin
+    for b in 0 to MAXB-1 loop
+      for j in 0 to BLK-1 loop
+        r(b)(j*16+15 downto j*16) :=
+          std_logic_vector(to_signed(4096 + 37*b + 13*j, 16));
+      end loop;
+    end loop;
+    return r;
+  end function;
+  signal xmem : xm_t  := xpoison;
 
   -- expectations
   type exp_t is array(0 to MAXR*MAXB-1) of signed(63 downto 0);
@@ -497,6 +543,9 @@ begin
                  " -- 14.2: the payload was never shifted" severity failure;
       end if;
     end procedure;
+    -- nemit as it stood entering PASS 9, so that pass can assert NOTHING was
+    -- emitted without depending on the absolute count of everything before it.
+    variable ne_p9 : integer;
   begin
     rst <= '1'; wait for 40 ns;
     rst <= '0';                       -- release BEFORE loading, see loader
@@ -527,6 +576,26 @@ begin
     assert nmant = n_rows
       report "COVERAGE: YMANT emitted for " & integer'image(nmant) &
              " rows, expected " & integer'image(n_rows) severity failure;
+    -- COVERAGE ON THE PORT, not only on the tap.  nmant counts the tm_val
+    -- STAGE TAP, which is NOT gated by y_mask, so a corrupted emit mask is
+    -- invisible to it.  nemit counts rows that left the PORT with y_mask set,
+    -- which is what a consumer actually sees.
+    --
+    -- MEASURED: mutation B13 of sim/mutate_matvec_core.sh -- "the emit y_mask
+    -- admits one pad row", rbase + rr <= n_rows -- SURVIVED all three traces
+    -- with only the nmant check present.  Two things hid it, and both are
+    -- properties of the stimulus rather than of the checker: the extra row
+    -- carries ZERO, so it compares equal to the zero expectation and no value
+    -- check can see it; and the run_pass COVERAGE assert that WOULD have
+    -- caught it runs only in the RAW and PARTIAL passes.  PASS 3 cannot catch
+    -- it either -- n_rows = MAXR = 64 is tile-aligned at RI = 4, so rbase + rr
+    -- never reaches n_rows.  It takes a RAGGED BFP tile, which is exactly what
+    -- a trace whose M is not a multiple of RI supplies.
+    assert nemit = n_rows
+      report "COVERAGE: y_mask admitted " & integer'image(nemit) &
+             " rows out of the PORT, expected " & integer'image(n_rows) &
+             " -- the emit mask is wrong, and a pad row's payload is zero so "
+           & "no value check can see it" severity failure;
     report "BFP: " & integer'image(nchk) & " stage values compared, " &
            integer'image(nbad) & " mismatches, ns=" & integer'image(tap_ns) &
            " y_exp=" & integer'image(y_exp) severity note;
@@ -675,6 +744,46 @@ begin
     -- out_mode = "00" goes there.  Simulation-fatal, and fatal on the ONE
     -- descriptor the lm_head is supposed to issue.
     run_pass("01", MAXR + 1, "PASS 8 RAW above MAXROWS_BFP");
+
+    -- ---------------------------------------------------------------------
+    -- PASS 9: BFP ABOVE MAXROWS_BFP MUST BE REFUSED.  The mirror of PASS 8,
+    -- and the ONLY pass here that expects `err` to go HIGH.
+    --
+    -- Spec 7.6's mode table admits n_rows > MAXROWS_BFP in raw and partial
+    -- and FORBIDS it in BFP, because ybuf is only ceil(MAXROWS_BFP/ROWS_IF)
+    -- tiles deep and BFP is the one mode that writes and reads it.  S_IDLE
+    -- therefore has to REJECT the descriptor.  Every other pass in this file
+    -- asserts that err stays LOW, so until this pass existed NOTHING checked
+    -- that it ever goes high -- the guard on a buffer overrun was itself
+    -- unguarded.
+    --
+    -- MEASURED: mutation I1 of sim/mutate_matvec_core.sh, which deletes the
+    -- BFP row bound from the S_IDLE check, SURVIVED all three traces before
+    -- this pass existed.  PASS 8 does not cover it: 7.6 makes that same row
+    -- count LEGAL in raw, so PASS 8 proves the opposite property.
+    --
+    -- Two things are checked, not one.  A rejection that still emitted rows
+    -- would be a rejection in name only, and an err that fired while the core
+    -- also ran the job is worse than either alone.
+    ne_p9 := nemit;
+    out_mode <= "00";
+    ov_rows  <= MAXR + 1;
+    wait until rising_edge(clk);
+    wait until rising_edge(clk);
+    report "PASS 9 BFP above MAXROWS_BFP must be REFUSED: out_mode=00 n_rows="
+           & integer'image(n_rows) severity note;
+    start <= '1'; wait until rising_edge(clk); start <= '0';
+    wait until done = '1';
+    wait until rising_edge(clk);
+    assert err = '1'
+      report "PASS 9: BFP at n_rows = " & integer'image(n_rows) & " > "
+           & "MAXROWS_BFP was ACCEPTED.  7.6 forbids it, and ybuf is only "
+           & "ceil(MAXROWS_BFP/ROWS_IF) tiles deep, so the job walks the "
+           & "output buffer off its end." severity failure;
+    assert nemit = ne_p9
+      report "PASS 9: the descriptor was refused but " &
+             integer'image(nemit - ne_p9) & " rows still left the port"
+      severity failure;
 
     report "TOTAL: " & integer'image(nchk) & " stage + " &
            integer'image(ychk) & " output values compared, " &
