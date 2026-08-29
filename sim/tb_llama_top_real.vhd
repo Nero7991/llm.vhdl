@@ -45,6 +45,27 @@
 --
 -- Teeth: `sim/mutate_llama_top_kv.sh` rows N1 and N2 are mutations of the
 -- `NORM_REAL` adapter, which does not elaborate at all in the other two rows.
+--
+-- THE VALUE GATE.  Four landmarks, MEASURED 2026-08-29 on the unmutated tree
+-- at commit 35e0ed0 (GHDL 1.0.0 mcode).  Until they were pinned this row
+-- scored a run on STRUCTURE alone -- schedule, skew across latency points,
+-- degenerate residuals -- and PRINTED the numbers without comparing them, so
+-- a deterministic wrong answer produced the same verdict as a right one.
+--
+-- NTOK IS 1 HERE, so EXP_XALL is by construction the same hash as EXP_XSUM
+-- and adds no resolution at this row; it is pinned so that raising NTOK
+-- without re-measuring FAILS rather than silently widening the gate.
+--
+-- EXP_STEPH IS THE ONE WITH REACH THIS ROW DID NOT HAVE.  It hashes every
+-- completion's captured exponent and write hash, so it sees seams the
+-- residual's alignment discards.  MEASURED by TRACK CAPTURE: a `gdn_silu`
+-- truncation moves R_Y-0/1/2 and R_ER-0/1/2 and leaves R_X(0) = -16364 and
+-- hash(R_X) = 91622 bit-identical -- the sixth instance of OI-3.  Teeth:
+-- `sim/mutate_llama_top_land.sh` rows P3 and P3x are that mutant with
+-- EXP_STEPH pinned and unset, and the pair is the whole argument for it.
+--
+-- A LANDMARK IS A CHANGE DETECTOR, NOT AN ORACLE.  See
+-- docs/debugging/2026-08-29_oi3b-top-level-value-gate.md.
 library ieee; use ieee.std_logic_1164.all;
 
 entity tb_llama_top_real is
@@ -61,5 +82,9 @@ begin
       ATTN_HD     => 16,
       NORM_REAL   => true,
       NORM_ANCHOR => false,
-      W_IMAGE     => "llama_top_w_b4_pool.hex");
+      W_IMAGE     => "llama_top_w_b4_pool.hex",
+      EXP_X0      => -16364,
+      EXP_XSUM    => 91622,
+      EXP_XALL    => 91622,
+      EXP_STEPH   => 17333);
 end architecture;

@@ -35,6 +35,27 @@
 -- not comparable with anything this run prints.
 --
 -- Teeth: `sim/mutate_llama_top_kv.sh`.
+--
+-- THE VALUE GATE.  Four landmarks, MEASURED 2026-08-29 on the unmutated tree
+-- at commit 35e0ed0 (GHDL 1.0.0 mcode), pinned here because until this file
+-- pinned them THIS ROW COULD NOT FAIL ON A WRONG NUMBER.  MEASURED, and
+-- reproduced by TRACK OI3B at commit 4736950: this row PASSED with
+-- `rtl/attn_block.vhd`'s v_ref fold reverted to defect C1 at all four of its
+-- index sites, and PASSED again with the fold collapsed to a single register
+-- shared across every layer AND every KV head.  Both mutants moved
+-- R_X(0) from -14252 to -14240 and hash(R_X) from 7668 to 97483, so the
+-- numbers were there to be compared and nothing compared them.
+--
+-- Teeth: `sim/mutate_llama_top_land.sh` rows P1 and P2 are exactly those two
+-- mutants, and both are KILLED here now.  See
+-- docs/debugging/2026-08-29_oi3b-top-level-value-gate.md.
+--
+-- A LANDMARK IS A CHANGE DETECTOR, NOT AN ORACLE.  It says the numbers are
+-- what they were when a human last looked, never that they are attention.
+-- The independent value oracle for this seam is `ref/attn_block_seq_vec.c`
+-- through `sim/tb_attn_kv_seam.vhd`, at the BLOCK level.  If a legitimate
+-- change moves these four, say in the commit message WHY and record both the
+-- old and the new values; a landmark updated silently is worth nothing.
 library ieee; use ieee.std_logic_1164.all;
 
 entity tb_llama_top_seq is
@@ -57,5 +78,9 @@ begin
       KV_BLOCK => 16,
       N_ROT    => 16,
       MAXPOS   => 8,
-      KV_AXI   => true);
+      KV_AXI   => true,
+      EXP_X0    => -14252,
+      EXP_XSUM  => 7668,
+      EXP_XALL  => 96762,
+      EXP_STEPH => 57526);
 end architecture;

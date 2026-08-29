@@ -502,6 +502,74 @@ entity tb_llama_top is
     -- a claim that the card needs this depth; `sim/tb_llama_top_smp.vhd`
     -- row M10 is the measurement that says the card's peak occupancy is one.
     SMP_FIFO  : positive := 64;
+    -- ==================================================================
+    -- THE VALUE GATE.  READ THIS BEFORE ADDING A ROW TO sim/regress.sh.
+    --
+    -- WHY IT EXISTS.  Until 2026-08-29 the `fail` sum below was built from
+    -- STRUCTURAL fault counters only -- schedule mismatches, skew differences
+    -- across latency points, degenerate residuals, KV placement faults.  The
+    -- numbers the machine computed were PRINTED, in the PASS line, and
+    -- compared against nothing.  So the whole family's gate was
+    -- self-consistency, and A DETERMINISTIC DEFECT IS CONSISTENT WITH ITSELF.
+    --
+    -- MEASURED, and this is the reason the generics below are here.  With
+    -- `rtl/attn_block.vhd`'s `v_ref` fold reverted to defect C1 at all four
+    -- of its index sites, `tb_llama_top_seq` printed
+    --   OVERALL PASS 1 FAIL 0
+    -- and with the fold collapsed to a SINGLE register shared across every
+    -- layer AND every KV head -- strictly worse than C1 -- it printed
+    --   OVERALL PASS 1 FAIL 0
+    -- again.  Two runs, 299 s and 319 s.  See
+    -- docs/debugging/2026-08-29_oi3b-top-level-value-gate.md and section 11
+    -- of docs/debugging/2026-08-29_c-seam-layer-interleave.md.
+    --
+    -- WHAT THESE ARE AND WHAT THEY ARE NOT.  A landmark is a GOLDEN VALUE
+    -- taken from a run of this design.  It is a change detector with a
+    -- recorded reference point, NOT an independent model: it says "the
+    -- numbers are what they were when a human last looked", never "the
+    -- numbers are attention".  The independent oracles live one level down
+    -- (`ref/attn_block_seq_vec.c` via `sim/tb_attn_kv_seam.vhd`) and in the
+    -- CAPTURE path (`tools/ref9b/bisect_scaled.py`, 58 of 63 seams).  What a
+    -- landmark DOES do, and what nothing here did before, is FAIL.
+    --
+    -- FOUR OF THEM, BECAUSE THEY HAVE DIFFERENT REACH.  Each is teeth-checked
+    -- against a named mutation in the write-up; do not delete one as
+    -- redundant without re-running that table.
+    --
+    --   EXP_X0     `results(0)(NTOK-1)(0)`.  The element-0 landmark this
+    --              file's header has quoted since 2026-08-28.  Weakest of the
+    --              four and kept for CONTINUITY with those notes.
+    --   EXP_XSUM   `hash(R_X)`, the positional hash of the LAST token's
+    --              residual, run 0.  The other half of the published pair.
+    --   EXP_XALL   the same hash taken over EVERY token of run 0, not only
+    --              the last.  A defect that moves token 1 and reconverges by
+    --              the last token is invisible to EXP_XSUM and visible here.
+    --   EXP_STEPH  a hash of every COMPLETION's captured exponent and write
+    --              hash (`obs_cmp_exp`, `obs_wsum`), over the whole schedule.
+    --              This is the one that reaches seams the residual cannot.
+    --              MEASURED by TRACK CAPTURE: a `gdn_silu` truncation moves
+    --              R_Y-0/1/2 and R_ER-0/1/2 and leaves `hash(R_X)` bit-
+    --              identical, because R_ER sits at exp 16 while R_X.embed
+    --              sits at exp 3 and the residual's alignment shift discards
+    --              exactly the bits it moved.  EXP_X0, EXP_XSUM and EXP_XALL
+    --              are ALL blind to that defect and EXP_STEPH is not.
+    --
+    -- THE SENTINELS ARE DELIBERATE.  `integer'low` and -1 mean "this run is
+    -- not gated on values", and the run says so loudly in its PASS line
+    -- rather than quietly.  Manual runs at shapes nobody has recorded a
+    -- landmark for stay usable; a GATED row that leaves them unset is a row
+    -- back in the state this block exists to end, and the NOTE is how the
+    -- next reader finds that out.  -1 is a safe sentinel for the three
+    -- hashes: they are `mod 100003` and can never be negative.
+    --
+    -- WHEN A LANDMARK LEGITIMATELY MOVES, and it will, the honest procedure
+    -- is the one b75d7a1 used: say in the commit message WHY the numbers
+    -- moved, and record the old and new values.  A landmark updated without
+    -- an explanation is worth exactly as much as no landmark.
+    EXP_X0    : integer  := integer'low;
+    EXP_XSUM  : integer  := -1;
+    EXP_XALL  : integer  := -1;
+    EXP_STEPH : integer  := -1;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
     VERBOSE   : boolean  := false;
@@ -1045,6 +1113,71 @@ architecture tb of tb_llama_top is
   signal fail       : natural := 0;
   signal xsum       : integer := 0;
   signal rsum       : integer := 0;
+  -- The value gate.  `n_bad_land` reaches `fail`, which is the whole point:
+  -- a landmark that only reported would be the decoration this replaces.
+  signal xall       : integer := 0;
+  signal steph      : integer := 0;
+  signal n_bad_land : natural := 0;
+
+  -- ---- THE DEFAULT ROW'S LANDMARK, AND WHY IT CANNOT BE A WRAPPER --------
+  --
+  -- `sim/tb_llama_top_seq.vhd`, `_real.vhd` and `_normw.vhd` pin their own
+  -- landmarks in their generic maps.  The DEFAULT gate row has no wrapper --
+  -- it IS this entity, discovered by name -- and `sim/regress.sh` passes no
+  -- generics at all, so there is nowhere to put four numbers for it.
+  --
+  -- Making the EXP_* defaults non-sentinel would have gated it, and would
+  -- ALSO have turned every row of `sim/mutate_llama_top_kv.sh` red, controls
+  -- included: that harness runs THIS entity at the `seq` generic set with
+  -- `-g` arguments and no EXP_* overrides, so a default landmark measured at
+  -- the default shape would fail on all 23 of its cases and every control
+  -- would report a kill it did not earn.  MEASURED as a design constraint,
+  -- not guessed: `BASE=` at the top of that file is the generic set.
+  --
+  -- So the default-shape landmark is applied ONLY when the run is actually at
+  -- the default shape.  `AT_DEFAULT` is that test.
+  --
+  -- THE LITERALS BELOW ARE COPIES OF THE GENERIC DEFAULTS AND NOTHING
+  -- ENFORCES THAT THEY STAY COPIES.  If a default moves and this list does
+  -- not, `AT_DEFAULT` goes false and the default row SILENTLY LOSES ITS GATE.
+  -- That is the failure this whole block exists to prevent, so it is exactly
+  -- what the "NO VALUE GATE" note at the end of the run is for: it is not
+  -- decoration, it is the only thing that reports this.
+  constant AT_DEFAULT : boolean :=
+       (BLOCKS = 4) and (ATTN_INT = 4) and (NTOK = 1)
+   and (not A_BEHAV) and (not B_BEHAV) and (not B_SRC_REAL)
+   and NORM_ANCHOR and (not NORM_REAL) and (not C_REAL)
+   and (NORM_W_IMAGE = "") and (W_IMAGE = "")
+   and (ATTN_HD = 32) and (KV_BLOCK = 4) and (N_ROT = 8) and (MAXPOS = 4)
+   and (not KV_AXI)
+   and (not MUT_KV_STALE) and (not MUT_KV_DROP_REC) and (not MUT_KV_ZERO)
+   and (not MUT_TOK_RESET) and (not MUT_KV_NO_BRESP) and EMBED_VARY;
+
+  -- MEASURED 2026-08-29 on the unmutated tree at commit 35e0ed0, GHDL 1.0.0
+  -- mcode, from this file's own "P14 landmarks measured" line.  See
+  -- docs/debugging/2026-08-29_oi3b-top-level-value-gate.md for the run.
+  -- The DEFAULT generic set: 4 blocks, ATTN_INT 4, NTOK 1, the attention stub
+  -- (C_REAL false), the anchored behavioural norm, no weight image, no KV.
+  -- At NTOK = 1, EXP_XALL is by construction equal to EXP_XSUM -- it is the
+  -- same hash over one token -- and it is pinned anyway so that raising NTOK
+  -- here without re-measuring is a FAILURE rather than a silent widening.
+  constant DEF_X0    : integer := -12739;
+  constant DEF_XSUM  : integer := 38863;
+  constant DEF_XALL  : integer := 38863;
+  constant DEF_STEPH : integer := 6432;
+
+  -- The landmark actually in force: an explicit generic always wins, so a
+  -- wrapper or a `-g` argument can override the default-shape numbers.
+  function pick (g, d : integer; unset : integer) return integer is
+  begin
+    if g /= unset then return g; end if;
+    if AT_DEFAULT then return d; end if;
+    return unset;
+  end function;
+  constant L_X0    : integer := pick(EXP_X0,    DEF_X0,    integer'low);
+  constant L_XSUM  : integer := pick(EXP_XSUM,  DEF_XSUM,  -1);
+  constant L_XALL  : integer := pick(EXP_XALL,  DEF_XALL,  -1);
+  constant L_STEPH : integer := pick(EXP_STEPH, DEF_STEPH, -1);
 
   -- The token embedding.  Deterministic, non-trivial, and not symmetric: a
   -- residual stream that is accidentally zeroed or accidentally copied has to
@@ -2535,11 +2668,117 @@ begin
       wait for 0 ns;
     end loop;
 
+    -- The same hash over EVERY token of run 0.  `xsum` sees the last token
+    -- only, so a defect that moves token 1 and has reconverged by the last
+    -- one is invisible to it -- and divergence-then-reconvergence is exactly
+    -- what P2's own comment says a KV race looks like.  Token-major so the
+    -- hash is order-sensitive across the token axis as well as within it.
+    xall <= 0;
+    wait for 0 ns;
+    for t in 0 to NTOK-1 loop
+      for i in 0 to SHAPE.hidden-1 loop
+        xall <= (xall * 31 + results(0)(t)(i) + 40000) mod 100003;
+        wait for 0 ns;
+      end loop;
+    end loop;
+
+    -- THE STEP TRACE, HASHED.  `tr_exp` and `tr_sum` are the exponent and the
+    -- write hash the region lock captured at EVERY completion -- so this
+    -- reaches every region a step writes, R_Y and R_ER included, and not only
+    -- the residual the token ends on.  That is the coverage the three R_X
+    -- landmarks do not have: see the EXP_STEPH note in the generic block for
+    -- the measured `gdn_silu` case where R_X is bit-identical and six seams
+    -- have moved.
+    --
+    -- RUN 0 ONLY, and the bound is NSTEP-1 exactly as the divergence trace
+    -- above uses.  The other runs are already required to be bit-identical to
+    -- run 0 on both arrays by the two loops above, so hashing them as well
+    -- would add no resolution and would tie the landmark to NRUNS.
+    --
+    -- `tr_*` HOLDS THE LAST TOKEN'S TRACE, not the whole sequence: `n_cmp` is
+    -- reset by `go`, which pulses per token, so each token overwrites the
+    -- previous one's entries.  Stated because it bounds the claim -- an
+    -- intermediate seam that is wrong only in a NON-final token, and whose
+    -- error does not reach any token's R_X, is not covered by anything here.
+    steph <= 0;
+    wait for 0 ns;
+    for i in 0 to NSTEP-1 loop
+      steph <= (steph * 31 + tr_exp(0)(i) + 40000) mod 100003;
+      wait for 0 ns;
+      steph <= (steph * 31 + (tr_sum(0)(i) mod 100003)) mod 100003;
+      wait for 0 ns;
+    end loop;
+
+    -- ---- P14: THE VALUE GATE ---------------------------------------------
+    -- Every branch increments `n_bad_land`, which reaches `fail`.  A check
+    -- whose result you do not branch on is decoration, and that sentence is
+    -- already in this file two hundred lines up about a different counter.
+    if L_X0 /= integer'low and results(0)(NTOK-1)(0) /= L_X0 then
+      n_bad_land <= n_bad_land + 1;
+      wait for 0 ns;
+      report "tb_llama_top: P14 -- R_X(0) is "
+           & integer'image(results(0)(NTOK-1)(0)) & " and the recorded "
+           & "landmark for this configuration is " & integer'image(L_X0)
+           & ".  The machine computed different numbers.  Either something "
+           & "regressed, or the landmark is stale and the commit that moved "
+           & "it must say why." severity error;
+    end if;
+    if L_XSUM >= 0 and xsum /= L_XSUM then
+      n_bad_land <= n_bad_land + 1;
+      wait for 0 ns;
+      report "tb_llama_top: P14 -- hash(R_X) over the last token is "
+           & integer'image(xsum) & " and the recorded landmark is "
+           & integer'image(L_XSUM) & "." severity error;
+    end if;
+    if L_XALL >= 0 and xall /= L_XALL then
+      n_bad_land <= n_bad_land + 1;
+      wait for 0 ns;
+      report "tb_llama_top: P14 -- hash(R_X) over ALL " & integer'image(NTOK)
+           & " tokens is " & integer'image(xall)
+           & " and the recorded landmark is " & integer'image(L_XALL)
+           & ".  A token other than the last one moved." severity error;
+    end if;
+    if L_STEPH >= 0 and steph /= L_STEPH then
+      n_bad_land <= n_bad_land + 1;
+      wait for 0 ns;
+      report "tb_llama_top: P14 -- hash of the " & integer'image(NSTEP)
+           & "-completion step trace is " & integer'image(steph)
+           & " and the recorded landmark is " & integer'image(L_STEPH)
+           & ".  Some step's captured exponent or write hash moved, which "
+           & "reaches seams the residual's alignment can discard."
+        severity error;
+    end if;
+    if L_X0 = integer'low and L_XSUM < 0 and L_XALL < 0
+       and L_STEPH < 0 then
+      -- NOT a failure: manual exploration at an unrecorded shape is a
+      -- legitimate use of this file.  It is loud because a GATED row in this
+      -- state is the defect OI-3b names, and nothing else would say so.
+      report "tb_llama_top: P14 -- NO VALUE GATE.  None of EXP_X0, EXP_XSUM, "
+           & "EXP_XALL or EXP_STEPH is set, so this run is checked on "
+           & "structure and self-consistency alone and a deterministic wrong "
+           & "answer would print the same verdict as a right one.  Measured "
+           & "landmarks for this run are printed below; a GATED row must pin "
+           & "them." severity note;
+    end if;
+
     -- ---- verdict ---------------------------------------------------------
     fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
           + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp
-          + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt;
+          + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt + n_bad_land;
     wait for 0 ns;
+
+    -- THE MEASURED LANDMARKS, ALWAYS, PASS OR FAIL.  Printed as a line a
+    -- wrapper can be pasted from, because the alternative is transcribing
+    -- four numbers out of prose and the transcription is where a stale
+    -- landmark comes from.  The word `landmark` is deliberately not one of
+    -- sim/regress.sh's FAIL_RE literals.
+    report "tb_llama_top: P14 landmarks measured -- "
+         & "EXP_X0 => "    & integer'image(results(0)(NTOK-1)(0)) & ", "
+         & "EXP_XSUM => "  & integer'image(xsum)  & ", "
+         & "EXP_XALL => "  & integer'image(xall)  & ", "
+         & "EXP_STEPH => " & integer'image(steph)
+         & "   (" & integer'image(n_bad_land)
+         & " of the pinned landmarks moved)" severity note;
 
     if CAPTURE /= "" then
       report "tb_llama_top: seam capture wrote " & integer'image(cap_nrec)
