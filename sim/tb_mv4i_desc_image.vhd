@@ -62,6 +62,23 @@ entity tb_mv4i_desc_image is
     EXPECT      : integer  := -1;
     -- -1 = do not check ERR_INFO.
     EXPECT_INFO : integer  := -1;
+    -- -1 = do not check STATUS bit 4 (ERR_ADDR, latched AT DESC_PTR_HI WRITE
+    -- TIME).  0 or 1 pins it.  Added 2026-08-29 by TRACK DESC-MUT: without it
+    -- the write-time check was covered by NO case in any bench, because the
+    -- S_IDLE fits_addr(dptr) refusal produces the SAME err_code from a
+    -- DIFFERENT check, so a mutation that removes the write-time loop is
+    -- invisible.  MEASURED: mutation W2 below survives with this at -1 and is
+    -- killed with it at 1.
+    EXPECT_EADDR : integer := -1;
+    -- The descriptor slave's behaviour.  DEAD never answers AR at all, which
+    -- is the only way to reach EC_WDOG from a bench that owns the slave;
+    -- STALL delays arready by that many cycles, which is how a WDOG_LIMIT
+    -- that has been made SMALLER is separated from one that has been removed.
+    DSLV_DEAD   : boolean  := false;
+    DSLV_STALL  : natural  := 0;
+    -- Status polls before the run is declared a timeout.  A generic so a case
+    -- that is EXPECTED to hang costs seconds rather than minutes.
+    POLL_MAX    : positive := 200000;
     -- The FK33 build.  Same numbers as rtl/matvec_int4_desc_axi.vhd's own
     -- generic defaults, so this bench talks to the build the card will carry
     -- rather than to a shrunken one.
@@ -138,6 +155,13 @@ architecture sim of tb_mv4i_desc_image is
 
   -- "the core was started", latched off the first weight-side AR
   signal started : std_logic := '0';
+  -- Descriptor-fetch AR handshakes, counted.  This is the observable that
+  -- separates "S_ERR is terminal" from "S_ERR can be re-armed": a re-armed
+  -- design goes back to S_IDLE and FETCHES THE DESCRIPTOR AGAIN, while every
+  -- register-visible bit (err, err_code, err_info) is identical either way
+  -- because nothing clears them but reset.  MEASURED 2026-08-29: mutation E2
+  -- survives every other check in this bench and is killed by this counter.
+  signal d_ar_cnt : natural := 0;
 begin
   ck : process
   begin
@@ -195,9 +219,16 @@ begin
   begin
     d_arready <= '0'; d_rvalid <= '0'; d_rlast <= '0';
     wait until aresetn = '1';
+    if DSLV_DEAD then
+      -- Never answer.  The fetch must then be ended by the design's own
+      -- watchdog and by nothing else; if the design has no watchdog the bench
+      -- runs out of status polls and reports a timeout, which is a FAIL.
+      wait;
+    end if;
     loop
       d_arready <= '0';
       while d_arvalid = '0' loop wait until rising_edge(clk); end loop;
+      for i in 1 to DSLV_STALL loop wait until rising_edge(clk); end loop;
       a := unsigned(d_araddr);
       n := to_integer(unsigned(d_arlen)) + 1;
       assert d_arburst = "01"
@@ -238,9 +269,15 @@ begin
   begin
     if rising_edge(clk) then
       if aresetn = '0' then
-        started <= '0';
-      elsif m_arvalid /= (m_arvalid'range => '0') then
-        started <= '1';
+        started  <= '0';
+        d_ar_cnt <= 0;
+      else
+        if m_arvalid /= (m_arvalid'range => '0') then
+          started <= '1';
+        end if;
+        if d_arvalid = '1' and d_arready = '1' then
+          d_ar_cnt <= d_ar_cnt + 1;
+        end if;
       end if;
     end if;
   end process;
@@ -280,6 +317,8 @@ begin
     variable tmo : integer;
     variable verdict : integer;      -- -1 accepted, else the err_code
     variable info    : integer;
+    variable eaddr   : integer;      -- STATUS bit 4 as read at the end
+    variable arcnt0  : natural;      -- descriptor AR handshakes before re-GO
 
     procedure awr(addr : natural; d : std_logic_vector(31 downto 0)) is
     begin
@@ -344,7 +383,7 @@ begin
 
     verdict := -2; info := -1;
     tmo := 0;
-    while verdict = -2 and tmo < 200000 loop
+    while verdict = -2 and tmo < POLL_MAX loop
       ard(16#0C#, st);
       if st(2) = '1' then
         verdict := to_integer(unsigned(st(11 downto 8)));
@@ -367,10 +406,84 @@ begin
         severity note;
     end if;
 
-    if verdict = EXPECT and (EXPECT_INFO < 0 or info = EXPECT_INFO) then
+    -- ===================================================================
+    -- WHAT A REFUSAL MUST *ALSO* BE.  Added 2026-08-29 by TRACK DESC-MUT.
+    -- Until then this bench asked only "which err_code", and two mutations of
+    -- rtl/matvec_int4_desc_axi.vhd that break a property its own header calls
+    -- load-bearing survived every case in the suite.
+    -- ===================================================================
+    if verdict >= 0 then
+      -- (1) A REFUSED DESCRIPTOR MUST NOT ALSO REPORT DONE.  `st` is the very
+      -- status word the poll loop read when it first saw err, so this is that
+      -- instant and not a later one.  Kills mutation E3.
+      assert st(0) = '0'
+        report "REFUSED with err_code " & integer'image(verdict) &
+               " and STATUS bit 0 (done) SET in the SAME status word: a "
+             & "driver polling `done or err` would read a result the design "
+             & "never computed"
+        severity failure;
+
+      -- (2) S_ERR MUST BE TERMINAL.  "a design that could be re-armed by
+      -- another GO would let a driver that ignores STATUS keep running
+      -- descriptors past a rejected one" -- rtl/matvec_int4_desc_axi.vhd's own
+      -- comment on S_ERR.  Nothing checked it.  The observable is the
+      -- DESCRIPTOR FETCH, not any status bit: err/err_code/err_info survive a
+      -- re-arm unchanged because only reset clears them, so a re-armed design
+      -- is register-indistinguishable and AXI-distinguishable.  Kills E2.
+      -- TWO GOs, not one, and the reason is worth stating because one GO is
+      -- what a first draft used and it MEASURED E2 as a survivor.  `go_p` is a
+      -- sticky capture bit that S_IDLE CONSUMES.  A design re-armed out of
+      -- S_ERR consumes the first GO on the way out, lands in S_IDLE with
+      -- go_p already cleared, and sits there: the re-arm has happened but
+      -- nothing observable has.  The second GO is what makes it run.  A
+      -- design whose S_ERR is terminal absorbs both and fetches nothing.
+      arcnt0 := d_ar_cnt;
+      awr(16#08#, x"00000001");
+      for i in 0 to 49 loop wait until rising_edge(clk); end loop;
+      awr(16#08#, x"00000001");
+      for i in 0 to 299 loop wait until rising_edge(clk); end loop;
+      assert d_ar_cnt = arcnt0
+        report "S_ERR IS NOT STICKY: a second GO after err_code " &
+               integer'image(verdict) & " re-fetched the descriptor (" &
+               integer'image(arcnt0) & " -> " & integer'image(d_ar_cnt) &
+               " AR handshakes)"
+        severity failure;
+      assert started = '0'
+        report "S_ERR IS NOT STICKY: a second GO after err_code " &
+               integer'image(verdict) & " started the core"
+        severity failure;
+      ard(16#0C#, st);
+      assert st(2) = '1'
+        report "the err bit did not survive a second GO" severity failure;
+      assert st(0) = '0'
+        report "a second GO after a refusal set DONE" severity failure;
+    end if;
+
+    -- ERR_ADDR, STATUS bit 4.  Read AFTER the verdict so the poll loop's own
+    -- reads cannot have raced the DESC_PTR_HI write, and read unconditionally
+    -- so a case that expects it CLEAR is a real check and not a skipped one.
+    ard(16#0C#, st);
+    if st(4) = '1' then eaddr := 1; else eaddr := 0; end if;
+
+    if verdict = EXPECT and (EXPECT_INFO < 0 or info = EXPECT_INFO)
+       and (EXPECT_EADDR < 0 or eaddr = EXPECT_EADDR) then
       report "PASS: descriptor image judged as expected (" &
              integer'image(verdict) & ")" severity note;
+      -- The canonical verdict line, in the "<entity>: PASS" spelling
+      -- sim/mutverdict.py matches.  It is SEPARATE from the line above
+      -- because tools/verify_mv4i_desc.py parses the RESULT line by regex and
+      -- a harness must not rewrite the bench it measures.  It also carries the
+      -- code in DECIMAL, because the RESULT line prints "0x" in front of a
+      -- decimal integer'image and so shows err_code 15 as "0x15".
+      report "tb_mv4i_desc_image: PASS -- verdict " & integer'image(verdict) &
+             " info " & integer'image(info) &
+             " err_addr " & integer'image(eaddr) severity note;
     else
+      report "tb_mv4i_desc_image: FAIL -- expected verdict " &
+             integer'image(EXPECT) & " info " & integer'image(EXPECT_INFO) &
+             " err_addr " & integer'image(EXPECT_EADDR) & ", got verdict " &
+             integer'image(verdict) & " info " & integer'image(info) &
+             " err_addr " & integer'image(eaddr) severity note;
       report "FAIL: expected " & integer'image(EXPECT) &
              " info " & integer'image(EXPECT_INFO) &
              ", got " & integer'image(verdict) &
