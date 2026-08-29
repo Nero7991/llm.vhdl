@@ -836,7 +836,33 @@ begin
           end loop;
           -- written as ONE full-width word: lane-by-lane slice assignment looks
           -- like a partial write and pushes Vivado into byte-wide write enables
-          if out_mode /= "10" then ybuf(re2_t) <= ynew; end if;
+          --
+          -- `out_mode = "00"`, NOT `/= "10"`.  ybuf is the BFP OUTPUT BUFFER
+          -- and nothing else: spec 7.6's mode table gives it to BFP alone
+          -- ("Buffering: BFP into the output buffer; raw none; partial none"),
+          -- and it is read only in S_EMIT, which is reachable only through
+          -- S_SCAN, which only out_mode = "00" enters.  So the raw-mode write
+          -- was dead -- and out of range.  ybuf is ceil(MAXROWS_BFP/ROWS_IF)
+          -- tiles deep, while S_IDLE bounds n_rows against MAXROWS_BFP ONLY in
+          -- BFP mode, because 7.6 says "in raw mode M may exceed MAXROWS_BFP"
+          -- (the lm_head is the caller that needs it).  A raw job one row past
+          -- that bound therefore indexed one tile past the array: harmless in
+          -- hardware, since no reader exists in that mode, and an immediate
+          -- abort in simulation.  MEASURED at MAXROWS_BFP=64/ROWS_IF=4,
+          -- n_rows = 65: "index (16) out of bounds (0 to 15) at
+          -- rtl/matvec_core.vhd:839", with the SAME 65 rows in partial mode
+          -- passing immediately before it.  Worklog OI-10; the same buffer's
+          -- read side was OI-8.
+          --
+          -- Narrowing the write ENABLE, not clamping the address as OI-8 did.
+          -- OI-8 clamped because that access is a READ that has to stay
+          -- unconditional to infer the BRAM read port -- see the note at it.
+          -- This one is a WRITE whose condition already IS the write enable, so
+          -- narrowing it changes nothing about inference, whereas a clamped
+          -- address would put a comparator in the BRAM write-address path and
+          -- keep firing a dead write into the last tile on every raw job past
+          -- the bound.
+          if out_mode = "00" then ybuf(re2_t) <= ynew; end if;
           y_addr <= std_logic_vector(to_unsigned(rbase, 16));
           if out_mode /= "00" then y_we <= '1'; end if;
         end if;

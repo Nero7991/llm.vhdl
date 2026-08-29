@@ -12,6 +12,23 @@
 -- a pseudo-random valid so the core is exercised under backpressure rather than
 -- only at full rate.  Activations come from a 1-cycle-latency block memory,
 -- standing in for act_mem_striped.
+--
+-- ALL THREE out_mode VALUES ARE DRIVEN HERE, and all three are compared against
+-- ref/matvec_int4.c rather than against each other (spec 7.6's mode table):
+--
+--   "00" BFP      int32 into ybuf, then one shared ns over all n_rows and an
+--                 int16 mantissa out.  y_exp = w_exp + x_exp - out_shift - ns.
+--                 n_rows <= MAXROWS_BFP is ENFORCED by the core.
+--   "01" raw      no buffering; sat32(round_shift(acc, out_shift)) straight
+--                 out of row end, sign-extended to 64.  y_exp carries no ns
+--                 term.  n_rows > MAXROWS_BFP is LEGAL (nothing is buffered).
+--   "10" partial  no buffering, no requant and no sat32 at all: the UNROUNDED
+--                 s48 accumulator, y_exp = w_exp + x_exp (14.2).
+--                 n_rows > MAXROWS_BFP is legal here too.
+--
+-- The raw-mode expectation needed NO new vector: ref/matvec_int4.c writes a
+-- YDATA line inside mv4i_matvec on every non-partial pass, and that value IS
+-- the raw payload.  The loader was throwing the line away.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -40,10 +57,13 @@ architecture sim of tb_matvec_core is
 
   signal n_cols, out_shift, w_exp, x_exp, y_exp : integer := 0;
   -- n_rows and tiles_s have TWO sources -- the trace's DIMS line, and the
-  -- top-of-range pass below -- and a signal may have only one driver, so the
-  -- loader writes the _tr pair and the driver only raises top_pass.
+  -- shape-override passes below -- and a signal may have only one driver, so
+  -- the loader writes the _tr pair and the driver only writes ov_rows.
+  -- ov_rows = 0 means "use the trace's own M"; any other value overrides it,
+  -- which is how the top-of-range and above-the-range passes are shaped
+  -- without a second trace.
   signal n_rows_tr, tiles_tr : integer := 0;
-  signal top_pass : boolean := false;
+  signal ov_rows : integer := 0;
   signal n_rows, tiles_s : integer;
   signal out_mode : std_logic_vector(1 downto 0) := "00";
   signal cb_we    : std_logic := '0';
@@ -80,6 +100,10 @@ architecture sim of tb_matvec_core is
   type row_t is array(0 to MAXR-1)      of signed(63 downto 0);
   signal e_part, e_contrib : exp_t := (others => (others => '0'));
   signal e_acc, e_ymant    : row_t := (others => (others => '0'));
+  -- The RAW-mode payload: sat32(round_shift(acc, out_shift)), sign-extended.
+  -- Same line the BFP pass consumes as its pre-normalisation intermediate, so
+  -- one trace serves both modes.
+  signal e_ydata           : row_t := (others => (others => '0'));
   signal e_ns, e_yexp, nb_s, ri_s : integer := 0;
   -- expected sticky sat_event for the BFP pass, from the trace.  -1 means
   -- the trace predates SATEV, in which case the check is skipped rather
@@ -91,6 +115,7 @@ architecture sim of tb_matvec_core is
   signal nmant : integer := 0;   -- rows actually emitted, for coverage
   signal nemit  : integer := 0;  -- y_mask'd rows out of the port, UNGATED
   signal nm_top : integer := 0;  -- nemit as it stood entering PASS 3
+  signal yb3    : integer := 0;  -- ychk as it stood entering PASS 4
   signal ybad, ychk : integer := 0;   -- own counters: one driver per signal
   signal finished : boolean := false;
 begin
@@ -106,11 +131,13 @@ begin
     wait;
   end process;
 
-  -- THE TOP OF THE ROW RANGE.  n_rows = MAXR makes ceil(n_rows / RI) equal
-  -- the core's own TILES = ceil(MAXROWS_BFP / RI) exactly, at every RI, which
-  -- is the shape the emit pointer walks one word past.  See PASS 3.
-  n_rows  <= MAXR                  when top_pass else n_rows_tr;
-  tiles_s <= (MAXR + RI - 1) / RI  when top_pass else tiles_tr;
+  -- THE SHAPE OVERRIDE.  n_rows = MAXR makes ceil(n_rows / RI) equal the
+  -- core's own TILES = ceil(MAXROWS_BFP / RI) exactly, at every RI, which is
+  -- the shape the emit pointer walks one word past (PASS 3).  n_rows > MAXR is
+  -- illegal in BFP mode and LEGAL in raw and partial, which is the shape the
+  -- ybuf WRITE walks past the end of (PASS 8, worklog OI-10).
+  n_rows  <= ov_rows                  when ov_rows /= 0 else n_rows_tr;
+  tiles_s <= (ov_rows + RI - 1) / RI  when ov_rows /= 0 else tiles_tr;
 
   -- stand-in for act_mem_striped: registered read, 1-cycle latency (7.8)
   actmem : process(clk)
@@ -195,6 +222,9 @@ begin
         read(l, a); hread(l, hv); e_acc(a) <= signed(hv);
       elsif tok(1 to 5) = "YMANT" then
         read(l, a); hread(l, hv); e_ymant(a) <= signed(hv);
+      elsif tok(1 to 5) = "YDATA" then
+        -- the raw-mode payload, and the BFP pass's own pre-ns intermediate
+        read(l, a); hread(l, hv); e_ydata(a) <= signed(hv);
       elsif tok(1 to 2) = "NS" then
         read(l, a); e_ns <= a;
       elsif tok(1 to 4) = "YEXP" then
@@ -318,15 +348,22 @@ begin
       for b in 0 to nb_s-1 loop
         for rr in 0 to RI-1 loop
           r := t*RI + rr;
+          -- `r < MAXR` as well as `r < n_rows`: PASS 8 drives n_rows ABOVE the
+          -- core's MAXROWS_BFP, which raw mode admits, and widx/wscl are only
+          -- MAXR deep.  Rows the trace never described are fed index 0 with
+          -- SCALE 0 -- the same zero-fill the packer applies to pad rows -- so
+          -- their contribution is identically zero and the checker below knows
+          -- to expect zero rather than nothing.
           for j in 0 to BLK-1 loop
-            if r < n_rows then
+            if r < n_rows and r < MAXR then
               w_data((rr*BLK + j)*4+3 downto (rr*BLK + j)*4)
                 <= std_logic_vector(to_unsigned(widx(r, b*BLK + j), 4));
             else
               w_data((rr*BLK + j)*4+3 downto (rr*BLK + j)*4) <= "0000";
             end if;
           end loop;
-          if r < n_rows then s_data(rr*16+15 downto rr*16) <= wscl(r, b);
+          if r < n_rows and r < MAXR then
+                             s_data(rr*16+15 downto rr*16) <= wscl(r, b);
           else               s_data(rr*16+15 downto rr*16) <= x"0000"; end if;
         end loop;
         -- pseudo-random backpressure
@@ -372,9 +409,22 @@ begin
             -- where an expectation exists could not see a dropped tile there.
             ne := ne + 1;
             r := to_integer(unsigned(y_addr)) + rr;
-            if r >= n_rows_tr then next; end if;   -- no expectation above it
-            if out_mode = "10" then want := e_acc(r);
-            else                    want := e_ymant(r); end if;
+            -- EVERY masked row carries an expectation now, including the ones
+            -- above the trace's own M.  The feeder gives those rows index 0
+            -- and SCALE 0, so acc is identically zero and the expected output
+            -- is zero in all three modes.  The previous version skipped them,
+            -- which is why the passes that raise n_rows above the trace shape
+            -- scored a row COUNT and no values at all -- exactly the hole
+            -- TRACK DIVIDE's mutation M3 walked through, where the only
+            -- value-checking case ran at one shape and the shape sweep checked
+            -- completion.
+            if r < n_rows_tr then
+              if    out_mode = "10" then want := e_acc(r);
+              elsif out_mode = "01" then want := e_ydata(r);
+              else                       want := e_ymant(r); end if;
+            else
+              want := (others => '0');
+            end if;
             g := signed(y_data(rr*64+63 downto rr*64));
             nc := nc + 1;
             if g /= want then
@@ -394,6 +444,59 @@ begin
 
   -- ------------------------------------------------------------------ driver
   drv : process
+    -- One operation, with the shape and the mode named, plus the two checks
+    -- that are the same in every mode: the descriptor was accepted, and every
+    -- row it asked for came OUT.  The VALUES are scored by ycap/chk above and
+    -- reported in aggregate at the end.
+    --
+    -- The row COUNT is not decoration.  A dropped tile emits correct values
+    -- for the tiles it does emit, so a value-only check passes on it; and a
+    -- HANG scores as an acceptance on any check that only reads `err` after a
+    -- bounded poll (worklog OI-11).  Here a hang cannot score at all: the pass
+    -- blocks on `done`, so the run simply never reaches its report.
+    procedure run_pass(constant mode : in std_logic_vector(1 downto 0);
+                       constant rows : in integer;    -- 0 = the trace's own M
+                       constant tag  : in string) is
+      variable ne0 : integer;
+    begin
+      out_mode <= mode;
+      ov_rows  <= rows;
+      wait until rising_edge(clk);
+      wait until rising_edge(clk);
+      -- Named on entry, not only on failure.  These passes deliberately drive
+      -- shapes that ABORT the simulator on unfixed RTL, and an abort prints no
+      -- context of its own: without this line the log shows PASS 1's note and
+      -- then a bare index error, and which pass reached the defect has to be
+      -- bisected by deleting passes.
+      report tag & ": out_mode=" & to_string(mode) & " n_rows=" &
+             integer'image(n_rows) severity note;
+      ne0 := nemit;
+      start <= '1'; wait until rising_edge(clk); start <= '0';
+      wait until done = '1';
+      wait until rising_edge(clk);
+      wait until rising_edge(clk);
+      assert err = '0'
+        report tag & ": err fired on a descriptor spec 7.6 admits (n_rows = "
+               & integer'image(n_rows) & ", out_mode = " & to_string(mode)
+               & ")" severity failure;
+      assert nemit - ne0 = n_rows
+        report tag & " COVERAGE: " & integer'image(nemit - ne0) &
+               " rows out of the port, expected " & integer'image(n_rows) &
+               " -- a tile went missing rather than wrong" severity failure;
+      -- The exponent each mode owes, from spec 7.6's mode table and 14.2,
+      -- computed from the trace's own DIMS rather than from the BFP answer.
+      if mode = "01" then
+        assert y_exp = w_exp + x_exp - out_shift
+          report tag & ": RAW y_exp got " & integer'image(y_exp) & " want " &
+                 integer'image(w_exp + x_exp - out_shift) &
+                 " -- raw carries out_shift and NO ns term" severity failure;
+      elsif mode = "10" then
+        assert y_exp = w_exp + x_exp
+          report tag & ": PARTIAL y_exp got " & integer'image(y_exp) & " want "
+                 & integer'image(w_exp + x_exp) &
+                 " -- 14.2: the payload was never shifted" severity failure;
+      end if;
+    end procedure;
   begin
     rst <= '1'; wait for 40 ns;
     rst <= '0';                       -- release BEFORE loading, see loader
@@ -467,7 +570,7 @@ begin
     -- all unchanged from PASS 1, and e_acc/e_ymant are zero there too.  So the
     -- existing checkers score this pass as well, and the assertions below are
     -- the ones that would notice a tile going missing rather than wrong.
-    top_pass <= true;
+    ov_rows  <= MAXR;
     out_mode <= "00";
     wait until rising_edge(clk);
     nm_top <= nemit;
@@ -493,17 +596,97 @@ begin
              & "MAXROWS_BFP -- got ns=" & integer'image(tap_ns) & " y_exp="
              & integer'image(y_exp) & ", want ns=" & integer'image(e_ns)
              & " y_exp=" & integer'image(e_yexp) severity failure;
-    top_pass <= false;
+    ov_rows <= 0;
+    yb3 <= ychk;
+
+    -- ---------------------------------------------------------------------
+    -- PASS 4: RAW MODE, AGAINST THE REFERENCE.
+    --
+    -- out_mode = "01" emits sat32(round_shift(acc, out_shift)) straight out of
+    -- row end with no BFP normalisation, which is EXACTLY the YDATA line
+    -- ref/matvec_int4.c already writes inside mv4i_matvec.  So the oracle for
+    -- this mode was in the trace file the whole time and the loader was
+    -- dropping the line.
+    --
+    -- WHAT DROVE THIS MODE BEFORE, and why it is not an oracle: exactly one
+    -- bench in the tree, sim/tb_matvec_cb_lockstep, at one tile of ROWS_IF
+    -- rows.  It compares four runs AGAINST EACH OTHER (same codebook twice, a
+    -- different codebook, then the first one back) and never against the C
+    -- reference at all -- by design, it is testing codebook visibility.  A
+    -- round trip is not an oracle: a raw path that computed a consistently
+    -- wrong number would pass all four of its comparisons.
+    run_pass("01", 0, "PASS 4 RAW");
+    -- raw runs the SAME sat32 as BFP -- 14.2 exempts only partial -- so the
+    -- sticky flag must agree with the reference's BFP-pass value.
+    assert e_satev < 0
+        or (e_satev = 1 and sat_event = '1')
+        or (e_satev = 0 and sat_event = '0')
+      report "PASS 4 RAW: SAT_EVENT got " & std_logic'image(sat_event) &
+             " want " & integer'image(e_satev) & " -- raw applies sat32"
+      severity failure;
+    assert ychk > yb3
+      report "PASS 4 RAW: not one output value was compared" severity failure;
+
+    -- PASS 5 and 6: RAW at the TILE BOUNDARY, with VALUES checked.
+    --
+    -- n_rows = MAXR - RI + 1 gives a RAGGED last tile (one real row, RI-1 pad)
+    -- at tiles_r = TILES; n_rows = MAXR gives a FULL last tile at the same
+    -- tiles_r.  Both are the top corner of the declared range, and rows at and
+    -- above the trace's M are scored against zero rather than skipped, so
+    -- these are value checks and not merely completion checks.  That
+    -- distinction is the one TRACK DIVIDE's mutation M3 exploited: it was
+    -- wrong only at n_rows = 49/97/145, the shape sweep ran those shapes, and
+    -- the sweep checked only that the job completed.
+    run_pass("01", MAXR - RI + 1, "PASS 5 RAW ragged top tile");
+    run_pass("01", MAXR,          "PASS 6 RAW full top tile");
+
+    -- ---------------------------------------------------------------------
+    -- PASS 7: PARTIAL ABOVE MAXROWS_BFP.  THE CONTROL FOR PASS 8.
+    --
+    -- Spec 7.6's mode table: "n_rows > MAXROWS_BFP is legal in partial mode
+    -- (no output buffer is used)", and the core agrees -- S_IDLE bounds n_rows
+    -- against MAXROWS_BFP only when out_mode = "00".  Partial is the mode that
+    -- takes the SAME illegal-for-BFP row count and does NOT write ybuf, so it
+    -- separates "anything above MAXROWS_BFP breaks" from "the ybuf write
+    -- breaks".  Without it PASS 8 would not localize.
+    run_pass("10", MAXR + 1, "PASS 7 PARTIAL above MAXROWS_BFP");
+    assert sat_event = '0'
+      report "PASS 7: SAT_EVENT SET IN PARTIAL MODE: 14.2 runs no sat32"
+      severity failure;
+
+    -- ---------------------------------------------------------------------
+    -- PASS 8: RAW ABOVE MAXROWS_BFP.  WORKLOG OI-10.
+    --
+    -- Same row count as PASS 7, one mode over.  Raw is equally legal above
+    -- MAXROWS_BFP -- 7.6 says "in raw mode M may exceed MAXROWS_BFP" and the
+    -- lm_head is the caller that needs it -- but the row-end stage wrote
+    -- `ybuf(re2_t)` on every mode except partial, and ybuf is only
+    -- ceil(MAXROWS_BFP / RI) tiles deep.  So a raw job one row past the BFP
+    -- bound indexed one tile past the array.
+    --
+    -- MEASURED before the fix at MAXR=64 / RI=4 (TILES=16), n_rows = 65:
+    --   ghdl: index (16) out of bounds (0 to 15) at rtl/matvec_core.vhd:839
+    -- with PASS 7 -- the same 65 rows in partial mode -- passing immediately
+    -- before it.  Same family as OI-8 and the opposite side of the same
+    -- buffer: OI-8 was the READ walking one past on the last emit cycle.
+    --
+    -- Synthesis-benign for the same reason OI-8 was: nothing ever reads ybuf
+    -- in raw mode, because S_EMIT is reachable only through S_SCAN and only
+    -- out_mode = "00" goes there.  Simulation-fatal, and fatal on the ONE
+    -- descriptor the lm_head is supposed to issue.
+    run_pass("01", MAXR + 1, "PASS 8 RAW above MAXROWS_BFP");
 
     report "TOTAL: " & integer'image(nchk) & " stage + " &
            integer'image(ychk) & " output values compared, " &
-           integer'image(nbad + ybad) & " mismatches (BFP, PARTIAL and the "
-           & "top of the row range at n_rows = " & integer'image(MAXR) & ")"
-           severity note;
+           integer'image(nbad + ybad) & " mismatches (BFP, PARTIAL, RAW, the "
+           & "top of the row range at n_rows = " & integer'image(MAXR) &
+           " and both no-buffer modes above it at n_rows = " &
+           integer'image(MAXR + 1) & ")" severity note;
     assert nbad = 0 and ybad = 0
       report "RTL DIVERGES FROM THE C REFERENCE" severity failure;
     assert ychk > 0 report "output port never checked" severity failure;
-    report "RTL matches ref/matvec_int4.c at every stage" severity note;
+    report "RTL matches ref/matvec_int4.c at every stage, in all three "
+           & "out_mode values" severity note;
     finished <= true;
     wait;
   end process;
