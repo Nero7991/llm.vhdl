@@ -401,16 +401,23 @@ class Oracle(object):
         `tools/ref9b/seam_map.SEAMS`.
 
         Two edits, both forced and both stated:
-          * `R_X.embed` is dropped: it is a HOST write of the embedding, not
-            a descriptor step (TRACK TOKIO's finding, and `seq_opdec`'s
-            `tok_fsm` exists to publish it).
+          * The seams NO descriptor produces are dropped, and WHICH THOSE ARE
+            IS NOW DECLARED BY THE MAP (`seam_map.NON_DESCRIPTOR`) rather than
+            tested by name here.  It was `rtl == "R_X.embed"` until
+            2026-08-29, which knew about the host embedding write and nothing
+            else; when the map legitimately gained `TOKEN` -- the argmax
+            `sampler_stream` produces, which is downstream of the lm_head
+            descriptors rather than one of them -- this function counted it as
+            a step and `C1-count` went red at 504 against 505 with both the
+            program and the map correct.  A membership rule restated in a
+            consumer cannot see the file it is about change.
           * `LOGITS` becomes N row windows, because MAXROWS_BFP bounds
             n_rows in EVERY out_mode (matvec_int4_desc_axi:721-726).  The
             window list is derived here from the RTL bound; that derivation
             is itself one of the things being checked."""
         out = []
         for rtl, anchor, off, ln in SM.SEAMS:
-            if rtl == "R_X.embed":
+            if rtl in SM.NON_DESCRIPTOR:
                 continue
             if rtl == "LOGITS":
                 if layers is not None:

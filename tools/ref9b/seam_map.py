@@ -96,6 +96,47 @@ def build():
 
 SEAMS = build()
 
+# SEAMS IS NOT "THE LIST OF DESCRIPTOR STEPS", AND ASSUMING IT IS HAS NOW COST
+# A RED CHECK.  Two of its rows are seams of the model that NO descriptor
+# produces, and a consumer enumerating what subsystem D's program must write
+# has to subtract them.  The rule lived in the consumer, by NAME, and knew only
+# about the first of the two:
+#
+#   MEASURED 2026-08-29 at 2a411bb, on a pristine `git archive` tree:
+#     `tools/dprog_check.sh`  ->  dprog_oracle: 505 steps, 39330 checks, 1 FAIL
+#       FAIL C1-count  program writes 504 regions, llama.cpp's graph has 505 seams
+#   and the arithmetic behind it: len(SEAMS) = 492, minus R_X.embed, minus
+#   LOGITS, plus 15 lm_head windows = 505, against a program that correctly
+#   writes 504.  Neither the map nor the program was wrong.  `TOKEN` was added
+#   here at 35e0ed0 and the consumer had no way to know it was not a step.
+#
+# So the membership is DECLARED here, next to the rows, rather than restated as
+# a name test somewhere that cannot see this file change.  A seam added to
+# `build()` that no descriptor produces MUST be added here in the same edit.
+NON_DESCRIPTOR = {
+    "R_X.embed": "a HOST write of the embedding row into region X before `go` "
+                 "(rtl/seq_opdec.vhd's tok_fsm publishes it, and "
+                 "rtl/llama_top.vhd passes HOST_REG => R_X).  There is no "
+                 "descriptor for it, which is why token_embd.weight needs zero "
+                 "A jobs",
+    "TOKEN":     "the argmax rtl/sampler_stream.vhd produces from the LOGITS "
+                 "stream.  It is downstream of the lm_head descriptors, not "
+                 "one of them, and it has no region at all -- seam_region() "
+                 "raises on it",
+}
+
+
+def descriptor_seams():
+    """`SEAMS` restricted to the seams a DESCRIPTOR STEP produces.
+
+    Use this, not `SEAMS`, when the question is what subsystem D's program must
+    emit.  `LOGITS` is still one row here and still has to be expanded into its
+    row windows by the caller, because the window count comes from the RTL's
+    MAXROWS_BFP and not from this map.
+    """
+    return [s for s in SEAMS if s[0] not in NON_DESCRIPTOR]
+
+
 if __name__ == "__main__":
     for a, b, o, n in SEAMS:
         print("%-16s <- %-26s off=%-5d len=%s"

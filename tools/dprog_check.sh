@@ -43,6 +43,24 @@
 # seam_map question and not a program question -- confirm with
 # `git diff -- tools/ref9b/seam_map.py` before believing it.
 #
+# CORRECTION 2026-08-29 (TRACK REF-TOKEN).  That happened AGAIN, at 2a411bb,
+# committed rather than uncommitted this time: `seam_map` gained a `TOKEN` row
+# at 35e0ed0 and `C1-count` read 504 against 505.  NEITHER SIDE WAS WRONG.
+# `TOKEN` is a real seam of the model that no DESCRIPTOR produces -- it is the
+# argmax `rtl/sampler_stream.vhd` makes from the LOGITS stream -- and
+# `dprog_oracle.expected()` was deciding membership of that class by testing
+# one name, `R_X.embed`.  The map now DECLARES the class
+# (`seam_map.NON_DESCRIPTOR`) and the oracle filters on the declaration, so a
+# future non-descriptor seam is handled by the edit that adds it.
+#
+# AND TO ANSWER THE OBVIOUS QUESTION: NOTHING HERE HARDCODES A COUNT, and
+# nothing should.  Both sides of `C1-count` are derived -- the left from the
+# emitted descriptor bytes, the right from the seam map plus the RTL's
+# MAXROWS_BFP window derivation -- which is exactly why the check is worth
+# having.  Freezing either side to a literal would turn a real disagreement
+# into a number somebody bumps.  What must not be restated outside the map is
+# WHICH seams a descriptor produces, and that is what was fixed.
+#
 # Usage: tools/dprog_check.sh [MANIFEST]
 set -u
 here=$(cd -- "$(dirname -- "$0")" && pwd)
