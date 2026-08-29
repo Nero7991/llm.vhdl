@@ -468,7 +468,29 @@ static void a_job(const char *tensor, int seg, const reg_t *x, reg_t *y)
 /* The lm_head job.  rtl/llama_top's schedule runs it with out_mode = 1 (raw)
  * and dst = R_NONE, i.e. it computes the logits and THROWS THEM AWAY -- see
  * the write-up section 3, defect D1.  Here they are kept, because a reference
- * whose last step discards the answer cannot say whether a token is right. */
+ * whose last step discards the answer cannot say whether a token is right.
+ *
+ * AND IT IS ONE JOB HERE WHILE THE DESIGN RUNS FIFTEEN.  `mv4i_matvec` is
+ * called once over the whole 248,320-row vocabulary, which is a descriptor the
+ * GATEWARE REFUSES: `matvec_int4_desc_axi` bounds n_rows by MAXROWS_BFP =
+ * 17,408 in every out_mode, so the schedule emits 15 tile-aligned windows at
+ * stride 17,376 with a last window of 5,056.  MEASURED with
+ * `tools/gen_layer_program.py --one-lmhead-job`: the one-job form is emitted
+ * and then rejected, `ERR_DESC: shape`.
+ *
+ * The numbers are unaffected and that is checkable rather than hopeful:
+ * `mv4i_matvec`'s row loop is `for (r = 0; r < n_rows; r++)` over
+ * `get_widx(f, r, k)`, so rows are independent and a row's value does not
+ * depend on how many rows were asked for; and RAW mode's exponent is
+ * `w_exp + x_exp - out_shift` with no per-job `ns` term, so the 15 windows
+ * publish the exponent this one call publishes.  What the reference does NOT
+ * model is the descriptor SET -- 15 row_starts, byte bases and beat counts
+ * that must tile the tensor -- and that is checked separately by
+ * `tools/gen_lmhead_windows.py` (geometry) and
+ * `tools/ref9b/lmhead_window_check.py` (the fields the 15 must agree on).
+ * Anyone comparing this LOGITS record against a card capture is comparing a
+ * one-job model against a fifteen-job machine, and the tiling is the part
+ * that has to be checked elsewhere. */
 static void lm_head(const reg_t *x, double *logits)
 {
     mvw_t *m = mv("output.weight");

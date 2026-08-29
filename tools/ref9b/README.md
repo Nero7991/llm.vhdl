@@ -39,6 +39,7 @@ next token on all five positions of the reference prompt.
 | `mutate_logits.sh` | teeth for the LOGITS seam and the argmax |
 | `check_token.py` | the automatic verdict on the DECIDED TOKEN across streams, with the margin that decision had |
 | `mutate_token.py` | teeth for `check_token.py`, applied to the stream bytes rather than to the RTL |
+| `lmhead_window_check.py` | the 15 lm_head windows as a SET: tiling, per-window relations, and the fields all 15 must agree on |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
