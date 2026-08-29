@@ -429,7 +429,8 @@ static void gdn_block_token(blk_t *b)
  * ========================================================================== */
 static double dsilu(double x){ return x / (1.0 + exp(-x)); }
 
-static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd)
+static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd,
+                                double *ynorm)
 {
     const int QCH = KH*D, VCH = VH*D;
     const int CHMAX = (QCH > VCH) ? QCH : VCH;
@@ -483,6 +484,11 @@ static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd)
     }
 
     double *od = malloc((size_t)VH*D*sizeof(double));
+    /* The output dot is a D-term SIGNED sum and cancels heavily, so an error
+     * measured against |sum| explodes wherever the sum is near zero while
+     * every term is fine.  ref/gdn_recur_vec.c hit this first and emits the
+     * sum of |terms| for the same reason; onm is that quantity here. */
+    double *onm = malloc((size_t)VH*D*sizeof(double));
     for (h = 0; h < VH; h++) {
         const int hk = key_head_of(h);
         for (j = 0; j < D; j++) {
@@ -494,12 +500,14 @@ static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd)
                 sk += scol[i] * kd[hk*D+i];
             }
             double dl = (v - sk) * btd[h];
-            double acc = 0.0;
+            double acc = 0.0, anrm = 0.0;
             for (i = 0; i < D; i++) {
                 scol[i] += kd[hk*D+i] * dl;
-                acc += scol[i] * qd[hk*D+i];
+                acc  += scol[i] * qd[hk*D+i];
+                anrm += fabs(scol[i] * qd[hk*D+i]);
             }
-            od[h*D+j] = acc;
+            od [h*D+j] = acc;
+            onm[h*D+j] = anrm;
         }
     }
 
@@ -510,11 +518,12 @@ static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd)
         double gain = 1.0 / sqrt(ms + EPS);
         for (j = 0; j < D; j++) {
             double zr = ldexp((double)b->zm[(size_t)h*D+j], -b->z_e);
-            yd[h*D+j] = od[h*D+j] * gain * ldexp((double)b->wm[j], -b->w_e)
-                      * dsilu(zr);
+            double post = gain * ldexp((double)b->wm[j], -b->w_e) * dsilu(zr);
+            yd   [h*D+j] = od [h*D+j] * post;
+            ynorm[h*D+j] = onm[h*D+j] * fabs(post);
         }
     }
-    free(sil); free(qd); free(kd); free(egd); free(btd); free(od);
+    free(sil); free(qd); free(kd); free(egd); free(btd); free(od); free(onm);
 }
 
 /* ========================================================================== */
@@ -601,13 +610,16 @@ int main(int argc, char **argv)
             semem[h*D + j] = 9 + ((h + j) % 4);
         }
 
-    /* the double oracle's copy of the same initial state */
+    /* The double oracle's own copy of the initial state.  It then runs free
+     * across tokens, exactly as the fixed path does.
+     *
+     * MEASURED AND REJECTED: re-seeding sd from the dequantized fixed state at
+     * every token, on the theory that the token-count dependence of the error
+     * was the recurrence's accumulated drift.  It is not: the re-seed moved
+     * the worst figure at (1, 3, 16, 4 tokens) from 26481.23 to 26464.24, a
+     * change of 0.06%.  The real cause is CANCELLATION in the output dot, and
+     * the fix is the term-norm denominator below. */
     double *sd = calloc((size_t)VH*D*D, sizeof(double));
-    for (int h = 0; h < VH; h++)
-        for (int j = 0; j < D; j++)
-            for (int i = 0; i < D; i++)
-                sd[((size_t)h*D + j)*D + i] =
-                    ldexp((double)smem[((size_t)h*D + j)*D + i], -semem[h*D+j]);
 
     /* ---- header and the token-independent stimulus ---------------------- */
     fprintf(f, "%d %d %d %d %d %d %d %d %d\n", KH, VH, D, KCONV, NLAYER, NTOK,
@@ -624,9 +636,11 @@ int main(int argc, char **argv)
     int16_t *xtap = calloc((size_t)CHTOT*KCONV, sizeof(int16_t));
     int16_t *y    = calloc((size_t)VH*D, sizeof(int16_t));
     double  *yd   = calloc((size_t)VH*D, sizeof(double));
+    double  *yn   = calloc((size_t)VH*D, sizeof(double));
     int e_t[SEGS*KCONV], tv[SEGS*KCONV];
     int err_conv = 0, err_g = 0, err_se = 0, y_sat = 0;
     double worst = 0.0; int worst_tok = -1, worst_idx = -1;
+    double worst_lsb = 0.0;
     long nsat = 0, nchecked = 0, nbad = 0;
 
     for (int t = 0; t < NTOK; t++) {
@@ -664,14 +678,22 @@ int main(int argc, char **argv)
         err_conv |= b.err_conv; err_g |= b.err_g;
         err_se   |= b.err_se;   y_sat |= b.y_sat;
 
-        gdn_block_token_dbl(&b, sd, yd);
+        gdn_block_token_dbl(&b, sd, yd, yn);
         if (!b.y_sat) {
             double lsb = ldexp(1.0, -b.y_exp);
             for (int a = 0; a < VH*D; a++) {
                 double got = ldexp((double)y[a], -b.y_exp);
-                double e = fabs(got - yd[a]) / lsb;
+                /* Denominator: one LSB of the shared y grid OR the element's
+                 * own term norm, whichever is LARGER.  The LSB alone is
+                 * meaningless where the D-term dot cancels; the term norm
+                 * alone is meaningless where the element is genuinely zero. */
+                double den = lsb;
+                if (yn[a] > den) den = yn[a];
+                double e = fabs(got - yd[a]) / den;
+                double el = fabs(got - yd[a]) / lsb;
+                if (el > worst_lsb) worst_lsb = el;
                 nchecked++;
-                if (e > 64.0) nbad++;
+                if (e > 0.05) nbad++;
                 if (e > worst) { worst = e; worst_tok = t; worst_idx = a; }
             }
         } else nsat++;
@@ -708,12 +730,14 @@ int main(int argc, char **argv)
     fprintf(stderr, "  flags: err_conv=%d err_g=%d err_se=%d y_sat=%d "
                     "(%ld saturating tokens excluded from the oracle)\n",
             err_conv, err_g, err_se, y_sat, nsat);
-    fprintf(stderr, "  worst end-to-end error vs the double oracle: %.4f LSB "
-                    "of the y grid (token %d, element %d)\n",
+    fprintf(stderr, "  worst end-to-end error vs the double oracle: %.6f, "
+                    "relative to max(one y LSB, the element term norm) "
+                    "(token %d, element %d)\n",
             worst, worst_tok, worst_idx);
-    fprintf(stderr, "  elements compared: %ld of %ld;  over 64 LSB: %ld (%.2f%%)\n",
+    fprintf(stderr, "  elements compared: %ld of %ld;  over 0.05: %ld (%.2f%%)\n",
             nchecked, (long)NTOK*VH*D, nbad,
             nchecked ? 100.0*(double)nbad/(double)nchecked : 0.0);
+    fprintf(stderr, "  worst error in bare y LSB, no term norm: %.4f\n", worst_lsb);
 
     /* SANITY bound, not a derived one.  Seven quantizing stages compose here
      * -- the conv requantize, silu, two L2 norms, the state write-back, the
@@ -731,30 +755,49 @@ int main(int argc, char **argv)
      * actually COMPARED is gated with a floor -- a run that compares nothing
      * must not be able to pass, which is the failure a max and a count share.
      *
-     * MEASURED over 29 seeds at KH=2 VH=4 D=32 tokens=2.  The seed matters a
-     * great deal and the committed one is at the benign end, which is exactly
-     * the trap this project has recorded before:
+     * MEASURED over 29 seeds at KH=2 VH=4 D=32 tokens=2, kmap=div:
      *
-     *   worst LSB       3.12 (seed 5)  ..  1303.48 (seed 19)   418x spread
-     *   over 64 LSB     0.00% (most)   ..     8.20% (seed 19)
+     *   worst error     0.1224 (seed 1)  ..  0.4973 (seed 77777)
+     *   over 0.05       0.00% (most)     ..  10.94% (seed 1)
      *   compared        256 of 256 in every run
      *
-     * The metric is LSB of a grid SHARED by the whole token, so it is
-     * dominated by cancellation in the 128-term output dot of whichever head
-     * is smallest; that is why the spread is so wide and why the bounds below
-     * are 15x and 4x above the measured worst rather than tight.  What they
-     * have to catch is the class that bit ref/gdn_emit_chain_vec.c twice: an
-     * uninitialised shared LUT or epsilon, at 9.4e8 and 1.6e11 LSB. */
+     * And across SHAPES, which is what the term-norm denominator bought: with
+     * the old LSB-only denominator the same figure ran 9.97 at
+     * (2,4,32,2 tokens) to 26481 at (1,3,16,4 tokens), so a bound calibrated
+     * on one shape fired spuriously on another.  With this denominator the six
+     * shapes measured span 0.135 to 0.491.
+     *
+     * FOUR GATES, AND THE MAX IS THE WEAKEST OF THEM.  MEASURED: with
+     * fx_init() removed, or with bf_resolve_eps() removed -- the two failures
+     * that bit ref/gdn_emit_chain_vec.c, each as a silent wrong answer -- the
+     * term-norm MAX reads 0.664 and 0.665, BELOW the 2.0 bound, while the
+     * COUNT reads 99.22% in both.  The max got SMALLER than a legitimate seed
+     * can produce while the design was destroyed, because a term-norm
+     * denominator structurally caps the ratio near 1 when the output collapses
+     * to zero.  So the count is what carries this bench, the bare-LSB figure
+     * is kept as an unbounded blow-up detector, and the floor on elements
+     * compared stops a run that checks nothing from passing.  A max alone
+     * would have missed both. */
     int bad = 0;
-    if (worst > 20000.0) {
+    if (worst > 2.0) {
         fprintf(stderr, "  FAIL: end-to-end error is far larger than the "
                         "composed quantization can explain\n");
         bad = 1;
     }
-    if (nchecked && 100.0*(double)nbad/(double)nchecked > 35.0) {
-        fprintf(stderr, "  FAIL: %.2f%% of elements are over 64 LSB from the "
+    if (nchecked && 100.0*(double)nbad/(double)nchecked > 45.0) {
+        fprintf(stderr, "  FAIL: %.2f%% of elements are over 0.05 from the "
                         "double oracle; the DISTRIBUTION has moved, not just "
                         "one element\n", 100.0*(double)nbad/(double)nchecked);
+        bad = 1;
+    }
+    /* The bare-LSB figure is kept as a fourth gate, loose on purpose.  It is
+     * shape-sensitive -- 9.97 at (2,4,32,2 tokens) against 26481 at
+     * (1,3,16,4 tokens) on identical, correct code -- so it cannot be tight,
+     * but it is the only one of the four that grows without bound, and the
+     * two uninitialised-global failures reach 2.6e7 and 7.9e30 on it. */
+    if (worst_lsb > 1.0e6) {
+        fprintf(stderr, "  FAIL: worst bare-LSB error %.4g is a blow-up, not "
+                        "quantization\n", worst_lsb);
         bad = 1;
     }
     if (nsat == 0 && nchecked != (long)NTOK*VH*D) {

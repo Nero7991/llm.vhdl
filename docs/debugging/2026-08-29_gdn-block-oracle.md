@@ -213,6 +213,17 @@ if (num_k_heads != num_v_heads && (!cparams.fused_gdn_ar || !cparams.fused_gdn_c
 with `constant VPK : integer := VAL_HEADS/KEY_HEADS;`. Those are the only two
 occurrences of `VPK` in the file.
 
+### The independent confirmation that has NOT been run, and how to run it
+
+`tools/ref9b/` builds its golden from `dump_llamacpp`, i.e. from real
+llama.cpp tensor dumps, so it inherits ggml's broadcast semantics without
+anyone having to decide anything. A `q_conv_predelta` / `k_conv_predelta`
+capture at a GDN layer, compared per value head against what
+`rtl/gdn_block.vhd` feeds `gdn_recur_pipe`, would confirm B-BLK-1 at the REAL
+shape and would not depend on this oracle at all. That is the cheapest
+available second opinion and it was not run here, because `tools/ref9b/**` is
+TRACK C1's and `layer` is hardwired to 0 in every B bench.
+
 ### Where the wrong rule most plausibly came from
 
 B spec 2.9's VERIFIED box says "the GQA ratio inside GDN is **3 value heads per
@@ -240,26 +251,72 @@ $ ghdl -r ... tb_gdn_block_vec -gKMAP_DIV=true      # against kmap=mod vectors
 tb_gdn_block_vec.vhd:357:5:@0ms:(assertion failure): tb_gdn_block_vec: gdn_block_vec.txt was generated with kmap=0 and this testbench has KMAP_DIV=true.
 ```
 
-### Seed sensitivity of the double-oracle bound
+### The double-oracle bound: what the denominator had to be, and which gate carries it
 
-29 seeds, `2 4 32 2 2`. The knob is live: nine sampled seeds gave nine distinct
+The first denominator was one LSB of the y grid. It is **shape-dependent by an
+order of magnitude on identical, correct code**, so a bound calibrated at one
+shape fires spuriously at another:
+
+| shape (KH VH DIM tokens) | worst, bare y LSB |
+|---|---|
+| 2 4 32 2 | 6.09 |
+| 4 8 16 3 | 2683.32 |
+| 1 3 16 4 | 26481.23 |
+| 2 4 32 8 | 2966.36 |
+| **16 32 128 2 -- the real 9B shape** | **6.89** |
+
+`ref/gdn_recur_vec.c` hit the same thing first and says why: the output dot is
+a D-term SIGNED sum that cancels heavily, so an error measured against the
+result explodes wherever the result is near zero while every term is fine. Its
+fix is to emit the sum of |terms| and normalise by that. Doing the same here --
+denominator `max(one y LSB, the element's own term norm)` -- makes the figure
+shape-stable: 0.135 to 0.544 across the same five shapes.
+
+Seed sensitivity at the committed shape, 29 seeds, kmap=div, on the new metric:
+worst **0.1224** (seed 1) to **0.4973** (seed 77777); worst count over 0.05
+**10.94%** (seed 1). The knob is live -- nine sampled seeds gave nine distinct
 vector-file md5s.
 
-| | worst LSB | over 64 LSB |
-|---|---|---|
-| seed 5 | 3.12 | 0.00% |
-| **committed default 20260829** | **9.97** | **0.00%** |
-| seed 42 | 33.33 | 0.00% |
-| seed 3 | 309.19 | 1.17% |
-| seed 20260101 | 414.52 | 4.69% |
-| seed 1 | 531.19 | 7.03% |
-| seed 19 | 1303.48 | 8.20% |
+**And then the important measurement: the MAX is the weakest of the four
+gates.** With `fx_init()` removed, or with `bf_resolve_eps()` removed -- the
+two failures that bit `ref/gdn_emit_chain_vec.c`, each as a silent wrong answer
+-- the term-norm max reads **0.664** and **0.665**, which is BELOW what a
+legitimate seed produces, while the count reads **99.22%** in both:
 
-**The committed seed is at the benign end of a 418x spread.** The gates are set
-at 20000 LSB and 35% -- 15x and 4x above the measured worst -- because the
-metric is LSB of a grid SHARED by the whole token and is therefore dominated by
-cancellation in the output dot of whichever head is smallest. What the bound
-has to catch is the 1e7-to-1e30 class above, not a factor of four.
+```
+--- fx_init() removed ---
+  worst end-to-end error vs the double oracle: 0.664863, relative to max(one y LSB, the element term norm)
+  elements compared: 256 of 256;  over 0.05: 254 (99.22%)
+  worst error in bare y LSB, no term norm: 9647912845648509027052624543744.0000
+  FAIL: 99.22% of elements are over 0.05 from the double oracle; the DISTRIBUTION has moved
+  FAIL: worst bare-LSB error 9.648e+30 is a blow-up, not quantization
+--- bf_resolve_eps() removed ---
+  worst end-to-end error vs the double oracle: 0.663658
+  elements compared: 256 of 256;  over 0.05: 254 (99.22%)
+  worst error in bare y LSB, no term norm: 31896156.8301
+  FAIL (both)
+```
+
+The max got SMALLER than a good seed can produce while the design was
+destroyed, because a term-norm denominator structurally caps the ratio near 1
+once the output collapses to zero. So the generator gates **four** things:
+
+1. the term-norm max, at 2.0 (4x the measured worst),
+2. the COUNT over 0.05, at 45% (4x the measured worst) -- **this is the gate
+   that catches both catastrophic failures**,
+3. the bare-LSB max, at 1e6, deliberately loose: it is the only figure that
+   grows without bound, and it reads 3.2e7 and 9.6e30 on the two above,
+4. a FLOOR on the number of elements actually compared, because a run that
+   compares nothing must not be able to pass and none of the other three can
+   see that.
+
+**One measurement recorded without a conclusion.** At the real 9B shape
+(16 key heads, 32 value heads, DIM 128) the worst element reads 0.5435 and
+4.2% of elements exceed 0.05, both larger than at the bench shape. The worst
+element is in **token 0**, which is the masked-state first token where spec
+2.1.4's own correction table already shows the largest error. The stimulus is
+synthetic. This is a number, not a defect claim, and it should be re-measured
+against captured activations before anyone acts on it.
 
 ### `tb_gdn_block`'s four flags: gated, and each gate shown to fire
 
@@ -368,11 +425,24 @@ is suspect.
   The L2 copies are now `L2_`-prefixed; the rename was verified byte-identical
   at N = 32, 64 and 128.
 
-- **Do not gate the double-oracle comparison on a maximum alone.** Measured, a
-  max moves 418x across seeds on this metric. The generator gates a max, a
-  COUNT of elements past 64 LSB, and a FLOOR on the number of elements actually
-  compared -- the last because a run that compares nothing must not be able to
-  pass, and neither of the first two can see that.
+- **Do not gate the double-oracle comparison on a maximum alone.** MEASURED:
+  the two catastrophic failures score 0.664 and 0.665 on the term-norm max,
+  BELOW what a legitimate seed produces, and 99.22% on the count. See the
+  evidence section. The generator gates four things, and the count is the one
+  that carries it.
+
+- **Do not use one LSB of the y grid as the only denominator.** MEASURED on
+  identical, correct code: 6.09 at (2,4,32,2 tokens) against 26481.23 at
+  (1,3,16,4 tokens). A bound calibrated at one shape fires spuriously at
+  another. The denominator is `max(one y LSB, the element term norm)`, the
+  same move `ref/gdn_recur_vec.c` already makes for the same reason. The bare
+  LSB figure is kept as a separate, deliberately loose blow-up detector.
+
+- **Do not re-seed the double state from the fixed state at every token.** It
+  was tried, on the theory that the token-count dependence of the error was the
+  recurrence's accumulated quantization drift. MEASURED: it moved the worst
+  figure at (1,3,16,4 tokens) from 26481.23 to 26464.24, a change of 0.06%.
+  The cause was cancellation in the output dot, not drift. Reverted.
 
 - **Do not "fix" the divergence by changing the oracle's default.** The
   oracle's default is the model. The RTL's rule is reachable only through an
