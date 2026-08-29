@@ -51,7 +51,7 @@ below may be edited by a track that does not own it.
 |---|---|---|
 | `sim/regress.sh` | **SHARED** | any track adding a test edits it. Re-read it immediately before editing, keep the edit to the rows you add, and re-check `BASELINE_PASS` at commit time. |
 | `rtl/llama_top.vhd`, `sim/tb_llama_top.vhd`, `rtl/llama_map_pkg.vhd` | free | released by the integration track at `3246046` |
-| `hw/fk33/gen_pcieep.py` | free | released by the HBM-port track (it deliberately changed nothing) |
+| `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl`, `hw/fk33/*.xdc`, `hw/fk33/gen_fk33_engine.py`, `hw/fk33/rtl/fk33_engine.vhd` | free | released by TRACK SHELL at `928ad9f`. `gen_fk33_engine.py` and `rtl/fk33_engine.vhd` are new files from that track; the second is GENERATED, so edit the first. |
 | `rtl/attn_*.vhd`, `sim/tb_attn_block.vhd`, `ref/attn_*` | TRACK C-ORACLE | |
 | `rtl/gdn_*.vhd`, `rtl/l2norm_rs.vhd`, `sim/tb_gdn_*.vhd`, `sim/tb_l2norm_rs.vhd`, `ref/gdn_*`, `ref/l2norm*` | TRACK B-ACCURACY | |
 | `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | TRACK TOK-C | |
@@ -518,6 +518,59 @@ that feeds raw bytes; a JSON parser rejects them first. Recorded so nobody
 re-derives it while fuzzing, and because it is why the byte fuzz excludes lead
 bytes `0xF0..0xFF` -- there is no oracle answer to compare against.
 
+### OI-12: the FK33 shell build does not route
+
+**MEASURED 2026-08-29, `928ad9f`.** The first build carrying subsystem A on the
+card's HBM ports places, but `route_design` terminates:
+
+    ERROR: [Route 35-3] Design is not routable as its global congestion
+                        level is 7.
+
+7 is the top of the scale. Six attempts at initial net routing over 7 min 48 s,
+then abandoned. **There is no routed checkpoint and no bitstream.**
+
+**It is not area.** Whole design 39.50% LUT, 14.22% FF, 38.91% BRAM36, 55.03%
+DSP, 0 URAM. The engine's own area in the shell is within 1.8% of the
+out-of-context figure on every line (LUT 132,113 vs 134,534; FF 63,797 vs
+64,067; DSP and BRAM36 identical), so the OOC numbers were honest and the
+shell costs 41,581 LUT and 69 BRAM36 on top.
+
+**It is probably not timing either, though that is not settled.** Design-wide
+WNS went -0.763 after place, -0.368 after phys_opt, -0.260 at the router's last
+update before it quit, against 250 MHz on the HBM AXI side and 200 MHz on the
+core.
+
+**What is NOT known is what is congested.** `report_design_analysis
+-congestion` did not complete in the time available, so the 128x128
+long-congestion regions south and east are the only localisation there is. The
+untried experiments, in order of cheapness: a pblock putting the engine in the
+clock regions nearest the HBM BLI interfaces (its core clock currently spans
+all 8x4 regions); a lower clock, which separates congestion from the
+timing-driven replication that added 185 of the design's 3,887 control sets;
+and a different placer directive.
+
+Write-up, including five things measured and rejected:
+`docs/debugging/2026-08-29_fk33-shell-integration-does-not-route.md`.
+
+### OI-13: the aux domain's CDC check does not scale to subsystem A
+
+The impl-stage verification that made the aux domain trustworthy -- enumerate
+every path crossing the clock boundary and demand that none is ANALYSED, since
+an asynchronous group excludes a path without stopping it being enumerated --
+**does not terminate** on a design containing subsystem A. MEASURED: over 20
+minutes on `get_timing_paths -from <core> -to <axi> -max_paths 8`, killed.
+`report_timing_summary` on the same checkpoint likewise. 28 gray-pointer FIFOs
+plus 28 four-phase clear handshakes is an enormous enumeration where the aux
+domain is a handful of single-bit crossings.
+
+`gen_pcieep.py` now checks only that both clock lookups RESOLVE, which is what
+decides whether the XDC `set_clock_groups` matched anything (an empty group is
+a warning, not an error), and writes `report_clock_interaction` to a file for a
+human. It is labelled in the script as the weaker check it is. **Consequence:
+nothing currently proves the per-port CDC is being treated as asynchronous
+rather than timed, and no per-clock WNS figure exists for this design.** If the
+group did NOT apply, every WNS above is pessimistic rather than optimistic.
+
 ### OI-4: no descriptor-program generator exists, in any language
 
 Subsystem D's control core is integrated and mutation-tested, but nothing emits
@@ -557,7 +610,7 @@ Keep this list fed: when a track lands, add whatever it unblocked.
 | # | task | depends on | owns |
 |---|---|---|---|
 | 1 | **`attn_block` <-> `attn_kv_axi` seam.** Wire the KV interface into the block and prove multi-token attention. | TRACK C-KV | `rtl/attn_block.vhd`, `sim/tb_attn_block.vhd` |
-| 2 | **FK33 shell integration.** Instantiate subsystem A into `gen_pcieep.py`, enable the HBM ports, build. **This is the first build that could put arithmetic on the card.** Needs the port enable AND a top to connect them to, which is why it was blocked all day. | TRACK SYNTH (need real area/timing first) | `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl` |
+| 2 | ~~**FK33 shell integration.**~~ **DONE and NEGATIVE, `928ad9f` / `70c35db`.** 28 HBM ports enabled and driven, subsystem A connected, the thermal halt reaching it. **route_design terminates: global congestion level 7.** Area is not the reason -- 39.50% LUT, 55.03% DSP, and the engine in the shell is within 1.8% of its OOC area on every line. See OI-12. | -- | `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl` |
 | ~~3~~ | **LANDED 2026-08-29, TRACK TOP-KV.** `llama_top` instantiates `attn_kv_axi`, connects `attn_block`'s four seam handshakes, and carries a sequence position. Four tokens, two attention layers, three KV read latencies. See the Landed table. | -- | -- |
 | 4 | **Token I/O: embedding and LM head.** Still 512-entry / 64-dim stories260K ROMs. The residency map gives the embedding an HBM home and says the lookup path has no owner. Note `MAXROWS_BFP = 17408` means `output.weight` and `token_embd.weight` need 15 descriptor jobs each. | none | `rtl/`(new), `tools/` |
 | 5 | **`pl_backend` v2 and the server seam.** `server/llama_server.cpp` is zero-dep C++ and the C tokenizer now links. The seam must move from the AXU3EG's whole-loop-in-hardware to prefill plus decode-returning-logits. | item 4 for a real vocab path | `server/**` |
