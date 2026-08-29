@@ -187,7 +187,11 @@ MEASURED, the bench passes at every granularity offered:
 ## 6. THE HOLE: a job CAN start against a partially-written codebook
 
 **Reported prominently because it answers one of the four questions with "yes,
-and nothing prevents it".**
+and nothing prevents it" AT THE CORE'S PORT. See CORRECTION 11.1, appended the
+same day: the two planes that actually drive the FK33 design both load all
+sixteen entries atomically, and the descriptor plane additionally has a
+completeness flag that IS checked. The hazard is real at the port and in one
+wrapper; it is not reachable through the FK33 path.**
 
 Coherency is guaranteed across REPLICAS. It is guaranteed nowhere across the
 sixteen ENTRIES. Nothing in `matvec_core` marks the codebook complete, so:
@@ -408,9 +412,10 @@ the loop for a cost that has not been measured.
   section 5 is `tb_matvec_cb_contract` only. `tb_matvec_core` runs at the
   default of 1, so bit-exactness at 2 and 4 rests on the 2026-08-27 sweep, not
   on anything measured here.
-* **The AXI wrapper's codebook path.** `rtl/matvec_int4_axi.vhd` is what a
-  driver actually writes through; this track tested `matvec_core`'s port. The
-  wrapper's own idle-gating, if any, is unexamined.
+* **The AXI wrappers' codebook paths, beyond a read.** Partly retired by
+  CORRECTION 11.1, which reports what the three drivers of `cb_we` do. Nothing
+  was SIMULATED at wrapper level by this track; the correction is a reading of
+  the RTL, not a measurement.
 * **Whether a completeness guard is wanted** (section 6). Demonstrated, costed
   as a design change, left for Oren.
 * **`inflight` as an independent invariant.** `P_CB_CHK`'s second assertion
@@ -423,4 +428,46 @@ the loop for a cost that has not been measured.
 
 ## 11. Corrections
 
-None yet. Append here rather than editing above.
+### 11.1 (2026-08-29, same day) The partial-load hazard is guarded ABOVE the core, on the path that matters
+
+Section 6 says nothing marks the codebook complete. That is true of
+`matvec_core` itself and it is the right statement about the unit this track
+tested, but it overstates the hazard as a property of the DESIGN. Read after the
+fact, from the three drivers of the `cb_we` port:
+
+* **`rtl/matvec_int4_desc_axi.vhd` -- the FK33 descriptor plane -- ALREADY HAS
+  THE GUARD.** Its `S_CB` state loads all sixteen entries and only then sets
+  `cb_valid <= '1'`; a descriptor that asks to reuse a codebook (`dw(0)(10) =
+  '0'`) while `cb_valid = '0'` is rejected with `EC_DESC` before `S_START`. Its
+  own comment names exactly the failure mode section 6 describes: *"Reusing a
+  codebook that was never loaded computes an all-zero answer and reports
+  success, which is the failure mode this whole file exists to stop."* It is
+  also atomic: `S_CB` runs to `cb_cnt = 16` and cannot be interrupted by a
+  start.
+* **`rtl/llama_top.vhd` is atomic too.** Its `S_CB` state walks `k = 0..15`
+  unconditionally, then spends one dead cycle in `S_CBGAP` specifically so
+  `start` cannot share an edge with the last `cb_we`.
+* **`rtl/matvec_int4_axi.vhd` is NOT guarded.** Register 15 raises `cb_we` on
+  any AXI write, one entry per write, with no counter, no completeness flag and
+  no idle check. A host writing it mid-operation is silently dropped by the core
+  (K5) with no error, and a host that writes eight entries and starts gets the
+  mixed table of section 6. That is the register-mapped standalone plane, not
+  the FK33 path.
+
+**What stands from section 6:** the hazard is a property of `matvec_core`'s
+port, run 8 demonstrates it, and the register-mapped wrapper is exposed to it.
+**What is withdrawn:** the implication that the shipping FK33 design can start a
+job against a partial codebook. It cannot; `cb_valid` and `EC_DESC` are the
+guard, and they were found by reading the wrappers after this document was
+first written.
+
+**The methodology point, which is the reusable part:** this track scoped itself
+to one unit's port and then made a claim about the system. A per-unit evidence
+class says nothing about the composition -- the project's own standing lesson,
+applied here in the direction nobody watches for, where the composition is
+SAFER than the unit and the write-up was needlessly alarming. Check the callers
+before generalising a port-level hazard.
+
+**Not verified even after this correction:** whether `matvec_int4_axi.vhd`
+should grow the same guard. It is a register-map change on a plane the FK33 does
+not use, so it is a decision, not a fix.
