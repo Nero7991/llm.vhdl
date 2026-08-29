@@ -30,6 +30,22 @@
 -- "must be refused with this code".  EXPECT_INFO, when >= 0, additionally
 -- pins ERR_INFO, which is what distinguishes "refused for the right reason"
 -- from "refused for some reason".
+--
+-- THE DEFAULT VECTOR IS COMMITTED, AND ITS EXTENSION IS LOAD BEARING.
+-- sim/mv4i_desc_image.txt is a real descriptor for a real tensor, emitted by
+-- tools/gen_mv4i_desc.py.  It is committed and named `.txt` because
+-- sim/regress.sh symlinks every sim/*.txt into a test's run directory, so the
+-- unfiltered gate picks this bench up and runs it with no row in that script
+-- and no dependency on the 4.7 GiB model set, which is not in git.
+--
+-- What a committed golden does and does not prove.  It proves the gateware
+-- accepts a descriptor a host tool actually wrote, which is the only claim
+-- made here.  It does NOT re-verify the generator: if gen_mv4i_desc.py
+-- regressed tomorrow this file would not move and this bench would keep
+-- passing.  Checking the generator is tools/verify_mv4i_desc.py's job, against
+-- ref/mv_fk33_tr and tools/mv4i_desc_ref.c.  Staleness of the GEOMETRY is
+-- caught, though: the word count and CAPS are asserted against the build
+-- below, so a build that moves ROWS_IF or AXI_DW fails loudly here.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -40,7 +56,7 @@ use work.matvec_int4_desc_pkg.all;
 
 entity tb_mv4i_desc_image is
   generic(
-    DESC        : string   := "desc.hex";
+    DESC        : string   := "mv4i_desc_image.txt";
     -- -1 = must be accepted (the core starts); 0..15 = must be refused with
     -- this err_code.
     EXPECT      : integer  := -1;

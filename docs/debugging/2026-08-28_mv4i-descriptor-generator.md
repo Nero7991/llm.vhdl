@@ -419,11 +419,20 @@ the same reading as the thing it checks.
 
 ## 9. Open, not determined here
 
-* **`sim/tb_mv4i_desc_image.vhd` is NOT in `sim/regress.sh`.** It was
-  deliberately not added: `regress.sh` is shared, TRACK A-SHAPE was running
-  concurrently, and `BASELINE_PASS` would have had to move under it. The row
-  and the floor bump belong to whoever lands next. Until then the bench rots
-  unless run by hand.
+* `sim/tb_mv4i_desc_image.vhd` **is** in the gate, and the way it got there is
+  worth knowing. `regress.sh`'s planner discovers every testbench by scanning
+  sources, so a new bench joins the unfiltered run whether or not anyone adds a
+  row -- and a bench whose vector file does not exist then FAILS the shared
+  gate. That very nearly happened here: `--list` reported
+  `RUN sim:tb_mv4i_desc_image ... vectors=none` with a default generic pointing
+  at a `desc.hex` nothing creates. The fix needed no row at all: `run_one`
+  symlinks every `sim/*.txt` into a test's run directory, so naming the
+  committed vector `sim/mv4i_desc_image.txt` and defaulting the generic to it
+  makes the test self-contained and independent of the 4.7 GiB model set.
+  `BASELINE_PASS` was raised 78 -> 79.
+  **Generalise:** in this repo, adding a `sim/tb_*.vhd` file is adding a gate
+  row whether you meant to or not. Run `bash sim/regress.sh --list` after
+  creating one.
 * **Nothing verifies that the bytes at `hbm_offset` on the CARD are this
   file's bytes.** The manifest's `blake2b_128` was verified at load time and is
   re-verified against the on-disk file here, but no read-back was performed

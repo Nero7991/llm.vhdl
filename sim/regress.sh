@@ -348,7 +348,11 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=78   # +1 sim/tb_matvec_fk33_desc, subsystem A through the
+BASELINE_PASS=79   # +1 sim/tb_mv4i_desc_image, the gateware judging a
+                   #    descriptor image written by tools/gen_mv4i_desc.py.
+                   #    Its vector sim/mv4i_desc_image.txt is COMMITTED, so it
+                   #    needs no row in this script and no model set, 2026-08-28
+                   # +1 sim/tb_matvec_fk33_desc, subsystem A through the
                    #    descriptor control plane plus its mutation matrix,
                    #    2026-08-28
                    # +1 sim/tb_matvec_fk33, subsystem A at ROWS_IF=48 /
