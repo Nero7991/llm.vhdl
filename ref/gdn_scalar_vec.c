@@ -82,6 +82,80 @@ static int64_t rshift_r(int64_t v, int s)
     return (v + (1LL << s >> 1)) >> s;
 }
 
+/* ---------------------------------------------------------------------------
+ * THE WHOLE SCALAR PATH FOR ONE VALUE HEAD, as a callable core.
+ *
+ * Extracted from main() on 2026-08-29 so that ref/gdn_block_vec.c can compose
+ * it rather than transcribe it.  A second transcription of an approximation
+ * kernel is worth nothing: it measures self-consistency, which is exactly how
+ * the l2norm recipe collapse survived 55 passing cases.  The arithmetic and
+ * every comment below are UNCHANGED from the in-main form; the extraction was
+ * verified byte-identical on the emitted vector file (md5 before/after, at
+ * SP_Q = 12, 15, 18 and 20).
+ *
+ * Defining GDN_CHAIN_INCLUDE before including this file keeps this core and
+ * drops the standalone harness below, the same convention rmsnorm_bf_vec.c
+ * and gdn_silu_vec.c already use.
+ * ------------------------------------------------------------------------- */
+static void gdn_scalar_int(int32_t al_m, int al_e, int32_t dt_m, int dt_e,
+                           int32_t a_m,  int a_e,  int32_t b_m,  int b_e,
+                           int *eg_out, int *beta_out, int *err_g_out)
+{
+    /* The softplus argument is formed on a WIDE grid and clamped ONCE.
+       2.1.3 as written converts alpha and dt to Q separately and adds
+       "in s32", which saturates each term before the add -- and two
+       opposite-sign saturations cancel: a true argument of -34826 is
+       computed as -1, turning a closed gate (eg 4) into an open one
+       (eg 32768).  See docs/debugging/2026-08-26_gdn-scalar-path.md.
+       Clamping to +/-16*2^q loses nothing: softplus is the identity
+       above +16 and zero below -16 on every grid this model uses. */
+    int64_t arg  = to_q_wide(al_m, al_e) + to_q_wide(dt_m, dt_e);
+    int64_t lim  = 16LL << SP_Q;
+
+    /* softplus on the wide grid.  Only the NEGATIVE tail may be clamped:
+       below -16 the function is zero to well under an LSB.  The positive
+       tail must NOT be clamped -- there softplus is the identity, so the
+       argument's magnitude is exactly what propagates into g through the
+       multiply by a, and pinning it at +16 turns a saturated gate into a
+       wide-open one (case 88: eg 30280 against a true 0.0037). */
+    int64_t sp;
+    if      (arg <= -lim) sp = 0;
+    else if (arg >=  lim) sp = arg;                 /* 1.1(f) identity */
+    else                  sp = fx_softplus_q((int32_t)arg, SP_Q);
+
+    int64_t gp   = sp * (int64_t)a_m;
+    int64_t g64  = rshift_r(gp, a_e);
+    if (g64 > 0) g64 = 0;                          /* min(0, .) guard */
+    int64_t gmin = -16LL << SP_Q;
+    int err_g = (g64 < gmin);                      /* clamped, 2.1.6 */
+    if (g64 < gmin) g64 = gmin;
+    int32_t g_q  = (int32_t)g64;
+
+    int32_t eg_sp = fx_exp_q(g_q, SP_Q);
+    /* output format is pinned Q15 regardless of the internal grid */
+    int64_t eg_o  = rshift_r(eg_sp, SP_Q - 15);
+    if (eg_o > 32768) eg_o = 32768;
+    if (eg_o < 0) eg_o = 0;
+
+    /* Same converter and same clamp as the RTL, so the two cannot drift.
+       Using the saturating s32 to_q here and to_q_wide there was a
+       divergence in its own right. */
+    int64_t bqw = to_q_wide(b_m, b_e);
+    if (bqw >  lim) bqw =  lim;
+    if (bqw < -lim) bqw = -lim;
+    int32_t beta_sp = fx_sigmoid_q((int32_t)bqw, SP_Q);
+    int64_t beta_o = rshift_r(beta_sp, SP_Q - 16);
+    /* the recurrence port is unsigned(15 downto 0); Q16 1.0 = 65536 does
+       not fit, so the top of the range saturates one LSB low. */
+    if (beta_o > 65535) beta_o = 65535;
+    if (beta_o < 0) beta_o = 0;
+
+    *eg_out    = (int)eg_o;
+    *beta_out  = (int)beta_o;
+    *err_g_out = err_g;
+}
+
+#ifndef GDN_CHAIN_INCLUDE
 int main(int argc, char **argv)
 {
     fx_init();
@@ -163,54 +237,12 @@ int main(int argc, char **argv)
         }
 
         /* ---------------- fixed path ----------------
-           The softplus argument is formed on a WIDE grid and clamped ONCE.
-           2.1.3 as written converts alpha and dt to Q separately and adds
-           "in s32", which saturates each term before the add -- and two
-           opposite-sign saturations cancel: a true argument of -34826 is
-           computed as -1, turning a closed gate (eg 4) into an open one
-           (eg 32768).  See docs/debugging/2026-08-26_gdn-scalar-path.md.
-           Clamping to +/-16*2^q loses nothing: softplus is the identity
-           above +16 and zero below -16 on every grid this model uses. */
-        int64_t arg  = to_q_wide(al_m, al_e) + to_q_wide(dt_m, dt_e);
-        int64_t lim  = 16LL << SP_Q;
-
-        /* softplus on the wide grid.  Only the NEGATIVE tail may be clamped:
-           below -16 the function is zero to well under an LSB.  The positive
-           tail must NOT be clamped -- there softplus is the identity, so the
-           argument's magnitude is exactly what propagates into g through the
-           multiply by a, and pinning it at +16 turns a saturated gate into a
-           wide-open one (case 88: eg 30280 against a true 0.0037). */
-        int64_t sp;
-        if      (arg <= -lim) sp = 0;
-        else if (arg >=  lim) sp = arg;                 /* 1.1(f) identity */
-        else                  sp = fx_softplus_q((int32_t)arg, SP_Q);
-
-        int64_t gp   = sp * (int64_t)a_m;
-        int64_t g64  = rshift_r(gp, a_e);
-        if (g64 > 0) g64 = 0;                          /* min(0, .) guard */
-        int64_t gmin = -16LL << SP_Q;
-        int err_g = (g64 < gmin);                      /* clamped, 2.1.6 */
-        if (g64 < gmin) g64 = gmin;
-        int32_t g_q  = (int32_t)g64;
-
-        int32_t eg_sp = fx_exp_q(g_q, SP_Q);
-        /* output format is pinned Q15 regardless of the internal grid */
-        int64_t eg_o  = rshift_r(eg_sp, SP_Q - 15);
-        if (eg_o > 32768) eg_o = 32768;
-        if (eg_o < 0) eg_o = 0;
-
-        /* Same converter and same clamp as the RTL, so the two cannot drift.
-           Using the saturating s32 to_q here and to_q_wide there was a
-           divergence in its own right. */
-        int64_t bqw = to_q_wide(b_m, b_e);
-        if (bqw >  lim) bqw =  lim;
-        if (bqw < -lim) bqw = -lim;
-        int32_t beta_sp = fx_sigmoid_q((int32_t)bqw, SP_Q);
-        int64_t beta_o = rshift_r(beta_sp, SP_Q - 16);
-        /* the recurrence port is unsigned(15 downto 0); Q16 1.0 = 65536 does
-           not fit, so the top of the range saturates one LSB low. */
-        if (beta_o > 65535) beta_o = 65535;
-        if (beta_o < 0) beta_o = 0;
+           The recipe itself lives in gdn_scalar_int() above, so that this
+           harness and ref/gdn_block_vec.c cannot drift apart. */
+        int eg_i, beta_i, err_g;
+        gdn_scalar_int(al_m, al_e, dt_m, dt_e, a_m, a_e, b_m, b_e,
+                       &eg_i, &beta_i, &err_g);
+        int64_t eg_o = eg_i, beta_o = beta_i;
 
         /* ---------------- double oracle (no LUT, no grid) ------------- */
         double al_r = ldexp((double)al_m, -al_e);
@@ -233,3 +265,4 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+#endif  /* GDN_CHAIN_INCLUDE */

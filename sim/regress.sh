@@ -383,7 +383,23 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=91   # +1 sim/tb_matvec_core_ragsat, 2026-08-29.  TRACK A-MUT
+BASELINE_PASS=92   # +1 sim/tb_gdn_block_vec, 2026-08-29.  TRACK B-BLOCK.  THE
+                   #    FIRST VALUE ORACLE SUBSYSTEM B'S TOP LEVEL HAS EVER
+                   #    HAD.  sim/tb_gdn_block checks bit-IDENTITY of its dump
+                   #    across producer skews and says in its own header that
+                   #    it "does not re-check arithmetic", so every wiring
+                   #    error in the block was invisible: the dump is
+                   #    identical under every skew and wrong in all of them.
+                   #    ref/gdn_block_vec.c computes the whole block -- conv,
+                   #    tap masking, silu, both L2 paths, the scalar path, the
+                   #    recurrence, both emit sites, the norm and the gate --
+                   #    and this row asserts the y stream, y_exp, the FINAL
+                   #    recurrent state, the final exponent table and all four
+                   #    status flags bit for bit.  It found defect B-BLK-1 on
+                   #    the first comparison; the row runs with KMAP_DIV=true
+                   #    so the rest of the composition is still gated while
+                   #    that defect is open.  MEASURED 13 s.
+                   # +1 sim/tb_matvec_core_ragsat, 2026-08-29.  TRACK A-MUT
                    #    measured EIGHT mutations of rtl/matvec_core.vhd that
                    #    the committed gate cannot see, because sim/tr.txt has
                    #    K = 96 = 3*32 exactly, M = 8 = 2*4 exactly and
@@ -836,6 +852,32 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_gdn_emit_chain)   echo "-gOVERLAP=true -gCOL_GAP=4 -gSTRICT=false -gSILU_LANES=16 -gRMS_LANES=4 -gZ_DELAY=640 --stop-time=300ms" ;;
     # sim/run_gdn_block.sh reference point: every producer maximally ahead.
     sim:tb_gdn_block)        echo "-gOUTFILE=gdn_block_out.txt --stop-time=200ms" ;;
+    # THE BLOCK-LEVEL VALUE ORACLE, and the one row in this file that runs
+    # against a KNOWN OPEN DEFECT ON PURPOSE.
+    #
+    # ref/gdn_block_vec.c defaults to the MODEL's key-head mapping,
+    # hk = h mod KEY_HEADS, which is what ggml_repeat_4d does (it TILES:
+    # ggml_compute_forward_repeat_f32 writes dst row i1*ne01+k1 from src row
+    # k1).  rtl/gdn_block.vhd's P_HKQ state does hk = h/(VAL_HEADS/KEY_HEADS),
+    # the GQA-style contiguous grouping, which is a different permutation for
+    # every value head but the first and the last.  That is defect B-BLK-1 and
+    # it is NOT fixed here: TRACK B-BLOCK does not change RTL.
+    #
+    # MEASURED at KEY_HEADS=2 VAL_HEADS=4 DIM=32 TOKENS=2: with the model
+    # mapping, 128 of 256 y mantissas, 2048 of 4096 final state mantissas and
+    # 20 of 128 final state exponents disagree -- exactly value heads 1 and 2,
+    # the two the two mappings differ on.  With KMAP_DIV=true, 0, 0 and 0.
+    # So ONE wiring decision is the whole divergence and every other stage of
+    # the composition is bit-exact.
+    #
+    # This row therefore runs the oracle at KMAP_DIV=true, which gates the
+    # whole rest of the block while the defect is open, and the bench prints a
+    # loud note saying so on every run.  WHEN B-BLK-1 IS FIXED: drop
+    # -gKMAP_DIV=true here and change "div" to "mod" in the tb_vector_args row
+    # below.  Both must move together; the vector file carries a kmap flag the
+    # bench asserts against the generic, so a half-done change is loud.
+    # docs/debugging/2026-08-29_gdn-block-oracle.md.
+    sim:tb_gdn_block_vec)    echo "-gKMAP_DIV=true --stop-time=200ms" ;;
     # sim/run_matvec.sh stage 5/6/7 baselines.  --stop-delta is raised because
     # the trace loader spends one delta per line, which trips ghdl's 5000
     # default and looks exactly like a zero-delay loop.  It is not one.
@@ -967,6 +1009,20 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # the vector file's shape header, so a mismatch here is loud, not silent.
     seq_vec_chain_vec.txt)  echo "250 8 20260827" ;; # sim/run_seq_vec_seam.sh
     gdn_emit_chain_vec.txt) echo "3 24 128" ;;     # sim/run_gdn_emit_chain.sh
+    # ref/gdn_block_vec.c, subsystem B's BLOCK-level oracle.  Argument order is
+    # KEY_HEADS VAL_HEADS DIM TOKENS LAYERS KMAP SEED and it must match
+    # sim/tb_gdn_block_vec.vhd's generic defaults; the vector file carries a
+    # shape header AND a kmap flag that the bench asserts against them, so a
+    # mismatch here is loud rather than a wrong answer.
+    #
+    # VAL_HEADS = 2*KEY_HEADS is load bearing, not a size: at VAL_HEADS =
+    # KEY_HEADS the key-head mapping is the identity under both candidate
+    # rules and the question defect B-BLK-1 turns on cannot be asked at all.
+    #
+    # "div" selects rtl/gdn_block.vhd's mapping rather than the model's.  See
+    # the tb_args row above for why, and change it to "mod" together with that
+    # row when B-BLK-1 is fixed.
+    gdn_block_vec.txt)      echo "2 4 32 2 2 div" ;;
     # ref/l2norm_rs_vec.c, subsystem B 2.1.3's fixed-point reference.  Args are
     # N and the LCG seed; the vector file carries an N header that
     # sim/tb_l2norm_rs.vhd asserts against its own generic, so a mismatch is

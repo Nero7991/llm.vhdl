@@ -33,7 +33,7 @@
  *           (the 1/sqrt(N) fold is a SHIFT OF THE ARGUMENT, not of the output)
  *   m    = msb(arg);  he = m/2 (floor);  y = Q30 Newton rsqrt of arg
  *          normalised to [1,2), times 1/sqrt(2) when m is odd
- *   out[i] = sat16( (xm[i]*y + bias) >> sh ),  sh = 30 - OUT + he,
+ *   out[i] = l2_sat16( (xm[i]*y + bias) >> sh ),  sh = 30 - OUT + he,
  *          bias = 1 << (sh-1)      -- round half up, ARITHMETIC shift
  *   ssq = 0 emits zeros on BOTH paths: 2.1.3's deliberate divergence from
  *   ggml_l2_norm, which would emit amplified dust.
@@ -54,10 +54,13 @@
 #include <stdint.h>
 
 /* Bit-identical to rtl/fixed_luts_pkg.vhd's RSQRT_ROM, which is itself
+ * (the L2_ prefix is local: ref/rmsnorm_bf_vec.c declares its own copy under
+ * the unprefixed name, and ref/gdn_block_vec.c includes both cores in one
+ * translation unit)
  * generated from mem/luts/.  Copied rather than re-derived on purpose: the ROM
  * contents are hardware, not recipe, and re-deriving them here would make a
  * ROM typo invisible in exactly the direction that matters. */
-static const int64_t RSQRT_ROM[64] = {
+static const int64_t L2_RSQRT_ROM[64] = {
     1073741824, 1065450257, 1057347856, 1049427536, 1041682578, 1034106604, 1026693558, 1019437682,
     1012333500, 1005375799,  998559613,  991880210,  985333074,  978913898,  972618566,  966443148,
      960383883,  954437177,  948599586,  942867814,  937238702,  931709222,  926276469,  920937655,
@@ -68,17 +71,17 @@ static const int64_t RSQRT_ROM[64] = {
      784150157,  780903145,  777696137,  774528319,  771398898,  768307107,  765252196,  762233438
 };
 /* to_signed(759250125, 32) in rtl/l2norm_rs.vhd:114 == round(2^30/sqrt(2)) */
-#define INV_SQRT2_C  759250125LL
-#define THREE_Q30    (3LL << 30)
+#define L2_INV_SQRT2_C  759250125LL
+#define L2_THREE_Q30    (3LL << 30)
 
-static int msb_pos(int64_t v)          /* highest set bit of bits 62..0 */
+static int l2_msb_pos(int64_t v)          /* highest set bit of bits 62..0 */
 {
     int p = 0;
     for (int i = 0; i <= 62; i++) if ((v >> i) & 1) p = i;
     return p;
 }
 
-static int64_t sat16(int64_t v)
+static int64_t l2_sat16(int64_t v)
 {
     if (v >  32767) return  32767;
     if (v < -32768) return -32768;
@@ -87,9 +90,9 @@ static int64_t sat16(int64_t v)
 
 /* one rsqrt pass: returns the Q30 mantissa y, writes the exponent he.
  * arg must be > 0. */
-static int64_t rsqrt_q30(int64_t arg, int *he_out)
+static int64_t l2_rsqrt_q30(int64_t arg, int *he_out)
 {
-    int m = msb_pos(arg);
+    int m = l2_msb_pos(arg);
     uint64_t A = (uint64_t)arg, mant;
     if (m <= 30) mant = A << (30 - m);
     else         mant = A >> (m - 30);
@@ -99,14 +102,14 @@ static int64_t rsqrt_q30(int64_t arg, int *he_out)
         fprintf(stderr, "l2norm_rs_vec: rsqrt mantissa not normalised to Q30\n");
         exit(1);
     }
-    int64_t y     = RSQRT_ROM[(mant >> 24) & 0x3F];
+    int64_t y     = L2_RSQRT_ROM[(mant >> 24) & 0x3F];
     int64_t smant = (int64_t)(uint32_t)mant;          /* signed(mant(31 downto 0)) */
     for (int it = 0; it < 2; it++) {
         int64_t y2 = (int64_t)(int32_t)((y * y) >> 30);
-        int64_t d  = THREE_Q30 - ((smant * y2) >> 30);
+        int64_t d  = L2_THREE_Q30 - ((smant * y2) >> 30);
         y = (int64_t)(int32_t)((d * y) >> 31);
     }
-    if (m & 1) { *he_out = (m - 1) / 2; y = (y * INV_SQRT2_C) >> 30; }
+    if (m & 1) { *he_out = (m - 1) / 2; y = (y * L2_INV_SQRT2_C) >> 30; }
     else       { *he_out =  m      / 2; }
     return y;
 }
@@ -121,8 +124,8 @@ static void l2norm_rs(const int *x, int N, int log2n, int *k, int *q)
         return;
     }
     int he_k, he_q;
-    int64_t y_k = rsqrt_q30(ssq, &he_k);
-    int64_t y_q = rsqrt_q30(ssq << log2n, &he_q);
+    int64_t y_k = l2_rsqrt_q30(ssq, &he_k);
+    int64_t y_q = l2_rsqrt_q30(ssq << log2n, &he_q);
     int sh_k = 15 + he_k, sh_q = 12 + he_q;
     int64_t bk = sh_k > 0 ? (1LL << (sh_k - 1)) : 0;
     int64_t bq = sh_q > 0 ? (1LL << (sh_q - 1)) : 0;
@@ -131,10 +134,23 @@ static void l2norm_rs(const int *x, int N, int log2n, int *k, int *q)
          * arithmetic on every compiler this repo builds with; the RTL's
          * shift_right on a signed is arithmetic by definition.  Asserted once
          * in main() rather than assumed. */
-        k[i] = (int)sat16(((int64_t)x[i] * y_k + bk) >> sh_k);
-        q[i] = (int)sat16(((int64_t)x[i] * y_q + bq) >> sh_q);
+        k[i] = (int)l2_sat16(((int64_t)x[i] * y_k + bk) >> sh_k);
+        q[i] = (int)l2_sat16(((int64_t)x[i] * y_q + bq) >> sh_q);
     }
 }
+
+/* ---------------------------------------------------------------------------
+ * Defining GDN_CHAIN_INCLUDE keeps the recipe above -- l2_rsqrt_q30() and
+ * l2norm_rs() -- and drops the standalone harness below, the same convention
+ * rmsnorm_bf_vec.c and gdn_silu_vec.c already use.  ref/gdn_block_vec.c
+ * composes the core rather than transcribing it, because a second
+ * transcription measures self-consistency and nothing else: that is exactly
+ * what certified the collapsed recipe in
+ * docs/debugging/2026-08-25_l2norm-recipe-collapse.md.  The extraction was
+ * verified byte-identical on the emitted vector file (md5 before/after, at
+ * N = 32, 64 and 128).
+ * ------------------------------------------------------------------------- */
+#ifndef GDN_CHAIN_INCLUDE
 
 /* deterministic LCG, so the vector file is reproducible without depending on
  * any libc's rand() */
@@ -196,7 +212,7 @@ int main(int argc, char **argv)
     /* ---- 1. ssq = 0, the deliberate ggml divergence -------------------- */
     ZERO(); EMIT();
 
-    /* ---- 2. near-zero norms: the sat16 corner and its neighbourhood ----
+    /* ---- 2. near-zero norms: the l2_sat16 corner and its neighbourhood ----
      * A single tiny element makes 1/sqrt(ssq) enormous, so BOTH paths must
      * saturate.  This is also the "denormal-ish" end of the range asked for:
      * ssq as small as it can be while nonzero. */
@@ -330,3 +346,5 @@ int main(int argc, char **argv)
     (void)hdr;
     return 0;
 }
+
+#endif  /* GDN_CHAIN_INCLUDE */

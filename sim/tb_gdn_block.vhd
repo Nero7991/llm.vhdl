@@ -102,6 +102,41 @@ entity tb_gdn_block is
     -- no output is ambiguous between wedged and slow, and that ambiguity has
     -- cost real time on this project's testbenches more than once.
     HEARTBEAT_US : integer := 0;
+
+    -- ---- what the four status flags MUST be on this stimulus -------------
+    --
+    -- These were PRINTED, not asserted, from the day this bench was written,
+    -- so the regression could not fail on any of them.  That is the third
+    -- instance of a shape already fixed twice in subsystem B: gdn_silu and
+    -- rmsnorm_bf both had oracles whose result was reported rather than
+    -- gated, and the flagship mutation in the second was bit-exact green
+    -- while the output was 1.7e10 LSB wrong.
+    --
+    -- All four are FALSE, and that is a claim about the stimulus, derived
+    -- rather than observed:
+    --
+    --   err_conv  gdn_conv's e_seg leaves int8.  m12() bounds every conv
+    --             mantissa at +/-2047, so |acc| <= 4*2047^2 < 2^24 and
+    --             sh_seg <= 10; e_ref is 8..10 and cw_exp is 12..14, so
+    --             e_seg lands in roughly [10, 24].  int8 is never at risk.
+    --   err_g     gdn_scalar hit the -16 clamp on g.  a_m is -|m12| at
+    --             a_e = 12, so |a| <= 0.5; al and dt are m12 at exp 12, so
+    --             |al+dt| <= 1.0 and softplus(.) <= 1.32.  |g| <= 0.66,
+    --             twenty-four times inside the clamp.
+    --   err_se    a state-column exponent leaves int8.  MEASURED, not
+    --             derived: the semem initialiser is a constant 10 and the
+    --             stimulus is narrow-band, so se_new stays near it.
+    --   y_sat     site 13's sat16 fired.  MEASURED.
+    --
+    -- They are generics rather than literals so that a deliberately
+    -- out-of-range stimulus can assert the OTHER polarity and prove the flag
+    -- is reachable, which is the check that stops "expect 0" from being a
+    -- check that can never fail.
+    EXP_ERR_CONV : boolean := false;
+    EXP_ERR_G    : boolean := false;
+    EXP_ERR_SE   : boolean := false;
+    EXP_Y_SAT    : boolean := false;
+
     OUTFILE  : string  := "gdn_block_out.txt"
   );
 end entity;
@@ -648,6 +683,35 @@ begin
          & " err_g=" & std_logic'image(err_g)
          & " err_se=" & std_logic'image(err_se)
          & " y_sat=" & std_logic'image(y_sat);
+
+    -- ---- and the same four, GATED.  See the generics for why each is
+    -- false on this stimulus.  Printed, they were decoration: mutation
+    -- testing cannot catch a check that cannot fail, because mutating what
+    -- it watches changes nothing.
+    assert (err_conv = '1') = EXP_ERR_CONV
+      report "tb_gdn_block: err_conv is " & std_logic'image(err_conv)
+           & ", expected " & boolean'image(EXP_ERR_CONV)
+           & ".  err_conv is gdn_conv reporting a segment exponent outside "
+           & "int8, and this stimulus bounds every conv mantissa at +/-2047."
+      severity failure;
+    assert (err_g = '1') = EXP_ERR_G
+      report "tb_gdn_block: err_g is " & std_logic'image(err_g)
+           & ", expected " & boolean'image(EXP_ERR_G)
+           & ".  err_g is gdn_scalar hitting the -16 clamp on g, and this "
+           & "stimulus holds |a| <= 0.5 and |alpha+dt| <= 1."
+      severity failure;
+    assert (err_se = '1') = EXP_ERR_SE
+      report "tb_gdn_block: err_se is " & std_logic'image(err_se)
+           & ", expected " & boolean'image(EXP_ERR_SE)
+           & ".  err_se is gdn_recur_pipe reporting a state-column exponent "
+           & "outside int8."
+      severity failure;
+    assert (y_sat = '1') = EXP_Y_SAT
+      report "tb_gdn_block: y_sat is " & std_logic'image(y_sat)
+           & ", expected " & boolean'image(EXP_Y_SAT)
+           & ".  y_sat is site 13's sat16 firing on the whole-token "
+           & "renormalization."
+      severity failure;
 
     -- ---- the dump that the cross-skew diff compares ---------------------
     file_open(fh, OUTFILE, write_mode);
