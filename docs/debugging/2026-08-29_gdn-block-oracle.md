@@ -487,6 +487,25 @@ is suspect.
   shape in subsystem B and it will not be the last: grep for `report` lines that
   print a checkable quantity.
 
+- **PARALLEL AGENTS SHARE ONE SCRATCHPAD ROOT, and a generic directory name
+  collides.** My full gate run used `$SCRATCHPAD/full` and redirected its
+  output to `$SCRATCHPAD/full.log`. Another track then ran
+  `bash sim/mutate_mv4i_desc.sh $SCRATCHPAD/full -j 10`, which takes a scratch
+  directory as its first argument and writes its own log beside it. The two
+  met: my regression log was overwritten with somebody else's mutation table,
+  in the middle of a 20-minute run, and the run's own summary was lost. The run
+  was discarded and repeated under a track-specific name. **Name a scratch
+  directory after the TRACK, not after what it holds.** Nothing was corrupted
+  in the repository and no result was misread, because the collision was
+  obvious the moment the log was read -- but a subtler overlap in the results
+  directory would not have been.
+
+  The same check found FOUR concurrent heavy jobs on the box (two full
+  regressions and two mutation sweeps). CLAUDE.md already records that a
+  full-gate run showing failures in files you cannot have touched is machine
+  contention; this is the same hazard one step earlier, at the point where you
+  choose a path.
+
 - **`sim/regress.sh` treats any bare `"*.txt"` string literal in a testbench as
   a vector file** and will build `ref/<stem>.c` for it. That is how
   `gdn_block_vec.txt` gets generated with no plumbing, and it is also why
