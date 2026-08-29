@@ -384,7 +384,36 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=92   # +1 sim/tb_gdn_block_vec, 2026-08-29.  TRACK B-BLOCK.  THE
+BASELINE_PASS=93   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
+                   #    CB-ORACLE.  THE CODEBOOK'S WRITE CONTRACT, written
+                   #    BEFORE the pre-authorised LUTRAM fallback that
+                   #    multiplies its replica count by 32.  TRACK A-MUT
+                   #    measured C2 (writes accepted outside idle) and C3 (the
+                   #    cb_we/start interlock deleted) as SURVIVORS on all
+                   #    three gate traces: matvec_core's own P_CB_CHK has the
+                   #    teeth and NO bench in the closure generated the
+                   #    stimulus.  This row does -- a whole sixteen-entry load
+                   #    offered DURING an operation and again under reset, and
+                   #    cb_we held high against a held start -- and it adds six
+                   #    contract terms nothing had stated: writes outside idle
+                   #    are DROPPED and not deferred, the table survives reset,
+                   #    an un-loaded codebook decodes to zero (the only
+                   #    property that tests cb's initialiser, which becomes the
+                   #    RAM INIT string under LUTRAM), and every emitted lane
+                   #    is equal, which is replica coherency seen at the OUTPUT
+                   #    instead of through an internal assertion.  Every row is
+                   #    identical by construction so a stale replica shows up
+                   #    as lane inequality; that scales to per-lane replicas
+                   #    unchanged.  Run 8 DEMONSTRATES an open hazard rather
+                   #    than forbidding it: an operation started after a
+                   #    PARTIAL load consumes a mixed table and reports
+                   #    success.  MEASURED 0.46 s.  Teeth:
+                   #    sim/mutate_matvec_cb.sh, 13 of 19 over six columns,
+                   #    with a control and an assert-neutered column; the six
+                   #    survivors and the one row only P_CB_CHK catches are
+                   #    named there and in
+                   #    docs/debugging/2026-08-29_codebook-coherency-oracle.md.
+                   # +1 sim/tb_gdn_block_vec, 2026-08-29.  TRACK B-BLOCK.  THE
                    #    FIRST VALUE ORACLE SUBSYSTEM B'S TOP LEVEL HAS EVER
                    #    HAD.  sim/tb_gdn_block checks bit-IDENTITY of its dump
                    #    across producer skews and says in its own header that
