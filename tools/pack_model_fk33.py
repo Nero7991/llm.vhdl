@@ -86,6 +86,30 @@ ports after the host takes one).  So under this flat layout at least 12 of the
 27-lane arena layout of the residency map section 3, which needs a build-time
 lane->port->stack table that no bitstream in this repo has.  This allocator
 removes the straddle; it does not make the flat layout port-local.
+
+`--drop TENSOR` -- LEAVING A TENSOR OUT OF THE IMAGE ON PURPOSE.  A tensor the
+card never reads still costs HBM if it is placed, and HBM is the binding
+resource at N=4 cards (docs/debugging/2026-08-29_token-embd-drop.md).  `--drop`
+names a GGUF tensor that is NOT to be packed, NOT to be placed and NOT to appear
+in the manifest's `files`.  It is repeatable, it defaults to EMPTY -- so the
+default set is exactly the set this tool produced before the option existed --
+and it REFUSES a name that is not in the GGUF, because a typo that silently
+drops nothing is the failure mode an option like this invites.
+
+What it is NOT: it is not a deletion of the data.  The manifest records every
+dropped tensor by name, shape, and the byte count it WOULD have occupied, next
+to `source_gguf`, so the set says out loud what it lacks and where to get it.
+Whoever owns the tensor off-card reads it from that GGUF, or from a .mv4i packed
+separately; `tools/embed_gather.py` is the row-gather recipe for the latter.
+
+The intended use is `--drop token_embd.weight`: the host owns the embedding
+gather and writes R_X into the card over the region-file write port -- the
+`hw_we / hw_reg / hw_addr / hw_data` ports of `rtl/llama_top.vhd` (:583 at the
+time of writing) and the `tok_fsm` of `rtl/seq_opdec.vhd` (:611) that publishes
+that write into the lock plane -- so nothing on the card reads the embedding
+table.  Cited by SYMBOL because those files are edited often and a line number
+goes stale within the day; one already had.  Revisit the drop if an on-card
+gather opcode is ever added, which is the trigger recorded in the note above.
 """
 
 import argparse
@@ -231,6 +255,15 @@ def main():
                          "whole ROWS_IF tile. Reproduces the historic set, in "
                          "which two of the three qkv row windows per GDN block "
                          "are not expressible at ROWS_IF=48")
+    ap.add_argument("--drop", action="append", default=[], metavar="TENSOR",
+                    help="exact GGUF tensor name to leave OUT of the image: not "
+                         "packed, not placed, not in the manifest's files. "
+                         "Repeatable. DEFAULT: drop nothing, which reproduces "
+                         "the set this tool made before the option existed. "
+                         "Refuses a name the GGUF does not have. Intended use "
+                         "is --drop token_embd.weight, because the host owns "
+                         "the embedding gather and nothing on the card reads "
+                         "that tensor")
     a = ap.parse_args()
 
     rows_if, axi_dw = a.rows_if, a.axi_dw
@@ -246,14 +279,45 @@ def main():
     sys.stdout.flush()
 
     rd = GGUFReader(a.gguf, "r")
-    tensors = list(rd.tensors)
+    all_tensors = list(rd.tensors)
+
+    # ---------------------------------------------------------- --drop
+    # Resolved against the GGUF's own tensor list and REFUSED if a name does
+    # not match exactly one tensor.  An unmatched --drop would otherwise be a
+    # no-op that still reports success, i.e. an image nobody notices is full
+    # size.  Done before classification so a dropped tensor is invisible to
+    # everything downstream: it is not packed, not placed, not counted.
+    drop_names = list(dict.fromkeys(a.drop))          # dedup, keep order
+    by_name = {}
+    for t in all_tensors:
+        by_name.setdefault(t.name, []).append(t)
+    for n in drop_names:
+        if len(by_name.get(n, [])) != 1:
+            raise SystemExit(
+                f"--drop {n!r}: the GGUF has {len(by_name.get(n, []))} tensors "
+                f"with that exact name, want exactly 1. Nothing was written.")
+    dropped = []
+    for n in drop_names:
+        t = by_name[n][0]
+        ne = [int(v) for v in t.shape]
+        is_mv = P.is_matvec(t.name, ne)
+        would = (P.packed_layout(ne[1], ne[0], rows_if, axi_dw,
+                                 emitting=False)[-1] if is_mv
+                 else align_up(int(np.prod(ne)) * 4))
+        dropped.append(dict(name=n, shape_ne=ne, matvec=bool(is_mv),
+                            bytes_if_placed=int(would)))
+    tensors = [t for t in all_tensors if t.name not in set(drop_names)]
 
     mv, nonmv = [], []
     for t in tensors:
         ne = [int(v) for v in t.shape]
         (mv if P.is_matvec(t.name, ne) else nonmv).append(t)
-    print(f"tensors  {len(tensors)} total, {len(mv)} matvec, "
-          f"{len(nonmv)} kept F32")
+    print(f"tensors  {len(all_tensors)} in the GGUF, {len(dropped)} dropped, "
+          f"{len(tensors)} placed: {len(mv)} matvec, {len(nonmv)} kept F32")
+    for d in dropped:
+        print(f"  DROPPED {d['name']} ne={d['shape_ne']} "
+              f"{'matvec' if d['matvec'] else 'f32'}, "
+              f"{d['bytes_if_placed']} B not placed")
     sys.stdout.flush()
 
     # ---------------------------------------------------- the 177, one blob
@@ -482,7 +546,12 @@ def main():
                  kv_extents=kv_extents,
                  free_after_gdn=free,
                  max_context_tokens=max_ctx),
-        counts=dict(tensors=len(tensors), matvec=len(mv), f32=len(nonmv)),
+        # `tensors` counts what is PLACED, so it stays the sum of matvec+f32
+        # and `check_mv4i_set.py`'s count check keeps its meaning.  What the
+        # GGUF held is recorded separately, so the two can never be confused.
+        counts=dict(tensors=len(tensors), matvec=len(mv), f32=len(nonmv),
+                    gguf_tensors=len(all_tensors), dropped=len(dropped)),
+        dropped_tensors=dropped,
         files=files,
     )
     mpath = os.path.join(a.outdir, "manifest.json")
@@ -494,6 +563,13 @@ def main():
           f"({100.0*total/HBM_SIZE:.1f} % of 8 GiB)")
     print(f"  GDN state        {GDN_STATE_BYTES/1024**2:.1f} MB at "
           f"{gdn_base:#x}")
+    if dropped:
+        tot_d = sum(d["bytes_if_placed"] for d in dropped)
+        print(f"  dropped          {len(dropped)} tensor(s), {tot_d} B "
+              f"({tot_d/G:.3f} GiB) NOT placed: "
+              + ", ".join(d["name"] for d in dropped))
+    else:
+        print("  dropped          none")
     print(f"  qkv segment pad  {'on' if a.qkv_pad else 'OFF'}, "
           f"{sum(1 for f in files if f.get('segments'))} fused tensor(s) padded")
     print(f"  stack holes      {hole_bytes} B  {hole_bytes/1024**2:.1f} MiB "

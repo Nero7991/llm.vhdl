@@ -27,7 +27,10 @@ And over the set:
   * HBM offsets are 4 KB aligned, ascending, non-overlapping, and inside 8 GiB;
   * the F32 side file exists at its manifest size and every entry inside it is
     4 KB aligned and within it;
-  * the totals in the manifest are the sum of the files on disk.
+  * the totals in the manifest are the sum of the files on disk;
+  * every tensor the manifest declares under `dropped_tensors` (see
+    `pack_model_fk33.py --drop`) really is absent from `files`, and the
+    placed/dropped/GGUF counts add up.
 
 `--full` additionally hashes every byte and COMPARES the digest to the
 `blake2b_128` the manifest recorded at pack time.  That is the only check that
@@ -72,6 +75,34 @@ def check(outdir: str, full: bool = False) -> int:
         fail(f"manifest geometry says NPORTS_W={g['nports_w']} "
              f"n_scale_sub={g['n_scale_sub']}, spec 6.5/6.5a gives "
              f"{nports}/{nss}")
+
+    # ---- `--drop`ped tensors, when the manifest declares any.  A set that
+    # says it left a tensor out must actually have left it out: the failure
+    # this catches is a manifest edited to claim a drop that never happened,
+    # or a stale entry surviving a repack.  Checked against the FILE LIST, not
+    # against the packer's intent.
+    dropped = man.get("dropped_tensors", [])
+    placed = {e.get("tensor") for e in man["files"]}
+    placed_files = {e["file"] for e in man["files"]}
+    for d in dropped:
+        if d["name"] in placed:
+            fail(f"{d['name']}: declared dropped, but a manifest entry places "
+                 f"it")
+        if d["name"] + ".mv4i" in placed_files:
+            fail(f"{d['name']}: declared dropped, but {d['name']}.mv4i is in "
+                 f"the file list")
+    c = man.get("counts", {})
+    if "gguf_tensors" in c and "dropped" in c:
+        if c["dropped"] != len(dropped):
+            fail(f"counts.dropped {c['dropped']} but dropped_tensors lists "
+                 f"{len(dropped)}")
+        if c["gguf_tensors"] != c["tensors"] + c["dropped"]:
+            fail(f"counts: {c['tensors']} placed + {c['dropped']} dropped "
+                 f"!= {c['gguf_tensors']} in the GGUF")
+    if c.get("tensors") is not None and \
+            c["tensors"] != c.get("matvec", 0) + c.get("f32", 0):
+        fail(f"counts.tensors {c['tensors']} != matvec {c.get('matvec')} "
+             f"+ f32 {c.get('f32')}")
 
     def hashed(path):
         h = hashlib.blake2b(digest_size=16)
@@ -249,6 +280,11 @@ def check(outdir: str, full: bool = False) -> int:
         fail(f"manifest counts.matvec {man['counts']['matvec']}, "
              f"{n_mv} .mv4i entries checked")
 
+    if dropped:
+        print(f"\n{len(dropped)} tensor(s) declared dropped and confirmed "
+              f"absent from the image: "
+              + ", ".join(f"{d['name']} ({d['bytes_if_placed']} B)"
+                          for d in dropped))
     print(f"\n{n_mv} packed tensors + 1 F32 side file, {total} bytes total"
           + (f", {n_hashed} payloads hashed and matched" if full else
              " (payloads NOT hashed -- pass --full for that)"))
