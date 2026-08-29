@@ -222,11 +222,89 @@ device.  Intel HEX is ASCII, roughly 2.8x expansion (about 45 characters per
   which is the only positive control we have) and the risk it mitigates is
   testable directly by re-reading the flash and comparing.
 
+## Results of the backup
+
+`BACKUP_OK` then `BACKUP_CHECK_OK`, twice, on two independent reads:
+
+```
+  decoded     33554432 bytes (32.00 MiB)
+  0xFF bytes  6713365 (20.01%)
+  0x00 bytes  107826 (0.32%)
+  distinct    256 byte values
+  sync word   AA995566 at offset 0x000050
+  bus width   000000BB at offset 0x000040
+  sync count  1
+  last data   offset 0x19BF938 (25.75 MiB used)
+```
+
+### The low-VCCINT hypothesis, tested rather than assumed
+
+The voltage gate exists because a readback taken below the 0.698 V floor "risks
+being quietly wrong".  That is a hypothesis, and it is directly testable.  The
+flash was read twice, independently, both at 0.677 V:
+
+```
+f8d2a6a0cc627647fe7b9c0f5836ce9075d01e304b81dfb5b0c352c66c445f7e  ..._153300001366.bin
+f8d2a6a0cc627647fe7b9c0f5836ce9075d01e304b81dfb5b0c352c66c445f7e  ..._153300001366_read2.bin
+```
+
+**BIT-IDENTICAL.**  MEASURED, `sha256sum` and `cmp`.
+
+**What this does and does not establish.**  It establishes that the readback at
+0.677 V is REPEATABLE.  It does NOT by itself establish that it is CORRECT: a
+systematic error in the read path at low VCCINT would appear identically in
+both reads.  The independent support for correctness is structural -- canonical
+bus-width sequence at 0x40, sync word at the canonical 0x50, 256 distinct byte
+values, and a payload extent consistent with an uncompressed configuration
+stream for this device -- plus the fact that the card demonstrably configures
+from this flash.  A read path corrupted enough to matter would be unlikely to
+yield a canonically structured bitstream twice.  Stated as: strong, not proof.
+
+### What the image is
+
+MEASURED, by scanning the decoded `.bin`:
+
+* exactly **one** `AA995566` sync word, at 0x50
+* exactly **one** `000000BB 11220044` bus-width sequence, at 0x40
+* payload runs continuously to 0x19BF314, with only a 1572-byte `20000000`
+  NOOP tail after it
+
+So it is a **single configuration stream of 25.75 MiB**, not a golden plus
+multiboot pair.
+
+That is 2.2x our own `fk33_pcieep.bit` at 11.66 MiB for the same device.  The
+reason is not a second image: `fk33_pcieep.xdc:127` and `fk33_i2cprobe.xdc:127`
+both set `BITSTREAM.GENERAL.COMPRESS TRUE`, so **our** image is compressed and
+25.75 MiB is the uncompressed size.  DERIVED.
+
+**This strengthens finding 1 considerably.**  Card 2 loads 2.2x more
+configuration data than our own image would, from the same flash part, at
+0.677 V, and still reaches DONE=1 with every BOOT_STATUS error bit clear.  The
+configuration-time budget that sits in the docs as a DERIVED ~225.7 ms against
+a ~200 ms window is not violated in practice even at more than double our
+image's size.  That budget concern should be re-examined against this
+measurement rather than carried forward unchanged.
+
+### Where the image is stored
+
+`bit/` is gitignored, so the backup is NOT in version control.  Archived to
+`/mnt/storage/fk33-factory-backups/` with `SHA256SUMS.txt` and a `README.txt`
+carrying the caveat above.  `/mnt/storage/files` is owned by the `sftpgo` uid
+and is not writable, hence `/mnt/storage` directly.
+
+**This is the only copy of this image.**  Card 1's factory image was destroyed
+and SQRL is the only other source.
+
 ## Open, not yet answered
 
-* Whether a readback taken at 0.677 V is bit-identical to one taken at 0.717 V.
-  Pending: second read and hash comparison.
-* What card 2's factory image actually is -- the dump has not been decoded
-  beyond the sync-word validation `check_flash_backup.py` performs.
+
+* Whether a readback at 0.677 V matches one taken at 0.717 V.  ANSWERED only
+  in part: two reads at 0.677 V agree bit-for-bit, but no read at 0.717 V has
+  been taken, so the comparison ACROSS voltages is still untested.  Doing it
+  costs one probe-bitstream load plus two minutes and would settle it.
+* What the factory design DOES.  The image is structurally identified above,
+  but not decoded: no design name is recoverable (the ASCII header exists only
+  in the `.bit` wrapper, not in a flash image) and the configuration stream has
+  not been disassembled.
 * Whether card 2 trains a PCIe link.  It is on aux power only, not in a slot,
   so this run cannot say.
