@@ -25,6 +25,7 @@
 # a 4 KB scratch page at the very top of the address map.
 
 source [file join [file dirname [info script]] target_select.tcl]
+source [file join [file dirname [info script]] axi_select.tcl]
 
 puts "PCIEEP_CHECK begin"
 
@@ -63,16 +64,39 @@ if {[llength $axis] < 2} {
 # decimal TEXT against the hex string "464B3333", which can never match: the
 # endpoint reported PCIEEP_FAIL "this is not fk33_pcieep" on a card that was
 # answering with exactly the right magic (decimal 1179333427 = 0x464B3333).
+proc rd_words {ax addr} {
+    # NO -quiet ON create_hw_axi_txn.  MEASURED by TRACK ADDRMAP: -quiet returns
+    # QUIETLY ON FAILURE and leaves the PREVIOUS txn of that name in place, so
+    # run_hw_axi then re-runs the OLD transaction and reports a stale value as
+    # though it were fresh.  That is where 0xA4960CF2 came from: it was the
+    # immediately preceding read, reported twice.  A `catch` around a `-quiet`
+    # command catches nothing, so the earlier fix here removed one silencer and
+    # left the other.
+    #
+    # `-t x4` prints HEX.  The old code used `-t d4`, which prints signed
+    # DECIMAL, and compared that text against hex strings.
+    #
+    # Returns the LIST of 32-bit words.  A 64-bit master returns TWO per read
+    # and `lindex ... 1` silently took one of them; which one was not known.
+    # MEASURED at the DMA BRAM against a pattern the host had written:
+    #   hw_axi_3 at 0x200000000 -> <464b3333 4a544147>
+    # against a host write of 464B3333 4A544147 12345678 FEDCBA98, so the first
+    # word is the LOW word and the order is little-endian as expected.
+    create_hw_axi_txn -force t $ax -address $addr -type read
+    run_hw_axi [get_hw_axi_txns t]
+    set r [report_hw_axi_txn -t x4 [get_hw_axi_txns t]]
+    return [lrange $r 1 end]
+}
 proc rd {ax addr} {
-    create_hw_axi_txn -quiet -force t $ax -address $addr -type read
-    run_hw_axi -quiet [get_hw_axi_txns t]
-    set v [lindex [report_hw_axi_txn -t d4 [get_hw_axi_txns t]] 1]
-    return [expr {$v & 0xFFFFFFFF}]
+    set w [rd_words $ax $addr]
+    if {![llength $w]} { error "no data returned from $addr" }
+    return [expr 0x[lindex $w 0]]
 }
 proc rdhex {ax addr} { return [format %08X [rd $ax $addr]] }
 proc wr {ax addr data} {
-    create_hw_axi_txn -quiet -force t $ax -address $addr -data $data -type write
-    run_hw_axi -quiet [get_hw_axi_txns t]
+    # No -quiet, for the same reason as rd_words above.
+    create_hw_axi_txn -force t $ax -address $addr -data $data -type write
+    run_hw_axi [get_hw_axi_txns t]
 }
 
 # ---- PICK THE AXI-LITE MASTER BY WHAT IT ANSWERS, NOT BY ITS ORDINAL.
@@ -91,16 +115,6 @@ proc wr {ax addr data} {
 # (MEASURED: hw_axi_1 returns 0xDEC0DEE3 there).  So probe, and refuse if the
 # answer is not unique.
 set ID_MAGIC 0x464B3333
-# Report each master's address width.  A 34-bit address (the DMA BRAM window at
-# 0x2_0000_0000) cannot be issued on a master narrower than that, and the txn
-# ERRORS rather than returning a wrong value.
-foreach a $axis {
-    set aw "?"
-    catch {set aw [get_property ADDR_WIDTH $a]}
-    set dw "?"
-    catch {set dw [get_property DATA_WIDTH $a]}
-    puts "  master [get_property NAME $a]  ADDR_WIDTH=$aw DATA_WIDTH=$dw"
-}
 set cand {}
 foreach a $axis {
     if {[catch {rd $a A000} v]} { continue }
@@ -139,22 +153,34 @@ if {[llength $hbmc] == 1} {
     # This is a round trip and therefore NOT an oracle for the memory itself.
     # It is only being used to tell two masters apart, and the real four-word
     # check still runs afterwards.
+    # 64 BITS OF DATA.  MEASURED: a 32-bit -data on the 64-bit master is
+    # refused outright -- "Data value '5A5A0F0F' does not fill up complete
+    # 64-bit data words.  Last data word has only 8 bits."  The master's width
+    # dictates the transaction shape, and the 32-bit masters cannot even issue
+    # the 34-bit address ("Address Value '200000000' is too large").  Between
+    # them those two errors identify all three masters without guessing.
     set probe_a 200000000
-    set probe_v 0x5A5A0F0F
+    set probe_v 5A5A0F0F0F5A5A5A
     foreach a $hbmc {
         # Do NOT swallow the error.  A `catch ... continue` here hid the fact
         # that both candidates ERRORED rather than returning wrong data, which
         # is a completely different diagnosis, and left the run reporting
         # "0 answered" with no way to tell why.
         if {[catch {
-            wr $a $probe_a [format %08X $probe_v]
-            set got [rd $a $probe_a]
+            wr $a $probe_a $probe_v
+            set gw [rd_words $a $probe_a]
+            # rd_words returns low word first (MEASURED against a pattern the
+            # host had written), so reassemble high:low to compare with -data.
+            set got [expr {[llength $gw] >= 2
+                           ? "[lindex $gw 1][lindex $gw 0]"
+                           : [lindex $gw 0]}]
+            set got [string toupper $got]
         } perr]} {
             puts "  probe [get_property NAME $a] at 0x$probe_a ERRORED: $perr"
             continue
         }
-        puts [format "  probe %s at 0x%s -> 0x%08X" [get_property NAME $a] $probe_a $got]
-        if {$got == $probe_v} { lappend hbmhit $a }
+        puts "  probe [get_property NAME $a] at 0x$probe_a -> 0x$got"
+        if {$got eq $probe_v} { lappend hbmhit $a }
     }
     if {[info exists hbmhit] && [llength $hbmhit] == 1} {
         set hbm [lindex $hbmhit 0]
@@ -237,27 +263,30 @@ puts [format "GPIO tri=0x%08x data=0x%08x  (tri must be 0x3 or wider all-ones at
 # ---- 3. HBM through the JTAG master.  Isolates the memory path from the DMA
 # path: if this works and host DMA does not, the fault is in XDMA or the driver,
 # not in HBM or the smartconnect.  Scratch page is the last 4 KB of the 8 GB map.
-set pat {DEADBEEF 0BADC0DE 5A5A5A5A A5A5A5A5}
+# Two 64-bit words carrying the same four 32-bit values as before, high:low,
+# because rd_words returns the low word first.
+set pat {0BADC0DEDEADBEEF A5A5A5A55A5A5A5A}
 set ok 1
 if {$hbm eq ""} {
     puts "HBM_SKIPPED: no unambiguous HBM master (see PCIEEP_NOTE above)."
     set ok -1
 } else {
-for {set i 0} {$i < 4} {incr i} {
-    set a [format %X [expr {0x1FFFFF000 + $i * 4}]]
+for {set i 0} {$i < 2} {incr i} {
+    set a [format %X [expr {0x1FFFFF000 + $i * 8}]]
     wr $hbm $a [lindex $pat $i]
 }
-for {set i 0} {$i < 4} {incr i} {
-    set a [format %X [expr {0x1FFFFF000 + $i * 4}]]
-    set got [rd $hbm $a]
+for {set i 0} {$i < 2} {incr i} {
+    set a [format %X [expr {0x1FFFFF000 + $i * 8}]]
+    set gw [rd_words $hbm $a]
+    set got [string toupper "[lindex $gw 1][lindex $gw 0]"]
     # NUMERIC compare.  This was `[string toupper $got] ne [string toupper
     # $want]`, comparing rd's DECIMAL output against a hex literal, so it could
     # never match and every word reported a mismatch whatever the memory held.
     # MEASURED 2026-08-29: it printed "wrote DEADBEEF read 3" and the run was
     # read as an HBM fault on evidence that could not distinguish one.
-    set want [expr 0x[lindex $pat $i]]
-    if {$got != $want} {
-        puts [format "HBM_MISMATCH at 0x%s: wrote 0x%08X read 0x%08X" $a $want $got]
+    set want [lindex $pat $i]
+    if {$got ne $want} {
+        puts "HBM_MISMATCH at 0x$a: wrote 0x$want read 0x$got"
         set ok 0
     }
 }
@@ -277,21 +306,23 @@ if {$ok == -1} {
 # known pattern here from JTAG, read it from the host, and vice versa.  Unlike
 # the HBM scratch page above it involves no memory controller at all, so a
 # mismatch here cannot be blamed on HBM initialisation.
-set bpat {464B3333 4A544147 12345678 FEDCBA98}
+# Same four words the host writes, paired into 64-bit transactions.
+set bpat {4A544147464B3333 FEDCBA9812345678}
 set bok 1
 if {$hbm eq ""} {
     puts "DMABRAM_SKIPPED: no unambiguous HBM master (see PCIEEP_NOTE above)."
     set bok -1
 } else {
-for {set i 0} {$i < 4} {incr i} {
-    wr $hbm [format %X [expr {0x200000000 + $i * 4}]] [lindex $bpat $i]
+for {set i 0} {$i < 2} {incr i} {
+    wr $hbm [format %X [expr {0x200000000 + $i * 8}]] [lindex $bpat $i]
 }
-for {set i 0} {$i < 4} {incr i} {
-    set a [format %X [expr {0x200000000 + $i * 4}]]
-    set got [rd $hbm $a]
-    set want [expr 0x[lindex $bpat $i]]
-    if {$got != $want} {
-        puts [format "DMABRAM_MISMATCH at 0x%s: wrote 0x%08X read 0x%08X" $a $want $got]
+for {set i 0} {$i < 2} {incr i} {
+    set a [format %X [expr {0x200000000 + $i * 8}]]
+    set gw [rd_words $hbm $a]
+    set got [string toupper "[lindex $gw 1][lindex $gw 0]"]
+    set want [lindex $bpat $i]
+    if {$got ne $want} {
+        puts "DMABRAM_MISMATCH at 0x$a: wrote 0x$want read 0x$got"
         set bok 0
     }
 }
