@@ -232,15 +232,15 @@ architecture rtl of matvec_int4_desc_axi is
   -- and the same three-way agreement the packer and the C reference already
   -- have:
   --
-  --   tiles   = ceil(n_rows / ROWS_IF)            matvec_core.vhd:858
-  --   nblk    = ceil(n_cols / BLK)                matvec_core.vhd:857
+  --   tiles   = ceil(n_rows / ROWS_IF)            matvec_core.vhd:672-680
+  --   nblk    = ceil(n_cols / BLK)                matvec_core.vhd:924
   --   w_beats = tiles * nblk                      per WEIGHT sub-region
   --   s_beats = ceil(tiles * nblk / GRP)          per SCALE  sub-region
   --
   -- Why those are the right numbers, rather than a plausible reading of the
   -- packer.  matvec_core's issue FSM walks t_iss over tiles and b_iss over
-  -- nblk (:617-620) and accepts exactly one weight word per step; w_ready and
-  -- s_ready are THE SAME signal (`accept`, :517-518), so one scale GROUP is
+  -- nblk (:664-683) and accepts exactly one weight word per step; w_ready and
+  -- s_ready are THE SAME signal (`accept`, :565-568), so one scale GROUP is
   -- consumed per weight word.  weight_streamer pops one beat from EVERY
   -- weight port per delivered word and one beat from EVERY scale port per
   -- SUPERWORD, and a superword carries GRP groups.  So a weight sub-region
@@ -364,8 +364,46 @@ architecture rtl of matvec_int4_desc_axi is
   attribute ram_style of res : signal is "block";
   signal res_q   : std_logic_vector(ROWS_IF*64-1 downto 0) := (others => '0');
   signal y_idx   : unsigned(15 downto 0) := (others => '0');
-  signal y_idx_d : unsigned(15 downto 0) := (others => '0');
   signal y_sel   : std_logic_vector(63 downto 0);
+
+  -- ---------------------------------------- Y_IDX -> (tile, lane), NO DIVIDE
+  -- `res` is tile-major, so presenting row Y_IDX needs Y_IDX / ROWS_IF and
+  -- Y_IDX mod ROWS_IF.  Both used to be written as VHDL `/` and `mod` on the
+  -- 16-bit register, and ROWS_IF is 48 on the FK33, so both were real
+  -- dividers.  MEASURED (sim/ooc_fk33_a.tcl, Vivado 2023.2,
+  -- xcvu33p-fsvh2104-2L-e @ 0.717 V), once matvec_core's own divide-by-48 was
+  -- removed this became the WHOLE critical path -- the three worst paths in
+  -- the design were all y_idx_reg[5] -> res_reg_N/ADDRARDADDR[14], 4.727 ns,
+  -- 16 logic levels, 8 CARRY8, holding the core clock at 192.86 MHz against
+  -- 226.96 MHz for matvec_int4 with no descriptor plane at all.
+  --
+  -- Same answer as section 5.2's shape check and as matvec_core's tile
+  -- counter: subtract the synthesis constant repeatedly instead of dividing.
+  -- The quotient and remainder are produced by a small sequential loop, and
+  -- the AXI-Lite read of Y_LO / Y_HI STALLS until they are ready.  The stall
+  -- is what makes this a handshake rather than a timing assumption: nothing
+  -- here relies on the host leaving cycles between the Y_IDX write and the
+  -- Y_LO read, which is a software convention and not a hardware guarantee.
+  --
+  -- COST: floor(Y_IDX / ROWS_IF) cycles per NEW Y_IDX value, bounded by
+  -- TILES-1 (362 at MAXROWS_BFP = 17408 / ROWS_IF = 48), against an AXI-Lite
+  -- read transaction that is already several cycles.  It is the result
+  -- READBACK path, one row per host transaction; the real result leaves on
+  -- the y_we / y_addr / y_data bus, which this does not touch.
+  signal yq      : integer range 0 to TILES-1   := 0;   -- Y_IDX / ROWS_IF
+  signal yr      : integer range 0 to ROWS_IF-1 := 0;   -- Y_IDX mod ROWS_IF
+  signal yi_q    : integer range 0 to TILES-1   := 0;   -- quotient so far
+  signal yi_run  : unsigned(15 downto 0) := (others => '0');  -- what is left
+  signal yi_snap : unsigned(15 downto 0) := (others => '0');  -- index in hand
+  signal y_ok    : std_logic := '0';   -- yq / yr are final for yi_snap
+  signal y_rdy   : std_logic := '0';   -- ... and res_q has been read at yq
+
+  -- Write side, also without a divide.  `res` is written once per tile, in
+  -- tile order, by matvec_core's emit (rtl/matvec_core.vhd:840 in raw/partial
+  -- mode and :978 in BFP mode, both with y_addr = the tile's BASE row), so
+  -- the tile index is a counter and y_addr/ROWS_IF is not needed.  That the
+  -- counter and y_addr agree is CHECKED below rather than assumed.
+  signal w_tile  : integer range 0 to TILES-1 := 0;
 
   signal c_cycles, c_beats, c_starve : unsigned(31 downto 0)
          := (others => '0');
@@ -853,22 +891,73 @@ begin
     end if;
   end process;
 
+  -- ------------------------------------------- Y_IDX -> (tile, lane) by
+  -- repeated subtraction.  Restarts whenever Y_IDX changes; y_ok marks the
+  -- pair final.  See the declarations for why this is not a divide.
+  ydiv : process(s_axi_aclk)
+  begin
+    if rising_edge(s_axi_aclk) then
+      if s_axi_aresetn = '0' then
+        yi_snap <= (others => '0'); yi_run <= (others => '0');
+        yi_q <= 0; yq <= 0; yr <= 0; y_ok <= '0';
+      elsif y_idx /= yi_snap then
+        -- a new index: reload and start again.  Comparing against the
+        -- SNAPSHOT rather than watching the register write is what makes a
+        -- rewrite of the same value cost nothing and a rewrite mid-loop
+        -- restart correctly.
+        yi_snap <= y_idx;
+        yi_run  <= y_idx;
+        yi_q    <= 0;
+        y_ok    <= '0';
+      elsif y_ok = '0' then
+        if yi_run >= ROWS_IF then
+          if yi_q = TILES-1 then
+            -- Y_IDX is past the last row this build can hold.  SATURATE
+            -- rather than run off the end of `res`: the old expression
+            -- res(to_integer(y_idx)/ROWS_IF) indexed outside the array for
+            -- any Y_IDX >= TILES*ROWS_IF, which is a simulation abort and an
+            -- undefined address in hardware.  Nothing legal reaches here.
+            yq <= TILES-1; yr <= ROWS_IF-1; y_ok <= '1';
+          else
+            yi_run <= yi_run - ROWS_IF;
+            yi_q   <= yi_q + 1;
+          end if;
+        else
+          yq <= yi_q; yr <= to_integer(yi_run); y_ok <= '1';
+        end if;
+      end if;
+    end if;
+  end process;
+
   -- --------------------------------------------------------- result capture
   resp : process(s_axi_aclk)
   begin
     if rising_edge(s_axi_aclk) then
       if y_we_i = '1' then
-        res(to_integer(unsigned(y_addr_i)) / ROWS_IF) <= y_data_i;
+        res(w_tile) <= y_data_i;
+        -- THE ASSUMPTION, CHECKED.  w_tile replaces y_addr_i/ROWS_IF and is
+        -- only equal to it while the core emits tiles in order starting at
+        -- tile 0.  Vivado drops `assert` in synthesis, so this costs nothing
+        -- there and fires in every GHDL run.
+        assert w_tile * ROWS_IF = to_integer(unsigned(y_addr_i))
+          report "matvec_int4_desc_axi: result write " & integer'image(w_tile)
+               & " carries y_addr = "
+               & integer'image(to_integer(unsigned(y_addr_i)))
+               & ", not " & integer'image(w_tile * ROWS_IF)
+               & ".  The tile counter that replaced y_addr/ROWS_IF assumes "
+               & "the core emits tiles in order from 0."
+          severity failure;
+        if w_tile < TILES-1 then w_tile <= w_tile + 1; end if;
       end if;
+      if core_start = '1' then w_tile <= 0; end if;
       -- registered read, issued continuously so it infers a BRAM read port
-      res_q   <= res(to_integer(y_idx) / ROWS_IF);
-      y_idx_d <= y_idx;
+      res_q <= res(yq);
+      y_rdy <= y_ok;
     end if;
   end process;
 
   -- combinational lane mux, aligned to the index that fetched res_q
-  y_sel <= res_q(((to_integer(y_idx_d) mod ROWS_IF) + 1)*64 - 1
-                 downto (to_integer(y_idx_d) mod ROWS_IF)*64);
+  y_sel <= res_q((yr + 1)*64 - 1 downto yr*64);
 
   -- ------------------------------------------------------------- read channel
   rdp : process(s_axi_aclk)
@@ -878,9 +967,16 @@ begin
       if s_axi_aresetn = '0' then
         arready <= '0'; rvalid <= '0';
       else
-        if arready = '0' and s_axi_arvalid = '1' then
+        rreg := to_integer(unsigned(s_axi_araddr(7 downto 2)));
+        -- Y_LO / Y_HI STALL until Y_IDX has been resolved to (tile, lane) and
+        -- res_q has been fetched at that tile.  Holding arready low is a real
+        -- handshake; the alternative -- answering immediately and trusting
+        -- the host to have left enough cycles since the Y_IDX write -- is a
+        -- software convention that no constraint or test would ever check.
+        -- Every other register answers in the same cycle it always did.
+        if arready = '0' and s_axi_arvalid = '1'
+           and not ((rreg = 10 or rreg = 11) and (y_ok and y_rdy) = '0') then
           arready <= '1';
-          rreg := to_integer(unsigned(s_axi_araddr(7 downto 2)));
           case rreg is
             when 0 => rdata_r <= dptr(31 downto 0);
             when 1 => rdata_r <= dptr(63 downto 32);

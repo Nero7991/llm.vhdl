@@ -255,6 +255,36 @@ architecture rtl of matvec_core is
 
   signal nb_r, tiles_r, lastvalid : integer := 0;
   signal t_iss, b_iss  : integer := 0;              -- next word to accept
+
+  -- ROWS STILL TO ISSUE, AND WHY THIS EXISTS INSTEAD OF A DIVIDE.
+  --
+  -- tiles_r USED TO BE ceil(n_rows / ROWS_IF), computed in one cycle in
+  -- S_IDLE.  ROWS_IF is 48 at the FK33 geometry and n_rows arrives from a
+  -- descriptor word, so that was a 32-bit divide by a non-power-of-two on a
+  -- register-to-register path.  MEASURED, matvec_int4_desc_axi at the FK33
+  -- geometry (sim/ooc_fk33_a.tcl, Vivado 2023.2, xcvu33p-2L-e @ 0.717 V):
+  -- dw_reg[1][1] -> tiles_r_reg[25], 7.464 ns, 30 logic levels, 18 CARRY8,
+  -- core clock 133.92 MHz against 257.33 MHz on the AXI side.  It was the
+  -- binding constraint on the whole subsystem.  matvec_int4 standalone HID
+  -- it: n_rows is a top-level port there, and an OOC run sets no input
+  -- delay, so the path was simply not timed.
+  --
+  -- The divide is not needed.  ceil(n_rows / ROWS_IF) is the number of tiles
+  -- the issue FSM below walks anyway, so tiles_r is now a COUNTER of tiles
+  -- issued, and "is this the last tile" is `rows_left <= ROWS_IF` with
+  -- rows_left decremented by the synthesis constant ROWS_IF per tile.  That
+  -- is the same "multiply up, never divide" argument the descriptor
+  -- wrapper's shape check already makes (docs/2026-08-28_matvec-descriptor-
+  -- format.md 5.2), except that here it costs ZERO extra cycles: the tiles
+  -- were being counted out one at a time regardless.
+  --
+  -- WHERE tiles_r IS READ, AND WHY A COUNTER IS SAFE THERE.  Every reader is
+  -- in S_EMIT (:rd_t < tiles_r, and em_t = tiles_r - 1), and S_EMIT is
+  -- reachable only through S_DRAIN -> S_SCAN.  S_DRAIN is entered by the
+  -- branch below that increments tiles_r for the LAST tile, so tiles_r has
+  -- already reached ceil(n_rows / ROWS_IF) before any reader runs.  The
+  -- issue FSM itself no longer reads tiles_r at all.
+  signal rows_left : integer := 0;
   signal amax   : unsigned(35 downto 0) := (others => '0');
   -- NS, THE BFP OUTPUT SHIFT, AND WHY IT IS DECLARED AND REPLICATED LIKE THIS.
   --
@@ -636,8 +666,18 @@ begin
           else                     nxt(0).last  := '0'; end if;
           if b_iss = nb_r - 1 then
             b_iss <= 0;
-            if t_iss = tiles_r - 1 then st <= S_DRAIN;
-            else t_iss <= t_iss + 1; end if;
+            -- This tile is now fully issued, so count it.  tiles_r is the
+            -- running count of issued tiles; see its declaration for why it
+            -- is a counter and no longer a divide.
+            tiles_r <= tiles_r + 1;
+            -- LAST TILE iff fewer than a full tile of rows remain.  For tile
+            -- t, rows_left = n_rows - t*ROWS_IF, so `rows_left <= ROWS_IF` is
+            -- exactly `t = ceil(n_rows/ROWS_IF) - 1` given n_rows >= 1, which
+            -- S_IDLE has already checked.  The old test `t_iss = tiles_r - 1`
+            -- said the same thing about the divided value.
+            if rows_left <= ROWS_IF then st <= S_DRAIN;
+            else rows_left <= rows_left - ROWS_IF;
+                 t_iss     <= t_iss + 1; end if;
           else
             b_iss <= b_iss + 1;
           end if;
@@ -882,7 +922,13 @@ begin
                 err_r <= '1'; st <= S_DONE;
               else
                 nb_r      <= (n_cols + BLK - 1) / BLK;              -- 6.3 ceil
-                tiles_r   <= (n_rows + ROWS_IF - 1) / ROWS_IF;
+                -- NO DIVIDE HERE.  tiles_r is counted out by the issue FSM
+                -- and rows_left is a plain copy of n_rows; see the rows_left
+                -- declaration for the measurement that motivated this.  BLK
+                -- is a power of two so the two divides that remain on this
+                -- line and the next are shifts.
+                tiles_r   <= 0;
+                rows_left <= n_rows;
                 lastvalid <= n_cols - ((n_cols - 1) / BLK) * BLK;
                 t_iss <= 0; b_iss <= 0; b_pf <= 0;
                 xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0';
