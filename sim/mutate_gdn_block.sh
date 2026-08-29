@@ -95,7 +95,18 @@ open(dst, "w").write(s)
 PY
 }
 
-# $1 tag, $2 class (rtl|c|control), $3 desc, then --rtl old new ... --c old new ...
+# $1 tag, $2 class (rtl|c|control), $3 desc, then any of
+#   --rtl  old new ...      mutate rtl/gdn_block.vhd
+#   --c    old new ...      mutate ref/gdn_block_vec.c
+#   --depf <path>           name a DEPENDENCY of gdn_block to mutate instead
+#   --dep  old new ...      the pairs applied to that dependency
+#   --run  <ghdl generic>   extra run arguments for THIS row only
+#
+# --depf exists because the layer index does not live in gdn_block.vhd: the
+# store it addresses is rtl/gdn_exp_capture.vhd, and a harness that can only
+# mutate the top level cannot ask whether the store has a layer dimension.
+# --run exists because a mutation's verdict can DEPEND on how the bench is
+# configured, and the pair of verdicts is the measurement -- see M13/M13Z.
 mutate() {
   local tag="$1" cls="$2" desc="$3"; shift 3
   if [ -n "$ONLY" ] && [ "$tag" != "$ONLY" ]; then return; fi
@@ -103,14 +114,36 @@ mutate() {
   NTOT=$((NTOT+1))
   rm -rf "$dir"; mkdir -p "$dir"
 
-  local mode="" rtl_args=() c_args=()
+  local mode="" depf="" rtl_args=() c_args=() dep_args=() run_args=()
   for a in "$@"; do
     case "$a" in
-      --rtl) mode=rtl ;;
-      --c)   mode=c ;;
-      *) if [ "$mode" = rtl ]; then rtl_args+=("$a"); else c_args+=("$a"); fi ;;
+      --rtl)  mode=rtl ;;
+      --c)    mode=c ;;
+      --dep)  mode=dep ;;
+      --depf) mode=depf ;;
+      --run)  mode=run ;;
+      *) case "$mode" in
+           rtl)  rtl_args+=("$a") ;;
+           c)    c_args+=("$a") ;;
+           dep)  dep_args+=("$a") ;;
+           depf) depf="$a" ;;
+           run)  run_args+=("$a") ;;
+         esac ;;
     esac
   done
+
+  if [ -n "$depf" ]; then
+    if [ ${#dep_args[@]} -gt 0 ]; then
+      if ! patch_file "$depf" "$dir/$(basename "$depf")" "${dep_args[@]}" \
+             2>"$dir/anchor.log"; then
+        printf '%-10s %-7s ANCHOR-FAILED  %s\n' "$tag" "$cls" "$desc"
+        sed 's/^/             /' "$dir/anchor.log"
+        NABORT=$((NABORT+1)); ABORTED+=("$tag ANCHOR"); return
+      fi
+    else
+      cp "$depf" "$dir/$(basename "$depf")"
+    fi
+  fi
 
   if [ ${#rtl_args[@]} -gt 0 ]; then
     if ! patch_file "$RTL" "$dir/gdn_block.vhd" "${rtl_args[@]}" 2>"$dir/anchor.log"; then
@@ -145,7 +178,12 @@ mutate() {
 
   local ok=1
   for f in $DEPS; do
-    "$GHDL" -a --std=08 -frelaxed --workdir="$dir" "$REPO/$f" >>"$dir/analyze.log" 2>&1 || ok=0
+    if [ -n "$depf" ] && [ "$f" = "$depf" ]; then
+      "$GHDL" -a --std=08 -frelaxed --workdir="$dir" \
+        "$dir/$(basename "$depf")" >>"$dir/analyze.log" 2>&1 || ok=0
+    else
+      "$GHDL" -a --std=08 -frelaxed --workdir="$dir" "$REPO/$f" >>"$dir/analyze.log" 2>&1 || ok=0
+    fi
   done
   "$GHDL" -a --std=08 -frelaxed --workdir="$dir" "$dir/gdn_block.vhd" >>"$dir/analyze.log" 2>&1 || ok=0
   "$GHDL" -a --std=08 -frelaxed --workdir="$dir" "$REPO/$TB" >>"$dir/analyze.log" 2>&1 || ok=0
@@ -160,7 +198,8 @@ mutate() {
   local rc=0
   # shellcheck disable=SC2086
   ( cd "$dir" && timeout 900 "$GHDL" -r --std=08 -frelaxed --workdir="$dir" \
-      "$TBE" $RUNARGS ) >"$dir/run.log" 2>&1 || rc=$?
+      "$TBE" $RUNARGS "${run_args[@]+"${run_args[@]}"}" ) \
+      >"$dir/run.log" 2>&1 || rc=$?
   # ghdl prints a metavalue warning per cycle on this design; it is noise and
   # would swamp the log and the classifier alike.
   grep -v 'metavalue detected' "$dir/run.log" > "$dir/run.clean" && \
@@ -270,6 +309,42 @@ mutate M11 rtl "v column index off by one within the head" \
 mutate M12 rtl "the state column exponent is read as a constant" \
   --rtl 'rp_cse   <= se_rdata;' \
         'rp_cse   <= to_signed(10, 8);'
+
+# ---------------------------------------------------------------------------
+# THE LAYER DIMENSION.  One gdn_block is time-shared across every GDN layer
+# (rtl/llama_top.vhd:2980 sweeps b_layer), and `layer` is used in exactly ONE
+# place inside rtl/gdn_block.vhd: gdn_exp_capture's rd_layer.  Both benches
+# drove layer => 0 until 2026-08-29, which made that one use untestable.
+# ---------------------------------------------------------------------------
+
+# M13 and M13Z are the SAME MUTATION at two bench configurations, and the PAIR
+# is the measurement.  KILLED at DUT_LAYER=1, PASS at DUT_LAYER=0 -- because at
+# layer 0 a DUT that ignores the port reads exactly the entry it should.  M13Z
+# is therefore an EXPECTED SURVIVOR and is reported as one rather than hidden:
+# it is this bench's resolution floor on the layer index, and it is the reason
+# sim/tb_gdn_block_vec.vhd defaults DUT_LAYER to 1.
+mutate M13 rtl "exponent-store read layer hardwired to 0 (layer index ignored)" \
+  --rtl 'rd_layer => layer,' \
+        'rd_layer => 0,'
+
+mutate M13Z rtl "M13 again at DUT_LAYER=0 -- EXPECTED SURVIVOR, the floor" \
+  --run '-gDUT_LAYER=0' \
+  --rtl 'rd_layer => layer,' \
+        'rd_layer => 0,'
+
+# M14 is defect C1's shape transplanted onto B: the store loses its layer
+# dimension entirely, so every layer's tap exponents fold into every other
+# layer's.  It is killed here only because the bench now writes DECOY captures
+# into every layer it is not running; with the pre-2026-08-29 bench, which
+# captured layer 0 and nothing else, this mutation was bit-exact green --
+# MEASURED, 0 of 256 y mismatches.  See
+# docs/debugging/2026-08-29_b-layer-dimension.md.
+mutate M14 rtl "gdn_exp_capture loses its layer dimension (defect C1's shape)" \
+  --depf rtl/gdn_exp_capture.vhd \
+  --dep 'a := cap_layer * SEGS + cap_seg;' \
+        'a := cap_seg;' \
+        'a := rd_layer * SEGS + rd_seg;' \
+        'a := rd_seg;'
 
 # ---------------------------------------------------------------------------
 # C-class rows.  These mutate the ORACLE, not the design, and exist to show

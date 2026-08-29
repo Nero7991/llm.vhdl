@@ -36,11 +36,19 @@ ghdl -a --std=08 -frelaxed --workdir="$WORK" sim/tb_gdn_block.vhd
 # --max-stack-alloc=0 because the testbench builds the whole initial state
 # memory in one function return value; ghdl-mcode's 128 KB default rejects it
 # at DIM=128 with "declaration of a too large object", not with a VHDL error.
+#
+# NLAY is the layer axis, and it is OFF for the skew matrix on purpose.  The
+# matrix asks "does a producer skew change the output"; the layer phase asks a
+# different question and triples the runtime of every point that carries it
+# (13 s -> 37 s, MEASURED 2026-08-29).  It gets its own section below, where
+# it is swept against the skews that could plausibly interact with it.
+NLAY="-gNLAYER=1"
 run () {   # run <name> <extra generics...>
   local name="$1"; shift
   ( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" tb_gdn_block \
-      "-gOUTFILE=$name.txt" "$@" --max-stack-alloc=0 --stop-time=200ms ) \
-    2>&1 | grep -E "CYCLES|PASS|failure|error" | sed "s/^/  [$name] /"
+      "-gOUTFILE=$name.txt" $NLAY "$@" --max-stack-alloc=0 --stop-time=200ms ) \
+    2>&1 | grep -E "CYCLES|PASS|failure|error|FOLD|non-interference" \
+    | sed "s/^/  [$name] /"
 }
 
 echo "=== reference: every producer maximally ahead ==="
@@ -95,6 +103,32 @@ else
   fail=1
 fi
 
+# ---- THE LAYER AXIS -----------------------------------------------------
+# One gdn_block is time-shared across every GDN layer in rtl/llama_top.vhd
+# (b_layer, rtl/llama_top.vhd:2980), so anything the block retains across
+# invocations without a layer index folds every layer into every other one --
+# which is exactly defect C1's shape in subsystem C.  With NLAYER=2 the bench
+# runs layer 0's tokens alone, then re-runs them INTERLEAVED with layer 1's,
+# and asserts inside itself that the two agree.  The check is in the bench, so
+# these rows fail loudly rather than needing a diff.
+#
+# Teeth, MEASURED 2026-08-29: removing the layer term from gdn_exp_capture's
+# address (`a := cap_layer*SEGS + cap_seg` -> `a := cap_seg`, and the same on
+# the read side) PASSES at NLAYER=1 and FAILS at NLAYER=2 on invocation 3.
+echo "=== the layer axis: non-interference across interleaved layers ==="
+NLAY="-gNLAYER=2"
+run lay
+run layskew -gZ_DELAY=5 -gW_MOVE=true -gSC_MOVE=true -gCW_MOVE=true \
+            -gCAP_BUSY=true -gCV_GAP=2
+if diff -q "$WORK/lay.txt" "$WORK/layskew.txt" >/dev/null; then
+  echo "  layskew: identical to lay"
+else
+  echo "  layskew: DIFFERS from lay  <-- seam defect on the layer axis"
+  diff "$WORK/lay.txt" "$WORK/layskew.txt" | head -20
+  fail=1
+fi
+NLAY="-gNLAYER=1"
+
 # ---- what the straight-through silu saved, MEASURED ---------------------
 # The point of removing the second pass is the schedule, so the cost per token
 # is measured rather than estimated.  The saving is one pass over the conv
@@ -117,6 +151,7 @@ run w2 -gTOKENS=1 -gKEY_HEADS=4 -gVAL_HEADS=8
 echo "=== per-head deadline, DIM=128 SILU_LANES=16 RMS_LANES=4 ==="
 DL="-gKEY_HEADS=2 -gVAL_HEADS=4 -gDIM=128 -gTOKENS=1 -gSILU_LANES=16"
 DL="$DL -gRMS_LANES=4 -gL2_LANES=4 -gRECUR_LANES=64 -gRECUR_SLOTS=32"
+DL="$DL -gNLAYER=1"
 for g in 0 111 112 113 256; do
   if ( cd "$WORK" && ghdl -r --std=08 -frelaxed --workdir="$WORK" tb_gdn_block \
          $DL "-gHEAD_GAP=$g" -gOUTFILE=dl.txt --max-stack-alloc=0 \

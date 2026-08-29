@@ -97,6 +97,32 @@ entity tb_gdn_block_vec is
     -- fixed: docs/debugging/2026-08-29_gdn-block-oracle.md.
     KMAP_DIV : boolean := false;
 
+    -- WHICH GDN LAYER THE BLOCK IS RUN AS, and it defaults to 1 rather than
+    -- to 0 ON PURPOSE.
+    --
+    -- `layer` is used in exactly one place inside rtl/gdn_block.vhd -- it is
+    -- gdn_exp_capture's `rd_layer`, at rtl/gdn_block.vhd:572 -- and the
+    -- exponent store is the block's ONLY internal per-layer state.  Every
+    -- other per-layer thing (the recurrent state, the state exponent table,
+    -- the conv taps) is outside the block, addressed by ports that carry no
+    -- layer index at all, so the memory OWNER is the one that has to qualify
+    -- by layer.
+    --
+    -- Both block-level benches drove `layer => 0` until 2026-08-29, and at
+    -- layer 0 a DUT that ignores the port entirely is indistinguishable from
+    -- one that honours it: entry (0, seg) is exactly the entry a hardwired
+    -- zero reads.  The whole of the layer index was therefore untested by any
+    -- value oracle.  MEASURED: mutation M13 in sim/mutate_gdn_block.sh
+    -- (`rd_layer => layer` becomes `rd_layer => 0`) SURVIVES at DUT_LAYER=0
+    -- and is KILLED at DUT_LAYER=1.  That one pair of runs is the whole
+    -- argument for this default.
+    --
+    -- The oracle itself is layer-agnostic: ref/gdn_block_vec.c models ONE
+    -- layer and its vectors carry no layer index, so running the DUT at any
+    -- layer must reproduce the same numbers.  That is the property, and it is
+    -- the reason a non-zero default costs nothing.
+    DUT_LAYER : natural := 1;
+
     VECFILE  : string  := "gdn_block_vec.txt"
   );
 end entity;
@@ -279,6 +305,14 @@ begin
 
   cap_req   <= dr_req or cb_req;
   cap_layer <= dr_layer when dr_req = '1' else cb_layer;
+
+  -- A DUT_LAYER outside the store would be an out-of-range port association
+  -- reported with no context; say what it means instead.
+  assert DUT_LAYER < LAYERS
+    report "tb_gdn_block_vec: DUT_LAYER=" & integer'image(DUT_LAYER)
+         & " but the exponent store only has " & integer'image(LAYERS)
+         & " layers"
+    severity failure;
   cap_seg   <= dr_seg   when dr_req = '1' else cb_seg;
   cap_exp   <= dr_exp   when dr_req = '1' else cb_exp;
 
@@ -293,7 +327,8 @@ begin
                   ISSUE_GAP => ISSUE_GAP, HEAD_GAP => HEAD_GAP,
                   STRICT_PRODUCER => STRICT )
     port map ( clk => clk, rst => rst,
-               start => blk_start, layer => 0, tk0 => tk0, busy => busy,
+               start => blk_start, layer => DUT_LAYER, tk0 => tk0,
+               busy => busy,
                seq_rst => seq_rst,
                cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
                cap_exp => cap_exp, cap_ready => cap_ready,
@@ -635,7 +670,9 @@ begin
       for i in 1 to 37 loop wait until rising_edge(clk); end loop;
       exit when all_done;
       if dr_req = '0' then
-        cb_layer <= 1;
+        -- A layer the DUT is NOT running, so a collision can only DELAY
+        -- the block's own read, never change what it reads.
+        cb_layer <= (DUT_LAYER + 1) mod LAYERS;
         cb_seg   <= 1;
         cb_exp   <= to_signed(9, 8);
         cb_req   <= '1';
@@ -687,6 +724,27 @@ begin
     variable first_y : integer := -1;
     variable got, want : integer;
     variable a : integer;
+
+    -- One capture, with the rd_req/rd_ack handshake held the way
+    -- gdn_exp_capture requires (audit B-12: a read that collides with a
+    -- capture is DROPPED, silently).
+    procedure do_cap(lay : integer; seg : integer; ex : integer) is
+    begin
+      loop
+        wait until rising_edge(clk);
+        exit when cap_ready = '1' and cap_req = '0';
+      end loop;
+      dr_layer <= lay;
+      dr_seg   <= seg;
+      dr_exp   <= to_signed(ex, 8);
+      dr_req   <= '1';
+      wait until rising_edge(clk);
+      dr_req   <= '0';
+      loop
+        wait until rising_edge(clk);
+        exit when cap_ready = '1';
+      end loop;
+    end procedure;
   begin
     wait until loaded;
     rst <= '1';
@@ -706,19 +764,27 @@ begin
       -- One capture per segment per token: that is what advances the conv
       -- state FIFO and what makes tvalid grow one tap at a time.
       for s in 0 to 2 loop
-        loop
-          wait until rising_edge(clk);
-          exit when cap_ready = '1' and cap_req = '0';
-        end loop;
-        dr_layer <= 0;
-        dr_seg   <= s;
-        dr_exp   <= to_signed(v_cap(t*3 + s), 8);
-        dr_req   <= '1';
-        wait until rising_edge(clk);
-        dr_req   <= '0';
-        loop
-          wait until rising_edge(clk);
-          exit when cap_ready = '1';
+        do_cap(DUT_LAYER, s, v_cap(t*3 + s));
+        -- DECOYS, and they are the reason this bench can see a layer index at
+        -- all.  Every OTHER layer of the store is captured too, with an
+        -- exponent three powers of two away.  Without them a DUT that reads
+        -- the wrong layer reads an entry that was never written, `tvalid`
+        -- comes back all-zero and gdn_conv's own "no valid taps" assertion
+        -- fires -- which sim/mutverdict.py scores as ABORT, not as a kill,
+        -- because a design that dies is not a design that was measured.
+        -- With the decoys in place the same wrong index yields a legal
+        -- exponent that is WRONG BY A POWER OF TWO PER TAP, which is exactly
+        -- the failure gdn_exp_capture exists to prevent and exactly what a
+        -- value oracle is for.  MEASURED: mutation M13 scores ABORT without
+        -- the decoys and KILLED with them.
+        --
+        -- They cannot perturb a correct DUT: gdn_exp_capture's entries are
+        -- independent per (layer, segment), and every capture here happens
+        -- while the block is idle.
+        for dl in 0 to LAYERS-1 loop
+          if dl /= DUT_LAYER then
+            do_cap(dl, s, v_cap(t*3 + s) + 3);
+          end if;
         end loop;
       end loop;
 
