@@ -496,10 +496,14 @@ is suspect.
 
 ## NOT verified
 
-- **The real shape.** Everything above is at KEY_HEADS 2, VAL_HEADS 4, DIM 32,
-  2 tokens, 1 layer. The 9B shape is 16, 32, 128, and 24 GDN layers. Nothing
-  here has been run at it, and one token at the shipping shape is minutes of
-  GHDL.
+- **The real shape, against the RTL.** Everything asserted against
+  `rtl/gdn_block.vhd` is at KEY_HEADS 2, VAL_HEADS 4, DIM 32, 2 tokens,
+  1 layer. The 9B shape is 16, 32, 128 and 24 GDN layers. The ORACLE runs
+  there -- it is a C program -- and its self-consistency figures at that shape
+  are in the evidence section (0.5435 worst, 4.2% over 0.05, worst element in
+  token 0). **No GHDL run at that shape has been made**, so nothing bit-exact
+  is claimed there; one token at the shipping shape is minutes of GHDL per
+  configuration.
 - **More than one layer.** `layer` is hardwired to 0 in both benches, exactly
   as it is in `tb_gdn_block`. The per-(layer, segment) exponent store is
   therefore exercised at one layer plus, under `CAP_BUSY`, a colliding capture
