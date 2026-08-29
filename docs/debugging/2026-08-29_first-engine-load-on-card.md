@@ -156,3 +156,78 @@ Region 0: Memory at 4802b00000 (64-bit, prefetchable) [size=128K]
 * **The build stamp reads `0x20260828`** while the bitstream file is dated
   2026-08-29. Probably a block-design constant rather than a build timestamp,
   but not established.
+
+---
+
+## ADDENDUM, same day: the host side, and the memory finding WITHDRAWN
+
+The dispatcher's shell reported no `fk33` group and the host tests were deferred
+to Oren. That was wrong: `getent group fk33` shows `fk33:x:1004:orencollaco`.
+Group membership is read at **login**, and the shell predated the change.
+**`sg fk33 -c '<cmd>'` bridges it with no re-login.** Worth remembering: `id -nG`
+describes the PROCESS, not the account, and the two can disagree for hours.
+
+### Every host-side test passes
+
+MEASURED with `hw/fk33/host/fk33ctl.py` through the BAR, and with `dd` on
+`/dev/xdma0_{h2c,c2h}_0`:
+
+```
+id       magic 0x464b3333  build 0x20260828 (BCD yyyymmdd)   OK
+sysmon   die 35.5 C   VCCINT 0.7174 V   in spec
+gpio     TRI 0x3  DAT 0x3   SCL=1 SDA=1, live pull-up on BB24/BA24
+scratch  8 KB at 0x10000: OK                    <- BAR WRITES work
+```
+
+`id` alone proves link, config space, BAR placement, AXI-Lite clock and reset,
+smartconnect decode and bitstream identity. Combined with the JTAG read of the
+same register, this is the conclusive pair the check's own header describes:
+
+```
+JTAG OK + host OK   -> everything works
+```
+
+The MMIO path also cross-checks against JTAG on the same registers: BAR reports
+VCCINT 0.7174 V / die 35.5 C where JTAG reported 0.7146 V / 37.2 C. Two
+independent paths, same silicon, agreeing.
+
+### The memory finding is WITHDRAWN. Memory is fine.
+
+```
+DMA BRAM at AXI 0x2_0000_0000
+  wrote     464B3333 4A544147 12345678 FEDCBA98
+  read back 464B3333 4A544147 12345678 FEDCBA98    MATCH
+
+HBM at AXI 0x1FFFFF000 (last 4 KB of the 8 GB map, SAXI_16's half)
+  wrote     DEADBEEF 0BADC0DE 5A5A5A5A A5A5A5A5
+  read back DEADBEEF 0BADC0DE 5A5A5A5A A5A5A5A5    MATCH
+HBM at AXI 0x0                                      MATCH
+```
+
+**HBM initialisation HAS completed, both stacks are mapped, and the addresses
+the JTAG script uses are correct.** The section above titled "NO to the memory
+path" is hereby withdrawn as a statement about the CARD. It remains true as a
+statement about the JTAG-AXI instrument.
+
+This kills four of the five candidate causes listed earlier: the address map is
+not different, HBM init is not incomplete, the memory path is not held in reset,
+and the `axi_aclk`/`axi_aresetn` domain is demonstrably serving the host. What
+remains is the JTAG-AXI master question: which of the three masters reaches the
+memory space in this build, and in what transaction shape. Note the earlier
+enumeration showed one master returning TWO data words from a single read, so a
+64-bit master driven with a 32-bit single-beat probe is a live sub-hypothesis.
+
+**The methodological point.** The JTAG check and the host check disagree, and
+the host is right. The check's own comment predicted the value of running both:
+a JTAG failure with a host success localises the fault to the instrument. Had
+only JTAG been run, "HBM does not work" would have been recorded as a property
+of the card. It was very nearly written up that way.
+
+### A trap avoided by luck, worth recording
+
+The first DMA BRAM write used `printf "\x33\x33..."` inside `sg fk33 -c '...'`,
+where the escapes were not interpreted, so LITERAL backslash-x text was written.
+The read returned exactly that text. **The round trip was still proved** -- what
+went in came out -- but the pattern was not the intended one, and a less careful
+reading would have called it a data-integrity failure. Rewritten with
+`struct.pack` to write exact bytes.
