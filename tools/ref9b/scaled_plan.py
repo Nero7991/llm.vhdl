@@ -162,8 +162,16 @@ def check_against_capture(steps, recs, tok):
     """
     bad = []
     want = set()
+    lm = None
     for st in steps:
-        if st.op == OP_END or st.dst is None:
+        if st.op == OP_END:
+            continue
+        if st.dst is None:
+            # The lm_head step.  It has no destination region, so it is
+            # checked through the LOGITS record the SMP_EN capture emits
+            # instead: same row count, whatever route the values took.  A run
+            # without SMP_EN simply has no such record, which is not drift.
+            lm = st
             continue
         want.add(st.seam)
         k = (st.seam, tok)
@@ -172,6 +180,19 @@ def check_against_capture(steps, recs, tok):
         elif recs[k] != st.n_rows:
             bad.append("%s: plan says %d values, capture has %d"
                        % (st.seam, st.n_rows, recs[k]))
+    if lm is not None and ("LOGITS", tok) in recs:
+        want.add("LOGITS")
+        if recs[("LOGITS", tok)] != lm.n_rows:
+            bad.append("LOGITS: the lm_head job is %d rows, the capture has %d"
+                       % (lm.n_rows, recs[("LOGITS", tok)]))
+    if ("TOKEN", tok) in recs:
+        want.add("TOKEN")
+        if recs[("TOKEN", tok)] != 1:
+            bad.append("TOKEN: expected one argmax index, the capture has %d"
+                       % recs[("TOKEN", tok)])
+        if ("LOGITS", tok) not in recs:
+            bad.append("TOKEN is in the capture without LOGITS, so the argmax "
+                       "has nothing to be the argmax OF")
     for (nm, t) in recs:
         if t == tok and nm not in want and nm != "R_X.embed":
             bad.append("%s is in the capture and not in the plan" % nm)

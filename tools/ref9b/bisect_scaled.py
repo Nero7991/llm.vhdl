@@ -154,10 +154,17 @@ class Weights:
         return bytes(out)
 
 
-def run_a_oracle(step, M, K, w_exp, out_shift, x, x_exp, w):
+def run_a_oracle_full(step, M, K, w_exp, out_shift, x, x_exp, w):
+    """One A job through ref/matvec_int4.c.
+
+    Returns (bfp_mant, bfp_exp, raw_s32, raw_exp).  BOTH payloads come from one
+    invocation because `ref/matvec_int4.c` fills `y_data` in the row loop,
+    before the out_mode branch; only the reported exponent differs by `ns`.
+    The RAW pair is what the LOGITS seam carries.
+    """
     exe = os.path.join(HERE, "mv_step_oracle")
     if not os.path.exists(exe):
-        raise SystemExit("build it first:\n  cc -O2 -Wall -I ref -o "
+        raise SystemExit("build it first:\n  cc -O2 -Wall -DMV4I_LIB -I ref -o "
                          "tools/ref9b/mv_step_oracle tools/ref9b/mv_step_oracle.c -lm")
     fd, jp = tempfile.mkstemp(suffix=".job")
     with os.fdopen(fd, "w") as fp:
@@ -172,10 +179,42 @@ def run_a_oracle(step, M, K, w_exp, out_shift, x, x_exp, w):
         os.unlink(jp)
     if r.returncode:
         raise SystemExit("mv_step_oracle failed on step %d: %s" % (step, r.stderr))
-    lines = r.stdout.split()
-    assert lines[0] == "Y"
-    y_exp, _ns, n = int(lines[1]), int(lines[2]), int(lines[3])
-    return [int(v) for v in lines[4:4 + n]], y_exp
+    f = r.stdout.split()
+    if f[0] != "Y":
+        raise SystemExit("mv_step_oracle: expected Y, got %r" % f[0])
+    y_exp, _ns, n = int(f[1]), int(f[2]), int(f[3])
+    mant = [int(v) for v in f[4:4 + n]]
+    f = f[4 + n:]
+    if not f or f[0] != "YRAW":
+        # An oracle binary predating the YRAW block would silently return no
+        # raw payload, and the LOGITS seam would then be omitted with a reason
+        # that reads like "no model" rather than "stale binary".  Say which.
+        raise SystemExit("mv_step_oracle emitted no YRAW block; rebuild it:\n"
+                         "  cc -O2 -Wall -DMV4I_LIB -I ref -o "
+                         "tools/ref9b/mv_step_oracle "
+                         "tools/ref9b/mv_step_oracle.c -lm")
+    raw_exp, nr = int(f[1]), int(f[2])
+    raw = [int(v) for v in f[3:3 + nr]]
+    return mant, y_exp, raw, raw_exp
+
+
+def run_a_oracle(step, M, K, w_exp, out_shift, x, x_exp, w):
+    mant, y_exp, _raw, _re = run_a_oracle_full(step, M, K, w_exp, out_shift,
+                                               x, x_exp, w)
+    return mant, y_exp
+
+
+def argmax_first(v):
+    """`rtl/sampler_stream.vhd`'s rule, restated: index 0 is the initial
+    candidate and a later index displaces it only on a STRICT `>`, so the
+    FIRST maximum wins on a tie.  Written out rather than calling
+    numpy.argmax so the tie rule is visible and can be mutated.
+    """
+    bi, bv = 0, v[0]
+    for i in range(1, len(v)):
+        if v[i] > bv:
+            bi, bv = i, v[i]
+    return bi
 
 
 # ----------------------------------------------------------------------- driver
@@ -280,10 +319,74 @@ def main():
                             "the R_Y model refused this capture: %s" % e))
 
     for st in steps:
-        if st.op == SP.OP_END or st.dst is None:
-            if st.op != SP.OP_END:
-                skipped.append((st.seam, "destination is R_NONE: the lm_head "
-                                         "job discards its result (finding D1)"))
+        if st.op == SP.OP_END:
+            continue
+        if st.dst is None:
+            # THE LOGITS SEAM.  `dst = R_NONE` is not "the result is
+            # discarded" -- rtl/llama_top.vhd routes it to the sampler under
+            # SMP_EN -- it is "no region can hold it": at the 9B shape
+            # region_max is 12,288 against a 248,320-row vocabulary.  So the
+            # capture cannot snapshot it and emits the STREAM instead, as an
+            # s32 record plus the design's own argmax.  With SMP_EN off there
+            # is no such record and the seam stays unmodelled, which is the
+            # state this project was in until 2026-08-29.
+            if ("LOGITS", a.tok) not in by:
+                skipped.append((st.seam,
+                                "no LOGITS record in the capture: this run "
+                                "elaborated SMP_EN = false, so the lm_head "
+                                "job's result left through nothing"))
+                continue
+            if a.no_a:
+                skipped.append((st.seam, "--no-a"))
+                continue
+            src = prod[st.i]["src"]
+            x = by[(src, a.tok)]
+            if len(x.v) != st.n_cols:
+                skipped.append((st.seam, "source %s has %d values, the job "
+                                         "reads %d" % (src, len(x.v), st.n_cols)))
+                continue
+            _m, _e, exp_v, exp_e = run_a_oracle_full(
+                st.i, st.n_rows, st.n_cols, st.w_exp, st.out_shift,
+                x.v, x.exp, w)
+            got = by[("LOGITS", a.tok)]
+            why = ("ref/matvec_int4.c in RAW out_mode on the bench's own "
+                   "weight bytes")
+            nbad = sum(1 for i in range(len(exp_v)) if exp_v[i] != got.v[i]) \
+                if len(exp_v) == len(got.v) else -1
+            ebad = (exp_e != got.exp)
+            checked.append(("LOGITS", why))
+            if nbad or ebad:
+                first = -1
+                if nbad > 0:
+                    first = next(i for i in range(len(exp_v))
+                                 if exp_v[i] != got.v[i])
+                diverged.append(("LOGITS", first, exp_e, got.exp, nbad,
+                                 len(got.v),
+                                 (exp_v[first] if first >= 0 else None),
+                                 (got.v[first] if first >= 0 else None)))
+            if a.verbose:
+                print("  %-14s %-6s %s" % ("LOGITS",
+                                           "DIFFERS" if (nbad or ebad) else "ok",
+                                           why))
+
+            # THE ARGMAX, WHICH IS THE THING THAT DECIDES A TOKEN.  Taken over
+            # the MODEL's logits, not over the capture's, and compared against
+            # what rtl/sampler_stream.vhd produced.  Over the capture's own
+            # values it would be a round trip.
+            if ("TOKEN", a.tok) in by:
+                want = argmax_first(exp_v)
+                tgot = by[("TOKEN", a.tok)]
+                checked.append(("TOKEN",
+                                "argmax of the modelled logits, first-max on "
+                                "ties (rtl/sampler_stream.vhd:57)"))
+                if tgot.v[0] != want:
+                    diverged.append(("TOKEN", 0, 0, 0, 1, 1, want, tgot.v[0]))
+                if a.verbose:
+                    print("  %-14s %-6s model %d, design %d"
+                          % ("TOKEN", "DIFFERS" if tgot.v[0] != want else "ok",
+                             want, tgot.v[0]))
+            else:
+                skipped.append(("TOKEN", "no TOKEN record in the capture"))
             continue
         got = by[(st.seam, a.tok)]
         src = prod[st.i]["src"]

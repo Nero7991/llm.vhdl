@@ -94,6 +94,11 @@ def cross(ref_path, anchor_path, tok, thresh, verbose,
     base = load_baseline(baseline) if baseline else None
     rows, missing, diverged = [], [], []
     for rtl, node, off, ln in SEAMS:
+        if node is None:
+            # An RTL seam with no counterpart node in llama.cpp's graph --
+            # TOKEN, the argmax, which is sampled outside the graph.  Not
+            # "missing from the anchor": absent by construction.
+            continue
         rk, ak = (rtl, tok), (node, tok)
         if rk not in ref:
             continue                        # a partial run stops early
@@ -175,15 +180,49 @@ def cross(ref_path, anchor_path, tok, thresh, verbose,
 
 
 def exact(a_path, b_path, tok, verbose):
+    """Compare EVERY record the two streams have in common at this token.
+
+    THE WALK IS NOT `seam_map.SEAMS`, AND THAT WAS A REAL DEFECT.  Until
+    2026-08-29 this function iterated `SEAMS` and compared only the names that
+    map knows.  `SEAMS` hardcodes the 9B attention interleave (attention at
+    every fourth layer), so a capture at `ATTN_INT = 2` carries `R_QG-1`,
+    `R_KIN-1` and `R_VIN-1`, which have no entry -- and those three seams were
+    PRESENT IN BOTH STREAMS, MODELLED on the reference side, and never visited.
+    MEASURED on `llama_top_seq_HEAD.r9bs`: 57 records per token present in
+    both, 54 compared, verdict `54 seams identical, 0 differ`, which reads
+    exactly like full coverage.  Only the opt-in `capture_to_r9bs --check-names`
+    could catch it.
+
+    So the walk is now over the INTERSECTION of the two streams, ordered by
+    `SEAMS` where the map knows a name and by the reference stream's own file
+    order after that, and the verdict states the compared count against the
+    records present.  A checker that silently compares fewer things than it
+    claims is the defect class this project keeps finding; the counts are the
+    fix, and the ordering only decides which divergence is reported FIRST.
+    """
     A = r9bs.index(a_path)
     B = r9bs.index(b_path)
-    order = [s[0] for s in SEAMS]
+    rank = {s[0]: i for i, s in enumerate(SEAMS)}
+
+    # File order of the REFERENCE stream at this token, which is execution
+    # order for every producer in this repository.  It is the tie-break for a
+    # name `seam_map` does not know, and it is what puts such a name somewhere
+    # deterministic rather than nowhere.
+    a_names = [n for (n, t) in A if t == tok]
+    a_pos = {n: i for i, n in enumerate(a_names)}
+    b_names = [n for (n, t) in B if t == tok]
+
+    both = [n for n in a_names if (n, tok) in B]
+    both.sort(key=lambda n: (rank.get(n, len(rank)), a_pos[n]))
+
+    only_a = [n for n in a_names if (n, tok) not in B]
+    only_b = [n for n in b_names if (n, tok) not in A]
+    unmapped = [n for n in both if n not in rank]
+
     first = None
     n_ok = n_bad = 0
-    for rtl in order:
+    for rtl in both:
         k = (rtl, tok)
-        if k not in A or k not in B:
-            continue
         ra, rb = A[k], B[k]
         if ra.kind != rb.kind:
             print("  %-16s KIND MISMATCH %d vs %d" % (rtl, ra.kind, rb.kind))
@@ -198,25 +237,52 @@ def exact(a_path, b_path, tok, verbose):
                 first = (rtl, -1, "length %d vs %d" % (ra.n, rb.n))
             continue
         d = np.nonzero(ra.raw != rb.raw)[0]
+        what = "mantissas" if ra.kind == r9bs.KIND_BFP16 else "values"
         if bad_exp or d.size:
             n_bad += 1
             i = int(d[0]) if d.size else -1
             if first is None:
-                first = (rtl, i, "exp %d vs %d, %d of %d mantissas differ"
-                         % (ra.exp, rb.exp, d.size, ra.n))
+                first = (rtl, i, "exp %d vs %d, %d of %d %s differ"
+                         % (ra.exp, rb.exp, d.size, ra.n, what))
             if verbose:
-                print("  %-16s exp %d/%d  %d/%d mantissas differ, first at %d"
-                      % (rtl, ra.exp, rb.exp, d.size, ra.n, i))
+                print("  %-16s exp %d/%d  %d/%d %s differ, first at %d"
+                      % (rtl, ra.exp, rb.exp, d.size, ra.n, what, i))
         else:
             n_ok += 1
             if verbose:
                 print("  %-16s exact (%d values, exp %d)" % (rtl, ra.n, ra.exp))
+
+    # THE COVERAGE LINE IS PART OF THE VERDICT, NOT A FOOTNOTE.  `n_ok + n_bad`
+    # is what was COMPARED; `len(a_names)` and `len(b_names)` are what each
+    # stream CARRIES.  Printing only the first was how three seams per token
+    # went missing without a word.
     print("# exact compare, token %d: %d seams identical, %d differ"
           % (tok, n_ok, n_bad))
+    print("# coverage: compared %d of %d records present in BOTH streams; "
+          "reference has %d, other has %d at this token"
+          % (n_ok + n_bad, len(both), len(a_names), len(b_names)))
+    if only_a or only_b:
+        print("# %d record(s) are in ONE stream only and were NOT compared.  "
+              "A clean verdict says nothing whatever about these:"
+              % (len(only_a) + len(only_b)))
+        for n in only_a[:12]:
+            print("    only in %s: %s" % (a_path, n))
+        for n in only_b[:12]:
+            print("    only in %s: %s" % (b_path, n))
+        if len(only_a) + len(only_b) > 24:
+            print("    ... %d more" % (len(only_a) + len(only_b) - 24))
+    if unmapped:
+        # Compared here, but `--mode cross` still walks SEAMS and cannot see
+        # them, and neither can anything else keyed on the map.
+        print("# %d compared record(s) have no seam_map entry, so --mode cross "
+              "and any map-keyed tool cannot compare them: %s"
+              % (len(unmapped), ", ".join(unmapped[:8])))
     if first:
         print("\nFIRST DIVERGENCE: %s at element %d -- %s" % first)
         return 1
-    print("\nEVERY COMPARED SEAM IS BIT-IDENTICAL.")
+    print("\nEVERY COMPARED SEAM IS BIT-IDENTICAL (%d of %d present in both; "
+          "%d record(s) present in only one stream were not compared)."
+          % (n_ok, len(both), len(only_a) + len(only_b)))
     return 0
 
 

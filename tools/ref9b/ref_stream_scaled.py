@@ -53,20 +53,22 @@ import vec_oracle as VO
 
 MAGIC = b"R9BS"
 VERSION = 1
-KIND_BFP16 = 1
+VERSION_S32 = 2
+KIND_BFP16, KIND_S32 = 1, 2
+_PACK = {KIND_BFP16: "h", KIND_S32: "i"}
 _HDR = struct.Struct("<IIiiii")
 
 
-def _write_rec(fp, name, tok, layer, exp, values):
+def _write_rec(fp, name, tok, layer, exp, values, kind=KIND_BFP16):
     nm = name.encode("utf-8")
-    fp.write(_HDR.pack(len(nm), len(values), tok, layer, KIND_BFP16, exp))
+    fp.write(_HDR.pack(len(nm), len(values), tok, layer, kind, exp))
     fp.write(nm)
-    fp.write(struct.pack("<%dh" % len(values), *values))
+    fp.write(struct.pack("<%d%s" % (len(values), _PACK[kind]), *values))
 
 
 def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
           norm_q, w_image, kv_block, n_rot, qkn_exp, attn_fold, no_a):
-    """(list of (name, layer, exp, values), list of (name, why-omitted))."""
+    """(list of (name, layer, exp, values, kind), list of (name, why-omitted))."""
     recs = BS.read_capture(capture)
     by = {}
     for r in recs:
@@ -118,10 +120,44 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
                             "the R_Y model refused this capture: %s" % e))
 
     for st in steps:
-        if st.op == SP.OP_END or st.dst is None:
-            if st.op != SP.OP_END:
-                omitted.append((st.seam, "destination is R_NONE: the lm_head "
-                                         "job discards its result"))
+        if st.op == SP.OP_END:
+            continue
+        if st.dst is None:
+            # THE LOGITS SEAM.  Modelled here for the first time.  `dst =
+            # R_NONE` says no REGION can hold the result (at the 9B shape
+            # region_max is 12,288 against a 248,320-row vocabulary), not that
+            # the result is discarded: rtl/llama_top.vhd's SMP_EN route
+            # streams it, raw s32, into rtl/sampler_stream.vhd.  When the
+            # capture carries that stream, the model is the SAME A oracle
+            # every other A job uses, read in RAW out_mode.
+            if ("LOGITS", tok) not in by:
+                omitted.append(("LOGITS",
+                                "no LOGITS record in the capture: this run "
+                                "elaborated SMP_EN = false"))
+                continue
+            if no_a:
+                omitted.append(("LOGITS", "--no-a"))
+                continue
+            src = prod[st.i]["src"]
+            x = by[(src, tok)]
+            if len(x.v) != st.n_cols:
+                omitted.append(("LOGITS", "source %s has %d values, the job "
+                                          "reads %d" % (src, len(x.v),
+                                                        st.n_cols)))
+                continue
+            _m, _e, raw, raw_exp = BS.run_a_oracle_full(
+                st.i, st.n_rows, st.n_cols, st.w_exp, st.out_shift,
+                x.v, x.exp, w)
+            got = by[("LOGITS", tok)]
+            out.append(("LOGITS", got.layer, raw_exp, [int(v) for v in raw],
+                        KIND_S32))
+            # The argmax OF THE MODEL'S OWN LOGITS.  Taking it over the
+            # capture's values instead would make the comparison a round trip.
+            if ("TOKEN", tok) in by:
+                out.append(("TOKEN", by[("TOKEN", tok)].layer, 0,
+                            [BS.argmax_first(raw)], KIND_S32))
+            else:
+                omitted.append(("TOKEN", "no TOKEN record in the capture"))
             continue
         if (st.seam, tok) not in by:
             omitted.append((st.seam, "not present in the capture"))
@@ -163,11 +199,12 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
             omitted.append((st.seam, "subsystem %s has no integration-level "
                                      "model" % st.op))
             continue
-        out.append((st.seam, got.layer, exp_e, [int(v) for v in exp_v]))
+        out.append((st.seam, got.layer, exp_e, [int(v) for v in exp_v],
+                    KIND_BFP16))
 
     # The embedding is the bench's own input, not a computed seam.  It has no
     # model here and is deliberately NOT carried across from the capture.
-    if ("R_X.embed", tok) in by and not any(n == "R_X.embed" for n, _, _, _ in out):
+    if ("R_X.embed", tok) in by and not any(r[0] == "R_X.embed" for r in out):
         omitted.append(("R_X.embed", "the bench writes it; it is an INPUT to "
                                      "the model, not an output of one"))
     return out, omitted
@@ -207,14 +244,15 @@ def main():
         o, om = build(a.capture, t, a.blocks, a.attn_int, a.attn_hd,
                       a.norm, a.norm_exp, a.norm_w_exp, a.norm_q, a.w_image,
                       a.kv_block, a.n_rot, a.qkn_exp, a.attn_fold, a.no_a)
-        out += [(n, t, l, e, v) for (n, l, e, v) in o]
+        out += [(n, t, l, e, v, k) for (n, l, e, v, k) in o]
         omitted += [("tok %d %s" % (t, n), why) for n, why in om]
 
+    ver = VERSION_S32 if any(r[5] == KIND_S32 for r in out) else VERSION
     with open(a.out, "wb") as fp:
         fp.write(MAGIC)
-        fp.write(struct.pack("<I", VERSION))
-        for name, t, layer, exp, vals in out:
-            _write_rec(fp, name, t, layer, exp, vals)
+        fp.write(struct.pack("<I", ver))
+        for name, t, layer, exp, vals, kind in out:
+            _write_rec(fp, name, t, layer, exp, vals, kind)
 
     cov = a.out + ".coverage"
     with open(cov, "w") as fp:
@@ -227,8 +265,10 @@ def main():
                  "says nothing whatever about these:\n")
         for n, why in omitted:
             fp.write("OMITTED %-14s %s\n" % (n, why))
-    sys.stderr.write("wrote %s: %d seams modelled, %d omitted (see %s)\n"
-                     % (a.out, len(out), len(omitted), os.path.basename(cov)))
+    sys.stderr.write("wrote %s: %d seams modelled, %d omitted, format "
+                     "version %d (see %s)\n"
+                     % (a.out, len(out), len(omitted), ver,
+                        os.path.basename(cov)))
     for n, why in omitted:
         sys.stderr.write("  OMITTED %-14s %s\n" % (n, why))
     return 0

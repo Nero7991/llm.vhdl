@@ -31,6 +31,12 @@ next token on all five positions of the reference prompt.
 | `seam_map.py` | RTL seam name -> llama.cpp node name, with the slices |
 | `seam_bisect.py` | the bisect: first diverging seam, with the magnitude |
 | `capture_to_r9bs.py` | a line-oriented TEXT capture (what a GHDL bench or the host driver can emit) -> `.r9bs`, and back with `--from-r9bs` |
+| `capture_llama_top.sh` | runs `sim/tb_llama_top.vhd` with the capture on. `SMP=1` adds the LOGITS seam; `CAPTURE_REV=<sha>` stamps the provenance header on a scratch tree |
+| `scaled_plan.py`, `bisect_scaled.py`, `vec_oracle.py`, `attn_oracle.py` | the STEPWISE oracle at the shape a GHDL run reaches, and its models |
+| `ref_stream_scaled.py` | the same expectations as a `.r9bs` stream, so `--mode exact` has a counterpart |
+| `mv_step_oracle.c` | one subsystem-A job through `ref/matvec_int4.c`, emitting both the BFP mantissas and the RAW s32 payload |
+| `mutate_capture.sh` | teeth for the region seams |
+| `mutate_logits.sh` | teeth for the LOGITS seam and the argmax |
 
 `seam_bisect.py` is NOT called `bisect.py`, and that is not cosmetic: a file of
 that name here shadows the Python standard library for every script run from
@@ -72,6 +78,14 @@ python3 seam_bisect.py suspect.r9bs ../../anchor.r9bs --tok 4 --baseline base4.t
 python3 seam_bisect.py ../../ref.r9bs capture.r9bs --mode exact --tok 4
 ```
 
+**THREE numeric kinds, not two.** A record is F32, BFP16 (int16 mantissas plus
+a shared exponent) or **S32** (raw 32-bit values plus a shared exponent). S32 is
+what the LOGITS seam carries, because raw `out_mode` publishes a sign-extended
+s32 that `rtl/sampler_stream.vhd` reads directly; recording it as BFP16 would
+right-shift it by the normalising `ns` before anything compared it. A file
+containing an S32 record declares format version 2, so a reader predating it
+stops loudly rather than decoding 32-bit values as int16.
+
 **Two rules for reading any output from this tool.**
 
 **A flat threshold is meaningless in `--mode cross`.** The clean reference sits
@@ -82,6 +96,13 @@ Always pass `--baseline`.
 **`--mode exact` resolves one LSB.** MEASURED: a single-mantissa perturbation
 in one of 491 seams is located to the element index. That is the resolution the
 card will be debugged at.
+
+**`--mode exact` compares every record the two streams have in common**, not
+just the names `seam_map.py` knows. It walked the map until 2026-08-29, and a
+capture at `ATTN_INT = 2` carries three seams the 9B map has no entry for; they
+were present in both streams, modelled, and never compared, while the verdict
+read like full coverage. The verdict line now states the compared count against
+the records present, and names anything in only one stream.
 
 **`--mode exact` finds things `--mode cross` cannot.** Of nine mutants, cross
 mode located 6 and exact mode located 8, and for one of them exact mode named a
@@ -96,3 +117,5 @@ re-packed at the region boundary. Only the subsystem A matvecs are bit-exact.
 Those stages are marked `FX-HOOK` in `ref/run9b.c`; each fixed-point recipe that
 lands should replace one and be measured on the way in. The full "NOT verified"
 list is section 9 of the write-up.
+
+The LOGITS seam is no longer among them: `docs/debugging/2026-08-29_logits-seam-model.md`.

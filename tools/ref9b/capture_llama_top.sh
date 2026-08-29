@@ -9,7 +9,20 @@
 # nothing else.
 #
 # Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub} [outfile]
-# Env:    SCRATCH=<dir>   keep the work directory
+# Env:    SCRATCH=<dir>      keep the work directory
+#         CAPTURE_REV=<sha>  stamp this revision in the provenance header, for
+#                            a `git archive` scratch tree that has no .git
+#         SMP=1           elaborate SMP_EN, so the capture also carries the
+#                         LOGITS seam and the design's own argmax.
+#
+# WHY SMP IS A SWITCH AND NOT ALWAYS ON.  Every seam but one is snapshotted
+# from the region file at a job's completion; the lm_head job has `dst =
+# R_NONE` because no region can hold a vocabulary (at the 9B shape region_max
+# is 12,288 against 248,320 rows), so LOGITS reaches the capture only through
+# rtl/llama_top.vhd's FLG_TO_SMP stream, which exists only under SMP_EN.  With
+# SMP=1 the capture gains two records per token (LOGITS, TOKEN) and the R_X
+# landmark is unchanged -- the route is additive and reads nothing.  Left off
+# by default so the committed goldens keep the record counts they have.
 #
 # THE THREE CONFIGURATIONS ARE THE THREE GATE ROWS, and their generics are
 # copied from the wrappers rather than invented:
@@ -53,6 +66,8 @@ case "$CFG" in
   stub) G="" ;;
   *) echo "unknown configuration $CFG (real|seq|stub)"; exit 2 ;;
 esac
+GSMP=""
+[ "${SMP:-0}" = "1" ] && GSMP="-gSMP_EN=true"
 [ -z "$OUT" ] && OUT="$PWD/tools/ref9b/golden/llama_top_${CFG}.txt"
 
 for f in $FILES; do
@@ -63,16 +78,43 @@ done
 ln -sfn "$PWD/sim/llama_top_w_b4_pool.hex" "$W/run/" 2>/dev/null
 
 ( cd "$W/run" && timeout -k 5 3600 ghdl -r --std=08 -frelaxed --workdir=".." \
-    tb_llama_top $G -gNRUNS=1 -gCAPTURE=cap.txt \
+    tb_llama_top $G $GSMP -gNRUNS=1 -gCAPTURE=cap.txt \
     --max-stack-alloc=0 --stop-time=900ms > run.log 2>&1 )
 rc=$?
-grep -a "RESULT:\|seam capture wrote" "$W/run/run.log" | sed 's/^.*(report note): //'
+grep -a "RESULT:\|seam capture wrote\|logits capture:" "$W/run/run.log" | sed 's/^.*(report note): //'
 if [ ! -s "$W/run/cap.txt" ]; then
   echo "NO CAPTURE WAS WRITTEN (ghdl rc=$rc).  A run that died has captured "
   echo "nothing, and an empty file compares equal to another empty file."
   exit 3
 fi
 mkdir -p "$(dirname "$OUT")"
-cp "$W/run/cap.txt" "$OUT"
+
+# ---- PROVENANCE, and it is not decoration -------------------------------
+# This script reads the WORKING TREE, not HEAD.  On a repository with
+# concurrent tracks editing rtl/, a capture that disagrees with a committed
+# golden says "another track has uncommitted edits" exactly as loudly as it
+# says "the golden is stale" -- and TRACK CAPTURE lost an hour and published a
+# wrong finding to that ambiguity on 2026-08-29, blaming a commit that was
+# innocent.  Stamping the revision AND the dirtiness of the files that were
+# actually read settles it in one line instead.
+{
+  echo "# captured by tools/ref9b/capture_llama_top.sh, configuration $CFG"
+  # CAPTURE_REV exists because the honest way to capture at a revision on a
+  # repository with concurrent tracks is `git archive <rev> | tar -x` into
+  # scratch -- and a scratch extraction is not a git repository, so
+  # `git rev-parse` there reports nothing.  Pass the rev you extracted.
+  echo "# HEAD ${CAPTURE_REV:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown (not a git tree -- pass CAPTURE_REV)')}  SMP=${SMP:-0}"
+  DIRTY="$(git status --porcelain -- rtl sim tools 2>/dev/null | grep -v '^??' | awk '{print $2}' | tr '\n' ' ')"
+  if [ -n "$DIRTY" ]; then
+    echo "# TREE WAS DIRTY when this was captured.  These tracked files under"
+    echo "# rtl/, sim/ and tools/ differed from HEAD, so this capture is NOT a"
+    echo "# capture of that commit:"
+    echo "#   $DIRTY"
+  else
+    echo "# tree clean under rtl/, sim/ and tools/: this IS a capture of that commit"
+  fi
+} > "$OUT"
+cat "$W/run/cap.txt" >> "$OUT"
 echo "wrote $OUT ($(grep -ac '^SEAM' "$OUT") records)"
+grep -a '^# HEAD\|^# TREE WAS DIRTY' "$OUT"
 echo "scratch: $SCRATCH"

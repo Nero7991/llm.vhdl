@@ -450,6 +450,58 @@ entity tb_llama_top is
     -- and REFUSES a duplicate, so a second run at the same token indices
     -- would make the file unreadable rather than merely larger.
     CAPTURE   : string   := "";
+    -- ==================================================================
+    -- THE LOGITS SEAM, AND WHY IT NEEDED A SEPARATE ROUTE OUT OF THIS FILE.
+    --
+    -- Every other seam the capture emits is read out of the REGION FILE:
+    -- `emit` snapshots `PLAN(stp).dst` at the job's completion.  The lm_head
+    -- job has no destination region -- `seq_tbl_pkg`/`llama_sched_pkg` issue
+    -- it with `dst = R_NONE` and `FLG_TO_SMP`, which
+    -- `rtl/seq_desc_fetch.vhd:495,504` check two-sidedly -- so the capture's
+    -- own guard `if dstr /= R_NONE` skipped it, and `LOGITS`, the one seam
+    -- that decides which token comes out, was the one seam ABSENT FROM THE
+    -- CAPTURE ENTIRELY.  Not modelled on either side, and no comparison could
+    -- notice, because a seam absent from both streams is simply not walked.
+    --
+    -- With SMP_EN the result leaves through `rtl/llama_top.vhd`'s FLG_TO_SMP
+    -- route: raw s32 rows, one per cycle, on `smp_valid`/`smp_v`/`smp_idx`
+    -- with ONE `smp_exp` for the whole token, into `rtl/sampler_stream.vhd`.
+    -- So the capture collects that STREAM instead of snapshotting a region,
+    -- and emits two records per token:
+    --
+    --     SEAM LOGITS <tok> <layer> s32 <smp_exp> <n>
+    --     SEAM TOKEN  <tok> <layer> s32 0 1
+    --
+    -- `s32` because the payload is raw `out_mode`: a sign-extended 32-bit
+    -- accumulator (`rtl/matvec_core.vhd`), which is exactly what the sampler
+    -- reads.  Recording it as bfp16 would right-shift it by the normalising
+    -- `ns` first, and an argmax must not be compared through a quantisation
+    -- the design does not perform.
+    --
+    -- DEFAULT FALSE, so every landmark measured before this generic existed is
+    -- unchanged: with it false `gsmptie` ties the ports off, this process
+    -- emits nothing, and the record count is what it was.
+    SMP_EN    : boolean  := false;
+    -- THE FIFO DEPTH IS A PROPERTY OF THIS SHAPE'S RATE, NOT OF THE DESIGN.
+    -- `rtl/llama_top.vhd` defaults SMP_FIFO to 8 and its own note says why
+    -- that is margin rather than a measured requirement: at the FK33 geometry
+    -- A produces 48 rows per 128 cycles = 0.375 logits/cycle against the
+    -- sampler's 1/cycle, so nothing queues.  At THIS shape A produces
+    -- A_ROWS_IF = 4 rows every ceil(n_cols/BLK) = 2 cycles and the serialiser
+    -- retires one lane per cycle, so the backlog grows by one beat for every
+    -- two produced.  MEASURED at depth 8 on the `real` configuration: the
+    -- FIFO overflowed twice, and `y_we` has no ready, so two beats -- eight
+    -- logits -- were LOST and the captured LOGITS record carried four zeros
+    -- at indices 100..103 where a beat should have been.
+    --
+    -- So the bench buys MORE than the whole job's worth of beats: 64 beats
+    -- hold A_ROWS_IF * 64 = 256 rows against this shape's 128-row vocabulary
+    -- shard, so the producer runs out before the FIFO can and overflow is
+    -- structurally impossible rather than merely unobserved.  That keeps a
+    -- rate artefact of a small shape from being read as a design defect.  It is deliberately NOT
+    -- a claim that the card needs this depth; `sim/tb_llama_top_smp.vhd`
+    -- row M10 is the measurement that says the card's peak occupancy is one.
+    SMP_FIFO  : positive := 64;
     -- Per-step exponents and per-region fingerprints.  Off by default: at 32
     -- blocks it is 490 lines and the regression runner reads every line.
     VERBOSE   : boolean  := false;
@@ -828,6 +880,24 @@ architecture tb of tb_llama_top is
   signal cap_nrec  : natural := 0;
   signal n_bad_cap : natural := 0;
 
+  -- ---- the logits egress seam --------------------------------------------
+  -- ALL OUTPUTS of `rtl/llama_top.vhd`, and tied off when SMP_EN is false.
+  signal smp_valid : std_logic;
+  signal smp_v     : std_logic_vector(31 downto 0);
+  signal smp_idx   : unsigned(31 downto 0);
+  signal smp_exp   : signed(EXP_W-1 downto 0);
+  signal smp_token : unsigned(31 downto 0);
+  signal smp_done  : std_logic;
+  signal smp_n     : unsigned(31 downto 0);
+  signal err_smp_ovf : std_logic;
+  -- Faults the capture itself can raise, checked at the end of the run.  Each
+  -- is a reason the LOGITS record would be a plausible vector rather than a
+  -- wrong one, which is the failure mode the tearing note names for the
+  -- region snapshots.
+  signal n_smp_hole : natural := 0;   -- an index arrived twice, or none did
+  signal n_smp_ovr  : natural := 0;   -- an index past the vocabulary shard
+  signal n_smp_cnt  : natural := 0;   -- the DUT's smp_n disagreed with the count
+
   -- ======================================================================
   -- THE KV CACHE'S SIDE OF THE WORLD.
   --
@@ -1049,6 +1119,7 @@ begin
       C_K_BASE => KV_K_BASE, C_V_BASE => KV_V_BASE,
       C_KV_ADDR_W => KV_ADDR_W, C_KV_AXI_DW => KV_DW,
       A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
+      SMP_EN => SMP_EN, SMP_FIFO => SMP_FIFO,
       SHOUT => true)
     port map(
       clk => clk, rst => rst,
@@ -1083,6 +1154,9 @@ begin
       kv_wready => kv_wready, kv_wdata => kv_wdata, kv_wstrb => kv_wstrb,
       kv_wlast => kv_wlast, kv_bvalid => kv_bvalid, kv_bready => kv_bready,
       kv_bresp => kv_bresp, kv_err => kv_err, obs_tok_pos => obs_tok_pos,
+      smp_valid => smp_valid, smp_v => smp_v, smp_idx => smp_idx,
+      smp_exp => smp_exp, smp_token => smp_token, smp_done => smp_done,
+      smp_n => smp_n, err_smp_ovf => err_smp_ovf,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
 
@@ -2464,13 +2538,30 @@ begin
     -- ---- verdict ---------------------------------------------------------
     fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
           + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp
-          + n_bad_cap;
+          + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt;
     wait for 0 ns;
 
     if CAPTURE /= "" then
       report "tb_llama_top: seam capture wrote " & integer'image(cap_nrec)
            & " records to " & CAPTURE & ", capture/dump disagreements="
            & integer'image(n_bad_cap) severity note;
+    end if;
+    -- THE LOGITS CAPTURE'S OWN FAULTS.  These are not value checks -- nothing
+    -- here knows what a logit should be -- but a capture with a hole in it
+    -- emits a record of the right LENGTH carrying stale zeros, which reads as
+    -- a value defect and is a capture defect.  Counted into `fail`, so a
+    -- torn logits capture stops the run instead of producing a plausible
+    -- vector.  `err_smp_ovf` is the DESIGN's own: A's y_we has no ready, so
+    -- an overflowed FIFO loses beats silently.
+    if SMP_EN then
+      report "tb_llama_top: logits capture: holes=" & integer'image(n_smp_hole)
+           & " out-of-range indices=" & integer'image(n_smp_ovr)
+           & " count disagreements=" & integer'image(n_smp_cnt)
+           & " design FIFO overflow=" & std_logic'image(err_smp_ovf)
+           severity note;
+      assert err_smp_ovf = '0'
+        report "tb_llama_top: the logits FIFO overflowed, so beats were LOST "
+             & "and the captured LOGITS record is incomplete." severity failure;
     end if;
     report "tb_llama_top: schedule mismatches=" & integer'image(n_bad_sched)
          & " skew differences=" & integer'image(n_bad_skew)
@@ -2614,6 +2705,65 @@ begin
       cap_nrec <= cap_nrec + 1;
       wait for 0 ns;
     end procedure;
+
+    -- ---- THE LOGITS SEAM -------------------------------------------------
+    -- Collected from the STREAM, not snapshotted from a region, because there
+    -- is no region: see the SMP_EN generic's note.  `lg` is indexed by the
+    -- VOCABULARY index the design publishes on `smp_idx`, not by arrival
+    -- order, so a serialiser that reordered lanes or numbered a window from
+    -- zero shows up as a hole rather than as a plausible permutation.
+    type lg_t is array (0 to SHAPE.vocab_shard-1) of integer;
+    type lgs_t is array (0 to SHAPE.vocab_shard-1) of boolean;
+    variable lg   : lg_t  := (others => 0);
+    variable lgs  : lgs_t := (others => false);
+    variable nlg  : natural := 0;
+    variable li   : integer;
+    -- ACCUMULATED IN VARIABLES, PUBLISHED ONCE PER EDGE.  A signal
+    -- incremented several times inside one process execution takes the LAST
+    -- assignment, so the loop below that counts MISSING indices would report
+    -- 1 however many were missing.  `kvrd` in this file carries the same note
+    -- for the same reason.
+    variable vhole, vovr, vcnt : natural := 0;
+
+    procedure emit_logits(tk : integer; lay : integer;
+                          ex : integer; n : natural) is
+      variable l : line;
+    begin
+      write(l, string'("SEAM LOGITS "));
+      write(l, tk);
+      write(l, ' '); write(l, lay);
+      write(l, string'(" s32 "));
+      write(l, ex);
+      write(l, ' '); write(l, n);
+      writeline(fh, l);
+      for i in 0 to n-1 loop
+        write(l, lg(i));
+        if (i mod 16) = 15 or i = n-1 then writeline(fh, l);
+        else                                write(l, ' '); end if;
+      end loop;
+      cap_nrec <= cap_nrec + 1;
+      wait for 0 ns;
+    end procedure;
+
+    -- The argmax the DESIGN produced, as its own record.  It is emitted
+    -- separately from the values on purpose: an oracle that only recomputed
+    -- the argmax FROM the captured values would be checking Python's argmax
+    -- against Python's argmax.  This is `rtl/sampler_stream.vhd`'s answer, so
+    -- comparing it against the model's argmax of the MODEL's logits is a
+    -- statement about the machine.
+    procedure emit_token(tk : integer; lay : integer; v : integer) is
+      variable l : line;
+    begin
+      write(l, string'("SEAM TOKEN "));
+      write(l, tk);
+      write(l, ' '); write(l, lay);
+      write(l, string'(" s32 0 1"));
+      writeline(fh, l);
+      write(l, v);
+      writeline(fh, l);
+      cap_nrec <= cap_nrec + 1;
+      wait for 0 ns;
+    end procedure;
   begin
     if CAPTURE = "" then wait; end if;
     assert CAP_SETTLE < CLK_HALF
@@ -2647,7 +2797,60 @@ begin
       if obs_issue = '1' then
         pend := true;
       end if;
+      -- ---- THE LOGITS STREAM, sampled EVERY edge ------------------------
+      -- Sampled at the top of the loop, so the value read is the one the DUT
+      -- drove on the PREVIOUS edge, uniformly.  The body below consumes at
+      -- most CAP_SETTLE (asserted strictly inside the half period), so this
+      -- process returns here before the next rising edge and no cycle of the
+      -- stream is skipped.  A skipped cycle is a LOST logit, and a lost logit
+      -- is a capture that compares equal to nothing while looking complete.
+      if SMP_EN and cur_run = 0 and rst = '0' and tb_reset = '0' then
+        if go = '1' then
+          lgs := (others => false);
+          nlg := 0;
+        end if;
+        if smp_valid = '1' then
+          li := to_integer(smp_idx);
+          if li < 0 or li >= SHAPE.vocab_shard then
+            vovr := vovr + 1;
+          elsif lgs(li) then
+            vhole := vhole + 1;
+          else
+            lg(li)  := to_integer(signed(smp_v));
+            lgs(li) := true;
+            nlg     := nlg + 1;
+          end if;
+        end if;
+        n_smp_ovr  <= vovr;
+        n_smp_hole <= vhole;
+        n_smp_cnt  <= vcnt;
+      end if;
       if cur_run = 0 and rst = '0' and tb_reset = '0' then
+        if SMP_EN and smp_done = '1' then
+          -- EVERY index of the shard must have arrived exactly once.  A
+          -- partial stream would otherwise emit a record of the right LENGTH
+          -- carrying stale zeros at the missing indices, which compares as a
+          -- value defect and is really a capture defect.
+          -- VARIABLES, for the reason stated at their declaration.  Written
+          -- as `n_smp_hole <= n_smp_hole + 1` this loop reports 1 however
+          -- many indices are missing, AND is then overwritten by the
+          -- stream sampler's own publication on the very next edge -- which
+          -- is how a first run of this code reported holes=0 on a capture
+          -- that visibly had four.  MEASURED, and it is why the counters are
+          -- published from variables in exactly one place.
+          for i in 0 to SHAPE.vocab_shard-1 loop
+            if not lgs(i) then vhole := vhole + 1; end if;
+          end loop;
+          if nlg /= to_integer(smp_n) then
+            vcnt := vcnt + 1;
+          end if;
+          n_smp_hole <= vhole;
+          n_smp_cnt  <= vcnt;
+          emit_logits(to_integer(obs_tok_pos), SHAPE.blocks,
+                      to_integer(smp_exp), SHAPE.vocab_shard);
+          emit_token(to_integer(obs_tok_pos), SHAPE.blocks,
+                     to_integer(smp_token));
+        end if;
         if go = '1' then
           -- The embedding, before any job has run.  `host_x_exp` is the
           -- exponent the driver declares for it and the one the top level

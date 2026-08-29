@@ -42,6 +42,22 @@
  * and the output on stdout:
  *      Y <y_exp> <ns> <M>
  *      <M int16 mantissas>
+ *      YRAW <raw_exp> <M>
+ *      <M int32 raw values>
+ *
+ * BOTH BLOCKS COME FROM ONE CALL AND THAT IS NOT A SHORTCUT.  `ref/matvec_int4.c`
+ * fills `y_data[r] = sat32(round_shift(acc, out_shift))` in the ROW LOOP, before
+ * the out_mode branch, so the raw payload exists in BFP mode too; only the
+ * reported exponent differs, and in RAW mode it is `w_exp + x_exp - out_shift`
+ * with no `ns` term (matvec_int4.c's final else, matching rtl/matvec_core.vhd's
+ * raw publication).  Running the job twice in two modes would read the same
+ * bytes twice and produce the same numbers.
+ *
+ * The RAW block is what the LOGITS seam carries: `rtl/llama_top.vhd`'s
+ * FLG_TO_SMP route serialises A's RAW s32 rows into `rtl/sampler_stream.vhd`,
+ * whose only input is a bare 32-bit integer.  Comparing that seam against the
+ * BFP mantissas would compare it after a normalising right shift the design
+ * never performs.
  */
 #define MV4I_LIB 1
 #include "../../ref/matvec_int4.c"
@@ -164,5 +180,13 @@ int main(int argc, char **argv)
     printf("Y %d %d %d\n", r.y_exp, r.ns, M);
     for (int i = 0; i < M; i++)
         printf("%d%c", (int)r.y_mant[i], (i % 16 == 15 || i == M - 1) ? '\n' : ' ');
+
+    /* y_exp above is the BFP one, which has SUBTRACTED ns.  Raw does not, so
+     * it is recovered by adding ns back rather than by re-deriving it from
+     * w_exp/x_exp/out_shift here -- a second derivation is a second thing that
+     * can be wrong, and this one is the reference's own arithmetic. */
+    printf("YRAW %d %d\n", r.y_exp + r.ns, M);
+    for (int i = 0; i < M; i++)
+        printf("%d%c", (int)r.y_data[i], (i % 16 == 15 || i == M - 1) ? '\n' : ' ');
     return 0;
 }

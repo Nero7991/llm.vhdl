@@ -35,6 +35,23 @@ WHERE THE TWO SIDES DISAGREE STRUCTURALLY, and it is not cosmetic:
  3. R_KIN / R_VIN are the RAW k and v projections, before the k norm and
     before RoPE.  llama.cpp names the pre-norm and post-RoPE tensors BOTH
     `Kcur-L`; the pre-norm one is the first occurrence and is what maps here.
+ 4. TOKEN has anchor `None`.  It is the argmax `rtl/sampler_stream.vhd`
+    produces, and llama.cpp's graph has no node for it -- sampling happens
+    outside the graph the `cb_eval` hook can see.  So it is a seam with an RTL
+    side and no anchor side, and `--mode cross` skips it rather than reporting
+    it missing.
+
+THIS MAP IS THE 9B MODEL'S, AND IT IS NOT A SHAPE-GENERIC SCHEDULE.
+`ATTN_INT` is 4 here because that is the real model's interleave, and the
+anchor names on the right are llama.cpp's for that model, so the map cannot be
+anything else.  A SCALED simulation at `ATTN_INT = 2` therefore produces names
+this map does not contain (`R_QG-1`, `R_KIN-1`, `R_VIN-1`).  Until 2026-08-29
+`seam_bisect.exact()` WALKED THIS LIST, so those seams were present in both
+streams, modelled, and silently never compared -- 57 modelled, 54 compared, and
+the verdict line read like full coverage.  `exact()` now walks the intersection
+of the two streams instead and this map only orders the walk.  `cross()` still
+needs it, because a cross-format comparison is against the 9B anchor by
+definition.
 """
 
 N_LAYER, ATTN_INT = 32, 4
@@ -72,7 +89,8 @@ def build():
               ("R_ER.ffn-%d"  % L, "ffn_out-%d" % L, 0, None),
               ("R_X-%d"       % L, "l_out-%d" % L, 0, None)]
     m += [("R_XN.final", "result_norm", 0, None),
-          ("LOGITS",     "result_output", 0, None)]
+          ("LOGITS",     "result_output", 0, None),
+          ("TOKEN",      None, 0, None)]
     return m
 
 
@@ -80,4 +98,5 @@ SEAMS = build()
 
 if __name__ == "__main__":
     for a, b, o, n in SEAMS:
-        print("%-16s <- %-26s off=%-5d len=%s" % (a, b, o, n if n else "all"))
+        print("%-16s <- %-26s off=%-5d len=%s"
+              % (a, b if b else "(no anchor node)", o, n if n else "all"))
