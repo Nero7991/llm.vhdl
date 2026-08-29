@@ -714,3 +714,33 @@ MEASURED at 4 to 5, and the end-to-end number is not obtainable in this
 repository until those two constants become generics. That change belongs to
 whoever owns `sim/tb_llama_top.vhd`; this track did not make it, having been
 asked not to touch that file.
+
+---
+
+## 13. Appended to section 6: trap T7, and it is worse than T5
+
+**T7. `--kv-block` and `--n-rot` are not recorded in the capture, and a wrong
+LEGAL value produces a small wrong answer rather than an error.** MEASURED,
+`attn_oracle.py` on the `real` capture, which was elaborated at `KV_BLOCK = 4`:
+
+```
+$ ... --attn-hd 32 ...          # wrong head dim
+attn_oracle: the oracle refused the stimulus
+attn_block_cap_vec: illegal shape HEAD_DIM=32 N_QH=2 N_KVH=1 KV_BLOCK=4 ...
+
+$ ... --kv-block 8 ...          # wrong block, but a LEGAL shape
+  R_Y-3  tok 0  exp 14 expected vs 14 captured, 5 of 64 mantissas differ,
+                first at 7 (expected -10588, captured -10589)
+```
+
+The first is caught, because the element counts stop matching and the shape
+assert refuses. **The second is not**, and its signature -- five mantissas of
+sixty-four, every delta exactly 1 -- is indistinguishable from a real one-LSB
+rounding defect, which is precisely what mutation VA1 looks like.
+
+This is a sharper version of BISECT's T5. There, a wrong `--norm` moved a whole
+vector together with its exponent, which is a recognisable parameter-mistake
+signature. Here there is no signature at all. The mitigation is procedural and
+it is now in the tool's own help text: take `--kv-block` and `--n-rot` from the
+run's generics, never from the defaults. `bisect_scaled.py` inherits the same
+hazard and the same defaults.

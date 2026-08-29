@@ -201,8 +201,21 @@ def main():
     ap.add_argument("--blocks", type=int, default=4)
     ap.add_argument("--attn-int", type=int, default=4)
     ap.add_argument("--attn-hd", type=int, default=16)
-    ap.add_argument("--kv-block", type=int, default=4)
-    ap.add_argument("--n-rot", type=int, default=8)
+    # THESE THREE ARE NOT RECORDED IN THE CAPTURE AND GUESSING THEM IS A TRAP.
+    # `--attn-hd` wrong is caught: the element counts stop matching and the
+    # shape assert refuses.  `--kv-block` and `--n-rot` wrong are NOT caught,
+    # because a wrong-but-legal value produces a legal shape and a small wrong
+    # answer.  MEASURED 2026-08-29: `--kv-block 8` against a run elaborated at
+    # 4 reports "5 of 64 mantissas differ, max |delta| 1", which reads exactly
+    # like a subtle arithmetic defect and not like a parameter mistake.  Take
+    # them from the run's own generics, never from these defaults.
+    ap.add_argument("--kv-block", type=int, default=4,
+                    help="rtl/llama_top.vhd's C_KV_BLOCK.  NOT in the capture; "
+                         "a wrong legal value is a small wrong answer, not an "
+                         "error")
+    ap.add_argument("--n-rot", type=int, default=8,
+                    help="rtl/llama_top.vhd's C_N_ROT.  Same hazard as "
+                         "--kv-block")
     ap.add_argument("--qkn-exp", type=int, default=12)
     ap.add_argument("--fold", default="perlayer",
                     choices=("perlayer", "shared", "pertoken"),
