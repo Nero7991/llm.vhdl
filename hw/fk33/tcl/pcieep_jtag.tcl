@@ -33,34 +33,141 @@ connect_hw_server -allow_non_jtag
 fk33_open_target
 set d [lindex [get_hw_devices] 0]
 current_hw_device $d
-refresh_hw_device -quiet $d
-puts "IDCODE [get_property REGISTER.IDCODE [current_hw_device]]"
+# -update_hw_probes false so refresh does not hunt for debug cores.
+refresh_hw_device -quiet -update_hw_probes false $d
+# NOT `get_property REGISTER.IDCODE`.  That property does not exist on this
+# hw_device and ABORTS the whole script, which is how the 2026-08-29 endpoint
+# check died at its first line after a successful configure, reporting nothing
+# about a link that was in fact up.  The trap was already written down in
+# tcl/flash_common.tcl:56, tcl/aux_probe.tcl:172 and tcl/flash_status.tcl:65
+# and had been removed from all three -- leaving it live in the one file whose
+# job is to check the endpoint.  A trap documented three times and fixed
+# nowhere it mattered.
 puts "PART   [get_property PART [current_hw_device]]"
 
-# hw_axi_1 is jtag_hbm (64-bit, reaches HBM), hw_axi_2 is jtag_axil.
-# Both are named by the block design; if either is missing the bitstream that
-# is loaded is not this one.
 set axis [get_hw_axis]
 puts "AXI_MASTERS $axis"
 if {[llength $axis] < 2} {
-    puts "PCIEEP_FAIL: expected 2 JTAG-AXI masters, found [llength $axis]."
+    puts "PCIEEP_FAIL: expected at least 2 JTAG-AXI masters, found [llength $axis]."
     puts "             The device is not running the endpoint bitstream."
     puts "PCIEEP_DONE"
     close_hw_target
     exit 0
 }
-set hbm  [lindex $axis 0]
-set axil [lindex $axis 1]
 
+# `report_hw_axi_txn -t d4` prints the data word in DECIMAL (that is what the
+# `d` means), as a SIGNED 32-bit value.  rd returns it normalised to an unsigned
+# integer, and rdhex formats it.  Everything downstream compares NUMBERS.
+#
+# THIS COST A FALSE ALARM ON 2026-08-29.  The identity check used to compare the
+# decimal TEXT against the hex string "464B3333", which can never match: the
+# endpoint reported PCIEEP_FAIL "this is not fk33_pcieep" on a card that was
+# answering with exactly the right magic (decimal 1179333427 = 0x464B3333).
 proc rd {ax addr} {
     create_hw_axi_txn -quiet -force t $ax -address $addr -type read
     run_hw_axi -quiet [get_hw_axi_txns t]
-    return [lindex [report_hw_axi_txn -t d4 [get_hw_axi_txns t]] 1]
+    set v [lindex [report_hw_axi_txn -t d4 [get_hw_axi_txns t]] 1]
+    return [expr {$v & 0xFFFFFFFF}]
 }
+proc rdhex {ax addr} { return [format %08X [rd $ax $addr]] }
 proc wr {ax addr data} {
     create_hw_axi_txn -quiet -force t $ax -address $addr -data $data -type write
     run_hw_axi -quiet [get_hw_axi_txns t]
 }
+
+# ---- PICK THE AXI-LITE MASTER BY WHAT IT ANSWERS, NOT BY ITS ORDINAL.
+#
+# This used to be `set axil [lindex $axis 1]`.  The block design happens to
+# enumerate jtag_axil second, so with two masters it worked by coincidence; the
+# engine build has THREE and the comment above it ("hw_axi_1 is jtag_hbm,
+# hw_axi_2 is jtag_axil") was a statement about enumeration order, which is not
+# a contract.  Same defect class as selecting a JTAG target by index, which
+# already cost this project a factory flash image.
+#
+# There is nothing in a master's PROPERTIES to tell them apart -- all three
+# report NAME hw_axi_N and PROTOCOL AXI4_Full.  But the identity register makes
+# them SELF-IDENTIFYING: the AXI-Lite master is the one that answers 0x464B3333
+# at 0xA000.  A master whose map does not cover it returns a decode sentinel
+# (MEASURED: hw_axi_1 returns 0xDEC0DEE3 there).  So probe, and refuse if the
+# answer is not unique.
+set ID_MAGIC 0x464B3333
+# Report each master's address width.  A 34-bit address (the DMA BRAM window at
+# 0x2_0000_0000) cannot be issued on a master narrower than that, and the txn
+# ERRORS rather than returning a wrong value.
+foreach a $axis {
+    set aw "?"
+    catch {set aw [get_property ADDR_WIDTH $a]}
+    set dw "?"
+    catch {set dw [get_property DATA_WIDTH $a]}
+    puts "  master [get_property NAME $a]  ADDR_WIDTH=$aw DATA_WIDTH=$dw"
+}
+set cand {}
+foreach a $axis {
+    if {[catch {rd $a A000} v]} { continue }
+    puts [format "  probe %s at 0xA000 -> 0x%08X" [get_property NAME $a] $v]
+    if {$v == $ID_MAGIC} { lappend cand $a }
+}
+if {[llength $cand] != 1} {
+    puts "PCIEEP_FAIL: [llength $cand] of [llength $axis] JTAG-AXI masters answered"
+    puts "             the identity register 0x464B3333 at 0xA000; expected exactly 1."
+    if {[llength $cand] == 0} {
+        puts "             No master identifies as fk33_pcieep's AXI-Lite.  Either the"
+        puts "             fabric is not running this bitstream, or the link is down"
+        puts "             so axi_aclk is not running.  Check LED 6 and LnkSta."
+    }
+    puts "PCIEEP_DONE"
+    close_hw_target
+    exit 0
+}
+set axil [lindex $cand 0]
+# The HBM master is the 64-bit one, and is whichever is NOT the AXI-Lite one.
+# With more than two masters this is still ambiguous, so say so rather than
+# guessing: an HBM result read from the wrong master is worse than no result.
+set hbm ""
+set hbmc {}
+foreach a $axis { if {$a ne $axil} { lappend hbmc $a } }
+if {[llength $hbmc] == 1} {
+    set hbm [lindex $hbmc 0]
+} else {
+    # More than one candidate, so elimination is not enough.  Identify by what
+    # answers, as with the AXI-Lite master above: the memory master is the one
+    # whose map covers the DMA BRAM.  That window is chosen deliberately -- it
+    # has NO memory controller behind it, so this identification cannot be
+    # confused by HBM initialisation not having completed, which is precisely
+    # the ambiguity the HBM check further down exists to report.
+    #
+    # This is a round trip and therefore NOT an oracle for the memory itself.
+    # It is only being used to tell two masters apart, and the real four-word
+    # check still runs afterwards.
+    set probe_a 200000000
+    set probe_v 0x5A5A0F0F
+    foreach a $hbmc {
+        # Do NOT swallow the error.  A `catch ... continue` here hid the fact
+        # that both candidates ERRORED rather than returning wrong data, which
+        # is a completely different diagnosis, and left the run reporting
+        # "0 answered" with no way to tell why.
+        if {[catch {
+            wr $a $probe_a [format %08X $probe_v]
+            set got [rd $a $probe_a]
+        } perr]} {
+            puts "  probe [get_property NAME $a] at 0x$probe_a ERRORED: $perr"
+            continue
+        }
+        puts [format "  probe %s at 0x%s -> 0x%08X" [get_property NAME $a] $probe_a $got]
+        if {$got == $probe_v} { lappend hbmhit $a }
+    }
+    if {[info exists hbmhit] && [llength $hbmhit] == 1} {
+        set hbm [lindex $hbmhit 0]
+    } else {
+        puts "PCIEEP_NOTE: could not identify the memory master: [llength $hbmc] candidates,"
+        puts "             [expr {[info exists hbmhit] ? [llength $hbmhit] : 0}] answered the DMA BRAM probe."
+        puts "             HBM and DMA BRAM checks are SKIPPED rather than run against"
+        puts "             a guess.  A result read from the wrong master is worse than"
+        puts "             no result."
+    }
+}
+puts "AXI_LITE_MASTER [get_property NAME $axil]"
+if {$hbm ne ""} { puts "AXI_HBM_MASTER  [get_property NAME $hbm]" }
 
 # ---- 1. AXI-Lite.  The cheapest possible proof that the PCIe user clock runs.
 # SYSMON is read-only and has a known-good cross-check: the same numbers came
@@ -86,12 +193,13 @@ if {[catch {
 #   JTAG OK + host bad  -> the fabric is right; the fault is link, BAR or driver
 #   JTAG bad            -> the FPGA is not running fk33_pcieep at all, and no
 #                          amount of host-side debugging will change that
-set idm [rd $axil A000]
-set idb [rd $axil A008]
-if {[string toupper $idm] eq "464B3333"} {
-    puts "ID_OK magic=0x$idm build=0x$idb  (\"FK33\")"
+# Compared NUMERICALLY.  See the note on rd above: -t d4 is decimal.
+set idm [rd    $axil A000]
+set idb [rdhex $axil A008]
+if {$idm == $ID_MAGIC} {
+    puts [format "ID_OK magic=0x%08X build=0x%s  (\"FK33\")" $idm $idb]
 } else {
-    puts "PCIEEP_FAIL: id magic reads 0x$idm, expected 0x464B3333."
+    puts [format "PCIEEP_FAIL: id magic reads 0x%08X, expected 0x%08X." $idm $ID_MAGIC]
     puts "             The AXI-Lite path answers but this is not fk33_pcieep."
     puts "             Reconfigure before debugging anything on the host side."
 }
@@ -131,6 +239,10 @@ puts [format "GPIO tri=0x%08x data=0x%08x  (tri must be 0x3 or wider all-ones at
 # not in HBM or the smartconnect.  Scratch page is the last 4 KB of the 8 GB map.
 set pat {DEADBEEF 0BADC0DE 5A5A5A5A A5A5A5A5}
 set ok 1
+if {$hbm eq ""} {
+    puts "HBM_SKIPPED: no unambiguous HBM master (see PCIEEP_NOTE above)."
+    set ok -1
+} else {
 for {set i 0} {$i < 4} {incr i} {
     set a [format %X [expr {0x1FFFFF000 + $i * 4}]]
     wr $hbm $a [lindex $pat $i]
@@ -138,13 +250,20 @@ for {set i 0} {$i < 4} {incr i} {
 for {set i 0} {$i < 4} {incr i} {
     set a [format %X [expr {0x1FFFFF000 + $i * 4}]]
     set got [rd $hbm $a]
-    set want [lindex $pat $i]
-    if {[string toupper $got] ne [string toupper $want]} {
-        puts "HBM_MISMATCH at 0x$a: wrote $want read $got"
+    # NUMERIC compare.  This was `[string toupper $got] ne [string toupper
+    # $want]`, comparing rd's DECIMAL output against a hex literal, so it could
+    # never match and every word reported a mismatch whatever the memory held.
+    # MEASURED 2026-08-29: it printed "wrote DEADBEEF read 3" and the run was
+    # read as an HBM fault on evidence that could not distinguish one.
+    set want [expr 0x[lindex $pat $i]]
+    if {$got != $want} {
+        puts [format "HBM_MISMATCH at 0x%s: wrote 0x%08X read 0x%08X" $a $want $got]
         set ok 0
     }
 }
-if {$ok} {
+}
+if {$ok == -1} {
+} elseif {$ok} {
     puts "HBM_OK scratch page 0x1FFFFF000 writes and reads back"
     puts "       (this address is in SAXI_16's half, so both stacks are mapped)"
 } else {
@@ -160,18 +279,25 @@ if {$ok} {
 # mismatch here cannot be blamed on HBM initialisation.
 set bpat {464B3333 4A544147 12345678 FEDCBA98}
 set bok 1
+if {$hbm eq ""} {
+    puts "DMABRAM_SKIPPED: no unambiguous HBM master (see PCIEEP_NOTE above)."
+    set bok -1
+} else {
 for {set i 0} {$i < 4} {incr i} {
     wr $hbm [format %X [expr {0x200000000 + $i * 4}]] [lindex $bpat $i]
 }
 for {set i 0} {$i < 4} {incr i} {
     set a [format %X [expr {0x200000000 + $i * 4}]]
     set got [rd $hbm $a]
-    if {[string toupper $got] ne [string toupper [lindex $bpat $i]]} {
-        puts "DMABRAM_MISMATCH at 0x$a: wrote [lindex $bpat $i] read $got"
+    set want [expr 0x[lindex $bpat $i]]
+    if {$got != $want} {
+        puts [format "DMABRAM_MISMATCH at 0x%s: wrote 0x%08X read 0x%08X" $a $want $got]
         set bok 0
     }
 }
-if {$bok} {
+}
+if {$bok == -1} {
+} elseif {$bok} {
     puts "DMABRAM_OK 0x200000000 holds 464B3333 4A544147 12345678 FEDCBA98"
     puts "           Read the same four words from the host with:"
     puts "             dd if=/dev/xdma0_c2h_0 bs=16 count=1 skip=\$((0x200000000/16)) | xxd"
