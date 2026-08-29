@@ -1621,6 +1621,11 @@ assumed** - the same rule the recon doc applies to everything else.
 > This closes the `dt_rank` unconfirmed note above for the 27B: it is 48, and
 > the GQA ratio inside GDN is **3 value heads per key head**, not the 1:1 of
 > the 0.8B. The 9B remains unverified.
+>
+> **That is the ratio and NOT the assignment.** Which key head feeds which
+> value head is `hk = h mod num_k_heads`, stated normatively in §4; do not
+> infer contiguous grouping from the ratio here. Defect B-BLK-1 was exactly
+> that inference.
 
 ### 2.10 State precision under recurrence: RESOLVED 2026-08-25, int16 stands
 
@@ -3378,6 +3383,42 @@ head serves **3 value heads**. §2.1 and §2.4 must treat the k/q operands as
 shared across a group of 3 heads rather than private to one. **This is the
 single largest structural change from the 0.8B derivation** and it affects the
 column pipeline's operand fetch, not its arithmetic.
+
+> **WHICH three, NORMATIVE, added 2026-08-29.** Value head `h` is fed by key
+> head
+>
+> ```
+>     hk = h mod num_k_heads          -- TILING, not contiguous grouping
+> ```
+>
+> so at 16 key heads and 48 value heads, key head 0 serves value heads 0, 16
+> and 32; key head 1 serves 1, 17 and 33; and so on. It is **not**
+> `h / (num_v_heads / num_k_heads)`, which would give key head 0 value heads
+> 0, 1 and 2.
+>
+> **Why tiling.** `ggml_repeat_4d` is a broadcast, and every ggml broadcast
+> tiles: `ggml_compute_forward_repeat_f32` writes destination row
+> `i1*ne01 + k1` from source row `k1`, so destination head `h` reads source
+> head `h % ne01`. Confirmed from the other direction as well -- in the
+> non-fused decode path `ggml_mul(s, k)` broadcasts a `[S, 1, H_k]` operand
+> against an `[S, S, H_v]` one and indexes the smaller operand modulo its own
+> extent -- and `q_conv` is a `ggml_view_4d(..., head_k_dim, num_k_heads, ...)`
+> so dim 1 really is the key head index.
+>
+> **This sentence exists because its absence cost a defect.** The paragraph
+> above and §2.9's "3 value heads per key head" both state the RATIO and
+> neither stated the ASSIGNMENT, and `rtl/gdn_block.vhd` was written to the
+> contiguous reading. That is defect B-BLK-1: at 2 key / 4 value heads it moved
+> 128 of 256 y mantissas, 2048 of 4096 final state mantissas and 20 of 128
+> final state exponents, and at the real 9B shape 30 of 32 value heads. The two
+> rules agree only on the first and last value head of each group, which is why
+> the divergence looked like a head-boundary bug rather than a permutation.
+> Found by `ref/gdn_block_vec.c`, fixed 2026-08-29.
+> See `docs/debugging/2026-08-29_gdn-block-oracle.md` and
+> `docs/debugging/2026-08-29_b-blk-1-key-head-mapping.md`.
+>
+> **A ratio is not an assignment.** Any future statement of the form "each X
+> serves N Y" in this document owes the index expression alongside it.
 
 > **NOTE 2026-08-27, recorded because the confusion has bitten this project in
 > BOTH directions. Nothing in this section is withdrawn.** The table above is a

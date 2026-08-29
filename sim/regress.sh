@@ -907,32 +907,30 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_gdn_emit_chain)   echo "-gOVERLAP=true -gCOL_GAP=4 -gSTRICT=false -gSILU_LANES=16 -gRMS_LANES=4 -gZ_DELAY=640 --stop-time=300ms" ;;
     # sim/run_gdn_block.sh reference point: every producer maximally ahead.
     sim:tb_gdn_block)        echo "-gOUTFILE=gdn_block_out.txt --stop-time=200ms" ;;
-    # THE BLOCK-LEVEL VALUE ORACLE, and the one row in this file that runs
-    # against a KNOWN OPEN DEFECT ON PURPOSE.
+    # THE BLOCK-LEVEL VALUE ORACLE.  This row ran quarantined at
+    # -gKMAP_DIV=true from 2026-08-29 until later the same day, because
+    # rtl/gdn_block.vhd's P_HKQ state fed value head h from key head
+    # h/(VAL_HEADS/KEY_HEADS), the GQA-style contiguous grouping, where the
+    # model TILES: ggml_compute_forward_repeat_f32 writes dst row i1*ne01+k1
+    # from src row k1, so hk = h mod KEY_HEADS.  That was defect B-BLK-1.
     #
-    # ref/gdn_block_vec.c defaults to the MODEL's key-head mapping,
-    # hk = h mod KEY_HEADS, which is what ggml_repeat_4d does (it TILES:
-    # ggml_compute_forward_repeat_f32 writes dst row i1*ne01+k1 from src row
-    # k1).  rtl/gdn_block.vhd's P_HKQ state does hk = h/(VAL_HEADS/KEY_HEADS),
-    # the GQA-style contiguous grouping, which is a different permutation for
-    # every value head but the first and the last.  That is defect B-BLK-1 and
-    # it is NOT fixed here: TRACK B-BLOCK does not change RTL.
+    # IT IS FIXED, so the quarantine is lifted: the vectors are generated at
+    # kmap=mod in the tb_vector_args row below and this row runs the bench at
+    # its KMAP_DIV=false default.  Both moved together, which the vector
+    # file's kmap flag and the bench's assertion against the generic make
+    # mandatory -- a half-done change is loud rather than a wrong answer.
     #
-    # MEASURED at KEY_HEADS=2 VAL_HEADS=4 DIM=32 TOKENS=2: with the model
-    # mapping, 128 of 256 y mantissas, 2048 of 4096 final state mantissas and
-    # 20 of 128 final state exponents disagree -- exactly value heads 1 and 2,
-    # the two the two mappings differ on.  With KMAP_DIV=true, 0, 0 and 0.
-    # So ONE wiring decision is the whole divergence and every other stage of
-    # the composition is bit-exact.
+    # MEASURED after the fix, at KEY_HEADS=2 VAL_HEADS=4 DIM=32 TOKENS=2:
+    # 0 of 256 y mantissas, 0 of 4096 final state mantissas and 0 of 128 final
+    # state exponents disagree.  Before it, against the same model vectors,
+    # 128 / 2048 / 20 -- exactly value heads 1 and 2, the two the two rules
+    # differ on.  docs/debugging/2026-08-29_gdn-block-oracle.md and
+    # docs/debugging/2026-08-29_b-blk-1-key-head-mapping.md.
     #
-    # This row therefore runs the oracle at KMAP_DIV=true, which gates the
-    # whole rest of the block while the defect is open, and the bench prints a
-    # loud note saying so on every run.  WHEN B-BLK-1 IS FIXED: drop
-    # -gKMAP_DIV=true here and change "div" to "mod" in the tb_vector_args row
-    # below.  Both must move together; the vector file carries a kmap flag the
-    # bench asserts against the generic, so a half-done change is loud.
-    # docs/debugging/2026-08-29_gdn-block-oracle.md.
-    sim:tb_gdn_block_vec)    echo "-gKMAP_DIV=true --stop-time=200ms" ;;
+    # DUT_LAYER defaults to 1 in this bench, deliberately: at layer 0 a DUT
+    # that ignores the layer index entirely is indistinguishable from one that
+    # honours it.  docs/debugging/2026-08-29_b-layer-dimension.md.
+    sim:tb_gdn_block_vec)    echo "--stop-time=200ms" ;;
     # sim/run_matvec.sh stage 5/6/7 baselines.  --stop-delta is raised because
     # the trace loader spends one delta per line, which trips ghdl's 5000
     # default and looks exactly like a zero-delay loop.  It is not one.
@@ -1079,10 +1077,10 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # KEY_HEADS the key-head mapping is the identity under both candidate
     # rules and the question defect B-BLK-1 turns on cannot be asked at all.
     #
-    # "div" selects rtl/gdn_block.vhd's mapping rather than the model's.  See
-    # the tb_args row above for why, and change it to "mod" together with that
-    # row when B-BLK-1 is fixed.
-    gdn_block_vec.txt)      echo "2 4 32 2 2 div" ;;
+    # "mod" is the model's mapping and, since defect B-BLK-1 was fixed on
+    # 2026-08-29, rtl/gdn_block.vhd's as well.  It moved together with the
+    # tb_args row above; see there.
+    gdn_block_vec.txt)      echo "2 4 32 2 2 mod" ;;
     # ref/l2norm_rs_vec.c, subsystem B 2.1.3's fixed-point reference.  Args are
     # N and the LCG seed; the vector file carries an N header that
     # sim/tb_l2norm_rs.vhd asserts against its own generic, so a mismatch is

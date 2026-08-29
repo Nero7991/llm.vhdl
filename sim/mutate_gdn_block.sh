@@ -25,13 +25,13 @@
 # that is to run the clean design through the mutate path rather than through
 # sim/regress.sh.
 #
-# IT RUNS AGAINST DEFECT B-BLK-1, DELIBERATELY.  rtl/gdn_block.vhd feeds value
-# head h from key head h/(VAL_HEADS/KEY_HEADS); the model feeds it from
-# h mod KEY_HEADS.  So the vectors are generated with kmap=div and the bench
-# with -gKMAP_DIV=true, exactly as sim/regress.sh's gate row does, which holds
-# every other stage bit-exact while that defect is open.  Row M01 is the FIX
-# for it, and it must be KILLED here: that is what shows this harness can see
-# the mapping at all.  See docs/debugging/2026-08-29_gdn-block-oracle.md.
+# DEFECT B-BLK-1 IS FIXED, so this harness no longer runs quarantined.  The
+# vectors are generated at kmap=mod -- the model's mapping, which is now also
+# the RTL's -- and the bench runs at its KMAP_DIV=false default, exactly as
+# sim/regress.sh's gate row does.  Row M01 is the REGRESSION: it puts the
+# contiguous grouping back, and it must be KILLED, which is what shows this
+# harness can see the mapping at all.
+# See docs/debugging/2026-08-29_gdn-block-oracle.md.
 #
 # Nothing under rtl/, ref/ or sim/ is edited.  Every mutation is applied to a
 # COPY in a private scratch directory.
@@ -48,8 +48,8 @@ TB=sim/tb_gdn_block_vec.vhd
 TBE=tb_gdn_block_vec
 VEC=gdn_block_vec.txt
 # The shape and the kmap, kept identical to sim/regress.sh's tb_vector_args row.
-GENARGS="2 4 32 2 2 div"
-RUNARGS="-gKMAP_DIV=true --stop-time=200ms --max-stack-alloc=0"
+GENARGS="2 4 32 2 2 mod"
+RUNARGS="--stop-time=200ms --max-stack-alloc=0"
 
 # The transitive closure of the design under test, in analysis order.  Taken
 # from sim/regress.sh's own plan for this testbench rather than hand-listed, so
@@ -242,12 +242,18 @@ mutate CONTROL control "UNMUTATED design through the same mutate path"
 # compares the block's dump against ITSELF across producer skews.
 # ---------------------------------------------------------------------------
 
-# M01 is the FIX for defect B-BLK-1, and it is expected to be KILLED because
-# the vectors are generated at kmap=div.  If this ever survives, the harness
-# has stopped seeing the key-head mapping and every other row is suspect.
-mutate M01 rtl "key-head map h/(VH/KH) -> h mod KEY_HEADS (the B-BLK-1 FIX)" \
-  --rtl 'base := (vh/VPK)*DIM*16;' \
-        'base := (vh mod KEY_HEADS)*DIM*16;'
+# M01 REINTRODUCES defect B-BLK-1: value head h fed from key head
+# h/(VAL_HEADS/KEY_HEADS), the contiguous grouping the RTL carried until
+# 2026-08-29, against kmap=mod vectors.  It must be KILLED.  If it ever
+# survives, the harness has stopped seeing the key-head mapping and every
+# other row in this table is suspect.
+#
+# Note the mutation writes the divisor out rather than naming VPK: that
+# constant was DELETED with the defect, so an anchor mentioning it would fail
+# to compile rather than fail to match, which is a much less useful signal.
+mutate M01 rtl "key-head map h mod KH -> h/(VH/KH) (REINTRODUCES B-BLK-1)" \
+  --rtl 'base := (vh mod KEY_HEADS)*DIM*16;' \
+        'base := (vh/(VAL_HEADS/KEY_HEADS))*DIM*16;'
 
 mutate M02 rtl "L2 input: the q head is normed from the k segment buffer" \
   --rtl '              l2_x <= qbuf(base+DIM*16-1 downto base);' \

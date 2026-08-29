@@ -87,14 +87,20 @@ entity tb_gdn_block_vec is
     -- configuration choice, and the generic exists so that the rest of the
     -- composition can still be gated while it is open.
     --
-    --   false  hk = h mod KEY_HEADS          -- what the MODEL does
-    --   true   hk = h / (VAL_HEADS/KEY_HEADS) -- what rtl/gdn_block.vhd does
+    --   false  hk = h mod KEY_HEADS          -- what the MODEL does, and
+    --                                            since 2026-08-29 what
+    --                                            rtl/gdn_block.vhd does
+    --   true   hk = h / (VAL_HEADS/KEY_HEADS) -- the superseded contiguous
+    --                                            grouping, defect B-BLK-1
     --
-    -- ref/gdn_block_vec.c defaults to the model; this generic must agree with
-    -- the kmap flag in the vector file's header, which is asserted below, so
-    -- the two cannot silently disagree.  Set it back to false and re-point
-    -- sim/regress.sh's tb_vector_args row at "mod" when defect B-BLK-1 is
-    -- fixed: docs/debugging/2026-08-29_gdn-block-oracle.md.
+    -- DEFECT B-BLK-1 IS FIXED and this generic is now false everywhere: the
+    -- gate row, sim/mutate_gdn_block.sh and this default all run `mod`.  It is
+    -- kept rather than deleted for two reasons.  It is the tie between the
+    -- bench and the `kmap` flag in the vector file's header, asserted below,
+    -- so the oracle and the DUT cannot silently disagree about a decision that
+    -- moves half the output.  And it is how the defect is REPRODUCED: generate
+    -- with `div` and run with KMAP_DIV=true.
+    -- docs/debugging/2026-08-29_gdn-block-oracle.md.
     KMAP_DIV : boolean := false;
 
     -- WHICH GDN LAYER THE BLOCK IS RUN AS, and it defaults to 1 rather than
@@ -395,16 +401,12 @@ begin
            & boolean'image(KMAP_DIV) & ".  Regenerate the vectors or fix the "
            & "generic; a mismatch here is a wrong answer, not a wrong shape."
       severity failure;
-    if KMAP_DIV then
-      report "tb_gdn_block_vec: RUNNING AGAINST OPEN DEFECT B-BLK-1.  The "
-           & "oracle has been told to use rtl/gdn_block.vhd's key-head "
-           & "mapping hk = h/(VAL_HEADS/KEY_HEADS) instead of the model's "
-           & "hk = h mod KEY_HEADS, so that every OTHER stage of the "
-           & "composition is still gated.  Run with KMAP_DIV=false and "
-           & "kmap=mod vectors to reproduce the defect.  See "
-           & "docs/debugging/2026-08-29_gdn-block-oracle.md."
-        severity note;
-    end if;
+    -- The loud per-run note that used to sit here is GONE with the defect:
+    -- B-BLK-1 was fixed in rtl/gdn_block.vhd on 2026-08-29 and this bench now
+    -- runs the model's mapping by default, with no quarantine to announce.
+    -- The KMAP_DIV generic and the header assertion above STAY, because they
+    -- are what makes the two sides unable to disagree silently, and because
+    -- KMAP_DIV=true against div vectors is how the defect is reproduced.
 
     readline(vf, l); for s in 0 to 2 loop rdi(l, ti); v_cwe(s) := ti; end loop;
     readline(vf, l); for i in 0 to DIM-1 loop rdi(l, ti); v_wm(i) := ti; end loop;

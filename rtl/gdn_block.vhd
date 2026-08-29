@@ -364,7 +364,10 @@ architecture rtl of gdn_block is
   constant NBQ    : integer := QCH/CONV_LANES;
   constant NBV    : integer := VCH/CONV_LANES;
   constant NB_R   : integer := DIM/RECUR_LANES; -- groups per state column
-  constant VPK    : integer := VAL_HEADS/KEY_HEADS;
+  -- VPK, the contiguous-grouping divisor, is GONE.  It was defect B-BLK-1 and
+  -- it is deleted rather than left unused, because a dead constant named for
+  -- the wrong rule is a statement about the mapping and the statement is
+  -- false.  See P_HKQ below.
   constant NCOL   : integer := VAL_HEADS*DIM;   -- state columns per layer
 
   -- ---- staging.  See the header note on why these are registers. ---------
@@ -954,8 +957,24 @@ begin
           -- issue; head vh-1's own sweep is DIM*NB_R cycles long, which is
           -- larger for every shape this block supports.  gdn_recur_pipe's occ
           -- shift register fails the simulation if that ever stops holding.
+          -- WHICH KEY HEAD FEEDS VALUE HEAD vh, and it is `mod`, not `div`.
+          -- The reference repeats q and k to match v with `ggml_repeat_4d`
+          -- (`qwen35.cpp`, when num_k_heads /= num_v_heads), and EVERY ggml
+          -- broadcast TILES rather than groups: destination row i1*ne01 + k1
+          -- is written from source row k1, so destination head h reads source
+          -- head h mod ne01.  B spec section 4 now says so normatively.
+          --
+          -- This was `(vh/VPK)*DIM*16`, contiguous grouping, until 2026-08-29.
+          -- That is defect B-BLK-1, found by ref/gdn_block_vec.c: at 2 key /
+          -- 4 value heads it moved 128 of 256 y mantissas, 2048 of 4096 final
+          -- state mantissas and 20 of 128 state exponents -- precisely value
+          -- heads 1 and 2, the two the rules disagree on -- and at the real
+          -- 9B shape 30 of 32 value heads.  The two rules AGREE only on the
+          -- first and last value head of each group, which is why head 0 was
+          -- clean and made the divergence look like a head-boundary bug.
+          -- docs/debugging/2026-08-29_gdn-block-oracle.md.
           when P_HKQ =>
-            base := (vh/VPK)*DIM*16;
+            base := (vh mod KEY_HEADS)*DIM*16;
             rp_kn      <= knb(base+DIM*16-1 downto base);
             rp_qs      <= qsb(base+DIM*16-1 downto base);
             rp_eg      <= eg_b(vh);
