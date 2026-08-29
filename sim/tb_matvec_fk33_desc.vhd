@@ -158,34 +158,46 @@ architecture sim of tb_matvec_fk33_desc is
   -- weight slaves police it and only MAXBEAT beats of image exist; the
   -- AXU3EG arm serves no weights at all and is unconstrained.
   --
-  -- THE UPPER LIMIT ON n_rows HERE IS NOT MAXROWS_BFP, AND THAT IS A DEFECT
-  -- ELSEWHERE, NOT A CHOICE.  rtl/matvec_core.vhd:835 reads `ybuf(rd_t)`
-  -- unconditionally, and :883-884 lets rd_t reach tiles_r; ybuf is indexed
-  -- `0 to TILES-1` (:191), so index TILES is an out-of-bounds read whenever
-  -- ceil(n_rows/ROWS_IF) = TILES.  MEASURED: n_rows = 145 and n_rows = 192
-  -- each abort this bench with
+  -- THE TOP OF THE ROW RANGE IS REACHED, AND UNTIL `cbb0457` IT COULD NOT BE.
+  -- rtl/matvec_core.vhd read `ybuf(rd_t)` unconditionally while S_EMIT let
+  -- rd_t reach tiles_r, and ybuf is indexed `0 to TILES-1`, so index TILES was
+  -- an out-of-bounds read whenever ceil(n_rows/ROWS_IF) = TILES -- i.e. for
+  -- every n_rows in the top ROWS_IF rows of MAXROWS_BFP.  MEASURED then:
+  -- n_rows = 145 and n_rows = 192 each aborted this bench with
   --   index (4) out of bounds (0 to 3) at rtl/matvec_core.vhd:835
-  -- at MAXROWS_BFP = 192 / ROWS_IF = 48.  The read is harmless in synthesis
-  -- (rd_v is '0' in that cycle, so nothing consumes ybuf_q) but it is fatal
-  -- in simulation, so the top ROWS_IF rows of the declared range cannot be
-  -- exercised.  matvec_core is not this track's file: the sweep stays below
-  -- the trap and the defect is written up rather than worked around silently.
+  -- at MAXROWS_BFP = 192 / ROWS_IF = 48.  Harmless in synthesis (rd_v is '0'
+  -- in that cycle) and fatal in simulation, so the sweep had to stay below it,
+  -- which left the top corner of the row range unverified -- and that corner is
+  -- exactly where an off-by-one in `tiles` would show.  Worklog OI-8, fixed by
+  -- clamping the read address; the ceiling is lifted here as the second half of
+  -- that fix.
+  --
+  -- BOTH TOP-CORNER SHAPES ARE PRESENT, not just the round one: 192 is an exact
+  -- multiple of ROWS_IF and 145 is not, and they are the two the finder
+  -- measured aborting.  A ceil/floor error in `tiles` separates them.
+  -- w_beats = tiles*nblk must still stay within MAXBEAT on this arm, because
+  -- the weight slaves police it and only MAXBEAT beats of image exist: at
+  -- tiles = 4 that caps n_cols at 96*BLK = 3072, which both new pairings
+  -- respect (128 beats and 4 beats).
   constant NSHAPE : integer := 10;
   type shp_t is array(0 to NSHAPE-1) of integer;
   --                       six of the ten have an n_rows that is NOT a multiple
-  --                       of ROWS_IF (1, 47, 49, 97, 100, 49), which is the
+  --                       of ROWS_IF (1, 47, 49, 97, 145, 49), which is the
   --                       case a floor-instead-of-ceil check gets wrong.
-  constant SH_ROWS : shp_t := (  1,  47,  48,  49,  96,  97, 100, 144, 144,  49);
+  constant SH_ROWS : shp_t := (  1,  47,  48,  49,  96,  97, 100, 192, 145,  49);
   constant SH_COLS : shp_t := ( 32, 128, 4095, 33, 1024, 64, 4096, 1024, 32, 4096);
 
   -- The AXU3EG arm's shapes.  THREE of the nine give an ODD w_beats -- 1, 1
   -- and 3 -- and those are the only ones where ceil(w_beats/2) differs from
   -- floor(w_beats/2), so they are what pins the ceil rather than the divide.
   -- At the FK33 arm's GRP = 1 s_beats and w_beats are equal and neither is
-  -- observable.
+  -- observable.  The top two entries reach B_ROWS itself, 64 = 16*B_RI and
+  -- 61 = 15*B_RI + 1, for the same reason the FK33 arm carries 192 and 145.
+  -- This arm ties off the weight masters and never reaches the emit pass, so
+  -- what it lifts is the SHAPE CHECK's top corner, not OI-8's.
   constant NSHAPB : integer := 9;
   type shpb_t is array(0 to NSHAPB-1) of integer;
-  constant BS_ROWS : shpb_t := (   1,  3,    4,  5,  8,  9,   33, 57,   60);
+  constant BS_ROWS : shpb_t := (   1,  3,    4,  5,  8,  9,   33, 61,   64);
   constant BS_COLS : shpb_t := (  32, 32, 4096, 96, 33, 32, 1024, 64, 4095);
 
   -- ------------------------------------------------------------ the cases

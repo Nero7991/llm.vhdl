@@ -352,7 +352,67 @@ in process .tb_attn_emit(sim).dut1@attn_emit(rtl).P13
   same argument that produced OI-8. NOT reproduced and NOT fixed here: it is a
   different mode, no bench drives it, and it is outside the three defects
   assigned. Recorded so it is not rediscovered from scratch.
-- **Whether the `MAXROWS_BFP = 192 / ROWS_IF = 48` geometry the finder used
-  now passes.** Not re-run; the fix is geometry-independent by construction and
-  was verified at `64/4` with a below-the-band control, but that is a DERIVED
-  claim about the finder's geometry, not a measured one.
+- ~~Whether the `MAXROWS_BFP = 192 / ROWS_IF = 48` geometry the finder used now
+  passes.~~ **Answered in section 8 below, MEASURED.**
+
+## 8. Appended -- lifting the two ceilings OI-8 imposed
+
+TRACK A-SHAPE built the descriptor shape sweep in `sim/tb_matvec_fk33_desc.vhd`
+and had to keep it BELOW the OI-8 trap, so the top corner of the row range was
+unverified -- and that corner is exactly where an off-by-one in `tiles` would
+show. Lifted after `cbb0457` landed, per the coordinator's direction:
+
+- FK33 arm, `SH_ROWS`: `144 -> 192` and `144 -> 145`.
+- AXU3EG arm, `BS_ROWS`: `57 -> 61` and `60 -> 64`.
+
+**Two shapes were raised on each arm, not one.** `192 = 4*ROWS_IF` and
+`64 = 16*B_RI` are exact multiples; `145` and `61` are not. Both give
+`tiles = TILES`, and a ceil/floor error in `tiles` separates them, so raising
+only the round one would have re-created a smaller version of the same gap.
+`145` and `192` are also the two values the finder originally measured aborting.
+
+`w_beats = tiles*nblk` must still stay within `MAXBEAT = 384` on the FK33 arm,
+which at `tiles = 4` caps `n_cols` at `96*BLK = 3072`; the new pairings are
+`(192, 1024)` at 128 beats and `(145, 32)` at 4 beats.
+
+**Result: every legal shape in the newly-reachable top corner is ACCEPTED.**
+No legal shape is refused, so there is no off-by-one in the shape check at its
+top corner.
+
+```
+shape sweep, FK33 arm (ROWS_IF=48, GRP=1): 10 legal shapes accepted,
+    38 one-off beat-count mutations refused
+shape sweep, AXU3EG arm (ROWS_IF=4, GRP=2): 9 legal shapes accepted,
+    32 one-off beat-count mutations refused
+tb_matvec_fk33_desc: 22 cases run, 0 failures
+subsystem A is bit-exact with ref/matvec_int4.c through the descriptor control
+    plane, and every checked mutation is refused
+```
+
+The case counts are unchanged by the lift, which is what says no case was lost
+in the swap. DERIVED and consistent with the numbers: 10 shapes x 5 variants
+minus the 2 skips that only shape `(1, 32)` can produce (`wbx = sbx = 1`, so
+`k = 1` and `k = 3` land on zero) is `10 + 38`; 9 x 5 minus the 4 skips from
+`(1, 32)` and `(3, 32)` is `9 + 32`. Neither skip count depends on the top
+entries.
+
+**Teeth on the lift, and it answers section 7's open item.** The lifted bench
+was run against `cbb0457^`'s `matvec_core`, i.e. with the OI-8 fix reverted, at
+the FK33 geometry `MAXROWS_BFP = 192 / ROWS_IF = 48`:
+
+```
+/usr/bin/ghdl-mcode:error: index (4) out of bounds (0 to 3) at matvec_core.vhd:835
+/usr/bin/ghdl-mcode:error: simulation failed
+```
+
+That is the finder's original message, verbatim, at the finder's original
+geometry. So the new shapes genuinely reach the trap, the lift has teeth, and
+the fix is now MEASURED at `192/48` and not merely derived from `64/4`.
+
+**One weakness in that sweep, pre-existing and NOT introduced here.** The FK33
+arm's accept test polls for `done or err` with a 40,000-iteration timeout and
+then judges on `err`. A shape that HANGS therefore scores as accepted, because
+neither bit is set. So "10 legal shapes accepted" is not by itself proof that
+the top-corner jobs completed. What proves it here is that the run finished at
+all: with the defect present, GHDL kills the process. Worth closing if the
+sweep is ever relied on for liveness rather than for the shape check.
