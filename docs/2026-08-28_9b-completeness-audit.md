@@ -911,3 +911,185 @@ still 512-entry ROMs. And its verdict on E, that it is correctly out of scope at
 Its insistence that **where a document and the RTL disagree, the RTL wins** is
 what made today's corrections findable, and it should be read as applying to
 this audit too.
+
+---
+
+## 9. CORRECTION, appended 2026-08-29: 54 commits after section 8
+
+Section 8 was appended 56 commits after this audit was written. It is now
+**54 further commits stale** (MEASURED: `git rev-list --count 6f96bd6..HEAD` =
+54 at `abbd2ed`), and several of the verdicts section 8 left standing have
+themselves been overturned. Nothing above is edited out.
+
+**Every reading in this section is taken at commit `abbd2ed`**, against
+`git show <commit>:<path>` or a working tree verified clean for that path
+(`git status --porcelain rtl/` empty at the time of reading). Where a reading
+could only be taken from an uncommitted working tree it is labelled as such and
+NOT treated as fact.
+
+### 9.1 Claims in section 8.3 that are now FALSE
+
+Section 8.3 is the part of this document a brief is most likely to quote,
+because it is headed "what the audit got RIGHT". Three of its four supporting
+sentences no longer hold.
+
+| 8.3 said | verdict | evidence, at `abbd2ed` |
+|---|---|---|
+| "`attn_kv_axi` (the HBM KV interface) does not exist, so subsystem C cannot read a KV cache" | **FALSE** | `rtl/attn_kv_axi.vhd:267` declares the entity; 933 lines. Built at `e6419cc`, bit-exact and mutation-tested (`sim/mutate_attn_kv_axi.sh`). It is instantiated at `rtl/llama_top.vhd:3420` inside the `gkvaxi` generate, gated by the `C_KV_AXI` generic (`:405`, default `false`). MEASURED |
+| "Nothing emits a descriptor program" | **FALSE** | `tools/gen_layer_program.py` exists and is tracked (`git ls-files`); it emits subsystem D's descriptor program for a layer. `tools/gen_mv4i_desc.py` emits the A job's descriptor. MEASURED |
+| "The embedding and LM head are still 512-entry ROMs" | **HALF TRUE, and the half that changed is the one that matters** | Still true of the files: `rtl/embed.vhd:34-35` and `rtl/lm_head.vhd:29-30` are both `DIM := 64`, `VOCAB := 512`. MEASURED. But the 9B LM head no longer goes through `rtl/lm_head.vhd` at all -- it is an A descriptor job in raw `out_mode` over 15 row windows, and `c754e39` routed its s32 logits into `rtl/sampler_stream.vhd` behind the `SMP_EN` generic. A brief that reads "the LM head is a 512-entry ROM" and concludes the LM head has no owner is wrong |
+| "its verdict on E, that it is correctly out of scope at `NCARDS = 1`, needed no revision" | **STANDS** | not re-checked in detail; no commit since touches `tp_*` |
+
+### 9.2 Section 5 items that are now closed, and one that was never a backlog row
+
+**5.1 "There is no whole-model reference for Qwen3.5-9B" is CLOSED.**
+`ref/run9b.c` and the `tools/ref9b/` harness (24 tracked files) landed at
+`91ba5ef` / `885420c`. Three rungs -- llama.cpp on BF16, INT4-weight float
+activations, and the hardware's own INT4 + int16-BFP format -- agree on the next
+token id at all five positions of the reference prompt. Write-up:
+`docs/debugging/2026-08-29_9b-whole-model-reference.md`.
+
+> **This is the item the 2026-08-29 independent review named as the audit's
+> process failure, and the failure was not the analysis.** Section 5.1 was
+> correct, load-bearing and specific, and it sat in this document for a day
+> without ever becoming a backlog row, because **section 5 has no route into
+> `docs/WORKLOG.md`'s BACKLOG table.** It became backlog item 12 only when a
+> reviewer went looking. Any future audit in this shape must emit its section 5
+> AS backlog rows, not as prose, or the same thing happens again. See section 9.5
+> for the other section-5 items that still have no row.
+
+**5.3 "The vocabulary is unverified ... there is no 9B GGUF here" is CLOSED.**
+MEASURED: `/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf`,
+17,920,697,312 bytes, present since 2026-08-28. `n_tokens = 248320` read from
+that file's own metadata (`docs/debugging/2026-08-28_qwen35-tokenizer.md:90`,
+`tools/extract_tokenizer.py --summary`), which is exactly
+`rtl/model_cfg_pkg.vhd:70`. `docs/debugging/2026-08-29_9b-whole-model-reference.md`
+states that the whole `QWEN35_9B` record is correct in every field against the
+GGUF. **This also closes section 6.7** ("Whether the 9B numbers are right at
+all", "No Qwen3.5-9B checkpoint exists here") and the parenthetical in section 4
+item 3 that calls obtaining a checkpoint an unlisted prerequisite.
+
+**5.4 `l2norm_rs` has a C model.** `ref/l2norm_rs_vec.c` exists and is tracked.
+Already noted in 8.1; repeated here because 5.4 is where a reader looks.
+
+**5.5 "Mutation coverage is C and D only, and B's is unreproducible" is FALSE.**
+MEASURED at `abbd2ed`, `git ls-files sim/mutate_*.sh`: **30 scripts**, not 17.
+By family: 9 `attn`, **8 `gdn`**, 5 `seq`, 5 `ref_*`, 2 `llama_top`, 1
+`rmsnorm_bf`. B's mutation evidence is now executable
+(`c50a2b7`, seven previously uncovered units).
+
+**What has NOT changed: subsystem A still has zero mutation scripts.** MEASURED:
+no `mutate_matvec*`, no `mutate_bfp*`, no `mutate_weight*`. That half of 5.5
+stands, and it is now the only subsystem of the four for which it does.
+
+**5.5a `gdn_recur_pipe` has its accuracy oracle back** (`d64c0b6`, recorded in
+8.1). **5.6a stands, unchanged and now the oldest open item in B's checking:**
+MEASURED, `sim/tb_gdn_block.vhd:647-650` still `report`s `err_conv`, `err_g`,
+`err_se` and `y_sat` with no severity and no assert.
+
+**5.6 `gdn_block` still has no output-level oracle.** MEASURED: `ref/` contains
+no `gdn_block_vec.c`. The half of 5.6 about the gate running the skew sweep was
+not re-measured here and is marked NOT verified.
+
+### 9.3 Section 4's ordered plan: item 2 was SUPERSEDED, not executed
+
+Section 4 item 2 says: *"Write the HBM weight front end. Six files, none of
+which exist."* MEASURED at `abbd2ed`, all six are **still absent**:
+`rtl/hbm_rd_lane.vhd`, `rtl/hbm_weight_streamer.vhd`, `rtl/fk33_arena_pkg.vhd`,
+`rtl/matvec_int4_hbm.vhd`, `ref/hbm_weight_streamer.c`,
+`sim/tb_hbm_weight_streamer.vhd`.
+
+**And subsystem A nevertheless reaches HBM.** The project took a different
+route: `rtl/matvec_int4_desc_axi.vhd` (the descriptor control plane, `a4f7e17`)
+drives 27 weight/scale masters plus a separate descriptor-fetch master directly,
+and `hw/fk33/rtl/fk33_engine.vhd:1156` instantiates it as the board-facing
+wrapper. A reader who takes item 2 at face value will go and write six files
+that are not the plan any more. **The item is withdrawn as written; what remains
+open from it is the CDC and the arena table, both of which landed inside
+`a4f7e17` rather than as separate files.**
+
+Item 0 (train the PCIe link) and item 3 (repack in FK33 geometry) are closed --
+8.2 records both. Items 1, 5, 6, 8, 9, 10, 11 are not re-checked here and are
+marked NOT verified.
+
+### 9.4 Section 1 and 3 figures that have moved
+
+| where | audit said | at `abbd2ed` | how measured |
+|---|---|---|---|
+| §3 headline | `OVERALL PASS 72`, "baseline: 72 ... floor of 72" (§8.2 updated it to 78) | **`BASELINE_PASS=85`** | `git show HEAD:sim/regress.sh`, line 377. The working tree carries an uncommitted 86 from a live track; 85 is the committed figure |
+| §3 coverage | "82 files in `rtl/`" | **91** | `ls rtl/*.vhd \| wc -l` |
+| §1.4 unit table | 6 of 13 C units ABSENT | **0 of 13 absent by RESPONSIBILITY; 6 still absent by NAME** | see section 9.6 and `docs/debugging/2026-08-29_spec-reconciliation.md` |
+| §1.1 C row | "**No `rtl/` file instantiates a single C unit.**" | **FALSE.** `rtl/attn_block.vhd` instantiates ten (`:772, 779, 790, 806, 823, 845, 861, 875, 885, 901`); `rtl/llama_top.vhd:3513` instantiates `attn_block` and `:3420` instantiates `attn_kv_axi` | grep, MEASURED |
+| §1.7 hop 11 / packer | "the accepted set is `BLOCK=32, AXI_DW=128, ROWS_IF in {1,2,4,8}`, and nothing else ... `rtl/weight_streamer.vhd:107-110` asserts `AXI_DW >= ROWS_IF*16` ... so `ROWS_IF = 16` already fails and 48 is far outside" | **FALSE on both halves.** `rtl/weight_streamer.vhd:175` states in its own comment that the old `AXI_DW >= SW` assert was **replaced**; `NPORTS_S` is now a generic (`:70`) and the FK33 uses 3 scale ports. `tools/pack_int4.py:109-139` refuses only three things, and the FK33 geometry is not among them. Packed sets at `ROWS_IF = 48 / AXI_DW = 256` exist on disk (`/mnt/storage/llama-models/qwen35-9b-mv4i-qkvpad`, 250 `.mv4i`) | grep + `ls`, MEASURED |
+| §1.7, §1.8, §2 | assorted "NEVER" seam rows | superseded by 8.2's `llama_top` row; **not re-enumerated here** and marked NOT verified row by row | -- |
+
+**Section 3's rotted-testbench finding STANDS, re-measured.**
+`sim/tb_bfp_cmp.vhd:11,17,18` still port-maps `in_q`, and `rtl/bfp_pack.vhd:53`
+still says that bus was replaced by the `o_raddr`/`i_rdata` read-ahead. The
+bench still cannot elaborate against the current RTL and is still invisible to
+the gate behind the unrelated `library beh` skip.
+
+**Section 6.9 STANDS: `hw/fk33/bit/` is still untracked.** MEASURED:
+`git ls-files hw/fk33/bit` returns 0 rows.
+
+### 9.5 Section 6.8: the 491 answer is under active revision, and this is a WARNING not a correction
+
+Section 6.8 concluded, applying this document's own rule, that **491 is the
+number** of descriptor steps in a 9B token, over `rtl/seq_desc_fetch.vhd:148`'s
+comment of 546.
+
+At `abbd2ed` that still holds: `git show HEAD:sim/seq_tbl_pkg.vhd` says 491
+(`:206`) and `rtl/seq_desc_fetch.vhd:148` still says 546.
+
+**But the UNCOMMITTED working tree of `sim/seq_tbl_pkg.vhd` says 505**, with a
+header stating *"THE TOKEN IS 505 STEPS, NOT 491. It was 491 until 2026-08-29 ...
+Comments and documents elsewhere that say 491 predate this."* That file is owned
+by a live track and is not committed, so **505 is NOT recorded here as fact.**
+It is recorded as notice that the number is moving, that `491` appears in at
+least `docs/2026-08-27_hbm-port-contention.md:80,135` and
+`sim/probe_abc_ports.vhd:14`, and that whichever value lands, those sites will
+need a sweep of their own. **Do not quote 491 or 505 without re-reading
+`sim/seq_tbl_pkg.vhd` at the commit you are quoting.**
+
+Measurement trap recorded, because it nearly went the other way: the first
+reading of this was taken from the working tree and would have entered this
+document as a MEASURED 505. `git status --porcelain` on the path is what caught
+it. Five tracks are editing this tree; a reading not taken against a named
+commit is not a reading.
+
+### 9.6 The subsystem C verdict, restated
+
+Section 8.2 already softened the C row to *"the six spec-named units are still
+absent BY THOSE NAMES: the design took a different decomposition and the spec
+was never updated"*. That is the correct statement and it is now discharged:
+**the spec has been reconciled to the RTL**, in
+`docs/superpowers/specs/2026-08-27-C-gated-attention-skeleton.md` section 2.1
+(appended 2026-08-29) and in
+`docs/debugging/2026-08-29_spec-reconciliation.md`.
+
+The one-line answer, so nobody has to chase it: **all thirteen responsibilities
+are implemented; six are implemented inside files with other names.**
+`attn_lane`, `attn_score_tree` and `attn_acc` are one unit,
+`rtl/attn_mac_array.vhd`, and that file's own header (`:13-18`) says so and gives
+the reason. `attn_qk_norm` is `rtl/rmsnorm_rs.vhd` instantiated directly
+(`rtl/attn_block.vhd:772`) with no wrapper. `attn_ctrl` is `attn_block`'s own
+36-state phase machine (`rtl/attn_block.vhd:586-597`, case at `:1140`).
+`attn_kv_axi` exists under its own name. **`attn_score_q12` is real, is half of
+`attn_score_tree`, and is on no spec list at all.**
+
+### 9.7 What this correction did NOT verify
+
+Stated because the failure this document exists to avoid is a tidy conclusion.
+
+1. **Sections 1.2, 1.3, 1.5, 1.6 were not re-run.** The per-unit evidence
+   classes for A, B, D and E are as of `b66c4b4` plus section 8, and several are
+   certainly stale (B gained mutation harnesses; A gained a descriptor plane).
+2. **Section 2's seam table was not re-enumerated.** 8.2 corrects the headline;
+   the individual rows were not re-checked.
+3. **Section 4 items 1, 5, 6, 8, 9, 10, 11 were not re-checked.**
+4. **Section 5.2, 5.7, 5.8, 5.9, 5.10 were not re-checked.** 5.9's 208.8 MHz in
+   particular predates the shell build and OI-12.
+5. **Section 7's seven corrections were not re-verified**, except item 8's
+   "69 PASS" which is now doubly stale (the committed floor is 85).
+6. **No tool was run against hardware and no simulation was run for this
+   correction.** Every reading is `git show`, `grep`, `ls` or `git ls-files`.

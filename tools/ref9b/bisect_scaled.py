@@ -21,9 +21,14 @@ That structure buys two things a whole-model reference cannot:
     counterpart in the model).  Locally the ramp is known exactly.
 
 AND WHAT IT CANNOT DO, WHICH IS THE HALF THAT MATTERS.  A stepwise oracle is
-blind wherever it has no model.  Subsystem B's and subsystem C's outputs
-(`R_Y`) have no integration-level model here, so a wrong `R_Y` is fed to the
-next step AS GIVEN and every later comparison still passes.  A clean run of
+blind wherever it has no model.  Subsystem B's output (`R_Y` at a GDN
+block) has no integration-level model here, so a wrong `R_Y` is fed to the next
+step AS GIVEN and every later comparison still passes.  Subsystem C's `R_Y`
+DOES have one as of 2026-08-29 -- `tools/ref9b/attn_oracle.py` driving
+`ref/attn_block_cap_vec.c` -- because subsystem C's whole input is three
+captured regions plus the KV records earlier tokens wrote from theirs.
+Subsystem B's is not reachable the same way: its input includes a recurrent
+state no region holds.  A clean run of
 this tool therefore does NOT mean the token is right.  It means: no step that
 has a model computed something other than what its model says, given the
 machine's own inputs.  The coverage table is printed for exactly that reason
@@ -40,6 +45,7 @@ import subprocess
 import sys
 import tempfile
 
+import attn_oracle as AO
 import scaled_plan as SP
 import vec_oracle as VO
 
@@ -193,6 +199,20 @@ def main():
                     help="the bench's W_IMAGE hex; omit for the synthetic wword")
     ap.add_argument("--no-a", action="store_true",
                     help="skip the subsystem A seams (they cost one process each)")
+    ap.add_argument("--no-c", action="store_true",
+                    help="skip the subsystem C R_Y model")
+    ap.add_argument("--kv-block", type=int, default=4)
+    ap.add_argument("--n-rot", type=int, default=8)
+    ap.add_argument("--qkn-exp", type=int, default=12)
+    ap.add_argument("--attn-fold", default="perlayer",
+                    choices=("perlayer", "shared", "pertoken"),
+                    help="which v_ref fold subsystem C's model assumes.  The "
+                         "DEFAULT is perlayer, which is C spec 2.1.4 and what "
+                         "ref/attn_block_vec.c states.  'shared' is what a "
+                         "single time-shared attn_block instance does across "
+                         "more than one attention layer; it is a "
+                         "CHARACTERISATION of the RTL, not the spec, and "
+                         "selecting it hides defect C1.")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
 
@@ -220,6 +240,44 @@ def main():
 
     w = Weights(a.w_image)
     checked, skipped, diverged = [], [], []
+
+    # Subsystem C's R_Y, predicted for the WHOLE capture at once.  It has to be
+    # the whole sequence and not this one token: the cache token t reads is
+    # what tokens 0..t-1 wrote, and the v_ref fold spans the sequence, so a
+    # per-token call would have no state to fold.
+    cpred, cwhy = {}, ""
+    # THE ATTENTION STUB IS DETECTED, NOT DECLARED BY A FLAG.  With C_REAL
+    # false `rtl/llama_top.vhd:3037` writes y(i) = -32768 + (i mod 4096) and
+    # ignores Q, K and V entirely, so running the attention model over that run
+    # would report a divergence at every element of a seam that is not
+    # attention at all.  `--norm` guessed wrong once and made eight norm seams
+    # look defective (first-bisect trap T5); this reads the capture instead.
+    def _is_stub_ramp(r):
+        return all(r.v[i] == -32768 + (i % 4096) for i in range(len(r.v)))
+
+    stub_c = [b for b in range(shape.blocks) if shape.is_attn(b)
+              and ("R_Y-%d" % b, a.tok) in by
+              and _is_stub_ramp(by[("R_Y-%d" % b, a.tok)])]
+    stub_named = set("R_Y-%d" % b for b in stub_c)
+    if stub_c:
+        for b in stub_c:
+            skipped.append(("R_Y-%d" % b,
+                            "this run elaborated the ATTENTION STUB, not "
+                            "attn_block: R_Y is llama_top:3037's -32768 + i "
+                            "ramp, bit for bit"))
+    if not a.no_c and not stub_c \
+            and any(shape.is_attn(b) for b in range(shape.blocks)):
+        ctoks = sorted(set(r.tok for r in recs))
+        try:
+            cpred, _cblks, _cvt = AO.predict(
+                by, shape, ctoks, a.kv_block, a.n_rot, a.qkn_exp,
+                False, a.attn_fold)
+            cwhy = ("ref/attn_block_vec.c's attn_token() over the capture's "
+                    "own R_QG/R_KIN/R_VIN, v_ref fold '%s'" % a.attn_fold)
+        except SystemExit as e:
+            cpred, cwhy = {}, ""
+            skipped.append(("(subsystem C)",
+                            "the R_Y model refused this capture: %s" % e))
 
     for st in steps:
         if st.op == SP.OP_END or st.dst is None:
@@ -265,6 +323,11 @@ def main():
             else:
                 exp_v, exp_e = VO.norm_mean(x.v, x.exp)
                 why = "the behavioural mean-removal stand-in"
+        elif st.op == SP.OP_C and (st.seam, a.tok) in cpred:
+            exp_e, exp_v = cpred[(st.seam, a.tok)]
+            why = cwhy
+        elif st.op == SP.OP_C and st.seam in stub_named:
+            continue                      # already reported as the stub ramp
         else:
             skipped.append((st.seam, "subsystem %s has no integration-level "
                                      "model" % st.op))

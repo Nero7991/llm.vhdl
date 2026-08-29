@@ -788,5 +788,45 @@ less than an honest gap.
 
 ## 12. Corrections
 
-None yet. Later findings that overturn anything above should be appended here
-with a date, and the superseded claim marked withdrawn in place.
+Later findings that overturn anything above are appended here with a date, and
+the superseded claim is marked withdrawn in place.
+
+### 2026-08-29: the port arithmetic in sections 1.3 and 11.2 is off by one, and the conclusion is strengthened
+
+**Read at commit `abbd2ed`.**
+
+Sections 1.3 (`:37`) and 11.2 (`:323-326`) both say *"A takes 27 of 30 engine
+ports"* with *"3 remain"* for B and C. **WITHDRAWN: it is 28 of 30 and 2
+remain.**
+
+The 27 is `rtl/matvec_int4.vhd`'s `NPORTS_W + NPORTS_S = 24 + 3`. The entity
+that actually reaches HBM is `rtl/matvec_int4_desc_axi.vhd` (`a4f7e17`), which
+carries a **separate descriptor-fetch read master** at `:169-174` beside the
+27-wide array at `:182-191`. `hw/fk33/rtl/fk33_engine.vhd:7-8` states the total
+in its own header: *"27 weight/scale AXI read masters + 1 descriptor master = 28
+masters."* MEASURED. Full write-up:
+`docs/2026-08-28_can-27-read-masters-be-served.md`, correction appended the same
+day.
+
+**This does not change the recommendation; it makes it stronger.** Section 11.2
+argues *"A 28th master for a 0.09% latency saving is the wrong trade."* That
+28th master now exists and is spent on something else, so an on-card gatherer
+would be the **29th**, against 2 free ports that B and C between them already
+want 7 of. The residency map's "real conflict" is one port worse than this
+document costed it.
+
+**NOT verified:** whether the descriptor master could share a port with a scale
+master given its duty cycle. That is the only obvious route back to 3 free
+ports and nobody has costed it.
+
+### 2026-08-29: "the LM head is a 512-entry ROM" no longer describes the 9B path
+
+Not a correction to this document, which is careful about it, but recorded here
+because this file is where the LM head question gets read. MEASURED at
+`abbd2ed`: `rtl/lm_head.vhd:29-30` is still `DIM := 64`, `VOCAB := 512`, and it
+is still the stories260K unit. The 9B LM head does not go through it. It is a
+subsystem A descriptor job in raw `out_mode` over 15 row windows at stride
+17,376 (`a781326`), whose s32 logits are routed into `rtl/sampler_stream.vhd`
+behind `llama_top`'s `SMP_EN` generic (`c754e39`). The embedding half is
+unchanged: `rtl/embed.vhd:34-35` is still 64/512 and the lookup path still has
+no owner in RTL.

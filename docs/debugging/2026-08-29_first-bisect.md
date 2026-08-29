@@ -671,3 +671,30 @@ needs a producer of its own in `sim/tb_llama_top.vhd`'s capture process rather
 than the `hr_*` read every other seam uses. That is the one remaining seam
 between this harness and a whole-token comparison on hardware.
 
+
+**2026-08-29, appended by TRACK RY-ORACLE. Section 5.6's closing claim is
+WITHDRAWN as a statement about the design.** That section says, DERIVED from two
+captured exponents, that "at this position, subsystem C's entire contribution to
+the residual is quantised away". MEASURED since, at commit `c754e39`, by
+`tools/ref9b/res_headroom.py`: the effect is caused by the `seq` configuration's
+lack of a weight image. Its synthetic `wword` generator grows the residual
+**1.06e6x in four blocks** (15.6 to 1.66e7); the same four blocks with the
+pooled Qwen image grow it 1.10x (15.6 to 17.2). At the real 9B shape, over all
+320 residual steps of `/mnt/storage/ref9b/ref_bfp.r9bs`, there are **zero**
+cases where the whole vector is quantised away, the median loss is **4 of 16
+mantissa bits** with a worst case of 8, and the FFN branch is affected
+identically to the attention branch. The arithmetic in 5.6 is correct and its
+scope was not. Full numbers, and the correction in the required form, in
+`docs/debugging/2026-08-29_ry-oracle-and-er-exponent.md`.
+
+**2026-08-29, appended by TRACK RY-ORACLE. Section 8's first bullet is now
+partly closed, and closing it found a defect.** `ref/attn_block_cap_vec.c` plus
+`tools/ref9b/attn_oracle.py` give subsystem C's `R_Y` an integration-level
+model driven from the machine's own captured `R_QG`/`R_KIN`/`R_VIN`; coverage
+moves 58 -> **59 of 63** at `real` and 55 -> **57 of 60** at `seq`, **R7 is
+killed on the numbers**, and the SPEC model reports that the CLEAN design's
+`R_Y-1` diverges at tokens 1 and 2 because `rtl/attn_block.vhd:422`'s `v_ref`
+fold has no LAYER dimension while its own header at `:111` says C spec 2.1.4
+requires one per (layer, KV head). Subsystem B's three `R_Y` seams stay open:
+its input includes a recurrent state no region holds, so the same approach does
+not transfer.

@@ -329,6 +329,85 @@ written alongside this document.
 everything else is a fixed cost. That split is the whole structure of the DSP
 budget.
 
+### 2.1 RECONCILIATION, appended 2026-08-29: the RTL took a different decomposition
+
+**The table above is a DESIGN-TIME decomposition and it is not the file layout
+that was built.** Six of its thirteen names exist in no `rtl/` file, and
+`docs/2026-08-28_9b-completeness-audit.md` section 1.4 read that as six absent
+units and rated subsystem C *"the array does not exist"*. That verdict was
+correct when it was written and is wrong now, and the shape of the mistake is
+worth more than the correction: **an absent NAME was read as an absent
+RESPONSIBILITY.**
+
+This section maps every row of the table above to what implements it. It does
+not change the table, and it does not change the DSP budget in section 3 -- the
+budget is derived from operand widths and lane counts, both of which survived
+the regrouping intact (`rtl/attn_mac_array.vhd:226-228`: the A operand is sized
+by the rescale mode at `ACC_W`, "that is the whole reason the lane is 2 DSP").
+
+**Every file:line below is read at commit `abbd2ed`**, against a working tree
+verified clean for `rtl/` (`git status --porcelain rtl/` empty). Where a
+document and the RTL disagree, the RTL wins; this section is that rule applied
+to this document.
+
+| spec name | status | what implements it, at `abbd2ed` |
+|---|---|---|
+| `attn_qk_norm` | **no file of that name, and deliberately so** | `rtl/rmsnorm_rs.vhd:59` instantiated DIRECTLY as `u_norm`, `rtl/attn_block.vhd:772`, at `NORM_LANES = 1`. The spec's own line for this row is "wraps the existing `rmsnorm_rs` at `LANES = 1`"; a wrapper that only renames ports is a seam with no content, so none was written. ONE shared instance serves 14 invocations per layer (`rtl/attn_block.vhd:20-21`) |
+| `attn_twiddle` | present | `rtl/attn_twiddle.vhd`; `rtl/attn_block.vhd:779` |
+| `attn_rope` | present | `rtl/attn_rope.vhd`; `rtl/attn_block.vhd:790` |
+| `attn_kv_quant` | present | `rtl/attn_kv_quant.vhd`; `rtl/attn_block.vhd:806` |
+| `attn_kv_axi` | **present, and NOT inside `attn_block`** | `rtl/attn_kv_axi.vhd:267`. Instantiated one level UP, at `rtl/llama_top.vhd:3420`, inside the `gkvaxi` generate gated by `C_KV_AXI` (`:405`, default `false`). `attn_block` presents a one-cycle memory-port seam plus four `_rdy` handshakes instead, and its header (`:44-56`) argues that is a boundary and not a stub |
+| `attn_lane` | **implemented, no file of that name** | `rtl/attn_mac_array.vhd`. The `LANES = QH_TILE*DIM_TILE` multiply is the loop at `:431-433`; the three operand modes are muxed ahead of it and registered (`A_W`/`B_W` at `:226-231`). `rtl/attn_lane_skel.vhd` is still present and is still a pricing harness that computes an XOR digest -- MEASURED, it is instantiated by nothing in `rtl/`, `sim/`, `tb/` or `hw/` |
+| `attn_score_tree` | **implemented, SPLIT ACROSS TWO FILES** | The multiply and the per-head `DIM_TILE`-term fabric adder tree are `rtl/attn_mac_array.vhd:441-456` (`M_SCORE`, with the `P_W` overflow check at `:447-450`). The `asr (e_k[b] - e_min)` alignment, the s32 sum and the Q12 conversion are `rtl/attn_score_q12.vhd:128`, instantiated at `rtl/attn_block.vhd:845`. **Half of this row existed before the array did**, which is why the audit could see the file and still call the unit absent |
+| `attn_acc` | **implemented, no file of that name** | `rtl/attn_mac_array.vhd:242,247` declares `acc` as `NACC = QH_TILE*ACC_N*DIM_TILE` entries of `signed(ACC_W-1 downto 0)`; the read-modify-write with ONE shared adder per lane is `:457-470`, and the readback mux is `:492` |
+| `attn_softmax` | present | `rtl/attn_softmax.vhd`; `rtl/attn_block.vhd:861` |
+| `attn_recip` | present | `rtl/attn_recip.vhd`; `rtl/attn_block.vhd:875` |
+| `attn_gate` | present | `rtl/attn_gate.vhd`; `rtl/attn_block.vhd:885` |
+| `attn_emit` | present | `rtl/attn_emit.vhd`; `rtl/attn_block.vhd:901` |
+| `attn_ctrl` | **implemented, no file of that name** | `rtl/attn_block.vhd`'s own phase machine: `type ph_t` at `:586-597`, **36 states**, signal `ph` at `:598`, the `case ph is` at `:1140`. `rtl/attn_c_ports_skel.vhd` remains the documented interface and remains instantiated by nothing (MEASURED) |
+
+**Not on this document's list at all, and real:** `rtl/attn_score_q12.vhd`
+(504 lines, bit-exact against `ref/attn_score_q12_vec.c`, which is itself checked
+against three double-precision oracles). It is half of `attn_score_tree`. A
+thirteen-row table that omits a real unit is the same defect class as six rows
+that name units nobody built.
+
+**Why three names became one file, in the RTL's own words**
+(`rtl/attn_mac_array.vhd:13-18`):
+
+> This file is attn_lane + attn_score_tree + attn_acc from the C skeleton's
+> section 2 table, as ONE unit. They are one unit here and three names there
+> because the accumulator file cannot be separated from the lane that writes
+> it: C spec 2.6 measures the read mux going non-linear above 16 entries per
+> lane precisely because the file is INSIDE the lane, and a decomposition that
+> put a port between them would be pricing a structure nobody builds.
+
+**What this reconciliation does NOT claim.** It says the responsibilities are
+implemented and where. It says nothing about whether they are implemented
+CORRECTLY -- that is a separate question with a separate answer, and the answer
+is `ref/attn_block_vec.c` (commit `8baa413`), the first block-level oracle,
+which found 64 of 64 mantissas wrong and bisected to two independent defects
+that seven passing properties and 13 of 17 wiring mutations had not seen. The
+per-unit evidence classes in the audit's section 1.4 were all honest and none of
+them predicted that.
+
+**Three deviations from this document that are live, and are NOT reconciled by
+renaming anything**, all self-declared in `rtl/attn_block.vhd:186-190`:
+
+- **No two-position PV lag and no overlap.** One position at a time. Section
+  3.7's cycle budget assumes both, so the built cycle cost is not the budgeted
+  cycle cost.
+- **G exp cones, not one shared cone.** A deviation from section 3's sizing.
+- **The gate is re-read one element at a time**, not through a 512-bit block
+  port. Same values, more cycles.
+
+**One stale in-code comment found and deliberately NOT fixed** (five tracks are
+live in `rtl/`): `rtl/attn_block.vhd:184-185` says *"`rtl/llama_top.vhd` leaves
+them open today and runs one token at cur_pos = 0, where nothing is ever read."*
+MEASURED at `abbd2ed`: `rtl/llama_top.vhd:3577` drives `c_cpos` from `tok_pos`,
+and the `gkvaxi` branch at `:3387-3430` connects the handshakes. That sentence
+was true before `5d0253f` and is false after it.
+
 ---
 
 ## 3. DSP budget

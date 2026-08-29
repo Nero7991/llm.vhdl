@@ -30,6 +30,50 @@ yet survived an adversarial review**; sections 1-2 have survived five. Treat
 > Full derivation: `docs/2026-08-27_budgets-at-the-measured-clock.md` section
 > 7.2.
 
+> **CORRECTION, appended 2026-08-29: THE MODEL IN SECTIONS 1 AND 2 IS NOT THE
+> BUILD TARGET, AND HAS NOT BEEN SINCE THIS DOCUMENT'S OWN SECTION 4.**
+>
+> Sections 1 and 2 are written throughout at **Qwen3.5-0.8B** -- 8 query heads,
+> 2 KV heads, 6 attention layers (see the table in section 1.4). **Section 4 at
+> the end of this file is NORMATIVE and supersedes every one of those
+> dimensions**, and it has done since 2026-08-21. A reader who copies section
+> 1.4's table into a brief gets numbers that are wrong by a factor of 2 to 4 on
+> every head count. That has happened.
+>
+> And section 4 is itself one retarget behind. It supersedes 0.8B with
+> **Qwen3.8-27B at `N = 2` cards**. The build target at `abbd2ed` is
+> **Qwen3.5-9B on ONE card**, MEASURED at `rtl/model_cfg_pkg.vhd:85`
+> (`MODEL := QWEN35_9B`) and `:91` (`NCARDS := 1`).
+>
+> | | 0.8B (sections 1-2) | 27B, N=2 (section 4) | **9B, N=1 (BUILD TARGET)** |
+> |---|---|---|---|
+> | blocks | 24 | 64 | **32** |
+> | attention layers | 6 | 16 | **8** (`32 / 4`, DERIVED from `attn_interval` at `rtl/model_cfg_pkg.vhd:65`, via `attn_layers` at `:112-115`) |
+> | query heads, per card | 8 | 12 | **16** |
+> | KV heads, per card | 2 | 2 | **4** |
+> | GQA group `G` | 4 | 6 | **4** |
+> | head_dim | 256 | 256 | **256** |
+> | `d_model` | 1,024 | 5,120 | **4,096** |
+>
+> Source for the 9B column: `rtl/model_cfg_pkg.vhd:64-70`, the `QWEN35_9B`
+> record, MEASURED, and independently confirmed field by field against the GGUF
+> in `docs/debugging/2026-08-29_9b-whole-model-reference.md`. `head_dim = 256`
+> and `KV heads = 4` are the two that carry across from 27B; **the query head
+> count does not**, and `rtl/attn_block.vhd:162-166` says so in its own generic
+> comments (defaults `N_QH = 12`, `N_KVH = 2` for 27B on two cards, with "9B on
+> one card is N_QH = 16, N_KVH = 4" written beside them).
+>
+> **What is NOT superseded: the numeric contract of section 2.1.** The exponent
+> chains, the alignment policy, the rounding sites and the per-32 block format
+> are shape-independent and are what this document is the authority on. It is
+> only the DIMENSIONS that moved. Nothing in section 2.1 is withdrawn here.
+>
+> **Also not reconciled by this note:** the unit decomposition. See
+> `docs/superpowers/specs/2026-08-27-C-gated-attention-skeleton.md` section 2.1
+> (appended 2026-08-29) for the thirteen spec-named units mapped to the files
+> that actually implement them, and
+> `docs/debugging/2026-08-29_spec-reconciliation.md` for the procedure.
+
 ## 0. Revision history
 
 **Rev 7 (2026-08-25)** writes section 3 against the settled §1-2 foundation:
@@ -202,7 +246,13 @@ while issuing instructions to it.
 
 ### 1.4 Dimensions and interface
 
-| | Qwen3.5-0.8B |
+**SUPERSEDED, see the correction at the top of this file and section 4.** This
+table is Qwen3.5-0.8B. The build target at `abbd2ed` is Qwen3.5-9B on one card:
+**8 attention layers, 16 query heads, 4 KV heads, head_dim 256, `d_model`
+4,096** (`rtl/model_cfg_pkg.vhd:64-70,85,91`, MEASURED). The table is kept
+unedited because the derivations below reference its values.
+
+| | Qwen3.5-0.8B (SUPERSEDED) |
 |---|---|
 | Attention layers | 6, at indices 3, 7, 11, 15, 19, 23 |
 | n_head / n_head_kv / head_dim | 8 / 2 / 256 (GQA 4:1) |

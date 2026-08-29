@@ -507,3 +507,49 @@ No `opt_design`, `place_design` or `route_design`; no other subsystem, no HBM
 IP, no XDMA shell, no congestion, no I/O. Congestion only makes timing worse, so
 **189.50 MHz is an upper bound on the full build at this ACLK, not a prediction
 of it.**
+
+---
+
+## CORRECTION, appended 2026-08-29: it is 28 masters, not 27
+
+**Read at commit `abbd2ed`, working tree clean for `rtl/` and `hw/fk33/rtl/`.**
+
+Everything above is about `rtl/matvec_int4.vhd`, which has
+`NPORTS_W + NPORTS_S = 24 + 3 = 27` AXI read masters. That count is correct for
+that entity and every bandwidth number above stands.
+
+**But the entity that reaches the FK33's HBM is not that one.** The descriptor
+control plane landed at `a4f7e17` as `rtl/matvec_int4_desc_axi.vhd`, and it
+carries a **twenty-eighth** master that this document never counted: the
+descriptor fetch. MEASURED:
+
+- `rtl/matvec_int4_desc_axi.vhd:182-191` -- the `m_ar*` / `m_r*` arrays, width
+  `NPORTS_W + NPORTS_S` = 27 at the FK33 generics (`:103-104`).
+- `rtl/matvec_int4_desc_axi.vhd:169-174` -- `d_arvalid` / `d_arready` /
+  `d_araddr` / `d_arlen` / `d_arsize` / `d_arburst`, a **separate** read master,
+  driven at `:504-505`.
+- `hw/fk33/rtl/fk33_engine.vhd:7-8`, the board-facing wrapper's own header:
+  *"27 weight/scale AXI read masters + 1 descriptor master = 28 masters, each on
+  its own HBM SAXI port, each 256 bits wide."* It instantiates
+  `matvec_int4_desc_axi` at `:1156`.
+
+**The consequence is a budget line, not a bandwidth line.** This document's
+section 5 summary row reads *"Ports used: 27 of 30 engine ports; 3 left for
+B|C"*. At `abbd2ed` that is **28 of 30, and 2 left for B and C.** The same
+arithmetic error is carried by `docs/2026-08-28_token-io-path.md:37,323`.
+
+**Not withdrawn:** the 288.0 GB/s at 30 ports measurement, the SmartConnect
+rejection, the AXI3 16-beat cap, and the structural answer that the part can
+serve this many masters. 28 is still below the 30 that were measured together.
+
+**MEASURED separately and it is the reason this correction is not comfortable:**
+the first shell build carrying these 28 masters **does not route**
+(`[Route 35-3] global congestion level 7`, worklog OI-12,
+`docs/debugging/2026-08-29_fk33-shell-integration-does-not-route.md`). This
+document's own closing section says congestion only makes timing worse and that
+its figures are an upper bound; that caveat is now a measured outcome rather
+than a caveat.
+
+**NOT verified here:** whether the descriptor master needs a dedicated HBM SAXI
+port at all, or could share one with a scale port given its duty cycle. Nobody
+has costed that, and it is the obvious way back to 3 free ports.
