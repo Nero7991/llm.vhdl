@@ -40,6 +40,33 @@ chosen here:
 
 The cost of that alignment is under 1 MB across all 177.  Revisit it only if
 something is ever specified.
+
+THE STACK RULE.  The FK33 carries TWO 4 GiB HBM stacks and the split is at a
+hard address, 0x1_0000_0000.  An AXI master on a stack-0 SAXI port that issues
+an address above that does NOT fault: the address decodes (the HBM IP exposes
+all 32 pseudo-channel segments on every port when both global switches are on,
+MEASURED in docs/2026-08-28_can-27-read-masters-be-served.md section 2.1), so
+the read returns SOMETHING and the job reports success.  That is the
+silent-wrong-answer class named in docs/2026-08-27_hbm-residency-map.md item 5.4
+and it is the reason this allocator exists rather than a bare running offset.
+
+The rule implemented here: NO placed object may CONTAIN the boundary strictly
+inside it.  It applies to a whole .mv4i file, which is stronger than it needs to
+be -- the sub-regions inside a file are what the 27 masters actually read -- but
+a file that is wholly inside one stack has every one of its 27 sub-regions
+wholly inside that stack for free, and the stronger rule is the one a reader can
+check without parsing a header.  When the next object would straddle, the
+allocator SKIPS to the boundary and records the hole; it never reorders, so the
+manifest stays a function of the GGUF's tensor order alone.
+
+WHAT THIS RULE DOES NOT DO, stated so it is not mistaken for a solved problem:
+it puts each tensor wholly in ONE stack, and subsystem A reads every tensor with
+27 masters that CANNOT all be on one stack (a stack offers at most 15 engine
+ports after the host takes one).  So under this flat layout at least 12 of the
+27 masters read out of their own stack on every tensor.  Fixing THAT is the
+27-lane arena layout of the residency map section 3, which needs a build-time
+lane->port->stack table that no bitstream in this repo has.  This allocator
+removes the straddle; it does not make the flat layout port-local.
 """
 
 import argparse
@@ -58,12 +85,42 @@ from gguf.gguf_reader import GGUFReader                       # noqa: E402
 
 ALIGN = 4096
 HBM_SIZE = 8 * 1024 ** 3
+STACK_BYTES = 4 * 1024 ** 3                # one HBM stack; the boundary is here
 GDN_STATE_BYTES = 48 * 6144 * 128 * 2      # SS audit: 72 MB, persistent
 KV_BYTES_PER_TOKEN = 16 * 4 * 256 * 2 * 2  # 16 attention layers, K+V, int16
 
 
 def align_up(n: int) -> int:
     return (n + ALIGN - 1) & ~(ALIGN - 1)
+
+
+def stack_of(off: int) -> int:
+    return off // STACK_BYTES
+
+
+def place(off: int, nbytes: int):
+    """Next legal base for `nbytes` at or after `off`.  See THE STACK RULE.
+
+    Returns (base, hole_bytes).  `base` is 4 KB aligned and `[base, base+nbytes)`
+    contains no stack boundary strictly inside it.  `hole_bytes` is what was
+    skipped, which the caller records rather than silently loses.
+
+    Written as a loop over boundaries rather than as one `if` so that it is
+    correct for an object larger than a stack (it cannot be placed at all, and
+    the loop terminates on the range check instead of looping forever) and for
+    any future HBM with more than two stacks.
+    """
+    base = align_up(off)
+    hole = 0
+    while True:
+        if nbytes > STACK_BYTES:
+            raise ValueError(f"object of {nbytes} B cannot fit in a "
+                             f"{STACK_BYTES} B stack")
+        b = (base // STACK_BYTES + 1) * STACK_BYTES     # next boundary above
+        if base + nbytes <= b:
+            return base, hole                            # wholly inside a stack
+        hole += b - base
+        base = b                                         # skip to the boundary
 
 
 def digest(path: str) -> str:
@@ -240,35 +297,86 @@ def main():
     # ---------------------------------------------------------- the load map
     off = 0
     files = []
+    holes = []
     print("hashing the set for the manifest ...")
     sys.stdout.flush()
     for r in recs:
         assert off % ALIGN == 0
+        base, hole = place(off, r["nbytes"])
+        if hole:
+            holes.append(dict(offset=off, nbytes=hole,
+                              why=f"stack boundary before {r['name']}.mv4i"))
         files.append(dict(file=r["name"] + ".mv4i", kind="mv4i",
                           tensor=r["name"], M=r["M"], K=r["K"],
                           w_exp=r["w_exp"], out_shift=r["out_shift"],
-                          nbytes=r["nbytes"], hbm_offset=off,
+                          nbytes=r["nbytes"], hbm_offset=base,
+                          stack=stack_of(base),
                           blake2b_128=digest(
                               os.path.join(a.outdir, r["name"] + ".mv4i"))))
         assert r["nbytes"] % ALIGN == 0, r["name"]
-        off += r["nbytes"]
-    nm_base = align_up(off)
+        off = base + r["nbytes"]
+    nm_base, hole = place(off, nm_size)
+    if hole:
+        holes.append(dict(offset=off, nbytes=hole,
+                          why="stack boundary before nonmatvec_f32.bin"))
     files.append(dict(file="nonmatvec_f32.bin", kind="f32blob",
                       tensor=None, nbytes=nm_size, hbm_offset=nm_base,
+                      stack=stack_of(nm_base),
                       blake2b_128=digest(nm_path),
                       entries=[dict(e, hbm_offset=nm_base + e["offset"])
                                for e in nm_entries]))
     weights_end = align_up(nm_base + nm_size)
     for f in files:
         assert f["hbm_offset"] % ALIGN == 0, f["file"]
+        # THE STACK RULE, asserted rather than trusted: the file itself, and
+        # every sub-region a master will read out of it.  A .mv4i is a header
+        # plus NPORTS_W + n_scale_sub sub-regions, so checking the file is
+        # sufficient AND checking it again per sub-region costs nothing.
+        assert stack_of(f["hbm_offset"]) \
+            == stack_of(f["hbm_offset"] + f["nbytes"] - 1), \
+            f'{f["file"]} straddles the {STACK_BYTES} B stack boundary'
+        if f["kind"] == "mv4i":
+            lay = P.packed_layout(f["M"], f["K"], rows_if, axi_dw,
+                                  emitting=False)
+            _, _, np_, sub_sz, nss_, scl_sz, tot_ = lay
+            assert tot_ == f["nbytes"], (f["file"], tot_, f["nbytes"])
+            subs = [(P.HDR_BYTES + sub_sz * p, sub_sz) for p in range(np_)]
+            so = P.HDR_BYTES + sub_sz * np_
+            subs += [(so + scl_sz * q, scl_sz) for q in range(nss_)]
+            for o, n in subs:
+                s = f["hbm_offset"] + o
+                assert stack_of(s) == stack_of(s + n - 1), \
+                    f'{f["file"]} sub-region at +{o} straddles the boundary'
         if f["kind"] == "f32blob":
             for e in f["entries"]:
                 assert e["hbm_offset"] % ALIGN == 0, e["name"]
+                assert stack_of(e["hbm_offset"]) \
+                    == stack_of(e["hbm_offset"] + e["nbytes"] - 1), e["name"]
 
     total = sum(f["nbytes"] for f in files)
-    gdn_base = weights_end
+    gdn_base, hole = place(weights_end, GDN_STATE_BYTES)
+    if hole:
+        holes.append(dict(offset=weights_end, nbytes=hole,
+                          why="stack boundary before the GDN state region"))
     kv_base = align_up(gdn_base + GDN_STATE_BYTES)
     free = HBM_SIZE - kv_base
+    hole_bytes = sum(h["nbytes"] for h in holes)
+
+    # KV is a REGION, not an object, so the stack rule applies to the per-token
+    # RECORD, not to the region.  Split the region at every stack boundary and
+    # count whole records inside each extent; that makes a straddling record
+    # impossible by construction rather than by an alignment coincidence, and
+    # the extent list is what a KV allocator needs anyway.  The old
+    # `free // KV_BYTES_PER_TOKEN` silently permitted one straddling record per
+    # boundary crossed.
+    kv_extents, p = [], kv_base
+    while p < HBM_SIZE:
+        e = min((p // STACK_BYTES + 1) * STACK_BYTES, HBM_SIZE)
+        kv_extents.append(dict(base=p, nbytes=e - p, stack=stack_of(p),
+                               tokens=(e - p) // KV_BYTES_PER_TOKEN))
+        p = e
+    max_ctx = sum(x["tokens"] for x in kv_extents)
+
     man = dict(
         format="llama.vhdl FK33 load manifest v1",
         source_gguf=os.path.abspath(a.gguf),
@@ -276,12 +384,15 @@ def main():
         geometry=dict(rows_if=rows_if, axi_dw=axi_dw, block=P.BLOCK,
                       nports_w=nports, n_scale_sub=nss,
                       axi_read_masters=nports + nss),
-        hbm=dict(size=HBM_SIZE, align=ALIGN,
+        hbm=dict(size=HBM_SIZE, align=ALIGN, stack_bytes=STACK_BYTES,
                  weights_bytes=total, weights_end=weights_end,
+                 stack_holes=holes, stack_hole_bytes=hole_bytes,
                  gdn_state_base=gdn_base, gdn_state_bytes=GDN_STATE_BYTES,
+                 gdn_state_stack=stack_of(gdn_base),
                  kv_base=kv_base, kv_bytes_per_token=KV_BYTES_PER_TOKEN,
+                 kv_extents=kv_extents,
                  free_after_gdn=free,
-                 max_context_tokens=free // KV_BYTES_PER_TOKEN),
+                 max_context_tokens=max_ctx),
         counts=dict(tensors=len(tensors), matvec=len(mv), f32=len(nonmv)),
         files=files,
     )
@@ -294,8 +405,13 @@ def main():
           f"({100.0*total/HBM_SIZE:.1f} % of 8 GiB)")
     print(f"  GDN state        {GDN_STATE_BYTES/1024**2:.1f} MB at "
           f"{gdn_base:#x}")
+    print(f"  stack holes      {hole_bytes} B  {hole_bytes/1024**2:.1f} MiB "
+          f"in {len(holes)} hole(s)")
+    for h in holes:
+        print(f"    {h['nbytes']} B at {h['offset']:#x}: {h['why']}")
     print(f"  free for KV      {free/G:.3f} GiB from {kv_base:#x} "
-          f"=> {free // KV_BYTES_PER_TOKEN} tokens of context")
+          f"=> {max_ctx} tokens of context "
+          f"in {len(kv_extents)} per-stack extent(s)")
     print(f"  total elapsed    {time.perf_counter() - t_all:.1f} s")
     return 0
 
