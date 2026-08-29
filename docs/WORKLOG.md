@@ -148,10 +148,10 @@ landed, the table is the defect.
 
 | track | question | owns |
 |---|---|---|
-| **BUILD-E2E** | The routed bitstream came from a **checkpoint flow**, so the regenerated build script has never run end to end. A build script that does not reproduce the result is a result that exists once. | `hw/fk33/**` |
-| **LOGITS** | **`LOGITS` has no model on either side, and it is the one seam that decides a token.** Plus backlog 4's LM head half, and a silent coverage loss where `seam_bisect` compared 54 of 57 modelled seams while its verdict line read like full coverage. | `tools/ref9b/**`, new `ref/logits_*`, `tools/ref9b/golden/llama_top_real.txt` |
-| **ORDINAL** | **One field, two incompatible meanings.** `llama_top` reads `ordinal` as the BLOCK index and derives the layer; `seq_tbl_pkg` and `gen_layer_program.py` stamp the PER-KIND ordinal. DERIVED at 9B: wrong layer on 29 of 32 blocks, `c_layer = -1` on blocks 3, 7, 11. | `rtl/llama_top.vhd`, `sim/seq_tbl_pkg.vhd`, `tools/gen_layer_program.py`, `tools/dprog_oracle.py`, D spec |
-| **OI3B** | **The top-level benches cannot fail.** Backlog 7 plus C-SEAM's OI-3b. Give the `tb_llama_top*` family value gates that can go red, and audit all six. | `sim/tb_llama_top*.vhd`, `sim/mutate_llama_top*.sh` |
+| **OI3B** | **The top-level benches cannot fail.** `tb_llama_top_seq` passes with C1 restored AND with a strictly worse control. Give the family value gates that go red, and audit all six. | `sim/tb_llama_top*.vhd`, `sim/mutate_llama_top*.sh` |
+| **COMPOSE** | Replace the MODELLED "+558 DSP for B+C+D" with a MEASURED one. A is already at 55.0% DSP of 2,880. If B+C+D cannot fit alongside A, that is schedule-changing and Oren needs it early. | new `sim/ooc_compose_*`, new `hw/fk33/results/compose_*` |
+| **WEIGHTS** | The 9B residency map and the HBM load path, now that host-to-HBM DMA is proven. Includes a `verify` that is an independent check, not a re-read through the same code path. | new `tools/weights_*`, new `hw/fk33/host/fk33_load_weights.py` |
+| **REALFIX** | Make the real 9B shape elaborate: R1 `REGMAX`, **R2 the ~46 GB B state signal**, R3 `VN_W`, R4 an unreachable guard, R5 K/V regions overrunning `ADDR_W`, R6 the unusable last cache position. R2 is the wall and converting a signal to a variable is not obviously legal. | `rtl/llama_top.vhd`, `rtl/attn_kv_axi.vhd` |
 
 **Landed since the last rewrite:** C-DONE, B-BLOCK, CDC-STATIC, CB-ORACLE, C1,
 B-LAYER (twice: the layer benches, then the B-BLK-1 fix and the `llama_top`
@@ -215,6 +215,38 @@ Three landed rows were found still open today (1, 12, and OI-4), and one of them
 caused a track to be dispatched onto finished work. The In flight section has a
 rule about exactly this and the BACKLOG table has none. **Strike a row in the
 same action that lands it.**
+
+### TRACK REALSHAPE, 2026-08-29: the real shape has never elaborated, and it is the DEFAULT
+
+`ghdl -r llama_top` with **no generic overrides** dies: 24.9 GB, 18.2 s,
+`STORAGE_ERROR : grt-table.adb:58`. VERIFIED INDEPENDENTLY by the dispatcher:
+`mk_shape(MODEL, NCARDS)` occurs **exactly once in the whole VHDL tree**, at
+`rtl/llama_top.vhd:168`, as `llama_top`'s OWN DEFAULT, commented "Defaults to
+the real build target. A simulation passes `mk_shape_scaled(...)`."
+
+**So the never-elaborated configuration is the top level's default -- the one
+synthesis gets if nobody overrides it.** Every simulation ever run has passed
+the scaled shape instead.
+
+The wall is not a subsystem. `gdn_block` standalone at the exact 9B generics
+takes 0.35 s / 299 MB. It is one declaration: `rtl/llama_top.vhd:2731-2733`
+models B's per-layer recurrent state as a **signal** array of 201,326,592 bits.
+MEASURED ~228 bytes per GHDL scalar signal, so DERIVED **~46 GB**. The same
+bits as a process variable measured **206 MB / 0.17 s**.
+
+Six defects, five invisible at `mk_shape_scaled`. The sharpest is **R4**:
+`attn_kv_axi:455`'s guard `NBLK <= 16` is UNREACHABLE at the shipping
+`HEAD_DIM 256`, so the illegal value prints `overflow detected` with no line
+number, and at `HEAD_DIM 32/64` the same value prints the named assert. It also
+makes `llama_top:3650`'s mirror guard dead. **Zero margin, hit exactly by the
+shipping geometry, and one step past it the diagnostic vanishes.**
+
+`VN_W` 14 gives only 1.33x at 9B and **fails outright at 27B** (`ffn` 17408),
+which matters for the stated end goal.
+
+**The prize:** with `stmem` shrunk in a throwaway probe, the FULL composition
+including real B elaborates in **2.09 GB / 1.93 s**, so a real-shape
+elaboration gate row is affordable. TRACK REALFIX is going for it.
 
 ### Raised by TRACK D-PROG, 2026-08-29 -- the most serious of the day
 
