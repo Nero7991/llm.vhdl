@@ -165,10 +165,23 @@ echo "golden: $VECS"
 # run a control; the multi-config harnesses did not.
 #
 # MEASURED 2026-08-29, and this is why the row exists: sim/mutate_attn_emit.sh
-# config B (-gM_GAP=0 -gACK_LAG=0) WEDGES ON THE UNMUTATED DESIGN -- 20 ms of
+# config B (-gM_GAP=0 -gACK_LAG=0) WEDGED ON THE UNMUTATED DESIGN -- 20 ms of
 # simulated time, not one line of output, not even the heartbeat.  Under the
 # old two-way judging that silence scored as a KILL on all 22 rows, and two of
 # them had no other evidence.
+#
+# FIXED 2026-08-29, same day, in sim/tb_attn_emit.vhd, and the diagnosis in the
+# note that first reported it was WRONG about the mechanism.  It is not that
+# done_r cleared in the cycle it was raised.  At ACK_LAG = 0 the ack already
+# stands when the unit completes, so `done` is legally high for exactly ONE
+# cycle -- and the bench waited for the TWO instances' done signals
+# SEQUENTIALLY, `while done /= '1'` then `while done1 /= '1'`.  MEASURED by
+# instrumenting a scratch copy: the one-group instance has no S_EMIN pass and
+# finishes TWO CYCLES EARLIER (done1 at tick 217, done at tick 219), so the
+# first loop consumed done1's whole pulse and the second waited forever.  The
+# bench now latches each pulse as it is seen.  Configuration B is
+# A=PASS B=PASS C=PASS on the clean design; the control row proves it on every
+# run rather than asking anyone to trust this paragraph.
 #
 # The control goes through the SAME mutate() path as every other row, with the
 # substitution deliberately an identity, so it exercises the same analyze, the

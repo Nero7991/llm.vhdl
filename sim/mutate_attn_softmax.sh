@@ -117,6 +117,13 @@ PY
     echo "$tag: DID NOT ANALYZE (a mutation that will not compile has tested nothing)"
     sed -n 1,4p "$dir/analyze.log"; return
   fi
+  # sim/hsk_chk.vhd is PART OF THE CHECKER, not part of the design: it is
+  # the done/done_ack contract as a property.  It has to be analysed before
+  # the bench that instantiates it, and it has to be NAMED to
+  # sim/mutverdict.py below, or a clause firing is classified
+  # ABORT:DUTASSERT(hsk_chk.vhd) rather than KILLED.
+  ghdl -a --std=08 -frelaxed --workdir="$dir" sim/hsk_chk.vhd \
+       >/dev/null 2>&1
   ghdl -a --std=08 -frelaxed --workdir="$dir" sim/tb_attn_softmax.vhd \
        >/dev/null 2>&1
 
@@ -127,7 +134,7 @@ PY
          --max-stack-alloc=0 --stop-time=900ms \
          > "$dir/run_$c.log" 2>&1
     rcv=$?
-    v=$(python3 "$MUTV" "$dir/run_$c.log" tb_attn_softmax "$rcv")
+    v=$(python3 "$MUTV" "$dir/run_$c.log" tb_attn_softmax "$rcv" sim/hsk_chk.vhd)
     case "$v" in
       PASS)   survivors="$survivors $c" ;;
       KILLED) killers="$killers $c" ;;
@@ -139,7 +146,11 @@ PY
     echo "$tag  KILLED by:$killers   aborted:${aborts:- -}   survived:${survivors:- -}   -- $desc"
     for c in $killers; do
       echo "      [$c $(cfg_name "$c")]"
-      grep -E "report error" "$dir/run_$c.log" | head -1 \
+      # "report failure" as well as "report error": sim/hsk_chk.vhd's clauses
+      # are severity failure, deliberately (see its header), so a handshake
+      # kill prints no "report error" line at all and this used to show the
+      # kill with an empty reason.
+      grep -aE "report (error|failure)" "$dir/run_$c.log" | head -1 \
         | sed 's/^/        /' | cut -c1-170
     done
   elif [ -n "$aborts" ]; then
@@ -168,10 +179,23 @@ echo "golden: $VECS   cases: $NCASE"
 # run a control; the multi-config harnesses did not.
 #
 # MEASURED 2026-08-29, and this is why the row exists: sim/mutate_attn_emit.sh
-# config B (-gM_GAP=0 -gACK_LAG=0) WEDGES ON THE UNMUTATED DESIGN -- 20 ms of
+# config B (-gM_GAP=0 -gACK_LAG=0) WEDGED ON THE UNMUTATED DESIGN -- 20 ms of
 # simulated time, not one line of output, not even the heartbeat.  Under the
 # old two-way judging that silence scored as a KILL on all 22 rows, and two of
 # them had no other evidence.
+#
+# FIXED 2026-08-29, same day, in sim/tb_attn_emit.vhd, and the diagnosis in the
+# note that first reported it was WRONG about the mechanism.  It is not that
+# done_r cleared in the cycle it was raised.  At ACK_LAG = 0 the ack already
+# stands when the unit completes, so `done` is legally high for exactly ONE
+# cycle -- and the bench waited for the TWO instances' done signals
+# SEQUENTIALLY, `while done /= '1'` then `while done1 /= '1'`.  MEASURED by
+# instrumenting a scratch copy: the one-group instance has no S_EMIN pass and
+# finishes TWO CYCLES EARLIER (done1 at tick 217, done at tick 219), so the
+# first loop consumed done1's whole pulse and the second waited forever.  The
+# bench now latches each pulse as it is seen.  Configuration B is
+# A=PASS B=PASS C=PASS on the clean design; the control row proves it on every
+# run rather than asking anyone to trust this paragraph.
 #
 # The control goes through the SAME mutate() path as every other row, with the
 # substitution deliberately an identity, so it exercises the same analyze, the
@@ -280,6 +304,39 @@ mutate M6 "the rescale pass is pulsed instead of held until the array acks (RULE
 "          when S_RS =>
             rs_v_r <= '0';
             state  <= S_ZED;"
+
+# ---- THE SAME DEFECT CLASS, WITHOUT THE HANG ------------------------------
+# M5 above is the member of this class that HAPPENS TO DEADLOCK, and that is
+# the only reason five harnesses noticed it at all.  H1 is the member that does
+# NOT deadlock: `done` is raised, is held for as long as the consumer wants,
+# and is then released by the next head's `start` instead of by the ack.  The
+# ack has no effect on `done` whatsoever.  Every value this unit produces is still correct.
+#
+# MEASURED 2026-08-29 with the sim/hsk_chk.vhd instance REMOVED from
+# sim/tb_attn_softmax.vhd and nothing else changed: H1 is
+#     A=PASS  B=PASS  C=PASS
+# a clean survivor of every configuration.  Polling for `done = '1'` cannot see
+# it, because the poll is satisfied by the stale level left over from the
+# previous layer, and no value check sees it because no value is wrong.  With
+# the property it is KILLED in all three configurations, by clause 3, RELEASE.
+#
+# The release signal is chosen per unit to be the one that SURVIVES: on
+# attn_emit and attn_twiddle a clear at cfg_taken instead of at `start` lands
+# one cycle later, leaves `done` still high inside the bench's ACK_LAG hold
+# window, and is caught by the existing "done fell before done_ack" check in
+# all three configurations.  That difference is a single cycle, and it is the
+# whole distance between this class being visible and being invisible.
+#
+# This row is the reason sim/hsk_chk.vhd exists.  A harness whose only evidence
+# for a defect class is that one member of it hangs has measured the member,
+# not the class.
+mutate H1 "the ack has NO effect on done: it is released by the next layer's accept instead (the non-hanging sibling of M5)" \
+"        if state /= S_DONE then
+          done_r <= '0';
+        end if;" \
+"        if start = '1' then
+          done_r <= '0';
+        end if;"
 
 echo "==================================================================="
 

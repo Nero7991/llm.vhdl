@@ -142,6 +142,21 @@ begin
   end process;
   x_rdata <= std_logic_vector(xrd);
 
+  -- THE COMPLETION HANDSHAKE, as a property.  See sim/hsk_chk.vhd's header.
+  -- P25 of sim/mutate_attn_rope.sh is a member of the same class that made an
+  -- explicit `done_r` clear inside the ack branch an ABORT in five other
+  -- harnesses and a detection in none: it was seen only as a deadlock in the
+  -- degenerate configuration.
+  -- DEADLINE = 12000.  MEASURED with hsk_chk's NOTE_MAX => true: the worst
+  -- start-to-done latency on the clean design is 1453 cycles (configuration C
+  -- of sim/mutate_attn_rope.sh, TW_GAP = 11; 717 in A, 144 in B); 12000 is
+  -- 8.3x that.  Do not "tighten" it: this clause is a timeout, so its only job
+  -- is to be finite.
+  hsk : entity work.hsk_chk
+    generic map ( NAME => "attn_rope", DEADLINE => 12000 )
+    port map ( clk => clk, rst => rst, start_ev => cfg_taken,
+               done => done, ack => done_ack );
+
   dut : entity work.attn_rope
     generic map(HEAD_DIM => HEAD_DIM, N_ROT => N_ROT, MANT_W => MANT_W,
                 Q => 15, EXP_W => 8, STRICT_PRODUCER => true)

@@ -98,6 +98,23 @@ begin
                r_ready => r_ready,
                done => done, done_ack => done_ack, err => err, ovr => ovr );
 
+  -- THE COMPLETION HANDSHAKE, as a property.  See sim/hsk_chk.vhd's header:
+  -- one mutation, an explicit `done_r` clear inside the ack branch, is an
+  -- ABORT in FIVE harnesses and was detected by a check in none of them.
+  -- DEADLINE = 2000.  MEASURED with hsk_chk's NOTE_MAX => true: the worst
+  -- start-to-done latency on the clean design is 72 cycles (configuration C of
+  -- sim/mutate_attn_recip.sh, R_READY_LAG = 20; 57 in A, 51 in B).  start_ev
+  -- here is s_taken, which pulses on EVERY accepted head rather than once per
+  -- layer, so the clause measures cycles since the last accepted input --
+  -- stricter than once per layer, not looser.
+  -- 2000 is 27.8x that.  Do not "tighten" it: this clause is a timeout, so
+  -- its only job is to be finite, and a deadline near the real latency turns
+  -- a wider vector set into a red gate for no gain.
+  hsk : entity work.hsk_chk
+    generic map ( NAME => "attn_recip", DEADLINE => 2000 )
+    port map ( clk => clk, rst => rst, start_ev => s_taken,
+               done => done, ack => done_ack );
+
   hb : process
   begin
     if HEARTBEAT_US = 0 then wait; end if;

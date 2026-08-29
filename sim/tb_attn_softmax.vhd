@@ -142,6 +142,20 @@ begin
   -- reproduces.  Non-zero exercises the hold.
   rs_ack <= '1' when RS_ACK_LAG = 0 else rs_ack_r;
 
+  -- THE COMPLETION HANDSHAKE, as a property.  See sim/hsk_chk.vhd's header:
+  -- one mutation, an explicit `done_r` clear inside the ack branch, is an
+  -- ABORT in FIVE harnesses and was detected by a check in none of them.
+  -- DEADLINE = 4000.  MEASURED with hsk_chk's NOTE_MAX => true: the worst
+  -- start-to-done latency on the clean design is 371 cycles (configuration A
+  -- of sim/mutate_attn_softmax.sh, RS_ACK_LAG = 9; 294 in B, 305 in C).
+  -- 4000 is 10.8x that.  Do not "tighten" it: this clause is a timeout, so
+  -- its only job is to be finite, and a deadline near the real latency turns
+  -- a wider vector set into a red gate for no gain.
+  hsk : entity work.hsk_chk
+    generic map ( NAME => "attn_softmax", DEADLINE => 4000 )
+    port map ( clk => clk, rst => rst, start_ev => cfg_taken,
+               done => done, ack => done_ack );
+
   ackp : process(clk)
     variable lag : integer := 0;
   begin

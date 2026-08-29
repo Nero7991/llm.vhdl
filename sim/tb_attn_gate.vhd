@@ -144,6 +144,21 @@ begin
   -- tb_attn_kv_quant's write-up records that a ready derived from the accepted
   -- count DEADLOCKS -- nothing is accepted while it is low, so the condition
   -- that lowered it never clears -- and the run then looks like a DUT hang.
+
+  -- THE COMPLETION HANDSHAKE, as a property.  See sim/hsk_chk.vhd's header:
+  -- one mutation, an explicit `done_r` clear inside the ack branch, is an
+  -- ABORT in FIVE harnesses and was detected by a check in none of them.
+  -- DEADLINE = 12000.  MEASURED with hsk_chk's NOTE_MAX => true: the worst
+  -- start-to-done latency on the clean design is 1360 cycles (configuration C
+  -- of sim/mutate_attn_gate.sh, Y_GAP = 20; 404 in A, 85 in B).
+  -- 12000 is 8.8x that.  Do not "tighten" it: this clause is a timeout, so
+  -- its only job is to be finite, and a deadline near the real latency turns
+  -- a wider vector set into a red gate for no gain.
+  hsk : entity work.hsk_chk
+    generic map ( NAME => "attn_gate", DEADLINE => 12000 )
+    port map ( clk => clk, rst => rst, start_ev => cfg_taken,
+               done => done, ack => done_ack );
+
   tickp : process(clk)
   begin
     if rising_edge(clk) then

@@ -208,6 +208,28 @@ begin
                done => done1, done_ack => done_ack,
                o_sat => o_sat1, err => err1 );
 
+  -- THE COMPLETION HANDSHAKE, as a property.  See sim/hsk_chk.vhd's header for
+  -- the contract and for why a `done_r` clear inside the ack branch was an
+  -- ABORT in five harnesses and a detection in none.  Both instances are
+  -- covered: they share done_ack, and it is the ack's timing relative to each
+  -- unit's own completion that the class of defect turns on.
+  --
+  -- DEADLINE = 12000.  MEASURED with NOTE_MAX => true: the worst start-to-done
+  -- latency on the clean design is 1267 cycles (configuration C, M_GAP = 11,
+  -- the slow-consumer column; 497 in A, 211 in B); 12000 is 9.5x that.  Do not
+  -- "tighten" it -- a deadline near the real latency turns a wider vector set
+  -- into a red gate, and this clause is a timeout, so its only job is to be
+  -- finite.
+  hsk : entity work.hsk_chk
+    generic map ( NAME => "attn_emit", DEADLINE => 12000 )
+    port map ( clk => clk, rst => rst, start_ev => cfg_taken,
+               done => done, ack => done_ack );
+
+  hsk1 : entity work.hsk_chk
+    generic map ( NAME => "attn_emit NGRP=1", DEADLINE => 12000 )
+    port map ( clk => clk, rst => rst, start_ev => cfg_tk1,
+               done => done1, ack => done_ack );
+
   memp1 : process(clk)
   begin
     if rising_edge(clk) then
@@ -424,6 +446,7 @@ begin
     variable v_m : int_arr(0 to 4095);
     variable ok  : boolean;
     variable eq_grid, ok1 : boolean;
+    variable d_seen, d1_seen : boolean;
   begin
     file_open(fh, VECS, read_mode);
     readline(fh, ln);
@@ -485,8 +508,35 @@ begin
       e_grid  <= (others => '1');
       e_grid1 <= (others => '1');
 
-      while done /= '1' loop wait until rising_edge(clk); end loop;
-      while done1 /= '1' loop wait until rising_edge(clk); end loop;
+      -- BOTH instances' done, waited for JOINTLY rather than one after the
+      -- other.  At ACK_LAG = 0 done_ack already stands high when the unit
+      -- completes, so the ack is present the instant done rises and `done` is
+      -- legally high for exactly ONE cycle: RULE 1 says HELD UNTIL ACKED, and
+      -- an ack that is already there is satisfied immediately.  The two
+      -- instances do NOT finish together -- MEASURED 2026-08-29 by
+      -- instrumenting a scratch copy of this bench at -gM_GAP=0 -gACK_LAG=0:
+      --     DBG done1=1 tick=217   @2175ns
+      --     DBG done=1  tick=219   @2195ns
+      -- the one-group instance has no S_EMIN pass, so it reaches S_DONE two
+      -- cycles EARLIER, every case.  Waiting for `done` first therefore
+      -- consumed done1's whole pulse, and the second loop then waited for a
+      -- signal that would never rise again until the next start that this
+      -- process itself was supposed to issue.
+      --
+      -- That deadlock is why configuration B of sim/mutate_attn_emit.sh
+      -- (-gM_GAP=0 -gACK_LAG=0) WEDGED ON THE UNMUTATED DESIGN, and under the
+      -- old two-way judging its silence scored as a KILL on every row of that
+      -- harness.  The defect was in this bench, not in rtl/attn_emit.vhd.
+      -- Latch each pulse as it is seen instead.  At ACK_LAG > 0 both done
+      -- signals are HELD, so this is exactly equivalent to the two sequential
+      -- loops and configurations A and C are unchanged.
+      d_seen  := done  = '1';
+      d1_seen := done1 = '1';
+      while not (d_seen and d1_seen) loop
+        wait until rising_edge(clk);
+        if done  = '1' then d_seen  := true; end if;
+        if done1 = '1' then d1_seen := true; end if;
+      end loop;
       for k in 1 to ACK_LAG loop
         wait until rising_edge(clk);
         if done /= '1' then
