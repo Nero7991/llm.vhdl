@@ -332,7 +332,12 @@ mutate K1a "KILL, both mechanisms: this is the A-MUT C2 gap this bench closes" \
 "        if cb_we = '1' and st = S_IDLE and rst = '0' then" \
 "        if cb_we = '1' and rst = '0' then"
 
-mutate K1b "KILL(v) on C: run 5 offers a whole load under reset" \
+# MEASURED: SURVIVES, and it is REDUNDANCY rather than a coverage hole.  The
+# trailing `if rst = '1' then cbw_v <= (others => '0'); end if;` in the same
+# process overrides the capture on the same edge, so the `rst = '0'` term in
+# the gate is belt and braces.  K1d removes BOTH and IS killed, which is what
+# distinguishes the two cases.  Do not "clean up" either one alone.
+mutate K1b "SURVIVE (measured; predicted KILL): the trailing rst clear of cbw_v already covers it -- see K1d" \
   "the reset gate is dropped, so writes are accepted while rst is asserted" \
 "        if cb_we = '1' and st = S_IDLE and rst = '0' then" \
 "        if cb_we = '1' and st = S_IDLE then"
@@ -479,7 +484,13 @@ mutate K6a "KILL(v) on C: run 6 pulses rst between two runs and requires the sam
 echo
 echo "---- class K7: ADDRESS -- which entry a command writes ------------------"
 
-mutate K7a "KILL(v): during a back-to-back load the live address is one entry ahead of the registered data" \
+# MEASURED: killed by bench M ONLY.  The prediction that C would catch it was
+# wrong, and the reason is the one structural fact about this bench worth
+# carrying away: C and L are RELATIONAL.  Every load is corrupted the SAME way,
+# so every run agrees with every other run and the whole self-consistent world
+# is wrong together.  Only an ABSOLUTE oracle -- ref/matvec_int4.c -- has an
+# opinion about what the table should contain.
+mutate K7a "KILL(v) on M ONLY (measured; predicted C too): a table wrong the same way every time is invisible to a relational bench" \
   "the write address is taken LIVE from cb_addr instead of the registered cbw_a" \
 "          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
 "          cb(c)(to_integer(unsigned(cb_addr))) <= signed(cbw_d(c));"
