@@ -458,9 +458,15 @@ echo "=== N: the NORM_REAL adapter, which only sim/tb_llama_top_real.vhd reaches
 # code and once against the DEFAULT gate row, which does not.  A row that only
 # showed the kill would not show that the OTHER rows are blind to it, and the
 # blindness is the reason the row had to be added.
+# RE-ANCHORED 2026-08-29.  TRACK NORMW's 9f690a0 made the gain a SELECTED
+# source (`wsel`) instead of the constant `W_CONST`, so this row's anchor
+# stopped matching and `mutate_rtl` printed MUTATION ANCHOR MATCHED 0 TIMES and
+# the row was SILENTLY DROPPED -- the loud message is the only thing between a
+# stale anchor and a mutation table that has quietly shrunk.  The mutation
+# itself is unchanged: the learned gain's exponent, 20 octaves out.
 D=$(mutate_rtl N1 rtl/llama_top.vhd \
-  "          w_mant => W_CONST, w_exp => NORM_W_EXP," \
-  "          w_mant => W_CONST, w_exp => NORM_W_EXP + 20,")
+  "          w_mant => wsel,    w_exp => NORM_W_EXP," \
+  "          w_mant => wsel,    w_exp => NORM_W_EXP + 20,")
 if [ -n "$D" ]; then
   run_row N1  "the real rmsnorm's learned-gain exponent is 20 octaves out"          "$D" tb_llama_top_real
   run_row N1x "the SAME mutation against the DEFAULT gate row, which does not elaborate the NORM_REAL adapter at all" "$D" tb_llama_top

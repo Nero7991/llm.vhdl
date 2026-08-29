@@ -580,3 +580,49 @@ configuration exists there. The 6-of-6 claim is a claim about the `seq` shape.
 | `rtl/attn_block.vhd` | `vref_r` gains its `LAYERS` dimension; four indexings and two comments |
 | `sim/tb_llama_top.vhd` | `KV_K_BASE_G` / `KV_V_BASE_G` / `KV_NB_G` generics with the old constants as defaults, an elaboration-time fit check, and the 32-block landmark's move recorded where the old value was |
 | `sim/mutate_llama_top_kv.sh` | `cap_oracle_args seq` gains `--kv-block 16 --n-rot 16`; rows `R7b` and `VR7b`; R7's survival documented under its own name |
+
+---
+
+## 9. Appended, same day: two harness rows validated end to end, and a THIRD that had gone silently missing
+
+Sections 2 and 4 score R7 and R7b from captures taken by hand. Run through the
+harness itself, `SCRATCH=... ONLY="R7 R7b" bash sim/mutate_llama_top_kv.sh`:
+
+```
+R7   SURVIVED   -- the v_ref sequence reset is issued per TOKEN, not per sequence (C spec 2.1.4)
+R7b  KILLED(ABORT) -- the run produced no RESULT line -- R7's DESCRIPTION, actually
+     implemented: the v_ref fold is reset at EVERY token boundary (edge-detected, so it
+     cannot go sticky the way R7 does)
+```
+
+The same run printed one line that belongs to neither row:
+
+```
+=== N: the NORM_REAL adapter, which only sim/tb_llama_top_real.vhd reaches ===
+MUTATION ANCHOR MATCHED 0 TIMES, expected 1
+```
+
+**Row N1 had stopped existing and nothing said so except that line.** TRACK
+NORMW's `9f690a0` made the top-level norm gain a SELECTED source, so
+`w_mant => W_CONST, w_exp => NORM_W_EXP,` became `w_mant => wsel,    w_exp =>
+NORM_W_EXP,` and N1's anchor no longer matched. `mutate_rtl` returns empty on a
+bad anchor and the caller's `[ -n "$D" ]` then skips the row, so the harness
+went from reporting a kill to reporting nothing, and BOTH its rows (N1 and its
+blindness control N1x) vanished. Re-anchored, mutation unchanged, and
+re-measured:
+
+```
+N1   KILLED     -- the real rmsnorm's learned-gain exponent is 20 octaves out
+        tb_llama_top: ... degenerate residuals=16 ...
+        tb_llama_top RESULT: FAIL
+N1x  SURVIVED   -- the SAME mutation against the DEFAULT gate row, which does not
+     elaborate the NORM_REAL adapter at all
+```
+
+**The general point is worth more than the row.** A textual-anchor mutation
+harness decays silently every time the RTL it points into is refactored, and
+the decay looks like a shorter report rather than like a failure. `mutate_rtl`'s
+loud `MATCHED 0 TIMES` is the only thing standing between a stale anchor and a
+mutation table that has quietly shrunk -- **read the harness's stderr, not only
+its verdict lines**, and treat a row that has simply stopped appearing as a
+regression in coverage.
