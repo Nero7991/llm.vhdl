@@ -45,15 +45,23 @@
 -- THE KV CACHE IS A MEMORY PORT, NOT AXI, AND THAT IS A BOUNDARY AND NOT A
 -- STUB.  C spec 2.2 puts the cache in DDR/HBM behind two read masters and one
 -- write master, with 4 KB burst splitting, a 16-byte record-phase realignment
--- mux and a drain-then-flush on `start`.  That unit -- `attn_kv_axi` in the C
--- skeleton's section 2 table -- does not exist and is NOT written here.  What
--- appears here instead is a read port and a write port with a one-cycle
--- synchronous read, which is exactly what gdn_block does with the recurrent
--- state (2 MiB, DDR-resident by B spec 2.4, and a port here).  The difference
--- between a boundary and a stub is that a boundary computes nothing and claims
--- nothing: no exponent is fabricated, no value is invented, and the port
--- contract is the same one a BRAM or an HBM read stage presents.  What is NOT
--- covered by it is stated in the open list at the end of this header.
+-- mux and a drain-then-flush on `start`.  That unit is `rtl/attn_kv_axi.vhd`
+-- and it is written; what appears HERE is still a read port and a write port
+-- with a one-cycle synchronous read, which is exactly what gdn_block does
+-- with the recurrent state (2 MiB, DDR-resident by B spec 2.4, and a port
+-- here).  The difference between a boundary and a stub is that a boundary
+-- computes nothing and claims nothing: no exponent is fabricated, no value is
+-- invented, and the port contract is the same one a BRAM or an HBM read stage
+-- presents.
+--
+-- UNTIL 2026-08-28 THAT PORT COULD NOT BE CONNECTED TO ANY CACHE WITH
+-- LATENCY, and the four `_rdy` inputs are what fixed it.  The issue is one
+-- beat per cycle back to back and the capture is a fixed two cycles behind
+-- it, so there was nothing to wait on; MEASURED, one extra cycle of memory
+-- latency turns 64 of 64 output mantissas wrong against the oracle with `err`
+-- clear.  The seam
+-- is documented at the port declarations and at P_RECK.  What is still NOT
+-- covered is stated in the open list at the end of this header.
 --
 -- THE CURRENT POSITION IS BYPASSED FROM REGISTERS AND NEVER RE-READ.  C spec
 -- 2.4 makes this a correctness requirement rather than an optimisation: C
@@ -165,10 +173,16 @@
 --
 -- ============== WHAT THIS FILE DOES NOT DO -- the open list ==============
 --
---   * No AXI.  `attn_kv_axi` is not written: no burst splitting at 4 KB, no
---     16-byte record-phase realignment, no drain-then-flush on `start`, and
---     `done` is NOT gated on BRESP (C spec 2.7 requires that, and the window it
---     protects is milliseconds wide today).
+--   * No AXI IN THIS FILE.  The masters, the 4 KB burst splitting, the
+--     16-byte record-phase realignment and the drain-then-flush on `start`
+--     all live in `rtl/attn_kv_axi.vhd`; this block drives its port shape and
+--     obeys its three `_rdy` signals.  `done` IS now gated on the write
+--     master's B channel, through `kv_wr_idle` (C spec 2.7).
+--   * The `_rdy` inputs default to '1'.  An instantiation that leaves them
+--     open compiles, runs, and gets the pre-seam never-refusing memory --
+--     which is correct for a BRAM and silently wrong for a cache with
+--     latency.  `rtl/llama_top.vhd` leaves them open today and runs one token
+--     at cur_pos = 0, where nothing is ever read.
 --   * No overlap.  One position at a time, no two-position PV lag, no
 --     group-overlap of the QK-norms.  C spec 3.7's cycle budget assumes both.
 --   * G exp cones instead of one shared cone.  See the deviation note above.
@@ -263,6 +277,23 @@ entity attn_block is
     wn_taken : out std_logic;
 
     -- ---- the KV cache.  A PORT, not a master.  See the boundary note. ----
+    --
+    -- THE FOUR `_rdy` INPUTS BELOW ARE THE SEAM, ADDED 2026-08-28.  Before
+    -- them this port was unconnectable to any AXI-backed cache and that was
+    -- not a matter of degree.  The read issue below is ONE BEAT PER CYCLE,
+    -- BACK TO BACK, and the capture is a fixed two cycles after the issue
+    -- (:1013-1027), i.e. a one-cycle synchronous read with no elasticity
+    -- anywhere; HBM read latency is O(100) cycles and this block had no
+    -- signal on which it could wait.  MEASURED before the change: giving the
+    -- memory model in sim/tb_attn_block.vhd ONE extra cycle of latency makes
+    -- 64 of 64 output mantissas wrong against the oracle with `err` clear --
+    -- a wrong answer, not a stall and not a fault.
+    --
+    -- All four default to '1', which is exactly the behaviour of a memory
+    -- that can never refuse, so an instantiation that leaves them open keeps
+    -- the pre-seam schedule bit for bit.  That default is a compatibility
+    -- decision and it is the same one `y_ready` takes above; it is NOT a
+    -- claim that leaving them open is safe against a real cache.
     kv_layer : out unsigned(clog2(LAYERS)-1 downto 0);
     -- write: the header first, then one block per cycle
     kw_sel   : out std_logic;                       -- '0' = K, '1' = V
@@ -273,21 +304,40 @@ entity attn_block is
     kw_en    : out std_logic;
     kw_blk   : out unsigned(clog2(HEAD_DIM/KV_BLOCK)-1 downto 0);
     kw_mant  : out std_logic_vector(KV_BLOCK*CM_W-1 downto 0);
+    -- '1' while the sink can take a whole record.  rtl/attn_kv_axi.vhd drops
+    -- kw_hen and kw_en SILENTLY while its record buffer is full or while it
+    -- is flushing, so an ungated writer loses a record and nothing says so.
+    kw_rdy   : in  std_logic := '1';
     -- read, K side and V side, one cycle.  The header is returned with every
     -- beat of the record it belongs to, which is what makes the header-first
     -- contract attn_score_q12 depends on free at this boundary.
+    --
+    -- REQUEST / RESIDENCY / BEATS, the contract rtl/attn_kv_axi.vhd:85-101
+    -- publishes.  `kr_head` / `kr_pos` are a REQUEST and are HELD from before
+    -- the first issue until after the last beat of that record has been
+    -- taken; `kr_rdy` is combinational in the held request and says the
+    -- record is resident; only while it is '1' may `kr_en` be raised, and the
+    -- beat then returns on the next cycle.
     kr_en   : out std_logic;
     kr_head : out unsigned(clog2(N_KVH)-1 downto 0);
     kr_pos  : out unsigned(POS_W-1 downto 0);
+    kr_rdy  : in  std_logic := '1';
     kr_blk  : out unsigned(clog2(HEAD_DIM/KV_BLOCK)-1 downto 0);
     kr_hdr  : in  std_logic_vector((HEAD_DIM/KV_BLOCK)*EXP_W-1 downto 0);
     kr_mant : in  std_logic_vector(KV_BLOCK*CM_W-1 downto 0);
     vr_en   : out std_logic;
     vr_head : out unsigned(clog2(N_KVH)-1 downto 0);
     vr_pos  : out unsigned(POS_W-1 downto 0);
+    vr_rdy  : in  std_logic := '1';
     vr_blk  : out unsigned(clog2(HEAD_DIM/KV_BLOCK)-1 downto 0);
     vr_hdr  : in  std_logic_vector((HEAD_DIM/KV_BLOCK)*EXP_W-1 downto 0);
     vr_mant : in  std_logic_vector(KV_BLOCK*CM_W-1 downto 0);
+    -- C spec 2.7: token T's write of K/V[cur_pos] is read by token T+1
+    -- through a DIFFERENT master and AXI orders nothing between masters, so
+    -- `done` must not assert until every write of this job has retired its
+    -- BRESP.  rtl/attn_kv_axi.vhd publishes that term as `wr_idle`; this
+    -- block does not own the fact and only gates on it.
+    kv_wr_idle : in std_logic := '1';
 
     -- ---- the block output, to A's activation memory for wo ---------------
     y_valid : out std_logic;
@@ -630,12 +680,13 @@ begin
   -- than a run-time event.
   announce : process
   begin
-    report "attn_block: the KV cache is a MEMORY PORT, not AXI.  attn_kv_axi "
-         & "is NOT implemented: no 4 KB burst splitting, no 16-byte record "
-         & "phase realignment, no drain-then-flush on start, and `done` is "
-         & "NOT gated on BRESP (C spec 2.7).  The port contract is a "
-         & "one-cycle synchronous read, the same boundary gdn_block draws "
-         & "around the recurrent state."
+    report "attn_block: the KV cache is a memory PORT.  rtl/attn_kv_axi.vhd "
+         & "implements the other side of it -- burst splitting, 16-byte "
+         & "record phase realignment, drain-then-flush on start -- and this "
+         & "block connects to it through kr_rdy / vr_rdy / kw_rdy and gates "
+         & "`done` on kv_wr_idle (C spec 2.7).  All four default to '1', so "
+         & "an instantiation that leaves them open still gets the old "
+         & "never-refusing memory and none of those properties."
       severity note;
     wait;
   end process;
@@ -654,6 +705,26 @@ begin
   dbg_ep_lost <= eplost_r;
   kv_layer    <= to_unsigned(lay_r, clog2(LAYERS));
   sm_last     <= last_p;
+
+  -- THE HELD KV READ REQUEST.  Driven concurrently from the sweep's own
+  -- registers rather than inside P_RECK / P_RECV, which is what makes the
+  -- request stand a STATE EARLIER than the issue and keeps it standing
+  -- across P_HDR, the score, the rescale and the whole of P_RECV -- i.e.
+  -- from before the first beat of a record is asked for until after the last
+  -- beat of it has been captured.  `kr_rdy` is combinational in this request
+  -- at the other end, so a residency answer only means anything if the
+  -- question is stable, and driving it from the issue cycle would have made
+  -- the answer arrive one cycle after it was needed.
+  --
+  -- `pos_i` is the bypass position (= cur_pos) during the first position of
+  -- every head's sweep.  That is deliberately still published: the sink
+  -- refuses `pos >= cur_pos` by leaving `kr_rdy` low and raises `err` only
+  -- for an ENABLED read, and P_RECK never enables one while `is_byp` is set.
+  -- C spec 2.4's bypass therefore stays a property of the addresses.
+  kr_head <= to_unsigned(kvh, AW_H);
+  kr_pos  <= pos_i;
+  vr_head <= to_unsigned(kvh, AW_H);
+  vr_pos  <= pos_i;
 
   y_valid     <= em_mv;
   y_mant      <= signed(em_md);
@@ -1191,8 +1262,12 @@ begin
             blk <= 0;
             ph <= P_KQW;
 
+          -- `kw_rdy` gates the HEADER and not just the mantissas, because
+          -- the sink takes the record header first and drops it silently if
+          -- its buffer is occupied -- and a dropped header makes every
+          -- following kw_en a no-op as well, so the whole record vanishes.
           when P_KQW =>
-            if kq_dn = '1' then
+            if kq_dn = '1' and kw_rdy = '1' then
               kbyp <= krec;
               kbh  <= khdr;
               -- HEADER FIRST, then the mantissa blocks.  The record layout is
@@ -1218,7 +1293,7 @@ begin
             ph <= P_VQW;
 
           when P_VQW =>
-            if kq_dn = '1' then
+            if kq_dn = '1' and kw_rdy = '1' then
               vbyp <= vrec;
               vbh  <= vhdr;
               kw_sel  <= '1';
@@ -1239,16 +1314,18 @@ begin
 
           when P_WREC =>
             if blk < NBLK then
-              kw_en  <= '1';
-              kw_blk <= to_unsigned(blk, AW_B);
-              if wr_isv = '1' then
-                kw_mant <= vrec((blk+1)*KV_BLOCK*CM_W-1 downto
-                                blk*KV_BLOCK*CM_W);
-              else
-                kw_mant <= krec((blk+1)*KV_BLOCK*CM_W-1 downto
-                                blk*KV_BLOCK*CM_W);
+              if kw_rdy = '1' then
+                kw_en  <= '1';
+                kw_blk <= to_unsigned(blk, AW_B);
+                if wr_isv = '1' then
+                  kw_mant <= vrec((blk+1)*KV_BLOCK*CM_W-1 downto
+                                  blk*KV_BLOCK*CM_W);
+                else
+                  kw_mant <= krec((blk+1)*KV_BLOCK*CM_W-1 downto
+                                  blk*KV_BLOCK*CM_W);
+                end if;
+                blk <= blk + 1;
               end if;
-              blk <= blk + 1;
             else
               li <= 0; lw <= 0; qh <= 0;
               if wr_isv = '1' then
@@ -1282,18 +1359,25 @@ begin
             rbi <= 0; blk <= 0;
             ph <= P_RECK;
 
+          -- THE SEAM.  `kr_rdy` is the whole of the change on the read side:
+          -- the issue is still one beat per cycle and the capture is still a
+          -- fixed two cycles behind it, but a beat is only issued while the
+          -- cache says the record named by the HELD request is resident.  The
+          -- request itself is driven concurrently from `kvh` / `pos_i` below,
+          -- which is what makes it stand a state earlier than this one and
+          -- keeps standing until P_POSN moves `pos_i`.
           when P_RECK =>
             if is_byp = '1' then
               krec <= kbyp;
               khdr <= kbh;
               ph <= P_HDR;
             elsif blk < NBLK then
-              kr_en   <= '1';
-              kr_head <= to_unsigned(kvh, AW_H);
-              kr_pos  <= pos_i;
-              kr_blk  <= to_unsigned(blk, AW_B);
-              rbv(1)  <= '1';
-              blk <= blk + 1;
+              if kr_rdy = '1' then
+                kr_en   <= '1';
+                kr_blk  <= to_unsigned(blk, AW_B);
+                rbv(1)  <= '1';
+                blk <= blk + 1;
+              end if;
             elsif rbi = NBLK then
               ph <= P_HDR;
             end if;
@@ -1385,12 +1469,12 @@ begin
               blk <= 0;
               ph <= P_PV;
             elsif blk < NBLK then
-              vr_en   <= '1';
-              vr_head <= to_unsigned(kvh, AW_H);
-              vr_pos  <= pos_i;
-              vr_blk  <= to_unsigned(blk, AW_B);
-              rbv(1)  <= '1';
-              blk <= blk + 1;
+              if vr_rdy = '1' then
+                vr_en   <= '1';
+                vr_blk  <= to_unsigned(blk, AW_B);
+                rbv(1)  <= '1';
+                blk <= blk + 1;
+              end if;
             elsif rbi = NBLK then
               blk <= 0;
               ph <= P_PV;
@@ -1541,12 +1625,18 @@ begin
               ph <= P_DONE;
             end if;
 
-          -- RULE 1: done is HELD until acked, never pulsed.
+          -- RULE 1: done is HELD until acked, never pulsed.  C spec 2.7:
+          -- it must also not assert until this job's KV writes have retired
+          -- their BRESP, because token T+1 reads them through a DIFFERENT
+          -- master.  `kv_wr_idle` is that term and it is an input, not a
+          -- derivation: this block cannot see a B channel.
           when P_DONE =>
-            done_r <= '1';
-            if done_ack = '1' then
-              done_r <= '0';
-              ph <= P_IDLE;
+            if kv_wr_idle = '1' then
+              done_r <= '1';
+              if done_ack = '1' then
+                done_r <= '0';
+                ph <= P_IDLE;
+              end if;
             end if;
 
         end case;

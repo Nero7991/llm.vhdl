@@ -96,12 +96,20 @@
 --       matches the oracle's, i.e. every run except P5's deliberately rescaled
 --       one.
 --
--- WHAT IS STILL NOT CHECKED, now that the values are: the KV cache is a
--- MEMORY MODEL here, so nothing about `attn_kv_axi` -- burst splitting, record
--- realignment, drain-then-flush, BRESP gating -- is exercised, because that
--- unit does not exist.  Nor is anything about a multi-token sequence: v_ref is
--- a per-SEQUENCE minimum and this bench writes exactly one token per sequence,
--- so the fold is checked at its first value and not across an append.
+-- WHAT IS STILL NOT CHECKED HERE, and where it now IS.  The KV cache is a
+-- MEMORY MODEL in this bench, and deliberately stays one: it answers in one
+-- cycle and can never refuse, so `attn_block`'s four `_rdy` inputs sit at
+-- their '1' defaults and nothing about `rtl/attn_kv_axi.vhd` -- burst
+-- splitting, 16-byte record realignment, drain-then-flush, BRESP gating -- is
+-- exercised.  Nor is anything about a multi-token sequence: v_ref is a
+-- per-SEQUENCE minimum and this bench writes exactly ONE token per sequence,
+-- so the fold is checked at its first value and never across an append.
+--
+-- All of that is `sim/tb_attn_kv_seam.vhd`, which instantiates this block
+-- against the real cache over AXI and runs four tokens.  Keeping the two
+-- benches separate is deliberate: this one holds the block's ARITHMETIC to a
+-- fixed schedule with no cache in the way, and a regression here is a
+-- regression in the block rather than in the seam.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use std.textio.all;
 use work.util_pkg.all;
@@ -518,11 +526,25 @@ begin
   --      producer that never stalls reaches states a gapped one skips.
   --   1  lagged: a fixed two-cycle stall after every accepted beat.
   --   2  pseudo-random.
+  -- A FULL xorshift32.  Until 2026-08-28 this was the single term
+  -- `rnd_r <= rnd_r xor shift_left(rnd_r, 13)`, which LEAVES THE LOW 13 BITS
+  -- UNCHANGED FOR EVER -- so `rnd_r(3 downto 0)` below was the constant 13
+  -- from the seed, the test never fired, and CONFIGURATION 2 WAS A SECOND
+  -- COPY OF CONFIGURATION 0 rather than the pseudo-random consumer its
+  -- comment claimed.  P2 was therefore comparing two never-stalling runs and
+  -- one fixed-gap run, not three distinct handshake patterns.  Found while
+  -- building sim/tb_attn_kv_seam.vhd, where the same expression turned a
+  -- one-cycle stall mutation into a permanent stall.
   yrdy : process(clk)
     variable gapc : integer := 0;
+    variable v    : unsigned(31 downto 0);
   begin
     if rising_edge(clk) then
-      rnd_r <= rnd_r xor shift_left(rnd_r, 13);
+      v := rnd_r;
+      v := v xor shift_left(v, 13);
+      v := v xor shift_right(v, 17);
+      v := v xor shift_left(v, 5);
+      rnd_r <= v;
       case cfg_sel is
         when 0 =>
           y_ready <= '1';

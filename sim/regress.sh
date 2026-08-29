@@ -348,7 +348,9 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=80   # +1 sim/tb_mv4i_desc_image, the gateware judging a
+BASELINE_PASS=81   # +1 sim/tb_attn_kv_seam, rtl/attn_block.vhd joined to
+                   #    rtl/attn_kv_axi.vhd over a 4-token sequence, 2026-08-28
+                   # +1 sim/tb_mv4i_desc_image, the gateware judging a
                    #    descriptor image written by tools/gen_mv4i_desc.py.
                    #    Its vector sim/mv4i_desc_image.txt is COMMITTED, so it
                    #    needs no row in this script and no model set, 2026-08-28
@@ -718,6 +720,24 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # 272-byte record is what makes REC_B indivisible by the 32-byte beat, and
     # that indivisibility is the 16-byte record phase the unit exists to handle.
     attn_kv_axi_vec.txt)    echo "256 32 2 2 32 1 20 20260828" ;;
+    # ref/attn_block_seq_vec.c, the MULTI-TOKEN oracle for the attn_block <->
+    # attn_kv_axi seam.  Argument order is HEAD_DIM N_QH N_KVH KV_BLOCK N_ROT
+    # NTOK SEED and it must match sim/tb_attn_kv_seam.vhd's generic defaults;
+    # the vector file carries a shape header the bench asserts against them.
+    # KV_BLOCK 16 is the SMALLEST legal value: rtl/attn_kv_axi.vhd's record is
+    # a byte layout on a 16-byte granule, so KV_BLOCK*CM_W/8 must be a
+    # multiple of 16, and HEAD_DIM 64 then gives REC_B = 80, which is not a
+    # multiple of the 32-byte beat -- which is the whole point, because the
+    # 16-byte record phase is what the realignment mux exists for.
+    #
+    # The SEED is 2 and it was CHOSEN, not defaulted.  v_ref is a per-sequence
+    # minimum, and at most seeds every token's own record already carries the
+    # sequence minimum, so resetting the fold per TOKEN changes nothing -- the
+    # oracle itself is byte-identical under that mutation at seeds 1, 3, 7, 11,
+    # 42, 123, 999, 20260828 and 31337.  At seed 2 it moves 358 of the vector
+    # file's 5,328 integers, so the mutation is observable and the bench's
+    # v_ref property has teeth.  Do not "tidy" this back to a round number.
+    attn_block_seq_vec.txt) echo "64 4 2 16 16 4 2" ;;
     attn_emit_vec.txt)      echo "40 2 48" ;;      # sim/mutate_attn_emit.sh
     attn_gate_vec.txt)      echo "35 64" ;;        # sim/mutate_attn_gate.sh
     attn_recip_vec.txt)     echo "24 12" ;;        # sim/mutate_attn_recip.sh

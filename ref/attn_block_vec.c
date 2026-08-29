@@ -101,6 +101,20 @@
  * in the file rather than recomputed in VHDL on purpose: a bench that
  * regenerated it would have two sources of truth for the inputs, and a
  * divergence between them would read as an arithmetic failure.
+ *
+ * =====================================================================
+ * ONE TOKEN IS A FUNCTION, 2026-08-28.
+ * =====================================================================
+ *
+ * `attn_token()` below is exactly what `main()` used to be inline; the split
+ * is mechanical and the single-token output is byte-identical across it
+ * (MEASURED at three geometries by md5 before and after).  It exists so that
+ * `ref/attn_block_seq_vec.c` can call it once per token of a SEQUENCE with a
+ * cache that is what the earlier tokens WROTE rather than a synthetic one --
+ * which is the only way to check the append, and the append is what one token
+ * at cur_pos = 0 can never reach.  Defining ATTN_BLOCK_VEC_NO_MAIN before
+ * including this file suppresses the main() below; the arithmetic is never
+ * copied, because two copies of an oracle drift and the drift is invisible.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -506,69 +520,34 @@ static uint32_t hsh(int a, int b)
 static int m12(int a, int b) { return (int)(hsh(a, b) & 0xFFF) - 2048; }
 
 /* =====================================================================
- * main
+ * ONE TOKEN.
+ *
+ * This is the whole of the model: it was inline in main() until 2026-08-28
+ * and the split is mechanical.  It reads the cache at (h * CSTRIDE + pos),
+ * folds this token's own record into the caller's running `vref`, optionally
+ * generates a synthetic cache (single-token mode) and optionally APPENDS the
+ * record it just wrote at position CPOS (sequence mode).  `vref` is NOT reset
+ * here: it is a per-SEQUENCE minimum and resetting it per token is C spec
+ * 2.1.4's silent-truncation failure.
  * =================================================================== */
-int main(int argc, char **argv)
+static void attn_token(int N, int N_QH, int N_KVH, int KVB, int N_ROT,
+                       int CPOS, int SEED,
+                       const int *qg, const int *kin, const int *vin,
+                       const int *qnw, const int *knw,
+                       int qg_exp, int kin_exp, int vin_exp,
+                       int qn_exp, int kn_exp,
+                       int synth, int append, int CSTRIDE,
+                       int *ckm, int *ckh, int *cvm, int *cvh,
+                       int *vref, int *ymant, int *yexp_out)
 {
-    const char *out = (argc > 1) ? argv[1] : "attn_block_vec.txt";
-    int N       = (argc > 2) ? atoi(argv[2]) : 16;    /* HEAD_DIM   */
-    int N_QH    = (argc > 3) ? atoi(argv[3]) : 4;
-    int N_KVH   = (argc > 4) ? atoi(argv[4]) : 2;
-    int KVB     = (argc > 5) ? atoi(argv[5]) : 4;     /* KV_BLOCK   */
-    int N_ROT   = (argc > 6) ? atoi(argv[6]) : 8;
-    int CPOS    = (argc > 7) ? atoi(argv[7]) : 3;     /* cur_pos    */
-    int CLEN    = (argc > 8) ? atoi(argv[8]) : 4;     /* ctx_len    */
-    int SEED    = (argc > 9) ? atoi(argv[9]) : 0;
-
     int NBLK  = N / KVB;
     int G     = N_QH / N_KVH;
     int AW_D  = clog2i(N);
     int KQ_SH = AW_D / 2;
     int NPOS  = CPOS + 1;                 /* positions attended over */
     int NY    = N_QH * N;
-
-    int *qg, *kin, *vin, *qnw, *knw;
-    int qg_exp = 12, kin_exp = 11, vin_exp = 10, qn_exp = 12, kn_exp = 12;
-    int *ckm, *ckh, *cvm, *cvh;           /* the cache, positions 0..CPOS-1 */
-    int *ypre, *ymant;
-    int *vref;
-    int h, p, d, g, b, t, i, yexp;
-    FILE *f;
-
-    tables_init();
-
-    if (N % KVB || N_QH % N_KVH || (1 << AW_D) != N || (AW_D & 1)
-        || N_ROT % 2 || N_ROT > N || G < 2 || NBLK < 2 || N_KVH < 2) {
-        fprintf(stderr, "attn_block_vec: illegal shape.  N_KVH >= 2 is "
-                        "REQUIRED: rtl/attn_emit.vhd assigns grp <= 1 into a "
-                        "range 0 to NGRP-1, so NGRP = 1 is an immediate bound "
-                        "violation (worklog OI-2).\n");
-        return 2;
-    }
-
-    qg  = malloc(sizeof(int) * 2 * N * N_QH);
-    kin = malloc(sizeof(int) * N * N_KVH);
-    vin = malloc(sizeof(int) * N * N_KVH);
-    qnw = malloc(sizeof(int) * N);
-    knw = malloc(sizeof(int) * N);
-    ckm = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * N);
-    ckh = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * NBLK);
-    cvm = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * N);
-    cvh = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * NBLK);
-    ypre  = malloc(sizeof(int) * NY);
-    ymant = malloc(sizeof(int) * NY);
-    vref  = malloc(sizeof(int) * N_KVH);
-
-    for (i = 0; i < 2 * N * N_QH; i++) qg[i]  = m12(7919   + SEED, i);
-    for (i = 0; i < N * N_KVH; i++)    kin[i] = m12(104729 + SEED, i);
-    for (i = 0; i < N * N_KVH; i++)    vin[i] = m12(65537  + SEED, i);
-    /* The norm weights are held positive and away from zero: a weight vector
-     * straddling zero makes max|raw| a property of one element and turns the
-     * whole comparison into a comparison of clamps. */
-    for (i = 0; i < N; i++) {
-        int a = m12(31337 + SEED, i); qnw[i] = (a < 0 ? -a : a) + 256;
-        a = m12(51501 + SEED, i);     knw[i] = (a < 0 ? -a : a) + 256;
-    }
+    int *ypre = malloc(sizeof(int) * NY);
+    int h, p, d, g, b, t, i;
 
     /* ---------------------------------------------------------------
      * The per-head fixed-point pipeline, in model order.
@@ -596,11 +575,31 @@ int main(int argc, char **argv)
             kv_quant(vin + h * N, N, KVB, vin_exp, vcm + h * N, vce + h * NBLK);
 
             /* v_ref is a MINIMUM folded per (layer, KV head) over every record
-             * written for this sequence, initialised to +127.  Only the
-             * current token is written by this job. */
-            vref[h] = 127;
+             * written for this SEQUENCE, initialised to +127 by the caller
+             * and NOT reset per token.  This job writes exactly one record
+             * per KV head and folds it in here, at write time, before the
+             * sweep reads anything -- which is the order rtl/attn_block.vhd's
+             * P_VQW uses and the reason the append-only invariant
+             * e_v[b] >= v_ref holds for every earlier record too. */
             for (b = 0; b < NBLK; b++)
                 if (vce[h * NBLK + b] < vref[h]) vref[h] = vce[h * NBLK + b];
+        }
+
+        /* THE APPEND.  The record this token writes IS what the next token
+         * reads back, so in sequence mode it goes into the cache at CPOS --
+         * from the quantized values, never from the pre-quantization int16,
+         * because the reference attends over the quantized cache. */
+        if (append) {
+            for (h = 0; h < N_KVH; h++) {
+                for (d = 0; d < N; d++) {
+                    ckm[(h * CSTRIDE + CPOS) * N + d] = kcm[h * N + d];
+                    cvm[(h * CSTRIDE + CPOS) * N + d] = vcm[h * N + d];
+                }
+                for (b = 0; b < NBLK; b++) {
+                    ckh[(h * CSTRIDE + CPOS) * NBLK + b] = kce[h * NBLK + b];
+                    cvh[(h * CSTRIDE + CPOS) * NBLK + b] = vce[h * NBLK + b];
+                }
+            }
         }
 
         /* Q heads: normed with the Q norm weights and roped.  Head qh reads
@@ -610,30 +609,40 @@ int main(int argc, char **argv)
             rope(tmp, N, N_ROT, CPOS, qrot + i * N);
         }
 
-        /* The cache for positions 0..CPOS-1.  The K headers are generated
-         * near the current record's own exponents so the score alignment is
-         * exercised rather than annihilated; the V headers are generated at or
-         * ABOVE v_ref, which is the append-only invariant the site-3 shift
-         * depends on (e_v[b] >= v_ref makes the alignment unconditionally a
-         * right shift). */
-        for (h = 0; h < N_KVH; h++) {
-            int kbase = kce[h * NBLK];
-            for (b = 1; b < NBLK; b++)
-                if (kce[h * NBLK + b] < kbase) kbase = kce[h * NBLK + b];
-            for (p = 0; p < CPOS; p++) {
-                for (d = 0; d < N; d++) {
-                    ckm[(h * CPOS + p) * N + d] =
-                        (int)(hsh(9001 + SEED, (h * CPOS + p) * N + d) & 0xFF) - 128;
-                    cvm[(h * CPOS + p) * N + d] =
-                        (int)(hsh(9007 + SEED, (h * CPOS + p) * N + d) & 0xFF) - 128;
-                }
-                for (b = 0; b < NBLK; b++) {
-                    ckh[(h * CPOS + p) * NBLK + b] =
-                        kbase + (int)(hsh(9011 + SEED,
-                                          (h * CPOS + p) * NBLK + b) % 3u);
-                    cvh[(h * CPOS + p) * NBLK + b] =
-                        vref[h] + (int)(hsh(9013 + SEED,
-                                            (h * CPOS + p) * NBLK + b) % 4u);
+        /* The cache for positions 0..CPOS-1.
+         *
+         * SYNTHETIC (synth != 0, the single-token generator).  The K headers
+         * are generated near the current record's own exponents so the score
+         * alignment is exercised rather than annihilated; the V headers are
+         * generated at or ABOVE v_ref, which is the append-only invariant the
+         * site-3 shift depends on (e_v[b] >= v_ref makes the alignment
+         * unconditionally a right shift).
+         *
+         * REAL (synth == 0, the sequence generator).  The caller has already
+         * put the records the earlier tokens WROTE there, and the same
+         * invariant then holds for a reason rather than by construction:
+         * v_ref only ever decreases, so every record written before this one
+         * has e_v[b] >= the current v_ref. */
+        if (synth) {
+            for (h = 0; h < N_KVH; h++) {
+                int kbase = kce[h * NBLK];
+                for (b = 1; b < NBLK; b++)
+                    if (kce[h * NBLK + b] < kbase) kbase = kce[h * NBLK + b];
+                for (p = 0; p < CPOS; p++) {
+                    for (d = 0; d < N; d++) {
+                        ckm[(h * CPOS + p) * N + d] =
+                            (int)(hsh(9001 + SEED, (h * CPOS + p) * N + d) & 0xFF) - 128;
+                        cvm[(h * CPOS + p) * N + d] =
+                            (int)(hsh(9007 + SEED, (h * CPOS + p) * N + d) & 0xFF) - 128;
+                    }
+                    for (b = 0; b < NBLK; b++) {
+                        ckh[(h * CPOS + p) * NBLK + b] =
+                            kbase + (int)(hsh(9011 + SEED,
+                                              (h * CPOS + p) * NBLK + b) % 3u);
+                        cvh[(h * CPOS + p) * NBLK + b] =
+                            vref[h] + (int)(hsh(9013 + SEED,
+                                                (h * CPOS + p) * NBLK + b) % 4u);
+                    }
                 }
             }
         }
@@ -661,10 +670,10 @@ int main(int argc, char **argv)
                         kmant = kcm + h * N;      kexp = kce + h * NBLK;
                         vmant = vcm + h * N;      vexp = vce + h * NBLK;
                     } else {
-                        kmant = ckm + (h * CPOS + pos) * N;
-                        kexp  = ckh + (h * CPOS + pos) * NBLK;
-                        vmant = cvm + (h * CPOS + pos) * N;
-                        vexp  = cvh + (h * CPOS + pos) * NBLK;
+                        kmant = ckm + (h * CSTRIDE + pos) * N;
+                        kexp  = ckh + (h * CSTRIDE + pos) * NBLK;
+                        vmant = cvm + (h * CSTRIDE + pos) * N;
+                        vexp  = cvh + (h * CSTRIDE + pos) * NBLK;
                     }
 
                     for (g = 0; g < G; g++) {
@@ -786,12 +795,90 @@ int main(int argc, char **argv)
                 ymant[i] = (int)sat_to(round_shift(asr64(ypre[i], sh), shp),
                                        MANT_W);
             }
-            yexp = emin - shp;
+            *yexp_out = emin - shp;
             free(eg);
         }
         free(tmp); free(tmp2); free(kcm); free(kce); free(vcm); free(vce);
         free(qrot); free(qexp); free(acc);
     }
+
+    free(ypre);
+}
+
+/* =====================================================================
+ * main
+ * =================================================================== */
+#ifndef ATTN_BLOCK_VEC_NO_MAIN
+int main(int argc, char **argv)
+{
+    const char *out = (argc > 1) ? argv[1] : "attn_block_vec.txt";
+    int N       = (argc > 2) ? atoi(argv[2]) : 16;    /* HEAD_DIM   */
+    int N_QH    = (argc > 3) ? atoi(argv[3]) : 4;
+    int N_KVH   = (argc > 4) ? atoi(argv[4]) : 2;
+    int KVB     = (argc > 5) ? atoi(argv[5]) : 4;     /* KV_BLOCK   */
+    int N_ROT   = (argc > 6) ? atoi(argv[6]) : 8;
+    int CPOS    = (argc > 7) ? atoi(argv[7]) : 3;     /* cur_pos    */
+    int CLEN    = (argc > 8) ? atoi(argv[8]) : 4;     /* ctx_len    */
+    int SEED    = (argc > 9) ? atoi(argv[9]) : 0;
+
+    int NBLK  = N / KVB;
+    int G     = N_QH / N_KVH;
+    int AW_D  = clog2i(N);
+    int KQ_SH = AW_D / 2;
+    int NPOS  = CPOS + 1;                 /* positions attended over */
+    int NY    = N_QH * N;
+
+    int *qg, *kin, *vin, *qnw, *knw;
+    int qg_exp = 12, kin_exp = 11, vin_exp = 10, qn_exp = 12, kn_exp = 12;
+    int *ckm, *ckh, *cvm, *cvh;           /* the cache, positions 0..CPOS-1 */
+    int *ymant;
+    int *vref;
+    int h, i, yexp;
+    FILE *f;
+
+    tables_init();
+
+    if (N % KVB || N_QH % N_KVH || (1 << AW_D) != N || (AW_D & 1)
+        || N_ROT % 2 || N_ROT > N || G < 2 || NBLK < 2 || N_KVH < 2) {
+        fprintf(stderr, "attn_block_vec: illegal shape.  N_KVH >= 2 is "
+                        "REQUIRED: rtl/attn_emit.vhd assigns grp <= 1 into a "
+                        "range 0 to NGRP-1, so NGRP = 1 is an immediate bound "
+                        "violation (worklog OI-2).\n");
+        return 2;
+    }
+
+    qg  = malloc(sizeof(int) * 2 * N * N_QH);
+    kin = malloc(sizeof(int) * N * N_KVH);
+    vin = malloc(sizeof(int) * N * N_KVH);
+    qnw = malloc(sizeof(int) * N);
+    knw = malloc(sizeof(int) * N);
+    ckm = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * N);
+    ckh = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * NBLK);
+    cvm = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * N);
+    cvh = malloc(sizeof(int) * N_KVH * (CPOS ? CPOS : 1) * NBLK);
+    ymant = malloc(sizeof(int) * NY);
+    vref  = malloc(sizeof(int) * N_KVH);
+
+    for (i = 0; i < 2 * N * N_QH; i++) qg[i]  = m12(7919   + SEED, i);
+    for (i = 0; i < N * N_KVH; i++)    kin[i] = m12(104729 + SEED, i);
+    for (i = 0; i < N * N_KVH; i++)    vin[i] = m12(65537  + SEED, i);
+    /* The norm weights are held positive and away from zero: a weight vector
+     * straddling zero makes max|raw| a property of one element and turns the
+     * whole comparison into a comparison of clamps. */
+    for (i = 0; i < N; i++) {
+        int a = m12(31337 + SEED, i); qnw[i] = (a < 0 ? -a : a) + 256;
+        a = m12(51501 + SEED, i);     knw[i] = (a < 0 ? -a : a) + 256;
+    }
+
+    /* One token, with a SYNTHETIC cache and no append.  v_ref is a per-
+     * SEQUENCE fold and this generator writes one token per sequence, so its
+     * initial value +127 is set here and attn_token() only folds into it. */
+    for (h = 0; h < N_KVH; h++) vref[h] = 127;
+    attn_token(N, N_QH, N_KVH, KVB, N_ROT, CPOS, SEED,
+               qg, kin, vin, qnw, knw,
+               qg_exp, kin_exp, vin_exp, qn_exp, kn_exp,
+               1, 0, CPOS, ckm, ckh, cvm, cvh, vref, ymant, &yexp);
+
 
     /* ---------------------------------------------------------------
      * the vector file
@@ -814,3 +901,4 @@ int main(int argc, char **argv)
     fclose(f);
     return 0;
 }
+#endif  /* ATTN_BLOCK_VEC_NO_MAIN */
