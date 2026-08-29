@@ -176,10 +176,45 @@ architecture rtl of async_fifo is
   signal wp_g_s1, wp_g_s2 : ptr_t := (others => '0');
   signal rp_g_s1, rp_g_s2 : ptr_t := (others => '0');
 
+  -- ASYNC_REG (added 2026-08-29, TRACK CDC-STATIC).  THIS WAS MISSING, AND
+  -- MISSING IS NOT NEUTRAL.  Without it the placer is free to put the two
+  -- stages of a synchroniser in different slices, so the resolution time a
+  -- metastable first stage gets is whatever the router happened to leave --
+  -- which is the one number the 2FF pair exists to maximise.  It also lets
+  -- synthesis retime or absorb the pair.
+  --
+  -- MEASURED, on `report_cdc` over an OOC synth of axi_rd_port at
+  -- DUAL_CLK = true, xcvu33p-fsvh2104-2L-e, before and after (the flow is
+  -- sim/cdc_teeth.sh, rows BASE and N2):
+  --
+  --   before  CDC-2 Warning x5, CDC-5 Warning x2, "No ASYNC_REG" 24 endpoints
+  --   after   CDC-3 Info    x5, CDC-6 Warning x2, "No ASYNC_REG"  0 endpoints
+  --
+  -- and a netlist census of every sequential cell went from 0 of 577 carrying
+  -- ASYNC_REG to 50 of 577.  The header's own claim that these are "named, not
+  -- inlined, so a constraint file can find them" was true and no constraint
+  -- file ever did: `grep -rn ASYNC_REG` over rtl/ and hw/ found the attribute
+  -- only in rtl/hbm_tg.vhd and hw/fk33/rtl/fk33_aux.vhd.
+  --
+  -- The two CDC-6 rows that REMAIN are the gray pointer buses themselves, and
+  -- they are not closable with an attribute: report_cdc has no concept of a
+  -- gray code, so a multi-bit crossing is a Warning however it is encoded.
+  -- See docs/debugging/2026-08-29_cdc-static-analysis.md for what does close
+  -- them, which is a bus-skew constraint and not RTL.
+  attribute async_reg : string;
+  attribute async_reg of wp_g_s1 : signal is "TRUE";
+  attribute async_reg of wp_g_s2 : signal is "TRUE";
+  attribute async_reg of rp_g_s1 : signal is "TRUE";
+  attribute async_reg of rp_g_s2 : signal is "TRUE";
+
   -- clear handshake
   signal clr_r_s1, clr_r_s2   : std_logic := '0';   -- clr, in the read domain
   signal clr_ack_r            : std_logic := '0';   -- read side has parked
   signal clr_a_s1, clr_a_s2   : std_logic := '0';   -- ack, back in the write domain
+  attribute async_reg of clr_r_s1 : signal is "TRUE";
+  attribute async_reg of clr_r_s2 : signal is "TRUE";
+  attribute async_reg of clr_a_s1 : signal is "TRUE";
+  attribute async_reg of clr_a_s2 : signal is "TRUE";
 
   -- read-side output stage, same shape as rtl/stream_fifo.vhd and for the same
   -- reason: the memory read is REGISTERED so it infers BRAM, and a 2-entry

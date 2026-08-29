@@ -384,7 +384,7 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=93   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
+BASELINE_PASS=94   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
                    #    CB-ORACLE.  THE CODEBOOK'S WRITE CONTRACT, written
                    #    BEFORE the pre-authorised LUTRAM fallback that
                    #    multiplies its replica count by 32.  TRACK A-MUT
@@ -413,6 +413,30 @@ BASELINE_PASS=93   # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
                    #    survivors and the one row only P_CB_CHK catches are
                    #    named there and in
                    #    docs/debugging/2026-08-29_codebook-coherency-oracle.md.
+                   # +1 sim/tb_axi_rd_port_dual, 2026-08-29.  TRACK CDC-STATIC.
+                   #    rtl/axi_rd_port.vhd's OWN dual-clock generate -- the
+                   #    `start` toggle synchroniser, the `run` level crossing
+                   #    back to the core domain and the `rst` synchroniser --
+                   #    had no gate coverage of any kind.  The existing
+                   #    sim/tb_axi_rd_port row instantiates the port at
+                   #    DUAL_CLK = false, which takes the `g_sc` branch, so the
+                   #    `g_dc` block was never elaborated on a gate run; this
+                   #    is a SEPARATE FILE and not a generic on that bench
+                   #    because regress keys a test by name and cannot run one
+                   #    testbench twice.  Three clock ratios concurrently, a
+                   #    value-and-order oracle carrying each beat's own
+                   #    address, two abandons (consumer held off, and at full
+                   #    rate), a mid-flight reset, and a SLOW-consumer phase
+                   #    that is the only state in which the FIFO is full rather
+                   #    than empty.  It also asserts the AR throttle's own
+                   #    invariant -- the port never refuses an offered R beat --
+                   #    which is what rtl/async_fifo.vhd's header claims and
+                   #    nothing had checked.  MEASURED 0.14 s.  Teeth:
+                   #    sim/mutate_axi_rd_port_dual.sh, 6 of 20; the 14
+                   #    survivors are named in that harness and in
+                   #    docs/debugging/2026-08-29_cdc-static-analysis.md, and
+                   #    six of them are MTBF-class rows that NO simulation can
+                   #    reach -- sim/cdc_teeth.sh is what reaches them.
                    # +1 sim/tb_gdn_block_vec, 2026-08-29.  TRACK B-BLOCK.  THE
                    #    FIRST VALUE ORACLE SUBSYSTEM B'S TOP LEVEL HAS EVER
                    #    HAD.  sim/tb_gdn_block checks bit-IDENTITY of its dump
@@ -953,6 +977,11 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     # acknowledgement latencies.  2 ms and 40 ms are 26x and 1500x those.
     sim:tb_async_fifo)       echo "--stop-time=2ms --stop-delta=2000000" ;;
     sim:tb_axi_rd_fsm)       echo "--stop-time=40ms --stop-delta=2000000" ;;
+    # The DUAL_CLK = true configuration of axi_rd_port, a separate entity from
+    # sim:tb_axi_rd_port above.  MEASURED honest end time 9.947 us across its
+    # three concurrent clock ratios; 40 ms is ~4000x, and the --stop-delta is
+    # needed because the bench's sequencer drives long waits.
+    sim:tb_axi_rd_port_dual) echo "--stop-time=40ms --stop-delta=2000000" ;;
     # sim/run_seq_*.sh named configuration: the one the real system runs
     # closest to (memory fast, units slow, so the prefetch gets far ahead).
     sim:tb_seq_desc_fetch)   echo "-gURAM_LAT=1 -gJOB_LAT=120 -gLAT_SKEW=11 -gSTRICT=true --stop-time=400ms" ;;

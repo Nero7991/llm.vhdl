@@ -158,6 +158,21 @@ architecture rtl of axi_rd_port is
 
   signal s_tog   : std_logic := '0';
   signal s_t1, s_t2, s_t3 : std_logic := '0';
+
+  -- ASYNC_REG (added 2026-08-29, TRACK CDC-STATIC).  Same finding as in
+  -- rtl/async_fifo.vhd, whose declaration block carries the measurement: none
+  -- of this port's synchroniser flops carried the attribute either, so the
+  -- placer was free to split every pair.  s_t3 is deliberately NOT marked --
+  -- it is the edge detector's second sample, not a synchroniser stage, and
+  -- ASYNC_REG on it would ask the placer to keep a flop next to one it has no
+  -- metastability relationship with.
+  attribute async_reg : string;
+  attribute async_reg of run_s1 : signal is "TRUE";
+  attribute async_reg of run_s2 : signal is "TRUE";
+  attribute async_reg of rst_s1 : signal is "TRUE";
+  attribute async_reg of rst_s2 : signal is "TRUE";
+  attribute async_reg of s_t1   : signal is "TRUE";
+  attribute async_reg of s_t2   : signal is "TRUE";
 begin
   arsize  <= std_logic_vector(to_unsigned(clog2(BYTES), 3));
   arburst <= "01";                                  -- INCR

@@ -346,6 +346,37 @@ at +/-2047, so `|acc| < 2^24` and `e_seg` lands in roughly [10, 24]; `err_g`
 cannot fire because `|a| <= 0.5` and `|alpha+dt| <= 1`, so `|g| <= 0.66`
 against a clamp at 16. `err_se` and `y_sat` are measured, not derived.
 
+### The full unfiltered gate run
+
+`bash sim/regress.sh --jobs 2`, both suites, at commit `8a17790`, on a box
+carrying four other tracks' jobs (load average 25):
+
+```
+ suite sim   PASS 65   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 91   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ BASELINE DROP: 91 passing, expected at least 92
+ NOT GREEN:
+   - sim:tb_axi_rd_port
+```
+
+**The one FAIL is another track's uncommitted work in flight, and that is
+MEASURED rather than argued.** The message is
+`ghdl-mcode:error: cannot find in top entity generic 'maxout'`:
+`sim/regress.sh` passes `-gMAXOUT=2`, and the working-tree
+`sim/tb_axi_rd_port.vhd` has turned `MAXOUT` from a generic into a constant
+(`constant MAXOUT : positive := 4;`) while `HEAD` still declares it as a
+generic. Analysed and run in scratch with `HEAD`'s copy of that ONE file and
+the working tree's RTL, at the same generics the gate row passes:
+
+```
+tb_head.vhd:161:5:@3395ns:(report note): axi_rd_port: 0 bad beats
+```
+
+which is that bench's own pass marker. So with a clean tree the run reads
+**PASS 92**, which is exactly the raised `BASELINE_PASS`. Nothing was touched
+in that file or its row by this track.
+
 ### Mutation table
 
 `bash sim/mutate_gdn_block.sh`, at the gate row's own configuration
