@@ -49,24 +49,35 @@ typedef struct {
     uint64_t kv_bytes_per_token;
     uint64_t max_context_tokens;
 
-    /* OPTIONAL, and zero means ABSENT rather than zero-length.
+    /* REQUIRED as of 2026-08-29.  The manifest is the AUTHORITY for the
+     * subsystem A descriptor arena, and for the max_chunk the host blocks were
+     * placed under.
      *
-     * The subsystem A descriptor arena, if the packed set declares one.  This
-     * is mechanism (a) for the collision TRACK WEIGHTS measured on 2026-08-29:
-     * `tools/gen_layer_program.py` and `pl_derive_bases()` both anchored at the
-     * top of the device and neither could see the other, so 153,664 B of the
-     * logits writeback sat under the A descriptors and the symptom was a wrong
-     * token with no fault.  A region declared once, in the manifest, and read
-     * by both consumers is one of the two ways out; the other is
-     * `pl_place_desc_arena()`.  WHICH ONE IS OREN'S DECISION and neither is
-     * assumed here -- this reader only makes (a) expressible.
+     * The collision TRACK WEIGHTS measured: `tools/gen_layer_program.py` and
+     * `pl_derive_bases()` both anchored at the top of the device and neither
+     * could see the other, so 153,664 B of the logits writeback sat under the
+     * A descriptors and the symptom was a wrong token with no fault.  TRACK
+     * ADDRARENA built one model of the address space and left the MECHANISM
+     * open, implementing both.  Oren chose this one: a region block in the
+     * manifest states every base, `tools/pack_model_fk33.py` writes it once at
+     * pack time, and neither consumer invents an address.
      *
-     * Unlike every field above, these two are NOT required: a set packed
-     * before the keys existed is still a valid set, and refusing it would
-     * break the load path to fix an address-space question.  `absent` is
-     * therefore reported honestly and pl_open warns rather than pretending. */
+     * These were OPTIONAL for exactly one day, and the optionality was the
+     * defect: a missing key read as zero, zero read as "no arena declared",
+     * and "no arena declared" was protected by a printed warning.  A warning
+     * that reads as "checked" is how the original collision survived.  They
+     * are required now, so a set packed before the block existed is REFUSED
+     * with a message naming the migration:
+     *
+     *     python3 tools/hbm_map.py <manifest> --write-manifest-hbm
+     *
+     * `host_max_chunk` is here because max_chunk comes from the card's CAPS
+     * and a larger one drags x_base DOWN through a fixed arena.  Nothing
+     * constrained it before; pinning it makes a mismatched card a refusal at
+     * open time instead of an overlap discovered later. */
     uint64_t desc_arena_base;
     uint64_t desc_arena_bytes;
+    uint64_t host_max_chunk;
 
     /* DERIVED here, not read: the first address the host may place a block at
      * without landing on something the card owns.  max of the three ends. */

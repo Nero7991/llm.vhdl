@@ -138,16 +138,18 @@ typedef struct {
     /* The subsystem A descriptor arena, which `tools/gen_layer_program.py`
      * places and which used to be invisible here.  See pl_hbm_bases.
      *
-     *   desc_arena_bytes  0  -> no arena is declared.  pl_open WARNS once:
-     *                           the three blocks above are then checked
-     *                           against each other and the image and against
-     *                           NOTHING ELSE, and the arena is free to land
-     *                           on the logits row exactly as it did.
+     *   desc_arena_bytes  0  -> nothing was declared HERE.  With a manifest
+     *                           that is normal: fk33_manifest_read() requires
+     *                           hbm.desc_arena_base / _bytes and pl_open takes
+     *                           them from there.  With NO manifest and no
+     *                           value here, pl_open REFUSES -- as of
+     *                           2026-08-29 an undeclared arena is a refusal,
+     *                           not the warning it used to be.
      *                     >0 -> checked, and placed by pl_place_desc_arena()
      *                           if desc_arena_base is 0.
-     *   desc_arena_base   an explicit base (from the manifest's
-     *                     hbm.desc_arena_base, or from whatever ran
-     *                     gen_layer_program.py).  Checked, never trusted. */
+     *   desc_arena_base   an explicit base, which OUTRANKS the manifest for a
+     *                     caller that actually ran gen_layer_program.py with
+     *                     --desc-base.  Checked, never trusted. */
     uint64_t desc_arena_base;
     uint64_t desc_arena_bytes;
 
@@ -229,15 +231,18 @@ typedef struct {
      * pl_check_bases() had no concept of an arena, and gen_layer_program.py
      * has no concept of these three blocks.
      *
-     * ZERO SPAN MEANS "NOT DECLARED", and pl_open then says so once on stderr
-     * rather than pretending the three blocks are the whole story.  That is
-     * deliberate: silence would read as "checked and clean", which is exactly
-     * how this defect survived.
+     * ZERO SPAN MEANS "NOT DECLARED", AND pl_check_bases() NOW REFUSES IT.
+     * It used to pass, with pl_open printing a note; TRACK ADDRARENA recorded
+     * that as the live hazard, because a note reads as "checked".  A layout
+     * that is about to be used and does not say where subsystem A's
+     * descriptors are is incomplete, and incomplete is refused.
      *
-     * WHICH ALLOCATOR OWNS THE TOP OF HBM IS AN OPEN DECISION.  Two mechanisms
-     * are on the table -- a region declared in the manifest that both
-     * consumers read, or a fourth block allocated here by
-     * pl_place_desc_arena().  Both are supported below; neither is chosen. */
+     * THE MECHANISM IS DECIDED (Oren, 2026-08-29): the manifest's `hbm` region
+     * block is the authority.  pl_place_desc_arena() remains, because the
+     * ALLOCATION RULE has to live somewhere the C can be checked against, and
+     * tools/hbm_map.py --check-c compiles this file and requires the two to
+     * agree; but the shipping path reads hbm.desc_arena_base and does not
+     * call it. */
     uint64_t arena_base, arena_span;
 } pl_hbm_bases;
 
@@ -246,22 +251,27 @@ int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
                     uint64_t kv_bytes_per_token, pl_hbm_bases *out);
 
 /* Place the subsystem A descriptor arena in the first 4 KB-aligned block below
- * `x_base`, and re-run pl_check_bases().  `arena_bytes` 0 clears the arena.
+ * `x_base`, and re-run pl_check_bases().  `arena_bytes` 0 is now an ERROR:
+ * clearing the arena produces exactly the incomplete layout that is no longer
+ * legal.
  *
- * This is mechanism (b): pl_derive_bases() owns the arena too.  It is offered,
- * not imposed -- a caller that gets the arena from a manifest sets
- * `arena_base`/`arena_span` directly and never calls this.  Either way
- * pl_check_bases() is the single gate.
- *
- * The placement mirrors `tools/hbm_map.py --policy below-host`, and that
- * file's own C cross-check compiles this translation unit and requires the
- * two to agree address for address.  Returns 0, or a FK33_SEAM_ERR_* code. */
+ * This is the ALLOCATION RULE, and after 2026-08-29 it is not the shipping
+ * path: `tools/pack_model_fk33.py` runs the same rule once, at pack time, and
+ * writes the answer into the manifest.  It stays here because
+ * `tools/hbm_map.py --check-c` compiles this translation unit and requires the
+ * Python allocator and this one to agree address for address -- that check is
+ * the only evidence either of them is right.  Returns 0, or FK33_SEAM_ERR_*. */
 int pl_place_desc_arena(pl_hbm_bases *b, uint64_t arena_bytes);
 
 /* The check the derivation is not allowed to skip, exported so a caller that
  * supplies its own bases can run it first.  `reserved_end` 0 disables only the
  * image-overlap half; alignment, the stack line, the top of HBM and mutual
- * overlap are always checked.  Returns 0, or a FK33_SEAM_ERR_* code. */
+ * overlap are always checked.
+ *
+ * IT ALSO REQUIRES A DECLARED ARENA (arena_span != 0) as of 2026-08-29.  A
+ * caller that only wants the three host blocks derived calls pl_derive_bases(),
+ * which runs the geometry half and does not demand the fourth region it has
+ * not placed.  Returns 0, or a FK33_SEAM_ERR_* code. */
 int pl_check_bases(const pl_hbm_bases *b);
 
 /* Open, read CAPS, and check them.  Returns 0, or negative.  On success

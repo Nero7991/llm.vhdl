@@ -248,6 +248,14 @@ int main(int argc, char **argv)
         o.x_base = OLD_X;
         o.l_base = OLD_L;
         o.desc_ptr = OLD_D;
+        /* A DECLARED ARENA, because as of 2026-08-29 pl_check_bases() refuses
+         * an incomplete layout and this control is not about the arena.  It is
+         * about `reserved_end`: it asserts that E's refusal came from the
+         * MANIFEST's knowledge of where the image ends and not from some new
+         * constant.  Without this line the open would be refused for a third,
+         * unrelated reason and the control would stop isolating what it names.
+         * pl_place_desc_arena() puts it below the OLD_X given above. */
+        o.desc_arena_bytes = 4096;
         rc = pl_open(&o, &c);
         CK(rc == 0, "the old bases were refused even with no image to compare "
                     "against (rc %d); the refusal must come from the manifest, "

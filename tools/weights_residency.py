@@ -2,7 +2,7 @@
 """The 9B HBM residency REPORT, over the map in `tools/hbm_map.py`.
 
     weights_residency.py MANIFEST.json [--desc-base ADDR] [--desc-jobs N]
-                         [--policy below-host|top-down]
+                         [--policy manifest|allocate-below-host|top-down]
                          [--no-host-blocks] [--max-chunk N]
                          [--markdown] [--per-tensor]
 
@@ -203,17 +203,20 @@ def main():
     ap.add_argument("--desc-jobs", type=int, default=311,
                     help="number of A descriptors to reserve space for "
                          "(311 at the 9B token program). 0 removes the arena")
-    ap.add_argument("--policy", choices=("below-host", "top-down"),
-                    default="below-host",
-                    help="how hbm_map places the arena. 'top-down' is "
+    ap.add_argument("--policy",
+                    choices=("manifest", "allocate-below-host", "top-down"),
+                    default="manifest",
+                    help="'manifest' READS hbm.desc_arena_base, the decided mechanism. 'top-down' is "
                          "gen_layer_program.py's HISTORIC default and it "
                          "COLLIDES with the host blocks")
     ap.add_argument("--no-host-blocks", action="store_true",
                     help="do not model the three blocks pl_derive_bases() "
                          "allocates at the top of HBM")
-    ap.add_argument("--max-chunk", type=int, default=512,
+    ap.add_argument("--max-chunk", type=int, default=None,
                     help="pl_open()'s max_chunk, which sets the R_X staging "
-                         "span (default 512)")
+                         "span.  Default: hbm.host_max_chunk out of the "
+                         "manifest, which pins the cap the arena was placed "
+                         "under")
     ap.add_argument("--markdown", action="store_true")
     ap.add_argument("--per-tensor", action="store_true")
     a = ap.parse_args()

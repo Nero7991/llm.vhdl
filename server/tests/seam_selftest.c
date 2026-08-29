@@ -73,6 +73,17 @@ static void small_opts(fk33_sim_opts *s, pl_open_opts *o)
     o->max_chunk = 8;
     o->go_timeout_ms = 200;
     o->embed = pl_embed_synthetic;
+    /* A DECLARED SUBSYSTEM A DESCRIPTOR ARENA, required as of 2026-08-29.
+     * pl_check_bases() no longer passes a layout that does not say where A's
+     * descriptors live: an undeclared arena used to pass with a printed
+     * warning, and TRACK ADDRARENA recorded that warning as the live hazard --
+     * it is how gen_layer_program.py's top-down default sat on 153,664 B of
+     * the logits row without anything refusing.  On the real path the number
+     * comes from the manifest's hbm.desc_arena_bytes; here there is no
+     * manifest, so the size is stated and pl_place_desc_arena() puts it below
+     * x_base.  One page is ample for a test that runs no A jobs, and the point
+     * is that the layout is COMPLETE, not that the size is right. */
+    o->desc_arena_bytes = 4096;
 }
 
 /* The card's fold, recomputed here.  See the header block: this is the second

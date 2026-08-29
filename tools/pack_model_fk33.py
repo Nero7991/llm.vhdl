@@ -124,13 +124,83 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pack_int4 as P                                        # noqa: E402
+import hbm_map as HM              # noqa: E402  the ONE HBM address space
 from gguf.gguf_reader import GGUFReader                       # noqa: E402
 
 ALIGN = 4096
 HBM_SIZE = 8 * 1024 ** 3
 STACK_BYTES = 4 * 1024 ** 3                # one HBM stack; the boundary is here
-GDN_STATE_BYTES = 48 * 6144 * 128 * 2      # SS audit: 72 MB, persistent
-KV_BYTES_PER_TOKEN = 16 * 4 * 256 * 2 * 2  # 16 attention layers, K+V, int16
+# THE TWO ARENAS NOTHING ALLOCATES WITHIN.  Both are reserved as a single
+# opaque extent and the manifest has never said what is inside them, so no
+# check can see a per-layer slot land on its neighbour.  The FACTORS are
+# written into the manifest (`gdn_state_layers` / `gdn_state_bytes_per_layer`,
+# `kv_layers` / `kv_bytes_per_layer_per_token`) so the sub-structure is at
+# least DECLARED, and `check_arena_substructure()` below refuses a reservation
+# that is too small for the program.
+#
+# MEASURED 2026-08-29 (TRACK ARENA-MANIFEST): these layer counts are NOT this
+# model's.  `gen_layer_program.QWEN35_9B` is 32 blocks at attn_interval 4 =
+# 8 attention blocks and 24 GDN blocks.  48 and 16 are twice that, so both
+# arenas are reserved at 2x what the 9B shape uses -- 72 MiB of GDN state
+# where 36 MiB is used, and 65,536 B/token of KV where 32,768 B is used, which
+# is HALF the context this card could hold.  Over-reservation is SAFE (it
+# wastes capacity, it does not overwrite anything) so nothing here refuses it,
+# and the numbers are left alone: the per-layer terms 6144*128 and 4*256 are
+# from the SS audit and have NOT been checked against the RTL by this track,
+# so halving them is a separate job with the RTL as its oracle.
+GDN_STATE_LAYERS = 48
+GDN_STATE_BYTES_PER_LAYER = 6144 * 128 * 2
+GDN_STATE_BYTES = GDN_STATE_LAYERS * GDN_STATE_BYTES_PER_LAYER
+KV_LAYERS = 16                             # attention layers, K+V, int16
+KV_BYTES_PER_LAYER_PER_TOKEN = 4 * 256 * 2 * 2
+KV_BYTES_PER_TOKEN = KV_LAYERS * KV_BYTES_PER_LAYER_PER_TOKEN
+
+
+def check_arena_substructure(files):
+    """The GDN and KV arenas, against the program that will use them.
+
+    UNDER-reservation is a wrong answer: a 25th GDN slot in a 24-slot arena
+    lands on the KV cache.  OVER-reservation only costs context, so it is
+    REPORTED and not refused -- a check that fails on a safe configuration
+    trains people to ignore it.
+
+    Returns the four factor keys for the manifest."""
+    lm = next((e for e in files if e.get("tensor") == "output.weight"), None)
+    if lm is None:
+        return dict(gdn_state_layers=GDN_STATE_LAYERS,
+                    gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
+                    kv_layers=KV_LAYERS,
+                    kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN)
+    import gen_layer_program as GL
+    s = GL.QWEN35_9B
+    if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
+        return dict(gdn_state_layers=GDN_STATE_LAYERS,
+                    gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
+                    kv_layers=KV_LAYERS,
+                    kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN)
+    n_gdn, n_attn = s.n_gdn(), s.n_attn()
+    if GDN_STATE_LAYERS < n_gdn:
+        raise SystemExit(
+            "pack_model_fk33: the GDN state arena is reserved for %d layers "
+            "and this model has %d GDN blocks.  A slot past the end lands on "
+            "the KV cache." % (GDN_STATE_LAYERS, n_gdn))
+    if KV_LAYERS < n_attn:
+        raise SystemExit(
+            "pack_model_fk33: the KV arena is %d B/token for %d attention "
+            "layers and this model has %d.  A layer past the end lands on the "
+            "next token's record." % (KV_BYTES_PER_TOKEN, KV_LAYERS, n_attn))
+    if GDN_STATE_LAYERS > n_gdn or KV_LAYERS > n_attn:
+        used_kv = n_attn * KV_BYTES_PER_LAYER_PER_TOKEN
+        print(f"  arena headroom   GDN reserved for {GDN_STATE_LAYERS} layers, "
+              f"program uses {n_gdn}; KV reserved for {KV_LAYERS} attention "
+              f"layers at {KV_BYTES_PER_TOKEN} B/token, program uses {n_attn} "
+              f"at {used_kv} B/token.  Over-reservation is SAFE and costs "
+              f"context; it is reported, not refused.")
+    return dict(gdn_state_layers=GDN_STATE_LAYERS,
+                gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
+                kv_layers=KV_LAYERS,
+                kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN,
+                gdn_state_layers_used=n_gdn, kv_layers_used=n_attn)
 
 
 def align_up(n: int) -> int:
@@ -238,6 +308,52 @@ def qkv_segments(rd, M: int):
     return [key_dim, key_dim, val_dim], ["q", "k", "v"]
 
 
+def a_descriptor_jobs(files):
+    """How many subsystem A descriptors this set's token program needs.
+
+    COUNTED, not assumed: `tools/gen_layer_program.py.build_plan()` is the only
+    thing that knows how many A_JOB steps a token is, and it builds the plan
+    from a Shape alone -- no manifest -- so importing it here is not circular.
+    The count is the MAXIMUM over every variant of the program, because
+    `--qkv-fused` and `--one-lmhead-job` both REDUCE it (MEASURED 2026-08-29:
+    311 default, 297 one-lmhead, 263 qkv-fused, 249 both) and a reservation
+    that is too small for a variant somebody runs later is a silent overrun
+    into the host's R_X staging.
+
+    REFUSES on a shape that generator does not describe, rather than guessing.
+    `--desc-arena-jobs N` is the way to state it for such a model."""
+    import gen_layer_program as GL
+    lm = next((e for e in files if e.get("tensor") == "output.weight"), None)
+    if lm is None:
+        raise SystemExit(
+            "pack_model_fk33: no output.weight in this set, so the token "
+            "program's A job count cannot be counted and the host blocks "
+            "cannot be modelled.  Pass --desc-arena-jobs N, or "
+            "--no-region-block and accept that fk33_manifest.c refuses the "
+            "result.  A partial pack (--only) is not a loadable set, so "
+            "--no-region-block is the right answer there.")
+    s = GL.QWEN35_9B
+    if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
+        raise SystemExit(
+            "pack_model_fk33: this set's output.weight is %d x %d and "
+            "tools/gen_layer_program.py describes %d x %d.  The A descriptor "
+            "count is a property of the PROGRAM, and that generator is the "
+            "only thing that knows it; it does not describe this model.  Pass "
+            "--desc-arena-jobs N."
+            % (int(lm["M"]), int(lm["K"]), s.vocab_shard, s.hidden))
+    best, how = 0, None
+    for one_lm in (False, True):
+        for fused in (False, True):
+            lmw = [(0, s.vocab_shard)] if one_lm else GL.lmhead_windows(s)
+            steps = GL.build_plan(s, qkv_fused=fused, lm_windows=lmw)
+            n = sum(1 for st in steps if st.opcode == GL.OP_A_JOB)
+            if n > best:
+                best, how = n, (one_lm, fused)
+    print(f"  A job count      {best} descriptors, the max over the four "
+          f"program variants (one_lmhead={how[0]} qkv_fused={how[1]})")
+    return best
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -255,6 +371,25 @@ def main():
                          "whole ROWS_IF tile. Reproduces the historic set, in "
                          "which two of the three qkv row windows per GDN block "
                          "are not expressible at ROWS_IF=48")
+    ap.add_argument("--max-chunk", type=int, default=512,
+                    help="the max_chunk pl_open() will run at.  It sets the "
+                         "host R_X span, which is what the subsystem A "
+                         "descriptor arena is placed below, so it MOVES the "
+                         "arena.  It is PINNED into the manifest as "
+                         "hbm.host_max_chunk and a card whose CAPS disagree is "
+                         "refused at open time")
+    ap.add_argument("--desc-arena-jobs", type=int, default=None,
+                    help="how many subsystem A descriptors to reserve for.  "
+                         "Default: the maximum over every variant of the full "
+                         "token program, counted by importing "
+                         "tools/gen_layer_program.py.  Give it explicitly for "
+                         "a model that generator does not describe")
+    ap.add_argument("--no-region-block", action="store_true",
+                    help="do NOT write hbm.desc_arena_* / hbm.host_max_chunk.  "
+                         "The result is a manifest server/fk33_manifest.c "
+                         "REFUSES and tools/gen_layer_program.py refuses to "
+                         "emit descriptors against.  It exists so the refusal "
+                         "can be demonstrated, and for no other reason")
     ap.add_argument("--drop", action="append", default=[], metavar="TENSOR",
                     help="exact GGUF tensor name to leave OUT of the image: not "
                          "packed, not placed, not in the manifest's files. "
@@ -529,6 +664,43 @@ def main():
         p = e
     max_ctx = sum(x["tokens"] for x in kv_extents)
 
+    # ------------------------------------------------- the region block
+    #
+    # THE MANIFEST IS THE AUTHORITY (Oren, 2026-08-29).  Every base in the 8 GiB
+    # is stated here, once, and no consumer re-derives one.  Before this, THREE
+    # allocators shared the device and none could see the other two: this
+    # packer placed the weights, `tools/gen_layer_program.py` placed the A
+    # descriptor arena top-down from 0x2_0000_0000, and
+    # `server/pl_backend.c::pl_derive_bases()` placed the host's three blocks
+    # top-down from the same address.  The last two COLLIDED -- MEASURED at the
+    # 9B shape, 153,664 B of the logits writeback and 3,584 B of the D program
+    # page under the arena, whichever master wrote last winning, symptom a
+    # wrong token with no fault.
+    #
+    # The arena address is DERIVED by `tools/hbm_map.py.derive_region_block()`,
+    # which is the only function in this repository that chooses one.  It is
+    # evaluated HERE, once, because the answer is a property of the packed set
+    # and not of whoever runs a tool later: TRACK ADDRARENA measured the old
+    # arena base moving with the COMMAND LINE, because it was sized from the
+    # selected steps rather than the whole program.
+    hbm_core = dict(size=HBM_SIZE, align=ALIGN, stack_bytes=STACK_BYTES,
+                    weights_bytes=total, weights_end=weights_end,
+                    stack_holes=holes, stack_hole_bytes=hole_bytes,
+                    gdn_state_base=gdn_base, gdn_state_bytes=GDN_STATE_BYTES,
+                    gdn_state_stack=stack_of(gdn_base),
+                    kv_base=kv_base, kv_bytes_per_token=KV_BYTES_PER_TOKEN,
+                    kv_extents=kv_extents,
+                    free_after_gdn=free,
+                    max_context_tokens=max_ctx,
+                    **check_arena_substructure(files))
+    region_block = None
+    if not a.no_region_block:
+        n_jobs = a.desc_arena_jobs
+        if n_jobs is None:
+            n_jobs = a_descriptor_jobs(files)
+        region_block = HM.derive_region_block(
+            dict(files=files, hbm=hbm_core), n_jobs, a.max_chunk)
+
     man = dict(
         format="llama.vhdl FK33 load manifest v1",
         source_gguf=os.path.abspath(a.gguf),
@@ -537,15 +709,7 @@ def main():
                       nports_w=nports, n_scale_sub=nss,
                       axi_read_masters=nports + nss,
                       qkv_segment_pad=bool(a.qkv_pad)),
-        hbm=dict(size=HBM_SIZE, align=ALIGN, stack_bytes=STACK_BYTES,
-                 weights_bytes=total, weights_end=weights_end,
-                 stack_holes=holes, stack_hole_bytes=hole_bytes,
-                 gdn_state_base=gdn_base, gdn_state_bytes=GDN_STATE_BYTES,
-                 gdn_state_stack=stack_of(gdn_base),
-                 kv_base=kv_base, kv_bytes_per_token=KV_BYTES_PER_TOKEN,
-                 kv_extents=kv_extents,
-                 free_after_gdn=free,
-                 max_context_tokens=max_ctx),
+        hbm=dict(hbm_core, **(region_block or {})),
         # `tensors` counts what is PLACED, so it stays the sum of matvec+f32
         # and `check_mv4i_set.py`'s count check keeps its meaning.  What the
         # GGUF held is recorded separately, so the two can never be confused.
@@ -579,6 +743,18 @@ def main():
     print(f"  free for KV      {free/G:.3f} GiB from {kv_base:#x} "
           f"=> {max_ctx} tokens of context "
           f"in {len(kv_extents)} per-stack extent(s)")
+    if region_block:
+        print(f"  A desc arena     {region_block['desc_arena_bytes']} B at "
+              f"{region_block['desc_arena_base']:#x} for "
+              f"{region_block['desc_arena_jobs']} descriptors at "
+              f"{region_block['desc_arena_stride']} B, under host_max_chunk "
+              f"{region_block['host_max_chunk']}")
+        print(f"  host blocks      x_base {region_block['host_x_base']:#x} "
+              f"l_base {region_block['host_l_base']:#x} "
+              f"desc_ptr {region_block['host_desc_ptr']:#x}")
+    else:
+        print("  A desc arena     NOT DECLARED (--no-region-block).  "
+              "server/fk33_manifest.c will REFUSE this manifest.")
     print(f"  total elapsed    {time.perf_counter() - t_all:.1f} s")
     return 0
 

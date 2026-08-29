@@ -145,7 +145,15 @@ static int seam_wait(pl_ctx *c, uint32_t *status_out)
 
 static uint64_t align_down(uint64_t v, uint64_t a) { return v / a * a; }
 
-int pl_check_bases(const pl_hbm_bases *b)
+/* GEOMETRY ONLY: is every region that IS declared aligned, in range, in one
+ * stack, and disjoint from its neighbours and from the card's own bytes?
+ *
+ * This is deliberately NOT the public gate.  `pl_derive_bases()` produces the
+ * three host blocks and has not placed a descriptor arena yet -- that is the
+ * manifest's job, one call later -- so it needs a predicate that does not
+ * demand an arena.  Every arithmetic rule lives here exactly once; the public
+ * `pl_check_bases()` below is this plus the completeness requirement. */
+static int check_geometry(const pl_hbm_bases *b)
 {
     uint64_t top;
     if (!b) return FK33_SEAM_ERR_POS;
@@ -189,7 +197,7 @@ int pl_check_bases(const pl_hbm_bases *b)
      * three, because there is no version of this where one region gets a
      * weaker rule than its neighbours. */
     if (b->arena_span) {
-        if (b->arena_base % 512ull) return FK33_SEAM_ERR_ALIGN;
+        if (b->arena_base % 4096ull) return FK33_SEAM_ERR_ALIGN;
         if (b->arena_base + b->arena_span > top) return FK33_SEAM_ERR_POS;
         if (b->arena_base < FK33_HBM_STACK_LINE &&
             b->arena_base + b->arena_span > FK33_HBM_STACK_LINE)
@@ -217,14 +225,36 @@ int pl_check_bases(const pl_hbm_bases *b)
     return 0;
 }
 
+/* THE PUBLIC GATE: geometry, PLUS the layout must be complete.
+ *
+ * `arena_span == 0` used to PASS here, protected by a warning printed at
+ * pl_open time.  TRACK ADDRARENA recorded that as the live hazard and could
+ * not close it, because making a declared arena mandatory would have broken
+ * every caller of a function whose owning decision was still open.
+ *
+ * The decision is made: the manifest's `hbm` region block is the authority,
+ * `server/fk33_manifest.c` REQUIRES `hbm.desc_arena_base` /
+ * `hbm.desc_arena_bytes`, and `tools/pack_model_fk33.py` writes them.  So
+ * there is no longer a legitimate state in which a layout that is about to be
+ * used has no arena: an undeclared arena means the descriptors are somewhere
+ * nobody checked, which is exactly the 153,664 B of logits row this whole
+ * mechanism exists to stop being overwritten.  A warning that reads as
+ * "checked" is how that defect survived; this is a refusal. */
+int pl_check_bases(const pl_hbm_bases *b)
+{
+    int e = check_geometry(b);
+    if (e) return e;
+    if (!b->arena_span) return FK33_SEAM_ERR_POS;
+    return 0;
+}
+
 int pl_place_desc_arena(pl_hbm_bases *b, uint64_t arena_bytes)
 {
     uint64_t need;
     if (!b) return FK33_SEAM_ERR_POS;
-    if (!arena_bytes) {
-        b->arena_base = b->arena_span = 0;
-        return pl_check_bases(b);
-    }
+    /* Zero used to mean "clear the arena", and clearing it is precisely the
+     * state that is no longer legal.  Refuse rather than produce one. */
+    if (!arena_bytes) return FK33_SEAM_ERR_POS;
     need = (arena_bytes + 4095ull) / 4096ull * 4096ull;
     if (b->x_base < need) return FK33_SEAM_ERR_POS;
     b->arena_base = align_down(b->x_base - need, 4096ull);
@@ -259,7 +289,12 @@ int pl_derive_bases(int n_embd, int n_vocab, int max_chunk,
     if (kv_bytes_per_token && out->hbm_top > out->x_base)
         out->kv_tokens_cost = (out->hbm_top - out->x_base) / kv_bytes_per_token;
 
-    return pl_check_bases(out);
+    /* GEOMETRY ONLY.  This function places the three HOST blocks; the fourth
+     * region comes from the manifest, one call later.  Returning the full
+     * pl_check_bases() here would make deriving the host blocks impossible
+     * without first knowing the arena, which is backwards: the arena is placed
+     * BELOW x_base and therefore after it. */
+    return check_geometry(out);
 }
 
 void pl_open_opts_default(pl_open_opts *o)
@@ -383,12 +418,48 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
             have_manifest = 1;
             reserved_end = man.reserved_end;
             kv_bpt = man.kv_bytes_per_token;
-            /* Mechanism (a): the arena declared once, in the manifest, read by
-             * both consumers.  An explicit option still wins, because a caller
-             * that knows where it put the descriptors outranks a file. */
+            /* THE DECIDED MECHANISM.  The arena is declared once, in the
+             * manifest, and read by every consumer.  fk33_manifest_read()
+             * requires the keys, so `man.desc_arena_bytes` is always set here.
+             * An explicit option still wins, because a caller that knows where
+             * it actually put the descriptors outranks a file -- and it is
+             * CHECKED against the same map either way. */
             if (man.desc_arena_bytes && !arena_bytes) {
                 arena_base  = man.desc_arena_base;
                 arena_bytes = man.desc_arena_bytes;
+            }
+            /* THE CAP THE ARENA WAS PLACED UNDER.  max_chunk comes from the
+             * card's CAPS, and a bigger one drags x_base DOWN through a fixed
+             * arena.  ADDRARENA left this unconstrained -- nothing in the
+             * manifest pinned it.  It is pinned now, so a card whose CAPS do
+             * not match the cap the addresses were derived under is refused
+             * here, by name, rather than discovered as an overlap five
+             * regions later. */
+            /* ONE DIRECTION ONLY, and the asymmetry is derived rather than
+             * chosen: x_base = align_down(l_base - x_stride*max_chunk), which
+             * is monotonically DECREASING in max_chunk.  A cap SMALLER than
+             * the pinned one can therefore only move x_base UP, away from the
+             * arena, leaving a gap and no overlap -- wasteful, never wrong.  A
+             * cap LARGER than the pinned one moves x_base DOWN, through a
+             * fixed arena, and that is the hazard ADDRARENA measured and could
+             * not constrain.  Refusing the safe direction too would break
+             * every caller that opens a small simulated card against a real
+             * manifest, for no gain. */
+            if (man.host_max_chunk &&
+                (uint64_t)c->max_chunk > man.host_max_chunk) {
+                fprintf(stderr,
+                    "pl_open: this card reports max_chunk %d, but the packed "
+                    "set's manifest pinned hbm.host_max_chunk = %llu.\n"
+                    "  The host blocks and the A descriptor arena were placed "
+                    "under THAT cap; a LARGER one drags x_base DOWN through "
+                    "the arena and the map that was checked is not the map "
+                    "this open would use.\n"
+                    "  Repack, or re-run "
+                    "`python3 tools/hbm_map.py <manifest> "
+                    "--write-manifest-hbm --max-chunk %d`.\n",
+                    c->max_chunk, (unsigned long long)man.host_max_chunk,
+                    c->max_chunk);
+                pl_close(c); return -3;
             }
             fprintf(stderr, "[pl_backend] %s\n",
                     fk33_manifest_describe(&man, mbuf, sizeof mbuf));
@@ -478,21 +549,24 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                     "(subsystem A descriptors, tools/gen_layer_program.py)\n",
                     (unsigned long long)want.arena_base,
                     (unsigned long long)want.arena_span);
+            else
+                fprintf(stderr,
+                "  -> NO subsystem A descriptor arena was declared, and that is\n"
+                "     now a refusal rather than a note.  The manifest's\n"
+                "     hbm.desc_arena_base / hbm.desc_arena_bytes are the authority\n"
+                "     for where subsystem A's descriptors live and nothing\n"
+                "     re-derives them.  A set packed before that block existed is\n"
+                "     migrated with\n"
+                "       python3 tools/hbm_map.py <manifest> --write-manifest-hbm\n"
+                "     tools/gen_layer_program.py places 311 descriptors for the 9B\n"
+                "     token program; its historic default put them at 0x1FFFD9000,\n"
+                "     over 153,664 B of this logits row.\n");
             pl_close(c); return -3;
         }
-        /* NO ARENA DECLARED IS NOT THE SAME AS NO ARENA.  Something has to
-         * place subsystem A's descriptors, and until 2026-08-29 the thing that
-         * did anchored at the top of HBM and landed on the logits row.  Say so
-         * every time, because a silent open is what made that survivable. */
-        if (!want.arena_span)
-            fprintf(stderr,
-                "[pl_backend] NOTE: no subsystem A descriptor arena was declared\n"
-                "  (desc_arena_bytes = 0), so the blocks above were checked against\n"
-                "  each other and the image and against NOTHING ELSE.  The arena is\n"
-                "  real: tools/gen_layer_program.py places 311 descriptors for the 9B\n"
-                "  token program and its historic default put them at 0x1FFFD9000,\n"
-                "  over 153,664 B of this logits row.  Run\n"
-                "  `python3 tools/hbm_map.py <manifest>` for the whole map.\n");
+        /* Reaching here means the layout is COMPLETE: all four regions
+         * declared, aligned, in one stack, disjoint, and above the card's own
+         * bytes.  An undeclared arena can no longer get this far -- it is
+         * refused in the block above, with the migration command. */
         if (!want.reserved_end)
             fprintf(stderr,
                 "[pl_backend] NOTE: neither manifest_path nor hbm_reserved_end was\n"

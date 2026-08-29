@@ -2,9 +2,34 @@
 """THE 8 GiB HBM ADDRESS SPACE, IN ONE PLACE, WITH A CHECK THAT BITES.
 
     hbm_map.py MANIFEST.json [--desc-jobs N] [--desc-base ADDR]
-               [--policy below-host|top-down] [--max-chunk N]
+               [--policy manifest|allocate-below-host|top-down] [--max-chunk N]
                [--no-host-blocks] [--json] [--markdown] [--check-c]
-               [--emit-manifest-hbm]
+               [--emit-manifest-hbm] [--write-manifest-hbm]
+
+THE MANIFEST IS THE AUTHORITY (Oren, 2026-08-29).  The mechanism question that
+TRACK ADDRARENA left open -- does the arena live in the manifest, or does
+`pl_derive_bases()` allocate it -- is decided: **a region block in the
+manifest's `hbm` object states every base, and neither producer invents one.**
+
+    hbm.desc_arena_base    the first A descriptor's byte address
+    hbm.desc_arena_bytes   the page-rounded reservation
+    hbm.desc_arena_jobs    how many descriptors it was sized for
+    hbm.desc_arena_stride  bytes per descriptor
+    hbm.host_max_chunk     the max_chunk the host blocks were placed at
+    hbm.host_n_embd / host_n_vocab
+    hbm.host_x_base / host_l_base / host_desc_ptr
+
+`tools/pack_model_fk33.py` writes that block at pack time by calling
+`derive_region_block()` below; `--write-manifest-hbm` writes the same block
+into a set that was packed before the block existed.  `derive_region_block()`
+is the ONLY function in this repository that chooses an arena address.
+Everything else -- `gen_layer_program.py`, `pl_derive_bases()`,
+`weights_residency.py`, `fk33_load_weights.py` -- READS it.
+
+`--policy allocate-below-host` is the allocation RULE that block is computed
+with.  It is no longer an interim fallback for consumers: a consumer that
+cannot find the block in the manifest REFUSES rather than re-deriving it, so
+"two producers agreed" is not a state this address space can be in.
 
 WHY THIS FILE EXISTS.  On 2026-08-29 TRACK WEIGHTS measured that THREE
 allocators share this device and none of them can see the other two, and that
@@ -59,17 +84,26 @@ silent default.  `tools/gen_layer_program.py` set that precedent for the VHDL
 nports values after a literal copy of a wrong number agreed with the wrong
 original.
 
-THE ARENA POLICY IS INTERIM AND IS OREN'S DECISION, NOT THIS FILE'S.
-`--policy below-host` places the arena in the first 4 KB-aligned block below the
-host's R_X staging.  At the 9B shape that is 0x1_FFAD_D000, which is the address
-TRACK WEIGHTS measured as making the map disjoint.  MEASURED cost against the
-colliding placement: 2 tokens of KV context, 61,231 -> 61,229 (TRACK WEIGHTS
-said 3; the arithmetic is in the ADDRARENA write-up).  It is a DERIVATION, not a constant, so it moves when the shape moves.
-It is still interim: which allocator owns the top of HBM, and whether the arena
-is declared in the manifest (option a) or allocated by `pl_derive_bases()`
-(option b), is a decision that has been put to Oren and is not made here.
+THE ALLOCATION RULE, AND WHY IT IS NOT INTERIM ANY MORE.
+`--policy allocate-below-host` places the arena in the first 4 KB-aligned block
+below the host's R_X staging.  At the 9B shape that is 0x1_FFAD_D000, which is
+the address TRACK WEIGHTS measured as making the map disjoint.  MEASURED cost
+against the colliding placement: 2 tokens of KV context, 61,231 -> 61,229 (TRACK
+WEIGHTS said 3; the arithmetic is in the ADDRARENA write-up).  It is a
+DERIVATION, so it moves when the shape moves -- and now it is EVALUATED ONCE, at
+pack time, and written down.  The address in a shipped manifest is a fact about
+that packed set, not a policy a reader has to re-run and hope to reproduce.
 `--policy top-down` reproduces the historic colliding placement, on purpose, so
 the check can be shown going red.
+
+WHY THE HOST BLOCKS ARE IN THE BLOCK TOO.  `pl_derive_bases()` places them from
+the card's CAPS at open time, and `max_chunk` is one of those CAPS: a bigger cap
+drags `x_base` DOWN, through a fixed arena.  Pinning `hbm.host_max_chunk` turns
+that from an unconstrained runtime parameter into a declared one, and the
+overlap check in `pl_check_bases()` then REFUSES an open whose cap does not
+match the one the arena was placed under.  ADDRARENA left this as an open item
+(`max_chunk_grown_over_a_fixed_arena`); it is closed here by declaration, not by
+another checker.
 
 WHAT THIS FILE DOES NOT DO.  It never opens a `.mv4i` file, never hashes a
 payload, and never touches the card.  Bytes on disk are `check_mv4i_set.py`'s
@@ -250,20 +284,60 @@ def host_blocks(n_embd, n_vocab, max_chunk, hbm_top=None):
     return regs, raw
 
 
-def desc_arena(n_jobs, base=None, policy="below-host", host_floor=None,
-               stride=None, strict=True):
-    """Allocator 2: `tools/gen_layer_program.py`'s subsystem A descriptors.
+# The keys the manifest's `hbm` object carries under the decided mechanism.
+# REQUIRED_HBM_KEYS are the ones `server/fk33_manifest.c` also requires, so a
+# manifest either states them or is refused on both sides of the language
+# boundary.  The rest are provenance: they let a reader see WHAT the address was
+# derived from without re-deriving it.
+REQUIRED_HBM_KEYS = ("desc_arena_base", "desc_arena_bytes", "host_max_chunk")
+PROVENANCE_HBM_KEYS = ("desc_arena_jobs", "desc_arena_stride",
+                       "host_n_embd", "host_n_vocab",
+                       "host_x_base", "host_l_base", "host_desc_ptr")
+REGION_BLOCK_KEYS = REQUIRED_HBM_KEYS + PROVENANCE_HBM_KEYS
+
+
+class NoRegionBlock(Exception):
+    """The manifest does not declare the arena, so there is nothing to read.
+
+    Raised, never defaulted.  A default here would be a second allocator with
+    a different address, which is the entire defect this file exists to end."""
+
+
+def manifest_arena(mani):
+    """THE AUTHORITY.  Read the arena out of the manifest's `hbm` block.
+
+    No arithmetic.  If the block is absent this raises `NoRegionBlock`; the
+    caller decides whether that is a refusal (every PRODUCER: yes) or a
+    reported gap (an AUDITOR over a pre-block set: yes, loudly)."""
+    hbm = (mani.get("hbm") or {}) if isinstance(mani, dict) else {}
+    missing = [k for k in REQUIRED_HBM_KEYS if k not in hbm]
+    if missing:
+        raise NoRegionBlock(
+            "the manifest's hbm block does not declare " + ", ".join(missing)
+            + ".  The descriptor arena is declared in the manifest and read "
+              "from it; nothing re-derives it.  Run "
+              "`python3 tools/hbm_map.py <manifest> --write-manifest-hbm` on a "
+              "set packed before the block existed, or repack.")
+    base = int(hbm["desc_arena_base"])
+    nbytes = int(hbm["desc_arena_bytes"])
+    return base, nbytes, int(hbm["host_max_chunk"])
+
+
+def desc_arena(n_jobs, base=None, policy="allocate-below-host",
+               host_floor=None, stride=None, strict=True):
+    """Allocator 2: the subsystem A descriptor arena.
 
     `policy`:
-      below-host   the first 4 KB-aligned block below `host_floor` (which is
-                   pl_derive_bases()'s x_base).  INTERIM -- see the module
-                   docstring; it is a derivation, but WHICH allocator owns the
-                   top of HBM is Oren's decision, not this file's.
+      allocate-below-host  the first 4 KB-aligned block below `host_floor`
+                   (which is pl_derive_bases()'s x_base).  THIS IS THE
+                   ALLOCATION RULE, and it runs at PACK time only -- see
+                   `derive_region_block()`.  A consumer never reaches it.
       top-down     `(hbm_top - need) & ~0xFFF`, the historic placement.  It
                    COLLIDES with the host blocks at the 9B shape and is kept
                    so the check can be shown going red.
 
-    An explicit `base` overrides the policy and is checked like any other."""
+    An explicit `base` overrides the policy and is checked like any other;
+    `policy="manifest"` is handled by the caller, which supplies that base."""
     if not n_jobs:
         return [], None
     stride = DESC_STRIDE if stride is None else stride
@@ -271,7 +345,7 @@ def desc_arena(n_jobs, base=None, policy="below-host", host_floor=None,
     if base is None:
         if policy == "top-down":
             base = align_down(HBM_TOP - stride * n_jobs, PAGE)
-        elif policy == "below-host":
+        elif policy in ("allocate-below-host", "below-host"):
             if host_floor is None:
                 # NO HOST BLOCKS MEANS NO FLOOR TO SIT UNDER.  A producer that
                 # is about to emit descriptors must not guess (strict=True, it
@@ -281,9 +355,9 @@ def desc_arena(n_jobs, base=None, policy="below-host", host_floor=None,
                 # that refuses to run is a tool nobody runs.
                 if strict:
                     raise SystemExit(
-                        "hbm_map: --policy below-host needs the host blocks, "
-                        "and they were not modelled.  Placing the arena "
-                        "without them is exactly the blindness this file "
+                        "hbm_map: --policy allocate-below-host needs the host "
+                        "blocks, and they were not modelled.  Placing the "
+                        "arena without them is exactly the blindness this file "
                         "exists to remove; pass --desc-base to say where it "
                         "goes instead.")
                 return [], None
@@ -302,6 +376,12 @@ class HbmMap:
         self.hbm = dict(hbm or {})
         self.notes = list(notes or [])
         self.hbm_top = hbm_top
+        # Faults that are not about a pair of addresses: a max_chunk that does
+        # not match the one the arena was placed under, and a reservation that
+        # is in the right place but too small for the program.  They are FAILs
+        # like any other and are appended by check().
+        self.extra_fails = []
+        self.declared_host = {}
 
     def by_kind(self, *kinds):
         return [r for r in self.regions if r.kind in kinds]
@@ -353,7 +433,24 @@ class HbmMap:
           * a declared `stack` that is not the stack the base is really in;
           * ANY pairwise overlap, across ALL allocators.  This is the one that
             was missing: the two producers each checked their own regions."""
-        fails = []
+        fails = list(self.extra_fails)
+        # THE MANIFEST'S OWN HOST BLOCKS, AGAINST THE MIRROR.  The block records
+        # what pl_derive_bases() produced at pack time; if the mirror here no
+        # longer reproduces them the manifest is describing a layout this tool
+        # can no longer build, and every base below it is suspect.
+        for key, name in (("host_x_base", "<host R_X staging>"),
+                          ("host_l_base", "<host logits writeback>"),
+                          ("host_desc_ptr", "<host D program>")):
+            if key not in self.declared_host:
+                continue
+            got = next((r.base for r in self.regions if r.name == name), None)
+            if got is None:
+                continue
+            if int(self.declared_host[key]) != int(got):
+                fails.append(
+                    f"the manifest declares hbm.{key} = "
+                    f"{h(int(self.declared_host[key]))} but this map places "
+                    f"{name} at {h(got)}")
         for r in self.regions:
             if r.base % PAGE:
                 fails.append(f"{r.name}: base {h(r.base)} is not 4 KB aligned "
@@ -444,20 +541,30 @@ class HbmMap:
 
 # ------------------------------------------------------------------- plan()
 
-def plan(mani, desc_jobs=311, desc_base=None, policy="below-host",
-         max_chunk=512, want_host_blocks=True, n_embd=None, n_vocab=None,
-         strict_arena=False):
+def plan(mani, desc_jobs=311, desc_base=None, policy="manifest",
+         max_chunk=None, want_host_blocks=True, n_embd=None, n_vocab=None,
+         strict_arena=False, _allow_chunk_mismatch=False):
     """THE ONE ENTRY POINT.  Build the whole map from a manifest.
 
     `mani` is a parsed manifest dict or a path to one.  Returns an `HbmMap`.
     Nothing here opens a payload file or a device.
 
+    `policy="manifest"` (the DEFAULT, and what every consumer uses) takes the
+    arena base and `max_chunk` straight out of the manifest's region block and
+    performs NO placement arithmetic at all.  The other policies exist for the
+    two callers that are allowed to allocate: `derive_region_block()` at pack
+    time, and the teeth.
+
+    `max_chunk=None` means "the manifest's `hbm.host_max_chunk`".  An explicit
+    value is honoured and, when the manifest also states one and they differ,
+    the disagreement is recorded as a FAIL rather than silently preferred:
+    the arena was placed under ONE cap and only that cap reproduces the map.
+
     ORDER MATTERS AND IS NOT ARBITRARY.  The host blocks are placed FIRST,
-    because `--policy below-host` puts the descriptor arena underneath them,
-    and because that is the order the shipping code already has: the host's
-    blocks come from the card's own CAPS at open time, and the arena is built
-    offline by a tool that can be told where to go.  Reversing it is a real
-    option and it is part of the decision that is Oren's."""
+    because the allocation rule puts the descriptor arena underneath them, and
+    because that is the order the shipping code already has: the host's blocks
+    come from the card's own CAPS at open time, and the arena is built offline
+    by a tool that can be told where to go."""
     if isinstance(mani, str):
         with open(mani) as f:
             mani = json.load(f)
@@ -465,6 +572,33 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="below-host",
     top = int(hbm.get("size", HBM_TOP))
     notes = []
     regions = manifest_regions(mani)
+    declared_chunk = hbm.get("host_max_chunk")
+
+    # THE CAP THE ARENA WAS PLACED UNDER.  Not a preference: a cap the map was
+    # not built for produces different host blocks and therefore a different
+    # answer to "is this disjoint".
+    chunk_fail = None
+    if max_chunk is None:
+        if declared_chunk is None:
+            max_chunk = 512
+            notes.append(
+                "no hbm.host_max_chunk in this manifest, so max_chunk 512 was "
+                "ASSUMED.  The host blocks below are a guess at what "
+                "pl_derive_bases() will do, not a reading of what was declared.")
+        else:
+            max_chunk = int(declared_chunk)
+    elif (declared_chunk is not None and not _allow_chunk_mismatch
+          and int(max_chunk) > int(declared_chunk)):
+        # ONE DIRECTION ONLY.  x_base = align_down(l_base - x_stride*max_chunk)
+        # decreases monotonically in max_chunk, so a SMALLER cap can only move
+        # x_base up, away from the arena: a gap, never an overlap.  A LARGER
+        # cap moves it down through a fixed arena, which is the hazard.
+        chunk_fail = (
+            "max_chunk %d was asked for, but the manifest pinned "
+            "hbm.host_max_chunk = %d and the arena was placed under THAT cap.  "
+            "A LARGER cap drags x_base DOWN through the arena and the map is "
+            "no longer the one that was checked."
+            % (int(max_chunk), int(declared_chunk)))
 
     host_floor = None
     if want_host_blocks:
@@ -491,16 +625,58 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="below-host",
             f"from CAPS, not a manifest field: a larger one moves x_base DOWN "
             f"and the arena with it.")
 
-    da, base = desc_arena(desc_jobs, desc_base, policy, host_floor,
-                          strict=strict_arena)
+    # ------------------------------------------------------------ the arena
+    #
+    # THE DEFAULT PATH DOES NO ARITHMETIC.  It reads.  `arena_bytes_declared`
+    # is kept so `check()` can compare the reservation against what the
+    # program actually needs -- a block that is in the right place but too
+    # SMALL is a real failure the address model can see, unlike a block that
+    # holds the wrong descriptors, which it never can.
+    arena_fail = None
+    block_fail = None
+    declared_bytes = None
+    if policy == "manifest" and desc_base is None:
+        try:
+            base, declared_bytes, _ = manifest_arena(mani)
+        except NoRegionBlock as e:
+            # A PRODUCER raises; an AUDITOR reports -- but reports it as a
+            # FAIL, not a note.  ADDRARENA left the absence of an arena as a
+            # printed warning on the C side and named that as the live hazard;
+            # the same hazard on this side would be a green map over a set
+            # whose descriptors nothing has placed.  A tool that refuses to
+            # RUN is a tool nobody runs, so the map is still built and still
+            # printed; what it is not is PASS.
+            if strict_arena:
+                raise SystemExit("hbm_map: " + str(e))
+            block_fail = "NO REGION BLOCK: " + str(e)
+            da, base = [], None
+        else:
+            da = [Region("<A descriptor arena>", base, declared_bytes, "desc",
+                         "manifest hbm.desc_arena_base", stack_of(base))]
+            need = align_up(DESC_STRIDE * desc_jobs, PAGE) if desc_jobs else 0
+            if need > declared_bytes:
+                arena_fail = (
+                    "<A descriptor arena>: the manifest reserves %d B but %d "
+                    "jobs at %d B/descriptor need %d B.  The reservation is in "
+                    "the right place and TOO SMALL, so the tail of the program "
+                    "would run past it into %s."
+                    % (declared_bytes, desc_jobs, DESC_STRIDE, need,
+                       "the host R_X staging"))
+    else:
+        da, base = desc_arena(desc_jobs, desc_base, policy, host_floor,
+                              strict=strict_arena)
     regions += da
     if desc_jobs and not da:
         notes.append(
-            "NO DESCRIPTOR ARENA IS IN THIS MAP.  The host blocks could not be "
-            "modelled, so 'below-host' has no floor to sit under.  Nothing "
-            "here has checked where gen_layer_program.py's descriptors go.")
+            "NO DESCRIPTOR ARENA IS IN THIS MAP.  Nothing here has checked "
+            "where gen_layer_program.py's descriptors go.")
     if da:
-        if desc_base is not None:
+        if policy == "manifest" and desc_base is None:
+            notes.append(
+                f"descriptor arena READ from the manifest at {h(base)}, "
+                f"{declared_bytes} B.  Nothing here placed it; "
+                f"tools/pack_model_fk33.py did, once, at pack time.")
+        elif desc_base is not None:
             notes.append(f"descriptor arena base given explicitly: {h(base)}")
         elif policy == "top-down":
             notes.append(
@@ -508,14 +684,124 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="below-host",
                 f"default {h(base)}.  This is the placement that collides.")
         else:
             notes.append(
-                f"descriptor arena placed by policy 'below-host' at {h(base)}: "
-                f"the first 4 KB block below the host's R_X staging.  "
-                f"INTERIM -- which allocator owns the top of HBM is Oren's "
-                f"decision, not this tool's.")
+                f"descriptor arena ALLOCATED by rule 'allocate-below-host' at "
+                f"{h(base)}: the first 4 KB block below the host's R_X "
+                f"staging.  This rule runs at PACK time; a consumer reads the "
+                f"answer out of the manifest instead.")
+
+    # THE TWO ARENAS NOTHING ALLOCATES WITHIN.  Reported, not modelled: a
+    # Region per KV slot would be ~490k regions at the 9B shape and the report
+    # would be unreadable.  What the manifest now declares is the SUB-STRUCTURE
+    # -- how many layers and at what stride -- which is the input a future
+    # per-slot check needs and which nothing wrote down before.
+    if "gdn_state_layers" in hbm:
+        notes.append(
+            "GDN state sub-structure DECLARED but not allocated within: %d "
+            "layers x %d B (%d used by the program).  Nothing places a slot "
+            "inside this extent, so nothing can check one."
+            % (hbm["gdn_state_layers"], hbm.get("gdn_state_bytes_per_layer", 0),
+               hbm.get("gdn_state_layers_used", -1)))
+    if "kv_layers" in hbm:
+        notes.append(
+            "KV sub-structure DECLARED but not allocated within: %d attention "
+            "layers x %d B per token (%d used).  Same limit."
+            % (hbm["kv_layers"], hbm.get("kv_bytes_per_layer_per_token", 0),
+               hbm.get("kv_layers_used", -1)))
 
     m = HbmMap(regions, hbm, notes, top)
+    m.extra_fails = [s for s in (block_fail, chunk_fail, arena_fail) if s]
+    # THE DECLARED HOST BLOCKS ARE A FACT ABOUT `host_max_chunk`, so they are
+    # only comparable when this map was built at that cap.  Comparing them at
+    # any other cap would report a disagreement that is simply the cap doing
+    # what a cap does, and a check that fires for the wrong reason is not
+    # measuring the thing it names.
+    if declared_chunk is None or int(declared_chunk) == int(max_chunk):
+        m.declared_host = {k: hbm[k] for k in
+                           ("host_x_base", "host_l_base", "host_desc_ptr")
+                           if k in hbm}
     m.carve_kv()
     return m
+
+
+# ------------------------------------------------- the ONE allocator, at pack time
+
+def derive_region_block(mani, desc_jobs, max_chunk=512, n_embd=None,
+                        n_vocab=None):
+    """THE ONLY PLACE IN THIS REPOSITORY THAT CHOOSES AN ARENA ADDRESS.
+
+    Called by `tools/pack_model_fk33.py` while it is writing the manifest, and
+    by `--write-manifest-hbm` for a set packed before the block existed.
+    Returns the dict that goes into the manifest's `hbm` object.
+
+    It REFUSES rather than returning a block it cannot stand behind: if the
+    resulting map has any overlap, no block is written, because a declared
+    address that collides is worse than an absent one -- absent is loud."""
+    if isinstance(mani, str):
+        with open(mani) as f:
+            mani = json.load(f)
+    if desc_jobs <= 0:
+        raise SystemExit("hbm_map: derive_region_block needs a positive job "
+                         "count; 0 would reserve nothing and mean 'no A'.")
+    lm = next((e for e in mani["files"] if e.get("tensor") == "output.weight"),
+              None)
+    if n_embd is None or n_vocab is None:
+        if lm is None:
+            raise SystemExit(
+                "hbm_map: no output.weight in this manifest, so the host "
+                "blocks cannot be modelled and the arena has no floor to sit "
+                "under.  Pass n_embd/n_vocab explicitly.")
+        n_embd = n_embd if n_embd is not None else int(lm["K"])
+        n_vocab = n_vocab if n_vocab is not None else int(lm["M"])
+    top = int(mani.get("hbm", {}).get("size", HBM_TOP))
+    _, raw = host_blocks(n_embd, n_vocab, max_chunk, top)
+    da, base = desc_arena(desc_jobs, None, "allocate-below-host",
+                          raw["x_base"], strict=True)
+    blk = {
+        "desc_arena_base": int(base),
+        "desc_arena_bytes": int(da[0].nbytes),
+        "desc_arena_jobs": int(desc_jobs),
+        "desc_arena_stride": int(DESC_STRIDE),
+        "host_max_chunk": int(max_chunk),
+        "host_n_embd": int(n_embd),
+        "host_n_vocab": int(n_vocab),
+        "host_x_base": int(raw["x_base"]),
+        "host_l_base": int(raw["l_base"]),
+        "host_desc_ptr": int(raw["desc_ptr"]),
+    }
+    # Stand behind it: build the whole map with the block installed and require
+    # it to be clean before handing it back.
+    trial = json.loads(json.dumps(mani))
+    trial.setdefault("hbm", {}).update(blk)
+    m = plan(trial, desc_jobs=desc_jobs, policy="manifest", strict_arena=True)
+    fails = m.check()
+    if fails:
+        raise SystemExit(
+            "hbm_map: REFUSING to declare a descriptor arena -- the map that "
+            "results has %d fault(s):\n" % len(fails)
+            + "\n".join("  " + s for s in fails))
+    return blk
+
+
+def write_region_block(path, blk):
+    """Install `blk` into an existing manifest.json, atomically, keeping a
+    .bak.  Additive: no existing key is removed and none but the region-block
+    keys is touched, so every reader that predates the block still parses."""
+    with open(path) as f:
+        mani = json.load(f)
+    if "hbm" not in mani:
+        raise SystemExit("hbm_map: %s has no top-level hbm object" % path)
+    before = {k: mani["hbm"].get(k) for k in REGION_BLOCK_KEYS}
+    mani["hbm"].update(blk)
+    bak = path + ".bak"
+    if not os.path.exists(bak):
+        with open(bak, "w") as f:
+            json.dump(json.load(open(path)), f, indent=1)
+    tmp = path + ".tmp-hbm-map"
+    with open(tmp, "w") as f:
+        json.dump(mani, f, indent=1)
+    os.replace(tmp, path)          # atomic: a concurrent reader sees one or the
+                                   # other whole file, never a torn one
+    return before
 
 
 # --------------------------------------------- the C, compiled and executed
@@ -576,13 +862,21 @@ int main(int argc, char **argv)
               4096ull);
     /* one page over the R_X staging block */
     emit_case("on_r_x", b, (unsigned long long)b.x_base, 4096ull);
-    /* 512-B aligned but not 4 KB, and clear of every other block.  MUST PASS:
-     * pl_check_bases demands 512-B alignment of the arena, not 4 KB.  The
-     * first attempt at this case put the base 512 B HIGHER and so ran 512 B
-     * into R_X; it was refused for OVERLAP and read as an alignment failure.
-     * Kept as a case rather than deleted -- it is the resolution floor of the
-     * alignment rule, and a case that cannot separate two reasons for a
-     * refusal is not measuring the one it names. */
+    /* 512-B aligned but not 4 KB, and clear of every other block.  This case
+     * WANTED 0 until 2026-08-29: pl_check_bases() demanded 512-B alignment of
+     * the arena while hbm_map.check() demanded 4 KB of every region, so a
+     * 512-aligned base was accepted by the C and rejected by the Python.
+     * TRACK ADDRARENA recorded that divergence under its own name rather than
+     * harmonising it, because 512 is the descriptor stride and 4 KB is the
+     * allocation granularity and both were defensible while nobody produced
+     * such an address.  With the manifest as the authority something does now
+     * produce the address -- derive_region_block() -- and it produces a
+     * page-aligned one, so the looser rule bought nothing and cost a hole
+     * where the two checkers disagreed.  The C is now 4 KB too and this case
+     * WANTS A REFUSAL.  The first attempt at it put the base 512 B HIGHER and
+     * so ran 512 B into R_X; it was refused for OVERLAP and read as an
+     * alignment failure, which is why the -4096 is there: a case that cannot
+     * separate two reasons for a refusal is not measuring the one it names. */
     emit_case("aligned_512_not_4k", b,
               (unsigned long long)b.x_base - 159744ull - 4096ull + 512ull,
               159744ull);
@@ -667,12 +961,18 @@ def check_against_c(n_embd, n_vocab, max_chunk, hbm_top=HBM_TOP, cc=None,
     # name and kept: it is the resolution floor of the check, and this project
     # has repeatedly found that the non-biting rows are the informative ones.
     want_rc = {
-        "none":                 0,   # not declared -> pl_open warns instead
+        # MANDATORY AS OF 2026-08-29.  This row used to want 0 -- an undeclared
+        # arena PASSED, protected only by a printed warning, and ADDRARENA
+        # flagged it as the live hazard.  With the manifest as the authority
+        # there is no such thing as "no arena declared": either the manifest
+        # states it or the manifest is refused, so a layout with arena_span 0
+        # is incomplete and pl_check_bases() now says so.
+        "none":                 "nonzero",
         "historic_top_down":    "nonzero",
         "on_d_program":         "nonzero",
         "on_logits_tail":       "nonzero",
         "on_r_x":               "nonzero",
-        "aligned_512_not_4k":   0,   # pl_check_bases demands 512, not 4096
+        "aligned_512_not_4k":   "nonzero",   # 4 KB now, harmonised with the map
         "misaligned_64":        "nonzero",
         "past_top":             "nonzero",
         "straddles_stack_line": "nonzero",
@@ -700,8 +1000,19 @@ def check_against_c(n_embd, n_vocab, max_chunk, hbm_top=HBM_TOP, cc=None,
 # capacity charge rather than a collision, and a row that pins that decision
 # down is the only thing separating "by design" from "cannot see it".
 
-def _teeth_cases(mani, max_chunk=512, desc_jobs=311):
-    """Yield (name, want_red, builder) where builder returns an HbmMap."""
+def _teeth_cases(mani, max_chunk=None, desc_jobs=311):
+    """Yield (name, want_red, builder) where builder returns an HbmMap.
+
+    The manifest handed in may or may not carry a region block.  Every row
+    below runs against a copy that DOES, installed by `derive_region_block()`,
+    so the rows measure the decided mechanism rather than the migration state
+    of whichever file the caller pointed at.  The rows that measure the ABSENCE
+    of a block install nothing."""
+    raw = json.loads(json.dumps(mani))
+    blocked = json.loads(json.dumps(mani))
+    blocked.setdefault("hbm", {}).update(
+        derive_region_block(raw, desc_jobs, max_chunk or 512))
+    mani = blocked
 
     def base_map(**kw):
         kw.setdefault("desc_jobs", desc_jobs)
@@ -716,6 +1027,60 @@ def _teeth_cases(mani, max_chunk=512, desc_jobs=311):
         return plan(m2, **kw)
 
     yield ("control_clean", False, lambda: base_map())
+
+    # ---------------------------------------------------------------- the
+    # mechanism itself.  These four rows are what item 3 of the ARENA-MANIFEST
+    # brief asked for: the mandatory block, shown failing.
+
+    def _drop_block(m2):
+        for k in REGION_BLOCK_KEYS:
+            m2["hbm"].pop(k, None)
+    yield ("no_region_block_at_all", True,
+           lambda: mutate(_drop_block, strict_arena=False))
+
+    def _drop_one_key(m2):
+        m2["hbm"].pop("desc_arena_bytes")
+    yield ("region_block_missing_one_key", True,
+           lambda: mutate(_drop_one_key, strict_arena=False))
+
+    def _block_overlaps_logits(m2):
+        # The historic colliding address, but DECLARED.  A block is not
+        # trusted because it is declared; it is checked like any other region.
+        m2["hbm"]["desc_arena_base"] = align_down(
+            HBM_TOP - DESC_STRIDE * desc_jobs, PAGE)
+    yield ("declared_block_on_the_logits_row", True,
+           lambda: mutate(_block_overlaps_logits))
+
+    def _block_too_small(m2):
+        m2["hbm"]["desc_arena_bytes"] = PAGE
+    yield ("declared_block_too_small_for_the_program", True,
+           lambda: mutate(_block_too_small))
+
+    def _block_unaligned(m2):
+        m2["hbm"]["desc_arena_base"] = int(m2["hbm"]["desc_arena_base"]) + 64
+    yield ("declared_block_unaligned", True,
+           lambda: mutate(_block_unaligned))
+
+    def _host_blocks_disagree(m2):
+        m2["hbm"]["host_x_base"] = int(m2["hbm"]["host_x_base"]) + PAGE
+    yield ("declared_host_x_base_disagrees_with_the_mirror", True,
+           lambda: mutate(_host_blocks_disagree))
+
+    # THE ROW THAT WAS RED AND UNCLOSEABLE AT ADDRARENA.  max_chunk comes from
+    # CAPS and nothing constrained it; now the manifest pins it, so opening at
+    # a different cap is a stated disagreement rather than a moved map.
+    yield ("max_chunk_larger_than_the_one_the_arena_was_placed_under", True,
+           lambda: base_map(max_chunk=4096))
+
+    # MUST STAY GREEN, and it is a derivation rather than a leniency:
+    # x_base = align_down(l_base - x_stride*max_chunk) decreases monotonically
+    # in max_chunk, so a SMALLER cap moves x_base UP, away from the arena.  The
+    # result is a gap between the arena and R_X -- wasted, never overwritten.
+    # Refusing it would break every caller that opens a small simulated card
+    # against a real manifest, which server/tests/embed_e2e.c does deliberately
+    # at max_chunk 8.
+    yield ("max_chunk_smaller_than_the_pinned_one", False,
+           lambda: base_map(max_chunk=8))
 
     yield ("arena_historic_top_down", True,
            lambda: base_map(policy="top-down"))
@@ -732,14 +1097,19 @@ def _teeth_cases(mani, max_chunk=512, desc_jobs=311):
     yield ("arena_past_top", True,
            lambda: base_map(desc_base=HBM_TOP - 4096))
 
-    # A parameter, not an address.  max_chunk comes from the card's CAPS at
-    # open time and nothing in the manifest constrains it; a bigger one drags
-    # x_base down THROUGH a fixed arena.  This is the case that shows the map
-    # has to be recomputed per shape and per cap, not stored as constants.
-    yield ("max_chunk_grown_over_a_fixed_arena", True,
+    # ADDRARENA's `max_chunk_grown_over_a_fixed_arena` lived here.  It is
+    # SUPERSEDED, not deleted: it drove an UNDECLARED max_chunk over a fixed
+    # arena, and with the cap now pinned in the manifest that mutation goes red
+    # for TWO reasons at once -- the geometric overlap it was written for and
+    # the declared-cap disagreement.  A row that cannot separate two reasons
+    # for a refusal is not measuring the one it names (ADDRARENA section 7), so
+    # it was replaced by `max_chunk_not_the_one_the_arena_was_placed_under`
+    # above, which isolates the declaration, and by this row, which isolates
+    # the geometry by keeping the cap consistent and moving the arena instead.
+    yield ("host_blocks_grown_down_through_a_fixed_arena", True,
            lambda: base_map(desc_base=align_down(
                HBM_TOP - 5_226_496 - align_up(DESC_STRIDE * desc_jobs, PAGE),
-               PAGE), max_chunk=4096))
+               PAGE), max_chunk=4096, _allow_chunk_mismatch=True))
 
     def _overlap_two_tensors(m2):
         f = [e for e in m2["files"] if e["kind"] == "mv4i"]
@@ -812,10 +1182,11 @@ def run_teeth(mani, max_chunk=512, desc_jobs=311, verbose=True):
 # ----------------------------------------------- manifest keys, for option (a)
 
 def manifest_hbm_patch(m):
-    """The two keys a manifest would carry if Oren picks the manifest-region
-    mechanism.  Printed, never written: `tools/pack_model_fk33.py` is not this
-    track's file, and a tool that silently edits a manifest is a fourth
-    allocator."""
+    """The region block as this map sees it, for `--emit-manifest-hbm`.
+
+    Superseded as a PRODUCER by `derive_region_block()`, which is what the
+    packer and `--write-manifest-hbm` call; this one just reports whatever map
+    is in hand, including one built by a policy nobody should ship."""
     a = [r for r in m.regions if r.kind == "desc"]
     if not a:
         return None
@@ -836,14 +1207,19 @@ def main(argv=None):
                          "arrangement")
     ap.add_argument("--desc-base", type=lambda x: int(x, 0), default=None,
                     help="place the arena here instead of by policy")
-    ap.add_argument("--policy", choices=("below-host", "top-down"),
-                    default="below-host",
-                    help="below-host: the first 4 KB block under the host's "
-                         "R_X staging (INTERIM, see the docstring).  "
+    ap.add_argument("--policy",
+                    choices=("manifest", "allocate-below-host", "top-down"),
+                    default="manifest",
+                    help="manifest: READ hbm.desc_arena_base, the decided "
+                         "mechanism, no arithmetic.  allocate-below-host: the "
+                         "allocation rule, which is what pack time runs.  "
                          "top-down: gen_layer_program.py's historic default, "
-                         "which COLLIDES")
-    ap.add_argument("--max-chunk", type=int, default=512,
-                    help="pl_open()'s max_chunk, which sets the R_X span")
+                         "which COLLIDES and is kept only to show the refusal")
+    ap.add_argument("--max-chunk", type=int, default=None,
+                    help="pl_open()'s max_chunk, which sets the R_X span.  "
+                         "Default: hbm.host_max_chunk out of the manifest.  "
+                         "Passing one that disagrees with the pinned value is "
+                         "a FAIL, not a preference")
     ap.add_argument("--no-host-blocks", action="store_true")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--markdown", action="store_true")
@@ -856,12 +1232,29 @@ def main(argv=None):
                          "Rows that DO NOT bite are printed under their own "
                          "names, because they are the resolution floor")
     ap.add_argument("--emit-manifest-hbm", action="store_true",
-                    help="print the hbm.desc_arena_* keys a manifest would "
-                         "carry under the manifest-region mechanism")
+                    help="print the region block this map implies")
+    ap.add_argument("--write-manifest-hbm", action="store_true",
+                    help="DERIVE the region block with the allocation rule and "
+                         "WRITE it into this manifest, atomically, keeping a "
+                         ".bak.  This is the migration for a set packed before "
+                         "the block existed; new packs get it from "
+                         "tools/pack_model_fk33.py")
     a = ap.parse_args(argv)
 
     with open(a.manifest) as f:
         mani = json.load(f)
+
+    if a.write_manifest_hbm:
+        blk = derive_region_block(mani, a.desc_jobs,
+                                  512 if a.max_chunk is None else a.max_chunk)
+        before = write_region_block(a.manifest, blk)
+        had = {k: v for k, v in before.items() if v is not None}
+        print("wrote the region block into %s" % a.manifest)
+        print("  before: %s" % (json.dumps(had) if had
+                                else "no region block at all"))
+        print("  after:  %s" % json.dumps(blk, indent=1))
+        print("  backup: %s" % (a.manifest + ".bak"))
+        return 0
 
     if a.self_test:
         bad, _ = run_teeth(mani, a.max_chunk, a.desc_jobs)
@@ -893,7 +1286,9 @@ def main(argv=None):
         if lm is None:
             print("SKIP  no output.weight; cannot pick a shape for the C check")
         else:
-            ok, msgs = check_against_c(int(lm["K"]), int(lm["M"]), a.max_chunk,
+            chunk = (a.max_chunk if a.max_chunk is not None
+                     else int(mani.get("hbm", {}).get("host_max_chunk", 512)))
+            ok, msgs = check_against_c(int(lm["K"]), int(lm["M"]), chunk,
                                        int(mani.get("hbm", {}).get("size",
                                                                    HBM_TOP)),
                                        verbose=True)

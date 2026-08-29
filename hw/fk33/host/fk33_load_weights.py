@@ -267,7 +267,7 @@ def select(mani, only):
 
 
 def preflight(mani, ents, root, need_files, desc_jobs=311,
-              max_chunk=512):
+              max_chunk=None):
     """Everything that can be wrong BEFORE a byte moves.  A load is minutes; a
     refusal is a second."""
     bad = []
@@ -311,6 +311,17 @@ def preflight(mani, ents, root, need_files, desc_jobs=311,
                    "against this image.  That is the check the 2026-08-29 "
                    "collision needed." % _HM_WHY)
     else:
+        # THE REGION BLOCK IS REQUIRED (Oren, 2026-08-29).  A manifest that
+        # does not declare hbm.desc_arena_base / _bytes / host_max_chunk is a
+        # manifest whose map cannot be fully checked, and a load that places
+        # perfect weights under an unchecked top is still a wrong token.  This
+        # is the same refusal server/fk33_manifest.c makes, on this side of the
+        # language boundary, so a set cannot be loadable by one and refused by
+        # the other.
+        try:
+            HM.manifest_arena(mani)
+        except HM.NoRegionBlock as e:
+            bad.append("REGION BLOCK: %s" % e)
         try:
             m = HM.plan(mani, desc_jobs=desc_jobs, max_chunk=max_chunk)
             for msg in m.check():
@@ -534,10 +545,20 @@ def cmd_selfcheck(a):
                           blake2b_128=hashlib.blake2b(
                               blob, digest_size=16).hexdigest()))
         base += (len(blob) + ALIGN - 1) & ~(ALIGN - 1)
+    # A REGION BLOCK, because preflight requires one.  These synthetic sets
+    # carry no output.weight, so hbm_map cannot model the host blocks and
+    # cannot run the allocation rule; the block is therefore written out by
+    # hand, well clear of the four tiny objects, and its job here is to be
+    # PRESENT.  What it is NOT is a second allocator: nothing derives a
+    # shipping address from this, and `no_region_block` below removes it to
+    # show the requirement biting.
     mani = dict(format="selfcheck", geometry=dict(
         rows_if=rows_if, axi_dw=axi_dw, block=BLOCK,
         nports_w=_nports_w(rows_if, axi_dw),
-        n_scale_sub=_n_scale_sub(rows_if, axi_dw)), files=files)
+        n_scale_sub=_n_scale_sub(rows_if, axi_dw)),
+        hbm=dict(desc_arena_base=0x1_F000_0000, desc_arena_bytes=0x28000,
+                 host_max_chunk=512),
+        files=files)
     mpath = os.path.join(tmp, "manifest.json")
     with open(mpath, "w") as f:
         json.dump(mani, f)

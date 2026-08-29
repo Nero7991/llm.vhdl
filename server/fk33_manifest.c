@@ -58,7 +58,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     char *buf = NULL;
     long n = 0, i, hbm_depth = -1;
     int depth = 0, rc = -1, k;
-    field f[12];      /* [10] and [11] are OPTIONAL; see the header */
+    field f[13];      /* ALL required as of 2026-08-29; see the header */
 
     if (!path || !m) return -1;
     memset(m, 0, sizeof *m);
@@ -74,12 +74,16 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     f[7].name = "kv_base";            f[7].slot = &m->kv_base;
     f[8].name = "kv_bytes_per_token"; f[8].slot = &m->kv_bytes_per_token;
     f[9].name = "max_context_tokens"; f[9].slot = &m->max_context_tokens;
-    /* OPTIONAL from here on -- a set packed before the descriptor arena
-     * existed is still a valid set.  See the header for why these two are
-     * not required and why absence is reported rather than defaulted. */
+    /* THE REGION BLOCK.  Required, on the same terms as everything above it:
+     * the manifest is the authority for where the subsystem A descriptor arena
+     * lives and for the max_chunk the host blocks were placed under, and an
+     * authority that may omit the region it authorises is not one.  These
+     * three were optional for one day and the optionality was the defect --
+     * see the header. */
     f[10].name = "desc_arena_base";   f[10].slot = &m->desc_arena_base;
     f[11].name = "desc_arena_bytes";  f[11].slot = &m->desc_arena_bytes;
-    for (k = 0; k < 12; k++) f[k].seen = 0;
+    f[12].name = "host_max_chunk";    f[12].slot = &m->host_max_chunk;
+    for (k = 0; k < 13; k++) f[k].seen = 0;
 
     fp = fopen(path, "rb");
     if (!fp) { fprintf(stderr, "fk33_manifest: %s: %s\n", path, strerror(errno));
@@ -116,7 +120,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
                 continue;
             }
             if (depth != hbm_depth) continue;   /* nested: not our key */
-            for (k = 0; k < 12; k++) {
+            for (k = 0; k < 13; k++) {
                 size_t len = strlen(f[k].name);
                 if ((size_t)(q1 - q0 - 1) != len) continue;
                 if (strncmp(buf + q0 + 1, f[k].name, len)) continue;
@@ -141,23 +145,21 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     free(buf);
 
     if (hbm_depth < 0) return fail(path, "no top-level \"hbm\" object");
-    for (k = 0; k < 10; k++) {
+    for (k = 0; k < 13; k++) {
         if (f[k].seen == 1) continue;
         fprintf(stderr, "fk33_manifest: %s: hbm.%s appears %d times, want "
                 "exactly 1.  A missing key would read as zero, and a zero here "
                 "reads as \"no constraint\".\n", path, f[k].name, f[k].seen);
+        if (k >= 10)
+            fprintf(stderr,
+                "  hbm.desc_arena_base / hbm.desc_arena_bytes / hbm.host_max_chunk\n"
+                "  are the region block.  They are where the subsystem A descriptor\n"
+                "  arena is DECLARED; no consumer re-derives it.  A set packed before\n"
+                "  the block existed is migrated in place with\n"
+                "    python3 tools/hbm_map.py %s --write-manifest-hbm\n",
+                path);
         return -1;
     }
-    for (k = 10; k < 12; k++) {
-        if (f[k].seen <= 1) continue;
-        fprintf(stderr, "fk33_manifest: %s: hbm.%s appears %d times, want 0 "
-                "or 1.\n", path, f[k].name, f[k].seen);
-        return -1;
-    }
-    if ((f[10].seen != 0) != (f[11].seen != 0))
-        return fail(path, "hbm.desc_arena_base and hbm.desc_arena_bytes must "
-                          "be given together or not at all; one alone is a "
-                          "region with no length or a length with no place");
 
     /* Structural sanity, so a manifest that parses but cannot be true is
      * refused here rather than producing a base that looks derived. */
@@ -169,6 +171,23 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
         return fail(path, "gdn_state_base is below weights_end");
     if (m->kv_base < m->gdn_state_base + m->gdn_state_bytes)
         return fail(path, "kv_base is below the end of the GDN state");
+    /* The region block, checked as a region rather than accepted as a pair of
+     * integers.  pl_check_bases() checks it again against the host blocks; this
+     * is the half that can be checked from the file alone, so a manifest that
+     * cannot be true is refused before anything derives an address from it. */
+    if (m->desc_arena_bytes == 0)
+        return fail(path, "hbm.desc_arena_bytes is 0; a declared arena with no "
+                          "length is not a declaration");
+    if (m->desc_arena_base % 4096ull)
+        return fail(path, "hbm.desc_arena_base is not 4 KB aligned");
+    if (m->desc_arena_base + m->desc_arena_bytes > m->size)
+        return fail(path, "the declared descriptor arena runs past hbm.size");
+    if (m->desc_arena_base < m->kv_base)
+        return fail(path, "the declared descriptor arena starts below kv_base, "
+                          "i.e. inside bytes the card already owns");
+    if (m->host_max_chunk == 0)
+        return fail(path, "hbm.host_max_chunk is 0; the host blocks cannot have "
+                          "been placed under a zero chunk cap");
 
     m->reserved_end = m->weights_end;
     if (m->gdn_state_base + m->gdn_state_bytes > m->reserved_end)
@@ -184,7 +203,8 @@ const char *fk33_manifest_describe(const fk33_manifest *m, char *buf, size_t n)
     if (!m || !buf) return "(none)";
     snprintf(buf, n,
              "manifest %s: hbm %llu B, weights_end 0x%llX, gdn 0x%llX+%llu, "
-             "kv_base 0x%llX, %llu B/token, max_ctx %llu, reserved_end 0x%llX",
+             "kv_base 0x%llX, %llu B/token, max_ctx %llu, reserved_end 0x%llX, "
+             "A arena 0x%llX+%llu, host_max_chunk %llu",
              m->path, (unsigned long long)m->size,
              (unsigned long long)m->weights_end,
              (unsigned long long)m->gdn_state_base,
@@ -192,6 +212,9 @@ const char *fk33_manifest_describe(const fk33_manifest *m, char *buf, size_t n)
              (unsigned long long)m->kv_base,
              (unsigned long long)m->kv_bytes_per_token,
              (unsigned long long)m->max_context_tokens,
-             (unsigned long long)m->reserved_end);
+             (unsigned long long)m->reserved_end,
+             (unsigned long long)m->desc_arena_base,
+             (unsigned long long)m->desc_arena_bytes,
+             (unsigned long long)m->host_max_chunk);
     return buf;
 }

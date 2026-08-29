@@ -729,6 +729,14 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
 def place_desc_arena(a, mani, all_steps, sel):
     """Where the subsystem A descriptors go, DECIDED BY `tools/hbm_map.py`.
 
+    THE DEFAULT PATH DOES NO ARITHMETIC AT ALL.  It reads
+    `hbm.desc_arena_base` out of the manifest -- Oren's 2026-08-29 decision:
+    the region block in the manifest is the authority, one file states every
+    base, and neither producer invents a number.  `hbm_map` still builds the
+    whole map and still refuses on any overlap, so a DECLARED address is
+    checked exactly as hard as a computed one was; what is gone is the
+    possibility of this file and `pl_derive_bases()` arriving at two answers.
+
     THIS USED TO BE FOUR LINES OF LOCAL ARITHMETIC AND IT PRODUCED A SILENT
     WRONG TOKEN.  It read:
 
@@ -769,9 +777,10 @@ def place_desc_arena(a, mani, all_steps, sel):
 
     n_full = max(1, sum(1 for st in all_steps if st.opcode == OP_A_JOB))
     n_sel = sum(1 for st in sel if st.opcode == OP_A_JOB)
-    # strict_arena=True: a PRODUCER may not guess.  If the host blocks cannot
-    # be modelled there is no floor for 'below-host' to sit under, and emitting
-    # descriptors at an unchecked address is the defect, not a fallback.
+    # strict_arena=True: a PRODUCER may not guess.  Under the decided mechanism
+    # that means a manifest with no region block is a REFUSAL here, not a
+    # re-derivation -- if this file could compute the address itself, two
+    # producers would be free to disagree again, which is the defect.
     m = HM.plan(mani, desc_jobs=n_full, desc_base=a.desc_base,
                 policy=a.desc_policy, max_chunk=a.max_chunk,
                 strict_arena=True)
@@ -786,10 +795,10 @@ def place_desc_arena(a, mani, all_steps, sel):
         raise SystemExit("gen_layer_program: hbm_map placed no arena")
     if a.print:
         print("A descriptor arena %s .. %s (%d B, %d jobs in the full token "
-              "program, %d selected here); checked disjoint against %d regions "
-              "from %d allocators"
+              "program, %d selected here); READ FROM %s; checked disjoint "
+              "against %d regions from %d allocators"
               % (HM.h(arena[0].base), HM.h(arena[0].end), arena[0].nbytes,
-                 n_full, n_sel, len(m.regions),
+                 n_full, n_sel, arena[0].owner, len(m.regions),
                  len({r.owner for r in m.regions})))
     return arena[0].base
 
@@ -931,18 +940,22 @@ def main(argv=None):
                          "in the manifest reserves descriptor space, so this "
                          "is CHECKED by tools/hbm_map.py against the host's "
                          "blocks and the weight image and REFUSED on overlap")
-    ap.add_argument("--desc-policy", choices=("below-host", "top-down"),
-                    default="below-host",
-                    help="how tools/hbm_map.py places the arena when "
-                         "--desc-base is not given.  'top-down' is the "
-                         "HISTORIC default of this file and it COLLIDES with "
-                         "pl_derive_bases(); it is kept only so the refusal "
-                         "can be demonstrated")
-    ap.add_argument("--max-chunk", type=int, default=512,
+    ap.add_argument("--desc-policy",
+                    choices=("manifest", "allocate-below-host", "top-down"),
+                    default="manifest",
+                    help="'manifest' READS hbm.desc_arena_base out of the "
+                         "packed set, which is the decided mechanism and does "
+                         "no arithmetic.  'allocate-below-host' re-runs the "
+                         "allocation rule and 'top-down' reproduces this "
+                         "file's HISTORIC colliding default; both exist only "
+                         "so the refusals can be demonstrated and neither "
+                         "should be used to emit a program")
+    ap.add_argument("--max-chunk", type=int, default=None,
                     help="pl_open()'s max_chunk.  It sets the host R_X span, "
                          "which is what the arena is placed below, so it "
-                         "MOVES the arena.  Not a manifest field: it comes "
-                         "from the card's CAPS at open time")
+                         "MOVES the arena.  Default: hbm.host_max_chunk out of "
+                         "the manifest, which PINS the cap the arena was "
+                         "placed under; passing one that disagrees is a FAIL")
     ap.add_argument("--nsub-w", type=int, default=None,
                     help="D header nsub_w.  Default: the manifest geometry's "
                          "nports_w (24 on the FK33).  The VHDL generators "
