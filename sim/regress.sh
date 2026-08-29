@@ -384,7 +384,43 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=99   # 2026-08-29, TRACK SEAMGATE, and only THREE of the +5 are
+BASELINE_PASS=101  # +2 sim/tb_realshape_9b and sim/tb_stmem_equiv, 2026-08-29.
+                   #    TRACK REALFIX.  The first row in this script that runs
+                   #    at the REAL Qwen3.5-9B shape, and the oracle for the one
+                   #    modelling change that made that possible.
+                   #
+                   #    tb_realshape_9b elaborates `llama_top` with NO GENERIC
+                   #    MAP AT ALL.  That is not a shortcut, it is the point:
+                   #    `mk_shape(MODEL, NCARDS)` occurs exactly ONCE in the
+                   #    whole VHDL tree, as that file's own SHAPE default, so
+                   #    the configuration nothing had ever elaborated was the
+                   #    top level's own -- the one a synthesis run gets if
+                   #    nobody overrides anything.  It needed ~46 GB and died
+                   #    with STORAGE_ERROR; it now costs 2.2 GB and 2 s.  Do
+                   #    not add a generic to that bench.  ELABORATING IS NOT
+                   #    COMPUTING and the bench says so in its own PASS line:
+                   #    it proves every generic, array bound, index expression
+                   #    and integer range is legal at hidden 4096 / ffn 12288,
+                   #    and checks no value.  The ten guard rows that must
+                   #    make the elaborator REFUSE cannot be a testbench -- a
+                   #    refused elaboration takes the bench with it -- so they
+                   #    live in sim/realshape_gate.sh, run by hand.
+                   #
+                   #    tb_stmem_equiv is the R2 oracle.  Subsystem B's state
+                   #    store moved from an architecture SIGNAL to a process
+                   #    VARIABLE, and the only thing that conversion can change
+                   #    is read-during-write at one address on one edge, which
+                   #    is decided by STATEMENT ORDER.  The bench runs the
+                   #    signal form, the variable read-first form and the
+                   #    variable WRITE-FIRST form on one stimulus stream and
+                   #    requires read-first to match on every cycle AND
+                   #    write-first to differ on at least one: 0 and 2488 of
+                   #    20064.  The tb_llama_top family cannot do this job --
+                   #    MEASURED, all sixteen of its landmarks are identical
+                   #    with the WRONG ordering in place, because b_tk0 is
+                   #    hardwired '1' and gdn_recur_pipe masks the state read.
+                   #    docs/debugging/2026-08-29_realfix-9b-shape.md.
+                   # 2026-08-29, TRACK SEAMGATE, and only THREE of the +5 are
                    #    this track's.  MEASURED on a full unfiltered both-suite
                    #    run at a802780: OVERALL PASS 99, FAIL 0.  The floor said
                    #    94 and the tree was already at 96 before these rows
