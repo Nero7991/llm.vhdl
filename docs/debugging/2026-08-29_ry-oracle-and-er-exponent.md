@@ -633,3 +633,44 @@ cheap and general: apply the candidate fix and re-run the mutant. That step is
 worth making routine, because "the harness now kills X" and "the harness kills X
 on a correct design" are different claims and only the second is the one anyone
 wants.
+
+---
+
+## 11. Appended: C1's magnitude at the real shape is 4 to 5 bits, not one
+
+Section 7 listed "the MAGNITUDE of C1 at the real shape" as NOT verified, on the
+grounds that the only measurement available was `v_ref` moving 0 to -1 across
+two attention layers in a toy. A better-anchored number is available from the 9B
+reference and it is much larger.
+
+MEASURED, `/mnt/storage/ref9b/ref_bfp.r9bs`, the exponent of `R_VIN` at each of
+the **8** attention layers (blocks 3, 7, 11, 15, 19, 23, 27, 31 -- confirmed by
+enumerating which blocks emit `R_QG`):
+
+```
+  tok 0: L3:12 L7:10 L11:9  L15:9  L19:9  L23:9  L27:8 L31:9    min=8 max=12 spread=4
+  tok 1: L3:13 L7:13 L11:12 L15:12 L19:12 L23:11 L27:8 L31:10   min=8 max=13 spread=5
+  tok 2: L3:13 L7:12 L11:12 L15:12 L19:11 L23:11 L27:8 L31:10   min=8 max=13 spread=5
+  tok 3: L3:12 L7:12 L11:12 L15:12 L19:11 L23:11 L27:8 L31:10   min=8 max=12 spread=4
+  tok 4: L3:13 L7:13 L11:12 L15:12 L19:12 L23:11 L27:8 L31:10   min=8 max=13 spread=5
+```
+
+**DERIVED.** A shared fold collapses all eight layers onto the global minimum,
+which is layer 27's at exponent 8 at every token. Layer 3 sits at 12 or 13. Site
+3's alignment is `v_aligned = v_mant asr (e_v[b] - v_ref)`, so the shallow
+attention layers would run with a `v_ref` **4 to 5 bits below their own**, and
+that is 4 to 5 extra bits of right shift on every V block they read -- of 8, at
+`CM_W = 8`.
+
+**The caveat, stated rather than buried.** `v_ref` is the minimum over
+`attn_kv_quant`'s per-KV-BLOCK exponents, not over `R_VIN`'s vector exponent, so
+the numbers above are a PROXY for the quantity C1 actually collapses. They fix
+the order of magnitude and the sign; they are not the fold itself. The toy's one
+bit was measured at two layers with a synthetic stimulus, and it is the number
+that should be discarded as unrepresentative, not this one.
+
+This moves C1 from "a precision regression of unmeasured size" to "a plausible
+loss of half the V mantissa at the shallow attention layers", which is the
+difference between a cleanup and a priority. It is still not a proof: no GHDL
+configuration in this repository runs eight attention layers, and the
+`--attn-fold shared` model would have to be driven at that shape to settle it.
