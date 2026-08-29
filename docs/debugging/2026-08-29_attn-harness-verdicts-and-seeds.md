@@ -527,6 +527,36 @@ No RTL and no testbench was changed. `sim/regress.sh` was not changed.
 
 ---
 
-## 9. Corrections
+## 9. The gate, full and unfiltered
+
+Run at `ec1ec41` with every harness and generator change in place, no `--only`,
+no `--quick`:
+
+```
+ suite sim   PASS 62   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 88   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 88 passing, matches the recorded floor of 88
+ REGRESSION: PASS
+```
+
+That is the LAST `OVERALL` line in the log, and `BASELINE_PASS` was 88 at the
+moment of the run. `sim/regress.sh` was not edited by this track; the floor was
+raised to 88 earlier the same day by the `tb_llama_top_normw` track.
+
+The gate exercises the sixteen patched generators directly: `tb_vector_args`
+regenerates `attn_emit_vec.txt`, `attn_gate_vec.txt`, `attn_recip_vec.txt`,
+`attn_softmax_vec.txt`, `attn_twiddle_vec.txt`, `attn_kv_quant_vec.txt`,
+`attn_score_q12_vec.txt` and `gdn_emit_chain_vec.txt` on every run, and no row
+passes a seed, so all eight came out at the committed default.
+
+**Caveat on this number: the box was NOT quiet.** Three `tb_llama_top` runs
+belonging to another track were in flight during it (`ps` showed them at 3 min
+elapsed). Nothing failed, so the contention did not matter here, but a FAIL in
+this log would have had to be re-run on a quiet box before being believed.
+
+---
+
+## 10. Corrections
 
 None yet. Append dated CORRECTION sections here rather than editing the above.
