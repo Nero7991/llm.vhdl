@@ -321,7 +321,7 @@ int qwen35_chat_render(const qwen35_chat_msg *msgs, int n,
 int qwen35_chat_tokenize(const qwen35_tok *tk,
                          const qwen35_chat_msg *msgs, int n,
                          int add_generation_prompt, int enable_thinking,
-                         int *ids, int max)
+                         int *ids, int max, int *needed)
 {
     char *txt;
     int   need = 0, got, rc;
@@ -341,5 +341,8 @@ int qwen35_chat_tokenize(const qwen35_tok *tk,
      * ordinary text and every turn boundary is wrong. */
     rc = qwen35_tok_encode(tk, txt, (size_t)got, ids, max, 1);
     free(txt);
+    if (rc == QWEN35_TOK_ERR) return QWEN35_CHAT_E_OOM;
+    if (rc < 0) { if (needed) *needed = -rc; return QWEN35_CHAT_E_SHORT; }
+    if (needed) *needed = rc;
     return rc;
 }

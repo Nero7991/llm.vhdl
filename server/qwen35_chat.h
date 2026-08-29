@@ -120,13 +120,18 @@ int qwen35_chat_render(const qwen35_chat_msg *msgs, int n,
  * become single ids, which is what parse_special does).  Nothing is prepended:
  * this vocabulary has no BOS and the template emits none.
  *
- * Returns ids written, -(ids needed) when `max` was too small (the tokenizer's
- * own contract, which has no such ambiguity because it never returns a refusal
- * code), or a QWEN35_CHAT_E_* code. */
+ * Returns ids written, or a QWEN35_CHAT_E_* code.  On QWEN35_CHAT_E_SHORT
+ * nothing was written and *needed (if non-NULL) holds the ids required.
+ *
+ * NOT -(ids needed), for the same reason qwen35_chat_render is not: this
+ * function can return BOTH a refusal code and a size, they share the negative
+ * half-line, and a prompt needing 4 ids would be indistinguishable from
+ * QWEN35_CHAT_E_TOOLS.  The tokenizer's own -(ids needed) contract is safe
+ * because qwen35_tok_encode has no refusal codes; this wrapper does. */
 int qwen35_chat_tokenize(const qwen35_tok *tk,
                          const qwen35_chat_msg *msgs, int n,
                          int add_generation_prompt, int enable_thinking,
-                         int *ids, int max);
+                         int *ids, int max, int *needed);
 
 /* Python's str.strip() over UTF-8, exposed because the server needs the same
  * rule when it trims a completion.  Returns the trimmed span inside `s`. */

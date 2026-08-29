@@ -489,6 +489,28 @@ static int sample_from(std::vector<float>& f, float temperature, float top_p,
 // JSON string produces invalid JSON, so incomplete tails are held back until
 // the next token completes them.  This is not theoretical for a byte-level BPE
 // vocabulary: a single emoji is routinely several tokens.
+// Replace anything that is not a well-formed UTF-8 sequence with U+FFFD.
+// json_escape passes bytes >= 0x20 through raw, so an ill-formed byte would
+// produce a JSON string that is not valid UTF-8 and that some clients reject
+// outright.  The gate below never EMITS a truncated sequence -- it holds it
+// back or drops it -- so the only way here is genuinely malformed model
+// output, but "rare" is not "impossible" for a byte-level BPE vocabulary.
+static std::string utf8_sanitize(const std::string& s) {
+    std::string o; o.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        unsigned char c = (unsigned char)s[i];
+        size_t need = c < 0x80u ? 1 : (c & 0xE0u) == 0xC0u ? 2
+                    : (c & 0xF0u) == 0xE0u ? 3 : (c & 0xF8u) == 0xF0u ? 4 : 0;
+        bool ok = need && i + need <= s.size();
+        for (size_t k = 1; ok && k < need; k++)
+            if (((unsigned char)s[i + k] & 0xC0u) != 0x80u) ok = false;
+        if (ok) { o.append(s, i, need); i += need; }
+        else    { o += "\xEF\xBF\xBD"; i++; }
+    }
+    return o;
+}
+
 struct Utf8Gate {
     std::string pend;
     std::string feed(const std::string& bytes) {
@@ -593,17 +615,13 @@ static int qwen_generate(GenSink& sink, const JValue& root, bool is_chat,
         const JValue* et = root.find("enable_thinking");
         if (et) think = et->as_bool(false) ? 1 : 0;
 
-        int need = qwen35_chat_render(msgs.data(), (int)msgs.size(), 1, think,
-                                      nullptr, 0, nullptr);
-        (void)need;
-        int cap = 8192, n;
+        int cap = 8192, n, want = 0;
         for (;;) {
             ids.resize((size_t)cap);
             n = qwen35_chat_tokenize(g_tok, msgs.data(), (int)msgs.size(), 1, think,
-                                     ids.data(), cap);
+                                     ids.data(), cap, &want);
             if (n >= 0) break;
-            if (n == QWEN35_TOK_ERR) { why = "tokenizer out of memory"; return -1; }
-            if (n < QWEN35_CHAT_E_SHORT) { cap = -n; continue; }   // -(ids needed)
+            if (n == QWEN35_CHAT_E_SHORT && want > cap) { cap = want; continue; }
             why = qwen35_chat_strerror(n);
             return -1;
         }
@@ -658,7 +676,7 @@ static int qwen_generate(GenSink& sink, const JValue& root, bool is_chat,
         char buf[512];
         int nb = qwen35_tok_piece(g_tok, tok, buf, (int)sizeof buf, 0);
         if (nb < 0) nb = 0;
-        std::string emit = gate.feed(std::string(buf, (size_t)nb));
+        std::string emit = utf8_sanitize(gate.feed(std::string(buf, (size_t)nb)));
         if (!emit.empty() && piece_cb(emit.c_str(), &sink)) break;
         if (!sink.ok) break;
 
@@ -736,9 +754,6 @@ static void handle_completion(int fd, const JValue& root, bool is_chat) {
     int cap = g_qwen ? pl_max_ctx(g_card) : llama_seq_len(g_ctx);
     if (max_tokens > cap) max_tokens = cap;
     unsigned long long seed = root.find("seed") ? (unsigned long long)root.find("seed")->as_num(0) : (unsigned long long)time(nullptr);
-
-    GenSink qsink;   // declared early so the qwen path can share the plumbing
-    (void)qsink;
 
     std::string prompt;
     if (!g_qwen) {

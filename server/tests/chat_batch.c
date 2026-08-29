@@ -148,15 +148,15 @@ int main(int argc, char **argv)
                  * never executed.  That is the classic "the harness does not
                  * run the code under test" defect and it is recorded in the
                  * write-up rather than quietly fixed. */
-                int cap = rc + 8, n;
+                int cap = rc + 8, n, want = 0;
                 int *ids = (int *)malloc((size_t)cap * sizeof(int));
                 n = qwen35_chat_tokenize(tk, msgs, (int)n_msgs, (int)agp,
-                                         (int)think, ids, cap);
-                if (n < 0 && n != QWEN35_TOK_ERR && -n > cap) {
-                    cap = -n; free(ids);
+                                         (int)think, ids, cap, &want);
+                if (n == QWEN35_CHAT_E_SHORT) {
+                    cap = want; free(ids);
                     ids = (int *)malloc((size_t)cap * sizeof(int));
                     n = qwen35_chat_tokenize(tk, msgs, (int)n_msgs, (int)agp,
-                                             (int)think, ids, cap);
+                                             (int)think, ids, cap, NULL);
                 }
                 if (n < 0) n = 0;
                 wr_u32(stdout, (unsigned)n);
