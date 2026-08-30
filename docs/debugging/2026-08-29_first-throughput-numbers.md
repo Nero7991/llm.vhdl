@@ -21,9 +21,10 @@ was shown bit-exact tonight; **bit-exact says nothing about fast**.
 2. **DERIVED: a whole-token matvec pass is ~560 ms of compute, i.e. ~1.78
    tok/s** at 200 MHz -- and that is a **LOWER BOUND**, counting only the 249
    `mv4i` tensors and no attention, no Gated DeltaNet, no norms, no sampling.
-3. **MEASURED: the host round trip is ~150 ms per job, essentially independent
-   of job size.** With 249 jobs per token that is **37.4 s/token, 0.027 tok/s
-   -- 67x slower than the compute it is driving.**
+3. ~~MEASURED: the host round trip is ~150 ms per job...67x slower than the
+   compute it is driving.~~ **WITHDRAWN -- see CORRECTION 1 at the end of this
+   file.** The ~150 ms is this tool rebuilding its oracle, not PCIe. The card's
+   contribution is below this method's noise floor.
 
 **So the single largest performance fact about this design is not in the
 gateware at all: it is that a host-sequenced token spends 98.5% of its time in
@@ -106,3 +107,76 @@ Host-sequenced, at the measured ~150 ms per job and 249 jobs:
 - **Nothing here overlaps jobs.** Whether the engine can accept a new descriptor
   while one is running -- which would hide much of the 150 ms -- is untested.
 - **One tensor.** The cyc/beat slope was taken on `blk.0.ffn_gate.weight` only.
+
+---
+
+## CORRECTION 1, 2026-08-29 ~21:20: the "150 ms host round trip" is NOT PCIe, and the 67x figure is WITHDRAWN
+
+**Section 2 item 3 and all of section 4's host-sequenced arithmetic are
+WITHDRAWN.** They said the host round trip costs ~150 ms per job and that a
+host-sequenced token would take 37.4 s, 67x the compute. **The ~150 ms is
+almost entirely this debugging tool rebuilding its oracle, not PCIe latency.**
+The measurement I should have taken before publishing is three commands long.
+
+### MEASURED
+
+```
+python3 -c pass                                    0.026 s
+fk33_run_job.py --help          (imports only)     0.053 s
+fk33_run_job.py plan  --rows 4096  (NO CARD)       0.832 s
+fk33_run_job.py run   --rows 4096  (WITH CARD)     0.684 s
+```
+
+**`plan` never opens `/dev/xdma*` and is SLOWER than the full run.** Whatever
+the wall time is, it is not the card.
+
+Dry-run (simulated register plane, opens nothing under `/dev`) against the real
+card, three paired trials at 4096 rows:
+
+| trial | dry-run | real run | delta |
+|---|---:|---:|---:|
+| 1 | 0.754 | 0.651 | **-0.103** |
+| 2 | 0.786 | 0.735 | **-0.052** |
+| 3 | 0.575 | 0.613 | +0.037 |
+
+**The card's contribution is within noise and twice measured NEGATIVE.** It is
+below the noise floor of this method, so this experiment does not bound PCIe
+latency at all -- it only shows it is small compared to ~0.65 s of tooling.
+
+The tool's own instrumentation says the same thing directly, at 4096 rows:
+
+```
+activations 4096 elements written in 0.00 s
+job         ... after 472 polls / 0.001 s
+```
+
+### And this CORROBORATES the compute figure
+
+238,052 cycles at 200 MHz = **1.190 ms** (DERIVED). The tool independently
+measures the job at **0.001 s** wall. Two different methods -- a hardware cycle
+counter and a host clock -- agreeing to poll granularity. **So section 2 item 1
+and 2 stand and are now stronger**: 21.6 cycles/beat and the ~560 ms
+compute-only token are unaffected by this correction.
+
+### What the withdrawn claim should have been
+
+The ~0.65 s is dominated by host work this tool does on every invocation --
+compiling the C oracle with `cc`, parsing a 117 KB manifest, building the
+descriptor, and comparing 4096 rows in Python. **It is a property of a
+debugging instrument, not of the architecture.** A production sequencer would
+do none of it.
+
+**Consequence: nothing here says how much subsystem D is worth.** That question
+is now OPEN and needs a real measurement of PCIe descriptor-post latency, which
+this tool cannot provide. The honest statement is that on-card sequencing
+removes a per-job host cost whose true size is **unmeasured**.
+
+### Measurement trap hit, mine
+
+**I attributed a whole wall time to the one component I was interested in.**
+The tool prints `after 472 polls / 0.001 s` in its own output -- the refutation
+was on screen in the run I quoted, and I read past it because 150 ms per job
+made a satisfying story about why subsystem D matters. A `plan` invocation,
+which the tool already offers and which touches no hardware, would have caught
+it in one command. **When a measurement supports a conclusion you already hold,
+that is the moment to find the cheapest thing that could refute it.**
