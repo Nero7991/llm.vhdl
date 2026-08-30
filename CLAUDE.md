@@ -80,6 +80,40 @@ The rules that follow from this:
   shows 0 free the box is already living on the swapfile, and the failure that
   follows is compaction thrashing rather than a clean kill.
 
+### AND THERE IS A SECOND MACHINE. USE IT.
+
+**`labuser@192.0.2.200` (`cachyos-bc250`) exists for exactly this and was
+never touched.** On the night the workstation died it was **up 3 days, load
+0.07, 13 of 14 GB free**, with Vivado 2023.2 at
+`/tools/Xilinx/2023.2/Vivado/2023.2` and a node-locked licence at
+`~/.Xilinx/Xilinx-4.lic` covering VU33P. Not one track that night mentioned it.
+
+It was provisioned in August specifically to keep FPGA synthesis off this
+workstation after an earlier OOM incident, and then the whole overnight run
+put six Vivado processes on the workstation instead.
+
+- **Sync first, every time:** `bash ~/GitHub/DevOps/bc250-sync-llama-vhdl.sh`.
+  It rsyncs the ~1,829 git-TRACKED files only (21 MB, not the 4.8 GB working
+  tree), has no `--delete`, and copies nothing back, so a sweep there cannot
+  clobber anything here. Destination is `/home/orencollaco/GitHub/llama.vhdl`
+  on that box, **not** `/home/labuser/...`, because two `sim/*.tcl` hardcode
+  the absolute path.
+- **What it is FOR: OOC unit synthesis and area sweeps.** Results are
+  **bit-identical** to the workstation (DSP/LUT/FF/BRAM/WNS/Fmax match to 13
+  significant figures), so a number measured there is quotable here.
+- **What it is NOT for:** it has **15.2 GB unified** memory. A full `pcieep`
+  build peaks at 25.0 GiB and does not fit; a full `engine_shared` OOC peaks
+  23.8 GB and does not fit either. **Check the peak against 14 GB before
+  sending anything.**
+- **It is 2.3x slower** end to end, MEASURED on identical ZU3EG synthesis. A
+  2 h workstation sweep is ~4.5 h there. **That is still infinitely faster than
+  a sweep that hangs the box and loses ninety minutes of place-and-route.**
+- **Its shell is fish**, so wrap remote commands in `bash -c "..."`.
+- It is deliberately on no WoL watchdog, so if it is off, it is off.
+
+**The rule: if the work is an OOC synthesis or an area sweep, the default
+destination is the BC-250, not this box.** Sending it here needs a reason.
+
 ---
 
 ## THE HARDWARE BOUNDARY (safety, not preference)
