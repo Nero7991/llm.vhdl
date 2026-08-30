@@ -88,13 +88,17 @@ carry, and they matter more than the route choice.**
    URAM-capable way to serve this gain, and is a point in its favour that no
    brief made. The landing therefore asks for `rom_style = "block"` and says
    so, with the message quoted in the RTL.
-5. **The landing is a BRAM ROM read four elements at a time, shifted into a
-   plain register.** Structurally it is NWFIX's HBM write path with a block-RAM
-   source instead of an AXI one, so it should cost what that costs in LUT and
-   need no HBM bandwidth, no AXI master, no schedule and no dependency on TRACK
-   PACKSTRIPE's pseudo-channel fix. **It is not free: it spends of order
-   114-135 BRAM tiles of the 672 this part has**, and that is a resource other
-   levers want. Numbers in section 6, **as a range**.
+5. **THE LANDING IS MEASURED AT 67,318 CLB LUT AND 171 BRAM, TWICE, AND THE
+   TWO DRAWS ARE BIT-IDENTICAL.** A BRAM ROM read four elements at a time and
+   shifted into a plain register. The saving over the ROM is
+   **`+15,279 to +60,747 LUT`, and the whole of that interval belongs to the
+   before-side** -- `nu_u1` and `nu_u2` agree on the entire
+   `report_utilization` and their cell censuses are byte-identical. It lands
+   **within 259 LUT of NWFIX's HBM floor** while spending no HBM bandwidth, no
+   AXI master, no schedule and no dependency on TRACK PACKSTRIPE's
+   pseudo-channel fix, and `WNS +1.675` is unchanged from the control.
+   **It is not free: 171 RAMB36E2 of 672, 25.45%**, and that is a resource
+   other levers want.
 6. **The values did not move, and that is MEASURED at the OUTPUT.**
    `sim/tb_llama_top_normw` reports `0 of the pinned landmarks moved` -- all
    four token-level hashes bit-identical -- and a ten-row mutation matrix shows
