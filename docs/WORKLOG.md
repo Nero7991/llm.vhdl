@@ -129,6 +129,110 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK ATTNTEETH COMPLETE (`5755473`,`a8053ca`,`1e18ce3`). The oracle's STIMULUS was the defect.
+
+**`tb_attn_block` passed a deliberately broken tree, and the mechanism was never
+in the bench.** Root cause is ONE LINE of the oracle's stimulus,
+`ref/attn_block_vec.c:864`:
+
+```c
+for (i = 0; i < N * N_KVH; i++)    vin[i] = m12(65537 + SEED, i);
+```
+
+Uniform on [-2048, 2047] with no per-block structure, so every block's peak
+lands in the top binade and `kv_quant` gives all NBLK blocks the SAME exponent.
+MEASURED with a probe at the fold site: all six folds are `e0=e1=e2=e3=6`.
+**`v_ref` is the minimum over that, and a minimum over a constant vector is that
+constant.** P8 compared exactly the right numbers, bit-exactly, with no
+tolerance, **and could not have disagreed whatever the reduction did.**
+
+**All four hypotheses in my brief were wrong** -- shared source, narrow scope,
+stale vector, early exit. Each was checked and each refuted. The defect was
+upstream of every one of them.
+
+| tag | mutation | before | after | `kv_seam` |
+|---|---|---|---|---|
+| M1 | drop the last tree stage (TIMING's) | PASS | KILLED | KILLED |
+| M2 | no reduction, return block 0 | PASS | KILLED | KILLED |
+| M3 | maximum not minimum | PASS | KILLED | KILLED |
+| M4 | pad with 127 | PASS | SURVIVED | SURVIVED |
+| M5 | result never folded in | KILLED | KILLED | KILLED |
+| M6 | per-TOKEN not per-SEQUENCE | PASS | SURVIVED | KILLED |
+| M7 | defect C1, `v_ref` shared across layers | PASS | SURVIVED | KILLED |
+| M8 | drop the LAST block exponent | PASS | KILLED | SURVIVED |
+
+**1 of 8 to 5 of 8. M8 is the one that matters: it survived BOTH benches
+before.**
+
+**THE ATTRIBUTION CONTROL PAID FOR ITSELF AGAIN. P9 is credited with ZERO
+kills.** All eight verdicts are identical with P9 disabled; P8 does all the
+killing, and P9 is justified as a stimulus gate rather than a detector.
+**Without the control this would have claimed four detections for a check that
+makes none.** P9's own teeth-check (flat stimulus, honest RTL) fails with every
+sub-check firing while P8 passes.
+
+**Survivors kept and explained:** M4's pad branch is unreachable (`NBLK` is
+4/4/8, all powers of two -- dead code, not a missed defect). M6 and M7 are
+structural to a one-token one-layer bench and `kv_seam` owns and kills both.
+**The two benches have DISJOINT blind spots**, which is a stronger statement
+than either being adequate.
+
+**AND IT CAUGHT ITS OWN FIX REINTRODUCING THE DEFECT ONE LEVEL UP.** A per-head
+PERMUTATION taper gives every head the same `v_ref`, so `attn_emit`'s cross-head
+fold went degenerate. **It passed the generator's assert, P9 as first written,
+and the whole suite.** The sibling enumeration caught it; nothing checking the
+fix did.
+
+**HIGHEST-VALUE FOLLOW-ON, NOT YET OWNED:** `ref/attn_block_seq_vec.c:214-215`
+still carries the untapered line word for word, giving `e_grid = {20,20}` on
+layer 1 -- **a minimum over a constant vector on half the design**. And
+`tb_attn_kv_seam`'s teeth on this structure are **ONE block exponent of sixteen
+headers** (15 of 16 folds are flat `6 6 6 6`), which is the repo's entire
+coverage of the fold, at a hand-picked seed. Blocked on `sim/regress.sh`
+(GATEGREEN's), whose lines 1499-1518 justify that generator's SEED=2 in terms of
+exactly these numbers.
+
+### TRACK TOKENSTRIPE COMPLETE (`6ca385f`, `a25847b`). The sixth consumer, and a guard fixed rather than muted.
+
+**Defect sized first:** 15 window descriptors, **0 errors, 405 of 405
+sub-region bases wrong**. After: 405/405 MOVE, 0 wrong against the manifest,
+lm-head **3 to 25 pseudo-channels**. It was THREE lines, not two -- `TailJob`
+uses `__slots__`, so `pieces` had to be declared there or the assignment raises.
+
+**THE TRAP, and it explains why a track looking straight at this missed it:**
+`output.weight.mv4i` sits at `hbm_offset` **0 under BOTH layouts** (same
+`blake2b_128`), so the pre-change tail's 15 descriptors are **byte-identical
+between the flat and the striped manifest. Diffing the two runs shows
+nothing.** Only comparison against the manifest's `pieces` sees it.
+
+**`tools/weights_residency.py` was FIXED, not muted, and the old rule was
+another coincidence-of-geometry guard.** `stack_hole_bytes` is not "the gaps":
+`place()` returns `hole` only for a stack-boundary skip and the striped branch
+never calls `place()`, so it is structurally 0. The old check compared it
+against ALL inter-placement gaps, **and the two coincide under the flat layout
+only because a bump allocator leaves no other gaps.** Replaced by a closed
+ledger, DERIVED exact to the byte before any rule was written:
+`2,690,994,176 = 0 + 2,422,558,720 + 268,435,456`.
+
+**It is STRICTER on the flat layout, not looser**: the old rule compared totals,
+so a `stack_holes` entry at the wrong address, a list disagreeing with its own
+total, and an emptied list all passed. All three now fail and the pre-change
+file survives all three. Ledger earns **10 independent kills**; rows earning
+nothing (S1b, S5, S6) are named.
+
+**Corrections issued:** STRIPEPATH's "running `fk33_run_token.py` needs the
+card" is WRONG -- `plan` and `selfcheck` are offline and were traced clean, so
+its section 9.2 step 4 is superseded. And my brief's framing was off: the
+manifest's `stack_hole_bytes` was always correct; it was the CHECKER's
+re-derivation that was flat-only, which is why the fix is a consumer change.
+
+**Traps it hit and reported against itself:** its first teeth table credited the
+change with 8 kills it had not earned, for want of a whole-ledger-removed arm.
+
+**STILL OPEN and blocking a full striped re-run:** the striped packed dir has
+**no `index.txt`** (PACKSTRIPE's artefact), so `plan`'s host re-run cannot cover
+the striped set. T12 remains unclosed.
+
 ### TRACK STRIPEPATH COMPLETE, 2026-08-30 (`d7f96cd`, `9d73018`). The striping path emits.
 
 **The defect, SIZED before it was fixed:** pre-change, `fk33_run_layer` on the
