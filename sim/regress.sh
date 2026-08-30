@@ -1362,7 +1362,7 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     #     docs/debugging/2026-08-29_b-verification-defects-d1-d3.md closed for
     #     gdn_conv, where a golden that had drifted from its own generator
     #     masked mutation R13 completely.
-    #  2. EACH GENERATOR`S OWN EXIT CODE WAS UNREACHABLE.  ref/gdn_head_emit_vec.c
+    #  2. EACH GENERATOR'S OWN EXIT CODE WAS UNREACHABLE.  ref/gdn_head_emit_vec.c
     #     and ref/gdn_y_emit_vec.c return 1 when their double oracle reaches
     #     1.0 output LSB; ref/gdn_silu_vec.c returns 2 if silu leaves int16 and
     #     ref/rmsnorm_bf_vec.c returns 2 on a bf_fail.  MEASURED, before this
@@ -1370,17 +1370,17 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     #     4.0000 LSB and the generator exiting 1, `--only tb_gdn_head_emit`
     #     printed REGRESSION: PASS.
     #
-    # Every row below is the generator`s OWN default, so the regenerated file
+    # Every row below is the generator's OWN default, so the regenerated file
     # is BYTE-IDENTICAL to the committed one.  Verified with cmp against
     # `git show HEAD:sim/<file>` for all four, deliberately not against the
     # working tree, for the reason the attn_kv_quant row gives.  MEASURED cost
     # per row: cc 0.06 to 0.12 s plus generation under 0.02 s, against row wall
     # times of 7 s and up.
     #
-    # This is ROUTE A of that document`s section 7, and it is ADDITIVE to
+    # This is ROUTE A of that document's section 7, and it is ADDITIVE to
     # ROUTE B rather than a substitute for it.  All four benches already carry
     # their own real-valued oracle and gate it at severity error against the
-    # DUT`s own outputs (commits 728fcfe and 2868f6b), which is the only thing
+    # DUT's own outputs (commits 728fcfe and 2868f6b), which is the only thing
     # that can see an RTL-only accuracy defect; Route A routes its claim
     # through the C and cannot.  What it adds is that the golden is pinned by
     # the gate rather than by whatever happens to be lying in sim/.
