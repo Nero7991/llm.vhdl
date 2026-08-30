@@ -1,7 +1,7 @@
 # Can the five descriptor emitters that PIECES left flat learn `pieces`, and can the stack checker be made to fail on the thing it guards?
 
 **Date:** 2026-08-30. Branch `fpga`. **TRACK STRIPEPATH.** Base commit
-`3a2d0d0`; landed at the sha in section 11.
+`3a2d0d0`; **landed at `d7f96cd`**.
 
 **No hardware was touched.** Nothing below ran `xsdb`, `hw_server`,
 `vivado ... program`, `hw/fk33/pcieep.sh`, `hw/fk33/jtag.sh`,
@@ -768,7 +768,7 @@ do not.
   against today's manifest. Section 7, trap 1. The defect is real and is
   measured directly in 4.3.
 
-**Landed at:** see the commit that carries this file. Files changed:
+**Landed at `d7f96cd`.** Files changed:
 `hw/fk33/host/fk33_run_layer.py`, `tools/gen_layer_program.py`,
 `tools/gen_lmhead_windows.py`, `tools/verify_mv4i_desc.py`,
 `tools/check_hbm_stack.py`, plus this document and the three harnesses beside
