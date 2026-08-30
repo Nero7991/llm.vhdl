@@ -1282,11 +1282,22 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_matvec_fk33)      echo "--stop-time=50ms --stop-delta=1000000" ;;
     # The same trace and the same geometry, driven through the descriptor
     # control plane, plus 21 descriptor mutations in one run.  Every generic
-    # defaults to the FK33 configuration; -gDUAL=true additionally runs the
-    # whole AXI side on a faster clock through axi_rd_port's CDC and is a
-    # separate manual run rather than a second gate row, because regress keys
-    # a test by name and cannot run one testbench twice.
+    # defaults to the FK33 configuration.
+    #
+    # The two configurations that are NOT the default get a gate row each,
+    # because regress keys a test by name and cannot run one testbench twice --
+    # so sim/tb_matvec_fk33_desc_dual.vhd and sim/tb_matvec_fk33_desc_xexp.vhd
+    # are thin wrappers that instantiate this same architecture with one
+    # generic set.  Added 2026-08-29, TRACK ACOV, row N8: DUAL_CLK = true is
+    # what the FK33 build instantiates and its CDC once broke 17 of 22 cases,
+    # and USE_XEXP_PORT = true appeared NOWHERE in the tree at all.  Both were
+    # "a manual run somebody has to remember", which is the same as no
+    # coverage.  All three are OPTIONAL rows -- see tb_prereq -- so none of
+    # them moves BASELINE_PASS.  MEASURED wall clock, one core: 48.9 s, 50.9 s
+    # and 49.1 s respectively.
     sim:tb_matvec_fk33_desc) echo "--stop-time=200ms --stop-delta=1000000" ;;
+    sim:tb_matvec_fk33_desc_dual) echo "--stop-time=200ms --stop-delta=1000000" ;;
+    sim:tb_matvec_fk33_desc_xexp) echo "--stop-time=200ms --stop-delta=1000000" ;;
     # sim/run_matvec.sh stages 4 and 4b, first row of each sweep.
     sim:tb_act_mem)          echo "-gELEMS=544 -gBLK=32 -gLANES=4 --stop-time=500ms" ;;
     sim:tb_axi_rd_port)      echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 --stop-time=200ms" ;;
@@ -1549,7 +1560,8 @@ tb_trace_args() {   # <suite:name> -> `ref/matvec_int4 --trace <file>` argv
 # two optional rows is strictly the better failure.
 tb_prereq() {   # <suite:name> -> a path that must be readable, or the row skips
   case "$1" in
-    sim:tb_matvec_fk33|sim:tb_matvec_fk33_desc)
+    sim:tb_matvec_fk33|sim:tb_matvec_fk33_desc|\
+    sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp)
       echo "${MV4I_FK33_FILE:-/mnt/storage/llama-models/qwen35-9b-mv4i/blk.11.attn_k.weight.mv4i}" ;;
     *) : ;;
   esac
@@ -1571,7 +1583,8 @@ tb_pass_marker() {
     sim:tb_matvec_fk33)  echo 'bit-exact with ref/matvec_int4.c from the real .mv4i bytes up' ;;
     # Printed only after all 22 cases have been judged and the failure count
     # asserted to zero, so a truncated run is a NOVERDICT rather than a pass.
-    sim:tb_matvec_fk33_desc) echo 'every checked mutation is refused' ;;
+    sim:tb_matvec_fk33_desc|sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp)
+                         echo 'every checked mutation is refused' ;;
     sim:tb_hbm_tg)       echo 'recovers a known bandwidth at every port count' ;;
     # The tb/ suite states its verdict as "PASS:<unit>" almost everywhere and
     # \bPASS\b already matches that.  These two phrase it differently.
