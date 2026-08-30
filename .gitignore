@@ -59,8 +59,25 @@ hw/llama_hw
 sim/work_arith/
 sim/work_mv/
 
-# subsystem A: stage traces are regenerated per case by sim/run_matvec.sh
-sim/tr.txt
+# subsystem A: stage traces are regenerated per case by sim/run_matvec.sh.
+#
+# sim/tr.txt IS NO LONGER IGNORED, 2026-08-29, TRACK GATEHYGIENE.  Ignoring it
+# was the reason the regression gate could not be reproduced from a clean
+# checkout: three tracked rows (tb_matvec_core, tb_matvec_int4, tb_matvec_axi)
+# open it as ../tr.txt, so on any tree without it they died with `cannot open
+# file` and BASELINE_PASS was unreachable by construction -- and because the
+# file was IGNORED rather than merely untracked, `git status` never once
+# mentioned that a load-bearing gate input was missing from the repository.
+# sim/regress.sh now GENERATES its own copy from ref/matvec_int4.c, so the gate
+# no longer reads this file at all; it is committed because
+# sim/mutate_matvec_core.sh cmp's its trace A against it and refuses to run
+# otherwise, and because sim/tr_ragsat.txt has been committed all along for
+# exactly the same reason.
+#
+# NOTE that sim/run_matvec.sh REWRITES this file at whatever M/K/RI its current
+# case asks for.  That now shows up as a modified tracked file instead of
+# passing unnoticed: restore it with `git checkout -- sim/tr.txt`, and do not
+# let it ride along in an unrelated commit.
 sim/matvec_trace.txt
 sim/work_mv/
 sim/work_arith/

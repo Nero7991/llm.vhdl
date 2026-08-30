@@ -166,6 +166,22 @@
 #    fails the run when the count DROPS, saying in as many words that this is
 #    a disappearance and not a failure.
 #
+#    THE FLOOR IS A CLEAN-CHECKOUT NUMBER, and that is what makes it mean
+#    anything.  The plan is globbed off the FILESYSTEM, so an untracked
+#    sim/tb_*.vhd is a full gate row for whoever happens to hold it and does
+#    not exist for anyone else; a floor calibrated against such a tree is not
+#    a property of the repository, and on 2026-08-29 exactly that put a value
+#    on the line that no tree could reach (see BASELINE_PASS's own comment).
+#    So this runner prints a NOT IN GIT section naming every row and every
+#    compiled source git does not have, and when that section is non-empty it
+#    declines to suggest raising the floor.  `--list` prints it in about two
+#    seconds without running anything.  Raise BASELINE_PASS only from a run
+#    that said "(none)", or from a `git archive` tree.
+#
+#    Related: a row whose EXTERNAL prerequisite is absent -- the FK33 rows need
+#    a .mv4i from a GGUF model set that is not in git -- is SKIPPED with the
+#    path, not failed.  The floor is calibrated with those absent.
+#
 # 11. PARALLELISM IS CONSERVATIVE BY DEFAULT.  --jobs defaults to 2 because this
 #    workstation regularly has a Vivado synthesis running, and Vivado is the
 #    memory hog that has already triggered a systemd-oomd kill of the whole
@@ -384,7 +400,59 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=101  # +2 sim/tb_realshape_9b and sim/tb_stmem_equiv, 2026-08-29.
+BASELINE_PASS=93   # RESET FROM 101, 2026-08-29, TRACK GATEHYGIENE.  THIS IS THE
+                   #    FIRST VALUE ON THIS LINE THAT WAS MEASURED ON A TREE
+                   #    SOMEBODY ELSE CAN PRODUCE, and that is the whole change.
+                   #
+                   #    HOW TO REPRODUCE IT, exactly, and please do rather than
+                   #    trusting the number:
+                   #
+                   #      git archive <sha> | tar -x -C /tmp/t
+                   #      MV4I_FK33_FILE=/nonexistent \
+                   #        REGRESS_SCRATCH=/tmp/s bash /tmp/t/sim/regress.sh --jobs 2
+                   #
+                   #    MEASURED on `git archive 9ad4c14` plus this track's
+                   #    patch, GHDL 1.0.0 mcode, --jobs 2, 2026-08-29:
+                   #      suite sim  PASS 67  FAIL 0  NOCHECK 3
+                   #      suite tb   PASS 26  FAIL 0  NOCHECK 1
+                   #      OVERALL    PASS 93  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 8
+                   #    DERIVED and consistent: 97 rows planned, 4 NOCHECK, so
+                   #    93 is the CEILING and not merely the score -- nothing
+                   #    was red.
+                   #
+                   #    WHY 101 WAS WRONG, and it is worth reading because the
+                   #    mistake was invisible and both tracks acted correctly on
+                   #    what they could see.  The planner globs sim/tb_*.vhd off
+                   #    the FILESYSTEM, so an untracked testbench is a gate row
+                   #    for whoever holds it and for nobody else.  TRACK SEAMGATE
+                   #    measured `OVERALL PASS 99` at 17:30:26 and recorded 99.
+                   #    TRACK REALFIX committed sim/tb_realshape_9b.vhd and
+                   #    sim/tb_stmem_equiv.vhd at 17:34:32 and added +2 for them.
+                   #    But at 17:30 those two files were already sitting
+                   #    UNTRACKED in the shared working tree, so SEAMGATE's 99
+                   #    had counted them, and 101 counted them a second time.
+                   #    101 was two ABOVE the working tree's own ceiling (104
+                   #    planned minus 5 NOCHECK = 99), so from e788a0e until this
+                   #    commit EVERY full run for EVERY track reported BASELINE
+                   #    DROP.  A floor that can only ever fire is worth exactly
+                   #    what one that can never fire is worth.
+                   #
+                   #    93 < 99 is NOT a coverage loss.  A clean checkout has 18
+                   #    fewer testbench files than this workstation's tree (4 of
+                   #    which passed) and, with no GGUF model set, 2 fewer FK33
+                   #    rows.  Those rows still run for anyone who has them; they
+                   #    are simply not what the floor is a statement about.
+                   #
+                   #    BEFORE YOU RAISE THIS.  The gate now prints a NOT IN GIT
+                   #    section and, when it is non-empty, REFUSES to suggest a
+                   #    raise.  `bash sim/regress.sh --list` prints that section
+                   #    in about two seconds without running a simulation.  Raise
+                   #    this only from a run whose NOT IN GIT section said
+                   #    "(none)", or from a `git archive` tree.
+                   #
+                   # ---- history below this line, kept, not rewritten ----------
+                   # +2 sim/tb_realshape_9b and sim/tb_stmem_equiv, 2026-08-29.
                    #    TRACK REALFIX.  The first row in this script that runs
                    #    at the REAL Qwen3.5-9B shape, and the oracle for the one
                    #    modelling change that made that possible.
@@ -436,10 +504,16 @@ BASELINE_PASS=101  # +2 sim/tb_realshape_9b and sim/tb_stmem_equiv, 2026-08-29.
                    # +3 sim:seamgate_{real,stub,seq}.  The first rows in this
                    #    script whose oracle is an INDEPENDENT MODEL of the value
                    #    rather than a pinned landmark or the testbench's own
-                   #    assertion.  MEASURED: 61 seams for real, 60 for stub, 59
-                   #    per token over three tokens for seq, all bit-exact.  See
-                   #    the block that appends them to $PLAN for why they are
-                   #    rows and the golden diff is not.
+                   #    assertion.  MEASURED: 64 seams checked for real, 63 for
+                   #    stub, 61 per token over three tokens for seq, all
+                   #    bit-exact.  (Was 61/60/59 when these rows were added;
+                   #    RAISED 2026-08-29 by TRACK RY-MODEL, whose R_Y model
+                   #    closed the three unmodelled subsystem-B seams.  Read the
+                   #    floors off the `case "$CFG"` block in
+                   #    tools/ref9b/seamgate.sh, which is the authority --
+                   #    these are a copy and copies go stale, as this one did.)
+                   #    See the block that appends them to $PLAN for why they
+                   #    are rows and the golden diff is not.
                    # +1 sim/tb_matvec_cb_contract, 2026-08-29.  TRACK
                    #    CB-ORACLE.  THE CODEBOOK'S WRITE CONTRACT, written
                    #    BEFORE the pre-authorised LUTRAM fallback that
@@ -618,7 +692,10 @@ BASELINE_PASS=101  # +2 sim/tb_realshape_9b and sim/tb_stmem_equiv, 2026-08-29.
                    # +1 sim/tb_attn_kv_axi, subsystem C's KV cache in HBM at
                    #    two AXI widths, 2026-08-28
 
-usage() { sed -n '2,237p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+# NOTE: the upper bound tracks the end of the header block above.  It moved
+# 237 -> 253 on 2026-08-29 when section 10 gained the clean-checkout paragraph.
+# If you add to the header, move it, or --help silently truncates.
+usage() { sed -n '2,253p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -936,8 +1013,11 @@ PYEOF
 # with its seam capture on and then asks `tools/ref9b/bisect_scaled.py`, for
 # every step of the descriptor plan that has an independent model, whether the
 # machine's output IS what the model says given the machine's own inputs.  A
-# failure names the SEAM and the ELEMENT.  MEASURED 2026-08-29: 61 seams for
-# `real`, 60 for `stub`, 59 per token over three tokens for `seq`.
+# failure names the SEAM and the ELEMENT.  MEASURED 2026-08-29: 64 seams
+# checked for `real`, 63 for `stub`, 61 per token over three tokens for `seq`.
+# Those are a COPY of the `case "$CFG"` floors in tools/ref9b/seamgate.sh, which
+# is the authority; this copy read 61/60/59 until 2026-08-29, when TRACK
+# RY-MODEL raised the floors and the copy here was not moved with them.
 #
 # WHY THEY ARE A ROW AND THE GOLDEN DIFF IS NOT.  `tools/ref9b/golden_status.sh`
 # rejected a byte-identity row against `tools/ref9b/golden/llama_top_*.txt`, and
@@ -964,6 +1044,86 @@ for _sg in real stub seq; do
   printf 'seamgate_%s\tsim\tRUN\t-\t-\t-\t-\n' "$_sg" >> "$PLAN"
 done
 unset _sg
+
+# ===========================================================================
+# 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
+# ===========================================================================
+# THE DEFECT THIS EXISTS TO MAKE VISIBLE, and it is not hypothetical -- it had
+# already put a wrong number in this file by the time it was found.
+#
+# The planner globs sim/tb_*.vhd and tb/tb_*.vhd off the FILESYSTEM.  git has
+# no say in it, so a testbench that is merely SITTING in somebody's working
+# tree is a full gate row for them and does not exist for anybody else.  The
+# pass count is therefore not a property of the repository, and BASELINE_PASS
+# -- which is a number every track branches on -- was being calibrated against
+# it anyway.
+#
+# MEASURED 2026-08-29, the case that motivated this block.  TRACK SEAMGATE ran
+# a full unfiltered gate at 17:30:26, measured `OVERALL PASS 99`, and recorded
+# 99 as the floor.  TRACK REALFIX committed sim/tb_realshape_9b.vhd and
+# sim/tb_stmem_equiv.vhd at 17:34:32, four minutes later, and raised the floor
+# by +2 for them.  Both acted correctly on what they could see.  But those two
+# files were already lying UNTRACKED in the shared working tree at 17:30, so
+# SEAMGATE's 99 had already counted them, and 101 counted them twice.  At 101
+# the floor sat two ABOVE the working tree's own ceiling (104 rows planned
+# minus 5 NOCHECK = 99 reachable), so every full run for every track reported
+# BASELINE DROP -- a floor that can only ever fire is worth exactly as much as
+# one that can never fire.
+#
+# A comment could not have caught that and neither could more care: nothing in
+# the OUTPUT distinguished a row backed by a committed file from a row backed by
+# a file only that operator had.  So the runner says so itself, below.
+#
+# Two classes, and the second is the one that hid sim/tr.txt for months:
+#   UNTRACKED  git does not have it.  `git status` shows it, so it is at least
+#              visible to somebody who looks.
+#   IGNORED    git is told to pretend it does not exist.  `git status` is SILENT
+#              about it, so it is invisible by design -- which is exactly how a
+#              .gitignore'd sim/tr.txt came to be a load-bearing gate input.
+#
+# This is REPORTING ONLY.  It never changes a verdict, never adds or removes a
+# row, and is skipped in silence when git is absent or this is an exported tree
+# (a `git archive` checkout has no .git, which is precisely the tree the floor
+# is supposed to be a statement about).
+UNTRACKED_ROWS=""; IGNORED_ROWS=""; UNTRACKED_DEPS=""; IGNORED_DEPS=""
+GIT_VISIBLE=0
+if command -v git >/dev/null 2>&1 &&
+   git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_VISIBLE=1
+  # Row set: a testbench file the planner globbed that git does not have.
+  # `--others` alone hides ignored files, so the ignored class is a second,
+  # explicit query.  Without it the sim/tr.txt class stays invisible here too.
+  _q_unt="$(git -C "$REPO" ls-files --others --exclude-standard -- \
+              'sim/tb_*.vhd' 'tb/tb_*.vhd' 2>/dev/null)"
+  _q_ign="$(git -C "$REPO" ls-files --others --ignored --exclude-standard -- \
+              'sim/tb_*.vhd' 'tb/tb_*.vhd' 2>/dev/null)"
+  for _p in $_q_unt; do
+    UNTRACKED_ROWS="$UNTRACKED_ROWS $(dirname "$_p"):$(basename "$_p" .vhd)"
+  done
+  for _p in $_q_ign; do
+    IGNORED_ROWS="$IGNORED_ROWS $(dirname "$_p"):$(basename "$_p" .vhd)"
+  done
+  # Analysis closures: an rtl/ or sim/ file some row COMPILES that git does not
+  # have.  A row whose provider is untracked resolves for this operator and is
+  # reported SKIPPED (unresolved design unit) for everyone else, which moves the
+  # count in the opposite direction and is just as invisible.
+  # Column 5 is the analysis file list; column 7 is the bare-name vector files,
+  # which resolve in sim/ through the per-test workdir's symlinks and are just
+  # as load bearing as a source.  tb_*.vhd is filtered back out of the result:
+  # a testbench is in its own closure, and it is already named as a ROW above.
+  _deps="$( { cut -f5 "$PLAN" | tr ' ' '\n' | grep -v '^-\?$'
+              cut -f7 "$PLAN" | tr ' ' '\n' | grep -v '^-\?$' | sed 's|^|sim/|'
+            } | sort -u )"
+  if [ -n "$_deps" ]; then
+    # shellcheck disable=SC2086
+    UNTRACKED_DEPS="$(git -C "$REPO" ls-files --others --exclude-standard -- $_deps 2>/dev/null |
+                      grep -vE '^(sim|tb)/tb_.*\.vhd$')"
+    # shellcheck disable=SC2086
+    IGNORED_DEPS="$(git -C "$REPO" ls-files --others --ignored --exclude-standard -- $_deps 2>/dev/null |
+                    grep -vE '^(sim|tb)/tb_.*\.vhd$')"
+  fi
+  unset _q_unt _q_ign _p _deps
+fi
 
 # ===========================================================================
 # 2. EXTRAS.  Per-testbench generics, stop-time, vector generation and success
@@ -1230,6 +1390,68 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
   esac
 }
 
+# ---------------------------------------------------------------------------
+# THE PARENT-DIRECTORY TRACE.  `ref/matvec_int4.c --trace` argv, per testbench.
+# ---------------------------------------------------------------------------
+# The three subsystem-A trace rows pass `-gTRACE=../tr.txt`, which resolves ONE
+# LEVEL ABOVE the run directory, so this file cannot go through the vector
+# machinery in the subshell below: that machinery keys off names the planner
+# scraped out of the testbench, and the planner deliberately ignores any literal
+# containing a `/`.  Hence a second, tiny table rather than a special case
+# inside the first one.
+#
+# `8 96 4 0` is M K RI sat and it is NOT a fresh choice.  It is the argv
+# sim/mutate_matvec_core.sh calls trace A, the column whose entire claim is that
+# it is the trace this script gates on -- that script REGENERATES A on every run
+# and REFUSES TO RUN unless it is byte-identical to sim/tr.txt.  Generating the
+# same argv here makes that identity true BY CONSTRUCTION instead of true only
+# on the one machine whose working tree happens to hold the right file.
+#
+# MEASURED 2026-08-29 (cmp, twice, plus md5sum): the file this produces is
+# byte-identical to the sim/tr.txt that was in the working tree --
+# md5 3864d53068abeb0ec6b570d2a6f54353 both ways -- and generating it twice
+# gives the same bytes, so the generator carries no clock, no PID and no
+# unseeded RNG.  Its header decodes as `DIMS 8 96 3 3 2 5 4` / `SATEV 0`, the
+# shape every comment in this file and in sim/mutate_matvec_core.sh describes.
+tb_trace_args() {   # <suite:name> -> `ref/matvec_int4 --trace <file>` argv
+  case "$1" in
+    sim:tb_matvec_core|sim:tb_matvec_int4|sim:tb_matvec_axi) echo "8 96 4 0" ;;
+    *) : ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# EXTERNAL PREREQUISITES.  Files that are NOT in the repository and cannot be.
+# ---------------------------------------------------------------------------
+# sim/tr.txt was fixable -- a committed generator produces it byte-for-byte, so
+# the gate now makes its own.  This one is not: the two FK33 rows read a real
+# packed tensor, one of the 250 .mv4i files tools/pack_int4.py writes from an
+# 18 GB GGUF that is deliberately not in git.  There is nothing to commit and
+# nothing to generate.
+#
+# So the rows are SKIPPED, with the path in the reason, exactly like an
+# xsim-only row -- which is this script's existing contract for a test that
+# cannot be run ("Nothing is dropped quietly").  Before this they went through
+# the vector machinery and came out as a BUILD-ERROR, which is a different and
+# WRONG claim: it says the tree is broken when the truth is that an optional
+# input is absent, and it made the floor below unreachable for anyone without
+# the model set -- the same defect as sim/tr.txt, one layer out.
+#
+# CONSEQUENCE FOR THE FLOOR, and it is a deliberate trade.  BASELINE_PASS is
+# calibrated with these rows ABSENT, because that is the number a clone can
+# reproduce.  On a box that HAS the model set they run and the count is higher;
+# the note printed at the end says so rather than inviting a raise.  The cost is
+# that these two rows could disappear on such a box without the floor noticing.
+# A floor nobody else can reach detects nothing at all, so a floor that misses
+# two optional rows is strictly the better failure.
+tb_prereq() {   # <suite:name> -> a path that must be readable, or the row skips
+  case "$1" in
+    sim:tb_matvec_fk33|sim:tb_matvec_fk33_desc)
+      echo "${MV4I_FK33_FILE:-/mnt/storage/llama-models/qwen35-9b-mv4i/blk.11.attn_k.weight.mv4i}" ;;
+    *) : ;;
+  esac
+}
+
 # Success markers for testbenches whose pass is stated as a counter rather
 # than as the word PASS.  Where a run_*.sh already greps for a phrase to
 # decide OK, that same phrase is used here, so the two agree by construction.
@@ -1387,8 +1609,21 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
            "$SIM"/*.hex; do
     [ -e "$f" ] && ln -sfn "$f" "$run/$(basename "$f")"
   done
-  # tb_matvec_* address their trace one level up, as ../tr.txt.
-  for f in "$SIM"/tr.txt "$SIM"/arith_vectors.txt; do
+  # sim/arith_vectors.txt is COMMITTED and is addressed one level up, so it is
+  # symlinked beside the run directory rather than inside it.
+  #
+  # sim/tr.txt USED TO BE SYMLINKED HERE AND IS NOW GENERATED -- see
+  # tb_trace_args and the block that calls it.  Two defects, one fix:
+  #   * it is a .gitignore'd file (.gitignore's "subsystem A" stanza), so on any
+  #     clean checkout the three tb_matvec_* rows died with `cannot open` and
+  #     the floor below was unreachable by construction;
+  #   * sim/run_matvec.sh REWRITES sim/tr.txt at whatever M/K/RI its current
+  #     case asks for, so whichever shape happened to be left in the working
+  #     tree is the shape the gate measured.  That is the hazard the
+  #     attn_kv_quant_vec.txt row in tb_vector_args already names in as many
+  #     words: a golden nothing regenerates is a golden anything can replace in
+  #     silence.
+  for f in "$SIM"/arith_vectors.txt; do
     [ -e "$f" ] && ln -sfn "$f" "$dir/$(basename "$f")"
   done
 
@@ -1397,6 +1632,19 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   # six tests silently produced no result at all.
   (
     echo "### $key  (top entity: $top)"
+    # --- the ../tr.txt trace, generated, never read from sim/ ----------
+    local targs
+    targs="$(tb_trace_args "$key")"
+    if [ -n "$targs" ]; then
+      if ! cc -O2 -w -I "$REPO/ref" -o "$dir/gen_tr" "$REPO/ref/matvec_int4.c" -lm 2>&1; then
+        echo "VECTORGEN_BUILD_FAILED $REPO/ref/matvec_int4.c"; exit 90
+      fi
+      rm -f "$dir/tr.txt"
+      # shellcheck disable=SC2086
+      if ! "$dir/gen_tr" --trace "$dir/tr.txt" $targs >/dev/null 2>&1; then
+        echo "VECTORGEN_RUN_FAILED $REPO/ref/matvec_int4.c --trace $targs"; exit 90
+      fi
+    fi
     # --- vectors -------------------------------------------------------
     local v stem gen args
     for v in $vecs; do
@@ -1505,8 +1753,44 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
 # ===========================================================================
 # 4. DRIVE
 # ===========================================================================
+# ---- rows and inputs that exist only in THIS working tree -----------------
+# See section 1b.  Printed unconditionally when git can see this tree, with an
+# explicit "(none)", because a section that appears only on bad news is a
+# section nobody learns to read.  Called from BOTH the --list path and the full
+# summary: --list runs no simulation, so it answers "is my gate reproducible?"
+# in about two seconds, which is the version of this check anyone will actually
+# run before committing.
+report_not_in_git() {
+  [ "$GIT_VISIBLE" = 1 ] || return 0
+  echo
+  echo "-- NOT IN GIT (these rows/inputs are yours alone) ------------------------------"
+  if [ -z "$UNTRACKED_ROWS$IGNORED_ROWS$UNTRACKED_DEPS$IGNORED_DEPS" ]; then
+    echo "(none) -- every planned row and every file it compiles is tracked."
+    return 0
+  fi
+  local k
+  for k in $UNTRACKED_ROWS; do
+    printf 'UNTRACKED  row    %-34s not in git: a gate row for you, absent for a clone\n' "$k"
+  done
+  for k in $IGNORED_ROWS; do
+    printf 'IGNORED    row    %-34s .gitignore hides it -- git status will NEVER mention it\n' "$k"
+  done
+  for k in $UNTRACKED_DEPS; do
+    printf 'UNTRACKED  source %-34s compiled by some row; absent, that row goes SKIPPED\n' "$k"
+  done
+  for k in $IGNORED_DEPS; do
+    printf 'IGNORED    source %-34s .gitignore hides it -- git status will NEVER mention it\n' "$k"
+  done
+  echo
+  echo "   The pass count is NOT reproducible from a clean checkout while this"
+  echo "   list is non-empty.  Commit them, delete them, or leave them -- but do"
+  echo "   NOT raise BASELINE_PASS from a run that included them."
+  return 0
+}
+
 selected=()
 skipped_names=(); skipped_reasons=()
+OPTIONAL_ROWS=""   # rows that ran only because an external prerequisite is here
 while IFS=$'\t' read -r name suite status reason flist top vecs; do
   key="$suite:$name"
   [[ " $SUITES " == *" $suite "* ]] || continue
@@ -1519,6 +1803,16 @@ while IFS=$'\t' read -r name suite status reason flist top vecs; do
     skipped_reasons+=("--quick: slow seam/top-level test, deliberately excluded -- run without --quick")
     continue
   fi
+  # An absent EXTERNAL prerequisite is a SKIP with its path, never a failure.
+  # See tb_prereq.  Counted as an optional row so the baseline note can say why
+  # a run is above the floor instead of inviting a raise.
+  preq="$(tb_prereq "$key")"
+  if [ -n "$preq" ] && [ ! -r "$preq" ]; then
+    skipped_names+=("$key")
+    skipped_reasons+=("external prerequisite not in this tree and not in git: $preq -- one of the .mv4i files tools/pack_int4.py writes from the GGUF model set. Override with MV4I_FK33_FILE")
+    continue
+  fi
+  [ -n "$preq" ] && OPTIONAL_ROWS="$OPTIONAL_ROWS $key"
   # Keep the '-' placeholder: with IFS=tab an EMPTY field collapses and every
   # field after it shifts, which is how the analysis file list once ended up in
   # the vectors slot and every test reported "cannot find entity".
@@ -1535,6 +1829,7 @@ if [ "$LIST_ONLY" = 1 ]; then
   for i in "${!skipped_names[@]}"; do
     printf 'SKIP %-34s %s\n' "${skipped_names[$i]}" "${skipped_reasons[$i]}"
   done
+  report_not_in_git
   exit 0
 fi
 
@@ -1592,6 +1887,8 @@ if [ "$COVERAGE_ONLY" = 0 ]; then
       printf 'SKIPPED    %-34s %s\n' "${skipped_names[$i]}" "${skipped_reasons[$i]}"
     done
   fi
+
+  report_not_in_git
 fi
 
 # ===========================================================================
@@ -1632,7 +1929,15 @@ if [ "$QUICK" = 0 ] && [ -z "$ONLY" ] && [ "$(echo $SUITES)" = "sim tb" ]; then
     baseline_drop=1
     baseline_note="BASELINE DROP: $npass passing, expected at least $BASELINE_PASS"
   elif [ "$npass" -gt "$BASELINE_PASS" ]; then
-    baseline_note="baseline: $npass passing, above the recorded floor of $BASELINE_PASS -- raise BASELINE_PASS in this script"
+    # THE ONE PLACE THE DOUBLE-COUNT COULD COME BACK.  "You are above the floor,
+    # raise it" is correct advice on a clean tree and WRONG advice on a tree
+    # carrying rows nobody else has -- following it is literally how 101 was
+    # arrived at.  So the advice is withheld exactly when it would be wrong.
+    if [ -n "$UNTRACKED_ROWS$IGNORED_ROWS$OPTIONAL_ROWS" ]; then
+      baseline_note="baseline: $npass passing, above the floor of $BASELINE_PASS -- but this tree has rows a clean checkout does not get:$UNTRACKED_ROWS$IGNORED_ROWS$OPTIONAL_ROWS.  DO NOT raise BASELINE_PASS from this run: the floor is a CLEAN-CHECKOUT number, and a floor raised to include rows that depend on your working tree or your model set is unreachable for everybody else, including you after a clean clone."
+    else
+      baseline_note="baseline: $npass passing, above the recorded floor of $BASELINE_PASS -- raise BASELINE_PASS in this script"
+    fi
   else
     baseline_note="baseline: $npass passing, matches the recorded floor of $BASELINE_PASS"
   fi
