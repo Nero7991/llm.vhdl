@@ -69,6 +69,10 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+-- `clog2`, so POSW below is an expression of MAXCTX rather than a literal
+-- that goes stale the next time the context length moves.  It already did
+-- once: see the note on the four corrected widths in the port clause.
+use work.util_pkg.clog2;
 
 entity attn_c_ports_skel is
   generic(
@@ -79,6 +83,18 @@ entity attn_c_ports_skel is
     KV_BLOCK  : positive := 32;     -- quantization granularity, C spec 2.1.1
     MAXLAYERS : positive := 16;     -- GGUF block_count / full_attention_interval
     MAXCTX    : positive := 2048;   -- MUST be a multiple of 256, C spec 2.2
+                                    -- (rtl/attn_kv_axi.vhd:44-53 records that
+                                    -- it does NOT need to be, because the
+                                    -- splitter works on the absolute beat
+                                    -- address; the spec's constraint is what a
+                                    -- base-relative splitter would need)
+    -- The position width, and the BYTE address width of the KV bases.  Both
+    -- are what `rtl/llama_top.vhd` actually configures: POSW there is
+    -- clog2(C_MAXPOS+1) = 18 at C_MAXPOS 131072, and C_KV_ADDR_W is 33
+    -- because tools/hbm_map.py puts the arena above the 4 GiB line.  The
+    -- defaults here follow MAXCTX so the two cannot drift apart.
+    POSW      : positive := clog2(MAXCTX+1);
+    ADDR_W    : positive := 33;     -- 8 GiB of FK33 HBM
     -- MACS = QH_TILE x DIM_TILE.  DIM_TILE is fixed at 32 by the HBM AXI beat
     -- (256 b = 32 int8 = exactly one KV_BLOCK), and QH_TILE must divide the
     -- GQA group of 6, so the legal ladder is 32 / 64 / 96 / 192 and nothing
@@ -105,13 +121,45 @@ entity attn_c_ports_skel is
     -- still sweeping corrupts exactly the tail of the job and nothing else --
     -- the head-23 shape.  cfg_taken makes the safe instant observable.
     start     : in  std_logic;
-    layer     : in  unsigned(4 downto 0);   -- ATTENTION ORDINAL 0..15, not the
-                                            -- model layer index.  D owns the
-                                            -- 3,7,...,63 -> 0..15 mapping.
-    cur_pos   : in  unsigned(15 downto 0);
-    ctx_len   : in  unsigned(15 downto 0);
-    k_base    : in  std_logic_vector(31 downto 0);
-    v_base    : in  std_logic_vector(31 downto 0);
+    layer     : in  unsigned(4 downto 0);   -- ATTENTION ORDINAL, not the model
+                                            -- layer index.  D owns the
+                                            -- 3,7,... -> 0.. mapping.  At the
+                                            -- 9B retarget there are 8
+                                            -- attention layers, not 16.
+    -- ==================================================================
+    -- THESE FOUR WIDTHS WERE STALE AND ARE CORRECTED, 2026-08-29, KVVALUE.
+    --
+    -- They were `unsigned(15 downto 0)` and `std_logic_vector(31 downto 0)`,
+    -- written for the 27B shape before the 9B retarget and before the arena
+    -- resize, and BOTH are too narrow for the map subsystem C actually runs:
+    --
+    --   * `k_base`/`v_base` at 32 bits cannot hold the real bases at all.
+    --     tools/hbm_map.py's manifest puts `hbm.kv_base` at 4,521,582,592 and
+    --     the V region at 5,662,433,280.  `rtl/llama_top.vhd` carries
+    --     `C_KV_ADDR_W = 33` for exactly this reason and hands
+    --     `rtl/attn_kv_axi.vhd` a 33-bit BYTE address.
+    --   * `cur_pos`/`ctx_len` at 16 bits cap the context at 65,535.
+    --     `C_MAXPOS` is 131,072 (Qwen3.5-9B's native context, Oren's
+    --     decision), so `POSW = clog2(C_MAXPOS+1) = 18`.
+    --
+    -- Nothing was ever mis-bound by this, because this file is a SKELETON and
+    -- is instantiated by nothing -- MEASURED 2026-08-29 by grep over every
+    -- *.vhd in the tree: `attn_c_ports_skel` occurs in its own entity and
+    -- architecture headers and in one COMMENT in `rtl/attn_lane_skel.vhd`,
+    -- with no component declaration and no instantiation anywhere.
+    -- `sim/regress.sh`'s coverage report lists it under NOTB.  It is
+    -- documentation, and that is precisely why a stale width in it is worth
+    -- fixing: its whole purpose is to be the reviewable statement of the
+    -- contract, and a reviewer who trusted these four numbers would conclude
+    -- the real KV map is unreachable.
+    --
+    -- The widths are written as expressions of the generics rather than as
+    -- literals, so the next shape change moves them by itself.
+    -- ==================================================================
+    cur_pos   : in  unsigned(POSW-1 downto 0);
+    ctx_len   : in  unsigned(POSW-1 downto 0);
+    k_base    : in  std_logic_vector(ADDR_W-1 downto 0);
+    v_base    : in  std_logic_vector(ADDR_W-1 downto 0);
     cfg_taken : out std_logic;              -- one cycle, at the latch instant
 
     -- Per-SEQUENCE reset of the v_ref min-fold registers (C spec 2.1.4).

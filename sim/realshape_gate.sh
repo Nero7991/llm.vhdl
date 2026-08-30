@@ -284,6 +284,51 @@ row real_kv_ceiling   ok   llama_top $CKV -gC_KV_BLOCK=32 \
 # shellcheck disable=SC2086
 row real_kv_ctx_over  fail llama_top $CKV $KVR -gC_CTXLEN=131073
 
+# ===========================================================================
+# THE MANIFEST LINK.  TRACK KVVALUE, 2026-08-29.
+#
+# Every row above says the map ELABORATES.  Not one of them says the map
+# points at the arena, and CKVMAP reported exactly that as a guard that does
+# not bite: "there is no link from the RTL to `hbm.kv_base`, so a base one
+# chunk -- or one megabyte -- off the manifest elaborates clean and would read
+# and write real weights.  THE GATE ROW PINS THE CORRECT VALUE, AND THE GATE
+# ROW IS THE ONLY THING THAT DOES."
+#
+# `tools/check_kv_map.py` is what makes the $KVR numbers above DERIVED rather
+# than hand-copied: it reads `tools/hbm_map.py`'s shape (the authority TRACK
+# ARENA-MANIFEST established), the packed model's manifest for `hbm.kv_base`,
+# `rtl/llama_top.vhd` for the generic names and the chunk-to-byte shift, and
+# THIS BLOCK for the values, and refuses on any mismatch.  Its own teeth are
+# `python3 tools/check_kv_map.py --teeth`, 17 rows.
+#
+# It is run here rather than in `sim/regress.sh` because the values it checks
+# are the $KVR block a few lines up: the check and the thing checked belong in
+# one file, and a clone with no packed model must not turn the shared gate red.
+# --no-manifest is passed only when the manifest is genuinely absent, and the
+# row then prints NOT RUN for the placement side instead of passing quietly.
+echo
+MANI="${KV_MANIFEST:-/mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json}"
+if [ -f "$MANI" ]; then
+  kvargs=(--manifest "$MANI")
+else
+  kvargs=(--manifest "$MANI" --no-manifest)
+  echo "check_kv_map: NO MANIFEST at $MANI -- the rows that pin C_K_BASE_CH to"
+  echo "              hbm.kv_base WILL NOT RUN.  Set KV_MANIFEST to a packed"
+  echo "              model's manifest.json to close that."
+fi
+if python3 "$(dirname "$0")/../tools/check_kv_map.py" "${kvargs[@]}" \
+     > "$SCRATCH/check_kv_map.log" 2>&1; then
+  echo "row  kv_map_manifest_link  ok    $(grep -c '^  ok' "$SCRATCH/check_kv_map.log") rows against tools/hbm_map.py and the manifest"
+  pass=$((pass+1))
+else
+  echo "row  kv_map_manifest_link  FAIL  -- the KV generics and the HBM address"
+  echo "     map's authority DISAGREE.  This is not a style point: the cache"
+  echo "     would read and write real weights."
+  sed -n '1,40p' "$SCRATCH/check_kv_map.log" | sed 's/^/     /'
+  fail=$((fail+1))
+  failed_rows+=("kv_map_manifest_link")
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "REALSHAPE GATE: PASS  rows $pass ($expected of them guards that must refuse)"

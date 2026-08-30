@@ -370,6 +370,35 @@ architecture rtl of attn_kv_axi is
   constant MPB    : integer := KV_BLOCK*CM_W/8/CH_B;  -- chunks per KV block
   constant BEAT_B : integer := AXI_DW/8;
   constant BEAT_CH: integer := BEAT_B/CH_B;
+  -- THE LOW BITS OF AN ADDRESS ARE TAKEN AS BITS, NEVER THROUGH `to_integer`
+  -- OF THE WHOLE VECTOR.  `to_integer(a) mod 4096` reads like a slow way of
+  -- masking; at the real 9B KV map it is a SIMULATION-KILLING OVERFLOW.
+  -- MEASURED 2026-08-29, TRACK KVVALUE, GHDL 1.0.0 mcode, this file at
+  -- ADDR_W 33 with the manifest's k_base = 4,521,582,592:
+  --
+  --   ghdl:error: overflow detected
+  --   in process .tb_attn_kv_map(sim).dut@attn_kv_axi(rtl).gen_rd(1).p_rd
+  --     from: ieee.numeric_std.to_integer at numeric_std-body.vhdl:3042
+  --
+  -- because `natural'high` is 2,147,483,647 and the base alone is 2.1x that.
+  -- Every existing bench ran with bases under 36 MB, so the whole 32-bit
+  -- region of the address space was outside their coverage and this was
+  -- unreachable from all of them.  It is the same wall TRACK CGENERICS hit on
+  -- the GENERIC and TRACK CKVMAP closed by counting the base in 16-byte
+  -- chunks -- the generic stopped being a byte count, and this did not.
+  --
+  -- `resize` on an UNSIGNED drops the leftmost bits, so `low_bits(a,n)` is
+  -- exactly `a mod 2**n` for every ADDR_W: it TRUNCATES when ADDR_W > n and
+  -- zero-EXTENDS when ADDR_W < n, and in the second case the value is already
+  -- below 2**n so the answer is the value itself.  All four call sites below
+  -- take a power-of-two modulus, so no call site loses anything.
+  constant BEAT_LW: integer := clog2(BEAT_B);   -- BEAT_B is a power of two
+
+  function low_bits(a : unsigned; n : positive) return integer is
+  begin
+    return to_integer(resize(a, n));
+  end function;
+
   constant AW_B   : integer := clog2(NBLK);
   constant AW_H   : integer := clog2(N_KVH);
 
@@ -413,7 +442,7 @@ architecture rtl of attn_kv_axi is
     variable to4k : integer;
     variable n    : integer;
   begin
-    to4k := (4096 - (to_integer(a) mod 4096))/BEAT_B;
+    to4k := (4096 - low_bits(a, 12))/BEAT_B;
     n := left;
     if n > MAXB then n := MAXB; end if;
     if n > to4k then n := to4k; end if;
@@ -566,6 +595,34 @@ begin
           if to_integer(ctx_len) > MAXCTX or ctx_len = 0
              or cur_pos >= ctx_len or layer > LAYERS-1 then
             err_cfg <= '1';
+          end if;
+          -- THE 16-BYTE BASE ALIGNMENT, WHICH IS A FORMAT REQUIREMENT AND
+          -- WHOSE ONLY REMAINING HOME IS HERE.  Section 1 states it: the
+          -- record granule is 16 bytes and the realignment mux works in
+          -- chunks.  rtl/llama_top.vhd used to assert it, and TRACK CKVMAP
+          -- correctly RETIRED that assert when C_K_BASE_CH/C_V_BASE_CH became
+          -- chunk counts, because from there an unaligned base stopped being
+          -- representable.  But THIS module's `k_base`/`v_base` are BYTE
+          -- addresses and any other instantiator can still hand it one.
+          --
+          -- MEASURED 2026-08-29, TRACK KVVALUE, sim/mutate_kv_map.sh row
+          -- `k_one_byte` before this check existed: a base ONE BYTE high is
+          -- not merely unchecked, the two engines DISAGREE about it.  The
+          -- read side computes `ph_ch = low_bits(a0,BEAT_LW)/CH_B`, an
+          -- integer divide by 16, so an offset of 1..15 bytes is quantised
+          -- away and the reads are correct.  The write side keeps the same
+          -- offset as `phase` and shifts every strobe by it, so the RECORD
+          -- LANDS ONE BYTE LATE and byte 0 of its first chunk is never
+          -- written at all.  A silent one-byte corruption of the cache, with
+          -- the reader unable to see the cause.  Refusing the job is the
+          -- whole fix; there is no alignment either engine could agree on.
+          if k_base(3 downto 0) /= "0000" or v_base(3 downto 0) /= "0000" then
+            err_cfg <= '1';
+            report "attn_kv_axi: k_base/v_base must be 16-byte aligned -- "
+                 & "that is the record granule (section 1).  An unaligned "
+                 & "base is quantised away by the read engine and honoured "
+                 & "by the write engine, so the record lands late and the "
+                 & "reader cannot see why." severity warning;
           end if;
         elsif flushing = '1' and rd_quiet = "11" and wr_quiet = '1' then
           flushing <= '0';
@@ -755,8 +812,8 @@ begin
               if s = 0 then base := kb_r; else base := vb_r; end if;
               a0 := rec_addr(base, lay_r, to_integer(q_head(s)),
                              to_integer(q_pos(s)));
-              ph_ch   <= (to_integer(a0) mod BEAT_B)/CH_B;
-              ar_addr <= a0 - to_unsigned(to_integer(a0) mod BEAT_B, ADDR_W);
+              ph_ch   <= low_bits(a0, BEAT_LW)/CH_B;
+              ar_addr <= a0 - to_unsigned(low_bits(a0, BEAT_LW), ADDR_W);
               run_hd  <= q_head(s);
               run_p0  <= q_pos(s);
               run_v   <= '1';
@@ -894,7 +951,7 @@ begin
               if wb_sel = '0' then base := kb_r; else base := vb_r; end if;
               a0     := rec_addr(base, lay_r, to_integer(wb_hd),
                                  to_integer(wb_ps));
-              phase  := to_integer(a0) mod BEAT_B;
+              phase  := low_bits(a0, BEAT_LW);
               astart := a0 - to_unsigned(phase, ADDR_W);
               nbeats := (phase + REC_B + BEAT_B - 1)/BEAT_B;
               bi     := 0;
