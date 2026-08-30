@@ -66,6 +66,17 @@
 --
 -- A LANDMARK IS A CHANGE DETECTOR, NOT AN ORACLE.  See
 -- docs/debugging/2026-08-29_oi3b-top-level-value-gate.md.
+--
+-- OI-3's TWO NAMED DEFECTS ARE NOW MEASURED AGAINST THIS ROW, and this row is
+-- the only one that catches them.  `sim/mutate_llama_top_land.sh` rows P5r and
+-- P6r are the exponent claim re-aimed at R_X and the R_QG prefetch consuming
+-- at k-3 -- the two mutations that PART 7 of
+-- `docs/debugging/2026-08-28_llama-top-first-seams.md` recorded as PASSING
+-- BROKEN.  Both are KILLED here on all four landmarks, and rows P5rx/P6rx are
+-- the same two mutants with the landmarks UNSET, which both SURVIVE.  So the
+-- kill is P14's and no other property's, and OI-3's original finding is
+-- reproduced rather than merely quoted.  MEASURED 2026-08-29 at f257466;
+-- `docs/debugging/2026-08-29_oi3mut-oi3-two-mutations.md`.
 library ieee; use ieee.std_logic_1164.all;
 
 entity tb_llama_top_real is

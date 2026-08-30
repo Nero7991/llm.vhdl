@@ -252,4 +252,65 @@ row P4r "AXIS: clean real run, landmarks UNPINNED -- the NO VALUE GATE note must
     "" $G_REAL
 
 echo
+echo "--- P5/P6: THE TWO MUTATIONS OI-3 NAMED.  Backlog row N6. ---"
+# PART 7 of docs/debugging/2026-08-28_llama-top-first-seams.md records these
+# two as the only rows of nine that "PASS BROKEN", and OI-3 is named after
+# them.  Both live in unit C's prefetch adapter in rtl/llama_top.vhd, and both
+# are load-bearing: each changes every element of the residual.  The gate they
+# were measured against had no value landmark.  P14 does, and until
+# 2026-08-29 NOTHING had shown that P14 sees them: MEASURED at f257466,
+# `grep -rn 'c_exp_region\|qg_buf\|k-3\|R_VIN' sim/mutate_*.sh
+# docs/debugging/2026-08-29_oi3b-top-level-value-gate.md` returned zero hits.
+#
+# EITHER VERDICT IS A RESULT.  A kill closes OI-3's two classes.  A survival
+# would say P14 does not have the resolution it is believed to have and that
+# every claim resting on tb_llama_top_real has to be re-read.  Do NOT change
+# the gate to make these pass.
+#
+# ANCHORS ARE BY CONTENT, count 1.  Line numbers in rtl/llama_top.vhd were
+# MEASURED moving :782 -> :789 -> :835 inside one hour on 2026-08-29.
+D=$(mutate_n P5 rtl/llama_top.vhd \
+    "c_exp_region <= to_unsigned(R_VIN, 8);" \
+    "c_exp_region <= to_unsigned(R_X, 8);" 1)
+if [ -n "$D" ]; then
+  row P5r  "OI-3 mutation 1: unit C's R_VIN exponent claim re-aimed at R_X, the real-path configuration" \
+      "$D" $G_REAL $LAND_REAL
+  row P5s  "the SAME mutation in the KV configuration" \
+      "$D" $G_SEQ  $LAND_SEQ
+  # THE ATTRIBUTION CONTROL, and it is what makes the two rows above mean
+  # something.  A KILL says the RUN failed; it does not say WHICH check
+  # failed, and crediting P14 with a detection another property made is
+  # exactly the error this table exists to avoid.  The `x` rows are the same
+  # mutant with all four landmarks left at their sentinels, which is the
+  # pre-OI3B bench EXACTLY: structure, skew and degenerate residuals alone.
+  #   x SURVIVES -> the kill above is P14's and nobody else's, and OI-3's
+  #                 "PASSES BROKEN" finding is reproduced at this commit.
+  #   x KILLED   -> an existing structural property already saw it, P14 is
+  #                 not the reason, and the row must say so by name.
+  row P5rx "ATTRIBUTION: the same mutant, real path, landmarks UNSET -- the pre-OI3B gate" \
+      "$D" $G_REAL
+  row P5sx "ATTRIBUTION: the same mutant, KV path, landmarks UNSET -- the pre-OI3B gate" \
+      "$D" $G_SEQ
+fi
+
+# WHY k-3 AND NOT k-1.  PART 7's own "Measured and REJECTED" says it: at
+# k = QGN+1 the k-1 form indexes qg_buf(QGN) and the run ABORTS with an
+# index-out-of-bounds, which is a broken mutant and not a result.  k-3 stays
+# in range, so the design computes and the gate gets a chance to judge it.
+# The GUARD has to move with the index or k = 2 writes qg_buf(-1).
+D=$(mutate_n P6 rtl/llama_top.vhd \
+    "if k >= 2 then qg_buf(k-2) <= el_rdata; end if;" \
+    "if k >= 3 then qg_buf(k-3) <= el_rdata; end if;" 1)
+if [ -n "$D" ]; then
+  row P6r  "OI-3 mutation 2: the R_QG prefetch consumes at k-3 instead of k-2, the real-path configuration" \
+      "$D" $G_REAL $LAND_REAL
+  row P6s  "the SAME mutation in the KV configuration" \
+      "$D" $G_SEQ  $LAND_SEQ
+  row P6rx "ATTRIBUTION: the same mutant, real path, landmarks UNSET -- the pre-OI3B gate" \
+      "$D" $G_REAL
+  row P6sx "ATTRIBUTION: the same mutant, KV path, landmarks UNSET -- the pre-OI3B gate" \
+      "$D" $G_SEQ
+fi
+
+echo
 echo "=== scratch: $SCRATCH"
