@@ -141,9 +141,55 @@ Treat the shape of the trend as a lead, not as a measurement.
   silicon, and board row N3 records that no RTL top composes them for the card.
 - **One activation vector per job**, supplied by the host. Nothing here
   exercises a layer, a sequence, or the KV cache.
-- **Four tensors of roughly 250.** No claim is made about the rest, and the
-  failure mode this cannot see is a tensor whose geometry differs from the four
-  tried.
+- ~~Four tensors of roughly 250.~~ **CLOSED, see section 9.** All eight
+  distinct geometries now pass.
 - **Why THERM-255 was quiet for this window** is not established; see the
   companion note on the trip-burst measurement. A quiet window is not a fixed
   defect.
+
+
+---
+
+## 9. Geometry coverage is COMPLETE: 8 of 8
+
+Added 20:14-20:16. The 249 `mv4i` objects have only **eight distinct
+`(M, K)` shapes**, so complete coverage of the geometry space is eight runs,
+not 249. Enumerated from the manifest, then all eight run:
+
+| M x K | objects with this shape | tensor run | verdict |
+|---|---:|---|---|
+| 12288 x 4096 | 64 | `blk.0.ffn_gate.weight` | **PASS** 64/64 |
+| 4096 x 4096 | 56 | `blk.0.attn_gate.weight` | **PASS** 64/64 |
+| 32 x 4096 | 48 | `blk.0.ssm_alpha.weight` | **PASS** 32/32 |
+| 4096 x 12288 | 32 | `blk.20.ffn_down.weight` | **PASS** 64/64 |
+| 8224 x 4096 | 24 | `blk.0.attn_qkv.weight` | **PASS** 64/64 |
+| 1024 x 4096 | 16 | `blk.11.attn_k.weight` | **PASS** 100/100 |
+| 8192 x 4096 | 8 | `blk.11.attn_q.weight` | **PASS** 64/64 |
+| 248320 x 4096 | 1 | `output.weight` | **PASS** 64/64 |
+
+**The two worth calling out are the ones chosen because they are awkward, not
+because they are typical:**
+
+- **`M = 8224` is not a multiple of 32**, unlike every other shape in the
+  table. `8224 = 8192 + 32`, the fused QKV with its padding. Row-count
+  arithmetic that assumes a `BLOCK`-aligned `M` would break here and nowhere
+  else in the model.
+- **`M = 248320` is the lm_head**, the tensor `MAXROWS_BFP = 17408` forces into
+  **15 descriptor jobs**, and which TRACK LMHEAD proved the gateware REFUSES as
+  a single 248,320-row job. **This run does not contradict that**: it asks for
+  64 rows, i.e. one window well inside the cap. What it establishes is that the
+  windowing geometry computes correctly, not that the refusal is gone.
+
+**Zero thermal trips across the entire session.** `LATCHED TRIP none since the
+last clear` still held at 20:16, with the counter cleared at 20:12:27 and
+twelve jobs run in between.
+
+### What this still does not cover
+
+- **One row-count per geometry.** `--rows` was 32, 64 or 100; nothing swept the
+  row count within a shape, so an off-by-one at a window boundary is not
+  excluded. The lm_head is the place that matters and it was run at 64 of a
+  17,408 cap.
+- **Only `slot` 0..3 of the descriptor arena**, and one activation vector per
+  job supplied by the host.
+- **Still subsystem A alone.** B, C and D have never run on this silicon.
