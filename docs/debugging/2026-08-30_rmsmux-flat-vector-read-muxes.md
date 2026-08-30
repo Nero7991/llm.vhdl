@@ -625,8 +625,16 @@ instantiates `rmsnorm_rs_mem` is exposed, and today none does.
    measured as foldable by 17,367 LUT.** Not explained. Until it is, neither
    number should be treated as *the* baseline for this lever, and both draws in
    section 8 should be taken with the standalone control drawn in the same
-   session.
-9. **Only N=64..256 was simulated.** N=4096 was never run in GHDL; the sweep
+   session. **The N=4096 GHDL run that would close item 10 was deliberately
+   NOT taken**: `ghdl-mcode` has been MEASURED at 20.9 GiB in one process and
+   GATEGREEN's full gate held the workstation, so the box could not have taken
+   it beside TIMING's route. Confirmed by the coordinator as staying open
+   rather than becoming a quiet omission.
+9. **THE COMPOSED LOAD RACE IS UNVERIFIED AND THIS BENCH CANNOT VERIFY IT.**
+   See the NORMURAM block in section 12. `tb_rmsnorm_rs_mem` loads both vectors
+   before `start`, so the concurrent-load case has no coverage at all, and the
+   deadline is inside the unit where the parent cannot see it.
+10. **Only N=64..256 was simulated.** N=4096 was never run in GHDL; the sweep
    argument is that the transform is index arithmetic that does not depend on
    N, but that is an argument, not a measurement.
 
@@ -675,6 +683,73 @@ in that draw, which is what a register whose only value is a constant does.
 and is a third vector, so the hookup's FF saving there is larger than 132,920.
 Do not quote a single number for it until a composed FF census is taken with a
 real gain image.**
+
+### THE COMPOSITION COSTS TIMING MARGIN. FINDING BY TRACK NORMURAM.
+
+**Recorded here because section 12 as first written was wrong by omission**: it
+read NORMURAM's gain loader as free to reuse. It is free in **order** and in
+**granularity** but **NOT in RATE**, and that is a real cost that belongs on
+the record before anyone books the FF saving.
+
+`w_we`/`w_waddr`/`w_wdata` is **one 16-bit word per cycle**. NORMURAM's
+shift-register form reads `GW = 4` elements per cycle. So pointing the loader
+at this unit's bank port makes the load 4x longer.
+
+**DERIVED INDEPENDENTLY HERE, from `rtl/rmsnorm_rs.vhd`'s own state list rather
+than from NORMURAM's message, and it agrees.** The fixed states between the end
+of `S_ACC` and the first `w` read at `S_RAW` are `S_INV1..6` (6), `S_SEED1..2`
+(2), `S_RQ` steps 0..24 (25), `S_RQ_FOLD` (1), `S_RQ_FIN1..3` (3),
+`S_RQ_CLAMP` (1) = **38 cycles**. With the load at `NN+2` and the deadline at
+`NN + NN/LANES + 38`:
+
+| configuration | load | deadline | margin |
+|---|---:|---:|---:|
+| today, shift register, `GW = 4`, any shape | `NN/GW+1` | `NN+4` | **4.0000x** |
+| composed, `NN = 4096`, `NORM_LANES = 4` | 4,098 | 5,158 | **1.2587x** |
+| composed, `NN = 4096`, `NORM_LANES = 16` | 4,098 | 4,390 | **1.0713x** |
+
+matching NORMURAM's 4.0x, 1.26x and 1.07x. `LANES = 16` is not hypothetical:
+it is a legal configuration and it is one of the eight this unit's own sweep
+covers.
+
+**AND THE PART THE ARITHMETIC ADDS, WHICH IS THE DANGEROUS ONE.** The margin is
+shape-invariant today and is NOT shape-invariant composed, and it moves in the
+direction that makes a small-shape bench **flattering**:
+
+| shape | composed margin, `LANES = 4` | composed margin, `LANES = 16` |
+|---|---:|---:|
+| `NN = 64` (a bench shape) | **1.7879x** | 1.6061x |
+| `NN = 4096` (the build) | **1.2587x** | 1.0713x |
+
+**A bench at hidden 64 sees 1.79x of margin where the shipping build has 1.26x.**
+So a composed test that passes at a small shape is not evidence about the real
+one, which is exactly the property `GW = 4`'s 4.0000x had and the bank port
+loses. Whoever attempts the composition must exercise it at the real shape or
+not claim it.
+
+**The URAM count survives** (`GW = 4` with a 4-cycle demux keeps 17 URAM288,
+not the 114 NWROM measured at `GW = 1`). It is the rate that does not.
+
+**Second-order, and worse for checking than for timing.** Today the gain is
+fully resident before `r_go`, which is a **phase separation** that `gvr` can
+see and that `wbusy` checks. Composed, the reader walks `LANES` elements per
+cycle against the writer's one, both ascending, so it becomes a **race** -- and
+the deadline moves from `r_go`, which `gvr` can see, to the unit's internal
+`S_RAW`, which `gvr` cannot see at all. NORMURAM's U6/U6x mutant pair is direct
+evidence that this fault class leaves the VALUES correct and every landmark
+unmoved, which is the worst possible signature.
+
+**MY OWN VERIFICATION SAYS NOTHING ABOUT THIS, AND THAT IS MINE TO STATE.**
+`sim/tb_rmsnorm_rs_mem.vhd` loads x and w **completely before `start`**, so it
+exercises the phase-separated case only and never the concurrent-load race. No
+mutation in section 7.4 perturbs load timing. **The unit is verified; the
+composition is not, and this bench cannot verify it.**
+
+`rmsnorm_rs_mem` exposes no tap for when `S_RAW` begins, so a parent cannot
+today check the deadline it now owns. Making that visible is a small,
+non-arithmetic addition and is **not made here** -- the coordinator has
+sequenced the composition after NORMURAM's six points and has not asked for a
+change to this unit. Named so the composed step starts from it.
 
 **The one thing that must be decided by Oren and not by a track:** `gvr` is one
 generate block holding BOTH the gain image (NORMURAM's) and the input staging
