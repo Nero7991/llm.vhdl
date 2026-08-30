@@ -51,9 +51,32 @@
 --   0x28 Y_LO         R   y[Y_IDX][31:0]
 --   0x2C Y_HI         R   y[Y_IDX][63:32]
 --   0x30 Y_EXP        R
---   0x34 CYCLES       R   cycles busy, GO to done
---   0x38 BEATS        R   weight words the array consumed
---   0x3C STARVED      R   cycles busy with no weight word available
+--   0x34 CYCLES       R   cycles in S_WAIT, i.e. core_start to core_done.
+--                         NOT "GO to done", which is what this line used to
+--                         say and is what a reader would assume from `busy`:
+--                         `busy` rises in S_IDLE on GO, but all three counters
+--                         are incremented ONLY in the S_WAIT arm below, so the
+--                         descriptor fetch (S_FETCH/S_R), the shape checks and
+--                         the up-to-17-cycle codebook load are OUTSIDE every
+--                         one of them.  The distinction is load bearing: it is
+--                         what makes CYCLES a clean per-job ARITHMETIC window
+--                         with no fixed control-plane overhead in it, so a
+--                         CYCLES/BEATS ratio is a steady-state rate and must
+--                         NOT be explained as overhead being amortised.
+--                         Corrected 2026-08-30, TRACK COUNTERS; see
+--                         docs/debugging/2026-08-30_counters-cycles-beats-starved.md
+--   0x38 BEATS        R   weight words the array consumed.  One word is
+--                         ROWS_IF*BLK*4 bits = NPORTS_W AXI beats, one from
+--                         each weight port, so BEATS is NOT an AXI beat count.
+--                         It equals tiles*nblk exactly on a completed job.
+--   0x3C STARVED      R   cycles in the same window with no weight word
+--                         available (w_valid low, i.e. at least one of the
+--                         NPORTS_W weight FIFOs was empty).  Honestly named,
+--                         but it is a LOWER BOUND on read-path stall: it does
+--                         NOT see the SCALE path, so a cycle with every weight
+--                         FIFO full and the scale superword missing counts as
+--                         neither BEATS nor STARVED.  On silicon that residual
+--                         is 10% to 47% of CYCLES.
 --
 -- NOT IN THE MAP, ON PURPOSE: N_ROWS, N_COLS, OUT_SHIFT, W_EXP, X_EXP,
 -- OUT_MODE, the bases, W_BEATS, S_BEATS and the codebook are all descriptor
