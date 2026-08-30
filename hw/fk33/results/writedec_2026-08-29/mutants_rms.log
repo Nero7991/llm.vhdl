@@ -1,0 +1,61 @@
+=== MUTANT idx_off ===
+  244c244
+  <         if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = wi then
+  ---
+  >         if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = (wi+1) mod NB then
+  WRITEDEC FAIL t 0 i 0 ref -14006 new -25527
+  WRITEDEC FAIL t 0 i 1 ref 13435 new -10940
+  WRITEDEC FAIL t 0 i 2 ref 3677 new 8119
+  VERDICT: CAUGHT (rc=1)
+=== MUTANT lane_rev ===
+  228c228
+  <         o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(32767, 16));
+  ---
+  >         o_wd((LANES-k)*16-1 downto (LANES-1-k)*16) <= std_logic_vector(to_signed(32767, 16));
+  230c230
+  <         o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(-32768, 16));
+  WRITEDEC FAIL t 0 i 0 ref -14006 new -10772
+  WRITEDEC FAIL t 0 i 1 ref 13435 new 3677
+  WRITEDEC FAIL t 0 i 2 ref 3677 new 13435
+  VERDICT: CAUGHT (rc=1)
+=== MUTANT lastword ===
+  241c241
+  <   gow : for wi in 0 to NB-1 generate
+  ---
+  >   gow : for wi in 0 to NB-2 generate
+  WRITEDEC FAIL t 0 i 252 ref -6785 new 0
+  WRITEDEC FAIL t 0 i 253 ref 502 new 0
+  WRITEDEC FAIL t 0 i 254 ref 1331 new 0
+  VERDICT: CAUGHT (rc=1)
+=== MUTANT no_v3 ===
+  244c244
+  <         if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = wi then
+  ---
+  >         if rst = '0' and state = S_EMIT and idx3 = wi then
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:245:7:@30065ns:(report note): WRITEDEC EQUIV PASS: rmsnorm_rs is bit-exact with rmsnorm_rs_ref, N=256 LANES=4
+  VERDICT: NOT CAUGHT -- resolution floor
+=== MUTANT no_rst ===
+  244c244
+  <         if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = wi then
+  ---
+  >         if state = S_EMIT and v3 = '1' and idx3 = wi then
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:168:13:@27485ns:(report error): WRITEDEC FAIL idle-after-reset: o_mant differs while the unit is idle
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:248:7:@29975ns:(report failure): WRITEDEC EQUIV FAIL errs=1 degenerate=0
+  VERDICT: CAUGHT (rc=1)
+=== MUTANT no_state ===
+  237c237
+  <   -- The write decode.  `rst = '0' and state = S_EMIT and v3 = '1'` is exactly
+  ---
+  >   -- The write decode.  `rst = '0' and v3 = '1'` is exactly
+  244c244
+  <         if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = wi then
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:168:13:@27485ns:(report error): WRITEDEC FAIL idle-after-reset: o_mant differs while the unit is idle
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:248:7:@29975ns:(report failure): WRITEDEC EQUIV FAIL errs=1 degenerate=0
+  VERDICT: CAUGHT (rc=1)
+=== MUTANT sat_hi ===
+  228c228
+  <         o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(32767, 16));
+  ---
+  >         o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(32766, 16));
+  /mnt/storage/writedec/equiv/tb_writedec_rms.vhd:245:7:@30065ns:(report note): WRITEDEC EQUIV PASS: rmsnorm_rs is bit-exact with rmsnorm_rs_ref, N=256 LANES=4
+  VERDICT: NOT CAUGHT -- resolution floor

@@ -1,0 +1,41 @@
+=== MUTANT vbuf_off ===
+  702c702
+  <            and cv_seg_i > 1 and obeat = wi then
+  ---
+  >            and cv_seg_i > 1 and obeat = (wi+1) mod NBV then
+   OVERALL     PASS 1   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  gdn_block_out.txt DIFFERS ; top-level VCD DIFFERS
+  VERDICT: CAUGHT
+=== MUTANT qsb_off ===
+  713c713
+  <            and l2_qk = '0' and kh = h then
+  ---
+  >            and l2_qk = '0' and kh = (h+1) mod KEY_HEADS then
+   OVERALL     PASS 1   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  gdn_block_out.txt DIFFERS ; top-level VCD DIFFERS
+  VERDICT: CAUGHT
+=== MUTANT no_seg ===
+  680c680
+  <            and cv_seg_i = 0 and obeat = wi then
+  ---
+  >            and obeat = wi then
+   OVERALL     PASS 1   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  gdn_block_out.txt DIFFERS ; top-level VCD DIFFERS
+  VERDICT: CAUGHT
+=== MUTANT no_ph ===
+  679c679
+  <         if rst = '0' and co_valid = '1' and ph /= P_IDLE
+  ---
+  >         if rst = '0' and co_valid = '1'
+  690c690
+   OVERALL     PASS 2   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  gdn_block_out.txt IDENTICAL ; top-level VCD IDENTICAL
+  VERDICT: NOT CAUGHT -- resolution floor
+=== MUTANT qk_swap ===
+  713c713
+  <            and l2_qk = '0' and kh = h then
+  ---
+  >            and l2_qk = '1' and kh = h then
+   OVERALL     PASS 1   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  gdn_block_out.txt DIFFERS ; top-level VCD DIFFERS
+  VERDICT: CAUGHT

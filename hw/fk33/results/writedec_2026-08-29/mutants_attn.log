@@ -1,0 +1,35 @@
+=== MUTANT qplane_off ===
+  1026c1026
+  <            and qh = g then
+  ---
+  >            and qh = (g+1) mod G then
+   OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  VERDICT: CAUGHT
+=== MUTANT krec_blkoff ===
+  1040c1040
+  <           elsif rbv(2) = '1' and ph /= P_RECV and rbi = j/KV_BLOCK then
+  ---
+  >           elsif rbv(2) = '1' and ph /= P_RECV and rbi = (j/KV_BLOCK + 1) mod NBLK then
+   OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  VERDICT: CAUGHT
+=== MUTANT vrec_isv ===
+  1062c1062
+  <           elsif kq_mv = '1' and kq_isv = '1'
+  ---
+  >           elsif kq_mv = '1' and kq_isv = '0'
+   OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  VERDICT: CAUGHT
+=== MUTANT krec_nobyp ===
+  1037c1037
+  <           if ph = P_RECK and is_byp = '1' then
+  ---
+  >           if ph = P_RECK then
+   OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  VERDICT: CAUGHT
+=== MUTANT qpl_nolsel ===
+  1025c1025
+  <         if rst = '0' and ph = P_ROPEW and rp_dn = '1' and lsel /= 0
+  ---
+  >         if rst = '0' and ph = P_ROPEW and rp_dn = '1'
+   OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+  VERDICT: CAUGHT

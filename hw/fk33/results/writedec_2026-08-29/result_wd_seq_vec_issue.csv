@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+seq_vec_issue,"",0,94,94,0,112,0,0,0,0,0,0,0,3.723,783.085356303837,11,-1,94,112,0,0

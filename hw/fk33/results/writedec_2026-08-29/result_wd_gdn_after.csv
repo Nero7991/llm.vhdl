@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+gdn_block,"",253,131760,127661,4099,248873,36,14,43,0,2913,29025,13327,0.483,221.3858755811379,236,-1,131760,248873,253,43

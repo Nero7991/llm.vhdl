@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+attn_block,"HEAD_DIM=256 N_QH=16 N_KVH=4 LAYERS=8",298,147263,147154,109,101112,3,16,11,0,2734,17990,3792,-3.449,118.35720203574388,207,-1,147263,101112,298,11

@@ -1,0 +1,13 @@
+WRITEDEC trial 0 o_exp 2 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 1 o_exp 6 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 2 o_exp 5 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 3 o_exp 4 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 4 o_exp 3 nonzero 197/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 5 o_exp 2 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 6 o_exp 7 nonzero 255/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 7 o_exp 12 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 8 o_exp 11 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 9 o_exp 10 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC trial 10 o_exp 5 nonzero 256/256 saturated 0 done_cyc ref 246 new 246
+WRITEDEC saturated elements over all trials 0
+tb_writedec_rms.vhd:245:7:@30065ns:(report note): WRITEDEC EQUIV PASS: rmsnorm_rs is bit-exact with rmsnorm_rs_ref, N=256 LANES=4

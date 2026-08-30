@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+seq_desc_fetch,"",0,702,702,0,962,0,0,0,0,8,2,0,2.901,476.4173415912339,14,-1,702,962,0,0
