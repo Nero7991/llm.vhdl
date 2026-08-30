@@ -249,3 +249,97 @@ hidden port is not recoverable from userspace at any privilege level.
 MISSING relative to a known-good capture, and the only reason that capture
 existed is that someone took a baseline before the first bring-up. Take
 baselines.
+
+---
+
+## SECOND CORRECTION, 2026-08-30: the reboot cannot work either, and why
+
+**WITHDRAWN: "The actual fix -- a warm reboot, taken NOW THAT THE FPGA IS
+CONFIGURED."** Two reboots were taken with the engine bitstream loaded. Neither
+enumerated the card. The reasoning was sound and the conclusion was wrong.
+
+### What was measured
+
+After the second reboot, with the engine bitstream loaded before it:
+
+```
+AXI_MASTERS hw_axi_1 hw_axi_2 hw_axi_3
+  probe hw_axi_1 at 0xA000 -> 0xDEC0DEE3
+```
+
+Three JTAG-AXI masters is the engine build's signature, and one answers. **So
+FPGA configuration DOES survive a warm reboot on this board.** `flash.sh
+--status` agrees: `CFG_DONE 1`, `CFG_SYSMON TEMP=35.6 VCCINT=0.715`,
+`CFG_AXI_MASTERS 3`. And `00:1c.4` was still absent from config space.
+
+**Configuration was never the blocker.** The wiper reading 68 rather than 128
+was a correct measurement used to support a conclusion that had not been tested:
+it proves card power survived, and says nothing about whether the endpoint
+trained.
+
+### The actual mechanism, from the project's own record
+
+`docs/debugging/2026-08-28_fk33-first-light.md`, describing the ONLY successful
+bring-up:
+
+> **Exploit the live root port.** The handoff's reasoning -- PCIe wants a
+> trained link within ~100 ms of PERST# deassertion, JTAG configuration cannot
+> meet it, so the host disables the port -- **is sound for a COLD boot. It does
+> not apply when a root port is already up.** So: remove the PCI device, JTAG
+> configure our bitstream, rescan.
+
+**The root port was already up because the card configured itself from its
+FACTORY FLASH at power-on, inside the 100 ms window.** The JTAG bitstream was
+then swapped in behind an already-live bridge. `hw/fk33/flash.sh`'s own header
+records the card enumerating as `Squirrels Research Labs ForestKitten 33
+[1e24:1533]` behind root port `00:1d.0` while running that factory image.
+
+**So the working procedure was never "configure over JTAG, then reboot".** It
+was "flash boot trains the link, then remove / configure / rescan". Card 1's
+factory image was destroyed, so the first half no longer happens and there is
+never a live port for the second half to exploit. **JTAG configuration cannot
+open the window; only something in flash can.**
+
+## Measured and REJECTED -- do not retry
+
+- **A warm reboot with the bitstream JTAG-loaded.** Taken TWICE. Configuration
+  survives; the port stays hidden. **Do not take a third.**
+- **`/sys/bus/pci/rescan`.** No bridge exists to enumerate behind.
+- **A secondary bus reset on `0000:00:1c.0`.** Wrong port, and see below.
+- **Reading the wiper as evidence about FPGA configuration.** It is evidence
+  about card POWER only. The discriminator for configuration is the JTAG-AXI
+  master count, or `flash.sh --status`, and it is cheap.
+
+## A SAFETY DEFECT FOUND WHILE DIAGNOSING, not yet fixed
+
+**`hw/fk33/host/potlatch.tcl:52` opens the JTAG target by BARE INDEX:**
+
+```tcl
+open_hw_target [lindex [get_hw_targets] 0]
+```
+
+`hw/fk33/tcl/target_select.tcl` exists precisely to eliminate this, and its own
+header says why: *"An agent already destroyed card 1's SQRL factory flash image
+by aiming a flash operation at the wrong thing; card 2's copy of that image is
+now the ONLY surviving one."* With two cards on the chain, index 0 is whichever
+enumerated first.
+
+`host/fk33_powercycle.sh` reads no target variable at all, so its verdict is
+about whichever card index 0 happens to be. **That is why it reported
+`no_axi_master` for a card that had three**: it was reading card 2. The verdict
+was not wrong about what it looked at; it looked at the wrong card.
+
+`potlatch.tcl` has no write path, so this is a WRONG-ANSWER defect rather than a
+destructive one. It is still the same selection defect in the same directory as
+the operation that caused the original damage. **Convert it to
+`target_select.tcl` and give `fk33_powercycle.sh` the target variables.**
+
+## Still open
+
+- Whether card 1's flash is genuinely empty. Being tested by reading it out and
+  letting `check_flash_backup.py` judge; a rejection IS the evidence.
+- **Card 2's factory backup is VERIFIED GOOD**: two independent readbacks are
+  byte-identical (`dcb97432538b9c7d2855b1d9c93658f7`) and copies exist on two
+  physical disks (`/dev/nvme1n1p6` and `/dev/nvme0n1p1`). Note
+  `hw/fk33/bit/` is gitignored, so the `/mnt/storage/fk33-factory-backups/`
+  copy is the one under protection. Nothing is off-box.
