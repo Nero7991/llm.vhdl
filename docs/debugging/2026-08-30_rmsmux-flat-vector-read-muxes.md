@@ -41,6 +41,56 @@ element AND fires `done` on the **same cycle** as `rmsnorm_rs`, over 10
 non-degenerate trials at each of **8 (N, LANES) configurations** including
 `LANES = 1` and `LANES = 16`.
 
+### THIS TRANSFORM ALREADY EXISTED. READ TRACK LUTDIET FIRST.
+
+Put first because it is the single most useful thing to know before scheduling
+this lever, and because the brief that dispatched this track said the opposite.
+
+**TRACK LUTDIET built and MEASURED a `rmsnorm_rs_mem` on 2026-08-29.** The
+artefacts have been in the repo the whole time, at
+`hw/fk33/results/lutdiet_2026-08-29/`, with the write-up at
+`docs/debugging/2026-08-29_lutdiet-flat-vector-ports.md`. Verbatim from
+`result_mem_n4096.csv` and `result_hotw_n4096.csv`, `xcvu33p-fsvh2104-2L-e`,
+5.0 ns, `-mode out_of_context -flatten_hierarchy none`:
+
+    rmsnorm_rs_mem, N=4096 LANES=4:  dsp 40  lut 4798   ff 1700   ramb18 12
+                                     bram_tile 6  uram 0  f7 0      f8 0
+                                     wns +0.971  fmax 248.2 MHz  synth 21 s
+    rmsnorm_rs_hotw,N=4096 LANES=4:  dsp 40  lut 40804  ff 67267  bram_tile 0
+                                     uram 0       f7 17408  f8 8704
+                                     wns +1.675  fmax 300.8 MHz  synth 74 s
+
+and `census_rmsnorm_rs_mem.txt`, top roots, verbatim:
+
+    root                                     LUT   MUXF7   MUXF8       FF  CARRY8
+    o_wd                                    1101       0       0       64      32
+    max_raw                                 1047       0       0       63      56
+    rq_shifted                               519       0       0       64       2
+    ARG                                      443       0       0        0      11
+    shifted_r                                405       0       0       64       0
+
+**`ARG` -- the read of `x_mant` and `w_mant` -- falls from 17,916 LUT to 443,
+there is no `sq` root at all, and MUXF7 and MUXF8 are both ZERO.** That is the
+mechanism this lever rests on, already measured on the real part, with a
+three-mutant teeth check and a GHDL bit-exactness proof, a day before this
+track was dispatched.
+
+**What this track adds, and it is deliberately narrow:** the transform
+re-derived onto the post-WRITEDEC base (LUTDIET's was pre-WRITEDEC and has been
+superseded by `51323ca`); a combinational output write path so `done` does not
+move at all, where LUTDIET's registered form cost a cycle; `LANES = 1` support;
+an oracle against `rtl/rmsnorm.vhd` rather than against `rmsnorm_rs`; a
+three-column attribution control; and a unit that lives in `rtl/` and is a gate
+row, where LUTDIET's was explicitly a measurement artefact outside `rtl/`.
+
+**THE FALSE PREMISE WAS IN THE DISPATCH, NOT IN LUTDIET'S WORK.** The brief for
+this track stated "Nobody has been working on it". LUTDIET had, had measured it,
+and had left the numbers in the repo under a clear README. This is recorded here
+because it is the second false premise about prior work handed to a track on the
+same day, and the cost of the class is duplicated tracks rather than wrong
+numbers. **The cheap check is `ls hw/fk33/results/` and a grep of
+`docs/debugging/` for the unit's name before writing a brief.**
+
 **Four things this track establishes:**
 
 **(a) The two vectors are not both inside the unit, and my brief was wrong
@@ -93,8 +143,8 @@ measurement of an unstated expectation.
 | TIMING 8: "not latency-neutral -- every element access gains cycles and the unit's internal schedule has to absorb them" | **CORRECTED, MEASURED.** `done` fires on the same cycle. The schedule already contained the fetch register the RAM's output register replaces |
 | TIMING 12a: "hardest of the three; interface redesign ... a unit that is instantiated by B, C and D" | **CORRECTED IN SCOPE.** `rmsnorm_rs` is UNCHANGED. `rmsnorm_rs_mem` is a new entity, so every existing instantiation in B, C and D is untouched and the blast radius is exactly whoever instantiates the new one |
 | "`rmsnorm_rs` has never run on silicon" | **CONFIRMED.** `docs/debugging/2026-08-30_a-whole-token-on-the-silicon.md` section on what did not run: "The 64 RMS norms, the final norm ... ran on the **host**." Restated in section 10 with what it does and does not buy |
-| TIMING's 43,213 LUT for `gvr.u_rms` is the baseline this lever comes off | **QUALIFIED, and it is the most important qualification in this document.** `hw/fk33/rtl/compose4_top.vhd` line 19 states it outright: **"NORM_W_IMAGE IS EMPTY HERE, as it was in every row of the booking"**, and `sim/ooc_normadapt_extract.py` defaults it to `""`. So the composed draw measured `u_rms` with `w_mant` driven by a register whose only value is the elaboration-time constant `W_CONST`. TRACK NWFIX MEASURED that configuration difference **on this exact port at 17,367 LUT**. The design that has to fit has a REAL gain image. See section 8 |
-| "nobody has been working on it" | **CORRECTED.** TRACK LUTDIET built and MEASURED a `rmsnorm_rs_mem` on 2026-08-29 (`hw/fk33/results/lutdiet_2026-08-29/`), GHDL-verified bit-exact with a three-mutant teeth check, at **299,030 -> 4,798 CLB LUT** for +6 BRAM. It was explicitly left as a measurement artefact outside `rtl/`. This track's unit is that transform re-derived onto the post-WRITEDEC base, with a stronger oracle. **The prior art halves the risk of this lever and should be read before it is scheduled** |
+| TIMING's 43,213 LUT for `gvr.u_rms` is the baseline this lever comes off | **QUALIFIED, and it is the most important qualification in this document.** `hw/fk33/rtl/compose4_top.vhd` line 19 states it outright: **"NORM_W_IMAGE IS EMPTY HERE, as it was in every row of the booking"**, and `sim/ooc_normadapt_extract.py` defaults it to `""`. So the composed draw measured `u_rms` with `w_mant` driven by a register whose only value is the elaboration-time constant `W_CONST`. TRACK NWFIX MEASURED that configuration difference **on this exact port at 17,367 LUT**. The design that has to fit has a REAL gain image. See section 8. ACCEPTED by the coordinator, who is carrying it into the fit table; TRACK NORMURAM reached the same fold from the opposite direction, which is two independent arrivals at one number |
+| "nobody has been working on it" | **FALSE, and the error is the DISPATCH's rather than a gap in the repo.** TRACK LUTDIET built and MEASURED `rmsnorm_rs_mem` on 2026-08-29 and left it at `hw/fk33/results/lutdiet_2026-08-29/` with a README, a census, a bit-exactness log and a three-mutant teeth check: **299,030 -> 4,798 CLB LUT**, F7 and F8 to zero, for +6 BRAM tiles. See the block at the head of section 2. **The prior art halves the risk of this lever and must be read before it is scheduled.** ACCEPTED by the coordinator, who has recorded the false premise under their own name |
 
 ---
 
@@ -441,7 +491,25 @@ arithmetic, which it must not.
 82,597 to 128,065 CLB LUT across five draws of a memory-like structure on this
 project, two of them from the IDENTICAL command. A single draw here means
 nothing, and the same discipline applies to a number that is predicted to be
-small.
+small. Scatter has NOT been measured at this size on this project, so the two
+draws also measure the scatter rather than merely averaging over it.
+
+**THE PREDICTION IS SHARPER THAN THE BAND, AND BOTH ARE STATED.** LUTDIET's
+already-measured `rmsnorm_rs_mem` is **4,798 LUT / 1,700 FF / 6 BRAM / 0 F7 /
+0 F8 / 40 DSP**, and this unit differs from it by making the output write path
+combinational, which removes three registers (`o_we`, `o_wa`, `o_wd`) and adds
+none. **So the central expectation is 4,798 LUT to within a few hundred, and
+slightly BELOW 1,700 FF.** The 4,798..7,823 band is retained because two draws
+have not been taken and because a central expectation that coincides with a
+prior measurement is exactly the situation in which it is easiest to stop
+asking what would falsify it.
+
+**STATUS: QUEUED, NOT RUN.** The draws are fourth in the lane order set by the
+coordinator on 2026-08-30 (TIMING's pblock squeeze on the workstation, then
+LEVERC's inference question, then NORMURAM's six points, then these) and are to
+be taken on the **BC-250**, whose results are bit-identical to the workstation's
+and where a small OOC job is the right fit. Nothing in this section is a
+measurement until they run.
 
 ---
 
@@ -504,12 +572,11 @@ instantiates `rmsnorm_rs_mem` is exposed, and today none does.
 1. **No area number exists.** Section 8 is a prediction. Two draws at N=4096
    LANES=4, reported as a range, are the outstanding work, and they need a
    Vivado lane.
-2. **THE HOOKUP IS NOT MADE, AND IT IS AN ARBITRATION.** Realising the saving
-   needs `rtl/llama_top.vhd`'s `gvr` block to instantiate `rmsnorm_rs_mem`.
-   That file was MODIFIED and uncommitted throughout this track (TRACK
-   NORMURAM) and this track did not touch it. See section 12 for what the
-   hookup would be and why it is strictly additive to NORMURAM rather than in
-   conflict with it.
+2. **THE HOOKUP IS NOT MADE HERE. ARBITRATED 2026-08-30: TRACK NORMURAM OWNS
+   IT** and wires this unit in following section 12's port map verbatim, since
+   `gvr` is its file. This track stopped at the file boundary and reported,
+   which is what the arbitration was for. **Closed as an arbitration, still
+   open as work**: until NORMURAM lands it, none of the saving is realised.
 3. **The parent's drain gains one priming cycle** and the effect on the pinned
    `seq` landmarks and on `d_norm`'s `dn` instant has not been measured. This
    is the only place in the whole change where a cycle can move.
@@ -542,7 +609,10 @@ instantiates `rmsnorm_rs_mem` is exposed, and today none does.
 
 ## 12. The hookup, stated precisely so it can be arbitrated rather than guessed
 
-**This is a proposal for `rtl/llama_top.vhd`. It is NOT applied.**
+**ARBITRATED 2026-08-30: TRACK NORMURAM applies this, not this track.** `gvr`
+is NORMURAM's file and it wires the unit in following the port map below
+verbatim. What is written here is therefore a handoff, not a proposal, and
+nothing in this section has been applied by TRACK RMSMUX.
 
     u_rms : entity work.rmsnorm_rs_mem
       generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
