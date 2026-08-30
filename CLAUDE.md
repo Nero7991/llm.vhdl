@@ -227,6 +227,16 @@ out-of-range `natural` constant. Its XDC reader forbids `if`, skipping the block
 with only a CRITICAL WARNING. Reading a block-design `CONFIG.*` reads a REQUEST,
 not an answer.
 
+**A COMPLETION SIGNAL THAT ALSO FIRES ON FAILURE IS NOT A COMPLETION SIGNAL.**
+MEASURED 2026-08-30: a waiter armed on a `systemd` unit reported **"completed"
+when the unit was KILLED**, not only when it succeeded, and announced a
+finished job a minute after that job was deliberately stopped. **Gate on a
+sentinel the work itself writes into its log, never on the waiter firing.**
+Same shape as `wait_on_run -timeout`, which returns rc 0 on expiry without
+raising, and as a Vivado run that prints full success and then dies on a Tcl
+error afterwards. In all three the harness is reporting that it finished
+waiting, which is a fact about the harness and not about the job.
+
 **Never `pkill -f <pattern>`, and never `pgrep -f` on a pattern that appears in
 your own command line.** This has killed the shell four times in this project.
 
