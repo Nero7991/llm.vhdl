@@ -296,7 +296,8 @@ class TailJob(object):
     downstream."""
     __slots__ = ("idx", "gidx", "step", "tensor", "short", "row_start",
                  "logical_row", "n_rows", "n_cols", "M", "K", "w_exp",
-                 "out_shift", "mv4i", "hbm_offset", "desc_addr", "src_region",
+                 "out_shift", "mv4i", "hbm_offset", "pieces", "desc_addr",
+                 "src_region",
                  "dst_region", "dst_off", "ordinal", "src2", "const_base",
                  "out_mode", "segment", "src_seam", "dst_seam")
 
@@ -378,6 +379,37 @@ def make_tail(a, s, slot0, arena, stride, n_slots):
         j.n_rows, j.n_cols = st.n_rows, st.n_cols
         j.M, j.K, j.w_exp, j.out_shift = h.M, h.K, h.w_exp, h.out_shift
         j.mv4i, j.hbm_offset = path, int(ent["hbm_offset"])
+        # WHERE EACH SUB-REGION ACTUALLY IS.  Same defect and same fix as
+        # `fk33_run_layer.make_layer` (TRACK STRIPEPATH, `d7f96cd`): this file
+        # reads the manifest with a bare `json.load` at the top of this
+        # function, so `gen_mv4i_desc.load_manifest()`'s refusal of a v2
+        # lane-striped manifest never reaches it.  MEASURED 2026-08-30 on the
+        # pre-change file against the shipping striped manifest: 15 window
+        # descriptors emitted, 0 errors, and 405 of 405 sub-region bases WRONG
+        # -- every one `hbm_offset + <file offset>` where `hbm_offset` names
+        # only the tensor's 4 KB header.
+        #
+        # THE TRAP THAT HIDES IT HERE.  `output.weight.mv4i` is placed at
+        # hbm_offset 0 under BOTH layouts, so the pre-change tail's 15
+        # descriptors are BYTE-IDENTICAL between the flat and the striped
+        # manifest.  Diffing the two runs shows nothing at all; only a
+        # comparison against the manifest's `pieces` sees it.
+        #
+        # None for a v1 flat manifest, in which case `build_descriptor`
+        # reduces to exactly the old `hbm_base + file offset`; a
+        # `{file_offset: (hbm_offset, nbytes)}` map for a v2 one.  The join is
+        # the FILE OFFSET, never a lane, kind or segment label -- see
+        # `gen_mv4i_desc.sub_base()`.
+        #
+        # No `hbm_map.plan().check()` is added here, for a stronger version of
+        # the reason STRIPEPATH recorded in `make_layer`: `make_token` above
+        # calls `fk33_run_layer.make_layer` for EVERY layer before it reaches
+        # this function, and each of those calls `place_desc_arena()`, which
+        # runs `hbm_map.plan(...).check()` and raises SystemExit on any fault.
+        # A manifest whose pieces overlap, straddle a stack or sit off a 4 KB
+        # line has already been refused 32 times over.  A 33rd copy would earn
+        # no kills -- MEASURED, TOKENSTRIPE teeth table, the `runlayer` column.
+        j.pieces = G.piece_extents(ent)
         j.desc_addr = arena + (slot0 + i) * stride
         j.src_region, j.dst_region, j.dst_off = st.src, st.dst, st.dst_off
         j.ordinal, j.src2, j.const_base = st.ordinal, st.src2, st.const_base
@@ -1105,7 +1137,8 @@ def run_tail(a, tp, regs, bar, hbm, ref_run, out=None):
             out_mode=j.out_mode, cb_load=True, addr_w=a.addr_w,
             row_start=j.row_start, src_region=j.src_region,
             dst_region=j.dst_region, dst_offset=j.dst_off, ordinal=j.ordinal,
-            src_region2=j.src2, const_base=j.const_base, const_exp=0)
+            src_region2=j.src2, const_base=j.const_base, const_exp=0,
+            pieces=j.pieces)
         bad = G.rtl_would_reject(d, build=LR._build(a), desc_addr=j.desc_addr)
         if bad:
             raise TokenError(

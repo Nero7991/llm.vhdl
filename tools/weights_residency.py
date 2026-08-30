@@ -33,8 +33,15 @@ mirror cannot silently drift.
 WHAT REMAINS HERE, and it is not nothing: the checks that are about the
 MANIFEST'S OWN ARITHMETIC rather than about addresses.
 
-  * the manifest's `weights_bytes`, `weights_end`, `stack_hole_bytes` and
-    `free_after_gdn` are what its own placements actually give;
+  * the manifest's `weights_bytes`, `weights_end` and `free_after_gdn` are what
+    its own placements actually give;
+  * THE GAP LEDGER: every empty byte between the weight placements is accounted
+    for by something the manifest declares -- a `stack_holes` entry, the unused
+    tail of a declared lane arena, or a segment declared reserved.  On a v1
+    flat manifest only the first of the three exists and this is the old
+    `stack_hole_bytes` rule.  See the block above `lane_arenas()` for what that
+    rule was, why a v2 lane-striped manifest made it fail for a reason
+    unrelated to what it guards, and why the answer was not to widen it;
   * `max_context_tokens` is `floor(kv_bytes / kv_bytes_per_token)`;
   * the F32 blob's 177 internal entries are 4 KB aligned, inside the blob, in
     one stack, and their `hbm_offset` is the blob base plus their offset;
@@ -65,6 +72,199 @@ Region = HM.Region
 h = HM.h
 gib = HM.gib
 stack_of = HM.stack_of
+
+
+# --------------------------------------------------------- the gap accounting
+#
+# WHAT THIS REPLACED, AND WHY IT WAS NOT A TOLERANCE.  Until 2026-08-30 the
+# `stack_hole_bytes` check was one line:
+#
+#     holes = sum(b.base - a.end for consecutive placements)
+#     if holes != hbm["stack_hole_bytes"]: FAIL
+#
+# On a v2 lane-striped manifest that FAILS -- MEASURED: `manifest 0, the gaps
+# between consecutive placements sum to 2690994176` -- and it fails for a
+# reason unrelated to what it guards.  `stack_hole_bytes` is not "the gaps".
+# `pack_model_fk33.place()` returns `hole` ONLY for bytes skipped to stop an
+# object straddling the 4 GiB stack line, and the striped branch never calls
+# `place()` at all, so its value is structurally 0.  The two quantities
+# coincide under the FLAT layout for one unstated reason: a bump allocator
+# leaves no other gaps.  **The old check agreed with its subject by coincidence
+# of geometry on every manifest it had ever seen**, which is this project's
+# recorded dominant defect class and is exactly what makes a guard get muted
+# the first time a new layout arrives.
+#
+# WHAT IT IS NOW.  The same question asked properly: **is every empty byte
+# between the weight placements ACCOUNTED FOR by something the manifest
+# declares?**  Three declarations can account for one:
+#
+#   1. `hbm.stack_holes` -- a bump-allocator skip at a stack boundary;
+#   2. the unused TAIL of a declared lane arena (`hbm.lane_stripe.segments`
+#      and `.common`), which is by design and is where the 2.69 GiB went;
+#   3. a whole 256 MiB segment listed in `hbm.lane_stripe.reserved_segments`.
+#
+# Anything else is an unexplained hole, reported with its address and size.
+#
+# ON A v1 FLAT MANIFEST NOTHING BUT (1) EXISTS, so this reduces to the old rule
+# and its output on a flat set is byte-identical -- MEASURED, section 4 of
+# `docs/debugging/2026-08-30_tokenstripe-the-tail-and-the-gap-ledger.md`.  It is
+# STRICTER than the old rule even there: the old one compared TOTALS, so a
+# `stack_holes` entry at the wrong offset, or a `stack_holes` list disagreeing
+# with `stack_hole_bytes`, both passed.  Both now fail (teeth rows R12, R13).
+#
+# WHAT WOULD MAKE THIS FAIL -- the question every guard here has to answer.  A
+# piece placed outside the arena its manifest declares (A1); an arena whose
+# declared `bytes` is not what its pieces actually occupy, in either direction
+# (A2); a piece placed non-contiguously inside its own arena, which makes the
+# declared `bytes` a lie (A2); a segment left empty inside the weight span
+# without being declared reserved (A3); a `stack_holes` entry moved, resized,
+# added or deleted (R7, R12, R13).  MEASURED: 9 kills, teeth table section 6.
+#
+# WHAT IT DELIBERATELY DOES NOT DO.  It never asks whether an arena is on the
+# RIGHT segment for its lane.  That needs `ENG_PORT_MAP` and it is
+# `pack_model_fk33.check_lane_stripe()` check 1.  `hbm.lane_stripe.checks` in
+# the manifest is that function's PACK-TIME self-report copied in, i.e. a
+# claim; nothing here reads it, because a checker that reads another checker's
+# recorded verdict has checked nothing.
+
+def lane_arenas(hbm):
+    """The declared lane arenas as `(segment, base, capacity, bytes)`, or None
+    on a v1 flat manifest that declares none.
+
+    `common` is segment 0 and holds the .mv4i headers plus the F32 blob; the
+    rest are one per pseudo-channel.  Returned in ONE list because every rule
+    below applies to all of them identically."""
+    ls = hbm.get("lane_stripe")
+    if not ls:
+        return None
+    out = []
+    c = ls.get("common")
+    if c:
+        out.append((int(c["segment"]), int(c["base"]), int(c["capacity"]),
+                    int(c["bytes"])))
+    for x in ls.get("segments", []):
+        out.append((int(x["segment"]), int(x["base"]), int(x["capacity"]),
+                    int(x["bytes"])))
+    return out
+
+
+def _subtract(span, allowed):
+    """The bytes of `span = (lo, hi)` left over after every interval in
+    `allowed` is removed.  Returns a list of (lo, hi) residues."""
+    lo, hi = span
+    res = [(lo, hi)]
+    for a, b, _why in allowed:
+        nxt = []
+        for x, y in res:
+            if b <= x or a >= y:
+                nxt.append((x, y))
+                continue
+            if x < a < y:
+                nxt.append((x, a))
+            if x < b < y:
+                nxt.append((b, y))
+        res = nxt
+        if not res:
+            break
+    return res
+
+
+def check_gap_accounting(mani, m, placed, fail):
+    """Every empty byte between the first and last weight placement is
+    accounted for by a declaration the manifest makes.  See the block above."""
+    hbm = m.hbm
+    order = sorted(placed, key=lambda r: r.base)
+    gaps = [(a.end, b.base) for a, b in zip(order, order[1:]) if b.base > a.end]
+    total_gap = sum(b - a for a, b in gaps)
+
+    allowed = []
+
+    # (1) the bump allocator's stack-boundary skips.  The LIST is read, not
+    # just its total: the old check read only `stack_hole_bytes`, so a hole
+    # declared at the wrong address, and a list disagreeing with its own total,
+    # were both invisible.
+    hole_list = hbm.get("stack_holes")
+    declared = hbm.get("stack_hole_bytes")
+    if hole_list is not None:
+        for x in hole_list:
+            off, nb = int(x["offset"]), int(x["nbytes"])
+            allowed.append((off, off + nb,
+                            "hbm.stack_holes: %s" % x.get("why", "?")))
+        s = sum(int(x["nbytes"]) for x in hole_list)
+        if declared is not None and s != int(declared):
+            fail(f"stack_hole_bytes: manifest {declared}, its own "
+                 f"hbm.stack_holes list sums to {s}")
+
+    arenas = lane_arenas(hbm)
+    if arenas is not None:
+        ls = hbm["lane_stripe"]
+        seg = int(ls["segment_bytes"])
+        by_seg = {s: (b, c, n) for s, b, c, n in arenas}
+
+        # A1 CONTAINMENT.  Every placement lies wholly inside one declared
+        # arena.  Without this, A2's occupancy sums silently omit whatever
+        # landed outside and the whole ledger balances over a hole.
+        inside = {s: [] for s in by_seg}
+        for r in order:
+            s = r.base // seg
+            a = by_seg.get(s)
+            if a is None or r.base < a[0] or r.end > a[0] + a[1]:
+                fail(f"{r.name} at {h(r.base)}..{h(r.end)} is not inside any "
+                     f"arena hbm.lane_stripe declares (segment {s})")
+                continue
+            inside[s].append((r.base, r.end))
+
+        # A2 OCCUPANCY.  `pack_model_fk33.lane_stripe_plan()` writes each
+        # arena's `bytes` from `fill[s]`, the bump pointer -- so it is the
+        # EXTENT from the arena base, not a sum of piece sizes.  Checked as an
+        # extent for that reason, and NOT as strict contiguity: a future
+        # geometry whose sub-region size is not a 4 KB multiple would make
+        # `take()` pad between pieces, and a contiguity rule would then refuse
+        # a correct packing.  An interior hole is not waved through by that
+        # choice -- it is a gap between two placements like any other and falls
+        # out of the ledger below with its address.  MEASURED on the shipping
+        # striped manifest: 0 interior holes across 6,973 placements.
+        #
+        # This is the rule that makes the tail in (2) a DERIVED number rather
+        # than a manifest field compared against itself.
+        for s, b, c, n in arenas:
+            if not inside[s]:
+                fail(f"segment {s} arena declares {n} occupied bytes and no "
+                     f"placement is inside it")
+                continue
+            got = max(y for _x, y in inside[s]) - b
+            if got != n:
+                fail(f"segment {s} arena declares {n} occupied bytes and its "
+                     f"pieces run {got} bytes from {h(b)}")
+                continue
+            # (2) the unused tail, DERIVED from the placements just walked.
+            if c > n:
+                allowed.append((b + n, b + c,
+                                "the unused tail of the segment %d lane arena"
+                                % s))
+
+        # (3) whole segments nothing was placed in.  Declared, or unexplained.
+        for s in ls.get("reserved_segments", []):
+            allowed.append((int(s) * seg, (int(s) + 1) * seg,
+                            "hbm.lane_stripe.reserved_segments"))
+
+    # THE VERDICT: every empty byte between two placements is covered by one of
+    # the three declarations above.  Reported per RESIDUE with its address, not
+    # as a total: a total says a manifest is inconsistent, an address says
+    # where.  The old rule could only ever print a total, which is why its one
+    # message on the striped set named 2.69 GiB and pointed at nothing.
+    resid = [(x, y) for a, b in gaps for x, y in _subtract((a, b), allowed)]
+    unaccounted = sum(y - x for x, y in resid)
+    for x, y in resid[:8]:
+        fail(f"{y - x} bytes at {h(x)}..{h(y)} are empty and nothing the "
+             f"manifest declares accounts for them")
+    if len(resid) > 8:
+        fail(f"... and {len(resid) - 8} more unaccounted ranges")
+    if resid:
+        fail(f"the weight placements leave {total_gap} empty bytes, of which "
+             f"{total_gap - unaccounted} are accounted for by hbm.stack_holes, "
+             f"the declared lane arena tails and hbm.lane_stripe."
+             f"reserved_segments, and {unaccounted} are not")
 
 
 # ------------------------------------------------------------------ checks
@@ -98,11 +298,7 @@ def check_manifest_arithmetic(mani, m, fail):
             fail(f"weights_end: manifest {hbm['weights_end']}, last placement "
                  f"ends at {end} (4 KB rounded {want})")
 
-    order_p = sorted(placed, key=lambda r: r.base)
-    holes = sum(b.base - a.end for a, b in zip(order_p, order_p[1:]))
-    if hbm.get("stack_hole_bytes") is not None and holes != int(hbm["stack_hole_bytes"]):
-        fail(f"stack_hole_bytes: manifest {hbm['stack_hole_bytes']}, the gaps "
-             f"between consecutive placements sum to {holes}")
+    check_gap_accounting(mani, m, placed, fail)
 
     # The KV arithmetic is checked against the MANIFEST'S OWN extents, not the
     # shortened ones: the top-anchored charge is this tool's restatement and
