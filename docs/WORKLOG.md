@@ -129,6 +129,78 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK CBINFER COMPLETE (`0d24f7d`). LEVER C IS ALIVE: Vivado DOES infer LUTRAM.
+
+LEVERC's own first open item said this "must be the first thing a Vivado lane
+checks, before any area number", because a NO would have made lever C **1,536
+register copies, strictly worse than today**, and moot every row containing it.
+
+**1. YES.** MEASURED at three geometries on `xcvu33p-fsvh2104-2L-e`, Vivado
+2023.2: at `CB_STYLE = "distributed"` every codebook copy becomes one
+`RAM32M16` (16 x 8, 8 LUTs) and the 16:1 mux per lane vanishes. The clean line
+is the object-level census at ROWS_IF=8:
+
+```
+v_regs_r8   cells named cb_reg*:  RAM=0     FF=1024
+v_dist_r8   cells named cb_reg*:  RAM=4352  FF=0
+```
+
+**LEVERC's 12,288-LUTRAM assumption is now MEASURED rather than assumed:**
+LUTRAM added per lane is **8.000 at all three points** (128, 256, 512 lanes),
+MUXF8 removed 8.000/lane, MUXF7 removed 16.00/lane -- **matching CONGEST's
+shell per-lane census exactly**.
+
+**2. The `ram_style` attribute from a function of a generic is ACCEPTED and
+EARNS NOTHING.** The Final Mapping Report attributes 128 of 128 copies to `User
+Attribute` -- but the attribution control (both attributes deleted) is
+**byte-identical in every column** and merely relabels the inference `Implied`.
+**So LEVERC's two-sibling-architecture fallback is not required and would buy
+nothing.** `dont_touch = "false"` versus deleting it is also identical, so
+presence-not-value was tested and refuted.
+
+**3. `ram_style = "registers"` does NOT change today's shipping build** --
+identical on eleven columns and WNS to the last digit, with a repeat draw
+reproducing itself exactly, so it is a demonstrated no-op rather than a
+coincidence.
+
+**THE TRAP THAT WOULD HAVE INVERTED ANSWER 1, and it is the mirror image of
+NORMURAM's URAM trap the same morning.** Vivado's log says, one hundred times:
+
+```
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored,
+object 'cb[0][0]' is not inferred as ram due to incorrect usage
+```
+
+**Every object it names IS a `RAM32M16` in the same run's mapping report.**
+Where `[Synth 8-10226]` claimed a resource the design never got, this one denies
+one the design did get. **Vivado's inference log is unreliable in BOTH
+directions; only the mapping report and the primitive census are
+authoritative.** Landed in CLAUDE.md as `7888ef9`.
+
+**CORRECTION OWED TO LEVERC, and it does not change their conclusion.** A
+`RAM32M16` is 8 LUTs and CLB-atomic, so LEVERC's fragmented "4 per CLB" case is
+unreachable. Their CLB saving narrows to **4,608 .. 8,946** from 3,072 .. 8,946.
+**Lever C still does not close the fit under either bound; LEVERC's conclusion
+stands.**
+
+**NEXT VIVADO JOB, and it must go on the WORKSTATION:** the FK33 geometry
+`ROWS_IF=48` was **not drawn**. ROWS_IF=16 already peaked at **14.38 GB summed
+Vivado RSS on the BC-250's 14 GB**, so 48 does not fit there. Projections to
+1,536 lanes are labelled: the structural per-lane figures are exact at three
+points, but the **total-LUT saving is an ESTIMATE of 36,000-39,000** because
+per-lane saving falls with lane count (29.11 / 27.71 / 26.05) and two models
+disagree. DERIVED and exact: **+13,200 FF** at ROWS_IF=48 (three-point model,
+residuals 0, -2, +4).
+
+**Its own trap, recorded against itself:** the first primitive-census parser
+assumed a four-column Primitives table (it has three) and **silently wrote zeros
+into six CSV rows beside a populated utilization table** -- the exact failure
+the cross-check exists to catch. Parser now hard-errors on zero rows.
+
+**Not covered:** OOC synthesis, not placement, and lever C's claim is about
+PACKING which only a place run measures. `matvec_core` alone, not the composed
+design.
+
 ### TRACK NORMURAM COMPLETE (`c479ae8`, `57ecea4`, `5026897`). The gain image is out of LUT fabric.
 
 `rtl/llama_top.vhd`'s `gvr` generate reshapes `NW_TBL` to 4 elements per word,
