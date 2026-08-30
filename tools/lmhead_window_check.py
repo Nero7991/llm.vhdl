@@ -63,20 +63,30 @@ def cc_oracle(outdir):
     return exe
 
 
-# ref/matvec_int4.c's `--emit` CANNOT be used to make a synthetic tensor here,
-# and the reason is a finding rather than an inconvenience.  `pack_geom`
-# (ref/matvec_int4.c:474-480) 4 KB-ALIGNS every sub-region (`align4k`), while
-# `gen_mv4i_desc.sub_offsets_from_layout` encodes the TIGHT layout -- one
-# sub-region immediately after the last -- as "the offsets spec 6.5a's layout
-# implies".  Both are legal: the file names its own offsets in the 4 KB header
-# and the reference reads them.  But `check_bases` compares the header table
-# against the tight rule and refuses on any disagreement, so it refuses every
-# C-packed file:
+# WITHDRAWN 2026-08-29 by TRACK FLOOR.  This note used to say that
+# `ref/matvec_int4.c --emit` CANNOT be used to make a synthetic tensor here
+# because `gen_mv4i_desc.check_bases` "refuses every C-packed file": rule 2,
+# `sub_offsets_from_layout`, encoded the TIGHT layout while `pack_geom`
+# (ref/matvec_int4.c:474-480) 4 KB-ALIGNS every sub-region, so the two rules
+# disagreed on any geometry where align4k was not the identity --
 #
 #   header w=[4096, 8192, 12288, ...]   layout w=[4096, 6784, 9472, ...]
 #
-# The tensors this tool is for were written by tools/pack_int4.py, which packs
-# tight, so the check is exercised against real bytes instead.
+# THAT IS NO LONGER TRUE.  `3f23a46` gave rule 2 its own `layout_strides`,
+# which applies align4k and gives the scale region its own stride, so rule 2
+# now reproduces the C packer's offsets.  MEASURED 2026-08-29 by running
+# `python3 tools/gen_mv4i_desc.py --selftest` (the sim:descrule gate row):
+# rows NONALIGN and GRP2, the two unaligned geometries, are `agree` under the
+# corrected rule and `refuse` under the old tight one -- "CORRECTED RULE ONLY".
+#
+# The comment is corrected rather than deleted because a note describing a
+# defect that has since been fixed reads as a live limitation, and would tell
+# the next reader that this guard is weaker than it is.
+#
+# WHAT IS STILL TRUE: the tensors this tool is for are written by
+# tools/pack_int4.py, and that is what it is exercised against.  WHAT IS NOT
+# VERIFIED: whether `--emit` would now actually serve as a synthetic source
+# here.  Only the stated OBSTACLE has been measured away; nobody has tried it.
 
 # ------------------------------------------------------------------ windows
 def windows_from_plan(M, build):

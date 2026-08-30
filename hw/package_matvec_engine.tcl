@@ -20,6 +20,17 @@ ipx::associate_bus_interfaces -busif s_axi -clock s_axi_aclk $core
 ipx::create_xgui_files $core
 ipx::update_checksums $core
 ipx::save_core $core
-puts "CLOCK_ASSOC: [get_property CONFIG.ASSOCIATED_BUSIF [ipx::get_bus_interfaces s_axi_aclk -of_objects $core]]"
+# See hw/package_mac_axi.tcl for the full note.  ASSOCIATED_BUSIF is an
+# IP-XACT BUS PARAMETER on the clock interface, not a CONFIG.* property; the
+# CONFIG.* spelling is the block-design one and raises `Unknown property
+# 'CONFIG.ASSOCIATED_BUSIF' on bus_interface`.  MEASURED 2026-08-29, Vivado
+# 2023.2, TRACK FLOOR.  It sat AFTER ipx::save_core, so this script exited
+# non-zero having already written a correct IP.
+set clkif [ipx::get_bus_interfaces s_axi_aclk -of_objects $core]
+set assoc [get_property VALUE [ipx::get_bus_parameters ASSOCIATED_BUSIF -of_objects $clkif]]
+if {$assoc ne "s_axi"} {
+    error "PACKAGE FAIL: s_axi_aclk ASSOCIATED_BUSIF is \"$assoc\", not \"s_axi\""
+}
+puts "CLOCK_ASSOC: $assoc"
 puts "PACKAGE_DONE [file exists $root/ip_repo/matvec_engine_1_0/component.xml]"
 close_project

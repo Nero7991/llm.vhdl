@@ -18,6 +18,31 @@ ipx::associate_bus_interfaces -busif s_axi -clock s_axi_aclk $core
 ipx::create_xgui_files $core
 ipx::update_checksums $core
 ipx::save_core $core
-puts "CLOCK_ASSOC: [get_property CONFIG.ASSOCIATED_BUSIF [ipx::get_bus_interfaces s_axi_aclk -of_objects $core]]"
+# ASSOCIATED_BUSIF is an IP-XACT BUS PARAMETER on the clock interface, not a
+# CONFIG.* property of it.  In component.xml it is a <spirit:parameter> named
+# ASSOCIATED_BUSIF inside the s_axi_aclk bus interface's <spirit:parameters>,
+# so it is read through ipx::get_bus_parameters and its VALUE property.
+#
+# The CONFIG.* form is the BLOCK-DESIGN spelling (`get_property
+# CONFIG.ASSOCIATED_BUSIF [get_bd_pins .../core_clk]`, as in
+# hw/fk33/build_fk33_pcieep.tcl:904) and it does NOT exist on an ipx object.
+# MEASURED 2026-08-29, Vivado 2023.2, TRACK FLOOR, on this very core:
+#   CONFIG.ASSOCIATED_BUSIF   -> rc=1 Unknown property 'CONFIG.ASSOCIATED_BUSIF' on bus_interface
+#   bare ASSOCIATED_BUSIF     -> rc=1 Unknown property 'ASSOCIATED_BUSIF' on bus_interface
+#   bus parameter VALUE       -> rc=0 s_axi
+# Because it sat AFTER ipx::save_core, the error aborted the script with a
+# non-zero status having already written a correct IP: a caller gating on the
+# exit code would have believed packaging failed.  See
+# ip_repo/check_ip_sync.py's "honest weakness" note, which recorded it.
+set clkif [ipx::get_bus_interfaces s_axi_aclk -of_objects $core]
+set assoc [get_property VALUE [ipx::get_bus_parameters ASSOCIATED_BUSIF -of_objects $clkif]]
+# ipx::associate_bus_interfaces is exactly the shape of call that can do
+# nothing quietly, so read it back and REFUSE, the way build_fk33_pcieep.tcl
+# does for the block-design spelling.  Without the association every AXI
+# interface defaults to 100 MHz downstream.
+if {$assoc ne "s_axi"} {
+    error "PACKAGE FAIL: s_axi_aclk ASSOCIATED_BUSIF is \"$assoc\", not \"s_axi\""
+}
+puts "CLOCK_ASSOC: $assoc"
 puts "PACKAGE_DONE [file exists $root/ip_repo/mac_axi_1_0/component.xml]"
 close_project
