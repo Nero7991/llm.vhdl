@@ -257,6 +257,42 @@ track's patch, `MV4I_FK33_FILE=/nonexistent/none.mv4i`, `--jobs 2`, 2026-08-29
 floor of 101. Nothing was red. 97 rows planned minus 4 NOCHECK is 93, so this is
 the ceiling and not merely the score.
 
+### 4.10 The working tree after the fix, MEASURED (appended after `5154518`)
+
+The 99 in section 4.3 was DERIVED (104 planned, 5 NOCHECK, plus 86 + 13). It is
+now MEASURED directly: a full unfiltered both-suite run on this workstation's
+working tree at `5154518`, `--jobs 2`.
+
+```
+ suite sim   PASS 73   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 99   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ REGRESSION: PASS
+```
+
+Three things this establishes that nothing else did:
+
+1. **The derived ceiling of 99 is exact.** The working tree passes 99 and cannot
+   pass more.
+2. **The gate is green again.** At the old floor of 101 this identical run would
+   have printed `BASELINE DROP: 99 passing, expected at least 101` and
+   `REGRESSION: FAIL`, which is what every track was getting.
+3. **The new no-raise guard has teeth, on the branch that had never been
+   exercised.** Verbatim:
+
+```
+ baseline: 99 passing, above the floor of 93 -- but this tree has rows a clean
+ checkout does not get: sim:tb_attn_cmp2 sim:tb_attn_fix_beh ... sim:tb_swiglu_ps
+ sim:tb_matvec_fk33 sim:tb_matvec_fk33_desc.  DO NOT raise BASELINE_PASS from
+ this run: the floor is a CLEAN-CHECKOUT number, and a floor raised to include
+ rows that depend on your working tree or your model set is unreachable for
+ everybody else, including you after a clean clone.
+```
+
+All 20 rows a clean checkout does not get are named: the 18 untracked
+testbenches and the 2 rows that ran only because this box holds the model set.
+The 99 - 93 = 6 gap decomposes as 4 passing untracked rows plus the 2 FK33 rows.
+
 ## 5. Triage of the 18 untracked testbenches
 
 None is a live track's work. MEASURED: every one has an mtime between 2026-07-05
