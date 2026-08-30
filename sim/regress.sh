@@ -400,7 +400,51 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=99   # RAISED FROM 98, 2026-08-30, TRACK STRAYROW.  ONE new row:
+BASELINE_PASS=99   # DELIBERATELY NOT RAISED, 2026-08-30, TRACK GATEGREEN.
+                   #    101 IS MEASURED AND CORRECT FOR `32a7b47`.  IT IS NOT
+                   #    APPLIED, AND THE REASON IS THE POINT.
+                   #
+                   #    MEASURED on `git archive 32a7b472f8d4b010c004426871f70bfae5eb05fc`,
+                   #    GHDL 1.0.0 mcode, --jobs 1, the documented recipe exactly:
+                   #      MV4I_FK33_FILE=/nonexistent \
+                   #        REGRESS_SCRATCH=<dir> bash <archive>/sim/regress.sh --jobs 1
+                   #      suite sim  PASS 75  FAIL 0  NOCHECK 3
+                   #      suite tb   PASS 26  FAIL 0  NOCHECK 1
+                   #      OVERALL    PASS 101  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 10
+                   #      baseline: 101 passing, above the recorded floor of 99
+                   #                -- raise BASELINE_PASS in this script
+                   #    The gate PRINTED the raise suggestion rather than either
+                   #    refusal, which is the evidence that both the NOT IN GIT
+                   #    list and the optional-row list were empty on that tree.
+                   #    99 + 2 = 101 and the measurement agrees; the two new rows
+                   #    are `sim:tb_fk33_seam` (`9270c7a`, TRACK DSEAM) and
+                   #    `sim:tb_rmsnorm_rs_mem` (`ce7b836`, TRACK RMSMUX).
+                   #
+                   #    WHY IT IS STILL 99.  `sim/tb_a_wbase.vhd` landed in
+                   #    `d7a6bf7` (TRACK BASEFAB) AFTER that archive was taken,
+                   #    and it is a third auto-discovered row.  So 101 is a
+                   #    measurement of a commit that is no longer HEAD, and 102
+                   #    would be arithmetic over a row nobody has run.  The box
+                   #    was going down and a fresh full run was not available.
+                   #
+                   #    A STALE FLOOR FAILS LOUDLY; A WRONG ONE PASSES QUIETLY.
+                   #    99 is low, so every full run prints "raise it" and no run
+                   #    is blocked.  Setting 102 unmeasured risks the exact defect
+                   #    the number 101 already caused once in this file: a floor
+                   #    ABOVE the tree's own ceiling, which then fires on every
+                   #    run for every track and is worth nothing.
+                   #
+                   #    TO CLOSE THIS: one full clean-archive run at a settled
+                   #    HEAD, same recipe, then set the number it prints.  Do not
+                   #    add 1 to 101.  Expect 102 and be ready to be wrong -- the
+                   #    `93 -> 98` entry below is the case where that same
+                   #    arithmetic was off by exactly one and the disagreement was
+                   #    the only thing that found an uncounted committed bench.
+                   #    Evidence: docs/debugging/2026-08-30_gategreen-full-gate-and-the-floor.md
+                   #
+                   # ---- previous entry, kept because its reasoning is the rule ----
+                   # WAS RAISED FROM 98, 2026-08-30, TRACK STRAYROW.  ONE new row:
                    #    `sim:tb_axi_rd_port_stray` (`2217778`), the gate row
                    #    TRACK A7 designed in section 8b of
                    #    docs/debugging/2026-08-29_a7-dual-clock-run-gate.md and

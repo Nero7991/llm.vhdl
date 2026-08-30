@@ -117,12 +117,44 @@ before the measurement precisely so it can be wrong**, which is the lesson of th
 98, and the discrepancy of exactly one was the only thing that found a committed
 1076-line bench nobody had counted.
 
-**Status of the measurement: IN FLIGHT at the time of writing.** The
-floor-calibration run (`MV4I_FK33_FILE=/nonexistent`, same clean archive, same
-`--jobs 1`, log `/mnt/storage/track-gategreen/floor.log`) had reported 78 of 105
-rows with `FAIL 0` and the four expected `NOCHECK`s. **`BASELINE_PASS` is
-therefore LEFT AT 99 in this commit.** A stale floor fails loudly; a wrong one
-passes quietly. It is not being raised on the arithmetic alone.
+**MEASURED, and it is 101.** Same clean archive of `32a7b47`, same `--jobs 1`,
+with the documented `MV4I_FK33_FILE=/nonexistent`:
+
+```
+ suite sim   PASS 75   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 3
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4 (1)
+ OVERALL     PASS 101   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4   SKIPPED 10
+ baseline: 101 passing, above the recorded floor of 99 -- raise BASELINE_PASS in this script
+ REGRESSION: PASS
+```
+
+The gate printed the **raise suggestion** rather than either refusal, which is
+the evidence that its `NOT IN GIT` list and its optional-row list were both
+empty. `SKIPPED` went 6 to 10, which is the four FK33 rows correctly skipping.
+The prediction of 101 held, and it was still measured rather than assumed.
+
+### And it is still not being applied. `BASELINE_PASS` stays at 99.
+
+`sim/tb_a_wbase.vhd` landed in **`d7a6bf7`** (TRACK BASEFAB) **after** the
+archive was taken. MEASURED, `git merge-base --is-ancestor d7a6bf7 32a7b47`:
+not an ancestor. So it is a **third** auto-discovered row today, alongside
+DSEAM's and RMSMUX's, and my 101 does not include it.
+
+**101 is a correct floor for `32a7b47` and a stale one for HEAD. 102 would be
+arithmetic over a row nobody has run.** The box was going down and a fresh full
+run was not available, so the number stays at the known-stale 99, which is low
+and therefore prints "raise it" on every run rather than blocking anybody. The
+measurement is recorded in `sim/regress.sh`'s comment block so the next track
+can close it with one run and no re-derivation.
+
+The asymmetry is the whole argument, and this file already contains the
+counter-example: **the number 101 was once set above the tree's own ceiling and
+every full run for every track reported `BASELINE DROP` until it was corrected.**
+A floor that can only ever fire is worth exactly what one that can never fire is
+worth. A stale floor fails loudly; a wrong one passes quietly.
+
+**To close it:** one full clean-archive run at a settled HEAD, same recipe, then
+set the number it prints. Expect 102 and be ready to be wrong.
 
 ## The trap I hit myself
 
@@ -179,6 +211,29 @@ timing claims from several tracks, and it supports none of them.
   `attn_c_ports_skel.vhd`, `attn_lane_skel.vhd`, `hbm_tg_ip.vhd`,
   `seq_top_skel.vhd`, `tp_collective_skel.vhd`. 5 of 93.
 - **Green is a statement about ONE commit.** See the next section.
+
+### And a green row is not the same size as it looks
+
+Two results from other tracks today, both about rows inside this gate, and both
+of which shrink what a `PASS` in my table is worth:
+
+- TRACK ATTNTEETH (`5755473`): `sim:tb_attn_block` **passed a broken tree**,
+  because the oracle's V stimulus had no block-exponent spread and the fold had
+  nothing to fold.
+- TRACK BASEFAB's new `sim/tb_a_wbase.vhd` kills 8 of 11 mutants, and **its own
+  attribution control denies it credit for seven of the eight.** Only one is a
+  detection the pre-existing rows do not already make; the rest fire because a
+  recorded numeric landmark happens to be address-sensitive, not because
+  anything in the gate checks addresses.
+
+Read together, those say something specific about this suite: **a large part of
+its apparent discrimination is incidental.** Rows kill mutants because a number
+somewhere downstream happens to move, not because a property is being asserted.
+That is the "structure is not values" failure at the level of the gate rather
+than the unit, and the only instrument that finds it is a mutation run with the
+attribution control, which is not something a full-gate PASS can substitute for.
+`OVERALL FAIL 0` means no row noticed anything. It does not mean the rows would
+notice.
 
 ## The result's expiry date, and it is short
 
@@ -247,11 +302,15 @@ Two consequences that should not be glossed:
 
 ## Open, not yet answered
 
-- **The floor number itself.** The calibration run was in flight when this was
-  written. `BASELINE_PASS` is left at **99**. Predicted 101; not raised on the
-  prediction.
-- **Is `729df43` green?** Unknown. Only `32a7b47` was measured. `rtl/llama_top.vhd`
-  and `sim/tb_attn_block.vhd` changed after it.
+- **The floor at HEAD.** MEASURED 101 at `32a7b47`. Not measured with
+  `sim/tb_a_wbase.vhd` (`d7a6bf7`) in the plan, so the number for a settled HEAD
+  is unknown. `BASELINE_PASS` is left at **99** on purpose.
+- **Is `729df43` or later green?** Unknown. Only `32a7b47` was measured.
+  `rtl/llama_top.vhd` and `sim/tb_attn_block.vhd` changed after it, and
+  `sim/tb_a_wbase.vhd` has never been run by a full gate at all.
+- **Does `sim:tb_a_wbase` pass in a full run?** BASEFAB ran it under its own
+  harness and deliberately did not run a full gate, correctly, because the box
+  was contended. Nobody has seen it as a gate row.
 - **Do the six `*_cmp` netlist benches pass?** They have never been run by any
   gate. They need Vivado xsim and a regenerated netlist, and no track owns them.
 - **What actually costs 20.9 GiB in `ghdl-mcode`?** Not the gate (2.13 GiB
