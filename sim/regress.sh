@@ -1108,6 +1108,31 @@ printf 'runguard\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # the honest limits are at the top of ip_repo/check_ip_sync.py.
 printf 'ipsync\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# THE DESCRIPTOR BASE-RULE ROW (2026-08-29, TRACK NOGUARD, defect DESC-RULE2).
+# ---------------------------------------------------------------------------
+# tools/gen_mv4i_desc.py computes every sub-region base TWICE, by two rules
+# that share no code, and refuses to emit if they disagree.  That cross-check
+# is the ONLY guard against a base aimed at the wrong sub-region, which is the
+# one descriptor corruption the gateware cannot see: it computes wrong data
+# and reports success.
+#
+# MEASURED 2026-08-29: rule 2 omitted the align4k() both packers apply
+# (ref/matvec_int4.c:474, tools/pack_int4.py:477) and used one stride for both
+# kinds of sub-region.  On the shipping 9B set BLOCK=32 and AXI_DW=256 make
+# nb*port_b = K exactly, K is 4096 or 12288, and GRP is 1 -- so align4k was
+# the identity and the two strides coincided.  THE TWO RULES AGREED BY
+# COINCIDENCE OF GEOMETRY ON EVERY FILE THIS TOOL HAD EVER SEEN, and refused
+# correct files of any other shape (M=96 K=128 gave [4096, 8192] against
+# [4096, 4352]).
+#
+# This row runs the corrected rules against synthesised headers -- including
+# the coincident geometry, a non-coincident one, and a GRP != 1 file where the
+# weight and scale strides genuinely differ -- and against the OLD tight rule
+# as the attribution control, so each verdict is attributed to the correction
+# rather than to the harness.  No model, no card, no Vivado; under a second.
+printf 'descrule\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -1743,6 +1768,9 @@ run_graygate() {   # run_graygate <suite:name>
 #                  27.6-hour hang into a build that stops and says why.
 #   sim:ipsync     ip_repo/*/src/*.vhd must be the bytes of rtl/*.vhd.  Nothing
 #                  in this tree re-runs the packagers, so the copies drift.
+#   sim:descrule   tools/gen_mv4i_desc.py's two-rule base cross-check, the only
+#                  guard against the one descriptor corruption the gateware
+#                  cannot see.  It had never once discriminated.
 #
 # The command is looked up by row name in SELFCHECK_CMD below, so adding a row
 # is one line there and one printf into $PLAN.  Verdicts:
@@ -1759,6 +1787,7 @@ run_graygate() {   # run_graygate <suite:name>
 declare -A SELFCHECK_CMD=(
   [runguard]="python3 $REPO/hw/fk33/gen_pcieep.py --selftest"
   [ipsync]="python3 $REPO/ip_repo/check_ip_sync.py"
+  [descrule]="python3 $REPO/tools/gen_mv4i_desc.py --selftest"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -1790,7 +1819,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

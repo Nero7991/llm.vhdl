@@ -46,11 +46,21 @@ rules that share no code, and the two must agree or nothing is emitted:
 
   rule 1  the offset table the file's own 4 KB header carries at 0x38
   rule 2  the offsets implied by spec 6.5a's layout: a 4 KB header, then
-          nsub_w weight sub-regions of ceil(M/ROWS_IF)*ceil(K/BLOCK)*(AXI_DW/8)
-          bytes each, then nsub_s scale sub-regions of the same size
+          nsub_w weight sub-regions of
+          align4k(ceil(M/ROWS_IF)*ceil(K/BLOCK)*(AXI_DW/8)) bytes each, then
+          nsub_s scale sub-regions of align4k(ceil(tiles*nb/GRP)*(AXI_DW/8))
 
 Rule 2 also fixes the ORDER, which is the part rule 1 alone cannot check: a
 permuted offset table satisfies every structural property of the file.
+
+CORRECTION, 2026-08-29, TRACK NOGUARD (defect DESC-RULE2).  Rule 2 used to
+omit both align4k() calls and to use one stride for both kinds of sub-region.
+On the shipping 9B set that is the identity -- see layout_strides() for the
+derivation -- so THE TWO RULES AGREED BY COINCIDENCE OF GEOMETRY ON EVERY FILE
+THIS TOOL HAD EVER SEEN, and refused correct files of any other shape
+(MEASURED at M=96 K=128: rule 1 [4096, 8192], rule 2 [4096, 4352]).  A check
+that cannot disagree on the data it is run on is not a check.  Every base for
+all 249 shipping tensors is byte-identical across that correction.
 
 Usage:
     tools/gen_mv4i_desc.py --mv4i FILE.mv4i --rows 100 --x-exp 5 \\
@@ -247,20 +257,68 @@ def sub_offsets_from_header(h):
     return list(h.w_sub_offset), list(h.s_sub_offset)
 
 
+def align4k(v):
+    """The packers' padding rule, transcribed rather than restated.
+
+    ref/matvec_int4.c:456  `(v + 4095) & ~(size_t)4095`
+    tools/pack_int4.py:194 the same value."""
+    return (v + 4095) & ~4095
+
+
+def layout_strides(h):
+    """(weight stride, scale stride) in the packed file.
+
+    THE DEFECT THIS FIXES, and it is worth stating in full because the rule it
+    corrects had never once discriminated.
+
+    Rule 2 used ONE stride, `h.sub_bytes()` = tiles*nb*port_b, for both kinds
+    of sub-region.  That is wrong twice:
+
+      1. It omits the 4 KB padding both packers apply.
+         ref/matvec_int4.c:474  `sub_pad = align4k(tiles*NB*port_b)`
+         tools/pack_int4.py:477 `sub_sz  = align4k(tiles*NB*port_b)`
+
+      2. The SCALE stride is not the weight stride.  The scale region is
+         ceil(tiles*nb/GRP) SUPERWORDS, one beat per sub-region, so
+         ref/matvec_int4.c:478 and tools/pack_int4.py:482 both give it its own
+         `align4k(nsuper*port_b)`.  That equals the weight stride only when
+         GRP == 1.
+
+    WHY IT HAD NEVER BEEN CAUGHT, DERIVED rather than asserted.  On the FK33
+    the file geometry is BLOCK = 32 and AXI_DW = 256, so port_b = 32 and
+    nb = K/32, giving nb*port_b = K exactly.  Every tensor in the shipping 9B
+    set has K in {4096, 12288}, both exact multiples of 4096, so
+    tiles*nb*port_b = tiles*K is always 4 KB-aligned and align4k is the
+    identity; and GRP = 1 throughout, so the two strides coincide.  MEASURED
+    over all 249 mv4i files in qwen35-9b-mv4i-noembd: 8 distinct (M, K), GRP 1
+    for all of them, and EVERY base identical before and after this change.
+
+    So rule 2 agreed with rule 1 by coincidence of geometry on every file it
+    had ever seen -- and falsely refused anything else.  MEASURED at M=96
+    K=128: rule 1 gave [4096, 8192], rule 2 gave [4096, 4352].  A two-rule
+    cross-check that cannot disagree on the data it is run on is not a check;
+    it is the only guard against the one descriptor corruption the gateware
+    cannot see, and it was decoration."""
+    w_stride = align4k(h.sub_bytes())
+    nsuper = (h.tiles(h.M) * h.nb + h.grp - 1) // h.grp
+    s_stride = align4k(nsuper * h.port_b)
+    return w_stride, s_stride
+
+
 def sub_offsets_from_layout(h):
     """Rule 2: the offsets spec 6.5a's layout implies, computed from the shape
     alone.  Independent of the file's own offset table, and in particular it
     fixes the ORDER, which a permuted table would otherwise satisfy."""
-    stride = h.sub_bytes()          # whole tensor: every sub-region is this big
+    w_stride, s_stride = layout_strides(h)
     off = MV4I_HDR_BYTES
     w = []
     for _ in range(h.nports_w):
         w.append(off)
-        off += stride
+        off += w_stride
     s = []
     for _ in range(h.n_scale_sub):
         s.append(off)
-        off += stride
+        off += s_stride
     return w, s
 
 
@@ -275,7 +333,12 @@ def check_bases(h):
             "  header w=%r s=%r\n  layout w=%r s=%r\n"
             "Nothing is emitted: a base is the one field whose corruption the "
             "gateware cannot see." % (h.path, w1, s1, w2, s2))
-    end = s1[-1] + h.sub_bytes()
+    # The LAST scale sub-region is padded like every other one, so the file
+    # ends at its padded end, not at its live end.  Using h.sub_bytes() here
+    # was the same defect in its second place: it happened to be right only
+    # while align4k was the identity.
+    _, s_stride = layout_strides(h)
+    end = s1[-1] + s_stride
     if end != h.size:
         raise DescError(
             "%s: sub-regions end at %d but the file is %d bytes"
@@ -514,6 +577,231 @@ def parse_int(s):
     return int(s, 0)
 
 
+# ---------------------------------------------------------------------------
+# TEETH FOR THE TWO-RULE BASE CHECK (2026-08-29, TRACK NOGUARD, DESC-RULE2).
+#
+# The check this exercises had NEVER DISCRIMINATED.  It is the only guard
+# against a base aimed at the wrong sub-region, which is the one descriptor
+# corruption the gateware cannot see, and on every file it had ever been run
+# on its two rules agreed by coincidence of geometry.  So the rows below are
+# split three ways and all three are reported:
+#
+#   * rows where the two rules must AGREE, including the geometry that made
+#     the defect invisible (COINCIDE) and the ones that did not (NONALIGN,
+#     GRP2).  A false refusal here is what the old rule 2 did to every shape
+#     outside the model.
+#   * rows where the check must BITE.  A guard nobody has watched refuse is a
+#     guard nobody has shown to work.
+#   * an attribution control: every row is run again against the OLD rule 2,
+#     the tight single-stride one, so each verdict is attributed to the
+#     correction rather than to the harness.
+#
+# Headers are synthesised in Python.  They are deliberately NOT produced by
+# ref/matvec_int4.c: that file is the oracle this tool is checked against, and
+# a teeth test that called it would be checking the oracle against itself --
+# the same reason Mv4iHeader is an independent parse.  The bodies are sparse
+# (ftruncate), so a 570 MB geometry costs no disk.
+
+def _synth_mv4i(path, M, K, rows_if, axi_dw, pad=True,
+                mutate=None):
+    """Write a header-only .mv4i of the right total size.  `mutate(w, s)`
+    may return a corrupted offset table."""
+    port_b = axi_dw // 8
+    nb = (K + MV4I_BLOCK - 1) // MV4I_BLOCK
+    tiles = (M + rows_if - 1) // rows_if
+    nports_w = rows_if * MV4I_BLOCK * 4 // axi_dw
+    nss = n_scale_sub_rule(rows_if, axi_dw)
+    grp = grp_rule(rows_if, axi_dw)
+    a = align4k if pad else (lambda v: v)
+    w_stride = a(tiles * nb * port_b)
+    nsuper = (tiles * nb + grp - 1) // grp
+    s_stride = a(nsuper * port_b)
+    w = [MV4I_HDR_BYTES + w_stride * i for i in range(nports_w)]
+    s = [w[-1] + w_stride + s_stride * q for q in range(nss)]
+    total = s[-1] + s_stride
+    if mutate is not None:
+        w, s = mutate(list(w), list(s))
+    h = bytearray(MV4I_HDR_BYTES)
+    struct.pack_into("<IHHIIiiHHHH", h, 0, MV4I_MAGIC, 1, 1, M, K, 8, 3,
+                     rows_if, nports_w, MV4I_BLOCK, axi_dw)
+    struct.pack_into("<16b", h, 0x20, *([1] * 16))
+    struct.pack_into("<II", h, 0x30, s[0], nss)
+    for i, v in enumerate(w):
+        struct.pack_into("<Q", h, 0x38 + 8 * i, v)
+    for q, v in enumerate(s):
+        struct.pack_into("<Q", h, 0x38 + 8 * (nports_w + q), v)
+    with open(path, "wb") as fp:
+        fp.write(h)
+        fp.truncate(total)
+    return path
+
+
+def _tight_layout(h):
+    """Rule 2 EXACTLY AS IT WAS before this correction: one stride, no
+    align4k.  Kept verbatim as the attribution control -- without it, a row
+    that the corrected rule accepts cannot be distinguished from a row the
+    harness never really tested."""
+    stride = h.sub_bytes()
+    off = MV4I_HDR_BYTES
+    w = []
+    for _ in range(h.nports_w):
+        w.append(off)
+        off += stride
+    s = []
+    for _ in range(h.n_scale_sub):
+        s.append(off)
+        off += stride
+    return w, s
+
+
+def _agrees(h, layout_fn):
+    w1, s1 = sub_offsets_from_header(h)
+    w2, s2 = layout_fn(h)
+    return w1 == w2 and s1 == s2
+
+
+def selftest():
+    import shutil
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="mv4idesc.")
+    try:
+        def mk(name, **kw):
+            return _synth_mv4i(os.path.join(tmp, name + ".mv4i"), **kw)
+
+        def swap_two(w, s):
+            w[1], w[2] = w[2], w[1]
+            return w, s
+
+        def shift_one(w, s):
+            w[3] += 32                     # one beat: a plausible off-by-one
+            return w, s
+
+        def shift_scale(w, s):
+            s[0] += 4096
+            return w, s
+
+        # name, path, must-agree
+        ROWS = [
+            # The FK33/9B geometry.  align4k is the identity here and GRP is
+            # 1, which is exactly why the defect was invisible: this row
+            # passes with the OLD rule 2 too, and says so.
+            ("COINCIDE", mk("coincide", M=4096, K=4096, rows_if=48,
+                            axi_dw=256), True),
+            # The lm_head shape, same coincidence at 5174 tiles.
+            ("COINCIDE_BIG", mk("big", M=248320, K=4096, rows_if=48,
+                                axi_dw=256), True),
+            # K=12288, the other shipping K.
+            ("COINCIDE_K3", mk("k3", M=4096, K=12288, rows_if=48,
+                               axi_dw=256), True),
+            # The geometry the OLD rule 2 falsely REFUSED.  MEASURED: rule 1
+            # [4096, 8192], old rule 2 [4096, 4352].
+            ("NONALIGN", mk("nonalign", M=96, K=128, rows_if=48,
+                            axi_dw=256), True),
+            # GRP != 1, so the scale stride is NOT the weight stride.  The old
+            # rule used one stride for both and could not express this file at
+            # all.
+            ("GRP2", mk("grp2", M=800, K=800, rows_if=8, axi_dw=256), True),
+            # --- and now it must BITE ---
+            ("SWAP", mk("swap", M=96, K=128, rows_if=48, axi_dw=256,
+                        mutate=swap_two), False),
+            ("SHIFT_W", mk("shiftw", M=96, K=128, rows_if=48, axi_dw=256,
+                           mutate=shift_one), False),
+            ("SHIFT_S", mk("shifts", M=96, K=128, rows_if=48, axi_dw=256,
+                           mutate=shift_scale), False),
+            # A file packed TIGHT, with no padding at all.  Both packers pad,
+            # so this is not a file either of them writes -- and the corrected
+            # rule must refuse it rather than quietly accept a second layout.
+            ("UNPADDED", mk("unpadded", M=96, K=128, rows_if=48, axi_dw=256,
+                            pad=False), False),
+        ]
+        names = [r[0] for r in ROWS]
+        if len(set(names)) != len(names):
+            sys.exit("SELFTEST ABORT: duplicate row name -- one row would "
+                     "never run and another would run twice, and the table "
+                     "would look full either way.")
+        if len(set(["x", "x"])) == 2:
+            sys.exit("SELFTEST ABORT: the duplicate-name gate cannot fire.")
+
+        print("row           expect   corrected  old-rule2  attribution")
+        print("-" * 68)
+        bad = []
+        alone = 0
+        for name, path, want_agree in ROWS:
+            try:
+                h = Mv4iHeader(path)
+            except DescError as e:
+                print("%-13s %-8s %-10s %-10s %s"
+                      % (name, "-", "VOID", "-", e))
+                bad.append("%s: header would not parse: %s" % (name, e))
+                continue
+            new = _agrees(h, sub_offsets_from_layout)
+            old = _agrees(h, _tight_layout)
+            ok = (new == want_agree)
+            if want_agree:
+                attr = ("BOTH (this is the coincidence)" if old
+                        else "CORRECTED RULE ONLY")
+                if new and not old:
+                    alone += 1
+            else:
+                attr = "both refuse" if not old else "CORRECTED RULE ONLY"
+            print("%-13s %-8s %-10s %-10s %s%s"
+                  % (name, "agree" if want_agree else "REFUSE",
+                     "agree" if new else "refuse",
+                     "agree" if old else "refuse", attr,
+                     "" if ok else "   <== WRONG"))
+            if not ok:
+                bad.append("%s: wanted %s, corrected rule said %s"
+                           % (name, "agree" if want_agree else "refuse",
+                              "agree" if new else "refuse"))
+
+        # check_bases must actually RAISE, not merely disagree: the disagreement
+        # is only a guard if something stops on it.
+        raised = 0
+        for name, path, want_agree in ROWS:
+            if want_agree:
+                continue
+            try:
+                check_bases(Mv4iHeader(path))
+                bad.append("%s: check_bases did NOT raise" % name)
+            except DescError:
+                raised += 1
+        print("%-13s %-8s %-10s %-10s %s"
+              % ("RAISES", "4", str(raised), "-",
+                 "check_bases stops rather than merely disagreeing"))
+        if raised != 4:
+            bad.append("check_bases raised on %d of 4 corrupt files" % raised)
+
+        # VOID: a file that is not an .mv4i at all must be VOID, never a pass.
+        junk = os.path.join(tmp, "junk.mv4i")
+        with open(junk, "wb") as fp:
+            fp.write(b"\x00" * MV4I_HDR_BYTES)
+        try:
+            Mv4iHeader(junk)
+            vd = "PASSED"
+        except DescError:
+            vd = "VOID"
+        print("%-13s %-8s %-10s %-10s %s%s"
+              % ("VD", "VOID", vd, "-", "not an .mv4i at all",
+                 "" if vd == "VOID" else "   <== WRONG"))
+        if vd != "VOID":
+            bad.append("VD: a non-mv4i file scored %s, not VOID" % vd)
+
+        print("-" * 68)
+        print("CORRECTED RULE ALONE=%d  (rows the old tight rule got wrong)"
+              % alone)
+        if bad:
+            for b in bad:
+                print("FAIL " + b)
+            sys.exit("SELFTEST FAIL")
+        if alone == 0:
+            sys.exit("SELFTEST FAIL: every row behaves the same under the old "
+                     "tight rule, so nothing here measures the correction.")
+        print("SELFTEST PASS")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--mv4i", help="packed tensor to describe")
@@ -537,11 +825,18 @@ def main(argv=None):
     ap.add_argument("--hex", help="write one 64-bit word per line, hex")
     ap.add_argument("--json", help="write every derived field, for inspection")
     ap.add_argument("--print", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="teeth for the two-rule base check; no model, "
+                         "no card, no Vivado")
     ap.add_argument("--audit", action="store_true",
                     help="parse every tensor in the manifest and report")
     ap.add_argument("--no-hash", action="store_true",
                     help="skip the blake2b image check (it reads the file)")
     a = ap.parse_args(argv)
+
+    if a.selftest:
+        selftest()
+        return 0
 
     if a.audit:
         return audit(a)
