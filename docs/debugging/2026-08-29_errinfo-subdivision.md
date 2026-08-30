@@ -280,6 +280,38 @@ conditions could have been swapped without failing anything there. They now
 differ, and its `(29,4)` row additionally pins which arm wins when both fields
 are wrong.
 
+### The RTL-side teeth: six mutations that were inexpressible yesterday
+
+`bash sim/mutate_mv4i_desc.sh <scratch> -j 8 --only EI`, judged by
+`sim/tb_mv4i_desc_image.vhd` over the 62-case suite. Each row swaps one
+sub-case for another, or reverses one pair of new arms. **Every one of these
+was invisible to every case in the suite before this change**, because the two
+sites it confuses reported the same `(err_code, ERR_INFO)`.
+
+```
+baseline: all 62 cases pass on the unmutated design
+
+NAME  BRANCH VERDICT   NAMING CASE            NOTE
+----- ------ --------  ---------------------- ----
+EI1   IMG    KILLED    R_OPCODE (1/62)        the opcode refusal reports the CODEBOOK sub-case
+EI2   IMG    KILLED    R_W3PAD (1/62)         word 3's pad refusal reports the OUT_MODE sub-case
+EI3   IMG    KILLED    R_GEOM_NPS (1/62)      the nsub_s refusal reports the nsub_w sub-case
+EI4   IMG    KILLED    R_EXT3PAD (1/62)       the ext-word-3 pad names word EXT0+2, as it did before OI-9
+EI5   IMG    KILLED    R_SB_HIGH (1/62)       the s_beats UPPER-bound refusal reports the LOWER sub-case
+EI6   IMG    KILLED    R_BEATS_BOTH0 (1/62)   the two beat-count arms are in the opposite order
+
+TOTAL 6 mutations: 6 KILLED, 0 ABORT, 0 SURVIVED
+```
+
+**Read the `(1/62)`, not the KILLED.** Each mutation is caught by exactly ONE
+case and passes the other 61, which is the right shape: it changes the report of
+one site and nothing else, so a suite that killed it broadly would be telling
+you the cases are entangled rather than that the check is sharp. `EI4` is the
+pre-OI-9 behaviour restored, so that row is also a direct measurement that the
+wrong-word defect was real and is now covered. `EI6` is caught only by
+`R_BEATS_BOTH0`, one of the five order cases added in step 4 -- without it that
+mutation survives, which is exactly why they were added.
+
 ## The scheme, and what it cost
 
 ```
@@ -430,8 +462,15 @@ scratch file it names.
   (`R_SHAPE_ALLBAD` covers rows-zero before cols-zero, `R_SHAPE_OVERBOTH` covers
   rows-max before cols-max). The cross pairs -- rows-zero against cols-max, and
   rows-max against cols-zero -- are not covered by any case.
-* **The full 89-row mutation table** was still running when this was written;
-  see the report for its final line.
+* **The full 89-row mutation table was NOT run end to end.** Only the six new
+  `EI*` rows were, above. The 14 retargeted anchors were verified to RESOLVE
+  (each matches exactly once in the RTL, checked by string count) but were NOT
+  re-verified to still KILL anything. One full run is ~89 x 5 min because each
+  mutation re-analyses 13 files serially before its 62 cases, and the box was
+  carrying another track's Vivado throughout. **This is the largest single gap
+  in this write-up.** The three judges that WERE run cover the same checks from
+  three directions, but a mutation table is a different claim from a case suite
+  and it has not been re-made.
 
 ## Corrections to the brief this track was given
 
