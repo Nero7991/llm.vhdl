@@ -523,8 +523,16 @@ in git). `sim:tb_matvec_int4` ends at `@1675ns`, exactly where it ended before
 the new generics were added -- every one of them defaults to the historical
 value.
 
-**`BASELINE_PASS` stays 93.** No new `sim/tb_*.vhd` was created, so no gate row
-was added, and `sim/regress.sh` was not opened at all.
+**This track does not move `BASELINE_PASS`.** No new `sim/tb_*.vhd` was
+created, so no gate row was added, and `sim/regress.sh` was not opened at all.
+
+CORRECTION, appended after the commit: the dispatching brief said the floor was
+93 and the clean ceiling 94, and that was true when this track started. It is
+not now. **TRACK FLOOR raised it to 98 in `b60591d`, the commit immediately
+before this track's `028829e`**, so a reader checking the number against the
+brief will find 98 and should not conclude something here moved it. Nothing
+here did; the reasoning above is unchanged, only the value it is measured
+against.
 
 ## 10. Machine, as measured
 
