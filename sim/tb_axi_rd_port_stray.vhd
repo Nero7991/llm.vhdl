@@ -48,15 +48,21 @@
 --      rtl/axi_rd_fsm.vhd deleted, `tb_axi_rd_port_dual` reports
 --      `0 errors across 4 clock ratios` and PASSES.
 --
---   2. THE LENGTH OF THE RESET.  MEASURED NOT TO MATTER, and this CORRECTS
+--   2. THE LENGTH OF THE RESET.  MEASURED NOT TO MATTER -- IN THIS BENCH, AT
+--      EITHER DEPTH.  At DEPTH 64 holds of 1, 2 and 20 core cycles all give an
+--      IDENTICAL `strayl` = 4 at every ratio; at DEPTH 16 holds of 2 and 20
+--      both give the same `stray` 0 / 3 / 6 and `strayl` 0 / 1 / 1, i.e. the
+--      same coverage failure at anear.  Four arms, one number each way, and
+--      the hold moved nothing.
+--      **The sensitive variable here is the FIFO depth, not the reset width.**
+--
+--      This does NOT overturn
 --      docs/debugging/2026-08-29_a7-dual-clock-run-gate.md section 7, which
---      attributed its first vacuous control to a 20-core-cycle hold.  With
---      DEPTH at 64 (see DEPTH's own note) this row gives an IDENTICAL
---      `strayl` = 4 at every ratio for holds of 1, 2 and 20 core cycles.  At
---      A7's DEPTH of 16 the port only ever had one burst in flight, so a long
---      hold could drain it; at a depth the shipping design actually uses, the
---      outstanding-burst slots are full and no plausible hold empties them.
---      **The sensitive variable is the FIFO depth, not the reset width.**
+--      measured a 20-cycle hold going vacuous in a DIFFERENT bench
+--      (sim/tb_axi_rd_port_dual.vhd, whose J7 reset lands at a point where the
+--      job has already drained).  It says the result does not carry over, so
+--      do not copy the "one-cycle reset" prescription here and believe it is
+--      what is doing the work.
 --
 -- Because a bench of this shape can still pass for the wrong reason, the
 -- witnesses are asserted rather than hoped for.  They are counted on the AXI
@@ -522,9 +528,14 @@ begin
       whole_job(JB_BASE, 24, "JB after the reset");
       whole_job(JC_BASE, 13, "JC after the reset");
 
-      -- ---- COVERAGE, asserted rather than printed.  Both of these are the
-      -- ways this bench can pass for the wrong reason, and both have actually
-      -- happened to the control this row grew out of.
+      -- ---- COVERAGE, asserted rather than printed.  These are the ways this
+      -- bench can pass for the wrong reason, and the FIRST of them ALREADY
+      -- HAPPENED, on the very first run of this file: at DEPTH 16 the `anear`
+      -- ratio reported `stray = 0` and this assert is what turned the row red
+      -- instead of letting it go in green having tested nothing.  Two of the
+      -- three ratios passed that run on a single stray `rlast` each.
+      -- MEASURED again in control B (a reset-aware slave), where all three
+      -- ratios drop to `stray = 1`, `strayl = 0` and the second assert fires.
       if stray_o = 0 then
         report NAMES(i) & ": COVERAGE -- NO beat of the abandoned job arrived" &
                " after the reset, so the reset did not catch a burst in" &
