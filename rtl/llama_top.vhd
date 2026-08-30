@@ -500,9 +500,55 @@ entity llama_top is
     -- for that and `attn_kv_axi` does not need it, which TRACK C-SEAM
     -- measured.  Keeping the awkward bases here means this file exercises
     -- the same splitter path.
-    C_K_BASE    : natural  := 16;
-    C_V_BASE    : natural  := 4064;
-    C_KV_ADDR_W : positive := 16;
+    --
+    -- THE UNIT IS THE RECORD'S 16-BYTE CHUNK, NOT THE BYTE, AND THAT IS
+    -- FORCED BY THE LANGUAGE.  These were `natural` BYTE addresses until
+    -- 2026-08-29.  The real Qwen3.5-9B map places K at byte 4,521,582,592
+    -- (`hbm.kv_base` in the residency manifest, which tools/hbm_map.py
+    -- derives), and MEASURED on GHDL 1.0.0 mcode `natural'high` is
+    -- 2,147,483,647 -- so the real base is 2.11x the largest value the
+    -- generic could hold, and GHDL refused it with `value not in range for
+    -- generic 'c_k_base'` BEFORE any guard in this file ran.  VHDL-2008 has
+    -- no wider standard integer, so widening the type is not available.
+    --
+    -- `attn_kv_axi`'s record is built on a 16-byte granule (`CH_B` at
+    -- rtl/attn_kv_axi.vhd:365) and this file already refused any base that
+    -- was not a multiple of it, so counting chunks instead of bytes loses NO
+    -- representable address and buys 4 bits.  The real K base is 282,598,912
+    -- chunks, 13.2 percent of `natural`.
+    --
+    -- THE RENAME IS THE SAFETY MECHANISM, not cosmetic.  A domain change
+    -- under the OLD name would have been a silent 16x address error at every
+    -- existing call site.  MEASURED, both seams refuse a stale name loudly:
+    -- `ghdl -r llama_top -gC_K_BASE=0` gives `cannot find in top entity
+    -- generic 'c_k_base'` with rc=1, and a stale VHDL named association is an
+    -- analysis error.  Every value that existed before was already a multiple
+    -- of 16 (16, 4064, 0, 34816, 2228224), so the conversion was exact.
+    --
+    -- THE REAL 9B ONE-CARD MAP, for whoever configures a build.  Provenance:
+    -- `hbm.kv_base` from the manifest, `kv_bytes_per_token` from
+    -- tools/hbm_map.py `arena_sizes()`, both re-derived from this file's own
+    -- C_LAY 8 / C_NKVH 4 / REC_B 272.  These are NOT the defaults below and
+    -- must not become them: C_MAXPOS 131072 would size the BEHAVIOURAL cache
+    -- (`gkvmem`) at 8.4 million signal entries in every bench that leaves
+    -- C_KV_AXI false.  `sim/realshape_gate.sh`'s `real_kv_map` row is the
+    -- standing proof that the set below elaborates.
+    --
+    --     C_KV_BLOCK   32           legal set at head_dim 256 is {16,32,64,128}
+    --     C_MAXPOS     131072       Qwen3.5-9B's native context.  The arena
+    --                               affords 233,396; anything past 131,072
+    --                               needs RoPE extension that does not exist.
+    --     C_CTXLEN     <= C_MAXPOS
+    --     C_K_BASE_CH  282598912    = 0x1_0D81_E000 / 16
+    --     C_V_BASE_CH  353902080    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
+    --     C_KV_ADDR_W  33           clog2(353902080 + 71303168) = 29 = 33-4,
+    --                               satisfied with ZERO slack.  That slack is
+    --                               set by the BASE, not by C_MAXPOS: the
+    --                               base alone exceeds 2**28, so clog2 is 29
+    --                               for every C_MAXPOS from 1 to 233,705.
+    C_K_BASE_CH : natural  := 1;      -- 16-byte chunks.  1 chunk = byte 16
+    C_V_BASE_CH : natural  := 254;    -- 254 chunks = byte 4064
+    C_KV_ADDR_W : positive := 16;     -- a BYTE address width, unchanged
     C_KV_AXI_DW : positive := 256;
     C_KV_MAXB   : positive := 16;   -- AXI3: ARLEN is 4 bits.  16 is the cap.
     C_KV_MAXOUT : positive := 4;
@@ -3658,10 +3704,20 @@ begin
     signal kv_busy_s, kv_cfgt_s : std_logic;
 
     -- NO EXPRESSIONS IN THE PORT MAP, same rule as qg_e8 below.
+    --
+    -- THE DOMAIN CHANGES BACK TO BYTES HERE, AND ONLY HERE.  `attn_kv_axi`'s
+    -- `k_base`/`v_base` are BYTE addresses: rtl/attn_kv_axi.vhd:403-408
+    -- computes `rec_addr = unsigned(base) + idx*REC_B` with REC_B in bytes.
+    -- So the generics are chunks, these two constants are the shift back to
+    -- bytes, and everything downstream of the port map is bytes as before.
+    -- That is why `attn_kv_axi` needed no change for this: the seam is one
+    -- shift wide and it is written out here rather than implied.
     constant KBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
-                     := std_logic_vector(to_unsigned(C_K_BASE, C_KV_ADDR_W));
+                     := std_logic_vector(shift_left(
+                          to_unsigned(C_K_BASE_CH, C_KV_ADDR_W), 4));
     constant VBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
-                     := std_logic_vector(to_unsigned(C_V_BASE, C_KV_ADDR_W));
+                     := std_logic_vector(shift_left(
+                          to_unsigned(C_V_BASE_CH, C_KV_ADDR_W), 4));
     constant REC_B_C : natural := 16 + C_HD*C_CM_W/8;
 
     -- The behavioural cache's storage.  The TYPES stay here because the
@@ -3870,9 +3926,43 @@ begin
       -- elaborated clean, and the top 4,096 bytes of V wrapped onto the
       -- first records of K.  Written with clog2 rather than 2**C_KV_ADDR_W
       -- so a 32-bit address width does not overflow the check itself.
-      constant KVREG_B     : natural := C_LAY*C_NKVH*C_MAXPOS*REC_B_C;
+      --
+      -- IN CHUNKS, NOT BYTES, AND THAT IS WHAT MAKES THE CHECK EVALUATE AT
+      -- THE REAL MAP.  `clog2` in rtl/util_pkg.vhd is a `while v < n loop
+      -- v := v*2` doubling loop over `natural`, so it OVERFLOWS for any
+      -- argument above 2**30.  In the byte domain the real pair ends at
+      -- 6,803,283,968, which both overflows `natural` in the sum itself and
+      -- is far past that loop's ceiling; MEASURED, `overflow detected ...
+      -- from work.llama_top(rtl).DECL_ELAB` and the elaboration dies.  In
+      -- chunks the same quantity is 425,205,248, under 2**30, and clog2
+      -- returns 29.
+      --
+      -- The two forms are EXACTLY equivalent, not merely similar: every term
+      -- is a whole number of 16-byte chunks, and clog2(16*y) = clog2(y) + 4
+      -- for y >= 1, so `clog2(bytes) <= C_KV_ADDR_W` and
+      -- `clog2(chunks) <= C_KV_ADDR_W - 4` accept and refuse the same
+      -- layouts.  Nothing was loosened to make the real map fit.
+      --
+      -- REC_B must itself be a whole number of chunks or the conversion is
+      -- lossy.  `attn_kv_axi.vhd:483` asserts `MANT_B mod CH_B = 0`; it is
+      -- mirrored here as a natural constant because a concurrent assert runs
+      -- after the whole design has elaborated, which is too late.
+      --
+      -- IT IS UNREACHABLE TODAY AND IT IS KEPT ANYWAY, WHICH IS A CLAIM
+      -- ABOUT THE FUTURE AND NOT EVIDENCE ABOUT NOW.  `C_HD` is
+      -- `SHAPE.attn_head_dim` and SHAPE is a RECORD generic that GHDL cannot
+      -- override, so C_HD is 256 in every configuration this file can be
+      -- elaborated at; `C_HD*C_CM_W/8` is then `32*C_CM_W`, always a multiple
+      -- of 16, and no value of any overridable generic makes this constant
+      -- negative.  It has therefore never been shown to refuse anything.  It
+      -- would bite at a head dim below 32, which is the shape a future
+      -- retarget could bring, and it costs one elaboration-time subtraction.
+      constant CHK_KV_REC  : natural := 0 - ((C_HD*C_CM_W/8) mod 16);
+      constant REC_CH_C    : natural := REC_B_C / 16;
+      constant KVREG_CH    : natural := C_LAY*C_NKVH*C_MAXPOS*REC_CH_C;
       constant CHK_KV_FIT  : natural :=
-        C_KV_ADDR_W - clog2(maximum(C_K_BASE, C_V_BASE) + KVREG_B);
+        (C_KV_ADDR_W - 4)
+        - clog2(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH);
     begin
       -- ELABORATION CHECKS.  The three-way geometry constraint is stated in
       -- the C_KV_AXI generic's header; these name the caller rather than
@@ -3894,27 +3984,39 @@ begin
       -- clog2, not 2**C_KV_ADDR_W: the right-hand side would overflow a
       -- 32-bit integer at C_KV_ADDR_W = 32, so the check would fail on the
       -- widest legal address space rather than on an illegal layout.
-      assert clog2(maximum(C_K_BASE, C_V_BASE) + KVREG_B) <= C_KV_ADDR_W
+      -- Reported in CHUNKS.  The byte figure is not printed because at the
+      -- real map it is 6,803,283,968, which `integer'image` cannot render:
+      -- the argument would overflow before the message was built, replacing
+      -- the diagnostic with an unattributed `overflow detected`.
+      assert clog2(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH)
+             <= C_KV_ADDR_W - 4
         report "llama_top: the KV regions do not fit C_KV_ADDR_W.  The pair "
-             & "ends at byte " & integer'image(maximum(C_K_BASE, C_V_BASE)
-                                               + KVREG_B)
-             & " and the address space is " & integer'image(C_KV_ADDR_W)
-             & " bits.  The high end wraps onto the low region."
+             & "ends at 16-byte chunk "
+             & integer'image(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH)
+             & ", which needs "
+             & integer'image(clog2(maximum(C_K_BASE_CH, C_V_BASE_CH)
+                                   + KVREG_CH) + 4)
+             & " address bits, and C_KV_ADDR_W is "
+             & integer'image(C_KV_ADDR_W)
+             & ".  The high end wraps onto the low region."
         severity failure;
       -- The two regions must not overlap.  Nothing else checks this: both
       -- masters would work perfectly and the V records would be K records.
       -- K and V are SEPARATE regions with separate bases (C spec 2.2), so
       -- each is LAYERS*N_KVH*MAXCTX*REC_B and there is no factor of two.
-      assert C_K_BASE + C_LAY*C_NKVH*C_MAXPOS*REC_B_C <= C_V_BASE
-          or C_V_BASE + C_LAY*C_NKVH*C_MAXPOS*REC_B_C <= C_K_BASE
+      assert C_K_BASE_CH + KVREG_CH <= C_V_BASE_CH
+          or C_V_BASE_CH + KVREG_CH <= C_K_BASE_CH
         report "llama_top: the K and V KV regions overlap.  Each is "
-             & integer'image(C_LAY*C_NKVH*C_MAXPOS*REC_B_C) & " bytes."
+             & integer'image(KVREG_CH) & " chunks of 16 bytes."
         severity failure;
-      assert C_K_BASE mod 16 = 0 and C_V_BASE mod 16 = 0
-        report "llama_top: the KV bases must be 16-byte aligned; that is the "
-             & "record granule, and it is the ONLY alignment attn_kv_axi "
-             & "needs -- 4 KB alignment is not required."
-        severity failure;
+      -- THE 16-BYTE ALIGNMENT ASSERT IS RETIRED, NOT DROPPED.  It read
+      -- `C_K_BASE mod 16 = 0 and C_V_BASE mod 16 = 0`.  With the bases
+      -- counted in 16-byte chunks the constraint is STRUCTURAL -- there is no
+      -- longer a representable value that violates it -- so the assert could
+      -- never fire again, and a check that cannot fail is decoration rather
+      -- than evidence.  The requirement itself has not gone away; it is now
+      -- enforced by the encoding, and `KBASE_C` above is where it is made
+      -- true.  `attn_kv_axi.vhd:44-50` still states it.
 
       u_kv : entity work.attn_kv_axi
         generic map(

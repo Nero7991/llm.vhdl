@@ -156,10 +156,10 @@ row vn_w_ok           ok   llama_top -gVN_W=14
 CKV="-gA_BEHAV=true -gB_BEHAV=true -gC_REAL=true -gC_KV_AXI=true"
 # shellcheck disable=SC2086
 row kv_nblk_bad       fail llama_top $CKV -gC_KV_BLOCK=4 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 # shellcheck disable=SC2086
 row kv_nblk_ok        ok   llama_top $CKV -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 # THE GRANULE CHECK IN ISOLATION, and the reason this row looks absurd.
 # `CHK_KV_GRAN` is declared after `CHK_KV_NBLK`, so at every SENSIBLE
 # geometry the NBLK check fires first and the granule one is never reached:
@@ -171,7 +171,7 @@ row kv_nblk_ok        ok   llama_top $CKV -gC_KV_BLOCK=32 \
 # satisfied, and the granule bound is the only thing left to refuse it.
 # shellcheck disable=SC2086
 row kv_gran_bad       fail llama_top $CKV -gC_KV_BLOCK=17 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 
 KVG="-gN_KVH=4 -gLAYERS=8 -gMAXCTX=4 -gPOS_W=16 -gCM_W=8 -gEXP_W=8"
 KVG="$KVG -gAXI_DW=256 -gADDR_W=16"
@@ -191,10 +191,10 @@ row kvaxi_nblk16_ok   ok   attn_kv_axi -gHEAD_DIM=256 -gKV_BLOCK=16 $KVG
 # ===========================================================================
 # shellcheck disable=SC2086
 row kv_addr_wrap      fail llama_top $CKV -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=16
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=16
 # shellcheck disable=SC2086
 row kv_addr_fits      ok   llama_top $CKV -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 # and the overlap check itself still bites, one generic away
 # shellcheck disable=SC2086
 row kv_overlap        fail llama_top $CKV -gC_KV_BLOCK=32 -gC_KV_ADDR_W=20
@@ -208,7 +208,7 @@ row kv_overlap        fail llama_top $CKV -gC_KV_BLOCK=32 -gC_KV_ADDR_W=20
 #    that must STILL fail, or the fix would have removed the check instead of
 #    correcting it.
 # ===========================================================================
-KVC="-gC_KV_BLOCK=32 -gC_K_BASE=0 -gC_V_BASE=2228224 -gC_KV_ADDR_W=24"
+KVC="-gC_KV_BLOCK=32 -gC_K_BASE_CH=0 -gC_V_BASE_CH=139264 -gC_KV_ADDR_W=24"
 KVC="$KVC -gC_MAXPOS=256"
 # shellcheck disable=SC2086
 row ctx_at_max        ok   llama_top $CKV $KVC -gC_CTXLEN=256
@@ -227,7 +227,62 @@ row ctx_over_max      fail llama_top $CKV $KVC -gC_CTXLEN=257
 row all_real          ok   llama_top -gA_BEHAV=false -gB_BEHAV=false \
                              -gB_SRC_REAL=true -gNORM_REAL=true -gSMP_EN=true \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
+
+# ===========================================================================
+# 8. THE REAL KV MAP.  TRACK CKVMAP, 2026-08-29.
+#
+#    Every row above runs at C_MAXPOS <= 256 with bases under 36 MB, so the
+#    whole 32-bit wall was OUTSIDE this gate's coverage and a green run was
+#    compatible with a KV map that could not be expressed at all.  It could
+#    not: `C_K_BASE` was a byte-domain `natural` and the real K base is
+#    4,521,582,592, which is 2.11x `natural'high`.  The generics now count
+#    the record's own 16-byte chunks.
+#
+#    PROVENANCE OF EVERY NUMBER, all re-derived rather than restated:
+#      C_K_BASE_CH 282598912  = hbm.kv_base 4521582592 / 16, from the
+#                               residency manifest that tools/hbm_map.py
+#                               derives (ARENA-MANIFEST made it the authority)
+#      C_V_BASE_CH 353902080  = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*REC_CH
+#                               = 282598912 + 8*4*131072*17
+#      C_MAXPOS    131072     Qwen3.5-9B's native context.  DECIDED, not
+#                             derived: the arena affords 233,396 and anything
+#                             past 131,072 needs RoPE extension work that does
+#                             not exist.  See docs/WORKLOG.md.
+#      C_KV_ADDR_W 33         clog2(353902080 + 71303168) = clog2(425205248)
+#                             = 29, and 29 <= 33-4 EXACTLY.
+#
+#    THE PAIR IS THE POINT.  `real_kv_map` must pass and `real_kv_addr_short`
+#    -- the same map with one address bit fewer -- must refuse, or a green
+#    row would only prove the check cannot fail.
+#
+#    NOTE C_KV_ADDR_W IS PINNED BY THE BASE, NOT BY C_MAXPOS.  C_K_BASE_CH
+#    alone is 282,598,912, already above 2**28, so clog2 is 29 for EVERY
+#    C_MAXPOS from 1 to 233,705 -- which covers the arena ceiling of 233,396.
+#    `real_kv_ceiling` runs the map at that ceiling to show 33 still holds.
+# ===========================================================================
+KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902080"
+KVR="$KVR -gC_KV_ADDR_W=33 -gC_MAXPOS=131072 -gC_CTXLEN=131072"
+# shellcheck disable=SC2086
+row real_kv_map       ok   llama_top $CKV $KVR
+# shellcheck disable=SC2086
+row real_kv_addr_short fail llama_top $CKV -gC_KV_BLOCK=32 \
+                             -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902080 \
+                             -gC_KV_ADDR_W=32 -gC_MAXPOS=131072 -gC_CTXLEN=131072
+# The V base one chunk low, so the K region's last record overlaps V's first.
+# shellcheck disable=SC2086
+row real_kv_overlap   fail llama_top $CKV -gC_KV_BLOCK=32 \
+                             -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902079 \
+                             -gC_KV_ADDR_W=33 -gC_MAXPOS=131072 -gC_CTXLEN=131072
+# The arena ceiling.  Bases unchanged, C_MAXPOS at 233,396: still 33 bits.
+# shellcheck disable=SC2086
+row real_kv_ceiling   ok   llama_top $CKV -gC_KV_BLOCK=32 \
+                             -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=409566336 \
+                             -gC_KV_ADDR_W=33 -gC_MAXPOS=233396 -gC_CTXLEN=233396
+# C_CTXLEN past the cache, at the REAL depth.  The small-shape ctx rows above
+# cannot reach this arithmetic because their C_MAXPOS is 256.
+# shellcheck disable=SC2086
+row real_kv_ctx_over  fail llama_top $CKV $KVR -gC_CTXLEN=131073
 
 echo
 if [ "$fail" -eq 0 ]; then

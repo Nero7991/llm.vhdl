@@ -987,6 +987,21 @@ architecture tb of tb_llama_top is
   constant KV_CH_B   : natural  := 16;              -- the record granule
   constant KV_K_BASE : natural  := KV_K_BASE_G;
   constant KV_V_BASE : natural  := KV_V_BASE_G;
+  -- THE BENCH STAYS IN BYTES; llama_top's GENERICS ARE NOW 16-BYTE CHUNKS.
+  -- `C_K_BASE`/`C_V_BASE` became `C_K_BASE_CH`/`C_V_BASE_CH` on 2026-08-29
+  -- because the real 9B K base, 4,521,582,592, is 2.11x `natural'high` and a
+  -- byte-domain generic could not carry it (see rtl/llama_top.vhd:503 and
+  -- docs/debugging/2026-08-29_ckvmap-*.md).  Everything below -- kv_addr, the
+  -- slave decode at :1413 and :1600, the shadow -- is a BYTE address and is
+  -- unchanged.  These two constants are the only place the bench crosses the
+  -- domain, and the assert is the alignment check that llama_top RETIRED when
+  -- the encoding made it structural: here the byte form still exists, so a
+  -- misaligned KV_K_BASE_G is still a thing that can be asked for, and it is
+  -- still refused.
+  constant KV_K_BASE_CH : natural := KV_K_BASE / 16;
+  constant KV_V_BASE_CH : natural := KV_V_BASE / 16;
+  constant KV_ALIGN_OK  : boolean :=
+    (KV_K_BASE mod 16 = 0) and (KV_V_BASE mod 16 = 0);
   constant KV_NB     : natural  := KV_NB_G;         -- bytes of modelled HBM
   constant KV_REC_B  : natural  := KV_CH_B + ATTN_HD;   -- CM_W is 8
   constant KV_NBLK   : natural  := ATTN_HD / KV_BLOCK;
@@ -1217,6 +1232,17 @@ begin
          & "lower MAXPOS."
     severity failure;
 
+  -- The alignment guard llama_top retired.  It still has teeth HERE because
+  -- KV_K_BASE_G/KV_V_BASE_G are byte generics and a misaligned one is still
+  -- expressible; llama_top's chunk generics make it unrepresentable instead.
+  assert KV_ALIGN_OK
+    report "tb_llama_top: the KV bases must be 16-byte aligned -- that is "
+         & "attn_kv_axi's record granule.  K base "
+         & integer'image(KV_K_BASE) & ", V base " & integer'image(KV_V_BASE)
+         & ".  llama_top's C_K_BASE_CH/C_V_BASE_CH count 16-byte chunks, so "
+         & "a base that is not a multiple of 16 cannot even be passed to it."
+    severity failure;
+
   -- THE HALF PERIOD IS A NAMED CONSTANT because the seam capture depends on
   -- it: it settles for CAP_SETTLE after a rising edge and then snapshots a
   -- region in ZERO time, which is only atomic while CAP_SETTLE is strictly
@@ -1249,7 +1275,7 @@ begin
       C_REAL => C_REAL,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
-      C_K_BASE => KV_K_BASE, C_V_BASE => KV_V_BASE,
+      C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,
       C_KV_ADDR_W => KV_ADDR_W, C_KV_AXI_DW => KV_DW,
       A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
       SMP_EN => SMP_EN, SMP_FIFO => SMP_FIFO,

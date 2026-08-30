@@ -138,27 +138,27 @@ row kv_default_base  fail llama_top -gA_BEHAV=true -gB_BEHAV=true -gREGMAX=12288
 # the V region wraps onto the K region.  NOTHING checks this: it elaborates.
 row kv_addr_wrap     ok   llama_top -gA_BEHAV=true -gB_BEHAV=true -gREGMAX=12288 \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176
 row kv_good          ok   llama_top -gA_BEHAV=true -gB_BEHAV=true -gREGMAX=12288 \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 # OFF BY ONE AT A MAXIMUM.  POS_W = clog2(MAXCTX), and the guard demands
 # C_CTXLEN < 2**POS_W as well as <= C_MAXPOS.  At a power-of-two cache depth
 # those contradict, so the last cache position can never be used.
 row ctx_at_max       fail llama_top -gA_BEHAV=true -gB_BEHAV=true -gREGMAX=12288 \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=2228224 -gC_KV_ADDR_W=24 \
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=139264 -gC_KV_ADDR_W=24 \
                              -gC_MAXPOS=256 -gC_CTXLEN=256
 row ctx_one_short    ok   llama_top -gA_BEHAV=true -gB_BEHAV=true -gREGMAX=12288 \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=2228224 -gC_KV_ADDR_W=24 \
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=139264 -gC_KV_ADDR_W=24 \
                              -gC_MAXPOS=256 -gC_CTXLEN=255
 
 # ---- 4. everything real except B's state store -----------------------------
 row all_but_B        ok   llama_top -gA_BEHAV=false -gB_BEHAV=true -gREGMAX=12288 \
                              -gB_SRC_REAL=true -gNORM_REAL=true -gSMP_EN=true \
                              -gC_REAL=true -gC_KV_AXI=true -gC_KV_BLOCK=32 \
-                             -gC_K_BASE=0 -gC_V_BASE=34816 -gC_KV_ADDR_W=20
+                             -gC_K_BASE_CH=0 -gC_V_BASE_CH=2176 -gC_KV_ADDR_W=20
 
 # ---- 5. the D-vec element count against the 9B FFN -------------------------
 # VN_W defaults to 13, so seq_vec_issue refuses n_rows >= 8192.  The 9B
