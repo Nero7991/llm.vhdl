@@ -505,16 +505,26 @@ mutate A9 LVL "FSM told margin 0, FIFO still 3 -- EQUIVALENT MUTANT in g_sc, see
                   MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => 0)
       port map(clk => clk, rst => rst, start => start_f,'
 
-# --- class SC: the single-clock generate's own five lines -------------------
-# B1 IS AN EQUIVALENT MUTANT BECAUSE THE ASSIGNMENT IS DEAD CODE.  `frst` is
-# read at rtl/axi_rd_port.vhd:281 (`rst => frst`) and :291 (`wrst => frst`),
-# both inside g_dc.  In g_sc the FSM and the FIFO are both handed `rst`
-# directly, so nothing in that branch reads `frst` and no value assigned to it
-# can be observed.  Reported by TRACK ACOV, confirmed independently here, and
-# still NOT fixed -- this is a coverage track and does not edit rtl/.
-mutate B1 SC "frst tied low in g_sc -- EQUIVALENT MUTANT, the assignment is dead" \
-  '    frst    <= rst;' \
-  "    frst    <= '0';"
+# --- class SC: the single-clock generate's own four lines -------------------
+# B1 IS GONE, AND THE REASON IS THE POINT OF THIS COMMENT.  It used to mutate
+# `frst <= rst;` in g_sc and was labelled an EQUIVALENT MUTANT, because nothing
+# in that branch read `frst`: the FSM and the FIFO were both handed `rst`
+# directly.  That is not a property of the mutation, it is a DEFECT in the RTL
+# -- dead code, reported five separate times as AXIRD-FRST (TRACK ACOV first,
+# then confirmed here, then by STRAYROW, then by A7's dispatcher, then by
+# STRAYREACH) and fixed on 2026-08-30 by TRACK RESETGUARD, which deleted the
+# assignment and moved the declaration into g_dc where it is actually used.
+#
+# READ THIS BEFORE ADDING ANOTHER "EQUIVALENT MUTANT" LABEL.  This row is how
+# the defect survived five sightings: the fact was known, was checked, and was
+# recorded -- as the JUSTIFICATION FOR A SURVIVING MUTANT rather than as a
+# defect report.  A mutation-testing script converts "this line does nothing"
+# into an expected result, and an expected result is not a thing anyone
+# re-reads.  If a mutation is equivalent because the mutated line is DEAD, that
+# is a finding about the RTL and belongs in docs/WORKLOG.md's open issues, not
+# only in a comment here.  A9 and A8 above are genuinely equivalent for a
+# different reason (the parameter is not a correctness parameter), and that
+# distinction is the one to make.
 
 mutate B2 SC "start never reaches the FSM" \
   '    start_f <= start;' \

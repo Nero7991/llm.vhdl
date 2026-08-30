@@ -154,7 +154,6 @@ architecture rtl of axi_rd_port is
   signal run_c   : std_logic;
   signal run_s1, run_s2 : std_logic := '0';
   signal rst_s1, rst_s2 : std_logic := '1';
-  signal frst    : std_logic;
 
   signal s_tog   : std_logic := '0';
   signal s_t1, s_t2, s_t3 : std_logic := '0';
@@ -236,7 +235,6 @@ begin
   g_sc : if not DUAL_CLK generate
     signal ack : std_logic := '0';
   begin
-    frst    <= rst;
     start_f <= start;
     run_c   <= run_f;
 
@@ -305,6 +303,17 @@ begin
     -- low, so it can never re-open the gate before the drain and clear have
     -- run.  At power-on both are '0' and the term is inert.
     signal abort_c : std_logic := '0';
+
+    -- The AXI-domain reset.  DECLARED HERE rather than beside rst_s1/rst_s2
+    -- above, because it belongs to this branch and only this branch: the
+    -- single-clock generate hands the FSM and the FIFO `rst` directly and has
+    -- no use for a synchronised copy.  While it was an architecture-level
+    -- signal, g_sc also DROVE it (`frst <= rst;`) and nothing there read it --
+    -- dead code reported five separate times as AXIRD-FRST and fixed here
+    -- (TRACK RESETGUARD, 2026-08-30).  Scoping it is what stops a sixth
+    -- sighting: in this shape the assignment cannot be written back without
+    -- also being out of scope.
+    signal frst    : std_logic;
   begin
     frst  <= rst_s2;
     run_c <= run_s2 and not abort_c;
