@@ -129,6 +129,75 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK STRIPEPATH COMPLETE, 2026-08-30 (`d7f96cd`, `9d73018`). The striping path emits.
+
+**The defect, SIZED before it was fixed:** pre-change, `fk33_run_layer` on the
+striped set emitted 296 descriptors, **0 errors, and 7,992 of 7,992 bases
+wrong**. It failed silently and completely.
+
+**After: all bases MOVE and land where the manifest placed their file offset**,
+reaching **25 distinct pseudo-channels** read from address bits [32:28].
+`output.weight` goes from 3 segments to **25**. Inertness on the flat set:
+**24,258 descriptor words, nine diffs**, one intentional and named.
+
+**Guards that could not see their own defect, found here:**
+`check_hbm_stack` printed **PASS** with a piece straddling the 4 GiB stack line.
+It now earns 7 kills with the pre-change file earning zero on every row and its
+control surviving, so that attribution is clean. And **the range count was never
+a discriminator at all**: 7,154 on BOTH layouts, because
+`250 + 249*27 = 249*28 + 1 = 6,973`.
+
+**Zero-kill checks named and NOT credited** (the most valuable part of the
+report): the extent rule in `check_byte_cover` (its NOEXT arm kills identically
+to NEW on all 13 rows), and the `pieces` threading in `gen_layer_program` and
+`fk33_run_layer`. Non-biting mutants **T5 and T12** reported under their own
+names, with **T12 flagged as the hole nothing here closes**.
+
+**CORRECTION issued by STRIPEPATH, and it binds every future track on this
+path:** PIECES' quoted numbers do not reproduce -- against today's manifest the
+pre-PIECES world does not emit 311 jobs, it dies on an `hbm_map` OVERLAP, and
+the bases are not byte-identical to the flat program's. **The defect is real and
+was measured directly; the specific numbers must not be quoted. PACKSTRIPE has
+now moved the manifest between tracks twice.** Pin the manifest's identity
+(path plus hash) in any write-up that measures against it.
+
+Also corrected: `fk33_run_layer` needed **no** `hbm_map.plan().check()`, because
+`make_layer` already calls `place_desc_arena()` which runs one and raises. "The
+same two lines" was wrong once already.
+
+### THE CARD EXPERIMENT IS READY, AND ITS PREDICTION IS PINNED IN ADVANCE
+
+Section 9 of `docs/debugging/2026-08-30_stripepath-five-emitters.md` carries the
+offline arm, the card arm (Oren's only) and a failure-mode table.
+
+**Prediction, stated before the run: cycles/beat should fall from the MEASURED
+21.67 to between 1.60 and 3.0.** DERIVED: 27 beats on one pseudo-channel = 21.60
+core cycles; at most 2 lanes per channel = 1.60, which is exactly the RTL's own
+ideal-memory floor.
+
+**The falsifiers are stated too, and this is what makes it an experiment rather
+than a demonstration.** A measured **10 to 12** means half the lanes still share
+a channel. An **unchanged 21.6** means the image or the descriptors are not the
+striped ones, and is **NOT evidence about the theory**.
+
+**No new bitstream is needed.** Two things still block it:
+
+1. **`hw/fk33/host/fk33_run_token.py:1103` is a SIXTH consumer with the
+   identical defect**, on the token path, emitting the lm-head's 15 window
+   descriptors. **Until it lands, a striped set gives a correct 32-layer body
+   and a WRONG lm-head.** Dispatched as TRACK TOKENSTRIPE.
+2. **PCIe enumeration.** The card is configured (`d31ab02`) but its root port is
+   hidden by the BIOS; see the CORRECTION in
+   `docs/debugging/2026-08-30_restoring-the-card-after-a-power-cycle.md` -- a
+   rescan cannot work and the fix is a warm reboot, deferred by Oren until the
+   synthesis and gate lanes quiesce.
+
+Also handed over: `tools/weights_residency.py` fails on a striped manifest for a
+reason unrelated to what it guards (`stack_hole_bytes` computed for the flat
+layout against 2.69 GiB of by-design arena gaps) -- **needs an owner BEFORE it
+gets muted**, also TOKENSTRIPE. And `pack_model_fk33.expand_pieces()` remains a
+**second producer** of piece extents.
+
 ### TRACK SEAMMAP COMPLETE, 2026-08-30 (`1e46fb3`). N2 option (a) has an address.
 
 **`0xE000` is assigned, and it was checked rather than inherited.** MEASURED
