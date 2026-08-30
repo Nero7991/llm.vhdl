@@ -282,6 +282,23 @@ any amount of additional structural checking.**
   the same: the check has never been shown to discriminate on the thing it
   guards. Ask what it would take for this check to FAIL, and if you cannot
   answer, it is decoration.
+- **A ONE-PARAMETER MODEL FITTED TO ONE POINT IS NOT EVIDENCE ABOUT ANY OTHER
+  POINT.** MEASURED 2026-08-30: a packing-density model calibrated on a single
+  placed design reproduced that design and was used to project a second one. It
+  was wrong by **12 percentage points** -- it said a configuration fitted at
+  93.2% when the corrected figure is 105.2%, i.e. it does not fit -- and it had
+  the **sign** of its own mechanism backwards.
+  The author's diagnosis is the reusable part: *"the model's INPUT was sound, so
+  the cross-check passed and felt like validation. The model itself was never
+  checked against anything -- it reproduced one point because it was calibrated
+  on that point. A one-parameter model fitted to one point cannot be wrong
+  about that point and cannot be right about any other."*
+  It was correctly labelled ESTIMATE with its assumption stated, **and that was
+  not enough**, because nobody asked what would falsify it. **Labelling a
+  number ESTIMATE discharges honesty, not verification.** When a model has as
+  many free parameters as calibration points, it has been fitted, not tested.
+  The fix that worked was to derive the quantity from a census instead:
+  `CLB = F7/4 + (LUT - 2*F7)/D` predicts 54,846 against a measured 54,866.
 - **Teeth-check everything.** A checker never shown to fail has not been shown
   to work. **Report mutations that do NOT bite** under their own names: they
   measure your check's resolution floor and are the most valuable line in the
