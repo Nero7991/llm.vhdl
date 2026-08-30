@@ -129,6 +129,72 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### SUPERSEDED 2026-08-30 by TRACK TIMING's pblock squeeze (`1ebac6e`)
+
+**The table immediately below is SUPERSEDED. Its density constant was measured
+on an empty die and is wrong under pressure.** It is kept because the levers and
+their ordering are still right and because the correction is the point.
+
+The squeeze constrained the composed design to a pblock at 85.4% of the die and
+asked whether the placer would fail. **It did not fail. It placed.**
+
+```
+PS_PLACE_RC       0
+PS_UTIL  lut 347906  clb 49497
+PS_DENSITY        7.029 LUT per CLB
+PS_WNS            -3.658
+```
+
+| | whole die free | pblock, 85.4% |
+|---|---:|---:|
+| CLB | 54,866 | **49,497** |
+| density | 6.324 | **7.029** (+11.1%) |
+| non-mux density | 5.617 | **6.553** |
+| WNS | -3.056 | **-3.658** |
+
+**Density is elastic. 6.324 was a property of an empty die, not of the
+netlist** -- the same netlist packed into 5,369 fewer CLB under pressure. This
+falsifies the `D_nonmux = 5.617` constant that the C4 arithmetic used. LEVERC's
+mux term is untouched: 8.00 is pinned by the CLB structure, exactly as its
+architectural argument requires.
+
+| configuration | old (5.617) | **squeeze-measured (6.553)** |
+|---|---:|---:|
+| today + shell + ROM best | 123.5% | **110.1%** |
+| **+ lever C + gain to URAM** | 105.3% | **92.9%** |
+| + lever C + URAM + `d_norm` | 94.7% | **82.7%** |
+| **+ `d_norm` + URAM, no lever C** | 102.2% | **90.7%** |
+
+**Two levers may suffice on CLB count. The 105.2% relayed to Oren is
+superseded.**
+
+**TIMING's own prediction was refuted on both limbs** and it says so: it
+predicted the placer would either fail or stay near 6.32, and neither happened.
+The pre-registered threshold of 48,000 CLB was not met at 49,497, so by the
+letter the claim survives and by its spirit it does not.
+
+**TIMING's withdrawn 93.2% and this measured 92.9% agree, and that is TWO ERRORS
+CANCELLING, not vindication.** Section 7a inflated density for an
+architecturally backwards reason AND under-estimated achievable density under
+pressure, by similar amounts in opposite directions. **The 93.2% stays
+withdrawn**; reasoning is what gets reused and none of that reasoning was right.
+
+**AND THE CATCH, WHICH IS PROBABLY THE REAL RESULT. The squeeze bought CLB
+capacity in exactly the currency this design has already run out of.** WNS went
+**-3.056 to -3.658**, and the router had already declared, at the LOOSER
+density, that `[Route 35-447] congestion is preventing the router from routing
+all nets`. At 7.029 there is less routing resource per cell, not more.
+
+**"Fits by CLB count" and "builds" are different claims, and this experiment
+moved only the first.** A design at 92.9% CLB and 7.029 density gives the router
+a HARDER job than the one that already failed. Nobody may quote a percentage
+from the table above as a fit verdict.
+
+**Everything containing "+ lever C" is gated on TRACK CBINFER**, which is
+answering LEVERC's own first open item: whether Vivado infers LUTRAM from
+`cb`'s array-of-array-of-`signed` at all. If it does not, lever C is 1,536
+register copies, strictly worse than today, and those rows are moot.
+
 **The fit needs THREE levers, and the ordering is not what anyone assumed:**
 
 | configuration | CLB |
