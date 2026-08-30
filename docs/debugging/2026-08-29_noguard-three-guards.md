@@ -21,6 +21,9 @@ TRACK NOGUARD, 2026-08-29. Board rows **BUILD-HANG**, **IPREPO-DRIFT**,
 > 3. DESC-RULE2 -- the one that has never discriminated. [...] prove the bases
 >    are unchanged for every geometry in the shipping model.
 
+**Commits:** `0b692f0` BUILD-HANG, `a9392ca` IPREPO-DRIFT, `3f23a46` DESC-RULE2
+(this write-up lands with the third).
+
 Hardware, date, symptom numbers: workstation `Oren-Dell-Ubuntu`, root at 91%
 (120 G free), `/mnt/storage` 388 G, RAM 31 G with 18-21 G available and two
 Vivado syntheses in flight, load average 4.8-5.7. Vivado 2023.2 at
