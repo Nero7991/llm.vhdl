@@ -167,10 +167,27 @@ gdn_head_emit  args -> BYTE-IDENTICAL to git show HEAD:
 gdn_y_emit     args -> BYTE-IDENTICAL to git show HEAD:
 ```
 
-All five also reproduce at bare defaults, `gdn_emit_chain_vec.txt` included, so
-none of the five committed B goldens has drifted from its generator.  That is
-the D1 staleness question asked of the whole subsystem and answered: **clean at
-`66a2e2e`.**
+All five also reproduce at bare defaults, `gdn_emit_chain_vec.txt` included.
+Extended afterwards to the two units that were already gated before today:
+
+```
+$ ./gen_gdn_conv   fresh_gdn_conv.txt ; cmp fresh_gdn_conv.txt cmtd_gdn_conv.txt
+gdn_conv BYTE-IDENTICAL at defaults
+$ ./gen_gdn_scalar > fresh_gdn_scalar.txt ; cmp fresh_gdn_scalar.txt cmtd_gdn_scalar.txt
+gdn_scalar BYTE-IDENTICAL at defaults (stdout generator)
+```
+
+So the D1 staleness question, asked of all seven subsystem B goldens rather
+than of one, is answered: **none has drifted from its generator at `66a2e2e`.**
+
+**`ref/gdn_scalar_vec.c` cannot take a `tb_vector_args` row as it stands, and
+this was found by the probe rather than by reading.**  It writes the vector to
+**stdout**, and its `argv[1]` is `SP_Q`, not an output filename.  `run_one`
+calls `"$dir/gen_$stem" "$v" $args`, so a row would pass the filename as `SP_Q`,
+`atoi` it to 0, and write the vector to the log.  The first attempt here did
+exactly that and produced `cmp: fresh_gdn_scalar.txt: No such file or
+directory` with the generator exiting 0 -- a generator that "succeeds" and
+writes no file.
 
 ### 4.4 Route A teeth, branch 1: the stray generator run
 
@@ -360,6 +377,13 @@ the worst case at roughly 12% and it is the shortest row in the set.
   trees; had any of them been the repository, a later `cmp` would have compared
   a foreign file against a foreign file and reported agreement.  `git show
   HEAD:` is the only stable reference and it is what section 4.3 uses.
+- **A generator can exit 0 and write no file at all.**  `ref/gdn_scalar_vec.c`
+  writes to stdout and treats `argv[1]` as `SP_Q`; handed a filename it returns
+  0 having produced nothing, and the only symptom is the NEXT command failing
+  with `No such file or directory`.  The convention "argv[1] is the output path"
+  holds for six of the seven B generators and is not universal.  Any future row
+  should be checked by running the generator the way `run_one` does and then
+  looking for the file, not by reading the argument list.
 - **`ghdl -r ... | head` reports the PIPELINE's rc.**  Not hit here because
   every generator invocation used `${PIPESTATUS[0]}` explicitly, but the first
   draft of the section 4.5 probe did not and reported `rc=0` on a generator that
@@ -416,7 +440,8 @@ Recorded under their own heading because the brief asked for it.
 - **No `tb_vector_args` row was added for `gdn_conv_vec.txt` or
   `gdn_scalar_vec.txt`,** the two units that were already gated before today.
   Both were verified byte-identical to their generators in section 4.3, so
-  neither is stale now, but neither is pinned either.
+  neither is stale now, but neither is pinned either.  `gdn_scalar_vec.c` also
+  cannot take a row without a generator change; see section 4.3.
 - **No hardware ran.  No Vivado ran.  No `rtl/` file in the repository was
   modified.**
 
@@ -427,6 +452,13 @@ Recorded under their own heading because the brief asked for it.
    was actually observed to mask a mutation.  Not done here because both files
    are consumed by mutation harnesses this track does not own and the D1
    write-up's blast-radius argument should be re-run before touching them.
+   `gdn_conv_vec.c` takes a filename and would take a row today.
+   **`gdn_scalar_vec.c` would need a source change first**: it writes to stdout
+   and its `argv[1]` is `SP_Q` (section 4.3).  Either teach it a filename
+   argument, keeping stdout when none is given, or give `run_one` a
+   stdout-redirect class.  The first is smaller and touches no shared file, but
+   it moves the seed's positional index, which `ref/vec_seed.h` states as a
+   convention, so it is not free.
 2. **`gdn_emit_chain` still has no real-valued accuracy oracle in its bench.**
    `2868f6b` gave it the normalisation check only.  Its generator's end-to-end
    oracle IS now reachable from the gate, and has been since 2026-08-27, so the
