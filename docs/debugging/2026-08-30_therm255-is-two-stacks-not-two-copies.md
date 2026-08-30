@@ -387,3 +387,67 @@ transition has to be shown to have observed a transition before any of its
 output means anything.** The third window is the only one that carries
 information, and it does so only because the card happened to drift onto a code
 boundary while it ran.
+
+---
+
+# CORRECTION 2, 2026-08-30 01:05: the full-window trip ratio was diluted by counter saturation
+
+The probe ran to its full 1500 s. Final line:
+
+```
+end    394434000 samples in 1500.0 s (262,956/s), unequal seen 0, trips 2 -> 255
+```
+
+**`trips 2 -> 255` means the 8-bit counter SATURATED.** My own segment analysis
+printed this:
+
+```
+         segment  crossings  trips  trips/crossing
+     0-338               81      2           2.47 %
+   338-700              263      8           3.04 %
+   700-1000            1926     47           2.44 %
+  1000-1300            9115    196           2.15 %
+  1300-1501            2181      0           0.00 %
+           TOTAL      13566    253           1.86 %
+```
+
+**The last two figures are both wrong and the second is wrong because of the
+first.** The `1300-1501` segment did not see 2,181 crossings with no trips; it
+saw 2,181 crossings after the counter had already stopped counting at 255. The
+`TOTAL` of 1.86% is that dead segment diluting the live ones.
+
+Excluding the saturated segment: **11,385 crossings, 253 trips, 2.22%** -- and
+253 plus the 2 already on the counter at the start is exactly 255, which is the
+arithmetic that identifies the saturation rather than any suspicion about the
+data.
+
+The corrected figure across the four live segments is **2.15% to 3.04%**, with
+the best-powered segment (9,115 crossings) at 2.15%. The earlier 2.44% over
+82 crossings stands and is consistent.
+
+## Why this matters beyond the arithmetic
+
+The ratio holds across a **113x change in crossing rate** -- 0.24 pulses/s in
+the first segment against 30 pulses/s in the fourth. That is what a fixed
+per-crossing probability looks like, and it is strong independent support for
+the one-aux-clock race: if the trips came from anything that accumulated with
+time rather than with crossings, the ratio would have moved.
+
+## The trap, and it is a general one
+
+**A saturating counter reports a rate of zero once it is full, and a zero looks
+exactly like quiet.** The `1300-1501` row is the most dangerous line in that
+table: read alone it says the problem stopped. The only thing distinguishing
+"it stopped" from "the instrument stopped" is that 253 + 2 = 255 exactly.
+
+This is the same instrument that produced open issue THERM-255 in the first
+place, and `fk33_run_job.py` already warns about it:
+
+```
+warn        the trip counter is at its 8-bit SATURATING maximum, so
+            'it did not move' cannot be observed on this run.
+```
+
+**My probe did not carry that check, so I re-derived the warning the hard way
+from a table I had already printed.** Any probe reading this counter must
+either clear it periodically or test for 255 and refuse to report a rate.
