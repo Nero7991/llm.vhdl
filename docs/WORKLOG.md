@@ -129,6 +129,61 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK NORMURAM COMPLETE (`c479ae8`, `57ecea4`, `5026897`). The gain image is out of LUT fabric.
+
+`rtl/llama_top.vhd`'s `gvr` generate reshapes `NW_TBL` to 4 elements per word,
+lets Vivado infer BLOCK RAM, and shifts it into a plain register. The
+empty-image build (`gwc`) keeps the old code **character for character**.
+
+| point | LUT | BRAM | URAM | WNS |
+|---|---:|---:|---:|---:|
+| `nu_empty` pinned, no image | 49,654 | 0 | 0 | +1.675 |
+| `nu_ec` NEW RTL, no image | **49,654** bit-identical | 0 | 0 | +1.675 |
+| `nu_a` route (a), image | 83,709 | 0 | 0 | +1.675 |
+| `nu_rom` pinned, image | 89,970 | 0 | 0 | +1.675 |
+| `nu_u1` NEW RTL, image | **67,318** | 171 | 0 | +1.675 |
+| `nu_u2` same command again | **67,318** | 171 | 0 | +1.675 |
+
+**Saving +15,279 to +60,747 LUT, and the WHOLE INTERVAL belongs to the
+before-side.** `nu_empty` reproduces NWFIX's control on all eleven columns;
+`nu_u1`/`nu_u2` agree on the entire `report_utilization` with byte-identical
+censuses (md5 `1b341a73`). WNS unchanged on all six points. The gain store,
+address generator, shift register and busy logic together are **313 LUT and
+58,453 FF**, landing within 259 LUT of NWFIX's HBM floor **and spending no HBM
+bandwidth**.
+
+**THREE CORRECTIONS THAT OUTRANK THE NUMBER.**
+
+1. **Route (a) is a no-op, and not for the reason anyone gave.** `Synth 8-6040`
+   fires word for word with `:= 0` deleted, because **a VHDL signal of subtype
+   `natural range 0 to NW_N-1` has an initial value regardless** -- the language
+   gives it `subtype'left`, which is 0. **There is no way to spell "no initial
+   value".** The width would have refused it anyway: 65 x 65,536 needs 911
+   primitives against 672 RAMB36 / 320 URAM288.
+2. **URAM cannot hold this table at all** -- see the relabelling above.
+3. **"+32,943" was the DROP saving.** Any real gain pays `rmsnorm_rs`'s 17,367
+   LUT fold wherever it lives, so **no route that keeps the image reaches
+   349,421.**
+
+**THE ATTRIBUTION CONTROL CHANGED A CLAIM IN THE NEW CHECK'S FAVOUR, which is
+the rarer direction.** U6 is a margin failure that leaves the VALUES CORRECT,
+killed by the new `wbusy` assertion; U6x is the same mutant with that assertion
+disabled and it **survives with zero landmarks moved**. Both m7-class packing
+mutants killed on all four landmarks. **U7 reported as a row that does not
+bite**: the landmarks cannot see `GW`.
+
+**NEW MEASUREMENT TRAP, landed in CLAUDE.md as `cc06f35`: a capped job's
+`memory.peak` is the CAP, not the peak.** MEASURED: a five-point batch under
+`MemoryHigh=13G` reported `memory.peak` **1.1 MB above 13 GiB** -- the throttle
+holding it there, not the job's appetite. **The only honest unthrottled figure
+was `nu_empty`'s 10.54 GiB.** Cap for safety; read `memory.peak` for size only
+from a run that never reached its cap.
+
+**Open:** nothing here is placed or routed; the Vivado half of the values oracle
+is still open; and **171 BRAM is 25.45% of the device**, so a `GW = 2` point is
+the obvious next measurement if BRAM binds. The `rmsnorm_rs_mem` composition is
+DEFERRED, not rejected, for the rate reasons recorded above.
+
 ### TRACK ATTNTEETH COMPLETE (`5755473`,`a8053ca`,`1e18ce3`). The oracle's STIMULUS was the defect.
 
 **`tb_attn_block` passed a deliberately broken tree, and the mechanism was never
