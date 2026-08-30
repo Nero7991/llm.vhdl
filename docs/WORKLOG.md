@@ -151,11 +151,33 @@ landed, the table is the defect.
 | **BGATE2** | **Five of B's seven units have no accuracy gate the gate can fail.** The flagship: a mutation reintroducing exactly the defect `rmsnorm_bf` exists to fix is bit-exact-green and 1.7e10 output LSB wrong. Three of the five have oracle blind spots that must be answered before a tolerance means anything. | `sim/tb_gdn_silu.vhd`, `sim/tb_rmsnorm_bf.vhd`, `sim/tb_gdn_{head_emit,y_emit,emit_chain}.vhd` + their mutate scripts and generators |
 | **WRITEDEC** | LUTDIET measured the fix; this applies it. Per-word generate with a CONSTANT index, module by module with its own before/after, then a composed B+C+D measurement to replace the projection with a number. Must be bit-exact: it is a structural rewrite of a write path and must change no value. | `rtl/rmsnorm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `sim/ooc_writedec_*`, `hw/fk33/results/writedec_*` |
 | **KVVALUE** | CKVMAP's own open item: **the real map elaborating is not the real map working.** Build an oracle at the KV path's OUTPUT, multi-token so the read path is actually reached, and close the two guards CKVMAP measured as NOT biting -- chiefly that nothing mechanically links the RTL to `hbm_map.py`'s region block, so a base one chunk off elaborates clean. | `sim/tb_llama_top.vhd`, `sim/realshape_gate.sh`, `sim/elab9b_run.sh`, `rtl/attn_kv_axi.vhd`, `rtl/attn_c_ports_skel.vhd` |
-| **CLOG2** | `util_pkg.clog2` is a doubling loop over `natural` and overflows above 2**30, failing with `overflow detected ... at llama_top.vhd:785` -- **a line unrelated to the caller**. Fix it, make the diagnostic attributable, and audit every other 32-bit accumulator now that byte addresses exceed 4 GiB. | `rtl/util_pkg.vhd` and sibling utility packages |
+| **CLOG2TOP** | CLOG2's handoff, plus an open contradiction to settle. Delete `llama_top`'s locally declared `clog2`, which shadows the `use work.util_pkg.clog2;` already at `:173`, and rewrite the KV-fit guard against the new `clog2(unsigned)`. **Headline question: does the real 9B config elaborate at `C_MAXPOS = 131,072`, or only with the real KV bases at a smaller extent?** | `rtl/llama_top.vhd`, `rtl/hbm_tg.vhd`, the `sim/micro` copies |
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
-BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP.
+BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2.
+
+**AN OPEN CONTRADICTION, RECORDED RATHER THAN PAPERED OVER.** CKVMAP reported
+"the real 9B KV map elaborates" (2,452,864 kB / 2.36 s, `realshape_gate` PASS
+24). CLOG2 reported, as its load-bearing finding, that **`C_MAXPOS = 131,072`
+cannot elaborate and fixing `clog2` cannot make it**: the argument is
+6,803,283,968, **3.2x `natural'high`**, so it cannot be FORMED as a `natural`;
+a perfect `clog2(natural)` moves the ceiling only to 123,361, still short; and
+at 131,072 the overflow moves EARLIER, into `llama_top`'s own
+`constant KVREG_B : natural := C_LAY*C_NKVH*C_MAXPOS*REC_B_C` = 2,281,701,376.
+Both may be true of different configurations -- CKVMAP deliberately did not
+change the default and called the real map a build configuration. **TRACK
+CLOG2TOP is dispatched to settle it.** `C_MAXPOS = 131,072` is Oren's decision
+and is not being reopened; if it does not elaborate, it gets made to.
+
+**Two of my own framings were wrong and are corrected here.** (1) I told CLOG2
+that `llama_top:785` "blamed a bystander"; it MEASURED that `:785` WAS the
+failing `while` line inside the local `clog2`. **Missing attribution, not
+misattribution** -- it names the function correctly and fails to name the
+caller. (2) I said fixing `clog2` would unblock the KV map. It does not and
+cannot; that is what the `clog2(unsigned)` overload exists for, and on the real
+value it returns **33**, exactly `C_KV_ADDR_W`, corroborating CGENERICS'
+zero-slack finding by an independent route.
 
 **B+C+D CLOSES, and the cheapest fix is not the one anyone expected.** LUTDIET
 (`4950666`) MEASURED that decoding the variable-index write with a per-word
