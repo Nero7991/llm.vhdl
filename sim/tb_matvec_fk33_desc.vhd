@@ -427,6 +427,36 @@ architecture sim of tb_matvec_fk33_desc is
   signal t_wbeats, t_sbeats : integer := 0;
   signal e_yexp  : integer := 0;
 
+  -- ---------------------------------------------- THE SEQUENCE DISCRIMINATOR
+  -- An offset added to x_exp, by BOTH routes, so the sequence section below
+  -- can run two jobs that are identical in every way a counter can see and
+  -- different in exactly one register.
+  --
+  -- WHY x_exp AND NOT SOMETHING EASIER.  rtl/matvec_core.vhd:1031-1033 is the
+  -- only place x_exp is read: y_exp = w_exp + x_exp - os_r - ns_r, in every
+  -- out_mode.  The datapath never sees it.  So x_exp + 1 gives a job with
+  --   * the SAME n_rows and n_cols, therefore the same tiles*nblk, therefore
+  --     the same BEATS -- the quantity hw/fk33/host/fk33_run_layer.py's
+  --     stale_done_check() uses, which is why that check is blind here;
+  --   * BIT-IDENTICAL mantissas, so the element comparison is blind too;
+  --   * y_exp differing by exactly one.
+  -- One register apart is the hardest case a sequence can be asked about, and
+  -- it is the real one: ffn_gate followed by ffn_up in a 9B layer is a
+  -- same-shape adjacency, and stale_done_check cannot see it either.
+  signal xbump : integer := 0;
+
+  -- ------------------------------------- the stale-done window, in CYCLES
+  -- Driven by the monitor process below; see its header.  mon_stale is the
+  -- count of consecutive cycles, starting at the first edge AFTER a CTRL/GO
+  -- write handshake, on which the DUT still asserts job_done.  The invariant
+  -- is that it is zero: a completion reported after a GO must belong to that
+  -- GO.  mon_worst is the largest value seen anywhere in the run, over every
+  -- GO this bench writes, and mon_gos counts them so a monitor that silently
+  -- observed nothing cannot pass.
+  signal mon_stale : integer := 0;
+  signal mon_worst : integer := 0;
+  signal mon_gos   : integer := 0;
+
   -- The x_exp the FK33 arm is handed on its wrapper port.  Always the value
   -- the trace says is right; see the XEXP_PORT generic's comment.
   signal x_exp_port : std_logic_vector(31 downto 0) := (others => '0');
@@ -543,7 +573,7 @@ begin
 
   -- The wrapper-port x_exp.  Always the trace's own value; the descriptor
   -- word is what changes under XEXP_PORT, not this.
-  x_exp_port <= u32(t_xexp);
+  x_exp_port <= u32(t_xexp + xbump);
 
   -- =====================================================================
   dut : entity work.matvec_int4_desc_axi
@@ -923,6 +953,50 @@ begin
   end process;
 
   -- =====================================================================
+  -- THE STALE-DONE MONITOR.  Cycle-accurate, and independent of how fast this
+  -- bench's AXI-Lite procedures happen to be.
+  --
+  -- WHY IT IS NOT ENOUGH TO READ STATUS AFTER THE GO AND LOOK.  The bench's
+  -- own awr/ard pair puts the AR handshake three cycles after the AW/W
+  -- handshake, and the pre-fix window was three cycles wide, so the register
+  -- read landed on the LAST stale cycle with one cycle to spare.  A check that
+  -- narrow is measuring the testbench, not the design: one extra `wait until
+  -- rising_edge(clk)` anywhere in awr would have hidden the defect completely
+  -- and the row would still have said PASS.  So the window is measured
+  -- DIRECTLY, off the job_done port, in clock cycles, and the register read is
+  -- kept as the separate statement about what a host actually sees.
+  --
+  -- The GO is detected on the AW/W handshake rather than on any DUT internal:
+  -- awready and wready are the DUT's own outputs and are high together for
+  -- exactly one cycle, so this fires once per GO write and observes only
+  -- ports.  The AXU3EG arm has its own handshake signals and is not seen here.
+  --
+  -- Counting stops at the first cycle job_done is low, so a later legitimate
+  -- completion of the job that GO started is never counted; STALE_CAP bounds
+  -- it anyway, against a design that leaves done_l set for ever.
+  -- =====================================================================
+  stale_mon : process(clk)
+    constant STALE_CAP : integer := 16;
+    variable arm : boolean := false;
+  begin
+    if rising_edge(clk) then
+      if awready = '1' and wready = '1'
+         and awaddr = x"08" and wdata(0) = '1' then
+        arm := true;
+        mon_stale <= 0;
+        mon_gos   <= mon_gos + 1;
+      elsif arm then
+        if job_done = '1' and mon_stale < STALE_CAP then
+          mon_stale <= mon_stale + 1;
+          if mon_stale + 1 > mon_worst then mon_worst <= mon_stale + 1; end if;
+        else
+          arm := false;
+        end if;
+      end if;
+    end if;
+  end process;
+
+  -- =====================================================================
   -- The driver: build, program, run, judge -- once per case.
   -- =====================================================================
   drv : process
@@ -947,6 +1021,11 @@ begin
     variable rw, cl, wbx, sbx, wbm, sbm : integer;
     variable n_legal, n_teeth : integer := 0;
     variable bst : std_logic_vector(31 downto 0);
+    -- the back-to-back sequence section
+    variable q_beats : exp_t := (others => -1);   -- BEATS, per sequence job
+    variable q_yexp  : exp_t := (others => -1);   -- Y_EXP, per sequence job
+    variable q_stale : integer := 0;              -- stale STATUS reads seen
+    variable q_want  : integer;
 
     procedure awr(addr : natural; d : std_logic_vector(31 downto 0)) is
     begin
@@ -1176,7 +1255,7 @@ begin
       -- only has to be non-zero; it lands in y_exp, which the AXI-Lite
       -- readback below compares against the trace.
       if XEXP_PORT then w(31 downto 0) := u32(t_xexp + 7);
-      else              w(31 downto 0) := u32(t_xexp);
+      else              w(31 downto 0) := u32(t_xexp + xbump);
       end if;
       if mut = 12 then w(63 downto 32) := x"00000001"; end if;
       dimg(EXT0 + 2) <= w;
@@ -1437,6 +1516,208 @@ begin
            integer'image(n_teeth) & " one-off beat-count mutations refused"
       severity note;
 
+    -- =====================================================================
+    -- THREE JOBS BACK TO BACK, WITH NO RESET BETWEEN THEM.
+    --
+    -- Everything above this line, and everything below it, runs ONE job per
+    -- arming: the shape sweep resets between shapes and the case loop resets
+    -- between cases, because err/err_code are sticky by design.  So no check
+    -- in this file, and no tool in this repository before 2026-08-29, could
+    -- observe any state that survives a job boundary.  The defect this section
+    -- exists for is exactly that class:
+    --
+    --   rtl/matvec_int4_desc_axi.vhd used to clear done_l when S_IDLE consumed
+    --   the next GO, four clocks after the CTRL write handshake.  A host that
+    --   wrote GO and read STATUS therefore saw the PREVIOUS job's completion
+    --   and would then read the PREVIOUS job's Y registers -- a wrong number
+    --   with no error anywhere.  Found by reading, by TRACK LAYERRUN, once a
+    --   tool existed that ran jobs in sequence at all.
+    --
+    -- THE THREE JOBS ARE THE SAME SHAPE ON PURPOSE, and that is the whole
+    -- difficulty.  Same n_rows and n_cols means same tiles*nblk means same
+    -- BEATS, so the host-side mitigation in fk33_run_layer.py's
+    -- stale_done_check() -- "BEATS must equal tiles*nblk for THIS job" -- is
+    -- blind to the swap; and x_exp does not touch the datapath, so the
+    -- mantissas are bit-identical too and the element comparison is blind as
+    -- well.  Job 1 differs from jobs 0 and 2 in ONE register, Y_EXP, by one.
+    -- Both blindnesses are ASSERTED below rather than described, because a
+    -- quantity that cannot distinguish two jobs is an invariant, and an
+    -- invariant that is only written down in a comment is not a check.
+    --
+    -- Job 2 returns x_exp to the trace's value, so the discriminator is shown
+    -- to move in both directions: a design that latched y_exp on the first job
+    -- and never updated it would pass a two-job version of this.
+    --
+    -- Placed AFTER the shape sweeps and BEFORE the case loop deliberately.
+    -- Cases 21 and 22 leave AXI reads outstanding at slaves that are not
+    -- reset-aware, and running anything after them is a separate open question
+    -- (TRACK ASURV); this section must not be the thing that meets it.
+    -- =====================================================================
+    aresetn <= '0';
+    for i in 0 to 511 loop wait until rising_edge(clk); end loop;
+    aresetn <= '1';
+    wait until rising_edge(clk);
+
+    for j in 0 to 2 loop
+      if j = 1 then xbump <= 1; else xbump <= 0; end if;
+      wait until rising_edge(clk);
+      cap_en <= '0'; cap_clr <= '1';
+      build(0);
+      wait until rising_edge(clk);
+      cap_clr <= '0';
+      wait until rising_edge(clk);
+
+      -- A real host reprograms the pointer for every job even when it does not
+      -- move, so this does too: what is being measured is the GO-to-STATUS
+      -- seam, and shortening the write burst would flatter it.
+      ptr := resize(lift(DESC_OFF), 64);
+      awr(16#00#, std_logic_vector(ptr(31 downto 0)));
+      awr(16#04#, std_logic_vector(ptr(63 downto 32)));
+      cap_en <= '1';
+      awr(16#08#, x"00000001");                        -- GO
+
+      -- ------------------------------- THE FIRST STATUS READ AFTER THE GO
+      -- Issued with nothing between it and the write, which is what a driver
+      -- that polls for done does.  j = 0 is the CONTROL: nothing has completed
+      -- yet, so a done here would be a different defect entirely.
+      ard(16#0C#, st);
+      if st(0) = '1' then
+        nerr := nerr + 1;
+        q_stale := q_stale + 1;
+        ard(16#30#, rd);
+        report "SEQUENCE job " & integer'image(j) &
+               ": STATUS reported DONE on the first read after its own GO. " &
+               "The job cannot have finished -- Y_EXP reads " &
+               integer'image(to_integer(signed(rd))) & " and this job's " &
+               "answer is " & integer'image(e_yexp + xbump) &
+               ". A host polling for done takes the PREVIOUS job's result " &
+               "here, and every counter it could cross-check against is the " &
+               "previous job's too" severity error;
+      end if;
+
+      -- ------------------------------------------------------- wait it out
+      tmo := 0;
+      loop
+        ard(16#0C#, st);
+        exit when st(0) = '1' or st(2) = '1';
+        tmo := tmo + 1;
+        exit when tmo > 40000;
+      end loop;
+      ec := to_integer(unsigned(st(11 downto 8)));
+
+      ok := true;
+      if st(2) = '1' then
+        ok := false;
+        report "SEQUENCE job " & integer'image(j) & ": REJECTED, err_code = " &
+               integer'image(ec) severity error;
+      elsif st(0) /= '1' then
+        ok := false;
+        report "SEQUENCE job " & integer'image(j) &
+               ": never reported done (timeout " & integer'image(tmo) & ")"
+          severity error;
+      end if;
+
+      -- The mantissas, off the core bus and again through the AXI-Lite map.
+      -- IDENTICAL for all three jobs by construction: this is the check that
+      -- CANNOT tell them apart, and it is run so that the claim is measured.
+      if nchk /= t_rows or nbad /= 0 then
+        ok := false;
+        report "SEQUENCE job " & integer'image(j) & ": " &
+               integer'image(nbad) & " of " & integer'image(nchk) &
+               " elements differ from ref/matvec_int4.c (expected " &
+               integer'image(t_rows) & " elements)" severity error;
+      end if;
+      nrbad := 0;
+      for r in 0 to t_rows-1 loop
+        awr(16#24#, std_logic_vector(to_unsigned(r, 32)));
+        ard(16#28#, lo);
+        ard(16#2C#, hi);
+        if (hi & lo) /= e_ymant(r) then nrbad := nrbad + 1; end if;
+      end loop;
+      if nrbad /= 0 then
+        ok := false;
+        report "SEQUENCE job " & integer'image(j) & ": " &
+               integer'image(nrbad) &
+               " rows read back through AXI-Lite MISMATCH" severity error;
+      end if;
+
+      -- Y_EXP: the ONE quantity that separates job 1 from jobs 0 and 2.
+      ard(16#30#, rd);
+      q_yexp(j) := to_integer(signed(rd));
+      q_want    := e_yexp + xbump;
+      if q_yexp(j) /= q_want then
+        ok := false;
+        report "SEQUENCE job " & integer'image(j) & ": Y_EXP got " &
+               integer'image(q_yexp(j)) & " want " & integer'image(q_want) &
+               " -- this is the only register that distinguishes the jobs " &
+               "in this sequence, so a wrong value here is a job boundary " &
+               "that did not hold" severity error;
+      end if;
+
+      ard(16#38#, rd);
+      q_beats(j) := to_integer(unsigned(rd));
+
+      -- The cycle-accurate window, off the job_done port.  Zero is the
+      -- invariant; see the monitor's header for why the register read above
+      -- is not on its own a sufficient statement of it.
+      if mon_stale /= 0 then
+        nerr := nerr + 1;
+        report "SEQUENCE job " & integer'image(j) &
+               ": job_done stayed asserted for " & integer'image(mon_stale) &
+               " cycle(s) after this job's CTRL/GO write handshake. " &
+               "STATUS.done in that window belongs to the PREVIOUS job"
+          severity error;
+      end if;
+
+      if ok then
+        report "SEQUENCE job " & integer'image(j) & " (x_exp" &
+               integer'image(xbump) & " offset): " & integer'image(nchk) &
+               " elements bit-exact, " & integer'image(t_rows) &
+               " rows bit-exact through AXI-Lite, Y_EXP=" &
+               integer'image(q_yexp(j)) & ", BEATS=" &
+               integer'image(q_beats(j)) & ", stale-done window " &
+               integer'image(mon_stale) & " cycles" severity note;
+      else
+        nerr := nerr + 1;
+      end if;
+
+      cap_en <= '0';
+      wait until rising_edge(clk);
+    end loop;
+    xbump <= 0;
+    wait until rising_edge(clk);
+
+    -- ------------------------- THE TWO BLINDNESSES, ASSERTED NOT DESCRIBED
+    -- A quantity that cannot tell the jobs apart is an invariant of this
+    -- sequence, and stating it as an assert is what turns "the BEATS check is
+    -- blind here" from a caveat in a write-up into something this row fails on
+    -- if it ever stops being true.  If BEATS ever DID differ between these
+    -- three jobs, the same-shape adjacency would no longer be the hard case
+    -- and this whole section would be testing something easier than it claims.
+    if q_beats(0) /= q_beats(1) or q_beats(1) /= q_beats(2) then
+      nerr := nerr + 1;
+      report "SEQUENCE: BEATS differs across three same-shape jobs (" &
+             integer'image(q_beats(0)) & ", " & integer'image(q_beats(1)) &
+             ", " & integer'image(q_beats(2)) &
+             ") -- the adjacency this section is built on is not same-shape " &
+             "any more, and the claim that a BEATS check is blind to it no " &
+             "longer holds" severity error;
+    end if;
+    if q_yexp(0) /= q_yexp(2) or q_yexp(1) /= q_yexp(0) + 1 then
+      nerr := nerr + 1;
+      report "SEQUENCE: the discriminator did not move as designed: Y_EXP " &
+             integer'image(q_yexp(0)) & ", " & integer'image(q_yexp(1)) &
+             ", " & integer'image(q_yexp(2)) &
+             " -- expected n, n+1, n" severity error;
+    end if;
+    report "sequence: 3 jobs back to back with no reset, same shape, BEATS " &
+           integer'image(q_beats(0)) &
+           " on all three and mantissas bit-identical on all three, so " &
+           "neither can distinguish them; Y_EXP " & integer'image(q_yexp(0)) &
+           "/" & integer'image(q_yexp(1)) & "/" & integer'image(q_yexp(2)) &
+           "; " & integer'image(q_stale) &
+           " stale STATUS reads after a GO" severity note;
+
     -- ======================================================= the case loop
     for mut in 0 to NCASE loop
       -- a fresh reset per case: err / err_code / err_addr are sticky by
@@ -1693,6 +1974,29 @@ begin
         end if;
       end loop;
     end loop;
+    -- ------------------------------------------------- THE GLOBAL INVARIANT
+    -- Over EVERY GO this bench writes -- both shape sweeps, the three-job
+    -- sequence and all 23 cases -- job_done was never asserted after a GO
+    -- write handshake.  mon_gos is checked too: a monitor that observed
+    -- nothing at all would otherwise report a perfect zero.
+    if mon_gos < 3 then
+      nerr := nerr + 1;
+      report "the stale-done monitor saw " & integer'image(mon_gos) &
+             " GO writes, which cannot be right -- it is not watching the " &
+             "signals it thinks it is, and its zero means nothing"
+        severity error;
+    end if;
+    if mon_worst /= 0 then
+      nerr := nerr + 1;
+      report "stale-done: the WORST window over " & integer'image(mon_gos) &
+             " GO writes was " & integer'image(mon_worst) &
+             " cycle(s).  STATUS.done must belong to the most recent GO"
+        severity error;
+    end if;
+    report "stale-done: " & integer'image(mon_gos) &
+           " GO writes observed, worst window " & integer'image(mon_worst) &
+           " cycles" severity note;
+
     report "attribution: " & integer'image(NCASE + 1) &
            " cases, " & integer'image(ndup) &
            " pairs of DIFFERENT checks sharing one (err_code, ERR_INFO)"

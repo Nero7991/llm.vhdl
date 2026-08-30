@@ -294,15 +294,52 @@ architecture rtl of matvec_int4_desc_axi is
                    := (others => '0');
 
   signal dptr     : std_logic_vector(63 downto 0) := (others => '0');
-  signal go       : std_logic := '0';
-  -- GO is a one-cycle pulse from the AXI-Lite write channel and the FSM is not
-  -- always in a state that is listening for it.  Class (b) of
-  -- rtl/seq_desc_fetch.vhd's header, exactly: a completion (or a command)
-  -- signalled as a pulse and discarded because the consumer was busy.  So it
-  -- is captured into a sticky bit in an UNCONDITIONAL branch and the FSM reads
-  -- only the sticky bit.
+  -- GO, COMBINATIONALLY, IN THE WRITE-HANDSHAKE CYCLE ITSELF, and there is
+  -- exactly one of it.  This used to be a registered `go` set inside the write
+  -- channel's own case statement, which put the assertion one clock AFTER the
+  -- handshake.  That one clock was the head of a three-clock window in which
+  -- STATUS still reported the PREVIOUS job's completion -- see done_l below.
+  --
+  -- It is combinational off signals that are all stable in that cycle:
+  -- `awready`/`wready` are registered and high together for exactly one cycle,
+  -- `wr_addr` was captured on the cycle before and is held, and AXI requires
+  -- WDATA stable while WVALID is high, which it must be for the handshake to
+  -- be happening at all.  A glitch is not a hazard here because every consumer
+  -- is edge-triggered on the same clock.
+  --
+  -- ONE definition, used by the FSM, by STATUS and by the job_done port.  Two
+  -- decodes of "a GO write is being accepted" would be free to drift, and the
+  -- whole defect this closes was two pieces of the design disagreeing about
+  -- when a job begins.
+  signal go_now   : std_logic;
+  -- GO reaches an FSM that is not always in a state listening for it.  Class
+  -- (b) of rtl/seq_desc_fetch.vhd's header, exactly: a command signalled as a
+  -- pulse and discarded because the consumer was busy.  So it is captured into
+  -- a sticky bit in an UNCONDITIONAL branch and the FSM reads only that bit.
   signal go_p     : std_logic := '0';
   signal busy     : std_logic := '0';
+  -- COMPLETION, AND IT MUST BELONG TO THE MOST RECENT GO.
+  --
+  -- done_l was set in S_DONE and cleared only when S_IDLE consumed the next
+  -- GO.  Between the CTRL write and that clear there were three core clocks in
+  -- which STATUS reported the PREVIOUS job's `done` -- registered `go` at
+  -- handshake+1, go_p at +2, S_DONE -> S_IDLE at +3, the clear at +4 -- so a
+  -- host that wrote GO and read STATUS would see the previous job's completion
+  -- and then read the previous job's Y registers.  A wrong number with no
+  -- error anywhere.
+  --
+  -- NO TOOL BEFORE 2026-08-29 COULD MEET IT, because every one of them ran a
+  -- SINGLE job; a sequence meets it on every job after the first.  Found by
+  -- TRACK LAYERRUN by reading, not by running.  PCIe ordering plus AXI-Lite
+  -- latency very probably closed it in practice, but by about 10x of timing
+  -- margin and not by construction, and "not by construction" is the whole
+  -- objection: it is a race that happens to be losing.
+  --
+  -- Closed HERE, on go_now, not on the registered `go`: clearing on `go` would
+  -- still leave the handshake cycle and the one after it stale.  The clear is
+  -- in the same UNCONDITIONAL branch that captures go_p, so it fires from any
+  -- state, and the S_WAIT arm that SETS done_l runs later in the same process
+  -- and therefore wins if a job completes on the very cycle a GO is written.
   signal done_l   : std_logic := '0';
   signal err_l    : std_logic := '0';
   signal err_addr : std_logic := '0';
@@ -605,7 +642,15 @@ begin
   y_data  <= y_data_i;
   y_mask  <= y_mask_i;
   y_exp_o <= v_yexp;
-  job_done <= done_l;
+  -- The SAME masked view STATUS presents, so a consumer of the port and a
+  -- consumer of the register cannot disagree about whether a job is done.
+  -- The mask covers the handshake cycle itself, which the registered clear
+  -- cannot: a read accepted on the very cycle of the GO write would otherwise
+  -- latch the old done_l.  No PCIe master can issue that read (a non-posted
+  -- read cannot pass the posted write ahead of it), but "no master can" is an
+  -- argument about the master and this is meant to be an argument about the
+  -- slave.
+  job_done <= done_l and not go_now;
   job_err  <= err_l;
 
   -- =====================================================================
@@ -631,7 +676,11 @@ begin
 
       else
         -- UNCONDITIONAL, in every state in every cycle.  See go_p's comment.
-        if go = '1' then go_p <= '1'; end if;
+        -- done_l is cleared HERE and not in S_IDLE: see done_l's declaration.
+        -- The S_WAIT arm below may set it again in this same cycle and wins,
+        -- which is the right priority -- a job that completes on the cycle a
+        -- new GO is written has completed.
+        if go_now = '1' then go_p <= '1'; done_l <= '0'; end if;
         if core_sat = '1' then sat_l <= '1'; end if;
 
         case st is
@@ -640,6 +689,12 @@ begin
             if go_p = '1' then
               go_p   <= '0';
               busy   <= '1';
+              -- REDUNDANT since the go_now clear above, and deliberately kept.
+              -- It is the assignment this defect used to live in, and leaving
+              -- it means the go_now clear is the ONLY thing standing between
+              -- the design and a three-cycle stale window -- so a mutation
+              -- that removes it is caught by the timing check and by nothing
+              -- else, which is what makes that check attributable.
               done_l <= '0';
               sat_l  <= '0';
               wdog   <= 0;
@@ -896,12 +951,19 @@ begin
   end process;
 
   -- ------------------------------------------------------------ write channel
+  --
+  -- THE one decode of "a GO write is being accepted, this cycle".  Held in
+  -- reset because s_axi_aresetn drives awready/wready low, so no handshake can
+  -- be in progress; stated rather than relied on.
+  go_now <= '1' when s_axi_aresetn = '1' and awready = '1' and wready = '1'
+                     and unsigned(wr_addr(7 downto 2)) = 2
+                     and s_axi_wdata(0) = '1'
+            else '0';
+
   wrp : process(s_axi_aclk)
     variable reg : integer;
   begin
     if rising_edge(s_axi_aclk) then
-      go <= '0';
-
       if s_axi_aresetn = '0' then
         awready <= '0'; wready <= '0'; bvalid <= '0';
         err_addr <= '0'; dptr <= (others => '0'); y_idx <= (others => '0');
@@ -926,7 +988,11 @@ begin
                   err_addr <= '1';
                 end if;
               end loop;
-            when 2 => if s_axi_wdata(0) = '1' then go <= '1'; end if;
+            -- reg 2 is CTRL/GO and is deliberately EMPTY here.  The GO is
+            -- decoded combinationally as `go_now` above, in the handshake
+            -- cycle itself; a registered copy set in this arm is what put the
+            -- start of the job one clock behind the write.
+            when 2 => null;
             when 9 => y_idx <= unsigned(s_axi_wdata(15 downto 0));
             when others => null;
           end case;
@@ -1029,7 +1095,8 @@ begin
             when 1 => rdata_r <= dptr(63 downto 32);
             when 3 => rdata_r <= (31 downto 12 => '0') & err_code &
                                  (7 downto 5 => '0') &
-                                 err_addr & sat_l & err_l & busy & done_l;
+                                 err_addr & sat_l & err_l & busy &
+                                 (done_l and not go_now);
             when 4 => rdata_r <= (31 downto 16 => '0') & err_info;
             when 5 => rdata_r <= MV4I_MAGIC;
             when 6 => rdata_r <= std_logic_vector(to_unsigned(ADDR_W, 32));
