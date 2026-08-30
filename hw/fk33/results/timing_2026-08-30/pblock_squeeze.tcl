@@ -59,7 +59,7 @@ flush stdout
 create_pblock pb_squeeze
 add_cells_to_pblock [get_pblocks pb_squeeze] \
     [get_cells -quiet -filter {IS_PRIMITIVE == 0}] -clear_locs
-foreach cr $chosen { resize_pblock [get_pblocks pb_squeeze] -add $cr }
+foreach cr $chosen { resize_pblock [get_pblocks pb_squeeze] -add "CLOCKREGION_$cr" }
 report_utilization -pblocks [get_pblocks pb_squeeze] \
     -file [file join $outdir pbutil_squeeze_pre.rpt]
 

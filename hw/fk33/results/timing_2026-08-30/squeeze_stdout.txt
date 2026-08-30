@@ -1,0 +1,581 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /mnt/storage/timing_track/pblock_squeeze.tcl
+# proc envdef {n d} { if {[info exists ::env($n)]} { return $::env($n) }; return $d }
+# set dcp    [envdef PS_DCP /mnt/storage/compose4/out/c4_synth.dcp]
+# set outdir [envdef PS_OUT /mnt/storage/timing_track/out]
+# set frac   [envdef PS_FRAC 0.85]
+# file mkdir $outdir
+# set_param general.maxThreads 8
+# puts "PS_BEGIN dcp=$dcp frac=$frac"
+PS_BEGIN dcp=/mnt/storage/compose4/out/c4_synth.dcp frac=0.85
+# flush stdout
+# open_checkpoint $dcp
+Command: open_checkpoint /mnt/storage/compose4/out/c4_synth.dcp
+
+Starting open_checkpoint Task
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.02 . Memory (MB): peak = 1347.586 ; gain = 0.000 ; free physical = 5913 ; free virtual = 58022
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+Netlist sorting complete. Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3301.961 ; gain = 4.312 ; free physical = 3734 ; free virtual = 55851
+INFO: [Netlist 29-17] Analyzing 107097 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 8 CPU seconds
+INFO: [Project 1-479] Netlist was created with Vivado 2023.2
+INFO: [Project 1-570] Preparing netlist for logic optimization
+Read ShapeDB Complete: Time (s): cpu = 00:00:00.67 ; elapsed = 00:00:00.7 . Memory (MB): peak = 4203.727 ; gain = 120.672 ; free physical = 3019 ; free virtual = 55133
+INFO: [Timing 38-478] Restoring timing data from binary archive.
+INFO: [Timing 38-479] Binary timing data restore complete.
+INFO: [Project 1-856] Restoring constraints from binary archive.
+INFO: [Project 1-853] Binary constraint restore complete.
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.03 . Memory (MB): peak = 6946.594 ; gain = 0.000 ; free physical = 464 ; free virtual = 52584
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 4054 instances were transformed.
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 2177 instances
+  RAM16X1D => RAM32X1D (RAMD32(x2)): 16 instances
+  RAM32M => RAM32M (RAMD32(x6), RAMS32(x2)): 41 instances
+  RAM32M16 => RAM32M16 (RAMD32(x14), RAMS32(x2)): 1598 instances
+  RAM32X1D => RAM32X1D (RAMD32(x2)): 8 instances
+  RAM32X1S => RAM32X1S (RAMS32): 32 instances
+  RAM64M8 => RAM64M8 (RAMD64E(x8)): 165 instances
+  RAM64X1D => RAM64X1D (RAMD64E(x2)): 17 instances
+
+INFO: [Project 1-604] Checkpoint was created with Vivado v2023.2 (64-bit) build 4029153
+open_checkpoint: Time (s): cpu = 00:01:02 ; elapsed = 00:00:52 . Memory (MB): peak = 6946.629 ; gain = 5599.043 ; free physical = 465 ; free virtual = 52585
+# puts "PS_OPENED"
+PS_OPENED
+# set all_clb [llength [get_sites -quiet -filter {SITE_TYPE =~ SLICE*}]]
+# puts "PS_DEVICE_CLB $all_clb"
+PS_DEVICE_CLB 54960
+# set target [expr {int($all_clb * $frac)}]
+# puts "PS_TARGET_CLB $target"
+PS_TARGET_CLB 46716
+# flush stdout
+# set rows {}
+# foreach cr [get_clock_regions] {
+#     set n [llength [get_sites -quiet -of_objects $cr -filter {SITE_TYPE =~ SLICE*}]]
+#     if {$n > 0} { lappend rows [list [get_property NAME $cr] $n] }
+# }
+# set rows [lsort -index 0 $rows]
+# set chosen {}
+# set acc 0
+# foreach r $rows {
+#     if {$acc >= $target} break
+#     lappend chosen [lindex $r 0]
+#     incr acc [lindex $r 1]
+# }
+# puts "PS_CHOSEN_REGIONS [llength $chosen] of [llength $rows] : $chosen"
+PS_CHOSEN_REGIONS 27 of 32 : X0Y0 X0Y1 X0Y2 X0Y3 X1Y0 X1Y1 X1Y2 X1Y3 X2Y0 X2Y1 X2Y2 X2Y3 X3Y0 X3Y1 X3Y2 X3Y3 X4Y0 X4Y1 X4Y2 X4Y3 X5Y0 X5Y1 X5Y2 X5Y3 X6Y0 X6Y1 X6Y2
+# puts "PS_CHOSEN_CLB $acc  ([format %.1f [expr {100.0*$acc/$all_clb}]]% of device)"
+PS_CHOSEN_CLB 46920  (85.4% of device)
+# flush stdout
+# create_pblock pb_squeeze
+# add_cells_to_pblock [get_pblocks pb_squeeze] \
+#     [get_cells -quiet -filter {IS_PRIMITIVE == 0}] -clear_locs
+# foreach cr $chosen { resize_pblock [get_pblocks pb_squeeze] -add "CLOCKREGION_$cr" }
+# report_utilization -pblocks [get_pblocks pb_squeeze] \
+#     -file [file join $outdir pbutil_squeeze_pre.rpt]
+# set t0 [clock seconds]
+Command: place_design
+Attempting to get a license for feature 'Implementation' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xcvu33p'
+INFO: [Common 17-83] Releasing license: Implementation
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Vivado_Tcl 4-198] DRC finished with 0 Errors
+INFO: [Vivado_Tcl 4-199] Please refer to the DRC report (report_drc) for more information.
+Running DRC as a precondition to command place_design
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Vivado_Tcl 4-198] DRC finished with 0 Errors, 39 Advisories
+INFO: [Vivado_Tcl 4-199] Please refer to the DRC report (report_drc) for more information.
+INFO: [Place 30-611] Multithreading enabled for place_design using a maximum of 8 CPUs
+
+Starting Placer Task
+
+Phase 1 Placer Initialization
+
+Phase 1.1 Placer Initialization Netlist Sorting
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.04 . Memory (MB): peak = 7018.629 ; gain = 0.000 ; free physical = 368 ; free virtual = 52253
+Phase 1.1 Placer Initialization Netlist Sorting | Checksum: b9c43434
+
+Time (s): cpu = 00:00:00.1 ; elapsed = 00:00:00.09 . Memory (MB): peak = 7018.629 ; gain = 0.000 ; free physical = 368 ; free virtual = 52253
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.03 . Memory (MB): peak = 7018.629 ; gain = 0.000 ; free physical = 581 ; free virtual = 52458
+
+Phase 1.2 IO Placement/ Clock Placement/ Build Placer Device
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_conv/acc_mem_reg_bram_0_i_7" "u_conv/acc_mem_reg_bram_0_i_2" "u_conv/acc_mem_reg_bram_0_i_3" "u_conv/acc_mem_reg_bram_0_i_4" "u_conv/acc_mem_reg_bram_0_i_5" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_conv/acc_mem_reg_bram_1_i_1" "u_conv/acc_mem_reg_bram_0_i_6" "u_conv/acc_mem_reg_bram_1_i_2" "u_conv/acc_mem_reg_bram_1_i_3" "u_conv/acc_mem_reg_bram_1_i_4" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_conv/acc_mem_reg_bram_2_i_2" "u_conv/acc_mem_reg_bram_1_i_5" "u_conv/acc_mem_reg_bram_2_i_3" "u_conv/acc_mem_reg_bram_2_i_4" "u_conv/acc_mem_reg_bram_2_i_5" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_conv/acc_mem_reg_bram_3_i_1" "u_conv/acc_mem_reg_bram_2_i_1" "u_conv/acc_mem_reg_bram_3_i_2" "u_conv/acc_mem_reg_bram_3_i_3" "u_conv/acc_mem_reg_bram_3_i_4" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_scal/arg_reg[51]_i_2" "u_scal/arg_reg[15]_i_1" "u_scal/arg_reg[23]_i_1" "u_scal/arg_reg[31]_i_1" "u_scal/arg_reg[39]_i_1" "u_scal/arg_reg[47]_i_1" "u_scal/arg_reg[7]_i_1" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_silu_conv/o_data_reg[15]_i_1" "u_silu_conv/o_data_reg[13]_i_1" "u_silu_conv/o_data_reg[5]_i_1" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_silu_conv/o_data_reg[31]_i_1" "u_silu_conv/o_data_reg[21]_i_1" "u_silu_conv/o_data_reg[29]_i_1" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_silu_conv/o_data_reg[47]_i_1" "u_silu_conv/o_data_reg[37]_i_1" "u_silu_conv/o_data_reg[45]_i_1" in Carry-chain. The area groups involved are "pb_squeeze" 
+WARNING: [Place 30-439] A collection of cells which have restrictive placement or routing requirements has some cells within some area groups and some cells outside. This is likely to cause placement problems.
+	The cells involved are "b_gdn/u_silu_conv/o_data_reg[63]_i_1" "u_silu_conv/o_data_reg[53]_i_1" "u_silu_conv/o_data_reg[61]_i_1" in Carry-chain. The area groups involved are "pb_squeeze" 
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Phase 1.2 IO Placement/ Clock Placement/ Build Placer Device | Checksum: 888fb515
+
+Time (s): cpu = 00:02:12 ; elapsed = 00:00:48 . Memory (MB): peak = 7654.805 ; gain = 636.176 ; free physical = 439 ; free virtual = 51824
+
+Phase 1.3 Build Placer Netlist Model
+Phase 1.3 Build Placer Netlist Model | Checksum: b8cfd896
+
+Time (s): cpu = 00:04:45 ; elapsed = 00:01:51 . Memory (MB): peak = 12331.512 ; gain = 5312.883 ; free physical = 278 ; free virtual = 47235
+
+Phase 1.4 Constrain Clocks/Macros
+Phase 1.4 Constrain Clocks/Macros | Checksum: b8cfd896
+
+Time (s): cpu = 00:04:45 ; elapsed = 00:01:52 . Memory (MB): peak = 12331.512 ; gain = 5312.883 ; free physical = 276 ; free virtual = 47237
+Phase 1 Placer Initialization | Checksum: b8cfd896
+
+Time (s): cpu = 00:04:46 ; elapsed = 00:01:53 . Memory (MB): peak = 12331.512 ; gain = 5312.883 ; free physical = 252 ; free virtual = 47134
+
+Phase 2 Global Placement
+
+Phase 2.1 Floorplanning
+
+Phase 2.1.1 Partition Driven Placement
+
+Phase 2.1.1.1 PBP: Partition Driven Placement
+Phase 2.1.1.1 PBP: Partition Driven Placement | Checksum: 14fc87d4b
+
+Time (s): cpu = 00:13:16 ; elapsed = 00:05:14 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 316 ; free virtual = 46701
+
+Phase 2.1.1.2 PBP: Clock Region Placement
+INFO: [Place 30-3162] Check ILP status : ILP-based clock placer completed successfully.
+Phase 2.1.1.2 PBP: Clock Region Placement | Checksum: 8924e8ae
+
+Time (s): cpu = 00:13:21 ; elapsed = 00:05:20 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 507 ; free virtual = 46901
+
+Phase 2.1.1.3 PBP: Discrete Incremental
+Phase 2.1.1.3 PBP: Discrete Incremental | Checksum: 165a2f026
+
+Time (s): cpu = 00:13:28 ; elapsed = 00:05:26 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 515 ; free virtual = 46912
+
+Phase 2.1.1.4 PBP: Compute Congestion
+Phase 2.1.1.4 PBP: Compute Congestion | Checksum: 165a2f026
+
+Time (s): cpu = 00:13:59 ; elapsed = 00:05:34 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 408 ; free virtual = 46941
+
+Phase 2.1.1.5 PBP: Macro Placement
+Phase 2.1.1.5 PBP: Macro Placement | Checksum: de06ad6b
+
+Time (s): cpu = 00:14:08 ; elapsed = 00:05:43 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 524 ; free virtual = 46974
+
+Phase 2.1.1.6 PBP: UpdateTiming
+Phase 2.1.1.6 PBP: UpdateTiming | Checksum: fe9a6774
+
+Time (s): cpu = 00:14:41 ; elapsed = 00:05:56 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 256 ; free virtual = 46327
+
+Phase 2.1.1.7 PBP: Add part constraints
+Phase 2.1.1.7 PBP: Add part constraints | Checksum: fe9a6774
+
+Time (s): cpu = 00:14:42 ; elapsed = 00:05:57 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 265 ; free virtual = 46336
+Phase 2.1.1 Partition Driven Placement | Checksum: fe9a6774
+
+Time (s): cpu = 00:14:43 ; elapsed = 00:05:58 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 473 ; free virtual = 46544
+Phase 2.1 Floorplanning | Checksum: 16c9d016b
+
+Time (s): cpu = 00:14:44 ; elapsed = 00:05:59 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 491 ; free virtual = 46554
+
+Phase 2.2 Update Timing before SLR Path Opt
+Phase 2.2 Update Timing before SLR Path Opt | Checksum: 16c9d016b
+
+Time (s): cpu = 00:14:45 ; elapsed = 00:06:00 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 492 ; free virtual = 46555
+
+Phase 2.3 Post-Processing in Floorplanning
+Phase 2.3 Post-Processing in Floorplanning | Checksum: fb5569c1
+
+Time (s): cpu = 00:14:47 ; elapsed = 00:06:01 . Memory (MB): peak = 12411.551 ; gain = 5392.922 ; free physical = 496 ; free virtual = 46559
+
+Phase 2.4 Global Placement Core
+
+Phase 2.4.1 UpdateTiming Before Physical Synthesis
+Phase 2.4.1 UpdateTiming Before Physical Synthesis | Checksum: 1f91d058a
+
+Time (s): cpu = 00:28:33 ; elapsed = 00:11:05 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 324 ; free virtual = 45683
+
+Phase 2.4.2 Physical Synthesis In Placer
+INFO: [Physopt 32-1035] Found 706 LUTNM shape to break, 11123 LUT instances to create LUTNM shape
+INFO: [Physopt 32-1044] Break lutnm for timing: one critical 281, two critical 425, total 706, new lutff created 17
+INFO: [Physopt 32-1138] End 1 Pass. Optimized 3131 nets or LUTs. Breaked 706 LUTs, combined 2425 existing LUTs and moved 0 existing LUT
+INFO: [Physopt 32-1030] Pass 1. Identified 460 candidate driver sets for equivalent driver rewiring.
+INFO: [Physopt 32-661] Optimized 140 nets.  Re-placed 1505 instances.
+INFO: [Physopt 32-775] End 1 Pass. Optimized 140 nets or cells. Created 0 new cell, deleted 7 existing cells and moved 1505 existing cells
+Netlist sorting complete. Time (s): cpu = 00:00:01 ; elapsed = 00:00:01 . Memory (MB): peak = 12418.578 ; gain = 0.000 ; free physical = 401 ; free virtual = 45721
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[0]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2764 to 178 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 178.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[0]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1072 to 68 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 68.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg_n_0_[1]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1979 to 128 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 128.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[1]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2018 to 129 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 129.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[2]_rep__17_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2017 to 128 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 128.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[2]_rep__18_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1978 to 127 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 127.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg_n_0_[3]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1555 to 124 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 124.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[3]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1576 to 100 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 100.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/kh_reg[3]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1584 to 100 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 100.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[0]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1422 to 239 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 239.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[1]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1017 to 116 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 116.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[2]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1017 to 116 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 116.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[3]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1344 to 161 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 161.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[4]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1414 to 231 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 231.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[5]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2069 to 135 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 135.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[5]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1344 to 161 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 161.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[5]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1507 to 98 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 98.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[5]_rep__1_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1552 to 98 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 98.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[6]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2068 to 134 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 134.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[6]_rep_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1665 to 106 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 106.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[6]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 1410 to 106 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 106.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[7]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2051 to 132 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 132.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[7]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2584 to 185 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 185.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat[8]' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2051 to 132 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 132.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/obeat_reg[8]_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2581 to 182 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 182.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/rp_kq_wsel_reg_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/rp_kq_wsel_reg_rep__0_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/rp_kq_wsel_reg_rep__1_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2328 to 147 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 147.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/u_l2/p_0_in150_out' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/u_l2/p_0_in157_out' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/u_recur/kbuf_reg_r1_0_1_0_13_i_1_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2328 to 147 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 147.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/u_recur/kbuf_reg_r2_0_1_0_13_i_1_n_0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-1132] Very high fanout net 'b_gdn/u_recur/p_0_in__0__0' is not considered as a candidate in VHFN optimzation. The fanout considered for this optimization is changed from 2344 to 148 due to a timing constraint that prevent optimization on all of the loads. To force replication, set the FORCE_MAX_FANOUT property on the net to a number less than 148.
+INFO: [Physopt 32-76] Pass 1. Identified 21 candidate nets for fanout optimization.
+INFO: [Physopt 32-81] Processed net c_attn/opb[0]. Replicated 35 times.
+INFO: [Physopt 32-81] Processed net c_attn/opb[1]. Replicated 36 times.
+INFO: [Physopt 32-81] Processed net c_attn/u_arr/blk2[1]. Replicated 57 times.
+INFO: [Physopt 32-81] Processed net c_attn/u_arr/blk2[0]. Replicated 57 times.
+INFO: [Physopt 32-81] Processed net c_attn/u_arr/blk2[2]. Replicated 29 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_rsb_reg_n_0_[1]. Replicated 55 times.
+INFO: [Physopt 32-81] Processed net d_norm/k[2]. Replicated 77 times.
+INFO: [Physopt 32-81] Processed net d_norm/k[3]. Replicated 75 times.
+INFO: [Physopt 32-81] Processed net d_norm/gvr.u_rms/idx_reg_n_0_[1]. Replicated 73 times.
+INFO: [Physopt 32-81] Processed net d_norm/k[1]. Replicated 62 times.
+INFO: [Physopt 32-81] Processed net d_norm/gvr.u_rms/idx_reg_n_0_[0]. Replicated 73 times.
+INFO: [Physopt 32-81] Processed net d_norm/gvr.u_rms/idx_reg_n_0_[2]. Replicated 48 times.
+INFO: [Physopt 32-81] Processed net d_norm/k[0]. Replicated 31 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_rsb_reg_n_0_[0]. Replicated 56 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_rdh_reg_n_0_[0]. Replicated 56 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_pvv_reg_n_0. Replicated 33 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_scv_reg_n_0. Replicated 37 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_rdh_reg_n_0_[1]. Replicated 56 times.
+INFO: [Physopt 32-81] Processed net c_attn/ar_rsv_reg_n_0. Replicated 29 times.
+INFO: [Physopt 32-81] Processed net b_gdn/vh_reg_n_0_[1]. Replicated 8 times.
+INFO: [Physopt 32-81] Processed net b_gdn/l2_qk_reg_n_0. Replicated 14 times.
+INFO: [Physopt 32-232] Optimized 21 nets. Created 997 new instances.
+INFO: [Physopt 32-775] End 1 Pass. Optimized 21 nets or cells. Created 997 new cells, deleted 0 existing cell and moved 0 existing cell
+Netlist sorting complete. Time (s): cpu = 00:00:01 ; elapsed = 00:00:01 . Memory (MB): peak = 12418.578 ; gain = 0.000 ; free physical = 240 ; free virtual = 45810
+INFO: [Physopt 32-76] Pass 1. Identified 2 candidate nets for fanout optimization.
+INFO: [Physopt 32-81] Processed net b_gdn/u_recur/slotB_reg_n_0_[2]. Replicated 8 times.
+INFO: [Physopt 32-81] Processed net b_gdn/u_recur/slotB_reg_n_0_[3]. Replicated 8 times.
+INFO: [Physopt 32-232] Optimized 2 nets. Created 16 new instances.
+INFO: [Physopt 32-775] End 1 Pass. Optimized 2 nets or cells. Created 16 new cells, deleted 0 existing cell and moved 0 existing cell
+Netlist sorting complete. Time (s): cpu = 00:00:00.25 ; elapsed = 00:00:00.27 . Memory (MB): peak = 12418.578 ; gain = 0.000 ; free physical = 252 ; free virtual = 45796
+INFO: [Physopt 32-457] Pass 1. Identified 13 candidate cells for DSP register optimization.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[1]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[70]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[99]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[1]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[70]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[97]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[97]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[5]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[5]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[102]. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[99]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[69]0. 14 registers were pushed out.
+INFO: [Physopt 32-665] Processed cell c_attn/u_arr/p_reg_reg[102]0. 14 registers were pushed out.
+INFO: [Physopt 32-775] End 2 Pass. Optimized 13 nets or cells. Created 182 new cells, deleted 0 existing cell and moved 0 existing cell
+Netlist sorting complete. Time (s): cpu = 00:00:00.43 ; elapsed = 00:00:00.43 . Memory (MB): peak = 12418.578 ; gain = 0.000 ; free physical = 250 ; free virtual = 45575
+INFO: [Physopt 32-1123] No candidate cells found for Shift Register to Pipeline optimization
+INFO: [Physopt 32-775] End 2 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-1401] No candidate cells found for Shift Register optimization.
+INFO: [Physopt 32-677] No candidate cells for Shift Register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-526] No candidate cells for BRAM register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-846] No candidate cells for URAM register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-846] No candidate cells for URAM register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-949] No candidate nets found for dynamic/static region interface net replication
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.03 . Memory (MB): peak = 12418.578 ; gain = 0.000 ; free physical = 249 ; free virtual = 45545
+
+Summary of Physical Synthesis Optimizations
+============================================
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+|  Optimization                                     |  Added Cells  |  Removed Cells  |  Optimized Cells/Nets  |  Dont Touch  |  Iterations  |  Elapsed   |
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+|  LUT Combining                                    |          706  |           2425  |                  3131  |           0  |           1  |  00:00:03  |
+|  Retime                                           |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Equivalent Driver Rewiring                       |            0  |              7  |                   140  |          30  |           1  |  00:00:13  |
+|  Very High Fanout                                 |          997  |              0  |                    21  |           0  |           1  |  00:00:26  |
+|  Fanout                                           |           16  |              0  |                     2  |           0  |           1  |  00:00:00  |
+|  DSP Register                                     |          182  |              0  |                    13  |           0  |           1  |  00:00:02  |
+|  Shift Register to Pipeline                       |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Shift Register                                   |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  BRAM Register                                    |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  URAM Register                                    |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Dynamic/Static Region Interface Net Replication  |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Total                                            |         1901  |           2432  |                  3307  |          30  |          11  |  00:00:47  |
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Phase 2.4.2 Physical Synthesis In Placer | Checksum: 163860306
+
+Time (s): cpu = 00:29:59 ; elapsed = 00:12:15 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 254 ; free virtual = 45573
+Phase 2.4 Global Placement Core | Checksum: 1b2ad2d1b
+
+Time (s): cpu = 00:32:02 ; elapsed = 00:13:02 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 467 ; free virtual = 45715
+Phase 2 Global Placement | Checksum: 1b2ad2d1b
+
+Time (s): cpu = 00:32:02 ; elapsed = 00:13:03 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 397 ; free virtual = 45652
+
+Phase 3 Detail Placement
+
+Phase 3.1 Commit Multi Column Macros
+Phase 3.1 Commit Multi Column Macros | Checksum: cbe6b804
+
+Time (s): cpu = 00:33:03 ; elapsed = 00:13:22 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 475 ; free virtual = 45518
+
+Phase 3.2 Commit Most Macros & LUTRAMs
+Phase 3.2 Commit Most Macros & LUTRAMs | Checksum: 1f7e587aa
+
+Time (s): cpu = 00:33:49 ; elapsed = 00:13:41 . Memory (MB): peak = 12418.578 ; gain = 5399.949 ; free physical = 299 ; free virtual = 45323
+
+Phase 3.3 Small Shape DP
+
+Phase 3.3.1 Small Shape Clustering
+Phase 3.3.1 Small Shape Clustering | Checksum: 21cf9d7cd
+
+Time (s): cpu = 00:37:26 ; elapsed = 00:15:27 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 261 ; free virtual = 44969
+
+Phase 3.3.2 Slice Area Swap
+
+Phase 3.3.2.1 Slice Area Swap Initial
+Phase 3.3.2.1 Slice Area Swap Initial | Checksum: 1604d2a3b
+
+Time (s): cpu = 00:38:11 ; elapsed = 00:16:02 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 254 ; free virtual = 45461
+Phase 3.3.2 Slice Area Swap | Checksum: 1604d2a3b
+
+Time (s): cpu = 00:38:13 ; elapsed = 00:16:03 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 475 ; free virtual = 45684
+Phase 3.3 Small Shape DP | Checksum: 190fb6556
+
+Time (s): cpu = 00:39:28 ; elapsed = 00:16:27 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 251 ; free virtual = 45370
+
+Phase 3.4 Re-assign LUT pins
+Phase 3.4 Re-assign LUT pins | Checksum: 19cda1a33
+
+Time (s): cpu = 00:39:42 ; elapsed = 00:16:40 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 467 ; free virtual = 45600
+
+Phase 3.5 Pipeline Register Optimization
+Phase 3.5 Pipeline Register Optimization | Checksum: 16c0fb274
+
+Time (s): cpu = 00:39:45 ; elapsed = 00:16:43 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 255 ; free virtual = 45398
+
+Phase 3.6 Fast Optimization
+Phase 3.6 Fast Optimization | Checksum: e31bd090
+
+Time (s): cpu = 00:43:05 ; elapsed = 00:17:31 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 297 ; free virtual = 45161
+Phase 3 Detail Placement | Checksum: e31bd090
+
+Time (s): cpu = 00:43:07 ; elapsed = 00:17:33 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 536 ; free virtual = 45393
+
+Phase 4 Post Placement Optimization and Clean-Up
+
+Phase 4.1 Post Commit Optimization
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+
+Phase 4.1.1 Post Placement Optimization
+Post Placement Optimization Initialization | Checksum: 14fa57fdf
+
+Phase 4.1.1.1 BUFG Insertion
+
+Starting Physical Synthesis Task
+
+Phase 1 Physical Synthesis Initialization
+INFO: [Physopt 32-721] Multithreading enabled for phys_opt_design using a maximum of 8 CPUs
+INFO: [Physopt 32-619] Estimated Timing Summary | WNS=-4.704 | TNS=-4915.756 |
+Phase 1 Physical Synthesis Initialization | Checksum: 123995cb4
+
+Time (s): cpu = 00:00:36 ; elapsed = 00:00:08 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 320 ; free virtual = 44849
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[1023]_233, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-35] Processed net b_gdn/u_recur/WEBWE[0], inserted BUFG to drive 15966 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/trn[2][1383][27]_i_1_n_0, inserted BUFG to drive 10752 loads.
+INFO: [Place 46-34] Processed net c_attn/rn_x[4095]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/trn[3][1379][27]_i_1_n_0, inserted BUFG to drive 5376 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/re2_shv[17][47]_i_1_n_0, inserted BUFG to drive 4608 loads.
+INFO: [Place 46-35] Processed net c_attn/u_arr/acc[59][35]_i_2_n_0, inserted BUFG to drive 4500 loads.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[251][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[27][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[219][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[155][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[123][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[187][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-34] Processed net c_attn/u_arr/acc[91][35]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-35] Processed net b_gdn/rp_kn__0, inserted BUFG to drive 4096 loads.
+INFO: [Place 46-35] Processed net c_attn/u_tw/E[0], inserted BUFG to drive 3782 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/core_aresetn_0, inserted BUFG to drive 3417 loads.
+INFO: [Place 46-35] Processed net b_gdn/u_recur/a_acc[0]_37, inserted BUFG to drive 2688 loads.
+INFO: [Place 46-35] Processed net b_gdn/u_recur/c_acc[0]_728, inserted BUFG to drive 2688 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/trn[4][1377][27]_i_1_n_0, inserted BUFG to drive 2688 loads.
+INFO: [Place 46-35] Processed net d_vres/a_x[0]_48, inserted BUFG to drive 2346 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/re1_acc[0]_47, inserted BUFG to drive 2332 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/y_data[3071]_i_1_n_0, inserted BUFG to drive 2304 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/acc[17][0]_i_1_n_0, inserted BUFG to drive 2304 loads.
+INFO: [Place 46-35] Processed net b_gdn/u_recur/b_acc[0]_35, inserted BUFG to drive 2240 loads.
+INFO: [Place 46-34] Processed net a_eng/eng/dut/core/tr_reg[0][1406]_i_2_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/scp[1][0]_48, inserted BUFG to drive 2110 loads.
+INFO: [Place 46-35] Processed net b_gdn/u_emit/z_held, inserted BUFG to drive 2056 loads.
+INFO: [Place 46-35] Processed net b_gdn/l2_x, inserted BUFG to drive 2048 loads.
+INFO: [Place 46-35] Processed net b_gdn/u_emit/u_head/E[0], inserted BUFG to drive 2039 loads.
+INFO: [Place 46-35] Processed net c_attn/vbyp[2047]_i_1_n_0, inserted BUFG to drive 2002 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/re3_mag[38][35]_i_1_n_0, inserted BUFG to drive 1632 loads.
+INFO: [Place 46-34] Processed net c_attn/kbyp[2047]_i_1_n_0, BUFG insertion was skipped due to possible timing degradation.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/em_shv[11][31]_i_1_n_0, inserted BUFG to drive 1445 loads.
+INFO: [Place 46-35] Processed net a_eng/eng/dut/core/contrib[17][28]_i_1_n_0, inserted BUFG to drive 1392 loads.
+INFO: [Place 46-56] BUFG insertion identified 35 candidate nets. Inserted BUFG: 24, Replicated BUFG Driver: 0, Skipped due to Placement/Routing Conflicts: 0, Skipped due to Timing Degradation: 11, Skipped due to netlist editing failed: 0.
+Ending Physical Synthesis Task | Checksum: 1e5e83e28
+
+Time (s): cpu = 00:01:28 ; elapsed = 00:00:40 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 268 ; free virtual = 44785
+Phase 4.1.1.1 BUFG Insertion | Checksum: 19836c29a
+
+Time (s): cpu = 00:49:03 ; elapsed = 00:19:34 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 484 ; free virtual = 44995
+
+Phase 4.1.1.2 Post Placement Timing Optimization
+INFO: [Place 30-746] Post Placement Timing Summary WNS=-3.661. For the most accurate timing information please run report_timing.
+Phase 4.1.1.2 Post Placement Timing Optimization | Checksum: b789d887
+
+Time (s): cpu = 00:50:21 ; elapsed = 00:20:51 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 584 ; free virtual = 45038
+
+Time (s): cpu = 00:50:21 ; elapsed = 00:20:51 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 584 ; free virtual = 45038
+Phase 4.1 Post Commit Optimization | Checksum: b789d887
+
+Time (s): cpu = 00:50:24 ; elapsed = 00:20:53 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 406 ; free virtual = 44874
+WARNING: [Place 46-14] The placer has determined that this design is highly congested and may have difficulty routing. Run report_design_analysis -congestion for a detailed report.
+Netlist sorting complete. Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 398 ; free virtual = 44635
+
+Phase 4.2 Post Placement Cleanup
+Phase 4.2 Post Placement Cleanup | Checksum: 1190f3a28
+
+Time (s): cpu = 00:51:11 ; elapsed = 00:21:19 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 257 ; free virtual = 44860
+
+Phase 4.3 Placer Reporting
+
+Phase 4.3.1 Print Estimated Congestion
+INFO: [Place 30-612] Post-Placement Estimated Congestion 
+ ________________________________________________________________________
+|           | Global Congestion | Long Congestion   | Short Congestion  |
+| Direction | Region Size       | Region Size       | Region Size       |
+|___________|___________________|___________________|___________________|
+|      North|              32x32|              32x32|              64x64|
+|___________|___________________|___________________|___________________|
+|      South|              16x16|              32x32|              64x64|
+|___________|___________________|___________________|___________________|
+|       East|              32x32|              32x32|            128x128|
+|___________|___________________|___________________|___________________|
+|       West|            128x128|            128x128|            128x128|
+|___________|___________________|___________________|___________________|
+
+Phase 4.3.1 Print Estimated Congestion | Checksum: 1190f3a28
+
+Time (s): cpu = 00:51:14 ; elapsed = 00:21:22 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 245 ; free virtual = 45017
+Phase 4.3 Placer Reporting | Checksum: 1190f3a28
+
+Time (s): cpu = 00:51:16 ; elapsed = 00:21:25 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 250 ; free virtual = 45038
+
+Phase 4.4 Final Placement Cleanup
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.03 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 235 ; free virtual = 45040
+
+Time (s): cpu = 00:51:16 ; elapsed = 00:21:25 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 235 ; free virtual = 45041
+Phase 4 Post Placement Optimization and Clean-Up | Checksum: 149a5f080
+
+Time (s): cpu = 00:51:19 ; elapsed = 00:21:28 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 292 ; free virtual = 45181
+Ending Placer Task | Checksum: e2fe3312
+
+Time (s): cpu = 00:51:21 ; elapsed = 00:21:30 . Memory (MB): peak = 12787.477 ; gain = 5768.848 ; free physical = 437 ; free virtual = 45380
+149 Infos, 10 Warnings, 0 Critical Warnings and 0 Errors encountered.
+place_design completed successfully
+place_design: Time (s): cpu = 00:52:38 ; elapsed = 00:22:31 . Memory (MB): peak = 12787.477 ; gain = 5840.848 ; free physical = 326 ; free virtual = 45050
+# set rc [catch {place_design} perr]
+# puts "PS_PLACE_SECONDS [expr {[clock seconds] - $t0}]"
+PS_PLACE_SECONDS 1351
+# puts "PS_PLACE_RC $rc"
+PS_PLACE_RC 0
+# if {$rc} {
+#     puts "PS_PLACE_FAILED -- THIS CONFIRMS THE CLAIM"
+#     puts "PS_PLACE_ERROR $perr"
+#     flush stdout
+#     puts "PS_DONE squeeze"
+#     return
+# }
+# report_utilization -file [file join $outdir util_squeeze_placed.rpt]
+# report_utilization -pblocks [get_pblocks pb_squeeze] \
+#     -file [file join $outdir pbutil_squeeze_placed.rpt]
+report_utilization: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 280 ; free virtual = 44627
+# set u [report_utilization -return_string]
+# proc uget {rpt label} {
+#     foreach line [split $rpt "\n"] {
+#         if {[string index [string trim $line] 0] ne "|"} continue
+#         set f [split $line "|"]
+#         if {[llength $f] < 4} continue
+#         if {[string trim [lindex $f 1]] eq $label} { return [string trim [lindex $f 2]] }
+#     }
+#     return "NA"
+# }
+# set lut [uget $u "CLB LUTs*"]
+# if {$lut eq "NA"} { set lut [uget $u "CLB LUTs"] }
+# set clb [uget $u "CLB"]
+# puts "PS_UTIL lut $lut clb $clb f7 [uget $u {F7 Muxes}] f8 [uget $u {F8 Muxes}]"
+PS_UTIL lut 347906 clb 49497 f7 65108 f8 25788
+# if {$clb ne "NA" && $clb > 0} {
+#     puts "PS_DENSITY [format %.3f [expr {double($lut)/double($clb)}]] LUT per CLB"
+# }
+PS_DENSITY 7.029 LUT per CLB
+# report_timing_summary -file [file join $outdir timing_squeeze_placed.rpt]
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "b_gdn_z_valid" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "c_attn_kw_rdy" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "c_attn_start" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "core_aresetn" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "core_rst" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+report_timing_summary: Time (s): cpu = 00:03:33 ; elapsed = 00:00:55 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 481 ; free virtual = 44948
+# set p [get_timing_paths -delay_type max -max_paths 1]
+# puts "PS_WNS [get_property SLACK $p]"
+PS_WNS -3.658
+# write_checkpoint -force [file join $outdir squeeze_placed.dcp]
+INFO: [Timing 38-480] Writing timing data to binary archive.
+Write ShapeDB Complete: Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.74 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 256 ; free virtual = 44849
+Wrote PlaceDB: Time (s): cpu = 00:00:44 ; elapsed = 00:00:16 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 393 ; free virtual = 44956
+Wrote PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 393 ; free virtual = 44956
+Writing XDEF routing.
+Writing XDEF routing logical nets.
+Writing XDEF routing special nets.
+Wrote RouteStorage: Time (s): cpu = 00:00:00.06 ; elapsed = 00:00:00.2 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 314 ; free virtual = 44881
+Wrote Netlist Cache: Time (s): cpu = 00:00:00.58 ; elapsed = 00:00:00.61 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 276 ; free virtual = 44885
+Wrote Device Cache: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00.01 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 276 ; free virtual = 44888
+Write Physdb Complete: Time (s): cpu = 00:00:45 ; elapsed = 00:00:17 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 276 ; free virtual = 44887
+report_design_analysis: Time (s): cpu = 00:00:56 ; elapsed = 00:00:23 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 357 ; free virtual = 44935
+INFO: [Common 17-1381] The checkpoint '/mnt/storage/timing_track/out/squeeze_placed.dcp' has been generated.
+write_checkpoint: Time (s): cpu = 00:01:56 ; elapsed = 00:00:55 . Memory (MB): peak = 12787.477 ; gain = 0.000 ; free physical = 751 ; free virtual = 45447
+# puts "PS_DONE squeeze"
+PS_DONE squeeze
+INFO: [Common 17-206] Exiting Vivado at Sun Aug 30 08:29:38 2026...

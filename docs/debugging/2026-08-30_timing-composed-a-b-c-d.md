@@ -908,12 +908,23 @@ questions.**
    `tb_attn_kv_seam`, and the only reason the difference is known is that the
    mutant was run. **Run the mutant before believing the PASS.**
 
-4. **`systemd-run --user` does NOT inherit the caller's working directory**,
+4. **`get_property NAME` on a clock region returns `X0Y0`, but `resize_pblock
+   -add` requires `CLOCKREGION_X0Y0`.** The bare name is accepted by the
+   argument parser and rejected only at placement time with
+   `ERROR: [Place 30-342] pblock resize has invalid range X0Y0`, which reads
+   like a bad geometry rather than a missing prefix. It cost one Vivado launch.
+
+5. **`systemd-run --user` does NOT inherit the caller's working directory**,
    and a `bash -c` that omits its own `cd` fails with
    `bash: sim/regress.sh: No such file or directory` -- a 48-byte log that a
    `grep` for `OVERALL` renders as silence, which reads exactly like a bench
    that has not finished yet. It cost three attempts. Use
    `-p WorkingDirectory=`, and never treat an empty grep as "still running".
+
+6. **A waiter armed on a unit reports "completed" when that unit is KILLED**,
+   not only when it succeeds. Two notifications in this track announced a
+   finished job that had in fact been stopped by me a minute earlier. Gate on
+   the sentinel in the log, never on the waiter firing.
 
 2. **`c4dev_placed.dcp` survived the crash and saved 1,638 s.** Everything in
    `/mnt/storage/compose4/out/` was intact. Checking for surviving checkpoints
@@ -1067,6 +1078,14 @@ up to 45,468 LUT between draws of the *identical command*. A design whose
 central estimate is 93% has draws that are not 93%. **I would not schedule
 against a plan whose margin is smaller than the measured scatter**, which
 argues for taking all three levers rather than the cheapest two.
+
+**UPDATED BY THE SQUEEZE (section 15).** The ordering below stands, but the
+target is lower than C4 said: `lever C + gain to URAM` measures **92.9%**, not
+105.2%, so **two levers may suffice on CLB count**. The third lever
+(`d_norm`) then buys margin rather than being mandatory -- and margin is worth
+buying here, because the squeeze also showed that the denser the placement the
+worse the timing (WNS -3.056 to -3.658) on a design whose observed failure is
+routability, not capacity.
 
 **What I would do, in order:**
 
@@ -1225,7 +1244,99 @@ It is chained to launch only after the route unit exits and only after
 `pgrep -x vivado` returns nothing, because two Vivado processes on this box is
 the thing that destroyed the previous attempt at this design.
 
-**RESULTS: PENDING.**
+### RESULTS: the placer SUCCEEDED, and density is elastic
+
+MEASURED, `place_design` of `c4_synth.dcp` into a pblock of 27 of 32 clock
+regions:
+
+    PS_DEVICE_CLB     54960
+    PS_CHOSEN_CLB     46920   (85.4% of device)
+    PS_PLACE_SECONDS  1351
+    PS_PLACE_RC       0                       <- IT PLACED. It did not fail.
+    PS_UTIL           lut 347906  clb 49497  f7 65108  f8 25788
+    PS_DENSITY        7.029 LUT per CLB
+    PS_WNS            -3.658
+
+| | whole die free | pblock, 85.4% of die |
+|---|---:|---:|
+| LUT | 346,971 | 347,906 |
+| **CLB** | **54,866** | **49,497** |
+| **density** | **6.324** | **7.029** |
+| derived non-mux density | 5.617 | **6.553** |
+| WNS | -3.056 | **-3.658** |
+
+**MY PREDICTION IS REFUTED ON BOTH LIMBS.** It said the placer would fail or
+density would stay near 6.32. The placer succeeded, and density rose **11.1%**,
+freeing **5,369 CLB (9.8%)** from the same netlist.
+
+**The pre-registered falsification threshold was NOT met, and only just.** It
+was "<= 48,000 CLB"; the measurement is **49,497**, which is 1,497 CLB (3.1%)
+above it. So by the letter of the test the claim survives. By its spirit it
+does not: the test existed to ask whether 6.32 was a property of the netlist or
+of an empty die, and the answer is **of an empty die**.
+
+### This falsifies C4's constant too, not just section 7a's
+
+C4 replaced my inverted model with a decomposition calibrated on the
+unconstrained placement, `D_nonmux = 5.617`. **That constant is an artefact of
+the same free die.** Under pressure the non-mux logic packs at **6.553**. The
+mux term is unaffected, as LEVERC's architectural argument requires -- it is
+pinned at 8.00 by the CLB structure and cannot move.
+
+Refitting every row with the MEASURED under-pressure constant:
+
+| configuration | C4 (D=5.617) | **squeeze-measured (D=6.553)** |
+|---|---:|---:|
+| today + shell + ROM best draw | 123.5% | **110.1%** |
+| today + shell + ROM worst draw | 138.2% | **122.7%** |
+| + lever C + ROM best draw | 115.9% | **102.0%** |
+| **+ lever C + gain to URAM** | **105.3%** | **92.9%** |
+| + lever C + URAM + `d_norm` out | 94.7% | **82.7%** |
+| + `d_norm` out + URAM, no lever C | 102.2% | **90.7%** |
+
+**"Lever C + gain to URAM" moves from 105.3% (does not fit) to 92.9% (fits).**
+That reverses C4's headline conclusion about how many levers are needed.
+
+### And my withdrawn 93.2% was numerically right BY COINCIDENCE
+
+This has to be said plainly because it is the most misleading thing in this
+document. Section 7a's withdrawn estimate was **93.2%** for exactly this
+configuration. The squeeze-measured figure is **92.9%**.
+
+**That agreement is an accident of two errors cancelling.** Section 7a inflated
+density for a reason that is architecturally backwards (it credited mux removal
+with improving packing, when mux regions are the densest part of the design),
+and it simultaneously under-estimated how dense the non-mux logic can be made
+under placement pressure. The two mistakes were of similar size and opposite
+sign.
+
+**The number stays withdrawn.** A withdrawn claim that happens to land near a
+later measurement is still withdrawn, because nothing about the reasoning that
+produced it was right, and reasoning is what gets reused. LEVERC's correction
+was and remains correct on the mechanism.
+
+### THE CATCH, and it is the whole point
+
+**The squeeze bought CLB capacity in exactly the currency this design has
+already run out of.**
+
+    WNS   -3.056  (whole die)   ->   -3.658  (squeezed)      0.602 ns WORSE
+
+Denser placement means longer average net length per unit of logic and more
+contention for routing resources. And the router **had already announced, at
+the LOOSER 6.324 density, that `[Route 35-447] congestion is preventing the
+router from routing all nets`.** At 7.029 it has less routing resource per
+cell, not more.
+
+**So "it fits by CLB count" and "it builds" are different claims, and this
+experiment only moved the first one.** The honest statement is:
+
+* **CLB capacity is more elastic than either model assumed**, by about 11%, and
+  the lever target is correspondingly lower than C4 said.
+* **Routability is not thereby improved and is probably worsened**, and
+  routability is the failure actually observed on this design.
+* A build that fits at 92.9% CLB **at 7.029 density** is a build the router has
+  a harder job on than the one that already failed.
 
 ### What this experiment CANNOT settle
 
@@ -1299,6 +1410,13 @@ Applied to the composed design it returns **54,846 CLB against the MEASURED
 | + lever C + gain from HBM | 366,826 | 60,919 | 110.8% | 123.1% | 6.02 |
 | **+ lever C + gain URAM + `d_norm` muxes out** | 306,208 | 52,006 | **94.6%** | 105.8% | 5.89 |
 | + `d_norm` muxes out + gain URAM, NO lever C | 344,084 | 56,144 | **102.2%** | 112.8% | 6.13 |
+
+> **PARTIALLY SUPERSEDED BY SECTION 15's MEASUREMENT.** The MECHANISM below is
+> correct and stands -- mux regions are at 8.00 and lever C lowers average
+> density. But `D_nonmux = 5.617` was calibrated on the SAME unconstrained
+> placement that produced the 6.32, and the pblock squeeze MEASURED it at
+> **6.553** under pressure. Every percentage in the table below is therefore
+> too high by roughly 12 points. The refitted table is in section 15.
 
 **What moves, and it is not small:**
 
