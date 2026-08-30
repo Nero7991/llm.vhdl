@@ -834,6 +834,7 @@ int main(int argc, char **argv)
     int *ymant;
     int *vref;
     int h, i, yexp;
+    int b, d, j, t;
     FILE *f;
 
     tables_init();
@@ -861,13 +862,151 @@ int main(int argc, char **argv)
 
     for (i = 0; i < 2 * N * N_QH; i++) qg[i]  = m12(7919   + SEED, i);
     for (i = 0; i < N * N_KVH; i++)    kin[i] = m12(104729 + SEED, i);
-    for (i = 0; i < N * N_KVH; i++)    vin[i] = m12(65537  + SEED, i);
+
+    /* ------------------------------------------------------------------
+     * V: a DELIBERATE PER-BLOCK MAGNITUDE TAPER, and it is load-bearing.
+     *
+     * TRACK ATTNTEETH, 2026-08-30.  `vin[i] = m12(65537 + SEED, i)` for every
+     * i -- which is what stood here -- draws every element uniformly on
+     * [-2048, 2047], so every block of KVB elements has its peak in the top
+     * binade and kv_quant() gives EVERY block of a head THE SAME EXPONENT.
+     * MEASURED at the gate shape: e0 = e1 = e2 = e3 = 6 on both KV heads.
+     *
+     * SEAM 2's v_ref is the MINIMUM over those exponents.  A minimum over a
+     * constant vector is that constant, so the fold had nothing to fold and
+     * `sim/tb_attn_block.vhd`'s P8 -- the bit-exact oracle comparison, the
+     * bench's headline property -- could not see ANY defect in the reduction.
+     * MEASURED: five separate one-line fold mutants (drop the last tree
+     * stage, drop the reduction entirely, maximum instead of minimum, drop
+     * the previous-v_ref term, drop the layer index) all PASSED it.
+     *
+     * The taper puts every block of a head in a DIFFERENT binade, so the
+     * exponents are distinct and the minimum is a unique, identified element:
+     *
+     *   taper(h,b) = ((NBLK-1-b) + h*(NBLK/N_KVH)) mod NBLK, capped at 4
+     *   the block with taper 0 has the largest magnitude and hence, because
+     *   kv_quant writes e = src_exp - sh, the SMALLEST exponent.
+     *
+     * The argmin therefore sits at b = NBLK-1 on head 0 and at an interior b
+     * on head 1, which is why the two heads are tapered differently: a fold
+     * that silently returns element 0 is caught by both, one that returns the
+     * last element is caught by head 1, and one that drops the last element
+     * is caught by head 0.
+     *
+     * WHAT THIS COSTS, stated rather than hidden: the deepest-tapered block
+     * carries 2047 >> t as its peak instead of ~2047, so its INPUT has fewer
+     * distinct levels.  It does NOT cost mantissa coverage, because kv_quant
+     * normalises each block to CM_W bits against its own peak -- the taper
+     * moves the exponent, not the packed mantissa's range.
+     *
+     * The cap at 4 is the exponent range: sh = msb(amax) - (CM_W-2) is
+     * clamped at 0, and a 12-bit m12 draw tapered by more than 4 has
+     * msb <= 6, so sh saturates and two blocks would collide.  Distinctness
+     * of ALL exponents therefore holds for NBLK <= 5; uniqueness of the
+     * MINIMUM holds at every NBLK, because exactly one block has taper 0.
+     * Both are ASSERTED below rather than assumed.
+     * ---------------------------------------------------------------- */
+    for (h = 0; h < N_KVH; h++) {
+        for (b = 0; b < NBLK; b++) {
+            t = ((NBLK - 1 - b) + h * (NBLK / N_KVH)) % NBLK;
+            if (t > 4) t = 4;
+            for (d = 0; d < KVB; d++) {
+                int a;
+                j = h * N + b * KVB + d;
+                a = m12(65537 + SEED, j);
+                if (a < -2047) a = -2047;   /* keep |a| <= 2047 so that the
+                                             * anchor below is the peak */
+                vin[j] = a / (1 << t);      /* truncation TOWARD ZERO, so
+                                             * |vin| <= 2047 >> t */
+            }
+            /* Anchor the block's peak so its exponent is a function of the
+             * taper alone and not of the draw.  Without this the property is
+             * a lucky seed, which is the defect class this whole change
+             * exists to remove. */
+            vin[h * N + b * KVB] = 2047 >> t;
+        }
+    }
     /* The norm weights are held positive and away from zero: a weight vector
      * straddling zero makes max|raw| a property of one element and turns the
      * whole comparison into a comparison of clamps. */
     for (i = 0; i < N; i++) {
         int a = m12(31337 + SEED, i); qnw[i] = (a < 0 ? -a : a) + 256;
         a = m12(51501 + SEED, i);     knw[i] = (a < 0 ? -a : a) + 256;
+    }
+
+    /* ------------------------------------------------------------------
+     * The taper's PROPERTY, asserted rather than assumed.  This generator is
+     * the only thing that can make `sim/tb_attn_block.vhd`'s P8 able to see a
+     * defect in the SEAM 2 fold, and a stimulus that quietly stops having
+     * spread would put the bench straight back to passing broken trees with
+     * nothing anywhere printing a warning.  `sim/tb_attn_block.vhd`'s P9
+     * checks the same property from the other side, at the write port.
+     * ---------------------------------------------------------------- */
+    {
+        int *vm = malloc(sizeof(int) * N);
+        int *ve = malloc(sizeof(int) * NBLK);
+        int bad = 0;
+        for (h = 0; h < N_KVH; h++) {
+            int amin, nmin = 0, argmin = -1, want, ndist = 0;
+            kv_quant(vin + h * N, N, KVB, vin_exp, vm, ve);
+            amin = ve[0];
+            for (b = 1; b < NBLK; b++) if (ve[b] < amin) amin = ve[b];
+            for (b = 0; b < NBLK; b++)
+                if (ve[b] == amin) { nmin++; if (argmin < 0) argmin = b; }
+            for (b = 0; b < NBLK; b++) {
+                int seen = 0;
+                for (d = 0; d < b; d++) if (ve[d] == ve[b]) seen = 1;
+                if (!seen) ndist++;
+            }
+            /* taper(h,b) = ((NBLK-1-b) + h*(NBLK/N_KVH)) mod NBLK, so
+             * taper == 0 at b = (NBLK-1 + h*(NBLK/N_KVH)) mod NBLK. */
+            want = (NBLK - 1 + h * (NBLK / N_KVH)) % NBLK;
+            fprintf(stderr, "attn_block_vec: head %d v block exponents", h);
+            for (b = 0; b < NBLK; b++) fprintf(stderr, " %d", ve[b]);
+            fprintf(stderr, "  argmin=%d nmin=%d ndistinct=%d\n",
+                    argmin, nmin, ndist);
+            if (nmin != 1) {
+                fprintf(stderr, "attn_block_vec: head %d has %d blocks at the "
+                        "minimum exponent; the SEAM 2 fold is unobservable "
+                        "with a non-unique minimum\n", h, nmin);
+                bad = 1;
+            }
+            if (argmin != want) {
+                fprintf(stderr, "attn_block_vec: head %d argmin is block %d, "
+                        "the taper puts it at %d\n", h, argmin, want);
+                bad = 1;
+            }
+            if (NBLK <= 5 && ndist != NBLK) {
+                fprintf(stderr, "attn_block_vec: head %d has %d distinct "
+                        "block exponents of %d; NBLK <= 5 must give all "
+                        "distinct\n", h, ndist, NBLK);
+                bad = 1;
+            }
+        }
+        if (N_KVH >= 2) {
+            /* the two heads must not put the minimum at the same index, or
+             * every mutant that returns one fixed element is caught or missed
+             * by both together and the pair adds nothing over one head. */
+            int a0, a1, e0min, e1min;
+            kv_quant(vin + 0 * N, N, KVB, vin_exp, vm, ve);
+            e0min = ve[0]; a0 = 0;
+            for (b = 1; b < NBLK; b++) if (ve[b] < e0min) { e0min = ve[b]; a0 = b; }
+            kv_quant(vin + 1 * N, N, KVB, vin_exp, vm, ve);
+            e1min = ve[0]; a1 = 0;
+            for (b = 1; b < NBLK; b++) if (ve[b] < e1min) { e1min = ve[b]; a1 = b; }
+            if (a0 == a1) {
+                fprintf(stderr, "attn_block_vec: heads 0 and 1 both put the "
+                        "minimum V block exponent at block %d\n", a0);
+                bad = 1;
+            }
+        }
+        free(vm); free(ve);
+        if (bad) {
+            fprintf(stderr, "attn_block_vec: the V taper does not hold at this "
+                    "shape.  REFUSING to write a vector file that cannot "
+                    "falsify the SEAM 2 fold.\n");
+            return 3;
+        }
     }
 
     /* One token, with a SYNTHETIC cache and no append.  v_ref is a per-

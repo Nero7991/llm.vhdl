@@ -29,7 +29,7 @@
 -- bit-exact against a double-oracled C reference individually; nothing checked
 -- that they were connected in the order attention requires.
 --
--- THE EIGHT PROPERTIES, and what each one would catch.
+-- THE NINE PROPERTIES, and what each one would catch.
 --
 --   P1  ELEMENT COUNT.  Exactly N_QH*HEAD_DIM y elements per job, with
 --       contiguous ascending indices.  A lost beat anywhere in the emit path
@@ -95,6 +95,39 @@
 --       arithmetic or structural.  P8 is checked on every run whose descriptor
 --       matches the oracle's, i.e. every run except P5's deliberately rescaled
 --       one.
+--
+--   P9  THE STIMULUS CAN FALSIFY THE SEAM 2 FOLD.  A check on the INPUT,
+--       not on the DUT, and it kills no mutant on its own.
+--
+--       On 2026-08-30 TRACK TIMING reassociated the SEAM 2 write-time v_ref
+--       min fold in rtl/attn_block.vhd and teeth-checked the change.  THIS
+--       BENCH -- the one aimed at this unit, carrying the bit-exact oracle,
+--       its own header saying "P8 THE VALUES, BIT-EXACTLY" -- PASSED a
+--       deliberately broken tree.  TRACK ATTNTEETH reproduced it and named
+--       the mechanism, and it is not in this file at all: the oracle drew
+--       every V element uniformly on [-2048, 2047], so every block of a head
+--       had its peak in the top binade, kv_quant gave all NBLK blocks THE
+--       SAME EXPONENT (MEASURED: 6 6 6 6 on both heads), and v_ref is the
+--       MINIMUM over those.  A minimum over a constant vector is that
+--       constant.  P8 compared the right numbers, bit-exactly, with no
+--       tolerance, and could not have disagreed whatever the fold did.
+--       MEASURED: five one-line fold defects passed it -- drop the last tree
+--       stage, drop the reduction entirely, maximum instead of minimum, drop
+--       the previous-v_ref term, and drop the layer index.
+--
+--       So P9 asserts, at the WRITE PORT where the fold's whole input is
+--       visible, that the header actually being folded is capable of telling
+--       a right fold from a wrong one: (a) its NBLK block exponents are not
+--       all equal, (b) its minimum is UNIQUE, so which element the fold
+--       returns is decidable and not only its value, and (c) the KV heads do
+--       not put that minimum at the same block index, or a fold returning one
+--       fixed element would be caught by both heads together or by neither.
+--       ref/attn_block_vec.c produces that spread deliberately, by a per-block
+--       magnitude taper, and asserts the same property from its own side.
+--
+--       P9 is a GATE ON P8'S RESOLUTION, and the general lesson is that a
+--       bit-exact oracle is only as sharp as the stimulus driving it.  When it
+--       fires, fix the taper in ref/attn_block_vec.c.  Do not relax P9.
 --
 -- WHAT IS STILL NOT CHECKED HERE, and where it now IS.  The KV cache is a
 -- MEMORY MODEL in this bench, and deliberately stays one: it answers in one
@@ -373,6 +406,25 @@ architecture sim of tb_attn_block is
   signal kcov, vcov : cov_t := (others => 0);
   signal p7_bad : integer := 0;
 
+  -- ---- P9: STIMULUS ADEQUACY FOR THE SEAM 2 FOLD -------------------------
+  -- The written V header, captured at the write port, per KV head.  P9 is a
+  -- check on the INPUT, not on the DUT; see its entry in the header for why a
+  -- bench aimed at this unit needs one.
+  type vwrh_t is array (0 to N_KVH-1) of std_logic_vector(NBLK*EXP_W-1 downto 0);
+  signal vwr_hdr : vwrh_t := (others => (others => '0'));
+  signal vwr_n   : integer := 0;
+
+  function hdr_img(v : std_logic_vector) return string is
+    variable r : line;
+  begin
+    for b in 0 to NBLK-1 loop
+      write(r, integer'image(to_integer(signed(v((b+1)*EXP_W-1
+                                                downto b*EXP_W)))));
+      if b /= NBLK-1 then write(r, string'(" ")); end if;
+    end loop;
+    return r.all;
+  end function;
+
   -- The V-side exponent bias applied to the CACHE headers as well as to
   -- vin_exp.  P5 raises the current token's V scale; in a real sequence the
   -- earlier positions were written by this same block at that same scale, so
@@ -483,6 +535,20 @@ begin
       end if;
       if vin_re = '1' then
         vin_rdata <= to_signed(VEC(OFF_VIN + to_integer(vin_raddr)), MANT_W);
+      end if;
+    end if;
+  end process;
+
+  -- ---- P9's capture.  The V header the block WRITES for cur_pos is the
+  -- entire input to the SEAM 2 min fold in this bench: only one token is
+  -- written per sequence, so v_ref is exactly the minimum over these NBLK
+  -- exponents and nothing else ever folds into it.
+  vwr_p : process(clk)
+  begin
+    if rising_edge(clk) then
+      if kw_hen = '1' and kw_sel = '1' then
+        vwr_hdr(to_integer(kw_head)) <= kw_hdr;
+        vwr_n <= vwr_n + 1;
       end if;
     end if;
   end process;
@@ -673,6 +739,10 @@ begin
     variable base0, baser : integer;
     variable p8_n   : integer := 0;
     variable p8_cmp : integer := 0;
+    type argm_t is array (0 to N_KVH-1) of integer;
+    variable p9_argmin : argm_t := (others => -1);
+    variable p9_ev, p9_emin, p9_nmin, p9_ndist, p9_amin : integer := 0;
+    variable p9_seen, p9_same : boolean := false;
   begin
     -- The oracle's own shape header, asserted against this bench's generics.
     -- A vector file written for a different geometry would otherwise be read
@@ -868,6 +938,91 @@ begin
         p8_cmp := p8_cmp + NY + 1;
       end if;
     end loop;
+
+    -- ---- P9: the STIMULUS is able to falsify the SEAM 2 fold -------------
+    -- This checks the INPUT, not the DUT, and it kills no mutant.  It exists
+    -- because on 2026-08-30 this bench PASSED a deliberately broken tree: the
+    -- oracle's V stimulus was uniform full-scale in every block, so all NBLK
+    -- block exponents of a written header were EQUAL, and a minimum over a
+    -- constant vector is that constant.  P8 compared the right numbers and
+    -- could not have disagreed whatever the fold did.  P9 is the check that
+    -- would have said so.  Its own teeth-check is documented in
+    -- docs/debugging/2026-08-30_attnteeth-tb_attn_block-passes-a-broken-tree.md:
+    -- revert the taper in ref/attn_block_vec.c and P9 FAILS.
+    if vwr_n /= N_KVH*NRUNS then
+      nerr := nerr + 1;
+      report "tb_attn_block: P9 -- " & integer'image(vwr_n)
+           & " V header writes seen, expected " & integer'image(N_KVH*NRUNS)
+           & ".  The fold's input was not observed." severity error;
+    end if;
+    for h in 0 to N_KVH-1 loop
+      p9_emin  := to_integer(signed(vwr_hdr(h)(EXP_W-1 downto 0)));
+      p9_nmin  := 0;
+      p9_ndist := 0;
+      p9_amin  := -1;
+      for b in 0 to NBLK-1 loop
+        p9_ev := to_integer(signed(vwr_hdr(h)((b+1)*EXP_W-1 downto b*EXP_W)));
+        if p9_ev < p9_emin then p9_emin := p9_ev; end if;
+      end loop;
+      for b in 0 to NBLK-1 loop
+        p9_ev := to_integer(signed(vwr_hdr(h)((b+1)*EXP_W-1 downto b*EXP_W)));
+        if p9_ev = p9_emin then
+          p9_nmin := p9_nmin + 1;
+          if p9_amin < 0 then p9_amin := b; end if;   -- FIRST index at the
+        end if;                                       -- minimum, so that the
+                                                      -- per-head and
+                                                      -- cross-head reports
+                                                      -- cannot disagree on a
+                                                      -- degenerate header.
+        p9_seen := false;
+        for c in 0 to b-1 loop
+          if to_integer(signed(vwr_hdr(h)((c+1)*EXP_W-1 downto c*EXP_W)))
+             = p9_ev then p9_seen := true; end if;
+        end loop;
+        if not p9_seen then p9_ndist := p9_ndist + 1; end if;
+      end loop;
+      p9_argmin(h) := p9_amin;
+      report "tb_attn_block: P9 -- head " & integer'image(h)
+           & " written V block exponents: " & hdr_img(vwr_hdr(h))
+           & " argmin=" & integer'image(p9_amin)
+           & " nmin=" & integer'image(p9_nmin)
+           & " ndistinct=" & integer'image(p9_ndist);
+      -- (a) SPREAD.  A constant header makes every reduction over it agree.
+      if p9_ndist < 2 then
+        nerr := nerr + 1;
+        report "tb_attn_block: P9 -- head " & integer'image(h)
+             & " wrote " & integer'image(NBLK) & " V block exponents with "
+             & integer'image(p9_ndist) & " distinct value(s).  The SEAM 2 min "
+             & "fold is UNOBSERVABLE on this stimulus: P8 would pass any "
+             & "reduction, including none at all.  Fix the taper in "
+             & "ref/attn_block_vec.c, not this assertion." severity error;
+      end if;
+      -- (b) a UNIQUE minimum, so that WHICH element the fold returns is
+      -- decidable and not merely its value.
+      if p9_nmin /= 1 then
+        nerr := nerr + 1;
+        report "tb_attn_block: P9 -- head " & integer'image(h) & " has "
+             & integer'image(p9_nmin) & " blocks at the minimum exponent.  A "
+             & "fold that drops one of them is bit-exact by accident."
+          severity error;
+      end if;
+    end loop;
+    -- (c) the heads must not agree on WHERE the minimum is, or a fold that
+    -- returns one fixed element is caught by both heads together or by
+    -- neither, and the second head adds no resolution over the first.
+    if N_KVH >= 2 then
+      p9_same := true;
+      for h in 1 to N_KVH-1 loop
+        if p9_argmin(h) /= p9_argmin(0) then p9_same := false; end if;
+      end loop;
+      if p9_same then
+        nerr := nerr + 1;
+        report "tb_attn_block: P9 -- every KV head puts the minimum V block "
+             & "exponent at block " & integer'image(p9_argmin(0))
+             & ".  A fold that returns that fixed element is bit-exact on "
+             & "every head at once." severity error;
+      end if;
+    end if;
 
     -- P4
     if dbg_ep_lost /= '0' then
