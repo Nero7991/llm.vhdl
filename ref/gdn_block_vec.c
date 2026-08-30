@@ -528,6 +528,13 @@ static void gdn_block_token_dbl(const blk_t *b, double *sd, double *yd,
 
 /* ========================================================================== */
 
+/* THE MAIN IS GUARDED so that this file can be INCLUDED rather than copied.
+ * `ref/gdn_block_cap_vec.c` drives `gdn_block_token()` from an
+ * integration-level capture instead of from the stimulus below, and it
+ * includes this file for the same reason `ref/attn_block_cap_vec.c` includes
+ * `ref/attn_block_vec.c`: two copies of an oracle drift, and the drift is
+ * invisible because the copies are never compared against each other. */
+#ifndef GDN_BLOCK_VEC_NO_MAIN
 int main(int argc, char **argv)
 {
     const char *out = (argc > 1) ? argv[1] : "gdn_block_vec.txt";
@@ -811,3 +818,4 @@ int main(int argc, char **argv)
     fprintf(stderr, "  OK\n");
     return 0;
 }
+#endif  /* GDN_BLOCK_VEC_NO_MAIN */

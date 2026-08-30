@@ -48,6 +48,7 @@ import sys
 
 import bisect_scaled as BS
 import attn_oracle as AO
+import gdn_oracle as GO
 import scaled_plan as SP
 import vec_oracle as VO
 
@@ -67,7 +68,8 @@ def _write_rec(fp, name, tok, layer, exp, values, kind=KIND_BFP16):
 
 
 def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
-          norm_q, w_image, kv_block, n_rot, qkn_exp, attn_fold, no_a):
+          norm_q, w_image, kv_block, n_rot, qkn_exp, attn_fold, no_a,
+          conv_lanes=4, b_src_real=False, kmap="mod"):
     """(list of (name, layer, exp, values, kind), list of (name, why-omitted))."""
     recs = BS.read_capture(capture)
     by = {}
@@ -117,6 +119,23 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
         except SystemExit as e:
             cpred = {}
             omitted.append(("(subsystem C)",
+                            "the R_Y model refused this capture: %s" % e))
+
+    # Subsystem B's R_Y, modelled here for the first time.  It is possible
+    # because `rtl/llama_top.vhd:3270` drives `tk0` high on every token, so the
+    # recurrent state is written and never read and `R_Y` is a pure function of
+    # one token's inputs.  See tools/ref9b/gdn_oracle.py's header for the bound
+    # that comes with that, and note that an OMITTED seam is the honest
+    # encoding the day it stops holding -- never a copy of the capture.
+    bpred = {}
+    if any(not shape.is_attn(b) for b in range(shape.blocks)):
+        btoks = sorted(set(r.tok for r in recs))
+        try:
+            bpred, _bf = GO.predict(by, shape, btoks, conv_lanes, b_src_real,
+                                    kmap)
+        except SystemExit as e:
+            bpred = {}
+            omitted.append(("(subsystem B)",
                             "the R_Y model refused this capture: %s" % e))
 
     for st in steps:
@@ -195,6 +214,8 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
             exp_e, exp_v = cpred[(st.seam, tok)]
         elif st.op == SP.OP_C and st.seam in stub_named:
             continue
+        elif st.op == SP.OP_B and (st.seam, tok) in bpred:
+            exp_e, exp_v = bpred[(st.seam, tok)]
         else:
             omitted.append((st.seam, "subsystem %s has no integration-level "
                                      "model" % st.op))
@@ -232,6 +253,13 @@ def main():
     ap.add_argument("--attn-fold", default="perlayer",
                     choices=("perlayer", "shared", "pertoken"))
     ap.add_argument("--no-a", action="store_true")
+    ap.add_argument("--conv-lanes", type=int, default=4,
+                    help="rtl/llama_top.vhd's B_CONV_LANES.  NOT in the "
+                         "capture; a wrong legal value is a wrong conv weight")
+    ap.add_argument("--b-src-real", action="store_true",
+                    help="rtl/llama_top.vhd's B_SRC_REAL")
+    ap.add_argument("--kmap", default="mod", choices=("mod", "div"),
+                    help="which key head feeds value head h in subsystem B")
     a = ap.parse_args()
 
     if a.tok == "all":
@@ -243,7 +271,8 @@ def main():
     for t in toks:
         o, om = build(a.capture, t, a.blocks, a.attn_int, a.attn_hd,
                       a.norm, a.norm_exp, a.norm_w_exp, a.norm_q, a.w_image,
-                      a.kv_block, a.n_rot, a.qkn_exp, a.attn_fold, a.no_a)
+                      a.kv_block, a.n_rot, a.qkn_exp, a.attn_fold, a.no_a,
+                      a.conv_lanes, a.b_src_real, a.kmap)
         out += [(n, t, l, e, v, k) for (n, l, e, v, k) in o]
         omitted += [("tok %d %s" % (t, n), why) for n, why in om]
 

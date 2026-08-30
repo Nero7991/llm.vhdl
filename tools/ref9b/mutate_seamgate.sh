@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/ref9b/mutate_seamgate.sh -- THE TEETH FOR tools/ref9b/seamgate.sh.
 #
-#   bash tools/ref9b/mutate_seamgate.sh [S1|S2|S3|S4|S5|S6|S7|all]
+#   bash tools/ref9b/mutate_seamgate.sh [S1..S12|all]
 #
 # A checker never shown to fail has not been shown to work.  This injects
 # defects and records which ones the seam gate bites, WITH the ones it does
@@ -24,8 +24,27 @@
 #       sim/tb_llama_top_real.vhd structurally cannot see: that row leaves
 #       SMP_EN at its default false, so rtl/sampler_stream.vhd is not even
 #       elaborated there.
-#   S4  a defect inside subsystem B, whose R_Y has no integration-level model.
-#       EXPECTED TO SURVIVE.  Kept because it is the resolution floor.
+#   S4  a defect inside subsystem B's SiLU emit.  It SURVIVED until
+#       2026-08-29, when tools/ref9b/gdn_oracle.py gave R_Y a model; it now
+#       fails and names the seam.  The row is kept unchanged so that the two
+#       verdicts are comparable across that landing.
+#   S8  subsystem B's key-head map returned to contiguous grouping, which is
+#       defect B-BLK-1 as it stood before a77d181.  EXPECT FAIL.
+#   S9  subsystem B's conv segment requantizer truncates instead of rounding.
+#       EXPECT FAIL.
+#   S10 subsystem B's decay rounding bias deleted.  EXPECTED TO SURVIVE, and
+#       this is now the resolution floor: `rtl/llama_top.vhd:3270` drives tk0
+#       high at every token, so the state the decay multiplies is masked to
+#       ZERO and the bias has nothing to bias.
+#   S11 the per-layer term deleted from llama_top's B state memory address --
+#       the defect fixed at 2d10f76, restored.  EXPECTED TO SURVIVE, for the
+#       same reason as S10: the state is written and never read.
+#   S12 a stage-4 shift in the recurrence, which IS live at tk0.  EXPECT FAIL.
+#
+#   S10 AND S11 TOGETHER ARE THE HONEST NUMBER HERE.  Full seam coverage does
+#   not mean full defect coverage: everything downstream of the recurrent state
+#   is invisible while the top level discards that state every token, and no
+#   amount of modelling fixes it -- only a top level that drives tk0 low.
 #   S5  teeth for the COVERAGE branch: the comparison stops comparing while
 #       every seam it still compares matches.
 #   S6  teeth for the PLAN DRIFT branch: the model's mirror of the descriptor
@@ -61,6 +80,26 @@ apply_mut() {
       sed -i 's|^          y := rsh_r(prod(k), 15);|          y := shift_right(prod(k), 15);  -- MUTANT S4|' \
           "$tree/rtl/gdn_silu.vhd"
       grep -q "MUTANT S4" "$tree/rtl/gdn_silu.vhd" ;;
+    S8)
+      sed -i 's|^            base := (vh mod KEY_HEADS)\*DIM\*16;|            base := (vh / (VAL_HEADS/KEY_HEADS))*DIM*16;  -- MUTANT S8|' \
+          "$tree/rtl/gdn_block.vhd"
+      grep -q "MUTANT S8" "$tree/rtl/gdn_block.vhd" ;;
+    S9)
+      sed -i 's|^              bias <= shift_left(to_signed(1, 34), p - 15);|              bias <= (others => '"'"'0'"'"');  -- MUTANT S9|' \
+          "$tree/rtl/gdn_conv.vhd"
+      grep -q "MUTANT S9" "$tree/rtl/gdn_conv.vhd" ;;
+    S10)
+      sed -i 's|^          a_w18(k) <= resize(shift_right(a_m1(k) + to_signed(2\*\*12, 33), 13), 19);|          a_w18(k) <= resize(shift_right(a_m1(k), 13), 19);  -- MUTANT S10|' \
+          "$tree/rtl/gdn_recur_pipe.vhd"
+      grep -q "MUTANT S10" "$tree/rtl/gdn_recur_pipe.vhd" ;;
+    S11)
+      sed -i 's|^          a := b_layer\*STLY + st_rhead\*DM\*NBR + st_rcol\*NBR + st_rgrp;|          a := st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;  -- MUTANT S11|' \
+          "$tree/rtl/llama_top.vhd"
+      grep -q "MUTANT S11" "$tree/rtl/llama_top.vhd" ;;
+    S12)
+      sed -i 's|^          b_ks(k) <= shift_right(b_mkd(k), b_ctx(1).sk2);|          b_ks(k) <= shift_right(b_mkd(k), b_ctx(1).sk2 + 1);  -- MUTANT S12|' \
+          "$tree/rtl/gdn_recur_pipe.vhd"
+      grep -q "MUTANT S12" "$tree/rtl/gdn_recur_pipe.vhd" ;;
     *) return 0 ;;
   esac
 }
@@ -116,7 +155,7 @@ run_gate() {   # run_gate <tree> [extra bisect args are NOT supported: use S5/S6
 hdr() { echo; echo "===================== $1 ====================="; echo "$2"; }
 
 # ------------------------------------------------------------------- the table
-for m in S1 S2 S3 S4 S5 S6 S7; do
+for m in S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12; do
   [ "$WHICH" != "all" ] && [ "$WHICH" != "$m" ] && continue
   case "$m" in
 
@@ -144,10 +183,12 @@ for m in S1 S2 S3 S4 S5 S6 S7; do
       run_gate "$t"; echo "  [gate rc=$?]" ;;
 
   S4) hdr S4 "rtl/gdn_silu.vhd: the SiLU emit rounds by truncation.  Inside
-    subsystem B, whose R_Y has NO integration-level model, so the stepwise
-    oracle never compares it.  EXPECTED TO SURVIVE -- this row measures the
-    gate's resolution floor and must never be deleted.  The landmark row DOES
-    see it, via EXP_STEPH; both instruments are printed."
+    subsystem B.  THIS ROW SURVIVED UNTIL 2026-08-29 and was the gate's
+    recorded resolution floor: R_Y had no integration-level model, so the
+    stepwise oracle never compared it.  tools/ref9b/gdn_oracle.py gave it one.
+    EXPECT SEAMGATE FAIL naming R_Y-0.  The landmark row sees it too, via
+    EXP_STEPH; both instruments are printed, and the difference is that the
+    landmark says a number MOVED while this says which seam is WRONG."
       t=$(mktree S4) || continue
       echo "-- the landmark row on this mutant:"
       run_land "$t" | sed 's/^/    /'
@@ -168,7 +209,16 @@ for m in S1 S2 S3 S4 S5 S6 S7; do
       echo "  bisect rc=$?"
       head -3 "$SG/b.txt" | sed 's/^/    /'
       chk=$(awk '/^# [0-9]+ seams checked/{print $2}' "$SG/b.txt")
-      echo "    -> checked $chk against the row's floor of 61: $( [ "${chk:-0}" -lt 61 ] && echo 'BELOW, so the COVERAGE branch fires' || echo 'NOT below -- the floor has no teeth here') " ;;
+      echo "    -> checked $chk against the row's floor of 64: $( [ "${chk:-0}" -lt 64 ] && echo 'BELOW, so the COVERAGE branch fires' || echo 'NOT below -- the floor has no teeth here') "
+      # THE SAME TEETH FROM THE OTHER SIDE.  --no-b stops comparing subsystem
+      # B's three R_Y seams and nothing else, so it is the narrowest coverage
+      # loss the floor has to catch: 64 - 3 = 61, which is the OLD floor.  A
+      # floor left at 61 would have accepted exactly this.
+      MV_STEP_ORACLE="$SG/mv" python3 tools/ref9b/bisect_scaled.py "$SG/cap.txt" \
+          $(LIST_BISECT=1 bash tools/ref9b/capture_llama_top.sh real) --no-b \
+          > "$SG/b2.txt" 2>&1
+      chk2=$(awk '/^# [0-9]+ seams checked/{print $2}' "$SG/b2.txt")
+      echo "    -> --no-b checked $chk2 against 64: $( [ "${chk2:-0}" -lt 64 ] && echo 'BELOW, so the COVERAGE branch fires' || echo 'NOT below -- the floor has no teeth here') " ;;
 
   S6) hdr S6 "TEETH FOR THE PLAN DRIFT BRANCH.  No RTL is mutated.  The
     comparison is asked for a shape the capture does not have (--blocks 8),
@@ -215,6 +265,45 @@ PY
       echo "-- the landmark row AFTER re-pinning:"
       run_land "$t" | sed 's/^/    /'
       echo "-- the seam gate on the same mutant:"
+      run_gate "$t"; echo "  [gate rc=$?]" ;;
+  S8) hdr S8 "rtl/gdn_block.vhd: value head h fed by key head h/(VH/KH) again,
+    the contiguous GQA grouping.  This IS defect B-BLK-1, restored -- the one
+    ref/gdn_block_vec.c found and a77d181 fixed.  EXPECT SEAMGATE FAIL naming
+    an R_Y seam, which is the claim that the integration gate would now catch
+    it without a unit bench."
+      t=$(mktree S8) || continue
+      run_gate "$t"; echo "  [gate rc=$?]" ;;
+
+  S9) hdr S9 "rtl/gdn_conv.vhd: the segment requantizer's rounding bias
+    deleted, so the conv output truncates.  A sub-LSB defect two stages
+    upstream of R_Y.  EXPECT SEAMGATE FAIL."
+      t=$(mktree S9) || continue
+      run_gate "$t"; echo "  [gate rc=$?]" ;;
+
+  S10) hdr S10 "rtl/gdn_recur_pipe.vhd: the decay stage's rounding bias
+    deleted.  EXPECTED TO SURVIVE, and it is the NEW resolution floor.  The
+    decay multiplies the recurrent state, rtl/llama_top.vhd:3270 drives tk0
+    high at every token, and gdn_recur_pipe's TK0_ED masks that state to zero
+    -- so the mutated expression evaluates (0 + bias) >> 13 = 0 and (0) >> 13 =
+    0, identically.  No model can see this.  Only a top level with a real
+    token loop can."
+      t=$(mktree S10) || continue
+      run_gate "$t"; echo "  [gate rc=$?]" ;;
+
+  S11) hdr S11 "rtl/llama_top.vhd: the per-layer term dropped from the B state
+    memory address -- the defect fixed at 2d10f76, restored.  EXPECTED TO
+    SURVIVE, for the same reason as S10: the state is written and never read.
+    Two independent mutations measuring one blind spot is the point; a single
+    survivor reads like a fluke."
+      t=$(mktree S11) || continue
+      run_gate "$t"; echo "  [gate rc=$?]" ;;
+
+  S12) hdr S12 "rtl/gdn_recur_pipe.vhd: stage 4's k*delta alignment shifted one
+    bit too far.  Unlike S10 this term IS live at tk0 -- it is the only thing
+    the state update has when the previous state is masked away.  EXPECT
+    SEAMGATE FAIL, which is what separates 'the recurrence is unchecked' from
+    'the parts of it that run are unchecked'."
+      t=$(mktree S12) || continue
       run_gate "$t"; echo "  [gate rc=$?]" ;;
   esac
 done

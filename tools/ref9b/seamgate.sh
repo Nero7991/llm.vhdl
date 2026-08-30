@@ -81,20 +81,39 @@
 #                                         (the attention ramp stub)
 #   seq      3         61/tok       59    R_Y-0,2 (B)             ~110 s
 #
-# Every unchecked seam is subsystem B's `R_Y`, which has no integration-level
-# model, plus -- in the stub configuration -- the attention ramp, which is not
-# attention at all.  Raising these floors is what landing a subsystem B model
-# should do.  LOWERING one is a decision, and it has to be made here, in a
-# diff, rather than absorbed silently by a verdict line.
+# RAISED 2026-08-29 by TRACK RY-MODEL, re-MEASURED on a pristine
+# `git archive 9ad4c14` tree with `tools/ref9b/gdn_oracle.py` driving
+# `ref/gdn_block_cap_vec.c`, which models subsystem B's `R_Y`:
+#
+#   cfg   tokens  seams present  checked  not checked
+#   real     1         64           64    -- nothing --
+#   stub     1         64           63    R_Y-3 (the attention ramp stub)
+#   seq      3         61/tok       61    -- nothing --
+#
+# The `real` and `seq` rows now have NO unmodelled seam at all, and `stub`'s
+# one remaining exclusion is the `-32768 + i` ramp `rtl/llama_top.vhd:3037`
+# writes when `C_REAL` is false -- which is not attention and has nothing to
+# model.  Raising these floors is what landing a subsystem B model should do.
+# LOWERING one is a decision, and it has to be made here, in a diff, rather
+# than absorbed silently by a verdict line.
+#
+# WHAT FULL COVERAGE STILL DOES NOT MEAN, because the number 64 of 64 invites
+# exactly the wrong reading.  Every seam having a model does not make the model
+# STIMULUS rich: at these configurations `B_SRC_REAL` is false, so subsystem
+# B's conv taps, alpha and beta are `m12` stand-ins and `R_Y` depends on the
+# capture only through `R_Z` and the three `R_QKV` exponents.  A defect that
+# only shows on activation-derived taps is out of reach of this row until
+# something runs `B_SRC_REAL`.  See
+# docs/debugging/2026-08-29_ry-model-subsystem-b.md.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
 CFG="${1:-real}"
 
 case "$CFG" in
-  real) FLOOR=61 ;;
-  stub) FLOOR=60 ;;
-  seq)  FLOOR=59 ;;
+  real) FLOOR=64 ;;
+  stub) FLOOR=63 ;;
+  seq)  FLOOR=61 ;;
   *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub)"; exit 2 ;;
 esac
 
@@ -253,4 +272,10 @@ echo "  inputs (floor $FLOOR).  This is NOT a statement that the token is"
 echo "  right: read the NOT CHECKED lines above.  A wrong value at an"
 echo "  unmodelled seam is passed forward AS GIVEN and every later seam still"
 echo "  agrees."
+echo "  AND WHEN NOTHING IS LISTED AS UNCHECKED, THE RESIDUAL MOVES RATHER"
+echo "  THAN VANISHING.  Every seam then has a model, but the STIMULUS is"
+echo "  still the bench's: B_SRC_REAL is false in all three configurations, so"
+echo "  subsystem B sees m12 stand-in taps, and the four approximation kernels"
+echo "  are INCLUDED by the models rather than independently transcribed."
+
 exit 0

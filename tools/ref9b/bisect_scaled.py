@@ -21,15 +21,19 @@ That structure buys two things a whole-model reference cannot:
     counterpart in the model).  Locally the ramp is known exactly.
 
 AND WHAT IT CANNOT DO, WHICH IS THE HALF THAT MATTERS.  A stepwise oracle is
-blind wherever it has no model.  Subsystem B's output (`R_Y` at a GDN
-block) has no integration-level model here, so a wrong `R_Y` is fed to the next
-step AS GIVEN and every later comparison still passes.  Subsystem C's `R_Y`
-DOES have one as of 2026-08-29 -- `tools/ref9b/attn_oracle.py` driving
-`ref/attn_block_cap_vec.c` -- because subsystem C's whole input is three
-captured regions plus the KV records earlier tokens wrote from theirs.
-Subsystem B's is not reachable the same way: its input includes a recurrent
-state no region holds.  A clean run of
-this tool therefore does NOT mean the token is right.  It means: no step that
+blind wherever it has no model.  BOTH `R_Y` families have an
+integration-level model as of 2026-08-29.  Subsystem C's is
+`tools/ref9b/attn_oracle.py` driving `ref/attn_block_cap_vec.c`, because
+subsystem C's whole input is three captured regions plus the KV records earlier
+tokens wrote from theirs.  Subsystem B's is `tools/ref9b/gdn_oracle.py` driving
+`ref/gdn_block_cap_vec.c`.  B was believed unreachable because its input
+includes a recurrent state no region holds -- true of subsystem B, and NOT
+true of THIS TOP LEVEL, which drives `tk0` high on every token
+(`rtl/llama_top.vhd:3270`) so the state is written and never read.  READ THAT
+AS A BOUND AND NOT AS A CLOSURE: the day `llama_top` grows a real token loop,
+the B model must grow a state carry, and `ref/gdn_block_cap_vec.c` refuses
+rather than guessing.  A clean run of this tool therefore does NOT mean the
+token is right.  It means: no step that
 has a model computed something other than what its model says, given the
 machine's own inputs.  The coverage table is printed for exactly that reason
 and should be read before the verdict.
@@ -46,6 +50,7 @@ import sys
 import tempfile
 
 import attn_oracle as AO
+import gdn_oracle as GO
 import scaled_plan as SP
 import vec_oracle as VO
 
@@ -245,6 +250,21 @@ def main():
                     help="skip the subsystem A seams (they cost one process each)")
     ap.add_argument("--no-c", action="store_true",
                     help="skip the subsystem C R_Y model")
+    ap.add_argument("--no-b", action="store_true",
+                    help="skip the subsystem B R_Y model, which then reports "
+                         "as NOT CHECKED.  Teeth for the COVERAGE branch, the "
+                         "same standing as --no-a")
+    # NOT IN THE CAPTURE.  A wrong --conv-lanes is a legal shape and a wrong
+    # conv WEIGHT, the same hazard --kv-block carries on the C side.
+    ap.add_argument("--conv-lanes", type=int, default=4,
+                    help="rtl/llama_top.vhd's B_CONV_LANES")
+    ap.add_argument("--b-src-real", action="store_true",
+                    help="rtl/llama_top.vhd's B_SRC_REAL, which defaults FALSE "
+                         "in every configuration capture_llama_top.sh runs")
+    ap.add_argument("--kmap", default="mod", choices=("mod", "div"),
+                    help="which key head feeds value head h in subsystem B.  "
+                         "'mod' is the model (ggml_repeat tiles); 'div' is the "
+                         "contiguous GQA grouping that was defect B-BLK-1")
     ap.add_argument("--kv-block", type=int, default=4)
     ap.add_argument("--n-rot", type=int, default=8)
     ap.add_argument("--qkn-exp", type=int, default=12)
@@ -321,6 +341,31 @@ def main():
         except SystemExit as e:
             cpred, cwhy = {}, ""
             skipped.append(("(subsystem C)",
+                            "the R_Y model refused this capture: %s" % e))
+
+    # Subsystem B's R_Y.  Predicted for the whole capture at once for the same
+    # reason the C call is: the driver is layer-major and carries one state per
+    # GDN layer across the sequence, so a per-token call would have no state to
+    # carry.  At `tk0` that state is inert, which is exactly why this model is
+    # possible at all -- see tools/ref9b/gdn_oracle.py's header.
+    bpred, bwhy = {}, ""
+    if not a.no_b and any(not shape.is_attn(b) for b in range(shape.blocks)):
+        btoks = sorted(set(r.tok for r in recs))
+        try:
+            bpred, bflags = GO.predict(by, shape, btoks, a.conv_lanes,
+                                       a.b_src_real, a.kmap)
+            bwhy = ("ref/gdn_block_vec.c's gdn_block_token() over the capture's "
+                    "own R_Z and R_QKV exponents, kmap '%s'" % a.kmap)
+            for (nm, t, ec, eg, es, ys) in bflags:
+                if t == a.tok:
+                    print("# MODEL FLAG %s: err_conv=%d err_g=%d err_se=%d "
+                          "y_sat=%d.  The MODEL hit a range condition on this "
+                          "stimulus; the comparison below still stands, but a "
+                          "saturating y is a weak comparison." % (nm, ec, eg,
+                                                                  es, ys))
+        except SystemExit as e:
+            bpred, bwhy = {}, ""
+            skipped.append(("(subsystem B)",
                             "the R_Y model refused this capture: %s" % e))
 
     for st in steps:
@@ -436,6 +481,9 @@ def main():
             why = cwhy
         elif st.op == SP.OP_C and st.seam in stub_named:
             continue                      # already reported as the stub ramp
+        elif st.op == SP.OP_B and (st.seam, a.tok) in bpred:
+            exp_e, exp_v = bpred[(st.seam, a.tok)]
+            why = bwhy
         else:
             skipped.append((st.seam, "subsystem %s has no integration-level "
                                      "model" % st.op))
