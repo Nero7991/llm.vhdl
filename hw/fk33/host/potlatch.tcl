@@ -44,12 +44,19 @@ set DAT 0x00009000
 set SYSMON_VCCINT 3404
 set SYSMON_TEMP   3400
 
+# Target selection: NEVER by bare index.  With two cards on the chain,
+# [lindex [get_hw_targets] 0] is whichever enumerated first, and aiming an
+# operation at the wrong card is what destroyed card 1's factory flash.
+# MEASURED 2026-08-30: this file's bare index made fk33_powercycle.sh report
+# "no_axi_master" for a card that had three -- it was reading the other card.
+source [file join [file dirname [info script]] .. tcl target_select.tcl]
+
 proc emit {args} { puts "POTLATCH [join $args]" }
 
 if {[catch {
     open_hw_manager
     connect_hw_server -allow_non_jtag
-    open_hw_target [lindex [get_hw_targets] 0]
+    fk33_open_target
     set d [lindex [get_hw_devices] 0]
     current_hw_device $d
     # -update_hw_probes false: refreshing probes fails on this ES1 die and

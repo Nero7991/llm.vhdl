@@ -40,6 +40,12 @@ SYNC = bytes.fromhex("AA995566")
 BUSWIDTH = bytes.fromhex("000000BB")
 
 
+# Largest run of 0xFF permitted INSIDE the image (below the last data byte).
+# Card 2's intact factory image has 52,744; card 1's aborted erase has
+# 8,230,124.  1 MiB sits between them with room on both sides.
+MAX_INTERNAL_GAP = 1 << 20
+
+
 def read_ihex(path):
     """Decode an Intel HEX (.mcs) file into a flat bytearray.
 
@@ -158,6 +164,41 @@ def main():
         with open(args.bin, "wb") as fh:
             fh.write(data)
         print("  decoded to  %s" % args.bin)
+
+    # A PARTIAL erase.  The checks above all pass on an image whose HEADER is
+    # intact and whose BODY is gone, because the sync word lives in the first
+    # 0x50 bytes.  MEASURED 2026-08-30 on card 1 (153300000607A): a genuine
+    # factory image with 8,230,124 bytes of 0xFF erased out of its middle at
+    # 0x3D0000 was reported "BACKUP_CHECK_OK: this looks like a genuine flash
+    # image".  The FPGA cannot configure from it, which is the entire reason
+    # that card would not enumerate.
+    #
+    # A wholly failed read was the only failure this file was written for; a
+    # partial erase is the one the project actually suffered.  MEASURED
+    # thresholds, two orders of magnitude apart, so this is not delicate:
+    #   card 2, intact factory image :     52,744 bytes  (section padding)
+    #   card 1, aborted erase        :  8,230,124 bytes
+    best = run = 0
+    best_at = start = 0
+    for i in range(tail):
+        if data[i] == 0xFF:
+            if run == 0:
+                start = i
+            run += 1
+            if run > best:
+                best, best_at = run, start
+        else:
+            run = 0
+    print("  largest gap 0x%06X bytes of 0xFF inside the image at 0x%06X"
+          % (best, best_at))
+    if best > MAX_INTERNAL_GAP:
+        print("BACKUP_CHECK_FAIL: %d bytes of erased flash sit INSIDE the image,"
+              % best)
+        print("  starting at 0x%06X.  The header survived and the body did not:"
+              % best_at)
+        print("  this is an ABORTED ERASE, not a usable image.  The FPGA cannot")
+        print("  configure from it.  Do NOT treat this file as a backup.")
+        return 1
 
     print("BACKUP_CHECK_OK: this looks like a genuine flash image.")
     return 0
