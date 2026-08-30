@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-30
 **Track:** RMSMUX
-**Tree:** working tree at the commit recorded in section 12. `rtl/llama_top.vhd`
-was MODIFIED and uncommitted throughout (TRACK NORMURAM) and was never touched
-by this track.
+**Tree:** parent commit `e92cfe8`; this track's four files landed as
+`ce7b836`. `rtl/llama_top.vhd` was MODIFIED and uncommitted throughout
+(TRACK NORMURAM) and was never touched by this track.
 **Tools:** GHDL (mcode) only. **No Vivado ran.** **No hardware was touched** --
 no `xsdb`, no `hw_server`, no `program_hw_devices`, nothing under
 `hw/fk33/host` or `hw/fk33/tcl`, nothing opening `/dev/xdma*`.
