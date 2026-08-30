@@ -674,10 +674,14 @@ it.**
 MEASURED in the composed A+B+C+D, from TRACK TIMING's own `TT_MUX` census: the
 codebook is **37.7% of MUXF7 (24,576 / 65,108) and 47.6% of MUXF8
 (12,288 / 25,788)** -- not 97.7% / 98.8%. `d_norm/gvr.u_rms` alone carries
-17,696 F7 and 8,736 F8, and `c_attn/u_arr` another 15,796 F7. TIMING's section
-7a states the correct 38.2% / 48.1% **two paragraphs before quoting 97.7 / 98.8
-into its own lever-C estimate**, so the wrong number was carried forward
-independently by two of us from the same source.
+17,696 F7 and 8,736 F8, and `c_attn/u_arr` another 15,796 F7. **Attribution corrected the same day:** I wrote here that TIMING had made the
+same substitution in its section 7a. **It had not, and that accusation is
+withdrawn.** TIMING applied 97.7% / 98.8% to `a_eng`'s OWN census, explicitly
+labelled as such, giving 24,297 MUXF7 against LEVERC's structural
+**24,576 = 1536 x 16** -- 1.1% agreement, and as a share of the composed design
+its figure reads 37.3% / 47.5%, the same quantity. **The substitution was mine
+alone.** I inferred a second instance from a superficial reading and published
+it as a finding about another track's work.
 
 **A second correction, which reverses the sign of the argument.** This block
 said removing MUXF7/F8 "attacks the 6.32 directly" because they pin LUTs into
