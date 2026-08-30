@@ -69,10 +69,18 @@ The rules that follow from this:
   MEASURED 2026-08-30: one running Vivado shows as **four** processes, because
   the launcher is a chain of bash scripts also called `vivado`
   (`bin/vivado` -> `bin/loader` -> `bin/unwrapped/lnx64.o/vivado`), and three of
-  them are shells holding ~3 MB each. Only the `unwrapped/lnx64.o` one is the
-  tool. **Gate on PRESENCE, never on a count**, and if you want the real
-  footprint, sort by RSS:
-  `ps -eo pid,rss,args --sort=-rss | grep unwrapped/lnx64.o/vivado`.
+  them are shells holding ~3 MB each. **But filtering on the unwrapped path is
+  ALSO not a count of one tool**: MEASURED on the BC-250 the same day, a single
+  Vivado shows **five** matches on `bin/unwrapped/lnx64.o/vivado`, because
+  Vivado forks **parallel-synthesis workers that inherit the parent's argv** --
+  four at 2.36 GB each plus a 1.41 GB parent. **Gate on PRESENCE, never on a
+  count, by any pattern.** For the real footprint, SUM the RSS:
+  `ps -eo rss,args | grep unwrapped/lnx64.o/vivado | awk '{s+=$1} END {print s/1048576" GB"}'`.
+- **One Vivado costs 10.85 GB of the BC-250's 14 GB** (MEASURED 2026-08-30,
+  `attn_block` OOC with forked workers). So the second lane holds exactly one
+  tool and has ~3 GB of margin, not the comfortable headroom the 14 GB figure
+  suggests. **Two concurrent tools there OOM the box rather than merely slowing
+  it.**
   (`pgrep -x` is still the right form -- **never `pgrep -f`**, which matches
   your own command line and has killed the shell four times here.)
 - **A full build requires stopping `llama-server` first**, because 25.0 GiB does
