@@ -129,6 +129,65 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK SEAMMAP COMPLETE, 2026-08-30 (`1e46fb3`). N2 option (a) has an address.
+
+**`0xE000` is assigned, and it was checked rather than inherited.** MEASURED
+against the EMITTED `build_fk33_pcieep.tcl` rather than a document: BAR
+occupancy is 0x3000 SYSMON, 0x9000 GPIO, 0xA000 id, 0xB/C/D000 thermal,
+0x10000 + 8K scratch, 0x12000/0x13000 engine. **`0xE000` and `0xF000` are the
+only free 4 KB pages below the scratch**, and `0xE000` is the lower. It is
+inside the 128 KB BAR and 4 KB aligned, which `fk33_seam`'s 12-bit
+`s_axi_awaddr` requires. `FK33_SEAM_BASE_PROPOSED` is now `FK33_SEAM_BASE`
+across all four callers, and **the generator refuses to emit while the
+`_PROPOSED` define survives**.
+
+**THE FINDING, AND IT IS A DESIGN DECISION THE BRIEF DID NOT ANTICIPATE. There
+is no subsystem D behind this seam (N3), so its D face is driven by constants,
+and the OBVIOUS tie-off hangs the host.** MEASURED at `rtl/fk33_seam.vhd:549`:
+the completion arm runs only `if running = '1'`, and `running` is cleared ONLY
+by `d_err`, `d_tok_done` or ABORT. **Tie both low and a GO sets `running`
+forever** -- neither done nor err ever sets, and the `(done | err)` poll loop
+this seam's own header prescribes never exits.
+
+So `d_err` is tied HIGH: every GO refuses one cycle later with `EC_DESC` and
+`ERR_INFO[3:0] = 0xF`, **a code `llama_top` cannot produce**, so the refusal is
+distinguishable from a real error rather than merely silent. Faking a completion
+via `d_tok_done <= d_go` was considered and REJECTED.
+
+**SEAMMAP's own correction to my brief, and it is right: N2 must NOT be reported
+as "done" without the clause.** What sits at `0xE000` is a real, addressable,
+honest seam **with no transformer behind it**. The brief framed the
+instantiation as mechanical; it was not.
+
+**Verification worth copying.** `check_bar_map` **parses the emitted script**
+rather than restating the map, deliberately avoiding the hand-table shape that
+produced the descriptor-base coincidence defect. Address teeth ran a 3-arm
+attribution control (pre-SEAMMAP needles / new needles / the parser): 8
+refusals, 3 must-not-refuse, `MAP ALONE=4 both=4 NEITHER=0`, with **the
+pre-existing arm empty on every row** (DERIVED: `git show
+d53af73:hw/fk33/gen_pcieep.py | grep -ci seam` = 0). `md5sum -c` over **1,868**
+tracked files.
+
+**NON-BITER, reported under its own name and it is the useful one:** relocating
+`fk33_id` to `0xF000` is legal on every rule and WRONG, because `fk33_regs.h`
+hardcodes `0xA000`. **The check verifies internal consistency, not agreement
+with the host header.** Filed as work.
+
+**QUEUED, NOT REFUSED: a Vivado `--bd-only` run.** SEAMMAP requested it and did
+not take it, because its memory footprint is unmeasured and both lanes were
+committed (NORMURAM on the workstation, CBINFER on the BC-250). **It is the only
+non-hardware thing that answers whether the seam responds at `0xE000`**, and it
+would settle three things that cannot be checked statically: the inferred
+segment name `fk33_seam_0/s_axi/reg0`, whether module reference accepts
+`fk33_seam`'s `unsigned`/`natural range` ports, and whether
+`core_reset/peripheral_reset` ([0:0]) connects to the scalar `rst`. All three
+fail LOUDLY at the BD stage, none silently. **Dispatch when a lane frees.**
+
+Also open from SEAMMAP: `rtl/fk33_seam.vhd`'s `CAPS_FLAGS_V = 0x5` sets
+`FK33_CAP_SAMPLER` in a bitstream with no sampler (reported to DSEAM, correctly
+not fixed -- not its file); `fk33_regs.h` has no seam block and its non-thermal
+bases are unpinned; `desc_ram` BRAM inference is unsynthesised.
+
 ### TRACK TIMING COMPLETE, 2026-08-30 (`9e3348e`..`5d25911`). Three results.
 
 **1. SUBSYSTEM C CLOSES 200 MHz STANDALONE FOR THE FIRST TIME.** The 256 failing
