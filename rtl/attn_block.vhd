@@ -196,15 +196,33 @@ use work.util_pkg.all;
 
 entity attn_block is
   generic(
-    -- Shapes.  Defaults are Qwen3.8-27B on ONE of two cards, which is the
-    -- build target: 24 query heads / 4 KV heads / head_dim 256 across two
-    -- cards is 12 / 2 / 256 here.  9B on one card is N_QH = 16, N_KVH = 4.
+    -- Shapes.  Defaults are Qwen3.5-9B on ONE card, which is the current
+    -- build target, and every one of the four is DERIVED from
+    -- `rtl/model_cfg_pkg.vhd`'s `QWEN35_9B` record at `NCARDS = 1`:
+    --   HEAD_DIM 256 = attn_head_dim
+    --   N_QH      16 = attn_q_heads / ncards
+    --   N_KVH      4 = attn_kv_heads
+    --   LAYERS     8 = blocks / attn_interval = 32 / 4
+    -- 27B on two cards is N_QH = 12, N_KVH = 2, LAYERS = 16 (64 / 4).
+    --
+    -- CORRECTED 2026-08-29, TRACK CGENERICS.  All four used to be the 27B
+    -- two-card set while the header claimed it was "the build target"; the
+    -- target moved to the 9B at `constant MODEL := QWEN35_9B` and this file
+    -- did not follow.  `rtl/gdn_block.vhd:187` is the precedent: subsystem
+    -- B's defaults already say "Qwen3.5-9B on ONE card, which is the current
+    -- target" and carry LAYERS 24 = gdn_layers.  NOTHING READ THESE
+    -- DEFAULTS -- `sim/tb_attn_block.vhd:405`, `sim/tb_attn_kv_seam.vhd:502`
+    -- and `rtl/llama_top.vhd:3951` all map every shape generic explicitly,
+    -- and `sim/ooc_compose_bcd.tcl:73` passes exactly the set below because
+    -- the old one was wrong -- so this is a statement made true again, not a
+    -- number that was being computed with.  MEASURED: `sim/regress.sh
+    -- --only attn` is PASS 15 FAIL 0 either side of the change.
     HEAD_DIM  : positive := 256;
-    N_QH      : positive := 12;   -- query heads on THIS card
-    N_KVH     : positive := 2;    -- KV heads on THIS card
+    N_QH      : positive := 16;   -- query heads on THIS card
+    N_KVH     : positive := 4;    -- KV heads on THIS card
     KV_BLOCK  : positive := 32;   -- C spec 2.1.1, and one 256-bit HBM beat
     N_ROT     : positive := 64;   -- GGUF rope.dimension_count
-    LAYERS    : positive := 16;   -- attention layers, for the cache map
+    LAYERS    : positive := 8;    -- attention layers, for the cache map
     POS_W     : positive := 16;   -- position width; MAXCTX <= 2^POS_W
     MANT_W    : positive := 16;   -- activation mantissa
     CM_W      : positive := 8;    -- KV cache mantissa

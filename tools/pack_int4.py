@@ -787,19 +787,61 @@ def audit(path: str, rows_if: int, cards: int,
     # ---- what is LEFT.  Weights are not the whole residency: subsystem B's
     # recurrent state is persistent, and the KV cache grows with context.  A
     # weights-only fit is not a fit.
+    #
+    # THE SIX NUMBERS THAT USED TO BE HERE WERE A DIFFERENT MODEL'S.
+    # Until 2026-08-29 this block restated `n_gdn, n_attn = 48, 16` and
+    # `d_inner, state_size = 6144, 128` as literals.  48 and 16 are the
+    # Qwen3.8-27B layer counts (64 blocks / attn_interval 4); the 9B has 24
+    # and 8 (32 / 4).  6144 is 27B's `d_inner` = lin_val_heads 48 x
+    # lin_head_dim 128; the 9B is 32 x 128 = 4096.  And the KV term
+    # `kv_heads * head_dim * 2 * 2` assumed an int16 mantissa with NO record
+    # header, where `rtl/attn_kv_axi.vhd` stores an int8 BFP record with a
+    # 16-byte block-exponent granule: 16 + 256 = 272 B, not 1024.  Every one
+    # of those was over-reservation, so the printed context here was ~3.8x
+    # too pessimistic.  TRACK KVSIZE found and fixed the same six numbers in
+    # `tools/pack_model_fk33.py` (commit 0e4f98d) and flagged that this file
+    # still disagreed with the packer; TRACK CGENERICS closed it.
+    #
+    # There is now ONE place the arenas are sized -- `hbm_map.arena_sizes()`,
+    # which SCRAPES `rtl/model_cfg_pkg.vhd`, `rtl/attn_kv_axi.vhd` and
+    # `rtl/gdn_block.vhd` rather than restating them.  A scrape that stops
+    # matching is a hard SystemExit there, and a `--cards` the head counts do
+    # not divide is refused for the same reason `model_cfg_pkg`'s
+    # `val_heads_per_card` asserts it, instead of printing a fraction of a
+    # head as it used to.
     MB = 1024.0 ** 2
-    n_gdn, n_attn = 48, 16
-    d_inner, state_size = 6144, 128
-    kv_heads, head_dim = 4, 256
-    gdn_state = n_gdn * d_inner * state_size * 2 / cards      # int16, split
-    kv_tok    = n_attn * kv_heads * head_dim * 2 * 2 / cards  # K+V, int16, split
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import hbm_map as HM                                   # noqa: E402
+    sz = HM.arena_sizes(ncards=cards)
+    gdn_state = float(sz["gdn_state_bytes"])          # per card, already split
+    kv_tok    = float(sz["kv_bytes_per_token"])       # per card, already split
     free      = hbm * GIB - s_shard - gdn_state
-    print("  residency beyond weights, per card:")
+    print("  residency beyond weights, per card "
+          "(DERIVED by tools/hbm_map.py from rtl/, not restated here):")
+    print(f"    shape            {sz['gdn_layers']} GDN + {sz['attn_layers']} "
+          f"attention layers, {sz['val_heads_per_card']} val heads, "
+          f"{sz['kv_heads_per_card']} kv heads")
+    print(f"    GDN state/layer  {sz['gdn_state_mant_bytes_per_layer']} B "
+          f"mantissas + {sz['gdn_state_exp_bytes_per_layer']} B exponents "
+          f"= {sz['gdn_state_bytes_per_layer']} B")
+    print(f"    KV record        {sz['kv_record_hdr_bytes']} B header + "
+          f"{sz['attn_head_dim']} x {sz['kv_mantissa_bits']}/8 B mantissas "
+          f"= {sz['kv_record_bytes']} B")
     print(f"    GDN recurrent state (persistent) {gdn_state/MB:>9.1f} MB")
     print(f"    KV cache per token               {kv_tok/1024:>9.1f} KiB")
     print(f"    free for KV                      {free/GIB:>9.3f} GiB")
     if kv_tok > 0:
-        print(f"    => max context                   {free/kv_tok:>9.0f} tokens")
+        ctx = free / kv_tok
+        print(f"    => max context                   {ctx:>9.0f} tokens")
+        # The model's own ceiling, printed alongside, because the arena
+        # capacity above does NOT imply the model's context fits.  At the
+        # real 9B image on one card it does not: tools/hbm_map.py measures
+        # 233,396 tokens of a 262,144 max_context, short by 477 MiB.  The
+        # percentage here is whatever THIS gguf's shard leaves over, which
+        # is only that figure when the gguf is the real packed model.
+        print(f"       model max_context             {sz['max_context']:>9d} "
+              f"tokens  ({100.0*min(ctx, sz['max_context'])/sz['max_context']:.0f}% "
+              f"reachable at {cards} card(s))")
     print()
 
     worst = sorted(mv, key=lambda r: r[5] - r[3] * 4.5 / 8.0, reverse=True)[:6]
