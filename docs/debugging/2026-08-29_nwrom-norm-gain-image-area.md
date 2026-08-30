@@ -321,23 +321,35 @@ the merging kicks in and the prediction stops holding, which is the next point.
 
 ### 5.6 The `NW_N` sweep is NOT monotonic, and that is the measurement
 
-| `NW_N` | CLB LUT | adapter's own | CLB FF | `gvr.wsel` LUT / FF |
-|---:|---:|---:|---:|---|
-| 1 (empty) | 49,654 | 25,523 | 133,197 | absent |
-| 2 | 62,700 | 25,579 | 162,976 | absent (folded into the flop's D) |
-| 5 | **88,383** | 50,114 | 182,502 | 49,343 / 49,343 |
-| 9 | 71,331 | 33,045 | 158,198 | 15,348 / 25,032 |
-| 65 | 82,597 | 43,627 | 162,217 | 18,954 / 28,958 |
+| `NW_N` | form | CLB LUT | adapter's own | CLB FF | `gvr.wsel` LUT / FF |
+|---:|---|---:|---:|---:|---|
+| 1 (empty) | committed | 49,654 | 25,523 | 133,197 | absent |
+| 2 | committed | 62,700 | 25,579 | 162,976 | absent (folded into the flop's D) |
+| 5 | committed | 88,383 | 50,114 | 182,502 | 49,343 / 49,343 |
+| 9 | committed | 71,331 | 33,045 | 158,198 | 15,348 / 25,032 |
+| **65** | **committed** | **82,597** | **43,627** | **162,217** | **18,954 / 28,958** |
+| 2 | bounded probe | 62,700 | 25,579 | 162,976 | absent |
+| 17 | bounded probe | 90,120 | 51,837 | 186,075 | 51,837 root split |
+| 33 | bounded probe | **116,884** | 78,601 | 186,303 | -- |
+| 65 | bounded probe | 103,081 | 62,441 | 179,156 | -- |
 
-**`NW_N = 5` is the most expensive point measured, and it is 5,786 LUT worse
-than the real 65.** Do not read this table as a growth curve: past `NW_N = 5`
-the cost is flat-to-falling and the ordering is set by whether Vivado's flop
-merging fires, not by the table's size. At `k = 5` there are only 30 distinct
-non-constant bit patterns and Vivado merged none of them; at `k = 9` there are
-510 and it merged most; at `k = 65` there are 46,594 and there is little left to
-merge. The practical consequence: **a `NORM_W_IMAGE` measurement taken at a
-convenient small `NW_N` can be worse than the real one and must not be
-extrapolated.**
+**`NW_N = 5` is more expensive than the real 65 on the committed form, and
+`NW_N = 33` is the most expensive point measured anywhere.** Do not read this as
+a growth curve. The ordering is set by whether Vivado's flop merging fires, not
+by the table's size: at `k = 5` there are only 30 distinct non-constant bit
+patterns and Vivado merged none of them; at `k = 9` there are 510 and it merged
+most; at `k = 65` there are 46,594 and there is little left to merge. The
+practical consequence: **a `NORM_W_IMAGE` measurement taken at a convenient
+small `NW_N` can be worse than the real one and must not be extrapolated.**
+
+**And the honest worst case, stated because it narrows the margin.** Across
+every populated point measured -- both forms, five values of `NW_N` -- the
+spread is **62,700 to 116,884**. The committed RTL at the real 65 ops is 82,597
+(+32,943). The single worst number anywhere is 116,884, which is **+67,230**
+over the empty baseline. So the answer "populating the image costs less than the
+76,613 NORMADAPT removed" holds across the ENTIRE measured spread -- but at the
+worst point the margin is **9,383 LUT, not 43,670**. Anyone quoting the headline
+should know both numbers.
 
 ### 5.7 The bounded probe's teeth-check: identical where both elaborate
 
@@ -520,8 +532,7 @@ under TRACK READCONV changes that row and therefore changes this track's total,
 in a direction this track cannot predict.
 
 **`nw_bndura65` and `nw_bndblk65` FAILED on a generation mistake of this
-track's own (7.4) and were dropped, and `nw_bnd17` / `nw_bnd33` had not
-completed when this was written.** All four are secondary: the memory question
+track's own (7.4) and were dropped.** Both are secondary: the memory question
 is answered on the COMMITTED loader by `nw_lfblk65` and `nw_lfura65`, and the
 bounded probe's `NW_N` sweep would only extend a curve that section 5.7 shows to
 be noise. `hw/fk33/results/nwrom_2026-08-29/SUMMARY.txt` is the unfiltered table

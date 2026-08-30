@@ -1,0 +1,30 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 22:42:07 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/nwrom/out/synthutil_hier_nw_bnd33.rpt
+| Design       : ooc_nwrom_bnd
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|      Instance     |   Module   | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| ooc_nwrom_bnd     |      (top) |     116884 |     116884 |       0 |    0 | 186303 |      0 |      0 |    0 |         41 |
+|   (ooc_nwrom_bnd) |      (top) |      78601 |      78601 |       0 |    0 | 119135 |      0 |      0 |    0 |          1 |
+|   gvr.u_rms       | rmsnorm_rs |      38283 |      38283 |       0 |    0 |  67168 |      0 |      0 |    0 |         40 |
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+
+

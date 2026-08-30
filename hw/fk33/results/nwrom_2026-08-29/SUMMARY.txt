@@ -1,6 +1,7 @@
 tag                  lut       own     u_rms       ff     dsp   bram   uram carry8        f7        f8
-nw_bnd17       (no result yet -- still running or never started)
+nw_bnd17           90120     51837     38283   186075      41      0      0    268     25008     12448
 nw_bnd2            62700     25579     37121   162976      41      0      0    268     22546      9712
+nw_bnd33          116884     78601     38283   186303      41      0      0    268     25296     12592
 nw_bnd65          103081     62441     40640   179156      41      0      0    268     24281     11632
 nw_bndblk65    ERROR: [Synth 8-439] module 'ooc_nwrom_bndblk' not found
 nw_bndura65    ERROR: [Synth 8-439] module 'ooc_nwrom_bndura' not found
