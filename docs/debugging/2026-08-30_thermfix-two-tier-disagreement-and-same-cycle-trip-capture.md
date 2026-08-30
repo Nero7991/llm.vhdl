@@ -1,9 +1,18 @@
 # THERMFIX: fixing the two-stack equality halt and the trip record that lies
 
 **Date:** 2026-08-30
-**Tree:** branch `fpga`, parent `54f45c5`.
-**Files changed:** `hw/fk33/rtl/fk33_thermal.vhd`,
-`hw/fk33/sim/tb_fk33_thermal.vhd`, and the two host wording sites.
+**Tree:** branch `fpga`. Track started from `54f45c5`; `9992aca` (Oren's card
+measurement of the crossing coincidence) landed while it ran and is taken as an
+input, not re-derived.
+**Commits:**
+* `a4a564c` -- the RTL fix, the five new bench sections, and this document.
+* `7a7ec6f` -- the two host wording sites, committed separately because
+  `hw/fk33/host/` is contested with TRACK TOKENRUN. `git log -3 -- hw/fk33/host/`
+  immediately before that commit showed `e82ae0e`, `f257466`, `836b802` and no
+  TOKENRUN modification to either file -- TOKENRUN's work in that directory is
+  two UNTRACKED new files (`fk33_run_token.py`, `lmhead_raw_oracle.c`), so the
+  two files edited here were untouched. Committed with an explicit pathspec.
+
 **Root cause document this fixes:**
 `docs/debugging/2026-08-30_therm255-is-two-stacks-not-two-copies.md` (`54f45c5`).
 
