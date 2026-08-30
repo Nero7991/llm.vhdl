@@ -620,6 +620,56 @@ evidence, and **what event should reopen it**.
 | decision | by | on what evidence | trigger to revisit |
 |---|---|---|---|
 | ~~**Congestion fallback is lever C (IQ4_NL codebook to LUTRAM)**, pre-authorised.~~ **TRIGGER FIRED, DECISION CLOSED AS NOT NEEDED.** | Oren, 2026-08-29; closed by TRACK BOARDAUDIT 2026-08-29 | CONGEST measured the codebook at 86,992 primitives, 39.5% of `matvec_core`, and 97.7%/98.8% of the design's MUXF7/MUXF8. ~7.1x win, zero throughput cost. Risk is a 32x write-coherency surface. | **The stated trigger was "if TRACK PBLOCK routes the design, the fallback is not needed", and PBLOCK routed it at `ed1ffe2`** (0 nets with routing errors, 288,506 fully routed). Lever C was not taken and its 32x write-coherency surface was never opened. The row stayed live for a day after the event that retired it. Reopen only if a LATER build fails to route; the pre-authorisation stands, and the standing condition still holds -- **if lever C is ever taken, its oracle work is dispatched ALONGSIDE, not after.** Note `K2b` in the blind-spot list is a hazard in this same code and is NOT specific to lever C, so it does not close with this row. |
+
+### LEVER C REOPENED 2026-08-30 -- its own stated trigger has fired
+
+The row says **"Reopen only if a LATER build fails to route; the
+pre-authorisation stands."** A later build is failing to route. No new decision
+from Oren is needed; this records that the condition was met.
+
+**The closure reasoning was evaluated against the wrong design, and that is
+worth naming as a defect in the decision log rather than in the RTL.** The
+stated trigger was "if TRACK PBLOCK routes the design, the fallback is not
+needed", and PBLOCK routed `ed1ffe2` cleanly. But **PBLOCK routed the
+subsystem-A-only shell.** The design that has to fit is A+B+C+D, which did not
+exist in routable form on 2026-08-29. A trigger discharged against a smaller
+design than the one it was protecting is the same shape as the guards-that-pass-
+for-the-wrong-reason class in CLAUDE.md.
+
+**MEASURED by TRACK TIMING, 2026-08-30**, from COMPOSE4's surviving placed
+checkpoint plus its own runs:
+
+- Placed CLB occupancy **54,866 of 54,960 = 99.83%**, congestion level 7.
+- **33,767 failing endpoints after placement**, not the 256 the post-synthesis
+  report shows. Of the 20,000 worst, **20,000 of 20,000 are net-dominated**:
+  mean net delay **4.575 ns** against mean logic delay **0.670 ns**.
+- Attribution control: **subsystem A alone fails 3,779 endpoints** while being
+  byte-for-byte the entity that closes 200 MHz on the card today. It cannot
+  have acquired a logic problem by being placed beside B, C and D.
+- WNS after `phys_opt_design` **-2.834 ns** (from -3.056).
+
+**The fit arithmetic, which is the real answer to N3:**
+
+```
+composed 346,971 + shell 40,326 + norm image 32,943 = 420,240 LUT
+raw LUT:  420,240 / 439,680 = 95.6%          <- looks survivable, and is not the constraint
+at the MEASURED 6.32 LUT/CLB -> 66,494 CLB of 54,960 = 121%
+at 7.0                        -> 60,034 CLB           = 109%
+at an unreachable 8.0         -> 52,530 CLB           =  96%
+```
+
+**The binding constraint is CLB packing density, not LUT count.** That is
+exactly why lever C is more valuable than its LUT saving suggests: CONGEST
+MEASURED the codebook at 86,992 primitives, 39.5% of `matvec_core`, and
+**97.7% / 98.8% of the whole design's MUXF7 / MUXF8**. MUXF7/F8 pin LUTs into
+specific CLB slots, so removing them attacks the 6.32 directly. **Do not
+justify lever C on its ~7.1x LUT win alone; the packing effect is the point and
+it has not been measured.**
+
+Standing condition carried forward from the original row and still binding:
+**if lever C is taken, its oracle work is dispatched ALONGSIDE, not after.**
+Its known risk is a 32x write-coherency surface. `K2b` remains a standing
+hazard in this same code and is not specific to lever C.
 | **Tandem PCIe, ALL OF IT: deferred until 9B inference works on the card.** Not just the Field Updates hierarchy question -- the whole subject, including MCAP and ICAP. Do NOT restructure the shell for it, and do NOT spend a slot on it. | Oren, 2026-08-29 (superseding his earlier 'decide after it routes') | The earlier deferral was already the right call on TANDEM's own evidence (`abbd2ed`): its stage-1 pblock excludes `SLICE_X216Y0:SLICE_X232Y239` at DRC severity **Error**, **50,135 placed cells sit inside it**, and there is nothing to the right of `SLICE_X232` so every one of them moves LEFT into the half that already fails to route. Oren has now widened it: a bitstream-reload path is worth nothing until there is a bitstream worth reloading. | **9B inference running on the card.** Not 'the design routes' -- routing is necessary and nowhere near sufficient. Until then the standing procedure is the warm JTAG configure into a live root port plus `echo 1 > /sys/bus/pci/rescan`, which WORKS and is documented in `docs/debugging/2026-08-28_fk33-first-light.md`. **Nobody should re-litigate the reload path before then.** Accepted costs, both real: retrofitting the three-partition hierarchy later is the expensive path, and the card still cannot configure itself at power-on. |
 | **Logits egress is the full writeback, NOT on-card top-k.** Not a judgement call in the end. | evidence, confirmed by dispatcher 2026-08-29 | EGRESS measured writeback at 124 us, **0.32% of the 38.27 ms budget** and 32x oversupplied vs the 300 MB/s A can produce logits at, on two already-reserved idle pseudo-channels. The fabric direction is INVERTED from the intuition: top-k's logic lands inside `matvec_core`, which is 72-81% of every level-6/7 congestion window, while the writeback lands at the die edge. Top-k also loses repetition/frequency penalties, `logit_bias` outside k, speculative verification, and the oracle at the seam that decides a token, and makes `top_p` an approximation whose error the host CANNOT DETECT. | If the writeback is ever measured to add materially to `matvec_core`'s congestion. Two unexplored options are recorded in `docs/debugging/2026-08-29_logits-egress.md`: top-k plus the exact normaliser, and C2H from the existing 43-BRAM36 result buffer. |
 | **Card 2's factory flash: DUMP IT, and this is NOT a Tandem question.** It was previously bundled into the Tandem trigger and should not have been. | dispatcher, 2026-08-29 | Card 1's SQRL factory image was **destroyed** by an agent crossing the hardware boundary. Card 2's copy is the ONLY surviving one and is card 1's restore path. That value is independent of Tandem, of routing, and of inference. `hw/fk33/flash.sh` already has a readback mode; it writes nothing, but note its own warning that **readback IS itself a JTAG configuration**, so the card stops running the factory image until a power cycle. Check VCCINT is above the 0.698 V floor first, and treat an all-0xFF or all-0x00 readback as a **failed read that looks like a backup**. | **DONE 2026-08-29, and this row did not say so.** `docs/debugging/2026-08-29_second-fk33-verify-and-flash-backup.md`: card 2 self-configured from its own SPI flash (`CFG_DONE 1`, every BOOT_STATUS error bit clear) and the flash was read out to `hw/fk33/bit/fk33_factory_backup_153300001366.{bin,mcs}`. **Teeth on the readback: it was read TWICE and the two reads are md5-identical (`dcb97432538b9c7d2855b1d9c93658f7`)**, which is the check that separates a real backup from an all-0xFF read that looks like one. Two findings came free: **the SQRL factory image does NOT raise VCCINT** (card 2 measured 0.677 V running it, never observable before because card 1's image was destroyed), and `jtag.sh` was resetting the WRONG CARD's FTDI regardless of `FK33_TARGET`, now fixed. **What is NOT done: the backup has no off-disk copy.** It is untracked in git and sits only on a root filesystem at 91%. That is backlog row N9 and it is trivial. |
