@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+rmsnorm_rs_mem,"N=4096 LANES=4",40,4825,4825,0,1629,0,12,6,0,252,0,0,0.971,248.2005460412013,53,15,4825,1629,40,6

@@ -125,11 +125,30 @@ comparison and the non-degeneracy gate, i.e. every *structural* check -- **five
 of those six survive.** That is this project's through-line measured again on a
 new unit: structure is not values.
 
-**What is NOT established: any area number.** No Vivado ran. Both lanes were
-held (TIMING on the workstation, TWOCARD on the BC-250) and the brief said to
-ask rather than start a third. Section 8 states the DERIVED prediction and what
-would falsify it, so the draws when they happen are a test rather than a
-measurement of an unstated expectation.
+**(e) THE AREA, MEASURED.** Three draws on the BC-250, one tool at a time, all
+in one session with the same flow, `xcvu33p-fsvh2104-2L-e`, 5.0 ns, OOC,
+`-flatten_hierarchy none`, then `opt_design`:
+
+| | `rmsnorm_rs` (control) | `rmsnorm_rs_mem` | delta |
+|---|---:|---:|---:|
+| CLB LUT | 40,934 | **4,825** | **-36,109, -88.2%** |
+| CLB FF | 67,196 | **1,629** | **-65,567, -97.6%** |
+| MUXF7 | 17,408 | **0** | **-17,408, -100%** |
+| MUXF8 | 8,704 | **0** | **-8,704, -100%** |
+| BRAM tile | 0 | 6 | +6 of 425.5 free |
+| DSP | 40 | 40 | 0 |
+| WNS at 5.0 ns | +1.675 | +0.971 | -0.704 ns |
+| Fmax | 300.8 MHz | 248.2 MHz | still meets 200 with 0.971 to spare |
+
+**Every prediction in section 8 was made before the draws ran, all six hit, and
+none of the three falsifiers fired.** The two identical-command draws are
+**byte-identical, censuses included**: `spread = 1.0000x`.
+
+**What is still NOT established: the COMPOSED saving.** This is the unit
+standalone, post-synthesis, out of context. It is not placed, not routed, and
+not composed, and TIMING's composed `u_rms` was drawn with a foldable
+`w_mant` so it is not the same experiment. The unit-level number is what was
+asked for and is what is claimed.
 
 ---
 
@@ -601,9 +620,72 @@ size. **This synthesis is deterministic for this design.**
   area conclusions tonight was measured on a different structure with a
   mechanism this one lacks, and it was measured here at 1.0000x.
 
-**STATUS OF THE CONTROL: running at the time of writing.**
+### THE CONTROL, AND THE SAVING
 
-**STATUS: QUEUED, NOT RUN.** The draws are fourth in the lane order set by the
+    ctl_rs  rmsnorm_rs,"N=4096 LANES=4",40,40934,40934,0,67196,0,0,0,0,252,17408,8704,1.675,300.7518796992481,175,25,...
+
+**40,934 CLB LUT**, and that is the number TRACK WRITEDEC's own commit message
+records for the shipped file (`169,746 -> 40,934`), reproduced here on a
+different machine. It sits 130 LUT above LUTDIET's `hotw` control at 40,804,
+which is expected: `hotw` was a mechanical transform of the PRE-WRITEDEC file
+and the shipped fix is not character-identical to it.
+
+**The saving, control against the worst mem draw, same session, same flow:**
+
+| | control | mem (worst of 2) | delta |
+|---|---:|---:|---:|
+| CLB LUT | 40,934 | 4,825 | **-36,109, -88.2%** |
+| CLB FF | 67,196 | 1,629 | **-65,567, -97.6%** |
+| MUXF7 | 17,408 | 0 | **-17,408** |
+| MUXF8 | 8,704 | 0 | **-8,704** |
+| BRAM tile | 0 | 6 | +6 |
+| DSP | 40 | 40 | 0 |
+
+**AND THE CONTROL'S OWN CENSUS SETTLES THE ATTRIBUTION ON THE SHIPPED FILE**,
+rather than on LUTDIET's transform of a superseded one. `census_ctl_rs.txt`,
+verbatim:
+
+    root                                     LUT   MUXF7   MUXF8       FF  CARRY8
+    ARG                                    17916    8704    4352        0      11
+    sq                                     17474    8704    4352        0       0
+    gow.o                                   2356       0       0        0       0
+    max_raw                                 1047       0       0       63      56
+    # LUT primitives accounted: 41731 of 41731
+
+`ARG` (the x and w reads in `S_RAW`/`S_EMIT`) plus `sq` (the x read in
+`S_ACC`) are **35,390 LUT, 8,704+8,704 = 17,408 MUXF7 and 4,352+4,352 = 8,704
+MUXF8**. DERIVED: that is **86.5% of the shipped unit's 40,934 LUT and 100.0%
+of its MUXF7 and MUXF8**. The prediction in section 8 was built on LUTDIET's
+census of a mechanically transformed pre-WRITEDEC file; this is the same
+attribution measured directly on the file that ships, and the two agree to the
+LUT (`ARG` 17,916 and `sq` 17,474 in both).
+
+**The saving of 36,109 LUT is slightly LARGER than the 35,390 of read mux**,
+because the memory form also removes TRACK WRITEDEC's `gow.o` write decode
+(2,356 LUT here) and pays some of it back as bank and select logic.
+
+**Timing is a margin cost, not a miss.** +1.675 ns to +0.971 ns at 5.0 ns: it
+gives up **0.704 ns** and still meets 200 MHz with 0.971 to spare.
+**Post-synthesis OOC timing is not post-route timing and neither number is a
+verdict.**
+
+**DERIVED, and the assumption is named because it is TIMING's parameter and not
+mine.** Using TIMING's CENSUS-derived CLB model `CLB = F7/4 + (LUT - 2*F7)/D`
+at their measured `D = 6.32`, the composed `u_rms` occupies
+`17,696/4 + (43,213 - 35,392)/6.32 = 5,662 CLB`, and a mux-free unit at 4,825
+LUT with zero F7 occupies `4,825/6.32 = 763 CLB`. **DERIVED saving about 4,899
+CLB.** This is arithmetic on someone else's density figure applied to a
+composed draw taken under a different gain configuration; **it is not a
+measurement and it is not a substitute for re-drawing the composition.** It is
+stated only because the fit table is denominated in CLB and the unit-level
+measurement is denominated in LUT.
+
+**Machine note, worth recording because it governs dispatch.** Peak summed RSS
+over the descendant tree: `mem_d1` 3.46 GB, `mem_d2` 3.53 GB, `ctl_rs`
+**10.58 GB**. That last independently confirms CLAUDE.md's **10.85 GB for one
+Vivado on the BC-250's 14 GB** to within 2.5%, on a different design. **A
+second tool on that box would not have fitted**, which is the rule rather than
+a close call. The draws are fourth in the lane order set by the
 coordinator on 2026-08-30 (TIMING's pblock squeeze on the workstation, then
 LEVERC's inference question, then NORMURAM's six points, then these) and are to
 be taken on the **BC-250**, whose results are bit-identical to the workstation's
@@ -668,9 +750,12 @@ instantiates `rmsnorm_rs_mem` is exposed, and today none does.
 
 ## 11. Open, not yet answered
 
-1. **No area number exists.** Section 8 is a prediction. Two draws at N=4096
-   LANES=4, reported as a range, are the outstanding work, and they need a
-   Vivado lane.
+1. **CLOSED.** The draws landed 2026-08-30 on the BC-250: 4,825 CLB LUT against
+   a same-session control of 40,934, MUXF7 and MUXF8 to zero, spread 1.0000x
+   across two identical-command draws. **What remains open is the COMPOSED
+   number**, which is not this and is not derivable from it: nothing here is
+   placed, routed or composed, and the composed baseline was drawn with a
+   foldable `w_mant`.
 2. **THE HOOKUP IS NOT MADE HERE. ARBITRATED 2026-08-30: TRACK NORMURAM OWNS
    IT** and wires this unit in following section 12's port map verbatim, since
    `gvr` is its file. This track stopped at the file boundary and reported,
@@ -902,3 +987,7 @@ Owned and created by this track, and nothing else was edited:
     sim/tb_rmsnorm_rs_mem.vhd         the oracle (a new gate row)
     sim/mutate_rmsnorm_rs_mem.sh      the teeth, with the attribution control
     docs/debugging/2026-08-30_rmsmux-flat-vector-read-muxes.md   this file
+    sim/ooc_rmsmux_run.sh             the area runner, two draws plus a control
+    hw/fk33/results/rmsmux_2026-08-30/  the artefacts, 56 KB: three result CSVs,
+                                      three censuses, three peak-RSS files,
+                                      PINNED_SHA.  No checkpoints, no netlists.
