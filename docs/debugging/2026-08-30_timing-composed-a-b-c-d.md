@@ -597,6 +597,15 @@ subsystem A's mux population in the composition as well, and subsystem A is
 
 ### ESTIMATE: the post-lever-C packing density
 
+> **WITHDRAWN 2026-08-30 -- SEE SECTION 16 (CORRECTION C4). The model below has
+> its premise INVERTED.** MUXF7/F8 are dedicated hardware that does not consume
+> LUT capacity, so a mux-paired region sits at **8.00 LUT/CLB, the device
+> maximum** -- mux shapes are the DENSEST part of this design, not the loosest,
+> and removing them LOWERS the average density. `k = 0.558`, the 6.82 LUT/CLB
+> and every percentage derived from them are withdrawn. Kept in place, not
+> deleted, because they were relayed and acted on. The corrected decomposed
+> model and the corrected table are in section 16.
+
 **ASSUMPTION, stated because the number is only as good as it:** packing loss
 is proportional to the fraction of LUTs locked into MUXF7/F8 shapes, with the
 constant `k` = 0.558 calibrated on the ONE measured point above. This is a
@@ -622,7 +631,15 @@ does to the fit:
 | **+ lever C** | 382,364 .. 427,832 | 110% .. 123% | **102% .. 114%** |
 | **+ lever C + norm image out of LUTs** | **349,421** | 100.6% | **93.2%** |
 
+> **THE 6.82 COLUMN AND THE 93.2% ARE WITHDRAWN -- SEE SECTION 16.** The
+> corrected figures are 115.9%..130.6% for lever C and **105.2%** for lever C
+> plus the gain out of LUTs, which DOES NOT FIT. The row that fits requires a
+> THIRD lever and is 94.6%. The 6.32 column is closer to right than the 6.82
+> column, because density FALLS with lever C rather than rising.
+
 **LEVER C ALONE DOES NOT CLOSE IT, and with the range it is not even close.**
+(This conclusion is unchanged by C4; the corrected arithmetic makes it
+stronger, 115.9%..130.6% rather than 102%..114%.)
 At the estimated post-lever-C density it spans **102% to 114%** of the device's
 CLBs. The best draw of the norm image is the only number that makes lever C
 look nearly sufficient, and that draw is the one TRACK SCATTER forbids quoting.
@@ -640,6 +657,31 @@ thinner than its measurement scatter is worth more than the LUTs.
 `NORM_W_IMAGE` is 4096 x 65 x 16 = 4,259,840 bits = **14.4 URAM288 of the 320
 that are free** (DERIVED), it is a ROM of constants, it is on no failing path,
 and its only obligation is to serve the same values.
+
+### There are THREE ways to serve the norm gain, and only one of them is the ROM
+
+Found while checking C2's arithmetic against TRACK SCATTER's own table, which
+carries a row nobody has costed into a fit claim:
+
+| how the gain is served | LUT over the 49,654 empty-image baseline | evidence |
+|---|---|---|
+| **as a ROM in the LUT fabric** (today) | **+32,943 .. +78,411** | 6 draws, **NOT SAFE, no single number may be quoted** |
+| **from HBM** (TRACK NWFIX probe, 67,059) | **+17,405** | **n=2, SAFE, bit-identical on all eleven columns** |
+| **from URAM** (proposed, section 8) | ~0 LUT + 14.4 of 320 URAM288 | **unmeasured** |
+
+**The HBM path is already measured, is already reproducible, and is already
+cheaper than the BEST draw of the ROM by 15,538 LUT.** It is not the best
+option -- URAM should beat it outright -- but it is the one with evidence
+behind it today, and it is the fallback if URAM inference cannot be made to
+work:
+
+    lever C + gain from HBM     366,826 LUT   ->   97.9% at 6.82   (105.6% at 6.32)
+    lever C + gain from URAM    349,421 LUT   ->   93.2% at 6.82   (100.6% at 6.32)
+
+Both are values rather than ranges, which is the property that matters here.
+**Whichever is chosen, the ROM-in-LUTs path should not be what a fit claim is
+built on**, because it is the only one of the three that cannot be quoted at
+all under SCATTER's rule.
 
 ---
 
@@ -909,7 +951,7 @@ biggest line items are all things built out of LUTs that are not logic:
 |---|---:|---|---|
 | **C**: IQ4_NL codebook to LUTRAM | ~38,000 + packing | 86,992 primitives of runtime-loadable codebook, 97.7%/98.8% of A's muxes | pre-authorised; 32x write-coherency surface; oracle dispatched alongside |
 | **norm gain image to URAM/BRAM** | **32,943 .. 78,411** | a 4.26 Mb ROM of constants, 14.4 of 320 free URAM288 | **easiest of the three**; no timing subtlety, on no failing path; **and it is the only lever that removes a RANGE rather than a value** |
-| **`rmsnorm_rs` flat vectors to memory** | ~43,213 | 1024:1 muxes over 65,536-bit ports; 131,072 FF of vector in flops | **hardest**; interface redesign, NOT latency-neutral, bit-exactness obligation |
+| **`rmsnorm_rs` flat vectors to memory** | ~43,213 **+ 17,696 MUXF7** | 1024:1 muxes over 65,536-bit ports; 131,072 FF of vector in flops | **hardest**; interface redesign, NOT latency-neutral, bit-exactness obligation. **PROMOTED TO FIRST by C4: it alone beats lever C alone, 102.2% against 115.9%, and it has no write-coherency surface and has never been on silicon** |
 
 Lever C plus the norm image is **~93%** (ESTIMATE), and that row is the only
 one in the table that is a value rather than a range. Adding the third gives
@@ -1091,3 +1133,106 @@ divisor, and the divisor is only one of three terms; C2's norm-image range and
 C3's floor-ness are untouched by it. Conversely a confirming result does not
 prove 6.32 is a hard floor either -- it shows the placer could not do better
 under **one** pressure setting, with **one** pblock shape, on **one** draw.
+
+
+---
+
+## 16. CORRECTION C4, 2026-08-30: my packing model had its SIGN inverted
+
+**TRACK LEVERC challenged the direction of the packing argument, not its size,
+and LEVERC IS RIGHT. My `k = 0.558`, my 6.82 LUT/CLB and my 93.2% row are
+WITHDRAWN.** They were built on an inverted premise. The conclusion they
+supported -- lever C alone does not close the fit -- survives, and is now
+supported by arithmetic that runs the other way.
+
+### The error
+
+Section 7a assumed that MUXF7/F8 shapes CAUSE packing loss, and calibrated a
+one-parameter model on that assumption. The premise is false.
+
+**An UltraScale+ SLICE has 8 LUT6, 4 MUXF7, 2 MUXF8 and 1 MUXF9, and the
+F7/F8/F9 muxes are DEDICATED hardware that does not consume LUT capacity.** So
+a slice fully populated with F7-paired LUTs holds 8 LUTs and 4 F7 muxes and
+sits at **8.00 LUT/CLB, the device maximum**. An indivisible mux shape costs
+the placer FREEDOM, not LUT SITES.
+
+**The codebook mux is the DENSEST structure in the design, not the loosest.
+Removing it LOWERS the average density.**
+
+### Adjudicated from my own census, which is why this is settled rather than argued
+
+Decomposing the MEASURED placed design:
+
+    MUXF7 65,108, so LUTs in F7 pairs   = 2 x 65,108        = 130,216
+    at the architectural 4 MUXF7/CLB    = 65,108 / 4        =  16,277 CLB
+    MUX REGION density                  = 130,216 / 16,277  =    8.00 LUT/CLB
+    remainder                           = 216,755 LUT in 38,589 CLB
+    NON-MUX density                                         =    5.62 LUT/CLB
+    blended                                                 =    6.32  (MEASURED 6.32)
+
+**The mux region is at the device maximum and the non-mux logic is what packs
+at 5.62.** The 6.32 average is a blend of the two, and lever C removes from the
+dense side.
+
+Cross-check on the shipping routed build (171,458 LUT in 30,705 CLB, blended
+5.58): implied non-mux density **4.96**. So the non-mux constant is
+**4.96 .. 5.62** across the two builds visible to me, and both columns are
+reported below.
+
+### The corrected model, and it reproduces the calibration point
+
+    CLB(LUT, F7) = F7/4 + (LUT - 2*F7) / D_nonmux,     D_nonmux = 5.62 (4.96 pessimistic)
+
+Applied to the composed design it returns **54,846 CLB against the MEASURED
+54,866** -- 0.04% error. That is one calibrated constant, not a fitted curve.
+
+### The corrected fit table. THE 93.2% ROW WAS WRONG.
+
+| configuration | LUT | CLB | of 54,960 | pessimistic | density |
+|---|---:|---:|---:|---:|---:|
+| today + shell + gain ROM (best draw) | 420,240 | 67,821 | **123.4%** | 135.8% | 6.20 |
+| today + shell + gain ROM (worst draw) | 465,708 | 75,912 | **138.1%** | 152.5% | 6.13 |
+| + lever C + gain ROM (best draw) | 382,364 | 63,684 | **115.9%** | 128.8% | 6.00 |
+| + lever C + gain ROM (worst draw) | 427,832 | 71,774 | **130.6%** | 145.5% | 5.96 |
+| **+ lever C + gain to URAM** | 349,421 | 57,822 | **105.2%** | 116.7% | 6.04 |
+| + lever C + gain from HBM | 366,826 | 60,919 | 110.8% | 123.1% | 6.02 |
+| **+ lever C + gain URAM + `d_norm` muxes out** | 306,208 | 52,006 | **94.6%** | 105.8% | 5.89 |
+| + `d_norm` muxes out + gain URAM, NO lever C | 344,084 | 56,144 | **102.2%** | 112.8% | 6.13 |
+
+**What moves, and it is not small:**
+
+* **"Lever C + gain to URAM" is 105.2%, not 93.2%. IT DOES NOT FIT.** This is
+  the number that was relayed to Oren and it was wrong by 12 points.
+* **Density FALLS with lever C, 6.32 to 6.10**, exactly as LEVERC predicted.
+  Lever C's CLB saving is **4,138**, inside LEVERC's independently derived
+  3,072..8,946 bound.
+* **TWO levers are no longer enough. Three are.** Lever C plus the gain out of
+  LUTs plus `d_norm`'s read muxes reaches **94.6%**, and that is the first row
+  that fits.
+* **LEVERC's flag about `d_norm` is confirmed and is stronger than it stated:
+  `d_norm/gvr.u_rms` alone beats lever C alone.** 102.2% against 115.9% on the
+  best ROM draw. It is 43,213 LUT and 17,696 MUXF7, it has **no
+  write-coherency surface**, and it has **never been on silicon**, so it
+  carries none of lever C's 32x risk.
+
+### What does NOT change
+
+The verdict of section 12a is unchanged and was already "yes, but not with one
+change". The correction moves it from *two levers* to *three*, and reorders
+them: **`d_norm` is now the first lever, not the third.** The fit claim, the
+range discipline of C2, the floor-ness of C3, and everything in sections 1
+through 6 -- the `vref_r` characterisation, the fix, and its verification --
+are untouched by this.
+
+### What I got wrong and why it survived review
+
+The 97.7%/98.8% figures were applied correctly (to `a_eng`'s own census, giving
+24,297 MUXF7 against LEVERC's structural 24,576 = 1536 x 16, agreeing to 1.1%),
+so the INPUT to the model was sound. **The model itself was never checked
+against anything.** It reproduced one point because it was calibrated on that
+point, which is not evidence, and I labelled it ESTIMATE with its assumption
+stated but did not ask what would falsify it. **A one-parameter model
+calibrated on one point cannot be wrong about that point and cannot be right
+about any other**, and that is exactly the shape of thing this project's
+verification discipline says to distrust. It took a track with no census and a
+correct architectural argument to catch it.
