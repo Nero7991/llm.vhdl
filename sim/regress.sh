@@ -400,26 +400,77 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=93   # RESET FROM 101, 2026-08-29, TRACK GATEHYGIENE.  THIS IS THE
-                   #    FIRST VALUE ON THIS LINE THAT WAS MEASURED ON A TREE
-                   #    SOMEBODY ELSE CAN PRODUCE, and that is the whole change.
+BASELINE_PASS=98   # RAISED FROM 93, 2026-08-29, TRACK FLOOR.  Measured the same
+                   #    way GATEHYGIENE measured 93, on a CLEAN `git archive`, so
+                   #    the two numbers are comparable and the difference is
+                   #    entirely rows that landed in between.
                    #
                    #    HOW TO REPRODUCE IT, exactly, and please do rather than
                    #    trusting the number:
                    #
-                   #      git archive <sha> | tar -x -C /tmp/t
+                   #      SHA=$(git rev-parse HEAD)        # as its OWN step
+                   #      git archive $SHA | tar -x -C /tmp/t
                    #      MV4I_FK33_FILE=/nonexistent \
                    #        REGRESS_SCRATCH=/tmp/s bash /tmp/t/sim/regress.sh --jobs 2
                    #
-                   #    MEASURED on `git archive 9ad4c14` plus this track's
-                   #    patch, GHDL 1.0.0 mcode, --jobs 2, 2026-08-29:
-                   #      suite sim  PASS 67  FAIL 0  NOCHECK 3
+                   #    MEASURED on `git archive b6c5004`, GHDL 1.0.0 mcode,
+                   #    --jobs 2, 2026-08-29 22:05-22:2x:
+                   #      suite sim  PASS 72  FAIL 0  NOCHECK 3
                    #      suite tb   PASS 26  FAIL 0  NOCHECK 1
-                   #      OVERALL    PASS 93  FAIL 0  NOVERDICT 0  TIMEOUT 0
-                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 8
-                   #    DERIVED and consistent: 97 rows planned, 4 NOCHECK, so
-                   #    93 is the CEILING and not merely the score -- nothing
-                   #    was red.
+                   #      OVERALL    PASS 98  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 10
+                   #    DERIVED and consistent: 102 rows selected, 4 NOCHECK, so
+                   #    98 is the CEILING and not merely the score -- nothing
+                   #    was red.  The gate PRINTED the raise suggestion rather
+                   #    than the refusal, which is itself the evidence that its
+                   #    NOT IN GIT list was empty on this tree.
+                   #
+                   #    WHAT THE +5 IS, itemised, because "the floor went up"
+                   #    is not a reviewable claim.  All five are tracked files
+                   #    and all five PASSED on the clean archive:
+                   #      sim:graygate        TRACK GRAY1   async_fifo gray teeth
+                   #      sim:runguard        TRACK NOGUARD gen_pcieep run guards
+                   #      sim:ipsync          TRACK NOGUARD ip_repo/*/src vs rtl/
+                   #      sim:descrule        TRACK NOGUARD gen_mv4i_desc 2-rule
+                   #      sim:tb_attn_kv_map  TRACK CKVMAP  new bench, `6c9aa09`
+                   #
+                   #    THE FIFTH ONE IS THE POINT.  Every account of tonight's
+                   #    work, including the brief this track was given, said
+                   #    FOUR new rows.  93+4 = 97, and the measurement said 98.
+                   #    `sim/tb_attn_kv_map.vhd` is a committed 1076-line bench
+                   #    that no floor accounting mentioned, and it was found only
+                   #    because the predicted number disagreed with the measured
+                   #    one by exactly one.  Had the prediction been used instead
+                   #    of the measurement, the floor would have been set one
+                   #    below the ceiling and the miss would have been invisible.
+                   #    A new sim/tb_*.vhd becomes a gate row whether its author
+                   #    intended it or not; that is what makes this arithmetic
+                   #    worth redoing rather than reasoning through.
+                   #
+                   #    TWO OPTIONAL ROWS DELIBERATELY EXCLUDED.  TRACK ACOV
+                   #    added sim:tb_matvec_fk33_desc_dual and
+                   #    ...desc_xexp, but tb_prereq classes all four
+                   #    sim:tb_matvec_fk33* rows OPTIONAL: they need a .mv4i from
+                   #    the GGUF model set, which a clone does not have.  With
+                   #    MV4I_FK33_FILE=/nonexistent they SKIP, which is why
+                   #    SKIPPED went 8 -> 10 while the floor went 93 -> 98.  They
+                   #    must never raise this number.
+                   #
+                   #    MEASURED UNDER LOAD, and stated because it is a caveat
+                   #    on the number rather than a footnote.  This run shared
+                   #    the box with a VU33P synthesis and two other full
+                   #    regressions; load average was 6.4 to 10.1 throughout.
+                   #    That is SAFE FOR A FLOOR IN ONE DIRECTION ONLY, and the
+                   #    asymmetry is the whole argument: contention can starve a
+                   #    row into TIMEOUT, but it cannot make a failing row pass.
+                   #    So a contended clean run is a valid LOWER BOUND on the
+                   #    ceiling, and a floor set from a lower bound is
+                   #    conservative, never unreachable -- the exact failure 101
+                   #    had.  Here TIMEOUT was 0 and FAIL was 0, so the bound is
+                   #    tight and 98 is the true ceiling, not merely a floor.
+                   #    Note also the false-failure mode the house rules warn
+                   #    about (analysis failures from another track's dirty
+                   #    file) CANNOT occur in a `git archive` tree: it is frozen.
                    #
                    #    WHY 101 WAS WRONG, and it is worth reading because the
                    #    mistake was invisible and both tracks acted correctly on
