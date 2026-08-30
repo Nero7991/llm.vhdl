@@ -22,7 +22,7 @@
 #define FK33_ID_MAGIC_OFF   (FK33_ID_BASE + 0x0u)
 #define FK33_ID_BUILD_OFF   (FK33_ID_BASE + 0x8u)
 #define FK33_ID_MAGIC       0x464B3333u   /* "FK33" in ASCII */
-#define FK33_ID_BUILD       0x20260827u   /* yyyymmdd */
+#define FK33_ID_BUILD       0x20260828u   /* yyyymmdd */
 
 /* Read/write scratch BRAM.  The only thing in the design that proves MMIO
  * WRITES land without driving a real board pin. */
@@ -98,6 +98,118 @@
 #define FK33_THERM_HBM_WARN    75
 #define FK33_THERM_HBM_HALT    85
 #define FK33_THERM_HBM_RESUME  70
+
+/* ---- Subsystem A: the matvec engine, rtl/matvec_int4_desc_axi.vhd --- */
+/* Word-addressed, reg = addr[7:2].  CONSTANT AT EVERY GEOMETRY: that is
+ * the whole point of the descriptor-in-memory decision.  Everything that
+ * grows with ROWS_IF/NPORTS_W/AXI_DW lives in the descriptor, in memory.
+ *
+ * DISCOVERY, NOT ASSUMPTION.  ID, ADDR_CAP, CAPS and DESC_WORDS are how a
+ * host learns which build it is talking to.  A driver that assumes the
+ * FK33_ENG_* geometry below instead of reading them is a driver that will
+ * program a stale descriptor into a re-synthesised card and be told
+ * nothing. */
+#define FK33_ENG_CTL_BASE   0x00012000u
+#define FK33_ENG_DESC_PTR_LO  (FK33_ENG_CTL_BASE + 0x00u)  /* RW */
+#define FK33_ENG_DESC_PTR_HI  (FK33_ENG_CTL_BASE + 0x04u)  /* RW */
+#define FK33_ENG_CTRL         (FK33_ENG_CTL_BASE + 0x08u)  /* W  */
+#define FK33_ENG_STATUS       (FK33_ENG_CTL_BASE + 0x0Cu)  /* R  */
+#define FK33_ENG_ERR_INFO     (FK33_ENG_CTL_BASE + 0x10u)  /* R  */
+#define FK33_ENG_ID           (FK33_ENG_CTL_BASE + 0x14u)  /* R  */
+#define FK33_ENG_ADDR_CAP     (FK33_ENG_CTL_BASE + 0x18u)  /* R  */
+#define FK33_ENG_CAPS         (FK33_ENG_CTL_BASE + 0x1Cu)  /* R  */
+#define FK33_ENG_DESC_WORDS   (FK33_ENG_CTL_BASE + 0x20u)  /* R  */
+#define FK33_ENG_Y_IDX        (FK33_ENG_CTL_BASE + 0x24u)  /* W  */
+#define FK33_ENG_Y_LO         (FK33_ENG_CTL_BASE + 0x28u)  /* R  */
+#define FK33_ENG_Y_HI         (FK33_ENG_CTL_BASE + 0x2Cu)  /* R  */
+#define FK33_ENG_Y_EXP        (FK33_ENG_CTL_BASE + 0x30u)  /* R  */
+#define FK33_ENG_CYCLES       (FK33_ENG_CTL_BASE + 0x34u)  /* R  */
+#define FK33_ENG_BEATS        (FK33_ENG_CTL_BASE + 0x38u)  /* R  */
+#define FK33_ENG_STARVED      (FK33_ENG_CTL_BASE + 0x3Cu)  /* R  */
+
+#define FK33_ENG_ID_MAGIC   0x4D563449u   /* "MV4I" */
+#define FK33_ENG_GO         0x1u          /* CTRL bit 0, self-clearing */
+
+/* STATUS.  `done` is latched and cleared by the next GO; `err` is sticky
+ * until reset, and a rejected descriptor sets err WITHOUT setting done.
+ * So poll for (done | err): a host polling for done alone hangs, which is
+ * deliberate -- it is what stops a driver reading stale results. */
+#define FK33_ENG_ST_DONE     (1u << 0)
+#define FK33_ENG_ST_BUSY     (1u << 1)
+#define FK33_ENG_ST_ERR      (1u << 2)
+#define FK33_ENG_ST_SAT      (1u << 3)   /* sticky saturation event */
+#define FK33_ENG_ST_ERR_ADDR (1u << 4)   /* sticky; latched at WRITE time */
+#define FK33_ENG_ST_CODE(v)  (((v) >> 8) & 0xFu)
+
+/* ERR_INFO carries the failing descriptor WORD index, or this sentinel
+ * for the pointer itself. */
+#define FK33_ENG_EI_PTR     0xFFFFu
+
+/* Error codes, from rtl/matvec_int4_desc_pkg.vhd.  0x1, 0x2 and 0x5..0x8
+ * are subsystem D's and are deliberately absent here. */
+#define FK33_ENG_EC_NONE   0x0u
+#define FK33_ENG_EC_DESC   0x3u
+#define FK33_ENG_EC_WDOG   0x4u
+#define FK33_ENG_EC_GEOM   0x9u
+#define FK33_ENG_EC_MAGIC  0xAu
+#define FK33_ENG_EC_VER    0xBu
+#define FK33_ENG_EC_ALIGN  0xCu
+#define FK33_ENG_EC_ADDR   0xDu
+#define FK33_ENG_EC_CORE   0xEu
+#define FK33_ENG_EC_SHAPE  0xFu
+
+/* CAPS packs the four geometry constants the build was synthesised with. */
+#define FK33_ENG_CAPS_NPORTS_W(v) (((v) >>  0) & 0xFFu)
+#define FK33_ENG_CAPS_NPORTS_S(v) (((v) >>  8) & 0xFFu)
+#define FK33_ENG_CAPS_ROWS_IF(v)  (((v) >> 16) & 0xFFu)
+#define FK33_ENG_CAPS_AXI_B(v)    (((v) >> 24) & 0xFFu)  /* AXI_DW/8 */
+
+/* What THIS bitstream was built with (hw/fk33/gen_fk33_engine.py).  Use
+ * these to CHECK what CAPS/ADDR_CAP/DESC_WORDS report, never in place of
+ * reading them. */
+#define FK33_ENG_ROWS_IF     48
+#define FK33_ENG_BLK         32
+#define FK33_ENG_NPORTS_W    24
+#define FK33_ENG_NPORTS_S    3
+#define FK33_ENG_AXI_DW      256
+#define FK33_ENG_ADDR_W      40
+#define FK33_ENG_MAXCOLS     17408
+#define FK33_ENG_MAXROWS_BFP 17408
+#define FK33_ENG_MAXB        16
+#define FK33_ENG_DESC_MAXB   16
+/* DESC_PTR must be aligned to DESC_MAXB*AXI_DW/8.  Alignment replaces a
+ * 4 KB burst splitter in rtl/axi_rd_port.vhd; ERR_ALIGN otherwise. */
+#define FK33_ENG_DESC_ALIGN  512
+/* DESC_WORDS = 8 header + nsub_w + nsub_s + 4 extension, 64-bit words. */
+#define FK33_ENG_DESC_WORDS_EXPECT 39
+#define FK33_ENG_HBM_ADDR_W  33   /* the SAXI port; 40->33 is TRUNCATED */
+
+/* ---- The activation writer, rtl/fk33_engine.vhd --------------------- */
+/* matvec_int4_desc_axi has no X_IDX/X_DATA of its own: activations arrive
+ * on x_we/x_waddr/x_wdata from the previous stage.  In THIS bitstream
+ * there is no previous stage, so without this port the only thing the
+ * card could compute is a matvec against an all-zero x -- which is not
+ * arithmetic anyone can check.  Writing X_DATA drives one element at
+ * X_ADDR and post-increments X_ADDR, so a vector is one burst of writes
+ * to a single address. */
+#define FK33_ENGX_BASE      0x00013000u
+#define FK33_ENGX_X_ADDR     (FK33_ENGX_BASE + 0x00u)  /* RW */
+#define FK33_ENGX_X_DATA     (FK33_ENGX_BASE + 0x04u)  /* W  */
+#define FK33_ENGX_STAT       (FK33_ENGX_BASE + 0x08u)  /* R  */
+#define FK33_ENGX_ID         (FK33_ENGX_BASE + 0x0Cu)  /* R  */
+#define FK33_ENGX_ID_MAGIC  0x454E4731u   /* "ENG1" */
+
+/* ENGX_STAT.  GO_BLOCKED is the one that matters on this card: the
+ * thermal guard masks CTRL bit 0 while compute_halt is high, and open
+ * issue THERM-255 has that guard tripping roughly once every three
+ * minutes for reasons that are not heat.  A GO swallowed by the halt
+ * presents as a job that never starts, so clear this bit before GO and
+ * read it after: a set bit says the command was refused, not that the
+ * engine is slow. */
+#define FK33_ENGX_ST_HALT       (1u << 0)   /* live compute_halt */
+#define FK33_ENGX_ST_GO_BLOCKED (1u << 1)   /* sticky; write 1 to clear */
+#define FK33_ENGX_ST_JOB_DONE   (1u << 2)
+#define FK33_ENGX_ST_JOB_ERR    (1u << 3)
 
 /* ---- PCIe identity ------------------------------------------------------ */
 /* Already carried by dma_ip_drivers, so new_id should not be needed. */
