@@ -1071,6 +1071,24 @@ unset _sg
 # gate runs.  See docs/debugging/2026-08-29_gray1-identity-gray-code.md.
 printf 'graygate\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# THE RUN-GUARD ROW (added 2026-08-29, TRACK NOGUARD, defect BUILD-HANG).
+# ---------------------------------------------------------------------------
+# MEASURED 2026-08-29: an FK33 shell build sat blocked on `wait_on_run synth_1`
+# for 27.6 HOURS with 7 minutes of CPU across the whole period.  `launch_runs`
+# printed `Time (s): cpu = 00:00:17` and REPORTED SUCCESS; synth_1 never
+# started, and there was no synth_1 directory in fk33_pcieep.runs/ at all.  The
+# symptom is indistinguishable from a legitimately long place-and-route, which
+# is why it survived a day and a half before anyone read /proc.
+#
+# hw/fk33/gen_pcieep.py now emits a bounded wait plus a post-launch_runs
+# assertion that the run directory exists.  This row runs that guard's teeth
+# under tclsh with Vivado's get_runs/get_property stubbed, so the guard is
+# exercised WITHOUT a synthesis and without Vivado -- about a second.  It also
+# runs the guard MUTED as an attribution control, and fails if the guard earns
+# no kill of its own.  See docs/debugging/2026-08-29_noguard-three-guards.md.
+printf 'runguard\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -1682,6 +1700,54 @@ run_graygate() {   # run_graygate <suite:name>
       > "$SCRATCH/res.${suite}_${tb}"
 }
 
+# run_selfcheck -- rows that are a SCRIPT, not a testbench (2026-08-29, TRACK
+# NOGUARD).  Same shape and the same justification as run_seam and
+# run_graygate: run_one's contract is `ghdl -a` over a file list then `ghdl -r`
+# on a top entity, and these rows have no design unit at all.  What they guard
+# is not RTL:
+#
+#   sim:runguard   hw/fk33/gen_pcieep.py's run guards, which convert a
+#                  launch_runs that reports success while doing nothing from a
+#                  27.6-hour hang into a build that stops and says why.
+#
+# The command is looked up by row name in SELFCHECK_CMD below, so adding a row
+# is one line there and one printf into $PLAN.  Verdicts:
+#
+#   0        PASS
+#   124/137  TIMEOUT
+#   anything else FAIL, with the script's own last line as the detail.
+#
+# There is deliberately no VOID verdict here: each of these scripts prints its
+# own VOID line and exits non-zero, so a check that could not run lands as a
+# RED row with the word VOID in its detail rather than as a silent pass.  That
+# is the trap this whole track exists to remove -- a mutant scored CAUGHT
+# because a tool could not open a file.
+declare -A SELFCHECK_CMD=(
+  [runguard]="python3 $REPO/hw/fk33/gen_pcieep.py --selftest"
+)
+
+run_selfcheck() {   # run_selfcheck <suite:name>
+  local key="$1"
+  local tb="${key#*:}" suite="${key%%:*}"
+  local dir="$SCRATCH/${suite}_${tb}" log="$SCRATCH/${suite}_${tb}/log"
+  local t0; t0=$(date +%s)
+  mkdir -p "$dir"
+  ( cd "$REPO" && timeout -k 5 "$TIMEOUT" ${SELFCHECK_CMD[$tb]} ; \
+    echo "SELFCHECK_EXIT=$?" ) > "$log" 2>&1
+  local rc; rc=$(grep -oE '^SELFCHECK_EXIT=[0-9]+' "$log" | tail -1 | cut -d= -f2)
+  [ -n "${rc:-}" ] || rc=1
+  local rv rd
+  rd="$(grep -v '^SELFCHECK_EXIT=' "$log" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-150)"
+  case "$rc" in
+    0)       rv=PASS ;;
+    124|137) rv=TIMEOUT; rd="no result within ${TIMEOUT}s" ;;
+    *)       rv=FAIL ;;
+  esac
+  [ -n "$rd" ] || rd="${SELFCHECK_CMD[$tb]} exited $rc without output; log: $log"
+  printf '%s\t%s\t%s\t%s\n' "$key" "$rv" "$(( $(date +%s) - t0 ))" "$rd" \
+      > "$SCRATCH/res.${suite}_${tb}"
+}
+
 run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   local key="$1" top="$2" vecs="$3"; shift 3
   # The seam rows are dispatched HERE, on the name, so that the driver loop
@@ -1689,6 +1755,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
+    runguard)   run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
