@@ -630,6 +630,14 @@ entity llama_top is
     -- a 4 KB-aligned base and pads sub-regions to whole bursts.
     A_JOB_STRIDE : natural := 16#8000#;
     A_MEM_BASE   : natural := 16#100000#;
+    -- Bytes of that block given to ONE weight port.  It was a bare `4096`
+    -- written into the address arithmetic below and duplicated as a local
+    -- constant in `sim/tb_llama_top.vhd:790`, where it is the divisor that
+    -- turns an address back into a sub-region index.  It is a generic now for
+    -- one reason: the CAPACITY of a sub-region is what bounds a job, and a
+    -- bound that is a literal buried in an expression is a bound nothing can
+    -- check.  See A_SUB_BEATS below.
+    A_SUB_BYTES  : natural := 4096;
 
     -- SUBSYSTEM B's LANE COUNTS.  These are the exact set `sim/tb_gdn_block.vhd`
     -- defaults to and `sim/run_gdn_block.sh` runs, which matters: the minimum
@@ -880,6 +888,15 @@ architecture rtl of llama_top is
   -- latter overflows a 32-bit integer at VN_W = 31 and would then fail on a
   -- legal width.  `2**VN_W > n` and `VN_W >= clog2(n+1)` are the same claim.
   constant CHK_VN_W   : natural := VN_W - clog2(region_max(SHAPE) + 1);
+  -- CHK_A_BLOCK: the fabricated per-job block must hold A_ROWS_IF weight
+  -- sub-regions AND a scale sub-region.  At the defaults that is
+  -- 5*4096 = 20,480 inside 32,768, so 12,288 spare; shrink A_JOB_STRIDE or
+  -- widen A_ROWS_IF past that and the scale port's base lands OUTSIDE the
+  -- job's own block, on top of the NEXT job's weights.  Nothing said so.
+  -- The run-time half of this bound is A_SUB_BEATS / A_SCL_BEATS in the
+  -- `ga_real` generate; this is the half a synthesis run can see.
+  constant CHK_A_BLOCK : natural :=
+    A_JOB_STRIDE - (A_ROWS_IF + 1) * A_SUB_BYTES;
 
   -- ---- D core ----------------------------------------------------------
   signal go_walk    : std_logic;
@@ -2725,6 +2742,33 @@ begin
   -- seam.
   -- ======================================================================
   ga_real : if not A_BEHAV generate
+    -- ------------------------------------------------------------------
+    -- THE CAPACITY OF THE FABRICATED BLOCK, AND WHY IT IS CHECKED.
+    --
+    -- The base below is SYNTHETIC (see the banner).  What was never stated is
+    -- that it is also BOUNDED: port p is given exactly A_SUB_BYTES and the
+    -- scale port whatever is left of A_JOB_STRIDE.  Nothing checked that a
+    -- job fits, so a job needing more beats than that walked straight into
+    -- port p+1's sub-region and read it as its own weights -- completing with
+    -- done = 1, err = 0, having read the wrong bytes.  That is the same
+    -- failure mode as the fabrication itself, one level down, and it is
+    -- REACHABLE AT THE SHIPPING SHAPE rather than latent: DERIVED at
+    -- Qwen3.5-9B (hidden 4096, ffn 12288), the FFN gate job is
+    -- tiles*nblk = ceil(12288/4)*ceil(4096/32) = 3072*128 = 393,216 beats
+    -- per port against A_SUB_BYTES/16 = 256, i.e. short by 1536x.
+    --
+    -- So this refuses instead.  It is NOT a fix for the fabrication and must
+    -- not be read as one: a job that FITS is still reading whatever happens
+    -- to be at a made-up address.  What it removes is the silence.
+    -- ------------------------------------------------------------------
+    -- One AXI beat on a weight port, in bytes.  The masters are 128 bits wide
+    -- at this level (see the m_rdata port), and the same 16 appears in
+    -- `sim/tb_llama_top.vhd`'s address decode.
+    constant A_BEAT_B    : natural := 128 / 8;
+    constant A_SUB_BEATS : natural := A_SUB_BYTES / A_BEAT_B;
+    constant A_SCL_BEATS : natural :=
+      (A_JOB_STRIDE - A_ROWS_IF * A_SUB_BYTES) / A_BEAT_B;
+
     signal rdy  : std_logic := '1';
     signal dn   : std_logic := '0';
     signal uerr : std_logic := '0';
@@ -2803,6 +2847,12 @@ begin
       variable j_mode : std_logic_vector(1 downto 0) := "00";
       variable k, r   : natural := 0;
       variable tiles, nb, base : natural := 0;
+      -- Beats this job needs, per weight port and on the scale port.  Named
+      -- variables rather than expressions inlined at the two assignments,
+      -- because the capacity test and the value handed to A must be THE SAME
+      -- NUMBER; two copies of one expression is how a bound and the thing it
+      -- bounds drift apart.
+      variable wb, sb : natural := 0;
       variable a  : natural;
     begin
       if rising_edge(clk) then
@@ -2932,23 +2982,47 @@ begin
               nb    := (j_cols + A_BLK - 1) / A_BLK;
               tiles := (j_rows + A_ROWS_IF - 1) / A_ROWS_IF;
               base  := A_MEM_BASE + j_step * A_JOB_STRIDE;
-              r_rows  <= std_logic_vector(to_signed(j_rows, 32));
-              r_cols  <= std_logic_vector(to_signed(j_cols, 32));
-              r_shift <= std_logic_vector(to_signed(j_shift, 32));
-              r_wexp  <= std_logic_vector(to_signed(j_wexp, 32));
-              r_xexp  <= std_logic_vector(resize(exp_rd_data, 32));
-              r_mode  <= j_mode;
-              for p in 0 to A_ROWS_IF-1 loop
-                r_wbase((p+1)*32-1 downto p*32)
-                  <= std_logic_vector(to_unsigned(base + p*4096, 32));
-              end loop;
-              r_sbase <= std_logic_vector(
-                           to_unsigned(base + A_ROWS_IF*4096, 32));
-              r_wbeat <= std_logic_vector(to_signed(tiles*nb, 32));
-              -- one uint16 scale per (tile, block, row), 16 bytes per beat
-              r_sbeat <= std_logic_vector(
-                           to_signed((tiles*nb*A_ROWS_IF*2 + 15) / 16, 32));
-              st := S_GO;
+              -- THE CAPACITY REFUSAL.  Computed here, one clocked state
+              -- BEFORE `start` reaches A, which is the same ordering
+              -- `seq_desc_fetch`'s S_CHECK and `matvec_int4_desc_axi`'s
+              -- S_SHAPE use and for the same stated reason: a job refused
+              -- after the array has begun consuming weights has already read
+              -- the wrong memory.  Refusing means NOT entering S_GO at all,
+              -- so not one AR is issued.
+              wb := tiles * nb;
+              sb := (tiles * nb * A_ROWS_IF * 2 + 15) / 16;
+              if wb > A_SUB_BEATS or sb > A_SCL_BEATS then
+                report "llama_top: unit A REFUSED step "
+                     & integer'image(j_step) & " -- it needs "
+                     & integer'image(wb) & " weight beats per port (cap "
+                     & integer'image(A_SUB_BEATS) & ") and "
+                     & integer'image(sb) & " scale beats (cap "
+                     & integer'image(A_SCL_BEATS)
+                     & ").  The per-job weight address block is FABRICATED "
+                     & "and this job does not fit in it; running would have "
+                     & "read the next sub-region's bytes and reported "
+                     & "success."
+                  severity warning;
+                uerr <= '1';
+                st   := S_DONE;
+              else
+                r_rows  <= std_logic_vector(to_signed(j_rows, 32));
+                r_cols  <= std_logic_vector(to_signed(j_cols, 32));
+                r_shift <= std_logic_vector(to_signed(j_shift, 32));
+                r_wexp  <= std_logic_vector(to_signed(j_wexp, 32));
+                r_xexp  <= std_logic_vector(resize(exp_rd_data, 32));
+                r_mode  <= j_mode;
+                for p in 0 to A_ROWS_IF-1 loop
+                  r_wbase((p+1)*32-1 downto p*32)
+                    <= std_logic_vector(to_unsigned(base + p*A_SUB_BYTES, 32));
+                end loop;
+                r_sbase <= std_logic_vector(
+                             to_unsigned(base + A_ROWS_IF*A_SUB_BYTES, 32));
+                r_wbeat <= std_logic_vector(to_signed(wb, 32));
+                -- one uint16 scale per (tile, block, row), 16 bytes per beat
+                r_sbeat <= std_logic_vector(to_signed(sb, 32));
+                st := S_GO;
+              end if;
 
             when S_GO =>
               mv_start <= '1';
