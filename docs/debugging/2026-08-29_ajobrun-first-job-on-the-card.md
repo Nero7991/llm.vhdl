@@ -8,6 +8,7 @@
 (22,568,402 B, `ed1ffe2`), 9B weight image `qwen35-9b-mv4i-noembd` resident
 (4,487,442,432 B)
 **Hardware touched by this track: NONE.** Measured, not asserted; see section 4.1.
+**Commit:** `836b802`
 
 ---
 
@@ -291,6 +292,21 @@ descriptor: 312 bytes, 39 words
   GRP                    1                      == 1
   s_beats rule           128                    == 128
   bases 4KB-aligned: True  inside ADDR_W: True
+```
+
+### 4.5b It runs from a clean `git archive`, not just from this working tree
+
+`selfcheck` needs `cc` and the repository and nothing else -- no model set, no
+card. Checked against the commit itself rather than the tree it was written in,
+because a tool that only works where it was written is how a gate row rots:
+
+```
+$ git archive 836b8025b5aa52dc69e909772dba8ed1866fe0e0 | tar -x -C <clean dir>
+$ python3 hw/fk33/gen_fk33_regs.py --check
+fk33_regs.h is in step with gen_pcieep.py
+$ python3 hw/fk33/host/fk33_run_job.py selfcheck
+selfcheck   32 mutations, 17 expected-refusal rows bit, 0 rows disagreed
+clean-archive selfcheck rc=0
 ```
 
 ### 4.6 The two candidate first jobs, planned and dry-run
