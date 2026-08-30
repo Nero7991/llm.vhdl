@@ -445,6 +445,60 @@ teeth check in 3.1 had to be a separate run with no `catch`, reading `$?`.
 
 ---
 
+## 6b. An addendum on the red subsystem-A row, because two tracks disagreed
+
+TRACK DISTRAM committed `88d0ea2` while this track was writing up, reporting
+`sim:tb_matvec_fk33_desc` **red** with a bound check at `rtl/axi_rd_fsm.vhd:231`
+in the shared working tree, passing at 21:57 and failing at 22:23. **This
+track's own working-tree run measured the same row PASS at 49 s**, so the two
+observations disagree and that is worth resolving rather than leaving on the
+board.
+
+**It does not touch the floor, and that is worth stating first.**
+`sim:tb_matvec_fk33_desc` is OPTIONAL and SKIPPED on the clean archive under
+`MV4I_FK33_FILE=/nonexistent`, so it contributed nothing to 98 either way.
+
+**MEASURED**, clean `git archive` of `a6ed6a6` (this track's own HEAD), default
+`MV4I_FK33_FILE` so the rows genuinely ran rather than skipping:
+
+```
+PASS       sim:tb_matvec_fk33_desc               47s
+PASS       sim:tb_matvec_fk33_desc_dual          52s
+PASS       sim:tb_matvec_fk33_desc_xexp          46s
+ OVERALL     PASS 3   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+```
+
+This independently corroborates DISTRAM's own conclusion -- it had already run
+two `--only` runs on clean archive trees and got `PASS 3 FAIL 0` both times --
+at a later HEAD, and confirms the row is green in git.
+
+**The timeline, MEASURED from `git log --date=format:%H:%M:%S`:**
+
+```
+21:46:24  337b5fd  acov: DUAL_CLK/USE_XEXP_PORT      touches tb_matvec_fk33_desc.vhd
+21:46:54  6fc730e  TRACK TIMING: the AR throttle     touches rtl/axi_rd_fsm.vhd
+21:57              DISTRAM observes the row PASS
+22:23              DISTRAM observes the row FAIL     (bound check, axi_rd_fsm.vhd:231)
+22:30:19           this track's working-tree gate starts
+22:32:27  028829e  acov: 9 of 23 mutations killed    touches tb_matvec_fk33_desc.vhd
+    ~22:45         this track observes the row PASS  (reached after 028829e landed)
+```
+
+**ESTIMATE, not measured, and labelled as such:** the red window sits between
+two ACOV commits to that bench, and the assumption is that DISTRAM sampled an
+uncommitted in-flight edit which `028829e` then completed. **Nothing here
+demonstrates that** -- the intermediate working-tree content was never captured
+and cannot now be recovered. What IS established is that the row is green at
+`a6ed6a6` on a clean archive, and that a working-tree observation of it taken
+between 21:57 and 22:32 was sampling a file another track was actively editing.
+
+**The generalisable point:** a red row in the shared working tree is a claim
+about a moment, not about the repository. The cheap discriminator is the one
+both tracks reached independently -- re-run the row from a `git archive`, where
+no other track's editor can reach it.
+
+---
+
 ## 7. What was NOT verified
 
 - **The floor was measured at `b6c5004`, and HEAD is now `b60591d`.** The two
