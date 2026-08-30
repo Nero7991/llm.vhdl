@@ -80,6 +80,14 @@ one -- and the attribution control confirms it is credited with **zero** kills.
 `M8`, the fold silently dropping the last block exponent of the header, passed
 both `tb_attn_block` AND `tb_attn_kv_seam` before this change.
 
+**And the bench that DID discriminate does so by one block exponent.** MEASURED
+with the same probe on `tb_attn_kv_seam` at the gate's own arguments: of the
+sixteen SEAM 2 folds in that run, **fifteen are flat `6 6 6 6` and exactly one
+carries `e1 = 5`.** That single accidental low block is the whole basis of the
+repo's coverage of this structure, it is why `M8` survives there (index 3 is
+never the strict minimum anywhere in the run), and it is at a hand-picked seed
+that `sim/regress.sh` already warns must not be tidied. Section 6a.
+
 ---
 
 ## 1. Reproduction
@@ -344,6 +352,50 @@ observable on this stimulus. The V side was the only degenerate one, and only
 because the WRITTEN token's header is the one input `kv_quant` derives rather
 than the generator setting it directly.
 
+## 6a. `tb_attn_kv_seam`'s teeth on this structure rest on ONE header of sixteen
+
+The obvious objection to all of the above is that the repo was never blind:
+`tb_attn_kv_seam` kills M1. **It does, and the margin by which it does is one
+block exponent.**
+
+MEASURED, the same probe report inserted at the fold site in a scratch copy and
+`sim/regress.sh --only tb_attn_kv_seam` run at the gate's own arguments
+(`64 4 2 16 16 4 2 2`, `NLAY = 2`, `SEED = 2`), every fold of the run:
+
+```
+      1 PROBE lay=0 kvh=0 e0=6 e1=5 e2=6 e3=6
+      3 PROBE lay=0 kvh=0 e0=6 e1=6 e2=6 e3=6
+      4 PROBE lay=0 kvh=1 e0=6 e1=6 e2=6 e3=6
+      4 PROBE lay=1 kvh=0 e0=6 e1=6 e2=6 e3=6
+      4 PROBE lay=1 kvh=1 e0=6 e1=6 e2=6 e3=6
+```
+
+**Sixteen folds. Fifteen of them are flat. ONE header, at layer 0, KV head 0,
+one token of four, has `e1 = 5`, and that single block is the entire basis on
+which that bench distinguishes a right fold from a wrong one.**
+
+This is the same degeneracy as `tb_attn_block`'s, one accidental draw short of
+total. It explains both columns of the table exactly:
+
+- **M1, M2, M3 die** because the one non-flat header puts its minimum at index
+  1, which the dropped stage excludes, which `return e_of(v,0)` misses, and
+  which a maximum inverts.
+- **M8 SURVIVES** because index 3 is never the strict minimum anywhere in the
+  run. Nothing drops out of the fold that was ever the answer.
+
+`sim/regress.sh`'s own comment on that seed is therefore exactly right and
+understated: "at seed 2 it moves 358 integers, so the mutation is observable
+and the bench's v_ref property has teeth. Do not 'tidy' this back to a round
+number." **Those teeth are one tooth**, and it is there by luck rather than by
+construction. That is the strongest argument for the anchored taper: it makes
+the property hold by construction at any seed, instead of resting on a draw
+that a shape change would silently remove.
+
+**Recommendation, NOT done by this track** (`sim/tb_attn_kv_seam.vhd` is not
+this track's file): the same taper, or the same P9-style gate on its written V
+headers, belongs there too. Until then that bench's coverage of this structure
+should be read as one header, not four tokens.
+
 ## 7. Measured and REJECTED -- do not retry
 
 - **"Change the SEED."** `sim/regress.sh:1478` passes `16 4 2 4 8 3 4 0` and a
@@ -404,7 +456,17 @@ than the generator setting it directly.
   256/32 = 8, a THREE-stage tree rather than two. `emin_tree` is
   shape-independent by construction and the taper's unique-minimum property
   holds at any `NBLK`, but its ALL-DISTINCT property does not survive past
-  `NBLK = 5` and nothing has run at 8. TRACK TIMING recorded the same gap.
+  `NBLK = 5` and no RTL has run at 8. TRACK TIMING recorded the same gap.
+  The GENERATOR half of it is measured: run at `64 4 2 8 16 3 4 0`, i.e.
+  `NBLK = 8`, it accepts and prints
+
+      head 0 v block exponents 10 10 10 10 9 8 7 6  argmin=7 nmin=1 ndistinct=5
+      head 1 v block exponents 9 8 7 6 10 10 10 10  argmin=3 nmin=1 ndistinct=5
+
+  -- a unique minimum on both heads at different indices, five distinct values
+  of eight, the cap at 4 merging the four deepest-tapered blocks exactly as
+  documented. So the stimulus property survives the build shape; what has not
+  been run at that shape is the RTL.
 - **`M4`'s pad branch is dead code at every shape in the repo.** Whether to
   keep it is an RTL question this track did not touch.
 - **The taper is applied to V only.** K is drawn flat by the same generator
