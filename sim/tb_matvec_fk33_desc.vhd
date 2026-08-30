@@ -264,6 +264,52 @@ architecture sim of tb_matvec_fk33_desc is
                    -- sub-region should CONTAIN.
     21 => 16#4#);  -- EC_WDOG
 
+  -- ------------------------------------------------- the expected ERR_INFO
+  -- ADDED 2026-08-29 (TRACK ERRINFO, OI-9).  This bench PRINTED ERR_INFO on
+  -- every refusal and CHECKED it on none, so ten of its twenty cases were
+  -- pinned to err_code 0x3 and nothing else: any two of them could have swapped
+  -- verdicts and every one would still have passed.  "Refused" and "refused for
+  -- the right reason" are different claims and only the first was being made.
+  --
+  -- Each entry is the (sub-case, word index) pair rtl/matvec_int4_desc_pkg.vhd
+  -- defines, evaluated here rather than written as a magic integer, so a build
+  -- whose EI_WORD_W moved recomputes both sides.  -1 means the case is not an
+  -- EXP_ERR row and there is nothing to pin.
+  --
+  -- THE CROSS-CASE CHECK BELOW IS THE POINT, not this table: every EXP_ERR row
+  -- must produce a (err_code, ERR_INFO) pair no OTHER EXP_ERR row produces.
+  -- Before OI-9 that was false for three pairs in this table alone -- (5,14),
+  -- (6,8) and (3,4) -- so the strongest statement it could make was "some check
+  -- fired".
+  function eic(sub, word : natural) return integer is
+  begin
+    return to_integer(unsigned(ei(sub, word)));
+  end function;
+
+  constant CASE_INFO : exp_t := (
+    0  => -1,                              -- EXP_OK, nothing to pin
+    1  => eic(EI_SUB_NONE,   EXT0),        -- EC_MAGIC
+    2  => eic(EI_SUB_NONE,   EXT0),        -- EC_VER
+    3  => eic(EG_NSUB_W,     3),
+    4  => eic(EG_NSUB_S,     3),
+    5  => eic(ED_OPCODE,     0),
+    6  => eic(ED_PAD_W3,     3),
+    7  => eic(ED_PAD_W7,     7),
+    8  => eic(ED_OUT_MODE,   3),
+    9  => eic(ED_ROWS_ZERO,  1),
+    10 => eic(ED_COLS_MAX,   1),
+    11 => eic(ED_WBEATS_ZERO, EXT0 + 1),
+    12 => eic(ED_PAD_EXT,    EXT0 + 2),
+    13 => eic(ED_EXT_FLAGS,  EXT0),
+    14 => eic(ED_CB_UNLOADED, 0),
+    15 => eic(EI_SUB_NONE,   DESC_BASE0 + 7),        -- the misaligned w_base
+    16 => eic(EI_SUB_NONE,   DESC_BASE0 + NPW + 1),  -- the out-of-range s_base
+    17 => EI_PTR,                                    -- the pointer itself
+    18 => EI_PTR,
+    19 => -1,                              -- EXP_WRONG, no refusal expected
+    20 => eic(ES_WBEATS,     EXT0 + 1),    -- EC_SHAPE
+    21 => EI_PTR);                         -- EC_WDOG, on the fetch
+
   -- ------------------------------------------------------------- clocking
   signal clk, mclk : std_logic := '0';
   signal aresetn   : std_logic := '0';
@@ -829,6 +875,13 @@ begin
     variable lo, hi : std_logic_vector(31 downto 0);
     variable got, want : std_logic_vector(63 downto 0);
     variable nrb, nrbad : integer;
+    -- What each case ACTUALLY reported, kept so the cross-case distinctness
+    -- check below can run on observations rather than on expectations.  A
+    -- distinctness check over CASE_INFO would be a statement about this file
+    -- and would pass with the gateware ripped out.
+    variable obs_code : exp_t := (others => -1);
+    variable obs_info : exp_t := (others => -1);
+    variable ndup : integer := 0;
     -- the shape sweep
     variable rw, cl, wbx, sbx, wbm, sbm : integer;
     variable n_legal, n_teeth : integer := 0;
@@ -1467,6 +1520,22 @@ begin
                  " -> wrong err_code: got " & integer'image(ec) &
                  " want " & integer'image(CASE_EXP(mut)) severity error;
         end if;
+        -- ERR_INFO, read from the same map a driver reads.  Read
+        -- UNCONDITIONALLY, not inside the `ok` arm: a case that already failed
+        -- its err_code still has to record its pair, or the cross-case
+        -- distinctness check below silently loses a row.
+        ard(16#10#, rd);
+        obs_info(mut) := to_integer(unsigned(rd(15 downto 0)));
+        obs_code(mut) := ec;
+        if CASE_INFO(mut) >= 0 and obs_info(mut) /= CASE_INFO(mut) then
+          ok := false;
+          report "CASE " & integer'image(mut) & " " & CASE_NAME(mut) &
+                 " -> refused with the right err_code and the WRONG ERR_INFO: "
+                 & "got " & integer'image(obs_info(mut)) & " want " &
+                 integer'image(CASE_INFO(mut)) &
+                 " -- the refusal does not name the check that raised it"
+            severity error;
+        end if;
         if st(0) = '1' then
           ok := false;
           report "CASE " & integer'image(mut) & " " & CASE_NAME(mut) &
@@ -1479,11 +1548,11 @@ begin
                  " result elements despite being rejected" severity error;
         end if;
         if ok then
-          ard(16#10#, rd);
           report "CASE " & integer'image(mut) & " " & CASE_NAME(mut) &
                  " -> refused, err_code = " & integer'image(ec) &
-                 ", ERR_INFO = " &
-                 integer'image(to_integer(unsigned(rd(15 downto 0))))
+                 ", ERR_INFO = " & integer'image(obs_info(mut)) &
+                 " (sub-case " & integer'image(obs_info(mut) / 2**EI_WORD_W) &
+                 ", word " & integer'image(obs_info(mut) mod 2**EI_WORD_W) & ")"
             severity note;
         else
           nerr := nerr + 1;
@@ -1494,6 +1563,42 @@ begin
       d_deaf <= '0';
       wait until rising_edge(clk);
     end loop;
+
+    -- =================================================================
+    -- EVERY REFUSAL MUST BE ATTRIBUTABLE.  OI-9, 2026-08-29.
+    --
+    -- The per-case pins above say each refusal matched the pair this file
+    -- expected.  They do NOT say the pairs are distinct: a table that expected
+    -- the same pair twice would satisfy every one of them.  This does, over
+    -- what was OBSERVED, and it is the check that fails on the pre-OI-9 design
+    -- rather than on a mistake in the table.
+    --
+    -- MEASURED before the change, by re-running this bench against a copy of
+    -- rtl/matvec_int4_desc_axi.vhd with every sub-case collapsed to
+    -- EI_SUB_NONE: 17 of the 22 cases fail and this check fires FOUR times --
+    -- cases 3 and 4 both (9,3), 5 and 14 both (3,0), 6 and 8 both (3,3), and
+    -- 9 and 10 both (3,1).  Four, not the two OI-9 had on record: the pairs
+    -- that get written down are the ones somebody went looking for.
+    -- =================================================================
+    for a in 0 to NCASE loop
+      for b in a + 1 to NCASE loop
+        if obs_code(a) >= 0 and obs_code(b) >= 0
+           and obs_code(a) = obs_code(b) and obs_info(a) = obs_info(b) then
+          ndup := ndup + 1;
+          nerr := nerr + 1;
+          report "CASES " & integer'image(a) & " (" & CASE_NAME(a) & ") and " &
+                 integer'image(b) & " (" & CASE_NAME(b) &
+                 ") BOTH refuse with err_code " & integer'image(obs_code(a)) &
+                 " ERR_INFO " & integer'image(obs_info(a)) &
+                 " -- two different checks, one report: a refusal here cannot " &
+                 "be attributed to the check that raised it" severity error;
+        end if;
+      end loop;
+    end loop;
+    report "attribution: " & integer'image(NCASE + 1) &
+           " cases, " & integer'image(ndup) &
+           " pairs of DIFFERENT checks sharing one (err_code, ERR_INFO)"
+      severity note;
 
     nfail <= nerr;
     wait until rising_edge(clk);

@@ -227,6 +227,21 @@ def make_mutations(f):
     npw = f["nsub_w"]
     M = []
 
+    # ERR_INFO's two fields, restated from rtl/matvec_int4_desc_pkg.vhd
+    # (OI-9, 2026-08-29).  [10:0] is the failing descriptor word index and
+    # [15:11] is a sub-case NAMESPACED PER err_code, so the pins below are
+    # pairs, not word indices.  Sub-case 0 leaves the value equal to the bare
+    # word index, which is why the `ei(0, ...)` rows read as they always did.
+    def ei(sub, word):
+        return (sub << 11) | word
+
+    ED_EXT_FLAGS, ED_OPCODE, ED_PAD_W3, ED_PAD_W7 = 1, 2, 3, 4
+    ED_PAD_EXT, ED_OUT_MODE = 5, 6
+    ED_ROWS_ZERO, ED_ROWS_MAX, ED_COLS_ZERO, ED_COLS_MAX = 7, 8, 9, 10
+    ED_WBEATS_ZERO, ED_SBEATS_ZERO, ED_CB_UNLOADED = 11, 12, 13
+    EG_NSUB_W, EG_NSUB_S = 1, 2
+    ES_WBEATS = 1
+
     def add(name, fn, code, info, note="", alt=None):
         M.append((name, fn, code, info, note, alt))
 
@@ -234,48 +249,57 @@ def make_mutations(f):
 
     add("ext_magic off by one",
         lambda w, f: w.__setitem__(e, (w[e] & ~0xFFFFFFFF) | 0x4D563448),
-        0xA, e)
+        0xA, ei(0, e))
     add("ext_version = 2",
         lambda w, f: w.__setitem__(e, (w[e] & ~(0xFFFF << 32)) | (2 << 32)),
-        0xB, e)
+        0xB, ei(0, e))
     add("ext_flags nonzero",
-        lambda w, f: w.__setitem__(e, w[e] | (1 << 48)), 0x3, e)
+        lambda w, f: w.__setitem__(e, w[e] | (1 << 48)), 0x3, ei(ED_EXT_FLAGS, e))
     add("nsub_w = 23 (build has 24)",
         lambda w, f: w.__setitem__(3, (w[3] & ~(0xFFFF << 16)) | (23 << 16)),
-        0x9, 3)
+        0x9, ei(EG_NSUB_W, 3))
     add("nsub_s = 2 (build has 3)",
         lambda w, f: w.__setitem__(3, (w[3] & ~(0xFFFF << 32)) | (2 << 32)),
-        0x9, 3)
+        0x9, ei(EG_NSUB_S, 3))
     add("opcode = 4 (not OP_A_JOB)",
-        lambda w, f: w.__setitem__(0, (w[0] & ~0xFF) | 4), 0x3, 0)
+        lambda w, f: w.__setitem__(0, (w[0] & ~0xFF) | 4), 0x3, ei(ED_OPCODE, 0))
     add("word 3 pad byte nonzero",
-        lambda w, f: w.__setitem__(3, w[3] | (1 << 56)), 0x3, 3)
+        lambda w, f: w.__setitem__(3, w[3] | (1 << 56)), 0x3, ei(ED_PAD_W3, 3))
     add("word 7 (D reserved) nonzero",
-        lambda w, f: w.__setitem__(7, 1), 0x3, 7)
+        lambda w, f: w.__setitem__(7, 1), 0x3, ei(ED_PAD_W7, 7))
     add("ext word 2 pad half nonzero",
-        lambda w, f: w.__setitem__(e + 2, w[e + 2] | (1 << 32)), 0x3, e + 2)
+        lambda w, f: w.__setitem__(e + 2, w[e + 2] | (1 << 32)), 0x3,
+        ei(ED_PAD_EXT, e + 2))
+    # CHANGED 2026-08-29: this used to expect e+2, because the RTL reported the
+    # WRONG WORD for the second half of that `or`.  It now names e+3.
     add("ext word 3 nonzero",
-        lambda w, f: w.__setitem__(e + 3, 1), 0x3, e + 2)
+        lambda w, f: w.__setitem__(e + 3, 1), 0x3, ei(ED_PAD_EXT, e + 3))
     add("out_mode = 3",
-        lambda w, f: w.__setitem__(3, (w[3] & ~0xFF) | 3), 0x3, 3)
+        lambda w, f: w.__setitem__(3, (w[3] & ~0xFF) | 3), 0x3,
+        ei(ED_OUT_MODE, 3))
     add("n_rows = 0",
-        lambda w, f: w.__setitem__(1, w[1] & ~0xFFFFFFFF), 0x3, 1)
+        lambda w, f: w.__setitem__(1, w[1] & ~0xFFFFFFFF), 0x3,
+        ei(ED_ROWS_ZERO, 1))
     add("n_rows = MAXROWS_BFP+1",
-        lambda w, f: w.__setitem__(1, (w[1] & ~0xFFFFFFFF) | 17409), 0x3, 1)
+        lambda w, f: w.__setitem__(1, (w[1] & ~0xFFFFFFFF) | 17409), 0x3,
+        ei(ED_ROWS_MAX, 1))
     add("n_cols = MAXCOLS+1",
         lambda w, f: w.__setitem__(1, (w[1] & 0xFFFFFFFF) | (17409 << 32)),
-        0x3, 1)
+        0x3, ei(ED_COLS_MAX, 1))
     add("w_beats = 0",
-        lambda w, f: w.__setitem__(e + 1, w[e + 1] & ~0xFFFFFFFF), 0x3, e + 1)
+        lambda w, f: w.__setitem__(e + 1, w[e + 1] & ~0xFFFFFFFF), 0x3,
+        ei(ED_WBEATS_ZERO, e + 1))
     add("s_beats = 0",
-        lambda w, f: w.__setitem__(e + 1, w[e + 1] & 0xFFFFFFFF), 0x3, e + 1)
+        lambda w, f: w.__setitem__(e + 1, w[e + 1] & 0xFFFFFFFF), 0x3,
+        ei(ED_SBEATS_ZERO, e + 1))
     add("w_base[7] misaligned by 64 B",
-        lambda w, f: w.__setitem__(8 + 7, w[8 + 7] + 64), 0xC, 8 + 7)
+        lambda w, f: w.__setitem__(8 + 7, w[8 + 7] + 64), 0xC, ei(0, 8 + 7))
     add("s_base[1] bit at ADDR_W",
         lambda w, f: w.__setitem__(8 + npw + 1, w[8 + npw + 1] | (1 << 40)),
-        0xD, 8 + npw + 1)
+        0xD, ei(0, 8 + npw + 1))
     add("cb_load clear, none ever loaded",
-        lambda w, f: w.__setitem__(0, w[0] & ~(1 << 10)), 0x3, 0)
+        lambda w, f: w.__setitem__(0, w[0] & ~(1 << 10)), 0x3,
+        ei(ED_CB_UNLOADED, 0))
 
     # --- the ones the gateware is EXPECTED not to see.
     add("w_base[7] aims at sub-region 8",
@@ -288,7 +312,8 @@ def make_mutations(f):
         ACCEPT, None,
         "undetectable AT a4f7e17 (spec 5.1); starves the array, "
         "tb_matvec_fk33_desc case 20 MEASURED a hang",
-        alt=(0xF, e + 1, "TRACK A-SHAPE's in-flight EC_SHAPE check"))
+        alt=(0xF, ei(ES_WBEATS, e + 1),
+             "TRACK A-SHAPE's in-flight EC_SHAPE check"))
     add("codebook byte 3 changed",
         lambda w, f: w.__setitem__(5, w[5] ^ (0xFF << 24)), ACCEPT, None,
         "UNDETECTABLE: nothing binds the descriptor's codebook to the file's")

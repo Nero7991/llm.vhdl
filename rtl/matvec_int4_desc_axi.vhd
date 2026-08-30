@@ -34,7 +34,14 @@
 --   0x08 CTRL         W   bit0 = GO (self-clearing)
 --   0x0C STATUS       R   bit0 done, bit1 busy, bit2 err, bit3 sat_event,
 --                         bit4 err_addr (sticky), bits[11:8] err_code
---   0x10 ERR_INFO     R   failing descriptor WORD INDEX; 0xFFFF = the pointer
+--   0x10 ERR_INFO     R   [10:0] failing descriptor WORD INDEX,
+--                         [15:11] SUB-CASE within err_code (0 = none, 31 = the
+--                         report is about DESC_PTR itself and there is no
+--                         word, so 0xFFFF still reads as the old sentinel).
+--                         The register's WIDTH and OFFSET are unchanged and no
+--                         DESCRIPTOR byte moved: this splits an existing
+--                         register field, which is why it is the route OI-9
+--                         took.  See rtl/matvec_int4_desc_pkg.vhd.
 --   0x14 ID           R   0x4D563449 "MV4I"
 --   0x18 ADDR_CAP     R   ADDR_W this build was synthesised with, in bits
 --   0x1C CAPS         R   [7:0] NPORTS_W [15:8] NPORTS_S [23:16] ROWS_IF
@@ -216,6 +223,22 @@ architecture rtl of matvec_int4_desc_axi is
   constant DWORDS : positive := desc_words(NPORTS_W, NPORTS_S);
   constant DBEATS : positive := desc_beats(NPORTS_W, NPORTS_S, AXI_DW);
   constant EXT0   : natural  := desc_ext0(NPORTS_W, NPORTS_S);
+  -- ERR_INFO carries the failing descriptor word index in EI_WORD_W = 11 bits
+  -- and the sub-case in the top 5 (rtl/matvec_int4_desc_pkg.vhd).  A build
+  -- whose descriptor is longer than 2048 words could not name its own failing
+  -- word: the index would overflow into the sub-case field and a base-array
+  -- refusal would read as some other check entirely.  This is the guard.
+  --
+  -- A NATURAL, NOT AN ASSERT.  MEASURED, three OOC runs: Vivado silently
+  -- ignores `assert ... severity failure` in synthesis.  An out-of-range
+  -- natural constant DOES fail the build -- with no message beyond
+  -- "bound check failure at <file>:<line>", because a natural constant cannot
+  -- carry a report string.  If that line points here, the descriptor is longer
+  -- than ERR_INFO can index; see EI_WORD_W.
+  --
+  -- DERIVED: at the FK33 geometry DWORDS = desc_words(24,3) = 39, so the guard
+  -- has 2009 words of headroom and binds only past NPORTS_W+NPORTS_S = 2036.
+  constant EI_WORD_FITS : natural := EI_WORD_MAX - (DWORDS - 1);
   -- FIFO for the descriptor fetch.  A power of two (async_fifo requires it),
   -- at least DESC_MAXB so a full burst can be issued, and at least DBEATS so
   -- the whole descriptor can land before it is read.
@@ -542,11 +565,11 @@ begin
     for p in 0 to NP_ALL-1 loop
       if bad = '0' and not fits_addr(dw(DESC_BASE0 + p)) then
         bad := '1'; code := EC_ADDR;
-        info := std_logic_vector(to_unsigned(DESC_BASE0 + p, 16));
+        info := ei(EI_SUB_NONE, DESC_BASE0 + p);
       end if;
       if bad = '0' and not is_4k_aligned(dw(DESC_BASE0 + p)) then
         bad := '1'; code := EC_ALIGN;
-        info := std_logic_vector(to_unsigned(DESC_BASE0 + p, 16));
+        info := ei(EI_SUB_NONE, DESC_BASE0 + p);
       end if;
     end loop;
     base_bad <= bad; base_code <= code; base_info <= info;
@@ -628,11 +651,11 @@ begin
               -- being allowed to issue a read at a nonsense address.
               if not fits_addr(dptr) then
                 err_code <= EC_ADDR;
-                err_info <= std_logic_vector(to_unsigned(EI_PTR, 16));
+                err_info <= EI_PTR_V;
                 st <= S_ERR;
               elsif unsigned(dptr(clog2(DESC_ALIGN)-1 downto 0)) /= 0 then
                 err_code <= EC_ALIGN;
-                err_info <= std_logic_vector(to_unsigned(EI_PTR, 16));
+                err_info <= EI_PTR_V;
                 st <= S_ERR;
               else
                 f_got   <= 0;
@@ -656,7 +679,7 @@ begin
             -- would be a bound violation, not a timeout.
             if wdog = WDOG_LIMIT then
               err_code <= EC_WDOG;
-              err_info <= std_logic_vector(to_unsigned(EI_PTR, 16));
+              err_info <= EI_PTR_V;
               st <= S_ERR;
             else
               wdog <= wdog + 1;
@@ -682,53 +705,71 @@ begin
             op := to_integer(unsigned(dw(0)(7 downto 0)));
             if lo32(dw(EXT0)) /= MV4I_MAGIC then
               err_code <= EC_MAGIC;
-              err_info <= std_logic_vector(to_unsigned(EXT0, 16));
+              err_info <= ei(EI_SUB_NONE, EXT0);
               st <= S_ERR;
             elsif to_integer(unsigned(dw(EXT0)(47 downto 32))) /= MV4I_DESC_VER then
               err_code <= EC_VER;
-              err_info <= std_logic_vector(to_unsigned(EXT0, 16));
+              err_info <= ei(EI_SUB_NONE, EXT0);
               st <= S_ERR;
             elsif dw(EXT0)(63 downto 48) /= x"0000" then
               err_code <= EC_DESC;                     -- ext_flags reserved
-              err_info <= std_logic_vector(to_unsigned(EXT0, 16));
+              err_info <= ei(ED_EXT_FLAGS, EXT0);
               st <= S_ERR;
-            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W
-               or to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then
+            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W then
               err_code <= EC_GEOM;
-              err_info <= std_logic_vector(to_unsigned(3, 16));
+              err_info <= ei(EG_NSUB_W, 3);
+              st <= S_ERR;
+            elsif to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then
+              err_code <= EC_GEOM;
+              err_info <= ei(EG_NSUB_S, 3);
               st <= S_ERR;
             elsif op /= OP_A_JOB then
-              err_code <= EC_DESC;
-              err_info <= std_logic_vector(to_unsigned(0, 16));
+              err_code <= EC_DESC;                     -- opcode
+              err_info <= ei(ED_OPCODE, 0);
               st <= S_ERR;
             elsif dw(3)(63 downto 56) /= x"00" then
               err_code <= EC_DESC;                     -- D's word 3 pad
-              err_info <= std_logic_vector(to_unsigned(3, 16));
+              err_info <= ei(ED_PAD_W3, 3);
               st <= S_ERR;
             elsif dw(7) /= x"0000000000000000" then
               err_code <= EC_DESC;                     -- D's word 7 pad
-              err_info <= std_logic_vector(to_unsigned(7, 16));
+              err_info <= ei(ED_PAD_W7, 7);
               st <= S_ERR;
-            elsif hi32(dw(EXT0 + 2)) /= x"00000000"
-               or dw(EXT0 + 3) /= x"0000000000000000" then
+            elsif hi32(dw(EXT0 + 2)) /= x"00000000" then
               err_code <= EC_DESC;                     -- A's extension pads
-              err_info <= std_logic_vector(to_unsigned(EXT0 + 2, 16));
+              err_info <= ei(ED_PAD_EXT, EXT0 + 2);
+              st <= S_ERR;
+            elsif dw(EXT0 + 3) /= x"0000000000000000" then
+              err_code <= EC_DESC;                     -- A's extension pads
+              err_info <= ei(ED_PAD_EXT, EXT0 + 3);
               st <= S_ERR;
             elsif to_integer(unsigned(dw(3)(7 downto 0))) > 2 then
               err_code <= EC_DESC;                     -- out_mode 3..255
-              err_info <= std_logic_vector(to_unsigned(3, 16));
+              err_info <= ei(ED_OUT_MODE, 3);
               st <= S_ERR;
-            elsif unsigned(lo32(dw(1))) = 0
-               or unsigned(lo32(dw(1))) > MAXROWS_BFP
-               or unsigned(hi32(dw(1))) = 0
-               or unsigned(hi32(dw(1))) > MAXCOLS then
-              err_code <= EC_DESC;                     -- shape
-              err_info <= std_logic_vector(to_unsigned(1, 16));
+            elsif unsigned(lo32(dw(1))) = 0 then
+              err_code <= EC_DESC;                     -- shape: n_rows = 0
+              err_info <= ei(ED_ROWS_ZERO, 1);
               st <= S_ERR;
-            elsif unsigned(lo32(dw(EXT0 + 1))) = 0
-               or unsigned(hi32(dw(EXT0 + 1))) = 0 then
-              err_code <= EC_DESC;                     -- w_beats / s_beats
-              err_info <= std_logic_vector(to_unsigned(EXT0 + 1, 16));
+            elsif unsigned(lo32(dw(1))) > MAXROWS_BFP then
+              err_code <= EC_DESC;                     -- shape: n_rows too big
+              err_info <= ei(ED_ROWS_MAX, 1);
+              st <= S_ERR;
+            elsif unsigned(hi32(dw(1))) = 0 then
+              err_code <= EC_DESC;                     -- shape: n_cols = 0
+              err_info <= ei(ED_COLS_ZERO, 1);
+              st <= S_ERR;
+            elsif unsigned(hi32(dw(1))) > MAXCOLS then
+              err_code <= EC_DESC;                     -- shape: n_cols too big
+              err_info <= ei(ED_COLS_MAX, 1);
+              st <= S_ERR;
+            elsif unsigned(lo32(dw(EXT0 + 1))) = 0 then
+              err_code <= EC_DESC;                     -- w_beats = 0
+              err_info <= ei(ED_WBEATS_ZERO, EXT0 + 1);
+              st <= S_ERR;
+            elsif unsigned(hi32(dw(EXT0 + 1))) = 0 then
+              err_code <= EC_DESC;                     -- s_beats = 0
+              err_info <= ei(ED_SBEATS_ZERO, EXT0 + 1);
               st <= S_ERR;
             elsif base_bad = '1' then
               err_code <= base_code;
@@ -739,8 +780,8 @@ begin
               -- codebook that was never loaded computes an all-zero answer
               -- and reports success, which is the failure mode this whole
               -- file exists to stop.
-              err_code <= EC_DESC;
-              err_info <= std_logic_vector(to_unsigned(0, 16));
+              err_code <= EC_DESC;                     -- codebook never loaded
+              err_info <= ei(ED_CB_UNLOADED, 0);
               st <= S_ERR;
             else
               -- Everything above passed, so n_rows and n_cols are inside
@@ -784,13 +825,19 @@ begin
           -- `sb - 1` cannot underflow.  Both operands are widened to 64 bits
           -- because a garbage 32-bit s_beats times GRP overflows 32.
           when S_SHAPE_C =>
-            if unsigned(lo32(dw(EXT0 + 1))) /= to_unsigned(sh_prod, 32)
-               or unsigned(hi32(dw(EXT0 + 1))) * GRP
-                    < to_unsigned(sh_prod, 64)
-               or (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP
+            if unsigned(lo32(dw(EXT0 + 1))) /= to_unsigned(sh_prod, 32) then
+              err_code <= EC_SHAPE;
+              err_info <= ei(ES_WBEATS, EXT0 + 1);
+              st <= S_ERR;
+            elsif unsigned(hi32(dw(EXT0 + 1))) * GRP
+                    < to_unsigned(sh_prod, 64) then
+              err_code <= EC_SHAPE;
+              err_info <= ei(ES_SBEATS_LO, EXT0 + 1);
+              st <= S_ERR;
+            elsif (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP
                     >= to_unsigned(sh_prod, 64) then
               err_code <= EC_SHAPE;
-              err_info <= std_logic_vector(to_unsigned(EXT0 + 1, 16));
+              err_info <= ei(ES_SBEATS_HI, EXT0 + 1);
               st <= S_ERR;
             else
               st <= S_CB;
@@ -824,7 +871,7 @@ begin
             if dbg_wstarve = '1' then c_starve <= c_starve + 1; end if;
             if core_err = '1' then
               err_code <= EC_CORE;
-              err_info <= std_logic_vector(to_unsigned(EI_PTR, 16));
+              err_info <= EI_PTR_V;
               st <= S_ERR;
             elsif core_done = '1' then
               busy   <= '0';

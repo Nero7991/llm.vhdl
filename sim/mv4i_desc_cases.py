@@ -66,6 +66,32 @@ EC_MAGIC, EC_VER, EC_ALIGN, EC_ADDR, EC_SHAPE = 10, 11, 12, 13, 15
 EI_PTR = 0xFFFF
 ACCEPT = -1
 
+# ERR_INFO's two fields, restated from rtl/matvec_int4_desc_pkg.vhd.  RESTATED
+# and not imported for the same reason the geometry above is: a package whose
+# split moved would then move this file's expectations with it and the cases
+# would agree with the RTL by construction instead of by check.
+EI_WORD_W = 11
+EI_SUB_NONE = 0
+EI_SUB_PTR = 31
+
+
+def ei(sub, word):
+    """The (sub-case, word index) pair as the 16-bit ERR_INFO the gateware
+    reports.  Sub-case 0 leaves the value equal to the bare word index, which
+    is what every case that names no sub-case still expects."""
+    assert 0 <= sub <= 31 and 0 <= word < (1 << EI_WORD_W)
+    return (sub << EI_WORD_W) | word
+
+
+# Sub-cases, namespaced per err_code.  One name per `elsif` arm in
+# rtl/matvec_int4_desc_axi.vhd.
+ED_EXT_FLAGS, ED_OPCODE, ED_PAD_W3, ED_PAD_W7 = 1, 2, 3, 4
+ED_PAD_EXT, ED_OUT_MODE = 5, 6
+ED_ROWS_ZERO, ED_ROWS_MAX, ED_COLS_ZERO, ED_COLS_MAX = 7, 8, 9, 10
+ED_WBEATS_ZERO, ED_SBEATS_ZERO, ED_CB_UNLOADED = 11, 12, 13
+EG_NSUB_W, EG_NSUB_S = 1, 2
+ES_WBEATS, ES_SBEATS_LO, ES_SBEATS_HI = 1, 2, 3
+
 
 def load_golden():
     words = []
@@ -116,18 +142,43 @@ def cases():
     `edit` is a callable(words) applied to a fresh copy of the golden.
     expect_code ACCEPT (-1) means the design must START the core.
 
-    TWO PAIRS ARE INDISTINGUISHABLE BY (err_code, ERR_INFO) AND ARE MARKED SO:
+    NO TWO DISTINCT SITES SHARE AN (err_code, ERR_INFO) PAIR ANY MORE.  Until
+    2026-08-29 they did, and this docstring named two of the collisions:
+
       * R_OPCODE and R_CBNEVER  -- both EC_DESC with ERR_INFO 0
       * R_W3PAD  and R_OUTMODE3 -- both EC_DESC with ERR_INFO 3
-    Nothing this bench can read separates them, so a mutation that swaps one
-    for the other is invisible here BY CONSTRUCTION.  Recorded rather than
-    papered over: it is a resolution floor of the ERROR REPORTING, not of the
-    harness.
+
+    MEASURED at 3d5cba9 by the `site` gate in main(), the real count was SIX,
+    not two.  The four this file did not name were:
+
+      * R_ROWS0 / R_ROWSOVER / R_COLS0 / R_COLSOVER -- all EC_DESC ERR_INFO 1
+      * R_WBEATS0 and R_SBEATS0       -- both EC_DESC with ERR_INFO EXT0+1
+      * R_XEXPPAD and R_EXT3PAD       -- both EC_DESC with ERR_INFO EXT0+2,
+        which this file had already noticed and written down as a note on the
+        case rather than as a defect
+      * R_GEOM_NPW and R_GEOM_NPS     -- both EC_GEOM with ERR_INFO 3, the one
+        collision that is not in the EC_DESC space at all
+
+    That is the value of making the claim executable: the two that were
+    hand-noticed were the two that a reader happened to look for, and the gate
+    found three times as many in the same table.  OI-9's ERR_INFO subdivision
+    (rtl/matvec_int4_desc_pkg.vhd) separates all six, and the `site` column
+    below plus the gate in main() is what keeps them separated.
+
+    Cases that DO share a pair share a SITE and say so explicitly: the same
+    check reached by three magnitudes of misalignment, or by two out_mode
+    values above the cap, is one diagnosis and must report one thing.
     """
     C = []
 
-    def add(name, edit, code, info, gen="", note=""):
-        C.append((name, edit, code, info, gen, note))
+    def add(name, edit, code, info, gen="", note="", site=None):
+        # `site` names the ONE arm of rtl/matvec_int4_desc_axi.vhd this case
+        # must land on.  Several cases may share a site on purpose (three
+        # magnitudes of the same misalignment, two out_mode values above the
+        # cap); no two DIFFERENT sites may share an (err_code, ERR_INFO) pair.
+        # main() enforces both directions, which is the whole acceptance test
+        # for OI-9 and is what fires today at HEAD.
+        C.append((name, edit, code, info, gen, note, site or name))
 
     def nop(w):
         pass
@@ -170,122 +221,187 @@ def cases():
 
     # -------------------------------------------- REFUSE: the extension header
     add("R_MAGIC", lambda w: setfield(w, EXT0, 0, 32, 0x4D563448),
-        EC_MAGIC, EXT0, "", "extension magic wrong by one bit")
+        EC_MAGIC, ei(EI_SUB_NONE, EXT0), "",
+        "extension magic wrong by one bit")
     add("R_VER", lambda w: setfield(w, EXT0, 32, 16, 2),
-        EC_VER, EXT0, "", "extension version 2, this build speaks 1")
+        EC_VER, ei(EI_SUB_NONE, EXT0), "",
+        "extension version 2, this build speaks 1")
     add("R_EXTFLAGS", lambda w: setfield(w, EXT0, 48, 16, 1),
-        EC_DESC, EXT0, "", "extension ext_flags reserved bits set")
+        EC_DESC, ei(ED_EXT_FLAGS, EXT0), "",
+        "extension ext_flags reserved bits set")
     add("R_MAGIC_AND_OP",
         lambda w: (setfield(w, EXT0, 0, 32, 0x4D563448),
                    setfield(w, 0, 0, 8, 1)),
-        EC_MAGIC, EXT0, "",
-        "magic AND opcode both wrong: FIRST MATCH WINS, so magic")
+        EC_MAGIC, ei(EI_SUB_NONE, EXT0), "",
+        "magic AND opcode both wrong: FIRST MATCH WINS, so magic",
+        site="R_MAGIC")
 
     # ------------------------------------------------- REFUSE: D's header
     add("R_GEOM_NPW", lambda w: setfield(w, 3, 16, 16, NPW - 1),
-        EC_GEOM, 3, "", "descriptor claims one fewer weight sub-region")
+        EC_GEOM, ei(EG_NSUB_W, 3), "",
+        "descriptor claims one fewer weight sub-region")
     add("R_GEOM_NPS", lambda w: setfield(w, 3, 32, 16, NPS - 1),
-        EC_GEOM, 3, "", "descriptor claims one fewer scale sub-region")
+        EC_GEOM, ei(EG_NSUB_S, 3), "",
+        "descriptor claims one fewer scale sub-region.  Shared (9,3) with "
+        "R_GEOM_NPW until 2026-08-29")
     add("R_OPCODE", lambda w: setfield(w, 0, 0, 8, 1),
-        EC_DESC, 0, "", "opcode is not OP_A_JOB (shares (3,0) with R_CBNEVER)")
+        EC_DESC, ei(ED_OPCODE, 0), "",
+        "opcode is not OP_A_JOB.  Shared (3,0) with R_CBNEVER until 2026-08-29")
     add("R_W3PAD", lambda w: setfield(w, 3, 56, 8, 1),
-        EC_DESC, 3, "", "word 3's pad set (shares (3,3) with R_OUTMODE3)")
+        EC_DESC, ei(ED_PAD_W3, 3), "",
+        "word 3's pad set.  Shared (3,3) with R_OUTMODE3 until 2026-08-29")
+    add("R_GEOM_BOTH",
+        lambda w: (setfield(w, 3, 16, 16, NPW - 1),
+                   setfield(w, 3, 32, 16, NPS - 1)),
+        EC_GEOM, ei(EG_NSUB_W, 3), "",
+        "BOTH sub-region counts wrong: nsub_w is checked first",
+        site="R_GEOM_NPW")
     add("R_W7PAD", lambda w: w.__setitem__(7, 1),
-        EC_DESC, 7, "", "word 7, D's reserved word, is nonzero")
+        EC_DESC, ei(ED_PAD_W7, 7), "",
+        "word 7, D's reserved word, is nonzero")
     add("R_XEXPPAD", lambda w: setfield(w, EXT0 + 2, 32, 32, 1),
-        EC_DESC, EXT0 + 2, "", "the x_exp word's high half is not pad")
+        EC_DESC, ei(ED_PAD_EXT, EXT0 + 2), "",
+        "the x_exp word's high half is not pad", site="R_PAD_EXT2")
     add("R_EXT3PAD", lambda w: w.__setitem__(EXT0 + 3, 1),
-        EC_DESC, EXT0 + 2, "",
-        "the last extension word is not zero; ERR_INFO names EXT0+2, not +3")
+        EC_DESC, ei(ED_PAD_EXT, EXT0 + 3), "",
+        "the last extension word is not zero.  ERR_INFO used to name EXT0+2 "
+        "for this, which was the wrong word; it now names EXT0+3",
+        site="R_PAD_EXT3")
     add("R_OUTMODE3", lambda w: setfield(w, 3, 0, 8, 3),
-        EC_DESC, 3, "", "out_mode 3 (shares (3,3) with R_W3PAD)")
+        EC_DESC, ei(ED_OUT_MODE, 3), "",
+        "out_mode 3.  Shared (3,3) with R_W3PAD until 2026-08-29",
+        site="R_OUTMODE")
     add("R_OUTMODE255", lambda w: setfield(w, 3, 0, 8, 255),
-        EC_DESC, 3, "", "out_mode 255, the top of the byte")
+        EC_DESC, ei(ED_OUT_MODE, 3), "",
+        "out_mode 255, the top of the byte: the SAME site as R_OUTMODE3, so "
+        "the same report is correct here", site="R_OUTMODE")
+
+    add("R_PAD_EXT_BOTH",
+        lambda w: (setfield(w, EXT0 + 2, 32, 32, 1),
+                   w.__setitem__(EXT0 + 3, 1)),
+        EC_DESC, ei(ED_PAD_EXT, EXT0 + 2), "",
+        "BOTH extension pads nonzero: EXT0+2 is checked first, so ONE "
+        "sub-case with TWO word indices still names one word",
+        site="R_PAD_EXT2")
 
     # --------------------------------------------------- REFUSE: the shape
     add("R_ROWS0", lambda w: setfield(w, 1, 0, 32, 0),
-        EC_DESC, 1, "", "n_rows = 0")
+        EC_DESC, ei(ED_ROWS_ZERO, 1), "", "n_rows = 0")
     add("R_ROWSOVER", lambda w: setfield(w, 1, 0, 32, MAXROWS_BFP + 1),
-        EC_DESC, 1, "", "n_rows = MAXROWS_BFP + 1, one past the top")
+        EC_DESC, ei(ED_ROWS_MAX, 1), "",
+        "n_rows = MAXROWS_BFP + 1, one past the top")
     add("R_COLS0", lambda w: setfield(w, 1, 32, 32, 0),
-        EC_DESC, 1, "", "n_cols = 0")
+        EC_DESC, ei(ED_COLS_ZERO, 1), "", "n_cols = 0")
     add("R_COLSOVER", lambda w: setfield(w, 1, 32, 32, MAXCOLS + 1),
-        EC_DESC, 1, "", "n_cols = MAXCOLS + 1, one past the top")
+        EC_DESC, ei(ED_COLS_MAX, 1), "",
+        "n_cols = MAXCOLS + 1, one past the top")
     add("R_ROWSOVER_AND_BASE",
         lambda w: (setfield(w, 1, 0, 32, MAXROWS_BFP + 1),
                    w.__setitem__(W0, w[W0] + 0x100)),
-        EC_DESC, 1, "",
-        "n_rows out of range AND a misaligned base: the SHAPE check is first")
+        EC_DESC, ei(ED_ROWS_MAX, 1), "",
+        "n_rows out of range AND a misaligned base: the SHAPE check is first",
+        site="R_ROWSOVER")
+    add("R_SHAPE_ALLBAD",
+        lambda w: (setfield(w, 1, 0, 32, 0), setfield(w, 1, 32, 32, 0)),
+        EC_DESC, ei(ED_ROWS_ZERO, 1), "",
+        "n_rows AND n_cols both zero: the ROWS arm is first",
+        site="R_ROWS0")
+    add("R_SHAPE_OVERBOTH",
+        lambda w: (setfield(w, 1, 0, 32, MAXROWS_BFP + 1),
+                   setfield(w, 1, 32, 32, MAXCOLS + 1)),
+        EC_DESC, ei(ED_ROWS_MAX, 1), "",
+        "both dimensions one past the top: the ROWS arm is first",
+        site="R_ROWSOVER")
     add("R_WBEATS0", lambda w: setfield(w, EXT0 + 1, 0, 32, 0),
-        EC_DESC, EXT0 + 1, "", "w_beats = 0")
+        EC_DESC, ei(ED_WBEATS_ZERO, EXT0 + 1), "", "w_beats = 0")
     add("R_SBEATS0", lambda w: setfield(w, EXT0 + 1, 32, 32, 0),
-        EC_DESC, EXT0 + 1, "", "s_beats = 0")
+        EC_DESC, ei(ED_SBEATS_ZERO, EXT0 + 1), "",
+        "s_beats = 0.  Shared (3,EXT0+1) with R_WBEATS0 until 2026-08-29")
+
+    add("R_BEATS_BOTH0",
+        lambda w: setfield(w, EXT0 + 1, 0, 64, 0),
+        EC_DESC, ei(ED_WBEATS_ZERO, EXT0 + 1), "",
+        "BOTH beat counts zero: the w_beats arm is first",
+        site="R_WBEATS0")
 
     # ------------------------------------------------- REFUSE: the bases
     add("R_BASE_ADDR_W0", lambda w: w.__setitem__(W0, w[W0] | (1 << ADDR_W)),
-        EC_ADDR, W0, "", "weight base 0 has a bit AT ADDR_W")
+        EC_ADDR, ei(EI_SUB_NONE, W0), "",
+        "weight base 0 has a bit AT ADDR_W", site="R_BASE_ADDR_W0")
     add("R_BASE_ADDR_HI", lambda w: w.__setitem__(W0, w[W0] | (1 << 63)),
-        EC_ADDR, W0, "", "weight base 0 has bit 63 set")
+        EC_ADDR, ei(EI_SUB_NONE, W0), "",
+        "weight base 0 has bit 63 set", site="R_BASE_ADDR_W0")
     add("R_BASE_ALIGN_W0", lambda w: w.__setitem__(W0, w[W0] + 0x100),
-        EC_ALIGN, W0, "", "weight base 0 off a 4 KB boundary by 256 bytes")
+        EC_ALIGN, ei(EI_SUB_NONE, W0), "",
+        "weight base 0 off a 4 KB boundary by 256 bytes", site="R_BASE_ALIGN_W0")
     add("R_BASE_ALIGN_2K", lambda w: w.__setitem__(W0, w[W0] + 0x800),
-        EC_ALIGN, W0, "",
-        "weight base 0 off by 2 KB: separates a 4 KB check from a 2 KB one")
+        EC_ALIGN, ei(EI_SUB_NONE, W0), "",
+        "weight base 0 off by 2 KB: separates a 4 KB check from a 2 KB one",
+        site="R_BASE_ALIGN_W0")
     add("R_BASE_ALIGN_1", lambda w: w.__setitem__(W0, w[W0] + 1),
-        EC_ALIGN, W0, "", "weight base 0 off by ONE byte")
+        EC_ALIGN, ei(EI_SUB_NONE, W0), "",
+        "weight base 0 off by ONE byte", site="R_BASE_ALIGN_W0")
     add("R_BASE_ALIGN_WLAST",
         lambda w: w.__setitem__(WLAST, w[WLAST] + 0x100),
-        EC_ALIGN, WLAST, "", "the LAST weight base is misaligned")
+        EC_ALIGN, ei(EI_SUB_NONE, WLAST), "",
+        "the LAST weight base is misaligned")
     add("R_BASE_ADDR_S0", lambda w: w.__setitem__(S0, w[S0] | (1 << ADDR_W)),
-        EC_ADDR, S0, "", "the first SCALE base is out of range")
+        EC_ADDR, ei(EI_SUB_NONE, S0), "",
+        "the first SCALE base is out of range")
     add("R_BASE_ALIGN_SLAST",
         lambda w: w.__setitem__(SLAST, w[SLAST] + 0x100),
-        EC_ALIGN, SLAST, "",
+        EC_ALIGN, ei(EI_SUB_NONE, SLAST), "",
         "the LAST scale base is misaligned: the loop must reach NP_ALL-1")
     add("R_BASE_BOTH",
         lambda w: w.__setitem__(W0, (w[W0] | (1 << ADDR_W)) + 0x100),
-        EC_ADDR, W0, "",
-        "one base BOTH out of range and misaligned: ADDR is checked first")
+        EC_ADDR, ei(EI_SUB_NONE, W0), "",
+        "one base BOTH out of range and misaligned: ADDR is checked first",
+        site="R_BASE_ADDR_W0")
     add("R_BASE_ORDER",
         lambda w: (w.__setitem__(W0 + 1, w[W0 + 1] + 0x100),
                    w.__setitem__(W0 + 2, w[W0 + 2] | (1 << ADDR_W))),
-        EC_ALIGN, W0 + 1, "",
+        EC_ALIGN, ei(EI_SUB_NONE, W0 + 1), "",
         "base 1 misaligned, base 2 out of range: the LOWER index wins")
 
     # ------------------------------------------------- REFUSE: the codebook
     add("R_CBNEVER", lambda w: setfield(w, 0, 10, 1, 0),
-        EC_DESC, 0, "",
-        "cb_load clear and no codebook was ever loaded (shares (3,0) with "
-        "R_OPCODE)")
+        EC_DESC, ei(ED_CB_UNLOADED, 0), "",
+        "cb_load clear and no codebook was ever loaded.  Shared (3,0) with "
+        "R_OPCODE until 2026-08-29")
 
     # ------------------------------------------------- REFUSE: S_SHAPE_C
     add("R_WB_LOW", lambda w: setfield(w, EXT0 + 1, 0, 32, 383),
-        EC_SHAPE, EXT0 + 1, "", "w_beats one BELOW tiles*nblk: this STARVES")
+        EC_SHAPE, ei(ES_WBEATS, EXT0 + 1), "",
+        "w_beats one BELOW tiles*nblk: this STARVES", site="R_SHAPE_WB")
     add("R_WB_HIGH", lambda w: setfield(w, EXT0 + 1, 0, 32, 385),
-        EC_SHAPE, EXT0 + 1, "", "w_beats one ABOVE tiles*nblk")
+        EC_SHAPE, ei(ES_WBEATS, EXT0 + 1), "",
+        "w_beats one ABOVE tiles*nblk", site="R_SHAPE_WB")
     add("R_SB_LOW", lambda w: setfield(w, EXT0 + 1, 32, 32, 383),
-        EC_SHAPE, EXT0 + 1, "", "s_beats one below ceil(w_beats/GRP)")
+        EC_SHAPE, ei(ES_SBEATS_LO, EXT0 + 1), "",
+        "s_beats one below ceil(w_beats/GRP)", site="R_SHAPE_SB_LO")
     add("R_SB_HIGH", lambda w: setfield(w, EXT0 + 1, 32, 32, 385),
-        EC_SHAPE, EXT0 + 1, "", "s_beats one above ceil(w_beats/GRP)")
+        EC_SHAPE, ei(ES_SBEATS_HI, EXT0 + 1), "",
+        "s_beats one above ceil(w_beats/GRP)", site="R_SHAPE_SB_HI")
     add("R_WB_TILEOFF",
         lambda w: setfield(w, EXT0 + 1, 0, 32, shape(100, 4096)[0] + 128),
-        EC_SHAPE, EXT0 + 1, "",
+        EC_SHAPE, ei(ES_WBEATS, EXT0 + 1), "",
         "w_beats for FOUR tiles when the shape says three: a ceil/floor error "
-        "in the tile count lands exactly here")
+        "in the tile count lands exactly here", site="R_SHAPE_WB")
     add("R_SHAPE_TOP",
         lambda w: (with_shape(w, MAXROWS_BFP, 4096),
                    setfield(w, EXT0 + 1, 0, 32, shape(MAXROWS_BFP, 4096)[0] - 128)),
-        EC_SHAPE, EXT0 + 1, "",
-        "the same off-by-one-tile at the TOP of the row range")
+        EC_SHAPE, ei(ES_WBEATS, EXT0 + 1), "",
+        "the same off-by-one-tile at the TOP of the row range",
+        site="R_SHAPE_WB")
 
     # ------------------------------------------------ REFUSE: the pointer
-    add("P_ALIGN", nop, EC_ALIGN, EI_PTR,
+    add("P_ALIGN", nop, EC_ALIGN, EI_PTR,   # = ei(EI_SUB_PTR, 2047)
         "-gDESC_ADDR=%d -gEXPECT_EADDR=0" % (0x300000 + 0x100),
         "DESC_PTR not a multiple of DESC_MAXB*AXI_DW/8 = %d" % DESC_ALIGN)
     add("P_ALIGN_HALF", nop, EC_ALIGN, EI_PTR,
         "-gDESC_ADDR=%d -gEXPECT_EADDR=0" % (0x300000 + DESC_ALIGN // 2),
         "DESC_PTR off by HALF the alignment: separates DESC_ALIGN from "
-        "DESC_ALIGN/2")
+        "DESC_ALIGN/2", site="P_ALIGN")
     add("P_ADDR", nop, EC_ADDR, EI_PTR,
         "-gDESC_ADDR_HI=%d -gEXPECT_EADDR=1" % (1 << (ADDR_W - 32)),
         "DESC_PTR_HI has a bit AT ADDR_W: refused in S_IDLE *and* latched "
@@ -296,7 +412,7 @@ def cases():
     # broken design until the log is opened.
     add("P_ADDR_TOP", nop, EC_ADDR, EI_PTR,
         "-gDESC_ADDR_HI=%d -gEXPECT_EADDR=1" % (1 << 30),
-        "DESC_PTR_HI bit 62 set, well above ADDR_W")
+        "DESC_PTR_HI bit 62 set, well above ADDR_W", site="P_ADDR")
 
     # --------------------------------------------------- REFUSE: watchdog
     add("W_DEAD", nop, EC_WDOG, EI_PTR, "-gDSLV_DEAD=true",
@@ -305,15 +421,63 @@ def cases():
     return C
 
 
+def check_sites(C):
+    """THE ACCEPTANCE TEST FOR OI-9, and the reason the `site` column exists.
+
+    Two claims, and they pull in opposite directions so both have to be made:
+
+      (1) every case tagged with a site expects the SAME (err_code, ERR_INFO)
+          as every other case on that site -- one check, one diagnosis; and
+      (2) no two DIFFERENT sites expect the SAME (err_code, ERR_INFO) -- a
+          refusal names the check that raised it.
+
+    (2) is the one that was false before 2026-08-29, at six pairs.  (1) is what
+    stops the fix being "give every case its own number", which would separate
+    the reports without separating the checks and would pass (2) vacuously.
+
+    This runs at GENERATION time, on the expectations, so it is a statement
+    about the table.  The bench then runs each case against the gateware and
+    pins the pair, which is what makes it a statement about the RTL.  Neither
+    half is worth anything alone.
+    """
+    by_site = {}
+    by_pair = {}
+    bad = []
+    for name, _edit, code, info, _gen, _note, site in C:
+        if code == ACCEPT:
+            continue
+        pair = (code, info)
+        if site in by_site and by_site[site][0] != pair:
+            bad.append("site %s: %s expects (%d,0x%04X) but %s expects "
+                       "(%d,0x%04X) -- one check must give one diagnosis"
+                       % (site, by_site[site][1], by_site[site][0][0],
+                          by_site[site][0][1], name, code, info))
+        by_site.setdefault(site, (pair, name))
+        if pair in by_pair and by_pair[pair] != site:
+            bad.append("(err_code %d, ERR_INFO 0x%04X) is reported by TWO "
+                       "different sites, %s and %s -- a refusal there cannot "
+                       "be attributed (OI-9)"
+                       % (code, info, by_pair[pair], site))
+        by_pair.setdefault(pair, site)
+    return bad
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
     out = sys.argv[1]
     if not os.path.isdir(out):
         os.makedirs(out)
+    C = cases()
+    bad = check_sites(C)
+    if bad:
+        for b in bad:
+            sys.stderr.write("SITE GATE: %s\n" % b)
+        raise SystemExit("%d (err_code, ERR_INFO) collisions -- refusing to "
+                         "emit a suite that cannot attribute a refusal" % len(bad))
     golden = load_golden()
     rows = []
-    for name, edit, code, info, gen, note in cases():
+    for name, edit, code, info, gen, note, _site in C:
         w = list(golden)
         edit(w)
         if len(w) != DWORDS:
@@ -328,7 +492,10 @@ def main():
         rows.append("%s\t%s\t%s" % (name, args, note))
     with open(os.path.join(out, "cases.tsv"), "w") as fp:
         fp.write("\n".join(rows) + "\n")
-    sys.stderr.write("%d cases written to %s\n" % (len(rows), out))
+    sys.stderr.write("%d cases written to %s; site gate: %d sites, no "
+                     "(err_code, ERR_INFO) shared between two of them\n"
+                     % (len(rows), out,
+                        len(set(c[6] for c in C if c[2] != ACCEPT))))
 
 
 if __name__ == "__main__":

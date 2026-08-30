@@ -14,7 +14,7 @@
 -- unconnected to the build.  `rtl/matvec_int4_desc_axi.vhd:102,108` carries
 -- them again as generic DEFAULTS.  A divergence between the pair does not
 -- produce an error anywhere: it produces a DESCRIPTOR TABLE THE GATEWARE
--- REFUSES, `err_code 0x3 err_info 1`, at run time, on the card -- which is
+-- REFUSES, `err_code 0x3` at descriptor word 1, at run time, on the card -- which is
 -- exactly what TOKIO's `80d3a61` had to repair.
 --
 -- WHAT THIS BENCH CHECKS, and both halves have real teeth.
@@ -32,7 +32,8 @@
 --   builds two descriptors that differ in ONE field and lets the RTL judge:
 --
 --     n_rows = A_MAXROWS_BFP      must NOT be refused at descriptor word 1
---     n_rows = A_MAXROWS_BFP + 1  must be refused EC_DESC with err_info = 1
+--     n_rows = A_MAXROWS_BFP + 1  must be refused EC_DESC, sub-case
+--                                 ED_ROWS_MAX at descriptor word 1
 --
 --   Those two together BRACKET the DUT's MAXROWS_BFP at exactly the value
 --   `seq_tbl_pkg` believes.  A DUT bound below it fails the first; a DUT bound
@@ -43,9 +44,16 @@
 --   BEHAVIOURALLY, bracketed the same way at `matvec_int4_desc_axi.vhd:695-698`:
 --
 --     nsub = (A_NPORTS_W,   A_NPORTS_S)     must NOT be refused EC_GEOM
---     nsub = (A_NPORTS_W+1, A_NPORTS_S)     must be refused EC_GEOM, err_info 3
---     nsub = (A_NPORTS_W,   A_NPORTS_S+1)   must be refused EC_GEOM, err_info 3
---     nsub = (29, 4)                        must be refused EC_GEOM, err_info 3
+--     nsub = (A_NPORTS_W+1, A_NPORTS_S)     EC_GEOM, sub-case EG_NSUB_W, word 3
+--     nsub = (A_NPORTS_W,   A_NPORTS_S+1)   EC_GEOM, sub-case EG_NSUB_S, word 3
+--     nsub = (29, 4)                        EC_GEOM, sub-case EG_NSUB_W, word 3
+--
+--   UPDATED 2026-08-29 (TRACK ERRINFO, OI-9).  The middle two used to be
+--   indistinguishable -- both `EC_GEOM, err_info 3` -- so this bracket could
+--   not tell WHICH field the gateware objected to and the two RTL conditions
+--   could have been swapped without failing anything here.  ERR_INFO's new
+--   sub-case field separates them, and the (29,4) row now additionally pins
+--   which arm wins when BOTH fields are wrong.
 --
 --   The last is not a neighbourhood probe: it is the pair BOTH schedule
 --   generators wrote into descriptor word 3 until 2026-08-29, taken from the
@@ -115,6 +123,25 @@ architecture sim of tb_a_geom is
   -- A multiple of DESC_MAXB*AXI_DW/8 = 512, or the pointer raises ERR_ALIGN
   -- and the run never reaches S_CHECK at all.
   constant DESC_ADDR : natural := 16#300000#;
+
+  -- ERR_INFO expectations.  UPDATED 2026-08-29 (TRACK ERRINFO, OI-9):
+  -- ERR_INFO is now [10:0] word index + [15:11] sub-case
+  -- (rtl/matvec_int4_desc_pkg.vhd), so the bare 1 and 3 this bench used to
+  -- compare against are no longer what the design reports.
+  --
+  -- The brackets got STRONGER for free, and that is the reason this is a pin
+  -- change and not a masking-off of the new field.  Until today
+  -- nsub_w+1 and nsub_s+1 were refused IDENTICALLY -- both `EC_GEOM, 3` -- so
+  -- the two checks below could have had their conditions swapped in the RTL
+  -- and this bench would have passed either way.  They now differ, and a
+  -- swap fails.
+  --
+  -- Computed here, at the architecture level, and NOT in the driver process:
+  -- that process declares a variable called `ei`, which hides the package
+  -- function of the same name for its whole body.
+  constant EI_ROWS_MAX : integer := to_integer(unsigned(ei(ED_ROWS_MAX, 1)));
+  constant EI_NSUB_W   : integer := to_integer(unsigned(ei(EG_NSUB_W,   3)));
+  constant EI_NSUB_S   : integer := to_integer(unsigned(ei(EG_NSUB_S,   3)));
 
   signal clk      : std_logic := '0';
   signal aresetn  : std_logic := '0';
@@ -370,7 +397,7 @@ begin
     -- ---- MAXROWS_BFP, bracketed --------------------------------------
     build(A_MAXROWS_BFP);
     run_desc(ec, ei);
-    chk(not (ec = to_integer(unsigned(EC_DESC)) and ei = 1),
+    chk(not (ec = to_integer(unsigned(EC_DESC)) and ei = EI_ROWS_MAX),
         "n_rows = A_MAXROWS_BFP (" & integer'image(A_MAXROWS_BFP)
         & ") was refused at descriptor word 1, so the descriptor plane's "
         & "MAXROWS_BFP is BELOW what seq_tbl_pkg believes.  Every lm_head "
@@ -381,7 +408,7 @@ begin
 
     build(A_MAXROWS_BFP + 1);
     run_desc(ec, ei);
-    chk(ec = to_integer(unsigned(EC_DESC)) and ei = 1,
+    chk(ec = to_integer(unsigned(EC_DESC)) and ei = EI_ROWS_MAX,
         "n_rows = A_MAXROWS_BFP+1 (" & integer'image(A_MAXROWS_BFP + 1)
         & ") was NOT refused at descriptor word 1 (err_code "
         & integer'image(ec) & " err_info " & integer'image(ei)
@@ -416,7 +443,7 @@ begin
 
     build(A_MAXROWS_BFP, npw_f => A_NPORTS_W + 1, nps_f => A_NPORTS_S);
     run_desc(ec, ei);
-    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = EI_NSUB_W,
         "nsub_w = A_NPORTS_W+1 (" & integer'image(A_NPORTS_W + 1)
         & ") was NOT refused EC_GEOM at word 3 (err_code "
         & integer'image(ec) & " err_info " & integer'image(ei)
@@ -426,7 +453,7 @@ begin
 
     build(A_MAXROWS_BFP, npw_f => A_NPORTS_W, nps_f => A_NPORTS_S + 1);
     run_desc(ec, ei);
-    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = EI_NSUB_S,
         "nsub_s = A_NPORTS_S+1 (" & integer'image(A_NPORTS_S + 1)
         & ") was NOT refused EC_GEOM at word 3 (err_code "
         & integer'image(ec) & " err_info " & integer'image(ei) & ").");
@@ -441,7 +468,10 @@ begin
     -- names the historical defect rather than a neighbourhood of it.
     build(A_MAXROWS_BFP, npw_f => 29, nps_f => 4);
     run_desc(ec, ei);
-    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = 3,
+    -- (29,4) has BOTH fields wrong, so the arm that fires is the nsub_w one:
+    -- first match wins.  That is a claim about ORDER and it is only checkable
+    -- because the two arms now report differently.
+    chk(ec = to_integer(unsigned(EC_GEOM)) and ei = EI_NSUB_W,
         "the pre-2026-08-29 nsub pair (29,4) was NOT refused EC_GEOM at "
         & "word 3 (err_code " & integer'image(ec) & " err_info "
         & integer'image(ei) & ").");

@@ -76,15 +76,18 @@ MUTATIONS = [
      "  v_wbeats <= lo32(dw(EXT0));"),
 
     # ------------------------------------------------------ D's header words
+    # RETARGETED 2026-08-29 (TRACK ERRINFO): the single EC_GEOM `or` became
+    # two `elsif` arms so nsub_w and nsub_s report different sub-cases, and the
+    # old anchors stopped matching.  A stale anchor prints ANCHOR and is
+    # SKIPPED, which is loud but is still a mutation that measures nothing --
+    # so retargeting is part of the same change, not follow-up work.
     ("H1", "IMG", "weaken: NPORTS_W is not checked against the descriptor",
-     "            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W\n"
-     "               or to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then",
-     "            elsif to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then"),
+     "            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W then",
+     "            elsif false then"),
 
     ("H2", "IMG", "weaken: NPORTS_S is not checked against the descriptor",
-     "            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W\n"
-     "               or to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then",
-     "            elsif to_integer(unsigned(dw(3)(31 downto 16))) /= NPORTS_W then"),
+     "            elsif to_integer(unsigned(dw(3)(47 downto 32))) /= NPORTS_S then",
+     "            elsif false then"),
 
     ("H3", "IMG", "weaken: the opcode is not checked, so any D job runs as an A job",
      "            elsif op /= OP_A_JOB then",
@@ -99,14 +102,12 @@ MUTATIONS = [
      "            elsif false then"),
 
     ("H6", "IMG", "weaken: the extension's own pad words are not checked",
-     "            elsif hi32(dw(EXT0 + 2)) /= x\"00000000\"\n"
-     "               or dw(EXT0 + 3) /= x\"0000000000000000\" then",
+     "            elsif hi32(dw(EXT0 + 2)) /= x\"00000000\" then",
      "            elsif false then"),
 
     ("H7", "IMG", "weaken: only the FIRST of the two extension pads is checked",
-     "            elsif hi32(dw(EXT0 + 2)) /= x\"00000000\"\n"
-     "               or dw(EXT0 + 3) /= x\"0000000000000000\" then",
-     "            elsif hi32(dw(EXT0 + 2)) /= x\"00000000\" then"),
+     "            elsif dw(EXT0 + 3) /= x\"0000000000000000\" then",
+     "            elsif false then"),
 
     ("H8", "IMG", "weaken: out_mode 3 is admitted (the bound moved by one)",
      "            elsif to_integer(unsigned(dw(3)(7 downto 0))) > 2 then",
@@ -118,26 +119,24 @@ MUTATIONS = [
 
     # ------------------------------------------------------------- the shape
     ("S1", "IMG", "weaken: n_rows = 0 is admitted",
-     "            elsif unsigned(lo32(dw(1))) = 0\n"
-     "               or unsigned(lo32(dw(1))) > MAXROWS_BFP",
-     "            elsif unsigned(lo32(dw(1))) > MAXROWS_BFP"),
+     "            elsif unsigned(lo32(dw(1))) = 0 then",
+     "            elsif false then"),
 
     ("S2", "IMG", "weaken: the n_rows ceiling is one too high",
-     "               or unsigned(lo32(dw(1))) > MAXROWS_BFP",
-     "               or unsigned(lo32(dw(1))) > MAXROWS_BFP + 1"),
+     "            elsif unsigned(lo32(dw(1))) > MAXROWS_BFP then",
+     "            elsif unsigned(lo32(dw(1))) > MAXROWS_BFP + 1 then"),
 
     ("S3", "IMG", "tighten: the n_rows ceiling excludes MAXROWS_BFP itself",
-     "               or unsigned(lo32(dw(1))) > MAXROWS_BFP",
-     "               or unsigned(lo32(dw(1))) >= MAXROWS_BFP"),
+     "            elsif unsigned(lo32(dw(1))) > MAXROWS_BFP then",
+     "            elsif unsigned(lo32(dw(1))) >= MAXROWS_BFP then"),
 
     ("S4", "IMG", "weaken: n_cols = 0 is admitted",
-     "               or unsigned(hi32(dw(1))) = 0\n"
-     "               or unsigned(hi32(dw(1))) > MAXCOLS then",
-     "               or unsigned(hi32(dw(1))) > MAXCOLS then"),
+     "            elsif unsigned(hi32(dw(1))) = 0 then",
+     "            elsif false then"),
 
     ("S5", "IMG", "weaken: the n_cols ceiling is one too high",
-     "               or unsigned(hi32(dw(1))) > MAXCOLS then",
-     "               or unsigned(hi32(dw(1))) > MAXCOLS + 1 then"),
+     "            elsif unsigned(hi32(dw(1))) > MAXCOLS then",
+     "            elsif unsigned(hi32(dw(1))) > MAXCOLS + 1 then"),
 
     ("S6", "IMG", "n_rows and n_cols are read from each other's half",
      "              sh_rows <= to_integer(unsigned(lo32(dw(1))));\n"
@@ -145,9 +144,14 @@ MUTATIONS = [
      "              sh_rows <= to_integer(unsigned(hi32(dw(1))));\n"
      "              sh_cols <= to_integer(unsigned(lo32(dw(1))));"),
 
-    ("S7", "IMG", "weaken: a zero w_beats or s_beats is admitted",
-     "            elsif unsigned(lo32(dw(EXT0 + 1))) = 0\n"
-     "               or unsigned(hi32(dw(EXT0 + 1))) = 0 then",
+    ("S7", "IMG", "weaken: a zero w_beats is admitted",
+     "            elsif unsigned(lo32(dw(EXT0 + 1))) = 0 then",
+     "            elsif false then"),
+    # NEW 2026-08-29: the old S7 disabled BOTH beat checks in one edit because
+    # they were one `or`.  Splitting them means a mutation that removes only
+    # the s_beats half is now expressible, and it was not before.
+    ("S8", "IMG", "weaken: a zero s_beats is admitted",
+     "            elsif unsigned(hi32(dw(EXT0 + 1))) = 0 then",
      "            elsif false then"),
 
     # ---------------------------------------------------------- the bases
@@ -189,9 +193,9 @@ MUTATIONS = [
 
     ("B10", "IMG", "ERR_INFO names the port, not the descriptor word",
      "        bad := '1'; code := EC_ADDR;\n"
-     "        info := std_logic_vector(to_unsigned(DESC_BASE0 + p, 16));",
+     "        info := ei(EI_SUB_NONE, DESC_BASE0 + p);",
      "        bad := '1'; code := EC_ADDR;\n"
-     "        info := std_logic_vector(to_unsigned(p, 16));"),
+     "        info := ei(EI_SUB_NONE, p);"),
 
     ("B11", "IMG", "EC_ADDR and EC_ALIGN are swapped on the base array",
      "        bad := '1'; code := EC_ADDR;",
@@ -244,19 +248,19 @@ MUTATIONS = [
      "            if unsigned(lo32(dw(EXT0 + 1))) < to_unsigned(sh_prod, 32)"),
 
     ("C3", "IMG", "weaken: the s_beats LOWER bound is dropped (starvation)",
-     "               or unsigned(hi32(dw(EXT0 + 1))) * GRP\n"
-     "                    < to_unsigned(sh_prod, 64)",
-     "               or false"),
+     "            elsif unsigned(hi32(dw(EXT0 + 1))) * GRP\n"
+     "                    < to_unsigned(sh_prod, 64) then",
+     "            elsif false then"),
 
     ("C4", "IMG", "weaken: the s_beats UPPER bound is dropped (over-read)",
-     "               or (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP\n"
+     "            elsif (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP\n"
      "                    >= to_unsigned(sh_prod, 64) then",
-     "               or false then"),
+     "            elsif false then"),
 
     ("C5", "IMG", "the s_beats bracket loses its -1, so the exact value is refused",
-     "               or (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP\n"
+     "            elsif (unsigned(hi32(dw(EXT0 + 1))) - 1) * GRP\n"
      "                    >= to_unsigned(sh_prod, 64) then",
-     "               or unsigned(hi32(dw(EXT0 + 1))) * GRP\n"
+     "            elsif unsigned(hi32(dw(EXT0 + 1))) * GRP\n"
      "                    >= to_unsigned(sh_prod, 64) then"),
 
     ("C6", "IMG", "GRP is one too large, so every legal s_beats is refused",
@@ -364,6 +368,59 @@ MUTATIONS = [
      "              err_code <= EC_MAGIC;",
      "              err_code <= EC_MAGIC; done_l <= '1';"),
 
+    # ------------------------------------------- the ERR_INFO SUB-CASE field
+    # NEW 2026-08-29 (TRACK ERRINFO, OI-9).  Every mutation below was
+    # INEXPRESSIBLE before the sub-case field existed: the two sites it swaps
+    # reported the same (err_code, ERR_INFO), so an RTL that confused them was
+    # invisible to every case in the suite.  They are the measurement of what
+    # the subdivision bought, and each one names the case that must kill it.
+    # NAMED EI*, NOT N*.  MEASURED trap, 2026-08-29: the first draft called
+    # these N1..N6 and the GEN branch already had an N1 and an N2.  Nothing
+    # complained -- `--list` emitted both and `--apply` took whichever matched
+    # first -- so two mutations would silently have been run twice and two not
+    # at all.  A uniqueness gate is now asserted at import; see the bottom of
+    # this file.
+    ("EI1", "IMG", "the opcode refusal reports the CODEBOOK sub-case",
+     "              err_info <= ei(ED_OPCODE, 0);",
+     "              err_info <= ei(ED_CB_UNLOADED, 0);"),
+
+    ("EI2", "IMG", "word 3's pad refusal reports the OUT_MODE sub-case",
+     "              err_info <= ei(ED_PAD_W3, 3);",
+     "              err_info <= ei(ED_OUT_MODE, 3);"),
+
+    ("EI3", "IMG", "the nsub_s refusal reports the nsub_w sub-case",
+     "              err_info <= ei(EG_NSUB_S, 3);",
+     "              err_info <= ei(EG_NSUB_W, 3);"),
+
+    ("EI4", "IMG", "the ext-word-3 pad names word EXT0+2, as it did before OI-9",
+     "              err_info <= ei(ED_PAD_EXT, EXT0 + 3);",
+     "              err_info <= ei(ED_PAD_EXT, EXT0 + 2);"),
+
+    ("EI5", "IMG", "the s_beats UPPER-bound refusal reports the LOWER sub-case",
+     "              err_info <= ei(ES_SBEATS_HI, EXT0 + 1);",
+     "              err_info <= ei(ES_SBEATS_LO, EXT0 + 1);"),
+
+    # This one does not change any single-field case at all: it changes which
+    # arm wins when BOTH beat counts are zero.  Only R_BEATS_BOTH0 can see it,
+    # which is why that case was added in the same change.
+    ("EI6", "IMG", "the two beat-count arms are in the opposite order",
+     "            elsif unsigned(lo32(dw(EXT0 + 1))) = 0 then\n"
+     "              err_code <= EC_DESC;                     -- w_beats = 0\n"
+     "              err_info <= ei(ED_WBEATS_ZERO, EXT0 + 1);\n"
+     "              st <= S_ERR;\n"
+     "            elsif unsigned(hi32(dw(EXT0 + 1))) = 0 then\n"
+     "              err_code <= EC_DESC;                     -- s_beats = 0\n"
+     "              err_info <= ei(ED_SBEATS_ZERO, EXT0 + 1);\n"
+     "              st <= S_ERR;",
+     "            elsif unsigned(hi32(dw(EXT0 + 1))) = 0 then\n"
+     "              err_code <= EC_DESC;                     -- s_beats = 0\n"
+     "              err_info <= ei(ED_SBEATS_ZERO, EXT0 + 1);\n"
+     "              st <= S_ERR;\n"
+     "            elsif unsigned(lo32(dw(EXT0 + 1))) = 0 then\n"
+     "              err_code <= EC_DESC;                     -- w_beats = 0\n"
+     "              err_info <= ei(ED_WBEATS_ZERO, EXT0 + 1);\n"
+     "              st <= S_ERR;"),
+
     # ---------------------------------------------------- RUN branch only
     ("R1", "RUN", "the core's own error is not turned into EC_CORE",
      "            if core_err = '1' then",
@@ -418,6 +475,28 @@ def main():
         sys.exit(3)
     sys.stderr.write(__doc__ + "\nusage: --list | --apply NAME FILE\n")
     sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
+# NAMES MUST BE UNIQUE, and this is asserted at IMPORT so it fires for --list,
+# for --apply and for anything that imports the table.
+#
+# MEASURED 2026-08-29 (TRACK ERRINFO): a new row was added as N1 while the GEN
+# branch already had an N1.  Nothing objected.  `--list` printed BOTH rows, so
+# the harness ran a mutation called N1 twice; `--apply` returns on the FIRST
+# match, so it applied the SAME edit both times and the second N1 was never
+# tested at all.  The run still printed a full table with a verdict on every
+# row, which is the worst shape a measurement error can take: a report that
+# looks complete and covers one fewer thing than it says.
+_seen = {}
+for _r in MUTATIONS:
+    if _r[0] in _seen:
+        raise SystemExit(
+            "mv4i_desc_mutations: duplicate mutation name %r.  --apply returns "
+            "on the first match, so one of these two edits would never be "
+            "tested and the other would be tested twice, with a full-looking "
+            "table either way." % _r[0])
+    _seen[_r[0]] = True
 
 
 if __name__ == "__main__":

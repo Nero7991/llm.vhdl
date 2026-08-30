@@ -95,7 +95,7 @@ Word-addressed, `reg = addr[7:2]`, `C_S_AXI_ADDR_WIDTH = 8`.
 | `0x04` | 1 | `DESC_PTR_HI` | RW | descriptor byte address, high 32 bits |
 | `0x08` | 2 | `CTRL` | W | bit0 = `GO` (self-clearing) |
 | `0x0C` | 3 | `STATUS` | R | see below |
-| `0x10` | 4 | `ERR_INFO` | R | `[15:0]` failing descriptor word index; `0xFFFF` = the pointer itself |
+| `0x10` | 4 | `ERR_INFO` | R | `[10:0]` failing descriptor word index, `[15:11]` sub-case within `err_code`; `0xFFFF` = the pointer itself. See section 5.4 |
 | `0x14` | 5 | `ID` | R | `0x4D563449` ("MV4I") |
 | `0x18` | 6 | `ADDR_CAP` | R | `ADDR_W` this build was synthesised with, in bits |
 | `0x1C` | 7 | `CAPS` | R | `[7:0]` `NPORTS_W`, `[15:8]` `NPORTS_S`, `[23:16]` `ROWS_IF`, `[31:24]` `AXI_DW/8` |
@@ -258,26 +258,90 @@ On any failure the wrapper: does **not** pulse `start`, drops `busy`, sets
 rather than reading stale results; a driver that polls for `done or err` gets
 the code.
 
-| code | name | condition | `ERR_INFO` |
-|---|---|---|---|
-| `0x0` | `ERR_NONE` | -- | -- |
-| `0x3` | `ERR_DESC` | descriptor-class malformation: `opcode /= 0`; any pad field nonzero (word 3 `[63:56]`, word 7, ext word 2 `[63:32]`, ext word 3, `ext_flags`); `out_mode > 2`; `n_rows = 0` or `> MAXROWS_BFP`; `n_cols = 0` or `> MAXCOLS`; `w_beats = 0`; `s_beats = 0`; a job started with `cb_load = 0` before any codebook was ever loaded | word index |
-| `0x4` | `ERR_WDOG` | the descriptor fetch did not complete within `WDOG_LIMIT` cycles | `0xFFFF` |
-| `0x9` | `ERR_GEOM` | `nsub_w /= NPORTS_W` or `nsub_s /= NPORTS_S` | `3` |
-| `0xA` | `ERR_MAGIC` | `ext_magic /= 0x4D563449` | ext word 0 index |
-| `0xB` | `ERR_VER` | `ext_version /= 1` | ext word 0 index |
-| `0xC` | `ERR_ALIGN` | `DESC_PTR` not aligned to `DESC_MAXB*AXI_DW/8`, or a base has `[11:0] /= 0` | `0xFFFF` for the pointer, else the base's word index |
-| `0xD` | `ERR_ADDR` | `DESC_PTR` or a base has a bit set at or above `ADDR_W` | as above |
-| `0xE` | `ERR_CORE` | `matvec_int4` raised `err` after a clean descriptor | `0xFFFF` |
-| `0xF` | `ERR_SHAPE` | `w_beats` or `s_beats` does not match the shape in `n_rows`/`n_cols` -- see section 5.2 | ext word 1 index |
+| code | name | condition | `ERR_INFO` sub-case | word |
+|---|---|---|---|---|
+| `0x0` | `ERR_NONE` | -- | -- | -- |
+| `0x3` | `ERR_DESC` | `ext_flags` nonzero | 1 `ED_EXT_FLAGS` | ext word 0 |
+| `0x3` | `ERR_DESC` | `opcode /= 0` | 2 `ED_OPCODE` | 0 |
+| `0x3` | `ERR_DESC` | word 3 `[63:56]` nonzero (D's pad) | 3 `ED_PAD_W3` | 3 |
+| `0x3` | `ERR_DESC` | word 7 nonzero (D's reserved word) | 4 `ED_PAD_W7` | 7 |
+| `0x3` | `ERR_DESC` | ext word 2 `[63:32]` nonzero, or ext word 3 nonzero | 5 `ED_PAD_EXT` | ext word 2 **or** ext word 3, whichever it was |
+| `0x3` | `ERR_DESC` | `out_mode > 2` | 6 `ED_OUT_MODE` | 3 |
+| `0x3` | `ERR_DESC` | `n_rows = 0` | 7 `ED_ROWS_ZERO` | 1 |
+| `0x3` | `ERR_DESC` | `n_rows > MAXROWS_BFP` | 8 `ED_ROWS_MAX` | 1 |
+| `0x3` | `ERR_DESC` | `n_cols = 0` | 9 `ED_COLS_ZERO` | 1 |
+| `0x3` | `ERR_DESC` | `n_cols > MAXCOLS` | 10 `ED_COLS_MAX` | 1 |
+| `0x3` | `ERR_DESC` | `w_beats = 0` | 11 `ED_WBEATS_ZERO` | ext word 1 |
+| `0x3` | `ERR_DESC` | `s_beats = 0` | 12 `ED_SBEATS_ZERO` | ext word 1 |
+| `0x3` | `ERR_DESC` | a job started with `cb_load = 0` before any codebook was ever loaded | 13 `ED_CB_UNLOADED` | 0 |
+| `0x4` | `ERR_WDOG` | the descriptor fetch did not complete within `WDOG_LIMIT` cycles | 31 (the pointer) | -- |
+| `0x9` | `ERR_GEOM` | `nsub_w /= NPORTS_W` | 1 `EG_NSUB_W` | 3 |
+| `0x9` | `ERR_GEOM` | `nsub_s /= NPORTS_S` | 2 `EG_NSUB_S` | 3 |
+| `0xA` | `ERR_MAGIC` | `ext_magic /= 0x4D563449` | 0 | ext word 0 |
+| `0xB` | `ERR_VER` | `ext_version /= 1` | 0 | ext word 0 |
+| `0xC` | `ERR_ALIGN` | `DESC_PTR` not aligned to `DESC_MAXB*AXI_DW/8` | 31 (the pointer) | -- |
+| `0xC` | `ERR_ALIGN` | a base has `[11:0] /= 0` | 0 | that base's word |
+| `0xD` | `ERR_ADDR` | `DESC_PTR` has a bit at or above `ADDR_W` | 31 (the pointer) | -- |
+| `0xD` | `ERR_ADDR` | a base has a bit at or above `ADDR_W` | 0 | that base's word |
+| `0xE` | `ERR_CORE` | `matvec_int4` raised `err` after a clean descriptor | 31 (the pointer) | -- |
+| `0xF` | `ERR_SHAPE` | `w_beats /= tiles*nblk` -- section 5.2 | 1 `ES_WBEATS` | ext word 1 |
+| `0xF` | `ERR_SHAPE` | `s_beats*GRP < tiles*nblk` | 2 `ES_SBEATS_LO` | ext word 1 |
+| `0xF` | `ERR_SHAPE` | `(s_beats-1)*GRP >= tiles*nblk` | 3 `ES_SBEATS_HI` | ext word 1 |
+
+First match wins, in the order the rows appear above, which is the order the
+`elsif` chain in `rtl/matvec_int4_desc_axi.vhd` has them.
 
 Codes `0x1, 0x2, 0x5..0x8` are left unused so that D's own `ERR_UNIT`,
 `ERR_LOCK`, `ERR_GRANT`, `ERR_CTX`, `ERR_EPOCH`, `ERR_ABORT` keep their
 meanings if the two error spaces are ever merged.
 
-**The 4-bit field is now FULL.** `0x0`, `0x3`, `0x4` and `0x9..0xF` are all
-assigned and `0x1, 0x2, 0x5..0x8` are D's. A further A-specific code needs the
-field widened, not another value found.
+**The 4-bit field is FULL and stays full.** `0x0`, `0x3`, `0x4` and `0x9..0xF`
+are all assigned and `0x1, 0x2, 0x5..0x8` are D's.
+
+**CORRECTION, 2026-08-29.** The line that stood here said "a further A-specific
+code needs the field widened, not another value found." That was acted on and
+is now withdrawn: a further A-specific *condition* takes a **sub-case** under an
+existing code. Oren chose that route on 2026-08-29 over widening the field or
+taking one of D's reserved values, and the reason is the constraint this whole
+document exists to state -- **the descriptor's byte layout must not move.**
+`ERR_INFO` is a register field, so subdividing it moves no descriptor byte and
+invalidates no builder. See section 5.4.
+
+### 5.4 `ERR_INFO`: a word index and a sub-case
+
+    ERR_INFO[15:11]  sub-case, namespaced per err_code   (0 = none, 31 = the pointer)
+    ERR_INFO[10:0]   failing descriptor word index
+
+The two meanings **coexist**; the sub-case does not replace the word index. A
+host decodes the PAIR `(err_code, sub-case)` for the diagnosis and reads
+`[10:0]` for the word. That is load-bearing at the sites where one descriptor
+word carries several checks -- word 3 holds `out_mode`, `nsub_w`, `nsub_s` and a
+pad, and ext word 1 holds both beat counts -- and it is what lets `ED_PAD_EXT`
+stay one sub-case while naming ext word 2 or ext word 3, whichever was nonzero.
+
+`0xFFFF` is unchanged and now falls out of the scheme: sub-case 31 with word
+2047. Sub-case 31 is reserved and means **the report is about `DESC_PTR`, not
+about a descriptor word**; `[10:0]` carries nothing in that case.
+
+**What this cost.** The word index is capped at 2047. `desc_words(24,3) = 39` at
+the FK33, so the cap is 52x the longest descriptor this build produces and it
+binds only past `NPORTS_W + NPORTS_S = 2036`. `matvec_int4_desc_axi` carries an
+elaboration guard (`EI_WORD_FITS`, a `natural`, because Vivado ignores
+`assert ... severity failure` in synthesis). Thirty sub-cases per code are
+available; `ERR_DESC` uses thirteen.
+
+**Sub-case 0 leaves `ERR_INFO` numerically unchanged** from the old
+word-index-only encoding. Every site that is not subdivided still reports the
+same integer it always did, so a host that has not been taught the split still
+reads the right word for those -- and reads a conspicuously large number for the
+subdivided ones, which is visible rather than silently wrong.
+
+**WHY THIS WAS WORTH DOING, MEASURED.** At `3d5cba9`, seven distinct
+`(err_code, ERR_INFO)` values were each reported by two or more different
+checks, so a refusal at any of them could not be attributed. The two that were
+on record in OI-9 -- `(3,0)` and `(3,3)` -- were a third of the real total. The
+gate that found the rest is `check_sites()` in `sim/mv4i_desc_cases.py`, which
+refuses to emit a case suite in which two different SITES expect the same pair.
 
 `ERR_ADDR` also keeps the old map's **write-time** behaviour for the one
 address register that survives: writing `DESC_PTR_HI` with a bit at or above
