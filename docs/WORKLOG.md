@@ -666,6 +666,50 @@ specific CLB slots, so removing them attacks the 6.32 directly. **Do not
 justify lever C on its ~7.1x LUT win alone; the packing effect is the point and
 it has not been measured.**
 
+**CORRECTION 2026-08-30, from TRACK LEVERC (`845ea28`): the MUXF7/F8 figures
+above are the A-ONLY SHELL build's, and this block applied them to the COMPOSED
+fit. That is the same defect this block was written to record, committed inside
+it.**
+
+MEASURED in the composed A+B+C+D, from TRACK TIMING's own `TT_MUX` census: the
+codebook is **37.7% of MUXF7 (24,576 / 65,108) and 47.6% of MUXF8
+(12,288 / 25,788)** -- not 97.7% / 98.8%. `d_norm/gvr.u_rms` alone carries
+17,696 F7 and 8,736 F8, and `c_attn/u_arr` another 15,796 F7. TIMING's section
+7a states the correct 38.2% / 48.1% **two paragraphs before quoting 97.7 / 98.8
+into its own lever-C estimate**, so the wrong number was carried forward
+independently by two of us from the same source.
+
+**A second correction, which reverses the sign of the argument.** This block
+said removing MUXF7/F8 "attacks the 6.32 directly" because they pin LUTs into
+CLB slots. LEVERC's arithmetic says the premise is backwards: **a MUXF8 shape
+occupies 4 LUT6 in one CLB half and wastes none of them, so a paired mux region
+sits at exactly 8.00 LUT/CLB -- the device maximum.** The codebook mux is the
+DENSEST structure in the design, not the loosest, and removing it LOWERS the
+average density. An indivisible shape costs the placer freedom, not LUT sites.
+
+Bounded rather than point-estimated, since the non-mux logic also cannot exceed
+8 LUT/CLB (which refutes the fully-unpaired extreme by arithmetic):
+
+```
+mux-region density        4.69 .. 8.00 LUT/CLB
+CLB saving from lever C   3,072 .. 8,946
+overshoot (11,534 CLB)    27% .. 78% closed
+post-lever-C occupancy    104.7% .. 115.4%
+density moves             6.05 (down) .. 6.66 (up)   from 6.324
+```
+
+**Lever C alone does not close the fit under either bound.** That agrees with
+TIMING's conclusion while removing the reasoning both of us used to reach it.
+
+**`K2b` is CLOSED** by the same track, independently of whether lever C ships.
+`P_CB_CHK` watched the command register; re-aiming it at "the last stage" does
+not fix it, because the next change moves past that too. The new `P_CB_MODEL`
+watches no register at all: it rebuilds the write path from the entity's ports,
+delays it by a declared `CB_WR_LAT`, and requires `cb` to equal it every copy
+every cycle. **Its attribution control denied credit for thirteen of fifteen
+apparent detections** -- without it the table would have claimed fifteen where
+two are real.
+
 Standing condition carried forward from the original row and still binding:
 **if lever C is taken, its oracle work is dispatched ALONGSIDE, not after.**
 Its known risk is a 32x write-coherency surface. `K2b` remains a standing
