@@ -828,9 +828,13 @@ def run_job(p, regs, bar, hbm, a, out=sys.stdout):
           "thermal guard, so the halt cannot mask a GO -- and nothing is "
           "protecting the card either\n")
     if therm0 & (1 << 30):
-        w("warn        THERM_STATUS bit 30 is SET: the two HBM temperature "
-          "copies disagree (a CDC fault).  This is exactly the sticky that "
-          "open issue THERM-255 found set on a saturated trip counter\n")
+        w("warn        THERM_STATUS bit 30 is SET: the two HBM stacks "
+          "disagreed and stayed disagreeing.  They are two SEPARATE DIES "
+          "(build_fk33_pcieep.tcl:781-782), not two copies of one reading, so "
+          "this is a stuck or torn stack sensor or a real load gradient -- NOT "
+          "a CDC fault.  It is DIAGNOSTIC: since the THERMFIX change it cannot "
+          "halt the card, and a bitstream predating that change halts on a "
+          "5 ns transient at every code crossing (open issue THERM-255)\n")
     if trip0 == 255:
         w("warn        the trip counter is at its 8-bit SATURATING maximum, so "
           "'it did not move' cannot be observed on this run.  Clear it first: "

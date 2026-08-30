@@ -362,7 +362,12 @@ def cmd_thermal(a):
                       (27, "SYSMON user temperature alarm has fired"),
                       (28, "HBM stack 0 asserted CATTRIP"),
                       (29, "HBM stack 1 asserted CATTRIP"),
-                      (30, "the two HBM temperature copies disagreed (a CDC fault)")):
+                      (30, "the two HBM stacks disagreed for longer than the "
+                           "dwell.  DIAGNOSTIC ONLY -- it does not halt.  "
+                           "hbm_temp0/1 are two SEPARATE DIES, so this is a "
+                           "stuck or torn stack sensor, or two stacks that "
+                           "have genuinely separated under load.  It is NOT "
+                           "a CDC fault")):
         if st & (1 << bit):
             print(f"  STICKY: {what}")
     print(f"canary        {cn}  (advances only while the compute domain is")
