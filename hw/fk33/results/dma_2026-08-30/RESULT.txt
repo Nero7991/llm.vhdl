@@ -1,0 +1,44 @@
+C2H DMA cost against transfer size, MEASURED 2026-08-30 01:10 on the FK33.
+Read-only sweep by dmasize.py in this directory; dma_read only, never a write.
+
+Deliberately NOT `fk33ctl.py bench`: that writes os.urandom into the offset
+before timing, which is fine for a scratch region and not fine for a card
+holding 8 GiB of weights.  Source region 0x38204000, warmed, repeated.
+
+    bytes   reps   total s   us/call      MB/s
+       64   2000     0.015      7.43       8.6
+      128   2000     0.015      7.51      17.0
+      256   2000     0.015      7.56      33.9
+      384   2000     0.015      7.55      50.9
+      512   2000     0.015      7.47      68.5
+     1024   2000     0.015      7.69     133.2
+     2048   1953     0.015      7.93     258.3
+     4096    976     0.008      8.37     489.4
+     8192    488     0.005     10.53     778.1
+    16384    244     0.003     13.80    1187.2
+    65536     61     0.003     42.92    1526.8
+   262144     15     0.003    219.62    1193.6
+  1048576      4     0.004    970.01    1081.0
+  4194304      4     0.018   4440.68     944.5
+
+THE TWO TERMS
+  FIXED cost per call: ~7.5 us, FLAT from 64 B to 1024 B, still only 8.37 us
+  at 4 KB.  The fixed term dominates everything below about 8 KB.
+  PER-BYTE: peaks near 1.5 GB/s at 64 KB, then FALLS to ~0.94 GB/s at 4 MB.
+
+  That fall is NOT explained.  Do not model this interface as a single
+  throughput figure, and do not extrapolate the large sizes.
+
+WHY IT WAS TAKEN
+  A whole token (docs/debugging/2026-08-30_a-whole-token-on-the-silicon.md)
+  cost 3,583,291 MMIO reads at 1.92 us = 6.885 s of a 17.814 s token, because
+  Y_IDX/Y_LO/Y_HI is the only result path.  Whether an HBM result path helps
+  turns on the FIXED cost, since one 96-row job's Y is under 1 KB -- a path
+  that is fast per byte and expensive per call would lose at that size.
+
+  It does not lose.  768 B sits deep inside the flat region at ~7.5 us.
+
+  This measures the HOST side of an EXISTING path.  It says nothing about
+  whether the engine can write Y to HBM, what that costs in LUT against a fit
+  that is not settled, or what it does to a WNS of +0.069 ns.  TRACK READBACK
+  owns those questions and this file is an input to it, not an answer.
