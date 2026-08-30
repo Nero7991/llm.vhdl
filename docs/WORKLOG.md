@@ -42,6 +42,65 @@ Status values: `RUNNING`, `LANDED`, `BLOCKED-DECISION` (needs Oren),
 
 ---
 
+## WHAT STANDS BETWEEN THIS PROJECT AND 9B INFERENCE ON THE CARD
+
+**Added 2026-08-29 by TRACK BOARDAUDIT. Every fact here is MEASURED against the
+tree at `5a19f984`, and the audit went looking for it because several tracks
+had each said a piece of it in their own write-ups and no place on this board
+said it whole.**
+
+**The one-sentence answer: the design routes, a bitstream exists and is loaded,
+the 9B weights are resident in HBM and verified against a digest the loader did
+not produce -- and NOTHING HAS VERIFIED WHAT ANY OF IT COMPUTES, because the
+card carries subsystem A alone and no tool in this repository can start a job
+on it.**
+
+The five things that are true, in the order they were established:
+
+1. **The bitstream routes and loads.** `ed1ffe2`, 0 nets with routing errors,
+   288,506 fully routed, `hw/fk33/bit/fk33_pcieep_eng.bit` 22,568,402 bytes.
+   Loaded on card 1: configures, links Gen3 x4, identifies as `0x464B3333`,
+   SYSMON reads through the design, BAR writes work, the DMA BRAM and both HBM
+   stacks round-trip. `docs/debugging/2026-08-29_first-engine-load-on-card.md`.
+2. **The weights are on the card and are the right bytes.** 4,487,442,432 B
+   written in 8.76 s and read back and matched against the manifest's pack-time
+   `blake2b_128` and an independently written header parse. TRACK WEIGHTS,
+   `9d7a9e5`. That write-up's own words: **"a loaded magazine, not a fired shot."**
+3. **The card carries subsystem A and nothing else.** MEASURED:
+   `hw/fk33/rtl/fk33_engine.vhd` instantiates `matvec_int4_desc_axi` and no
+   other work unit. There is no B, no C, no D on the silicon.
+4. **No host tool can start a job on it.** MEASURED: `gen_pcieep.py` puts the
+   engine's register map at `ENG_CTL_BASE = 0x00012000`;
+   `grep -rn '0x12000\|ENG_CTL' hw/fk33/host/ server/ tools/` returns nothing.
+   `fk33_regs.h` has no engine block. `fk33ctl.py` has ten commands and none of
+   them starts an operation.
+5. **The host seam that WAS written targets a contract no gateware implements.**
+   MEASURED: `server/fk33_seam.h` defines `FK33_SEAM_*` with magic `"LLM2"` at a
+   base its own comment calls **PROPOSED, NOT DECIDED**; no file under `rtl/` or
+   `hw/fk33/rtl/` mentions it. `server/pl_backend.c`'s third line says
+   **"Nothing here has ever run against the card."**
+
+**So there are three gaps, not one, and they are of different kinds.**
+
+- A **tooling** gap: N1, the host-side runner for one A job, checked against
+  `ref/matvec_int4.c`. Writable and testable with **no hardware** through
+  `fk33_transport_open_sim`/`_filedir`; only the final run needs the bench.
+- A **decision** gap: N2, whether the seam or the descriptor plane is the
+  contract. Nobody should pick this for Oren.
+- A **design** gap: N3, an RTL top that composes A+B+C+D for the card. It does
+  not exist. `rtl/llama_top.vhd` composes all four but is a simulation top: it
+  binds `matvec_int4`, which has no descriptor plane, and `C_REAL`, `C_KV_AXI`,
+  `NORM_REAL` and `B_SRC_REAL` all default FALSE. N3 is blocked on B+C+D
+  fitting, which is WRITEDEC and N5.
+
+**The ordering matters and the cheap step is first.** N1 is small, needs no
+decision and no new RTL, and it is the only one of the three that converts
+"9B inference on the card" from an unfalsifiable claim into a measurable one.
+Every schedule below it rests on arithmetic nobody has ever checked on this
+silicon.
+
+---
+
 ## File ownership, right now
 
 Two agents editing one file has already cost this project real time. Nothing
