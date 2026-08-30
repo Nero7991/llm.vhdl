@@ -39,7 +39,16 @@ proc envdef {name dflt} {
 }
 
 set part    [envdef C4_PART   xcvu33p-fsvh2104-2L-e]
-set period  [envdef C4_PERIOD 5.0]
+# THE TWO PERIODS ARE DIFFERENT, and getting this wrong is optimistic in the
+# direction that matters.  hw/fk33/gen_pcieep.py:310 sets ENG_CORE_MHZ = 200.000
+# and :800 puts core_clk on clk_wiz_0/clk_out3, so core_clk is 5.000 ns.  But
+# :802 connects the engine's hbm_aclk to `xdma/axi_aclk`, NOT to a clk_wiz
+# output, and :1255 of the same file says in as many words that the tool would
+# otherwise "time every gray pointer ... against a 200/250 MHz common period".
+# So hbm_aclk is 250 MHz / 4.000 ns.  Constraining it at 5.0 would have relaxed
+# every one of subsystem A's 28 read masters by 25%.
+set period  [envdef C4_PERIOD     5.0]
+set aperiod [envdef C4_PERIOD_HBM 4.0]
 set stage   [envdef C4_STAGE  synth]
 set tag     [envdef C4_TAG    c4]
 set outdir  [envdef C4_OUT    /mnt/storage/compose4/out]
@@ -129,7 +138,7 @@ if {$stage eq "elab"} {
 
 # ---------------------------------------------------------------------------
 } elseif {$stage eq "synth"} {
-    puts "C4_BEGIN synth tag=$tag part=$part period=$period"
+    puts "C4_BEGIN synth tag=$tag part=$part core_period=$period hbm_period=$aperiod"
     puts "C4_RTL  $rtldir"
     puts "C4_FK33 $fkdir"
 
@@ -156,16 +165,16 @@ if {$stage eq "elab"} {
     set tsynth [expr {[clock seconds] - $t0}]
     puts "C4_SYNTH_SECONDS $tsynth"
 
-    # THE TWO CLOCKS.  hw/fk33/results/build_e2e_2026-08-29/
-    # e2e_timing_routed_summary.rpt puts clk_out2 and clk_out3 of clk_wiz_0
-    # BOTH at 5.000 ns / 200.000 MHz, and hw/fk33/gen_fk33_engine.py's header
-    # says core_clk and hbm_aclk are the engine's two domains.  So both get
-    # $period, and they are declared ASYNCHRONOUS to each other because the
-    # crossing between them lives inside rtl/axi_rd_port.vhd's per-port async
-    # FIFO -- timing paths between them are not real paths, and leaving them
-    # constrained would report failures that the hardware does not have.
-    create_clock -period $period -name core_clk [get_ports core_clk]
-    create_clock -period $period -name hbm_aclk [get_ports hbm_aclk]
+    # THE TWO CLOCKS.  core_clk 200 MHz, hbm_aclk 250 MHz; see the note at the
+    # top of this file for where each number comes from in gen_pcieep.py.
+    # They are declared ASYNCHRONOUS to each other because the crossing between
+    # them is a gray-pointer FIFO per port (rtl/async_fifo.vhd), one for each of
+    # the 28 masters -- so paths between the domains are not real paths, and
+    # leaving them constrained would report failures the hardware does not have.
+    # This is the same declaration sim/ooc_fk33_a.tcl:143 makes for subsystem A
+    # alone and gen_pcieep.py:1264 makes in the shipping build.
+    create_clock -period $period  -name core_clk [get_ports core_clk]
+    create_clock -period $aperiod -name hbm_aclk [get_ports hbm_aclk]
     set_clock_groups -asynchronous \
         -group [get_clocks core_clk] -group [get_clocks hbm_aclk]
 
