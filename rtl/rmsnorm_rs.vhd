@@ -173,8 +173,80 @@ architecture rtl of rmsnorm_rs is
   signal idx1, idx2, idx3 : natural range 0 to NB := 0;
 
   signal o_reg : std_logic_vector(N*16-1 downto 0) := (others => '0');
+
+  -- ---- the output register's WRITE DECODE --------------------------------
+  -- TRACK WRITEDEC, 2026-08-29.  The emit stage used to write o_reg with a
+  -- slice whose base is a runtime variable:
+  --     base := idx3 * LANES;
+  --     o_reg((base+k+1)*16-1 downto (base+k)*16) <= ...
+  -- MEASURED (TRACK LUTDIET, docs/debugging/2026-08-29_lutdiet-flat-vector-
+  -- ports.md, section 5.3): Vivado infers that as an N-way 16-bit DEMUX per
+  -- lane, and at N = 4096 / LANES = 4 it is 162,276 of the unit's 201,651 LUT
+  -- primitives -- 80.5% of the whole module, and it carries ZERO MUXF7 and
+  -- ZERO MUXF8, so it is invisible to the F7/F8 signature that found the read
+  -- mux.  It is NOT the flops: the register is still here and the FF count
+  -- does not move.
+  --
+  -- The fix moves the saturate-and-place out of the sequential process into a
+  -- COMBINATIONAL o_wd plus a per-word generate carrying a CONSTANT slice
+  -- index and a comparator on idx3, which synthesises as a clock enable.  No
+  -- port moves, no arithmetic moves, no BRAM is used, no pipeline stage is
+  -- added, and the schedule is unchanged CYCLE FOR CYCLE -- `done` still fires
+  -- on exactly the same cycle it always did.
+  --
+  -- WHY COMBINATIONAL AND NOT REGISTERED.  TRACK LUTDIET's probe registered
+  -- {o_we, o_wa, o_wd} inside the FSM, which cost one extra cycle on `done`.
+  -- That is a schedule change, and this unit's `done` is what the top level
+  -- and the pinned sequencer landmarks wait on, so it is not free.  The
+  -- combinational form is what the ORIGINAL already computed -- p3_sum ->
+  -- shift -> clamp -> o_reg, in one cycle -- with only the assignment TARGET
+  -- changed from a runtime slice to a constant one.  The path is if anything
+  -- shorter, because the N-way demux comes out of it.
+  --
+  -- TRAP, MEASURED IN GHDL AND RECORDED SO IT IS NOT REDISCOVERED.  o_wd is
+  -- ONE flat LANES*16 vector and not an array of LANES words, and that is
+  -- load-bearing.  A VHDL process creates its driver over the longest STATIC
+  -- prefix of the assignment target, so a per-word generate whose slice bounds
+  -- contain the for-loop variable k -- o_reg((wi*LANES+k+1)*16-1 downto ...)
+  -- -- gives EVERY generated process a driver over the WHOLE of o_reg, all NB
+  -- of them resolve against each other, and the output simulates as 'X'.  That
+  -- form SYNTHESISES CLEANLY.  Only simulation catches it.  The slice target
+  -- below is fully static in wi and contains no loop variable.
+  signal o_wd : std_logic_vector(LANES*16-1 downto 0) := (others => '0');
 begin
   o_mant <= o_reg;
+
+  -- The emit stage's saturate-and-place, verbatim, as combinational logic.
+  -- This is the SAME expression the sequential process used to evaluate; only
+  -- where its result is deposited has changed.
+  p_owd : process(p3_sum, shift_total)
+    variable omc : signed(63 downto 0);
+  begin
+    for k in 0 to LANES-1 loop
+      omc := shift_right(p3_sum(k), shift_total);
+      if    omc > 32767  then
+        o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(32767, 16));
+      elsif omc < -32768 then
+        o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(to_signed(-32768, 16));
+      else
+        o_wd((k+1)*16-1 downto k*16) <= std_logic_vector(resize(omc, 16));
+      end if;
+    end loop;
+  end process;
+
+  -- The write decode.  `rst = '0' and state = S_EMIT and v3 = '1'` is exactly
+  -- the guard the original write sat under -- the rst term is the outer
+  -- if/else of the FSM process and it matters, because rst does NOT clear v3
+  -- and `state` still reads S_EMIT on the cycle rst is taken.
+  gow : for wi in 0 to NB-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and state = S_EMIT and v3 = '1' and idx3 = wi then
+          o_reg((wi+1)*LANES*16-1 downto wi*LANES*16) <= o_wd;
+        end if;
+      end if;
+    end process;
+  end generate;
 
   assert N mod LANES = 0
     report "rmsnorm_rs: LANES must divide N" severity failure;
@@ -572,22 +644,11 @@ begin
               p3_sum(k) <= p2_raw(k) + emit_bias;
             end loop;
             -- stage 4: one shift, then saturate and place
-            if v3 = '1' then
-              base := idx3 * LANES;
-              for k in 0 to LANES-1 loop
-                om := shift_right(p3_sum(k), shift_total);
-                if    om > 32767  then
-                  o_reg((base+k+1)*16-1 downto (base+k)*16)
-                    <= std_logic_vector(to_signed(32767, 16));
-                elsif om < -32768 then
-                  o_reg((base+k+1)*16-1 downto (base+k)*16)
-                    <= std_logic_vector(to_signed(-32768, 16));
-                else
-                  o_reg((base+k+1)*16-1 downto (base+k)*16)
-                    <= std_logic_vector(resize(om, 16));
-                end if;
-              end loop;
-            end if;
+            -- stage 4's saturate-and-place has moved OUT of this process, to
+            -- the combinational o_wd and the gow generate above.  Nothing
+            -- else about this state changed and the completion condition is
+            -- the original's, unchanged: the write still lands on the same
+            -- cycle it always did.
             if idx = NB and vf = '0' and v1 = '0' and v2 = '0' and v3 = '0' then
               done  <= '1';
               state <= S_IDLE;
