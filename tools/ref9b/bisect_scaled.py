@@ -27,12 +27,13 @@ integration-level model as of 2026-08-29.  Subsystem C's is
 subsystem C's whole input is three captured regions plus the KV records earlier
 tokens wrote from theirs.  Subsystem B's is `tools/ref9b/gdn_oracle.py` driving
 `ref/gdn_block_cap_vec.c`.  B was believed unreachable because its input
-includes a recurrent state no region holds -- true of subsystem B, and NOT
-true of THIS TOP LEVEL, which drives `tk0` high on every token
-(`rtl/llama_top.vhd:3270`) so the state is written and never read.  READ THAT
-AS A BOUND AND NOT AS A CLOSURE: the day `llama_top` grows a real token loop,
-the B model must grow a state carry, and `ref/gdn_block_cap_vec.c` refuses
-rather than guessing.  A clean run of this tool therefore does NOT mean the
+includes a recurrent state no region holds -- true of subsystem B, and never
+true of THIS TOP LEVEL, whose every unit-B input is a captured region or a
+deterministic function of an index.  That sentence was written when
+`rtl/llama_top.vhd` drove `tk0` high on every token, so the state was written
+and never read; since defect B-TOP-1 was fixed on 2026-08-29 the state DOES
+carry, and `ref/gdn_block_cap_vec.c` -- which already allocated one per layer
+and ran layer-major -- carries it.  A clean run of this tool therefore does NOT mean the
 token is right.  It means: no step that
 has a model computed something other than what its model says, given the
 machine's own inputs.  The coverage table is printed for exactly that reason
@@ -346,8 +347,11 @@ def main():
     # Subsystem B's R_Y.  Predicted for the whole capture at once for the same
     # reason the C call is: the driver is layer-major and carries one state per
     # GDN layer across the sequence, so a per-token call would have no state to
-    # carry.  At `tk0` that state is inert, which is exactly why this model is
-    # possible at all -- see tools/ref9b/gdn_oracle.py's header.
+    # carry.  THAT IS LOAD-BEARING NOW.  Until 2026-08-29 the top level drove
+    # `tk0` high at every token and the state was inert; since defect B-TOP-1
+    # was fixed it is read at every token but the first, so calling this
+    # per-token would model a machine that resets its recurrence every token --
+    # which is the defect, not the design.  See tools/ref9b/gdn_oracle.py.
     bpred, bwhy = {}, ""
     if not a.no_b and any(not shape.is_attn(b) for b in range(shape.blocks)):
         btoks = sorted(set(r.tok for r in recs))

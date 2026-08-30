@@ -7,23 +7,35 @@ table and repeats it in every PASS line:
     Every unchecked seam is subsystem B's `R_Y`, which has no
     integration-level model.
 
-`tools/ref9b/bisect_scaled.py`'s header gives the reason it was believed
+`tools/ref9b/bisect_scaled.py`'s header gave the reason it was believed
 unreachable -- "its input includes a recurrent state no region holds" -- and
-`tools/ref9b/attn_oracle.py` repeats it.  THAT REASON DOES NOT HOLD AT THE
-CONFIGURATIONS THE GATE RUNS, and the fact is in the RTL:
+`tools/ref9b/attn_oracle.py` repeated it.  That reason is about subsystem B's
+PORT LIST and says nothing about what the top level feeds it; the top level's
+own inputs are all captured or all deterministic, so `R_Y` has a model.  This
+module computes it, with `ref/gdn_block_cap_vec.c` driving
+`ref/gdn_block_vec.c`'s `gdn_block_token()`.
 
-  * `rtl/llama_top.vhd:3270` drives `b_tk0 <= '1'` on EVERY token ("one token
-    only; there is no token loop yet"), and `rtl/gdn_recur_pipe.vhd`'s TK0_ED
-    masks the state read at `tk0`.  The recurrent state is written and never
-    read, so it cannot influence `R_Y`.
-  * `rtl/llama_top.vhd:4048` pulses `b_seq_rst` once per TOKEN, which resets
-    every `gdn_exp_capture` counter (`rtl/gdn_exp_capture.vhd:176`).  Exactly
-    one capture per (layer, segment) has happened by the time B starts, so
-    `tvalid` marks ONLY tap `KCONV-1` valid and the conv has no history.
+THE RECURRENCE NOW RUNS, AND THIS MODEL CARRIES IT.  When this file was
+written, `rtl/llama_top.vhd` drove `b_tk0 <= '1'` at every token ("one token
+only; there is no token loop yet") and pulsed `b_seq_rst` on every `go`, so
+`rtl/gdn_recur_pipe.vhd`'s TK0_ED masked the state read on every token and
+`gdn_exp_capture`'s `tvalid` marked only tap `KCONV-1` valid.  `R_Y` was then
+a pure function of ONE token's inputs -- which is what made this model easy
+and what made every defect downstream of the recurrent state invisible
+(`mutate_seamgate.sh` S10 and S11, both survivors).
 
-So `R_Y` at a GDN block is a pure function of one token's inputs.  This module
-computes it, with `ref/gdn_block_cap_vec.c` driving `ref/gdn_block_vec.c`'s
-`gdn_block_token()`.
+Defect candidate B-TOP-1 fixed both drivers on 2026-08-29:
+
+  * `b_tk0` follows `tok_pos`, so it is high only at the first token of a
+    sequence and the state carries.
+  * `b_seq_rst` fires only at `tok_pos = 0`, which is what
+    `rtl/gdn_exp_capture.vhd`'s own header says the port is for, so at token
+    n the newest min(n+1, KCONV) conv taps are valid.
+
+`ref/gdn_block_cap_vec.c` already allocated one state per layer and carried it
+across tokens layer-major, so nothing there had to change; what changed here
+is the `tk0`, `tvalid` and `e_t` this file WRITES into the stimulus.  See
+`docs/debugging/2026-08-29_btop1-b-recurrence.md`.
 
 WHAT `R_Y` ACTUALLY DEPENDS ON HERE, stated plainly because it bounds the
 check.  `B_SRC_REAL` defaults FALSE and none of the three `seamgate.sh`
@@ -198,7 +210,7 @@ def build_oracle(verbose=False):
 
 
 def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
-            kmap="mod", verbose=False, tk0="top"):
+            kmap="mod", verbose=False, tk0="seq"):
     """Run the oracle over the capture.  Returns {(seam, tok): (exp, mant)}."""
     lays = gdn_layers(shape)
     if not lays:
@@ -269,46 +281,99 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
                 # tk0.  THE DEFAULT MODELS THE RTL, NOT THE SPEC, AND THAT
                 # IS A CHOICE THAT HAS TO BE NAMED.
                 #
-                #   'top'  (default)  tk0 = 1 at EVERY token, which is what
-                #                     rtl/llama_top.vhd:3270 hardwires.  The
-                #                     recurrent state is never read, so every
-                #                     token is computed as if it were token 0.
-                #   'seq'              tk0 = 1 only at token 0, so the state
-                #                     carries -- B spec 2.1.4's recurrence.
+                #   'seq' (default)  tk0 = 1 only at token 0, so the recurrent
+                #                    state carries -- and the conv tap
+                #                    validity grows with the sequence position
+                #                    (see e_t below).  This is what
+                #                    `rtl/llama_top.vhd` drives TODAY, and it
+                #                    is also B spec 2.1.4's recurrence; since
+                #                    defect B-TOP-1 was fixed the two agree.
+                #   'pre-btop1'      tk0 = 1 at EVERY token and only tap
+                #                    KCONV-1 ever valid, which is what
+                #                    `rtl/llama_top.vhd` drove BEFORE
+                #                    2026-08-29.  It models a design that no
+                #                    longer exists and is kept for one reason:
+                #                    so a report can quantify what the defect
+                #                    cost instead of only asserting it moved.
+                #
+                # THE OLD SPELLING 'top' IS DELIBERATELY NOT ACCEPTED.  It
+                # meant "what the top level does", and after B-TOP-1 that is
+                # 'seq'; a caller passing 'top' from a stale document or
+                # script would otherwise silently model the pre-fix machine
+                # against the fixed one and read the difference as a defect.
+                # argparse rejects it by name, which is the loud failure.
                 #
                 # This is the same shape as `attn_oracle.py`'s `--fold`, and it
                 # exists for the same reason: a model that only implemented the
                 # spec could say the RTL disagrees with it and could not say
-                # what the RTL does instead.  'top' is the DEFAULT here rather
-                # than the spec because the top level's own comment declares
-                # the single-token behaviour -- see llama_top.vhd:2757-2761 --
-                # so it is a stated stand-in and not a silent one.  What is NOT
-                # stated there is that the declaration's premise ("there being
-                # no token loop") stopped being true when NTOK reached 3.
-                fp.write("%d %d\n" % (1 if (tk0 == "top" or t == 0) else 0,
-                                      z.exp))
+                # what the RTL does instead.
+                pre = (tk0 == "pre-btop1")
+                fp.write("%d %d\n" % (1 if (pre or t == 0) else 0, z.exp))
 
-                # e_t: only tap KCONV-1 carries a captured exponent, because
-                # b_seq_rst resets gdn_exp_capture's counters once per token.
+                # e_t and tvalid: `rtl/gdn_exp_capture.vhd` as a SHIFT, one
+                # capture per (layer, segment) per token, counters cleared once
+                # per SEQUENCE by `b_seq_rst`.
+                #
+                #   tap kk holds the exponent captured `age = KCONV-1-kk`
+                #   tokens ago, so it is valid iff `t - age >= 0`.
+                #
+                # DERIVED from that file's header ("new_word = cap_exp &
+                # old_word(K*8-1 downto 8)", "after `n` captures the valid taps
+                # are the newest `n`") and from `rtl/llama_top.vhd`'s S_CAPW /
+                # S_CAPR loop, which captures all three segments before every
+                # `b_start`.  At token 0 exactly one tap is valid, which is the
+                # `tk = 0` case B spec 2.1.4's test list calls for.
+                #
                 # The masked slots are given a wild exponent for the reason
                 # ref/gdn_block_vec.c states: if a failure to mask ever let one
                 # into the e_ref minimum, the segment would move 40 octaves and
                 # say so, rather than drifting by one bit.
                 et, tv = [], []
-                for s, r in enumerate((q, k, v)):
+                for seg_nm in ("R_QKV.q", "R_QKV.k", "R_QKV.v"):
                     for kk in range(KCONV):
-                        last = (kk == KCONV - 1)
-                        et.append(r.exp if last else -47)
-                        tv.append(1 if last else 0)
+                        age = KCONV - 1 - kk
+                        src = t - age
+                        if src < 0 or (pre and age > 0):
+                            et.append(-47)
+                            tv.append(0)
+                            continue
+                        key = ("%s-%d" % (seg_nm, b), src)
+                        if key not in recs_by_key:
+                            raise SystemExit(
+                                "gdn_oracle: block %d token %d needs %s from "
+                                "token %d for conv tap %d, and the capture has "
+                                "no such record.  The tap history is real now; "
+                                "a model that substituted the CURRENT token's "
+                                "exponent there would be a plausible wrong "
+                                "answer." % (b, t, seg_nm, src, kk))
+                        et.append(recs_by_key[key].exp)
+                        tv.append(1)
                 fp.write(" ".join(str(x) for x in et) + "\n")
                 fp.write(" ".join(str(x) for x in tv) + "\n")
 
                 if b_src_real:
+                    # THE SAME REFUSAL `rtl/llama_top.vhd`'s S_GO MAKES, and it
+                    # has to be here too or this model would quietly agree with
+                    # a machine that cannot run.  `cvdata_p` writes ZERO into
+                    # every tap but the newest, which was inert while `tvalid`
+                    # masked those slots; from token 1 it no longer does, and a
+                    # zero mantissa at a real captured exponent is a plausible
+                    # wrong answer on both sides at once.
+                    if not pre and t > 0:
+                        raise SystemExit(
+                            "gdn_oracle: --b-src-real at token %d.  "
+                            "rtl/llama_top.vhd holds no conv tap HISTORY -- "
+                            "every tap but the newest is zero -- and since "
+                            "defect B-TOP-1 gdn_exp_capture marks those slots "
+                            "VALID from token 1.  The machine asserts on this "
+                            "combination; this model refuses rather than "
+                            "modelling the zeros it would sum." % t)
                     # The newest tap from R_QKV, the older ones ZERO, which is
-                    # what rtl/llama_top.vhd:3006-3012 writes.  Those are the
-                    # slots tvalid excludes above, so the value is inert; it is
-                    # written as zero anyway so this branch is a transcription
-                    # of that process and not a claim about what matters.
+                    # what rtl/llama_top.vhd's cvdata_p writes.  At token 0
+                    # those are the slots tvalid excludes, so the value is
+                    # inert; it is written as zero anyway so this branch is a
+                    # transcription of that process and not a claim about what
+                    # matters.
                     real = [0] * (CHTOT * KCONV)
                     cur = list(q.v) + list(k.v) + list(v.v)
                     for c in range(CHTOT):
@@ -451,13 +516,19 @@ def main():
                     help="which key head feeds value head h.  'mod' is the "
                          "model (ggml_repeat tiles); 'div' is the contiguous "
                          "GQA grouping that was defect B-BLK-1")
-    ap.add_argument("--tk0", default="top", choices=("top", "seq"),
-                    help="'top' (the default) is tk0 = 1 at every token, which "
-                         "is what rtl/llama_top.vhd:3270 hardwires: the "
-                         "recurrent state is written and never read.  'seq' is "
-                         "tk0 = 1 only at token 0, which is B spec 2.1.4's "
-                         "recurrence.  Selecting 'seq' says what the spec asks "
-                         "for; the default says what the machine does")
+    ap.add_argument("--tk0", default="seq", choices=("seq", "pre-btop1"),
+                    help="'seq' (the default) is tk0 = 1 only at token 0 with "
+                         "the conv tap validity growing with the sequence "
+                         "position -- what rtl/llama_top.vhd drives today and "
+                         "also B spec 2.1.4's recurrence.  'pre-btop1' is tk0 "
+                         "= 1 at EVERY token and only tap KCONV-1 ever valid, "
+                         "which is what that file drove before defect B-TOP-1 "
+                         "was fixed on 2026-08-29; it models a design that no "
+                         "longer exists and is kept so a report can quantify "
+                         "the defect.  The old spelling 'top' is REJECTED on "
+                         "purpose: it meant 'what the machine does', which is "
+                         "now 'seq', so accepting it would silently compare "
+                         "the fixed machine against the broken model")
     ap.add_argument("--tok", type=int, default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()

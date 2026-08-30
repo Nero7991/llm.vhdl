@@ -79,8 +79,29 @@ begin
       N_ROT    => 16,
       MAXPOS   => 8,
       KV_AXI   => true,
-      EXP_X0    => -14252,
-      EXP_XSUM  => 7668,
-      EXP_XALL  => 96762,
-      EXP_STEPH => 57526);
+      -- RE-PINNED 2026-08-29 by TRACK BTOP1, and all four moved.  The OLD
+      -- values were EXP_X0 -14252, EXP_XSUM 7668, EXP_XALL 96762,
+      -- EXP_STEPH 57526, measured at 35e0ed0.
+      --
+      -- WHY: defect B-TOP-1.  `rtl/llama_top.vhd` drove `b_tk0 <= '1'` at
+      -- every token and pulsed `b_seq_rst` on every `go`, so subsystem B --
+      -- Gated DeltaNet, a RECURRENT architecture -- discarded its recurrent
+      -- state and its conv tap history at every token and computed tokens 1
+      -- and 2 as if each were token 0.  Both drivers now follow `tok_pos`.
+      -- MEASURED: 65 to 88 of 128 mantissas per `R_Y` seam were wrong at
+      -- tokens 1 and 2.  Token 0 is unaffected in every configuration, which
+      -- is why `tb_llama_top_real` and `tb_llama_top_normw` -- both NTOK = 1
+      -- -- print exactly their old values and were NOT re-pinned.
+      --
+      -- THIS IS NOT A RE-PIN THAT ASKS TO BE TRUSTED.  `sim:seamgate_seq`
+      -- ran on the same tree and reports all 61 seams of all three tokens
+      -- bit-identical to an independent model driven by the machine's own
+      -- captured inputs, and it reports `R_X(0) = -732 hash(R_X) = 86454` --
+      -- the same two numbers EXP_X0 and EXP_XSUM pin below, from a separate
+      -- run. The new numbers are checked, not merely different.
+      -- docs/debugging/2026-08-29_btop1-b-recurrence.md.
+      EXP_X0    => -732,
+      EXP_XSUM  => 86454,
+      EXP_XALL  => 79978,
+      EXP_STEPH => 50729);
 end architecture;

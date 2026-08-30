@@ -105,6 +105,23 @@
 # only shows on activation-derived taps is out of reach of this row until
 # something runs `B_SRC_REAL`.  See
 # docs/debugging/2026-08-29_ry-model-subsystem-b.md.
+#
+# ---------------------------------------------------------------------------
+# `seq` IS NOT `real` WITH MORE TOKENS.  IT IS THE ONLY ROW THAT SEES THE
+# RECURRENCE, AND SINCE 2026-08-29 THAT IS A REAL DIFFERENCE.
+# ---------------------------------------------------------------------------
+# `real` and `stub` run ONE token.  Subsystem B is a recurrent architecture and
+# `rtl/gdn_recur_pipe.vhd` masks the state read at `tk0`, so at a single token
+# NOTHING downstream of the recurrent state can be exercised, whatever the top
+# level drives.  Until defect B-TOP-1 was fixed the top level drove `tk0` high
+# at EVERY token, so `seq` could not see it either: `mutate_seamgate.sh` S10
+# (the decay rounding bias deleted) and S11 (the per-layer term deleted from
+# llama_top's B state address) both survived all three rows.
+#
+# They no longer survive `seq`.  They still survive `real` and `stub`, and that
+# is arithmetic and not a gap to be closed: one token has no previous state.
+# A B-side mutation must be run at `seq` before "it survived" means anything.
+# docs/debugging/2026-08-29_btop1-b-recurrence.md.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/ref9b/mutate_seamgate.sh -- THE TEETH FOR tools/ref9b/seamgate.sh.
 #
-#   bash tools/ref9b/mutate_seamgate.sh [S1..S12|all]
+#   bash tools/ref9b/mutate_seamgate.sh [S1..S12|B1|B2|all]
 #
 # A checker never shown to fail has not been shown to work.  This injects
 # defects and records which ones the seam gate bites, WITH the ones it does
@@ -32,19 +32,20 @@
 #       defect B-BLK-1 as it stood before a77d181.  EXPECT FAIL.
 #   S9  subsystem B's conv segment requantizer truncates instead of rounding.
 #       EXPECT FAIL.
-#   S10 subsystem B's decay rounding bias deleted.  EXPECTED TO SURVIVE, and
-#       this is now the resolution floor: `rtl/llama_top.vhd:3270` drives tk0
-#       high at every token, so the state the decay multiplies is masked to
-#       ZERO and the bias has nothing to bias.
+#   S10 subsystem B's decay rounding bias deleted.  It SURVIVED every row
+#       until 2026-08-29, when defect B-TOP-1 was fixed: the state the decay
+#       multiplies was masked to ZERO at every token, so the bias had nothing
+#       to bias.  EXPECT FAIL at `seq` and SURVIVAL at `real`.
 #   S11 the per-layer term deleted from llama_top's B state memory address --
-#       the defect fixed at 2d10f76, restored.  EXPECTED TO SURVIVE, for the
-#       same reason as S10: the state is written and never read.
-#   S12 a stage-4 shift in the recurrence, which IS live at tk0.  EXPECT FAIL.
-#
-#   S10 AND S11 TOGETHER ARE THE HONEST NUMBER HERE.  Full seam coverage does
-#   not mean full defect coverage: everything downstream of the recurrent state
-#   is invisible while the top level discards that state every token, and no
-#   amount of modelling fixes it -- only a top level that drives tk0 low.
+#       the defect fixed at 2d10f76, restored.  Same history as S10.
+#       EXPECT FAIL at `seq` and SURVIVAL at `real`.
+#   S12 a stage-4 shift in the recurrence, which is live even at tk0.  EXPECT
+#       FAIL at `real`.
+#   B1  defect B-TOP-1's first half restored: tk0 high at every token.
+#   B2  defect B-TOP-1's second half restored: the gdn_exp_capture tap
+#       counters cleared per TOKEN, so the causal conv has no history.
+#       B1 and B2 are separated so each half is measured on its own; a tree
+#       with one fixed and the other not is neither behaviour.
 #   S5  teeth for the COVERAGE branch: the comparison stops comparing while
 #       every seam it still compares matches.
 #   S6  teeth for the PLAN DRIFT branch: the model's mirror of the descriptor
@@ -52,6 +53,15 @@
 #   S7  THE ARGUMENT FOR THE ROW EXISTING AT ALL.  Take S1's mutant, do what a
 #       track does when numbers move -- re-pin the four landmarks to the new
 #       values the bench itself prints -- and run both instruments again.
+#
+#   THE CONFIGURATION IS PART OF THE CLAIM.  `real` and `stub` capture ONE
+#   token, and subsystem B is recurrent, so nothing downstream of the state
+#   can be exercised there whatever the top level drives.  Every B-side row
+#   here used to run `real` only, which is why S10 and S11 were recorded as
+#   survivors -- at that configuration they cannot be anything else.  They now
+#   run BOTH: a kill at `seq` beside a survival at `real` is what shows the
+#   kill came from the recurrence.  A B-side survival measured only at `real`
+#   measures nothing.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
@@ -100,6 +110,18 @@ apply_mut() {
       sed -i 's|^          b_ks(k) <= shift_right(b_mkd(k), b_ctx(1).sk2);|          b_ks(k) <= shift_right(b_mkd(k), b_ctx(1).sk2 + 1);  -- MUTANT S12|' \
           "$tree/rtl/gdn_recur_pipe.vhd"
       grep -q "MUTANT S12" "$tree/rtl/gdn_recur_pipe.vhd" ;;
+    B1)
+      # Defect B-TOP-1's FIRST half, restored: tk0 high at every token, so the
+      # recurrent state is written and never read.
+      sed -i 's|^              if tok_pos = 0 then b_tk0 <= .1.; else b_tk0 <= .0.; end if;|              b_tk0 <= '"'"'1'"'"';  -- MUTANT B1|' \
+          "$tree/rtl/llama_top.vhd"
+      grep -q "MUTANT B1" "$tree/rtl/llama_top.vhd" ;;
+    B2)
+      # Defect B-TOP-1's SECOND half, restored: gdn_exp_capture's tap-validity
+      # counters cleared once per TOKEN instead of once per SEQUENCE.
+      sed -i 's|^        if go = .1. and tok_pos = 0 then|        if go = '"'"'1'"'"' then  -- MUTANT B2|' \
+          "$tree/rtl/llama_top.vhd"
+      grep -q "MUTANT B2" "$tree/rtl/llama_top.vhd" ;;
     *) return 0 ;;
   esac
 }
@@ -146,16 +168,26 @@ run_land() {
       | sed 's/^.*(report note): //' | head -4
 }
 
-run_gate() {   # run_gate <tree> [extra bisect args are NOT supported: use S5/S6]
-  ( cd "$1" && KEEP=1 SEAMGATE_SCRATCH="$1/gate" bash tools/ref9b/seamgate.sh real ) \
-      2>&1 | grep -aE 'SEAMGATE (PASS|FAIL)|FIRST DIVERGENCE|token 0:|^    (R_|LOGITS|TOKEN)'
+run_gate() {   # run_gate <tree> [cfg]   extra bisect args: use S5/S6
+  # THE CONFIGURATION IS A PARAMETER BECAUSE `real` IS ONE TOKEN.
+  #
+  # `real` and `stub` capture a single token.  Subsystem B is RECURRENT and
+  # `rtl/gdn_recur_pipe.vhd` masks the state read at `tk0`, so at one token
+  # there is no previous state for any mutation downstream of it to corrupt --
+  # whatever the top level drives.  Every B-side row here ran `real`, which is
+  # why S10 and S11 were recorded as survivors: at that configuration they
+  # cannot be anything else, and the survival said nothing about the gate.
+  # `seq` is three tokens and is the only row where the recurrence runs.
+  local cfg="${2:-real}"
+  ( cd "$1" && KEEP=1 SEAMGATE_SCRATCH="$1/gate" bash tools/ref9b/seamgate.sh "$cfg" ) \
+      2>&1 | grep -aE 'SEAMGATE (PASS|FAIL)|FIRST DIVERGENCE|token [0-9]+:|^    (R_|LOGITS|TOKEN)'
   return "${PIPESTATUS[0]}"
 }
 
 hdr() { echo; echo "===================== $1 ====================="; echo "$2"; }
 
 # ------------------------------------------------------------------- the table
-for m in S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12; do
+for m in S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12 B1 B2; do
   [ "$WHICH" != "all" ] && [ "$WHICH" != "$m" ] && continue
   case "$m" in
 
@@ -281,30 +313,63 @@ PY
       run_gate "$t"; echo "  [gate rc=$?]" ;;
 
   S10) hdr S10 "rtl/gdn_recur_pipe.vhd: the decay stage's rounding bias
-    deleted.  EXPECTED TO SURVIVE, and it is the NEW resolution floor.  The
-    decay multiplies the recurrent state, rtl/llama_top.vhd:3270 drives tk0
-    high at every token, and gdn_recur_pipe's TK0_ED masks that state to zero
-    -- so the mutated expression evaluates (0 + bias) >> 13 = 0 and (0) >> 13 =
-    0, identically.  No model can see this.  Only a top level with a real
-    token loop can."
+    deleted.  IT SURVIVED EVERY ROW UNTIL 2026-08-29 and was the recorded
+    resolution floor: the decay multiplies the recurrent state, the top level
+    drove tk0 high at every token, and gdn_recur_pipe's TK0_ED masked that
+    state to zero, so the mutated expression evaluated (0 + bias) >> 13 = 0
+    against (0) >> 13 = 0.  Defect B-TOP-1 fixed the tk0 driver.  EXPECT
+    SEAMGATE FAIL at seq, and SURVIVAL at real -- real is ONE token, so there
+    is no previous state there and no top level can make one.  BOTH ROWS ARE
+    RUN, because the survival at real is what shows the kill at seq came from
+    the recurrence and not from the mutation being loud."
       t=$(mktree S10) || continue
-      run_gate "$t"; echo "  [gate rc=$?]" ;;
+      echo "-- seq (three tokens: the recurrence runs)"
+      run_gate "$t" seq; echo "  [seq gate rc=$?]"
+      echo "-- real (one token: the state is masked, EXPECT SURVIVAL)"
+      run_gate "$t" real; echo "  [real gate rc=$?]" ;;
 
   S11) hdr S11 "rtl/llama_top.vhd: the per-layer term dropped from the B state
-    memory address -- the defect fixed at 2d10f76, restored.  EXPECTED TO
-    SURVIVE, for the same reason as S10: the state is written and never read.
-    Two independent mutations measuring one blind spot is the point; a single
-    survivor reads like a fluke."
+    memory address -- the defect fixed at 2d10f76, restored.  Same history as
+    S10: it survived while the state was written and never read.  EXPECT
+    SEAMGATE FAIL at seq and SURVIVAL at real.  Two independent mutations
+    measuring one blind spot was the point when both survived; now they are two
+    independent mutations measuring that the blind spot is gone."
       t=$(mktree S11) || continue
-      run_gate "$t"; echo "  [gate rc=$?]" ;;
+      echo "-- seq (three tokens: the recurrence runs)"
+      run_gate "$t" seq; echo "  [seq gate rc=$?]"
+      echo "-- real (one token: the state is masked, EXPECT SURVIVAL)"
+      run_gate "$t" real; echo "  [real gate rc=$?]" ;;
 
   S12) hdr S12 "rtl/gdn_recur_pipe.vhd: stage 4's k*delta alignment shifted one
-    bit too far.  Unlike S10 this term IS live at tk0 -- it is the only thing
-    the state update has when the previous state is masked away.  EXPECT
-    SEAMGATE FAIL, which is what separates 'the recurrence is unchecked' from
-    'the parts of it that run are unchecked'."
+    bit too far.  Unlike S10 this term is live even at tk0 -- it is the only
+    thing the state update has when the previous state is masked away -- so it
+    was the control that kept the old statement precise: 'the state-carrying
+    half of the recurrence is unchecked', not 'the recurrence is unchecked'.
+    EXPECT SEAMGATE FAIL at real, and it still does."
       t=$(mktree S12) || continue
       run_gate "$t"; echo "  [gate rc=$?]" ;;
+
+  B1) hdr B1 "rtl/llama_top.vhd: b_tk0 driven high at EVERY token again, which
+    is defect B-TOP-1's first half restored.  THIS IS THE TEETH FOR THE FIX
+    ITSELF.  EXPECT SEAMGATE FAIL at seq, naming an R_Y seam at token 1 or 2,
+    and PASS at real -- one token cannot tell the two drivers apart."
+      t=$(mktree B1) || continue
+      echo "-- seq"
+      run_gate "$t" seq; echo "  [seq gate rc=$?]"
+      echo "-- real (one token: EXPECT SURVIVAL)"
+      run_gate "$t" real; echo "  [real gate rc=$?]" ;;
+
+  B2) hdr B2 "rtl/llama_top.vhd: b_seq_rst pulsed on every go again, which is
+    defect B-TOP-1's second half restored: gdn_exp_capture's tap counters are
+    cleared per TOKEN, so tvalid marks only tap KCONV-1 valid and the causal
+    conv has no history at any token.  Separated from B1 so the two halves are
+    measured independently -- fixing one and not the other is neither the old
+    behaviour nor the new one.  EXPECT SEAMGATE FAIL at seq, PASS at real."
+      t=$(mktree B2) || continue
+      echo "-- seq"
+      run_gate "$t" seq; echo "  [seq gate rc=$?]"
+      echo "-- real (one token: EXPECT SURVIVAL)"
+      run_gate "$t" real; echo "  [real gate rc=$?]" ;;
   esac
 done
 

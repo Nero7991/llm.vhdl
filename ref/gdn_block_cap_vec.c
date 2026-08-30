@@ -19,23 +19,27 @@
  *     recurrent state no region holds.
  *
  * THAT REASON DOES NOT HOLD AT THE CONFIGURATIONS THE GATE RUNS, and the fact
- * is in `rtl/llama_top.vhd`, not in an argument.  Its unit-B adapter drives
- * the block with `b_tk0 <= '1'` on every token (`:3270`, "one token only;
- * there is no token loop yet"), and `rtl/gdn_recur_pipe.vhd`'s TK0_ED masks
- * the state read at `tk0`.  So the recurrent state is WRITTEN and never READ:
- * it cannot influence `R_Y` at all.  Separately, `rtl/llama_top.vhd:4048`
- * pulses `b_seq_rst` once per TOKEN, which resets every `gdn_exp_capture`
- * counter, so exactly one capture per (layer, segment) has occurred by the
- * time B starts and `tvalid` marks ONLY tap `KCONV-1` valid -- the conv has no
- * history either.
+ * is in `rtl/llama_top.vhd`, not in an argument.  Every input its unit-B
+ * adapter drives is either a captured region or a deterministic function of an
+ * index, so `R_Y` is computable from the capture.  That is a property of THIS
+ * top level rather than of subsystem B.
  *
- * `R_Y` at a GDN block is therefore a PURE FUNCTION of one token's inputs, and
- * every one of those inputs is either a captured region or a deterministic
- * function of an index.  That is what makes this file possible, and it is a
- * property of THIS top level rather than of subsystem B: the day
- * `rtl/llama_top.vhd` grows a real token loop and drives `tk0` low, this
- * driver must grow the state carry, and it REFUSES rather than guesses (see
- * `tk0` in the stimulus format below).
+ * THE STATE CARRY IS NOW LIVE, AND THIS FILE ALREADY HAD IT.  When this file
+ * was written the adapter drove `b_tk0 <= '1'` on every token ("one token
+ * only; there is no token loop yet") and pulsed `b_seq_rst` once per TOKEN, so
+ * `rtl/gdn_recur_pipe.vhd`'s TK0_ED masked the state read everywhere and
+ * `tvalid` marked ONLY tap `KCONV-1` valid: `R_Y` was a pure function of ONE
+ * token's inputs.  Defect B-TOP-1 fixed both drivers on 2026-08-29 -- `b_tk0`
+ * follows `tok_pos`, and `b_seq_rst` fires only at `tok_pos = 0`, which is
+ * what `rtl/gdn_exp_capture.vhd`'s own header says that port is for -- so the
+ * recurrence runs and the conv gains a tap history.
+ *
+ * NOTHING IN THIS FILE HAD TO CHANGE FOR THAT, which is exactly why `smem` and
+ * `semem` were allocated per layer and the loops run layer-major from the
+ * start, even while `tk0` was 1 everywhere and the state was inert.
+ * `tools/ref9b/gdn_oracle.py` writes the `tk0`, `tvalid` and `e_t` this driver
+ * reads, and that is what moved.  The `tk0 = 0 at token 0` refusal below still
+ * stands: it means the caller believes in a state no capture carries.
  *
  * =====================================================================
  * INDEPENDENCE

@@ -240,11 +240,18 @@ entity llama_top is
     -- scale does not move with the token.  Sourcing a weight from an
     -- activation region would answer a different question.
     --
-    -- The tap HISTORY is not faked.  `gdn_exp_capture` masks every tap older
-    -- than the number of captures, so at `tk0` only tap KCONV-1 is valid and
-    -- the older ones are read but never summed.  This file has no token loop,
-    -- so tap KCONV-1 is R_QKV and the rest are zero, which is what the first
-    -- token of a sequence actually is.
+    -- THE TAP HISTORY IS THE PART THIS SWITCH CANNOT DELIVER, and it is a
+    -- REFUSAL rather than a stand-in.  `gdn_exp_capture` masks every tap
+    -- older than the number of captures, and this file now resets those
+    -- counters once per SEQUENCE, so at token 0 only tap KCONV-1 is valid --
+    -- which is what the first token of a sequence actually is -- and at
+    -- token n < KCONV the newest n+1 taps are valid.  With B_SRC_REAL false
+    -- every tap carries an `m12` stand-in and there is nothing to hold.  With
+    -- it TRUE only tap KCONV-1 comes from R_QKV and the rest are ZERO, so
+    -- from token 1 the conv would sum a zero at a real captured exponent.
+    -- `gb_real`'s S_GO asserts against that combination rather than letting
+    -- it produce a plausible wrong number; holding a real history is a new
+    -- (KCONV-1) x qkv_dim buffer this file does not have.
     B_SRC_REAL : boolean := false;
 
     -- A PROBE, NOT A FIX, AND NOT AN ARCHITECTURAL CHANGE.  It exists to
@@ -2753,13 +2760,18 @@ begin
   --
   --   the conv TAPS, alpha and beta, unless B_SRC_REAL.  With B_SRC_REAL they
   --   are read from R_QKV, R_ALPHA and R_BETA and carry those regions'
-  --   captured exponents.  The tap HISTORY is not faked either way: a tap
-  --   older than the number of `gdn_exp_capture` captures is masked out by
-  --   `tvalid` and ZEROED inside `gdn_conv` (gdn_conv.vhd:310-315), so at
-  --   `tk0` -- which is all this file has, there being no token loop -- only
-  --   tap KCONV-1 is ever summed.  That is why the missing token loop did not
-  --   block the experiment in PART 3 of
-  --   docs/debugging/2026-08-28_llama-top-first-seams.md.
+  --   captured exponents.  A tap older than the number of `gdn_exp_capture`
+  --   captures is masked out by `tvalid` and ZEROED inside `gdn_conv`
+  --   (gdn_conv.vhd:310-315).
+  --
+  --   THAT MASK IS NOW PER SEQUENCE AND NOT PER TOKEN.  `b_seq_rst` used to
+  --   fire on every `go`, so only tap KCONV-1 was ever valid and the conv had
+  --   no history at any token; it now fires only at `tok_pos = 0`, so at
+  --   token n the newest min(n+1, KCONV) taps are valid.  With B_SRC_REAL
+  --   false every tap is an `m12` stand-in and all of them are real values;
+  --   with it true the older taps are zero and S_GO refuses.  Defect
+  --   candidate B-TOP-1, closed:
+  --   docs/debugging/2026-08-29_btop1-b-recurrence.md.
   -- ======================================================================
   gb_real : if not B_BEHAV generate
     constant KH  : positive := SHAPE.key_heads;
@@ -2808,12 +2820,17 @@ begin
     -- b_layer across every GDN layer.  That is defect C1's shape exactly: one
     -- time-shared block, per-layer state with no layer dimension.
     --
-    -- It was LATENT rather than live when it was found, because b_tk0 is
+    -- It was LATENT rather than live when it was found, because b_tk0 was
     -- hardwired '1' below and gdn_recur_pipe masks the state read at tk0
     -- (TK0_ED, rtl/gdn_recur_pipe.vhd:503,722), so the shared region was
     -- written and never read back.  It becomes a wrong number on the first
     -- day there is a token loop, which is what this file is heading for.
     -- docs/debugging/2026-08-29_b-layer-dimension.md.
+    --
+    -- THAT DAY IS 2026-08-29.  `b_tk0` now follows `tok_pos`, so this address
+    -- is read at every token but the first and the layer term is LIVE.  The
+    -- mutation that deletes it (`mutate_seamgate.sh` S11) survived the seam
+    -- gate while tk0 was hardwired and is killed by the `seq` row now.
     --
     -- IT IS A PROCESS VARIABLE, NOT A SIGNAL, AND THAT IS A MODELLING
     -- CHOICE WITH A MEASURED PRICE ATTACHED.  At the real 9B shape this
@@ -3267,7 +3284,53 @@ begin
 
             when S_GO =>
               b_start <= '1';
-              b_tk0   <= '1';   -- one token only; there is no token loop yet
+              -- `tk0` IS THE SEQUENCE POSITION, NOT A CONSTANT.  This line
+              -- read `b_tk0 <= '1'` -- "one token only; there is no token
+              -- loop yet" -- and the premise expired: `sim/tb_llama_top_seq`
+              -- runs NTOK = 3 and is a gate row.  Driving it high at every
+              -- token makes `rtl/gdn_recur_pipe.vhd`'s TK0_ED mask the state
+              -- read on EVERY token, so the recurrent state is written and
+              -- never read and subsystem B -- a RECURRENT architecture -- is
+              -- computed as if every token were token 0.
+              --
+              -- `tok_pos` is the only sequence position this file has: reset
+              -- clears it and the `tok_done`/`tok_ack` handshake advances it,
+              -- so it is stable for the whole of a token and `tok_pos = 0` is
+              -- exactly the first token of a sequence.  It is the same source
+              -- subsystem C's `c_cpos` takes, so B and C cannot disagree about
+              -- which token this is.
+              --
+              -- MEASURED cost at the `seq` capture: this line ALONE was
+              -- 60 to 75 of 128 mantissas per `R_Y` seam wrong at tokens 1
+              -- and 2; with the per-token `b_seq_rst` below it, 65 to 88.
+              -- docs/debugging/2026-08-29_btop1-b-recurrence.md.
+              if tok_pos = 0 then b_tk0 <= '1'; else b_tk0 <= '0'; end if;
+
+              -- THE CONV TAP HISTORY IS THE OTHER HALF, and under B_SRC_REAL
+              -- this file does not hold one.  `cvdata_p` writes ZERO into
+              -- every tap but the newest (see the branch above), which was
+              -- inert while `b_seq_rst` fired every token and `tvalid` masked
+              -- those slots.  With the per-SEQUENCE reset below, `tvalid`
+              -- opens tap KCONV-2 at token 1 and KCONV-3 at token 2, and a
+              -- zero mantissa carrying a REAL captured exponent is then summed
+              -- as if it were an activation.  Holding the history is a new
+              -- (KCONV-1) x qkv_dim buffer -- 3 x 8,192 words at the 9B shape
+              -- -- and B_SRC_REAL cannot be run today for an unrelated reason
+              -- (:52-58: it makes R_ALPHA physically impossible), so this
+              -- REFUSES rather than producing a plausible wrong number.
+              --
+              -- SIMULATION ONLY, like the `j_lay` guard above: a VHDL
+              -- severity is not a check in synthesis.  B_SRC_REAL is a bench
+              -- switch and has no meaning on the card.
+              assert not (B_SRC_REAL and tok_pos > 0)
+                report "llama_top: B_SRC_REAL is true at token "
+                     & integer'image(tok_pos) & ", but this file holds no "
+                     & "conv tap HISTORY -- every tap but the newest is zero "
+                     & "(cvdata_p).  From token 1 gdn_exp_capture's tvalid "
+                     & "marks those slots VALID, so the conv would sum zeros "
+                     & "at a real exponent.  Refusing rather than producing a "
+                     & "plausible wrong number."
+                severity failure;
               st      := S_ARM;
 
             -- `busy` does not rise on the same edge as `start`, so waiting
@@ -4288,9 +4351,21 @@ begin
         last_dst <= 255;
         qkv_exp  <= (others => (others => '0'));
       else
-        if go = '1' then
-          -- One sequence reset per token, issued while everything is idle.
-          -- `gdn_exp_capture` asserts failure if this arrives mid-capture.
+        if go = '1' and tok_pos = 0 then
+          -- ONE RESET PER SEQUENCE, NOT PER TOKEN, and the port's own name
+          -- says so.  `rtl/gdn_exp_capture.vhd`'s header: "`seq_rst` clears
+          -- the counters at the start of a sequence".  This fired on every
+          -- `go`, which is once per TOKEN, so exactly one capture per
+          -- (layer, segment) had happened whenever B started and `tvalid`
+          -- marked only tap KCONV-1 valid -- the causal conv had no history
+          -- at any token.  It carried the same expired premise as `b_tk0`
+          -- and had to move with it: a state that carries across tokens while
+          -- the conv still sees one tap is neither behaviour.
+          --
+          -- `tok_pos = 0` is the first token of a sequence: reset clears it
+          -- and only `tok_done`/`tok_ack` advances it (see its declaration).
+          -- Issued while everything is idle; `gdn_exp_capture` asserts
+          -- failure if it arrives mid-capture.
           b_seq_rst <= '1';
         end if;
         if job_issue = '1' then

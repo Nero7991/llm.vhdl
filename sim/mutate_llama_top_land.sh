@@ -73,7 +73,13 @@ STOP=900ms
 # 2026-08-29 at commit 35e0ed0 on the unmutated tree.  Duplicated from the
 # wrappers deliberately: a row that read them out of the wrapper would move
 # with the wrapper and could never notice a wrapper that had been widened.
-LAND_SEQ="-gEXP_X0=-14252 -gEXP_XSUM=7668 -gEXP_XALL=96762 -gEXP_STEPH=57526"
+# RE-PINNED 2026-08-29 by TRACK BTOP1 with sim/tb_llama_top_seq.vhd, which
+# holds the same four values as generics.  BOTH COPIES HAVE TO MOVE TOGETHER:
+# re-pinning only the bench leaves P0s -- the control that says the CLEAN
+# design passes -- red, which is the most misleading state this table can be
+# in.  Old values: -14252 / 7668 / 96762 / 57526.  Why they moved: defect
+# B-TOP-1, docs/debugging/2026-08-29_btop1-b-recurrence.md.
+LAND_SEQ="-gEXP_X0=-732 -gEXP_XSUM=86454 -gEXP_XALL=79978 -gEXP_STEPH=50729"
 LAND_REAL="-gEXP_X0=-16364 -gEXP_XSUM=91622 -gEXP_XALL=91622 -gEXP_STEPH=17333"
 # The same three R_X landmarks with EXP_STEPH left at its sentinel.  This is
 # P3x's whole point; see the comment on P3.
