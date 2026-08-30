@@ -943,6 +943,37 @@ no bitstream" while both existed**, and the BACKLOG row for the same work said
 the opposite. Two places recording one fact is how that happens. The
 description below is kept for the record and is no longer the state of the tree.
 
+**PROVENANCE CORRECTED 2026-08-30 by TRACK BITPREP** (`e0e4fec`,
+`docs/debugging/2026-08-30_bitprep-rebuild-readiness.md`). `ed1ffe2` is the
+right commit for the **constraints and the routing** and the wrong one for the
+**netlist**. MEASURED from the artefact's own header: `write_bitstream` stamped
+`fk33_pcieep_eng.bit` at **2026/08/29 14:38:06**, and `ed1ffe2` landed at
+**14:42:42, four minutes later**. The netlist was synthesised around 06:56 that
+morning from `rtl/` at **`54b3c1a`**, with `hw/fk33/` in the state committed as
+`928ad9f`. No git SHA is stamped in the bitstream (`UserID=0XFFFFFFFF`), so
+this is reconstructed from build logs, not read off the artefact. Several
+write-ups say `ed1ffe2`; they are **not** being edited, because most of them
+are talking about the routing, where it is correct. When the question is *what
+RTL is on the card*, the answer is `54b3c1a`.
+
+**What a rebuild is actually worth, MEASURED by BITPREP.** The pcieep build
+consumes **fifteen** RTL files and B, C and D are not among them. `54b3c1a..HEAD`
+has 28 `rtl/` commits and **only 8 touch this design**, of which one is
+assert-only and one is inert at this geometry. The real content of a rebuild is
+**four commits: `0ff6828`, `75f95a8` (A7's `outst` clamp), `3ecc729` (DONE1's
+`done_l` race), `a4a564c` (THERMFIX's thermal guard)** -- not twenty-eight. All
+four confirmed absent from the loaded bit.
+
+**`hw/fk33/bit/` is gitignored (`.gitignore:134`), so the tree held the ONLY
+copy of what is on the card.** Archived 2026-08-30 to
+`/mnt/storage/fk33-bitstream-archive/`, all six `.bit` files, with the loaded
+one named `fk33_pcieep_eng.2026-08-29T1438.rtl-54b3c1a.bit`. Its sha256 is
+`6b12b3c46ee26396bcbc1f75cf240fe6231528a7a10c95ac91596b52bce164c6` and it was
+verified equal to the working copy after the archive. **This is the rollback
+artefact.** Note `hw/fk33/pcieep.sh` prefers `bit/fk33_pcieep.bit`, which is the
+Aug-27 **pre-engine** build -- without `EP_BIT` set explicitly it will configure
+a card with no engine and report success.
+
 
 ### OI-12, superseded text
 
