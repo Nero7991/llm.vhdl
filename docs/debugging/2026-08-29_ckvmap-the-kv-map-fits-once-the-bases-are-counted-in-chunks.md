@@ -281,11 +281,28 @@ run as the control, unfiltered:
 **That run is the one to believe, and it is deliberately the SCRATCH one.** It
 is a `git archive` of the pinned SHA with only this track's four files changed,
 so nothing else can have moved. A repeat against the repository working tree
-was started and is NOT reported here, because by then the working tree also
-held TRACK CLOG2's uncommitted `rtl/util_pkg.vhd` and TRACK BGATE2's
-uncommitted `rtl/rmsnorm_rs.vhd`, and three concurrent `regress.sh` runs were
-on the box -- a red row from it would not have been attributable to anything.
-See section 7 for the ownership consequence of that same overlap.
+was run as well and is reported below, but it is the WEAKER evidence and is
+kept in second place deliberately: by then the working tree also held TRACK
+CLOG2's uncommitted `rtl/util_pkg.vhd` and TRACK BGATE2's uncommitted
+`rtl/rmsnorm_rs.vhd` and `rtl/gdn_block.vhd`, and four concurrent heavy GHDL
+runs were on the box, so a RED row from it would not have been attributable to
+anything. See section 7 for the ownership consequence of that same overlap.
+
+APPENDED after the fact, once it finished: it came back green, unfiltered,
+against the committed working tree at `9d287f2`.
+
+```
+ suite sim   PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ suite tb    PASS 0   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ OVERALL     PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+```
+
+**A green run here is worth strictly less than a green run on the pinned
+tree, and the reason is asymmetric.** Red would have been uninterpretable;
+green says the three trees -- unmodified archive, modified archive, and the
+repository with two other tracks' in-flight edits -- all agree at PASS 6. It
+is corroboration, not the measurement.
 
 `sim/regress.sh` itself was NOT touched, no new `sim/tb_*.vhd` was added, and
 `BASELINE_PASS` is therefore unchanged. `sim/realshape_gate.sh` and
