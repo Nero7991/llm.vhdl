@@ -1,0 +1,23 @@
+# LUTDIET cell-name census, target=readconv_dram
+# LUT primitives grouped by the RTL signal root Vivado named them
+# after.  The root is a heuristic; the accounted total is printed
+# at the end so the remainder is visible.
+root                                     LUT   MUXF7   MUXF8       FF  CARRY8  example_cell
+r_data                                   256     128      64       64       0  r_data[0]_i_4
+ram_reg_768_831_0_6                        1       0       0        0       0  ram_reg_768_831_0_6_i_1
+ram_reg_512_575_0_6                        1       0       0        0       0  ram_reg_512_575_0_6_i_1
+ram_reg_256_319_0_6                        1       0       0        0       0  ram_reg_256_319_0_6_i_1
+ram_reg_960_1023_0_6                       1       0       0        0       0  ram_reg_960_1023_0_6_i_1
+ram_reg_896_959_0_6                        1       0       0        0       0  ram_reg_896_959_0_6_i_1
+ram_reg_128_191_0_6                        1       0       0        0       0  ram_reg_128_191_0_6_i_1
+ram_reg_384_447_0_6                        1       0       0        0       0  ram_reg_384_447_0_6_i_1
+ram_reg_704_767_0_6                        1       0       0        0       0  ram_reg_704_767_0_6_i_1
+ram_reg_448_511_0_6                        1       0       0        0       0  ram_reg_448_511_0_6_i_1
+ram_reg_0_63_0_6                           1       0       0        0       0  ram_reg_0_63_0_6_i_1
+ram_reg_832_895_0_6                        1       0       0        0       0  ram_reg_832_895_0_6_i_1
+ram_reg_320_383_0_6                        1       0       0        0       0  ram_reg_320_383_0_6_i_1
+ram_reg_64_127_0_6                         1       0       0        0       0  ram_reg_64_127_0_6_i_1
+ram_reg_640_703_0_6                        1       0       0        0       0  ram_reg_640_703_0_6_i_1
+ram_reg_576_639_0_6                        1       0       0        0       0  ram_reg_576_639_0_6_i_1
+ram_reg_192_255_0_6                        1       0       0        0       0  ram_reg_192_255_0_6_i_1
+# LUT primitives accounted: 272 of 272

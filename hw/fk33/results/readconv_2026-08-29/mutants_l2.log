@@ -1,0 +1,22 @@
+== TRACK READCONV mutation table, 2026-08-29T20:24:27-06:00
+== bench: tb_readconv_l2, N=128 LANES=4, 14 trials, 13 live
+control (unmutated)            : PASS   <- must be PASS or nothing below means anything
+idx_off                        : CAUGHT
+lastword                       : CAUGHT
+no_rst                         : NOT CAUGHT
+no_v1                          : NOT CAUGHT
+no_state                       : NOT CAUGHT
+no_zero                        : CAUGHT
+zero_off                       : NOT CAUGHT
+kq_swap                        : CAUGHT
+lane_rev                       : CAUGHT
+shk_off                        : CAUGHT
+nobias_k                       : CAUGHT
+nobias_q                       : CAUGHT
+sat_hi                         : CAUGHT
+sat_lo                         : NOT CAUGHT
+== end
+N=8 LANES=1 : CAUGHT
+N=32 LANES=4 : CAUGHT
+N=128 LANES=4 : NOT CAUGHT
+N=512 LANES=4 : NOT CAUGHT

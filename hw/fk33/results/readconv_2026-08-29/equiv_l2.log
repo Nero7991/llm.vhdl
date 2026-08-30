@@ -1,0 +1,8 @@
+N=8 LANES=1 rc=0 :: SUMMARY N=8 LANES=1 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=8 LANES=8 rc=0 :: SUMMARY N=8 LANES=8 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=32 LANES=4 rc=0 :: SUMMARY N=32 LANES=4 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=64 LANES=8 rc=0 :: SUMMARY N=64 LANES=8 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=128 LANES=1 rc=0 :: SUMMARY N=128 LANES=1 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=128 LANES=4 rc=0 :: SUMMARY N=128 LANES=4 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=256 LANES=2 rc=0 :: SUMMARY N=256 LANES=2 trials=16 live=15 fails=0 :: 1 OVERALL PASS
+N=512 LANES=4 rc=0 :: SUMMARY N=512 LANES=4 trials=16 live=15 fails=0 :: 1 OVERALL PASS

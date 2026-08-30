@@ -82,7 +82,7 @@ use work.fixed_pkg.all;
 use work.fixed_luts_pkg.all;
 use work.util_pkg.all;
 
-entity l2norm_rs is
+entity l2norm_rs_ref is
   generic(
     N     : positive := 128;
     LANES : positive := 4
@@ -107,7 +107,7 @@ entity l2norm_rs is
   );
 end entity;
 
-architecture rtl of l2norm_rs is
+architecture rtl of l2norm_rs_ref is
   constant NB : natural := N / LANES;
 
   constant THREE_Q30   : signed(33 downto 0) := shift_left(to_signed(3, 34), 30);
@@ -178,86 +178,12 @@ architecture rtl of l2norm_rs is
   signal idx, idxf, idx1 : natural range 0 to NB := 0;
 
   signal k_reg, q_reg : std_logic_vector(N*16-1 downto 0) := (others => '0');
-
-  -- sat16 of a 64-bit value, used on both paths.  HOISTED out of the FSM
-  -- process 2026-08-29 so the write-decode generate below can call it; the
-  -- body is byte-for-byte what the process declared.
-  function sat16(v : signed) return signed is
-  begin
-    if    v >  32767 then return to_signed( 32767, 16);
-    elsif v < -32768 then return to_signed(-32768, 16);
-    else                  return resize(v, 16);
-    end if;
-  end function;
-
-  -- ---- the output registers' WRITE DECODE --------------------------------
-  -- TRACK READCONV, 2026-08-29.  S_EMIT and S_ZERO used to write k_reg and
-  -- q_reg through a slice whose base is a runtime variable:
-  --     base := idx1 * LANES;
-  --     k_reg((base+k+1)*16-1 downto (base+k)*16) <= ...
-  -- MEASURED (TRACK LUTDIET's census, hw/fk33/results/lutdiet_2026-08-29/
-  -- census_l2_ctrl.txt): Vivado infers that as an NB-way 16-bit demux per
-  -- lane, and at N = 128 / LANES = 4 the two roots `q` and `k` are 8,354 and
-  -- 6,710 LUT primitives against a whole-unit CLB LUT count of 14,931.  The
-  -- write decode IS this unit, and it carries zero MUXF7 and zero MUXF8, so
-  -- the read-mux signature never found it.
-  --
-  -- This is TRACK WRITEDEC's fix (`51323ca`, rmsnorm_rs 169,746 -> 40,934)
-  -- applied to the one unit on B's norm path that WRITEDEC did not own.  Same
-  -- shape: a COMBINATIONAL write datum plus a per-word generate carrying a
-  -- CONSTANT slice index and a comparator that becomes a clock enable.  No
-  -- port moves, no arithmetic moves, no BRAM, no pipeline stage, and `done`
-  -- fires on exactly the cycle it always did.
-  --
-  -- TRAP, recorded by WRITEDEC and honoured here: the slice target must be
-  -- fully static in the generate index.  A process creates its driver over the
-  -- longest STATIC prefix of the target, so a per-word generate whose bounds
-  -- contain the inner loop variable drives the WHOLE register from every one
-  -- of the NB processes, they resolve against each other, and the output
-  -- simulates as 'X'.  That form SYNTHESISES CLEANLY; only simulation catches
-  -- it.  kq_wd_k / kq_wd_q are therefore ONE flat LANES*16 vector each and the
-  -- slice below contains no loop variable.
-  signal kq_wd_k, kq_wd_q : std_logic_vector(LANES*16-1 downto 0)
-       := (others => '0');
 begin
   k_mant <= k_reg;
   q_mant <= q_reg;
 
-  -- S_EMIT's stage-2 saturate-and-place, verbatim, as combinational logic.
-  -- Same expression, same operands, same cycle; only where the result is
-  -- deposited has changed.
-  p_kqwd : process(pk, pq, bias_k, bias_q, sh_k, sh_q)
-    variable ok, oq : signed(63 downto 0);
-  begin
-    for k in 0 to LANES-1 loop
-      ok := shift_right(pk(k) + bias_k, sh_k);
-      oq := shift_right(pq(k) + bias_q, sh_q);
-      kq_wd_k((k+1)*16-1 downto k*16) <= std_logic_vector(sat16(ok));
-      kq_wd_q((k+1)*16-1 downto k*16) <= std_logic_vector(sat16(oq));
-    end loop;
-  end process;
-
-  -- The write decode.  The two guards are exactly the two the original writes
-  -- sat under, including the `rst = '0'` term that was the FSM process's outer
-  -- if/else: rst does not clear v1, and `state` still reads S_EMIT on the
-  -- cycle rst is taken.  S_ZERO wrote unconditionally on every cycle of that
-  -- state, so it has no valid term.
-  gkq : for wi in 0 to NB-1 generate
-    process(clk) begin
-      if rising_edge(clk) then
-        if rst = '0' and state = S_EMIT and v1 = '1' and idx1 = wi then
-          k_reg((wi+1)*LANES*16-1 downto wi*LANES*16) <= kq_wd_k;
-          q_reg((wi+1)*LANES*16-1 downto wi*LANES*16) <= kq_wd_q;
-        elsif rst = '0' and state = S_ZERO and idx = wi then
-          k_reg((wi+1)*LANES*16-1 downto wi*LANES*16) <= (others => '0');
-          q_reg((wi+1)*LANES*16-1 downto wi*LANES*16) <= (others => '0');
-        end if;
-      end if;
-    end process;
-  end generate;
-
   assert N mod LANES = 0
-    report "l2norm_rs: LANES must divide N" severity failure;
+    report "l2norm_rs_ref: LANES must divide N" severity failure;
 
   process(clk)
     variable sq_sum : signed(63 downto 0);
@@ -265,8 +191,16 @@ begin
     variable p      : integer;
     variable A, mant : unsigned(63 downto 0);
     variable rq_d, rq_he : integer;
-    -- `ok`, `oq` and sat16 have moved to the architecture level with the
-    -- write decode; nothing in this process places a value any more.
+    variable ok, oq : signed(63 downto 0);
+
+    -- sat16 of a 64-bit value, used on both paths
+    function sat16(v : signed) return signed is
+    begin
+      if    v >  32767 then return to_signed( 32767, 16);
+      elsif v < -32768 then return to_signed(-32768, 16);
+      else                  return resize(v, 16);
+      end if;
+    end function;
   begin
     if rising_edge(clk) then
       if rst = '1' then
@@ -316,11 +250,11 @@ begin
           --                                    the ARGUMENT, no multiply, 2.1.3
           when S_ARG =>
             assert N_POW2_OK
-              report "l2norm_rs: N must be a power of two -- the 1/sqrt(N) "
+              report "l2norm_rs_ref: N must be a power of two -- the 1/sqrt(N) "
                      & "fold is applied as a shift of the rsqrt argument"
               severity failure;
             assert ssq >= 0 and ssq <= shift_left(to_signed(1, 64), SSQ_BITS)
-              report "l2norm_rs: ssq outside the u"
+              report "l2norm_rs_ref: ssq outside the u"
                      & integer'image(SSQ_BITS + 1)
                      & " bound implied by N"
               severity failure;
@@ -352,7 +286,7 @@ begin
             rq_y     <= to_signed(RSQRT_ROM(to_integer(mant(29 downto 24))), 32);
             rq_smant <= signed(mant(31 downto 0));
             assert mant(30) = '1'
-              report "l2norm_rs: rsqrt mantissa not normalised to Q30"
+              report "l2norm_rs_ref: rsqrt mantissa not normalised to Q30"
               severity failure;
             rq_step <= 0;
             state <= S_RQ;
@@ -496,13 +430,20 @@ begin
             -- gating wrote every block with the index of the block four
             -- elements later.  Uniform-magnitude test vectors cannot see that
             -- -- it was caught only by varying |x| per element.
-            -- Both paths: a per-INVOCATION scalar shift, its rounding bias
-            -- precomputed once in S_RQ_FOLD, exactly as rmsnorm_rs precomputes
-            -- emit_bias.  Never a per-element shift amount.  The saturate-and-
-            -- place itself has moved OUT of this process, to the combinational
-            -- kq_wd_k / kq_wd_q and the gkq generate above.  Nothing else about
-            -- this state changed and the completion condition is the
-            -- original's: the write still lands on the cycle it always did.
+            if v1 = '1' then
+              base := idx1 * LANES;
+              for k in 0 to LANES-1 loop
+                -- Both paths: a per-INVOCATION scalar shift, its rounding
+                -- bias precomputed once in S_RQ_FOLD, exactly as rmsnorm_rs
+                -- precomputes emit_bias.  Never a per-element shift amount.
+                ok := shift_right(pk(k) + bias_k, sh_k);
+                oq := shift_right(pq(k) + bias_q, sh_q);
+                k_reg((base+k+1)*16-1 downto (base+k)*16)
+                  <= std_logic_vector(sat16(ok));
+                q_reg((base+k+1)*16-1 downto (base+k)*16)
+                  <= std_logic_vector(sat16(oq));
+              end loop;
+            end if;
             if idx = NB and vf = '0' and v1 = '0' then
               done  <= '1';
               state <= S_IDLE;
@@ -510,9 +451,11 @@ begin
 
           -- ---- ssq = 0: zeros on both paths ------------------------------
           when S_ZERO =>
-            -- the zero write has moved to the gkq generate above, under
-            -- `state = S_ZERO and idx = wi`, which is this state's own
-            -- unconditional write expressed as a clock enable.
+            base := idx * LANES;
+            for k in 0 to LANES-1 loop
+              k_reg((base+k+1)*16-1 downto (base+k)*16) <= (others => '0');
+              q_reg((base+k+1)*16-1 downto (base+k)*16) <= (others => '0');
+            end loop;
             if idx = NB-1 then
               idx <= 0; done <= '1'; state <= S_IDLE;
             else

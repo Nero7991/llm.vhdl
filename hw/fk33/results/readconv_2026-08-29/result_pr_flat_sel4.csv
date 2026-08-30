@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+readconv_flat,"NW=2048 WLANES=4 SELW=4",0,9311,9311,0,32832,0,0,0,0,0,4352,2048,3.810,840.3361344537816,19,-1,9311,32832,0,0

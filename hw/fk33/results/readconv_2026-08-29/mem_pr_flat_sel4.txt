@@ -1,0 +1,1 @@
+tag=pr_flat_sel4 peak_rss_kib=3724256 peak_rss_gib=3.55 exit=0

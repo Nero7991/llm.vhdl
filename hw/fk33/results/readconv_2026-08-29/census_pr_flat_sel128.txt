@@ -1,0 +1,8 @@
+# LUTDIET cell-name census, target=readconv_flat
+# LUT primitives grouped by the RTL signal root Vivado named them
+# after.  The root is a heuristic; the accounted total is printed
+# at the end so the remainder is visible.
+root                                     LUT   MUXF7   MUXF8       FF  CARRY8  example_cell
+r_data                                  8192    4096    2048     2048       0  r_data[0]_i_4
+gw.buf                                   580       0       0    32768       0  gw[342].buf[21951]_i_1
+# LUT primitives accounted: 8772 of 8772

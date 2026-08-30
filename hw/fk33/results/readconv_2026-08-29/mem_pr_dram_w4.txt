@@ -1,0 +1,1 @@
+tag=pr_dram_w4 peak_rss_kib=3514576 peak_rss_gib=3.35 exit=0

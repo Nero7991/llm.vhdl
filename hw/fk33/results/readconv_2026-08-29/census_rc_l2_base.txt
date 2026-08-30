@@ -1,0 +1,44 @@
+# LUTDIET cell-name census, target=l2norm_rs
+# LUT primitives grouped by the RTL signal root Vivado named them
+# after.  The root is a heuristic; the accounted total is printed
+# at the end so the remainder is visible.
+root                                     LUT   MUXF7   MUXF8       FF  CARRY8  example_cell
+q                                       8354       0       0        0       0  q_reg[1999]_i_46
+k                                       6710       0       0        0       0  k_reg[1999]_i_68
+sq                                       578     256       0        0       0  sq_reg[1]_i_2
+ARG                                      425       0       0        0      12  ARG__3_i_55
+ssq                                      195       0       0       64      16  ssq[39]_i_3
+mr_m                                     181       0       0       34      19  mr_m[65]_i_16
+bias_k                                    88       0       0       64       6  bias_k[55]_i_21
+bias_q                                    86       0       0       64       6  bias_q[55]_i_21
+msb_p                                     83       0       0        6       0  msb_p[0]_i_10
+sh_k                                      78       0       0       49      13  sh_k[0]_i_3
+arg_r                                     59       0       0       64       0  arg_r[6]_i_1
+idx                                       36       0       0       12       0  idx[5]__5_i_1
+sh_q                                      35       0       0       49       4  sh_q[16]_i_2
+state_rep_i_1                             32       0       0        0       0  state[0]_rep_i_1__0
+pk                                        31       0       0       68       2  pk_reg[0]_i_18
+idx__5_rep_i_1                            12       0       0        0       0  idx[1]__5_rep_i_1__0
+state                                     10       0       0       37       0  state[3]_i_5
+rq_step                                    6       0       0        5       0  rq_step[0]_i_1
+done                                       5       0       0        1       0  done_i_4
+idxf                                       4       0       0        6       0  idxf[4]_i_3
+idx__5                                     4       0       0        0       0  idx[1]__5_rep_i_1
+sh_k_rep_i_1                               2       0       0        0       0  sh_k[1]_rep_i_1__0
+v1                                         2       0       0        1       0  v1_i_2
+idx1                                       2       0       0        6       0  idx1[5]_i_1
+pass                                       2       0       0        1       0  pass[0]_i_2
+idx_rep_i_1                                1       0       0        0       0  idx[5]_rep_i_1__0
+va                                         1       0       0        1       0  va_i_1
+vb                                         1       0       0        1       0  vb_i_1
+vf                                         1       0       0        1       0  vf_i_1
+fold_p                                     1       0       0       18       0  fold_p[16]_i_1
+pq                                         0       0       0       68       0  pq_reg[0][0]
+fold_odd                                   0       0       0        1       0  fold_odd_reg
+rq_y                                       0       0       0       32       0  rq_y_reg[0]
+mr_m2                                      0       0       0       34       0  mr_m2_reg[30]
+k_reg                                      0       0       0     2048      80  k_reg_reg[0]
+idx_reg__5                                 0       0       0       16       0  idx_reg[0]__5_rep
+mr_p                                       0       0       0       34       0  mr_p_reg[30]
+q_reg                                      0       0       0     2048      64  q_reg_reg[0]
+# LUT primitives accounted: 17025 of 17025
