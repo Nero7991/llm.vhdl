@@ -1,0 +1,33 @@
+
+== gdn_none : flat-storage share of LUT primitives ==
+  qsb           147456   qsb  32,768b staging, :378 ; written :889 ; read :979
+  knb           131072   knb  32,768b staging, :377 ; written :891 ; read :978
+  vbuf          100912   vbuf 65,536b staging, :376 ; written :725 ; read :1046 (4096:1)
+  kbuf           34841   kbuf 32,768b staging, :375 ; written :723 ; read :880
+  qbuf           33280   qbuf 32,768b staging, :374 ; written :721 ; read :878
+  l2_x           18433   l2_x  2,048b, the 16:1-of-2048b read off qbuf/kbuf, :423/:878
+  rp_cvj         17473   the 4096:1 16-bit read off vbuf, :1046
+  q               8354   u_l2/q_reg,  l2norm_rs's own flat output register
+  rp_qs           8193   rp_qs 2,048b, the 16:1 read off qsb, :443/:979
+  rp_kn           8192   rp_kn 2,048b, the 16:1 read off knb, :442/:978
+  k               6710   u_l2/k_reg,  l2norm_rs's own flat output register
+  o               4426   u_emit/u_head/o_reg, gdn_head_emit's own flat output register
+  TOTAL         519342 of 585430 = 88.7%
+
+== attn_none : flat-storage share of LUT primitives ==
+  qplane         49184   qplane G*HEAD_DIM*MANT_W = 16,384b, :410
+  krec           14150   krec  HEAD_DIM*CM_W = 4,096b, :415 ; written :1086/:1103
+  vrec           11276   vrec  HEAD_DIM*CM_W = 4,096b, :415 ; written :1088/:1100
+  o               6567   u_norm/o_reg, the embedded rmsnorm_rs's flat output register
+  vs              4505   vs, per-head flat value staging
+  rn_w            4096   rn_w  HEAD_DIM*MANT_W = 4,096b norm gain, :436
+  vs2_q           2192   the variable-index read off vs2
+  ARG             1531   u_norm/ARG, the embedded rmsnorm_rs's x_mant/w_mant read mux
+  kw_mant         1281   kw_mant KV_BLOCK*CM_W, :309
+  sq              1090   u_norm/sq, the embedded rmsnorm_rs's S_ACC read mux
+  vs_q            1088   the variable-index read off vs
+  vs2              337   vs2, per-head flat value staging
+  TOTAL          97297 of 168880 = 57.6%
+
+gdn_none   write-demux  467051 (79.8%)   read-mux  52291 (8.9%)   other   66088 (11.3%)  of 585430
+attn_none  write-demux   91396 (54.1%)   read-mux   5901 (3.5%)   other   71583 (42.4%)  of 168880

@@ -1,0 +1,1 @@
+tag=flat_n4096 peak_rss_kib=15242416 peak_rss_gib=14.54 exit=0

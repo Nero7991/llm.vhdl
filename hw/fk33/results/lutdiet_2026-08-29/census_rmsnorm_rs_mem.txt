@@ -1,0 +1,55 @@
+# LUTDIET cell-name census, target=rmsnorm_rs_mem
+# LUT primitives grouped by the RTL signal root Vivado named them
+# after.  The root is a heuristic; the accounted total is printed
+# at the end so the remainder is visible.
+root                                     LUT   MUXF7   MUXF8       FF  CARRY8  example_cell
+o_wd                                    1101       0       0       64      32  o_wd[0][14]_i_1
+max_raw                                 1047       0       0       63      56  max_raw[15]_i_11
+rq_shifted                               519       0       0       64       2  rq_shifted[63]_i_1
+ARG                                      443       0       0        0      11  ARG__27_i_57
+shifted_r                                405       0       0       64       0  shifted_r[63]_i_9
+p3_sum                                   256       0       0      256      32  p3_sum[0][15]_i_2
+S                                        222       0       0       52      14  S[0]_i_1
+mr_m                                     182       0       0       34      19  mr_m[65]_i_25
+rq_E                                     145       0       0       32      22  rq_E[0]_i_10
+p2_raw                                   124       0       0      258      16  p2_raw[0][40]_i_2
+sh_r                                     115       0       0       31       8  sh_r[15]_i_10
+msq_r                                     98       0       0       64       4  msq_r[63]_i_10
+msb_p                                     94       0       0        6       0  msb_p[0]_i_12
+rq_p                                      92       0       0        6       0  rq_p[0]_i_11
+emit_bias                                 80       0       0       64       1  emit_bias[63]_i_10
+rq_yfin                                   78       0       0       32       6  rq_yfin[17]_i_10
+bias_r                                    76       0       0       32       4  bias_r[63]_i_12
+rq_bias_r                                 73       0       0       64       0  rq_bias_r[63]_i_1
+o_exp                                     70       0       0       32       4  o_exp[7]_i_17
+rq_sum_r                                  66       0       0       64       8  rq_sum_r[31]_i_2
+rq_sh_r                                   62       0       0       31       4  rq_sh_r[16]_i_10
+sum_r                                     33       0       0       64       8  sum_r[16]_i_2
+idx                                       25       0       0       11       0  idx[10]_i_4
+o_rdata_INST_0                            16       0       0        0       0  o_rdata[0]_INST_0
+gbank.ux                                  14       0       0        0       0  gbank[0].ux_i_10
+idxf                                      13       0       0       10       0  idxf[9]_i_2
+idx1                                      12       0       0       10       0  idx1[0]_i_1
+idx3                                      12       0       0       10       0  idx3[0]_i_1
+idx2                                      10       0       0       10       0  idx2[0]_i_1
+rq_step                                    7       0       0        5       0  rq_step[0]_i_1
+state                                      5       0       0        5       0  state[4]_i_5
+done                                       5       0       0        1       0  done_i_2
+shift_total                                4       0       0       24       1  shift_total[5]_i_3
+gbank.uw                                   4       0       0        0       0  gbank[0].uw_i_1
+va                                         3       0       0        1       0  va_i_1
+vf                                         2       0       0        1       0  vf_i_2
+v1                                         2       0       0        1       0  v1_i_2
+xe                                         2       0       0       32       0  xe[31]_i_1
+vb                                         1       0       0        1       0  vb_i_1
+rq_up_r                                    1       0       0        1       0  rq_up_r_i_1
+v2                                         1       0       0        1       0  v2_i_1
+v3                                         1       0       0        1       0  v3_i_1
+g0_b0                                      1       0       0        0       0  g0_b0
+g0_b1                                      1       0       0        0       0  g0_b1
+g0_b2                                      1       0       0        0       0  g0_b2
+g0_b3                                      1       0       0        0       0  g0_b3
+g0_b4                                      1       0       0        0       0  g0_b4
+o_wa                                       1       0       0       10       0  o_wa[9]_i_1
+sq                                         1       0       0        0       0  sq_reg[1]_i_1
+# LUT primitives accounted: 5528 of 5528

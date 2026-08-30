@@ -1,0 +1,57 @@
+== MEASURED, from result_*.csv ==
+tag          top                generics               LUT       FF   BRAM  URAM   DSP      F7     F8      WNS
+attn_none    attn_block         HEAD_DIM=256 N_QH=16 N_KVH=4 LAYERS=8    157560   101190     11     0   298   17853   3808   -3.111
+flat_n4096   lutdiet_rms_flat   N=4096 LANES=4      299030   198472      0     0    40   26144  13072    1.675
+gdn_none     gdn_block                              438328   248972     43     0   253   29025   9231    0.483
+hotw_n4096   rmsnorm_rs_hotw    N=4096 LANES=4       40804    67267      0     0    40   17408   8704    1.675
+l2_ctrl      l2norm_rs          N=128 LANES=4        14931     4833      0     0    36     256      0    1.663
+mem_n4096    rmsnorm_rs_mem     N=4096 LANES=4        4798     1700      6     0    40       0      0    0.971
+rms_n1024    rmsnorm_rs         N=1024 LANES=4       43548    18124      0     0    40    4352   2176    1.675
+rms_n256     rmsnorm_rs         N=256 LANES=4        13365     5874      0     0    40    1024    512    1.675
+rms_n4096    rmsnorm_rs         N=4096 LANES=4      169746    67320      0     0    40   17408   8704    1.675
+
+== DERIVED, what the routed A build leaves free ==
+device : LUT 268222  FF 754354  BRAM 410.5  URAM 320  DSP 1295
+pb_core: LUT 233765  FF 679014  BRAM 351.0  URAM 320  DSP 1115
+
+== COMPOSE's composition, with D's norm row re-measured here ==
+B 438340 + C 157200 + D_seq 6614 + D_norm 169746 = 771900 LUT
+against 268222 free on device = 2.88x ; against 233765 free in pb_core = 3.30x
+must lose 503678 LUT to fit the device, 538135 to fit pb_core
+
+== DERIVED, cost per vector element of rmsnorm_rs's flat ports ==
+tag             N       LUT       FF   LUT/elem  FF/elem
+rms_n256      256     13365     5874       52.2     22.9
+rms_n1024    1024     43548    18124       42.5     17.7
+rms_n4096    4096    169746    67320       41.4     16.4
+
+== MEASURED, the same-contract pair at N=4096 ==
+flat_n4096   flat vectors + rmsnorm_rs      LUT   299030  FF  198472  BRAM     0  DSP  40  WNS 1.675
+mem_n4096    banked BRAM + rmsnorm_rs_mem   LUT     4798  FF    1700  BRAM     6  DSP  40  WNS 0.971
+DERIVED: -294232 LUT (98.4%), -196772 FF, +6.0 BRAM tiles
+
+== MEASURED, the no-memory no-interface-change variant ==
+rmsnorm_rs        169746 LUT
+rmsnorm_rs_hotw    40804 LUT   -> -128942 LUT (76.0%), BRAM 0, same ports
+
+== ESTIMATE: B+C+D after a flat-port-to-memory conversion ==
+assumption: r = fraction of the flat-storage LUT cost removed.  MEASURED on the one converted case: r = 0.984
+    r          B          C          D      total   vs 268,222 free (device) vs 233,765 free (pb_core)
+0.500     243929     112182      11412     367524   1.37x over               1.57x over              
+0.600     205049     103107      11412     319569   1.19x over               1.37x over              
+0.700     166170      94031      11412     271613   1.01x over               1.16x over              
+0.800     127290      84956      11412     223658   FITS, 44563 spare        FITS, 10106 spare       
+0.900      88410      75880      11412     175703   FITS, 92518 spare        FITS, 58061 spare       
+0.984      55751      68257      11412     135421   FITS, 132800 spare       FITS, 98343 spare       
+DERIVED break-even for device : r >= 0.707   ((438328 + 157560 + 11412 - 268222) / (438328*0.887 + 157560*0.576))
+DERIVED break-even for pb_core: r >= 0.779   ((438328 + 157560 + 11412 - 233765) / (438328*0.887 + 157560*0.576))
+
+== ESTIMATE: the two levers on B+C+D ==
+                               B         C         D      total  device (268,222)       pb_core (233,765)     
+today, MEASURED           438328    157560    176360     772248  2.88x OVER             3.30x OVER            
+lever 1 only (hotw)        90640     72831     47418     210890  FITS +57331            FITS +22874           
+lever 1 + 2 (memory)       55751     68257     11412     135421  FITS +132800           FITS +98343           
+
+BRAM: lever 1 adds 0 tiles.  Lever 2 MEASURED 6 tiles for one N=4096 unit;
+B+C+D hold 24576 flat vector elements in total, which at 4096 x 16b per
+RAMB18 is of order 30-60 tiles against 351 free in pb_core and 320 free URAM.

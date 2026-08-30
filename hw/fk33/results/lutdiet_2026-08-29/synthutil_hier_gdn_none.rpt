@@ -1,0 +1,41 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 18:47:54 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/lutdiet/out/synthutil_hier_gdn_none.rpt
+| Design       : gdn_block
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++---------------+--------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|    Instance   |          Module          | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++---------------+--------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| gdn_block     |                    (top) |     438328 |     434229 |    3774 |  325 | 248972 |     36 |     14 |    0 |        253 |
+|   (gdn_block) |                    (top) |     360661 |     360629 |      32 |    0 | 203899 |      0 |      0 |    0 |          0 |
+|   u_conv      |                 gdn_conv |       3162 |       3162 |       0 |    0 |   1390 |      4 |      0 |    0 |         16 |
+|   u_emit      |           gdn_emit_chain |      21714 |      21537 |      42 |  135 |  14426 |      8 |      9 |    0 |         57 |
+|     (u_emit)  |           gdn_emit_chain |       2769 |       2769 |       0 |    0 |   6448 |      0 |      0 |    0 |          0 |
+|     u_head    |            gdn_head_emit |       1026 |       1003 |      16 |    7 |   2332 |      1 |      0 |    0 |          0 |
+|     u_rms     |               rmsnorm_bf |       8663 |       8663 |       0 |    0 |   4404 |      0 |      0 |    0 |         40 |
+|     u_silu    | gdn_silu__parameterized0 |       8725 |       8597 |       0 |  128 |    919 |      0 |      8 |    0 |         16 |
+|     u_y       |               gdn_y_emit |        531 |        505 |      26 |    0 |    323 |      7 |      1 |    0 |          1 |
+|   u_exp       |          gdn_exp_capture |        725 |        565 |     160 |    0 |    313 |      0 |      0 |    0 |          0 |
+|   u_l2        |                l2norm_rs |      14928 |      14928 |       0 |    0 |   4833 |      0 |      0 |    0 |         36 |
+|   u_recur     |           gdn_recur_pipe |      27816 |      24154 |    3540 |  122 |  23161 |     24 |      1 |    0 |        129 |
+|   u_scal      |               gdn_scalar |       4634 |       4634 |       0 |    0 |    495 |      0 |      0 |    0 |          7 |
+|   u_silu_conv |                 gdn_silu |       4688 |       4620 |       0 |   68 |    455 |      0 |      4 |    0 |          8 |
++---------------+--------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+
+

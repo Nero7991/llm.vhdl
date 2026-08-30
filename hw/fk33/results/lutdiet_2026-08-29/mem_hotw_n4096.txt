@@ -1,0 +1,1 @@
+tag=hotw_n4096 peak_rss_kib=12929876 peak_rss_gib=12.33 exit=0

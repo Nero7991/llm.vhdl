@@ -1,0 +1,10 @@
+LUTDIET trial 0 o_exp 13 nonzero_out 0/256
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/lutdiet_2026-08-29/rtl/tb_lutdiet_rmsmem.vhd:141:7:@10245ns:(assertion error): LUTDIET TOOTH: trial produced an all-zero output, so it proves nothing
+LUTDIET trial 1 o_exp 6 nonzero_out 256/256
+LUTDIET trial 2 o_exp 13 nonzero_out 0/256
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/lutdiet_2026-08-29/rtl/tb_lutdiet_rmsmem.vhd:141:7:@30645ns:(assertion error): LUTDIET TOOTH: trial produced an all-zero output, so it proves nothing
+LUTDIET trial 3 o_exp 13 nonzero_out 0/256
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/lutdiet_2026-08-29/rtl/tb_lutdiet_rmsmem.vhd:141:7:@40845ns:(assertion error): LUTDIET TOOTH: trial produced an all-zero output, so it proves nothing
+LUTDIET trial 4 o_exp 3 nonzero_out 197/256
+LUTDIET trial 5 o_exp 2 nonzero_out 256/256
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/lutdiet_2026-08-29/rtl/tb_lutdiet_rmsmem.vhd:146:7:@61245ns:(report note): LUTDIET EQUIV PASS: rmsnorm_rs_mem is bit-exact with rmsnorm_rs

@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 18:52:10 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/lutdiet/out/util_hier_hotw_n4096.rpt
+| Design       : rmsnorm_rs_hotw
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-----------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|     Instance    | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-----------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| rmsnorm_rs_hotw |  (top) |      40804 |      40804 |       0 |    0 | 67267 |      0 |      0 |    0 |         40 |
++-----------------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+
+

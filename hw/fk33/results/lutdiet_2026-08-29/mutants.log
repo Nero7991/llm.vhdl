@@ -1,0 +1,24 @@
+=== MUTANT bankswap ===
+<     x_bwe(k) <= x_we when unsigned(x_waddr(clog2(LANES)-1 downto 0)) = k else '0';
+---
+>     x_bwe(k) <= x_we when unsigned(x_waddr(clog2(N)-1 downto clog2(N)-clog2(LANES))) = k else '0';
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/lutdiet_2026-08-29/rtl/tb_lutdiet_rmsmem.vhd:109:7:@15325ns:(assertion error): LUTDIET FAIL trial 1 o_exp 6 vs 5
+LUTDIET FAIL trial 1 i 0 flat 22130 mem 16368
+LUTDIET FAIL trial 1 i 1 flat 659 mem 0
+LUTDIET FAIL trial 1 i 2 flat -2429 mem 0
+=== MUTANT addroff ===
+<             o_wa <= std_logic_vector(to_unsigned(idx3, clog2(NB)));
+---
+>             o_wa <= std_logic_vector(to_unsigned((idx3+1) mod NB, clog2(NB)));
+LUTDIET FAIL trial 1 i 0 flat 22130 mem -1674
+LUTDIET FAIL trial 1 i 1 flat 659 mem 15225
+LUTDIET FAIL trial 1 i 2 flat -2429 mem 4232
+LUTDIET FAIL trial 1 i 3 flat 7733 mem 8295
+=== MUTANT selxor ===
+<       o_rsel <= o_raddr(clog2(LANES)-1 downto 0);
+---
+>       o_rsel <= o_raddr(clog2(LANES)-1 downto 0) xor "01";
+LUTDIET FAIL trial 1 i 0 flat 22130 mem 659
+LUTDIET FAIL trial 1 i 1 flat 659 mem 22130
+LUTDIET FAIL trial 1 i 2 flat -2429 mem 7733
+LUTDIET FAIL trial 1 i 3 flat 7733 mem -2429
