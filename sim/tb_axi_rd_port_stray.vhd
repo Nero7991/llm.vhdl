@@ -120,7 +120,13 @@ entity tb_axi_rd_port_stray is end entity;
 
 architecture sim of tb_axi_rd_port_stray is
 
-  constant NC     : natural  := 3;
+  -- SIX CONFIGURATIONS, IN TWO GROUPS OF THREE, AND THE GROUPS MODEL TWO
+  -- DIFFERENT MACHINES.  Rows 0-2 keep the original stimulus: a slave that
+  -- NEVER sees the port's reset, and a drain window long enough that every
+  -- pre-reset burst has returned before the next job starts.  Rows 3-5 are the
+  -- SHIPPING FK33 reset topology, added 2026-08-30 by TRACK STRAYREACH -- see
+  -- SLAVE_SHARES_RST.
+  constant NC     : natural  := 6;
   constant AXI_DW : positive := 32;
   constant ADDR_W : positive := 32;
   constant BYTES  : positive := AXI_DW / 8;
@@ -151,11 +157,50 @@ architecture sim of tb_axi_rd_port_stray is
 
   type tarr is array(0 to NC-1) of time;
   --                afast     aslow     anear
-  constant CPER : tarr := (4.0 ns, 3.0 ns, 3.000 ns);   -- core clock
-  constant APER : tarr := (3.0 ns, 5.0 ns, 3.001 ns);   -- AXI clock
+  constant CPER : tarr := (4.0 ns, 3.0 ns, 3.000 ns,
+                           4.0 ns, 3.0 ns, 3.000 ns);   -- core clock
+  constant APER : tarr := (3.0 ns, 5.0 ns, 3.001 ns,
+                           3.0 ns, 5.0 ns, 3.001 ns);   -- AXI clock
 
   type namearr is array(0 to NC-1) of string(1 to 5);
-  constant NAMES : namearr := ("afast", "aslow", "anear");
+  constant NAMES : namearr := ("afast", "aslow", "anear",
+                               "sfast", "sslow", "snear");
+
+  -- ==========================================================================
+  -- SLAVE_SHARES_RST -- THE VARIABLE THIS FILE NOW EXISTS TO SEPARATE.
+  --
+  -- FALSE (rows 0-2) is the original model: the slave never sees the port's
+  -- reset, so bursts it accepted before the reset keep returning afterwards.
+  --
+  -- TRUE (rows 3-5) is the SHIPPING FK33, and the wiring rather than the
+  -- intuition decides which one that is.  MEASURED 2026-08-30 from
+  -- hw/fk33/build_fk33_pcieep.tcl and its generator hw/fk33/gen_pcieep.py:
+  --
+  --   core_reset/ext_reset_in       <= xdma/axi_aresetn      (tcl:921)
+  --   eng/core_aresetn              <= core_reset/peripheral_aresetn (tcl:924)
+  --   hbm/AXI_nn_ARESET_N           <= xdma/axi_aresetn      (tcl:959..1040)
+  --
+  -- The two nets are NOT the same net, which is what the earlier write-ups
+  -- said and it is true -- but it is the wrong property.  `core_aresetn` is
+  -- GENERATED FROM `axi_aresetn` by a proc_sys_reset, so it cannot assert
+  -- unless the HBM slave's own reset asserted first.  The slave therefore
+  -- DOES share the reset in the only sense that matters here, and rows 3-5 are
+  -- the honest model of the card.
+  --
+  -- The reset ORDER in those rows is proc_sys_reset's: `srst` (ext_reset_in)
+  -- falls first and rises first; the port's `rst` (peripheral_aresetn) falls a
+  -- synchroniser later and rises a bsr hold later.  Neither window contains
+  -- the other and that asymmetry is the point, so it is modelled rather than
+  -- simplified to a common reset.
+  --
+  -- WHAT ROWS 3-5 ASSERT, and it is the opposite of what rows 0-2 assert:
+  -- that with the slave sharing the reset, a restart INSIDE the drain window
+  -- is safe.  They run at DRAIN_WAIT = 4, the setting that makes rows 0-2
+  -- produce wrong numbers (STRAY-NEXTJOB), and they require the value oracle
+  -- to hold anyway.
+  type barr is array(0 to NC-1) of boolean;
+  constant SLAVE_SHARES_RST : barr :=
+    (false, false, false,  true, true, true);
 
   -- THE RESET HOLD, in CORE cycles.  2 is chosen for ONE reason and it is not
   -- the reason that was expected.
@@ -204,7 +249,14 @@ architecture sim of tb_axi_rd_port_stray is
   -- gate red for every track over a defect that has an owner and no decision.
   -- The right move is to take the decision, fix rtl/axi_rd_fsm.vhd, and THEN
   -- shrink it -- at which point this file already contains the check.
-  constant DRAIN_WAIT : natural := 200;
+  -- Per configuration, because the two groups are asking different questions:
+  -- rows 0-2 keep the deliberate 200 that parks the shared gate on the safe
+  -- side of the undecided STRAY-NEXTJOB, and rows 3-5 use 4 -- the aggressive
+  -- restart that REACHES it -- because under the shipping topology it is
+  -- supposed to be safe, and a row that never enters the window would assert
+  -- nothing.
+  type darr is array(0 to NC-1) of natural;
+  constant DRAIN_W : darr := (200, 200, 200,  4, 4, 4);
 
   -- Word-index ranges, one per job, so a beat's own value says which job it
   -- belongs to.  The slave returns the word index of the address it was asked
@@ -227,6 +279,9 @@ begin
   g : for i in 0 to NC-1 generate
     signal clk, aclk : std_logic := '0';
     signal rst       : std_logic := '1';
+    -- The UPSTREAM reset: xdma/axi_aresetn on the card.  Asserted only in
+    -- the SLAVE_SHARES_RST rows; low for the whole run in rows 0-2.
+    signal srst      : std_logic := '1';
     signal go        : std_logic := '0';
 
     signal start   : std_logic := '0';
@@ -303,6 +358,13 @@ begin
     begin
       if rising_edge(aclk) then
         ph := (ph + 1) mod 7;
+        if srst = '1' then
+          -- An AXI slave in reset discards every accepted-but-unreturned
+          -- read.  hbm/AXI_nn_ARESET_N is xdma/axi_aresetn, so this branch is
+          -- what the card does; rows 0-2 never enter it.
+          qw := 0; qr := 0; qc := 0; busy := false;
+          rvalid <= '0'; rlast <= '0'; arready <= '0';
+        else
 
         if arready = '1' and arvalid = '1' then
           qa(qw) := to_integer(unsigned(araddr)) / BYTES;
@@ -331,6 +393,7 @@ begin
             rvalid <= '0';
             rlast  <= '0';
           end if;
+        end if;
         end if;
       end if;
     end process;
@@ -497,7 +560,7 @@ begin
       go   <= '1';
       rst  <= '1';
       for t in 0 to 9 loop wait until rising_edge(clk); end loop;
-      rst <= '0';
+      rst <= '0'; srst <= '0';
       for t in 0 to 4 loop wait until rising_edge(clk); end loop;
 
       -- ---- J1: a plain job BEFORE the interesting part.  If the bench cannot
@@ -516,12 +579,24 @@ begin
       -- ---- THE RESET.  Short (see RST_HOLD), and the slave above does not
       -- see it, so the bursts it has already accepted keep returning.
       mon_arm <= '1';
-      rst <= '1';
-      for t in 0 to RST_HOLD-1 loop wait until rising_edge(clk); end loop;
-      rst <= '0';
+      if SLAVE_SHARES_RST(i) then
+        -- proc_sys_reset ordering: ext_reset_in leads in and leads out, the
+        -- peripheral reset lags at both ends.
+        srst <= '1';
+        for t in 0 to 1 loop wait until rising_edge(clk); end loop;
+        rst <= '1';
+        for t in 0 to RST_HOLD-1 loop wait until rising_edge(clk); end loop;
+        srst <= '0';
+        for t in 0 to 15 loop wait until rising_edge(clk); end loop;
+        rst <= '0';
+      else
+        rst <= '1';
+        for t in 0 to RST_HOLD-1 loop wait until rising_edge(clk); end loop;
+        rst <= '0';
+      end if;
 
-      -- Let the strays return and be discarded.  See DRAIN_WAIT.
-      for t in 0 to DRAIN_WAIT-1 loop wait until rising_edge(clk); end loop;
+      -- Let the strays return and be discarded.  See DRAIN_W.
+      for t in 0 to DRAIN_W(i)-1 loop wait until rising_edge(clk); end loop;
       mon_arm <= '0';
 
       -- ---- JB and JC: ordinary jobs across the reset, each fully checked.
@@ -536,19 +611,36 @@ begin
       -- three ratios passed that run on a single stray `rlast` each.
       -- MEASURED again in control B (a reset-aware slave), where all three
       -- ratios drop to `stray = 1`, `strayl = 0` and the second assert fires.
-      if stray_o = 0 then
-        report NAMES(i) & ": COVERAGE -- NO beat of the abandoned job arrived" &
-               " after the reset, so the reset did not catch a burst in" &
-               " flight and nothing here was tested.  Check RST_HOLD"
-          severity error;
-        err_s <= err_s + 1;
-      end if;
-      if strayl_o = 0 then
-        report NAMES(i) & ": COVERAGE -- no stray beat carried `rlast`, so no" &
-               " burst was retired against a zeroed `outst` and the clamp in" &
-               " rtl/axi_rd_fsm.vhd was never reached"
-          severity error;
-        err_s <= err_s + 1;
+      if not SLAVE_SHARES_RST(i) then
+        if stray_o = 0 then
+          report NAMES(i) & ": COVERAGE -- NO beat of the abandoned job" &
+                 " arrived after the reset, so the reset did not catch a" &
+                 " burst in flight and nothing here was tested.  Check RST_HOLD"
+            severity error;
+          err_s <= err_s + 1;
+        end if;
+        if strayl_o = 0 then
+          report NAMES(i) & ": COVERAGE -- no stray beat carried `rlast`, so" &
+                 " no burst was retired against a zeroed `outst` and the clamp" &
+                 " in rtl/axi_rd_fsm.vhd was never reached"
+            severity error;
+          err_s <= err_s + 1;
+        end if;
+      else
+        -- THE SHIPPING ROWS ASSERT THE OPPOSITE, and this is a PROPERTY, not
+        -- coverage: if the slave shares the reset then NO pre-reset burst may
+        -- be retired against the zeroed `outst`, because the slave discarded
+        -- every one of them.  A non-zero `strayl` here would mean the model
+        -- has stopped modelling the card, and the value oracle above would
+        -- then be passing for a reason that does not hold on the card.
+        if strayl_o /= 0 then
+          report NAMES(i) & ": a pre-reset burst was RETIRED although the" &
+                 " slave shares the reset -- " & integer'image(strayl_o) &
+                 " stray `rlast` beats.  The slave model is no longer the" &
+                 " shipping topology, so this row proves nothing about it"
+            severity error;
+          err_s <= err_s + 1;
+        end if;
       end if;
       if stall_i = 0 then
         report NAMES(i) & ": COVERAGE -- the consumer NEVER waited on q_valid," &
