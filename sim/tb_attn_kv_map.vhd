@@ -385,6 +385,13 @@ architecture sim of tb_attn_kv_map is
   signal n_ar, n_rlast, n_cap, n_ph, n_4k : i2 := (others => 0);
   signal n_aw, n_wlast, n_b, n_wcap, n_wph : integer := 0;
   signal nbad_s : i2 := (others => 0);      -- slave-detected address faults
+  -- THE RECORD PHASE, COUNTED EXACTLY AND FROM THE ORACLE.  The slave's n_ph
+  -- counts ARs that do not begin on a record boundary, which is a SUPERSET:
+  -- every continuation AR of a split run qualifies whatever the phase is.
+  -- The phase of record r is (16*chunk(r)) mod BEAT_B, and 16*chunk overflows
+  -- `integer` at the real map, so it is taken as (chunk mod BEAT_CH) -- the
+  -- same number, computed on the chunk index that does fit.
+  signal n_recph : integer := 0;
   signal cyc : integer := 0;
 
   -- capture, one cycle behind the enable
@@ -748,6 +755,15 @@ begin
       variable cnt : integer;
       variable ee, gg : integer;
     begin
+      if sel = 0 then
+        if rec_ch(K_BASE_CH, lay, hd, ps) mod BEAT_CH /= 0 then
+          n_recph <= n_recph + 1;
+        end if;
+      else
+        if rec_ch(V_BASE_CH, lay, hd, ps) mod BEAT_CH /= 0 then
+          n_recph <= n_recph + 1;
+        end if;
+      end if;
       cap_rst <= '1'; tick; cap_rst <= '0'; tick;
       if sel = 0 then
         kr_head <= to_unsigned(hd, AW_H); kr_pos <= to_unsigned(ps, POS_W);
@@ -994,8 +1010,9 @@ begin
          & " | AR " & integer'image(n_ar(0)) & "/" & integer'image(n_ar(1))
          & "  at the 16-beat cap " & integer'image(n_cap(0)) & "/"
          & integer'image(n_cap(1))
-         & "  phase-16 runs " & integer'image(n_ph(0)) & "/"
+         & "  ARs off a record boundary " & integer'image(n_ph(0)) & "/"
          & integer'image(n_ph(1))
+         & "  records AT PHASE 16 " & integer'image(n_recph)
          & "  ending on 4 KB " & integer'image(n_4k(0)) & "/"
          & integer'image(n_4k(1))
          & " | AW " & integer'image(n_aw) & "  B " & integer'image(n_b)
@@ -1009,10 +1026,15 @@ begin
       report "tb_attn_kv_map: NO read burst reached the AXI3 16-beat cap -- "
            & "the splitter was never exercised" severity error;
     end if;
-    if n_ph(0) = 0 or n_ph(1) = 0 then
+    -- BEAT_CH = 1 (AXI_DW 128) makes REC_B an exact 17 beats, so the phase is
+    -- ALWAYS zero and the realignment mux genuinely cannot be reached at that
+    -- width -- which is sim/kv_axi_harness.vhd's own reason for running two.
+    -- Gating unconditionally would then fail a legitimate configuration, so
+    -- the gate is on the widths where the mechanism exists.
+    if BEAT_CH > 1 and n_recph = 0 then
       nbad := nbad + 1;
-      report "tb_attn_kv_map: NO read run started at record phase 16 -- "
-           & "the realignment mux was never exercised" severity error;
+      report "tb_attn_kv_map: NO record was read at record phase 16 -- the "
+           & "realignment mux was never exercised" severity error;
     end if;
     if n_aw /= n_b or n_aw /= n_wlast then
       nbad := nbad + 1;

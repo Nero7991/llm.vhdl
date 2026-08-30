@@ -144,6 +144,17 @@ echo "============ teeth for sim/tb_attn_kv_map.vhd (the REAL 9B map) ======="
 # THE CONTROL, RUN FIRST.  A mutation table read against a bench that fails on
 # the clean design measures nothing.
 gmut control "the unmutated bench, unmutated RTL -- MUST survive"
+# THE SECOND WIDTH, AND IT IS NOT DECORATION.  At AXI_DW 256 a single-record
+# write is 9 beats and NEVER splits, so the write-side burst splitter is
+# unreached at the real map.  At 128 a record is exactly 17 beats and splits
+# 16 + 1: MEASURED, AW 240 for 120 records with 120 of them at the 16-beat
+# cap, against AW 120 and 0 at the cap at 256.  The mirror image also holds --
+# at 128 REC_B is a whole number of beats so the 16-byte record phase is
+# always zero and the realignment mux cannot be reached -- which is why the
+# bench gates the phase coverage on BEAT_CH > 1.  Neither width covers both;
+# this is sim/kv_axi_harness.vhd's reasoning applied at the real map.
+gmut control_dw128 "the unmutated bench at AXI_DW 128 -- the ONLY shape that reaches the write splitter at the real map -- MUST survive" \
+     -gAXI_DW=128 -gRBUF=3
 
 echo "---- the chunk-to-byte seam (the model of llama_top KBASE_C/VBASE_C) ----"
 gmut shift_0  "BASE_SHIFT 0: the chunk count handed over AS a byte address" \

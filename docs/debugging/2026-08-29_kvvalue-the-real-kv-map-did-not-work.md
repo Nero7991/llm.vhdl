@@ -250,23 +250,47 @@ failure message names the record that was actually reached. That is why the
 | the AXI3 16-beat cap on reads | 47 K bursts, 47 V bursts |
 | the 16-byte record phase | 70 K runs, 73 V runs (phase is 16 for ODD `pos`, DERIVED: `kv_base mod 32 = 0` and `272 mod 32 = 16`) |
 | partially strobed write beats | 48 |
+| records read AT record phase 16 | 128 of 304 |
 | a burst ENDING on a 4 KB boundary | **0** |
-| a write burst at the 16-beat cap | **0** |
+| a write burst at the 16-beat cap | **0** at `AXI_DW` 256, **120 of 120** at 128 |
 
-The last two are reported as zero rather than omitted. Both bases are 4 KB
-aligned (DERIVED: `4521582592 = 4096*1103902` and `5662433280 = 4096*1382430`,
-both exact) and the runs are short, so no read burst reaches a 4 KB line; a
-single-record write is 9 beats at `AXI_DW` 256 and never splits, which is
-`sim/kv_axi_harness.vhd`'s own reason for existing at `AXI_DW` 128. The first
-two rows are enforced as GATE conditions inside the bench, not printed: a
-splitter that never split would otherwise satisfy every other check.
+Both bases are 4 KB aligned (DERIVED: `4521582592 = 4096*1103902` and
+`5662433280 = 4096*1382430`, both exact) and the runs are short, so no read
+burst reaches a 4 KB line. The first three rows are enforced as GATE
+conditions inside the bench, not merely printed: a splitter that never split
+and a phase that was always zero would satisfy every other check.
+
+**THE PHASE COUNT IS TAKEN FROM THE ORACLE, NOT FROM THE SLAVE, AND THE
+DIFFERENCE MATTERS.** The slave can only count ARs that do not begin on a
+record boundary (70/73 here), which is a SUPERSET: every continuation AR of a
+split run qualifies whatever the phase is. The exact number is
+`(16*chunk(record)) mod BEAT_B`, and `16*chunk` overflows `integer` at the
+real map, so it is computed as `chunk mod BEAT_CH` -- the same number on the
+index that fits. 128 of 304 is the DERIVED expectation: `kv_base mod 32 = 0`
+and `272 mod 32 = 16`, so the phase is 16 for exactly the odd positions.
+
+**BOTH AXI WIDTHS RUN AT THE REAL MAP, and neither covers what the other
+does.** MEASURED, same bench, `-gAXI_DW=128 -gRBUF=3`:
+
+```
+AXI_DW 256   AR 132/135  cap 47/47   records at phase 16 128   AW 120  cap 0
+AXI_DW 128   AR 270/285  cap 164/167 records at phase 16   0   AW 240  cap 120
+```
+
+At 256 a single-record write is 9 beats and never splits, so the write-side
+splitter is UNREACHED; at 128 a record is exactly 17 beats and splits 16 + 1,
+so it is reached on every one of the 120 records -- and there the phase is
+always zero and the realignment mux cannot be reached at all. Both PASS. The
+128 case is `control_dw128` in `sim/mutate_kv_map.sh` so it stays runnable;
+the gate row is 256, the FK33 HBM SAXI width.
 
 ### 4.8 Teeth on the bench: `bash sim/mutate_kv_map.sh`
 
-18 rows, control first. **14 KILLED, 1 SURVIVED (the control), 3 ABORT.**
+19 rows, controls first. **14 KILLED, 2 SURVIVED (both controls), 3 ABORT.**
 
 ```
 control                  SURVIVED   the unmutated bench, unmutated RTL
+control_dw128            SURVIVED   the same at AXI_DW 128
 shift_0                  KILLED     READ ADDRESS FAULT, master 0 chunk 26575328
                                     is sub-region -114 (layer -28)
 shift_3                  KILLED     READ ADDRESS FAULT ... chunk 150212352
@@ -500,10 +524,9 @@ PASS  sim:tb_attn_kv_seam    9s
   phase B uses 0, 3 and 7, and the untouched ones stay poison so a stride
   error lands somewhere that reads back as -128. All four KV heads are covered
   in both phases; all 8 blocks of every record are covered.
-* **`AXI_DW` is 256 only.** `sim/tb_attn_kv_axi.vhd` covers 128 as well, and
-  at 128 the write-side splitter is the only shape that runs. This bench does
-  not, so the write splitter is UNCOVERED AT THE REAL MAP even though it is
-  covered at the toy one.
+* **The gate row is `AXI_DW` 256 only.** The 128 case runs and passes, but
+  only as `control_dw128` in `sim/mutate_kv_map.sh`, which nothing runs
+  automatically. See section 9.
 * **Not attention.** `rtl/attn_block.vhd` is not instantiated. The composition
   is `sim/tb_attn_kv_seam.vhd`'s question and it runs at HEAD_DIM 64 /
   MAXCTX 8 / K base 16.
@@ -531,9 +554,12 @@ PASS  sim:tb_attn_kv_seam    9s
   **53 percent of `integer'high`**, so it does not bind -- but it is still a
   run-time expression inside a function and still unchecked. It would bind at
   `C_MAXPOS = 246,724`.
-* **The write-side burst splitter is uncovered at the real map** (section 8).
-  A second harness instance at `AXI_DW = 128` would close it; the bases and
-  the record image do not depend on the bus width, only the transport does.
+* **The two AXI widths are not covered by ONE gate row.** `control_dw128` in
+  `sim/mutate_kv_map.sh` runs the 128 case and passes, but the auto-discovered
+  `sim/regress.sh` row runs 256 only, so a regression that only shows at 128
+  reaches the shared gate through nothing. `sim/tb_attn_kv_axi.vhd` solves
+  this by instantiating a harness ENTITY twice; this bench is one
+  architecture with one DUT and would have to be split the same way.
 * **`sim/elab9b_run.sh` still fails 4 of 17 rows** and did so before CKVMAP;
   this track did not touch it and did not fix it either.
 * **`sim/ooc_compose_bcd.tcl:104` still names generics that do not exist**
