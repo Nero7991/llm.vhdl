@@ -129,6 +129,66 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK BASEFAB COMPLETE (`d7a6bf7`). THE URGENCY CLAIM WAS WRONG, AND THAT IS GOOD NEWS.
+
+**The form claim was right; the urgency claim that drove the dispatch was
+wrong.** `w_base(p) = A_MEM_BASE + step*A_JOB_STRIDE + p*A_SUB_BYTES` is a
+two-parameter affine map and PACKSTRIPE's allocator assigns segments per tensor,
+greedily on fill, which no closed form expresses. **But `llama_top`'s
+fabrication is not on the striped path and never was.**
+
+MEASURED by BASEFAB and **independently VERIFIED by the dispatcher**:
+
+- `hw/fk33/rtl/fk33_engine.vhd` binds **`matvec_int4_desc_axi`**, not `matvec_int4`.
+- `grep -c 'seq_' hw/fk33/rtl/fk33_engine.vhd` = **0**.
+- `rtl/matvec_int4_desc_axi.vhd:610-615` drives
+  `w_base <= dw(DESC_BASE0 + p)` -- **27 arbitrary 40-bit addresses fetched from
+  the descriptor image.**
+- `tools/gen_mv4i_desc.py`'s `sub_base()` already emits striped bases from the
+  v2 manifest's `pieces`.
+
+**So striping is expressible end to end on the card TODAY, PACKSTRIPE is not
+blocked by G3, and DSEAM's "on silicon every A job would read the wrong bytes"
+is conditional on an integration that does not exist. G3 is a defect in the
+SIMULATION top.** This materially de-risks the striping experiment.
+
+**A REAL DEFECT FIXED, because it is reachable today: the fabricated block was
+UNBOUNDED.** DERIVED at 9B, the FFN gate job needs **393,216 beats per port
+against a 256-beat sub-region, short by 1,536x**. Over-capacity jobs walked into
+port p+1's region and completed **`done=1, err=0`**. `llama_top` now refuses in
+`S_EXP` before `start`, so zero address beats are issued.
+
+**THE ATTRIBUTION CONTROL IS THE HEADLINE AND IT DENIES CREDIT FOR SEVEN OF
+EIGHT KILLS.** `sim/tb_a_wbase.vhd` kills 8 of 11; **only M9, the new guard, is
+a detection the six pre-existing rows do not already make.** And those rows kill
+via **recorded numeric landmarks, not address checks** -- they fire because
+`wword` happens to be address-sensitive. The two `smp` rows, whose memory answers
+on `addr mod A_JOB_STRIDE`, **pass every address mutation in the table.**
+
+**M5 IS THE MOST USEFUL ROW IN THE TABLE:** a uniform one-stride shift of every
+base **survives the bench and is caught only by the control**. *A checker of
+relative properties can never see a base that is uniformly wrong* -- which is
+G3's own shape. **Only an address-level oracle can catch a wrong base, and the
+oracle is the base array.**
+
+**THE DECISION THAT IS ACTUALLY OWNERLESS is not the base array, it is the
+integration.** `docs/2026-08-28_matvec-descriptor-format.md` says "D issues, A
+consumes" at :84 and "D fetching it is remaining work" at :570 -- **two mutually
+exclusive integrations in one file, and nobody has chosen.** BASEFAB argues D
+fetching it is the WRONG choice for a structural reason: `seq_desc_fetch`'s
+descriptor address is `resize(fetch_idx & "000", 16)`, a **fixed 8-word stride**
+on which its 0-DSP claim rests, and a 39-word descriptor is not addressable by
+`step*8`.
+
+**UNVERIFIED, under their own names:** M10_guard_ge and M11_port_rev **have no
+control column** -- both survived the bench, but whether the pre-existing rows
+catch them is unmeasured because the batch was cut short. Run M11 first;
+`tb_llama_top.vhd:892`'s `sub = p` assert should catch it.
+
+**No full gate run** -- GATEGREEN held the box and BASEFAB correctly judged a
+contended run not to be evidence. **`BASELINE_PASS` needs +1 for its row**
+(`sim/tb_a_wbase.vhd`); `sim/regress.sh` untouched. GATEGREEN notified.
+
 ### TRACK TRIPVETO (`729df43`). SIX consumers, THREE failure directions, and the fix deliberately NOT landed.
 
 **Six consumers in four files, and the load-bearing column is the failure
