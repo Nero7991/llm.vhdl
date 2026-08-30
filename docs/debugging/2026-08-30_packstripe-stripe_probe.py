@@ -180,15 +180,35 @@ def main(argv=None):
         # keep fields in step so anything reading them sees the truth
         f["w_base"] = [p["desc"].words[base0 + i] for i in range(npw)]
         f["s_base"] = [p["desc"].words[base0 + npw + i] for i in range(nps)]
-        print("\nRELOCATION  %d sub-regions -> %d DISTINCT 256 MiB segments %s"
-              % (len(relo), len(segs), sorted(segs)))
+        # THE PROPERTY THAT MAKES THIS THE EXPERIMENT is not "27 distinct
+        # segments" -- the shipping layout compacts 27 lanes onto 25 segments
+        # so two lanes legitimately share one pseudo-channel.  It is that no
+        # segment is asked for more lanes than the manifest planned, because
+        # the DERIVED rate is max(1.60 datapath, M/1.25 memory) and M is the
+        # whole variable.
+        want_share = int(sm["hbm"]["lane_stripe"]["max_lanes_per_segment"])
+        per_seg = {}
+        for _k, _i, _o, _n, _fo, _nb, _sg in relo:
+            per_seg[_sg] = per_seg.get(_sg, 0) + 1
+        share = max(per_seg.values())
+        print("\nRELOCATION  %d sub-regions -> %d segments %s"
+              % (len(relo), len(per_seg), sorted(per_seg)))
+        print("  sharing     at most %d lane(s) per pseudo-channel for THIS "
+              "tensor (the manifest plans at most %d)" % (share, want_share))
+        print("  DERIVED     %.2f core cycles per weight word "
+              "= max(datapath 1.60, memory %.2f); the flat layout is 21.60"
+              % (max(1.5964, share / 1.25), share / 1.25))
         for kind, i, old, new, fo, nb, sg in relo[:3] + relo[-3:]:
             print("  %s[%2d]  0x%010X -> 0x%010X  seg %2d  file +%-9d %d B"
                   % (kind, i, old, new, sg, fo, nb))
-        if len(segs) != npw + nps:
-            print("refusing: %d distinct segments, wanted %d -- this would "
-                  "NOT be the experiment" % (len(segs), npw + nps),
-                  file=sys.stderr)
+        if share > want_share:
+            print("refusing: %d lanes land on one pseudo-channel and the "
+                  "manifest plans at most %d -- this would NOT be the "
+                  "experiment" % (share, want_share), file=sys.stderr)
+            return 2
+        if len(per_seg) < 2:
+            print("refusing: %d segment(s) -- that is the FLAT layout, not a "
+                  "striped one" % len(per_seg), file=sys.stderr)
             return 2
         # ---- 3. would the gateware still take it?
         build = dict(G.FK33)
@@ -235,7 +255,10 @@ def main(argv=None):
         hbm.close()
     print("\nVERDICT     %s -- %s" % (verdict, detail))
     print("ARM         %s" % ("FLAT control" if a.flat else
-                              "LANE-STRIPED, %d segments" % (npw + nps)))
+                              "LANE-STRIPED, %d segments, max %d lane(s)/PC"
+                              % (len({r[6] for r in relo}),
+                                 max([sum(1 for x in relo if x[6] == g)
+                                      for g in {r[6] for r in relo}]))))
     return {R.Verdict.PASS: 0, R.Verdict.FAIL: 1,
             R.Verdict.INCONCLUSIVE: 3, R.Verdict.REFUSED: 2}[verdict]
 

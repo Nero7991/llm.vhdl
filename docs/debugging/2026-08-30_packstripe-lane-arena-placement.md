@@ -12,13 +12,38 @@ this document that needs a card.
 `hw/fk33/host/fk33_run_job.py --dry-run`; `cc` building `ref/mv_fk33_tr.c`;
 `git show`, `git diff`.
 
+**CORRECTION 2026-08-30, appended in place, NOT edited into history.** The
+first version of this document shipped a 27-wide stripe as the default and
+offered a "21-segment hybrid" as a fallback at 8.6x. Oren then stated the
+context requirement -- "Not a requirement, even 64k ish is fine" -- and against
+it **the 27-wide default FAILS at 44,500 tokens**. Re-deriving the supply model
+to answer that found TWO errors of my own, both in the fallback's favour and
+both now fixed:
+
+1. **The 8.6x was arithmetic.** I wrote "1 beat per AXI cycle = 0.8 beats per
+   core cycle"; it is 250/200 = **1.25**, not 200/250 = 0.8. Two lanes per
+   pseudo-channel supply **1.60** core cycles per weight word, which is exactly
+   the datapath's own floor, so **M = 2 costs nothing in the model** -- not 2.5
+   c/beat and not a 36% give-back.
+2. **The 21-segment hybrid as I described it was INFEASIBLE.** It assumed a
+   fixed lane -> segment table, and two lanes' arenas are 316.61 MiB against a
+   256.00 MiB segment. Compaction is only possible if WHICH segment a lane
+   reads varies per TENSOR, which is what the shipping allocator now does.
+
+**The default is now the compacted layout: 27 lanes on 25 segments, at most 2
+per pseudo-channel, DERIVED 1.60 core cycles per weight word (the same as the
+27-wide stripe), 75,340 tokens of context.** Sections 2, 6, 8 and 11b are
+rewritten below; sections 4.3, 5 and 7.1 carry the original 27-wide numbers and
+are marked where they do.
+
 **Files read as the authority:** `hw/fk33/gen_pcieep.py` (`ENG_PORT_MAP`, the
 `ENGINE_ADDR` block), `hw/fk33/rtl/fk33_engine.vhd` (which master is which
 lane), `tools/gen_mv4i_desc.py` (`check_bases`, `layout_strides`,
 `build_descriptor`), `tools/hbm_map.py` (`manifest_regions`,
 `derive_region_block`), `hw/fk33/host/fk33_load_weights.py` (`cmd_load`,
 `_verify`), `hw/fk33/host/fk33_run_job.py` (`make_plan`, `run_job`),
-`server/fk33_manifest.c`, `docs/2026-08-28_can-27-read-masters-be-served.md`,
+`server/fk33_manifest.c`, `rtl/attn_kv_axi.vhd` (`rec_addr`),
+`rtl/llama_top.vhd` (`C_K_BASE_CH`/`C_V_BASE_CH`), `tools/check_kv_map.py`, `docs/2026-08-28_can-27-read-masters-be-served.md`,
 `docs/debugging/2026-08-30_counters-cycles-beats-starved.md`.
 
 Labels: **MEASURED** (a named tool ran), **DERIVED** (arithmetic shown),
@@ -70,41 +95,108 @@ lanes 15..26 read stack 1, exactly the 15/12 split
 flat layout could never make more than 15 of the 27 masters stack-local at once
 and `tools/pack_model_fk33.py`'s own docstring said so.
 
-**2. It fits, comfortably, and the brief's framing of the capacity problem was
-wrong. The cost is not capacity, it is CONTIGUITY.**
+**2. It fits, comfortably. The brief's framing of the capacity problem was
+wrong: the cost is not capacity, it is CONTIGUITY -- and the amount of
+contiguity is a DIAL, not a constant.**
 
 MEASURED over the live 249-file `qwen35-9b-mv4i-noembd` set, per lane:
 
 ```
 per-lane need   165,994,496 B = 158.30 MiB   identical on all 27 lanes
 segment          268,435,456 B = 256.00 MiB
-fill                                61.8%    97.70 MiB spare per segment
 ```
 
 COUNTERS' 187.3 MB was computed on the older 250-file set that still carries
-`token_embd.weight`; that set is not what the card runs. On it the figure is
-**178.42 MiB, 69.7% fill** -- also comfortable. Neither set is close to the
-wall. **Total free space is essentially unchanged by striping** (3.826 GiB
-striped against 3.808 GiB flat).
+`token_embd.weight`; that set is not what the card runs. Neither set is close
+to a wall. **Total free space is essentially unchanged by striping** (3.826 GiB
+striped against 3.808 GiB flat). What changes is the SHAPE of the free space:
+it becomes segment tails, and the KV cache cannot use a tail, because
+`rtl/attn_kv_axi.vhd`'s `rec_addr` is one linear base
+(`addr = base + ((layer*N_KVH + head)*MAXCTX + pos) * REC_B`) and
+`server/fk33_manifest.c:170` requires `gdn_state_base >= weights_end`. So KV
+gets only what lies above the highest lane arena.
 
-What changes is the SHAPE of the free space. It becomes 27 tails of 97.70 MiB
-plus segment 16, and the KV cache cannot use any of it, because
-`rtl/attn_kv_axi.vhd` addresses KV from one linear base (`C_K_BASE_CH`,
-cross-checked by `tools/check_kv_map.py`) and `server/fk33_manifest.c:170`
-requires `gdn_state_base >= weights_end`. So KV gets only what lies above the
-highest lane arena. MEASURED, from `hbm_map.py --markdown` on the two maps:
+**THE SUPPLY MODEL, DERIVED, and it reproduces both known anchors.** A
+pseudo-channel's fabric access path is 32 B per ACLK cycle regardless of how
+many masters target it (`docs/2026-08-28_can-27-read-masters-be-served.md`
+section 2.1, MEASURED). ACLK is 250 MHz, the core is 200 MHz, so one PC passes
+**1.25 beats per CORE cycle**. With M lanes sharing a PC:
 
-| | flat (shipping) | lane-striped | ratio |
-|---|---|---|---|
-| KV arena | 4,062,965,760 B | 774,656,000 B | **0.191x** |
-| context | **233,396 tokens** | **44,500 tokens** | **0.191x** |
-| unusable | 8,876,032 B of stack hole | 3,194,744,832 B in 27 tails | |
+```
+memory bound = M / 1.25 core cycles per weight word
+achieved     = max(datapath floor 1.60, M / 1.25)
 
-**44,500 tokens is the price, and it is the only price.** Section 6 costs three
-fallbacks that buy context back.
+  M =  1 -> max(1.60, 0.80) =  1.60      M =  3 -> 2.40
+  M =  2 -> max(1.60, 1.60) =  1.60      M = 27 -> 21.60
+```
+
+Anchor 1: M = 27 gives **21.60**, against COUNTERS' independently DERIVED 21.60
+and the card's MEASURED 21.67. Anchor 2: M = 1 is datapath-bound, and COUNTERS'
+run A -- the same shipping RTL with an ideal memory -- measured 613 cycles for
+384 beats = 1.596. **M = 2 is free in this model**, and that is what makes
+compaction affordable: fewer segments means more contiguous KV at no DERIVED
+cost, right up to the point where a third lane joins a pseudo-channel.
+
+**But a fixed lane -> segment table cannot compact at all**: two lanes' arenas
+are 316.61 MiB against a 256.00 MiB segment. So the allocator assigns segments
+**per tensor**, greedily on current fill, within each lane's own HBM stack. The
+descriptor re-states all 27 bases for every job, so the only property that must
+hold is per-job: no pseudo-channel asked for more than M lanes.
+
+**The width curve, MEASURED, printed by the tool itself on every run:**
+
+```
+  stripe width search (stack-1 segments; stack-0 stays 1:1)
+    n   max lanes/seg   DERIVED c/beat   peak fill   KV tokens
+   12        1             1.60           61.8%      44500  (under the 65536 target)
+   11        2             1.60           69.7%      59920  (under the 65536 target)
+   10        2             1.60           74.2%      75340  <== chosen
+    9        2             1.60           82.5%      90760
+    8        2             1.60           92.8%     106180
+    7   REFUSED: HBM segment 21 overflows
+    6   REFUSED: HBM segment 17 overflows
+    5   REFUSED: 27 lanes onto 20 segments puts 3 lanes on one pseudo-channel
+    4   REFUSED: 27 lanes onto 19 segments puts 3 lanes on one pseudo-channel
+    3   REFUSED: 27 lanes onto 18 segments puts 4 lanes on one pseudo-channel
+    2   REFUSED: 27 lanes onto 17 segments puts 6 lanes on one pseudo-channel
+    1   REFUSED: 27 lanes onto 16 segments puts 12 lanes on one pseudo-channel
+```
+
+Only stack-1 segments are compacted. Compacting stack-0 frees LOW segments,
+which buys no contiguity at the top and therefore no context, and a lane is
+never moved off its own stack (check 7) because cross-stack lateral throughput
+is UNMEASURED in this project.
+
+**The rule is the WIDEST width that still meets the context target, never the
+narrowest.** M = 2 is free with ZERO SLACK -- COUNTERS' run A still shows 394
+of 1,188 cycles going to AR issue and FIFO fill with an ideal memory, and a
+memory matched exactly to consumption cannot hide them -- so compact only as
+far as the requirement forces.
+
+| layout | max lanes/PC | DERIVED c/beat | context | meets 64k |
+|---|---|---|---|---|
+| flat (shipping today) | 27 | 21.60 | 233,396 | yes, and 13.5x too slow |
+| 27-wide stripe (my first default) | 1 | 1.60 | **44,500** | **NO** |
+| **25-segment compact (the new default)** | **2** | **1.60** | **75,340** | **yes, 1.15x** |
+| 23-segment compact | 2 | 1.60 | 106,180 | yes, 1.62x, 92.8% fill |
+| extent-aware KV (section 6) | 1 or 2 | 1.60 | ~219,000 | yes, 3.3x, one RTL change |
 
 **3. Done, as `--stripe-lanes` in `tools/pack_model_fk33.py`, with a manifest
-`format` bump to `"llama.vhdl FK33 load manifest v2 lane-striped"`.** The
+`format` bump to `"llama.vhdl FK33 load manifest v2 lane-striped"`, and with a
+CONTEXT GATE that refuses rather than shipping a layout that misses the
+requirement.** `--stripe-min-context` defaults to 65,536; the packer searches
+the width curve, picks the widest that meets it, prints the whole curve, and
+REFUSES if none does. **The context the chosen layout yields is the last line
+of the tool's own summary**, so nobody has to open this document to discover
+what they got:
+
+```
+  CONTEXT          75340 tokens (73.6k), against the 65536 required (64k).  Margin 1.15x
+```
+
+`--stripe-stack1-segments N` overrides the search; the context refusal still
+applies afterwards, so the override cannot be used to sneak a sub-target layout
+out. Lowering the bar takes an explicit `--stripe-min-context`. The
 version bump is not decoration: under striping `files[].hbm_offset` names a
 4 KB HEADER and no longer the base of `nbytes` contiguous bytes, so a v1
 consumer that reads the pair would place, verify or describe the image wrong
@@ -126,11 +218,13 @@ C  6,723 of 6,723 lane sub-regions: the bytes at the striped address are the
 D  249 of 249 whole-file digests rebuilt by reading the pieces in order
 ```
 
-**5. The decisive test is section 8 and it is runnable today with no modified
-tool.** Prediction, stated in advance: `blk.0.ffn_gate.weight --rows 100`
-(K=4096, 3 tiles, BEATS=384) moves from **CYCLES 8,300-8,900 flat** to
-**CYCLES under 1,500 striped**, DERIVED target **~613**, and **VERDICT stays
-PASS in both arms** because the oracle comparison is unchanged.
+**5. The decisive test is section 8, it is runnable today with no modified
+tool, and the prediction is RESTATED for the layout that is now the default.**
+`blk.0.ffn_gate.weight --rows 100` (K=4096, 3 tiles, BEATS=384) moves from
+**CYCLES 8,300-8,900 flat** to **CYCLES under 1,500 striped**, and **VERDICT
+stays PASS in both arms**. The threshold does not move between the 27-wide and
+the compacted layout, because both are DERIVED at 1.60 c/beat; what moves is
+the confidence in the lower end, and section 8 states that separately.
 
 **The one-sentence correction to the brief:** the fix is a packer change AND a
 consumer change. `tools/pack_model_fk33.py` can decide the addresses on its
@@ -228,6 +322,10 @@ not a file-format decision". This change is that decision, finally taken.
 
 ### 4.3 The per-lane budget, MEASURED
 
+*(Per-lane bytes are a property of the packed set, not of the width, so this
+table is unchanged by the correction. The `fill` percentages quoted here are
+the 27-wide ones; the shipping 25-segment default peaks at 74.2%.)*
+
 `python3` over `manifest.json` + `pack_int4.packed_layout`, live 249-file set:
 
 ```
@@ -272,71 +370,79 @@ note: <kv arena 0> ... 233396 tokens at 17408 B/token, after the charge
 PASS  every region is aligned, in range, in one stack, and disjoint across all 3 allocators
 ```
 
-Lane-striped, over the piece-expanded extent list (6,973 extents):
+Lane-striped, the shipping 25-segment default, over the 6,973 real extents:
 
 ```
-| packed weights + F32 blob | 0x0 | 0x1_0b78_f000 | 4,487,442,432 | 4.1793 | 6973 objects, 3194744832 B of stack-line hole |
-| gdn recurrent state | 0x1_d000_0000 | 0x1_d181_8000 | 25,264,128 | 0.0235 |
-| kv arena 0 | 0x1_d181_8000 | 0x1_ffad_d000 | 774,656,000 | 0.7215 | 44500 tokens at 17408 B/token |
+| packed weights + F32 blob | 0x0 | 0x1_0b78_f000 | 4,487,442,432 | 4.1793 | 6973 objects, 2690994176 B of stack-line hole |
+| gdn recurrent state | 0x1_b000_0000 | 0x1_b181_8000 | 25,264,128 | 0.0235 |
+| kv arena 0 | 0x1_b181_8000 | 0x1_ffad_d000 | 1,311,526,912 | 1.2215 | 75340 tokens at 17408 B/token |
 | A descriptor arena | 0x1_ffad_d000 | 0x1_ffb0_4000 | 159,744 | 0.0001 |
 | host R_X staging | 0x1_ffb0_4000 | 0x1_fff0_c000 | 4,227,072 | 0.0039 |
 | host logits writeback | 0x1_fff0_c000 | 0x1_ffff_e840 | 993,344 | 0.0009 |
 | host D program | 0x1_ffff_f000 | 0x2_0000_0000 | 4,096 | 0.0000 |
 
 device      8,589,934,592 B = 8.0000 GiB
-accounted   8,487,491,648 B = 7.9046 GiB
-unaccounted   102,442,944 B
+accounted   8,520,611,904 B = 7.9354 GiB
+unaccounted    69,322,688 B
 PASS  every region is aligned, in range, in one stack, and disjoint across all 3 allocators
 ```
 
 **The descriptor arena and the three host blocks are at IDENTICAL addresses in
-both maps.** That is not luck and it is worth stating: `derive_region_block()`
-anchors them to the top of the device from `n_embd`, `n_vocab` and
-`max_chunk`, so they do not move with the weight placement. It also means the
-striped map needs no change to `server/pl_backend.c` or its mirror.
-
-### 4.5 The packer's own output
+both maps.** That is not luck: `derive_region_block()` anchors them to the top
+of the device from `n_embd`, `n_vocab` and `max_chunk`, none of which the weight
+placement touches. It is also load-bearing, because the width search needs a KV
+ceiling BEFORE the placement exists. **It is asserted, not believed** -- the
+packer compares the arena the search used against the arena
+`derive_region_block()` actually returns and refuses on a mismatch. Teeth: with
+`kv_top` deliberately moved one page, MEASURED
 
 ```
-  stripe check 1 every piece is in its master's own segment               PASS  0 violation(s)
+pack_model_fk33: the width search sized the KV cache against a descriptor arena
+at 0x1ffadc000 and derive_region_block() placed it at 0x1ffadd000.  The arena is
+NOT placement-independent after all and every context figure printed above is
+wrong.  Nothing was written.
+```
+
+### 4.5 The packer's own output, shipping default
+
+```
+  stripe width search (stack-1 segments; stack-0 stays 1:1)
+   10        2             1.60           74.2%      75340  <== chosen
+  stripe check 1 every piece is inside a segment its lane's group owns    PASS  0 violation(s)
   stripe check 2 every piece 4 KB aligned in HBM and in the file          PASS  0 violation(s)
   stripe check 3 the pieces tile the file exactly, in order               PASS  0 violation(s)
   stripe check 4 no two pieces overlap in HBM                             PASS  0 of 6971 adjacent pairs
-  stripe check 5 every lane arena fits its segment                        PASS  max fill 61.8%
-  stripe check 6 every tensor's 27 data pieces are in 27 DISTINCT segments PASS  0 tensor(s) not fully striped
-  A job count      311 descriptors, the max over the four program variants
+  stripe check 5 every segment arena fits                                 PASS  peak fill 74.2%
+  stripe check 6 no tensor puts more than 2 lane(s) on one pseudo-channel PASS  worst observed 2, DERIVED 1.60 c/beat vs datapath 1.60
+  stripe check 7 every lane reads only its own master's HBM stack         PASS  0 violation(s)
 
 wrote /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/manifest.json
   weights          4487442432 B  4.179 GiB  (52.2 % of 8 GiB)
-  GDN state        24.1 MB at 0x1d0000000
-  dropped          1 tensor(s), 572207104 B (0.533 GiB) NOT placed: token_embd.weight
-  qkv segment pad  on, 24 fused tensor(s) padded
-  lane stripe      ON, 27 lanes on segments 1,2,3..28 at 256 MiB each
-    per lane       165994496 B = 158.30 MiB, 61.8% of a segment (min 165994496, max 165994496)
+  GDN state        24.1 MB at 0x1b0000000
+  lane stripe      ON, 27 lanes on 25 segments of 256 MiB
+    stack 0        lanes 0..14 1:1 on segments [1..15]
+    stack 1        the remaining lanes on segments [17..26]
+    sharing        at most 2 lane(s) per pseudo-channel per tensor
+    DERIVED rate   1.60 core cycles per weight word = max(datapath 1.60, memory 1.60); the flat layout is 21.60
+    peak fill      199307264 B = 190.07 MiB, 74.2% of a segment
     segment 0      5591040 B of headers + nonmatvec_f32.bin
-    reserved segs  [0, 16, 29, 30, 31]
-    UNUSED         2765905920 B = 2.576 GiB in the 27 segment tails, plus whole
-                   reserved segments.  Only an extent-aware KV consumer can use
-                   them; hbm.kv_extents is already emitted
-  stack holes      0 B  0.0 MiB in 0 hole(s)
-  free for KV      0.726 GiB from 0x1d1818000 => 44809 tokens of context
+    reserved segs  [16, 27, 28, 29, 30, 31]
+    UNUSED         2229035008 B = 2.076 GiB in the 25 segment tails
+  CONTEXT          75340 tokens (73.6k), against the 65536 required (64k).  Margin 1.15x
+  free for KV      1.226 GiB from 0x1b1818000 => 75649 tokens of context
   A desc arena     159744 B at 0x1ffadd000 for 311 descriptors at 512 B
-  host blocks      x_base 0x1ffb04000 l_base 0x1fff0c000 desc_ptr 0x1fffff000
-  total elapsed    7.9 s
+  total elapsed    7.1 s
 ```
 
-7.9 seconds, and **not one byte of model data was written**: the outdir is
+7.1 seconds, and **not one byte of model data was written**: the outdir is
 hardlinks into the existing set and every file reported `kept`. Disk cost of
-the whole striped set is the 1,169,722-byte manifest. `df` before and after:
-386 G free on `/mnt/storage`, unchanged. The shipping
+the whole striped set is the manifest. The shipping
 `qwen35-9b-mv4i-noembd/manifest.json` still has its 2026-08-29 18:07 mtime.
 
-(`free for KV` says 44,809 and `hbm_map` says 44,500. The packer counts to the
+(`free for KV` says 75,649 and `hbm_map` says 75,340. The packer counts to the
 top of the device; `hbm_map` subtracts the 5,386,240 B of top-anchored host
-reservations = 309 tokens. Both numbers are right about different questions and
-the map's is the one to quote.)
-
----
+reservations = 309 tokens. Both are right about different questions and the
+map's is the one to quote.)
 
 ## 5. Addresses changed, values did not -- the oracle, with coverage stated
 
@@ -390,7 +496,7 @@ headers-only mode and prints the coverage rather than letting the reader infer
 it. Nothing here re-opens it; it is named so the next reader does not go
 looking.
 
-### 5.1 Teeth: ten mutations, each scored against all six checks
+### 5.1 Teeth: twelve mutations, each scored against all seven checks
 
 `/mnt/storage/track-packstripe/teeth_stripe.py`. The right column IS the
 attribution control -- it names which checks fired, not merely that one did.
@@ -398,37 +504,54 @@ attribution control -- it names which checks fired, not merely that one did.
 | mutation | verdict | checks that FAILED |
 |---|---|---|
 | M1 one w piece moved a whole segment up | KILL | 1, 4 |
-| M2 two lanes SWAPPED (still 27 distinct segments) | KILL | **1 only** |
+| M2 two lanes SWAPPED | KILL | **1 only** |
 | M3 one piece misaligned by 1 byte | KILL | 2, 4 |
 | M4 one piece 4096 B short (file no longer tiled) | KILL | **3 only** |
-| M5 one tensor restored to the FLAT contiguous layout | KILL | 1, 4, 6 |
+| M5 one tensor restored to the FLAT contiguous layout | KILL | 1, 4, 6, 7 |
 | M6 two tensors given the same lane-0 address | KILL | **4 only** |
-| M7 a lane arena declared past its segment | KILL | **5 only** |
+| M7 a segment arena declared past its segment | KILL | **5 only** |
 | M8 a piece moved into its OWN segment free tail | **survives** | (none) |
 | M9 two tensors swap their lane-0 arenas | **survives** | (none) |
 | M10 a header moved elsewhere inside segment 0 | **survives** | (none) |
+| M11 a stack-0 lane pointed at a stack-1 segment | KILL | 1, 4, 7 |
+| M12 THREE lanes of one tensor on one pseudo-channel | KILL | **6 only** |
 
-**CHECK 6 EARNED ZERO INDEPENDENT KILLS AND IS DECORATION BY THIS PROJECT'S
-OWN DEFINITION.** It fired only on M5, alongside checks 1 and 4. That is not an
-accident: `scrape_eng_port_map()` refuses a `ENG_PORT_MAP` with a duplicate, so
-check 1 (every piece in its master's own segment) logically IMPLIES check 6
-(27 distinct segments). M2 is the case that shows the implication does not run
-the other way -- two lanes swapped still occupy 27 distinct segments and check 6
-sees nothing, while check 1 catches it. **Check 6 is kept only as the
-human-readable statement of what the change is for, and it is labelled here so
-nobody credits it with catching anything.** Check 1 is the load-bearing one.
+**CHECK 6 CHANGED STATUS WITH THE ALLOCATOR AND BOTH FACTS BELONG ON THE
+RECORD.** Under the FIRST, 27-wide allocator it was "27 distinct segments", it
+earned **zero independent kills**, and it was labelled decoration here: with a
+unique `ENG_PORT_MAP` and a fixed lane -> segment table, check 1 logically
+implied it. Under the shipping per-tensor allocator the map is no longer fixed,
+so a lanes-per-pseudo-channel bound is a genuinely separate property, and
+**M12 kills on check 6 ALONE.** The same rule was decoration in one design and
+load-bearing in the next; nothing about the rule changed, only what else was
+true around it.
+
+**CHECK 7 IS THE NEW DECORATION AND IS LABELLED AS SUCH.** Every lane's allowed
+segment set is partitioned by stack, so a cross-stack piece is always outside
+that set and check 1 always co-fires: M11 kills on 1, 4 and 7 and there is no
+mutation where 7 fires alone. It is kept as the readable statement of the
+stack-locality property, credited with **zero independent kills**.
+
+**M12 needed a second attempt and that is the attribution control working.**
+The first version put three lanes on top of other tensors' bytes; check 4
+caught the overlap and check 6 would have been credited with a kill an existing
+check already had. Putting the three sub-regions in the segment's FREE TAIL,
+where nothing overlaps, is what isolates check 6. **M8 needed a second attempt
+for the mirror-image reason**: a fixed "240 MiB into the segment" ran off the
+end for `output.weight`, whose sub-region is 23 MiB, so it KILLED on checks 1
+and 4 and was measuring my constant rather than the checker.
 
 **The three survivors are the resolution floor and two of them are not
-defects.** M8 and M10 move a piece to a different address INSIDE the segment
-its lane owns; that is a legal placement and refusing it would be a check that
-fails on a safe configuration. **M9 is a real defect that these checks cannot
-see**: two tensors swapping a lane arena is a well-formed placement in which
-one lane reads the wrong tensor's bytes. Nothing structural can catch it,
-because structurally it is correct. What catches it is
-`fk33_load_weights.py verify` reading HBM back and finding the per-file
-blake2b wrong, and on the card the oracle comparison in `fk33_run_job.py`.
-**Say this out loud: the placement checks in this change are NOT a residency
-check and do not replace one.**
+defects.** M8 and M10 move a piece to a different legal address inside a segment
+its lane may read; refusing those would be a check that fails on a safe
+configuration. **M9 is a real defect that these checks structurally cannot
+see**: two tensors swapping a lane arena is a well-formed placement in which one
+lane reads the wrong tensor's bytes. What catches it is
+`fk33_load_weights.py verify` reading HBM back and finding the per-file blake2b
+wrong, and on the card the oracle comparison in `fk33_run_job.py`. **The
+placement checks in this change are NOT a residency check and do not replace
+one.** (`tools/hbm_map.py`'s new `manifest_piece_fails()` says the same thing
+in its own docstring and cites M9 by name.)
 
 ### 5.2 Teeth: the on-card probe's own refusals
 
@@ -444,7 +567,17 @@ T3    rc=2  refusing: w[1] base 0x12142000 is in segment 1 and the manifest labe
 T3b   rc=2  refusing: 26 distinct segments, wanted 27 -- this would NOT be the experiment
 T4    rc=2  refusing: w[0] striped base 0x12142001 is not 4 KB aligned; the gateware answers EC 0xC
 T5    rc=2  refusing: mut_T5.json is 'llama.vhdl FK33 load manifest v1', not a lane-striped manifest
+T6    rc=2  refusing: 3 lanes land on one pseudo-channel and the manifest plans at most 2 -- this
+              would NOT be the experiment
+T7    rc=2  refusing: 27 lanes land on one pseudo-channel and the manifest plans at most 2 -- this
+              would NOT be the experiment
 ```
+
+T6 and T7 replace an earlier `len(segs) != 27` refusal that the compacted
+layout would have tripped on a CORRECT placement. The property that makes this
+the experiment is not "27 distinct segments" -- it is that no pseudo-channel is
+asked for more lanes than the manifest planned, because the DERIVED rate is
+`max(1.60, M/1.25)` and M is the whole variable.
 
 **T3 originally SURVIVED and that is the most useful line in this document.**
 The first version of the distinct-segment check counted the manifest's declared
@@ -457,46 +590,122 @@ is a T3b at all.
 
 ---
 
-## 6. The fallbacks, costed, in case 44,500 tokens is not enough
+## 6. The extent-aware KV change, costed. NOT APPLIED -- `rtl/**` is not mine
 
-None of these is implemented. Each is stated with the arithmetic so the choice
-can be made on numbers.
+The shipping default meets the requirement at 1.15x. **Extent-aware KV is the
+right end state anyway**: it takes the same 1.60 c/beat to ~219,000 tokens, a
+3.3x margin, and it removes the whole width-versus-context trade instead of
+tuning it. This section is the cost, so it can be dispatched or declined on
+numbers. **Nothing in `rtl/**` was touched.**
 
-**(a) Extent-aware KV. RECOMMENDED. Recovers everything, costs one RTL change.**
-The 2.576 GiB in the 27 tails plus segment 16's 256 MiB is real memory at a
-fixed 256 MiB stride. `hbm.kv_extents` is ALREADY in every manifest this packer
-writes, and `hbm_map.manifest_regions` already reads it. What cannot read it is
-`rtl/attn_kv_axi.vhd`, whose KV address is linear in `C_K_BASE_CH`. A strided
-map -- skip 158.30 MiB every 256 MiB -- is one compare and one add in the
-address generator. **DERIVED recovery: 2.576 + 0.250 GiB = 2.826 GiB extra,
-taking context from 44,500 to about 214,000 tokens**, i.e. back to the flat
-layout's 233,396 less the descriptor and host reservations. It also spreads KV
-reads over 27 pseudo-channels, which subsystem C will want for exactly the
-reason subsystem A wanted it. `tools/check_kv_map.py` and `sim/tb_attn_kv_map.vhd`
-move with it.
+### 6.1 What is actually in the way, MEASURED from the RTL
 
-**(b) Stripe over 21 segments instead of 27, keeping 23..31 contiguous.**
-Assign lanes to segments 1..15 and 17..22; six of those 21 serve two lanes. A
-doubled segment passes 1 beat per AXI cycle shared by two lanes = 0.4 beats per
-core cycle each, so a doubled lane needs **2.5 core cycles per weight word**
-against the ideal 1.60 -- **DERIVED 8.6x instead of 13.5x**. Segments 23..31 are
-then contiguous and free: from `23 * 0x10000000` to `desc_arena_base` is
-2,410,532,864 B = **138,600 tokens**. This is the cheapest option that needs no
-RTL change at all, and it is a genuine 3x context for a 36% speed give-back.
+`rtl/attn_kv_axi.vhd:431`, the entire obstacle, verbatim:
 
-**(c) Do nothing about KV yet.** Subsystem C is not on the card and nothing
-today reads the KV arena. The 44,500-token map is enough to run every subsystem
-A measurement, the whole-token sequence work, and the on-card test in section 8.
-The decision can be deferred until C is real. **This is what the shipping
-default should be until (a) is built.**
+```vhdl
+  -- addr = base + ((layer*N_KVH + head)*MAXCTX + pos) * REC_B   (C spec 2.2)
+  function rec_addr(base : std_logic_vector; lay, hd, ps : integer)
+    return unsigned is
+    variable idx : integer;
+  begin
+    idx := (lay*N_KVH + hd)*MAXCTX + ps;
+    return unsigned(base) + to_unsigned(idx*REC_B, ADDR_W);
+  end function;
+```
 
-**Explicitly REJECTED: moving the GDN state or the descriptor arena into
-segment 0 or 16 to free the top.** `server/fk33_manifest.c:170` refuses
-`gdn_state_base < weights_end`, and under striping `weights_end` is at
-segment 28's arena end, so both must live above it. Changing that C rule to be
-extent-aware is the same work as (a) and buys strictly less.
+One scalar base, one linear index. `rtl/llama_top.vhd:549` supplies it as
+`C_K_BASE_CH` / `C_V_BASE_CH`, chunk counts at a 16 B granule. That is why a
+tail cannot be used: the arena must be one run.
 
----
+### 6.2 The change, and the shape it should NOT take
+
+**REJECTED before costing: a strided map** -- `addr = base + (i/U)*S + (i mod U)`
+where U is the usable bytes per 256 MiB segment. `REC_B` is 272, not a power of
+two, so keeping records unsplit needs `floor(U/272)` records per extent and the
+divisor is not a power of two. That is a constant-divisor divide in the ADDRESS
+path, and this project has already spent real time on dividers
+(`build_artifacts_itdiv/`, `rtl/divider_rs.vhd`). Rounding U down to a power of
+two instead avoids the divider but throws away 30% of each tail.
+
+**RECOMMENDED: a per-slice base table.** The index already decomposes as
+`(layer, head)` selecting a slice and `pos` running inside it. Replace the
+scalar with a table indexed by `lay*N_KVH + hd`:
+
+```vhdl
+  addr = base_tbl(lay*N_KVH + hd) + ps * REC_B
+```
+
+- **No divider, no modulo, no bit-slicing.** The multiply `ps*REC_B` is already
+  there; only the addend's source changes.
+- **Every record is contiguous by construction**, because a slice is contiguous
+  and a record lives inside one slice. The straddle class does not arise.
+- **Table size:** `LAY*N_KVH` = 8 x 8 = 64 slices for K and 64 for V = **128
+  entries x ADDR_W 33 = 4,224 bits**, one small distributed ROM. ESTIMATE, from
+  the entry count and width; not synthesised.
+- **Slice size at ~219,000 tokens: 219,000 x 272 = 59.6 MB**, against the
+  shipping default's 65.93 MiB tails. One slice per tail fits; the allocator
+  packs the 128 slices across the 25 tails, segment 16 and segments 27..31.
+
+### 6.3 What it recovers, DERIVED
+
+```
+shipping default KV          1,311,526,912 B     75,340 tokens
++ 25 segment tails           2,229,035,008 B    (MEASURED, printed by the packer)
++ segment 16                   268,435,456 B
+                             ---------------
+                             3,808,997,376 B   ~218,800 tokens   = 3.34x the 64k target
+```
+
+That is within rounding of the flat layout's 233,396, the difference being the
+5,591,040 B of headers and blob in segment 0 and the reserved-segment rounding.
+
+### 6.4 What it risks, named
+
+1. **The table has to be LOADED, and that is the real cost, not the adder.**
+   Today the base is a generic. 128 entries need either a register file on the
+   AXI-Lite map or a descriptor field, i.e. a new control path with its own
+   ordering hazard: a slice base read before it is written is a silent wrong
+   address, exactly the class `rtl/attn_kv_axi.vhd:619`'s alignment check
+   exists to catch.
+2. **The width asserts assume two scalars.** `rtl/llama_top.vhd:4291-4334`
+   sizes `C_KV_ADDR_W` from `maximum(C_K_BASE_CH, C_V_BASE_CH)` and checks
+   K/V disjointness with a single pair of comparisons. Both become a reduction
+   over 128 entries. An assert that silently stops covering 126 of them is the
+   guard-shaped hole this project keeps finding.
+3. **A slice must not straddle a 256 MiB boundary**, or a record inside it can.
+   That is an allocator rule of the same class as the existing stack rule, and
+   it is the packer's to enforce, not the RTL's.
+4. **Three artefacts pin the scalar and must move together**:
+   `tools/check_kv_map.py:256` (`C_K_BASE_CH*16 == manifest hbm.kv_base`),
+   `sim/tb_attn_kv_map.vhd:122`, and `sim/mutate_kv_map.sh`.
+
+### 6.5 The oracle that catches a mistake ALREADY EXISTS and has already bitten
+
+`sim/mutate_kv_map.sh` carries a `k_one_byte` row -- a base one byte high --
+and `rtl/attn_kv_axi.vhd:608` records that it was MEASURED to kill before the
+alignment check existed. `tools/check_kv_map.py` compares the RTL's constants
+against the manifest's `kv_base` and would compare the table against a manifest
+`kv_slices[]` the same way. So the change does not need a new verification
+strategy invented for it: **extend the existing per-base comparison to 128
+bases, and extend the mutation row to perturb one slice base rather than the
+one.** A mutation that moves slice 63 and is not caught means the checker is
+covering 1 of 128, which is the 250-in/249-checked shape again and is exactly
+what to look for.
+
+**ESTIMATE of size, with the assumption stated:** a table declaration, one
+indexed read replacing one signal read in `rec_addr`'s call sites (two, at
+`:813` and `:952`), the two assert reductions, the load path, and the three
+artefact updates. The RTL edit itself is small; **the load path is the part
+that is not, and it is the part to scope before dispatching.**
+
+### 6.6 The cheaper option, if the RTL is contested
+
+**Narrow the stripe further.** The width curve is already printed and already
+refuses anything worse than 2 lanes per pseudo-channel: `n=8` yields **106,180
+tokens at the same DERIVED 1.60 c/beat**, for `--stripe-stack1-segments 8` and
+no code change anywhere. Its cost is 92.8% peak segment fill, which leaves
+almost nothing for a future model or for restoring `token_embd.weight`. That is
+the whole trade and it needs no RTL.
 
 ## 7. What this change needs from files TRACK PACKSTRIPE does not own
 
@@ -505,6 +714,9 @@ touches an address computation -- they teach four consumers that one file can
 occupy more than one extent.
 
 ### 7.1 The refusals, MEASURED, so the deltas are not hypothetical
+
+Against the `hbm_map.py` that existed when the striped manifest was first
+written:
 
 ```
 $ python3 tools/hbm_map.py <striped>/manifest.json --markdown
@@ -520,7 +732,11 @@ FAIL nonmatvec_f32.bin: HBM offset 0xf9000 overlaps the previous region ending 0
 Both refusals are **CORRECT**. They are what the `format` bump exists to
 provoke.
 
-**AND ONE CONSUMER PASSED FOR THE WRONG REASON, WHICH IS WORSE THAN EITHER.**
+### 7.1a UNMISSABLE: A GUARD THAT PASSED OVER 7,154 RANGES OF WHICH ZERO EXIST
+
+**This is the fourth guard-passing-for-the-wrong-reason found on this project
+today and the second of exactly the 250-in / 249-checked shape. It is recorded
+here as a PATTERN, not as one bug.**
 
 ```
 $ python3 tools/check_hbm_stack.py <striped>
@@ -530,17 +746,51 @@ PASS no range crosses a stack boundary          rc=0
 
 `tools/check_hbm_stack.py:93,101` builds every range as
 `e["hbm_offset"] + <flat layout offset>`. Under striping those ranges are
-**fictitious**: they are a 4 KB header's address plus the offsets of sub-regions
-that are somewhere else entirely. Every one of them lands in the low 34 MB of
-segment 0, so none can cross the 4 GiB line and the `PASS` is guaranteed
-regardless of the truth. It checked 7,154 ranges of which **zero exist**. The
-striped layout does in fact satisfy the stack rule -- DERIVED: every piece is
-inside one 256 MiB segment (check 1) and a segment is inside one stack, and
-lane p's segment index equals its SAXI index so it is its master's own stack --
-but that PASS is not the evidence, and reading it as evidence is exactly the
-2026-08-29 "verify passed an object it never read" failure with a new number.
+**fictitious**: a 4 KB header's address plus the offsets of sub-regions that are
+somewhere else entirely. Every one of them lands in the low 34 MB of segment 0,
+so none *can* cross the 4 GiB line and the `PASS` is guaranteed **regardless of
+the truth**. It checked 7,154 ranges of which **zero exist**.
 
-### 7.2 `tools/hbm_map.py` -- `manifest_regions()`, about 6 lines
+The striped layout does satisfy the stack rule -- DERIVED: every piece is inside
+one 256 MiB segment (check 1), a segment is inside one stack, and check 7 keeps
+every lane on its own master's stack -- **but that PASS is not the evidence, and
+reading it as evidence is the 2026-08-29 "verify passed an object it never read"
+failure with a new number.**
+
+The four found today, so the shape is visible in one place:
+
+| guard | what it printed | what it had actually read |
+|---|---|---|
+| `fk33_load_weights.py verify` (2026-08-29) | `249 headers parsed and matched`, PASS | 249 of 250 objects; `nonmatvec_f32.bin` fell through both checks |
+| a descriptor base rule in `gen_mv4i_desc.py` | agreed with its cross-check | agreed **by coincidence of geometry** on every file it had ever seen |
+| three `util_pkg.vhd` copies | regenerated and matching | regenerated by a script **nothing schedules** |
+| **`check_hbm_stack.py` on a v2 manifest (today)** | **`checked 7154 byte ranges`, PASS** | **7,154 ranges that do not exist** |
+
+The tell is identical every time: **the check has never been shown to
+discriminate on the thing it guards.** `check_hbm_stack.py` has never been run
+against a layout whose real ranges could cross a stack line, so its PASS
+carries no information in either direction. It is a v1 consumer; its verdict on
+a v2 manifest is not evidence.
+
+### 7.1b hbm_map.py's delta HAS LANDED, by another track, and it does not collide
+
+MEASURED after the fact: `tools/hbm_map.py` in the working tree now carries
+`file_pieces()` and `manifest_piece_fails()` (uncommitted, another track's), and
+the shipping striped manifest **PASSES it directly** over 6,973 real extents --
+no expansion adaptor needed. Its P1-P6 rules are tiling, byte-sum, the
+`hbm_offset`-is-the-header rule, the header's declared stack, the label-versus-
+address decode, and the granule. **None of them assumes one lane per segment or
+that a lane reads its own master's segment**, so the compacted default satisfies
+all six; that track's own docstring scopes the master-segment rule OUT and cites
+this document's check 1 and teeth M9 by name. No collision.
+
+`tools/pack_model_fk33.py::expand_pieces()` was knowingly a second producer of
+the region model. It now **defers**: the packer feature-tests
+`hasattr(HM, "file_pieces")` and hands `derive_region_block()` the manifest
+unexpanded when `hbm_map` owns it, so the duplicate goes dark the moment that
+track lands and the packer still works if it does not.
+
+### 7.2 `tools/hbm_map.py` -- DONE by another track, kept for the record
 
 ```python
     for e in mani["files"]:
@@ -611,26 +861,40 @@ so the only thing that moves is the join, on the Python side, in
 
 ## 8. The decisive on-card test. **OREN ONLY. NO AGENT RUNS THIS.**
 
-**Prediction, stated before the run so it can fail.** On
-`blk.0.ffn_gate.weight`, `--rows 100`, K=4096, 3 tiles, BEATS=384:
+**RE-STATED FOR THE LAYOUT THAT IS NOW THE DEFAULT.** Arm B runs the shipping
+25-segment compacted layout, not the 27-wide one. Prediction, before the run:
 
-| arm | CYCLES | cycles/beat | VERDICT |
-|---|---|---|---|
-| A, flat control | **8,300 - 8,900** (COUNTERS measured 8,582) | ~22 | PASS |
-| B, lane-striped | **under 1,500**, DERIVED target ~613 | ~1.6 | PASS |
+| arm | layout | max lanes/PC | CYCLES | cycles/beat | VERDICT |
+|---|---|---|---|---|---|
+| A, flat control | 1 segment | 27 | **8,300 - 8,900** (COUNTERS measured 8,582) | ~22 | **PASS** |
+| B, striped default | 25 segments | **2** | **under 1,500**, DERIVED floor 613, ESTIMATE 613-950 | 1.6 - 2.5 | **PASS** |
 
-**DERIVED, why 613 and not something smaller.** One dedicated 256-bit
-pseudo-channel per lane at ACLK 250 MHz retires a beat every 4 ns; the core
-clock is 5 ns; so a lane can supply 1.25 weight words per core cycle against a
-demand of 1.0. The memory stops being the bound and COUNTERS' run A -- the same
-shipping RTL with an ideal memory and the identical `MAXOUT=16`, `MAXB=16`,
-`DEPTH=512` -- gives 613 cycles for exactly this job. 613 is a floor, not a
-forecast: 27 real pseudo-channels are not an ideal memory.
+**The threshold does not move between the two striped layouts and here is why,
+DERIVED.** The supply model is `max(1.60 datapath, M/1.25 memory)`. At M = 1 it
+is `max(1.60, 0.80) = 1.60`; at M = 2 it is `max(1.60, 1.60) = 1.60`. Both give
+613 cycles for a 384-beat job. So COUNTERS' "under 1,500" survives the change of
+default unaltered.
 
-**`VERDICT` must stay `PASS` in BOTH arms.** That is the value half and it is
-not optional. Subsystem A is proven bit-exact on this silicon over 1,675,264
-rows; a placement change that perturbs one weight would look like a hardware
-fault.
+**What DOES move is the confidence in the lower end, and this is an ESTIMATE
+with its assumption stated.** At M = 2 the memory supplies exactly what the
+datapath consumes, with zero slack. COUNTERS' run A shows 394 of 1,188 cycles
+going to AR issue and FIFO fill even with an ideal memory, and a memory matched
+exactly to consumption cannot hide any of it. So arm B is expected somewhere in
+**613 to 950 cycles** rather than at 613. The probe prints the max lanes per
+pseudo-channel for the specific tensor, so the arm reports which case it ran:
+`blk.0.ffn_gate.weight` under the shipping default is **M = 2** (MEASURED from
+the manifest by the probe in dry-run).
+
+**If you want the M = 1 point as well**, repack with
+`--stripe-stack1-segments 12 --stripe-min-context 40000` into a separate outdir
+and run a third arm. That is the 27-wide layout, it yields 44,500 tokens, and it
+is the clean measurement of whether M = 2 costs anything. **It is the only way
+to find out**, because the model says zero and the model has never been tested
+at M = 2.
+
+**`VERDICT` must stay `PASS` in ALL arms.** That is the value half and it is not
+optional. Subsystem A is proven bit-exact on this silicon over 1,675,264 rows; a
+placement change that perturbs one weight would look like a hardware fault.
 
 ### 8.0 Prerequisites and one hazard
 
@@ -681,6 +945,15 @@ python3 "$PROBE" \
 # 4  the two numbers, side by side.
 grep -H "^counters\|^VERDICT\|^ARM" "$SCR/armA.log" "$SCR/armB.log"
 
+# 4b OPTIONAL third arm, the M=1 point.  Repack into a SEPARATE outdir; it
+#    yields only 44,500 tokens and is a measurement, not a shipping layout.
+#    (Needs the .mv4i files present -- hardlink them in first, as the striped
+#     set was made.)
+#      python3 tools/pack_model_fk33.py <GGUF> <NEWDIR> --rows-if 48 \
+#          --axi-dw 256 --drop token_embd.weight --stripe-lanes \
+#          --stripe-stack1-segments 12 --stripe-min-context 40000
+#    then re-run step 3 against <NEWDIR>/manifest.json.
+
 # 5  THE TEETH FOR THE COPY STEP.  Relocate the bases and do NOT move the
 #    bytes.  This MUST fail; if it PASSES, the engine is not reading where the
 #    descriptor says and every number above is about something else.
@@ -696,8 +969,10 @@ python3 "$PROBE" --no-copy \
   manifest`, having read HBM back.
 - **step 2 and 3** each print, in order: the tensor and job shape;
   `cross-check 42 of 42 fields agree between tools/gen_mv4i_desc.py (Python)
-  and ref/mv_fk33_tr (C)`; for arm B only, `RELOCATION 27 sub-regions -> 27
-  DISTINCT 256 MiB segments [1, 2, ... 28]` and `gateware would ACCEPT`; then
+  and ref/mv_fk33_tr (C)`; for arm B only, `RELOCATION 27 sub-regions -> 25 segments
+  [1..15, 17..26]`, `sharing at most 2 lane(s) per pseudo-channel for THIS
+  tensor (the manifest plans at most 2)`, the DERIVED rate line, and
+  `gateware would ACCEPT`; then
   `counters    CYCLES=... BEATS=384 STARVED=...`; then
   `result read 100 of 100 rows, compared 100 of 100 against ref/matvec_int4.c,
   0 differ`; then `VERDICT PASS`.
@@ -709,6 +984,7 @@ python3 "$PROBE" --no-copy \
 |---|---|
 | arm A ~8,600, arm B **under 1,500**, both PASS | **The finding is confirmed.** Ship the striping; build section 7's four deltas. |
 | arm A ~8,600, arm B ~8,600, both PASS | The 27 masters are NOT limited by the destination pseudo-channel. Next suspect is the HBM global switch's lateral bandwidth, or an arbitration point upstream of the switch. COUNTERS named this as the falsifier; the whole analysis is wrong. |
+| arm B between 950 and 1,500, PASS | The finding is confirmed and **M = 2 costs more than the model says**. Re-run the optional M = 1 arm (step 4b) to price it; if that one lands near 613, widen the stripe and take the context from the extent-aware KV change instead. |
 | arm B between 1,500 and 5,000, PASS | Partial. Real striping gain, plus a second serialisation. Look at the scale path (`s_valid` has no counter -- COUNTERS' open item 3) and at the residual `CYCLES - BEATS - STARVED`, which on the card is 10-47% and which COUNTERS' single-clock model does not reproduce. |
 | arm B **FAIL**, rows differ | The relocation moved the wrong bytes, or the copy did not land. `--no-copy` should also FAIL; if it does not, the copy is not the variable. Re-run step 1 and compare `armB.log`'s `RELOCATION` table against the manifest. **Do not read the CYCLES number from a FAIL run.** |
 | arm B refuses before running | The probe caught it. The message names which of the six refusals fired; section 5.2 has all six with their teeth. |
@@ -722,10 +998,12 @@ python3 "$PROBE" --no-copy \
 
 ```
 cross-check 42 of 42 fields agree between tools/gen_mv4i_desc.py (Python) and ref/mv_fk33_tr (C)
-RELOCATION  27 sub-regions -> 27 DISTINCT 256 MiB segments [1, 2, 3, ... 26, 27, 28]
+RELOCATION  27 sub-regions -> 25 segments [1, 2, ... 15, 17, ... 26]
+  sharing     at most 2 lane(s) per pseudo-channel for THIS tensor (the manifest plans at most 2)
+  DERIVED     1.60 core cycles per weight word = max(datapath 1.60, memory 1.60); the flat layout is 21.60
   w[ 0]  0x0038205000 -> 0x0012142000  seg  1  file +4096      1048576 B
   w[ 1]  0x0038305000 -> 0x0022142000  seg  2  file +1052672   1048576 B
-  s[ 2]  0x0039C05000 -> 0x01C2142000  seg 28  file +27267072  1048576 B
+  s[ 2]  0x0039C05000 -> 0x0182542000  seg 24  file +27267072  1048576 B
   gateware would ACCEPT the relocated descriptor (rtl_would_reject: no findings)
 copied      28311552 B in 27 sub-regions to the striped addresses
 result      read 100 of 100 rows, compared 100 of 100 against ref/matvec_int4.c, 0 differ
@@ -750,6 +1028,9 @@ speed and about values comes from the card and from nowhere else.
 | **Keep `gen_mv4i_desc.py` unchanged by writing striped offsets into the `.mv4i` HEADER's 0x38 table** | `check_bases()` hard-refuses a header whose table disagrees with spec 6.5a's layout, and that refusal is the only guard against the one descriptor corruption the gateware cannot see. | Do not weaken `check_bases`. The offsets are FILE offsets and they are correct; the placement belongs in the manifest. |
 | **Emit 27 concatenated "lane image" files (`lane00.bin`..`lane26.bin`) so the loader places 27 contiguous objects and needs no change** | It works for the loader and for `hbm_map`, and it still leaves `gen_mv4i_desc.py` needing per-lane bases -- the same delta -- while creating 4.2 GiB of new files and destroying the per-tensor blake2b that is the value oracle in section 5. | Strictly worse than `pieces` on every axis except the loader. |
 | **Put the GDN state or the descriptor arena in segment 0 or 16 to free the top for KV** | `server/fk33_manifest.c:170` refuses `gdn_state_base < weights_end`, and under striping `weights_end` is at segment 28. | Fallback (a) in section 6 is the same work and buys more. |
+| **A FIXED lane -> segment table with two lanes per segment (my own first "21-segment hybrid")** | Two lanes' arenas are 316.61 MiB against a 256.00 MiB segment. The fallback I published in the first version of this document could not have been built. | Compaction requires a PER-TENSOR assignment. A fixed table cannot go below 27 segments at this model size, full stop. |
+| **The "8.6x for a 21-segment hybrid" figure I published** | 250/200 = 1.25 beats per core cycle, not 200/250 = 0.8. Two lanes per pseudo-channel is **1.60** c/beat, equal to the datapath floor, not 2.50. | The ratio is ACLK over core clock. Getting it upside down made a free option look like a 36% give-back and nearly cost the right default. |
+| **A strided extent-aware KV map, `addr = base + (i/U)*S + (i mod U)`** | `REC_B` = 272 is not a power of two, so keeping records unsplit needs a non-power-of-two divisor in the ADDRESS path. Rounding U down to a power of two avoids the divider and throws away 30% of every tail. | Use the per-slice base table in section 6.2 instead: no divider, and records are contiguous by construction. |
 | **Read `ENG_PORT_MAP` from the brief, or copy it into the packer** | The brief said "masters 0..14 -> SAXI_01..15, masters 15..27 -> SAXI_17..29" and implied 27 data lanes. The map has 28 entries and the 28th is the descriptor fetch master; placing a data lane there would put weights on segment 29 and leave the descriptor master sharing a pseudo-channel with them. | The packer scrapes `gen_pcieep.py` and re-asserts its four invariants. |
 | **Trust `check_hbm_stack.py`'s PASS on a striped manifest** | Section 7.1. It PASSES over 7,154 ranges of which zero exist. | It is a v1 consumer. Its verdict on a v2 manifest is not evidence in either direction. |
 | **Count the manifest's declared `segment` field to prove 27 distinct pseudo-channels** | Teeth case T3: two lanes given the same `hbm_offset` with their labels untouched survived. | Derive the segment from address bits [32:28]. The label is not what the hardware decodes. |
@@ -788,7 +1069,26 @@ speed and about values comes from the card and from nowhere else.
    oracle. The `--no-copy` arm, whose whole purpose is to fail, PASSES in
    dry-run. Any claim from a dry-run is at best DERIVED and is about this
    tooling, never about an FPGA.
-7. **`tools/check_mv4i_set.py MANIFEST.json` silently doubles the path** and
+7. **I inverted a clock ratio and it changed a design decision.** "1 beat per
+   AXI cycle = 0.8 beats per core cycle" is wrong; ACLK 250 over core 200 is
+   **1.25**. The error made two-lanes-per-pseudo-channel look like a 2.50
+   c/beat, 36% give-back when it is 1.60 and free. It survived a full write-up
+   because 2.50 was plausible and nothing cross-checked it. **The fix that
+   would have caught it in seconds: state the model, then run it against BOTH
+   known anchors.** M = 27 must give 21.60 (COUNTERS' DERIVED, card's MEASURED
+   21.67) and M = 1 must give the datapath floor. A model that reproduces two
+   independent anchors is very hard to have upside down.
+8. **A fallback I published had never been checked for CAPACITY.** The
+   21-segment hybrid was costed for speed and for context and not for whether
+   the bytes fit -- and they do not, by 24%. Cost every axis of an option
+   before offering it, including the one the rest of the document already
+   established as the constraint.
+9. **A blind `rm`-free scratch run still cost two minutes: pointing the packer
+   at a NEW outdir made it repack for real** instead of reusing hardlinks, and
+   it had to be killed at the timeout with a mutated source file in the tree.
+   Restore first, diagnose second. The restore was verified by grep, not
+   assumed.
+10. **`tools/check_mv4i_set.py MANIFEST.json` silently doubles the path** and
    reports `no manifest at .../manifest.json/manifest.json`. It wants the
    DIRECTORY. Two minutes lost; noted so the next reader loses none.
 
@@ -799,6 +1099,14 @@ speed and about values comes from the card and from nowhere else.
 1. **The 13.5x is DERIVED and the 14.0x is COUNTERS' simulation. NEITHER IS
    MEASURED.** Only section 8 settles it, and only on the card. Do not repeat
    either number as a measurement.
+1b. **M = 2 HAS NEVER BEEN TESTED, in simulation or on silicon.** The whole
+   compaction rests on `max(1.60, M/1.25)` giving 1.60 at M = 2, and the model
+   reproduces the M = 1 and M = 27 anchors but has no anchor between them. If M
+   = 2 costs anything real, the shipping default is slower than the 27-wide
+   stripe it replaced and the right answer is to widen and take the context
+   from section 6 instead. **Step 4b of the card test is the measurement that
+   prices it and it takes one extra run.** This is the single largest unhedged
+   assumption in this document.
 2. **Nothing in the striped set has been loaded onto a card.** Section 5 proves
    the addresses are internally consistent and the bytes unchanged; it says
    nothing about residency. The residency backstop is
@@ -807,38 +1115,54 @@ speed and about values comes from the card and from nowhere else.
    item 5. The GDN state and the KV arena are single large regions and any
    multi-master read of them hits the same 256 MiB granularity.
    `rtl/attn_kv_axi.vhd` has its own `starv` counter and neither track has
-   looked at it. Under this layout the GDN state sits alone in segment 29,
+   looked at it. Under this layout the GDN state sits alone in segment 27,
    which is at least not contending with a weight lane.
-4. **The KV decision is deferred, not made.** Fallback (a) is recommended and
-   not costed in engineering time; (b) is the no-RTL option at 138,600 tokens
-   and 8.6x; (c) is the shipping default. Someone has to choose.
-5. **`expand_pieces()` is knowingly a second producer** of the region model
-   until section 7.2 moves it into `hbm_map.py`. It is the exact defect
-   `hbm_map.py` exists to end and it is live in the tree right now, in one
-   place, named here so it is not discovered later as a surprise.
+4. **The extent-aware KV change is COSTED but not scoped in engineering time.**
+   Section 6 gives the shape (a 128-entry per-slice base table, no divider),
+   the recovery (~219,000 tokens, 3.3x the target), the four named risks and
+   the oracle that already exists and has already bitten. **The RTL edit is
+   small; the load path for 128 bases is not, and that is the part to scope
+   before dispatching.** Until then the shipping default meets the requirement
+   at 1.15x and `--stripe-stack1-segments 8` is the no-RTL route to 106,180
+   tokens at the same DERIVED rate, at 92.8% segment fill.
+5. **`expand_pieces()` is now dark but not deleted.** `hbm_map.py` has grown
+   its own piece awareness (section 7.1b) and the packer feature-tests for it,
+   so the duplicate producer no longer runs. It should be DELETED once that
+   track commits; leaving a dead second producer in the tree is how it comes
+   back.
 6. **The lane arenas are packed in manifest order and nothing pins the order.**
    Teeth M8/M9 show the checks do not constrain where inside its segment a
    lane's arena for a given tensor sits. That is correct today -- the address is
    in the manifest and the descriptor reads it -- but if anything ever derives a
    lane address arithmetically instead of reading it, this becomes the hole
    M9 describes.
-7. **Segment 16's 256 MiB and the 2.576 GiB of tails are declared free and
+7. **Segment 16's 256 MiB and the 2.076 GiB of tails are declared free and
    nothing can use them.** Stated in the packer's own summary line rather than
-   left for a reader to compute.
+   left for a reader to compute. Section 6 is the change that would.
+8. **The context margin is 1.15x and that is thin.** 75,340 against 65,536.
+   Restoring `token_embd.weight` to the image, or a larger model, moves the
+   whole curve and the packer would then refuse rather than ship. That refusal
+   is the intended behaviour, but it means the 64k requirement is currently met
+   with less headroom than any other number in this document.
+9. **Whether the greedy per-tensor assignment is STABLE against a change in
+   manifest order.** It bump-allocates on current fill in `recs` order, so a
+   different tensor order gives a different, equally valid layout. Nothing
+   depends on the specific one -- the manifest states every address -- but two
+   packs of the same model are not guaranteed byte-identical manifests, and
+   nothing checks that they are.
 
 ---
 
 ## 11b. The flat path is unchanged, MEASURED
 
 Re-running the packer with NO `--stripe-lanes` over the same GGUF and the same
-`--drop token_embd.weight`, into a fresh outdir of hardlinks, and comparing the
-manifest object-by-object against the shipping one:
+`--drop token_embd.weight`, into a fresh outdir of hardlinks, and comparing
+against the shipping manifest:
 
 ```
-files identical: True
-geometry lane_stripe    shipping=None  now=False
-hbm      arena_sizing   shipping='...QWEN35_9B by tools/hbm_ma...'
-                        now='derived from rtl/model_cfg_pkg.vhd by tools/hbm_map.py arena_sizes()'
+flat files[] identical to the shipping set: True
+flat hbm kv/gdn identical: True     (kv_base, gdn_state_base, weights_end,
+                                     max_context_tokens, desc_arena_base)
   weights          4487442432 B   GDN state 24.1 MB at 0x10c006000
   stack holes      8876032 B at 0xff789000
   free for KV      3.789 GiB from 0x10d81e000 => 233705 tokens
@@ -846,10 +1170,8 @@ hbm      arena_sizing   shipping='...QWEN35_9B by tools/hbm_ma...'
 ```
 
 **`files` is byte-identical** -- every `hbm_offset`, every digest, every entry,
-in the same order. `geometry.lane_stripe: false` is the one field this change
-adds. `hbm.arena_sizing` differs because the shipping manifest was written
-before an unrelated edit to that provenance string; `git diff` confirms this
-change does not touch it, and it is a comment field that nothing reads.
+in the same order -- and so is every address in `hbm`. The only field this
+change adds to a flat manifest is `geometry.lane_stripe: false`.
 
 ---
 
@@ -872,6 +1194,12 @@ change does not touch it, and it is a comment field that nothing reads.
 - **"`hw/fk33/host/fk33_load_weights.py --verify` ... had a real coverage hole
   yesterday."** It did, and it is already fixed, with the incident written into
   the source as a comment. Section 5 names it rather than re-litigating it.
+- **The context requirement was not in the brief and it decides the design.**
+  Oren, 2026-08-30: "Not a requirement, even 64k ish is fine." Against it the
+  27-wide stripe I first shipped as the default FAILS at 44,500 tokens. The
+  requirement is now a tool default (`--stripe-min-context 65536`), a refusal,
+  and the last line of the packer's summary, so it cannot be missed again by
+  anyone who never opens this file.
 - **"3. The repack."** There is no repack. The `.mv4i` bytes are a function of
   the tensor and the geometry, not of the address. `--stripe-lanes` over an
   existing set re-places and rewrites only the manifest, in 7.9 s, and every
@@ -884,7 +1212,7 @@ change does not touch it, and it is a comment field that nothing reads.
 
 | path | change |
 |---|---|
-| `tools/pack_model_fk33.py` | `--stripe-lanes`, `scrape_eng_port_map()`, `lane_stripe_plan()`, `check_lane_stripe()` (six invariants), `expand_pieces()`, the `hbm.lane_stripe` manifest block, the `format` v2 bump. The flat path is untouched and is still the default. |
+| `tools/pack_model_fk33.py` | `--stripe-lanes`, `--stripe-min-context` (default 65,536), `--stripe-stack1-segments`, `scrape_eng_port_map()`, `_lane_groups()`, `_assign_group()`, `lane_stripe_plan()` (per-tensor, stack-local), `stripe_context_tokens()`, `choose_stripe_width()`, `check_lane_stripe()` (seven invariants), `expand_pieces()` (now feature-tested dark), the `hbm.lane_stripe` manifest block, the `format` v2 bump, the placement-independence assert. The flat path is untouched and is still the default. |
 | `docs/debugging/2026-08-30_packstripe-lane-arena-placement.md` | this document |
 | `docs/debugging/2026-08-30_packstripe-stripe_probe.py` | the on-card probe of section 8. Deliberately NOT in `tools/` or `hw/fk33/host/`, same precedent as COUNTERS' `2026-08-30_counters-tb_ctr_rate.vhd`. |
 

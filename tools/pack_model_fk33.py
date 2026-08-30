@@ -142,6 +142,27 @@ STACK_BYTES = 4 * 1024 ** 3                # one HBM stack; the boundary is here
 # that number without gen_pcieep.py changing with it; it is asserted against
 # the scrape below.
 SEGMENT_BYTES = 0x1000_0000                 # 256 MiB, one pseudo-channel
+
+# THE SUPPLY MODEL, in two constants, both DERIVED and both anchored.
+#
+# A pseudo-channel's fabric access path is 32 B per ACLK cycle REGARDLESS of
+# how many masters target it (docs/2026-08-28_can-27-read-masters-be-served.md
+# section 2.1, MEASURED; and section 2.2's 30-master oversubscription sweep,
+# 9.60 GB/s flat from 1 master to 30, which is 32 B x 300 MHz).  This build
+# runs ACLK 250 MHz and the engine core at 200 MHz (gen_pcieep.py
+# ENG_CORE_MHZ), so one PC passes 250/200 = 1.25 beats per CORE cycle.
+BEATS_PER_CORE_CYCLE = 250.0 / 200.0
+# The rate the same shipping RTL reaches with an IDEAL memory and the identical
+# MAXOUT=16 / MAXB=16 / DEPTH=512: COUNTERS run A, 613 cycles for 384 beats.
+# It is AR issue and FIFO fill, not arithmetic, and it does not go away.
+DATAPATH_FLOOR_CPB = 613.0 / 384.0
+# Refuse a layout worse than this.  M=2 sits exactly on the datapath floor and
+# M=3 is a DERIVED 2.40 against it, i.e. a real 50% loss.
+MAX_LANES_PER_SEGMENT = 2
+# Oren, 2026-08-30: "Not a requirement, even 64k ish is fine."  A layout that
+# yields less context than this is REFUSED unless --stripe-min-context lowers
+# the bar on purpose.  The full 27-wide stripe yields 44,500 and would fail it.
+DEFAULT_MIN_CONTEXT_TOKENS = 65536
 N_SEGMENTS = HBM_SIZE // SEGMENT_BYTES      # 32
 GEN_PCIEEP = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "hw", "fk33", "gen_pcieep.py")
@@ -317,8 +338,50 @@ def place(off: int, nbytes: int):
         base = b                                         # skip to the boundary
 
 
-def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
-    """THE 27-LANE ARENA.  One pseudo-channel per AXI read master.
+def _lane_groups(port_map, nlane, npw):
+    """The lanes, split by which HBM STACK their own SAXI port sits on.
+
+    A lane may be moved to a different SEGMENT, but never to a different
+    STACK.  Segments 0..15 are stack 0 and 16..31 are stack 1, and master i is
+    wired to `SAXI_port_map[i]`, so a lane whose arena leaves its stack reads
+    every byte across the inter-stack switch.  The only MEASURED oversubscription
+    evidence in this project (docs/2026-08-28_can-27-read-masters-be-served.md
+    section 2.2, 30 masters onto one pseudo-channel, 9.60 GB/s flat) was taken
+    with every master on its own stack, so cross-stack lateral throughput is
+    UNMEASURED here and this allocator does not spend it.
+    """
+    g = {}
+    for i in range(nlane):
+        g.setdefault(stack_of(port_map[i] * SEGMENT_BYTES), []).append(i)
+    return g
+
+
+def _assign_group(segs, lanes, fill):
+    """Which segment each lane of one group reads FOR ONE TENSOR.
+
+    WHY THIS IS PER TENSOR AND NOT A FIXED TABLE, which is the whole reason
+    this function exists.  A fixed lane->segment map cannot put two lanes in
+    one segment: MEASURED, a lane's arena is 158.30 MiB on the live set and two
+    of them are 316.61 MiB against a 256.00 MiB segment.  So compacting 27
+    lanes onto fewer than 27 segments is only possible if WHICH segment a lane
+    reads varies by tensor.  It legitimately can: the descriptor carries 27
+    independent 64-bit bases and re-states them for every job, so the only
+    thing that must hold is that within ONE job no segment is asked for more
+    beats than it can pass.
+
+    The assignment is greedy on BYTES, not round-robin on index.  Round-robin
+    by `lane % n` puts the same lanes together on every tensor and overflows
+    exactly as a fixed table does; ordering by current fill spreads the big
+    tensors and keeps every segment within one sub-region of the mean.
+    """
+    order = sorted(segs, key=lambda s: (fill[s], s))
+    return [order[k % len(order)] for k in range(len(lanes))]
+
+
+def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
+                     n_stack1=None, digests=True):
+    """THE LANE ARENA.  One pseudo-channel per AXI read master, compacted only
+    as far as the context target demands.
 
     THE FINDING THIS IMPLEMENTS (TRACK COUNTERS, 2026-08-30,
     docs/debugging/2026-08-30_counters-cycles-beats-starved.md).  A .mv4i is
@@ -326,17 +389,41 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
     sub-regions share ONE segment, i.e. ONE pseudo-channel, and 27 dedicated
     SAXI ports queue behind a single 8.000 GB/s resource.  MEASURED on the
     card: 21.67 core cycles per weight word against a DERIVED
-    single-pseudo-channel bound of 21.60, and an aggregate byte rate flat at
-    7.4-7.9 GB/s across a 6x range of job size.
+    single-pseudo-channel bound of 21.60.
 
-    THE PLACEMENT.  Weight sub-region p goes into the 256 MiB segment that
-    weight master p's own SAXI port is attached to, `port_map[p]`; scale
-    sub-region q goes into `port_map[NPORTS_W + q]`.  Master p then reads only
-    from its directly attached pseudo-channel, and -- because gen_pcieep.py
-    puts masters 0..14 on SAXI_01..15 (stack 0) and 15..27 on SAXI_17..29
-    (stack 1), while HBM_MEM<s> for s < 16 is stack 0 -- it never crosses the
-    stack boundary either.  The flat layout could not do that for more than 15
-    of the 27 masters at once; this one does it for all 27, by construction.
+    THE SUPPLY MODEL, DERIVED, and it reproduces both known anchors.  A
+    pseudo-channel's fabric access path is 32 B per ACLK cycle regardless of
+    how many masters target it (docs/2026-08-28_can-27-read-masters-be-served.md
+    section 2.1, MEASURED).  ACLK is 250 MHz and the core clock is 200 MHz, so
+    one PC passes 1.25 beats per CORE cycle.  With M lanes sharing a PC each
+    gets 1.25/M, and a lane needs one beat per core cycle, so:
+
+        memory bound = M / 1.25 core cycles per weight word
+        achieved     = max(datapath floor 1.60, M / 1.25)
+
+        M =  1 -> max(1.60, 0.80) = 1.60     M = 27 -> 21.60
+        M =  2 -> max(1.60, 1.60) = 1.60     M =  3 ->  2.40
+
+    Anchor 1: M = 27 gives 21.60, against COUNTERS' DERIVED 21.60 and the
+    card's MEASURED 21.67.  Anchor 2: M = 1 is bounded by the datapath, and
+    COUNTERS' run A -- the same shipping RTL with an ideal memory -- measured
+    613 cycles for 384 beats = 1.596.
+
+    **M = 2 IS FREE IN THIS MODEL AND THAT IS THE WHOLE REASON COMPACTION IS
+    AFFORDABLE.**  Two lanes per pseudo-channel supply exactly the rate the
+    datapath consumes.  It is free with ZERO SLACK, though: COUNTERS' run A
+    still shows 394 of 1,188 cycles going to AR issue and FIFO fill even with
+    an ideal memory, and a memory matched exactly to consumption cannot hide
+    them.  So M = 2 is an ESTIMATE bounded below by the M = 1 number and above
+    by the M = 3 number, and only the card settles where in that range it
+    lands.  M >= 3 is a real and DERIVED loss and this allocator refuses it.
+
+    THE PLACEMENT.  Lane p reads a segment on ITS OWN master's stack, chosen
+    per tensor by `_assign_group`.  Stack-0 lanes keep a 1:1 map onto segments
+    1..15: compacting them frees low segments, which buys no contiguity at the
+    top and therefore no context.  Stack-1 lanes are compacted onto
+    `17 .. 17+n_stack1-1`, and every segment above that is free for the KV
+    cache, which is the only reason to compact at all.
 
     NO RTL CHANGE AND NO REPACK.  `w_base[0..23]` and `s_base[0..2]` are
     already 27 independent 64-bit descriptor fields, and the PACKED BYTES do
@@ -352,37 +439,28 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
                            weight lane's pseudo-channel.  The engine never
                            reads a header -- the descriptor carries every field
                            -- but `fk33_load_weights.py verify` reads it back,
-                           so it has to be resident and it has to be findable,
-                           which is why `hbm_offset` keeps meaning "where this
-                           file's header is".
-      port_map[p]          lane p's weight or scale arena, bump-allocated in
-                           manifest order from the bottom of the segment.
-      16                   RESERVED FREE.  The other host port.  Reachable, and
-                           deliberately unused: see the note on KV below.
-      29, 30, 31           GDN state then the KV cache, then the descriptor
+                           so it has to be resident and findable, which is why
+                           `hbm_offset` keeps meaning "where this file's header
+                           is".
+      1..15                the 15 stack-0 lanes, one each.
+      16                   RESERVED FREE.  The other host port.
+      17..17+n_stack1-1    the 12 stack-1 lanes, compacted.
+      above that           GDN state, then the KV cache, then the descriptor
                            arena and the host blocks that
                            `hbm_map.derive_region_block()` anchors to the top.
-
-    THE COST, AND IT IS CONTEXT, NOT CAPACITY.  The 27 lane arenas are equal
-    (see the GRP note below) and each is well under a segment, so total free
-    space is essentially unchanged.  What changes is that the free space is
-    now 27 segment TAILS plus segment 16, and `server/fk33_manifest.c` requires
-    `gdn_state_base >= weights_end` while `rtl/attn_kv_axi.vhd` addresses KV
-    from ONE linear base (`C_K_BASE_CH`).  So the contiguous KV run is only
-    what lies above the highest lane arena.  The tails are real memory and a
-    consumer that could read `hbm.kv_extents` -- which this manifest already
-    emits -- would get them back.  The number is printed, not buried.
 
     THE LANE ARENAS ARE EQUAL BY COINCIDENCE, NOT BY RULE.  At the FK33
     geometry GRP = 1, so `layout_strides()`'s scale stride equals its weight
     stride and all 27 lanes need identical bytes.  At GRP > 1 a scale lane
-    needs 1/GRP as much.  Nothing below assumes equality: every lane is sized
-    from its own sub-region sizes.  (`tools/gen_mv4i_desc.py::layout_strides`
-    records what assuming that equality already cost once.)
+    needs 1/GRP as much.  Nothing below assumes equality.
+    (`tools/gen_mv4i_desc.py::layout_strides` records what assuming that
+    equality already cost once.)
 
-    Returns (files, lane, common) where `files` is the manifest's file list
-    with a `pieces` array on every entry, `lane` is the per-lane arena record
-    and `common` describes segment 0.
+    `digests=False` skips the blake2b of every file, which is what makes the
+    context search in `choose_stripe_width()` affordable; the returned plan is
+    then for sizing only and must not be written to a manifest.
+
+    Returns (files, lane, common, nm_base, weights_end, share).
     """
     npw = P.check_geometry(rows_if, axi_dw, emitting=False)
     nss = P.n_scale_sub(rows_if, axi_dw)
@@ -391,30 +469,40 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
         raise SystemExit("pack_model_fk33: the geometry needs %d read masters "
                          "and gen_pcieep.py's ENG_PORT_MAP has %d entries"
                          % (nlane, len(port_map)))
-    seg = [port_map[i] for i in range(nlane)]
-    if len(set(seg)) != nlane:
-        raise SystemExit("pack_model_fk33: two lanes would share a segment")
 
-    # ---- the lane arenas, bump-allocated from the bottom of their segment
-    cur = [s * SEGMENT_BYTES for s in seg]
-    top = [(s + 1) * SEGMENT_BYTES for s in seg]
+    groups = _lane_groups(port_map, nlane, npw)
+    if sorted(groups) != [0, 1]:
+        raise SystemExit("pack_model_fk33: expected lanes on both HBM stacks, "
+                         "got stacks %r" % sorted(groups))
+    own = {st: sorted({port_map[i] for i in ls}) for st, ls in groups.items()}
+    n1 = len(own[1]) if n_stack1 is None else int(n_stack1)
+    if not 1 <= n1 <= len(own[1]):
+        raise SystemExit("pack_model_fk33: --stripe-stack1-segments %d is "
+                         "outside 1..%d" % (n1, len(own[1])))
+    gsegs = {0: own[0], 1: own[1][:n1]}
+    share = max(-(-len(groups[st]) // len(gsegs[st])) for st in (0, 1))
+    if share > 2:
+        raise SystemExit(
+            "pack_model_fk33: %d lanes onto %d segments puts %d lanes on one "
+            "pseudo-channel.  DERIVED %.2f core cycles per weight word against "
+            "the datapath's 1.60, i.e. a real slowdown, so this allocator "
+            "refuses it.  Widen the stripe."
+            % (nlane, len(gsegs[0]) + len(gsegs[1]), share, share / 1.25))
 
-    # ---- segment 0: headers first, then the F32 side file
+    allsegs = gsegs[0] + gsegs[1]
+    fill = {s: 0 for s in allsegs}
     com = 0
     files, weights_end = [], 0
 
-    def take(lane, nbytes):
-        base = align_up(cur[lane])
-        if base + nbytes > top[lane]:
+    def take(sg, nbytes):
+        base = align_up(sg * SEGMENT_BYTES + fill[sg])
+        if base + nbytes > (sg + 1) * SEGMENT_BYTES:
             raise SystemExit(
-                "pack_model_fk33: lane %d overflows HBM segment %d.  It needs "
-                "%d B and the segment holds %d.  This is the capacity wall the "
-                "27-lane arena has; the fallback is to stripe over fewer "
-                "segments (two lanes per segment costs about half the gain) "
-                "or to drop a tensor.  Nothing was written."
-                % (lane, seg[lane], base + nbytes - seg[lane] * SEGMENT_BYTES,
-                   SEGMENT_BYTES))
-        cur[lane] = base + nbytes
+                "pack_model_fk33: HBM segment %d overflows.  It needs %d B and "
+                "holds %d.  Widen the stripe (--stripe-stack1-segments) or drop "
+                "a tensor.  Nothing was written."
+                % (sg, base + nbytes - sg * SEGMENT_BYTES, SEGMENT_BYTES))
+        fill[sg] = base + nbytes - sg * SEGMENT_BYTES
         return base
 
     for r in recs:
@@ -427,19 +515,25 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
         if tot_ != r["nbytes"]:
             raise SystemExit("pack_model_fk33: %s layout says %d B, the packed "
                              "file is %d B" % (r["name"], tot_, r["nbytes"]))
+        # which segment each lane reads FOR THIS TENSOR
+        pick = {}
+        for st in (0, 1):
+            for lane_i, sg in zip(groups[st],
+                                  _assign_group(gsegs[st], groups[st], fill)):
+                pick[lane_i] = sg
         hdr_base = align_up(com)
         com = hdr_base + P.HDR_BYTES
         pieces = [dict(kind="header", lane=None, segment=segment_of(hdr_base),
                        file_offset=0, nbytes=P.HDR_BYTES, hbm_offset=hdr_base)]
         off = P.HDR_BYTES
         for p in range(npw):
-            b = take(p, sub_sz)
-            pieces.append(dict(kind="w", lane=p, segment=seg[p],
+            b = take(pick[p], sub_sz)
+            pieces.append(dict(kind="w", lane=p, segment=pick[p],
                                file_offset=off, nbytes=sub_sz, hbm_offset=b))
             off += sub_sz
         for q in range(nss):
-            b = take(npw + q, scl_sz)
-            pieces.append(dict(kind="s", lane=npw + q, segment=seg[npw + q],
+            b = take(pick[npw + q], scl_sz)
+            pieces.append(dict(kind="s", lane=npw + q, segment=pick[npw + q],
                                file_offset=off, nbytes=scl_sz, hbm_offset=b))
             off += scl_sz
         if off != r["nbytes"]:
@@ -450,8 +544,9 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
                    out_shift=r["out_shift"], nbytes=r["nbytes"],
                    hbm_offset=hdr_base, stack=stack_of(hdr_base),
                    striped=True, pieces=pieces,
-                   blake2b_128=digest(os.path.join(outdir,
-                                                   r["name"] + ".mv4i")))
+                   blake2b_128=(digest(os.path.join(outdir,
+                                                    r["name"] + ".mv4i"))
+                                if digests else None))
         if r.get("segments"):
             ent["M_logical"] = r["m_logical"]
             ent["segments"] = r["segments"]
@@ -468,15 +563,96 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size):
                          % (com, SEGMENT_BYTES))
 
     lane = [dict(lane=i, kind=("w" if i < npw else "s"),
-                 index=(i if i < npw else i - npw), master=i, saxi=seg[i],
-                 segment=seg[i], stack=stack_of(seg[i] * SEGMENT_BYTES),
-                 base=seg[i] * SEGMENT_BYTES,
-                 bytes=cur[i] - seg[i] * SEGMENT_BYTES,
-                 capacity=SEGMENT_BYTES)
+                 index=(i if i < npw else i - npw), master=i,
+                 saxi=port_map[i], own_segment=port_map[i],
+                 stack=stack_of(port_map[i] * SEGMENT_BYTES),
+                 segments=gsegs[stack_of(port_map[i] * SEGMENT_BYTES)])
             for i in range(nlane)]
+    seg_use = [dict(segment=s, base=s * SEGMENT_BYTES, bytes=fill[s],
+                    capacity=SEGMENT_BYTES,
+                    stack=stack_of(s * SEGMENT_BYTES)) for s in allsegs]
     common = dict(segment=0, base=0, bytes=com, capacity=SEGMENT_BYTES,
                   holds="mv4i headers and nonmatvec_f32.bin")
-    return files, lane, common, nm_base, weights_end
+    return files, lane, common, nm_base, weights_end, dict(
+        max_lanes_per_segment=share,
+        derived_cycles_per_beat=max(DATAPATH_FLOOR_CPB, share / BEATS_PER_CORE_CYCLE),
+        memory_cycles_per_beat=share / BEATS_PER_CORE_CYCLE,
+        datapath_floor_cycles_per_beat=DATAPATH_FLOOR_CPB,
+        stack0_segments=gsegs[0], stack1_segments=gsegs[1],
+        segments=seg_use)
+
+
+def stripe_context_tokens(weights_end, gdn_bytes, kv_top, per_token):
+    """Tokens of KV a lane-striped layout leaves, DERIVED, given where the
+    highest lane arena ends.
+
+    The GDN state and the KV cache start at the next SEGMENT boundary above the
+    weights, not the next 4 KB page.  Two reasons, both load-bearing:
+    `server/fk33_manifest.c:170` requires `gdn_state_base >= weights_end`, and
+    a 4 KB round-up would leave the GDN state sharing the top lane's
+    pseudo-channel -- the exact contention this whole change removes."""
+    gdn = ((weights_end + SEGMENT_BYTES - 1) // SEGMENT_BYTES) * SEGMENT_BYTES
+    kv = align_up(gdn + gdn_bytes)
+    return max(0, (kv_top - kv) // per_token), gdn, kv
+
+
+def choose_stripe_width(recs, rows_if, axi_dw, port_map, outdir, nm_size,
+                        gdn_bytes, kv_top, per_token, min_tokens, out=None):
+    """How many stack-1 segments to stripe over: the WIDEST that still meets
+    the context target.
+
+    WHY WIDEST AND NOT NARROWEST.  Compaction is what buys context, and it is
+    very nearly free up to two lanes per pseudo-channel -- but "very nearly" is
+    an ESTIMATE with zero measured slack behind it (see `lane_stripe_plan`'s
+    supply model).  So the rule is: compact only as far as the requirement
+    forces, never further, and print the whole curve so the choice is visible
+    rather than buried in a document.
+
+    Refuses rather than silently shipping a layout under `min_tokens`.  A tool
+    whose default quietly breaks a stated product requirement is the same
+    defect class as a guard that passes over an object it never read."""
+    rows, best = [], None
+    nmax = len({port_map[i] for i in range(P.check_geometry(rows_if, axi_dw,
+                                                            emitting=False)
+                                           + P.n_scale_sub(rows_if, axi_dw))
+                if stack_of(port_map[i] * SEGMENT_BYTES) == 1})
+    for n in range(nmax, 0, -1):
+        try:
+            _, _, _, _, we, sh = lane_stripe_plan(
+                recs, rows_if, axi_dw, port_map, outdir, nm_size,
+                n_stack1=n, digests=False)
+        except SystemExit as e:
+            rows.append(dict(n=n, tokens=None, why=str(e).split(".")[0]))
+            continue
+        tok, gdn, kv = stripe_context_tokens(we, gdn_bytes, kv_top, per_token)
+        fill = max(x["bytes"] for x in sh["segments"])
+        rows.append(dict(n=n, tokens=tok, share=sh["max_lanes_per_segment"],
+                         cpb=sh["derived_cycles_per_beat"],
+                         fill=100.0 * fill / SEGMENT_BYTES, gdn=gdn, kv=kv))
+        if best is None and tok >= min_tokens:
+            best = n
+    if out:
+        out("  stripe width search (stack-1 segments; stack-0 stays 1:1)\n")
+        out("    n   max lanes/seg   DERIVED c/beat   peak fill   KV tokens\n")
+        for r in sorted(rows, key=lambda r: -r["n"]):
+            if r["tokens"] is None:
+                out("   %2d   REFUSED: %s\n" % (r["n"], r["why"]))
+            else:
+                out("   %2d        %d            %5.2f          %5.1f%%   "
+                    "%8d%s\n"
+                    % (r["n"], r["share"], r["cpb"], r["fill"], r["tokens"],
+                       "  <== chosen" if r["n"] == best else
+                       ("  (under the %d target)" % min_tokens
+                        if r["tokens"] < min_tokens else "")))
+    if best is None:
+        raise SystemExit(
+            "pack_model_fk33: no lane-stripe width yields %d tokens of context. "
+            "The widest that fits at all yields %d.  Lower the bar on purpose "
+            "with --stripe-min-context, or take the extent-aware KV change in "
+            "docs/debugging/2026-08-30_packstripe-lane-arena-placement.md "
+            "section 6.  Nothing was written."
+            % (min_tokens, max((r["tokens"] or 0) for r in rows)))
+    return best, rows
 
 
 def expand_pieces(files):
@@ -510,14 +686,14 @@ def expand_pieces(files):
     return out
 
 
-def check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw):
+def check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw, share):
     """TEETH.  Every property the striping is FOR, checked on the output.
 
-    Six of them, and each one names a way the placement can be built, load
+    Seven of them, and each one names a way the placement can be built, load
     cleanly, verify green and still be wrong:
 
-      1. every piece is inside the segment it claims, and that segment is the
-         one `port_map` gives its lane.  A piece one byte over a 256 MiB
+      1. every piece is inside the segment it claims, and that segment is one
+         the plan gave its lane's group.  A piece one byte over a 256 MiB
          boundary reads out of the NEXT pseudo-channel and nothing faults.
       2. every piece is 4 KB aligned in HBM and in the file (spec 6.4, and the
          gateware's EC 0xC refuses a base with [11:0] nonzero).
@@ -526,41 +702,51 @@ def check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw):
          manifest's pack-time blake2b of the WHOLE file still checkable by
          reading the pieces back in order.
       4. no two pieces anywhere overlap in HBM.
-      5. every lane's arena is inside its segment.
-      6. THE POINT: for every tensor, the 27 data pieces occupy 27 DISTINCT
-         segments.  This is the one that would have caught the flat layout.
+      5. every segment's arena is inside it.
+      6. THE POINT: for every tensor, no segment is asked for more than
+         `share` lanes' worth of beats, and `share` is at most 2 -- the
+         DERIVED point at which the memory exactly matches what the datapath
+         consumes.
+      7. every lane reads only segments on ITS OWN MASTER'S STACK.  A lane that
+         leaves its stack reads every byte across the inter-stack switch, whose
+         throughput is UNMEASURED in this project.
+
+    CHECK 6 REPLACES AN EARLIER "27 DISTINCT SEGMENTS" RULE THAT EARNED ZERO
+    INDEPENDENT KILLS.  With a unique `ENG_PORT_MAP` and a fixed lane->segment
+    table, check 1 logically implied it, so it was decoration by this project's
+    own definition and is recorded as such in the write-up.  In this allocator
+    the map is per tensor, so a lanes-per-segment bound is a real and separate
+    property and check 1 no longer implies it.
 
     Returns a list of (name, ok, detail).  Nothing is printed here; the caller
     decides.  A check that only ever runs on a passing input has not been shown
-    to work, so `--stripe-teeth` runs each of these against a deliberately
+    to work, so the teeth harness runs each of these against a deliberately
     broken copy of the plan."""
     npw = P.check_geometry(rows_if, axi_dw, emitting=False)
     nss = P.n_scale_sub(rows_if, axi_dw)
+    allowed = {L["lane"]: set(L["segments"]) for L in lane}
+    stack = {L["lane"]: L["stack"] for L in lane}
     out = []
+
     bad = []
     for f in files:
-        if not f.get("pieces"):
-            continue
-        for x in f["pieces"]:
+        for x in f.get("pieces") or []:
             a, n = x["hbm_offset"], x["nbytes"]
-            if segment_of(a) != x["segment"] or segment_of(a + n - 1) != x["segment"]:
+            if (segment_of(a) != x["segment"]
+                    or segment_of(a + n - 1) != x["segment"]):
                 bad.append("%s %s piece at %#x+%d is not inside segment %d"
                            % (f["file"], x["kind"], a, n, x["segment"]))
-            if x["kind"] == "w" and x["segment"] != port_map[x["lane"]]:
-                bad.append("%s w[%d] is in segment %d, master %d is on SAXI_%02d"
-                           % (f["file"], x["lane"], x["segment"], x["lane"],
-                              port_map[x["lane"]]))
-            if x["kind"] == "s" and x["segment"] != port_map[x["lane"]]:
-                bad.append("%s s[%d] is in segment %d, master %d is on SAXI_%02d"
-                           % (f["file"], x["lane"] - npw, x["segment"],
-                              x["lane"], port_map[x["lane"]]))
-    out.append(("1 every piece is in its master's own segment", not bad,
-                "%d violation(s)%s" % (len(bad),
-                                       "" if not bad else ": " + bad[0])))
+            elif x["kind"] in ("w", "s") and x["segment"] not in allowed[x["lane"]]:
+                bad.append("%s lane %d is in segment %d, the plan allows %s"
+                           % (f["file"], x["lane"], x["segment"],
+                              sorted(allowed[x["lane"]])))
+    out.append(("1 every piece is inside a segment its lane's group owns",
+                not bad, "%d violation(s)%s"
+                % (len(bad), "" if not bad else ": " + bad[0])))
 
     bad = [("%s %s piece hbm %#x file +%d" % (f["file"], x["kind"],
                                               x["hbm_offset"], x["file_offset"]))
-           for f in files if f.get("pieces") for x in f["pieces"]
+           for f in files for x in (f.get("pieces") or [])
            if x["hbm_offset"] % ALIGN or x["file_offset"] % ALIGN]
     out.append(("2 every piece 4 KB aligned in HBM and in the file", not bad,
                 "%d violation(s)%s" % (len(bad),
@@ -586,7 +772,7 @@ def check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw):
                                        "" if not bad else ": " + bad[0])))
 
     ext = sorted(((x["hbm_offset"], x["nbytes"], f["file"], x["kind"])
-                  for f in files if f.get("pieces") for x in f["pieces"]),
+                  for f in files for x in (f.get("pieces") or [])),
                  key=lambda t: t[0])
     bad = ["%s %s at %#x+%d overlaps %s %s at %#x"
            % (ext[i][2], ext[i][3], ext[i][0], ext[i][1],
@@ -597,27 +783,53 @@ def check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw):
                 "%d of %d adjacent pairs%s" % (len(bad), max(len(ext) - 1, 0),
                                                "" if not bad else ": " + bad[0])))
 
-    bad = ["lane %d: %d B in a %d B segment" % (L["lane"], L["bytes"],
-                                                L["capacity"])
-           for L in lane if L["bytes"] > L["capacity"]]
-    out.append(("5 every lane arena fits its segment", not bad,
-                "max fill %.1f%%"
-                % (100.0 * max((L["bytes"] / float(L["capacity"])
-                                for L in lane), default=0.0))))
+    segs = share["segments"]
+    bad = ["segment %d: %d B in a %d B segment" % (x["segment"], x["bytes"],
+                                                   x["capacity"])
+           for x in segs if x["bytes"] > x["capacity"]]
+    out.append(("5 every segment arena fits", not bad, "peak fill %.1f%%"
+                % (100.0 * max((x["bytes"] / float(x["capacity"])
+                                for x in segs), default=0.0))))
 
-    want = npw + nss
-    bad = []
+    want = share["max_lanes_per_segment"]
+    bad, worst = [], 0
     for f in files:
         if not f.get("pieces"):
             continue
-        segs = {x["segment"] for x in f["pieces"] if x["kind"] in ("w", "s")}
-        if len(segs) != want:
-            bad.append("%s spans %d segments, wanted %d"
-                       % (f["file"], len(segs), want))
-    out.append(("6 every tensor's %d data pieces are in %d DISTINCT segments"
-                % (want, want), not bad,
-                "%d tensor(s) not fully striped%s"
-                % (len(bad), "" if not bad else ": " + bad[0])))
+        seen = {}
+        for x in f["pieces"]:
+            if x["kind"] in ("w", "s"):
+                # DERIVED FROM THE ADDRESS, NOT FROM THE `segment` LABEL.
+                # Teeth case T3: two lanes given the SAME hbm_offset with their
+                # labels untouched survived a version of this that counted the
+                # field.  Address bits [32:28] are what select the
+                # pseudo-channel; the label is not what the hardware decodes.
+                sg = x["hbm_offset"] // SEGMENT_BYTES
+                seen[sg] = seen.get(sg, 0) + 1
+        m = max(seen.values()) if seen else 0
+        worst = max(worst, m)
+        if m > want:
+            bad.append("%s puts %d lanes on segment %d"
+                       % (f["file"], m,
+                          max(seen, key=lambda k: seen[k])))
+    if want > MAX_LANES_PER_SEGMENT:
+        bad.append("the plan itself allows %d lanes per segment, cap is %d"
+                   % (want, MAX_LANES_PER_SEGMENT))
+    out.append(("6 no tensor puts more than %d lane(s) on one pseudo-channel"
+                % want, not bad,
+                "worst observed %d, DERIVED %.2f c/beat vs datapath %.2f%s"
+                % (worst, max(DATAPATH_FLOOR_CPB, worst / BEATS_PER_CORE_CYCLE),
+                   DATAPATH_FLOOR_CPB, "" if not bad else "; " + bad[0])))
+
+    bad = ["%s lane %d (stack %d) reads segment %d (stack %d)"
+           % (f["file"], x["lane"], stack[x["lane"]], x["segment"],
+              stack_of(x["segment"] * SEGMENT_BYTES))
+           for f in files for x in (f.get("pieces") or [])
+           if x["kind"] in ("w", "s")
+           and stack_of(x["segment"] * SEGMENT_BYTES) != stack[x["lane"]]]
+    out.append(("7 every lane reads only its own master's HBM stack", not bad,
+                "%d violation(s)%s" % (len(bad),
+                                       "" if not bad else ": " + bad[0])))
     return out
 
 
@@ -786,6 +998,22 @@ def main():
                          "manifest's `format` becomes v2 and every mv4i entry "
                          "grows a `pieces` array, because `hbm_offset` then "
                          "names a 4 KB header and not a contiguous image")
+    ap.add_argument("--stripe-min-context", type=int,
+                    default=DEFAULT_MIN_CONTEXT_TOKENS, metavar="TOKENS",
+                    help="the least KV context a lane-striped layout may "
+                         "yield.  Default %d (Oren, 2026-08-30: \"even 64k ish "
+                         "is fine\").  The packer picks the WIDEST stripe that "
+                         "still meets it and REFUSES if none does.  The full "
+                         "27-wide stripe yields about 44,500 and would fail "
+                         "this, which is why it is not the default"
+                         % DEFAULT_MIN_CONTEXT_TOKENS)
+    ap.add_argument("--stripe-stack1-segments", type=int, default=None,
+                    metavar="N",
+                    help="override the width search and put the 12 stack-1 "
+                         "lanes on exactly N segments.  The context refusal "
+                         "still applies afterwards, so this cannot be used to "
+                         "sneak a sub-target layout out; lower "
+                         "--stripe-min-context on purpose for that")
     ap.add_argument("--drop", action="append", default=[], metavar="TENSOR",
                     help="exact GGUF tensor name to leave OUT of the image: not "
                          "packed, not placed, not in the manifest's files. "
@@ -978,8 +1206,34 @@ def main():
     sys.stdout.flush()
     if a.stripe_lanes:
         port_map = scrape_eng_port_map()
-        files, lane, common, nm_base, weights_end = lane_stripe_plan(
-            recs, rows_if, axi_dw, port_map, a.outdir, nm_size)
+        # THE KV TOP IS PLACEMENT-INDEPENDENT AND THAT IS WHAT MAKES THE WIDTH
+        # SEARCH POSSIBLE.  `derive_region_block()` anchors the descriptor arena
+        # and the three host blocks to the TOP of the device from n_embd,
+        # n_vocab and max_chunk, none of which the weight placement touches --
+        # so the search can be run against one value and the final block then
+        # asserted to match it, which it is, below.
+        lm = next((r for r in recs if r["name"] == "output.weight"), None)
+        if lm is None:
+            raise SystemExit("pack_model_fk33: --stripe-lanes needs "
+                             "output.weight to model the host blocks")
+        _, _hostraw = HM.host_blocks(int(lm["K"]), int(lm["M"]), a.max_chunk,
+                                     HBM_SIZE)
+        _n_jobs = (a.desc_arena_jobs if a.desc_arena_jobs is not None
+                   else a_descriptor_jobs([dict(kind="mv4i", tensor=r["name"],
+                                                M=r["M"], K=r["K"])
+                                           for r in recs]))
+        _da, kv_top = HM.desc_arena(_n_jobs, None, "allocate-below-host",
+                                    _hostraw["x_base"], strict=True)
+        n1, width_rows = choose_stripe_width(
+            recs, rows_if, axi_dw, port_map, a.outdir, nm_size,
+            GDN_STATE_BYTES, kv_top, KV_BYTES_PER_TOKEN, a.stripe_min_context,
+            out=sys.stdout.write)
+        if a.stripe_stack1_segments is not None:
+            n1 = a.stripe_stack1_segments
+            print("  stripe width     OVERRIDDEN to %d by "
+                  "--stripe-stack1-segments" % n1)
+        files, lane, common, nm_base, weights_end, share = lane_stripe_plan(
+            recs, rows_if, axi_dw, port_map, a.outdir, nm_size, n_stack1=n1)
         files.append(dict(file="nonmatvec_f32.bin", kind="f32blob",
                           tensor=None, nbytes=nm_size, hbm_offset=nm_base,
                           stack=stack_of(nm_base),
@@ -987,7 +1241,7 @@ def main():
                           entries=[dict(e, hbm_offset=nm_base + e["offset"])
                                    for e in nm_entries]))
         stripe_checks = check_lane_stripe(files, lane, common, port_map,
-                                          rows_if, axi_dw)
+                                          rows_if, axi_dw, share)
         for nm, ok, det in stripe_checks:
             print("  stripe check %-58s %s  %s"
                   % (nm, "PASS" if ok else "FAIL", det))
@@ -997,14 +1251,24 @@ def main():
         # GDN and KV start at the next SEGMENT boundary above the highest lane
         # arena, not at the next 4 KB page.  Two reasons, both load-bearing:
         # `server/fk33_manifest.c` requires gdn_state_base >= weights_end, and
-        # a 4 KB round-up would leave the GDN state sharing scale lane 2's
+        # a 4 KB round-up would leave the GDN state sharing the top lane's
         # pseudo-channel -- the exact contention this whole change removes.
-        gdn_base = ((weights_end + SEGMENT_BYTES - 1)
-                    // SEGMENT_BYTES) * SEGMENT_BYTES
-        if segment_of(gdn_base) in set(port_map[:nports + nss]):
+        tokens_planned, gdn_base, _kvb = stripe_context_tokens(
+            weights_end, GDN_STATE_BYTES, kv_top, KV_BYTES_PER_TOKEN)
+        lane_segs = {x["segment"] for x in share["segments"]}
+        if segment_of(gdn_base) in lane_segs:
             raise SystemExit("pack_model_fk33: the GDN state would land in "
                              "segment %d, which a weight lane owns"
                              % segment_of(gdn_base))
+        if tokens_planned < a.stripe_min_context:
+            raise SystemExit(
+                "pack_model_fk33: the chosen layout yields %d tokens of "
+                "context against the %d required.  Nothing was written."
+                % (tokens_planned, a.stripe_min_context))
+        share["kv_top_used_for_the_search"] = kv_top
+        share["context_tokens"] = tokens_planned
+        share["min_context_tokens"] = a.stripe_min_context
+        share["width_search"] = width_rows
         total = sum(f["nbytes"] for f in files)
     else:
         for r in recs:
@@ -1131,9 +1395,12 @@ def main():
             eng_port_map_source="hw/fk33/gen_pcieep.py ENG_PORT_MAP",
             lanes=lane, common=common,
             reserved_segments=sorted(set(range(N_SEGMENTS))
-                                     - {L["segment"] for L in lane}),
+                                     - {x["segment"] for x in share["segments"]}
+                                     - {0}),
             checks=[dict(name=n, ok=bool(o), detail=d)
-                    for n, o, d in stripe_checks])
+                    for n, o, d in stripe_checks],
+            **{k: v for k, v in share.items() if k != "segments"})
+        hbm_core["lane_stripe"]["segments"] = share["segments"]
     region_block = None
     if not a.no_region_block:
         n_jobs = a.desc_arena_jobs
@@ -1150,9 +1417,35 @@ def main():
         # still needs the six-line `pieces` awareness reported in the write-up:
         # a later `hbm_map.py MANIFEST --markdown` reads the manifest's own
         # file list and cannot see this expansion.)
-        region_files = expand_pieces(files) if a.stripe_lanes else files
+        # ONE PRODUCER OF THE REGION MODEL, AS SOON AS THERE IS ONE.
+        # `hbm_map.manifest_regions()` models one file as `nbytes` contiguous
+        # bytes at `hbm_offset`, which under striping is FALSE -- `hbm_offset`
+        # is a 4 KB header and the payload is elsewhere.  `expand_pieces()`
+        # below is the adaptor that gives it the truth, and it is knowingly a
+        # SECOND producer of a fact `hbm_map.py` exists to own.  So it defers:
+        # the moment `hbm_map` grows its own piece awareness it is handed the
+        # manifest unexpanded and this copy goes dark.  Feature-tested rather
+        # than version-pinned, because the two land on different days.
+        region_files = files
+        if a.stripe_lanes and not hasattr(HM, "file_pieces"):
+            region_files = expand_pieces(files)
         region_block = HM.derive_region_block(
             dict(files=region_files, hbm=hbm_core), n_jobs, a.max_chunk)
+        if a.stripe_lanes:
+            # THE CLAIM THE WIDTH SEARCH RESTS ON, ASSERTED RATHER THAN
+            # BELIEVED.  The search needed a KV ceiling before the placement
+            # existed, and used one on the grounds that the arena is
+            # placement-independent.  If that is ever false the chosen width is
+            # sized against the wrong number and the context figure printed
+            # above is a lie, so it is checked here rather than argued.
+            if region_block["desc_arena_base"] != kv_top:
+                raise SystemExit(
+                    "pack_model_fk33: the width search sized the KV cache "
+                    "against a descriptor arena at %#x and "
+                    "derive_region_block() placed it at %#x.  The arena is NOT "
+                    "placement-independent after all and every context figure "
+                    "printed above is wrong.  Nothing was written."
+                    % (kv_top, region_block["desc_arena_base"]))
 
     man = dict(
         # THE FORMAT STRING IS THE GATE, and it changes on purpose.  A striped
@@ -1199,24 +1492,39 @@ def main():
     print(f"  qkv segment pad  {'on' if a.qkv_pad else 'OFF'}, "
           f"{sum(1 for f in files if f.get('segments'))} fused tensor(s) padded")
     if a.stripe_lanes:
-        M = 1024.0 ** 2
-        print(f"  lane stripe      ON, {len(lane)} lanes on segments "
-              f"{','.join(str(L['segment']) for L in lane[:3])}.."
-              f"{lane[-1]['segment']} at {SEGMENT_BYTES//M:.0f} MiB each")
-        print(f"    per lane       {lane[0]['bytes']} B = "
-              f"{lane[0]['bytes']/M:.2f} MiB, "
-              f"{100.0*lane[0]['bytes']/SEGMENT_BYTES:.1f}% of a segment "
-              f"(min {min(L['bytes'] for L in lane)}, "
-              f"max {max(L['bytes'] for L in lane)})")
+        MiB = 1024.0 ** 2
+        sg = share["segments"]
+        print(f"  lane stripe      ON, {len(lane)} lanes on "
+              f"{len(sg)} segments of {SEGMENT_BYTES//MiB:.0f} MiB")
+        print(f"    stack 0        lanes 0..{len(share['stack0_segments'])-1} "
+              f"1:1 on segments {share['stack0_segments']}")
+        print(f"    stack 1        the remaining lanes on segments "
+              f"{share['stack1_segments']}")
+        print(f"    sharing        at most "
+              f"{share['max_lanes_per_segment']} lane(s) per pseudo-channel "
+              f"per tensor")
+        print(f"    DERIVED rate   {share['derived_cycles_per_beat']:.2f} core "
+              f"cycles per weight word "
+              f"= max(datapath {share['datapath_floor_cycles_per_beat']:.2f}, "
+              f"memory {share['memory_cycles_per_beat']:.2f}); "
+              f"the flat layout is 21.60")
+        print(f"    peak fill      {max(x['bytes'] for x in sg)} B = "
+              f"{max(x['bytes'] for x in sg)/MiB:.2f} MiB, "
+              f"{100.0*max(x['bytes'] for x in sg)/SEGMENT_BYTES:.1f}% of a "
+              f"segment")
         print(f"    segment 0      {common['bytes']} B of headers + "
               f"nonmatvec_f32.bin")
         print(f"    reserved segs  "
               f"{hbm_core['lane_stripe']['reserved_segments']}")
-        tails = sum(L['capacity'] - L['bytes'] for L in lane)
-        print(f"    UNUSED         {tails} B = {tails/G:.3f} GiB in the 27 "
-              f"segment tails, plus whole reserved segments.  Only an "
-              f"extent-aware KV consumer can use them; hbm.kv_extents is "
-              f"already emitted")
+        tails = sum(x['capacity'] - x['bytes'] for x in sg)
+        print(f"    UNUSED         {tails} B = {tails/G:.3f} GiB in the "
+              f"{len(sg)} segment tails.  Only an extent-aware KV consumer "
+              f"can use them; hbm.kv_extents is already emitted")
+        print(f"  CONTEXT          {share['context_tokens']} tokens "
+              f"({share['context_tokens']/1024.0:.1f}k), against the "
+              f"{share['min_context_tokens']} required "
+              f"({share['min_context_tokens']/1024.0:.0f}k).  "
+              f"Margin {share['context_tokens']/float(share['min_context_tokens']):.2f}x")
     print(f"  stack holes      {hole_bytes} B  {hole_bytes/1024**2:.1f} MiB "
           f"in {len(holes)} hole(s)")
     for h in holes:
