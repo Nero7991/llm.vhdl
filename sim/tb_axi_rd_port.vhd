@@ -6,6 +6,34 @@
 -- that only works against a zero-latency always-ready slave has not been
 -- tested at all.
 --
+-- CONSUMER BACKPRESSURE -- the generic QSTALL, added 2026-08-29 (TRACK ACOV).
+-- Before it, this bench held `q_ready` high for the whole of every job, so the
+-- FIFO drained as fast as the slave could fill it and its level never rose.
+-- The entire reason axi_rd_port plumbs `f_level` and `LVL_MARGIN` out of the
+-- FIFO and into axi_rd_fsm is so the AR issue can be throttled against FIFO
+-- FREE SPACE (`f_level + pr + want <= DEPTH`, rtl/axi_rd_fsm.vhd:223), and a
+-- bench whose FIFO stays near empty never makes that comparison decide
+-- anything.  MEASURED by sim/mutate_axi_rd_port.sh: at QSTALL=0 eleven of its
+-- twenty mutations survived, and telling the FSM the FIFO is twice as deep as
+-- it is (C1), building the FIFO half the depth the FSM throttles against (C2)
+-- and collapsing LVL_MARGIN on one side only (A9) were among them.
+--
+-- WHAT THIS DOES *NOT* BUY, stated because the obvious expectation is wrong.
+-- It does not make `rready` fall.  The throttle above is precisely the
+-- guarantee that outstanding-plus-queued beats never exceed DEPTH, so in a
+-- CORRECT axi_rd_port the FIFO is never full, `f_ir` is high always, and
+-- `rready` is high always -- at every QSTALL.  The occupancy witness below is
+-- therefore built from the boundary counts, not from `rready`.
+--
+-- QSTALL defaults to 0, so the row sim/regress.sh runs is bit-for-bit the run
+-- it ran before this generic existed; the stalling configurations are reached
+-- from the mutation script and from sim/run_matvec.sh.
+--
+-- SEED IS BOUNDED BY 8.  The slave's LFSR seeds itself with SEED*7919 + 1
+-- through a 16-bit to_unsigned, which TRUNCATES above SEED = 8 and prints a
+-- numeric_std warning at time 0.  Harmless -- it only picks a different LFSR
+-- start -- but it is noise in a mutation log, so callers stay under it.
+--
 -- The last case is the one that matters most: 7.7 says the FIFO must be FLUSHED
 -- on start, because sub-regions are padded to whole 4 KB bursts and the burst
 -- carrying the final needed beat also delivers padding beats that stay resident
@@ -20,7 +48,16 @@ use ieee.numeric_std.all;
 
 entity tb_axi_rd_port is
   generic(SEED : integer := 1; STALL : natural := 3;
-          MAXOUT : positive := 2; DEPTH : positive := 64);
+          MAXOUT : positive := 2; DEPTH : positive := 64;
+          -- Consumer-side stall modulus.  0 or 1 = never stall, which is the
+          -- historical behaviour and the gate row's; N > 1 withholds q_ready
+          -- on roughly one LFSR draw in N.  See the header.
+          QSTALL : natural := 0;
+          -- Largest ARLEN this slave will accept, i.e. burst length minus one.
+          -- 15 is the AXI3 cap and therefore the FK33's HBM cap; see the
+          -- ARLEN paragraph in the header.  Raise it only to test a slave that
+          -- really is AXI4.
+          ARLEN_MAX : natural := 15);
 end entity;
 
 architecture sim of tb_axi_rd_port is
@@ -45,8 +82,47 @@ architecture sim of tb_axi_rd_port is
 
   signal finished : boolean := false;
   signal nbad : integer := 0;
+
+  -- COVERAGE WITNESS, not a check.  The FIFO's high-water mark, derived at the
+  -- BOUNDARY as (beats accepted on R) - (beats popped on Q), so it needs no
+  -- visibility into the DUT.  It answers the one question the mutation table
+  -- cannot answer for itself: did the FSM's AR throttle -- `f_level + pr +
+  -- want <= DEPTH` at rtl/axi_rd_fsm.vhd:223, the reason `f_level` and
+  -- `LVL_MARGIN` are plumbed out of the FIFO at all -- ever actually BIND?
+  --
+  -- Do NOT expect `rready` to fall instead.  That throttle is exactly the
+  -- guarantee that requested beats never exceed DEPTH, so in a CORRECT
+  -- axi_rd_port `f_ir` is high always and `rready` is high always; a witness
+  -- built on `rvalid and not rready` measures something this design makes
+  -- impossible and reads 0 no matter what the consumer does.  That was
+  -- MEASURED here first, and it is also why counting a beat on `rvalid` alone
+  -- is an EQUIVALENT mutant rather than a coverage gap (row A5 of
+  -- sim/mutate_axi_rd_port.sh).
+  --
+  -- `track` excludes the abandoned job's drain window, in which beats are
+  -- accepted on R and discarded rather than queued, so an un-gated difference
+  -- would report 44 beats of occupancy that never existed.
+  signal track  : std_logic := '0';
+  signal occ    : integer := 0;
+  signal occ_hi : integer := 0;
 begin
   rst <= '1', '0' after 40 ns;
+
+  occup : process(clk)
+    variable o : integer;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' or start = '1' then
+        occ <= 0;
+      elsif track = '1' then
+        o := occ;
+        if rvalid = '1' and rready = '1' then o := o + 1; end if;
+        if q_valid = '1' and q_ready = '1' then o := o - 1; end if;
+        occ <= o;
+        if o > occ_hi then occ_hi <= o; end if;
+      end if;
+    end if;
+  end process;
 
   clkgen : process
   begin
@@ -91,6 +167,19 @@ begin
       assert arburst = "01" report "burst type must be INCR" severity failure;
       assert to_integer(unsigned(arsize)) = 4
         report "arsize must match AXI_DW" severity failure;
+      -- THE AXI3 BURST CAP.  ARLEN is eight bits on AXI4 and this port emits
+      -- eight bits, but the FK33's HBM slave is AXI3, where ARLEN is FOUR --
+      -- so 16 beats is the hard cap on the card and a 17-beat burst is not a
+      -- slow burst, it is a burst the slave will not answer.  Before this
+      -- assert existed, raising the FSM's MAXB to 256 produced ARLEN=255 here
+      -- and the bench reported 0 bad beats (MEASURED, 2026-08-29, row C5 of
+      -- sim/mutate_axi_rd_port.sh), because a behavioural slave will happily
+      -- answer a burst no real slave would.
+      assert to_integer(unsigned(arlen)) <= ARLEN_MAX
+        report "ARLEN " & integer'image(to_integer(unsigned(arlen))) &
+               " exceeds " & integer'image(ARLEN_MAX) &
+               " -- the FK33's HBM slave is AXI3 and cannot answer this burst"
+        severity failure;
       arready <= '1'; tick; arready <= '0';
 
       -- return n beats, data = the beat's own word address
@@ -116,6 +205,21 @@ begin
   drv : process
     variable got, want : integer;
     variable nb : integer := 0;
+    -- The consumer's own LFSR, deliberately seeded differently from every
+    -- slave's so the consumer's stalls do not fall in step with the R-channel
+    -- stalls -- if they did, the FIFO would empty exactly as fast as it filled
+    -- and QSTALL would buy nothing.
+    variable qlf : unsigned(15 downto 0) := to_unsigned(SEED*31 + 12007, 16);
+
+    -- One clock, advancing the consumer LFSR.  A separate procedure so that
+    -- every wait in this process draws, including the ones inside the stall
+    -- loop; a draw that only advances while NOT stalling gives a stall length
+    -- that is either 0 or infinite.
+    procedure qtick is
+    begin
+      wait until rising_edge(clk);
+      qlf := qlf(14 downto 0) & (qlf(15) xor qlf(13) xor qlf(12) xor qlf(10));
+    end procedure;
 
     procedure run_job(constant bs : integer; constant nbe : integer;
                       constant consume : integer; constant nm : string) is
@@ -124,10 +228,19 @@ begin
       n_beats <= nbe;
       wait until rising_edge(clk);
       start <= '1'; wait until rising_edge(clk); start <= '0';
+      track <= '1';
       for i in 0 to consume-1 loop
+        -- WITHHOLD q_ready first, so the FIFO backs up towards its high-water
+        -- mark and the FSM's free-space throttle is the thing that decides
+        -- when the next AR goes out.  With QSTALL <= 1 this loop is skipped
+        -- entirely and the timing below is the historical one.
+        if QSTALL > 1 then
+          q_ready <= '0';
+          while (to_integer(qlf) mod QSTALL) = 0 loop qtick; end loop;
+        end if;
         q_ready <= '1';
         loop
-          wait until rising_edge(clk);
+          qtick;
           exit when q_valid = '1';
         end loop;
         got  := to_integer(unsigned(q_data));
@@ -142,6 +255,7 @@ begin
         end if;
       end loop;
       q_ready <= '0';
+      track   <= '0';
       wait until rising_edge(clk);
     end procedure;
   begin
@@ -158,7 +272,10 @@ begin
 
     nbad <= nb;
     wait until rising_edge(clk);
-    report "axi_rd_port: " & integer'image(nbad) & " bad beats" severity note;
+    report "axi_rd_port: " & integer'image(nbad) & " bad beats" &
+           " (QSTALL=" & integer'image(QSTALL) &
+           ", FIFO high-water " & integer'image(occ_hi) &
+           " of DEPTH " & integer'image(DEPTH) & ")" severity note;
     assert nbad = 0 report "axi_rd_port DELIVERED THE WRONG BEATS"
       severity failure;
     finished <= true;
