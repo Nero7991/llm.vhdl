@@ -408,6 +408,47 @@ PASS  sim:tb_attn_kv_seam    9s
 
 **The third field is elapsed SECONDS, not a check count** (`sim/regress.sh:1736`).
 
+### 4.12 The FULL unfiltered gate, both suites, on the `mine` archive
+
+23 minutes wall, alongside TRACK WRITEDEC's own full run on the same box.
+Unfiltered, last `OVERALL` line verbatim:
+
+```
+ suite sim   PASS 70   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 3
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 96   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4   SKIPPED 6
+ REGRESSION: PASS
+PASS       sim:tb_attn_kv_map                     0s
+```
+
+The four NOCHECK rows are `sim:tb_attn_beh`, `sim:tb_gdn_conv_cycles`,
+`sim:tb_swchain_beh` and `tb:tb_engine_dbg`; the six SKIPPED are the
+`library beh` post-synthesis compares that need xsim and UNISIM. None is this
+track's and none changed.
+
+**96 is not 93 + 1, and I am not raising the floor on the strength of it.**
+`BASELINE_PASS` is 93, recorded by TRACK GATEHYGIENE as a clean-archive
+ceiling; this is a clean archive plus this track's six files and it measures
+96, so two rows besides mine have been fixed or added since that measurement
+by other tracks. A floor is a MINIMUM, so a new passing row cannot breach it
+and nothing had to change -- and `sim/regress.sh` is the shared file this
+project lost six documents to an index race on today. **It should go to 94 on
+this track's account alone**, and whoever next holds that file quiescent
+should measure the true ceiling rather than take 96 from here: this run was
+against an archive, not a clone, and it overlapped another full run.
+
+### 4.13 The final state, re-verified on a clean archive of the tip
+
+`git archive 662b247`, md5 of `sim/tb_attn_kv_map.vhd` matched against
+`git show`:
+
+```
+tb_attn_kv_map                       rc=0   PASS   304 records, 3128 chunks
+tools/check_kv_map.py                       16 rows, 0 refused, 0 not run
+tools/check_kv_map.py --teeth               17 of 17 teeth rows behaved as intended
+sim/realshape_gate.sh                REALSHAPE GATE: PASS  rows 25
+```
+
 ---
 
 ## 5. Measured and REJECTED -- do not retry
@@ -495,6 +536,17 @@ PASS  sim:tb_attn_kv_seam    9s
   contention.** Ten rows of `realshape_gate` were red on the working tree with
   `rtl/attn_block.vhd:1022: constant "g" is not visible here`. Re-run on the
   archive: PASS 24 (base) and PASS 25 (mine).
+* **I EDITED FILES INSIDE A TREE THAT HAD A GATE RUNNING ON IT.** While the
+  full `regress.sh` was running against the `mine` archive I copied two later
+  versions of `sim/tb_attn_kv_map.vhd` into it for the `AXI_DW = 128`
+  experiments. `regress.sh` re-execs a private copy of ITSELF so the script
+  was safe, but each row analyses its sources when that row runs, so a row
+  after the copy would have seen a different file. It happens that
+  `sim:tb_attn_kv_map` had already produced its result, and section 4.13
+  re-runs the whole thing on a clean archive of the tip, so nothing here rests
+  on the ambiguous window -- but the mitigation was luck, not design. CKVMAP
+  recorded the same collision from the other side. **Use a second archive for
+  experiments; do not reuse the one a gate is reading.**
 * **`ghdl -r ... | head` reports the PIPELINE's rc.** Every rc here is from an
   unpiped run or `${PIPESTATUS[0]}`. Restated because it was hit once more in
   the first analysis loop.
