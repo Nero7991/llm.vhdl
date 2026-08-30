@@ -371,6 +371,29 @@ hygiene decision.
   in `78e0e4a`, and my run used the old `tools/ref9b/seamgate.sh`. Those rows
   passed at the old floors here and RY-MODEL measured them at the new ones, but no
   single run has covered both.
+
+  **CLOSED, appended 2026-08-29 after commit `1399425`.** Re-measured on a true
+  `git archive 1399425` tree, which carries RY-MODEL's raised floors:
+
+  ```
+  PASS  sim:seamgate_real  38s  SEAMGATE PASS -- real: 1 token(s), at least 64 seams per token
+  ```
+
+  and the three formerly broken rows, on the same tree, clone-faithful:
+
+  ```
+  PASS     sim:tb_matvec_core      2s      PASS     sim:tb_matvec_int4     1s
+  PASS     sim:tb_matvec_axi       1s      PASS     sim:tb_matvec_core_ragsat  3s
+  SKIPPED  sim:tb_matvec_fk33      external prerequisite not in this tree and not in git: ...
+  SKIPPED  sim:tb_matvec_fk33_desc external prerequisite not in this tree and not in git: ...
+  ```
+
+  That tree plans `RUN=97 SKIP=8`, identical to the tree the 93 was measured on,
+  so the ceiling is unchanged and `seamgate_real` holds at the raised floor.
+  `seamgate_stub` and `seamgate_seq` were NOT re-run at the new floors here; `seq`
+  is a three-token capture at roughly 110 s plus bisect and there was one full-run
+  budget for this track. They passed at the old floors and RY-MODEL measured them
+  at the new ones.
 - **`--quick` was not re-timed** after the prerequisite skip moved two rows out of
   it on a box without the model set.
 - **Whether the xsim compare flow should live in the repository at all** is not
