@@ -184,6 +184,341 @@ def _desc_stride():
 DESC_STRIDE = _desc_stride()
 
 
+# ------------------------------------------------- the shape, scraped from RTL
+#
+# WHY THIS SECTION EXISTS.  Until 2026-08-29 the two arenas that are RESERVED
+# rather than PLACED -- the GDN recurrent state and the KV cache -- were sized
+# by four literals in `tools/pack_model_fk33.py`:
+#
+#     GDN_STATE_LAYERS             = 48
+#     GDN_STATE_BYTES_PER_LAYER    = 6144 * 128 * 2
+#     KV_LAYERS                    = 16
+#     KV_BYTES_PER_LAYER_PER_TOKEN = 4 * 256 * 2 * 2
+#
+# Every one of those is a **Qwen3.8-27B** figure, and three of the four are
+# wrong for `QWEN35_9B` even after the layer counts are corrected:
+#
+#   * 48 GDN and 16 attention layers are 27B's (64 blocks / interval 4).  The
+#     9B is 32 blocks / interval 4 = 24 GDN and 8 attention.
+#   * `6144` is 27B's `d_inner` = lin_val_heads 48 x lin_head_dim 128.  The 9B
+#     is 32 x 128 = 4096.  TRACK ARENA-MANIFEST reported the layer count and
+#     explicitly did NOT check this term; it is wrong too, so the GDN arena was
+#     3x over, not 2x.
+#   * `4 * 256 * 2 * 2` assumes an **int16** KV mantissa and no record header.
+#     `rtl/attn_kv_axi.vhd` stores an int8 BFP record: 16 header bytes (NBLK
+#     int8 block exponents zero-padded to the 16-byte granule) + HEAD_DIM int8
+#     mantissas = 272 B, not 1024 B.
+#
+# So the numbers are not restated here either.  They are DERIVED from the model
+# record in `rtl/model_cfg_pkg.vhd` and from the format constants in the RTL
+# that implements each arena, scraped at import, with a hard failure if a
+# scrape stops matching.  That is the same rule `_scrape_seam_h` above already
+# follows, for the same reason: a literal that agrees with a document is two
+# documents agreeing, and this project has a recorded case (TRACK SCHED-FIX) of
+# a wrong constant surviving exactly that way.
+#
+# WHERE EACH TERM COMES FROM.  Named by SYMBOL, not by line, because these
+# files are edited daily:
+#
+#   shape              `rtl/model_cfg_pkg.vhd`, constant QWEN35_9B / QWEN38_27B
+#   attn/gdn layers    `rtl/model_cfg_pkg.vhd`, functions attn_layers/gdn_layers
+#                      (blocks/attn_interval and blocks - that)
+#   GDN state extent   `rtl/gdn_block.vhd` ports st_rhead (0..VAL_HEADS-1),
+#                      st_rcol (0..DIM-1), st_rgrp (0..DIM/RECUR_LANES-1) and
+#                      st_rdata (RECUR_LANES*16 bits): the array is
+#                      VAL_HEADS x DIM x DIM sixteen-bit words.  Corroborated by
+#                      `model_cfg_pkg.gdn_sweep_cycles`, whose body says "state
+#                      is head_dim x head_dim per VALUE head".
+#   GDN mantissa width `rtl/gdn_recur.vhd` port s_in, std_logic_vector(DIM*W-1)
+#   GDN exponent table `rtl/gdn_block.vhd` ports se_rhead/se_rcol/se_rdata:
+#                      VAL_HEADS x DIM words of `signed(se_j'range)` from
+#                      `rtl/gdn_recur.vhd`.
+#   KV record          `rtl/attn_kv_axi.vhd` constants CH_B (the 16-byte record
+#                      granule) and MANT_B = HEAD_DIM*CM_W/8, REC_B = CH_B +
+#                      MANT_B.  Mirrored in `rtl/llama_top.vhd` as REC_B_C.
+#   KV region extent   `rtl/llama_top.vhd` constant KVREG_B =
+#                      C_LAY*C_NKVH*C_MAXPOS*REC_B_C, ONE region; K and V are
+#                      SEPARATE regions with separate bases (C_K_BASE /
+#                      C_V_BASE), hence the factor 2.
+#
+# WHAT IS DELIBERATELY OVER-RESERVED, AND SAID OUT LOUD.  The GDN state
+# EXPONENT table is a combinational read in `gdn_block.vhd` and its header says
+# it is "small enough to be distributed RAM", so it may never touch HBM.  It is
+# reserved anyway (4 KiB per layer, 96 KiB total at the 9B shape) because
+# over-reservation costs context and under-reservation silently corrupts a
+# neighbouring arena, and 96 KiB of context is 5 tokens.
+
+MODEL_CFG_VHD = os.path.join(REPO, "rtl", "model_cfg_pkg.vhd")
+GDN_BLOCK_VHD = os.path.join(REPO, "rtl", "gdn_block.vhd")
+GDN_RECUR_VHD = os.path.join(REPO, "rtl", "gdn_recur.vhd")
+KV_AXI_VHD = os.path.join(REPO, "rtl", "attn_kv_axi.vhd")
+
+# The record fields of `model_cfg_t`, in the order they are declared.  Listed
+# so a field ADDED to the record and not handled here is a loud KeyError at the
+# call site rather than a silently ignored dimension.
+MODEL_CFG_FIELDS = ("blocks", "attn_interval", "hidden", "ffn",
+                    "lin_key_heads", "lin_val_heads", "lin_head_dim",
+                    "conv_kernel", "attn_q_heads", "attn_kv_heads",
+                    "attn_head_dim", "vocab", "max_context")
+
+
+def _scrape_fail(what, path, hint):
+    raise SystemExit(
+        "hbm_map: cannot scrape %s out of %s.\n  %s\n"
+        "  Fix the pattern rather than restating the number here: a literal is "
+        "how the GDN and KV arenas came to be sized for a different model."
+        % (what, path, hint))
+
+
+def scrape_model_cfg(name="QWEN35_9B", path=MODEL_CFG_VHD):
+    """The model record out of `rtl/model_cfg_pkg.vhd`, as a dict.
+
+    Parses the named `constant <NAME> : model_cfg_t := ( ... );` aggregate in
+    its NAMED-ASSOCIATION form (`blocks => 32, ...`), which is the form both
+    records in that file are written in.  Positional aggregates are NOT
+    accepted: reading one positionally would reintroduce exactly the
+    16-versus-24 head confusion the file's own header was written to end."""
+    try:
+        txt = open(path).read()
+    except OSError as e:
+        _scrape_fail("the model shape", path, str(e))
+    m = re.search(r"constant\s+%s\s*:\s*model_cfg_t\s*:=\s*\((.*?)\)\s*;"
+                  % re.escape(name), txt, re.S)
+    if not m:
+        _scrape_fail("constant %s : model_cfg_t" % name, path,
+                     "no such aggregate; the known ones are "
+                     + ", ".join(re.findall(
+                         r"constant\s+(\w+)\s*:\s*model_cfg_t", txt)))
+    body = m.group(1)
+    out = {}
+    for k, v in re.findall(r"(\w+)\s*=>\s*(\d+)", body):
+        out[k] = int(v)
+    missing = [f for f in MODEL_CFG_FIELDS if f not in out]
+    if missing:
+        _scrape_fail("fields %s of %s" % (", ".join(missing), name), path,
+                     "the aggregate parsed as %r" % out)
+    return out
+
+
+def scrape_build_model(path=MODEL_CFG_VHD):
+    """Which record `constant MODEL` selects.  The BUILD target, not a guess."""
+    try:
+        txt = open(path).read()
+    except OSError as e:
+        _scrape_fail("constant MODEL", path, str(e))
+    m = re.search(r"constant\s+MODEL\s*:\s*model_cfg_t\s*:=\s*(\w+)\s*;", txt)
+    if not m:
+        _scrape_fail("constant MODEL : model_cfg_t := <name>", path,
+                     "the build target is chosen there and nowhere else")
+    return m.group(1)
+
+
+def _scrape_int(path, pattern, what):
+    try:
+        txt = open(path).read()
+    except OSError as e:
+        _scrape_fail(what, path, str(e))
+    m = re.search(pattern, txt, re.M)
+    if not m:
+        _scrape_fail(what, path, "pattern %r did not match" % pattern)
+    return int(m.group(1))
+
+
+def scrape_kv_record_terms():
+    """(header granule bytes, cache mantissa bits) for one KV head-vector.
+
+    `CH_B` is `attn_kv_axi`'s record granule -- the NBLK int8 block exponents
+    zero-padded up to it -- and `CM_W` is the cache mantissa width, which that
+    unit asserts must be 8 and `llama_top` re-asserts naming the caller."""
+    ch_b = _scrape_int(KV_AXI_VHD,
+                       r"^\s*constant\s+CH_B\s*:\s*integer\s*:=\s*(\d+)\s*;",
+                       "constant CH_B (the KV record granule)")
+    cm_w = _scrape_int(KV_AXI_VHD,
+                       r"^\s*CM_W\s*:\s*positive\s*:=\s*(\d+)\s*;",
+                       "generic CM_W (the KV cache mantissa width)")
+    return ch_b, cm_w
+
+
+def scrape_gdn_state_terms():
+    """(state mantissa bits, state exponent bits) for the GDN recurrent state.
+
+    Both come from `gdn_recur`'s PORTS, which is where the widths are load
+    bearing: `s_in` carries DIM mantissas of the first width and `se_j` is the
+    per-column exponent of the second."""
+    mant = _scrape_int(
+        GDN_RECUR_VHD,
+        r"^\s*s_in\s*:\s*in\s+std_logic_vector\(DIM\*(\d+)\s*-\s*1\s+downto\s+0\)",
+        "port s_in (the GDN state mantissa width)")
+    hi = _scrape_int(
+        GDN_RECUR_VHD,
+        r"^\s*se_j\s*:\s*in\s+signed\((\d+)\s+downto\s+0\)",
+        "port se_j (the GDN state column exponent width)")
+    return mant, hi + 1
+
+
+def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
+    """THE ONLY PLACE THE TWO RESERVED ARENAS ARE SIZED.
+
+    `cfg` is a `scrape_model_cfg()` dict; None means the build target that
+    `constant MODEL` selects.  Returns a dict of every intermediate as well as
+    the two totals, so a caller can print the arithmetic rather than assert the
+    answer.
+
+    Every figure is DERIVED.  Nothing below is a literal except the two factors
+    that are structural rather than dimensional: `2` for K and V being separate
+    regions, and `8` for bits per byte."""
+    if cfg is None:
+        cfg = scrape_model_cfg(scrape_build_model())
+    ch_b, cm_w = scrape_kv_record_terms()
+    gdn_mant_w, gdn_exp_w = scrape_gdn_state_terms()
+
+    attn_layers = cfg["blocks"] // cfg["attn_interval"]
+    gdn_layers = cfg["blocks"] - attn_layers
+    if cfg["lin_val_heads"] % ncards or cfg["attn_kv_heads"] % ncards:
+        raise SystemExit(
+            "hbm_map: the head counts do not divide across %d cards "
+            "(lin_val_heads %d, attn_kv_heads %d).  model_cfg_pkg's "
+            "val_heads_per_card asserts the same thing."
+            % (ncards, cfg["lin_val_heads"], cfg["attn_kv_heads"]))
+    val_heads = cfg["lin_val_heads"] // ncards
+    kv_heads = cfg["attn_kv_heads"] // ncards
+    dim = cfg["lin_head_dim"]
+
+    # ---- GDN.  VAL_HEADS x DIM x DIM mantissas, plus VAL_HEADS x DIM column
+    # exponents.  See the port list of rtl/gdn_block.vhd.
+    gdn_mant_b = val_heads * dim * dim * (gdn_mant_w // 8)
+    gdn_exp_b = val_heads * dim * (gdn_exp_w // 8)
+    gdn_per_layer = gdn_mant_b + (gdn_exp_b if include_gdn_exp else 0)
+
+    # ---- KV.  One record per (layer, kv_head, position) per STREAM, and K and
+    # V are separate regions.
+    kv_rec_b = ch_b + cfg["attn_head_dim"] * cm_w // 8
+    kv_per_layer_per_token = 2 * kv_heads * kv_rec_b
+
+    return dict(
+        model_blocks=cfg["blocks"], attn_interval=cfg["attn_interval"],
+        ncards=ncards,
+        attn_layers=attn_layers, gdn_layers=gdn_layers,
+        val_heads_per_card=val_heads, kv_heads_per_card=kv_heads,
+        lin_head_dim=dim, attn_head_dim=cfg["attn_head_dim"],
+        max_context=cfg["max_context"],
+        gdn_mant_bits=gdn_mant_w, gdn_exp_bits=gdn_exp_w,
+        gdn_state_mant_bytes_per_layer=gdn_mant_b,
+        gdn_state_exp_bytes_per_layer=gdn_exp_b,
+        gdn_state_bytes_per_layer=gdn_per_layer,
+        gdn_state_bytes=gdn_layers * gdn_per_layer,
+        kv_record_hdr_bytes=ch_b, kv_mantissa_bits=cm_w,
+        kv_record_bytes=kv_rec_b,
+        kv_bytes_per_layer_per_token=kv_per_layer_per_token,
+        kv_bytes_per_token=attn_layers * kv_per_layer_per_token,
+    )
+
+
+def arena_arithmetic(sz):
+    """The derivation, as text, so a reader never has to trust the total."""
+    return [
+        "shape          %d blocks at attn_interval %d -> %d attention, %d GDN"
+        % (sz["model_blocks"], sz["attn_interval"], sz["attn_layers"],
+           sz["gdn_layers"]),
+        "GDN per layer  %d val heads x %d x %d x %d/8 B = %d B mantissas"
+        % (sz["val_heads_per_card"], sz["lin_head_dim"], sz["lin_head_dim"],
+           sz["gdn_mant_bits"], sz["gdn_state_mant_bytes_per_layer"]),
+        "               + %d x %d x %d/8 B = %d B column exponents"
+        % (sz["val_heads_per_card"], sz["lin_head_dim"], sz["gdn_exp_bits"],
+           sz["gdn_state_exp_bytes_per_layer"]),
+        "GDN total      %d layers x %d B = %d B"
+        % (sz["gdn_layers"], sz["gdn_state_bytes_per_layer"],
+           sz["gdn_state_bytes"]),
+        "KV record      %d B header + %d x %d/8 B mantissas = %d B"
+        % (sz["kv_record_hdr_bytes"], sz["attn_head_dim"],
+           sz["kv_mantissa_bits"], sz["kv_record_bytes"]),
+        "KV per layer   2 streams (K,V) x %d kv heads x %d B = %d B/token"
+        % (sz["kv_heads_per_card"], sz["kv_record_bytes"],
+           sz["kv_bytes_per_layer_per_token"]),
+        "KV total       %d attention layers x %d B = %d B/token"
+        % (sz["attn_layers"], sz["kv_bytes_per_layer_per_token"],
+           sz["kv_bytes_per_token"]),
+    ]
+
+
+def shape_of_manifest(mani):
+    """Which scraped model record this manifest's `output.weight` matches.
+
+    Returns (name, cfg) or (None, None).  Matching on the lm_head's (K, M) is
+    the only shape evidence a manifest carries that is independent of anything
+    this file computes, which is why the check below is gated on it rather than
+    on a name written into the manifest."""
+    lm = next((e for e in mani.get("files", [])
+               if e.get("tensor") == "output.weight"), None)
+    if lm is None:
+        return None, None
+    try:
+        txt = open(MODEL_CFG_VHD).read()
+    except OSError:
+        return None, None
+    for nm in re.findall(r"constant\s+(\w+)\s*:\s*model_cfg_t\s*:=\s*\(", txt):
+        cfg = scrape_model_cfg(nm)
+        if (int(lm["K"]), int(lm["M"])) == (cfg["hidden"], cfg["vocab"]):
+            return nm, cfg
+    return None, None
+
+
+def check_arenas(mani, ncards=1):
+    """FAIL for every arena reserved SMALLER than the shape needs.
+
+    UNDER-reservation is silent corruption: a 25th GDN slot in a 24-slot arena
+    lands on the KV cache, and an attention layer past the end of a KV record
+    lands on the next token's.  OVER-reservation only costs context, so it is a
+    NOTE.  Returns (fails, notes)."""
+    fails, notes = [], []
+    hbm = mani.get("hbm") or {}
+    name, cfg = shape_of_manifest(mani)
+    if cfg is None:
+        notes.append(
+            "the arenas were NOT checked against the RTL shape: this "
+            "manifest's output.weight matches no model_cfg_t record in "
+            "rtl/model_cfg_pkg.vhd (or it carries no output.weight)")
+        return fails, notes
+    sz = arena_sizes(cfg, ncards)
+    for key, want, what in (
+            ("gdn_state_bytes", sz["gdn_state_bytes"],
+             "the GDN recurrent state arena"),
+            ("kv_bytes_per_token", sz["kv_bytes_per_token"],
+             "the KV cache reservation per token")):
+        got = hbm.get(key)
+        if got is None:
+            notes.append("hbm.%s is absent, so %s was not checked"
+                         % (key, what))
+            continue
+        got = int(got)
+        if got < want:
+            fails.append(
+                "%s: hbm.%s is %d B and the %s shape needs %d B.  "
+                "UNDER-reservation is not a capacity cost, it is a "
+                "neighbouring arena being overwritten -- a GDN slot past the "
+                "end lands on the KV cache, and an attention layer past the "
+                "end of a token's record lands on the next token's.  "
+                "Derivation: %s"
+                % (what, key, got, name, want, "; ".join(arena_arithmetic(sz))))
+        elif got > want:
+            # The excess is stated in KV TOKENS, because that is the unit it is
+            # actually paid in: an over-reserved GDN arena pushes kv_base up
+            # and an over-reserved per-token figure divides the arena by too
+            # much.  Both come out of the same context budget.
+            if key == "gdn_state_bytes":
+                cost = "%d tokens of context" % (
+                    (got - want) // sz["kv_bytes_per_token"])
+            else:
+                cost = "a context %.3fx smaller than the shape allows" % (
+                    got / float(want))
+            notes.append(
+                "%s reserves %d B where the %s shape needs %d B (%.3fx); the "
+                "excess costs %s.  Over-reservation is SAFE, so this is a "
+                "note and not a fault."
+                % (what, got, name, want, got / float(want), cost))
+    return fails, notes
+
+
 # ------------------------------------------------------------------ helpers
 
 def h(n):
@@ -708,8 +1043,19 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="manifest",
             % (hbm["kv_layers"], hbm.get("kv_bytes_per_layer_per_token", 0),
                hbm.get("kv_layers_used", -1)))
 
+    # THE TWO RESERVED ARENAS, AGAINST THE RTL SHAPE.  This is the ONLY check
+    # in this file that is not about a pair of addresses: `gdn_state_bytes` and
+    # `kv_bytes_per_token` are SIZES, and a size that is too small does not
+    # overlap anything in this map -- the arena it corrupts is the one it grows
+    # into, which the map models as a single opaque extent.  So no amount of
+    # overlap checking can see it, and it is checked here instead, against
+    # `rtl/model_cfg_pkg.vhd` rather than against a constant.
+    arena_fails, arena_notes = check_arenas(mani)
+    notes.extend(arena_notes)
+
     m = HbmMap(regions, hbm, notes, top)
-    m.extra_fails = [s for s in (block_fail, chunk_fail, arena_fail) if s]
+    m.extra_fails = [s for s in (block_fail, chunk_fail, arena_fail) if s] \
+        + arena_fails
     # THE DECLARED HOST BLOCKS ARE A FACT ABOUT `host_max_chunk`, so they are
     # only comparable when this map was built at that cap.  Comparing them at
     # any other cap would report a disagreement that is simply the cap doing
@@ -780,6 +1126,116 @@ def derive_region_block(mani, desc_jobs, max_chunk=512, n_embd=None,
             "results has %d fault(s):\n" % len(fails)
             + "\n".join("  " + s for s in fails))
     return blk
+
+
+def relayout_arenas(mani, ncards=1):
+    """Re-place the GDN state and the KV arena at the size the SHAPE needs.
+
+    THE MIGRATION FOR A SET PACKED AGAINST THE 27B LITERALS.  A repack is the
+    honest way to fix a manifest, and it is not available: a real pack needs
+    the 18 GB GGUF and hours, on a root filesystem at 97 percent.  What this
+    does instead is recompute the ONLY fields that depend on the two arena
+    sizes and leave every placed tensor exactly where it is -- which is sound
+    because the weight image ends at `weights_end` and both arenas begin after
+    it.  Nothing that is already resident in HBM moves.
+
+    The placement rule is `pack_model_fk33.place()`, imported rather than
+    reimplemented: the stack-boundary rule that says an object may not straddle
+    the 4 GiB line is that function's, and a second copy of it here would be a
+    fourth model of this address space.  The import is deferred because
+    `pack_model_fk33` imports THIS module at load time.
+
+    Returns (new_hbm_dict, before_dict) without writing anything."""
+    import pack_model_fk33 as PK
+
+    hbm = dict(mani["hbm"])
+    before = {k: hbm.get(k) for k in
+              ("gdn_state_base", "gdn_state_bytes", "gdn_state_stack",
+               "kv_base", "kv_bytes_per_token", "kv_extents",
+               "free_after_gdn", "max_context_tokens",
+               "gdn_state_layers", "gdn_state_bytes_per_layer",
+               "kv_layers", "kv_bytes_per_layer_per_token")}
+
+    name, cfg = shape_of_manifest(mani)
+    if cfg is None:
+        raise SystemExit(
+            "hbm_map: this manifest's output.weight matches no model_cfg_t "
+            "record in rtl/model_cfg_pkg.vhd, so there is no shape to size the "
+            "arenas from.  Refusing rather than guessing.")
+    sz = arena_sizes(cfg, ncards)
+
+    top = int(hbm.get("size", HBM_TOP))
+    stack = int(hbm.get("stack_bytes", 4 * 1024 ** 3))
+    weights_end = int(hbm["weights_end"])
+    gdn_bytes = sz["gdn_state_bytes"]
+    gdn_base, hole = PK.place(weights_end, gdn_bytes)
+    kv_base = align_up(gdn_base + gdn_bytes, int(hbm.get("align", 4096)))
+    per = sz["kv_bytes_per_token"]
+
+    # The KV region is split at every stack boundary and whole records counted
+    # inside each extent, which is `pack_model_fk33`'s rule and the reason a
+    # record cannot straddle the line by an alignment coincidence.
+    extents, q = [], kv_base
+    while q < top:
+        e = min((q // stack + 1) * stack, top)
+        extents.append(dict(base=q, nbytes=e - q, stack=stack_of(q),
+                            tokens=(e - q) // per))
+        q = e
+
+    hbm.update(
+        gdn_state_base=gdn_base, gdn_state_bytes=gdn_bytes,
+        gdn_state_stack=stack_of(gdn_base),
+        gdn_state_layers=sz["gdn_layers"],
+        gdn_state_bytes_per_layer=sz["gdn_state_bytes_per_layer"],
+        gdn_state_mant_bytes_per_layer=sz["gdn_state_mant_bytes_per_layer"],
+        gdn_state_exp_bytes_per_layer=sz["gdn_state_exp_bytes_per_layer"],
+        kv_base=kv_base, kv_bytes_per_token=per,
+        kv_layers=sz["attn_layers"],
+        kv_bytes_per_layer_per_token=sz["kv_bytes_per_layer_per_token"],
+        kv_record_bytes=sz["kv_record_bytes"],
+        kv_extents=extents,
+        # `_used` is what the PROGRAM will place inside the extent.  With the
+        # reservation now derived from the same shape the program is emitted
+        # for, reserved and used are equal BY CONSTRUCTION -- which is the
+        # point of the change and is why they are written rather than left at
+        # the -1 that means "nobody said".
+        gdn_state_layers_used=sz["gdn_layers"],
+        kv_layers_used=sz["attn_layers"],
+        free_after_gdn=top - kv_base,
+        max_context_tokens=sum(x["tokens"] for x in extents),
+        arena_sizing="derived from rtl/model_cfg_pkg.vhd %s by "
+                     "tools/hbm_map.py arena_sizes()" % name)
+    if hole:
+        # The packer records stack holes; a re-layout that opens a new one must
+        # say so rather than lose the bytes silently.
+        hbm.setdefault("stack_holes", []).append(
+            dict(offset=weights_end, nbytes=hole,
+                 why="stack boundary before the re-laid-out GDN state region"))
+        hbm["stack_hole_bytes"] = sum(h["nbytes"]
+                                      for h in hbm["stack_holes"])
+    return hbm, before
+
+
+def write_arenas(path, ncards=1):
+    """Install `relayout_arenas()` into a manifest, atomically, keeping a .bak.
+
+    A DISTINCT backup name from `write_region_block()`'s.  That one creates
+    `manifest.json.bak` only if absent, so reusing it here would either clobber
+    the pre-region-block snapshot or silently keep it and record nothing about
+    this change."""
+    with open(path) as f:
+        mani = json.load(f)
+    new_hbm, before = relayout_arenas(mani, ncards)
+    mani["hbm"] = new_hbm
+    bak = path + ".bak-arenas"
+    if not os.path.exists(bak):
+        with open(bak, "w") as f:
+            json.dump(json.load(open(path)), f, indent=1)
+    tmp = path + ".tmp-arenas"
+    with open(tmp, "w") as f:
+        json.dump(mani, f, indent=1)
+    os.replace(tmp, path)
+    return before, new_hbm, bak
 
 
 def write_region_block(path, blk):
@@ -1154,6 +1610,197 @@ def _teeth_cases(mani, max_chunk=None, desc_jobs=311):
            lambda: base_map(desc_jobs=1))
 
 
+# ----------------------------------------------------- teeth, the two arenas
+#
+# A SEPARATE TABLE FROM `_teeth_cases`, on purpose.  Those rows mutate
+# ADDRESSES and are checked by the overlap machinery.  These mutate SIZES, and
+# a size that is too small overlaps nothing -- the arena it corrupts is modelled
+# as one opaque extent -- so they are checked by `check_arenas()` against
+# `rtl/model_cfg_pkg.vhd`.  Two different oracles, so two tables.
+#
+# Each row states, BEFORE it runs, whether the map must go red.  Rows that must
+# stay GREEN are the resolution floor and are the most useful line here: they
+# say exactly what this check cannot see.
+
+def _arena_teeth_cases(mani):
+    sz = arena_sizes()
+
+    def mutate(fn, **kw):
+        m2 = json.loads(json.dumps(mani))
+        m2.setdefault("hbm", {})
+        fn(m2)
+        return check_arenas(m2)[0]
+
+    # ---- the two under-reservations this whole track exists to make visible
+    yield ("kv_per_token_one_byte_under_the_shape", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               kv_bytes_per_token=sz["kv_bytes_per_token"] - 1)))
+    yield ("kv_per_token_one_attention_layer_short", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               kv_bytes_per_token=(sz["attn_layers"] - 1)
+               * sz["kv_bytes_per_layer_per_token"])))
+    yield ("kv_per_token_sized_for_int8_but_without_the_record_header", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               kv_bytes_per_token=sz["attn_layers"] * 2
+               * sz["kv_heads_per_card"] * sz["attn_head_dim"])))
+    yield ("gdn_arena_one_byte_under_the_shape", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_state_bytes=sz["gdn_state_bytes"] - 1)))
+    yield ("gdn_arena_one_layer_short", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_state_bytes=(sz["gdn_layers"] - 1)
+               * sz["gdn_state_bytes_per_layer"])))
+    # The mantissas alone, i.e. the exponent table assumed to stay on chip.
+    # THIS IS DELIBERATELY RED.  The exponent table probably never reaches HBM
+    # (gdn_block.vhd calls it distributed RAM), so this reservation is very
+    # likely fine in practice -- and the check refuses it anyway, because "very
+    # likely fine" is not a property a silent-corruption boundary should have.
+    # 96 KiB is 5 tokens; buying certainty for 5 tokens is not a trade.
+    yield ("gdn_arena_mantissas_only_no_exponent_table", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_state_bytes=sz["gdn_layers"]
+               * sz["gdn_state_mant_bytes_per_layer"])))
+
+    # ---- exactly right, and over.  Both must stay GREEN.
+    yield ("both_arenas_exactly_the_derived_size", False,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_state_bytes=sz["gdn_state_bytes"],
+               kv_bytes_per_token=sz["kv_bytes_per_token"])))
+    # THE SHIPPING VALUES AS OF THIS MORNING.  Over-reserved 2.99x and 3.76x
+    # and still GREEN, because over-reservation costs context and corrupts
+    # nothing.  Named so that green is read as the decision it is.
+    yield ("the_27b_literals_this_track_replaced_are_over_not_under", False,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_state_bytes=48 * 6144 * 128 * 2,
+               kv_bytes_per_token=16 * 4 * 256 * 2 * 2)))
+
+    # ---- the resolution floor: what this check CANNOT see.
+    yield ("arena_keys_absent_entirely", False,
+           lambda: mutate(lambda m: [m["hbm"].pop(k, None) for k in
+                                     ("gdn_state_bytes",
+                                      "kv_bytes_per_token")]))
+
+    def _unknown_shape(m):
+        for e in m["files"]:
+            if e.get("tensor") == "output.weight":
+                e["K"] = 1234
+    yield ("shape_matches_no_model_cfg_record", False,
+           lambda: mutate(_unknown_shape))
+
+
+def _arena_shape_teeth():
+    """Does the DERIVED figure move when the shape moves, and the right way?
+
+    This is item 4 of the brief.  A constant that silently encodes 48 GDN
+    layers is exactly how the defect survived, so the replacement has to be
+    shown tracking the shape -- and the sharpest available demonstration is
+    that `arena_sizes(QWEN38_27B)` REPRODUCES the very literals that were
+    removed.  That is not a coincidence to be noted; it is the proof that the
+    four literals were a different model's figures rather than merely stale."""
+    rows = []
+
+    def row(name, got, want):
+        rows.append((name, got, want, got == want))
+
+    nine = arena_sizes(scrape_model_cfg("QWEN35_9B"))
+    tw = arena_sizes(scrape_model_cfg("QWEN38_27B"))
+
+    row("27B gdn layers reproduce the removed GDN_STATE_LAYERS",
+        tw["gdn_layers"], 48)
+    row("27B gdn mantissas reproduce the removed 6144*128*2",
+        tw["gdn_state_mant_bytes_per_layer"], 6144 * 128 * 2)
+    row("27B attention layers reproduce the removed KV_LAYERS",
+        tw["attn_layers"], 16)
+    row("9B gdn layers are 24, not 48", nine["gdn_layers"], 24)
+    row("9B attention layers are 8, not 16", nine["attn_layers"], 8)
+    row("9B gdn mantissas are 4096*128*2, not 6144*128*2",
+        nine["gdn_state_mant_bytes_per_layer"], 4096 * 128 * 2)
+    # The KV RECORD is shape-independent between these two models -- both have
+    # attn_kv_heads 4 and attn_head_dim 256 -- so the per-layer KV term is the
+    # SAME 2176 B at both scales and only the layer count moves.  Stated
+    # because a row that moves for two reasons at once measures neither.
+    row("the KV record is 272 B at BOTH scales (head dim 256, int8)",
+        (nine["kv_record_bytes"], tw["kv_record_bytes"]), (272, 272))
+    row("only the layer count moves the KV per-token figure",
+        (nine["kv_bytes_per_token"], tw["kv_bytes_per_token"]),
+        (8 * 2176, 16 * 2176))
+    # Tensor parallelism divides the value heads and the KV heads, so both
+    # arenas must halve at NCARDS 2.  model_cfg_pkg's val_heads_per_card
+    # asserts the same divisibility.
+    row("NCARDS=2 halves the GDN arena",
+        arena_sizes(scrape_model_cfg("QWEN38_27B"), 2)["gdn_state_bytes"] * 2,
+        tw["gdn_state_bytes"])
+    row("NCARDS=2 halves the KV per-token figure",
+        arena_sizes(scrape_model_cfg("QWEN38_27B"), 2)["kv_bytes_per_token"]
+        * 2, tw["kv_bytes_per_token"])
+    return rows
+
+
+def _arena_scrape_teeth():
+    """A scrape that stops matching must HARD FAIL, never default.
+
+    `_scrape_seam_h` set that precedent above and the reason is the same: a
+    default is the defect with a different address."""
+    rows = []
+    with tempfile.TemporaryDirectory(prefix="hbm_map_scrape_") as td:
+        src = open(MODEL_CFG_VHD).read()
+        for name, mangled in (
+                ("model record renamed away",
+                 src.replace("constant QWEN35_9B", "constant QWEN35_9B_OLD")),
+                ("a field dropped from the record",
+                 src.replace("lin_val_heads => 32,", "")),
+                ("the aggregate turned positional",
+                 src.replace("blocks        => 32,   attn_interval => 4,",
+                             "32, 4,"))):
+            path = os.path.join(td, "mangled.vhd")
+            with open(path, "w") as f:
+                f.write(mangled)
+            try:
+                scrape_model_cfg("QWEN35_9B", path)
+                rows.append((name, False))
+            except SystemExit:
+                rows.append((name, True))
+    return rows
+
+
+def run_arena_teeth(mani, verbose=True):
+    bad = 0
+    rows = []
+    for name, want_red, build_ in _arena_teeth_cases(mani):
+        try:
+            fails = build_()
+        except SystemExit as e:
+            fails = ["SystemExit: %s" % e]
+        red = bool(fails)
+        ok = (red == want_red)
+        bad += (not ok)
+        rows.append((name, want_red, red, len(fails), ok,
+                     fails[0] if fails else ""))
+    if verbose:
+        print("ARENA SIZE TEETH  (oracle: rtl/model_cfg_pkg.vhd, not a constant)")
+        print(f"{'mutation':56s} {'want':>5s} {'got':>5s} {'n':>3s}  verdict")
+        for name, want_red, red, n, ok, first in rows:
+            print(f"{name:56s} {'RED' if want_red else 'green':>5s} "
+                  f"{'RED' if red else 'green':>5s} {n:>3d}  "
+                  f"{'ok' if ok else 'DID NOT BITE'}")
+        print()
+        print("DOES THE DERIVED FIGURE TRACK THE SHAPE")
+    for name, got, want, ok in _arena_shape_teeth():
+        bad += (not ok)
+        if verbose:
+            print(f"  {'ok  ' if ok else 'FAIL'}  {name:58s} {got!r}"
+                  + ("" if ok else f"  wanted {want!r}"))
+    if verbose:
+        print()
+        print("DOES A BROKEN SCRAPE HARD-FAIL")
+    for name, ok in _arena_scrape_teeth():
+        bad += (not ok)
+        if verbose:
+            print(f"  {'ok  ' if ok else 'FAIL'}  {name:58s}"
+                  f"  {'refused' if ok else 'RETURNED A VALUE ANYWAY'}")
+    return bad, rows
+
+
 def run_teeth(mani, max_chunk=512, desc_jobs=311, verbose=True):
     rows, bad = [], 0
     for name, want_red, build_ in _teeth_cases(mani, max_chunk, desc_jobs):
@@ -1233,6 +1880,20 @@ def main(argv=None):
                          "names, because they are the resolution floor")
     ap.add_argument("--emit-manifest-hbm", action="store_true",
                     help="print the region block this map implies")
+    ap.add_argument("--arena", action="store_true",
+                    help="print the GDN and KV arena sizing DERIVED from "
+                         "rtl/model_cfg_pkg.vhd, term by term, and what this "
+                         "manifest reserves against it")
+    ap.add_argument("--write-manifest-arenas", action="store_true",
+                    help="RE-LAY-OUT the GDN state and KV arenas at the size "
+                         "the RTL shape needs and write them into this "
+                         "manifest, atomically, keeping a .bak-arenas.  No "
+                         "placed tensor moves; both arenas begin after "
+                         "weights_end")
+    ap.add_argument("--ncards", type=int, default=1,
+                    help="tensor-parallel group size, which divides the value "
+                         "heads and the KV heads.  1 for the 9B bring-up, "
+                         "matching rtl/model_cfg_pkg.vhd's NCARDS")
     ap.add_argument("--write-manifest-hbm", action="store_true",
                     help="DERIVE the region block with the allocation rule and "
                          "WRITE it into this manifest, atomically, keeping a "
@@ -1243,6 +1904,49 @@ def main(argv=None):
 
     with open(a.manifest) as f:
         mani = json.load(f)
+
+    if a.arena:
+        name, cfg = shape_of_manifest(mani)
+        print("RTL shape      rtl/model_cfg_pkg.vhd constant MODEL = %s"
+              % scrape_build_model())
+        print("this manifest  output.weight matches %s"
+              % (name or "NO model_cfg_t record -- not checked"))
+        sz = arena_sizes(cfg, a.ncards) if cfg else arena_sizes(
+            ncards=a.ncards)
+        print()
+        for line in arena_arithmetic(sz):
+            print("  " + line)
+        print()
+        hbm = mani.get("hbm", {})
+        for k in ("gdn_state_bytes", "kv_bytes_per_token"):
+            got = hbm.get(k)
+            want = sz[k]
+            print("  %-20s manifest %-12s derived %-12s %s"
+                  % (k, got if got is not None else "absent", want,
+                     "" if got is None else
+                     ("EQUAL" if int(got) == want else
+                      "%.3fx %s" % (int(got) / float(want),
+                                    "OVER" if int(got) > want else "UNDER"))))
+        fails, notes = check_arenas(mani, a.ncards)
+        print()
+        for s_ in notes:
+            print("note: " + s_)
+        for s_ in fails:
+            print("FAIL  " + s_)
+        return 1 if fails else 0
+
+    if a.write_manifest_arenas:
+        before, new_hbm, bak = write_arenas(a.manifest, a.ncards)
+        print("re-laid-out the GDN and KV arenas in %s" % a.manifest)
+        for k in sorted(before):
+            b, n = before[k], new_hbm.get(k)
+            if k == "kv_extents":
+                b = "%d extent(s)" % len(b or [])
+                n = "%d extent(s)" % len(n or [])
+            if b != n:
+                print("  %-30s %s -> %s" % (k, b, n))
+        print("  backup: %s" % bak)
+        return 0
 
     if a.write_manifest_hbm:
         blk = derive_region_block(mani, a.desc_jobs,
@@ -1258,6 +1962,8 @@ def main(argv=None):
 
     if a.self_test:
         bad, _ = run_teeth(mani, a.max_chunk, a.desc_jobs)
+        print()
+        bad += run_arena_teeth(mani)[0]
         print()
         if bad:
             print(f"{bad} mutation(s) did not behave as predicted")

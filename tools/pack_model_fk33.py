@@ -130,30 +130,38 @@ from gguf.gguf_reader import GGUFReader                       # noqa: E402
 ALIGN = 4096
 HBM_SIZE = 8 * 1024 ** 3
 STACK_BYTES = 4 * 1024 ** 3                # one HBM stack; the boundary is here
-# THE TWO ARENAS NOTHING ALLOCATES WITHIN.  Both are reserved as a single
-# opaque extent and the manifest has never said what is inside them, so no
-# check can see a per-layer slot land on its neighbour.  The FACTORS are
-# written into the manifest (`gdn_state_layers` / `gdn_state_bytes_per_layer`,
-# `kv_layers` / `kv_bytes_per_layer_per_token`) so the sub-structure is at
-# least DECLARED, and `check_arena_substructure()` below refuses a reservation
-# that is too small for the program.
+# THE TWO ARENAS NOTHING ALLOCATES WITHIN, SIZED FROM THE SHAPE.
 #
-# MEASURED 2026-08-29 (TRACK ARENA-MANIFEST): these layer counts are NOT this
-# model's.  `gen_layer_program.QWEN35_9B` is 32 blocks at attn_interval 4 =
-# 8 attention blocks and 24 GDN blocks.  48 and 16 are twice that, so both
-# arenas are reserved at 2x what the 9B shape uses -- 72 MiB of GDN state
-# where 36 MiB is used, and 65,536 B/token of KV where 32,768 B is used, which
-# is HALF the context this card could hold.  Over-reservation is SAFE (it
-# wastes capacity, it does not overwrite anything) so nothing here refuses it,
-# and the numbers are left alone: the per-layer terms 6144*128 and 4*256 are
-# from the SS audit and have NOT been checked against the RTL by this track,
-# so halving them is a separate job with the RTL as its oracle.
-GDN_STATE_LAYERS = 48
-GDN_STATE_BYTES_PER_LAYER = 6144 * 128 * 2
-GDN_STATE_BYTES = GDN_STATE_LAYERS * GDN_STATE_BYTES_PER_LAYER
-KV_LAYERS = 16                             # attention layers, K+V, int16
-KV_BYTES_PER_LAYER_PER_TOKEN = 4 * 256 * 2 * 2
-KV_BYTES_PER_TOKEN = KV_LAYERS * KV_BYTES_PER_LAYER_PER_TOKEN
+# Both are reserved as a single opaque extent and the manifest has never said
+# what is inside them, so no check can see a per-layer slot land on its
+# neighbour.  The FACTORS are written into the manifest (`gdn_state_layers` /
+# `gdn_state_bytes_per_layer`, `kv_layers` / `kv_bytes_per_layer_per_token`) so
+# the sub-structure is at least DECLARED, and `check_arena_substructure()`
+# below refuses a reservation that is too small for the program.
+#
+# THESE USED TO BE FOUR LITERALS AND EVERY ONE OF THEM WAS A 27B FIGURE
+# (TRACK KVSIZE, 2026-08-29):
+#
+#     GDN_STATE_LAYERS             = 48    27B's 64 blocks / interval 4
+#     GDN_STATE_BYTES_PER_LAYER    = 6144 * 128 * 2    6144 = 27B's d_inner
+#     KV_LAYERS                    = 16    27B's attention layer count
+#     KV_BYTES_PER_LAYER_PER_TOKEN = 4 * 256 * 2 * 2   int16, and no record
+#                                          header: the RTL stores an int8 BFP
+#                                          record of 16 + HEAD_DIM bytes
+#
+# TRACK ARENA-MANIFEST caught the two layer counts and deliberately left the
+# per-layer terms, saying they needed the RTL as their oracle.  They did, and
+# both were wrong as well.  Nothing is restated here now: `hbm_map.arena_sizes`
+# DERIVES every term from `rtl/model_cfg_pkg.vhd` and from the format constants
+# in the RTL that implements each arena, and hard-fails if a scrape stops
+# matching.  A figure derived from the shape cannot be a different model's.
+_ARENA = HM.arena_sizes()
+GDN_STATE_LAYERS = _ARENA["gdn_layers"]
+GDN_STATE_BYTES_PER_LAYER = _ARENA["gdn_state_bytes_per_layer"]
+GDN_STATE_BYTES = _ARENA["gdn_state_bytes"]
+KV_LAYERS = _ARENA["attn_layers"]
+KV_BYTES_PER_LAYER_PER_TOKEN = _ARENA["kv_bytes_per_layer_per_token"]
+KV_BYTES_PER_TOKEN = _ARENA["kv_bytes_per_token"]
 
 
 def check_arena_substructure(files):
@@ -164,43 +172,53 @@ def check_arena_substructure(files):
     REPORTED and not refused -- a check that fails on a safe configuration
     trains people to ignore it.
 
-    Returns the four factor keys for the manifest."""
+    SINCE 2026-08-29 THE SIZES ARE DERIVED FROM `rtl/model_cfg_pkg.vhd`, so the
+    interesting comparison here changed.  It is no longer "does a literal match
+    the program"; it is **does `gen_layer_program.QWEN35_9B` -- the Python
+    mirror of the shape, which is what actually emits the descriptors -- agree
+    with the RTL record the arenas were sized from**.  Those are two
+    independent transcriptions of the same shape and a disagreement between
+    them means one of the two is emitting for a model the other did not
+    reserve for.  That is a HARD failure, not a note.
+
+    Returns the factor keys for the manifest."""
     lm = next((e for e in files if e.get("tensor") == "output.weight"), None)
-    if lm is None:
-        return dict(gdn_state_layers=GDN_STATE_LAYERS,
-                    gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
-                    kv_layers=KV_LAYERS,
-                    kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN)
-    import gen_layer_program as GL
-    s = GL.QWEN35_9B
-    if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
-        return dict(gdn_state_layers=GDN_STATE_LAYERS,
-                    gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
-                    kv_layers=KV_LAYERS,
-                    kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN)
-    n_gdn, n_attn = s.n_gdn(), s.n_attn()
-    if GDN_STATE_LAYERS < n_gdn:
-        raise SystemExit(
-            "pack_model_fk33: the GDN state arena is reserved for %d layers "
-            "and this model has %d GDN blocks.  A slot past the end lands on "
-            "the KV cache." % (GDN_STATE_LAYERS, n_gdn))
-    if KV_LAYERS < n_attn:
-        raise SystemExit(
-            "pack_model_fk33: the KV arena is %d B/token for %d attention "
-            "layers and this model has %d.  A layer past the end lands on the "
-            "next token's record." % (KV_BYTES_PER_TOKEN, KV_LAYERS, n_attn))
-    if GDN_STATE_LAYERS > n_gdn or KV_LAYERS > n_attn:
-        used_kv = n_attn * KV_BYTES_PER_LAYER_PER_TOKEN
-        print(f"  arena headroom   GDN reserved for {GDN_STATE_LAYERS} layers, "
-              f"program uses {n_gdn}; KV reserved for {KV_LAYERS} attention "
-              f"layers at {KV_BYTES_PER_TOKEN} B/token, program uses {n_attn} "
-              f"at {used_kv} B/token.  Over-reservation is SAFE and costs "
-              f"context; it is reported, not refused.")
-    return dict(gdn_state_layers=GDN_STATE_LAYERS,
+    base = dict(gdn_state_layers=GDN_STATE_LAYERS,
                 gdn_state_bytes_per_layer=GDN_STATE_BYTES_PER_LAYER,
                 kv_layers=KV_LAYERS,
                 kv_bytes_per_layer_per_token=KV_BYTES_PER_LAYER_PER_TOKEN,
-                gdn_state_layers_used=n_gdn, kv_layers_used=n_attn)
+                kv_record_bytes=_ARENA["kv_record_bytes"],
+                gdn_state_mant_bytes_per_layer=(
+                    _ARENA["gdn_state_mant_bytes_per_layer"]),
+                gdn_state_exp_bytes_per_layer=(
+                    _ARENA["gdn_state_exp_bytes_per_layer"]),
+                arena_sizing="derived from rtl/model_cfg_pkg.vhd by "
+                             "tools/hbm_map.py arena_sizes()")
+    if lm is None:
+        return base
+    import gen_layer_program as GL
+    s = GL.QWEN35_9B
+    if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
+        return base
+    n_gdn, n_attn = s.n_gdn(), s.n_attn()
+    if (n_gdn, n_attn) != (GDN_STATE_LAYERS, KV_LAYERS):
+        raise SystemExit(
+            "pack_model_fk33: gen_layer_program.QWEN35_9B says %d GDN and %d "
+            "attention blocks, and rtl/model_cfg_pkg.vhd says %d and %d.  The "
+            "descriptors are emitted from the first and the arenas are "
+            "reserved from the second, so one of them is about a different "
+            "model.  The RTL is the oracle; fix the mirror."
+            % (n_gdn, n_attn, GDN_STATE_LAYERS, KV_LAYERS))
+    if (s.attn_kv_heads, s.attn_head_dim) != (
+            _ARENA["kv_heads_per_card"], _ARENA["attn_head_dim"]):
+        raise SystemExit(
+            "pack_model_fk33: gen_layer_program.QWEN35_9B has attn_kv_heads "
+            "%d / attn_head_dim %d against the RTL's %d / %d.  The KV record "
+            "is sized on the second pair."
+            % (s.attn_kv_heads, s.attn_head_dim,
+               _ARENA["kv_heads_per_card"], _ARENA["attn_head_dim"]))
+    base.update(gdn_state_layers_used=n_gdn, kv_layers_used=n_attn)
+    return base
 
 
 def align_up(n: int) -> int:
