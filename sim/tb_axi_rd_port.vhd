@@ -57,7 +57,27 @@ entity tb_axi_rd_port is
           -- 15 is the AXI3 cap and therefore the FK33's HBM cap; see the
           -- ARLEN paragraph in the header.  Raise it only to test a slave that
           -- really is AXI4.
-          ARLEN_MAX : natural := 15);
+          ARLEN_MAX : natural := 15;
+          -- THE THROTTLE INVARIANT, added 2026-08-29 (TRACK ASURV).
+          -- rtl/axi_rd_fsm.vhd:223 issues a burst only while
+          --     f_level + pr + want <= DEPTH
+          -- and rtl/axi_rd_port.vhd's header states the consequence in as many
+          -- words: "the AR throttle is against FIFO FREE SPACE including beats
+          -- already requested, so MAXOUT can never make the FIFO overrun."
+          -- The observable form of that promise is that the port NEVER has to
+          -- refuse a beat the slave is offering, i.e. `rvalid and not rready`
+          -- is 0 on every cycle of every legal trace.  MEASURED 0 in eight
+          -- configurations of the unmutated port, including QSTALL up to 9.
+          --
+          -- Refusing a beat is legal AXI and costs no data -- the slave holds
+          -- it.  What it means is that the throttle stopped being the thing
+          -- that decides when an AR goes out, and on the FK33 that is 27
+          -- masters holding the HBM's R channel against each other rather than
+          -- against their own FIFOs.  So this is an invariant on the FSM's
+          -- contract, NOT a data-corruption check, and it is stated that way.
+          --
+          -- false is the ATTRIBUTION CONTROL for the two rows it kills.
+          CHK_FLOW : boolean := true);
 end entity;
 
 architecture sim of tb_axi_rd_port is
@@ -99,14 +119,43 @@ architecture sim of tb_axi_rd_port is
   -- is an EQUIVALENT mutant rather than a coverage gap (row A5 of
   -- sim/mutate_axi_rd_port.sh).
   --
-  -- `track` excludes the abandoned job's drain window, in which beats are
-  -- accepted on R and discarded rather than queued, so an un-gated difference
-  -- would report 44 beats of occupancy that never existed.
+  -- CORRECTION 2026-08-29 (TRACK ASURV).  The line that stood here said
+  -- "`track` excludes the abandoned job's drain window".  IT DOES NOT, and the
+  -- number below is an OVER-COUNT by however many beats that drain discards.
+  -- `track` is raised immediately after `start`, and the drain is what the
+  -- port does immediately after `start`: those beats are accepted on R with
+  -- `rready` forced high and thrown away without ever entering the FIFO, and
+  -- this counter counts every one of them in.
+  --
+  -- MEASURED, unmutated port, -gMAXOUT=16 -gDEPTH=32 -gSTALL=0 -gQSTALL=7
+  -- -gSEED=2: occ_hi = 41.  A DEPTH=32 stream_fifo holds at most
+  -- mcnt(32) + ocnt(2) + inflight(1) = 35 words, so 41 is not an occupancy at
+  -- all.  The gate row's own configuration (DEPTH=64, QSTALL=0) reports 26 and
+  -- is not affected, which is why this went unnoticed.
+  --
+  -- It is left as a WITNESS and deliberately NOT turned into a check: an
+  -- honest occupancy needs the FIFO's own `level`, which this port does not
+  -- expose.  Read it as an upper bound, never as the FIFO's high-water mark.
   signal track  : std_logic := '0';
   signal occ    : integer := 0;
   signal occ_hi : integer := 0;
+
+  -- Cycles on which the slave offered a beat and the port would not take it.
+  signal n_refuse : integer := 0;
 begin
   rst <= '1', '0' after 40 ns;
+
+  -- The throttle invariant's witness.  Unconditional: the count is reported
+  -- either way, and CHK_FLOW governs only whether it is ASSERTED on, so the
+  -- attribution control still prints the number that would have failed.
+  refusal : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '0' and rvalid = '1' and rready = '0' then
+        n_refuse <= n_refuse + 1;
+      end if;
+    end if;
+  end process;
 
   occup : process(clk)
     variable o : integer;
@@ -274,10 +323,23 @@ begin
     wait until rising_edge(clk);
     report "axi_rd_port: " & integer'image(nbad) & " bad beats" &
            " (QSTALL=" & integer'image(QSTALL) &
-           ", FIFO high-water " & integer'image(occ_hi) &
-           " of DEPTH " & integer'image(DEPTH) & ")" severity note;
+           ", occupancy upper bound " & integer'image(occ_hi) &
+           " of DEPTH " & integer'image(DEPTH) &
+           ", R beats refused " & integer'image(n_refuse) & ")" severity note;
     assert nbad = 0 report "axi_rd_port DELIVERED THE WRONG BEATS"
       severity failure;
+    if CHK_FLOW then
+      assert n_refuse = 0
+        report "THE THROTTLE DID NOT HOLD: the port refused an offered R beat "
+             & "on " & integer'image(n_refuse) & " cycles.  "
+             & "rtl/axi_rd_fsm.vhd's f_level + pr + want <= DEPTH exists so "
+             & "that this cannot happen -- an AR is issued only against free "
+             & "space the FIFO already has.  No data is lost (the slave holds "
+             & "the beat), so nbad is still 0; what is lost is the guarantee, "
+             & "and on the FK33 that is 27 masters back-pressuring one HBM "
+             & "R channel instead of their own FIFOs."
+        severity failure;
+    end if;
     finished <= true;
     wait;
   end process;

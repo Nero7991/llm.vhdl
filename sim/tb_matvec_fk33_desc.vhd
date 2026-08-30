@@ -221,7 +221,12 @@ architecture sim of tb_matvec_fk33_desc is
   -- ------------------------------------------------------------ the cases
   constant EXP_OK    : integer := -1;
   constant EXP_WRONG : integer := -2;
-  constant NCASE     : integer := 21;
+  -- Case 21 added 2026-08-29 (TRACK ASURV, board row N7).  It is the ONLY
+  -- case in this table refused by the CORE rather than by the descriptor
+  -- engine, and it is what makes EC_CORE (0xE) reachable at all.  It is
+  -- INSERTED BEFORE the watchdog case rather than appended; see the note in
+  -- CASE_NAME for the measurement that forced that.
+  constant NCASE     : integer := 22;
 
   type name_t is array(0 to NCASE) of string(1 to 34);
   constant CASE_NAME : name_t := (
@@ -246,7 +251,21 @@ architecture sim of tb_matvec_fk33_desc is
     18 => "DESC_PTR_HI above ADDR_W          ",
     19 => "w_base[7] aims at sub-region 8    ",
     20 => "w_beats halved to 192             ",
-    21 => "descriptor slave never answers    ");
+    -- 21 AND 22 ARE IN THIS ORDER DELIBERATELY, AND SWAPPING THEM BREAKS
+    -- THE RUN.  The watchdog case leaves an AR outstanding at the descriptor
+    -- slave (which is deaf for the whole case), and this bench's per-case
+    -- recovery is `aresetn` -- i.e. it resets the MASTER while a read is
+    -- outstanding at the SLAVE, which AXI gives no way to cancel.  Any case
+    -- that runs after it therefore starts a job into a slave that is still
+    -- delivering the previous burst.  MEASURED 2026-08-29 (TRACK ASURV): with
+    -- a case after it -- MUTATED OR CLEAN, both were tried -- the descriptor
+    -- fetch port dies with `bound check failure at rtl/axi_rd_fsm.vhd:231`,
+    -- which is `promised <= pr` leaving `-1 to DEPTH + MAXB`.  The watchdog
+    -- case was the LAST case until now, so nothing had ever asked.  Whether
+    -- the DESIGN can be re-armed after a descriptor watchdog is a real and
+    -- still OPEN question; this ordering does not answer it, it avoids it.
+    21 => "out_shift = 41, above 7.4's cap   ",
+    22 => "descriptor slave never answers    ");
 
   type exp_t is array(0 to NCASE) of integer;
   -- The expected err_code, or EXP_OK / EXP_WRONG.  Codes are the constants in
@@ -280,7 +299,18 @@ architecture sim of tb_matvec_fk33_desc is
                    -- observable.  Case 19 is still EXP_WRONG and still is
                    -- not this track's: nothing in the descriptor says what a
                    -- sub-region should CONTAIN.
-    21 => 16#4#);  -- EC_WDOG
+    -- THE ONLY ROW REFUSED BY THE CORE, NOT BY THE DESCRIPTOR ENGINE.
+    -- rtl/matvec_int4_desc_axi.vhd passes out_shift straight through
+    -- (`v_osh <= hi32(dw(2))`, line 543) with no validation of its own,
+    -- while rtl/matvec_core.vhd:946 rejects `out_shift < 0 or out_shift > 40`.
+    -- That gap is the entire reachable set of EC_CORE: every other guard the
+    -- core applies (n_rows <= 0, n_cols <= 0, n_cols > MAXCOLS,
+    -- n_rows > MAXROWS_BFP in BFP) is ALSO applied by the engine, earlier and
+    -- with its own code, so no descriptor can reach the core carrying one.
+    -- 41 is deliberately ONE over the cap, so what the row pins is the cap and
+    -- not merely "a large out_shift".
+    21 => 16#E#,   -- EC_CORE
+    22 => 16#4#);  -- EC_WDOG
 
   -- ------------------------------------------------- the expected ERR_INFO
   -- ADDED 2026-08-29 (TRACK ERRINFO, OI-9).  This bench PRINTED ERR_INFO on
@@ -326,7 +356,8 @@ architecture sim of tb_matvec_fk33_desc is
     18 => EI_PTR,
     19 => -1,                              -- EXP_WRONG, no refusal expected
     20 => eic(ES_WBEATS,     EXT0 + 1),    -- EC_SHAPE
-    21 => EI_PTR);                         -- EC_WDOG, on the fetch
+    21 => EI_PTR,                          -- EC_CORE: EI_PTR_V, no word index
+    22 => EI_PTR);                         -- EC_WDOG, on the fetch
 
   -- ------------------------------------------------------------- clocking
   signal clk, mclk : std_logic := '0';
@@ -1040,6 +1071,7 @@ begin
       variable flags : std_logic_vector(7 downto 0);
       variable nw, ns : integer;
       variable om : integer;
+      variable osh : integer;
       variable rows, cols, wb, sb : integer;
       variable bse : unsigned(63 downto 0);
     begin
@@ -1082,8 +1114,12 @@ begin
       -- word 1: n_rows, n_cols
       dimg(1) <= u32(cols) & u32(rows);
 
-      -- word 2: w_exp, out_shift
-      dimg(2) <= u32(t_osh) & u32(t_wexp);
+      -- word 2: w_exp, out_shift.  41 is one above spec 7.4's cap of 40 and
+      -- the descriptor engine does not look at this field at all, so it is the
+      -- one descriptor that reaches the core and is refused there (EC_CORE).
+      osh := t_osh;
+      if mut = 21 then osh := 41; end if;
+      dimg(2) <= u32(osh) & u32(t_wexp);
 
       -- word 3: out_mode, ordinal, nsub_w, nsub_s, src_region2, pad
       w := (others => '0');
@@ -1161,7 +1197,7 @@ begin
       if mut = 11 then p_wbeats <= t_wbeats; end if;   -- 0 is rejected anyway
 
       d_deaf <= '0';
-      if mut = 21 then d_deaf <= '1'; end if;
+      if mut = 22 then d_deaf <= '1'; end if;
     end procedure;
 
   begin
@@ -1404,9 +1440,34 @@ begin
     -- ======================================================= the case loop
     for mut in 0 to NCASE loop
       -- a fresh reset per case: err / err_code / err_addr are sticky by
-      -- design, so a case that inherited them would judge the previous one
+      -- design, so a case that inherited them would judge the previous one.
+      --
+      -- 512 CYCLES, NOT 8, AND THE LENGTH IS LOAD-BEARING (TRACK ASURV,
+      -- 2026-08-29).  AXI HAS NO WAY TO CANCEL AN OUTSTANDING READ.  A case
+      -- that leaves reads in flight -- the watchdog case, whose slave is deaf
+      -- for its whole duration, and the new EC_CORE case, where the core
+      -- refuses AFTER `start` and so leaves the weight streamer mid-fetch --
+      -- hands the next case a set of slaves still delivering the previous
+      -- burst, and none of the slave models in this file is reset-aware.
+      -- With the old 8 cycles the NEXT case died on
+      --     bound check failure at rtl/axi_rd_fsm.vhd:231
+      -- i.e. `promised <= pr` leaving its range `-1 to DEPTH + MAXB`.
+      -- MEASURED with a mutated case AND with a clean one, both, so it is a
+      -- property of running anything after those two and not of what is run.
+      -- Holding reset long enough works because `rready_i` is forced high
+      -- outside S_RUN, so the port accepts and discards every stale beat and
+      -- the slaves run themselves dry.  512 is chosen against the worst case
+      -- a port can have queued, MAXOUT*MAXB = 16*16 = 256 beats, doubled for
+      -- the slaves' stall margin.  MEASURED: 64 is already enough on these
+      -- seeds and 512 costs 1.5 s of the row's 50 s.
+      --
+      -- THIS IS NOT AN ANSWER TO "CAN THE DESIGN BE RE-ARMED AFTER AN ERROR".
+      -- It makes the BENCH able to run another case; the design's own recovery
+      -- from EC_CORE is a reset with reads outstanding, which on hardware is a
+      -- real hazard and is recorded as open in
+      -- docs/debugging/2026-08-29_asurv-subsystem-a-mutation-survivors.md.
       aresetn <= '0';
-      for i in 0 to 7 loop wait until rising_edge(clk); end loop;
+      for i in 0 to 511 loop wait until rising_edge(clk); end loop;
       aresetn <= '1';
       wait until rising_edge(clk);
 

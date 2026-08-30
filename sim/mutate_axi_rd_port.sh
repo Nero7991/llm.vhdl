@@ -22,15 +22,20 @@
 #   tight  MAXOUT=1  DEPTH=32  STALL=5 QSTALL=0  one burst in flight, heavy R stall
 #   brim   MAXOUT=4  DEPTH=32  STALL=0 QSTALL=3  slave never stalls, CONSUMER does
 #   brim2  MAXOUT=2  DEPTH=32  STALL=2 QSTALL=2  both sides stall
+#   starve MAXOUT=16 DEPTH=16  STALL=0 QSTALL=9  smallest FIFO, slowest consumer
 #
-# The five are not decoration.  MAXOUT and DEPTH are what the FSM's AR throttle
+# The six are not decoration.  MAXOUT and DEPTH are what the FSM's AR throttle
 # compares, and with QSTALL = 0 the FIFO never approaches DEPTH: the consumer
 # holds q_ready high for the whole job, so the level is drained as fast as the
 # slave fills it.  MEASURED by the bench's own occupancy witness, high-water
 # mark over the run:
 #
 #   gate 26 of 64      deep 43 of 512     tight 11 of 32
-#   brim 25 of 32      brim2 30 of 32
+#   brim 25 of 32      brim2 30 of 32     starve 12 of 16
+#
+# -- but read the CORRECTION below and the `track` comment in
+# sim/tb_axi_rd_port.vhd before quoting any of those six numbers: they are an
+# upper bound on occupancy, not occupancy.
 #
 # Only the last two put the level anywhere near DEPTH, and only there does
 # `f_level + pr + want <= DEPTH` (rtl/axi_rd_fsm.vhd:223) actually bind.
@@ -53,10 +58,44 @@
 # bench's occupancy witness report a number worth reading.  Do not present
 # them as a coverage win.
 #
+# --------------------------------------------------------------------------
+# CORRECTION, 2026-08-29 (TRACK ASURV).  THE PARAGRAPH ABOVE IS HALF WITHDRAWN,
+# AND THE HALF THAT IS WRONG IS THE CONCLUSION, NOT THE MEASUREMENT.
+# --------------------------------------------------------------------------
+# What actually held: with the checks that existed, QSTALL killed nothing.
+# What does NOT hold: "no amount of stimulus makes them correctness ones", and
+# the decision not to build the witness that would have shown it.
+#
+# `rvalid and not rready` was tried, found to read 0, and written off as
+# "measuring something the design makes impossible".  It IS impossible -- for
+# the CORRECT design.  That is what makes it an invariant rather than a dead
+# probe, and a witness that reads 0 on a correct design and non-zero on a
+# broken one is the definition of a check.  It is now
+# `sim/tb_axi_rd_port.vhd`'s CHK_FLOW assert, and it kills TWO of the rows
+# that paragraph lists:
+#
+#   C2 (FIFO built half the depth the FSM throttles against) dies at `brim`,
+#      34 refused beats -- a configuration THAT PARAGRAPH'S OWN WORK ADDED.
+#      The stimulus was right all along; the detector was missing.
+#   C1 (FSM told the FIFO is twice as deep) dies at `starve`, 5 refused beats.
+#      MEASURED that it does NOT die at any of the other five, which is why
+#      `starve` exists: DEPTH=16 is one burst's worth and QSTALL=9 is the
+#      slowest consumer in the table.
+#
+# The corrected statement: DEPTH and MAXOUT DRIFT -- one number reaching the
+# FSM and a different one reaching the FIFO -- is a correctness defect of the
+# throttle, observable with no data loss at all.  DEPTH and MAXOUT moved
+# CONSISTENTLY, and LVL_MARGIN moved either way, remain throughput or
+# range-declaration changes; see the A8 comment for why LVL_MARGIN was never a
+# throughput parameter either.  A5 is unaffected and is still provably
+# equivalent.
+#
+# The occupancy witness that paragraph shipped is ALSO over-reported; the
+# correction and its measurement are in sim/tb_axi_rd_port.vhd's `track`
+# comment.  Do not quote its high-water numbers as FIFO occupancy.
+#
 # Any row caught by exactly one configuration names which one in the caught-by
-# column, and that column is the useful part of the table.  At present no row
-# is: every catch is unanimous, which is itself a statement -- this bench's
-# discrimination comes from its checks, not from its generic space.
+# column, and that column is the useful part of the table.
 #
 # ---------------------------------------------------------------------------
 # FOUR VERDICTS.  ONLY TWO OF THEM ARE EVIDENCE ABOUT THE BENCH.
@@ -110,14 +149,27 @@ GHDL="${GHDL:-ghdl}"
 mkdir -p "$SCRATCH"
 
 # name : ghdl generic argv.  The order is the order the table reports.
-CFG_NAMES="gate deep tight brim brim2"
+# `starve` added 2026-08-29 (TRACK ASURV).  It is the ONLY configuration in
+# which the FIFO is small enough (DEPTH=16, one burst's worth) and the consumer
+# slow enough (QSTALL=9) that a throttle told the wrong DEPTH actually runs the
+# FIFO out of room.  Without it C1 and C2 both survive; with it and the
+# CHK_FLOW invariant in sim/tb_axi_rd_port.vhd both die.
+#
+# READ THIS TOGETHER WITH SECTION 6.1 OF
+# docs/debugging/2026-08-29_acov-subsystem-a-coverage-gaps.md, which added
+# QSTALL, measured that it killed ZERO rows, and concluded the FIFO parameters
+# are throughput-only.  The stimulus was right and the conclusion was wrong:
+# what was missing was a DETECTOR, not a stimulus.  `brim` (QSTALL=3), which
+# that section shipped, is what kills C2 here.
+CFG_NAMES="gate deep tight brim brim2 starve"
 cfg_args() {
   case "$1" in
-    gate)  echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 -gQSTALL=0 -gSEED=1" ;;
-    deep)  echo "-gMAXOUT=16 -gDEPTH=512 -gSTALL=0 -gQSTALL=0 -gSEED=7" ;;
-    tight) echo "-gMAXOUT=1 -gDEPTH=32 -gSTALL=5 -gQSTALL=0 -gSEED=3" ;;
-    brim)  echo "-gMAXOUT=4 -gDEPTH=32 -gSTALL=0 -gQSTALL=3 -gSEED=5" ;;
-    brim2) echo "-gMAXOUT=2 -gDEPTH=32 -gSTALL=2 -gQSTALL=2 -gSEED=8" ;;
+    gate)   echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 -gQSTALL=0 -gSEED=1" ;;
+    deep)   echo "-gMAXOUT=16 -gDEPTH=512 -gSTALL=0 -gQSTALL=0 -gSEED=7" ;;
+    tight)  echo "-gMAXOUT=1 -gDEPTH=32 -gSTALL=5 -gQSTALL=0 -gSEED=3" ;;
+    brim)   echo "-gMAXOUT=4 -gDEPTH=32 -gSTALL=0 -gQSTALL=3 -gSEED=5" ;;
+    brim2)  echo "-gMAXOUT=2 -gDEPTH=32 -gSTALL=2 -gQSTALL=2 -gSEED=8" ;;
+    starve) echo "-gMAXOUT=16 -gDEPTH=16 -gSTALL=0 -gQSTALL=9 -gSEED=4" ;;
   esac
 }
 
@@ -237,7 +289,7 @@ PY
 # broken control is a statement about the harness, not about the RTL.
 # ---------------------------------------------------------------------------
 echo
-echo "=== control: the UNMUTATED rtl/axi_rd_port.vhd, all five configurations ==="
+echo "=== control: the UNMUTATED rtl/axi_rd_port.vhd, all six configurations ==="
 mkdir -p "$SCRATCH/control/work"
 if ! analyze_into "$SCRATCH/control/work" "$REPO/$RTL" "$SCRATCH/control/analyze.log"; then
   echo "CONTROL DID NOT ANALYZE -- nothing below would mean anything:"
@@ -310,7 +362,7 @@ mutate() {   # mutate <tag> <class> <desc> <old> <new> [<old> <new> ...]
 echo
 echo "======================================================================="
 echo " mutations of rtl/axi_rd_port.vhd (common body + g_sc),"
-echo " judged by sim/tb_axi_rd_port.vhd in five configurations"
+echo " judged by sim/tb_axi_rd_port.vhd in six configurations"
 echo "======================================================================="
 echo "tag  class verdict  detail                                         caught-by -- what was changed"
 
@@ -332,7 +384,19 @@ mutate A3 RUN "rready deasserted outside S_RUN -- the drain can never complete" 
   "  rready_i <= f_ir when run_f = '1' else '1';" \
   "  rready_i <= f_ir when run_f = '1' else '0';"
 
-mutate A4 RUN "FIFO accepts write data outside S_RUN -- the drain's discards are kept" \
+# A4 IS AN EQUIVALENT MUTANT, and the argument is the FLUSH, not the stimulus.
+# S_DRAIN is ALWAYS followed by S_CLR/S_CLR2 (rtl/axi_rd_fsm.vhd, S_DRAIN's
+# only exit), those states hold `clr`, and rtl/stream_fifo.vhd:73 clears the
+# WHOLE fifo on `rst = '1' or flush = '1'`.  So whatever a drain writes is gone
+# before S_RUN, and the FIFO's state entering S_RUN is empty either way.  If
+# the FIFO is full while the drain writes, rtl/stream_fifo.vhd:64 drops
+# `i_ready` and the write is refused silently -- there is no overflow assert
+# for it to trip either.
+# THE ATTRIBUTION: row B4, which disables the flush outright, is KILLED by
+# every configuration.  The detector for residue exists and bites; A4's residue
+# is removed before it can be read.  Row PD of sim/mutate_axi_rd_port_dual.sh
+# is the same edit and also survives, at three clock ratios.
+mutate A4 RUN "FIFO accepts write data outside S_RUN -- EQUIVALENT MUTANT, the flush removes it" \
   "  f_iv     <= rvalid when run_f = '1' else '0';" \
   "  f_iv     <= rvalid;"
 
@@ -350,7 +414,23 @@ mutate A6 RUN "q_valid ungated -- the abandoned job's residue is offered to the 
   "  q_valid <= f_qv when run_c = '1' else '0';" \
   "  q_valid <= f_qv;"
 
-mutate A7 RUN "q_ready ungated -- the consumer pops the residue before the flush lands" \
+# A7 IS AN EQUIVALENT MUTANT IN THIS CONFIGURATION AND ONLY IN THIS ONE.
+# In g_sc `run_c <= run_f` is a plain wire, so the window in which the gate is
+# removed is exactly the window in which `f_iv` is gated OFF -- the FIFO can
+# then hold only the previous job's residue, which the flush is about to
+# discard anyway, and rtl/stream_fifo.vhd:99 pops only `if ocnt > 0 and
+# q_ready = '1'`, so a pop on an empty FIFO is a no-op.
+#
+# UNDER DUAL_CLK IT IS NOT EQUIVALENT AND NOTHING CATCHES IT.  There
+# `run_c <= run_s2`, twice synchronised, so it rises up to two core cycles
+# AFTER run_f -- and the async FIFO may already hold job data in that window.
+# An ungated `f_qr` pops those words while `q_valid` is suppressed and they are
+# LOST.  rtl/axi_rd_port.vhd's header argues "late is the safe direction" for
+# q_valid; that argument holds only because f_qr carries the same late gate.
+# MEASURED 2026-08-29: row P8 of sim/mutate_axi_rd_port_dual.sh is exactly this
+# edit and SURVIVES all three clock ratios, so sim/tb_axi_rd_port_dual.vhd does
+# not see it either.  Reported, not fixed -- that bench is not this script's.
+mutate A7 RUN "q_ready ungated -- equivalent in g_sc, NOT under DUAL_CLK (see above)" \
   "  f_qr    <= q_ready when run_c = '1' else '0';" \
   "  f_qr    <= q_ready;"
 
@@ -358,7 +438,31 @@ mutate A7 RUN "q_ready ungated -- the consumer pops the residue before the flush
 # Its whole reason for existing is that the two must not drift, so the two
 # halves are mutated SEPARATELY: changing both together is the safe edit and
 # would prove nothing.
-mutate A8 LVL "LVL_MARGIN 3 -> 0 in BOTH -- the declared no-drift edit" \
+#
+# BOTH A8 AND A9 ARE EQUIVALENT MUTANTS IN g_sc, PROVED, and the reason is NOT
+# the throttle.  LVL_MARGIN does not appear in the throttle at all.  Its only
+# uses are rtl/axi_rd_port.vhd:142 (the local f_level signal's range),
+# :209/:281 (the FSM generic) and :291 (async_fifo's OUT_MARGIN, g_dc ONLY) --
+# and inside rtl/axi_rd_fsm.vhd it appears ONLY in `f_level : in integer range
+# 0 to 2*DEPTH + LVL_MARGIN`.  Nothing reads it.  So in the single-clock
+# configuration these two edits narrow a declared range from 0..2*DEPTH+3 to
+# 0..2*DEPTH and change nothing else.  rtl/stream_fifo.vhd:67 drives
+# `level <= mcnt + ocnt + inflight` with mcnt <= DEPTH, ocnt <= 2 (the do_rd
+# guard) and inflight <= 1, so the largest value ever driven is DEPTH+3, which
+# is below 2*DEPTH for every DEPTH >= 3 and for all six configurations here.
+# A bound check therefore cannot fire.
+#
+# This CORRECTS section 6.1 of
+# docs/debugging/2026-08-29_acov-subsystem-a-coverage-gaps.md, which grouped
+# LVL_MARGIN with DEPTH and MAXOUT as "throughput parameters of this unit".
+# DEPTH and MAXOUT are; LVL_MARGIN is a range declaration and is not a
+# parameter of the behaviour in either sense.
+#
+# In g_dc it IS load-bearing -- async_fifo's level really is offset by
+# OUT_MARGIN and really does wrap during the four-phase clear (see
+# rtl/axi_rd_fsm.vhd's f_level comment).  Row PG of
+# sim/mutate_axi_rd_port_dual.sh is the drift version there and also survives.
+mutate A8 LVL "LVL_MARGIN 3 -> 0 in BOTH -- EQUIVALENT MUTANT in g_sc, see above" \
   '  constant LVL_MARGIN : natural := 3;' \
   '  constant LVL_MARGIN : natural := 0;'
 
@@ -367,7 +471,7 @@ mutate A8 LVL "LVL_MARGIN 3 -> 0 in BOTH -- the declared no-drift edit" \
 # which is the only thing that distinguishes the single-clock instance from the
 # dual-clock one (`clk => aclk, rst => frst`).  Drop that line from an anchor
 # and patch_file's uniqueness check refuses the edit rather than picking one.
-mutate A9 LVL "the FSM is told margin 0 while the FIFO still reports 3 -- they drift" \
+mutate A9 LVL "FSM told margin 0, FIFO still 3 -- EQUIVALENT MUTANT in g_sc, see A8" \
   '      generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
                   MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => LVL_MARGIN)
       port map(clk => clk, rst => rst, start => start_f,' \
@@ -376,7 +480,13 @@ mutate A9 LVL "the FSM is told margin 0 while the FIFO still reports 3 -- they d
       port map(clk => clk, rst => rst, start => start_f,'
 
 # --- class SC: the single-clock generate's own five lines -------------------
-mutate B1 SC "frst tied low in the single-clock branch" \
+# B1 IS AN EQUIVALENT MUTANT BECAUSE THE ASSIGNMENT IS DEAD CODE.  `frst` is
+# read at rtl/axi_rd_port.vhd:281 (`rst => frst`) and :291 (`wrst => frst`),
+# both inside g_dc.  In g_sc the FSM and the FIFO are both handed `rst`
+# directly, so nothing in that branch reads `frst` and no value assigned to it
+# can be observed.  Reported by TRACK ACOV, confirmed independently here, and
+# still NOT fixed -- this is a coverage track and does not edit rtl/.
+mutate B1 SC "frst tied low in g_sc -- EQUIVALENT MUTANT, the assignment is dead" \
   '    frst    <= rst;' \
   "    frst    <= '0';"
 
@@ -400,7 +510,17 @@ mutate B6 SC "clr_done never asserted -- the clear handshake never completes" \
   "        if rst = '1' then ack <= '0'; else ack <= clr; end if;" \
   "        if rst = '1' then ack <= '0'; else ack <= '0'; end if;"
 
-mutate B7 SC "the acknowledgement is combinational, not the promised one cycle" \
+# B7 IS BEHAVIOUR-PRESERVING, ONE TO TWO CYCLES EARLY.  With clr_done = clr the
+# FSM leaves S_CLR on its first evaluation of that state -- but `clr_r` is
+# already high by then (it was set on entry from S_DRAIN), so the FIFO still
+# sees `flush = '1'` at a rising edge and rtl/stream_fifo.vhd:73 still clears
+# everything; S_CLR2 then leaves immediately because clr_done has followed clr
+# down.  The registered ack exists so the four-phase handshake is the SAME CODE
+# in both configurations, which is what rtl/axi_rd_port.vhd's own comment says.
+# THE RESOLUTION IS VISIBLE IN THIS TABLE: B5 (clr_done stuck HIGH) and B6
+# (stuck LOW) both ABORT, so the bench does discriminate this handshake -- what
+# it does not discriminate is a clr_done that is correct and one cycle early.
+mutate B7 SC "clr_done combinational rather than registered -- one cycle early, same effect" \
   '    clr_done <= ack;' \
   '    clr_done <= clr;'
 
@@ -420,7 +540,18 @@ mutate C2 GEN "the FIFO is built half the depth the FSM throttles against" \
   '      generic map(W => AXI_DW, DEPTH => DEPTH)' \
   '      generic map(W => AXI_DW, DEPTH => DEPTH / 2)'
 
-mutate C3 GEN "the FSM may keep 64 bursts in flight regardless of MAXOUT" \
+# C3 IS UNOBSERVABLE IN THIS BENCH, AND THE REASON IS THE SLAVE MODEL.
+# sim/tb_axi_rd_port.vhd's slave is one sequential process: it waits for
+# arvalid, accepts exactly one AR, returns every beat of that burst, and only
+# then loops.  So at most ONE burst is ever outstanding and `os < MAXOUT` is
+# true for every MAXOUT >= 2.
+# MEASURED 2026-08-29, unmutated port, gate configuration: MAXOUT = 2, 4, 16
+# and 64 all finish at @3395ns with an identical occupancy trace, while
+# MAXOUT = 1 finishes at @3235ns.  So the knob is LIVE and saturates at 2 --
+# the survival is a slave-model limit, not a dead parameter.  Reaching it needs
+# a slave that accepts ARs while it is still returning data, which is a new
+# model rather than a new configuration.
+mutate C3 GEN "the FSM may keep 64 bursts in flight regardless of MAXOUT -- see above" \
   '      generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
                   MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => LVL_MARGIN)
       port map(clk => clk, rst => rst, start => start_f,' \
@@ -428,7 +559,13 @@ mutate C3 GEN "the FSM may keep 64 bursts in flight regardless of MAXOUT" \
                   MAXB => MAXB, MAXOUT => 64, LVL_MARGIN => LVL_MARGIN)
       port map(clk => clk, rst => rst, start => start_f,'
 
-mutate C4 GEN "burst length capped at one beat -- legal AXI, 16x the AR traffic" \
+# C4 IS A PERFORMANCE MUTATION AND IS DELIBERATELY NOT KILLED.  ARLEN = 0 is
+# legal AXI3 and AXI4, every beat is delivered in order, and the bench's own
+# occupancy witness drops from 26 to 4 -- correct, and 16x the AR traffic.  On
+# the FK33 that is a real cost across 27 masters, but it is a cost, not a
+# defect, and turning it into a kill would need an arbitrary AR-count
+# threshold.  Counting it as caught would be weakening what a kill means.
+mutate C4 GEN "burst length capped at one beat -- legal AXI, PERFORMANCE ONLY, see above" \
   '      generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
                   MAXB => MAXB, MAXOUT => MAXOUT, LVL_MARGIN => LVL_MARGIN)
       port map(clk => clk, rst => rst, start => start_f,' \

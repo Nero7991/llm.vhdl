@@ -48,7 +48,60 @@ entity tb_matvec_int4 is
     ADDR_W : positive := 64;
     -- Units of 4 GB added to every sub-region base.  0 is the historical case.
     -- Non-zero requires ADDR_W > 32 and FAILS loudly at 32.
-    BASE_HI : natural := 0
+    BASE_HI : natural := 0;
+
+    -- ----------------------------------------------------------------------
+    -- STIMULUS KNOBS, added 2026-08-29 (TRACK ASURV) to reach three regions
+    -- the mutation table named as unreached.  EVERY ONE DEFAULTS TO THE
+    -- HISTORICAL VALUE, so the gate row does not move.
+    -- ----------------------------------------------------------------------
+    -- The DUT's column bound.  512 is what this file hard-coded.  The reason
+    -- it is a generic is rtl/matvec_int4.vhd's
+    --     XB = clog2((MAXCOLS + BLK - 1) / BLK)
+    -- whose CEILING is only distinguishable from a plain divide when MAXCOLS
+    -- is NOT a multiple of BLK -- and 512 is.  See the MAXCOLS note below the
+    -- entity for which values separate the two.
+    MAXCOLS : positive := 512;
+
+    -- Added to the trace's w_exp / x_exp on the way into the DUT, and to the
+    -- trace's YEXP on the way into the expectation.  This is EXACT, not an
+    -- approximation: ref/matvec_int4.c:426 computes
+    --     y_exp = w_exp + x_exp - out_shift - ns
+    -- and rtl/matvec_core.vhd:1031 computes the same expression, so biasing
+    -- both inputs shifts the output by exactly the sum and NOTHING else in
+    -- either implementation reads w_exp or x_exp (grep: matvec_core has them
+    -- at lines 70/71 as ports and at 1031-1033 as this expression, nowhere
+    -- else).  The mantissas are untouched, so the whole packed image, the
+    -- activation vector and every YMANT stay valid.
+    --
+    -- WHY IT EXISTS: no trace in this tree drives a NEGATIVE w_exp or x_exp
+    -- (--trace pins 2 and 5), so `signed` and `unsigned` are the same function
+    -- on the descriptor's exponent words and the two conversions in
+    -- rtl/matvec_int4.vhd could not be told apart.  The .mv4i format calls the
+    -- field signed (ref/matvec_int4.c:173).
+    WEXP_BIAS : integer := 0;
+    XEXP_BIAS : integer := 0;
+
+    -- Observe dbg_wbeat / dbg_wstarve.  Every bench in the tree left both
+    -- `open`, which is what spec 11's bandwidth number would be built from.
+    -- false is the ATTRIBUTION CONTROL for the two rows these checks kill.
+    CHK_TAPS : boolean := true;
+
+    -- A SECOND, DELIBERATELY ILLEGAL descriptor issued after the good job,
+    -- whose only expectation is that `err` goes high and no row is emitted.
+    --   0  none -- the historical single-job behaviour
+    --   1  out_shift = -1, which spec 7.6 and rtl/matvec_core.vhd:946
+    --      (`out_shift < 0`) both forbid
+    --   2  n_rows = -1, forbidden by the same line (`n_rows <= 0`)
+    --
+    -- WHY: those two guard arms can only fire on a NEGATIVE integer, and
+    -- rtl/matvec_int4.vhd reaches them through `to_integer(signed(...))`.
+    -- Read as `unsigned` the same word is a large positive, so the `< 0` arm
+    -- becomes unreachable -- the conversion and the guard arm are one
+    -- requirement.  sim/tb_matvec_core.vhd exercises the guard, but it drives
+    -- matvec_core's INTEGER ports directly and so bypasses the conversion
+    -- entirely; no bench drove an illegal descriptor through this level.
+    ERRINJ : natural := 0
   );
 end entity;
 
@@ -107,14 +160,22 @@ architecture sim of tb_matvec_int4 is
   type img_t is array(0 to MAXW-1) of std_logic_vector(AXI_DW-1 downto 0);
   signal img : img_t := (others => (others => '0'));
 
-  type xm_t is array(0 to MAXB*BLK-1) of std_logic_vector(15 downto 0);
+  -- MAXCOLS, not MAXB*BLK.  The two were equal only because MAXB happened to
+  -- be 16 and MAXCOLS 512; MAXB is the AXI burst cap and has nothing to do
+  -- with how long the activation vector is.
+  type xm_t is array(0 to MAXCOLS-1) of std_logic_vector(15 downto 0);
   signal xv : xm_t := (others => (others => '0'));
+
+  -- the two performance taps, which every bench in the tree left `open`
+  signal s_wbeat, s_wstarve : std_logic;
+  signal n_wbeat, n_both    : integer := 0;
 
   type row_t is array(0 to MAXR-1) of signed(63 downto 0);
   signal e_ymant : row_t := (others => (others => '0'));
   signal e_yexp  : integer := 0;
 
   signal loaded, finished : boolean := false;
+  signal inj : boolean := false;
   signal nbad, nchk : integer := 0;
 
   -- Assemble a sub-region base from the trace's byte offset plus BASE_HI * 4 GB.
@@ -131,9 +192,17 @@ architecture sim of tb_matvec_int4 is
 begin
   rst <= '1', '0' after 40 ns;
 
-  v_rows   <= std_logic_vector(to_signed(n_rows, 32));
+  -- `inj` is driven by drv alone; n_rows / out_shift are driven by the loader
+  -- alone.  They are unresolved integers, so the override has to be a mux
+  -- here rather than a second driver on the signal -- the same reason
+  -- sim/tb_matvec_core.vhd carries ov_rows.
+  v_rows   <= std_logic_vector(to_signed(-1, 32))
+                when inj and ERRINJ = 2 else
+              std_logic_vector(to_signed(n_rows, 32));
   v_cols   <= std_logic_vector(to_signed(n_cols, 32));
-  v_osh    <= std_logic_vector(to_signed(out_shift, 32));
+  v_osh    <= std_logic_vector(to_signed(-1, 32))
+                when inj and ERRINJ = 1 else
+              std_logic_vector(to_signed(out_shift, 32));
   v_wexp   <= std_logic_vector(to_signed(w_exp, 32));
   v_xexp   <= std_logic_vector(to_signed(x_exp, 32));
   v_wbeats <= std_logic_vector(to_signed(w_beats, 32));
@@ -150,7 +219,7 @@ begin
 
   dut : entity work.matvec_int4
     generic map(BLK => BLK, ROWS_IF => RI, NPORTS_W => NP, AXI_DW => AXI_DW,
-                ADDR_W => ADDR_W, MAXCOLS => 512, MAXROWS_BFP => MAXR,
+                ADDR_W => ADDR_W, MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXR,
                 FIFO_DEPTH => 64, MAXB => 16)
     port map(clk => clk, rst => rst, start => start,
              n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
@@ -167,7 +236,7 @@ begin
              y_we => y_we, y_addr => y_addr, y_data => y_data,
              y_mask => y_mask, y_exp => v_yexp,
              done => done, err => err, sat_event => sat_event,
-             dbg_wbeat => open, dbg_wstarve => open);
+             dbg_wbeat => s_wbeat, dbg_wstarve => s_wstarve);
 
   -- ------------------------------------------------- one AXI slave per port
   slaves : for p in 0 to NP generate
@@ -257,7 +326,10 @@ begin
         read(l, wev); read(l, xev); read(l, R);
         assert R = RI report "trace ROWS_IF mismatch" severity failure;
         n_rows <= M; n_cols <= K;
-        out_shift <= osh; w_exp <= wev; x_exp <= xev;
+        assert K <= MAXCOLS
+          report "trace K=" & integer'image(K) & " exceeds MAXCOLS=" &
+                 integer'image(MAXCOLS) severity failure;
+        out_shift <= osh; w_exp <= wev + WEXP_BIAS; x_exp <= xev + XEXP_BIAS;
       elsif tok(1 to 2) = "CB" then
         read(l, a); read(l, v);
         cb_addr <= std_logic_vector(to_unsigned(a, 4));
@@ -280,7 +352,7 @@ begin
       elsif tok(1 to 5) = "YMANT" then
         read(l, a); hread(l, hv); e_ymant(a) <= signed(hv);
       elsif tok(1 to 4) = "YEXP" then
-        read(l, a); e_yexp <= a;
+        read(l, a); e_yexp <= a + WEXP_BIAS + XEXP_BIAS;
       end if;
       wait for 0 ns;
     end loop;
@@ -318,8 +390,46 @@ begin
     end if;
   end process;
 
+  -- ------------------------------------------------- the two performance taps
+  -- Spec 11 wants sustained bandwidth as a percentage of DDR peak, and
+  -- rtl/matvec_int4.vhd's dbg_wbeat / dbg_wstarve are the only measurement it
+  -- could be built from.  Until 2026-08-29 every bench in the tree left both
+  -- `open`, so both were free to be anything at all.
+  --
+  -- TWO ORACLES, and they are independent of the geometry:
+  --
+  --   both  dbg_wbeat = '1' and dbg_wstarve = '1' on the same cycle is a
+  --         CONTRADICTION IN THE PORT DEFINITIONS -- "a weight word was
+  --         accepted" and "no weight word was available" cannot both hold.
+  --         MEASURED 0 in twelve (M, K, STALL) combinations.
+  --   count the number of cycles dbg_wbeat is high over one job is the number
+  --         of w_data words the core consumed, which at AXI_DW=128 / BLK=32 is
+  --         exactly the trace's WBEATS (one 128-bit beat per row-block chunk,
+  --         one chunk per port, one w_data per pop).  MEASURED equal to
+  --         w_beats in the SAME twelve combinations: M in {8,32},
+  --         K in {96,256,512}, STALL in {0,3}.
+  --
+  -- The count is the sharper of the two: rtl/matvec_core.vhd:566 makes
+  -- `w_ready` depend on `w_valid`, so `wv and wr` and `wv` differ only on the
+  -- cycles the core cannot accept (not S_RUN, or the scale stream behind, or
+  -- the activation prefetch queue empty).  Whether such a cycle occurs is a
+  -- property of the STIMULUS -- at M=8 K=96 STALL=3, the historical
+  -- configuration, there is not one and the two expressions agree.
+  tapchk : process(clk)
+  begin
+    if rising_edge(clk) then
+      if CHK_TAPS and loaded then
+        if s_wbeat = '1' then n_wbeat <= n_wbeat + 1; end if;
+        if s_wbeat = '1' and s_wstarve = '1' then
+          n_both <= n_both + 1;
+        end if;
+      end if;
+    end if;
+  end process;
+
   -- ------------------------------------------------------------------ driver
   drv : process
+    variable ne_inj : integer := 0;
   begin
     wait until loaded;
     wait until rising_edge(clk);
@@ -351,6 +461,61 @@ begin
     assert nbad = 0 and y_exp = e_yexp
       report "SUBSYSTEM A DIVERGES FROM THE C REFERENCE END TO END"
       severity failure;
+    if CHK_TAPS then
+      report "taps: dbg_wbeat high on " & integer'image(n_wbeat) &
+             " cycles, w_beats=" & integer'image(w_beats) &
+             ", wbeat-and-wstarve on " & integer'image(n_both) & " cycles"
+        severity note;
+      assert n_both = 0
+        report "TAP CONTRADICTION: dbg_wbeat and dbg_wstarve were both high " &
+               "on " & integer'image(n_both) & " cycles.  A weight word " &
+               "cannot be accepted on a cycle when none was available."
+        severity failure;
+      assert n_wbeat = w_beats
+        report "TAP COUNT: dbg_wbeat was high on " & integer'image(n_wbeat) &
+               " cycles but the job consumed " & integer'image(w_beats) &
+               " weight words.  dbg_wbeat must count ACCEPTED words, not " &
+               "offered ones (spec 11 builds sustained bandwidth from it)."
+        severity failure;
+    end if;
+    -- ------------------------------------------------------------------
+    -- PHASE 2, only when ERRINJ /= 0: an illegal descriptor MUST be refused.
+    -- Two things are checked, not one -- a rejection that still emitted rows
+    -- would be a rejection in name only.  This mirrors PASS 9 of
+    -- sim/tb_matvec_core.vhd, one level up and through the conversions.
+    -- ------------------------------------------------------------------
+    if ERRINJ /= 0 then
+      wait until done = '0';
+      wait until rising_edge(clk);
+      ne_inj := nchk;
+      inj <= true;
+      wait until rising_edge(clk);
+      wait until rising_edge(clk);
+      if ERRINJ = 1 then
+        report "ERRINJ 1: issuing an illegal descriptor (out_shift = -1)"
+          severity note;
+      else
+        report "ERRINJ 2: issuing an illegal descriptor (n_rows = -1)"
+          severity note;
+      end if;
+      start <= '1'; wait until rising_edge(clk); start <= '0';
+      wait until done = '1';
+      wait until rising_edge(clk);
+      assert err = '1'
+        report "ERRINJ " & integer'image(ERRINJ) & ": the illegal descriptor " &
+               "was ACCEPTED.  spec 7.6 and rtl/matvec_core.vhd's S_IDLE " &
+               "check both forbid it, and the negative arm of that check is " &
+               "only reachable if this level converts the descriptor word as " &
+               "SIGNED."
+        severity failure;
+      assert nchk = ne_inj
+        report "ERRINJ " & integer'image(ERRINJ) & ": the descriptor was " &
+               "refused but " & integer'image(nchk - ne_inj) &
+               " rows still left the port" severity failure;
+      report "the illegal descriptor was refused, err=1, 0 rows emitted"
+        severity note;
+    end if;
+
     report "subsystem A matches ref/matvec_int4.c from the packed bytes up"
       severity note;
     finished <= true;
