@@ -608,3 +608,68 @@ step 4 is only observable on the build that is loaded now.
   safe because `f_qv` cannot lead `run_c`, not because `f_qr` carries the gate.
   The FALL is what the shared gate was actually protecting, and it was
   protecting it badly.
+
+---
+
+## ANSWER TO SECTION 9, 2026-08-29 23:40, from the dispatcher
+
+**The experiment is BLOCKED, and separately it could not have discriminated.
+It was not run.** Section 9 said "if nothing does, this experiment is blocked
+and that is itself worth knowing" -- nothing does.
+
+### 1. Nothing exposes `core_aresetn` (MEASURED)
+
+- `hw/fk33/host/fk33_regs.h` contains **no reset register or bit**. The engine
+  block at `FK33_ENG_CTL_BASE = 0x00012000` is `DESC_PTR_LO/HI` (RW), `CTRL`
+  (W), and `STATUS`, `ERR_INFO`, `ID`, `ADDR_CAP`, `CAPS`, `DESC_WORDS` (all
+  R). `CTRL` is the GO write. There is no reset path.
+- `fk33ctl.py`'s subcommands are `id scratch sysmon gpio vccint thermal
+  selftest bench load verify`. None resets anything.
+
+So there is no host-reachable way to assert the engine reset on the currently
+loaded bitstream. Adding one means new gateware, which means a rebuild -- and a
+rebuild destroys the very window section 9 exists to use.
+
+### 2. Even unblocked, a host-timed reset cannot hit the window (DERIVED)
+
+Section 9 states the window is "a few tens of nanoseconds wide against a
+host-timed reset" and asks for three repeats. Put the measured numbers in:
+
+- **MEASURED tonight**, one MMIO write costs **0.85 us** and one MMIO read
+  **2.88 us** (`2026-08-29_first-layer-in-sequence-on-silicon.md`). So host
+  timing has microsecond granularity at best.
+- **MEASURED**, the largest job in the 9B set runs 238,052 core cycles at
+  200 MHz = **1.190 ms**.
+- **DERIVED**, probability of a host-timed reset landing inside a 50 ns window
+  in a 1.190 ms job: `50e-9 / 1.190e-3` = **4.2e-5**. Three repeats:
+  **1.3e-4**.
+
+**A negative result would therefore have carried essentially no information**,
+which is the property this project calls a check that cannot fail. Running it
+would have produced a reassuring "bit-exact" line that meant nothing, at the
+cost of risking a wedged engine and a 4.49 GB weight reload.
+
+### 3. What would actually settle it
+
+Not a host-timed reset. Either:
+- **A gateware-timed abort** -- a CTRL bit that asserts the reset a
+  deterministic number of cycles after GO, so the window is hit by
+  construction. That is new gateware and a rebuild, so it cannot answer the
+  question about THIS bitstream; it can only answer it about the next one.
+- **Or simulation**, which is what section 2(c) already did: the mechanism was
+  reproduced deterministically with a non-reset-aware slave and a one-cycle
+  reset. **That evidence stands on its own and does not need silicon.**
+
+**Recommendation, and the reason the clamp should land regardless:** the
+committed clamp is justified by the simulated mechanism plus the fact that the
+unclamped failure mode is a **silent permanent AR stall** in synthesis, where
+there is no bound check. A defect whose hardware signature is "the port
+quietly stops issuing reads forever" does not need an on-silicon reproduction
+before being fixed. **The experiment was worth asking for and is worth
+declining; both are recorded so nobody re-derives it.**
+
+### 4. What was NOT established
+
+Whether the stray-beat misalignment of section 8 is reachable on silicon
+remains **open**. This note establishes only that the proposed experiment
+cannot answer it, not that the path is unreachable.
