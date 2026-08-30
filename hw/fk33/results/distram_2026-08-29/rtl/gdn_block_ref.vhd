@@ -1,3 +1,8 @@
+-- gdn_block_ref.vhd -- TRACK DISTRAM, 2026-08-29.  THE ORACLE.
+-- rtl/gdn_block.vhd at b1bbcb2e9b500ce9a702b336bbeb03b73dbea570, byte for
+-- byte, with ONLY the entity and architecture names changed.  Verified by
+-- un-renaming and diffing against the pinned archive; see scripts/mkref.sh.
+-- NOT a shipping unit.  Do not move it into rtl/.
 -- rtl/gdn_block.vhd
 -- Subsystem B: the Gated DeltaNet block, top level.  One GDN layer, one token.
 --
@@ -182,7 +187,7 @@
 -- being run.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 
-entity gdn_block is
+entity gdn_block_ref is
   generic(
     -- Shapes.  Defaults are Qwen3.5-9B on ONE card, which is the current
     -- target: 24 GDN layers, 32 value heads, 16 key heads, head dim 128.
@@ -355,12 +360,7 @@ entity gdn_block is
   );
 end entity;
 
-architecture rtl of gdn_block is
-
-  -- TRACK DISTRAM, 2026-08-29.  Declared ONCE, before any use: the
-  -- staging buffers below are declared in source order and an
-  -- attribute declaration must precede every specification of it.
-  attribute ram_style : string;
+architecture rtl of gdn_block_ref is
 
   constant SEGS   : integer := 3;
   constant QCH    : integer := KEY_HEADS*DIM;   -- q segment channels
@@ -376,71 +376,11 @@ architecture rtl of gdn_block is
   constant NCOL   : integer := VAL_HEADS*DIM;   -- state columns per layer
 
   -- ---- staging.  See the header note on why these are registers. ---------
-  -- TRACK DISTRAM lever 2c, 2026-08-29.  qbuf and kbuf are the ASYMMETRIC pair:
-  -- written one CONV_LANES-word beat at a time, read one whole DIM-element head
-  -- at a time (P_L2GO -> l2_x -> l2norm_rs.x_mant).  TRACK READCONV booked this
-  -- as needing a streaming port on l2norm_rs.  It does not: the buffer is split
-  -- into NBH = DIM/CONV_LANES BANKS, each KEY_HEADS deep and one beat wide.
-  -- The write hits exactly one bank -- bank (obeat mod NBH) at address
-  -- obeat / NBH -- and the read takes ALL banks at the same address kh and
-  -- concatenates them, which is a whole head with no extra cycle and no port
-  -- change.  A KEY_HEADS-deep memory is one LUT per bit against the 4 LUT per
-  -- bit that a 16:1 mux over 32,768 bits costs.
-  --
-  -- Write phase and read phase are disjoint: writes are gated on cv_seg_i = 0
-  -- or 1 during the conv/silu phases, which end at P_SEGN before P_L2GO.
-  constant NBH : integer := DIM/CONV_LANES;   -- conv beats per head
-  type hbank_t is array (0 to KEY_HEADS-1)
-    of std_logic_vector(CONV_LANES*16-1 downto 0);
-  type qbank_t is array (0 to NBH-1) of hbank_t;
-  signal qbuf : qbank_t := (others => (others => (others => '0')));
-  signal kbuf : qbank_t := (others => (others => (others => '0')));
-  attribute ram_style of qbuf : signal is "distributed";
-  attribute ram_style of kbuf : signal is "distributed";
-  -- TRACK DISTRAM lever 2a, 2026-08-29.  vbuf is the one staging buffer of
-  -- the five whose reader takes a SINGLE 16-bit element (P_COL's rp_cvj) and
-  -- whose writer takes one CONV_LANES-word beat, so it becomes a memory with
-  -- NO port change on any unit and NO cycle added anywhere.  MEASURED by TRACK
-  -- READCONV's readconv_probe: a variable-index read of a flat register costs
-  -- stored_bits/4 LUT, and 17,472 of gdn_block's LUT are this one read.
-  --
-  -- ram_style = "distributed" is LUT memory: ZERO BRAM tiles, ZERO URAM, and
-  -- an ASYNCHRONOUS read, so no pipeline stage appears and the schedule is
-  -- unchanged CYCLE FOR CYCLE.  The read below stays inside the same clocked
-  -- process under the same enable, so rp_cvj is registered exactly as before.
-  --
-  -- WHY THE ASYNC READ IS SAFE, and it does not rest on the phase argument.
-  -- A distributed-RAM read concurrent with a write to the same address returns
-  -- the OLD contents, which is precisely what the flat register did: a read of
-  -- vbuf inside a clocked process samples the pre-edge value.  The phase
-  -- argument holds as well and is recorded because it is what makes a
-  -- single-port memory legal at all: every vbuf WRITE is gated on
-  -- `cv_seg_i > 1`, which the sequencer sets only for the segment-2 conv/silu
-  -- phases, and those finish at P_CVDRAIN -> P_SEGN before P_L2GO; the only
-  -- vbuf READ is taken in P_COL/P_DRAIN, and no path re-enters P_EXP/P_CVGO
-  -- from there without passing P_IDLE.  Write phase and read phase are
-  -- disjoint.
-  type vbuf_t is array (0 to NBV-1)
-    of std_logic_vector(CONV_LANES*16-1 downto 0);
-  signal vbuf : vbuf_t := (others => (others => '0'));
-  attribute ram_style of vbuf : signal is "distributed";
-  -- TRACK DISTRAM lever 2b, 2026-08-29.  knb and qsb are ALREADY head-granular
-  -- on BOTH sides: gqsb/gknb write one whole DIM-element head (l2_q / l2_k) and
-  -- P_HKQ reads one whole head.  So they become a KEY_HEADS-deep by DIM*16-wide
-  -- memory with no streaming, no port change and no cycle added -- which is NOT
-  -- what TRACK READCONV's lever 2b assumed (it booked these as needing streaming
-  -- ports on gdn_recur_pipe).  The 16:1 read mux over 32,768 bits is 8,192 LUT
-  -- each; a 16-deep memory is one LUT per bit.
-  --
-  -- Write phase and read phase are disjoint: the writes happen in P_L2WAIT, the
-  -- reads in P_HKQ, and every P_L2WAIT of an invocation precedes every P_HKQ of
-  -- it (P_L2N leaves the L2 loop to P_SCADR only after kh = KEY_HEADS-1).
-  type headbuf_t is array (0 to KEY_HEADS-1)
-    of std_logic_vector(DIM*16-1 downto 0);
-  signal knb  : headbuf_t := (others => (others => '0'));
-  signal qsb  : headbuf_t := (others => (others => '0'));
-  attribute ram_style of knb : signal is "distributed";
-  attribute ram_style of qsb : signal is "distributed";
+  signal qbuf : std_logic_vector(QCH*16-1 downto 0) := (others => '0');
+  signal kbuf : std_logic_vector(QCH*16-1 downto 0) := (others => '0');
+  signal vbuf : std_logic_vector(VCH*16-1 downto 0) := (others => '0');
+  signal knb  : std_logic_vector(QCH*16-1 downto 0) := (others => '0');
+  signal qsb  : std_logic_vector(QCH*16-1 downto 0) := (others => '0');
 
   type u16_arr is array (natural range <>) of unsigned(15 downto 0);
   signal eg_b   : u16_arr(0 to VAL_HEADS-1) := (others => (others => '0'));
@@ -738,74 +678,64 @@ begin
   -- obeat's range runs to NBV, which is larger than NBQ; the q and k generates
   -- simply never match those values, which is what the `obeat < nbeat` assert
   -- in the sequencer already guarantees.
-  -- TRACK DISTRAM lever 2c: one process per BANK, not per word.  The enable is
-  -- the same condition the per-word generate carried plus the bank match, and
-  -- `obeat < NBQ` replaces the implicit bound the old `obeat = wi` gave.
-  gqbuf : for j in 0 to NBH-1 generate
+  gqbuf : for wi in 0 to NBQ-1 generate
     process(clk) begin
       if rising_edge(clk) then
         if rst = '0' and co_valid = '1' and ph /= P_IDLE
-           and cv_seg_i = 0 and obeat < NBQ and (obeat mod NBH) = j then
-          qbuf(j)(obeat / NBH) <= co_data;
+           and cv_seg_i = 0 and obeat = wi then
+          qbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
         end if;
       end if;
     end process;
   end generate;
 
-  gkbuf : for j in 0 to NBH-1 generate
+  gkbuf : for wi in 0 to NBQ-1 generate
     process(clk) begin
       if rising_edge(clk) then
         if rst = '0' and co_valid = '1' and ph /= P_IDLE
-           and cv_seg_i = 1 and obeat < NBQ and (obeat mod NBH) = j then
-          kbuf(j)(obeat / NBH) <= co_data;
+           and cv_seg_i = 1 and obeat = wi then
+          kbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
         end if;
       end if;
     end process;
   end generate;
 
-  -- TRACK DISTRAM lever 2a: vbuf's per-word generate collapses to one indexed
-  -- write, which is what a memory needs and what the generate was emulating.
-  -- The `obeat < NBV` guard is NOT a new condition: the generate fired only
-  -- for wi in 0..NBV-1, so an obeat of NBV -- its declared maximum, reached at
-  -- obeat = nbeat between segments -- wrote nothing there and writes nothing
-  -- here.  Without it a direct index would be an out-of-range access the flat
-  -- form could not have.
-  pvbuf : process(clk) begin
-    if rising_edge(clk) then
-      if rst = '0' and co_valid = '1' and ph /= P_IDLE
-         and cv_seg_i > 1 and obeat < NBV then
-        vbuf(obeat) <= co_data;
+  gvbuf : for wi in 0 to NBV-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and co_valid = '1' and ph /= P_IDLE
+           and cv_seg_i > 1 and obeat = wi then
+          vbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
+        end if;
       end if;
-    end if;
-  end process;
+    end process;
+  end generate;
 
-  -- TRACK DISTRAM lever 2b: one indexed write each.  `kh < KEY_HEADS` is not a
-  -- new condition -- the generates fired only for h in 0..KEY_HEADS-1, and kh's
-  -- declared range runs to KEY_HEADS.
-  pqsb : process(clk) begin
-    if rising_edge(clk) then
-      if rst = '0' and ph = P_L2WAIT and l2_done = '1'
-         and l2_qk = '0' and kh < KEY_HEADS then
-        qsb(kh) <= l2_q;
+  gqsb : for h in 0 to KEY_HEADS-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and ph = P_L2WAIT and l2_done = '1'
+           and l2_qk = '0' and kh = h then
+          qsb((h+1)*DIM*16-1 downto h*DIM*16) <= l2_q;
+        end if;
       end if;
-    end if;
-  end process;
+    end process;
+  end generate;
 
-  pknb : process(clk) begin
-    if rising_edge(clk) then
-      if rst = '0' and ph = P_L2WAIT and l2_done = '1'
-         and l2_qk = '1' and kh < KEY_HEADS then
-        knb(kh) <= l2_k;
+  gknb : for h in 0 to KEY_HEADS-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and ph = P_L2WAIT and l2_done = '1'
+           and l2_qk = '1' and kh = h then
+          knb((h+1)*DIM*16-1 downto h*DIM*16) <= l2_k;
+        end if;
       end if;
-    end if;
-  end process;
+    end process;
+  end generate;
 
   -- ---- the sequencer -----------------------------------------------------
   process(clk)
-    variable khr   : integer;   -- TRACK DISTRAM lever 2c
-    variable vidx  : integer;   -- TRACK DISTRAM lever 2a
-    variable vword : integer;
-    variable vlane : integer;
+    variable base : integer;
   begin
     if rising_edge(clk) then
       if rst = '1' then
@@ -1028,21 +958,12 @@ begin
           -- ---- L2 norms.  l2norm_rs latches nothing (B-4), so l2_x is a
           -- register held for the whole invocation rather than a live slice.
           when P_L2GO =>
-            khr := kh mod KEY_HEADS;   -- TRACK DISTRAM lever 2c
-            -- TRACK DISTRAM lever 2c: the same whole head, gathered from the
-            -- NBH banks at the same address.  A for-loop inside THIS process
-            -- is safe where a generate would not be: l2_x has exactly one
-            -- driver, this process, so a slice bound containing the loop
-            -- variable cannot collide with a second driver.
-            for j in 0 to NBH-1 loop
-              if l2_qk = '0' then
-                l2_x((j+1)*CONV_LANES*16-1 downto j*CONV_LANES*16)
-                  <= qbuf(j)(khr);
-              else
-                l2_x((j+1)*CONV_LANES*16-1 downto j*CONV_LANES*16)
-                  <= kbuf(j)(khr);
-              end if;
-            end loop;
+            base := kh*DIM*16;
+            if l2_qk = '0' then
+              l2_x <= qbuf(base+DIM*16-1 downto base);
+            else
+              l2_x <= kbuf(base+DIM*16-1 downto base);
+            end if;
             l2_start <= '1';
             ph <= P_L2WAIT;
 
@@ -1134,9 +1055,9 @@ begin
           -- clean and made the divergence look like a head-boundary bug.
           -- docs/debugging/2026-08-29_gdn-block-oracle.md.
           when P_HKQ =>
-            -- TRACK DISTRAM lever 2b: the same whole head, out of a memory.
-            rp_kn      <= knb(vh mod KEY_HEADS);
-            rp_qs      <= qsb(vh mod KEY_HEADS);
+            base := (vh mod KEY_HEADS)*DIM*16;
+            rp_kn      <= knb(base+DIM*16-1 downto base);
+            rp_qs      <= qsb(base+DIM*16-1 downto base);
             rp_eg      <= eg_b(vh);
             rp_beta    <= beta_b(vh);
             rp_kq_wsel <= '1' when (vh mod 2) = 1 else '0';
@@ -1202,15 +1123,8 @@ begin
           rp_chsel <= '1' when (st_rh_i mod 2) = 1 else '0';
           rp_cse   <= se_rdata;
           rp_cev   <= seg_e(2);
-          -- TRACK DISTRAM lever 2a: the same element, out of a memory
-          -- instead of a flat register.  vword is the RAM address, vlane the
-          -- 16-bit lane inside the CONV_LANES-word beat; the lane select is a
-          -- 4:1 mux on 16 bits, not a 4,096:1 mux on 16 bits.  Same cycle,
-          -- same value.
-          vidx     := st_rh_i*DIM + st_rc_i;
-          vword    := vidx / CONV_LANES;
-          vlane    := vidx mod CONV_LANES;
-          rp_cvj   <= signed(vbuf(vword)(vlane*16+15 downto vlane*16));
+          base     := (st_rh_i*DIM + st_rc_i)*16;
+          rp_cvj   <= signed(vbuf(base+15 downto base));
         end if;
 
       end if;

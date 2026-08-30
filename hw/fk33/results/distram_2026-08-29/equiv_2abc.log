@@ -1,0 +1,14 @@
+pass 1: 93 in, 54 still failing
+pass 2: 54 in, 15 still failing
+pass 3: 15 in, 7 still failing
+pass 4: 7 in, 0 still failing
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 0 (layer 0 token 0) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 1 (layer 0 token 1) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 2 (layer 1 token 0) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 3 (layer 1 token 1) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 4 (layer 0 token 0) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 5 (layer 1 token 0) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 6 (layer 0 token 1) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:931:7:@18313500ps:(report note): tb_gdn_block: CYCLES invocation 7 (layer 1 token 1) = 2267
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:1068:5:@18313500ps:(report note): DISTRAM_RESULT checks=18313 live=18136 fails=0
+/home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/distram_2026-08-29/rtl/tb_distram_gdn.vhd:1075:5:@18313500ps:(report note): DISTRAM_OVERALL PASS

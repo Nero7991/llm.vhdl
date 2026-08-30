@@ -1,0 +1,15 @@
+== TRACK DISTRAM mutation table, src=/mnt/storage/distram/work/gdn_2abc.vhd
+control            : NOT CAUGHT
+v_lane_off         : CAUGHT
+v_lane_zero        : CAUGHT
+v_word_off         : CAUGHT
+v_wr_seg           : NOT CAUGHT
+v_noguard          : NOT CAUGHT
+b_swap             : CAUGHT
+b_head_off         : CAUGHT
+b_wr_qk            : CAUGHT
+c_bank_off         : CAUGHT
+c_kh_off           : CAUGHT
+c_qk_swap          : CAUGHT
+c_gather_rev       : VOID(anchor x3)
+== end

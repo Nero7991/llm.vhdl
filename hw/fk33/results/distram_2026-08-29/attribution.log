@@ -1,0 +1,9 @@
+unmutated_control  :  OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+    log: /mnt/storage/distram/attrib/r_unmutated_control_hbb5MK/regress.log
+v_lane_off         :  OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+    log: /mnt/storage/distram/attrib/r_v_lane_off_GvlQGS/regress.log
+b_head_off         :  OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+    log: /mnt/storage/distram/attrib/r_b_head_off_O8ntAT/regress.log
+c_kh_off           :  OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+    log: /mnt/storage/distram/attrib/r_c_kh_off_SwUsvS/regress.log
+== end
