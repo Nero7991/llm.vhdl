@@ -193,3 +193,58 @@ twelve jobs run in between.
 - **Only `slot` 0..3 of the descriptor arena**, and one activation vector per
   job supplied by the host.
 - **Still subsystem A alone.** B, C and D have never run on this silicon.
+
+
+---
+
+## 10. Row-count sweep, exponent sweep, and the teeth I could NOT get
+
+Added 20:36-20:42. Section 9 left "one row-count per geometry, so an off-by-one
+at a window boundary is not excluded" as an open gap. Closed.
+
+### Row counts: 18 of 18 PASS
+
+`blk.0.ffn_gate.weight`, every `BLOCK`(32) and `ROWS_IF`(48) boundary and its
+neighbours: **1, 2, 3, 31, 32, 33, 47, 48, 49, 63, 64, 65, 95, 96, 97, 127,
+128, 129.** All PASS, bit-identical, `n of n` mantissas at every n. `rows=1`
+works. Thermal cleared at 20:36:45; `LATCHED TRIP none since the last clear`
+afterwards, so the whole sweep is unconfounded.
+
+### Activation exponent: 3 of 3 PASS
+
+`--x-exp` 3, 5, 6 all bit-exact. Note this is NOT a teeth-check -- the value
+goes into the descriptor AND into the oracle, so both sides move together. It
+broadens numeric coverage; it does not test discrimination.
+
+### THE HONEST LIMIT: I could not make the on-card comparison FAIL
+
+**Thirty-plus card jobs have now passed and I have NOT shown the card-vs-oracle
+numeric comparison failing on real silicon.** Three attempts, all refused
+BEFORE reaching the card, which is good tool behaviour and bad teeth:
+
+| attempt | intent | outcome |
+|---|---|---|
+| `--no-cb-load` after loading another tensor's codebook | make the card compute with the wrong codebook | **REFUSED by the tool**, `0x3 ERR_DESC: cb_load clear (only if no codebook was ever loaded)`, rc=2 |
+| unwritable `oracle.txt` pre-seeded with `y_exp=99` | make a STALE oracle slip through as PASS | **REFUSED loudly**, `ref/mv_fk33_tr failed (rc=2): Permission denied`, rc=2. It does not silently reuse a stale oracle. This one is a genuine hazard that bit. |
+| `--addr-w 33` | mis-address the weights | **REFUSED**, `ADDR_CAP reports ADDR_W = 40 and the descriptor was built for 33` |
+
+**So the claim "this comparison would catch a wrong card result" rests on TRACK
+AJOBRUN's 32-mutation `selfcheck` against a SIMULATED card, not on any
+measurement against silicon.** That is a real resolution floor and it is stated
+here rather than left implied. What would close it: a deliberate corruption of
+the resident weight bytes at a known offset, then a run expecting FAIL -- not
+attempted tonight because it perturbs a verified 4.49 GB image and the restore
+cost is a full reload.
+
+The `--addr-w` refusal is worth keeping for a second reason: the tool reads
+`ADDR_CAP` **from the card** and compares, rather than assuming. That is this
+project's own "select by what a thing ANSWERS, refuse rather than guess"
+principle, implemented.
+
+### Correction to TRACK AJOBRUN's write-up
+
+Its `selfcheck` lists `--addr-w 33` as **"a correct non-refusal"**. On the real
+card it IS refused, because the card answers `ADDR_W = 40`. The simulated card
+must report something else, so that row is a statement about the simulator, not
+about the card. Minor, but it is exactly the class of difference a simulated
+plane is there to expose and this one went the other way.
