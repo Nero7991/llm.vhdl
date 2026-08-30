@@ -78,8 +78,11 @@
 --      toggled, which detects the clock stopping but NOT the reader wedging.
 --      That is weaker and is called out here rather than glossed over.
 --   2. a PLAUSIBILITY band.  All-zeroes and all-ones both fall outside it.
---   3. for HBM, an AGREEMENT test between two independently synchronised
---      copies of the same source word (see the CDC note below).
+--   3. for HBM, a BOUND on how far the two stacks may drift apart.  They are
+--      two separate dies (see the port comment), so they are NOT required to
+--      agree -- requiring that halted an idle card 255 times -- but a sensor
+--      stuck at a plausible value while its stack heats does not track the
+--      other stack, and max() alone would read the good one and stay cool.
 --
 -- Failing any of them marks the sensor invalid, and an invalid sensor is hot.
 -- At reset every sensor is invalid, so the guard comes up HALTED and only
@@ -178,6 +181,47 @@ entity fk33_thermal is
     -- has not produced a reading yet and the output is the useless one.
     G_HBM_MIN_CODE : natural := 6;
     G_HBM_MAX_CODE : natural := 110;
+
+    ------------------------------------------------------------------------
+    -- HOW FAR THE TWO STACKS MAY DRIFT APART BEFORE THE SENSOR IS INVALID.
+    --
+    -- This replaces an equality test that was here until 2026-08-30 and that
+    -- was WRONG, not merely strict.  hbm_temp0 and hbm_temp1 are wired to
+    -- hbm/DRAM_0_STAT_TEMP and hbm/DRAM_1_STAT_TEMP (build_fk33_pcieep.tcl
+    -- :781-782), which are TWO PHYSICALLY SEPARATE DIES at two board
+    -- positions.  Requiring them to be equal made an idle card at code 38
+    -- halt compute 255 times against a halt threshold of 85, because two
+    -- stacks under different load are routinely a code apart and are
+    -- GUARANTEED to be a code apart transiently whenever either one crosses a
+    -- boundary -- the two debounce counters below are independent.  See
+    -- docs/debugging/2026-08-30_therm255-is-two-stacks-not-two-copies.md.
+    --
+    -- A BOUND on the difference is a validity test; equality is not.  Both
+    -- stacks sit on one interposer under one heatsink and track each other
+    -- closely: this card measures 38/38 live with a peak of 39/39.  A sensor
+    -- stuck at a plausible value while its stack really heats does NOT track,
+    -- and that is the one failure removing the equality term would otherwise
+    -- uncover, because max() below reads the good stack and stays cool.
+    --
+    -- 20 is chosen so that failure is caught with margin.  DERIVED: a sensor
+    -- stuck at the measured idle code 38 is flagged once the live stack
+    -- reaches 38 + 20 = 58, which is 27 codes BELOW the 85 halt point, so the
+    -- halt still happens before anything is over temperature.  It is also far
+    -- wider than any gradient this card has shown (1 code).
+    G_HBM_MAX_DELTA : natural := 20;
+    -- ...and BOTH tiers of the disagreement test -- the wide one that halts and
+    -- the any-difference one that only sets the sticky -- require the condition
+    -- to persist this long before it counts.
+    --
+    -- MEASURED on the card 2026-08-30: the disagreement behind THERM-255 is
+    -- ONE aux clock long (5 ns at 200 MHz) and occurs in about 2.4% of code
+    -- crossings, which themselves happen 0.243 times a second.  250 ms is seven
+    -- orders of magnitude above that transient and two orders below an HBM
+    -- stack's thermal time constant, so the threshold sits in a gap so wide
+    -- that no judgement is being exercised in placing it.  During the window
+    -- the guard is still comparing max(stack0, stack1) against the halt
+    -- threshold, which is the conservative reading, so waiting costs no safety.
+    G_HBM_DIV_MS    : natural := 250;
     -- Die band in degrees C.  Code 0x000 maps to -279 C and 0x3FF to +228 C, so
     -- all-zeroes and all-ones are both outside this and are both caught.
     G_DIE_MIN_C    : integer := -40;
@@ -233,15 +277,23 @@ entity fk33_thermal is
     -- HBM.  hbm/DRAM_x_STAT_TEMP and hbm/DRAM_x_STAT_CATTRIP, refreshed by
     -- logic inside the IP clocked by hbm/APB_0_PCLK.
     --
-    -- TRAP, and it is the IP's, not ours: on a TWO-STACK part DRAM_0_STAT_TEMP
-    -- and DRAM_1_STAT_TEMP are driven from the SAME merged expression
-    -- (hdl/hbm_v1_0_vl_rfs.sv:3744-3745), so they are one signal and there is
-    -- no per-stack temperature at these pins.  Per-stack separation would need
-    -- CONFIG.USER_APB_EN true and our own APB reads of 0x24000C on each of
-    -- APB_0 and APB_1.  Both are still taken, through SEPARATE synchroniser
-    -- chains, and required to AGREE: identical sources resolving differently is
-    -- a metastability or tearing fault, and that is worth catching.  CATTRIP is
-    -- genuinely per stack.
+    -- THESE ARE TWO SEPARATE DIES, NOT TWO COPIES OF ONE READING.
+    -- build_fk33_pcieep.tcl:781-782 wires hbm/DRAM_0_STAT_TEMP to hbm_temp0 and
+    -- hbm/DRAM_1_STAT_TEMP to hbm_temp1, one per stack.  CATTRIP is per stack
+    -- too.  Every decision below therefore halts on max(stack0, stack1) and
+    -- resumes only when BOTH are cool.
+    --
+    -- CORRECTED 2026-08-30.  This comment previously claimed the two ports were
+    -- "identical sources" merged by the IP and required them to AGREE, calling
+    -- disagreement "a metastability or tearing fault".  That premise came from
+    -- hdl/hbm_v1_0_vl_rfs.sv:3744-3745, which merges the two stacks into the
+    -- IP's own TEMP_STATUS register -- a DIFFERENT signal from the two
+    -- DRAM_x_STAT_TEMP pins actually connected here.  Acting on the wrong
+    -- premise, hbm_valid required h0_acc = h1_acc, so an idle card at code 38
+    -- halted compute 255 times against a halt threshold of 85.  Tearing is
+    -- handled where it was always handled: by the agreement filter, which
+    -- accepts a word only after G_STABLE+1 consecutive identical samples.
+    -- docs/debugging/2026-08-30_therm255-is-two-stacks-not-two-copies.md.
     ----------------------------------------------------------------------------
     hbm_pclk      : in  std_logic;
     hbm_temp0     : in  std_logic_vector(6 downto 0);
@@ -346,6 +398,13 @@ architecture rtl of fk33_thermal is
   constant C_HBM_HALT_CEILING : natural := 85 - G_HBM_HALT_C;
   constant C_DIE_HYST_FLOOR   : natural := G_DIE_HALT_C - G_DIE_RESUME_C - 10;
   constant C_HBM_HYST_FLOOR   : natural := G_HBM_HALT_C - G_HBM_RESUME_C - 10;
+  -- The divergence bound has a ceiling AND a floor, and both are safety
+  -- properties.  Above 40 a sensor stuck at the measured idle code 38 is no
+  -- longer flagged before the live stack passes the 85 halt point, so the hole
+  -- the bound exists to close reopens.  Below 2 the bound degenerates towards
+  -- the equality test it replaced, which halted an idle card 255 times.
+  constant C_HBM_DELTA_CEILING : natural := 40 - G_HBM_MAX_DELTA;
+  constant C_HBM_DELTA_FLOOR   : natural := G_HBM_MAX_DELTA - 2;
 
   function die_code(t_c : integer) return natural is
   begin
@@ -468,6 +527,53 @@ architecture rtl of fk33_thermal is
   signal h1_seen  : std_logic := '0';
   signal hbm_seen : std_logic;
 
+  -- The two stacks reduced to the two numbers every decision below is made on.
+  -- EVERY comparison uses hbm_max, never h0_acc alone: until 2026-08-30 the
+  -- halt, resume and warn thresholds were all compared against h0_acc only, so
+  -- stack 1's temperature reached no threshold in the design at all.  The
+  -- equality term in hbm_valid was the only thing that made stack 1 matter,
+  -- which is why removing that term is not a one-line change.
+  -- Initialised, like every other signal here, so that nothing compares against
+  -- a metavalue at time zero.  The baseline run had no NUMERIC_STD metavalue
+  -- warnings and this must not be what introduces the first ones: a simulation
+  -- that prints warnings routinely is a simulation whose warnings stop being
+  -- read.
+  signal hbm_max   : unsigned(6 downto 0) := (others => '0');
+  signal hbm_min   : unsigned(6 downto 0) := (others => '0');
+  signal hbm_delta : unsigned(6 downto 0) := (others => '0');
+
+  ------------------------------------------------------------------------------
+  -- TWO TIERS on the difference between the stacks, and only the WIDE one may
+  -- halt.  Both require the condition to hold continuously for G_HBM_DIV_MS.
+  --
+  --   hbm_neq_bad  ANY disagreement, sustained.  DIAGNOSTIC ONLY -- it feeds
+  --                the sticky in THERM_STATUS[30] and NOTHING else.  This is
+  --                the sensitive detector: two healthy stacks track each other
+  --                exactly on this card (MEASURED 2026-08-30 on the card by
+  --                Oren: 123 million samples of THERM_TEMPS at 3.89 us, ZERO
+  --                with h0 /= h1, across idle and a 320-job load), so a
+  --                sustained disagreement of even one code means a sensor is
+  --                stuck or the two stacks really have separated.  Either is
+  --                worth telling the host about.  It is NOT worth halting on,
+  --                because a halt here has no operator in the loop and
+  --                fk33_run_job.py refuses to start any job at all while
+  --                compute_halt is asserted -- a wrong halt does not degrade
+  --                throughput, it stops the card.
+  --
+  --   hbm_div_bad  a disagreement WIDER than G_HBM_MAX_DELTA, sustained.  This
+  --                one invalidates the sensor and therefore halts.  It is the
+  --                stuck-sensor case that actually endangers the part: a stack
+  --                whose sensor is frozen at a plausible value while the stack
+  --                heats separates from the good one without bound, and
+  --                max(stack0, stack1) reads the good one and stays cool.
+  ------------------------------------------------------------------------------
+  signal hbm_neq     : std_logic;
+  signal hbm_neq_ms  : unsigned(15 downto 0) := (others => '0');
+  signal hbm_neq_bad : std_logic := '0';
+  signal hbm_div     : std_logic;
+  signal hbm_div_ms  : unsigned(15 downto 0) := (others => '0');
+  signal hbm_div_bad : std_logic := '0';
+
   ------------------------------------------------------------------------------
   -- Time base and watchdogs
   ------------------------------------------------------------------------------
@@ -493,7 +599,6 @@ architecture rtl of fk33_thermal is
 
   signal halted   : std_logic := '1';   -- FAIL SAFE: halted out of reset
   signal armed    : std_logic := '0';
-  signal halted_d : std_logic := '1';
 
   ------------------------------------------------------------------------------
   -- Latches
@@ -608,6 +713,22 @@ begin
 
   assert G_HBM_WARN_C < G_HBM_HALT_C and G_HBM_RESUME_C <= G_HBM_WARN_C
     report "fk33_thermal: require G_HBM_RESUME_C <= G_HBM_WARN_C < G_HBM_HALT_C."
+    severity failure;
+
+  assert G_HBM_MAX_DELTA >= 2 and G_HBM_MAX_DELTA <= 40
+    report "fk33_thermal: G_HBM_MAX_DELTA must be between 2 and 40 codes.  "
+         & "Below 2 it degenerates towards the equality test it replaced, "
+         & "which halted an idle card 255 times because the two stacks are "
+         & "two separate dies.  Above 40 a sensor stuck at the measured idle "
+         & "code 38 is no longer flagged before the live stack passes the 85 "
+         & "halt point."
+    severity failure;
+
+  assert G_HBM_MAX_DELTA + G_HBM_MIN_CODE < G_HBM_HALT_C
+    report "fk33_thermal: a stack sitting at the plausibility floor while the "
+         & "other one heats must diverge past G_HBM_MAX_DELTA BEFORE the live "
+         & "stack reaches the halt threshold, or the stuck-sensor case is not "
+         & "covered at all."
     severity failure;
 
   -- The integer transfer function is approximate by construction, so check the
@@ -773,8 +894,22 @@ begin
     end if;
   end process;
 
-  -- Both copies must have been accepted before the HBM sensor counts as seen.
+  -- Both stacks must have been accepted before the HBM sensor counts as seen.
   hbm_seen <= h0_seen and h1_seen;
+
+  ------------------------------------------------------------------------------
+  -- The two stacks reduced.  max() is what every threshold is compared against,
+  -- because the guard must halt if EITHER stack is hot and must only resume if
+  -- BOTH are cool.  The difference feeds the divergence detector below.
+  ------------------------------------------------------------------------------
+  hbm_max   <= h0_acc when h0_acc >= h1_acc else h1_acc;
+  hbm_min   <= h0_acc when h0_acc <= h1_acc else h1_acc;
+  hbm_delta <= hbm_max - hbm_min;
+
+  hbm_neq <= '1' when hbm_seen = '1' and hbm_delta /= 0 else '0';
+  hbm_div <= '1' when hbm_seen = '1'
+                  and hbm_delta > to_unsigned(G_HBM_MAX_DELTA, hbm_delta'length)
+             else '0';
 
   ------------------------------------------------------------------------------
   -- Liveness watchdogs.  Reset by an EDGE on the foreign-domain toggle, which
@@ -794,6 +929,36 @@ begin
       elsif ms_tick = '1' and hbm_wd < to_unsigned(G_STALE_MS, hbm_wd'length) then
         hbm_wd <= hbm_wd + 1;
       end if;
+
+      ------------------------------------------------------------------------
+      -- The two dwells.  Each condition must hold continuously for
+      -- G_HBM_DIV_MS before it counts; any gap resets both the timer and the
+      -- result, so neither can ever latch on a transient.
+      --
+      -- MEASURED on the card 2026-08-30: the disagreement that produced 255
+      -- trips is ONE aux clock long, 5 ns at 200 MHz, and it happens in about
+      -- 2.4% of code crossings at 0.243 crossings/s.  G_HBM_DIV_MS = 250 is
+      -- SEVEN ORDERS OF MAGNITUDE above that, and still two orders below the
+      -- thermal time constant of an HBM stack.  There is no threshold-setting
+      -- judgement to make in a gap that wide.
+      ------------------------------------------------------------------------
+      if hbm_neq = '0' then
+        hbm_neq_ms  <= (others => '0');
+        hbm_neq_bad <= '0';
+      elsif hbm_neq_ms >= to_unsigned(G_HBM_DIV_MS, hbm_neq_ms'length) then
+        hbm_neq_bad <= '1';
+      elsif ms_tick = '1' then
+        hbm_neq_ms <= hbm_neq_ms + 1;
+      end if;
+
+      if hbm_div = '0' then
+        hbm_div_ms  <= (others => '0');
+        hbm_div_bad <= '0';
+      elsif hbm_div_ms >= to_unsigned(G_HBM_DIV_MS, hbm_div_ms'length) then
+        hbm_div_bad <= '1';
+      elsif ms_tick = '1' then
+        hbm_div_ms <= hbm_div_ms + 1;
+      end if;
     end if;
   end process;
 
@@ -811,11 +976,17 @@ begin
                     and die_acc < to_unsigned(C_DIE_MAX, die_acc'length)
                else '0';
 
+  -- The plausibility band is applied to BOTH stacks independently.  Applying it
+  -- to h0_acc alone was safe only while the equality term forced h1_acc to
+  -- equal it; with that term gone, checking one stack leaves the other's
+  -- stuck-at-zero and stuck-at-ones cases entirely uncovered.
   hbm_valid <= '1' when hbm_seen = '1'
                     and hbm_wd < to_unsigned(G_STALE_MS, hbm_wd'length)
-                    and h0_acc = h1_acc
+                    and hbm_div_bad = '0'
                     and h0_acc >= to_unsigned(G_HBM_MIN_CODE, h0_acc'length)
                     and h0_acc <= to_unsigned(G_HBM_MAX_CODE, h0_acc'length)
+                    and h1_acc >= to_unsigned(G_HBM_MIN_CODE, h1_acc'length)
+                    and h1_acc <= to_unsigned(G_HBM_MAX_CODE, h1_acc'length)
                else '0';
 
   die_hot <= '1' when die_valid = '0'
@@ -827,7 +998,7 @@ begin
   hbm_hot <= '1' when hbm_valid = '0'
                    or syn_cat0(1) = '1' or syn_cat1(1) = '1'
                    or st_cat0 = '1' or st_cat1 = '1'
-                   or h0_acc >= to_unsigned(G_HBM_HALT_C, h0_acc'length)
+                   or hbm_max >= to_unsigned(G_HBM_HALT_C, hbm_max'length)
              else '0';
 
   die_cool <= '1' when die_valid = '1'
@@ -838,13 +1009,13 @@ begin
   hbm_cool <= '1' when hbm_valid = '1'
                    and syn_cat0(1) = '0' and syn_cat1(1) = '0'
                    and st_cat0 = '0' and st_cat1 = '0'
-                   and h0_acc <= to_unsigned(G_HBM_RESUME_C, h0_acc'length)
+                   and hbm_max <= to_unsigned(G_HBM_RESUME_C, hbm_max'length)
               else '0';
 
   warn <= '1' when (die_valid = '1'
                     and die_acc >= to_unsigned(C_DIE_WARN, die_acc'length))
                 or (hbm_valid = '1'
-                    and h0_acc >= to_unsigned(G_HBM_WARN_C, h0_acc'length))
+                    and hbm_max >= to_unsigned(G_HBM_WARN_C, hbm_max'length))
           else '0';
 
   -- Priority encode.  Most specific first, so "the stack said catastrophic"
@@ -860,7 +1031,7 @@ begin
            to_unsigned(CAUSE_DIE_OVER, 4)
              when die_acc >= to_unsigned(C_DIE_HALT, die_acc'length)           else
            to_unsigned(CAUSE_HBM_OVER, 4)
-             when h0_acc >= to_unsigned(G_HBM_HALT_C, h0_acc'length)           else
+             when hbm_max >= to_unsigned(G_HBM_HALT_C, hbm_max'length)         else
            to_unsigned(CAUSE_NONE, 4);
 
   -- Both paths are EDGE triggered, not level.  The control words come from
@@ -879,7 +1050,6 @@ begin
   main : process (aux_clk)
   begin
     if rising_edge(aux_clk) then
-      halted_d   <= halted;
       aux_clrt_d <= aux_clrt;
       aux_clrp_d <= aux_clrp;
 
@@ -895,7 +1065,19 @@ begin
       if syn_alm(1)  = '1' then st_alm  <= '1'; end if;
       if syn_cat0(1) = '1' then st_cat0 <= '1'; end if;
       if syn_cat1(1) = '1' then st_cat1 <= '1'; end if;
-      if hbm_seen = '1' and h0_acc /= h1_acc then st_dis <= '1'; end if;
+      -- The DISAGREEMENT sticky, THERM_STATUS[30].  It records that the two
+      -- stacks disagreed AND STAYED disagreeing for G_HBM_DIV_MS.  It is a
+      -- diagnostic and nothing reads it as a halt input.
+      --
+      -- It deliberately does NOT record a bare `h0_acc /= h1_acc`, which was
+      -- what it recorded until 2026-08-30: that fires on a 5 ns transient at a
+      -- code crossing, so it was set within minutes on an idle card and told
+      -- nobody anything.  Requiring the dwell inverts its value -- it now reads
+      -- 0 on a healthy card and 1 only for a condition worth investigating,
+      -- which is also what makes it the instrument that can finally answer
+      -- whether the two stacks ever separate under a sustained asymmetric
+      -- load.  It answers that question WITHOUT being able to stop the card.
+      if hbm_neq_bad = '1' then st_dis <= '1'; end if;
 
       -- Peak hold.  Only on a VALID reading, or a stuck-at-0x3FF sensor would
       -- write a peak nobody ever reached.  Deliberately NOT cleared by
@@ -959,8 +1141,23 @@ begin
       --
       -- Placed AFTER the clear block on purpose: if a clear and a genuine trip
       -- land on the same cycle, the trip must survive.  Last assignment wins.
+      --
+      -- THE CONDITION IS THE COMBINATIONAL HOT TERM, NOT AN EDGE ON `halted`.
+      -- Until 2026-08-30 it was `halted = '1' and halted_d = '0'`, and `halted`
+      -- is a register: that edge is one clock AFTER the hot term rose, so
+      -- `cause`, `die_acc`, `h0_acc` and `h1_acc` were all sampled a cycle late
+      -- and ANY halt cause shorter than two cycles recorded CAUSE_NONE with
+      -- post-transient, benign temperatures.  That is exactly what the card
+      -- recorded on 2026-08-30: `trips=1`, cause `none`, and two EQUAL HBM
+      -- codes latched for a trip that a code INEQUALITY had caused.
+      --
+      -- `halted = '0'` is what makes this an edge -- it is the registered
+      -- value, so it still reads the pre-halt state in the cycle the halt is
+      -- being taken -- and every term of die_hot and hbm_hot has a matching
+      -- arm in `cause`, so a latched CAUSE_NONE is now unreachable.
       ------------------------------------------------------------------------
-      if armed = '1' and halted = '1' and halted_d = '0' then
+      if armed = '1' and halted = '0'
+         and (die_hot = '1' or hbm_hot = '1') then
         trip_valid <= '1';
         trip_cause <= cause;
         trip_die   <= die_acc;
@@ -979,7 +1176,6 @@ begin
       ------------------------------------------------------------------------
       if aux_aresetn = '0' then
         halted     <= '1';
-        halted_d   <= '1';
         armed      <= '0';
         hold       <= (others => '0');
         trip_valid <= '0';
@@ -1016,7 +1212,12 @@ begin
   --   [24]    SYSMON ot_out, live        [25] the same, sticky
   --   [26]    SYSMON user temp alarm, live [27] the same, sticky
   --   [28]    CATTRIP stack 0, sticky    [29] CATTRIP stack 1, sticky
-  --   [30]    the two HBM copies ever disagreed, sticky (a CDC fault)
+  --   [30]    the two HBM stacks DISAGREED AND STAYED DISAGREEING for
+  --           G_HBM_DIV_MS, sticky.  DIAGNOSTIC ONLY: it does not halt, and
+  --           nothing in the guard reads it.  A stuck or torn stack sensor, or
+  --           two stacks that have genuinely separated under an asymmetric
+  --           load.  NOT a CDC fault, and NOT set by the ~5 ns disagreement at
+  --           a code crossing that used to set it on every idle card.
   --   [31]    constant 1: the thermal guard is present in this bitstream.
   --           A bitstream without it reads 0 here, so "is there a guard" is one
   --           read and cannot be answered by wishful thinking.

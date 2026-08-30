@@ -26,6 +26,31 @@
 --  12. a clear over the HOST path does the same, from its own clock domain;
 --  13. a clear issued while the card is still HOT does NOT release the halt.
 --
+-- Added 2026-08-30, after THERM-255.  hbm_temp0 and hbm_temp1 are TWO SEPARATE
+-- DIES (build_fk33_pcieep.tcl:781-782), and the rows above never noticed
+-- because set_hbm drove both stacks to the SAME code on every single call, so
+-- the whole two-stack axis was untested.  These four rows are the ones that
+-- distinguish a two-stack guard from a guard that halts on inequality:
+--
+--  18. the two stacks a single code apart at benign values does NOT halt and
+--      does NOT count a trip -- the defect that halted an idle card 255 times
+--      at 38 C against a halt threshold of 85 -- and, when that difference
+--      PERSISTS past the dwell, it is REPORTED in the sticky and STILL not
+--      halted.  Two tiers, and only the wide one may stop the datapath;
+--  19. a genuine over-temperature on EITHER stack ALONE halts, with the
+--      OVER cause and both stacks' codes latched.  This is the row that catches
+--      a fix which trades the false halt for a missed one -- before it, the
+--      halt, resume and warn thresholds were all compared against h0_acc only,
+--      so stack 1 reached no threshold in the design at all;
+--  20. stack 1 is plausibility-checked IN ITS OWN RIGHT (the band used to be
+--      applied to stack 0 alone), and a LARGE divergence, sustained, DOES
+--      invalidate the sensor and halt.  That is the stuck-sensor case the
+--      equality test used to cover by accident, and dropping the equality test
+--      without it leaves it open;
+--  21. a halt cause exactly ONE aux clock long records ITS OWN cause, not the
+--      benign aftermath one cycle later.  The card recorded `trips=1`, cause
+--      `none` and two EQUAL HBM codes for a trip that an INEQUALITY caused.
+--
 -- Generics are scaled so a simulated millisecond is a real millisecond and the
 -- whole run is a few tens of milliseconds.  Every count in the design derives
 -- from G_CLK_HZ, so the behaviour is identical to the 200 MHz build.
@@ -55,6 +80,18 @@ architecture sim of tb_fk33_thermal is
   constant HBM_WARN_C   : natural := 75;
   constant HBM_HALT_C   : natural := 85;
   constant HBM_RESUME_C : natural := 70;
+
+  -- The two-stack divergence bound and its dwell.  DIV_MS is scaled down from
+  -- the build's 250 ms the same way STALE_MS is, so a row can wait it out.
+  --
+  -- It must stay comfortably LONGER than the longest unequal stretch any row
+  -- that expects the sticky to be CLEAR spends in that state.  Set to 8 first,
+  -- and section 18 then set the sticky legitimately -- three consecutive 3 ms
+  -- waits with the stacks one code apart is 9 ms, and the dwell does not reset
+  -- when the difference merely changes sign.  That was the bench being wrong
+  -- about its own timing, not the design.
+  constant HBM_MAX_DELTA : natural := 20;
+  constant HBM_DIV_MS    : natural := 20;
 
   constant KEY : std_logic_vector(15 downto 0) := x"C1EA";
 
@@ -130,6 +167,8 @@ begin
       G_HBM_WARN_C   => HBM_WARN_C,
       G_HBM_HALT_C   => HBM_HALT_C,
       G_HBM_RESUME_C => HBM_RESUME_C,
+      G_HBM_MAX_DELTA => HBM_MAX_DELTA,
+      G_HBM_DIV_MS    => HBM_DIV_MS,
       G_STALE_MS     => STALE_MS,
       G_MIN_HALT_MS  => MINHALT,
       G_CANARY_BIT   => 4
@@ -177,6 +216,15 @@ begin
     begin
       hbm_temp0 <= std_logic_vector(to_unsigned(code, 7));
       hbm_temp1 <= std_logic_vector(to_unsigned(code, 7));
+    end procedure;
+
+    -- The two stacks driven INDEPENDENTLY.  Every row above this one used
+    -- set_hbm, which drives both to the same code, and that is precisely why
+    -- none of them could see THERM-255.
+    procedure set_hbm2(code0, code1 : natural) is
+    begin
+      hbm_temp0 <= std_logic_vector(to_unsigned(code0, 7));
+      hbm_temp1 <= std_logic_vector(to_unsigned(code1, 7));
     end procedure;
 
     -- The canary is the observable thing the halt gates.  It advances only
@@ -528,7 +576,323 @@ begin
     expect_cause(CAUSE_HBM_STALE, "the HBM APB clock stopped");
     check_canary(false, "halted on a dead HBM APB clock");
 
-    ------------------------------- 17. the host-domain view agrees
+    ---------------------------------------- 17. back to a known two-stack state
+    -- Section 16 left the HBM APB clock stopped.  Restart it, put BOTH stacks
+    -- on the same benign code, clear the record, and release.  Everything from
+    -- here counts trips from zero.
+    pclk_on <= true;
+    set_hbm(30);
+    wait for 2 ms;
+    ctl_aux <= KEY & x"0001";
+    wait for 1 ms;
+    ctl_aux <= (others => '0');
+    wait for 1 ms;
+    wait_release("both stacks back on a benign code");
+    assert to_integer(unsigned(s_therm(23 downto 16))) = 0
+      report "the trip count did not clear before the two-stack rows"
+      severity failure;
+    assert s_therm(30) = '0'
+      report "the divergence sticky did not clear before the two-stack rows"
+      severity failure;
+
+    -------------------------------- 18. THE TWO STACKS ARE NOT ONE READING
+    -- hbm_temp0 and hbm_temp1 are wired to hbm/DRAM_0_STAT_TEMP and
+    -- hbm/DRAM_1_STAT_TEMP -- two physically separate dies at two board
+    -- positions.  One code apart at 30/31 is the NORMAL condition for them, and
+    -- it is guaranteed transiently at every code crossing because the two
+    -- debounce counters in the DUT are independent.
+    --
+    -- Until 2026-08-30 hbm_valid required h0_acc = h1_acc, so this halted the
+    -- compute domain and counted a thermal trip.  On the card that reached the
+    -- 8-bit saturating maximum of 255 trips on an IDLE board at code 38,
+    -- against an HBM halt threshold of 85.
+    set_hbm2(30, 31);
+    wait for 3 ms;
+    expect_halt('0',
+      "the two HBM STACKS read one code apart at a benign temperature.  They "
+    & "are separate dies; disagreement is not a fault");
+    assert s_therm(4) = '1'
+      report "the HBM sensor must stay VALID when the two stacks are one code "
+           & "apart.  They are two separate dies, not two copies of one word"
+      severity failure;
+    assert to_integer(unsigned(s_therm(23 downto 16))) = 0
+      report "a one-code difference between the two HBM stacks counted a "
+           & "thermal trip.  This is THERM-255: it saturated the counter at "
+           & "255 on an idle card at 38 C"
+      severity failure;
+    assert s_therm(30) = '0'
+      report "a one-code difference set the divergence sticky.  That sticky "
+           & "must mean a stuck or torn sensor, not two dies at two "
+           & "temperatures, or it is set on every card within seconds"
+      severity failure;
+    check_canary(true, "the two stacks read one code apart");
+
+    -- and the other way round, because a fix that special-cases stack 0 would
+    -- pass the line above and fail this one.
+    set_hbm2(31, 30);
+    wait for 3 ms;
+    expect_halt('0', "the two HBM stacks read one code apart, stack 0 higher");
+    assert to_integer(unsigned(s_therm(23 downto 16))) = 0
+      report "a one-code difference counted a trip with stack 0 the higher one"
+      severity failure;
+    assert s_therm(30) = '0'
+      report "the disagreement sticky fired on a difference that has lasted "
+           & "less than the dwell.  On the card the real transient is ONE aux "
+           & "clock, 5 ns; a sticky that fires inside the dwell is the old "
+           & "one, which was set on every idle card and told nobody anything"
+      severity failure;
+
+    ------------------- 18b. A SUSTAINED DISAGREEMENT IS REPORTED, NOT HALTED
+    -- The two tiers, and the reason this design is not simply "drop the
+    -- equality term".  A one-code difference that PERSISTS is not normal --
+    -- MEASURED on the card 2026-08-30, 123 million samples of THERM_TEMPS at
+    -- 3.89 us across idle and a 320-job load, ZERO with h0 /= h1 -- so it is
+    -- worth telling the host about.  It is NOT worth halting on: a halt has no
+    -- operator in the loop and fk33_run_job.py refuses to start any job while
+    -- compute_halt is asserted, so a wrong halt does not cost throughput, it
+    -- stops the card.
+    --
+    -- So the sticky must SET and the datapath must KEEP RUNNING.  A design
+    -- that halts here is candidate (c) applied to bare inequality; a design
+    -- whose sticky stays clear has given up the only sensitive detector of a
+    -- stuck stack sensor there is.
+    set_hbm2(30, 31);
+    wait for (HBM_DIV_MS + 4) * 1 ms;
+    assert s_therm(30) = '1'
+      report "a one-code difference sustained past the dwell did NOT set the "
+           & "disagreement sticky.  That sticky is the only sensitive detector "
+           & "of a stuck stack sensor in the design, and the only instrument "
+           & "that can answer whether the two stacks ever separate under load"
+      severity failure;
+    expect_halt('0',
+      "the two stacks have disagreed by one code for longer than the dwell.  "
+    & "That is REPORTED, not halted -- a halt here stops the card outright");
+    assert to_integer(unsigned(s_therm(23 downto 16))) = 0
+      report "a sustained one-code disagreement counted a thermal trip"
+      severity failure;
+    assert s_therm(4) = '1'
+      report "a sustained one-code disagreement must NOT invalidate the HBM "
+           & "sensor.  Invalid means hot, and hot means halted" severity failure;
+    check_canary(true, "the disagreement sticky is set");
+
+    set_hbm(30);
+    wait for 2 ms;
+    assert s_therm(30) = '1'
+      report "the disagreement sticky must survive the stacks converging"
+      severity failure;
+    ctl_aux <= KEY & x"0001";
+    wait for 1 ms;
+    ctl_aux <= (others => '0');
+    wait for 1 ms;
+    assert s_therm(30) = '0'
+      report "an explicit trip clear must clear the disagreement sticky"
+      severity failure;
+
+    ------------------------- 19. OVER-TEMPERATURE ON EITHER STACK ALONE
+    -- The row that catches a fix which trades a false halt for a MISSED one.
+    -- Before 2026-08-30 the halt, resume and warn comparisons all read h0_acc
+    -- and nothing else, so stack 1's temperature reached no threshold in the
+    -- design; the equality term was the only thing that made it matter at all.
+    -- Removing that term without also comparing both stacks would leave stack 1
+    -- entirely unguarded, which is far worse than the defect being fixed.
+    --
+    -- The codes are HBM_MAX_DELTA apart and no further, so this row tests the
+    -- THRESHOLD and not the divergence detector.
+    set_hbm2(HBM_HALT_C + 2 - HBM_MAX_DELTA, HBM_HALT_C + 2);
+    wait for 3 ms;
+    expect_halt('1', "HBM STACK 1 ALONE is above the halt threshold");
+    expect_cause(CAUSE_HBM_OVER,
+      "stack 1 is over temperature and stack 0 is cool");
+    expect_trip(CAUSE_HBM_OVER, 1, "an over-temperature on stack 1 alone");
+    assert to_integer(unsigned(s_trip(23 downto 17))) = HBM_HALT_C + 2
+      report "the latched stack 1 code is " &
+             integer'image(to_integer(unsigned(s_trip(23 downto 17)))) &
+             ", expected " & integer'image(HBM_HALT_C + 2) severity failure;
+    assert to_integer(unsigned(s_trip(16 downto 10)))
+             = HBM_HALT_C + 2 - HBM_MAX_DELTA
+      report "the latched stack 0 code is wrong for a stack 1 over-temperature"
+      severity failure;
+    check_canary(false, "halted on stack 1 alone");
+
+    set_hbm(HBM_RESUME_C - 5);
+    wait_release("both stacks fell below the resume point");
+
+    -- the mirror image
+    set_hbm2(HBM_HALT_C + 2, HBM_HALT_C + 2 - HBM_MAX_DELTA);
+    wait for 3 ms;
+    expect_halt('1', "HBM STACK 0 ALONE is above the halt threshold");
+    expect_cause(CAUSE_HBM_OVER,
+      "stack 0 is over temperature and stack 1 is cool");
+    expect_trip(CAUSE_HBM_OVER, 2, "an over-temperature on stack 0 alone");
+    check_canary(false, "halted on stack 0 alone");
+
+    -- RESUME needs BOTH stacks cool, not just the one that went over.  Stack 0
+    -- is dropped below the resume point while stack 1 is left INSIDE the
+    -- hysteresis band, between the resume point and the halt point.  A guard
+    -- that resumes on min(), or on stack 0 alone, releases the datapath here.
+    set_hbm2(HBM_RESUME_C - 5, HBM_RESUME_C + 2);
+    wait for 8 ms;
+    expect_halt('1',
+      "stack 0 is below the resume point but stack 1 is still inside the "
+    & "hysteresis band -- RESUME REQUIRES BOTH");
+
+    set_hbm(HBM_RESUME_C - 5);
+    wait_release("both stacks below the resume point");
+
+    -- WARN is a threshold too, and it was compared against stack 0 alone with
+    -- everything else.  Found by mutation: reverting `warn` to h0_acc survived
+    -- the whole bench, new rows included, until this row was added.  It is the
+    -- host's only advance notice, so a warn that cannot see stack 1 is a card
+    -- that goes from quiet to halted with nothing in between.
+    set_hbm2(HBM_WARN_C + 2 - HBM_MAX_DELTA, HBM_WARN_C + 2);
+    wait for 3 ms;
+    assert s_therm(1) = '1'
+      report "WARN is not set with HBM STACK 1 ALONE above the warn threshold"
+      severity failure;
+    expect_halt('0', "stack 1 is above warn but below halt");
+
+    set_hbm(HBM_RESUME_C - 5);
+    wait for 3 ms;
+    assert s_therm(1) = '0'
+      report "WARN did not clear once both stacks fell back" severity failure;
+
+    ------------------ 20a. STACK 1 IS PLAUSIBILITY-CHECKED IN ITS OWN RIGHT
+    -- The plausibility band used to be applied to h0_acc alone.  That was safe
+    -- only while the equality term forced the two stacks to be equal; with that
+    -- term gone, a stack 1 reading of 0 -- what an HBM that has not produced a
+    -- reading gives, and what a dead sensor gives -- would be accepted as a
+    -- very cold stack, which is the stuck-at-zero failure this whole module
+    -- exists to avoid.
+    --
+    -- It must halt WELL INSIDE the divergence dwell, or the row is passing on
+    -- the divergence detector rather than on the range check it is aimed at.
+    set_hbm2(30, 0);
+    wait for 2 ms;
+    expect_halt('1', "HBM STACK 1 reads all-zeroes with stack 0 perfectly cool");
+    expect_cause(CAUSE_HBM_STALE, "stack 1 reads implausibly low");
+    expect_trip(CAUSE_HBM_STALE, 3, "an implausible stack 1 reading");
+    assert s_therm(4) = '0'
+      report "the HBM sensor must be INVALID when stack 1 reads 0, whatever "
+           & "stack 0 says" severity failure;
+
+    set_hbm(30);
+    wait_release("stack 1 came back with a plausible value");
+
+    -- and all-ones, the other end of the same failure
+    set_hbm2(30, 127);
+    wait for 2 ms;
+    expect_halt('1', "HBM STACK 1 reads all-ones with stack 0 perfectly cool");
+    expect_trip(CAUSE_HBM_STALE, 4, "an all-ones stack 1 reading");
+    assert s_therm(4) = '0'
+      report "an all-ones stack 1 reading must be invalid, not 127 codes of "
+           & "real data" severity failure;
+
+    set_hbm(30);
+    wait_release("stack 1 came back from all-ones");
+    assert s_therm(30) = '0'
+      report "the disagreement sticky fired during the range-check rows.  "
+           & "Those rows are meant to complete well inside the dwell; if it "
+           & "fired, they are passing on the disagreement detector rather "
+           & "than on the per-stack range check they are aimed at"
+      severity failure;
+
+    ----------------------------- 20b. A LARGE, SUSTAINED DIVERGENCE IS A FAULT
+    -- This is the hole that removing the equality test would otherwise open,
+    -- and it is closed here rather than left for later.  A stack sensor stuck
+    -- at a plausible value while its stack really heats is invisible to
+    -- max(stack0, stack1) -- max reads the GOOD stack and stays cool -- and it
+    -- is invisible to the staleness watchdog, which watches the APB clock and
+    -- not the value.  What it is not invisible to is the two stacks drifting
+    -- further apart than any real gradient on one interposer.
+    --
+    -- It must NOT fire immediately: a bound that acts on the first sample is a
+    -- slower version of the equality test.  It must fire once sustained.
+    set_hbm2(30, 30 + HBM_MAX_DELTA + 5);
+    wait for 2 ms;
+    expect_halt('0',
+      "a large divergence has only just appeared -- it must persist before it "
+    & "counts, so that nothing transient can halt the datapath");
+    assert to_integer(unsigned(s_therm(23 downto 16))) = 4
+      report "a divergence counted a trip before its dwell had elapsed"
+      severity failure;
+
+    wait for (HBM_DIV_MS + 4) * 1 ms;
+    expect_halt('1',
+      "the two stacks have been " & integer'image(HBM_MAX_DELTA + 5) &
+      " codes apart for longer than the divergence dwell -- a stuck sensor");
+    expect_cause(CAUSE_HBM_STALE, "a sustained two-stack divergence");
+    expect_trip(CAUSE_HBM_STALE, 5, "a sustained two-stack divergence");
+    assert s_therm(4) = '0'
+      report "a sustained divergence must make the HBM sensor INVALID"
+      severity failure;
+    assert s_therm(30) = '1'
+      report "the disagreement sticky must also be set by a sustained WIDE "
+           & "divergence -- the wide tier is a subset of the any-difference "
+           & "tier, so a sticky that is clear here means the tiers have been "
+           & "wired the wrong way round" severity failure;
+    check_canary(false, "halted on a sustained two-stack divergence");
+
+    set_hbm(30);
+    wait_release("the two stacks converged again");
+    assert s_therm(30) = '1'
+      report "the disagreement sticky must SURVIVE the stacks converging.  It "
+           & "records that something happened" severity failure;
+
+    ------------------------- 21. A ONE-CYCLE HALT CAUSE MUST RECORD ITSELF
+    -- The trip record used to be captured on the rising edge of `halted`, which
+    -- is a REGISTER, so the cause and both temperatures were sampled one clock
+    -- after the combinational term that caused the halt.  Any cause shorter
+    -- than two cycles therefore recorded CAUSE_NONE and the benign aftermath.
+    -- That is exactly what the card produced on 2026-08-30: trips=1, cause
+    -- `none`, HBM codes 38 / 38 recorded for a trip an INEQUALITY caused.
+    --
+    -- SYSMON's OT alarm is pulsed for exactly ONE aux clock.  It reaches the
+    -- decision logic through syn_ot, so die_hot and `cause` are high for one
+    -- cycle and nothing else in the design is hot at all.
+    wait until rising_edge(aux_clk);
+    sysmon_ot <= '1';
+    wait until rising_edge(aux_clk);
+    sysmon_ot <= '0';
+    wait for 1 ms;
+
+    expect_trip(CAUSE_DIE_OT, 6,
+      "a SYSMON OT alarm exactly one aux clock long");
+    assert to_integer(unsigned(s_therm(15 downto 12))) /= 0
+      report "the latched cause is CAUSE_NONE.  Every term of die_hot and "
+           & "hbm_hot has a matching arm in `cause`, so a latched CAUSE_NONE "
+           & "means the record was captured a cycle after the condition that "
+           & "caused it and is describing the aftermath, not the cause"
+      severity failure;
+    assert to_integer(unsigned(s_trip(27 downto 24))) = CAUSE_DIE_OT
+      report "THERM_TRIP's own cause field disagrees with THERM_STATUS's"
+      severity failure;
+    -- The recorded temperatures must be the ones that were live at the halt,
+    -- not zero and not something the sensors never read.
+    assert unsigned(s_trip(16 downto 10)) = 30
+       and unsigned(s_trip(23 downto 17)) = 30
+      report "the latched HBM codes are " &
+             integer'image(to_integer(unsigned(s_trip(16 downto 10)))) & " / " &
+             integer'image(to_integer(unsigned(s_trip(23 downto 17)))) &
+             ", expected 30 / 30 -- the codes live at the instant of the halt"
+      severity failure;
+
+    wait_release("the one-cycle OT alarm went away");
+    check_canary(true, "released after a one-cycle OT alarm");
+
+    ------------------------------- 21b. settle the design before comparing
+    -- The comparison below needs the whole design STILL.  The canary counts
+    -- every compute cycle the guard has released, so while it is running the
+    -- publication filter can never accept a word that still matches the live
+    -- aux one and the comparison fails on a moving target rather than on a
+    -- broken crossing.  Section 16 used to leave the guard halted and section
+    -- 22 inherited that by accident; the two-stack rows leave it running, so
+    -- halt it explicitly here rather than depending on the row above.
+    pclk_on <= false;
+    wait for (STALE_MS + 3) * 1 ms;
+    expect_halt('1', "the HBM APB clock was stopped again to settle the design");
+    expect_cause(CAUSE_HBM_STALE, "the HBM APB clock stopped");
+
+    ------------------------------- 22. the host-domain view agrees
     -- The five words the host reads over the PCIe BAR are resynchronised
     -- copies.  With everything settled they must equal the aux-domain
     -- originals; if they do not, the publication filter is broken and the host
