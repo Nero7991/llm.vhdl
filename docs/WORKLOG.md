@@ -259,6 +259,36 @@ this one DOES have a Landed row, so the board contradicted itself),
 Three of the four dispatches wasted today were onto work whose write-up was
 sitting in `docs/debugging/` unreferenced.
 
+**CORRECTION, appended the same night: fifteen was a sample, and the real
+figure is far worse.** A full inventory of all **91** write-ups dated 2026-08-28
+or 2026-08-29 measured that only about **18 have a row in the Landed table at
+all**. The remainder split two ways, and the second is the larger problem:
+
+* **18 tracks are named ONLY by the bare "Landed since the last rewrite"
+  sentence above** -- OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX, SEAMGATE,
+  RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS, BUILD-E2E,
+  GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2. Every one is committed and fully
+  written up, and none has a commit, a result or a single line a reader
+  scanning `## Landed` would ever see. **A name-drop is not a record.** That
+  sentence is the single densest piece of under-recording on this board.
+* **Roughly 35 more appear NOWHERE**: no filename, no track name, no commit.
+  They include whole subsystems of the day's work -- `fk33-spi-flash-boot`,
+  `fk33-thermal-protection`, `fk33-free-running-observability`,
+  `hbm-stack-boundary-straddle`, `llama-top-first-seams`,
+  `subsystem-c-top-and-mac-array`, `cdc-and-fifo-coverage`,
+  `codebook-coherency-oracle`, `three-range-defects` (the commit that actually
+  fixed OI-2, OI-7 and OI-8), and `thermal-guard-255-trips`, **which is an OPEN
+  hardware defect and is now recorded as THERM-255 above.**
+
+**The generalisation, and it is the reason the board keeps failing this way.**
+The commit log cannot be used to recover this: only **2 of 183** commits since
+2026-08-28 use the `TRACK X:` convention, and 95 distinct message prefixes were
+counted. **The reliable index is the write-up header**, because nearly every
+file in `docs/debugging/` declares its own track and, where it has one, its own
+backlog row number. Anyone auditing this board again should start there and not
+with `git log`. And the cheap fix for the future is one line: **when a track
+lands, its Landed row cites the write-up FILENAME**, so a `grep` can find it.
+
 **AN OPEN CONTRADICTION, RECORDED RATHER THAN PAPERED OVER.** CKVMAP reported
 "the real 9B KV map elaborates" (2,452,864 kB / 2.36 s, `realshape_gate` PASS
 24). CLOG2 reported, as its load-bearing finding, that **`C_MAXPOS = 131,072`
