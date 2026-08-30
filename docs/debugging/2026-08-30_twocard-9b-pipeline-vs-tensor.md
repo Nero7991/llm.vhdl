@@ -20,12 +20,90 @@ Repo SHA at the start of this track: `494f8817cd0e93a7e6b53a15d9e7bfd8d4c26dc7`
 
 ## The answer, up front
 
+> ### THE HEADLINE
+>
+> **This design instantiates ONE physical A, ONE B, ONE C and ONE D, and
+> time-multiplexes them over all 32 blocks. So the layer count does not set the
+> area. The datapath WIDTH does.**
+>
+> That single structural fact decides the whole question. Every intuition
+> imported from how GPUs shard a transformer assumes the opposite, because on a
+> GPU the layers are weights in memory and the "hardware" is the same SMs
+> either way, so splitting layers splits the footprint. Here the layers are a
+> loop, and splitting a loop in half does not make the loop body smaller.
+>
+> MEASURED, not inferred: `c_attn` in
+> `hw/fk33/results/compose4_2026-08-29/util_hier_c4_synth.rpt` has exactly four
+> `gen_head[i]` instances (one per KV head, `N_KVH = 4`) and exactly one
+> `u_arr`. There is no per-attention-layer replication anywhere in the report.
+> `rtl/attn_block.vhd:225` states `LAYERS`'s job in its own words -- "attention
+> layers, **for the cache map**" -- and the only structure it sizes is
+> `vref_r`, at `LAYERS * N_KVH * EXP_W = 256 bits`. `rtl/gdn_block.vhd:194`
+> likewise: "GDN layers, **for the exponent store**", which is `u_exp` at
+> **844 LUT of B's 75,181**.
+>
+> **Pipeline parallelism is therefore dead for a structural reason, not a
+> numerical one.** It is not that the saving is disappointing; it is that there
+> is nothing there to save. Halving the layer count removes about 1,100 LUT of
+> state arrays out of 350,283.
+
+> ### THE DECISION, AND WHAT WOULD REVERSE IT
+>
+> **The 9B stays SINGLE-CARD. The two-card case is declined, not deferred.**
+> Decided 2026-08-30 on this analysis plus Oren's answer on context: *"Not a
+> requirement, even 64k ish is fine."*
+>
+> **Pipeline parallelism is declined permanently**, for the structural reason
+> boxed above. It does not become right at a different model size, a different
+> context, or a different area outcome. The only thing that would revive it is
+> **concurrent sequences in flight** (trigger X4), because that is the single
+> assumption its zero-speedup result rests on.
+>
+> **Tensor parallelism is declined for the 9B and retained as a costed option.**
+> It returns if any of the following becomes true. These are written to be
+> checkable by someone who was not here:
+>
+> | # | trigger | how to check it | status 2026-08-30 |
+> |---|---|---|---|
+> | **X1** | a context requirement above the single-card ceiling | compare the requirement against section 1.2's ceiling **at the striping configuration actually shipped** (see the watch item below) | 64k required against 202,681 unstriped. **3.2x headroom.** Not triggered |
+> | **X2** | a model that does not fit one card's HBM at the required context | run `arena_sizes()` for the model and add the 4.5 bpw weight figure | 9B is 5.10 GB of 8.59 at 64k. Not triggered. **27B is already over this line at 14.09 GiB and always was** |
+> | **X3** | the single-card AREA conclusion fails to close | neither norm-gain lever routes, AND section 7's draws confirm TP-small near 89% | two levers stand at 97.9% and 93.2% CLB, both **unrouted**. **Live, not resolved** |
+> | **X4** | batching, or two or more concurrent sequences | any change that puts more than one token in flight | single-stream today (`server/llama_server.cpp`, and D's `seq` is one token at a time). Not triggered. **This is the only trigger that revives PIPELINE rather than tensor** |
+>
+> **X3 is the one that is actually live.** X1, X2 and X4 are all comfortably
+> false today; X3 is undecided and is TRACK TIMING's, not mine.
+
+> ### WATCH ITEM AGAINST X1: striping SPENDS context, and it can spend past 64k
+>
+> Arrived after this document's first draft, from TRACK PACKSTRIPE, and it is
+> the mechanism most likely to move X1. **Striping the weights across HBM
+> pseudo-channels -- the ~13.5x engine speedup that fixes the 7.39-7.88 GB/s
+> defect -- costs contiguity, and contiguity is what the KV arena was spending
+> to reach 202,681 tokens.** MEASURED by that track:
+>
+> | striping configuration | engine speedup | usable context | headroom over 64k |
+> |---|---:|---:|---:|
+> | none (what section 1.2 computes) | 1x | 202,681 | 3.2x |
+> | **full striping** | **13.5x** | **44,500** | **0.70x -- VIOLATES 64k** |
+> | 21-segment hybrid, no RTL change | 8.6x | 138,600 | 2.2x |
+> | full striping + extent-aware KV | 13.5x | ~214,000 | 3.3x |
+>
+> **This is the first point in the project where single-card context is scarce
+> rather than abundant, and the scarcity is created by the speed fix rather
+> than by the model.** Two rules follow. First, **X1 must be checked against
+> the striping configuration actually shipped, never against the 202,681
+> figure**, which now describes a configuration nobody intends to ship.
+> Second, if the extent-aware KV change does not land, the working headroom is
+> 2.2x and one more claim on the KV arena could put 64k in reach of a
+> violation. Neither outcome brings back two cards on its own -- 2.2x is still
+> headroom -- but it is the only live path from "abundant" to "triggered".
+
 **No, it is not easy, and the specific reason is worse than "it is a big
 project": the cheap version of two cards does not solve the problem it would be
 bought for.** For the 9B the binding constraint is CLB area, not HBM capacity,
 and area is set by the datapath's WIDTH (MACs and lanes), not by the layer
-count, because the engine is one physical A, B, C and D time-multiplexed over
-all 32 blocks. Pipeline parallelism splits the layer count, so it removes
+count, for the reason boxed above. Pipeline parallelism splits the layer count,
+so it removes
 **4.0%** of the per-card area and leaves the design at **116% of the die**
 (DERIVED, section 2.3). It also delivers zero speedup, because a single
 autoregressive token cannot occupy both halves of a pipeline at once. Tensor
@@ -49,13 +127,41 @@ independent of every area argument here.
 
 Recorded first because three of them change what follows.
 
-**C1. `docs/2026-08-25_single-card-fallback-decision.md` line 24 is wrong about
-the 9B fitting one card.** It says "5.1 GB of 8 GiB, **yes**, ~2.9 GiB spare".
-That row counts weights only. Adding the KV cache at the model's own
-`max_context` of 262,144 puts the 9B at 9.625 GB against 8.590 GB. The row
-should read "yes below ~202k context, no at 262k". The same document's whole
-framing of two cards as being about 27B capacity therefore also applies to the
-9B, just at a different context length.
+> ### C1. A LOAD-BEARING GUARD IN A DECISION DOCUMENT PASSED FOR THE WRONG REASON
+>
+> **`docs/2026-08-25_single-card-fallback-decision.md:24` says the 9B fits one
+> card: "5.1 GB of 8 GiB, **yes**, ~2.9 GiB spare". It counts WEIGHTS ONLY.**
+> The KV cache is not in that row and is not mentioned anywhere on that line.
+>
+> ```
+>              the row says          the truth at max_context 262,144
+>   weights    5.1 GB                 5.0364 GB
+>   KV         (absent)               4.5634 GB   <- 17,408 B/token x 262,144
+>   GDN state  (absent)               0.0253 GB
+>              -------                ----------
+>              5.1 of 8.59 GB         9.6251 of 8.590 GB
+>              "~2.9 GiB spare"       OVER BY 1.0352 GB
+> ```
+>
+> **That table has underwritten the single-card strategy for five days.** It
+> reached the right verdict, and it reached it without ever evaluating the term
+> that decides it. The verdict survives only because Oren's answer on context
+> came back "64k ish is fine" -- at 64k the 9B needs 5.10 GB and the row's
+> conclusion holds with room. **Had he answered 262k, the row would have been
+> wrong AND load-bearing, and the single-card decision it underwrites would
+> have been wrong with it.**
+>
+> This is the project's own named defect class: *a check that has never been
+> shown to discriminate on the thing it guards*. The guard here is "does the
+> model fit the card", the thing it guards is total HBM occupancy, and the
+> check read one of three terms. **It is the third guard-passing-for-the-wrong-
+> reason found in a decision document today, and a decision document is the
+> most consequential place for one**, because unlike a testbench nothing
+> downstream re-derives the number -- it is quoted.
+>
+> **The row should read:** "yes at 64k with 3.4 GB spare; yes to ~202,681
+> tokens unstriped; NO at 262,144." And per the watch item above, the striped
+> figure is lower again.
 
 **C2. The E spec's central UNKNOWN U1 is RETIRED.**
 `docs/superpowers/specs/2026-08-27-E-tp-collective-skeleton.md:101` lists
@@ -381,7 +487,8 @@ though the absolutes are optimistic:
 | configuration | LUT/card | CLB | fits? | tok/s floor | what it buys |
 |---|---:|---:|---|---:|---|
 | **one card** | 420,240 | 121% | **no** | 57.2 | -- |
-| one card + the two URAM moves | 344,084 | 99.1%* | **not yet** | 57.2 | free, unexecuted |
+| one card, TRACK TIMING's `lever C + HBM gain` | -- | **97.9%** | unrouted | 57.2 | needs nothing unmeasured |
+| one card, TRACK TIMING's `lever C + URAM gain` | -- | **93.2%** | unrouted | 57.2 | free, unexecuted |
 | **PP by index, N=2** | 403,268 | 116% | **no** | 57.1 | context |
 | **PP by type, N=2** | 324-329k | 93-95% | **no** | 57.1 | context |
 | **TP-fast, N=2** | 416,410 | 120% | **no** | 112 | context, speed |
@@ -691,11 +798,32 @@ TP-small lands above 100% and two cards buy nothing at all.
 TIMING, so this was not run. It is three OOC synthesis runs, no place-and-route,
 no hardware, and it either confirms or kills the entire TP case.
 
-**How it fails:** if `attn_block` at half heads comes back above ~68,000 LUT,
-or `gdn_block` above ~60,000, or `matvec_core` above ~75,000, the section 2.5
-total exceeds 54,960 CLB and TP-small does not fit either. State that threshold
-BEFORE running, and treat a single draw as a draw: `attn_block` has been
-measured to vary by 278 LUT across pinned trees and the norm ROM by 1.55x.
+**How it fails. There are TWO thresholds and the weaker one was the only one
+originally stated, which was a mistake worth recording.**
+
+*Threshold A, "fits the die at all".* If `attn_block` at half heads comes back
+above **~68,000 LUT**, or `gdn_block` above **~60,000**, the section 2.5 total
+exceeds 54,960 CLB and TP-small does not fit.
+
+*Threshold B, "fits the routable region".* This is the one that matters and it
+is far tighter. Section 2.5's TP-small total of 311,877 LUT is **49,351 CLB =
+89.8%**, and the 90% target is 49,464 CLB = 312,613 LUT. **The margin is 736
+LUT, which is 0.24%.** So against the target that the composed design's
+congestion level 7 actually established, the thresholds are essentially the
+estimates themselves: `attn_block` above **~52,600** or `gdn_block` above
+**~52,600** puts TP-small over 90%.
+
+**Both are stated before the run and both will be reported.** The honest
+expectation is that threshold B is missed and threshold A is met, because a
+point estimate with 0.24% margin is not an estimate that lands. Recording that
+in advance is the point: a result inside threshold A and outside threshold B
+means "two cards fit, with no margin", which is a materially different answer
+from "two cards fit".
+
+Treat a single draw as a draw: `attn_block` has been measured to vary by 278
+LUT across pinned trees and the norm ROM by 1.55x across six draws from the
+identical command. Neither of these two targets is ROM-dominated, so they
+should be stable, but that is a prediction and it is tested by drawing twice.
 
 ```bash
 cd /home/orencollaco/GitHub/llama.vhdl
@@ -726,15 +854,46 @@ grep -E 'COMPOSE_DONE' /mnt/storage/twocard_halfwidth/*/*.log
 One Vivado at a time. `sim/ooc_compose_bcd.tcl:38-41` says so in its own header,
 and the box hung last night under six.
 
-### 7.2 Experiment 2: the free single-card fix, which should be tried FIRST
+### 7.2 Experiment 2: the single-card fix, which has overtaken this whole track
 
-Before spending a card, execute the two URAM moves TRACK TIMING already
-identified and priced at **76,156 LUT**, plus whatever density recovery follows
-from deleting 26,432 MUXF7/F8 pairs. If that closes the fit, the entire
-two-card area question disappears and only the 262k-context question remains.
-It is RTL work with a bit-exactness obligation on `rtl/rmsnorm_rs.vhd`, not a
-knob, and TRACK TIMING's write-up says so. **It is still cheaper than a
-backplane.**
+**SUPERSEDED IN PROGRESS, 2026-08-30, and in the direction this document
+argued.** When section 7.2 was first written the single-card relief was "the
+two URAM moves, 76,156 LUT, unexecuted". TRACK TIMING has since found a **third
+way to serve the norm gain**, and it is better on the axis that matters most
+here, which is evidence quality rather than size. Reported to me by the
+coordinator; **I have not read the underlying reports and label it as such**:
+
+| way to serve the norm gain | LUT cost | evidence |
+|---|---:|---|
+| LUT ROM (what the 420,240 assumes) | **+32,943 to +78,411** | 6 draws, 1.55x spread, **ruled NOT SAFE** |
+| URAM | -- | the move this section originally named |
+| **stream it from HBM** | **+17,405** | **n=2, reproducible, bit-identical on 11 columns** |
+
+Resulting single-card positions, as reported: `lever C + HBM gain` = **97.9%
+CLB on measured-only evidence**, `lever C + URAM gain` = **93.2%**.
+
+**Two things follow, and they point opposite ways.**
+
+It **strengthens** this document's central argument: the single-card fit now has
+a path that rests on nothing unmeasured, so two cards would be buying an area
+fix that is already available without them. Combined with Oren's 64k answer,
+that is what closed the decision.
+
+It does **not** yet close X3, and saying so is the honest half. **Both figures
+are above the 90% line**, and 90% is not an aesthetic target: the composed
+design placed at 99.83% CLB with **congestion level 7 and 33,767 failing
+endpoints**, which is what established that the high nineties is not a routable
+region on this die. 97.9% in particular is only 1.9 points below a
+configuration already MEASURED as unroutable. **Neither number is a routed
+result**, and until one is, X3 is live.
+
+Applied to this document's own arithmetic: substituting the HBM gain for the
+ROM takes 15,538 LUT out of TP-small too, giving ~296,300 synth / ~293,400
+placed = **46,424 CLB = 84.5%**. So the gap between the best single-card
+position and TP-small stays roughly 9 to 13 points either way. **Two cards do
+still buy real area. They are declined because 84.5% versus 93.2% is not worth
+a card, subsystem E, a peer link and the speedup, not because the area saving
+was imaginary.**
 
 ### 7.3 Experiment 3: two cards in slots, host-mediated only. Needs hands
 
@@ -861,13 +1020,31 @@ every recursive grep to `rtl/ hw/ tools/` with `--include`.
 7. **`t_sw`, the host software round trip.** Section 4.3 sweeps 5 to 60 us from
    the E spec's band. Nobody has measured it on this host, and it is the term
    that decides whether host-mediated TP is a 1.07x or a 1.37x gain.
-8. **Is 262,144 context a product requirement?** If it is, two cards are needed
-   for the 9B regardless of every area argument in this document. If it is not,
-   ~200k on one card may be enough and the two-card question is purely about
-   area. **This is Oren's call and I have not assumed either way.**
+8. ~~**Is 262,144 context a product requirement?**~~ **ANSWERED 2026-08-30 by
+   Oren: "Not a requirement, even 64k ish is fine."** This was the one input I
+   could not supply and it resolved the decision. At 64k the 9B needs 5.10 GB
+   of 8.59, and the unstriped ceiling of 202,681 tokens gives 3.2x headroom.
+   **Superseded by a sharper question: is 64k still safe at the striping
+   configuration that actually ships?** Full striping puts the ceiling at
+   44,500, which is BELOW 64k. See the watch item under the decision box; this
+   is now item 11.
 9. **Who owns the unstallable `e_o_we` hazard?** `rtl/seq_vec_res.vhd:168-173`
    and `rtl/llama_top.vhd:4470-4472` both call it UNRESOLVED. It is a
    prerequisite for E and it is on nobody's track.
 10. **Whether the two cards can be in slots simultaneously at all.** Card 2 has
     only ever been on JTAG and aux power, never in a slot. Power is 2 x ~155 W
     on a 700 W system, which recon says is fine, but it has not been done.
+11. **Which striping configuration ships, and therefore what the real
+    single-card context ceiling is.** This replaces item 8 and it is the live
+    one. Full striping is 44,500 tokens, which violates the 64k requirement;
+    the 21-segment hybrid is 138,600; the extent-aware KV change recovers
+    ~214,000. **X1 must be checked against whichever ships, never against this
+    document's unstriped 202,681.** Owned by TRACK PACKSTRIPE, not by me, and I
+    have not read its measurements.
+12. **Whether 93.2% or 97.9% CLB actually routes.** Both single-card lever
+    positions are above the 90% line, and the only nearby data point is the
+    composed design at 99.83% with congestion level 7 and 33,767 failing
+    endpoints, i.e. a MEASURED failure. Until one of the levers is taken
+    through `route_design`, trigger X3 is open and the single-card decision
+    rests on an unrouted projection. **This is the largest remaining risk to
+    the decision this document records.**
