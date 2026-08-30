@@ -336,8 +336,16 @@ The full gate, unfiltered last lines (`full_gate.log`):
 **106, not the 100 the brief predicted, and the difference is not mine.** Other
 tracks landed new rows during this session; the gate's own footer lists the 22
 working-tree-dependent rows and says explicitly not to raise `BASELINE_PASS`
-from such a run. `BASELINE_PASS` is left at 93 and `sim/regress.sh` is not
-touched by this track at all (`git diff -- sim/regress.sh` is empty).
+from such a run. `sim/regress.sh` is not touched by this track at all
+(`git diff -- sim/regress.sh` is empty).
+
+**A correction to my own brief.** It stated `BASELINE_PASS` is 93. It is **98**
+as of `b60591d`, TRACK FLOOR. **Both gate runs above still print `the floor of
+93`**, because each took its private copy of `sim/regress.sh` before that commit
+landed; the raise is real and the printed floor in these two logs is stale, not
+the other way round. This track did not change `BASELINE_PASS` and does not
+propose changing it -- and per the gate's own footer, neither 106 nor 105 may be
+used to raise it, since both counts include 22 working-tree-dependent rows.
 
 **One honesty note about this run.** It was started before the dead `variable
 base` declaration was removed, so it read `rtl/gdn_block.vhd` across that edit.
