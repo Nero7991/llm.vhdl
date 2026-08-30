@@ -1,6 +1,8 @@
 # The thermal guard tripped 255 times overnight, and it was not heat
 
-**Status: OPEN. A watcher is running; this file will gain a CORRECTION when it
+**Status: OPEN. See CORRECTION 3 (2026-08-29 20:10), which WITHDRAWS
+CORRECTION 2's decay model and replaces it with a measured burst structure that
+confirms the code-boundary hypothesis. A watcher is running; this file will gain a CORRECTION when it
 catches one.** Written now rather than later because the state that produced it
 has already been cleared and cannot be recovered.
 
@@ -266,3 +268,83 @@ a long window, not a rate from a short one.**
 Across all 900 s: `halted no`, `warn no`, `armed yes`, and the canary advanced
 throughout (1,270,735 to 1,348,756 over an earlier 4 min sample). The guard
 never halted the compute domain during any window on this bitstream.
+
+---
+
+## CORRECTION 3, 2026-08-29 20:10: the rate does not DECAY, it comes in BURSTS -- and that is what confirms the code-boundary hypothesis
+
+**CORRECTION 2's "the rate is not constant, it DECAYS" is WITHDRAWN as a
+model.** Its three numbers are not disputed and were correctly measured; the
+decay they appear to show is an artifact of a **300 s sampling interval**
+applied to a process whose structure is finer than that. Sampled at **30 s**,
+the shape is not a decay at all.
+
+### MEASURED: cleared 19:49:35, sampled every 30 s for 1,172 s
+
+Engine bitstream, card 1, dispatcher (not a subagent). Full CSV in the session
+scratch; the shape is the point:
+
+| window | elapsed | trips in window | rate | HBM code | die C |
+|---|---|---:|---|---|---|
+| burst 1 | 0 to 151 s | 34 | **13.5 / min** | 36, **37, 37**, 36, 36 | 35.3-37.8 |
+| **quiet** | 151 to 782 s | **0** | **0.0 / min** | **36 throughout** | 34.8-36.8 |
+| burst 2 | 782 to 932 s | 66 | **26.4 / min** | 36, 36, 36, **35** | 35.3-36.3 |
+| quiet | 932 to 1172 s | **0** | **0.0 / min** | 36 throughout | 34.8-36.8 |
+
+**631 consecutive seconds of exactly zero trips**, then a burst at **26.4 / min
+-- twice the initial rate.** A decaying process cannot produce that. Any model
+fitted to 300 s samples will read burst-plus-gap as decay, because the gap and
+the burst average out inside one bucket.
+
+### This CONFIRMS CORRECTION 2's hypothesis while refuting its model
+
+CORRECTION 2 proposed a **code-boundary** effect: two HBM temperature copies
+sampled at different instants straddle a code boundary when the true value sits
+between codes, and agree when it sits solidly inside one. It predicted the rate
+should follow **crossings**, not absolute temperature, and called itself NOT
+ESTABLISHED for want of a controlled comparison.
+
+The 30 s data is the finer-grained evidence it asked for, and it fits:
+
+- **Burst 1 coincides with the only excursion to code 37** (two consecutive
+  samples), and ends when the code settles at 36.
+- **The 631 s quiet window is exactly the interval where the code is 36 at
+  every single sample.** Not "mostly 36" -- every one.
+- **Burst 2 ends with an excursion to code 35**, i.e. the other boundary. The
+  trips accumulate as the value approaches the 35/36 edge and stop once it is
+  back inside 36.
+
+So trips track **proximity to a code boundary**, in both directions, and go to
+**zero** -- not to a low rate -- when the code is stable. Die temperature is
+flat at 34.8-37.8 C across all four windows and explains nothing.
+
+**Still NOT a controlled experiment.** Nothing here deliberately varied HBM
+load. The test CORRECTION 2 named is still the right one and is still not done:
+drive sustained traffic with `fk33ctl.py bench` to move the code across a
+boundary on purpose. What has changed is that the observational evidence is now
+much stronger and the sampling interval needed to see it is known to be <= 30 s.
+
+### Consequence that mattered the same night
+
+Twelve subsystem-A jobs were run on card 1 at 20:12-20:16 (see
+`2026-08-29_first-arithmetic-on-the-silicon.md`). The counter was cleared at
+20:12:27 and read **0 before and after every job**, with `LATCHED TRIP none
+since the last clear` still true at 20:16. **Every one of those results landed
+inside a quiet window and is therefore unconfounded.** Had they landed in a
+burst, each trip halts the compute domain and no result would have been
+evidence about subsystem A.
+
+**Do not read that as the defect being harmless.** It means the runs were
+lucky, and that luck was checked rather than assumed. A long job, or one
+started while the HBM code is drifting, has no such protection.
+
+### Measurement trap, added
+
+**A sampling interval is a hypothesis about the process.** CORRECTION 1 divided
+a saturated counter by elapsed time and got a floor over an assumption.
+CORRECTION 2 fixed that by clearing and measuring, but at 300 s -- and produced
+a decay curve for a bursty process, which is a different way to be confidently
+wrong from the same family. The earlier trap in this file ("a single event in a
+short window bounds nothing") has an equal and opposite twin: **a long
+interval does not bound the shape.** Both were needed; neither alone was
+enough.
