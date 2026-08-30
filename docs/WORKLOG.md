@@ -106,15 +106,26 @@ silicon.
 Two agents editing one file has already cost this project real time. Nothing
 below may be edited by a track that does not own it.
 
+**REWRITTEN 2026-08-29 by TRACK BOARDAUDIT. The table it replaces named four
+tracks that had landed days earlier (C-ORACLE, B-ACCURACY, TOK-C, A-CTRL) and
+named none of the tracks actually running that night.** An ownership table that
+lists dead owners is worse than none: it makes free files look taken and taken
+files look free, and both errors cost a dispatch.
+
 | path | owner | note |
 |---|---|---|
-| `sim/regress.sh` | **SHARED** | any track adding a test edits it. Re-read it immediately before editing, keep the edit to the rows you add, and re-check `BASELINE_PASS` at commit time. |
-| `rtl/llama_top.vhd`, `sim/tb_llama_top.vhd`, `rtl/llama_map_pkg.vhd` | free | released by the integration track at `3246046` |
-| `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl`, `hw/fk33/*.xdc`, `hw/fk33/gen_fk33_engine.py`, `hw/fk33/rtl/fk33_engine.vhd` | free | released by TRACK SHELL at `928ad9f`. `gen_fk33_engine.py` and `rtl/fk33_engine.vhd` are new files from that track; the second is GENERATED, so edit the first. |
-| `rtl/attn_*.vhd`, `sim/tb_attn_block.vhd`, `ref/attn_*` | TRACK C-ORACLE | |
-| `rtl/gdn_*.vhd`, `rtl/l2norm_rs.vhd`, `sim/tb_gdn_*.vhd`, `sim/tb_l2norm_rs.vhd`, `ref/gdn_*`, `ref/l2norm*` | TRACK B-ACCURACY | |
-| `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | TRACK TOK-C | |
-| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `rtl/axi_rd_fsm.vhd`, `rtl/async_fifo.vhd`, `hw/mv_driver.c`, matvec benches | TRACK A-CTRL | landed 2026-08-28, see Landed. `axi_rd_fsm.vhd` and `async_fifo.vhd` are new files from that track and belong to it. |
+| `sim/regress.sh` | **SHARED** | any track adding a test edits it. Re-read it immediately before editing, keep the edit to the rows you add, and re-check `BASELINE_PASS` at commit time. Editing it under a running instance is already safe; see the note below. |
+| `rtl/rmsnorm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `sim/ooc_writedec_*`, `hw/fk33/results/writedec_*` | **TRACK WRITEDEC** | RUNNING. Has already committed `51323ca` for `rmsnorm_rs` and is working through `gdn_block` and `attn_block`. |
+| `sim/tb_llama_top.vhd`, `sim/realshape_gate.sh`, `sim/elab9b_run.sh`, `rtl/attn_kv_axi.vhd`, `rtl/attn_c_ports_skel.vhd` | **TRACK KVVALUE** | RUNNING |
+| `rtl/llama_top.vhd`, `rtl/hbm_tg.vhd`, the `sim/micro` copies | **TRACK CLOG2TOP** | RUNNING |
+| `docs/WORKLOG.md` | **TRACK BOARDAUDIT** | RUNNING, exclusively, by arrangement with Oren for the duration of the audit. Released when this track reports. |
+| `hw/fk33/gen_pcieep.py`, `hw/fk33/*.tcl`, `hw/fk33/*.xdc`, `hw/fk33/gen_fk33_engine.py`, `hw/fk33/rtl/fk33_engine.vhd` | free | released by TRACK SHELL at `928ad9f`, then by TRACK PBLOCK at `ed1ffe2`. `rtl/fk33_engine.vhd` is GENERATED, so edit `gen_fk33_engine.py`. **Wanted by backlog rows N3 and N4.** |
+| `hw/fk33/host/**` | free | never claimed by a track. **Wanted by backlog row N1**, which is the first thing to dispatch. |
+| `rtl/attn_*.vhd` (except `attn_kv_axi`, `attn_c_ports_skel`, `attn_block`), `sim/tb_attn_*.vhd`, `ref/attn_*` | free | released by TRACK C-ORACLE `8baa413`, TRACK C-SEAM and TRACK RY-ORACLE |
+| `rtl/gdn_*.vhd`, `rtl/l2norm_rs.vhd`, `sim/tb_gdn_*.vhd`, `ref/gdn_*`, `ref/l2norm*` | free | released by TRACK B-ACCURACY, TRACK B-FIX, TRACK B-RECUR `ea26eec` and TRACK BGATE2 `dfe308c`. **`rtl/gdn_block.vhd` is the exception: WRITEDEC holds it.** |
+| `tools/qwen35_tokenizer.py`, `tools/*tokenizer*`, `server/**` | free | released by TRACK TOK-C `0181cc3` and TRACK SERVER `3963a60`. **Wanted by N2 once the decision is made.** |
+| `rtl/matvec_int4*.vhd`, `rtl/weight_streamer.vhd`, `rtl/axi_rd_port.vhd`, `rtl/axi_rd_fsm.vhd`, `rtl/async_fifo.vhd`, `hw/mv_driver.c`, matvec benches | free | released by TRACK A-CTRL `a4f7e17` and TRACK OUTMODE `0ff6828`. **Wanted by backlog rows N7, N8 and N10.** |
+| `tools/gen_layer_program.py`, `tools/dprog_oracle.py`, `tools/hbm_map.py` | free | released by TRACK D-PROG `a2b20f3`, TRACK SCHED-FIX and TRACK ARENA-MANIFEST `b28e92b` |
 
 **A COMPLETED AGENT CAN STILL WAKE UP AND COMMIT.** Observed 2026-08-28: the
 subsystem-A-sim track reported done, was superseded, and then woke hours later
@@ -205,16 +216,48 @@ consecutive dispatches. Appending is one action and retiring a row is another,
 and only the first feels like progress. If this table names a track that has
 landed, the table is the defect.
 
+**Corrected 2026-08-29 by TRACK BOARDAUDIT: BGATE2 had LANDED (`dfe308c`) and
+was still listed here as RUNNING, which is the defect this section's own rule
+names. It is moved to Landed. BOARDAUDIT is added, because it was running and
+was not listed.**
+
 | track | question | owns |
 |---|---|---|
-| **BGATE2** | **Five of B's seven units have no accuracy gate the gate can fail.** The flagship: a mutation reintroducing exactly the defect `rmsnorm_bf` exists to fix is bit-exact-green and 1.7e10 output LSB wrong. Three of the five have oracle blind spots that must be answered before a tolerance means anything. | `sim/tb_gdn_silu.vhd`, `sim/tb_rmsnorm_bf.vhd`, `sim/tb_gdn_{head_emit,y_emit,emit_chain}.vhd` + their mutate scripts and generators |
+| **BOARDAUDIT** | **The board is wrong often enough to have wasted three dispatches in one day, always the same way: work lands and nobody strikes the row.** Audit every BACKLOG row, every Open issue and every Decision against the TREE, not against another document, and rewrite the board so it is true. Then say what is actually ready. | `docs/WORKLOG.md`, `docs/debugging/2026-08-29_boardaudit-*.md` |
 | **WRITEDEC** | LUTDIET measured the fix; this applies it. Per-word generate with a CONSTANT index, module by module with its own before/after, then a composed B+C+D measurement to replace the projection with a number. Must be bit-exact: it is a structural rewrite of a write path and must change no value. | `rtl/rmsnorm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `sim/ooc_writedec_*`, `hw/fk33/results/writedec_*` |
 | **KVVALUE** | CKVMAP's own open item: **the real map elaborating is not the real map working.** Build an oracle at the KV path's OUTPUT, multi-token so the read path is actually reached, and close the two guards CKVMAP measured as NOT biting -- chiefly that nothing mechanically links the RTL to `hbm_map.py`'s region block, so a base one chunk off elaborates clean. | `sim/tb_llama_top.vhd`, `sim/realshape_gate.sh`, `sim/elab9b_run.sh`, `rtl/attn_kv_axi.vhd`, `rtl/attn_c_ports_skel.vhd` |
 | **CLOG2TOP** | CLOG2's handoff, plus an open contradiction to settle. Delete `llama_top`'s locally declared `clog2`, which shadows the `use work.util_pkg.clog2;` already at `:173`, and rewrite the KV-fit guard against the new `clog2(unsigned)`. **Headline question: does the real 9B config elaborate at `C_MAXPOS = 131,072`, or only with the real KV bases at a smaller extent?** | `rtl/llama_top.vhd`, `rtl/hbm_tg.vhd`, the `sim/micro` copies |
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
-BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2.
+BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2, **BGATE2** (`dfe308c`).
+
+**Tracks that landed and appear NOWHERE on this board, found by TRACK BOARDAUDIT
+2026-08-29.** Each has a full write-up in `docs/debugging/` and none is named in
+any Landed row. Recorded here rather than reconstructed into rows, because the
+write-ups are the artefact and the point is that the board lost them:
+**PBLOCK** (`ed1ffe2`, `2026-08-29_shell-pblock.md` -- the routed bitstream),
+**FIRSTLOAD** (`2026-08-29_first-engine-load-on-card.md` -- the bitstream loads,
+links and identifies; three instrument defects; the memory finding raised then
+withdrawn),
+**CARD2** (`2026-08-29_second-fk33-verify-and-flash-backup.md` -- card 2 works,
+its factory flash is dumped and double-read),
+**SERVER** (`3963a60`, `2026-08-29_host-seam-v2.md` -- backlog row 5),
+**B-RECUR** (`ea26eec`, `2026-08-29_gdn-recur-coverage-and-dm.md` -- backlog row 8),
+**SPECREC** (`f65e2bc`, `2026-08-29_spec-reconciliation.md` -- backlog row 9;
+this one DOES have a Landed row, so the board contradicted itself),
+**CAPTURE** (`2026-08-29_capture-llama-top-r9bs.md`),
+**C-SEAM** (`2026-08-29_c-seam-layer-interleave.md`),
+**CDC-STATIC** (`be982b3`, `2026-08-29_cdc-static-analysis.md`),
+**ADDRARENA** (`2026-08-29_addrarena-one-hbm-map.md`),
+**EMBED-BF16** (`2026-08-29_embedding-bf16-upgrade.md`),
+**HOST-EMBED** (`2026-08-29_host-embedding-gather.md`),
+**REFTOKEN** (`2026-08-29_ref-token-automatic-verdict.md`),
+**LOGITS-SEAM** (`2026-08-29_logits-seam-model.md`),
+**GDN-ORACLE** (`2026-08-29_gdn-block-oracle.md`).
+**MEASURED: `grep -ci` on this file for each of those filenames returned 0.**
+Three of the four dispatches wasted today were onto work whose write-up was
+sitting in `docs/debugging/` unreferenced.
 
 **AN OPEN CONTRADICTION, RECORDED RATHER THAN PAPERED OVER.** CKVMAP reported
 "the real 9B KV map elaborates" (2,452,864 kB / 2.36 s, `realshape_gate` PASS
