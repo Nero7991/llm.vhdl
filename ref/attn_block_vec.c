@@ -893,6 +893,20 @@ int main(int argc, char **argv)
      * last element is caught by head 1, and one that drops the last element
      * is caught by head 0.
      *
+     * THE PER-HEAD BASE `+ h` IS A SECOND, SEPARATE PROPERTY and it is not
+     * decoration.  Without it the taper is a PERMUTATION on every head, so
+     * exactly one block per head has taper 0 and v_ref comes out at the SAME
+     * VALUE on every head.  `rtl/attn_emit.vhd` then reduces `e_grid`, which
+     * is `v_ref + R_Q - 1` per head, over a CONSTANT vector -- the identical
+     * defect one level up, in the same chain, MEASURED as e_grid = {20, 20}.
+     * Shifting head h down by a further h binades makes the per-head minima
+     * DISTINCT (6, 7, ...), so attn_emit's cross-head minimum and every
+     * alignment shift it derives are observable in this bench too.  The
+     * per-block cap is 4 - h rather than 4 so that h + t stays inside the
+     * exponent range; ALL-DISTINCT within a head therefore needs
+     * NBLK + N_KVH - 1 <= 5, and the unique minimum and the distinct per-head
+     * minima hold for N_KVH <= 5.  All three are ASSERTED below.
+     *
      * WHAT THIS COSTS, stated rather than hidden: the deepest-tapered block
      * carries 2047 >> t as its peak instead of ~2047, so its INPUT has fewer
      * distinct levels.  It does NOT cost mantissa coverage, because kv_quant
@@ -909,7 +923,9 @@ int main(int argc, char **argv)
     for (h = 0; h < N_KVH; h++) {
         for (b = 0; b < NBLK; b++) {
             t = ((NBLK - 1 - b) + h * (NBLK / N_KVH)) % NBLK;
-            if (t > 4) t = 4;
+            if (t > 4 - h) t = 4 - h;   /* keep h + t inside the exponent range */
+            if (t < 0) t = 0;
+            t += h;                     /* PER-HEAD BASE, see below */
             for (d = 0; d < KVB; d++) {
                 int a;
                 j = h * N + b * KVB + d;
@@ -976,10 +992,10 @@ int main(int argc, char **argv)
                         "the taper puts it at %d\n", h, argmin, want);
                 bad = 1;
             }
-            if (NBLK <= 5 && ndist != NBLK) {
+            if (NBLK + N_KVH - 1 <= 5 && ndist != NBLK) {
                 fprintf(stderr, "attn_block_vec: head %d has %d distinct "
-                        "block exponents of %d; NBLK <= 5 must give all "
-                        "distinct\n", h, ndist, NBLK);
+                        "block exponents of %d; NBLK + N_KVH - 1 <= 5 must "
+                        "give all distinct\n", h, ndist, NBLK);
                 bad = 1;
             }
         }
@@ -997,6 +1013,15 @@ int main(int argc, char **argv)
             if (a0 == a1) {
                 fprintf(stderr, "attn_block_vec: heads 0 and 1 both put the "
                         "minimum V block exponent at block %d\n", a0);
+                bad = 1;
+            }
+            /* and their VALUES must differ, or v_ref is the same on every head
+             * and rtl/attn_emit.vhd's cross-head reduction over e_grid is a
+             * minimum over a constant vector -- the same defect one level up. */
+            if (e0min == e1min) {
+                fprintf(stderr, "attn_block_vec: heads 0 and 1 fold to the "
+                        "SAME v_ref (%d).  attn_emit's e_grid minimum is "
+                        "unobservable.\n", e0min);
                 bad = 1;
             }
         }

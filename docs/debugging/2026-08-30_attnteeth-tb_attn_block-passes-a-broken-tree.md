@@ -80,6 +80,12 @@ one -- and the attribution control confirms it is credited with **zero** kills.
 `M8`, the fold silently dropping the last block exponent of the header, passed
 both `tb_attn_block` AND `tb_attn_kv_seam` before this change.
 
+**The first cut of that fix introduced the same defect one level up, and the
+enumeration caught it, not the fix's own checks.** A per-head taper that is a
+PERMUTATION gives every head the same `v_ref`, so `attn_emit`'s cross-head
+minimum over `e_grid = v_ref + R_Q - 1` became a minimum over `{20, 20}`.
+Corrected by a per-head base; sections 10 and 11.
+
 **And the bench that DID discriminate does so by one block exponent.** MEASURED
 with the same probe on `tb_attn_kv_seam` at the gate's own arguments: of the
 sixteen SEAM 2 folds in that run, **fifteen are flat `6 6 6 6` and exactly one
@@ -339,7 +345,8 @@ rtl/*.vhd` gives four units carrying such a reduction:
     rtl/attn_score_q12.vhd
     rtl/gdn_conv.vhd
 
-A separate enumeration of the other three is in section 10. **It is an
+The enumeration of all four, with the stimulus of every bench that drives
+them measured rather than read, is section 10. **It is an
 enumeration, not a fix**, and the three are not claimed to be defective -- only
 to share the shape that has to be checked.
 
@@ -444,12 +451,130 @@ should be read as one header, not four tokens.
   instrumenting the fold site and printing its input, which should have been
   the FIRST action rather than the third. When a check does not discriminate,
   print the check's INPUT before theorising about the check.
+- **MY OWN SECOND-ORDER DEFECT, and it is the most instructive line here.** The
+  first cut of the taper made `taper(h,b)` a PERMUTATION on every head. A
+  permutation has exactly one zero, so every head folded to the SAME `v_ref`,
+  and `attn_emit`'s cross-head minimum over `e_grid` became a minimum over a
+  constant vector -- **the identical defect, one level up, in the same chain,
+  introduced by the fix for the first one.** It passed the generator's own
+  assert, passed P9 as first written, and passed the whole `--only attn` suite.
+  It was found by the sibling enumeration in section 10, i.e. by asking where
+  ELSE the shape lives, and NOT by anything checking the fix. Section 11 has
+  the fix and its mutants. The general form: **when you repair a degeneracy,
+  ask immediately what CONSUMES the thing you just made non-degenerate**, because
+  a stimulus property that is exact enough to fix one reduction is exact enough
+  to flatten the next one.
 - **The anchor row must not be labelled SURVIVED.** The first version of
   `sim/mutate_attn_block.sh` printed `A0 SURVIVED` for the honest tree, which
   reads exactly like a miss in a table whose entire value is its survivor
   column. It now prints `PASS (anchor)` and is not counted.
 
-## 9. Open, not yet answered
+## 10. The sibling enumeration -- where else this shape lives
+
+`grep -l 'emin\|e_min' rtl/*.vhd` gives four units carrying a reduction over
+per-block exponents. Each was traced to its bench, to the generator writing
+that bench's vector file, and to the exact stimulus line, and every FLAT case
+was MEASURED by compiling the generator with the gate's own arguments from
+`sim/regress.sh`'s `tb_vector_args()` and reading the exponents back out.
+
+| unit | bench | generator + gate args | stimulus | reduction observable? |
+|---|---|---|---|---|
+| `attn_block.vhd` SEAM 2 | `tb_attn_block` | `attn_block_vec.c` `16 4 2 4 8 3 4 0` | **was FLAT, now tapered** | **was NO, now YES** |
+| `attn_block.vhd` SEAM 2 | `tb_attn_kv_seam` | `attn_block_seq_vec.c` `64 4 2 16 16 4 2 2` | **FLAT** (`:214-215`) | **1 of 16 records** |
+| `attn_emit.vhd` `e_min` over `e_grid` | `tb_attn_emit` (dedicated) | `attn_emit_vec.c` `40 2 48` | SHAPED (`:229-237`) | YES, 32 of 40 layers |
+| `attn_emit.vhd` in-chain | `tb_attn_block` | `attn_block_vec.c` | **was degenerate, now spread** | **was NO, now YES** |
+| `attn_emit.vhd` in-chain | `tb_attn_kv_seam` | `attn_block_seq_vec.c` | **FLAT** | **NO on layer 1** |
+| `attn_score_q12.vhd` `e_min` over `e_k` | `tb_attn_score_q12` (dedicated) | `attn_score_q12_vec.c` `64 8 4` | SHAPED (`:236-245`) | YES, 57 of 64 cases |
+| `attn_score_q12.vhd` in-chain | `tb_attn_block` | `attn_block_vec.c` | SHAPED cache, FLAT current | YES via the cache |
+| `attn_score_q12.vhd` in-chain | `tb_attn_kv_seam` | `attn_block_seq_vec.c` | **FLAT** | 6 of 16 records |
+| `gdn_conv.vhd` `emin` over `e_t` | `tb_gdn_conv` | `gdn_conv_vec.c` defaults | SHAPED (`:70,73`) | YES, 101 of 128 |
+| `gdn_conv.vhd` in-chain | `tb_gdn_block_vec` | `gdn_block_vec.c` | SHAPED (`:587`) | YES |
+
+**The four DEDICATED unit benches are all clean** and were shown to be so by
+measurement, not by reading. `ref/gdn_conv_vec.c:73` even carries the comment
+"so the alignment shifts actually bite rather than all being zero", which is
+this whole finding stated in advance by whoever wrote that generator.
+
+### The one that still has the defect, and it is NOT fixed here
+
+**`ref/attn_block_seq_vec.c:214-215` is the untapered line, word for word:**
+
+```c
+        for (i = 0; i < N * N_KVH; i++)
+            vin[(size_t)s * N * N_KVH + i]
+                = m12(65537 + SEED + 1013 * t + 7717 * l, i);
+```
+
+MEASURED from the emitted record images at the gate's arguments, 16 records
+(8 steps x 2 KV heads), independently reproducing the probe in section 6a from
+the OTHER side:
+
+```
+step 0 (tok 0 lay 0) head 0:  V_exp[ 6 5 6 6 ]   <-- the only spread
+step 0 (tok 0 lay 0) head 1:  V_exp[ 6 6 6 6 ]
+step 1..7, both heads:        V_exp[ 6 6 6 6 ]   (14 more records)
+```
+
+so `v_ref[0][0] = 5` and every other `v_ref` is 6, and `attn_emit`'s
+`e_grid = v_ref + R_Q - 1` is `{19, 20}` on layer 0 and **`{20, 20}` on layer
+1** -- a minimum over a constant vector on half the design.
+
+**Not fixed by this track, deliberately, and the reason is ownership rather
+than difficulty.** `sim/tb_attn_kv_seam.vhd` is not this track's file, and
+`sim/regress.sh:1499-1518` -- TRACK GATEGREEN's file -- carries a long,
+carefully measured comment justifying that generator's SEED = 2 and NLAY = 2 in
+terms of exactly these numbers ("moves 358 integers, ALL of them layer 0's
+outputs"). Changing the stimulus invalidates that comment, and the comment
+cannot be updated in the same commit. **It is the single highest-value
+follow-on from this track**, it is a one-function change modelled on the taper
+landed here, and it should be dispatched as its own item with both files in
+scope.
+
+## 11. The taper's own second-order defect, found by the enumeration
+
+**The first cut of the taper fixed the WITHIN-head fold and left the
+CROSS-head one degenerate, and I did not notice.** `taper(h,b)` was a
+permutation on every head, so exactly one block per head has taper 0 and every
+head folds to the SAME `v_ref`. MEASURED at commit `5755473`: `v_ref` = 6 on
+both heads, so `e_grid = v_ref + R_Q - 1` = `{20, 20}` and
+`rtl/attn_emit.vhd`'s minimum over `e_grid` was a minimum over a constant
+vector -- **the identical defect, one level up, in the same chain, introduced
+by the fix for the first one.**
+
+Fixed by adding a per-head base: block `b` of head `h` is tapered by
+`min(t, 4-h) + h`, so the per-head minima are 6, 7, ... and differ by
+construction. MEASURED:
+
+```
+head 0 v block exponents 9 8 7 6   argmin=3 nmin=1 ndistinct=4
+head 1 v block exponents 8 7 10 9  argmin=1 nmin=1 ndistinct=4
+```
+
+Two further mutants were added to `sim/mutate_attn_block.sh` to prove it,
+both on `rtl/attn_emit.vhd`:
+
+| tag | mutation | at `5755473` | with the per-head base | `tb_attn_emit` |
+|---|---|---|---|---|
+| M9 | `attn_emit` takes the MAXIMUM over `e_grid` | **SURVIVED** | KILLED | KILLED |
+| M10 | `attn_emit`'s per-group alignment shift forced to 0 | **SURVIVED** | KILLED | KILLED |
+
+**Attribution, and it is less flattering than M8's.** `C1M9` and `C1M10` are
+both KILLED with P9 disabled, so again P8 does the killing and P9 none of it.
+But the last column is the repo-level control and it says **`tb_attn_emit`, the
+dedicated bench, already kills both.** So unlike M8, these are NOT new
+repo-wide detections: the per-head base removes a degeneracy in the CHAIN bench
+that a unit bench happens to cover today.
+
+Kept anyway, and the justification is stated rather than assumed: **"the unit
+bench covers it" is exactly how the original defect hid.** CLAUDE.md's record of
+this unit is that every unit inside `attn_block` was individually bit-exact
+against a double-oracled reference and nothing checked that they were connected
+in the order attention requires. The chain bench exists to check the
+composition, and a composition check running on a constant exponent vector
+checks nothing about the composition. The cost is four lines in the generator
+and one comparison in P9.
+
+## 12. Open, not yet answered
 
 - **The reassociation is exercised at `NBLK = 4`, never at `NBLK = 8`.** Both
   benches run scaled shapes (`HEAD_DIM` 16/4 and 64/16); the 9B build shape is
@@ -473,5 +598,17 @@ should be read as one header, not four tokens.
   (`kin[i] = m12(104729 + SEED, i)`), and the K-side fold is covered only
   through the CACHED records. Whether the BYPASSED K record's own header being
   degenerate hides anything in `attn_score_q12` was not measured here.
-- **Sibling benches (section 6) are enumerated, not fixed, and only the
-  `attn_block` one has been measured end to end.**
+- **`ref/attn_block_seq_vec.c:214-215` still carries the untapered line.**
+  Section 10. Not fixed here for ownership reasons and it is the highest-value
+  follow-on from this track.
+- **The K stimulus of `ref/attn_block_vec.c` is still FLAT**
+  (`kin[i] = m12(104729 + SEED, i)`). MEASURED it does not fully collapse at
+  `KV_BLOCK = 4` -- the written K headers come out `7 7 7 8` and `8 7 7 8`, so
+  max /= min and `attn_score_q12`'s min-vs-max mutation is visible -- but the
+  MINIMUM IS NOT UNIQUE (three-way and two-way ties), so a fold returning the
+  wrong tied index is not. Not tapered here; the K-side coverage in this bench
+  rests on the cached headers, which ARE shaped
+  (`ref/attn_block_vec.c:639-641`).
+- **`sim/tb_attn_kv_seam.vhd` has no P9-equivalent.** Section 6a. Its coverage
+  of this structure should be read as one header, not four tokens, until it
+  does.

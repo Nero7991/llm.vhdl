@@ -182,8 +182,8 @@ for i, l in enumerate(lines):
         n += 1
     else:
         out.append(l)
-if n != 4:
-    sys.stderr.write("expected 4 P9 verdict sites, neutered %d\n" % n)
+if n != 5:
+    sys.stderr.write("expected 5 P9 verdict sites, neutered %d\n" % n)
     sys.exit(2)
 open(dst, 'w').write('\n'.join(out))
 PY
@@ -269,12 +269,22 @@ M8=$(mutate M8 rtl/attn_block.vhd \
   "      if i < NBLK-1 then a(i) := e_of(v, i);")
 run_case M8 "the fold silently drops the LAST block exponent of the header" "$M8" "$GEN"
 
+M9=$(mutate M9 rtl/attn_emit.vhd \
+  "            if e_l(grp) < e_min then" \
+  "            if e_l(grp) > e_min then")
+run_case M9 "attn_emit takes the MAXIMUM over e_grid, not the minimum" "$M9" "$GEN"
+
+M10=$(mutate M10 rtl/attn_emit.vhd \
+  "            sh_v := to_integer(e_l(grp)) - to_integer(e_min);" \
+  "            sh_v := 0;")
+run_case M10 "attn_emit's per-group alignment shift is forced to zero" "$M10" "$GEN"
+
 echo
 echo "=========================================================================="
 echo " C1 -- ATTRIBUTION CONTROL.  Every kill above, re-run with P9's verdict"
 echo " DISABLED.  A kill that stands here belongs to P8, NOT to P9."
 echo "=========================================================================="
-for t in M1 M2 M3 M4 M5 M6 M7 M8; do
+for t in M1 M2 M3 M4 M5 M6 M7 M8 M9 M10; do
   src="$SCRATCH/${t}_src"
   [ -d "$src" ] || continue
   cp "$CTL/tb_attn_block.vhd" "$src/tb_attn_block.vhd"

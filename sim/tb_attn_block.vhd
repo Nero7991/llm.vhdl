@@ -121,9 +121,16 @@
 --       all equal, (b) its minimum is UNIQUE, so which element the fold
 --       returns is decidable and not only its value, and (c) the KV heads do
 --       not put that minimum at the same block index, or a fold returning one
---       fixed element would be caught by both heads together or by neither.
---       ref/attn_block_vec.c produces that spread deliberately, by a per-block
---       magnitude taper, and asserts the same property from its own side.
+--       fixed element would be caught by both heads together or by neither,
+--       and (d) the heads do not fold to the same v_ref VALUE, or e_grid --
+--       which is v_ref + R_Q - 1 per head -- is itself a constant vector and
+--       rtl/attn_emit.vhd's cross-head minimum over it is the same defect one
+--       level up in the same chain.  (d) was added after the first cut of the
+--       taper, which was a pure PERMUTATION per head and so gave every head
+--       the same v_ref; MEASURED e_grid = {20, 20} and attn_emit's reduction
+--       unobservable here even though the within-head fold was not.
+--       ref/attn_block_vec.c produces both spreads deliberately, by a per-block
+--       magnitude taper plus a per-head base, and asserts them from its side.
 --
 --       P9 is a GATE ON P8'S RESOLUTION, and the general lesson is that a
 --       bit-exact oracle is only as sharp as the stimulus driving it.  When it
@@ -741,6 +748,7 @@ begin
     variable p8_cmp : integer := 0;
     type argm_t is array (0 to N_KVH-1) of integer;
     variable p9_argmin : argm_t := (others => -1);
+    variable p9_minv   : argm_t := (others => 0);
     variable p9_ev, p9_emin, p9_nmin, p9_ndist, p9_amin : integer := 0;
     variable p9_seen, p9_same : boolean := false;
   begin
@@ -982,6 +990,7 @@ begin
         if not p9_seen then p9_ndist := p9_ndist + 1; end if;
       end loop;
       p9_argmin(h) := p9_amin;
+      p9_minv(h)   := p9_emin;
       report "tb_attn_block: P9 -- head " & integer'image(h)
            & " written V block exponents: " & hdr_img(vwr_hdr(h))
            & " argmin=" & integer'image(p9_amin)
@@ -1021,6 +1030,24 @@ begin
              & "exponent at block " & integer'image(p9_argmin(0))
              & ".  A fold that returns that fixed element is bit-exact on "
              & "every head at once." severity error;
+      end if;
+      -- (d) and the per-head MINIMA must differ, or v_ref is the same on every
+      -- head, e_grid = v_ref + R_Q - 1 is a constant vector, and
+      -- rtl/attn_emit.vhd's cross-head minimum over e_grid is the SAME defect
+      -- one level up in the same chain.  MEASURED 2026-08-30: with the taper a
+      -- pure permutation this was e_grid = {20, 20} and attn_emit's reduction
+      -- was unobservable here even though the within-head fold was not.
+      p9_same := true;
+      for h in 1 to N_KVH-1 loop
+        if p9_minv(h) /= p9_minv(0) then p9_same := false; end if;
+      end loop;
+      if p9_same then
+        nerr := nerr + 1;
+        report "tb_attn_block: P9 -- every KV head folds to the SAME v_ref ("
+             & integer'image(p9_minv(0))
+             & ").  attn_emit's minimum over e_grid is a minimum over a "
+             & "constant vector and every alignment shift it derives is 0."
+          severity error;
       end if;
     end if;
 
