@@ -161,12 +161,42 @@ architectural argument requires.
 | configuration | old (5.617) | **squeeze-measured (6.553)** |
 |---|---:|---:|
 | today + shell + ROM best | 123.5% | **110.1%** |
-| **+ lever C + gain to URAM** | 105.3% | **92.9%** |
-| + lever C + URAM + `d_norm` | 94.7% | **82.7%** |
-| **+ `d_norm` + URAM, no lever C** | 102.2% | **90.7%** |
+| **+ lever C + gain to BRAM** | 105.3% | **92.9%** |
+| + lever C + BRAM + `d_norm` | 94.7% | **82.7%** |
+| **+ `d_norm` + BRAM, no lever C** | 102.2% | **90.7%** |
 
 **Two levers may suffice on CLB count. The 105.2% relayed to Oren is
 superseded.**
+
+**RELABELLED 2026-08-30 by TRACK NORMURAM: those rows said "gain to URAM" and
+the resource is BRAM.** MEASURED, Vivado's own words in TRACK NWROM's log
+(`/mnt/storage/nwrom/out/vivado_nw_lfura65.log:412`, sitting in the artefacts
+since 2026-08-29 and never read past the result CSV):
+
+```
+WARNING: [Synth 8-10226] The ram_style = ultra set on ROM
+"ooc_nwrom_memura__GCB101/gvr.nwrom" can not be honored for this device.
+The URAM primitives on this device do not support initializations to any
+non 0 values.  This ROM will be implemented using BRAMs
+```
+
+Both of NWROM's memory probes report **`uram=0`**. The "114 URAM288" that this
+brief, TRACK SCATTER section 11 and TIMING's table all carried is the **`bram`
+column of a run in which the URAM request was REFUSED and silently downgraded.**
+The probe never used a single URAM.
+
+**The LUT saving is real and unaffected; what changes is the currency.** The
+gain image costs **114 to 135 BRAM tiles of the 672 on this part**, and nobody
+has been charging that against a BRAM budget. RMSMUX's vectors want 6 more.
+**"320 idle URAM288" is true and unusable**: URAM on this device is available
+only to a store written at RUN TIME, so the only URAM-capable way to serve this
+gain is the HBM route, which is a point in route (c)'s favour that no brief
+made.
+
+**No design change followed, and that is correct.** Vivado falls back to BRAM
+either way; asking for `rom_style = "block"` explicitly only stops the log
+carrying a WARNING that claims a resource the design never gets, which is
+exactly how the misread happened.
 
 **TIMING's own prediction was refuted on both limbs** and it says so: it
 predicted the placer would either fail or stay near 6.32, and neither happened.
