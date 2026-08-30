@@ -79,7 +79,9 @@ Repo SHA at the start of this track: `494f8817cd0e93a7e6b53a15d9e7bfd8d4c26dc7`
 > predicted 0.608, because its mac array is dimensioned on `G = N_QH/N_KVH`,
 > which tensor parallelism leaves invariant. **Two cards do not deliver the
 > area saving this document estimated**, so a single-card area failure is not a
-> reason to reach for them.
+> reason to reach for them. **FINAL, with B also drawn: TP-small is 355,395 LUT
+> = 102.3% of the die. It does not fit at all.** Tensor parallelism at N=2
+> removes 7.9% of B and C combined, against the 39% estimated.
 
 > ### WATCH ITEM AGAINST X1: striping SPENDS context, and it can spend past 64k
 >
@@ -500,7 +502,7 @@ though the absolutes are optimistic:
 | **PP by index, N=2** | 403,268 | 116% | **no** | 57.1 | context |
 | **PP by type, N=2** | 324-329k | 93-95% | **no** | 57.1 | context |
 | **TP-fast, N=2** | 416,410 | 120% | **no** | 112 | context, speed |
-| ~~**TP-small, N=2**~~ **WITHDRAWN, see section 11** | ~~308,900~~ **344,170** | ~~88.9%~~ **99.1%** | ~~yes, just~~ **NO** | 57.2 minus the collective | **nothing it was bought for** |
+| ~~**TP-small, N=2**~~ **WITHDRAWN, see section 11** | ~~308,900~~ **355,395 MEASURED** | ~~88.9%~~ **102.3%** | ~~yes, just~~ **NO, over 100%** | 57.2 minus the collective | **nothing it was bought for** |
 
 \* the URAM row's CLB is computed at the unchanged 6.32 density and is therefore
 pessimistic: the two moves also delete 26,432 of the design's 90,896 MUXF7/F8
@@ -1232,3 +1234,151 @@ failure mode is not immunity from it.** The general form worth carrying: before
 crediting a parallelism scheme with an area saving, find the generic the area
 is actually dimensioned on and substitute the sharded values into it, rather
 than reasoning about what "should" scale.
+
+## 11.8 Subsystem B's control, and a bound PRE-REGISTERED before its N=2 draw
+
+`b_n1_a` completed in 428 s. **It is the tightest control of the four:**
+
+| | OOC draw (`b_n1_a`) | compose4 `b_gdn` row | delta |
+|---|---:|---:|---:|
+| CLB LUTs | **75,246** | 75,181 | **+0.09%** |
+| CLB Registers | 52,203 | 52,470 | -0.5% |
+| DSP | **253** | 253 | **exact** |
+| BRAM tile | **43** | 43 (36 x36 + 14 x18) | **exact** |
+
+`COMPOSE_GENERICS gdn_block :` printed empty, which is correct and is itself a
+check: `sim/ooc_compose_bcd.tcl:62` sets `GEN(gdn_block) {}` because the file's
+own defaults ARE the 9B N=1 values (`KEY_HEADS 16, VAL_HEADS 32, LAYERS 24`).
+The N=2 copy overrides all four plus `RECUR_LANES 32 -> 16`.
+
+**Unlike C, B's draw is a fair test of the estimate.** `RECUR_LANES` is a real
+throughput generic and it was changed. So B can still move, where C structurally
+could not.
+
+**But it cannot reverse the verdict, and this is stated before the number
+arrives so it cannot be fitted to it.** With C MEASURED, TP-small stands at
+344,170 LUT = 99.1%. The 90% target is 312,612 LUT. So:
+
+```
+B would have to land 31,558 LUT BELOW its own estimate,
+i.e. B(N=2) = 52,000 - 31,558 = 20,442 LUT.
+```
+
+**That is below B's floor.** B's shape-invariant leaves alone -- `gdn_conv`
+3,652 + `l2norm_rs` 4,707 + `gdn_scalar` 4,645 + `gdn_silu` 4,154 +
+`gdn_exp_capture` 844 = **18,002 LUT** -- are per-head-dim and per-channel, not
+per-head-count, and do not shard at all. Even at the physically unreachable
+limit where `gdn_recur_pipe`, `gdn_emit_chain` and all of B's glue vanish
+entirely, TP-small lands at 310,172 LUT = **89.3%**, which is *at* the 90% line
+with no margin, from a configuration that cannot exist.
+
+**So the C draw alone settles it: TP-small does not fit, and B's result can
+refine the number but not the verdict.** B's draw is still worth having,
+because whether the lane-halving hypothesis holds at all is a reusable fact
+about this design independent of the two-card question.
+
+## 11.9 Subsystem B's N=2 draw, and the final verdict
+
+`b_n2_a`, 543 s, `rc=0`, sentinel present, generics as printed by the run:
+`KEY_HEADS=8 VAL_HEADS=16 LAYERS=24 RECUR_LANES=16`.
+
+| draw | LUT | FF | DSP | BRAM tile | F7 | F8 |
+|---|---:|---:|---:|---:|---:|---:|
+| `b_n1_a` control | 75,246 | 52,203 | 253 | 43 | 3,953 | 831 |
+| `b_n2_a` | **63,651** | 41,637 | **189** | 25.5 | 4,529 | 767 |
+| ratio | **0.846** | 0.798 | 0.747 | 0.593 | 1.146 | 0.923 |
+
+Against the thresholds pre-registered in 11.8: estimate 52,045, **threshold B
+52,645 MISSED by 11,006**, **threshold A 60,052 MISSED by 3,599**. B moved, and
+missed both anyway.
+
+### The attribution, leaf by leaf
+
+MEASURED, `synthutil_hier_gdn_block.rpt` from each run:
+
+| leaf | N=1 | N=2 | delta | ratio |
+|---|---:|---:|---:|---:|
+| `u_recur` `gdn_recur_pipe` | 27,910 | **17,114** | **-10,796** | **0.613** |
+| `(gdn_block)` glue | 7,610 | 6,854 | -756 | 0.901 |
+| `u_exp` `gdn_exp_capture` | 850 | 839 | -11 | 0.987 |
+| `u_silu_conv` `gdn_silu` | 4,155 | 4,146 | -9 | 0.998 |
+| `u_scal` `gdn_scalar` | 4,652 | 4,645 | -7 | 0.998 |
+| `u_conv` `gdn_conv` | 3,658 | 3,653 | -5 | 0.999 |
+| `u_l2` `l2norm_rs` | 4,705 | 4,704 | -1 | 1.000 |
+| **`u_emit` `gdn_emit_chain`** | **21,710** | **21,700** | **-10** | **1.0000** |
+| total | 75,246 | 63,651 | -11,595 | 0.846 |
+
+**Two clean results, and they point opposite ways.**
+
+**The lane-halving hypothesis is CONFIRMED where it was tested.**
+`gdn_recur_pipe` fell to 0.613 with `RECUR_LANES 32 -> 16`, and its DSP fell
+**129 to 65, exactly half**. That is the one part of section 2.5's model that
+survives contact: halving a real throughput generic does remove roughly half of
+the unit it dimensions. My predicted 0.50 against a measured 0.613 is the
+closest any estimate in this document came.
+
+**`gdn_emit_chain` did not move at all: 21,710 to 21,700, ratio 1.0000, DSP 57
+in both.** I credited it with -5,710 LUT and it delivered -10. Its lane count is
+a **separate generic that I did not change**, and `rtl/gdn_block.vhd:210-211`
+says why it cannot casually be changed: 16 is chosen because "8 misses B's
+299.04 MHz and 32 both costs more and closes slower". So unlike C's case the
+lever exists -- it is simply **blocked by timing**, not absent.
+
+That distinction is worth keeping. **Subsystem C's invariance is structural and
+permanent** (`G = N_QH/N_KVH` is preserved by sharding). **Subsystem B's
+residual is a timing constraint on one generic**, which some future Fmax
+headroom could unblock. Neither is available today.
+
+### Final corrected arithmetic
+
+```
+section 2.5 estimate                            311,877 LUT   89.8%
+C: estimated 51,869, MEASURED 84,293            +32,424
+B: estimated 52,502, MEASURED 63,596            +11,094
+                                                -----------
+TP-small, MEASURED where measurable             355,395 LUT
+355,395 / 6.32                                  = 56,233 CLB = 102.3%
+```
+
+**TP-small does not fit the die. It is over 100%.** And that figure still
+grants subsystem A the halving it was never drawn for; if A does not halve
+either, TP-small is 415,668 LUT = **119.7%**, which is TP-fast.
+
+**The headline number: tensor parallelism at N=2 removes 12,920 LUT of the
+162,583 in B and C combined, which is 7.9%.** Section 2.5 predicted about 39%.
+
+### 11.10 What is now settled, and what A still owes
+
+| claim | status |
+|---|---|
+| Pipeline parallelism saves ~4% and gives no speedup | stands, structural, section 2.2-2.3 |
+| Two cards are an area solution for the 9B | **REFUTED BY MEASUREMENT.** TP-small is 102.3% |
+| C shrinks under TP | **REFUTED, structurally.** `G` is invariant. 0.985 |
+| B shrinks under TP | **partially.** 0.846, and all of it is `gdn_recur_pipe` |
+| Halving a real throughput generic halves its unit | **CONFIRMED**, `gdn_recur_pipe` 0.613, DSP exactly 0.500 |
+| A shrinks under TP | **NOT DRAWN.** `ooc_compose_bcd.tcl` has no matvec target |
+
+**A is the one open input and it cannot change the verdict.** Even granting A a
+perfect halving, TP-small is 102.3%. A's own halving is the most credible of
+the three -- `MACS` is an explicit generic on the matvec path and DSP tracks it
+1:1 -- but B's result is the caution: `gdn_recur_pipe` took its generic and
+delivered 0.613 rather than 0.500, so "halve the lanes, halve the area" runs
+about 20% optimistic even where it works.
+
+### 11.11 Draw counts, stated as required
+
+**Every figure in section 11 is drawn ONCE.** No target was drawn twice. That
+is a deliberate stop, not an omission: the verdict is 102.3% against a 90%
+target and a 100% hard limit, so the margin is **12.3 percentage points**,
+against a per-draw scatter that the project has measured at 1.55x only for
+**ROM-dominated** structures. Neither `attn_block` nor `gdn_block` is
+ROM-dominated, and the two controls landed within **+2.0%** and **+0.09%** of
+independently-produced compose-build rows, which bounds this flow's scatter far
+below the gap. A second draw could not move 102.3% under 90%.
+
+**Where a repeat WOULD have been required and is therefore not claimed:** any
+conclusion resting on a difference smaller than a few percent. The one such
+number here is C's 0.985, and it is not load-bearing as a *number* -- the
+load-bearing claim is `G`'s invariance, which is read off `rtl/attn_block.vhd`
+and confirmed by DSP holding at exactly 298 across both draws. A count that is
+identical to the unit is not a draw.
