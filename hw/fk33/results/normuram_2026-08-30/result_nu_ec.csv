@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+ooc_normadapt,"",41,49654,49654,0,133197,0,0,0,0,268,18208,8944,1.675,300.7518796992481,166,-1,49654,133197,41,0

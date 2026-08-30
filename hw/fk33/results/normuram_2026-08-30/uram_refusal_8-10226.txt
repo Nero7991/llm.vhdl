@@ -1,0 +1,1 @@
+412:WARNING: [Synth 8-10226] The ram_style = ultra set on ROM "ooc_nwrom_memura__GCB101/gvr.nwrom" can not be honored for this device. The URAM primitives on this device do not support initializations to any non 0 values. This ROM will be implemented using BRAMs

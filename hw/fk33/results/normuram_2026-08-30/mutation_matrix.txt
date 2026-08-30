@@ -1,0 +1,52 @@
+=== teeth for the norm-gain store (rtl/llama_top.vhd, gwm) ===
+scratch: /mnt/storage/normuram/mut_final
+
+--- U0: the control.  A matrix whose control fails measures nothing. ---
+U0  SURVIVED   -- CONTROL: clean tree, tb_llama_top_normw's exact generics and landmarks
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16350, EXP_XSUM => 90889, EXP_XALL => 90889, EXP_STEPH => 18618   (0 of the 
+
+--- U1-U5: the reshape's own failure modes ---
+U1  KILLED(landmarks) -- ROTATED BY ONE WORD: the gain vector is cyclically shifted by GW elements
+        sim/tb_llama_top.vhd:2745:7:@52463500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16331 and the recorded landmark for this configuration is -16350.  The machine computed differ
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 65839 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 65839 and the recorded landmark is 90889.  A token other than the last one
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 37065 and the recorded landmark is 18618.  Some step's captured e
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16331, EXP_XSUM => 65839, EXP_XALL => 65839, EXP_STEPH => 37065   (4 of the 
+U2  KILLED(landmarks) -- THE m7 HAZARD, packer half: elements rotated INSIDE the GW-element word
+        sim/tb_llama_top.vhd:2745:7:@52463500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16346 and the recorded landmark for this configuration is -16350.  The machine computed differ
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 1115 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 1115 and the recorded landmark is 90889.  A token other than the last one 
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 90374 and the recorded landmark is 18618.  Some step's captured e
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16346, EXP_XSUM => 1115, EXP_XALL => 1115, EXP_STEPH => 90374   (4 of the pi
+U3  KILLED(landmarks) -- THE m7 HAZARD, unpacker half: the shift runs the other way, so the WORDS land reversed
+        sim/tb_llama_top.vhd:2745:7:@52463500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16321 and the recorded landmark for this configuration is -16350.  The machine computed differ
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 75638 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 75638 and the recorded landmark is 90889.  A token other than the last one
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 6601 and the recorded landmark is 18618.  Some step's captured ex
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16321, EXP_XSUM => 75638, EXP_XALL => 75638, EXP_STEPH => 6601   (4 of the p
+U4  KILLED(landmarks) -- NORM OP IGNORED: every norm op is served norm op 0's gain
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 90069 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 90069 and the recorded landmark is 90889.  A token other than the last one
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 82738 and the recorded landmark is 18618.  Some step's captured e
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16350, EXP_XSUM => 90069, EXP_XALL => 90069, EXP_STEPH => 82738   (3 of the 
+U5  KILLED(landmarks) -- THE LOAD NEVER RESTARTS: correct at norm op 0, stale for every op after it
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 90069 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 90069 and the recorded landmark is 90889.  A token other than the last one
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 82738 and the recorded landmark is 18618.  Some step's captured e
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16350, EXP_XSUM => 90069, EXP_XALL => 90069, EXP_STEPH => 82738   (3 of the 
+
+--- U6/U6x: the CYCLE BUDGET, and the attribution control for wbusy ---
+U6  KILLED(wbusy ASSERTION, not the landmarks) -- MARGIN GONE: one word every 8 cycles, so the load outlasts S_RD
+U6x  SURVIVED   -- ATTRIBUTION CONTROL: the SAME margin failure with the wbusy assertion disabled
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16350, EXP_XSUM => 90889, EXP_XALL => 90889, EXP_STEPH => 18618   (0 of the 
+U6b  KILLED(wbusy ASSERTION, not the landmarks) -- BUDGET BLOWN OUTRIGHT: one word every 64 cycles, so the gain is read half shifted
+U6bx  KILLED(landmarks) -- ATTRIBUTION CONTROL: the SAME outright failure with the wbusy assertion disabled
+        sim/tb_llama_top.vhd:2745:7:@52463500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16324 and the recorded landmark for this configuration is -16350.  The machine computed differ
+        sim/tb_llama_top.vhd:2755:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 19433 and the recorded landmark is 90889.
+        sim/tb_llama_top.vhd:2762:7:@52463500ps:(report error): tb_llama_top: P14 -- hash(R_X) over ALL 1 tokens is 19433 and the recorded landmark is 90889.  A token other than the last one
+        sim/tb_llama_top.vhd:2770:7:@52463500ps:(report error): tb_llama_top: P14 -- hash of the 64-completion step trace is 56374 and the recorded landmark is 18618.  Some step's captured e
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16324, EXP_XSUM => 19433, EXP_XALL => 19433, EXP_STEPH => 56374   (4 of the 
+
+--- U7: expected NOT to bite.  This is the resolution floor. ---
+U7  SURVIVED   -- GW forced to 1, so the reshape is one element per word: the VALUES are unchanged and this MUST survive
+        sim/tb_llama_top.vhd:2801:5:@52463500ps:(report note): tb_llama_top: P14 landmarks measured -- EXP_X0 => -16350, EXP_XSUM => 90889, EXP_XALL => 90889, EXP_STEPH => 18618   (0 of the 

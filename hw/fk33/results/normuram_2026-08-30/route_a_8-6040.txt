@@ -1,0 +1,3 @@
+56:WARNING: [Synth 8-6040] Register gvr.nidx_reg_rep driving address of a ROM cannot be packed in BRAM/URAM because of presence of initial value.
+636:INFO: [Synth 8-7052] The timing for the instance i_57/gvr.gwm.wrd_reg_0_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+637:INFO: [Synth 8-7052] The timing for the instance i_57/gvr.gwm.wrd_reg_0_1 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.

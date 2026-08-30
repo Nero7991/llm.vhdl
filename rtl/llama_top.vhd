@@ -2037,7 +2037,17 @@ begin
       -- vector.
       signal nidx : natural range 0 to NW_N-1 := 0;
       signal novf : boolean := false;
-      signal wsel : std_logic_vector(NN*MANT_W-1 downto 0) := NW_TBL(0);
+      -- `W_CONST` and not `NW_TBL(0)`, and the two are the SAME VALUE in the
+      -- only configuration where this initial value is ever the one a
+      -- register powers up with: `nw_load` returns `(others => W_CONST)`
+      -- unchanged when `NORM_W_IMAGE` is empty, and that is exactly the
+      -- branch (`gwc` below) in which `wsel` is a register at all.  In the
+      -- populated branch (`gwm`) `wsel` is a wire off `wreg`, so it has no
+      -- power-up value of its own and this initialiser is dead.  Written this
+      -- way so that `NW_TBL` is referenced NOWHERE outside `gwc` and the
+      -- elaboration-time reshape that feeds `gwm`'s ROM, which is what lets
+      -- the 65 x 65,536-bit constant fold away in the populated build.
+      signal wsel : std_logic_vector(NN*MANT_W-1 downto 0) := W_CONST;
     begin
       -- The flat view of `xw`, which is what `rmsnorm_rs`'s `x_mant` port
       -- takes.  One driver per bit; see the note on `xw` above.
@@ -2122,10 +2132,13 @@ begin
             end if;
           end if;
 
-          -- One cycle behind `nidx`, which is ample: the earliest `w_mant`
-          -- read is pass 2, after the n+2 region reads, S_GO and the whole
-          -- rsqrt.
-          wsel <= NW_TBL(nidx);
+          -- `wsel` USED TO BE DRIVEN HERE, `wsel <= NW_TBL(nidx)`, one cycle
+          -- behind `nidx`.  It is now driven by `gwc` or `gwm` below; see the
+          -- comment on `gwm` for why.  The instant is unchanged in the empty
+          -- branch and is a load STARTED at this instant in the populated
+          -- one, and the budget that makes that safe is the same one this
+          -- comment used to state: the earliest `w_mant` read is rmsnorm_rs's
+          -- pass 2, after the n+2 region reads, S_GO and the whole rsqrt.
 
           assert not (tk = '1' and novf and NORM_W_IMAGE /= "")
             report "llama_top: the token issued more OP_VEC_NORMs than the "
@@ -2135,6 +2148,233 @@ begin
             severity failure;
         end if;
       end process;
+
+      -- ==================================================================
+      -- WHERE THE GAIN LIVES.  TRACK NORMURAM, 2026-08-30.
+      --
+      -- THE PROBLEM, MEASURED BY THREE TRACKS AND NOT ARGUED HERE.  The line
+      -- that used to sit in `nsel`, `wsel <= NW_TBL(nidx)`, is a 65,536-BIT
+      -- REGISTER whose every bit is a function of a 7-bit index into a 65-
+      -- entry ELABORATION-TIME CONSTANT.  Vivado folds each of those 65,536
+      -- bits into logic of the seven `nidx` bits and then merges registers
+      -- whose D functions coincide, and HOW MUCH IT MERGES IS NOT
+      -- REPRODUCIBLE: TRACK NWROM and TRACK NWFIX between them drew the same
+      -- structure SIX times and got 82,597 / 87,254 / 103,081 / 103,302 /
+      -- 103,435 / 128,065 CLB LUT, TWO OF THEM FROM THE IDENTICAL COMMAND.
+      -- TRACK SCATTER attributed 94.5% of that spread to the single census
+      -- root `gvr.wsel` and measured the mechanism directly: between 4,569
+      -- and 36,578 of the same 65,536 flops are merged away depending on the
+      -- draw, an 8.0x range on one optimisation pass.
+      --
+      -- So this structure did not merely cost LUTs.  It was the only term in
+      -- the project's area budget that HAD NO VALUE, only a range, and the
+      -- range (45,468 LUT) was wider than the margin the fit was being argued
+      -- over.  Moving it does not bound that term, it deletes it.
+      --
+      -- WHAT MOVED AND WHAT DID NOT.  The IMAGE, its format, its producer
+      -- (`tools/gen_llama_top_weights.py --norm-out`), `nw_count`, `nw_load`,
+      -- `NW_TBL`, `nidx`, `novf` and the whole of `nsel` are UNCHANGED.  The
+      -- values `rmsnorm_rs` sees are the same values in the same order; that
+      -- is the claim, and it is checked by the four landmarks on
+      -- `sim/tb_llama_top_normw`, which are hashes of the TOKEN and not of
+      -- the table.  Only the STORE moved: from 65,536 bits of folded LUT
+      -- logic to an inferred memory read one word at a time.
+      --
+      -- TWO BRANCHES, AND THE EMPTY ONE IS DELIBERATELY THE OLD CODE.  With
+      -- `NORM_W_IMAGE` empty there is no table -- `NW_N` is 1 and `NW_TBL(0)`
+      -- is `W_CONST` -- so the fold is exactly what is wanted and a memory
+      -- would be a regression: it would cost `rmsnorm_rs` the constant fold
+      -- of `w_mant` that TRACK NWFIX measured at 17,367 LUT.  `gwc` is
+      -- therefore the pre-existing register, character for character, so the
+      -- `nw_empty` area control stays comparable across every track that has
+      -- quoted it.
+      -- ==================================================================
+      gwc : if NORM_W_IMAGE = "" generate
+        -- The old driver.  `NW_TBL(nidx)` with `NW_N = 1` is a constant, and
+        -- Vivado folds it; `nidx` is pinned at 0 by `nsel`'s own bound.
+        wcp : process(clk) is
+        begin
+          if rising_edge(clk) then
+            wsel <= NW_TBL(nidx);
+          end if;
+        end process;
+      end generate;
+
+      gwm : if NORM_W_IMAGE /= "" generate
+        -- THE RESHAPE.  `NW_TBL` is 65 words of 65,536 bits, which is the
+        -- one aspect ratio no memory primitive on this device can hold: a
+        -- RAMB36 is at most 72 bits wide (512x72) and a URAM288 is 4096x72,
+        -- so a ROM that must present 65,536 bits IN ONE CYCLE needs
+        -- ceil(65536/72) = 911 of either, against the 672 RAMB36 and 320
+        -- URAM288 `report_utilization` reports for this part.  DERIVED, and
+        -- it is the reason the one-line
+        -- experiment in section 3 of this track's write-up cannot work: the
+        -- initialiser Vivado's [Synth 8-6040] names is not the binding
+        -- constraint, the WIDTH is.
+        --
+        -- Reshaped to `GW` elements per word the same 4.26 Mbit becomes
+        -- 66,560 x 64 at the 9B shape, which fits BLOCK RAM and reads in
+        -- `NWORD + 1` cycles.  `GW = 4` rather than 1 shortens the load 4x
+        -- and makes the shift register below 1,024 stages deep instead of
+        -- 4,096.
+        --
+        -- IT IS `block` AND NOT `ultra`, AND THAT IS NOT A PREFERENCE.  This
+        -- device's URAM288 cannot be initialised to anything but zero, so a
+        -- ROM cannot live there at all.  Vivado says so itself and TRACK
+        -- NWROM's own log has the message, verbatim:
+        --
+        --   WARNING: [Synth 8-10226] The ram_style = ultra set on ROM
+        --   "ooc_nwrom_memura__GCB101/gvr.nwrom" can not be honored for this
+        --   device.  The URAM primitives on this device do not support
+        --   initializations to any non 0 values.  This ROM will be
+        --   implemented using BRAMs
+        --
+        -- and both of that track's memory probes report `uram=0` in their
+        -- result CSVs -- 114 BRAM tiles for the `ultra` request and 135 for
+        -- the `block` one.  The "114 URAM" that has been quoted downstream is
+        -- a misread of the BRAM column.  **The 320 idle URAM288 on this part
+        -- are not available to any constant table, only to a store written at
+        -- run time**, which is what makes the HBM route the only URAM-capable
+        -- way to serve this gain.  Asking for `ultra` here would still work,
+        -- because Vivado falls back -- and it would leave a WARNING claiming a
+        -- resource the design never gets, which is how the misread happened.
+        function gw_pick(n : positive) return positive is
+        begin
+          if n mod 4 = 0 then return 4; else return 1; end if;
+        end function;
+        constant GW    : positive := gw_pick(NN);
+        constant NWORD : positive := NN / GW;
+        constant WW    : positive := GW * MANT_W;
+
+        type nwrom_t is array (0 to NW_N*NWORD-1)
+          of std_logic_vector(WW-1 downto 0);
+
+        -- NESTED, AND THAT IS A SYNTHESIS REQUIREMENT.  Vivado's elaboration
+        -- loop limit is 65,536 PER LOOP STATEMENT (MEASURED, TRACK NWFIX),
+        -- and `NW_N*NWORD` is 66,560 at the 9B shape.  A single loop over the
+        -- flat index would reintroduce the [Synth 8-403] failure that
+        -- `nw_count` was restructured to remove.
+        --
+        -- THE PACKING ORDER IS THE HAZARD IN THIS FUNCTION, and it is the
+        -- same hazard the image format comment above names: word `w` holds
+        -- elements `w*GW .. w*GW+GW-1` with element `w*GW` in the LOW bits,
+        -- which is the same little-end convention `NW_TBL` itself uses.  Get
+        -- it backwards and every gain vector is permuted in groups of four
+        -- with no structural symptom at all.  Teeth for exactly that are
+        -- mutations U2 and U3 in this track's write-up.
+        function nwrom_flat return nwrom_t is
+          variable r : nwrom_t;
+        begin
+          for k in 0 to NW_N-1 loop
+            for w in 0 to NWORD-1 loop
+              r(k*NWORD + w) := NW_TBL(k)((w+1)*WW-1 downto w*WW);
+            end loop;
+          end loop;
+          return r;
+        end function;
+
+        signal nwrom : nwrom_t := nwrom_flat;
+        attribute rom_style : string;
+        attribute rom_style of nwrom : signal is "block";
+
+        -- THE STAGING REGISTER IS A SHIFT REGISTER AND NOT AN ADDRESSED
+        -- ARRAY, and that is worth 5,105 LUT.  TRACK NWROM's own memory probe
+        -- wrote `wsw(wptr_d) <= wrd` into an array of NN words and measured
+        -- 72,164 LUT; TRACK NWFIX's HBM probe shifted the same bits in and
+        -- measured 67,059, "and the shift-register write contributes no LUT
+        -- row at all -- it is 65,536 flops and an enable".  The difference is
+        -- a 4,096-way write decoder that buys nothing here, because the words
+        -- arrive strictly in order.  A version that ever needed them out of
+        -- order would pay TRACK WRITEDEC's barrel-shifter penalty instead.
+        signal wreg  : std_logic_vector(NN*MANT_W-1 downto 0)
+                     := (others => '0');
+        signal wrd   : std_logic_vector(WW-1 downto 0) := (others => '0');
+        signal wptr  : natural range 0 to NWORD-1 := 0;
+        signal wav   : std_logic := '1';   -- an address is being issued
+        signal wdv   : std_logic := '0';   -- ... and its datum is due now
+        signal wcnt  : natural range 0 to NWORD-1 := 0;
+        signal wbusy : std_logic := '1';
+      begin
+        -- `wreg` IS the gain; this is a rename, not a mux.  Kept separate
+        -- from `wsel` only so that `wsel`'s declared initial value stays the
+        -- empty branch's and this branch powers up at zero -- which is what
+        -- makes a load that never ran a WRONG NUMBER the landmarks catch,
+        -- rather than a correct one for norm op 0.
+        wsel <= wreg;
+
+        -- THE LOAD.  Restarted at every instant `nsel` moves `nidx`, which is
+        -- reset, token start, and the completion handshake of the previous
+        -- norm op -- and at no other instant, because `nidx` moves at no
+        -- other instant.  Two pipeline stages: the address is issued from
+        -- `wptr`, the datum lands in `wrd` one cycle later, and the shift
+        -- consumes the matched (`wdv`, `wrd`) pair one cycle after that, so
+        -- the whole vector is resident `NWORD + 1` cycles after the restart.
+        --
+        -- THE BUDGET, and it is the reason this is safe rather than merely
+        -- plausible.  From the restart the adapter runs S_IDLE, then S_RD for
+        -- `n+2` cycles, then S_GO before rmsnorm_rs even STARTS, and the
+        -- earliest `w_mant` read is that unit's pass 2, after its own pass 1
+        -- and the rsqrt.  Counting only as far as `r_go`, which is where the
+        -- assertion checks and is strictly earlier than any `w_mant` read,
+        -- the budget is `NN+4` against a load of `NN/GW+1`: at the 9B shape
+        -- 4,100 against 1,025, and at `tb_llama_top_normw`'s shape 68 against
+        -- 17.  **The margin is `GW` and does not depend on the shape**,
+        -- because the read pass and the gain load are both linear in
+        -- `hidden` -- so a bench at 64 exercises the ratio a build at 4,096
+        -- has.  `wbusy` and the assertion below turn that from an argument
+        -- into a check.
+        wload : process(clk) is
+        begin
+          if rising_edge(clk) then
+            -- Stage 1.  `wrd`/`wdv` become a MATCHED PAIR next cycle.
+            wrd <= nwrom(nidx*NWORD + wptr);
+            wdv <= wav;
+
+            -- Stage 2.  `wrd` and `wdv` read here are stage 1's outputs from
+            -- the previous cycle, hence matched.  Word 0 is shifted in first
+            -- and ends up in the LOW bits after NWORD shifts, which is the
+            -- order `nwrom_flat` packed and the order `rmsnorm_rs` reads.
+            if wdv = '1' then
+              wreg <= wrd & wreg(NN*MANT_W-1 downto WW);
+              if wcnt = NWORD-1 then
+                wbusy <= '0';
+              else
+                wcnt <= wcnt + 1;
+              end if;
+            end if;
+
+            -- Address sequencing.  LAST, so the restart wins over stage 2 on
+            -- the cycle they coincide.
+            if rst = '1' or go = '1' or (dn = '1' and v_ack(vi) = '1') then
+              wptr  <= 0;
+              wav   <= '1';
+              wdv   <= '0';
+              wcnt  <= 0;
+              wbusy <= '1';
+            elsif wav = '1' then
+              if wptr = NWORD-1 then
+                wav <= '0';
+              else
+                wptr <= wptr + 1;
+              end if;
+            end if;
+
+            -- SIMULATION-ONLY, and stated as such: Vivado ignores
+            -- `severity failure` in synthesis (MEASURED, TRACK NWROM).  This
+            -- is the check that the cycle budget above is real, and it is
+            -- shape-independent, so a bench at `hidden = 64` exercises it for
+            -- a build at 4,096.  `r_go` is one cycle of `start` into
+            -- rmsnorm_rs and is strictly earlier than any `w_mant` read.
+            assert not (r_go = '1' and wbusy = '1')
+              report "llama_top: OP_VEC_NORM started while the gain load was "
+                   & "still running.  The norm would be computed against a "
+                   & "half-shifted gain vector.  The load needs "
+                   & integer'image(NWORD + 1) & " cycles from the completion "
+                   & "of the previous norm op."
+              severity failure;
+          end if;
+        end process;
+      end generate;
 
       nproc : process(clk) is
         type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);

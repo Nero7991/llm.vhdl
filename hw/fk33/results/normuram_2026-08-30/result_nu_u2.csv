@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+ooc_normadapt,"NORM_W_IMAGE=/mnt/storage/nwfix/img/norm_w_9b.hex",41,67318,67318,0,191664,171,0,171,0,268,26736,13296,1.675,300.7518796992481,656,-1,67318,191664,41,171
