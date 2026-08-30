@@ -112,13 +112,15 @@ TB_L=sim/tb_matvec_cb_lockstep.vhd
 TB_M=sim/tb_matvec_core.vhd
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
-MODES="${MODES:-A N}"
+MODES="${MODES:-A N S}"
+CBSTYLE="${CBSTYLE:-regs}"
 GHDL="${GHDL:-ghdl}"
 mkdir -p "$SCRATCH"
 
 NKILL=0; NABORT=0; NSURV=0; NTOT=0
 SURV_TAGS=""
 ONLY_ASSERT_TAGS=""
+MODEL_EARNED_TAGS=""
 
 # ---------------------------------------------------------------------------
 # 1. THE PATCHER.  A mutation whose anchor is not unique has tested nothing, so
@@ -126,10 +128,10 @@ ONLY_ASSERT_TAGS=""
 #    `--neuter` additionally demotes P_CB_CHK's assertions, and it is applied
 #    to a region located by its process name rather than by line number.
 # ---------------------------------------------------------------------------
-patch_file() {  # patch_file <src> <dst> <neuter 0|1> [old new]...
+patch_file() {  # patch_file <src> <dst> <neuter-process-list> [old new]...
   python3 - "$@" <<'PY'
 import sys
-src, dst, neuter = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+src, dst, neuter = sys.argv[1], sys.argv[2], sys.argv[3]
 pairs = sys.argv[4:]
 s = open(src).read()
 for i in range(0, len(pairs), 2):
@@ -139,13 +141,21 @@ for i in range(0, len(pairs), 2):
         sys.stderr.write("ANCHOR %d MATCHED %d TIMES, expected 1\n" % (i // 2, n))
         sys.exit(2)
     s = s.replace(old, new)
-if neuter:
-    a = s.index("P_CB_CHK : process(clk)")
+# NEUTER is now a comma-separated list of PROCESS NAMES, not a flag, because
+# there are two independent checkers in this file and the whole point of the
+# attribution control is to disable exactly one of them at a time.  Each name
+# carries the number of asserts it is expected to contain: a region that has
+# grown or shrunk is a hard error, never a silent partial neuter.
+EXPECT = {"P_CB_CHK": 3, "P_CB_MODEL": 3}
+for name in [x for x in neuter.split(",") if x]:
+    if name not in EXPECT:
+        sys.stderr.write("NEUTER: unknown process %s\n" % name); sys.exit(2)
+    a = s.index("%s : process(clk)" % name)
     b = s.index("end process;", a)
     region = s[a:b]
-    if region.count("severity failure;") != 3:
-        sys.stderr.write("NEUTER: expected 3 asserts in P_CB_CHK, found %d\n"
-                         % region.count("severity failure;"))
+    if region.count("severity failure;") != EXPECT[name]:
+        sys.stderr.write("NEUTER: expected %d asserts in %s, found %d\n"
+                         % (EXPECT[name], name, region.count("severity failure;")))
         sys.exit(2)
     s = s[:a] + region.replace("severity failure;", "severity note;") + s[b:]
 open(dst, "w").write(s)
@@ -163,6 +173,11 @@ run_bench() {  # run_bench <workdir> <top> ; echoes verdict|mechanism|detail
   if [ "$top" = tb_matvec_core ]; then
     extra=(-gTRACE="$REPO/sim/tr.txt" -gRI=4 -gSTALL=0)
   fi
+  # CBSTYLE=distributed re-runs the WHOLE table against lever C's granularity
+  # (one codebook per LANE, 32x the copies at the FK33 shape).  Every bench in
+  # this harness now carries the generic, so the write-coherency surface the
+  # change opens is measured by the same mutations rather than argued about.
+  extra+=(-gCB_STYLE="$CBSTYLE")
   # --stop-time=200us is ~22x the honest run (MEASURED: tb_matvec_cb_contract
   # finishes at 8.875 us, tb_matvec_cb_lockstep at 3.6 us, tb_matvec_core at
   # 4.905 us), so a mutation that HANGS is caught in simulated time rather than
@@ -236,12 +251,20 @@ mutate() {
   rm -rf "$dir"
 
   local cols="" any_kill=0 any_abort=0 all_surv=1 detail=""
-  local killed_A=0 killed_N=0
+  local killed_A=0 killed_N=0 killed_S=0
   local m d0 v mech det
   for m in $MODES; do
     local mdir="$dir/$m"
     mkdir -p "$mdir/work"
-    local neut=0; [ "$m" = N ] && neut=1
+    # A = everything live.  N = P_CB_CHK demoted, so the question is whether
+    # the model catches it alone.  S = P_CB_MODEL demoted, which is EXACTLY the
+    # design as it stood before the model was added -- the attribution control.
+    # A row that is KILL in A and surv in S is a kill the model EARNED; one
+    # that is KILL in S too was already caught and the model only agreed.
+    local neut=""
+    [ "$m" = N ] && neut="P_CB_CHK"
+    [ "$m" = S ] && neut="P_CB_MODEL"
+    [ "$m" = X ] && neut="P_CB_CHK,P_CB_MODEL"
     if [ $# -gt 0 ]; then
       patch_file "$RTL" "$mdir/matvec_core.vhd" "$neut" "$@" || {
         printf '%-6s ANCHOR FAILED -- tested nothing -- %s\n' "$tag" "$desc"
@@ -272,9 +295,11 @@ mutate() {
       IFS='|' read -r v mech det <<< "$(run_bench "$mdir" "$top")"
       case "$v" in
         KILL)  cols="$cols $m$b:KILL($mech)"; any_kill=1; all_surv=0
-               [ "$m" = A ] && killed_A=1; [ "$m" = N ] && killed_N=1 ;;
+               [ "$m" = A ] && killed_A=1; [ "$m" = N ] && killed_N=1
+               [ "$m" = S ] && killed_S=1 ;;
         ABRT)  cols="$cols $m$b:ABRT      "; any_abort=1; all_surv=0
-               [ "$m" = A ] && killed_A=1; [ "$m" = N ] && killed_N=1 ;;
+               [ "$m" = A ] && killed_A=1; [ "$m" = N ] && killed_N=1
+               [ "$m" = S ] && killed_S=1 ;;
         *)     cols="$cols $m$b:surv      " ;;
       esac
       [ -z "$detail" ] && [ "$v" != SURV ] && detail="$m$b: $det"
@@ -292,6 +317,13 @@ mutate() {
   if [ "$killed_A" = 1 ] && [ "$killed_N" = 0 ]; then
     ONLY_ASSERT_TAGS="$ONLY_ASSERT_TAGS $tag"
   fi
+  # THE ATTRIBUTION CONTROL.  Killed with everything live, and NOT killed with
+  # only P_CB_MODEL demoted, means nothing that existed before the model caught
+  # it.  Anything not on this list was already covered, and crediting the model
+  # with it would overstate what it is worth maintaining.
+  if [ "$killed_A" = 1 ] && [ "$killed_S" = 0 ] && [[ " $MODES " == *" S "* ]]; then
+    MODEL_EARNED_TAGS="$MODEL_EARNED_TAGS $tag"
+  fi
   printf '%-6s %s %s  -- %s\n' "$tag" "$verdict" "$cols" "$desc"
   [ -n "$detail" ] && printf '       %s\n' "$detail"
   printf '       expected: %s\n' "$expect"
@@ -299,7 +331,13 @@ mutate() {
 
 echo "======================================================================="
 echo " sim/mutate_matvec_cb.sh -- the codebook write path"
-echo " columns: <mode><bench>  mode A = P_CB_CHK live, N = its asserts demoted"
+echo " columns: <mode><bench>   A = all checks live"
+echo "   N = P_CB_CHK demoted   -- does P_CB_MODEL catch it alone?"
+echo "   S = P_CB_MODEL demoted -- THE ATTRIBUTION CONTROL: the design exactly"
+echo "       as it stood before the model was added.  KILL in A and surv in S"
+echo "       is the only pattern that credits the model with a detection."
+echo " CB_STYLE = '"'"'$CBSTYLE'"'"'  (regs = the shipping register bank + 16:1 mux per"
+echo "   lane; distributed = lever C, one codebook copy per LANE)"
 echo "   bench C = tb_matvec_cb_contract  L = tb_matvec_cb_lockstep"
 echo "         M = tb_matvec_core on the committed sim/tr.txt, vs ref/matvec_int4.c"
 echo " KILL(v) = the bench's value oracle;  KILL(a) = matvec_core's assertion"
@@ -505,13 +543,13 @@ echo "---- class K8: THE REPLICA SELECT -- protected by coherency, by nothing el
 
 mutate K8a "SURVIVE: equivalent while the replicas are coherent, which is the whole point of the row" \
   "every row reads replica 0 (the per-row replication undone at the READ side)" \
-"                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);" \
+"                resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);" \
 "                resize(cb(0)(idx) * xw, 28);"
 
 mutate K8b "SURVIVE: same reason as K8a, and the pair is the evidence that NO functional bench can test the select" \
   "the replica select is rotated by one, so every row reads its neighbour's copy" \
-"                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);" \
-"                resize(cb((rr / CB_ROWS_PER_COPY + 1) mod CB_COPIES)(idx) * xw, 28);"
+"                resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);" \
+"                resize(cb(((rr*BLK + j) / CB_LANES_PER_COPY + 1) mod CB_COPIES)(idx) * xw, 28);"
 
 echo
 echo "---- class K9: PER-LANE STALENESS -- the lever-C failure mode, MODELLED --"
@@ -526,13 +564,13 @@ echo "     lane-equality oracle catches it WITHOUT P_CB_CHK."
 mutate K9a "KILL(v) in BOTH modes on C: the lane-equality oracle localises to the single lane, with no help from P_CB_CHK" \
   "lane (rr=1, j=0) decodes one entry one step off -- what a single stale per-lane replica looks like at the read" \
 "              tr(0)(rr*BLK + j) <=
-                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);" \
+                resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);" \
 "              if rr = 1 and j = 0 then
                 tr(0)(rr*BLK + j) <=
-                  resize((cb(rr / CB_ROWS_PER_COPY)(idx) + 1) * xw, 28);
+                  resize((cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) + 1) * xw, 28);
               else
                 tr(0)(rr*BLK + j) <=
-                  resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);
+                  resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);
               end if;"
 
 echo
@@ -600,5 +638,7 @@ printf 'kill ratio: %d KILLED + %d ABORTED = %d of %d;  %d SURVIVED\n' \
   "$NKILL" "$NABORT" "$((NKILL+NABORT))" "$NTOT" "$NSURV"
 echo "survivors (nothing in the closure watches these):$SURV_TAGS"
 echo "killed ONLY with P_CB_CHK live (the assertion is the sole witness):$ONLY_ASSERT_TAGS"
+echo "ATTRIBUTION CONTROL -- killed in A and NOT in S, so P_CB_MODEL earned it"
+echo "  and nothing that existed before it would have caught it:$MODEL_EARNED_TAGS"
 echo "scratch dir with every mutant and all four logs: $SCRATCH"
 echo "======================================================================="

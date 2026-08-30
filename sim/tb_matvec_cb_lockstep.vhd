@@ -44,7 +44,12 @@ entity tb_matvec_cb_lockstep is
     -- The core's default is 1 (one copy per row).  Overriding it here to
     -- ROWS_IF collapses the bank to a single copy, which is how you confirm
     -- this testbench is not passing because replication is absent.
-    CB_ROWS_PER_COPY : positive := 1
+    CB_ROWS_PER_COPY : positive := 1;
+    -- LEVER C.  "regs" is the shipping register bank plus a 16:1 mux per lane;
+    -- "distributed" is one table per LANE, the LUTRAM shape.  The DEFAULT IS
+    -- THE SHIPPING VALUE on purpose: this bench is a gate row, and a gate row
+    -- must measure what is on the card.  Drive the other value explicitly.
+    CB_STYLE : string := "regs"
   );
 end entity;
 
@@ -116,7 +121,8 @@ begin
 
   dut : entity work.matvec_core
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, MAXCOLS => 4096,
-                MAXROWS_BFP => 256, CB_ROWS_PER_COPY => CB_ROWS_PER_COPY)
+                MAXROWS_BFP => 256, CB_ROWS_PER_COPY => CB_ROWS_PER_COPY,
+                CB_STYLE => CB_STYLE)
     port map(clk => clk, rst => rst, start => start,
              n_rows => n_rows, n_cols => n_cols, out_shift => out_shift,
              w_exp => w_exp, x_exp => x_exp, out_mode => out_mode,

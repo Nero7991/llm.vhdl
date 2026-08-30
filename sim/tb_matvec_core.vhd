@@ -39,7 +39,12 @@ entity tb_matvec_core is
   generic(
     TRACE : string   := "../matvec_trace.txt";
     RI    : positive := 4;
-    STALL : natural  := 0        -- 0 = full rate, else 1-in-N valid deassert
+    STALL : natural  := 0;       -- 0 = full rate, else 1-in-N valid deassert
+    -- LEVER C.  "regs" is the shipping register bank plus a 16:1 mux per lane;
+    -- "distributed" is one table per LANE, the LUTRAM shape.  The DEFAULT IS
+    -- THE SHIPPING VALUE on purpose: this bench is a gate row, and a gate row
+    -- must measure what is on the card.  Drive the other value explicitly.
+    CB_STYLE : string := "regs"
   );
 end entity;
 
@@ -194,7 +199,8 @@ begin
   end process;
 
   dut : entity work.matvec_core
-    generic map(BLK => BLK, ROWS_IF => RI, MAXCOLS => 17408, MAXROWS_BFP => MAXR)
+    generic map(BLK => BLK, ROWS_IF => RI, MAXCOLS => 17408, MAXROWS_BFP => MAXR,
+                CB_STYLE => CB_STYLE)
     port map(clk => clk, rst => rst, start => start,
              n_rows => n_rows, n_cols => n_cols, out_shift => out_shift,
              w_exp => w_exp, x_exp => x_exp, out_mode => out_mode,

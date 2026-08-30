@@ -57,7 +57,13 @@ entity matvec_core is
     MAXROWS_BFP : positive := 17408;
     -- Rows served by one codebook replica.  1 = one copy per row, the default.
     -- See the cb declaration for why this is a generic and not a constant.
-    CB_ROWS_PER_COPY : positive := 1
+    CB_ROWS_PER_COPY : positive := 1;
+    -- LEVER C.  "regs" is the register bank plus a 16:1 mux per lane, which is
+    -- what is on the card today and what subsystem A was proven bit-exact
+    -- with.  "distributed" collapses the granularity to ONE COPY PER LANE so
+    -- the table can be inferred as LUTRAM and the mux disappears.  See the cb
+    -- declaration for the arithmetic and for what is and is not measured.
+    CB_STYLE : string := "regs"
   );
   port(
     clk, rst  : in  std_logic;
@@ -163,8 +169,46 @@ architecture rtl of matvec_core is
   -- is one copy per row; = 2 halves the flops and doubles the fanout; =
   -- ROWS_IF is exactly the pre-fix design and is how you measure what the
   -- replication was worth without touching anything else.
+  --
+  -- LEVER C, AND THE ONE NUMBER THAT DECIDES IT.
+  --
+  -- The granularity above is expressed in ROWS because that is the cluster the
+  -- adder tree already makes.  Lever C is the same knob taken to its limit --
+  -- one copy per LANE -- for a reason that has nothing to do with fanout: a
+  -- 16-entry table with exactly ONE reader is a distributed-RAM lookup, and a
+  -- 16-entry table with many readers is a mux tree.  MEASURED by CONGEST on
+  -- the shell build, per lane: exactly 16.0 MUXF7, exactly 8.0 MUXF8, 32.6 LUT
+  -- -- 86,992 primitives, 97.7% / 98.8% of the WHOLE DESIGN's MUXF7 / MUXF8.
+  --
+  -- DO NOT justify this on the LUT saving, and do not justify it on the
+  -- packing density either.  DERIVED from those same measurements: each MUXF8
+  -- locks a CLB half holding 4 LUT6, so the mux occupies 12,288 half-CLBs =
+  -- 6,144 CLBs holding 12,288*4 = 49,152 LUT6, which is EXACTLY 8.00 LUT/CLB.
+  -- That is the maximum a CLB can hold.  The codebook mux is the DENSEST
+  -- structure in the design, not the loosest: the rest of the shell build packs
+  -- at (173,694 - 49,152) / (27,789 - 6,144) = 5.75 LUT/CLB against the design
+  -- average of 6.25.  Replacing it LOWERS the average LUT/CLB.  What it buys is
+  -- absolute CLB count: 6,144 CLBs of mux become 12,288 LUTRAM = 1,536 CLBs at
+  -- 8 LUTRAM per SLICEM, a saving of 4,608 CLBs = 8.4% of the device.  On the
+  -- composed A+B+C+D fit that is 40% of the overshoot, not all of it.
+  -- See docs/debugging/2026-08-30_leverc-codebook-lutram.md.
+  --
+  -- CB_LANES_PER_COPY is the real knob; CB_ROWS_PER_COPY is the old spelling
+  -- of it and is preserved exactly.  For 0 <= j < BLK,
+  --   (rr*BLK + j) / (CB_ROWS_PER_COPY*BLK)  ==  rr / CB_ROWS_PER_COPY
+  -- identically, because rr*BLK + j = (rr/R)*R*BLK + ((rr mod R)*BLK + j) and
+  -- the remainder is in [0, R*BLK).  So "regs" is not a re-parameterisation
+  -- that happens to agree; it is the same integer, and the register bank on
+  -- the card is untouched.
+  function cb_lpc_f(style : string; rpc, blk_g : positive)
+    return positive is
+  begin
+    if style = "distributed" then return 1; else return rpc * blk_g; end if;
+  end function;
+  constant CB_LANES_PER_COPY : positive :=
+    cb_lpc_f(CB_STYLE, CB_ROWS_PER_COPY, BLK);
   constant CB_COPIES : positive :=
-    (ROWS_IF + CB_ROWS_PER_COPY - 1) / CB_ROWS_PER_COPY;
+    (ROWS_IF*BLK + CB_LANES_PER_COPY - 1) / CB_LANES_PER_COPY;
   type cb_t is array(0 to 15) of signed(7 downto 0);
   type cb_bank_t is array(0 to CB_COPIES-1) of cb_t;
   signal cb : cb_bank_t := (others => (others => (others => '0')));
@@ -187,8 +231,54 @@ architecture rtl of matvec_core is
   signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
   signal cbw_a : cba_arr := (others => (others => '0'));
   signal cbw_d : cbd_arr := (others => (others => '0'));
+
+  -- THE DECLARED WRITE LATENCY, AND THE FIX FOR K2b.
+  --
+  -- Cycles from the edge that accepts cb_we to the edge on which cb changes.
+  -- One, today: stage W0 captures the command, stage W1 performs the write.
+  --
+  -- K2b, recorded in docs/WORKLOG.md as a standing hazard: P_CB_CHK's idle
+  -- invariant used to watch cbw_v(0), the command REGISTER, so a stage added
+  -- BELOW that register moved the write without moving the watch point and
+  -- nothing in the tree noticed.  sim/mutate_matvec_cb.sh K2b is exactly that
+  -- mutant and it SURVIVED.  The fix is not to watch a different register --
+  -- the next deepening would move past that one too.  It is to state the
+  -- latency HERE, once, and have P_CB_CHK compare cb against an independent
+  -- model of the write path driven from the PORTS and delayed by exactly this
+  -- many cycles.  A deepening that does not update this constant now fires;
+  -- one that does update it moves the idle window with it, which is correct.
+  --
+  -- CB_BCAST, NOT IMPLEMENTED AND NAMED SO IT IS NOT REDISCOVERED.  At
+  -- CB_STYLE = "distributed" and the FK33 geometry the command reaches 1,536
+  -- copies, so cb_addr/cb_data carry 12,288 flop D-inputs on one net -- 32x
+  -- what the shipping design carries, and the shipping design exists BECAUSE
+  -- of a fanout problem.  The mitigation is a per-row rank between the port and
+  -- cbw_*, cutting it to 48 loads then 32.  It is deliberately not built here:
+  -- it is a synthesis-timing fix and nothing has been synthesised.  Adding it
+  -- is now a two-line change plus CB_WR_LAT := 2, and it is SAFE to add
+  -- precisely because of the paragraph above.
+  constant CB_WR_LAT : positive := 1;
+
+  -- dont_touch is what stops Vivado merging the replicas back into one table,
+  -- and it is required for "regs".  It is WRONG for "distributed": a signal
+  -- marked dont_touch is not a RAM inference candidate.  UNVERIFIED, and named
+  -- as such: whether Vivado accepts a non-literal attribute value here, and
+  -- whether it infers LUTRAM from an array-of-array at all, has not been
+  -- synthesised.  If either fails the fallback is two sibling architectures.
+  function cb_dt_f(style : string) return string is
+  begin
+    if style = "distributed" then return "false"; else return "true"; end if;
+  end function;
+  function cb_rs_f(style : string) return string is
+  begin
+    if style = "distributed" then return "distributed";
+    else return "registers"; end if;
+  end function;
+  constant CB_DT : string := cb_dt_f(CB_STYLE);
+  constant CB_RS : string := cb_rs_f(CB_STYLE);
+
   attribute dont_touch : string;
-  attribute dont_touch of cb    : signal is "true";
+  attribute dont_touch of cb    : signal is CB_DT;
   attribute dont_touch of cbw_v : signal is "true";
   attribute dont_touch of cbw_a : signal is "true";
   attribute dont_touch of cbw_d : signal is "true";
@@ -202,6 +292,7 @@ architecture rtl of matvec_core is
   type ybuf_t is array(0 to TILES-1) of std_logic_vector(ROWS_IF*32-1 downto 0);
   signal ybuf   : ybuf_t;
   attribute ram_style : string;
+  attribute ram_style  of cb   : signal is CB_RS;
   attribute ram_style of ybuf : signal is "block";
   signal ybuf_q : std_logic_vector(ROWS_IF*32-1 downto 0) := (others => '0');
 
@@ -562,6 +653,102 @@ begin
     end if;
   end process;
 
+  ----------------------------------------------------------------------------
+  -- P_CB_MODEL: AN INDEPENDENT MODEL OF THE WRITE PATH.  Simulation only, no
+  -- drivers, so synthesis prunes it exactly as it prunes P_CB_CHK.
+  ----------------------------------------------------------------------------
+  -- THIS IS THE FIX FOR K2b, AND IT IS A DIFFERENT KIND OF CHECK FROM THE ONE
+  -- ABOVE.  P_CB_CHK is structural: it watches named registers and asks
+  -- whether they are consistent with each other.  That is why K2b defeats it.
+  -- sim/mutate_matvec_cb.sh K2b adds a broadcast stage BELOW cbw_v, moving the
+  -- write one cycle later while leaving the watched register exactly where it
+  -- was, and it SURVIVED every bench and every assertion.  K2c is its mirror:
+  -- it bypasses the command register so the write lands one cycle EARLY,
+  -- silently undoing the fanout fix, and it survived too.
+  --
+  -- Watching a different register would not fix that; the next stage would move
+  -- past that one too.  So this process does not watch a register at all.  It
+  -- REBUILDS the write path from the entity's own ports -- cb_we, cb_addr,
+  -- cb_data, gated by st and rst -- delays it by CB_WR_LAT, and requires the
+  -- real cb to equal it, every copy, every cycle.  A path that is deeper than
+  -- CB_WR_LAT claims lags the model; one that is shallower leads it; one that
+  -- writes the wrong value or the wrong address disagrees on content.  All
+  -- three are the same assertion.
+  --
+  -- WHY THIS IS AN ORACLE AND NOT A ROUND TRIP.  Nothing here reads cbw_v,
+  -- cbw_a, cbw_d or any other internal of the path it is checking.  A packer
+  -- checked by its own reversed unpacker is the m7 mutant and passes while
+  -- being wrong; this compares against a second implementation written from
+  -- the SPEC (6.1: writes are legal only in idle, they take effect before the
+  -- next operation, and the table outlives reset).
+  --
+  -- It is NOT a value oracle for the matvec.  A codebook that loads correctly
+  -- is not a matvec that computes correctly; that is sim/tb_matvec_core.vhd
+  -- against ref/matvec_int4.c and nothing here replaces it.
+  P_CB_MODEL : process(clk)
+    type mv_t is array(0 to CB_WR_LAT-1) of std_logic;
+    type ma_t is array(0 to CB_WR_LAT-1) of std_logic_vector(3 downto 0);
+    type md_t is array(0 to CB_WR_LAT-1) of std_logic_vector(7 downto 0);
+    variable mv  : mv_t := (others => '0');
+    variable ma  : ma_t := (others => (others => '0'));
+    variable md  : md_t := (others => (others => '0'));
+    variable mcb : cb_t := (others => (others => '0'));
+  begin
+    if rising_edge(clk) then
+      -- 1. COMPARE FIRST, and the order is load-bearing.  cb is a SIGNAL, so
+      --    it reads the value the previous edge established; mcb is a VARIABLE
+      --    and was last updated at that same previous edge.  Comparing before
+      --    advancing the model puts both in one time frame.  Comparing after
+      --    would be off by one and would fire on every legal write.
+      for c in 0 to CB_COPIES-1 loop
+        assert cb(c) = mcb
+          report "matvec_core: codebook copy " & integer'image(c) &
+                 " disagrees with an independent model of the write path "
+               & "built from the ports and delayed by CB_WR_LAT = "
+               & integer'image(CB_WR_LAT) & ".  Either the path is deeper or "
+               & "shallower than CB_WR_LAT declares, or it writes a different "
+               & "address or value than the command carried.  If a stage was "
+               & "added on purpose, CB_WR_LAT is what has to move with it."
+          severity failure;
+      end loop;
+
+      -- 2. the write the CONTRACT says lands at this edge.  st and inflight
+      --    are read pre-edge, the same convention P_CB_CHK uses, so the
+      --    tightest legal schedule -- last cb_we, then start on the very next
+      --    edge -- reads S_IDLE and passes.
+      if mv(CB_WR_LAT-1) = '1' then
+        assert st = S_IDLE
+          report "matvec_core: the codebook write commanded CB_WR_LAT cycles "
+               & "ago lands on this edge, and the core has already left idle. "
+               & "Writes are legal only in idle (spec 6.1)."
+          severity failure;
+        assert inflight = '0'
+          report "matvec_core: the codebook write commanded CB_WR_LAT cycles "
+               & "ago lands on this edge with a beat in the compute pipeline."
+          severity failure;
+        mcb(to_integer(unsigned(ma(CB_WR_LAT-1)))) := signed(md(CB_WR_LAT-1));
+      end if;
+
+      -- 3. advance the model's own command pipeline, from the PORTS ONLY.
+      for k in CB_WR_LAT-1 downto 1 loop
+        mv(k) := mv(k-1);  ma(k) := ma(k-1);  md(k) := md(k-1);
+      end loop;
+      if cb_we = '1' and st = S_IDLE and rst = '0' then
+        mv(0) := '1';
+      else
+        mv(0) := '0';
+      end if;
+      ma(0) := cb_addr;
+      md(0) := cb_data;
+      -- rst kills a command in flight and deliberately does NOT clear mcb,
+      -- because the table outlives a reset.  A design that cleared cb on reset
+      -- would now disagree with the model, which is the intent.
+      if rst = '1' then
+        mv := (others => '0');
+      end if;
+    end if;
+  end process;
+
   accept <= '1' when st = S_RUN and w_valid = '1' and s_valid = '1'
                      and xq_cnt > 0 else '0';
   w_ready  <= accept;
@@ -697,12 +884,14 @@ begin
             xw  := signed(x_r(j*16+15 downto j*16));
             k   := tg(0).blk * BLK + j;
             if k < n_cols then
-              -- cb(rr / CB_ROWS_PER_COPY): the replica this row owns.  The
-              -- divisor is a constant and rr is a loop constant, so the copy
-              -- select is static per lane -- no mux is added in front of the
-              -- one that was already here.
+              -- The replica this LANE owns.  Both the numerator and the
+              -- divisor are loop/generic constants, so the copy select is
+              -- static per lane -- no mux is added in front of the one that
+              -- was already here.  At CB_LANES_PER_COPY = CB_ROWS_PER_COPY*BLK
+              -- this is identically rr / CB_ROWS_PER_COPY, the shipping form;
+              -- at 1 it is one table per lane, which is the LUTRAM shape.
               tr(0)(rr*BLK + j) <=
-                resize(cb(rr / CB_ROWS_PER_COPY)(idx) * xw, 28);
+                resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);
             else
               tr(0)(rr*BLK + j) <= (others => '0');
             end if;
