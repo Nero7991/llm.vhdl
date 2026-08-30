@@ -418,3 +418,57 @@ defect** and should be kept for exactly that purpose.
 - `potlatch.tcl` bare-index target selection, and `fk33_powercycle.sh` taking no
   target variable. Both must be fixed BEFORE any flash write, since wrong-target
   selection is the mechanism that caused this damage.
+
+---
+
+## THE FLASH WAS REWRITTEN, 2026-08-30 12:35
+
+`fk33_pcieep.mcs` (the plain endpoint, not the engine) written to card 1's SPI
+flash. `Erase Operation successful`, `Program/Verify Operation successful`,
+`FLASH_OK`. Took 4 min 13 s at almost no CPU.
+
+**The ES1 revision check fired and was waived, as designed.** `flash.sh` tries
+`xicom.skip_bitstream_compatibility_check 0` first, records the block, retries
+with 1, and logs `FLASH_REVCHECK_BIT`. The two `ERROR: [Labtools 27-3303]` lines
+in the log are that expected first attempt, **not** a failure.
+
+**Independent verification by readback**, judged by our own checker:
+
+| check | result |
+|---|---|
+| our image, byte-for-byte over its used region | **12,227,820 bytes, 0 differing** |
+| sync words in the whole 32 MiB | **1**, at `0x50` |
+| largest internal erased gap | **55,948** bytes, was 8,230,124 |
+| 0xFF fraction | 19.83%, was 44.30% |
+
+**A MEASUREMENT TRAP I HIT AND ALMOST REPORTED AS A FAILURE.** My first
+comparison declared `VERDICT: MISMATCH`, because it compared the *used size* of
+the flash (27,038,696 bytes) against the used size of our source image
+(12,227,820). Those differ because **the programmer erases only the sectors it
+writes**, so the tail of the old damaged image survives above ours. The number
+that matters is the byte comparison over OUR image's extent, which is exact, and
+the sync-word count, which is 1. **A residue with no sync word cannot be
+configured from and is inert.**
+
+The general form: *"does the flash equal my file" is the wrong question for a
+device that is only partially erased. Ask whether YOUR image is intact and
+whether anything else in the device is reachable.*
+
+**Why the plain endpoint and not the engine:** flashed once, it becomes a stable
+port opener. Once it trains at POST the root port stays live, and any bitstream
+goes in behind it with `remove -> configure -> rescan`, which is the procedure
+`2026-08-28_fk33-first-light.md` records as the one that worked. Flashing the
+engine would tie a reflash to every engine rebuild.
+
+## Open, pending a POWER CYCLE (not a reboot)
+
+**Untested: whether our endpoint bitstream configures from flash and trains
+inside the ~100 ms PERST window.** That is the whole experiment. A warm reboot
+cannot test it, because the FPGA only loads from flash at power-on.
+
+- If a Xilinx endpoint appears in `lspci` unaided, flash boot works and the port
+  is live permanently.
+- If nothing appears, our endpoint cannot meet the window even from flash. That
+  would be a result about the DESIGN, not the procedure, and would point at the
+  SQRL image doing something ours does not. Card 2's image remains the only
+  surviving SQRL copy and is untouched.
