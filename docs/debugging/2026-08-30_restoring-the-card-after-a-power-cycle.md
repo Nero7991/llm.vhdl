@@ -343,3 +343,78 @@ the operation that caused the original damage. **Convert it to
   physical disks (`/dev/nvme1n1p6` and `/dev/nvme0n1p1`). Note
   `hw/fk33/bit/` is gitignored, so the `/mnt/storage/fk33-factory-backups/`
   copy is the one under protection. Nothing is off-box.
+
+---
+
+## ROOT CAUSE, 2026-08-30: card 1's flash has a 7.85 MiB erased hole
+
+**The answer, up front: card 1's SPI flash contains a factory image whose middle
+was erased and never rewritten. The FPGA therefore cannot configure at power-on,
+DONE never asserts, no PCIe endpoint exists inside the ~100 ms PERST window, and
+the BIOS hides the root port. Every observation of 2026-08-30 follows from this
+single fact.**
+
+MEASURED, `flash.sh --backup` against `153300000607A` (target confirmed in the
+log, not assumed), largest run of erased bytes INSIDE the used region:
+
+```
+card1_readback_2026-08-30.bin          used=27038696  longest 0xFF run inside = 8230124 bytes at 0x3D0000
+fk33_factory_backup_153300001366.bin   used=26999096  longest 0xFF run inside =   52744 bytes at 0x19831F8
+```
+
+**7.85 MiB gone from card 1, starting at `0x3D0000`.** Card 2's 52,744 bytes is
+ordinary inter-section padding. The erase aborted partway: the header survived,
+the tail survived, the body did not. Consistent with the recorded incident in
+which an agent aimed a flash operation at the wrong target.
+
+Corroborating: card 1's image differs from card 2's factory image in **80.26% of
+bytes** and matches none of `bit/*.mcs`, while their first 0x50 bytes are
+byte-identical (`0000 00bb 1122 0044` bus width, `aa99 5566` sync, then
+`3003 e001 0000 026b`).
+
+## THE GUARD PASSED, AND IT IS THE ONE GUARD THAT MATTERS
+
+`check_flash_backup.py` reported:
+
+```
+  sync word   AA995566 at offset 0x000050
+BACKUP_CHECK_OK: this looks like a genuine flash image.
+```
+
+**about an image with 7.85 MiB missing.** `flash.sh`'s own header explains the
+design intent -- *"an all-0xFF or all-0x00 readback is a FAILED READ that
+produces a plausible 32 MB file. check_flash_backup.py looks for the Xilinx sync
+word instead of trusting the file's size"* -- and that reasoning is correct for a
+WHOLLY failed read. It has no coverage of a PARTIAL one, and a partial erase is
+the failure this project has actually experienced.
+
+The sync word lives in the first 0x50 bytes. **Any image with an intact header
+passes, whatever happened to the body.** This is the dominant defect class here:
+the check had never been shown to discriminate on the thing it guards.
+
+**FIX, not yet applied:** add a largest-internal-0xFF-run test to
+`check_flash_backup.py` and fail above a threshold (card 2's legitimate maximum
+is 52,744 bytes; card 1's defect is 8,230,124 -- two orders of magnitude apart,
+so the threshold is not delicate). **Teeth-check it against
+`card1_readback_2026-08-30.bin`, which is a real, non-synthetic instance of the
+defect** and should be kept for exactly that purpose.
+
+## What this makes true
+
+- **Nothing of value remains in card 1's flash.** It cannot configure the FPGA.
+  Writing to it therefore risks nothing that is not already lost -- an asymmetry
+  that does not apply to any other flash operation on this project.
+- **Card 2's image must still not be written to card 1 casually.** It is the
+  only surviving SQRL image and card 1 does not need it: our own endpoint
+  bitstream in flash opens the port just as well, and is rebuildable.
+- **The 100 ms window can only be met from flash.** JTAG cannot, which is why
+  two warm reboots failed and why no host-side action can substitute.
+
+## Still open
+
+- Whether our own endpoint bitstream, written to card 1's flash, configures and
+  trains inside the window. Untested; it is the next experiment.
+- What card 1's flash held before the erase. Unknowable now.
+- `potlatch.tcl` bare-index target selection, and `fk33_powercycle.sh` taking no
+  target variable. Both must be fixed BEFORE any flash write, since wrong-target
+  selection is the mechanism that caused this damage.
