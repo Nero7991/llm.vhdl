@@ -1348,6 +1348,46 @@ tb_vector_args() {   # <vector-file-name> -> generator argv after the filename
     # the vector file's shape header, so a mismatch here is loud, not silent.
     seq_vec_chain_vec.txt)  echo "250 8 20260827" ;; # sim/run_seq_vec_seam.sh
     gdn_emit_chain_vec.txt) echo "3 24 128" ;;     # sim/run_gdn_emit_chain.sh
+    # THE OTHER FOUR SUBSYSTEM B VECTORS.  All four are COMMITTED, and until
+    # this row block none of them had an entry here, so the
+    # `[ -e "$SIM/$v" ] && [ -z "$args" ]` test above skipped generation
+    # entirely and their generators never ran on a gate run at all.  Two
+    # consequences, both MEASURED on 2026-08-29:
+    #
+    #  1. WHATEVER FILE WAS IN sim/ WAS THE STANDARD.  That is the hazard the
+    #     attn_kv_quant_vec.txt row above records from a real incident earlier
+    #     the same day -- a stray generator run with cwd = sim/ overwrote the
+    #     working-tree copy, and the skip would have fed that foreign file
+    #     straight to the bench.  It is also the D1 stale-golden class that
+    #     docs/debugging/2026-08-29_b-verification-defects-d1-d3.md closed for
+    #     gdn_conv, where a golden that had drifted from its own generator
+    #     masked mutation R13 completely.
+    #  2. EACH GENERATOR`S OWN EXIT CODE WAS UNREACHABLE.  ref/gdn_head_emit_vec.c
+    #     and ref/gdn_y_emit_vec.c return 1 when their double oracle reaches
+    #     1.0 output LSB; ref/gdn_silu_vec.c returns 2 if silu leaves int16 and
+    #     ref/rmsnorm_bf_vec.c returns 2 on a bf_fail.  MEASURED, before this
+    #     block: with ref/gdn_head_emit_vec.c mutated so its own bound fires at
+    #     4.0000 LSB and the generator exiting 1, `--only tb_gdn_head_emit`
+    #     printed REGRESSION: PASS.
+    #
+    # Every row below is the generator`s OWN default, so the regenerated file
+    # is BYTE-IDENTICAL to the committed one.  Verified with cmp against
+    # `git show HEAD:sim/<file>` for all four, deliberately not against the
+    # working tree, for the reason the attn_kv_quant row gives.  MEASURED cost
+    # per row: cc 0.06 to 0.12 s plus generation under 0.02 s, against row wall
+    # times of 7 s and up.
+    #
+    # This is ROUTE A of that document`s section 7, and it is ADDITIVE to
+    # ROUTE B rather than a substitute for it.  All four benches already carry
+    # their own real-valued oracle and gate it at severity error against the
+    # DUT`s own outputs (commits 728fcfe and 2868f6b), which is the only thing
+    # that can see an RTL-only accuracy defect; Route A routes its claim
+    # through the C and cannot.  What it adds is that the golden is pinned by
+    # the gate rather than by whatever happens to be lying in sim/.
+    gdn_silu_vec.txt)       echo "256 128 20260826 12" ;;      # ncase N seed ARG_Q
+    rmsnorm_bf_vec.txt)     echo "200 128 20260826 12 1e-6" ;; # ncase N seed Q EPS
+    gdn_head_emit_vec.txt)  echo "64 128 20260826" ;;          # ncase DIM seed
+    gdn_y_emit_vec.txt)     echo "48 24 128 20260827" ;;       # ncase H D seed
     # ref/gdn_block_vec.c, subsystem B's BLOCK-level oracle.  Argument order is
     # KEY_HEADS VAL_HEADS DIM TOKENS LAYERS KMAP SEED and it must match
     # sim/tb_gdn_block_vec.vhd's generic defaults; the vector file carries a
