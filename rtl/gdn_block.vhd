@@ -643,6 +643,91 @@ begin
                y_exp => y_exp, done => ec_done, y_sat => ec_ysat,
                w_taken => w_taken );
 
+  -- ---- the staging buffers' WRITE DECODE ---------------------------------
+  -- TRACK WRITEDEC, 2026-08-29.  These five writes used to live inside the
+  -- sequencer below as slice assignments whose base is a runtime variable:
+  --     base := obeat*CONV_LANES*16;  qbuf(base+CONV_LANES*16-1 downto base) <= ...
+  --     base := kh*DIM*16;            qsb (base+DIM*16-1        downto base) <= ...
+  -- MEASURED (TRACK LUTDIET's netlist census, docs/debugging/
+  -- 2026-08-29_lutdiet-flat-vector-ports.md section 5.4): Vivado infers each of
+  -- those as a full-width DEMUX over the whole register, and the five of them
+  -- together are 447,561 of gdn_block's 585,430 LUT primitives -- qsb 147,456,
+  -- knb 131,072, vbuf 100,912, kbuf 34,841, qbuf 33,280.  They carry ZERO
+  -- MUXF7 and ZERO MUXF8, so the F7/F8 signature that found the READ muxes
+  -- does not see them at all.
+  --
+  -- The fix is a per-word generate with a CONSTANT slice index whose enable is
+  -- the SAME condition the write sat under in the sequencer, read from the
+  -- same signals.  Nothing is registered that was not registered before, no
+  -- pipeline stage is added, and the schedule is unchanged CYCLE FOR CYCLE.
+  -- The conditions below are transcribed from the sequencer, including the
+  -- `rst = '0'` that is the outer if/else of that process.
+  --
+  -- TRAP, MEASURED IN GHDL.  The slice target must be fully STATIC in the
+  -- generate index.  A process creates its driver over the longest static
+  -- prefix of the target, so a bound containing a for-loop variable gives
+  -- every generated process a driver over the WHOLE register, they resolve
+  -- against each other, and the signal simulates as 'X' -- while synthesising
+  -- cleanly.  Only simulation catches it.
+  --
+  -- obeat's range runs to NBV, which is larger than NBQ; the q and k generates
+  -- simply never match those values, which is what the `obeat < nbeat` assert
+  -- in the sequencer already guarantees.
+  gqbuf : for wi in 0 to NBQ-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and co_valid = '1' and ph /= P_IDLE
+           and cv_seg_i = 0 and obeat = wi then
+          qbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gkbuf : for wi in 0 to NBQ-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and co_valid = '1' and ph /= P_IDLE
+           and cv_seg_i = 1 and obeat = wi then
+          kbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gvbuf : for wi in 0 to NBV-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and co_valid = '1' and ph /= P_IDLE
+           and cv_seg_i > 1 and obeat = wi then
+          vbuf((wi+1)*CONV_LANES*16-1 downto wi*CONV_LANES*16) <= co_data;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gqsb : for h in 0 to KEY_HEADS-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and ph = P_L2WAIT and l2_done = '1'
+           and l2_qk = '0' and kh = h then
+          qsb((h+1)*DIM*16-1 downto h*DIM*16) <= l2_q;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gknb : for h in 0 to KEY_HEADS-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and ph = P_L2WAIT and l2_done = '1'
+           and l2_qk = '1' and kh = h then
+          knb((h+1)*DIM*16-1 downto h*DIM*16) <= l2_k;
+        end if;
+      end if;
+    end process;
+  end generate;
+
   -- ---- the sequencer -----------------------------------------------------
   process(clk)
     variable base : integer;
@@ -716,14 +801,9 @@ begin
         -- output here and then overwrote it in place on a second pass; there
         -- is no first copy to overwrite any more.
         if co_valid = '1' and ph /= P_IDLE then
-          base := obeat*CONV_LANES*16;
-          if    cv_seg_i = 0 then
-            qbuf(base+CONV_LANES*16-1 downto base) <= co_data;
-          elsif cv_seg_i = 1 then
-            kbuf(base+CONV_LANES*16-1 downto base) <= co_data;
-          else
-            vbuf(base+CONV_LANES*16-1 downto base) <= co_data;
-          end if;
+          -- The buffer write itself has moved to the gqbuf / gkbuf / gvbuf
+          -- generates above, under this exact condition.  Only the pointer
+          -- advance and the bound check remain here.
           assert obeat < nbeat
             report "gdn_block: u_silu_conv produced more beats than the "
                  & "segment has; the collect pointer would run past the buffer"
@@ -884,12 +964,8 @@ begin
 
           when P_L2WAIT =>
             if l2_done = '1' then
-              base := kh*DIM*16;
-              if l2_qk = '0' then
-                qsb(base+DIM*16-1 downto base) <= l2_q;   -- q path, 1/sqrt(DIM)
-              else
-                knb(base+DIM*16-1 downto base) <= l2_k;   -- k path
-              end if;
+              -- The qsb / knb write has moved to the gqsb / gknb generates
+              -- above, under this exact condition (q path 1/sqrt(DIM), k path).
               ph <= P_L2N;
             end if;
 
