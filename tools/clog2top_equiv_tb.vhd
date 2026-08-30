@@ -20,9 +20,11 @@
 -- alone would have proved nothing there.  The old bodies are called ONLY on
 -- their own domains; above and below those the oracles are the only witnesses.
 --
--- NOT A GATE ROW.  `sim/regress.sh` globs `sim/tb_*.vhd` and `tb/tb_*.vhd`
--- (`regress.sh:850`); `tools/` is in neither, so this adds no row and does not
--- move BASELINE_PASS.  Run it by hand:
+-- NOT A GATE ROW.  `sim/regress.sh` discovers rows by globbing `tb_*.vhd` in
+-- `sim/` and `tb/` ONLY (`regress.sh:924`, over SUITE_DIRS), and builds its
+-- analysis closure from `rtl/`, `sim/`, `sim/micro/` and `tb/` (`regress.sh:850`).
+-- `tools/` is in neither list, so this adds no row and does not move
+-- BASELINE_PASS.  Run it by hand:
 --
 --   W=$(mktemp -d)
 --   ghdl -a --std=08 --workdir=$W rtl/util_pkg.vhd tools/clog2top_equiv_tb.vhd
