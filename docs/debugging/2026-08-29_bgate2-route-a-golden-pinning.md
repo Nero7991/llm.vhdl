@@ -323,6 +323,41 @@ MEASURED on this box, per row, with `/usr/bin/time`:
 Against row wall times of 1, 3, 7 and 7 seconds.  The `tb_gdn_head_emit` row is
 the worst case at roughly 12% and it is the shortest row in the set.
 
+### 4.9 The full gate, unfiltered
+
+One full unfiltered both-suite run on this workstation's working tree at
+`1216a5e`, `--jobs 2`, started 2026-08-29 19:07:09, with two other tracks'
+gates and a Vivado synthesis competing for the box throughout (load average
+12.1 to 12.5).
+
+```
+ suite sim   PASS 73   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 99   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ baseline: 99 passing, above the floor of 93 -- but this tree has rows a clean
+ checkout does not get: ... DO NOT raise BASELINE_PASS from this run ...
+ REGRESSION: PASS
+```
+
+**99 is this working tree's ceiling**, the number TRACK GATEHYGIENE measured at
+`5154518`, so the four rows cost nothing and the no-raise guard fires correctly.
+All seven subsystem B rows, verbatim:
+
+```
+PASS       sim:tb_gdn_conv                        5s
+PASS       sim:tb_gdn_emit_chain                 65s
+PASS       sim:tb_gdn_head_emit                   0s
+PASS       sim:tb_gdn_scalar                      1s
+PASS       sim:tb_gdn_silu                        4s
+PASS       sim:tb_gdn_y_emit                      9s
+PASS       sim:tb_rmsnorm_bf                      8s
+```
+
+The four rows with new generator work are within noise of their pre-change
+times under this load (`tb_gdn_head_emit` rounds to 0 s with the generator in
+it).  `tb_gdn_emit_chain` at 65 s against the 61 s measured quiet is contention,
+not the rows: its generator has run on every gate run since 2026-08-27.
+
 ## 5. Measured and REJECTED -- do not retry
 
 - **Do NOT read the brief's "five units have no accuracy gate" as current.**
@@ -377,6 +412,13 @@ the worst case at roughly 12% and it is the shortest row in the set.
   trees; had any of them been the repository, a later `cmp` would have compared
   a foreign file against a foreign file and reported agreement.  `git show
   HEAD:` is the only stable reference and it is what section 4.3 uses.
+- **A cosmetic edit to `sim/regress.sh` was made while a full gate run of that
+  same script was in flight, and it was safe only by luck.**  bash reads a
+  script incrementally by byte offset, so rewriting it in place can make a
+  running shell resume mid-token.  The four substitutions here were backtick
+  for apostrophe, one byte for one byte, so the file length and every offset
+  were preserved.  Do not repeat this: stage the edit and apply it after the
+  run, or edit a copy.
 - **A generator can exit 0 and write no file at all.**  `ref/gdn_scalar_vec.c`
   writes to stdout and treats `argv[1]` as `SP_Q`; handed a filename it returns
   0 having produced nothing, and the only symptom is the NEXT command failing
