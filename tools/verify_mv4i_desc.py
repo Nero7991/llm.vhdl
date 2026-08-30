@@ -45,7 +45,11 @@ sys.path.insert(0, HERE)
 
 import gen_mv4i_desc as G                                    # noqa: E402
 
-MODEL = "/mnt/storage/llama-models/qwen35-9b-mv4i"
+# The packed set under test.  `--model` overrides it, which is what makes the
+# lane-striped arm of `--bytes` reachable at all: without a way to point this
+# program at a v2 set, the striped half of `check_bytes` would be code nobody
+# had ever run, which is worse than a check nobody has shown to fail.
+MODEL = os.environ.get("MV4I_MODEL", "/mnt/storage/llama-models/qwen35-9b-mv4i")
 MANIFEST = os.path.join(MODEL, "manifest.json")
 DEFAULT_TENSOR = os.path.join(MODEL, "blk.11.attn_k.weight.mv4i")
 
@@ -141,12 +145,31 @@ def build_c_ref(work):
 
 
 def check_bytes(work, sweep):
+    """The ENCODING, against the C.  And, on a lane-striped set, the claim that
+    striping moves the BASE WORDS AND NOTHING ELSE.
+
+    `tools/mv4i_desc_ref.c` computes `hbm_base + sub_offset + skip`, which is
+    the v1 FLAT placement rule.  It cannot express a v2 lane-striped one and it
+    is not being asked to: the format arm below therefore builds Python's image
+    with `pieces=None` on every set, so this stays a comparison of two
+    independent ENCODERS rather than quietly becoming a comparison of one
+    encoder against itself.
+
+    THE DELTA ARM IS NOT AN ORACLE FOR THE BASE VALUES AND IS NOT CREDITED AS
+    ONE.  Both sides of it are Python, so it cannot say a base is right; what
+    it can say -- and what nothing else in this file says -- is that turning
+    striping on perturbs exactly `nsub_w + nsub_s` words of the 39 and leaves
+    the other 12 alone.  A `pieces` path that also moved `w_beats`, a mode bit
+    or a pad would be caught here.  The base VALUES are checked by
+    `tools/hbm_map.py` and, on silicon, by `fk33_load_weights.py --verify`."""
     print("\n== --bytes: 312-byte image vs tools/mv4i_desc_ref.c (spec s7, in "
           "C) ==")
     exe = build_c_ref(work)
-    ok = True
-    n = 0
-    for mv4i, rows, x_exp, base, mode, rstart in sweep:
+    # TWO VERDICTS, NOT ONE.  A shared flag made the format arm's line report
+    # the delta arm's failure, which is a checker lying about which check bit.
+    fmt_ok = True
+    n = nstriped = ndelta_bad = 0
+    for mv4i, rows, x_exp, base, mode, rstart, pieces in sweep:
         h = G.Mv4iHeader(mv4i)
         d = G.build_descriptor(h, base, rows, x_exp, out_mode=mode,
                                row_start=rstart)
@@ -156,13 +179,31 @@ def check_bytes(work, sweep):
              str(rstart)]).decode().split()
         n += 1
         if mine != theirs:
-            ok = False
+            fmt_ok = False
             bad = [i for i in range(max(len(mine), len(theirs)))
                    if (mine[i:i + 1] or [None]) != (theirs[i:i + 1] or [None])]
             say(False, "%s rows=%d start=%d"
                 % (os.path.basename(mv4i), rows, rstart),
                 "words differ: %r" % bad[:8])
-    return say(ok, "%d images byte-identical to the C builder" % n)
+        if pieces is None:
+            continue
+        nstriped += 1
+        ds = G.build_descriptor(h, base, rows, x_exp, out_mode=mode,
+                               row_start=rstart, pieces=pieces)
+        f = d.fields
+        want = set(range(8, 8 + f["nsub_w"] + f["nsub_s"]))
+        got = {i for i, (u, v) in enumerate(zip(mine, ds.hexlines())) if u != v}
+        if not got <= want:
+            ndelta_bad += 1
+            say(False, "%s striping moved a NON-base word"
+                % os.path.basename(mv4i), "words %r" % sorted(got - want)[:8])
+    ok = say(fmt_ok, "%d images byte-identical to the C builder" % n)
+    if nstriped:
+        ok &= say(ndelta_bad == 0,
+                  "%d striped images move base words only" % nstriped,
+                  "delta arm: NOT a check of the base VALUES, only of which "
+                  "words move")
+    return ok
 
 
 # ----------------------------------------------------------------- --rtl
@@ -357,14 +398,22 @@ def check_rtl(work, mv4i, rows, x_exp, desc_addr, teeth=True):
         print("RTL under test: could not determine (%s)" % exc)
     wd = ghdl_prepare(work)
     h = G.Mv4iHeader(mv4i)
-    hbm, entry, _ = G.hbm_base_for(mv4i, MANIFEST)
-    clean = G.build_descriptor(h, hbm, rows, x_exp)
+    # `allow_striped=True`: TAUGHT.  `pieces` is read on the next line and
+    # goes into every image below, so the bases the RTL judges are the ones
+    # the manifest actually placed.  Without it a v2 manifest would put the
+    # gateware in front of a descriptor built from a 4 KB header's address,
+    # and the RTL would ACCEPT it -- acceptance says nothing about where the
+    # bytes are.
+    hbm, entry, _ = G.hbm_base_for(mv4i, MANIFEST, allow_striped=True)
+    pieces = G.piece_extents(entry)
+    clean = G.build_descriptor(h, hbm, rows, x_exp, pieces=pieces)
     muts = make_mutations(clean.fields) if teeth else make_mutations(clean.fields)[:1]
 
     ok = True
     silent = []
     for i, (name, fn, code, info, note, alt) in enumerate(muts):
-        d = G.build_descriptor(h, hbm, rows, x_exp, mutate=lambda w, f: fn(w, f))
+        d = G.build_descriptor(h, hbm, rows, x_exp, pieces=pieces,
+                               mutate=lambda w, f: fn(w, f))
         hp = os.path.join(work, "m%02d.hex" % i)
         with open(hp, "w") as fp:
             for ln in d.hexlines():
@@ -516,7 +565,10 @@ def main():
     if a.cross:
         ok &= check_cross(work, a.mv4i, a.rows, a.x_exp)
     if a.bytes:
-        _, by_file = G.load_manifest(MANIFEST)
+        # `allow_striped=True`: TAUGHT.  `piece_extents()` is read per tensor
+        # below and drives the delta arm of `check_bytes`; the format arm
+        # deliberately stays flat, because that is what the C builder is.
+        _, by_file = G.load_manifest(MANIFEST, allow_striped=True)
         names = sorted(n for n, f in by_file.items() if f.get("kind") == "mv4i")
         if a.sweep:
             step = max(1, len(names) // a.sweep)
@@ -526,11 +578,12 @@ def main():
             p = os.path.join(MODEL, n)
             h = G.Mv4iHeader(p)
             base = int(by_file[n]["hbm_offset"])
+            pcs = G.piece_extents(by_file[n])
             rows = min(h.M, 17408)
-            sweep.append((p, rows, 5, base, 0, 0))
-            sweep.append((p, min(h.M, h.rows_if), -3, base, 2, 0))
+            sweep.append((p, rows, 5, base, 0, 0, pcs))
+            sweep.append((p, min(h.M, h.rows_if), -3, base, 2, 0, pcs))
             if h.M >= 2 * h.rows_if:
-                sweep.append((p, h.rows_if, 7, base, 1, h.rows_if))
+                sweep.append((p, h.rows_if, 7, base, 1, h.rows_if, pcs))
         ok &= check_bytes(work, sweep)
     if a.rtl or a.teeth:
         ok &= check_rtl(work, a.mv4i, a.rows, a.x_exp, a.desc_addr,

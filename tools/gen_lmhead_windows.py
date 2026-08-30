@@ -69,6 +69,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import gen_mv4i_desc as G                                    # noqa: E402
+import hbm_map as HM                                         # noqa: E402
 from gen_mv4i_desc import DescError                          # noqa: E402
 
 MODES = {"bfp": G.MODE_BFP, "raw": G.MODE_RAW, "partial": G.MODE_PARTIAL}
@@ -93,7 +94,14 @@ def plan(M, rows_if, maxrows_bfp):
     return stride, out
 
 
-def build_set(h, hbm_base, x_exp, out_mode, maxrows_bfp, cb_load_first_only):
+def build_set(h, hbm_base, x_exp, out_mode, maxrows_bfp, cb_load_first_only,
+              pieces=None):
+    """`pieces` is `{file_offset: (hbm_offset, nbytes)}` from a v2 lane-striped
+    manifest, or None for a v1 flat one -- in which case every base below is
+    exactly the old `hbm_base + file offset`.  It is threaded rather than
+    recomputed because the byte-cover check reads the bases back out of the
+    descriptors, and a second idea of where a sub-region is would make that
+    check agree with itself instead of with the manifest."""
     stride, wins = plan(h.M, h.rows_if, maxrows_bfp)
     descs = []
     for i, (rs, nr) in enumerate(wins):
@@ -103,7 +111,7 @@ def build_set(h, hbm_base, x_exp, out_mode, maxrows_bfp, cb_load_first_only):
         cb = True if not cb_load_first_only else (i == 0)
         descs.append(G.build_descriptor(h, hbm_base, nr, x_exp,
                                         out_mode=out_mode, cb_load=cb,
-                                        row_start=rs))
+                                        row_start=rs, pieces=pieces))
     return stride, descs
 
 
@@ -132,14 +140,24 @@ def check_row_cover(h, descs):
     return prob
 
 
-def check_byte_cover(h, descs):
+def check_byte_cover(h, descs, pieces=None):
     """The same question asked of the BYTES, per sub-region.
 
     A row cover can be exactly right while the bases are wrong; worklog OI-1
     case 19 is that defect and the gateware cannot see it.  Here the two are
     independent: rows come from `row_start`/`n_rows`, bytes from `w_base`/
     `s_base` and `w_beats`/`s_beats`, and both are read off the emitted
-    descriptor rather than recomputed."""
+    descriptor rather than recomputed.
+
+    WHERE A SUB-REGION STARTS IS TWO SOURCES JOINED, NOT ONE READ BACK.  The
+    FILE OFFSET comes from `G.check_bases(h)`, i.e. the .mv4i's own 0x38 table;
+    the ADDRESS that offset was placed at comes from the manifest's `pieces`.
+    Deliberately NOT `f["w_extent_base"]`, which `build_descriptor` wrote from
+    the same manifest -- reading that back would make this check agree with the
+    descriptor it is checking, which is the m7-mutant shape.
+
+    Under a v1 flat manifest `pieces` is None and `want_start` is exactly the
+    old `hbm_base + off`."""
     prob = []
     port_b = h.axi_dw // 8
     order = sorted(range(len(descs)), key=lambda i: descs[i].fields["row_start"])
@@ -150,11 +168,29 @@ def check_byte_cover(h, descs):
             ("scale", s_off, "s_base", "s_beats")):
         for p in range(len(offs)):
             cursor = None
+            if pieces is not None:
+                # THE EXTENT MUST BE THE WHOLE SUB-REGION.  A window set walks
+                # one sub-region end to end, so a piece cut shorter than
+                # `sub_bytes()` means the last window reads into whatever the
+                # packer put next in that pseudo-channel, and nothing faults.
+                # `hbm_map` cannot see this: it never opens the .mv4i.
+                got = pieces.get(offs[p])
+                if got is None:
+                    prob.append("%s sub-region %d is at file +%d and the "
+                                "manifest places no piece there"
+                                % (kind, p, offs[p]))
+                    continue
+                if got[1] != full:
+                    prob.append("%s sub-region %d: the manifest's piece at "
+                                "file +%d is %d B, the header's own table "
+                                "makes the sub-region %d B"
+                                % (kind, p, offs[p], got[1], full))
             for i in order:
                 f = descs[i].fields
                 b = f[base_key][p]
                 n = f[beat_key] * port_b
-                want_start = f["hbm_base"] + offs[p]
+                want_start = (f["hbm_base"] + offs[p] if pieces is None
+                              else pieces[offs[p]][0])
                 if cursor is None:
                     cursor = want_start
                     if b != want_start:
@@ -167,7 +203,8 @@ def check_byte_cover(h, descs):
                                 % (kind, p, f["row_start"], b, cursor))
                 cursor = b + n
             if cursor is not None:
-                want_end = descs[0].fields["hbm_base"] + offs[p] + full
+                want_end = ((descs[0].fields["hbm_base"] + offs[p]
+                             if pieces is None else pieces[offs[p]][0]) + full)
                 if cursor != want_end:
                     prob.append("%s sub-region %d: windows end at 0x%X, the "
                                 "sub-region ends at 0x%X (%+d bytes)"
@@ -216,14 +253,15 @@ def check_y_exp(h, descs, out_mode):
     return prob
 
 
-def run_checks(h, descs, out_mode, build=G.FK33):
+def run_checks(h, descs, out_mode, build=G.FK33, pieces=None):
     return [("row cover", check_row_cover(h, descs)),
-            ("byte cover", check_byte_cover(h, descs)),
+            ("byte cover", check_byte_cover(h, descs, pieces)),
             ("gateware acceptance", check_acceptance(descs, build)),
             ("y_exp invariance", check_y_exp(h, descs, out_mode))]
 
 
-def report(h, stride, descs, out_mode, build=G.FK33, verbose=True):
+def report(h, stride, descs, out_mode, build=G.FK33, verbose=True,
+           pieces=None):
     if verbose:
         print("tensor        %s" % os.path.basename(h.path))
         print("shape         M=%d K=%d" % (h.M, h.K))
@@ -246,7 +284,7 @@ def report(h, stride, descs, out_mode, build=G.FK33, verbose=True):
                   % (i, f["row_start"], f["n_rows"], f["tiles"], f["w_beats"],
                      f["s_beats"], f["w_base"][0]))
         print()
-    results = run_checks(h, descs, out_mode, build)
+    results = run_checks(h, descs, out_mode, build, pieces)
     ok = True
     for name, prob in results:
         if prob:
@@ -302,12 +340,13 @@ def _swap_two(h, build):
     return "swap", None
 
 
-def run_mutations(h, hbm_base, x_exp, out_mode, build=G.FK33):
+def run_mutations(h, hbm_base, x_exp, out_mode, build=G.FK33, pieces=None):
     print("mutation table -- KILLED means a check refused the window set")
     print("%-46s %-8s %s" % ("mutant", "verdict", "what fired"))
     stride, descs = build_set(h, hbm_base, x_exp, out_mode,
-                              build["maxrows_bfp"], False)
-    clean = report(h, stride, descs, out_mode, build, verbose=False)
+                              build["maxrows_bfp"], False, pieces=pieces)
+    clean = report(h, stride, descs, out_mode, build, verbose=False,
+                   pieces=pieces)
     print("%-46s %-8s %s" % ("m0 clean (control)", "PASS" if clean else "FAIL",
                              "must PASS or the table means nothing"))
 
@@ -321,11 +360,11 @@ def run_mutations(h, hbm_base, x_exp, out_mode, build=G.FK33):
                             "exceeds M = %d" % (rs, nr, h.M)]
                 ds.append(G.build_descriptor(h, hbm_base, nr, x_exp,
                                              out_mode=out_mode, cb_load=True,
-                                             row_start=rs))
+                                             row_start=rs, pieces=pieces))
         except DescError as e:
             return ["build_descriptor refused: %s" % e]
         fired = []
-        for name, prob in run_checks(h, ds, out_mode, build):
+        for name, prob in run_checks(h, ds, out_mode, build, pieces):
             if prob:
                 fired.append("%s (%d)" % (name, len(prob)))
         return fired
@@ -391,19 +430,48 @@ def main(argv=None):
 
     h = G.Mv4iHeader(a.mv4i)
     if a.no_hbm_base:
-        hbm_base = 0
+        hbm_base, pieces = 0, None
     else:
-        hbm_base, _entry, _m = G.hbm_base_for(a.mv4i, a.manifest)
+        # `allow_striped=True`: TAUGHT.  `pieces` is read on the next line and
+        # threaded into every window's descriptor, so each sub-region base is
+        # the address the manifest placed that FILE OFFSET at.  Without it this
+        # tool would emit a full window set off a v2 manifest with every base
+        # computed from a 4 KB header, and the byte-cover check would agree
+        # with it because both would share the mistake.
+        hbm_base, _entry, _m = G.hbm_base_for(a.mv4i, a.manifest,
+                                              allow_striped=True)
+        pieces = G.piece_extents(_entry)
+        # THE PLACEMENT, CHECKED BY SOMETHING THAT NEVER SEES THESE
+        # DESCRIPTORS.  `check_byte_cover` below joins the file's 0x38 table to
+        # the manifest's `pieces` -- so a piece placed at a WRONG but
+        # self-consistent address (moved a whole segment, colliding with
+        # another lane, or across the 4 GiB stack line) is invisible to it: the
+        # placement is on both sides and cancels.  MEASURED 2026-08-30, teeth
+        # rows T1, T3, T9, T10: without this call the window set is emitted
+        # clean.  Same defect and same fix as `fk33_run_job.make_plan` at
+        # 263e0ee, and `gen_layer_program.place_desc_arena` already does it for
+        # the token program.
+        fails = HM.plan(_m).check()
+        if fails:
+            print("REFUSING to emit windows -- tools/hbm_map.py finds %d "
+                  "placement fault(s) in this manifest's own address map:"
+                  % len(fails))
+            for f in fails[:8]:
+                print("  %s" % f)
+            if len(fails) > 8:
+                print("  ... and %d more" % (len(fails) - 8))
+            return 1
     build = dict(G.FK33)
     build["maxrows_bfp"] = a.maxrows_bfp
     mode = MODES[a.out_mode]
 
     if a.mutate:
-        return 0 if run_mutations(h, hbm_base, a.x_exp, mode, build) else 1
+        return 0 if run_mutations(h, hbm_base, a.x_exp, mode, build,
+                                  pieces=pieces) else 1
 
     stride, descs = build_set(h, hbm_base, a.x_exp, mode, a.maxrows_bfp,
-                              a.cb_load_once)
-    ok = report(h, stride, descs, mode, build)
+                              a.cb_load_once, pieces=pieces)
+    ok = report(h, stride, descs, mode, build, pieces=pieces)
 
     if a.outdir:
         os.makedirs(a.outdir, exist_ok=True)

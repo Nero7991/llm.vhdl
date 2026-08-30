@@ -389,7 +389,8 @@ def f32_tensor(blob, f32idx, name):
 class Job(object):
     __slots__ = ("idx", "step", "tensor", "short", "logical_row", "row_start",
                  "n_rows", "n_cols", "M", "K", "w_exp", "out_shift",
-                 "src_seam", "dst_seam", "mv4i", "hbm_offset", "desc_addr",
+                 "src_seam", "dst_seam", "mv4i", "hbm_offset", "pieces",
+                 "desc_addr",
                  "src_region", "dst_region", "dst_off", "ordinal", "src2",
                  "const_base", "out_mode", "segment")
 
@@ -489,6 +490,27 @@ def make_layer(a):
         j.n_rows, j.n_cols = st.n_rows, st.n_cols
         j.M, j.K, j.w_exp, j.out_shift = h.M, h.K, h.w_exp, h.out_shift
         j.mv4i, j.hbm_offset = path, int(ent["hbm_offset"])
+        # WHERE EACH SUB-REGION ACTUALLY IS.  This file reads the manifest with
+        # a bare `json.load`, so `gen_mv4i_desc.load_manifest()`'s refusal of a
+        # v2 lane-striped manifest never reaches it: on such a manifest it
+        # would emit a complete, gateware-ACCEPTED descriptor aimed at bytes
+        # that are not there and report success.  MEASURED 2026-08-30 on the
+        # pre-change file over all 32 layers: 296 descriptors, 7,992 sub-region
+        # bases, every one of them `hbm_offset + <file offset>` where
+        # `hbm_offset` names only the tensor's 4 KB header.
+        #
+        # None for a v1 flat manifest, in which case `build_descriptor` reduces
+        # to exactly the old `hbm_base + file offset`; a `{file_offset:
+        # (hbm_offset, nbytes)}` map for a v2 one.  The join is the FILE
+        # OFFSET, never a lane, kind or segment label -- see
+        # `gen_mv4i_desc.sub_base()`.
+        #
+        # The independent verdict on the address map is ALREADY in this path:
+        # `place_desc_arena()` above runs `hbm_map.plan(...).check()` and
+        # raises SystemExit on any fault, so a manifest whose pieces overlap,
+        # straddle a stack or sit off a 4 KB line never reaches here.  A second
+        # copy of that call would add no teeth.
+        j.pieces = G.piece_extents(ent)
         j.desc_addr = arena_base + i * stride
         j.src_region, j.dst_region, j.dst_off = st.src, st.dst, st.dst_off
         j.ordinal, j.src2, j.const_base = st.ordinal, st.src2, st.const_base
@@ -997,7 +1019,8 @@ def run_layer(a, plan, ref, tok, regs, bar, hbm, out=None):
             out_mode=j.out_mode, cb_load=True, addr_w=a.addr_w,
             row_start=j.row_start, src_region=j.src_region,
             dst_region=j.dst_region, dst_offset=j.dst_off, ordinal=j.ordinal,
-            src_region2=j.src2, const_base=j.const_base, const_exp=0)
+            src_region2=j.src2, const_base=j.const_base, const_exp=0,
+            pieces=j.pieces)
         bad = G.rtl_would_reject(d, build=_build(a), desc_addr=j.desc_addr)
         if bad:
             raise LayerError(

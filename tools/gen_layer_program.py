@@ -636,7 +636,15 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
     arithmetic re-derivation: if the manifest declares segments and none of
     them matches the step, nothing is emitted for it and the reason says so."""
     build = build or G.FK33
-    m, by_file = G.load_manifest(manifest_path)
+    # `allow_striped=True`: TAUGHT.  Every A descriptor below is relocated per
+    # sub-region through `G.piece_extents()`.  Before that line existed this
+    # function emitted `311 of 311 A jobs, 0 refused` off a v2 lane-striped
+    # manifest with every one of its 6,723 sub-region bases computed as
+    # `hbm_offset + <file offset>`, where `hbm_offset` names a 4 KB header --
+    # a complete, gateware-ACCEPTED, wrong program reported as success
+    # (MEASURED 2026-08-30, TRACK PIECES).  The refusal that replaced it is
+    # what this flag now discharges.
+    m, by_file = G.load_manifest(manifest_path, allow_striped=True)
     root = os.path.dirname(os.path.abspath(manifest_path))
     out = []
     addr = desc_base
@@ -706,7 +714,12 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                 cb_load=True, addr_w=build["addr_w"], row_start=packed_start,
                 src_region=st.src, dst_region=st.dst,
                 dst_offset=st.dst_off, ordinal=st.ordinal,
-                src_region2=st.src2, const_base=st.const_base, const_exp=0)
+                src_region2=st.src2, const_base=st.const_base, const_exp=0,
+                # WHERE EACH SUB-REGION IS.  None on a v1 flat manifest, in
+                # which case this reduces to the old `hbm_offset + off`; the
+                # manifest's `pieces` on a v2 lane-striped one, joined on the
+                # FILE OFFSET and never on a lane, kind or segment label.
+                pieces=G.piece_extents(ent))
         except G.DescError as e:
             out.append(dict(step=st.idx, tensor=st.tensor, ok=False,
                             reason=str(e)))
@@ -808,7 +821,11 @@ def check_against_manifest(s, manifest_path, layer=0):
     """The 9B shape constants are copied from `rtl/model_cfg_pkg.vhd`.  The ONE
     independent source for them in this repository is the packed tensors'
     own shapes, so they are checked against those rather than trusted."""
-    m, by_file = G.load_manifest(manifest_path)
+    # `allow_striped=True`: this function reads `M`, `M_logical` and `K` and NO
+    # address at all, so striping cannot change its answer.  Saying so with the
+    # flag is better than leaving a pure SHAPE check to refuse a layout none of
+    # its arithmetic depends on.
+    m, by_file = G.load_manifest(manifest_path, allow_striped=True)
 
     def shp(name):
         """The LOGICAL shape.  `M` in the manifest is the PACKED row count,

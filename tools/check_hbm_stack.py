@@ -25,6 +25,33 @@ sub-regions, the F32 side blob, each of the 177 tensors inside it, the GDN state
 region, and each per-token KV record slot -- the byte range [base, base+len)
 must lie inside ONE stack, i.e. `base // STACK == (base+len-1) // STACK`.
 
+LANE-STRIPED (v2) MANIFESTS: THE RANGES CHECKED MUST BE THE RANGES THAT EXIST.
+Under `format` "... v2 lane-striped" a tensor is not one contiguous object.
+`hbm_offset` names a 4 KB HEADER and each of the 27 sub-regions is placed in its
+own 256 MiB pseudo-channel, listed in the entry's `pieces`.  The v1 arithmetic
+`hbm_offset + sub_offset` then names no byte the engine will ever read.
+
+MEASURED 2026-08-30, and it is why this section exists: on the shipping striped
+set this program printed `checked 7154 byte ranges ... PASS`, the SAME 7,154 as
+on the flat set, of which every sub-region range was fictitious.  It was not
+detecting an absence of crossings; it was asking about an address space that
+does not exist and getting a plausible answer.  A guard that has never been
+shown to discriminate on the thing it guards is decoration.
+
+So on a v2 entry this program checks each PIECE's real range, and adds three
+structural rules that no other consumer can state, because it is the only
+checker that opens the .mv4i:
+
+  * the pieces tile the file exactly, from 0 to its size ON DISK;
+  * the piece cuts are the file's OWN sub-region boundaries -- a 4 KB header
+    piece plus one piece per entry of the 0x38 table.  `tools/hbm_map.py`
+    cannot check this: it never opens the file;
+  * `hbm_offset` is the first piece, and every piece is 4 KB aligned.
+
+The count line names how many entries were striped and how many piece ranges
+were read, so a future silent skip is visible in the output rather than
+inferred.
+
 WHY IT MATTERS.  An AXI master that reads across the boundary does not fault.
 The HBM IP exposes all 32 pseudo-channel segments on every SAXI port when both
 global switches are on (MEASURED, docs/2026-08-28_can-27-read-masters-be-served
@@ -68,6 +95,8 @@ def main():
 
     bad = []
     n_obj = 0
+    n_striped = 0
+    n_piece = 0
 
     def chk(label, base, nbytes):
         """One object.  Empty objects are checked as a point, not skipped."""
@@ -91,6 +120,7 @@ def main():
     for e in man["files"]:
         path = os.path.join(a.outdir, e["file"])
         base = e["hbm_offset"]
+        pcs = e.get("pieces")
         if not os.path.exists(path):
             bad.append((e["file"], base, e["nbytes"], "file missing on disk"))
             continue
@@ -98,7 +128,39 @@ def main():
         if sz != e["nbytes"]:
             bad.append((e["file"], base, sz,
                         f"on disk {sz} B, manifest says {e['nbytes']} B"))
-        chk(e["file"], base, sz)
+        if not pcs:
+            # v1 flat: the object IS one range at `base`.
+            chk(e["file"], base, sz)
+        else:
+            # v2 lane-striped: `base` is a 4 KB header and the object is one
+            # range PER PIECE.  Checking [base, base+sz) here would be the
+            # fictitious range this program used to pass over.
+            n_striped += 1
+            pos = 0
+            for i, x in enumerate(pcs):
+                fo, ho, nb = (int(x["file_offset"]), int(x["hbm_offset"]),
+                              int(x["nbytes"]))
+                tag = x.get("kind", "?")
+                if x.get("lane") is not None:
+                    tag = f"{tag}{x['lane']:02d}"
+                if fo != pos:
+                    bad.append((f"{e['file']}:{tag}", ho, nb,
+                                f"piece {i} starts at file +{fo}, the pieces "
+                                f"before it end at +{pos}"))
+                if ho & 0xFFF:
+                    bad.append((f"{e['file']}:{tag}", ho, nb,
+                                "piece is not 4 KB aligned in HBM"))
+                n_piece += 1
+                chk(f"{e['file']}:{tag}", ho, nb)
+                pos = fo + nb
+            if pos != sz:
+                bad.append((e["file"], base, sz,
+                            f"pieces cover {pos} B, the file is {sz} B on "
+                            f"disk"))
+            if int(pcs[0]["hbm_offset"]) != base:
+                bad.append((e["file"], base, sz,
+                            f"hbm_offset is {base} and the first piece is at "
+                            f"{pcs[0]['hbm_offset']}"))
 
         if e["kind"] == "f32blob":
             for x in e.get("entries", []):
@@ -135,6 +197,30 @@ def main():
                         f"scale base {scl_off} disagrees with sub-region "
                         f"table entry {offs[nports]}"))
         ends = offs[1:] + [sz]              # length from the NEXT base
+        if pcs:
+            # THE CUTS MUST BE THE FILE'S OWN.  This is the one rule here that
+            # no other consumer can state: `tools/hbm_map.py` validates the
+            # pieces against the manifest's `nbytes` and never opens the .mv4i,
+            # so a manifest that cut the file somewhere other than the header's
+            # 0x38 table still tiles, still sums, and still passes there.  The
+            # pieces the engine reads are the SUB-REGIONS; a piece boundary
+            # anywhere else means the descriptor's base for that sub-region
+            # lands mid-piece or in another lane's arena.
+            want = [0] + offs                        # header, then each sub
+            got = [int(x["file_offset"]) for x in pcs]
+            if got != want:
+                bad.append((e["file"], base, sz,
+                            f"the manifest cuts this file at {got[:6]}... "
+                            f"({len(got)} pieces); its own sub-region table "
+                            f"cuts it at {want[:6]}... ({len(want)})"))
+            elif int(pcs[0]["nbytes"]) != HDR_BYTES:
+                bad.append((e["file"], base, sz,
+                            f"the first piece is {pcs[0]['nbytes']} B, a "
+                            f"header is {HDR_BYTES} B"))
+            # The per-sub-region STACK question is already answered above, on
+            # each piece's real address.  Re-asking it at `base + o` would be
+            # the fictitious range.
+            continue
         for i, (o, en) in enumerate(zip(offs, ends)):
             tag = f"w{i}" if i < nports else f"s{i - nports}"
             if en <= o:
@@ -167,6 +253,9 @@ def main():
 
     print(f"checked {n_obj} byte ranges against a {S} B stack boundary "
           f"in {mpath}")
+    print(f"  format {man.get('format')!r}: {n_striped} of "
+          f"{len(man['files'])} entries are LANE-STRIPED, contributing "
+          f"{n_piece} piece ranges")
     if bad:
         print(f"FAIL {len(bad)} range(s) cross a stack boundary or are "
               f"structurally wrong:")
