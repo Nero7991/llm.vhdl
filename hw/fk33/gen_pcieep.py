@@ -2318,6 +2318,49 @@ def main():
          "the elaboration-time ceiling on the HBM halt threshold is gone"),
         ("assert G_DIE_RESUME_C + 10 <= G_DIE_HALT_C",
          "the elaboration-time check on the die hysteresis band is gone"),
+        # --- the HBM divergence bound (added 2026-08-30, TRACK BITPREP, on
+        # --- TRACK THERMFIX's handoff).  What these guard is not a threshold
+        # --- but the REPLACEMENT for a threshold: hbm_valid used to demand the
+        # --- two stacks read EQUAL, and because they are two separate dies it
+        # --- halted an idle card 253 times in 1300 s and saturated the 8-bit
+        # --- trip counter at 255.  The bound is what makes a stuck sensor still
+        # --- detectable once equality is gone, so its ceiling and floor are
+        # --- safety numbers in exactly the sense the rows above are.
+        ("G_HBM_MAX_DELTA : natural := 20",
+         "the HBM divergence bound is no longer 20 codes.  20 is DERIVED so a "
+         "sensor stuck at the measured idle code 38 is flagged once the live "
+         "stack reaches 58, which is 27 codes below the 85 halt point -- change "
+         "it and the stuck-sensor hole the bound exists to close moves"),
+        ("constant C_HBM_DELTA_CEILING : natural := 40 - G_HBM_MAX_DELTA;",
+         "the SYNTHESIS-time ceiling on the HBM divergence bound is gone.  "
+         "Above 40 a stuck sensor is no longer flagged before the live stack "
+         "passes the halt point, and Vivado synthesis IGNORES "
+         "`assert ... severity failure` (measured 2026-08-28), so a "
+         "negative-natural constant is the only thing that stops it"),
+        ("constant C_HBM_DELTA_FLOOR   : natural := G_HBM_MAX_DELTA - 2;",
+         "the SYNTHESIS-time floor on the HBM divergence bound is gone.  "
+         "Below 2 the bound degenerates towards the equality test it replaced, "
+         "which is the defect that halted an idle card 255 times"),
+        ("assert G_HBM_MAX_DELTA >= 2 and G_HBM_MAX_DELTA <= 40",
+         "the elaboration-time bracket on the HBM divergence bound is gone"),
+        ("assert G_HBM_MAX_DELTA + G_HBM_MIN_CODE < G_HBM_HALT_C",
+         "the elaboration-time check that a stack parked at the plausibility "
+         "floor diverges past the bound BEFORE the live stack reaches the halt "
+         "threshold is gone, so the stuck-sensor case would not be covered"),
+        # --- and the third defect THERMFIX found: hbm_hot, hbm_cool, warn and
+        # --- cause all read stack 0 alone.  That was accidentally safe ONLY
+        # --- because the equality precondition was there; with equality gone it
+        # --- is a live hole, so the reduction over BOTH dies is guarded here.
+        ("or hbm_max >= to_unsigned(G_HBM_HALT_C, hbm_max'length)",
+         "the HBM halt no longer compares the MAX over both stacks.  These are "
+         "two separate dies: a guard reading stack 0 alone cannot halt for a "
+         "hot stack 1, and the equality precondition that used to make that "
+         "accidentally safe has been removed"),
+        ("and hbm_max <= to_unsigned(G_HBM_RESUME_C, hbm_max'length)",
+         "the HBM resume no longer requires the MAX over both stacks to be "
+         "cool, so the guard could release with one die still hot"),
+        ("or syn_cat0(1) = '1' or syn_cat1(1) = '1'",
+         "the HBM catastrophic-trip term no longer covers both stacks"),
         ("assert C_DIE_HALT > 700 and C_DIE_HALT < 800",
          "the elaboration-time check that the die threshold converts to a "
          "plausible SYSMON code is gone, so an arithmetic error in the "
