@@ -301,7 +301,7 @@ void pl_open_opts_default(pl_open_opts *o)
 {
     memset(o, 0, sizeof *o);
     o->transport = PL_TRANSPORT_SIM;
-    o->seam_base = FK33_SEAM_BASE_PROPOSED;
+    o->seam_base = FK33_SEAM_BASE;
     /* ZERO MEANS DERIVE.  See pl_derive_bases above and the note in
      * pl_backend.h about the three constants this replaces. */
     o->x_base   = 0;
@@ -330,7 +330,7 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
 
     c = (pl_ctx *)calloc(1, sizeof *c);
     if (!c) return -1;
-    c->base = o->seam_base ? o->seam_base : FK33_SEAM_BASE_PROPOSED;
+    c->base = o->seam_base ? o->seam_base : FK33_SEAM_BASE;
     c->embed = o->embed;
     c->embed_user = o->embed_user;
     c->x_base = o->x_base; c->l_base = o->l_base; c->desc_ptr = o->desc_ptr;

@@ -280,12 +280,12 @@ static int sim_reg_read32(void *c, uint32_t off, uint32_t *v)
 {
     sim_ctx *s = (sim_ctx *)c;
     uint32_t o;
-    if (off < FK33_SEAM_BASE_PROPOSED
-        || off >= FK33_SEAM_BASE_PROPOSED + FK33_SEAM_SPAN || (off & 3u)) {
+    if (off < FK33_SEAM_BASE
+        || off >= FK33_SEAM_BASE + FK33_SEAM_SPAN || (off & 3u)) {
         *v = 0xFFFFFFFFu;               /* BAR mapped, nothing answering */
         return 0;
     }
-    o = off - FK33_SEAM_BASE_PROPOSED;
+    o = off - FK33_SEAM_BASE;
     switch (o) {
     case FK33_SEAM_ID:         *v = FK33_SEAM_ID_MAGIC; return 0;
     case FK33_SEAM_VERSION:    *v = FK33_SEAM_VERSION_1; return 0;
@@ -304,10 +304,10 @@ static int sim_reg_write32(void *c, uint32_t off, uint32_t v)
 {
     sim_ctx *s = (sim_ctx *)c;
     uint32_t o;
-    if (off < FK33_SEAM_BASE_PROPOSED
-        || off >= FK33_SEAM_BASE_PROPOSED + FK33_SEAM_SPAN || (off & 3u))
+    if (off < FK33_SEAM_BASE
+        || off >= FK33_SEAM_BASE + FK33_SEAM_SPAN || (off & 3u))
         return 0;                        /* writes to nothing are dropped */
-    o = off - FK33_SEAM_BASE_PROPOSED;
+    o = off - FK33_SEAM_BASE;
     if (o == FK33_SEAM_CTRL) {
         if (v & FK33_CTRL_SEQ_RESET) {
             s->next_pos = 0; s->kv_valid = 0; s->hist = 2166136261u;

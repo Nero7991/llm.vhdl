@@ -110,7 +110,7 @@ typedef struct {
     const char *dev_user, *dev_h2c, *dev_c2h;
     uint32_t    allow_hardware;   /* must be FK33_ALLOW_HARDWARE for /dev */
 
-    /* BAR offset of the seam register block.  0 -> FK33_SEAM_BASE_PROPOSED. */
+    /* BAR offset of the seam register block.  0 -> FK33_SEAM_BASE. */
     uint32_t seam_base;
 
     /* HBM addresses.  ZERO MEANS DERIVE, and derived is the intended path.

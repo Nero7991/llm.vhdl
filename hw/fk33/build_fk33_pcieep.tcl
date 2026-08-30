@@ -199,6 +199,10 @@ add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4_desc_ax
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_engine.vhd
 update_compile_order -fileset sources_1
 
+# ---- host seam RTL (gen_pcieep.py) ----------------------------------------
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_seam.vhd
+update_compile_order -fileset sources_1
+
 #create_project $ProjectName ./$ProjectName -part xcvu33p-fsvh2104-2-e-es1
 
 set_param synth.maxThreads 8
@@ -1039,6 +1043,80 @@ connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29
 connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
 # ---- end subsystem A ------------------------------------------------------
+
+# ---- THE HOST SEAM (gen_pcieep.py) ----------------------------------------
+# rtl/fk33_seam.vhd, TRACK DSEAM.  Read the long note above SEAM_BLOCK in
+# gen_pcieep.py before changing anything here: the d_err tie is HIGH on
+# purpose and tying it low makes a host poll loop hang.
+create_bd_cell -type module -reference fk33_seam fk33_seam_0
+
+# THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,
+# and it does so through the smartconnect ENGINE_BLOCK already built.  Two
+# reasons, in order: subsystem D will be in the core domain, so putting the
+# seam anywhere else now buys a move later; and axil2eng is already
+# NUM_CLKS 2 with the incoming side on xdma/axi_aclk and the outgoing side
+# on clk_wiz_0/clk_out3, so this is one more MI on an interconnect that
+# exists rather than a new one.
+set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]
+set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells axil2eng]
+connect_bd_intf_net [get_bd_intf_pins axil2eng/[format M%02d_AXI $n]] \
+                    [get_bd_intf_pins fk33_seam_0/s_axi]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins fk33_seam_0/clk]
+
+# THE RESET IS ACTIVE HIGH.  fk33_seam's `rst` is `if rst = '1'`, so it
+# takes proc_sys_reset's peripheral_reset and NOT peripheral_aresetn.
+# Wiring the active-low net here would leave the block permanently in
+# reset after the MMCM locks, which reads from the host as a seam that
+# answers 0 to everything -- indistinguishable from an unmapped BAR.
+connect_bd_net [get_bd_pins core_reset/peripheral_reset] [get_bd_pins fk33_seam_0/rst]
+
+# ---- the subsystem-D tie-off ----------------------------------------------
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z1
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z1]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_h1
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}] [get_bd_cells seam_h1]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_nd4
+set_property -dict [list CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {15}] [get_bd_cells seam_nd4]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z11
+set_property -dict [list CONFIG.CONST_WIDTH {11} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z11]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z16
+set_property -dict [list CONFIG.CONST_WIDTH {16} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z16]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z32
+set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z32]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_busy]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_tok_done]
+connect_bd_net [get_bd_pins seam_h1/dout] [get_bd_pins fk33_seam_0/d_err]
+connect_bd_net [get_bd_pins seam_nd4/dout] [get_bd_pins fk33_seam_0/d_err_code]
+connect_bd_net [get_bd_pins seam_z11/dout] [get_bd_pins fk33_seam_0/d_err_step]
+connect_bd_net [get_bd_pins seam_z11/dout] [get_bd_pins fk33_seam_0/d_steps_done]
+connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/d_raddr]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_ren]
+connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/hr_data]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/obs_issue]
+connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/obs_tok_pos]
+connect_bd_net [get_bd_pins seam_z32/dout] [get_bd_pins fk33_seam_0/smp_token]
+connect_bd_net [get_bd_pins seam_z32/dout] [get_bd_pins fk33_seam_0/smp_n]
+connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/smp_exp]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_smp_ovf]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_lost_beat]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_gate_drop]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_unit_stub]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_e_coll]
+connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_kv_err]
+
+# READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a
+# CONFIG name an object does not have and get_property then returns the
+# empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this
+# build claiming a model geometry it does not have.  A bitstream with no
+# subsystem D behind the seam MUST report CAPS_VOCAB = 0.
+foreach g {CAPS_VOCAB CAPS_EMBD CAPS_LAYER CAPS_CTX} {
+    set v [get_property CONFIG.$g [get_bd_cells fk33_seam_0]]
+    if {$v ne "0"} {
+        error "FK33_SEAM FAIL: $g is \"$v\", not 0. There is no subsystem D in this bitstream, so the seam must not publish a model geometry."
+    }
+    puts "FK33_SEAM $g = $v"
+}
+# ---- end host seam --------------------------------------------------------
 regenerate_bd_layout
 save_bd_design
 
@@ -1140,6 +1218,13 @@ foreach pair {{m00 1} {m01 2} {m02 3} {m03 4} {m04 5} {m05 6} {m06 7} {m07 8} {m
             [get_bd_addr_segs [format "hbm/SAXI_%02d/HBM_MEM%02d" $sx $s]]
     }
 }
+
+# ---- host seam address map (gen_pcieep.py) ---------------------------------
+# 0xE000, 4 KB, on the PCIe AXI-Lite BAR.  This is board row N2's missing
+# line: server/fk33_seam.h has declared this base since TRACK SERVER and
+# nothing decoded it.  See the SEAM_BASE block in gen_pcieep.py for why 0xE000
+# and not another hole, and check_bar_map() for what stops it colliding.
+assign_bd_address -offset 0x0000E000 -range 4K [get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]
 
 
 if {$HBMGlobalSwitch == 1} {

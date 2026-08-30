@@ -186,25 +186,48 @@ extern "C" {
 /* ---------------------------------------------------------------------------
  * The seam register block.
  *
- * THE SEAM IS DECIDED; THE BASE ADDRESS IS STILL NOT ASSIGNED.  Board row N2
- * was resolved by Oren on 2026-08-30 in favour of option (a) -- build this
- * block in front of subsystem D -- so this is no longer one of three
- * candidate contracts.  What has NOT happened is the one line that only
- * `hw/fk33/gen_pcieep.py` can carry: `grep -n 0xE000 hw/fk33/gen_pcieep.py`
- * still returns nothing, so no bitstream decodes this block at any address.
- * TRACK DSEAM does not own that file and deliberately did not touch it.
+ * THE BASE ADDRESS IS DECIDED AND ASSIGNED.  UPDATED 2026-08-30, TRACK
+ * SEAMMAP.  Board row N2 was resolved by Oren on 2026-08-30 in favour of
+ * option (a) -- build this block in front of subsystem D -- and
+ * `hw/fk33/gen_pcieep.py` now carries `SEAM_BASE = 0x0000E000`, instantiates
+ * `rtl/fk33_seam.vhd` as `fk33_seam_0` and emits
+ * `assign_bd_address -offset 0x0000E000 -range 4K`.  The macro below was
+ * called `FK33_SEAM_BASE_PROPOSED` until that happened; the rename is the
+ * condition the old comment set for itself, and gen_pcieep.py now REFUSES to
+ * emit a build while the old name survives here.
  *
- * 0xE000 is chosen because it is the largest 4 KB hole below the scratch BRAM
- * that is not already taken: MEASURED occupancy of the 128 KB BAR from
- * hw/fk33/host/fk33_regs.h and the bring-up procedure is 0x3400 (SYSMON),
- * 0x9000 (GPIO), 0xA000 (ID), 0xB000/0xC000/0xD000 (thermal) and
- * 0x10000+0x2000 (scratch).
+ * 0xE000 is the lowest free 4 KB page below the scratch BRAM.  MEASURED
+ * occupancy of the 128 KB BAR, from `grep assign_bd_address
+ * hw/fk33/build_fk33_pcieep.tcl` -- the emitted script, not a document:
+ * 0x3000 (SYSMON), 0x9000 (GPIO), 0xA000 (ID), 0xB000/0xC000/0xD000
+ * (thermal), 0x10000+0x2000 (scratch), 0x12000/0x13000 (subsystem A).
+ * CORRECTED in the same commit: this comment previously said "0x3400
+ * (SYSMON)".  0x3400 is SYSMON's temperature REGISTER; the block occupies
+ * 0x3000..0x3FFF.  The answer does not change, but the map is no longer
+ * hand-maintained here -- `check_bar_map()` in gen_pcieep.py parses the
+ * emitted build script and refuses on overlap, on a non-4 KB-aligned base,
+ * on anything running past the 128 KB BAR, and on the seam being absent.
  *
- * The name stays `_PROPOSED` until that grep returns a line.  Renaming it
- * before then would make every caller read as though the address were real.
+ * WHAT IS AT 0xE000 IN THE BITSTREAM TODAY, AND WHAT IS NOT.  The seam is
+ * real and its host-facing half works: ID, VERSION, CAPS, CTRL, STATUS,
+ * ERR_INFO and both indirect windows.  SUBSYSTEM D IS NOT THERE --
+ * `hw/fk33/rtl/fk33_engine.vhd` is still subsystem A alone, which is board
+ * row N3 -- so gen_pcieep.py drives the seam's D face from constants with
+ * `d_err` tied HIGH.  Two consequences a host must expect:
+ *
+ *   * FK33_SEAM_CAPS_VOCAB reads 0, and so do CAPS_EMBD and CAPS_CTX.  That
+ *     is the honest report of a bitstream with no model behind the seam.
+ *   * every GO is refused one cycle later with FK33_SEAM_ERR_DESC in STATUS
+ *     and 0xF in ERR_INFO[3:0].  0xF is not a code `rtl/llama_top.vhd` can
+ *     produce, so it means "there is no subsystem D in this bitstream" and
+ *     never a real descriptor fault.  The refusal is deliberate: with d_err
+ *     LOW instead, a GO would set `running` and nothing would ever clear it,
+ *     and the poll loop this header prescribes would hang forever.
  * ------------------------------------------------------------------------- */
-#define FK33_SEAM_BASE_PROPOSED   0x0000E000u
+#define FK33_SEAM_BASE            0x0000E000u
 #define FK33_SEAM_SPAN            0x1000u
+/* ERR_INFO[3:0] when the bitstream has no subsystem D behind the seam. */
+#define FK33_SEAM_DINFO_ABSENT    0xFu
 
 #define FK33_SEAM_ID              0x00u   /* R   0x4C4C4D32 = "LLM2" */
 #define FK33_SEAM_VERSION         0x04u   /* R   contract version.

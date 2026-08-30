@@ -401,18 +401,18 @@ static void t9_header_mutation(void)
         { uint32_t tk = 5; memcpy(x + 4, &tk, 4); }
         x[16] ^= 0x01;                                  /* THE MUTATION */
         t->mem_write(t->ctx, xb, x, sizeof x);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_SEQ_POS, 0);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_N_STEP, 1);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_X_BASE_LO, (uint32_t)xb);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_X_BASE_HI, (uint32_t)(xb >> 32));
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_L_BASE_LO, (uint32_t)lb);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_L_BASE_HI, (uint32_t)(lb >> 32));
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_DESC_PTR_LO, (uint32_t)dp);
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_DESC_PTR_HI, (uint32_t)(dp >> 32));
-        t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_CTRL, FK33_CTRL_GO);
-        t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_STATUS, &st);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_SEQ_POS, 0);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_N_STEP, 1);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_X_BASE_LO, (uint32_t)xb);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_X_BASE_HI, (uint32_t)(xb >> 32));
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_L_BASE_LO, (uint32_t)lb);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_L_BASE_HI, (uint32_t)(lb >> 32));
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_DESC_PTR_LO, (uint32_t)dp);
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_DESC_PTR_HI, (uint32_t)(dp >> 32));
+        t->reg_write32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_CTRL, FK33_CTRL_GO);
+        t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_STATUS, &st);
         CK((st & FK33_ST_DONE) && !(st & FK33_ST_ERR), "mutated run status 0x%X", st);
-        t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_ARGMAX, &got);
+        t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_ARGMAX, &got);
         { int one[1] = { 5 };
           CK((int)got != expect_argmax_seq(one, 1, 0, TE, TV),
              "one flipped activation byte did NOT move the argmax"); }
@@ -431,13 +431,13 @@ static void t10_card_refusals(void)
     t = fk33_transport_open_sim(&s);
     if (!t) { CK(0, "sim transport"); return; }
 
-#define W(r, v) t->reg_write32(t->ctx, FK33_SEAM_BASE_PROPOSED + (r), (uint32_t)(v))
+#define W(r, v) t->reg_write32(t->ctx, FK33_SEAM_BASE + (r), (uint32_t)(v))
 #define SETUP() do { W(FK33_SEAM_X_BASE_LO, xb); W(FK33_SEAM_X_BASE_HI, xb >> 32); \
                      W(FK33_SEAM_L_BASE_LO, lb); W(FK33_SEAM_L_BASE_HI, lb >> 32); \
                      W(FK33_SEAM_DESC_PTR_LO, dp); W(FK33_SEAM_DESC_PTR_HI, dp >> 32); } while (0)
 #define GO_AND_READ() do { W(FK33_SEAM_CTRL, FK33_CTRL_GO); \
-      t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_STATUS, &st); \
-      t->reg_read32(t->ctx, FK33_SEAM_BASE_PROPOSED + FK33_SEAM_ERR_INFO, &info); } while (0)
+      t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_STATUS, &st); \
+      t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_ERR_INFO, &info); } while (0)
 
     SETUP();
     W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 0);

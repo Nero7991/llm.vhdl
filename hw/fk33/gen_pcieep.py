@@ -255,6 +255,69 @@ THERM_CTL_KEY   = 0xC1EA
 # The reviewed thresholds, repeated here ONLY so the host can report what the
 # bitstream is enforcing.  rtl/fk33_thermal.vhd is the authority: these are
 # checked against it in main() and the build aborts if they disagree.
+
+# ---------------------------------------------------------------------------
+# THE HOST SEAM'S BASE ADDRESS (TRACK SEAMMAP, 2026-08-30).  DECIDED HERE.
+#
+# `server/fk33_seam.h` has carried `FK33_SEAM_BASE_PROPOSED = 0x0000E000`
+# since TRACK SERVER, with its own comment saying "the name stays _PROPOSED
+# until `grep -n 0xE000 hw/fk33/gen_pcieep.py` returns a line".  This is that
+# line.  Oren resolved board row N2 on 2026-08-30 in favour of option (a) --
+# "we don't want host controlling, let's get D working" -- so the block exists
+# (`rtl/fk33_seam.vhd`, TRACK DSEAM) and the only thing it lacked was an
+# address.
+#
+# WHY 0xE000 AND NOT SOMETHING ELSE.  Three things had to hold and all three
+# were checked against the EMITTED build script rather than against a
+# document, because the emitted script is what Vivado reads:
+#
+#   1. IT IS FREE.  MEASURED occupancy of the PCIe AXI-Lite BAR at
+#      d53af73, from `grep assign_bd_address hw/fk33/build_fk33_pcieep.tcl`:
+#        0x3000 SYSMON, 0x9000 GPIO, 0xA000 fk33_id, 0xB000/0xC000/0xD000
+#        thermal, 0x10000+8K scratch, 0x12000 eng ctl, 0x13000 eng xw.
+#      0xE000 and 0xF000 are the only 4 KB holes below the scratch BRAM, and
+#      0xE000 is the lower of the two.  NOTE that the occupancy list in
+#      `server/fk33_seam.h` said "0x3400 (SYSMON)": that is SYSMON's
+#      temperature REGISTER, not the block base, which is 0x3000 with a 4 KB
+#      range.  Corrected there in the same commit.  It does not change the
+#      answer, and it is exactly the kind of hand-maintained map that
+#      check_bar_map below exists to stop trusting.
+#   2. IT IS INSIDE THE BAR.  The XDMA IP is asked for a 128 KB AXI-Lite
+#      master (`CONFIG.axilite_master_size {128}` /
+#      `axilite_master_scale {Kilobytes}`), i.e. 0x00000..0x1FFFF, and
+#      0xE000 + 0x1000 = 0xF000 is under it.  READ THE CAVEAT: that is a
+#      REQUEST in the Tcl, not an answer, and this project has already been
+#      bitten by reading a block-design CONFIG.* as though it were a report.
+#      What actually answers it is `assign_bd_address` itself refusing with
+#      BD 41-1075 -- which is how 0x11000 was caught colliding with the 8 KB
+#      scratch -- i.e. the `--bd-only` gate, not this file.
+#   3. IT IS 4 KB ALIGNED.  `rtl/fk33_seam.vhd`'s slave takes
+#      `s_axi_awaddr(11 downto 0)`, so anything but a 4 KB-aligned base
+#      would alias its own register file.  `FK33_SEAM_SPAN` in the header is
+#      0x1000 and matches.
+#
+# REJECTED, with the reason, so nobody re-opens it: moving the seam to
+# 0x14000 to sit next to the engine's 0x12000/0x13000 is purely cosmetic and
+# costs an edit to both halves of a host contract that already agrees on
+# 0xE000.  A base that only one side believes in is worse than no base.
+SEAM_BASE  = 0x0000E000
+SEAM_SPAN  = 0x1000            # 4 KB, one AXI-Lite page
+SEAM_CELL  = "fk33_seam_0"
+SEAM_RTL   = os.path.join(os.path.normpath(os.path.join(HERE, "..", "..",
+                                                        "rtl")),
+                          "fk33_seam.vhd")
+# `rtl/fk33_seam.vhd` and `server/fk33_seam.h` are the two halves of one
+# contract and this generator is the third copy of the number.  All three are
+# cross-checked in main(); a bare copy here would be a third chance to be
+# wrong.
+SEAM_MAGIC = 0x4C4C4D32        # "LLM2"
+# d_err_code presented to the seam while there is NO subsystem D behind it.
+# 0xF is chosen because `rtl/llama_top.vhd` reports 4-bit codes from
+# `seq_desc_fetch`/`seq_opdec` and none of them is 0xF, so a host reading
+# ERR_INFO[3:0] = 0xF is reading "there is no D in this bitstream" and not a
+# real D fault.  See SEAM_BLOCK for why this is tied HIGH rather than low.
+SEAM_NO_D_CODE = 0xF
+
 # ---------------------------------------------------------------------------
 # SUBSYSTEM A ON THE CARD (gen_pcieep.py, 2026-08-29).
 #
@@ -903,6 +966,185 @@ ENGINE_ADDR += """    set m  [lindex $pair 0]
 """.replace("ENGCELL", ENG_CELL)
 
 
+# ---------------------------------------------------------------------------
+# THE HOST SEAM ON THE BAR (TRACK SEAMMAP, 2026-08-30)
+# ---------------------------------------------------------------------------
+# WHAT THIS BLOCK IS AND, MORE IMPORTANTLY, WHAT IT IS NOT.
+#
+# `rtl/fk33_seam.vhd` is the AXI-Lite face of SUBSYSTEM D.  Subsystem D is NOT
+# in this bitstream: `hw/fk33/rtl/fk33_engine.vhd` instantiates
+# `matvec_int4_desc_axi` and nothing else, which is board row N3 and is
+# blocked.  So what is emitted here is the seam WITH ITS SUBSYSTEM-D FACE TIED
+# OFF, and the whole design of the tie-off is about making that state
+# UNMISTAKABLE from the host rather than plausible.
+#
+# THE TIE-OFF THAT MATTERS IS `d_err`, AND IT IS TIED HIGH.
+#
+# MEASURED by reading rtl/fk33_seam.vhd:549-566: the completion arm runs only
+# `if running = '1'`, and `running` is set by a GO and cleared ONLY by
+# `d_err`, `d_tok_done` or an explicit ABORT.  Tie `d_err` and `d_tok_done`
+# both LOW -- the obvious "unused input" choice -- and a GO sets `running`
+# forever: STATUS bit 0 (done) never sets, bit 2 (err) never sets, and a host
+# following this seam's own documented poll loop `(done | err)` HANGS.  That
+# is precisely the failure mode `rtl/fk33_seam.vhd`'s "ERROR DISCIPLINE"
+# section exists to forbid, and a D-less build with lazy tie-offs would ship
+# it.
+#
+# With `d_err` tied HIGH the same GO terminates on the very next cycle with
+# `st_err = 1`, `st_code = EC_DESC (6)` and `ERR_INFO[3:0] = SEAM_NO_D_CODE`.
+# The host gets a refusal it can print, in-contract, one cycle after asking.
+#
+# THE OTHER HALF OF SAYING "NO D": CAPS_VOCAB / CAPS_EMBD / CAPS_LAYER /
+# CAPS_CTX are left at their RTL defaults of 0.  A host that reads
+# CAPS_VOCAB = 0 is reading "this bitstream has no model behind the seam".
+# Both facts are checked below rather than assumed.
+#
+# WHAT IS STILL REAL, AND WHY THIS IS WORTH EMITTING AT ALL.  Everything on
+# the host side of the seam works with no D: the ID and VERSION words, the
+# CAPS words, CTRL/STATUS/ERR_INFO, and the indirect windows -- the 4,608-word
+# descriptor RAM and the 576-entry release RAM -- can be written and read back
+# over the BAR.  That is the first time any of `server/fk33_seam.h`,
+# `server/pl_backend.c` or `server/fk33_sim.c` can be pointed at silicon
+# instead of at a model, and it is a real decode test of the exact block that
+# will later carry the real program.
+#
+# WHAT THIS DOES NOT ANSWER, STATED PLAINLY BECAUSE NOTHING HERE CAN: whether
+# the seam RESPONDS at 0xE000 on the card.  No tool in this repository can
+# answer that.  The two things that would, in order: (1) `assign_bd_address`
+# accepting the offset and the segment name during a `--bd-only` run, which
+# proves the address is legal, unique and inside the master's space, and (2) a
+# host read of 0xE000 returning 0x4C4C4D32 on a configured card, which is
+# Oren's and needs hardware.
+#
+# WHEN SUBSYSTEM D LANDS (N3), EVERY TIE-OFF BELOW MUST GO.  That is not left
+# to memory: check_seam_tieoff() in this file refuses to emit a build whose
+# engine wrapper contains a `llama_top` instantiation while these constants
+# are still driving the seam.  A tie-off that outlives its reason is the
+# guard-passes-for-the-wrong-reason shape this project keeps finding.
+SEAM_RTL_ADD = "\n".join([
+    "",
+    "# ---- host seam RTL (gen_pcieep.py) ----------------------------------------",
+    "add_files -norecurse %s" % SEAM_RTL,
+    "update_compile_order -fileset sources_1",
+    "",
+])
+
+# (cell suffix, width, value) for the constant drivers the tie-off needs.
+_SEAM_CONSTS = [
+    ("z1",  1,  0),
+    ("h1",  1,  1),
+    ("nd4", 4,  SEAM_NO_D_CODE),
+    ("z11", 11, 0),
+    ("z16", 16, 0),
+    ("z32", 32, 0),
+]
+
+# (seam input pin, constant cell suffix).  Every input of fk33_seam that is
+# not clk, rst or part of the AXI-Lite slave is here.  Written out rather than
+# derived from the VHDL, so that adding a port to fk33_seam.vhd leaves an
+# unconnected pin the block designer complains about instead of silently
+# tying it to whatever Vivado feels like.
+_SEAM_TIES = [
+    ("d_busy",       "z1"),
+    ("d_tok_done",   "z1"),
+    ("d_err",        "h1"),      # THE ONE THAT IS NOT ZERO.  See above.
+    ("d_err_code",   "nd4"),
+    ("d_err_step",   "z11"),
+    ("d_steps_done", "z11"),
+    ("d_raddr",      "z16"),
+    ("d_ren",        "z1"),
+    ("hr_data",      "z16"),
+    ("obs_issue",    "z1"),
+    ("obs_tok_pos",  "z16"),
+    ("smp_token",    "z32"),
+    ("smp_n",        "z32"),
+    ("smp_exp",      "z16"),
+    ("f_smp_ovf",    "z1"),
+    ("f_lost_beat",  "z1"),
+    ("f_gate_drop",  "z1"),
+    ("f_unit_stub",  "z1"),
+    ("f_e_coll",     "z1"),
+    ("f_kv_err",     "z1"),
+]
+
+
+def _seam_block():
+    L = []
+    a = L.append
+    a("")
+    a("# ---- THE HOST SEAM (gen_pcieep.py) ----------------------------------------")
+    a("# rtl/fk33_seam.vhd, TRACK DSEAM.  Read the long note above SEAM_BLOCK in")
+    a("# gen_pcieep.py before changing anything here: the d_err tie is HIGH on")
+    a("# purpose and tying it low makes a host poll loop hang.")
+    a("create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL)
+    a("")
+    a("# THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,")
+    a("# and it does so through the smartconnect ENGINE_BLOCK already built.  Two")
+    a("# reasons, in order: subsystem D will be in the core domain, so putting the")
+    a("# seam anywhere else now buys a move later; and axil2eng is already")
+    a("# NUM_CLKS 2 with the incoming side on xdma/axi_aclk and the outgoing side")
+    a("# on clk_wiz_0/clk_out3, so this is one more MI on an interconnect that")
+    a("# exists rather than a new one.")
+    a("set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]")
+    a("set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells axil2eng]")
+    a("connect_bd_intf_net [get_bd_intf_pins axil2eng/[format M%02d_AXI $n]] \\")
+    a("                    [get_bd_intf_pins %s/s_axi]" % SEAM_CELL)
+    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/clk]" % SEAM_CELL)
+    a("")
+    a("# THE RESET IS ACTIVE HIGH.  fk33_seam's `rst` is `if rst = '1'`, so it")
+    a("# takes proc_sys_reset's peripheral_reset and NOT peripheral_aresetn.")
+    a("# Wiring the active-low net here would leave the block permanently in")
+    a("# reset after the MMCM locks, which reads from the host as a seam that")
+    a("# answers 0 to everything -- indistinguishable from an unmapped BAR.")
+    a("connect_bd_net [get_bd_pins core_reset/peripheral_reset] [get_bd_pins %s/rst]"
+      % SEAM_CELL)
+    a("")
+    a("# ---- the subsystem-D tie-off ----------------------------------------------")
+    for suf, width, val in _SEAM_CONSTS:
+        a("create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_%s" % suf)
+        a("set_property -dict [list CONFIG.CONST_WIDTH {%d} CONFIG.CONST_VAL {%d}] "
+          "[get_bd_cells seam_%s]" % (width, val, suf))
+    for pin, suf in _SEAM_TIES:
+        a("connect_bd_net [get_bd_pins seam_%s/dout] [get_bd_pins %s/%s]"
+          % (suf, SEAM_CELL, pin))
+    a("")
+    a("# READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a")
+    a("# CONFIG name an object does not have and get_property then returns the")
+    a("# empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this")
+    a("# build claiming a model geometry it does not have.  A bitstream with no")
+    a("# subsystem D behind the seam MUST report CAPS_VOCAB = 0.")
+    a("foreach g {CAPS_VOCAB CAPS_EMBD CAPS_LAYER CAPS_CTX} {")
+    a("    set v [get_property CONFIG.$g [get_bd_cells %s]]" % SEAM_CELL)
+    a("    if {$v ne \"0\"} {")
+    a("        error \"FK33_SEAM FAIL: $g is \\\"$v\\\", not 0. There is no subsystem D in this bitstream, so the seam must not publish a model geometry.\"")
+    a("    }")
+    a("    puts \"FK33_SEAM $g = $v\"")
+    a("}")
+    a("# ---- end host seam --------------------------------------------------------")
+    a("")
+    return "\n".join(L)
+
+
+SEAM_BLOCK = _seam_block()
+
+# The segment name is `s_axi/reg0`, not `s_axi/Reg`.  A module-reference cell
+# whose AXI4-Lite slave Vivado INFERS from the port names gets `reg0`; the
+# axi_gpio and axi_bram_ctrl IP above get `Reg`.  MEASURED from the emitted
+# script: the engine, which is the only other module-reference slave in this
+# design, is mapped as `eng/s_axi/reg0`.  If this is wrong the build stops at
+# `assign_bd_address` in the BD stage, loudly, which is what --bd-only is for.
+SEAM_ADDR = """
+# ---- host seam address map (gen_pcieep.py) ---------------------------------
+# 0xE000, 4 KB, on the PCIe AXI-Lite BAR.  This is board row N2's missing
+# line: server/fk33_seam.h has declared this base since TRACK SERVER and
+# nothing decoded it.  See the SEAM_BASE block in gen_pcieep.py for why 0xE000
+# and not another hole, and check_bar_map() for what stops it colliding.
+"""
+SEAM_ADDR += ("assign_bd_address -offset 0x%08X -range %dK "
+              "[get_bd_addr_segs {%s/s_axi/reg0}]\n"
+              % (SEAM_BASE, SEAM_SPAN // 1024, SEAM_CELL))
+
+
 THERM_ADDR = '''
 # ---- thermal register map (gen_pcieep.py) ----------------------------------
 # On jtag_aux, readable with the PCIe link DOWN:
@@ -1498,7 +1740,7 @@ SUBS = [
     # ---- 9a. the aux RTL, before anything that references it
     ('create_project $ProjectName ./$ProjectName -part "xcvu33p-fsvh2104-2L-e"',
      'create_project $ProjectName ./$ProjectName -part "xcvu33p-fsvh2104-2L-e"\n'
-     + AUX_RTL_ADD + ENG_RTL_ADD),
+     + AUX_RTL_ADD + ENG_RTL_ADD + SEAM_RTL_ADD),
 
     # ---- 9b. the AXI GPIO's I2C pins stop being an external interface here and
     # are taken over by the aux block, which arbitrates and owns the IOBUFs.
@@ -1607,12 +1849,12 @@ set_property -dict [list CONFIG.TEMPERATURE_ALARM_TRIGGER {90} CONFIG.TEMPERATUR
     # EnablePCIe if/else has wired the smartconnect clocks, so the block can
     # join those nets and be correct in both branches.
     ("regenerate_bd_layout\nsave_bd_design",
-     BRINGUP_BLOCK + AUX_BLOCK + THERM_BLOCK + ENGINE_BLOCK
+     BRINGUP_BLOCK + AUX_BLOCK + THERM_BLOCK + ENGINE_BLOCK + SEAM_BLOCK
      + "regenerate_bd_layout\nsave_bd_design"),
 
     ("assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_gpio_0/S_AXI/Reg}]",
      "assign_bd_address -offset 0x00009000 -range 4K [get_bd_addr_segs {axi_gpio_0/S_AXI/Reg}]\n"
-     + BRINGUP_ADDR + AUX_ADDR + THERM_ADDR + ENGINE_ADDR),
+     + BRINGUP_ADDR + AUX_ADDR + THERM_ADDR + ENGINE_ADDR + SEAM_ADDR),
 
     # ---- 9c. verify the aux constraints on the IMPLEMENTED design.
     # This has to live here and not in the XDC, because the XDC reader forbids
@@ -2243,6 +2485,8 @@ def selftest():
                  "measures the guard.")
 
     reset_topology_teeth()
+    addr_map_teeth()
+    seam_tieoff_teeth()
 
     print("SELFTEST PASS")
 
@@ -2342,6 +2586,250 @@ Rows sfast/sslow/snear of sim/tb_axi_rd_port_stray.vhd simulate the topology
 this function checks.  If you meant to change the reset tree, that document is
 the thing to read before deciding what to do about this refusal.
 """
+
+
+# ---------------------------------------------------------------------------
+# THE ADDRESS MAP (TRACK SEAMMAP, 2026-08-30)
+# ---------------------------------------------------------------------------
+# WHY THIS IS PARSED OUT OF THE EMITTED TEXT AND NOT WRITTEN AS A TABLE HERE.
+#
+# The obvious shape is a hand-maintained list of (name, base, size) in this
+# file, checked for overlap.  That is the defect class this repository keeps
+# finding: a descriptor base rule that agreed with its cross-check "by
+# coincidence of geometry on every file it had ever seen".  A hand table would
+# be a SECOND statement of the map, checked against itself, and it would stay
+# green while the emitter drifted away from it.
+#
+# So the map is read back out of the build script this generator just built.
+# There is exactly one statement of the address map and this reads it.
+#
+# THE PARTITION IS THE WHOLE PROBLEM.  Three DIFFERENT address spaces are
+# assigned in one file and their offsets legitimately collide:
+#
+#   BAR   the 128 KB PCIe AXI-Lite master.  SYSMON at 0x3000, GPIO 0x9000,
+#         id 0xA000, thermal 0xB/C/D000, seam 0xE000, scratch 0x10000+8K,
+#         engine 0x12000/0x13000.
+#   AUX   jtag_aux's own space, reachable with the PCIe link DOWN and never on
+#         the BAR.  aux_id at 0x0000 ... aux_ctl at 0x6000.
+#   DMA   the XDMA DMA master, where fk33_dmabram sits at 0x200000000, above
+#         the 8 GiB of HBM.
+#
+# A naive "no two offsets may repeat" check would REFUSE the correct design,
+# because AUX 0x3000 (aux_time) and BAR 0x3000 (SYSMON) are both real and are
+# in different spaces.  So each segment is classified explicitly and an
+# UNCLASSIFIED segment is a hard refusal.  That is the direction that fails
+# safe: a peripheral added later cannot be silently excluded from the overlap
+# check by being unknown to it -- it stops the build until someone says which
+# space it is in.
+SEG_SPACE = {
+    # --- on the PCIe AXI-Lite BAR -------------------------------------------
+    "system_management_wiz_0": "BAR",   # SYSMON
+    "axi_gpio_0":              "BAR",   # I2C / LED
+    "fk33_id":                 "BAR",
+    "fk33_scratch":            "BAR",
+    "fk33_therm":              "BAR",
+    "fk33_thermp":             "BAR",
+    "fk33_thermc":             "BAR",
+    "eng":                     "BAR",   # both s_axi and s_axix
+    SEAM_CELL:                 "BAR",
+    # --- jtag_aux's own space, never on the BAR -----------------------------
+    "aux_id":                  "AUX",
+    "aux_clkst":               "AUX",
+    "aux_stat":                "AUX",
+    "aux_time":                "AUX",
+    "aux_therm":               "AUX",
+    "aux_peak":                "AUX",
+    "aux_ctl":                 "AUX",
+    # --- the XDMA DMA master ------------------------------------------------
+    "fk33_dmabram":            "DMA",
+    "hbm":                      "DMA",   # SAXI_00 0..4G, SAXI_16 4..8G
+}
+
+# THE EMITTED SCRIPT CONTAINS MUTUALLY EXCLUSIVE TCL BRANCHES, AND A STATIC
+# SCAN SEES BOTH ARMS.  MEASURED 2026-08-30 while building this check:
+# `build_fk33_i2cprobe.tcl` assigns `hbm/SAXI_00/HBM_MEM00` at 0x0 inside
+# `if {$HBMGlobalSwitch == 1}` AND again at 0x0 inside the `else`, so 34 of
+# the 66 static assignments belong to two arms only one of which ever runs.
+#
+# A scan that pooled them would refuse the CORRECT design, which is the way a
+# guard gets deleted.  A scan that silently dropped duplicates would stop
+# seeing a segment genuinely assigned twice.  So: identical (segment, base,
+# range) rows are the same decision written in two arms and collapse; a
+# segment assigned two DIFFERENT addresses is a defect and refuses.  That
+# keeps the whole 8 GiB DMA space inside the overlap check rather than
+# carving `hbm` out of it.
+
+# CONFIG.axilite_master_size {128} / axilite_master_scale {Kilobytes}.  This is
+# what the design ASKS the XDMA IP for; see the caveat in the SEAM_BASE block
+# about a CONFIG.* being a request rather than an answer.
+BAR_BYTES = 128 * 1024
+
+_ASSIGN_RE = re.compile(
+    r"^assign_bd_address\s+-offset\s+(0x[0-9A-Fa-f]+)\s+-range\s+(\S+)\s+"
+    r"\[get_bd_addr_segs\s*\{([^}]+)\}\]\s*$", re.M)
+
+_RANGE_MUL = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+
+
+def _parse_range(tok):
+    m = re.fullmatch(r"(\d+)([KMG]?)", tok)
+    if not m:
+        return None
+    return int(m.group(1)) * _RANGE_MUL[m.group(2)]
+
+
+def parse_address_map(text):
+    """Every static assign_bd_address in `text`, as (space, cell, seg, base, size).
+
+    Lines carrying -target_address_space are the 28 x 32 HBM segment
+    assignments and are deliberately not here: they are the engine masters'
+    view of HBM, not a slave map, and they are already bounded by the IP.
+    """
+    rows = []
+    # Tcl line continuations first.  The 28 x 32 HBM assignments are written
+    # across four lines with trailing backslashes, and a scan that reads only
+    # the first line sees `assign_bd_address \` and neither the offset nor the
+    # -target_address_space that says it is not a BAR slave.  Joining is not
+    # cosmetic: without it the check either crashes or, worse, silently
+    # classifies 896 HBM segments as unparseable BAR entries.
+    joined = re.sub(r"\\\n\s*", " ", text)
+    for line in joined.splitlines():
+        s = line.strip()
+        if not s.startswith("assign_bd_address"):
+            continue
+        if "-target_address_space" in s:
+            continue
+        m = _ASSIGN_RE.match(s)
+        if not m:
+            sys.exit("ABORT: an assign_bd_address line in the emitted build "
+                     "script does not parse, so the address-map overlap check "
+                     "would silently skip it:\n  %s" % s)
+        base = int(m.group(1), 16)
+        size = _parse_range(m.group(2))
+        if size is None:
+            sys.exit("ABORT: cannot read the -range token %r on:\n  %s"
+                     % (m.group(2), s))
+        seg = m.group(3).strip()
+        cell = seg.split("/")[0]
+        space = SEG_SPACE.get(cell)
+        if space is None:
+            sys.exit("ABORT: %r is assigned an address but gen_pcieep.py's "
+                     "SEG_SPACE does not say which address space it is in, so "
+                     "the overlap check cannot cover it. Add it to SEG_SPACE "
+                     "as BAR, AUX or DMA.\n  %s" % (cell, s))
+        rows.append((space, cell, seg, base, size))
+
+    # Collapse the two arms of a Tcl if/else.  See the note above SEG_SPACE.
+    seen = {}
+    out = []
+    for r in rows:
+        prev = seen.get(r[2])
+        if prev is None:
+            seen[r[2]] = r
+            out.append(r)
+        elif prev[3] != r[3] or prev[4] != r[4]:
+            sys.exit("ABORT: segment %s is assigned at %#x range %d AND at "
+                     "%#x range %d in the same build script. Only one can be "
+                     "the address the host uses and nothing here can say "
+                     "which."
+                     % (r[2], prev[3], prev[4], r[3], r[4]))
+    return out
+
+
+def check_bar_map(text):
+    """Refuse to emit a build whose address map overlaps or leaves the BAR.
+
+    WHAT WOULD MAKE THIS FAIL, since a check nobody can answer that for is
+    decoration: two slaves given the same 4 KB page; a slave whose range runs
+    past the 128 KB BAR; a base that is not 4 KB aligned, which aliases a 12-bit
+    slave onto itself; and the seam being absent from the map altogether.
+    """
+    rows = parse_address_map(text)
+    bar = [r for r in rows if r[0] == "BAR"]
+    if not bar:
+        sys.exit("ABORT: the emitted build script assigns NOTHING to the PCIe "
+                 "AXI-Lite BAR. The host would have no register map at all.")
+
+    for space, cell, seg, base, size in rows:
+        if base % 4096:
+            sys.exit("ABORT: %s is at %#x, which is not 4 KB aligned. An "
+                     "AXI-Lite slave that decodes 12 address bits would alias "
+                     "its own register file." % (seg, base))
+        if size % 4096:
+            sys.exit("ABORT: %s has a range of %d bytes, which is not a whole "
+                     "number of 4 KB pages." % (seg, size))
+
+    for space, cell, seg, base, size in bar:
+        if base + size > BAR_BYTES:
+            sys.exit("ABORT: %s occupies %#x..%#x, which runs past the %d KB "
+                     "AXI-Lite BAR (ends at %#x). Vivado would refuse this "
+                     "with BD 41-1075, but only after the whole block design "
+                     "has been built."
+                     % (seg, base, base + size - 1, BAR_BYTES // 1024,
+                        BAR_BYTES - 1))
+
+    for space in ("BAR", "AUX", "DMA"):
+        grp = sorted([r for r in rows if r[0] == space], key=lambda r: r[3])
+        for a, b in zip(grp, grp[1:]):
+            if a[3] + a[4] > b[3]:
+                sys.exit("ABORT: in the %s address space, %s occupies "
+                         "%#x..%#x and OVERLAPS %s at %#x. One of the two "
+                         "would be unreachable, and which one is a property "
+                         "of the interconnect rather than of this file."
+                         % (space, a[2], a[3], a[3] + a[4] - 1, b[2], b[3]))
+
+    seam = [r for r in bar if r[1] == SEAM_CELL]
+    if len(seam) != 1:
+        sys.exit("ABORT: the host seam is assigned %d BAR addresses, not 1. "
+                 "Board row N2 was resolved in favour of building this block; "
+                 "a bitstream that does not decode it leaves "
+                 "server/fk33_seam.h driving nothing, which is the state N2 "
+                 "was filed about." % len(seam))
+    if seam[0][3] != SEAM_BASE or seam[0][4] != SEAM_SPAN:
+        sys.exit("ABORT: the host seam is mapped at %#x range %d, not at "
+                 "SEAM_BASE %#x range %d. server/fk33_seam.h would name an "
+                 "address no bitstream decodes."
+                 % (seam[0][3], seam[0][4], SEAM_BASE, SEAM_SPAN))
+
+    print("FK33_SEAMMAP BAR map OK: %d slaves, seam at %#x, %d bytes of %d KB "
+          "BAR assigned"
+          % (len(bar), SEAM_BASE, sum(r[4] for r in bar), BAR_BYTES // 1024))
+
+
+def check_seam_tieoff(text, eng_src=None):
+    """The tie-off must not outlive the reason for it.
+
+    SEAM_BLOCK drives fk33_seam's subsystem-D face from constants because
+    there is no subsystem D in this design.  The moment `hw/fk33/rtl/
+    fk33_engine.vhd` gains a `llama_top`, those constants become a bitstream
+    that answers ERR to every GO while a real transformer sits behind it, and
+    nothing else in this file would notice.
+    """
+    tied = "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL
+    has_tie = tied in text
+    if eng_src is None:
+        try:
+            eng_src = open(ENG_RTL).read()
+        except OSError:
+            eng_src = ""
+    has_d = re.search(r"\bllama_top\b", eng_src) is not None
+    if has_tie and has_d:
+        sys.exit("ABORT: %s instantiates llama_top, so subsystem D IS in this "
+                 "design, but SEAM_BLOCK still ties the seam's d_err HIGH. "
+                 "Every GO would be refused with FK33_SEAM_ERR_DESC and "
+                 "ERR_INFO[3:0] = 0x%X while a real transformer sat behind "
+                 "the seam. Remove the tie-off in _SEAM_TIES and wire the "
+                 "seam to the engine." % (ENG_RTL, SEAM_NO_D_CODE))
+    if not has_tie and not has_d:
+        sys.exit("ABORT: the seam's d_err tie-off is gone but %s still has no "
+                 "llama_top, so the seam's subsystem-D face is driven by "
+                 "nothing. A GO would set `running` and never clear it: STATUS "
+                 "would report neither done nor err and a host polling "
+                 "(done | err) would hang forever." % ENG_RTL)
+    print("FK33_SEAMMAP tie-off %s and %s %s llama_top -- consistent"
+          % ("present" if has_tie else "absent",
+             os.path.basename(ENG_RTL),
+             "has" if has_d else "has no"))
 
 
 def _reset_abort(detail):
@@ -2610,6 +3098,269 @@ def reset_topology_teeth():
                  "discriminate as claimed.")
 
 
+# ---------------------------------------------------------------------------
+# TEETH FOR THE ADDRESS MAP (TRACK SEAMMAP, 2026-08-30)
+# ---------------------------------------------------------------------------
+# THE BASE IS THE EMITTED FILE, not a constructed fragment.  selftest() already
+# requires build_fk33_pcieep.tcl to exist and reads it, so these rows mutate
+# the artefact a build would actually consume.  A row whose anchor stops
+# occurring exactly once goes VOID rather than silently green.
+#
+# THREE ARMS, BECAUSE A KILL DOES NOT SETTLE IT.  For every mutant, three
+# independent checks are run and reported separately:
+#
+#   OLD    the two address literals that were in this file BEFORE this track
+#          (`assign_bd_address -offset 0x00004000` and `... 0x0000B000`).
+#          These are the attribution control: anything OLD also catches was
+#          already covered and this track's work bought nothing for it.
+#   NEEDLE this track's own literal needles for the seam.
+#   MAP    check_bar_map(), the parsed overlap/containment/alignment check.
+#
+# A row where only MAP fires is a row that justifies check_bar_map's
+# existence.  A row where only OLD fires is one this track should not claim.
+_ADDR_OLD_NEEDLES = [
+    "assign_bd_address -offset 0x00004000",
+    "assign_bd_address -offset 0x0000B000",
+]
+_ADDR_NEW_NEEDLES = [
+    "assign_bd_address -offset 0x%08X" % SEAM_BASE,
+    "create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
+    "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL,
+]
+
+_ADDR_TEETH = [
+    # (tag, must_refuse, description, old, new)
+    ("A1", True, "the seam moved onto the thermal block at 0xB000",
+     "assign_bd_address -offset 0x0000E000 -range 4K",
+     "assign_bd_address -offset 0x0000B000 -range 4K"),
+
+    ("A2", True, "the seam moved past the end of the 128 KB BAR",
+     "assign_bd_address -offset 0x0000E000 -range 4K",
+     "assign_bd_address -offset 0x00020000 -range 4K"),
+
+    ("A3", True, "the seam at a base that is not 4 KB aligned, which aliases "
+     "a 12-bit slave onto itself",
+     "assign_bd_address -offset 0x0000E000 -range 4K",
+     "assign_bd_address -offset 0x0000E800 -range 4K"),
+
+    ("A4", True, "the seam's address assignment deleted entirely",
+     "assign_bd_address -offset 0x0000E000 -range 4K "
+     "[get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]",
+     "# deleted"),
+
+    # THE ONE THAT ACTUALLY HAPPENED.  ENGINE_ADDR's own comment records the
+    # engine being put at 0x11000, colliding with the second 4 KB of the 8 KB
+    # scratch at 0x10000, and being caught by a 90-second --bd-only Vivado run
+    # with BD 41-1075.  Nothing in this file could see it before.
+    ("A5", True, "the engine control map back at 0x11000, inside the 8 KB "
+     "scratch -- the collision that cost a --bd-only run",
+     "assign_bd_address -offset 0x00012000 -range 4K",
+     "assign_bd_address -offset 0x00011000 -range 4K"),
+
+    ("A6", True, "the scratch grown to 16 KB, swallowing both engine pages "
+     "without either of them moving",
+     "assign_bd_address -offset 0x00010000  -range 8K",
+     "assign_bd_address -offset 0x00010000  -range 16K"),
+
+    ("A7", True, "a new peripheral mapped whose address space nobody declared",
+     "assign_bd_address -offset 0x0000E000 -range 4K "
+     "[get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]",
+     "assign_bd_address -offset 0x0000E000 -range 4K "
+     "[get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]\n"
+     "assign_bd_address -offset 0x0000F000 -range 4K "
+     "[get_bd_addr_segs {some_new_block/S_AXI/Reg}]"),
+
+    ("A8", True, "the two arms of the HBM if/else disagreeing: SAXI_16/MEM16 "
+     "at a different offset in the else branch",
+     "assign_bd_address -offset 0x100000000 -range 256M "
+     "[get_bd_addr_segs {hbm/SAXI_16/HBM_MEM16 }]\n\n    exclude_seg_if",
+     "assign_bd_address -offset 0x180000000 -range 256M "
+     "[get_bd_addr_segs {hbm/SAXI_16/HBM_MEM16 }]\n\n    exclude_seg_if"),
+
+    # MUST NOT REFUSE.  A checker that rejects every rearrangement is a
+    # checker that gets deleted, and then nothing guards the map.
+    ("A9", False, "SAFE: the scratch relocated to another free, aligned, "
+     "in-BAR hole at 0x18000",
+     "assign_bd_address -offset 0x00010000  -range 8K",
+     "assign_bd_address -offset 0x00018000  -range 8K"),
+
+    ("A10", False, "SAFE: the thermal control page written before the peak "
+     "page.  assign_bd_address order carries no meaning and neither may this "
+     "scan",
+     "assign_bd_address -offset 0x0000C000 -range 4K "
+     "[get_bd_addr_segs {fk33_thermp/S_AXI/Reg}]\n"
+     "assign_bd_address -offset 0x0000D000 -range 4K "
+     "[get_bd_addr_segs {fk33_thermc/S_AXI/Reg}]",
+     "assign_bd_address -offset 0x0000D000 -range 4K "
+     "[get_bd_addr_segs {fk33_thermc/S_AXI/Reg}]\n"
+     "assign_bd_address -offset 0x0000C000 -range 4K "
+     "[get_bd_addr_segs {fk33_thermp/S_AXI/Reg}]"),
+
+    # THE RESOLUTION FLOOR.  REPORTED UNDER ITS OWN NAME AND NOT DISCARDED.
+    # fk33_id moved from 0xA000 to the free hole at 0xF000 is legal on every
+    # rule this check has -- aligned, unique, in the BAR -- and it is WRONG:
+    # hw/fk33/host/fk33_regs.h hardcodes FK33_ID_BASE 0x0000A000, so the host
+    # would read the empty 0xA000 page and print 0x00000000, which that
+    # header's own comment says means "the fabric is in reset".  Nothing in
+    # this generator cross-checks fk33_regs.h's non-thermal bases; only
+    # THERM_* are pinned.  MAP CANNOT AND SHOULD NOT CATCH THIS.  The fix is
+    # a fk33_regs.h cross-check, not a wider address rule.
+    ("A11", False, "FLOOR: fk33_id relocated to the free 0xF000 page. Legal, "
+     "unique, aligned -- and host/fk33_regs.h still says 0xA000",
+     "assign_bd_address -offset 0x0000A000  -range 4K",
+     "assign_bd_address -offset 0x0000F000  -range 4K"),
+]
+
+
+def addr_map_teeth():
+    """Show that check_bar_map discriminates, and attribute every kill."""
+    import io
+    import contextlib
+
+    if not os.path.exists(DST):
+        sys.exit("SELFTEST VOID: %s does not exist." % DST)
+    base = open(DST).read()
+
+    def _arm_old(t):
+        return [n for n in _ADDR_OLD_NEEDLES if n not in t]
+
+    def _arm_new(t):
+        return [n for n in _ADDR_NEW_NEEDLES if n not in t]
+
+    def _arm_map(t):
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                check_bar_map(t)
+            return False
+        except SystemExit:
+            return True
+
+    print()
+    print("ADDRESS-MAP TEETH (check_bar_map), with the attribution control")
+    print("%-4s %-9s %-4s %-6s %-4s %s"
+          % ("ROW", "VERDICT", "OLD", "NEEDLE", "MAP", "MUTATION"))
+    print("-" * 100)
+    bad, map_alone, both, neither = [], 0, 0, 0
+    for tag, must_refuse, desc, old, new in _ADDR_TEETH:
+        n = base.count(old)
+        if n != 1:
+            print("%-4s %-9s ANCHOR x%d -- TESTED NOTHING -- %s"
+                  % (tag, "VOID", n, desc))
+            bad.append("%s: anchor %r occurs %d times in the emitted script, "
+                       "not once. The emitter moved; this row tested nothing."
+                       % (tag, old[:56], n))
+            continue
+        t = base.replace(old, new)
+        hit_old = bool(_arm_old(t))
+        hit_new = bool(_arm_new(t))
+        hit_map = _arm_map(t)
+        refused = hit_old or hit_new or hit_map
+        ok = (refused == must_refuse)
+        if must_refuse:
+            if hit_map and not (hit_old or hit_new):
+                map_alone += 1
+            elif hit_map:
+                both += 1
+            elif refused:
+                neither += 1
+        print("%-4s %-9s %-4s %-6s %-4s %s%s"
+              % (tag, "REFUSED" if refused else "accepted",
+                 "yes" if hit_old else "-", "yes" if hit_new else "-",
+                 "yes" if hit_map else "-", desc,
+                 "" if ok else "   <== WRONG"))
+        if not ok:
+            bad.append("%s: expected %s, got %s -- %s"
+                       % (tag, "a refusal" if must_refuse else "acceptance",
+                          "a refusal" if refused else "acceptance", desc))
+
+    # The control.  A checker that refuses everything measures nothing.
+    if _arm_map(base) or _arm_old(base) or _arm_new(base):
+        print("%-4s %-9s the UNMUTATED emitted script   <== WRONG"
+              % ("A0", "REFUSED"))
+        bad.append("A0: the guards refuse the shipping address map.")
+    else:
+        print("%-4s %-9s %-4s %-6s %-4s %s"
+              % ("A0", "accepted", "-", "-", "-",
+                 "the UNMUTATED emitted script (the control)"))
+    print("-" * 100)
+    print("MAP ALONE=%d  both=%d  NEITHER=%d" % (map_alone, both, neither))
+    if map_alone == 0:
+        bad.append("no mutation is caught by check_bar_map alone, so it is "
+                   "not paying for its own maintenance: every kill it claims "
+                   "was already claimed by a literal needle.")
+    if bad:
+        for b in bad:
+            print("FAIL " + b)
+        sys.exit("SELFTEST FAIL: the address-map guard does not discriminate "
+                 "as claimed.")
+
+
+def seam_tieoff_teeth():
+    """Show that check_seam_tieoff discriminates in BOTH directions.
+
+    This guard is the one that costs the most if it is decoration, because
+    both of the states it refuses are SILENT: a tie-off outliving subsystem D
+    gives a bitstream that refuses every GO with a real transformer behind it,
+    and a tie-off removed before subsystem D arrives gives a bitstream whose
+    documented poll loop hangs. Neither turns anything red anywhere else.
+    """
+    import io
+    import contextlib
+
+    if not os.path.exists(DST):
+        sys.exit("SELFTEST VOID: %s does not exist." % DST)
+    base = open(DST).read()
+    tie = "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL
+    if base.count(tie) != 1:
+        sys.exit("SELFTEST VOID: the d_err tie anchor occurs %d times in the "
+                 "emitted script, not once." % base.count(tie))
+    no_tie = base.replace(tie, "[get_bd_pins seam_z1/dout] "
+                                "[get_bd_pins %s/d_err]" % SEAM_CELL)
+    no_d = "entity fk33_engine is\n"
+    with_d = no_d + "  -- u_top : entity work.llama_top\n"
+
+    rows = [
+        ("S1", False, base,   no_d,   "SHIPPING: tie-off present, "
+         "fk33_engine has no llama_top"),
+        ("S2", True,  base,   with_d, "the tie-off survives into a build "
+         "whose engine DOES instantiate llama_top: every GO refused with a "
+         "real transformer behind the seam"),
+        ("S3", True,  no_tie, no_d,   "the tie-off removed before subsystem D "
+         "exists: d_err low, GO sets `running` forever, a (done | err) poll "
+         "hangs"),
+        ("S4", False, no_tie, with_d, "N3's future state: no tie-off and a "
+         "real llama_top. Must be ACCEPTED or this guard blocks the work it "
+         "exists to hand over to"),
+    ]
+    print()
+    print("SEAM TIE-OFF TEETH (check_seam_tieoff)")
+    print("%-4s %-9s %s" % ("ROW", "RESULT", "STATE"))
+    print("-" * 100)
+    bad = []
+    for tag, must_refuse, txt, eng, desc in rows:
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                check_seam_tieoff(txt, eng_src=eng)
+            refused = False
+        except SystemExit:
+            refused = True
+        ok = (refused == must_refuse)
+        print("%-4s %-9s %s%s" % (tag, "REFUSED" if refused else "accepted",
+                                  desc, "" if ok else "   <== WRONG"))
+        if not ok:
+            bad.append("%s: expected %s, got %s"
+                       % (tag, "a refusal" if must_refuse else "acceptance",
+                          "a refusal" if refused else "acceptance"))
+    print("-" * 100)
+    if bad:
+        for b in bad:
+            print("FAIL " + b)
+        sys.exit("SELFTEST FAIL: the seam tie-off guard does not discriminate "
+                 "as claimed.")
+
+
 def main():
     if not os.path.exists(SRC):
         sys.exit(f"ABORT: probe build script not found: {SRC}\n"
@@ -2627,6 +3378,87 @@ def main():
                  "kind except SYSMON's 101 C over-temperature shutdown, which "
                  "is above the part's sustained rating, says nothing about "
                  "HBM, and takes the card off the PCIe bus when it fires.")
+    if not os.path.exists(SEAM_RTL):
+        sys.exit(f"ABORT: the host seam RTL not found: {SEAM_RTL}\n"
+                 "Board row N2 was resolved in favour of building this block, "
+                 "so a build without it decodes nothing at "
+                 f"{SEAM_BASE:#x} and server/fk33_seam.h drives nothing.")
+
+    # ---- THE SEAM CONTRACT EXISTS IN THREE COPIES AND THEY ARE CHECKED
+    # ---- AGAINST EACH OTHER, NOT TRUSTED.
+    #
+    # rtl/fk33_seam.vhd is the gateware, server/fk33_seam.h is the host, and
+    # this generator is the only thing that can put the two at the same
+    # address.  A drift between any pair is silent in exactly the way the
+    # thermal base drift would have been: the host reads a different
+    # peripheral and prints a plausible number.  Same guard, same reason.
+    seam_src = open(SEAM_RTL).read()
+    m = re.search(r'constant\s+ID_MAGIC\s*:\s*std_logic_vector\(31 downto 0\)'
+                  r'\s*:=\s*x"([0-9A-Fa-f]{8})"', seam_src)
+    if not m:
+        sys.exit("ABORT: rtl/fk33_seam.vhd no longer declares ID_MAGIC as an "
+                 "8-digit hex constant, so the seam's identity word cannot be "
+                 "compared with the host's.")
+    if int(m.group(1), 16) != SEAM_MAGIC:
+        sys.exit("ABORT: rtl/fk33_seam.vhd ID_MAGIC is 0x%s but gen_pcieep.py "
+                 "SEAM_MAGIC is 0x%08X. A host probing %#x for the seam would "
+                 "not recognise the block that answers."
+                 % (m.group(1).upper(), SEAM_MAGIC, SEAM_BASE))
+    # The four CAPS generics must DEFAULT to 0.  SEAM_BLOCK deliberately does
+    # not override them, so the default is what the bitstream publishes, and a
+    # non-zero default would make a D-less build claim a model geometry.
+    for gname in ("CAPS_VOCAB", "CAPS_EMBD", "CAPS_LAYER", "CAPS_CTX"):
+        m = re.search(r"%s\s*:\s*natural\s*:=\s*(\d+)" % gname, seam_src)
+        if not m:
+            sys.exit(f"ABORT: {gname} is no longer a natural generic of "
+                     "fk33_seam with a default, so a build with no subsystem "
+                     "D behind the seam could publish a model geometry it "
+                     "does not have.")
+        if int(m.group(1)) != 0:
+            sys.exit(f"ABORT: rtl/fk33_seam.vhd defaults {gname} to "
+                     f"{m.group(1)}, not 0. There is no subsystem D in this "
+                     "design and the seam must not report a model that is "
+                     "not there.")
+    # The AXI-Lite slave must still decode exactly 12 address bits, or
+    # SEAM_SPAN and the 4 KB alignment argument for SEAM_BASE are both wrong.
+    if "s_axi_awaddr  : in  std_logic_vector(11 downto 0)" not in seam_src:
+        sys.exit("ABORT: rtl/fk33_seam.vhd's AXI-Lite write address is no "
+                 "longer 12 bits, so SEAM_SPAN = %#x and the 4 KB alignment "
+                 "of SEAM_BASE = %#x no longer follow from anything."
+                 % (SEAM_SPAN, SEAM_BASE))
+
+    # host-side half.  server/fk33_seam.h is hand-written and compiled into
+    # server/, so a base that drifts there does not fail to build: it reads a
+    # different peripheral.  Identical treatment to host/fk33ctl.py below.
+    seam_h = os.path.normpath(os.path.join(HERE, "..", "..", "server",
+                                           "fk33_seam.h"))
+    if os.path.exists(seam_h):
+        h_src = open(seam_h).read()
+        # Matched as a #define, not as a substring: the header keeps a
+        # sentence saying what the macro USED to be called, and a loose
+        # needle would refuse the very state it is asking for.
+        if re.search(r"^#define\s+FK33_SEAM_BASE_PROPOSED\b", h_src, re.M):
+            sys.exit("ABORT: server/fk33_seam.h still calls the base "
+                     "FK33_SEAM_BASE_PROPOSED. It is no longer proposed -- "
+                     "this generator assigns it at %#x -- and its own comment "
+                     "says the name changes when `grep 0xE000 "
+                     "gen_pcieep.py` returns a line. Leaving the name would "
+                     "make every caller read as though the address were still "
+                     "a request." % SEAM_BASE)
+        for name, value in (("FK33_SEAM_BASE", SEAM_BASE),
+                            ("FK33_SEAM_SPAN", SEAM_SPAN),
+                            ("FK33_SEAM_ID_MAGIC", SEAM_MAGIC)):
+            m = re.search(r"^#define\s+%s\s+0x([0-9A-Fa-f]+)u?\s*$" % name,
+                          h_src, re.M)
+            if not m:
+                sys.exit(f"ABORT: server/fk33_seam.h has no {name} constant, "
+                         "so the host cannot find the block this build "
+                         "decodes.")
+            if int(m.group(1), 16) != value:
+                sys.exit(f"ABORT: server/fk33_seam.h {name} is 0x{m.group(1)} "
+                         f"but this build puts it at {value:#x}. The host "
+                         "would read a different peripheral and print a "
+                         "plausible number.")
 
     # The thermal thresholds are a safety property, checked HERE as well as
     # asserted in the RTL, for the same reason G_POT_WIPER is: a generator that
@@ -2988,6 +3820,44 @@ def main():
     # change made here in the generator cannot pass by virtue of the checked-in
     # artefact still being the old one.
     check_reset_topology(text)
+
+    # ---- the host seam.  Each of these is a way this build can come out with
+    # a seam that is present, builds, closes timing, and is either unreachable
+    # or lying about what is behind it.
+    for need, why in (
+        ("create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
+         "the host seam is not instantiated, so board row N2's decision was "
+         "not carried into the bitstream and server/fk33_seam.h still drives "
+         "nothing"),
+        ("add_files -norecurse %s" % SEAM_RTL,
+         "rtl/fk33_seam.vhd is not added to the project, so the module "
+         "reference above cannot resolve"),
+        ("assign_bd_address -offset 0x%08X" % SEAM_BASE,
+         "the seam is not on the PCIe BAR at %#x, so the host cannot reach it"
+         % SEAM_BASE),
+        ("[get_bd_pins core_reset/peripheral_reset] [get_bd_pins %s/rst]"
+         % SEAM_CELL,
+         "the seam's ACTIVE-HIGH reset is not driven from proc_sys_reset's "
+         "active-high output. Wired to the active-low net it would sit in "
+         "reset forever and answer 0 to every read, which from the host is "
+         "indistinguishable from an unmapped BAR"),
+        ("[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL,
+         "the seam's d_err is no longer tied HIGH. With no subsystem D in "
+         "this design and d_err low, a GO sets `running` and nothing ever "
+         "clears it: a host polling (done | err) hangs forever"),
+        ("CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {%d}" % SEAM_NO_D_CODE,
+         "the no-subsystem-D marker code is gone from ERR_INFO[3:0], so a "
+         "refusal caused by D's absence would be indistinguishable from a "
+         "real descriptor fault"),
+        ("FK33_SEAM FAIL: $g is",
+         "the CAPS read-back is gone, so a generic renamed in "
+         "rtl/fk33_seam.vhd would leave this build publishing a model "
+         "geometry it does not have"),
+    ):
+        if need not in text:
+            sys.exit(f"ABORT: {why} ({need!r} missing).")
+    check_bar_map(text)
+    check_seam_tieoff(text)
 
     open(DST, "w").write(HEADER + text)
     print(f"wrote {DST}")
