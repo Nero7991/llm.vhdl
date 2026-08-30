@@ -244,7 +244,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>6484468e</spirit:value>
+            <spirit:value>1f02bdfb</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -260,7 +260,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>6484468e</spirit:value>
+            <spirit:value>1f02bdfb</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -793,13 +793,13 @@
       <xilinx:displayName>mac_axi</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-07-03T21:49:01Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-30T03:39:40Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2023.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="64199c7c"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="a13b2e93"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="d2b52f48"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="057ee759"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="5371ece0"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="24c9578b"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="b0a35bd3"/>

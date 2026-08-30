@@ -1089,6 +1089,25 @@ printf 'graygate\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # no kill of its own.  See docs/debugging/2026-08-29_noguard-three-guards.md.
 printf 'runguard\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# THE IP-SYNC ROW (added 2026-08-29, TRACK NOGUARD, defect IPREPO-DRIFT).
+# ---------------------------------------------------------------------------
+# The three packaged IPs under ip_repo/ carry their own copies of the RTL,
+# imported by `ipx::package_project -import_files`.  Those copies are OUTPUTS;
+# rtl/ is the source of truth.  MEASURED: nothing in this repository ever
+# re-runs the packagers, and until this row THIS SCRIPT DID NOT MENTION
+# ip_repo AT ALL -- so rtl/util_pkg.vhd got a corrected clog2 (209d69e) and
+# five packaged copies silently kept the overflowing doubling loop.
+#
+# This row compares bytes; it does NOT run Vivado.  The alternative -- a gate
+# row that regenerates and diffs -- was measured and rejected: repackaging
+# with no RTL change at all still rewrites component.xml (two viewChecksum
+# values and coreCreationDateTime), so that gate would show a diff on every
+# run, and all three packagers begin `file delete -force <ipdir>`, so an
+# interrupted gate would destroy the artefact it is checking.  Reasoning and
+# the honest limits are at the top of ip_repo/check_ip_sync.py.
+printf 'ipsync\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -1709,6 +1728,8 @@ run_graygate() {   # run_graygate <suite:name>
 #   sim:runguard   hw/fk33/gen_pcieep.py's run guards, which convert a
 #                  launch_runs that reports success while doing nothing from a
 #                  27.6-hour hang into a build that stops and says why.
+#   sim:ipsync     ip_repo/*/src/*.vhd must be the bytes of rtl/*.vhd.  Nothing
+#                  in this tree re-runs the packagers, so the copies drift.
 #
 # The command is looked up by row name in SELFCHECK_CMD below, so adding a row
 # is one line there and one printf into $PLAN.  Verdicts:
@@ -1724,6 +1745,7 @@ run_graygate() {   # run_graygate <suite:name>
 # because a tool could not open a file.
 declare -A SELFCHECK_CMD=(
   [runguard]="python3 $REPO/hw/fk33/gen_pcieep.py --selftest"
+  [ipsync]="python3 $REPO/ip_repo/check_ip_sync.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -1755,7 +1777,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard)   run_selfcheck "$key"; return ;;
+    runguard|ipsync) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

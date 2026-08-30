@@ -244,7 +244,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>2af6ee4d</spirit:value>
+            <spirit:value>4594e639</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -260,7 +260,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>2af6ee4d</spirit:value>
+            <spirit:value>4594e639</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -803,13 +803,13 @@
       <xilinx:displayName>matvec_engine</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-07-04T11:48:33Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-30T03:40:13Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2023.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="64199c7c"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="a13b2e93"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="27b85004"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="d78c0273"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="5371ece0"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="f4ced354"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="3cf6d891"/>
