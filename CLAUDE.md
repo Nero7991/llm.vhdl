@@ -65,6 +65,13 @@ The rules that follow from this:
   peaks: full `pcieep` build 25.0 GiB, composed place-and-route several GiB,
   and a single OOC synthesis 11.9 GiB. Two of anything in that list does not
   fit beside `llama-server`.
+- **A composed `route_design` left `free physical = 233 MB` while ALONE on the
+  box** (MEASURED 2026-08-30, TRACK TIMING). Six of those were running
+  concurrently when the box hung. **A tool that leaves 233 MB when it is the
+  only thing running has no safe multiplicity at all** -- the correct
+  concurrency was never "two, carefully", it was one. And no amount of checking
+  `free` before starting reveals this, because the number only exists at peak.
+  **Peak is a property of the job, not of the moment you looked.**
 - **`pgrep -x vivado` OVER-REPORTS, and counting its output is wrong.**
   MEASURED 2026-08-30: one running Vivado shows as **four** processes, because
   the launcher is a chain of bash scripts also called `vivado`
