@@ -1,0 +1,12 @@
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:==== CBINFER v_regs_r8  rtl=/home/orencollaco/cbinfer-scratch/vars/v_regs  part=xcvu33p-fsvh2104-2L-e  ROWS_IF=8 BLK=32 ====
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:UTIL   LUT=21531 (logic 21044 / memory 487: distRAM 296, SRL 191)  FF=10709  BRAM36=28.5  DSP=264
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:CENSUS MUXF7=4097  MUXF8=2048  FDRE=10589  RAM cells=592  SRL=191
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:CENSUS RAM/SRL refs present: RAMB18E2=1 RAMB36E2=28 RAMD32=518 RAMS32=74 SRL16E=191
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:CB     cells named cb_reg*: RAM=0  FF=1024
+/mnt/storage/cbinfer-scratch/runs/run_v_regs_r8/stdout.txt:WNS=0.506 ns at period 3.3 ns
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:==== CBINFER v_dist_r8  rtl=/home/orencollaco/cbinfer-scratch/vars/v_dist  part=xcvu33p-fsvh2104-2L-e  ROWS_IF=8 BLK=32 ====
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:UTIL   LUT=14438 (logic 11903 / memory 2535: distRAM 2344, SRL 191)  FF=12907  BRAM36=28.5  DSP=264
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:CENSUS MUXF7=5  MUXF8=0  FDRE=12907  RAM cells=4688  SRL=191
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:CENSUS RAM/SRL refs present: RAMB18E2=1 RAMB36E2=28 RAMD32=4102 RAMS32=586 SRL16E=191
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:CB     cells named cb_reg*: RAM=4352  FF=0
+/mnt/storage/cbinfer-scratch/runs/run_v_dist_r8/stdout.txt:WNS=0.528 ns at period 3.3 ns

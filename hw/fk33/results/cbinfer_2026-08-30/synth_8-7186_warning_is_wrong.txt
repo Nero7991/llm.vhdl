@@ -1,0 +1,36 @@
+# CBINFER: the log message that would have produced the WRONG answer.
+#
+# [Synth 8-7186] says the ram_style attribute was IGNORED and cb was NOT
+# inferred as ram.  It is emitted 100 times (Vivado's own per-message cap,
+# see the Common 17-14 line) against per-ELEMENT objects cb[0..6][0..15].
+# Every one of those copies is nevertheless mapped to a RAM32M16 in the
+# Distributed RAM Final Mapping Report, and report_utilization plus the
+# primitive census agree with the mapping report, not with the warning.
+#
+# Read the census.  Do not read the log.
+
+--- count per variant (ROWS_IF=4) ---
+v_regs           8-7186 lines: 0
+v_regs_noattr    8-7186 lines: 0
+v_dist           8-7186 lines: 101
+v_distlit        8-7186 lines: 101
+v_dist_noattr    8-7186 lines: 0
+v_distlit_nodt   8-7186 lines: 101
+
+--- first two and last two of the 100, v_dist ---
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[0][0]' is not inferred as ram due to incorrect usage [/home/orencollaco/cbinfer-scratch/vars/v_dist/matvec_core.vhd:214]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[0][1]' is not inferred as ram due to incorrect usage [/home/orencollaco/cbinfer-scratch/vars/v_dist/matvec_core.vhd:214]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[6][3]' is not inferred as ram due to incorrect usage [/home/orencollaco/cbinfer-scratch/vars/v_dist/matvec_core.vhd:214]
+INFO: [Common 17-14] Message 'Synth 8-7186' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+
+--- the cap that truncates them ---
+INFO: [Common 17-14] Message 'Synth 8-7186' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+
+--- the same copies in the Final Mapping Report ---
+|matvec_core | cb_reg[0][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[1][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[2][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[3][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[4][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[5][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[6][11]   | User Attribute | 16 x 8               | RAM32M16 x 1   | 

@@ -1,0 +1,70 @@
+# CBINFER: the Distributed-RAM Final Mapping Report for cb, per variant.
+# Source: the -log file of each Vivado run, section 'Distributed RAM: Final Mapping Report'.
+# Only the cb_reg rows plus the one xq_reg row are shown; the cb rows are
+# identical apart from the copy index, so the first three and the last one are
+# quoted and the total row count is stated.
+
+===== v_regs (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 0
+|Module Name | RTL Object | Inference | Size (Depth x Width) | Primitives     | 
+|matvec_core | xq_reg     | Implied   | 2 x 512              | RAM32M16 x 37  | 
+...
+
+===== v_regs_noattr (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 0
+|Module Name | RTL Object | Inference | Size (Depth x Width) | Primitives     | 
+|matvec_core | xq_reg     | Implied   | 2 x 512              | RAM32M16 x 37  | 
+...
+
+===== v_dist (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 128
+|Module Name | RTL Object      | Inference      | Size (Depth x Width) | Primitives     | 
+|matvec_core | cb_reg[31][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[30][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | xq_reg          | Implied        | 2 x 512              | RAM32M16 x 37  | 
+|matvec_core | cb_reg[29][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+...
+|matvec_core | cb_reg[96][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+
+===== v_distlit (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 128
+|Module Name | RTL Object      | Inference      | Size (Depth x Width) | Primitives     | 
+|matvec_core | cb_reg[31][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[30][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | xq_reg          | Implied        | 2 x 512              | RAM32M16 x 37  | 
+|matvec_core | cb_reg[29][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+...
+|matvec_core | cb_reg[96][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+
+===== v_dist_noattr (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 128
+|Module Name | RTL Object      | Inference | Size (Depth x Width) | Primitives     | 
+|matvec_core | cb_reg[31][11]  | Implied   | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[30][11]  | Implied   | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | xq_reg          | Implied   | 2 x 512              | RAM32M16 x 37  | 
+|matvec_core | cb_reg[29][11]  | Implied   | 16 x 8               | RAM32M16 x 1   | 
+...
+|matvec_core | cb_reg[96][11]  | Implied   | 16 x 8               | RAM32M16 x 1   | 
+
+===== v_distlit_nodt (ROWS_IF=4, CB_COPIES = 4 for regs / 128 for distributed)
+cb_reg rows in the report: 128
+|Module Name | RTL Object      | Inference      | Size (Depth x Width) | Primitives     | 
+|matvec_core | cb_reg[31][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | cb_reg[30][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core | xq_reg          | Implied        | 2 x 512              | RAM32M16 x 37  | 
+|matvec_core | cb_reg[29][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+...
+|matvec_core | cb_reg[96][11]  | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+
+===== v_regs (ROWS_IF=16, CB_COPIES = 16 for regs / 512 for distributed)
+cb_reg rows in the report: 0
+|Module Name      | RTL Object | Inference | Size (Depth x Width) | Primitives     | 
+|matvec_core__GB4 | xq_reg     | Implied   | 2 x 512              | RAM32M16 x 37  | 
+
+===== v_dist (ROWS_IF=16, CB_COPIES = 16 for regs / 512 for distributed)
+cb_reg rows in the report: 512
+|Module Name      | RTL Object      | Inference      | Size (Depth x Width) | Primitives     | 
+|matvec_core__GB0 | cb_reg[479][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core__GB0 | cb_reg[478][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core__GB0 | cb_reg[477][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+
