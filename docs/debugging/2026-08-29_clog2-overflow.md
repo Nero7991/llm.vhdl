@@ -1,8 +1,10 @@
 # `clog2` overflows above 2**30, and the reported wall is not where it was thought to be
 
 TRACK CLOG2, 2026-08-29. Repo `llama.vhdl`, branch `fpga`. HEAD when this work
-started: `8889cfa2714c166e96eca682a630dd8b6beecc9e`. HEAD when the gate
-finished and this was committed: `1216a5e299b3b88c475e931dbd4566fb5e0bc38d`.
+started: `8889cfa2714c166e96eca682a630dd8b6beecc9e`. HEAD when the full gate
+finished: `1216a5e299b3b88c475e931dbd4566fb5e0bc38d`. HEAD when the seamgate
+control re-run finished: `3722ae8cd1634a7dab263bebfd92c6dbae68d041`. This work
+landed as `209d69e22dbc133e2980e21bd754defe7c1293a4`.
 Both read with `git rev-parse HEAD` as its own step; other tracks landed
 between the two and none of them touch `rtl/util_pkg.vhd`.
 
