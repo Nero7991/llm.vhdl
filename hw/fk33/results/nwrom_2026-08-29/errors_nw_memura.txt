@@ -1,0 +1,4 @@
+ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl_memura/ooc_nwrom_memura_top.vhd:187]
+ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/mnt/storage/nwrom/rtl_memura/ooc_nwrom_memura_top.vhd:199]
+ERROR: [Synth 8-285] failed synthesizing module 'ooc_nwrom_memura' [/mnt/storage/nwrom/rtl_memura/ooc_nwrom_memura_top.vhd:63]
+ERROR: [Common 17-69] Command failed: Vivado Synthesis failed

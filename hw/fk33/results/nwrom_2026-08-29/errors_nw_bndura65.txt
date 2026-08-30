@@ -1,0 +1,2 @@
+ERROR: [Synth 8-439] module 'ooc_nwrom_bndura' not found
+ERROR: [Common 17-69] Command failed: Vivado Synthesis failed

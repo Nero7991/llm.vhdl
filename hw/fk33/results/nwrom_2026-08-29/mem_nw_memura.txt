@@ -1,0 +1,1 @@
+tag=nw_memura peak_rss_kib=1951556 peak_rss_gib=1.86 exit=1

@@ -1,0 +1,18 @@
+tag                  lut       own     u_rms       ff     dsp   bram   uram carry8        f7        f8
+nw_bnd17       (no result yet -- still running or never started)
+nw_bnd2            62700     25579     37121   162976      41      0      0    268     22546      9712
+nw_bnd65          103081     62441     40640   179156      41      0      0    268     24281     11632
+nw_bndblk65    ERROR: [Synth 8-439] module 'ooc_nwrom_bndblk' not found
+nw_bndura65    ERROR: [Synth 8-439] module 'ooc_nwrom_bndura' not found
+nw_empty           49654     25523     24131   133197      41      0      0    268     18208      8944
+nw_lf65            82597     43627     38970   162217      41      0      0    268     23718     11156
+nw_lfblk65         72073     30507     41566   194797      41    135      0    268     26528     13200
+nw_lfura65         72164     30598     41566   194821      41    114      0    268     26528     13200
+nw_memblk      ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl_memblk/ooc_nwrom_memblk
+nw_memura      ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl_memura/ooc_nwrom_memura
+nw_n17         ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl/ooc_normadapt_top.vhd:1
+nw_n2              62700     25579     37121   162976      41      0      0    268     22546      9712
+nw_n33         ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl/ooc_normadapt_top.vhd:1
+nw_n5              88383     50114     38269   182502      41      0      0    268     24953     12230
+nw_n65         ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwrom/rtl/ooc_normadapt_top.vhd:1
+nw_n9              71331     33045     38286   158198      41      0      0    268     24893     12178

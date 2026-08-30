@@ -1,0 +1,8 @@
+k, varying_bit_positions_of_65536, distinct_row_patterns_mean
+  1      0
+  2  29820
+  5  49501
+  9  51947
+ 17  52907
+ 33  53133
+ 65  56896
