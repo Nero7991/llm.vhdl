@@ -40,14 +40,17 @@ Tools: Vivado 2023.2, part `xcvu33p-fsvh2104-2L-e`, `core_clk` 5.000 ns,
 DENSITY, not LUT count, and every budget in circulation for this design is
 denominated in the wrong unit.**
 
+    PLACED, not post-synthesis (post-synth is 350,283):
     CLB LUTs   346,971 of 439,680   78.91 %      <- what everyone has been counting
     CLB         54,866 of  54,960   99.83 %      <- what actually runs out
 
 **94 CLBs left on the die.** The design gets **6.32 LUT per CLB** against the
 architectural 8, because 90,896 MUXF7/MUXF8 pairs lock 37.5% of its LUTs into
 indivisible placement shapes. Add the FK33 shell and the norm gain image and
-the honest total needs **121% of this device's CLBs** while sitting at only
-95.6% of its LUTs.
+the honest total needs **121% to 134% of this device's CLBs** while sitting at
+95.6% to 105.9% of its LUTs -- **the upper end of which does not fit even by
+the LUT count everyone has been using.** The range is the norm gain image and
+it is irreducible; see the correction in section 12.
 
 **The WNS is a symptom; the packing is the disease.** All 33,767 setup failures
 are net-delay failures caused by a device that is full: over the 20,000 worst,
@@ -613,24 +616,30 @@ not a measurement.
 ~38,000 LUT saving, and the packing half is not optional to count.** What that
 does to the fit:
 
-| configuration | LUT | at 6.32 today | at **6.82 ESTIMATE** | at 7.0 | at 8.0 |
-|---|---:|---:|---:|---:|---:|
-| **as measured today** | 420,240 | **121%** | -- | 109% | 96% |
-| **+ lever C** | 382,364 | 110% | **102%** | 99.4% | 87% |
-| **+ lever C + norm image out of LUTs** | 349,421 | 100.5% | **93.2%** | 90.8% | 79.5% |
+| configuration | LUT | at 6.32 today | at **6.82 ESTIMATE** |
+|---|---:|---:|---:|
+| **as measured today** | 420,240 .. 465,708 | **121% .. 134%** | 112% .. 124% |
+| **+ lever C** | 382,364 .. 427,832 | 110% .. 123% | **102% .. 114%** |
+| **+ lever C + norm image out of LUTs** | **349,421** | 100.6% | **93.2%** |
 
-**LEVER C ALONE DOES NOT CLOSE IT.** At the estimated post-lever-C density it
-lands at **about 102% of the device's CLBs**, and it only reaches 99.4% if the
-density gets to 7.0, which is above anything this design has demonstrated. The
-honest reading is that lever C takes a design that misses by 21% to one that
-misses by about 2%, which is close enough to be tantalising and not close
-enough to build.
+**LEVER C ALONE DOES NOT CLOSE IT, and with the range it is not even close.**
+At the estimated post-lever-C density it spans **102% to 114%** of the device's
+CLBs. The best draw of the norm image is the only number that makes lever C
+look nearly sufficient, and that draw is the one TRACK SCATTER forbids quoting.
 
 **LEVER C PLUS MOVING THE NORM GAIN IMAGE OUT OF THE LUT FABRIC DOES CLOSE IT,
-at about 93%.** That is the cheapest pair that fits, and the second half is the
-easier of the two: `NORM_W_IMAGE` is 4096 x 65 x 16 = 4,259,840 bits =
-**14.4 URAM288 of the 320 that are free** (DERIVED), it is a ROM of constants,
-it is on no failing path, and its only obligation is to serve the same values.
+at about 93%** -- and note what else that row does:
+
+**IT IS THE ONLY ROW WITHOUT A RANGE.** The 32,943..78,411 uncertainty IS the
+norm gain ROM. Move it into URAM and the quantity leaves the LUT fabric
+entirely, taking its irreproducibility with it. So that option does not merely
+save the most LUTs per unit of effort -- **it deletes the single least
+reproducible term in the whole budget**, which for a design whose margin is
+thinner than its measurement scatter is worth more than the LUTs.
+
+`NORM_W_IMAGE` is 4096 x 65 x 16 = 4,259,840 bits = **14.4 URAM288 of the 320
+that are free** (DERIVED), it is a ROM of constants, it is on no failing path,
+and its only obligation is to serve the same values.
 
 ---
 
@@ -819,25 +828,50 @@ design that computes anything. Specifically:
 
 All MEASURED unless marked. This is the number to plan against.
 
-    composed, PLACED, MEASURED                     346,971 LUT   54,866 CLB (99.83%)
+    composed, PLACED (post-synth was 350,283)      346,971 LUT   54,866 CLB (99.83%)
       the FK33 shell, DERIVED by TRACK COMPOSE4
       (171,458 routed total - 131,132 engine)       40,326 LUT
-      a real NORM_W_IMAGE, MEASURED TRACK NWROM     32,943 LUT
-    the honest total for a build that can run      420,240 LUT   = 95.6% of 439,680
+      a real NORM_W_IMAGE, RANGE not a value
+      (TRACK SCATTER: 82,597..128,065 populated,
+       over the 49,654 empty-image baseline)     +32,943..+78,411 LUT
+    the honest total for a build that can run  420,240..465,708 LUT
+                                                   = 95.6% .. 105.9% of 439,680
 
-**And 95.6% of the LUTs is not the constraint. The CLBs are.** At the MEASURED
-packing density of 346,971 / 54,866 = **6.32 LUT per CLB**:
+**THE NORM IMAGE IS A RANGE, AND QUOTING ITS BEST DRAW IS NOT ALLOWED.**
+TRACK SCATTER's table marks the populated norm gain ROM **"NOT SAFE, AND NOT
+FIXABLE BY REPEATING. No single number may be quoted; report the range or
+nothing"** -- 82,597 to 128,065 LUT across **six** draws. `+32,943` is the
+delta of its BEST draw over the 49,654-LUT empty-image baseline; the honest
+delta is **+32,943 to +78,411**. Every row below inherits that range, and at
+the top of it **the design exceeds the device's LUT count outright, 105.9%**,
+before any packing argument is made at all.
+
+**And 95.6% of the LUTs was never the constraint. The CLBs are.** At the
+MEASURED packing density of 346,971 / 54,866 = **6.32 LUT per CLB**:
 
 | assumed density | CLBs needed | of the 54,960 on the die |
 |---|---:|---:|
-| 6.32 (MEASURED) | 66,494 | **121%** |
-| 7.00 | 60,034 | 109% |
-| 8.00 (architectural max, unreachable) | 52,530 | 96% |
+| 6.32 (MEASURED) | 66,494 .. 73,688 | **121% .. 134%** |
+| 7.00 | 60,034 .. 66,530 | 109% .. 121% |
+| 8.00 (architectural max, unreachable) | 52,530 .. 58,214 | 96% .. 106% |
 
-**The composed design plus its shell plus its gain image needs about 121% of
-this device, and even at a packing density no real design achieves it needs
-96%.** That is the measured, specific failure the brief asked for, and it is
-an area failure rather than a timing one.
+**The composed design plus its shell plus its gain image needs 121% to 134% of
+this device, and even at a packing density no real design achieves it needs 96%
+to 106%.** That is the measured, specific failure the brief asked for, and it
+is an area failure rather than a timing one.
+
+### And the total is an UNDERCOUNT, in a direction nobody has priced
+
+`compose4_top` deliberately wires nothing to anything. Its nine instances share
+only `core_clk` and `core_rst`; every other port of every instance is a
+top-level port, 1,184 declarations and 36,529 bits. There are **no
+inter-subsystem nets, no host plumbing, and no `fk33_seam`** -- N2 was
+unresolved when the checkpoint was built.
+
+A real top adds all of that: logic AND, more importantly for a design bound by
+packing, **nets**. So 420,240..465,708 is a floor, not an estimate, and
+whenever it is quoted the floor-ness should be quoted with it. This cuts in the
+same direction as everything else in this section.
 
 DERIVED, what has to change: to sit at 90% CLB at the measured density the
 design may hold **312,809 LUT**, so **about 107,400 LUT must come out.**
@@ -874,11 +908,12 @@ biggest line items are all things built out of LUTs that are not logic:
 | lever | LUT | what it is | difficulty |
 |---|---:|---|---|
 | **C**: IQ4_NL codebook to LUTRAM | ~38,000 + packing | 86,992 primitives of runtime-loadable codebook, 97.7%/98.8% of A's muxes | pre-authorised; 32x write-coherency surface; oracle dispatched alongside |
-| **norm gain image to URAM/BRAM** | 32,943 | a 4.26 Mb ROM of constants, 14.4 of 320 free URAM288 | **easiest of the three**; no timing subtlety, on no failing path |
+| **norm gain image to URAM/BRAM** | **32,943 .. 78,411** | a 4.26 Mb ROM of constants, 14.4 of 320 free URAM288 | **easiest of the three**; no timing subtlety, on no failing path; **and it is the only lever that removes a RANGE rather than a value** |
 | **`rmsnorm_rs` flat vectors to memory** | ~43,213 | 1024:1 muxes over 65,536-bit ports; 131,072 FF of vector in flops | **hardest**; interface redesign, NOT latency-neutral, bit-exactness obligation |
 
-Lever C plus the norm image is **~93%** (ESTIMATE). Adding the third gives real
-margin. The device also has **320 URAM sitting entirely unused and 425 free
+Lever C plus the norm image is **~93%** (ESTIMATE), and that row is the only
+one in the table that is a value rather than a range. Adding the third gives
+real margin. The device also has **320 URAM sitting entirely unused and 425 free
 BRAM tiles** while the LUT fabric is asked to store 4.26 Mb of constants and
 two 64 Kb vectors in flip-flops.
 
@@ -901,6 +936,10 @@ argues for taking all three levers rather than the cheapest two.
    after lever C there would be a second point to calibrate against.
 4. **`rmsnorm_rs` only if 1-3 leave insufficient margin**, because it is the
    one that can break arithmetic.
+
+**Weigh all of the above against the fact that 420,240..465,708 is a FLOOR.**
+`compose4_top` wires nothing to anything, so a real top adds logic and nets on
+top of every figure here.
 
 **And the option that is larger than all three combined:** not having all four
 subsystems resident simultaneously. That is board row N2/N3 architecture and
@@ -942,3 +981,113 @@ trade a verification capability for area that a memory can hold for free.
    shipping floorplan reserves `pb_core` = `CLOCKREGION_X0Y0:X6Y3`, and a
    design that needs 121% of the whole die cannot fit a sub-region, so the run
    was not queued. **It remains formally unmeasured.**
+
+
+---
+
+## 14. CORRECTIONS, appended 2026-08-30 after adversarial review
+
+Nothing above is deleted. An adversarial review of the fit claim (Fable, via
+the dispatcher) returned **"SOUND as a statement about the RTL as written
+today, and OVERSTATED as a device verdict"**, and found that the overstatement
+came from a relay that stopped at the 121% table and dropped section 12a. Three
+corrections follow; all three make the claim MORE conservative in the same
+direction, and all three are now folded into the sections above as well.
+
+### C1. `346,971` is the PLACED figure, not post-synthesis
+
+Post-synthesis is **350,283**; `opt_design` took it to 350,228 and
+`place_design` to 346,971. Section 12 was already labelled correctly; the
+headline was not, and is now. The direction favours the claim (the placed
+figure is the smaller one), so nothing downstream moves.
+
+### C2. The norm gain image is a RANGE, and the value quoted was its best draw
+
+**This is the weakest number in the chain and it was quoted as though it were
+a measurement.** TRACK SCATTER's own table marks the populated norm gain ROM
+**"NOT SAFE, AND NOT FIXABLE BY REPEATING. No single number may be quoted;
+report the range or nothing"** -- **82,597 to 128,065 LUT over six draws.**
+`+32,943` is the delta of the BEST of those six over the 49,654 empty-image
+baseline. The honest delta is **+32,943 to +78,411**.
+
+Every fit row now carries the range. The consequences are not cosmetic:
+
+* today: **121% .. 134%** of CLBs, and **95.6% .. 105.9% of the device's LUTs**
+  -- at the top of the range it does not fit by LUT count either, which no
+  version of this claim had said;
+* + lever C: **102% .. 114%**, so lever C alone is further from sufficient than
+  the single-draw arithmetic suggested;
+* + lever C + image to URAM: **93.2%, and this row has no range at all**,
+  because moving the ROM out of the LUT fabric removes the irreproducible
+  quantity from the budget rather than bounding it. That is now the strongest
+  argument for that lever and it was not visible before this correction.
+
+### C3. The honest total is a FLOOR, not an estimate
+
+`compose4_top` deliberately wires nothing to anything: nine instances sharing
+only `core_clk`/`core_rst`, 1,184 top-level ports, no inter-subsystem nets, no
+host plumbing, no `fk33_seam` (N2 was unresolved when the checkpoint was
+built). A real top adds logic **and nets**, and nets are what a
+packing-bound design is short of. `420,240..465,708` should be quoted as a
+floor whenever it is quoted.
+
+### What the review CONFIRMED, recorded because a review that only finds faults has not been checked either
+
+* **The addition is legitimate cell-wise.** Verified from `util_c4_synth.rpt`
+  section 6 that `compose4_top` contains **none** of the shell (PCIE4CE4 = 0,
+  all HBM interfaces = 0), so the shell's 40,326 is disjoint from `a_eng`, and
+  the norm-image figure is a delta over the empty-image `d_norm` already
+  inside. **No double count.**
+* **346,971 is a value, not a draw.** TRACK SCATTER localised 94.5% of its
+  1.55x area scatter to `gvr.wsel`, which exists only when the gain ROM is
+  POPULATED -- and `compose4`'s image is empty. Every non-ROM point ever drawn
+  twice in this project reproduced bit-identically. So the scatter caveat
+  attaches to the norm-image term (C2) and **not** to the composed figure.
+* **The MUXF7/F8 cross-check stands**: 37,268 here against CONGEST's 36,864,
+  1.1%, two tracks and two designs.
+
+### The soft joint, and the experiment that tests it
+
+The step turning a survivable 95.6% LUT into 121% CLB is the **6.32 divisor**,
+and it is an **n=1 measurement taken on a placement that had the whole die
+free**. Packing density is elastic under pressure: a placer with room to spread
+will spread. Section 15 is the experiment.
+
+
+## 15. The pblock squeeze: is 6.32 LUT/CLB a property of the netlist or of an empty die?
+
+**The soft joint in the whole fit argument.** Every percentage in section 12
+divides by 6.32, and 6.32 was measured ONCE, on a `place_design` that had the
+entire die available. Placers spread when they have room -- spreading reduces
+congestion and improves timing, and this run had every incentive to do it
+(congestion level 7, WNS negative). So 6.32 may describe **what that placer
+chose to do** rather than **how densely this netlist can be packed.**
+
+If density is elastic, the 121% is soft in the direction that reopens the fit
+question, and it would be the one number in this document that is both load
+bearing and unreplicated.
+
+**The experiment.** One `place_design` of the SAME `c4_synth.dcp` -- no
+synthesis, the checkpoint already exists -- inside a pblock holding about 85%
+of the die's CLBs. The netlist is identical; only the room changes.
+
+    PREDICTION FROM THE CLAIM   place_design FAILS, or density stays near 6.32
+    CLAIM FALSIFIED IF          the same netlist packs into <= 48,000 CLBs
+
+**A placer failure is the result that CONFIRMS the claim**, not an error, so
+`place_design` is wrapped in `catch` and every exit path reports. Script:
+`hw/fk33/results/timing_2026-08-30/pblock_squeeze.tcl`.
+
+It is chained to launch only after the route unit exits and only after
+`pgrep -x vivado` returns nothing, because two Vivado processes on this box is
+the thing that destroyed the previous attempt at this design.
+
+**RESULTS: PENDING.**
+
+### What this experiment CANNOT settle
+
+Even a falsifying result would not make the design fit. It would move the
+divisor, and the divisor is only one of three terms; C2's norm-image range and
+C3's floor-ness are untouched by it. Conversely a confirming result does not
+prove 6.32 is a hard floor either -- it shows the placer could not do better
+under **one** pressure setting, with **one** pblock shape, on **one** draw.
