@@ -14,6 +14,73 @@ the answer only has to be classified, not argued with.
 Written to survive a context compaction. Every figure here is MEASURED unless
 labelled, and several supersede figures still standing elsewhere in this file.
 
+### 2026-08-30 08:30, added by the dispatcher: three landings and one new constraint
+
+**TRACK RESETLAND landed (`8b7eefe`).** All three of RESETGUARD's orphaned
+changes are in, plus a third file the brief did not know about. Generated
+artefacts MEASURED byte-identical over 676 tracked files. The reset-topology
+guard now has teeth with the attribution control run on every row: **7 dangerous
+rows all abort, and `GUARD OFF` is `PASS` on every one**, so the new check earns
+all seven kills alone rather than inheriting them. Two rows corrected the agent
+rather than the guard, and are recorded as such. Remaining hole, stated as
+fail-OPEN: the guard reads the block design and **cannot see the RTL**, so a
+soft-reset bit added inside `fk33_engine.vhd` or `llama_top.vhd` leaves it green.
+
+**TRACK RMSMUX draw 1 is in, on the BC-250, and every pre-registered falsifier
+held.** This is the largest area lever measured on this project so far:
+
+| quantity | predicted | MEASURED `mem_d1` |
+|---|---|---:|
+| `ARG` census root (the x and w reads) | -- | **443**, from **17,916** in the flat unit |
+| CLB LUT | 4,798..7,823 | **4,825** |
+| MUXF7 / MUXF8 | 0 / 0 | **0 / 0** |
+| CLB FF | below 1,700 | **1,629** |
+| DSP | 40 | **40** |
+| WNS @ 5.0 ns | not predicted | **+0.971**, 248.2 MHz |
+
+The 1024:1 read mux is gone, measured rather than argued: **no root anywhere
+carries a single MUXF7 or MUXF8, and there is no `sq` root at all.** The FF
+figure is the one worth pausing on, because it was a mechanism-level prediction
+and not a curve fit: three dropped registers, `o_we` + `o_wa` + `o_wd` = 75
+flops predicted, **71 measured**. Two independently derived transforms of the
+same file agree root for root to the LUT on everything except the one thing that
+differs between them. Scatter conclusion is held until `mem_d2` returns, as
+pre-registered.
+
+**NEW CONSTRAINT, found by TRACK NORMURAM, and it changes a composition
+everyone assumed was free.** Section 12 of the RMSMUX write-up reads NORMURAM's
+gain-loader word stream as free to reuse against `rmsnorm_rs_mem`'s bank port.
+**It is free in ORDER and in GRANULARITY but NOT in RATE.**
+
+- Today: budget to `r_go` is `NN+4`, load is `NN/GW+1`, margin **GW = 4.0x and
+  independent of shape**. A bench at hidden 64 exercises the ratio a build at
+  4096 has.
+- Composed: `w_we`/`w_waddr`/`w_wdata` is one 16-bit word per cycle, so the load
+  becomes `NN+2` and the margin becomes about **`1 + 1/LANES`**: 1.26x at the
+  shipping `NORM_LANES = 4`, **1.07x at `NORM_LANES = 16`**, which
+  `rmsnorm_rs_mem`'s own sweep covers as legal.
+
+DERIVED by NORMURAM, reviewed for shape by the dispatcher, **not independently
+re-derived**. The conclusion does not turn on the exact `S_RAW` arrival term:
+any margin that depends on `LANES` has already lost the property that made the
+current form checkable.
+
+Second and worse for checking: the reader walks LANES elements per cycle against
+the writer's one, both ascending, so "fully resident before use" stops being a
+phase separation and becomes a race. **The deadline moves from `r_go`, which
+`gvr` can see and `wbusy` checks today, to the unit's internal `S_RAW`, which
+`gvr` cannot see at all.** NORMURAM's U6/U6x pair is direct evidence that this
+fault class leaves the values correct and every landmark unmoved.
+
+**Ruling: the composition is sequenced AFTER NORMURAM's six points land, and the
+`nw_empty` = 49,654 anchor is not retired** -- NORMADAPT, NWROM, NWFIX and
+NORMURAM all quote it as the scale their numbers sit on.
+
+**General rule extracted, and it is reusable past this track: a change that
+removes a check and tightens the margin that check was guarding is not a wiring
+change.** NORMURAM was dispatched to compose two levers, judged it a redesign,
+stopped, and reported. That was correct.
+
 ### The single most important thing on the board
 
 **The composed A+B+C+D does not route on this part as currently written, and
