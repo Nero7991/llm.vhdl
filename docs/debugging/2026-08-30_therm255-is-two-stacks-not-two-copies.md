@@ -272,3 +272,118 @@ these levels; what matters is that a boundary crossing is when the two stacks'
 accumulators are unequal.** The correlation is with *crossing*, not with
 *heat*, and reading it as heat is what kept the search on cooling and on CDC
 for as long as it stayed there.
+
+---
+
+# CONFIRMATION AND CORRECTION, 2026-08-30 00:30, same session
+
+The "open, not yet answered" question above -- *are the two stacks routinely
+unequal, or only transiently at crossings?* -- is now answered on the card, and
+answering it also **corrects one claim made above**. Recorded here rather than
+by editing the original, per house rules.
+
+## CORRECTION 1: "unequal at every code crossing" is too strong
+
+Above I wrote that independent debounce counters make `h0_acc` and `h1_acc`
+unequal "transiently at every code crossing". **MEASURED: 97.6% of crossings
+are clean.** The accumulators go unequal only when the two raw sensor inputs
+change in *different* aux cycles rather than the same one. The claim is
+withdrawn and replaced by the number below. It matters because a bench row
+written on the original premise would assert something false.
+
+## The measurement
+
+Two read-only probes over `THERM_TEMPS` (0xB008) and `THERM_STATUS` (0xB000),
+at 257,000 samples/s (3.89 us per two-register sample). Neither ever writes a
+register, so neither can clear a counter or perturb the guard.
+
+| window | samples | `h0 /= h1` seen |
+|---|---:|---:|
+| 30 s idle | 7,688,000 | 0 |
+| 150 s under a 320-job load | 38,598,000 | 0 |
+| 338 s further | ~77,000,000 | 0 |
+
+**Roughly 123 million samples, zero unequal.** The card sat at code 38
+throughout the first two windows, which is why they test nothing on their own
+(see the trap below).
+
+In the third window the card was sitting **exactly on the 38/39 boundary and
+dithering**, which is the condition the first two lacked:
+
+```
+window            338.143 s
+upward crossings  82   (38 -> 39)
+downward          82   (39 -> 38)
+trips             2
+crossing rate     0.243 pulses/s
+trips per pulse   2/82 = 2.44 %
+
+dwell at code 39, every pulse, ms
+     55 4.0
+     26 5.0
+      1 6.0
+```
+
+Every crossing moved **both** stacks within one 3.89 us sample; no `38/39` or
+`39/38` pair was ever observed. Both trips landed on a crossing, to the
+millisecond, and both on the **downward** transition:
+
+```
+  173.646  CODE  38/38 -> 39/39   trips=2
+  173.651  TRIP  2 -> 3   codes now 39/39  die_raw=641
+  173.651  CODE  39/39 -> 38/38   trips=3
+...
+  280.281  CODE  38/38 -> 39/39   trips=3
+  280.285  CODE  39/39 -> 38/38   trips=4
+  280.285  TRIP  3 -> 4   codes now 38/38  die_raw=640
+```
+
+## What it confirms
+
+**Trips occur only at crossings, and only at 2.44% of them.** That is the
+signature of a one-aux-clock race, not of a persistent condition. At 3.89 us
+per sample against an event of order 10 ns, the probability of catching one
+*in the act* is under 1%, so **zero observed disagreements is the predicted
+result and is not evidence against the mechanism.** What carries the evidence
+is the coincidence, not the direct observation.
+
+It also closes defect 2 independently: a one-cycle condition is exactly what
+makes the late capture record `CAUSE_NONE` with equal, benign codes, which is
+what the card latched.
+
+## What it does to the three candidate fixes
+
+Candidate (c), *require the inequality to persist for N ms*, is now the
+strongest on evidence and was the weakest-looking when the list was written.
+The false condition is ~10 ns and the real one -- a stuck or torn sensor --
+is indefinite. **The separation is at least five orders of magnitude**, which
+is an unusually comfortable place to put a threshold. (a) removes the trips but
+also removes the only term that could ever catch a stack sensor stuck at a
+plausible in-range code, which neither the range check nor the staleness
+watchdog covers. (b) removes the trips and gives up halting on a real
+persistent disagreement, which (c) keeps.
+
+## Rejected here, do not retry
+
+* **The staleness watchdog as the path for these trips.** REJECTED by
+  construction: `hbm_wd` clears only on an edge of `syn_pclk`, so a staleness
+  event cannot self-clear in one cycle, and the late capture would record
+  `CAUSE_HBM_STALE`, not `CAUSE_NONE`. The card latched `CAUSE_NONE`. The path
+  is still real and still shares an undwelt halt; it wants its own bench row.
+* **Sampling THERM_TEMPS to observe the disagreement directly.** REJECTED at
+  any rate this interface can reach. 123 million samples found none, and the
+  arithmetic says they never will.
+
+## Measurement trap hit, my own, and it is the same one twice
+
+**I built a probe to catch a crossing and then ran it for 180 s in a window
+that contained no crossing at all**, at idle and under a 320-job load, and got
+46 million clean samples that looked like a strong negative. They are not a
+negative; they are a measurement of a stable operating point. Earlier in this
+same file I criticised exactly this error in the 400 job-boundary samples --
+"absence of the sticky during 200 jobs is not absence of the fault" -- and then
+committed a finer-grained version of it within the hour. **A probe aimed at a
+transition has to be shown to have observed a transition before any of its
+output means anything.** The third window is the only one that carries
+information, and it does so only because the card happened to drift onto a code
+boundary while it ran.
