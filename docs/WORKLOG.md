@@ -129,6 +129,69 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK TRIPVETO (`729df43`). SIX consumers, THREE failure directions, and the fix deliberately NOT landed.
+
+**Six consumers in four files, and the load-bearing column is the failure
+DIRECTION, not the file:**
+
+| # | where | verdict at `trip_cnt = 255` |
+|---|---|---|
+| 1 | `fk33_run_job.py:909, 1000-1001` | **false PASS**, veto dead; `:926` prints a correct warning about exactly this and proceeds |
+| 2 | `fk33_run_token.py:737-738, 748, 775-776` | **false PASS**, `t1 == t0` forever, no trip logged, no retry fires |
+| 3 | `fk33_run_token.py:980-981, 1044-1045, 1352` | silent under-report |
+| 4 | `therm_selftest.py:256, 294-297` | **INVERTED** -- it asserts the counter MUST move, so saturation makes it FAIL a WORKING guard |
+| 5 | `fk33ctl.py:358` | silent under-report |
+| 6 | `hw/fk33/tcl/aux_probe.tcl:114-116` | silent under-report, on the JTAG path |
+| -- | `fk33_stripe_experiment.py:227-260` | defended (STRIPEREADY's) |
+
+Named as NOT consumers so nobody re-checks: `fk33_run_layer.py`,
+`fk33_load_weights.py`, all of `server/`, all of `tools/`.
+
+**CORRECTION TO MY BRIEF, and it is the reusable part: my starting grep finds
+THREE OF SIX.** `fk33_run_token.py` names them `t0`/`t1` and `trips0`/`trips1`,
+`therm_selftest.py` uses `trips_before`/`trips_after`, and `aux_probe.tcl` is
+Tcl outside the searched path. **The REGISTER name is the search key, not the
+variable names.**
+
+**THE RTL SATURATION IS CORRECT. DO NOT REBUILD.** TRIPVETO opened expecting to
+recommend widening and its own measurement killed that: **wrapping trades a
+permanent, detectable failure for a periodic, undetectable one**; 16 bits buys
+~4.5 h at the measured 30 crossings/s and changes nothing about the failure
+mode; and any fixed width saturates above some rate. The one thing worth riding
+along with a future `fk33_thermal.vhd` change is a **sticky `trip_cnt_sat` bit,
+one FF** -- the only thing that can close consumers 3, 5 and 6, which no host
+change can reach, because clearing destroys the history they report.
+
+**WHY THE FIX WAS NOT LANDED, and this was the right call.** Applying
+STRIPEREADY's clear-and-prove shape inside `fk33_run_job.py` **BREAKS
+`fk33_run_token.py`**: its retry wrapper samples `t0` immediately before
+`_ORIG_RUN_JOB(...)` and `t1` immediately after, so if `run_job` clears then
+`t1 < t0` on every job, `t1 != t0` fires, and **a phantom trip is logged and a
+retry burned on every job of every layer of every token.** That converts a dead
+veto into a live false alarm **which would read as evidence about THERM-255
+itself.** The correct fix is a structured channel that `run_token` consumes
+instead of sampling around the call: two files, hardware-only consumer, not
+something to half-land before a reboot.
+
+**TWO TRAPS FOUND BY READING, for whoever takes the fix:**
+- `SimBar._status` at `fk33_run_job.py:774` fires the injected trip only when
+  `self.trip == faults["trip0"]`. After a clear that is `0 == 255`, so the
+  `trip0=255, trip_during=1` mutant **would not bite AND would look like it
+  had.**
+- `tests_fk33ctl.py:137` and `:175` both pin the count at **3** (DERIVED:
+  `(0x8A0377CD >> 16) & 0xFF = 3`). **The existing fixture cannot see this
+  defect at all.**
+
+**Correction appended in place:** `2026-08-30_therm255-...md:262` ("nothing here
+is fixed") is now stale FOR THE RTL IN THE TREE -- the capture-a-cycle-late
+defect is fixed at `fk33_thermal.vhd:1146-1160`. **It remains true for the
+bitstream ON THE CARD.**
+
+**OPERATIONAL NOTE FOR THE STRIPING RUN:** `fk33_stripe_experiment.py` defends
+itself, so the one-command experiment is safe. **`fk33_run_job.py` and
+`fk33_run_token.py` invoked directly are NOT**, and at 255 they will report
+health.
+
 ### TRACK STRIPEREADY COMPLETE (`0eac8d4`, `639880e`). THE EXPERIMENT IS ONE COMMAND.
 
 ```bash
