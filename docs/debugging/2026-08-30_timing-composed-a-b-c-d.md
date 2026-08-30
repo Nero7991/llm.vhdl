@@ -1455,3 +1455,69 @@ calibrated on one point cannot be wrong about that point and cannot be right
 about any other**, and that is exactly the shape of thing this project's
 verification discipline says to distrust. It took a track with no census and a
 correct architectural argument to catch it.
+
+
+---
+
+## 17. TRACK RMSMUX has MEASURED the lever I could only estimate
+
+Landed at `5152e91` while this track's squeeze was running. It replaces the
+single largest ESTIMATE in this document with three draws on real synthesis.
+
+**MEASURED, `rmsnorm_rs` N=4096 LANES=4, BC-250, one session, one tool at a
+time:**
+
+    control  rmsnorm_rs      40,934 LUT   67,196 FF   17,408 MUXF7   8,704 MUXF8
+    memory   rmsnorm_rs_mem   4,825 LUT    1,629 FF        0 MUXF7      0 MUXF8   +6 BRAM
+    delta                    -36,109 (-88.2%)  -65,567 FF (-97.6%)  ALL F7/F8 -> 0
+
+    timing: gives up 0.704 ns and STILL MEETS 200 MHz with 0.971 ns to spare
+    scatter: the two identical-command draws are BYTE-IDENTICAL with matching
+             census hashes, so SCATTER's 1.55x must NOT be applied to this number
+
+**Against my section 8 estimate this is close and better founded.** I put
+`d_norm/gvr.u_rms` at 43,213 LUT and 17,696 MUXF7 from the composed placed
+census; RMSMUX's standalone control is 40,934 and 17,408 -- 5.3% and 1.6%
+apart, the difference being composition against standalone. My "~43,213 LUT"
+saving was optimistic: the replacement is not free, it costs 4,825 LUT, so the
+net is **-36,109** rather than -43,213.
+
+**And it costs 6 BRAM tiles of the 425.5 free**, which is the point I made in
+section 8 from the other direction -- there is an idle memory subsystem beside
+a LUT fabric being asked to hold vectors in flip-flops.
+
+### The fit table with RMSMUX MEASURED and the squeeze-MEASURED density
+
+Scaling the replacement to the composed instance (4,825 x 43,213/40,934 =
+5,094 LUT, 0 MUXF7), so the net in-composition effect is **-38,119 LUT and
+-17,696 MUXF7**:
+
+| configuration (gain from URAM unless stated) | free-die D=5.617 | **under pressure D=6.553** |
+|---|---:|---:|
+| today + shell + ROM best draw | 123.5% | 110.1% |
+| + RMSMUX only, + ROM best draw | 114.5% | 101.3% |
+| **+ RMSMUX only, gain to URAM** | 103.8% | **92.1%** |
+| **+ lever C only, gain to URAM** | 105.3% | **92.9%** |
+| **+ RMSMUX + lever C, gain to URAM** | 96.3% | **84.1%** |
+| + RMSMUX + lever C + ROM worst draw | 121.7% | 105.9% |
+
+**Three things this settles:**
+
+1. **RMSMUX and lever C are worth almost exactly the same** -- 92.1% against
+   92.9%. My section 12a promotion of `d_norm` to first lever was right on
+   ordering but overstated the margin; they are equals on area.
+2. **RMSMUX is the better one to take first anyway, and for reasons that are
+   not area.** It has no write-coherency surface, it has never been on silicon
+   so there is nothing to regress, its draws are byte-identical (lever C's
+   inference behaviour is still the open question LEVERC is on the lane for),
+   and it **still meets 200 MHz with 0.971 ns to spare**.
+3. **Both together reach 84.1%**, which is the first configuration in this
+   whole document with genuine margin rather than a number that merely clears
+   100%.
+
+**The caveat from section 15 still governs all of it.** These are CLB-count
+percentages at a density of 7.029 that was only achieved under placement
+pressure, and that pressure cost 0.602 ns of WNS on a design whose observed
+failure is `[Route 35-447]`, routing congestion. **Fitting by CLB count is not
+building.** The next real question is not another area number; it is whether a
+configuration in the 84% row ROUTES.
