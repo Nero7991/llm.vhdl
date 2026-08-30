@@ -35,14 +35,30 @@ THE HONEST WEAKNESS, stated rather than buried: this checker compares outputs
 to sources and cannot see a packaging script that is itself wrong.  Rules
 UNLISTED and NOSCRIPT below narrow that gap without Vivado -- they refuse a
 packaged file that no script names, and an IP directory that no script targets
--- but they do not close it.  MEASURED instance found while regenerating for
-this commit and NOT catchable here: hw/package_mac_axi.tcl and
-hw/package_matvec_engine.tcl both END IN AN ERROR, `Unknown property
-'CONFIG.ASSOCIATED_BUSIF' on bus_interface`, after ipx::save_core has already
-run.  The IP is written correctly and the script exits non-zero, so a caller
-that checked the exit status would think packaging had failed.  Those two
-files are not this track's to edit; the defect is recorded in
-docs/debugging/2026-08-29_noguard-three-guards.md.
+-- but they do not close it.
+
+THE WORKED EXAMPLE THAT USED TO SIT HERE HAS BEEN FIXED, and the example is
+kept in its fixed form rather than deleted, because it is what makes the
+paragraph above concrete.  As first recorded (TRACK NOGUARD,
+docs/debugging/2026-08-29_noguard-three-guards.md) hw/package_mac_axi.tcl and
+hw/package_matvec_engine.tcl BOTH ENDED IN AN ERROR -- `Unknown property
+'CONFIG.ASSOCIATED_BUSIF' on bus_interface` -- after ipx::save_core had already
+run: the IP was written correctly and the script exited non-zero, so a caller
+gating on the exit status would have believed packaging had failed, and
+nothing here could see it.
+
+TRACK FLOOR root-caused and fixed both scripts on 2026-08-29 (`d2adbcd`;
+docs/debugging/2026-08-29_floor-and-three-defects.md).  ASSOCIATED_BUSIF is an
+IP-XACT BUS PARAMETER, read through `ipx::get_bus_parameters ... VALUE`; the
+`CONFIG.*` spelling is the BLOCK-DESIGN one and does not exist on an ipx
+object.  MEASURED with Vivado 2023.2, before and after: pre-fix rc=1 with no
+PACKAGE_DONE, post-fix rc=0 with `CLOCK_ASSOC: s_axi` and `PACKAGE_DONE 1`.
+
+So the gap this example illustrates is REAL and still open in general -- a
+packaging script can be wrong in a way this checker cannot see -- but do not
+go looking for that particular error, and do not treat this docstring as
+evidence that those two scripts are still broken.  Recorded as IPSYNC-DOC in
+docs/WORKLOG.md and closed there.
 
 Usage:
     python3 ip_repo/check_ip_sync.py [--repo ROOT]
