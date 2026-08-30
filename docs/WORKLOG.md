@@ -1123,6 +1123,54 @@ and the In flight table did, which is exactly the difference in their accuracy.
 |---|---|---|---|
 | **N1** | **NOTHING HAS VERIFIED WHAT THE CARD COMPUTES, AND NO TOOL IN THIS REPOSITORY CAN.** This is the standing question and it now has a row. MEASURED: `hw/fk33/gen_pcieep.py` puts the engine's own register map at **`ENG_CTL_BASE = 0x00012000`** and its activation writer at `ENG_XW_BASE = 0x00013000`; `grep -rn '0x12000\|0x00012000\|ENG_CTL' hw/fk33/host/ server/ tools/` returns **nothing**. `hw/fk33/host/fk33_regs.h` has no engine block at all, and `fk33ctl.py`'s commands are `sysmon thermal id scratch gpio vccint selftest bench load verify` -- none of which starts a job. So: write the host-side runner that builds one `matvec_int4_desc_axi` descriptor, points it at a real `.mv4i` weight already resident in HBM, starts it at `0x12000`, and compares the result against `ref/matvec_int4.c`. **The agent-safe half is all of it except the last step:** `server/fk33_transport.h` already offers `fk33_transport_open_sim` and `fk33_transport_open_filedir`, so the runner can be written and fully exercised with NO hardware. **The real run is Oren's, at the bench.** This is the first arithmetic on this silicon and every schedule below it is unfalsifiable until it happens. **Read open issue THERM-255 before trusting any result from it:** the thermal guard has been measured tripping roughly once every three minutes for reasons that are not heat, and each trip halts the compute domain, so a stall or a wrong answer with a non-zero trip count is not evidence about subsystem A. | none | `hw/fk33/host/` (new file), `hw/fk33/host/fk33_regs.h` |
 | **N2** | **THE HOST SEAM CONTRACT HAS NO GATEWARE, AND NOBODY HAS SAID WHICH SIDE MOVES.** MEASURED: `server/fk33_seam.h` defines a register block with magic `0x4C4C4D32` ("LLM2") at `FK33_SEAM_BASE_PROPOSED = 0x0000E000`, and its own comment says **"BASE IS PROPOSED, NOT DECIDED"**. `grep -rln 'LLM2\|4C4C4D32\|SEAM_ID' rtl/ hw/fk33/rtl/ hw/fk33/gen_pcieep.py` returns **zero files**; `0xE000` is assigned nowhere in `gen_pcieep.py`. So the whole of row 5's work drives a contract no bitstream implements, which is why `pl_backend.c` line 2 says it has never run. **This is a DECISION, not a fix, and it is Oren's:** either (a) build an `fk33_seam` AXI-Lite block in front of subsystem D, which presumes D is on the card and it is not, or (b) retarget `pl_backend` at the descriptor plane that IS on the card, which makes the host own the step loop, or (c) leave the seam as the target contract and accept that row 5 is dead code until N3 lands. Do not let a track pick one. | N1 for evidence | decision |
+
+### N2 RESOLVED 2026-08-30 by Oren: option (a). Build the seam in front of D.
+
+Oren, verbatim: **"we don't want host controlling, let's get D working"**.
+
+That selects **(a) build an `fk33_seam` AXI-Lite block in front of subsystem D**
+and rejects (b) explicitly. (b) was "retarget `pl_backend` at the descriptor
+plane that IS on the card, which makes the host own the step loop" -- and the
+host owning the step loop is the thing being ruled out.
+
+**The row's own objection to (a) stands and is now a work item rather than a
+reason not to choose it:** (a) "presumes D is on the card and it is not". So (a)
+depends on N3, the composed A+B+C+D place-and-route. That is the ordering, not
+a blocker.
+
+What this makes true:
+
+- `server/fk33_seam.h`'s magic `0x4C4C4D32` ("LLM2") and
+  `FK33_SEAM_BASE_PROPOSED = 0x0000E000` stop being proposed. The base still has
+  to be **assigned in `gen_pcieep.py`**, where `0xE000` is currently assigned
+  nowhere, and the register block still has to be **implemented in RTL**, where
+  `grep -rln 'LLM2\|4C4C4D32\|SEAM_ID' rtl/ hw/fk33/rtl/ hw/fk33/gen_pcieep.py`
+  returns zero files.
+- Row 5's work stops being dead code, and `server/pl_backend.c` line 2 -- "Nothing
+  here has ever run against the card" -- becomes a thing to fix rather than a
+  thing to accept.
+- The host-side step loop in `hw/fk33/host/fk33_run_token.py` becomes a
+  **reference implementation and an oracle**, not the shipping path. It stays
+  valuable exactly because it is bit-exact against `ref/run9b`: it is what the
+  seam's output gets compared to.
+
+**What it does NOT change, MEASURED, and this is the part that matters for
+expectations.** Removing the host from the inner loop is worth the PCIe traffic
+and nothing else. Fitting the card's own cycle counters across a 6x range of job
+size:
+
+```
+CYCLES = 21.67 * BEATS + 215
+  BEATS= 128 CYCLES=  2992  cycles/beat=23.38
+  BEATS= 384 CYCLES=  8582  cycles/beat=22.35
+  BEATS= 256 CYCLES=  5724  cycles/beat=22.36
+  BEATS= 768 CYCLES= 16847  cycles/beat=21.94
+```
+
+The intercept is **215 cycles = 1.07 us**, so the per-job setup that D amortises
+is worth **0.33 ms across a whole 311-job token**. The 21.67 cycles per beat is
+**per-beat and does not amortise**, so **D does not touch it.** Anyone expecting
+D to fix the engine's internal rate should read this first.
 | **N3** | **NO RTL TOP COMPOSES A+B+C+D FOR THE CARD.** MEASURED: `hw/fk33/rtl/fk33_engine.vhd` instantiates `matvec_int4_desc_axi` and **nothing else** -- subsystem A alone. `rtl/llama_top.vhd` does instantiate all four (`matvec_int4`, `gdn_block`, `attn_block` + `attn_kv_axi`, the five `seq_*` + `rmsnorm_rs`, plus `sampler_stream`) but it is a SIMULATION top: it binds **`matvec_int4`, which has no descriptor plane**, and `C_REAL`, `C_KV_AXI`, `NORM_REAL` and `B_SRC_REAL` all default **false**. So between "B+C+D fits" and "9B runs on the card" there is an entire unwritten top level, and no row named it until now. **Blocked on WRITEDEC** (there is no point composing something that does not fit) and on N2 (the top level's host interface is exactly what N2 decides). | WRITEDEC, N2 | `hw/fk33/gen_fk33_engine.py`, `hw/fk33/rtl/fk33_engine.vhd` (generated), a new synthesis top |
 | **N4** | **BUILD-HANG's real fix, which nobody owns.** A shell build sat blocked on `wait_on_run synth_1` for **27.6 hours** for a run `launch_runs` reported as started and never created. The processes were killed 2026-08-29 with Oren's approval; **the defect is untouched.** Fix is two lines of discipline in `hw/fk33/gen_pcieep.py`: a **bounded** wait, and a post-`launch_runs` assertion that the run directory actually exists. Small, self-contained, and the file is free. | none | `hw/fk33/gen_pcieep.py` |
 | **N5** | **Re-measure the composed B+C+D after WRITEDEC lands.** COMPOSE MEASURED 771,900 LUT against 268,222 free. LUTDIET MEASURED the fix on one unit (`rmsnorm_rs` 169,746 -> 40,804 LUT at identical ports, FF, WNS and zero BRAM) and PROJECTED B+C+D at 210,890 against 233,765 free in `pb_core` -- a **9.8% margin, which is positive and thin**. A projection is not a measurement and 9.8% is not enough margin to schedule against. Re-run `sim/ooc_compose_bcd.tcl` on the post-WRITEDEC tree. | WRITEDEC | `sim/ooc_compose_bcd.tcl`, `hw/fk33/results/` |
