@@ -529,6 +529,80 @@ Let `spread = max(d1, d2) / min(d1, d2)` on CLB LUT.
   hypothesis, and `mem_d1` vs `mem_d2` is its test.** If the spread here is
   large, the merging explanation for SCATTER's spread is incomplete.
 
+### THE DRAWS. MEASURED 2026-08-30 on the BC-250.
+
+Vivado 2023.2, `xcvu33p-fsvh2104-2L-e`, 5.0 ns, `synth_design -mode
+out_of_context -flatten_hierarchy none` then `opt_design`, via
+`sim/ooc_lutdiet_ports.tcl` **unmodified** and `sim/ooc_rmsmux_run.sh`. Tree
+verified by md5 on all four load-bearing files against the local tree before
+the run. Peak RSS 3.46 and 3.53 GB of the box's 14. One tool at a time.
+
+    mem_d1  rmsnorm_rs_mem,"N=4096 LANES=4",40,4825,4825,0,1629,0,12,6,0,252,0,0,0.971,248.2005460412013,53,15,...
+    mem_d2  rmsnorm_rs_mem,"N=4096 LANES=4",40,4825,4825,0,1629,0,12,6,0,252,0,0,0.971,248.2005460412013,53,15,...
+    columns: target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,
+             carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,...
+
+**Every prediction in the table above was made before these ran.**
+
+| quantity | PREDICTED | MEASURED | verdict |
+|---|---|---:|---|
+| CLB LUT | 4,798..7,823, central "4,798 to within a few hundred" | **4,825** | hit, +27 on LUTDIET (+0.56%) |
+| MUXF7 | 0 | **0** | hit, falsifier (i) did not fire |
+| MUXF8 | 0 | **0** | hit |
+| CLB FF | "slightly BELOW 1,700" | **1,629** | hit, -71 against a DERIVED -75 |
+| BRAM tile | 6 | **6** (12 RAMB18) | hit |
+| DSP | 40 | **40** | hit, falsifier (iii) did not fire |
+| CLB LUT above 8,000 | falsifier (ii) | 4,825 | did not fire |
+
+**The FF row is the one that tests understanding rather than luck.** The
+prediction was not "about 1,700"; it was *below* 1,700 by the three registers
+this unit removes relative to LUTDIET's, which are `o_we` (1 bit), `o_wa`
+(`clog2(NB)` = 10 bits) and `o_wd` (`LANES*16` = 64 bits) = **75 flops
+DERIVED**. Measured **71**. The direction and the magnitude were both stated in
+advance.
+
+The census confirms the mechanism directly. `ARG`, the read of `x_mant` and
+`w_mant`, is **443 LUT against 17,916** in the flat unit, and there is **no
+`sq` root at all** -- the `S_ACC` read mux is gone rather than shrunk. Every
+root reports MUXF7 = 0 and MUXF8 = 0. Against LUTDIET's census the two agree
+root for root -- `max_raw` 1,047, `rq_shifted` 519, `ARG` 443, `shifted_r` 405,
+`S` 222, all identical -- and differ in exactly one place, `o_wd` 1,101 becoming
+`gbank.uo` 1,148, which is the one thing this unit changed.
+
+### THE SCATTER, AS A FIRST-CLASS RESULT
+
+**`spread = 1.0000x`, and it is stronger than the headline.** The two draws are
+byte-identical in every CSV field including WNS and an Fmax to 13 significant
+figures, **and their censuses hash the same**:
+
+    diff <(tail -1 result_mem_d1.csv) <(tail -1 result_mem_d2.csv)  ->  IDENTICAL
+    2c85f5c4d9e8fa4cca6149d571beaf46  census_mem_d1.txt
+    2c85f5c4d9e8fa4cca6149d571beaf46  census_mem_d2.txt
+
+So the two netlists agree down to per-root primitive tallies, not merely in
+size. **This synthesis is deterministic for this design.**
+
+**Read exactly as pre-registered, in both directions.**
+
+* **It does NOT establish that this structure is scatter-free.** Two draws, one
+  box, one session, back to back, same tool lifetime. It establishes that **no
+  scatter was observed in two draws**, which is what is written.
+* **The pre-registered hypothesis was NOT refuted.** The prediction was that
+  the spread here would be small because SCATTER's 1.55x came from **register
+  merging on a foldable 65,536-flop constant ROM**, and a memory-backed unit
+  has no fold to perform. A structure with nothing to merge drew identically
+  twice. **That is consistent with the merging explanation and fails to refute
+  it; one comparison does not prove it**, and the alternative -- that SCATTER's
+  two identical-command draws differed for a reason unrelated to merging, such
+  as a tool or host difference this run does not control for -- is untested
+  here.
+* **The operational consequence, which is what the fit table needs: SCATTER's
+  1.55x must NOT be applied to this unit's 4,825.** The spread that bounds other
+  area conclusions tonight was measured on a different structure with a
+  mechanism this one lacks, and it was measured here at 1.0000x.
+
+**STATUS OF THE CONTROL: running at the time of writing.**
+
 **STATUS: QUEUED, NOT RUN.** The draws are fourth in the lane order set by the
 coordinator on 2026-08-30 (TIMING's pblock squeeze on the workstation, then
 LEVERC's inference question, then NORMURAM's six points, then these) and are to
