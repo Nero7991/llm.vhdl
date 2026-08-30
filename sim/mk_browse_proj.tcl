@@ -58,8 +58,43 @@ if {$target eq "shell"} {
     return
 }
 
+# THE SHAPE MATTERS AND THE PRODUCTION DEFAULT DOES NOT ELABORATE.
+# MEASURED 2026-08-30: `llama_top` at its default 9B shape CRASHES Vivado.  Its
+# region scratch (rtl/llama_top.vhd:1085) is a FLAT `buf_t(0 to NREGION*REGMAX-1)`
+# with 16 access ports; at 9B that is 14 * 12288 * 16 = 2,752,512 bits, which
+# Vivado cannot infer as RAM, cannot dissolve, and SEGFAULTS attempting:
+#   ERROR: [Synth 8-3391] ... Failed to dissolve the memory into bits because
+#   the number of bits (2752512) is too large.
+# followed by SIGSEGV in HOptDfg::dissolveRam (hs_err_pid478670.log).
+#
+# So `model` defaults to the SCALED wrapper, which is generated mechanically
+# from llama_top's own entity by sim/mk_browse_wrapper.py -- same hierarchy,
+# same 89 ports, only counts and widths shrink.  MEASURED: elaborates in 57 s
+# to 172,827 cells / 1,186,930 nets, peak 5 GB, zero errors.
+#
+#   BROWSE_SHAPE=scaled  (default) top = llama_top_browse
+#   BROWSE_SHAPE=real    top = llama_top.  KNOWN TO CRASH.  Kept because a
+#                        future card-level top will not have this memory, and
+#                        the day it elaborates is a result worth having.
+set shape "scaled"
+if {[info exists ::env(BROWSE_SHAPE)]} { set shape $::env(BROWSE_SHAPE) }
+
+set wrapper "/mnt/storage/llama-browse/llama_top_browse.vhd"
+
 switch -- $target {
-    model { set top "llama_top" }
+    model {
+        if {$shape eq "real"} {
+            set top "llama_top"
+            puts "WARNING: BROWSE_SHAPE=real.  This is MEASURED to crash Vivado in"
+            puts "         HOptDfg::dissolveRam at 2,752,512 bits.  See the header."
+        } else {
+            if {![file exists $wrapper]} {
+                error "wrapper missing: $wrapper
+Run: python3 sim/mk_browse_wrapper.py"
+            }
+            set top "llama_top_browse"
+        }
+    }
     card  { set top "compose4_top" }
     default { error "BROWSE_TARGET must be model, card or shell (got '$target')" }
 }
@@ -74,6 +109,7 @@ create_project -force $proj $outdir/$proj -part xcvu33p-fsvh2104-2L-e
 set srcs [glob -nocomplain $repo/rtl/*.vhd]
 set fk33 [glob -nocomplain $repo/hw/fk33/rtl/*.vhd]
 if {[llength $fk33] > 0} { set srcs [concat $srcs $fk33] }
+if {$top eq "llama_top_browse"} { lappend srcs $wrapper }
 add_files -norecurse $srcs
 set_property file_type {VHDL 2008} [get_files *.vhd]
 set_property top $top [current_fileset]
