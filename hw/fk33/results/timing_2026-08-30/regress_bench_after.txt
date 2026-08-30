@@ -1,0 +1,3 @@
+PASS       sim:tb_attn_block                      2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_block.vhd:916:7:@81465ns:(report note): tb_attn_block: PASS -- 3 consumer configurations, 64
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS

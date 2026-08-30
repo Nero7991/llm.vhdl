@@ -694,7 +694,7 @@ architecture rtl of attn_block is
       else             a(i) := e_of(v, 0);
       end if;
     end loop;
-    for s in 0 to LG-1 loop
+    for s in 0 to LG-2 loop
       for i in 0 to 2**(LG-1-s)-1 loop
         if a(i + 2**(LG-1-s)) < a(i) then a(i) := a(i + 2**(LG-1-s)); end if;
       end loop;

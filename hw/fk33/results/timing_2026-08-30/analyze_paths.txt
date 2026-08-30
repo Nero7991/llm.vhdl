@@ -1,0 +1,126 @@
+TT_BEGIN analyze dcp=/mnt/storage/compose4/out/c4dev_placed.dcp npath=20000
+TT_OPEN_SECONDS 67
+TT_STATE 
+TT_GETPATHS_SECONDS 45
+TT_NFAIL_RETURNED 20000
+TT_WORST  0 slack=-3.056   lvl=28  dly=7.972   logic=2.524   net=5.448  
+TT_WORST  1 slack=-3.041   lvl=28  dly=7.953   logic=2.521   net=5.432  
+TT_WORST  2 slack=-3.040   lvl=28  dly=7.948   logic=2.522   net=5.426  
+TT_WORST  3 slack=-3.037   lvl=28  dly=7.947   logic=2.522   net=5.425  
+TT_WORST  4 slack=-3.035   lvl=28  dly=7.952   logic=2.524   net=5.428  
+TT_WORST  5 slack=-3.032   lvl=28  dly=7.946   logic=2.520   net=5.426  
+TT_WORST  6 slack=-3.032   lvl=28  dly=7.938   logic=2.522   net=5.416  
+TT_WORST  7 slack=-3.030   lvl=28  dly=7.945   logic=2.524   net=5.421  
+TT_WORST  8 slack=-3.030   lvl=28  dly=7.944   logic=2.524   net=5.420  
+TT_WORST  9 slack=-3.029   lvl=28  dly=7.939   logic=2.523   net=5.416  
+TT_WORST 10 slack=-3.028   lvl=28  dly=7.939   logic=2.524   net=5.415  
+TT_WORST 11 slack=-3.025   lvl=28  dly=7.944   logic=2.523   net=5.421  
+TT_WORST 12 slack=-3.021   lvl=28  dly=7.938   logic=2.525   net=5.413  
+TT_WORST 13 slack=-3.021   lvl=28  dly=7.932   logic=2.523   net=5.409  
+TT_WORST 14 slack=-3.018   lvl=28  dly=7.932   logic=2.520   net=5.412  
+TT_WORST 15 slack=-3.018   lvl=28  dly=7.930   logic=2.520   net=5.410  
+TT_WORST 16 slack=-3.016   lvl=28  dly=7.934   logic=2.527   net=5.407  
+TT_WORST 17 slack=-3.016   lvl=28  dly=7.930   logic=2.524   net=5.406  
+TT_WORST 18 slack=-3.016   lvl=28  dly=7.928   logic=2.523   net=5.405  
+TT_WORST 19 slack=-3.016   lvl=28  dly=7.926   logic=2.523   net=5.403  
+TT_WORST 20 slack=-3.016   lvl=28  dly=7.925   logic=2.522   net=5.403  
+TT_WORST 21 slack=-3.015   lvl=28  dly=7.933   logic=2.523   net=5.410  
+TT_WORST 22 slack=-3.015   lvl=28  dly=7.928   logic=2.520   net=5.408  
+TT_WORST 23 slack=-3.014   lvl=28  dly=7.931   logic=2.525   net=5.406  
+TT_WORST 24 slack=-3.014   lvl=28  dly=7.929   logic=2.524   net=5.405  
+TT_WORST 25 slack=-3.014   lvl=28  dly=7.918   logic=2.521   net=5.397  
+TT_WORST 26 slack=-3.013   lvl=28  dly=7.931   logic=2.525   net=5.406  
+TT_WORST 27 slack=-3.013   lvl=28  dly=7.925   logic=2.521   net=5.404  
+TT_WORST 28 slack=-3.013   lvl=28  dly=7.923   logic=2.522   net=5.401  
+TT_WORST 29 slack=-3.013   lvl=28  dly=7.917   logic=2.524   net=5.393  
+TT_WORST 30 slack=-3.012   lvl=28  dly=7.926   logic=2.525   net=5.401  
+TT_WORST 31 slack=-3.011   lvl=28  dly=7.928   logic=2.523   net=5.405  
+TT_WORST 32 slack=-3.011   lvl=28  dly=7.922   logic=2.523   net=5.399  
+TT_WORST 33 slack=-3.010   lvl=28  dly=7.925   logic=2.525   net=5.400  
+TT_WORST 34 slack=-3.010   lvl=28  dly=7.924   logic=2.522   net=5.402  
+TT_WORST 35 slack=-3.008   lvl=28  dly=7.926   logic=2.524   net=5.402  
+TT_WORST 36 slack=-3.008   lvl=28  dly=7.924   logic=2.524   net=5.400  
+TT_WORST 37 slack=-3.008   lvl=28  dly=7.922   logic=2.521   net=5.401  
+TT_WORST 38 slack=-3.008   lvl=28  dly=7.921   logic=2.520   net=5.401  
+TT_WORST 39 slack=-3.008   lvl=28  dly=7.921   logic=2.527   net=5.394  
+TT_MEAN_SLACK      -0.539 ns
+TT_MEAN_LOGIC      0.670 ns
+TT_MEAN_NET        4.575 ns
+TT_MEAN_PCT_NET    87.2 %
+TT_NET_DOMINATED   20000 of 20000  (100.0%)
+TT_LVL   2     741
+TT_LVL   3       8
+TT_LVL   4     281
+TT_LVL   5    3057
+TT_LVL   6     146
+TT_LVL   7      75
+TT_LVL   8     980
+TT_LVL   9   10863
+TT_LVL  10       1
+TT_LVL  11     223
+TT_LVL  12    1342
+TT_LVL  13       1
+TT_LVL  15      80
+TT_LVL  16      49
+TT_LVL  17     393
+TT_LVL  18    1454
+TT_LVL  19      23
+TT_LVL  20      27
+TT_LVL  28     256
+TT_B1   10378  d_norm -> d_norm
+TT_B1    3954  b_gdn -> b_gdn
+TT_B1    3779  a_eng -> a_eng
+TT_B1    1889  c_attn -> c_attn
+TT_B3    3661  a_eng/eng/dut
+TT_B3    2012  b_gdn/u_emit/u_head
+TT_B3      29  d_norm/gvr.u_rms/ARG__10
+TT_B3      25  d_norm/gvr.u_rms/sq_reg[3]
+TT_B3      19  d_norm/gvr.u_rms/ARG__5
+TT_B3      18  d_norm/gvr.u_rms/ARG__9
+TT_B3      14  d_norm/gvr.u_rms/sq_reg[1]
+TT_B3      14  d_norm/gvr.u_rms/ARG__31
+TT_B3      10  d_norm/gvr.u_rms/ARG__30
+TT_B3       9  d_norm/gvr.u_rms/ARG
+TT_B3       9  d_norm/gvr.u_rms/ARG__0
+TT_B3       7  c_attn/u_arr/p_reg_reg[100]
+TT_B3       7  c_attn/u_arr/p_reg_reg[101]
+TT_B3       7  c_attn/u_arr/p_reg_reg[102]
+TT_B3       7  c_attn/u_arr/p_reg_reg[103]
+TT_B3       7  c_attn/u_arr/p_reg_reg[104]
+TT_B3       7  c_attn/u_arr/p_reg_reg[105]
+TT_B3       7  c_attn/u_arr/p_reg_reg[106]
+TT_B3       7  c_attn/u_arr/p_reg_reg[108]
+TT_B3       7  c_attn/u_arr/p_reg_reg[110]
+TT_B3       7  c_attn/u_arr/p_reg_reg[112]
+TT_B3       7  c_attn/u_arr/p_reg_reg[114]
+TT_B3       7  c_attn/u_arr/p_reg_reg[117]
+TT_B3       7  c_attn/u_arr/p_reg_reg[120]
+TT_B3       7  c_attn/u_arr/p_reg_reg[119]
+TT_B3       7  c_attn/u_arr/p_reg_reg[121]
+TT_B3       7  c_attn/u_arr/p_reg_reg[122]
+TT_B3       7  c_attn/u_arr/p_reg_reg[123]
+TT_B3       7  c_attn/u_arr/p_reg_reg[124]
+TT_B3       7  c_attn/u_arr/p_reg_reg[125]
+TT_B3       7  c_attn/u_arr/p_reg_reg[126]
+TT_B3       7  c_attn/u_arr/p_reg_reg[10]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[11]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[14]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[16]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[21]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[22]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[23]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[24]0
+TT_B3       7  c_attn/u_arr/p_reg_reg[25]0
+TT_B3_DISTINCT 12808
+TT_MEMSCAN scanned=3000 cells_matched=3
+TT_MEMREF RAMB36E2          3
+TT_POP RAMB36E2      231
+TT_POP RAMB18E2       31
+TT_POP URAM288         0
+TT_POP RAMD32      22666
+TT_POP RAMD64E      1354
+TT_POP RAMS32       3310
+TT_POP RAMS64E         0
+TT_POP SRL16E       1196
+TT_POP SRLC32E         2
+TT_DONE analyze

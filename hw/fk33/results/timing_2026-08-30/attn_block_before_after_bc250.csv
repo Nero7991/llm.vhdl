@@ -1,0 +1,3 @@
+target,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+attn_block,298,85538,85429,109,101307,3,16,11,0,2734,18146,3776,-3.122,123.12238364934746,526,78,85535,101307,298,11
+attn_block,298,87340,87231,109,101319,3,16,11,0,2734,16350,2992,0.825,239.52095808383234,542,79,87337,101319,298,11

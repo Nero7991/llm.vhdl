@@ -1,0 +1,18 @@
+PASS       sim:tb_attn_block                      1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_block.vhd:916:7:@81465ns:(report note): tb_attn_block: PASS -- 3 consumer configurations, 64
+PASS       sim:tb_attn_emit                       1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_emit.vhd:699:7:@203245ns:(report note): tb_attn_emit: PASS -- 40 layers x 96 elements bit-ex
+PASS       sim:tb_attn_fix_beh                    2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_fix_beh.vhd:129:23:@284575ns:(report note): PASS:attn_replay netlist matches behavioral
+PASS       sim:tb_attn_gate                       1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_gate.vhd:533:7:@149025ns:(report note): tb_attn_gate: PASS -- 35 heads x 64 elements bit-exa
+PASS       sim:tb_attn_kv_axi                     2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_axi.vhd:77:7:@20725ns:(report note): tb_attn_kv_axi: PASS -- 2 AXI widths, records and me
+PASS       sim:tb_attn_kv_map                     0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_map.vhd:934:5:@12685ns:(report note): tb_attn_kv_map: phase A done -- 64 preseeded record
+PASS       sim:tb_attn_kv_quant                   0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_quant.vhd:414:7:@465975ns:(report note): tb_attn_kv_quant: PASS -- 64 vectors x 256 (8 bl
+PASS       sim:tb_attn_kv_seam                   10s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_seam.vhd:1432:7:@457945ns:(report note): tb_attn_kv_seam: PASS -- 4 tokens at cur_pos 0..
+PASS       sim:tb_attn_mac_array                  2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_mac_array.vhd:338:7:@61245ns:(report note): tb_attn_mac_array: PASS -- 24 cases, QH_TILE=2 D
+PASS       sim:tb_attn_recip                      0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_recip.vhd:308:7:@169055ns:(report note): tb_attn_recip: PASS -- 24 layers x 12 heads bit-exa
+PASS       sim:tb_attn_replay_beh                 2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_replay_beh.vhd:129:23:@284575ns:(report note): PASS:attn_replay netlist matches behavioral
+PASS       sim:tb_attn_rescale                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_rescale.vhd:307:7:@5475ns:(report note): tb_attn_rescale PASS: 512 cases bit-exact, SEQ_MULT
+PASS       sim:tb_attn_rope                       1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_rope.vhd:524:7:@204455ns:(report note): tb_attn_rope PASS: 28 head vectors, 2688 elements bi
+PASS       sim:tb_attn_score_q12                  1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_score_q12.vhd:303:7:@27645ns:(report note): tb_attn_score_q12: PASS -- 64 cases x 8 blocks b
+PASS       sim:tb_attn_softmax                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_softmax.vhd:513:7:@68435ns:(report note): tb_attn_softmax: PASS -- 44 heads bit-exact: every
+PASS       sim:tb_attn_twiddle                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_twiddle.vhd:386:7:@35535ns:(report note): tb_attn_twiddle: PASS -- 24 positions x 32 pairs b
+ OVERALL     PASS 16   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1   SKIPPED 4
+ REGRESSION: PASS
