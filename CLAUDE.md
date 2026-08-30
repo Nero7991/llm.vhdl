@@ -107,6 +107,19 @@ The rules that follow from this:
   Better still where the job is yours: take the cgroup's own `memory.peak`
   rather than any sampled `free` or `ps`, because peak is a property of the job
   and a sample only sees the moment you looked.
+
+  **BUT A CAPPED JOB'S `memory.peak` IS THE CAP, NOT THE PEAK, and these two
+  pieces of advice interact.** MEASURED 2026-08-30 by TRACK NORMURAM: a
+  five-point batch run under `MemoryHigh=13G` reported `memory.peak` **1.1 MB
+  above 13 GiB**. That is not the job's appetite, it is the throttle holding it
+  there -- `MemoryHigh` forces reclaim rather than failing, so RSS sits at the
+  cap and `memory.peak` records the cap. **The only honest unthrottled figure in
+  that batch was the one point that never reached its cap, at 10.54 GiB.**
+
+  So: cap for SAFETY, and read `memory.peak` for SIZE only from a run that did
+  not reach its cap. A capped `memory.peak` tells you nothing except that the
+  cap worked, and quoting it as a footprint over-states small jobs and
+  under-states large ones by exactly the amount you needed to know.
 - **One Vivado costs 10.85 GB of the BC-250's 14 GB** (MEASURED 2026-08-30,
   `attn_block` OOC with forked workers). So the second lane holds exactly one
   tool and has ~3 GB of margin, not the comfortable headroom the 14 GB figure
