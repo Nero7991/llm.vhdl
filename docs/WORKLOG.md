@@ -129,6 +129,78 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK STRIPEREADY COMPLETE (`0eac8d4`, `639880e`). THE EXPERIMENT IS ONE COMMAND.
+
+```bash
+cd /home/orencollaco/GitHub/llama.vhdl
+python3 hw/fk33/host/fk33_stripe_experiment.py run
+```
+
+It pins BOTH manifests by hash, runs every offline guard, loads and verifies the
+FLAT image, runs the four published jobs, repeats for the STRIPED image, and
+prints one table with CYCLES, BEATS, STARVED, cycles/beat, **the trip count**
+and the channel census on each row. Idempotent, both phases are full loads, and
+it finishes with the card holding a verified striped image. **If it refuses it
+produces no number and names the guard.**
+
+**The `index.txt` gap is closed WITHOUT touching the packer**, which matters
+because the packer has moved the manifest under three tracks now.
+`tools/ref9b/make_index.py` reads geometry and shape only, never `hbm_offset`
+and never `pieces`; STRIPEREADY enumerated its inputs, PREDICTED the striped
+index would be byte-identical to the flat apart from line 1, then generated it:
+MEASURED **428 body lines identical, one differing provenance comment**, and
+`git diff --stat -- tools/pack_model_fk33.py` empty. Blocker measured shut both
+ways (`index.txt does not exist` to `248320 of 248320 logits, 0 differ`).
+**But `plan` is INERT to placement** -- flat vs striped differs in two lines,
+both timings -- **so it closes the gap without being a striping verifier and
+must not be quoted as one.**
+
+**THE FINDING, and it sits directly on the measurement path.**
+`hw/fk33/host/fk33_run_job.py`'s thermal veto rests on `trip_cnt`, which
+**SATURATES at 255**. VERIFIED by the dispatcher at
+`hw/fk33/rtl/fk33_thermal.vhd:1166`:
+
+```vhdl
+if trip_cnt /= to_unsigned(255, trip_cnt'length) then
+  trip_cnt <= trip_cnt + 1;
+end if;
+```
+
+At 255 the veto's `trip1 != trip0` test is **false forever** while still
+printing `trips=255 (was 255)`. **The guard stops discriminating exactly when
+the condition it guards is worst, and reports health while doing so** -- and
+THERM-255, the open issue named for that number, is the reason the counter gets
+there. STRIPEREADY's own runner defends itself (clear, then refuse unless the
+post-clear word reads 0) and correctly flagged the rest as needing an owner.
+Dispatched as TRACK TRIPVETO.
+
+**T12 IS CLOSED**, after three tracks carried it. Honestly reported: its first
+mutant was **not clean** -- it overlapped the f32 blob and `hbm_map` killed it
+for the wrong reason, and **the neighbouring arms revealed that, not its own**.
+The clean version is a same-size permutation that five checks pass and the
+runner refuses. **Closed at the host, still open at the packer.**
+
+**THE PREDICTION IS UNCHANGED, and its load-bearing input is now MEASURED over
+all 249 tensors rather than inferred:** `striped {(25, 2): 249}` -- every
+tensor, 25 channels, exactly 2 lanes on the busiest. The flat half of that
+census **independently reproduces the counters document** (235/13/1, the missing
+3-segment file being `token_embd`, absent from `noembd`).
+
+**NEW FALSIFIER INPUT, and it weakens the run rather than strengthening it:**
+only **15 to 17 of 27 lanes** read the channel their own master is wired to, so
+the result leans hard on STRIPEPATH's lateral-crossing ESTIMATE -- and the four
+measurement tensors split 17/15/17/15, **not enough spread to test it.**
+
+**Verification:** 11 mutants x 5 arms, **control surviving in every arm**. G1
+earns 1 independent kill, the census family 3, whole-image scope 1 that the
+four-tensor scope cannot see, the oracle join 1. **M2, M3, M4 earn G1 nothing
+and are named. M7 and M8 survive as designed. G4's extent-count cross-check
+earns ZERO and is labelled.** Six commands traced with zero `/dev` opens.
+
+**Correction to my brief, and it is right:** "verify the striped image and the
+striped descriptors" is TWO guards and either can pass while the other fails --
+**which is exactly the `output.weight` byte-identity case TOKENSTRIPE hit.**
+
 ### TRACK CBINFER COMPLETE (`0d24f7d`). LEVER C IS ALIVE: Vivado DOES infer LUTRAM.
 
 LEVERC's own first open item said this "must be the first thing a Vivado lane
