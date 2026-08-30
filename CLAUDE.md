@@ -65,6 +65,16 @@ The rules that follow from this:
   peaks: full `pcieep` build 25.0 GiB, composed place-and-route several GiB,
   and a single OOC synthesis 11.9 GiB. Two of anything in that list does not
   fit beside `llama-server`.
+- **`pgrep -x vivado` OVER-REPORTS, and counting its output is wrong.**
+  MEASURED 2026-08-30: one running Vivado shows as **four** processes, because
+  the launcher is a chain of bash scripts also called `vivado`
+  (`bin/vivado` -> `bin/loader` -> `bin/unwrapped/lnx64.o/vivado`), and three of
+  them are shells holding ~3 MB each. Only the `unwrapped/lnx64.o` one is the
+  tool. **Gate on PRESENCE, never on a count**, and if you want the real
+  footprint, sort by RSS:
+  `ps -eo pid,rss,args --sort=-rss | grep unwrapped/lnx64.o/vivado`.
+  (`pgrep -x` is still the right form -- **never `pgrep -f`**, which matches
+  your own command line and has killed the shell four times here.)
 - **A full build requires stopping `llama-server` first**, because 25.0 GiB does
   not fit in 13. That is a deliberate act with a user-visible cost, so it is
   Oren's call, not a track's.
