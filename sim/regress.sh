@@ -400,7 +400,62 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=98   # RAISED FROM 93, 2026-08-29, TRACK FLOOR.  Measured the same
+BASELINE_PASS=99   # RAISED FROM 98, 2026-08-30, TRACK STRAYROW.  ONE new row:
+                   #    `sim:tb_axi_rd_port_stray` (`2217778`), the gate row
+                   #    TRACK A7 designed in section 8b of
+                   #    docs/debugging/2026-08-29_a7-dual-clock-run-gate.md and
+                   #    handed off because it did not own this file.
+                   #
+                   #    MEASURED on `git archive 2217778`, GHDL 1.0.0 mcode,
+                   #    --jobs 2, 2026-08-29 23:50 to 2026-08-30 00:1x, exactly
+                   #    the recipe below:
+                   #      suite sim  PASS 73  FAIL 0  NOCHECK 3
+                   #      suite tb   PASS 26  FAIL 0  NOCHECK 1
+                   #      OVERALL    PASS 99  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 10
+                   #      baseline: 99 passing, above the recorded floor of 98
+                   #                -- raise BASELINE_PASS in this script
+                   #    DERIVED and consistent: 103 rows selected, 4 NOCHECK, so
+                   #    99 is the CEILING and not merely the score.  The gate
+                   #    PRINTED the raise suggestion rather than the refusal,
+                   #    which is the evidence that its NOT IN GIT list was empty
+                   #    on this tree.
+                   #
+                   #    98 + 1 = 99 and the measurement agrees, which is the
+                   #    FIRST time tonight that the predicted floor and the
+                   #    measured one have matched.  It was still measured rather
+                   #    than assumed, for the reason in FLOOR's note below: the
+                   #    same arithmetic was right four times and wrong on the
+                   #    fifth, and there is no way to tell which case you are in
+                   #    without running it.
+                   #
+                   #    THREE COMMITS LANDED AFTER `2217778` and NONE ADDS OR
+                   #    REMOVES A ROW, so this number is still the ceiling at
+                   #    HEAD.  MEASURED with `git log --name-status 2217778..HEAD
+                   #    -- sim/ tb/`: the only additions are
+                   #    `sim/mutate_mv4i_desc_stale.sh`, `sim/ooc_nwfix_*`, none
+                   #    of which is in the `tb_*.vhd` glob.  This track's own
+                   #    later commits are a comment change to the new bench, an
+                   #    `ip_repo/check_ip_sync.py` DOCSTRING change (the
+                   #    `sim:ipsync` row still passes -- MEASURED,
+                   #    `IPSYNC: 3 IP(s), 32 packaged .vhd, 0 finding(s)`), and
+                   #    docs.
+                   #
+                   #    MEASURED UNDER LOAD, stated because it is a caveat on the
+                   #    number.  TRACK DONE1 was running its own regress.sh and
+                   #    COMPOSE4 a place-and-route; load average ran 7.3 to 10.0
+                   #    throughout.  Same asymmetry argument as below: contention
+                   #    can starve a row into TIMEOUT but cannot make a failing
+                   #    row pass, so a contended clean run is a valid LOWER bound
+                   #    on the ceiling.  TIMEOUT 0 and FAIL 0, so the bound is
+                   #    tight.
+                   #
+                   #    The new row costs 1 s and is NOT optional -- `tb_prereq`
+                   #    names only the four `sim:tb_matvec_fk33*` rows, so this
+                   #    one runs on a bare clone and is allowed to move the floor.
+                   #
+                   # ---- previous entry, kept because its reasoning is the rule ----
+                   # WAS 98, RAISED FROM 93, 2026-08-29, TRACK FLOOR.  Measured the same
                    #    way GATEHYGIENE measured 93, on a CLEAN `git archive`, so
                    #    the two numbers are comparable and the difference is
                    #    entirely rows that landed in between.
