@@ -11,6 +11,15 @@
  * =====================================================================
  * Everything in this header is a CONTRACT, not a report.  As of 2026-08-29:
  *
+ * UPDATED 2026-08-30, TRACK DSEAM.  One line of that has changed and no
+ * more: THE REGISTER BLOCK NOW HAS RTL.  `rtl/fk33_seam.vhd` implements
+ * VERSION 2 of the contract below and `sim/tb_fk33_seam.vhd` runs a whole
+ * token through it with `rtl/llama_top.vhd`'s host face driven by nothing
+ * else.  Everything else in this list still stands: there is no bitstream
+ * containing a transformer, `hw/fk33/rtl/fk33_engine.vhd` is still subsystem
+ * A alone, the base address below is still assigned nowhere in
+ * `hw/fk33/gen_pcieep.py`, and NOTHING HERE HAS RUN ON SILICON.
+ *
  *   * The composed FK33 design does not route (OI-12, global congestion
  *     level 7).  There is no bitstream that contains a transformer.
  *   * `rtl/llama_top.vhd:133-134` says in its own words that there is no
@@ -39,10 +48,19 @@
  * GENERATION-level: hand the card a prompt, get a token stream back.  That
  * was correct there and it is wrong here, and the reason is not preference:
  *
+ * "THE LOOP" IS TWO LOOPS AND THIS TABLE MEANT ONLY ONE OF THEM.  Corrected
+ * 2026-08-30 because board row N2 turned on the distinction.  The TOKEN loop
+ * -- sample, decide, feed the next position -- is the host's, for the reasons
+ * below.  The STEP loop -- the 546 descriptors inside one token -- is the
+ * CARD's, and Oren decided that explicitly on 2026-08-30: "we don't want host
+ * controlling, let's get D working".  A reader who took the row below to mean
+ * the host drives every job would be reading the option N2 REJECTED.
+ *
  *   AXU3EG                            FK33
  *   -----------------------------     ------------------------------------
  *   PS on the same die                no PS at all; the host is a real host
- *   engine ran the whole loop         host must own the loop
+ *   engine ran the whole loop         host owns the TOKEN loop; subsystem D
+ *                                     owns the step loop inside a token
  *   argmax in the fabric, no logits   a sampler still cannot see top_p
  *   MAXPOS 24 positions, 512 vocab    198,415-token KV capacity, 248,320 vocab
  *   /dev/mem mmap, ~ns per access     PCIe, ~1-2 us per non-posted BAR read
@@ -168,19 +186,29 @@ extern "C" {
 /* ---------------------------------------------------------------------------
  * The seam register block.
  *
- * BASE IS PROPOSED, NOT DECIDED.  `hw/fk33/gen_pcieep.py` configures the block
- * design and therefore owns every BAR offset; this track does not own that
- * file.  0xE000 is chosen because it is the largest 4 KB hole below the
- * scratch BRAM that is not already taken: MEASURED occupancy of the 128 KB BAR
- * from hw/fk33/host/fk33_regs.h and the bring-up procedure is 0x3400 (SYSMON),
+ * THE SEAM IS DECIDED; THE BASE ADDRESS IS STILL NOT ASSIGNED.  Board row N2
+ * was resolved by Oren on 2026-08-30 in favour of option (a) -- build this
+ * block in front of subsystem D -- so this is no longer one of three
+ * candidate contracts.  What has NOT happened is the one line that only
+ * `hw/fk33/gen_pcieep.py` can carry: `grep -n 0xE000 hw/fk33/gen_pcieep.py`
+ * still returns nothing, so no bitstream decodes this block at any address.
+ * TRACK DSEAM does not own that file and deliberately did not touch it.
+ *
+ * 0xE000 is chosen because it is the largest 4 KB hole below the scratch BRAM
+ * that is not already taken: MEASURED occupancy of the 128 KB BAR from
+ * hw/fk33/host/fk33_regs.h and the bring-up procedure is 0x3400 (SYSMON),
  * 0x9000 (GPIO), 0xA000 (ID), 0xB000/0xC000/0xD000 (thermal) and
  * 0x10000+0x2000 (scratch).
+ *
+ * The name stays `_PROPOSED` until that grep returns a line.  Renaming it
+ * before then would make every caller read as though the address were real.
  * ------------------------------------------------------------------------- */
 #define FK33_SEAM_BASE_PROPOSED   0x0000E000u
 #define FK33_SEAM_SPAN            0x1000u
 
 #define FK33_SEAM_ID              0x00u   /* R   0x4C4C4D32 = "LLM2" */
-#define FK33_SEAM_VERSION         0x04u   /* R   contract version, = 1 */
+#define FK33_SEAM_VERSION         0x04u   /* R   contract version.
+                                           * rtl/fk33_seam.vhd reports 2. */
 #define FK33_SEAM_CAPS_VOCAB      0x08u   /* R   n_vocab */
 #define FK33_SEAM_CAPS_EMBD       0x0Cu   /* R   [15:0] n_embd [31:16] n_layer */
 #define FK33_SEAM_CAPS_CTX        0x10u   /* R   KV capacity, in tokens */
@@ -189,24 +217,135 @@ extern "C" {
 #define FK33_SEAM_ERR_INFO        0x1Cu   /* R   */
 #define FK33_SEAM_SEQ_POS         0x20u   /* RW  position of this GO's step 0 */
 #define FK33_SEAM_N_STEP          0x24u   /* RW  positions this GO advances */
-#define FK33_SEAM_X_BASE_LO       0x28u   /* W   */
-#define FK33_SEAM_X_BASE_HI       0x2Cu   /* W   */
-#define FK33_SEAM_L_BASE_LO       0x30u   /* W   */
-#define FK33_SEAM_L_BASE_HI       0x34u   /* W   */
-#define FK33_SEAM_DESC_PTR_LO     0x38u   /* W   the D program for one token */
-#define FK33_SEAM_DESC_PTR_HI     0x3Cu   /* W   */
+/* THE FOUR HBM POINTERS BELOW ARE VERSION-3 REGISTERS.  They are the right
+ * long-term shape and `rtl/fk33_seam.vhd` DOES NOT IMPLEMENT THEM: fetching a
+ * block out of HBM needs an HBM master the seam does not have, subsystem A
+ * already takes 27 of the 30 engine ports, and the port assignment lives in
+ * a file this contract cannot change.  In v2 they must be ZERO at GO and a
+ * non-zero one raises FK33_SEAM_ERR_RSVD -- deliberately loud, because a host
+ * that thinks it handed the card a pointer and gets a token back was lied to.
+ * Read FK33_SEAM_CAPS_FLAGS bit 1 rather than assuming. */
+#define FK33_SEAM_X_BASE_LO       0x28u   /* W   v3, must be 0 in v2 */
+#define FK33_SEAM_X_BASE_HI       0x2Cu   /* W   v3, must be 0 in v2 */
+#define FK33_SEAM_L_BASE_LO       0x30u   /* W   v3, must be 0 in v2 */
+#define FK33_SEAM_L_BASE_HI       0x34u   /* W   v3, must be 0 in v2 */
+#define FK33_SEAM_DESC_PTR_LO     0x38u   /* W   v3, must be 0 in v2 */
+#define FK33_SEAM_DESC_PTR_HI     0x3Cu   /* W   v3, must be 0 in v2 */
 #define FK33_SEAM_CYCLES          0x40u   /* R   core cycles, GO to done */
 #define FK33_SEAM_ARGMAX          0x44u   /* R   argmax of the LAST step */
 #define FK33_SEAM_LOGIT_EXP       0x48u   /* R   its shared block exponent */
 
+/* ---------------------------------------------------------------------------
+ * VERSION 2, added 2026-08-30 by TRACK DSEAM.
+ *
+ * WHY THESE EXIST AND WHY THEY ARE NOT OPTIONAL.  Version 1 was written
+ * against a card that would fetch its own program out of HBM, so it carried
+ * no register for the two things subsystem D actually needs from a host every
+ * token.  MEASURED against `rtl/llama_top.vhd`'s port list:
+ *
+ *   TBL_LEN   `tbl_len`, the descriptor count INCLUDING the END_TOKEN
+ *             descriptor.  `rtl/seq_desc_fetch.vhd` checks the walk against
+ *             it two-sidedly -- reaching it without an END_TOKEN is ERR_DESC,
+ *             and an END_TOKEN before it is also ERR_DESC -- so a card that
+ *             does not know it cannot run a token at all.
+ *   X_EXP     `host_x_exp`, the BFP block exponent of the activation row.
+ *             v1 carried this only as a FIELD INSIDE the HBM block at X_BASE,
+ *             which is a block v2 does not fetch.
+ *
+ * And the windows, which are what replace the HBM fetch:
+ *
+ *   WIN_SEL   0 = the descriptor program (32-bit halves, low half first)
+ *             1 = the RELEASE MASK table, one entry per step
+ *             2 = the activation row, one int16 mantissa per write
+ *             3 = readback of the residual region, read-only
+ *   WIN_ADDR  index into the selected window.  AUTO-INCREMENTS on every
+ *             WIN_DATA access, read or write, so a host streams.
+ *   WIN_DATA  the port.
+ *
+ * THE RELEASE-MASK TABLE IS THE ONE THAT CLOSES N2, and it is worth being
+ * explicit about why a whole window exists for 14 bits per step.  D's region
+ * lock needs to know, per step, which regions that step is the LAST reader
+ * of.  Lifetime is a property of the SCHEDULE, so the generator is what knows
+ * it -- and `rtl/seq_region_lock.vhd`'s own header records that the D spec's
+ * section 6.1 descriptor format HAS NO FIELD FOR IT.  So until 2026-08-30 the
+ * mask arrived on a per-step wire that a TESTBENCH drove
+ * (`sim/tb_llama_top.vhd:1923`).  A host driving that over PCIe would be
+ * inside the inner loop, which is exactly what N2 ruled out.
+ * `tools/gen_layer_program.py` already emits the table as a separate file
+ * (`--rel-file`, `write_rel()`), so nothing new has to be computed: it is
+ * written to WIN_SEL 1 once per model and the card indexes it itself.
+ * ------------------------------------------------------------------------- */
+#define FK33_SEAM_CAPS_FLAGS      0x4Cu   /* R   see FK33_CAP_* */
+#define FK33_SEAM_TBL_LEN         0x50u   /* RW  descriptors, END_TOKEN incl. */
+#define FK33_SEAM_X_EXP           0x54u   /* RW  i32, the row's block exponent */
+#define FK33_SEAM_WIN_SEL         0x58u   /* RW  see FK33_WIN_* */
+#define FK33_SEAM_WIN_ADDR        0x5Cu   /* RW  auto-increments on DATA */
+#define FK33_SEAM_WIN_DATA        0x60u   /* RW  the window port */
+#define FK33_SEAM_SMP_N           0x64u   /* R   logits folded since GO */
+#define FK33_SEAM_FAULTS          0x68u   /* R   see FK33_FAULT_* */
+
+#define FK33_WIN_DESC             0u
+#define FK33_WIN_REL              1u
+#define FK33_WIN_XIN              2u
+#define FK33_WIN_XOUT             3u
+
+/* CAPS_FLAGS.  What the BITSTREAM implements, so a host does not discover it
+ * by trying.  `rtl/fk33_seam.vhd` reports 0x5: windows and sampler, no HBM
+ * fetch and no logits egress. */
+#define FK33_CAP_WINDOWS          (1u << 0)
+#define FK33_CAP_HBM_FETCH        (1u << 1)
+#define FK33_CAP_SAMPLER          (1u << 2)
+#define FK33_CAP_LOGITS           (1u << 3)
+
+/* FAULTS.  Every bit is a DEFECT, not a statistic, and every one is SILENT in
+ * the arithmetic -- which is the whole reason they get a register rather than
+ * a log line.  Sourced from `rtl/llama_top.vhd`'s five sticky seam counters
+ * plus `attn_kv_axi`'s.  A token whose numbers look fine and whose FAULTS is
+ * non-zero has not computed what it claims. */
+#define FK33_FAULT_SMP_OVF        (1u << 0)  /* the logits FIFO lost beats */
+#define FK33_FAULT_LOST_BEAT      (1u << 1)  /* an unstallable producer beat */
+#define FK33_FAULT_GATE_DROP      (1u << 2)  /* the region lock refused a write */
+#define FK33_FAULT_UNIT_STUB      (1u << 3)  /* a STUB unit produced a result */
+#define FK33_FAULT_E_COLL         (1u << 4)  /* OP_E_COLL issued at NCARDS=1 */
+#define FK33_FAULT_KV             (1u << 5)  /* attn_kv_axi's sticky error */
+
 #define FK33_SEAM_ID_MAGIC        0x4C4C4D32u
 #define FK33_SEAM_VERSION_1       1u
+#define FK33_SEAM_VERSION_2       2u
+
+/* TWO IMPLEMENTATIONS OF THIS HEADER NOW EXIST AND THEY REPORT DIFFERENT
+ * VERSIONS.  Said here rather than left to be discovered:
+ *
+ *   rtl/fk33_seam.vhd   reports 2.  Windows, no HBM fetch, no logits egress.
+ *   server/fk33_sim.c   reports 1.  It models the v1 shape -- X_BASE, L_BASE,
+ *                       DESC_PTR and a sparse AXI space -- and TRACK DSEAM did
+ *                       not change it, because that file is not this track's
+ *                       and a second edit to a model nobody had asked for is
+ *                       how two producers end up disagreeing quietly.
+ *
+ * So a host must BRANCH ON THE VERSION REGISTER, not on this header.  A v2
+ * card ignores the pointers and refuses a non-zero one; a v1 model ignores the
+ * windows.  Reconciling `fk33_sim.c` to v2 is open work with no owner. */
 
 /* CTRL, write-only, every bit self-clearing. */
 #define FK33_CTRL_GO              (1u << 0)
 #define FK33_CTRL_SEQ_RESET       (1u << 1)  /* invalidate KV, seq pos -> 0 */
 #define FK33_CTRL_LOGITS_ALL      (1u << 2)  /* write logits for EVERY step,
-                                              * not only the last one */
+                                              * not only the last one.
+                                              * NOT IMPLEMENTED in v2: there
+                                              * is no logits egress at all.
+                                              * Check FK33_CAP_LOGITS. */
+#define FK33_CTRL_ABORT           (1u << 3)  /* v2.  Drops the current token. */
+#define FK33_CTRL_TOK_ACK         (1u << 4)  /* v2.  RESERVED, and the reason
+                                              * is worth stating: D's own
+                                              * `tok_done` is a LEVEL held
+                                              * until `tok_ack`, and
+                                              * rtl/fk33_seam.vhd raises that
+                                              * ack ITSELF.  A host round trip
+                                              * to acknowledge a completion it
+                                              * is already polling for would
+                                              * buy nothing. */
+#define FK33_CTRL_CLR_ERR         (1u << 5)  /* v2.  Clears the sticky error. */
 
 /* STATUS.
  *
@@ -220,6 +359,20 @@ extern "C" {
 #define FK33_ST_BUSY              (1u << 1)
 #define FK33_ST_ERR               (1u << 2)
 #define FK33_ST_ERRCODE(v)        (((v) >> 8) & 0xFu)
+
+/* ERR_INFO, v2.  Three fields, and the third is the one worth polling on a
+ * clean run too: `steps_done` MUST equal TBL_LEN at a clean completion.  That
+ * is `rtl/seq_desc_fetch.vhd`'s own counting identity, and an accounting
+ * identity is what named the gdn head-emit defect that a throughput metric
+ * had missed.
+ *
+ * D_ERRCODE IS NOT A SEAM ERROR CODE.  D reports in its own 4-bit space and
+ * subsystem A's is full (OI-9); a shared field with two meanings per value is
+ * how an error report becomes fiction.  A D failure surfaces as seam code
+ * FK33_SEAM_ERR_DESC in STATUS, with D's own code HERE. */
+#define FK33_EI_D_ERRCODE(v)      ((v) & 0xFu)
+#define FK33_EI_ERR_STEP(v)       (((v) >> 4) & 0x7FFu)
+#define FK33_EI_STEPS_DONE(v)     (((v) >> 16) & 0x7FFu)
 
 /* Error codes.  Deliberately NOT overlapping subsystem A's 0x0..0xF space,
  * because A's is FULL (OI-9) and a shared field with two meanings per value is
@@ -241,6 +394,16 @@ extern "C" {
 #define FK33_SEAM_ERR_DESC        0x6u  /* the D program was refused */
 #define FK33_SEAM_ERR_HALT        0x7u  /* thermal guard refused the GO */
 #define FK33_SEAM_ERR_SEQ         0x8u  /* SEQ_POS is not the card's next pos */
+
+/* WHICH OF THE NINE `rtl/fk33_seam.vhd` CAN ACTUALLY RAISE, said because a
+ * code nothing can produce is a code nothing tests.  v2 raises NONE, POS,
+ * NSTEP, RSVD, DESC and SEQ.  It cannot raise ALIGN or STACK -- both are
+ * properties of the HBM pointers, which v2 refuses outright as RSVD before
+ * either check would apply -- and it cannot raise HALT, because the thermal
+ * guard's `compute_halt` is not wired to this block.  Wiring it is open work:
+ * `docs/debugging/2026-08-30_therm255-is-two-stacks-not-two-copies.md` is why
+ * a GO refused for heat has to be distinguishable from one refused for a bad
+ * request. */
 
 /* ---------------------------------------------------------------------------
  * Block geometry.  Derived from CAPS, so a host that reads CAPS cannot
