@@ -1,0 +1,126 @@
+model       Qwen3.5-9B: 32 blocks, 24 Gated DeltaNet + 8 attention, hidden 4096, vocab 248320
+program     32 layers selected; 296 subsystem-A jobs in the layers + 15 lm_head windows = 311
+arena       0x1FFADD000, 311 slots of 512 bytes, 311 used
+lm_head     15 windows at stride 17376, last 5056 rows, covering 248320 of 248320 rows
+
+cost, DERIVED from the MEASURED per-access rates of 2026-08-29 (0.85 us per MMIO
+write, 2.88 us per MMIO read).  NOT a prediction of the whole wall time -- it omits
+the status polling and every host step:
+  activation writes    1536000     1.31 s
+  Y index writes       1675264     1.42 s
+  Y readback reads     3350528     9.65 s   <-- the term that decides the run
+  of which lm_head      496640     1.43 s   (15% of the readback, one tensor)
+  weight beats         5187328     0.56 s   at the MEASURED 21.6 core cycles per beat, 200 MHz
+  MMIO total           6561792    12.38 s
+
+checking the host non-matvec steps before chaining anything through them:
+  32 of 32 layers' host steps reproduce the reference
+
+transport   /dev/xdma0_user + /dev/xdma0_h2c_0//dev/xdma0_c2h_0
+halt policy a spurious THERM-255 halt is WAITED OUT and the job RETRIED, up to 8
+            times per job with 5.00 s of wait each.  A refused GO leaves the engine in
+            S_IDLE, so no descriptor was consumed and the retry's inputs are byte-
+            identical -- see install_halt_retry.
+
+
+mode        CHAINED -- only the token input comes from the reference; every other x is
+            derived on the host from the CARD's own outputs, ACROSS layer boundaries
+
+layer 0   gdn  10/10 jobs PASS   45120 rows   0.383 s  out MATCH
+layer 1   gdn  10/10 jobs PASS   45120 rows   0.363 s  out MATCH
+layer 2   gdn  10/10 jobs PASS   45120 rows   0.366 s  out MATCH
+layer 3   attn  7/ 7 jobs PASS   43008 rows   0.340 s  out MATCH
+layer 4   gdn  10/10 jobs PASS   45120 rows   0.365 s  out MATCH
+layer 5   gdn  10/10 jobs PASS   45120 rows   0.366 s  out MATCH
+layer 6   gdn  10/10 jobs PASS   45120 rows   0.367 s  out MATCH
+layer 7   attn  7/ 7 jobs PASS   43008 rows   0.341 s  out MATCH
+layer 8   gdn  10/10 jobs PASS   45120 rows   0.369 s  out MATCH
+layer 9   gdn  10/10 jobs PASS   45120 rows   0.370 s  out MATCH
+layer 10  gdn  10/10 jobs PASS   45120 rows   0.370 s  out MATCH
+layer 11  attn  7/ 7 jobs PASS   43008 rows   0.341 s  out MATCH
+layer 12  gdn  10/10 jobs PASS   45120 rows   0.369 s  out MATCH
+layer 13  gdn  10/10 jobs PASS   45120 rows   0.372 s  out MATCH
+layer 14  gdn  10/10 jobs PASS   45120 rows   0.393 s  out MATCH
+layer 15  attn  7/ 7 jobs PASS   43008 rows   0.355 s  out MATCH
+layer 16  gdn  10/10 jobs PASS   45120 rows   0.370 s  out MATCH
+layer 17  gdn  10/10 jobs PASS   45120 rows   0.371 s  out MATCH
+layer 18  gdn  10/10 jobs PASS   45120 rows   0.374 s  out MATCH
+layer 19  attn  7/ 7 jobs PASS   43008 rows   0.347 s  out MATCH
+layer 20  gdn  10/10 jobs PASS   45120 rows   0.406 s  out MATCH
+layer 21  gdn  10/10 jobs PASS   45120 rows   0.384 s  out MATCH
+layer 22  gdn  10/10 jobs PASS   45120 rows   0.373 s  out MATCH
+layer 23  attn  7/ 7 jobs PASS   43008 rows   0.346 s  out MATCH
+layer 24  gdn  10/10 jobs PASS   45120 rows   0.378 s  out MATCH
+layer 25  gdn  10/10 jobs PASS   45120 rows   0.372 s  out MATCH
+layer 26  gdn  10/10 jobs PASS   45120 rows   0.370 s  out MATCH
+layer 27  attn  7/ 7 jobs PASS   43008 rows   0.341 s  out MATCH
+layer 28  gdn  10/10 jobs PASS   45120 rows   0.368 s  out MATCH
+layer 29  gdn  10/10 jobs PASS   45120 rows   0.369 s  out MATCH
+layer 30  gdn  10/10 jobs PASS   45120 rows   0.405 s  out MATCH
+layer 31  attn  7/ 7 jobs PASS   43008 rows   0.342 s  out MATCH
+
+the tail -- the final norm on the host, then the lm_head as 15 RAW windows on the card
+  final norm  R_X-31 -> R_XN.final: 0 of 4096 mantissas differ from the reference, exp d=0
+
+the lm_head oracle against the reference's own LOGITS record:
+  compared    248320 of 248320 logits, 0 differ
+  resolution  0 of 248320 have |s32| >= 2^24, where s32 -> f32 is many-to-one
+              and this comparison cannot see a low-bit error
+  reference   TOKEN = 2614; the oracle's own argmax over its s32 is 2614
+  activation  the R_XN.final this run derived is IDENTICAL to the reference's, so the
+              expectation is unchanged (oracle 4.2 s, run once)
+  window 0    rows      0.. 17375  PASS         0.111 s
+  window 1    rows  17376.. 34751  PASS         0.109 s
+  window 2    rows  34752.. 52127  PASS         0.109 s
+  window 3    rows  52128.. 69503  PASS         0.109 s
+  window 4    rows  69504.. 86879  PASS         0.110 s
+  window 5    rows  86880..104255  PASS         0.109 s
+  window 6    rows 104256..121631  PASS         0.109 s
+  window 7    rows 121632..139007  PASS         0.109 s
+  window 8    rows 139008..156383  PASS         0.109 s
+  window 9    rows 156384..173759  PASS         0.109 s
+  window 10   rows 173760..191135  PASS         0.109 s
+  window 11   rows 191136..208511  PASS         0.124 s
+  window 12   rows 208512..225887  PASS         0.112 s
+  window 13   rows 225888..243263  PASS         0.112 s
+  window 14   rows 243264..248319  PASS         0.033 s
+
+PCIe register traffic over the whole run, counted per access by Meter:
+  MMIO reads     3583291      6.885 s     1.92 us each
+  MMIO writes    3212819      1.493 s     0.46 us each
+  Setup is amortised -- one process, one open device, one compiled oracle -- so
+  what is left IS the PCIe cost.
+
+result      32 of 32 layers run; 311 of 311 jobs; 311 PASS, 0 FAIL/REFUSED, 0 INCONCLUSIVE
+            1675264 result rows compared against ref/run9b's stream, element for element
+            token wall 17.814 s
+            RE-ANCHORED 32 times (the chain was broken here):
+               24 x  the Gated DeltaNet block -- subsystem B, which is not on this silicon
+                8 x  the gated attention block -- subsystem C, which is not on this silicon
+            DONE-1 poll witness: 0 of 311 jobs completed on their FIRST STATUS read
+            THERM-255 trip counter 0 -> 0
+            GUARD       0 refused GO(s) waited out and retried (0.00 s waiting, 0
+                        unrecovered); 0 trip(s) across a job that ran, 0 of
+                        those left a job that did not PASS
+            THE TRIP COUNT IS A LOWER BOUND.  It is sampled at job boundaries, and
+            MEASURED 2026-08-30: 400 such samples taken while compute was active caught
+            NOTHING, while an idle read afterwards did.  A halt that rises and falls
+            inside one job is invisible here.  Nothing in this run reports the LATCHED
+            cause, which is captured a cycle late and reads CAUSE_NONE on exactly the
+            transient inequality that caused it (fk33_thermal.vhd:963).
+
+            the tail:
+              final norm  reproduces the reference exactly
+              lm_head     248320 of 248320 rows read back from the card
+              LOGITS      the oracle matched the reference's f32 record on all of them
+              TOKEN       card argmax 2614, reference 2614
+
+VERDICT     PASS -- every one of the 311 matvecs in the token reproduced ref/run9b's stream bit-exactly, in program order, on one open device, and the argmax over the card's OWN 248320 logits is token 2614 -- the same token ref/run9b picked
+SCOPE       subsystem A only.  The 64 RMS norms and the final norm, the 64 residual adds,
+            the 32 SwiGLUs and the whole Gated DeltaNet or attention block of every
+            layer ran on the HOST.  B, C and D are not on this silicon, so this is the
+            MATVEC SKELETON of a token, not a token the card computed by itself.
+            ONE token, ONE position, ONE prompt.  Coverage of the input space is not
+            coverage of the output space: this exercises one activation per job at the
+            exponents this prompt happens to produce, and reaches no saturation corner
+            and no row count other than the shapes the model has.
