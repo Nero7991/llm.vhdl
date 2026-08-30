@@ -832,12 +832,28 @@ architecture rtl of llama_top is
   -- ---- shape, derived once ---------------------------------------------
   constant SZ      : integer_vector := region_sizes(SHAPE);
   constant NG      : natural := (REGMAX + LANES - 1) / LANES;
-  function clog2(n : natural) return natural is
-    variable v : natural := 0;
-  begin
-    while (2**v) < n loop v := v + 1; end loop;
-    return v;
-  end function;
+  -- THERE IS NO LOCAL `clog2` HERE ANY MORE, AND ITS ABSENCE IS THE POINT.
+  -- This architecture used to declare its own
+  --   `function clog2(n : natural) return natural` -- `while (2**v) < n`
+  -- which HID the `use work.util_pkg.clog2;` at the top of this file for the
+  -- whole architecture.  Same simple name, same profile, so the local
+  -- declaration wins outright; MEASURED by TRACK CLOG2, whose reproducer got
+  -- `overflow detected ... from: work.repro(rtl).clog2`, naming the
+  -- architecture's function and never the package's.
+  --
+  -- Two consequences, both bad.  The file used TWO DIFFERENT `clog2`
+  -- functions: the entity's generic defaults (`VN_W` at the top) are outside
+  -- the architecture and always resolved to the package one, while everything
+  -- below this line resolved to the local one -- and `CHK_VN_W` compares the
+  -- two results.  And the `clog2` overflow fix that landed in
+  -- `rtl/util_pkg.vhd` at `209d69e` reached none of this file.
+  --
+  -- MEASURED that deleting it is behaviour-preserving, not merely plausible:
+  -- `tools/clog2top_equiv_tb.vhd` checks the deleted body, the package body
+  -- and TWO independent oracles three ways over 2,097,153 exhaustive values,
+  -- 3,099 Python-generated golden values and 1,048,576 random draws, with the
+  -- deleted body called only where it is defined (n <= 2**30).  Zero
+  -- mismatches; 15 of 17 mutants bite.
   constant LOG2L   : natural := clog2(LANES);
   constant GA_W    : natural := VN_W - LOG2L;
 

@@ -53,10 +53,27 @@ entity c_lane_p is
 end entity;
 
 architecture sizing of c_lane_p is
+  -- LOCAL ON PURPOSE, NOT A COPY WAITING TO BE DELETED.  `work.util_pkg.clog2`
+  -- is the same function, but the micro flow synthesises these files ONE AT A
+  -- TIME with no package in the fileset -- `sim/run_micro.sh:27` passes
+  -- `micro/micro_c_lane.vhd` alone and `sim/run_micro_pnr.sh:24` passes
+  -- `micro/c_lane.vhd micro/micro_c_array.vhd`, and `sim/ooc_micro.tcl:59`
+  -- reads exactly the files it is handed.  A `use work.util_pkg.clog2;` here
+  -- would break every one of those runs.
+  --
+  -- THE BODY IS THE HALVING SHAPE NOW, NOT `v := v * 2`.  The doubling form
+  -- needs `2**31` at n = 2**30 + 1 and leaves the integer type there; MEASURED
+  -- by TRACK CLOG2 as `overflow detected` at exactly that threshold, and the
+  -- same defect that `rtl/util_pkg.vhd` was fixed for at `209d69e`.  ACC_N is
+  -- a lane count and has never been near 2**30, so this is a latent class and
+  -- not a live bug -- recorded as such rather than dressed up.  The halving
+  -- form only ever decreases, so no intermediate can leave `natural`.
   function clog2(n : positive) return natural is
-    variable r : natural := 0; variable v : positive := 1;
+    variable r : natural := 0; variable v : natural;
   begin
-    while v < n loop v := v * 2; r := r + 1; end loop; return r;
+    if n <= 1 then return 0; end if;
+    v := n - 1;
+    while v > 0 loop r := r + 1; v := v / 2; end loop; return r;
   end function;
   constant IW : positive := clog2(ACC_N);
 
