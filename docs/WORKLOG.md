@@ -406,7 +406,7 @@ reserved D value. Still Oren's call.
 
 ### Two blind spots recorded, with no owner
 
-* **Gray coding has no automated defence.** TRACK CDC-STATIC measured that mutation `G1` (both gray functions to identity) is not caught by static CDC analysis, and is WORSE than uncaught: the binary-pointer design reports TWO FEWER warnings than the correct one, so any "the report must not get worse" rule passes it. `G2`, which simulation kills instantly, is byte-identical to the baseline under the static flow. Vivado classifies by width, depth, ASYNC_REG and fan-in and never inspects an encoding. Simulation and static analysis are complementary on topology and **both blind to the encoding.**
+* **Gray coding has no automated defence, and TRACK BOARDAUDIT narrowed that to exactly one class.** TRACK CDC-STATIC landed real machinery (`sim/cdc_teeth.sh`, `sim/mutate_async_fifo.sh` class GRAY `G1`..`G6`, `docs/debugging/2026-08-29_cdc-static-analysis.md`, `be982b3`) and it closes two of three classes: the encoder/decoder MISMATCH (`G2`) is killed by simulation, and the 2FF-vs-1FF MTBF class (`G3`/`G4`/`C6`) by `report_cdc`. **What remains undefended is `G1` alone: both gray functions replaced by identity, consistently.** It is worse than uncaught -- the binary-pointer design reports TWO FEWER `report_cdc` warnings than the correct one, so any "the report must not get worse" rule PASSES it. Vivado classifies by width, depth, ASYNC_REG and fan-in and never inspects an encoding. Simulation and static analysis are complementary on topology and **both blind to the encoding.** The CDC-STATIC write-up says this about itself in its own section 7; backlog row N10.
 * **`K2b`, a standing hazard, not a task.** `P_CB_CHK`'s idle invariant watches `cbw_v(0)`, the command REGISTER, not the write. Any future change that deepens the codebook command path makes the invariant vacuous with nothing in the tree noticing. Lever C is no longer being taken (the shell routes without it), but the hazard is not specific to lever C.
 
 ## Decisions taken, with their triggers
@@ -489,6 +489,22 @@ exponent claim re-aimed at R_X, and the prefetch consuming at k-3. Both change
 every element and no property in the bench can observe either. Fourth and fifth
 instance of the same family. This is the honest ceiling on what `tb_llama_top`
 proves, and it is not closed by any track above.
+
+**UPDATE 2026-08-29, TRACK BOARDAUDIT. Probably closed, and NOT MEASURED, which
+is the whole point of saying so.** TRACK OI3B (`5578132`) gave the family a real
+value gate: `sim/tb_llama_top.vhd`'s `P14` fires when
+`results(0)(NTOK-1)(0) /= L_X0`, with `L_X0` pinned in `sim/tb_llama_top_real.vhd`.
+The two defects OI-3 names are `rtl/llama_top.vhd`'s
+`c_exp_region <= to_unsigned(R_VIN, 8)` and `if k >= 2 then qg_buf(k-2) <= el_rdata`,
+both live in the config `tb_llama_top_real` exercises, and both move `R_X(0)`.
+So the gate ought to kill them.
+
+**But nothing has shown that it does.** MEASURED: no `sim/mutate_llama_top_*.sh`
+row and no line of OI3B's own teeth table names either mutation; OI3B's teeth
+were taken on defect C1, the `v_ref` collapse and the `gdn_silu` truncation.
+**A gate that ought to catch a defect and has never been shown to is exactly the
+class this project keeps being bitten by**, so this stays OPEN as backlog row N6
+until two mutations have been run. It is cheap: two mutations, one bench.
 
 ### OI-5: RESOLVED 2026-08-28 (`c8a57d8`) -- the Python decoder was wrong on 243 ids
 
@@ -692,7 +708,29 @@ that feeds raw bytes; a JSON parser rejects them first. Recorded so nobody
 re-derives it while fuzzing, and because it is why the byte fuzz excludes lead
 bytes `0xF0..0xFF` -- there is no oracle answer to compare against.
 
-### OI-12: the FK33 shell build does not route
+### OI-12: RESOLVED 2026-08-29 (`ed1ffe2`) -- the FK33 shell build did not route
+
+**CLOSED by TRACK BOARDAUDIT 2026-08-29, against the tree rather than against a
+document.** The cause was never area, timing or the placer: it was
+`hw/fk33/fk33_pcieep.xdc:133-140`, an **inherited SQRL constraint** assigning
+the whole block design to a pblock holding 67% of the assigned LUTs and 33% of
+the assigned DSPs. It is `IS_SOFT`, so the placer crammed and spilled rather
+than failing, and SHELL's own `runme.log` said so in nine `Place 30-640` lines
+nobody read. Deleting it plus a small pblock at `CLOCKREGION_X0Y0:X6Y3` routes.
+
+VERIFIED in the tree, not in a report: `hw/fk33/results/pblock_2026-08-29/ASX_route_status.rpt`
+says **0 nets with routing errors, 288,506 fully routed**, and
+`hw/fk33/bit/fk33_pcieep_eng.bit` is 22,568,402 bytes. `ed1ffe2` is an ancestor
+of HEAD. The bitstream has since been loaded on card 1 and configures, links
+Gen3 x4 and identifies (`docs/debugging/2026-08-29_first-engine-load-on-card.md`).
+
+**This entry sat unmodified for a day saying "There is no routed checkpoint and
+no bitstream" while both existed**, and the BACKLOG row for the same work said
+the opposite. Two places recording one fact is how that happens. The
+description below is kept for the record and is no longer the state of the tree.
+
+
+### OI-12, superseded text
 
 **MEASURED 2026-08-29, `928ad9f`.** The first build carrying subsystem A on the
 card's HBM ports places, but `route_design` terminates:
@@ -745,12 +783,26 @@ nothing currently proves the per-port CDC is being treated as asynchronous
 rather than timed, and no per-clock WNS figure exists for this design.** If the
 group did NOT apply, every WNS above is pessimistic rather than optimistic.
 
-### OI-4: no descriptor-program generator exists, in any language
+### OI-4: RESOLVED 2026-08-29 (`a2b20f3`) -- the descriptor-program generator exists
 
-Subsystem D's control core is integrated and mutation-tested, but nothing emits
-the descriptor program it executes. This is **host software** and it is on the
-critical path for both the card and the server. **UNBLOCKED 2026-08-28:** the
-descriptor format is settled and byte-pinned in
+**CLOSED by TRACK BOARDAUDIT 2026-08-29.** `tools/gen_layer_program.py` is
+1,155 lines, names backlog row 6 in its own header, and emits real bytes:
+`d_table.hex` and a per-job `a<NN>_<tensor>.hex` for each of the 311 A jobs,
+behind a full CLI. `tools/dprog_oracle.py` (956 lines) checks the EMITTED BYTES
+against artefacts from other sources. Both VERIFIED present at HEAD.
+
+Note the WORKLOG's own D-PROG section already said "**OI-4 is STALE at HEAD and
+should be closed**" and the entry was left open anyway. A correction written in
+one section does not close an issue recorded in another.
+
+**Trap that survives the closure: `gen_layer_program.py` defaults to the
+PRE-QKV-PAD packed set, where 48 of 311 A jobs are refused. Always pass
+`--manifest`.**
+
+Superseded text: Subsystem D's control core is integrated and mutation-tested,
+but nothing emits the descriptor program it executes. This is **host software**
+and it is on the critical path for both the card and the server. **UNBLOCKED
+2026-08-28:** the descriptor format is settled and byte-pinned in
 `docs/2026-08-28_matvec-descriptor-format.md`, whose section 7 carries a
 reference builder in C for the A job. Still nothing emits it.
 
