@@ -72,6 +72,14 @@ Repo SHA at the start of this track: `494f8817cd0e93a7e6b53a15d9e7bfd8d4c26dc7`
 >
 > **X3 is the one that is actually live.** X1, X2 and X4 are all comfortably
 > false today; X3 is undecided and is TRACK TIMING's, not mine.
+>
+> **X3 WAS REWRITTEN 2026-08-30 after the section 7.1 draws came back. It can
+> no longer fire in the form above. See section 11.6.** The draws MEASURED
+> subsystem C at **0.985** of its N=1 area under tensor parallelism against a
+> predicted 0.608, because its mac array is dimensioned on `G = N_QH/N_KVH`,
+> which tensor parallelism leaves invariant. **Two cards do not deliver the
+> area saving this document estimated**, so a single-card area failure is not a
+> reason to reach for them.
 
 > ### WATCH ITEM AGAINST X1: striping SPENDS context, and it can spend past 64k
 >
@@ -492,7 +500,7 @@ though the absolutes are optimistic:
 | **PP by index, N=2** | 403,268 | 116% | **no** | 57.1 | context |
 | **PP by type, N=2** | 324-329k | 93-95% | **no** | 57.1 | context |
 | **TP-fast, N=2** | 416,410 | 120% | **no** | 112 | context, speed |
-| **TP-small, N=2** | ~308,900 | 88.9% | **yes, just** | 57.2 minus the collective | context, and a FIT |
+| ~~**TP-small, N=2**~~ **WITHDRAWN, see section 11** | ~~308,900~~ **344,170** | ~~88.9%~~ **99.1%** | ~~yes, just~~ **NO** | 57.2 minus the collective | **nothing it was bought for** |
 
 \* the URAM row's CLB is computed at the unchanged 6.32 density and is therefore
 pessimistic: the two moves also delete 26,432 of the design's 90,896 MUXF7/F8
@@ -856,6 +864,9 @@ and the box hung last night under six.
 
 ### 7.2 Experiment 2: the single-card fix, which has overtaken this whole track
 
+> **Its 84.5% TP-small figure is WITHDRAWN by section 11; corrected it is 94.6%.**
+
+
 **SUPERSEDED IN PROGRESS, 2026-08-30, and in the direction this document
 argued.** When section 7.2 was first written the single-card relief was "the
 two URAM moves, 76,156 LUT, unexecuted". TRACK TIMING has since found a **third
@@ -1048,3 +1059,176 @@ every recursive grep to `rtl/ hw/ tools/` with `--include`.
     through `route_design`, trigger X3 is open and the single-card decision
     rests on an unrouted projection. **This is the largest remaining risk to
     the decision this document records.**
+
+---
+
+# 11. RESULTS of the section 7.1 draws, and the withdrawal of section 2.5's C row
+
+**Run 2026-08-30 on the BC-250** (`cachyos-bc250`, 192.0.2.200), Vivado
+2023.2, part `xcvu33p-fsvh2104-2L-e`, period 5.0 ns, licence
+`~/.Xilinx/Xilinx-4.lic`. Tree synced with
+`~/GitHub/DevOps/bc250-sync-llama-vhdl.sh` immediately before the run; md5 of
+`rtl/attn_block.vhd`, `rtl/gdn_block.vhd` and `sim/ooc_compose_bcd.tcl` verified
+identical on both machines before any Vivado started. One Vivado at a time,
+gated on presence. **No hardware, no workstation Vivado.**
+
+Harness `/mnt/storage/twocard_scratch/run_halfwidth.sh`; it rewrites exactly two
+`GEN` lines of `sim/ooc_compose_bcd.tcl` into a scratch copy and **refuses to
+run if either rewrite did not bite**. The repo's own script is untouched.
+
+## 11.1 The answer, up front
+
+**BOTH THRESHOLDS MISSED, AND NOT NARROWLY. Section 2.5's TP-small estimate is
+WITHDRAWN.** `attn_block` at half the heads is **86,012 LUT against the N=1
+control's 87,337, a ratio of 0.985**. I predicted 0.608.
+
+**And the reason is structural, not numerical. It is the same class of error I
+caught in the brief's pipeline proposal, committed by me, in my own tensor
+estimate, in the same document.**
+
+## 11.2 The measurement
+
+| draw | generics | LUT | FF | DSP | F7 | F8 | BRAM | secs |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `c_n1_a` control | `N_QH=16 N_KVH=4` | **87,337** | 101,319 | **298** | 16,350 | 2,992 | 11 | 706 |
+| `c_n2_a` | `N_QH=8 N_KVH=2` | **86,012** | 101,127 | **298** | 18,112 | 3,776 | 9.5 | 658 |
+
+Both post-synthesis, `rc=0`, both with the `COMPOSE_DONE attn_block` sentinel.
+`HEAD_DIM=256` and `LAYERS=8` held constant in both, as recorded by the
+`COMPOSE_GENERICS` line each run printed.
+
+**The control validates the flow.** `c_n1_a` at 87,337 LUT / 101,319 FF / 298
+DSP / 11 BRAM reproduces the composed build's `c_attn` instance row (85,592 /
+101,046 / 298 / 11) to **+2.0% on LUT and exactly on DSP and BRAM**. That
+matters because `sim/ooc_compose_bcd.tcl`'s header warns a per-instance row in
+a flattened composed synthesis is not an isolated measurement. It agrees, so
+the comparison is sound.
+
+| | ratio | LUT on the OOC basis | verdict |
+|---|---:|---:|---|
+| section 2.5 estimate | 0.608 | 53,101 | -- |
+| **threshold B**, fits the 90% routable target | 0.615 | 53,712 | **MISSED by 32,300** |
+| **threshold A**, fits the die at all | 0.795 | 69,433 | **MISSED by 16,579** |
+| **MEASURED** | **0.985** | **86,012** | |
+
+## 11.3 Why: G is invariant under tensor parallelism
+
+MEASURED, `rtl/attn_block.vhd:395-396` and `:898-901`:
+
+```vhdl
+constant NBLK  : integer := HEAD_DIM/KV_BLOCK;   -- 256/32 = 8
+constant G     : integer := N_QH/N_KVH;          -- the GQA group size
+
+u_arr : entity work.attn_mac_array
+  generic map ( QH_TILE => G, DIM_TILE => KV_BLOCK, ACC_N => NBLK, ... )
+```
+
+**The mac array is dimensioned on the RATIO `G = N_QH/N_KVH`, and tensor
+parallelism divides the numerator and the denominator by the same N.**
+
+```
+N=1 :  G = 16/4 = 4
+N=2 :  G =  8/2 = 4        <-  INVARIANT
+```
+
+`KV_BLOCK`, `HEAD_DIM` and `NBLK` are invariant by inspection. So
+`attn_mac_array` -- **55,854 LUT and 256 of C's 298 DSP**, the single largest
+item in subsystem C -- is **exactly invariant under TP**, and the DSP column
+measuring **298 in both draws, to the unit**, is the proof rather than an
+argument for it.
+
+The 1.5% that did come out is the `gen_head[i]` replication falling from 4
+instances to 2 (4,210 LUT) plus part of `attn_kv_quant`, **partly cancelled by
+something that grew**: F7 muxes rose 10.8% and F8 muxes rose 26.2%.
+
+**That last point may matter more than the LUT number.** CLB is the binding
+resource, not LUT, and F7/F8 pairs are indivisible placement shapes -- they are
+precisely what drove packing density from the architectural 8 down to the
+measured 6.32. A configuration with 1.5% fewer LUTs and 12.9% more mux pairs
+could occupy **more** CLB, not less. An OOC synthesis is unplaced and cannot
+answer that; see the open item below.
+
+## 11.4 The corollary that decides it
+
+The array can only shrink by taking `QH_TILE` **below** `G`, which is the MACS
+ladder (`QH_TILE` must divide the group, so at the 9B the legal rungs are 32,
+64, 128 -- `docs/2026-08-27_9b-single-card-resource-envelope.md` finding F2).
+
+**Every rung of that ladder is available at N=1.** Halving MACS trades
+throughput for area on ONE card, with no second card, no subsystem E, no peer
+link and no collective. **So the lever that shrinks C is orthogonal to the card
+count, and adding a card unlocks none of it.**
+
+That generalises to the whole TP-small case, and it is the finding worth
+keeping: **TP-small was never "two cards buy you area". It was "accept half the
+throughput and you buy area", with a second card attached to it for no reason.**
+Section 3.2 already showed TP-small runs at one card's speed; section 11.3 now
+shows it does not even get the area.
+
+## 11.5 Corrected arithmetic
+
+Substituting the MEASURED C for the estimate, scaled to the compose basis
+(86,012 x 85,592/87,337 = 84,293):
+
+```
+section 2.5 TP-small total                        311,877 LUT   89.8%
+C estimated 52,000, MEASURED 84,293               +32,293
+                                                  -----------
+corrected TP-small total                          344,170 LUT
+344,170 / 6.32                                    = 54,457 CLB = 99.1%
+```
+
+**TP-small does not fit.** 99.1% against the composed design's 99.83%, which is
+MEASURED unroutable at congestion level 7 with 33,767 failing endpoints. This is
+before subsystem B's draws are in, and before any allowance for the mux growth
+in 11.3.
+
+**Section 2.5's table, section 2.6's `TP-small` row (88.9%), and every figure
+derived from them are WITHDRAWN.** They are left in place rather than deleted,
+per the house rule, and this section is the correction. The 84.5% figure in
+section 7.2, which applied TRACK TIMING's HBM norm gain to the same estimate,
+is withdrawn with them; corrected it is 344,170 - 15,538 = 328,632 LUT = 94.6%.
+
+## 11.6 What this does and does not change
+
+**Does not change the decision.** The 9B stays single-card, and this
+strengthens it: the two-card option is now measured to be worse than estimated
+on the one axis that motivated it.
+
+**Does change trigger X3.** X3 read "the single-card area conclusion fails to
+close, AND section 7's draws confirm TP-small near 89%". **The second clause is
+now false and X3 can never fire in the form written.** If single-card area
+fails to close, two cards as specified do not rescue it, so the correct
+response would be the MACS ladder, the norm-gain levers, or a smaller model --
+not a second card. **X3 is rewritten below.**
+
+> **X3, corrected 2026-08-30 after the draws.** The single-card area conclusion
+> failing to close is **no longer a trigger for two cards at all**. Measured:
+> halving the shape generics leaves subsystem C's area unchanged (0.985),
+> because its mac array is dimensioned on the TP-invariant ratio `G`. If area
+> fails to close, the levers are `QH_TILE` below `G` (costing throughput, on
+> one card), the norm-gain paths, or a smaller model. **Two cards return only
+> via X1, X2 or X4.**
+
+## 11.7 Measurement traps hit, mine included
+
+**T6. I halved C's SHAPE generics and left its THROUGHPUT dimensioning alone,
+and I did not notice because `attn_block` exposes no generic for the latter.**
+Section 2.5 attributed `u_arr`'s halving to "`MACS` 128 to 64" -- but there is
+no `MACS` generic on `attn_block`; the array's width is `QH_TILE => G`, derived
+inside the file. So the experiment I designed could not have tested the thing
+my estimate assumed, and the only reason this is a finding rather than a
+botched run is that **the DSP column held at 298 across both draws and made the
+invariance impossible to miss.** Had I looked only at LUT (87,337 to 86,012) I
+would have recorded "TP saves less than expected" instead of "TP saves nothing
+here, structurally".
+
+**T7. I made the same class of error I had just diagnosed in someone else.**
+The headline of this document is that pipeline parallelism fails because the
+area is dimensioned on something the split does not touch. Section 2.5 then
+assumed C's area was dimensioned on the head count, when it is dimensioned on
+the ratio of two head counts, which TP preserves exactly. **Diagnosing a
+failure mode is not immunity from it.** The general form worth carrying: before
+crediting a parallelism scheme with an area saving, find the generic the area
+is actually dimensioned on and substitute the sharded values into it, rather
+than reasoning about what "should" scale.
