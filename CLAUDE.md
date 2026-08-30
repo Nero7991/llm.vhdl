@@ -130,9 +130,17 @@ The rules that follow from this:
 - **A full build requires stopping `llama-server` first**, because 25.0 GiB does
   not fit in 13. That is a deliberate act with a user-visible cost, so it is
   Oren's call, not a track's.
-- **`ghdl-mcode` is not free.** MEASURED the same day: 20.9 GiB anon-RSS in a
-  single process, OOM-killed twice at 16:48. It was contained only because
-  `claude-tmux --mem` put it in a cgroup. Uncontained, it is a box-killer.
+- **`ghdl-mcode` is not free, BUT THE 20.9 GiB FIGURE IS NOT THE GATE.**
+  MEASURED: 20.9 GiB anon-RSS in a single process, OOM-killed twice, contained
+  only because `claude-tmux --mem` put it in a cgroup. **That figure belongs to
+  ONE bench, not to a regression run, and it has never been attributed to a
+  named row.** MEASURED 2026-08-30 by TRACK GATEGREEN: **the FULL both-suite
+  gate at `--jobs 1` peaks at 2.13 GiB** (cgroup `memory.peak`, well under its
+  8G cap so it is a real peak and not the cap), running beside a 7-10.6 GiB
+  Vivado `place_design` with `MemAvailable` never below 19 GiB. **`--jobs 2` is
+  fine; preferring 1 is politeness, not safety.** Do not provision the whole
+  dispatch budget against 20.9 GiB, as this dispatcher did all night -- **pin
+  which bench actually reaches it before quoting it again.**
 - **THE REFILL RULE DOES NOT OVERRIDE THIS.** "Four concurrent tracks" is a
   target for keeping the backlog moving, not a licence to exceed the machine.
   **Four tracks that hang the box complete zero work and destroy the work

@@ -129,6 +129,64 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK GATEGREEN COMPLETE (`392f818`, `df0b194`). THE TREE IS GREEN.
+
+Full both-suite run on a clean `git archive 32a7b47`, GHDL 1.0.0 mcode,
+`--jobs 1`:
+
+```
+ suite sim   PASS 79   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 3
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 105  FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4   SKIPPED 6
+ REGRESSION: PASS
+```
+
+**Zero red rows, so no bisection was needed.** Every row for every file the 32
+commits touched passed, including the two new auto-discovered rows.
+
+**`BASELINE_PASS` LEFT AT 99, DELIBERATELY.** The floor run (with the documented
+`MV4I_FK33_FILE=/nonexistent`) measures **101**, and the gate itself printed the
+raise suggestion. But `sim/tb_a_wbase.vhd` landed in `d7a6bf7` AFTER the archive
+(verified with `git merge-base --is-ancestor`), so 101 describes a commit that is
+no longer HEAD and **102 would be arithmetic over a row nobody has run.** The
+measurement, the recipe and the reason are written into `sim/regress.sh` so the
+next track closes it with one run and no re-derivation.
+
+**WHAT THE GATE DOES NOT COVER, and this matters because seven tracks quoted
+area and timing numbers today:** GHDL simulation plus seven Python/Tcl
+self-checks. **No synthesis, no timing, no placement, no routing, no area, no
+power, no card.** Six `*_cmp` rows are skipped by design, so **the netlist is
+never compared to the behavioural model.** Four rows are NOCHECK. **Five `rtl/`
+files are reached by no testbench at all.**
+
+And the line worth keeping: **`FAIL 0` means no row noticed anything, not that
+the rows would notice.** ATTNTEETH found `tb_attn_block` passing a broken tree
+on a degenerate oracle, and BASEFAB's control denies its own new row credit for
+seven of eight kills. **Much of this suite's apparent discrimination is
+incidental.**
+
+**TWO CORRECTIONS TO MY BRIEF.**
+1. "Nobody has run the full gate" was wrong -- TRACK STRAYROW ran one on a clean
+   archive of `2217778` (`912ada7`). **The practice was followed; only the
+   number was stale.**
+2. **THE MEMORY WARNING DOES NOT SURVIVE MEASUREMENT.** The full gate at
+   `--jobs 1` peaks at **2.13 GiB** (cgroup `memory.peak`, under its 8G cap so a
+   real peak), beside a 7-10.6 GiB Vivado `place_design`, `MemAvailable` never
+   below 19 GiB. **The 20.9 GiB `ghdl-mcode` figure belongs to something else
+   and the whole dispatch budget was provisioned against it all night.** Landed
+   in CLAUDE.md; **the bench that actually reaches 20.9 GiB is now an open item
+   and must be pinned before that number is quoted again.**
+
+**ITS OWN TRAP, and it is a guard passing its teeth-check on a live operator
+error:** the first gate ran WITHOUT `MV4I_FK33_FILE=/nonexistent`, so four FK33
+rows ran off a `.mv4i` that has sat on this box since 28 Aug, and the headline
+came out **105**. **The gate refused the raise and named all four rows.** Note
+the `NOT IN GIT` check was silent and correct (an archive has no `.git`); the
+optional-row refusal is a separate mechanism and it is the one that fired.
+
+**Largest unverified surface:** `rtl/llama_top.vhd` changed after `32a7b47`
+(BASEFAB's `d7a6bf7`), so the six `tb_llama_top*` rows are unverified at HEAD.
+
 ### TRACK BASEFAB COMPLETE (`d7a6bf7`). THE URGENCY CLAIM WAS WRONG, AND THAT IS GOOD NEWS.
 
 **The form claim was right; the urgency claim that drove the dispatch was
