@@ -430,7 +430,33 @@ mutate A6 RUN "q_valid ungated -- the abandoned job's residue is offered to the 
 # MEASURED 2026-08-29: row P8 of sim/mutate_axi_rd_port_dual.sh is exactly this
 # edit and SURVIVES all three clock ratios, so sim/tb_axi_rd_port_dual.vhd does
 # not see it either.  Reported, not fixed -- that bench is not this script's.
-mutate A7 RUN "q_ready ungated -- equivalent in g_sc, NOT under DUAL_CLK (see above)" \
+#
+# ---------------------------------------------------------------------------
+# CORRECTION 2026-08-29 (TRACK A7).  THE "AND THEY ARE LOST" HALF IS WITHDRAWN,
+# AND THE ROW IS NOW CAUGHT ANYWAY.
+# ---------------------------------------------------------------------------
+# The paragraph above is right that A7 is not equivalent under DUAL_CLK and
+# wrong that it loses a word.  Its harm needs `f_qv = '1'` while `run_c` is
+# still low at the RISE of a job, and that is unreachable at EVERY clock ratio:
+# `run_c` is a 2FF core-domain synchroniser of `run_f`, and `f_qv` is a 2FF
+# core-domain synchroniser of the FIFO's WRITE POINTER plus an output stage
+# (rtl/async_fifo.vhd:360 and :353), and the write pointer cannot move until the
+# first R beat lands at least two aclk edges after `run_f` rose.  So `run_c`
+# rises at or before `f_qv`, always.
+#
+# MEASURED: the exact 0d14a70 RTL plus this edit, at a 20:1 aclk:clk ratio
+# (`awild`, added to sim/tb_axi_rd_port_dual.vhd), produced ZERO value errors.
+# The FK33's own ratio is 250:200 = 1.25.  Do not go hunting for a ratio.
+#
+# So A7 is an OUTPUT-equivalent mutant in g_sc, exactly as the paragraph above
+# proves, and a behaviour-changing but HARMLESS one under DUAL_CLK.  It is now
+# ABORT rather than SURVIVED because rtl/axi_rd_port.vhd carries a clocked
+# assert -- the FIFO is never popped while the stream output is suppressed --
+# which is an INTERNAL invariant, not an output oracle.  Read the row that way:
+# the kill is a strengthened check, not a defect found.
+#
+# Full write-up: docs/debugging/2026-08-29_a7-dual-clock-run-gate.md
+mutate A7 RUN "q_ready ungated -- output-equivalent, caught by the port's own invariant" \
   "  f_qr    <= q_ready when run_c = '1' else '0';" \
   "  f_qr    <= q_ready;"
 

@@ -196,6 +196,42 @@ begin
   q_data  <= f_qd;
   f_qr    <= q_ready when run_c = '1' else '0';
 
+  -- THE TWO GATES ABOVE MUST CARRY THE SAME LEVEL, and this is the assertion
+  -- that says so.  It is a TAUTOLOGY of the two lines above -- f_qr = '1'
+  -- implies run_c = '1' implies q_valid = f_qv -- and that is exactly why it is
+  -- worth writing down: an invariant a correct design cannot violate is the
+  -- only kind worth asserting.  Added 2026-08-29 by TRACK A7 because ungating
+  -- `f_qr` alone (row A7 of sim/mutate_axi_rd_port.sh, row P8 of
+  -- sim/mutate_axi_rd_port_dual.sh) SURVIVED every configuration of both
+  -- benches: a word is popped out of the FIFO while `q_valid` is held low, so
+  -- no consumer ever sees it and no value oracle downstream can miss what it
+  -- was never offered.  Under DUAL_CLK that is real data loss -- `run_c` rises
+  -- up to two core cycles after `run_f`, and at a large aclk:clk ratio the FIFO
+  -- is already filling in that window.
+  --
+  -- Clocked on `clk`, not concurrent: `f_qr` is combinational off `run_c`, so a
+  -- concurrent assert would evaluate in the delta where one has moved and the
+  -- other has not.  Sampling at the edge reads the settled values, which are
+  -- the ones the handshake at that edge actually uses.
+  --
+  -- Vivado ignores `severity failure` in synthesis (it is documented in
+  -- CLAUDE.md as a trap), so this costs nothing in the bitstream.  It is a
+  -- simulation-only detector and it fires in EVERY bench that instantiates the
+  -- port, which is the point: a check that lives in one testbench only covers
+  -- the configurations that testbench happens to run.
+  gate_chk : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '0' then
+        assert not (f_qv = '1' and f_qr = '1' and run_c = '0')
+          report "axi_rd_port: the FIFO was POPPED while the stream output was "
+               & "SUPPRESSED.  A word left the FIFO that no consumer can ever "
+               & "have seen; q_valid and f_qr must carry the same run gate."
+          severity failure;
+      end if;
+    end if;
+  end process;
+
   -- =============================================== single-clock configuration
   g_sc : if not DUAL_CLK generate
     signal ack : std_logic := '0';
@@ -238,8 +274,40 @@ begin
 
   -- ================================================= dual-clock configuration
   g_dc : if DUAL_CLK generate
+    -- THE CORE-DOMAIN CLOSE.  Added 2026-08-29 by TRACK A7.
+    --
+    -- `run_s2` is `run_f` delayed by two core cycles, and the header above
+    -- argues that a LATE RISE is the safe direction.  It is.  A late FALL is
+    -- not, and the same synchroniser produces both: after a core-domain
+    -- `start`, `run_f` does not drop until the toggle has crossed (up to three
+    -- aclk edges) and `run_s2` not until two core edges after that, so the
+    -- output gate stays OPEN for roughly five core cycles into a job that has
+    -- already been abandoned.  In the SINGLE-clock configuration `run_c` is
+    -- `run_f` itself and the gate shuts on the cycle after `start`; this makes
+    -- the two configurations agree.
+    --
+    -- MEASURED at 0d14a70 with sim/tb_axi_rd_port_dual.vhd's full-rate abandon:
+    -- 2 residue beats at afast, 3 at anear, 4 at aslow reached the consumer
+    -- from a job that had already been abandoned.  That is a delivered word,
+    -- not an internal transient.
+    --
+    -- WHY IT MATTERED IN THIS DESIGN, stated so the fix is not mistaken for
+    -- tidiness: rtl/weight_streamer.vhd:294 clears the scale holding register's
+    -- valid bit on `start`, and its pop term `s_take` is then `s_allv` with NO
+    -- downstream ready in it.  So for those cycles a residue superword can be
+    -- latched into `s_hold` and every scale of the new job is shifted by one
+    -- superword.  It does not happen today only because the FIFOs are provably
+    -- EMPTY at every `start` the shipping flow reaches (see the write-up), and
+    -- nothing asserts that.
+    --
+    -- The clamp is one FF and one LUT per port.  `abort_c` is SET by the
+    -- core-domain `start` and released only once `run_s2` has been observed
+    -- low, so it can never re-open the gate before the drain and clear have
+    -- run.  At power-on both are '0' and the term is inert.
+    signal abort_c : std_logic := '0';
+  begin
     frst  <= rst_s2;
-    run_c <= run_s2;
+    run_c <= run_s2 and not abort_c;
 
     -- reset into the AXI domain
     rsync : process(aclk)
@@ -266,12 +334,19 @@ begin
     end process;
     start_f <= s_t2 xor s_t3;
 
-    -- `run` level back into the core domain
+    -- `run` level back into the core domain, plus the core-domain close.
+    -- The release condition reads the OLD `run_s2`, so `abort_c` clears one
+    -- core cycle after the synchronised run level was seen low -- by which
+    -- time `run_c` is low on the `run_s2` term alone, and the AND is what
+    -- holds it there until the FSM re-enters S_RUN.
     rsyn : process(clk)
     begin
       if rising_edge(clk) then
-        if rst = '1' then run_s1 <= '0'; run_s2 <= '0';
+        if rst = '1' then run_s1 <= '0'; run_s2 <= '0'; abort_c <= '0';
         else run_s1 <= run_f; run_s2 <= run_s1;
+          if start = '1' then abort_c <= '1';
+          elsif run_s2 = '0' then abort_c <= '0';
+          end if;
         end if;
       end if;
     end process;

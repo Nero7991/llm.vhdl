@@ -80,7 +80,7 @@ entity tb_axi_rd_port_dual is end entity;
 
 architecture sim of tb_axi_rd_port_dual is
 
-  constant NC     : natural  := 3;
+  constant NC     : natural  := 4;
   constant AXI_DW : positive := 32;
   constant ADDR_W : positive := 32;
   constant BYTES  : positive := AXI_DW / 8;
@@ -89,12 +89,12 @@ architecture sim of tb_axi_rd_port_dual is
   constant MAXOUT : positive := 4;
 
   type tarr is array(0 to NC-1) of time;
-  --                afast     aslow     anear
-  constant CPER : tarr := (4.0 ns, 3.0 ns, 3.000 ns);   -- core clock
-  constant APER : tarr := (3.0 ns, 5.0 ns, 3.001 ns);   -- AXI clock
+  --                afast     aslow     anear     awild
+  constant CPER : tarr := (4.0 ns, 3.0 ns, 3.000 ns, 10.0 ns);  -- core clock
+  constant APER : tarr := (3.0 ns, 5.0 ns, 3.001 ns,  0.5 ns);  -- AXI clock
 
   type namearr is array(0 to NC-1) of string(1 to 5);
-  constant NAMES : namearr := ("afast", "aslow", "anear");
+  constant NAMES : namearr := ("afast", "aslow", "anear", "awild");
 
   type iarr is array(0 to NC-1) of integer;
   signal errs    : iarr := (others => 0);
@@ -102,17 +102,29 @@ architecture sim of tb_axi_rd_port_dual is
   signal nbeats  : iarr := (others => 0);
   signal nstall  : iarr := (others => 0);   -- consumer waited on q_valid
   signal nres    : iarr := (others => 0);   -- residue beats, full-rate abandon
+  signal nrqv    : std_logic_vector(0 to NC-1) := (others => '0');
   signal fin     : std_logic_vector(0 to NC-1) := (others => '0');
 
-  -- The residue bound.  DERIVED, not chosen: after a core-domain `start`, the
-  -- toggle needs up to 3 aclk edges to become `start_f`, the FSM leaves S_RUN
-  -- on the next aclk edge, and `run_c` then falls 2 clk edges later.  In that
-  -- window the gate is still open and the consumer may legally take beats the
-  -- old job put in the FIFO.  8 covers it at every ratio here with margin;
-  -- MEASURED honest maxima are printed by every run so the margin is visible
-  -- rather than assumed.  Ungating q_valid lets the consumer drain the whole
-  -- FIFO instead, which is DEPTH = 16.
-  constant RES_MAX : integer := 8;
+  -- The residue bound.  TIGHTENED FROM 8 TO 1 on 2026-08-29 by TRACK A7,
+  -- together with the core-domain close in rtl/axi_rd_port.vhd's `g_dc`.
+  --
+  -- The OLD derivation was correct for the OLD RTL and is kept here because it
+  -- is what the number 8 meant: after a core-domain `start` the toggle needed
+  -- up to 3 aclk edges to become `start_f`, the FSM left S_RUN on the next aclk
+  -- edge, and `run_c` fell 2 clk edges after that, so roughly five core cycles
+  -- of an abandoned job's residue could legally reach the consumer.  MEASURED
+  -- at 0d14a70: 2 beats at afast, 3 at anear, 4 at aslow.
+  --
+  -- `abort_c` closes the gate on the core clock instead, so the ONLY beat that
+  -- can still be delivered is the one whose handshake completes on the very
+  -- edge that samples `start` -- hence 1, and hence a bound with almost no
+  -- slack left in it, which is the point.  Row PK of
+  -- sim/mutate_axi_rd_port_dual.sh removes the close and is killed here.
+  --
+  -- Ungating q_valid (row P7) lets the consumer keep re-reading the same
+  -- residue word until the flush lands, which is what that row is now caught
+  -- by.
+  constant RES_MAX : integer := 1;
 
 begin
 
@@ -149,6 +161,7 @@ begin
     signal slow      : std_logic := '0';   -- consumer takes 1 beat in 8
     signal exp_left_o: integer := 0;       -- published: beats still owed
     signal res_cnt_o : integer := 0;       -- published: residue beats counted
+    signal res_qv_o  : std_logic := '0';   -- published: FIFO offering at the abandon
     signal err_i     : integer := 0;       -- consumer's own errors
     signal err_s     : integer := 0;       -- sequencer's own errors
     signal stall_i   : integer := 0;
@@ -264,6 +277,15 @@ begin
       variable exp_left : integer := 0;
       variable res_open : boolean := false;
       variable res_cnt  : integer := 0;
+      -- NON-VACUITY WITNESS.  With the gate closing on the core clock the
+      -- honest residue count is 0 or 1, so "res_cnt > 0" can no longer serve as
+      -- proof that the FIFO actually held an abandoned job's beats -- and a
+      -- residue bound measured against an EMPTY FIFO passes vacuously, which
+      -- is a mistake this bench has already made once (see J5/J6 below).  What
+      -- is recorded instead is whether the port was OFFERING a beat on the edge
+      -- the abandon was armed.  That is the same fact, taken one step earlier,
+      -- and it does not move when the gate is tightened.
+      variable res_qv   : std_logic := '0';
       variable err      : integer := 0;
       variable stall    : integer := 0;
       variable bp       : integer := 0;
@@ -295,6 +317,7 @@ begin
         if res_arm = '1' then
           res_open := true;
           res_cnt  := 0;
+          res_qv   := q_valid;
         end if;
 
         if rst = '0' and q_valid = '1' and q_ready = '1' then
@@ -349,6 +372,7 @@ begin
 
         exp_left_o <= exp_left;
         res_cnt_o  <= res_cnt;
+        res_qv_o   <= res_qv;
         err_i      <= err;
         stall_i    <= stall;
         bp_i       <= bp;
@@ -360,6 +384,7 @@ begin
     nbeats(i) <= beats_i;
     nstall(i) <= stall_i;
     nres(i)   <= res_cnt_o;
+    nrqv(i)   <= res_qv_o;
 
     -- ==================================================== the sequencer
     seq : process
@@ -549,9 +574,11 @@ begin
           severity error;
         err_s <= err_s + 1;
       end if;
-      if res_cnt_o = 0 then
-        report NAMES(i) & ": COVERAGE -- the full-rate abandon found NO residue" &
-               " resident, so the run gate's bound was tested vacuously"
+      if res_qv_o = '0' then
+        report NAMES(i) & ": COVERAGE -- the port was offering NOTHING on the" &
+               " edge the full-rate abandon was armed, so the run gate's" &
+               " residue bound was tested against an empty FIFO and passed" &
+               " vacuously"
           severity error;
         err_s <= err_s + 1;
       end if;
@@ -563,6 +590,7 @@ begin
              " bp=" & integer'image(bp_i) &
              " rrefuse=" & integer'image(nrf_i) &
              " residue=" & integer'image(res_cnt_o) &
+             " resarm_qv=" & std_logic'image(res_qv_o) &
              " err=" & integer'image(err_i + err_s);
       fin(i) <= '1';
       go <= '0';

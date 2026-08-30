@@ -29,7 +29,34 @@
 # ---------------------------------------------------------------------------
 #   KILL   the bench's own counters or one of its checks.
 #   ABORT  ghdl stopped the run: a bound check, an RTL assert, or a hang.
-#   SURV   the bench printed "0 errors across 3 clock ratios".
+#   SURV   the bench printed "0 errors across N clock ratios".
+#
+# ---------------------------------------------------------------------------
+# CORRECTION 2026-08-29 (TRACK A7).  P8 IS NOT A LOST-WORD DEFECT.
+# ---------------------------------------------------------------------------
+# docs/debugging/2026-08-29_asurv-subsystem-a-mutation-survivors.md finding 3
+# said of this row's single-clock twin:
+#
+#   > an ungated `f_qr` pops those words while `q_valid` is suppressed and they
+#   > are lost
+#
+# The "and they are lost" half is WITHDRAWN.  Its harm needs `f_qv = '1'` while
+# `run_c` is still low at the RISE of a job, and that is unreachable at EVERY
+# clock ratio: both are 2FF core-domain synchronisers, `run_c`'s starts from
+# `run_f` at the aclk edge entering S_RUN, and `f_qv`'s starts from the FIFO
+# write pointer, which cannot move until the first R beat lands at least two
+# aclk edges LATER (rtl/async_fifo.vhd:360 syncs wp_g on rclk, :353 adds an
+# output stage on top).  So `run_c` rises at or before `f_qv`, always.
+#
+# MEASURED: the exact 0d14a70 RTL plus P8, at a 20:1 aclk:clk ratio (the
+# `awild` row added below), produced ZERO value errors.  The FK33's own ratio is
+# 250:200 = 1.25.  Do not go looking for a ratio that makes it bite.
+#
+# P8 is still not an equivalent mutant -- it really does pop the FIFO while the
+# output is suppressed -- but everything it pops is residue the flush is about
+# to discard.  It is now caught by an INVARIANT in rtl/axi_rd_port.vhd rather
+# than by a value oracle, and that invariant is a tautology of the correct
+# design.  That is the reason to assert it, not a reason to discard it.
 #
 # Nothing under rtl/ is edited; every mutation is applied to a COPY.
 #
@@ -89,8 +116,12 @@ import re, sys
 log = open(sys.argv[1], errors="replace").read()
 rc  = int(sys.argv[2])
 log = "\n".join(l for l in log.splitlines() if "metavalue detected" not in l)
+# The ratio COUNT is read out of the bench rather than hardcoded: it was 3
+# until TRACK A7 added `awild`, and a hardcoded 3 scored every row ABORT.
+m = re.search(r"errors across (\d+) clock ratios", log)
+NRATIO = m.group(1) if m else "?"
 
-tot  = re.search(r"axi_rd_port_dual: (\d+) errors across 3 clock ratios", log)
+tot  = re.search(r"axi_rd_port_dual: (\d+) errors across \d+ clock ratios", log)
 # THE CHECKER'S OWN DIAGNOSTICS COME FIRST.  A run that both reports an error
 # and then aborts is a CAUGHT mutation, and reading the abort first would score
 # it as the weaker verdict.
@@ -103,7 +134,7 @@ lang = re.search(r"ghdl[^:]*:error: (.+)", log)
 hung = re.search(r"simulation stopped (by --stop-time|@)", log)
 
 if tot and int(tot.group(1)) == 0 and "PASS: tb_axi_rd_port_dual" in log:
-    print("SURV|0 errors across 3 clock ratios")
+    print("SURV|0 errors across %s clock ratios" % NRATIO)
 elif diag:
     print("KILL|%s" % diag.group(1).strip()[:60])
 elif tot and int(tot.group(1)) != 0:
@@ -214,12 +245,30 @@ echo
 echo "---- class RUN: the run level crossing back to the core domain ---------"
 
 mutate P5 RUN "run_c is taken one flop early -- a 1FF crossing (MTBF only -- expected to survive)" \
-"    run_c <= run_s2;" \
-"    run_c <= run_s1;"
+"    run_c <= run_s2 and not abort_c;" \
+"    run_c <= run_s1 and not abort_c;"
 
 mutate P6 RUN "run_c is the AXI-domain run level with NO SYNCHRONISER AT ALL (MTBF only -- expected to survive, and that is the whole point of sim/cdc_teeth.sh)" \
-"    run_c <= run_s2;" \
-"    run_c <= run_f;"
+"    run_c <= run_s2 and not abort_c;" \
+"    run_c <= run_f and not abort_c;"
+
+# THE TEETH-CHECK FOR THE 2026-08-29 FIX ITSELF.  A fix with no row that would
+# have caught it leaves the next instance invisible, so this row IS the fix,
+# reverted.  It restores exactly the 0d14a70 behaviour, which measured 2/3/4
+# residue beats and passed the old RES_MAX = 8.
+mutate PK RUN "the CORE-DOMAIN CLOSE is removed, so run_c falls only through the 2FF synchroniser and an abandoned job keeps streaming for ~5 core cycles" \
+"    run_c <= run_s2 and not abort_c;" \
+"    run_c <= run_s2;"
+
+# And the other half of it: the close is applied but NEVER RELEASED on a run
+# that was already low, which would wedge the gate shut for good if the release
+# condition were wrong.
+mutate PL RUN "abort_c is set on start and never released, so the output gate shuts on the first job and never re-opens" \
+"          if start = '1' then abort_c <= '1';
+          elsif run_s2 = '0' then abort_c <= '0';
+          end if;" \
+"          if start = '1' then abort_c <= '1';
+          end if;"
 
 mutate P7 RUN "q_valid loses its run_c gate, so the abandoned job's residue flows to the consumer until the flush lands" \
 "  q_valid <= f_qv when run_c = '1' else '0';" \

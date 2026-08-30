@@ -226,7 +226,27 @@ begin
           end if;
         end if;
 
+        -- BOTH counters are clamped, and the second clamp is NOT symmetry for
+        -- its own sake.  MEASURED 2026-08-29 (TRACK A7): without it,
+        -- `outst <= os` below is a BOUND CHECK FAILURE at this line whenever an
+        -- `rlast` beat lands while `outst` is already 0, and that is reachable
+        -- from a conforming AXI slave -- a local reset cannot cancel an
+        -- outstanding read, so bursts issued before `rst` keep returning
+        -- afterwards, and this FSM has just zeroed `outst` in the reset branch.
+        -- sim/tb_matvec_fk33_desc.vhd hits exactly that (a descriptor case run
+        -- after the EC_WDOG watchdog case) and TRACK ASURV worked around it in
+        -- the bench with a 512-cycle inter-case reset; the RTL is where it
+        -- belongs.  In synthesis there is no bound check: `outst` is
+        -- clog2(MAXOUT+2) bits, so -1 wraps to all-ones, the `os < MAXOUT`
+        -- guard below then reads FALSE, and that port issues no further AR --
+        -- a silent hang, not a trap.
+        --
+        -- On a CONFORMING trace neither clamp can fire, so this is bit-exact
+        -- with what shipped: `os` reaches -1 only on an rlast the FSM did not
+        -- issue.  What the clamp does NOT fix is the beats themselves: see the
+        -- open item in docs/debugging/2026-08-29_a7-dual-clock-run-gate.md.
         if pr < 0 then pr := 0; end if;      -- drained promises never go negative
+        if os < 0 then os := 0; end if;      -- nor do retired bursts
         promised <= pr;
         outst    <= os;
       end if;
