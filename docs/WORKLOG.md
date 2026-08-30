@@ -129,6 +129,58 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK TIMING COMPLETE, 2026-08-30 (`9e3348e`..`5d25911`). Three results.
+
+**1. SUBSYSTEM C CLOSES 200 MHz STANDALONE FOR THE FIRST TIME.** The 256 failing
+endpoints were one structure: `c_attn/vref_r`, and `LAYERS*N_KVH*EXP_W` =
+8*4*8 = **exactly 256 bits**. All forty worst placed paths ran
+`vref_r_reg` to `vref_r_reg` through 28 logic levels, and the post-synthesis
+report named the mechanism itself (`Logic Levels: 28 (CARRY8=8 ...)`): a SERIAL
+min-fold over `NBLK`=8 seeded from `vref_r`. Reassociated into a balanced tree
+with `vref_r` folded last. Min is associative, commutative and idempotent on
+integers, so the change is **bit-exact and latency-neutral by construction**,
+and CARRY8 is unchanged at 2,734 -- the same comparisons, re-bracketed.
+
+MEASURED on the BC-250, before and after: **WNS -3.122 to +0.825, Fmax 123.1 to
+239.5 MHz.**
+
+**2. THE FIT, WITH RMSMUX MEASURED AND THE SQUEEZE DENSITY. The two levers are
+EQUALS, correcting TIMING's own earlier claim that lever C led:**
+
+| configuration | CLB |
+|---|---:|
+| RMSMUX alone | **92.1%** |
+| lever C alone | **92.9%** |
+| **both together** | **84.1%, the first configuration with real margin** |
+
+**3. THE BRIEF I GAVE TIMING WAS WRONG, AND IT SAID SO.** I told it "only 256 of
+1,027,089 endpoints fail". **That was the POST-SYNTHESIS count; the placed
+report already on disk said 33,767.** There were two independent problems and my
+brief described only the first. The other 33,511 are **net-delay, not logic**:
+mean net 4.575 ns against mean logic 0.670 ns, 20,000 of 20,000 net-dominated.
+The attribution control is the convincing part: **subsystem A, unchanged and
+proven on silicon, fails 3,779 endpoints in this composition.** Root cause is
+area, at 54,866 of 54,960 CLB.
+
+Also retired: the post-synthesis 279,484 hold violations are an **artefact**,
+collapsing to 7,881 on placement with no RTL change, and the named path has
+`Logic Levels: 0`.
+
+**NEW OPEN ISSUE, and it is the highest-value line in TIMING's report:
+`tb_attn_block` PASSES A DELIBERATELY BROKEN TREE.** This is the bench named
+after the unit, carrying subsystem C's bit-exact oracle, and it was found only
+by running the mutant. **A guard passing for the wrong reason, in the one place
+that was most trusted.** It needs an owner. Note this is the same unit that
+"passed seven properties and 13 of 17 wiring mutations while computing wrong
+numbers" in the CLAUDE.md verification list, so this is the SECOND time
+`attn_block`'s evidence has been shown not to discriminate.
+
+**AND THE STANDING CAUTION ON ALL THREE NUMBERS ABOVE.** Those percentages need
+a density reached only under pressure, and reaching it cost **0.602 ns of WNS**
+on a design whose observed failure is `[Route 35-447]` **routing congestion**,
+not area. **The next question is not another area number. It is whether an 84%
+configuration ROUTES.**
+
 ### SUPERSEDED 2026-08-30 by TRACK TIMING's pblock squeeze (`1ebac6e`)
 
 **The table immediately below is SUPERSEDED. Its density constant was measured
