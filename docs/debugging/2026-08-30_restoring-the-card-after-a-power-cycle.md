@@ -169,3 +169,83 @@ with `V_CEILING 0.760`.
   measured tripping roughly once every three minutes for reasons that are not
   heat, and each trip halts the compute domain. No result from this card is
   evidence about subsystem A unless the trip count is read alongside it.
+
+---
+
+## CORRECTION, 2026-08-30, same day: the rescan CANNOT work, and this document told you to try it
+
+**WITHDRAWN: the section above headed "The remaining step, for the operator".**
+Oren ran `sudo sh -c 'echo 1 > /sys/bus/pci/rescan'` and it found nothing, which
+is not bad luck. **No rescan and no secondary bus reset can recover this state,
+and the reason was already on disk in this repository when the advice was
+written.**
+
+### What was actually wrong
+
+The recovery ladder named `0000:00:1c.0`. That port is **not the card's**. It
+was chosen because `fk33_pcie_check.sh` printed it, and the port was never
+cross-checked against the recorded baseline.
+
+MEASURED, `hw/fk33/host/pci_baseline.txt`, captured 2026-08-27:
+
+```
+BRIDGE 0000:00:1c.0 8.0GT/sPCIe 1 2.5GT/sPCIe 0 4 0     <- 0 children, an empty slot
+BRIDGE 0000:00:1c.4 16.0GT/sPCIe 4 2.5GT/sPCIe 4 6 2    <- bus 06
+DEV 0000:06:00.0 0x10de 0x2204
+DEV 0000:06:00.1 0x10de 0x1aef
+```
+
+Bus 06 is the port the card now sits behind, which is why the first-load
+document and `fk33_reload.sh`'s default both say `0000:06:00.0`. (In the
+baseline that bus held an RTX 3090, `0x10de 0x2204`; the card was fitted into
+that slot afterwards.)
+
+**Today `0000:00:1c.4` is ABSENT from config space entirely.** Bridges present
+now: `00:01.0`, `00:01.1`, `00:06.0`, `00:1c.0`, `00:1c.2`. The baseline has all
+five plus `00:1c.4`. `ls /sys/class/pci_bus/0000:06` does not exist.
+
+`fk33_pcie_check.sh` had already stated this case in its own output, in the run
+quoted earlier in this document:
+
+> A port with a slot entry that is ABSENT from config space is a real connector
+> whose root port the BIOS disabled after nothing trained on it at POST. That is
+> a bring-up finding, not a missing card: **there is no bridge to rescan behind
+> and setpci cannot address it.**
+
+The FPGA was unconfigured at POST because slot power had been cut, so nothing
+trained, so the BIOS disabled the port. **There is no bridge, so `rescan` has
+nowhere to enumerate and `setpci -s 0000:00:1c.4` has no target.**
+
+### The actual fix
+
+**A warm reboot, taken NOW THAT THE FPGA IS CONFIGURED.** Configuration and the
+VCCINT wiper both survive a warm reboot; `host/fk33_powercycle.sh:15` records it
+as MEASURED on 2026-08-28: `after a warm reboot: wiper=64 VCCINT=0.7203 V`. With
+a live endpoint present at POST the BIOS will train the link and enumerate the
+port normally. **The order that works is configure, then reboot** -- the
+opposite of the order this document originally implied.
+
+Deferred by Oren's decision until the running synthesis and gate work quiesces,
+because nothing needs the card in the meantime.
+
+### Measurement trap, and it is the reusable part
+
+**`fk33_pcie_check.sh` prints a recovery ladder that names a port it has not
+established is yours.** Its ladder is a template. The document above copied it
+verbatim and turned it into an instruction, and the disconfirming evidence -- a
+baseline capture, in this repository, listing every bridge and its bus -- was
+never consulted. **The check that would have caught it costs one `grep`:**
+
+```
+grep '^BRIDGE' hw/fk33/host/pci_baseline.txt
+lspci -D | awk '/PCI bridge/{print $1}'
+```
+
+A bridge in the first list and missing from the second is a hidden port, and a
+hidden port is not recoverable from userspace at any privilege level.
+
+**Generalised: an empty root port and an absent root port look identical in
+`lspci` output if you only look at what is there.** The signal is what is
+MISSING relative to a known-good capture, and the only reason that capture
+existed is that someone took a baseline before the first bring-up. Take
+baselines.
