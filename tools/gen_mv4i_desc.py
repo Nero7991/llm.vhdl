@@ -348,6 +348,64 @@ def check_bases(h):
     return w1, s1, notes
 
 
+def sub_base(kind, idx, off, skip, span, extent, path):
+    """Absolute HBM address of ONE sub-region.  The only place a lane-striped
+    placement enters the descriptor.
+
+    `extent` is `(hbm_base_of_this_sub_region, bytes_available_there)`.  For a
+    v1 flat manifest that is `(hbm_offset + off, stride)`; for a v2
+    lane-striped one it is the piece the manifest placed at file offset `off`.
+
+    THE JOIN IS ON THE FILE OFFSET, NEVER ON A LANE LABEL.  `off` comes from
+    `check_bases()`, which has already required the file's own 0x38 offset
+    table and spec 6.5a's layout to agree by two rules that share no code.  The
+    manifest is then asked only where THAT file offset was placed.  Nothing
+    here reads a piece's `lane`, `kind` or `segment`, so a manifest whose
+    labels are wrong but whose addresses are right still yields the right
+    descriptor -- and one whose labels are right and whose addresses are wrong
+    is not rescued by them.  TRACK PACKSTRIPE's teeth case T3 is the recorded
+    cost of the other choice.
+
+    `check_bases()` IS NOT RELAXED BY STRIPING AND MUST NOT BE.  It compares
+    two FILE offsets and striping changes neither (MEASURED by PACKSTRIPE:
+    249 of 249 mv4i agree under both layouts).  If a striped layout ever seems
+    to need it loosened, the `pieces` model is wrong, not the check.
+
+    The bound is the hazard striping ADDS.  Under the flat layout a job that
+    read past its sub-region ran into the next sub-region of the SAME tensor;
+    under striping the next bytes belong to a different tensor's lane arena in
+    that pseudo-channel, and nothing faults."""
+    base, avail = extent
+    if base is None:
+        raise DescError(
+            "%s: %s sub-region %d is at file +%d and the manifest places no "
+            "piece there.  A striped manifest that does not cut the file where "
+            "the header's own offset table cuts it describes different bytes."
+            % (path, kind, idx, off))
+    if skip + span > avail:
+        raise DescError(
+            "%s: %s sub-region %d would read %d bytes from +%d of an extent "
+            "that is only %d bytes.  Under a lane-striped layout the bytes "
+            "past the end belong to another tensor's arena in the same "
+            "pseudo-channel, and the read does not fault."
+            % (path, kind, idx, span, skip, avail))
+    return base + skip
+
+
+def piece_extents(entry):
+    """`{file_offset: (hbm_offset, nbytes)}` for a manifest object, or None if
+    the object is flat.
+
+    ONE PRODUCER: `tools/hbm_map.py::file_pieces()`.  Imported lazily because
+    `hbm_map` imports THIS module at load time to size the descriptor stride,
+    and a module-level import here would close the cycle."""
+    if not entry or not entry.get("pieces"):
+        return None
+    import hbm_map                                          # noqa: E402
+    return {p["file_offset"]: (p["hbm_offset"], p["nbytes"])
+            for p in hbm_map.file_pieces(entry)}
+
+
 # ------------------------------------------------------------ the descriptor
 class Descriptor(object):
     def __init__(self, words, ext0, fields):
@@ -375,6 +433,7 @@ def build_descriptor(h, hbm_base, n_rows, x_exp, out_mode=MODE_BFP,
                      src_region=0xFF, dst_region=0x00, dst_offset=0,
                      ordinal=0, src_region2=0xFF,
                      const_base=0, const_exp=0,
+                     pieces=None,
                      mutate=None):
     """Build the descriptor image.  `mutate` is a callable(words, ctx) applied
     AFTER the clean image is built, used only by the teeth checks.
@@ -404,15 +463,34 @@ def build_descriptor(h, hbm_base, n_rows, x_exp, out_mode=MODE_BFP,
                         % (row_start, h.grp))
 
     w_off, s_off, notes = check_bases(h)
-    w_base = [hbm_base + o + w_skip for o in w_off]
-    s_base = [hbm_base + o + s_skip for o in s_off]
+    wb = wbeats(h, n_rows)
+    sb = sbeats(h, n_rows)
+
+    # WHERE EACH SUB-REGION IS.  `pieces` is `{file_offset: (hbm_offset,
+    # nbytes)}` from a v2 lane-striped manifest, or None for a v1 flat one, in
+    # which case the strides ARE the extents and this reduces exactly to the
+    # old `hbm_base + off`.  Same code, same arithmetic, one loop -- so the
+    # striped and flat paths cannot drift, and `--stripe-lanes` being inert on
+    # a flat model is a comparison of outputs rather than a reading of code.
+    w_stride, s_stride = layout_strides(h)
+    if pieces is None:
+        w_ext = [(hbm_base + o, w_stride) for o in w_off]
+        s_ext = [(hbm_base + o, s_stride) for o in s_off]
+    else:
+        w_ext = [pieces.get(o, (None, 0)) for o in w_off]
+        s_ext = [pieces.get(o, (None, 0)) for o in s_off]
+    w_base = [sub_base("weight", p, o, w_skip, wb * h.port_b, w_ext[p], h.path)
+              for p, o in enumerate(w_off)]
+    s_base = [sub_base("scale", q, o, s_skip, sb * h.port_b, s_ext[q], h.path)
+              for q, o in enumerate(s_off)]
+    if pieces is not None:
+        notes.append("bases relocated per sub-region from the manifest's "
+                     "`pieces`, joined on file offset (%d pieces)"
+                     % len(pieces))
     if row_start:
         notes.append("row window starts at tile %d: +%d bytes on every weight "
                      "base, +%d on every scale base"
                      % (skip_tiles, w_skip, s_skip))
-
-    wb = wbeats(h, n_rows)
-    sb = sbeats(h, n_rows)
 
     d = [0] * nwords
 
@@ -454,6 +532,9 @@ def build_descriptor(h, hbm_base, n_rows, x_exp, out_mode=MODE_BFP,
         codebook=list(cb), hbm_base=hbm_base, row_start=row_start,
         w_sub_offset=w_off, s_sub_offset=s_off,
         w_base=w_base, s_base=s_base,
+        striped=pieces is not None,
+        w_extent_base=[e[0] for e in w_ext],
+        s_extent_base=[e[0] for e in s_ext],
         ext0=ext0, desc_words=nwords, desc_bytes=8 * nwords,
         notes=notes)
 
@@ -535,17 +616,45 @@ def rtl_would_reject(d, build=FK33, desc_addr=None):
 
 
 # ------------------------------------------------------------------ manifest
-def load_manifest(path):
+def load_manifest(path, allow_striped=False):
+    """Parse a load manifest, and REFUSE a lane-striped one to a caller that
+    has not said it understands `pieces`.
+
+    THE DEFAULT IS THE POINT.  Under a v2 lane-striped manifest a tensor's
+    sub-regions are in up to 28 different HBM pseudo-channels and
+    `files[].hbm_offset` names only its 4 KB header, so `hbm_offset + <file
+    offset>` names no byte the engine will ever read.  A tool that has not been
+    taught this does not fail -- it emits a complete, well-formed, gateware-
+    ACCEPTED descriptor aimed at the wrong bytes, and prints success.  MEASURED
+    2026-08-30: `tools/gen_layer_program.py --token` over the striped manifest
+    emitted `311 of 311 A jobs, 0 refused`, with all 6,723 sub-region bases
+    IDENTICAL to the flat program's.
+
+    This is what the `format` bump exists to provoke.  A caller that has been
+    taught passes `allow_striped=True`; there is deliberately no way to get a
+    flat base out of a striped manifest by accident."""
     with open(path) as fp:
         m = json.load(fp)
     by_file = {}
     for f in m.get("files", []):
         by_file[f.get("file")] = f
+    if not allow_striped:
+        striped = [f for f in m.get("files", []) if f.get("pieces")]
+        if striped:
+            raise DescError(
+                "%s is %r: %d of its %d objects are LANE-STRIPED, so "
+                "`hbm_offset` is a 4 KB header and the sub-regions are in "
+                "other HBM pseudo-channels.  This caller reads one contiguous "
+                "extent per tensor and would emit descriptors aimed at bytes "
+                "that are not there, without failing.  Teach it "
+                "`gen_mv4i_desc.piece_extents()` + `build_descriptor(..., "
+                "pieces=...)`, then pass allow_striped=True."
+                % (path, m.get("format"), len(striped), len(m.get("files", []))))
     return m, by_file
 
 
-def hbm_base_for(mv4i_path, manifest_path):
-    m, by_file = load_manifest(manifest_path)
+def hbm_base_for(mv4i_path, manifest_path, allow_striped=False):
+    m, by_file = load_manifest(manifest_path, allow_striped=allow_striped)
     name = os.path.basename(mv4i_path)
     f = by_file.get(name)
     if f is None:
@@ -850,8 +959,12 @@ def main(argv=None):
     h = Mv4iHeader(a.mv4i)
     if a.no_hbm_base:
         hbm_base, entry = 0, None
+        pieces = None
     else:
-        hbm_base, entry, _ = hbm_base_for(a.mv4i, a.manifest)
+        # TAUGHT: the pieces are read three lines down.
+        hbm_base, entry, _ = hbm_base_for(a.mv4i, a.manifest,
+                                          allow_striped=True)
+        pieces = piece_extents(entry)
         if not a.no_hash:
             got, want, ok = verify_image(a.mv4i, entry)
             if not ok:
@@ -866,7 +979,8 @@ def main(argv=None):
                         % (a.row_start, n_rows, h.M))
 
     d = build_descriptor(h, hbm_base, n_rows, a.x_exp, row_start=a.row_start,
-                         out_mode=a.out_mode, cb_load=not a.no_cb_load)
+                         out_mode=a.out_mode, cb_load=not a.no_cb_load,
+                         pieces=pieces)
 
     bad = rtl_would_reject(d, desc_addr=a.desc_addr)
     if bad:
@@ -926,13 +1040,15 @@ def main(argv=None):
 
 
 def audit(a):
-    m, by_file = load_manifest(a.manifest)
+    m, by_file = load_manifest(a.manifest, allow_striped=True)
     geo = m.get("geometry", {})
     print("manifest geometry %r" % geo)
     nfiles = nbad = 0
     align_bad = []
     addr_bad = []
     beat_max = 0
+    nbase = nstriped = 0
+    top = int(m.get("hbm", {}).get("size", 1 << 33))
     for name, f in sorted(by_file.items()):
         if f.get("kind") != "mv4i":
             continue
@@ -945,16 +1061,37 @@ def audit(a):
             nbad += 1
             print("REFUSED %s: %s" % (name, e))
             continue
+        # THE ADDRESSES AUDITED ARE THE ONES THAT EXIST.  Under a v2
+        # lane-striped manifest `hbm_offset + off` names no byte the engine
+        # will ever read: the sub-region is in another pseudo-channel
+        # entirely.  Auditing it anyway is what `tools/check_hbm_stack.py`
+        # does, and it PASSES over 7,154 ranges of which zero are real.
+        pieces = piece_extents(f)
+        if pieces is not None:
+            nstriped += 1
         base = int(f["hbm_offset"])
-        if base + h.size > int(m.get("hbm", {}).get("size", 1 << 33)):
-            addr_bad.append(name)
         for o in w_off + s_off:
-            if (base + o) & 0xFFF:
+            if pieces is None:
+                addr, span = base + o, None
+            else:
+                addr, span = pieces.get(o, (None, 0))
+                if addr is None:
+                    nbad += 1
+                    print("REFUSED %s: no piece at file +%d" % (name, o))
+                    break
+            nbase += 1
+            if addr & 0xFFF:
                 align_bad.append((name, o))
-            if (base + o) >> FK33["addr_w"]:
+            if addr >> FK33["addr_w"]:
                 addr_bad.append(name)
+            if span is not None and addr + span > top:
+                addr_bad.append(name)
+        if pieces is None and base + h.size > top:
+            addr_bad.append(name)
         beat_max = max(beat_max, wbeats(h, h.M))
     print("tensors parsed        %d (%d refused)" % (nfiles, nbad))
+    print("lane-striped tensors  %d of %d" % (nstriped, nfiles))
+    print("sub-region bases read %d" % nbase)
     print("bases not 4 KB aligned %d" % len(align_bad))
     for n, o in align_bad[:5]:
         print("   %s +%d" % (n, o))

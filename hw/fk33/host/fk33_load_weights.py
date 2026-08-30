@@ -113,6 +113,42 @@ MV4I_MAGIC = 0x4D563449               # "MV4I", spec 6.4
 BLOCK = 32                            # spec 6.1
 
 
+class StripedWithoutMap(Exception):
+    pass
+
+
+def pieces_of(e):
+    """The extents this object occupies: one for a v1 flat manifest, 28 for a
+    v2 lane-striped one (a 4 KB header plus one sub-region per engine master,
+    each in its own HBM pseudo-channel).
+
+    DELEGATED, NOT REIMPLEMENTED.  `tools/hbm_map.py::file_pieces()` is the one
+    producer of this model and three other consumers read it through the same
+    function.  A local copy here would be a second idea of where a tensor is,
+    which is precisely the class of defect this whole change exists to close.
+
+    A v2 manifest with no `hbm_map` importable is REFUSED rather than treated
+    as flat.  Treating it as flat is not a degraded check, it is a wrong one:
+    `hbm_offset` on a striped object is a 4 KB header, so a flat reading would
+    write `nbytes` bytes over 27 other lanes' arenas and verify a range that
+    does not exist."""
+    if HM is not None:
+        return HM.file_pieces(e)
+    if e.get("pieces"):
+        raise StripedWithoutMap(
+            "%s carries `pieces` (a lane-striped v2 manifest) and "
+            "tools/hbm_map.py could not be imported (%s), so the extents "
+            "cannot be read.  Refusing: reading hbm_offset/nbytes as one "
+            "contiguous range would place and verify bytes that are not "
+            "there." % (e.get("file"), _HM_WHY))
+    # The stripped-checkout fallback, and FLAT ONLY.  It is the one line of
+    # this model that exists twice, it is reachable only when hbm_map is
+    # absent, and it is why the branch above refuses rather than falls through.
+    return [dict(index=0, kind="whole", lane=None, file_offset=0,
+                 hbm_offset=int(e["hbm_offset"]), nbytes=int(e["nbytes"]),
+                 segment=None, segment_declared=None)]
+
+
 def h2c():
     return os.environ.get("FK33_H2C", "/dev/xdma0_h2c_0")
 
@@ -274,15 +310,38 @@ def preflight(mani, ents, root, need_files, desc_jobs=311,
     seen = []
     for e in ents:
         off, nb = int(e["hbm_offset"]), int(e["nbytes"])
-        if off % ALIGN:
-            bad.append(f"{e['file']}: base {off:#x} is not 4 KB aligned")
-        if off + nb > HBM_SIZE:
-            bad.append(f"{e['file']}: {off:#x}+{nb} runs past the 8 GiB map")
-        if off < 0x1_0000_0000 < off + nb:
-            bad.append(f"{e['file']}: spans the HBM stack boundary; an "
-                       f"out-of-stack read returns wrong bytes and reports "
-                       f"success")
-        seen.append((off, off + nb, e["file"]))
+        # PER EXTENT, NOT PER OBJECT.  A lane-striped object is one file at 28
+        # addresses; `off + nb` names a range it does not occupy and every
+        # check on that range is answering about nothing.  `pieces_of()`
+        # returns a single whole-object extent for a flat manifest, so this
+        # loop is the old code on the old input.
+        try:
+            pcs = pieces_of(e)
+        except StripedWithoutMap as ex:
+            bad.append(str(ex))
+            pcs = []
+        pos = 0
+        for p in pcs:
+            po, pn = p["hbm_offset"], p["nbytes"]
+            tag = e["file"] if len(pcs) == 1 else f"{e['file']}:{p['index']}"
+            if po % ALIGN:
+                bad.append(f"{tag}: base {po:#x} is not 4 KB aligned")
+            if po + pn > HBM_SIZE:
+                bad.append(f"{tag}: {po:#x}+{pn} runs past the 8 GiB map")
+            if po < 0x1_0000_0000 < po + pn:
+                bad.append(f"{tag}: spans the HBM stack boundary; an "
+                           f"out-of-stack read returns wrong bytes and reports "
+                           f"success")
+            if p["file_offset"] != pos:
+                bad.append(f"{tag}: starts at file +{p['file_offset']}, the "
+                           f"pieces before it end at +{pos}.  They do not tile "
+                           f"the file, so the manifest's whole-file digest is "
+                           f"not a digest of what would be written")
+            pos += pn
+            seen.append((po, po + pn, tag))
+        if pcs and pos != nb:
+            bad.append(f"{e['file']}: its extents cover {pos} bytes, the "
+                       f"manifest declares {nb}")
         if need_files:
             p = os.path.join(root, e["file"])
             if not os.path.exists(p):
@@ -338,23 +397,30 @@ def cmd_plan(a):
     ents = select(mani, a.only)
     bad = preflight(mani, ents, root, need_files=not a.no_files)
     tot = sum(int(e["nbytes"]) for e in ents)
-    lo = min(int(e["hbm_offset"]) for e in ents)
-    hi = max(int(e["hbm_offset"]) + int(e["nbytes"]) for e in ents)
-    print(f"{len(ents)} objects, {tot:,} B = {tot / 2**30:.4f} GiB, "
-          f"HBM {lo:#x}..{hi:#x}")
+    exts = [p for e in ents for p in pieces_of(e)]
+    lo = min(p["hbm_offset"] for p in exts)
+    hi = max(p["hbm_offset"] + p["nbytes"] for p in exts)
+    print(f"{len(ents)} objects in {len(exts)} extents, {tot:,} B = "
+          f"{tot / 2**30:.4f} GiB, HBM {lo:#x}..{hi:#x}")
     for d in mani.get("dropped_tensors", []):
         print(f"  DROPPED {d['name']}: {d['bytes_if_placed']:,} B not placed")
     if a.list:
         for e in ents:
-            print(f"  {int(e['hbm_offset']):#014x}  {int(e['nbytes']):>12,}  "
-                  f"stack {e.get('stack')}  {e['file']}")
+            for p in pieces_of(e):
+                tag = (e["file"] if p["kind"] == "whole"
+                       else f"{e['file']}:{p['index']} ({p['kind']}"
+                            f"{'' if p['lane'] is None else ' lane %d' % p['lane']}"
+                            f", seg {p['segment']})")
+                print(f"  {p['hbm_offset']:#014x}  {p['nbytes']:>12,}  "
+                      f"stack {e.get('stack')}  {tag}")
     for m in bad:
         print(f"FAIL  {m}")
     if bad:
         print(f"{len(bad)} FAIL")
         return 1
-    print("PASS  every object is aligned, in range, in one stack, disjoint, "
-          "present at its manifest size, and carries a digest")
+    print("PASS  every EXTENT is aligned, in range, in one stack and disjoint; "
+          "every object tiles its file, is present at its manifest size, and "
+          "carries a digest")
     return 0
 
 
@@ -376,19 +442,32 @@ def cmd_load(a):
     fails = 0
     try:
         for i, e in enumerate(ents):
-            off, nb = int(e["hbm_offset"]), int(e["nbytes"])
+            nb = int(e["nbytes"])
             dig = hashlib.blake2b(digest_size=16)
+            # ONE DIGEST OVER THE WHOLE FILE, WRITTEN IN AS MANY PIECES AS THE
+            # MANIFEST SAYS.  The file is still read start to finish in file
+            # order -- preflight has already refused a piece list that does not
+            # tile it from 0 -- so the digest is byte-identical to the flat
+            # one and stays comparable against the packer's pack-time value.
+            # That is what keeps `--verify` an oracle after striping instead of
+            # a round trip.
             with open(os.path.join(root, e["file"]), "rb") as f:
                 pos = 0
-                while pos < nb:
-                    chunk = f.read(min(CHUNK, nb - pos))
-                    if not chunk:
+                for p in pieces_of(e):
+                    off, want = p["hbm_offset"], p["nbytes"]
+                    got = 0
+                    while got < want:
+                        chunk = f.read(min(CHUNK, want - got))
+                        if not chunk:
+                            break
+                        dig.update(chunk)
+                        k = 0
+                        while k < len(chunk):
+                            k += os.pwrite(fd, chunk[k:], off + got + k)
+                        got += len(chunk)
+                    pos += got
+                    if got != want:
                         break
-                    dig.update(chunk)
-                    k = 0
-                    while k < len(chunk):
-                        k += os.pwrite(fd, chunk[k:], off + pos + k)
-                    pos += len(chunk)
             if pos != nb:
                 print(f"FAIL  {e['file']}: wrote {pos} of {nb} bytes")
                 fails += 1
@@ -443,10 +522,16 @@ def _verify(mani, ents, headers_only, progress):
     # CHECKER".  Caught by teeth-check T1 (blob base moved one 4K page), which
     # is the only reason this comment exists.
     attempted = set()
+    # EXTENTS READ, STATED SEPARATELY FROM OBJECTS.  Under a lane-striped
+    # manifest one object is up to 28 extents in 28 pseudo-channels, and
+    # "250 of 250 objects" would be true of a run that read one piece of each.
+    nextent = nextent_read = 0
     t0 = time.perf_counter()
     try:
         for i, e in enumerate(ents):
             off, nb = int(e["hbm_offset"]), int(e["nbytes"])
+            pcs = pieces_of(e)
+            nextent += len(pcs)
             # ---- check 1: the header at the claimed base IS this tensor's
             if e["kind"] == "mv4i":
                 hdr = os.pread(fd, HDR_BYTES, off)
@@ -485,15 +570,29 @@ def _verify(mani, ents, headers_only, progress):
             dig = hashlib.blake2b(digest_size=16)
             pos = 0
             short = False
-            while pos < nb:
-                got = os.pread(fd, min(CHUNK, nb - pos), off + pos)
-                if not got:
-                    fails.append(f"{e['file']}: short read at "
-                                 f"{off + pos:#x} ({pos} of {nb})")
-                    short = True
+            # ONE DIGEST, READ BACK OUT OF AS MANY PSEUDO-CHANNELS AS THE
+            # MANIFEST PLACED IT IN, in FILE order.  The pieces tile the file
+            # (preflight refuses a list that does not), so this reconstructs
+            # exactly the byte sequence the packer digested and the comparison
+            # below stays the same oracle it was under the flat layout.  That
+            # is the property that makes verify catch PACKSTRIPE's M9 -- two
+            # tensors swapping a lane arena -- which no structural check can.
+            for p in pcs:
+                po, pn = p["hbm_offset"], p["nbytes"]
+                got_n = 0
+                while got_n < pn:
+                    got = os.pread(fd, min(CHUNK, pn - got_n), po + got_n)
+                    if not got:
+                        fails.append(f"{e['file']}: short read at "
+                                     f"{po + got_n:#x} ({pos + got_n} of {nb})")
+                        short = True
+                        break
+                    dig.update(got)
+                    got_n += len(got)
+                pos += got_n
+                if short:
                     break
-                dig.update(got)
-                pos += len(got)
+                nextent_read += 1
             nbytes_read += pos
             if short:
                 continue
@@ -514,6 +613,15 @@ def _verify(mani, ents, headers_only, progress):
     print(f"read {nbytes_read:,} bytes in {dt:.2f} s = "
           f"{nbytes_read / max(dt, 1e-9) / 1e9:.2f} GB/s")
     print(f"{nhdr} headers parsed and matched, {nhash} payload digests matched")
+    # EXTENT COVERAGE, SAID OUT LOUD.  A striped object is one file in up to 28
+    # pseudo-channels, so an object tally alone would call a run that read one
+    # piece of each "250 of 250".  In headers-only mode NO mv4i sub-region is
+    # read at all -- 249 of 6,973 extents on the shipping set -- and that is a
+    # property of the mode, not a fault, which is exactly why it is printed
+    # rather than left for the reader to infer.
+    print(f"extents      {nextent_read} of {nextent} digested"
+          + (" (headers-only: an mv4i's payload extents are NOT read)"
+             if headers_only else ""))
 
     # STATE THE COVERAGE, DO NOT LET THE READER INFER IT.  The old summary
     # printed two tallies and a PASS, and 249 + 0 against 250 objects read as
@@ -745,6 +853,127 @@ def cmd_selfcheck(a):
     run("M14 two identical-shape tensors swapped, headers only "
         "(EXPECTED NOT TO BITE)", swap_two(0, 3), False, True)
 
+    # ---------------------------------------------------- the striped arm
+    #
+    # THE SAME FOUR FILES, CUT AT THEIR OWN SUB-REGION BOUNDARIES AND
+    # SCATTERED.  A lane-striped object is one file at 28 addresses and the
+    # order in HBM is NOT the order in the file, so a load that reads the
+    # file sequentially and a verify that reads HBM sequentially would both
+    # "work" while describing different bytes.  Nothing above exercises that,
+    # and a path with no teeth is a path nobody has shown to work.
+    #
+    # The pieces are deliberately placed in REVERSE order of file offset, at a
+    # coarse stride, so any consumer that quietly assumes HBM order equals file
+    # order gets a wrong digest rather than a lucky pass.
+    spieces, sfiles, cur = [], [], span + ALIGN
+    stride = 0
+    for e in files:
+        blob = open(os.path.join(tmp, e["file"]), "rb").read()
+        sub_sz, nports, scl_off, scl_sub_sz, nss, total = _packed_layout(
+            int(e["M"]), int(e["K"]), rows_if, axi_dw)
+        cuts = [(0, HDR_BYTES, "header", None)]
+        for p in range(nports):
+            cuts.append((HDR_BYTES + sub_sz * p, sub_sz, "w", p))
+        for q in range(nss):
+            cuts.append((scl_off + scl_sub_sz * q, scl_sub_sz, "s",
+                         nports + q))
+        stride = max(stride, max(n for _, n, _, _ in cuts) + ALIGN)
+        pcs = []
+        for k, (fo, n, kind, lane) in enumerate(cuts):
+            pcs.append(dict(kind=kind, lane=lane, segment=None,
+                            file_offset=fo, nbytes=n, hbm_offset=0))
+        spieces.append(pcs)
+        sfiles.append(dict(e))
+    # Reverse placement, one arena per piece index, so file order and HBM
+    # order disagree everywhere.
+    for pcs in spieces:
+        for k, p in enumerate(reversed(pcs)):
+            p["hbm_offset"] = cur
+            cur += (p["nbytes"] + ALIGN - 1) & ~(ALIGN - 1)
+    for e, pcs in zip(sfiles, spieces):
+        e["pieces"] = pcs
+        e["hbm_offset"] = pcs[0]["hbm_offset"]
+        e["stack"] = 0
+    smani = dict(mani)
+    smani["format"] = "selfcheck v2 lane-striped"
+    smani["files"] = sfiles
+    sdev = os.path.join(tmp, "fake_hbm_striped.bin")
+    sspan = cur + ALIGN
+    spath = os.path.join(tmp, "manifest_striped.json")
+    with open(spath, "w") as f:
+        json.dump(smani, f)
+
+    class SNS(NS):
+        manifest = spath
+
+    def srun(label, mutate, expect_fail, headers_only=False):
+        nonlocal hard
+        with open(sdev, "wb") as f:
+            f.truncate(sspan)
+        os.environ["FK33_H2C"] = sdev
+        os.environ["FK33_C2H"] = sdev
+        if cmd_load(SNS()) != 0:
+            print("  selfcheck harness could not load a clean STRIPED image")
+            hard += 1
+            return
+        if mutate:
+            mutate()
+        rc = _verify(smani, sorted(smani["files"],
+                                   key=lambda e: e["hbm_offset"]),
+                     headers_only, False)
+        caught = rc != 0
+        ok = caught == expect_fail
+        results.append((label, expect_fail, caught, ok))
+        if not ok:
+            hard += 1
+
+    def spoke(fi, pi, delta):
+        def go():
+            off = spieces[fi][pi]["hbm_offset"] + delta
+            with open(sdev, "r+b") as f:
+                f.seek(off)
+                cur_ = f.read(1)[0]
+                f.seek(off)
+                f.write(bytes([cur_ ^ 0xFF]))
+        return go
+
+    def sswap_pieces(fi, i, j):
+        """Two of ONE tensor's sub-regions at each other's addresses.  Every
+        byte in HBM belongs there; the lanes read each other's."""
+        def go():
+            a_, b_ = spieces[fi][i], spieces[fi][j]
+            n = min(a_["nbytes"], b_["nbytes"])
+            with open(sdev, "r+b") as f:
+                f.seek(a_["hbm_offset"]); x = f.read(n)
+                f.seek(b_["hbm_offset"]); y = f.read(n)
+                f.seek(a_["hbm_offset"]); f.write(y)
+                f.seek(b_["hbm_offset"]); f.write(x)
+        return go
+
+    def sswap_lane_arena(i, j, pi):
+        """PACKSTRIPE's M9: two tensors swap ONE lane's arena.  The placement
+        stays well-formed and every structural rule accepts it."""
+        def go():
+            a_, b_ = spieces[i][pi], spieces[j][pi]
+            n = min(a_["nbytes"], b_["nbytes"])
+            with open(sdev, "r+b") as f:
+                f.seek(a_["hbm_offset"]); x = f.read(n)
+                f.seek(b_["hbm_offset"]); y = f.read(n)
+                f.seek(a_["hbm_offset"]); f.write(y)
+                f.seek(b_["hbm_offset"]); f.write(x)
+        return go
+
+    srun("S0 BASELINE striped image (must PASS)", None, False)
+    srun("S1 BASELINE striped, headers only (must PASS)", None, False, True)
+    srun("S2 one byte flipped in a MIDDLE sub-region",
+         spoke(1, 5, 17), True)
+    srun("S3 two sub-regions of one tensor swapped in HBM",
+         sswap_pieces(1, 3, 7), True)
+    srun("S4 two IDENTICAL-shape tensors swap one lane arena "
+         "(PACKSTRIPE M9)", sswap_lane_arena(0, 3, 4), True)
+    srun("S5 one byte flipped in a middle sub-region, headers only "
+         "(EXPECTED NOT TO BITE)", spoke(1, 5, 17), False, True)
+
     print()
     print(f"{'mutation':56s} {'expect':>8s} {'caught':>7s}  verdict")
     for label, exp, got, ok in results:
@@ -757,6 +986,17 @@ def cmd_selfcheck(a):
           "the 9B set, 246 of 249 packed tensors are in such a class. That is "
           "the resolution floor of the header pass and the reason the full "
           "digest verify exists.")
+    print()
+    print("S5 is the same floor on the striped path and is WIDER there: a "
+          "lane-striped object is one file in as many pseudo-channels as the "
+          "manifest names, and --headers-only reads exactly ONE of those "
+          "extents per object -- 4 of 112 in this run, 249 of 6,973 on the "
+          "shipping 9B set.  The `extents N of M digested` line says so on "
+          "every run rather than leaving it to be inferred.  S4 is the one "
+          "that matters: two tensors swapping a lane arena is a WELL-FORMED "
+          "placement that every structural rule in tools/hbm_map.py and "
+          "tools/pack_model_fk33.py accepts (PACKSTRIPE teeth M9), and this "
+          "full read-back is what catches it.")
     for f in os.listdir(tmp):
         os.unlink(os.path.join(tmp, f))
     os.rmdir(tmp)

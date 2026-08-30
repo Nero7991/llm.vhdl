@@ -385,7 +385,37 @@ def make_plan(a, scratch):
                        % (a.slot, n_jobs))
     desc_addr = arena_base + a.slot * stride
 
-    hbm_base, entry, _ = G.hbm_base_for(a.mv4i, a.manifest)
+    # THE PLACEMENT, CHECKED ONCE, BECAUSE THE CROSS-CHECK BELOW CANNOT SEE IT.
+    #
+    # MEASURED 2026-08-30, and it is the reason this call exists: mutating a
+    # sub-region's HBM address in the manifest -- moving it a whole segment,
+    # colliding it with another piece, or shortening it -- leaves the 69-field
+    # cross-check reporting `69 of 69 agree`.  It must: `w_base[p]` is built
+    # from the manifest and compared against the C's file offset carried
+    # through THE SAME manifest, so the placement cancels on both sides.  That
+    # is true of the 42-field form this replaced as well, where `hbm_base`
+    # cancelled identically; the base half of that check has never been able to
+    # see a placement fault under either layout.  It is a FILE-LAYOUT check
+    # wearing an address's clothes, which is exactly the m7-mutant shape: a
+    # packer and a reader that agree because they share the mistake.
+    #
+    # `hbm_map` is the independent reader of the placement -- it never sees the
+    # descriptor -- so its verdict is the missing half.  MEASURED 13 ms on the
+    # 6,973-extent striped map, 1 ms on the flat one.
+    map_fails = hbm_map.plan(mani, desc_jobs=n_jobs).check()
+    if map_fails:
+        raise RunError(
+            "tools/hbm_map.py refuses this manifest's own address map, so the "
+            "descriptor below would describe a layout that does not hold "
+            "together:\n  " + "\n  ".join(map_fails[:8])
+            + ("\n  ... %d more" % (len(map_fails) - 8) if len(map_fails) > 8
+               else ""))
+
+    # `allow_striped=True`: this runner reads `pieces` below and relocates
+    # every base per sub-region.  The default refusal is what stops the
+    # descriptor emitters that do NOT from producing a plausible wrong program
+    # off a v2 manifest.
+    hbm_base, entry, _ = G.hbm_base_for(a.mv4i, a.manifest, allow_striped=True)
 
     # THE ONE CHECK THAT CAN SEE A BASE POINTING AT THE WRONG BYTES.  The
     # gateware cannot: nothing in the descriptor says what a sub-region should
@@ -402,10 +432,18 @@ def make_plan(a, scratch):
                        "point the engine at bytes this host has never seen."
                        % (a.mv4i, got, hbm_base, want))
 
+    # WHERE EACH SUB-REGION ACTUALLY IS.  None for a v1 flat manifest, in which
+    # case `build_descriptor` reduces to `hbm_base + file offset` exactly as
+    # before; a `{file_offset: (hbm_offset, nbytes)}` map for a v2 lane-striped
+    # one, where the tensor occupies one extent per engine master and
+    # `hbm_base` names only the 4 KB header.
+    pieces = G.piece_extents(entry)
+
     build = dict(G.FK33)
     build["addr_w"] = a.addr_w
     d = G.build_descriptor(h, hbm_base, n_rows, a.x_exp, out_mode=a.out_mode,
-                           cb_load=not a.no_cb_load, addr_w=a.addr_w)
+                           cb_load=not a.no_cb_load, addr_w=a.addr_w,
+                           pieces=pieces)
     bad = G.rtl_would_reject(d, build=build, desc_addr=desc_addr)
     if bad:
         raise RunError("the descriptor this tool built would be REFUSED by the "
@@ -438,10 +476,60 @@ def make_plan(a, scratch):
     xc("w_beats", f["w_beats"], orc["w_beats"])
     xc("s_beats", f["s_beats"], orc["s_beats"])
     xc("codebook", list(f["codebook"]), list(orc["cb"]))
+    # THE BASE CHECK, SPLIT IN TWO SO NEITHER HALF LOSES ITS TEETH.
+    #
+    # It used to be one comparison, `w_base[p] == hbm_base + orc["wsub"][p]`,
+    # which is two claims at once: that the C and Python agree on the FILE
+    # layout, and that the descriptor places that layout where the manifest
+    # says the bytes went.  Under a lane-striped manifest the second claim is
+    # no longer an addition -- the sub-region is in another pseudo-channel --
+    # so the two are separated:
+    #
+    #   sub_offset  the C's reading of spec 6.4 against Python's.  Pure file
+    #               offsets.  Striping does not touch it and it is the check
+    #               `check_bases()` guards; MEASURED unchanged, 249 of 249.
+    #   base        the C's file offset carried THROUGH the manifest's
+    #               placement, against the descriptor Python built.  For a flat
+    #               manifest `where()` is `hbm_base + off` and this is exactly
+    #               the old comparison; for a striped one it is the piece the
+    #               manifest placed at that file offset.
+    #
+    # SAY WHICH HALF HAS THE TEETH.  `sub_offset` is the whole cross-language
+    # content: it is the C's parse of spec 6.4 against Python's.  `base` is
+    # that same comparison with the manifest's placement added to BOTH sides,
+    # so the placement cancels and it can only fail when `sub_offset` already
+    # has.  MEASURED: moving a piece's address in the manifest leaves all 69
+    # fields agreeing.  It is kept as the composed statement the reader
+    # expects to see, and it is labelled here so nobody credits it with
+    # catching a misplacement -- `hbm_map.plan(...).check()` above is what
+    # does that, and it never sees the descriptor.
+    #
+    # Nothing here reads a lane, kind or segment label; the join is the file
+    # offset the C itself emitted.
+    def where(off):
+        if pieces is None:
+            return hbm_base + off
+        got = pieces.get(off)
+        return None if got is None else got[0]
+
+    # The row window, RE-DERIVED here rather than read off `d.fields`, because
+    # a cross-check that reuses the value it is checking is not one.  It is 0
+    # on every path this runner has: `make_plan` never passes --row-start.
+    _skip_tiles = f["row_start"] // f["rows_if"]
+    _port_b = f["axi_dw"] // 8
+    _w_skip = _skip_tiles * f["nb"] * _port_b
+    _s_skip = ((_skip_tiles * f["nb"]) // f["grp"]) * _port_b
+
     for p in range(f["nsub_w"]):
-        xc("w_base[%d]" % p, f["w_base"][p], hbm_base + orc["wsub"][p])
+        xc("w_sub_offset[%d]" % p, f["w_sub_offset"][p], orc["wsub"][p])
+        b = where(orc["wsub"][p])
+        xc("w_base[%d]" % p, f["w_base"][p],
+           None if b is None else b + _w_skip)
     for q in range(f["nsub_s"]):
-        xc("s_base[%d]" % q, f["s_base"][q], hbm_base + orc["ssub"][q])
+        xc("s_sub_offset[%d]" % q, f["s_sub_offset"][q], orc["ssub"][q])
+        b = where(orc["ssub"][q])
+        xc("s_base[%d]" % q, f["s_base"][q],
+           None if b is None else b + _s_skip)
 
     return dict(desc=d, fields=f, oracle=orc, desc_addr=desc_addr,
                 arena_base=arena_base, arena_bytes=arena_bytes, stride=stride,

@@ -541,6 +541,164 @@ def stack_of(addr):
     return 0 if addr < STACK_LINE else 1
 
 
+# ------------------------------------------------------- HBM pseudo-channels
+#
+# 32 pseudo-channels, 256 MiB each, DERIVED from HBM_TOP rather than re-scraped
+# out of `hw/fk33/gen_pcieep.py`.  The two are cross-checked in
+# `manifest_piece_fails()` P6, so a manifest that was striped at some other
+# granule is a FAIL here instead of a plausible-looking map.
+
+HBM_SEGMENTS = 32
+SEGMENT_BYTES = HBM_TOP // HBM_SEGMENTS
+
+
+def segment_of(addr):
+    """Which HBM pseudo-channel a byte address decodes to.
+
+    ADDRESS BITS, NEVER A LABEL.  `hw/fk33/gen_pcieep.py`'s ENGINE_ADDR block
+    assigns every engine master `HBM_MEM<s>` at `s * 0x1000_0000` with range
+    256M, so address bits [32:28] select the pseudo-channel and nothing else
+    does.
+
+    TRACK PACKSTRIPE's teeth case T3 is why this function exists rather than a
+    read of the manifest's `segment` field: its first distinct-segment check
+    counted that FIELD, so two lanes given the same `hbm_offset` with their
+    labels left alone still looked like 27 distinct segments and the mutant
+    survived.  A check that reads a label certifies a layout it never saw."""
+    return addr // SEGMENT_BYTES
+
+
+def file_pieces(e):
+    """THE extents one manifest object occupies.  ONE PRODUCER, four consumers.
+
+    v1 flat: one extent, the whole object at `hbm_offset`.
+
+    v2 lane-striped: the object's `pieces` -- a 4 KB header plus one
+    sub-region per engine master, each placed in its own 256 MiB
+    pseudo-channel segment.  `hbm_offset` then names the HEADER and NOT
+    `nbytes` contiguous bytes, which is what the `format` bump exists to
+    announce.  A v1 consumer that reads the (hbm_offset, nbytes) pair on a v2
+    object describes a region that does not exist: `tools/check_hbm_stack.py`
+    PASSES over 7,154 such fictitious ranges, of which zero are real.
+
+    THE FLAT CASE RETURNS A SYNTHETIC ONE-PIECE LIST ON PURPOSE.  Every
+    consumer then runs exactly one loop over one producer, so the flat path and
+    the striped path cannot drift apart -- and `--stripe-lanes` being inert on
+    a flat model is checkable by comparing outputs rather than by reading code.
+
+    This function READS.  It does not validate, and it never repairs: a reader
+    that quietly fixed what it read would make `manifest_piece_fails()` unable
+    to see it."""
+    hbm0, nb = int(e["hbm_offset"]), int(e["nbytes"])
+    pcs = e.get("pieces")
+    if not pcs:
+        return [dict(index=0, kind="whole", lane=None, file_offset=0,
+                     hbm_offset=hbm0, nbytes=nb,
+                     segment=segment_of(hbm0), segment_declared=None)]
+    out = []
+    for i, x in enumerate(pcs):
+        a = int(x["hbm_offset"])
+        out.append(dict(index=i, kind=x.get("kind"), lane=x.get("lane"),
+                        file_offset=int(x["file_offset"]),
+                        hbm_offset=a, nbytes=int(x["nbytes"]),
+                        segment=segment_of(a),
+                        segment_declared=x.get("segment")))
+    return out
+
+
+def manifest_piece_fails(mani):
+    """What a striped object's PIECES must satisfy that the region model cannot.
+
+    `manifest_regions()` turns pieces into regions, so alignment, range, the
+    stack line and every pairwise overlap are already checked by `check()` --
+    on the real extents, which is the whole point.  What is left is the
+    relation between the pieces and the FILE they were cut from, plus the two
+    labels nothing else compares:
+
+      P1  the pieces tile the file exactly, in increasing file order, from 0.
+          If they do not, the whole-file blake2b that
+          `fk33_load_weights.py verify` reads HBM back to check -- the only
+          residency oracle in this system -- is computed over different bytes
+          than the packer digested, and it would then fail for a reason nobody
+          could attribute.
+      P2  the pieces' bytes sum to the object's declared `nbytes`.
+      P3  the object's `hbm_offset` IS its first piece's address, so a v1
+          reader at least lands on the header instead of in the middle of some
+          other tensor's lane arena.
+      P4  the object's declared `stack` is the stack its header is really in.
+          The pieces carry no declared stack, so `manifest_regions()` gives
+          them none: 12 of the 27 lanes are in stack 1 by design and comparing
+          them against the object's field would fail on a correct layout.
+          This is where that field is checked instead.
+      P5  every piece's declared `segment` agrees with the segment its ADDRESS
+          decodes to.  This is the only place the label and the hardware's
+          decode are ever compared.
+      P6  the granule the packer scraped out of `hw/fk33/gen_pcieep.py` is the
+          granule this file derives from HBM_TOP.  Striping at the wrong
+          granule puts every lane back on one pseudo-channel and looks like it
+          worked.
+
+    NOT CHECKED HERE, named so nothing is credited with it: that each lane's
+    pieces land in the segment that lane's engine MASTER is wired to.  That
+    needs `ENG_PORT_MAP`, it is `pack_model_fk33.check_lane_stripe()` check 1,
+    and it is the load-bearing one.  Nor is this a residency check: two
+    tensors swapping a lane arena is a well-formed placement that every rule
+    here accepts (PACKSTRIPE teeth M9)."""
+    fails = []
+    ls = (mani.get("hbm") or {}).get("lane_stripe") or {}
+    if ls.get("segment_bytes") is not None:
+        got = int(ls["segment_bytes"])
+        if got != SEGMENT_BYTES:
+            fails.append(
+                "PIECES P6: the manifest was striped at a %d B granule and "
+                "hw/fk33/gen_pcieep.py's ENGINE_ADDR block gives %d B.  At the "
+                "wrong granule every lane lands back on one pseudo-channel and "
+                "the map still looks striped." % (got, SEGMENT_BYTES))
+    for e in mani.get("files", []):
+        if not e.get("pieces"):
+            continue
+        name = e["file"]
+        pcs = file_pieces(e)
+        pos = 0
+        for p in pcs:
+            if p["file_offset"] != pos:
+                fails.append(
+                    "PIECES P1: %s piece %d starts at file +%d, the pieces "
+                    "before it end at +%d.  They do not tile the file, so the "
+                    "manifest's whole-file digest is not a digest of what "
+                    "would be loaded." % (name, p["index"], p["file_offset"],
+                                          pos))
+                break
+            pos += p["nbytes"]
+        else:
+            if pos != int(e["nbytes"]):
+                fails.append(
+                    "PIECES P2: %s pieces cover %d bytes, the object declares "
+                    "%d" % (name, pos, int(e["nbytes"])))
+        if pcs and pcs[0]["hbm_offset"] != int(e["hbm_offset"]):
+            fails.append(
+                "PIECES P3: %s declares hbm_offset %s and its first piece is "
+                "at %s" % (name, h(int(e["hbm_offset"])),
+                           h(pcs[0]["hbm_offset"])))
+        if e.get("stack") is not None and \
+                int(e["stack"]) != stack_of(int(e["hbm_offset"])):
+            fails.append(
+                "PIECES P4: %s declares stack %s, its header at %s is in "
+                "stack %d" % (name, e["stack"], h(int(e["hbm_offset"])),
+                              stack_of(int(e["hbm_offset"]))))
+        for p in pcs:
+            if p["segment_declared"] is None:
+                continue
+            if int(p["segment_declared"]) != p["segment"]:
+                fails.append(
+                    "PIECES P5: %s piece %d is labelled segment %s and its "
+                    "address %s decodes to segment %d.  The label is not what "
+                    "the hardware reads."
+                    % (name, p["index"], p["segment_declared"],
+                       h(p["hbm_offset"]), p["segment"]))
+    return fails
+
+
 class Region:
     """A named half-open byte range [base, base+nbytes), and WHO placed it.
 
@@ -577,8 +735,21 @@ def manifest_regions(mani):
     hbm = mani.get("hbm", {})
     out = []
     for e in mani["files"]:
-        out.append(Region(e["file"], e["hbm_offset"], e["nbytes"], e["kind"],
-                          "pack_model_fk33.py", e.get("stack")))
+        pcs = file_pieces(e)
+        if len(pcs) == 1 and not e.get("pieces"):
+            out.append(Region(e["file"], e["hbm_offset"], e["nbytes"],
+                              e["kind"], "pack_model_fk33.py", e.get("stack")))
+            continue
+        # A LANE-STRIPED OBJECT IS ONE FILE AT UP TO 28 ADDRESSES.  One Region
+        # each, named `file:index`, so a collision report says WHICH
+        # sub-region.  They carry no declared stack because the manifest gives
+        # a piece none, and inventing one from the address would be a check
+        # comparing a value to itself; the object's own `stack` field is
+        # checked against its header in `manifest_piece_fails()` P4 instead.
+        for p in pcs:
+            out.append(Region("%s:%d" % (e["file"], p["index"]),
+                              p["hbm_offset"], p["nbytes"], e["kind"],
+                              "pack_model_fk33.py", None))
     if hbm.get("gdn_state_bytes"):
         out.append(Region("<gdn recurrent state>", hbm["gdn_state_base"],
                           hbm["gdn_state_bytes"], "gdn",
@@ -1055,7 +1226,7 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="manifest",
 
     m = HbmMap(regions, hbm, notes, top)
     m.extra_fails = [s for s in (block_fail, chunk_fail, arena_fail) if s] \
-        + arena_fails
+        + arena_fails + manifest_piece_fails(mani)
     # THE DECLARED HOST BLOCKS ARE A FACT ABOUT `host_max_chunk`, so they are
     # only comparable when this map was built at that cap.  Comparing them at
     # any other cap would report a disagreement that is simply the cap doing
