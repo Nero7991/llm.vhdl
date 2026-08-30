@@ -216,7 +216,7 @@ stays asynchronous and the schedule does not move.
 The brief warned that every projection tonight came in optimistic. **The
 aggregate here is optimistic too, by 3.6%, which is an order of magnitude
 smaller than the 41,120 / 12,985 / 6,614 / 52% misses it warned about** -- and
-2a is the one row of the night that came in better than its estimate. The
+2a came in the other way, which none of the rows the brief named did. The
 reason both halves are close is that READCONV's factor came from a probe of the
 identical structure at the identical sizes, not from a fraction of a census.
 
@@ -344,7 +344,42 @@ base` declaration was removed, so it read `rtl/gdn_block.vhd` across that edit.
 The difference is one unused declaration and both forms analyse and simulate;
 the equivalence run `equiv_2abc_f` and the synthesis `dr_gdn_2abc_f` are both
 on the final bytes. A confirming gate on the settled tree is in
-`full_gate_final.log` if present.
+`full_gate_final.log`, and it is NOT green -- see immediately below.
+
+### The confirming gate is RED, on one row that is not mine, and here is the proof
+
+    OVERALL     PASS 105  FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+    NOT GREEN:
+       - sim:tb_matvec_fk33_desc
+    REGRESSION: FAIL
+
+    sim:tb_matvec_fk33_desc  FAIL  50  exit 1: ghdl-mcode:error:
+        bound check failure at rtl/axi_rd_fsm.vhd:231
+
+That row is **subsystem A**. `grep -n gdn sim/tb_matvec_fk33_desc.vhd` returns
+nothing, so `gdn_block` is not in its design at all. It **passed** in the
+21:57 gate and **failed** in the 22:23 one, and between those two runs TRACK
+ACOV committed a new `sim/tb_matvec_fk33_desc.vhd` (`028829e`) -- a file this
+track is explicitly forbidden to touch.
+
+**Asserting that is not the same as measuring it, so it was measured**, with
+two runs of `--only tb_matvec_fk33_desc` (3 rows each) on CLEAN
+`git archive HEAD` trees under `REGRESS_REPO`:
+
+    tree                                              verdict
+    git archive HEAD, gdn_block reverted to pinned    OVERALL PASS 3  FAIL 0
+    git archive HEAD, gdn_block = THIS COMMIT         OVERALL PASS 3  FAIL 0
+
+**The row passes on a clean checkout that carries this change.** It fails only
+in the shared working tree, which at 22:23 held another track's uncommitted
+`rtl/llama_top.vhd` and a large set of untracked `sim/` files that
+`sim/regress.sh` auto-discovers and that a clean archive regenerates. That is
+the "gate row failing from another track's dirty file" case the brief names,
+and it is left alone rather than chased: the file belongs to TRACK ACOV.
+
+**What this does NOT prove.** It does not prove the working tree is healthy,
+and it does not prove the 21:57 `PASS 106 / FAIL 0` is the state of the tree
+now. It proves only that the failing row does not depend on this change.
 
 ---
 

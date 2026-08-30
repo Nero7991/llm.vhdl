@@ -1,0 +1,210 @@
+================================================================================
+ llama.vhdl regression -- FULL run, 2 job(s), 900s per test
+ 2026-08-29 22:22:59   ghdl: GHDL 1.0.0 (Ubuntu 1.0.0+dfsg-6) [Dunoon edition]
+================================================================================
+
+-- suite sim ---------------------------------------------------------------
+PASS       sim:tb_a_geom                          2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_a_geom.vhd:484:7:@10985ns:(report note): tb_a_geom RESULT: PASS -- 10 checks, A_ROWS_IF = 48, A_M
+PASS       sim:tb_act_mem                         0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_act_mem.vhd:84:5:@5795ns:(report note): act_mem_striped: 544 elements checked, 0 mismatches (ELEM
+PASS       sim:tb_arith                           1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_arith.vhd:69:5:@0ms:(report note): arith vectors: 4178 checked, 0 mismatches
+PASS       sim:tb_async_fifo                      0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_async_fifo.vhd:747:5:@76031500ps:(report note): PASS: tb_async_fifo
+NOCHECK    sim:tb_attn_beh                        1s  observation only: prints per-position xb_exp then BEH_DONE. It is the behavioral half of the xsim netlist compare (sim/run_attn_cmp.sh), not a self-checking bench
+PASS       sim:tb_attn_block                      1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_block.vhd:916:7:@81465ns:(report note): tb_attn_block: PASS -- 3 consumer configurations, 64
+PASS       sim:tb_attn_emit                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_emit.vhd:699:7:@203245ns:(report note): tb_attn_emit: PASS -- 40 layers x 96 elements bit-ex
+PASS       sim:tb_attn_fix_beh                    1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_fix_beh.vhd:129:23:@284575ns:(report note): PASS:attn_replay netlist matches behavioral
+PASS       sim:tb_attn_gate                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_gate.vhd:533:7:@149025ns:(report note): tb_attn_gate: PASS -- 35 heads x 64 elements bit-exa
+PASS       sim:tb_attn_kv_axi                     2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_axi.vhd:77:7:@20725ns:(report note): tb_attn_kv_axi: PASS -- 2 AXI widths, records and me
+PASS       sim:tb_attn_kv_map                     1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_map.vhd:934:5:@12685ns:(report note): tb_attn_kv_map: phase A done -- 64 preseeded record
+PASS       sim:tb_attn_kv_quant                   1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_quant.vhd:414:7:@465975ns:(report note): tb_attn_kv_quant: PASS -- 64 vectors x 256 (8 bl
+PASS       sim:tb_attn_kv_seam                   11s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_kv_seam.vhd:1432:7:@457945ns:(report note): tb_attn_kv_seam: PASS -- 4 tokens at cur_pos 0..
+PASS       sim:tb_attn_mac_array                  1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_mac_array.vhd:338:7:@61245ns:(report note): tb_attn_mac_array: PASS -- 24 cases, QH_TILE=2 D
+PASS       sim:tb_attn_recip                      0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_recip.vhd:308:7:@169055ns:(report note): tb_attn_recip: PASS -- 24 layers x 12 heads bit-exa
+PASS       sim:tb_attn_replay_beh                 2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_replay_beh.vhd:129:23:@284575ns:(report note): PASS:attn_replay netlist matches behavioral
+PASS       sim:tb_attn_rescale                    1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_rescale.vhd:307:7:@5475ns:(report note): tb_attn_rescale PASS: 512 cases bit-exact, SEQ_MULT
+PASS       sim:tb_attn_rope                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_rope.vhd:524:7:@204455ns:(report note): tb_attn_rope PASS: 28 head vectors, 2688 elements bi
+PASS       sim:tb_attn_score_q12                  1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_score_q12.vhd:303:7:@27645ns:(report note): tb_attn_score_q12: PASS -- 64 cases x 8 blocks b
+PASS       sim:tb_attn_softmax                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_softmax.vhd:513:7:@68435ns:(report note): tb_attn_softmax: PASS -- 44 heads bit-exact: every
+PASS       sim:tb_attn_twiddle                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_attn_twiddle.vhd:386:7:@35535ns:(report note): tb_attn_twiddle: PASS -- 24 positions x 32 pairs b
+PASS       sim:tb_axi_rd_fsm                      1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_axi_rd_fsm.vhd:593:5:@27246ns:(report note): PASS: tb_axi_rd_fsm
+PASS       sim:tb_axi_rd_port                     0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_axi_rd_port.vhd:324:5:@3395ns:(report note): axi_rd_port: 0 bad beats (QSTALL=0, occupancy upper 
+PASS       sim:tb_axi_rd_port_dual                1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_axi_rd_port_dual.vhd:583:7:@9947ns:(report note): PASS: tb_axi_rd_port_dual
+PASS       sim:tb_b_audit_ser_handshake           0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_b_audit_ser_handshake.vhd:194:5:@330500ps:(report note): tb_b_audit_ser_handshake: HEAD_GAP=0  DI
+PASS       sim:tb_engine_dump                   108s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_engine_dump.vhd:111:7:@49631376ns:(report note): PASS:engine_shared 6/6 tokens match
+PASS       sim:tb_exp_cone                        0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_exp_cone.vhd:88:7:@895ns:(report note): VALUES AGREE on the 8 the staged form produced
+PASS       sim:tb_gdn_block                      32s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_block.vhd:1015:5:@18313500ps:(report note): tb_gdn_block: PASS, 1024 elements, dump in gdn_bl
+PASS       sim:tb_gdn_block_vec                   8s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_block_vec.vhd:907:5:@4624500ps:(report note): tb_gdn_block_vec: PASS, 256 y elements, 4096 st
+PASS       sim:tb_gdn_conv                        5s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_conv.vhd:227:7:@110126ns:(report note): gdn_conv: bit-exact with the C recipe on all 128 case
+NOCHECK    sim:tb_gdn_conv_cycles                 2s  measurement only: emits a CSV cycle table (CYC,...) and "done". There is no expected value to check it against
+PASS       sim:tb_gdn_conv_tvalid_skew            1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_conv_tvalid_skew.vhd:336:7:@655ns:(report note): ==== CASE 1 CONTROL  segment A, no mid-pass 
+PASS       sim:tb_gdn_emit_chain                 62s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_emit_chain.vhd:460:7:@52684500ps:(report note): tb_gdn_emit_chain: PASS -- 3 blocks x 24 head
+PASS       sim:tb_gdn_exp_capture                 0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_exp_capture.vhd:247:7:@5285ns:(report note): tb_gdn_exp_capture: PASS -- 6 tokens x 4 layers 
+PASS       sim:tb_gdn_head_emit                   1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_head_emit.vhd:478:7:@266775ns:(report note): tb_gdn_head_emit: PASS -- 64 cases x 128 bit-exa
+PASS       sim:tb_gdn_recur                       7s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_recur.vhd:463:7:@353326ns:(report note): gdn_recur: bit-exact with the C recipe on all 384 ca
+PASS       sim:tb_gdn_recur_pipe                  9s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_recur_pipe.vhd:383:7:@25345ns:(report note): gdn_recur_pipe: bit-identical to the reference o
+PASS       sim:tb_gdn_scalar                      0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_scalar.vhd:244:5:@75936ns:(report note): bit-exact vs fixed reference: eg mismatches 0, beta 
+PASS       sim:tb_gdn_silu                        4s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_silu.vhd:240:7:@115565ns:(report note): gdn_silu: bit-exact with the C reference on all 8192 
+PASS       sim:tb_gdn_y_emit                      7s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_gdn_y_emit.vhd:501:7:@4585295ns:(report note): tb_gdn_y_emit: PASS -- 48 cases x 24 heads x 128 b
+PASS       sim:tb_hbm_tg                          1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_hbm_tg.vhd:695:5:@45791ns:(report note): hbm_tg recovers a known bandwidth at every port count
+PASS       sim:tb_l2norm_rs                       2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_l2norm_rs.vhd:219:7:@49935ns:(report note): l2norm_rs: bit-exact with ref/l2norm_rs_vec.c on all 
+PASS       sim:tb_llama_top                     122s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top.vhd:2846:7:@92351500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 bl
+PASS       sim:tb_llama_top_normw                81s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top.vhd:2846:7:@52463500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 bl
+PASS       sim:tb_llama_top_real                 82s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top.vhd:2846:7:@52463500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 bl
+PASS       sim:tb_llama_top_seq                 327s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top.vhd:2846:7:@213781500ps:(report note): tb_llama_top RESULT: PASS -- 61 descriptors, 4 b
+PASS       sim:tb_llama_top_smp                   2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top_smp.vhd:773:7:@16765ns:(report note): tb_llama_top_smp: PASS.  2 tokens, 64 logits each
+PASS       sim:tb_llama_top_smp_beh               1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_llama_top_smp.vhd:773:7:@10825ns:(report note): tb_llama_top_smp: PASS.  2 tokens, 64 logits each
+PASS       sim:tb_matvec_axi                      2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_axi.vhd:337:5:@5245ns:(report note): AXI: 8 rows read back, 0 mismatches
+PASS       sim:tb_matvec_cb_contract              0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_cb_contract.vhd:612:5:@8875ns:(report note): tb_matvec_cb_contract: PASS -- 9 runs, 0 fail
+PASS       sim:tb_matvec_cb_lockstep              1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_cb_lockstep.vhd:258:5:@1745ns:(report note): tb_matvec_cb_lockstep: PASS -- codebook repli
+PASS       sim:tb_matvec_core                     1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_core.vhd:599:5:@535ns:(report note): BFP: 64 stage values compared, 0 mismatches, ns=6 y_e
+PASS       sim:tb_matvec_core_ragsat              3s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_core.vhd:599:5:@1115ns:(report note): BFP: 396 stage values compared, 0 mismatches, ns=16 
+PASS       sim:tb_matvec_fk33                    12s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_fk33.vhd:483:5:@48195ns:(report note): subsystem A is bit-exact with ref/matvec_int4.c fro
+FAIL       sim:tb_matvec_fk33_desc               50s  exit 1: /usr/bin/ghdl-mcode:error: bound check failure at /home/orencollaco/GitHub/llama.vhdl/rtl/axi_rd_fsm.vhd:231
+PASS       sim:tb_matvec_fk33_desc_dual          58s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_fk33_desc.vhd:1714:5:@659645ns:(report note): subsystem A is bit-exact with ref/matvec_int
+PASS       sim:tb_matvec_fk33_desc_xexp          51s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_fk33_desc.vhd:1714:5:@659765ns:(report note): subsystem A is bit-exact with ref/matvec_int
+PASS       sim:tb_matvec_int4                     2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_int4.vhd:455:5:@1675ns:(report note): end to end: 8 rows compared, 0 mismatches, y_exp=-2
+PASS       sim:tb_matvec_int4_ip                  0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_matvec_int4_ip.vhd:559:7:@12395ns:(report note): tb_matvec_int4_ip: PASS -- matvec_int4_ip is a b
+PASS       sim:tb_model_cfg                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_model_cfg.vhd:62:5:@0ms:(report note): tb_model_cfg: PASS
+PASS       sim:tb_mv4i_desc_image                 2s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_mv4i_desc_image.vhd:470:7:@2245ns:(report note): PASS: descriptor image judged as expected (-1)
+PASS       sim:tb_realshape_9b                    3s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_realshape_9b.vhd:109:5:@1ns:(report note): REALSHAPE 9B: PASS -- every generic, array bound, inde
+NOCHECK    sim:tb_rms_sweep                       1s  observation only: sweeps xe and prints oe/o0, then SWEEP_DONE. Has no pass criterion; it exists to compare against a recorded hardware reading
+PASS       sim:tb_rmsnorm_bf                      7s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_rmsnorm_bf.vhd:380:7:@60815ns:(report note): rmsnorm_bf: bit-exact with the C reference on all 20
+PASS       sim:tb_rmsnorm_rs                      4s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_rmsnorm_rs.vhd:128:9:@1321ns:(report note): random, xe=8: bit-exact  (ref 651 cycles, rs 148)
+PASS       sim:tb_rope_pair                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_rope_pair.vhd:144:5:@855ns:(report note): NEOX pairing is exactly ADJACENT's rotation on permuted
+PASS       sim:tb_rope_ps                         0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_rope_ps.vhd:197:5:@506ns:(report note): PASS:rope  max_dev=1
+PASS       sim:tb_seq_desc_fetch                  0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_desc_fetch.vhd:653:7:@144148500ps:(report note): tb_seq_desc_fetch: PASS -- 2 token(s) x 505 
+PASS       sim:tb_seq_opdec                       0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_opdec.vhd:1053:7:@58046500ps:(report note): tb_seq_opdec: PASS
+PASS       sim:tb_seq_region_lock                 0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_region_lock.vhd:679:7:@32281500ps:(report note): tb_seq_region_lock: PASS
+PASS       sim:tb_seq_tbl_shape                   0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_tbl_shape.vhd:277:7:@0ms:(report note): tb_seq_tbl_shape: PASS
+PASS       sim:tb_seq_vec_res                     1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_vec_res.vhd:564:7:@75915ns:(report note): tb_seq_vec_res: PASS -- 64 cases bit-exact on every
+PASS       sim:tb_seq_vec_seam                    0s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_seq_vec_seam.vhd:1420:7:@1948500ps:(report note): tb_seq_vec_seam: PASS
+PASS       sim:tb_silu_cone                       1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_silu_cone.vhd:92:5:@11569ns:(report note): compared 5769 outputs, 0 mismatches
+PASS       sim:tb_stmem_equiv                     5s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_stmem_equiv.vhd:222:7:@200641ns:(report note): STMEM EQUIV: PASS -- the process-variable read-fir
+NOCHECK    sim:tb_swchain_beh                     0s  observation only: prints one o_exp/checksum line. Its header says "GHDL-only sanity bench"; the real check is tb_swchain_cmp under xsim
+PASS       sim:tb_weight_streamer                 1s  /home/orencollaco/GitHub/llama.vhdl/sim/tb_weight_streamer.vhd:403:5:@535ns:(report note): weight_streamer: 0 reassembly errors across both 
+PASS       sim:seamgate_real                     37s  SEAMGATE PASS -- real: 1 token(s), at least 64 seams per token
+PASS       sim:seamgate_stub                     28s  SEAMGATE PASS -- stub: 1 token(s), at least 63 seams per token
+PASS       sim:seamgate_seq                     155s  SEAMGATE PASS -- seq: 3 token(s), at least 61 seams per token
+PASS       sim:graygate                           1s  GRAY_CHECK: PASS  (13 widths, pointer 2..14 bits, all exhaustive) /home/orencollaco/GitHub/llama.vhdl/rtl/async_fifo.vhd
+PASS       sim:runguard                           0s  SELFTEST PASS
+PASS       sim:ipsync                             0s  IPSYNC: PASS
+PASS       sim:descrule                           0s  SELFTEST PASS
+
+-- suite tb ---------------------------------------------------------------
+PASS       tb:tb_attention                        0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_attention.vhd:289:5:@5499ns:(report note): PASS:attention  scores_dev=12 probs_dev=2 kv_dev=0 xb_d
+PASS       tb:tb_bfp_stress                       1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_bfp_stress.vhd:181:7:@20947ns:(report note): ALL BFP-PACK STRESS CASES PASSED
+PASS       tb:tb_divider_rs                       0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_divider_rs.vhd:199:7:@328345ns:(report note): tb_divider_rs: ALL TESTS PASS
+PASS       tb:tb_e2e                            111s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_e2e.vhd:146:7:@5321946ns:(report note): PASS:e2e 16/16 tokens match
+PASS       tb:tb_embed                            0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_embed.vhd:114:5:@7556ns:(report note): PASS:embed  max_dev=1
+PASS       tb:tb_engine                         226s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_engine.vhd:116:7:@66894996ns:(report note): PASS:engine 24/24 tokens match
+NOCHECK    tb:tb_engine_dbg                     446s  debug register dump: zero assertions, every report at severity note, exits 0 unconditionally. Running it proves it elaborates and terminates, nothing more
+PASS       tb:tb_engine_shared                  416s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_engine_shared.vhd:111:7:@200782476ns:(report note): PASS:engine_shared 24/24 tokens match
+PASS       tb:tb_fixed_pkg                        0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_fixed_pkg.vhd:66:5:@0ms:(report note): PASS:fixed_pkg
+PASS       tb:tb_kv_mem                           0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_kv_mem.vhd:27:5:@166ns:(report note): PASS:kv_mem
+PASS       tb:tb_layer                            1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_layer.vhd:290:5:@26ns:(report note): PASS:layer  max_dev=12  kv_max_dev=4
+PASS       tb:tb_layer_fsm                        6s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_layer_fsm.vhd:212:5:@491036ns:(report note): PASS:layer_fsm  max_dev=8  kv_max_dev=4
+PASS       tb:tb_llama_engine_axi               416s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_llama_engine_axi.vhd:138:7:@200783455ns:(report note): PASS:llama_engine_axi 24/24 tokens match
+PASS       tb:tb_lm_head                          1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_lm_head.vhd:125:5:@327736ns:(report note): PASS:lm_head  max_dev=0  mismatches=0  argmax=378
+PASS       tb:tb_mac_array                        0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_mac_array.vhd:37:5:@3855ns:(report note): PASS:mac_array
+PASS       tb:tb_mac_axi                          0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_mac_axi.vhd:91:5:@8055ns:(report note): PASS:mac_axi  acc=-15
+PASS       tb:tb_matmul                           3s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_matmul.vhd:135:5:@42975ns:(report note): PASS:matmul_wq max_dev=1
+PASS       tb:tb_matmul_rt                        1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_matmul_rt.vhd:159:5:@387375ns:(report note): PASS:matmul_rt wq=1 wk=1
+PASS       tb:tb_matvec_engine                    1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_matvec_engine.vhd:174:7:@55855ns:(report note): PASS:matvec_engine  64/64
+PASS       tb:tb_rmsnorm                          0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_rmsnorm.vhd:136:5:@3336ns:(report note): PASS:rmsnorm  max_dev=1
+PASS       tb:tb_rope                             1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_rope.vhd:197:5:@506ns:(report note): PASS:rope  max_dev=1
+PASS       tb:tb_sampler                          0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_sampler.vhd:72:5:@26ns:(report note): PASS:sampler case1 (tie first-max) token=10
+PASS       tb:tb_smoke                            0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_smoke.vhd:11:5:@0ms:(report note): PASS:smoke
+PASS       tb:tb_softmax                          1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_softmax.vhd:150:5:@226ns:(report note): PASS:softmax  max_dev=1  pq_sum=4093
+PASS       tb:tb_swiglu                           0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_swiglu.vhd:133:5:@6906ns:(report note): PASS:swiglu max_dev=2
+PASS       tb:tb_weight_mem                       0s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_weight_mem.vhd:23:5:@76ns:(report note): PASS:weight_mem
+PASS       tb:tb_weights_pkg                      1s  /home/orencollaco/GitHub/llama.vhdl/tb/tb_weights_pkg.vhd:78:7:@0ms:(report note): PASS:weights_pkg
+
+
+-- SKIPPED (listed, never dropped silently) ------------------------------------
+SKIPPED    sim:tb_attn_cmp                    declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_attn_cmp2                   declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_attn_probe_cmp              declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_attn_replay                 declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_bfp_cmp                     declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_divprobe_cmp                declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_embed_ps                    needs embed_ps, provided only by a post-synthesis netlist file (sim/embed_ps_wrap.vhd): xsim job, not GHDL
+SKIPPED    sim:tb_lm_head_ps                  needs lm_head_ps, provided only by a post-synthesis netlist file (sim/lm_ps_wrap.vhd): xsim job, not GHDL
+SKIPPED    sim:tb_matmul_rt_ps                needs matmul_rt_ps, provided only by a post-synthesis netlist file (sim/mm_ps_wrap.vhd): xsim job, not GHDL
+SKIPPED    sim:tb_res_cmp                     declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_rms_cmp                     declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_rms_real                    declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_rmsnorm_ps                  needs rmsnorm_ps, provided only by a post-synthesis netlist file (sim/rms_ps_wrap.vhd): xsim job, not GHDL
+SKIPPED    sim:tb_samp_cmp                    declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_sm_cmp                      declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_sm_cmp24                    declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_softmax_ps                  needs softmax_ps, provided only by a post-synthesis netlist file (sim/sm_ps_wrap.vhd): xsim job, not GHDL
+SKIPPED    sim:tb_swchain_cmp                 declares `library beh`: post-synthesis netlist-vs-behavioral compare, needs xsim + UNISIM (see sim/run_*_cmp.sh)
+SKIPPED    sim:tb_swiglu_ps                   needs swiglu_ps, provided only by a post-synthesis netlist file (sim/sw_ps_wrap.vhd): xsim job, not GHDL
+
+-- NOT IN GIT (these rows/inputs are yours alone) ------------------------------
+UNTRACKED  row    sim:tb_attn_cmp2                   not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_fix_beh                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_probe_cmp              not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_replay                 not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_replay_beh             not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_divprobe_cmp                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_embed_ps                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_engine_dump                 not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_lm_head_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_matmul_rt_ps                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rms_real                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rms_sweep                   not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rmsnorm_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rope_ps                     not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_sm_cmp                      not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_sm_cmp24                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_softmax_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_swiglu_ps                   not in git: a gate row for you, absent for a clone
+UNTRACKED  source sim/attention_ml_fix.vhd           compiled by some row; absent, that row goes SKIPPED
+UNTRACKED  source sim/attention_ml_probe.vhd         compiled by some row; absent, that row goes SKIPPED
+UNTRACKED  source sim/engine_shared_dump.vhd         compiled by some row; absent, that row goes SKIPPED
+
+   The pass count is NOT reproducible from a clean checkout while this
+   list is non-empty.  Commit them, delete them, or leave them -- but do
+   NOT raise BASELINE_PASS from a run that included them.
+
+-- RTL COVERAGE ----------------------------------------------------------------
+   (transitive closure from every testbench in BOTH suites)
+   91 files in rtl/: 71 reached by the sim/ suite, 38 by tb/, 23 by both.
+
+   RTL FILES REACHED BY NO TESTBENCH IN EITHER SUITE:
+     rtl/attn_c_ports_skel.vhd
+     rtl/attn_lane_skel.vhd
+     rtl/hbm_tg_ip.vhd
+     rtl/seq_top_skel.vhd
+     rtl/tp_collective_skel.vhd
+   5 of 91.
+
+   reached ONLY by the tb/ suite (run it with --suite tb, or leave the
+   default which runs both):
+     rtl/attention.vhd                tb_attention,tb_engine,tb_layer_fsm
+     rtl/engine.vhd                   tb_engine
+     rtl/engine_shared.vhd            tb_engine_dbg,tb_engine_shared,tb_llama_engine_axi
+     rtl/layer.vhd                    tb_e2e,tb_layer
+     rtl/layer_ar.vhd                 tb_engine
+     rtl/layer_fsm.vhd                tb_layer_fsm
+     rtl/llama_engine_axi.vhd         tb_llama_engine_axi
+     rtl/mac_axi.vhd                  tb_mac_axi
+     rtl/matmul.vhd                   tb_engine,tb_layer_fsm,tb_matmul
+     rtl/matvec_engine.vhd            tb_matvec_engine
+     rtl/sampler.vhd                  tb_e2e,tb_engine,tb_sampler
+     rtl/seq_ctrl.vhd                 tb_e2e
+     rtl/weight_mem.vhd               tb_weight_mem
+     rtl/weights_pkg.vhd              tb_engine,tb_layer_fsm,tb_matmul,tb_weights_pkg
+     rtl/wq_l0_rom_pkg.vhd            tb_matvec_engine
+
+================================================================================
+ suite sim   PASS 79   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 105   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+================================================================================
+ baseline: 105 passing, above the floor of 93 -- but this tree has rows a clean checkout does not get: sim:tb_attn_cmp2 sim:tb_attn_fix_beh sim:tb_attn_probe_cmp sim:tb_attn_replay sim:tb_attn_replay_beh sim:tb_divprobe_cmp sim:tb_embed_ps sim:tb_engine_dump sim:tb_lm_head_ps sim:tb_matmul_rt_ps sim:tb_rms_real sim:tb_rms_sweep sim:tb_rmsnorm_ps sim:tb_rope_ps sim:tb_sm_cmp sim:tb_sm_cmp24 sim:tb_softmax_ps sim:tb_swiglu_ps sim:tb_matvec_fk33 sim:tb_matvec_fk33_desc sim:tb_matvec_fk33_desc_dual sim:tb_matvec_fk33_desc_xexp.  DO NOT raise BASELINE_PASS from this run: the floor is a CLEAN-CHECKOUT number, and a floor raised to include rows that depend on your working tree or your model set is unreachable for everybody else, including you after a clean clone.
+================================================================================
+ NOT GREEN:
+   - sim:tb_matvec_fk33_desc
+
+ REGRESSION: FAIL
