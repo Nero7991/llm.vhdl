@@ -314,12 +314,15 @@ Every draw of the populated ROM, all eight, from three tracks:
 |---|---:|
 | the ROM's BEST draw, 82,597 | **15,279** |
 | this track's own same-session before-side, `nu_rom` 89,970 | **22,652** |
-| the ROM's median, ~103,192 | **~35,874** |
+| the ROM's median over all EIGHT draws, 96,526 | **29,208** |
 | the ROM's WORST draw, 128,065 | **60,747** |
 
 **So: `+15,279 to +60,747 LUT`, and the width of that interval is a property of
-the thing being removed, not of the thing replacing it.** If one number has to
-be carried, carry the saving against the median with the range attached -- and
+the thing being removed, not of the thing replacing it.** The median of the eight is
+`(89,970 + 103,081)/2 = 96,526`; **note that adding this track's two draws
+moved that median by 6,666 LUT**, which is itself a measurement of how little a
+median of a non-reproducible quantity is worth. If one number has to be
+carried, carry the saving against the median with the range attached -- and
 note that the more valuable half of the result is that the budget loses its
 only termless-than-a-value.
 
