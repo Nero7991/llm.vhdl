@@ -149,13 +149,34 @@ landed, the table is the defect.
 | track | question | owns |
 |---|---|---|
 | **BGATE2** | **Five of B's seven units have no accuracy gate the gate can fail.** The flagship: a mutation reintroducing exactly the defect `rmsnorm_bf` exists to fix is bit-exact-green and 1.7e10 output LSB wrong. Three of the five have oracle blind spots that must be answered before a tolerance means anything. | `sim/tb_gdn_silu.vhd`, `sim/tb_rmsnorm_bf.vhd`, `sim/tb_gdn_{head_emit,y_emit,emit_chain}.vhd` + their mutate scripts and generators |
-| **LUTDIET** | COMPOSE measured B+C+D at 2.88x the device in LUT, with **82.3% of B's LUT being glue carrying 0 DSP, 0 BRAM, 0 URAM**. Find where the glue is and whether it can come out. Schedule-critical: if it cannot, the single-card 9B plan changes. | `sim/ooc_lutdiet_*`, `hw/fk33/results/lutdiet_*` |
+| **WRITEDEC** | LUTDIET measured the fix; this applies it. Per-word generate with a CONSTANT index, module by module with its own before/after, then a composed B+C+D measurement to replace the projection with a number. Must be bit-exact: it is a structural rewrite of a write path and must change no value. | `rtl/rmsnorm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `sim/ooc_writedec_*`, `hw/fk33/results/writedec_*` |
 | **CKVMAP** | CGENERICS' handoff: encode C's KV bases in the format's own 16-byte granule so they fit a `natural`, and set `C_MAXPOS = 131,072`. **Not blocked on CLOG2 after all** -- the chunk-domain sum is 425,205,248, under the 2**30 where `clog2` overflows, which is the point of the encoding. | `rtl/llama_top.vhd`, released by BTOP1 at `bf99d39` |
 | **CLOG2** | `util_pkg.clog2` is a doubling loop over `natural` and overflows above 2**30, failing with `overflow detected ... at llama_top.vhd:785` -- **a line unrelated to the caller**. Fix it, make the diagnostic attributable, and audit every other 32-bit accumulator now that byte addresses exceed 4 GiB. | `rtl/util_pkg.vhd` and sibling utility packages |
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
-BUILD-E2E, GATEHYGIENE, BTOP1.
+BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET.
+
+**B+C+D CLOSES, and the cheapest fix is not the one anyone expected.** LUTDIET
+(`4950666`) MEASURED that decoding the variable-index write with a per-word
+generate and a CONSTANT index takes `rmsnorm_rs` from 169,746 to **40,804 LUT**
+at identical ports, identical FF, identical WNS and **zero BRAM** -- a 76%
+reduction with no memory and no interface change. That alone projects B+C+D at
+**210,890 LUT against 233,765 free in `pb_core`**, against COMPOSE's 2.88x-over
+starting point. The margin is 22,875 LUT, **9.8%**, which is positive and thin.
+
+**It also corrected the mechanism, and the correction changes where to look.**
+COMPOSE described the cost as a mux tree. The mux tree is **17.5%** of it.
+**80.5% is the variable-index WRITE into the flat register, and that structure
+uses ZERO MUXF7 and ZERO MUXF8** -- so hunting this cost by its F7/F8 signature
+finds one fifth of it. Same split by netlist census in B (79.8% write / 8.9%
+read, 88.7% of 585,430 primitives) and C (54.1% / 3.5%).
+
+**Two of my own figures were wrong and are corrected here.** "Lose roughly 500K
+to fit" was the DEVICE number; `pb_core` needs **538,135**. And COMPOSE
+UNDERSTATED the composition: it booked D's norm at 169,746, the unit WITHOUT
+the vector storage `llama_top` must add, while B and C included theirs. With
+it, D's norm is 299,030 and B+C+D is ~901K, not 772K.
 
 **`BASELINE_PASS` IS NOW 93, AND THE OLD 101 WAS UNREACHABLE ON EVERY TREE.**
 GATEHYGIENE (`1399425`, `5154518`, `7676510`) found the gate had been printing
