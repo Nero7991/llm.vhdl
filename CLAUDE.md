@@ -82,7 +82,31 @@ The rules that follow from this:
   Vivado forks **parallel-synthesis workers that inherit the parent's argv** --
   four at 2.36 GB each plus a 1.41 GB parent. **Gate on PRESENCE, never on a
   count, by any pattern.** For the real footprint, SUM the RSS:
-  `ps -eo rss,args | grep unwrapped/lnx64.o/vivado | awk '{s+=$1} END {print s/1048576" GB"}'`.
+  **NOT the argv form.** `ps -eo rss,args | grep unwrapped/lnx64.o/vivado`
+  OVER-COUNTS by matching any process that merely CARRIES that text in its own
+  command line. MEASURED 2026-08-30 on this box: with five real Vivado workers
+  running, the same filter also matched **four `bash` processes and a `ugrep`**,
+  adding ~18 MB of phantom Vivado; and with ZERO Vivados running, TRACK NORMURAM
+  measured 3,532 KiB of "Vivado" and **sat in a sleep loop for ELEVEN MINUTES
+  against a lane that was already free**. **The `[u]nwrapped` bracket trick does
+  NOT save you here** -- the bracket only stops the filter matching its OWN
+  argv, and the text that matched belonged to SIBLING processes. This is the
+  `pgrep -f` self-match trap generalised, and it is silent: it looks exactly
+  like a busy lane, so it costs time rather than raising an error.
+
+  **Read `/proc/PID/exe`, which a command line cannot spoof, and sum `VmRSS`:**
+
+  ```bash
+  for p in $(ls /proc | grep -E '^[0-9]+$'); do
+    e=$(readlink /proc/$p/exe 2>/dev/null) || continue
+    case "$e" in *unwrapped/lnx64.o/vivado*)
+      awk -v p=$p '/VmRSS/{s+=$2} END{print s}' /proc/$p/status;; esac
+  done | awk '{s+=$1} END {printf "%.2f GB\n", s/1048576}'
+  ```
+
+  Better still where the job is yours: take the cgroup's own `memory.peak`
+  rather than any sampled `free` or `ps`, because peak is a property of the job
+  and a sample only sees the moment you looked.
 - **One Vivado costs 10.85 GB of the BC-250's 14 GB** (MEASURED 2026-08-30,
   `attn_block` OOC with forked workers). So the second lane holds exactly one
   tool and has ~3 GB of margin, not the comfortable headroom the 14 GB figure
@@ -217,6 +241,19 @@ box before believing it.
 **A new `sim/tb_*.vhd` becomes a gate row whether you meant it or not**
 (auto-discovered). Vectors defaulting to a nonexistent file turn the shared gate
 red for every track.
+
+**URAM CANNOT HOLD A CONSTANT TABLE ON THIS DEVICE, and asking anyway gets you
+BRAM with only a WARNING.** MEASURED, Vivado's own words in TRACK NWROM's log:
+`[Synth 8-10226] The ram_style = ultra set on ROM ... can not be honored for
+this device. The URAM primitives on this device do not support initializations
+to any non 0 values. This ROM will be implemented using BRAMs`. The run then
+reports `uram=0`. **So "320 idle URAM288" is real and unusable for any
+initialised table** -- URAM is available only to a store written at run time,
+which means the HBM route, not a ROM. Three separate briefs carried "114 URAM"
+for the norm gain image; that 114 was the **`bram` column** of a run whose URAM
+request had been refused. Charge such levers in BRAM (672 tiles on this part),
+and prefer `rom_style = "block"` explicitly so the log does not carry a WARNING
+claiming a resource the design never gets.
 
 **The FK33's HBM slave is AXI3: `ARLEN` is 4 bits, so 16 beats is the hard burst
 cap**, not the 128 that AXI4's 4 KB rule allows. A module's own assert bounds
