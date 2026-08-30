@@ -1918,7 +1918,36 @@ begin
       signal tk   : std_logic := '0';
       signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
 
-      signal xv     : std_logic_vector(NN*MANT_W-1 downto 0) := (others => '0');
+      -- THE INPUT STAGING VECTOR, HELD ONE WORD PER ELEMENT.
+      --
+      -- `rmsnorm_rs`'s `x_mant` port is one flat N*16 vector, so this adapter
+      -- has to hold the whole vector while the read pass fills it.  It used to
+      -- hold it as a flat `std_logic_vector` and write it with a RUNTIME slice,
+      -- `xv((k-1)*MANT_W-1 downto (k-2)*MANT_W) <= el_rdata`.  MEASURED, TRACK
+      -- LUTDIET and TRACK WRITEDEC: that idiom is the single most expensive
+      -- structure in this design.  Vivado does not infer a write decoder from
+      -- it; it builds a barrel shifter over the whole register, 88,640 LUT
+      -- primitives at `hidden = 4096`, and -- the reason it is easy to miss --
+      -- it consumes ZERO MUXF7 and ZERO MUXF8, so the F7/F8 signature that
+      -- finds the READ muxes does not find this at all.
+      --
+      -- Holding the same bits as an ARRAY OF WORDS makes the write target
+      -- `xw(k-2)`, a whole element, which is the shape Vivado turns into one
+      -- clock enable per word.  Nothing else moves: the write happens on the
+      -- same edges, under the same condition, with the same data and the same
+      -- index, and the flat view `xv` the unit's port needs is rebuilt below
+      -- by a concurrent generate.
+      --
+      -- THE TRAP THIS FORM AVOIDS, and it is invisible to synthesis.  A slice
+      -- whose bounds contain a FOR-LOOP variable inside a process creates a
+      -- driver over the WHOLE signal in every such process; they resolve
+      -- against each other and the signal simulates as 'X' while synthesising
+      -- cleanly.  Every slice bound in `gxflat` is the GENERATE index, which
+      -- is a constant inside each generated statement, so each bit of `xv` has
+      -- exactly one driver.
+      type xw_t is array (0 to NN-1) of std_logic_vector(MANT_W-1 downto 0);
+      signal xw     : xw_t := (others => (others => '0'));
+      signal xv     : std_logic_vector(NN*MANT_W-1 downto 0);
       signal ov     : std_logic_vector(NN*MANT_W-1 downto 0);
       signal r_go   : std_logic := '0';
       signal r_done : std_logic;
@@ -1949,6 +1978,12 @@ begin
       signal novf : boolean := false;
       signal wsel : std_logic_vector(NN*MANT_W-1 downto 0) := NW_TBL(0);
     begin
+      -- The flat view of `xw`, which is what `rmsnorm_rs`'s `x_mant` port
+      -- takes.  One driver per bit; see the note on `xw` above.
+      gxflat : for i in 0 to NN-1 generate
+        xv((i+1)*MANT_W-1 downto i*MANT_W) <= xw(i);
+      end generate;
+
       v_ready(vi) <= rdy;
       v_done(vi)  <= dn;
       v_taken(vi) <= tk;
@@ -2090,8 +2125,8 @@ begin
                   ur_addr(NUNIT+vi) <= k;
                 end if;
                 if k >= 2 then
-                  xv((k-1)*MANT_W-1 downto (k-2)*MANT_W)
-                    <= std_logic_vector(el_rdata);
+                  -- A WHOLE-WORD target, not a runtime slice.  See `xw`.
+                  xw(k-2) <= std_logic_vector(el_rdata);
                   sqp := el_rdata * el_rdata;
                   ssq := ssq + unsigned(resize(sqp, 64));
                 end if;
