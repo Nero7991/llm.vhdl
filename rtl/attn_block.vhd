@@ -425,6 +425,11 @@ architecture rtl of attn_block is
   signal vs2  : v_arr := (others => (others => '0'));   -- rope destination
   signal vs_q, vs2_q : signed(MANT_W-1 downto 0) := (others => '0');
 
+  -- vs2 flattened, so gqpl's slice target can be static in the generate index.
+  -- See the note at gqpl.
+  signal vs2_flat : std_logic_vector(HEAD_DIM*MANT_W-1 downto 0)
+                  := (others => '0');
+
   signal qplane : std_logic_vector(G*HEAD_DIM*MANT_W-1 downto 0)
                 := (others => '0');
   type e8_arr is array (natural range <>) of signed(EXP_W-1 downto 0);
@@ -978,6 +983,91 @@ begin
     vsh_neg <= neg;
   end process;
 
+  -- ---- qplane, krec and vrec: the WRITE DECODE ---------------------------
+  -- TRACK WRITEDEC, 2026-08-29.  These three registers used to be written from
+  -- the sequencer with slice bounds containing a runtime signal, and Vivado
+  -- infers each such write as a demux over the WHOLE register.  MEASURED
+  -- (TRACK LUTDIET's netlist census, docs/debugging/
+  -- 2026-08-29_lutdiet-flat-vector-ports.md section 5.4 and SHARES.txt):
+  -- qplane 49,184 LUT, krec 14,150, vrec 11,276 -- 74,610 of the 91,396 this
+  -- module spends on write demux, and 47% of the whole unit's 157,560.  None
+  -- of it carries a MUXF7 or a MUXF8.
+  --
+  -- Each write below becomes a per-word generate with a CONSTANT slice index,
+  -- enabled by the SAME condition the write sat under in the sequencer, read
+  -- from the same signals.  Nothing new is registered, no pipeline stage is
+  -- added and the schedule is unchanged CYCLE FOR CYCLE.
+  --
+  -- THE PRIORITY IS THE ORIGINAL PROCESS'S ASSIGNMENT ORDER, and it is the one
+  -- part of this that is not mechanical.  Inside a process the LAST assignment
+  -- on an edge wins, so for krec and vrec:
+  --    the case-statement bypass write (:1398 / :1494) outranks
+  --    the block collector (:1118 / :1121)  which outranks
+  --    the element collector (:1104 / :1106).
+  -- The if/elsif chains below are written in that order.  Whether any two of
+  -- them can actually be true on one edge is NOT assumed either way; the
+  -- ordering reproduces the original whether they can or not.
+  --
+  -- TRAP, MEASURED IN GHDL.  The slice target must be fully STATIC in the
+  -- generate index.  A process creates its driver over the longest static
+  -- prefix of the target, so a bound containing a for-loop variable gives
+  -- every generated process a driver over the WHOLE register, they resolve
+  -- against each other, and the signal simulates as 'X' -- while synthesising
+  -- cleanly.  That is why vs2 is flattened by a separate concurrent generate
+  -- below and handed to gqpl as one static slice.
+  gv2f : for i in 0 to HEAD_DIM-1 generate
+    vs2_flat((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(vs2(i));
+  end generate;
+
+  gqpl : for g in 0 to G-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' and ph = P_ROPEW and rp_dn = '1' and lsel /= 0
+           and qh = g then
+          qplane((g+1)*HEAD_DIM*MANT_W-1 downto g*HEAD_DIM*MANT_W) <= vs2_flat;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gkrec : for j in 0 to HEAD_DIM-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' then
+          if ph = P_RECK and is_byp = '1' then
+            krec((j+1)*CM_W-1 downto j*CM_W)
+              <= kbyp((j+1)*CM_W-1 downto j*CM_W);
+          elsif rbv(2) = '1' and ph /= P_RECV and rbi = j/KV_BLOCK then
+            krec((j+1)*CM_W-1 downto j*CM_W)
+              <= kr_mant((j mod KV_BLOCK + 1)*CM_W-1 downto (j mod KV_BLOCK)*CM_W);
+          elsif kq_mv = '1' and kq_isv = '0'
+                and to_integer(unsigned(kq_mi)) = j then
+            krec((j+1)*CM_W-1 downto j*CM_W) <= kq_md;
+          end if;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  gvrec : for j in 0 to HEAD_DIM-1 generate
+    process(clk) begin
+      if rising_edge(clk) then
+        if rst = '0' then
+          if ph = P_RECV and is_byp = '1' then
+            vrec((j+1)*CM_W-1 downto j*CM_W)
+              <= vbyp((j+1)*CM_W-1 downto j*CM_W);
+          elsif rbv(2) = '1' and ph = P_RECV and rbi = j/KV_BLOCK then
+            vrec((j+1)*CM_W-1 downto j*CM_W)
+              <= vr_mant((j mod KV_BLOCK + 1)*CM_W-1 downto (j mod KV_BLOCK)*CM_W);
+          elsif kq_mv = '1' and kq_isv = '1'
+                and to_integer(unsigned(kq_mi)) = j then
+            vrec((j+1)*CM_W-1 downto j*CM_W) <= kq_md;
+          end if;
+        end if;
+      end if;
+    end process;
+  end generate;
+
   -- ======================= the sequencer =================================
   process(clk)
     variable base  : integer;
@@ -1098,14 +1188,8 @@ begin
         if kq_hdrv = '1' and (ph = P_KQW or ph = P_VQW) then
           if kq_isv = '1' then vhdr <= kq_eblk; else khdr <= kq_eblk; end if;
         end if;
-        if kq_mv = '1' then
-          base := to_integer(unsigned(kq_mi))*CM_W;
-          if kq_isv = '1' then
-            vrec(base+CM_W-1 downto base) <= kq_md;
-          else
-            krec(base+CM_W-1 downto base) <= kq_md;
-          end if;
-        end if;
+        -- the per-element krec/vrec write has moved to the gkrec / gvrec
+        -- generates above, under this exact condition.
 
         -- the KV record read, one cycle behind its issue.  The destination is
         -- decided by the STATE, and the state cannot advance until rbi = NBLK,
@@ -1113,12 +1197,12 @@ begin
         rbv(1) <= '0';
         rbv(2) <= rbv(1);
         if rbv(2) = '1' then
-          base := rbi*KV_BLOCK*CM_W;
+          -- the per-block krec/vrec write has moved to the gkrec / gvrec
+          -- generates above, under this exact condition; only the header and
+          -- the pointer remain here.
           if ph = P_RECV then
-            vrec(base+KV_BLOCK*CM_W-1 downto base) <= vr_mant;
             vhdr <= vr_hdr;
           else
-            krec(base+KV_BLOCK*CM_W-1 downto base) <= kr_mant;
             khdr <= kr_hdr;
           end if;
           rbi <= rbi + 1;
@@ -1275,10 +1359,8 @@ begin
                 kq_isv  <= '0';
                 ph <= P_KQGO;
               else
-                for i in 0 to HEAD_DIM-1 loop
-                  qplane((qh*HEAD_DIM + i + 1)*MANT_W-1 downto
-                         (qh*HEAD_DIM + i)*MANT_W) <= std_logic_vector(vs2(i));
-                end loop;
+                -- the qplane write has moved to the gqpl generate above,
+                -- under this exact condition
                 ph <= P_QN;
               end if;
             end if;
@@ -1395,7 +1477,7 @@ begin
           -- keeps standing until P_POSN moves `pos_i`.
           when P_RECK =>
             if is_byp = '1' then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
               ph <= P_HDR;
             elsif blk < NBLK then
@@ -1491,7 +1573,7 @@ begin
 
           when P_RECV =>
             if is_byp = '1' then
-              vrec <= vbyp;
+              -- vrec <= vbyp has moved to the gvrec generate above
               vhdr <= vbh;
               blk <= 0;
               ph <= P_PV;
