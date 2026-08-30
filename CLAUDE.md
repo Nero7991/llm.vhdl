@@ -111,8 +111,23 @@ put six Vivado processes on the workstation instead.
 - **Its shell is fish**, so wrap remote commands in `bash -c "..."`.
 - It is deliberately on no WoL watchdog, so if it is off, it is off.
 
-**The rule: if the work is an OOC synthesis or an area sweep, the default
-destination is the BC-250, not this box.** Sending it here needs a reason.
+**The rule, from Oren 2026-08-30: USE BOTH. They are two lanes, not a primary
+and a fallback.**
+
+- **One Vivado on the workstation AND one on the BC-250, concurrently.** That is
+  two synthesis lanes with neither box over its budget, and roughly double the
+  throughput -- which is the whole point of having provisioned the second
+  machine.
+- **"ONE Vivado at a time" above means one PER BOX, not one in total.** Two on
+  either box is what does the damage; one on each is free.
+- **Big job here, small job there.** The workstation has ~13 GiB against the
+  BC-250's 14 GB but is 2.3x faster, and anything that does not fit in 14 GB
+  has to run here by definition.
+- **Sync before every BC-250 dispatch.** Its results are bit-identical to this
+  box's, so a number measured against a stale tree is indistinguishable from a
+  real one. That is the trap the second lane introduces.
+- When both lanes are busy, that is the ceiling. **A third Vivado anywhere is
+  the mistake that cost a night.**
 
 ---
 
