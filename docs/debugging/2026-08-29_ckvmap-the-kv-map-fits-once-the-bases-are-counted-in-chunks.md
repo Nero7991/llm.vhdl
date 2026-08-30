@@ -268,6 +268,16 @@ sim:tb_llama_top_smp      PASS
 sim:tb_llama_top_smp_beh  PASS
 ```
 
+and the same six rows on an archive of the SAME commit with NOTHING changed,
+run as the control, unfiltered:
+
+```
+ suite sim   PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ suite tb    PASS 0   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ OVERALL     PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+```
+
 **That run is the one to believe, and it is deliberately the SCRATCH one.** It
 is a `git archive` of the pinned SHA with only this track's four files changed,
 so nothing else can have moved. A repeat against the repository working tree
