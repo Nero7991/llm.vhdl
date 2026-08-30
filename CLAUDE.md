@@ -255,6 +255,26 @@ box before believing it.
 (auto-discovered). Vectors defaulting to a nonexistent file turn the shared gate
 red for every track.
 
+**VIVADO'S INFERENCE LOG LIES IN BOTH DIRECTIONS. Only the mapping report and
+the primitive census are authoritative.** Two MEASURED cases, one each way, on
+the same day:
+
+- **It claims a resource the design never gets.** `[Synth 8-10226]`: the URAM
+  request "can not be honored", and the run reports `uram=0` while three
+  documents quoted "114 URAM" that was really the BRAM column.
+- **It denies a resource the design DID get.** `[Synth 8-7186]`: `Applying
+  attribute ram_style = "distributed" is ignored, object 'cb[0][0]' is not
+  inferred as ram due to incorrect usage`, printed one hundred times -- and
+  **every object it names is a `RAM32M16` in the same run's mapping report.**
+
+So a warning saying an inference failed is not evidence that it failed, and a
+message saying one succeeded is not evidence that it succeeded. **Cross-check
+`report_utilization` against an object-level `get_cells` census, and when they
+disagree the census wins.** The cheap discriminator is
+`get_cells -hier -filter {REF_NAME =~ RAM*}` next to the LUT-as-memory row: if a
+run reports `RAM=0 FF=1024` you have registers, and `RAM=4352 FF=0` you have
+distributed RAM, whatever the log said about either.
+
 **URAM CANNOT HOLD A CONSTANT TABLE ON THIS DEVICE, and asking anyway gets you
 BRAM with only a WARNING.** MEASURED, Vivado's own words in TRACK NWROM's log:
 `[Synth 8-10226] The ram_style = ultra set on ROM ... can not be honored for
