@@ -832,7 +832,7 @@ this prediction.
   clean mutant and the five-gate control that shows nothing else catches it
   (4.6). It remains open at the packer (section 8 item 5).
 
-**Landed at the commit named in the reply.** Files added, both new and
+**Landed at `0eac8d4`.** Files added, both new and
 exclusively this track's:
 `hw/fk33/host/fk33_stripe_experiment.py`,
 `docs/debugging/2026-08-30_stripeready-teeth.py`, and this document. No tracked
