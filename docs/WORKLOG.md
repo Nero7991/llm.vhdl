@@ -129,6 +129,61 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### THE STRIPING EXPERIMENT RAN ON SILICON, 2026-08-30 14:20. 11.09x.
+
+```
+mean cycles/beat   flat 22.49   striped 2.03   speedup 11.09x
+```
+
+**The pre-registered band was 1.60 to 3.0 and the measurement is 2.03.** Neither
+falsifier fired: not 10-12 (half the lanes still sharing a channel), not ~21.6
+(the descriptors not being the striped ones).
+
+| tensor | flat | striped |
+|---|---:|---:|
+| `blk.0.ssm_alpha.weight` | 23.45 | **2.38** |
+| `blk.0.ffn_gate.weight` | 22.19 | **2.02** |
+| `blk.11.attn_k.weight` | 22.38 | **2.00** |
+| `blk.20.ffn_down.weight` | 21.95 | **1.72** |
+
+**The census is printed beside every number**, so the layout and the measurement
+cannot be read apart. Whole-image: flat `{(1,27): 235, ...}`, striped
+`{(25,2): 249}` -- every one of the 249 tensors on 25 channels with at most 2
+lanes on the busiest. G1, G2 and G2b all PASS. Both manifests pinned by sha256
+in the log, because that file has moved under three tracks.
+
+**`trips=0` before AND after all eight jobs**, with the counter cleared and
+observed 0 before each. The thermal veto was discriminating rather than
+saturated, because the cold power cycle reset it -- so no number here is
+contaminated by THERM-255.
+
+**STRIPEREADY's caveat against its own interest did NOT bite:** only 15 to 17 of
+27 lanes read the pseudo-channel their own engine master is wired to, so ~40%
+cross the HBM global switch laterally, **and 2.03 was reached anyway.** Lateral
+crossing is cheaper than the estimate feared. That is now a measured fact rather
+than an assumption, and it is the one genuinely new thing this run taught beyond
+confirming the prediction.
+
+Log: `/mnt/storage/stripe_experiment_2026-08-30.log`. The card is left holding
+the striped image, fully verified; re-running the command is safe.
+
+### AND THE CARD BOOTS ITSELF NOW
+
+`hw/fk33/bit/fk33_pcieep.mcs` written to card 1's SPI flash. On the next full
+power cycle the FPGA configured from flash, trained inside the ~100 ms PERST
+window, and the BIOS enumerated **root port `00:1d.0`** unaided --
+`06:00.0 Xilinx Corporation Device [10ee:9034]`, `LnkSta: Speed 8GT/s (ok),
+Width x4 (ok)`.
+
+**This retires the entire rescan/reboot problem.** The port is live at every
+boot from now on, and any bitstream goes in behind it with `remove -> configure
+-> rescan` (`sudo hw/fk33/host/fk33_reload.sh --with-vccint`), which is the
+August procedure that always worked and had simply lost its precondition.
+
+**`00:1c.4` was the RTX 3090's slot, not the card's.** A whole deadlock theory
+was built on that misidentification this morning; it was settled by flashing and
+looking, not by more inference.
+
 ### TRACK GATEGREEN COMPLETE (`392f818`, `df0b194`). THE TREE IS GREEN.
 
 Full both-suite run on a clean `git archive 32a7b47`, GHDL 1.0.0 mcode,

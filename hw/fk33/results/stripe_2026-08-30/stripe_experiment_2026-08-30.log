@@ -1,0 +1,83 @@
+manifests   pinned by sha256, because this file has moved under two tracks already:
+  697bc32c7389e216691f04a175080f565b6e35542e9a5a772f77b63e6bcc17e6  /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json
+  5e5df0839dac2377c97e1810003a4cff2f5808118d67d530c1b2a47ac7fc2938  /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/manifest.json
+G1  PASS    striped: 249 of 250 objects lane-striped, `hbm.lane_stripe` present;  flat: 0 of 250
+index.txt   present in both packed dirs
+
+G2  the 27 sub-region bases, derived from each .mv4i's own 0x38 table
+    and the manifest's raw `pieces` JSON.  Segments are ADDRESS BITS
+    [32:28], never a piece's `segment` label.
+    tensor                     layout   lanes chans max/chan on their own SAXI
+    blk.0.ssm_alpha.weight     flat        27     1       27 1 of 27
+    blk.0.ssm_alpha.weight     striped     27    25        2 17 of 27
+    blk.0.ffn_gate.weight      flat        27     1       27 1 of 27
+    blk.0.ffn_gate.weight      striped     27    25        2 15 of 27
+    blk.11.attn_k.weight       flat        27     1       27 1 of 27
+    blk.11.attn_k.weight       striped     27    25        2 17 of 27
+    blk.20.ffn_down.weight     flat        27     1       27 1 of 27
+    blk.20.ffn_down.weight     striped     27    25        2 15 of 27
+G2  PASS    every measurement tensor: flat 1 channel, striped >= 20, at most 3 lanes per channel
+
+G2b whole-image census, (channels, max lanes on one channel) -> tensors
+    flat     {(1, 27): 235, (2, 14): 2, (2, 16): 2, (2, 17): 1, (2, 18): 1, (2, 19): 1, (2, 20): 2, (2, 21): 1, (2, 23): 2, (2, 26): 1, (3, 13): 1}
+    striped  {(25, 2): 249}
+G2b PASS    all 249 striped tensors meet the requirement
+
+PREDICTION  pre-registered in docs/debugging/2026-08-30_stripepath-five-emitters.md section 10,
+            restated here against the census above and NOT re-derived to taste:
+            flat    27 beats on 1 pseudo-channel / 250 MHz = 108.0 ns = 21.60 core cycles at 200 MHz;  MEASURED 21.67
+            striped 2 beats on the busiest channel / 250 MHz = 8.0 ns = 1.60 core cycles
+            so cycles/beat should fall to between 1.60 and 3.0.
+            10-12 means half the lanes still share a channel.
+            UNCHANGED ~21.6 means the image or the descriptors are not the striped ones,
+            and G2/G3/G4 above are what make that outcome impossible to reach silently.
+
+id magic   0x464b3333   expected 0x464b3333 ("FK33")
+id build   0x20260828   yyyymmdd, BCD
+  OK -- link, config space, BAR placement, AXI-Lite clock and reset,
+  smartconnect decode and bitstream identity are ALL proven by this one read.
+
+### PHASE: FLAT
+load        wrote 4,487,442,432 bytes in 8.4 s
+verify      250 of 250 extents digested in 5.7 s
+job         blk.0.ssm_alpha.weight     CYCLES=3001    BEATS=128   cyc/beat= 23.45  trips=0  attempts=1
+job         blk.0.ffn_gate.weight      CYCLES=8520    BEATS=384   cyc/beat= 22.19  trips=0  attempts=1
+job         blk.11.attn_k.weight       CYCLES=5728    BEATS=256   cyc/beat= 22.38  trips=0  attempts=1
+job         blk.20.ffn_down.weight     CYCLES=16861   BEATS=768   cyc/beat= 21.95  trips=0  attempts=1
+
+### PHASE: STRIPED
+load        wrote 4,487,442,432 bytes in 8.0 s
+verify      6973 of 6973 extents digested in 5.7 s
+job         blk.0.ssm_alpha.weight     CYCLES=305     BEATS=128   cyc/beat=  2.38  trips=0  attempts=1
+job         blk.0.ffn_gate.weight      CYCLES=775     BEATS=384   cyc/beat=  2.02  trips=0  attempts=1
+job         blk.11.attn_k.weight       CYCLES=511     BEATS=256   cyc/beat=  2.00  trips=0  attempts=1
+job         blk.20.ffn_down.weight     CYCLES=1319    BEATS=768   cyc/beat=  1.72  trips=0  attempts=1
+
+==============================================================================
+STRIPING EXPERIMENT -- cycles/beat, both layouts, one session
+==============================================================================
+tensor                      rows    CYCLES   BEATS   STARVED cyc/beat  trips  chans max/chan own SAXI
+-- FLAT (control)
+blk.0.ssm_alpha.weight        32      3001     128      2525    23.45      0      1       27     1/27
+blk.0.ffn_gate.weight        100      8520     384      5489    22.19      0      1       27     1/27
+blk.11.attn_k.weight          64      5728     256      5016    22.38      0      1       27     1/27
+blk.20.ffn_down.weight        64     16861     768      7267    21.95      0      1       27     1/27
+-- STRIPED
+blk.0.ssm_alpha.weight        32       305     128       154     2.38      0     25        2    17/27
+blk.0.ffn_gate.weight        100       775     384       391     2.02      0     25        2    15/27
+blk.11.attn_k.weight          64       511     256       244     2.00      0     25        2    17/27
+blk.20.ffn_down.weight        64      1319     768       551     1.72      0     25        2    15/27
+
+chans/max-chan/own-SAXI are the G2 census of THIS run's manifest, printed beside the
+number so the layout and the measurement are never read apart.  'own SAXI' is how many
+of the 27 lanes read the pseudo-channel their own engine master is wired to in
+hw/fk33/gen_pcieep.py's ENG_PORT_MAP; the rest cross the HBM global switch laterally.
+
+mean cycles/beat   flat 22.49   striped 2.03   speedup 11.09x
+
+READING  the prediction HOLDS: the bound has stopped being one pseudo-channel.
+
+thermal  trip counter cleared and observed 0 before every one of the 8 jobs; 0 job(s) reported a non-zero count afterwards
+         A throughput number with a non-zero trip count is not evidence about striping.
+
+The card is left holding the STRIPED image, fully verified.  Re-running this command is safe.
