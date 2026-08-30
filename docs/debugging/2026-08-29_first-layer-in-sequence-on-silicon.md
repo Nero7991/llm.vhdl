@@ -129,3 +129,50 @@ whose checker has not been shown to bite is worth nothing.
 - **The 2.88 us readback is one measurement on one layer.** Whether it is
   latency-bound (and so fixable by batching) or bandwidth-bound is not
   established, and it is now the largest single term in the wall time.
+
+
+---
+
+## 9. BOTH layer types now pass, chained. Added 00:07, 2026-08-30.
+
+Section 8 listed "one layer, one token, one shape -- layer 0 is Gated DeltaNet;
+layer 3 is attention and was not run" as open. Layer 3 has now been run, in
+`chained` mode, thermal cleared first:
+
+```
+result      7 of 7 jobs run; 7 PASS, 0 FAIL/REFUSED, 0 INCONCLUSIVE
+            43008 result rows compared against ref/run9b's stream, element for element
+            layer wall 0.331 s
+            anchored from the reference: R_X-2, R_Y-3
+            RE-ANCHORED (the chain was broken here):
+              R_Y-3            the gated attention block -- subsystem C, which is not on this silicon
+            LAYER OUTPUT R_X-3: 0 of 4096 mantissas differ from ref/run9b, exp 10 vs 10
+
+VERDICT     PASS
+```
+
+So **both layer topologies in the 9B model now run in sequence on the card and
+produce bit-exact layer outputs**: layer 0 (Gated DeltaNet, **10** A jobs,
+45,120 rows) and layer 3 (attention, **7** A jobs, 43,008 rows). **88,128
+result rows in total, element for element, zero differ.**
+
+The re-anchor point differs and is named differently in each -- `R_Y-0` for
+"the Gated DeltaNet block -- subsystem B" and `R_Y-3` for "the gated attention
+block -- subsystem C" -- which is the tool correctly reporting **two different
+structural gaps**, not one generic one.
+
+**`LAYER OUTPUT ... exp 10 vs 10`** against layer 0's `exp 12 vs 12`: the
+exponents differ between the two layers and both match the reference, so this
+is not a case where a constant would have passed.
+
+### What is still NOT established by this
+
+- **Still one token.** Both runs are token id 760, position 0.
+- **Still subsystem A only.** Seven of the layer's steps ran on the host and
+  the eighth -- the attention block itself -- is the structural gap. **B and C
+  have never run on this silicon.**
+- **Layers 1 and 2 (also Gated DeltaNet) were not run**, and no layer beyond 3
+  exists in this reference stream (`--layers 4`).
+- **The `done_l` stale-completion race (DONE-1) is unfixed**, and its detection
+  through BEATS is blind on same-shape adjacencies -- which both of these
+  layers contain in `ffn_gate`/`ffn_up`. Neither run is evidence against it.
