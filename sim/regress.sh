@@ -1045,6 +1045,32 @@ for _sg in real stub seq; do
 done
 unset _sg
 
+# ---------------------------------------------------------------------------
+# THE GRAY-CODE ROW (added 2026-08-29, TRACK GRAY1).  Appended here for the
+# same reason as the seam rows: it has no testbench file of its own, and it is
+# a `sim`-suite row that is not a fiction -- what it runs is GHDL.
+# ---------------------------------------------------------------------------
+# WHY IT IS A GATE ROW AND NOT A SCRIPT SOMEBODY REMEMBERS TO RUN.  It closes
+# the ONE defect class in rtl/async_fifo.vhd that no other instrument in this
+# repository reaches, and that one of them actively REWARDS:
+#
+#   sim/mutate_async_fifo.sh row G1 replaces both gray functions with the
+#   identity, so the FIFO's pointers cross the clock boundary as plain BINARY.
+#   MEASURED: it survives all eight clock ratios in sim/tb_async_fifo.vhd (the
+#   identity is a bijection, and an RTL simulator assigns an `unsigned`
+#   atomically, so the multi-bit-transition event gray coding exists to survive
+#   is not in the model at all), and MEASURED, this track, sim/cdc_teeth.sh
+#   rows BASE and G1: report_cdc emits TWO FEWER rows on the defective design
+#   than on the correct one, with the Warning and Critical counts identical.
+#   A review rule of the form "the CDC report must not get worse" therefore
+#   passes the binary-pointer design.
+#
+# rtl/async_fifo.vhd is in subsystem A's weight datapath, which is the part of
+# this design measured computing bit-exactly on the FK33.  A gray-coding defect
+# there is load-dependent, intermittent, and invisible to everything else the
+# gate runs.  See docs/debugging/2026-08-29_gray1-identity-gray-code.md.
+printf 'graygate\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -1615,12 +1641,54 @@ run_seam() {   # run_seam <suite:name>
       > "$SCRATCH/res.${suite}_${tb}"
 }
 
+# run_graygate -- the sim:graygate row appended to $PLAN above.  Same shape as
+# run_seam and for the same reason: run_one's contract is `ghdl -a` over a file
+# list then `ghdl -r` on a top entity, and this row's whole point is that its
+# design unit is GENERATED at gate time from rtl/async_fifo.vhd's own bytes.
+#
+# FOUR VERDICTS FROM sim/gray_check.sh, and three of them are RED here.  The
+# distinction is kept because it is the difference between "the encoding is
+# wrong" and "the check could not run", and a row that collapses those is how a
+# harness scores a clean sweep while testing nothing:
+#
+#   0  PASS     every property held exhaustively at every pointer width
+#   1  FAIL     a property was violated -- the encoding is not a gray code
+#   3  NOSHAPE  rtl/async_fifo.vhd no longer contains exactly one bin2gray and
+#               one gray2bin.  RED, and the message says to update the check.
+#               A legitimate RENAME lands here; that is the known cost of
+#               extracting by name, and it is a loud cost rather than a silent
+#               pass.  See sim/mutate_gray.sh row NF.
+#   4  VOID     ghdl could not analyse or elaborate the generated probe
+run_graygate() {   # run_graygate <suite:name>
+  local key="$1"
+  local tb="${key#*:}" suite="${key%%:*}"
+  local dir="$SCRATCH/${suite}_${tb}" log="$SCRATCH/${suite}_${tb}/log"
+  local t0; t0=$(date +%s)
+  mkdir -p "$dir"
+  ( SCRATCH="$dir/gc" GHDL="$GHDL" timeout -k 5 "$TIMEOUT" \
+      bash "$REPO/sim/gray_check.sh" ; echo "GRAYCHECK_EXIT=$?" ) > "$log" 2>&1
+  local rc; rc=$(grep -oE '^GRAYCHECK_EXIT=[0-9]+' "$log" | tail -1 | cut -d= -f2)
+  [ -n "${rc:-}" ] || rc=1
+  local rv rd
+  rd="$(grep -am1 '^GRAY_CHECK:' "$log" | cut -c1-150)"
+  case "$rc" in
+    0)       rv=PASS ;;
+    124|137) rv=TIMEOUT
+             rd="no result within ${TIMEOUT}s -- gray_check.sh is 13 exhaustive GHDL runs" ;;
+    *)       rv=FAIL ;;
+  esac
+  [ -n "$rd" ] || rd="gray_check.sh exited $rc without a verdict line; log: $log"
+  printf '%s\t%s\t%s\t%s\n' "$key" "$rv" "$(( $(date +%s) - t0 ))" "$rd" \
+      > "$SCRATCH/res.${suite}_${tb}"
+}
+
 run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   local key="$1" top="$2" vecs="$3"; shift 3
   # The seam rows are dispatched HERE, on the name, so that the driver loop
   # below is untouched and no existing row can reach a different code path.
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
+    graygate)   run_graygate "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
