@@ -504,6 +504,31 @@ have not been taken and because a central expectation that coincides with a
 prior measurement is exactly the situation in which it is easiest to stop
 asking what would falsify it.
 
+### How the scatter will be read, PRE-REGISTERED before the draws ran
+
+Written and committed **before** `mem_d1` and `mem_d2` returned, so the
+interpretation cannot be tuned to the numbers. The coordinator asked for the
+scatter as a first-class result and it is treated as one.
+
+Let `spread = max(d1, d2) / min(d1, d2)` on CLB LUT.
+
+* **`spread` at or near 1.00** does NOT mean this structure is scatter-free.
+  Two draws can agree by chance, and SCATTER's own evidence is that two of its
+  five draws came from the identical command and still differed. It means only
+  that **no scatter was observed in two draws**, which is what will be written.
+* **`spread` materially above 1.00** is the more informative outcome and is
+  NOT a defect: it bounds how much any single-draw area claim about this unit
+  can be trusted, including LUTDIET's 4,798, which was one draw.
+* **Either way the reported area is a RANGE**, `min..max`, never a mean. A mean
+  of two draws is a number with no error bar pretending to be a measurement.
+* **The comparison to `rmsnorm_rs` uses the WORST mem draw against the control**,
+  so the saving is a floor rather than a best case.
+* **SCATTER's 1.55x does not transfer.** It was measured on a 65,536-flop
+  constant ROM whose spread came from register merging, and a memory-backed
+  unit with no fold to perform has no obvious equivalent mechanism. **That is a
+  hypothesis, and `mem_d1` vs `mem_d2` is its test.** If the spread here is
+  large, the merging explanation for SCATTER's spread is incomplete.
+
 **STATUS: QUEUED, NOT RUN.** The draws are fourth in the lane order set by the
 coordinator on 2026-08-30 (TIMING's pblock squeeze on the workstation, then
 LEVERC's inference question, then NORMURAM's six points, then these) and are to
