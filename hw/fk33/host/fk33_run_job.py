@@ -187,6 +187,90 @@ EC_WHY = {
 }
 
 
+# ---- ERR_INFO is TWO fields, and the sub-case names live in the RTL --------
+#
+# OI-9 (Oren's decision, 2026-08-29): subsystem A's 4-bit error space was FULL,
+# and the route chosen was to subdivide it via ERR_INFO rather than widen the
+# code field, because the descriptor's byte layout is pinned.  So ERR_INFO now
+# carries [10:0] the failing descriptor word index and [15:11] a sub-case that
+# is NAMESPACED PER err_code -- the same sub-case number under two codes means
+# two different things.
+#
+# WHY THIS PARSES THE RTL INSTEAD OF CARRYING A TABLE.  TRACK ERRINFO's handoff
+# proposed a hand-copied dict of 18 constants here.  This project has already
+# recorded what that costs: two producers agreeing is not evidence, and a
+# wrong constant (`nsub_w=29`) survived precisely because two places restated
+# it and matched.  rtl/matvec_int4_desc_pkg.vhd declares the code in its
+# section header ("-- EC_DESC (0x3)") and each arm as
+# `constant ED_x : natural := n;  -- description`, so the number, the name, the
+# description AND the code mapping all come from one file that the gateware is
+# built from.  If the parse finds nothing we say so and degrade; we never
+# invent a name.
+_EC_SEC = re.compile(r"^\s*--\s*(EC_[A-Z]+)\s*\((0x[0-9A-Fa-f]+)\)")
+_EC_SUB = re.compile(
+    r"^\s*constant\s+([A-Z]{2}_[A-Z0-9_]+)\s*:\s*natural\s*:=\s*(\d+)\s*;"
+    r"\s*--\s*(.*?)\s*$")
+
+
+def load_err_subcases(pkg="rtl/matvec_int4_desc_pkg.vhd"):
+    """{code: {sub: (NAME, description)}} parsed from the RTL, or {} if absent."""
+    try:
+        lines = open(pkg, encoding="utf-8").read().splitlines()
+    except OSError:
+        return {}
+    out, code = {}, None
+    for ln in lines:
+        m = _EC_SEC.match(ln)
+        if m:
+            code = int(m.group(2), 16)
+            out.setdefault(code, {})
+            continue
+        if code is None:
+            continue
+        m = _EC_SUB.match(ln)
+        if m:
+            out[code][int(m.group(2))] = (m.group(1), m.group(3))
+        elif ln.strip() and not ln.strip().startswith("--"):
+            code = None          # left the sub-case block
+    return {c: v for c, v in out.items() if v}
+
+
+EI_SUB_PTR = 31
+
+
+def ei_str(code, info, subs):
+    """Name the PAIR (err_code, sub-case).  Never guess."""
+    sub, word = (info >> 11) & 0x1F, info & 0x7FF
+    if sub == EI_SUB_PTR or info == 0xFFFF:
+        return "the pointer itself, not a descriptor word"
+    if sub == 0:
+        return "descriptor word %d" % word
+    if not subs:
+        return ("descriptor word %d, sub-case %d -- rtl/matvec_int4_desc_pkg.vhd "
+                "could not be read, so this host cannot name it" % (word, sub))
+    if code not in subs:
+        # NOT the same thing as an unknown sub-case, and saying so matters.
+        # A code with no sub-cases declared (EC_CORE, EC_MAGIC, ...) reporting
+        # a nonzero sub-case means the SITE is wrong, not that this checkout is
+        # stale -- blaming the checkout would send the reader to the wrong file,
+        # which is the exact failure this function was written to remove.
+        return ("descriptor word %d, sub-case %d -- but err_code 0x%X declares "
+                "NO sub-cases in rtl/matvec_int4_desc_pkg.vhd, so the raising "
+                "site is wrong, not this host" % (word, sub, code))
+    hit = subs[code].get(sub)
+    if hit is None:
+        # THE ARM THAT MATTERS.  Before this existed the code printed
+        # "descriptor word index" for the whole 16-bit value, so an opcode
+        # refusal (ERR_INFO=0x1000) was reported as descriptor word 4096 -- a
+        # wrong diagnosis stated confidently, which is worse than the
+        # ambiguity it replaced.
+        return ("descriptor word %d, sub-case %d -- UNKNOWN to this host, so "
+                "the gateware is newer than this checkout of "
+                "rtl/matvec_int4_desc_pkg.vhd" % (word, sub))
+    return "descriptor word %d: %s (%s)" % (word, hit[1], hit[0])
+
+
+
 # ------------------------------------------------------------- the oracle
 def build_oracle(mv4i, n_rows, x_exp, scratch, seed=None, xamp=None, cc="cc"):
     """Compile and run ref/mv_fk33_tr, then parse its trace.
@@ -827,13 +911,11 @@ def run_job(p, regs, bar, hbm, a, out=sys.stdout):
       % (therm1, trip1, trip0, "  <-- MOVED" if moved else ""))
 
     if err:
+        _ei = bar.rd(R["FK33_ENG_ERR_INFO"])
         detail = ("the gateware REFUSED or failed the descriptor: err_code=0x%X "
                   "%s -- %s.  ERR_INFO=0x%04X (%s)."
                   % (ec, EC_NAME.get(ec, "?"), EC_WHY.get(ec, "unassigned code"),
-                     bar.rd(R["FK33_ENG_ERR_INFO"]),
-                     "the pointer itself"
-                     if bar.rd(R["FK33_ENG_ERR_INFO"]) == 0xFFFF
-                     else "descriptor word index"))
+                     _ei, ei_str(ec, _ei, load_err_subcases())))
         if moved:
             return Verdict.INCONCLUSIVE, detail + ("  AND the trip counter "
                 "moved %d -> %d during the job, so this error is not evidence "
