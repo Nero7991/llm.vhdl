@@ -1,7 +1,8 @@
 # Can the lm-head tail of the token path learn `pieces`, and can `weights_residency`'s `stack_hole_bytes` rule be made right for a layout with by-design arena gaps instead of muted?
 
 **Date:** 2026-08-30. Branch `fpga`. **TRACK TOKENSTRIPE.** Base commit
-`2c66e89` (HEAD moved to `a8053ca` while this ran; see section 7 trap 6).
+`2c66e89` (HEAD moved to `a8053ca` while this ran; see section 7 trap 6);
+**landed at `6ca385f`**.
 
 **No hardware was touched.** Nothing below ran `xsdb`, `hw_server`,
 `vivado ... program`, `hw/fk33/pcieep.sh`, `hw/fk33/jtag.sh`,
