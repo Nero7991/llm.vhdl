@@ -1,0 +1,18 @@
+# BUFG insertion in out-of-context synthesis -- MEASURED 2026-08-29, TRACK COMPOSE4
+# part xcvu33p-fsvh2104-2L-e, Vivado 2023.2, a four-flop probe (probe.vhd).
+#
+# (a) plain  synth_design -mode out_of_context, no constraint:
+# (b) same, plus an out-of-context XDC with
+#     set_property CLOCK_BUFFER_TYPE BUFG [get_ports clk]
+
+PROBE_A_BUFG 0
+PROBE_A_NETTYPE LOCAL_CLOCK
+PROBE_B_BUFG 0
+PROBE_DONE2
+
+# And setting that property BEFORE synth_design in a non-project in-memory
+# flow does not merely fail to work, it ERRORS -- there are no port objects
+# until synthesis has run:
+
+
+ERROR: [Common 17-161] Invalid option value '' specified for 'objects'.

@@ -1,0 +1,200 @@
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][31] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][32] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][33] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][34] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][35] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][36] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][37] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][38] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][39] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][40] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][41] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][42] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][43] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][44] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][45] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][46] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][47] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][0] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][1] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][2] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][3] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][4] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][5] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][6] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][7] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][8] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][9] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][10] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][11] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][12] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][13] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][14] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][15] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][16] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][17] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][18] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][19] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][20] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][21] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][22] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][23] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][24] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][25] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][26] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][27] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][28] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][29] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][30] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][31] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][32] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][33] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][34] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][35] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][36] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][37] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][38] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][39] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][40] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][41] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][42] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][43] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][44] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][45] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][46] was removed.  [/mnt/storage/compose4/tree/rtl/matvec_core.vhd:649]
+INFO: [Common 17-14] Message 'Synth 8-6014' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+WARNING: [Synth 8-7129] Port go in module ooc_normadapt is either unconnected or has no load
+WARNING: [Synth 8-7129] Port i_v_reg_a[7] in module ooc_normadapt is either unconnected or has no load
+WARNING: [Synth 8-7129] Port i_v_reg_d[7] in module ooc_normadapt is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_unit[2] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_unit[1] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_unit[0] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[10] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[9] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[8] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[7] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[6] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[5] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[4] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[3] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[2] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[1] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_step[0] in module seq_vec_issue is either unconnected or has no load
+WARNING: [Synth 8-7129] Port iss_req in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[15] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[14] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[13] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[12] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[11] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[10] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[9] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[8] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[7] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[6] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[5] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[4] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[3] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[2] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[1] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port xw_exp[0] in module seq_region_lock is either unconnected or has no load
+WARNING: [Synth 8-7129] Port ep_ready in module attn_softmax is either unconnected or has no load
+WARNING: [Synth 8-7129] Port p_ready in module attn_mac_array is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_waddr[15] in module matvec_int4 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[3] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[31] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[30] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[29] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[28] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[27] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[26] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[25] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[24] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[23] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[22] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[21] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[20] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[19] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[18] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[17] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[16] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[15] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[14] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[13] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[12] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[11] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[10] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[9] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[8] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[7] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[6] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[5] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[4] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[3] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awaddr[11] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awaddr[10] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awaddr[9] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awaddr[8] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[11] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[10] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[9] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[8] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_awaddr[1] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_awaddr[0] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_awprot[2] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_awprot[1] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_awprot[0] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[31] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[30] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[29] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[28] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[27] in module fk33_engine is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axix_wdata[26] in module fk33_engine is either unconnected or has no load
+INFO: [Common 17-14] Message 'Synth 8-7129' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:01:48 ; elapsed = 00:01:50 . Memory (MB): peak = 6552.512 ; gain = 4137.371 ; free physical = 2068 ; free virtual = 49210
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:01:50 ; elapsed = 00:01:52 . Memory (MB): peak = 6552.512 ; gain = 4137.371 ; free physical = 2343 ; free virtual = 49478
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:01:50 ; elapsed = 00:01:52 . Memory (MB): peak = 6552.512 ; gain = 4137.371 ; free physical = 2343 ; free virtual = 49478
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:06 ; elapsed = 00:00:06 . Memory (MB): peak = 6616.512 ; gain = 0.000 ; free physical = 2440 ; free virtual = 49707
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.04 . Memory (MB): peak = 7674.621 ; gain = 0.000 ; free physical = 1268 ; free virtual = 48552
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:02:52 ; elapsed = 00:02:34 . Memory (MB): peak = 7674.656 ; gain = 5259.516 ; free physical = 1161 ; free virtual = 48454
+100 Infos, 316 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:02:57 ; elapsed = 00:02:39 . Memory (MB): peak = 7674.656 ; gain = 6341.891 ; free physical = 1161 ; free virtual = 48454
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 7109.813; main = 7109.813; forked = 430.606
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 7674.625; main = 7674.625; forked = 993.168
+C4_ELAB_CELLS 631988
+C4_ELAB_PORTS 36529
+C4_DONE elab c4
+INFO: [Common 17-206] Exiting Vivado at Sat Aug 29 23:17:11 2026...
