@@ -436,6 +436,13 @@ def _verify(mani, ents, headers_only, progress):
           f"C2H {c2h()}")
     fd = os.open(c2h(), os.O_RDONLY)
     fails, nhdr, nhash, nbytes_read = [], 0, 0, 0
+    # ATTEMPTED, not passed.  The first version of the coverage guard below
+    # counted `nhdr + nhash`, i.e. successes, so an object that WAS checked and
+    # FAILED looked identical to one that was never looked at -- and the guard
+    # fired first, reporting a genuine wrong-offset fault as "a hole in the
+    # CHECKER".  Caught by teeth-check T1 (blob base moved one 4K page), which
+    # is the only reason this comment exists.
+    attempted = set()
     t0 = time.perf_counter()
     try:
         for i, e in enumerate(ents):
@@ -444,6 +451,7 @@ def _verify(mani, ents, headers_only, progress):
             if e["kind"] == "mv4i":
                 hdr = os.pread(fd, HDR_BYTES, off)
                 nbytes_read += len(hdr)
+                attempted.add(i)
                 try:
                     parse_and_check_header(hdr, e, geom,
                                            f"{e['file']} @ {off:#x}")
@@ -453,8 +461,27 @@ def _verify(mani, ents, headers_only, progress):
                     if headers_only:
                         continue
             # ---- check 2: the payload hashes to what the packer recorded
-            if headers_only:
+            #
+            # HEADERS-ONLY USED TO LEAVE AN OBJECT CHECKED BY NOTHING AND STILL
+            # PRINT PASS.  Check 1 is gated on `kind == "mv4i"` because only an
+            # mv4i object HAS a parseable header; check 2 was then skipped for
+            # everything.  So a non-mv4i object fell through both and was
+            # counted in neither tally.  MEASURED 2026-08-29 against the live
+            # card: 250 objects in, "249 headers parsed and matched", PASS.
+            # The one that vanished is `nonmatvec_f32.bin` (kind `f32blob`,
+            # 4,571,136 bytes) -- the norms and biases, i.e. exactly the class
+            # whose corruption gives subtly wrong logits rather than garbage.
+            #
+            # A headerless object is therefore digested even in headers-only
+            # mode.  That is affordable because it is the ONLY such object and
+            # it is 4.5 MB: MEASURED 0.01 s at 0.69 GB/s, against 0.00 s for
+            # the 249 headers.  If a future image carries large headerless
+            # objects this becomes a real cost and needs revisiting -- but the
+            # answer then is a per-kind policy, NOT going back to skipping,
+            # because "PASS" must never cover an object nothing looked at.
+            if headers_only and e["kind"] == "mv4i":
                 continue
+            attempted.add(i)
             dig = hashlib.blake2b(digest_size=16)
             pos = 0
             short = False
@@ -487,12 +514,47 @@ def _verify(mani, ents, headers_only, progress):
     print(f"read {nbytes_read:,} bytes in {dt:.2f} s = "
           f"{nbytes_read / max(dt, 1e-9) / 1e9:.2f} GB/s")
     print(f"{nhdr} headers parsed and matched, {nhash} payload digests matched")
+
+    # STATE THE COVERAGE, DO NOT LET THE READER INFER IT.  The old summary
+    # printed two tallies and a PASS, and 249 + 0 against 250 objects read as
+    # a rounding detail rather than as an object nobody looked at.  Say the
+    # arithmetic out loud, and refuse to call it PASS if it does not close.
+    # A REAL FAULT OUTRANKS A COVERAGE COMPLAINT.  Report fails first: if an
+    # object was read and disagreed, that is the finding, and calling it a
+    # checker hole would send the reader to the wrong file.
     for m in fails:
         print(f"FAIL  {m}")
     if fails:
         print(f"{len(fails)} FAIL")
         return 1
-    print("PASS  the image on the card is the image the manifest describes")
+
+    # STATE THE COVERAGE, DO NOT LET THE READER INFER IT.  The old summary
+    # printed two tallies and a PASS, and "249 headers" against 250 objects
+    # read as a rounding detail rather than as an object nobody looked at.
+    #
+    # THIS BRANCH IS CURRENTLY UNREACHABLE, AND IS LABELLED SO RATHER THAN
+    # PRESENTED AS A WORKING CHECK.  Every path now marks `attempted`: an mv4i
+    # object via its header, anything else via the digest it falls through to.
+    # Teeth-checked 2026-08-29 with three manifests -- a moved blob base (FAIL,
+    # correctly, on the digest), an unknown `kind` (PASS at 250/250, because an
+    # unknown kind is digested rather than skipped, which is the intent), and
+    # an untouched control (PASS).  None of the three reaches this branch and I
+    # could not construct one that does.  It is kept as defence against a
+    # FUTURE `kind` whose handling `continue`s past both checks, which is
+    # exactly the shape of the bug this whole block exists to prevent.
+    # A guard never shown to fire has not been shown to work; treat it as
+    # unproven, not as verified.
+    unlooked = [e for i, e in enumerate(ents) if i not in attempted]
+    if unlooked:
+        print(f"UNVERIFIED  {len(unlooked)} of {len(ents)} objects were read "
+              f"by neither check.  This is a hole in the CHECKER, not a fault "
+              f"in the image, and it is not a PASS.")
+        for e in unlooked:
+            print(f"            unlooked-at: {e['file']} kind={e['kind']}")
+        return 1
+
+    print(f"PASS  the image on the card is the image the manifest describes "
+          f"({len(attempted)} of {len(ents)} objects read and checked)")
     return 0
 
 
