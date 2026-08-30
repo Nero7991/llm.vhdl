@@ -1,0 +1,14 @@
+ Number of Nodes with overlaps = 35976
+ Number of Nodes with overlaps = 23310
+ Number of Nodes with overlaps = 16757
+Phase 4.1 Global Iteration 0 | Checksum: 27fcdf2f4
+Phase 4.2 Global Iteration 1
+ Number of Nodes with overlaps = 69858
+ Number of Nodes with overlaps = 183525
+ Number of Nodes with overlaps = 111513
+Time (s): cpu = 00:09:31 ; elapsed = 00:02:44 . Memory (MB): peak = 12620.742 ; gain = 1107.289 ; free physical = 494 ; free virtual = 47016
+Time (s): cpu = 00:12:41 ; elapsed = 00:03:52 . Memory (MB): peak = 12620.742 ; gain = 1107.289 ; free physical = 513 ; free virtual = 46779
+Time (s): cpu = 00:12:51 ; elapsed = 00:03:54 . Memory (MB): peak = 12620.742 ; gain = 1107.289 ; free physical = 510 ; free virtual = 46779
+INFO: [Route 35-448] Estimated Global/Short routing congestion is level 5 (32x32). Congestion levels of 5 and greater can reduce routability and impact timing closure.
+WARNING: [Route 35-447] Congestion is preventing the router from routing all nets. The router will prioritize the successful completion of routing all nets over timing optimizations.
+Time (s): cpu = 02:22:27 ; elapsed = 00:56:35 . Memory (MB): peak = 12620.742 ; gain = 1107.289 ; free physical = 233 ; free virtual = 39495

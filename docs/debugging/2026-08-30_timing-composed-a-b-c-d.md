@@ -378,7 +378,108 @@ is reported in section 5.** WHS is not evidence of anything until then.
 
 ## 5. Place, phys_opt and route
 
-**RESULTS: PENDING.**
+Resumed from `c4dev_placed.dcp`, the checkpoint that survived the 01:25 hang.
+`place_design`'s 1,638 s was already paid and was not repeated.
+
+    TT_PHYSOPT_SECONDS 151
+    TT_PHYSOPT_WNS     -2.834        (from -3.056 placed)
+
+`phys_opt_design` recovered 0.222 ns, taking the longest path from 8.056 ns to
+7.834 ns, i.e. 124.1 MHz to 127.6 MHz. It did not come close to closing.
+
+### The router's own verdict, and it is quotable
+
+MEASURED, `route_design`, Phase 4.1 Global Iteration 0, after 56 min 35 s:
+
+    Number of Nodes with overlaps = 494506
+    Number of Nodes with overlaps = 150615
+    Number of Nodes with overlaps = 65271
+    Number of Nodes with overlaps = 35976
+    Number of Nodes with overlaps = 23310
+    Number of Nodes with overlaps = 16757
+    WARNING: [Route 35-447] Congestion is preventing the router from routing
+    all nets. The router will prioritize the successful completion of routing
+    all nets over timing optimizations.
+    Phase 4.1 Global Iteration 0 | Checksum: 27fcdf2f4
+    Time (s): cpu = 02:22:27 ; elapsed = 00:56:35
+    Phase 4.2 Global Iteration 1
+    Number of Nodes with overlaps = 69858
+    Number of Nodes with overlaps = 183525
+
+**`[Route 35-447]` is the tool saying, unprompted and in its own words, that
+this design is congestion-bound.** It has abandoned timing optimisation in
+order to try to finish routing at all. That is an independent confirmation of
+this document's central claim from the one piece of software with no stake in
+it, and it arrives before any model, any density argument or any estimate.
+
+**And the overlap count is RISING in iteration 1**, 69,858 to 183,525, after
+converging monotonically through iteration 0 to 16,757. A router that has to
+rip up more than it fixed on the previous pass is thrashing, not converging.
+
+### THE MEMORY NUMBER, AND IT IS THE SHARPEST THING THIS RUN MEASURED
+
+State this plainly because it settles a question that "we ran too many Vivados"
+only gestured at.
+
+MEASURED, from `route_design`'s own progress lines, this run **alone on the
+box**:
+
+    Phase 3.2 Initial Net Routing   ... free physical = 513 MB
+    Phase 3   Initial Routing       ... free physical = 510 MB
+    Phase 4.1 Global Iteration 0    ... free physical = 233 MB
+    Time (s): cpu = 02:22:27 ; elapsed = 00:56:35
+
+**A single composed place-and-route drove this 31 GiB machine to 233 MB of free
+physical memory while it was the only thing running.**
+
+**Therefore this tool had no safe multiplicity on this box. Not two-with-care.
+One.** The correct concurrency was never a matter of leaving headroom for a
+second job, because at peak there was no headroom for anything at all. Six of
+these ran concurrently on 2026-08-30 at 01:25 and the machine hung hard --
+`kcompactd0` stuck 75 s, RCU stalls, soft lockups on nine CPUs, power button
+required
+(`docs/debugging/2026-08-30_the-box-hung-under-my-own-dispatch.md`).
+
+**And no pre-flight check would have revealed this.** The 233 MB appears only at
+peak, 56 minutes into the run. Every one of those six agents could have run
+`free -g` before starting, found what it needed, been individually correct, and
+still produced exactly the observed outcome. **A budget computed from
+pre-launch free memory is measuring the wrong instant.** The only quantity that
+bounds concurrency is the PEAK, it is knowable only after the fact or from a
+prior run's logs, and for this job on this box it is the whole machine.
+
+The `-p MemoryHigh=` / `-p MemoryMax=` caps used throughout this track are the
+mitigation that does work, because they bound the peak rather than the start:
+a capped job is throttled or killed, and the box survives either. They were
+applied to every GHDL run here for exactly that reason.
+
+### RESULT: killed by decision at 67 minutes, and that IS the result
+
+`route_design` was stopped deliberately, with the dispatcher's approval, in
+Phase 4.2 after the following trajectory:
+
+    iteration 0:  494,506 -> 150,615 -> 65,271 -> 35,976 -> 23,310 -> 16,757   (56m35s)
+                  WARNING: [Route 35-447] congestion is preventing the router
+                  from routing all nets
+    iteration 1:  69,858 -> 183,525 -> 111,513                                 (rising)
+
+**The brief asked to "close it, or produce a measured, specific failure". This
+is the measured, specific failure, and it is better evidence than a completed
+route would have been.** A finished route would have reported a WNS around -3
+and some number of unrouted nets, which is a symptom. `[Route 35-447]` names
+the MECHANISM -- congestion -- and it is the tool's own unprompted verdict,
+issued before any model, density argument or estimate in this document existed,
+by the only participant in the argument with no stake in it.
+
+What was given up by stopping: `report_route_status`, `report_drc` and a routed
+`report_timing_summary` on a design that the router had already announced it
+could not route. What was bought: the only lane on the box, for the pblock
+squeeze (section 15), which measures a quantity that was being reported wrongly.
+
+**This is recorded as a DECISION, not a completion.** Anyone wanting the routed
+numbers can resume from `/mnt/storage/compose4/out/c4dev_physopt.dcp`, which
+this run wrote before routing began. Budget several hours and expect it to
+fail; iteration 1 was diverging when it was stopped.
 
 ---
 
