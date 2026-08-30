@@ -224,16 +224,33 @@ was not listed.**
 
 | track | question | owns |
 |---|---|---|
-| **OI3MUT** | Row N6. OI-3's two named mutations have never been run against the gate meant to catch them. If `P14` kills them, two defect classes close; **if it does not, that is the bigger finding** and every claim resting on `tb_llama_top_real` needs re-reading. | `sim/mutate_llama_top_land.sh`, `sim/tb_llama_top*.vhd` |
-| **ERRINFO** | Row N12, and the route is Oren's decision, not a choice: subdivide the descriptor error space via `ERR_INFO`, **byte layout must not move**. First target is `EC_DESC` (0x3), raised at NINE sites with two confirmed collisions, so "refused for the right reason" is recoverable for only 6 of 9 codes today. | `rtl/matvec_int4_desc_pkg.vhd`, `rtl/matvec_int4_desc_axi.vhd`, `server/pl_backend.c`, `sim/tb_matvec_fk33_desc.vhd`, `docs/2026-08-28_matvec-descriptor-format.md` |
-| **READCONV** | B's read-side conversion, which I held back and WRITEDEC's numbers have now made necessary. LUTDIET measured B's read share at 8.9% of 585,430 primitives, so **this is the smaller half and may not close the gap alone** -- measure it and say so either way. **Not** the BRAM trade; that stays the fallback. | `rtl/l2norm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `rtl/rmsnorm_rs.vhd`, `sim/ooc_readconv_*` |
-| **NORMADAPT** | **The largest single remaining LUT item.** `llama_top`'s D-vec norm adapter is 129,877 CLB LUT of the write-decode idiom one level up -- **four times the 31,359 gap to `pb_core`**. Released by CLOG2TOP at `61e6a12`. | `rtl/llama_top.vhd`, `sim/ooc_normadapt_*`, `hw/fk33/results/normadapt_*` |
+| **READCONV** | **The remaining lever on the `pb_core` fit.** B's read-side conversion, needing `l2norm_rs` to take a streaming port. LUTDIET measured B's read share at 8.9% of 585,430 primitives, so this is the smaller half and may not close 40,079 alone. NOT the BRAM trade; that stays the fallback. | `rtl/l2norm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `rtl/rmsnorm_rs.vhd`, `sim/ooc_readconv_*` |
+| **ACOV** | Row N8. Subsystem A's three coverage gaps -- no mutation script for `matvec_int4.vhd` or `axi_rd_port.vhd`, `USE_XEXP_PORT=true` in no bench, `DUAL_CLK=true` manual only. **A is now the only part of this design proven on silicon and the part with the named holes.** | `sim/mutate_matvec_int4.sh` (new), `sim/mutate_axi_rd_port.sh` (new), `sim/tb_a_geom.vhd`, `sim/tb_matvec_fk33_desc.vhd`, `tools/verify_mv4i_desc.py` |
+| **NWROM** | NORMADAPT's flagged risk: **every fit number tonight was taken with `NORM_W_IMAGE` EMPTY.** Populated at 9B it is 65 entries of 65,536 bits with a 65:1 mux, and may cost more than the 76,613 LUT NORMADAPT just saved. Measure it, and say whether it belongs in BRAM/URAM -- both sit unused in every measurement taken tonight. | `rtl/llama_top.vhd`, `sim/ooc_nwrom_*`, `hw/fk33/results/nwrom_*` |
+| **GRAY1** | Row N10, **the sharpest instance of tonight's theme**: `G1` (both gray functions replaced by identity) is caught by neither simulation nor `report_cdc`, and **the broken design reports TWO FEWER `report_cdc` warnings than the correct one**, so a "must not get worse" rule actively passes it. In `async_fifo.vhd`, which is in the datapath now working on silicon. | `rtl/async_fifo.vhd`, `sim/cdc_teeth.sh`, `sim/tb_async_fifo*.vhd` |
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
 BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2, BGATE2 (`dfe308c`),
 BOARDAUDIT (`7c5f5a3`..`d7952b6`), KVVALUE (`ef1aa7e`), WRITEDEC (`971524c`),
-AJOBRUN (`1fdf42e`), CLOG2TOP (`61e6a12`).
+AJOBRUN (`1fdf42e`), CLOG2TOP (`61e6a12`), ERRINFO (`a269ed4`, row N12),
+NORMADAPT (`45981f0`), OI3MUT (`3853650`, row N6).
+
+### The fit, corrected. MY ARITHMETIC WAS STRUCTURALLY WRONG.
+
+I told the board that NORMADAPT's 129,877 LUT target was "four times the
+31,359 `pb_core` gap". **That subtraction was never valid**, and NORMADAPT
+caught it: the 31,359 shortfall comes from the OPTIMISTIC booking, whose
+`D_norm` is the bare `rmsnorm_rs` with **no adapter storage at all**. You
+cannot reduce a shortfall computed from a total that never contained the thing
+you removed. The 129,877 figure was also a MODEL and overstates by 52% -- the
+real adapter's own logic is 102,204, and `wv` **does not exist in `llama_top`**.
+
+MEASURED position now: **realistic B+C+D = 273,844 LUT**, over the device by
+**5,622** and over `pb_core` by **40,079**, against 350,457 before NORMADAPT.
+What NORMADAPT actually bought was collapsing the gap between the optimistic
+and realistic bookings from 85,333 to **8,720**. **READCONV is the remaining
+lever**, and TRACK NWROM may yet move the number the wrong way.
 
 ## ROW N1 IS ANSWERED. SUBSYSTEM A COMPUTES CORRECTLY ON THE FK33.
 
