@@ -32,6 +32,56 @@ what the last few results newly unblocked, because most landings open something.
 
 ---
 
+## THE MEMORY BUDGET IS GLOBAL, AND ONLY THE DISPATCHER CAN SEE IT
+
+**The box has 31 GiB and `llama-server` permanently holds 18 of them.**
+Everything this project does shares the remaining ~13 GiB: every Vivado, every
+GHDL, every track at once.
+
+**MEASURED 2026-08-30 01:25: the box died.** Not an OOM kill, which is
+survivable and contained. `kcompactd0` stuck for 75 s, RCU stalls, soft lockups
+on nine CPUs including `llama-server` and five separate `bash` processes, and
+the kernel could no longer make enough progress to kill anything. Oren had to
+hold the power button. **The FPGA lost its configuration when slot power was
+cut**, so the card had to be reprogrammed, and a composed place-and-route that
+had been running for over ninety minutes was lost.
+
+At the moment of dispatch the dispatcher had measured `0 free, 21 GiB swap in
+use, load 10.1`, six Vivado processes and `llama-server` at 18 GiB -- **wrote
+those numbers into the briefs of two new tracks as a warning -- and dispatched
+them anyway.**
+
+**Telling each agent to check `free -g` first does not create a budget.** Every
+agent checks. Every agent finds what it needs. Each is individually correct and
+the sum kills the machine. **An agent can only see its own footprint; the
+dispatcher is the only one who can see the total, so the dispatcher owns it.**
+
+The rules that follow from this:
+
+- **Count the memory before dispatching, not after.** State the budget out loud:
+  what is already resident, what the new track will peak at, and what is left.
+  If that arithmetic is not written down, it was not done.
+- **ONE Vivado at a time. Not one per track -- one on the box.** MEASURED
+  peaks: full `pcieep` build 25.0 GiB, composed place-and-route several GiB,
+  and a single OOC synthesis 11.9 GiB. Two of anything in that list does not
+  fit beside `llama-server`.
+- **A full build requires stopping `llama-server` first**, because 25.0 GiB does
+  not fit in 13. That is a deliberate act with a user-visible cost, so it is
+  Oren's call, not a track's.
+- **`ghdl-mcode` is not free.** MEASURED the same day: 20.9 GiB anon-RSS in a
+  single process, OOM-killed twice at 16:48. It was contained only because
+  `claude-tmux --mem` put it in a cgroup. Uncontained, it is a box-killer.
+- **THE REFILL RULE DOES NOT OVERRIDE THIS.** "Four concurrent tracks" is a
+  target for keeping the backlog moving, not a licence to exceed the machine.
+  **Four tracks that hang the box complete zero work and destroy the work
+  already running.** When memory is the binding constraint, say so explicitly
+  and run fewer -- that is the rule being followed, not broken.
+- **Swap in use is the leading indicator, not free RAM.** By the time `free`
+  shows 0 free the box is already living on the swapfile, and the failure that
+  follows is compaction thrashing rather than a clean kill.
+
+---
+
 ## THE HARDWARE BOUNDARY (safety, not preference)
 
 **Subagents get NO hardware access. Ever.** Never `xsdb`, `hw_server`,
