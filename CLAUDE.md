@@ -106,6 +106,26 @@ not an answer.
 **Never `pkill -f <pattern>`, and never `pgrep -f` on a pattern that appears in
 your own command line.** This has killed the shell four times in this project.
 
+**Never put a shell variable anywhere in a path passed to `rm`.** Not
+`rm -rf "$DIR"`, not `rm -rf "$SCRATCH/$x"`, not `rm -rf $TMP/*`. If the
+variable is empty or unset, that command deletes from the filesystem root or
+the home directory, and nothing here is backed up. Delete only by writing the
+full literal path out, one explicit `rm -rf /full/literal/path` per directory,
+nothing interpolated, read back before running. If that is tedious, that is
+the point.
+
+Oren caught and blocked this on 2026-08-29. The agent that ran it had done so
+**ten times**, unquoted, and got away with it every time because `SD` was
+assigned on the same command line immediately before each `rm` -- so it never
+expanded empty and every target was inside its own scratch. **That is exactly
+what makes the habit dangerous rather than exactly what makes it safe.** The
+form is indistinguishable from the fatal one at the moment you type it, and it
+had already survived long enough to look normal.
+
+The same hazard is not confined to `rm`: that agent also flagged, unprompted,
+a `cp "$SD/tree/$f" "$f"` loop overwriting four repo files, with a variable on
+**both** sides of the path. Naming it was the right call and is the standard.
+
 ---
 
 ## VERIFICATION DISCIPLINE
