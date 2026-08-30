@@ -1020,3 +1020,35 @@ and the In flight table did, which is exactly the difference in their accuracy.
 | **7** | **OI-3 proper: the two defect classes `tb_llama_top` structurally cannot see.** Distinct from N6, which only asks whether the existing gate already covers them. If N6 measures that it does, this row closes; if it measures that it does not, this row is the work. | N6 | `sim/tb_llama_top.vhd` |
 | **N10** | **Gray coding still has no automated defence, and this is now precise.** TRACK CDC-STATIC's `sim/cdc_teeth.sh` and `docs/debugging/2026-08-29_cdc-static-analysis.md` (`be982b3`) closed two of the three classes: the encoder/decoder MISMATCH (`G2`) is caught by simulation, and the 2FF-vs-1FF MTBF class by `report_cdc`. **`G1`, both gray functions replaced by identity, is caught by neither** -- and is worse than uncaught, because the binary-pointer design reports TWO FEWER `report_cdc` warnings than the correct one, so any "the report must not get worse" rule passes it. The doc says so about itself. No owner. | none | `rtl/async_fifo.vhd`, `sim/cdc_teeth.sh` |
 | **N11** | **`K2b`: `P_CB_CHK`'s idle invariant watches the command REGISTER, not the write.** VERIFIED unchanged at HEAD: the assert is on `cbw_v(0)`, which is the stage-W0 command register set the cycle `cb_we='1' and st=S_IDLE`, not the stage-W1 write into `cb(c)`. Any future change that deepens the codebook command path makes the invariant vacuous with nothing in the tree noticing. A standing hazard, not a task; recorded so it is not discovered by a defect. | none | `rtl/matvec_core.vhd` |
+
+### THE ORDERED READY-TO-DISPATCH LIST
+
+**Produced 2026-08-29 by TRACK BOARDAUDIT at HEAD `5a19f984`, after auditing
+every row above against the tree.** READY means both of: its file ownership
+does not collide with WRITEDEC, KVVALUE or CLOG2TOP, and its dependency has
+landed. Ownership was checked against the rewritten table at the top of this
+file, not against the stale one it replaced.
+
+**Dispatch in this order. The first three are mutually non-colliding and can
+run concurrently right now.**
+
+| order | row | why now | owns | collides with a running track? |
+|---|---|---|---|---|
+| **1** | **N1** | **The only item that converts "9B inference on the card" from unfalsifiable into measurable.** No dependency, no decision, no new RTL. `hw/fk33/host/` has never been claimed by any track. Write and fully exercise the runner through `fk33_transport_open_sim`/`_filedir` with **no hardware**; hand the final run to Oren, who is authorised for card 1 tonight and only tonight. | `hw/fk33/host/` (new file), `hw/fk33/host/fk33_regs.h` | no |
+| **2** | **N12** | Oren decided the route hours ago, so it is determined work rather than a question. Carries DESC-MUT's `EC_DESC` nine-site collision measurement, which is the thing the route actually buys. | `rtl/matvec_int4_desc_pkg.vhd`, `rtl/matvec_int4_desc_axi.vhd`, `server/pl_backend.c`, `sim/tb_matvec_fk33_desc.vhd`, `sim/regress.sh` (shared) | no |
+| **3** | **N4** | Small, self-contained, and it is the fix for a defect that already cost 27.6 hours of a build slot silently. `hw/fk33/gen_pcieep.py` was released by PBLOCK and nobody has claimed it. Fold **N9** into this track: copying the only surviving SQRL factory image off a 91%-full root disk is minutes of work and the cost of not doing it is unbounded. | `hw/fk33/gen_pcieep.py`; plus `hw/fk33/bit/` (copy only) for N9 | no |
+| **4** | **N8** | Three named subsystem-A coverage gaps, all still open, all independent of everything running. Sequence it AFTER N12 if N12 is running, because both touch `sim/regress.sh` and one of them touches `tb_matvec_fk33_desc`. | `sim/mutate_matvec_int4.sh` (new), `sim/mutate_axi_rd_port.sh` (new), `sim/regress.sh` (shared) | no, but serialise with N12 |
+| **5** | **N7** | `EC_CORE` reachable by no bench. Genuinely open, no owner. **Serialise after N12**, which is in the same file, and there is a real argument for making them one track: N12 subdivides the error space and N7 makes one of its codes reachable. | `sim/tb_matvec_fk33_desc.vhd`, `sim/mutate_mv4i_desc*.sh` | serialise with N12 |
+| **6** | **N10** | The one gray-coding class nothing defends, now narrowed to `G1` alone by CDC-STATIC. Honest risk: it may be unclosable, and the write-up already argues so. Dispatch it as a question, not as a task, and accept "measured, cannot be closed, here is why" as a good result. | `rtl/async_fifo.vhd`, `sim/cdc_teeth.sh` | no |
+| BLOCKED | **N6** | Cheap and valuable, but **KVVALUE owns `sim/tb_llama_top.vhd`**. Dispatch the moment KVVALUE releases. Closing N6 also closes or reopens backlog row 7, so it gates that too. | `sim/mutate_llama_top_land.sh`, `sim/tb_llama_top*.vhd` | **yes, KVVALUE** |
+| BLOCKED | **N5** | Depends on WRITEDEC. It replaces LUTDIET's 9.8% PROJECTED margin with a measurement, and 9.8% is not a margin anyone should schedule against. Dispatch the moment WRITEDEC lands. | `sim/ooc_compose_bcd.tcl`, `hw/fk33/results/` | **yes, WRITEDEC** |
+| BLOCKED | **N3** | Depends on WRITEDEC (no point composing what does not fit) and on N2 (its host interface is what N2 decides). The single largest piece of unwritten work between here and 9B on the card. | `hw/fk33/gen_fk33_engine.py`, a new synthesis top | **yes, WRITEDEC; and N2** |
+| **OREN** | **N2** | A decision, not a fix: is the seam or the descriptor plane the contract? Raise it; do not let a track choose. N1's result is the evidence that should inform it, which is another reason N1 goes first. | decision | n/a |
+
+**If all four slots are somehow free: N1, N12, N4+N9, N8.**
+
+**What this list does NOT contain, said explicitly.** No row here claims the
+card computes anything correctly, because nothing has measured that. N1 is the
+row that would, and until it returns a number, every downstream estimate on
+this board -- the LUT margin, the token budget, the schedule -- is arithmetic
+about a machine whose arithmetic has never been checked.
