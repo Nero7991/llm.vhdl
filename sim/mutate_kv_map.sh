@@ -6,7 +6,9 @@
 #
 #   GENERIC rows perturb what the bench hands ACROSS the DUT port: the base,
 #     the chunk-to-byte shift, the K/V assignment.  They are the model of
-#     rtl/llama_top.vhd:3715-3720, which is the one place the chunk domain
+#     rtl/llama_top.vhd's `KBASE_C`/`VBASE_C` constants (named by content,
+#     not by line: that file's line numbers are unstable), which is the one
+#     place the chunk domain
 #     becomes the byte domain and therefore the one place a silent 16x address
 #     error can be introduced.  llama_top itself cannot be run on values at
 #     this scale, so this is how that seam gets a teeth check at all -- see
@@ -143,7 +145,7 @@ echo "============ teeth for sim/tb_attn_kv_map.vhd (the REAL 9B map) ======="
 # the clean design measures nothing.
 gmut control "the unmutated bench, unmutated RTL -- MUST survive"
 
-echo "---- the chunk-to-byte seam (the model of llama_top.vhd:3715-3720) ----"
+echo "---- the chunk-to-byte seam (the model of llama_top KBASE_C/VBASE_C) ----"
 gmut shift_0  "BASE_SHIFT 0: the chunk count handed over AS a byte address" \
      -gBASE_SHIFT=0
 gmut shift_3  "BASE_SHIFT 3: half the real base"   -gBASE_SHIFT=3

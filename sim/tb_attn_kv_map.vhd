@@ -32,12 +32,16 @@
 -- ======================================================================
 --
 --   1. THE ADDRESS DOMAIN IS 16-BYTE CHUNKS EVERYWHERE ABOVE THE DUT PORT.
---      Exactly the encoding rtl/llama_top.vhd:549-550 uses for
+--      Exactly the encoding rtl/llama_top.vhd's `C_K_BASE_CH`/`C_V_BASE_CH` generics use for
 --      C_K_BASE_CH / C_V_BASE_CH, and for exactly the same reason: the whole
 --      K+V extent is 425,205,248 chunks, which fits a `natural`, while its
 --      6,803,283,968 bytes do not.  The conversion back to bytes happens in
 --      ONE place, `KB_C`/`VB_C` below, which is the bench's copy of
---      rtl/llama_top.vhd:3715-3720.
+--      rtl/llama_top.vhd's `KBASE_C`/`VBASE_C` constants (the two
+--      `shift_left(to_unsigned(C_*_BASE_CH, C_KV_ADDR_W), 4)` declarations
+--      just above the `u_kv : entity work.attn_kv_axi` instance).  IDENTIFY
+--      THEM BY CONTENT: line numbers in that file are unstable, its local
+--      `clog2` moved twice within one hour on 2026-08-29.
 --
 --   2. MEMORY IS SPARSE.  The modelled region spans 5.7 GB; the test touches
 --      a few thousand 16-byte chunks.  `mem` is a hash of chunks and every
@@ -81,7 +85,8 @@
 -- WHAT THIS DOES NOT ESTABLISH
 -- ======================================================================
 --   * NOT rtl/llama_top.vhd's port map.  The chunk-to-byte shift at
---     rtl/llama_top.vhd:3715-3720 is REPRODUCED here (BASE_SHIFT) so that a
+--     rtl/llama_top.vhd's `KBASE_C`/`VBASE_C` shift is REPRODUCED here
+--     (BASE_SHIFT) so that a
 --     mutation of it can be measured, but a green run of this bench is not a
 --     statement about that line of llama_top.  See the write-up.
 --   * NOT attention.  rtl/attn_block.vhd is not instantiated; the consumer is
@@ -118,7 +123,7 @@ entity tb_attn_kv_map is
     -- V = K + LAYERS*N_KVH*MAXCTX*(REC_B/16).
     K_BASE_CH : natural := 282598912;
     V_BASE_CH : natural := 353902080;
-    -- ---- the chunk -> byte seam, llama_top.vhd:3715-3720 ----------------
+    -- ---- the chunk -> byte seam, llama_top's KBASE_C/VBASE_C ------------
     BASE_SHIFT : natural := 4;
     -- ---- mutation hooks.  All zero/false in the shipping bench. ---------
     MUT_K_CH  : integer := 0;      -- chunks added to the K base at the port
@@ -296,7 +301,8 @@ architecture sim of tb_attn_kv_map is
 
   ---------------------------------------------------------------------------
   -- the bases, in both domains.  THE ONE SHIFT, and the bench's copy of
-  -- rtl/llama_top.vhd:3715-3720.  Mutations are applied here and ONLY here,
+  -- rtl/llama_top.vhd's `KBASE_C`/`VBASE_C`.  Mutations are applied here
+  -- and ONLY here,
   -- so what they perturb is the value handed across the port, never the
   -- oracle: `rec_ch(K_BASE_CH, ...)` below is unmutated by construction.
   ---------------------------------------------------------------------------
