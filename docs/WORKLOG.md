@@ -224,14 +224,44 @@ was not listed.**
 
 | track | question | owns |
 |---|---|---|
-| **BOARDAUDIT** | **The board is wrong often enough to have wasted three dispatches in one day, always the same way: work lands and nobody strikes the row.** Audit every BACKLOG row, every Open issue and every Decision against the TREE, not against another document, and rewrite the board so it is true. Then say what is actually ready. | `docs/WORKLOG.md`, `docs/debugging/2026-08-29_boardaudit-*.md` |
-| **WRITEDEC** | LUTDIET measured the fix; this applies it. Per-word generate with a CONSTANT index, module by module with its own before/after, then a composed B+C+D measurement to replace the projection with a number. Must be bit-exact: it is a structural rewrite of a write path and must change no value. | `rtl/rmsnorm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `sim/ooc_writedec_*`, `hw/fk33/results/writedec_*` |
-| **KVVALUE** | CKVMAP's own open item: **the real map elaborating is not the real map working.** Build an oracle at the KV path's OUTPUT, multi-token so the read path is actually reached, and close the two guards CKVMAP measured as NOT biting -- chiefly that nothing mechanically links the RTL to `hbm_map.py`'s region block, so a base one chunk off elaborates clean. | `sim/tb_llama_top.vhd`, `sim/realshape_gate.sh`, `sim/elab9b_run.sh`, `rtl/attn_kv_axi.vhd`, `rtl/attn_c_ports_skel.vhd` |
-| **CLOG2TOP** | CLOG2's handoff, plus an open contradiction to settle. Delete `llama_top`'s locally declared `clog2`, which shadows the `use work.util_pkg.clog2;` already at `:173`, and rewrite the KV-fit guard against the new `clog2(unsigned)`. **Headline question: does the real 9B config elaborate at `C_MAXPOS = 131,072`, or only with the real KV bases at a smaller extent?** | `rtl/llama_top.vhd`, `rtl/hbm_tg.vhd`, the `sim/micro` copies |
+| **OI3MUT** | Row N6. OI-3's two named mutations have never been run against the gate meant to catch them. If `P14` kills them, two defect classes close; **if it does not, that is the bigger finding** and every claim resting on `tb_llama_top_real` needs re-reading. | `sim/mutate_llama_top_land.sh`, `sim/tb_llama_top*.vhd` |
+| **ERRINFO** | Row N12, and the route is Oren's decision, not a choice: subdivide the descriptor error space via `ERR_INFO`, **byte layout must not move**. First target is `EC_DESC` (0x3), raised at NINE sites with two confirmed collisions, so "refused for the right reason" is recoverable for only 6 of 9 codes today. | `rtl/matvec_int4_desc_pkg.vhd`, `rtl/matvec_int4_desc_axi.vhd`, `server/pl_backend.c`, `sim/tb_matvec_fk33_desc.vhd`, `docs/2026-08-28_matvec-descriptor-format.md` |
+| **READCONV** | B's read-side conversion, which I held back and WRITEDEC's numbers have now made necessary. LUTDIET measured B's read share at 8.9% of 585,430 primitives, so **this is the smaller half and may not close the gap alone** -- measure it and say so either way. **Not** the BRAM trade; that stays the fallback. | `rtl/l2norm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `rtl/rmsnorm_rs.vhd`, `sim/ooc_readconv_*` |
+| **NORMADAPT** | **The largest single remaining LUT item.** `llama_top`'s D-vec norm adapter is 129,877 CLB LUT of the write-decode idiom one level up -- **four times the 31,359 gap to `pb_core`**. Released by CLOG2TOP at `61e6a12`. | `rtl/llama_top.vhd`, `sim/ooc_normadapt_*`, `hw/fk33/results/normadapt_*` |
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
-BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2, **BGATE2** (`dfe308c`).
+BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2, BGATE2 (`dfe308c`),
+BOARDAUDIT (`7c5f5a3`..`d7952b6`), KVVALUE (`ef1aa7e`), WRITEDEC (`971524c`),
+AJOBRUN (`1fdf42e`), CLOG2TOP (`61e6a12`).
+
+## ROW N1 IS ANSWERED. SUBSYSTEM A COMPUTES CORRECTLY ON THE FK33.
+
+MEASURED 2026-08-29 20:12-20:16 by the dispatcher on card 1, under Oren's
+one-night authorisation. **Twelve jobs. All eight distinct `(M, K)` geometries
+in the 9B model. Every mantissa and every `y_exp` bit-identical to
+`ref/matvec_int4.c`.** `err_code=0x0 (EC_NONE)` throughout; `BEATS` matched
+`tiles*nblk` exactly every time. Write-up:
+`docs/debugging/2026-08-29_first-arithmetic-on-the-silicon.md`.
+
+The load-bearing row is `blk.11.attn_k.weight --rows 100`: that is the **exact
+argv `sim/regress.sh:1428` feeds `sim/tb_matvec_fk33`**, on a byte-identical
+file, so the card and the simulator agree on the same job. The two awkward
+geometries were chosen deliberately: `M = 8224` is the only shape in the model
+that is **not** a multiple of 32, and `M = 248320` is the lm_head (run at 64
+rows, one window inside the 17,408 cap -- this does **NOT** contradict LMHEAD's
+finding that the gateware refuses it as one job).
+
+**Every result is unconfounded by THERM-255, and that was checked rather than
+assumed:** counter cleared at 20:12:27, read 0 before and after every job,
+`LATCHED TRIP none since the last clear` still true at 20:16.
+
+**What this does NOT establish:** subsystem A alone. `fk33_engine.vhd`
+instantiates `matvec_int4_desc_axi` and nothing else, so **B, C and D have
+never run on this silicon** -- row N3 stands. One activation vector per job,
+supplied by the host; nothing here exercises a layer, a sequence or the KV
+cache. And one row-count per geometry, so an off-by-one at a window boundary
+is not excluded.
 
 **Tracks that landed and appear NOWHERE on this board, found by TRACK BOARDAUDIT
 2026-08-29.** Each has a full write-up in `docs/debugging/` and none is named in
