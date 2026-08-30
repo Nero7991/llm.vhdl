@@ -97,6 +97,24 @@ entity tb_matvec_fk33_desc is
     BASE_HI : natural  := 1;
     -- Run the AXI side on its own faster clock, through axi_rd_port's CDC.
     DUAL    : boolean  := false;
+    -- Take x_exp from the WRAPPER PORT rather than from extension word 2 of
+    -- the descriptor (matvec_int4_desc_axi.vhd:547,
+    --   v_xexp <= x_exp_in when USE_XEXP_PORT else lo32(dw(EXT0 + 2))).
+    --
+    -- HOW IT IS TESTED, because "set the generic and see it still pass" tests
+    -- nothing: when XEXP_PORT is true the descriptor's OWN x_exp word is
+    -- written DELIBERATELY WRONG (t_xexp + 7) and the port carries the right
+    -- value.  A correct mux therefore still produces the reference answer, and
+    -- a mux wired the other way produces a y_exp seven too large, which the
+    -- AXI-Lite readback check at the end of the case loop reports as an error.
+    -- So this configuration FAILS if the port is ignored -- MEASURED: running
+    -- the same stimulus with XEXP_PORT's descriptor sabotage but the generic
+    -- left false gives "y_exp got 13 want 6".
+    --
+    -- The whole 22-case matrix and the shape sweep run underneath it, so this
+    -- is not a bespoke one-shot: everything else the bench proves is proved
+    -- again with the exponent arriving by the other route.
+    XEXP_PORT : boolean := false;
     -- AXI half-period when DUAL, in PICOSECONDS.  An integer, not a `time`:
     -- ghdl -r refuses a generic override of a physical type ("unhandled type
     -- for generic override"), so a `time` generic here could not be swept.
@@ -377,6 +395,10 @@ architecture sim of tb_matvec_fk33_desc is
   signal t_rows, t_cols, t_osh, t_wexp, t_xexp : integer := 0;
   signal t_wbeats, t_sbeats : integer := 0;
   signal e_yexp  : integer := 0;
+
+  -- The x_exp the FK33 arm is handed on its wrapper port.  Always the value
+  -- the trace says is right; see the XEXP_PORT generic's comment.
+  signal x_exp_port : std_logic_vector(31 downto 0) := (others => '0');
   signal e_satev : integer := 0;
   signal loaded  : boolean := false;
 
@@ -488,6 +510,10 @@ begin
     end process;
   end generate;
 
+  -- The wrapper-port x_exp.  Always the trace's own value; the descriptor
+  -- word is what changes under XEXP_PORT, not this.
+  x_exp_port <= u32(t_xexp);
+
   -- =====================================================================
   dut : entity work.matvec_int4_desc_axi
     generic map(BLK => BLK, ROWS_IF => RI, NPORTS_W => NPW, NPORTS_S => NPS,
@@ -495,6 +521,7 @@ begin
                 MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS,
                 FIFO_DEPTH => 256, MAXB => MAXB, MAXOUT => 16,
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
+                USE_XEXP_PORT => XEXP_PORT,
                 DUAL_CLK => DUAL, C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => mclk,
@@ -520,7 +547,10 @@ begin
       m_rdata => m_rdata, m_rlast => m_rlast,
 
       x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
-      x_exp_in => (others => '0'),
+      -- Driven unconditionally.  At USE_XEXP_PORT = false the design ignores
+      -- it, so there is nothing to guard; at true it is the ONLY correct
+      -- source, because the descriptor word is sabotaged in that case.
+      x_exp_in => x_exp_port,
 
       y_we => y_we, y_addr => y_addr, y_data => y_data, y_mask => y_mask,
       y_exp_o => y_exp_o, job_done => job_done, job_err => job_err);
@@ -1104,7 +1134,14 @@ begin
       dimg(EXT0 + 1) <= u32(sb) & u32(wb);
 
       w := (others => '0');
-      w(31 downto 0) := u32(t_xexp);
+      -- THE SABOTAGE.  Under XEXP_PORT the descriptor's own x_exp is written
+      -- SEVEN TOO LARGE, so the run can only produce the reference y_exp if
+      -- the design really is reading x_exp_in instead.  Seven is arbitrary and
+      -- only has to be non-zero; it lands in y_exp, which the AXI-Lite
+      -- readback below compares against the trace.
+      if XEXP_PORT then w(31 downto 0) := u32(t_xexp + 7);
+      else              w(31 downto 0) := u32(t_xexp);
+      end if;
       if mut = 12 then w(63 downto 32) := x"00000001"; end if;
       dimg(EXT0 + 2) <= w;
 
@@ -1603,8 +1640,13 @@ begin
     nfail <= nerr;
     wait until rising_edge(clk);
 
+    -- The configuration is printed with the verdict, not only at the top,
+    -- because three entities now run this same architecture and a log that
+    -- does not say which one it is cannot be told apart from the others.
     report "tb_matvec_fk33_desc: " & integer'image(NCASE + 1) &
-           " cases run, " & integer'image(nerr) & " failures" severity note;
+           " cases run, " & integer'image(nerr) & " failures" &
+           " [DUAL=" & boolean'image(DUAL) &
+           " XEXP_PORT=" & boolean'image(XEXP_PORT) & "]" severity note;
     assert nerr = 0
       report "SUBSYSTEM A'S DESCRIPTOR CONTROL PLANE FAILED " &
              integer'image(nerr) & " CASES" severity failure;
