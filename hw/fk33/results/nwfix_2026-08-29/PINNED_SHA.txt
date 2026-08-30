@@ -1,0 +1,23 @@
+TRACK NWFIX -- provenance of the BEFORE side, 2026-08-29.
+
+The brief named  fc7dea9ca00cbe9dd479d4e4ff3cfc7723747b0d
+`git rev-parse HEAD`, run as its own step immediately before `git archive`,
+returned            0d14a704d9a0f8597805edc718b9155410d5ee2d
+and the archive was taken at that sha.  HEAD had moved once during setup.
+
+The one intervening commit is 0d14a70 "asurv: correct the BASELINE_PASS note",
+a comment correction in sim/regress.sh.
+
+    $ git diff --stat fc7dea9 0d14a70 -- rtl/llama_top.vhd rtl/rmsnorm_rs.vhd
+    (empty)
+
+so the two files every number here depends on are identical across the brief's
+sha and the pinned sha.
+
+    rtl/llama_top.vhd   md5 d55fa9024c14960449c8627234f76f67
+    rtl/rmsnorm_rs.vhd  md5 e8226805f8222720e9f200b35506ef64
+
+The llama_top md5 is the SAME md5 TRACK NWROM recorded for its own pinned tree
+(3853650), so the before-side of every area number below is bit-for-bit the
+design NWROM measured, and `git diff 3853650 0d14a70 -- rtl/rmsnorm_rs.vhd
+rtl/llama_top.vhd` is empty as well.

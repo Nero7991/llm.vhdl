@@ -1861,28 +1861,89 @@ begin
       -- A SHORT OR LONG IMAGE IS A REFUSAL, not a truncation: the table is
       -- indexed by NORM OP, so an image built for a different BLOCKS would
       -- serve every norm the gain of some other norm, silently.
+      -- IT COUNTS IN GROUPS OF `NN`, NOT IN LINES, AND THAT IS A SYNTHESIS
+      -- REQUIREMENT RATHER THAN A STYLE (added 2026-08-29, TRACK NWFIX).
+      --
+      -- This function used to be a single `while not endfile(fh) loop` that
+      -- read ONE line per iteration.  MEASURED, TRACK NWROM: at the real 9B
+      -- shape that loop runs 65 x 4096 = 266,240 times, and Vivado's
+      -- elaboration loop limit is 65,536 per loop statement:
+      --
+      --   ERROR: [Synth 8-403] loop limit (65536) exceeded [...llama_top:187]
+      --
+      -- so the whole design failed ELABORATION -- not timing, not area --
+      -- for every image bigger than about 16 norm ops.  The bracket was
+      -- measured: `NW_N = 9` (36,864 lines) elaborated, `NW_N = 17` (69,632)
+      -- did not.  Nothing in this project could see it: GHDL has no such
+      -- limit, and `sim/tb_llama_top_normw`'s image is 576 lines, 462x under
+      -- the threshold.
+      --
+      -- The limit is PER LOOP STATEMENT and not cumulative over nesting.
+      -- MEASURED, and it is the fact the fix rests on: `nw_load` below has
+      -- always run the same 266,240 body executions as two NESTED loops of 65
+      -- and 4096, and it elaborates -- TRACK NWROM's `nw_bnd65` point
+      -- synthesised the full 65-op table with NO loop-limit override.  So the
+      -- cure is to give this function the same shape as `nw_load`: the outer
+      -- loop runs once per NORM OP and the inner once per ELEMENT, and
+      -- neither dimension of any model this design targets comes within an
+      -- order of magnitude of 65,536.
+      --
+      -- The tool ALSO has an escape hatch,
+      -- `set_param synth.elaboration.rodinMoreOptions {rt::set_parameter
+      -- maxLoopLimit 4000000}`, and it was measured to work.  It is NOT the
+      -- fix taken and should not be reintroduced: it is an undocumented
+      -- internal parameter that every present and future flow touching this
+      -- file would have to remember, whose omission costs a twenty-minute
+      -- synthesis and reports a `while` loop rather than the missing setting.
+      --
+      -- The refusals are unchanged.  A file that is not a positive whole
+      -- number of NN-element groups is still a hard stop, and it is now
+      -- reported as "n complete norm ops plus part leftover lines" rather
+      -- than as a line total, which names the same fault more usefully.
       impure function nw_count return natural is
         file     fh : text;
-        variable ok : file_open_status;
-        variable l  : line;
-        variable n  : natural := 0;
+        variable ok    : file_open_status;
+        variable l     : line;
+        variable n     : natural := 0;      -- COMPLETE NN-line groups read
+        variable part  : natural := 0;      -- lines read in a final SHORT group
+        variable short : boolean := false;
       begin
         if NORM_W_IMAGE = "" then return 1; end if;
         file_open(ok, fh, NORM_W_IMAGE, read_mode);
         assert ok = open_ok
           report "llama_top: cannot open the norm gain image "
                & NORM_W_IMAGE severity failure;
+        -- Outer: once per norm op, so NW_N iterations.  Inner: once per
+        -- element, so NN.  The `endfile` guard on the outer loop means the
+        -- inner one can only run out of file PART WAY through a group, which
+        -- is exactly the short-image case.
         while not endfile(fh) loop
-          readline(fh, l);
+          part := 0;
+          for i in 0 to NN-1 loop
+            if endfile(fh) then
+              short := true;
+              exit;
+            end if;
+            readline(fh, l);
+            part := part + 1;
+          end loop;
+          if short then exit; end if;
           n := n + 1;
         end loop;
         file_close(fh);
-        assert n > 0 and n mod NN = 0
-          report "llama_top: the norm gain image " & NORM_W_IMAGE & " has "
-               & integer'image(n) & " lines, which is not a positive multiple "
-               & "of the norm length " & integer'image(NN) & "."
+        assert not short
+          report "llama_top: the norm gain image " & NORM_W_IMAGE & " holds "
+               & integer'image(n) & " complete norm ops of "
+               & integer'image(NN) & " elements plus "
+               & integer'image(part) & " leftover lines.  It must be a whole "
+               & "number of norm ops."
           severity failure;
-        return n / NN;
+        assert n > 0
+          report "llama_top: the norm gain image " & NORM_W_IMAGE
+               & " is empty.  It must hold at least one norm op of "
+               & integer'image(NN) & " elements."
+          severity failure;
+        return n;
       end function;
       constant NW_N : positive := nw_count;
 

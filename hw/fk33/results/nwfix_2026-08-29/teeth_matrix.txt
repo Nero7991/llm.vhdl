@@ -1,0 +1,7 @@
+BASE PASS  VHDL NW_TBL == independent python reader, 67 rows each
+t1 CAUGHT  (1 row(s) differ)
+t2 CAUGHT  (2 row(s) differ)
+t3 CAUGHT  (1 row(s) differ)
+t6 CAUGHT  (1 row(s) differ)
+t4 REFUSED by the shipping nw_count (rc=1)
+t5 REFUSED by the shipping nw_count (rc=1)

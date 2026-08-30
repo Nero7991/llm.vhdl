@@ -1,0 +1,82 @@
+2026-08-29 23:1x -- MEMORY, and the hog was NOT this track and NOT Vivado.
+
+    $ ps -eo comm=,rss= --sort=-rss | head -3
+    llama-server    18848624      <- 17.98 GiB, the box's own llama.cpp service
+    vivado           4741916
+    vivado           1615196
+
+    $ free -g
+    Mem: total 31  used 12  free 0  available 18
+    Swap: total 31  used 11
+
+and in the Vivado log, at RTL Optimization Phase 2:
+
+    # Minor page faults: 4.52269e+06 Major page faults: 277047
+    # Thrashing Detected!
+    # Process may be trying to use more memory than is available
+
+NWROM's budget line says "peak RSS for these runs is 15.27 GiB" and "one Vivado
+at a time".  BOTH were honoured here and the box still thrashed, because the
+15.27 GiB budget is against 31 GB of RAM that a resident 18 GiB
+`llama-cpp-server` had already taken.  The rule that actually holds is
+"one Vivado at a time AND check `ps --sort=-rss` first", not "one Vivado at a
+time".  This track also made it worse by running a `sim/regress.sh` row set
+concurrently with a Vivado point; GHDL is cheap per process but the llama_top
+rows are not.
+
+FOLLOW-UP, same incident: THREE of the four ghdl processes were NOT this
+track's.  This track's regress run used `REGRESS_SCRATCH=/mnt/storage/nwfix/
+regress2`; the survivors had `--workdir=/tmp/claude-1000/.../329968a0-...`,
+the SESSION scratchpad, i.e. another track's concurrent regression.  Checking
+the parent's args before killing anything is what caught that -- a `pkill` on
+any pattern loose enough to match "ghdl" would have taken another track's gate
+run out from under it.  `sim/regress.sh` was already gone from the process
+table by then, so only this track's own contribution was stopped.
+
+2026-08-29 23:14 -- THE HEADLINE NUMBER THIS PROJECT IS CARRYING DOES NOT
+REPRODUCE.
+
+`nf_pre65lf` is the PINNED committed loader (md5 d55fa90..., the same md5 NWROM
+recorded), the real 9B image (stats byte-identical to NWROM's artefact), run
+through `sim/ooc_nwrom_loopfix_run.sh` UNMODIFIED with the same part, period and
+flags.  It is NWROM's `nw_lf65` re-run.
+
+    NWROM nw_lf65    82597 LUT   own 43627   gvr.wsel 18954 LUT / 28958 FF
+    NWFIX nf_pre65lf 103302 LUT  own 61980   gvr.wsel 37552 LUT / 42555 FF
+
++20,705 LUT, +25.1%, on identical inputs.  And 103,302 is within 221 LUT of
+NWROM's own `nw_bnd65` = 103,081, the bounded probe it REJECTED as "20,484 LUT
+MORE than the committed RTL".
+
+So the 82,597 that the board's 306,787 composition rests on is not a point
+estimate; `gvr.wsel` alone spans 18,954 to 37,611 LUT across four builds of the
+same 65-entry table.  NWROM's section 5.4 already named the mechanism -- Vivado
+folds the select into logic of the seven `nidx` bits and then MERGES equivalent
+flops -- and the merge outcome is evidently not stable between runs.
+
+2026-08-29 23:30 -- AND IT IS WORSE THAN A DIFFERENCE BETWEEN SESSIONS.  THE
+IDENTICAL COMMAND, TWICE, ON THE SAME MACHINE, IN THE SAME HOUR.
+
+`nf_fix65b` is a byte-for-byte repeat of `nf_fix65`: same rtl_fix directory,
+same image, same `run_synth3.sh` invocation, same runner, same part, same
+period, same flags.
+
+    nf_fix65    87254 LUT   own 47487   ff 166937   synth 396 s
+    nf_fix65b  128065 LUT   own  -----   ff 194242   synth 497 s
+
++40,811 LUT, +46.8%, from re-running the same command.
+
+Every measurement of the populated 65-op table, all sources:
+
+    82597   NWROM nw_lf65     committed loader, limit RAISED
+    87254   NWFIX nf_fix65    fixed loader,     limit default
+   103081   NWROM nw_bnd65    bounded probe,    limit default
+   103302   NWFIX nf_pre65lf  committed loader, limit RAISED
+   128065   NWFIX nf_fix65b   fixed loader,     limit default   <- repeat of 87254
+
+Range 82,597 .. 128,065 = a factor of 1.55.  NWROM's own section 5.7 had the
+shape of this right -- "the same design synthesised twice down a slightly
+different elaboration path" -- and then quoted 82,597 as the answer anyway,
+and the board's 306,787 composition inherited it.  NO SINGLE LUT NUMBER FOR
+THIS BLOCK MEANS ANYTHING.  A `NORM_W_IMAGE` area figure has to be reported as
+a range over repeats, or not reported.

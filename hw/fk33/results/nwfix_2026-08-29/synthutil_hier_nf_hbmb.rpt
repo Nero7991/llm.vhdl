@@ -1,0 +1,30 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 23:52:36 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/nwfix/out/synthutil_hier_nf_hbmb.rpt
+| Design       : ooc_nwfix_hbm
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|      Instance     |   Module   | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| ooc_nwfix_hbm     |      (top) |      67059 |      67059 |       0 |    0 | 198698 |      0 |      0 |    0 |         41 |
+|   (ooc_nwfix_hbm) |      (top) |      25561 |      25561 |       0 |    0 | 131524 |      0 |      0 |    0 |          1 |
+|   gvr.u_rms       | rmsnorm_rs |      41498 |      41498 |       0 |    0 |  67174 |      0 |      0 |    0 |         40 |
++-------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+
+

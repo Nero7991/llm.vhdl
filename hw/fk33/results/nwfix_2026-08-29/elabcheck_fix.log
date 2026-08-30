@@ -1,0 +1,7 @@
+NWFIX_GEOM image=/mnt/storage/nwfix/img/norm_w_9b.hex lines=266240 nn=4096 ops=65 limit=65536
+NWFIX_GEOM_NOTE 266240 lines is over the 65536 limit, so a loader
+NWFIX_GEOM_NOTE that reads ONE LINE PER ITERATION of a single loop
+NWFIX_GEOM_NOTE cannot elaborate this image.  llama_top's does not;
+NWFIX_GEOM_NOTE it counts in groups of NN.  If [Synth 8-403] appears
+NWFIX_GEOM_NOTE below, that structure has been reintroduced.
+NWFIX_GEOM_PASS both loop bounds are under 65536

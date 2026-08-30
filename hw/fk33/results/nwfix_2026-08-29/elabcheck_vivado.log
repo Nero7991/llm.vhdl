@@ -1,0 +1,66 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/orencollaco/GitHub/llama.vhdl/sim/ooc_nwfix_elabcheck.tcl -notrace
+NWFIX_ELAB_BEGIN top=ooc_normadapt part=xcvu33p-fsvh2104-2L-e rtl=/mnt/storage/nwfix/rtl_fix gen=NORM_W_IMAGE=/mnt/storage/nwfix/img/norm_w_9b.hex
+NWFIX_ELAB_CMD synth_design -rtl -mode out_of_context -top ooc_normadapt -part xcvu33p-fsvh2104-2L-e -generic NORM_W_IMAGE=/mnt/storage/nwfix/img/norm_w_9b.hex
+Command: synth_design -rtl -mode out_of_context -top ooc_normadapt -part xcvu33p-fsvh2104-2L-e -generic NORM_W_IMAGE=/mnt/storage/nwfix/img/norm_w_9b.hex
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 1618225
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 2809.219 ; gain = 400.707 ; free physical = 252 ; free virtual = 49186
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'ooc_normadapt' [/mnt/storage/nwfix/rtl_fix/ooc_normadapt_top.vhd:63]
+	Parameter NORM_W_IMAGE bound to: /mnt/storage/nwfix/img/norm_w_9b.hex - type: string 
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_rs' [/mnt/storage/nwfix/rtl_fix/rmsnorm_rs.vhd:81]
+	Parameter N bound to: 4096 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'rmsnorm_rs' (0#1) [/mnt/storage/nwfix/rtl_fix/rmsnorm_rs.vhd:81]
+INFO: [Synth 8-256] done synthesizing module 'ooc_normadapt' (0#1) [/mnt/storage/nwfix/rtl_fix/ooc_normadapt_top.vhd:63]
+WARNING: [Synth 8-6014] Unused sequential element gvr.novf_reg was removed.  [/mnt/storage/nwfix/rtl_fix/ooc_normadapt_top.vhd:423]
+WARNING: [Synth 8-3917] design ooc_normadapt has port o_v_err driven by constant 0
+WARNING: [Synth 8-3917] design ooc_normadapt has port o_ur_addr[31] driven by constant 0
+WARNING: [Synth 8-3917] design ooc_normadapt has port o_uw_addr[31] driven by constant 0
+WARNING: [Synth 8-7129] Port i_v_reg_a[7] in module ooc_normadapt is either unconnected or has no load
+WARNING: [Synth 8-7129] Port i_v_reg_d[7] in module ooc_normadapt is either unconnected or has no load
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:02:23 ; elapsed = 00:03:17 . Memory (MB): peak = 18036.523 ; gain = 15628.012 ; free physical = 276 ; free virtual = 29679
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:02:24 ; elapsed = 00:03:18 . Memory (MB): peak = 18036.523 ; gain = 15628.012 ; free physical = 317 ; free virtual = 29788
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:02:24 ; elapsed = 00:03:18 . Memory (MB): peak = 18036.523 ; gain = 15628.012 ; free physical = 317 ; free virtual = 29788
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 18036.531 ; gain = 0.000 ; free physical = 302 ; free virtual = 28180
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.02 . Memory (MB): peak = 18100.555 ; gain = 0.000 ; free physical = 253 ; free virtual = 28429
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:02:43 ; elapsed = 00:03:37 . Memory (MB): peak = 18100.590 ; gain = 15692.078 ; free physical = 236 ; free virtual = 28430
+11 Infos, 6 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:02:46 ; elapsed = 00:03:41 . Memory (MB): peak = 18100.590 ; gain = 16767.828 ; free physical = 236 ; free virtual = 28430
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 6797.345; main = 6795.516; forked = 383.928
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 19028.867; main = 18100.559; forked = 992.340
+NWFIX_ELAB_PASS ooc_normadapt
+INFO: [Common 17-206] Exiting Vivado at Sat Aug 29 23:57:18 2026...

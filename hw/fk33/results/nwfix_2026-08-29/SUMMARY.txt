@@ -1,0 +1,9 @@
+tag          top                   lut       own     u_rms       ff    dsp   bram   uram  carry8      f7       f8        wns    fmax  synth_s
+nf_empty     ooc_normadapt       49654     25523     24131   133197     41      0      0     268   18208     8944      1.675   300.7519      164
+nf_fix65     ooc_normadapt       87254     47487     39767   166937     41      0      0     268   24268    11504      1.675   300.7519      396
+nf_fix65b    ooc_normadapt      128065     86525     41540   194242     41      0      0     268   26763    13167      1.675   300.7519      497
+nf_fix65lf   ooc_normadapt      103435     62401     41034   176502     41      0      0     268   25437    12552      1.675   300.7519      431
+nf_hbm       ooc_nwfix_hbm       67059     25561     41498   198698     41      0      0     268   26640    13264      1.675   300.7519      197
+nf_hbmb      ooc_nwfix_hbm       67059     25561     41498   198698     41      0      0     268   26640    13264      1.675   300.7519      203
+nf_pre65     ERROR: [Synth 8-403] loop limit (65536) exceeded [/mnt/storage/nwfix/rtl_base/ooc_normadapt_top.
+nf_pre65lf   ooc_normadapt      103302     61980     41322   175810     41      0      0     268   24505    12038      1.675   300.7519      450
