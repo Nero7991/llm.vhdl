@@ -38,6 +38,38 @@ held.** This is the largest area lever measured on this project so far:
 | DSP | 40 | **40** |
 | WNS @ 5.0 ns | not predicted | **+0.971**, 248.2 MHz |
 
+**FINAL, all three draws in, TRACK RMSMUX complete** (`5152e91`, artefacts
+`hw/fk33/results/rmsmux_2026-08-30/`). Against its own same-session control,
+same flow, one tool at a time:
+
+| | `rmsnorm_rs` control | `rmsnorm_rs_mem` | delta |
+|---|---:|---:|---:|
+| CLB LUT | 40,934 | **4,825** | **-36,109, -88.2%** |
+| CLB FF | 67,196 | **1,629** | **-65,567, -97.6%** |
+| MUXF7 | 17,408 | **0** | **-17,408, -100%** |
+| MUXF8 | 8,704 | **0** | **-8,704, -100%** |
+| BRAM tile | 0 | 6 | +6 of 425.5 free |
+| DSP | 40 | 40 | 0 |
+| WNS @ 5.0 ns | +1.675 | +0.971 | -0.704 ns, still meets 200 MHz |
+
+**Scatter is `1.0000x`: the two identical-command draws are byte-identical in
+every CSV field AND their censuses hash the same** (`2c85f5c4...`), agreeing
+down to per-root primitive tallies. **Operationally, and this is the part the
+fit table needs: SCATTER's 1.55x must NOT be applied to this 4,825.** The
+pre-registered hypothesis (that SCATTER's spread came from register merging on
+a foldable constant ROM, and a memory-backed unit has no fold to perform) is
+**unrefuted, not proven** -- two draws, one box, one session.
+
+The control's own census settles the attribution **on the shipped file**, not on
+a transform of a superseded one: `ARG` 17,916 + `sq` 17,474 = **86.5% of the
+shipped unit's LUT and 100.0% of its MUXF7 and MUXF8**, both agreeing with
+LUTDIET's census to the LUT. The saving exceeds the 35,390 of read mux because
+the memory form also removes `gow.o` (WRITEDEC's write decode, 2,356).
+
+**Still open and NOT derivable from the above: the COMPOSED number.** Nothing
+here is placed, routed or composed, and TIMING's composed baseline was drawn
+with a foldable `w_mant`.
+
 The 1024:1 read mux is gone, measured rather than argued: **no root anywhere
 carries a single MUXF7 or MUXF8, and there is no `sq` root at all.** The FF
 figure is the one worth pausing on, because it was a mechanism-level prediction
