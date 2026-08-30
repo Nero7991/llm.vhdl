@@ -9,6 +9,139 @@ fresh result is how scope drifts and how a negative result gets talked into
 being a positive one. If the branch was written before the answer was known,
 the answer only has to be classified, not argued with.
 
+## STATE OF THE BOARD, 2026-08-30 morning
+
+Written to survive a context compaction. Every figure here is MEASURED unless
+labelled, and several supersede figures still standing elsewhere in this file.
+
+### The single most important thing on the board
+
+**The composed A+B+C+D does not route on this part as currently written, and
+Vivado said so itself, unprompted:**
+
+```
+[Route 35-447] Congestion is preventing the router from routing all nets.
+iteration 0  494,506 -> 150,615 -> 65,271 -> 35,976 -> 23,310 -> 16,757  (56m35s)
+iteration 1  69,858 -> 183,525 -> 111,513   (RISING -- the router is thrashing)
+```
+
+Placed occupancy **54,866 of 54,960 CLB = 99.83%**, congestion level 7, 33,767
+failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
+(mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
+decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
+
+**The fit needs THREE levers, and the ordering is not what anyone assumed:**
+
+| configuration | CLB |
+|---|---:|
+| today | 121% |
+| + lever C alone (IQ4_NL codebook to LUTRAM) | 115.9% |
+| **+ `d_norm/gvr.u_rms` read muxes alone** | **102.2%** |
+| + lever C + norm gain image out of LUTs | 105.2% |
+| + all three | 94.6% |
+
+**`d_norm` alone beats lever C alone by 13.7 points and nobody was working on
+it.** It is 43,213 LUT plus 17,696 MUXF7 of 1024:1 read muxes, it has **never
+run on silicon** (the token run's 64 RMS norms ran on the host), so it carries
+less regression risk than lever C, which is inside `matvec_core`.
+
+**Caveats that bound all of the above, and must travel with it:**
+- The 94.6% row is **overstated by ~17,405 LUT**: TRACK NORMURAM MEASURED that
+  "+32,943" is the saving from DROPPING the gain image, not MOVING it, because
+  any real gain pays a 17,367 LUT `w_mant` fold wherever the table lives.
+- The norm-image term is the best of six draws of the one quantity SCATTER
+  ruled **NOT SAFE to quote as a point** (82,597..128,065). Range or nothing.
+- `compose4` **wires nothing to anything** -- no inter-subsystem nets, no host
+  plumbing. The real top adds logic and nets on top of 420,240. The total is a
+  FLOOR.
+- A `pblock_squeeze` (netlist unchanged, die restricted to 46,920 CLB) is in
+  flight and is **the only measurement** of packing under pressure. Everything
+  else about density is inference.
+
+### The engine runs at 1/22 speed and the cause is the address map, not the RTL
+
+DERIVED before fitting, then MEASURED to 0.32%: one core weight word is
+24 weight + 3 scale beats = 27 x 32 B = 864 B; one 256-bit HBM port at 250 MHz
+is 8.000 GB/s; 27 beats through ONE port = 21.60 core cycles at 200 MHz.
+**Measured slope 21.67.** The card sustains 7.39-7.88 GB/s -- 92-99% of exactly
+one AXI port, with 26 idle -- because **235 of 250 tensors have all 27 lane
+sub-regions inside ONE 256 MiB segment**, which is the pseudo-channel granule.
+
+The attribution control is what makes it solid: the same shipping RTL with only
+the memory model swapped runs at **1.60 cycles/beat at identical `MAXOUT=16`,
+`MAXB=16`, `DEPTH=512`** -- which kills the outstanding-read hypothesis
+outright, including TRACK A7's `outst` depth.
+
+**Fix is in the packer, not the RTL.** Supply model `max(1.60 datapath, M/1.25
+memory)` where M = lanes per pseudo-channel: M=1 and M=2 both give **1.60**, M=3
+gives 2.40, M=27 gives 21.60. **M=2 is exactly the knee**, so the shipping
+default is 27 lanes on 25 segments, max 2 per PC: full datapath-floor
+throughput at **75,340 tokens**, against Oren's stated 64k requirement.
+**The model has NO anchor at M=2** -- flagged as its largest unhedged
+assumption.
+
+**BLOCKED:** `gen_layer_program.py` correctly refuses a striped manifest rather
+than emitting a wrong program, so **nothing can emit a token program for a
+striped set** until TRACK STRIPEPATH lands. The card experiment cannot run
+before then.
+
+### Decisions taken by Oren, with their triggers
+
+- **N2 = option (a)**: the seam in front of D. "We don't want host controlling."
+  `rtl/fk33_seam.vhd` landed (`9270c7a`). **`0xE000` is still assigned nowhere
+  in `gen_pcieep.py`** -- the block has registers and no address.
+- **Context requirement is 64k**, not 262,144. Ceiling on one card is ~202,681,
+  but **X1 must be checked against the SHIPPING striping layout, never against
+  202,681**, which describes a configuration nobody intends to build.
+- **9B is single-card.** Two cards buy a fit and context, **not speed**.
+  MEASURED: `attn_mac_array` is **exactly invariant under tensor parallelism**
+  because `G := N_QH/N_KVH` divides numerator and denominator by the same N --
+  the N=2 draw returned **298 DSP, identical to N=1, to the unit**. The ladder
+  that does shrink it (`QH_TILE` below `G`) is available at N=1 with no second
+  card, no subsystem E and no peer link. Reopens only on context, a bigger
+  model, or batching.
+- **Lever C reopened** by its own stated trigger. Its closure had been
+  discharged against the subsystem-A-only PBLOCK route, not against A+B+C+D.
+
+### The defect class this project keeps finding
+
+**Guards that pass for the wrong reason. Six more today**, in addition to the
+four already recorded:
+
+1. `check_hbm_stack.py` PASSED over **7,154 ranges of which zero exist**.
+2. The **42-field descriptor cross-check cannot see a wrong address.** With a
+   piece's address mutated, `make_plan` reported **69 of 69 fields agree** --
+   the placement is on both sides and cancels. It had the same defect via
+   `hbm_base`. This is the check that was described everywhere as "gates every
+   job".
+3. `gen_layer_program.py --token` on a striped set emitted **311 of 311 A jobs,
+   0 refused, all 6,723 bases byte-identical to the flat program's** -- a
+   complete, gateware-acceptable, wrong program reported as success.
+4. `tb_attn_block` -- the bench named after the unit, carrying subsystem C's
+   bit-exact oracle -- **passes a deliberately broken min-fold tree**.
+5. Lever C's closure in this file, discharged against the wrong design.
+6. The 2026-08-25 capacity table's "9B fits with ~2.9 GiB spare" **counted
+   weights only**; at 262,144 the real figure is 9.625 GB against 8.590 GB. It
+   underwrote the single-card strategy for five days and survives only because
+   the answer came back 64k.
+
+**And one model failure of a different shape:** a one-parameter packing model
+calibrated on a single placed design was wrong by **12 points with its sign
+inverted**. It was correctly labelled ESTIMATE with its assumption stated, and
+that was not enough. See CLAUDE.md.
+
+### The machine
+
+The workstation **hung hard at 01:25** under six concurrent Vivados --
+`kcompactd0` stuck 75 s, RCU stalls, nine CPUs in soft lockup, power button,
+FPGA configuration lost, ninety minutes of place-and-route destroyed. **A single
+composed route leaves 233 MB free while ALONE on the box**, so no pre-flight
+`free` check could ever have caught it. Rules in CLAUDE.md; the second lane
+(BC-250) was idle at load 0.07 the entire night and was never used.
+
+**The card is currently UNCONFIGURED** -- slot power was cut -- and nothing has
+been reprogrammed since.
+
 ## THE REFILL RULE (read this first, every time)
 
 **Standing instruction from Oren, 2026-08-28: the parallel slots must not go
