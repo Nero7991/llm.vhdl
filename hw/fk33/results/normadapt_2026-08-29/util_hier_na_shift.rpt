@@ -1,0 +1,30 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Aug 29 20:59:53 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/normadapt/out/util_hier_na_shift.rpt
+| Design       : ooc_normadapt_shift
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-------------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|         Instance        |   Module   | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-------------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| ooc_normadapt_shift     |      (top) |      44293 |      44293 |       0 |    0 | 133132 |      0 |      0 |    0 |         41 |
+|   (ooc_normadapt_shift) |      (top) |      20225 |      20225 |       0 |    0 |  65944 |      0 |      0 |    0 |          1 |
+|   gvr.u_rms             | rmsnorm_rs |      24068 |      24068 |       0 |    0 |  67188 |      0 |      0 |    0 |         40 |
++-------------------------+------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+
+

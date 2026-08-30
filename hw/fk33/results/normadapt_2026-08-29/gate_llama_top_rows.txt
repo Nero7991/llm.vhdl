@@ -1,0 +1,8 @@
+ OVERALL     PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+sim:tb_llama_top	PASS	113
+sim:tb_llama_top_normw	PASS	79
+sim:tb_llama_top_real	PASS	76
+sim:tb_llama_top_seq	PASS	318
+sim:tb_llama_top_smp	PASS	1
+sim:tb_llama_top_smp_beh	PASS	2

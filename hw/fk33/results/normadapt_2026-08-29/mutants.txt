@@ -1,0 +1,15 @@
+== NORMADAPT mutants, 2026-08-29T20:41:45-06:00
+m_none               SURVIVED
+m_off1               CAUGHT-RTL     (index (64) out of bounds)
+m_wr_rot             CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_flat_rev           CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_flat_drop0         CAUGHT-RTL     (rmsnorm_rs: sum of squares out of the assumed range)
+m_flat_rot           CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_firstdrop          CAUGHT-BENCH   (MISMATCH obs_norm payload)
+m_zerodata           CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_extracycle         CAUGHT-BENCH   (MISMATCH obs_pub ref)
+m_uwaddr             CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_uwreg              CAUGHT-BENCH   (MISMATCH uw addr/reg/data at addr )
+m_ssq                CAUGHT-BENCH   (MISMATCH obs_norm payload)
+m_nidx_at_accept     SURVIVED
+== done

@@ -1,0 +1,9 @@
+== na_before start 2026-08-29T20:49:43-06:00  avail=27G
+tag=na_before peak_rss_kib=13111920 peak_rss_gib=12.50 exit=0
+== na_before rc=0 2026-08-29T20:53:04-06:00
+== na_after start 2026-08-29T20:53:04-06:00  avail=27G
+tag=na_after peak_rss_kib=13107152 peak_rss_gib=12.50 exit=0
+== na_after rc=0 2026-08-29T20:56:45-06:00
+== na_shift start 2026-08-29T20:56:45-06:00  avail=27G
+tag=na_shift peak_rss_kib=12689996 peak_rss_gib=12.10 exit=0
+== na_shift rc=0 2026-08-29T21:00:26-06:00
