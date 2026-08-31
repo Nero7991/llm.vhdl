@@ -1,0 +1,7 @@
+C4_BEGIN synth tag=c4ctl part=xcvu33p-fsvh2104-2L-e core_period=5.0 hbm_period=4.0
+C4_RTL  /mnt/storage/route2_2026-08-30/tree/rtl
+C4_FK33 /mnt/storage/route2_2026-08-30/tree/hw/fk33/rtl
+C4_READ 99 files
+C4_SYNTH_SECONDS 480
+C4_BUFG 2
+C4_UTIL c4ctl synth lut 310180 lut_logic 294600 lut_mem 15580 ff 224400 carry8 12153 f7 45611 f8 16268 bram 253.5 uram 0 dsp 2177 clb NA

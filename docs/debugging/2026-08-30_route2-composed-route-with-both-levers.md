@@ -617,3 +617,74 @@ forced by routability.
    density curve, at a pressure where the placer had a choice. It has not been
    reconciled with the free-die 6.324 or the squeeze's 7.029, and CLAUDE.md
    already records what happens when a one-point density model is extrapolated.
+## Result 7 -- the attribution control, and the whole miss belongs to ONE lever
+
+`--cb-style regs`, **same tree, same session, same Vivado**, generated from the
+same generator into `compose4_ctl_top` which differs from `compose4_top` by the
+`CB_STYLE` literal and nothing else (step 6 above). `C4_SYNTH_SECONDS 480`.
+
+```
+C4_UTIL c4ctl synth lut 310180 lut_logic 294600 lut_mem 15580 ff 224400
+                    carry8 12153 f7 45611 f8 16268 bram 253.5 uram 0 dsp 2177
+```
+
+Three points now exist, and they apportion the 8.2% miss exactly.
+
+### Lever C in the composition reproduces its unit measurement
+
+`c4ctl -> c4lev`, the only difference being the generic:
+
+| | control | levered | delta | LEVERC48 standalone | miss |
+|---|---:|---:|---:|---:|---:|
+| CLB LUT | 310,180 | 265,658 | **-44,522** | -42,633 | **-4.43%** |
+| LUT as Memory | 15,580 | 27,842 | **+12,262** | +12,288 | **-0.21%** |
+| CLB FF | 224,400 | 237,832 | **+13,432** | +13,195 | **+1.80%** |
+| F7 Muxes | 45,611 | 20,225 | **-25,386** | -24,583 | **-3.27%** |
+| F8 Muxes | 16,268 | 3,970 | **-12,298** | -12,288 | **-0.08%** |
+| BRAM | 253.5 | 253.5 | **0** | -- | -- |
+| DSP | 2,177 | 2,177 | **0** | -- | -- |
+
+**Every column within 4.5%, and the two with an exact structural closed form
+within 0.21%.** A lever measured on `matvec_core` alone transfers to a
+nine-instance composition essentially unchanged. That is a real and reusable
+finding: it is not what this project usually observes.
+
+### The norm lever delivers about 70% of what was measured in `llama_top`
+
+`2026-08-29 baseline -> c4ctl`. **Cross-day and cross-SHA** (baseline at
+`56cebe8`), which is the weaker of the two comparisons and is labelled so:
+
+| | baseline | control | delta | RMSWIRE in `llama_top` | miss |
+|---|---:|---:|---:|---:|---:|
+| CLB LUT | 350,283 | 310,180 | **-40,103** | -62,053 | **+35.4%** |
+| CLB FF | 355,468 | 224,400 | **-131,068** | -189,515 | **+30.8%** |
+| F7 Muxes | 65,108 | 45,611 | **-19,497** | -26,736 | **+27.1%** |
+| F8 Muxes | 25,788 | 16,268 | **-9,520** | -13,296 | **+28.4%** |
+| BRAM | 246.5 | 253.5 | **+7.0** | +6 | +16.7% |
+| LUT as Memory | 15,580 | 15,580 | **0** | -- | exact |
+
+Every column short by **27 to 35%, all in the same direction**, which is the
+signature of a proportional effect rather than one missing structure.
+
+**So the entire 8.2% miss on the composed prediction belongs to the norm lever,
+and none of it to lever C.** That is MEASURED. The MECHANISM remains an
+ESTIMATE: RMSWIRE measured the region in place inside `llama_top`, while
+`compose4_top`'s `d_norm` is that region extracted into a standalone entity
+with the enclosing scope turned into ports, and a port cannot be optimised
+away. **What would falsify it:** extracting `gvr` from the PRE-RMSWIRE
+`llama_top` and drawing it beside this one, which measures the extraction's own
+overhead directly instead of inferring it. Not run.
+
+`LUT as Memory 15,580 -> 15,580` between the baseline and the control is worth
+noting on its own: **exactly unchanged across a cross-day, cross-SHA
+comparison.** That is a neutrality check the comparison was not designed to
+provide, and it supports treating the 2026-08-29 baseline as comparable.
+
+### The consequence for how these numbers get quoted
+
+**A lever measured on a UNIT transferred at 0.2-4.4%. A lever measured on a
+COMPOSITION transferred at 27-35% short.** That is the opposite of the ordering
+anyone would guess, and the reason is not the levers -- it is that the norm
+lever's "composed" measurement was composed inside a DIFFERENT top from the one
+that has to fit. **"Measured composed" is not a property of a number; it names
+which composition, and two compositions are two different measurements.**
