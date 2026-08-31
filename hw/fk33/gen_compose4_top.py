@@ -95,7 +95,14 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(HERE)
+# THE REPO ROOT IS TWO LEVELS UP FROM hw/fk33, NOT ONE.  MEASURED 2026-08-30 by
+# TRACK ROUTE2: this was `os.path.dirname(HERE)`, which is `<repo>/hw`, so the
+# default `--rtl` resolved to `<repo>/hw/rtl` -- a directory that has never
+# existed in this tree.  Every invocation since the generator was written has
+# therefore had to pass `--rtl` explicitly, and running it without one aborts
+# with `COMPOSE4 ABORT: missing <repo>/hw/rtl/gdn_block.vhd`.  That abort is
+# loud, which is the only reason this was harmless rather than silent.
+REPO = os.path.dirname(os.path.dirname(HERE))
 
 # ---------------------------------------------------------------------------
 # The composition.  (instance, entity, source file, generic overrides)
