@@ -183,6 +183,18 @@ Aurora over the PCIe edge GTYs is the interconnect, and the PCB work is in
 
 ### STEP 3 -- Build the card top (row N3). It does not exist.
 
+**INHERITED DEADLINE, added 2026-08-30. MEASURED by TRACK RMSWIRE: there is a
+1,030-cycle window `[977, 2006]` in which the norm unit reads the PREVIOUS
+operation's gain vector -- up to 1,373 of 4,096 elements -- and EVERY OUTPUT WORD
+IS BIT-IDENTICAL to the oracle.** `tb_llama_top`'s `EXP_*` landmarks are token
+hashes and pass throughout it. The width is exactly
+`S_EMIT arrival - S_RAW arrival = 2097 - 1067`.
+
+**A value-based check cannot see this.** The card top MUST honour the deadline
+structurally, and the only thing that makes it visible from outside the unit is
+`rmsnorm_rs_mem`'s `w_active` output: first rise is `S_RAW`, rise-after-fall is
+`S_EMIT`. **Wire it and assert on it.**
+
 Neither candidate is usable, so this is new work, not a wiring change.
 
 **It must:**

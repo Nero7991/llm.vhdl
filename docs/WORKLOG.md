@@ -157,9 +157,59 @@ refused the composition over -- it said the fault class "leaves the VALUES
 correct and is invisible to the landmarks" -- and RMSWIRE has now put a number
 on it: **the invisible window is 116 cycles wide, 2007 to 2123.** Nobody had one.
 
-**`tb_llama_top`'s landmarks pass throughout that window.** Whoever builds the
-card top (row N3) inherits this deadline and **cannot see it from outside the
-unit** unless the `S_RAW` tap is exposed.
+**CORRECTION, 2026-08-30, by TRACK RMSWIRE. WITHDRAWN: the dispatcher's "116
+cycles wide, 2007 to 2123". THE WINDOW IS 1,030 CYCLES AND I HAD BOTH ENDS
+WRONG.** `2007` is the window's first SAFE cycle, not its start, and `2123` was
+invented. MEASURED, both boundaries pinned to the cycle (`2006` corrupt / `2007`
+clean, `976` corrupt / `977` clean):
+
+```
+window = [977, 2006] = 1030 cycles = exactly S_EMIT arrival - S_RAW arrival = 2097 - 1067
+```
+
+17 points swept across it with the ordinary previous-op stale gain
+(`invisible_window.txt`):
+
+```
+start_at  raw_rise  stale_raw  differing verdict
+977       2044      1373       0        INVISIBLE
+1400      2467       809       0        INVISIBLE
+1991      3058        21       0        INVISIBLE
+2006      3073         1       0        INVISIBLE
+```
+
+**Up to 1,373 of 4,096 elements read from the WRONG gain vector and not one
+output word moves, anywhere in the window.**
+
+**`tb_llama_top`'s four `EXP_*` landmarks are TOKEN HASHES and pass
+throughout.** Whoever builds the card top (row N3) inherits this deadline and
+**cannot see it from outside the unit** without the tap.
+
+**THE TAP NOW EXISTS.** `rtl/rmsnorm_rs_mem.vhd` gained one output, `w_active`,
+high through `S_RAW` AND `S_EMIT` and low in the `S_SHIFT1`/`S_SHIFT2` gap, so
+**one pin times both deadlines**: first rise is `S_RAW`, rise-after-fall is
+`S_EMIT`. Every number above was measured off it. Named association throughout
+means a parent may leave it unassociated.
+
+**THE THREE MEMORY FIGURES ARE NOT INTERCHANGEABLE, and this run is the worked
+example:**
+
+| figure | value | what it is |
+|---|---:|---|
+| Vivado `Memory (MB): peak` | **17.3 GiB** | the tool's peak ALLOCATION; swap absorbed it |
+| summed `/proc` `VmRSS` | **11.94 GiB** | sampled RESIDENT; 5.4 GiB below Vivado's, sign of the error unknown |
+| cgroup `memory.peak` | **11.0015 GiB** | **THE CAP**, 1.6 MB above `MemoryHigh=11G`. Not a footprint. |
+
+The last row reproduces CLAUDE.md's warning exactly, on a real job.
+
+**CROSS-VALIDATION worth having: `ctl_flat` reproduced NORMURAM's `nu_u1` on
+DIFFERENT hardware, every field identical** -- `lut=67318 ff=191664 bram=171
+f7=26736 f8=13296 wns=1.675`, at 1,625 s against 641 s (2.53x). That is the
+BC-250/workstation bit-identity property re-confirmed on a composed draw rather
+than a unit one.
+
+**Attribution, R3: `K:loadassert / K:loadassert / K:landmarks` -- the landmarks
+earn that kill on their own, so NEITHER new assertion gets credit for it.**
 
 **Correction to my brief, accepted: I sent a COMPOSED `llama_top` draw to the
 14 GB BC-250** on the strength of RMSMUX's 10.58 GB peak, which was a UNIT draw.
