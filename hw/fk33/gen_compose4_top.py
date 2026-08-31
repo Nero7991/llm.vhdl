@@ -351,6 +351,16 @@ def main():
     ap.add_argument("--norm-entity", default="ooc_normadapt",
                     choices=["ooc_normadapt", "ooc_normadapt_flat"])
     ap.add_argument("--norm-file", default="")
+    # THE GAIN IMAGE, TRACK ROUTE3, 2026-08-31.  Every composed draw before
+    # this option carried NORM_W_IMAGE = "" (the synthetic ramp), so the
+    # composed BRAM figure never included the gain store.  GAIN16 replaced
+    # that store with an 11-bit codebook index (99 RAMB36, MEASURED OOC) plus
+    # a 1,567-entry table, and the question ROUTE3 answers is whether the
+    # composition still ROUTES with it in.  The path is BAKED INTO the
+    # generated file's d_norm generic map, exactly as CB_STYLE is, because
+    # the PnR Tcl passes no generics on its synth_design line.  Default ""
+    # preserves every existing number.
+    ap.add_argument("--norm-w-image", default="")
     a = ap.parse_args()
 
     global INSTANCES
@@ -358,6 +368,11 @@ def main():
                   (dict(i[3], CB_STYLE='"%s"' % a.cb_style)
                    if i[0] == "a_eng" else i[3]))
                  for i in INSTANCES]
+    if a.norm_w_image:
+        INSTANCES = [(i[0], i[1], i[2],
+                      (dict(i[3], NORM_W_IMAGE='"%s"' % a.norm_w_image)
+                       if i[0] == "d_norm" else i[3]))
+                     for i in INSTANCES]
     if a.norm_entity != "ooc_normadapt":
         INSTANCES = [(i[0], a.norm_entity, i[2], i[3]) if i[0] == "d_norm"
                      else i for i in INSTANCES]
@@ -483,10 +498,23 @@ def main():
         "--     rtl/llama_top.vhd's `gvr` block and HEAD's `gvr` binds rmsnorm_rs_mem.",
         "-- The generator ABORTS if the extraction it is handed binds the flat unit.",
         "--",
-        "-- NORM_W_IMAGE IS EMPTY HERE, as it was in every row of the booking this",
-        "-- is compared against.  TRACK NWROM MEASURED that a real gain image costs",
-        "-- +32,943 CLB LUT, so that must be ADDED to any number this top produces",
-        "-- before comparing it to a pb_core budget.",
+    ]
+    if a.norm_w_image:
+        hdr += [
+            "-- NORM_W_IMAGE IS REAL HERE (TRACK ROUTE3): %s" % a.norm_w_image,
+            "-- The gain store is GAIN16's 11-bit codebook index plus a",
+            "-- 1,567-entry table, 99 RAMB36 MEASURED OOC, so this top's BRAM",
+            "-- total INCLUDES the gain image and no addition is needed before",
+            "-- comparing it to a pb_core budget.",
+        ]
+    else:
+        hdr += [
+            "-- NORM_W_IMAGE IS EMPTY HERE, as it was in every row of the booking this",
+            "-- is compared against.  TRACK NWROM MEASURED that a real gain image costs",
+            "-- +32,943 CLB LUT, so that must be ADDED to any number this top produces",
+            "-- before comparing it to a pb_core budget.",
+        ]
+    hdr += [
         "--",
         "-- Instances, and the generics each carries:",
     ]
