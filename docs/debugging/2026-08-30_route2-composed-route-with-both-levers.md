@@ -318,3 +318,65 @@ registers -- 3 against 6,144 settles that -- but they have not been named. The
 corrected census prints the names, so the next run resolves it for free. Not
 resolved here because doing so needs a second Vivado and the implementation had
 the lane.
+## Result 3 -- the fit inside the card's real `pb_core`, before placement
+
+`C4_PBLOCK=1` reproduces `hw/fk33/fk33_pblock.xdc:92`'s region and the script
+errors if the range comes back anything else:
+
+```
+C4_PBLOCK_RANGE CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+```
+
+`out/pbutil_c4lev_preplace.rpt`, the composition against the REGION's supply
+rather than the device's:
+
+| resource | used | available in `pb_core` | % |
+|---|---:|---:|---:|
+| CLB LUTs | 265,658 | 388,800 | **68.33** |
+| CLB Registers | 237,832 | 777,600 | 30.59 |
+| Block RAM Tile | 253.5 | 576 | 44.01 |
+| **DSPs** | **2,177** | **2,700** | **80.63** |
+| URAM | 0 | 320 | 0.00 |
+
+**DSP is now the tightest resource in the region at 80.63%**, ahead of LUT at
+68.33%. Neither lever moves DSP, and nothing in this project is holding a DSP
+budget. That is a change of which resource binds and it is stated here because
+it did not exist as a question before the levers landed.
+
+**The BRAM sum, stated explicitly as the brief requires.** The 576 above is the
+region's whole supply and does NOT subtract the shell cells physically inside
+it. `hw/fk33/results/build_e2e_2026-08-29/e2e_pblock_util_routed.rpt` measures
+those at **203.5**, so our logic has **372.5**:
+
+| term | tiles |
+|---|---:|
+| composed A+B+C+D, both levers, `NORM_W_IMAGE = ""` | **253.5** MEASURED |
+| available inside `pb_core` | 372.5 MEASURED |
+| **headroom without the gain image** | **+119.0** |
+| + the norm gain image (NORMURAM, MEASURED standalone) | 171 |
+| **total with the image** | **424.5** |
+| **shortfall with the image** | **-52.0** |
+
+So the levers did NOT fix BRAM and were never going to: **the composition is
+comfortable at 253.5 and the gain image alone is what does not fit.** The
+dispatcher's DERIVED shortfall of 51 tiles is confirmed at 52 with a real
+composed measurement rather than a sum. That is TRACK GWTWO's `GW` curve to
+close, not this track's.
+### A trap I set for myself and then walked into, caught before it cost anything
+
+`chain2.sh`, which queues the attribution control behind the implementation,
+gated on `log/drv_impl_c4lev.txt`. **That file is never written.** The driver's
+own stdout goes wherever the caller redirects it, and the chain redirects it to
+`chain.txt`; only the Vivado log is named after the stage. So the control would
+have waited forever while the lane sat empty after the implementation finished,
+and nothing would have reported an error -- **a gate on a file that is never
+written looks exactly like a job that has not finished yet.**
+
+This is the same shape as the completion-signal trap CLAUDE.md records, one
+level down: I gated on a sentinel rather than on a waiter, which was right, but
+never checked that the sentinel's FILE exists. Repointed at
+`^CHAIN: impl rc=` in `chain.txt`, which is a line the chain itself writes and
+which was verified present in the running file's format before relaunching.
+
+**The general rule this suggests: after writing a gate, `ls` the thing it
+watches.** It costs one command and the failure mode is silent.
