@@ -129,6 +129,60 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK LEVERC48 COMPLETE (`a4828ab`). STEP 1c IS DONE.
+
+MEASURED at ROWS_IF=48 (1,536 lanes), OOC synth of `matvec_core`, same-session
+`v_regs` vs `v_dist`, against HEAD's exact file (md5 verified with `git show`):
+
+```
+CLB LUT       121,139 -> 78,506    -42,633
+LUT as memory   1,126 -> 13,414    +12,288 = 8.000/lane EXACT
+MUXF7          24,583 -> 0         -24,583
+MUXF8          12,288 -> 0         -12,288 = 8.000/lane EXACT
+CLB FF         60,268 -> 73,463    +13,195  (DERIVED +13,200, residual -5)
+WNS @ 3.3 ns   +0.242 -> -0.027
+```
+
+**BOTH PROJECTIONS WERE WRONG AND THE RANGE DID NOT CONTAIN THE ANSWER.** See
+CLAUDE.md `09f59ac`: a constant per-lane figure, from the same three points,
+predicts 42,428 against 42,633 (0.48%), while both fits missed by 8.6% and 14.9%
+and their average was worse than either.
+
+**CORRECTION 1, and it is the one that mattered: `matvec_core.vhd` has carried
+the lever C implementation since `845ea28`. The real gap was that NOTHING COULD
+SELECT IT** -- no wrapper declared or forwarded `CB_STYLE`, so the lever was
+**implemented and unreachable from any build.** Now forwarded through
+`matvec_int4`, `matvec_int4_desc_axi` and `matvec_int4_axi`, defaulting to
+`"regs"`. **Proven in SYNTHESIS, a mechanism CBINFER never tested:** with
+`CB_STYLE` on the `synth_design` line, `cb_reg*` goes 6,144 FF / 0 RAM to
+0 FF / 26,112 RAM, saving 45,768 LUT there.
+
+**CORRECTION 2: WNS REVERSES with lane count.** CBINFER's "marginally better at
+all three geometries" is true and **does not extrapolate**: +0.116 at 768,
+0.000 at 1,024, **-0.269 at 1,536**. At the real 5.0 ns period the cost is
+-0.029 ns with 1.18 ns margin, so not a blocker -- but it is **the first
+evidence `CB_BCAST` is load-bearing rather than optional.**
+
+**CORRECTION 3: still NOT a fit-closer.** The codebook's footprint is 54,921
+LUT, not 49,152, so LEVERC's CLB bound rescales to **5,329..10,177 CLB against
+an 11,534 overshoot.** Does not close it at either end, and **this is synthesis,
+not placement.**
+
+**Verification worth copying:** the `[Synth 8-7186]` trap reproduced exactly --
+**101 log lines saying the RAM was not inferred, beside 1,536 `RAM32M16` rows in
+the same run's mapping report.** Its own announcement guard was keyed on a
+string and its **own control caught it printing `LEVER C ACTIVE` over a register
+bank**; re-keyed on `CB_LANES_PER_COPY = 1`. The coherency oracle now runs at the
+real 1,536 replicas (LEVERC's ran at 64) with K3a/K3b/K3c/K9a/K2b all killing.
+Neutrality: the same pair drawn three times from three source md5s, **all six
+runs identical in every column including WNS**.
+
+**Open and NAMED rather than absorbed: 517 unexplained flip-flops** at the
+wrapper level (+13,717 against the codebook's +13,195 closed form), and why the
+per-lane curve has a minimum at 768.
+
+**No new `tb_*.vhd`, so `BASELINE_PASS` stays 99.**
+
 ### TRACK RMSWIRE COMPLETE (`47c9d9c`). STEP 1a IS DONE, and composition found a cost no unit draw could.
 
 | | `ctl_flat` | `mem_bank` | delta |
