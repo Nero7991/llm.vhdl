@@ -110,6 +110,39 @@ the concurrent-load race**. That gap must be closed by whoever composes them.
 together, with a same-session control, and the load-race is covered by a bench
 at the real shape.
 
+### STEP 1d -- BRAM MAY BIND BEFORE LUT. Added 2026-08-30 after the plan was written.
+
+**Nobody has added BRAM up across the composition and the levers, and the sum
+does not obviously fit.**
+
+| term | tiles | source |
+|---|---:|---|
+| composed A+B+C+D | 246.5 of 672 | MEASURED, `hw/fk33/results/compose4_2026-08-29/util_c4_synth.rpt` |
+| + norm gain image | 171 | MEASURED standalone, TRACK NORMURAM |
+| + `rmsnorm_rs_mem` vectors | 6 | MEASURED standalone, TRACK RMSMUX |
+| **needed** | **423.5** | DERIVED |
+| **available inside `pb_core`** | **372.5** | MEASURED, see below |
+
+`hw/fk33/results/build_e2e_2026-08-29/e2e_pblock_util_routed.rpt` shows `pb_core`
+holds **576** Block RAM Tiles, of which **203.5 are "Non-Assigned"** -- shell
+cells physically inside the region. `576 - 203.5 = 372.5` for our logic against
+**423.5** needed: **short by about 51 tiles.** Device-wide it is 627 of 672,
+93.3%, which is also uncomfortably tight.
+
+**DERIVED, and its load-bearing assumption is that separately-measured units do
+not share.** That is exactly the assumption this project keeps getting burned
+by, so treat it as a hypothesis a composed draw can test, not a fact.
+**Falsified by:** a composed draw reporting the total under 372.5.
+
+**The gain image is the dominant term at 171 tiles, 45.9% of everything
+available.** TRACK NORMURAM already named the fallback: *"171 BRAM is 25.45% of
+the device -- a `GW = 2` point is the obvious next measurement if BRAM binds."*
+That measurement has not been taken.
+
+**Do not trade LUT for BRAM without stating the BRAM cost.** `rmsnorm_rs_mem`
+converts a 40,934-LUT mux tree into 6 tiles, which is an excellent trade at 6
+and a different question if BRAM is the binding resource.
+
 ### STEP 2 -- Answer whether it ROUTES. This is the real unknown.
 
 **Fit by CLB count is not the same claim as builds, and only the first has
