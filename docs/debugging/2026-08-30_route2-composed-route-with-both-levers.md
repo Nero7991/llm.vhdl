@@ -259,3 +259,62 @@ not been run yet.
 **Nothing in the falsification is bad news for the fit.** 60.42% LUT against
 79.67% is the largest single area move this composition has seen, F8 is down
 85%, and the levers have not made BRAM or DSP worse.
+## Result 2 -- the lever-C census, and my discriminator was wrong
+
+`C4_STAGE=census` on `c4lev_synth.dcp`. This is an object-level `get_cells`
+census, run because `[Synth 8-7186]` printed its 100 lines in this very run
+saying `cb[*]` was not inferred as RAM.
+
+```
+C4_CENSUS ref RAM32M     41       C4_CENSUS ref RAMB18E2    43
+C4_CENSUS ref RAM32M16 3134       C4_CENSUS ref RAMB36E2   232
+C4_CENSUS ref RAM32X1D   24       C4_CENSUS ref RAMD32   44170
+C4_CENSUS ref RAM32X1S   32       C4_CENSUS ref RAMD64E   1354
+C4_CENSUS ref RAM64M8   165       C4_CENSUS ref RAMS32    6382
+C4_CENSUS ref RAM64X1D   17
+C4_CENSUS ram_cells_total 55594
+C4_CENSUS cb_reg_ff    3
+C4_CENSUS cb_reg_ram   26112
+C4_CENSUS rmsmem_cells 23222
+C4_LEVERC AMBIGUOUS  cb_reg_ff=3 cb_reg_ram=26112
+```
+
+**LEVER C IS ACTIVE. The `AMBIGUOUS` verdict is my checker's fault, not the
+design's**, and it is worth writing down because it is the shape of a bad
+discriminator.
+
+`cb_reg_ram = 26112` is **exactly** LEVERC48's measured figure for the
+levered configuration (`cb_reg*` goes `6,144 FF / 0 RAM` to `0 FF / 26,112
+RAM`). An exact match on a five-digit number is strong evidence. But I had
+written the ACTIVE branch as `cb_reg_ff == 0 && cb_reg_ram > 0`, so three stray
+flip-flops matched by the loose wildcard `NAME =~ *cb_reg*` -- against the
+**6,144** the unlevered configuration carries -- were enough to collapse a
+clean verdict to `AMBIGUOUS`.
+
+**The right discriminator was the number that was already pinned, and I used a
+weaker one.** Corrected in `sim/ooc_compose4_pnr.tcl`: the test is now equality
+against 26,112, the `INACTIVE` branch requires `>= 6144` registers, and any
+stray `cb_reg*` flip-flops are **printed by name** rather than left as an
+unexplained residue. An unexplained residue is precisely what turns a
+measurement into an ambiguity.
+
+Two independent confirmations that the lever really is in:
+
+- **LUT as Memory rose 15,580 to 27,842, `+12,262`**, against a DERIVED
+  `+12,288` that is `8.000 LUTRAM/lane x 1,536 lanes` exactly. **-0.09%.**
+- **F8 Muxes fell 25,788 to 3,970.** Lever C's structural claim is that the
+  codebook's MUXF8 tree disappears entirely.
+
+So this is the third recorded case of `[Synth 8-7186]` denying an inference
+that the census shows happened. **The log is not evidence in either direction.**
+
+`rmsmem_cells 23222` confirms the norm lever's unit is present in the
+composition, which is the other half of the configuration under test.
+
+### Still open from the census
+
+**What the 3 stray `cb_reg*` flip-flops are.** They are not codebook
+registers -- 3 against 6,144 settles that -- but they have not been named. The
+corrected census prints the names, so the next run resolves it for free. Not
+resolved here because doing so needs a second Vivado and the implementation had
+the lane.

@@ -154,9 +154,20 @@ proc c4_census {} {
         puts "C4_CENSUS ref $r $byref($r)"
     }
     puts "C4_CENSUS ram_cells_total [llength $ram]"
-    set cbff [llength [get_cells -quiet -hier -filter \
-        {NAME =~ *cb_reg* && REF_NAME =~ FD*}]]
+    # NAME =~ *cb_reg* IS A LOOSE FILTER and MEASURED 2026-08-30 to over-match:
+    # it returned 3 flip-flops in a run whose codebook is entirely LUTRAM,
+    # against the 6,144 the register configuration carries.  The three belong
+    # to some other signal whose name merely contains the substring, so the
+    # names are printed rather than left as an unexplained residue -- an
+    # unexplained residue is exactly what turns a clean verdict into an
+    # AMBIGUOUS one.
+    set cbffc [get_cells -quiet -hier -filter \
+        {NAME =~ *cb_reg* && REF_NAME =~ FD*}]
+    set cbff [llength $cbffc]
     puts "C4_CENSUS cb_reg_ff $cbff"
+    if {$cbff > 0 && $cbff < 64} {
+        foreach c $cbffc { puts "C4_CENSUS cb_reg_ff_name [get_property NAME $c]" }
+    }
     set cbram [llength [get_cells -quiet -hier -filter \
         {NAME =~ *cb_reg* && REF_NAME =~ RAM*}]]
     puts "C4_CENSUS cb_reg_ram $cbram"
@@ -164,10 +175,23 @@ proc c4_census {} {
     # a hierarchy, and the flat one must be absent.
     puts "C4_CENSUS rmsmem_cells [llength [get_cells -quiet -hier \
         -filter {NAME =~ *u_rms*}]]"
-    if {$cbff == 0 && $cbram > 0} {
-        puts "C4_LEVERC ACTIVE  cb_reg_ff=0 cb_reg_ram=$cbram"
-    } elseif {$cbff > 0 && $cbram == 0} {
+    # THE DISCRIMINATOR IS THE RAM COUNT, NOT THE FF COUNT.  Both configurations
+    # are pinned by LEVERC48 (`a4828ab`) at ROWS_IF = 48:
+    #   "distributed" -> 26,112 RAM cells under cb_reg*, 0 registers
+    #   "regs"        ->      0 RAM cells,             6,144 registers
+    # An exact match against 26,112 is a far stronger statement than "the FF
+    # count is zero", and it does not collapse to AMBIGUOUS on a handful of
+    # cells the wildcard over-matched.  MEASURED here: 26,112 exact with 3 stray
+    # flip-flops, so the first ACTIVE branch fires and the strays are named
+    # above rather than absorbed.
+    if {$cbram == 26112} {
+        puts "C4_LEVERC ACTIVE  cb_reg_ram=$cbram exactly LEVERC48's figure,\
+ cb_reg_ff=$cbff against 6144 for the register configuration"
+    } elseif {$cbff >= 6144 && $cbram == 0} {
         puts "C4_LEVERC INACTIVE  cb_reg_ff=$cbff cb_reg_ram=0"
+    } elseif {$cbff == 0 && $cbram > 0} {
+        puts "C4_LEVERC ACTIVE_OFF_FIGURE  cb_reg_ff=0 cb_reg_ram=$cbram,\
+ NOT 26112 -- the geometry is not ROWS_IF=48 or the lever changed"
     } else {
         puts "C4_LEVERC AMBIGUOUS  cb_reg_ff=$cbff cb_reg_ram=$cbram"
     }
