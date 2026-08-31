@@ -1,0 +1,12 @@
+ suite sim   PASS 85   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 111   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ REGRESSION: PASS
+
+Full both-suite regression on the LANDED tree (GW = 1 in rtl/llama_top.vhd plus
+the tools/ref9b/capture_llama_top.sh closure fix), --jobs 1, capped at
+MemoryHigh=8G.  Compare fullgate_before_seamfix.txt, which is the same tree
+BEFORE the closure fix: PASS 108 FAIL 3.  The three that moved are
+sim:seamgate_{real,stub,seq}, and they were red at HEAD before this track --
+seamgate_pre_existing_control.log is the same three rows failing identically on
+a pristine `git archive HEAD` tree.
