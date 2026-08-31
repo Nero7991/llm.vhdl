@@ -129,6 +129,49 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK RMSWIRE, in flight: the lever is wired, and there are TWO deadlines
+
+**Landed and green.** `rmsnorm_rs_mem` is wired into `llama_top` at the real 9B
+shape. All six `sim:tb_llama_top*` rows PASS, including `tb_llama_top_normw`,
+the only wrapper that exercises the gain loader. **The token landmarks did not
+move, so the numeric oracle is unchanged.** New gate row
+`sim:tb_rmswire_loadrace` PASS at `N=4096 LANES=4`.
+
+**THE FINDING, and it outranks the area number the track was dispatched for.
+There are TWO deadlines, not one:**
+
+- **`S_RAW` at `start+1067`** corrupts only `max_raw`.
+- **`S_EMIT` at `start+2097`** corrupts every output word.
+- **The strict boundary, 2007, is the INVISIBLE one.** At `start_at=1991`, 21
+  elements are read from the PREVIOUS norm op's gain **and the output is
+  bit-identical to the oracle.**
+
+Both boundaries are now pinned to the cycle and predicted exactly by one
+corrected model.
+
+**A race that produces bit-identical output cannot be caught by any check that
+compares values.** This is the inverse of this project's usual failure mode:
+normally the structure looks right and the numbers are wrong, and here **the
+numbers are right and the design is wrong.** It is exactly what TRACK NORMURAM
+refused the composition over -- it said the fault class "leaves the VALUES
+correct and is invisible to the landmarks" -- and RMSWIRE has now put a number
+on it: **the invisible window is 116 cycles wide, 2007 to 2123.** Nobody had one.
+
+**`tb_llama_top`'s landmarks pass throughout that window.** Whoever builds the
+card top (row N3) inherits this deadline and **cannot see it from outside the
+unit** unless the `S_RAW` tap is exposed.
+
+**Correction to my brief, accepted: I sent a COMPOSED `llama_top` draw to the
+14 GB BC-250** on the strength of RMSMUX's 10.58 GB peak, which was a UNIT draw.
+That is the "figure from a smaller design applied to a bigger one" error, made
+in the brief itself. Vivado reported a 17.1 GB peak; the box survived on swap
+(MEASURED mid-run: 10 GB free, 2 of 46 GB swap, load 1.13).
+
+**And a distinction worth keeping: Vivado's `Memory (MB): peak` is not the
+cgroup's `memory.peak`.** The former is the process's own peak allocation, which
+swap can absorb -- which is why 17.1 GB "fit" on a 14 GB box. Quote the cgroup
+figure, and only from a run that never reached its cap.
+
 ### THE STRIPING EXPERIMENT RAN ON SILICON, 2026-08-30 14:20. 11.09x.
 
 ```
