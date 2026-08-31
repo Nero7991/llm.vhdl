@@ -400,47 +400,54 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=99   # DELIBERATELY NOT RAISED, 2026-08-30, TRACK GATEGREEN.
-                   #    101 IS MEASURED AND CORRECT FOR `32a7b47`.  IT IS NOT
-                   #    APPLIED, AND THE REASON IS THE POINT.
+BASELINE_PASS=103  # RAISED FROM 99, 2026-08-30, by the dispatcher.  TWO new rows,
+                   #    and this time the predicted floor and the measured one
+                   #    AGREE, which is the first thing worth recording.
                    #
-                   #    MEASURED on `git archive 32a7b472f8d4b010c004426871f70bfae5eb05fc`,
+                   #    MEASURED on `git archive 93ddac7b6352e2f76dce78efd89ceda5703f410d`,
                    #    GHDL 1.0.0 mcode, --jobs 1, the documented recipe exactly:
                    #      MV4I_FK33_FILE=/nonexistent \
                    #        REGRESS_SCRATCH=<dir> bash <archive>/sim/regress.sh --jobs 1
-                   #      suite sim  PASS 75  FAIL 0  NOCHECK 3
+                   #      suite sim  PASS 77  FAIL 0  NOCHECK 3
                    #      suite tb   PASS 26  FAIL 0  NOCHECK 1
-                   #      OVERALL    PASS 101  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #      OVERALL    PASS 103  FAIL 0  NOVERDICT 0  TIMEOUT 0
                    #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 10
-                   #      baseline: 101 passing, above the recorded floor of 99
+                   #      baseline: 103 passing, above the recorded floor of 99
                    #                -- raise BASELINE_PASS in this script
                    #    The gate PRINTED the raise suggestion rather than either
                    #    refusal, which is the evidence that both the NOT IN GIT
                    #    list and the optional-row list were empty on that tree.
-                   #    99 + 2 = 101 and the measurement agrees; the two new rows
-                   #    are `sim:tb_fk33_seam` (`9270c7a`, TRACK DSEAM) and
-                   #    `sim:tb_rmsnorm_rs_mem` (`ce7b836`, TRACK RMSMUX).
                    #
-                   #    WHY IT IS STILL 99.  `sim/tb_a_wbase.vhd` landed in
-                   #    `d7a6bf7` (TRACK BASEFAB) AFTER that archive was taken,
-                   #    and it is a third auto-discovered row.  So 101 is a
-                   #    measurement of a commit that is no longer HEAD, and 102
-                   #    would be arithmetic over a row nobody has run.  The box
-                   #    was going down and a fresh full run was not available.
+                   #    DERIVED and consistent: 101 was MEASURED at `32a7b47`,
+                   #    and exactly two auto-discovered rows have landed since,
+                   #    both in sim/, which is why suite sim moved 75 -> 77 and
+                   #    suite tb did not move at all:
+                   #      sim/tb_a_wbase.vhd         `d7a6bf7`  TRACK BASEFAB/G3
+                   #      sim/tb_rmswire_loadrace.vhd `47c9d9c` TRACK RMSWIRE
+                   #    101 + 2 = 103 and the measurement agrees.  The previous
+                   #    entry predicted 102 and told its successor to "expect 102
+                   #    and be ready to be wrong"; it was wrong because the
+                   #    SECOND row did not exist yet when it wrote that, not
+                   #    because the arithmetic was.  The instruction was still
+                   #    the right one -- it is what made this run a measurement
+                   #    rather than an increment.
                    #
-                   #    A STALE FLOOR FAILS LOUDLY; A WRONG ONE PASSES QUIETLY.
-                   #    99 is low, so every full run prints "raise it" and no run
-                   #    is blocked.  Setting 102 unmeasured risks the exact defect
-                   #    the number 101 already caused once in this file: a floor
-                   #    ABOVE the tree's own ceiling, which then fires on every
-                   #    run for every track and is worth nothing.
+                   #    A TRAP THIS RUN EXISTS TO DOCUMENT.  TRACK GWTWO measured
+                   #    `OVERALL PASS 111` on the same HEAD an hour earlier and it
+                   #    was NOT wrong -- it was a WORKING-TREE run, and this tree
+                   #    carries untracked sim/*.vhd (attention_ml_fix.vhd,
+                   #    attention_ml_probe.vhd, attn_probe_wrap.vhd and others)
+                   #    that the gate auto-discovers as rows.  Eight of them.
+                   #    **111 is real and unreachable; 103 is the number a clean
+                   #    checkout gets.**  Setting the floor to 111 would have
+                   #    made the gate fire on every run for every track and on
+                   #    every clean clone -- the exact defect the number 101
+                   #    already caused once in this file.  ALWAYS measure the
+                   #    floor on `git archive`, never on the working tree, and
+                   #    note the gate cannot warn you here: its NOT-IN-GIT list
+                   #    covers rows whose SOURCES are untracked, which is
+                   #    precisely this case, so read the note it prints.
                    #
-                   #    TO CLOSE THIS: one full clean-archive run at a settled
-                   #    HEAD, same recipe, then set the number it prints.  Do not
-                   #    add 1 to 101.  Expect 102 and be ready to be wrong -- the
-                   #    `93 -> 98` entry below is the case where that same
-                   #    arithmetic was off by exactly one and the disagreement was
-                   #    the only thing that found an uncounted committed bench.
                    #    Evidence: docs/debugging/2026-08-30_gategreen-full-gate-and-the-floor.md
                    #
                    # ---- previous entry, kept because its reasoning is the rule ----
