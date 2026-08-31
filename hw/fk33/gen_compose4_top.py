@@ -340,6 +340,17 @@ def main():
     # "regs" three levels down in matvec_core.
     ap.add_argument("--cb-style", default="distributed",
                     choices=["distributed", "regs"])
+    # THE NORM LEVER'S CONTROL.  There is no generic for it: `d_norm` is an
+    # extraction of llama_top's `gvr` block, so the ONLY way to draw the
+    # pre-lever configuration is to point this at an extraction taken from a
+    # pre-RMSWIRE llama_top.  Kept as an explicit, named, loud option rather
+    # than as a way to disable the staleness guard, because the guard exists to
+    # catch an ACCIDENTALLY stale file and this is a DELIBERATE one.  The guard
+    # is not bypassed here, it is INVERTED: with --norm-entity naming the flat
+    # variant, the generator aborts if the file DOES bind rmsnorm_rs_mem.
+    ap.add_argument("--norm-entity", default="ooc_normadapt",
+                    choices=["ooc_normadapt", "ooc_normadapt_flat"])
+    ap.add_argument("--norm-file", default="")
     a = ap.parse_args()
 
     global INSTANCES
@@ -347,6 +358,11 @@ def main():
                   (dict(i[3], CB_STYLE='"%s"' % a.cb_style)
                    if i[0] == "a_eng" else i[3]))
                  for i in INSTANCES]
+    if a.norm_entity != "ooc_normadapt":
+        INSTANCES = [(i[0], a.norm_entity, i[2], i[3]) if i[0] == "d_norm"
+                     else i for i in INSTANCES]
+        SRC_FILE[a.norm_entity] = (
+            "RTL", a.norm_file or ("%s_top.vhd" % a.norm_entity))
     if a.instances:
         keep = set(x.strip() for x in a.instances.split(",") if x.strip())
         unknown = keep - set(i[0] for i in INSTANCES)
@@ -377,6 +393,23 @@ def main():
         # extracted file mentions `rmsnorm_rs_mem` in prose at line 312 while
         # the binding is at line 485, so a substring test on the whole file
         # would pass over an extraction that binds the flat unit.
+        if ent == "ooc_normadapt_flat":
+            # THE GUARD, INVERTED.  This entity exists ONLY to draw the
+            # pre-lever configuration, so a file that DOES bind the
+            # memory-backed unit here is just as wrong as a stale one is in the
+            # other direction -- and it would silently report the levered area
+            # under the control's name, which is the worse of the two errors.
+            if re.search(r"entity\s+work\.rmsnorm_rs_mem\b", text):
+                sys.exit(
+                    "COMPOSE4 ABORT: %s binds rmsnorm_rs_mem, but it was asked\n"
+                    "  for as the FLAT pre-lever control.  Extract it from a\n"
+                    "  llama_top from BEFORE TRACK RMSWIRE (`47c9d9c`), e.g.\n"
+                    "    git show 012d28d~1:rtl/llama_top.vhd > /tmp/pre.vhd\n"
+                    "    python3 sim/ooc_normadapt_extract.py /tmp/pre.vhd \\\n"
+                    "            %s ooc_normadapt_flat" % (path, path))
+            if not re.search(r"entity\s+work\.rmsnorm_rs\b", text):
+                sys.exit("COMPOSE4 ABORT: %s binds neither rmsnorm_rs nor "
+                         "rmsnorm_rs_mem." % path)
         if ent == "ooc_normadapt":
             if not re.search(r"entity\s+work\.rmsnorm_rs_mem\b", text):
                 sys.exit(

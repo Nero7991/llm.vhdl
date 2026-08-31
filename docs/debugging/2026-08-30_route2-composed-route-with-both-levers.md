@@ -55,6 +55,118 @@ before.** Failing endpoints went 33,767 (pre-lever, after placement) to 268
 after placement here, 82 after `phys_opt_design`, and 9,056 of 971,406 after
 routing. That last number is 0.93% of endpoints and TNS is -876.045 ns.
 
+## RETRACTION, 2026-08-30, and it is the first thing anyone should read
+
+**`166cbd4`'s commit body says "The router CONVERGED where the pre-lever
+attempt thrashed" and that sentence has been reported upward as "the levers are
+what made it route". THAT CLAIM IS WITHDRAWN. It is not supported by my data.**
+
+What is withdrawn, and what is not:
+
+| claim in `166cbd4` | status |
+|---|---|
+| the composed A+B+C+D design routes in `pb_core`, 0 nets with routing errors, 0 DRC errors | **STANDS.** MEASURED |
+| `STEP 2`'s "done when" is met | **STANDS** |
+| the binding resource is now DSP at 80.63% of `pb_core` | **STANDS.** MEASURED |
+| BRAM is 253.5, +119.0 headroom without the gain image, -52.0 with it | **STANDS.** MEASURED |
+| post-route WNS -0.575 on `core_clk`, Fmax 179.4 MHz | **STANDS.** MEASURED |
+| **"the router converged where the pre-lever attempt thrashed"** | **WITHDRAWN** |
+| **credit to TRACK TIMING for "the 33,511 endpoints ... root cause is area"** | **WITHDRAWN as unsupported by this track's data** |
+
+### 1. What exactly routed in the control -- the configuration, named
+
+Three tops were synthesised and implemented, all from ONE `git archive` of
+`3b2003c` and all through the identical `sim/ooc_compose4_pnr.tcl`:
+
+| top | `a_eng` `CB_STYLE` | `d_norm` entity | binds | levers in |
+|---|---|---|---|---|
+| `compose4_top` | `"distributed"` | `ooc_normadapt` | `rmsnorm_rs_mem` | **both** |
+| `compose4_ctl_top` | **`"regs"`** | `ooc_normadapt` | `rmsnorm_rs_mem` | **norm lever ONLY** |
+| `compose4_null_top` | **`"regs"`** | **`ooc_normadapt_flat`** | **`rmsnorm_rs`** | **neither** |
+
+**The control that routed is `compose4_ctl_top`: `CB_STYLE = "regs"`, and the
+NEW `d_norm`. Only lever C was reverted. The norm lever was still in.** That
+is the answer to "which lever was in", and it is why the result is narrower
+than a full retraction: nobody has yet drawn the no-levers configuration under
+this constraint. `compose4_null_top` exists to close exactly that hole and its
+result is below.
+
+### 2. The numbers, side by side
+
+All three from the same session, same tree, same `pb_core`
+(`CLOCKREGION_X0Y0:CLOCKREGION_X6Y3`), same script:
+
+| | **levered** (both) | **control** (norm only) | delta |
+|---|---:|---:|---|
+| routed CLB | **46,733** | **48,963** | control +2,230 |
+| CLB in `pb_core` at placement | 46,713 / 48,600 = **96.12%** | 48,960 / 48,600 = **100.74%** | **control OVERFLOWS the region** |
+| routed CLB LUT | 261,539 | 306,007 | control +44,468 |
+| LUT in `pb_core` | 67.27% | 78.70% | |
+| **DSP** | **2,177 (80.63%)** | **2,177 (80.63%)** | **identical, neither lever touches DSP** |
+| **BRAM** | **253.5 (44.01%)** | **253.5 (44.01%)** | **identical** |
+| placed WNS | **-0.216** | **-0.672** | |
+| placed failing endpoints | **268** | **1,932** | **7.2x** |
+| after `phys_opt_design` | **-0.061**, **82** | **-0.546**, **1,707** | **20.8x** |
+| `[Route 35-447]` | **absent** | **FIRES** | |
+| router overlaps, first value | **96** | **501,118** | **5 orders of magnitude** |
+| overlap curve | `96 -> 63 -> 26 -> 12 -> 11 -> 2 -> 2 -> 1 -> 2 -> 3 -> 1 -> 0` | `501,118 -> 162,120 -> 58,308 -> 21,191 -> 7,971 -> ... -> 0` (4 global iterations) | |
+| `route_design` seconds | **1,597** | **1,920** | |
+| routing errors | **0** | **0** | **BOTH ROUTE** |
+| post-route `core_clk` WNS | **-0.575** (179.4 MHz) | **-1.168** (162.1 MHz) | **+0.593 ns** |
+| post-route `hbm_aclk` WNS | **+0.080 MEETS** | **-0.064 FAILS** | lever C closes the HBM domain |
+| TNS | **-876.045** | **-19,758.709** | **22.6x** |
+| post-route failing endpoints | **9,056 / 971,406 = 0.93%** | **57,342 / 830,211 = 6.91%** | **7.4x by fraction** |
+| WHS | +0.010 | +0.009 | both meet |
+
+**Both route. So what lever C bought, precisely: FIT (the control overflows
+`pb_core` by 360 CLB), 0.593 ns of WNS, the `hbm_aclk` domain going from
+failing to meeting, 22.6x on TNS, and 323 seconds of router time.** It bought
+nothing on DSP and nothing on BRAM, which are identical to the last tile.
+
+For comparison, the original overlap curve, from the WORKLOG:
+
+```
+iteration 0  494,506 -> 150,615 -> 65,271 -> 35,976 -> 23,310 -> 16,757  (56m35s)
+iteration 1   69,858 -> 183,525 -> 111,513   (RISING -- the router is thrashing)
+```
+
+**The control's iteration-0 curve looks like the original's** -- both start
+around half a million overlaps and fall by two orders of magnitude. The
+difference is what happens next: the control kept descending through four
+global iterations to 0, and the original rose on iteration 1 and was killed.
+
+### 3. So what killed the original attempt, if not the levers?
+
+**TWO variables changed between the original run and my control, not one, and
+the second one has never been named in any document on this track:**
+
+1. **Area.** The original was `compose4_top` with NEITHER lever, at 350,283 LUT.
+   My control has the norm lever in, at 310,180 LUT. That is **-40,103 LUT**
+   already removed before lever C is even considered.
+2. **THE CONSTRAINT, and this is the one nobody noticed.** The original's
+   killed route is `c4dev_physopt.dcp`. **`c4dev` is the DEVICE run --
+   `C4_PBLOCK=0`, the whole die, UNCONSTRAINED.** That is confirmed by its own
+   headline number: 54,866 of **54,960** CLB, and 54,960 is the DEVICE CLB
+   count. `pb_core` holds 48,600. A pblocked run cannot report 54,866.
+
+   `sim/ooc_compose4_run.sh` defines both `impl_pb` (`C4_PBLOCK=1`, line 113)
+   and `impl_dev` (`C4_PBLOCK=0`, line 117), and the 2026-08-29 write-up plans
+   them as steps 6 and 7 with the explicit purpose *"Isolates: whether a
+   failure in step 6 is a REGION failure or a DEVICE failure."*
+
+   **`hw/fk33/results/compose4_2026-08-29/` contains NO implementation
+   artefacts at all** -- only `util_c4_synth.rpt`, `timing_c4_synth.rpt`,
+   `elab.stdout.tail` and the BUFG probe. There is no `route_status`, no
+   `pbutil`, no placed or routed utilization. **So no pblocked compose4 route
+   attempt has ever been recorded, and every "the composed design does not
+   route" statement in this project traces to a single UNCONSTRAINED die-wide
+   run that was killed rather than allowed to finish.**
+
+**That means "the levers made it route" and "the pblock made it route" were
+never separated, and my `166cbd4` asserted the first without excluding the
+second.** The experiment that separates them is `compose4_null_top` --
+neither lever, same `pb_core`, same session -- and it is running.
+
 ## What had to be built before the question could even be asked
 
 **Neither lever was reachable from `compose4_top`, and they were unreachable
@@ -822,3 +934,104 @@ strong evidence and is not an observation of failure. Both configurations
 measured tonight route. That is worth stating because the whole framing of
 STEP 2 -- "the router already failed at a looser density" -- rests on a run
 that was stopped, not one that finished.
+## Result 9 -- does TRACK TIMING's diagnosis survive?
+
+`166cbd4` credited TIMING with having predicted this: that the 33,511 failing
+endpoints beyond the 256 it fixed by hand were net-delay whose *"root cause is
+area, at 54,866 of 54,960 CLB"*.
+
+**That credit is withdrawn. My data does not support it and does not refute it.**
+
+What my data DOES support, from two same-session points that differ in area and
+in nothing else:
+
+| | LUT | placed CLB | placed failing endpoints |
+|---|---:|---:|---:|
+| control (norm lever only) | 306,003 | 48,960 | **1,932** |
+| levered (both) | 261,539 | 46,713 | **268** |
+
+**-44,464 LUT removes 1,664 failing endpoints, a 7.2x reduction, with nothing
+else changed.** So failing-endpoint count IS steeply area-sensitive in this
+composition, which is the direction TIMING's argument needs.
+
+**But that is not the same claim.** TIMING's number is 33,767, mine are 1,932
+and 268, and between the original run and mine BOTH the area AND the placement
+constraint changed. **A relationship demonstrated between 306,003 and 261,539
+LUT under a pblock says nothing rigorous about a die-wide run at 350,283.**
+Extrapolating it would be the exact error CLAUDE.md records twice: a model
+fitted where it was measured, quoted about a point it never saw.
+
+**The honest status: TIMING's diagnosis is PLAUSIBLE and CONSISTENT with two
+new points, and remains unproven at the point it was made about.**
+
+## Measured and REJECTED -- do not retry
+
+**1. `synth_design -generic CB_STYLE=distributed` to reach the codebook.**
+`-generic` binds the TOP's generics only; `matvec_core` is four levels down.
+No Vivado mechanism sets a generic on a deep instance from the command line.
+The generic must be declared and forwarded by every entity on the path, and
+`fk33_engine` was the one that did not.
+
+**2. Fixing `sim/ooc_normadapt_extract.py` for the new `llama_top`.** The brief
+said it aborts against HEAD. Only `--shift` does. The plain path costs one
+second and settles it. **No extractor fix was made and none was required.**
+
+**3. A whole-file substring test as the staleness guard.** HEAD's extraction
+contains `rmsnorm_rs_mem` in a comment 173 lines before it binds the entity, so
+`if "rmsnorm_rs_mem" in text` passes on a file that binds the flat unit.
+
+**4. A bare `route_design` in the batch script.** `[Route 35-447]` can be an
+ERROR and would abort before any report is written. Wrapped in `catch`.
+**Note it was a WARNING in both runs here, so the wrapper was not what saved
+them** -- it is insurance, and it has not yet been shown to earn its keep.
+
+**5. `cb_reg_ff == 0` as the lever-C discriminator.** Too strict: the wildcard
+`NAME =~ *cb_reg*` over-matches by exactly 3 cells in BOTH configurations.
+The discriminator is the RAM count against LEVERC48's pinned 26,112.
+
+**6. Treating `[Synth 8-7186]` as evidence.** It printed 100 lines saying `cb[*]`
+was not inferred as RAM, in a run whose census shows 26,112 RAM cells under
+those exact names. Third recorded instance.
+
+## Measurement traps hit, including my own
+
+**MY OWN, the worst one: `C4_ROUTE_STATUS errors=93489` was a FALSE FAIL.**
+My filter counted `HIERPORT` as a routing error, and this out-of-context top has
+1,184 hierarchical ports by design. Vivado's own `report_route_status` in the
+same run says `# of nets with routing errors : 0`. **A checker written to avoid
+a false PASS produced a false FAIL on the single question the composition exists
+to answer**, and only the tool's independent count caught it. The script's own
+header had warned about this exact class and then put `HIERPORT` on the wrong
+side of the line. Corrected; `HIERPORT` is now counted and printed separately.
+
+**MY OWN: I nearly shipped an untested guard because an abort was an abort.**
+The staleness guard's first run printed
+`COMPOSE4 ABORT: missing .../hw/rtl/gdn_block.vhd`, which is not the guard's
+abort at all -- it is the generator's default `--rtl` resolving to a directory
+that has never existed. **Reading the abort's TEXT rather than its exit code is
+what caught it.** That accident found the real defect, fixed in `7477f23`.
+
+**MY OWN: a gate on a file nothing writes.** `chain2.sh` waited on
+`log/drv_impl_c4ctl.txt`, which the driver never creates. The queued control
+would have waited forever with the lane empty and no error anywhere. **A gate
+on a file that is never written is indistinguishable from a job still
+running.** After writing a gate, `ls` the thing it watches.
+
+**MY OWN, and it is the reason the retraction above exists: I compared against
+a run that differed in TWO variables and asserted one of them.** The original
+failure was die-wide and unconstrained; mine is pblocked. Nothing in any
+document on this track said so, because `c4dev` reads as a tag rather than as
+`C4_PBLOCK=0`. **The tell was on the face of the number the whole time: 54,960
+is the DEVICE CLB count and `pb_core` holds 48,600.**
+
+**An rc read off a pipeline is the pipeline's rc.** Hit again while
+teeth-checking the inverted guard: `python3 ... | head -6; echo rc=$?` printed
+`rc=0` over an abort. The abort TEXT was the evidence, not the code.
+
+**A generated file is not its generator.** `gen_fk33_engine.py` was MEASURED to
+reproduce HEAD byte-identically (`md5 bf6aee7939e59415eaf34510060c8418`) before
+being edited, so the 22-line diff afterwards is attributable.
+
+**A line-number citation in another file is a dependency.**
+`sim/tb_a_geom.vhd:75` cites `gen_fk33_engine.py:85,91`. The edits went in at
+252 and 519; `tools/check_a_geometry.py` re-run afterwards, all sites agree.
