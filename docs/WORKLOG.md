@@ -14,6 +14,104 @@ the answer only has to be classified, not argued with.
 Written to survive a context compaction. Every figure here is MEASURED unless
 labelled, and several supersede figures still standing elsewhere in this file.
 
+### 2026-08-31, dispatcher (new session): the overnight session died on the API limit one message before landing GAIN16. This entry catches the board up
+
+**How the session ended, and why the tree was dirty.** At 00:42:52 MDT the
+weekly API limit fired **one message after the dispatcher resumed TRACK GAIN16
+with "Block on swcb properly, then land".** GAIN16's agent failed before it
+could commit; ROUTE2's agent failed at 00:51 with all of its commits already
+in; the gate-floor teeth Run B background job was killed at 01:05. So from
+`3b2003c` (the entry below) to now, the record lived only in `git log` and in
+`docs/debugging/`, and GAIN16's entire result sat uncommitted in the working
+tree. **A second harness may enter this repo (Oren, 00:30 UTC): the tag
+`v2.0-fk33-matvec` at `3f1235c` is the known-good rollback point Oren asked
+for.** `docs/PLAN_TO_FIRST_INFERENCE.md` (`3f1235c`) is the standing plan.
+
+**TRACK GWTWO COMPLETE (`21db25b`, `93ddac7`, `c3a2f01`).** The gain image at
+`GW = 1` is **135 RAMB36 / 141 tile**. ROUTE2's composed BRAM gap is measured
+at **52, not 51** (`253.5 + 171 = 424.5` against 372.5). The image's aspect
+ratio is worth 36 tiles and is free. Full gate on the landed tree green.
+
+**TRACK ROUTE2 COMPLETE. STEP 2 IS ANSWERED, WITH A RETRACTION ATTACHED**
+(commits through `48633e5`; write-up
+`docs/debugging/2026-08-30_route2-composed-route-with-both-levers.md`).
+The composed A+B+C+D **ROUTES with both levers on** (`166cbd4`), and then the
+controls came home: the `CB_STYLE=regs` control routes too (`5b10182`), the
+second uncontrolled variable was the PBLOCK, and **"the levers made it route"
+is withdrawn** (`53d4619`); the double control reproduces the killed
+configuration to four exact columns (`48633e5`). What stands, all MEASURED:
+lever C buys **fit and timing**, not routability; the routed design is now
+**DSP-bound at 2,177 of 2,700 = 80.63%** of `pb_core` against LUT's 68.33%;
+**BRAM 253.5 of 372.5, i.e. +119.0 headroom without the gain image and -52.0
+with it.** The whole-composition route with a non-empty `NORM_W_IMAGE` has
+**never been drawn by anyone** and is the next Vivado question after the
+gain-store form settles.
+
+**TRACK GAIN16: the 16 tiles are closed by 20, and the closure is being
+re-verified before it lands.** Write-up
+`docs/debugging/2026-08-31_gain16-closing-the-last-bram-tiles.md`. The gain
+store becomes an **11-bit codebook index (99 RAMB36, MEASURED as the `sw11`
+lossy probe) plus a 1,567-entry codebook built at elaboration from
+`norm_w_9b.hex` itself** -- one input, no second image, no drift pair. Zero
+DSP (41 at all six points) and zero WNS (+0.971 at all six). The 14-bit
+alternative is a measured negative: 126 tiles, 9 saved, **7 short**. The
+mechanism is **9 RAMB36 per bit of stored word** at three of four widths, and
+splitting widths across arrays buys exactly nothing (`sw9_4_1` = 126 = `sw14`,
+47% more synth time). **Do not retry either.**
+
+**The elaboration-form decision GAIN16 left open is DECIDED by this
+dispatcher: the record-free form ships.** The record form (`cbb_t`) sat in
+Vivado elaboration > 15 min pinned at its 11G cap, undrawn; the record-free
+form (`cb_mark`/`cb_count`/`cb_map`/`cb_rom`, four plain-array functions) is
+DERIVED to produce identical constants, PASSed the 266,240-element oracle as
+`cb_clean`, and is now installed in `rtl/llama_top.vhd`. The head-to-head
+elaboration draw is a **documented non-goal**: the decision does not depend on
+it, because the record-free form is strictly cheaper to elaborate at identical
+output. GAIN16's own open item asks for the comparison before anyone *quotes
+an elaboration time*; nothing here quotes one.
+
+**Three verifications were dispatched with pre-written branches; two have
+returned, one is in flight:**
+
+- **Teeth Run B: RETURNED with exactly the required verdict.** Clean archive
+  of `93ddac7` with `BASELINE_PASS=104` printed **OVERALL PASS 103 FAIL 0 and
+  REGRESSION: FAIL, "BASELINE DROP: 103 passing, expected at least 104."**
+  The floor is shown to discriminate, not merely to match, and the raise
+  landed as `0c16b27`. Run A (floor 103, same archive) had already PASSed
+  with "matches the recorded floor". The landing is complete: `c094867`,
+  `a433bab`, `197e813`, `45cd94e` (ROUTE3's generator option), `0c16b27`.
+- **Oracle on the installed file: RETURNED, and the swap is verified.**
+  `GAIN16_ORACLE_ROW cbland mutant=none verdict=PASS rc=0 compared=266240
+  mismatched=0 never_written=0 wrong_nidx=0`.
+- **`cbland`: RETURNED, and the `sw11` probe did not mislead.** The shipping
+  record-free file measures **RAMB36 99, RAMB18 12, tile 105, DSP 41, LUT
+  5,155, FF 2,351, WNS +0.971 (248.2 MHz), synth 334 s, peak RSS 13.62 GiB
+  under a 14G cap** (an honest peak, under its cap). Elaboration completed in
+  minutes, where the record form sat > 15 min at its cap undrawn -- the swap
+  is the fix, not merely a workaround. **Margin: 253.5 + 99 = 352.5 against
+  372.5, i.e. +20.0, MEASURED on the shipping design, not on the probe.**
+  Landed as `c094867` (RTL), `a433bab` (four closure repairs), `197e813`
+  (write-up and artefacts).
+
+**Operational notes for the next session.**
+
+- **`systemd-run --user --scope` attaches the scope's lifetime to the
+  CLIENT.** Killing the client kills the scope. This is what killed teeth Run
+  B twice (the overnight session's `borip14fp`, and once more under the new
+  dispatcher). For detached jobs use transient **services**
+  (`systemd-run --user --unit=...` without `--scope`), which return
+  immediately and survive the launcher.
+- The card was rebooted and reloaded with `fk33_pcieep_eng.bit` by Oren on
+  2026-08-30 ~14:17 MDT and holds the verified striped image.
+- Oren's standing instruction remains **two agents, one per Vivado lane**.
+- **The gate-floor teeth for the 103 raise is only half proven** (Run A
+  matched; Run B was killed mid-run) until the service above returns.
+- GAIN16 found **eight dead hand-maintained source closures** across four
+  tracks, two of them via a one-second textual invariant
+  (`hw/fk33/results/gain16_2026-08-30/closure_audit.py`). The four fixes are
+  part of the uncommitted landing. The generalisation, measured 8 for 8:
+  **copying a list rotted; borrowing one did not.**
+
 ### 2026-08-30 late morning, dispatcher: two lanes, both full, and the budget written down first
 
 **Oren's standing instruction for this stretch: TWO agents, not four.** One per
@@ -1545,19 +1643,44 @@ was still listed here as RUNNING, which is the defect this section's own rule
 names. It is moved to Landed. BOARDAUDIT is added, because it was running and
 was not listed.**
 
+**REWRITTEN 2026-08-31 by the dispatcher.** The four rows this table carried
+(READCONV, ACOV, NWROM, GRAY1) were all long landed or answered: READCONV's
+question was subsumed by RMSMUX/RMSWIRE (the read muxes are gone, measured),
+ACOV is backlog row N8 (open, undispatched), NWROM was answered by NORMURAM
+and GWTWO (the image is in BRAM at 135 tiles, then the codebook at ~99), and
+GRAY1 is backlog row N10 (open, undispatched). Naming them here as RUNNING was
+the defect this section's own rule describes.
+
 | track | question | owns |
 |---|---|---|
-| **READCONV** | **The remaining lever on the `pb_core` fit.** B's read-side conversion, needing `l2norm_rs` to take a streaming port. LUTDIET measured B's read share at 8.9% of 585,430 primitives, so this is the smaller half and may not close 40,079 alone. NOT the BRAM trade; that stays the fallback. | `rtl/l2norm_rs.vhd`, `rtl/gdn_block.vhd`, `rtl/attn_block.vhd`, `rtl/rmsnorm_rs.vhd`, `sim/ooc_readconv_*` |
-| **ACOV** | Row N8. Subsystem A's three coverage gaps -- no mutation script for `matvec_int4.vhd` or `axi_rd_port.vhd`, `USE_XEXP_PORT=true` in no bench, `DUAL_CLK=true` manual only. **A is now the only part of this design proven on silicon and the part with the named holes.** | `sim/mutate_matvec_int4.sh` (new), `sim/mutate_axi_rd_port.sh` (new), `sim/tb_a_geom.vhd`, `sim/tb_matvec_fk33_desc.vhd`, `tools/verify_mv4i_desc.py` |
-| **NWROM** | NORMADAPT's flagged risk: **every fit number tonight was taken with `NORM_W_IMAGE` EMPTY.** Populated at 9B it is 65 entries of 65,536 bits with a 65:1 mux, and may cost more than the 76,613 LUT NORMADAPT just saved. Measure it, and say whether it belongs in BRAM/URAM -- both sit unused in every measurement taken tonight. | `rtl/llama_top.vhd`, `sim/ooc_nwrom_*`, `hw/fk33/results/nwrom_*` |
-| **GRAY1** | Row N10, **the sharpest instance of tonight's theme**: `G1` (both gray functions replaced by identity) is caught by neither simulation nor `report_cdc`, and **the broken design reports TWO FEWER `report_cdc` warnings than the correct one**, so a "must not get worse" rule actively passes it. In `async_fifo.vhd`, which is in the datapath now working on silicon. | `rtl/async_fifo.vhd`, `sim/cdc_teeth.sh`, `sim/tb_async_fifo*.vhd` |
+| **ROUTE3** (dispatcher, in session) | Does the composed A+B+C+D route with a NON-EMPTY `NORM_W_IMAGE` (the codebook in)? Never drawn by anyone. Workstation lane, after the final-tree gate frees the box. | `hw/fk33/gen_compose4_top.py`, `hw/fk33/results/route3_*` |
+
+**TRACK CARDTOP was dispatched and RECALLED the same hour, 2026-08-31.** It
+went to a harness subagent, and Oren's ruling is that the subagent model is
+not strong enough for VHDL/RTL design work. **No subagents for RTL tracks
+from here.** Audit on recall: no commits, no edits to any tracked file; its
+only output was four new files, quarantined UNREVIEWED to
+`/mnt/storage/cardtop_flash_draft_2026-08-31/` (a 5,363-line
+`fk33_llama_top.vhd` draft plus three sketches). Do not copy anything back
+without a full review. STEP 3 (row N3) returns to undispatched; when it runs,
+it runs in the dispatcher's own session.
+
+The dispatcher also holds: teeth Run B (gate for the floor-103 commit), then
+the full gate on the final tree at the new HEAD.
 
 **Landed since the last rewrite:** OI3B, COMPOSE, WEIGHTS, REALSHAPE, REALFIX,
 SEAMGATE, RY-MODEL, SCHED-FIX, ORDINAL, ARENA-MANIFEST, KVSIZE, CGENERICS,
 BUILD-E2E, GATEHYGIENE, BTOP1, LUTDIET, CKVMAP, CLOG2, BGATE2 (`dfe308c`),
 BOARDAUDIT (`7c5f5a3`..`d7952b6`), KVVALUE (`ef1aa7e`), WRITEDEC (`971524c`),
 AJOBRUN (`1fdf42e`), CLOG2TOP (`61e6a12`), ERRINFO (`a269ed4`, row N12),
-NORMADAPT (`45981f0`), OI3MUT (`3853650`, row N6).
+NORMADAPT (`45981f0`), OI3MUT (`3853650`, row N6), RESETLAND (`8b7eefe`),
+GATEGREEN (`392f818`, `df0b194`), BASEFAB (`d7a6bf7`), STRIPEREADY (`0eac8d4`,
+`639880e`), TRIPVETO (`729df43`), TOKENSTRIPE (`6ca385f`, `a25847b`),
+STRIPEPATH (`d7f96cd`, `9d73018`), SEAMMAP (`1e46fb3`), TIMING
+(`9e3348e`..`5d25911`), ATTNTEETH (`5755473`, `a8053ca`, `1e18ce3`), NORMURAM
+(`c479ae8`, `57ecea4`, `5026897`), CBINFER (`0d24f7d`), LEVERC48 (`a4828ab`),
+RMSMUX (`5152e91`), RMSWIRE (`47c9d9c`), GWTWO (`21db25b`, `93ddac7`,
+`c3a2f01`), ROUTE2 (through `48633e5`).
 
 ### The fit, corrected. MY ARITHMETIC WAS STRUCTURALLY WRONG.
 
