@@ -394,6 +394,33 @@ any amount of additional structural checking.**
   many free parameters as calibration points, it has been fitted, not tested.
   The fix that worked was to derive the quantity from a census instead:
   `CLB = F7/4 + (LUT - 2*F7)/D` predicts 54,846 against a measured 54,866.
+
+  **AND THE SEQUEL, MEASURED 2026-08-30 by TRACK LEVERC48: NOT FITTING BEAT
+  FITTING, ON THE SAME DATA.** Two models were fitted to three points to project
+  lever C's saving at 1,536 lanes. Both were wrong and **the range between them
+  did not contain the answer**: linear-in-lanes was -8.59%, log2 was -14.88%,
+  and their average was worse than either at -11.73%. The measurement is
+  **-42,633 LUT**.
+
+  Drawing three MORE geometries showed why. The per-lane saving is **not
+  monotone** -- 29.109, 27.707, 26.051, 25.353, 28.391, 27.756 at
+  128/256/512/768/1024/1536 -- it is flat with **plus or minus 6.9% scatter and
+  no direction at all**. A **constant** per-lane saving, taken as the mean of
+  *the same three points both models were fitted to*, predicts **42,428 against
+  42,633: an error of 0.48%.**
+
+  In the author's words, and this is the reusable part: **"a two-parameter fit
+  to two points cannot tell scatter from slope, so it read the scatter as a
+  slope and extrapolated it."** Fitting a trend to noise does not produce a
+  weak trend, it produces a confident wrong one, and adding a second parameter
+  makes it worse rather than better.
+
+  **Before fitting anything, plot the residuals and ask whether the quantity has
+  a direction at all.** Where a per-unit figure is genuinely structural it holds
+  EXACTLY and needs no fit -- LUTRAM per lane and MUXF8 per lane were 8.0000 at
+  all six points, and the FF closed form was exact to 0. **A quantity that
+  scatters is a mean; a quantity that is structural is a constant; neither is a
+  slope.**
 - **Teeth-check everything.** A checker never shown to fail has not been shown
   to work. **Report mutations that do NOT bite** under their own names: they
   measure your check's resolution floor and are the most valuable line in the
