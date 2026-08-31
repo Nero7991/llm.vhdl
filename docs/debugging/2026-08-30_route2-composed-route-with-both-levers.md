@@ -688,3 +688,28 @@ anyone would guess, and the reason is not the levers -- it is that the norm
 lever's "composed" measurement was composed inside a DIFFERENT top from the one
 that has to fit. **"Measured composed" is not a property of a number; it names
 which composition, and two compositions are two different measurements.**
+### The control census closes the stray-flip-flop question for free
+
+```
+C4_CENSUS cb_reg_ff  6147
+C4_CENSUS cb_reg_ram    0
+C4_LEVERC INACTIVE  cb_reg_ff=6147 cb_reg_ram=0
+```
+
+**6,147 = 6,144 + 3.** The register configuration carries LEVERC48's exact
+6,144 codebook registers **plus the same three strays** that appeared in the
+levered run. So the three belong to some other signal whose name merely
+contains `cb_reg`, they are present in BOTH configurations, and they are not
+codebook registers. Open item 4 is closed without a separate run.
+
+**And this is the census's own teeth-check.** The discriminator has now been
+shown to fire on the configuration it must fire on:
+
+| | `cb_reg_ff` | `cb_reg_ram` | verdict |
+|---|---:|---:|---|
+| `CB_STYLE = "distributed"` | 3 | **26,112** | ACTIVE |
+| `CB_STYLE = "regs"` | **6,147** | 0 | INACTIVE |
+
+A checker never shown to fail has not been shown to work. This one has now been
+shown to discriminate, on the two configurations it exists to tell apart, in the
+same session.
