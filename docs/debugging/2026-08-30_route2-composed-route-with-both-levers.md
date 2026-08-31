@@ -1035,3 +1035,38 @@ being edited, so the 22-line diff afterwards is attributable.
 **A line-number citation in another file is a dependency.**
 `sim/tb_a_geom.vhd:75` cites `gen_fk33_engine.py:85,91`. The edits went in at
 252 and 519; `tools/check_a_geometry.py` re-run afterwards, all sites agree.
+## Result 10 -- the DOUBLE control reproduces the 2026-08-29 configuration
+
+`compose4_null_top`: `CB_STYLE = "regs"` AND `d_norm = ooc_normadapt_flat`,
+the latter extracted from `012d28d~1`'s `llama_top` and binding the flat
+`rmsnorm_rs`. **Neither lever.** `C4_SYNTH_SECONDS 655`.
+
+```
+C4_UTIL c4null synth lut 353629 lut_logic 338049 lut_mem 15580 ff 355554
+                     carry8 12147 f7 63307 f8 25004 bram 246.5 uram 0 dsp 2177
+```
+
+Against the 2026-08-29 run it is meant to reproduce (`56cebe8`, a different
+SHA, four days of other tracks' commits apart):
+
+| | 2026-08-29 original | `c4null` reproduction | delta | |
+|---|---:|---:|---:|---|
+| CLB LUT | 350,283 | 353,629 | +3,346 | +0.96% |
+| LUT as Logic | 334,703 | 338,049 | +3,346 | +1.00% |
+| **LUT as Memory** | **15,580** | **15,580** | **0** | **exact** |
+| CLB Registers | 355,468 | 355,554 | +86 | **+0.02%** |
+| **CARRY8** | **12,147** | **12,147** | **0** | **exact** |
+| F7 Muxes | 65,108 | 63,307 | -1,801 | -2.77% |
+| F8 Muxes | 25,788 | 25,004 | -784 | -3.04% |
+| **Block RAM Tile** | **246.5** | **246.5** | **0** | **exact** |
+| **DSPs** | **2,177** | **2,177** | **0** | **exact** |
+
+**Four columns exact, registers within 0.02%, LUT within 0.96%.** The residual
+is SHA drift from other tracks' commits to shared RTL between `56cebe8` and
+`3b2003c`, not from the reconstruction.
+
+**So this really is the configuration whose route was killed**, and taking it
+through the SAME `pb_core`-constrained implementation as the levered design is
+the experiment that separates the two variables. Note it needs 353,629 LUT
+against `pb_core`'s 388,800 (**90.95%**), and the original needed **54,866 CLB
+where `pb_core` holds 48,600**.
