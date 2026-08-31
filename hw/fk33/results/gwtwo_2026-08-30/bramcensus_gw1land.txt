@@ -1,0 +1,18 @@
+# TRACK GWTWO object-level BRAM census, tag=gw1land
+# get_cells -hier -filter {REF_NAME == RAMB36E2 | RAMB18E2}.
+# This is the AUTHORITY.  report_utilization's row is quoted beside
+# it, and if the two disagree the census wins.
+
+== RAMB36E2  count = 135
+  (top)                                                           135
+  -- configured geometries --
+     135 x  RAM_MODE= READ_WIDTH_A=1 READ_WIDTH_B=0 WRITE_WIDTH_A=1 WRITE_WIDTH_B=0 CASCADE_ORDER_A=NONE 
+
+== RAMB18E2  count = 12
+  gvr.u_rms/gbank.uo                                                4
+  gvr.u_rms/gbank.uw                                                4
+  gvr.u_rms/gbank.ux                                                4
+  -- configured geometries --
+      12 x  RAM_MODE= READ_WIDTH_A=18 READ_WIDTH_B=18 WRITE_WIDTH_A=18 WRITE_WIDTH_B=18 CASCADE_ORDER_A=NONE 
+
+# report_utilization says: RAMB36/FIFO*=135 RAMB18=12 BlockRAMTile=141

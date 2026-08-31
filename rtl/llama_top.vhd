@@ -2359,11 +2359,48 @@ begin
         -- initialiser Vivado's [Synth 8-6040] names is not the binding
         -- constraint, the WIDTH is.
         --
-        -- Reshaped to `GW` elements per word the same 4.26 Mbit becomes
-        -- 66,560 x 64 at the 9B shape, which fits BLOCK RAM and reads in
-        -- `NWORD + 1` cycles.  `GW = 4` rather than 1 shortens the load 4x
-        -- and makes the shift register below 1,024 stages deep instead of
-        -- 4,096.
+        -- Reshaped to `GW` elements per word the same 4.26 Mbit fits BLOCK
+        -- RAM at any `GW`.  `GW` USED TO BE 4 BECAUSE IT SHORTENED THE LOAD
+        -- 4x; that reason died with TRACK RMSWIRE's rate converter, which
+        -- walks ONE element per cycle whatever `GW` is (see `wload` below),
+        -- so `GW` is now a pure aspect-ratio parameter with no rate
+        -- consequence at all.
+        --
+        -- `GW = 1` BECAUSE IT IS MEASURED TO BE STRICTLY BETTER.  TRACK
+        -- GWTWO, 2026-08-30, four points in one session on the BC-250,
+        -- `sim/ooc_lutdiet_ports.tcl` with the same flags every draw on this
+        -- scale uses, the `GW = 4` point byte-identical to the parent commit
+        -- and reproducing TRACK RMSWIRE's `mem_bank` field for field:
+        --
+        --   GW   ROM shape        CLB LUT   CLB FF   RAMB36   TILE     WNS
+        --    1   266,240 x  16      5,073    3,511      135    141   +0.971
+        --    2   133,120 x  32      5,229    3,465      145    151   +0.971
+        --    4    66,560 x  64      5,265    2,149      171    177   +0.971
+        --    8    33,280 x 128      5,277    2,133      226    232   +0.971
+        --
+        -- Monotone in BOTH LUT and BRAM, so there is no exchange rate to
+        -- negotiate: `GW = 1` buys 36 tiles AND saves 192 LUT against the old
+        -- `GW = 4`, at identical WNS, for 1,362 more flops -- 0.155% of the
+        -- device's 879,360 CLB registers.  The cause is packing efficiency
+        -- against the RAMB36's 32,768 data bits, which DEGRADES as the word
+        -- widens: 96.3% at GW=1, 89.6% at 2, 76.0% at 4, 57.5% at 8.
+        --
+        -- THAT WAS NOT PREDICTABLE FROM THE PRIMITIVE'S DATA SHEET, and the
+        -- registered prediction that it would be flat was falsified by its
+        -- own criterion.  A RAMB36 natively supports 32Kx1 through 512x72 and
+        -- all four widths sit on a native width with the same 8/9 padding
+        -- loss, so the count "should" not move.  It moves by 91 tiles.
+        -- An argument from what the hardware CAN do is not a measurement of
+        -- what the tool DOES.
+        --
+        -- 15 TILES STILL SHORT, AND `GW` HAS NO MORE TO GIVE.  Composed
+        -- 246.5 + this unit's 6 + 135 = 387.5 against 372.5 inside `pb_core`.
+        -- What remains is in the IMAGE, not its shape: the table holds only
+        -- 1,567 distinct 16-bit values, its maximum is 0x2FE0 so 14 bits
+        -- suffice, and its empirical entropy is 9.956 bits/element (MEASURED
+        -- over norm_w_9b.hex, md5 69f614a1515e1160f5dc9e8a9e72fdc3).  None of
+        -- those has been drawn.  See
+        -- docs/debugging/2026-08-30_gwtwo-gain-image-aspect-ratio.md.
         --
         -- IT IS `block` AND NOT `ultra`, AND THAT IS NOT A PREFERENCE.  This
         -- device's URAM288 cannot be initialised to anything but zero, so a
@@ -2385,9 +2422,17 @@ begin
         -- way to serve this gain.  Asking for `ultra` here would still work,
         -- because Vivado falls back -- and it would leave a WARNING claiming a
         -- resource the design never gets, which is how the misread happened.
+        --
+        -- `n` is still the parameter so the shape stays visible at the call
+        -- site and a future `GW` can depend on it again, but every shape now
+        -- gets 1: `GW = 1` needs no divisibility (`NN mod 1 = 0` always), so
+        -- the odd-`NN` fallback the old form carried is what the whole
+        -- function now returns.  Everything downstream -- `nwrom_flat`'s
+        -- packing, the `wsubsel` mux, `wel / GW` -- is written as a function
+        -- of `GW` and degenerates correctly at 1; it is not special-cased.
         function gw_pick(n : positive) return positive is
         begin
-          if n mod 4 = 0 then return 4; else return 1; end if;
+          return 1;
         end function;
         constant GW    : positive := gw_pick(NN);
         constant NWORD : positive := NN / GW;
@@ -2483,8 +2528,20 @@ begin
         -- slices rather than as `wrd((s+1)*MANT_W-1 downto s*MANT_W)` with a
         -- runtime `s`, for the reason this file's `xw` note records: a slice
         -- whose bounds are non-static is legal but is the same shape as the
-        -- construct that has twice built a barrel shifter here.  At GW = 4
-        -- this is a 4:1 mux on 16 bits.
+        -- construct that has twice built a barrel shifter here.  At the
+        -- landed GW = 1 the loop runs once with a CONSTANT condition
+        -- (`wel_d mod 1 = 0`) and this degenerates to a wire, which is part
+        -- of why GW = 1 is 192 LUT cheaper than the GW = 4 it replaced; at
+        -- GW = 4 it was a 4:1 mux on 16 bits.
+        --
+        -- TEETH, AND THE ONE ROW THAT DOES NOT BITE.  TRACK GWTWO mutated
+        -- this select to `(wel_d mod GW) = (GW-1-s)` and ran
+        -- `sim:tb_llama_top_normw`: it FAILS at GW = 2 and GW = 4 on
+        -- `tb_llama_top`'s P14 landmark, and PASSES at GW = 1 because at
+        -- GW = 1 the mutation is a semantic no-op.  That non-biting row is
+        -- the point, not an omission: a GW = 1 design cannot have a sub-word
+        -- ordering bug because it has no sub-word, and this whole mux is now
+        -- dead weight kept only so a future GW > 1 is a one-line change.
         wsubsel : process(wrd, wel_d) is
         begin
           nw_wd <= wrd(MANT_W-1 downto 0);

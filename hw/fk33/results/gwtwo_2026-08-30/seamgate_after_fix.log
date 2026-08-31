@@ -1,0 +1,79 @@
+================================================================================
+ llama.vhdl regression -- FULL run, 1 job(s), 900s per test
+ 2026-08-30 22:13:48   ghdl: GHDL 1.0.0 (Ubuntu 1.0.0+dfsg-6) [Dunoon edition]
+================================================================================
+
+-- suite sim ---------------------------------------------------------------
+PASS       sim:seamgate_real                     38s  SEAMGATE PASS -- real: 1 token(s), at least 64 seams per token
+PASS       sim:seamgate_stub                     28s  SEAMGATE PASS -- stub: 1 token(s), at least 63 seams per token
+PASS       sim:seamgate_seq                     157s  SEAMGATE PASS -- seq: 3 token(s), at least 61 seams per token
+
+-- suite tb ---------------------------------------------------------------
+
+
+-- SKIPPED (listed, never dropped silently) ------------------------------------
+(none)
+
+-- NOT IN GIT (these rows/inputs are yours alone) ------------------------------
+UNTRACKED  row    sim:tb_attn_cmp2                   not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_fix_beh                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_probe_cmp              not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_replay                 not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_attn_replay_beh             not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_divprobe_cmp                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_embed_ps                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_engine_dump                 not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_lm_head_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_matmul_rt_ps                not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rms_real                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rms_sweep                   not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rmsnorm_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_rope_ps                     not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_sm_cmp                      not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_sm_cmp24                    not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_softmax_ps                  not in git: a gate row for you, absent for a clone
+UNTRACKED  row    sim:tb_swiglu_ps                   not in git: a gate row for you, absent for a clone
+UNTRACKED  source sim/attention_ml_fix.vhd           compiled by some row; absent, that row goes SKIPPED
+UNTRACKED  source sim/attention_ml_probe.vhd         compiled by some row; absent, that row goes SKIPPED
+UNTRACKED  source sim/engine_shared_dump.vhd         compiled by some row; absent, that row goes SKIPPED
+
+   The pass count is NOT reproducible from a clean checkout while this
+   list is non-empty.  Commit them, delete them, or leave them -- but do
+   NOT raise BASELINE_PASS from a run that included them.
+
+-- RTL COVERAGE ----------------------------------------------------------------
+   (transitive closure from every testbench in BOTH suites)
+   93 files in rtl/: 73 reached by the sim/ suite, 38 by tb/, 23 by both.
+
+   RTL FILES REACHED BY NO TESTBENCH IN EITHER SUITE:
+     rtl/attn_c_ports_skel.vhd
+     rtl/attn_lane_skel.vhd
+     rtl/hbm_tg_ip.vhd
+     rtl/seq_top_skel.vhd
+     rtl/tp_collective_skel.vhd
+   5 of 93.
+
+   reached ONLY by the tb/ suite (run it with --suite tb, or leave the
+   default which runs both):
+     rtl/attention.vhd                tb_attention,tb_engine,tb_layer_fsm
+     rtl/engine.vhd                   tb_engine
+     rtl/engine_shared.vhd            tb_engine_dbg,tb_engine_shared,tb_llama_engine_axi
+     rtl/layer.vhd                    tb_e2e,tb_layer
+     rtl/layer_ar.vhd                 tb_engine
+     rtl/layer_fsm.vhd                tb_layer_fsm
+     rtl/llama_engine_axi.vhd         tb_llama_engine_axi
+     rtl/mac_axi.vhd                  tb_mac_axi
+     rtl/matmul.vhd                   tb_engine,tb_layer_fsm,tb_matmul
+     rtl/matvec_engine.vhd            tb_matvec_engine
+     rtl/sampler.vhd                  tb_e2e,tb_engine,tb_sampler
+     rtl/seq_ctrl.vhd                 tb_e2e
+     rtl/weight_mem.vhd               tb_weight_mem
+     rtl/weights_pkg.vhd              tb_engine,tb_layer_fsm,tb_matmul,tb_weights_pkg
+     rtl/wq_l0_rom_pkg.vhd            tb_matvec_engine
+
+================================================================================
+ suite sim   PASS 3   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ suite tb    PASS 0   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0
+ OVERALL     PASS 3   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+================================================================================
+ REGRESSION: PASS

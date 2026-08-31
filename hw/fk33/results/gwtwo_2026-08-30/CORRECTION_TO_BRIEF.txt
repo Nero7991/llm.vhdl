@@ -1,0 +1,54 @@
+TRACK GWTWO -- CORRECTION TO MY OWN BRIEF, raised before any measurement
+=======================================================================
+
+THE BRIEF SAYS
+--------------
+  "Whatever GW you land, the LOAD-RATE MARGIN must not get worse, and the
+   numbers are pinned. ... budget to r_go is NN+4, load is NN/GW+1, so the
+   margin is GW, and at GW = 4 it is 4.0000x and SHAPE-INVARIANT.  At GW = 2
+   the margin halves to 2.0x.  At GW = 1 it is 1.0x, i.e. NO MARGIN."
+
+THAT ARITHMETIC IS STALE.  IT DESCRIBES THE PRE-RMSWIRE TREE.
+-------------------------------------------------------------
+  `load = NN/GW + 1` was true while the ROM's GW-wide word was shifted into a
+  65,536-flop staging register, one WORD per cycle.  TRACK RMSWIRE deleted
+  that register.  The evidence is in the shipping source, rtl/llama_top.vhd,
+  in the `wload` process:
+
+      elsif wav = '1' then
+        if wel = NN-1 then
+          wav <= '0';
+        else
+          wel <= wel + 1;
+        end if;
+
+  `wel` is an ELEMENT index, incremented by ONE per cycle to NN-1, because
+  `rmsnorm_rs_mem`'s bank port takes ONE 16-bit element per cycle.  The ROM
+  address is `wel / GW`, so the same ROM word is simply re-read GW cycles
+  running.  llama_top.vhd's own comment states the consequence:
+
+      "the budget to `r_go` is `NN + 4` against a load of `NN + 2`: THREE
+       CYCLES at every shape, where TRACK NORMURAM's form had a
+       shape-invariant `GW = 4.0000x`."
+
+  So on THIS tree:
+    load   = NN + 2 cycles, INDEPENDENT OF GW.
+    margin = 3 cycles, INDEPENDENT OF GW.
+    and residency is made structural by `nproc` gating S_GO on `wbusy`,
+    not by the margin at all.
+
+WHAT THIS CHANGES FOR THIS TRACK
+--------------------------------
+  GW is now a PURE AREA/ASPECT-RATIO PARAMETER WITH NO RATE CONSEQUENCE.
+  The brief's central constraint -- "GW = 1 has NO MARGIN" -- cannot be
+  violated by any GW, because GW no longer appears in the rate at all.
+
+  I still test it rather than asserting it: `sim/tb_rmswire_loadrace.vhd` is
+  run at every GW at the real shape (N=4096, LANES=4) and the w_active-derived
+  boundary cycles are compared point for point.  If the boundaries move, this
+  correction is wrong and the brief was right.
+
+  DIRECTION OF ERROR MATTERS: the stale arithmetic was CONSERVATIVE.  It
+  would have ruled out GW = 1 for a reason that no longer exists.  Had I
+  obeyed the brief literally I would have drawn only GW = 2 and 4 and missed
+  half the curve I was asked to produce.

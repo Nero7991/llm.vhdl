@@ -1,0 +1,7 @@
+FAIL       sim:seamgate_real                      1s  SEAMGATE FAIL -- the capture produced no seam records (rc=2).
+FAIL       sim:seamgate_stub                      1s  SEAMGATE FAIL -- the capture produced no seam records (rc=2).
+FAIL       sim:seamgate_seq                       1s  SEAMGATE FAIL -- the capture produced no seam records (rc=2).
+ suite sim   PASS 82   FAIL 3   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 4
+ suite tb    PASS 26   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1
+ OVERALL     PASS 108   FAIL 3   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 5   SKIPPED 19
+ REGRESSION: FAIL

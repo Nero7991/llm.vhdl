@@ -1,0 +1,17 @@
+== census gw4 start 2026-08-30T23:20:31-04:00 avail=13G
+== census gw4 rc=0 2026-08-30T23:28:01-04:00
+SENTINEL OK gw4
+GWTWO_CENSUS tag=gw4 ramb36_cells=171  ramb18_cells=12  rpt_ramb36=171 rpt_ramb18=12 rpt_tile=177
+== census gw2 start 2026-08-30T23:28:01-04:00 avail=13G
+== census gw2 rc=0 2026-08-30T23:35:03-04:00
+SENTINEL OK gw2
+GWTWO_CENSUS tag=gw2 ramb36_cells=145  ramb18_cells=12  rpt_ramb36=145 rpt_ramb18=12 rpt_tile=151
+== census gw1 start 2026-08-30T23:35:03-04:00 avail=13G
+== census gw1 rc=0 2026-08-30T23:42:33-04:00
+SENTINEL OK gw1
+GWTWO_CENSUS tag=gw1 ramb36_cells=135  ramb18_cells=12  rpt_ramb36=135 rpt_ramb18=12 rpt_tile=141
+== census gw8 start 2026-08-30T23:42:33-04:00 avail=13G
+== census gw8 rc=0 2026-08-30T23:52:22-04:00
+SENTINEL OK gw8
+GWTWO_CENSUS tag=gw8 ramb36_cells=226  ramb18_cells=12  rpt_ramb36=226 rpt_ramb18=12 rpt_tile=232
+GWTWO_CENSUS_ALL_DONE

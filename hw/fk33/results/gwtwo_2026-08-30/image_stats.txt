@@ -1,0 +1,19 @@
+# TRACK GWTWO -- MEASURED properties of the norm gain image
+# file      : /mnt/storage/nwfix/img/norm_w_9b.hex
+# md5       : 69f614a1515e1160f5dc9e8a9e72fdc3
+# lines     : 266240  NN = 4096  NW_N = 65
+# bits      : 4259840
+distinct_vectors      : 65 of 65  -> dedup buys NOTHING
+distinct_values_16b   : 1567  -> index width 11 bits
+min / max             : 0x0010 / 0x2fe0
+value_bit_length      : 14 bits suffice, not 16
+OR over all values    : 0x3fff  (bits 15,14 always zero)
+empirical_entropy     : 9.956 bits/element
+ideal_packed_bits     : 2650745  against 4259840 at 16 bits
+per_vector_distinct   : min 192  median 681  max 1120
+
+# DERIVED, at the 96.3% packing efficiency MEASURED at GW=1 (135 tiles
+# for 4,259,840 bits).  ESTIMATES.  Assumption: Vivado packs a 14-bit
+# or 11-bit word as efficiently as it packs a 16-bit one.  NOT DRAWN.
+  14-bit store          : 3727360 bits -> ~118 tiles (saves ~17 of 135)
+  11-bit codebook index : 2950578 bits -> ~94 tiles (saves ~41 of 135)

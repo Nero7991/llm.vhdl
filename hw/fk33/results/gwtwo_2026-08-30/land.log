@@ -1,0 +1,21 @@
+GWTWO_IMAGE 69f614a1515e1160f5dc9e8a9e72fdc3  /home/labuser/rmswire/img/norm_w_9b.hex
+== gw1land start 2026-08-30T23:57:42-04:00 rtl=/home/labuser/gwtwo/rtl_gw1land avail=13G
+== gw1land topmd5 d3c6ca4eaaaeec8128e2cb42cd41f818  /home/labuser/gwtwo/rtl_gw1land/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=gw1land top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-30T23:57:42-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           0          13           0           1          13
+Swap:             46           1          45
+tag=gw1land peak_rss_kib=12274324 peak_rss_gib=11.71 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== gw1land rc=0 2026-08-31T00:05:45-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5073,5073,0,3511,135,12,141,0,276,0,0,0.971,248.2005460412013,425,-1,5073,3511,41,141
+tag=gw1land peak_rss_kib=12274324 peak_rss_gib=11.71 exit=0
+GWTWO_SYNTH_ALL_DONE
+== census gw1land start 2026-08-31T00:05:45-04:00 avail=13G
+== census gw1land rc=0 2026-08-31T00:13:13-04:00
+SENTINEL OK gw1land
+GWTWO_CENSUS tag=gw1land ramb36_cells=135  ramb18_cells=12  rpt_ramb36=135 rpt_ramb18=12 rpt_tile=141
+GWTWO_CENSUS_ALL_DONE

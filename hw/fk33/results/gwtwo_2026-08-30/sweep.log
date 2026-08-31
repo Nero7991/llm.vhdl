@@ -1,0 +1,58 @@
+GWTWO_IMAGE 69f614a1515e1160f5dc9e8a9e72fdc3  /home/labuser/rmswire/img/norm_w_9b.hex
+== gw4 start 2026-08-30T22:44:34-04:00 rtl=/home/labuser/gwtwo/rtl_gw4 avail=13G
+== gw4 topmd5 0c9d6338414d850ab3be1db76e202608  /home/labuser/gwtwo/rtl_gw4/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=gw4 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-30T22:44:34-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           0          13           0           1          13
+Swap:             46           1          45
+tag=gw4 peak_rss_kib=12023812 peak_rss_gib=11.47 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== gw4 rc=0 2026-08-30T22:52:41-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5265,5265,0,2149,171,12,177,0,279,0,0,0.971,248.2005460412013,431,-1,5265,2149,41,177
+tag=gw4 peak_rss_kib=12023812 peak_rss_gib=11.47 exit=0
+== gw2 start 2026-08-30T22:52:41-04:00 rtl=/home/labuser/gwtwo/rtl_gw2 avail=13G
+== gw2 topmd5 0ffe10e9ca5d3dabde78d5e78ebc225f  /home/labuser/gwtwo/rtl_gw2/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=gw2 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-30T22:52:41-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          12           0           1          13
+Swap:             46           1          45
+tag=gw2 peak_rss_kib=12056868 peak_rss_gib=11.50 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== gw2 rc=0 2026-08-30T23:00:19-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5229,5229,0,3465,145,12,151,0,279,28,14,0.971,248.2005460412013,399,-1,5229,3465,41,151
+tag=gw2 peak_rss_kib=12056868 peak_rss_gib=11.50 exit=0
+== gw1 start 2026-08-30T23:00:19-04:00 rtl=/home/labuser/gwtwo/rtl_gw1 avail=13G
+== gw1 topmd5 c7be3d79948b26e1061fd9c8980ad146  /home/labuser/gwtwo/rtl_gw1/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=gw1 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-30T23:00:19-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           0          13           0           1          13
+Swap:             46           1          45
+tag=gw1 peak_rss_kib=12151768 peak_rss_gib=11.59 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== gw1 rc=0 2026-08-30T23:08:16-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5073,5073,0,3511,135,12,141,0,276,0,0,0.971,248.2005460412013,421,-1,5073,3511,41,141
+tag=gw1 peak_rss_kib=12151768 peak_rss_gib=11.59 exit=0
+== gw8 start 2026-08-30T23:08:16-04:00 rtl=/home/labuser/gwtwo/rtl_gw8 avail=13G
+== gw8 topmd5 2e50353a66dc21c500540cca05ffa277  /home/labuser/gwtwo/rtl_gw8/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=gw8 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-30T23:08:16-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          12           0           0          13
+Swap:             46           1          45
+tag=gw8 peak_rss_kib=12095912 peak_rss_gib=11.54 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== gw8 rc=0 2026-08-30T23:18:34-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5277,5277,0,2133,226,12,232,0,279,14,0,0.971,248.2005460412013,561,-1,5277,2133,41,232
+tag=gw8 peak_rss_kib=12095912 peak_rss_gib=11.54 exit=0
+GWTWO_SYNTH_ALL_DONE

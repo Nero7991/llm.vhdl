@@ -1,0 +1,33 @@
+=== GW=4 ROW=tb_rmswire_loadrace start 2026-08-30T20:46:44-06:00
+=== GW=4 ROW=tb_rmswire_loadrace rc=0 2026-08-30T20:46:55-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_rmswire_loadrace	PASS	11	/mnt/storage/gwtwo/tree_gw4/sim/tb_rmswire_loadrace.vhd:648:7:@862225ns:(report note): tb_rmswire_loadrace: PASS -- 6 rows at N=4096 LANES=4
+=== GW=4 ROW=tb_llama_top_normw start 2026-08-30T20:46:55-06:00
+=== GW=4 ROW=tb_llama_top_normw rc=0 2026-08-30T20:48:09-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	PASS	73	/mnt/storage/gwtwo/tree_gw4/sim/tb_llama_top.vhd:2846:7:@52499500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks, 1 
+=== GW=2 ROW=tb_rmswire_loadrace start 2026-08-30T20:48:09-06:00
+=== GW=2 ROW=tb_rmswire_loadrace rc=0 2026-08-30T20:48:21-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_rmswire_loadrace	PASS	11	/mnt/storage/gwtwo/tree_gw2/sim/tb_rmswire_loadrace.vhd:648:7:@862225ns:(report note): tb_rmswire_loadrace: PASS -- 6 rows at N=4096 LANES=4
+=== GW=2 ROW=tb_llama_top_normw start 2026-08-30T20:48:21-06:00
+=== GW=2 ROW=tb_llama_top_normw rc=0 2026-08-30T20:49:33-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	PASS	72	/mnt/storage/gwtwo/tree_gw2/sim/tb_llama_top.vhd:2846:7:@52499500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks, 1 
+=== GW=1 ROW=tb_rmswire_loadrace start 2026-08-30T20:49:33-06:00
+=== GW=1 ROW=tb_rmswire_loadrace rc=0 2026-08-30T20:49:44-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_rmswire_loadrace	PASS	11	/mnt/storage/gwtwo/tree_gw1/sim/tb_rmswire_loadrace.vhd:648:7:@862225ns:(report note): tb_rmswire_loadrace: PASS -- 6 rows at N=4096 LANES=4
+=== GW=1 ROW=tb_llama_top_normw start 2026-08-30T20:49:44-06:00
+=== GW=1 ROW=tb_llama_top_normw rc=0 2026-08-30T20:50:58-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	PASS	73	/mnt/storage/gwtwo/tree_gw1/sim/tb_llama_top.vhd:2846:7:@52499500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks, 1 
+=== GW=8 ROW=tb_rmswire_loadrace start 2026-08-30T20:50:58-06:00
+=== GW=8 ROW=tb_rmswire_loadrace rc=0 2026-08-30T20:51:10-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_rmswire_loadrace	PASS	11	/mnt/storage/gwtwo/tree_gw8/sim/tb_rmswire_loadrace.vhd:648:7:@862225ns:(report note): tb_rmswire_loadrace: PASS -- 6 rows at N=4096 LANES=4
+=== GW=8 ROW=tb_llama_top_normw start 2026-08-30T20:51:10-06:00
+=== GW=8 ROW=tb_llama_top_normw rc=0 2026-08-30T20:52:25-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	PASS	75	/mnt/storage/gwtwo/tree_gw8/sim/tb_llama_top.vhd:2846:7:@52499500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks, 1 
+GWTWO_GHDL_ALL_DONE

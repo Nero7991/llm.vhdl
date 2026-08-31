@@ -1,0 +1,17 @@
+=== MUT=gw1_M1 start 2026-08-30T20:52:26-06:00
+=== MUT=gw1_M1 rc=0 2026-08-30T20:53:40-06:00
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	PASS	73	/mnt/storage/gwtwo/tree_gw1_M1/sim/tb_llama_top.vhd:2846:7:@52499500ps:(report note): tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks,
+=== MUT=gw2_M1 start 2026-08-30T20:53:40-06:00
+=== MUT=gw2_M1 rc=1 2026-08-30T20:54:55-06:00
+ OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	FAIL	74	exit 1: /mnt/storage/gwtwo/tree_gw2_M1/sim/tb_llama_top.vhd:2745:7:@52499500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16346 and the recorded landmark for this 
+=== MUT=gw4_M1 start 2026-08-30T20:54:55-06:00
+=== MUT=gw4_M1 rc=1 2026-08-30T20:56:07-06:00
+ OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	FAIL	72	exit 1: /mnt/storage/gwtwo/tree_gw4_M1/sim/tb_llama_top.vhd:2745:7:@52499500ps:(report error): tb_llama_top: P14 -- R_X(0) is -16308 and the recorded landmark for this 
+=== MUT=gw2_M2 start 2026-08-30T20:56:07-06:00
+=== MUT=gw2_M2 rc=1 2026-08-30T20:57:20-06:00
+ OVERALL     PASS 0   FAIL 1   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+sim:tb_llama_top_normw	FAIL	72	exit 1: /mnt/storage/gwtwo/tree_gw2_M2/sim/tb_llama_top.vhd:2755:7:@52499500ps:(report error): tb_llama_top: P14 -- hash(R_X) over the last token is 90069 and the recor
+GWTWO_MUT_ALL_DONE

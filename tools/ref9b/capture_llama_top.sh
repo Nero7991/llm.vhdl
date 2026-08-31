@@ -54,8 +54,40 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
        rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
        rtl/attn_block.vhd rtl/attn_kv_axi.vhd rtl/gdn_block.vhd
-       rtl/matvec_int4.vhd rtl/sampler_stream.vhd rtl/llama_top.vhd
+       rtl/matvec_int4.vhd rtl/sampler_stream.vhd
+       rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd
+       rtl/llama_top.vhd
        sim/tb_llama_top.vhd"
+
+# `rtl/vec_mem.vhd` AND `rtl/rmsnorm_rs_mem.vhd` ADDED 2026-08-30 BY TRACK
+# GWTWO, AND THE GATE HAD BEEN RED SINCE `47c9d9c` WITHOUT THEM.  TRACK RMSWIRE
+# wired `rmsnorm_rs_mem` into `rtl/llama_top.vhd:2190`, and this list is
+# HAND-MAINTAINED, so from that commit onward `llama_top` did not analyse:
+#
+#   rtl/llama_top.vhd:2190:27: unit "rmsnorm_rs_mem" not found in library "work"
+#   DID NOT ANALYZE: rtl/llama_top.vhd
+#   SEAMGATE FAIL -- the capture produced no seam records (rc=2).
+#
+# and `sim:seamgate_{real,stub,seq}` -- three GATE ROWS, not a private harness
+# -- failed for every track on the box.  MEASURED by TRACK GWTWO against a
+# pristine `git archive HEAD` tree at `8ff9010`, i.e. with no GWTWO change
+# present, so it is not caused by anything that track did.
+#
+# THIS IS THE FOURTH CONSUMER OF A HAND-MAINTAINED CLOSURE TO BREAK THE SAME
+# WAY.  TRACK RMSWIRE found and fixed three (`sim/mutate_llama_top_*.sh`) and
+# recorded the lesson -- "`regress.sh` computes its own closure and stayed
+# green throughout, so the gate structurally cannot catch this class" -- and
+# then missed this one, which is the only one of the four that IS a gate row.
+# `regress.sh` cannot help here either: it delegates to `seamgate.sh`, which
+# delegates to this list, so its own closure logic never sees these files.
+#
+# The ordering is load bearing: `vec_mem` before `rmsnorm_rs_mem` (which
+# instantiates three of them at :377/:381/:385) and both before `llama_top`.
+#
+# ADDED OUTSIDE TRACK GWTWO'S STATED OWNERSHIP, deliberately and flagged here
+# so the dispatcher can reverse it: the alternative was to leave the shared
+# gate red at HEAD, where the next track to run it cannot tell this failure
+# apart from its own.
 
 # LIST_FILES=1 prints the analysis closure and exits, so tools/ref9b/
 # golden_status.sh can ask "did any file this capture READ change?" without

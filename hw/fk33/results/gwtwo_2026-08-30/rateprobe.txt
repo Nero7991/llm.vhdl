@@ -1,0 +1,10 @@
+/mnt/storage/gwtwo/gwtwo_rateprobe.vhd:98:5:@0ms:(report note): GWTWO_RATEPROBE: alive, image=/mnt/storage/nwfix/img/norm_w_9b.hex
+GWTWO_RATEPROBE NN=4096 first_ur_en=3 first_uw_en=7230 done=11326
+/mnt/storage/gwtwo/gwtwo_rateprobe.vhd:98:5:@0ms:(report note): GWTWO_RATEPROBE: alive, image=/mnt/storage/nwfix/img/norm_w_9b.hex
+GWTWO_RATEPROBE NN=4096 first_ur_en=3 first_uw_en=7230 done=11326
+/mnt/storage/gwtwo/gwtwo_rateprobe.vhd:98:5:@0ms:(report note): GWTWO_RATEPROBE: alive, image=/mnt/storage/nwfix/img/norm_w_9b.hex
+GWTWO_RATEPROBE NN=4096 first_ur_en=3 first_uw_en=7230 done=11326
+/mnt/storage/gwtwo/gwtwo_rateprobe.vhd:98:5:@0ms:(report note): GWTWO_RATEPROBE: alive, image=/mnt/storage/nwfix/img/norm_w_9b.hex
+GWTWO_RATEPROBE NN=4096 first_ur_en=3 first_uw_en=7230 done=11326
+/mnt/storage/gwtwo/gwtwo_rateprobe.vhd:98:5:@0ms:(report note): GWTWO_RATEPROBE: alive, image=/mnt/storage/nwfix/img/norm_w_9b.hex
+GWTWO_RATEPROBE NN=4096 first_ur_en=3 first_uw_en=11322 done=15418

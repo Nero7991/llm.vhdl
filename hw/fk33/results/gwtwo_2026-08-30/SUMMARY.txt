@@ -1,0 +1,48 @@
+TRACK GWTWO -- SUMMARY, 2026-08-30.  Tree 8ff90105f03cb29d52bba11455db1d8ad5bc9208.
+
+THE QUESTION: does reshaping the norm gain image (GW, elements per ROM word)
+buy the 51 BRAM tiles the composed design is short?
+
+THE ANSWER: GW is a real lever, it is FREE (it saves LUT as well as BRAM), and
+it does NOT close the gap.  GW = 1 buys 36 of the 51 tiles and stops.
+
+MEASURED, four points one session, BC-250, Vivado 2023.2, xcvu33p-fsvh2104-2L-e,
+sim/ooc_lutdiet_ports.tcl with LUTDIET_FLATTEN=none LUTDIET_NOOPT=1:
+
+  GW   ROM shape        CLB LUT   CLB FF   RAMB36  RAMB18  TILE      WNS
+   1   266,240 x  16      5,073    3,511      135      12   141   +0.971
+   2   133,120 x  32      5,229    3,465      145      12   151   +0.971
+   4    66,560 x  64      5,265    2,149      171      12   177   +0.971
+   8    33,280 x 128      5,277    2,133      226      12   232   +0.971
+
+CONTROL: gw4's source is byte-identical to rtl/llama_top.vhd at the parent
+commit and reproduces TRACK RMSWIRE's mem_bank in every field but synth_s.
+LANDED: gw1land, the extracted shipping file, reproduces gw1 in every field
+but synth_s.
+CENSUS: get_cells RAMB36E2/RAMB18E2 counts agree with report_utilization
+exactly at all five points; all moving tiles attribute to the top-level ROM.
+
+THE GAP, DERIVED (246.5 composed + 6 unit vectors + image, vs 372.5 in pb_core):
+  GW=8  478.5  short 106.0
+  GW=4  423.5  short  51.0
+  GW=2  397.5  short  25.0
+  GW=1  387.5  short  15.0    <- landed.  NARROWED, NOT CLOSED.
+
+EXCHANGE RATE: there is none to negotiate.  4 -> 1 saves 36 tiles AND 192 LUT
+at identical WNS; the only cost is +1,362 FF, 0.155% of the device's 879,360.
+
+RATE: unchanged at every GW, MEASURED at the real shape NN = 4096
+(first region write-back at cycle 7230, done at 11326, identical at GW =
+1/2/4/8; a slowload teeth mutant moves it to 11322/15418).  The brief's
+"GW = 1 has NO MARGIN" was pre-RMSWIRE arithmetic; see CORRECTION_TO_BRIEF.txt.
+
+FUNCTIONAL: sim:tb_llama_top_normw PASS at all four GW, with teeth
+(mutation_matrix.txt: the sub-word mirror mutant FAILS at GW 2 and 4, and does
+not bite at GW 1 because there it is a semantic no-op).
+
+SIDE FINDING: sim:seamgate_{real,stub,seq} were FAILING at HEAD before this
+track, because tools/ref9b/capture_llama_top.sh's hand-maintained file list
+never gained rmsnorm_rs_mem.  Fixed; all three now PASS.
+
+NOT ANSWERED: the last 15 tiles; whether the composed BRAM sum is additive at
+all; whether GW = 1 routes.  See the write-up's "open, not yet answered".

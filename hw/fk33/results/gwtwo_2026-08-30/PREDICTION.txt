@@ -1,0 +1,92 @@
+TRACK GWTWO -- PREDICTION, WRITTEN BEFORE ANY DRAW
+==================================================
+Recorded 2026-08-30, before a single Vivado invocation.  Tree SHA in
+PINNED_SHA.txt.  Registered so the report can say whether it held.
+
+THE SHAPE, DERIVED
+------------------
+  NN      = SHAPE.hidden = 4096          (rtl/model_cfg_pkg.vhd, MODEL 9B)
+  MANT_W  = 16
+  NW_N    = 65                           (266,240 lines / 4096, MEASURED by
+                                          wc -l on norm_w_9b.hex)
+  bits    = 65 * 4096 * 16 = 4,259,840
+
+  A RAMB36 holds 32,768 data bits + 4,096 parity bits.
+  4,259,840 / 32,768 = 130.0 EXACTLY.  So 130 tiles is the data-only floor at
+  ANY aspect ratio, and 116 is the floor if the parity bits are usable.
+
+  MEASURED at GW = 4 (66,560 x 64): 171 RAMB36.  That is 76.0% of the
+  data-only capacity of 171 tiles, i.e. Vivado is ~1.32x off the floor.
+
+PREDICTION 1 -- THE MAIN ONE
+----------------------------
+  BRAM tile count is approximately GW-INVARIANT: every point in
+  {GW=1, 2, 4, 8} lands within +/- 20% of 171.
+
+  WHY.  The total bit count is fixed by the model, not by GW.  A RAMB36E2 on
+  this device natively supports 32Kx1, 16Kx2, 8Kx4, 4Kx9, 2Kx18, 1Kx36 and
+  512x72 (SDP).  The four candidate word widths are 16, 32, 64 and 128 bits,
+  and EVERY one of them sits on a native width with the same 8/9 padding loss
+  (16 of 18, 32 of 36, 64 of 72, 128 as 2x72).  The depth divides evenly in
+  every case (NW_N*NWORD = 266240 / 133120 / 66560 / 33280, all exact
+  multiples of the corresponding native depth).  There is no pathological
+  aspect ratio in this set, so there is no reason for the tile count to move.
+
+  CONSEQUENCE IF IT HOLDS: GW = 2 does NOT close the 51-tile gap and does not
+  meaningfully narrow it.  The lever NORMURAM named is not a lever.
+
+PREDICTION 2 -- LUT
+-------------------
+  LUT moves by less than 500 between the extreme points, and monotonically
+  with GW: the only GW-dependent logic in the block is the GW-to-1 sub-word
+  mux on 16 bits (zero LUT at GW=1, ~16 LUT6 at GW=4) and the ROM's own
+  depth-cascade output mux, which moves the OTHER way (deeper at small GW).
+  So the two effects partly cancel and the curve may not even be monotone.
+
+  CONSEQUENCE: if prediction 1 holds, THERE IS NO EXCHANGE RATE TO STATE.
+  Tiles-saved-per-LUT-added is 0/x = 0 at every point, which is not a trade,
+  it is a null result.
+
+PREDICTION 3 -- LOAD-RATE MARGIN
+--------------------------------
+  The margin does not move at ANY GW, and the brief's "at GW = 2 the margin
+  halves to 2.0x" is stale.  See CORRECTION_TO_BRIEF.txt: TRACK RMSWIRE
+  already replaced the GW-wide load with a one-element-per-cycle stream, so
+  the load is NN + 2 cycles INDEPENDENT OF GW.
+
+WHAT WOULD FALSIFY EACH
+-----------------------
+  P1: any drawn point differing from 171 by more than 34 tiles.
+  P2: any pair of points differing by more than 500 LUT.
+  P3: tb_rmswire_loadrace reporting a different boundary cycle at any GW,
+      or w_active's first rise moving.
+
+================================================================================
+OUTCOME, appended after the draws.  DO NOT EDIT THE ABOVE.
+================================================================================
+
+P1  BRAM is approximately GW-invariant (+/- 20%, falsified by > 34 tiles)
+    ** FALSIFIED, by its own criterion. **
+    MEASURED 135 / 145 / 171 / 226 RAMB36 at GW = 1 / 2 / 4 / 8.
+    GW = 1 is 36 tiles below GW = 4, and 36 > 34.
+    GW = 8 is 55 tiles ABOVE, so the full span is 91 tiles on a 171 base.
+    The reasoning was sound clause by clause and assumed Vivado packs to the
+    primitive's capability.  It does not: efficiency against the RAMB36's
+    32,768 data bits is 96.3% / 89.6% / 76.0% / 57.5%, degrading monotonically
+    as the word widens.
+
+P2  LUT moves by less than 500 between the extremes, possibly non-monotone
+    ** HELD, and it was monotone. **
+    5,073 / 5,229 / 5,265 / 5,277.  Span 204 < 500.  Monotone increasing in GW,
+    so the sub-word mux dominates and the depth-cascade effect I expected to
+    push the other way did not appear at this resolution.
+
+P3  The load-rate margin does not move at any GW
+    ** HELD, MEASURED at the real shape NN = 4096. **
+    first_uw_en = 7230 and done = 11326 at all four GW, identical to the cycle,
+    with a slowload teeth mutant moving it to 11322 / 15418 (+4,092 = NN - 4).
+
+CONSEQUENCE OF P1 BEING WRONG: the track's whole deliverable exists because of
+it.  Had P1 held there would have been no lever and no exchange rate to state.
+The registered falsification criterion is what made the result readable as a
+result instead of as noise.
