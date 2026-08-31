@@ -16,13 +16,19 @@
 -- 5.000 ns / 200.000 MHz in the routed shell build
 -- (hw/fk33/results/build_e2e_2026-08-29/e2e_timing_routed_summary.rpt).
 --
+-- BOTH AREA LEVERS ARE IN THIS FILE as of 2026-08-30 (TRACK ROUTE2):
+--   * lever C, `a_eng`'s CB_STYLE generic, printed in the instance list below;
+--   * the norm lever, which is NOT a generic -- `d_norm` is an extraction of
+--     rtl/llama_top.vhd's `gvr` block and HEAD's `gvr` binds rmsnorm_rs_mem.
+-- The generator ABORTS if the extraction it is handed binds the flat unit.
+--
 -- NORM_W_IMAGE IS EMPTY HERE, as it was in every row of the booking this
 -- is compared against.  TRACK NWROM MEASURED that a real gain image costs
 -- +32,943 CLB LUT, so that must be ADDED to any number this top produces
 -- before comparing it to a pb_core budget.
 --
 -- Instances, and the generics each carries:
---   a_eng    fk33_engine      854 ports, 851 exported   (defaults)
+--   a_eng    fk33_engine      854 ports, 851 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
 --   c_attn   attn_block        68 ports,  66 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
@@ -1265,8 +1271,11 @@ begin
     hbm_aclk_i <= hbm_aclk;
   end generate;
 
-  -- a_eng : fk33_engine  (all generics at their file defaults)
+  -- a_eng : fk33_engine  CB_STYLE="distributed"
   a_eng : entity work.fk33_engine
+    generic map(
+      CB_STYLE => "distributed"
+    )
     port map(
       core_clk => core_clk_i,
       core_aresetn => core_aresetn,

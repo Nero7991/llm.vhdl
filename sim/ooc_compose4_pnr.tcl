@@ -107,6 +107,72 @@ proc emit_util {tag phase outdir} {
     return $row
 }
 
+# WHY A PLACED VERDICT IS PRINTED BEFORE THE ROUTER RUNS.
+# The previous composed attempt was killed mid-route, and the three numbers
+# that made its failure attributable -- placed CLB occupancy, the congestion
+# LEVEL, and the failing-endpoint count -- had to be dug out of reports
+# afterwards.  Printed here they exist even if the run dies later, and they are
+# what lets a route failure be attributed to area rather than merely observed.
+#
+# CONGESTION LEVEL is read from the placed congestion report rather than from a
+# property, because `report_design_analysis -congestion` is the only thing that
+# produces the per-direction level table on this part.
+proc c4_place_verdict {tag phase outdir} {
+    set clb [llength [get_sites -quiet -filter {SITE_TYPE =~ SLICE* && IS_USED}]]
+    puts "C4_PLACED $phase clb_sites_used $clb"
+    # Failing endpoints, both directions, from the timing summary object.
+    set ns [get_timing_paths -quiet -delay_type max -max_paths 1]
+    if {[llength $ns]} {
+        puts "C4_PLACED $phase wns [get_property SLACK $ns]"
+    }
+    set nfail 0
+    foreach p [get_timing_paths -quiet -delay_type max -max_paths 200000 \
+                   -slack_lesser_than 0 -nworst 1] {
+        incr nfail
+    }
+    puts "C4_PLACED $phase failing_endpoints_max $nfail"
+    report_design_analysis -congestion \
+        -file [file join $outdir congestion_${tag}_${phase}.rpt]
+}
+
+# THE OBJECT-LEVEL CENSUS.  MEASURED twice in this project that Vivado's
+# inference log lies in BOTH directions: `[Synth 8-7186]` printed 100 lines
+# here saying `cb[*]` was not inferred as RAM, and LEVERC48 found 1,536
+# `RAM32M16` rows in the same run's mapping report.  So the lever is verified
+# against `get_cells`, never against the log and never against a utilization
+# row alone.  The discriminator is exact and stated in advance:
+#   lever C ACTIVE   -> cb_reg* FF = 0      and RAM32M16 cells present
+#   lever C INACTIVE -> cb_reg* FF = 6,144  and RAM32M16 = 0
+proc c4_census {} {
+    set ram [get_cells -quiet -hier -filter {REF_NAME =~ RAM*}]
+    array set byref {}
+    foreach c $ram {
+        set r [get_property REF_NAME $c]
+        if {[info exists byref($r)]} { incr byref($r) } else { set byref($r) 1 }
+    }
+    foreach r [lsort [array names byref]] {
+        puts "C4_CENSUS ref $r $byref($r)"
+    }
+    puts "C4_CENSUS ram_cells_total [llength $ram]"
+    set cbff [llength [get_cells -quiet -hier -filter \
+        {NAME =~ *cb_reg* && REF_NAME =~ FD*}]]
+    puts "C4_CENSUS cb_reg_ff $cbff"
+    set cbram [llength [get_cells -quiet -hier -filter \
+        {NAME =~ *cb_reg* && REF_NAME =~ RAM*}]]
+    puts "C4_CENSUS cb_reg_ram $cbram"
+    # The norm lever, same treatment: the memory-backed unit must be present as
+    # a hierarchy, and the flat one must be absent.
+    puts "C4_CENSUS rmsmem_cells [llength [get_cells -quiet -hier \
+        -filter {NAME =~ *u_rms*}]]"
+    if {$cbff == 0 && $cbram > 0} {
+        puts "C4_LEVERC ACTIVE  cb_reg_ff=0 cb_reg_ram=$cbram"
+    } elseif {$cbff > 0 && $cbram == 0} {
+        puts "C4_LEVERC INACTIVE  cb_reg_ff=$cbff cb_reg_ram=0"
+    } else {
+        puts "C4_LEVERC AMBIGUOUS  cb_reg_ff=$cbff cb_reg_ram=$cbram"
+    }
+}
+
 # ---------------------------------------------------------------------------
 proc c4_read_all {rtldir fkdir} {
     set n 0
@@ -236,14 +302,30 @@ number below would be meaningless."
             -file [file join $outdir pbutil_${tag}_placed.rpt]
     }
     write_checkpoint -force [file join $outdir ${tag}_placed.dcp]
+    c4_place_verdict $tag placed $outdir
 
     set t0 [clock seconds]
     phys_opt_design -quiet
     puts "C4_PHYSOPT_SECONDS [expr {[clock seconds] - $t0}]"
+    write_checkpoint -force [file join $outdir ${tag}_physopt.dcp]
+    c4_place_verdict $tag physopt $outdir
 
+    # ROUTE_DESIGN IS WRAPPED, and the wrapper is the point of this stage.
+    # `[Route 35-447] Congestion is preventing the router from routing all
+    # nets` is an ERROR: in a bare batch script it aborts the run and every
+    # report below -- the congestion map, the failing-endpoint attribution, the
+    # unrouted-net census -- is never written.  MEASURED: that is exactly what
+    # the previous composed attempt (`ac35293`) left behind, a killed run with
+    # nothing but the log to reason from.  A negative answer is a RESULT here,
+    # so the reports have to survive it.  `C4_ROUTE_RC` is the verdict; it is
+    # NOT the sentinel, and the caller must not confuse the two.
     set t0 [clock seconds]
-    route_design
+    set rrc [catch {route_design} rmsg]
     puts "C4_ROUTE_SECONDS [expr {[clock seconds] - $t0}]"
+    puts "C4_ROUTE_RC $rrc"
+    if {$rrc} {
+        puts "C4_ROUTE_ERROR $rmsg"
+    }
 
     emit_util $tag routed $outdir
     report_timing_summary -file [file join $outdir timing_${tag}_routed.rpt]
@@ -273,6 +355,24 @@ number below would be meaningless."
     set n_all  [llength [get_nets -quiet -hier]]
     puts "C4_ROUTE_STATUS nets=$n_all errors=$n_err unrouted=$n_unr partial=$n_part"
 
+    # WHERE, not merely WHETHER.  If the router does not finish, "it still does
+    # not route" is barely a result; the reusable part is which hierarchy the
+    # unrouted nets belong to and whether the failure is still net-dominated.
+    # `a_eng` is subsystem A, proven on silicon and unchanged, so its share of
+    # the unrouted nets is this run's attribution control: a large share means
+    # the failure is the composition's density, not any one subsystem.
+    array set unr {}
+    foreach n [get_nets -quiet -hier -filter \
+            {ROUTE_STATUS == UNROUTED || ROUTE_STATUS == PARTIAL || \
+             ROUTE_STATUS == ANTENNAS || ROUTE_STATUS == CONFLICTS}] {
+        set nm [get_property NAME $n]
+        set top [lindex [split $nm "/"] 0]
+        if {[info exists unr($top)]} { incr unr($top) } else { set unr($top) 1 }
+    }
+    foreach k [lsort [array names unr]] {
+        puts "C4_UNROUTED_BY_INST $k $unr($k)"
+    }
+
     set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
     set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
     puts "C4_TIMING wns=$wns whs=$whs"
@@ -284,6 +384,21 @@ number below would be meaningless."
         }
     }
     puts "C4_DONE impl $tag"
+
+} elseif {$stage eq "census"} {
+    # A CHEAP SECOND INVOCATION, deliberately separate.  Opening a checkpoint
+    # and running get_cells costs minutes, and the alternative -- folding the
+    # census into the synthesis stage -- means a census bug throws away an hour
+    # of synthesis.  It also lets a checkpoint written before this proc existed
+    # still be censused.
+    if {$dcp eq "" || ![file exists $dcp]} {
+        error "C4 FAIL: C4_DCP is '$dcp', which does not exist."
+    }
+    puts "C4_BEGIN census tag=$tag dcp=$dcp"
+    open_checkpoint $dcp
+    emit_util $tag census $outdir
+    c4_census
+    puts "C4_DONE census $tag"
 
 } else {
     error "C4 FAIL: unknown C4_STAGE '$stage'"

@@ -250,6 +250,27 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity fk33_engine is
+  generic(
+    -- LEVER C, forwarded to matvec_int4_desc_axi -> matvec_int4 ->
+    -- matvec_core.  "regs" is the shipping value and keeps this entity
+    -- byte-identical in behaviour to the bitstream on card 1; TRACK LEVERC48
+    -- (`a4828ab`) MEASURED "distributed" at ROWS_IF = 48 as -42,633 CLB LUT,
+    -- MUXF7 24,583 -> 0, MUXF8 12,288 -> 0, +13,195 CLB FF, +12,288 LUTRAM.
+    --
+    -- ADDED 2026-08-30 BY TRACK ROUTE2, and the reason it had to be added
+    -- here: LEVERC48 forwarded CB_STYLE through matvec_int4_desc_axi,
+    -- matvec_int4 and matvec_int4_axi, but `fk33_engine` is the entity that
+    -- BINDS matvec_int4_desc_axi for the card and for `compose4_top`, and it
+    -- had no generics at all.  So the lever was reachable from a unit
+    -- synthesis of matvec_core and from NO top the card or the composition
+    -- actually builds.  Passing it on the `synth_design` line does not help:
+    -- -generic reaches the TOP's generics only, never a deep instance.
+    --
+    -- Every unrecognised value silently means "regs" -- see the note at
+    -- rtl/matvec_core.vhd:238 and its CHK_CB_STYLE typo guard, which is what
+    -- catches a misspelling rather than this wrapper.
+    CB_STYLE : string := "regs"
+  );
   port(
     ------------------------------------------------------------------------
     -- clocks and resets
@@ -522,6 +543,7 @@ begin
       NPORTS_S      => NPORTS_S,
       AXI_DW        => AXI_DW,
       ADDR_W        => ADDR_W,
+      CB_STYLE      => CB_STYLE,
       MAXCOLS       => {MAXCOLS},
       MAXROWS_BFP   => {MAXROWS_BFP},
       FIFO_DEPTH    => {FIFO_DEPTH},
