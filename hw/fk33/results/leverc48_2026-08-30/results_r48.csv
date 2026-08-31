@@ -1,0 +1,3 @@
+tag,part,rows_if,blk,lut,lut_as_logic,lut_as_mem,dist_ram,shift_reg,ff,bram36,dsp,muxf7,muxf8,fdre,ram_cells,srl,cb_ram_cells,cb_ff_cells,wns_ns
+v_regs_r48,xcvu33p-fsvh2104-2L-e,48,32,121139,120013,1126,296,830,60268,21.5,1584,24583,12288,60268,592,830,0,6144,0.242
+v_dist_r48,xcvu33p-fsvh2104-2L-e,48,32,78506,65092,13414,12584,830,73463,21.5,1584,0,0,73463,25168,830,26112,0,-0.027

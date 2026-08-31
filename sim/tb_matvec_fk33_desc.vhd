@@ -89,6 +89,16 @@ entity tb_matvec_fk33_desc is
     MAXROWS : positive := 192;
     MAXCOLS : positive := 4096;
     STALL   : natural  := 3;
+    -- LEVER C, forwarded to BOTH DUTs.  Default "regs" is the shipping design,
+    -- so this bench's default behaviour and its gate row do not move.  With
+    -- -gCB_STYLE=distributed the SAME element-exact comparison against
+    -- ref/matvec_int4.c runs through matvec_int4_desc_axi -> matvec_int4 ->
+    -- matvec_core with the codebook in LUTRAM: this is the value oracle at the
+    -- level of the WRAPPER, which is where the generic threading it tests
+    -- lives.  matvec_core prints "LEVER C ACTIVE" when, and only when, the
+    -- generic actually arrives -- a wrapper that declares it and forgets to
+    -- forward it passes every check here in silence otherwise.
+    CB_STYLE : string  := "regs";
     -- 40, not 64.  A base above 4 GB must still be representable (the FK33 has
     -- 8 GB of HBM and BASE_HI puts every sub-region past the 4 GB line), but
     -- ADDR_W must be BELOW 64 or the ERR_ADDR check is vacuous: at 64 no bit
@@ -583,7 +593,7 @@ begin
                 FIFO_DEPTH => 256, MAXB => MAXB, MAXOUT => 16,
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
                 USE_XEXP_PORT => XEXP_PORT,
-                DUAL_CLK => DUAL, C_S_AXI_ADDR_WIDTH => 8)
+                DUAL_CLK => DUAL, CB_STYLE => CB_STYLE, C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => mclk,
       s_axi_awaddr => awaddr, s_axi_awprot => "000",
@@ -757,7 +767,7 @@ begin
                 MAXCOLS => B_COLS, MAXROWS_BFP => B_ROWS,
                 FIFO_DEPTH => 64, MAXB => MAXB, MAXOUT => 2,
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
-                DUAL_CLK => false, C_S_AXI_ADDR_WIDTH => 8)
+                DUAL_CLK => false, CB_STYLE => CB_STYLE, C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => clk,
       s_axi_awaddr => b_awaddr, s_axi_awprot => "000",

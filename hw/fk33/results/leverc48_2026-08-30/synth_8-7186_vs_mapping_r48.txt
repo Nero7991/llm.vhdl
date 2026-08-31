@@ -1,0 +1,32 @@
+TRACK LEVERC48 -- the [Synth 8-7186] trap at the FK33 geometry (ROWS_IF=48)
+source: /mnt/storage/leverc48-scratch/run_v_dist_r48/vivado_v_dist.log, Vivado 2023.2, xcvu33p-fsvh2104-2L-e
+
+--- Vivado says, 100 times, that it did NOT infer the RAM: ---
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[0][0]' is not inferred as ram due to incorrect usage [/mnt/storage/leverc48-scratch/vars/v_dist/matvec_core.vhd:214]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[0][1]' is not inferred as ram due to incorrect usage [/mnt/storage/leverc48-scratch/vars/v_dist/matvec_core.vhd:214]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'cb[0][2]' is not inferred as ram due to incorrect usage [/mnt/storage/leverc48-scratch/vars/v_dist/matvec_core.vhd:214]
+INFO: [Common 17-14] Message 'Synth 8-7186' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+total 8-7186 lines in v_dist_r48 log: 101
+total 8-7186 lines in v_regs_r48 log: 0
+
+--- and the SAME RUN's Distributed RAM Final Mapping Report: ---
+Distributed RAM: Final Mapping Report
++------------------+------------------+----------------+----------------------+----------------+
+|Module Name       | RTL Object       | Inference      | Size (Depth x Width) | Primitives     | 
++------------------+------------------+----------------+----------------------+----------------+
+|matvec_core__GB10 | cb_reg[1023][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core__GB10 | cb_reg[1022][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core__GB10 | cb_reg[1021][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+|matvec_core__GB10 | cb_reg[1020][11] | User Attribute | 16 x 8               | RAM32M16 x 1   | 
+...
+cb_reg rows in that report, v_dist_r48: 1536  (= CB_COPIES at 1,536 lanes)
+cb_reg rows in that report, v_regs_r48: 0
+
+--- the object-level census, which is the authority ---
+v_regs_r48   CB cells named cb_reg*:  RAM=0      FF=6144    (48 copies x 16 entries x 8 bits)
+v_dist_r48   CB cells named cb_reg*:  RAM=26112  FF=0       (1,536 copies x 17 cells: the
+                                                             RAM32M16 macro plus its 16 leaf
+                                                             RAMD32/RAMS32 cells)
+
+Every one of the 100 objects [Synth 8-7186] names is a RAM32M16 in the report above.
+The log is wrong in the same direction CBINFER measured it wrong at ROWS_IF 4/8/16.

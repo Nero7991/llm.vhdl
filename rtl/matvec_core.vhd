@@ -193,6 +193,35 @@ architecture rtl of matvec_core is
   -- composed A+B+C+D fit that is 40% of the overshoot, not all of it.
   -- See docs/debugging/2026-08-30_leverc-codebook-lutram.md.
   --
+  -- NOW DRAWN AT THIS GEOMETRY (TRACK LEVERC48, docs/debugging/
+  -- 2026-08-30_leverc48-the-fk33-geometry.md).  MEASURED, OOC synthesis of
+  -- matvec_core at ROWS_IF=48 BLK=32 on xcvu33p-fsvh2104-2L-e, "regs" against
+  -- "distributed" in one session:
+  --
+  --   CLB LUT      121,139 -> 78,506     -42,633
+  --   LUT as logic 120,013 -> 65,092     -54,921
+  --   LUT as memory  1,126 -> 13,414     +12,288  = 8.000 per lane, exactly
+  --   MUXF7         24,583 -> 0          -24,583  = 16.005 per lane
+  --   MUXF8         12,288 -> 0          -12,288  = 8.000 per lane, exactly
+  --   CLB FF        60,268 -> 73,463     +13,195  (DERIVED +13,200, residual -5)
+  --   BRAM / DSP / SRL unchanged;  WNS @3.3 ns  +0.242 -> -0.027
+  --
+  -- Two corrections to the paragraph above, both from that draw:
+  --
+  --   * The codebook's LUT footprint here is 54,921, not the 49,152 charged
+  --     above -- 35.76 LUT per lane against CONGEST's shell figure of 32.6.
+  --     There are ~3.8 LUT per lane of read-path logic OUTSIDE the F7/F8
+  --     shapes that also go away.  Every CLB term proportional to that
+  --     footprint moves up by 11.7%.  The CLB saving is still NOT MEASURED:
+  --     this is synthesis, and the claim is about PACKING, which only
+  --     place_design measures.  Lever C does not close the composed fit under
+  --     either end of the bound, which is LEVERC's conclusion unchanged.
+  --   * WNS moves the WRONG WAY at this geometry, by 0.269 ns, having been
+  --     marginally BETTER at 128/256/512 lanes (+0.020/+0.022/+0.044).  Both
+  --     are still well above target (327.0 vs 300.6 MHz OOC), so this is not a
+  --     blocker; it is the first evidence that the CB_BCAST rank named below
+  --     is load-bearing at 1,536 copies rather than optional.
+  --
   -- CB_LANES_PER_COPY is the real knob; CB_ROWS_PER_COPY is the old spelling
   -- of it and is preserved exactly.  For 0 <= j < BLK,
   --   (rr*BLK + j) / (CB_ROWS_PER_COPY*BLK)  ==  rr / CB_ROWS_PER_COPY
@@ -205,6 +234,27 @@ architecture rtl of matvec_core is
   begin
     if style = "distributed" then return 1; else return rpc * blk_g; end if;
   end function;
+
+  -- CB_STYLE IS A STRING, AND EVERY UNRECOGNISED VALUE SILENTLY MEANS "regs".
+  -- cb_lpc_f above, and cb_dt_f/cb_rs_f below, all test `style = "distributed"`
+  -- and fall through to the register bank otherwise.  So `CB_STYLE =>
+  -- "distrbuted"`, or a stray trailing space, or a wrapper that forgets to
+  -- forward the generic at all, builds the design that ships and reports
+  -- success -- which is exactly the failure class this project keeps finding:
+  -- a lever that does nothing and looks like it worked.  Two of those three
+  -- cases are typos and are caught here.
+  --
+  -- An out-of-range `natural` and NOT `assert ... severity failure`: Vivado
+  -- silently IGNORES a failing severity-failure assert in synthesis (MEASURED,
+  -- on record at rtl/llama_top.vhd:165) and stops on [Synth 8-11323] "assigned
+  -- value '-1' out of range".  This constant is deliberately unused elsewhere;
+  -- it fires during DECLARATION elaboration, in both GHDL and Vivado.
+  function cb_style_chk_f(style : string) return integer is
+  begin
+    if style = "regs" or style = "distributed" then return 0; end if;
+    return -1;
+  end function;
+  constant CHK_CB_STYLE : natural := cb_style_chk_f(CB_STYLE);
   constant CB_LANES_PER_COPY : positive :=
     cb_lpc_f(CB_STYLE, CB_ROWS_PER_COPY, BLK);
   constant CB_COPIES : positive :=
@@ -261,10 +311,33 @@ architecture rtl of matvec_core is
 
   -- dont_touch is what stops Vivado merging the replicas back into one table,
   -- and it is required for "regs".  It is WRONG for "distributed": a signal
-  -- marked dont_touch is not a RAM inference candidate.  UNVERIFIED, and named
-  -- as such: whether Vivado accepts a non-literal attribute value here, and
-  -- whether it infers LUTRAM from an array-of-array at all, has not been
-  -- synthesised.  If either fails the fallback is two sibling architectures.
+  -- marked dont_touch is not a RAM inference candidate.
+  --
+  -- ALL THREE OF THE QUESTIONS THIS BLOCK USED TO CALL "UNVERIFIED" ARE NOW
+  -- MEASURED (TRACK CBINFER, 0d24f7d, Vivado 2023.2, xcvu33p-fsvh2104-2L-e,
+  -- six RTL variants at ROWS_IF 4/8/16; docs/debugging/
+  -- 2026-08-30_cbinfer-does-cb-infer-lutram.md):
+  --
+  --   * The array-of-array-of-signed DOES infer distributed RAM.  Every copy
+  --     becomes one RAM32M16 (16 x 8, 8 LUTs) and the 16:1 mux per lane goes
+  --     away.  Object-level census at ROWS_IF=8, cells named cb_reg*:
+  --     "regs" RAM=0 FF=1024, "distributed" RAM=4352 FF=0.
+  --   * Vivado ACCEPTS an attribute value that is a constant returned by a
+  --     function of a generic; it quotes the value back and credits 128 of
+  --     128 copies to "User Attribute" in the Final Mapping Report.
+  --   * BUT THE ATTRIBUTE EARNS NOTHING.  The attribution control -- both
+  --     attributes on cb deleted outright -- is byte-identical in every
+  --     reported column and merely relabels the inference "Implied".  The
+  --     two-sibling-architecture fallback named here is NOT required and is
+  --     not built.  ram_style = "registers" is likewise a no-op on the
+  --     shipping build.  Both functions are kept because they state the
+  --     intent at the one place the style is decided, not because the tool
+  --     needs them.
+  --
+  -- DO NOT READ THE SYNTHESIS LOG FOR THIS.  [Synth 8-7186] says one hundred
+  -- times that ram_style = "distributed" was ignored and cb[c][e] "is not
+  -- inferred as ram due to incorrect usage".  Every object it names is a
+  -- RAM32M16 in the same run's mapping report.  The census is the authority.
   function cb_dt_f(style : string) return string is
   begin
     if style = "distributed" then return "false"; else return "true"; end if;
@@ -550,6 +623,41 @@ architecture rtl of matvec_core is
   signal accept  : std_logic;
   signal inflight: std_logic;
 begin
+
+  -- LEVER C IS SILENT WHEN IT IS OFF AND LOUD WHEN IT IS ON.
+  --
+  -- CB_STYLE reaches this entity through matvec_int4_desc_axi -> matvec_int4,
+  -- and a wrapper that declares the generic but forgets to FORWARD it produces
+  -- the shipping design while every bench still passes -- indistinguishable
+  -- from a lever that was never asked for.  CHK_CB_STYLE above catches a typo
+  -- but cannot catch a dropped forward, because "regs" is legal.  This process
+  -- is the observable: run any wrapper-level bench with the generic set and
+  -- the line either appears or it does not.
+  --
+  -- Guarded so the DEFAULT build's logs are byte-identical to what they were,
+  -- and wrapped in translate_off so the synthesised netlist provably cannot
+  -- move: the entity below this line is the one proven bit-exact on silicon.
+  -- pragma translate_off
+  --
+  -- KEYED ON THE BUILT SHAPE, NOT ON THE STRING.  An earlier version tested
+  -- `CB_STYLE /= "regs"` and MEASURED itself wrong: with CHK_CB_STYLE deleted,
+  -- CB_STYLE => "distrbuted" printed "LEVER C ACTIVE ... CB_COPIES=48
+  -- CB_LANES_PER_COPY=32" -- announcing the lever over a design that is the
+  -- register bank.  CB_LANES_PER_COPY = 1 is reachable only through the
+  -- distributed branch of cb_lpc_f (the other branch returns rpc*BLK >= 32),
+  -- so this reports a fact about the netlist rather than a fact about a string.
+  p_cb_style_ann : process
+  begin
+    if CB_LANES_PER_COPY = 1 then
+      report "matvec_core: LEVER C ACTIVE  CB_STYLE=" & CB_STYLE
+           & "  CB_COPIES=" & integer'image(CB_COPIES)
+           & "  CB_LANES_PER_COPY=" & integer'image(CB_LANES_PER_COPY)
+           & "  CB_WR_LAT=" & integer'image(CB_WR_LAT)
+        severity note;
+    end if;
+    wait;
+  end process;
+  -- pragma translate_on
 
   -- The adder-tree reclaim routing assumes at least one fabric level
   -- exists (BLK >= 4).  BLK = 32 in every configuration used, giving

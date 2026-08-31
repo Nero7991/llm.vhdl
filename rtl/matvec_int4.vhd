@@ -47,7 +47,15 @@ entity matvec_int4 is
     MAXOUT      : positive := 16;
     -- Run the AXI read masters on `aclk` rather than `clk` (spec 14.5 item 3).
     -- The CDC is inside axi_rd_port; nothing else in subsystem A moves.
-    DUAL_CLK    : boolean := false
+    DUAL_CLK    : boolean := false;
+    -- LEVER C, forwarded to matvec_core and to nothing else.  "regs" is the
+    -- register bank plus a 16:1 mux per lane that is on the card today;
+    -- "distributed" collapses the codebook to one copy per LANE so Vivado
+    -- infers it as LUTRAM.  Carried here ONLY so the lever is reachable from a
+    -- board top: before this generic existed the choice could not be made
+    -- above matvec_core, so the lever was implemented and unusable.
+    -- matvec_core hard-errors on any other value.
+    CB_STYLE    : string := "regs"
   );
   port(
     clk, rst : in  std_logic;
@@ -171,7 +179,7 @@ begin
 
   core : entity work.matvec_core
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, MAXCOLS => MAXCOLS,
-                MAXROWS_BFP => MAXROWS_BFP)
+                MAXROWS_BFP => MAXROWS_BFP, CB_STYLE => CB_STYLE)
     port map(clk => clk, rst => rst, start => start,
              n_rows => i_rows, n_cols => i_cols, out_shift => i_osh,
              w_exp => i_wexp, x_exp => i_xexp, out_mode => out_mode,

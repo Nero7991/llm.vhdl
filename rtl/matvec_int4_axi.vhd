@@ -103,6 +103,11 @@ entity matvec_int4_axi is
     FIFO_DEPTH  : positive := 512;
     MAXB        : positive := 256;
     MAXOUT      : positive := 2;
+    -- LEVER C, forwarded to matvec_int4 -> matvec_core.  Changes nothing in
+    -- the AXI-Lite register map, so the objection this file's header raises to
+    -- shape-moving generics does not apply.  matvec_core hard-errors on any
+    -- value other than "regs" or "distributed".
+    CB_STYLE    : string := "regs";
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -295,7 +300,7 @@ begin
                 NPORTS_S => NPORTS_S,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                 MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT, CB_STYLE => CB_STYLE)
     port map(clk => s_axi_aclk, rst => rst, start => start,
              n_rows => r_rows, n_cols => r_cols, out_shift => r_osh,
              w_exp => r_wexp, x_exp => r_xexp, out_mode => r_mode,

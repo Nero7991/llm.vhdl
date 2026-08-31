@@ -163,6 +163,12 @@ entity matvec_int4_desc_axi is
     -- the whole memory side -- weights, scales and the descriptor -- is one
     -- domain and every word crosses through the same tested FIFO.
     DUAL_CLK    : boolean := false;
+    -- LEVER C.  Forwarded to matvec_int4 -> matvec_core and to nothing else;
+    -- it changes no register decode, no port width and no descriptor field, so
+    -- unlike the generics this file's header refuses to add, it is invisible to
+    -- a host driver.  "regs" is what is on the card; "distributed" puts the
+    -- IQ4_NL codebook in LUTRAM.  matvec_core hard-errors on any other value.
+    CB_STYLE    : string := "regs";
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -641,7 +647,7 @@ begin
                 NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
                 FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
-                DUAL_CLK => DUAL_CLK)
+                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE)
     port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
              start => core_start,
              n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
