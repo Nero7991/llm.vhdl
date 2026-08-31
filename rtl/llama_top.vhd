@@ -2436,10 +2436,70 @@ begin
         end function;
         constant GW    : positive := gw_pick(NN);
         constant NWORD : positive := NN / GW;
-        constant WW    : positive := GW * MANT_W;
+        -- WW IS NOW THE VALUE WIDTH AND NOT THE STORE WIDTH.  The store
+        -- holds an INDEX; see the codebook note below.
+        constant WW    : positive := MANT_W;
 
-        type nwrom_t is array (0 to NW_N*NWORD-1)
-          of std_logic_vector(WW-1 downto 0);
+        -- ================================================================
+        -- THE CODEBOOK.  TRACK GAIN16, 2026-08-30.
+        --
+        -- WHY.  TRACK ROUTE2 routed the composed A+B+C+D design inside the
+        -- card's real `pb_core` and MEASURED BRAM at 253.5 used of 372.5
+        -- available: +119.0 headroom WITHOUT this gain image and -52.0 with
+        -- the then-shipping GW = 4 store.  TRACK GWTWO's `GW = 1` bought 36
+        -- of those 52 tiles and stopped, leaving the design SHORT BY 16.
+        --
+        -- WHAT THE COST OF A STORE ACTUALLY IS ON THIS PART, MEASURED, six
+        -- points, one session, BC-250, `sim/ooc_lutdiet_ports.tcl`, the
+        -- `head` point byte-identical to the parent commit:
+        --
+        --   store shape                        RAMB36   DSP    LUT    WNS
+        --   266,240 x 16  (was shipping)          135    41   5,073  +0.971
+        --   266,240 x 14                          126    41   5,070  +0.971
+        --   266,240 x 11  (lossy area probe)       99    41   5,061  +0.971
+        --   266,240 x  9  (lossy area probe)       81    41   5,055  +0.971
+        --   14 bits split 9+4+1 across 3 arrays   126    41   5,075  +0.971
+        --
+        -- THE RULE IS NINE RAMB36 PER BIT OF STORED WORD, and it is exact:
+        -- 126/14, 99/11 and 81/9 are all 9.0000.  Vivado maps this ROM as
+        -- one 32Kx1 cascade PER BIT PLANE -- ceil(266,240/32,768) = 9 -- so
+        -- the cost is linear in the WORD WIDTH and completely indifferent to
+        -- how those bits are grouped.  Splitting 14 bits across three arrays
+        -- of 9, 4 and 1 costs exactly what one 14-bit array costs, to the
+        -- tile: 126 either way.  DO NOT RETRY SPLITTING.
+        --
+        -- SO A 14-BIT STORE IS NOT ENOUGH.  It is lossless for this image
+        -- (the OR over all 266,240 values is 0x3FFF, so bits 15 and 14 are
+        -- always zero) and it buys 9 tiles against a 16-tile gap.  The only
+        -- way further down is to store FEWER BITS PER ELEMENT than the value
+        -- has, which means a codebook.
+        --
+        -- WHAT THE IMAGE PERMITS, MEASURED over norm_w_9b.hex
+        -- (md5 69f614a1515e1160f5dc9e8a9e72fdc3, 266,240 lines):
+        --   distinct values      1,567   -> an 11-bit index
+        --   maximum value       0x2FE0   -> the value itself needs 14 bits
+        --   empirical entropy    9.956 bits/element
+        -- so 11 bits is within 1.05 bits of the information-theoretic floor
+        -- for a fixed-width code, and 9 x 11 = 99 tiles is what it costs.
+        --
+        -- IT IS BUILT AT ELABORATION, FROM THE SAME FILE, ON PURPOSE.  An
+        -- offline encoder plus an in-design decoder are TWO implementations
+        -- and they can drift; worse, the drift is invisible to the obvious
+        -- test, because `decode(encode(x)) = x` holds for a wrong-but-
+        -- consistent pair.  That is the `m7 mutant` recorded in CLAUDE.md,
+        -- where a packer and a reversed decoder passed an entire self-test
+        -- suite.  Here `NORM_W_IMAGE` remains the ONLY input, there is no
+        -- second file, no second generic, and no build step to forget.
+        --
+        -- THE COST IS NOT PAID IN DSP, AND THAT IS THE POINT.  ROUTE2
+        -- measured the routed composition DSP-BOUND at 2,177 of 2,700 =
+        -- 80.63% of pb_core against LUT's 68.33%, with every congested
+        -- window DSP-saturated.  A BRAM lever that spends a multiplier is a
+        -- regression whatever it wins.  DSP is 41 at EVERY point in the
+        -- table above and at this one: the codebook is a table lookup, not
+        -- an arithmetic decode.
+        type cbmark_t is array (0 to 2**MANT_W-1) of boolean;
+        type cbmap_t  is array (0 to 2**MANT_W-1) of natural range 0 to 2**MANT_W-1;
 
         -- NESTED, AND THAT IS A SYNTHESIS REQUIREMENT.  Vivado's elaboration
         -- loop limit is 65,536 PER LOOP STATEMENT (MEASURED, TRACK NWFIX),
@@ -2454,20 +2514,115 @@ begin
         -- it backwards and every gain vector is permuted in groups of four
         -- with no structural symptom at all.  Teeth for exactly that are
         -- mutations U2 and U3 in this track's write-up.
-        function nwrom_flat return nwrom_t is
-          variable r : nwrom_t;
+        -- EVERY LOOP OVER 2**MANT_W IS NESTED, and that is a synthesis
+        -- requirement, not a style.  Vivado's elaboration loop limit is
+        -- 65,536 iterations PER LOOP STATEMENT (MEASURED, TRACK NWFIX) and
+        -- 2**MANT_W is exactly 65,536, i.e. exactly at it.  Same
+        -- restructuring `nw_count` above already carries, for the same
+        -- reason.
+        --
+        -- THE DOMAIN IS THE FULL 2**MANT_W AND NOT A 14-BIT WINDOW.  The
+        -- "14 bits suffice" fact is a property of THIS image produced by the
+        -- current packer at NORM_W_EXP = 12, not a property of the format.
+        -- Building over the full domain means a future image that used the
+        -- top two bits gets a wider index and costs more tiles, rather than
+        -- silently losing them.
+        function cb_mark return cbmark_t is
+          variable r : cbmark_t := (others => false);
+          variable v : natural;
         begin
           for k in 0 to NW_N-1 loop
-            for w in 0 to NWORD-1 loop
-              r(k*NWORD + w) := NW_TBL(k)((w+1)*WW-1 downto w*WW);
+            for i in 0 to NN-1 loop
+              v := to_integer(unsigned(NW_TBL(k)((i+1)*MANT_W-1 downto i*MANT_W)));
+              r(v) := true;
+            end loop;
+          end loop;
+          return r;
+        end function;
+        constant CBMARK : cbmark_t := cb_mark;
+
+        function cb_count return natural is
+          variable n : natural := 0;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then n := n + 1; end if;
+            end loop;
+          end loop;
+          return n;
+        end function;
+        constant NCB : positive := cb_count;
+
+        function cb_map return cbmap_t is
+          variable r : cbmap_t := (others => 0);
+          variable n : natural := 0;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then
+                r(a*256 + b) := n;
+                n := n + 1;
+              end if;
+            end loop;
+          end loop;
+          return r;
+        end function;
+        constant CBMAP : cbmap_t := cb_map;
+
+        -- `log2c(1)` is 0 and a null `std_logic_vector(-1 downto 0)` is not
+        -- what a one-entry codebook wants.  The empty-image path reaches
+        -- this: `NORM_W_IMAGE = ""` gives NW_N = 1 and a single W_CONST
+        -- ramp, whose distinct count is small but never zero.
+        function ixw_of(n : positive) return positive is
+          variable r : natural := log2c(n);
+        begin
+          if r = 0 then return 1; else return r; end if;
+        end function;
+        constant IXW : positive := ixw_of(NCB);
+
+        type cbrom_t is array (0 to NCB-1) of std_logic_vector(MANT_W-1 downto 0);
+        function cb_rom return cbrom_t is
+          variable r : cbrom_t;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then
+                r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+              end if;
             end loop;
           end loop;
           return r;
         end function;
 
-        signal nwrom : nwrom_t := nwrom_flat;
+        type ixrom_t is array (0 to NW_N*NWORD-1)
+          of std_logic_vector(IXW-1 downto 0);
+        function ixrom_flat return ixrom_t is
+          variable r : ixrom_t;
+        begin
+          for k in 0 to NW_N-1 loop
+            for w in 0 to NWORD-1 loop
+              r(k*NWORD + w) := std_logic_vector(to_unsigned(
+                CBMAP(to_integer(unsigned(
+                  NW_TBL(k)((w+1)*MANT_W-1 downto w*MANT_W)))), IXW));
+            end loop;
+          end loop;
+          return r;
+        end function;
+
+        -- `block` FOR THE INDEX STORE AND `distributed` FOR THE CODEBOOK,
+        -- and neither is a preference.  The index store is 266,240 x 11 and
+        -- is the whole point of the change; the codebook is 1,567 x 16 and
+        -- must NOT take a block RAM, because BRAM is the resource that does
+        -- not fit.  `ultra` is not an option for either: this device's
+        -- URAM288 cannot be initialised to anything but zero, Vivado refuses
+        -- the request with only a WARNING and reports `uram=0`, and the "114
+        -- URAM" three briefs once carried for this table was a misread of
+        -- the BRAM column.
         attribute rom_style : string;
-        attribute rom_style of nwrom : signal is "block";
+        signal ixrom : ixrom_t := ixrom_flat;
+        attribute rom_style of ixrom : signal is "block";
+        signal cbrom : cbrom_t := cb_rom;
+        attribute rom_style of cbrom : signal is "distributed";
 
         -- THE 65,536-FLOP STAGING REGISTER IS GONE.  TRACK RMSWIRE.
         --
@@ -2511,7 +2666,7 @@ begin
         -- fired anyway); it costs cycles only in the case that used to be a
         -- silent wrong answer.  `sim/tb_rmswire_loadrace.vhd` measures both
         -- the ungated failure and the gated pass AT hidden = 4096.
-        signal wrd   : std_logic_vector(WW-1 downto 0) := (others => '0');
+        signal wix   : std_logic_vector(IXW-1 downto 0) := (others => '0');
         signal wel   : natural range 0 to NN-1 := 0;   -- element being issued
         signal wel_d : natural range 0 to NN-1 := 0;   -- ... one cycle later
         signal wav   : std_logic := '1';   -- an address is being issued
@@ -2542,14 +2697,26 @@ begin
         -- the point, not an omission: a GW = 1 design cannot have a sub-word
         -- ordering bug because it has no sub-word, and this whole mux is now
         -- dead weight kept only so a future GW > 1 is a one-line change.
-        wsubsel : process(wrd, wel_d) is
+        -- THE CODEBOOK LOOKUP, AND IT IS COMBINATIONAL ON PURPOSE.  A
+        -- REGISTERED second lookup would make the gain load NN+3 cycles
+        -- against a budget of NN+4 where it is NN+2 today, and TRACK
+        -- RMSWIRE's entire load-race analysis -- including
+        -- `sim/tb_rmswire_loadrace.vhd`, which measures the ungated failure
+        -- and the gated pass AT hidden = 4096 -- is written against NN+2.
+        -- Reading a distributed ROM off the index ROM's REGISTERED output
+        -- leaves (wdv, wel_d, nw_wd) the matched triple they already are and
+        -- the load length byte-identical, and pays for it in LUTs, which is
+        -- the currency this design has to spare.
+        --
+        -- THE GW SUB-WORD MUX IS GONE WITH THE STORE IT SELECTED FROM.  At
+        -- the landed GW = 1 it was already a wire (`wel_d mod 1 = 0` is a
+        -- constant condition), and TRACK GWTWO reported under its own name
+        -- that its mirror mutant DOES NOT BITE at GW = 1 because there the
+        -- mutation is a semantic no-op.  A future GW > 1 would reintroduce
+        -- it around `wix` rather than around the value.
+        wsubsel : process(wix) is
         begin
-          nw_wd <= wrd(MANT_W-1 downto 0);
-          for s in 0 to GW-1 loop
-            if (wel_d mod GW) = s then
-              nw_wd <= wrd((s+1)*MANT_W-1 downto s*MANT_W);
-            end if;
-          end loop;
+          nw_wd <= cbrom(to_integer(unsigned(wix)));
         end process;
 
         -- THE LOAD.  Restarted at every instant `nsel` moves `nidx`, which is
@@ -2588,7 +2755,7 @@ begin
           if rising_edge(clk) then
             -- Stage 1.  `wrd`/`wel_d`/`wdv` become a MATCHED TRIPLE next
             -- cycle: all three are derived from the same cycle's `wel`/`wav`.
-            wrd   <= nwrom(nidx*NWORD + (wel / GW));
+            wix   <= ixrom(nidx*NWORD + (wel / GW));
             wel_d <= wel;
             wdv   <= wav;
 
