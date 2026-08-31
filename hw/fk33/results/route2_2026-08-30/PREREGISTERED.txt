@@ -1,0 +1,65 @@
+TRACK ROUTE2 -- PRE-REGISTERED PREDICTIONS, written 2026-08-30 BEFORE the
+composed synthesis with both levers finished.  Recorded so the result can
+falsify something rather than merely be described.
+
+BASELINE, MEASURED, hw/fk33/results/compose4_2026-08-29/util_c4_synth.rpt
+(compose4_top, NO levers, ROWS_IF=48, NORM_W_IMAGE=""):
+  CLB LUT   350,283 / 439,680 = 79.67%
+  CLB FF    355,468
+  F7 / F8    65,108 / 25,788
+  BRAM        246.5 / 672
+  DSP         2,177 / 2,880 = 75.59%
+  URAM            0
+  placed on the FREE DIE: 54,866 of 54,960 CLB = 99.83%, congestion level 7,
+  33,767 failing endpoints, route killed on [Route 35-447].
+
+LEVER DELTAS, MEASURED ELSEWHERE, applied additively (DERIVED):
+  lever C    (LEVERC48 a4828ab, matvec_core OOC at ROWS_IF=48)
+             LUT -42,633   F7 -24,583   F8 -12,288   FF +13,195   LUTRAM +12,288
+  norm lever (RMSWIRE 47c9d9c, llama_top gvr composed)
+             LUT -62,053   F7 -26,736   F8 -13,296   FF -189,515  BRAM +6
+
+PREDICTION 1 (DERIVED, additive, ASSUMES the two levers do not interact and
+that neither delta changes when the other is present):
+  CLB LUT   350,283 - 42,633 - 62,053 = 245,597  = 55.9% of 439,680
+  CLB FF    355,468 + 13,195 - 189,515 = 179,148
+  F7         65,108 - 24,583 - 26,736 = 13,789
+  F8         25,788 - 12,288 - 13,296 =    204
+  BRAM        246.5 + 6 = 252.5 of 672
+  DSP         2,177, UNCHANGED -- neither lever touches an arithmetic unit
+  LUT as Memory  1,126 + 12,288 = 13,414
+
+  FALSIFIED BY: any of the above off by more than 5%.  The additive assumption
+  is exactly the one this project keeps getting burned by (RMSWIRE found a
+  62,053-LUT structure that no unit draw could see), so it is stated as a
+  hypothesis, not a fact.
+
+PREDICTION 2 (DERIVED from CLAUDE.md's census formula
+CLB = F7/4 + (LUT - 2*F7)/D, which predicted 54,846 against a measured 54,866):
+  with F7 = 13,789 and LUT = 245,597 and D = 6.553 (TIMING's squeeze-measured
+  non-mux density):  13,789/4 + (245,597 - 27,578)/6.553 = 3,447 + 33,270
+  = 36,717 CLB = 66.8% of 54,960.
+  ASSUMPTION: D is a property of pressure, and at 67% there is LESS pressure
+  than at the 99.83% where 6.553 was measured, so the real CLB count is
+  EXPECTED TO BE HIGHER than 36,717, not lower.  Stating the direction because
+  a model fitted at one density predicting another is the exact failure
+  CLAUDE.md records for the packing model.
+
+PREDICTION 3 (ESTIMATE, and the one the track exists to test):
+  the design ROUTES inside pb_core = CLOCKREGION_X0Y0:X6Y3.
+  ASSUMPTION: the observed failure was congestion CAUSED BY area at 99.83%
+  occupancy, and roughly a 45% reduction in LUT with F8 essentially eliminated
+  relieves it.
+  FALSIFIED BY: [Route 35-447] again, or a rising unrouted count across router
+  iterations, at an occupancy well under 99.83%.  That result would mean the
+  congestion is topological -- the 1,184 out-of-context ports, the 28 HBM
+  masters' fanout -- and NOT area, which would be a different and more
+  important finding than the fit.
+
+BRAM, STATED IN ADVANCE because it may bind first:
+  252.5 predicted here EXCLUDES the norm gain image (NORM_W_IMAGE = "").
+  The image is 171 tiles (NORMURAM, MEASURED).  252.5 + 171 = 423.5 against
+  372.5 available inside pb_core (576 in region less 203.5 shell cells).
+  So a route that succeeds on LUT still leaves BRAM 51 tiles short once the
+  real gain image is present.  That is TRACK GWTWO's problem, not this one's,
+  and this run reports its own BRAM total explicitly either way.
