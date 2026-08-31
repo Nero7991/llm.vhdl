@@ -517,3 +517,43 @@ two `sim/*.tcl` hardcode that path, and the login user is `labuser`. Eight
 - **The `NORM_LANES` interaction.** All draws are at the shipping
   `NORM_LANES = 4`. `GW` and `NORM_LANES` are independent in the current
   design but that has only been checked at one point.
+
+---
+
+## 10. CORRECTION, appended 2026-08-30 after TRACK ROUTE2 landed `166cbd4`
+
+**Appended, not edited in.** Nothing above is withdrawn; one number is
+sharpened and one open item is closed.
+
+TRACK ROUTE2 ROUTED `compose4_top` with both levers inside the card's real
+`pb_core`, `0` nets with routing errors, and MEASURED its BRAM directly instead
+of deriving it:
+
+> **BRAM, stated explicitly: 253.5 used, 372.5 available for our logic, so
+> +119.0 headroom WITHOUT the gain image and -52.0 with its 171 tiles.**
+
+**That CLOSES this write-up's second open item** -- "whether the composed BRAM
+sum is additive at all". It very nearly is: my DERIVED base was
+`246.5 + 6 = 252.5` against ROUTE2's MEASURED `253.5`, one tile apart, and the
+shortfall my brief carried as 51 is 52 on the composed, routed design.
+
+**Recomputed against the MEASURED base rather than the derived one:**
+
+| GW | image | total | vs 372.5 | |
+|---:|---:|---:|---:|---|
+| 4 (was shipping) | 171 | 424.5 | **short 52.0** | ROUTE2's own figure |
+| 2 | 145 | 398.5 | short 26.0 | |
+| **1 (landed)** | **135** | **388.5** | **short 16.0** | |
+
+So the answer in section 2 stands with one changed digit: **`GW = 1` narrows the
+gap from 52 tiles to 16, which is 69.2% of the way, and does not close it.**
+
+**AND THE BINDING RESOURCE HAS MOVED.** ROUTE2 also measured that the routed
+composition is **DSP-bound**, at 2,177 of 2,700 = 80.63% of `pb_core` against
+LUT's 68.33%, with every congested window DSP-saturated. **That does not make
+the 16 tiles go away** -- the gain image still has to live somewhere and there
+is still not room for it -- but it does mean the follow-on levers in section 7
+buy BRAM in a design whose critical resource is now DSP. **Whoever picks up
+those 16 tiles should check the DSP question first**, because a BRAM lever that
+costs DSP is now a net loss and none of section 7's options has been costed
+that way.
