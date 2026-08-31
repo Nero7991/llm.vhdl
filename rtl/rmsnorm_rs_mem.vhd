@@ -154,7 +154,30 @@ entity rmsnorm_rs_mem is
     -- by counting the two registers as a chain.  The bench measures it.)
     o_raddr : in  std_logic_vector(clog2(N)-1 downto 0);
     o_rdata : out std_logic_vector(15 downto 0);
-    o_exp   : out integer
+    o_exp   : out integer;
+    -- THE DEADLINE TAP.  TRACK RMSWIRE, 2026-08-30, and it exists because a
+    -- parent that streams `w` CONCURRENTLY with the run inherits a deadline it
+    -- could not otherwise see.
+    --
+    -- With flat ports the parent's obligation was "hold w_mant stable", which
+    -- `start` bounds.  With a banked write port the obligation becomes "have
+    -- word j resident before the element loop reads it", and the first `w`
+    -- read is S_RAW -- an INTERNAL state, several hundred cycles after
+    -- `start`, with no external landmark.  TRACK NORMURAM refused this
+    -- composition once on exactly that ground: "the deadline moves from
+    -- `r_go`, which the loader can see, to the unit's internal S_RAW, which it
+    -- cannot".
+    --
+    -- `w_active` IS that landmark.  It is high on every cycle of the two
+    -- element passes that read `w` (S_RAW and S_EMIT) and low everywhere else,
+    -- so a parent, an assertion or a bench can name the instant instead of
+    -- deriving it.  It is a COMBINATIONAL decode of a state register that
+    -- already exists, drives no logic inside this unit, and is safe to leave
+    -- unassociated -- which every existing port map does.
+    --
+    -- IT IS NOT A HANDSHAKE.  It reports; it does not stall.  A parent that
+    -- needs the race not to exist must sequence the load, not watch this pin.
+    w_active : out std_logic
   );
 end entity;
 
@@ -387,6 +410,10 @@ begin
     end if;
   end process;
   o_rdata <= o_bq(to_integer(unsigned(o_rsel)));
+
+  -- The deadline tap.  See the port comment.  S_RAW is the FIRST cycle any
+  -- `w` word is read; S_EMIT is the second pass that reads it again.
+  w_active <= '1' when (state = S_RAW or state = S_EMIT) else '0';
 
   assert N mod LANES = 0
     report "rmsnorm_rs: LANES must divide N" severity failure;

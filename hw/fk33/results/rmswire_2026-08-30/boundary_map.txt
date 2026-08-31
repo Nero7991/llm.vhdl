@@ -1,0 +1,20 @@
+# TRACK RMSWIRE, 2026-08-30.  Boundary map from sim/tb_rmswire_loadrace.vhd
+# N=4096 LANES=4.  PROBE_S rows are UNJUDGED single trials.
+# tail=false is the ordinary previous-op gain, which maps the OBSERVABLE
+# (S_EMIT) boundary.  tail=true is the tail-heavy probe gain, which is the
+# only stimulus that makes an S_RAW-only corruption visible in the output.
+
+PROBE tail=false start_at=0 raw_rise=1067 emit_rise=2097 differing_elements=1301 first=2794 reproduces_oracle=false
+PROBE tail=false start_at=960 raw_rise=2027 emit_rise=3057 differing_elements=22 first=4074 reproduces_oracle=false
+PROBE tail=false start_at=970 raw_rise=2037 emit_rise=3067 differing_elements=9 first=4087 reproduces_oracle=false
+PROBE tail=false start_at=976 raw_rise=2043 emit_rise=3073 differing_elements=1 first=4095 reproduces_oracle=false
+PROBE tail=false start_at=982 raw_rise=2049 emit_rise=3079 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=false start_at=1000 raw_rise=2067 emit_rise=3097 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=true start_at=2004 raw_rise=3071 emit_rise=4101 differing_elements=4096 first=0 reproduces_oracle=false
+PROBE tail=true start_at=2005 raw_rise=3072 emit_rise=4102 differing_elements=4096 first=0 reproduces_oracle=false
+PROBE tail=true start_at=2006 raw_rise=3073 emit_rise=4103 differing_elements=4096 first=0 reproduces_oracle=false
+PROBE tail=true start_at=2007 raw_rise=3074 emit_rise=4104 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=true start_at=2008 raw_rise=3075 emit_rise=4105 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=true start_at=2009 raw_rise=3076 emit_rise=4106 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=false start_at=977 raw_rise=2044 emit_rise=3074 differing_elements=0 first=-1 reproduces_oracle=true
+PROBE tail=false start_at=978 raw_rise=2045 emit_rise=3075 differing_elements=0 first=-1 reproduces_oracle=true

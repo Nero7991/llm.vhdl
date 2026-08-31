@@ -1,0 +1,9 @@
+ORACLE rmsnorm_rs N=4096 LANES=4 o_exp=14 ref(0)=-3755 ref(N-1)=-21764
+MEASURED w_active rises at trial cycles 5165 (S_RAW) and 6195 (S_EMIT), i.e. start + 1067 and start + 2097.  DERIVED earliest safe start: crit_raw=2007 crit_emit=977 (safe when j <= arrival + j/LANES - 2 for every j: vec_mem is read-first AND the unit consumes the word one stage after the address, and the -2 is MEASURED at six points, not reasoned).  The S_EMIT deadline is 1030 cycles slacker, which is why an output comparison alone measures the wrong boundary.
+ROW A resident: start_at=4098 differing_elements=0 first=-1 o_exp=14/14 reproduces_oracle=true expected=true
+ROW B concurrent-from-zero: start_at=0 differing_elements=1301 first=2794 o_exp=14/14 reproduces_oracle=false expected=false
+ROW C emit-unsafe: start_at=961 differing_elements=21 first=4075 o_exp=14/14 reproduces_oracle=false expected=false
+ROW E raw-unsafe tailprobe: start_at=1991 differing_elements=4096 first=0 o_exp=11/14 reproduces_oracle=false expected=false
+ROW F safe tailprobe: start_at=2023 differing_elements=0 first=-1 o_exp=14/14 reproduces_oracle=true expected=true
+ROW G raw-unsafe ordinary-gain (REPORTED, NOT JUDGED): start_at=1991 differing_elements=0 first=-1 o_exp=14/14 reproduces_oracle=true.  This point is INSIDE the S_RAW-unsafe region: elements near the tail are read from the previous norm op's gain.  If it reproduces the oracle, that is a silent corruption an output comparison cannot see, not a safe configuration.
+tb_rmswire_loadrace: PASS -- 6 rows at N=4096 LANES=4, the real 9B shape.  With the gain resident before start the memory-backed unit is bit-identical to rmsnorm_rs; inside either unsafe region it is not.  Both boundaries are derived from MEASURED w_active arrivals and then used to predict new points, and row G records the case an output comparison cannot see.  CHK_VAL=true CHK_EXP=true

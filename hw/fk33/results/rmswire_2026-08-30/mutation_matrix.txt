@@ -1,0 +1,43 @@
+=== TRACK RMSWIRE teeth: the composed norm path in rtl/llama_top.vhd ===
+scratch: /mnt/storage/rmswire/mut2
+
+TAG    FULL          noWACT        noASRT        WHAT
+------ ------------- ------------- ------------- ----
+R0     SURVIVES      -             -             CONTROL: clean tree.  A matrix whose control fails measures nothing.
+R1     SURVIVES      -             -             GATE REMOVED, load at full rate.  EXPECTED TO SURVIVE: the load finishes about 3 cycles before S_GO anyway, which is exactly why a 3-cycle margin is not a design.
+R2     SURVIVES      -             -             LOAD 4x SLOWER, gate INTACT.  EXPECTED TO SURVIVE: the gate turns a blown budget into a stall instead of a wrong number.  This is the row that says the gate is structural.
+R3     K:loadassert  K:loadassert  K:landmarks   LOAD 4x SLOWER AND THE GATE REMOVED.  The composition without its interlock.  Must be killed by something.
+R4     K:landmarks   K:landmarks   K:landmarks   w STREAM, m7 hazard: the GW-to-1 sub-word select reversed, so every gain vector is permuted in groups of four with no structural symptom.
+R5     K:landmarks   K:landmarks   K:landmarks   w STREAM: the bank write address off by one, so the gain is rotated by one element.
+R6     K:landmarks   K:landmarks   K:landmarks   x STREAM: the read pass writes each element one address high, so the residual stream is rotated going in.
+R7     K:landmarks   K:landmarks   K:landmarks   o STREAM: the write-back consumes the bank output ONE CYCLE EARLY, which is exactly the latency the flat port did not have.
+R8     K:landmarks   K:landmarks   K:landmarks   o STREAM: the region write address off by one against the bank read address.
+R9     K:landmarks   K:landmarks   K:landmarks   THE LOAD NEVER RESTARTS: correct at norm op 0, stale for every op after it.  TRACK NORMURAM's U5 re-asked of the rewritten loader.
+R11    SURVIVES      -             -             GW forced to 1, so the ROM holds one element per word.  The VALUES are unchanged and this MUST survive; it is the resolution floor.
+
+=== the w_active tap, judged by sim/tb_rmswire_loadrace.vhd ===
+The tap feeds an assertion that never fires in a correct design, so
+tb_llama_top_normw cannot see it break.  The loadrace bench TIMES both
+gain-reading passes off it, so a broken tap moves every boundary it
+derives.  That is the only check with teeth on this pin.
+
+TAG    FULL        noVAL       noEXP       WHAT
+------ ----------- ----------- ----------- ----
+T0     SURVIVES    -           -           CONTROL: the clean unit.
+T1     KILLED      KILLED      KILLED      TAP BLIND TO S_RAW: it reports only the later, slacker pass, so the derived safe boundary becomes about 1,030 cycles too generous.
+T2     KILLED      KILLED      KILLED      TAP TIED HIGH: no second rise, so neither pass is timed.
+T3     KILLED      KILLED      KILLED      TAP TIED LOW: no rise at all.
+
+scratch kept at /mnt/storage/rmswire/mut2
+
+=== ADDENDUM: the FOURTH attribution column, run separately on R3 ===
+The matrix above was produced by a three-column version of
+sim/mutate_rmswire.sh.  R3 is the only row where an assertion fires at all, so
+the fourth column -- NORMURAM's r_go assertion OFF and this track's wact_chk
+ON, the mirror of noWACT -- was run on R3 alone with the four-column script.
+Without it wact_chk can never be shown to discriminate, because it is checked
+LATER than NORMURAM's and the verdict reports whichever fired first.
+
+TAG    FULL          noWACT        noASRT        onlyWA        WHAT
+------ ------------- ------------- ------------- ------------- ----
+R3     K:loadassert  K:loadassert  K:landmarks   K:wact        LOAD 4x SLOWER AND THE GATE REMOVED.

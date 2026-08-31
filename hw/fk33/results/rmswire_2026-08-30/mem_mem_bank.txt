@@ -1,0 +1,1 @@
+tag=mem_bank peak_rss_kib=12254304 peak_rss_gib=11.69 exit=0

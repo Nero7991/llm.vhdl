@@ -1996,37 +1996,97 @@ begin
       signal tk   : std_logic := '0';
       signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
 
-      -- THE INPUT STAGING VECTOR, HELD ONE WORD PER ELEMENT.
+      -- THE THREE WHOLE-VECTOR SIGNALS ARE GONE.  TRACK RMSWIRE, 2026-08-30.
       --
-      -- `rmsnorm_rs`'s `x_mant` port is one flat N*16 vector, so this adapter
-      -- has to hold the whole vector while the read pass fills it.  It used to
-      -- hold it as a flat `std_logic_vector` and write it with a RUNTIME slice,
-      -- `xv((k-1)*MANT_W-1 downto (k-2)*MANT_W) <= el_rdata`.  MEASURED, TRACK
-      -- LUTDIET and TRACK WRITEDEC: that idiom is the single most expensive
-      -- structure in this design.  Vivado does not infer a write decoder from
-      -- it; it builds a barrel shifter over the whole register, 88,640 LUT
-      -- primitives at `hidden = 4096`, and -- the reason it is easy to miss --
-      -- it consumes ZERO MUXF7 and ZERO MUXF8, so the F7/F8 signature that
-      -- finds the READ muxes does not find this at all.
+      -- WHAT USED TO BE HERE.  `xw` (an array of NN words), its flat view
+      -- `xv`, and `ov` -- three N*16-bit signals, 65,536 bits each at the 9B
+      -- shape, because `rmsnorm_rs`'s `x_mant`, `w_mant` and `o_mant` ports
+      -- are flat whole-vector ports.  `xw` was already the CHEAP form of the
+      -- input: TRACK LUTDIET and TRACK WRITEDEC measured that writing the flat
+      -- `xv` with a runtime slice built a barrel shifter over the whole
+      -- register, 88,640 LUT primitives at `hidden = 4096` and -- the reason
+      -- it was easy to miss -- with ZERO MUXF7 and ZERO MUXF8, so the F7/F8
+      -- signature that finds READ muxes does not find it at all.  Holding the
+      -- bits as an array of words fixed the WRITE side.
       --
-      -- Holding the same bits as an ARRAY OF WORDS makes the write target
-      -- `xw(k-2)`, a whole element, which is the shape Vivado turns into one
-      -- clock enable per word.  Nothing else moves: the write happens on the
-      -- same edges, under the same condition, with the same data and the same
-      -- index, and the flat view `xv` the unit's port needs is rebuilt below
-      -- by a concurrent generate.
+      -- The READ side was never fixed here, because it is not in this file:
+      -- `rmsnorm_rs` selects one element out of its 65,536-bit port at a
+      -- RUNTIME index, three times per element pass, which is a 1024:1 16-bit
+      -- multiplexer per lane.  TRACK RMSMUX MEASURED the whole unit at 40,934
+      -- CLB LUT / 67,196 FF / 17,408 MUXF7 / 8,704 MUXF8 against 4,825 /
+      -- 1,629 / 0 / 0 for `rmsnorm_rs_mem`, which holds the same three vectors
+      -- in LANES-way banked block RAM instead.
       --
-      -- THE TRAP THIS FORM AVOIDS, and it is invisible to synthesis.  A slice
-      -- whose bounds contain a FOR-LOOP variable inside a process creates a
-      -- driver over the WHOLE signal in every such process; they resolve
-      -- against each other and the signal simulates as 'X' while synthesising
-      -- cleanly.  Every slice bound in `gxflat` is the GENERATE index, which
-      -- is a constant inside each generated statement, so each bit of `xv` has
-      -- exactly one driver.
-      type xw_t is array (0 to NN-1) of std_logic_vector(MANT_W-1 downto 0);
-      signal xw     : xw_t := (others => (others => '0'));
-      signal xv     : std_logic_vector(NN*MANT_W-1 downto 0);
-      signal ov     : std_logic_vector(NN*MANT_W-1 downto 0);
+      -- SO THE PORTS ARE NOW WORD STREAMS, and the three signals dissolve:
+      --   * `xw`/`xv` -> `x_we`/`x_wa`/`x_wd`.  The read pass in `nproc`
+      --     already produced exactly one word per cycle in ascending element
+      --     order; it now writes that word into the unit's bank instead of
+      --     into a register.  No extra cycle, no extra state.
+      --   * `ov` -> `o_ra`/`o_rd`.  The write-back pass presents an address
+      --     and takes the word ONE EDGE later, which is the only externally
+      --     visible timing change and is why S_WR carries a two-deep valid
+      --     pipeline below.
+      --   * `wsel` -> `nw_we`/`nw_wa`/`nw_wd`, and the 65,536-flop staging
+      --     register `gwm.wreg` that TRACK NORMURAM shifted the gain into goes
+      --     with it.  See the loader below.
+      -- LOG2N, WITHOUT `work.util_pkg.clog2`, AND THAT IS DELIBERATE.
+      --
+      -- MEASURED, first attempt: `sim/ooc_normadapt_extract.py` copies this
+      -- generate block VERBATIM into a top whose use clauses are ieee,
+      -- numeric_std, textio, `model_cfg_pkg` and `llama_map_pkg` and nothing
+      -- else, so `clog2` compiles here inside `llama_top` and fails with
+      -- "no declaration for clog2" in the extraction -- which is the harness
+      -- EVERY area number ever quoted for this block was measured with
+      -- (TRACK NORMADAPT, NWROM, NWFIX, NORMURAM and this one).  Keeping the
+      -- block self-contained is cheaper and safer than widening a harness
+      -- that belongs to another track, and it keeps the property that makes
+      -- that harness trustworthy: the diff between two generated files IS the
+      -- diff between two `llama_top.vhd` files.
+      --
+      -- The body is `util_pkg.clog2`'s, unchanged, including its bounded
+      -- `for` -- a `while` would be an unbounded loop statement in front of
+      -- Vivado's 65,536-iteration elaboration limit for no reason.
+      function log2c(n : positive) return natural is
+        variable m : natural;
+        variable r : natural := 0;
+      begin
+        if n <= 1 then return 0; end if;
+        m := n - 1;
+        for i in 1 to 31 loop
+          if m > 0 then m := m / 2; r := r + 1; end if;
+        end loop;
+        return r;
+      end function;
+      constant LOG2N : natural := log2c(NN);
+
+      -- The input word stream into the unit's `x` bank.  Driven by `nproc`'s
+      -- S_RD, one word per cycle, ascending, exactly as `xw(k-2) <=` was.
+      signal x_we   : std_logic := '0';
+      signal x_wa   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal x_wd   : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+
+      -- The gain word stream into the unit's `w` bank.  Driven by the loader.
+      signal nw_we  : std_logic := '0';
+      signal nw_wa  : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal nw_wd  : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+
+      -- The output word stream out of the unit's `o` bank.  Driven by S_WR.
+      signal o_ra   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal o_rd   : std_logic_vector(MANT_W-1 downto 0);
+      signal rav    : std_logic := '0';   -- an o_ra is being presented
+      signal rav_d  : std_logic := '0';   -- ... and its datum is due now
+
+      -- THE GAIN-LOAD INTERLOCK, PROMOTED OUT OF THE LOADER.
+      --
+      -- `wbusy` was a private signal of TRACK NORMURAM's `gwm` generate and
+      -- fed one simulation-only assertion.  It is now read by `nproc`, which
+      -- HOLDS `start` until the load has finished.  See the loader for why
+      -- that stopped being optional when the gain moved onto a word port.
+      signal wbusy  : std_logic := '1';
+
+      -- The unit's deadline tap: high while it is in an element pass that
+      -- reads `w`.  Observation only -- `nproc` gates on `wbusy`, not on this.
+      signal r_wact : std_logic;
       signal r_go   : std_logic := '0';
       signal r_done : std_logic;
       signal r_xe   : integer := 0;
@@ -2054,24 +2114,12 @@ begin
       -- vector.
       signal nidx : natural range 0 to NW_N-1 := 0;
       signal novf : boolean := false;
-      -- `W_CONST` and not `NW_TBL(0)`, and the two are the SAME VALUE in the
-      -- only configuration where this initial value is ever the one a
-      -- register powers up with: `nw_load` returns `(others => W_CONST)`
-      -- unchanged when `NORM_W_IMAGE` is empty, and that is exactly the
-      -- branch (`gwc` below) in which `wsel` is a register at all.  In the
-      -- populated branch (`gwm`) `wsel` is a wire off `wreg`, so it has no
-      -- power-up value of its own and this initialiser is dead.  Written this
-      -- way so that `NW_TBL` is referenced NOWHERE outside `gwc` and the
-      -- elaboration-time reshape that feeds `gwm`'s ROM, which is what lets
-      -- the 65 x 65,536-bit constant fold away in the populated build.
-      signal wsel : std_logic_vector(NN*MANT_W-1 downto 0) := W_CONST;
+      -- `wsel`, the 65,536-bit flat gain the unit's `w_mant` port used to
+      -- take, IS GONE (TRACK RMSWIRE).  So is the branch that chose how to
+      -- drive it.  The gain now reaches the unit as a word stream, and the
+      -- store it comes out of is the same `rom_style = "block"` ROM TRACK
+      -- NORMURAM landed; only the thing on the far side of it changed.
     begin
-      -- The flat view of `xw`, which is what `rmsnorm_rs`'s `x_mant` port
-      -- takes.  One driver per bit; see the note on `xw` above.
-      gxflat : for i in 0 to NN-1 generate
-        xv((i+1)*MANT_W-1 downto i*MANT_W) <= xw(i);
-      end generate;
-
       v_ready(vi) <= rdy;
       v_done(vi)  <= dn;
       v_taken(vi) <= tk;
@@ -2111,13 +2159,78 @@ begin
              & "and its lossless-narrowing bounds are 16-bit."
         severity failure;
 
-      u_rms : entity work.rmsnorm_rs
+      -- THE MEMORY-BACKED UNIT, NOT THE FLAT ONE.  TRACK RMSWIRE, 2026-08-30.
+      --
+      -- `rtl/rmsnorm_rs_mem.vhd` is `rtl/rmsnorm_rs.vhd` with the three flat
+      -- whole-vector ports replaced by word streams into and out of LANES-way
+      -- banked block RAM.  Every width, every rounding site, every shift, the
+      -- accumulation order and the state machine are IDENTICAL, so `o_mant`
+      -- and `o_exp` are bit-identical element for element -- which
+      -- `sim/tb_rmsnorm_rs_mem.vhd` asserts against BOTH `rmsnorm_rs` and the
+      -- independently written `rmsnorm.vhd` at every gate run, together with
+      -- the CYCLE `done` fires on.
+      --
+      -- THE NUMBERS, MEASURED by TRACK RMSMUX on the BC-250 against its own
+      -- same-session control, N=4096 LANES=4, artefacts in
+      -- `hw/fk33/results/rmsmux_2026-08-30/`:
+      --
+      --                rmsnorm_rs   rmsnorm_rs_mem
+      --     CLB LUT        40,934            4,825
+      --     CLB FF         67,196            1,629
+      --     MUXF7          17,408                0
+      --     MUXF8           8,704                0
+      --     BRAM tile           0                6
+      --     WNS @ 5.0ns    +1.675           +0.971
+      --
+      -- IT IS A BRAM-FOR-LUT TRADE AND THAT IS SAID OUT LOUD.  6 tiles of the
+      -- 672 on this part, against a design that is LUT-bound and congested.
+      -- It stops being obviously right if BRAM ever becomes the binding
+      -- resource; the term to reshape first would be the gain image below,
+      -- which is 171 tiles.
+      u_rms : entity work.rmsnorm_rs_mem
         generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
         port map(
           clk => clk, rst => rst, start => r_go,
-          x_mant => xv,      x_exp => r_xe,
-          w_mant => wsel,    w_exp => NORM_W_EXP,
-          done => r_done, o_mant => ov, o_exp => r_oe);
+          x_we => x_we, x_waddr => x_wa, x_wdata => x_wd, x_exp => r_xe,
+          w_we => nw_we, w_waddr => nw_wa, w_wdata => nw_wd,
+          w_exp => NORM_W_EXP,
+          done => r_done,
+          o_raddr => o_ra, o_rdata => o_rd, o_exp => r_oe,
+          w_active => r_wact);
+
+      -- THE DEADLINE CHECK, AT THE INSTANT THE DEADLINE ACTUALLY IS.
+      --
+      -- TRACK NORMURAM's objection to this composition, verbatim: "the
+      -- deadline moves from `r_go`, which `gvr` can see and which `wbusy`
+      -- checks, to the unit's internal S_RAW, which it cannot."  This is the
+      -- check that closes it.  `r_wact` IS S_RAW (and S_EMIT, the second
+      -- `w`-reading pass), published by the unit, so the assertion is on the
+      -- real deadline rather than on a landmark that stands in for it.
+      --
+      -- IT IS NOT REDUNDANT WITH THE ONE IN THE LOADER, and the difference is
+      -- the whole point.  The loader's assertion fires if the load is still
+      -- running at `r_go`, which the S_GO gate now prevents by construction;
+      -- this one fires if the load is still running when the gain is actually
+      -- READ, which is the fault a future change to the gate, to
+      -- `NORM_LANES`, to `GW` or to the sequencer could reintroduce without
+      -- touching `r_go` at all.
+      --
+      -- SIMULATION-ONLY: Vivado ignores `severity failure` in synthesis
+      -- (MEASURED, TRACK NWROM), and `r_wact` drives nothing else, so this
+      -- costs the build nothing.
+      wact_chk : process(clk) is
+      begin
+        if rising_edge(clk) then
+          assert not (rst = '0' and r_wact = '1' and wbusy = '1')
+            report "llama_top: the norm unit entered a gain-reading element "
+                 & "pass while the gain load was STILL RUNNING.  Some of the "
+                 & "gain vector it is multiplying by is whatever the bank "
+                 & "held from the previous norm op.  The values stay "
+                 & "plausible and no landmark moves; this assertion is the "
+                 & "only thing that sees it."
+            severity failure;
+        end if;
+      end process;
 
       -- The norm-op counter.  Separate from `nproc` so that the two instants
       -- it keys off are the ones `nproc` PUBLISHES (`tk`, `dn`) rather than a
@@ -2206,18 +2319,35 @@ begin
       -- `nw_empty` area control stays comparable across every track that has
       -- quoted it.
       -- ==================================================================
-      gwc : if NORM_W_IMAGE = "" generate
-        -- The old driver.  `NW_TBL(nidx)` with `NW_N = 1` is a constant, and
-        -- Vivado folds it; `nidx` is pinned at 0 by `nsel`'s own bound.
-        wcp : process(clk) is
-        begin
-          if rising_edge(clk) then
-            wsel <= NW_TBL(nidx);
-          end if;
-        end process;
-      end generate;
-
-      gwm : if NORM_W_IMAGE /= "" generate
+      -- THE TWO BRANCHES ARE NOW ONE.  TRACK RMSWIRE, 2026-08-30.
+      --
+      -- `gwc` used to be the pre-existing register, character for character,
+      -- so that the `nw_empty` area control TRACK NORMADAPT, NWROM, NWFIX and
+      -- NORMURAM all quote stayed comparable.  It relied on `NW_TBL(nidx)`
+      -- being a foldable elaboration-time constant when `NORM_W_IMAGE` is
+      -- empty (`NW_N = 1`), and on the fold reaching THROUGH `rmsnorm_rs`'s
+      -- flat `w_mant` port -- TRACK NWFIX measured that reach at 17,367 LUT.
+      --
+      -- Neither survives the port change, and this is a REAL COST stated
+      -- rather than hidden.  `rmsnorm_rs_mem` holds its gain in a RAM written
+      -- at run time, so there is no constant for the tool to fold into the
+      -- arithmetic no matter what drives the words.  The empty configuration
+      -- therefore has to stream `W_CONST` in exactly as the populated one
+      -- streams the image, which is why one loader now serves both:
+      -- `nw_count` returns 1 and `nw_load` returns `(others => W_CONST)` when
+      -- the image is empty, so the ROM below is simply one norm op deep.
+      --
+      -- CONSEQUENCE FOR THE RECORD, and it is a correction to the ruling in
+      -- docs/WORKLOG.md that "the `nw_empty` = 49,654 anchor is not retired":
+      -- `nw_empty` is no longer REPRODUCIBLE on this tree.  It was a draw of
+      -- a configuration -- flat port, folded constant gain -- that this file
+      -- no longer contains.  The anchor remains valid for the trees it was
+      -- measured on (0b4c7b2 and earlier) and every conclusion those tracks
+      -- drew from it stands; it is simply not a control this file can be
+      -- drawn against any more.  The comparable control for TRACK RMSWIRE is
+      -- the SAME extraction taken from the parent commit, drawn in the same
+      -- session, which is what `hw/fk33/results/rmswire_2026-08-30/` holds.
+      gwl : block is
         -- THE RESHAPE.  `NW_TBL` is 65 words of 65,536 bits, which is the
         -- one aspect ratio no memory primitive on this device can hold: a
         -- RAMB36 is at most 72 bits wide (512x72) and a URAM288 is 4096x72,
@@ -2294,110 +2424,179 @@ begin
         attribute rom_style : string;
         attribute rom_style of nwrom : signal is "block";
 
-        -- THE STAGING REGISTER IS A SHIFT REGISTER AND NOT AN ADDRESSED
-        -- ARRAY, and that is worth 5,105 LUT.  TRACK NWROM's own memory probe
-        -- wrote `wsw(wptr_d) <= wrd` into an array of NN words and measured
-        -- 72,164 LUT; TRACK NWFIX's HBM probe shifted the same bits in and
-        -- measured 67,059, "and the shift-register write contributes no LUT
-        -- row at all -- it is 65,536 flops and an enable".  The difference is
-        -- a 4,096-way write decoder that buys nothing here, because the words
-        -- arrive strictly in order.  A version that ever needed them out of
-        -- order would pay TRACK WRITEDEC's barrel-shifter penalty instead.
-        signal wreg  : std_logic_vector(NN*MANT_W-1 downto 0)
-                     := (others => '0');
+        -- THE 65,536-FLOP STAGING REGISTER IS GONE.  TRACK RMSWIRE.
+        --
+        -- What was here was `wreg`, a shift register the ROM's GW-wide words
+        -- were shifted into so that a whole 65,536-bit gain vector could be
+        -- presented to `rmsnorm_rs`'s flat `w_mant` port in one cycle.  TRACK
+        -- NWROM measured the ADDRESSED alternative at 72,164 LUT against
+        -- TRACK NWFIX's 67,059 for the shift form and recorded that the shift
+        -- write "contributes no LUT row at all -- it is 65,536 flops and an
+        -- enable".  Those 65,536 flops are what this change deletes: the unit
+        -- now keeps the gain in its own banked block RAM, so nothing outside
+        -- it ever needs the whole vector at once.
+        --
+        -- WHAT REPLACES IT IS A RATE CONVERTER, AND THE RATE IS THE POINT.
+        -- The ROM still reads GW elements per address, because reshaping it
+        -- is TRACK NORMURAM's lever and not this one -- 171 BRAM tiles were
+        -- measured at this aspect ratio and changing it changes that number.
+        -- The unit's bank port takes ONE 16-bit word per cycle.  So `wel`
+        -- walks elements at one per cycle, the ROM address is `wel / GW`
+        -- (a constant shift), and `wsub` selects the word inside the group.
+        --
+        -- THE MARGIN THIS COSTS, DERIVED, and it is the reason TRACK NORMURAM
+        -- refused this composition rather than performing it:
+        --   before  load = NWORD + 1 = NN/GW + 1 cycles, budget to `r_go` is
+        --           NN + 4, so the margin is GW = 4.0000x AND IS INDEPENDENT
+        --           OF SHAPE -- a bench at hidden 64 exercised the ratio a
+        --           build at 4096 has.
+        --   after   load = NN + 2 cycles against the same NN + 4 budget.  The
+        --           margin is 3 CYCLES at every shape, which is not a margin.
+        --           Extending the budget to the unit's first `w` read (S_RAW,
+        --           after its own pass 1 and the whole rsqrt) recovers only
+        --           about 1 + 1/LANES: 1.26x at NORM_LANES = 4 and 1.07x at
+        --           16, which the unit's own sweep covers as legal.  It is no
+        --           longer shape-invariant either, so a bench that passes at
+        --           a small shape says nothing about the build.
+        --
+        -- SO THE MARGIN IS NOT WHAT THIS RESTS ON.  `nproc` HOLDS `start`
+        -- until `wbusy` clears, below, which makes full residency structural
+        -- instead of arithmetical.  At the shipping shape that gate costs
+        -- ZERO cycles (the load finishes 3 cycles before S_GO would have
+        -- fired anyway); it costs cycles only in the case that used to be a
+        -- silent wrong answer.  `sim/tb_rmswire_loadrace.vhd` measures both
+        -- the ungated failure and the gated pass AT hidden = 4096.
         signal wrd   : std_logic_vector(WW-1 downto 0) := (others => '0');
-        signal wptr  : natural range 0 to NWORD-1 := 0;
+        signal wel   : natural range 0 to NN-1 := 0;   -- element being issued
+        signal wel_d : natural range 0 to NN-1 := 0;   -- ... one cycle later
         signal wav   : std_logic := '1';   -- an address is being issued
         signal wdv   : std_logic := '0';   -- ... and its datum is due now
-        signal wcnt  : natural range 0 to NWORD-1 := 0;
-        signal wbusy : std_logic := '1';
       begin
-        -- `wreg` IS the gain; this is a rename, not a mux.  Kept separate
-        -- from `wsel` only so that `wsel`'s declared initial value stays the
-        -- empty branch's and this branch powers up at zero -- which is what
-        -- makes a load that never ran a WRONG NUMBER the landmarks catch,
-        -- rather than a correct one for norm op 0.
-        wsel <= wreg;
+        -- The word the unit's bank port takes this cycle.  `wdv`, `wel_d` and
+        -- `wrd` are a MATCHED TRIPLE: all three are the previous cycle's
+        -- `wav`/`wel`/ROM read, so the enable, the address and the datum
+        -- cannot drift apart the way a separately-derived address could.
+        nw_we <= wdv;
+        nw_wa <= std_logic_vector(to_unsigned(wel_d, LOG2N));
+
+        -- The GW-to-1 sub-word select.  Written as a loop over CONSTANT
+        -- slices rather than as `wrd((s+1)*MANT_W-1 downto s*MANT_W)` with a
+        -- runtime `s`, for the reason this file's `xw` note records: a slice
+        -- whose bounds are non-static is legal but is the same shape as the
+        -- construct that has twice built a barrel shifter here.  At GW = 4
+        -- this is a 4:1 mux on 16 bits.
+        wsubsel : process(wrd, wel_d) is
+        begin
+          nw_wd <= wrd(MANT_W-1 downto 0);
+          for s in 0 to GW-1 loop
+            if (wel_d mod GW) = s then
+              nw_wd <= wrd((s+1)*MANT_W-1 downto s*MANT_W);
+            end if;
+          end loop;
+        end process;
 
         -- THE LOAD.  Restarted at every instant `nsel` moves `nidx`, which is
         -- reset, token start, and the completion handshake of the previous
         -- norm op -- and at no other instant, because `nidx` moves at no
-        -- other instant.  Two pipeline stages: the address is issued from
-        -- `wptr`, the datum lands in `wrd` one cycle later, and the shift
-        -- consumes the matched (`wdv`, `wrd`) pair one cycle after that, so
-        -- the whole vector is resident `NWORD + 1` cycles after the restart.
+        -- other instant.  Two pipeline stages, unchanged in shape from TRACK
+        -- NORMURAM's: the address is issued from `wel`, the datum lands in
+        -- `wrd` one cycle later, and the matched (`wdv`, `wel_d`, `wrd`)
+        -- triple is presented to the unit's bank port one cycle after that.
+        -- The whole vector is resident `NN + 2` cycles after the restart.
         --
-        -- THE BUDGET, and it is the reason this is safe rather than merely
-        -- plausible.  From the restart the adapter runs S_IDLE, then S_RD for
-        -- `n+2` cycles, then S_GO before rmsnorm_rs even STARTS, and the
-        -- earliest `w_mant` read is that unit's pass 2, after its own pass 1
-        -- and the rsqrt.  Counting only as far as `r_go`, which is where the
-        -- assertion checks and is strictly earlier than any `w_mant` read,
-        -- the budget is `NN+4` against a load of `NN/GW+1`: at the 9B shape
-        -- 4,100 against 1,025, and at `tb_llama_top_normw`'s shape 68 against
-        -- 17.  **The margin is `GW` and does not depend on the shape**,
-        -- because the read pass and the gain load are both linear in
-        -- `hidden` -- so a bench at 64 exercises the ratio a build at 4,096
-        -- has.  `wbusy` and the assertion below turn that from an argument
-        -- into a check.
+        -- WHY THE ADDRESS IS `wel / GW` AND NOT `wptr`.  `wel` is an ELEMENT
+        -- index now, not a word index, because the sink takes one element per
+        -- cycle.  The ROM is unchanged, so its address is the group `wel`
+        -- falls in, and `GW` is a power of two so the divide is a constant
+        -- shift.  Reading the same address `GW` cycles running is free: it is
+        -- a registered ROM read, not a re-arbitration.
+        --
+        -- THE BUDGET IS NO LONGER THE GUARANTEE.  From the restart the
+        -- adapter runs S_IDLE, then S_RD for `n+2` cycles, then S_GO before
+        -- the unit even STARTS, so the budget to `r_go` is `NN + 4` against a
+        -- load of `NN + 2`: THREE CYCLES at every shape, where TRACK
+        -- NORMURAM's form had a shape-invariant `GW = 4.0000x`.  Three cycles
+        -- of margin on a sequencer whose timing is not pinned by anything is
+        -- not a design; it is a coincidence that happens to hold today.
+        --
+        -- So `nproc` GATES on `wbusy` instead: S_GO does not fire `r_go`
+        -- until the load has finished.  Residency becomes structural and the
+        -- assertion below becomes a PERFORMANCE check -- it fires only if the
+        -- gate ever actually had to stall, which at the shipping shape it
+        -- does not.  MEASURED consequence: the gate costs 0 cycles at
+        -- `hidden = 4096`, and `sim/tb_rmswire_loadrace.vhd` measures what
+        -- happens WITHOUT it at that same shape rather than at a small one.
         wload : process(clk) is
         begin
           if rising_edge(clk) then
-            -- Stage 1.  `wrd`/`wdv` become a MATCHED PAIR next cycle.
-            wrd <= nwrom(nidx*NWORD + wptr);
-            wdv <= wav;
+            -- Stage 1.  `wrd`/`wel_d`/`wdv` become a MATCHED TRIPLE next
+            -- cycle: all three are derived from the same cycle's `wel`/`wav`.
+            wrd   <= nwrom(nidx*NWORD + (wel / GW));
+            wel_d <= wel;
+            wdv   <= wav;
 
-            -- Stage 2.  `wrd` and `wdv` read here are stage 1's outputs from
-            -- the previous cycle, hence matched.  Word 0 is shifted in first
-            -- and ends up in the LOW bits after NWORD shifts, which is the
-            -- order `nwrom_flat` packed and the order `rmsnorm_rs` reads.
-            if wdv = '1' then
-              wreg <= wrd & wreg(NN*MANT_W-1 downto WW);
-              if wcnt = NWORD-1 then
-                wbusy <= '0';
-              else
-                wcnt <= wcnt + 1;
-              end if;
+            -- Stage 2.  `wdv`/`wel_d`/`wrd` read here are stage 1's outputs
+            -- from the previous cycle, hence matched.  Element 0 is written
+            -- first and element NN-1 last, ascending, which is both the order
+            -- `nwrom_flat` packed and the order the unit's element passes
+            -- walk its banks.
+            if wdv = '1' and wel_d = NN-1 then
+              wbusy <= '0';
             end if;
 
             -- Address sequencing.  LAST, so the restart wins over stage 2 on
             -- the cycle they coincide.
             if rst = '1' or go = '1' or (dn = '1' and v_ack(vi) = '1') then
-              wptr  <= 0;
+              wel   <= 0;
               wav   <= '1';
               wdv   <= '0';
-              wcnt  <= 0;
               wbusy <= '1';
             elsif wav = '1' then
-              if wptr = NWORD-1 then
+              if wel = NN-1 then
                 wav <= '0';
               else
-                wptr <= wptr + 1;
+                wel <= wel + 1;
               end if;
             end if;
 
             -- SIMULATION-ONLY, and stated as such: Vivado ignores
-            -- `severity failure` in synthesis (MEASURED, TRACK NWROM).  This
-            -- is the check that the cycle budget above is real, and it is
-            -- shape-independent, so a bench at `hidden = 64` exercises it for
-            -- a build at 4,096.  `r_go` is one cycle of `start` into
-            -- rmsnorm_rs and is strictly earlier than any `w_mant` read.
+            -- `severity failure` in synthesis (MEASURED, TRACK NWROM).
+            --
+            -- ITS MEANING CHANGED WITH THE GATE AND THAT IS DELIBERATE.  It
+            -- used to be the ONLY thing standing between a late load and a
+            -- half-shifted gain vector.  `nproc` now holds `r_go` until
+            -- `wbusy` clears, so this can no longer fire -- and that is the
+            -- point: it is the check that the GATE is not silently costing
+            -- cycles, i.e. that the load still finishes inside the read pass.
+            -- A firing here is a schedule regression, not a wrong number.
+            --
+            -- It is written as the same condition rather than as a stall
+            -- counter so that a tree with the gate REMOVED (the attribution
+            -- control in sim/mutate_rmswire.sh) still reports the original
+            -- fault under the original message.
             assert not (r_go = '1' and wbusy = '1')
               report "llama_top: OP_VEC_NORM started while the gain load was "
                    & "still running.  The norm would be computed against a "
                    & "half-shifted gain vector.  The load needs "
-                   & integer'image(NWORD + 1) & " cycles from the completion "
+                   & integer'image(NN + 2) & " cycles from the completion "
                    & "of the previous norm op."
               severity failure;
           end if;
         end process;
-      end generate;
+      end block;
 
       nproc : process(clk) is
         type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);
         variable st : st_t := S_IDLE;
         variable n  : natural := 0;
         variable k  : natural := 0;
+        -- The WRITE-BACK counter, separate from `k`.  With a flat `o_mant`
+        -- port one counter served both the read of `ov` and the write into
+        -- the region file, because they happened in the same cycle.  The
+        -- unit's `o` bank answers ONE EDGE after the address is presented, so
+        -- the address issue (`k`) and the region write (`kw`) are two cycles
+        -- apart and cannot share a counter.
+        variable kw : natural := 0;
         variable oe : integer := 0;
         variable ssq : unsigned(63 downto 0) := (others => '0');
         variable sqp : signed(2*MANT_W-1 downto 0);
@@ -2406,10 +2605,15 @@ begin
           tk    <= '0';
           p_pub <= '0';
           r_go <= '0';
+          x_we <= '0';
           ur_en(NUNIT+vi) <= '0';
           uw_en(NUNIT+vi) <= '0';
           if rst = '1' then
-            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0;
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0; kw := 0;
+            -- The read pipeline is cleared here as well as at the end of
+            -- S_WR, so a reset taken mid-write-back cannot leave a stale
+            -- `rav_d` that writes one region word on the next norm op.
+            rav <= '0'; rav_d <= '0';
           else
             case st is
               when S_IDLE =>
@@ -2422,7 +2626,8 @@ begin
                   -- cycle.  Every OP_VEC_NORM in the schedule is `s.hidden`.
                   assert n = NN
                     report "llama_top: the norm op was issued with n = "
-                         & integer'image(n) & ", but the rmsnorm_rs instance "
+                         & integer'image(n) & ", but the rmsnorm_rs_mem "
+                         & "instance "
                          & "is elaborated at N = " & integer'image(NN)
                          & ".  A norm of a different length needs its own "
                          & "instance; padding this one changes the mean "
@@ -2443,8 +2648,22 @@ begin
                   ur_addr(NUNIT+vi) <= k;
                 end if;
                 if k >= 2 then
-                  -- A WHOLE-WORD target, not a runtime slice.  See `xw`.
-                  xw(k-2) <= std_logic_vector(el_rdata);
+                  -- STRAIGHT INTO THE UNIT'S `x` BANK.  TRACK RMSWIRE.  This
+                  -- pass already produced exactly one word per cycle in
+                  -- ascending element order -- that is what made a memory
+                  -- port free on this side -- so the write target changes
+                  -- from a register (`xw(k-2)`) to a bank address and
+                  -- nothing else moves.  `x_we`, `x_wa` and `x_wd` are all
+                  -- registered here, so the enable, the address and the datum
+                  -- reach the bank on the SAME edge and cannot drift apart.
+                  --
+                  -- Residency for `x` is not a race and does not need the
+                  -- interlock `w` needs: the last word is written on the edge
+                  -- ending S_GO, and the unit's pass 1 does not read address
+                  -- 0 until two edges after that.
+                  x_we <= '1';
+                  x_wa <= std_logic_vector(to_unsigned(k-2, LOG2N));
+                  x_wd <= std_logic_vector(el_rdata);
                   sqp := el_rdata * el_rdata;
                   ssq := ssq + unsigned(resize(sqp, 64));
                 end if;
@@ -2458,11 +2677,36 @@ begin
                   k := k + 1;
                 end if;
 
-              -- One cycle of `start`.  rmsnorm_rs samples x_exp here, and
-              -- `xv` has been stable since the read pass ended.
+              -- One cycle of `start`, AND THE GAIN-LOAD INTERLOCK.
+              --
+              -- TRACK RMSWIRE.  `x` residency is guaranteed by construction
+              -- (the read pass above ends before this state), but `w`
+              -- residency is not: the gain streams in at one element per
+              -- cycle from the completion of the PREVIOUS norm op, and the
+              -- unit's pass 2 reads `NORM_LANES` elements per cycle from
+              -- element 0 upward.  That is a race, not a phase separation.
+              --
+              -- Holding `start` here converts it into a phase separation
+              -- again, at the cost of a stall that MEASURES ZERO at the
+              -- shipping shape.  It is the cheapest possible fix and it is
+              -- the only one that does not depend on a cycle-count argument
+              -- surviving every future change to the sequencer, to
+              -- `NORM_LANES`, or to `GW`.
+              --
+              -- The alternative that was NOT taken: gate on the unit's
+              -- `w_active` tap (which is why the tap exists and is wired to
+              -- `r_wact`).  That would let the load overlap pass 1 and the
+              -- rsqrt and recover the 1 + 1/LANES margin -- but it needs the
+              -- writer to stay AHEAD of a reader that is LANES times faster,
+              -- which is an element-by-element deadline and not a state
+              -- boundary.  `wbusy` is a single bit that is either true or
+              -- false; that is the difference between a check with teeth and
+              -- an argument.
               when S_GO =>
-                r_go <= '1';
-                st   := S_RUN;
+                if wbusy = '0' then
+                  r_go <= '1';
+                  st   := S_RUN;
+                end if;
 
               when S_RUN =>
                 if r_done = '1' then
@@ -2471,18 +2715,42 @@ begin
                   -- on how long the unit holds it.
                   oe := r_oe;
                   k  := 0;
+                  kw := 0;
                   st := S_WR;
                 end if;
 
-              -- `ov` is rmsnorm_rs's output REGISTER and the unit is idle,
-              -- so reading it across this pass is not a live read of a
-              -- moving value.
+              -- THE WRITE-BACK, NOW A TWO-DEEP READ PIPELINE.  TRACK RMSWIRE.
+              --
+              -- `ov` was the unit's flat output REGISTER, so an address and
+              -- its datum were available in the same cycle.  The `o` bank
+              -- answers ONE EDGE after the address is on the port, which for
+              -- a register-driven address means TWO cycles in this process:
+              -- `o_ra <= k` at cycle t puts k on the port at t+1 and the word
+              -- on `o_rd` at t+2.
+              --
+              -- `rav` -> `rav_d` is that two-cycle delay written as a valid
+              -- pipeline rather than as an index offset, which is the form
+              -- that cannot go off by one silently: `rav_d` and `o_rd` are
+              -- derived from the SAME cycle's `o_ra`, so a `rav_d` seen high
+              -- means the word beside it is the one `kw` wants.  The unit is
+              -- idle across this whole pass, so nothing is moving underneath.
               when S_WR =>
-                uw_en(NUNIT+vi)   <= '1';
-                uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
-                uw_addr(NUNIT+vi) <= k;
-                uw_data(NUNIT+vi) <= signed(ov((k+1)*MANT_W-1 downto k*MANT_W));
-                if k = n-1 then k := 0; st := S_DONE; else k := k + 1; end if;
+                if k < n then
+                  o_ra <= std_logic_vector(to_unsigned(k, LOG2N));
+                  rav  <= '1';
+                  k    := k + 1;
+                else
+                  rav  <= '0';
+                end if;
+                rav_d <= rav;
+                if rav_d = '1' then
+                  uw_en(NUNIT+vi)   <= '1';
+                  uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                  uw_addr(NUNIT+vi) <= kw;
+                  uw_data(NUNIT+vi) <= signed(o_rd);
+                  if kw = n-1 then kw := 0; st := S_DONE;
+                  else kw := kw + 1; end if;
+                end if;
 
               when S_DONE =>
                 dn   <= '1';

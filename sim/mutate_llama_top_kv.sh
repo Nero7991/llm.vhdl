@@ -82,6 +82,22 @@ SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
 mkdir -p "$SCRATCH"
 
+# TRACK RMSWIRE, 2026-08-30: `rtl/vec_mem.vhd` and `rtl/rmsnorm_rs_mem.vhd`
+# added.  `llama_top`'s D-vec norm now instantiates the memory-backed unit
+# instead of the flat `rmsnorm_rs`, so the source closure grew by two files.
+#
+# THIS LIST IS READ BY THREE HARNESSES, not one -- mutate_llama_top_normuram.sh
+# and mutate_rmswire.sh both `sed` it out of this file, exactly so that a
+# closure change lands in one place.  Without these two entries every row of
+# all three, INCLUDING THE CONTROLS, reports NOBUILD with
+# `unit "rmsnorm_rs_mem" not found in library "work"` buried in a per-row
+# analyze log.  MEASURED: that is how mutate_rmswire.sh's first run came out,
+# and the tell was that the CONTROL failed -- a matrix whose control fails
+# measures nothing, which is why every one of them has a control row.
+#
+# `sim/regress.sh` was NOT affected: it computes the closure itself and the
+# llama_top rows stayed green throughout.  So the gate cannot catch this class
+# of staleness and the control rows are the only thing that can.
 FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/model_cfg_pkg.vhd rtl/act_mem_striped.vhd rtl/async_fifo.vhd
        rtl/attn_emit.vhd rtl/attn_gate.vhd rtl/attn_kv_quant.vhd
@@ -91,7 +107,8 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/gdn_recur_pipe.vhd rtl/gdn_scalar.vhd rtl/gdn_silu.vhd
        rtl/gdn_y_emit.vhd rtl/imrope_pkg.vhd rtl/l2norm_rs.vhd
        rtl/llama_map_pkg.vhd rtl/mv4i_arith_pkg.vhd rtl/rmsnorm_bf.vhd
-       rtl/rmsnorm_rs.vhd rtl/seq_desc_fetch.vhd rtl/seq_opdec.vhd
+       rtl/rmsnorm_rs.vhd rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd
+       rtl/seq_desc_fetch.vhd rtl/seq_opdec.vhd
        rtl/seq_region_lock.vhd rtl/seq_vec_issue.vhd rtl/seq_vec_res.vhd
        rtl/stream_fifo.vhd sim/seq_tbl_pkg.vhd rtl/attn_recip.vhd
        rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
