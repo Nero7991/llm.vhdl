@@ -64,7 +64,8 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
        rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
        rtl/attn_block.vhd rtl/attn_kv_axi.vhd rtl/gdn_block.vhd
-       rtl/sampler_stream.vhd rtl/matvec_int4.vhd rtl/llama_top.vhd
+       rtl/sampler_stream.vhd rtl/matvec_int4.vhd rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd
+       rtl/llama_top.vhd
        sim/tb_llama_top_smp.vhd sim/tb_llama_top_smp_beh.vhd"
 
 STOP=200ms
