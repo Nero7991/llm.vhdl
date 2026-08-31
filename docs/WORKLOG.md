@@ -93,7 +93,55 @@ returned, one is in flight:**
   Landed as `c094867` (RTL), `a433bab` (four closure repairs), `197e813`
   (write-up and artefacts).
 
+**TRACK ROUTE3 is in flight on the workstation lane, run by the dispatcher in
+session (no subagents for RTL tracks).** The question: does the composed
+A+B+C+D route with a NON-EMPTY `NORM_W_IMAGE`? Every composed draw before
+this one carried the synthetic ramp, so the composed BRAM figure never
+included the gain store. The mirror is ROUTE2's accepted configuration
+exactly (`C4_PBLOCK=1` in `pb_core`, CB_STYLE=distributed, HEAD's `gvr`
+extraction) plus one changed variable: the real 266,240-line image, md5
+`69f614a1515e1160f5dc9e8a9e72fdc3`, baked in by `45cd94e`. Tree `bebd952`.
+
+**Pre-registered branches, so the answer only has to be classified:**
+
+- **Routes, 0 nets with routing errors, 0 DRC errors.** The composition fits
+  WITH the gain store. The fit question is fully closed and STEP 3 (the card
+  top, row N3) is the whole remaining critical path.
+- **Routes but WNS negative.** Routability holds; timing is a separate lever
+  hunt. Named suspect from LEVERC48 CORRECTION 2: `CB_BCAST` (WNS reverses
+  with lane count, -0.269 at 1,536).
+- **Does not route.** The deliverable becomes WHERE: congestion by region,
+  which nets, and whether ROUTE2's DSP-saturated windows moved.
+- **BRAM over 372.5 in `pb_core`.** The OOC +20 margin did not survive
+  composition; the no-sharing assumption between separately-measured units
+  breaks. Report the measured deficit.
+- **Elaboration time explodes at composed scale.** The record-form hang was
+  OOC, the record-free form elaborated in minutes at OOC; if the composed
+  synth sits in elaboration anyway, that IS the result and it is reported.
+
+**ROUTE3 progress at this writing:** elab DONE in 7m55s (no hang; ROUTE2's
+ramp took 1m34s, so the codebook costs about six minutes and ~25 GB of peak
+ALLOCATION at elaboration -- RSS stayed ~8 GiB; quote RSS, not the
+allocation). Synth DONE in 1,108 s. **Synth-stage utilization: LUT 265,767
+(+109 against ROUTE2's ramp), FF 238,176 (+344), BRAM 351.5 (+98, one tile
+BETTER than the paper 352.5), DSP 2,177 (unmoved). The OOC +20 margin
+survives composition: 351.5 against 372.5 = +21.0, MEASURED at composed
+synth.** The route is the remaining question.
+
+**The final-tree gate is GREEN.** Clean archive of `bebd952` (codebook,
+closure repairs, generator option, floor raise, this board entry):
+`OVERALL PASS 103 FAIL 0, baseline: 103 passing, matches the recorded floor
+of 103, REGRESSION: PASS` (`llama-finalgate.service`, log at
+/mnt/storage/llama-finalgate/gate.log).
+
 **Operational notes for the next session.**
+
+- **`hw/design_mv_generated.tcl` is dirty in the working tree and that is NOT
+  this project's business.** The hunk sets `FIFO_DEPTH 2048, MAXOUT 8` on the
+  AXU3EG `mv` block design (the OLD board, Zynq MPSoC era); mtime 2026-08-23,
+  predating the overnight session. Provenance is Oren's own AXU3EG
+  experimentation. It is deliberately left uncommitted and unreverted: do not
+  sweep it into anything, and do not "clean" it without asking Oren.
 
 - **`systemd-run --user --scope` attaches the scope's lifetime to the
   CLIENT.** Killing the client kills the scope. This is what killed teeth Run
