@@ -14,7 +14,40 @@ Vivado 2023.2 on the workstation. Tree pinned at `3b2003c`, work committed at
 
 ## The answer
 
-TO BE FILLED FROM THE MEASUREMENT.
+**YES. It routes, inside the card's real `pb_core`, with 0 nets with routing
+errors and 0 DRC errors. It does NOT close 200 MHz: post-route WNS is
+-0.575 ns on `core_clk`, which is Fmax 179.4 MHz.** Hold is met with margin to
+spare (WHS +0.010, 0 failing endpoints) and `hbm_aclk` meets 250 MHz at +0.080.
+
+Vivado's own count, `out/route_status_c4lev.rpt`:
+
+```
+   # of logical nets.......................... :     2434587
+       # of nets not needing routing.......... :     1918031
+       # of routable nets..................... :      516556
+           # of fully routed nets............. :      516556
+       # of nets with routing errors.......... :           0
+```
+
+The router converged rather than thrashed. Its overlap count, which is the
+number that RAN AWAY in the failing attempt (69,858 -> 183,525 -> 111,513):
+
+```
+96 -> 63 -> 26 -> 12 -> 11 -> 2 -> 2 -> 1 -> 2 -> 3 -> 1 -> 0
+```
+
+`C4_ROUTE_SECONDS 1597` (26 min 37 s) against the previous attempt's 56 m 35 s
+for a single unfinished iteration.
+
+**The binding resource has changed identity: it is now DSP at 80.63% of
+`pb_core`, and every congested window in both the placed and the routed
+congestion reports is DSP-saturated at 62-100% while LUT sits at 45-70%.**
+Neither area lever touches a DSP, and nothing in the backlog does.
+
+**The remaining timing gap is 0.575 ns and it is NOT the same problem as
+before.** Failing endpoints went 33,767 (pre-lever, after placement) to 268
+after placement here, 82 after `phys_opt_design`, and 9,056 of 971,406 after
+routing. That last number is 0.93% of endpoints and TNS is -876.045 ns.
 
 ## What had to be built before the question could even be asked
 
@@ -380,3 +413,207 @@ which was verified present in the running file's format before relaunching.
 
 **The general rule this suggests: after writing a gate, `ls` the thing it
 watches.** It costs one command and the failure mode is silent.
+## Result 4 -- IT PLACES, and the placed design is a different design
+
+`place_design` inside `pb_core`, `C4_PLACE_SECONDS 906` (15 min).
+
+```
+C4_UTIL c4lev placed lut 261539 lut_logic 234222 lut_mem 27317 ff 240120
+                     carry8 12174 f7 20225 f8 3970 bram 253.5 uram 0
+                     dsp 2177 clb 46713
+C4_PLACED placed clb_sites_used        46713
+C4_PLACED placed wns                  -0.216
+C4_PLACED placed failing_endpoints_max   268
+```
+
+**Against the composition that failed to route** (MEASURED by TRACK TIMING on
+the same top with neither lever):
+
+| | no levers | **both levers** | |
+|---|---:|---:|---|
+| placed CLB | 54,866 of 54,960 device = **99.83%** | 46,713 of 48,600 in `pb_core` = **96.12%** | |
+| placed WNS | **-3.056** free die / **-3.658** squeezed | **-0.216** | **14.2x / 16.9x better** |
+| failing endpoints after placement | **33,767** | **268** | **126x fewer** |
+| congestion level | **7** | **6** (one window; the rest are 5) | |
+| route | `[Route 35-447]`, killed | pending at the time of writing | |
+
+**268 failing endpoints is the same order as the 256 TRACK TIMING closed by
+hand in subsystem C**, on a design where the previous count was 33,767. TIMING's
+diagnosis was that the 33,511 beyond its 256 were "net-delay, not logic ... root
+cause is area, at 54,866 of 54,960 CLB". **This run is the confirmation of that
+diagnosis: the levers removed the area and the net-delay failures went with
+it.** That was a prediction TIMING made and could not test, and it is now
+MEASURED.
+
+### Where the congestion still is, and it is DSP, not LUT
+
+`out/congestion_c4lev_placed.rpt`, all five reported windows:
+
+```
+Direction Type  Level Window                            LUT LUTRAM Flop MUXF RAMB  DSP CARRY  Cell Names
+North     Long      5 (CLEM_X17Y75,CLEM_X33Y106)        68%     0%  20%  11%   0%  85%   40%  c_attn/u_arr(97%)
+East      Long      5 (CLEL_R_X12Y186,CLEL_R_X28Y217)   66%     5%  33%   2%  83%  64%   16%  a_eng/eng/dut/core(51%),c_attn(23%),c_attn/u_norm(21%)
+West      Long      5 (CLEM_X36Y127,CLEL_R_X51Y158)     45%    22%  31%   2%  16% 100%   31%  a_eng/eng/dut/core(63%),c_attn(20%),c_attn/u_quant(8%)
+West      Long      6 (CLEL_R_X29Y121,LAG_LAG_X60Y184)  47%    21%  30%   4%  54% 100%   27%  a_eng/eng/dut/core(56%),c_attn(16%),c_attn/u_arr(11%)
+East      Short     5 (CLEL_R_X10Y185,CLEL_R_X26Y216)   66%     5%  34%   2%  85%  62%   16%  a_eng/eng/dut/core(49%),c_attn(23%),c_attn/u_norm(23%)
+```
+
+**Every congested window is DSP-saturated: 85%, 100%, 100%, 64%, 62%**, against
+LUT at 45-68%. This agrees with the pre-placement region fit, where DSP was
+80.63% and LUT 68.33%. **The binding resource has changed identity.** Neither
+lever touches a DSP and no third lever in the backlog does either.
+
+The named cells are `a_eng/eng/dut/core` (subsystem A's matvec array) and
+`c_attn/u_arr` (subsystem C's attention array), which are the two DSP consumers.
+
+### The placed shape is odd and worth naming
+
+**96.12% of the CLBs are occupied while only 67.27% of the LUTs are used**, a
+density of 5.599 LUT/CLB. The placer spread into almost every CLB and filled
+each about two-thirds. That is much looser than the 6.324 measured on the free
+die without levers and the 7.029 the pblock squeeze forced. **Density is
+elastic and this is a third point on that curve**, at a pressure where the
+placer had a choice. Do not read 96.12% as "nearly full": at this density there
+is a large amount of LUT capacity left inside the occupied CLBs.
+## Result 5 -- the routing verdict, as raw output
+
+```
+C4_PHYSOPT_SECONDS 323
+C4_PLACED physopt clb_sites_used 46733
+C4_PLACED physopt wns -0.061
+C4_PLACED physopt failing_endpoints_max 82
+C4_ROUTE_SECONDS 1597
+C4_ROUTE_RC 0
+C4_UTIL c4lev routed lut 261539 lut_logic 234222 lut_mem 27317 ff 242696
+                     carry8 12174 f7 20225 f8 3970 bram 253.5 uram 0
+                     dsp 2177 clb 46733
+C4_ROUTE_STATUS nets=3525162 errors=93489 unrouted=0 partial=0
+C4_TIMING wns=-0.575 whs=0.010
+C4_CLKWNS core_clk period=5.000 wns=-0.575
+C4_CLKWNS hbm_aclk period=4.000 wns=0.080
+C4_DONE impl c4lev
+```
+
+Post-route timing summary, `out/timing_c4lev_routed.rpt`:
+
+```
+ WNS(ns)   TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints   WHS(ns)  THS Failing  WPWS(ns)  TPWS Failing
+  -0.575  -876.045                   9056               971406     0.010            0     1.458             0
+```
+
+`report_drc`, `out/drc_c4lev.rpt`: **0 Errors, 0 Critical Warnings.** All 2,771
+violations are Warning or Advisory:
+
+```
+| Rule      | Severity | Description             | Violations |
+| DPIP-2    | Warning  | Input pipelining        | 1772       |
+| DPOP-3    | Warning  | PREG Output pipelining  | 319        |
+| DPOP-4    | Warning  | MREG Output pipelining  | 632        |
+| RTSTAT-10 | Warning  | No routable loads       | 1          |
+| CHECK-2   | Advisory | Report rule not checked | 47         |
+```
+
+The three DP\* rules are DSP register-stage advisories, which is the same
+finding as the congestion report arriving by a different route.
+
+### `errors=93489` IS A FALSE ALARM OF MY OWN MAKING, and it nearly buried the answer
+
+My `C4_ROUTE_STATUS` line counts `ANTENNAS || CONFLICTS || **HIERPORT**` as
+errors. **`HIERPORT` is the ordinary status of a net attached to a hierarchical
+port, and this top has 1,184 of them by design.** Vivado's own
+`report_route_status` in the same run says `# of nets with routing errors : 0`
+with all 516,556 routable nets fully routed.
+
+DERIVED: `ANTENNAS` and `CONFLICTS` genuinely ARE routing errors, and Vivado
+reports zero routing errors, so both are zero and **all 93,489 are HIERPORT**.
+
+**A false alarm of that size, on the single question the composition exists to
+answer, would have read as a routing failure.** The script's own header warned
+about exactly this class -- "reporting 0 nets with routing errors from a report
+that also lists thousands of unrouted port nets would be the kind of
+silent-success claim this project keeps finding" -- and then put HIERPORT on
+the wrong side of the line. Corrected: `HIERPORT` is now counted and printed
+separately as `C4_ROUTE_HIERPORT`, and `errors` is `ANTENNAS || CONFLICTS`
+alone.
+
+**The lesson is not "be careful". It is that a checker written to avoid a false
+PASS produced a false FAIL, and only the tool's own independent count caught
+it.** Cross-check against `report_route_status` and never trust a hand-rolled
+`get_nets` filter alone.
+
+## Result 6 -- where the congestion is, post-route
+
+`out/congestion_c4lev_routed.rpt`, max level **6**, against **7** on the
+attempt that failed:
+
+```
+Direction Type   Level Window                          LUT LUTRAM Flop MUXF RAMB  DSP CARRY  Cell Names
+East      Global     5 (CLEL_L_X16Y190,CLEM_X31Y221)   66%     6%  32%   3%  71%  62%   17%  a_eng/eng/dut/core(50%),c_attn(23%)
+North     Long       6 (CLEM_X9Y56,CLEM_X72Y119)       64%     6%  29%  14%  41%  94%   28%  c_attn/u_arr(73%),a_eng/eng/dut/core
+North     Long       6 (CLEM_X9Y72,CLEM_X72Y103)       64%     6%  28%  14%  42%  94%   27%  c_attn/u_arr(77%),a_eng/eng/dut/core
+South     Long       5 (CLEM_X54Y149,CLEM_X77Y196)     70%    37%  42%   1%  92% 100%   26%  a_eng/eng/dut/core(56%)
+East      Long       5 (CLEL_R_X10Y177,LAG_LAG_X40Y224) 67%    5%  31%   3%  76%  75%   20%  a_eng/eng/dut/core(49%),c_attn(22%)
+East      Long       5 (CLEL_R_X10Y193,LAG_LAG_X40Y224) 68%    5%  31%   3%  83%  69%   20%  a_eng/eng/dut/core(50%),c_attn(21%)
+West      Long       6 (CLEM_X32Y99,CLEM_X95Y194)      60%    23%  32%   4%  67%  99%   27%  a_eng/eng/dut/core(48%),c_attn(27%)
+West      Long       6 (CLEM_X32Y115,CLEM_X79Y178)     57%    23%  31%   3%  56% 100%   26%  a_eng/eng/dut/core(49%),c_attn(28%)
+```
+
+**DSP is 94-100% in every level-6 window** and 62-75% in the level-5 ones,
+while LUT never exceeds 70%. The two named cells are the only two DSP consumers
+in the composition: `a_eng/eng/dut/core`, subsystem A's matvec array, and
+`c_attn/u_arr`, subsystem C's attention array.
+
+**So the next lever is a DSP lever, and there is not one.** This is a genuinely
+new question that did not exist before tonight, because LUT was the binding
+resource in every previous measurement.
+## What this does and does not license
+
+**Does:** STEP 2 of `docs/PLAN_TO_FIRST_INFERENCE.md` is answered. Its own
+"done when" was *"`compose4_top` with both levers reaches `route_design` with 0
+nets with routing errors and a reported WNS"*. Both conditions are met. The
+schedule below it is no longer unfalsifiable, and the two-card split is not
+forced by routability.
+
+**Does not:**
+
+- **It is not 200 MHz.** -0.575 ns is a real miss and the card's shell runs
+  `core_clk` at 5.000 ns. Either the composition gets 0.575 ns faster or the
+  engine clock comes down to ~179 MHz, which is a throughput decision nobody
+  has taken.
+- **It is not the card top.** `compose4_top`'s subsystems are not wired to each
+  other and it has 1,184 out-of-context ports. The real top adds inter-subsystem
+  nets the router has never seen and removes 1,184 ports it has. **Both
+  directions, and neither is estimated.**
+- **It is not the shell.** No XDMA, no HBM controller, no clk_wiz, no thermal
+  block, no AXI interconnect. Their cells inside `pb_core` are accounted for
+  only in the BRAM arithmetic, by subtraction, and not in the LUT or DSP
+  arithmetic at all.
+- **It is not the gain image.** `NORM_W_IMAGE = ""`. With the real image the
+  BRAM sum is 424.5 against 372.5 available and does not fit.
+- **It is not arithmetic.** A routed design is not a correct one, and
+  subsystems B and C have never run on this silicon.
+
+## Open, not yet answered
+
+1. **The 0.575 ns.** Which paths, and whether they are logic or net. TRACK
+   TIMING's method on subsystem C -- find the one structure behind the whole
+   failing population -- is the obvious approach, and 9,056 endpoints of
+   971,406 is a much easier target than the 33,767 it faced.
+2. **DSP is now the binding resource** at 80.63% of `pb_core`, and every
+   congested window is DSP-saturated at 62-100%. There is no DSP lever in the
+   backlog and nobody is holding a DSP budget. **This question did not exist
+   before tonight.**
+3. **Why the two levers do not add**: -84,625 LUT measured against -104,686
+   predicted, and -117,636 FF against -176,320. The attribution control
+   (`--cb-style regs`, same tree, same session) was queued and its result is
+   not in this document.
+4. **What the 3 stray `cb_reg*` flip-flops are.** Not codebook registers (3
+   against 6,144), but unnamed. The corrected census prints the names.
+5. **Whether the extracted `ooc_normadapt` is a fair stand-in for `llama_top`'s
+   `gvr` in place.** The 8.2% miss is the first evidence the difference is not
+   small, and nobody has measured it directly.
+6. **The gain image's 171 tiles.** TRACK GWTWO's `GW` curve.
+7. **The 96.12% CLB occupancy at 5.599 LUT/CLB** is a third point on the
+   density curve, at a pressure where the placer had a choice. It has not been
+   reconciled with the free-die 6.324 or the squeeze's 7.029, and CLAUDE.md
+   already records what happens when a one-point density model is extrapolated.

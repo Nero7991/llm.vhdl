@@ -1,0 +1,21 @@
+C4_BEGIN impl tag=c4lev dcp=/mnt/storage/route2_2026-08-30/out/c4lev_synth.dcp pblock=1
+C4_PBLOCK_RANGE CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+C4_OPT_SECONDS 94
+C4_UTIL c4lev opt lut 265602 lut_logic 237760 lut_mem 27842 ff 237832 carry8 12174 f7 20225 f8 3970 bram 253.5 uram 0 dsp 2177 clb NA
+C4_PLACE_SECONDS 906
+C4_UTIL c4lev placed lut 261539 lut_logic 234222 lut_mem 27317 ff 240120 carry8 12174 f7 20225 f8 3970 bram 253.5 uram 0 dsp 2177 clb 46713
+C4_PLACED placed clb_sites_used 46713
+C4_PLACED placed wns -0.216
+C4_PLACED placed failing_endpoints_max 268
+C4_PHYSOPT_SECONDS 323
+C4_PLACED physopt clb_sites_used 46733
+C4_PLACED physopt wns -0.061
+C4_PLACED physopt failing_endpoints_max 82
+C4_ROUTE_SECONDS 1597
+C4_ROUTE_RC 0
+C4_UTIL c4lev routed lut 261539 lut_logic 234222 lut_mem 27317 ff 242696 carry8 12174 f7 20225 f8 3970 bram 253.5 uram 0 dsp 2177 clb 46733
+C4_ROUTE_STATUS nets=3525162 errors=93489 unrouted=0 partial=0
+C4_TIMING wns=-0.575 whs=0.010
+C4_CLKWNS core_clk period=5.000 wns=-0.575
+C4_CLKWNS hbm_aclk period=4.000 wns=0.080
+C4_DONE impl c4lev

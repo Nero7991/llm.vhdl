@@ -1,0 +1,44 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Aug 30 22:10:26 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_drc -file /mnt/storage/route2_2026-08-30/out/drc_c4lev.rpt
+| Design       : compose4_top
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Fully Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report DRC
+
+Table of Contents
+-----------------
+1. REPORT SUMMARY
+2. REPORT DETAILS
+
+1. REPORT SUMMARY
+-----------------
+            Netlist: netlist
+          Floorplan: checkpoint_c4lev_synth
+      Design limits: <entire design considered>
+           Ruledeck: default
+             Max violations: <unlimited>
+             Violations found: 2771
++-----------+----------+-------------------------+------------+
+| Rule      | Severity | Description             | Violations |
++-----------+----------+-------------------------+------------+
+| DPIP-2    | Warning  | Input pipelining        | 1772       |
+| DPOP-3    | Warning  | PREG Output pipelining  | 319        |
+| DPOP-4    | Warning  | MREG Output pipelining  | 632        |
+| RTSTAT-10 | Warning  | No routable loads       | 1          |
+| CHECK-2   | Advisory | Report rule not checked | 47         |
++-----------+----------+-------------------------+------------+
+
+2. REPORT DETAILS
+-----------------
+DPIP-2#1 Warning
+
+-- TRIMMED by TRACK ROUTE2: the full report is 1.0 MB, of which essentially
+-- all is the 2,723 DSP pipelining advisories enumerated one per instance.
+-- Full report kept at /mnt/storage/route2_2026-08-30/out/drc_c4lev.rpt

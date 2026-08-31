@@ -372,8 +372,20 @@ number below would be meaningless."
     # routing errors" from a report that also lists thousands of unrouted port
     # nets would be the kind of silent-success claim this project keeps
     # finding.
+    # HIERPORT IS NOT A ROUTING ERROR AND MUST NOT BE COUNTED AS ONE.
+    # MEASURED 2026-08-30: this filter reported `errors=93489` on a run whose
+    # own `report_route_status` says
+    #   # of nets with routing errors.......... : 0
+    # with 516,556 routable nets ALL fully routed.  Every one of the 93,489 was
+    # HIERPORT -- the ordinary status of a net attached to a hierarchical port,
+    # and this top has 1,184 of them by design.  A false alarm of that size on
+    # the single question the composition exists to answer would have read as a
+    # routing failure, so HIERPORT is now counted and printed SEPARATELY.
+    # ANTENNAS and CONFLICTS are the real errors and they stay in `errors`.
     set n_err  [llength [get_nets -quiet -hier -filter \
-        {ROUTE_STATUS == ANTENNAS || ROUTE_STATUS == CONFLICTS || ROUTE_STATUS == HIERPORT}]]
+        {ROUTE_STATUS == ANTENNAS || ROUTE_STATUS == CONFLICTS}]]
+    set n_hp   [llength [get_nets -quiet -hier -filter {ROUTE_STATUS == HIERPORT}]]
+    puts "C4_ROUTE_HIERPORT $n_hp  (out-of-context port nets, NOT errors)"
     set n_unr  [llength [get_nets -quiet -hier -filter {ROUTE_STATUS == UNROUTED}]]
     set n_part [llength [get_nets -quiet -hier -filter {ROUTE_STATUS == PARTIAL}]]
     set n_all  [llength [get_nets -quiet -hier]]
