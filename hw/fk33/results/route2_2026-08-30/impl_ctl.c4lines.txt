@@ -1,0 +1,21 @@
+C4_BEGIN impl tag=c4ctl dcp=/mnt/storage/route2_2026-08-30/out/c4ctl_synth.dcp pblock=1
+C4_PBLOCK_RANGE CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+C4_OPT_SECONDS 101
+C4_UTIL c4ctl opt lut 310129 lut_logic 294549 lut_mem 15580 ff 224400 carry8 12153 f7 45611 f8 16268 bram 253.5 uram 0 dsp 2177 clb NA
+C4_PLACE_SECONDS 968
+C4_UTIL c4ctl placed lut 306003 lut_logic 290948 lut_mem 15055 ff 226842 carry8 12153 f7 45611 f8 16268 bram 253.5 uram 0 dsp 2177 clb 48960
+C4_PLACED placed clb_sites_used 48960
+C4_PLACED placed wns -0.672
+C4_PLACED placed failing_endpoints_max 1932
+C4_PHYSOPT_SECONDS 240
+C4_PLACED physopt clb_sites_used 48963
+C4_PLACED physopt wns -0.546
+C4_PLACED physopt failing_endpoints_max 1707
+C4_ROUTE_SECONDS 1920
+C4_ROUTE_RC 0
+C4_UTIL c4ctl routed lut 306007 lut_logic 290952 lut_mem 15055 ff 228283 carry8 12153 f7 45611 f8 16268 bram 253.5 uram 0 dsp 2177 clb 48963
+C4_ROUTE_STATUS nets=3479112 errors=93489 unrouted=0 partial=0
+C4_TIMING wns=-1.168 whs=0.009
+C4_CLKWNS core_clk period=5.000 wns=-1.168
+C4_CLKWNS hbm_aclk period=4.000 wns=-0.064
+C4_DONE impl c4ctl

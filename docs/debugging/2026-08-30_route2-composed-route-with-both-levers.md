@@ -16,7 +16,13 @@ Vivado 2023.2 on the workstation. Tree pinned at `3b2003c`, work committed at
 
 **YES. It routes, inside the card's real `pb_core`, with 0 nets with routing
 errors and 0 DRC errors. It does NOT close 200 MHz: post-route WNS is
--0.575 ns on `core_clk`, which is Fmax 179.4 MHz.** Hold is met with margin to
+-0.575 ns on `core_clk`, which is Fmax 179.4 MHz.**
+
+**But see the CORRECTION in Result 8: the same-session `CB_STYLE = "regs"`
+control ROUTES TOO. Routability was already bought by the norm lever alone.
+What lever C buys is FIT -- the control overflows `pb_core` at 100.74% CLB --
+and 0.593 ns of WNS, which is the difference between `hbm_aclk` meeting and
+missing.** Hold is met with margin to
 spare (WHS +0.010, 0 failing endpoints) and `hbm_aclk` meets 250 MHz at +0.080.
 
 Vivado's own count, `out/route_status_c4lev.rpt`:
@@ -713,3 +719,106 @@ shown to fire on the configuration it must fire on:
 A checker never shown to fail has not been shown to work. This one has now been
 shown to discriminate, on the two configurations it exists to tell apart, in the
 same session.
+## Result 8 -- the control IMPLEMENTATION, and `[Route 35-447]` fires on it
+
+The area control above answers "how much did each lever save". It does not
+answer "did the levers cause the route to succeed", because the only routing
+failure on record was a **different day, a different SHA, and the FREE DIE
+rather than `pb_core`**. So the control was taken through the same
+implementation: same tree, same session, same `pb_core`, same script.
+
+### Placement
+
+| | control, `CB_STYLE="regs"` | levered, both | |
+|---|---:|---:|---|
+| LUT in `pb_core` | 306,003 = **78.70%** | 261,539 = **67.27%** | |
+| placed CLB in `pb_core` | 48,960 = **100.74%** | 46,713 = **96.12%** | control OVERFLOWS the region |
+| density | 6.250 LUT/CLB | 5.599 LUT/CLB | |
+| placed WNS | **-0.672** | **-0.216** | |
+| failing endpoints after place | **1,932** | **268** | **7.2x** |
+| after `phys_opt_design` | **-0.546**, **1,707** | **-0.061**, **82** | **20.8x** |
+| congested windows reported | **11** | **5** | |
+| congestion level | 6 | 6 | |
+
+**The control's placement does not fit inside `pb_core`: 48,960 CLB against
+48,600 available, 100.74%.** The placer put cells outside the region. The
+levered design fits at 96.12%.
+
+Note the control still carries the norm lever, so it is **not** the 2026-08-29
+configuration: its 1,932 failing endpoints are already far better than that
+run's 33,767. **This isolates lever C alone.**
+
+### And the router says it, unprompted
+
+```
+WARNING: [Route 35-447] Congestion is preventing the router from routing all
+nets. The router will prioritize the successful completion of routing all nets
+over timing optimizations.
+```
+
+**That message appears in the control's log and appears NOWHERE in the levered
+design's log.** Same session, same tree, same region, same script, one generic
+different.
+
+The overlap trajectories are the mechanism, side by side:
+
+```
+levered  96 -> 63 -> 26 -> 12 -> 11 -> 2 -> 2 -> 1 -> 2 -> 3 -> 1 -> 0
+control  501,118 -> 162,120 -> 58,308 -> 21,191 -> 7,971 -> ... (iteration 1)
+```
+
+**The levered router begins with 96 overlaps. The control begins with 501,118**
+-- five orders of magnitude apart on the same netlist minus one generic. Every
+congested window in the control is `DSP 100%` with LUT at 70-79%, against the
+levered design's 45-70% LUT.
+### CORRECTION, appended in place: THE CONTROL ROUTES TOO
+
+**I expected the control to fail and it did not.** Recorded here rather than by
+editing the section above, because the expectation is the part worth keeping.
+
+```
+C4_ROUTE_SECONDS 1920
+C4_ROUTE_RC 0
+C4_ROUTE_STATUS nets=3479112 errors=93489 unrouted=0 partial=0
+C4_TIMING wns=-1.168 whs=0.009
+C4_CLKWNS core_clk period=5.000 wns=-1.168
+C4_CLKWNS hbm_aclk period=4.000 wns=-0.064
+
+   # of routable nets..................... :      502627
+       # of fully routed nets............. :      502627
+   # of nets with routing errors.......... :           0
+```
+
+`[Route 35-447]` is a **WARNING** here, not an error: it says the router will
+prioritise completing the routing over timing optimisation, and it did. Four
+global iterations instead of converging in the first, and overlaps that started
+five orders of magnitude higher, but it finished.
+
+**So lever C is NOT what makes the composition routable. It is what makes it
+FIT and what makes it close to timing.**
+
+| | control (`regs`) | levered (`distributed`) | |
+|---|---:|---:|---|
+| routes | **yes**, 0 errors | **yes**, 0 errors | |
+| fits inside `pb_core` | **NO, 48,960 of 48,600 CLB = 100.74%** | **yes, 96.12%** | the real difference |
+| `[Route 35-447]` | **fires** | absent | |
+| router overlaps at start | 501,118 | 96 | |
+| route time | 1,920 s, 4 global iterations | 1,597 s | |
+| `core_clk` WNS | **-1.168** (Fmax 162.1 MHz) | **-0.575** (Fmax 179.4 MHz) | **+0.593 ns** |
+| `hbm_aclk` WNS | **-0.064, FAILS** | **+0.080, MEETS** | lever C closes the HBM domain |
+| TNS | **-19,758.709** | **-876.045** | **22.6x** |
+| failing endpoints | **57,342 of 830,211 = 6.91%** | **9,056 of 971,406 = 0.93%** | **7.4x by fraction** |
+| WHS | +0.009 | +0.010 | both meet |
+
+**The corrected claim, and it is narrower than the one I set out to make:**
+routability was already achieved by the norm lever alone; lever C converts a
+design that overflows its region and misses both clocks into one that fits and
+misses one clock by 0.575 ns.
+
+**And a claim nobody should now make in either direction: no composed
+`route_design` has ever been observed to FAIL to completion in this project.**
+The 2026-08-29 attempt was **killed as a decision while thrashing**, which is
+strong evidence and is not an observation of failure. Both configurations
+measured tonight route. That is worth stating because the whole framing of
+STEP 2 -- "the router already failed at a looser density" -- rests on a run
+that was stopped, not one that finished.

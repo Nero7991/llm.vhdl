@@ -1,0 +1,47 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Aug 30 22:44:39 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_design_analysis -congestion -file /mnt/storage/route2_2026-08-30/out/congestion_c4ctl_placed.rpt
+| Design       : compose4_ctl_top
+| Device       : xcvu33p
+| Design State : Fully Placed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------+
+| Direction |  Type  | Level |             Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM |  DSP | CARRY | SRL |                           Cell Names                          |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------+
+| North     | Global |     5 | (CLEM_X27Y69,CLEL_R_X42Y100)   |            0% |         3.603 | 73% | 6%     |  32% |  34% | 85%  | NA   | 100% |   21% |  0% | c_attn/u_arr(57%),a_eng/eng/dut/core(40%)                     |
+| West      | Global |     5 | (CLEL_R_X41Y13,CLEM_X57Y44)    |            0% |         3.643 | 76% | 0%     |  26% |  16% | 0%   | NA   | 100% |   30% |  0% | c_attn/u_arr(94%)                                             |
+| North     | Long   |     5 | (CLEL_R_X21Y66,CLEL_R_X37Y97)  |            0% |         3.368 | 70% | 4%     |  30% |  27% | 66%  | 0%   | 100% |   27% |  0% | c_attn/u_arr(70%),a_eng/eng/dut/core(28%)                     |
+| North     | Long   |     6 | (CLEL_R_X10Y53,CLEL_R_X42Y116) |            0% |         3.549 | 72% | 4%     |  25% |  28% | 64%  | 0%   | 100% |   30% |  0% | c_attn/u_arr(63%),a_eng/eng/dut/core(34%)                     |
+| South     | Long   |     5 | (CLEM_X33Y163,DSP_X48Y190)     |            0% |         4.270 | 78% | 8%     |  21% |  42% | 50%  | NA   | 100% |   13% |  0% | a_eng/eng/dut/core(82%),c_attn(8%),a_eng/eng/dut/streamer(5%) |
+| West      | Long   |     5 | (CLEL_R_X42Y13,BRAM_X58Y40)    |            0% |         3.631 | 76% | 0%     |  25% |  15% | 0%   | NA   | 100% |   32% |  0% | c_attn/u_arr(94%)                                             |
+| South     | Short  |     5 | (CLEL_R_X29Y167,CLEM_X45Y198)  |            0% |         4.302 | 79% | 7%     |  22% |  40% | 41%  | NA   | 100% |   15% |  0% | a_eng/eng/dut/core(81%),c_attn(9%),a_eng/eng/dut/streamer(4%) |
+| East      | Short  |     5 | (CLEM_X39Y12,DSP_X54Y40)       |            0% |         3.684 | 75% | 0%     |  25% |  17% | NA   | NA   | 100% |   27% |  0% | c_attn/u_arr(91%),c_attn(4%)                                  |
+| East      | Short  |     6 | (CLEM_X11Y110,CLEL_L_X43Y173)  |            0% |         3.940 | 79% | 7%     |  22% |  39% | 76%  | 0%   | 100% |   26% |  0% | a_eng/eng/dut/core(81%),c_attn(7%),a_eng/eng/dut/streamer(6%) |
+| West      | Short  |     5 | (CLEL_R_X40Y13,BRAM_X56Y40)    |            0% |         3.683 | 76% | 0%     |  25% |  17% | 0%   | NA   | 100% |   28% |  0% | c_attn/u_arr(93%)                                             |
+| West      | Short  |     6 | (CLEL_R_X9Y14,CLEL_R_X41Y77)   |            0% |         3.599 | 73% | 0%     |  24% |  18% | 5%   | 0%   | 100% |   31% |  0% | c_attn/u_arr(92%),a_eng/eng/dut/core(5%)                      |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------+
+
+
+2. SLR Net Crossing Reporting
+-----------------------------
+
++------------+-----------------------------+
+| Cell Names | Number of Nets crossing SLR |
++------------+-----------------------------+
+* The current part is not an SSI device
+
+
