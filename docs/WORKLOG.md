@@ -129,6 +129,53 @@ failing endpoints after placement, **20,000 of the 20,000 worst net-dominated**
 (mean net 4.575 ns against mean logic 0.670 ns). The route was killed as a
 decision, not a completion (`ac35293`); `c4dev_physopt.dcp` is kept.
 
+### TRACK RMSWIRE COMPLETE (`47c9d9c`). STEP 1a IS DONE, and composition found a cost no unit draw could.
+
+| | `ctl_flat` | `mem_bank` | delta |
+|---|---:|---:|---:|
+| CLB LUT | 67,318 | **5,265** | **-62,053, -92.2%** |
+| CLB FF | 191,664 | **2,149** | **-189,515** |
+| MUXF7 / MUXF8 | 26,736 / 13,296 | **0 / 0** | -100% |
+| **BRAM tile** | **171** | **177** | **+6** |
+| WNS @ 5.0 ns | +1.675 | +0.971 | 248.2 MHz |
+
+**The saving is 72% LARGER than RMSMUX's standalone -36,109, and the census says
+exactly why: `gvr.uw_data` -- 19,728 LUT / 9,328 MUXF7 / 4,592 MUXF8 -- is the
+ADAPTER'S OWN 4096-to-1 write-back read mux, absent from every standalone draw.**
+Nobody had measured it, because a unit draw structurally cannot see it. **This is
+the counter-example to "compose late": composing EARLIER would have found a
+62,053-LUT structure two tracks were unknowingly leaving on the table.**
+
+**BRAM CONFIRMED BY MEASUREMENT, and the dispatcher's DERIVED figure holds:**
+`246.5 + 177 = 423.5` against `372.5` available in `pb_core` -- **51 short**. The
+gain image did not move (171 RAMB36 at both points). **45 of those 51 tiles are
+NOT this lever.** The binding term is the gain image, and NORMURAM's `GW = 2`
+fallback has still not been measured.
+
+**`wact_chk` EARNS ZERO KILLS**, stated plainly. Kept only because `onlyWA =
+K:wact` shows it discriminates and it is the sole check on the real deadline if
+the gate is ever relaxed. **R1, R2 and R11 do not bite and are named** -- R1
+(gate removed, survives) measures the gate at **zero cycles**.
+
+**THREE CORRECTIONS THAT OUTLIVE THIS TRACK.**
+
+1. **`sim/mutate_llama_top_kv.sh` needed `vec_mem` + `rmsnorm_rs_mem` added by
+   hand.** Three harnesses read that hand-maintained closure, and without it
+   **every row of all three, INCLUDING THE CONTROLS, was `NOBUILD`.**
+   `regress.sh` computes its own closure and stayed green throughout, so **the
+   gate structurally cannot catch this class.** A mutation harness whose
+   controls all fail to build reports nothing and looks like it ran.
+2. **`ooc_normadapt_extract.py --shift` now aborts against HEAD** (no `xw`).
+   Correct behaviour, but **NORMADAPT's `na_shift` probe is no longer
+   reproducible.**
+3. **`nw_empty = 49,654` IS RETIRED as a cross-track control.** It was a draw of
+   a configuration -- flat port, foldable constant gain -- that `llama_top` no
+   longer contains. **This reverses the dispatcher's ruling this morning that it
+   must not be retired**, and correctly: that ruling was right while the tree
+   still held that configuration and wrong the moment this landed. Prior
+   conclusions stand for their own trees; **nothing replaces it as a shared
+   scale, and four tracks were quoting it.**
+
 ### TRACK RMSWIRE, in flight: the lever is wired, and there are TWO deadlines
 
 **Landed and green.** `rmsnorm_rs_mem` is wired into `llama_top` at the real 9B
