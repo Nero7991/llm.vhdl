@@ -1,0 +1,5680 @@
+-- rtl/llama_top.vhd
+-- THE INTEGRATION TOP LEVEL.  One token, N transformer blocks, one residual
+-- stream, one sequencer, four unit adapters and a region file.
+--
+-- =====================================================================
+-- WHY THIS FILE EXISTS
+-- =====================================================================
+-- Four subsystems were built and verified in isolation and NONE OF THEM HAD
+-- EVER BEEN CONNECTED TO ANY OTHER:
+--
+--   A  INT4 matvec        matvec_int4 / matvec_core / weight_streamer.
+--                         Verified end to end by sim/run_matvec.sh.
+--   B  Gated DeltaNet     rtl/gdn_block.vhd, a real seven-unit top level,
+--                         bit-identical under five independent producer skews.
+--   C  gated attention    steps 3..8 verified contiguous.  THE LANE ARRAY
+--                         `attn_lane_skel` IS A PRICING SKELETON AND COMPUTES
+--                         NOTHING.  C cannot produce an attention output.
+--   D  sequencer          seq_desc_fetch / seq_region_lock / seq_opdec /
+--                         seq_vec_issue / seq_vec_res, all real.
+--                         `seq_top_skel` is NOT real -- it instantiates
+--                         nothing and has never been simulated.
+--
+-- Every integration defect this project has found came from a seam.  The D
+-- owner demonstrated that two units each verified against a stub of the other
+-- hid four defects between them.  This file is where the remaining seams
+-- become reachable.
+--
+-- =====================================================================
+-- WHAT IS REAL HERE AND WHAT IS NOT.  READ THIS BEFORE BELIEVING A NUMBER.
+-- =====================================================================
+-- REAL RTL, instantiated, not modelled (the DEFAULT configuration):
+--   seq_desc_fetch   the descriptor walker
+--   seq_opdec        opcode decode, region masks, exponent capture
+--   seq_region_lock  the region locks and the per-region exponent store
+--   seq_vec_issue    the D-ctrl to D-vec adapter
+--   seq_vec_res      the residual add.  THE SPINE OF THE BLOCK LOOP.
+--   matvec_int4      subsystem A, streaming weights over five AXI4 masters
+--   gdn_block        subsystem B, seven units, with its six memories
+--
+-- REAL UNIT, SYNTHETIC INPUT.  Worth separating from both lists, because it
+-- is the easiest thing here to overstate:
+--   A's WEIGHTS       the descriptor base array past the 64-byte header is
+--                     not fetched (seq_desc_fetch.vhd:113-115), so the
+--                     adapter computes a per-step address block and whatever
+--                     the memory returns there is what A multiplies.
+--   B's conv taps,    deterministic functions of index by DEFAULT.  With
+--   conv weights,     B_SRC_REAL the newest conv tap comes from R_QKV,
+--   scalars, w_mant   alpha from R_ALPHA and beta from R_BETA; the conv
+--                     weights, ssm_dt_bias, ssm_a and the ssm_norm weight
+--                     stay fixed-scale because they are learned WEIGHTS.
+--                     `z`, the output gate, always comes from R_Z.
+--                     B_SRC_REAL defaults FALSE and the reason is measured,
+--                     not conservatism: with it TRUE the degenerate-residual
+--                     count RISES, 0/3/10/23 -> 3/5/11/24 at 4/8/16/32
+--                     blocks, because A's synthetic weights make R_ALPHA's
+--                     VALUES physically impossible and gdn_scalar's gate
+--                     saturates shut.  Sourcing the taps ALONE is neutral.
+--                     See PART 3 of
+--                     docs/debugging/2026-08-28_llama-top-first-seams.md.
+--
+-- BEHAVIOURAL MODELS, selected by generic, every one of them marked in its
+-- own comment block and every one of them reporting what it is at time zero:
+--   the region file          a flat array.  Really 14 BRAM/URAM regions.
+--   unit A when A_BEHAV      a plain integer matvec with synthetic weights.
+--   unit B when B_BEHAV      a first-order recurrence, NOT Gated DeltaNet.
+--   unit C always            *** ATTENTION IS A STUB.  SEE THE BANNER. ***
+--   unit E always            unreachable at NCARDS=1; errors if ever started.
+--   the norm when not        `out(i) = in(i) - mean(in)`, NOT rmsnorm.  With
+--     NORM_REAL              NORM_REAL the real `rmsnorm_rs` runs instead --
+--                            see that generic, and read the MEASURED result
+--                            there before assuming it is an improvement.
+--   swiglu always            `out(i) = (a(i)*b(i)) / 2**MANT_W`, no gate.
+--
+-- `A_BEHAV` and `B_BEHAV` exist so that a failure can be BISECTED to a side of
+-- a seam.  They are not an alternative implementation and nothing about them
+-- is a claim.  With both false the top level instantiates the real A and the
+-- real B.
+--
+-- =====================================================================
+-- THE THREE SEAM RULES THIS FILE OBEYS, AND WHY EACH IS HERE
+-- =====================================================================
+-- (1) EVERY DESCRIPTOR FIELD A UNIT NEEDS IS LATCHED ONCE, AT `job_issue`,
+--     AND READ FROM THE LATCH THEREAFTER.
+--
+--     `u_start` and `job_issue` ARE NOT THE SAME INSTANT.  seq_desc_fetch
+--     drives `u_start` combinationally from `state = S_ISSUE`
+--     (seq_desc_fetch.vhd:962) but sets `issue_r`, `live_bank` and `jvalid_r`
+--     in the REGISTERED body of S_ISSUE (:788-794).  So `u_start` is high one
+--     cycle BEFORE `job_issue`, and during that cycle the `job_*` outputs are
+--     still decoding the PREVIOUS live bank.  An adapter that latches its
+--     descriptor on `u_start` latches the previous job's shape.  That is
+--     defect class (a) -- an input read at the wrong instant of a long
+--     operation -- and it is the first thing a new adapter gets wrong.
+--
+--     It matters most for subsystem A, which reads `n_rows`, `n_cols`,
+--     `w_exp`, `x_exp` and `out_mode` LIVE for the whole of a multi-thousand
+--     cycle job (matvec_core.vhd:639, :771, :912, :932-934).  Only
+--     `out_shift` is latched inside A.  So the register that holds A's
+--     descriptor has to live HERE, in the adapter, or A silently computes
+--     with a mixture of two jobs' shapes.
+--
+-- (2) EVERY COMPLETION IS CONVERTED TO A LEVEL HELD UNTIL `u_ack`.
+--
+--     seq_desc_fetch:235 states the contract: "u_done MUST be a level held
+--     until u_ack".  Neither real unit meets it.  `matvec_core`'s `done` is a
+--     one-cycle pulse with no ack (matvec_core.vhd:918-920).  `gdn_block`'s
+--     `done` is a one-cycle pulse with no ack, and its own testbench polls
+--     `busy` instead (tb_gdn_block.vhd:618-621).  That is defect class (b).
+--     D happens to survive it, because its sticky `done_seen` capture is the
+--     sole sampler, but surviving it is not the same as meeting it: D also
+--     refuses to issue while `u_done` is still high (:787), so a unit whose
+--     `done` is a pulse and whose `ready` is synthesised wrong deadlocks.
+--     Both adapters therefore hold `done` themselves and clear it on `u_ack`.
+--
+-- (3) EVERY UN-STALLABLE PRODUCER IS TREATED AS A CORRECTNESS OBLIGATION.
+--
+--     `y_we` in A, and `y_valid` in B, have no ready.  A stall there LOSES a
+--     beat, it does not delay it.  Both sinks in this file accept
+--     unconditionally, every cycle, and `err_lost` is raised if a beat ever
+--     arrives when the sink is not armed.  A region write that the lock drops
+--     (`wr_gate` low) is likewise counted and reported, not ignored.
+--
+-- =====================================================================
+-- WHAT THE TOP LEVEL DOES NOT DO.  STATED SO NOBODY HAS TO FIND OUT.
+-- =====================================================================
+--   * There is no attention.  See the C banner.  A schedule with
+--     `attn_interval` > blocks has no attention step and is the only
+--     configuration whose OUTPUT means anything at all.
+--   * The weight base array past the 64-byte descriptor header is not
+--     fetched.  seq_desc_fetch range-checks `nsub_w`/`nsub_s` against
+--     NSUB_MAX and says in its own header that "fetching it is remaining
+--     work" (:113-115).  So A's weights do not come from the descriptor.
+--   * There is no sampler and no lm_head output.  The final A job is issued
+--     with dst = R_NONE and its result is discarded.
+--     CORRECTED 2026-08-29: true only with SMP_EN false, which is still the
+--     DEFAULT.  With SMP_EN the A adapter routes a FLG_TO_SMP job's RAW s32
+--     rows into `rtl/sampler_stream.vhd` and publishes them on the `smp_*`
+--     ports.  See that generic.  What is STILL true either way: there is no
+--     writeback of the logits to memory, so the only egress is the streaming
+--     argmax and the `smp_*` observation ports -- the costed comparison
+--     between a y-to-HBM writeback and on-card top-k is section 7 of
+--     docs/debugging/2026-08-29_logits-egress.md and is a decision nobody has
+--     taken.
+--   * There is no KV cache, no position, no RoPE at this level.
+--   * NCARDS > 1 is not wired.  OP_E_COLL reaches a unit adapter that raises
+--     an error, deliberately, rather than silently completing.
+--   * The release mask is an INPUT PORT.  seq_opdec finding (3) says it is a
+--     whole-table liveness property with no descriptor field, so the host
+--     computes it.  `sim/llama_sched_pkg.build_plan` is that computation.
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+-- textio is here for ONE thing: NORM_W_IMAGE, the real RMSNorm gain image.
+-- It is read at elaboration and only when that generic is non-empty; nothing
+-- in the default path touches a file.  This file is in no BUILD flow
+-- (`grep -rn llama_top hw/` is empty), so the elaboration-time read costs
+-- nothing there either.
+--
+-- CORRECTED 2026-08-29 (TRACK REALFIX): "not in any synthesis flow" was too
+-- strong and it matters for the elaboration checks below.  `hw/` is indeed
+-- empty of this file, but `sim/ooc_compose_bcd.tcl` has
+-- `set GEN(llama_top) {}` and synthesises this entity OUT OF CONTEXT at its
+-- own defaults for area.  So Vivado DOES read this file, which is exactly
+-- why the guards here are out-of-range `natural` constants and not
+-- `assert ... severity failure`: MEASURED 2026-08-29 on Vivado 2023.2, an
+-- out-of-range constant is `ERROR: [Synth 8-11323] assigned value '-48' out
+-- of range` and stops the run, while a failing severity-failure assert is
+-- ignored in synthesis.
+use std.textio.all;
+use work.model_cfg_pkg.all;
+use work.llama_map_pkg.all;
+use work.util_pkg.clog2;
+
+entity llama_top is
+  generic(
+    -- The model shape.  Defaults to the real build target.  A simulation
+    -- passes `mk_shape_scaled(blocks, attn_interval)`.
+    SHAPE   : shape_t := mk_shape(MODEL, NCARDS);
+
+    -- Datapath widths.  These are the D-vec widths and they are the same ones
+    -- sim/tb_seq_vec_seam.vhd closes seq_vec_res at.
+    LANES   : positive := 8;
+    MANT_W  : positive := 16;
+    ACC_W   : positive := 32;
+    EXP_W   : positive := 16;
+    -- D-VEC ELEMENT-COUNT WIDTH.  `seq_vec_issue` refuses a job with
+    -- `job_n_rows >= 2**VN_W` (rtl/seq_vec_issue.vhd:376, EC_NROWS), and the
+    -- widest D-vec job a schedule issues is `region_max(SHAPE)` elements --
+    -- at 9B that is `ffn` = 12288, so the old fixed 13 refused EVERY FFN of
+    -- EVERY block at run time and nothing rejected the combination at
+    -- elaboration.  `maximum(13, ...)` and not the bare `clog2`, so that a
+    -- scaled shape keeps exactly the 13 it has always had rather than
+    -- silently narrowing to 8: this change must move no existing number.
+    -- 9B needs 14; 27B's ffn 17408 will make it 15 on its own.
+    VN_W    : positive := maximum(13, clog2(region_max(SHAPE) + 1));
+    ADDR_W  : positive := 16;   -- the lock's element-address width
+    SEGS    : positive := 3;
+    EPOCH_W : positive := 4;
+    STEP_W  : positive := 11;
+
+    -- Elements per region.  Every region is allocated the widest region's
+    -- size, which is what a flat model costs and what a real build would not
+    -- pay.  Stated because it is a model artefact, not a design choice.
+    --
+    -- IT DEFAULTS FROM THE SHAPE, and it did not before.  The old default was
+    -- a bare 4096 while `region_max(mk_shape(MODEL,1))` -- the default SHAPE
+    -- -- is 12288.  Nothing asserted it, so the real shape elaborated clean
+    -- and then produced a bound-check error on the first FFN write in
+    -- simulation.  Both benches that instantiate this file already compute
+    -- `region_max(SHAPE)` themselves (sim/tb_llama_top.vhd:606,
+    -- sim/tb_llama_top_smp.vhd:112), so this makes the default agree with
+    -- every caller rather than inventing a new value.  `CHK_REGMAX` below
+    -- bites if it is overridden too small.
+    REGMAX  : positive := region_max(SHAPE);
+
+    WDOG_LIMIT : positive := 200000;
+    STRICT     : boolean  := true;
+
+    -- Bisection switches.  See the header.  Both false = the real units.
+    -- Both default FALSE: the real `matvec_int4` and the real `gdn_block` are
+    -- instantiated, and the default configuration of a top level should be
+    -- the real one.  Set either true to bisect a failure to a side of a seam.
+    A_BEHAV : boolean := false;
+    B_BEHAV : boolean := false;
+
+    -- WHERE SUBSYSTEM B'S ACTIVATION INPUTS COME FROM.  Not a bisection
+    -- switch and not a behavioural model: with it TRUE the real `gdn_block`
+    -- reads the SAME data either way, only the source changes.
+    --
+    --   false  the conv taps, alpha and beta are deterministic functions of
+    --          their index at a FIXED exponent, as in `tb_gdn_block`.
+    --   true   the newest conv tap comes from region R_QKV, alpha from
+    --          R_ALPHA and beta from R_BETA, each carrying THAT REGION'S
+    --          captured exponent, so B's inputs sit on the token's own scale.
+    --
+    -- Only the ACTIVATIONS move.  The conv weights, the two learned per-head
+    -- scalars (ssm_dt_bias, ssm_a) and the ssm_norm weight stay at a fixed
+    -- exponent, because that is what a learned weight IS: a constant whose
+    -- scale does not move with the token.  Sourcing a weight from an
+    -- activation region would answer a different question.
+    --
+    -- THE TAP HISTORY IS THE PART THIS SWITCH CANNOT DELIVER, and it is a
+    -- REFUSAL rather than a stand-in.  `gdn_exp_capture` masks every tap
+    -- older than the number of captures, and this file now resets those
+    -- counters once per SEQUENCE, so at token 0 only tap KCONV-1 is valid --
+    -- which is what the first token of a sequence actually is -- and at
+    -- token n < KCONV the newest n+1 taps are valid.  With B_SRC_REAL false
+    -- every tap carries an `m12` stand-in and there is nothing to hold.  With
+    -- it TRUE only tap KCONV-1 comes from R_QKV and the rest are ZERO, so
+    -- from token 1 the conv would sum a zero at a real captured exponent.
+    -- `gb_real`'s S_GO asserts against that combination rather than letting
+    -- it produce a plausible wrong number; holding a real history is a new
+    -- (KCONV-1) x qkv_dim buffer this file does not have.
+    B_SRC_REAL : boolean := false;
+
+    -- A PROBE, NOT A FIX, AND NOT AN ARCHITECTURAL CHANGE.  It exists to
+    -- measure ONE question: is the block-to-block exponent drift caused by
+    -- the norm never restoring the activation scale?
+    --
+    -- The norm model is `out(i) = in(i) - mean` and it publishes
+    -- `y_exp = x_exp`, i.e. it passes the input scale straight through.  A
+    -- REAL rmsnorm does not: `out = (x / rms(x)) * w` is scale-free in x, so
+    -- its output exponent is fixed by the WEIGHT scale and carries no memory
+    -- of the input's.  With NORM_ANCHOR true the model reproduces that ONE
+    -- property -- mantissas renormalised to full scale, exponent published as
+    -- the constant NORM_EXP -- and nothing else about rmsnorm.
+    --
+    -- Default FALSE.  The measured numbers are in
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md, PART 3.
+    NORM_ANCHOR : boolean := false;
+    NORM_EXP    : integer := 12;
+
+    -- THE REAL UNIT, NOT A PROBE.  With NORM_REAL true the D-vec norm op is
+    -- computed by `rtl/rmsnorm_rs.vhd` -- the same instance subsystem C's
+    -- budget already carries -- behind an adapter that translates
+    -- seq_vec_issue's by-value protocol to its flat-vector one.  With it
+    -- false the behavioural mean-removal model above runs and the default
+    -- path is bit-identical to what it was before this generic existed.
+    --
+    -- `rmsnorm_rs` takes the WHOLE vector on one port, so N is fixed at
+    -- elaboration.  Every OP_VEC_NORM in the schedule is `n_rows =>
+    -- s.hidden` (llama_sched_pkg.vhd:185, :202, :216, :242), so one instance
+    -- at N = SHAPE.hidden covers all of them, and the adapter ASSERTS the
+    -- issued `v_n` against it rather than padding: a padded vector changes
+    -- the mean square, so a shorter norm would be a wrong number and not a
+    -- wasted cycle.
+    --
+    -- THE NORM WEIGHT IS A FIXED-SCALE STAND-IN, and that is what a learned
+    -- weight IS -- a constant whose scale does not move with the token.  It
+    -- is the same rule B_SRC_REAL applies to the conv weights and the two
+    -- learned per-head scalars.  There is no weight region, no descriptor
+    -- field naming one, and no packing for it; inventing one would answer a
+    -- different question.
+    --
+    -- MEASURED 2026-08-28, AND IT DOES NOT FIX THE SCALE DRIFT.  Real A,
+    -- real B, attn_interval 4, NRUNS = 1, degenerate residuals (P6):
+    --
+    --     BLOCKS               1    2    4    8   16   32
+    --     NORM_REAL true       0    2    6   14   28   59
+    --     NORM_ANCHOR probe    -    -    0    0    3    8
+    --     neither              -    -    5   12   27   56
+    --
+    -- The real unit is about as bad as no norm at all, and the reason is NOT
+    -- its exponent bookkeeping: that part is exactly the scale-free
+    -- behaviour the probe models, and it was observed directly -- the
+    -- published `o_exp` is 13 or 14 for input exponents of 3, 10, -1, -5, -6
+    -- and -7 alike.  The reason is that `rmsnorm_rs` has a HARD 19-octave
+    -- INPUT MAGNITUDE window, `rms(x_real)` in [2^-6, 2^12], with a SILENT
+    -- all-zeros rail above it.  That window was measured independently in
+    -- docs/debugging/2026-08-26_rmsnorm-magnitude-window.md and this file
+    -- did not re-derive it.  The residual stream crosses 2^12 during the
+    -- SECOND block: measured log2 rms 3.20, then 3.36, then 15.10 and stuck.
+    -- From the third norm onward every output element is zero, so R_XN is a
+    -- zero vector, every matvec below it produces zero, ER is zero and the
+    -- residual stream freezes.  The probe cannot show this, because it folds
+    -- the magnitude in unbounded integer arithmetic and so has no window.
+    --
+    -- Raising NORM_Q is a DELAY, not a fix, and that is measured too: at
+    -- Q = 20 the count is 0/0/6/38 at 4/8/16/32 blocks, and at 32 blocks 39
+    -- of the 65 norms are emitting zeros again because the stream has
+    -- drifted on to x_exp -8.  See PART 5 of
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+    --
+    -- ============ CORRECTED 2026-08-28, SAME DAY.  READ THIS. ============
+    -- EVERY NUMBER ABOVE WAS TAKEN WITH SYNTHETIC WEIGHTS, and the conclusion
+    -- drawn from them -- that the real unit is worse than no norm -- is
+    -- WITHDRAWN.  The bench's arithmetic weight image has an rms ROW NORM of
+    -- 2**4.87 (measured over the same 297 A jobs); the real Qwen3.5-9B
+    -- weights have 2**-0.03.  A matvec multiplies the activation magnitude by
+    -- its row norm, so the synthetic image alone drives the stream up about
+    -- five octaves per matvec and out of `rmsnorm_rs`'s window in the second
+    -- block.  With REAL weights fed through `W_IMAGE` in the bench:
+    --
+    --     BLOCKS                             1   2   4   8  16  32
+    --     NORM_REAL true,  real weights      0   0   0   0   0   0
+    --     NORM_REAL true,  synthetic         0   2   6  14  28  59
+    --     no norm anchor,  real weights      0   1   3   9  23  51
+    --     no norm anchor,  synthetic         1   2   5  12  27  56
+    --
+    -- and the norm's input magnitude stays at log2 rms 3.20 -> 5.24 across
+    -- the whole 32-block token, i.e. deep inside the 19-octave window, with
+    -- the stream demonstrably still moving (65 distinct magnitudes over 65
+    -- norms).  So `rmsnorm_rs` on this op DOES restore the scale, PART 3's
+    -- recommendation stands, and PART 5 measured the stimulus.
+    --
+    -- The other half of PART 3 is NOT withdrawn and is confirmed: with real
+    -- weights and the behavioural mean-removal model the stream still
+    -- explodes, 3.20 -> 25875 octaves over 32 blocks.  Nothing in the block
+    -- loop restores the scale EXCEPT a real norm.  See PART 6.
+    NORM_REAL  : boolean  := false;
+    NORM_LANES : positive := 4;      -- must divide SHAPE.hidden
+    -- rmsnorm_rs's internal Q, left at ITS OWN default.  Do not raise it to
+    -- move the P6 count: measured above, it moves the count and does not
+    -- remove the mechanism.
+    NORM_Q     : integer  := 12;
+    -- The stand-in weight's exponent.  The weight mantissas sit around
+    -- 2**NORM_W_EXP, i.e. a value near 1.0, which is what an RMSNorm gain is
+    -- initialised to.
+    NORM_W_EXP : integer  := 12;
+
+    -- ==================================================================
+    -- THE REAL NORM GAIN, `NORM_W_IMAGE`.  Added 2026-08-29, TRACK NORMW.
+    --
+    -- WHY.  Two tracks found the same thing on 2026-08-29 without knowing of
+    -- each other.  TRACK REF9B, building the whole-model 9B reference, had to
+    -- record finding D2: "the top-level norm weight is synthetic ... those two
+    -- seams cannot be compared against this reference at all".  TRACK SPECREC,
+    -- reconciling the specs against the RTL, observed that `attn_norm` appears
+    -- ZERO times in this file.  `R_XN-L`, `R_XN.ffn-L` and `R_XN.final` are 9
+    -- of the 63 seams a token captures, and they are the outputs of the one
+    -- operation the whole residual stream's scale depends on.
+    --
+    -- WHAT IT IS.  A file of the real gains, one entry per OP_VEC_NORM of a
+    -- token in schedule order, written by
+    -- `tools/gen_llama_top_weights.py --norm-out`.  Empty (the DEFAULT) keeps
+    -- the synthetic ramp and the default path is bit-identical to what it was
+    -- before this generic existed -- MEASURED, not asserted: the
+    -- `tb_llama_top_real` landmark pair `R_X(0) = -16364 hash 91622` is
+    -- unchanged.
+    --
+    -- CORRECTED 2026-08-29 (TRACK REALFIX).  This comment carried
+    -- `-16339 hash 92903` from the day it was written and had been WRONG
+    -- since `a77d181`, the B-BLK-1 key-head mapping fix, which moved the
+    -- landmark and did not move the comment.  TRACK OI3B and TRACK CAPTURE
+    -- measured the current pair independently; it is re-measured here as
+    -- `EXP_X0 => -16364, EXP_XSUM => 91622` on a pristine `git archive`
+    -- 5578132 tree.  The CLAIM the comment makes -- that the default path is
+    -- bit-identical with the generic empty -- is unaffected; only the
+    -- witness numbers were stale.  Since `5578132` these four numbers reach
+    -- the bench's verdict, so a stale pair here can no longer outlive a run.
+    --
+    -- WHAT IT IS NOT, and this is the part not to overstate.  It does NOT add
+    -- a weight region, a descriptor field, or a packing for a norm gain.  The
+    -- design still has no path by which a gain reaches this unit from HBM, and
+    -- that gap is exactly as open as it was.  This is STIMULUS, in the same
+    -- sense `W_IMAGE` is stimulus for subsystem A -- and, as with A, replacing
+    -- a fabricated constant with the real numbers is what makes the arithmetic
+    -- judgeable at all.  A gain is a learned weight whose scale does not move
+    -- with the token, so serving it from an elaboration-time image rather than
+    -- a token-varying region misrepresents nothing about the operation.
+    --
+    -- NORM_REAL only.  With NORM_REAL false the behavioural mean-removal model
+    -- runs, it has no weight at all, and this generic is not read.
+    NORM_W_IMAGE : string := "";
+
+    -- ==================================================================
+    -- THE REAL SUBSYSTEM C, NOT THE STUB.  With C_REAL true `OP_C_JOB` is
+    -- computed by `rtl/attn_block.vhd`; with it false the `-32768 + i` ramp
+    -- above runs and `err_unit_stub` rises, and the default path is
+    -- bit-identical to what it was before this generic existed.
+    --
+    -- WHAT IT DOES AND DOES NOT ESTABLISH, said here because the integration
+    -- must not imply more than the block does.  `attn_block` sequences ten
+    -- units, honours every handshake, is invariant under consumer skew and
+    -- derives its output scale from its inputs -- and **NOTHING ESTABLISHES
+    -- THAT IT COMPUTES ATTENTION**.  C spec 3.11 names `ref/attn_gated_fx.c`
+    -- as the block-level reference and it does not exist, so
+    -- `sim/tb_attn_block.vhd` checks properties and not values.  Wiring the
+    -- block in replaces a unit that is deliberately, visibly wrong with one
+    -- that is plausibly right and unverified at block level.  That is
+    -- progress and it is not a result.
+    --
+    -- The KV cache is a one-cycle behavioural memory port here UNLESS
+    -- `C_KV_AXI` is set -- see that generic.  With it false the model does
+    -- NOT cover 4 KB burst splitting, the record-phase realignment,
+    -- drain-then-flush on `start`, or `done` gated on BRESP, and it cannot
+    -- refuse, so `attn_block`'s four seam handshakes sit at their '1'
+    -- defaults.  (CORRECTED 2026-08-29: this used to say `attn_kv_axi` does
+    -- not exist.  It does, and it is instantiated below.)
+    --
+    -- MEASURED 2026-08-28, NRUNS = 1, real A and real B, attn_interval 4.
+    -- Degenerate residuals (P6), the real block against the stub:
+    --
+    --     BLOCKS                          1   2   4   8  16  32
+    --     stub C, NORM_ANCHOR             0   0   0   0   3   8
+    --     REAL C, NORM_ANCHOR             0   0   0   0   3   8
+    --     stub C, unanchored              1   2   5  12  27  56
+    --     REAL C, unanchored              1   2   P4 fails from 4 blocks up
+    --
+    -- IDENTICAL where it can be compared.  Ten real units in place of a ramp
+    -- move P6 by nothing, because P6 measures the residual's SCALE and defect
+    -- 7's fix already had the stub publishing its source region's exponent.
+    -- Unanchored, the real block ends with R_X all zeros rather than merely
+    -- wrong: it carries `rmsnorm_rs` instances of its own for the QK-norm and
+    -- so has the same 19-octave input window as the D-vec norm.
+    --
+    -- With C_REAL, NORM_REAL and PART 6's real weights all on, the whole
+    -- 491-descriptor 32-block token PASSES with 0 degenerate residuals and
+    -- the norm's input magnitude flat at log2 rms 3.20 to 3.34.  That is
+    -- every computing unit in the block loop real, with no probe enabled.
+    --
+    -- SHAPE CONSTRAINT, and it is an ELABORATION one.  `attn_block` folds
+    -- `kq_scale = 1/sqrt(HEAD_DIM)` into an exponent, which is exact only for
+    -- an EVEN power of two, and it needs `HEAD_DIM/C_KV_BLOCK >= 2` and a GQA
+    -- group of at least 2.  `mk_shape_scaled`'s default `attn_head_dim` of 32
+    -- is 2**5 and FAILS the first of those.  `attn_emit.vhd:400` adds a fourth
+    -- that nothing asserts: it writes `grp <= 1` with `grp` ranged
+    -- `0 to NGRP-1`, so ONE KV head is a run-time bound check failure inside a
+    -- verified unit.  So C_REAL requires a shape built with
+    -- `attn_head_dim => 16`, which `mk_shape_scaled` turns into 4 query heads
+    -- and 2 KV heads while leaving att_q, att_qg and att_kv exactly where they
+    -- were.  The assertions below say so rather than letting the block's own
+    -- failure read as a bug in this file.
+    C_REAL      : boolean  := false;
+    C_KV_BLOCK  : positive := 4;    -- C spec 2.1.1 block; must divide HEAD_DIM
+    C_N_ROT     : positive := 8;    -- even, and at most HEAD_DIM
+    C_CM_W      : positive := 8;    -- KV cache mantissa
+    C_MAXPOS    : positive := 4;    -- cache positions modelled here
+
+    -- ==================================================================
+    -- THE KV CACHE IN HBM, `rtl/attn_kv_axi.vhd`, C_REAL only.
+    --
+    -- With C_KV_AXI FALSE the KV cache is the one-cycle behavioural memory
+    -- below and `attn_block`'s four handshake inputs are left at their '1'
+    -- defaults.  That is correct for THAT memory and SILENTLY WRONG for any
+    -- cache with latency: TRACK C-SEAM measured it by adding ONE cycle of
+    -- read latency to the same model and got 64 of 64 output mantissas wrong
+    -- with `err` clear.  See docs/debugging/2026-08-28_attn-block-kv-seam.md.
+    --
+    -- With it TRUE `attn_kv_axi` is instantiated, the four handshakes are
+    -- connected, and the cache leaves this file over three AXI masters.
+    --
+    -- THE GEOMETRY IS NOT FREE, and the constraint is a THREE-WAY one that
+    -- no single unit states.  `attn_kv_axi` demands CM_W = 8, a record on a
+    -- 16-byte granule (so KV_BLOCK*CM_W/8 must be a multiple of 16, i.e.
+    -- KV_BLOCK >= 16) and N_KVH >= 2; `attn_block` demands HEAD_DIM an EVEN
+    -- power of two, HEAD_DIM/KV_BLOCK >= 2 and a GQA group of at least 2.
+    -- The SMALLEST shape satisfying all of them is HEAD_DIM 64, KV_BLOCK 16,
+    -- 4 query heads and 2 KV heads -- which is why `mk_shape_scaled` had to
+    -- learn attn_hd = 64, and why C_KV_AXI cannot run at the attn_hd = 16
+    -- shape every C_REAL landmark before today was measured at.
+    C_KV_AXI    : boolean  := false;
+    -- The sequence length published as `ctx_len`.  `attn_block` and
+    -- `attn_kv_axi` both range-check `cur_pos < ctx_len <= MAXCTX` and
+    -- NEITHER uses the value for anything else (`clen_r` is latched and dead
+    -- in both), so this bounds the run and does not enter the arithmetic.
+    C_CTXLEN    : positive := 1;
+    -- The two KV regions.  DELIBERATELY NOT 4 KB ALIGNED: C spec 2.2 asks
+    -- for that and `attn_kv_axi` does not need it, which TRACK C-SEAM
+    -- measured.  Keeping the awkward bases here means this file exercises
+    -- the same splitter path.
+    --
+    -- THE UNIT IS THE RECORD'S 16-BYTE CHUNK, NOT THE BYTE, AND THAT IS
+    -- FORCED BY THE LANGUAGE.  These were `natural` BYTE addresses until
+    -- 2026-08-29.  The real Qwen3.5-9B map places K at byte 4,521,582,592
+    -- (`hbm.kv_base` in the residency manifest, which tools/hbm_map.py
+    -- derives), and MEASURED on GHDL 1.0.0 mcode `natural'high` is
+    -- 2,147,483,647 -- so the real base is 2.11x the largest value the
+    -- generic could hold, and GHDL refused it with `value not in range for
+    -- generic 'c_k_base'` BEFORE any guard in this file ran.  VHDL-2008 has
+    -- no wider standard integer, so widening the type is not available.
+    --
+    -- `attn_kv_axi`'s record is built on a 16-byte granule (`CH_B` at
+    -- rtl/attn_kv_axi.vhd:365) and this file already refused any base that
+    -- was not a multiple of it, so counting chunks instead of bytes loses NO
+    -- representable address and buys 4 bits.  The real K base is 282,598,912
+    -- chunks, 13.2 percent of `natural`.
+    --
+    -- THE RENAME IS THE SAFETY MECHANISM, not cosmetic.  A domain change
+    -- under the OLD name would have been a silent 16x address error at every
+    -- existing call site.  MEASURED, both seams refuse a stale name loudly:
+    -- `ghdl -r llama_top -gC_K_BASE=0` gives `cannot find in top entity
+    -- generic 'c_k_base'` with rc=1, and a stale VHDL named association is an
+    -- analysis error.  Every value that existed before was already a multiple
+    -- of 16 (16, 4064, 0, 34816, 2228224), so the conversion was exact.
+    --
+    -- THE REAL 9B ONE-CARD MAP, for whoever configures a build.  Provenance:
+    -- `hbm.kv_base` from the manifest, `kv_bytes_per_token` from
+    -- tools/hbm_map.py `arena_sizes()`, both re-derived from this file's own
+    -- C_LAY 8 / C_NKVH 4 / REC_B 272.  These are NOT the defaults below and
+    -- must not become them: C_MAXPOS 131072 would size the BEHAVIOURAL cache
+    -- (`gkvmem`) at 8.4 million signal entries in every bench that leaves
+    -- C_KV_AXI false.  `sim/realshape_gate.sh`'s `real_kv_map` row is the
+    -- standing proof that the set below elaborates.
+    --
+    --     C_KV_BLOCK   32           legal set at head_dim 256 is {16,32,64,128}
+    --     C_MAXPOS     131072       Qwen3.5-9B's native context.  The arena
+    --                               affords 233,396; anything past 131,072
+    --                               needs RoPE extension that does not exist.
+    --     C_CTXLEN     <= C_MAXPOS
+    --     C_K_BASE_CH  282598912    = 0x1_0D81_E000 / 16
+    --     C_V_BASE_CH  353902080    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
+    --     C_KV_ADDR_W  33           clog2(353902080 + 71303168) = 29 = 33-4,
+    --                               satisfied with ZERO slack.  That slack is
+    --                               set by the BASE, not by C_MAXPOS: the
+    --                               base alone exceeds 2**28, so clog2 is 29
+    --                               for every C_MAXPOS from 1 to 233,705.
+    C_K_BASE_CH : natural  := 1;      -- 16-byte chunks.  1 chunk = byte 16
+    C_V_BASE_CH : natural  := 254;    -- 254 chunks = byte 4064
+    C_KV_ADDR_W : positive := 16;     -- a BYTE address width, unchanged
+    C_KV_AXI_DW : positive := 256;
+    C_KV_MAXB   : positive := 16;   -- AXI3: ARLEN is 4 bits.  16 is the cap.
+    C_KV_MAXOUT : positive := 4;
+    C_KV_RBUF   : positive := 4;
+    -- The QK-norm gains.  LEARNED WEIGHTS, so fixed-scale stand-ins, exactly
+    -- as NORM_W_EXP is for the D-vec norm and the conv weights are for B.
+    C_QKN_EXP   : integer  := 12;
+
+    -- ==================================================================
+    -- THE LOGITS EGRESS SEAM.  `FLG_TO_SMP`, AND THE ONE OUTPUT THIS FILE
+    -- USED TO THROW AWAY.
+    --
+    -- `llama_map_pkg.vhd:102` defines FLG_TO_SMP = 2 and both schedule
+    -- generators set it on the lm_head step (`sim/llama_sched_pkg.vhd:277`,
+    -- `sim/seq_tbl_pkg.vhd:341`).  `rtl/seq_desc_fetch.vhd:495` and :504
+    -- CHECK it -- dst = 0xFF is legal only when a route flag says where the
+    -- output went -- and NOTHING ROUTES IT.  Until this generic existed the
+    -- flag reached `job_flags` (:1029), was read by nobody, and the A adapter
+    -- discarded the result on `j_dst < NREGION` alone, which the banner at
+    -- :134 said in as many words.
+    --
+    -- With SMP_EN TRUE the A adapter, on a job whose flags carry FLG_TO_SMP,
+    -- serialises A's RAW s32 result rows into a one-logit-per-cycle stream,
+    -- publishes it on the `smp_*` ports, and folds it into an instance of
+    -- `rtl/sampler_stream.vhd` -- the streaming argmax that
+    -- `rtl/engine_shared.vhd:652` already uses on the AXU3EG, whose only
+    -- input is a bare 32-bit integer, which is exactly what RAW `out_mode`
+    -- produces (`rtl/matvec_core.vhd:829`, a sign-extended `sat32`).
+    --
+    -- DEFAULT FALSE, and the default path is bit-identical to what it was
+    -- before this generic existed: with it false nothing below elaborates,
+    -- `job_flags` is still read by nobody, and the discard at :1968/:2048 is
+    -- unchanged.  The same precedent C_KV_AXI set.
+    --
+    -- WHY THE ACCUMULATION IS PER TOKEN AND NOT PER JOB.  The real lm_head is
+    -- 248,320 rows against a `MAXROWS_BFP` of 17,408 and
+    -- `rtl/matvec_int4_desc_axi.vhd`'s S_CHECK bounds `n_rows` in EVERY
+    -- out_mode, so TRACK LMHEAD's answer is 15 raw WINDOWS at stride 17,376,
+    -- not one job (docs/debugging/2026-08-29_lmhead-window-schedule.md).  A
+    -- sampler cleared per job would return the argmax of the last window.  So
+    -- `smp_clr` fires on `go` -- the token start -- and the window base
+    -- accumulates across every FLG_TO_SMP job of the token, which is what
+    -- makes `smp_idx` a VOCABULARY index and not a row index.
+    --
+    -- THE FIFO IS A RATE ARTEFACT OF SMALL SHAPES, NOT OF THE DESIGN.  A
+    -- emits ROWS_IF rows per beat and one beat per row-tile, i.e. one beat
+    -- every ceil(n_cols/BLK) cycles.  At the FK33 geometry that is 48 rows
+    -- per 128 cycles = 0.375 logits/cycle, comfortably under the sampler's
+    -- 1/cycle.  At the scaled simulation shape it is 4 rows per 2 cycles =
+    -- 2 logits/cycle, so the stream MUST be buffered there or beats are lost,
+    -- and `y_we` has no ready (seam rule 3), so losing one is silent.  The
+    -- FIFO holds BEATS, not logits.  Overflow is a sticky fault, never a drop.
+    --
+    -- THE DEFAULT DEPTH IS NOT MEASURED TO BE NECESSARY, and saying so is
+    -- worth more than the eight beats.  `sim/mutate_llama_top_smp.sh` row M10
+    -- sets SMP_FIFO = 1 and BOTH gate rows still pass with `err_smp_ovf`
+    -- clear, so the peak occupancy at the simulated shape is ONE beat: the
+    -- real `matvec_int4` does not in fact deliver a row-tile every two
+    -- cycles, whatever `ceil(n_cols/BLK)` says it could.  8 is margin for a
+    -- shape whose rate this bench does not produce, not a measured
+    -- requirement, and a build that needs the area back can take it.
+    SMP_EN   : boolean  := false;
+    SMP_FIFO : positive := 8;
+
+    -- Set false only in a run that is deliberately measuring the banner cost.
+    SHOUT   : boolean := true;
+
+    -- SUBSYSTEM A's GEOMETRY IS NOT FREE.  `weight_streamer.vhd:100-103`
+    -- asserts NPORTS_W * AXI_DW = ROWS_IF * BLK * 4, and the packed byte
+    -- layout is only defined at AXI_DW = 128 with BLK = 32, so BLK = 32,
+    -- AXI_DW = 128 and NPORTS_W = ROWS_IF is the whole legal family.
+    A_BLK      : positive := 32;
+    A_ROWS_IF  : positive := 4;
+    A_FIFO     : positive := 64;
+    A_MAXB     : positive := 16;
+    -- Bytes of address space per A job, and where the first one starts.  Each
+    -- job gets its own aligned block so two jobs cannot alias, and each port
+    -- gets a 4 KB-aligned sub-region inside it because `axi_rd_port` requires
+    -- a 4 KB-aligned base and pads sub-regions to whole bursts.
+    A_JOB_STRIDE : natural := 16#8000#;
+    A_MEM_BASE   : natural := 16#100000#;
+    -- Bytes of that block given to ONE weight port.  It was a bare `4096`
+    -- written into the address arithmetic below and duplicated as a local
+    -- constant in `sim/tb_llama_top.vhd:790`, where it is the divisor that
+    -- turns an address back into a sub-region index.  It is a generic now for
+    -- one reason: the CAPACITY of a sub-region is what bounds a job, and a
+    -- bound that is a literal buried in an expression is a bound nothing can
+    -- check.  See A_SUB_BEATS below.
+    A_SUB_BYTES  : natural := 4096;
+
+    -- SUBSYSTEM B's LANE COUNTS.  These are the exact set `sim/tb_gdn_block.vhd`
+    -- defaults to and `sim/run_gdn_block.sh` runs, which matters: the minimum
+    -- legal `RECUR_SLOTS` in `gdn_recur_pipe` is SHAPE-DEPENDENT, so a smaller
+    -- DIM or RECUR_LANES can silently need a larger slot count, and this
+    -- project's stated failure mode for that shortcut is a wrong number rather
+    -- than an elaboration error.
+    B_CONV_LANES  : positive := 4;
+    B_RECUR_LANES : positive := 4;
+    B_RECUR_SLOTS : positive := 16;
+    B_L2_LANES    : positive := 4;
+    B_SILU_LANES  : positive := 8;
+    B_RMS_LANES   : positive := 4
+  );
+  port(
+    clk : in std_logic;
+    rst : in std_logic;
+
+    -- ---- host ----------------------------------------------------------
+    go         : in  std_logic;
+    abort      : in  std_logic;
+    tbl_len    : in  unsigned(STEP_W-1 downto 0);
+    host_x_exp : in  signed(EXP_W-1 downto 0);
+    -- The whole-table liveness mask for the step currently being CHECKED.
+    -- The host generator owns it; see seq_opdec finding (3).
+    rel_mask   : in  std_logic_vector(NREGION-1 downto 0);
+
+    busy       : out std_logic;
+    tok_done   : out std_logic;
+    tok_ack    : in  std_logic;
+    err        : out std_logic;
+    err_code   : out std_logic_vector(3 downto 0);
+    err_step   : out unsigned(STEP_W-1 downto 0);
+    steps_done : out unsigned(STEP_W-1 downto 0);
+
+    -- ---- the descriptor table, a host-written URAM ----------------------
+    -- Registered read of arbitrary latency, D is the only master.
+    d_raddr  : out unsigned(15 downto 0);
+    d_ren    : out std_logic;
+    d_rdata  : in  std_logic_vector(63 downto 0);
+    d_rvalid : in  std_logic;
+
+    -- ---- host access to the region file --------------------------------
+    -- The token embedding is written into R_X before `go`; the result is read
+    -- back out of R_X after `tok_done`.
+    hw_we    : in  std_logic;
+    hw_reg   : in  natural range 0 to NREGION-1;
+    hw_addr  : in  natural range 0 to REGMAX-1;
+    hw_data  : in  signed(MANT_W-1 downto 0);
+    hr_reg   : in  natural range 0 to NREGION-1;
+    hr_addr  : in  natural range 0 to REGMAX-1;
+    hr_data  : out signed(MANT_W-1 downto 0);
+
+    -- ---- subsystem A's weight ports ------------------------------------
+    -- NPORTS_W+1 = 5 AXI4 read-only masters: four weight sub-regions and one
+    -- dedicated scale sub-region.  They leave the top level because the
+    -- weights live in HBM and the memory model belongs to whoever is driving
+    -- the top level, not inside it.  Tied off when A_BEHAV.
+    m_arvalid : out std_logic_vector(A_NPORTS-1 downto 0);
+    m_arready : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+    m_araddr  : out std_logic_vector(A_NPORTS*32-1 downto 0);
+    m_arlen   : out std_logic_vector(A_NPORTS*8-1 downto 0);
+    m_arsize  : out std_logic_vector(A_NPORTS*3-1 downto 0);
+    m_arburst : out std_logic_vector(A_NPORTS*2-1 downto 0);
+    m_rvalid  : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+    m_rready  : out std_logic_vector(A_NPORTS-1 downto 0);
+    m_rdata   : in  std_logic_vector(A_NPORTS*128-1 downto 0)
+              := (others => '0');
+    m_rlast   : in  std_logic_vector(A_NPORTS-1 downto 0) := (others => '0');
+
+    -- ---- subsystem C's KV cache masters, C_KV_AXI only -----------------
+    -- Two AXI read masters (index 0 = K, 1 = V) and one write master, exactly
+    -- `rtl/attn_kv_axi.vhd`'s port shapes.  They leave the top level for the
+    -- same reason A's do: the cache lives in HBM and the memory model belongs
+    -- to whoever drives the top level.  EVERY INPUT HAS A DEFAULT and every
+    -- output is driven (tied off when not C_KV_AXI), so an instantiation that
+    -- predates this block still elaborates.
+    kv_arvalid : out std_logic_vector(1 downto 0);
+    kv_arready : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_araddr  : out std_logic_vector(2*C_KV_ADDR_W-1 downto 0);
+    kv_arlen   : out std_logic_vector(15 downto 0);
+    kv_arsize  : out std_logic_vector(5 downto 0);
+    kv_arburst : out std_logic_vector(3 downto 0);
+    kv_rvalid  : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_rready  : out std_logic_vector(1 downto 0);
+    kv_rdata   : in  std_logic_vector(2*C_KV_AXI_DW-1 downto 0)
+               := (others => '0');
+    kv_rlast   : in  std_logic_vector(1 downto 0) := (others => '0');
+    kv_rresp   : in  std_logic_vector(3 downto 0) := (others => '0');
+    kv_awvalid : out std_logic;
+    kv_awready : in  std_logic := '0';
+    kv_awaddr  : out std_logic_vector(C_KV_ADDR_W-1 downto 0);
+    kv_awlen   : out std_logic_vector(7 downto 0);
+    kv_awsize  : out std_logic_vector(2 downto 0);
+    kv_awburst : out std_logic_vector(1 downto 0);
+    kv_wvalid  : out std_logic;
+    kv_wready  : in  std_logic := '0';
+    kv_wdata   : out std_logic_vector(C_KV_AXI_DW-1 downto 0);
+    kv_wstrb   : out std_logic_vector(C_KV_AXI_DW/8-1 downto 0);
+    kv_wlast   : out std_logic;
+    kv_bvalid  : in  std_logic := '0';
+    kv_bready  : out std_logic;
+    kv_bresp   : in  std_logic_vector(1 downto 0) := (others => '0');
+    -- `attn_kv_axi`'s sticky error (C spec 3.9), and the position this token
+    -- ran at.  Both are observability: the bench needs to know which token it
+    -- is looking at, and a cache error that only appeared in `err` would be
+    -- indistinguishable from a schedule fault.
+    kv_err     : out std_logic;
+    obs_tok_pos : out unsigned(15 downto 0);
+
+    -- ---- observability, for the testbench and for the host -------------
+    obs_issue  : out std_logic;                       -- 1 cycle per step
+    obs_unit   : out unsigned(2 downto 0);
+    obs_opcode : out unsigned(3 downto 0);
+    obs_step   : out unsigned(STEP_W-1 downto 0);
+    obs_dst    : out unsigned(7 downto 0);
+    obs_cmp    : out std_logic;                       -- 1 cycle per completion
+    -- The exponent the lock captured for this completion, and a running hash
+    -- over EVERY element write the machine has made.  Together they separate
+    -- "the exponent path is timing-dependent" from "the data path is", which
+    -- is the first question to ask when a skew sweep differs.
+    obs_cmp_exp : out signed(EXP_W-1 downto 0);
+    obs_wsum    : out unsigned(31 downto 0);
+    -- The residual's two operand exponents, valid on `obs_res_take`.  Exposed
+    -- because a BFP add whose operands are far apart in scale DISCARDS one of
+    -- them, silently and deterministically, and no sequencing property can
+    -- see it.  See P6 in sim/tb_llama_top.vhd.
+    obs_res_take : out std_logic;
+    obs_res_ea   : out signed(EXP_W-1 downto 0);
+    obs_res_eb   : out signed(EXP_W-1 downto 0);
+    -- THE NORM'S INPUT MAGNITUDE, valid on `obs_norm_pub`.  An EXPONENT is not
+    -- a magnitude, and PART 5 of
+    -- docs/debugging/2026-08-28_llama-top-first-seams.md is the record of what
+    -- that costs: with the real `rmsnorm_rs` in, the residual stream's
+    -- exponent pins at -1 and holds for thirty blocks, which reads exactly
+    -- like the bounded series everyone wants, and it is bounded because the
+    -- stream has STOPPED -- R_XN is all zeros, so ER is zero and X + ER = X.
+    -- Every real normaliser in this project has a hard input MAGNITUDE window
+    -- (rmsnorm_rs: rms(x_real) in [2^-6, 2^12], with a silent all-zeros rail
+    -- above it, measured in docs/debugging/2026-08-26_rmsnorm-magnitude-window
+    -- .md), so the quantity that decides whether the design works is the one
+    -- below and not the exponent beside it.
+    --
+    -- Integer only, deliberately: the sum of squares of the input mantissas
+    -- and the element count go out as they are, and the testbench turns them
+    -- into log2 rms.  `ieee.math_real` has no business in this file.
+    obs_norm_pub : out std_logic;                     -- 1 cycle per norm op
+    obs_norm_exp : out signed(EXP_W-1 downto 0);      -- the norm's input exp
+    obs_norm_ssq : out unsigned(63 downto 0);         -- sum of x_mant squared
+    obs_norm_n   : out unsigned(15 downto 0);         -- elements summed
+
+    -- ---- the logits stream, SMP_EN only --------------------------------
+    -- ALL OUTPUTS, DELIBERATELY.  An instantiation that predates this block
+    -- leaves them unassociated, which VHDL permits for an output port and
+    -- does not permit for an input without a default, so no existing bench
+    -- has to change.  Tied off when not SMP_EN.
+    --
+    -- `smp_valid` is one logit per cycle.  `smp_v` is A's RAW s32 result for
+    -- vocabulary row `smp_idx`, which is the WINDOW BASE plus the row inside
+    -- the window, so it is a vocabulary index across all of a token's
+    -- FLG_TO_SMP jobs and not a per-job row.  `smp_exp` is the ONE exponent
+    -- the whole token's logits share -- raw `out_mode` publishes
+    -- `w_exp + x_exp - out_shift` with no per-job term
+    -- (`rtl/matvec_core.vhd:1032`), which is the property that lets 15
+    -- windows feed one sampler at all.
+    smp_valid : out std_logic;
+    smp_v     : out std_logic_vector(31 downto 0);
+    smp_idx   : out unsigned(31 downto 0);
+    smp_exp   : out signed(EXP_W-1 downto 0);
+    -- The streaming argmax and its liveness.  `smp_token` is the RUNNING
+    -- argmax across every FLG_TO_SMP job of the token so far.
+    --
+    -- `smp_done` pulses ONCE PER FLG_TO_SMP JOB, when that job's last logit
+    -- has been folded -- NOT once per token.  The distinction is not
+    -- cosmetic and it is not an oversight: the descriptor plane has no field
+    -- saying "this is the last window", and the machine cannot know it is
+    -- looking at window 15 of 15 rather than window 3.  So the token's argmax
+    -- is final at the LAST such pulse before `tok_done`, and `tok_done` is
+    -- the event a host should read `smp_token` on.  A `smp_done` that claimed
+    -- to be per-token would be a claim this file cannot support.
+    smp_token : out unsigned(31 downto 0);
+    smp_done  : out std_logic;
+    -- How many logits have been folded since `go`.  Observability, and the
+    -- only thing that can tell "the argmax is wrong" from "the argmax is
+    -- right over the wrong number of rows".
+    smp_n     : out unsigned(31 downto 0);
+
+    -- Sticky seam-fault counters.  Every one of these is a defect, not a
+    -- statistic, and every one is silent in the arithmetic.
+    err_smp_ovf   : out std_logic;   -- the logits FIFO overflowed: beats LOST
+    err_lost_beat : out std_logic;   -- an un-stallable producer beat dropped
+    err_gate_drop : out std_logic;   -- the lock refused a region write
+    err_unit_stub : out std_logic;   -- a stub unit produced a result
+    err_e_coll    : out std_logic    -- OP_E_COLL issued at NCARDS=1
+  );
+end entity;
+
+architecture rtl of llama_top is
+
+  -- ---- shape, derived once ---------------------------------------------
+  constant SZ      : integer_vector := region_sizes(SHAPE);
+  constant NG      : natural := (REGMAX + LANES - 1) / LANES;
+  -- THERE IS NO LOCAL `clog2` HERE ANY MORE, AND ITS ABSENCE IS THE POINT.
+  -- This architecture used to declare its own
+  --   `function clog2(n : natural) return natural` -- `while (2**v) < n`
+  -- which HID the `use work.util_pkg.clog2;` at the top of this file for the
+  -- whole architecture.  Same simple name, same profile, so the local
+  -- declaration wins outright; MEASURED by TRACK CLOG2, whose reproducer got
+  -- `overflow detected ... from: work.repro(rtl).clog2`, naming the
+  -- architecture's function and never the package's.
+  --
+  -- Two consequences, both bad.  The file used TWO DIFFERENT `clog2`
+  -- functions: the entity's generic defaults (`VN_W` at the top) are outside
+  -- the architecture and always resolved to the package one, while everything
+  -- below this line resolved to the local one -- and `CHK_VN_W` compares the
+  -- two results.  And the `clog2` overflow fix that landed in
+  -- `rtl/util_pkg.vhd` at `209d69e` reached none of this file.
+  --
+  -- MEASURED that deleting it is behaviour-preserving, not merely plausible:
+  -- `tools/clog2top_equiv_tb.vhd` checks the deleted body, the package body
+  -- and TWO independent oracles three ways over 2,097,153 exhaustive values,
+  -- 3,099 Python-generated golden values and 1,048,576 random draws, with the
+  -- deleted body called only where it is defined (n <= 2**30).  Zero
+  -- mismatches; 15 of 17 mutants bite.
+  constant LOG2L   : natural := clog2(LANES);
+  constant GA_W    : natural := VN_W - LOG2L;
+
+  -- ---- ELABORATION CHECKS THAT BITE IN SYNTHESIS TOO --------------------
+  -- These are `natural` constants that go NEGATIVE when the invariant is
+  -- broken, not `assert ... severity failure`.  The reason is on record:
+  -- Vivado silently IGNORES a failing severity-failure assert in synthesis,
+  -- so an assert-only check is a simulation check wearing a build check's
+  -- clothes.  An out-of-range `natural` is a hard error in both tools, and
+  -- it fires during DECLARATION elaboration, which is before any concurrent
+  -- assert runs and before any statement part is elaborated.
+  --
+  -- Each is written so the legal case is >= 0 and the message is the name.
+  --
+  -- CHK_REGMAX: every region is REGMAX elements, so REGMAX below the widest
+  -- region silently truncates a region address.  At the default 9B shape the
+  -- old REGMAX 4096 was 8192 elements short of `ffn` 12288.
+  constant CHK_REGMAX : natural := REGMAX - region_max(SHAPE);
+  -- CHK_VN_W: `seq_vec_issue` refuses `job_n_rows >= 2**VN_W`, and the
+  -- widest D-vec job is `region_max(SHAPE)` elements.  This is a RUN-TIME
+  -- refusal in that file (EC_NROWS) with nothing rejecting the combination
+  -- at elaboration, which is how VN_W 13 survived alongside ffn 12288.
+  -- Stated as a width and not as `2**VN_W - 1 - region_max`, because the
+  -- latter overflows a 32-bit integer at VN_W = 31 and would then fail on a
+  -- legal width.  `2**VN_W > n` and `VN_W >= clog2(n+1)` are the same claim.
+  constant CHK_VN_W   : natural := VN_W - clog2(region_max(SHAPE) + 1);
+  -- CHK_A_BLOCK: the fabricated per-job block must hold A_ROWS_IF weight
+  -- sub-regions AND a scale sub-region.  At the defaults that is
+  -- 5*4096 = 20,480 inside 32,768, so 12,288 spare; shrink A_JOB_STRIDE or
+  -- widen A_ROWS_IF past that and the scale port's base lands OUTSIDE the
+  -- job's own block, on top of the NEXT job's weights.  Nothing said so.
+  -- The run-time half of this bound is A_SUB_BEATS / A_SCL_BEATS in the
+  -- `ga_real` generate; this is the half a synthesis run can see.
+  constant CHK_A_BLOCK : natural :=
+    A_JOB_STRIDE - (A_ROWS_IF + 1) * A_SUB_BYTES;
+
+  -- ---- D core ----------------------------------------------------------
+  signal go_walk    : std_logic;
+  -- `tok_done` is a PORT and this file has to act on it, so the driver is an
+  -- internal signal and the port is a copy of it.  VHDL-2008 permits reading
+  -- an output port, but doing so makes the file's meaning depend on the
+  -- standard revision the tool was invoked with.
+  signal tok_done_i : std_logic;
+  -- THE POSITION OF THE TOKEN IN THE SEQUENCE.  Reset clears it and every
+  -- completed token advances it, so a sequence is a reset followed by N
+  -- `go`/`tok_done` handshakes and NOT N resets.  Before this existed the
+  -- position was hardwired to 0 in the C adapter, which is why neither of
+  -- `attn_block`'s two real defects was visible here: at cur_pos 0 the block
+  -- takes its bypass path and never reads the cache at all.
+  signal tok_pos    : natural range 0 to C_MAXPOS-1 := 0;
+  -- `attn_kv_axi`'s sticky error, hoisted to the architecture so the C
+  -- adapter can fold it into `u_err` and the port can be a single copy.
+  signal kv_err_i   : std_logic := '0';
+  -- THE SEAM HANDSHAKE, AS A STICKY FAULT.  MEASURED 2026-08-29: leaving
+  -- `kr_rdy` unconnected -- which is exactly the PRE-SEAM design one level up,
+  -- and the defect TRACK C-SEAM proved makes 64 of 64 output mantissas wrong
+  -- with `err` clear -- SURVIVED the whole integration bench, including the
+  -- KV read-latency sweep.  Nothing at this level has a value oracle, and
+  -- `attn_kv_axi` raises no error for a read that is in RANGE but not
+  -- RESIDENT: it simply does not update `kr_mant`, so the block captures a
+  -- stale beat, deterministically, at every latency.
+  --
+  -- `sim/tb_attn_kv_seam.vhd`'s Q4 catches it at the BLOCK level because it
+  -- can see both wires.  Inside this file they are both visible too, so the
+  -- property is asserted HERE and published as a sticky fault, the same shape
+  -- `err_lost_beat` already uses.  NOT cleared on `rst`: `rst` is asserted
+  -- once per run and clearing it would erase run 0's fault when run 1 starts.
+  signal kv_seam_bad : std_logic := '0';
+  signal d_ren_i    : std_logic;
+  signal job_valid, job_issue, job_cmp : std_logic;
+  signal job_epoch  : unsigned(EPOCH_W-1 downto 0);
+  signal job_unit   : unsigned(2 downto 0);
+  signal job_opcode : unsigned(3 downto 0);
+  signal job_flags  : std_logic_vector(7 downto 0);
+  signal job_src, job_src2, job_dst : unsigned(7 downto 0);
+  signal job_dst_off, job_n_rows, job_n_cols : unsigned(31 downto 0);
+  signal job_w_exp, job_out_shift, job_const_exp : signed(31 downto 0);
+  signal job_out_mode : std_logic_vector(7 downto 0);
+  signal job_ordinal  : unsigned(7 downto 0);
+  signal job_const_base : unsigned(31 downto 0);
+  signal job_step   : unsigned(STEP_W-1 downto 0);
+
+  signal chk_req, chk_bad : std_logic;
+  signal chk_code : std_logic_vector(3 downto 0);
+  signal chk_opcode : unsigned(3 downto 0);
+  signal chk_src, chk_dst : unsigned(7 downto 0);
+  signal chk_dst_off, chk_n_rows : unsigned(31 downto 0);
+
+  signal u_start, u_ready, u_done, u_ack, u_err
+       : std_logic_vector(NUNIT-1 downto 0) := (others => '0');
+  signal u_done_epoch : std_logic_vector(NUNIT*EPOCH_W-1 downto 0)
+                      := (others => '0');
+  signal u_y_exp      : std_logic_vector(NUNIT*EXP_W-1 downto 0)
+                      := (others => '0');
+
+  signal host_busy : std_logic;
+  signal lock_rst  : std_logic;
+  signal iss_req, iss_commit, iss_prod : std_logic;
+  signal iss_dst   : unsigned(7 downto 0);
+  signal iss_seg   : unsigned(1 downto 0);
+  signal iss_off, iss_n_rows : unsigned(ADDR_W-1 downto 0);
+  signal iss_cons, iss_rel : std_logic_vector(NREGION-1 downto 0);
+  signal iss_ok    : std_logic;
+  signal iss_code  : std_logic_vector(3 downto 0);
+  signal cmp_valid : std_logic;
+  signal cmp_y_exp : signed(EXP_W-1 downto 0);
+  signal viol, viol_ack : std_logic;
+  signal viol_code : std_logic_vector(3 downto 0);
+  signal viol_reg  : unsigned(7 downto 0);
+  signal y_exp_taken : std_logic;
+  signal y_exp_held  : signed(EXP_W-1 downto 0);
+  signal viol_step   : unsigned(STEP_W-1 downto 0);
+  signal viol_seen   : std_logic;
+  signal lock_state  : std_logic_vector(2*NREGION-1 downto 0);
+
+  signal wr_we    : std_logic := '0';
+  signal wr_region: unsigned(7 downto 0) := (others => '0');
+  signal wr_gate  : std_logic;
+  -- THE EXPONENT READ PORT IS A SHARED RESOURCE, AND IT HAS TO BE ARBITRATED.
+  --
+  -- `seq_region_lock` has exactly ONE exponent read port and it is
+  -- combinational (seq_region_lock.vhd:378-383).  `seq_vec_issue` drives it
+  -- for the D-vec ops.  Unit A needs it too: A's `y_exp` is
+  -- `w_exp + x_exp - out_shift`, and `x_exp` is the SOURCE region's captured
+  -- exponent, which lives in the lock because hazard A3's fix made the
+  -- exponent part of the locked object.
+  --
+  -- Wiring seq_vec_issue straight to the port and letting A read whatever it
+  -- happened to be pointing at makes A's exponent a function of the D-vec
+  -- adapter's internal state, i.e. OF TIMING.  That is what the first run of
+  -- sim/tb_llama_top.vhd measured: R_X differed between descriptor-memory
+  -- latency 1 and latency 2.  See docs/debugging/2026-08-28_llama-top-first-seams.md.
+  signal exp_rd_region : unsigned(7 downto 0);
+  signal exp_rd_seg    : unsigned(1 downto 0);
+  signal exp_rd_data   : signed(EXP_W-1 downto 0);
+  signal exp_rd_valid  : std_logic;
+  signal vi_exp_region : unsigned(7 downto 0);
+  signal vi_exp_seg    : unsigned(1 downto 0);
+  -- Claimed by whichever NON-D-vec unit is active, at the same instant it
+  -- latches its descriptor.  Units A and B both need a source exponent out of
+  -- the lock; the lock has one port and D runs one unit at a time.
+  -- ONE SIGNAL PER CLAIMANT, NOT ONE SHARED SIGNAL.  A first version had A
+  -- and B both driving a single `ux_exp_region`, one signal for both.  `unsigned` is built on the
+  -- RESOLVED type `std_logic`, so two drivers is not an elaboration error: the
+  -- bits resolve to 'X', `to_integer` reports a metavalue and returns 0, and
+  -- unit A silently reads region 0's exponent.  It is deterministic, so the
+  -- skew sweep passed; the `exp_rd_valid` assertion below is what caught it.
+  -- That is the second time in this file that a shared-resource defect
+  -- survived a determinism property -- see defect 2 in
+  -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+  signal a_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal a_exp_seg     : unsigned(1 downto 0) := "00";
+  signal b_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal b_exp_seg     : unsigned(1 downto 0) := "00";
+  signal c_exp_region  : unsigned(7 downto 0) := (others => '0');
+  signal c_exp_seg     : unsigned(1 downto 0) := "00";
+
+  -- The three q/k/v exponents subsystem A published for R_QKV this block,
+  -- recorded so unit B can hand them to `gdn_exp_capture` before it starts.
+  -- THIS IS A REAL CROSS-SUBSYSTEM OBLIGATION AND NOTHING CARRIED IT BEFORE:
+  -- `gdn_block`'s conv path reads its tap exponents out of `gdn_exp_capture`,
+  -- and the values that belong there are A's `y_exp` for the three wqkv
+  -- projections.  No descriptor field says so; the schedule only guarantees
+  -- the ordering.
+  type qexp_t is array (0 to 2) of signed(7 downto 0);
+  signal qkv_exp : qexp_t := (others => (others => '0'));
+  signal last_dst : natural range 0 to 255 := 255;
+  signal last_seg : natural range 0 to 2 := 0;
+  signal b_seq_rst : std_logic := '0';
+
+  -- ---- D-vec -----------------------------------------------------------
+  signal v_start, v_ready, v_taken, v_done, v_ack, v_err
+       : std_logic_vector(NVOP-1 downto 0) := (others => '0');
+  signal v_y_exp : std_logic_vector(NVOP*EXP_W-1 downto 0) := (others => '0');
+  signal v_n     : unsigned(VN_W-1 downto 0);
+  signal v_exp_a, v_exp_b : signed(EXP_W-1 downto 0);
+  signal v_reg_a, v_reg_b, v_reg_d : unsigned(7 downto 0);
+  signal vi_epoch : unsigned(EPOCH_W-1 downto 0);
+  signal vi_yexp  : signed(EXP_W-1 downto 0);
+  signal vi_code  : std_logic_vector(3 downto 0);
+
+  signal r_en   : std_logic;
+  signal r_addr : unsigned(GA_W-1 downto 0);
+  signal x_rdata, e_rdata : std_logic_vector(LANES*MANT_W-1 downto 0)
+                          := (others => '0');
+  signal w_we   : std_logic;
+  signal w_addr : unsigned(GA_W-1 downto 0);
+  signal w_be   : std_logic_vector(LANES-1 downto 0);
+  signal w_data : std_logic_vector(LANES*MANT_W-1 downto 0);
+  signal vres_exp : signed(EXP_W-1 downto 0);
+
+  -- ======================================================================
+  -- THE REGION FILE.
+  --
+  -- BEHAVIOURAL.  A flat array of NREGION*REGMAX 16-bit mantissas with one
+  -- element read port, one element write port, one LANES-wide group read port
+  -- with two operand selects, and one LANES-wide group write port.  Both read
+  -- ports are REGISTERED, one cycle, because that is what a BRAM is and an
+  -- adapter written against a combinational read does not survive the real
+  -- thing.
+  --
+  -- READ_LATENCY IS TWO EDGES, NOT ONE, AND EVERY ADAPTER HERE DEPENDS ON IT.
+  -- An adapter drives `ur_addr` from a clocked process, so the address is
+  -- registered once there; the memory registers the data again.  An element
+  -- whose address is issued at edge k is therefore readable at edge k+2.
+  -- Consuming it at k+1 reads whatever the port held from the PREVIOUS unit's
+  -- last access, which is a function of timing and not of data -- a wrong
+  -- number that changes when a handshake moves.  See
+  -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+  --
+  -- A REAL IMPLEMENTATION would be 14 separately-sized BRAM/URAM regions with
+  -- their own port counts, sized from `region_sizes(SHAPE)` rather than all
+  -- at REGMAX, and the arbitration below would be per-region rather than
+  -- global.  The single element port is not a simplification: subsystem D
+  -- issues at most one unit at a time -- `cur_unit` in seq_desc_fetch is a
+  -- scalar -- so no second unit can be reading.  When D grows overlap, this
+  -- becomes a real arbiter and this comment becomes wrong.
+  -- ======================================================================
+  type buf_t is array (natural range <>) of signed(MANT_W-1 downto 0);
+  subtype mem_t is buf_t(0 to NREGION*REGMAX-1);
+  signal mem : mem_t := (others => (others => '0'));
+
+  -- Per-CLIENT element ports, muxed below.  A client is not a unit: unit V is
+  -- an ADAPTER in front of NVOP engines, and each engine needs its own port
+  -- slot or the two of them are two drivers on one unresolved signal.  Slots
+  -- 0..NUNIT-1 are the units (slot U_V is unused), slots NUNIT+v are the
+  -- D-vec engines.
+  constant NPORT : natural := NUNIT + NVOP;
+  type nat_u  is array (0 to NPORT-1) of natural;
+  type sig_u  is array (0 to NPORT-1) of signed(MANT_W-1 downto 0);
+  signal ur_en   : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal ur_reg  : nat_u := (others => 0);
+  signal ur_addr : nat_u := (others => 0);
+  signal uw_en   : std_logic_vector(NPORT-1 downto 0) := (others => '0');
+  signal uw_reg  : nat_u := (others => 0);
+  signal uw_addr : nat_u := (others => 0);
+  signal uw_data : sig_u := (others => (others => '0'));
+
+  signal el_ren   : std_logic := '0';
+  signal el_reg   : natural range 0 to NREGION-1 := 0;
+  signal el_addr  : natural range 0 to REGMAX-1 := 0;
+  signal el_rdata : signed(MANT_W-1 downto 0) := (others => '0');
+  signal el_we    : std_logic := '0';
+  signal el_wreg  : natural range 0 to NREGION-1 := 0;
+  signal el_waddr : natural range 0 to REGMAX-1 := 0;
+  signal el_wdata : signed(MANT_W-1 downto 0) := (others => '0');
+
+  -- The unit whose element ports are selected.  Latched at `job_issue` and
+  -- held for the whole job, because the mux is read for the DURATION of a
+  -- long operation and `job_unit` is not: it decodes the live bank, which is
+  -- exactly what defect class (a) is about.
+  signal act_unit : natural range 0 to NUNIT-1 := 0;
+  -- Which D-vec engine owns the port while act_unit = U_V.  Latched at
+  -- `v_taken`, which is the engine's own accept instant, not at `v_start`:
+  -- seq_vec_issue holds `v_start` until the engine takes it, so `v_start` is
+  -- high for an arbitrary number of cycles before anything is running.
+  signal act_vop  : natural range 0 to NVOP-1 := 0;
+  signal act_port : natural range 0 to NUNIT+NVOP-1 := 0;
+
+  -- ---- the logits egress seam ------------------------------------------
+  -- The A adapter is the producer and there are TWO of it (`ga_real` and
+  -- `ga_behav`), so the beat interface lives at the architecture level and
+  -- whichever branch elaborates drives it.  Exactly one does.
+  --
+  -- A beat is up to A_ROWS_IF s32 rows with a per-row validity mask, plus the
+  -- VOCABULARY index of row 0 of the beat -- the window base already added,
+  -- so the drain side never has to know about jobs.
+  signal smp_be_we   : std_logic := '0';
+  signal smp_be_dat  : std_logic_vector(A_ROWS_IF*32-1 downto 0)
+                     := (others => '0');
+  signal smp_be_msk  : std_logic_vector(A_ROWS_IF-1 downto 0)
+                     := (others => '0');
+  signal smp_be_idx  : unsigned(31 downto 0) := (others => '0');
+  -- The adapter raises this for the whole of a FLG_TO_SMP job's run window.
+  -- Its FALLING edge, once the FIFO is empty, is `smp_done`.
+  signal smp_run     : std_logic := '0';
+  signal smp_yexp_i  : signed(EXP_W-1 downto 0) := (others => '0');
+  -- Driven by the drain side, read by the adapter: a FLG_TO_SMP job does not
+  -- report `done` until every logit it produced has been folded, so `u_done`
+  -- means "the sampler has seen this job" and not merely "A stopped".
+  signal smp_empty   : std_logic := '1';
+  signal f_smp_ovf   : std_logic := '0';
+
+  -- ---- sticky seam faults ----------------------------------------------
+  signal f_lost  : std_logic := '0';
+  signal f_gate  : std_logic := '0';
+  signal f_stub  : std_logic := '0';
+  signal f_ecoll : std_logic := '0';
+
+  -- ---- helpers ---------------------------------------------------------
+  function sat_m(v : integer) return signed is
+    constant HI : integer := 2**(MANT_W-1) - 1;
+    constant LO : integer := -(2**(MANT_W-1));
+  begin
+    if v > HI then return to_signed(HI, MANT_W); end if;
+    if v < LO then return to_signed(LO, MANT_W); end if;
+    return to_signed(v, MANT_W);
+  end function;
+
+  -- Subsystem A's shape limits, derived from SHAPE so nobody re-derives them.
+  -- `n_cols` is the SOURCE width of an A job and `n_rows` the destination
+  -- width.  The lm_head step's `n_rows` is the vocabulary shard, which is far
+  -- larger than any region -- it is issued with dst = R_NONE and in raw mode,
+  -- so `MAXROWS_BFP` (checked only in BFP mode) does not have to cover it and
+  -- the y buffer does not have to hold it.
+  function amax_cols(sh : shape_t) return positive is
+    variable m : positive := sh.hidden;
+  begin
+    if sh.ffn      > m then m := sh.ffn;      end if;
+    if val_dim(sh) > m then m := val_dim(sh); end if;
+    if att_q(sh)   > m then m := att_q(sh);   end if;
+    return m;
+  end function;
+  constant A_MAXCOLS : positive := amax_cols(SHAPE);
+  constant A_MAXROWS : positive := region_max(SHAPE);
+
+  -- The identity signed-int4 codebook: nibble value v selects cb(v), and the
+  -- table makes cb(v) the two's-complement 4-bit integer that v encodes.  The
+  -- production codebook is IQ4_NL; this one is chosen so that a wrong nibble
+  -- order is a wrong number rather than a differently-scaled right one.
+  function cb_int4(i : natural) return integer is
+  begin
+    if i < 8 then return i; else return i - 16; end if;
+  end function;
+
+  -- The synthetic weight of the behavioural A.  A deterministic function of
+  -- (row, col, ordinal) only.  It is NOT a model of anything; it exists so
+  -- that the residual stream carries a value that DEPENDS on every input and
+  -- therefore cannot be right by accident under a skew sweep.
+  function wsyn(r, c, o : natural) return integer is
+  begin
+    return ((r*13 + c*7 + o*29) mod 15) - 7;
+  end function;
+
+begin
+
+  -- ======================================================================
+  -- THE BANNERS.  Printed once, at time zero, at severity note, so that no
+  -- run of this top level can be mistaken for inference.
+  -- ======================================================================
+  banner : process is
+    -- THE ATTENTION LINE HAS TO AGREE WITH `C_REAL`, and it did not.  It was
+    -- printed unconditionally, including in the runs where the real
+    -- `attn_block` is instantiated -- and the two `gcr` reports below it
+    -- ("llama_top: unit C is the REAL attn_block", grep for that string)
+    -- said the opposite, so the same log stated both.  A banner whose job is
+    -- to stop a run being mistaken for inference cannot itself be wrong
+    -- about which units are real.
+    function c_line return string is
+    begin
+      if C_REAL then
+        return " * unit C is the REAL attn_block.  KV cache is AXI : "
+             & boolean'image(C_KV_AXI) & LF
+             & "   Its OUTPUT still has no value oracle at this level;" & LF
+             & "   see the C report below for what that does and does not"
+             & LF & "   establish.";
+      else
+        return " * ATTENTION IS A STUB.  Unit C returns a documented," & LF
+             & "   obviously-wrong, well-formed pattern.  attn_lane_skel" & LF
+             & "   is a pricing skeleton and computes nothing.  Any block"
+             & LF
+             & "   at an attention position produces a MEANINGLESS value"
+             & LF
+             & "   and every later block inherits it through the residual.";
+      end if;
+    end function;
+  begin
+    if SHOUT then
+      report LF
+        & "==========================================================" & LF
+        & " llama_top: THIS DOES NOT PERFORM INFERENCE YET." & LF
+        & "==========================================================" & LF
+        & c_line & LF
+        & " * unit A behavioural : " & boolean'image(A_BEHAV) & LF
+        & " * unit B behavioural : " & boolean'image(B_BEHAV) & LF
+        & " * the D-vec norm is the REAL rmsnorm_rs : "
+        & boolean'image(NORM_REAL) & LF
+        & " * swiglu is behavioural in every configuration." & LF
+        & " * the region file is a flat behavioural array." & LF
+        & " * no weights are fetched: the descriptor base array past" & LF
+        & "   the header is range-checked and not read." & LF
+        & " What IS real: the schedule, the region locks, the" & LF
+        & " exponent path, the residual add, and every handshake." & LF
+        & "=========================================================="
+        severity note;
+    end if;
+    wait;
+  end process;
+
+  -- ======================================================================
+  -- REGION FILE
+  -- ======================================================================
+  -- Element port mux.  One-hot by construction; the assertion says so.
+  act_port <= act_unit when act_unit /= U_V else NUNIT + act_vop;
+
+  elmux : process(ur_en, ur_reg, ur_addr, uw_en, uw_reg, uw_addr, uw_data,
+                  act_port, hw_we, hw_reg, hw_addr, hw_data) is
+  begin
+    el_ren   <= ur_en(act_port);
+    el_reg   <= ur_reg(act_port);
+    el_addr  <= ur_addr(act_port);
+    if hw_we = '1' then
+      el_we    <= '1';
+      el_wreg  <= hw_reg;
+      el_waddr <= hw_addr;
+      el_wdata <= hw_data;
+    else
+      el_we    <= uw_en(act_port);
+      el_wreg  <= uw_reg(act_port);
+      el_waddr <= uw_addr(act_port);
+      el_wdata <= uw_data(act_port);
+    end if;
+  end process;
+
+  -- A unit that drives a port it does not own is a silent cross-region write,
+  -- which is the worst failure this file can have: it corrupts the residual
+  -- stream and every later block inherits it.  Checked every cycle.
+  onehot : process(clk) is
+    variable n : natural;
+  begin
+    if rising_edge(clk) then
+      n := 0;
+      for u in 0 to NPORT-1 loop
+        if uw_en(u) = '1' and u /= act_port then n := n + 1; end if;
+      end loop;
+      assert n = 0
+        report "llama_top: a unit that is not the active unit drove the "
+             & "region write port.  This is a cross-region write."
+        severity failure;
+    end if;
+  end process;
+
+  memp : process(clk) is
+    variable a : natural;
+  begin
+    if rising_edge(clk) then
+      -- write-first, so an in-place overtake is visible rather than hidden
+      if el_we = '1' then
+        mem(el_wreg*REGMAX + el_waddr) <= el_wdata;
+      end if;
+      if w_we = '1' then
+        for i in 0 to LANES-1 loop
+          if w_be(i) = '1' then
+            a := to_integer(unsigned(v_reg_d(6 downto 0)))*REGMAX
+                 + to_integer(w_addr)*LANES + i;
+            if a < NREGION*REGMAX then
+              mem(a) <= signed(w_data((i+1)*MANT_W-1 downto i*MANT_W));
+            end if;
+          end if;
+        end loop;
+      end if;
+
+      if el_ren = '1' then
+        el_rdata <= mem(el_reg*REGMAX + el_addr);
+      end if;
+
+      -- The D-vec group read: ONE address, TWO operand regions.
+      if r_en = '1' then
+        for i in 0 to LANES-1 loop
+          a := to_integer(unsigned(v_reg_a(6 downto 0)))*REGMAX
+               + to_integer(r_addr)*LANES + i;
+          if a < NREGION*REGMAX then
+            x_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(mem(a));
+          else
+            x_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+          end if;
+          a := to_integer(unsigned(v_reg_b(6 downto 0)))*REGMAX
+               + to_integer(r_addr)*LANES + i;
+          if a < NREGION*REGMAX then
+            e_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(mem(a));
+          else
+            e_rdata((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+          end if;
+        end loop;
+      end if;
+    end if;
+  end process;
+
+  hr_data <= mem(hr_reg*REGMAX + hr_addr);
+
+  -- ======================================================================
+  -- SUBSYSTEM D.  Three real units.  This port map is lifted from
+  -- sim/tb_seq_vec_seam.vhd:510-627, which is the only place these three had
+  -- ever been connected, and it is the authoritative reference for it.
+  -- ======================================================================
+  d_ren <= d_ren_i;
+
+  u_fetch : entity work.seq_desc_fetch
+    generic map(
+      NREG => NREGION, EPOCH_W => EPOCH_W, NUNIT => NUNIT,
+      NSUB_MAX => 64, STEP_W => STEP_W,
+      WDOG_LIMIT => WDOG_LIMIT, STRICT_PROTO => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      go => go_walk, tbl_len => tbl_len, abort => abort,
+      busy => busy, tok_done => tok_done_i, tok_ack => tok_ack,
+      err => err, err_code => err_code, err_step => err_step,
+      steps_done => steps_done,
+      d_raddr => d_raddr, d_ren => d_ren_i, d_rdata => d_rdata,
+      d_rvalid => d_rvalid,
+      job_valid => job_valid, job_issue => job_issue, job_cmp => job_cmp,
+      job_epoch => job_epoch, job_unit => job_unit, job_opcode => job_opcode,
+      job_flags => job_flags, job_src => job_src, job_src2 => job_src2,
+      job_dst => job_dst, job_dst_off => job_dst_off,
+      job_n_rows => job_n_rows, job_n_cols => job_n_cols,
+      job_w_exp => job_w_exp, job_out_shift => job_out_shift,
+      job_out_mode => job_out_mode, job_ordinal => job_ordinal,
+      job_const_base => job_const_base, job_const_exp => job_const_exp,
+      job_step => job_step,
+      chk_req => chk_req, chk_bad => chk_bad, chk_code => chk_code,
+      chk_opcode => chk_opcode, chk_src => chk_src, chk_dst => chk_dst,
+      chk_dst_off => chk_dst_off, chk_n_rows => chk_n_rows,
+      u_start => u_start, u_ready => u_ready, u_done => u_done,
+      u_ack => u_ack, u_err => u_err, u_done_epoch => u_done_epoch);
+
+  u_opdec : entity work.seq_opdec
+    generic map(
+      NREG => NREGION, SEGS => SEGS, ADDR_W => ADDR_W, EXP_W => EXP_W,
+      NUNIT => NUNIT, STEP_W => STEP_W,
+      OPC_CONS => OPC_CONS_MAP,
+      -- The three-way q|k|v exponent split.  R_QKV carries three captured
+      -- exponents because the wqkv split exists precisely so q, k and v do
+      -- not share a scale; the descriptor has no segment field, so the
+      -- segment is inferred from `dst_off` against these two boundaries.
+      MSEG_REG => R_QKV, MSEG_OFF1 => key_dim(SHAPE),
+      MSEG_OFF2 => 2*key_dim(SHAPE),
+      REL_NAIVE => false,
+      HOST_REG => R_X, HOST_ROWS => SHAPE.hidden,
+      STRICT => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      go_in => go, host_x_exp => host_x_exp,
+      go_out => go_walk, host_busy => host_busy,
+      chk_req => chk_req, chk_opcode => chk_opcode, chk_src => chk_src,
+      chk_dst => chk_dst, chk_dst_off => chk_dst_off, chk_n_rows => chk_n_rows,
+      chk_bad => chk_bad, chk_code => chk_code,
+      rel_mask => rel_mask,
+      job_issue => job_issue, job_cmp => job_cmp, job_unit => job_unit,
+      job_src2 => job_src2, job_step => job_step,
+      u_done => u_done, u_y_exp => u_y_exp,
+      lock_rst => lock_rst,
+      iss_req => iss_req, iss_commit => iss_commit, iss_prod => iss_prod,
+      iss_dst => iss_dst, iss_seg => iss_seg, iss_off => iss_off,
+      iss_n_rows => iss_n_rows, iss_cons => iss_cons, iss_rel => iss_rel,
+      iss_ok => iss_ok, iss_code => iss_code,
+      cmp_valid => cmp_valid, cmp_y_exp => cmp_y_exp,
+      viol => viol, viol_code => viol_code, viol_ack => viol_ack,
+      y_exp_taken => y_exp_taken, y_exp_held => y_exp_held,
+      viol_step => viol_step, viol_seen => viol_seen);
+
+  u_lock : entity work.seq_region_lock
+    generic map(
+      REG_SIZE => SZ, SEGS => SEGS, ADDR_W => ADDR_W, EXP_W => EXP_W,
+      STRICT => STRICT)
+    port map(
+      clk => clk, rst => lock_rst,
+      iss_req => iss_req, iss_commit => iss_commit, iss_prod => iss_prod,
+      iss_dst => iss_dst, iss_seg => iss_seg, iss_off => iss_off,
+      iss_n_rows => iss_n_rows, iss_cons => iss_cons, iss_rel => iss_rel,
+      iss_ok => iss_ok, iss_code => iss_code,
+      cmp_valid => cmp_valid, cmp_y_exp => cmp_y_exp,
+      wr_we => wr_we, wr_region => wr_region, wr_gate => wr_gate,
+      -- The exponent write port is unused: exponents reach the lock through
+      -- seq_opdec's `cmp_valid`/`cmp_y_exp` capture, which is the path that
+      -- freezes the exponent as part of the locked object (hazard A3).  A
+      -- second, ungated path would reopen it.
+      xw_we => '0', xw_region => (others => '0'), xw_seg => "00",
+      xw_exp => (others => '0'), xw_gate => open,
+      exp_rd_region => exp_rd_region, exp_rd_seg => exp_rd_seg,
+      exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      lock_state => lock_state,
+      viol => viol, viol_ack => viol_ack, viol_code => viol_code,
+      viol_region => viol_reg);
+
+  -- Every region write in the machine is policed by the lock.  A beat outside
+  -- the window [iss_commit, cmp_valid] of the job that owns the region is
+  -- DROPPED by a real design, so it is counted here rather than ignored.
+  wr_we     <= w_we or el_we;
+  wr_region <= v_reg_d when w_we = '1'
+               else to_unsigned(el_wreg, 8);
+
+  gatechk : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        f_gate <= '0';
+      elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0' then
+        f_gate <= '1';
+        report "llama_top: the region lock DROPPED a write to region "
+             & integer'image(to_integer(wr_region))
+             & ".  A unit is writing outside the window its own job holds."
+          severity error;
+      end if;
+    end if;
+  end process;
+
+  -- ======================================================================
+  -- SUBSYSTEM D-VEC.  seq_vec_issue is real; seq_vec_res is real; the norm
+  -- and swiglu engines behind it do not exist as RTL and are modelled.
+  -- ======================================================================
+  u_vissue : entity work.seq_vec_issue
+    generic map(
+      NVOP => NVOP, OP_BASE => OP_VEC_NORM, MY_UNIT => U_V,
+      NREG => NREGION, EXP_W => EXP_W, VN_W => VN_W,
+      EPOCH_W => EPOCH_W, STEP_W => STEP_W, STRICT => STRICT)
+    port map(
+      clk => clk, rst => rst,
+      job_issue => job_issue, job_unit => job_unit, job_opcode => job_opcode,
+      job_epoch => job_epoch, job_src => job_src, job_src2 => job_src2,
+      job_dst => job_dst, job_dst_off => job_dst_off,
+      job_n_rows => job_n_rows, job_step => job_step,
+      u_start => u_start(U_V), u_ack => u_ack(U_V),
+      u_ready => u_ready(U_V), u_done => u_done(U_V), u_err => u_err(U_V),
+      u_done_epoch => vi_epoch, u_y_exp => vi_yexp,
+      exp_rd_region => vi_exp_region, exp_rd_seg => vi_exp_seg,
+      exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      v_start => v_start, v_ready => v_ready, v_taken => v_taken,
+      v_done => v_done, v_ack => v_ack, v_err => v_err, v_y_exp => v_y_exp,
+      v_n => v_n, v_exp_a => v_exp_a, v_exp_b => v_exp_b,
+      v_reg_a => v_reg_a, v_reg_b => v_reg_b, v_reg_d => v_reg_d,
+      iss_lat => open, exp_lat => open, err_code => vi_code);
+
+  u_done_epoch((U_V+1)*EPOCH_W-1 downto U_V*EPOCH_W)
+    <= std_logic_vector(vi_epoch);
+  u_y_exp((U_V+1)*EXP_W-1 downto U_V*EXP_W) <= std_logic_vector(vi_yexp);
+
+  -- The arbiter.  `act_unit` is latched at `job_issue` and held for the whole
+  -- job, so the selection cannot move underneath a reader mid-operation --
+  -- which is the same rule the element port mux obeys, for the same reason.
+  exp_rd_region <= a_exp_region when act_unit = U_A else
+                   b_exp_region when act_unit = U_B else
+                   c_exp_region when act_unit = U_C else vi_exp_region;
+  exp_rd_seg    <= a_exp_seg    when act_unit = U_A else
+                   b_exp_seg    when act_unit = U_B else
+                   c_exp_seg    when act_unit = U_C else vi_exp_seg;
+
+  -- THE RESIDUAL.  Real RTL.  X <- X + ER, in place, twice per block.  This
+  -- is the spine and it is the one arithmetic unit in the block loop that is
+  -- not a model.
+  u_vres : entity work.seq_vec_res
+    generic map(LANES => LANES, MANT_W => MANT_W, ACC_W => ACC_W,
+                EXP_W => EXP_W, ADDR_W => VN_W, STRICT => true)
+    port map(
+      clk => clk, rst => rst,
+      ready => v_ready(V_RES), start => v_start(V_RES), i_n => v_n,
+      i_exp_x => v_exp_a, i_exp_e => v_exp_b, i_taken => v_taken(V_RES),
+      r_en => r_en, r_addr => r_addr, x_rdata => x_rdata, e_rdata => e_rdata,
+      w_we => w_we, w_addr => w_addr, w_be => w_be, w_data => w_data,
+      done => v_done(V_RES), done_ack => v_ack(V_RES),
+      o_exp => vres_exp, o_shift => open, o_sat => open,
+      err => v_err(V_RES));
+
+  v_y_exp((V_RES+1)*EXP_W-1 downto V_RES*EXP_W) <= std_logic_vector(vres_exp);
+
+  -- ======================================================================
+  -- THE TWO D-VEC ENGINES THAT DO NOT EXIST.
+  --
+  -- BEHAVIOURAL MODEL.  rmsnorm and swiglu both have real RTL in this repo
+  -- (rtl/rmsnorm_rs.vhd, rtl/swiglu.vhd) and NEITHER has a D-vec adapter:
+  -- they take their own shapes and handshakes and nothing translates
+  -- seq_vec_issue's by-value protocol to them.  Building those adapters is
+  -- remaining work.  These models produce a well-formed, deterministic,
+  -- input-dependent result over the same handshake, so the SEQUENCING is
+  -- exercised and the arithmetic is not claimed.
+  --
+  -- norm  : out(i) = in(i) - (sum(in) / n)          mean removal, not rmsnorm
+  -- swiglu: out(i) = (a(i) * b(i)) / 2**MANT_W       no gate, not swiglu
+  --
+  -- THE VALUES ARE MODELS; THE PUBLISHED EXPONENTS ARE NOT.  Every D-vec op's
+  -- output exponent below is the arithmetically correct one for the mantissa
+  -- operation the model performs, because a wrong exponent is not a wrong
+  -- value -- it is a wrong SCALE, and the residual silently discards an
+  -- operand whose scale is more than a mantissa width away.  See the comment
+  -- at S_DONE for the derivation of each one.
+  -- ======================================================================
+  gen_vstub : for vi in 0 to NVOP-1 generate
+    gv : if vi /= V_RES and not (NORM_REAL and vi = V_NORM) generate
+      signal rdy  : std_logic := '1';
+      signal dn   : std_logic := '0';
+      signal tk   : std_logic := '0';
+      signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+      -- The magnitude tap.  See obs_norm_* in the port list.
+      signal p_pub : std_logic := '0';
+      signal p_ssq : unsigned(63 downto 0) := (others => '0');
+      signal p_n   : unsigned(15 downto 0) := (others => '0');
+    begin
+      v_ready(vi) <= rdy;
+      v_done(vi)  <= dn;
+      v_taken(vi) <= tk;
+      v_err(vi)   <= '0';
+      v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
+
+      gtap : if vi = V_NORM generate
+        obs_norm_pub <= p_pub;
+        obs_norm_ssq <= p_ssq;
+        obs_norm_n   <= p_n;
+        obs_norm_exp <= v_exp_a;
+      end generate;
+
+      vproc : process(clk) is
+        type st_t is (S_IDLE, S_RD, S_WR, S_DONE);
+        variable st   : st_t := S_IDLE;
+        variable buf  : buf_t(0 to REGMAX-1);
+        variable buf2 : buf_t(0 to REGMAX-1);
+        variable n    : natural := 0;
+        variable k    : natural := 0;
+        variable acc  : integer := 0;
+        variable pass : natural := 0;
+        -- NORM_ANCHOR only.
+        variable mx, pmsb, nsh, d : integer := 0;
+        -- The magnitude tap.  A 32-bit `integer` cannot hold this: 64 elements
+        -- of a 16-bit mantissa reach 2**36.
+        variable ssq  : unsigned(63 downto 0) := (others => '0');
+        variable sqp  : signed(2*MANT_W-1 downto 0);
+      begin
+        if rising_edge(clk) then
+          tk <= '0';
+          p_pub <= '0';
+          ur_en(NUNIT+vi) <= '0';
+          uw_en(NUNIT+vi) <= '0';
+          if rst = '1' then
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0; pass := 0;
+          else
+            case st is
+              when S_IDLE =>
+                if v_start(vi) = '1' and rdy = '1' then
+                  tk   <= '1';
+                  rdy  <= '0';
+                  n    := to_integer(v_n);
+                  k    := 0;
+                  pass := 0;
+                  acc  := 0;
+                  ssq  := (others => '0');
+                  st   := S_RD;
+                end if;
+
+              when S_RD =>
+                -- TWO cycles of read latency, not one.  See READ_LATENCY in
+                -- the region-file header: the address is registered in this
+                -- process and the data is registered in the memory, so the
+                -- element issued at edge k is readable at edge k+2.  The loop
+                -- therefore runs to n+1 and drains.  Each pass drains fully
+                -- before the next begins, so the (region, address) pair in
+                -- flight always belongs to the pass that issued it.
+                if k < n then
+                  ur_en(NUNIT+vi)   <= '1';
+                  ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)))
+                                  when pass = 0
+                                  else to_integer(unsigned(v_reg_b(6 downto 0)));
+                  ur_addr(NUNIT+vi) <= k;
+                end if;
+                if k >= 2 then
+                  if pass = 0 then
+                    buf(k-2) := el_rdata; acc := acc + to_integer(el_rdata);
+                    sqp := el_rdata * el_rdata;   -- non-negative, fits 2*MANT_W
+                    ssq := ssq + unsigned(resize(sqp, 64));
+                  else                buf2(k-2) := el_rdata; end if;
+                end if;
+                if k = n+1 then
+                  if pass = 0 and vi = V_SWG then
+                    pass := 1; k := 0;
+                  else
+                    k := 0;
+                    -- THE MAGNITUDE TAP.  Published once per norm op, at the
+                    -- instant the input vector has been read in full.  It is
+                    -- the INPUT's magnitude and not the output's, because the
+                    -- window that decides whether a real normaliser works is
+                    -- on its input.
+                    if vi = V_NORM then
+                      p_pub <= '1';
+                      p_ssq <= ssq;
+                      p_n   <= to_unsigned(n, 16);
+                    end if;
+                    -- THE PROBE.  One pass over the mean-removed vector to
+                    -- find the shift that puts its largest element at
+                    -- MANT_W-2 bits.  Behavioural: a real unit folds the
+                    -- magnitude as it streams, exactly as seq_vec_res does.
+                    if NORM_ANCHOR and vi = V_NORM then
+                      mx := 0;
+                      for i in 0 to REGMAX-1 loop
+                        if i < n then
+                          d := to_integer(buf(i)) - (acc / n);
+                          if d < 0 then d := -d; end if;
+                          if d > mx then mx := d; end if;
+                        end if;
+                      end loop;
+                      pmsb := -1;
+                      for i in 0 to 30 loop
+                        if mx >= 2**i then pmsb := i; end if;
+                      end loop;
+                      if pmsb < 0 then nsh := 0;
+                      else               nsh := pmsb - (MANT_W-2); end if;
+                    end if;
+                    st := S_WR;
+                  end if;
+                else
+                  k := k + 1;
+                end if;
+
+              when S_WR =>
+                uw_en(NUNIT+vi)   <= '1';
+                uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                uw_addr(NUNIT+vi) <= k;
+                if NORM_ANCHOR and vi = V_NORM then
+                  d := to_integer(buf(k)) - (acc / n);
+                  if    nsh > 0 then d := d / (2**nsh);
+                  elsif nsh < 0 then d := d * (2**(-nsh)); end if;
+                  uw_data(NUNIT+vi) <= sat_m(d);
+                elsif vi = V_NORM then
+                  uw_data(NUNIT+vi) <= sat_m(to_integer(buf(k)) - (acc / n));
+                else
+                  -- THE NORMALISATION SHIFT IS MANT_W AND THAT IS NOT
+                  -- ARBITRARY.  Two MANT_W-wide mantissas multiply to at most
+                  -- 2**(2*MANT_W-2), so a right shift of MANT_W is the
+                  -- smallest FIXED shift under which the product CANNOT
+                  -- saturate.  It was /64, and at /64 every one of the 128
+                  -- outputs of every swiglu in this schedule saturated:
+                  -- measured `sat=128 unsat=0`, i.e. R_H was a CONSTANT vector
+                  -- and the FFN carried no information from R_G or R_U at all.
+                  -- A saturated mantissa also makes the published exponent a
+                  -- lie, because the stored value is no longer the one the
+                  -- exponent describes.  A real engine picks this shift from
+                  -- the data, exactly as seq_vec_res does; a fixed MANT_W is
+                  -- the stand-in that is never wrong in the unsafe direction.
+                  uw_data(NUNIT+vi) <= sat_m((to_integer(buf(k))
+                                         * to_integer(buf2(k)))
+                                         / (2**MANT_W));
+                end if;
+                if k = n-1 then
+                  k  := 0;
+                  st := S_DONE;
+                else
+                  k := k + 1;
+                end if;
+
+              when S_DONE =>
+                dn <= '1';
+                -- THE PUBLISHED OUTPUT EXPONENT.  A stub must be wrong in its
+                -- VALUES and RIGHT IN ITS CONTRACT, and an exponent is part of
+                -- the contract, not part of the values.  A fabricated exponent
+                -- puts a stub's output on a grid nothing else in the token
+                -- shares, and the next residual then shifts one of its two
+                -- operands out entirely: a second, invisible failure layered
+                -- on top of the intended, visible one.  That is defect 7 of
+                -- docs/debugging/2026-08-28_llama-top-first-seams.md.
+                --
+                -- The convention is `value = mantissa * 2^-exponent`
+                -- (seq_vec_res.vhd:13-15), so a right shift of the mantissa by
+                -- s SUBTRACTS s from the exponent, and a PRODUCT's exponent is
+                -- the SUM of its operands'.  `matvec_core` publishes
+                -- `w_exp + x_exp - out_shift - ns` for exactly that reason and
+                -- is the independent confirmation of both rules.
+                --
+                -- The exponent must also stay DETERMINISTIC AND
+                -- INPUT-DEPENDENT, so that a stale or shared capture anywhere
+                -- in the exponent path becomes a WRONG number rather than a
+                -- repeat of the right one.  Both formulae below are; the
+                -- swiglu one now depends on BOTH source captures instead of
+                -- one, so it is a stronger detector than the `+ vi` it
+                -- replaces, not a weaker one.
+                --
+                -- WITHDRAWN: `yexp <= v_exp_a + to_signed(vi, EXP_W)`, i.e.
+                -- the input exponent plus the OP INDEX.  Deterministic and
+                -- input-dependent, and arithmetically wrong for the swiglu:
+                -- it published `v_exp_a + 2` for a product, discarding
+                -- `v_exp_b` entirely even though seq_vec_issue had already
+                -- read it and wired it in.  It was accidentally RIGHT for the
+                -- norm, because the op index there is 0.
+                if NORM_ANCHOR and vi = V_NORM then
+                  -- SCALE-FREE, like the unit this models.  The output
+                  -- exponent is the weight scale and carries no memory of
+                  -- the input's, which is the whole point of the probe.
+                  yexp <= to_signed(NORM_EXP, EXP_W);
+                elsif vi = V_NORM then
+                  -- MODEL: out(i) = in(i) - mean(in).  A difference of two
+                  -- quantities that are already on the input's grid is on the
+                  -- input's grid, so the output exponent IS the input
+                  -- exponent, with no constant at all.  This is the one case
+                  -- where "input exponent plus a constant" is the correct
+                  -- answer, and the constant is zero.
+                  --
+                  -- It is correct for the MODEL and it is NOT what the OP
+                  -- would publish: a real rmsnorm is scale-free in its input
+                  -- and its output exponent is the WEIGHT scale.  That gap is
+                  -- what NORM_ANCHOR probes and what a real `rmsnorm_rs` on
+                  -- this op would close.
+                  yexp <= v_exp_a;
+                else
+                  -- MODEL: out(i) = (a(i) * b(i)) / 2**MANT_W.  A PRODUCT,
+                  -- so the exponent is the SUM of the two operands'
+                  -- exponents, and the normalisation shift is a MANT_W-place
+                  -- right shift of the mantissa, so MANT_W comes back off.
+                  --
+                  -- `v_exp_b` is the exponent seq_vec_issue read for `src2`.
+                  -- Every OP_VEC_SWG descriptor in the schedule names one
+                  -- (llama_sched_pkg.vhd:190, src2 => R_U).  seq_vec_issue
+                  -- publishes 0 for a descriptor that does NOT
+                  -- (seq_vec_issue.vhd:440), which would silently degrade this
+                  -- back to the fabricated form, so the absence is an error
+                  -- and not a default.
+                  assert v_reg_b /= x"FF"
+                    report "llama_top: an OP_VEC_SWG descriptor named no "
+                         & "src2, so the product's second exponent is a "
+                         & "fabricated 0."
+                    severity error;
+                  yexp <= v_exp_a + v_exp_b - to_signed(MANT_W, EXP_W);
+                end if;
+                if v_ack(vi) = '1' then
+                  dn  <= '0';
+                  rdy <= '1';
+                  st  := S_IDLE;
+                end if;
+            end case;
+          end if;
+        end if;
+      end process;
+    end generate;
+
+    -- ====================================================================
+    -- THE REAL rmsnorm ON THE D-VEC NORM OP.  NORM_REAL only.
+    --
+    -- This is not a new architectural element and it is not a probe.
+    -- `rtl/rmsnorm_rs.vhd` is real RTL, bit-exact against `rtl/rmsnorm.vhd`
+    -- and already carried by subsystem C's budget; `OP_VEC_NORM` is already
+    -- in the schedule.  The only piece that was missing is this adapter,
+    -- which translates seq_vec_issue's by-value protocol -- a start held
+    -- until `v_taken`, a completion held until `v_ack`, one element port
+    -- into the region file -- to rmsnorm_rs's, which is a flat N*16 vector
+    -- in, a flat N*16 vector out and a one-cycle `done`.
+    --
+    -- WHY A REAL RMSNORM CHANGES THE SCALE BEHAVIOUR.  rmsnorm_rs computes
+    -- `out = (x / rms(x)) * w` and publishes `o_exp = x_exp + w_exp + Q - st`
+    -- with `st` the data-driven shift that puts max|raw| at bit 14
+    -- (rmsnorm_rs.vhd:S_SHIFT2).  Because `raw` already carries a factor
+    -- 2**(x_exp + w_exp + Q), that `st` cancels the x_exp term: the output
+    -- exponent is a function of the SHAPE of x, not of its scale.  That is
+    -- the property `NORM_ANCHOR` models and nothing else in the block loop
+    -- has -- every matvec's exponent only ever FALLS.
+    --
+    -- AND IT IS NOT ENOUGH.  Measured, and the numbers are at the NORM_REAL
+    -- generic: the exponent bookkeeping behaves exactly as above, and the
+    -- unit still emits an ALL-ZERO vector from the third norm onward,
+    -- because its Q-format reciprocal has a 19-octave input magnitude window
+    -- and the residual stream leaves it during the second block.  Read that
+    -- generic before treating this instance as a fix for anything.
+    --
+    -- THE ADAPTER OBEYS THE THREE SEAM RULES AT THE HEAD OF THIS FILE:
+    --   (1) `v_n` and `v_exp_a` are latched at the accept instant, never
+    --       re-read during the operation.
+    --   (2) `done` is held as a level until `v_ack`, and `v_ready` stays low
+    --       while it is held -- seq_vec_issue asserts on the alternative.
+    --   (3) the region read consumes at k-2, not k-1.  Two edges, always.
+    -- ====================================================================
+    gvr : if NORM_REAL and vi = V_NORM generate
+      constant NN : positive := SHAPE.hidden;
+
+      -- THE LEARNED GAIN, a fixed-scale stand-in.  Deterministic in the
+      -- element index and centred on 1.0 at NORM_W_EXP, which is what an
+      -- RMSNorm gain is initialised to.  It is a WEIGHT: its scale does not
+      -- move with the token, and there is no region, descriptor field or
+      -- packing that would let it.  Same rule the conv weights and the two
+      -- learned per-head scalars follow under B_SRC_REAL.
+      --
+      -- IT IS ALSO SYNTHETIC, AND THAT COST A COMPARISON.  Two tracks found
+      -- this independently on 2026-08-29: REF9B's finding D2 and SPECREC's
+      -- observation that `attn_norm` appears ZERO times in this file.  Its
+      -- consequence is not cosmetic -- `R_XN-L` and `R_XN.ffn-L` are 9 of the
+      -- 63 captured seams and NEITHER can be compared against a reference
+      -- built from the model, because the model's gain is not what normalises
+      -- them.  `NORM_W_IMAGE` below is that fix; this ramp is what runs when
+      -- it is empty, and the empty path is bit-identical to what it was
+      -- before that generic existed.
+      function norm_w_const return std_logic_vector is
+        variable r : std_logic_vector(NN*MANT_W-1 downto 0);
+        variable v : integer;
+      begin
+        for i in 0 to NN-1 loop
+          v := 2**NORM_W_EXP + ((i * 37) mod 512) - 256;
+          r((i+1)*MANT_W-1 downto i*MANT_W)
+            := std_logic_vector(to_signed(v, MANT_W));
+        end loop;
+        return r;
+      end function;
+      constant W_CONST : std_logic_vector(NN*MANT_W-1 downto 0) := norm_w_const;
+
+      -- ================================================================
+      -- THE REAL GAIN IMAGE.  `NORM_W_IMAGE`, added 2026-08-29 (TRACK NORMW).
+      --
+      -- One entry per OP_VEC_NORM of the token, in SCHEDULE ORDER, which is
+      -- what `tools/gen_llama_top_weights.py --norm-out` writes:
+      -- `blk.L.attn_norm.weight` before the attention/GDN half,
+      -- `blk.L.post_attention_norm.weight` before the FFN half, and
+      -- `output_norm.weight` at the tail.  That is exactly the mapping
+      -- `tools/ref9b/seam_map.py` names for `R_XN-L`, `R_XN.ffn-L` and
+      -- `R_XN.final`, so a seam captured here is comparable against the
+      -- reference element for element.
+      --
+      -- WHAT THIS IS NOT.  It is NOT a weight region, a descriptor field or a
+      -- packing.  The design still has no way for a norm gain to reach this
+      -- unit from HBM, and that gap is unchanged and is NOT closed here -- see
+      -- the write-up.  This is stimulus, in the same sense `W_IMAGE` is
+      -- stimulus for subsystem A: it replaces a fabricated constant with the
+      -- real numbers so the arithmetic can be judged.  A gain is a learned
+      -- weight, so serving it from an elaboration-time image rather than a
+      -- token-varying region does not misrepresent anything about it.
+      --
+      -- THE FILE FORMAT is one 4-hex-digit two's-complement int16 per line,
+      -- ELEMENT 0 FIRST, NN elements per norm op, norm ops back to back.  One
+      -- value per line rather than one packed word per op is deliberate: a
+      -- packed word has to be written MSB-first, i.e. element NN-1 first,
+      -- which is the ordering easiest to get silently backwards, and a
+      -- reversed gain vector is a wrong number with no structural symptom.
+      --
+      -- A SHORT OR LONG IMAGE IS A REFUSAL, not a truncation: the table is
+      -- indexed by NORM OP, so an image built for a different BLOCKS would
+      -- serve every norm the gain of some other norm, silently.
+      -- IT COUNTS IN GROUPS OF `NN`, NOT IN LINES, AND THAT IS A SYNTHESIS
+      -- REQUIREMENT RATHER THAN A STYLE (added 2026-08-29, TRACK NWFIX).
+      --
+      -- This function used to be a single `while not endfile(fh) loop` that
+      -- read ONE line per iteration.  MEASURED, TRACK NWROM: at the real 9B
+      -- shape that loop runs 65 x 4096 = 266,240 times, and Vivado's
+      -- elaboration loop limit is 65,536 per loop statement:
+      --
+      --   ERROR: [Synth 8-403] loop limit (65536) exceeded [...llama_top:187]
+      --
+      -- so the whole design failed ELABORATION -- not timing, not area --
+      -- for every image bigger than about 16 norm ops.  The bracket was
+      -- measured: `NW_N = 9` (36,864 lines) elaborated, `NW_N = 17` (69,632)
+      -- did not.  Nothing in this project could see it: GHDL has no such
+      -- limit, and `sim/tb_llama_top_normw`'s image is 576 lines, 462x under
+      -- the threshold.
+      --
+      -- The limit is PER LOOP STATEMENT and not cumulative over nesting.
+      -- MEASURED, and it is the fact the fix rests on: `nw_load` below has
+      -- always run the same 266,240 body executions as two NESTED loops of 65
+      -- and 4096, and it elaborates -- TRACK NWROM's `nw_bnd65` point
+      -- synthesised the full 65-op table with NO loop-limit override.  So the
+      -- cure is to give this function the same shape as `nw_load`: the outer
+      -- loop runs once per NORM OP and the inner once per ELEMENT, and
+      -- neither dimension of any model this design targets comes within an
+      -- order of magnitude of 65,536.
+      --
+      -- The tool ALSO has an escape hatch,
+      -- `set_param synth.elaboration.rodinMoreOptions {rt::set_parameter
+      -- maxLoopLimit 4000000}`, and it was measured to work.  It is NOT the
+      -- fix taken and should not be reintroduced: it is an undocumented
+      -- internal parameter that every present and future flow touching this
+      -- file would have to remember, whose omission costs a twenty-minute
+      -- synthesis and reports a `while` loop rather than the missing setting.
+      --
+      -- The refusals are unchanged.  A file that is not a positive whole
+      -- number of NN-element groups is still a hard stop, and it is now
+      -- reported as "n complete norm ops plus part leftover lines" rather
+      -- than as a line total, which names the same fault more usefully.
+      impure function nw_count return natural is
+        file     fh : text;
+        variable ok    : file_open_status;
+        variable l     : line;
+        variable n     : natural := 0;      -- COMPLETE NN-line groups read
+        variable part  : natural := 0;      -- lines read in a final SHORT group
+        variable short : boolean := false;
+      begin
+        if NORM_W_IMAGE = "" then return 1; end if;
+        file_open(ok, fh, NORM_W_IMAGE, read_mode);
+        assert ok = open_ok
+          report "llama_top: cannot open the norm gain image "
+               & NORM_W_IMAGE severity failure;
+        -- Outer: once per norm op, so NW_N iterations.  Inner: once per
+        -- element, so NN.  The `endfile` guard on the outer loop means the
+        -- inner one can only run out of file PART WAY through a group, which
+        -- is exactly the short-image case.
+        while not endfile(fh) loop
+          part := 0;
+          for i in 0 to NN-1 loop
+            if endfile(fh) then
+              short := true;
+              exit;
+            end if;
+            readline(fh, l);
+            part := part + 1;
+          end loop;
+          if short then exit; end if;
+          n := n + 1;
+        end loop;
+        file_close(fh);
+        assert not short
+          report "llama_top: the norm gain image " & NORM_W_IMAGE & " holds "
+               & integer'image(n) & " complete norm ops of "
+               & integer'image(NN) & " elements plus "
+               & integer'image(part) & " leftover lines.  It must be a whole "
+               & "number of norm ops."
+          severity failure;
+        assert n > 0
+          report "llama_top: the norm gain image " & NORM_W_IMAGE
+               & " is empty.  It must hold at least one norm op of "
+               & integer'image(NN) & " elements."
+          severity failure;
+        return n;
+      end function;
+      constant NW_N : positive := nw_count;
+
+      type nw_t is array (0 to NW_N-1)
+        of std_logic_vector(NN*MANT_W-1 downto 0);
+
+      impure function nw_load return nw_t is
+        file     fh : text;
+        variable ok : file_open_status;
+        variable l  : line;
+        variable v  : std_logic_vector(MANT_W-1 downto 0);
+        variable r  : nw_t := (others => W_CONST);
+      begin
+        if NORM_W_IMAGE = "" then return r; end if;
+        file_open(ok, fh, NORM_W_IMAGE, read_mode);
+        assert ok = open_ok
+          report "llama_top: cannot open the norm gain image "
+               & NORM_W_IMAGE severity failure;
+        for k in 0 to NW_N-1 loop
+          for i in 0 to NN-1 loop
+            readline(fh, l);
+            hread(l, v);
+            r(k)((i+1)*MANT_W-1 downto i*MANT_W) := v;
+          end loop;
+        end loop;
+        file_close(fh);
+        return r;
+      end function;
+      constant NW_TBL : nw_t := nw_load;
+
+      signal rdy  : std_logic := '1';
+      signal dn   : std_logic := '0';
+      signal tk   : std_logic := '0';
+      signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+      -- THE THREE WHOLE-VECTOR SIGNALS ARE GONE.  TRACK RMSWIRE, 2026-08-30.
+      --
+      -- WHAT USED TO BE HERE.  `xw` (an array of NN words), its flat view
+      -- `xv`, and `ov` -- three N*16-bit signals, 65,536 bits each at the 9B
+      -- shape, because `rmsnorm_rs`'s `x_mant`, `w_mant` and `o_mant` ports
+      -- are flat whole-vector ports.  `xw` was already the CHEAP form of the
+      -- input: TRACK LUTDIET and TRACK WRITEDEC measured that writing the flat
+      -- `xv` with a runtime slice built a barrel shifter over the whole
+      -- register, 88,640 LUT primitives at `hidden = 4096` and -- the reason
+      -- it was easy to miss -- with ZERO MUXF7 and ZERO MUXF8, so the F7/F8
+      -- signature that finds READ muxes does not find it at all.  Holding the
+      -- bits as an array of words fixed the WRITE side.
+      --
+      -- The READ side was never fixed here, because it is not in this file:
+      -- `rmsnorm_rs` selects one element out of its 65,536-bit port at a
+      -- RUNTIME index, three times per element pass, which is a 1024:1 16-bit
+      -- multiplexer per lane.  TRACK RMSMUX MEASURED the whole unit at 40,934
+      -- CLB LUT / 67,196 FF / 17,408 MUXF7 / 8,704 MUXF8 against 4,825 /
+      -- 1,629 / 0 / 0 for `rmsnorm_rs_mem`, which holds the same three vectors
+      -- in LANES-way banked block RAM instead.
+      --
+      -- SO THE PORTS ARE NOW WORD STREAMS, and the three signals dissolve:
+      --   * `xw`/`xv` -> `x_we`/`x_wa`/`x_wd`.  The read pass in `nproc`
+      --     already produced exactly one word per cycle in ascending element
+      --     order; it now writes that word into the unit's bank instead of
+      --     into a register.  No extra cycle, no extra state.
+      --   * `ov` -> `o_ra`/`o_rd`.  The write-back pass presents an address
+      --     and takes the word ONE EDGE later, which is the only externally
+      --     visible timing change and is why S_WR carries a two-deep valid
+      --     pipeline below.
+      --   * `wsel` -> `nw_we`/`nw_wa`/`nw_wd`, and the 65,536-flop staging
+      --     register `gwm.wreg` that TRACK NORMURAM shifted the gain into goes
+      --     with it.  See the loader below.
+      -- LOG2N, WITHOUT `work.util_pkg.clog2`, AND THAT IS DELIBERATE.
+      --
+      -- MEASURED, first attempt: `sim/ooc_normadapt_extract.py` copies this
+      -- generate block VERBATIM into a top whose use clauses are ieee,
+      -- numeric_std, textio, `model_cfg_pkg` and `llama_map_pkg` and nothing
+      -- else, so `clog2` compiles here inside `llama_top` and fails with
+      -- "no declaration for clog2" in the extraction -- which is the harness
+      -- EVERY area number ever quoted for this block was measured with
+      -- (TRACK NORMADAPT, NWROM, NWFIX, NORMURAM and this one).  Keeping the
+      -- block self-contained is cheaper and safer than widening a harness
+      -- that belongs to another track, and it keeps the property that makes
+      -- that harness trustworthy: the diff between two generated files IS the
+      -- diff between two `llama_top.vhd` files.
+      --
+      -- The body is `util_pkg.clog2`'s, unchanged, including its bounded
+      -- `for` -- a `while` would be an unbounded loop statement in front of
+      -- Vivado's 65,536-iteration elaboration limit for no reason.
+      function log2c(n : positive) return natural is
+        variable m : natural;
+        variable r : natural := 0;
+      begin
+        if n <= 1 then return 0; end if;
+        m := n - 1;
+        for i in 1 to 31 loop
+          if m > 0 then m := m / 2; r := r + 1; end if;
+        end loop;
+        return r;
+      end function;
+      constant LOG2N : natural := log2c(NN);
+
+      -- The input word stream into the unit's `x` bank.  Driven by `nproc`'s
+      -- S_RD, one word per cycle, ascending, exactly as `xw(k-2) <=` was.
+      signal x_we   : std_logic := '0';
+      signal x_wa   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal x_wd   : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+
+      -- The gain word stream into the unit's `w` bank.  Driven by the loader.
+      signal nw_we  : std_logic := '0';
+      signal nw_wa  : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal nw_wd  : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+
+      -- The output word stream out of the unit's `o` bank.  Driven by S_WR.
+      signal o_ra   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal o_rd   : std_logic_vector(MANT_W-1 downto 0);
+      signal rav    : std_logic := '0';   -- an o_ra is being presented
+      signal rav_d  : std_logic := '0';   -- ... and its datum is due now
+
+      -- THE GAIN-LOAD INTERLOCK, PROMOTED OUT OF THE LOADER.
+      --
+      -- `wbusy` was a private signal of TRACK NORMURAM's `gwm` generate and
+      -- fed one simulation-only assertion.  It is now read by `nproc`, which
+      -- HOLDS `start` until the load has finished.  See the loader for why
+      -- that stopped being optional when the gain moved onto a word port.
+      signal wbusy  : std_logic := '1';
+
+      -- The unit's deadline tap: high while it is in an element pass that
+      -- reads `w`.  Observation only -- `nproc` gates on `wbusy`, not on this.
+      signal r_wact : std_logic;
+      signal r_go   : std_logic := '0';
+      signal r_done : std_logic;
+      signal r_xe   : integer := 0;
+      signal r_oe   : integer;
+      -- The magnitude tap.  See obs_norm_* in the port list.  Same tap as the
+      -- behavioural branch, because the question it answers -- does the
+      -- stream stay inside the unit's input window -- is the same question
+      -- whichever engine is on the op.
+      signal p_pub : std_logic := '0';
+      signal p_ssq : unsigned(63 downto 0) := (others => '0');
+      signal p_n   : unsigned(15 downto 0) := (others => '0');
+
+      -- WHICH norm op this is.  Counted, not decoded: `seq_vec_issue` carries
+      -- no step index to this adapter, and the ONE thing the schedule fixes is
+      -- the ORDER of the norm ops in a token.  Reset on `go`, which is the
+      -- token start, so a run of NTOK tokens serves each token the same gains
+      -- -- a gain is per LAYER, not per position.
+      --
+      -- `nidx` is PINNED for the whole of the operation it names and advances
+      -- only at its completion; see `nsel` below for why the obvious place --
+      -- the accept -- is off by one.  That pinning is seam rule (1) in this
+      -- file's header applied to the gain: rmsnorm_rs reads `w_mant` in TWO
+      -- separate element passes several hundred cycles apart, so a `w_mant`
+      -- that moved mid-operation would mix two gains into one plausible wrong
+      -- vector.
+      signal nidx : natural range 0 to NW_N-1 := 0;
+      signal novf : boolean := false;
+      -- `wsel`, the 65,536-bit flat gain the unit's `w_mant` port used to
+      -- take, IS GONE (TRACK RMSWIRE).  So is the branch that chose how to
+      -- drive it.  The gain now reaches the unit as a word stream, and the
+      -- store it comes out of is the same `rom_style = "block"` ROM TRACK
+      -- NORMURAM landed; only the thing on the far side of it changed.
+    begin
+      v_ready(vi) <= rdy;
+      v_done(vi)  <= dn;
+      v_taken(vi) <= tk;
+      v_err(vi)   <= '0';
+      v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
+
+      obs_norm_pub <= p_pub;
+      obs_norm_ssq <= p_ssq;
+      obs_norm_n   <= p_n;
+      obs_norm_exp <= v_exp_a;
+
+      -- The banner, on the same rule as every other model in this file: a
+      -- configuration that is not the default says so at time zero.
+      nwsay : if SHOUT generate
+        process is
+        begin
+          if NORM_W_IMAGE = "" then
+            report "llama_top: the D-vec norm gain is the SYNTHETIC RAMP "
+                 & "(NORM_W_IMAGE empty).  R_XN is not comparable against a "
+                 & "model-derived reference."
+              severity note;
+          else
+            report "llama_top: the D-vec norm gain is REAL, "
+                 & integer'image(NW_N) & " norm ops from " & NORM_W_IMAGE
+              severity note;
+          end if;
+          wait;
+        end process;
+      end generate;
+
+      -- rmsnorm_rs's element width is hardcoded 16 throughout, in its ports
+      -- and in the value bounds its narrowing assertions rest on.  This is
+      -- an elaboration-time stop, not a run-time one, because a mismatch
+      -- would be a silent slice error rather than a wrong number.
+      assert MANT_W = 16
+        report "llama_top: NORM_REAL needs MANT_W = 16.  rmsnorm_rs's ports "
+             & "and its lossless-narrowing bounds are 16-bit."
+        severity failure;
+
+      -- THE MEMORY-BACKED UNIT, NOT THE FLAT ONE.  TRACK RMSWIRE, 2026-08-30.
+      --
+      -- `rtl/rmsnorm_rs_mem.vhd` is `rtl/rmsnorm_rs.vhd` with the three flat
+      -- whole-vector ports replaced by word streams into and out of LANES-way
+      -- banked block RAM.  Every width, every rounding site, every shift, the
+      -- accumulation order and the state machine are IDENTICAL, so `o_mant`
+      -- and `o_exp` are bit-identical element for element -- which
+      -- `sim/tb_rmsnorm_rs_mem.vhd` asserts against BOTH `rmsnorm_rs` and the
+      -- independently written `rmsnorm.vhd` at every gate run, together with
+      -- the CYCLE `done` fires on.
+      --
+      -- THE NUMBERS, MEASURED by TRACK RMSMUX on the BC-250 against its own
+      -- same-session control, N=4096 LANES=4, artefacts in
+      -- `hw/fk33/results/rmsmux_2026-08-30/`:
+      --
+      --                rmsnorm_rs   rmsnorm_rs_mem
+      --     CLB LUT        40,934            4,825
+      --     CLB FF         67,196            1,629
+      --     MUXF7          17,408                0
+      --     MUXF8           8,704                0
+      --     BRAM tile           0                6
+      --     WNS @ 5.0ns    +1.675           +0.971
+      --
+      -- IT IS A BRAM-FOR-LUT TRADE AND THAT IS SAID OUT LOUD.  6 tiles of the
+      -- 672 on this part, against a design that is LUT-bound and congested.
+      -- It stops being obviously right if BRAM ever becomes the binding
+      -- resource; the term to reshape first would be the gain image below,
+      -- which is 171 tiles.
+      u_rms : entity work.rmsnorm_rs_mem
+        generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
+        port map(
+          clk => clk, rst => rst, start => r_go,
+          x_we => x_we, x_waddr => x_wa, x_wdata => x_wd, x_exp => r_xe,
+          w_we => nw_we, w_waddr => nw_wa, w_wdata => nw_wd,
+          w_exp => NORM_W_EXP,
+          done => r_done,
+          o_raddr => o_ra, o_rdata => o_rd, o_exp => r_oe,
+          w_active => r_wact);
+
+      -- THE DEADLINE CHECK, AT THE INSTANT THE DEADLINE ACTUALLY IS.
+      --
+      -- TRACK NORMURAM's objection to this composition, verbatim: "the
+      -- deadline moves from `r_go`, which `gvr` can see and which `wbusy`
+      -- checks, to the unit's internal S_RAW, which it cannot."  This is the
+      -- check that closes it.  `r_wact` IS S_RAW (and S_EMIT, the second
+      -- `w`-reading pass), published by the unit, so the assertion is on the
+      -- real deadline rather than on a landmark that stands in for it.
+      --
+      -- IT IS NOT REDUNDANT WITH THE ONE IN THE LOADER, and the difference is
+      -- the whole point.  The loader's assertion fires if the load is still
+      -- running at `r_go`, which the S_GO gate now prevents by construction;
+      -- this one fires if the load is still running when the gain is actually
+      -- READ, which is the fault a future change to the gate, to
+      -- `NORM_LANES`, to `GW` or to the sequencer could reintroduce without
+      -- touching `r_go` at all.
+      --
+      -- SIMULATION-ONLY: Vivado ignores `severity failure` in synthesis
+      -- (MEASURED, TRACK NWROM), and `r_wact` drives nothing else, so this
+      -- costs the build nothing.
+      wact_chk : process(clk) is
+      begin
+        if rising_edge(clk) then
+          assert not (rst = '0' and r_wact = '1' and wbusy = '1')
+            report "llama_top: the norm unit entered a gain-reading element "
+                 & "pass while the gain load was STILL RUNNING.  Some of the "
+                 & "gain vector it is multiplying by is whatever the bank "
+                 & "held from the previous norm op.  The values stay "
+                 & "plausible and no landmark moves; this assertion is the "
+                 & "only thing that sees it."
+            severity failure;
+        end if;
+      end process;
+
+      -- The norm-op counter.  Separate from `nproc` so that the two instants
+      -- it keys off are the ones `nproc` PUBLISHES (`tk`, `dn`) rather than a
+      -- second decode of `v_start` that could disagree with them.
+      --
+      -- IT ADVANCES AT THE COMPLETION, NOT AT THE ACCEPT, and that is the one
+      -- subtlety here.  Advancing at the accept was the first version and it
+      -- is off by one: `tk` fires in S_IDLE, hundreds of cycles before
+      -- rmsnorm_rs's pass 2 reads `w_mant`, so norm op k would have been
+      -- computed with gain k+1 -- every seam wrong, none of them structurally
+      -- so.  Advancing at `dn and v_ack` leaves `nidx` pinned at k for the
+      -- whole of op k and moves it while no unit is reading.
+      nsel : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if rst = '1' or go = '1' then
+            nidx <= 0;
+            novf <= false;
+          elsif dn = '1' and v_ack(vi) = '1' then
+            if nidx + 1 < NW_N then
+              nidx <= nidx + 1;
+            else
+              -- ONE PAST THE END.  Not an error yet: the LAST norm of a token
+              -- completes here and nothing more is coming.  It becomes an
+              -- error only if another norm is then accepted, which is what
+              -- the assert below catches.  Wrapping instead would serve the
+              -- tail of a token the gains of its head, silently.
+              novf <= true;
+            end if;
+          end if;
+
+          -- `wsel` USED TO BE DRIVEN HERE, `wsel <= NW_TBL(nidx)`, one cycle
+          -- behind `nidx`.  It is now driven by `gwc` or `gwm` below; see the
+          -- comment on `gwm` for why.  The instant is unchanged in the empty
+          -- branch and is a load STARTED at this instant in the populated
+          -- one, and the budget that makes that safe is the same one this
+          -- comment used to state: the earliest `w_mant` read is rmsnorm_rs's
+          -- pass 2, after the n+2 region reads, S_GO and the whole rsqrt.
+
+          assert not (tk = '1' and novf and NORM_W_IMAGE /= "")
+            report "llama_top: the token issued more OP_VEC_NORMs than the "
+                 & "norm gain image " & NORM_W_IMAGE & " holds ("
+                 & integer'image(NW_N) & ").  It was built for a different "
+                 & "BLOCKS."
+            severity failure;
+        end if;
+      end process;
+
+      -- ==================================================================
+      -- WHERE THE GAIN LIVES.  TRACK NORMURAM, 2026-08-30.
+      --
+      -- THE PROBLEM, MEASURED BY THREE TRACKS AND NOT ARGUED HERE.  The line
+      -- that used to sit in `nsel`, `wsel <= NW_TBL(nidx)`, is a 65,536-BIT
+      -- REGISTER whose every bit is a function of a 7-bit index into a 65-
+      -- entry ELABORATION-TIME CONSTANT.  Vivado folds each of those 65,536
+      -- bits into logic of the seven `nidx` bits and then merges registers
+      -- whose D functions coincide, and HOW MUCH IT MERGES IS NOT
+      -- REPRODUCIBLE: TRACK NWROM and TRACK NWFIX between them drew the same
+      -- structure SIX times and got 82,597 / 87,254 / 103,081 / 103,302 /
+      -- 103,435 / 128,065 CLB LUT, TWO OF THEM FROM THE IDENTICAL COMMAND.
+      -- TRACK SCATTER attributed 94.5% of that spread to the single census
+      -- root `gvr.wsel` and measured the mechanism directly: between 4,569
+      -- and 36,578 of the same 65,536 flops are merged away depending on the
+      -- draw, an 8.0x range on one optimisation pass.
+      --
+      -- So this structure did not merely cost LUTs.  It was the only term in
+      -- the project's area budget that HAD NO VALUE, only a range, and the
+      -- range (45,468 LUT) was wider than the margin the fit was being argued
+      -- over.  Moving it does not bound that term, it deletes it.
+      --
+      -- WHAT MOVED AND WHAT DID NOT.  The IMAGE, its format, its producer
+      -- (`tools/gen_llama_top_weights.py --norm-out`), `nw_count`, `nw_load`,
+      -- `NW_TBL`, `nidx`, `novf` and the whole of `nsel` are UNCHANGED.  The
+      -- values `rmsnorm_rs` sees are the same values in the same order; that
+      -- is the claim, and it is checked by the four landmarks on
+      -- `sim/tb_llama_top_normw`, which are hashes of the TOKEN and not of
+      -- the table.  Only the STORE moved: from 65,536 bits of folded LUT
+      -- logic to an inferred memory read one word at a time.
+      --
+      -- TWO BRANCHES, AND THE EMPTY ONE IS DELIBERATELY THE OLD CODE.  With
+      -- `NORM_W_IMAGE` empty there is no table -- `NW_N` is 1 and `NW_TBL(0)`
+      -- is `W_CONST` -- so the fold is exactly what is wanted and a memory
+      -- would be a regression: it would cost `rmsnorm_rs` the constant fold
+      -- of `w_mant` that TRACK NWFIX measured at 17,367 LUT.  `gwc` is
+      -- therefore the pre-existing register, character for character, so the
+      -- `nw_empty` area control stays comparable across every track that has
+      -- quoted it.
+      -- ==================================================================
+      -- THE TWO BRANCHES ARE NOW ONE.  TRACK RMSWIRE, 2026-08-30.
+      --
+      -- `gwc` used to be the pre-existing register, character for character,
+      -- so that the `nw_empty` area control TRACK NORMADAPT, NWROM, NWFIX and
+      -- NORMURAM all quote stayed comparable.  It relied on `NW_TBL(nidx)`
+      -- being a foldable elaboration-time constant when `NORM_W_IMAGE` is
+      -- empty (`NW_N = 1`), and on the fold reaching THROUGH `rmsnorm_rs`'s
+      -- flat `w_mant` port -- TRACK NWFIX measured that reach at 17,367 LUT.
+      --
+      -- Neither survives the port change, and this is a REAL COST stated
+      -- rather than hidden.  `rmsnorm_rs_mem` holds its gain in a RAM written
+      -- at run time, so there is no constant for the tool to fold into the
+      -- arithmetic no matter what drives the words.  The empty configuration
+      -- therefore has to stream `W_CONST` in exactly as the populated one
+      -- streams the image, which is why one loader now serves both:
+      -- `nw_count` returns 1 and `nw_load` returns `(others => W_CONST)` when
+      -- the image is empty, so the ROM below is simply one norm op deep.
+      --
+      -- CONSEQUENCE FOR THE RECORD, and it is a correction to the ruling in
+      -- docs/WORKLOG.md that "the `nw_empty` = 49,654 anchor is not retired":
+      -- `nw_empty` is no longer REPRODUCIBLE on this tree.  It was a draw of
+      -- a configuration -- flat port, folded constant gain -- that this file
+      -- no longer contains.  The anchor remains valid for the trees it was
+      -- measured on (0b4c7b2 and earlier) and every conclusion those tracks
+      -- drew from it stands; it is simply not a control this file can be
+      -- drawn against any more.  The comparable control for TRACK RMSWIRE is
+      -- the SAME extraction taken from the parent commit, drawn in the same
+      -- session, which is what `hw/fk33/results/rmswire_2026-08-30/` holds.
+      gwl : block is
+        -- THE RESHAPE.  `NW_TBL` is 65 words of 65,536 bits, which is the
+        -- one aspect ratio no memory primitive on this device can hold: a
+        -- RAMB36 is at most 72 bits wide (512x72) and a URAM288 is 4096x72,
+        -- so a ROM that must present 65,536 bits IN ONE CYCLE needs
+        -- ceil(65536/72) = 911 of either, against the 672 RAMB36 and 320
+        -- URAM288 `report_utilization` reports for this part.  DERIVED, and
+        -- it is the reason the one-line
+        -- experiment in section 3 of this track's write-up cannot work: the
+        -- initialiser Vivado's [Synth 8-6040] names is not the binding
+        -- constraint, the WIDTH is.
+        --
+        -- Reshaped to `GW` elements per word the same 4.26 Mbit fits BLOCK
+        -- RAM at any `GW`.  `GW` USED TO BE 4 BECAUSE IT SHORTENED THE LOAD
+        -- 4x; that reason died with TRACK RMSWIRE's rate converter, which
+        -- walks ONE element per cycle whatever `GW` is (see `wload` below),
+        -- so `GW` is now a pure aspect-ratio parameter with no rate
+        -- consequence at all.
+        --
+        -- `GW = 1` BECAUSE IT IS MEASURED TO BE STRICTLY BETTER.  TRACK
+        -- GWTWO, 2026-08-30, four points in one session on the BC-250,
+        -- `sim/ooc_lutdiet_ports.tcl` with the same flags every draw on this
+        -- scale uses, the `GW = 4` point byte-identical to the parent commit
+        -- and reproducing TRACK RMSWIRE's `mem_bank` field for field:
+        --
+        --   GW   ROM shape        CLB LUT   CLB FF   RAMB36   TILE     WNS
+        --    1   266,240 x  16      5,073    3,511      135    141   +0.971
+        --    2   133,120 x  32      5,229    3,465      145    151   +0.971
+        --    4    66,560 x  64      5,265    2,149      171    177   +0.971
+        --    8    33,280 x 128      5,277    2,133      226    232   +0.971
+        --
+        -- Monotone in BOTH LUT and BRAM, so there is no exchange rate to
+        -- negotiate: `GW = 1` buys 36 tiles AND saves 192 LUT against the old
+        -- `GW = 4`, at identical WNS, for 1,362 more flops -- 0.155% of the
+        -- device's 879,360 CLB registers.  The cause is packing efficiency
+        -- against the RAMB36's 32,768 data bits, which DEGRADES as the word
+        -- widens: 96.3% at GW=1, 89.6% at 2, 76.0% at 4, 57.5% at 8.
+        --
+        -- THAT WAS NOT PREDICTABLE FROM THE PRIMITIVE'S DATA SHEET, and the
+        -- registered prediction that it would be flat was falsified by its
+        -- own criterion.  A RAMB36 natively supports 32Kx1 through 512x72 and
+        -- all four widths sit on a native width with the same 8/9 padding
+        -- loss, so the count "should" not move.  It moves by 91 tiles.
+        -- An argument from what the hardware CAN do is not a measurement of
+        -- what the tool DOES.
+        --
+        -- 15 TILES STILL SHORT, AND `GW` HAS NO MORE TO GIVE.  Composed
+        -- 246.5 + this unit's 6 + 135 = 387.5 against 372.5 inside `pb_core`.
+        -- What remains is in the IMAGE, not its shape: the table holds only
+        -- 1,567 distinct 16-bit values, its maximum is 0x2FE0 so 14 bits
+        -- suffice, and its empirical entropy is 9.956 bits/element (MEASURED
+        -- over norm_w_9b.hex, md5 69f614a1515e1160f5dc9e8a9e72fdc3).  None of
+        -- those has been drawn.  See
+        -- docs/debugging/2026-08-30_gwtwo-gain-image-aspect-ratio.md.
+        --
+        -- IT IS `block` AND NOT `ultra`, AND THAT IS NOT A PREFERENCE.  This
+        -- device's URAM288 cannot be initialised to anything but zero, so a
+        -- ROM cannot live there at all.  Vivado says so itself and TRACK
+        -- NWROM's own log has the message, verbatim:
+        --
+        --   WARNING: [Synth 8-10226] The ram_style = ultra set on ROM
+        --   "ooc_nwrom_memura__GCB101/gvr.nwrom" can not be honored for this
+        --   device.  The URAM primitives on this device do not support
+        --   initializations to any non 0 values.  This ROM will be
+        --   implemented using BRAMs
+        --
+        -- and both of that track's memory probes report `uram=0` in their
+        -- result CSVs -- 114 BRAM tiles for the `ultra` request and 135 for
+        -- the `block` one.  The "114 URAM" that has been quoted downstream is
+        -- a misread of the BRAM column.  **The 320 idle URAM288 on this part
+        -- are not available to any constant table, only to a store written at
+        -- run time**, which is what makes the HBM route the only URAM-capable
+        -- way to serve this gain.  Asking for `ultra` here would still work,
+        -- because Vivado falls back -- and it would leave a WARNING claiming a
+        -- resource the design never gets, which is how the misread happened.
+        --
+        -- `n` is still the parameter so the shape stays visible at the call
+        -- site and a future `GW` can depend on it again, but every shape now
+        -- gets 1: `GW = 1` needs no divisibility (`NN mod 1 = 0` always), so
+        -- the odd-`NN` fallback the old form carried is what the whole
+        -- function now returns.  Everything downstream -- `nwrom_flat`'s
+        -- packing, the `wsubsel` mux, `wel / GW` -- is written as a function
+        -- of `GW` and degenerates correctly at 1; it is not special-cased.
+        function gw_pick(n : positive) return positive is
+        begin
+          return 1;
+        end function;
+        constant GW    : positive := gw_pick(NN);
+        constant NWORD : positive := NN / GW;
+        -- WW IS NOW THE VALUE WIDTH AND NOT THE STORE WIDTH.  The store
+        -- holds an INDEX; see the codebook note below.
+        constant WW    : positive := MANT_W;
+
+        -- ================================================================
+        -- THE CODEBOOK.  TRACK GAIN16, 2026-08-30.
+        --
+        -- WHY.  TRACK ROUTE2 routed the composed A+B+C+D design inside the
+        -- card's real `pb_core` and MEASURED BRAM at 253.5 used of 372.5
+        -- available: +119.0 headroom WITHOUT this gain image and -52.0 with
+        -- the then-shipping GW = 4 store.  TRACK GWTWO's `GW = 1` bought 36
+        -- of those 52 tiles and stopped, leaving the design SHORT BY 16.
+        --
+        -- WHAT THE COST OF A STORE ACTUALLY IS ON THIS PART, MEASURED, six
+        -- points, one session, BC-250, `sim/ooc_lutdiet_ports.tcl`, the
+        -- `head` point byte-identical to the parent commit:
+        --
+        --   store shape                        RAMB36   DSP    LUT    WNS
+        --   266,240 x 16  (was shipping)          135    41   5,073  +0.971
+        --   266,240 x 14                          126    41   5,070  +0.971
+        --   266,240 x 11  (lossy area probe)       99    41   5,061  +0.971
+        --   266,240 x  9  (lossy area probe)       81    41   5,055  +0.971
+        --   14 bits split 9+4+1 across 3 arrays   126    41   5,075  +0.971
+        --
+        -- THE RULE IS NINE RAMB36 PER BIT OF STORED WORD, and it is exact:
+        -- 126/14, 99/11 and 81/9 are all 9.0000.  Vivado maps this ROM as
+        -- one 32Kx1 cascade PER BIT PLANE -- ceil(266,240/32,768) = 9 -- so
+        -- the cost is linear in the WORD WIDTH and completely indifferent to
+        -- how those bits are grouped.  Splitting 14 bits across three arrays
+        -- of 9, 4 and 1 costs exactly what one 14-bit array costs, to the
+        -- tile: 126 either way.  DO NOT RETRY SPLITTING.
+        --
+        -- SO A 14-BIT STORE IS NOT ENOUGH.  It is lossless for this image
+        -- (the OR over all 266,240 values is 0x3FFF, so bits 15 and 14 are
+        -- always zero) and it buys 9 tiles against a 16-tile gap.  The only
+        -- way further down is to store FEWER BITS PER ELEMENT than the value
+        -- has, which means a codebook.
+        --
+        -- WHAT THE IMAGE PERMITS, MEASURED over norm_w_9b.hex
+        -- (md5 69f614a1515e1160f5dc9e8a9e72fdc3, 266,240 lines):
+        --   distinct values      1,567   -> an 11-bit index
+        --   maximum value       0x2FE0   -> the value itself needs 14 bits
+        --   empirical entropy    9.956 bits/element
+        -- so 11 bits is within 1.05 bits of the information-theoretic floor
+        -- for a fixed-width code, and 9 x 11 = 99 tiles is what it costs.
+        --
+        -- IT IS BUILT AT ELABORATION, FROM THE SAME FILE, ON PURPOSE.  An
+        -- offline encoder plus an in-design decoder are TWO implementations
+        -- and they can drift; worse, the drift is invisible to the obvious
+        -- test, because `decode(encode(x)) = x` holds for a wrong-but-
+        -- consistent pair.  That is the `m7 mutant` recorded in CLAUDE.md,
+        -- where a packer and a reversed decoder passed an entire self-test
+        -- suite.  Here `NORM_W_IMAGE` remains the ONLY input, there is no
+        -- second file, no second generic, and no build step to forget.
+        --
+        -- THE COST IS NOT PAID IN DSP, AND THAT IS THE POINT.  ROUTE2
+        -- measured the routed composition DSP-BOUND at 2,177 of 2,700 =
+        -- 80.63% of pb_core against LUT's 68.33%, with every congested
+        -- window DSP-saturated.  A BRAM lever that spends a multiplier is a
+        -- regression whatever it wins.  DSP is 41 at EVERY point in the
+        -- table above and at this one: the codebook is a table lookup, not
+        -- an arithmetic decode.
+        type cbmark_t is array (0 to 2**MANT_W-1) of boolean;
+        type cbmap_t  is array (0 to 2**MANT_W-1) of natural range 0 to 2**MANT_W-1;
+
+        -- NESTED, AND THAT IS A SYNTHESIS REQUIREMENT.  Vivado's elaboration
+        -- loop limit is 65,536 PER LOOP STATEMENT (MEASURED, TRACK NWFIX),
+        -- and `NW_N*NWORD` is 66,560 at the 9B shape.  A single loop over the
+        -- flat index would reintroduce the [Synth 8-403] failure that
+        -- `nw_count` was restructured to remove.
+        --
+        -- THE PACKING ORDER IS THE HAZARD IN THIS FUNCTION, and it is the
+        -- same hazard the image format comment above names: word `w` holds
+        -- elements `w*GW .. w*GW+GW-1` with element `w*GW` in the LOW bits,
+        -- which is the same little-end convention `NW_TBL` itself uses.  Get
+        -- it backwards and every gain vector is permuted in groups of four
+        -- with no structural symptom at all.  Teeth for exactly that are
+        -- mutations U2 and U3 in this track's write-up.
+        -- EVERY LOOP OVER 2**MANT_W IS NESTED, and that is a synthesis
+        -- requirement, not a style.  Vivado's elaboration loop limit is
+        -- 65,536 iterations PER LOOP STATEMENT (MEASURED, TRACK NWFIX) and
+        -- 2**MANT_W is exactly 65,536, i.e. exactly at it.  Same
+        -- restructuring `nw_count` above already carries, for the same
+        -- reason.
+        --
+        -- THE DOMAIN IS THE FULL 2**MANT_W AND NOT A 14-BIT WINDOW.  The
+        -- "14 bits suffice" fact is a property of THIS image produced by the
+        -- current packer at NORM_W_EXP = 12, not a property of the format.
+        -- Building over the full domain means a future image that used the
+        -- top two bits gets a wider index and costs more tiles, rather than
+        -- silently losing them.
+        function cb_mark return cbmark_t is
+          variable r : cbmark_t := (others => false);
+          variable v : natural;
+        begin
+          for k in 0 to NW_N-1 loop
+            for i in 0 to NN-1 loop
+              v := to_integer(unsigned(NW_TBL(k)((i+1)*MANT_W-1 downto i*MANT_W)));
+              r(v) := true;
+            end loop;
+          end loop;
+          return r;
+        end function;
+        constant CBMARK : cbmark_t := cb_mark;
+
+        function cb_count return natural is
+          variable n : natural := 0;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then n := n + 1; end if;
+            end loop;
+          end loop;
+          return n;
+        end function;
+        constant NCB : positive := cb_count;
+
+        function cb_map return cbmap_t is
+          variable r : cbmap_t := (others => 0);
+          variable n : natural := 0;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then
+                r(a*256 + b) := n;
+                n := n + 1;
+              end if;
+            end loop;
+          end loop;
+          return r;
+        end function;
+        constant CBMAP : cbmap_t := cb_map;
+
+        function ixw_of(n : positive) return positive is
+          variable r : natural := log2c(n);
+        begin
+          if r = 0 then return 1; else return r; end if;
+        end function;
+        constant IXW : positive := ixw_of(NCB);
+
+        type cbrom_t is array (0 to NCB-1) of std_logic_vector(MANT_W-1 downto 0);
+        function cb_rom return cbrom_t is
+          variable r : cbrom_t;
+        begin
+          for a in 0 to 255 loop
+            for b in 0 to 255 loop
+              if CBMARK(a*256 + b) then
+                r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+              end if;
+            end loop;
+          end loop;
+          return r;
+        end function;
+
+        type ixrom_t is array (0 to NW_N*NWORD-1)
+          of std_logic_vector(IXW-1 downto 0);
+        function ixrom_flat return ixrom_t is
+          variable r : ixrom_t;
+        begin
+          for k in 0 to NW_N-1 loop
+            for w in 0 to NWORD-1 loop
+              r(k*NWORD + w) := std_logic_vector(to_unsigned(
+                CBMAP(to_integer(unsigned(
+                  NW_TBL(k)((w+1)*MANT_W-1 downto w*MANT_W)))), IXW));
+            end loop;
+          end loop;
+          return r;
+        end function;
+
+        -- `block` FOR THE INDEX STORE AND `distributed` FOR THE CODEBOOK,
+        -- and neither is a preference.  The index store is 266,240 x 11 and
+        -- is the whole point of the change; the codebook is 1,567 x 16 and
+        -- must NOT take a block RAM, because BRAM is the resource that does
+        -- not fit.  `ultra` is not an option for either: this device's
+        -- URAM288 cannot be initialised to anything but zero, Vivado refuses
+        -- the request with only a WARNING and reports `uram=0`, and the "114
+        -- URAM" three briefs once carried for this table was a misread of
+        -- the BRAM column.
+        attribute rom_style : string;
+        signal ixrom : ixrom_t := ixrom_flat;
+        attribute rom_style of ixrom : signal is "block";
+        signal cbrom : cbrom_t := cb_rom;
+        attribute rom_style of cbrom : signal is "distributed";
+
+        -- THE 65,536-FLOP STAGING REGISTER IS GONE.  TRACK RMSWIRE.
+        --
+        -- What was here was `wreg`, a shift register the ROM's GW-wide words
+        -- were shifted into so that a whole 65,536-bit gain vector could be
+        -- presented to `rmsnorm_rs`'s flat `w_mant` port in one cycle.  TRACK
+        -- NWROM measured the ADDRESSED alternative at 72,164 LUT against
+        -- TRACK NWFIX's 67,059 for the shift form and recorded that the shift
+        -- write "contributes no LUT row at all -- it is 65,536 flops and an
+        -- enable".  Those 65,536 flops are what this change deletes: the unit
+        -- now keeps the gain in its own banked block RAM, so nothing outside
+        -- it ever needs the whole vector at once.
+        --
+        -- WHAT REPLACES IT IS A RATE CONVERTER, AND THE RATE IS THE POINT.
+        -- The ROM still reads GW elements per address, because reshaping it
+        -- is TRACK NORMURAM's lever and not this one -- 171 BRAM tiles were
+        -- measured at this aspect ratio and changing it changes that number.
+        -- The unit's bank port takes ONE 16-bit word per cycle.  So `wel`
+        -- walks elements at one per cycle, the ROM address is `wel / GW`
+        -- (a constant shift), and `wsub` selects the word inside the group.
+        --
+        -- THE MARGIN THIS COSTS, DERIVED, and it is the reason TRACK NORMURAM
+        -- refused this composition rather than performing it:
+        --   before  load = NWORD + 1 = NN/GW + 1 cycles, budget to `r_go` is
+        --           NN + 4, so the margin is GW = 4.0000x AND IS INDEPENDENT
+        --           OF SHAPE -- a bench at hidden 64 exercised the ratio a
+        --           build at 4096 has.
+        --   after   load = NN + 2 cycles against the same NN + 4 budget.  The
+        --           margin is 3 CYCLES at every shape, which is not a margin.
+        --           Extending the budget to the unit's first `w` read (S_RAW,
+        --           after its own pass 1 and the whole rsqrt) recovers only
+        --           about 1 + 1/LANES: 1.26x at NORM_LANES = 4 and 1.07x at
+        --           16, which the unit's own sweep covers as legal.  It is no
+        --           longer shape-invariant either, so a bench that passes at
+        --           a small shape says nothing about the build.
+        --
+        -- SO THE MARGIN IS NOT WHAT THIS RESTS ON.  `nproc` HOLDS `start`
+        -- until `wbusy` clears, below, which makes full residency structural
+        -- instead of arithmetical.  At the shipping shape that gate costs
+        -- ZERO cycles (the load finishes 3 cycles before S_GO would have
+        -- fired anyway); it costs cycles only in the case that used to be a
+        -- silent wrong answer.  `sim/tb_rmswire_loadrace.vhd` measures both
+        -- the ungated failure and the gated pass AT hidden = 4096.
+        signal wix   : std_logic_vector(IXW-1 downto 0) := (others => '0');
+        signal wel   : natural range 0 to NN-1 := 0;   -- element being issued
+        signal wel_d : natural range 0 to NN-1 := 0;   -- ... one cycle later
+        signal wav   : std_logic := '1';   -- an address is being issued
+        signal wdv   : std_logic := '0';   -- ... and its datum is due now
+      begin
+        -- The word the unit's bank port takes this cycle.  `wdv`, `wel_d` and
+        -- `wrd` are a MATCHED TRIPLE: all three are the previous cycle's
+        -- `wav`/`wel`/ROM read, so the enable, the address and the datum
+        -- cannot drift apart the way a separately-derived address could.
+        nw_we <= wdv;
+        nw_wa <= std_logic_vector(to_unsigned(wel_d, LOG2N));
+
+        -- The GW-to-1 sub-word select.  Written as a loop over CONSTANT
+        -- slices rather than as `wrd((s+1)*MANT_W-1 downto s*MANT_W)` with a
+        -- runtime `s`, for the reason this file's `xw` note records: a slice
+        -- whose bounds are non-static is legal but is the same shape as the
+        -- construct that has twice built a barrel shifter here.  At the
+        -- landed GW = 1 the loop runs once with a CONSTANT condition
+        -- (`wel_d mod 1 = 0`) and this degenerates to a wire, which is part
+        -- of why GW = 1 is 192 LUT cheaper than the GW = 4 it replaced; at
+        -- GW = 4 it was a 4:1 mux on 16 bits.
+        --
+        -- TEETH, AND THE ONE ROW THAT DOES NOT BITE.  TRACK GWTWO mutated
+        -- this select to `(wel_d mod GW) = (GW-1-s)` and ran
+        -- `sim:tb_llama_top_normw`: it FAILS at GW = 2 and GW = 4 on
+        -- `tb_llama_top`'s P14 landmark, and PASSES at GW = 1 because at
+        -- GW = 1 the mutation is a semantic no-op.  That non-biting row is
+        -- the point, not an omission: a GW = 1 design cannot have a sub-word
+        -- ordering bug because it has no sub-word, and this whole mux is now
+        -- dead weight kept only so a future GW > 1 is a one-line change.
+        -- THE CODEBOOK LOOKUP, AND IT IS COMBINATIONAL ON PURPOSE.  A
+        -- REGISTERED second lookup would make the gain load NN+3 cycles
+        -- against a budget of NN+4 where it is NN+2 today, and TRACK
+        -- RMSWIRE's entire load-race analysis -- including
+        -- `sim/tb_rmswire_loadrace.vhd`, which measures the ungated failure
+        -- and the gated pass AT hidden = 4096 -- is written against NN+2.
+        -- Reading a distributed ROM off the index ROM's REGISTERED output
+        -- leaves (wdv, wel_d, nw_wd) the matched triple they already are and
+        -- the load length byte-identical, and pays for it in LUTs, which is
+        -- the currency this design has to spare.
+        --
+        -- THE GW SUB-WORD MUX IS GONE WITH THE STORE IT SELECTED FROM.  At
+        -- the landed GW = 1 it was already a wire (`wel_d mod 1 = 0` is a
+        -- constant condition), and TRACK GWTWO reported under its own name
+        -- that its mirror mutant DOES NOT BITE at GW = 1 because there the
+        -- mutation is a semantic no-op.  A future GW > 1 would reintroduce
+        -- it around `wix` rather than around the value.
+        wsubsel : process(wix) is
+        begin
+          nw_wd <= cbrom(to_integer(unsigned(wix)));
+        end process;
+
+        -- THE LOAD.  Restarted at every instant `nsel` moves `nidx`, which is
+        -- reset, token start, and the completion handshake of the previous
+        -- norm op -- and at no other instant, because `nidx` moves at no
+        -- other instant.  Two pipeline stages, unchanged in shape from TRACK
+        -- NORMURAM's: the address is issued from `wel`, the datum lands in
+        -- `wrd` one cycle later, and the matched (`wdv`, `wel_d`, `wrd`)
+        -- triple is presented to the unit's bank port one cycle after that.
+        -- The whole vector is resident `NN + 2` cycles after the restart.
+        --
+        -- WHY THE ADDRESS IS `wel / GW` AND NOT `wptr`.  `wel` is an ELEMENT
+        -- index now, not a word index, because the sink takes one element per
+        -- cycle.  The ROM is unchanged, so its address is the group `wel`
+        -- falls in, and `GW` is a power of two so the divide is a constant
+        -- shift.  Reading the same address `GW` cycles running is free: it is
+        -- a registered ROM read, not a re-arbitration.
+        --
+        -- THE BUDGET IS NO LONGER THE GUARANTEE.  From the restart the
+        -- adapter runs S_IDLE, then S_RD for `n+2` cycles, then S_GO before
+        -- the unit even STARTS, so the budget to `r_go` is `NN + 4` against a
+        -- load of `NN + 2`: THREE CYCLES at every shape, where TRACK
+        -- NORMURAM's form had a shape-invariant `GW = 4.0000x`.  Three cycles
+        -- of margin on a sequencer whose timing is not pinned by anything is
+        -- not a design; it is a coincidence that happens to hold today.
+        --
+        -- So `nproc` GATES on `wbusy` instead: S_GO does not fire `r_go`
+        -- until the load has finished.  Residency becomes structural and the
+        -- assertion below becomes a PERFORMANCE check -- it fires only if the
+        -- gate ever actually had to stall, which at the shipping shape it
+        -- does not.  MEASURED consequence: the gate costs 0 cycles at
+        -- `hidden = 4096`, and `sim/tb_rmswire_loadrace.vhd` measures what
+        -- happens WITHOUT it at that same shape rather than at a small one.
+        wload : process(clk) is
+        begin
+          if rising_edge(clk) then
+            -- Stage 1.  `wrd`/`wel_d`/`wdv` become a MATCHED TRIPLE next
+            -- cycle: all three are derived from the same cycle's `wel`/`wav`.
+            wix   <= ixrom(nidx*NWORD + (wel / GW));
+            wel_d <= wel;
+            wdv   <= wav;
+
+            -- Stage 2.  `wdv`/`wel_d`/`wrd` read here are stage 1's outputs
+            -- from the previous cycle, hence matched.  Element 0 is written
+            -- first and element NN-1 last, ascending, which is both the order
+            -- `nwrom_flat` packed and the order the unit's element passes
+            -- walk its banks.
+            if wdv = '1' and wel_d = NN-1 then
+              wbusy <= '0';
+            end if;
+
+            -- Address sequencing.  LAST, so the restart wins over stage 2 on
+            -- the cycle they coincide.
+            if rst = '1' or go = '1' or (dn = '1' and v_ack(vi) = '1') then
+              wel   <= 0;
+              wav   <= '1';
+              wdv   <= '0';
+              wbusy <= '1';
+            elsif wav = '1' then
+              if wel = NN-1 then
+                wav <= '0';
+              else
+                wel <= wel + 1;
+              end if;
+            end if;
+
+            -- SIMULATION-ONLY, and stated as such: Vivado ignores
+            -- `severity failure` in synthesis (MEASURED, TRACK NWROM).
+            --
+            -- ITS MEANING CHANGED WITH THE GATE AND THAT IS DELIBERATE.  It
+            -- used to be the ONLY thing standing between a late load and a
+            -- half-shifted gain vector.  `nproc` now holds `r_go` until
+            -- `wbusy` clears, so this can no longer fire -- and that is the
+            -- point: it is the check that the GATE is not silently costing
+            -- cycles, i.e. that the load still finishes inside the read pass.
+            -- A firing here is a schedule regression, not a wrong number.
+            --
+            -- It is written as the same condition rather than as a stall
+            -- counter so that a tree with the gate REMOVED (the attribution
+            -- control in sim/mutate_rmswire.sh) still reports the original
+            -- fault under the original message.
+            assert not (r_go = '1' and wbusy = '1')
+              report "llama_top: OP_VEC_NORM started while the gain load was "
+                   & "still running.  The norm would be computed against a "
+                   & "half-shifted gain vector.  The load needs "
+                   & integer'image(NN + 2) & " cycles from the completion "
+                   & "of the previous norm op."
+              severity failure;
+          end if;
+        end process;
+      end block;
+
+      nproc : process(clk) is
+        type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);
+        variable st : st_t := S_IDLE;
+        variable n  : natural := 0;
+        variable k  : natural := 0;
+        -- The WRITE-BACK counter, separate from `k`.  With a flat `o_mant`
+        -- port one counter served both the read of `ov` and the write into
+        -- the region file, because they happened in the same cycle.  The
+        -- unit's `o` bank answers ONE EDGE after the address is presented, so
+        -- the address issue (`k`) and the region write (`kw`) are two cycles
+        -- apart and cannot share a counter.
+        variable kw : natural := 0;
+        variable oe : integer := 0;
+        variable ssq : unsigned(63 downto 0) := (others => '0');
+        variable sqp : signed(2*MANT_W-1 downto 0);
+      begin
+        if rising_edge(clk) then
+          tk    <= '0';
+          p_pub <= '0';
+          r_go <= '0';
+          x_we <= '0';
+          ur_en(NUNIT+vi) <= '0';
+          uw_en(NUNIT+vi) <= '0';
+          if rst = '1' then
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0; kw := 0;
+            -- The read pipeline is cleared here as well as at the end of
+            -- S_WR, so a reset taken mid-write-back cannot leave a stale
+            -- `rav_d` that writes one region word on the next norm op.
+            rav <= '0'; rav_d <= '0';
+          else
+            case st is
+              when S_IDLE =>
+                if v_start(vi) = '1' and rdy = '1' then
+                  tk  <= '1';
+                  rdy <= '0';
+                  n   := to_integer(v_n);
+                  -- NOT PADDED.  Zero-padding a short vector changes the mean
+                  -- square, so it would be a wrong number and not a wasted
+                  -- cycle.  Every OP_VEC_NORM in the schedule is `s.hidden`.
+                  assert n = NN
+                    report "llama_top: the norm op was issued with n = "
+                         & integer'image(n) & ", but the rmsnorm_rs_mem "
+                         & "instance "
+                         & "is elaborated at N = " & integer'image(NN)
+                         & ".  A norm of a different length needs its own "
+                         & "instance; padding this one changes the mean "
+                         & "square."
+                    severity failure;
+                  r_xe <= to_integer(v_exp_a);
+                  k    := 0;
+                  ssq  := (others => '0');
+                  st   := S_RD;
+                end if;
+
+              -- Two edges of read latency, and the loop runs to n+1 so the
+              -- pipeline drains.  See READ_LATENCY in the region-file header.
+              when S_RD =>
+                if k < n then
+                  ur_en(NUNIT+vi)   <= '1';
+                  ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)));
+                  ur_addr(NUNIT+vi) <= k;
+                end if;
+                if k >= 2 then
+                  -- STRAIGHT INTO THE UNIT'S `x` BANK.  TRACK RMSWIRE.  This
+                  -- pass already produced exactly one word per cycle in
+                  -- ascending element order -- that is what made a memory
+                  -- port free on this side -- so the write target changes
+                  -- from a register (`xw(k-2)`) to a bank address and
+                  -- nothing else moves.  `x_we`, `x_wa` and `x_wd` are all
+                  -- registered here, so the enable, the address and the datum
+                  -- reach the bank on the SAME edge and cannot drift apart.
+                  --
+                  -- Residency for `x` is not a race and does not need the
+                  -- interlock `w` needs: the last word is written on the edge
+                  -- ending S_GO, and the unit's pass 1 does not read address
+                  -- 0 until two edges after that.
+                  x_we <= '1';
+                  x_wa <= std_logic_vector(to_unsigned(k-2, LOG2N));
+                  x_wd <= std_logic_vector(el_rdata);
+                  sqp := el_rdata * el_rdata;
+                  ssq := ssq + unsigned(resize(sqp, 64));
+                end if;
+                if k = n+1 then
+                  k := 0;
+                  p_pub <= '1';
+                  p_ssq <= ssq;
+                  p_n   <= to_unsigned(n, 16);
+                  st := S_GO;
+                else
+                  k := k + 1;
+                end if;
+
+              -- One cycle of `start`, AND THE GAIN-LOAD INTERLOCK.
+              --
+              -- TRACK RMSWIRE.  `x` residency is guaranteed by construction
+              -- (the read pass above ends before this state), but `w`
+              -- residency is not: the gain streams in at one element per
+              -- cycle from the completion of the PREVIOUS norm op, and the
+              -- unit's pass 2 reads `NORM_LANES` elements per cycle from
+              -- element 0 upward.  That is a race, not a phase separation.
+              --
+              -- Holding `start` here converts it into a phase separation
+              -- again, at the cost of a stall that MEASURES ZERO at the
+              -- shipping shape.  It is the cheapest possible fix and it is
+              -- the only one that does not depend on a cycle-count argument
+              -- surviving every future change to the sequencer, to
+              -- `NORM_LANES`, or to `GW`.
+              --
+              -- The alternative that was NOT taken: gate on the unit's
+              -- `w_active` tap (which is why the tap exists and is wired to
+              -- `r_wact`).  That would let the load overlap pass 1 and the
+              -- rsqrt and recover the 1 + 1/LANES margin -- but it needs the
+              -- writer to stay AHEAD of a reader that is LANES times faster,
+              -- which is an element-by-element deadline and not a state
+              -- boundary.  `wbusy` is a single bit that is either true or
+              -- false; that is the difference between a check with teeth and
+              -- an argument.
+              when S_GO =>
+                if wbusy = '0' then
+                  r_go <= '1';
+                  st   := S_RUN;
+                end if;
+
+              when S_RUN =>
+                if r_done = '1' then
+                  -- `o_exp` is set in S_SHIFT2 and held; captured at the
+                  -- completion instant anyway, so nothing downstream depends
+                  -- on how long the unit holds it.
+                  oe := r_oe;
+                  k  := 0;
+                  kw := 0;
+                  st := S_WR;
+                end if;
+
+              -- THE WRITE-BACK, NOW A TWO-DEEP READ PIPELINE.  TRACK RMSWIRE.
+              --
+              -- `ov` was the unit's flat output REGISTER, so an address and
+              -- its datum were available in the same cycle.  The `o` bank
+              -- answers ONE EDGE after the address is on the port, which for
+              -- a register-driven address means TWO cycles in this process:
+              -- `o_ra <= k` at cycle t puts k on the port at t+1 and the word
+              -- on `o_rd` at t+2.
+              --
+              -- `rav` -> `rav_d` is that two-cycle delay written as a valid
+              -- pipeline rather than as an index offset, which is the form
+              -- that cannot go off by one silently: `rav_d` and `o_rd` are
+              -- derived from the SAME cycle's `o_ra`, so a `rav_d` seen high
+              -- means the word beside it is the one `kw` wants.  The unit is
+              -- idle across this whole pass, so nothing is moving underneath.
+              when S_WR =>
+                if k < n then
+                  o_ra <= std_logic_vector(to_unsigned(k, LOG2N));
+                  rav  <= '1';
+                  k    := k + 1;
+                else
+                  rav  <= '0';
+                end if;
+                rav_d <= rav;
+                if rav_d = '1' then
+                  uw_en(NUNIT+vi)   <= '1';
+                  uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                  uw_addr(NUNIT+vi) <= kw;
+                  uw_data(NUNIT+vi) <= signed(o_rd);
+                  if kw = n-1 then kw := 0; st := S_DONE;
+                  else kw := kw + 1; end if;
+                end if;
+
+              when S_DONE =>
+                dn   <= '1';
+                yexp <= to_signed(oe, EXP_W);
+                if v_ack(vi) = '1' then
+                  dn  <= '0';
+                  rdy <= '1';
+                  st  := S_IDLE;
+                end if;
+            end case;
+          end if;
+        end if;
+      end process;
+    end generate;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT A.  BEHAVIOURAL when A_BEHAV.
+  --
+  -- The adapter half is REAL in both configurations and is where the D-to-A
+  -- seam lives: latch the descriptor at `job_issue` (never at `u_start`),
+  -- hold `n_rows`/`n_cols`/`w_exp`/`x_exp`/`out_mode` stable for the whole
+  -- job, convert A's one-cycle `done` pulse into a level held until `u_ack`,
+  -- and synthesise the `u_ready` that A does not have.
+  --
+  -- BEHAVIOURAL MODEL: y(r) = sat16( sum_c x(c)*wsyn(r,c,ord) >> out_shift ).
+  -- The weights are synthetic.  A's arithmetic is verified by
+  -- sim/run_matvec.sh and is NOT what this file is testing.
+  -- ======================================================================
+  ga_behav : if A_BEHAV generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+    -- THE LOGITS EGRESS SEAM, producer half.  See the same two signals in
+    -- `ga_real`.  This branch has no `y_we`, so it emits ONE row per beat
+    -- with mask "0..01" and the FIFO's serialiser is the same code.
+    signal j_smp    : std_logic := '0';
+    signal smp_base : unsigned(31 downto 0) := (others => '0');
+  begin
+    u_ready(U_A) <= rdy;
+    u_done(U_A)  <= dn;
+    u_err(U_A)   <= '0';
+    u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
+
+    ap : process(clk) is
+      type st_t is (S_IDLE, S_XRD, S_EXP, S_MUL, S_SDRAIN, S_DONE);
+      variable st   : st_t := S_IDLE;
+      variable xb   : buf_t(0 to REGMAX-1);
+      -- THE LATCHED DESCRIPTOR.  Seam rule (1).
+      variable j_src, j_dst, j_off, j_rows, j_cols, j_ord : natural := 0;
+      variable j_shift : integer := 0;
+      variable j_wexp  : integer := 0;
+      variable j_live  : boolean := false;
+      variable k, r    : natural := 0;
+      variable acc     : integer := 0;
+      variable sh      : integer := 0;
+      variable xexp    : integer := 0;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_A) <= '0';
+        uw_en(U_A) <= '0';
+        smp_be_we  <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; j_live := false;
+          smp_run <= '0'; smp_base <= (others => '0'); j_smp <= '0';
+        else
+          if go = '1' then smp_base <= (others => '0'); end if;
+          -- Latch at job_issue.  NOT at u_start: u_start leads job_issue by
+          -- one cycle and job_* still decodes the previous live bank there.
+          if job_issue = '1' and to_integer(job_unit) = U_A then
+            j_src   := to_integer(job_src(6 downto 0));
+            j_dst   := to_integer(job_dst(6 downto 0));
+            j_off   := to_integer(job_dst_off(15 downto 0));
+            j_rows  := to_integer(job_n_rows(15 downto 0));
+            j_cols  := to_integer(job_n_cols(15 downto 0));
+            j_ord   := to_integer(job_ordinal);
+            j_shift := to_integer(job_out_shift(15 downto 0));
+            j_wexp  := to_integer(job_w_exp(15 downto 0));
+            j_live  := true;
+            ep      <= job_epoch;
+            rdy     <= '0';
+            k       := 0;
+            st      := S_XRD;
+            if SMP_EN then
+              j_smp <= job_flags(1);          -- FLG_TO_SMP, llama_map_pkg:102
+            else
+              j_smp <= '0';
+            end if;
+            -- Claim the exponent read port for THIS job's source, at the same
+            -- instant the descriptor is latched.  A's sources are never the
+            -- multi-segment region, so segment 0 is the whole story here; a
+            -- source that could be R_QKV would have to infer the segment from
+            -- the offset the way seq_opdec's MSEG mechanism does.
+            a_exp_region <= job_src;
+            a_exp_seg    <= "00";
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_XRD =>
+              -- Two cycles of read latency; the loop runs to j_cols+1 and
+              -- drains.  Consuming at k-1 reads the PREVIOUS unit's last
+              -- result instead of this region's element 0, which is a
+              -- timing-dependent wrong number and is exactly what
+              -- sim/tb_llama_top.vhd's write-hash trace caught at
+              -- completion 1.
+              if k < j_cols then
+                ur_en(U_A)   <= '1';
+                ur_reg(U_A)  <= j_src;
+                ur_addr(U_A) <= k;
+              end if;
+              if k >= 2 then xb(k-2) := el_rdata; end if;
+              if k = j_cols+1 then
+                k := 0;
+                st := S_EXP;
+              else
+                k := k + 1;
+              end if;
+
+            when S_EXP =>
+              -- x_exp comes out of the LOCK, not out of the descriptor: it is
+              -- the producing job's captured exponent and it is part of the
+              -- locked object.  This is the read half of hazard A3's fix.
+              --
+              -- `a_exp_region` was driven at the LATCH instant and has been
+              -- stable ever since, and the lock's read is combinational, so
+              -- this samples a value that has not moved.  Reading the port
+              -- without owning it is what produced the first skew difference
+              -- this bench found.
+              assert exp_rd_valid = '1'
+                report "llama_top: unit A read region "
+                     & integer'image(to_integer(a_exp_region))
+                     & "'s exponent before anything captured it."
+                severity error;
+              xexp := to_integer(exp_rd_data);
+              r    := 0;
+              st   := S_MUL;
+
+            when S_MUL =>
+              acc := 0;
+              for c in 0 to REGMAX-1 loop
+                if c < j_cols then
+                  acc := acc + to_integer(xb(c)) * wsyn(r, c, j_ord);
+                end if;
+              end loop;
+              if j_shift >= 0 and j_shift < 31 then
+                sh := acc / (2**j_shift);
+              else
+                sh := acc;
+              end if;
+              if j_dst < NREGION then
+                uw_en(U_A)   <= '1';
+                uw_reg(U_A)  <= j_dst;
+                uw_addr(U_A) <= j_off + r;
+                uw_data(U_A) <= sat_m(sh);
+              end if;
+              -- THE LOGITS ROUTE.  The behavioural A has no `y_we`, so the
+              -- beat is synthesised here: one row, s32, NOT the s16 the
+              -- region write saturates to.  RAW `out_mode` emits s32 and
+              -- narrowing the logit to 16 bits would change which row wins.
+              if j_smp = '1' then
+                smp_run    <= '1';
+                smp_be_we  <= '1';
+                smp_be_msk <= (0 => '1', others => '0');
+                smp_be_idx <= smp_base + r;
+                smp_be_dat <= (others => '0');
+                smp_be_dat(31 downto 0)
+                  <= std_logic_vector(to_signed(sh, 32));
+                smp_yexp_i <= to_signed(j_wexp + xexp - j_shift, EXP_W);
+              end if;
+              if r = j_rows-1 then
+                if j_smp = '1' then
+                  smp_base <= smp_base + j_rows;
+                  st := S_SDRAIN;
+                else
+                  st := S_DONE;
+                end if;
+              else
+                r := r + 1;
+              end if;
+
+            when S_SDRAIN =>
+              -- See the same state in `ga_real`: `done` on a FLG_TO_SMP job
+              -- means the sampler has seen every logit, not that A stopped.
+              smp_run <= '0';
+              if smp_empty = '1' then st := S_DONE; end if;
+
+            when S_DONE =>
+              -- Seam rule (2): a LEVEL, held until u_ack.
+              dn   <= '1';
+              yexp <= to_signed(j_wexp + xexp - j_shift, EXP_W);
+              if u_ack(U_A) = '1' then
+                dn     <= '0';
+                rdy    <= '1';
+                j_live := false;
+                st     := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+
+  -- With the behavioural A there is no weight streamer, so the AXI masters
+  -- are tied off rather than left floating.
+  ga_tie : if A_BEHAV generate
+    m_arvalid <= (others => '0');
+    m_araddr  <= (others => '0');
+    m_arlen   <= (others => '0');
+    m_arsize  <= (others => '0');
+    m_arburst <= (others => '0');
+    m_rready  <= (others => '0');
+  end generate;
+
+  -- ======================================================================
+  -- UNIT A.  THE REAL `matvec_int4`, and the D-to-A seam.
+  --
+  -- This adapter is the seam.  Everything it does is one of the three rules
+  -- in the header, applied to a unit that meets none of D's conventions:
+  --
+  --  * A HAS NO `ready`.  seq_desc_fetch holds `u_start` until it sees one
+  --    (:787) and refuses to issue while `u_done` is high.  The adapter
+  --    synthesises `ready` from its own idle state.
+  --
+  --  * A's `done` IS A ONE-CYCLE PULSE WITH NO ACK (matvec_core.vhd:918-920).
+  --    D's contract is a LEVEL held until `u_ack` (seq_desc_fetch.vhd:235).
+  --    The adapter converts.
+  --
+  --  * A READS `n_rows`, `n_cols`, `w_exp`, `x_exp` AND `out_mode` LIVE for
+  --    the whole job (matvec_core.vhd:639, :771, :912, :932-934).  Only
+  --    `out_shift` is latched inside A.  So the adapter holds all six in its
+  --    own registers, written once at `job_issue` and never again while the
+  --    job runs.  Driving them from `job_*` would be defect class (a) with a
+  --    multi-thousand-cycle exposure window.
+  --
+  --  * A's `y_we` HAS NO READY.  A stall LOSES a beat.  The sink below
+  --    accepts every beat unconditionally into a buffer and drains afterwards,
+  --    and raises `err_lost_beat` if a beat ever arrives outside the window
+  --    or past the end of the buffer.  A beat cannot be refused, so the only
+  --    honest design is one that cannot refuse.
+  --
+  --  * `cb_we` AND `start` MUST NOT SHARE AN EDGE.  matvec_core.vhd:565-571
+  --    keeps an empty branch specifically as that interlock, and a `start` on
+  --    the same edge as the last codebook write is silently DROPPED, not
+  --    flagged.  S_CBGAP exists for that and for nothing else.
+  --
+  -- WHAT IS STILL SYNTHETIC: the weights.  The descriptor's base array past
+  -- the 64-byte header is not fetched by `seq_desc_fetch` (its header,
+  -- :113-115, "fetching it is remaining work"), so the adapter computes a
+  -- per-step address block instead.  Whatever the memory returns at those
+  -- addresses is what A multiplies.  A's ARITHMETIC is verified by
+  -- sim/run_matvec.sh against its own oracle; what is verified HERE is the
+  -- seam.
+  -- ======================================================================
+  ga_real : if not A_BEHAV generate
+    -- ------------------------------------------------------------------
+    -- THE CAPACITY OF THE FABRICATED BLOCK, AND WHY IT IS CHECKED.
+    --
+    -- The base below is SYNTHETIC (see the banner).  What was never stated is
+    -- that it is also BOUNDED: port p is given exactly A_SUB_BYTES and the
+    -- scale port whatever is left of A_JOB_STRIDE.  Nothing checked that a
+    -- job fits, so a job needing more beats than that walked straight into
+    -- port p+1's sub-region and read it as its own weights -- completing with
+    -- done = 1, err = 0, having read the wrong bytes.  That is the same
+    -- failure mode as the fabrication itself, one level down, and it is
+    -- REACHABLE AT THE SHIPPING SHAPE rather than latent: DERIVED at
+    -- Qwen3.5-9B (hidden 4096, ffn 12288), the FFN gate job is
+    -- tiles*nblk = ceil(12288/4)*ceil(4096/32) = 3072*128 = 393,216 beats
+    -- per port against A_SUB_BYTES/16 = 256, i.e. short by 1536x.
+    --
+    -- So this refuses instead.  It is NOT a fix for the fabrication and must
+    -- not be read as one: a job that FITS is still reading whatever happens
+    -- to be at a made-up address.  What it removes is the silence.
+    -- ------------------------------------------------------------------
+    -- One AXI beat on a weight port, in bytes.  The masters are 128 bits wide
+    -- at this level (see the m_rdata port), and the same 16 appears in
+    -- `sim/tb_llama_top.vhd`'s address decode.
+    constant A_BEAT_B    : natural := 128 / 8;
+    constant A_SUB_BEATS : natural := A_SUB_BYTES / A_BEAT_B;
+    constant A_SCL_BEATS : natural :=
+      (A_JOB_STRIDE - A_ROWS_IF * A_SUB_BYTES) / A_BEAT_B;
+
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal uerr : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+    signal mv_start : std_logic := '0';
+    signal mv_done, mv_err, mv_sat : std_logic;
+    signal r_rows, r_cols, r_shift, r_wexp, r_xexp : std_logic_vector(31 downto 0)
+         := (others => '0');
+    signal r_mode  : std_logic_vector(1 downto 0) := "00";
+    signal r_wbase : std_logic_vector(A_ROWS_IF*32-1 downto 0) := (others => '0');
+    signal r_wbeat : std_logic_vector(31 downto 0) := (others => '0');
+    signal r_sbase : std_logic_vector(31 downto 0) := (others => '0');
+    signal r_sbeat : std_logic_vector(31 downto 0) := (others => '0');
+
+    signal cb_we   : std_logic := '0';
+    signal cb_addr : std_logic_vector(3 downto 0) := (others => '0');
+    signal cb_data : std_logic_vector(7 downto 0) := (others => '0');
+    signal x_we    : std_logic := '0';
+    signal x_waddr : std_logic_vector(15 downto 0) := (others => '0');
+    signal x_wdata : std_logic_vector(15 downto 0) := (others => '0');
+
+    signal y_we    : std_logic;
+    signal y_addr  : std_logic_vector(15 downto 0);
+    signal y_data  : std_logic_vector(A_ROWS_IF*64-1 downto 0);
+    signal y_mask  : std_logic_vector(A_ROWS_IF-1 downto 0);
+    signal y_expv  : std_logic_vector(31 downto 0);
+    -- THE LOGITS EGRESS SEAM, producer half.  `j_smp` is this job's copy of
+    -- FLG_TO_SMP, latched with the rest of the descriptor at `job_issue` --
+    -- seam rule (1) applies to a ROUTE exactly as it applies to a shape, and
+    -- reading `job_flags` live during a multi-thousand-cycle job would route
+    -- the tail of one job by the flags of the next.
+    signal j_smp   : std_logic := '0';
+    -- The vocabulary index of row 0 of THIS job.  Zeroed on `go` and advanced
+    -- by `n_rows` per FLG_TO_SMP job, so 15 windows produce one index space.
+    signal smp_base : unsigned(31 downto 0) := (others => '0');
+  begin
+    u_ready(U_A) <= rdy;
+    u_done(U_A)  <= dn;
+    u_err(U_A)   <= uerr;
+    u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
+
+    u_mv : entity work.matvec_int4
+      generic map(
+        BLK => A_BLK, ROWS_IF => A_ROWS_IF, NPORTS_W => A_ROWS_IF,
+        AXI_DW => 128, ADDR_W => 32,
+        MAXCOLS => A_MAXCOLS, MAXROWS_BFP => A_MAXROWS,
+        FIFO_DEPTH => A_FIFO, MAXB => A_MAXB, MAXOUT => 2)
+      port map(
+        clk => clk, rst => rst,
+        start => mv_start,
+        n_rows => r_rows, n_cols => r_cols, out_shift => r_shift,
+        w_exp => r_wexp, x_exp => r_xexp, out_mode => r_mode,
+        w_base => r_wbase, w_beats => r_wbeat,
+        s_base => r_sbase, s_beats => r_sbeat,
+        cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+        x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+        m_arvalid => m_arvalid, m_arready => m_arready, m_araddr => m_araddr,
+        m_arlen => m_arlen, m_arsize => m_arsize, m_arburst => m_arburst,
+        m_rvalid => m_rvalid, m_rready => m_rready, m_rdata => m_rdata,
+        m_rlast => m_rlast,
+        y_we => y_we, y_addr => y_addr, y_data => y_data, y_mask => y_mask,
+        y_exp => y_expv, done => mv_done, err => mv_err, sat_event => mv_sat,
+        dbg_wbeat => open, dbg_wstarve => open);
+
+    ap : process(clk) is
+      type st_t is (S_IDLE, S_CB, S_CBGAP, S_XRD, S_EXP, S_GO, S_RUN,
+                    S_SDRAIN, S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable yb : buf_t(0 to A_MAXROWS-1);
+      -- THE LATCHED DESCRIPTOR.  Seam rule (1).  Nothing below reads `job_*`.
+      variable j_src, j_dst, j_off, j_rows, j_cols, j_step : natural := 0;
+      variable j_shift, j_wexp : integer := 0;
+      variable j_mode : std_logic_vector(1 downto 0) := "00";
+      variable k, r   : natural := 0;
+      variable tiles, nb, base : natural := 0;
+      -- Beats this job needs, per weight port and on the scale port.  Named
+      -- variables rather than expressions inlined at the two assignments,
+      -- because the capacity test and the value handed to A must be THE SAME
+      -- NUMBER; two copies of one expression is how a bound and the thing it
+      -- bounds drift apart.
+      variable wb, sb : natural := 0;
+      variable a  : natural;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_A) <= '0';
+        uw_en(U_A) <= '0';
+        cb_we      <= '0';
+        x_we       <= '0';
+        mv_start   <= '0';
+        smp_be_we  <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
+          smp_run <= '0'; smp_base <= (others => '0'); j_smp <= '0';
+        else
+          -- The vocabulary index space is per TOKEN.  `go` is the only
+          -- instant at which the machine is idle and a new one begins.
+          if go = '1' then smp_base <= (others => '0'); end if;
+          if job_issue = '1' and to_integer(job_unit) = U_A then
+            j_src   := to_integer(job_src(6 downto 0));
+            j_dst   := to_integer(job_dst(6 downto 0));
+            j_off   := to_integer(job_dst_off(15 downto 0));
+            j_rows  := to_integer(job_n_rows(15 downto 0));
+            j_cols  := to_integer(job_n_cols(15 downto 0));
+            j_shift := to_integer(job_out_shift(15 downto 0));
+            j_wexp  := to_integer(job_w_exp(15 downto 0));
+            j_mode  := job_out_mode(1 downto 0);
+            j_step  := to_integer(job_step);
+            ep      <= job_epoch;
+            uerr    <= '0';
+            rdy     <= '0';
+            k       := 0;
+            st      := S_CB;
+            a_exp_region <= job_src;
+            a_exp_seg    <= "00";
+            -- THE ROUTE, LATCHED WITH THE SHAPE.  Seam rule (1).
+            if SMP_EN then
+              j_smp <= job_flags(1);          -- FLG_TO_SMP, llama_map_pkg:102
+            else
+              j_smp <= '0';
+            end if;
+          end if;
+
+          -- ---- the un-refusable y sink.  Outside the FSM on purpose: a
+          -- beat that arrives in a state that did not expect it must still be
+          -- ACCEPTED and then reported, never dropped.
+          if y_we = '1' and j_smp = '1' then
+            -- THE LOGITS ROUTE.  RAW `out_mode` puts a sign-extended s32 in
+            -- the low half of each 64-bit lane (`matvec_core.vhd:829`), so the
+            -- logit is bits 31..0 and the upper half is sign extension, not
+            -- payload.  The whole beat goes to the FIFO with its mask; the
+            -- serialiser below drops the pad rows.
+            smp_be_we  <= '1';
+            smp_be_msk <= y_mask;
+            -- A's OWN published exponent, not a re-derivation of it.  RAW is
+            -- `w_exp + x_exp - os_r` and carries no per-job term, so every
+            -- window of a token reports the same value and 15 windows can
+            -- feed one comparator.
+            smp_yexp_i <= resize(signed(y_expv), EXP_W);
+            smp_be_idx <= smp_base + to_integer(unsigned(y_addr));
+            for rr in 0 to A_ROWS_IF-1 loop
+              smp_be_dat(rr*32+31 downto rr*32)
+                <= y_data(rr*64+31 downto rr*64);
+            end loop;
+          end if;
+          if y_we = '1' then
+            if st /= S_RUN then
+              f_lost <= '1';
+              report "llama_top: unit A emitted a y beat outside its run "
+                   & "window.  y_we has no ready, so this beat is LOST."
+                severity error;
+            end if;
+            for rr in 0 to A_ROWS_IF-1 loop
+              if y_mask(rr) = '1' then
+                a := to_integer(unsigned(y_addr)) + rr;
+                if j_dst < NREGION then
+                  if a < A_MAXROWS then
+                    yb(a) := signed(y_data(rr*64+MANT_W-1 downto rr*64));
+                  else
+                    f_lost <= '1';
+                    report "llama_top: unit A produced row "
+                         & integer'image(a) & " past the y buffer ("
+                         & integer'image(A_MAXROWS) & ")." severity error;
+                  end if;
+                end if;
+              end if;
+            end loop;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_CB =>
+              cb_we   <= '1';
+              cb_addr <= std_logic_vector(to_unsigned(k, 4));
+              cb_data <= std_logic_vector(to_signed(cb_int4(k), 8));
+              if k = 15 then k := 0; st := S_CBGAP; else k := k + 1; end if;
+
+            when S_CBGAP =>
+              -- ONE dead cycle, so `start` can never share an edge with the
+              -- last `cb_we`.  matvec_core drops such a start silently.
+              st := S_XRD;
+
+            when S_XRD =>
+              if k < j_cols then
+                ur_en(U_A)   <= '1';
+                ur_reg(U_A)  <= j_src;
+                ur_addr(U_A) <= k;
+              end if;
+              if k >= 2 then
+                x_we    <= '1';
+                x_waddr <= std_logic_vector(to_unsigned(k-2, 16));
+                x_wdata <= std_logic_vector(el_rdata);
+              end if;
+              if k = j_cols+1 then
+                k := 0;
+                st := S_EXP;
+              else
+                k := k + 1;
+              end if;
+
+            when S_EXP =>
+              assert exp_rd_valid = '1'
+                report "llama_top: unit A read region "
+                     & integer'image(to_integer(a_exp_region))
+                     & "'s exponent before anything captured it."
+                severity error;
+              nb    := (j_cols + A_BLK - 1) / A_BLK;
+              tiles := (j_rows + A_ROWS_IF - 1) / A_ROWS_IF;
+              base  := A_MEM_BASE + j_step * A_JOB_STRIDE;
+              -- THE CAPACITY REFUSAL.  Computed here, one clocked state
+              -- BEFORE `start` reaches A, which is the same ordering
+              -- `seq_desc_fetch`'s S_CHECK and `matvec_int4_desc_axi`'s
+              -- S_SHAPE use and for the same stated reason: a job refused
+              -- after the array has begun consuming weights has already read
+              -- the wrong memory.  Refusing means NOT entering S_GO at all,
+              -- so not one AR is issued.
+              wb := tiles * nb;
+              sb := (tiles * nb * A_ROWS_IF * 2 + 15) / 16;
+              if wb > A_SUB_BEATS or sb > A_SCL_BEATS then
+                report "llama_top: unit A REFUSED step "
+                     & integer'image(j_step) & " -- it needs "
+                     & integer'image(wb) & " weight beats per port (cap "
+                     & integer'image(A_SUB_BEATS) & ") and "
+                     & integer'image(sb) & " scale beats (cap "
+                     & integer'image(A_SCL_BEATS)
+                     & ").  The per-job weight address block is FABRICATED "
+                     & "and this job does not fit in it; running would have "
+                     & "read the next sub-region's bytes and reported "
+                     & "success."
+                  severity warning;
+                uerr <= '1';
+                st   := S_DONE;
+              else
+                r_rows  <= std_logic_vector(to_signed(j_rows, 32));
+                r_cols  <= std_logic_vector(to_signed(j_cols, 32));
+                r_shift <= std_logic_vector(to_signed(j_shift, 32));
+                r_wexp  <= std_logic_vector(to_signed(j_wexp, 32));
+                r_xexp  <= std_logic_vector(resize(exp_rd_data, 32));
+                r_mode  <= j_mode;
+                for p in 0 to A_ROWS_IF-1 loop
+                  r_wbase((p+1)*32-1 downto p*32)
+                    <= std_logic_vector(to_unsigned(base + p*A_SUB_BYTES, 32));
+                end loop;
+                r_sbase <= std_logic_vector(
+                             to_unsigned(base + A_ROWS_IF*A_SUB_BYTES, 32));
+                r_wbeat <= std_logic_vector(to_signed(wb, 32));
+                -- one uint16 scale per (tile, block, row), 16 bytes per beat
+                r_sbeat <= std_logic_vector(to_signed(sb, 32));
+                st := S_GO;
+              end if;
+
+            when S_GO =>
+              mv_start <= '1';
+              r        := 0;
+              -- The logits run window opens with the job and closes when
+              -- A stops, which is NOT when the sampler has seen the last
+              -- logit.  See S_SDRAIN.
+              if j_smp = '1' then smp_run <= '1'; end if;
+              st       := S_RUN;
+
+            when S_RUN =>
+              if mv_done = '1' then
+                uerr <= mv_err;
+                r    := 0;
+                if j_smp = '1' then
+                  -- The next FLG_TO_SMP job's rows start where this one's
+                  -- ended.  Advanced HERE, after the last beat has been
+                  -- pushed with the old base, so a window boundary cannot
+                  -- renumber a window boundary
+                  smp_base <= smp_base + j_rows;
+                  st := S_SDRAIN;
+                elsif j_dst < NREGION then
+                  st := S_DRAIN;
+                else
+                  st := S_DONE;
+                end if;
+              end if;
+
+            when S_SDRAIN =>
+              -- WAIT FOR THE SAMPLER, NOT FOR A.  `u_done` on a FLG_TO_SMP
+              -- job means "every logit this job produced has been folded",
+              -- so a token that reaches END_TOKEN has a final argmax.  A
+              -- `done` raised at `mv_done` would let the next job's `go`
+              -- clear the FIFO with beats still in it -- a LOST result that
+              -- no counter would show, because nothing was refused.
+              smp_run <= '0';
+              if smp_empty = '1' then
+                if j_dst < NREGION then st := S_DRAIN; else st := S_DONE; end if;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_A)   <= '1';
+              uw_reg(U_A)  <= j_dst;
+              uw_addr(U_A) <= j_off + r;
+              uw_data(U_A) <= yb(r);
+              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= resize(signed(y_expv), EXP_W);
+              if u_ack(U_A) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT B.  BEHAVIOURAL when B_BEHAV.
+  --
+  -- BEHAVIOURAL MODEL, AND IT IS NOT GATED DELTANET.  It reads R_QKV, R_Z,
+  -- R_BETA and R_ALPHA -- the same four regions the real B consumes, which is
+  -- what makes the region-lock consume mask reachable -- and produces
+  --   y(i) = sat16( (qkv(i) + qkv(2*key_dim+i)) * z(i) / 256 + beta(head) )
+  -- which is a first-order function of every one of its inputs and of nothing
+  -- else.  It has no recurrent state, no conv, no L2 norm and no gate.
+  -- ======================================================================
+  gb_behav : if B_BEHAV generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_B) <= rdy;
+    u_done(U_B)  <= dn;
+    u_err(U_B)   <= '0';
+    u_done_epoch((U_B+1)*EPOCH_W-1 downto U_B*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_B+1)*EXP_W-1 downto U_B*EXP_W) <= std_logic_vector(yexp);
+
+    bp : process(clk) is
+      type st_t is (S_IDLE, S_RD, S_WR, S_DONE);
+      variable st  : st_t := S_IDLE;
+      variable qb, zb, bb : buf_t(0 to REGMAX-1);
+      variable j_dst, j_rows, j_ord : natural := 0;
+      variable j_wexp : integer := 0;
+      variable k    : natural := 0;
+      variable pass : natural := 0;
+      constant KD   : natural := key_dim(SHAPE);
+      constant HD   : natural := SHAPE.head_dim;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_B) <= '0';
+        uw_en(U_B) <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_B then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_ord  := to_integer(job_ordinal);
+            j_wexp := to_integer(job_w_exp(15 downto 0));
+            ep     <= job_epoch;
+            rdy    <= '0';
+            k      := 0;
+            pass   := 0;
+            st     := S_RD;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_RD =>
+              -- three passes: qkv value half, z, beta
+              if k < j_rows then
+                ur_en(U_B) <= '1';
+                case pass is
+                  when 0 =>
+                    ur_reg(U_B)  <= R_QKV;
+                    ur_addr(U_B) <= 2*KD + k;
+                  when 1 =>
+                    ur_reg(U_B)  <= R_Z;
+                    ur_addr(U_B) <= k;
+                  when others =>
+                    ur_reg(U_B)  <= R_BETA;
+                    ur_addr(U_B) <= k / HD;
+                end case;
+              end if;
+              if k >= 2 then
+                case pass is
+                  when 0      => qb(k-2) := el_rdata;
+                  when 1      => zb(k-2) := el_rdata;
+                  when others => bb(k-2) := el_rdata;
+                end case;
+              end if;
+              if k = j_rows+1 then
+                k := 0;
+                if pass = 2 then st := S_WR; else pass := pass + 1; end if;
+              else
+                k := k + 1;
+              end if;
+
+            when S_WR =>
+              uw_en(U_B)   <= '1';
+              uw_reg(U_B)  <= j_dst;
+              uw_addr(U_B) <= k;
+              uw_data(U_B) <= sat_m((to_integer(qb(k)) * to_integer(zb(k)))
+                                    / 256 + to_integer(bb(k)));
+              if k = j_rows-1 then
+                st := S_DONE;
+              else
+                k := k + 1;
+              end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= to_signed(j_wexp + j_ord, EXP_W);
+              if u_ack(U_B) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT B.  THE REAL `gdn_block`, its six memories, and the D-to-B seam.
+  --
+  -- WHAT IS REAL HERE:
+  --   * `gdn_block` itself, seven units, at the exact generic set
+  --     `sim/tb_gdn_block.vhd` defaults to and `sim/run_gdn_block.sh` runs.
+  --   * the six memories it needs, at the LATENCIES ITS PORT CONTRACT
+  --     SPECIFIES, which are not all the same and getting one wrong is a
+  --     silent wrong number:
+  --        st_*   registered address, data one cycle later   (BRAM)
+  --        se_*   COMBINATIONAL, address to data in one cycle (LUTRAM)
+  --        cv_*   registered address, combinational data      (BRAM)
+  --        sc_*   registered, one cycle, indexed by sc_head   (regfile)
+  --        w_*    a level, latched inside B at head 0's pickup
+  --        z_*    a real valid/ready handshake, one per value head
+  --     Building `se_*` as a one-cycle BRAM by analogy with `st_*` is the
+  --     obvious mistake and the port comment says so in as many words.
+  --   * the EXPONENT CAPTURE OBLIGATION.  Before B may be started for a
+  --     layer, exactly one `cap_req` per q/k/v segment must have been issued
+  --     carrying A's `y_exp` for that projection.  Nothing carried that
+  --     before this file: it is a contract between subsystem A and subsystem
+  --     B that no descriptor field expresses.
+  --   * COMPLETION IS `busy` FALLING, NOT `done`.  `gdn_block`'s `done` is a
+  --     one-cycle pulse with no ack; `busy` is a level that falls one cycle
+  --     later, and `sim/tb_gdn_block.vhd:618-621` polls `busy` for exactly
+  --     this reason.  Defect class (b), avoided by using the level.
+  --   * the y stream has NO ready.  Accepted unconditionally into a buffer.
+  --   * z, the output gate, IS READ FROM REGION R_Z, which subsystem A
+  --     produced.  That is one real A-to-B data path.
+  --
+  -- WHAT IS STILL A STAND-IN, stated plainly:
+  --   the conv WEIGHTS, ssm_dt_bias, ssm_a and the ssm_norm weight, always:
+  --   they are learned constants, they have no region, and a fixed exponent
+  --   is what a weight HAS.  Sourcing one from an activation region would
+  --   answer a different question.
+  --
+  --   the conv TAPS, alpha and beta, unless B_SRC_REAL.  With B_SRC_REAL they
+  --   are read from R_QKV, R_ALPHA and R_BETA and carry those regions'
+  --   captured exponents.  A tap older than the number of `gdn_exp_capture`
+  --   captures is masked out by `tvalid` and ZEROED inside `gdn_conv`
+  --   (gdn_conv.vhd:310-315).
+  --
+  --   THAT MASK IS NOW PER SEQUENCE AND NOT PER TOKEN.  `b_seq_rst` used to
+  --   fire on every `go`, so only tap KCONV-1 was ever valid and the conv had
+  --   no history at any token; it now fires only at `tok_pos = 0`, so at
+  --   token n the newest min(n+1, KCONV) taps are valid.  With B_SRC_REAL
+  --   false every tap is an `m12` stand-in and all of them are real values;
+  --   with it true the older taps are zero and S_GO refuses.  Defect
+  --   candidate B-TOP-1, closed:
+  --   docs/debugging/2026-08-29_btop1-b-recurrence.md.
+  -- ======================================================================
+  gb_real : if not B_BEHAV generate
+    constant KH  : positive := SHAPE.key_heads;
+    constant VH  : positive := SHAPE.val_heads;
+    constant DM  : positive := SHAPE.head_dim;
+    constant KC  : positive := SHAPE.conv_kernel;
+    constant NLY : positive := n_gdn_blocks(SHAPE);
+    constant NBR : positive := DM / B_RECUR_LANES;
+
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+    signal b_start, b_busy, b_done, b_tk0 : std_logic := '0';
+    signal b_layer : integer range 0 to NLY-1 := 0;
+    signal cap_req, cap_ready : std_logic := '0';
+    signal cap_layer : integer range 0 to NLY-1 := 0;
+    signal cap_seg   : integer range 0 to 2 := 0;
+    signal cap_exp   : signed(7 downto 0) := (others => '0');
+
+    signal cv_seg   : integer range 0 to 2;
+    signal cv_ren   : std_logic;
+    signal cv_grp   : integer range 0 to (VH*DM)/B_CONV_LANES-1;
+    signal cv_x, cv_w : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
+    signal cv_cw_exp  : signed(7 downto 0);
+    signal cv_taken, eseg_taken : std_logic;
+    signal cvq_seg : integer range 0 to 2 := 0;
+    signal cvq_grp : integer range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+
+    signal sc_head : integer range 0 to VH-1;
+    signal sc_head_q : integer range 0 to VH-1 := 0;
+    signal sc_al_m, sc_dt_m, sc_a_m, sc_b_m : signed(15 downto 0);
+    signal sc_al_e, sc_dt_e, sc_a_e, sc_b_e : signed(7 downto 0);
+    signal sc_taken : std_logic;
+
+    signal st_ren, st_wen : std_logic;
+    signal st_rhead, st_whead : integer range 0 to VH-1;
+    signal st_rcol, st_wcol : integer range 0 to DM-1;
+    signal st_rgrp, st_wgrp : integer range 0 to NBR-1;
+    signal st_rdata, st_wdata, st_rq
+         : std_logic_vector(B_RECUR_LANES*16-1 downto 0);
+    -- PER LAYER, and the layer term is the whole point.  gdn_block's st_*
+    -- port carries (head, col, group) and NO layer index, so the memory OWNER
+    -- is what has to fold `layer` in -- and this file did not, while driving
+    -- b_layer across every GDN layer.  That is defect C1's shape exactly: one
+    -- time-shared block, per-layer state with no layer dimension.
+    --
+    -- It was LATENT rather than live when it was found, because b_tk0 was
+    -- hardwired '1' below and gdn_recur_pipe masks the state read at tk0
+    -- (TK0_ED, rtl/gdn_recur_pipe.vhd:503,722), so the shared region was
+    -- written and never read back.  It becomes a wrong number on the first
+    -- day there is a token loop, which is what this file is heading for.
+    -- docs/debugging/2026-08-29_b-layer-dimension.md.
+    --
+    -- THAT DAY IS 2026-08-29.  `b_tk0` now follows `tok_pos`, so this address
+    -- is read at every token but the first and the layer term is LIVE.  The
+    -- mutation that deletes it (`mutate_seamgate.sh` S11) survived the seam
+    -- gate while tk0 was hardwired and is killed by the `seq` row now.
+    --
+    -- IT IS A PROCESS VARIABLE, NOT A SIGNAL, AND THAT IS A MODELLING
+    -- CHOICE WITH A MEASURED PRICE ATTACHED.  At the real 9B shape this
+    -- array is NLY*VH*DM*NBR words of B_RECUR_LANES*16 bits, i.e.
+    -- 24*32*128*128*16 = 201,326,592 scalars; the lane count cancels, so no
+    -- generic can shrink it.  ghdl-mcode costs ~228 bytes per scalar SIGNAL
+    -- (MEASURED, TRACK REALSHAPE), so as a signal this one declaration wants
+    -- ~46 GB and `ghdl -r llama_top` -- the DEFAULT generic set, which is the
+    -- real shape -- died with STORAGE_ERROR at 24.9 GB.  The same bits as a
+    -- variable cost 206 MB and 0.17 s.
+    --
+    -- WHY IT IS BEHAVIOUR-PRESERVING, which is the part that is not obvious.
+    -- `stmem` had exactly two accesses in the whole file, both inside this
+    -- one clocked process, and no concurrent statement read it.  So the only
+    -- observable difference a signal-to-variable conversion can make is
+    -- read-during-write at the SAME address on the SAME edge: with a signal
+    -- the read always sees the pre-edge value, because the write is not
+    -- applied until the following delta.  A variable applies immediately, so
+    -- the READ IS ORDERED BEFORE THE WRITE below and the same pre-edge value
+    -- is read.  That ordering is load-bearing; write-first would be a
+    -- different memory.  `st_rq` stays a signal, so the port timing at
+    -- `st_rdata` is untouched.  docs/debugging/2026-08-29_realfix-9b-shape.md.
+    constant STLY : positive := VH*DM*NBR;   -- state words per layer
+    type stmem_t is array (0 to NLY*STLY-1)
+                    of std_logic_vector(B_RECUR_LANES*16-1 downto 0);
+
+    signal se_rhead, se_whead : integer range 0 to VH-1;
+    signal se_rcol, se_wcol : integer range 0 to DM-1;
+    signal se_rdata, se_wdata : signed(7 downto 0);
+    signal se_wen : std_logic;
+    -- Per layer for the same reason as stmem; se_* carries (head, col) only.
+    constant SELY : positive := VH*DM;       -- state exponents per layer
+    type semem_t is array (0 to NLY*SELY-1) of signed(7 downto 0);
+    signal semem : semem_t := (others => (others => '0'));
+
+    signal w_mant : std_logic_vector(DM*16-1 downto 0);
+    signal w_exp  : integer := 12;
+    signal w_taken : std_logic;
+
+    -- The prefetched ACTIVATION inputs, used only when B_SRC_REAL.  They are
+    -- signals and not process variables because the conv-tap and scalar
+    -- producers are separate processes: `cv_x` has to be combinational in the
+    -- registered address, which is what the port contract demands.
+    constant QKVN : positive := qkv_dim(SHAPE);
+    signal qkv_b  : buf_t(0 to QKVN-1) := (others => (others => '0'));
+    signal bet_b, alp_b : buf_t(0 to VH-1) := (others => (others => '0'));
+    signal bet_e, alp_e : signed(7 downto 0) := to_signed(12, 8);
+
+    signal z_mant : std_logic_vector(DM*16-1 downto 0) := (others => '0');
+    signal z_exp  : signed(7 downto 0) := to_signed(12, 8);
+    signal z_valid : std_logic := '0';
+    signal z_ready : std_logic;
+
+    signal y_valid, y_last : std_logic;
+    signal y_mant : signed(15 downto 0);
+    signal b_yexp : signed(7 downto 0);
+
+    -- Deterministic stand-in stimulus, a function of the index and NOTHING
+    -- else, so that changing a handshake cannot change one input value.  That
+    -- is the whole basis of the cross-skew comparison.  Range is a 12-bit
+    -- signed centred on zero, matching `tb_gdn_block`'s m12: full-scale int16
+    -- would make every comparison a comparison of clamps.
+    function m12(a, b : integer) return signed is
+      variable x : unsigned(31 downto 0);
+      variable t : unsigned(63 downto 0);
+    begin
+      t := to_unsigned(a mod 1048576, 32) * to_unsigned(1103515245, 32);
+      x := t(31 downto 0) + to_unsigned((b mod 100000) * 12345, 32);
+      x := x xor shift_right(x, 15);
+      t := x * to_unsigned(668265261, 32);
+      x := t(31 downto 0);
+      x := x xor shift_right(x, 13);
+      return to_signed(to_integer(x(11 downto 0)) - 2048, 16);
+    end function;
+  begin
+    u_ready(U_B) <= rdy;
+    u_done(U_B)  <= dn;
+    u_err(U_B)   <= '0';
+    u_done_epoch((U_B+1)*EPOCH_W-1 downto U_B*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_B+1)*EXP_W-1 downto U_B*EXP_W) <= std_logic_vector(yexp);
+
+    u_gdn : entity work.gdn_block
+      generic map(
+        KEY_HEADS => KH, VAL_HEADS => VH, DIM => DM, KCONV => KC,
+        LAYERS => NLY, CONV_LANES => B_CONV_LANES,
+        RECUR_LANES => B_RECUR_LANES, RECUR_SLOTS => B_RECUR_SLOTS,
+        L2_LANES => B_L2_LANES, SILU_LANES => B_SILU_LANES,
+        RMS_LANES => B_RMS_LANES, STRICT_PRODUCER => STRICT)
+      port map(
+        clk => clk, rst => rst,
+        start => b_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
+        seq_rst => b_seq_rst,
+        cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
+        cap_exp => cap_exp, cap_ready => cap_ready,
+        cv_seg => cv_seg, cv_ren => cv_ren, cv_grp => cv_grp,
+        cv_x => cv_x, cv_w => cv_w, cv_cw_exp => cv_cw_exp,
+        cv_taken => cv_taken, eseg_taken => eseg_taken,
+        sc_head => sc_head,
+        sc_al_m => sc_al_m, sc_al_e => sc_al_e,
+        sc_dt_m => sc_dt_m, sc_dt_e => sc_dt_e,
+        sc_a_m => sc_a_m, sc_a_e => sc_a_e,
+        sc_b_m => sc_b_m, sc_b_e => sc_b_e, sc_taken => sc_taken,
+        st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
+        st_rgrp => st_rgrp, st_rdata => st_rdata,
+        st_wen => st_wen, st_whead => st_whead, st_wcol => st_wcol,
+        st_wgrp => st_wgrp, st_wdata => st_wdata,
+        se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
+        se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
+        se_wdata => se_wdata,
+        w_mant => w_mant, w_exp => w_exp, w_taken => w_taken,
+        z_mant => z_mant, z_exp => z_exp,
+        z_valid => z_valid, z_ready => z_ready,
+        y_valid => y_valid, y_mant => y_mant, y_last => y_last,
+        y_exp => b_yexp, done => b_done,
+        err_conv => open, err_g => open, err_se => open, y_sat => open,
+        dbg_col_ready => open, dbg_col_drop => open);
+
+    -- ---- memory 1: the recurrent state.  Registered, one cycle. ---------
+    st_rdata <= st_rq;
+    stmem_p : process(clk) is
+      variable a : integer;
+      variable stmem : stmem_t := (others => (others => '0'));
+    begin
+      if rising_edge(clk) then
+        -- b_layer is registered at job issue and held for the whole
+        -- invocation, so it is stable across every access the block makes.
+        --
+        -- READ FIRST.  See the declaration comment: with `stmem` a variable
+        -- the statement order IS the read-during-write policy, and read-old
+        -- is what the signal form gave.  Do not reorder these two blocks.
+        if st_ren = '1' then
+          a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+          st_rq <= stmem(a);
+        end if;
+        if st_wen = '1' then
+          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+          stmem(a) := st_wdata;
+        end if;
+      end if;
+    end process;
+
+    -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
+    se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
+    semem_p : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if se_wen = '1' then
+          semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+        end if;
+      end if;
+    end process;
+
+    -- ---- memory 3: conv taps and weights.  Registered ADDRESS, ---------
+    -- combinational DATA, which is what a BRAM with a registered address
+    -- port gives and what the port comment demands.
+    cvaddr_p : process(clk) is
+    begin
+      if rising_edge(clk) then
+        cvq_seg <= cv_seg;
+        cvq_grp <= cv_grp;
+      end if;
+    end process;
+
+    cvdata_p : process(cvq_seg, cvq_grp, qkv_b) is
+      variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
+      variable b, ch, sbase : integer;
+    begin
+      -- The conv WEIGHTS are learned constants in every configuration.
+      for t in 0 to KC-1 loop
+        for ln in 0 to B_CONV_LANES-1 loop
+          b := (t*B_CONV_LANES + ln)*16;
+          wv(b+15 downto b) :=
+            std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+        end loop;
+      end loop;
+
+      if B_SRC_REAL then
+        -- q | k | v in that channel order, the same two boundaries
+        -- `seq_opdec`'s MSEG mechanism and this file's `last_seg` use.
+        if    cvq_seg = 0 then sbase := 0;
+        elsif cvq_seg = 1 then sbase := KH*DM;
+        else                   sbase := 2*KH*DM; end if;
+        for t in 0 to KC-1 loop
+          for ln in 0 to B_CONV_LANES-1 loop
+            b := (t*B_CONV_LANES + ln)*16;
+            if t = KC-1 then
+              ch := sbase + cvq_grp*B_CONV_LANES + ln;
+              if ch < QKVN then
+                xv(b+15 downto b) := std_logic_vector(qkv_b(ch));
+              else
+                xv(b+15 downto b) := (others => '0');
+              end if;
+            else
+              -- Older than the first token.  `gdn_exp_capture`'s tvalid mask
+              -- excludes these; zero is what they are, not a stand-in.
+              xv(b+15 downto b) := (others => '0');
+            end if;
+          end loop;
+        end loop;
+      else
+        for t in 0 to KC-1 loop
+          for ln in 0 to B_CONV_LANES-1 loop
+            b := (t*B_CONV_LANES + ln)*16;
+            xv(b+15 downto b) :=
+              std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+          end loop;
+        end loop;
+      end if;
+      cv_x <= xv;
+      cv_w <= wv;
+    end process;
+
+    -- Per SEGMENT, published one cycle behind `cv_seg` like a register file.
+    cvsq : process(clk) is
+    begin
+      if rising_edge(clk) then
+        cv_cw_exp <= to_signed(12 + cv_seg, 8);
+      end if;
+    end process;
+
+    -- ---- memory 4: the four scalars.  Registered, one cycle. -----------
+    scq : process(clk) is
+    begin
+      if rising_edge(clk) then
+        sc_head_q <= sc_head;
+      end if;
+    end process;
+
+    scdrv : process(sc_head_q, alp_b, bet_b, alp_e, bet_e) is
+      variable ix : integer;
+    begin
+      ix      := sc_head_q;
+      -- ssm_dt_bias and ssm_a are LEARNED per-head weights.  They have no
+      -- region and their scale does not move with the token.
+      sc_dt_m <= m12(ix*31 + 2, 3);
+      -- ssm_a is -exp(A_log), so `a` is always <= 0 and the decay never
+      -- amplifies.  A positive one would exercise a case the model cannot
+      -- produce.
+      sc_a_m  <= -abs(m12(ix*31 + 3, 4));
+      sc_dt_e <= to_signed(12, 8);
+      sc_a_e  <= to_signed(12, 8);
+      if B_SRC_REAL then
+        -- alpha and beta ARE per-token activations: subsystem A projects them
+        -- into R_ALPHA and R_BETA, one element per value head, which is
+        -- exactly `sc_head`'s index.
+        sc_al_m <= alp_b(ix);
+        sc_b_m  <= bet_b(ix);
+        sc_al_e <= alp_e;
+        sc_b_e  <= bet_e;
+      else
+        sc_al_m <= m12(ix*31 + 1, 2);
+        sc_b_m  <= m12(ix*31 + 4, 5);
+        sc_al_e <= to_signed(12, 8);
+        sc_b_e  <= to_signed(12, 8);
+      end if;
+    end process;
+
+    -- ---- memory 5: the ssm_norm weight.  A level. ----------------------
+    wdrv : process(all) is
+    begin
+      for j in 0 to DM-1 loop
+        w_mant((j+1)*16-1 downto j*16) <= std_logic_vector(m12(4242, j));
+      end loop;
+    end process;
+
+    -- ---- the adapter, the z producer and the y sink --------------------
+    bp : process(clk) is
+      type st_t is (S_IDLE, S_QRD, S_BRD, S_ARD, S_ZRD, S_CAPW, S_CAPR,
+                    S_GO, S_ARM, S_RUN, S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable zb : buf_t(0 to A_MAXROWS-1);
+      variable yb : buf_t(0 to A_MAXROWS-1);
+      variable j_dst, j_rows, j_lay : natural := 0;
+      variable k, seg, h, ycnt : natural := 0;
+      variable zi : natural := 0;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_B) <= '0';
+        uw_en(U_B) <= '0';
+        cap_req    <= '0';
+        b_start    <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; z_valid <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_B then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_lay  := to_integer(job_ordinal);
+            -- `job_ordinal` IS the GDN layer ordinal, 0 .. gdn_layers-1.  It
+            -- is taken, not derived.  D spec 4.1 and 6.1: the field is
+            -- per-KIND ("B: 0..47, C: 0..15" at the 27B shape), the host
+            -- generator computes `gdn_ord(i) = i - (i+1)/attn_interval`, and
+            -- `rtl/seq_top_skel.vhd:403` wires the latched ordinal straight
+            -- into `b_w_sel` with no arithmetic at all -- which is the point
+            -- of the field and the reason spec 4.1 says D does not compute
+            -- these (a divide by a generic `attn_interval` is not free).
+            --
+            -- THIS LINE USED TO RE-DERIVE THE ORDINAL FROM A BLOCK INDEX, and
+            -- that was defect ORD-1: the only generator that agreed was
+            -- `sim/llama_sched_pkg.vhd`, which stamped `blk mod 64`, while
+            -- `sim/seq_tbl_pkg.vhd` and `tools/gen_layer_program.py` both
+            -- stamp the per-kind ordinal the spec defines.  MEASURED at the
+            -- 9B shape: driving the manifest-stamped program into the old
+            -- code addressed the wrong layer on 29 of 32 blocks.  See
+            -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+            --
+            -- SIMULATION ONLY, and BEFORE the assignment on purpose: the
+            -- signal's own range would abort first and print only
+            -- "bound check failure", which says nothing about why.  A VHDL
+            -- integer range is a WIDTH in synthesis and not a check, so
+            -- nothing here or on the card catches this on silicon -- see the
+            -- write-up's section on what -1 actually does.
+            assert j_lay < NLY
+              report "llama_top: unit B was issued ordinal "
+                   & integer'image(j_lay) & " but this shape has only "
+                   & integer'image(NLY) & " GDN layers.  `ordinal` is the "
+                   & "PER-KIND layer index (D spec 4.1), not the block index."
+              severity failure;
+            b_layer  <= j_lay;
+            ep       <= job_epoch;
+            rdy      <= '0';
+            k        := 0;
+            ycnt     := 0;
+            seg      := 0;
+            h        := 0;
+            zi       := 0;
+            if B_SRC_REAL then
+              st := S_QRD;
+              b_exp_region <= to_unsigned(R_QKV, 8);
+              b_exp_seg    <= "00";
+            else
+              st := S_ZRD;
+              b_exp_region <= to_unsigned(R_Z, 8);
+              b_exp_seg    <= "00";
+            end if;
+          end if;
+
+          -- The un-refusable y stream.  Outside the FSM: a beat that arrives
+          -- where it was not expected must still be ACCEPTED, then reported.
+          if y_valid = '1' then
+            if st /= S_RUN then
+              f_lost <= '1';
+              report "llama_top: unit B emitted a y element outside its run "
+                   & "window.  y_valid has no ready, so this element is LOST."
+                severity error;
+            end if;
+            if ycnt < A_MAXROWS then yb(ycnt) := y_mant; end if;
+            ycnt := ycnt + 1;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            -- ---- B_SRC_REAL only: the three activation prefetches --------
+            -- Same two-edge region-read discipline as every other adapter in
+            -- this file: the address is registered here and the memory
+            -- registers the data, so an address issued at k is consumed at
+            -- k-2 and the loop runs to n+1 to drain.  Consuming at k-1 is
+            -- defect 3 and it is silent.
+            when S_QRD =>
+              if k < QKVN then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_QKV;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then qkv_b(k-2) <= el_rdata; end if;
+              if k = QKVN+1 then
+                k := 0;
+                b_exp_region <= to_unsigned(R_BETA, 8);
+                st := S_BRD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_BRD =>
+              if k < VH then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_BETA;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then bet_b(k-2) <= el_rdata; end if;
+              if k = VH+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit B read R_BETA's exponent before "
+                       & "anything captured it."
+                  severity error;
+                bet_e <= resize(exp_rd_data, 8);
+                k := 0;
+                b_exp_region <= to_unsigned(R_ALPHA, 8);
+                st := S_ARD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_ARD =>
+              if k < VH then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_ALPHA;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then alp_b(k-2) <= el_rdata; end if;
+              if k = VH+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit B read R_ALPHA's exponent before "
+                       & "anything captured it."
+                  severity error;
+                alp_e <= resize(exp_rd_data, 8);
+                k := 0;
+                b_exp_region <= to_unsigned(R_Z, 8);
+                st := S_ZRD;
+              else
+                k := k + 1;
+              end if;
+
+            -- Read the whole gate region into a buffer BEFORE starting, so
+            -- the z handshake never has to wait on a region read while the
+            -- block is running.
+            when S_ZRD =>
+              if k < VH*DM then
+                ur_en(U_B)   <= '1';
+                ur_reg(U_B)  <= R_Z;
+                ur_addr(U_B) <= k;
+              end if;
+              if k >= 2 then zb(k-2) := el_rdata; end if;
+              if k = VH*DM+1 then
+                z_exp <= resize(exp_rd_data, 8);
+                k := 0;
+                st := S_CAPW;
+              else
+                k := k + 1;
+              end if;
+
+            -- One capture per q/k/v segment, carrying A's y_exp for that
+            -- projection.  Hold-until-ready on both sides: wait for
+            -- cap_ready with cap_req low, pulse for one cycle, then wait for
+            -- cap_ready again before the next.
+            when S_CAPW =>
+              if cap_ready = '1' and cap_req = '0' then
+                cap_layer <= b_layer;
+                cap_seg   <= seg;
+                cap_exp   <= qkv_exp(seg);
+                cap_req   <= '1';
+                st        := S_CAPR;
+              end if;
+
+            when S_CAPR =>
+              if cap_ready = '1' then
+                if seg = 2 then st := S_GO; else seg := seg + 1; st := S_CAPW; end if;
+              end if;
+
+            when S_GO =>
+              b_start <= '1';
+              -- `tk0` IS THE SEQUENCE POSITION, NOT A CONSTANT.  This line
+              -- read `b_tk0 <= '1'` -- "one token only; there is no token
+              -- loop yet" -- and the premise expired: `sim/tb_llama_top_seq`
+              -- runs NTOK = 3 and is a gate row.  Driving it high at every
+              -- token makes `rtl/gdn_recur_pipe.vhd`'s TK0_ED mask the state
+              -- read on EVERY token, so the recurrent state is written and
+              -- never read and subsystem B -- a RECURRENT architecture -- is
+              -- computed as if every token were token 0.
+              --
+              -- `tok_pos` is the only sequence position this file has: reset
+              -- clears it and the `tok_done`/`tok_ack` handshake advances it,
+              -- so it is stable for the whole of a token and `tok_pos = 0` is
+              -- exactly the first token of a sequence.  It is the same source
+              -- subsystem C's `c_cpos` takes, so B and C cannot disagree about
+              -- which token this is.
+              --
+              -- MEASURED cost at the `seq` capture: this line ALONE was
+              -- 60 to 75 of 128 mantissas per `R_Y` seam wrong at tokens 1
+              -- and 2; with the per-token `b_seq_rst` below it, 65 to 88.
+              -- docs/debugging/2026-08-29_btop1-b-recurrence.md.
+              if tok_pos = 0 then b_tk0 <= '1'; else b_tk0 <= '0'; end if;
+
+              -- THE CONV TAP HISTORY IS THE OTHER HALF, and under B_SRC_REAL
+              -- this file does not hold one.  `cvdata_p` writes ZERO into
+              -- every tap but the newest (see the branch above), which was
+              -- inert while `b_seq_rst` fired every token and `tvalid` masked
+              -- those slots.  With the per-SEQUENCE reset below, `tvalid`
+              -- opens tap KCONV-2 at token 1 and KCONV-3 at token 2, and a
+              -- zero mantissa carrying a REAL captured exponent is then summed
+              -- as if it were an activation.  Holding the history is a new
+              -- (KCONV-1) x qkv_dim buffer -- 3 x 8,192 words at the 9B shape
+              -- -- and B_SRC_REAL cannot be run today for an unrelated reason
+              -- (:52-58: it makes R_ALPHA physically impossible), so this
+              -- REFUSES rather than producing a plausible wrong number.
+              --
+              -- SIMULATION ONLY, like the `j_lay` guard above: a VHDL
+              -- severity is not a check in synthesis.  B_SRC_REAL is a bench
+              -- switch and has no meaning on the card.
+              assert not (B_SRC_REAL and tok_pos > 0)
+                report "llama_top: B_SRC_REAL is true at token "
+                     & integer'image(tok_pos) & ", but this file holds no "
+                     & "conv tap HISTORY -- every tap but the newest is zero "
+                     & "(cvdata_p).  From token 1 gdn_exp_capture's tvalid "
+                     & "marks those slots VALID, so the conv would sum zeros "
+                     & "at a real exponent.  Refusing rather than producing a "
+                     & "plausible wrong number."
+                severity failure;
+              st      := S_ARM;
+
+            -- `busy` does not rise on the same edge as `start`, so waiting
+            -- for it to FALL without first seeing it RISE completes instantly.
+            when S_ARM =>
+              if b_busy = '1' then st := S_RUN; end if;
+
+            when S_RUN =>
+              -- COMPLETION IS `busy` FALLING.  `done` is a one-cycle pulse
+              -- with no ack and this adapter never reads it.
+              if b_busy = '0' then
+                k    := 0;
+                yexp <= resize(b_yexp, EXP_W);
+                assert ycnt = VH*DM
+                  report "llama_top: unit B produced " & integer'image(ycnt)
+                       & " y elements, expected " & integer'image(VH*DM)
+                       & ".  An un-stallable stream lost or gained beats."
+                  severity error;
+                if j_dst < NREGION then st := S_DRAIN; else st := S_DONE; end if;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_B)   <= '1';
+              uw_reg(U_B)  <= j_dst;
+              uw_addr(U_B) <= k;
+              if k < A_MAXROWS then uw_data(U_B) <= yb(k); end if;
+              if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
+
+            when S_DONE =>
+              dn <= '1';
+              if u_ack(U_B) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+
+          -- The z handshake, one offer per value head, running alongside.
+          if st = S_RUN or st = S_ARM or st = S_GO then
+            if z_valid = '0' and h < VH then
+              for j in 0 to DM-1 loop
+                z_mant((j+1)*16-1 downto j*16) <=
+                  std_logic_vector(zb(h*DM + j));
+              end loop;
+              z_valid <= '1';
+            elsif z_valid = '1' and z_ready = '1' then
+              z_valid <= '0';
+              h := h + 1;
+            end if;
+          else
+            z_valid <= '0';
+          end if;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT C.  *** ATTENTION IS A STUB WHEN `C_REAL` IS FALSE, WHICH IS THE
+  -- DEFAULT.  THE STUB COMPUTES NOTHING. ***
+  --
+  -- Subsystem C's steps 3..8 -- twiddle, rope, kv_quant, score, softmax,
+  -- recip, gate, emit -- are verified and contiguous.  THE LANE ARRAY IS NOT.
+  -- `rtl/attn_lane_skel.vhd` is a PRICING SKELETON: it exists to be
+  -- synthesised for area and it produces a 32-bit `digest`, not an attention
+  -- score.  There is therefore no path from Q, K and V to an attention
+  -- output in this repository, and this adapter cannot make one.
+  --
+  -- WHAT IT WRITES, and it is chosen to be impossible to mistake for a
+  -- result: y(i) = -32768 + i, ignoring Q, K and V entirely.  It is
+  -- saturated-negative at element 0, it ramps, and it does not depend on any
+  -- input.  A residual stream that has passed through an attention block
+  -- therefore carries an obviously broken value, on purpose.
+  --
+  -- `err_unit_stub` goes high and STAYS high the first time this runs.  Any
+  -- run whose `err_unit_stub` is set produced no inference.
+  -- ======================================================================
+  gc : if not C_REAL generate
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_C) <= rdy;
+    u_done(U_C)  <= dn;
+    u_err(U_C)   <= '0';
+    u_done_epoch((U_C+1)*EPOCH_W-1 downto U_C*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_C+1)*EXP_W-1 downto U_C*EXP_W) <= std_logic_vector(yexp);
+
+    cp : process(clk) is
+      type st_t is (S_IDLE, S_WR, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable j_dst, j_rows : natural := 0;
+      variable k : natural := 0;
+      variable said : boolean := false;
+    begin
+      if rising_edge(clk) then
+        uw_en(U_C) <= '0';
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_C then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            ep     <= job_epoch;
+            rdy    <= '0';
+            k      := 0;
+            st     := S_WR;
+            f_stub <= '1';
+            -- THE STUB'S VALUES ARE GARBAGE; ITS SCALE IS NOT.  A stub that
+            -- also fabricates an exponent puts its output on a scale nothing
+            -- else in the token shares, and the next residual then shifts one
+            -- of its two operands out entirely -- which is a SECOND, invisible
+            -- failure layered on top of the intended, visible one.  Measured:
+            -- with a fabricated exponent of 0 the attention block produced a
+            -- residual whose operands were 25 binary places apart.  So the
+            -- stub reports its SOURCE region's exponent, and the damage stays
+            -- confined to the numbers.
+            c_exp_region <= job_src;
+            c_exp_seg    <= "00";
+            if not said and SHOUT then
+              report "llama_top: *** UNIT C IS A STUB.  ATTENTION WAS NOT "
+                   & "COMPUTED.  The residual stream from this block onward "
+                   & "is meaningless. ***" severity warning;
+              said := true;
+            end if;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+            when S_WR =>
+              uw_en(U_C)   <= '1';
+              uw_reg(U_C)  <= j_dst;
+              uw_addr(U_C) <= k;
+              uw_data(U_C) <= to_signed(-32768 + (k mod 4096), MANT_W);
+              if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= exp_rd_data;
+              if u_ack(U_C) = '1' then
+                dn  <= '0'; rdy <= '1'; st := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+
+  -- ======================================================================
+  -- UNIT C, REAL.  `rtl/attn_block.vhd`, C_REAL only.
+  --
+  -- WHAT THIS IS AND IS NOT.  Read the C_REAL generic before reading this.
+  -- The block sequences ten real units and computes SOMETHING from Q, K and V
+  -- rather than a ramp; NOTHING IN THIS REPOSITORY ESTABLISHES THAT WHAT IT
+  -- COMPUTES IS ATTENTION.  `ref/attn_gated_fx.c`, the block-level reference
+  -- C spec 3.11 names, does not exist, so `sim/tb_attn_block.vhd` checks seven
+  -- SEAM properties and no value.  This adapter therefore does not set
+  -- `err_unit_stub` -- the stub is gone -- and that is a statement about the
+  -- stub, not about the arithmetic.
+  --
+  -- THREE THINGS THE ADAPTER OWNS, and each is a contract that was read out of
+  -- `rtl/attn_block.vhd` before a line of this was written:
+  --
+  -- (1) THE ACTIVATION PORTS ARE PREFETCHED, NOT ARBITRATED.  `attn_block` is
+  --     the master of three independent one-cycle read ports (qg, kin, vin)
+  --     and can drive any of them in any cycle; the region file has ONE
+  --     element port per CLIENT.  So all three regions are copied into local
+  --     buffers BEFORE `start`, with the same two-edge discipline every other
+  --     adapter here uses (address registered in this process, data registered
+  --     in the memory, consume at k-2, run the loop to n+1 to drain), and the
+  --     ports are then served out of the buffers with the exact contract
+  --     `attn_kv_quant.vhd:103-104` states: data holds mem[addr] on the cycle
+  --     after an edge at which the enable was high, and is HELD across any
+  --     edge at which it was low.  A memory that updated unconditionally would
+  --     let the block read at the wrong instant and pass.
+  --
+  -- (2) THE THREE SOURCE EXPONENTS ARE CLAIMED ONE AT A TIME.  C spec 2.1.2:
+  --     the exponent chains are data-dependent and not derivable from any
+  --     port.  `seq_region_lock` has ONE combinational exponent read port and
+  --     this file arbitrates it on `act_unit`, so the prefetch claims R_QG,
+  --     then R_KIN, then R_VIN, and captures each at the end of its own phase.
+  --     Reading all three from one claim is defect 2's family.
+  --
+  -- (3) THE KV CACHE IS EITHER A MEMORY OR `attn_kv_axi`, AND WHICH ONE IS
+  --     `C_KV_AXI`.  CORRECTED 2026-08-29; this paragraph used to say
+  --     "`attn_kv_axi` does not exist" and "`llama_top` runs ONE token with
+  --     `tk0` hardwired, so `cur_pos` is 0 and `ctx_len` is 1", and both are
+  --     now false in one configuration.
+  --
+  --     With `C_KV_AXI` FALSE the cache is the behavioural memory below -- a
+  --     write port and two read ports, the same boundary `gdn_block` draws
+  --     around the recurrent state -- and it can never refuse, so
+  --     `attn_block`'s four seam handshakes are tied high.  That is correct
+  --     for THIS memory and silently wrong for any cache with latency:
+  --     TRACK C-SEAM added ONE cycle of read latency to the equivalent model
+  --     and got 64 of 64 output mantissas wrong with `err` clear.
+  --
+  --     With it TRUE the cache is `rtl/attn_kv_axi.vhd` over three AXI
+  --     masters, the four handshakes are connected, and the read path runs
+  --     from the second token of a sequence onward.
+  --
+  --     EITHER WAY, the position comes from `tok_pos` and not from a
+  --     hardwired 0, so a run of N tokens between resets attends over the
+  --     records the earlier tokens wrote.  At `cur_pos = 0` the block still
+  --     takes its bypass path and never reads -- that is `tb_attn_block`'s
+  --     JOB_POS = 0 case and it is why a one-token run proves nothing about
+  --     the cache.
+  --
+  -- The QK-norm gains are fixed-scale stand-ins.  They are LEARNED WEIGHTS:
+  -- their scale does not move with the token, there is no region, descriptor
+  -- field or packing for them, and sourcing one from an activation region is
+  -- the mistake PART 3 measured.
+  -- ======================================================================
+  gcr : if C_REAL generate
+    function nlay(s : shape_t) return positive is
+      variable n : natural := n_attn_blocks(s);
+    begin
+      if n = 0 then return 1; else return n; end if;
+    end function;
+
+    constant C_HD   : positive := SHAPE.attn_head_dim;
+    constant C_NQH  : positive := SHAPE.attn_q_heads;
+    constant C_NKVH : positive := SHAPE.attn_kv_heads;
+    constant C_NBLK : positive := C_HD / C_KV_BLOCK;
+    constant C_LAY  : positive := nlay(SHAPE);
+    constant QGN    : positive := att_qg(SHAPE);   -- 2*HEAD_DIM*N_QH
+    constant KVN    : positive := att_kv(SHAPE);   -- HEAD_DIM*N_KVH
+    constant YN     : positive := att_q(SHAPE);    -- HEAD_DIM*N_QH
+    -- POSITION WIDTH.  `clog2(C_MAXPOS + 1)` and NOT `clog2(C_MAXPOS)`.
+    -- POS_W has to carry two different quantities: a POSITION, which runs
+    -- 0 .. C_MAXPOS-1, and `ctx_len`, which is a COUNT and runs 1 .. C_MAXPOS.
+    -- `attn_kv_axi` range-checks the count with `to_integer(ctx_len) > MAXCTX`
+    -- (rtl/attn_kv_axi.vhd:542), so the count must be representable.  At a
+    -- power-of-two cache depth the old width could not hold it: MAXPOS 256
+    -- gave POSW 8, `to_unsigned(256, 8)` is 0, and the guard below -- which
+    -- demanded BOTH `C_CTXLEN <= C_MAXPOS` and `C_CTXLEN < 2**POSW` -- became
+    -- self-contradictory at exactly `C_CTXLEN = C_MAXPOS`.  MEASURED: 256
+    -- failed and 255 passed, i.e. the last cache position could never be
+    -- used and the assert blamed the caller for it.  One extra bit fixes the
+    -- count and costs nothing the position cares about.
+    constant POSW   : positive := clog2(C_MAXPOS + 1);
+
+    -- THE QK-NORM GAINS.  Deterministic in the element index and centred on
+    -- 1.0 at C_QKN_EXP, which is what an RMSNorm gain is initialised to.
+    -- Distinct per port so a q/k swap in the wiring is a wrong number.
+    function qkn_const(seed : integer) return std_logic_vector is
+      variable r : std_logic_vector(C_HD*MANT_W-1 downto 0);
+      variable v : integer;
+    begin
+      for i in 0 to C_HD-1 loop
+        v := 2**C_QKN_EXP + ((i * seed) mod 512) - 256;
+        r((i+1)*MANT_W-1 downto i*MANT_W)
+          := std_logic_vector(to_signed(v, MANT_W));
+      end loop;
+      return r;
+    end function;
+    constant QN_CONST : std_logic_vector(C_HD*MANT_W-1 downto 0) := qkn_const(37);
+    constant KN_CONST : std_logic_vector(C_HD*MANT_W-1 downto 0) := qkn_const(53);
+
+    signal rdy  : std_logic := '1';
+    signal dn   : std_logic := '0';
+    signal uerr : std_logic := '0';
+    signal ep   : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+    -- control
+    signal c_start  : std_logic := '0';
+    signal c_layer  : integer range 0 to C_LAY-1 := 0;
+    signal c_cpos   : unsigned(POSW-1 downto 0) := (others => '0');
+    signal c_ctx    : unsigned(POSW-1 downto 0) := to_unsigned(C_CTXLEN, POSW);
+    signal c_busy, c_cfgtk, c_wntk : std_logic;
+    signal c_seqrst : std_logic := '1';
+    signal c_srtk   : std_logic;
+    signal c_done   : std_logic;
+    signal c_dack   : std_logic := '0';
+    signal c_err, c_ropes, c_kvs, c_ys, c_zs, c_eplost : std_logic;
+    signal c_rsmax  : unsigned(15 downto 0);
+
+    -- the prefetched activation planes
+    signal qg_buf  : buf_t(0 to QGN-1) := (others => (others => '0'));
+    signal kin_buf : buf_t(0 to KVN-1) := (others => (others => '0'));
+    signal vin_buf : buf_t(0 to KVN-1) := (others => (others => '0'));
+    signal qg_e, kin_e, vin_e : signed(EXP_W-1 downto 0) := (others => '0');
+
+    -- the block's memory ports
+    signal qg_raddr  : unsigned(clog2(QGN)-1 downto 0);
+    signal qg_re     : std_logic;
+    signal qg_rdata  : signed(MANT_W-1 downto 0) := (others => '0');
+    signal kin_raddr : unsigned(clog2(KVN)-1 downto 0);
+    signal kin_re    : std_logic;
+    signal kin_rdata : signed(MANT_W-1 downto 0) := (others => '0');
+    signal vin_raddr : unsigned(clog2(KVN)-1 downto 0);
+    signal vin_re    : std_logic;
+    signal vin_rdata : signed(MANT_W-1 downto 0) := (others => '0');
+
+    -- the KV cache
+    signal kv_layer : unsigned(clog2(C_LAY)-1 downto 0);
+    signal kw_sel   : std_logic;
+    signal kw_head  : unsigned(clog2(C_NKVH)-1 downto 0);
+    signal kw_pos   : unsigned(POSW-1 downto 0);
+    signal kw_hen   : std_logic;
+    signal kw_hdr   : std_logic_vector(C_NBLK*8-1 downto 0);
+    signal kw_en    : std_logic;
+    signal kw_blk   : unsigned(clog2(C_NBLK)-1 downto 0);
+    signal kw_mant  : std_logic_vector(C_KV_BLOCK*C_CM_W-1 downto 0);
+    signal kr_en, vr_en : std_logic;
+    signal kr_head, vr_head : unsigned(clog2(C_NKVH)-1 downto 0);
+    signal kr_pos, vr_pos   : unsigned(POSW-1 downto 0);
+    signal kr_blk, vr_blk   : unsigned(clog2(C_NBLK)-1 downto 0);
+    signal kr_hdr, vr_hdr   : std_logic_vector(C_NBLK*8-1 downto 0)
+                            := (others => '0');
+    signal kr_mant, vr_mant : std_logic_vector(C_KV_BLOCK*C_CM_W-1 downto 0)
+                            := (others => '0');
+
+    -- THE FOUR HANDSHAKES `attn_block` GAINED AT THE SEAM.  Every one of them
+    -- defaults to '1' on the block's port, which is a memory that can never
+    -- refuse -- correct for the behavioural cache below, and a SILENT WRONG
+    -- ANSWER for any cache with latency.  They are signals here rather than
+    -- open, so both cache branches have to say what they are.
+    signal kw_rdy_s  : std_logic;
+    signal kr_rdy_s  : std_logic;
+    signal vr_rdy_s  : std_logic;
+    signal wr_idle_s : std_logic;
+    signal kv_busy_s, kv_cfgt_s : std_logic;
+
+    -- NO EXPRESSIONS IN THE PORT MAP, same rule as qg_e8 below.
+    --
+    -- THE DOMAIN CHANGES BACK TO BYTES HERE, AND ONLY HERE.  `attn_kv_axi`'s
+    -- `k_base`/`v_base` are BYTE addresses: rtl/attn_kv_axi.vhd:403-408
+    -- computes `rec_addr = unsigned(base) + idx*REC_B` with REC_B in bytes.
+    -- So the generics are chunks, these two constants are the shift back to
+    -- bytes, and everything downstream of the port map is bytes as before.
+    -- That is why `attn_kv_axi` needed no change for this: the seam is one
+    -- shift wide and it is written out here rather than implied.
+    constant KBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
+                     := std_logic_vector(shift_left(
+                          to_unsigned(C_K_BASE_CH, C_KV_ADDR_W), 4));
+    constant VBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
+                     := std_logic_vector(shift_left(
+                          to_unsigned(C_V_BASE_CH, C_KV_ADDR_W), 4));
+    constant REC_B_C : natural := 16 + C_HD*C_CM_W/8;
+
+    -- The behavioural cache's storage.  The TYPES stay here because the
+    -- `gkvmem` generate is the only user and a type is free; the two ARRAYS
+    -- moved INTO that generate.  They used to be declared at this level, so
+    -- they were elaborated even with C_KV_AXI true, i.e. with the real AXI
+    -- cache in their place and nothing reading them.  MEASURED at the real
+    -- attention geometry, C_KV_AXI on throughout: 29.8 MB of GHDL signal
+    -- storage per cache position, 8.9 GB at C_MAXPOS 256, all of it dead.
+    type hdr_arr is array (natural range <>) of
+         std_logic_vector(C_NBLK*8-1 downto 0);
+    type man_arr is array (natural range <>) of
+         std_logic_vector(C_KV_BLOCK*C_CM_W-1 downto 0);
+
+    -- the y stream
+    signal y_valid, y_last, y_hdrv : std_logic;
+    signal y_mant : signed(MANT_W-1 downto 0);
+    signal y_index : unsigned(clog2(C_NQH*C_HD)-1 downto 0);
+    signal c_yexp : signed(7 downto 0);
+
+    -- NO EXPRESSIONS IN THE PORT MAP.  GHDL 1.0 mcode raised
+    -- `TYPES.INTERNAL_ERROR : trans.adb:553` on `resize(qg_e, 8)` written as
+    -- an actual, which is an internal error and not a diagnostic, so it reads
+    -- as a broken design.  Every actual below is a plain signal or constant.
+    signal qg_e8, kin_e8, vin_e8 : signed(7 downto 0) := (others => '0');
+    constant QKN_E8 : signed(7 downto 0) := to_signed(C_QKN_EXP, 8);
+    constant Y_RDY  : std_logic := '1';
+  begin
+    u_ready(U_C) <= rdy;
+    u_done(U_C)  <= dn;
+    u_err(U_C)   <= uerr;
+    u_done_epoch((U_C+1)*EPOCH_W-1 downto U_C*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_C+1)*EXP_W-1 downto U_C*EXP_W) <= std_logic_vector(yexp);
+
+    -- ---- elaboration-time shape checks.  attn_block asserts these itself;
+    -- they are repeated here so the message names the caller that has to
+    -- change rather than the unit that refused.
+    assert 2**clog2(C_HD) = C_HD and clog2(C_HD) mod 2 = 0
+      report "llama_top: C_REAL needs an EVEN power-of-two attn_head_dim, "
+           & "because attn_block folds kq_scale = 1/sqrt(HEAD_DIM) into an "
+           & "exponent.  mk_shape_scaled's default is 32 = 2**5; build the "
+           & "shape with attn_head_dim => 16."
+      severity failure;
+    assert C_HD mod C_KV_BLOCK = 0 and C_NBLK >= 2
+      report "llama_top: C_KV_BLOCK must divide attn_head_dim and leave at "
+           & "least two blocks." severity failure;
+    assert C_NQH mod C_NKVH = 0 and C_NQH / C_NKVH >= 2
+      report "llama_top: attn_q_heads / attn_kv_heads is the GQA group and "
+           & "attn_mac_array needs it to be at least 2." severity failure;
+    -- NOTHING ELSE ASSERTS THIS.  `attn_emit.vhd:400` writes `grp <= 1` at
+    -- S_IDLE with `grp` ranged `0 to NGRP-1`, so ONE KV head is a run-time
+    -- bound check failure deep inside the first attention block rather than
+    -- an elaboration refusal.  Caught here, where the caller can act on it.
+    assert C_NKVH >= 2
+      report "llama_top: attn_kv_heads must be at least 2.  attn_emit is "
+           & "elaborated at NGRP = attn_kv_heads and assigns grp <= 1 with "
+           & "grp ranged 0 to NGRP-1, so one KV head aborts mid-job with a "
+           & "bound check failure at attn_emit.vhd:400." severity failure;
+    assert C_N_ROT mod 2 = 0 and C_N_ROT <= C_HD
+      report "llama_top: C_N_ROT must be even and at most attn_head_dim."
+      severity failure;
+
+    cbanner : process is
+    begin
+      if SHOUT then
+        if C_KV_AXI then
+          report "llama_top: unit C is the REAL attn_block against the REAL "
+               & "attn_kv_axi, over three AXI masters.  The cache read path "
+               & "runs from the second token of a sequence onward.  NOTHING "
+               & "here establishes that what the block computes is "
+               & "attention: that claim belongs to ref/attn_block_seq_vec.c "
+               & "and sim/tb_attn_kv_seam.vhd, at the BLOCK level."
+            severity note;
+        else
+          report "llama_top: unit C is the REAL attn_block.  It sequences "
+               & "ten real units; NOTHING establishes that it computes "
+               & "attention, because C has no block-level reference.  "
+               & "attn_kv_axi is NOT instantiated (C_KV_AXI is false) -- the "
+               & "KV cache is a behavioural memory port that can never "
+               & "refuse, and attn_block's four handshake inputs are "
+               & "therefore held high.  That is correct for THIS memory and "
+               & "silently wrong for any cache with latency."
+            severity note;
+        end if;
+      end if;
+      wait;
+    end process;
+
+    -- ---- the per-SEQUENCE v_ref reset.  A LEVEL held until taken. -------
+    srp : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then      c_seqrst <= '1';
+        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+      end if;
+    end process;
+
+    -- ---- A's activation memory, served from the prefetched planes.
+    -- The HOLD is the contract, not an optimisation: updating
+    -- unconditionally lets a unit read at the wrong instant and pass.
+    amem : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if qg_re  = '1' then qg_rdata  <= qg_buf(to_integer(qg_raddr));   end if;
+        if kin_re = '1' then kin_rdata <= kin_buf(to_integer(kin_raddr)); end if;
+        if vin_re = '1' then vin_rdata <= vin_buf(to_integer(vin_raddr)); end if;
+      end if;
+    end process;
+
+    -- ======================================================================
+    -- THE KV CACHE, TWO WAYS.
+    --
+    -- `gkvmem` is the one-cycle behavioural memory this file has always had:
+    -- exactly the shape `sim/tb_attn_block.vhd` models, and the shape
+    -- `attn_block` was written against.  It can never refuse, so all four
+    -- handshakes are tied high, and THAT IS ONLY CORRECT FOR THIS MEMORY.
+    --
+    -- `gkvaxi` is `rtl/attn_kv_axi.vhd`, the real cache in HBM.  It refuses,
+    -- it has O(100) cycles of read latency, and it does not make a write
+    -- visible until BRESP.  The four handshakes are what make that legal.
+    -- ======================================================================
+    gkvmem : if not C_KV_AXI generate
+      -- DECLARED HERE AND NOT ONE LEVEL UP.  These are the behavioural
+      -- cache's storage and nothing outside this generate touches them; at
+      -- the outer level they cost 29.8 MB of elaboration per cache position
+      -- even when `gkvaxi` had replaced them.
+      signal kvhdr : hdr_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS-1)
+                   := (others => (others => '0'));
+      signal kvmem : man_arr(0 to C_LAY*2*C_NKVH*C_MAXPOS*C_NBLK-1)
+                   := (others => (others => '0'));
+    begin
+      kw_rdy_s  <= '1';
+      kr_rdy_s  <= '1';
+      vr_rdy_s  <= '1';
+      wr_idle_s <= '1';
+      kv_busy_s <= '0';
+      kv_cfgt_s <= '0';
+    kvp : process(clk) is
+      variable a : integer;
+    begin
+      if rising_edge(clk) then
+        if kw_hen = '1' or kw_en = '1' then
+          assert to_integer(kw_pos) < C_MAXPOS
+            report "llama_top: the KV cache model is " & integer'image(C_MAXPOS)
+                 & " positions deep and position " & integer'image(to_integer(kw_pos))
+                 & " was written." severity failure;
+        end if;
+        if kw_hen = '1' then
+          a := ((to_integer(kv_layer)*2
+                 + to_integer(unsigned'("" & kw_sel)))*C_NKVH
+                + to_integer(kw_head))*C_MAXPOS + to_integer(kw_pos);
+          kvhdr(a) <= kw_hdr;
+        end if;
+        if kw_en = '1' then
+          a := (((to_integer(kv_layer)*2
+                  + to_integer(unsigned'("" & kw_sel)))*C_NKVH
+                 + to_integer(kw_head))*C_MAXPOS + to_integer(kw_pos))*C_NBLK
+               + to_integer(kw_blk);
+          kvmem(a) <= kw_mant;
+        end if;
+        if kr_en = '1' then
+          a := ((to_integer(kv_layer)*2 + 0)*C_NKVH + to_integer(kr_head))
+               *C_MAXPOS + to_integer(kr_pos);
+          kr_hdr  <= kvhdr(a);
+          kr_mant <= kvmem(a*C_NBLK + to_integer(kr_blk));
+        end if;
+        if vr_en = '1' then
+          a := ((to_integer(kv_layer)*2 + 1)*C_NKVH + to_integer(vr_head))
+               *C_MAXPOS + to_integer(vr_pos);
+          vr_hdr  <= kvhdr(a);
+          vr_mant <= kvmem(a*C_NBLK + to_integer(vr_blk));
+        end if;
+      end if;
+    end process;
+    end generate;
+
+    -- ---- the real cache ---------------------------------------------------
+    gkvaxi : if C_KV_AXI generate
+      -- ---- CHECKS THAT RUN DURING DECLARATION ELABORATION ----------------
+      -- Everything below the `begin` is a concurrent assert, and a concurrent
+      -- assert runs only after the WHOLE design has elaborated.  That is too
+      -- late for two of these: at HEAD_DIM 256 with a too-small C_KV_BLOCK,
+      -- `attn_kv_axi`'s P_WR overflows while its statement part is being
+      -- elaborated and GHDL prints `overflow detected` with no file and no
+      -- line, so the named asserts never get to speak.  A `natural` constant
+      -- that goes negative is evaluated HERE, before `u_kv` is elaborated at
+      -- all, and it also survives Vivado, which ignores a failing
+      -- severity-failure assert in synthesis.  The asserts are kept: where
+      -- they are reachable their message is better than a range error.
+      --
+      -- The legal case is >= 0 in every one; the name is the diagnostic.
+
+      -- The block exponents must fit the 16-byte header chunk of the record.
+      -- This is `attn_kv_axi`'s own :455 assert, mirrored here so the CALLER
+      -- is named.  C_NBLK = attn_head_dim / C_KV_BLOCK, and EXP_W is 8.
+      constant CHK_KV_NBLK : natural := 16 - C_NBLK*8/8;
+      -- One KV block must be a whole number of 16-byte record granules.
+      constant CHK_KV_GRAN : natural := 0 - ((C_KV_BLOCK*C_CM_W/8) mod 16);
+      -- `ctx_len` is a COUNT, 1 .. C_MAXPOS.  POSW is now wide enough to
+      -- hold C_MAXPOS itself (see its declaration), so this is the whole
+      -- constraint and the old second clause is gone rather than restated.
+      constant CHK_KV_CTX  : natural := C_MAXPOS - C_CTXLEN;
+      -- THE K AND V REGIONS MUST FIT THE ADDRESS SPACE, not merely miss each
+      -- other.  Nothing checked this before: MEASURED, two 34,816-byte
+      -- regions based at 0 and 34,816 in a 16-bit space need 69,632 bytes,
+      -- elaborated clean, and the top 4,096 bytes of V wrapped onto the
+      -- first records of K.  Written with clog2 rather than 2**C_KV_ADDR_W
+      -- so a 32-bit address width does not overflow the check itself.
+      --
+      -- IN CHUNKS, NOT BYTES, AND THAT IS WHAT MAKES THE CHECK EVALUATE AT
+      -- THE REAL MAP.  `clog2` in rtl/util_pkg.vhd is a `while v < n loop
+      -- v := v*2` doubling loop over `natural`, so it OVERFLOWS for any
+      -- argument above 2**30.  In the byte domain the real pair ends at
+      -- 6,803,283,968, which both overflows `natural` in the sum itself and
+      -- is far past that loop's ceiling; MEASURED, `overflow detected ...
+      -- from work.llama_top(rtl).DECL_ELAB` and the elaboration dies.  In
+      -- chunks the same quantity is 425,205,248, under 2**30, and clog2
+      -- returns 29.
+      --
+      -- The two forms are EXACTLY equivalent, not merely similar: every term
+      -- is a whole number of 16-byte chunks, and clog2(16*y) = clog2(y) + 4
+      -- for y >= 1, so `clog2(bytes) <= C_KV_ADDR_W` and
+      -- `clog2(chunks) <= C_KV_ADDR_W - 4` accept and refuse the same
+      -- layouts.  Nothing was loosened to make the real map fit.
+      --
+      -- REC_B must itself be a whole number of chunks or the conversion is
+      -- lossy.  `attn_kv_axi.vhd:483` asserts `MANT_B mod CH_B = 0`; it is
+      -- mirrored here as a natural constant because a concurrent assert runs
+      -- after the whole design has elaborated, which is too late.
+      --
+      -- IT IS UNREACHABLE TODAY AND IT IS KEPT ANYWAY, WHICH IS A CLAIM
+      -- ABOUT THE FUTURE AND NOT EVIDENCE ABOUT NOW.  `C_HD` is
+      -- `SHAPE.attn_head_dim` and SHAPE is a RECORD generic that GHDL cannot
+      -- override, so C_HD is 256 in every configuration this file can be
+      -- elaborated at; `C_HD*C_CM_W/8` is then `32*C_CM_W`, always a multiple
+      -- of 16, and no value of any overridable generic makes this constant
+      -- negative.  It has therefore never been shown to refuse anything.  It
+      -- would bite at a head dim below 32, which is the shape a future
+      -- retarget could bring, and it costs one elaboration-time subtraction.
+      constant CHK_KV_REC  : natural := 0 - ((C_HD*C_CM_W/8) mod 16);
+      constant REC_CH_C    : natural := REC_B_C / 16;
+      constant KVREG_CH    : natural := C_LAY*C_NKVH*C_MAXPOS*REC_CH_C;
+      constant CHK_KV_FIT  : natural :=
+        (C_KV_ADDR_W - 4)
+        - clog2(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH);
+    begin
+      -- ELABORATION CHECKS.  The three-way geometry constraint is stated in
+      -- the C_KV_AXI generic's header; these name the caller rather than
+      -- letting `attn_kv_axi`'s own asserts read as a bug in that file.
+      assert C_CM_W = 8
+        report "llama_top: C_KV_AXI needs C_CM_W = 8.  attn_kv_axi's record "
+             & "is an int8 byte layout and it asserts CM_W = 8 itself."
+        severity failure;
+      assert (C_KV_BLOCK*C_CM_W/8) mod 16 = 0
+        report "llama_top: C_KV_AXI needs KV_BLOCK*CM_W/8 to be a multiple of "
+             & "16, the record granule.  At CM_W = 8 that means C_KV_BLOCK "
+             & "at least 16, and with attn_block's HEAD_DIM/KV_BLOCK >= 2 and "
+             & "HEAD_DIM an even power of two the smallest legal head dim is "
+             & "64.  Build the shape with attn_head_dim => 64."
+        severity failure;
+      assert C_CTXLEN <= C_MAXPOS
+        report "llama_top: C_CTXLEN must fit in the cache."
+        severity failure;
+      -- clog2, not 2**C_KV_ADDR_W: the right-hand side would overflow a
+      -- 32-bit integer at C_KV_ADDR_W = 32, so the check would fail on the
+      -- widest legal address space rather than on an illegal layout.
+      -- Reported in CHUNKS.  The byte figure is not printed because at the
+      -- real map it is 6,803,283,968, which `integer'image` cannot render:
+      -- the argument would overflow before the message was built, replacing
+      -- the diagnostic with an unattributed `overflow detected`.
+      assert clog2(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH)
+             <= C_KV_ADDR_W - 4
+        report "llama_top: the KV regions do not fit C_KV_ADDR_W.  The pair "
+             & "ends at 16-byte chunk "
+             & integer'image(maximum(C_K_BASE_CH, C_V_BASE_CH) + KVREG_CH)
+             & ", which needs "
+             & integer'image(clog2(maximum(C_K_BASE_CH, C_V_BASE_CH)
+                                   + KVREG_CH) + 4)
+             & " address bits, and C_KV_ADDR_W is "
+             & integer'image(C_KV_ADDR_W)
+             & ".  The high end wraps onto the low region."
+        severity failure;
+      -- The two regions must not overlap.  Nothing else checks this: both
+      -- masters would work perfectly and the V records would be K records.
+      -- K and V are SEPARATE regions with separate bases (C spec 2.2), so
+      -- each is LAYERS*N_KVH*MAXCTX*REC_B and there is no factor of two.
+      assert C_K_BASE_CH + KVREG_CH <= C_V_BASE_CH
+          or C_V_BASE_CH + KVREG_CH <= C_K_BASE_CH
+        report "llama_top: the K and V KV regions overlap.  Each is "
+             & integer'image(KVREG_CH) & " chunks of 16 bytes."
+        severity failure;
+      -- THE 16-BYTE ALIGNMENT ASSERT IS RETIRED, NOT DROPPED.  It read
+      -- `C_K_BASE mod 16 = 0 and C_V_BASE mod 16 = 0`.  With the bases
+      -- counted in 16-byte chunks the constraint is STRUCTURAL -- there is no
+      -- longer a representable value that violates it -- so the assert could
+      -- never fire again, and a check that cannot fail is decoration rather
+      -- than evidence.  The requirement itself has not gone away; it is now
+      -- enforced by the encoding, and `KBASE_C` above is where it is made
+      -- true.  `attn_kv_axi.vhd:44-50` still states it.
+
+      u_kv : entity work.attn_kv_axi
+        generic map(
+          HEAD_DIM => C_HD, KV_BLOCK => C_KV_BLOCK, N_KVH => C_NKVH,
+          LAYERS => C_LAY, MAXCTX => C_MAXPOS, POS_W => POSW,
+          CM_W => C_CM_W, EXP_W => 8,
+          AXI_DW => C_KV_AXI_DW, ADDR_W => C_KV_ADDR_W,
+          MAXB => C_KV_MAXB, MAXOUT => C_KV_MAXOUT, RBUF => C_KV_RBUF)
+        port map(
+          clk => clk, rst => rst,
+          start => c_start, layer => c_layer,
+          cur_pos => c_cpos, ctx_len => c_ctx,
+          k_base => KBASE_C, v_base => VBASE_C,
+          cfg_taken => kv_cfgt_s, busy => kv_busy_s, wr_idle => wr_idle_s,
+          err => kv_err_i,
+          kw_sel => kw_sel, kw_head => kw_head, kw_pos => kw_pos,
+          kw_hen => kw_hen, kw_hdr => kw_hdr, kw_en => kw_en,
+          kw_blk => kw_blk, kw_mant => kw_mant, kw_rdy => kw_rdy_s,
+          kr_head => kr_head, kr_pos => kr_pos, kr_rdy => kr_rdy_s,
+          kr_en => kr_en, kr_blk => kr_blk, kr_hdr => kr_hdr,
+          kr_mant => kr_mant,
+          vr_head => vr_head, vr_pos => vr_pos, vr_rdy => vr_rdy_s,
+          vr_en => vr_en, vr_blk => vr_blk, vr_hdr => vr_hdr,
+          vr_mant => vr_mant,
+          r_arvalid => kv_arvalid, r_arready => kv_arready,
+          r_araddr => kv_araddr, r_arlen => kv_arlen, r_arsize => kv_arsize,
+          r_arburst => kv_arburst, r_rvalid => kv_rvalid,
+          r_rready => kv_rready, r_rdata => kv_rdata, r_rlast => kv_rlast,
+          r_rresp => kv_rresp,
+          w_awvalid => kv_awvalid, w_awready => kv_awready,
+          w_awaddr => kv_awaddr, w_awlen => kv_awlen, w_awsize => kv_awsize,
+          w_awburst => kv_awburst, w_wvalid => kv_wvalid,
+          w_wready => kv_wready, w_wdata => kv_wdata, w_wstrb => kv_wstrb,
+          w_wlast => kv_wlast, w_bvalid => kv_bvalid, w_bready => kv_bready,
+          w_bresp => kv_bresp);
+
+      -- The three handshakes, as properties.  A beat offered while its gate
+      -- is low is a SILENT WRONG ANSWER on the read side -- the cache does
+      -- not update its output, so the block captures whatever it last held --
+      -- and a vanished record on the write side, because attn_kv_axi drops
+      -- an unaccepted header and every following beat of that record with it.
+      seamchk : process(clk) is
+        variable said : boolean := false;
+      begin
+        if rising_edge(clk) then
+          if (kr_en = '1' and kr_rdy_s = '0')
+             or (vr_en = '1' and vr_rdy_s = '0')
+             or ((kw_en = '1' or kw_hen = '1') and kw_rdy_s = '0') then
+            kv_seam_bad <= '1';
+            if not said then
+              said := true;
+              report "llama_top: a KV cache beat was offered while its "
+                   & "handshake was low.  On a read that is a silent wrong "
+                   & "answer -- attn_kv_axi leaves kr_mant/vr_mant at their "
+                   & "last value and the block captures it -- and on a write "
+                   & "the whole record vanishes.  Reported once; the fault "
+                   & "is sticky on kv_err." severity error;
+            end if;
+          end if;
+        end if;
+      end process;
+
+      -- THE TWO SIDES MUST AGREE ABOUT WHICH LAYER THIS IS.  `attn_block`
+      -- publishes `kv_layer` with every write; `attn_kv_axi` takes `layer`
+      -- once, at `start`.  Nothing connects them, so a skew between the job
+      -- ordinal and the block's own latch would put a whole layer's records
+      -- at another layer's addresses and every read would still be served.
+      glchk : if C_LAY > 1 generate
+        lchk : process(clk) is
+        begin
+          if rising_edge(clk) then
+            if kw_en = '1' or kw_hen = '1' then
+              assert to_integer(kv_layer) = c_layer
+                report "llama_top: attn_block is writing layer "
+                     & integer'image(to_integer(kv_layer))
+                     & " and attn_kv_axi was configured for layer "
+                     & integer'image(c_layer) severity error;
+            end if;
+          end if;
+        end process;
+      end generate;
+    end generate;
+
+    -- THE INT8 NARROWING IS A REAL RAIL, NOT A CAST.  Subsystem C's exponent
+    -- ports are 8-bit signed by spec, and the residual stream's exponent is
+    -- 16-bit here and reaches -387 in the unanchored configuration PART 3
+    -- measured.  `resize` would WRAP silently -- which is defect class
+    -- "8-bit exponent wrap", already paid for once in subsystem B -- so the
+    -- narrowing is checked rather than assumed.
+    qg_e8  <= resize(qg_e, 8);
+    kin_e8 <= resize(kin_e, 8);
+    vin_e8 <= resize(vin_e, 8);
+
+
+    u_attn : entity work.attn_block
+      generic map(
+        HEAD_DIM => C_HD, N_QH => C_NQH, N_KVH => C_NKVH,
+        KV_BLOCK => C_KV_BLOCK, N_ROT => C_N_ROT, LAYERS => C_LAY,
+        POS_W => POSW, MANT_W => MANT_W, CM_W => C_CM_W, EXP_W => 8,
+        NORM_LANES => 1, STRICT_PRODUCER => true)
+      port map(
+        clk => clk, rst => rst,
+        start => c_start, layer => c_layer, cur_pos => c_cpos,
+        ctx_len => c_ctx, busy => c_busy, cfg_taken => c_cfgtk,
+        kv_seq_rst => c_seqrst, seq_rst_taken => c_srtk,
+        qg_raddr => qg_raddr, qg_re => qg_re, qg_rdata => qg_rdata,
+        qg_exp => qg_e8,
+        kin_raddr => kin_raddr, kin_re => kin_re, kin_rdata => kin_rdata,
+        kin_exp => kin_e8,
+        vin_raddr => vin_raddr, vin_re => vin_re, vin_rdata => vin_rdata,
+        vin_exp => vin_e8,
+        qn_mant => QN_CONST, qn_exp => QKN_E8,
+        kn_mant => KN_CONST, kn_exp => QKN_E8,
+        wn_taken => c_wntk,
+        kv_layer => kv_layer, kw_sel => kw_sel, kw_head => kw_head,
+        kw_pos => kw_pos, kw_hen => kw_hen, kw_hdr => kw_hdr,
+        kw_en => kw_en, kw_blk => kw_blk, kw_mant => kw_mant,
+        kw_rdy => kw_rdy_s,
+        kr_en => kr_en, kr_head => kr_head, kr_pos => kr_pos,
+        kr_blk => kr_blk, kr_hdr => kr_hdr, kr_mant => kr_mant,
+        kr_rdy => kr_rdy_s,
+        vr_en => vr_en, vr_head => vr_head, vr_pos => vr_pos,
+        vr_blk => vr_blk, vr_hdr => vr_hdr, vr_mant => vr_mant,
+        vr_rdy => vr_rdy_s, kv_wr_idle => wr_idle_s,
+        y_valid => y_valid, y_mant => y_mant, y_index => y_index,
+        y_last => y_last, y_exp => c_yexp, y_ready => Y_RDY,
+        y_hdr_valid => y_hdrv,
+        done => c_done, done_ack => c_dack,
+        err => c_err, rope_sat => c_ropes, kv_sat => c_kvs, y_sat => c_ys,
+        z_sat => c_zs, rescale_max => c_rsmax, dbg_ep_lost => c_eplost);
+
+    cp : process(clk) is
+      type st_t is (S_IDLE, S_QGRD, S_KRD, S_VRD, S_GO, S_RUN, S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable yb : buf_t(0 to YN-1);
+      variable j_dst, j_rows, j_lay : natural := 0;
+      variable k, r, ycnt : natural := 0;
+      variable e_said : boolean := false;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_C) <= '0';
+        uw_en(U_C) <= '0';
+        c_start    <= '0';
+        c_dack     <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_C then
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_lay  := to_integer(job_ordinal);
+            -- `job_ordinal` IS the attention-layer ordinal, 0 .. attn-1.  It
+            -- is taken, not derived: D spec 4.1 gives the host generator
+            -- `attn_ord(i) = (i - (attn_interval-1)) / attn_interval` and
+            -- spec 6.1 fixes the field as per-KIND ("B: 0..47, C: 0..15").
+            --
+            -- THIS LINE USED TO RE-DERIVE IT FROM A BLOCK INDEX, defect
+            -- ORD-1, and it was the worse of the two halves: at the 9B shape
+            -- the manifest-stamped ordinals 0, 1 and 2 (attention blocks 3,
+            -- 7 and 11) each produced c_layer = -1.  MEASURED on this RTL --
+            -- `ghdl-mcode:error: bound check failure at
+            -- rtl/llama_top.vhd:3804` at `-gBLOCKS=8 -gC_REAL=true`.  On the
+            -- card there is no bound check: -1 truncates to the declared
+            -- width and aliases onto a legal KV layer.  See
+            -- `docs/debugging/2026-08-29_ordinal-two-meanings.md`.
+            --
+            -- SIMULATION ONLY, and before the assignment; see `b_layer`.
+            assert j_lay < C_LAY
+              report "llama_top: unit C was issued ordinal "
+                   & integer'image(j_lay) & " but this shape has only "
+                   & integer'image(C_LAY) & " attention layers.  `ordinal` "
+                   & "is the PER-KIND layer index (D spec 4.1), not the "
+                   & "block index."
+              severity failure;
+            c_layer <= j_lay;
+            -- THE SEQUENCE POSITION, not a constant 0.  See `tok_pos`.
+            c_cpos  <= to_unsigned(tok_pos, POSW);
+            c_ctx   <= to_unsigned(C_CTXLEN, POSW);
+            ep      <= job_epoch;
+            uerr    <= '0';
+            rdy     <= '0';
+            k       := 0;
+            ycnt    := 0;
+            c_exp_region <= to_unsigned(R_QG, 8);
+            c_exp_seg    <= "00";
+            st := S_QGRD;
+            assert j_rows = YN
+              report "llama_top: the C job asked for " & integer'image(j_rows)
+                   & " rows and attn_block emits " & integer'image(YN)
+              severity failure;
+          end if;
+
+          -- The un-refusable side of the y stream.  `y_ready` is tied high
+          -- here, so this can only fire if the block emits outside its run
+          -- window, which would be a lost element.
+          if y_valid = '1' then
+            if st /= S_RUN then
+              f_lost <= '1';
+              report "llama_top: unit C emitted a y element outside its run "
+                   & "window." severity error;
+            end if;
+            if to_integer(y_index) < YN then
+              yb(to_integer(y_index)) := y_mant;
+            end if;
+            ycnt := ycnt + 1;
+          end if;
+          if c_eplost = '1' then f_lost <= '1'; end if;
+
+          -- THE INT8 NARROWING, CHECKED ONCE.  Free-running it fires 175,313
+          -- times in the unanchored 32-block run and buries every other line
+          -- in the log; a guard nobody can read past is a guard nobody reads.
+          -- It lives in THIS process and not its own so that the C branch
+          -- contributes exactly ONE driver to `f_lost`, which is a resolved
+          -- std_logic with a driver per adapter already.
+          if not e_said
+             and (qg_e < -128 or qg_e > 127 or kin_e < -128 or kin_e > 127
+                  or vin_e < -128 or vin_e > 127) then
+            e_said := true;
+            f_lost <= '1';
+            report "llama_top: a source exponent for unit C is outside int8 "
+                 & "and would WRAP on the way into attn_block -- R_QG "
+                 & integer'image(to_integer(qg_e)) & ", R_KIN "
+                 & integer'image(to_integer(kin_e)) & ", R_VIN "
+                 & integer'image(to_integer(vin_e))
+              severity error;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            -- Three prefetch phases, each claiming its own region's captured
+            -- exponent and consuming at k-2.  Consuming at k-1 is defect 3.
+            when S_QGRD =>
+              if k < QGN then
+                ur_en(U_C)   <= '1';
+                ur_reg(U_C)  <= R_QG;
+                ur_addr(U_C) <= k;
+              end if;
+              if k >= 2 then qg_buf(k-2) <= el_rdata; end if;
+              if k = QGN+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit C read R_QG's exponent before "
+                       & "anything captured it." severity error;
+                qg_e <= exp_rd_data;
+                c_exp_region <= to_unsigned(R_KIN, 8);
+                k := 0; st := S_KRD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_KRD =>
+              if k < KVN then
+                ur_en(U_C)   <= '1';
+                ur_reg(U_C)  <= R_KIN;
+                ur_addr(U_C) <= k;
+              end if;
+              if k >= 2 then kin_buf(k-2) <= el_rdata; end if;
+              if k = KVN+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit C read R_KIN's exponent before "
+                       & "anything captured it." severity error;
+                kin_e <= exp_rd_data;
+                c_exp_region <= to_unsigned(R_VIN, 8);
+                k := 0; st := S_VRD;
+              else
+                k := k + 1;
+              end if;
+
+            when S_VRD =>
+              if k < KVN then
+                ur_en(U_C)   <= '1';
+                ur_reg(U_C)  <= R_VIN;
+                ur_addr(U_C) <= k;
+              end if;
+              if k >= 2 then vin_buf(k-2) <= el_rdata; end if;
+              if k = KVN+1 then
+                assert exp_rd_valid = '1'
+                  report "llama_top: unit C read R_VIN's exponent before "
+                       & "anything captured it." severity error;
+                vin_e <= exp_rd_data;
+                k := 0; st := S_GO;
+              else
+                k := k + 1;
+              end if;
+
+            when S_GO =>
+              c_start <= '1';
+              st := S_RUN;
+
+            when S_RUN =>
+              if c_done = '1' then
+                c_dack <= '1';
+                -- The CACHE's sticky error is subsystem C's error too.  A
+                -- cache fault that only reached its own port would leave the
+                -- schedule reporting success on a token whose records were
+                -- never written.
+                uerr   <= c_err or kv_err_i or kv_seam_bad;
+                -- A REPORT IS NOT A VERDICT.  This sets `f_lost`, which P3
+                -- in the bench reads, so a short y stream FAILS the run
+                -- instead of printing a line nobody greps for.
+                if ycnt /= YN then
+                  f_lost <= '1';
+                  report "llama_top: unit C emitted " & integer'image(ycnt)
+                       & " y elements, the job needs " & integer'image(YN)
+                    severity error;
+                end if;
+                r  := 0;
+                st := S_DRAIN;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_C)   <= '1';
+              uw_reg(U_C)  <= j_dst;
+              uw_addr(U_C) <= r;
+              uw_data(U_C) <= yb(r);
+              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              -- The block's OWN y_exp, published before its first y_valid.
+              -- Not the source region's: this unit computes, so its output
+              -- scale is its own.
+              yexp <= resize(c_yexp, EXP_W);
+              if u_ack(U_C) = '1' then
+                dn <= '0'; rdy <= '1'; st := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- ======================================================================
+  -- UNIT E.  The tensor-parallel collective.  Unreachable at NCARDS = 1: the
+  -- schedule emits no OP_E_COLL.  It is wired to raise `u_err` rather than to
+  -- complete, so a schedule built for NCARDS > 1 and run here STOPS instead
+  -- of quietly producing a number.
+  --
+  -- Note the OPEN hazard it would hit if it ever did run: `e_o_we` into
+  -- D-vec's residual pass has NO ready at all (seq_top_skel.vhd:199-209,
+  -- seq_vec_res.vhd:168-174, both calling it "UNSTALLABLE, AND UNRESOLVED").
+  -- ======================================================================
+  ge : block
+    signal rdy : std_logic := '1';
+    signal dn  : std_logic := '0';
+    signal ep  : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+  begin
+    u_ready(U_E) <= rdy;
+    u_done(U_E)  <= dn;
+    u_err(U_E)   <= dn;
+    u_done_epoch((U_E+1)*EPOCH_W-1 downto U_E*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_E+1)*EXP_W-1 downto U_E*EXP_W) <= (others => '0');
+
+    epp : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then
+          dn <= '0'; rdy <= '1';
+        else
+          if job_issue = '1' and to_integer(job_unit) = U_E then
+            ep     <= job_epoch;
+            rdy    <= '0';
+            dn     <= '1';
+            f_ecoll <= '1';
+            report "llama_top: OP_E_COLL was issued.  NCARDS = 1 has no "
+                 & "collective and no unit E.  The schedule and the build "
+                 & "disagree." severity error;
+          end if;
+          if dn = '1' and u_ack(U_E) = '1' then
+            dn <= '0'; rdy <= '1';
+          end if;
+        end if;
+      end if;
+    end process;
+  end block;
+
+  -- ======================================================================
+  -- THE ACTIVE-UNIT LATCH, and observability.
+  -- ======================================================================
+  actp : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        act_unit <= 0;
+      elsif job_issue = '1' then
+        act_unit <= to_integer(job_unit);
+      end if;
+      if rst = '1' then
+        act_vop <= 0;
+      else
+        for v in 0 to NVOP-1 loop
+          if v_taken(v) = '1' then act_vop <= v; end if;
+        end loop;
+      end if;
+    end if;
+  end process;
+
+  wsump : process(clk) is
+    variable h : unsigned(31 downto 0);
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        h := (others => '0');
+      elsif el_we = '1' then
+        h := resize(h * 31, 32);
+        h := h + to_unsigned(el_wreg * 8191 + el_waddr, 32)
+               + resize(unsigned(std_logic_vector(el_wdata)), 32);
+      elsif w_we = '1' then
+        for i in 0 to LANES-1 loop
+          if w_be(i) = '1' then
+            h := resize(h * 31, 32);
+            h := h + to_unsigned(to_integer(unsigned(v_reg_d(6 downto 0)))*8191
+                                 + to_integer(w_addr)*LANES + i, 32)
+                   + resize(unsigned(w_data((i+1)*MANT_W-1 downto i*MANT_W)), 32);
+          end if;
+        end loop;
+      end if;
+      obs_wsum <= h;
+    end if;
+  end process;
+
+  -- The q/k/v exponent recorder.  `cmp_valid` is the completing job, and D
+  -- runs one job at a time, so the job latched at the last `job_issue` IS the
+  -- one completing.  Segment comes from `dst_off` against the same two
+  -- boundaries `seq_opdec`'s MSEG mechanism uses, so the two cannot disagree
+  -- about which of q, k and v a job produced.
+  qexpp : process(clk) is
+    variable off : natural;
+  begin
+    if rising_edge(clk) then
+      b_seq_rst <= '0';
+      if rst = '1' then
+        last_dst <= 255;
+        qkv_exp  <= (others => (others => '0'));
+      else
+        if go = '1' and tok_pos = 0 then
+          -- ONE RESET PER SEQUENCE, NOT PER TOKEN, and the port's own name
+          -- says so.  `rtl/gdn_exp_capture.vhd`'s header: "`seq_rst` clears
+          -- the counters at the start of a sequence".  This fired on every
+          -- `go`, which is once per TOKEN, so exactly one capture per
+          -- (layer, segment) had happened whenever B started and `tvalid`
+          -- marked only tap KCONV-1 valid -- the causal conv had no history
+          -- at any token.  It carried the same expired premise as `b_tk0`
+          -- and had to move with it: a state that carries across tokens while
+          -- the conv still sees one tap is neither behaviour.
+          --
+          -- `tok_pos = 0` is the first token of a sequence: reset clears it
+          -- and only `tok_done`/`tok_ack` advances it (see its declaration).
+          -- Issued while everything is idle; `gdn_exp_capture` asserts
+          -- failure if it arrives mid-capture.
+          b_seq_rst <= '1';
+        end if;
+        if job_issue = '1' then
+          last_dst <= to_integer(job_dst(6 downto 0));
+          off := to_integer(job_dst_off(15 downto 0));
+          if    off = key_dim(SHAPE)   then last_seg <= 1;
+          elsif off = 2*key_dim(SHAPE) then last_seg <= 2;
+          else                              last_seg <= 0; end if;
+        end if;
+        if cmp_valid = '1' and last_dst = R_QKV then
+          qkv_exp(last_seg) <= resize(cmp_y_exp, 8);
+        end if;
+      end if;
+    end if;
+  end process;
+
+  -- ---- the sequence position -------------------------------------------
+  -- Advanced on the `tok_done`/`tok_ack` handshake, which is the only point
+  -- at which the machine is idle and the token is finished.  A sequence that
+  -- runs past the cache's depth is an ERROR and not a wrap: wrapping would
+  -- overwrite position 0's record with position C_MAXPOS's and every
+  -- subsequent read would be served a plausible wrong answer.
+  tokp : process(clk) is
+    variable said : boolean := false;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        tok_pos <= 0;
+      elsif tok_done_i = '1' and tok_ack = '1' then
+        if tok_pos = C_MAXPOS-1 then
+          if not said then
+            said := true;
+            report "llama_top: token " & integer'image(tok_pos)
+                 & " completed and the KV cache is only "
+                 & integer'image(C_MAXPOS) & " positions deep.  The next "
+                 & "token would overwrite position 0." severity error;
+          end if;
+        else
+          tok_pos <= tok_pos + 1;
+        end if;
+      end if;
+    end if;
+  end process;
+
+  tok_done    <= tok_done_i;
+  obs_tok_pos <= to_unsigned(tok_pos, 16);
+  kv_err      <= kv_err_i or kv_seam_bad;
+
+  -- The KV masters when there is no cache to drive them.  ONE driver each:
+  -- the `gkvaxi` branch inside the C adapter drives the same ports from
+  -- `attn_kv_axi`'s port map and this branch does not elaborate then.
+  -- C_KV_AXI LIVES INSIDE THE C_REAL BRANCH, so with C_REAL false there is
+  -- nothing to drive the KV masters and the tie-off below has to cover that
+  -- case too.  The assert makes the configuration an elaboration refusal
+  -- rather than a top level whose AXI outputs are 'U'.
+  kvcfg : process is
+  begin
+    assert C_REAL or not C_KV_AXI
+      report "llama_top: C_KV_AXI is set and C_REAL is not.  attn_kv_axi is "
+           & "instantiated inside the real subsystem C, so there is no cache "
+           & "to connect and the KV master ports would have no driver."
+      severity failure;
+    wait;
+  end process;
+
+  gkvtie : if not (C_REAL and C_KV_AXI) generate
+    kv_arvalid <= (others => '0');
+    kv_araddr  <= (others => '0');
+    kv_arlen   <= (others => '0');
+    kv_arsize  <= (others => '0');
+    kv_arburst <= (others => '0');
+    kv_rready  <= (others => '0');
+    kv_awvalid <= '0';
+    kv_awaddr  <= (others => '0');
+    kv_awlen   <= (others => '0');
+    kv_awsize  <= (others => '0');
+    kv_awburst <= (others => '0');
+    kv_wvalid  <= '0';
+    kv_wdata   <= (others => '0');
+    kv_wstrb   <= (others => '0');
+    kv_wlast   <= '0';
+    kv_bready  <= '0';
+    kv_err_i   <= '0';
+  end generate;
+
+  -- ======================================================================
+  -- THE LOGITS EGRESS SEAM.  SMP_EN only.
+  --
+  -- Beat FIFO -> one-logit-per-cycle serialiser -> `rtl/sampler_stream.vhd`.
+  --
+  -- WHY A BEAT FIFO AND NOT A LOGIT FIFO.  A's `y_we` presents A_ROWS_IF rows
+  -- in ONE cycle and has no ready (seam rule 3), so a sink that could take
+  -- only one row per cycle would LOSE the other three, silently.  The FIFO
+  -- therefore accepts a whole beat per cycle and the serialiser walks its
+  -- lanes.  Depth is in BEATS, so SMP_FIFO = 64 is 64*(A_ROWS_IF*32 + 32 +
+  -- A_ROWS_IF) bits, not 64 logits.
+  --
+  -- WHY THE MASK IS OBEYED AND NOT ASSUMED.  `matvec_core.vhd:832-835` sets
+  -- `y_mask(rr)` from `rbase + rr < n_rows`, so the LAST beat of a job whose
+  -- row count is not a multiple of A_ROWS_IF carries pad rows.  Folding a pad
+  -- row into the argmax would let a value that is not a logit win, and it
+  -- would do it only at row counts that are not a multiple of four -- which
+  -- is every real vocabulary shard except by accident.
+  --
+  -- THE SERIALISER EMITS LANES IN INDEX ORDER and the argmax's tie-break is
+  -- "first max wins" (`rtl/sampler_stream.vhd:57`), so lane order is not a
+  -- presentation choice: reversing it changes the answer on a tie.
+  -- ======================================================================
+  gsmp : if SMP_EN generate
+    type sfd_t is array (0 to SMP_FIFO-1)
+                  of std_logic_vector(A_ROWS_IF*32-1 downto 0);
+    type sfm_t is array (0 to SMP_FIFO-1)
+                  of std_logic_vector(A_ROWS_IF-1 downto 0);
+    type sfi_t is array (0 to SMP_FIFO-1) of unsigned(31 downto 0);
+    signal fd : sfd_t := (others => (others => '0'));
+    signal fm : sfm_t := (others => (others => '0'));
+    signal fi : sfi_t := (others => (others => '0'));
+    signal wp, rp, occ : natural range 0 to SMP_FIFO := 0;
+    signal lane        : natural range 0 to A_ROWS_IF := 0;
+    signal s_iv   : std_logic := '0';
+    signal s_v    : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_idx  : unsigned(31 downto 0) := (others => '0');
+    signal s_clr  : std_logic := '0';
+    signal s_tok  : integer;
+    signal n_fold : unsigned(31 downto 0) := (others => '0');
+    signal run_q  : std_logic := '0';
+    signal arm    : std_logic := '0';
+    signal dn_p   : std_logic := '0';
+  begin
+    -- VOCAB is declared by `sampler_stream` and read by nothing in its
+    -- architecture -- it keeps a running index, not an array -- so the value
+    -- is documentation.  Passing the shard rather than the unit's 512 default
+    -- keeps it from reading as a claim about this build.
+    u_smp : entity work.sampler_stream
+      generic map(VOCAB => SHAPE.vocab_shard)
+      port map(clk => clk, rst => rst, clr => s_clr,
+               in_valid => s_iv, in_v => s_v, token => s_tok);
+
+    smp_empty <= '1' when occ = 0 and lane = 0 else '0';
+
+    fifo : process(clk) is
+      variable o        : integer;
+      variable nxt, nx2 : integer;
+    begin
+      if rising_edge(clk) then
+        s_iv  <= '0';
+        s_clr <= '0';
+        dn_p  <= '0';
+        if rst = '1' then
+          wp <= 0; rp <= 0; occ <= 0; lane <= 0; arm <= '0';
+          n_fold <= (others => '0');
+          run_q  <= '0';
+        else
+          o := occ;
+
+          -- ---- the token boundary.  `go` is the only instant at which the
+          -- machine is idle and a new token's logits begin.  Clearing the
+          -- sampler per JOB instead would return the last WINDOW's argmax.
+          if go = '1' then
+            s_clr  <= '1';
+            wp <= 0; rp <= 0; lane <= 0; o := 0; arm <= '0';
+            n_fold <= (others => '0');
+          end if;
+
+          -- ---- POP BEFORE PUSH, and the ORDER IS THE WHOLE CORRECTNESS
+          -- ARGUMENT.  `fd`/`fm`/`fi` are SIGNALS, so a beat written this
+          -- cycle is not readable until the next one.  Popping off an
+          -- occupancy that had already counted this cycle's push therefore
+          -- reads the array's PREVIOUS contents at that slot.
+          --
+          -- MEASURED, because it is not a hypothetical: with push first, the
+          -- first token folded ZERO logits (the stale slot's mask was all
+          -- zeros, so the serialiser retired the beat without folding
+          -- anything) and the SECOND token folded 64 logits carrying the
+          -- FIRST token's values.  Both tokens completed, `err` stayed clear,
+          -- no counter moved, and the argmax was a plausible number.
+          -- ---- pop one VALID LANE per cycle, in index order.
+          --
+          -- MASKED-OFF LANES COST NO CYCLE, and that is a rate property and
+          -- not a tidiness one.  `ga_behav` emits one row per beat with
+          -- mask "0..01"; a serialiser that spent A_ROWS_IF cycles per beat
+          -- regardless would consume at 1/A_ROWS_IF of the production rate
+          -- and overflow any depth.  So the next valid lane is FOUND, and a
+          -- beat with no valid lane at all is retired without folding
+          -- anything -- which is also what a whole pad tile is.
+          if o > 0 then
+            nxt := A_ROWS_IF;
+            for l in A_ROWS_IF-1 downto 0 loop
+              if l >= lane and fm(rp)(l) = '1' then nxt := l; end if;
+            end loop;
+            if nxt < A_ROWS_IF then
+              s_iv  <= '1';
+              s_v   <= fd(rp)(nxt*32+31 downto nxt*32);
+              s_idx <= fi(rp) + nxt;
+              n_fold <= n_fold + 1;
+              nx2 := A_ROWS_IF;
+              for l in A_ROWS_IF-1 downto 0 loop
+                if l > nxt and fm(rp)(l) = '1' then nx2 := l; end if;
+              end loop;
+            else
+              nx2 := A_ROWS_IF;
+            end if;
+            if nx2 < A_ROWS_IF then
+              lane <= nx2;
+            else
+              lane <= 0;
+              if rp = SMP_FIFO-1 then rp <= 0; else rp <= rp + 1; end if;
+              o := o - 1;
+            end if;
+          end if;
+
+          -- ---- push, AFTER the pop.  Unconditional: `y_we` cannot be
+          -- refused, so the only honest sink is one that cannot refuse.
+          if smp_be_we = '1' then
+            if o < SMP_FIFO then
+              fd(wp) <= smp_be_dat;
+              fm(wp) <= smp_be_msk;
+              fi(wp) <= smp_be_idx;
+              if wp = SMP_FIFO-1 then wp <= 0; else wp <= wp + 1; end if;
+              o := o + 1;
+            else
+              f_smp_ovf <= '1';
+              report "llama_top: the logits FIFO overflowed at depth "
+                   & integer'image(SMP_FIFO) & ".  A's y_we has no ready, so "
+                   & "this beat is LOST." severity error;
+            end if;
+          end if;
+
+          occ <= o;
+
+          -- ---- `smp_done`: the job's run window has closed AND the FIFO has
+          -- drained.  Both halves are load bearing: A's `done` fires with
+          -- beats still in flight, and an empty FIFO before the job started
+          -- is not a finished token.  ARMED on the falling edge and fired
+          -- later, because the two events are not the same cycle: the falling
+          -- edge is one cycle wide and the drain is not.
+          run_q <= smp_run;
+          if run_q = '1' and smp_run = '0' then
+            arm <= '1';
+          end if;
+          if (arm = '1' or (run_q = '1' and smp_run = '0'))
+             and o = 0 and lane = 0 then
+            dn_p <= '1';
+            arm  <= '0';
+          end if;
+        end if;
+      end if;
+    end process;
+
+    smp_valid <= s_iv;
+    smp_v     <= s_v;
+    smp_idx   <= s_idx;
+    smp_exp   <= smp_yexp_i;
+    -- GUARDED, and the guard is not defensive style.  `sampler_stream`'s
+    -- `token` is an unconstrained `integer` output whose default initial
+    -- value is `integer'left`, i.e. NEGATIVE, until its first `rst` edge --
+    -- and `to_unsigned` of a negative is a bound check failure that aborts
+    -- the run before time zero.  MEASURED: "bound check failure at
+    -- rtl/llama_top.vhd" from inside this concurrent assignment.
+    smp_token <= to_unsigned(s_tok, 32) when s_tok >= 0
+                 else (others => '0');
+    smp_done  <= dn_p;
+    smp_n     <= n_fold;
+  end generate;
+
+  gsmptie : if not SMP_EN generate
+    smp_empty <= '1';
+    smp_valid <= '0';
+    smp_v     <= (others => '0');
+    smp_idx   <= (others => '0');
+    smp_exp   <= (others => '0');
+    smp_token <= (others => '0');
+    smp_done  <= '0';
+    smp_n     <= (others => '0');
+  end generate;
+
+  err_smp_ovf <= f_smp_ovf;
+
+  obs_res_take <= v_taken(V_RES);
+  obs_res_ea   <= v_exp_a;
+  obs_res_eb   <= v_exp_b;
+
+  obs_cmp_exp <= cmp_y_exp;
+  obs_issue  <= job_issue;
+  obs_unit   <= job_unit;
+  obs_opcode <= job_opcode;
+  obs_step   <= job_step;
+  obs_dst    <= job_dst;
+  obs_cmp    <= cmp_valid;
+
+  err_lost_beat <= f_lost;
+  err_gate_drop <= f_gate;
+  err_unit_stub <= f_stub;
+  err_e_coll    <= f_ecoll;
+
+end architecture;

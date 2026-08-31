@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5075,5075,0,3324,126,12,132,0,276,0,0,0.971,248.2005460412013,627,-1,5075,3324,41,132

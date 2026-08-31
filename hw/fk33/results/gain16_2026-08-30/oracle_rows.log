@@ -1,0 +1,43 @@
+EXTRACT OK /mnt/storage/gain16/lt_cb_clean.vhd lines 1818..2891 (1074 lines) -> /mnt/storage/gain16/top_cb_clean.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_clean.vhd
+GAIN16_ORACLE_ROW cb_clean mutant=none verdict=PASS rc=0 compared=266240 mismatched=0 never_written=0 wrong_nidx=0
+MUTATE OK T1 -> /mnt/storage/gain16/lt_head_T1.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_head_T1.vhd lines 1818..2824 (1007 lines) -> /mnt/storage/gain16/top_head_T1.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_head_T1.vhd
+GAIN16_ORACLE_ROW head_T1 mutant=T1 verdict=FAIL rc=1 compared=266240 mismatched=264662 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=0 elem=0 got=0x106E want=0x1238
+MUTATE OK T2 -> /mnt/storage/gain16/lt_head_T2.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_head_T2.vhd lines 1818..2824 (1007 lines) -> /mnt/storage/gain16/top_head_T2.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_head_T2.vhd
+GAIN16_ORACLE_ROW head_T2 mutant=T2 verdict=FAIL rc=1 compared=266240 mismatched=261940 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=1 elem=0 got=0x1238 want=0x0D2C
+MUTATE OK T3 -> /mnt/storage/gain16/lt_head_T3.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_head_T3.vhd lines 1818..2824 (1007 lines) -> /mnt/storage/gain16/top_head_T3.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_head_T3.vhd
+GAIN16_ORACLE_ROW head_T3 mutant=T3 verdict=FAIL rc=1 compared=266240 mismatched=265923 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=0 elem=0 got=0x0D2C want=0x1238
+MUTATE OK E1 -> /mnt/storage/gain16/lt_cb_E1.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_cb_E1.vhd lines 1818..2891 (1074 lines) -> /mnt/storage/gain16/top_cb_E1.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_E1.vhd
+GAIN16_ORACLE_ROW cb_E1 mutant=E1 verdict=FAIL rc=1 compared=266240 mismatched=266240 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=0 elem=0 got=0x1239 want=0x1238
+MUTATE OK E2 -> /mnt/storage/gain16/lt_cb_E2.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_cb_E2.vhd lines 1818..2891 (1074 lines) -> /mnt/storage/gain16/top_cb_E2.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_E2.vhd
+GAIN16_ORACLE_ROW cb_E2 mutant=E2 verdict=FAIL rc=1 compared=266240 mismatched=266240 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=0 elem=0 got=0x123C want=0x1238
+MUTATE OK E3 -> /mnt/storage/gain16/lt_cb_E3.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_cb_E3.vhd lines 1818..2891 (1074 lines) -> /mnt/storage/gain16/top_cb_E3.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_E3.vhd
+GAIN16_ORACLE_ROW cb_E3 mutant=E3 verdict=PASS rc=0 compared=266240 mismatched=0 never_written=0 wrong_nidx=0
+MUTATE OK E5a -> /mnt/storage/gain16/lt_cb_E5a.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_cb_E5a.vhd lines 1818..2895 (1078 lines) -> /mnt/storage/gain16/top_cb_E5a.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_E5a.vhd
+GAIN16_ORACLE_ROW cb_E5a mutant=E5a verdict=FAIL rc=1 compared=266240 mismatched=1 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=17 elem=843 got=0x0000 want=0x0250
+MUTATE OK E5b -> /mnt/storage/gain16/lt_cb_E5b.vhd.m
+EXTRACT OK /mnt/storage/gain16/lt_cb_E5b.vhd lines 1818..2895 (1078 lines) -> /mnt/storage/gain16/top_cb_E5b.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_cb_E5b.vhd
+GAIN16_ORACLE_ROW cb_E5b mutant=E5b verdict=FAIL rc=1 compared=266240 mismatched=802 never_written=0 wrong_nidx=0
+GAIN16_ORACLE FIRST MISMATCH op=0 elem=0 got=0x0000 want=0x1238
+GAIN16_ORACLE_ROWS_DONE

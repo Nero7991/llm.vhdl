@@ -1,0 +1,77 @@
+TRACK GAIN16 -- SUMMARY, 2026-08-30/31.
+Tree 93ddac7 at dispatch, re-pinned to 48633e5 (rtl/ and sim/ byte-identical).
+
+THE QUESTION: close the last 16 BRAM tiles the norm gain image is over budget
+by, against TRACK ROUTE2's MEASURED composed 253.5 used of 372.5 available.
+
+THE ANSWER: CLOSED, with +20.0 tiles to spare, at zero DSP and zero timing
+cost.  The store is now an 11-bit codebook index (99 RAMB36) plus a 1,567-entry
+codebook built at elaboration from norm_w_9b.hex itself.
+
+  GW = 4, before GWTWO      171 RAMB36    short 52.0
+  GW = 1, GWTWO's landing   135 RAMB36    short 16.0
+  codebook, landed here      99 RAMB36    +20.0 to spare (MEASURED cbland)
+
+  The 11-bit INDEX STORE alone was MEASURED at 99 RAMB36 (the sw11 probe).
+  sw11 is a LOSSY probe and is not the codebook; the codebook's own figure
+  is the cbland row, drawn 2026-08-31 on the shipping record-free file:
+  RAMB36 99, RAMB18 12, tile 105, DSP 41, LUT 5155, FF 2351, WNS +0.971,
+  synth 334 s, peak RSS 13.62 GiB under a 14G cap (honest peak).
+
+AND THE OTHER CANDIDATE DOES NOT CLOSE IT.  A 14-bit store buys 9 tiles
+against a 16-tile gap and is 7 SHORT.  Stated plainly rather than talked up.
+
+BOTH ESTIMATES IN THE BRIEF WERE WRONG, IN OPPOSITE DIRECTIONS.  GWTWO derived
+"14-bit -> ~118, saving 17" and "codebook -> ~93, saving 42" from bits over
+RAMB36 capacity.  MEASURED: 126 (saving 9) and 99 (saving 36).
+
+THE MECHANISM, MEASURED at six points, one Vivado at a time on the BC-250,
+sim/ooc_lutdiet_ports.tcl, LUTDIET_FLATTEN=none LUTDIET_NOOPT=1:
+
+  tag        DSP    LUT     FF  RAMB36  RAMB18   tile      WNS  synth_s
+  head        41   5073   3511     135      12    141    0.971      425
+  sw16        41   5073   3511     135      12    141    0.971      426
+  sw14        41   5070   3412     126      12    132    0.971      424
+  sw11        41   5061   3115      99      12    105    0.971      415   LOSSY PROBE
+  sw9         41   5055   2917      81      12     87    0.971      415   LOSSY PROBE
+  sw9_4_1     41   5075   3324     126      12    132    0.971      627
+
+  126/14 = 99/11 = 81/9 = 9.0000 EXACTLY.
+
+Vivado maps this ROM as one 32Kx1 cascade PER BIT PLANE -- ceil(266240/32768)
+= 9 -- so cost is LINEAR IN WORD WIDTH and indifferent to how bits are grouped.
+That is why splitting 14 bits into 9+4+1 across three arrays costs 126, the
+same as one 14-bit array, to the tile.  DO NOT RETRY SPLITTING.
+
+DSP IS 41 AT EVERY POINT and WNS is +0.971 at every point, byte-identical.
+The brief's central constraint -- a BRAM lever that spends a DSP is a
+regression, because ROUTE2 measured the routed design DSP-bound at 80.63% --
+is met with no DSP moved at all.
+
+CONTROL: `head` is the shipping file extracted with no rewrite and reproduces
+TRACK GWTWO's gw1 in every field (135/141/5073/3511/41/+0.971).  `sw16` is the
+rewriter at 16 bits and reproduces `head` in every field but synth_s.
+
+THE ORACLE: hw/fk33/results/gain16_2026-08-30/gain16_romoracle.vhd drives all
+65 norm ops at the real NN=4096 and compares the gain word stream into
+rmsnorm_rs_mem's bank port against norm_w_9b.hex ELEMENT BY ELEMENT at the full
+266,240 length.  Not a round trip: the only reference is the file on disk.
+The LANDED file PASSES, 266,240 compared, 0 mismatched.
+
+TEETH: 8 mutants.  7 bite.  E3 (codebook built in DESCENDING order) does NOT
+bite and is reported under its own name -- it is a consistent permutation, a
+valid alternative encoding, and an oracle that flagged it would be wrong.
+E5a corrupts the ONE codeword for a value occurring EXACTLY ONCE in 266,240
+and is caught with mismatched=1: that is the resolution floor.
+
+SIDE FINDING, and it generalises: EIGHT hand-maintained source-closure lists
+have now been found dead across four tracks, TWO of them by this track's
+one-second invariant (closure_audit.py) that nobody had found by hand:
+sim/mutate_fk33_seam.sh and tools/capture_normw.sh.  The invariant is pure
+text -- for every X.vhd in a list, every `entity work.Y` X.vhd instantiates
+must also be in that list -- and it is teeth-checked in both directions.
+COPYING a list rotted 8 for 8; BORROWING one did not rot at all.
+
+NOT ANSWERED: whether the composed design still ROUTES with the codebook in
+it; why the 16-bit point is 135 and not 9x16=144; the elaboration cost of
+building the codebook inside Vivado.

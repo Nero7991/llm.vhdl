@@ -1,0 +1,63 @@
+TRACK GAIN16 -- SECOND PREDICTION, registered 2026-08-31 BEFORE the `swcb`
+CSV existed (verified: SWCB_STILL_RUNNING at the moment of writing).
+
+WHY A SECOND ONE.  My first prediction was fitted to a mode-grid argument and
+was falsified by two of its own falsifiers.  The replacement mechanism -- 9
+RAMB36 per bit of stored word -- was DERIVED FROM three of the six points it
+explains, so it has not yet predicted anything it was not fitted to.  A model
+that reproduces its own calibration points is worth nothing; that is the exact
+failure CLAUDE.md records, where a one-parameter model fitted to one point was
+12 percentage points wrong on the next.  This is the out-of-sample test.
+
+THE MECHANISM, and its KNOWN EXCEPTION stated up front:
+
+  MEASURED   9-bit -> 81   11-bit -> 99   14-bit -> 126     all exactly 9.0000/bit
+  MEASURED  16-bit -> 135, where the rule predicts 16 x 9 = 144.
+
+  So the rule holds at 9, 11 and 14 and FAILS at 16 by exactly one bit plane.
+  It is NOT a law and must not be quoted as one.  See RECONCILIATION below.
+
+PREDICTED for `swcb`, the codebook (266,240 x 11 index ROM + 1,567 x 16
+codebook requested `distributed`):
+
+  RAMB36    99      The index store is the SAME SHAPE as the sw11 probe
+                    (266,240 x 11), which MEASURED 99.  The codebook is
+                    asked for distributed and should take none.
+  RAMB18    12      unchanged, rmsnorm_rs_mem's three vector banks
+  tile     105      = 99 + 12/2
+  DSP       41      MUST NOT MOVE.  This is the gating criterion, not a
+                    prediction: ROUTE2 measured the routed design DSP-bound
+                    at 80.63%, so any DSP movement makes the lever a
+                    regression whatever it does to BRAM.
+  CLB LUT  5,700 .. 6,300   ESTIMATE.  sw11 measured 5,061 and a 2,048-deep
+                    16-bit distributed ROM is roughly 16 x 32 = 512 LUT6 plus
+                    mux, so 600-1,200 added.  ASSUMPTION: Vivado honours
+                    `rom_style = "distributed"` on a combinationally-read
+                    constant array.
+  WNS      +0.7 .. +0.971   ESTIMATE.  The codebook inserts one LUT level
+                    between the index ROM's registered output and the unit's
+                    bank write port, on a path that had 0.971 ns of slack.
+
+GAP, DERIVED, against TRACK ROUTE2's MEASURED composed 253.5 of 372.5:
+  253.5 + 99 = 352.5  ->  +20.0 TILES SPARE, i.e. the 16-tile gap CLOSES.
+
+FALSIFIERS, named now so the answer only has to be classified:
+
+  G1  RAMB36 above 105.  Then the codebook took block RAM despite the
+      attribute, or the index store is not the shape sw11 measured, and the
+      99 must not be quoted.
+  G2  DSP not 41.  Then the lever is a REGRESSION and must not land, however
+      many tiles it wins.
+  G3  CLB LUT above 8,000.  Then the combinational codebook costs more than a
+      registered BRAM stage would, and the pipeline-stage version is worth
+      the NN+3 load it would cost.
+  G4  WNS negative.  Then the added LUT level does not fit and the codebook
+      must be registered.
+  G5  RAMB36 exactly 144 or exactly 135.  Either would mean the index ROM did
+      not narrow at all and the whole mechanism is wrong.
+
+WHAT THIS PREDICTION CANNOT SETTLE: the elaboration time.  `swcb` had already
+been in Vivado's RTL elaboration for over 20 minutes when this was written,
+against 425 s for the whole of `head`, so whatever the area says, the
+generated form's elaboration cost is a separate and possibly disqualifying
+number.  `swcb2` is the control for that and is queued behind it.

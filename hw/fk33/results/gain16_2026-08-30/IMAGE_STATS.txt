@@ -1,0 +1,13 @@
+TRACK GAIN16 -- norm_w_9b.hex re-measured independently, 2026-08-30
+md5 69f614a1515e1160f5dc9e8a9e72fdc3
+count            266240
+distinct         1567      -> an 11-bit index
+min / max        0x10 / 0x2FE0
+OR over all      0x3FFF  -> bits 15 and 14 are ALWAYS ZERO, 14 bits suffice
+entropy          9.9562 bits/element
+vectors          65, all distinct
+values occurring exactly once: 19   <- what a random-index test misses
+
+Every figure reproduces TRACK GWTWO's section 7 exactly.  Re-measured
+rather than carried over, because a model whose INPUT was sound and
+whose mechanism was backwards is the failure recorded in CLAUDE.md.

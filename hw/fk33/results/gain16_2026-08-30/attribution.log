@@ -1,0 +1,24 @@
+=== PHASE 2a: the oracle on the LANDED file ===
+EXTRACT OK /mnt/storage/gain16/lt_land.vhd lines 1818..2980 (1163 lines) -> /mnt/storage/gain16/top_land.vhd
+MKPROBE OK -> /mnt/storage/gain16/probe_land.vhd
+GAIN16_ORACLE_ROW land mutant=none verdict=PASS rc=0 compared=266240 mismatched=0 never_written=0 wrong_nidx=0
+=== PHASE 2b: the ATTRIBUTION CONTROL, sim:tb_llama_top_normw per mutant ===
+GAIN16_ATTRIB_ROW base_head mutant=none rc=0 NO_OVERALL_LINE
+GAIN16_ATTRIB_ROW base_land mutant=none rc=0 NO_OVERALL_LINE
+MUTATE OK T1 -> /mnt/storage/gain16/attrib/t_head_T1/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW head_T1 mutant=T1 rc=1 OVERALL PASS 0 FAIL 1
+MUTATE OK T2 -> /mnt/storage/gain16/attrib/t_head_T2/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW head_T2 mutant=T2 rc=1 OVERALL PASS 0 FAIL 1
+MUTATE OK T3 -> /mnt/storage/gain16/attrib/t_head_T3/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW head_T3 mutant=T3 rc=1 OVERALL PASS 0 FAIL 1
+MUTATE OK E1 -> /mnt/storage/gain16/attrib/t_cb_E1/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW cb_E1 mutant=E1 rc=1 OVERALL PASS 0 FAIL 1
+MUTATE OK E2 -> /mnt/storage/gain16/attrib/t_cb_E2/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW cb_E2 mutant=E2 rc=1 OVERALL PASS 0 FAIL 1
+MUTATE OK E3 -> /mnt/storage/gain16/attrib/t_cb_E3/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW cb_E3 mutant=E3 rc=0 OVERALL PASS 1 FAIL 0
+MUTATE OK E5a -> /mnt/storage/gain16/attrib/t_cb_E5a/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW cb_E5a mutant=E5a rc=0 OVERALL PASS 1 FAIL 0
+MUTATE OK E5b -> /mnt/storage/gain16/attrib/t_cb_E5b/rtl/llama_top.vhd.m
+GAIN16_ATTRIB_ROW cb_E5b mutant=E5b rc=0 OVERALL PASS 1 FAIL 0
+GAIN16_PHASE2_DONE

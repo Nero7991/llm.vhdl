@@ -1,0 +1,86 @@
+GAIN16_IMAGE 69f614a1515e1160f5dc9e8a9e72fdc3  /home/labuser/rmswire/img/norm_w_9b.hex
+== head start 2026-08-31T01:20:28-04:00 rtl=/home/labuser/gain16/rtl_head avail=13G
+== head topmd5 21c7f1f9bbe414d90e9feee232dfad94  /home/labuser/gain16/rtl_head/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=head top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T01:20:28-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           0          12           0           1          13
+Swap:             46           1          45
+tag=head peak_rss_kib=12094624 peak_rss_gib=11.53 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== head rc=0 2026-08-31T01:28:31-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5073,5073,0,3511,135,12,141,0,276,0,0,0.971,248.2005460412013,425,-1,5073,3511,41,141
+tag=head peak_rss_kib=12094624 peak_rss_gib=11.53 exit=0
+== sw16 start 2026-08-31T01:28:31-04:00 rtl=/home/labuser/gain16/rtl_sw16 avail=13G
+== sw16 topmd5 0bac6bde320f3cda658d6798ab57e4fe  /home/labuser/gain16/rtl_sw16/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=sw16 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T01:28:31-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          12           0           1          13
+Swap:             46           1          45
+tag=sw16 peak_rss_kib=12140936 peak_rss_gib=11.58 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== sw16 rc=0 2026-08-31T01:36:33-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5073,5073,0,3511,135,12,141,0,276,0,0,0.971,248.2005460412013,426,-1,5073,3511,41,141
+tag=sw16 peak_rss_kib=12140936 peak_rss_gib=11.58 exit=0
+== sw14 start 2026-08-31T01:36:33-04:00 rtl=/home/labuser/gain16/rtl_sw14 avail=13G
+== sw14 topmd5 5693e1d2ea82947f71dd5ac98427c6cd  /home/labuser/gain16/rtl_sw14/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=sw14 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T01:36:33-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          12           0           1          13
+Swap:             46           1          45
+tag=sw14 peak_rss_kib=12091772 peak_rss_gib=11.53 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== sw14 rc=0 2026-08-31T01:44:36-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5070,5070,0,3412,126,12,132,0,276,0,0,0.971,248.2005460412013,424,-1,5070,3412,41,132
+tag=sw14 peak_rss_kib=12091772 peak_rss_gib=11.53 exit=0
+== sw11 start 2026-08-31T01:44:36-04:00 rtl=/home/labuser/gain16/rtl_sw11 avail=13G
+== sw11 topmd5 539e09a75d59fb515cc7988d3f96879f  /home/labuser/gain16/rtl_sw11/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=sw11 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T01:44:36-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          13           0           1          13
+Swap:             46           1          45
+tag=sw11 peak_rss_kib=12132296 peak_rss_gib=11.57 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== sw11 rc=0 2026-08-31T01:52:29-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5061,5061,0,3115,99,12,105,0,276,0,0,0.971,248.2005460412013,415,-1,5061,3115,41,105
+tag=sw11 peak_rss_kib=12132296 peak_rss_gib=11.57 exit=0
+== sw9 start 2026-08-31T01:52:29-04:00 rtl=/home/labuser/gain16/rtl_sw9 avail=13G
+== sw9 topmd5 897df653d159e5e12649904ef64c0583  /home/labuser/gain16/rtl_sw9/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=sw9 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T01:52:29-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          13           0           0          13
+Swap:             46           1          45
+tag=sw9 peak_rss_kib=12079944 peak_rss_gib=11.52 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== sw9 rc=0 2026-08-31T02:00:21-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5055,5055,0,2917,81,12,87,0,276,0,0,0.971,248.2005460412013,415,-1,5055,2917,41,87
+tag=sw9 peak_rss_kib=12079944 peak_rss_gib=11.52 exit=0
+== sw9_4_1 start 2026-08-31T02:00:21-04:00 rtl=/home/labuser/gain16/rtl_sw9_4_1 avail=13G
+== sw9_4_1 topmd5 bd98173babfcc33c39c72c77bcb5440c  /home/labuser/gain16/rtl_sw9_4_1/ooc_normadapt_top.vhd
+== ooc_lutdiet_run tag=sw9_4_1 top=ooc_normadapt gen='NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex' : 2026-08-31T02:00:21-04:00
+df: /mnt/storage: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  473G  216G  256G  46% /
+               total        used        free      shared  buff/cache   available
+Mem:              14           1          12           0           0          13
+Swap:             46           1          45
+tag=sw9_4_1 peak_rss_kib=12080864 peak_rss_gib=11.52 exit=0
+SENTINEL OK: LUTDIET_DONE ooc_normadapt
+== sw9_4_1 rc=0 2026-08-31T02:11:55-04:00
+ooc_normadapt,"NORM_W_IMAGE=/home/labuser/rmswire/img/norm_w_9b.hex",41,5075,5075,0,3324,126,12,132,0,276,0,0,0.971,248.2005460412013,627,-1,5075,3324,41,132
+tag=sw9_4_1 peak_rss_kib=12080864 peak_rss_gib=11.52 exit=0
+GAIN16_SYNTH_ALL_DONE
