@@ -1,0 +1,5 @@
+C4_BEGIN elab tag=c3img part=xcvu33p-fsvh2104-2L-e
+C4_READ 98 files
+C4_ELAB_CELLS 429733
+C4_ELAB_PORTS 36529
+C4_DONE elab c3img

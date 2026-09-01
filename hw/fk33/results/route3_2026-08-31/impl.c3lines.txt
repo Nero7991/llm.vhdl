@@ -1,0 +1,22 @@
+C4_BEGIN impl tag=c3img dcp=/mnt/storage/route3_2026-08-31/out/c3img_synth.dcp pblock=1
+C4_PBLOCK_RANGE CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+C4_OPT_SECONDS 154
+C4_UTIL c3img opt lut 265711 lut_logic 237869 lut_mem 27842 ff 238176 carry8 12176 f7 20235 f8 3970 bram 351.5 uram 0 dsp 2177 clb NA
+C4_PLACE_SECONDS 1450
+C4_UTIL c3img placed lut 261663 lut_logic 234346 lut_mem 27317 ff 240297 carry8 12176 f7 20235 f8 3970 bram 351.5 uram 0 dsp 2177 clb 46550
+C4_PLACED placed clb_sites_used 46550
+C4_PLACED placed wns -0.331
+C4_PLACED placed failing_endpoints_max 295
+C4_PHYSOPT_SECONDS 690
+C4_PLACED physopt clb_sites_used 46573
+C4_PLACED physopt wns -0.069
+C4_PLACED physopt failing_endpoints_max 134
+C4_ROUTE_SECONDS 2522
+C4_ROUTE_RC 0
+C4_UTIL c3img routed lut 261664 lut_logic 234347 lut_mem 27317 ff 243263 carry8 12176 f7 20235 f8 3970 bram 351.5 uram 0 dsp 2177 clb 46573
+C4_ROUTE_HIERPORT 93489  (out-of-context port nets, NOT errors)
+C4_ROUTE_STATUS nets=3526125 errors=0 unrouted=0 partial=0
+C4_TIMING wns=-0.815 whs=0.010
+C4_CLKWNS core_clk period=5.000 wns=-0.815
+C4_CLKWNS hbm_aclk period=4.000 wns=0.037
+C4_DONE impl c3img

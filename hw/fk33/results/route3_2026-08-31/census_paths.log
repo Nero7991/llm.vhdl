@@ -1,0 +1,265 @@
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source census_timing.tcl -notrace
+Command: open_checkpoint /mnt/storage/route3_2026-08-31/out/c3img_routed.dcp
+
+Starting open_checkpoint Task
+
+Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.05 . Memory (MB): peak = 1307.031 ; gain = 0.000 ; free physical = 4049 ; free virtual = 51501
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+Netlist sorting complete. Time (s): cpu = 00:00:01 ; elapsed = 00:00:01 . Memory (MB): peak = 3090.789 ; gain = 0.000 ; free physical = 1934 ; free virtual = 49753
+INFO: [Netlist 29-17] Analyzing 41971 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 13 CPU seconds
+INFO: [Project 1-479] Netlist was created with Vivado 2023.2
+INFO: [Project 1-570] Preparing netlist for logic optimization
+Read ShapeDB Complete: Time (s): cpu = 00:00:00.65 ; elapsed = 00:00:00.66 . Memory (MB): peak = 3977.125 ; gain = 88.188 ; free physical = 1231 ; free virtual = 49113
+INFO: [Timing 38-478] Restoring timing data from binary archive.
+INFO: [Timing 38-479] Binary timing data restore complete.
+INFO: [Project 1-856] Restoring constraints from binary archive.
+INFO: [Project 1-853] Binary constraint restore complete.
+INFO: [Designutils 20-5722] Start Reading Physical Databases.
+Reading placement.
+Read Netlist Cache: Time (s): cpu = 00:00:00.72 ; elapsed = 00:00:00.73 . Memory (MB): peak = 6482.750 ; gain = 0.000 ; free physical = 279 ; free virtual = 46795
+Reading placer database...
+Read Device Cache: Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 6482.750 ; gain = 0.000 ; free physical = 528 ; free virtual = 47041
+Read PlaceDB: Time (s): cpu = 00:00:16 ; elapsed = 00:00:16 . Memory (MB): peak = 7072.156 ; gain = 589.406 ; free physical = 338 ; free virtual = 46481
+Read PulsedLatchDB: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 7072.156 ; gain = 0.000 ; free physical = 338 ; free virtual = 46481
+Reading routing.
+Read RouteStorage: Time (s): cpu = 00:00:09 ; elapsed = 00:00:09 . Memory (MB): peak = 7217.086 ; gain = 144.930 ; free physical = 519 ; free virtual = 46181
+Read Physdb Files: Time (s): cpu = 00:00:26 ; elapsed = 00:00:26 . Memory (MB): peak = 7217.086 ; gain = 734.336 ; free physical = 519 ; free virtual = 46180
+Restored from archive | CPU: 26.650000 secs | Memory: 820.581070 MB |
+Finished XDEF File Restore: Time (s): cpu = 00:00:26 ; elapsed = 00:00:27 . Memory (MB): peak = 7217.086 ; gain = 734.336 ; free physical = 517 ; free virtual = 46181
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.04 . Memory (MB): peak = 7227.086 ; gain = 0.000 ; free physical = 282 ; free virtual = 45997
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 5591 instances were transformed.
+  BUFG => BUFGCE: 1 instance 
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 2176 instances
+  DSP48E2 => DSP48E2 (inverted pins: RSTA, RSTB, RSTP) (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 1 instance 
+  RAM16X1D => RAM32X1D (RAMD32(x2)): 16 instances
+  RAM32M => RAM32M (RAMD32(x6), RAMS32(x2)): 41 instances
+  RAM32M16 => RAM32M16 (RAMD32(x14), RAMS32(x2)): 3134 instances
+  RAM32X1D => RAM32X1D (RAMD32(x2)): 8 instances
+  RAM32X1S => RAM32X1S (RAMS32): 32 instances
+  RAM64M8 => RAM64M8 (RAMD64E(x8)): 165 instances
+  RAM64X1D => RAM64X1D (RAMD64E(x2)): 17 instances
+
+INFO: [Project 1-604] Checkpoint was created with Vivado v2023.2 (64-bit) build 4029153
+open_checkpoint: Time (s): cpu = 00:01:59 ; elapsed = 00:01:43 . Memory (MB): peak = 7227.121 ; gain = 5920.090 ; free physical = 492 ; free virtual = 46106
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "b_gdn_z_valid" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "c_attn_start" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "core_aresetn" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "core_rst" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+get_timing_paths: Time (s): cpu = 00:04:36 ; elapsed = 00:01:24 . Memory (MB): peak = 8814.379 ; gain = 1587.258 ; free physical = 327 ; free virtual = 43171
+R3CENSUS npaths 200
+R3CENSUS -0.815 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.815 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.815 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.815 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.813 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.813 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.813 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.813 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.812 a_eng/eng/dw_reg[1][32] -> a_eng/eng/dut
+R3CENSUS -0.812 a_eng/eng/dw_reg[1][32] -> a_eng/eng/dut
+R3CENSUS -0.812 c_attn/u_quant/m_data_r_reg[7] -> c_attn/gvrec[135].vrec_reg[1087]/D
+R3CENSUS -0.812 c_attn/u_quant/m_data_r_reg[7] -> c_attn/gvrec[135].vrec_reg[1087]/D
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.811 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 c_attn/u_arr/acc[301][23]_i_12_psdsp -> c_attn/u_arr/er_r_reg
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.810 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.809 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.808 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.807 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.806 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.806 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.806 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.806 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.806 c_attn/ar_rdi_reg[0]_rep__24/C -> c_attn/u_arr/od_r_reg[26]
+R3CENSUS -0.806 c_attn/ar_rdi_reg[0]_rep__24/C -> c_attn/u_arr/od_r_reg[26]
+R3CENSUS -0.806 c_attn/ar_rdi_reg[0]_rep__24/C -> c_attn/u_arr/od_r_reg[26]
+R3CENSUS -0.806 c_attn/ar_rdi_reg[0]_rep__24/C -> c_attn/u_arr/od_r_reg[26]
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.805 c_attn/ar_rdi_reg[0]_rep__19/C -> c_attn/u_arr/od_r_reg[21]
+R3CENSUS -0.805 c_attn/ar_rdi_reg[0]_rep__19/C -> c_attn/u_arr/od_r_reg[21]
+R3CENSUS -0.805 c_attn/ar_rdi_reg[0]_rep__19/C -> c_attn/u_arr/od_r_reg[21]
+R3CENSUS -0.805 c_attn/ar_rdi_reg[0]_rep__19/C -> c_attn/u_arr/od_r_reg[21]
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.804 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.803 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 c_attn/ar_rdi_reg[0]_rep__0/C -> c_attn/u_arr/od_r_reg[2]
+R3CENSUS -0.802 c_attn/ar_rdi_reg[0]_rep__0/C -> c_attn/u_arr/od_r_reg[2]
+R3CENSUS -0.802 c_attn/ar_rdi_reg[0]_rep__0/C -> c_attn/u_arr/od_r_reg[2]
+R3CENSUS -0.802 c_attn/ar_rdi_reg[0]_rep__0/C -> c_attn/u_arr/od_r_reg[2]
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.802 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 c_attn/u_quant/m_data_r_reg[0]_rep -> c_attn/gkrec[200].krec_reg[1600]/D
+R3CENSUS -0.801 c_attn/u_quant/m_data_r_reg[0]_rep -> c_attn/gkrec[200].krec_reg[1600]/D
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS -0.801 a_eng/eng/dut -> a_eng/eng/dut
+R3CENSUS_DONE
+INFO: [Common 17-206] Exiting Vivado at Mon Aug 31 19:53:26 2026...
