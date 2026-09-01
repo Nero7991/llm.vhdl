@@ -119,14 +119,18 @@ extraction) plus one changed variable: the real 266,240-line image, md5
   OOC, the record-free form elaborated in minutes at OOC; if the composed
   synth sits in elaboration anyway, that IS the result and it is reported.
 
-**ROUTE3 progress at this writing:** elab DONE in 7m55s (no hang; ROUTE2's
-ramp took 1m34s, so the codebook costs about six minutes and ~25 GB of peak
-ALLOCATION at elaboration -- RSS stayed ~8 GiB; quote RSS, not the
-allocation). Synth DONE in 1,108 s. **Synth-stage utilization: LUT 265,767
-(+109 against ROUTE2's ramp), FF 238,176 (+344), BRAM 351.5 (+98, one tile
-BETTER than the paper 352.5), DSP 2,177 (unmoved). The OOC +20 margin
-survives composition: 351.5 against 372.5 = +21.0, MEASURED at composed
-synth.** The route is the remaining question.
+**TRACK ROUTE3 COMPLETE (`8eaaf18`). Branch 2 fires: routes but WNS
+negative.** `nets=3,526,125 errors=0 unrouted=0 partial=0`;
+**BRAM 351.5 against 372.5 in `pb_core` = +21.0 headroom** -- the OOC +20
+margin survives composition, one tile better than the paper sum. DSP unmoved
+at 2,177; LUT +109, FF +344 against ROUTE2's ramp. **WNS -0.815 against
+-0.575, failing endpoints 9,056 -> 25,860, TNS -876 -> -7,437, hold clean.**
+The 200-path census on the routed checkpoint puts **162 in `matvec_core`,
+28 in the attention array, and ZERO in `d_norm`**: the gain codebook is no
+critical path; the regression lands on the lever-C / `CB_BCAST` family
+LEVERC48 already named. **The fit question is closed with the gain store
+in.** The timing lever hunt is its own track and its quarry is unchanged.
+Write-up: `docs/debugging/2026-08-31_route3-composed-route-with-the-gain-image.md`.
 
 **The final-tree gate is GREEN.** Clean archive of `bebd952` (codebook,
 closure repairs, generator option, floor raise, this board entry):
@@ -1701,7 +1705,8 @@ the defect this section's own rule describes.
 
 | track | question | owns |
 |---|---|---|
-| **ROUTE3** (dispatcher, in session) | Does the composed A+B+C+D route with a NON-EMPTY `NORM_W_IMAGE` (the codebook in)? Never drawn by anyone. Workstation lane, after the final-tree gate frees the box. | `hw/fk33/gen_compose4_top.py`, `hw/fk33/results/route3_*` |
+| **STEP 3 / the card top (row N3)** | UNBLOCKED ON FIT: ROUTE3 measured the composition routing with the gain store in, +21.0 BRAM headroom, DSP unmoved. The card top does not exist; build it token-identical to `llama_top` with `matvec_int4_desc_axi` as the A binding and RMSWIRE's `w_active` deadline honoured structurally. **Runs in the dispatcher's own session; NO SUBAGENTS for RTL tracks.** | a NEW RTL top + its benches; NOT `rtl/llama_top.vhd` |
+| **TIMING lever hunt** (queued) | ROUTE3's -0.815 WNS / 25,860 endpoints, 81% in `matvec_core`, `CB_BCAST` the named suspect. Cheap first move: a placement-directive sweep on the routed ROUTE3 checkpoint. | `hw/fk33/results/route3_*`, Vivado lane |
 
 **TRACK CARDTOP was dispatched and RECALLED the same hour, 2026-08-31.** It
 went to a harness subagent, and Oren's ruling is that the subagent model is
