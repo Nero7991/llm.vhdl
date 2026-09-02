@@ -400,7 +400,29 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=107  # RAISED FROM 105, 2026-09-02, by the dispatcher.  TWO new
+BASELINE_PASS=108  # RAISED FROM 107, 2026-09-02, TRACK CARDTOP increment 4.
+                   #    ONE new row, `sim:tb_u_seam`, and 107 + 1 = 108 agrees.
+                   #
+                   #    NOT taken from the full run's headline number.  That
+                   #    run reported OVERALL PASS 112 and this script's own
+                   #    warning refused it: the working tree carried FOUR rows
+                   #    a clean checkout does not get (sim:tb_matvec_fk33,
+                   #    _desc, _desc_dual, _desc_xexp), which depend on a model
+                   #    set rather than on the repository.  112 - 4 = 108, but
+                   #    subtraction is an argument, not a measurement, so the
+                   #    new row was measured on its own instead:
+                   #
+                   #      `git archive HEAD` + this change, --only tb_u_seam:
+                   #        OVERALL PASS 1  FAIL 0  BUILD-ERROR 0  SKIPPED 0
+                   #        tb_u_seam: pulse checks=11914 mismatches=0
+                   #                 | ack checks=11914 mismatches=0
+                   #
+                   #    tb_u_seam reads no vector file and needs no model, so
+                   #    it is reachable from a bare clone -- which is the whole
+                   #    property this floor is supposed to have.
+                   #
+                   # PREVIOUSLY 107, RAISED FROM 105, 2026-09-02, by the
+                   #    dispatcher.  TWO new
                    #    rows from TRACK CARDTOP 3a, and 105 + 2 = 107 agrees.
                    #
                    #    MEASURED on `git archive ec2dc1e`, GHDL 1.0.0 mcode,

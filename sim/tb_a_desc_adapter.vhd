@@ -286,12 +286,29 @@ begin
     procedure issue(i : integer) is
     begin
       clr_log <= '1';
-      -- bump the epoch the way seq_desc_fetch does at S_ISSUE, so a stale
-      -- echo is distinguishable from a fresh one
-      job_epoch <= job_epoch + 1;
       wait until rising_edge(clk);
       clr_log <= '0';
-      wait until rising_edge(clk);
+
+      -- FOREIGN EPOCH BUMPS.  seq_desc_fetch keeps ONE `epoch_r` shared
+      -- across all five units and bumps it at every issue to ANY of them, so
+      -- between two A jobs the epoch advances by however many jobs went to
+      -- B, C or V.  Without these the epoch advances exactly once per A job
+      -- and an adapter that ignored D and counted its own jobs would agree on
+      -- every comparison.
+      --
+      -- MEASURED 2026-09-02, and this is why the loop is here: with the
+      -- adapter mutated back to latching the epoch at the issue edge -- the
+      -- real off-by-one this bench was supposed to be guarding -- the bench
+      -- still reported PASS, 2496 checks, 0 mismatches.  The epoch check was
+      -- not wrong, it was unreachable: the old code bumped `job_epoch` two
+      -- cycles BEFORE the start and then held it, so latching at issue and
+      -- latching a cycle later read the SAME value and no timing error could
+      -- be expressed.
+      for k in 0 to (i mod 3) loop
+        job_epoch <= job_epoch + 1;
+        wait until rising_edge(clk);
+      end loop;
+
       u_index <= std_logic_vector(to_unsigned(i, 16));
       u_start <= '1';
       -- D holds start until it sees ready; the accepting edge is the one
@@ -300,6 +317,13 @@ begin
         wait until rising_edge(clk);
         exit when u_ready = '1';
       end loop;
+      -- THE ONE INSTANT.  seq_desc_fetch bumps `epoch_r` ON this edge
+      -- (rtl/seq_desc_fetch.vhd:790) while `job_epoch <= epoch_r` (:932) is
+      -- combinational, so the adapter sees the OLD value during the accepting
+      -- cycle and the NEW one from the next cycle on.  S_COMPLETE compares
+      -- the echo against the NEW one (:834).  Bumping here rather than
+      -- earlier is what makes the two latch timings distinguishable.
+      job_epoch <= job_epoch + 1;
       wait until rising_edge(clk);
       u_start <= '0';
     end procedure;

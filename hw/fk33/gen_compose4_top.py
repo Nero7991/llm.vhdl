@@ -199,6 +199,22 @@ WIRE = {
     },
     # D's unit-facing vectors become internal; the glue slices U_A out of
     # them for the adapter and ties the units D does not have here.
+    # B and C are BOTH driven through rtl/u_seam.vhd.  They are nearly the
+    # same shape and the differences are exactly what the seam is
+    # parameterised over, read off the RTL rather than assumed:
+    #   B  rtl/gdn_block.vhd:625   `done` is a PULSE, and there are THREE
+    #                              error bits, ORed in the glue.
+    #   C  rtl/attn_block.vhd:1799 `done` is a LEVEL held until `done_ack`,
+    #                              and there is ONE `err`.
+    "gdn_block": {
+        "start": "w_b_start", "busy": "w_b_busy", "done": "w_b_done",
+        "err_conv": "w_b_err_conv", "err_g": "w_b_err_g",
+        "err_se": "w_b_err_se",
+    },
+    "attn_block": {
+        "start": "w_c_start", "busy": "w_c_busy", "done": "w_c_done",
+        "done_ack": "w_c_done_ack", "err": "w_c_err",
+    },
     "seq_desc_fetch": {
         "u_start": "w_u_start", "u_ready": "w_u_ready",
         "u_done":  "w_u_done",  "u_ack":   "w_u_ack",
@@ -214,7 +230,7 @@ WIRE = {
 WIRE_SIGNALS = [
     ("w_a_awvalid",  "std_logic"),
     ("w_a_awready",  "std_logic"),
-    ("w_a_awaddr",   "std_logic_vector(7 downto 0)"),
+    ("w_a_awaddr",   None),   # width filled in from the engine's own port
     ("w_a_awprot",   "std_logic_vector(2 downto 0)"),
     ("w_a_wvalid",   "std_logic"),
     ("w_a_wready",   "std_logic"),
@@ -232,6 +248,18 @@ WIRE_SIGNALS = [
     ("w_u_err",      "std_logic_vector(NUNIT-1 downto 0)"),
     ("w_u_done_epoch", "std_logic_vector(NUNIT*EPOCH_W-1 downto 0)"),
     ("w_job_epoch",  "unsigned(EPOCH_W-1 downto 0)"),
+    ("w_b_start",    "std_logic"),
+    ("w_b_busy",     "std_logic"),
+    ("w_b_done",     "std_logic"),
+    ("w_b_err_conv", "std_logic"),
+    ("w_b_err_g",    "std_logic"),
+    ("w_b_err_se",   "std_logic"),
+    ("w_b_err",      "std_logic"),
+    ("w_c_start",    "std_logic"),
+    ("w_c_busy",     "std_logic"),
+    ("w_c_done",     "std_logic"),
+    ("w_c_done_ack", "std_logic"),
+    ("w_c_err",      "std_logic"),
 ]
 
 SRC_FILE = {
@@ -274,10 +302,15 @@ GLUE = """
   -- produces, so absent units read NOT ready, which is the one value that
   -- makes the omission visible rather than silent.
   -- ====================================================================
-  u_a : entity work.a_desc_adapter
+  -- LABELLED `seam_*`, NOT `u_a`/`u_b`/`u_c`.  VHDL identifiers are
+  -- case-insensitive and llama_map_pkg declares the slot indices `U_A`,
+  -- `U_B`, `U_C`, so an instance labelled `u_a` hides the constant `U_A`
+  -- and every `w_u_ready(U_A)` in this block becomes
+  -- "'u_a' is illegal in an expression".
+  seam_a : entity work.a_desc_adapter
     generic map (
       ADDR_W      => 40,
-      LITE_AW     => 8,
+      LITE_AW     => %LITE_AW%,
       DESC_STRIDE => 512,
       N_JOBS      => 311,
       EPOCH_W     => EPOCH_W)
@@ -309,9 +342,51 @@ GLUE = """
 
   w_a_awprot <= (others => '0');
 
-  -- Units B, C and V are NOT wired yet.  NOT ready, deliberately: see above.
+  -- ====================================================================
+  -- THE D-TO-B AND D-TO-C SEAMS.
+  --
+  -- One entity serves both.  rtl/u_seam.vhd latches `done` (so a PULSE is
+  -- caught), emits `unit_ack` (so a unit that HOLDS `done` is released),
+  -- latches `unit_err` with the completion, and echoes D's epoch.
+  --
+  -- THE EPOCH IS LATCHED ONE CYCLE AFTER ISSUE, inside the seam.  That is
+  -- not a detail: seq_desc_fetch bumps `epoch_r` ON the issue edge (:790)
+  -- while `job_epoch <= epoch_r` is combinational (:932), so a seam that
+  -- latched at issue would echo the OLD epoch and D would reject every
+  -- completion as stale at S_COMPLETE (:834).
+  -- ====================================================================
+  seam_b : entity work.u_seam
+    generic map (EPOCH_W => EPOCH_W)
+    port map (
+      clk => core_clk_i, rstn => core_aresetn,
+      u_start => w_u_start(U_B), u_ready => w_u_ready(U_B),
+      u_done  => w_u_done(U_B),  u_err   => w_u_err(U_B),
+      u_ack   => w_u_ack(U_B),   job_epoch => w_job_epoch,
+      u_done_epoch => w_u_done_epoch((U_B+1)*EPOCH_W-1 downto U_B*EPOCH_W),
+      unit_start => w_b_start, unit_busy => w_b_busy,
+      unit_done  => w_b_done,  unit_ack  => open,
+      unit_err   => w_b_err);
+
+  -- B publishes THREE error bits and the seam takes one.  ORed here rather
+  -- than inside the seam, because which bits exist is a property of the
+  -- unit and not of the contract.  gdn_block.vhd:162-164.
+  w_b_err <= w_b_err_conv or w_b_err_g or w_b_err_se;
+
+  seam_c : entity work.u_seam
+    generic map (EPOCH_W => EPOCH_W)
+    port map (
+      clk => core_clk_i, rstn => core_aresetn,
+      u_start => w_u_start(U_C), u_ready => w_u_ready(U_C),
+      u_done  => w_u_done(U_C),  u_err   => w_u_err(U_C),
+      u_ack   => w_u_ack(U_C),   job_epoch => w_job_epoch,
+      u_done_epoch => w_u_done_epoch((U_C+1)*EPOCH_W-1 downto U_C*EPOCH_W),
+      unit_start => w_c_start, unit_busy => w_c_busy,
+      unit_done  => w_c_done,  unit_ack  => w_c_done_ack,
+      unit_err   => w_c_err);
+
+  -- Unit V is NOT wired yet.  NOT ready, deliberately: see above.
   g_unwired : for u in 0 to NUNIT-1 generate
-    g_off : if u /= U_A generate
+    g_off : if u /= U_A and u /= U_B and u /= U_C generate
       w_u_ready(u) <= '0';
       w_u_done(u)  <= '0';
       w_u_err(u)   <= '0';
@@ -549,6 +624,8 @@ def main():
     top_ports = []          # (name, dir, type)
     inst_blocks = []
     summary = []
+    epoch_w_default = None
+    lite_aw = None
 
     for inst, ent, _which, over in INSTANCES:
         which, fname = SRC_FILE[ent]
@@ -594,6 +671,18 @@ def main():
                     "        rtl/llama_top.vhd %s ooc_normadapt" % (path, path))
 
         gdefs = parse_generics(clause(text, ent, "generic"))
+        if ent == "seq_desc_fetch":
+            # NOT a hardcoded 4.  `EPOCH_W` is a generic of seq_desc_fetch and
+            # of llama_top, and the composed top instantiates D with its
+            # DEFAULTS, so the top's constant must be that default and not a
+            # second opinion about it.  hbm_map.py already recorded what an
+            # independent copy of a shared address costs: it becomes a fourth
+            # model of the same quantity, and the copies drift silently.
+            epoch_w_default = gdefs.get("EPOCH_W")
+            if epoch_w_default is None:
+                sys.exit("COMPOSE4 ABORT: seq_desc_fetch declares no EPOCH_W "
+                         "generic; the composed top cannot size w_job_epoch "
+                         "without inventing a value")
         for k in over:
             if k not in gdefs:
                 sys.exit("COMPOSE4 ABORT: %s has no generic %s" % (ent, k))
@@ -601,6 +690,23 @@ def main():
         gmap.update(over)
 
         ports = parse_ports(clause(text, ent, "port"), ent)
+        if ent == "fk33_engine":
+            # LITE_AW IS LIFTED FROM THE ENGINE'S OWN PORT, not written here.
+            # MEASURED 2026-09-02: the glue passed `LITE_AW => 8` and the
+            # engine declares `s_axi_awaddr : std_logic_vector(11 downto 0)`,
+            # so elaboration failed with `port width mismatch ... port width
+            # = 12, actual width = 8`.  The adapter's OWN bench cannot see
+            # this -- it drives a slave model of the adapter's chosen width,
+            # so it agrees with the adapter and not with the engine.  This is
+            # the third quantity in this file that had to stop being a
+            # literal for the same reason.
+            for pn_, dir_, tp_ in ports:
+                if pn_ == "s_axi_awaddr":
+                    m_ = re.search(r"\(\s*(\d+)\s+downto\s+0\s*\)", tp_)
+                    if not m_:
+                        sys.exit("COMPOSE4 ABORT: cannot read the width of "
+                                 "fk33_engine.s_axi_awaddr from %r" % tp_)
+                    lite_aw = int(m_.group(1)) + 1
         shared = dict(SHARED.get(ent, SHARED["_default"]))
         if a.wire:
             for pn_, net_ in WIRE.get(ent, {}).items():
@@ -701,6 +807,10 @@ def main():
         "use ieee.std_logic_1164.all;",
         "use ieee.numeric_std.all;",
         "use work.util_pkg.all;      -- clog2, used by attn_block's port widths",
+    ] + ([
+        "use work.llama_map_pkg.all; -- NUNIT and the U_* slot indices, used",
+        "                            -- by D's unit-facing vectors",
+    ] if a.wire else []) + [
         "library unisim;",
         "use unisim.vcomponents.all; -- BUFGCE",
         "",
@@ -718,6 +828,30 @@ def main():
         "    hbm_aclk     : in  std_logic;",
         "",
     ]
+
+    if a.wire:
+        # THE SEAM'S TWO REMAINING INPUTS, EXPORTED RATHER THAN INVENTED.
+        #
+        # `a_arena_base` is the HBM base of the descriptor arena, which is
+        # host-supplied at run time and is legitimately a port.
+        #
+        # `a_job_index` is NOT settled, and it is exported rather than wired
+        # because nothing in the RTL decides it yet.  The obvious candidate is
+        # D's `job_ordinal`, and it is WRONG twice over: it is 8 bits, so it
+        # cannot address the 311 A jobs of the 9B token program at all, and
+        # rtl/llama_top.vhd uses it as `wsyn(r, c, j_ord)` -- a synthetic
+        # weight selector in the simulation model, not a descriptor pointer.
+        # Wiring it would have elaborated cleanly and produced wrong
+        # descriptors on the card, which is the exact failure class this
+        # project keeps finding.  See section 13 of
+        # docs/debugging/2026-08-31_cardtop-design-note.md.
+        top_ports.append(("a_arena_base", "in", "std_logic_vector(39 downto 0)"))
+        top_ports.append(("a_job_index",  "in", "std_logic_vector(15 downto 0)"))
+        # The adapter's own issue counter.  Exported rather than left `open`
+        # so that a bring-up read has something to compare against the 311
+        # jobs the token program contains; an `open` output is invisible and
+        # this is the cheapest liveness signal subsystem A has.
+        top_ports.append(("a_jobs_issued", "out", "std_logic_vector(31 downto 0)"))
 
     w = max(len(p[0]) for p in top_ports)
     body = []
@@ -743,8 +877,17 @@ def main():
         "  signal hbm_aclk_i : std_logic;",
     ] + ([
         "",
-        "  -- nets carrying the D-to-A seam; see WIRE in the generator",
-    ] + ["  signal %-16s : %s;" % (n, t) for n, t in WIRE_SIGNALS]
+        "  -- EPOCH_W is LIFTED from seq_desc_fetch's own generic default, not",
+        "  -- written here.  The composed top instantiates D with its defaults,",
+        "  -- so a literal in this file would be a second, independent opinion",
+        "  -- about a width D alone owns, and the two would drift in silence.",
+        "  constant EPOCH_W : positive := %s;" % epoch_w_default,
+        "",
+        "  -- nets carrying the D-to-A, D-to-B and D-to-C seams; see WIRE",
+    ] + ["  signal %-16s : %s;"
+         % (n, t if t is not None
+              else "std_logic_vector(%d downto 0)" % (lite_aw - 1))
+         for n, t in WIRE_SIGNALS]
         if a.wire else []) + [
         "begin",
         "",
@@ -757,7 +900,8 @@ def main():
         "    hbm_aclk_i <= hbm_aclk;",
         "  end generate;",
         "",
-    ] + inst_blocks + (GLUE.splitlines() if a.wire else []) + [
+    ] + inst_blocks + (GLUE.replace("%LITE_AW%", str(lite_aw)).splitlines()
+                       if a.wire else []) + [
         "end architecture;",
         "",
     ]

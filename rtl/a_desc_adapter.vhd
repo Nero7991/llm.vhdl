@@ -116,6 +116,7 @@ architecture rtl of a_desc_adapter is
   signal wdone   : std_logic := '0';   -- this beat's W  handshake has happened
   signal err_q   : std_logic := '0';
   signal ep_q    : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+  signal ep_take : std_logic := '0';
   signal cnt_q   : unsigned(31 downto 0) := (others => '0');
 
   -- the register offsets, word-addressed as the unit decodes them
@@ -184,12 +185,31 @@ begin
       if rstn = '0' then
         st <= S_IDLE; awdone <= '0'; wdone <= '0';
         err_q <= '0'; addr_q <= (others => '0'); cnt_q <= (others => '0');
+        ep_take <= '0'; ep_q <= (others => '0');
       else
+        -- the deferred epoch latch; see the note at `ep_take <= '1'` below
+        ep_take <= '0';
+        if ep_take = '1' then
+          ep_q <= job_epoch;
+        end if;
+
         case st is
 
           when S_IDLE =>
             awdone <= '0'; wdone <= '0';
             if u_start = '1' then
+              -- HAZARD, NOT YET A BUG, and it becomes one the moment
+              -- `u_index` is driven from D.  rtl/llama_top.vhd:3047 says of
+              -- this exact edge: "Latch at job_issue.  NOT at u_start:
+              -- u_start leads job_issue by one cycle and job_* still decodes
+              -- the PREVIOUS live bank there."  That applies to every job_*
+              -- field, not only to the epoch below.
+              --
+              -- It is safe TODAY only because `u_index` is a top-level input
+              -- of the composed top and is not sourced from D's decode at
+              -- all.  When it is wired -- and hw/fk33/gen_compose4_top.py
+              -- records why it is not wired yet -- it must be sampled one
+              -- cycle later, the same way `ep_take` defers the epoch.
               idx_v  := unsigned(u_index);
               base_v := (others => '0');
               base_v(ADDR_W-1 downto 0) := unsigned(arena_base);
@@ -214,12 +234,27 @@ begin
                 bad_v := '1';
               end if;
 
-              -- latched in BOTH arms.  A REFUSED job still completes from
+              -- Armed in BOTH arms.  A REFUSED job still completes from
               -- D's point of view -- it raises u_done with u_err -- so it
               -- must carry the epoch of the job D issued, or D rejects the
               -- error report as stale and waits forever on a job that will
               -- never be retried.
-              ep_q <= job_epoch;
+              --
+              -- ARMED HERE, LATCHED ONE CYCLE LATER.  seq_desc_fetch drives
+              -- `job_epoch <= epoch_r` (:932) and bumps `epoch_r` ON this
+              -- edge (:790), so `job_epoch` still carries the OLD value in
+              -- the issue cycle while S_COMPLETE compares the echo against
+              -- the NEW one (:834).  Latching here would be off by one on
+              -- EVERY job.  llama_top's seven proven adapters all latch on
+              -- `job_issue`, which D raises one cycle later; `ep_take` is
+              -- that same instant without adding a port.
+              --
+              -- FOUND 2026-09-02, and it had passed a 2,496-check bench:
+              -- that bench's D model carried the same off-by-one, so the
+              -- adapter and its oracle agreed with each other and neither
+              -- agreed with seq_desc_fetch.  A model written by the author
+              -- of the thing it checks is not an oracle.
+              ep_take <= '1';
               if bad_v = '1' then
                 err_q <= '1';
                 st    <= S_REFUSE;

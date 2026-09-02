@@ -240,6 +240,87 @@ STEP 4, the seam to D; then STEP 5, the token. The timing lever hunt
 (-0.815 WNS, `CB_BCAST` suspect) is queued and its cheapest first move is a
 placement-directive sweep on the ROUTE3 checkpoint.
 
+### 2026-09-02 late afternoon, in session, no subagents: the B/C seam landed and found a shipped bug in the A seam
+
+**`rtl/u_seam.vhd` (130 lines) is the D-to-unit control seam, and it serves
+BOTH B and C.** They are nearly the same shape and the differences are exactly
+what it is parameterised over, read off the RTL rather than assumed: B's `done`
+is a one-cycle PULSE with THREE error bits (`gdn_block.vhd:625,162-164`), C's is
+a LEVEL held until its own `done_ack` with ONE `err` (`attn_block.vhd:1799`).
+The seam latches `done`, emits `unit_ack`, and takes a single `unit_err` that
+the glue reduces. Both are instantiated in `gen_compose4_top.py --wire`, on
+slots `U_B` and `U_C`; only `U_V` and slot 3 remain tied NOT ready.
+
+**IT FOUND AN EPOCH BUG THAT HAD ALREADY SHIPPED IN `rtl/a_desc_adapter.vhd`
+(`3a145fd`), BEHIND A BENCH REPORTING 2,496 CHECKS AND 0 MISMATCHES.** Both it
+and the first draft of the seam latched `job_epoch` at the issue edge.
+`seq_desc_fetch` bumps `epoch_r` ON that edge (`:790`) and compares the echo
+against the bumped value at `S_COMPLETE` (`:834`), so **every completion would
+have been rejected as stale on the card**. `llama_top`'s seven adapters all
+latch on `job_issue` instead, and `llama_top:3047` says so in as many words:
+"Latch at job_issue. NOT at u_start". The rule existed and was lost by writing
+against a port list rather than against the working code.
+
+**The adapter's bench returned PASS for the bug AND PASS for the fix**, because
+it held `job_epoch` constant across each job, so the two latch timings read the
+same value and no timing error could be expressed. Both files are fixed and
+both benches now kill it: 312 mismatches of 2,496, and 200 of 200.
+
+**Two checks were true, correctly computed, and UNREACHABLE.** A generated
+epoch counter SURVIVED (D's `epoch_r` is global across five units; the bench
+only ever issued to one, so a per-job counter stayed in lockstep), and the error
+latch SURVIVED (no job in the stimulus ever reported an error). Foreign epoch
+bumps and an error stimulus were added; both mutants now die, and the bench
+REFUSES to pass a run where either stimulus count is zero.
+
+Full account, 10 mutations, 5 attribution controls, and the mutations that did
+NOT bite under their own names:
+`docs/debugging/2026-09-02_epoch-latch-off-by-one.md`.
+
+**`compose4_top --wire` NOW ELABORATES: `C4_DONE elab seam6`, 0 errors,
+429,938 cells, 39,700 ports.** It never had before. Three integration defects
+that no unit bench could structurally see, all found by pushing it through
+Vivado:
+
+1. `NUNIT` and `EPOCH_W` were undeclared. `NUNIT` now comes from
+   `llama_map_pkg`; `EPOCH_W` is LIFTED from `seq_desc_fetch`'s own generic
+   default, with an abort if D ever stops declaring it.
+2. Instance label `u_a` hid the constant `U_A` -- VHDL identifiers are
+   case-insensitive. Labels are now `seam_a`/`seam_b`/`seam_c`.
+3. `LITE_AW => 8` against the engine's 12-bit `s_axi_awaddr`. **The adapter's
+   own bench cannot see this**: it drives a slave model of the adapter's chosen
+   width, so it agrees with the adapter and not with the engine. `LITE_AW` is
+   now lifted from the engine's parsed port.
+
+**SCOPE CORRECTION, and it is the important line here.** `gdn_block` and
+`attn_block` have NO region-facing ports. `llama_top`'s per-unit blocks are
+DATA MOVERS, not handshake converters, and they are large: `ga_real` 353 lines,
+`gb_real` 635, `gcr` 942 (measured by generate label). So `u_seam` covers the
+CONTROL contract -- the part that is shared, the part D enforces, and the part
+where the epoch defect lived in both files -- and roughly **1,600 lines of
+per-unit data movement remain for B and C alone**. "Add seams for B, C and V"
+understated the wiring work.
+
+**`a_job_index` is a top-level PORT, deliberately not wired.** The obvious
+source, D's `job_ordinal`, is wrong twice: it is 8 bits so it cannot address the
+311 A jobs at all, and `llama_top` uses it as `wsyn(r, c, j_ord)`, a synthetic
+weight selector in the simulation model. Wiring it would have elaborated
+cleanly and produced wrong descriptors on the card. Nothing in the RTL decides
+this yet, so the decision stays visible.
+
+**A RELATED HAZARD, NOT YET A BUG:** `a_desc_adapter` also latches `u_index` at
+the `u_start` edge. `llama_top:3047` says every `job_*` field still decodes the
+PREVIOUS bank there, not only the epoch. It is safe today only because
+`u_index` is a top-level input and is not sourced from D's decode. A warning is
+now at that latch.
+
+**NEXT, in order:** the region file into the wired top (`region_mem` with
+`HOST_WINDOW=false`) and the B/C data movement; the descriptor-index decision;
+then P&R of the WIRED top, whose numbers do NOT carry over from ROUTE3; then
+the token check against `ref/run9b --acts bfp`. The composed bench that drives
+the REAL `seq_desc_fetch` through the real seams into the real units does not
+exist, so the seam is currently verified against a MIRROR of D, not against D.
+
 ### 2026-08-30 late morning, dispatcher: two lanes, both full, and the budget written down first
 
 **Oren's standing instruction for this stretch: TWO agents, not four.** One per

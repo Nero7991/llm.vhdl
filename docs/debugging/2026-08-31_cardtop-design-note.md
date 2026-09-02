@@ -808,3 +808,109 @@ the wiring D3/D4 were preparing for, moved to a base that already routes:
 **`rtl/a_desc_adapter.vhd` and `rtl/region_mem.vhd` both carry over unchanged.**
 Increments 2 and the D5 work were not wasted by this pivot; only the generated
 `fk33_llama_top` becomes simulation-only.
+
+---
+
+## 13. Increment 4, 2026-09-02: `rtl/u_seam.vhd`, and the epoch bug it exposed in increment 2
+
+With D6 settled, the card top is `compose4_top --wire` and the remaining work
+is seams: one per unit, converting each subsystem's native handshake into D's
+contract. A landed at increment 2. This increment does **B and C together**,
+because they are nearly the same shape.
+
+### They are nearly the same, and the differences are the whole design
+
+Read off the RTL rather than assumed, which mattered:
+
+| | B `gdn_block` | C `attn_block` |
+|---|---|---|
+| `start` | sampled in `P_IDLE` only (`:932`) | sampled in `P_IDLE` only (`:1298`) |
+| `busy` | `'0' when ph = P_IDLE` (`:620`) | `'0' when ph = P_IDLE` (`:769`) |
+| `done` | **a PULSE**, `done <= ec_done` (`:625`) | **a LEVEL held until `done_ack`** (`:1799`) |
+| ack input | none | `done_ack` (`:179`) |
+| error | **THREE** bits: `err_conv`, `err_g`, `err_se` (`:162-164`) | **ONE**: `err` (`:184`) |
+
+The summary carried into this session said both were plain `start`/`busy`/`done`
+units and that one conversion would serve both verbatim. That was half right:
+one *entity* serves both, but only because it **latches** `done` (catching a
+pulse), **emits** `unit_ack` (releasing a unit that holds), and takes a single
+`unit_err` that the glue is responsible for reducing. A seam written for either
+unit alone is wrong for the other, silently.
+
+`u_seam` is 130 lines and is instantiated twice in `gen_compose4_top.py`'s
+`GLUE`, on slots `U_B` and `U_C`. B's three error bits are ORed in the glue,
+not in the seam, because which bits exist is a property of the unit and not of
+the contract.
+
+### What it found in increment 2
+
+The first run of the new bench failed on every job by exactly one epoch. The
+seam was wrong -- and so was `rtl/a_desc_adapter.vhd`, shipped at `3a145fd`
+behind *2,496 checks, 0 mismatches*. Both latched `job_epoch` at the issue
+edge; D bumps `epoch_r` **on** that edge and compares against the bumped value
+at `S_COMPLETE`, so both would have had every completion rejected as stale.
+
+The adapter's bench could not see it because it held `job_epoch` constant
+across each job, making the two latch timings read the same value. It returned
+**PASS for the bug and PASS for the fix**. Full account, the mutation table,
+the attribution controls, and the two checks that were true but unreachable:
+`docs/debugging/2026-09-02_epoch-latch-off-by-one.md`.
+
+Both files are fixed and both benches now kill the bug: the adapter's at 312
+mismatches of 2,496, the seam's at 200 of 200.
+
+### Two things the composed top needed before it would elaborate
+
+`--wire` had never been through Vivado. Two defects, both of the same class:
+
+1. **`NUNIT` and `EPOCH_W` were undeclared.** The wired top referenced both and
+   pulled in neither. `NUNIT` comes from `llama_map_pkg`, now used under
+   `--wire` only.
+2. **`EPOCH_W` has no package to come from** -- it is a *generic* of
+   `seq_desc_fetch`, defaulting to 4. The generator now **lifts that default
+   out of the parsed entity** and emits it as a constant, and aborts if
+   `seq_desc_fetch` ever stops declaring it. Writing `4` in the generator would
+   have been a second, independent opinion about a width D alone owns, which is
+   exactly what `hbm_map.py` already recorded going wrong with the arena base.
+
+### Still open after this increment
+
+- **The seam is verified against a MIRROR of D, not against D.** The mirror
+  copies `seq_desc_fetch`'s registers with line numbers cited, but it is still
+  a model, and this session has now been bitten once by a model written by the
+  author of the thing it checks. The composed bench -- real `seq_desc_fetch`,
+  real seams, real `gdn_block` and `attn_block` -- does not exist.
+- **The glue's OR of B's three error bits is untested.**
+- **`u_seam` has never been synthesised**, so its area and timing are unknown,
+  and ROUTE3's numbers describe the UNWIRED top and do not carry over.
+- **Unit V is still tied NOT ready.**
+
+### 13b. Scope correction: a "seam" is the handshake, and the handshake is the small half
+
+While wiring `u_seam` it became clear that `llama_top`'s per-unit adapters are
+not handshake converters. They are **data movers**: they read operands out of
+the region file into the unit's ports and write its outputs back. `gdn_block`
+and `attn_block` have **no region-facing ports at all** -- they take
+`w_mant`/`w_exp` style operand buses, and the adapter is what fills them.
+
+MEASURED, by generate label rather than by eye:
+
+| block | lines | what it is |
+|---|---|---|
+| `ga_real` 3236-3588 | 353 | A's real adapter |
+| `gb_real` 3740-4374 | 635 | B's real adapter |
+| `gcr` 4512-5453 | 942 | C's real adapter |
+
+(An earlier count in this session put C at 616 lines. That was wrong -- the
+line-range heuristic walked to the wrong banner and landed inside `gb_real`.
+The table above is by generate label and supersedes it.)
+
+So `rtl/u_seam.vhd` at 130 lines covers the **control** contract for B and C,
+and roughly 1,600 lines of data movement remain to be brought across for those
+two units alone. That is the honest remaining shape of the wiring work, and it
+is larger than "add seams for B, C and V" implied.
+
+**This does not make `u_seam` wasted.** The control contract is the part that
+is identical between B and C, is the part D actually enforces, and is where the
+epoch defect lived in both A's adapter and the first draft of the seam. The
+data movement is per-unit by nature and cannot be shared.
