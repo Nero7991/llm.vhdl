@@ -28,7 +28,7 @@
 -- before comparing it to a pb_core budget.
 --
 -- Instances, and the generics each carries:
---   a_eng    fk33_engine      854 ports, 851 exported   CB_STYLE="distributed"
+--   a_eng    fk33_engine      864 ports, 861 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
 --   c_attn   attn_block        68 ports,  66 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
@@ -105,6 +105,16 @@ entity compose4_top is
     a_eng_s_axix_rready    : in    std_logic;
     a_eng_s_axix_rdata     : out   std_logic_vector(31 downto 0);
     a_eng_s_axix_rresp     : out   std_logic_vector(1 downto 0);
+    a_eng_d_job_done       : out   std_logic;
+    a_eng_d_job_err        : out   std_logic;
+    a_eng_d_x_we           : in    std_logic;
+    a_eng_d_x_waddr        : in    std_logic_vector(15 downto 0);
+    a_eng_d_x_wdata        : in    std_logic_vector(15 downto 0);
+    a_eng_d_y_we           : out   std_logic;
+    a_eng_d_y_addr         : out   std_logic_vector(15 downto 0);
+    a_eng_d_y_data         : out   std_logic_vector(48*64-1 downto 0);
+    a_eng_d_y_mask         : out   std_logic_vector(48-1 downto 0);
+    a_eng_d_y_exp          : out   std_logic_vector(31 downto 0);
     a_eng_m00_axi_awvalid  : out   std_logic;
     a_eng_m00_axi_awready  : in    std_logic;
     a_eng_m00_axi_awaddr   : out   std_logic_vector(32 downto 0);
@@ -1319,6 +1329,16 @@ begin
       s_axix_rready => a_eng_s_axix_rready,
       s_axix_rdata => a_eng_s_axix_rdata,
       s_axix_rresp => a_eng_s_axix_rresp,
+      d_job_done => a_eng_d_job_done,
+      d_job_err => a_eng_d_job_err,
+      d_x_we => a_eng_d_x_we,
+      d_x_waddr => a_eng_d_x_waddr,
+      d_x_wdata => a_eng_d_x_wdata,
+      d_y_we => a_eng_d_y_we,
+      d_y_addr => a_eng_d_y_addr,
+      d_y_data => a_eng_d_y_data,
+      d_y_mask => a_eng_d_y_mask,
+      d_y_exp => a_eng_d_y_exp,
       m00_axi_awvalid => a_eng_m00_axi_awvalid,
       m00_axi_awready => a_eng_m00_axi_awready,
       m00_axi_awaddr => a_eng_m00_axi_awaddr,

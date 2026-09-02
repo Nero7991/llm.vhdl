@@ -161,6 +161,79 @@ SHARED = {
     "_default":    {"clk": "core_clk_i", "rst": "core_rst"},
 }
 
+# ======================================================================
+# WIRING (--wire).  TRACK CARDTOP, 2026-09-02.
+#
+# Without this the top is a CO-RESIDENCY vehicle: every port of every
+# instance is brought out, nothing is connected to anything, and what it
+# measures is area / place / route with cross-boundary optimisation allowed.
+# That is what TRACK ROUTE3 measured and its numbers describe THAT top.
+#
+# WIRING CHANGES WHAT THE NUMBERS MEAN.  Ports that were top-level become
+# internal, so the tool has more to optimise across and the wiring itself
+# adds logic.  ROUTE3's +21.0 BRAM headroom and 80.63% DSP are evidence the
+# four subsystems CO-FIT AND ROUTE on this part -- which is the hard part and
+# still stands -- and they are NOT predictions for the wired design.  The
+# wired top needs its own place-and-route run.
+#
+# --wire is therefore OFF by default: the measurement vehicle is preserved
+# exactly, and `sim/ooc_compose4_pnr.tcl` keeps measuring the thing its
+# numbers were taken on.
+#
+# A port listed here stops being exported and joins the named net instead.
+# Two instances naming one net are wired to each other.
+# ======================================================================
+WIRE = {
+    # subsystem A's control plane is driven by rtl/a_desc_adapter.vhd, which
+    # is instantiated in the glue below rather than in INSTANCES, because it
+    # is a SEAM and not a subsystem.
+    "fk33_engine": {
+        "s_axi_awvalid": "w_a_awvalid", "s_axi_awready": "w_a_awready",
+        "s_axi_awaddr":  "w_a_awaddr",  "s_axi_awprot":  "w_a_awprot",
+        "s_axi_wvalid":  "w_a_wvalid",  "s_axi_wready":  "w_a_wready",
+        "s_axi_wdata":   "w_a_wdata",   "s_axi_wstrb":   "w_a_wstrb",
+        "s_axi_bvalid":  "w_a_bvalid",  "s_axi_bready":  "w_a_bready",
+        "s_axi_bresp":   "w_a_bresp",
+        "d_job_done":    "w_a_job_done",
+        "d_job_err":     "w_a_job_err",
+    },
+    # D's unit-facing vectors become internal; the glue slices U_A out of
+    # them for the adapter and ties the units D does not have here.
+    "seq_desc_fetch": {
+        "u_start": "w_u_start", "u_ready": "w_u_ready",
+        "u_done":  "w_u_done",  "u_ack":   "w_u_ack",
+        "u_err":   "w_u_err",   "u_done_epoch": "w_u_done_epoch",
+        "job_epoch": "w_job_epoch",
+    },
+}
+
+# Nets the WIRE table names, declared once.  A net named in WIRE and missing
+# here is a hard error rather than an implicit std_logic, because a silently
+# defaulted control signal is the plausible-wrong-number failure this
+# project keeps finding.
+WIRE_SIGNALS = [
+    ("w_a_awvalid",  "std_logic"),
+    ("w_a_awready",  "std_logic"),
+    ("w_a_awaddr",   "std_logic_vector(7 downto 0)"),
+    ("w_a_awprot",   "std_logic_vector(2 downto 0)"),
+    ("w_a_wvalid",   "std_logic"),
+    ("w_a_wready",   "std_logic"),
+    ("w_a_wdata",    "std_logic_vector(31 downto 0)"),
+    ("w_a_wstrb",    "std_logic_vector(3 downto 0)"),
+    ("w_a_bvalid",   "std_logic"),
+    ("w_a_bready",   "std_logic"),
+    ("w_a_bresp",    "std_logic_vector(1 downto 0)"),
+    ("w_a_job_done", "std_logic"),
+    ("w_a_job_err",  "std_logic"),
+    ("w_u_start",    "std_logic_vector(NUNIT-1 downto 0)"),
+    ("w_u_ready",    "std_logic_vector(NUNIT-1 downto 0)"),
+    ("w_u_done",     "std_logic_vector(NUNIT-1 downto 0)"),
+    ("w_u_ack",      "std_logic_vector(NUNIT-1 downto 0)"),
+    ("w_u_err",      "std_logic_vector(NUNIT-1 downto 0)"),
+    ("w_u_done_epoch", "std_logic_vector(NUNIT*EPOCH_W-1 downto 0)"),
+    ("w_job_epoch",  "unsigned(EPOCH_W-1 downto 0)"),
+]
+
 SRC_FILE = {
     "fk33_engine":     ("FK33", "fk33_engine.vhd"),
     "gdn_block":       ("RTL",  "gdn_block.vhd"),
@@ -183,6 +256,69 @@ PORT_RE = re.compile(
 GEN_RE = re.compile(
     r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_ ]*"
     r"(?:\s+range\s+[^:]*?)?)\s*:=\s*(.*?)\s*$")
+
+
+GLUE = """
+  -- ====================================================================
+  -- THE D-TO-A SEAM.  TRACK CARDTOP, 2026-09-02.
+  --
+  -- rtl/a_desc_adapter.vhd is a SEAM, not a subsystem, so it is here rather
+  -- than in INSTANCES.  It programs DESC_PTR_LO/HI and pulses CTRL bit 0
+  -- over the engine's AXI-Lite slave, converts A's completion to D's
+  -- held-level contract, and echoes D's epoch.
+  --
+  -- D's unit-facing ports are VECTORS across NUNIT.  Only slot U_A is
+  -- driven here; the others are tied so that D can never select a unit that
+  -- is not wired.  THE TIE MATTERS: u_ready tied HIGH on an absent unit
+  -- would let D issue to it and wait forever for a done that no logic
+  -- produces, so absent units read NOT ready, which is the one value that
+  -- makes the omission visible rather than silent.
+  -- ====================================================================
+  u_a : entity work.a_desc_adapter
+    generic map (
+      ADDR_W      => 40,
+      LITE_AW     => 8,
+      DESC_STRIDE => 512,
+      N_JOBS      => 311,
+      EPOCH_W     => EPOCH_W)
+    port map (
+      clk        => core_clk_i,
+      rstn       => core_aresetn,
+      arena_base => a_arena_base,
+      u_start    => w_u_start(U_A),
+      u_index    => a_job_index,
+      u_ready    => w_u_ready(U_A),
+      u_done     => w_u_done(U_A),
+      u_err      => w_u_err(U_A),
+      u_ack      => w_u_ack(U_A),
+      job_epoch  => w_job_epoch,
+      u_done_epoch => w_u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W),
+      m_awaddr   => w_a_awaddr,
+      m_awvalid  => w_a_awvalid,
+      m_awready  => w_a_awready,
+      m_wdata    => w_a_wdata,
+      m_wstrb    => w_a_wstrb,
+      m_wvalid   => w_a_wvalid,
+      m_wready   => w_a_wready,
+      m_bresp    => w_a_bresp,
+      m_bvalid   => w_a_bvalid,
+      m_bready   => w_a_bready,
+      job_done   => w_a_job_done,
+      job_err    => w_a_job_err,
+      jobs_issued => a_jobs_issued);
+
+  w_a_awprot <= (others => '0');
+
+  -- Units B, C and V are NOT wired yet.  NOT ready, deliberately: see above.
+  g_unwired : for u in 0 to NUNIT-1 generate
+    g_off : if u /= U_A generate
+      w_u_ready(u) <= '0';
+      w_u_done(u)  <= '0';
+      w_u_err(u)   <= '0';
+      w_u_done_epoch((u+1)*EPOCH_W-1 downto u*EPOCH_W) <= (others => '0');
+    end generate;
+  end generate;
+"""
 
 
 def strip_comment(line):
@@ -271,8 +407,25 @@ def parse_ports(lines, entity):
             sys.exit("COMPOSE4 ABORT: %s: unparsed port line %r" % (entity, s))
         name, direction, typ = m.group(1), m.group(2), m.group(3)
         # Strip a port default.  `:=` cannot appear inside a type mark here.
-        typ = typ.split(":=")[0].strip().rstrip(")").strip() \
-            if typ.strip().endswith(")") and ":=" in typ else typ
+        #
+        # THE OLD FORM CORRUPTED VECTOR TYPES THAT CARRY A DEFAULT.  It was
+        #   typ.split(":=")[0].strip().rstrip(")").strip()
+        #       if typ.strip().endswith(")") and ":=" in typ else typ
+        # and for `std_logic_vector(15 downto 0) := (others => '0')` the
+        # rstrip ate the TYPE'S OWN closing paren, emitting
+        # `std_logic_vector(15 downto 0` -- a syntax error in the generated
+        # file.  It never showed because no port in this design had both a
+        # vector type and a default until fk33_engine's D-facing inputs did,
+        # and those NEED defaults so an unconnected instantiation still
+        # elaborates (hw/fk33/gen_pcieep.py drives none of them).
+        #
+        # Balance the parens instead of stripping blind: remove a trailing
+        # `)` only when there is one more `)` than `(`, which is the port
+        # clause's own closer landing on this line.
+        if ":=" in typ:
+            typ = typ.split(":=")[0].strip()
+        if typ.count(")") == typ.count("(") + 1 and typ.endswith(")"):
+            typ = typ[:-1].strip()
         if ":=" in typ:
             typ = typ.split(":=")[0].strip()
         typ = typ.rstrip(";").strip()
@@ -334,6 +487,11 @@ def main():
     ap.add_argument("--instances", default="",
                     help="comma-separated instance names to keep; default all")
     ap.add_argument("--entity", default="compose4_top")
+    ap.add_argument("--wire", action="store_true",
+                    help="connect D to A instead of exporting both. OFF by "
+                         "default so the co-residency measurement vehicle, "
+                         "and TRACK ROUTE3's numbers taken on it, are "
+                         "preserved exactly.")
     # LEVER C.  "distributed" is the configuration STEP 2 is asking about;
     # "regs" reproduces the pre-lever composition and is the attribution
     # control.  Anything else is rejected here rather than silently meaning
@@ -443,7 +601,16 @@ def main():
         gmap.update(over)
 
         ports = parse_ports(clause(text, ent, "port"), ent)
-        shared = SHARED.get(ent, SHARED["_default"])
+        shared = dict(SHARED.get(ent, SHARED["_default"]))
+        if a.wire:
+            for pn_, net_ in WIRE.get(ent, {}).items():
+                if net_ not in dict(WIRE_SIGNALS):
+                    sys.exit("COMPOSE4 ABORT: WIRE names net %s for %s.%s but "
+                             "WIRE_SIGNALS does not declare it.  An undeclared "
+                             "net would become an implicit signal and a "
+                             "silently defaulted control line."
+                             % (net_, ent, pn_))
+                shared[pn_] = net_
 
         maps = []
         nbits_exported = 0
@@ -574,6 +741,11 @@ def main():
         "architecture rtl of %s is" % a.entity,
         "  signal core_clk_i : std_logic;",
         "  signal hbm_aclk_i : std_logic;",
+    ] + ([
+        "",
+        "  -- nets carrying the D-to-A seam; see WIRE in the generator",
+    ] + ["  signal %-16s : %s;" % (n, t) for n, t in WIRE_SIGNALS]
+        if a.wire else []) + [
         "begin",
         "",
         "  gbufg : if CLK_BUFG generate",
@@ -585,7 +757,7 @@ def main():
         "    hbm_aclk_i <= hbm_aclk;",
         "  end generate;",
         "",
-    ] + inst_blocks + [
+    ] + inst_blocks + (GLUE.splitlines() if a.wire else []) + [
         "end architecture;",
         "",
     ]
