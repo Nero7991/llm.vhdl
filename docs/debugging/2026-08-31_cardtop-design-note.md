@@ -711,3 +711,100 @@ there, deliberately.
 **Open:** a bench that deliberately drives `el_waddr` past `sz_words(r)` would
 discriminate `F`. It would also make the intentional divergence above
 observable, so it must assert `region_mem`'s behaviour and NOT `llama_top`'s.
+
+---
+
+## 12. D6, 2026-09-02: the card is built from `compose4_top`, not from the `llama_top` fork
+
+**Oren's decision.** D1's fork stays as a SIMULATION artefact; it is no longer
+the intended card build.
+
+### 12.1 What forced it
+
+MEASURED, elaborating `fk33_llama_top` at the real 9B shape with
+`HOST_WINDOW=false`, Vivado 2023.2:
+
+```
+[Synth 8-4767] Trying to implement RAM ' ' in registers ... x100
+  1: RAM has multiple writes via different ports in same process.
+RAM dissolved into registers  ... x128
+Abnormal program termination (11)      <- segfault, WRAPPER_RC=139
+```
+
+`region_mem`'s own banks are FIXED -- zero `bank_reg` failures, down from 14,
+after the write-port merge. **The pattern is design-wide, not local**: 100
+further RAMs fail the same way, they are unnamed and appear AFTER every module
+is synthesised, so they are in the top-level dissolve phase, and the failed
+dissolve crashes the tool rather than erroring cleanly.
+
+**The deeper reason is that `llama_top` is a SIMULATION MODEL.** `C_REAL`
+defaults to **false**; the default configuration stubs unit C entirely
+(`UNIT C IS A STUB. ATTENTION WAS NOT COMPUTED`). Making a simulation model
+synthesisable at the real shape is a project of its own, and
+`hw/fk33/rtl/compose4_top.vhd` -- the composition of the REAL units -- already
+routes at the real geometry: **3,526,125 nets, 0 routing errors, BRAM 351.5 of
+372.5, DSP 80.63%, WNS -0.815** (TRACK ROUTE3, `8eaaf18`).
+
+### 12.2 The question this raises, and the answer
+
+> *If the simulation model cannot verify inference tokens, how are we doing
+> that?* -- Oren
+
+**`llama_top` was never the token oracle. `tools/ref9b` is**, and it is
+independent of both tops. Its README states the three rungs:
+
+| rung | what | isolates |
+|---|---|---|
+| 1 | llama.cpp on the BF16 GGUF | the ALGORITHM. Nobody here wrote it, so it is the defence against the m7 self-consistency trap |
+| 2 | `ref/run9b --acts f32` | the INT4 WEIGHT format |
+| 3 | `ref/run9b --acts bfp` | the int16 BFP ACTIVATION format on top. **This is the hardware model** |
+
+MEASURED 2026-08-29: the weight format costs 0.1252 relative RMS, the
+activation format 0.00313 on top, and **all three rungs pick the same next
+token at all five positions** of the reference prompt.
+
+So the token check for the card is **rung 3, via `tools/ref9b/check_token.py`**,
+whatever the card is built from. `llama_top` is a SECOND IMPLEMENTATION checked
+against that same reference through `capture_llama_top.sh`; it is not the
+reference. **The pivot costs a whole-design signal-level diff (65 captured
+records) and costs nothing at the token level.**
+
+### 12.3 Two corrections to earlier claims in this file
+
+- **`hash(R_X) = 38863` is NOT a whole-model result.** The identity bench runs
+  the bench's default generics, and those have `C_REAL = false`, so unit C is
+  stubbed and attention is not computed. The hash is sound evidence about the
+  D3 memory substitution and the write-port merge, which is what it was used
+  for, and it is not evidence about a token. Sections 9 and 11 should be read
+  with that scope.
+- **`llama_top` CAN run real units.** There is a `real` capture config and the
+  committed golden is `tools/ref9b/golden/llama_top_real.txt`. The earlier
+  reading that the model is stub-only was wrong.
+
+### 12.4 A staleness that predates all of this
+
+`tools/ref9b/golden_status.sh` reports the golden **NOT PROVABLY CURRENT**:
+stamped at `d1d1e95`, with nine RTL files changed since, including
+`llama_top.vhd`, `matvec_core.vhd`, `attn_block.vhd`, `gdn_block.vhd` and
+`l2norm_rs.vhd`. **So the llama_top-versus-reference evidence is stale right
+now**, independently of which card path is taken -- the area levers
+(RMSWIRE, LEVERC48, GAIN16) all landed after that stamp and nothing has
+re-checked them at the token level. Being re-captured.
+
+### 12.5 What the compose4 path needs
+
+`compose4_top`'s own header says it plainly: **"THE SUBSYSTEMS ARE NOT WIRED TO
+EACH OTHER."** It instantiates `fk33_engine`, `gdn_block`, `attn_block`,
+`ooc_normadapt` and the `seq_*` units side by side. So the remaining work is
+the wiring D3/D4 were preparing for, moved to a base that already routes:
+
+1. wire D to A, B and C inside `compose4_top` (the A seam is
+   `rtl/a_desc_adapter.vhd`, already landed and teeth-checked),
+2. give it a region file -- `rtl/region_mem.vhd` with `HOST_WINDOW=false`,
+   which is exactly why that generic exists,
+3. check the token against `ref/run9b --acts bfp` with
+   `tools/ref9b/check_token.py`.
+
+**`rtl/a_desc_adapter.vhd` and `rtl/region_mem.vhd` both carry over unchanged.**
+Increments 2 and the D5 work were not wasted by this pivot; only the generated
+`fk33_llama_top` becomes simulation-only.
