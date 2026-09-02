@@ -1972,8 +1972,21 @@ run_graygate() {   # run_graygate <suite:name>
 #                  guard against the one descriptor corruption the gateware
 #                  cannot see.  It had never once discriminated.
 #
-# The command is looked up by row name in SELFCHECK_CMD below, so adding a row
-# is one line there and one printf into $PLAN.  Verdicts:
+# Adding a row takes THREE edits, not two.  The line below used to say "one
+# line there and one printf into $PLAN" and that is WRONG: it omits the
+# dispatch case in run_one, and a row with a command and a plan entry but no
+# case falls through to the testbench path, where `ghdl -a` is handed a script
+# name and the row lands as a BUILD ERROR rather than as anything that names
+# the real problem.  MEASURED 2026-09-02: `sim:cardtop` was added by following
+# this comment literally and turned the whole gate red with
+# `ghdl -a failed on -:`, which points at nothing.  The three edits are:
+#
+#   1. SELFCHECK_CMD below            the command
+#   2. a printf into $PLAN            the row
+#   3. the case in run_one            the ROUTING, and this is the one the
+#                                     old comment omitted
+#
+# Verdicts:
 #
 #   0        PASS
 #   124/137  TIMEOUT
@@ -2020,7 +2033,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
