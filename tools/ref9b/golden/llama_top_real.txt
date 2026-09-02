@@ -37,7 +37,7 @@
 # dispatcher and not an edit; recorded in
 # docs/debugging/2026-08-29_logits-seam-model.md section 8.
 # captured by tools/ref9b/capture_llama_top.sh, configuration real
-# HEAD d1d1e95 + TRACK LOGITS  SMP=1
+# HEAD a9d4d24  SMP=1
 # tree clean under rtl/, sim/ and tools/: this IS a capture of that commit
 # sim/tb_llama_top.vhd seam capture, run 0.  value = mant * 2^-exp.
 # blocks=4 attn_interval=4 hidden=64 ffn=128  -- A SCALED SHAPE, not the 9B one.
