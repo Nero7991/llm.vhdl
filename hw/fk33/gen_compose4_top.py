@@ -384,6 +384,65 @@ GLUE = """
       unit_done  => w_c_done,  unit_ack  => w_c_done_ack,
       unit_err   => w_c_err);
 
+  -- ====================================================================
+  -- THE REGION FILE.  rtl/region_mem.vhd, the card's activation store.
+  --
+  -- HOST_WINDOW => FALSE.  That generic exists because of D5: with the
+  -- host read window present, `hr_data` is a COMBINATIONAL read of every
+  -- region, and a memory with a combinational read port cannot be a BRAM.
+  -- The identity between the card top and llama_top was proven with
+  -- HOST_WINDOW=true; the CARD is built with it false, which is the one
+  -- output port the two configurations differ by.  With it false the
+  -- per-region banks carry `ram_style = "block"` and can actually infer.
+  --
+  -- SZ comes from `region_sizes(RG_SHAPE)`, the SAME function llama_top
+  -- uses.  A hand-written size list here would be a second opinion about
+  -- fourteen numbers, and region_mem's own pad contract is UNVERIFIED
+  -- (its bench never drives an out-of-size access), so a wrong entry
+  -- would not be caught by anything.
+  --
+  -- REGMAX is asserted against the shape rather than assumed: region_mem
+  -- defaults REGMAX to 12288, which happens to BE region_max at 9B, and a
+  -- default that is right by coincidence stops being right at 27B (17408)
+  -- with nothing to say so.
+  -- ====================================================================
+  rgfile : entity work.region_mem
+    generic map (
+      NREGION     => NREGION,
+      REGMAX      => region_max(RG_SHAPE),
+      LANES       => 8,
+      MANT_W      => 16,
+      GA_W        => 11,
+      SZ          => region_sizes(RG_SHAPE),
+      HOST_WINDOW => false)
+    port map (
+      clk      => core_clk_i,
+      el_ren   => rg_el_ren,
+      el_reg   => rg_el_reg,
+      el_addr  => rg_el_addr,
+      el_rdata => rg_el_rdata,
+      el_we    => rg_el_we,
+      el_wreg  => rg_el_wreg,
+      el_waddr => rg_el_waddr,
+      el_wdata => rg_el_wdata,
+      r_en     => rg_r_en,
+      r_rega   => rg_r_rega,
+      r_regb   => rg_r_regb,
+      r_addr   => rg_r_addr,
+      x_rdata  => rg_x_rdata,
+      e_rdata  => rg_e_rdata,
+      w_we     => rg_w_we,
+      w_regd   => rg_w_regd,
+      w_addr   => rg_w_addr,
+      w_be     => rg_w_be,
+      w_data   => rg_w_data,
+      -- HOST_WINDOW is false, so these select nothing and `hr_data` is
+      -- driven constant inside.  Tied rather than exported so no caller can
+      -- believe there is a host read path on the card.
+      hr_reg   => 0,
+      hr_addr  => 0,
+      hr_data  => open);
+
   -- Unit V is NOT wired yet.  NOT ready, deliberately: see above.
   g_unwired : for u in 0 to NUNIT-1 generate
     g_off : if u /= U_A and u /= U_B and u /= U_C generate
@@ -808,8 +867,10 @@ def main():
         "use ieee.numeric_std.all;",
         "use work.util_pkg.all;      -- clog2, used by attn_block's port widths",
     ] + ([
-        "use work.llama_map_pkg.all; -- NUNIT and the U_* slot indices, used",
-        "                            -- by D's unit-facing vectors",
+        "use work.model_cfg_pkg.all; -- MODEL and NCARDS, for the shape",
+        "use work.llama_map_pkg.all; -- NUNIT, the U_* slot indices used by",
+        "                            -- D's unit-facing vectors, and the",
+        "                            -- region size/extent functions",
     ] if a.wire else []) + [
         "library unisim;",
         "use unisim.vcomponents.all; -- BUFGCE",
@@ -818,7 +879,15 @@ def main():
         "  generic(",
         "    -- FALSE leaves the clocks on local routing.  Only ever useful for",
         "    -- reproducing the measurement that made the buffers necessary.",
-        "    CLK_BUFG : boolean := true",
+        "    CLK_BUFG : boolean := true" + (";" if a.wire else ""),
+    ] + ([
+        "    -- THE MODEL SHAPE, so the region file's port widths below size",
+        "    -- themselves from the same function llama_top uses rather than",
+        "    -- from literals.  A generic and not an architecture constant,",
+        "    -- because the PORT CLAUSE needs it and constants cannot be",
+        "    -- declared ahead of it.",
+        "    RG_SHAPE : shape_t := mk_shape(MODEL, NCARDS)",
+    ] if a.wire else []) + [
         "  );",
         "  port(",
         "    -- the two clocks the card runs, both 5.000 ns",
@@ -852,6 +921,45 @@ def main():
         # jobs the token program contains; an `open` output is invisible and
         # this is the cheapest liveness signal subsystem A has.
         top_ports.append(("a_jobs_issued", "out", "std_logic_vector(31 downto 0)"))
+
+        # THE REGION FILE'S SURFACE, EXPORTED.
+        #
+        # rtl/region_mem.vhd is the card's activation store.  Its real drivers
+        # are the per-unit data movers, which do not exist yet, so every port
+        # is brought out -- exactly as the rest of this top does with anything
+        # not yet wired.  That is not cosmetic: a memory whose inputs are tied
+        # to constants is optimised away entirely, and then a place-and-route
+        # of this top would report a fit that the card does not have.  TRACK
+        # ROUTE3 measured a composed design with NO region file in it at all,
+        # so its numbers do not answer the fit question for the card.
+        #
+        # Widths come from `RG_SHAPE` and from llama_map_pkg's NREGION, never
+        # from literals: `region_max(mk_shape(QWEN35_9B, 1))` is 12288 today
+        # and 17408 at 27B, and a literal would be wrong at exactly the moment
+        # the retarget happens.
+        RG = [
+            ("el_ren",   "in",  "std_logic"),
+            ("el_reg",   "in",  "natural range 0 to NREGION-1"),
+            ("el_addr",  "in",  "natural range 0 to region_max(RG_SHAPE)-1"),
+            ("el_rdata", "out", "signed(15 downto 0)"),
+            ("el_we",    "in",  "std_logic"),
+            ("el_wreg",  "in",  "natural range 0 to NREGION-1"),
+            ("el_waddr", "in",  "natural range 0 to region_max(RG_SHAPE)-1"),
+            ("el_wdata", "in",  "signed(15 downto 0)"),
+            ("r_en",     "in",  "std_logic"),
+            ("r_rega",   "in",  "unsigned(7 downto 0)"),
+            ("r_regb",   "in",  "unsigned(7 downto 0)"),
+            ("r_addr",   "in",  "unsigned(10 downto 0)"),
+            ("x_rdata",  "out", "std_logic_vector(8*16-1 downto 0)"),
+            ("e_rdata",  "out", "std_logic_vector(8*16-1 downto 0)"),
+            ("w_we",     "in",  "std_logic"),
+            ("w_regd",   "in",  "unsigned(7 downto 0)"),
+            ("w_addr",   "in",  "unsigned(10 downto 0)"),
+            ("w_be",     "in",  "std_logic_vector(7 downto 0)"),
+            ("w_data",   "in",  "std_logic_vector(8*16-1 downto 0)"),
+        ]
+        for pn_, dir_, tp_ in RG:
+            top_ports.append(("rg_" + pn_, dir_, tp_))
 
     w = max(len(p[0]) for p in top_ports)
     body = []

@@ -240,6 +240,80 @@ STEP 4, the seam to D; then STEP 5, the token. The timing lever hunt
 (-0.815 WNS, `CB_BCAST` suspect) is queued and its cheapest first move is a
 placement-directive sweep on the ROUTE3 checkpoint.
 
+### 2026-09-02 evening, in session, no subagents: the region file infers ZERO BRAM, and D3's "~34 RAMB36" was never implemented
+
+**The fit question for the card was open and nobody had ever synthesised the
+region file.** `region_mem` is now instantiated in `compose4_top --wire` with
+`HOST_WINDOW => false` (the card configuration) and the wired top elaborates:
+`C4_DONE elab rg`, 0 errors, 436,048 cells, 40,210 ports. The UNWIRED output
+is byte-identical to the committed `hw/fk33/rtl/compose4_top.vhd`, verified by
+regenerate-and-diff, so TRACK ROUTE3's numbers stay comparable.
+
+**MEASURED, OOC at the real 9B shape on the BC-250: 0 RAMB36, 0 RAMB18,
+0 URAM, 91,073 LUT of which 81,920 are LUTRAM.** The design note carried
+"~34 RAMB36 -- cheap" as a DERIVED figure and concluded the card "fits inside
+the same envelope". It is not 34 tiles, it is zero tiles and 91k LUTs, which
+would have taken pb_core from 67.3% to about 90.7% LUT occupancy.
+
+**TWO INDEPENDENT DEFECTS, and both must be fixed:**
+
+1. **The THIRD READER blocks inference.** Each bank is read at three sites --
+   the element read plus the group's `x` and `e`. Vivado's own words: with two
+   readers `[Synth 8-3971] recognized as a true dual port RAM template`; with
+   three, `[Synth 8-6849] Infeasible attribute ram_style = "block"` on all
+   fourteen banks and a LUTRAM fallback. A TDP BRAM has two ports.
+2. **The per-region sizing was never implemented.** `bank : bank_t` is MAXW
+   deep for all fourteen regions, so `R_BETA` and `R_ALPHA` (`val_heads`
+   elements each) get the same 1,536-word array as an FFN bank.
+
+**"~34 RAMB36" WAS NEVER WRONG -- IT WAS NEVER BUILT.** 9,480 words x 128 bits
+is 33.7 RAMB36, exactly the note's number. It described D3's intent; the code
+declares a uniform array. A DERIVED number and the RTL disagreed for two days
+because nothing had ever run the tool on this file.
+
+**THE FIX, MEASURED:**
+
+| configuration | BRAM | LUT | LUTRAM |
+|---|---|---|---|
+| as committed (uniform, 3 readers) | **0** | 91,073 | 81,920 |
+| sized per region, 3 readers (R8) | **0** | 84,839 | 76,800 |
+| uniform, 2 readers (R6) | 224 | 2,913 | 0 |
+| **sized + 2 readers (R9)** | **100** | **2,918** | **0** |
+
+R8 proves the two defects are independent. **R9 is the target: 100 tiles
+against 224.5 spare, and 91,073 LUTs returned.**
+
+**METHOD, and this is the reusable part.** EIGHT probes that ADDED features to
+a working control (three read ports, byte-enable write, bank-in-generate,
+separate write process, guarded read, and the byte-enable/multi-read
+combinations) ALL INFERRED BRAM and found nothing -- a search that adds to a
+passing control can only ever exonerate. DELETING from the failing file found
+it in three runs, because a bisection needs an endpoint that fails. And the
+tool control should have been probe ONE, not probe FIVE: four `region_mem`
+variants were synthesised on the untested assumption that Vivado would infer
+BRAM here at all.
+
+Full account, twelve rejected hypotheses under "do not retry", the measurement
+traps, and my own 47%-wrong tile estimate:
+`docs/debugging/2026-09-02_region-mem-zero-bram.md`.
+
+**CORRECTION to the cardtop design note 3.5.** It reads ROUTE3 as "BRAM
+351.5/372.5", +21.0 spare. `pbutil_c3img_routed.rpt` says
+`Block RAM Tile | 351.5 | ... | 576 | 61.02`, so the pblock holds **576**
+tiles and **224.5** are spare. Where 372.5 came from is not established.
+
+**NOT LANDED, deliberately:** the `region_mem` fix itself. Per-region sizing
+makes an out-of-range write a real hazard rather than a theoretical one, and
+the pad contract is still UNVERIFIED (mutations F, G and F+G all fail to bite
+because the bench never drives an out-of-size access). Getting to two readers
+means merging `x`/`e`, which `region_mem.vhd:286-293` records as having BROKEN
+the hold contract once already. Both need bench work first.
+
+**NEXT:** close the pad-contract gap in `sim/tb_region_mem.vhd`, then land
+sizing; then the `x`/`e` merge through a registered SIGNAL (not the variable
+form, which infers no BRAM) re-earned against the bench; then re-measure; then
+the B/C data movers; then P&R of the wired top.
+
 ### 2026-09-02 late afternoon, in session, no subagents: the B/C seam landed and found a shipped bug in the A seam
 
 **`rtl/u_seam.vhd` (130 lines) is the D-to-unit control seam, and it serves
