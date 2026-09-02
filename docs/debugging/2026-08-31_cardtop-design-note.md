@@ -499,3 +499,91 @@ runs.
   real benches into references to files that do not, producing confident
   wrong documentation. The generator renames the entity, the architecture
   and the verdict string, and nothing else.
+
+---
+
+## 10. Increment 3b, surveyed and specified 2026-09-02, NOT yet implemented
+
+3a proved the generator and the identity oracle. 3b is the A binding (D1/D2)
+and the `w_active` gate (D4). **The survey below is MEASURED against
+`llama_top` at `2a7e3a7`**; the RTL is not written, and this section exists so
+whoever writes it does not have to re-derive the boundary.
+
+### 10.1 The span
+
+The A block is `llama_top.vhd:3196` (its banner) to `:3577` (`end generate`),
+**382 lines**, containing one `u_mv : entity work.matvec_int4` instantiation
+and one `ap : process(clk)`.
+
+### 10.2 What the card KEEPS, DROPS and ADDS
+
+**KEEPS, because both units have these ports and D's contract is unchanged:**
+`rdy`, `dn`, `uerr`, `ep`, `yexp` (the D-facing handshake and epoch),
+`x_we`/`x_waddr`/`x_wdata` (the activation feed), and
+`y_we`/`y_addr`/`y_data` (the result sink, which must stay a sink that
+CANNOT REFUSE a beat: `matvec_int4`'s `y_we` has no ready and a stall LOSES a
+beat, and the descriptor unit inherits that).
+
+**DROPS, all of it, because the descriptor is host-prebuilt (D2):**
+`r_rows`, `r_cols`, `r_shift`, `r_wexp`, `r_xexp`, `r_mode`, `r_wbase`
+(`A_ROWS_IF*32` bits of FABRICATED weight bases), `r_wbeat`, `r_sbase`,
+`r_sbeat`, and `cb_we`/`cb_addr`/`cb_data`. **That is the entire register
+adapter.** It also drops the `S_CBGAP` interlock, which exists only because
+`cb_we` and `start` must not share an edge in `matvec_core`; with no codebook
+writes there is no edge to avoid. **Do not port S_CBGAP forward "to be
+safe": a state that cannot be entered is not caution, it is a state nobody
+will ever be able to justify removing.**
+
+**ADDS:** an `a_desc_adapter` instance (landed, increment 2) plus the
+descriptor fetch master `d_ar*`/`d_r*`, and the FK33 geometry on the unit:
+`NPORTS_W=24, NPORTS_S=3, AXI_DW=256, ADDR_W=40, MAXB=16, MAXOUT=16`,
+`ROWS_IF=48`, `USE_XEXP_PORT=true`, `CB_STYLE="distributed"`,
+`DUAL_CLK=true`.
+
+### 10.3 The three things most likely to go wrong, named in advance
+
+1. **`AXI_DW` goes 128 to 256 and `ADDR_W` 32 to 40.** Every width in the
+   kept `y_*`/`m_*` plumbing is derived from those two. `A_ROWS_IF` also goes
+   to 48, so `y_data` is `48*64` and not `A_ROWS_IF*64` at the simulation
+   value. **A width mismatch here analyses cleanly in some places and
+   truncates silently in others.**
+2. **`ARLEN` IS 4 BITS ON THE FK33's HBM SLAVE.** It is AXI3, so 16 beats is
+   the hard burst cap, not AXI4's 128. `MAXB=16` above is that cap, and a
+   module's own assert bounds what THAT MODULE permits and says nothing
+   about what the slave accepts.
+3. **D4, the `w_active` gate.** The gain loader must not start while
+   `rmsnorm_rs_mem`'s `w_active` is high. **A VALUE CHECK CANNOT SEE THIS
+   FAILURE** (MEASURED, TRACK RMSWIRE `47c9d9c`): the window is 1,030 cycles,
+   `[977, 2006]`, during which the design is wrong and every value is still
+   right. It needs an assertion plus an attribution control -- a mutant that
+   loads inside the window must be KILLED BY THE GATE, not by luck.
+
+### 10.4 Why the identity oracle gets WEAKER at 3b, and what replaces it
+
+3a's oracle worked because D3 alone must not change behaviour, so
+`hash(R_X) = 38863` is a complete statement. **3b deliberately changes the A
+binding, so the card top is NO LONGER required to match `llama_top` on a
+bench that fabricates weight bases** -- `llama_top`'s adapter computes
+`A_MEM_BASE + step*A_JOB_STRIDE + p*A_SUB_BYTES` and the card fetches a real
+descriptor instead.
+
+So the pin in `sim/cardtop_ident_expect.txt` will stop holding, and **the
+correct response is NOT to re-measure it from the card top.** That would
+assert the fork equal to itself. Item 4's bench must instead drive both tops
+from the SAME descriptor program (`tools/gen_layer_program.py`, 311
+descriptors, checked by `tools/dprog_oracle.py` at 39,330 checks 0 FAIL) so
+that the fabricated bases and the fetched descriptors describe the same
+arithmetic. **Until that bench exists, 3b has no oracle at all**, and that is
+the reason 3b is specified here rather than started.
+
+### 10.5 Open, not yet answered
+
+- **Which stage's output feeds `x_exp_in` per token.** Already recorded in
+  section 5 as the first open question; `USE_XEXP_PORT=true` makes it load
+  bearing rather than cosmetic.
+- Whether the kept `y_*` sink needs resizing for `ROWS_IF=48` or whether the
+  existing buffer logic is already parameterised on it.
+- Whether `DUAL_CLK=true` puts the D-facing handshake in a different clock
+  domain from `ap`, which would make the kept `rdy`/`dn` conversion a CDC
+  rather than a rename. **This is the one that would invalidate the "KEEPS"
+  list above, so check it FIRST.**
