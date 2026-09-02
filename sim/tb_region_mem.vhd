@@ -83,6 +83,18 @@ architecture sim of tb_region_mem is
   signal mem : mem_t := (others => (others => '0'));
 
   signal n_checks : natural := 0;
+  -- THE PAD CONTRACT.  rtl/region_mem.vhd:34-38: "Reads past the region's
+  -- real size return 0; writes past it are dropped."  Until now the bench
+  -- drove pad READS but never a pad WRITE, so with the write guard removed
+  -- no pad write ever happened and there was nothing for an unguarded read
+  -- to find -- mutations F, G and F+G all PASSED.  That was a STIMULUS gap,
+  -- not a checker gap (design note 11.4).
+  signal pad_phase   : boolean := false;
+  signal pad_done    : boolean := false;
+  signal pad_checks  : natural := 0;
+  signal pad_bad     : natural := 0;
+  signal n_pad_checks : natural := 0;
+  signal n_pad_bad    : natural := 0;
   signal n_mismatch : natural := 0;
 
   -- LFSR for the fuzz
@@ -166,7 +178,15 @@ begin
     variable bad : boolean;
   begin
     wait until rising_edge(clk);
-    if not stop then
+    -- `pad_phase` suppresses the MODEL COMPARISON, not the checking.  The
+    -- reference model above is deliberately llama_top-shaped: it pads every
+    -- region to REGMAX, so an out-of-size write LANDS in its pad and reads
+    -- back non-zero.  region_mem DROPS that write and reads back zero.  The
+    -- two genuinely differ there, on purpose (rtl/region_mem.vhd:34-38), so
+    -- comparing them across a pad access would report a mismatch that is the
+    -- intended behaviour.  The pad phase asserts region_mem's OWN contract
+    -- directly instead, in `pad_contract` below.
+    if not stop and not pad_phase then
       wait for 1 ns;
       bad := false;
       n_checks <= n_checks + 1;
@@ -202,6 +222,16 @@ begin
     end if;
   end process;
 
+  -- Pad-contract observation, driven only by the pad phase.
+  pad_chk : process is
+    variable c, b : natural := 0;
+  begin
+    wait until pad_done;
+    n_pad_checks <= pad_checks;
+    n_pad_bad    <= pad_bad;
+    wait;
+  end process;
+
   lfsr_p : process(clk) is
   begin
     if rising_edge(clk) then
@@ -214,6 +244,12 @@ begin
   -- ==================================================================
   stim : process is
     variable seed : unsigned(31 downto 0) := x"0BAD_F00D";
+    -- the pad phase's working values.  VHDL has no inline declarative block
+    -- inside a process body, so these live here rather than beside the loop.
+    variable pNWr  : natural;
+    variable pLAST : natural;
+    variable pPAD0 : natural;
+    variable pkeep : signed(MANT_W-1 downto 0);
 
     procedure idle is
     begin
@@ -431,13 +467,157 @@ begin
       step;
     end loop;
 
+    -- ==================================================================
+    -- THE PAD CONTRACT.  rtl/region_mem.vhd:34-38 promises: "Reads past the
+    -- region's real size return 0; writes past it are dropped."
+    --
+    -- This phase is what closes design-note 11.4.  The bench already drove
+    -- pad READS, but never a pad WRITE, so with the element write guard
+    -- removed no pad write ever happened and the unguarded read had nothing
+    -- to find: mutations F, G and F+G all PASSED.  A checker cannot
+    -- discriminate a defect the stimulus never triggers.
+    --
+    -- It asserts region_mem's OWN behaviour and deliberately NOT llama_top's.
+    -- The two differ here on purpose: llama_top's array is padded to REGMAX
+    -- so an out-of-size write lands harmlessly inside it, while region_mem
+    -- DROPS it.  That is why the model comparison is suppressed for these
+    -- cycles rather than the model being "fixed" to agree.
+    -- ==================================================================
+    -- The outputs are REGISTERED, so a cycle driven while `pad_phase` is
+    -- still false is compared one cycle later, when it is true -- and vice
+    -- versa at the far edge.  Both boundaries are widened by two cycles so
+    -- no pad access is ever compared against the llama_top-shaped model.
+    idle;
+    pad_phase <= true;
+    step; step; step;
+
+    for rg in 0 to NREGION-1 loop
+      if SZ(rg) < REGMAX then
+        pNWr  := (SZ(rg) + LANES - 1) / LANES;
+        pLAST := SZ(rg) - 1;          -- last REAL element
+        pPAD0 := pNWr * LANES;        -- first PAD element, word-aligned so
+                                      -- the write guard (which is on the
+                                      -- WORD index) is what gets tested
+          -- 1. capture the last real element, so a pad write that aliased
+          --    into real data would be caught rather than merely suspected
+          eread(rg, pLAST); step;
+          pkeep := d_el_rdata;
+
+          -- 2. write a distinctive non-zero value INTO THE PAD
+          ewrite(rg, pPAD0,     16#2A5#);
+          ewrite(rg, pPAD0 + 3, 16#3C7#);
+          step;
+
+          -- 3. read the pad back: the write must have been DROPPED and the
+          --    read must return zero.  This is the F half of the contract.
+          eread(rg, pPAD0); step;
+          pad_checks <= pad_checks + 1;
+          if d_el_rdata /= 0 then
+            pad_bad <= pad_bad + 1;
+            report "tb_region_mem PAD: element read past size returned "
+                 & integer'image(to_integer(d_el_rdata))
+                 & " (expected 0) region=" & integer'image(rg)
+                 & " addr=" & integer'image(pPAD0)
+              severity error;
+          end if;
+
+          eread(rg, pPAD0 + 3); step;
+          pad_checks <= pad_checks + 1;
+          if d_el_rdata /= 0 then
+            pad_bad <= pad_bad + 1;
+            report "tb_region_mem PAD: element read past size returned "
+                 & integer'image(to_integer(d_el_rdata))
+                 & " (expected 0) region=" & integer'image(rg)
+                 & " addr=" & integer'image(pPAD0 + 3)
+              severity error;
+          end if;
+
+          -- 3b. the GROUP write past the region size.  Without this only the
+          --     ELEMENT write guard is exercised: mutation G (the group
+          --     write's own guard) SURVIVED until this line existed, for
+          --     exactly the reason 11.4 gives -- a checker cannot
+          --     discriminate a defect the stimulus never triggers, and the
+          --     two writers have SEPARATE guards.
+          gwrite(rg, pNWr, (others => '1'), 16#4E1#);
+          step;
+          eread(rg, pPAD0); step;
+          pad_checks <= pad_checks + 1;
+          if d_el_rdata /= 0 then
+            pad_bad <= pad_bad + 1;
+            report "tb_region_mem PAD: a GROUP write past the region size "
+                 & "was not dropped; element read returned "
+                 & integer'image(to_integer(d_el_rdata))
+                 & " region=" & integer'image(rg)
+              severity error;
+          end if;
+
+          -- 4. the same pad word through the GROUP read.  This is the G half:
+          --    a host/group reader that ignored the region size would surface
+          --    the dropped write here even if the element read hid it.
+          gread(rg, rg, pNWr); step;
+          pad_checks <= pad_checks + 1;
+          if d_x_rdata /= (d_x_rdata'range => '0') then
+            pad_bad <= pad_bad + 1;
+            report "tb_region_mem PAD: group read past size was non-zero, "
+                 & "region=" & integer'image(rg)
+                 & " word=" & integer'image(pNWr)
+              severity error;
+          end if;
+
+          -- 5. the last REAL element must be untouched.  A pad write that
+          --    wrapped or aliased would corrupt live data, which is worse
+          --    than failing to drop it.
+          eread(rg, pLAST); step;
+          pad_checks <= pad_checks + 1;
+          if d_el_rdata /= pkeep then
+            pad_bad <= pad_bad + 1;
+            report "tb_region_mem PAD: a write past the region size changed "
+                 & "the last real element of region " & integer'image(rg)
+              severity error;
+          end if;
+      end if;
+    end loop;
+
+    -- RESYNCHRONISE BEFORE LEAVING THE PHASE.  All three read words are
+    -- REGISTERED and HOLD until the next read of their kind.  The last pad
+    -- access leaves the DUT holding zero and the llama_top-shaped model
+    -- holding the value it stored in its own pad, and with no further read
+    -- they would hold those different values for the rest of the run --
+    -- every drain cycle mismatching on a divergence that is intended.
+    -- One in-range read of each kind puts both back in step.
+    eread(0, 0); step;
+    gread(0, 1, 0); step;
+    idle;
+    step; step; step;
+    pad_phase <= false;
+    pad_done  <= true;
+    step;
+
     -- drain and verdict
     for i in 0 to 3 loop step; end loop;
     wait for 1 ns;
-    if n_mismatch = 0 then
+
+    -- THE STIMULUS-REACHABILITY GUARD.  A run that drove no pad access at
+    -- all would report zero pad failures and look identical to a run that
+    -- passed them, which is exactly how 11.4's gap survived.  Same shape as
+    -- tb_u_seam's foreign-bump and error-job guards.
+    if pad_checks = 0 then
+      report "tb_region_mem: FAIL -- the pad phase drove NO accesses; the "
+           & "pad contract is unverified and this run cannot say otherwise"
+        severity failure;
+    end if;
+
+    if n_mismatch = 0 and pad_bad = 0 then
       report "tb_region_mem: PASS -- " & integer'image(n_checks)
-           & " cycles compared, 0 mismatches"
+           & " cycles compared, 0 mismatches; pad contract "
+           & integer'image(pad_checks) & " checks, 0 failures"
         severity note;
+    elsif pad_bad /= 0 then
+      report "tb_region_mem: FAIL -- " & integer'image(pad_bad)
+           & " pad-contract failures of " & integer'image(pad_checks)
+           & " checks (" & integer'image(n_mismatch)
+           & " model mismatches of " & integer'image(n_checks) & ")"
+        severity failure;
     else
       report "tb_region_mem: FAIL -- " & integer'image(n_mismatch)
            & " mismatching cycles of " & integer'image(n_checks)

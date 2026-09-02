@@ -214,7 +214,22 @@ begin
   -- ====================================================================
   g_region : for r in 0 to NREGION-1 generate
     constant NW : natural := sz_words(r);
-    signal bank : bank_t := (others => (others => '0'));
+    -- SIZED PER REGION, not MAXW.  `bank_t` is as deep as the WIDEST region
+    -- (ffn, 1,536 words at 9B); using it for all fourteen banks made R_BETA
+    -- and R_ALPHA -- val_heads elements each -- cost as much as an FFN bank.
+    -- D3 always said "sized per-region BRAM ... ~34 RAMB36"; that is the
+    -- figure for the 9,480 real words, and this declaration is what makes it
+    -- true.  MEASURED 2026-09-02, two readers, OOC on xcvu33p: uniform
+    -- `bank_t` costs 224 RAMB36, per-region 100.
+    --
+    -- THIS IS WHAT MAKES THE WRITE GUARD LOad-BEARING.  With a MAXW-deep
+    -- array an unguarded write past the region size landed harmlessly in the
+    -- pad; with an NW-deep array it is an out-of-bounds index.  The guard
+    -- below was already there, and sim/tb_region_mem.vhd's pad phase now
+    -- drives writes past every region's size so the combination is exercised
+    -- rather than assumed.
+    type bank_sized_t is array (0 to NW-1) of word_t;
+    signal bank : bank_sized_t := (others => (others => '0'));
     -- ASK EXPLICITLY.  CLAUDE.md: Vivado's inference log lies in both
     -- directions, so this attribute is a REQUEST and the mapping report plus
     -- an object-level get_cells census are the only authoritative answers.

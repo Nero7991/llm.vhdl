@@ -712,6 +712,47 @@ there, deliberately.
 discriminate `F`. It would also make the intentional divergence above
 observable, so it must assert `region_mem`'s behaviour and NOT `llama_top`'s.
 
+### CLOSED 2026-09-02, and the proposed fix above was WRONG
+
+The pad phase was written exactly as prescribed -- `sim/tb_region_mem.vhd`
+drives element writes past every region's size, asserts `region_mem`'s own
+contract rather than `llama_top`'s, and suppresses the model comparison across
+those cycles because the two deliberately differ. **`F` still SURVIVED.**
+
+The reason is not a stimulus gap this time, it is an OBSERVABILITY limit that
+11.4 did not identify: **the write guard and the read guard are REDUNDANT.**
+With a `MAXW`-deep array, an unguarded write past the region size lands
+harmlessly in the pad, and the read guard then returns zero for it regardless.
+`F` is unobservable at the port boundary as long as the read guard holds, so
+no stimulus alone can discriminate it. MEASURED: `F` alone SURVIVES; `F`
+together with the read guard removed is KILLED, returning **677 = 0x2A5**,
+exactly the value the new pad stimulus writes; and the attribution control --
+the read guard removed with `F` absent -- SURVIVES, so the kill belongs to the
+pad write and not to the read.
+
+**What actually made `F` bite was the per-region SIZING**, landed the same
+day. With `bank` declared `0 to NW-1` instead of `0 to MAXW-1`, an unguarded
+write past the region size is no longer a harmless pad write, it is an
+out-of-bounds index, and the new stimulus reaches it:
+
+| mutation | 11.4 | now |
+|---|---|---|
+| `F_element_write_ignores_pad_guard` | PASS, does not bite | **KILLED**, `index (512) out of bounds (0 to 511)` |
+| `G_group_write_ignores_pad_guard` | PASS, does not bite | **KILLED**, out of bounds |
+| `H_pad_read_holds_instead_of_zero` | FAIL, bites | KILLED |
+| `I_group_pad_read_holds` (new) | -- | KILLED |
+| unmutated control | -- | SURVIVES |
+
+`G` needed its own stimulus: the two writers have SEPARATE guards, and the
+first version of the pad phase drove only ELEMENT writes past the size, so
+`G` survived until a group write past the size was added. That is 11.4's own
+lesson recurring one level down -- a checker cannot discriminate a defect the
+stimulus never triggers, and "the pad contract" is two guards, not one.
+
+The bench now refuses to pass a run where `pad_checks = 0`, so this gap
+cannot silently reopen. Current: 5,401 cycles compared, 0 mismatches, 55 pad
+checks, 0 failures.
+
 ---
 
 ## 12. D6, 2026-09-02: the card is built from `compose4_top`, not from the `llama_top` fork
