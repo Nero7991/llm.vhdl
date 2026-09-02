@@ -400,7 +400,33 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=103  # RAISED FROM 99, 2026-08-30, by the dispatcher.  TWO new rows,
+BASELINE_PASS=105  # RAISED FROM 103, 2026-09-01, by the dispatcher.  TWO new
+                   #    rows, both from TRACK CARDTOP, and again the predicted
+                   #    floor and the measured one AGREE.
+                   #
+                   #    MEASURED on `git archive 941a711`, GHDL 1.0.0 mcode,
+                   #    --jobs 2, the documented recipe:
+                   #      MV4I_FK33_FILE=/nonexistent \
+                   #        REGRESS_SCRATCH=<dir> bash <archive>/sim/regress.sh --jobs 2
+                   #      suite sim  PASS 79  FAIL 0  NOCHECK 3
+                   #      suite tb   PASS 26  FAIL 0  NOCHECK 1
+                   #      OVERALL    PASS 105  FAIL 0  NOVERDICT 0  TIMEOUT 0
+                   #                 BUILD-ERROR 0  NOCHECK 4  SKIPPED 10
+                   #      baseline: 105 passing, above the recorded floor of 103
+                   #                -- raise BASELINE_PASS in this script
+                   #    The gate PRINTED the raise suggestion rather than either
+                   #    refusal, which is the evidence that both the NOT IN GIT
+                   #    list and the optional-row list were empty on that tree.
+                   #
+                   #    DERIVED and consistent: the two new auto-discovered rows
+                   #    are both in sim/, which is why suite sim moved 77 -> 79
+                   #    and suite tb did not move:
+                   #      sim/tb_region_mem.vhd       `264d756`  TRACK CARDTOP 1
+                   #      sim/tb_a_desc_adapter.vhd   `941a711`  TRACK CARDTOP 2
+                   #    103 + 2 = 105 and the measurement agrees.
+                   #
+                   # ---- previous entry, kept because its reasoning is the rule ----
+                   # WAS 103, RAISED FROM 99, 2026-08-30, by the dispatcher.  TWO new rows,
                    #    and this time the predicted floor and the measured one
                    #    AGREE, which is the first thing worth recording.
                    #
