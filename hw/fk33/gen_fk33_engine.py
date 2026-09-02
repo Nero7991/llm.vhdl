@@ -333,6 +333,59 @@ entity fk33_engine is
     s_axix_rresp   : out std_logic_vector(1 downto 0);
 
     ------------------------------------------------------------------------
+    -- D-FACING COMPLETION.  TRACK CARDTOP, 2026-09-02.
+    --
+    -- Until now this engine had NO D-facing interface at all: `job_done` and
+    -- `job_err` were internal and reachable only as STATUS bits [2] and [3]
+    -- over the AXI-Lite slave, because the engine was built to be driven by
+    -- the HOST over PCIe, which is what it is doing on the card today.
+    --
+    -- rtl/a_desc_adapter.vhd takes completion from PORTS rather than from a
+    -- STATUS read, deliberately: a read channel would be a second way to
+    -- learn the same fact, free to disagree with the first.  These two
+    -- outputs are that path.
+    --
+    -- PURELY ADDITIVE.  They are OUTPUTS driven from the same two signals
+    -- STATUS already presents, so no existing behaviour can change and the
+    -- image currently in the card's flash stays valid until a new one is
+    -- deliberately built.  An unconnected output is legal VHDL and costs
+    -- nothing, so hw/fk33/gen_pcieep.py needs no change to keep working.
+    ------------------------------------------------------------------------
+    d_job_done     : out std_logic;
+    d_job_err      : out std_logic;
+
+    -- D-FACING ACTIVATION WRITE.  The host path above (s_axix) moves ONE
+    -- int16 per AXI-Lite transaction, which is right for a host loading a
+    -- vector over PCIe and wrong for D: a 4,096-element activation across
+    -- 311 jobs would cost millions of core cycles per token.  This port is
+    -- one element per cycle, the same shape llama_top's own A adapter
+    -- drives (`llama_top.vhd:3197-3226`).
+    --
+    -- DEFAULTS MAKE IT INERT.  Left unconnected, d_x_we is '0' and the
+    -- s_axix path below is untouched, so the image in the card's flash
+    -- keeps working exactly as it does today.
+    d_x_we         : in  std_logic := '0';
+    d_x_waddr      : in  std_logic_vector(15 downto 0) := (others => '0');
+    d_x_wdata      : in  std_logic_vector(15 downto 0) := (others => '0');
+
+    -- D-FACING RESULT.  Results currently leave this engine ONLY through the
+    -- AXI-Lite Y_IDX/Y_LO/Y_HI registers, one row per two reads, which D
+    -- cannot use.  These are the core's own result beats, brought out.
+    --
+    -- `y_we` HAS NO READY AND A STALL LOSES A BEAT -- that is the core's
+    -- contract, not a choice made here (llama_top.vhd:3217-3220 says the
+    -- same of the simulation path).  So whatever consumes these must accept
+    -- every beat unconditionally; a consumer that can refuse is a consumer
+    -- that will silently drop results.
+    --
+    -- Outputs, so leaving them unconnected changes nothing.
+    d_y_we         : out std_logic;
+    d_y_addr       : out std_logic_vector(15 downto 0);
+    d_y_data       : out std_logic_vector({ROWS_IF}*64-1 downto 0);
+    d_y_mask       : out std_logic_vector({ROWS_IF}-1 downto 0);
+    d_y_exp        : out std_logic_vector(31 downto 0);
+
+    ------------------------------------------------------------------------
     -- {NMAST} HBM read masters
     ------------------------------------------------------------------------
 {MASTER_PORTS}
@@ -392,6 +445,9 @@ architecture rtl of fk33_engine is
   signal xrd_addr : std_logic_vector(11 downto 0) := (others => '0');
 
   signal job_done, job_err : std_logic;
+  signal x_we_mux    : std_logic;
+  signal x_waddr_mux : std_logic_vector(15 downto 0);
+  signal x_wdata_mux : std_logic_vector(15 downto 0);
 
   -- USE_XEXP_PORT is false, so this is never read.  It is a signal rather than
   -- an aggregate in the port map because VHDL-93 does not allow an expression
@@ -535,6 +591,39 @@ begin
   ---------------------------------------------------------------------------
   -- SUBSYSTEM A
   ---------------------------------------------------------------------------
+  -- The D-facing completion outputs.  Driven from the SAME two signals the
+  -- STATUS register presents at bits [2] and [3], on purpose: one source,
+  -- so a port and a register read cannot disagree about whether a job
+  -- finished.
+  d_job_done <= job_done;
+  d_job_err  <= job_err;
+
+  -- the result beats, straight out of the core
+  d_y_we   <= y_we;
+  d_y_addr <= y_addr;
+  d_y_data <= y_data;
+  d_y_mask <= y_mask;
+  d_y_exp  <= y_exp_o;
+
+  -- The activation write, muxed.  D wins when it is driving, and the two
+  -- sources must never drive together: on the card D owns the engine during
+  -- a token and the host owns it between tokens.  That is a PROTOCOL claim,
+  -- so it is asserted rather than assumed.  Simulation only -- Vivado
+  -- ignores `severity failure` in synthesis.
+  x_we_mux    <= d_x_we when d_x_we = '1' else x_we;
+  x_waddr_mux <= d_x_waddr when d_x_we = '1' else x_waddr;
+  x_wdata_mux <= d_x_wdata when d_x_we = '1' else x_wdata;
+
+  collide : process(core_clk) is
+  begin
+    if rising_edge(core_clk) then
+      assert not (d_x_we = '1' and x_we = '1')
+        report "fk33_engine: D and the host both wrote an activation in one "
+             & "cycle; the host write is LOST"
+        severity failure;
+    end if;
+  end process;
+
   eng : entity work.matvec_int4_desc_axi
     generic map(
       BLK           => BLK,
@@ -590,9 +679,9 @@ begin
       m_rvalid  => m_rvalid,  m_rready  => m_rready,  m_rdata  => m_rdata,
       m_rlast   => m_rlast,
 
-      x_we     => x_we,
-      x_waddr  => x_waddr,
-      x_wdata  => x_wdata,
+      x_we     => x_we_mux,
+      x_waddr  => x_waddr_mux,
+      x_wdata  => x_wdata_mux,
       x_exp_in => x_exp_zero,
 
       y_we     => y_we,

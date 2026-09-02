@@ -58,7 +58,8 @@ entity a_desc_adapter is
     ADDR_W      : positive := 40;   -- must match the unit's ADDR_W
     LITE_AW     : positive := 8;    -- the unit's C_S_AXI_ADDR_WIDTH
     DESC_STRIDE : positive := 512;  -- = DESC_MAXB*AXI_DW/8, the unit's DESC_ALIGN
-    N_JOBS      : positive := 311   -- descriptors the arena was sized for
+    N_JOBS      : positive := 311;  -- descriptors the arena was sized for
+    EPOCH_W     : positive := 4     -- must match seq_desc_fetch's EPOCH_W
   );
   port (
     clk        : in  std_logic;
@@ -74,6 +75,15 @@ entity a_desc_adapter is
     u_done     : out std_logic;                      -- level, until u_ack
     u_err      : out std_logic;
     u_ack      : in  std_logic;
+
+    -- THE EPOCH ECHO.  seq_desc_fetch bumps `job_epoch` at S_ISSUE and
+    -- compares what comes back at S_COMPLETE (`seq_desc_fetch.vhd:302-304`),
+    -- so a completion that does not carry the epoch of the job D issued is
+    -- rejected as stale.  The adapter's job is to LATCH the epoch at issue
+    -- and echo it, never to compute one: an epoch generated here rather than
+    -- captured would agree with itself and defeat the very check it feeds.
+    job_epoch    : in  unsigned(EPOCH_W-1 downto 0);
+    u_done_epoch : out std_logic_vector(EPOCH_W-1 downto 0);
 
     -- AXI-Lite master, write channel only
     m_awaddr   : out std_logic_vector(LITE_AW-1 downto 0);
@@ -105,6 +115,7 @@ architecture rtl of a_desc_adapter is
   signal awdone  : std_logic := '0';   -- this beat's AW handshake has happened
   signal wdone   : std_logic := '0';   -- this beat's W  handshake has happened
   signal err_q   : std_logic := '0';
+  signal ep_q    : unsigned(EPOCH_W-1 downto 0) := (others => '0');
   signal cnt_q   : unsigned(31 downto 0) := (others => '0');
 
   -- the register offsets, word-addressed as the unit decodes them
@@ -136,6 +147,7 @@ begin
   u_ready     <= '1' when st = S_IDLE else '0';
   u_done      <= '1' when (st = S_DONE or st = S_REFUSE) else '0';
   u_err       <= err_q;
+  u_done_epoch <= std_logic_vector(ep_q);
   jobs_issued <= std_logic_vector(cnt_q);
 
   m_wstrb  <= "1111";
@@ -202,6 +214,12 @@ begin
                 bad_v := '1';
               end if;
 
+              -- latched in BOTH arms.  A REFUSED job still completes from
+              -- D's point of view -- it raises u_done with u_err -- so it
+              -- must carry the epoch of the job D issued, or D rejects the
+              -- error report as stale and waits forever on a job that will
+              -- never be retried.
+              ep_q <= job_epoch;
               if bad_v = '1' then
                 err_q <= '1';
                 st    <= S_REFUSE;

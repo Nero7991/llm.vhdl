@@ -39,6 +39,9 @@ architecture sim of tb_a_desc_adapter is
   signal u_index    : std_logic_vector(15 downto 0) := (others => '0');
   signal u_ready, u_done, u_err : std_logic;
   signal u_ack      : std_logic := '0';
+  constant EPOCH_W  : positive := 4;
+  signal job_epoch  : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+  signal u_done_epoch : std_logic_vector(EPOCH_W-1 downto 0);
 
   signal m_awaddr  : std_logic_vector(LITE_AW-1 downto 0);
   signal m_awvalid : std_logic;
@@ -100,12 +103,14 @@ begin
 
   dut : entity work.a_desc_adapter
     generic map (ADDR_W => ADDR_W, LITE_AW => LITE_AW,
-                 DESC_STRIDE => DESC_STRIDE, N_JOBS => N_JOBS)
+                 DESC_STRIDE => DESC_STRIDE, N_JOBS => N_JOBS,
+                 EPOCH_W => EPOCH_W)
     port map (
       clk => clk, rstn => rstn,
       arena_base => arena_base,
       u_start => u_start, u_index => u_index,
       u_ready => u_ready, u_done => u_done, u_err => u_err, u_ack => u_ack,
+      job_epoch => job_epoch, u_done_epoch => u_done_epoch,
       m_awaddr => m_awaddr, m_awvalid => m_awvalid, m_awready => m_awready,
       m_wdata => m_wdata, m_wstrb => m_wstrb, m_wvalid => m_wvalid,
       m_wready => m_wready, m_bresp => m_bresp, m_bvalid => m_bvalid,
@@ -281,6 +286,9 @@ begin
     procedure issue(i : integer) is
     begin
       clr_log <= '1';
+      -- bump the epoch the way seq_desc_fetch does at S_ISSUE, so a stale
+      -- echo is distinguishable from a fresh one
+      job_epoch <= job_epoch + 1;
       wait until rising_edge(clk);
       clr_log <= '0';
       wait until rising_edge(clk);
@@ -337,6 +345,11 @@ begin
             "job " & integer'image(i) & ": CTRL bit0 not set");
       end if;
       chk(u_err = '0', "job " & integer'image(i) & ": spurious error");
+      chk(unsigned(u_done_epoch) = job_epoch,
+          "job " & integer'image(i) & ": echoed epoch "
+          & integer'image(to_integer(unsigned(u_done_epoch)))
+          & " but D issued epoch "
+          & integer'image(to_integer(job_epoch)));
       -- every descriptor address must meet the unit's own DESC_ALIGN
       chk(exp(8 downto 0) = 0,
           "job " & integer'image(i) & ": descriptor address not 512-aligned");
@@ -355,6 +368,9 @@ begin
       exit when u_done = '1';
     end loop;
     chk(u_err = '1', "an out-of-capacity index was not refused");
+    chk(unsigned(u_done_epoch) = job_epoch,
+        "a REFUSED job echoed a stale epoch, so D would reject its own error "
+        & "report and wait forever on a job that is never retried");
     chk(log_n = 0, "an out-of-capacity index still issued "
         & integer'image(log_n) & " writes");
     chk(to_integer(unsigned(jobs_issued)) = N_JOBS,
