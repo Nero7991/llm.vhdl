@@ -327,17 +327,28 @@ begin
     r_addr <= to_unsigned(9, GA_W);
     step;
     w_we <= '0'; w_be <= (others => '0'); r_en <= '0'; w_data <= (others => '0');
-    -- 3e: element write AND group write, same word: the GROUP write wins
-    el_we <= '1'; el_wreg <= 3; el_waddr <= 64; el_wdata <= to_signed(111, MANT_W);
-    w_we <= '1'; w_regd <= to_unsigned(3, 8); w_addr <= to_unsigned(8, GA_W);
-    w_be <= (others => '1');
-    for i in 0 to LANES-1 loop
-      w_data((i+1)*MANT_W-1 downto i*MANT_W) <= std_logic_vector(to_signed(7777, MANT_W));
-    end loop;
-    step;
-    el_we <= '0'; w_we <= '0'; w_be <= (others => '0'); w_data <= (others => '0');
-    eread(3, 64);
-    gread(3, 3, 8);
+    -- 3e RETIRED 2026-09-02.  It used to drive an element write and a group
+    -- write in the SAME cycle and check that the group won the tie.
+    --
+    -- region_mem now merges the two writers into ONE write port, because
+    -- Vivado refuses to infer a RAM from a process with two write statements
+    -- ([Synth 8-4767] "RAM has multiple writes via different ports in same
+    -- process") and the failed dissolve SEGFAULTS the tool.  Under a merged
+    -- port simultaneous writes are not a tie to be resolved, they are a
+    -- PRECONDITION VIOLATION: the port serves one and the other is lost.
+    -- region_mem asserts against it.
+    --
+    -- THE CASE IS UNREACHABLE IN THE DESIGN, which is why this is a
+    -- retirement and not a loss of coverage.  D issues one unit at a time,
+    -- and MEASURED over a full token of sim/tb_fk33_cardtop_ident.vhd there
+    -- were ZERO cycles with both writers active.  region_mem's own header
+    -- said as much before the merge existed.
+    --
+    -- WHAT IS NO LONGER TESTED, stated plainly rather than quietly dropped:
+    -- the write-priority mux inside region_mem still prefers the group
+    -- write, and nothing exercises that preference, because the only
+    -- stimulus that could is the stimulus the RTL now forbids.  Mutation
+    -- `C_element_write_wins_tie` is retired with it.
 
     -- PHASE 4: out-of-range reads return 0 in both.  NOTE the constraint:
     -- group words must stay inside the region's PADDED slot (REGMAX/LANES

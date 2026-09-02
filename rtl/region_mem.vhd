@@ -21,10 +21,16 @@
 --     element-write cross collision.  llama_top's process reads the signal
 --     before any assignment takes effect; so does this one.  Xilinx calls
 --     it READ_FIRST.
---   * If an element write and a group write hit the same word in one
---     cycle, the GROUP write wins (later assignment in llama_top's
---     process).  The same assignment order is kept here, though D's
---     one-unit-at-a-time rule makes the case unreachable today.
+--   * SIMULTANEOUS ELEMENT AND GROUP WRITES ARE A PRECONDITION VIOLATION,
+--     not a tie.  llama_top performs BOTH (they are two assignments in one
+--     process, so writes to different words both land, and the group wins a
+--     same-word tie by being later).  This memory merges the two writers
+--     into ONE write port -- Vivado will not infer a RAM otherwise, see the
+--     note on the write statement -- so it can serve only one, and it
+--     asserts rather than silently dropping the other.
+--     THAT IS A REAL DIVERGENCE FROM llama_top, and it is safe only because
+--     the case cannot arise: D issues one unit at a time, and MEASURED over
+--     a full token there were ZERO cycles with both writers active.
 --   * Reads past the region's real size return 0; writes past it are
 --     dropped.  That is llama_top's pad: its array is padded to REGMAX per
 --     region and zero-initialised, and a correct adapter never writes the
@@ -166,6 +172,35 @@ architecture rtl of region_mem is
 
 begin
 
+  -- THE ASSUMPTION THE MERGED WRITE PORT RESTS ON, CHECKED NOT ASSUMED.
+  -- MEASURED 2026-09-02 over a full token of the card-top identity bench:
+  -- zero cycles with both writers active.  That is a property of D's
+  -- schedule, not of this memory: a future D with overlap would violate it
+  -- and the merged port would silently DROP a write.
+  excl : process(clk) is
+  begin
+    if rising_edge(clk) then
+      -- THE PRECONDITION IS PER REGION, not global.  The write mux lives
+      -- inside the per-region generate, so an element write to region 3 and
+      -- a group write to region 7 in the same cycle BOTH land: region 3's
+      -- mux never sees the group write and region 7's never sees the
+      -- element write.  A write is lost only when both target the SAME
+      -- region, which is the only case this may forbid.
+      --
+      -- The first version of this assertion was global and fired on the
+      -- unit bench immediately.  A precondition stated more strongly than
+      -- the mechanism requires is not "safe": it forbids traffic the design
+      -- handles correctly, and it would have driven a much larger and
+      -- entirely unnecessary restructuring.
+      assert not (el_we = '1' and w_we = '1'
+                  and el_wreg = to_integer(w_regd))
+        report "region_mem: element and group WRITE to the SAME region in "
+             & "one cycle; the merged write port serves the group write and "
+             & "the element write is LOST"
+        severity failure;
+    end if;
+  end process;
+
   assert 2**LOG2L = LANES
     report "region_mem: LANES must be a power of two"
     severity failure;
@@ -187,31 +222,82 @@ begin
     -- read port present no attribute can make this a BRAM.
     attribute ram_style : string;
     attribute ram_style of bank : signal is "block";
+
+    signal wr_en   : std_logic := '0';
+    signal wr_addr : natural range 0 to MAXW-1 := 0;
+    signal wr_be   : std_logic_vector(LANES-1 downto 0) := (others => '0');
+    signal wr_data : word_t := (others => '0');
   begin
+
+    -- the two writers muxed into one port, group first so it wins a tie
+    process(el_we, el_wreg, el_waddr, el_wdata, w_we, w_regd, w_addr, w_be, w_data)
+      variable ew : natural;
+      variable el : natural;
+    begin
+      wr_en   <= '0';
+      wr_addr <= 0;
+      wr_be   <= (others => '0');
+      wr_data <= (others => '0');
+      if w_we = '1' and to_integer(w_regd) = r then
+        if to_integer(w_addr) < NW then
+          wr_en   <= '1';
+          wr_addr <= to_integer(w_addr);
+          wr_be   <= w_be;
+          wr_data <= w_data;
+        end if;
+      elsif el_we = '1' and el_wreg = r then
+        ew := el_waddr / LANES;
+        el := el_waddr mod LANES;
+        if ew < NW then
+          wr_en   <= '1';
+          wr_addr <= ew;
+          for i in 0 to LANES-1 loop
+            if i = el then
+              wr_be(i) <= '1';
+            end if;
+            wr_data((i+1)*MANT_W-1 downto i*MANT_W)
+              <= std_logic_vector(el_wdata);
+          end loop;
+        end if;
+      end if;
+    end process;
     process(clk)
       variable ew : natural;
       variable el : natural;
     begin
       if rising_edge(clk) then
-        -- element write first (llama_top's order)
-        if el_we = '1' and el_wreg = r then
-          ew := el_waddr / LANES;
-          el := el_waddr mod LANES;
-          if ew < NW then
-            bank(ew)((el+1)*MANT_W-1 downto el*MANT_W)
-              <= std_logic_vector(el_wdata);
-          end if;
-        end if;
-        -- group write second: it wins a same-word tie, as in llama_top
-        if w_we = '1' and to_integer(w_regd) = r then
-          if to_integer(w_addr) < NW then
-            for i in 0 to LANES-1 loop
-              if w_be(i) = '1' then
-                bank(to_integer(w_addr))((i+1)*MANT_W-1 downto i*MANT_W)
-                  <= w_data((i+1)*MANT_W-1 downto i*MANT_W);
-              end if;
-            end loop;
-          end if;
+        -- ONE WRITE STATEMENT.  This is the ONLY structural change the
+        -- tool asked for, and it is not a preference:
+        --   [Synth 8-4767] Trying to implement RAM 'g_region[0].bank_reg'
+        --   in registers ... 1: RAM has multiple writes via different ports
+        --   in same process.
+        --   [Synth 8-3391] Unable to infer a block/distributed RAM ...
+        -- and the failed dissolve then SEGFAULTS Vivado 2023.2 outright
+        -- (`Abnormal program termination (11)`), MEASURED 2026-09-02.
+        --
+        -- The two writers are muxed AHEAD of the single write, group first
+        -- so it still wins a same-word tie exactly as llama_top's assignment
+        -- order does.  The element write becomes a one-hot lane enable on
+        -- the same byte-enabled port, so both are one primitive.
+        --
+        -- Sound only because the two writers never fire together.  MEASURED
+        -- over a full token: zero coincidences.  That is a property of D's
+        -- one-unit-at-a-time schedule and NOT of this memory, so it is
+        -- asserted rather than assumed -- see `excl` below.
+        --
+        -- READS ARE LEFT ALONE.  The tool's complaint named writes only;
+        -- multiple readers it can serve by replicating.  An earlier attempt
+        -- merged the readers too and BROKE the hold contract, because the
+        -- three registered words hold across DIFFERENT intervals and one
+        -- shared register cannot: an element read clobbered the group word.
+        -- The unit bench caught it. Do not merge the reads.
+        if wr_en = '1' then
+          for i in 0 to LANES-1 loop
+            if wr_be(i) = '1' then
+              bank(wr_addr)((i+1)*MANT_W-1 downto i*MANT_W)
+                <= wr_data((i+1)*MANT_W-1 downto i*MANT_W);
+            end if;
+          end loop;
         end if;
 
         -- reads: pre-write data, one cycle, into this region's own slot
