@@ -220,3 +220,121 @@ simultaneous traffic on both ports, because D's one-unit-at-a-time rule
 means the bench never generates it -- coverage of the input space is not
 coverage of the output space, and that case is enumerated here rather than
 tested.
+
+---
+
+## 7. Increment 2 landed: `rtl/a_desc_adapter.vhd`, and a witness that took four tries
+
+**Added 2026-09-01 by the dispatcher, in session, no subagents.** Item 2 of
+section 4 is implemented and verified. The seam is SMALLER than the
+simulation one, exactly as section 3.1 predicted: three AXI-Lite writes per
+job (`DESC_PTR_LO`, `DESC_PTR_HI`, `CTRL` bit 0), and no shape registers at
+all, because D2 makes the descriptor host-prebuilt.
+
+Two decisions worth recording:
+
+- **The arena base is an INPUT PORT, not a generic.** `tools/hbm_map.py`'s
+  header records that a hardcoded copy of this address in
+  `server/fk33_seam.h` had already become "a FOURTH model of the same
+  address". `hbm_map.py` is the only thing in the repository that chooses an
+  arena address; a generic here would make this file the fifth model.
+- **There is no AXI-Lite READ path.** Completion and error come from the
+  unit's `job_done`/`job_err` PORTS, which it documents as mirroring STATUS
+  bits 0 and 2. A read channel would be a second way to learn the same fact,
+  free to disagree with the first. The cost is that this adapter cannot
+  report `err_code`; the host reads STATUS when `u_err` fires. Deliberate
+  narrowing, not an omission.
+
+MEASURED: `tb_a_desc_adapter: PASS -- 2184 checks, 0 mismatches`, a full
+token of 311 A jobs plus a refusal and a recovery.
+
+### 7.1 The mutation table
+
+Nine mutations of `rtl/a_desc_adapter.vhd`, run in a `git archive` tree so
+the repo was never mutated, every row `cmp`-verified to have actually
+changed the file:
+
+| mutation | caught by | verdict |
+|---|---|---|
+| `N1_go_before_hi` | register-order check | FAIL |
+| `N2_ignore_descriptor_stride` | `DESC_PTR_LO` value check | FAIL |
+| `N3_accept_one_past_capacity` | refusal check | FAIL |
+| `N4_leave_done_without_ack` | **watchdog** | FAIL |
+| `N5_error_flag_is_sticky` | error-survives-into-good-job check | FAIL |
+| `N6_do_not_count_jobs` | `jobs_issued` check | FAIL |
+| `N7_refuse_still_writes` | refusal issued-writes check | FAIL |
+| `N8_retry_go_while_unacked` | hazard witness + write count + watchdog | FAIL |
+| `N9_u_done_decoded_from_wrong_states` | RTL assertion; witness with it disabled | FAIL |
+
+**ATTRIBUTION, and it is not flattering to the witness.** Every mutant the
+hazard witness catches is ALSO caught by the write-count check, the
+watchdog, or the in-RTL assertion. Run with each of those disabled in turn,
+**the witness earns ZERO kills alone across all nine rows**, and so does the
+in-RTL assertion. Both are kept for one stated reason only: they are the
+only checks that name the actual protocol violation, where the others
+report a generic symptom ("saw 4 writes", "deadlocked"). That is a
+diagnosis argument, not a detection argument, and it is recorded as such
+rather than dressed up as coverage.
+
+### 7.2 THE WITNESS TOOK FOUR FORMULATIONS AND THE FIRST THREE ALL PASSED SILENTLY
+
+This is the most reusable thing on this increment. The property is one
+sentence: *no AXI write may be issued between a completion and D's ack.*
+Every version below looked correct when written.
+
+- **v1, driver-declared window.** The driver announced "a completion is
+  standing" and the slave flagged writes inside it. Never fired: the
+  offending write can land outside the driver's five-cycle hold. **A check
+  whose firing depends on the testbench's own timing is not an invariant.**
+- **v2, "no write while `u_done` is high", computed from ports.** Sounded
+  strictly stronger. Still never fired, because the adapter LEAVES `S_DONE`
+  in order to issue the bad write, so `u_done` is low at the moment it
+  lands. **The invariant described the state the adapter was in, not the
+  obligation it was under.**
+- **v3, latch the obligation from `u_done` rising until `u_ack`.** Correct
+  at last, and STILL never fired, for a reason that has nothing to do with
+  the invariant: it was only EVALUATED by a `chk` at the end of the
+  stimulus process, and `N8` deadlocks the driver, so the watchdog ends the
+  run with `severity failure` long before that line is reached. **A check
+  that only runs at the end of the test cannot fire in any run that dies
+  before the end, and the mutants likeliest to violate a liveness property
+  are exactly the ones that die early.**
+- **v4, report at the point of violation.** Fires.
+
+Three versions of a check that a careful reader would have approved, all
+passing for the wrong reason, all found only by insisting the check be
+shown to FAIL. The general form: **it is not enough for an invariant to be
+true and correctly computed. It must also be reachable in the runs where it
+matters.**
+
+### 7.3 A defect in the bench's own verdict, found the same way
+
+The first version counted checks with two SIGNALS. A signal assignment
+takes effect after a wait, so every `chk` between two waits computed the
+same right-hand side and the last one won: the suite printed **313 checks
+for 311 jobs**, i.e. one of the seven checks per job was counted and six
+were invisible. `n_mismatch` is what the PASS line is computed from, so two
+failures in one job would have been reported as one. Counters are variables
+now. **The tell was arithmetic: 313 is not 311 x 7, and nothing else in the
+output looked wrong.**
+
+### 7.4 Measured and REJECTED, do not retry
+
+- **`resize(idx,64) * to_unsigned(DESC_STRIDE,32)`** for the descriptor
+  offset. `numeric_std`'s `*` returns the SUM of the operand widths, so this
+  is 96 bits into a 64-bit target and fails the bound check at elaboration
+  time. `DESC_STRIDE` is constrained to a power of two, so `shift_left` is
+  both correct and the honest statement of that constraint.
+- **Clearing the write log from the driver.** Two processes assigning one
+  unresolved signal is multiple drivers; GHDL rejects it at elaboration. The
+  driver requests a clear and the slave, the log's only driver, performs it.
+
+### 7.5 Open, not yet answered
+
+- **No mutant is caught by the hazard witness ALONE.** One would have to
+  keep the write count at three per job, keep the adapter live, and still
+  violate the ordering. Until such a mutant exists, the witness's detection
+  value is unproven and only its diagnostic value is established.
+- The bench models the unit's completion semantics; it does not run against
+  `matvec_int4_desc_axi` itself. That is item 3's job, where the real unit
+  and a real descriptor arena appear together.
