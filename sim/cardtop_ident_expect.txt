@@ -1,0 +1,20 @@
+# sim/cardtop_ident_expect.txt
+#
+# The landmark `llama_top` ITSELF produces under sim/tb_llama_top.vhd at that
+# bench's default generics.  tools/gen_cardtop.py injects it into the
+# generated identity bench as an assertion.
+#
+# MEASURED 2026-09-02, GHDL 1.0.0 mcode, at commit 2aac831 plus the generator:
+#   MV4I_FK33_FILE=/nonexistent REGRESS_SCRATCH=<dir> \
+#     bash sim/regress.sh --only tb_llama_top --jobs 2
+#   sim:tb_llama_top -> "tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks,
+#   1 tokens per run, 4 descriptor-latency points, R_X bit-identical across all
+#   of them, R_X(0) = -12739 hash(R_X) = 38863"
+#
+# RE-MEASURE FROM llama_top, NEVER FROM THE CARD TOP.  Taking these numbers
+# from tb_fk33_cardtop_ident would make the pin a round trip: the card top
+# would be asserted equal to itself, which is satisfied by any
+# wrong-but-consistent fork and is precisely the m7-mutant failure recorded in
+# CLAUDE.md.
+R_X0=-12739
+HASH=38863

@@ -164,6 +164,82 @@ of 103, REGRESSION: PASS` (`llama-finalgate.service`, log at
   part of the uncommitted landing. The generalisation, measured 8 for 8:
   **copying a list rotted; borrowing one did not.**
 
+### 2026-09-02, in session, no subagents: STEP 3 is three increments in and the card top is token-identical to the oracle
+
+**Oren's ruling stands: NO subagents for RTL work**, and none were used. The
+two Claude subagents that were running died on the weekly rate limit; the
+DeepSeek harness's own subagents produced a 5,363-line card-top draft that
+was quarantined unreviewed and has now been DELETED.
+
+**STEP 2 is closed and the fit question with it.** TRACK ROUTE3 (`8eaaf18`,
+by the harness) routed the composed A+B+C+D **with the real gain image in**:
+`nets=3,526,125 errors=0 unrouted=0`, BRAM **351.5 of 372.5 in `pb_core`,
++21.0 headroom**, DSP unmoved at 2,177, WNS **-0.815**. The 200-path census
+puts 162 paths in `matvec_core`, 28 in the attention array and **zero in
+`d_norm`**, so the gain codebook is not a critical path and the timing
+regression belongs to the lever-C / `CB_BCAST` family LEVERC48 already named.
+**Fit is answered; timing is the separate lever hunt it always was.**
+
+**STEP 3, increments 1 to 3a, all landed in session:**
+
+| increment | file | evidence |
+|---|---|---|
+| 1 | `rtl/region_mem.vhd` | 6 mutations, **5 bite**, `F` does not and cannot |
+| 2 | `rtl/a_desc_adapter.vhd` | 2,184 checks, **9 mutations, 9 bite** |
+| 3a | `tools/gen_cardtop.py` | **token-identical to `llama_top`** |
+
+**THE HEADLINE: `R_X(0) = -12739 hash(R_X) = 38863` from BOTH `llama_top` and
+the generated card top**, same bench, same generics. MEASURED separately, one
+run each.
+
+**D1 was CORRECTED, not overturned** (`2aac831`): the card top is still a
+separate file and `llama_top` is still the untouched oracle, but the fork is
+GENERATED. `llama_top` is 5,684 lines and the card's decisions touch about
+**8.6%** of it, so hand-copying the other 91% is a transcription task with a
+defect rate -- which is exactly what the quarantined 5,363-line draft was.
+
+**Three findings that only composition could produce, and the third is the
+important one:**
+
+1. **`region_mem` dropped a 7-bit mask.** `llama_top` indexes the group ports
+   as `v_reg_a(6 downto 0)`; `region_mem` takes `unsigned(7 downto 0)` and
+   never masks. `NREGION` is 14 so bit 7 is never set in normal traffic --
+   **which is why `region_mem` passed its own bench with 5 of 6 mutations
+   biting and was still not a drop-in replacement.** Its bench drives its own
+   ports and cannot see what `llama_top` does to those signals first.
+2. **`llama_top.vhd:1301` documents the wrong memory semantics.** It says
+   `write-first, so an in-place overtake is visible`; `mem` is a SIGNAL, so
+   reads see pre-write data and the overtake is exactly what is NOT visible.
+   `region_mem` matches the CODE. **Recorded, deliberately NOT fixed:** a
+   one-word edit to the oracle during a fork makes a token-identity result
+   unattributable.
+3. **The identity bench's own PASS was NOT an identity result.** It reports
+   `R_X` bit-identical **across descriptor-latency points**, which is
+   SELF-consistency and is satisfied by a consistently-wrong card top. The
+   generator now injects a pin against the landmark `llama_top` itself
+   produces, read from `sim/cardtop_ident_expect.txt`, and with that file
+   absent it injects an unconditional FAILURE so an unpinned bench cannot
+   report success.
+
+**The gate row `sim:cardtop` is the point of the generator, not an extra.**
+It runs `gen_cardtop.py --check --bench`, regenerating and diffing, and sits
+beside `sim:ipsync` which exists for the identical drift on `ip_repo/*/src`.
+Teeth-checked four ways: clean tree OK; hand-edited output STALE; upstream
+moved STALE; **anchor vanished, rc 2, ABORTS naming the anchor**. That last
+is `ooc_normadapt_extract.py`'s recorded failure mode.
+
+**Floor: `BASELINE_PASS` 99 -> 103 (`0c16b27`, harness) -> 105 (`fcee6df`).**
+Both measured on `git archive`, never the working tree, which carries
+untracked `sim/tb_*.vhd` the gate auto-discovers; GWTWO's `PASS 111` was real
+and unreachable. Increment 3a adds two more rows and the floor must be
+re-measured, not incremented.
+
+**NEXT, in order:** increment 3b, the A binding (D1/D2) and the `w_active`
+gate (D4) into the generator; then item 4's bench at the REAL shape; then
+STEP 4, the seam to D; then STEP 5, the token. The timing lever hunt
+(-0.815 WNS, `CB_BCAST` suspect) is queued and its cheapest first move is a
+placement-directive sweep on the ROUTE3 checkpoint.
+
 ### 2026-08-30 late morning, dispatcher: two lanes, both full, and the budget written down first
 
 **Oren's standing instruction for this stretch: TWO agents, not four.** One per
