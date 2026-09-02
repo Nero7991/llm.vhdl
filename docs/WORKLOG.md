@@ -302,7 +302,35 @@ traps, and my own 47%-wrong tile estimate:
 `Block RAM Tile | 351.5 | ... | 576 | 61.02`, so the pblock holds **576**
 tiles and **224.5** are spare. Where 372.5 came from is not established.
 
-**NOT LANDED, deliberately:** the `region_mem` fix itself. Per-region sizing
+**RESOLVED THE SAME EVENING (`1da4a71`, `ca99235`). THE REGION FILE IS BRAM
+AND THE FIT QUESTION IS CLOSED:**
+
+| | this morning | now |
+|---|---|---|
+| BRAM | 0 | **100 RAMB36** (224.5 spare) |
+| LUT | 91,073 | **3,496** |
+| LUTRAM | 81,920 | **0** |
+
+87,577 LUTs returned. The region file would have taken pb_core from 67.3% LUT
+to about 90.7%; it now leaves it roughly where ROUTE3 measured it.
+
+**The pad contract has teeth, and design-note 11.4's PRESCRIBED FIX WAS
+WRONG.** The bench it asked for was written -- element writes past every
+region's size, asserting region_mem's contract and not llama_top's -- and `F`
+STILL SURVIVED. The reason is an OBSERVABILITY limit 11.4 missed: the write
+guard and the read guard are REDUNDANT, so with a MAXW-deep array no stimulus
+alone can discriminate `F`. What made it bite was the SIZING: with `bank`
+declared `0 to NW-1` an unguarded pad write is an out-of-bounds index. `F` and
+`G` went from "does not bite" to KILLED; `G` needed its own stimulus because
+the two writers have SEPARATE guards.
+
+**The group-read merge is NOT the merge that broke the hold contract**, and
+the difference is measured: mutant `J` reproduces the old merge and the bench
+still KILLS it on `el_rdata`. `x` and `e` are both gated by `r_en` alone so
+they always update together; the element read fires on `el_ren` and stays
+separate.
+
+**PREVIOUSLY NOT LANDED, now landed:** the `region_mem` fix itself. Per-region sizing
 makes an out-of-range write a real hazard rather than a theoretical one, and
 the pad contract is still UNVERIFIED (mutations F, G and F+G all fail to bite
 because the bench never drives an out-of-size access). Getting to two readers
