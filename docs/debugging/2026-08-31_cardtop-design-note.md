@@ -955,3 +955,44 @@ is larger than "add seams for B, C and V" implied.
 is identical between B and C, is the part D actually enforces, and is where the
 epoch defect lived in both A's adapter and the first draft of the seam. The
 data movement is per-unit by nature and cannot be shared.
+
+---
+
+## 14. The WIRED top synthesises, 2026-09-02
+
+First area measurement of the composed design with the seams and a working
+region file in it. `C4_STAGE=synth`, `xcvu33p-fsvh2104-2L-e`, 0 errors,
+sentinel `C4_DONE synth wired`.
+
+| resource | used | available | % |
+|---|---|---|---|
+| CLB LUTs | 270,141 | 439,680 | 61.44 |
+| LUT as Memory | 27,842 | 205,440 | 13.55 |
+| CLB Registers | 237,885 | 879,360 | 27.05 |
+| Block RAM Tile | 327.5 | 672 | 48.74 |
+| DSPs | 2,177 | 2,880 | **75.59** |
+
+**DSP is the tightest resource, not LUT and not BRAM.** That is unchanged from
+ROUTE3 (2,177 either way), which is expected: seams and memories contain no
+multipliers.
+
+**THIS IS NOT DIRECTLY COMPARABLE TO ROUTE3, and the differences all matter:**
+
+- ROUTE3 is **routed**, this is **synthesised**. Placement and routing move
+  LUT counts.
+- ROUTE3's table is the **pblock** (`pb_core`, 388,800 LUT / 576 BRAM); this
+  is the **whole device** (439,680 / 672).
+- **ROUTE3 has the gain image and this does NOT.** `NORM_W_IMAGE` is empty
+  here, and the generator's own header records that a real gain image costs
+  **+32,943 CLB LUT**, which would put this build near 303,000.
+
+So the honest statement is that the wired design synthesises cleanly and sits
+comfortably inside the device on every resource, with DSP the binding one at
+75.59%. A like-for-like comparison against ROUTE3 needs a routed run of THIS
+top with the gain image in, and that run has not happened. Quoting a delta
+between these two tables would be comparing three differences at once.
+
+**Still absent from this top, so its numbers are a FLOOR and not the card:**
+the B and C data movers (roughly 1,600 lines, see 13b), unit V, and the
+descriptor-index wiring. The region file is present and real; the units it
+would serve are not yet connected to it.
