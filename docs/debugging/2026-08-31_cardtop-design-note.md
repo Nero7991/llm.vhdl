@@ -587,3 +587,29 @@ the reason 3b is specified here rather than started.
   domain from `ap`, which would make the kept `rdy`/`dn` conversion a CDC
   rather than a rename. **This is the one that would invalidate the "KEEPS"
   list above, so check it FIRST.**
+
+### 10.6 RESOLVED 2026-09-02: `DUAL_CLK` does NOT make the kept handshake a CDC
+
+Section 10.5 flagged this as the item to check FIRST, because it would have
+invalidated the "KEEPS" list. It does not.
+
+MEASURED in `rtl/matvec_int4_desc_axi.vhd`: **`s_axi_aclk` IS the core clock**
+(`:176`, its own comment says so), and `m_aclk` is the HBM AXI clock, ignored
+when `DUAL_CLK = false` (`:179`). The internal units are mapped
+`clk => s_axi_aclk, aclk => m_aclk` (`:590`, `:651`), so **the control path --
+AXI-Lite, `job_done`, `job_err`, `x_we`, `y_we` -- is in the CORE domain at
+either setting, and only the HBM-facing masters cross.** The CDC is inside
+the unit.
+
+**This retroactively validates increment 2.** `rtl/a_desc_adapter.vhd` is
+written on a single `clk` and drives `s_axi_*`; since `s_axi_aclk` is the core
+clock, the adapter is already in the right domain and needs no change when
+`DUAL_CLK` is switched on. That was not reasoned about when it was written, so
+it was luck rather than judgement, and it is recorded as such.
+
+**The unit's header records the failure that would otherwise have been ours**
+(`:407-415`): the descriptor capture was hand-rolled in the core domain first
+and **MEASURED to fail the moment `DUAL_CLK` was switched on**, because the
+descriptor slave answers in the AXI domain -- "the weight path had a CDC and
+the CONTROL path did not". The fix is inside the unit. **Do not re-derive
+this; the asymmetry is the whole hazard and it is already closed.**
