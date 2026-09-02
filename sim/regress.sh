@@ -400,7 +400,41 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=105  # RAISED FROM 103, 2026-09-01, by the dispatcher.  TWO new
+BASELINE_PASS=107  # RAISED FROM 105, 2026-09-02, by the dispatcher.  TWO new
+                   #    rows from TRACK CARDTOP 3a, and 105 + 2 = 107 agrees.
+                   #
+                   #    MEASURED on `git archive ec2dc1e`, GHDL 1.0.0 mcode,
+                   #    --jobs 2:
+                   #      suite sim  PASS 81  FAIL 0  NOCHECK 3
+                   #      suite tb   PASS 26  FAIL 0  NOCHECK 1
+                   #      OVERALL    PASS 107  FAIL 0  BUILD-ERROR 0
+                   #                 NOCHECK 4  SKIPPED 10
+                   #      baseline: 107 passing, above the recorded floor of 105
+                   #    The gate PRINTED the raise suggestion rather than either
+                   #    refusal, so both the NOT IN GIT list and the optional-row
+                   #    list were empty on that tree.
+                   #
+                   #    The two rows are of DIFFERENT KINDS, which is the part
+                   #    worth remembering:
+                   #      sim:tb_fk33_cardtop_ident  a GENERATED testbench,
+                   #                                 auto-discovered like any
+                   #                                 other sim/tb_*.vhd
+                   #      sim:cardtop                a SELFCHECK row, which is
+                   #                                 NOT auto-discovered and
+                   #                                 needs three explicit edits
+                   #
+                   #    THE MEASUREMENT BEFORE THIS ONE READ 106 AND WAS A RED
+                   #    GATE, and the difference is the whole lesson.  The
+                   #    selfcheck row had a command and a plan entry but no case
+                   #    in run_one, so it fell through to the testbench path and
+                   #    landed as BUILD-ERROR with `ghdl -a failed on -:`.  The
+                   #    floor arithmetic still looked plausible at 106 -- one
+                   #    more than 105 -- which is exactly how a broken row hides
+                   #    inside a number that moved in the right direction.
+                   #    ALWAYS read FAIL and BUILD-ERROR, never just PASS.
+                   #
+                   # ---- previous entry, kept because its reasoning is the rule ----
+                   # WAS 105, RAISED FROM 103, 2026-09-01, by the dispatcher.  TWO new
                    #    rows, both from TRACK CARDTOP, and again the predicted
                    #    floor and the measured one AGREE.
                    #
