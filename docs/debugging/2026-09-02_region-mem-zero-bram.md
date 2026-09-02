@@ -218,6 +218,43 @@ that way. The rule that keeps holding is that a structural figure is a
 constant and a scattered one is a mean, and a tile count is neither -- it is
 a ceiling function with a floor.
 
+## RESOLVED, same day: the region file is BRAM
+
+Both defects are fixed and MEASURED on the committed file, OOC on
+`xcvu33p-fsvh2104-2L-e`:
+
+| | before | after |
+|---|---|---|
+| BRAM | 0 | **100 RAMB36** |
+| LUT | 91,073 | **3,496** |
+| LUTRAM | 81,920 | **0** |
+
+100 tiles against ROUTE3's 224.5 spare, and 87,577 LUTs returned to the
+pblock. **The fit question the card top opened is closed.**
+
+The second fix is the group-read merge: `x` and `e` now share ONE registered
+word per bank, selected downstream by the already-registered `ra_q`/`rb_q`.
+
+**IT IS NOT THE MERGE THAT BROKE THE HOLD CONTRACT, and the difference is
+measurable rather than argued.** `region_mem.vhd`'s write-statement note
+records an earlier attempt that merged the ELEMENT read in as well; that one
+failed because the element read fires on `el_ren` and the group reads on
+`r_en`, so the three words hold across DIFFERENT intervals and one register
+cannot serve them. `x` and `e` are both gated by `r_en` alone and therefore
+always update together, which is exactly the property the element read lacks.
+
+Teeth-checked against the same bench that caught the original failure:
+
+| mutation | verdict |
+|---|---|
+| `J_element_read_merged_in` (reproduces the old, broken merge) | **KILLED**, MISMATCH el_rdata |
+| `A_swap_group_selects` | **KILLED**, MISMATCH x_rdata |
+| `K_group_read_rega_only` | **KILLED**, MISMATCH e_rdata |
+| unmutated control | SURVIVES |
+
+`J` is the row that matters: the bench still kills the merge that failed
+before, so this one passing is evidence rather than coincidence.
+
 ## Open, not yet answered
 
 - **Why the third read specifically.** R3 (1 read) and R6 (2 reads) infer;
@@ -226,8 +263,8 @@ a ceiling function with a floor.
   while the control's three reads had independent addresses. That is a
   hypothesis, not a measurement: the discriminating probe is a control with
   three reads, two of which share an address signal. NOT YET RUN.
-- **How to get to two readers without breaking the hold contract.** This is
-  the whole remaining design question. `x` and `e` share one address and
+- ~~How to get to two readers without breaking the hold contract.~~ **DONE,
+  see "RESOLVED" above.** Kept for the reasoning: `x` and `e` share one address and
   differ only in region select, so a bank serves at most one of them and they
   want the identical word when `rega = regb` -- the merge is sound in
   principle. But `region_mem.vhd:286-293` records that an earlier merge

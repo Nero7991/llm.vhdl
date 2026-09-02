@@ -163,8 +163,7 @@ architecture rtl of region_mem is
 
   -- per-region registered read words, and the registered selects
   signal el_word_r : word_arr_t := (others => (others => '0'));
-  signal x_word_r  : word_arr_t := (others => (others => '0'));
-  signal e_word_r  : word_arr_t := (others => (others => '0'));
+  signal g_word_r  : word_arr_t := (others => (others => '0'));
   signal el_reg_q  : natural range 0 to NREGION-1 := 0;
   signal el_lane_q : natural range 0 to LANES-1 := 0;
   signal ra_q      : natural range 0 to NREGION-1 := 0;
@@ -324,20 +323,37 @@ begin
             el_word_r(r) <= (others => '0');
           end if;
         end if;
-        if r_en = '1' then
-          if to_integer(r_rega) = r then
-            if to_integer(r_addr) < NW then
-              x_word_r(r) <= bank(to_integer(r_addr));
-            else
-              x_word_r(r) <= (others => '0');
-            end if;
-          end if;
-          if to_integer(r_regb) = r then
-            if to_integer(r_addr) < NW then
-              e_word_r(r) <= bank(to_integer(r_addr));
-            else
-              e_word_r(r) <= (others => '0');
-            end if;
+        -- ONE GROUP READ SITE, serving BOTH operands.
+        --
+        -- This is what makes the bank a BRAM.  MEASURED 2026-09-02, OOC on
+        -- xcvu33p: with THREE read sites (element, x, e) Vivado reports
+        -- `[Synth 8-6849] Infeasible attribute ram_style = "block"` on all
+        -- fourteen banks and falls back to LUTRAM -- 0 BRAM, 84,836 LUT.
+        -- With TWO it reports `[Synth 8-3971] recognized as a true dual port
+        -- RAM template` and gives 100 RAMB36, 2,918 LUT.  A TDP BRAM has two
+        -- ports and the third reader has nowhere to go.
+        --
+        -- SOUND BECAUSE x AND e ARE THE SAME READ.  They share `r_addr` and
+        -- differ only in which region each selects, so a given bank is asked
+        -- for at most one of them, and when `rega = regb` they want the
+        -- identical word.  The output mux below picks with the REGISTERED
+        -- selects `ra_q`/`rb_q`, captured at this same edge.
+        --
+        -- AND THIS IS NOT THE MERGE THAT BROKE THE HOLD CONTRACT.  The note
+        -- on the write statement above records an earlier attempt that
+        -- merged the ELEMENT read in as well; that one failed because the
+        -- element read fires on `el_ren` and the group reads on `r_en`, so
+        -- the three words hold across DIFFERENT intervals and one register
+        -- cannot serve them -- an element read clobbered the group word.
+        -- `x` and `e` are both gated by `r_en` alone and therefore always
+        -- update together, which is exactly the property the element read
+        -- lacks.  The element read stays separate.
+        if r_en = '1'
+           and (to_integer(r_rega) = r or to_integer(r_regb) = r) then
+          if to_integer(r_addr) < NW then
+            g_word_r(r) <= bank(to_integer(r_addr));
+          else
+            g_word_r(r) <= (others => '0');
           end if;
         end if;
       end if;
@@ -380,8 +396,8 @@ begin
 
   el_rdata <= signed(el_word_r(el_reg_q)(
                      (el_lane_q+1)*MANT_W-1 downto el_lane_q*MANT_W));
-  x_rdata  <= x_word_r(ra_q);
-  e_rdata  <= e_word_r(rb_q);
+  x_rdata  <= g_word_r(ra_q);
+  e_rdata  <= g_word_r(rb_q);
 
   -- The host window, gated.  When HOST_WINDOW it is combinational and
   -- reads exactly what llama_top:1343 reads; when not, it is tied to zero
