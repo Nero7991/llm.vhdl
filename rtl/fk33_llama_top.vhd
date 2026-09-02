@@ -666,7 +666,17 @@ entity fk33_llama_top is
     B_RECUR_SLOTS : positive := 16;
     B_L2_LANES    : positive := 4;
     B_SILU_LANES  : positive := 8;
-    B_RMS_LANES   : positive := 4
+    B_RMS_LANES   : positive := 4;
+
+    -- ADDED BY tools/gen_cardtop.py; llama_top does not have this generic.
+    -- hr_reg/hr_addr/hr_data are a COMBINATIONAL full-range read port into
+    -- the region file, and a memory with one cannot be a BRAM.  Nothing on
+    -- the card drives or consumes them.  true = simulation, and the
+    -- configuration in which identity with llama_top is PROVEN; false = the
+    -- card, hr_data reads zero and the banks can infer BRAM.  The proven and
+    -- the built configuration therefore differ by exactly one output port
+    -- that no card logic reads.  Oren's decision, 2026-09-02.
+    HOST_WINDOW : boolean := true
   );
   port(
     clk : in std_logic;
@@ -1352,7 +1362,8 @@ begin
       LANES   => LANES,
       MANT_W  => MANT_W,
       GA_W    => GA_W,
-      SZ      => SZ)
+      SZ      => SZ,
+      HOST_WINDOW => HOST_WINDOW)
     port map (
       clk      => clk,
       el_ren   => el_ren,   el_reg   => el_reg,   el_addr  => el_addr,

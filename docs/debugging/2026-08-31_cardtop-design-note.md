@@ -613,3 +613,101 @@ and **MEASURED to fail the moment `DUAL_CLK` was switched on**, because the
 descriptor slave answers in the AXI domain -- "the weight path had a CDC and
 the CONTROL path did not". The fix is inside the unit. **Do not re-derive
 this; the asymmetry is the whole hazard and it is already closed.**
+
+---
+
+## 11. D5, 2026-09-02: the host read window is what stops the region file being a BRAM
+
+**This overturns the reasoning behind D3, though not D3 itself.** D3 said the
+flat `NREGION*REGMAX` array "is the elaboration blocker and goes". The array's
+SHAPE was never the blocker.
+
+### 11.1 The measurement that says so
+
+Elaborating `fk33_llama_top` at the real 9B shape, `synth_design -rtl`,
+Vivado 2023.2, `xcvu33p-fsvh2104-2L-e`:
+
+```
+WARNING: [Synth 8-11357] Potential Runtime issue for 3D-RAM or RAM from
+Record/Structs for RAM  mem_reg with 2752512 registers
+```
+
+**2,752,512 is the SAME number as the recorded crash**
+(`HOptDfg::dissolveRam at 2,752,512 bits`, `sim/mk_browse_proj.tcl`). DERIVED:
+`region_mem`'s store is `14 regions x 1,536 words x 128 bits = 2,752,512`,
+exactly `llama_top`'s `14 x 12,288 x 16`. **Reorganising a flat array into
+per-region banks does not reduce what the tool has to dissolve.**
+
+### 11.2 The actual cause
+
+`llama_top` exposes `hr_reg`/`hr_addr`/`hr_data` as **TOP-LEVEL PORTS**
+(`llama_top.vhd:690-692`): a COMBINATIONAL, full-range random read into the
+region file. **A memory with a combinational read port cannot be a BRAM**, so
+while that port exists the store is LUTs and flip-flops whatever shape it has
+and whatever `ram_style` asks for.
+
+**Nothing on the card uses it.** MEASURED: no file under `hw/fk33/rtl/`
+references `hr_reg`, `hr_addr` or `hr_data`. Its only consumer is
+`sim/tb_llama_top.vhd`, which reads results through it.
+
+### 11.3 D5, decided by Oren 2026-09-02: gate it with a generic
+
+`region_mem` and the generated card top take `HOST_WINDOW : boolean := true`.
+
+- **true, the default** -- simulation. `sim/tb_fk33_cardtop_ident.vhd` runs
+  here, and **this is the configuration in which identity with `llama_top` is
+  proven** (`hash(R_X) = 38863`).
+- **false** -- the card. `hr_data` reads zero, the per-region banks carry
+  `ram_style = "block"`, and they are free to infer BRAM.
+
+**The honest caveat, stated rather than buried: identity is proven at `true`
+and the card is built at `false`, so the proven configuration is not the built
+one.** They differ by exactly one OUTPUT port that no card logic reads. Two
+options were rejected: registering the window keeps one configuration but
+changes behaviour, so the oracle bench's own expectations would have to be
+adjusted, and **an oracle you had to adjust is a weaker oracle than one you
+did not**; keeping it combinational keeps the region file at 2.75 Mbit of LUT
+and flip-flop, which is the thing D3 exists to avoid.
+
+`region_mem` was also restructured so each region declares its OWN `bank`
+inside the generate, giving the tool 14 independent 2-D arrays rather than one
+3-D object it warns about by name. The unit bench passes unchanged:
+`5402 cycles compared, 0 mismatches`.
+
+### 11.4 The pad contract is UNVERIFIED, and one more mutation proved it
+
+Re-running the mutation table against the restructured file, every row
+`cmp`-verified to have changed it:
+
+| mutation | verdict |
+|---|---|
+| `A_swap_group_read_selects` | FAIL, bites |
+| `B_ignore_write_byte_enables` | FAIL, bites |
+| `C_element_write_wins_tie` | FAIL, bites |
+| `D_pad_read_holds_instead_of_zero` | FAIL, bites |
+| `E_unregistered_element_select` | FAIL, bites |
+| `F_element_write_ignores_pad_guard` | **PASS, does not bite** |
+| `G_host_window_ignores_region_size` (new) | **PASS, does not bite** |
+| **`F` and `G` TOGETHER** | **PASS, does not bite** |
+
+`F` and `G` are the two halves of the pad contract -- one writes past a
+region's real size, the other reads past it -- and the obvious hypothesis was
+that neither is observable alone but their conjunction is. **It was tested and
+it is false.**
+
+**The reason is a STIMULUS gap, not a checker gap**, and that distinction is
+the useful part. The bench never drives an out-of-size access, so with the
+write guard removed **no pad write ever happens**, and there is nothing for
+the unguarded read to find. No checker can discriminate a defect the stimulus
+never triggers. **Coverage of the input space is not coverage of the output
+space, and here the input space itself was never reached.**
+
+Note this is also an INTENTIONAL divergence from `llama_top`, which is why the
+identity bench cannot close it either: `llama_top`'s array is padded to
+`REGMAX` so an out-of-size write lands harmlessly inside it, while
+`region_mem` DROPS it (`rtl/region_mem.vhd` header). The two genuinely differ
+there, deliberately.
+
+**Open:** a bench that deliberately drives `el_waddr` past `sz_words(r)` would
+discriminate `F`. It would also make the intentional divergence above
+observable, so it must assert `region_mem`'s behaviour and NOT `llama_top`'s.

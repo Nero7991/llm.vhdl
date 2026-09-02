@@ -59,7 +59,28 @@ entity region_mem is
     LANES   : positive := 8;
     MANT_W  : positive := 16;
     GA_W    : positive := 11;             -- group (word) address width
-    SZ      : integer_vector              -- per-region element counts
+    SZ      : integer_vector;             -- per-region element counts
+    -- THE HOST READ WINDOW, AND WHY IT IS A GENERIC.
+    --
+    -- llama_top exposes hr_reg/hr_addr/hr_data as TOP-LEVEL PORTS: a
+    -- COMBINATIONAL, full-range random read into the region file.  A memory
+    -- with a combinational read port CANNOT be a BRAM, so while that port
+    -- exists this store is LUTs and registers no matter what shape the array
+    -- has.  MEASURED 2026-09-02: Vivado reports
+    -- `[Synth 8-11357] ... RAM mem_reg with 2752512 registers`, which is the
+    -- SAME 2,752,512 figure as the recorded `HOptDfg::dissolveRam` crash on
+    -- llama_top.  Reorganising the array from flat to per-region did not
+    -- change it, because the array's shape was never the cause.
+    --
+    -- Nothing on the CARD drives or consumes that port: it exists for
+    -- sim/tb_llama_top.vhd, which reads results through it.  So it is gated.
+    --   TRUE  (default) -- simulation.  Identity against llama_top is proven
+    --                      in this configuration.
+    --   FALSE           -- the card.  hr_data reads zero and the banks can
+    --                      infer BRAM.
+    -- The two configurations differ by exactly one output port that is dead
+    -- on the card.  Oren's call, 2026-09-02.
+    HOST_WINDOW : boolean := true              -- per-region element counts
   );
   port(
     clk      : in  std_logic;
@@ -120,8 +141,17 @@ architecture rtl of region_mem is
   constant MAXW : natural := (REGMAX + LANES - 1) / LANES;
 
   type bank_t is array (0 to MAXW-1) of word_t;
-  type mem_t is array (0 to NREGION-1) of bank_t;
-  signal mem : mem_t := (others => (others => (others => '0')));
+  type word_arr_fwd_t is array (0 to NREGION-1) of word_t;
+
+  -- NO SINGLE 3-D `mem` SIGNAL.  Each region declares its own `bank` inside
+  -- the generate below, so the tool sees NREGION independent 2-D arrays
+  -- rather than one object it must dissolve as a whole.  Vivado warns
+  -- specifically about the latter: `[Synth 8-11357] Potential Runtime issue
+  -- for 3D-RAM or RAM from Record/Structs`.
+  --
+  -- The host window's per-region read word, driven inside the generate only
+  -- when HOST_WINDOW, and muxed by hr_reg below.
+  signal hr_word : word_arr_fwd_t := (others => (others => '0'));
 
   type word_arr_t is array (0 to NREGION-1) of word_t;
 
@@ -149,6 +179,14 @@ begin
   -- ====================================================================
   g_region : for r in 0 to NREGION-1 generate
     constant NW : natural := sz_words(r);
+    signal bank : bank_t := (others => (others => '0'));
+    -- ASK EXPLICITLY.  CLAUDE.md: Vivado's inference log lies in both
+    -- directions, so this attribute is a REQUEST and the mapping report plus
+    -- an object-level get_cells census are the only authoritative answers.
+    -- It is honoured only when HOST_WINDOW is false; with a combinational
+    -- read port present no attribute can make this a BRAM.
+    attribute ram_style : string;
+    attribute ram_style of bank : signal is "block";
   begin
     process(clk)
       variable ew : natural;
@@ -160,7 +198,7 @@ begin
           ew := el_waddr / LANES;
           el := el_waddr mod LANES;
           if ew < NW then
-            mem(r)(ew)((el+1)*MANT_W-1 downto el*MANT_W)
+            bank(ew)((el+1)*MANT_W-1 downto el*MANT_W)
               <= std_logic_vector(el_wdata);
           end if;
         end if;
@@ -169,7 +207,7 @@ begin
           if to_integer(w_addr) < NW then
             for i in 0 to LANES-1 loop
               if w_be(i) = '1' then
-                mem(r)(to_integer(w_addr))((i+1)*MANT_W-1 downto i*MANT_W)
+                bank(to_integer(w_addr))((i+1)*MANT_W-1 downto i*MANT_W)
                   <= w_data((i+1)*MANT_W-1 downto i*MANT_W);
               end if;
             end loop;
@@ -180,7 +218,7 @@ begin
         if el_ren = '1' and el_reg = r then
           ew := el_addr / LANES;
           if ew < NW then
-            el_word_r(r) <= mem(r)(ew);
+            el_word_r(r) <= bank(ew);
           else
             el_word_r(r) <= (others => '0');
           end if;
@@ -188,14 +226,14 @@ begin
         if r_en = '1' then
           if to_integer(r_rega) = r then
             if to_integer(r_addr) < NW then
-              x_word_r(r) <= mem(r)(to_integer(r_addr));
+              x_word_r(r) <= bank(to_integer(r_addr));
             else
               x_word_r(r) <= (others => '0');
             end if;
           end if;
           if to_integer(r_regb) = r then
             if to_integer(r_addr) < NW then
-              e_word_r(r) <= mem(r)(to_integer(r_addr));
+              e_word_r(r) <= bank(to_integer(r_addr));
             else
               e_word_r(r) <= (others => '0');
             end if;
@@ -203,6 +241,21 @@ begin
         end if;
       end if;
     end process;
+
+    -- the host window's read for THIS region, combinational, guarded on the
+    -- region's real size exactly as llama_top's mux is
+    g_hw : if HOST_WINDOW generate
+      process(bank, hr_addr)
+        variable w : natural;
+      begin
+        w := hr_addr / LANES;
+        if w < NW then
+          hr_word(r) <= bank(w);
+        else
+          hr_word(r) <= (others => '0');
+        end if;
+      end process;
+    end generate;
   end generate;
 
   -- the registered selects, captured at the same edge as the words
@@ -229,18 +282,20 @@ begin
   x_rdata  <= x_word_r(ra_q);
   e_rdata  <= e_word_r(rb_q);
 
-  -- the combinational host window: a mux, exactly as llama_top:1343
-  process(mem, hr_reg, hr_addr)
-    variable w : natural;
-    variable l : natural;
-  begin
-    w := hr_addr / LANES;
-    l := hr_addr mod LANES;
-    if w < sz_words(hr_reg) then
-      hr_data <= signed(mem(hr_reg)(w)((l+1)*MANT_W-1 downto l*MANT_W));
-    else
-      hr_data <= (others => '0');
-    end if;
-  end process;
+  -- The host window, gated.  When HOST_WINDOW it is combinational and
+  -- reads exactly what llama_top:1343 reads; when not, it is tied to zero
+  -- and the banks above are free to infer BRAM.
+  g_host : if HOST_WINDOW generate
+    process(hr_word, hr_reg, hr_addr)
+      variable l : natural;
+    begin
+      l := hr_addr mod LANES;
+      hr_data <= signed(hr_word(hr_reg)((l+1)*MANT_W-1 downto l*MANT_W));
+    end process;
+  end generate;
+
+  g_nohost : if not HOST_WINDOW generate
+    hr_data <= (others => '0');
+  end generate;
 
 end architecture;
