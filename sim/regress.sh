@@ -400,7 +400,44 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=113  # RAISED FROM 112, 2026-09-02 (later).  ONE new row,
+BASELINE_PASS=115  # RAISED FROM 113, 2026-09-03.  TWO new rows across three
+                   #    commits: sim:tb_gdn_job_seq (ce410db, B's per-layer job
+                   #    sequencer) and sim:tb_a_job_counter (e359805, which A
+                   #    descriptor within a token).  A third row,
+                   #    sim:tb_a_desc_ptr, was added in e01c535 and REMOVED in
+                   #    e359805 when that module was found to duplicate
+                   #    rtl/a_desc_adapter.vhd, so it is net zero and does not
+                   #    appear in this count.
+                   #
+                   #    MEASURED THE SAME WAY, twice, on `git archive HEAD`
+                   #    trees with MV4I_FK33_FILE=/nonexistent:
+                   #
+                   #      at ce410db:
+                   #        OVERALL PASS 114  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #        baseline: 114 passing, above the recorded floor of
+                   #                  113 -- raise BASELINE_PASS in this script
+                   #      at e359805:
+                   #        OVERALL PASS 115  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #        baseline: 115 passing, above the recorded floor of
+                   #                  113 -- raise BASELINE_PASS in this script
+                   #        REGRESSION: PASS
+                   #
+                   #    Neither run printed a "rows a clean checkout does not
+                   #    get" section, which is the condition rule 10 requires.
+                   #    113 + 2 = 115 agrees with the route recorded below.
+                   #
+                   #    THE INTERMEDIATE 114 WAS MEASURED AND KEPT ON PURPOSE.
+                   #    It is what makes the +2 two separate observations
+                   #    rather than one derivation: the alternative was to
+                   #    measure 115 once and assert the missing step.
+                   #
+                   #    THE WORKING TREE MEASURED 123 IN THE SAME SESSION AND
+                   #    THAT NUMBER IS NOT USABLE HERE.  The runner named 23
+                   #    rows a clean checkout does not get, sim:tb_a_job_counter
+                   #    among them while it was still untracked.
+                   #
+                   # ---- the previous entry, kept ----
+                   # RAISED FROM 112, 2026-09-02 (later).  ONE new row,
                    #    sim:tb_gdn_conv_tap_mem -- the conv tap history for one
                    #    GDN layer, the third and last piece of B's per-layer
                    #    state (docs/debugging/2026-09-02_conv-tap-history.md).
