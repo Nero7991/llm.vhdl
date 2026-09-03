@@ -891,6 +891,22 @@ int main(int argc, char** argv) {
         "/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf";
     const char* embed_mv4i_default =
         "/mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i";
+
+    /* THE SUBSYSTEM A DESCRIPTOR ARENA.  pl_open REFUSES an undeclared arena
+     * as of 2026-08-29 -- it used to print a note and continue.  That refusal
+     * is right: the manifest's hbm.desc_arena_base / _bytes are the authority
+     * for where subsystem A's descriptors live and nothing re-derives them.
+     *
+     * server/tests/seam_selftest.c was updated when the refusal landed and
+     * declares 4096 bytes explicitly.  THIS FILE WAS NOT, so the FK33 arm has
+     * been unable to open its backend since -- `--model qwen35` printed
+     * "pl_open failed" and exited, and server/tests/server_e2e.py has been
+     * reporting "server never came up" for the same reason.
+     *
+     * Deliberately NOT defaulted to a nonzero value: a silent default is what
+     * the refusal exists to prevent.  Pass a manifest, or state the size. */
+    const char* manifest_path = nullptr;
+    unsigned long long desc_arena_bytes = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i+1<argc) model = argv[++i];
         else if (!strcmp(argv[i], "--qtk") && i+1<argc) qtk = argv[++i];
@@ -904,6 +920,9 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--pl-clock") && i+1<argc) pl_clock = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--embed") && i+1<argc) embed_kind = argv[++i];
         else if (!strcmp(argv[i], "--embed-path") && i+1<argc) embed_path = argv[++i];
+        else if (!strcmp(argv[i], "--manifest") && i+1<argc) manifest_path = argv[++i];
+        else if (!strcmp(argv[i], "--desc-arena-bytes") && i+1<argc)
+            desc_arena_bytes = strtoull(argv[++i], nullptr, 0);
         else { fprintf(stderr,
                 "usage: %s [--model stories260k|qwen35] [--host h] [--port p]\n"
                 "          [--checkpoint f] [--tokenizer f] [--pl] [--pl-clock MHZ]\n"
@@ -1006,8 +1025,20 @@ int main(int argc, char** argv) {
                             "  tools/extract_tokenizer.py; it is 9 MB and not committed.\n", qtk);
             return 1;
         }
+        if (manifest_path)     o.manifest_path     = manifest_path;
+        if (desc_arena_bytes)  o.desc_arena_bytes  = desc_arena_bytes;
         if (pl_open(&o, &g_card) != 0) {
-            fprintf(stderr, "[llama_server] pl_open failed\n");
+            fprintf(stderr,
+                "[llama_server] pl_open failed\n"
+                "  If the refusal above is about the subsystem A descriptor\n"
+                "  arena, this server declares neither by default and that is\n"
+                "  deliberate -- nothing re-derives it.  Pass ONE of:\n"
+                "    --manifest PATH             take hbm.desc_arena_* from a\n"
+                "                                packed set's manifest.json\n"
+                "    --desc-arena-bytes N        state the size; pl_open places\n"
+                "                                it below the logits block\n"
+                "  The 9B token program uses 311 descriptors at a 512-byte\n"
+                "  slot, so N = 159232 for a full program.\n");
             return 1;
         }
         // Two independent artefacts, compared rather than trusted.  MEASURED

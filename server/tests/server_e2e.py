@@ -180,10 +180,21 @@ def main():
         # default became the BF16 GGUF on 2026-08-29; leaving the default here
         # would make every case fail with the server right and the oracle wrong,
         # which is the most convincing kind of wrong reference.
+        # --desc-arena-bytes is REQUIRED, not decoration.  pl_open refuses an
+        # undeclared subsystem A descriptor arena (a refusal added 2026-08-29,
+        # replacing a printed note), and llama_server deliberately supplies no
+        # default because nothing may re-derive it.  159232 = 311 descriptors
+        # at a 512-byte slot, the 9B token program's size.
+        #
+        # stderr is CAPTURED, not discarded.  It used to go to DEVNULL, so when
+        # the server started refusing this test reported only "server never came
+        # up" -- a statement about the harness, with the actual reason thrown
+        # away.  On failure the captured text is printed below.
         proc = subprocess.Popen([exe, "--model", "qwen35", "--port", str(a.port),
-                                 "--qtk", a.qtk, "--embed", "synthetic"],
+                                 "--qtk", a.qtk, "--embed", "synthetic",
+                                 "--desc-arena-bytes", "159232"],
                                 cwd=ROOT, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+                                stderr=subprocess.PIPE)
         url = f"http://127.0.0.1:{a.port}"
         for _ in range(120):
             try:
@@ -193,7 +204,16 @@ def main():
                 time.sleep(1)
         else:
             proc.kill()
+            err = b""
+            try:
+                err = proc.stderr.read() or b""
+            except Exception:                                    # noqa: BLE001
+                pass
             print("FAIL: server never came up")
+            if err:
+                print("---- the server's own stderr ----")
+                print(err.decode("utf-8", "replace").rstrip())
+                print("---- end ----")
             return 1
 
     try:
