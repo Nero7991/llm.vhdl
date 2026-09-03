@@ -429,11 +429,20 @@ the capability before quoting its absence.
 | `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** |
 | `rtl/gdn_state_store.vhd` | all of the above, ALL THREE phases | **4,028 CLB LUT, 2,004 FF, 32 URAM288, 12 RAMB36, 3 DSP, WNS +1.400** |
 | `rtl/gdn_job_seq.vhd` | one GDN layer for one token: load, run, refill taps, save | **39 CLB LUT, 146 FF, 0 RAM, 0 CARRY**, WNS +3.909 (916 MHz) |
-| `rtl/a_desc_ptr.vhd` | A's descriptor pointer, `BASE + n*STRIDE` | **20 CLB LUT, 50 FF, 0 DSP, 4 CARRY**, WNS +4.057 (1,060 MHz) |
+| `rtl/a_job_counter.vhd` | which A descriptor, within a token | **11 CLB LUT, 10 FF, 0 DSP, 0 CARRY**, WNS +4.063 (1,067 MHz) |
 
-The last two are **59 CLB LUT between them, 0.013% of the device**, and neither
-uses a DSP: both multiplies are by elaboration constants and fold into shifts.
-They are listed here so the budget is complete, not because they threaten it.
+The last two are **50 CLB LUT between them, 0.011% of the device**, and neither
+uses a DSP: `gdn_job_seq`'s segment split is two compares against elaboration
+constants, and `a_job_counter` does no arithmetic beyond `n+1`.
+
+**THE CARRY COUNT MEASURED THE DUPLICATION.** The withdrawn `a_desc_ptr` was
+20 LUT / 50 FF / **4 CARRY**; `a_job_counter` is 11 LUT / 10 FF / **0 CARRY**.
+Those four CARRYs were the `arena_base + u_index * DESC_STRIDE` adder that
+`rtl/a_desc_adapter.vhd:213` already had, and the 40 extra FFs were its latched
+base. `sim/ooc_a_job_counter.tcl` says in as many words that a CARRY chain
+appearing here again would mean the address arithmetic had crept back in, so
+the guard is now the census rather than a comment.
+
 **Neither is instantiated anywhere**, so these are OOC numbers for unwired
 modules and they do not include whatever the composition costs -- which, on the
 evidence of the three rows above, is where the surprises live.
@@ -575,8 +584,16 @@ sourcing is unresolved" and "`job_ordinal` is 8-bit and cannot address 311
 jobs". They are one question: D's 64-byte header has no field pointing at A's
 per-job data.
 
-**The card counts.** `rtl/a_desc_ptr.vhd` holds the number of A jobs dispatched
-so far in the current token and emits `BASE + n*STRIDE`.
+**The card counts.** `rtl/a_job_counter.vhd` holds the number of A jobs
+retired so far in the current token and emits the index;
+`rtl/a_desc_adapter.vhd` -- which already existed -- turns that index into
+`arena_base + u_index * DESC_STRIDE` and issues the AXI-Lite writes.
+
+**CORRECTED 2026-09-03:** this first read "`rtl/a_desc_ptr.vhd` [...] emits
+`BASE + n*STRIDE`". That module duplicated `a_desc_adapter`'s address
+arithmetic, bound check and stride refusal, and is withdrawn. The gap was
+never the address; it was that nothing drove `a_desc_adapter`'s `u_index`. See
+the CORRECTION in `docs/debugging/2026-09-03_a-desc-ptr.md`.
 
 **And that is why the descriptor format changed anyway.** Arithmetic addressing
 imposes an ORDERING CONTRACT on the host, and an unchecked ordering contract
@@ -594,8 +611,9 @@ refused every A job but the first and broken the flow that produced *311 of
 311 jobs, 1,675,264 result rows element-exact*. Opting in is the safe
 direction.
 
-**Still open:** nothing instantiates `a_desc_ptr`, and nothing pulses
-`a_dispatch` or `tok_start`.
+**Still open:** nothing instantiates `a_job_counter`, and nothing pulses
+`job_retire` or `tok_start`. `a_desc_adapter`'s `u_index` is still a top-level
+input.
 
 ### STEP 4 -- Wire the seam to D and retire the refusal.
 

@@ -11,6 +11,42 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (later still): CORRECTION -- `a_desc_ptr` duplicated `a_desc_adapter`
+
+**Withdrawn: `rtl/a_desc_ptr.vhd`**, committed `e01c535` earlier today and
+removed in the next commit. The version-2 descriptor index work in that commit
+STANDS; only the pointer module is withdrawn.
+
+**`rtl/a_desc_adapter.vhd` already existed** -- 328 lines, with a gate row --
+and already owned the address (`arena_base + u_index * DESC_STRIDE`, :213), the
+`u_index >= N_JOBS` bound check (:230), the non-power-of-two stride refusal
+(:127) and the AXI-Lite writes. Its own header cites `tools/hbm_map.py` on why
+a hardcoded arena address became "a FOURTH model of the same address" and takes
+`arena_base` as a PORT so as not to be the fifth. `a_desc_ptr` made it the
+fifth.
+
+**HOW: I grepped for the DOCUMENT's word, not the RTL's.** Three documents call
+it `a_job_index`; no VHDL file does. The port is `u_index`. A null grep for one
+spelling is not evidence about the design. **This is the second instance in one
+day** -- the first was claiming A's weight fetcher did not exist. Both times I
+reasoned from prose rather than from entity declarations. The rule that was
+already written down ("a 'not done HERE' comment is a statement about ITS
+FILE") was not enough. The operational version: **grep the entity declarations
+for the SHAPE you are about to build -- a port of that width, a generic of that
+name -- not for the words a document used.**
+
+**The replacement is smaller and better.** `rtl/a_job_counter.vhd` does only
+the thing that was missing: nothing drove `u_index`. And narrowing it exposed a
+design improvement `a_desc_ptr` did not have -- it advances on **retire**, not
+issue, so the index is constant across a whole job and
+`a_desc_adapter:200-212`'s "must be sampled one cycle later" hazard does not
+arise instead of being answered carefully. 122 checks; five mutants killed, and
+Z2b (priority inverted between `tok_start` and `job_retire`) fails exactly one
+check and nothing else.
+
+Doc: `docs/debugging/2026-09-03_a-desc-ptr.md`, CORRECTION section at the end.
+The filename is deliberately unchanged so the link in `e01c535` still resolves.
+
 ### 2026-09-03 (later): the A descriptor pointer is DECIDED, and B has a job sequencer
 
 Two of the five standing blockers closed, and one of them turned out to be two
