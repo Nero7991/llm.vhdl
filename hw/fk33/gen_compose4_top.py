@@ -196,6 +196,10 @@ WIRE = {
         "s_axi_bresp":   "w_a_bresp",
         "d_job_done":    "w_a_job_done",
         "d_job_err":     "w_a_job_err",
+        # Driven by rtl/a_job_counter.vhd in the glue, together with the
+        # adapter's `u_index`.  The two are the SAME number in the two widths
+        # their consumers declare, which is why one counter feeds both.
+        "job_index":     "w_a_job_index32",
     },
     # D's unit-facing vectors become internal; the glue slices U_A out of
     # them for the adapter and ties the units D does not have here.
@@ -241,6 +245,8 @@ WIRE_SIGNALS = [
     ("w_a_bresp",    "std_logic_vector(1 downto 0)"),
     ("w_a_job_done", "std_logic"),
     ("w_a_job_err",  "std_logic"),
+    ("w_a_job_index",   "std_logic_vector(15 downto 0)"),
+    ("w_a_job_index32", "std_logic_vector(31 downto 0)"),
     ("w_u_start",    "std_logic_vector(NUNIT-1 downto 0)"),
     ("w_u_ready",    "std_logic_vector(NUNIT-1 downto 0)"),
     ("w_u_done",     "std_logic_vector(NUNIT-1 downto 0)"),
@@ -307,6 +313,39 @@ GLUE = """
   -- `U_B`, `U_C`, so an instance labelled `u_a` hides the constant `U_A`
   -- and every `w_u_ready(U_A)` in this block becomes
   -- "'u_a' is illegal in an expression".
+  -- ====================================================================
+  -- WHICH A DESCRIPTOR.  rtl/a_job_counter.vhd, 2026-09-03.
+  --
+  -- This used to be a top-level INPUT (`a_job_index`), exported because
+  -- nothing in the RTL decided it.  Something does now.  The counter holds
+  -- the number of A jobs retired so far in the current token and the adapter
+  -- turns that into `arena_base + u_index*DESC_STRIDE`; the descriptor's own
+  -- stamped index is checked against it inside matvec_int4_desc_axi, so a
+  -- misordered descriptor table is refused rather than producing a wrong
+  -- token.  See docs/2026-08-28_matvec-descriptor-format.md, version 2.
+  --
+  -- `job_retire` IS D's `u_ack`, and it is a genuine ONE-CYCLE PULSE:
+  -- seq_desc_fetch.vhd:963 drives it from `state = S_COMPLETE`, and every
+  -- branch of S_COMPLETE assigns a new state, so the unit cannot sit there.
+  -- A level would multi-count and walk off the end of the descriptor table.
+  --
+  -- IT ADVANCES ON RETIRE, NOT ISSUE, WHICH IS WHAT MAKES IT SAFE HERE.
+  -- a_desc_adapter:200-212 warns that `u_index` must be sampled one cycle
+  -- after `u_start` if its driver changes it there.  This one does not: the
+  -- index is constant from before one `u_start` until after that job's
+  -- completion is acknowledged, so both samples agree and the deferral
+  -- question does not arise.
+  seam_a_idx : entity work.a_job_counter
+    generic map (N_JOBS => 311)
+    port map (
+      clk        => core_clk_i,
+      rst        => core_rst,
+      tok_start  => d_fetch_go,
+      job_retire => w_u_ack(U_A),
+      u_index    => w_a_job_index,
+      job_index  => w_a_job_index32,
+      err        => a_index_err);
+
   seam_a : entity work.a_desc_adapter
     generic map (
       ADDR_W      => 40,
@@ -319,7 +358,7 @@ GLUE = """
       rstn       => core_aresetn,
       arena_base => a_arena_base,
       u_start    => w_u_start(U_A),
-      u_index    => a_job_index,
+      u_index    => w_a_job_index,
       u_ready    => w_u_ready(U_A),
       u_done     => w_u_done(U_A),
       u_err      => w_u_err(U_A),
@@ -904,18 +943,25 @@ def main():
         # `a_arena_base` is the HBM base of the descriptor arena, which is
         # host-supplied at run time and is legitimately a port.
         #
-        # `a_job_index` is NOT settled, and it is exported rather than wired
-        # because nothing in the RTL decides it yet.  The obvious candidate is
-        # D's `job_ordinal`, and it is WRONG twice over: it is 8 bits, so it
-        # cannot address the 311 A jobs of the 9B token program at all, and
-        # rtl/llama_top.vhd uses it as `wsyn(r, c, j_ord)` -- a synthetic
+        # `a_job_index` WAS a top-level input here, exported because nothing
+        # in the RTL decided it.  SETTLED 2026-09-03: rtl/a_job_counter.vhd
+        # decides it, instantiated in the glue above, so the port is gone.
+        #
+        # The reasoning that kept it exported still stands and is why the
+        # answer is a counter rather than a wire: D's `job_ordinal` is WRONG
+        # twice over -- 8 bits, so it cannot address the 311 A jobs at all,
+        # and rtl/llama_top.vhd uses it as `wsyn(r, c, j_ord)`, a synthetic
         # weight selector in the simulation model, not a descriptor pointer.
-        # Wiring it would have elaborated cleanly and produced wrong
-        # descriptors on the card, which is the exact failure class this
-        # project keeps finding.  See section 13 of
-        # docs/debugging/2026-08-31_cardtop-design-note.md.
+        # Wiring THAT would have elaborated cleanly and produced wrong
+        # descriptors on the card.  See section 13 of
+        # docs/debugging/2026-08-31_cardtop-design-note.md and the CORRECTION
+        # in docs/debugging/2026-09-03_a-desc-ptr.md.
+        #
+        # `a_index_err` is exported instead: it is the counter running past
+        # the end of the descriptor table, which is a bring-up signal the host
+        # has no other way to see.
         top_ports.append(("a_arena_base", "in", "std_logic_vector(39 downto 0)"))
-        top_ports.append(("a_job_index",  "in", "std_logic_vector(15 downto 0)"))
+        top_ports.append(("a_index_err",  "out", "std_logic"))
         # The adapter's own issue counter.  Exported rather than left `open`
         # so that a bring-up read has something to compare against the 311
         # jobs the token program contains; an `open` output is invisible and

@@ -11,6 +11,66 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (evening): the first integration lands, and `--wire` is not "nothing is wired"
+
+**A CORRECTION TO THIS SESSION'S OWN READING OF THE BOARD.** It was reported
+here and to Oren that the subsystems are "not wired to anything". That is true
+of the CHECKED-IN `hw/fk33/rtl/compose4_top.vhd` -- and that file is the
+UNWIRED variant. `hw/fk33/gen_compose4_top.py` has a `--wire` flag that emits a
+materially different top: `seam_a` (`a_desc_adapter`, D-to-A), `seam_b` and
+`seam_c` (both `u_seam`), and `region_mem`. It is off by default for a stated
+reason -- *"so the co-residency measurement vehicle, and TRACK ROUTE3's numbers
+taken on it, are preserved exactly."*
+
+So the CONTROL plane has a generated wiring. What is missing is the DATA plane,
+and the generator says so at line 928: the region file's *"real drivers are the
+per-unit data movers, which do not exist yet."*
+
+**`a_job_index` also existed after all**, as a generated top-level port wired to
+`a_desc_adapter.u_index`. It appears in no hand-written `.vhd`, which is why a
+grep for it found nothing and why this session first concluded the wrong thing
+twice. The port is `u_index`; the signal is `a_job_index`.
+
+**WIRED THIS SESSION.** `rtl/a_job_counter.vhd` now drives it:
+
+* `hw/fk33/rtl/fk33_engine.vhd` forwards `job_index` and `CHECK_JOB_INDEX` to
+  `matvec_int4_desc_axi`. Both default so the host-driven card flow -- the one
+  that produced 311 of 311 jobs element-exact -- is untouched.
+* `gen_compose4_top.py --wire` instantiates the counter, drives BOTH
+  `a_desc_adapter.u_index` (16 bits) and the engine's `job_index` (32) from it,
+  and **retires the `a_job_index` top-level input**. That port existed because
+  nothing in the RTL decided the value. Something does now.
+* `job_retire` is D's `u_ack`, VERIFIED to be a one-cycle pulse:
+  `seq_desc_fetch.vhd:963` drives it from `S_COMPLETE`, and every branch of
+  that state assigns a new state, so the unit cannot sit there. A level would
+  multi-count and walk off the descriptor table.
+
+**MEASURED: the wired top elaborates in Vivado, ELAB_EXIT 0, zero ERRORs**,
+with `seam_a_idx` and `seam_a` both present as cells. GHDL cannot answer this
+-- the composed top instantiates UNISIM `BUFGCE` and has never been
+GHDL-elaborable, which is a property of the existing top and not of this
+change.
+
+**AND WIRING IT FOUND A BUG IN THE MODULE.** `seq_desc_fetch.vhd:166`: *"`go`
+is a level or a pulse; it is only read in S_IDLE."* D can read a level because
+it leaves S_IDLE at once. The counter could not: it checked `tok_start` before
+`job_retire`, so a host holding `go` high would have pinned the count at zero
+and **every A job of that token would have fetched descriptor 0**. Fixed by
+reloading on the RISING edge, which accepts the weaker contract.
+
+**THE BENCH PASSED BOTH BEFORE AND AFTER THAT FIX** -- 122 checks, green
+either way, because it had no case holding `tok_start` high across a retire.
+*A green bench across a real fix is the tell that the fix is untested.* Case
+added (134 checks); the pre-fix version fails 4 of them with `u_index is 0` on
+every retire, the predicted failure observed. Six mutants now, all killed, each
+by its own property.
+
+The reusable form: **before connecting a signal, read the DRIVER's stated
+contract for it, not the shape you expect, and where they differ take the
+weaker one** -- that is the one the other end is allowed to produce.
+
+Doc: `docs/debugging/2026-09-03_a-desc-ptr.md`, final two sections.
+
 ### 2026-09-03 (later still): CORRECTION -- `a_desc_ptr` duplicated `a_desc_adapter`
 
 **Withdrawn: `rtl/a_desc_ptr.vhd`**, committed `e01c535` earlier today and

@@ -72,7 +72,21 @@ entity a_job_counter is
     clk : in std_logic;
     rst : in std_logic;
 
-    -- One pulse at the start of each token: reload the count to zero.
+    -- Reload the count to zero at the start of each token.
+    --
+    -- A LEVEL OR A PULSE, EITHER IS ACCEPTED, and that is deliberate: the
+    -- signal this is driven from is `seq_desc_fetch`'s `go`, whose own header
+    -- says in as many words *"`go` is a level or a pulse; it is only read in
+    -- S_IDLE"* (seq_desc_fetch.vhd:166).  D can afford to read a level because
+    -- it leaves S_IDLE immediately; a counter that reloaded on the LEVEL would
+    -- be pinned at zero for as long as the host held `go` high, and EVERY A
+    -- job of that token would fetch descriptor 0 -- a well-formed descriptor
+    -- for the wrong step, which is the exact failure this whole mechanism
+    -- exists to prevent.
+    --
+    -- So the reload is on the RISING EDGE.  Taking the weaker contract here
+    -- costs one flip-flop and means this module cannot be broken by a caller
+    -- that is behaving correctly by D's rules.
     --
     -- PER TOKEN, NOT PER PROGRAM.  The A descriptor table belongs to the
     -- token PROGRAM and the program is the same every token; only the data
@@ -118,7 +132,12 @@ architecture rtl of a_job_counter is
 
   signal n   : natural range 0 to N_JOBS := 0;
   signal ovf : std_logic := '0';
+  -- `tok_start` delayed one cycle, so the reload is edge-triggered.  See the
+  -- port comment: the driver is allowed to hold it high.
+  signal tok_d  : std_logic := '0';
+  signal tok_re : std_logic;
 begin
+  tok_re <= tok_start and not tok_d;
   u_index   <= std_logic_vector(to_unsigned(n, 16));
   job_index <= std_logic_vector(to_unsigned(n, 32));
   err       <= ovf;
@@ -126,9 +145,10 @@ begin
   p : process(clk) is
   begin
     if rising_edge(clk) then
+      tok_d <= tok_start;
       if rst = '1' then
-        n <= 0; ovf <= '0';
-      elsif tok_start = '1' then
+        n <= 0; ovf <= '0'; tok_d <= '0';
+      elsif tok_re = '1' then
         -- Clears `err` as well as the count: one bad token must not poison
         -- every token after it.
         n <= 0; ovf <= '0';

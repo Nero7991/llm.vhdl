@@ -69,7 +69,28 @@ entity fk33_engine is
     -- Every unrecognised value silently means "regs" -- see the note at
     -- rtl/matvec_core.vhd:238 and its CHK_CB_STYLE typo guard, which is what
     -- catches a misspelling rather than this wrapper.
-    CB_STYLE : string := "regs"
+    CB_STYLE : string := "regs";
+
+    -- THE VERSION-2 A-JOB INDEX CHECK, forwarded to matvec_int4_desc_axi.
+    --
+    -- Descriptor version 2 stamps the descriptor's own A-job index into
+    -- extension word 3, and the descriptor plane refuses a disagreement with
+    -- EC_DESC / ED_JOB_INDEX before starting the array.  That closes the
+    -- ordering contract an arithmetic descriptor address imposes on the host:
+    -- a well-formed descriptor for the WRONG step passes every other check.
+    --
+    -- DEFAULT FALSE, and that is what keeps the host-driven flow working.  A
+    -- build where the HOST writes DESC_PTR per job has no counter, so
+    -- `job_index` sits at zero and every v2 descriptor stamped with a nonzero
+    -- index would be refused -- which is every A job but the first, now that
+    -- tools/gen_layer_program.py stamps them.  That is the flow which produced
+    -- 311 of 311 jobs, 1,675,264 result rows element-exact.
+    --
+    -- A build that drives `job_index` from rtl/a_job_counter.vhd sets this
+    -- true and gains the check.  `hw/fk33/gen_compose4_top.py --wire` does.
+    -- Opting in is the safe direction: forgetting to opt in loses a check,
+    -- forgetting to opt out breaks a working card.
+    CHECK_JOB_INDEX : boolean := false
   );
   port(
     ------------------------------------------------------------------------
@@ -153,6 +174,12 @@ entity fk33_engine is
     ------------------------------------------------------------------------
     d_job_done     : out std_logic;
     d_job_err      : out std_logic;
+
+    -- Which A descriptor the sequencer believes it is fetching, compared
+    -- against the descriptor's own claim in version-2 extension word 3.
+    -- Defaulted so every existing instantiation stays legal; with
+    -- CHECK_JOB_INDEX false it is not read at all.
+    job_index      : in  std_logic_vector(31 downto 0) := (others => '0');
 
     -- D-FACING ACTIVATION WRITE.  The host path above (s_axix) moves ONE
     -- int16 per AXI-Lite transaction, which is right for a host loading a
@@ -1278,12 +1305,14 @@ begin
       MAXB          => 16,
       MAXOUT        => 16,
       DESC_MAXB     => 16,
+      CHECK_JOB_INDEX => CHECK_JOB_INDEX,
       USE_XEXP_PORT => false,
       DUAL_CLK      => true,
       C_S_AXI_DATA_WIDTH => 32,
       C_S_AXI_ADDR_WIDTH => 8
     )
     port map(
+      job_index     => job_index,
       s_axi_aclk    => core_clk,
       s_axi_aresetn => core_aresetn,
       m_aclk        => hbm_aclk,

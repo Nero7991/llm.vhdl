@@ -429,7 +429,7 @@ the capability before quoting its absence.
 | `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** |
 | `rtl/gdn_state_store.vhd` | all of the above, ALL THREE phases | **4,028 CLB LUT, 2,004 FF, 32 URAM288, 12 RAMB36, 3 DSP, WNS +1.400** |
 | `rtl/gdn_job_seq.vhd` | one GDN layer for one token: load, run, refill taps, save | **39 CLB LUT, 146 FF, 0 RAM, 0 CARRY**, WNS +3.909 (916 MHz) |
-| `rtl/a_job_counter.vhd` | which A descriptor, within a token | **11 CLB LUT, 10 FF, 0 DSP, 0 CARRY**, WNS +4.063 (1,067 MHz) |
+| `rtl/a_job_counter.vhd` | which A descriptor, within a token | **11 FF, 0 DSP, 0 CARRY**, WNS +4.063 (1,067 MHz) |
 
 The last two are **50 CLB LUT between them, 0.011% of the device**, and neither
 uses a DSP: `gdn_job_seq`'s segment split is two compares against elaboration
@@ -611,9 +611,21 @@ refused every A job but the first and broken the flow that produced *311 of
 311 jobs, 1,675,264 result rows element-exact*. Opting in is the safe
 direction.
 
-**Still open:** nothing instantiates `a_job_counter`, and nothing pulses
-`job_retire` or `tok_start`. `a_desc_adapter`'s `u_index` is still a top-level
-input.
+**WIRED 2026-09-03.** `hw/fk33/gen_compose4_top.py --wire` instantiates
+`a_job_counter`, drives both `a_desc_adapter.u_index` and (through a new
+forwarding port on `fk33_engine`) `matvec_int4_desc_axi.job_index` from it, and
+**retires the `a_job_index` top-level input**. `job_retire` is D's `u_ack`,
+verified a one-cycle pulse at `seq_desc_fetch.vhd:963`. `tok_start` is D's
+`go`, which that file documents as *"a level or a pulse"*, so the counter
+reloads on the RISING EDGE -- a level would have pinned the count at zero and
+sent every A job to descriptor 0.
+
+MEASURED: the wired top elaborates in Vivado, `ELAB_EXIT 0`, zero errors, with
+`seam_a_idx` and `seam_a` present as cells.
+
+**Still open:** `CHECK_JOB_INDEX` defaults false, so the ordering check is
+wired but not armed on any build; and the wired top has never been placed and
+routed.
 
 ### STEP 4 -- Wire the seam to D and retire the refusal.
 

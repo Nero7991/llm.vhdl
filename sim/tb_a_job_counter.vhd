@@ -146,6 +146,30 @@ begin
     job_retire <= '0'; tok_start <= '0'; tick;
     expect(0, "tok_start must win over a simultaneous retire");
 
+    -- ---- tok_start HELD HIGH, the case that motivated the edge detect ----
+    -- `seq_desc_fetch.vhd:166`: "`go` is a level or a pulse; it is only read
+    -- in S_IDLE."  D can read a level because it leaves S_IDLE at once.  A
+    -- counter that reloaded on the LEVEL would be pinned at zero for as long
+    -- as the host held `go` high and every A job of that token would fetch
+    -- descriptor 0.
+    --
+    -- MEASURED: this bench PASSED both before and after the edge detect was
+    -- added, because it had no such case.  A green bench across a real fix is
+    -- the tell that the fix is untested, not that it was unnecessary.
+    tok_start <= '1'; tick; tick;          -- rises, and STAYS high
+    expect(0, "held tok_start: the rising edge reloads");
+    retire;
+    expect(1, "held tok_start: a retire must still advance while it is high");
+    retire;
+    expect(2, "held tok_start: and again");
+    tok_start <= '0'; tick; tick;
+    expect(2, "held tok_start: falling must not reload");
+    retire;
+    expect(3, "after tok_start fell");
+    -- and a fresh rise still reloads
+    tok_start <= '1'; tick; tok_start <= '0'; tick;
+    expect(0, "a new rising edge reloads");
+
     -- ---- reset -----------------------------------------------------------
     rst <= '1'; tick; tick; rst <= '0'; tick;
     chk(err = '0', "reset must clear err");
