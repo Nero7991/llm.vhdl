@@ -1,0 +1,3 @@
+C4_BEGIN synth tag=wire4 part=xcvu33p-fsvh2104-2L-e core_period=5.0 hbm_period=4.0
+C4_READ 111 files
+C4_DONE synth wire4
