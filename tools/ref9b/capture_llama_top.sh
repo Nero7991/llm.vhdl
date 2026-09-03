@@ -45,6 +45,8 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_mac_array.vhd rtl/attn_rope.vhd rtl/attn_score_q12.vhd
        rtl/attn_softmax.vhd rtl/axi_rd_fsm.vhd rtl/divider_rs.vhd
        rtl/gdn_conv.vhd rtl/gdn_exp_capture.vhd rtl/gdn_head_emit.vhd
+       rtl/gdn_conv_tap_mem.vhd rtl/gdn_exp_mem.vhd
+       rtl/gdn_state_axi.vhd rtl/gdn_state_mem.vhd
        rtl/gdn_recur_pipe.vhd rtl/gdn_scalar.vhd rtl/gdn_silu.vhd
        rtl/gdn_y_emit.vhd rtl/imrope_pkg.vhd rtl/l2norm_rs.vhd
        rtl/llama_map_pkg.vhd rtl/mv4i_arith_pkg.vhd rtl/rmsnorm_bf.vhd
@@ -54,6 +56,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
        rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
        rtl/attn_block.vhd rtl/attn_kv_axi.vhd rtl/gdn_block.vhd
+       rtl/gdn_state_store.vhd rtl/gdn_job_seq.vhd
        rtl/matvec_int4.vhd rtl/sampler_stream.vhd
        rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd
        rtl/llama_top.vhd

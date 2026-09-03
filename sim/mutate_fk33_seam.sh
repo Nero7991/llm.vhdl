@@ -76,7 +76,9 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
  rtl/stream_fifo.vhd sim/seq_tbl_pkg.vhd rtl/attn_recip.vhd
  rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
  rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
+       rtl/gdn_conv_tap_mem.vhd rtl/gdn_exp_mem.vhd rtl/gdn_state_axi.vhd rtl/gdn_state_mem.vhd
  rtl/attn_block.vhd rtl/gdn_block.vhd rtl/matvec_int4.vhd
+       rtl/gdn_state_store.vhd rtl/gdn_job_seq.vhd
  rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd rtl/llama_top.vhd
  sim/tb_fk33_seam.vhd"
 

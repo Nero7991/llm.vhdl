@@ -650,7 +650,32 @@ entity llama_top is
     B_RECUR_SLOTS : positive := 16;
     B_L2_LANES    : positive := 4;
     B_SILU_LANES  : positive := 8;
-    B_RMS_LANES   : positive := 4
+    B_RMS_LANES   : positive := 4;
+
+    -- ---- B's recurrent state: on-chip for all layers, or tiered ----------
+    -- FALSE keeps `stmem`/`semem`, which hold EVERY GDN layer's state at
+    -- once.  MEASURED 2026-09-03: that is `stmem_t = NLY*STLY x
+    -- B_RECUR_LANES*16`, which Vivado's RAM inference table names as
+    -- 3072 K x 64 = 24.0 MiB = 5,472 RAMB36 on a 672-tile part, and it is the
+    -- single reason `gb_real` does not fit.  `gdn_block` itself is 22 tiles.
+    --
+    -- TRUE replaces BOTH with `rtl/gdn_state_store.vhd`, which holds ONE
+    -- resident layer and moves the rest over AXI, sequenced by
+    -- `rtl/gdn_job_seq.vhd`.  The extracted-block measurement of exactly this
+    -- configuration is 34 BRAM tiles and 32 URAM, with the LUT count HALVED
+    -- as a side effect, because a 3-million-entry address computation goes
+    -- away with the array.
+    -- docs/debugging/2026-09-03_b-mover-does-not-fit.md.
+    --
+    -- DEFAULT FALSE, following `C_KV_AXI`: the tiered arm needs an HBM
+    -- allocation for `bst_state_base` that nothing supplies yet, so turning it
+    -- on without one gives a store that loads from address zero.
+    --
+    -- IT DOES NOT LIFT THE TOKEN-1 REFUSAL BELOW.  The store's tap face is
+    -- NOT used here: memory 3 supplies `cv_w` and `cv_cw_exp` as well as the
+    -- taps, and the store carries taps only, so the two cannot be swapped
+    -- wholesale.  See the refusal's own comment.
+    B_STATE_AXI : boolean := false
   );
   port(
     clk : in std_logic;
@@ -741,6 +766,41 @@ entity llama_top is
     kv_bvalid  : in  std_logic := '0';
     kv_bready  : out std_logic;
     kv_bresp   : in  std_logic_vector(1 downto 0) := (others => '0');
+
+    -- ---- subsystem B's recurrent-state master, B_STATE_AXI only ----------
+    -- `rtl/gdn_state_store.vhd`'s AXI face, ADDR_W 33 and DW 256.  Every
+    -- input carries a default and every output is driven (tied off when not
+    -- B_STATE_AXI), so an existing instantiation still elaborates.  The same
+    -- precedent `kv_*` set directly above.
+    bst_state_base : in  std_logic_vector(32 downto 0) := (others => '0');
+    bst_busy   : out std_logic;
+    bst_done   : out std_logic;
+    bst_err    : out std_logic;
+    bst_arvalid : out std_logic;
+    bst_arready : in  std_logic := '0';
+    bst_araddr  : out std_logic_vector(32 downto 0);
+    bst_arlen   : out std_logic_vector(7 downto 0);
+    bst_arsize  : out std_logic_vector(2 downto 0);
+    bst_arburst : out std_logic_vector(1 downto 0);
+    bst_rvalid  : in  std_logic := '0';
+    bst_rready  : out std_logic;
+    bst_rdata   : in  std_logic_vector(255 downto 0) := (others => '0');
+    bst_rlast   : in  std_logic := '0';
+    bst_rresp   : in  std_logic_vector(1 downto 0) := (others => '0');
+    bst_awvalid : out std_logic;
+    bst_awready : in  std_logic := '0';
+    bst_awaddr  : out std_logic_vector(32 downto 0);
+    bst_awlen   : out std_logic_vector(7 downto 0);
+    bst_awsize  : out std_logic_vector(2 downto 0);
+    bst_awburst : out std_logic_vector(1 downto 0);
+    bst_wvalid  : out std_logic;
+    bst_wready  : in  std_logic := '0';
+    bst_wdata   : out std_logic_vector(255 downto 0);
+    bst_wstrb   : out std_logic_vector(31 downto 0);
+    bst_wlast   : out std_logic;
+    bst_bvalid  : in  std_logic := '0';
+    bst_bready  : out std_logic;
+    bst_bresp   : in  std_logic_vector(1 downto 0) := (others => '0');
     -- `attn_kv_axi`'s sticky error (C spec 3.9), and the position this token
     -- ran at.  Both are observability: the bench needs to know which token it
     -- is looking at, and a cache error that only appeared in `err` would be
@@ -836,6 +896,20 @@ entity llama_top is
 end entity;
 
 architecture rtl of llama_top is
+
+  -- ---- subsystem B's state-store AXI face, shadowed ---------------------
+  -- See the `bst_*` port comment.  Driven only inside `gb_real`'s
+  -- B_STATE_AXI arm; with no driver each keeps its initial value, which is
+  -- the tie-off.
+  signal bst_busy_i, bst_done_i, bst_err_i : std_logic := '0';
+  signal bst_arvalid_i, bst_rready_i, bst_awvalid_i : std_logic := '0';
+  signal bst_wvalid_i, bst_wlast_i, bst_bready_i : std_logic := '0';
+  signal bst_araddr_i, bst_awaddr_i : std_logic_vector(32 downto 0) := (others => '0');
+  signal bst_arlen_i, bst_awlen_i : std_logic_vector(7 downto 0) := (others => '0');
+  signal bst_arsize_i, bst_awsize_i : std_logic_vector(2 downto 0) := (others => '0');
+  signal bst_arburst_i, bst_awburst_i : std_logic_vector(1 downto 0) := (others => '0');
+  signal bst_wdata_i : std_logic_vector(255 downto 0) := (others => '0');
+  signal bst_wstrb_i : std_logic_vector(31 downto 0) := (others => '0');
 
   -- ---- shape, derived once ---------------------------------------------
   constant SZ      : integer_vector := region_sizes(SHAPE);
@@ -1224,6 +1298,17 @@ architecture rtl of llama_top is
   end function;
 
 begin
+
+  -- `bst_*` outputs, from the shadows declared above.
+  bst_busy <= bst_busy_i;  bst_done <= bst_done_i;  bst_err <= bst_err_i;
+  bst_arvalid <= bst_arvalid_i;  bst_araddr <= bst_araddr_i;
+  bst_arlen <= bst_arlen_i;  bst_arsize <= bst_arsize_i;
+  bst_arburst <= bst_arburst_i;  bst_rready <= bst_rready_i;
+  bst_awvalid <= bst_awvalid_i;  bst_awaddr <= bst_awaddr_i;
+  bst_awlen <= bst_awlen_i;  bst_awsize <= bst_awsize_i;
+  bst_awburst <= bst_awburst_i;  bst_wvalid <= bst_wvalid_i;
+  bst_wdata <= bst_wdata_i;  bst_wstrb <= bst_wstrb_i;
+  bst_wlast <= bst_wlast_i;  bst_bready <= bst_bready_i;
 
   -- ======================================================================
   -- THE BANNERS.  Printed once, at time zero, at severity note, so that no
@@ -3857,6 +3942,30 @@ begin
     type semem_t is array (0 to NLY*SELY-1) of signed(7 downto 0);
     signal semem : semem_t := (others => (others => '0'));
 
+    -- ---- B_STATE_AXI arm ------------------------------------------------
+    -- `gb_start` is what `gdn_block` actually starts on and `j_busy` is what
+    -- the job FSM waits on, so the FSM below is UNCHANGED in either mode:
+    -- with the tier on, `gdn_job_seq` sits between them and runs the state
+    -- load and save around `gdn_block`'s invocation.
+    signal gb_start : std_logic;
+    signal j_busy   : std_logic;
+    signal js_b_start, js_busy, js_done, js_err : std_logic := '0';
+    signal js_ld, js_sv : std_logic := '0';
+    signal js_layer : integer range 0 to NLY-1 := 0;
+    signal js_cvw_en : std_logic := '0';
+    signal js_cvw_seg : integer range 0 to 2 := 0;
+    signal js_cvw_grp : natural range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+    signal js_cvw_data : std_logic_vector(B_CONV_LANES*16-1 downto 0) := (others => '0');
+    -- `gdn_job_seq` REGISTERS q_seg/q_grp, so the source sees the address one
+    -- edge after issue and must present data one edge after THAT.  A
+    -- combinational read of `qkv_b` is one edge EARLY, so this register is
+    -- not optional: see the port comment in rtl/gdn_job_seq.vhd, where a
+    -- one-stage refill failed 31 of 32 data checks with count and order both
+    -- green.
+    signal js_q_seg : integer range 0 to 2 := 0;
+    signal js_q_grp : natural range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+    signal js_q_data : std_logic_vector(B_CONV_LANES*16-1 downto 0) := (others => '0');
+
     signal w_mant : std_logic_vector(DM*16-1 downto 0);
     signal w_exp  : integer := 12;
     signal w_taken : std_logic;
@@ -3912,7 +4021,7 @@ begin
         RMS_LANES => B_RMS_LANES, STRICT_PRODUCER => STRICT)
       port map(
         clk => clk, rst => rst,
-        start => b_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
+        start => gb_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
         seq_rst => b_seq_rst,
         cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
         cap_exp => cap_exp, cap_ready => cap_ready,
@@ -3939,40 +4048,133 @@ begin
         err_conv => open, err_g => open, err_se => open, y_sat => open,
         dbg_col_ready => open, dbg_col_drop => open);
 
+    -- ---- memories 1 and 2, in one of two forms --------------------------
+    -- FALSE: every GDN layer's state on chip.  MEASURED at 5,472 RAMB36
+    -- against 672 on the part, and the only reason `gb_real` does not fit.
+    -- TRUE: one resident layer in `gdn_state_store`, the rest over AXI.
+    -- See the `B_STATE_AXI` generic.
+    gen_st_flat : if not B_STATE_AXI generate
     -- ---- memory 1: the recurrent state.  Registered, one cycle. ---------
-    st_rdata <= st_rq;
-    stmem_p : process(clk) is
-      variable a : integer;
-      variable stmem : stmem_t := (others => (others => '0'));
-    begin
-      if rising_edge(clk) then
-        -- b_layer is registered at job issue and held for the whole
-        -- invocation, so it is stable across every access the block makes.
-        --
-        -- READ FIRST.  See the declaration comment: with `stmem` a variable
-        -- the statement order IS the read-during-write policy, and read-old
-        -- is what the signal form gave.  Do not reorder these two blocks.
-        if st_ren = '1' then
-          a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
-          st_rq <= stmem(a);
+      st_rdata <= st_rq;
+      stmem_p : process(clk) is
+        variable a : integer;
+        variable stmem : stmem_t := (others => (others => '0'));
+      begin
+        if rising_edge(clk) then
+          -- b_layer is registered at job issue and held for the whole
+          -- invocation, so it is stable across every access the block makes.
+          --
+          -- READ FIRST.  See the declaration comment: with `stmem` a variable
+          -- the statement order IS the read-during-write policy, and read-old
+          -- is what the signal form gave.  Do not reorder these two blocks.
+          if st_ren = '1' then
+            a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+            st_rq <= stmem(a);
+          end if;
+          if st_wen = '1' then
+            a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+            stmem(a) := st_wdata;
+          end if;
         end if;
-        if st_wen = '1' then
-          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
-          stmem(a) := st_wdata;
-        end if;
-      end if;
-    end process;
+      end process;
 
-    -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
-    se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
-    semem_p : process(clk) is
-    begin
-      if rising_edge(clk) then
-        if se_wen = '1' then
-          semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+      -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
+      se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
+      semem_p : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if se_wen = '1' then
+            semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+          end if;
         end if;
-      end if;
-    end process;
+      end process;
+    end generate gen_st_flat;
+
+    gen_st_tier : if B_STATE_AXI generate
+      -- The store's st_*/se_* ports are `gdn_block`'s VERBATIM, which is why
+      -- this is a drop-in for both processes above and why nothing between
+      -- here and `gdn_block` changes shape.
+      u_state : entity work.gdn_state_store
+        generic map(VAL_HEADS => VH, DIM => DM, RECUR_LANES => B_RECUR_LANES,
+                    LAYERS => NLY, KEY_HEADS => KH, KCONV => KC,
+                    CONV_LANES => B_CONV_LANES)
+        port map(
+          clk => clk, rst => rst,
+          load_start => js_ld, save_start => js_sv,
+          layer => js_layer, state_base => bst_state_base,
+          busy => bst_busy_i, done => js_done, err => js_err,
+          st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
+          st_rgrp => st_rgrp, st_rdata => st_rdata,
+          st_wen => st_wen, st_whead => st_whead, st_wcol => st_wcol,
+          st_wgrp => st_wgrp, st_wdata => st_wdata,
+          se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
+          se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
+          se_wdata => se_wdata,
+          -- The tap face is present but NOT used: memory 3 below supplies the
+          -- taps AND `cv_w`/`cv_cw_exp`, which the store does not carry, so
+          -- the two cannot be swapped wholesale.  `gdn_job_seq` still refills
+          -- the store's taps so the arm is complete and one change lifts the
+          -- token-1 refusal later.
+          cv_seg => 0, cv_grp => 0, cv_x => open,
+          cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
+          cvw_data => js_cvw_data, tok_adv => '0',
+          r_arvalid => bst_arvalid_i, r_arready => bst_arready,
+          r_araddr => bst_araddr_i, r_arlen => bst_arlen_i,
+          r_arsize => bst_arsize_i, r_arburst => bst_arburst_i,
+          r_rvalid => bst_rvalid, r_rready => bst_rready_i,
+          r_rdata => bst_rdata, r_rlast => bst_rlast, r_rresp => bst_rresp,
+          w_awvalid => bst_awvalid_i, w_awready => bst_awready,
+          w_awaddr => bst_awaddr_i, w_awlen => bst_awlen_i,
+          w_awsize => bst_awsize_i, w_awburst => bst_awburst_i,
+          w_wvalid => bst_wvalid_i, w_wready => bst_wready,
+          w_wdata => bst_wdata_i, w_wstrb => bst_wstrb_i,
+          w_wlast => bst_wlast_i,
+          w_bvalid => bst_bvalid, w_bready => bst_bready_i,
+          w_bresp => bst_bresp);
+
+      u_jobseq : entity work.gdn_job_seq
+        generic map(VAL_HEADS => VH, DIM => DM, KEY_HEADS => KH,
+                    KCONV => KC, CONV_LANES => B_CONV_LANES, LAYERS => NLY)
+        port map(
+          clk => clk, rst => rst,
+          start => b_start, layer => b_layer,
+          busy => js_busy, done => open, err => open,
+          ss_load_start => js_ld, ss_save_start => js_sv,
+          ss_layer => js_layer, ss_done => js_done, ss_err => js_err,
+          cvw_en => js_cvw_en, cvw_seg => js_cvw_seg,
+          cvw_grp => js_cvw_grp, cvw_data => js_cvw_data,
+          b_start => js_b_start, b_busy => b_busy,
+          q_seg => js_q_seg, q_grp => js_q_grp, q_data => js_q_data);
+
+      bst_done_i <= js_done;
+      bst_err_i  <= js_err;
+
+      -- THE ONE REGISTER STAGE.  Addressed exactly as `cvdata_p`'s
+      -- `t = KC-1` branch addresses this token's column, which is the only
+      -- place in this file that already computes it.
+      qcol_p : process(clk) is
+        variable sbase, ch : integer;
+      begin
+        if rising_edge(clk) then
+          if    js_q_seg = 0 then sbase := 0;
+          elsif js_q_seg = 1 then sbase := KH*DM;
+          else                    sbase := 2*KH*DM; end if;
+          for ln in 0 to B_CONV_LANES-1 loop
+            ch := sbase + js_q_grp*B_CONV_LANES + ln;
+            if ch < QKVN then
+              js_q_data((ln+1)*16-1 downto ln*16) <= std_logic_vector(qkv_b(ch));
+            else
+              js_q_data((ln+1)*16-1 downto ln*16) <= (others => '0');
+            end if;
+          end loop;
+        end if;
+      end process;
+    end generate gen_st_tier;
+
+    -- `gdn_block` starts from the sequencer when the tier is on, and the job
+    -- FSM waits on the sequencer instead of on `gdn_block` directly.
+    gb_start <= js_b_start when B_STATE_AXI else b_start;
+    j_busy   <= js_busy    when B_STATE_AXI else b_busy;
 
     -- ---- memory 3: conv taps and weights.  Registered ADDRESS, ---------
     -- combinational DATA, which is what a BRAM with a registered address
@@ -4327,12 +4529,12 @@ begin
             -- `busy` does not rise on the same edge as `start`, so waiting
             -- for it to FALL without first seeing it RISE completes instantly.
             when S_ARM =>
-              if b_busy = '1' then st := S_RUN; end if;
+              if j_busy = '1' then st := S_RUN; end if;
 
             when S_RUN =>
               -- COMPLETION IS `busy` FALLING.  `done` is a one-cycle pulse
               -- with no ack and this adapter never reads it.
-              if b_busy = '0' then
+              if j_busy = '0' then
                 k    := 0;
                 yexp <= resize(b_yexp, EXP_W);
                 assert ycnt = VH*DM

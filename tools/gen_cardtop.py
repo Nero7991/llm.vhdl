@@ -159,7 +159,7 @@ D3_STMT_NEW = """  -- ==========================================================
       hr_reg   => hr_reg,   hr_addr  => hr_addr,  hr_data  => hr_data);
 """
 
-GENERIC_ADD = """    B_RMS_LANES   : positive := 4;
+GENERIC_ADD = """    B_STATE_AXI : boolean := false;
 
     -- ADDED BY tools/gen_cardtop.py; llama_top does not have this generic.
     -- hr_reg/hr_addr/hr_data are a COMBINATIONAL full-range read port into
@@ -195,7 +195,13 @@ def generate_rtl(src_text):
     t = src_text
     t = sub_once(t, D3_DECL_OLD, D3_DECL_NEW, "D3 declarations")
     t = span_once(t, D3_STMT_START, D3_STMT_END, D3_STMT_NEW, "D3 statements")
-    t = sub_once(t, "    B_RMS_LANES   : positive := 4\n  );",
+    # ANCHOR = the LAST generic before `);`.  It moved from B_RMS_LANES to
+    # B_STATE_AXI on 2026-09-03 when llama_top gained the state-tier generic.
+    # Fixed deliberately rather than relaxed to a substring, which is what this
+    # generator's own failure message demands: a substring anchor would keep
+    # matching as llama_top's generic clause changes underneath it and would
+    # silently emit a card top with the wrong generics.
+    t = sub_once(t, "    B_STATE_AXI : boolean := false\n  );",
                  GENERIC_ADD, "card-top generic clause")
     t = sub_once(t, "entity %s is" % OLD_ENTITY,
                  "entity %s is" % NEW_ENTITY, "entity header")
