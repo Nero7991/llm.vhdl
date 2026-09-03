@@ -305,6 +305,22 @@ out-of-range `natural` constant. Its XDC reader forbids `if`, skipping the block
 with only a CRITICAL WARNING. Reading a block-design `CONFIG.*` reads a REQUEST,
 not an answer.
 
+**AND A SENTINEL GREP MUST BE LINE-ANCHORED, BECAUSE THE LOG CONTAINS THE
+SCRIPT THAT WRITES IT.** MEASURED 2026-09-03, twice in a row on the same job:
+`sim/ooc_compose4_pnr.tcl` echoes its own source into its log, so the log holds
+`#     puts "C4_DONE synth $tag"` and `#  error "C4 FAIL: ..."` from the moment
+it starts. An unanchored `grep -qE 'C4_DONE synth|C4 FAIL:'` therefore matched
+the SCRIPT'S OWN TEXT and the waiter reported a finished synthesis seconds
+after launch, both times, while `synth_design` was still fetching its licence.
+Use `grep -qE '^(C4_DONE|ERROR:)'`, and confirm with a count of the anchored
+pattern before believing any waiter.
+
+**This is the `pgrep -f` self-match trap again, in a third place.** First it was
+a process matching its own command line, then a `/proc` loop matching the
+script text that was searching for it, now a log grep matching the source
+embedded in the log. **Whenever you search a haystack that can contain your own
+needle, anchor the match or pick a needle the haystack cannot hold.**
+
 **A COMPLETION SIGNAL THAT ALSO FIRES ON FAILURE IS NOT A COMPLETION SIGNAL.**
 MEASURED 2026-08-30: a waiter armed on a `systemd` unit reported **"completed"
 when the unit was KILLED**, not only when it succeeded, and announced a
