@@ -1146,6 +1146,33 @@ architecture rtl of llama_top is
   signal f_smp_ovf   : std_logic := '0';
 
   -- ---- sticky seam faults ----------------------------------------------
+  -- ONE DRIVER PER ADAPTER, OR-ed HERE.  `f_lost` used to be assigned
+  -- directly from `ap`, `bp` and `cp`, so a resolved std_logic carried up to
+  -- THREE drivers.  MEASURED 2026-09-02 with a standalone three-driver GHDL
+  -- model: when one driver asserts '1' and the other two hold their initial
+  -- '0', the resolved value is 'X', NOT '1'.
+  --
+  -- WHAT THIS CHANGE BUYS, AND WHAT IT DOES NOT.  The attribution control was
+  -- run and it is the honest answer: mutant M1 (`bp` reports a lost beat on
+  -- every y element) kills `tb_llama_top`, `_real`, `_normw` and `_seq`
+  -- IDENTICALLY with and without this split.  It had to, because those rows
+  -- check `assert err_lost_beat = '0' severity failure`, and 'X' is not '0'.
+  -- So this earns NOTHING in detection and must not be credited with a kill.
+  -- It is here for two other reasons:
+  --   * the reported VALUE becomes '1' rather than 'X', so a consumer that
+  --     tests `= '1'` behaves.  `sim/tb_llama_top_smp.vhd:752` is such a
+  --     consumer, but it was never actually broken: that row runs
+  --     `B_BEHAV => true` and `C_REAL => false`, so `ga_real` is the only
+  --     driver present and the value there was already a clean '1'.  The
+  --     fragility was latent, not live.
+  --   * multiple drivers on one signal is not synthesisable, so this had to
+  --     go before any adapter could be lifted onto the card.
+  -- An adapter whose generate branch is absent contributes no driver and its
+  -- signal keeps the initial '0', which is exactly what the phantom driver
+  -- was pretending to be.
+  signal f_lost_a : std_logic := '0';
+  signal f_lost_b : std_logic := '0';
+  signal f_lost_c : std_logic := '0';
   signal f_lost  : std_logic := '0';
   signal f_gate  : std_logic := '0';
   signal f_stub  : std_logic := '0';
@@ -3411,7 +3438,7 @@ begin
           end if;
           if y_we = '1' then
             if st /= S_RUN then
-              f_lost <= '1';
+              f_lost_a <= '1';
               report "llama_top: unit A emitted a y beat outside its run "
                    & "window.  y_we has no ready, so this beat is LOST."
                 severity error;
@@ -3423,7 +3450,7 @@ begin
                   if a < A_MAXROWS then
                     yb(a) := signed(y_data(rr*64+MANT_W-1 downto rr*64));
                   else
-                    f_lost <= '1';
+                    f_lost_a <= '1';
                     report "llama_top: unit A produced row "
                          & integer'image(a) & " past the y buffer ("
                          & integer'image(A_MAXROWS) & ")." severity error;
@@ -4137,7 +4164,7 @@ begin
           -- where it was not expected must still be ACCEPTED, then reported.
           if y_valid = '1' then
             if st /= S_RUN then
-              f_lost <= '1';
+              f_lost_b <= '1';
               report "llama_top: unit B emitted a y element outside its run "
                    & "window.  y_valid has no ready, so this element is LOST."
                 severity error;
@@ -5133,7 +5160,7 @@ begin
           -- window, which would be a lost element.
           if y_valid = '1' then
             if st /= S_RUN then
-              f_lost <= '1';
+              f_lost_c <= '1';
               report "llama_top: unit C emitted a y element outside its run "
                    & "window." severity error;
             end if;
@@ -5142,19 +5169,23 @@ begin
             end if;
             ycnt := ycnt + 1;
           end if;
-          if c_eplost = '1' then f_lost <= '1'; end if;
+          if c_eplost = '1' then f_lost_c <= '1'; end if;
 
           -- THE INT8 NARROWING, CHECKED ONCE.  Free-running it fires 175,313
           -- times in the unanchored 32-block run and buries every other line
           -- in the log; a guard nobody can read past is a guard nobody reads.
           -- It lives in THIS process and not its own so that the C branch
-          -- contributes exactly ONE driver to `f_lost`, which is a resolved
-          -- std_logic with a driver per adapter already.
+          -- contributes exactly ONE driver to `f_lost_c`.  That constraint is
+          -- now enforced by construction rather than by this comment: each
+          -- adapter drives its OWN signal and they are OR-ed at the
+          -- declaration.  The old arrangement -- three processes driving the
+          -- resolved `f_lost` directly -- did NOT do what this comment used to
+          -- claim: one '1' against two initial '0's resolves to 'X'.
           if not e_said
              and (qg_e < -128 or qg_e > 127 or kin_e < -128 or kin_e > 127
                   or vin_e < -128 or vin_e > 127) then
             e_said := true;
-            f_lost <= '1';
+            f_lost_c <= '1';
             report "llama_top: a source exponent for unit C is outside int8 "
                  & "and would WRAP on the way into attn_block -- R_QG "
                  & integer'image(to_integer(qg_e)) & ", R_KIN "
@@ -5237,7 +5268,7 @@ begin
                 -- in the bench reads, so a short y stream FAILS the run
                 -- instead of printing a line nobody greps for.
                 if ycnt /= YN then
-                  f_lost <= '1';
+                  f_lost_c <= '1';
                   report "llama_top: unit C emitted " & integer'image(ycnt)
                        & " y elements, the job needs " & integer'image(YN)
                     severity error;
@@ -5676,6 +5707,7 @@ begin
   obs_dst    <= job_dst;
   obs_cmp    <= cmp_valid;
 
+  f_lost <= f_lost_a or f_lost_b or f_lost_c;
   err_lost_beat <= f_lost;
   err_gate_drop <= f_gate;
   err_unit_stub <= f_stub;

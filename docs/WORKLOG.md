@@ -11,6 +11,122 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-02, session: the B data mover is NOT a port, because B's state does not fit the device
+
+**Oren asked what remains to flash a bitstream, and chose the B/C data movers
+as the next step. Sizing them first changed what they are.**
+
+**THE FINDING, MEASURED** by elaborating this repository's own shape functions
+against `QWEN35_9B` under GHDL (not hand arithmetic):
+**the Gated DeltaNet recurrent state for all 24 GDN layers is 201,326,592 bits
+= 24.0 MB, against 14.2 MB of BRAM plus URAM on the entire `xcvu33p`.** It
+overruns every on-chip memory the part has by **1.69x**, with nothing left for
+anything else. Write-up
+`docs/debugging/2026-09-02_gdn-state-does-not-fit-on-chip.md`; the plan gains
+`STEP 3b`.
+
+**So "port `gb_real`'s 635 lines" is WITHDRAWN as the description of this
+work.** That framing was written from a line count and never from a sizing.
+`gb_real`'s `stmem` is a process variable holding every layer at once, which is
+a correct simulation model and cannot become hardware. **A data mover's cost is
+in what it moves, and that is not visible in its source: the offending array is
+three lines long.**
+
+**ONE layer is 1.0 MB and does fit**, so the design is one layer resident
+on-chip streamed to and from HBM per job, 24 jobs per token, DERIVED 50.4 MB of
+HBM traffic per token. `rtl/attn_kv_axi.vhd` is the existing precedent and
+should be followed rather than reinvented.
+
+**The lane count cannot be swept out of this.** `NBR = DIM/RECUR_LANES` and the
+word is `RECUR_LANES*16` wide, so the lane term cancels exactly. `llama_top`'s
+own comment says the same independently. Do not retry.
+
+**A SECOND piece of new RTL is required regardless: the conv tap history.**
+`llama_top` holds none, and refuses rather than computing a wrong number, so
+**`B_SRC_REAL` -- the mode the card must run in -- has never executed past
+token 0 anywhere in this repository.**
+
+**LANDED, and the census answered it.** `rtl/gdn_state_mem.vhd` (one layer,
+`ram_style` a generic) censused OOC on the **BC-250 lane**
+(`sim/ooc_gdn_state.tcl`, three points), workstation lane on the GHDL gate, no
+Vivado on this box:
+
+| `ram_style` | URAM288 | RAMB36 | share |
+|---|---:|---:|---|
+| `"ultra"` | **32** | 0 | 10.0% of 320 URAM, WNS +2.549 at 5.0 ns |
+| `"block"` | 0 | **228** | 33.9% of 672 BRAM |
+| `"auto"` (no attribute) | 0 | **228** | 33.9% of 672 BRAM |
+
+**THE HEADLINE IS THE THIRD ROW: Vivado picks BRAM on its own and never URAM.**
+Without an explicit `ram_style = "ultra"` this store silently costs 228 tiles;
+against the wired `compose4_top`'s 327.5 that is 82.7% of the device **before**
+the 171-tile gain image, which would put it over. With `ultra` the BRAM column
+does not move at all and it spends 32 of 320 idle URAM. **The attribute is the
+difference between fitting and not, and it is the first use found for the
+URAM.**
+
+**Predictions scored: 32 URAM was EXACT, 256 RAMB36 was WRONG (228).** The
+width-quantisation rule bit the URAM case and not the BRAM case, and there was
+no way to tell which in advance -- two methods, one right each. The census is
+what settles it, not either rule.
+
+**MEASUREMENT TRAP, recorded because it reached a CSV:** the census script's
+WNS comes from a `regexp` over `report_timing_summary` with `0.0` as the
+initialiser. It matched for `ultra` and NOT for the other two, so those rows
+carry `wns 0.0, fmax 200.0` -- **the default wearing the shape of a
+measurement**, in the same column as a real one. Only the `ultra` timing figure
+is quotable. Two more columns (`LUTasRAM`, `LUT`, `FF`) are filter bugs
+(`REF_NAME =~ RAM*` also matches `RAMB36E2`) and were discarded rather than
+reported.
+
+**AND THE HBM SIDE IS ALREADY ALLOCATED, which de-risks the rest.**
+`tools/hbm_map.py::arena_sizes()` derives, and `tools/pack_model_fk33.py`
+already reserves, `gdn_state_mant_bytes_per_layer = 1,048,576` /
+`gdn_state_exp_bytes_per_layer = 4,096` / 24 layers / 25,264,128 B total.
+**1,048,576 bytes is 8,388,608 bits: the same number measured from the shape
+functions, to the byte, by a different tool for a different purpose.** Three
+independent derivations now agree. The architecture was always "the state lives
+in HBM"; only the RTL that moves it is missing. **Except the conv tap history,
+which nothing reserves** -- 49,152 B per layer, 1.125 MB total -- and it must
+be added to `arena_sizes()` rather than quietly placed, because this address
+space has already had one silent two-allocator collision whose symptom was a
+wrong token.
+
+**The new memory has an oracle, and three of its first four mutants SURVIVED.**
+`sim/tb_gdn_state_mem.vhd` compares against a model coded from `llama_top`'s
+`stmem_p`, not from the DUT. First version: 2,825 checks, 0 mismatches, and
+nearly worthless. M2 (transposed read address) died; **M1 (write before read),
+M3 (read ungated) and M4 (write ungated) all lived.** M1 lives correctly and
+permanently -- `mem` is a SIGNAL, so read-old is structural and the ordering
+this file's header claimed was load-bearing is not, which corrected the RTL
+comment. M3 was invisible because the comparison only looked at cycles where
+the reference had also read; M4 because the stimulus let the write port HOLD
+while `w_en` was low, so the unwanted write was a no-op. **A stimulus that
+holds its inputs cannot see a missing enable.** Hardened: 4,323 checks, M2/M3/M4
+all dead. **Attribution control: the two fixes are orthogonal** -- every-cycle
+comparison alone catches M3 and not M4 (130 vs 0), scrambled ports alone catch
+M4 and not M3 (1,325 vs 0). Neither alone would have been enough and it would
+have looked improved either way. **Bench reach measured, not assumed: it runs
+at 65,536 words (real DIM, real lanes, half the head count) under a 6 GB cap
+and DIED at the real 131,072 under 8 GB. No simulation here has exercised this
+memory at the 9B head count.**
+
+**ALSO LANDED, and its attribution control is the interesting part:** `f_lost`
+had **three drivers** (`ap`, `bp`, `cp` each assigning the resolved
+`std_logic`). MEASURED with a standalone three-driver GHDL model: one driver
+at '1' against two initial '0's resolves to **'X', not '1'**. Now one signal
+per adapter, OR-ed once. **The attribution control says this earns NOTHING in
+detection:** mutant M1 (`bp` reports a lost beat on every y element) kills
+`tb_llama_top`, `_real`, `_normw` and `_seq` identically with and without the
+split, because those rows assert `err_lost_beat = '0' severity failure` and 'X'
+is not '0'. It is here because the reported VALUE becomes correct and because
+**multiple drivers are not synthesisable**, which blocked lifting any adapter
+onto the card. My first draft of the comment claimed it fixed a dead `fail`
+counter in `tb_llama_top_smp`; that claim is **wrong and was corrected in
+place** -- that row runs `B_BEHAV => true`, so `ga_real` is its only driver and
+the value there was already a clean '1'. The fragility was latent, not live.
+
+
 Written to survive a context compaction. Every figure here is MEASURED unless
 labelled, and several supersede figures still standing elsewhere in this file.
 

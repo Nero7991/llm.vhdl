@@ -214,6 +214,95 @@ Neither candidate is usable, so this is new work, not a wiring change.
 **Done when:** the card top elaborates in Vivado at the real 9B shape, and a
 bench proves it token-identical to `llama_top` on the `ref/run9b` stream.
 
+### STEP 3b -- B's RECURRENT STATE DOES NOT FIT ON-CHIP. Added 2026-09-02, and it enlarges STEP 3.
+
+**This step was not in the plan and has to be, because STEP 3 point 1 requires
+`B_SRC_REAL => true` and that mode cannot be built from what exists.**
+Write-up: `docs/debugging/2026-09-02_gdn-state-does-not-fit-on-chip.md`.
+
+**MEASURED** by elaborating this repository's own shape functions against
+`QWEN35_9B` (GHDL, not hand arithmetic):
+
+| store | MB | note |
+|---|---:|---|
+| `stmem`, all 24 GDN layers -- what `gb_real` holds today | **24.000** | does not fit |
+| `stmem`, ONE layer | 1.000 | 29 URAM288, or 228 BRAM36 |
+| conv tap history, all layers | 1.125 | 48 KB resident |
+| `semem`, all layers | 0.094 | |
+| **device BRAM + URAM, everything the part has** | **14.203** | 672 tiles + 320 URAM288 |
+
+**24.0 MB against 14.2 MB is 1.69x the entire on-chip memory of the device,
+with nothing left over.** So the previous plan-of-record framing -- "port
+`gb_real`'s 635 lines" -- is **withdrawn**. It was written from a line count
+and not from a sizing, and nothing in the source signals that one of its five
+arrays outweighs the part.
+
+**The lane count cannot fix it.** `stmem` is `NLY*VH*DM*NBR` words of
+`B_RECUR_LANES*16` bits with `NBR = DM/B_RECUR_LANES`, so the lane term
+cancels and the extent is `NLY*VH*DM*DM*16` regardless. `llama_top`'s own
+comment says the same thing independently. **Do not sweep the generic.**
+
+**What has to be built instead**, per GDN job, 24 per token:
+
+1. load layer L's recurrent state, 1.0 MB, HBM to on-chip URAM;
+2. load its conv tap history (48 KB) and state exponents (4 KB);
+3. run `gdn_block` against the on-chip copies, which `gb_real` already does
+   correctly and IS worth porting;
+4. store the updated state and history back.
+
+DERIVED traffic: **50.4 MB per token**, read plus write. Not a throughput
+concern at HBM bandwidth; it is new RTL, a new AXI master and new seam rules.
+
+**Follow `rtl/attn_kv_axi.vhd` rather than reinventing it.** Subsystem C's KV
+cache already solves this exact problem -- on-chip working set in front of an
+HBM-backed store, own AXI3 master, selected by `C_KV_AXI` -- and its generics
+(`AXI_DW = 256`, `ADDR_W = 33`, `MAXB = 16` with the AXI3 `ARLEN` cap named)
+are the template for a `gdn_state_axi`.
+
+**URAM IS legal for this store, unlike the norm gain image.** `[Synth 8-10226]`
+refuses `ram_style = ultra` only for a table with non-zero INITIALISATION;
+`stmem` is written at run time and starts at zero. The two cases look alike
+and are not. This is the first use found for the 320 idle URAM288.
+
+**A second piece of new RTL is required independently of the fit question: the
+conv tap history buffer.** `llama_top` holds none and says so in an assert that
+refuses rather than computing a wrong number, so **`B_SRC_REAL` has never
+executed past token 0 anywhere in this repository.**
+
+**MEASURED 2026-09-02, and `auto` is the trap:** `rtl/gdn_state_mem.vhd`, one
+layer, OOC on the FK33 part.
+
+| `ram_style` | URAM288 | RAMB36 |
+|---|---:|---:|
+| `"ultra"` | **32** (10.0% of 320) | 0, WNS +2.549 at 5.0 ns |
+| `"block"` | 0 | **228** (33.9% of 672) |
+| `"auto"` (no attribute) | 0 | **228** |
+
+**Vivado never reaches for URAM on its own.** Without the explicit attribute
+this store costs 228 tiles, which on top of the wired top's 327.5 is 82.7% of
+the device before the 171-tile gain image would take it over. The attribute is
+the difference between fitting and not.
+
+**THE HBM SIDE ALREADY EXISTS, which is the one piece of good news here.**
+`tools/hbm_map.py::arena_sizes()` derives, and `tools/pack_model_fk33.py`
+already reserves in the manifest, `gdn_state_mant_bytes_per_layer = 1,048,576`
+and `gdn_state_exp_bytes_per_layer = 4,096`, 24 layers, 25,264,128 bytes total.
+**1,048,576 bytes is 8,388,608 bits: the same figure measured above, to the
+byte, derived independently by a different tool for a different purpose.**
+`server/fk33_manifest.c` already enforces `gdn_state_base >= weights_end`. So
+the mover writes into an address map that exists; it does not have to allocate
+one.
+
+**But nothing reserves the conv tap history**: `(KCONV-1) * qkv_dim * 16 bits`
+= 49,152 B per layer, 1.125 MB total. It must be added to
+`hbm_map.arena_sizes()` and not quietly placed -- this address space has
+already had one silent collision between two allocators that could not see each
+other, and the symptom was a wrong token.
+
+**Done when:** the per-job load and store move a layer between HBM and
+`gdn_state_mem`, and a bench shows `gdn_block` producing identical output
+across a save-and-restore, against a token stream longer than one token.
+
 ### STEP 4 -- Wire the seam to D and retire the refusal.
 
 `rtl/fk33_seam.vhd` exists and **is addressable at `0xE000`** (TRACK SEAMMAP,
