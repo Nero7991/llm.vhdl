@@ -29,6 +29,27 @@ package matvec_int4_desc_pkg is
   -- package adds.
   constant MV4I_DESC_VER : natural := 1;
 
+  -- Descriptor version 2 is version 1 plus ONE field: extension word 3's low
+  -- half carries the descriptor's own A-job index, which the fetcher compares
+  -- against a counter the sequencer keeps.  Everything else is byte-identical,
+  -- and version 1 remains ACCEPTED, so this is an extension and not a break.
+  --
+  -- WHY A CHECK AND NOT A POINTER.  The card computes a descriptor's address
+  -- as `A_DESC_BASE + n*A_DESC_STRIDE` from its own count of A jobs, so the
+  -- host must lay the descriptors out in the schedule's A-job order.  That is
+  -- an ORDERING CONTRACT, and an unchecked ordering contract produces a wrong
+  -- answer rather than an error: fetching a well-formed descriptor for the
+  -- wrong step passes every structural check this package has, because nothing
+  -- else in a descriptor says WHICH step it belongs to.  Section 5.1 already
+  -- states the analogous hole for sub-region contents.  This field closes the
+  -- ordering half of it: the descriptor names its own index, and a descriptor
+  -- that disagrees with the counter is refused BEFORE the core is started.
+  --
+  -- 32 bits, not the 8 of D's `job_ordinal`.  `job_ordinal` cannot address the
+  -- 311 A jobs of the 9B token program and means something else besides (the
+  -- per-kind layer index, defect ORD-1); it is not reusable here.
+  constant MV4I_DESC_VER_IDX : natural := 2;
+
   -- D's opcode for a subsystem A job (rtl/seq_desc_fetch.vhd:253).
   constant OP_A_JOB : natural := 0;
 
@@ -139,7 +160,7 @@ package matvec_int4_desc_pkg is
   -- of 16.  Every constant below names ONE `elsif` arm in
   -- rtl/matvec_int4_desc_axi.vhd and nothing else.
 
-  -- EC_DESC (0x3) -- thirteen arms, previously seven reports.
+  -- EC_DESC (0x3) -- fourteen arms, previously seven reports.
   constant ED_EXT_FLAGS    : natural := 1;   -- ext word 0 [63:48] nonzero
   constant ED_OPCODE       : natural := 2;   -- word 0 opcode /= OP_A_JOB
   constant ED_PAD_W3       : natural := 3;   -- word 3 [63:56] nonzero (D's pad)
@@ -153,6 +174,7 @@ package matvec_int4_desc_pkg is
   constant ED_WBEATS_ZERO  : natural := 11;  -- w_beats = 0
   constant ED_SBEATS_ZERO  : natural := 12;  -- s_beats = 0
   constant ED_CB_UNLOADED  : natural := 13;  -- cb_load = 0, no codebook loaded
+  constant ED_JOB_INDEX    : natural := 14;  -- v2 ext word 3 index /= expected
 
   -- EC_GEOM (0x9) -- two arms, previously one report.
   constant EG_NSUB_W       : natural := 1;   -- word 3 nsub_w /= NPORTS_W

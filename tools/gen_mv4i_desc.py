@@ -86,6 +86,12 @@ import sys
 # happily.
 MV4I_MAGIC = 0x4D563449          # "MV4I"
 MV4I_DESC_VER = 1
+# Version 2 is version 1 plus ONE field: extension word 3's low half carries
+# the descriptor's own A-job index, which the card compares against the count
+# it keeps as it walks the program.  See rtl/matvec_int4_desc_pkg.vhd for why
+# that is a CHECK and not a pointer.  Version 1 is still accepted by the RTL,
+# so emitting v1 remains legal and simply leaves the ordering unchecked.
+MV4I_DESC_VER_IDX = 2
 OP_A_JOB = 0
 DESC_HDR_WORDS = 8
 DESC_EXT_WORDS = 4
@@ -433,6 +439,11 @@ def build_descriptor(h, hbm_base, n_rows, x_exp, out_mode=MODE_BFP,
                      src_region=0xFF, dst_region=0x00, dst_offset=0,
                      ordinal=0, src_region2=0xFF,
                      const_base=0, const_exp=0,
+                     # None emits a version 1 descriptor with extension word 3
+                     # all pad.  An int emits version 2 and stamps it there, so
+                     # the card can refuse a descriptor fetched for the wrong
+                     # step BEFORE it starts the array.
+                     job_index=None,
                      pieces=None,
                      mutate=None):
     """Build the descriptor image.  `mutate` is a callable(words, ctx) applied
@@ -518,10 +529,12 @@ def build_descriptor(h, hbm_base, n_rows, x_exp, out_mode=MODE_BFP,
     for q in range(nps):
         d[DESC_BASE0 + npw + q] = s_base[q]
 
-    d[ext0 + 0] = MV4I_MAGIC | (MV4I_DESC_VER << 32)   # ext_flags 63:48 = 0
+    ver = MV4I_DESC_VER if job_index is None else MV4I_DESC_VER_IDX
+    d[ext0 + 0] = MV4I_MAGIC | (ver << 32)             # ext_flags 63:48 = 0
     d[ext0 + 1] = (wb & 0xFFFFFFFF) | ((sb & 0xFFFFFFFF) << 32)
     d[ext0 + 2] = u32(x_exp)                           # 63:32 pad = 0
-    d[ext0 + 3] = 0
+    # v1: the whole word is pad.  v2: [31:0] is the job index, [63:32] pad.
+    d[ext0 + 3] = 0 if job_index is None else u32(job_index)
 
     fields = dict(
         tensor=os.path.basename(h.path), n_rows=n_rows, n_cols=h.K,
@@ -578,7 +591,7 @@ def rtl_would_reject(d, build=FK33, desc_addr=None):
         return out
     if lo32(w[e]) != MV4I_MAGIC:
         out.append((0xA, "ERR_MAGIC"))
-    elif ((w[e] >> 32) & 0xFFFF) != MV4I_DESC_VER:
+    elif ((w[e] >> 32) & 0xFFFF) not in (MV4I_DESC_VER, MV4I_DESC_VER_IDX):
         out.append((0xB, "ERR_VER"))
     elif (w[e] >> 48) & 0xFFFF:
         out.append((0x3, "ERR_DESC: ext_flags nonzero"))
@@ -590,7 +603,12 @@ def rtl_would_reject(d, build=FK33, desc_addr=None):
         out.append((0x3, "ERR_DESC: word 3 pad"))
     elif w[7]:
         out.append((0x3, "ERR_DESC: word 7 pad"))
-    elif hi32(w[e + 2]) or w[e + 3]:
+    elif hi32(w[e + 2]) or hi32(w[e + 3]):
+        out.append((0x3, "ERR_DESC: extension pad"))
+    elif ((w[e] >> 32) & 0xFFFF) == MV4I_DESC_VER and lo32(w[e + 3]):
+        # A v1 descriptor may not carry an index: that is a v2 descriptor
+        # mislabelled, and the card would then leave its ordering unchecked,
+        # which is worse than either version on its own.
         out.append((0x3, "ERR_DESC: extension pad"))
     elif (w[3] & 0xFF) > 2:
         out.append((0x3, "ERR_DESC: out_mode"))
@@ -896,6 +914,57 @@ def selftest():
         if vd != "VOID":
             bad.append("VD: a non-mv4i file scored %s, not VOID" % vd)
 
+        # ==============================================================
+        # THE VERSION 2 A-JOB INDEX, round-tripped through the emitter and
+        # the verifier.  Added 2026-09-03 with the field itself.
+        #
+        # `rtl_would_reject` is this file's model of `S_CHECK`, so these rows
+        # check that the emitter and the model AGREE.  They do NOT check that
+        # either agrees with the RTL -- `sim/tb_a_geom.vhd` rows (a)..(f) are
+        # what does that, against the real `matvec_int4_desc_axi`, with three
+        # RTL mutants confirming each row bites.  Stated so nobody reads a
+        # green SELFTEST as coverage of the gateware.
+        # ==============================================================
+        vh = Mv4iHeader(mk("v2probe", M=4096, K=4096, rows_if=48,
+                           axi_dw=256))
+        e2 = DESC_BASE0 + vh.nports_w + vh.n_scale_sub
+
+        d1 = build_descriptor(vh, 0x100000, 4096, 0)
+        if ((d1.words[e2] >> 32) & 0xFFFF) != MV4I_DESC_VER:
+            bad.append("V1: default build is not version 1")
+        if d1.words[e2 + 3] != 0:
+            bad.append("V1: default build put something in ext word 3")
+        if rtl_would_reject(d1, desc_addr=0):
+            bad.append("V1: a default descriptor is refused")
+
+        d2 = build_descriptor(vh, 0x100000, 4096, 0, job_index=137)
+        if ((d2.words[e2] >> 32) & 0xFFFF) != MV4I_DESC_VER_IDX:
+            bad.append("V2: job_index did not select version 2")
+        if (d2.words[e2 + 3] & 0xFFFFFFFF) != 137:
+            bad.append("V2: the index is not in ext word 3's low half")
+        if (d2.words[e2 + 3] >> 32) != 0:
+            bad.append("V2: ext word 3's high half is not pad")
+        if rtl_would_reject(d2, desc_addr=0):
+            bad.append("V2: a well-formed version 2 descriptor is refused")
+
+        # TEETH.  A v1 descriptor carrying an index must be refused, or a v2
+        # descriptor mislabelled v1 has its ordering silently unchecked.
+        d3 = build_descriptor(vh, 0x100000, 4096, 0)
+        d3.words[e2 + 3] = 137
+        if not rtl_would_reject(d3, desc_addr=0):
+            bad.append("V1IDX: a version 1 descriptor carrying an index in "
+                       "ext word 3 was accepted")
+
+        # And the HIGH half stays reserved in v2 as well as v1.
+        d4 = build_descriptor(vh, 0x100000, 4096, 0, job_index=137)
+        d4.words[e2 + 3] |= (1 << 32)
+        if not rtl_would_reject(d4, desc_addr=0):
+            bad.append("V2PAD: ext word 3's high half was accepted nonzero "
+                       "on a version 2 descriptor")
+
+        print("-" * 68)
+        print("V2 INDEX: emitter and verifier agree on v1, v2, and both "
+              "malformed cases")
         print("-" * 68)
         print("CORRECTED RULE ALONE=%d  (rows the old tight rule got wrong)"
               % alone)

@@ -186,6 +186,42 @@ which is exactly what D2 is.
   `sim:tb_gdn_job_seq` among 23 rows a clean checkout does not get. The floor
   is a clean-checkout number and this tree is not one.
 
+## The port contract, checked mechanically rather than by eye
+
+The bench proves the SCHEDULE against models. It says nothing about whether the
+module can actually be connected to the real `gdn_state_store` and `gdn_block`,
+which have 59 and 65 ports respectively -- too many to hand-wire a probe for
+quickly, and reading two port lists side by side is exactly the check that
+looks done and is not.
+
+So the entity declarations were parsed and the eleven connecting ports compared
+programmatically: subtype string identical, direction opposite.
+
+```
+job_seq port     dir    type                                         peer
+ss_load_start    out    std_logic                                    load_start     OK
+ss_save_start    out    std_logic                                    save_start     OK
+ss_layer         out    integer range 0 to LAYERS-1                  layer          OK
+ss_done          in     std_logic                                    done           OK
+ss_err           in     std_logic                                    err            OK
+cvw_en           out    std_logic                                    cvw_en         OK
+cvw_seg          out    integer range 0 to 2                         cvw_seg        OK
+cvw_grp          out    natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1  cvw_grp    OK
+cvw_data         out    std_logic_vector(CONV_LANES*16-1 downto 0)   cvw_data       OK
+b_start          out    std_logic                                    start          OK
+b_busy           in     std_logic                                    busy           OK
+MISMATCHES: 0
+```
+
+**WHAT THIS DOES NOT ESTABLISH, and it matters.** The subtypes are written in
+terms of generics -- `LAYERS`, `VAL_HEADS`, `DIM`, `CONV_LANES` -- and they
+match only because both entities spell those generics the same way. **If the
+two are instantiated with different generic VALUES the strings still match and
+the design is still wrong**, silently, because a `natural range 0 to N-1` on
+each side simply resolves to two different ranges. This check compares
+declarations, not elaborated instances. An actual structural elaboration of the
+three together is the thing that would close it, and it has not been done.
+
 ## Open, not yet answered
 
 - **Nothing instantiates this module.** It is verified against models; wiring it

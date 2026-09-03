@@ -142,6 +142,13 @@ architecture sim of tb_a_geom is
   constant EI_ROWS_MAX : integer := to_integer(unsigned(ei(ED_ROWS_MAX, 1)));
   constant EI_NSUB_W   : integer := to_integer(unsigned(ei(EG_NSUB_W,   3)));
   constant EI_NSUB_S   : integer := to_integer(unsigned(ei(EG_NSUB_S,   3)));
+  constant EI_JOB_IDX  : integer := to_integer(unsigned(ei(ED_JOB_INDEX, EXT0+3)));
+  constant EI_PAD_EXT3 : integer := to_integer(unsigned(ei(ED_PAD_EXT,   EXT0+3)));
+
+  -- The A-job index the sequencer claims.  Driven by the bench so a v2
+  -- descriptor can be given a MATCHING and a MISMATCHING claim against the
+  -- same descriptor bytes.
+  signal jidx_s   : std_logic_vector(31 downto 0) := (others => '0');
 
   signal clk      : std_logic := '0';
   signal aresetn  : std_logic := '0';
@@ -239,7 +246,11 @@ begin
   -- default, so this bench talks to the build the FK33 instantiates rather
   -- than to a set of numbers it typed itself.
   dut : entity work.matvec_int4_desc_axi
+    -- CHECK_JOB_INDEX is FALSE by default (see the generic's comment).  This
+    -- bench is the one that proves the check works, so it opts in explicitly.
+    generic map(CHECK_JOB_INDEX => true)
     port map(
+      job_index => jidx_s,
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => clk,
       s_axi_awaddr => awaddr, s_axi_awprot => "000", s_axi_awvalid => awvalid,
       s_axi_awready => awready, s_axi_wdata => wdata, s_axi_wstrb => wstrb,
@@ -316,7 +327,10 @@ begin
     -- moves them.
     procedure build(rows  : natural;
                     npw_f : natural := NPW;
-                    nps_f : natural := NPS) is
+                    nps_f : natural := NPS;
+                    ver   : natural := MV4I_DESC_VER;
+                    jidx  : natural := 0;
+                    pad3h : natural := 0) is
       variable w : dimg_t := (others => (others => '0'));
     begin
       -- word 0: op = OP_A_JOB, flags bit 2 (bit 10 of the word) = cb_load, so
@@ -335,8 +349,12 @@ begin
       -- the extension: magic, version, then non-zero w_beats / s_beats
       w(EXT0) := (others => '0');
       w(EXT0)(31 downto 0)  := MV4I_MAGIC;
-      w(EXT0)(47 downto 32) := std_logic_vector(to_unsigned(MV4I_DESC_VER, 16));
+      w(EXT0)(47 downto 32) := std_logic_vector(to_unsigned(ver, 16));
       w(EXT0 + 1) := u32(1) & u32(1);
+      -- extension word 3: pad in v1, [31:0] = the descriptor's own A-job index
+      -- in v2.  `pad3h` writes the HIGH half, which is reserved in BOTH
+      -- versions, so the pad arm can be shown to still bite on a v2 image.
+      w(EXT0 + 3) := u32(pad3h) & u32(jidx);
       dimg <= w;
       wait for 0 ns;
     end procedure;
@@ -395,6 +413,91 @@ begin
         & ", the package says " & integer'image(DWORDS));
 
     -- ---- MAXROWS_BFP, bracketed --------------------------------------
+    -- ================================================================
+    -- THE v2 A-JOB INDEX, AND ITS TEETH
+    -- ================================================================
+    -- The card computes a descriptor's address from its own count of A jobs,
+    -- so the host must lay them out in the schedule's A-job order.  That
+    -- ordering contract is unchecked by every other arm in S_CHECK: a
+    -- well-formed descriptor for the WRONG step passes all of them and
+    -- produces a wrong answer rather than an error.  These rows are the check
+    -- that closes it, and the rows that show it BITES.
+
+    -- (a) a v1 descriptor is still accepted, unchanged.  The extension is an
+    --     extension, not a break.
+    build(1024, ver => MV4I_DESC_VER);
+    jidx_s <= u32(0);
+    run_desc(ec, ei);
+    chk(ec /= to_integer(unsigned(EC_VER)),
+        "a version 1 descriptor was refused EC_VER after the v2 extension "
+      & "landed, so the extension broke every existing producer");
+    chk(ei /= EI_JOB_IDX,
+        "a version 1 descriptor was refused for its job index, but v1 has no "
+      & "job index field");
+
+    -- (b) a v2 descriptor whose index MATCHES the claim is accepted.
+    build(1024, ver => MV4I_DESC_VER_IDX, jidx => 137);
+    jidx_s <= u32(137);
+    run_desc(ec, ei);
+    chk(ec /= to_integer(unsigned(EC_VER)),
+        "version 2 was refused EC_VER, so MV4I_DESC_VER_IDX is not accepted");
+    chk(ei /= EI_JOB_IDX,
+        "a v2 descriptor claiming index 137, fetched as job 137, was refused "
+      & "for a job-index mismatch.  err_code " & integer'image(ec)
+      & " err_info " & integer'image(ei));
+
+    -- (c) THE TOOTH.  Same descriptor bytes, one different claim.  Nothing
+    --     else about the image changed, so a pass here would mean the check
+    --     is decoration.
+    build(1024, ver => MV4I_DESC_VER_IDX, jidx => 137);
+    jidx_s <= u32(138);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_DESC)) and ei = EI_JOB_IDX,
+        "a v2 descriptor claiming index 137 was NOT refused with ED_JOB_INDEX "
+      & "while the sequencer was fetching job 138.  (It may still be refused "
+      & "later for something else -- these bench descriptors trip EC_SHAPE "
+      & "eventually -- but the ordering contract itself is then unenforced, "
+      & "and a misordered table of otherwise-valid descriptors produces a "
+      & "wrong token silently.)  "
+      & "err_code " & integer'image(ec) & " err_info " & integer'image(ei));
+    report "tb_a_geom: v2 index 137 vs claim 138 -> err_code "
+         & integer'image(ec) & " err_info " & integer'image(ei) severity note;
+
+    -- (d) a v1 descriptor may NOT carry an index.  Otherwise a v2 descriptor
+    --     mislabelled v1 has its ordering silently unchecked, which is worse
+    --     than either version alone.
+    build(1024, ver => MV4I_DESC_VER, jidx => 137);
+    jidx_s <= u32(137);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_DESC)) and ei = EI_PAD_EXT3,
+        "a version 1 descriptor carrying a nonzero extension word 3 low half "
+      & "was not refused with ED_PAD_EXT.  That is a v2 descriptor "
+      & "mislabelled v1, and its index would go unchecked.  err_code " & integer'image(ec)
+      & " err_info " & integer'image(ei));
+
+    -- (e) the HIGH half of extension word 3 is reserved in BOTH versions, and
+    --     the pad arm must still bite on a v2 image.  Splitting a pad word is
+    --     exactly how a reserved field stops being checked by accident.
+    build(1024, ver => MV4I_DESC_VER_IDX, jidx => 137, pad3h => 1);
+    jidx_s <= u32(137);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_DESC)) and ei = EI_PAD_EXT3,
+        "extension word 3's HIGH half is reserved in v2 as well as v1, and a "
+      & "nonzero value in it was not refused with ED_PAD_EXT.  err_code " & integer'image(ec)
+      & " err_info " & integer'image(ei));
+
+    -- (f) an UNKNOWN version is still refused.  Accepting two versions must
+    --     not become accepting any.
+    build(1024, ver => MV4I_DESC_VER_IDX + 1);
+    jidx_s <= u32(0);
+    run_desc(ec, ei);
+    chk(ec = to_integer(unsigned(EC_VER)),
+        "descriptor version " & integer'image(MV4I_DESC_VER_IDX + 1)
+      & " was not refused EC_VER; widening the version check to two values "
+      & "widened it to all of them.  err_code " & integer'image(ec));
+
+    jidx_s <= u32(0);
+
     build(A_MAXROWS_BFP);
     run_desc(ec, ei);
     chk(not (ec = to_integer(unsigned(EC_DESC)) and ei = EI_ROWS_MAX),

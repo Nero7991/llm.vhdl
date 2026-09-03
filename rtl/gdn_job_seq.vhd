@@ -117,9 +117,17 @@ architecture rtl of gdn_job_seq is
   constant NG_V   : positive := VAL_CH / CONV_LANES;   -- groups in v
   constant NG     : positive := QKVN / CONV_LANES;     -- groups in the walk
 
-  -- ---- REFUSALS THAT RUN DURING ELABORATION ---------------------------
-  -- Out-of-range `natural`s, not asserts: Vivado ignores
-  -- `assert ... severity failure` in synthesis.  The NAME is the diagnostic.
+  -- REFUSALS THAT RUN DURING ELABORATION.  Out-of-range `natural`s, not
+  -- asserts, because Vivado silently ignores `assert ... severity failure` in
+  -- synthesis.
+  --
+  -- MEASURED, so the claim is not overstated: GHDL reports these as
+  -- `bound check failure at <file>:<line>` and does NOT print the constant's
+  -- name, so the name is a diagnostic for whoever OPENS the file at that line
+  -- rather than one that appears in the log. That is still worth the naming
+  -- effort -- the line number alone is useless six months later -- but it is
+  -- not the self-describing error message the idiom is sometimes claimed to
+  -- give.
   constant bad_kconv_below_two : natural := KCONV - 2;
   constant bad_key_ch_not_group_aligned : natural := 0 - (KEY_CH mod CONV_LANES);
   constant bad_val_ch_not_group_aligned : natural := 0 - (VAL_CH mod CONV_LANES);

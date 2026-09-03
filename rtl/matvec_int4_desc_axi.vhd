@@ -143,6 +143,24 @@ entity matvec_int4_desc_axi is
     -- the same reason (the FK33 HBM slave is AXI3, ARLEN is 4 bits).  It also
     -- sets the DESC_PTR alignment: see DESC_ALIGN in the body.
     DESC_MAXB   : positive := 16;
+    -- Enforce the v2 job index against the `job_index` port.
+    --
+    -- DEFAULT FALSE, DELIBERATELY, and the reason is a regression this very
+    -- nearly caused.  On the card the HOST writes DESC_PTR over AXI-Lite once
+    -- per job (`hw/fk33/rtl/fk33_engine.vhd:1266`) and there is no counter to
+    -- compare against, so `job_index` sits at its all-zero default.  With this
+    -- generic true, every v2 descriptor stamped with a nonzero index -- which
+    -- is every A job but the first, now that `tools/gen_layer_program.py`
+    -- stamps them -- would be REFUSED, and the host-driven flow that produced
+    -- `311 of 311 jobs, 1,675,264 result rows element-exact` would stop
+    -- working.
+    --
+    -- False does NOT make a v2 descriptor illegal; it makes the index
+    -- unchecked, which is exactly the version 1 situation.  A build that HAS a
+    -- counter (`rtl/a_desc_ptr.vhd`) sets it true and gains the ordering
+    -- check.  Opting in is the safe direction: forgetting to opt in loses a
+    -- check, forgetting to opt out breaks a working card.
+    CHECK_JOB_INDEX : boolean := false;
     -- Cycles the descriptor fetch may take before ERR_WDOG.  It covers a slave
     -- that never answers as well as one that answers slowly, so it is a
     -- liveness bound on the whole fetch, not a latency budget.  It still does
@@ -177,6 +195,13 @@ entity matvec_int4_desc_axi is
     s_axi_aresetn : in  std_logic;
     -- HBM AXI clock.  Ignored when DUAL_CLK = false.
     m_aclk        : in  std_logic := '0';
+
+    -- The A-job index the SEQUENCER believes it is fetching, compared against
+    -- the descriptor's own claim in v2 extension word 3.  Defaulted so that
+    -- every existing instantiation stays legal: an unconnected port with
+    -- CHECK_JOB_INDEX true means the build accepts only index 0, which is a
+    -- visible refusal on job 1 rather than a silent pass.
+    job_index     : in  std_logic_vector(31 downto 0) := (others => '0');
 
     s_axi_awaddr  : in  std_logic_vector(C_S_AXI_ADDR_WIDTH-1 downto 0);
     s_axi_awprot  : in  std_logic_vector(2 downto 0);
@@ -791,7 +816,12 @@ begin
               err_code <= EC_MAGIC;
               err_info <= ei(EI_SUB_NONE, EXT0);
               st <= S_ERR;
-            elsif to_integer(unsigned(dw(EXT0)(47 downto 32))) /= MV4I_DESC_VER then
+            elsif to_integer(unsigned(dw(EXT0)(47 downto 32))) /= MV4I_DESC_VER
+              and to_integer(unsigned(dw(EXT0)(47 downto 32)))
+                    /= MV4I_DESC_VER_IDX then
+              -- BOTH versions are accepted.  v2 adds the self-identifying job
+              -- index in ext word 3 and is otherwise byte-identical, so a v1
+              -- producer keeps working and a v2 one gains the ordering check.
               err_code <= EC_VER;
               err_info <= ei(EI_SUB_NONE, EXT0);
               st <= S_ERR;
@@ -823,9 +853,28 @@ begin
               err_code <= EC_DESC;                     -- A's extension pads
               err_info <= ei(ED_PAD_EXT, EXT0 + 2);
               st <= S_ERR;
-            elsif dw(EXT0 + 3) /= x"0000000000000000" then
+            elsif hi32(dw(EXT0 + 3)) /= x"00000000" then
+              -- v1: the whole word is pad.  v2: only the HIGH half is, and the
+              -- low half is the job index checked on the next arm.
               err_code <= EC_DESC;                     -- A's extension pads
               err_info <= ei(ED_PAD_EXT, EXT0 + 3);
+              st <= S_ERR;
+            elsif to_integer(unsigned(dw(EXT0)(47 downto 32))) = MV4I_DESC_VER
+                  and lo32(dw(EXT0 + 3)) /= x"00000000" then
+              -- a v1 descriptor may not carry an index; that would be a v2
+              -- descriptor mislabelled, and its ordering would go unchecked.
+              err_code <= EC_DESC;
+              err_info <= ei(ED_PAD_EXT, EXT0 + 3);
+              st <= S_ERR;
+            elsif CHECK_JOB_INDEX
+                  and to_integer(unsigned(dw(EXT0)(47 downto 32)))
+                        = MV4I_DESC_VER_IDX
+                  and lo32(dw(EXT0 + 3)) /= job_index then
+              -- THE ORDERING CHECK.  Refused before `start`, like every other
+              -- check here, because a descriptor rejected after the array has
+              -- begun consuming weights has already read the wrong memory.
+              err_code <= EC_DESC;
+              err_info <= ei(ED_JOB_INDEX, EXT0 + 3);
               st <= S_ERR;
             elsif to_integer(unsigned(dw(3)(7 downto 0))) > 2 then
               err_code <= EC_DESC;                     -- out_mode 3..255

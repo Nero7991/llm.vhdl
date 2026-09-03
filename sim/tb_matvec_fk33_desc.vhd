@@ -242,7 +242,7 @@ architecture sim of tb_matvec_fk33_desc is
   constant CASE_NAME : name_t := (
     0  => "clean descriptor                  ",
     1  => "ext magic corrupted               ",
-    2  => "ext version = 2                   ",
+    2  => "ext version = 3 (unknown)         ",
     3  => "nsub_w = 23 (build has 24)        ",
     4  => "nsub_s = 2 (build has 3)          ",
     5  => "opcode = 4 (VEC_NORM, not A_JOB)  ",
@@ -1251,7 +1251,14 @@ begin
       w := (others => '0');
       if mut = 1 then w(31 downto 0) := x"4D563448";    -- magic off by one
       else            w(31 downto 0) := MV4I_MAGIC; end if;
-      if mut = 2 then w(47 downto 32) := x"0002";
+      -- VERSION 3, NOT 2.  Version 2 became LEGAL on 2026-09-03 -- it is
+      -- version 1 plus the A-job index in extension word 3, and the RTL
+      -- accepts both.  This case must mutate to a version that is still
+      -- unknown, or it stops testing the version check and starts testing
+      -- nothing.  This bench CAUGHT the format change by failing here, which
+      -- is the check doing its job; leaving it at 2 would have been the
+      -- silent-decoration outcome.
+      if mut = 2 then w(47 downto 32) := x"0003";
       else            w(47 downto 32) := x"0001"; end if;
       if mut = 13 then w(63 downto 48) := x"0001"; end if;
       dimg(EXT0) <= w;

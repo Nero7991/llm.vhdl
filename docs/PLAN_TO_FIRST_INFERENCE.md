@@ -428,6 +428,15 @@ the capability before quoting its absence.
 | `rtl/gdn_state_axi.vhd` | the per-job HBM mover | **269 LUT, 703 FF, 1 DSP**, WNS +2.670 |
 | `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** |
 | `rtl/gdn_state_store.vhd` | all of the above, ALL THREE phases | **4,028 CLB LUT, 2,004 FF, 32 URAM288, 12 RAMB36, 3 DSP, WNS +1.400** |
+| `rtl/gdn_job_seq.vhd` | one GDN layer for one token: load, run, refill taps, save | **39 CLB LUT, 146 FF, 0 RAM, 0 CARRY**, WNS +3.909 (916 MHz) |
+| `rtl/a_desc_ptr.vhd` | A's descriptor pointer, `BASE + n*STRIDE` | **20 CLB LUT, 50 FF, 0 DSP, 4 CARRY**, WNS +4.057 (1,060 MHz) |
+
+The last two are **59 CLB LUT between them, 0.013% of the device**, and neither
+uses a DSP: both multiplies are by elaboration constants and fold into shifts.
+They are listed here so the budget is complete, not because they threaten it.
+**Neither is instantiated anywhere**, so these are OOC numbers for unwired
+modules and they do not include whatever the composition costs -- which, on the
+evidence of the three rows above, is where the surprises live.
 
 **The parts do NOT sum, measured three times.** The mantissa-only composition cost
 +228 LUT over its two components; the full two-phase composition costs
@@ -532,13 +541,61 @@ is the difference from the previous revision of this table.
    `sim/tb_gdn_state_store.vhd` is **7,968 checks, 1,024 conv tap groups of
    which 256 have a FULL history**, and seven of eight new mutations bite.
 
-   **What is still missing is a CALLER.** Nothing feeds the tap write port
-   from A's qkv stream and nothing pulses `tok_adv`; both are the job
-   sequencer's. So `B_SRC_REAL` still cannot run past token 0 -- but the
-   reason is now that no sequencer exists, not that the storage does not.
-3. the B job sequencer: load state, run `gdn_block`, save state, plus the
-   activation movement that `gb_real`'s `bp` process does today;
-4. the same for C, which already has its HBM tier in `attn_kv_axi`.
+   ~~**What is still missing is a CALLER.**~~ **THE SEQUENCER LANDED
+   2026-09-03**, `rtl/gdn_job_seq.vhd`: load, run `gdn_block`, refill the conv
+   taps from this token's qkv column, save. 39 CLB LUT / 146 FF, fmax 916 MHz,
+   79 bench checks, six of seven mutants killed and the seventh proven
+   equivalent. `docs/debugging/2026-09-03_gdn-job-seq.md`.
+
+   **What is still missing is an INSTANTIATION.** Nothing instantiates
+   `gdn_job_seq`, nothing drives its qkv read port from A's output, and
+   nothing pulses `tok_adv` -- which is deliberately not one of its ports,
+   because it advances the tap rotation once per TOKEN and this module is one
+   LAYER. So `B_SRC_REAL` still cannot run past token 0, and the reason has
+   moved once more: not that the storage is missing, not that the sequencer is
+   missing, but that neither is wired to anything.
+3. ~~the B job sequencer~~ **DONE 2026-09-03**, see above. What remains under
+   this heading is the activation movement that `gb_real`'s `bp` process does
+   today.
+4. ~~the same for C~~ -- **C ALREADY HAS BOTH.** `rtl/attn_kv_axi.vhd` is
+   1,014 lines, has four benches (`tb_attn_kv_axi`, `tb_attn_kv_map`,
+   `tb_attn_kv_seam`, plus `sim/kv_axi_harness.vhd`), is instantiated in
+   `llama_top` under `C_KV_AXI`, and `sim/realshape_gate.sh:182` runs a
+   real-shape row with `-gC_KV_AXI=true`. A standing blocker list carried
+   "C's mover not implemented" as late as 2026-09-03; it is stale, and
+   `rtl/llama_top.vhd:429` already carries a CORRECTION dated 2026-08-29 for
+   the same misreading. What is true is narrower: `C_KV_AXI` DEFAULTS to
+   false, because the AXI cache needs HEAD_DIM 64 / KV_BLOCK 16 / 2 KV heads
+   and every earlier C_REAL landmark was measured at attn_hd = 16.
+
+### STEP 3b -- How a D step finds its A descriptor. DECIDED 2026-09-03.
+
+Previously open, and previously counted as TWO blockers -- "`DESC_PTR`
+sourcing is unresolved" and "`job_ordinal` is 8-bit and cannot address 311
+jobs". They are one question: D's 64-byte header has no field pointing at A's
+per-job data.
+
+**The card counts.** `rtl/a_desc_ptr.vhd` holds the number of A jobs dispatched
+so far in the current token and emits `BASE + n*STRIDE`.
+
+**And that is why the descriptor format changed anyway.** Arithmetic addressing
+imposes an ORDERING CONTRACT on the host, and an unchecked ordering contract
+produces a wrong token rather than an error: a well-formed descriptor for the
+wrong step passes every check in `S_CHECK`, because nothing else in a
+descriptor says which step it belongs to. So **descriptor version 2** stamps
+the descriptor's own index into extension word 3, and a disagreement is refused
+`EC_DESC` / `ED_JOB_INDEX` before the array starts. Version 1 is still
+accepted. `docs/debugging/2026-09-03_a-desc-ptr.md`.
+
+**`CHECK_JOB_INDEX` defaults FALSE and that is load-bearing.** On the card the
+HOST writes `DESC_PTR` per job (`hw/fk33/rtl/fk33_engine.vhd:1266`) and there
+is no counter, so `job_index` sits at zero; defaulting the check on would have
+refused every A job but the first and broken the flow that produced *311 of
+311 jobs, 1,675,264 result rows element-exact*. Opting in is the safe
+direction.
+
+**Still open:** nothing instantiates `a_desc_ptr`, and nothing pulses
+`a_dispatch` or `tok_start`.
 
 ### STEP 4 -- Wire the seam to D and retire the refusal.
 

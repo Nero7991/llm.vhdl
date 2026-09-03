@@ -30,13 +30,29 @@ This tool therefore emits TWO things:
                     A_JOB step, at the FK33 geometry, in the form
                     `sim/tb_mv4i_desc_image.vhd` reads.
 
-WHAT NOTHING SUPPLIES: the pointer from a D step to its A descriptor.  D's
-header has no field for it, `matvec_int4_desc_axi` takes `DESC_PTR` over
-AXI-Lite, and `rtl/llama_top.vhd:1913` synthesises A's bases arithmetically
-(`A_MEM_BASE + step*A_JOB_STRIDE`) precisely because the base array is not
-fetched.  So the A descriptor ADDRESSES this tool emits are a host-side
-allocation (see `--desc-base`), and which mechanism delivers them to the card
-is an open integration decision, not a derivation.  Stated, not invented.
+HOW A D STEP FINDS ITS A DESCRIPTOR -- DECIDED 2026-09-03, previously open.
+D's header has no field for it and `job_ordinal` cannot be one (8 bits, cannot
+address 311 jobs, and it already means the per-kind layer index -- defect
+ORD-1).  The card COUNTS instead: `rtl/a_desc_ptr.vhd` holds the number of A
+jobs dispatched so far in the current token and emits
+`A_DESC_BASE + n*A_DESC_STRIDE`.
+
+That makes the LAYOUT ORDER a contract, and an unchecked ordering contract
+produces a wrong token rather than an error, because a well-formed descriptor
+for the wrong step passes every other check in the descriptor plane.  So the
+contract is CHECKED: descriptor version 2 stamps the descriptor's own A-job
+index into extension word 3, `matvec_int4_desc_axi` compares it against the
+counter, and a mismatch is refused with EC_DESC / ED_JOB_INDEX before the array
+is started.  This tool stamps that index below, in the order this file walks
+the A steps, which is the order the addresses assume.
+
+Version 1 remains accepted by the RTL, so an older image still loads; it simply
+leaves the ordering unchecked.
+
+STILL NOT SUPPLIED: `rtl/llama_top.vhd` does not yet instantiate
+`matvec_int4_desc_axi` at all -- it instantiates the raw `matvec_int4` and
+synthesises A's bases arithmetically.  The mechanism above is decided,
+implemented and verified as a unit; wiring it into the top is separate work.
 
 ============================================================================
 WHERE EVERY D HEADER FIELD COMES FROM
@@ -649,6 +665,16 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
     out = []
     addr = desc_base
     align = build["desc_maxb"] * (build["axi_dw"] // 8)
+    # THE SLOT STRIDE.  `rtl/a_desc_ptr.vhd` computes descriptor addresses as
+    # BASE + n*STRIDE, so the slots must be UNIFORM.  They are, for a given
+    # build -- descriptor length is DESC_BASE0 + npw + nps + DESC_EXT_WORDS
+    # words and every one of those is a build constant -- but that is a
+    # property worth asserting rather than assuming, because a variable-length
+    # descriptor would make the card's arithmetic silently wrong for every
+    # descriptor after the first odd one.
+    a_desc_bytes = (G.DESC_BASE0 + build["nports_w"] + build["nports_s"]
+                    + G.DESC_EXT_WORDS) * 8
+    a_slot = ((a_desc_bytes + align - 1) // align) * align
     for st in steps:
         if st.opcode != OP_A_JOB:
             continue
@@ -715,6 +741,20 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                 src_region=st.src, dst_region=st.dst,
                 dst_offset=st.dst_off, ordinal=st.ordinal,
                 src_region2=st.src2, const_base=st.const_base, const_exp=0,
+                # THE A-JOB INDEX, DERIVED FROM THE ADDRESS SLOT and not from
+                # a parallel counter.  The card computes a descriptor's address
+                # as A_DESC_BASE + n*A_DESC_STRIDE from its own count of
+                # dispatches, so the stamp has to mean "which slot am I in".
+                #
+                # A separate counter would have been subtly wrong: `addr` below
+                # advances only on the SUCCESS path, so a refused step consumes
+                # no slot, and a counter incremented per A step would drift
+                # against the table it is stamping.  Deriving it makes the two
+                # incapable of disagreeing -- and if the tool ever emits a
+                # sparse table, the card's dispatch count then disagrees with
+                # the stamp and the v2 check refuses it LOUDLY, which is the
+                # outcome we want rather than a silent wrong token.
+                job_index=(addr - desc_base) // a_slot,
                 # WHERE EACH SUB-REGION IS.  None on a v1 flat manifest, in
                 # which case this reduces to the old `hbm_offset + off`; the
                 # manifest's `pieces` on a v2 lane-striped one, joined on the
@@ -734,7 +774,17 @@ def a_jobs_for(steps, manifest_path, x_exp, desc_base, out_mode=None,
                         n_rows=st.n_rows,
                         w_beats=d.fields["w_beats"],
                         s_beats=d.fields["s_beats"]))
-        addr += ((d.fields["desc_bytes"] + align - 1) // align) * align
+        this_slot = ((d.fields["desc_bytes"] + align - 1) // align) * align
+        if this_slot != a_slot:
+            # Not reachable for a fixed build; raised rather than ignored
+            # because the card's BASE + n*STRIDE arithmetic has no way to
+            # express a table whose slots differ.
+            raise G.DescError(
+                "A descriptor for step %d occupies %d bytes of slot, the "
+                "table stride is %d.  rtl/a_desc_ptr.vhd computes addresses "
+                "as BASE + n*STRIDE and cannot address a ragged table."
+                % (st.idx, this_slot, a_slot))
+        addr += a_slot
     return out, m
 
 

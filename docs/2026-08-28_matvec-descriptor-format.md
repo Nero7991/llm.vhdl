@@ -184,13 +184,15 @@ precisely so that it is.
 
 ```
 ext word 0 (E + 0x00) : [31:0]  ext_magic   = 0x4D563449  ("MV4I")
-                        [47:32] ext_version = 0x0001
+                        [47:32] ext_version = 0x0001 or 0x0002
                         [63:48] ext_flags (u16), reserved, must be 0 in v1
 ext word 1 (E + 0x08) : [31:0]  w_beats (u32)   beats per weight sub-region
                         [63:32] s_beats (u32)   beats per scale sub-region
 ext word 2 (E + 0x10) : [31:0]  x_exp (i32)
                         [63:32] PAD, must be 0
-ext word 3 (E + 0x18) : PAD, must be 0
+ext word 3 (E + 0x18) : version 1: PAD, must be 0
+                        version 2: [31:0]  a_job_index
+                                   [63:32] PAD, must be 0
 ```
 
 `ext_magic` and `ext_version` sit here rather than in word 0 because word 0 is
@@ -265,7 +267,8 @@ the code.
 | `0x3` | `ERR_DESC` | `opcode /= 0` | 2 `ED_OPCODE` | 0 |
 | `0x3` | `ERR_DESC` | word 3 `[63:56]` nonzero (D's pad) | 3 `ED_PAD_W3` | 3 |
 | `0x3` | `ERR_DESC` | word 7 nonzero (D's reserved word) | 4 `ED_PAD_W7` | 7 |
-| `0x3` | `ERR_DESC` | ext word 2 `[63:32]` nonzero, or ext word 3 nonzero | 5 `ED_PAD_EXT` | ext word 2 **or** ext word 3, whichever it was |
+| `0x3` | `ERR_DESC` | ext word 2 `[63:32]` nonzero; ext word 3 `[63:32]` nonzero; or ext word 3 `[31:0]` nonzero **on a version 1 descriptor** | 5 `ED_PAD_EXT` | ext word 2 **or** ext word 3, whichever it was |
+| `0x3` | `ERR_DESC` | version 2 and ext word 3 `[31:0]` `/=` the `job_index` port | 14 `ED_JOB_INDEX` | ext word 3 |
 | `0x3` | `ERR_DESC` | `out_mode > 2` | 6 `ED_OUT_MODE` | 3 |
 | `0x3` | `ERR_DESC` | `n_rows = 0` | 7 `ED_ROWS_ZERO` | 1 |
 | `0x3` | `ERR_DESC` | `n_rows > MAXROWS_BFP` | 8 `ED_ROWS_MAX` | 1 |
@@ -278,7 +281,7 @@ the code.
 | `0x9` | `ERR_GEOM` | `nsub_w /= NPORTS_W` | 1 `EG_NSUB_W` | 3 |
 | `0x9` | `ERR_GEOM` | `nsub_s /= NPORTS_S` | 2 `EG_NSUB_S` | 3 |
 | `0xA` | `ERR_MAGIC` | `ext_magic /= 0x4D563449` | 0 | ext word 0 |
-| `0xB` | `ERR_VER` | `ext_version /= 1` | 0 | ext word 0 |
+| `0xB` | `ERR_VER` | `ext_version` is neither 1 nor 2 | 0 | ext word 0 |
 | `0xC` | `ERR_ALIGN` | `DESC_PTR` not aligned to `DESC_MAXB*AXI_DW/8` | 31 (the pointer) | -- |
 | `0xC` | `ERR_ALIGN` | a base has `[11:0] /= 0` | 0 | that base's word |
 | `0xD` | `ERR_ADDR` | `DESC_PTR` has a bit at or above `ADDR_W` | 31 (the pointer) | -- |
@@ -509,6 +512,8 @@ for (int p = 0; p < 24; p++) d[8 + p]      = w_sub_addr[p];
 for (int q = 0; q <  3; q++) d[8 + 24 + q] = s_sub_addr[q];
 int E = 8 + 24 + 3;                          /* = 35 */
 d[E + 0] = 0x4D563449ull | (1ull << 32);     /* magic, version 1            */
+/* For version 2, write (2ull << 32) above and stamp the index:              */
+/*   d[E + 3] = (uint64_t)a_job_index;      the high half stays 0            */
 d[E + 1] = (uint64_t)w_beats | ((uint64_t)s_beats << 32);
 d[E + 2] = (uint32_t)x_exp;
 d[E + 3] = 0;
@@ -570,3 +575,57 @@ to whatever that token's schedule actually needs. **A reads none of them.**
 * **`seq_desc_fetch` fetching the base array.** Still remaining work in D. Once
   it does, the base array has exactly one reader in the integrated system, and
   this document's section 4.2 is where the layout is written down.
+
+
+============================================================================
+VERSION 2: THE A-JOB INDEX  (added 2026-09-03)
+============================================================================
+
+Version 2 is version 1 plus ONE field. Extension word 3's low half carries the
+descriptor's own index in the token program's A-job order; its high half stays
+reserved. Everything else is byte-identical, and **version 1 is still
+accepted**, so this is an extension and not a break.
+
+WHY IT EXISTS. D's 64-byte step header has no field pointing at A's per-job
+data, and `job_ordinal` cannot be one: it is 8 bits, so it cannot address the
+311 A jobs of the 9B token program, and it already means the per-kind layer
+index (defect ORD-1). The decision taken on 2026-09-03 is that **the card
+counts**: `rtl/a_desc_ptr.vhd` holds the number of A jobs dispatched so far in
+the current token and emits `A_DESC_BASE + n*A_DESC_STRIDE`.
+
+WHY IT IS CHECKED RATHER THAN TRUSTED. Arithmetic addressing imposes an
+ORDERING CONTRACT on the host: the descriptors must be laid out in the
+schedule's A-job order. An unchecked ordering contract produces a wrong token
+rather than an error, because a well-formed descriptor for the wrong step
+passes **every** other check in this document -- nothing else in a descriptor
+says which step it belongs to. Section 5.1 already records the analogous hole
+for sub-region CONTENTS. Version 2 closes the ordering half: the descriptor
+names its own index and a disagreement is refused with `EC_DESC` /
+`ED_JOB_INDEX` **before** the array is started, under the same "every check
+runs before the core is started" discipline as the rest of `S_CHECK`.
+
+THREE CONSEQUENCES worth stating, each of which is a bench row in
+`sim/tb_a_geom.vhd`:
+
+* **A version 1 descriptor may NOT carry an index.** A nonzero ext word 3 low
+  half on a v1 descriptor is refused `ED_PAD_EXT`. Otherwise a v2 descriptor
+  mislabelled v1 would have its ordering silently unchecked, which is worse
+  than either version alone.
+* **Ext word 3's HIGH half stays reserved in both versions.** Splitting a pad
+  word is exactly how a reserved field stops being checked by accident.
+* **Widening the version check to two values must not widen it to all of
+  them.** Version 3 is still refused `ERR_VER`.
+
+THE SLOT STRIDE MUST BE UNIFORM. `BASE + n*STRIDE` cannot address a ragged
+table. Descriptor length is `DESC_BASE0 + npw + nps + DESC_EXT_WORDS` words and
+every one of those is a build constant, so it is uniform for a given build;
+`tools/gen_layer_program.py` raises rather than assuming it.
+
+`CHECK_JOB_INDEX` on `matvec_int4_desc_axi` disables the comparison for a build
+with no counter to compare against. It does not make a v2 descriptor illegal,
+it makes the index unchecked, which is the version 1 situation.
+
+STILL OPEN: `rtl/llama_top.vhd` does not instantiate `matvec_int4_desc_axi` at
+all. It instantiates the raw `matvec_int4` and synthesises A's bases
+arithmetically. The mechanism above is decided, implemented and verified as a
+unit; wiring it into the top is separate work.

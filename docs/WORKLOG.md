@@ -11,6 +11,72 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (later): the A descriptor pointer is DECIDED, and B has a job sequencer
+
+Two of the five standing blockers closed, and one of them turned out to be two
+blockers that were the same question.
+
+**BLOCKERS 1 AND 4 WERE ONE DECISION.** "A's `DESC_PTR` sourcing is an
+unresolved design decision" and "`job_ordinal` is 8-bit and cannot address 311
+jobs" are two faces of one missing field: D's 64-byte step header has nothing
+pointing at A's per-job data. Both `DESC_PTR` and `a_job_index` were exported
+as top-level inputs of the composed top rather than wired, which is why the gap
+stayed visible instead of being guessed at.
+
+**THE DECISION, taken by Oren: the card COUNTS.** `rtl/a_desc_ptr.vhd` holds
+the number of A jobs dispatched so far in the current token and emits
+`BASE + n*STRIDE`. No fetch, no new region, no D format change.
+
+**AND THAT IS WHY THE DESCRIPTOR FORMAT CHANGED ANYWAY.** An arithmetic pointer
+does not remove the problem, it MOVES it: it imposes an ordering contract on
+the host, and an unchecked ordering contract produces a WRONG TOKEN rather than
+an error. A well-formed descriptor for the wrong step passes every single check
+in `S_CHECK` -- magic, version, geometry, opcode, four pads, shape -- because
+**nothing else in a descriptor says which step it belongs to**. So descriptor
+**version 2** stamps the descriptor's own index into extension word 3 and
+`matvec_int4_desc_axi` refuses a disagreement with `EC_DESC` / `ED_JOB_INDEX`
+before the array starts. Version 1 is still accepted.
+
+**THE MUTANTS MAP ONE-TO-ONE, which is the attribution.** Three RTL mutants,
+each deleting one new arm: X1 (the index comparison) fails only bench row (c),
+X2 ("a v1 descriptor may not carry an index") only row (d), X4 (version check
+widened to accept anything) only row (f). No row rides on another row's kill.
+Four counter mutants, all killed: monotonic across tokens, live base, wrap on
+overflow, sticky `err`.
+
+**A PARALLEL COUNTER IN THE PACKER WOULD HAVE DRIFTED.** `addr` advances only
+on the success path, so a refused step consumes no slot while a per-step
+counter keeps counting. The stamp is DERIVED from the address slot instead,
+`(addr - desc_base) // a_slot`, so the two cannot disagree -- and if the tool
+ever emits a sparse table, the card's dispatch count disagrees with the stamp
+and the check refuses it LOUDLY.
+
+**BLOCKER 2 CLOSED: `rtl/gdn_job_seq.vhd`.** One GDN layer for one token: load,
+run `gdn_block`, refill the conv taps, save. 39 CLB LUT / 146 FF, fmax 916 MHz.
+The refill goes AFTER the unit because the taps hold the previous `KCONV-1`
+columns while it reads them. **The qkv read takes TWO edges, not one** -- a
+one-stage version failed 31 of 32 data checks with the count and the order both
+green. `tok_adv` is deliberately not a port: it belongs to whoever knows where
+a token ends, and this module is one layer.
+
+**MUTANT D2 IS WHY THE ATTRIBUTION CONTROL EXISTS.** Refilling the taps BEFORE
+the unit runs satisfies every other ordering check in the bench -- every group
+written once, in order, with correct data, after the load and before the save.
+It fails 9 with the full bench and **0 with the control**. Without the control
+the table would have credited the kill to nothing in particular.
+
+**WHAT IS STILL NOT CONNECTED, stated plainly.** `rtl/llama_top.vhd` does not
+instantiate `matvec_int4_desc_axi` at all; it instantiates the raw
+`matvec_int4` and synthesises A's bases arithmetically. Nothing instantiates
+`gdn_job_seq` either, and nothing pulses `a_dispatch`, `tok_start` or
+`tok_adv`. **Three mechanisms are decided, implemented and verified as units,
+and none of them is wired to anything.** Blockers 3 (C's mover) and 5 (unit V,
+P&R) are untouched.
+
+Docs: `docs/debugging/2026-09-03_gdn-job-seq.md`,
+`docs/debugging/2026-09-03_a-desc-ptr.md`,
+`docs/2026-08-28_matvec-descriptor-format.md` (version 2 section appended).
+
 ### 2026-09-03: the third phase lands, and B's per-layer state is complete on-chip
 
 **`gdn_state_store` now runs THREE movers over ONE pair of HBM masters** --
