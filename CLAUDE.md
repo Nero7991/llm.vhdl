@@ -316,7 +316,24 @@ error afterwards. In all three the harness is reporting that it finished
 waiting, which is a fact about the harness and not about the job.
 
 **Never `pkill -f <pattern>`, and never `pgrep -f` on a pattern that appears in
-your own command line.** This has killed the shell four times in this project.
+your own command line.** This has killed the shell FIVE times in this project,
+most recently 2026-09-03 -- and that fifth time was not `pgrep` at all. It was a
+hand-rolled `/proc` loop matching `cmdline` against a scratch-directory name,
+which matched the running shell because the SCRIPT TEXT contained that name.
+**The hazard is matching on a command line, not the particular tool that reads
+it.** `ps`, `pgrep -f`, and your own `/proc` loop are the same mistake, and the
+`[b]racket` trick does not save you: the bracket only stops a pattern matching
+its own argv, and here the text belonged to the shell that was interpreting it.
+
+**Identify a process by `/proc/PID/exe` or `/proc/PID/cwd`, which a command line
+cannot spoof.** That is the same rule the Vivado RSS census above already
+states, generalised: whenever the question is "is this process the thing I
+mean", the answer comes from the kernel's view of what it is running or where
+it is running, never from the string it was invoked with.
+
+**`git commit -m` with a long message dies with `Argument list too long`.**
+Write the message to a file in the scratchpad and use `git commit -F <file>`.
+This is not a heredoc quoting problem and no amount of re-quoting fixes it.
 
 **Never put a shell variable anywhere in a path passed to `rm`.** Not
 `rm -rf "$DIR"`, not `rm -rf "$SCRATCH/$x"`, not `rm -rf $TMP/*`. If the
@@ -482,6 +499,36 @@ any amount of additional structural checking.**
   all six points, and the FF closed form was exact to 0. **A quantity that
   scatters is a mean; a quantity that is structural is a constant; neither is a
   slope.**
+- **AN INVARIANCE ARGUMENT IDENTIFIES WHAT A NUMBER IS *NOT*, NEVER WHAT IT
+  IS.** MEASURED 2026-09-03: B's extracted data mover reported 5,472 BRAM tiles
+  against 672 on the part. A size sweep showed the figure did not move when the
+  buffers were quadrupled, so it was not the buffers -- and from "not the
+  buffers" this dispatcher concluded "then it is `gdn_block`", wrote it up with
+  a table, cross-checked the arithmetic against the project's known 24 MB
+  finding, and got AGREEMENT. The attribution was still wrong. `gdn_block`
+  alone is **22 tiles**; the array belongs to the enclosing block, one level up.
+  The 24 MiB was real and was simply somewhere else.
+  **Ruling out one candidate promotes nothing, because there were never only
+  two.** An agreeing cross-check does not rescue this: the quantity agreed
+  because the quantity was right, which says nothing about the owner. The
+  control that settled it cost six minutes and the wrong document was already
+  written when it landed.
+- **WHEN A REPORT NAMES THE OBJECT, NO ARGUMENT ABOUT THE TOTAL IS ADMISSIBLE.**
+  In the same run, Vivado's `Report RAM Utilization` table named
+  `gb_real.stmem_p.stmem_reg | 3072 K x 64 | 5472` outright, and had done from
+  the first run. This file already says the log lies in both directions and
+  only the mapping report and an object-level census are authoritative -- and
+  the reasoning above was still done from the utilization TOTAL, with the
+  naming table sitting unread in the same log. **Read the census FIRST, not as
+  a confirmation step after forming a theory**, because once a theory exists
+  the census gets used to check it rather than to replace it.
+- **The parts do not sum across synthesis contexts, so do not do arithmetic on
+  them.** MEASURED the same day: `gdn_block` alone reports 22 BRAM tiles and
+  10,161 LUT-as-memory; inside the composed block the RAM table attributes ALL
+  5,472 tiles to one other object and LUT-as-memory is 35,078. Vivado maps the
+  same RTL to different primitives depending on what surrounds it. A saving
+  predicted by subtracting one context's number from another's is not a
+  prediction, it is two unrelated measurements. Substitute and re-synthesise.
 - **Teeth-check everything.** A checker never shown to fail has not been shown
   to work. **Report mutations that do NOT bite** under their own names: they
   measure your check's resolution floor and are the most valuable line in the
