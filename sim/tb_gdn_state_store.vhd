@@ -51,8 +51,18 @@ entity tb_gdn_state_store is
     VAL_HEADS   : positive := 4;
     DIM         : positive := 16;
     RECUR_LANES : positive := 2;
+    -- The conv geometry.  KEY_HEADS must not exceed VAL_HEADS -- the tap
+    -- store's `r_grp` range is the WIDEST segment's, which is v -- and
+    -- CONV_LANES must divide both segment widths.
+    KEY_HEADS   : positive := 2;
+    KCONV       : positive := 4;
+    CONV_LANES  : positive := 2;
     LAYERS      : positive := 4;
-    NTOK        : positive := 3;
+    -- FOUR tokens, not three.  The conv history is KCONV-1 = 3 columns deep,
+    -- so a run of three tokens never once presents a FULL history and the
+    -- rotation's interesting case goes unchecked.  The mantissa and exponent
+    -- checks only ever needed two.
+    NTOK        : positive := 4;
     AXI_DW      : positive := 64;
     MAXB        : positive := 4;
     MAXOUT      : positive := 2;
@@ -72,12 +82,20 @@ architecture sim of tb_gdn_state_store is
   constant EXPN         : positive := VAL_HEADS * DIM;
   constant EXP_BYTES    : positive := EXPN;          -- one byte per entry
   constant EXP_BEATS    : positive := EXP_BYTES / BPB;
+  constant NTAP       : positive := KCONV - 1;
+  constant KEY_CH     : positive := KEY_HEADS * DIM;
+  constant VAL_CH     : positive := VAL_HEADS * DIM;
+  constant QKVN       : positive := 2*KEY_CH + VAL_CH;
+  constant CONV_WORDS : positive := NTAP * QKVN;
+  constant CONV_BYTES : positive := 2 * CONV_WORDS;
+  constant CONV_BEATS : positive := CONV_BYTES / BPB;
   -- A GAP AFTER THE EXPONENTS, ON PURPOSE.  `MANT_BYTES + EXP_BYTES` exactly
   -- would make "the end of layer L's exponents" and "the start of layer L+1"
   -- the same address, so a mover that ran one region too long would land on
   -- the next layer's data and be caught only by luck.  With a spare beat, an
   -- overrun writes a hole nothing reads and the CHECK is what catches it.
-  constant LAYER_STRIDE : positive := MANT_BYTES + EXP_BYTES + BPB;
+  constant LAYER_STRIDE : positive := MANT_BYTES + EXP_BYTES + CONV_BYTES
+                                     + BPB;
   constant ADDR_W : positive := 33;
   constant BASE   : natural := 8192;
 
@@ -101,6 +119,14 @@ architecture sim of tb_gdn_state_store is
   signal se_wen   : std_logic := '0';
   signal se_wdata : signed(7 downto 0) := (others => '0');
 
+  signal cv_seg,  cvw_seg : integer range 0 to 2 := 0;
+  signal cv_grp,  cvw_grp : natural range 0 to VAL_CH/CONV_LANES-1 := 0;
+  signal cv_x     : std_logic_vector(NTAP*CONV_LANES*16-1 downto 0);
+  signal cvw_en   : std_logic := '0';
+  signal cvw_data : std_logic_vector(CONV_LANES*16-1 downto 0)
+                  := (others => '0');
+  signal tok_adv  : std_logic := '0';
+
   signal arvalid, arready, rvalid, rready, rlast : std_logic := '0';
   signal araddr : std_logic_vector(ADDR_W-1 downto 0);
   signal arlen  : std_logic_vector(7 downto 0);
@@ -120,7 +146,7 @@ architecture sim of tb_gdn_state_store is
   signal bresp  : std_logic_vector(1 downto 0) := "00";
 
   constant SLAVE_BEATS : positive := LAYERS * (LAYER_STRIDE / BPB)
-                                    + BEATS + EXP_BEATS;
+                                    + BEATS + EXP_BEATS + CONV_BEATS;
   type smem_t is array (0 to SLAVE_BEATS-1)
                  of std_logic_vector(AXI_DW-1 downto 0);
   -- Driven by the slave process ONLY; nothing else assigns it.  Two drivers
@@ -131,6 +157,8 @@ architecture sim of tb_gdn_state_store is
   signal n_chk, n_bad : natural := 0;
   signal n_stall : natural := 0;
   signal n_exp   : natural := 0;   -- exponent bytes actually checked
+  signal n_conv  : natural := 0;   -- conv tap groups actually checked
+  signal n_full  : natural := 0;   -- of those, with a FULL history behind them
 
   -- the value layer L holds at token T, distinct in every 16-bit lane
   function val(L, T, i : natural) return std_logic_vector is
@@ -151,6 +179,32 @@ architecture sim of tb_gdn_state_store is
   begin
     return to_signed(((L*23 + T*57 + i*11 + 19) mod 256) - 128, 8);
   end function;
+
+  -- The conv column layer L wrote at token T, channel ch.  A THIRD distinct
+  -- generator, for the same reason `eval` is distinct from `val`: three
+  -- regions in one layer, and a mover that wrote one over another must not be
+  -- able to read back something self-consistent.
+  function cval(L, T, ch : integer) return std_logic_vector is
+  begin
+    if T < 0 then
+      return x"0000";   -- older than the sequence: zero, not a stand-in
+    end if;
+    return std_logic_vector(to_unsigned(
+      ((L*4099 + T*1013 + ch*37 + 11) mod 65536), 16));
+  end function;
+
+  function chan_of(seg : integer; grp, ln : natural) return natural is
+  begin
+    if seg = 0 then return grp*CONV_LANES + ln;
+    elsif seg = 1 then return KEY_CH + grp*CONV_LANES + ln;
+    else return 2*KEY_CH + grp*CONV_LANES + ln; end if;
+  end function;
+
+  function grps_in(seg : integer) return natural is
+  begin
+    if seg = 2 then return VAL_CH/CONV_LANES;
+    else return KEY_CH/CONV_LANES; end if;
+  end function;
 begin
   clk <= not clk after 5 ns;
 
@@ -169,9 +223,11 @@ begin
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
                 RECUR_LANES => RECUR_LANES, LAYERS => LAYERS,
                 STYLE => "auto",
-                EXP_STYLE => "distributed",
+                KEY_HEADS => KEY_HEADS, KCONV => KCONV,
+                CONV_LANES => CONV_LANES,
+                EXP_STYLE => "distributed", CONV_STYLE => "auto",
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => MANT_BYTES,
-                EXP_BYTES => EXP_BYTES,
+                EXP_BYTES => EXP_BYTES, CONV_BYTES => CONV_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst,
@@ -186,6 +242,9 @@ begin
              se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
              se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
              se_wdata => se_wdata,
+             cv_seg => cv_seg, cv_grp => cv_grp, cv_x => cv_x,
+             cvw_en => cvw_en, cvw_seg => cvw_seg, cvw_grp => cvw_grp,
+             cvw_data => cvw_data, tok_adv => tok_adv,
              r_arvalid => arvalid, r_arready => arready, r_araddr => araddr,
              r_arlen => arlen, r_arsize => arsize, r_arburst => arburst,
              r_rvalid => rvalid, r_rready => rready, r_rdata => rdata,
@@ -370,6 +429,27 @@ begin
       se_rcol  <= i mod DIM;
       wait for 1 ns;
     end procedure;
+
+    -- The conv tap port.  REGISTERED address, data in the following cycle --
+    -- gdn_block's stated contract and a plain BRAM's behaviour, unlike the
+    -- exponent port above which must be combinational.  The two live in one
+    -- bench precisely so a reader cannot assume they are the same.
+    procedure unit_cread(seg : integer; grp : natural) is
+    begin
+      cv_seg <= seg; cv_grp <= grp;
+      tick;
+      wait for 1 ns;
+    end procedure;
+
+    procedure unit_cwrite(seg : integer; grp : natural;
+                          d : std_logic_vector) is
+    begin
+      cvw_en <= '1'; cvw_seg <= seg; cvw_grp <= grp; cvw_data <= d;
+      tick;
+      cvw_en <= '0';
+    end procedure;
+    variable ccol : std_logic_vector(CONV_LANES*16-1 downto 0);
+    variable cok  : boolean;
   begin
     rst <= '1'; tick(4); rst <= '0'; tick(2);
 
@@ -411,11 +491,50 @@ begin
           end loop;
         end if;
 
+        -- THE CONV TAPS, and the property here is ORDER rather than mere
+        -- survival: at token T the store must hand back this layer's columns
+        -- T-NTAP .. T-1, OLDEST FIRST, after a save to HBM and a load back.
+        -- The rotation lives on-chip and the HBM image is slot-major, so this
+        -- is the check that the two agree.  Zeros before the sequence starts
+        -- are not a stand-in, they are what those columns are.
+        for seg in 0 to 2 loop
+          for grp in 0 to grps_in(seg)-1 loop
+            unit_cread(seg, grp);
+            cok := true;
+            for k in 0 to NTAP-1 loop
+              for ln in 0 to CONV_LANES-1 loop
+                if cv_x(k*CONV_LANES*16 + (ln+1)*16 - 1
+                        downto k*CONV_LANES*16 + ln*16)
+                   /= cval(L, T - NTAP + k, chan_of(seg, grp, ln)) then
+                  cok := false;
+                end if;
+              end loop;
+            end loop;
+            n_conv <= n_conv + 1;
+            if T >= NTAP then n_full <= n_full + 1; end if;
+            chk(cok, "token " & integer'image(T) & " layer "
+                   & integer'image(L) & " seg " & integer'image(seg)
+                   & " grp " & integer'image(grp)
+                   & ": the conv taps are not columns "
+                   & integer'image(T-NTAP) & ".." & integer'image(T-1)
+                   & " oldest first; got " & to_hstring(cv_x));
+          end loop;
+        end loop;
+
         for i in 0 to WORDS-1 loop
           unit_write(i, val(L, T, i));
         end loop;
         for i in 0 to EXPN-1 loop
           unit_ewrite(i, eval(L, T, i));
+        end loop;
+        for seg in 0 to 2 loop
+          for grp in 0 to grps_in(seg)-1 loop
+            for ln in 0 to CONV_LANES-1 loop
+              ccol((ln+1)*16-1 downto ln*16)
+                := cval(L, T, chan_of(seg, grp, ln));
+            end loop;
+            unit_cwrite(seg, grp, ccol);
+          end loop;
         end loop;
 
         save_start <= '1'; tick; save_start <= '0';
@@ -423,6 +542,13 @@ begin
         chk(er = '0', "err after SAVE, token " & integer'image(T)
                     & " layer " & integer'image(L));
       end loop;
+
+      -- ONE pulse per TOKEN, after every layer has read and written -- not
+      -- one per layer.  Every GDN layer is visited once per token, so all of
+      -- them rotate in lockstep and the rotation needs no per-layer state.
+      -- Pulsing it per layer would advance it LAYERS times per token and the
+      -- taps would come back in the wrong order for every layer but the last.
+      tok_adv <= '1'; tick; tok_adv <= '0';
     end loop;
 
     tick(4);
@@ -431,6 +557,8 @@ begin
          & " tokens=" & integer'image(NTOK)
          & " layers=" & integer'image(LAYERS)
          & " exponent bytes=" & integer'image(n_exp)
+         & " conv groups=" & integer'image(n_conv)
+         & " (full history " & integer'image(n_full) & ")"
          & " W stalls=" & integer'image(n_stall) severity note;
 
     -- A run that never reached token 1 checked no persistence at all.
@@ -447,12 +575,27 @@ begin
       report "tb_gdn_state_store: FAIL, no exponent was ever checked, so the "
            & "second phase of every transfer is UNTESTED."
       severity failure;
+    assert n_conv > 0
+      report "tb_gdn_state_store: FAIL, no conv tap was ever checked, so the "
+           & "THIRD phase of every transfer is UNTESTED."
+      severity failure;
+    -- COVERAGE OF THE INPUT SPACE IS NOT COVERAGE OF THE OUTPUT SPACE.  Every
+    -- conv check before token NTAP is reading a history that is partly zeros,
+    -- and a rotation that is wrong only when all KCONV-1 slots are live would
+    -- pass every one of them.  This is the assertion that says the
+    -- interesting case was actually reached.
+    assert n_full > 0
+      report "tb_gdn_state_store: FAIL, no conv tap was ever checked with a "
+           & "FULL history behind it; NTOK must exceed KCONV-1."
+      severity failure;
 
     if n_bad = 0 then
       report "tb_gdn_state_store RESULT: PASS -- " & integer'image(n_chk)
            & " checks, of which " & integer'image(n_exp)
-           & " exponents; every layer's mantissas AND exponents survived "
-           & integer'image(LAYERS-1)
+           & " exponents and " & integer'image(n_conv)
+           & " conv tap groups (" & integer'image(n_full)
+           & " with a full history); every layer's mantissas, exponents AND "
+           & "conv taps survived " & integer'image(LAYERS-1)
            & " evictions per token across " & integer'image(NTOK)
            & " tokens." severity note;
     else

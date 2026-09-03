@@ -40,15 +40,20 @@
 -- its state mid-load reads a mixture of this layer and the previous one -- a
 -- wrong number, not a hang.
 --
+-- THREE REGIONS, THREE PHASES, ONE PAIR OF MASTERS.  A GDN layer's state is
+-- the recurrent MANTISSAS (1,048,576 B), the state EXPONENTS (4,096 B) and the
+-- CONV TAP HISTORY (49,152 B) -- `(conv_kernel-1) x qkv_dim` 16-bit elements,
+-- the previous KCONV-1 columns of the whole qkv stream that `gdn_conv`'s
+-- causal kernel needs.  All three are inside `LAYER_STRIDE`, laid out in that
+-- order, and all three are moved by an instance of the SAME `gdn_state_axi`
+-- run in turn over the same masters.
+--
 -- WHAT THIS STILL DOES NOT COVER, stated because a reader would reasonably
--- assume otherwise: the CONV TAP HISTORY.  `(conv_kernel-1) x qkv_dim` 16-bit
--- elements = 49,152 bytes per layer at the 9B shape.  As of 2026-09-02 it IS
--- reserved -- `tools/hbm_map.py::arena_sizes()` derives
--- `gdn_state_conv_bytes_per_layer` and it is inside `LAYER_STRIDE`, sitting
--- immediately after the exponents -- but NOTHING MOVES IT.  A third phase here
--- would be a third `gdn_state_axi` at `WORD_BITS => 16, N_GRP => 1` and a
--- fourth sequencer state.  There is no port here that pretends to move it, and
--- until there is, the second token of any sequence convolves against zeros.
+-- assume otherwise: nothing here FEEDS the conv tap write port -- that data is
+-- this token's qkv column from A, one group at a time -- and nothing pulses
+-- `tok_adv`, which only something that knows where a token ends can do.  Both
+-- are the job sequencer's, and until it exists this tier is complete and
+-- unused.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -60,12 +65,20 @@ entity gdn_state_store is
     DIM         : positive := 128;
     RECUR_LANES : positive := 4;
     LAYERS      : positive := 24;
+    -- The conv geometry.  KEY_HEADS is a generic and not derived because the
+    -- q and k segments are KEY_HEADS wide while v is VAL_HEADS wide, and
+    -- nothing else in this entity needed the distinction until the taps.
+    KEY_HEADS   : positive := 16;         -- model_cfg_pkg lin_key_heads
+    KCONV       : positive := 4;          -- model_cfg_pkg conv_kernel
+    CONV_LANES  : positive := 4;          -- gdn_block CONV_LANES
     STYLE       : string   := "ultra";        -- gdn_state_mem: NOT "auto"
     EXP_STYLE   : string   := "distributed";  -- gdn_exp_mem: NOT block/ultra
+    CONV_STYLE  : string   := "block";        -- gdn_conv_tap_mem: NOT distrib
 
     LAYER_STRIDE : positive := 1101824;   -- gdn_state_bytes_per_layer
     MANT_BYTES   : positive := 1048576;   -- gdn_state_mant_bytes_per_layer
     EXP_BYTES    : positive := 4096;      -- gdn_state_exp_bytes_per_layer
+    CONV_BYTES   : positive := 49152;     -- gdn_state_conv_bytes_per_layer
 
     AXI_DW : positive := 256;
     ADDR_W : positive := 33;
@@ -111,6 +124,24 @@ entity gdn_state_store is
     se_wcol  : in  natural range 0 to DIM-1;
     se_wdata : in  signed(7 downto 0);
 
+    -- ---- gdn_block's cv_* tap source, and the write that refills it -------
+    -- `cv_seg`/`cv_grp` are sampled on the rising edge and `cv_x` is valid in
+    -- the following cycle, which is gdn_block's stated contract (:269-272).
+    -- `cv_x` here is the KCONV-1 STORED taps only, oldest first; the CURRENT
+    -- column is this token's qkv and the caller appends it.
+    cv_seg   : in  integer range 0 to 2;
+    cv_grp   : in  natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1;
+    cv_x     : out std_logic_vector((KCONV-1)*CONV_LANES*16-1 downto 0);
+    cvw_en   : in  std_logic;
+    cvw_seg  : in  integer range 0 to 2;
+    cvw_grp  : in  natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1;
+    cvw_data : in  std_logic_vector(CONV_LANES*16-1 downto 0);
+    -- ONE pulse per TOKEN, after every layer has read and written.  Not per
+    -- layer: every GDN layer is visited once per token so all of them rotate
+    -- in lockstep, which is why the rotation needs no per-layer state and
+    -- therefore no HBM storage.  See rtl/gdn_conv_tap_mem.vhd.
+    tok_adv  : in  std_logic;
+
     -- ---- the AXI masters, ONE pair, shared by both phases -----------------
     r_arvalid : out std_logic;
     r_arready : in  std_logic;
@@ -146,6 +177,10 @@ architecture rtl of gdn_state_store is
   constant WBITS : positive := RECUR_LANES * 16;
   constant BPB   : positive := AXI_DW / 8;
   constant EXPN  : positive := VAL_HEADS * DIM;
+  constant KEY_CH : positive := KEY_HEADS * DIM;      -- the q and k segments
+  constant VAL_CH : positive := VAL_HEADS * DIM;      -- the v segment
+  constant QKVN   : positive := 2*KEY_CH + VAL_CH;    -- llama_map_pkg qkv_dim
+  constant CONV_WORDS : positive := (KCONV-1) * QKVN; -- 16-bit words per layer
 
   -- ---- REFUSALS THAT RUN DURING ELABORATION ----------------------------
   -- Out-of-range `natural`s, not asserts: Vivado ignores
@@ -169,6 +204,19 @@ architecture rtl of gdn_state_store is
   -- mantissa geometry, and a check that holds by consequence is not a check.
   constant bad_mant_bytes_not_beat_aligned : natural
          := 0 - (MANT_BYTES mod BPB);
+  -- THE SAME ARGUMENT, ONE REGION FURTHER ALONG, AND IT NEEDED SAYING AGAIN.
+  -- The rule above stops at two regions.  With THREE, a stride that fits the
+  -- mantissas and the exponents can still put the conv taps on top of the next
+  -- layer, and neither of those two checks nor any of the three movers' own
+  -- can see it -- each mover knows only its own byte count and the stride.
+  constant bad_stride_below_all_three : natural
+         := LAYER_STRIDE - (MANT_BYTES + EXP_BYTES + CONV_BYTES);
+  -- The conv region starts at `state_base + MANT_BYTES + EXP_BYTES`, so that
+  -- sum must be beat-aligned for the same reason MANT_BYTES alone must be.
+  constant bad_conv_base_not_beat_aligned : natural
+         := 0 - ((MANT_BYTES + EXP_BYTES) mod BPB);
+  -- The arena figure must match the SHAPE, two bytes per 16-bit element.
+  constant bad_conv_bytes_vs_shape : natural := CONV_BYTES - 2*CONV_WORDS;
 
   signal bsy : std_logic;
 
@@ -234,30 +282,68 @@ architecture rtl of gdn_state_store is
   signal e_rd_s, e_wd_s     : signed(7 downto 0);
   signal e_unit_wen         : std_logic;
 
+  -- ---- the CONV TAP mover ----------------------------------------------
+  -- Same entity again, at `VAL_HEADS => 1, DIM => CONV_WORDS, N_GRP => 1,
+  -- WORD_BITS => 16`.
+  --
+  -- **THOSE GENERICS ARE CHOSEN SO THERE IS NO ARITHMETIC IN THE MUX.**
+  -- `gdn_state_axi` emits `flat = (head*DIM + col)*N_GRP + grp`; with
+  -- VAL_HEADS 1 and N_GRP 1 the head and the group are both always 0 and
+  -- **`col` IS the flat word address**, which is exactly what
+  -- `gdn_conv_tap_mem`'s mover port takes.  It wires straight across: no
+  -- multiply, no add, nothing for an integration error to hide in.  That is
+  -- defect D1 of docs/debugging/2026-09-02_gdn-state-dma.md applied rather
+  -- than restated -- pick the decomposition so the caller never inverts it.
+  signal c_load, c_save, c_busy, c_done, c_err : std_logic := '0';
+  signal c_we, c_re : std_logic;
+  signal c_wa, c_ra : natural range 0 to CONV_WORDS-1;
+  signal c_wd, c_rd : std_logic_vector(15 downto 0);
+
+  signal c_arvalid, c_arready, c_rvalid, c_rready : std_logic;
+  signal c_araddr : std_logic_vector(ADDR_W-1 downto 0);
+  signal c_arlen  : std_logic_vector(7 downto 0);
+  signal c_arsize : std_logic_vector(2 downto 0);
+  signal c_arburst: std_logic_vector(1 downto 0);
+  signal c_awvalid, c_awready, c_wvalid, c_wready, c_wlast : std_logic;
+  signal c_bvalid, c_bready : std_logic;
+  signal c_awaddr : std_logic_vector(ADDR_W-1 downto 0);
+  signal c_awlen  : std_logic_vector(7 downto 0);
+  signal c_awsize : std_logic_vector(2 downto 0);
+  signal c_awburst: std_logic_vector(1 downto 0);
+  signal c_wdata  : std_logic_vector(AXI_DW-1 downto 0);
+  signal c_wstrb  : std_logic_vector(AXI_DW/8-1 downto 0);
+
+  signal cv_unit_wen : std_logic;
+
   -- ---- the sequencer ---------------------------------------------------
-  type q_t is (Q_IDLE, Q_MANT, Q_EXP, Q_DONE);
+  type q_t is (Q_IDLE, Q_MANT, Q_EXP, Q_CONV, Q_DONE);
   signal q       : q_t := Q_IDLE;
   signal is_save : std_logic := '0';
-  signal sel_e   : std_logic := '0';   -- '1' = the exponent mover owns AXI
   signal done_q  : std_logic := '0';
+  -- WHICH MOVER OWNS THE MASTERS.  Two bits now, not one: "00" mantissas,
+  -- "01" exponents, "10" conv taps.  Held for a whole phase.
+  signal sel     : std_logic_vector(1 downto 0) := "00";
 
-  -- The exponent region of THIS layer sits immediately after its mantissas.
-  -- The mover adds `layer * LAYER_STRIDE` itself, so the only thing added
-  -- here is the within-layer offset, and it is a constant.
-  signal exp_base : std_logic_vector(ADDR_W-1 downto 0);
+  -- The three regions of THIS layer, in order.  The movers add
+  -- `layer * LAYER_STRIDE` themselves, so the only thing added here is the
+  -- within-layer offset, and both are constants.
+  signal exp_base  : std_logic_vector(ADDR_W-1 downto 0);
+  signal conv_base : std_logic_vector(ADDR_W-1 downto 0);
 begin
   busy <= bsy;
   bsy  <= '0' when q = Q_IDLE else '1';
   done <= done_q;
-  err  <= a_err or e_err;
+  err  <= a_err or e_err or c_err;
 
-  exp_base <= std_logic_vector(unsigned(state_base)
-                             + to_unsigned(MANT_BYTES, ADDR_W));
+  exp_base  <= std_logic_vector(unsigned(state_base)
+                              + to_unsigned(MANT_BYTES, ADDR_W));
+  conv_base <= std_logic_vector(unsigned(state_base)
+                              + to_unsigned(MANT_BYTES + EXP_BYTES, ADDR_W));
 
   -- ================= the sequencer ======================================
-  -- ONE start in, TWO transfers, ONE done out.  `sel_e` is set on the edge
-  -- the mantissa phase reports done and held for the whole exponent phase;
-  -- the mantissa mover has fully retired by then (it does not leave S_SDRAIN
+  -- ONE start in, THREE transfers, ONE done out.  `sel` is set on the edge a
+  -- phase reports done and held for the whole of the next one; a mover has
+  -- fully retired by the time it reports done (it does not leave S_SDRAIN
   -- until its last BRESP is in) so there is no residual traffic to steal.
   seq : process(clk) is
   begin
@@ -265,9 +351,10 @@ begin
       done_q <= '0';
       a_load <= '0'; a_save <= '0';
       e_load <= '0'; e_save <= '0';
+      c_load <= '0'; c_save <= '0';
 
       if rst = '1' then
-        q <= Q_IDLE; sel_e <= '0'; is_save <= '0';
+        q <= Q_IDLE; sel <= "00"; is_save <= '0';
       else
         case q is
           when Q_IDLE =>
@@ -275,7 +362,7 @@ begin
               is_save <= save_start;
               a_load  <= load_start;
               a_save  <= save_start;
-              sel_e   <= '0';
+              sel     <= "00";
               q       <= Q_MANT;
             end if;
 
@@ -283,14 +370,22 @@ begin
             if a_done = '1' then
               e_load <= not is_save;
               e_save <= is_save;
-              sel_e  <= '1';
+              sel    <= "01";
               q      <= Q_EXP;
             end if;
 
           when Q_EXP =>
             if e_done = '1' then
-              sel_e <= '0';
-              q     <= Q_DONE;
+              c_load <= not is_save;
+              c_save <= is_save;
+              sel    <= "10";
+              q      <= Q_CONV;
+            end if;
+
+          when Q_CONV =>
+            if c_done = '1' then
+              sel <= "00";
+              q   <= Q_DONE;
             end if;
 
           when Q_DONE =>
@@ -301,43 +396,69 @@ begin
     end if;
   end process;
 
-  -- ================= the AXI 2:1 ========================================
-  -- Outputs follow `sel_e`.  Inputs are FORCED LOW to the mover that does not
+  -- ================= the AXI 3:1 ========================================
+  -- Outputs follow `sel`.  Inputs are FORCED LOW to the two movers that do not
   -- own the bus rather than merely broadcast, because a handshake is an AND of
   -- valid and ready: broadcasting `r_arready` to an idle mover is harmless
   -- only for as long as that mover keeps `arvalid` low, and a design that is
   -- correct only because of what another module happens not to do is the
   -- shape of bug this project keeps paying for.  Data and response fields ARE
   -- broadcast: they are qualified by the valid that is already gated.
-  r_arvalid <= e_arvalid when sel_e = '1' else a_arvalid;
-  r_araddr  <= e_araddr  when sel_e = '1' else a_araddr;
-  r_arlen   <= e_arlen   when sel_e = '1' else a_arlen;
-  r_arsize  <= e_arsize  when sel_e = '1' else a_arsize;
-  r_arburst <= e_arburst when sel_e = '1' else a_arburst;
-  r_rready  <= e_rready  when sel_e = '1' else a_rready;
+  --
+  -- `with ... select` rather than a chain of `when`, because with three
+  -- sources a chain buries the default and this form makes the unused fourth
+  -- encoding explicit.  "11" never occurs; it maps to the mantissa mover
+  -- rather than to 'X' so a glitch cannot inject an undefined AXI valid.
+  with sel select r_arvalid <= e_arvalid when "01",
+                               c_arvalid when "10", a_arvalid when others;
+  with sel select r_araddr  <= e_araddr  when "01",
+                               c_araddr  when "10", a_araddr  when others;
+  with sel select r_arlen   <= e_arlen   when "01",
+                               c_arlen   when "10", a_arlen   when others;
+  with sel select r_arsize  <= e_arsize  when "01",
+                               c_arsize  when "10", a_arsize  when others;
+  with sel select r_arburst <= e_arburst when "01",
+                               c_arburst when "10", a_arburst when others;
+  with sel select r_rready  <= e_rready  when "01",
+                               c_rready  when "10", a_rready  when others;
 
-  a_arready <= r_arready when sel_e = '0' else '0';
-  a_rvalid  <= r_rvalid  when sel_e = '0' else '0';
-  e_arready <= r_arready when sel_e = '1' else '0';
-  e_rvalid  <= r_rvalid  when sel_e = '1' else '0';
+  a_arready <= r_arready when sel = "00" else '0';
+  a_rvalid  <= r_rvalid  when sel = "00" else '0';
+  e_arready <= r_arready when sel = "01" else '0';
+  e_rvalid  <= r_rvalid  when sel = "01" else '0';
+  c_arready <= r_arready when sel = "10" else '0';
+  c_rvalid  <= r_rvalid  when sel = "10" else '0';
 
-  w_awvalid <= e_awvalid when sel_e = '1' else a_awvalid;
-  w_awaddr  <= e_awaddr  when sel_e = '1' else a_awaddr;
-  w_awlen   <= e_awlen   when sel_e = '1' else a_awlen;
-  w_awsize  <= e_awsize  when sel_e = '1' else a_awsize;
-  w_awburst <= e_awburst when sel_e = '1' else a_awburst;
-  w_wvalid  <= e_wvalid  when sel_e = '1' else a_wvalid;
-  w_wdata   <= e_wdata   when sel_e = '1' else a_wdata;
-  w_wstrb   <= e_wstrb   when sel_e = '1' else a_wstrb;
-  w_wlast   <= e_wlast   when sel_e = '1' else a_wlast;
-  w_bready  <= e_bready  when sel_e = '1' else a_bready;
+  with sel select w_awvalid <= e_awvalid when "01",
+                               c_awvalid when "10", a_awvalid when others;
+  with sel select w_awaddr  <= e_awaddr  when "01",
+                               c_awaddr  when "10", a_awaddr  when others;
+  with sel select w_awlen   <= e_awlen   when "01",
+                               c_awlen   when "10", a_awlen   when others;
+  with sel select w_awsize  <= e_awsize  when "01",
+                               c_awsize  when "10", a_awsize  when others;
+  with sel select w_awburst <= e_awburst when "01",
+                               c_awburst when "10", a_awburst when others;
+  with sel select w_wvalid  <= e_wvalid  when "01",
+                               c_wvalid  when "10", a_wvalid  when others;
+  with sel select w_wdata   <= e_wdata   when "01",
+                               c_wdata   when "10", a_wdata   when others;
+  with sel select w_wstrb   <= e_wstrb   when "01",
+                               c_wstrb   when "10", a_wstrb   when others;
+  with sel select w_wlast   <= e_wlast   when "01",
+                               c_wlast   when "10", a_wlast   when others;
+  with sel select w_bready  <= e_bready  when "01",
+                               c_bready  when "10", a_bready  when others;
 
-  a_awready <= w_awready when sel_e = '0' else '0';
-  a_wready  <= w_wready  when sel_e = '0' else '0';
-  a_bvalid  <= w_bvalid  when sel_e = '0' else '0';
-  e_awready <= w_awready when sel_e = '1' else '0';
-  e_wready  <= w_wready  when sel_e = '1' else '0';
-  e_bvalid  <= w_bvalid  when sel_e = '1' else '0';
+  a_awready <= w_awready when sel = "00" else '0';
+  a_wready  <= w_wready  when sel = "00" else '0';
+  a_bvalid  <= w_bvalid  when sel = "00" else '0';
+  e_awready <= w_awready when sel = "01" else '0';
+  e_wready  <= w_wready  when sel = "01" else '0';
+  e_bvalid  <= w_bvalid  when sel = "01" else '0';
+  c_awready <= w_awready when sel = "10" else '0';
+  c_wready  <= w_wready  when sel = "10" else '0';
+  c_bvalid  <= w_bvalid  when sel = "10" else '0';
 
   -- ================= the mantissa store =================================
   -- THE 2:1, AND NOTHING ELSE.  No arithmetic: see the header.
@@ -449,6 +570,60 @@ begin
              w_wlast => e_wlast, w_bvalid => e_bvalid, w_bready => e_bready,
              w_bresp => w_bresp);
 
+  -- ================= the conv tap store =================================
+  -- The write is GATED rather than muxed, the same as the exponent store's:
+  -- gdn_conv_tap_mem has one write port and hands it to whichever of the two
+  -- asserts, so suppressing the unit's while a mover owns the tier is what
+  -- makes the ownership rule real.  The guard below reads the RAW `cvw_en`
+  -- port, not this gated copy.
+  cv_unit_wen <= cvw_en and not bsy;
+
+  u_conv : entity work.gdn_conv_tap_mem
+    generic map(KCONV => KCONV, CONV_LANES => CONV_LANES,
+                KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE)
+    port map(clk => clk,
+             r_seg => cv_seg, r_grp => cv_grp, r_x => cv_x,
+             w_en => cv_unit_wen, w_seg => cvw_seg, w_grp => cvw_grp,
+             w_data => cvw_data,
+             tok_adv => tok_adv,
+             -- `m_r_en` IS CONNECTED HERE and is left open on the other two
+             -- stores, which is not an inconsistency: this memory is a SIMPLE
+             -- dual port whose one read address is muxed between the unit and
+             -- the mover, so it is `m_r_en` that hands the port over.  Leaving
+             -- it open would give the mover the unit's address and read the
+             -- wrong word every time.
+             m_r_en => c_re, m_r_addr => c_ra, m_r_data => c_rd,
+             m_w_en => c_we, m_w_addr => c_wa, m_w_data => c_wd);
+
+  u_cdma : entity work.gdn_state_axi
+    -- VAL_HEADS 1 and N_GRP 1, so `col` IS the flat word address and the
+    -- wiring below is names to names.  See the signal declarations.
+    generic map(VAL_HEADS => 1, DIM => CONV_WORDS,
+                RECUR_LANES => RECUR_LANES, LAYERS => LAYERS,
+                WORD_BITS => 16, N_GRP => 1,
+                LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => CONV_BYTES,
+                AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                MAXB => MAXB, MAXOUT => MAXOUT)
+    port map(clk => clk, rst => rst,
+             load_start => c_load, save_start => c_save,
+             layer => layer, state_base => conv_base,
+             busy => c_busy, done => c_done, err => c_err,
+             m_w_en => c_we, m_w_head => open, m_w_col => c_wa,
+             m_w_grp => open, m_w_data => c_wd,
+             m_r_en => c_re, m_r_head => open, m_r_col => c_ra,
+             m_r_grp => open, m_r_data => c_rd,
+             r_arvalid => c_arvalid, r_arready => c_arready,
+             r_araddr => c_araddr, r_arlen => c_arlen, r_arsize => c_arsize,
+             r_arburst => c_arburst, r_rvalid => c_rvalid,
+             r_rready => c_rready, r_rdata => r_rdata, r_rlast => r_rlast,
+             r_rresp => r_rresp,
+             w_awvalid => c_awvalid, w_awready => c_awready,
+             w_awaddr => c_awaddr, w_awlen => c_awlen, w_awsize => c_awsize,
+             w_awburst => c_awburst, w_wvalid => c_wvalid,
+             w_wready => c_wready, w_wdata => c_wdata, w_wstrb => c_wstrb,
+             w_wlast => c_wlast, w_bvalid => c_bvalid, w_bready => c_bready,
+             w_bresp => w_bresp);
+
   -- SIMULATION ONLY.  A VHDL severity is a width in synthesis and not a
   -- check, so this catches the caller in a bench and not on the card.  It is
   -- still the right place for it: the violation is silent otherwise, and it
@@ -457,7 +632,8 @@ begin
   guard : process(clk) is
   begin
     if rising_edge(clk) then
-      if bsy = '1' and (st_ren = '1' or st_wen = '1' or se_wen = '1') then
+      if bsy = '1' and (st_ren = '1' or st_wen = '1' or se_wen = '1'
+                        or cvw_en = '1') then
         report "gdn_state_store: gdn_block accessed the recurrent state while "
              & "the HBM mover owned it.  A read here returns a mixture of "
              & "this layer and the previous one, and a write is lost.  Wait "

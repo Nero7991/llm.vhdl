@@ -1,7 +1,20 @@
 # OOC census of `rtl/gdn_state_store.vhd` -- the WHOLE resident state tier for
 # one GDN layer: the URAM mantissa store, the distributed-RAM exponent store,
-# TWO instances of the HBM mover, the sequencer that runs them in turn, and the
-# AXI and store arbiters between them.
+# the BRAM conv tap store, THREE instances of the HBM mover, the sequencer that
+# runs them in turn, and the AXI and store arbiters between them.
+#
+# THREE REGIONS AND THREE PHASES over ONE pair of masters.  Component numbers
+# to add up against: mantissa store 32 URAM288, exponent store 2,466 CLB LUT,
+# conv tap store 12 RAMB36 + 317 CLB LUT, one mover 269 LUT / 703 FF / 1 DSP.
+# The two-phase composition measured 3,310 CLB LUT, which was already +347 over
+# ITS component sum -- so the question this run answers is whether the third
+# phase costs another ~350 or whether the muxes grow faster than that.
+#
+# ANSWERED, MEASURED 2026-09-03: **4,028 CLB LUT** (2,108 logic + 1,920 as
+# memory), 2,004 FF, 12 RAMB36, 32 URAM288, 3 DSP, WNS +1.400.  Against
+# 3,310 + 317 = 3,627 that is **+401, +11.1%** -- the same shape as the second
+# phase's +347, so the muxes are NOT growing faster than linearly in phases.
+# The three DSPs are one `layer * LAYER_STRIDE` per mover.
 #
 # THE QUESTION this answers that the component censuses do not: whether
 # composing them costs anything beyond the sum.  The parts measured 32 URAM288
@@ -36,12 +49,15 @@ create_project -in_memory -part $part
 read_vhdl -vhdl2008 [file join $rtldir util_pkg.vhd]
 read_vhdl -vhdl2008 [file join $rtldir gdn_state_mem.vhd]
 read_vhdl -vhdl2008 [file join $rtldir gdn_exp_mem.vhd]
+read_vhdl -vhdl2008 [file join $rtldir gdn_conv_tap_mem.vhd]
 read_vhdl -vhdl2008 [file join $rtldir gdn_state_axi.vhd]
 read_vhdl -vhdl2008 [file join $rtldir gdn_state_store.vhd]
 synth_design -mode out_of_context -top gdn_state_store -part $part \
   -generic VAL_HEADS=32 -generic DIM=128 -generic RECUR_LANES=4 \
   -generic LAYERS=24 -generic LAYER_STRIDE=1101824 \
+  -generic KEY_HEADS=16 -generic KCONV=4 -generic CONV_LANES=4 \
   -generic MANT_BYTES=1048576 -generic EXP_BYTES=4096 \
+  -generic CONV_BYTES=49152 \
   -generic AXI_DW=256 -generic ADDR_W=33 -generic MAXB=16 -generic MAXOUT=4
 
 create_clock -period $period -name clk [get_ports clk]

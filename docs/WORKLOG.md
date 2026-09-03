@@ -11,6 +11,92 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03: the third phase lands, and B's per-layer state is complete on-chip
+
+**`gdn_state_store` now runs THREE movers over ONE pair of HBM masters** --
+mantissas, exponents, conv taps -- with a five-state sequencer and a 3:1 AXI
+mux. One `load_start` moves all 1,101,824 bytes of a layer in three transfers
+and pulses `done` once.
+
+**MEASURED, composed OOC, shipping shape, 5.0 ns: 4,028 CLB LUT (2,108 logic +
+1,920 as memory), 2,004 FF, 32 URAM288, 12 RAMB36, 3 DSP, WNS +1.400.** That
+is the WHOLE resident state tier for all 24 GDN layers: 0.92% of the device's
+LUTs, 1.79% of its BRAM, 10.0% of its URAM.
+
+**THE PARTS DO NOT SUM, FOR THE THIRD TIME, AND NOW THE SHAPE IS KNOWN.**
+3,310 + 317 = 3,627 against 4,028 measured: **+401 LUT, +11.1%**. The
+two-phase composition was +347, +11.7%. Two increments of the same size, so
+**the muxes are NOT growing faster than linearly in phases** -- which was the
+obvious worry about going from a 2:1 to a 3:1 and is now measured instead of
+assumed. Three DSPs, one `layer * LAYER_STRIDE` per mover.
+
+**THE GENERIC CHOICE THAT REMOVED THE ARITHMETIC.** `gdn_state_axi` emits
+`flat = (head*DIM + col)*N_GRP + grp`. Instantiating the conv mover at
+`VAL_HEADS => 1, DIM => CONV_WORDS, N_GRP => 1` makes head and grp identically
+zero, so **`col` IS the flat word address** and it wires straight to
+`gdn_conv_tap_mem`'s mover port -- no multiply, no add, nothing for an
+integration error to hide in. That is defect D1 applied rather than restated:
+pick the decomposition so the caller never has to invert it. **Mutation C7 --
+instantiating it at `VAL_HEADS => CONV_WORDS/DIM, DIM => DIM` instead, which
+is the natural-looking choice -- fails 920 of 7,968 checks.**
+
+**THE BENCH NEEDED A FOURTH TOKEN, AND THAT IS THE COVERAGE LESSON.** The
+conv history is `KCONV-1 = 3` columns deep, so a three-token run never once
+presents a FULL history: every conv check would have been reading a history
+that was partly zeros, and a rotation wrong only when all three slots are live
+would have passed all of them while the suite said PASS. `NTOK` 3 -> 4, and
+`n_full` is now asserted non-zero so a future shrink cannot silently undo it.
+**Coverage of the input space is not coverage of the output space**: 1,024
+conv groups were checked and only **256** of them had a full history behind
+them.
+
+**Seven of eight new mutations bite** (phase skipped; conv aliased onto the
+exponent base; load/save swapped; the wrong `sel` held, which dies in the
+mover's own bound check; the rotation frozen; `m_r_en` left open; the head/col
+decomposition). The three earlier mutations still bite against the extended
+bench, so the older properties were not weakened by the new shape.
+
+**C8 does NOT bite** -- the `busy` gate on the unit's conv write -- and it is
+the third of its kind after `s5` and `s6`. The bench never violates the
+ownership rule, so a gate against that violation has nothing to suppress. Kept
+as defence, reported as untested. Three of these now; the pattern is that
+every ownership gate in this tier is structurally invisible to a bench whose
+stimulus obeys the ownership rule, and only a deliberately misbehaving caller
+would exercise them.
+
+**What is still missing is a CALLER, not storage.** Nothing feeds the tap
+write port from A's qkv stream and nothing pulses `tok_adv`. `B_SRC_REAL`
+still cannot run past token 0, but the reason has moved: it is now the absence
+of a job sequencer rather than the absence of anywhere to put the state.
+
+**CORRECTION TO MY OWN FRAMING TODAY, AND IT MATTERS MORE THAN THE TIER.**
+I have been calling the conv tap history "the" reason `B_SRC_REAL` cannot pass
+token 0, and repeating it into three documents. Reading `llama_top`'s own
+header rather than the assert shows TWO reasons, and it MEASURED them:
+"B_SRC_REAL defaults FALSE and the reason is measured, not conservatism: with
+it TRUE the degenerate-residual count RISES, 0/3/10/23 -> 3/5/11/24 at
+4/8/16/32 blocks, because A's synthetic weights make R_ALPHA's VALUES
+physically impossible and gdn_scalar's gate saturates shut. **Sourcing the taps
+ALONE is neutral.**"
+
+So the tap store removes an ASSERT and changes no number. The thing that
+changes numbers is **`rtl/seq_desc_fetch.vhd:113-115`: "The base array
+(`nsub_w + nsub_s` 64-bit words at offset 0x40) is NOT fetched here ...
+Fetching it is remaining work."** A multiplies whatever the memory holds at a
+computed address instead of the weights its descriptor names, and that is
+upstream of B, C and the sampler alike.
+
+**THE HONEST ORDER OF WHAT REMAINS TO A RIGHT TOKEN**, corrected:
+1. A's descriptor base-array fetch. Nothing downstream can be right first.
+2. The B job sequencer, which is also what feeds the tap write port and
+   pulses `tok_adv`.
+3. C's mover.
+4. The descriptor index (`job_ordinal` is 8 bits and cannot address 311 jobs).
+5. Unit V, then P&R.
+
+Nothing in that list is software. The state tier landed today is item 2's
+prerequisite and not item 1's.
+
 ### 2026-09-02, later still: both phases of the state move, the conv arena is reserved, and a standing check had been red
 
 **LANDED: the exponent phase.** `rtl/gdn_state_store.vhd` now instantiates

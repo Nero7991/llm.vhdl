@@ -340,6 +340,39 @@ space has already had one silent collision between two allocators that could
 not see each other, and the symptom was a wrong token. **Nothing moves it
 yet.**
 
+**CORRECTION, 2026-09-03: THE CONV TAP HISTORY IS NOT THE THING BETWEEN HERE
+AND INFERENCE, AND THIS DOCUMENT SAID IT WAS.**
+
+Earlier revisions of this section, and the write-ups they cite, say that
+`B_SRC_REAL` has never run past token 0 "because this buffer does not exist".
+That is true of the ASSERT and false as a summary. `rtl/llama_top.vhd:46-58`
+is explicit about there being TWO separate reasons, and it measured them:
+
+> B_SRC_REAL defaults FALSE and the reason is measured, not conservatism: with
+> it TRUE the degenerate-residual count RISES, 0/3/10/23 -> 3/5/11/24 at
+> 4/8/16/32 blocks, because A's synthetic weights make R_ALPHA's VALUES
+> physically impossible and gdn_scalar's gate saturates shut.
+> **Sourcing the taps ALONE is neutral.**
+
+So the tap history gates `B_SRC_REAL and tok_pos > 0` -- that is the assert in
+`bp`'s S_GO, and `rtl/gdn_conv_tap_mem.vhd` is what removes it -- but the
+reason `B_SRC_REAL` is off AT ALL is subsystem A, and closing the tap gap
+alone changes nothing about the numbers.
+
+**AND THE A GAP IS BIGGER THAN A GENERIC.** `rtl/seq_desc_fetch.vhd:113-115`,
+in its own words:
+
+> The base array (`nsub_w + nsub_s` 64-bit words at offset 0x40) is NOT
+> fetched here.  Its length is open with A section 14.5 and the count is only
+> RANGE-CHECKED against NSUB_MAX at the moment.  **Fetching it is remaining
+> work.**
+
+A therefore multiplies whatever the memory happens to hold at a computed
+address rather than the weights the descriptor names. **That is upstream of
+every subsystem**, so no amount of correctness in B's state tier or C's cache
+produces a right token while it stands. It belongs at the top of this list and
+it was not on it.
+
 **BUILT AND VERIFIED 2026-09-02.** Four modules and four benches, write-up
 `docs/debugging/2026-09-02_gdn-state-dma.md`:
 
@@ -348,13 +381,17 @@ yet.**
 | `rtl/gdn_state_mem.vhd` | one resident layer, mantissas | **32 URAM288**, 0 BRAM, WNS +2.549 |
 | `rtl/gdn_exp_mem.vhd` | one resident layer, exponents | **2,466 CLB LUT** (1,920 as memory), WNS +3.450 |
 | `rtl/gdn_state_axi.vhd` | the per-job HBM mover | **269 LUT, 703 FF, 1 DSP**, WNS +2.670 |
-| `rtl/gdn_state_store.vhd` | all of the above, both phases | **3,310 CLB LUT, 1,355 FF, 32 URAM288, 2 DSP, WNS +1.400** |
-| `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** (not yet composed in) |
+| `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** |
+| `rtl/gdn_state_store.vhd` | all of the above, ALL THREE phases | **4,028 CLB LUT, 2,004 FF, 32 URAM288, 12 RAMB36, 3 DSP, WNS +1.400** |
 
-**The parts do NOT sum, measured twice.** The mantissa-only composition cost
+**The parts do NOT sum, measured three times.** The mantissa-only composition cost
 +228 LUT over its two components; the full two-phase composition costs
 **3,310 against a naive sum of 2,963 -- +347 LUT, +11.7%** for the second
-mover instance, the sequencer and the two AXI muxes. Neither increment is
+mover instance, the sequencer and the two AXI muxes; and the three-phase
+composition **4,028 against 3,627 -- +401 LUT, +11.1%** for the third mover and
+the 3:1.  Two increments of the same shape, so the muxes are NOT growing faster
+than linearly in phases -- which is worth knowing because it was the obvious
+worry and it is now measured rather than assumed. Neither increment is
 visible in any component's own census, and a budget built from component
 numbers would have been short both times. Note also that `get_cells REF_NAME
 =~ LUT*` says 1,700 and `report_utilization` says 3,310: those count
@@ -444,12 +481,16 @@ is the difference from the previous revision of this table.
    zero BRAM** -- and the sequence of Vivado refusals is the reusable part:
    `docs/debugging/2026-09-02_conv-tap-history.md`.
 
-   **What is still missing is the MOVEMENT**, so `B_SRC_REAL` still cannot run
-   past token 0: a third phase in `gdn_state_store` (a third `gdn_state_axi` at
-   `WORD_BITS => 16, N_GRP => 1` and a fourth sequencer state), something to
-   feed the tap write port from A's qkv stream, and something to pulse
-   `tok_adv` once per token. Nothing downstream of B can be trusted until
-   then.
+   ~~**What is still missing is the MOVEMENT**~~ -- **THE THIRD PHASE LANDED
+   2026-09-03.** `gdn_state_store` runs three movers over one pair of masters,
+   with a five-state sequencer and a 3:1 AXI mux;
+   `sim/tb_gdn_state_store.vhd` is **7,968 checks, 1,024 conv tap groups of
+   which 256 have a FULL history**, and seven of eight new mutations bite.
+
+   **What is still missing is a CALLER.** Nothing feeds the tap write port
+   from A's qkv stream and nothing pulses `tok_adv`; both are the job
+   sequencer's. So `B_SRC_REAL` still cannot run past token 0 -- but the
+   reason is now that no sequencer exists, not that the storage does not.
 3. the B job sequencer: load state, run `gdn_block`, save state, plus the
    activation movement that `gb_real`'s `bp` process does today;
 4. the same for C, which already has its HBM tier in `attn_kv_axi`.
