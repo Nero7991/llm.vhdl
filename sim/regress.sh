@@ -1543,6 +1543,79 @@ printf 'descrule\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # This row is therefore the difference between a fork and a copy.
 printf 'cardtop\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# sim:srvseam and sim:srve2e -- the HOST SOFTWARE.  server/pl_backend.c is the
+# driver and server/llama_server.cpp is the OpenAI-compatible server, and until
+# 2026-09-03 NOTHING SCHEDULED EITHER of their harnesses.
+#
+# THIS IS NOT HYPOTHETICAL ROT.  `server/tests/server_e2e.py` began failing on
+# 2026-08-29, when `pl_open` started refusing an undeclared descriptor arena
+# and `seam_selftest.c` was updated for it but `llama_server.cpp` was not.  It
+# stayed red for days and reported only "FAIL: server never came up", because
+# it sent the server's stderr to DEVNULL and so could not show the refusal that
+# explained it.  Nobody saw it because no gate ran it.  Same shape as the eight
+# dead source closures `sim:cardtop` above was created for.
+#
+#   srvseam  server/tests/seam_selftest.c, 84 checks over the driver: identity,
+#            the layout refusals, injected card faults, two TEETH rows, and the
+#            hardware tripwire that must refuse to open a /dev path without an
+#            explicit token.  SELF-CONTAINED -- it needs no model artefact, so
+#            it is real teeth on a clean checkout.
+#   srve2e   server/tests/server_e2e.py, the server's own request path against
+#            a reference tokenizer.
+#
+# **srve2e IS A NO-OP ON A CLEAN CHECKOUT AND THAT IS STATED, NOT HIDDEN.**  It
+# needs `build_artifacts_tok/qwen35_9b.qtk`, which is 9 MB and not committed,
+# and it RETURNS 0 when the artefact is absent.  So on a clean clone it passes
+# without checking anything, and it is NOT teeth there.  It is teeth on a
+# developer tree, which is exactly where the 2026-08-29 regression lived and
+# went unseen.  It counts toward the floor either way because it passes in both
+# cases; do not read a green srve2e as evidence the server works unless its
+# detail line shows the case results rather than a SKIP.
+# TEETH, MEASURED 2026-09-03 BEFORE THESE ROWS WERE ADDED.  A row nothing has
+# been shown to fail is decoration, and three of four mutants here SURVIVED, so
+# the gaps are recorded with the kill rather than left to be discovered.
+#
+#   M4  off-by-one in pl_prefill's KV capacity bound
+#       (`next_pos + n > max_ctx` -> `> max_ctx + 1`)          KILLED
+#
+#   M1  FK33_SEAM_ID_MAGIC 0x4C4C4D32 -> 0x4C4C4D33            SURVIVED
+#   M2  the x_base/l_base alignment refusal DELETED outright   SURVIVED
+#   M3  the identity comparison disabled (`if (0)`)            SURVIVED
+#
+# WHY THE SURVIVORS MATTER MORE THAN THE KILL:
+#
+#   M1 is a SHARED CONSTANT.  fk33_sim.c and pl_backend.c both read
+#   FK33_SEAM_ID_MAGIC, so moving it moves BOTH sides and the comparison still
+#   agrees.  That is self-consistency, not an oracle -- the same shape as the
+#   `m7 mutant` recorded elsewhere in this project, where a packer and a
+#   reversed decoder passed an entire self-test suite.
+#
+#   M3 shows T2 PASSES FOR THE WRONG REASON.  T2 is titled "a wrong seam base
+#   is refused by the identity read" and asserts only `pl_open(...) < 0` with
+#   seam_base = 0x4000.  With the identity check disabled, pl_open still fails
+#   -- for a different reason -- so T2 discriminates "something rejects a bad
+#   base", never "the identity read rejects it".
+#
+#   M2 means T6's "four layout refusals, at open" does not reach the
+#   x_base/l_base alignment predicate in check_geometry() at all.
+#
+# So srvseam IS a real row -- M4 proves it can fail -- and its 84 checks are
+# measurably weaker than their titles for three specific properties.  Do not
+# read "84 checks, 0 failed" as coverage of the identity read, the alignment
+# refusal, or the seam magic.  Tightening those is open work, not done here.
+#
+# DETAIL-LINE LIMITATION, stated because it is the thing this file elsewhere
+# complains about.  These two run through `make`, and `run_selfcheck` takes the
+# LAST non-empty line as the row's detail, which on failure is make's own
+# `*** [Makefile:142: test] Error 1` -- a line that names nothing.  The
+# selftest's own failing checks are in the row's log, one directory up from the
+# verdict.  It is not fixable from the command string: SELFCHECK_CMD is
+# expanded UNQUOTED, so `sh -c '...'` and `&&` are not re-parsed as shell
+# syntax and a nested-quote form dies with "Unterminated quoted string" --
+# MEASURED while adding these rows.
+printf 'srvseam\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+printf 'srve2e\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -2212,6 +2285,8 @@ declare -A SELFCHECK_CMD=(
   [ipsync]="python3 $REPO/ip_repo/check_ip_sync.py"
   [descrule]="python3 $REPO/tools/gen_mv4i_desc.py --selftest"
   [cardtop]="python3 $REPO/tools/gen_cardtop.py --check --bench"
+  [srvseam]="make -s -C $REPO/server test"
+  [srve2e]="make -s -C $REPO/server test-e2e"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2243,7 +2318,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
