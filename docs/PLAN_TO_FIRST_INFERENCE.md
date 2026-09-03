@@ -359,19 +359,64 @@ So the tap history gates `B_SRC_REAL and tok_pos > 0` -- that is the assert in
 reason `B_SRC_REAL` is off AT ALL is subsystem A, and closing the tap gap
 alone changes nothing about the numbers.
 
-**AND THE A GAP IS BIGGER THAN A GENERIC.** `rtl/seq_desc_fetch.vhd:113-115`,
-in its own words:
+**AND THE A GAP IS REAL, BUT SMALLER THAN THE COMMENT MAKES IT SOUND.**
+`rtl/seq_desc_fetch.vhd:113-115` says:
 
 > The base array (`nsub_w + nsub_s` 64-bit words at offset 0x40) is NOT
 > fetched here.  Its length is open with A section 14.5 and the count is only
 > RANGE-CHECKED against NSUB_MAX at the moment.  **Fetching it is remaining
 > work.**
 
-A therefore multiplies whatever the memory happens to hold at a computed
-address rather than the weights the descriptor names. **That is upstream of
-every subsystem**, so no amount of correctness in B's state tier or C's cache
-produces a right token while it stands. It belongs at the top of this list and
-it was not on it.
+**CORRECTION, same day, an hour later: that sentence is about THAT FILE and I
+quoted it as a project-level fact.** `rtl/matvec_int4_desc_axi.vhd` ALREADY
+fetches a descriptor from a `DESC_PTR` and drives the core's bases from its
+base array --
+
+```vhdl
+  gen_wb : for p in 0 to NPORTS_W-1 generate
+    w_base((p+1)*ADDR_W-1 downto p*ADDR_W)
+      <= dw(DESC_BASE0 + p)(ADDR_W-1 downto 0);
+  end generate;
+```
+
+-- it has base-array bounds checks of its own (`bchk`), and it is covered by
+**four gate rows**: `tb_a_geom`, `tb_matvec_fk33_desc`,
+`tb_matvec_fk33_desc_dual`, `tb_matvec_fk33_desc_xexp`.
+
+**What is actually wrong is the INTEGRATION.** `rtl/llama_top.vhd:3335`
+instantiates the RAW `matvec_int4` and fabricates the per-port bases as a
+uniform stride:
+
+```vhdl
+  for p in 0 to A_ROWS_IF-1 loop
+    r_wbase((p+1)*32-1 downto p*32)
+      <= std_logic_vector(to_unsigned(base + p*A_SUB_BYTES, 32));
+  end loop;
+```
+
+and the file's own warning says what that costs: "The per-job weight address
+block is FABRICATED and this job does not fit in it; running would have read
+the next sub-region's bytes and reported success."
+
+So the work is to instantiate the descriptor variant and give each A job a
+`DESC_PTR` -- not to write a fetcher. **The genuinely open piece is where that
+pointer comes from**, and `tools/gen_layer_program.py:36` states it as an open
+decision rather than a gap: "D's header has no field for it,
+`matvec_int4_desc_axi` takes `DESC_PTR` over AXI-Lite, and
+`rtl/llama_top.vhd:1913` synthesises A's bases arithmetically precisely
+because the base array is not fetched.  So the A descriptor ADDRESSES this
+tool emits are a host-side allocation, and which mechanism delivers them to
+the card is an open integration decision, not a derivation."
+
+D's step table is dense at a 64-byte stride, so **step i+1's header occupies
+exactly the bytes step i's base array would need** -- the two cannot share one
+block, which is why the pointer has to exist somewhere and does not.
+
+**THE LESSON, and it is the second time today.** A comment saying "not done
+HERE" or "remaining work" is a statement about the file it is in. Both times I
+took one as a statement about the repository, and both times the capability
+existed elsewhere or the blocker was narrower than the quote implied. Grep for
+the capability before quoting its absence.
 
 **BUILT AND VERIFIED 2026-09-02.** Four modules and four benches, write-up
 `docs/debugging/2026-09-02_gdn-state-dma.md`:

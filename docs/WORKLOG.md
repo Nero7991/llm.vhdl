@@ -79,15 +79,43 @@ it TRUE the degenerate-residual count RISES, 0/3/10/23 -> 3/5/11/24 at
 physically impossible and gdn_scalar's gate saturates shut. **Sourcing the taps
 ALONE is neutral.**"
 
-So the tap store removes an ASSERT and changes no number. The thing that
-changes numbers is **`rtl/seq_desc_fetch.vhd:113-115`: "The base array
-(`nsub_w + nsub_s` 64-bit words at offset 0x40) is NOT fetched here ...
-Fetching it is remaining work."** A multiplies whatever the memory holds at a
-computed address instead of the weights its descriptor names, and that is
-upstream of B, C and the sampler alike.
+So the tap store removes an ASSERT and changes no number. What changes numbers
+is A -- and **I then got the SIZE of that wrong too, in the same hour, and the
+two mistakes have one shape.**
 
-**THE HONEST ORDER OF WHAT REMAINS TO A RIGHT TOKEN**, corrected:
-1. A's descriptor base-array fetch. Nothing downstream can be right first.
+I quoted `rtl/seq_desc_fetch.vhd:113-115` -- "The base array ... is NOT fetched
+here ... Fetching it is remaining work" -- and wrote it up as "A does not fetch
+its weights, and writing that fetcher is the top blocker". **The fetcher
+exists.** `rtl/matvec_int4_desc_axi.vhd` reads a descriptor from `DESC_PTR`,
+drives the core's `w_base`/`s_base` from its base array
+(`dw(DESC_BASE0 + p)`), carries its own base-array bounds checks, and is
+covered by FOUR gate rows: `tb_a_geom`, `tb_matvec_fk33_desc`,
+`tb_matvec_fk33_desc_dual`, `tb_matvec_fk33_desc_xexp`.
+
+What is wrong is the INTEGRATION: `llama_top.vhd:3335` instantiates the RAW
+`matvec_int4` and fabricates the bases as a uniform stride
+(`base + p*A_SUB_BYTES`), and its own warning says the cost -- "The per-job
+weight address block is FABRICATED ... running would have read the next
+sub-region's bytes and reported success."
+
+**The genuinely open piece is where `DESC_PTR` comes from**, and
+`tools/gen_layer_program.py:36` states it as a DECISION rather than a gap:
+"which mechanism delivers them to the card is an open integration decision,
+not a derivation." D's step table is dense at a 64-byte stride, so step i+1's
+header occupies exactly the bytes step i's base array would need; the two
+cannot share a block, so the pointer must live somewhere and today it does not.
+
+**THE LESSON, TWICE IN ONE HOUR: a "not done HERE / remaining work" comment is
+a statement about ITS FILE, not about the repository.** I took one as a
+project-level fact about the conv taps and again about A's weight fetch, and
+both times the real situation was narrower -- once because a second blocker
+mattered more, once because the capability already existed and was gated.
+**Grep for the capability before quoting its absence.**
+
+**THE HONEST ORDER OF WHAT REMAINS TO A RIGHT TOKEN**, corrected twice:
+1. Wire `matvec_int4_desc_axi` into `llama_top` in place of the raw core, and
+   decide where each A job's `DESC_PTR` comes from. Nothing downstream can be
+   right first, and the fetch logic is already written and gated.
 2. The B job sequencer, which is also what feeds the tap write port and
    pulses `tok_adv`.
 3. C's mover.
