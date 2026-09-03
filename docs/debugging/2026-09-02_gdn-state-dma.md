@@ -347,13 +347,183 @@ attribute was the difference between fitting and not. **Two stores in the same
 subsystem, opposite answers on whether the attribute matters, and neither is
 guessable from the other.**
 
+## 7f. The exponent phase, sequenced through the ONE pair of masters
+
+**The question.** The mover was generalised over word shape in 7d so that one
+module could carry the state exponents as well as the mantissas, and 7e built
+the 8-bit store they land in -- but nothing instantiated the mover at that
+shape. Can both phases share one pair of HBM masters, and what does the whole
+tier then cost?
+
+**The answer, up front.** Yes. `gdn_state_store` now holds two instances of
+`gdn_state_axi` -- one at `WORD_BITS => RECUR_LANES*16, N_GRP => DIM/LANES`
+and one at `WORD_BITS => 8, N_GRP => 1` -- a four-state sequencer that runs
+them in turn, and a 2:1 on the masters selected by a `sel_e` held for a whole
+phase. One `load_start` moves 1,052,672 bytes in two transfers and pulses
+`done` once. MEASURED, shipping shape, `xcvu33p`, 5.0 ns:
+
+| | | device |
+|---|---:|---:|
+| CLB LUTs | **3,310** | 0.75% |
+| -- LUT as logic | 1,390 | |
+| -- LUT as memory | 1,920 | 0.93% |
+| CLB Registers | **1,355** | 0.15% |
+| URAM288 | **32** | 10.00% |
+| Block RAM Tile | **0** | 0.00% |
+| DSP48E2 | **2** | 0.07% |
+| CARRY8 / F7 / F8 | 30 / 224 / 96 | |
+| WNS | **+1.400 ns**, 278 MHz | |
+
+**The parts sum to 2,963 and the composition is 3,310**, so the second mover,
+the sequencer and the two AXI muxes cost **347 CLB LUT, +11.7%** over the naive
+sum of the mantissa-only store (497) and the standalone exponent store (2,466).
+That is the number the composed draw exists to produce: it is neither free, as
+a reader might assume from "it is the same module again", nor full price, which
+would have been another 269.
+
+**The two DSPs are the two `layer * LAYER_STRIDE` multiplies**, one per mover
+instance -- the same constant multiply flagged in section 8 as removable by a
+shift-and-add if DSP ever binds. It now costs two.
+
+### The procedure
+
+1. `tb_gdn_exp_mem` extended with a check that DISCRIMINATES on the mover
+   port's latency, then mutated.
+2. `tb_gdn_state_store` re-shaped so the exponent phase is more than one burst,
+   and extended to move exponents through the unit's `se_*` ports on every
+   token alongside the mantissas.
+3. Eight mutants, each run against the full bench AND against the bench with
+   the exponent checks removed -- the attribution control.
+4. One composed OOC synthesis for the census above.
+
+### The design defect: the mover's read of the exponent store must be REGISTERED
+
+`gdn_state_axi` issues an address, registers it, and collects the word TWO
+edges later, because `gdn_state_mem` is a block or ultra RAM with a registered
+read. `gdn_exp_mem` is distributed RAM and its unit-facing read is
+ASYNCHRONOUS by requirement -- `gdn_block` consumes an exponent on the same
+edge it drives the address. Handing that asynchronous port to the mover
+presents each byte one edge EARLY, and since the mover walks a new address
+every cycle, the byte it collects is the NEXT one: every saved exponent block
+shifted by one, wrapping at the beat.
+
+The fix is 8 flip-flops on the mover port only. The unit port is untouched, so
+the array keeps one style and one behaviour.
+
+**This is defect D2 from section 5 recurring on a second port**, which is the
+argument for writing it down rather than fixing it quietly: the two-edge rule
+is a property of the MOVER, and it is now been violated once by each memory it
+has been connected to.
+
+### The bench defect: 767 of 768 wrong, and the cause was in neither module
+
+The first run of the extended store bench failed 511 of 512 exponent checks,
+every one shifted by exactly one entry. That is the exact signature of the
+latency defect above, which had already been fixed -- so the obvious reading
+was that the fix was wrong or incomplete.
+
+**PROBE A settled it in one run.** A loop inserted between the unit's writes
+and the `save_start` pulse, reading the exponents straight back through the
+unit port with NO DMA in between: 767 of 768 mismatched. The mover had not run
+yet. The defect was on the unit's own read path.
+
+The cause was a relay inside the DUT. `se_rdata <= ex_r_data`, with
+`ex_r_data` driven by the memory instance, is free in hardware and is NOT free
+in a bench: it inserts a delta cycle, and the bench checked the combinational
+read after a fixed `wait for 0 ns; wait for 0 ns;`. Two deltas were enough
+before the relay existed and one short after it.
+
+Two things changed, and both are the lesson:
+
+- **The DUT drives `se_rdata` directly from the instance.** A relay signal
+  that exists only to be renamed is a delta with no purpose.
+- **The bench no longer counts deltas.** `unit_eread` positions itself at a
+  FALLING edge, drives the address, and waits a real 1 ns -- half a clock
+  period, so no rising edge can occur and the read is still proven
+  combinational, but the check survives any amount of internal rewiring. **A
+  fixed delta count encodes a private detail of the DUT's wiring in the
+  bench**, and when that detail changes the bench reports a data error in the
+  wrong module. It cost an hour, and every minute of it was spent reading the
+  mover.
+
+### The mutation table, WITH the attribution control
+
+Every mutant was run twice: against the bench as it now stands, and against
+the same bench with the exponent write, read and check loops removed -- i.e.
+against what the bench was before this work. The control column is what stops
+the new checks being credited with kills that already belonged to something
+else.
+
+| # | mutation | full bench | control (no exponent checks) | credit |
+|---|---|---|---|---|
+| e1 | `gdn_exp_mem` mover read made asynchronous again | **FAIL 448/4632** | PASS 4120 | **new** |
+| s1 | `sel_e` never asserted: the exponent mover never gets the bus | **FAIL, `done` never asserted** | dies in the mover | pre-existing |
+| s2 | exponent phase skipped, `Q_MANT -> Q_DONE` | **FAIL 512/4632** | PASS 4120 | **new** |
+| s3 | `exp_base = state_base`: exponents written over the mantissas | **FAIL 128/4632** | FAIL 128/4120 | pre-existing |
+| s4 | load and save swapped for the exponent phase only | **FAIL 509/4632** | PASS 4120 | **new** |
+| s5 | the idle mover's `arready`/`rvalid` broadcast instead of forced low | PASS | PASS | **NO BITE** |
+| s6 | the unit's exponent write no longer gated by `busy` | PASS | PASS | **NO BITE** |
+| s7 | `done` reported after the mantissa phase, exponents still in flight | **dies: `outst` underflow in the mover** | dies | pre-existing |
+
+**Three of the six kills belong to the new checks and three do not.** Without
+the control this table would have claimed six, and s3 in particular reads like
+an exponent bug while being caught by the MANTISSA checks -- writing the
+exponents at the layer base corrupts 128 mantissa words, and the exponent
+checks then pass because the exponents themselves round-trip correctly to the
+wrong address.
+
+**s5 and s6 do not bite, and they are reported under their own names because
+that is the honest resolution floor of this bench.** Both are defensive:
+
+- **s5** forces the idle mover's ready and valid inputs low. It is
+  unobservable here because an idle `gdn_state_axi` holds `arvalid` low, so
+  broadcasting a ready to it changes nothing. The gating is kept anyway: a
+  design that is correct only because of what another module happens not to do
+  is the shape of bug this project keeps paying for. But it is UNTESTED, and
+  no mutation of this bench can test it.
+- **s6** removes the `and not bsy` from the unit's exponent write. The bench
+  never violates the ownership rule, so there is nothing to suppress. The
+  sim-only `guard` process is what would catch a caller that did, and the guard
+  reads the RAW `se_wen` port rather than the gated copy precisely so that
+  gating the write does not also silence the report. Neither is exercised.
+
+### Two refusals that only this file can make
+
+`bad_exp_bytes_vs_shape` and `bad_stride_below_mant_plus_exp` live in
+`gdn_state_store`, not in the mover. **Each mover checks its own byte count
+against `LAYER_STRIDE` and neither can see the other**, so nothing inside them
+would notice the mantissa and exponent regions OVERLAPPING inside one layer.
+This is the only place both figures are visible at once. The third,
+`bad_mant_bytes_not_beat_aligned`, is true at the shipping shape as a
+consequence of the mantissa geometry -- and a check that holds by consequence
+is not a check, so it is stated independently.
+
+### A measurement trap, in the control itself
+
+The control build prints `PASS -- 4120 checks, of which 0 exponents; every
+layer's mantissas AND exponents survived ...`. That sentence is false in the
+control, and it is false because the control is the bench with its
+`assert n_exp > 0` removed. In the shipping bench that assertion is what stops
+a run that moved no exponents from claiming it did. **The control is a
+deliberately weakened bench and its PASS line should not be quoted as
+evidence about anything except the mutants.**
+
 ## 8. Open, not yet answered
 
-- **The exponents.** `gdn_state_exp_bytes_per_layer = 4096` is reserved in the
-  arena and this module does NOT move it. `semem` in `llama_top` is the
-  corresponding store. Named, not built.
-- **The conv tap history.** No arena reservation and no mover. 49,152 B per
-  layer.
+- ~~**The exponents.**~~ **DONE, see section 7f.** `gdn_state_store` runs a
+  second `gdn_state_axi` at `WORD_BITS => 8, N_GRP => 1` after the mantissa
+  phase, over the same pair of masters. 4,632 checks in
+  `tb_gdn_state_store`, of which 512 are exponents.
+- **The conv tap history.** ~~No arena reservation and no mover.~~ 49,152 B per
+  layer. **RESERVED 2026-09-02** inside `gdn_state_bytes_per_layer` -- derived
+  by `hbm_map.arena_sizes()` from `conv_kernel`, the
+  `qkv_dim = 2*key_dim + val_dim` identity, and the element width scraped off
+  `gdn_block`'s `cv_x` port; the stride went 1,052,672 -> 1,101,824. **The
+  on-chip store is built and measured** (`rtl/gdn_conv_tap_mem.vhd`, 12 RAMB36
+  / 317 CLB LUT, four versions and three different failed BRAM inferences --
+  `docs/debugging/2026-09-02_conv-tap-history.md`). **STILL NO MOVER**: nothing
+  instantiates `gdn_state_axi` at `WORD_BITS => 16, N_GRP => 1`, nothing feeds
+  the tap write port from A's qkv, and nothing pulses `tok_adv`.
 - ~~Area and timing.~~ **MEASURED, BC-250 lane, shipping geometry**
   (VAL_HEADS 32, DIM 128, RECUR_LANES 4, LAYERS 24, LAYER_STRIDE 1,052,672,
   MANT_BYTES 1,048,576, AXI_DW 256, MAXB 16, MAXOUT 4), 5.0 ns:
@@ -386,5 +556,12 @@ guessable from the other.**
 - **The 50-cycle HBM read latency** used to derive the 31-vs-127 tok/s
   outstanding-burst argument is an ESTIMATE and has never been measured on this
   card. The ratio is what the argument rests on, not the figure.
-- **Nothing has connected this to `gdn_block`.** The mux between the DMA's
-  store ports and the unit's `st_*` ports is described and not written.
+- **Nothing has connected this to `gdn_block`.** The mux between the movers'
+  store ports and the unit's `st_*` and `se_*` ports IS written and measured
+  (`gdn_state_store`, 3,310 CLB LUT), but no instance of `gdn_block` is wired
+  to it and no sequencer issues `load_start`/`save_start` per layer. That job
+  sequencer is the next piece, and until it exists the tier is verified and
+  unused.
+- **`s5` and `s6` are untestable by this bench** (section 7f). The AXI input
+  gating and the busy-gate on the unit's exponent write are both defensive and
+  neither has ever been shown to discriminate.

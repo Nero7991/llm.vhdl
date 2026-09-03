@@ -21,6 +21,17 @@
 -- every OTHER layer has been loaded into and evicted from the same physical
 -- URAM.  A design that kept state on-chip would pass this trivially and is
 -- exactly what does not fit.
+--
+-- BOTH HALVES OF THE STATE, AND THEY ARE NOT THE SAME KIND OF MEMORY.  The
+-- mantissas live in URAM with a REGISTERED read; the exponents live in
+-- distributed RAM with a COMBINATIONAL one, because gdn_block consumes an
+-- exponent on the same edge it drives the address.  They are moved by two
+-- instances of the SAME mover over ONE shared pair of AXI masters, in
+-- sequence, so the failure this bench is really hunting is a phase that
+-- steals the other's handshake or writes the other's region of the arena.
+-- Layer L's exponents sit at `base + L*stride + MANT_BYTES`, immediately
+-- after its mantissas: an off-by-one-region address error is invisible at
+-- layer 0 and corrupts every other layer.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -29,12 +40,20 @@ use std.env.finish;
 
 entity tb_gdn_state_store is
   generic(
-    VAL_HEADS   : positive := 2;
-    DIM         : positive := 8;
+    -- SHAPED SO THE EXPONENT PHASE IS MORE THAN ONE BURST.  The exponents are
+    -- `VAL_HEADS*DIM` BYTES, so at the previous 2x8 shape they were 16 bytes
+    -- against a 4-beat burst of 16-byte beats: BURSTS would round to zero and
+    -- the mover's `bad_fewer_beats_than_one_burst` refusal would fire during
+    -- elaboration.  Narrowing AXI_DW to 64 rather than widening the geometry
+    -- keeps the mantissa side small: at 4x16 the exponents are 64 bytes = 8
+    -- beats = 2 bursts, which also exercises the MAXOUT=2 bound on a phase
+    -- short enough that a bug in it cannot hide behind the long one.
+    VAL_HEADS   : positive := 4;
+    DIM         : positive := 16;
     RECUR_LANES : positive := 2;
     LAYERS      : positive := 4;
     NTOK        : positive := 3;
-    AXI_DW      : positive := 128;
+    AXI_DW      : positive := 64;
     MAXB        : positive := 4;
     MAXOUT      : positive := 2;
     RD_LAT      : positive := 5;
@@ -50,7 +69,15 @@ architecture sim of tb_gdn_state_store is
   constant BEATS : positive := WORDS / WPB;
   constant BPB   : positive := AXI_DW / 8;
   constant MANT_BYTES   : positive := BEATS * BPB;
-  constant LAYER_STRIDE : positive := MANT_BYTES + BPB;
+  constant EXPN         : positive := VAL_HEADS * DIM;
+  constant EXP_BYTES    : positive := EXPN;          -- one byte per entry
+  constant EXP_BEATS    : positive := EXP_BYTES / BPB;
+  -- A GAP AFTER THE EXPONENTS, ON PURPOSE.  `MANT_BYTES + EXP_BYTES` exactly
+  -- would make "the end of layer L's exponents" and "the start of layer L+1"
+  -- the same address, so a mover that ran one region too long would land on
+  -- the next layer's data and be caught only by luck.  With a spare beat, an
+  -- overrun writes a hole nothing reads and the CHECK is what catches it.
+  constant LAYER_STRIDE : positive := MANT_BYTES + EXP_BYTES + BPB;
   constant ADDR_W : positive := 33;
   constant BASE   : natural := 8192;
 
@@ -67,6 +94,12 @@ architecture sim of tb_gdn_state_store is
   signal st_rgrp,  st_wgrp  : natural range 0 to NBR-1 := 0;
   signal st_rdata : std_logic_vector(WBITS-1 downto 0);
   signal st_wdata : std_logic_vector(WBITS-1 downto 0) := (others => '0');
+
+  signal se_rhead, se_whead : natural range 0 to VAL_HEADS-1 := 0;
+  signal se_rcol,  se_wcol  : natural range 0 to DIM-1 := 0;
+  signal se_rdata : signed(7 downto 0);
+  signal se_wen   : std_logic := '0';
+  signal se_wdata : signed(7 downto 0) := (others => '0');
 
   signal arvalid, arready, rvalid, rready, rlast : std_logic := '0';
   signal araddr : std_logic_vector(ADDR_W-1 downto 0);
@@ -86,7 +119,8 @@ architecture sim of tb_gdn_state_store is
   signal bvalid, bready : std_logic := '0';
   signal bresp  : std_logic_vector(1 downto 0) := "00";
 
-  constant SLAVE_BEATS : positive := LAYERS * (LAYER_STRIDE / BPB) + BEATS;
+  constant SLAVE_BEATS : positive := LAYERS * (LAYER_STRIDE / BPB)
+                                    + BEATS + EXP_BEATS;
   type smem_t is array (0 to SLAVE_BEATS-1)
                  of std_logic_vector(AXI_DW-1 downto 0);
   -- Driven by the slave process ONLY; nothing else assigns it.  Two drivers
@@ -96,6 +130,7 @@ architecture sim of tb_gdn_state_store is
 
   signal n_chk, n_bad : natural := 0;
   signal n_stall : natural := 0;
+  signal n_exp   : natural := 0;   -- exponent bytes actually checked
 
   -- the value layer L holds at token T, distinct in every 16-bit lane
   function val(L, T, i : natural) return std_logic_vector is
@@ -106,6 +141,15 @@ architecture sim of tb_gdn_state_store is
         ((L*7919 + T*104729 + i*31 + k*613) mod 65536), 16));
     end loop;
     return v;
+  end function;
+
+  -- the exponent layer L holds at token T, entry i.  A DIFFERENT generator
+  -- from `val`, deliberately: if both regions were filled from one function
+  -- a mover that wrote the exponents over the mantissas' address range could
+  -- still read back consistent-looking bytes.
+  function eval(L, T, i : natural) return signed is
+  begin
+    return to_signed(((L*23 + T*57 + i*11 + 19) mod 256) - 128, 8);
   end function;
 begin
   clk <= not clk after 5 ns;
@@ -125,7 +169,9 @@ begin
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
                 RECUR_LANES => RECUR_LANES, LAYERS => LAYERS,
                 STYLE => "auto",
+                EXP_STYLE => "distributed",
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => MANT_BYTES,
+                EXP_BYTES => EXP_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst,
@@ -137,6 +183,9 @@ begin
              st_rgrp => st_rgrp, st_rdata => st_rdata,
              st_wen => st_wen, st_whead => st_whead, st_wcol => st_wcol,
              st_wgrp => st_wgrp, st_wdata => st_wdata,
+             se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
+             se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
+             se_wdata => se_wdata,
              r_arvalid => arvalid, r_arready => arready, r_araddr => araddr,
              r_arlen => arlen, r_arsize => arsize, r_arburst => arburst,
              r_rvalid => rvalid, r_rready => rready, r_rdata => rdata,
@@ -287,6 +336,40 @@ begin
       st_ren <= '0';
       tick;   -- registered read: the data is valid on the second edge
     end procedure;
+
+    -- the exponent port.  Same shape as gdn_block's se_*, including the
+    -- absence of a read enable: the read is COMBINATIONAL and there is
+    -- nothing to enable.
+    procedure unit_ewrite(i : natural; d : signed) is
+    begin
+      se_wen   <= '1';
+      se_whead <= i / DIM;
+      se_wcol  <= i mod DIM;
+      se_wdata <= d;
+      tick;
+      se_wen <= '0';
+    end procedure;
+
+    -- NO RISING EDGE between driving the address and checking the data.  If
+    -- there were one, the check would pass against a REGISTERED exponent
+    -- memory, which is the one memory gdn_block cannot use (see the
+    -- rtl/gdn_exp_mem.vhd header).
+    --
+    -- POSITIONED AT A FALLING EDGE AND THEN WAITING A REAL 1 ns, rather than
+    -- counting `wait for 0 ns`.  A fixed delta count encodes a private detail
+    -- of the DUT's internal wiring -- how many concurrent assignments the
+    -- signal passes through on its way out -- so adding one relay inside the
+    -- DUT silently shifts every read by one address.  MEASURED: that is
+    -- exactly what happened here, and it read as a mover bug until a probe
+    -- showed the unit port was already wrong BEFORE any DMA ran.  Half a
+    -- clock period is unambiguous and survives any internal rewiring.
+    procedure unit_eread(i : natural) is
+    begin
+      wait until falling_edge(clk);
+      se_rhead <= i / DIM;
+      se_rcol  <= i mod DIM;
+      wait for 1 ns;
+    end procedure;
   begin
     rst <= '1'; tick(4); rst <= '0'; tick(2);
 
@@ -313,8 +396,26 @@ begin
           end loop;
         end if;
 
+        -- The exponents, same rule: token 0 seeds, later tokens must find
+        -- what the previous one left after every other layer has passed
+        -- through the same distributed RAM.
+        if T > 0 then
+          for i in 0 to EXPN-1 loop
+            unit_eread(i);
+            n_exp <= n_exp + 1;
+            chk(se_rdata = eval(L, T-1, i),
+                "token " & integer'image(T) & " layer " & integer'image(L)
+                & " exponent " & integer'image(i) & " lost its state: got "
+                & integer'image(to_integer(se_rdata)) & " want "
+                & integer'image(to_integer(eval(L, T-1, i))));
+          end loop;
+        end if;
+
         for i in 0 to WORDS-1 loop
           unit_write(i, val(L, T, i));
+        end loop;
+        for i in 0 to EXPN-1 loop
+          unit_ewrite(i, eval(L, T, i));
         end loop;
 
         save_start <= '1'; tick; save_start <= '0';
@@ -329,6 +430,7 @@ begin
          & " bad=" & integer'image(n_bad)
          & " tokens=" & integer'image(NTOK)
          & " layers=" & integer'image(LAYERS)
+         & " exponent bytes=" & integer'image(n_exp)
          & " W stalls=" & integer'image(n_stall) severity note;
 
     -- A run that never reached token 1 checked no persistence at all.
@@ -338,10 +440,18 @@ begin
     assert n_stall > 0
       report "tb_gdn_state_store: FAIL, the slave never stalled."
       severity failure;
+    -- The exponent phase is 0.39% of the traffic and 50% of the state's
+    -- correctness.  A run that moved only mantissas and still said PASS is
+    -- the exact failure this assertion exists to prevent.
+    assert n_exp > 0
+      report "tb_gdn_state_store: FAIL, no exponent was ever checked, so the "
+           & "second phase of every transfer is UNTESTED."
+      severity failure;
 
     if n_bad = 0 then
       report "tb_gdn_state_store RESULT: PASS -- " & integer'image(n_chk)
-           & " checks; every layer's state survived "
+           & " checks, of which " & integer'image(n_exp)
+           & " exponents; every layer's mantissas AND exponents survived "
            & integer'image(LAYERS-1)
            & " evictions per token across " & integer'image(NTOK)
            & " tokens." severity note;

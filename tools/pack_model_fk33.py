@@ -276,6 +276,14 @@ def check_arena_substructure(files):
                     _ARENA["gdn_state_mant_bytes_per_layer"]),
                 gdn_state_exp_bytes_per_layer=(
                     _ARENA["gdn_state_exp_bytes_per_layer"]),
+                # The conv tap history, reserved 2026-09-02.  The three
+                # per-layer figures must sum to `gdn_state_bytes_per_layer`
+                # and the consumer asserts that they do, because the mover
+                # addresses each region as an OFFSET from the layer base and a
+                # stride that does not contain all three puts the third region
+                # on top of the next layer.
+                gdn_state_conv_bytes_per_layer=(
+                    _ARENA["gdn_state_conv_bytes_per_layer"]),
                 arena_sizing="derived from rtl/model_cfg_pkg.vhd by "
                              "tools/hbm_map.py arena_sizes()")
     if lm is None:

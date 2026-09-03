@@ -54,6 +54,7 @@ architecture sim of tb_gdn_exp_mem is
 
   signal n_chk, n_bad : natural := 0;
   signal n_async : natural := 0;   -- reads checked WITHOUT a clock edge
+  signal n_reg   : natural := 0;   -- mover reads shown NOT to be async
 
   function pat(i : natural) return signed is
   begin
@@ -116,12 +117,39 @@ begin
           & integer'image(to_integer(pat(i))));
     end loop;
 
-    -- ---- read through the MOVER port, also combinational -----------------
+    -- ---- read through the MOVER port, which is REGISTERED ----------------
+    -- ONE edge after the address, not zero.  `gdn_state_axi` collects a word
+    -- two edges after issuing its address, so an asynchronous mover read
+    -- would hand it the NEXT byte and shift every saved exponent block by
+    -- one; see the `m_r_data` port comment in rtl/gdn_exp_mem.vhd.
+    --
+    -- THE `wait for 0 ns` CHECK IS THE ONE WITH TEETH.  It asserts the data
+    -- has NOT yet moved.  Without it this loop passes just as happily against
+    -- an asynchronous read, which is exactly the memory this file used to
+    -- instantiate -- so the loop alone would not have caught the change it
+    -- exists to pin.
     for i in 0 to N-1 loop
       m_r_addr <= i;
       wait for 0 ns; wait for 0 ns;
+      if i > 0 then
+        n_reg <= n_reg + 1;
+        chk(m_r_data = pat(i-1),
+            "the mover read is NOT registered: the word at "
+            & integer'image(i) & " appeared with no clock edge, got "
+            & integer'image(to_integer(m_r_data)) & " want the PREVIOUS "
+            & integer'image(to_integer(pat(i-1))));
+      end if;
+      tick;
+      -- A DELTA AFTER THE EDGE, NOT JUST THE EDGE.  The memory assigns
+      -- `m_r_data` on this same edge, and a signal assigned in one delta is
+      -- not readable until the next; without this the check compares against
+      -- the PREVIOUS word and reports an off-by-one that is the bench's, not
+      -- the memory's.  MEASURED: 31 of 32 spurious failures.
+      wait for 0 ns;
       chk(m_r_data = pat(i),
-          "combinational mover read at " & integer'image(i));
+          "registered mover read at " & integer'image(i) & " got "
+          & integer'image(to_integer(m_r_data)) & " want "
+          & integer'image(to_integer(pat(i))));
     end loop;
 
     -- ---- write through the UNIT port, read back both ways ----------------
@@ -134,7 +162,7 @@ begin
     tick;
     for i in 0 to N-1 loop
       m_r_addr <= i;
-      wait for 0 ns; wait for 0 ns;
+      tick; wait for 0 ns;
       chk(m_r_data = pat2(i),
           "unit write not visible on the mover port at " & integer'image(i));
     end loop;
@@ -148,24 +176,33 @@ begin
     m_w_en <= '0'; w_en <= '0';
     tick;
     m_r_addr <= 3;
-    wait for 0 ns; wait for 0 ns;
+    tick; wait for 0 ns;
     chk(m_r_data = to_signed(99, 8),
         "the mover port did not win a simultaneous write: got "
         & integer'image(to_integer(m_r_data)));
 
     report "tb_gdn_exp_mem: checks=" & integer'image(n_chk)
          & " bad=" & integer'image(n_bad)
-         & " combinational reads=" & integer'image(n_async) severity note;
+         & " combinational reads=" & integer'image(n_async)
+         & " registered-mover proofs=" & integer'image(n_reg) severity note;
 
     assert n_async > 0
       report "tb_gdn_exp_mem: FAIL, no combinational read was ever checked, "
            & "so the property this file exists for is UNTESTED."
       severity failure;
+    -- The two ports have OPPOSITE latencies and both matter.  A run that
+    -- checked neither asymmetry checked nothing this file is for.
+    assert n_reg > 0
+      report "tb_gdn_exp_mem: FAIL, the mover port was never shown to be "
+           & "registered, so an asynchronous read would pass here."
+      severity failure;
 
     if n_bad = 0 then
       report "tb_gdn_exp_mem RESULT: PASS -- " & integer'image(n_chk)
            & " checks, of which " & integer'image(n_async)
-           & " confirmed the read is combinational." severity note;
+           & " confirmed the unit read is combinational and "
+           & integer'image(n_reg)
+           & " confirmed the mover read is not." severity note;
     else
       report "tb_gdn_exp_mem RESULT: FAIL -- " & integer'image(n_bad)
            & " of " & integer'image(n_chk) severity error;

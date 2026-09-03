@@ -6,7 +6,7 @@
 #
 # The generics here are the SHIPPING ones, from tools/hbm_map.py::arena_sizes()
 # against QWEN35_9B: 24 GDN layers, 1,048,576 mantissa bytes per layer, stride
-# 1,052,672.  A run with different numbers is not pricing the card's mover.
+# 1,101,824.  A run with different numbers is not pricing the card's mover.
 # THE `PRIMITIVE_GROUP` FILTER DOES NOT WORK IN THIS VIVADO AND RETURNS ZERO.
 # MEASURED 2026-09-02: `get_cells -hier -filter {PRIMITIVE_GROUP == LUT}` and
 # `== FLOP_LATCH` both returned 0 on a design whose own report_utilization said
@@ -34,7 +34,7 @@ read_vhdl -vhdl2008 [file join $rtldir util_pkg.vhd]
 read_vhdl -vhdl2008 [file join $rtldir gdn_state_axi.vhd]
 synth_design -mode out_of_context -top gdn_state_axi -part $part \
   -generic VAL_HEADS=32 -generic DIM=128 -generic RECUR_LANES=4 \
-  -generic LAYERS=24 -generic LAYER_STRIDE=1052672 \
+  -generic LAYERS=24 -generic LAYER_STRIDE=1101824 \
   -generic MANT_BYTES=1048576 \
   -generic AXI_DW=256 -generic ADDR_W=33 -generic MAXB=16 -generic MAXOUT=4
 

@@ -387,17 +387,46 @@ def main():
     ap.add_argument("--show", type=int, default=6, help="max mismatches to print")
     a = ap.parse_args()
 
+    # A MUTANT NEVER GETS THE DEFAULT BINARY PATH.  MEASURED 2026-09-02: a
+    # `--build --mutate think-default` run compiled the mutant to `--cbin`
+    # and LEFT IT THERE, so the next plain run -- which does not rebuild --
+    # silently tested the mutant and reported
+    # `leg 1 bytes: 992 identical, 1045 DIFFER ... CHAT_TEMPLATE FAIL`.
+    # That reads exactly like a regression in qwen35_chat.c, and it cost half
+    # an hour of hunting one: the C was correct, the harness was running last
+    # week's mutant.  Suffixing the path means a mutation run can never poison
+    # the clean binary, and the two can coexist.
+    cbin = a.cbin + ("." + a.mutate if a.mutate else "")
+
     if a.build:
-        build(a.cbin, a.mutate)
+        build(cbin, a.mutate)
     elif a.mutate:
         raise SystemExit("--mutate needs --build")
+
+    # A BINARY THIS RUN DID NOT BUILD IS NOT EVIDENCE ABOUT THIS TREE.  Without
+    # --build the comparison is against whatever was compiled last, which may
+    # predate every source change since.  Refuse rather than report on it.
+    if not a.build:
+        if not os.path.exists(cbin):
+            raise SystemExit(f"{cbin} does not exist; run with --build")
+        newer = [f for f in (os.path.join(HERE, "qwen35_chat.c"),
+                             os.path.join(HERE, "qwen35_tok.c"),
+                             os.path.join(HERE, "qwen35_unicode_data.c"),
+                             os.path.join(HERE, "tests", "chat_batch.c"))
+                 if os.path.getmtime(f) > os.path.getmtime(cbin)]
+        if newer:
+            raise SystemExit(
+                "%s is older than %s.\n"
+                "  Re-run with --build.  A stale binary reports a FAIL that "
+                "belongs to a source nobody is looking at."
+                % (cbin, ", ".join(os.path.basename(f) for f in newer)))
 
     cases = build_cases(a.seed, a.n_random)
     print(f"cases             : {len(cases)} "
           f"({len(cases) - a.n_random} hand-written, {a.n_random} random)")
 
     tmpl = make_env(load_template(a.qtk, a.jinja))
-    ours = run_c(a.cbin, cases, a.qtk if a.ids else None)
+    ours = run_c(cbin, cases, a.qtk if a.ids else None)
 
     n_ok = n_refused_both = 0
     deliberate = []

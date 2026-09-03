@@ -11,8 +11,9 @@
 -- THE ADDRESS MAP IS NOT INVENTED HERE, AND MUST NOT BE.  `tools/hbm_map.py`
 -- already derives, and `tools/pack_model_fk33.py` already reserves in the
 -- manifest, `gdn_state_mant_bytes_per_layer = 1048576` and
--- `gdn_state_exp_bytes_per_layer = 4096`, stride 1052672, 24 layers,
--- 25,264,128 bytes total, with `server/fk33_manifest.c` enforcing
+-- `gdn_state_exp_bytes_per_layer = 4096` and (since 2026-09-02)
+-- `gdn_state_conv_bytes_per_layer = 49152`, stride 1101824, 24 layers,
+-- 26,443,776 bytes total, with `server/fk33_manifest.c` enforcing
 -- `gdn_state_base >= weights_end`.  `state_base` is an INPUT for exactly that
 -- reason: this module is told where the arena is and never computes it.  That
 -- address space has already had one silent collision between two allocators
@@ -44,11 +45,13 @@
 -- measured on this card**; the ratio is what matters and it does not depend
 -- on the exact figure.
 --
--- STATUS: the mantissa path only.  The 4,096 bytes of per-layer state
--- EXPONENTS (`semem` in llama_top) are declared in the arena and are NOT moved
--- by this module yet, and neither is the conv tap history, which has no arena
--- reservation at all.  Both are named in the write-up's open list.  This
--- module REFUSES to claim it moved them: `exp_done` does not exist.
+-- STATUS: ONE region per instantiation, whichever the generics name.  The
+-- caller runs it twice -- see `rtl/gdn_state_store.vhd`, which instantiates it
+-- at the mantissa shape and again at `WORD_BITS => 8, N_GRP => 1` for the
+-- 4,096 bytes of per-layer state EXPONENTS, over one shared pair of masters.
+-- The CONV TAP HISTORY (49,152 B per layer) is reserved in the arena as of
+-- 2026-09-02 and is NOT moved by anything yet.  This module REFUSES to claim
+-- otherwise: there is no third phase in it and no port that pretends to.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -84,7 +87,7 @@ entity gdn_state_axi is
 
     -- the arena, from tools/hbm_map.py::arena_sizes().  DEFAULTS ARE THE 9B
     -- FIGURES AND ARE STILL ONLY DEFAULTS: the caller passes the manifest's.
-    LAYER_STRIDE : positive := 1052672;   -- gdn_state_bytes_per_layer
+    LAYER_STRIDE : positive := 1101824;   -- gdn_state_bytes_per_layer
     MANT_BYTES   : positive := 1048576;   -- gdn_state_mant_bytes_per_layer
 
     -- AXI
@@ -207,7 +210,7 @@ architecture rtl of gdn_state_axi is
   -- exists: at AXI_DW=256 a bench stride of MANT_BYTES+16 is 528 bytes
   -- against a 32-byte beat, and exactly one layer of 256 checks failed while
   -- the other two passed.  The shipping 9B numbers ARE aligned
-  -- (1,052,672 / 32 = 32,896) so this never fires in the real configuration,
+  -- (1,101,824 / 32 = 34,432) so this never fires in the real configuration,
   -- which is precisely why it needed a sweep to find.
   constant bad_stride_not_beat_aligned : natural := 0 - (LAYER_STRIDE mod BPB);
   -- A geometry with fewer beats than one burst transfers nothing at all.

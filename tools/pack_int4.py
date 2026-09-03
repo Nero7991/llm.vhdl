@@ -821,8 +821,14 @@ def audit(path: str, rows_if: int, cards: int,
     print(f"    shape            {sz['gdn_layers']} GDN + {sz['attn_layers']} "
           f"attention layers, {sz['val_heads_per_card']} val heads, "
           f"{sz['kv_heads_per_card']} kv heads")
+    # THE THREE TERMS MUST BE PRINTED, NOT TWO.  This line said
+    # "mantissas + exponents = total" and the total gained a third term (the
+    # conv tap history) on 2026-09-02, so it would have printed an equation
+    # that does not add up -- which is worse than printing nothing, because a
+    # reader checks the arithmetic and concludes the ARENA is wrong.
     print(f"    GDN state/layer  {sz['gdn_state_mant_bytes_per_layer']} B "
           f"mantissas + {sz['gdn_state_exp_bytes_per_layer']} B exponents "
+          f"+ {sz['gdn_state_conv_bytes_per_layer']} B conv taps "
           f"= {sz['gdn_state_bytes_per_layer']} B")
     print(f"    KV record        {sz['kv_record_hdr_bytes']} B header + "
           f"{sz['attn_head_dim']} x {sz['kv_mantissa_bits']}/8 B mantissas "

@@ -49,6 +49,18 @@
 # is a `ghdl -r`.  A deep stack is NOT optional -- at the default 8 MB the
 # real shape SEGFAULTS during elaboration, which reads as a GHDL bug rather
 # than as the memory exhaustion it is.
+#
+# `--max-stack-alloc=0` FOR THE SAME REASON, AND ITS ABSENCE WAS THE SECOND
+# THING SILENTLY RED HERE.  MEASURED 2026-09-02, at HEAD and byte-identical in
+# the working tree: the `all_real` row died with
+#   declaration of a too large object (256 > --max-stack-alloc=128 KB)
+#   in process .llama_top(rtl).gen_vstub(0).gvr.u_rms@rmsnorm_rs_mem(rtl).P9
+# because this script passed no `--max-stack-alloc` and took GHDL's 128 KB
+# default, while `sim/regress.sh:2244` has passed `=0` all along.  The MEMORY
+# guard here is `systemd-run -p MemoryMax=`, not GHDL's stack cap, so lifting
+# the cap removes nothing: a runaway row still dies at 8G.  `all_real` is the
+# ONE row that turns B and C on together at the real shape, so the flag
+# mismatch silenced exactly the row worth the most.
 
 set -u
 
@@ -59,7 +71,20 @@ ONLY=""
 [ "${1:-}" = "--only" ] && ONLY="${2:-}"
 
 GHDL="${GHDL:-ghdl}"
-STD="--std=08"
+# `-frelaxed` IS NOT OPTIONAL AND ITS ABSENCE MADE THIS SCRIPT SILENTLY RED.
+# MEASURED 2026-09-02: ten of the nineteen rows -- every row that expects `ok`,
+# including `default_9b` -- failed with
+#   rtl/attn_block.vhd:1065:24: constant "g" is not visible here
+# and three cascading operator errors, at HEAD and with the working tree, on a
+# file nothing in this session touched.  Adding `-frelaxed` to the `-r` makes
+# the same row exit 0.  `sim/regress.sh` has passed it unconditionally to both
+# `-a` and `-r` since long before that (see its comment at :90), so the two
+# harnesses disagreed about the dialect and only the one that is a GATE ROW
+# stayed green.  **A standing check that nobody runs can be red for weeks**:
+# this one is deliberately not a gate row (its header says why -- ten rows must
+# make the ELABORATOR refuse, which no testbench can express), and that is
+# exactly what let it rot.
+STD="--std=08 -frelaxed"
 WORK="$SCRATCH/work"
 mkdir -p "$WORK"
 
@@ -98,6 +123,7 @@ row() {
   ( cd "$WORK" && "${CAPRUN[@]}" \
       /usr/bin/time -f 'RSSKB %M WALL %e' \
       "$GHDL" -r $STD --workdir="$WORK" "$unit" "$@" --stop-time=1ns \
+      --max-stack-alloc=0 \
   ) >"$out" 2>&1
   rc=$?
   local rss wall

@@ -321,39 +321,56 @@ the difference between fitting and not.
 **THE HBM SIDE ALREADY EXISTS, which is the one piece of good news here.**
 `tools/hbm_map.py::arena_sizes()` derives, and `tools/pack_model_fk33.py`
 already reserves in the manifest, `gdn_state_mant_bytes_per_layer = 1,048,576`
-and `gdn_state_exp_bytes_per_layer = 4,096`, 24 layers, 25,264,128 bytes total.
+and `gdn_state_exp_bytes_per_layer = 4,096` and, since 2026-09-02,
+`gdn_state_conv_bytes_per_layer = 49,152`; 24 layers, 26,443,776 bytes total.
 **1,048,576 bytes is 8,388,608 bits: the same figure measured above, to the
 byte, derived independently by a different tool for a different purpose.**
 `server/fk33_manifest.c` already enforces `gdn_state_base >= weights_end`. So
 the mover writes into an address map that exists; it does not have to allocate
 one.
 
-**But nothing reserves the conv tap history**: `(KCONV-1) * qkv_dim * 16 bits`
-= 49,152 B per layer, 1.125 MB total. It must be added to
-`hbm_map.arena_sizes()` and not quietly placed -- this address space has
-already had one silent collision between two allocators that could not see each
-other, and the symptom was a wrong token.
+~~**But nothing reserves the conv tap history**~~ -- **RESERVED 2026-09-02.**
+`(KCONV-1) * qkv_dim * 16 bits` = 49,152 B per layer, 1.125 MB total, now
+DERIVED by `hbm_map.arena_sizes()` from `conv_kernel` in `model_cfg_pkg`,
+`qkv_dim = 2*key_dim + val_dim` (the identity `gen_layer_program.Shape` and
+`llama_map_pkg` already use), and the element width scraped from `gdn_block`'s
+own `cv_x` port. It is INSIDE `gdn_state_bytes_per_layer`, so there is one
+base, one stride, and no second allocator -- which is the point: this address
+space has already had one silent collision between two allocators that could
+not see each other, and the symptom was a wrong token. **Nothing moves it
+yet.**
 
-**BUILT AND VERIFIED 2026-09-02.** Three modules and three benches, write-up
+**BUILT AND VERIFIED 2026-09-02.** Four modules and four benches, write-up
 `docs/debugging/2026-09-02_gdn-state-dma.md`:
 
 | module | what it is | measured |
 |---|---|---|
-| `rtl/gdn_state_mem.vhd` | one resident layer | **32 URAM288**, 0 BRAM, WNS +2.549 |
+| `rtl/gdn_state_mem.vhd` | one resident layer, mantissas | **32 URAM288**, 0 BRAM, WNS +2.549 |
+| `rtl/gdn_exp_mem.vhd` | one resident layer, exponents | **2,466 CLB LUT** (1,920 as memory), WNS +3.450 |
 | `rtl/gdn_state_axi.vhd` | the per-job HBM mover | **269 LUT, 703 FF, 1 DSP**, WNS +2.670 |
-| `rtl/gdn_state_store.vhd` | the two plus the arbiter | **497 LUT, 708 FF, 32 URAM288, 1 DSP, WNS +1.400** |
+| `rtl/gdn_state_store.vhd` | all of the above, both phases | **3,310 CLB LUT, 1,355 FF, 32 URAM288, 2 DSP, WNS +1.400** |
+| `rtl/gdn_conv_tap_mem.vhd` | one layer's conv tap history | **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831** (not yet composed in) |
 
-**The parts do NOT sum: the arbiter costs +228 LUT and 1.15 ns of slack**, and
-neither is visible in either component's own census. Small in absolute terms
-(0.11% of the device) but not zero, and a budget built from the two component
-numbers would have been 228 LUT short. Note also that `get_cells REF_NAME =~
-LUT*` says 548 and `report_utilization` says 497: those count PRIMITIVES and
-SITES respectively, both correct, and **the site count is the budget number**.
+**The parts do NOT sum, measured twice.** The mantissa-only composition cost
++228 LUT over its two components; the full two-phase composition costs
+**3,310 against a naive sum of 2,963 -- +347 LUT, +11.7%** for the second
+mover instance, the sequencer and the two AXI muxes. Neither increment is
+visible in any component's own census, and a budget built from component
+numbers would have been short both times. Note also that `get_cells REF_NAME
+=~ LUT*` says 1,700 and `report_utilization` says 3,310: those count
+PRIMITIVES and SITES respectively, both correct, and **the site count is the
+budget number** -- the 1,610 difference is the exponent store's 384 RAM64M8 at
+five LUT sites each.
 
 `sim/tb_gdn_state_store.vhd` proves the property the whole design rests on:
-**a layer's recurrent state survives being evicted by every other layer, across
-tokens.** 536 checks, 3 tokens, 3 evictions per layer per token, and all three
-of its mutations bite. A design that kept 24 layers on-chip would pass that
+**a layer's recurrent state -- mantissas AND exponents -- survives being
+evicted by every other layer, across tokens.** 4,632 checks, of which 512 are
+exponents, 3 tokens, 3 evictions per layer per token. **Six of eight mutations
+bite and two do not**, and the two that do not are named in the write-up with
+the reason: both are defensive properties this bench structurally cannot
+observe. An attribution control -- every mutant re-run against the bench
+WITHOUT the exponent checks -- shows the new checks earn **three** of the six
+kills and not six. A design that kept 24 layers on-chip would pass all of it
 trivially and is exactly the design that does not fit.
 
 **WHAT IT COSTS THE COMPOSITION, DERIVED from the two measured numbers.**
@@ -362,39 +379,48 @@ design -- so the cost is not per layer:
 
 | | wired `compose4_top` (MEASURED) | + the state tier | of device |
 |---|---:|---:|---:|
-| CLB LUTs | 270,141 | 270,638 | 61.6% |
+| CLB LUTs | 270,141 | 273,451 | 62.2% |
 | Block RAM | 327.5 | 327.5 | 48.7% |
 | **URAM288** | 0 | **32** | **10.0%** |
-| DSPs | 2,177 | 2,178 | **75.6%** |
+| DSPs | 2,177 | 2,179 | **75.6%** |
 
-**It is essentially free, and it spends a resource nothing else in this design
-uses.** DSP stays the binding resource at 75.6%. This is DERIVED addition of
-two separately measured OOC runs, not a composed draw, and section 7c of the
-DMA write-up is a live example of why that distinction matters -- composing the
-store with its own mover cost +228 LUT that neither component showed. Treat
-this table as an ESTIMATE until a composed synthesis reports it.
+**It is cheap and it spends a resource nothing else in this design uses.**
+DSP stays the binding resource at 75.6%; the tier's whole LUT cost is 0.75% of
+the device. This is DERIVED addition of two OOC runs -- the wired top and the
+composed store -- not a single composed draw, so the +347 lesson applies again
+one level up and this table is an ESTIMATE until one synthesis reports both.
+The state tier itself is now a COMPOSED measurement rather than a sum, which
+is the difference from the previous revision of this table.
 
 **Done when** -- the remaining B work, all of it still open:
-1. ~~the per-layer state EXPONENTS~~ -- the STORE is built and measured
-   (`rtl/gdn_exp_mem.vhd`, **2,466 LUT sites**, 1,920 of them LUT-as-memory,
-   0 FF, 0 BRAM, 0 URAM, WNS +3.450). **It cannot be BRAM or URAM**:
-   `gdn_block:317` demands a COMBINATIONAL read and both have registered ones.
-   The MOVER is ready for it -- `gdn_state_axi` now takes `WORD_BITS` and
-   `N_GRP` generics, so `WORD_BITS => 8, N_GRP => 1` gives exactly 4,096 bytes
-   -- but **nothing instantiates it at that shape yet**. What remains is a
-   sequencer in `gdn_state_store` to run the mantissa phase then the exponent
-   phase over the ONE shared pair of HBM masters;
-2. the conv tap history. **COSTED EXACTLY 2026-09-02**, through the
-   repository's own scrapers rather than by hand
-   (`hbm_map.scrape_model_cfg` + `scrape_gdn_state_terms`):
+1. ~~the per-layer state EXPONENTS~~ -- **DONE 2026-09-02.**
+   `rtl/gdn_exp_mem.vhd` (**2,466 LUT sites**, 1,920 of them LUT-as-memory,
+   0 BRAM, 0 URAM, WNS +3.450; **it cannot be BRAM or URAM**, `gdn_block:317`
+   demands a COMBINATIONAL read and both have registered ones) is now driven
+   by a SECOND `gdn_state_axi` at `WORD_BITS => 8, N_GRP => 1`, sequenced
+   after the mantissa phase over the ONE shared pair of HBM masters. One
+   `load_start` moves 1,052,672 bytes in two transfers and pulses `done` once.
+   The mover's read of that memory had to be REGISTERED -- an asynchronous one
+   shifts every saved block by a byte -- which is defect D2 of the write-up
+   recurring on a second port;
+2. ~~the conv tap history~~ -- **RESERVED 2026-09-02, NOT YET MOVED.**
+   Costed through the repository's own scrapers rather than by hand
+   (`hbm_map.scrape_model_cfg` + the new `scrape_gdn_conv_mant_bits`):
 
    ```
    qkv_dim                      8192
    conv history bytes per layer 49152      = (KCONV-1) * qkv_dim * mant_w/8
    conv history all 24 layers 1179648
-   current gdn arena total   25264128
-   would become              26443776      (+4.7%)
+   gdn arena total was       25264128
+   gdn arena total now       26443776      (+4.7%)
    ```
+
+   **It went into `hbm_map.arena_sizes()`**, inside `gdn_state_bytes_per_layer`
+   rather than as a fourth arena, so `LAYER_STRIDE` grew 1,052,672 ->
+   1,101,824 and every consumer picked it up from one place.
+   `server/fk33_manifest.c` needed NO change: it reads `gdn_state_base` and
+   `gdn_state_bytes` and nothing finer. `sim/realshape_gate.sh`'s
+   `kv_map_manifest_link` row still reports `ok 16 rows`.
 
    **It must go into `hbm_map.arena_sizes()` and not be placed by hand.** That
    file's own header records why: three allocators already share this device,
@@ -412,9 +438,18 @@ this table as an ESTIMATE until a composed synthesis reports it.
    the cost is a manifest rewrite and a re-verify, NOT a reflash of the weight
    image.
 
-   `B_SRC_REAL` has never run past token 0 anywhere in this repository because
-   this buffer does not exist, so nothing downstream can be trusted until it
-   does.
+   **THE ON-CHIP STORE IS BUILT AND MEASURED**, `rtl/gdn_conv_tap_mem.vhd`:
+   **12 RAMB36, 317 CLB LUT, 8 FF, WNS +3.831**, 107 checks, eight of nine
+   mutations biting. It took four versions -- the first cost **35,726 LUT and
+   zero BRAM** -- and the sequence of Vivado refusals is the reusable part:
+   `docs/debugging/2026-09-02_conv-tap-history.md`.
+
+   **What is still missing is the MOVEMENT**, so `B_SRC_REAL` still cannot run
+   past token 0: a third phase in `gdn_state_store` (a third `gdn_state_axi` at
+   `WORD_BITS => 16, N_GRP => 1` and a fourth sequencer state), something to
+   feed the tap write port from A's qkv stream, and something to pulse
+   `tok_adv` once per token. Nothing downstream of B can be trusted until
+   then.
 3. the B job sequencer: load state, run `gdn_block`, save state, plus the
    activation movement that `gb_real`'s `bp` process does today;
 4. the same for C, which already has its HBM tier in `attn_kv_axi`.

@@ -400,7 +400,52 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=112  # RAISED FROM 108, 2026-09-02.  FOUR new rows:
+BASELINE_PASS=113  # RAISED FROM 112, 2026-09-02 (later).  ONE new row,
+                   #    sim:tb_gdn_conv_tap_mem -- the conv tap history for one
+                   #    GDN layer, the third and last piece of B's per-layer
+                   #    state (docs/debugging/2026-09-02_conv-tap-history.md).
+                   #
+                   #    MEASURED THE SAME WAY AS THE 112 RAISE BELOW: a
+                   #    `git archive HEAD` tree with the changed and new files
+                   #    overlaid by explicit path, run with
+                   #    MV4I_FK33_FILE=/nonexistent so the four model-dependent
+                   #    FK33 rows SKIP:
+                   #
+                   #      OVERALL PASS 113  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 113 passing, above the recorded floor of
+                   #                112 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    and with NO "rows a clean checkout does not get"
+                   #    section, which is the condition rule 10 requires.
+                   #    112 + 1 = 113 agrees with the route recorded below.
+                   #
+                   #    THE WORKING TREE MEASURED 121 IN THE SAME SESSION AND
+                   #    THAT NUMBER IS NOT USABLE HERE, which is the whole
+                   #    point of the two-tree method: the runner named 23 rows
+                   #    a clean checkout does not get -- 19 untracked
+                   #    `sim/tb_*.vhd` plus the four FK33 rows that need the
+                   #    model set -- and refused to suggest a raise from it.
+                   #
+                   #    AND IT WAS SHOWN TO DISCRIMINATE ON THIS RAISE, not
+                   #    assumed from the previous one.  Teeth run: the SAME
+                   #    archive tree with `sim/tb_gdn_conv_tap_mem.vhd`
+                   #    DELIBERATELY OMITTED -- which reproduces the real
+                   #    scenario, a row DISAPPEARING, rather than testing the
+                   #    comparison from the other side by inflating the floor:
+                   #
+                   #      OVERALL     PASS 112  FAIL 0  BUILD-ERROR 0
+                   #      BASELINE DROP: 112 passing, expected at least 113
+                   #      REGRESSION: FAIL
+                   #
+                   #    Note `FAIL 0` in that line.  Nothing was red; the run
+                   #    is red ONLY because a row went missing, which is the
+                   #    entire class this floor exists to catch and the one
+                   #    every other check here is blind to.
+                   #
+                   # ---- the previous raise, kept because its route is the
+                   # ---- method and not just its answer ----
+                   # RAISED FROM 108, 2026-09-02.  FOUR new rows:
                    #    sim:tb_gdn_state_mem, sim:tb_gdn_state_axi,
                    #    sim:tb_gdn_state_store and sim:tb_gdn_exp_mem -- the
                    #    resident-state tier for subsystem B

@@ -356,7 +356,21 @@ def scrape_gdn_state_terms():
     return mant, hi + 1
 
 
-def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
+def scrape_gdn_conv_mant_bits():
+    """The per-element width of a stored conv tap, from `gdn_block`'s PORT.
+
+    `cv_x` carries `KCONV*CONV_LANES` elements of this width, and that port is
+    where the width is load bearing: it is what the tap memory must hand over
+    and therefore what a saved column costs per channel."""
+    return _scrape_int(
+        GDN_BLOCK_VHD,
+        r"^\s*cv_x\s*:\s*in\s+std_logic_vector\("
+        r"KCONV\*CONV_LANES\*(\d+)\s*-\s*1\s+downto\s+0\)",
+        "port cv_x (the conv tap element width)")
+
+
+def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True,
+                include_gdn_conv=True):
     """THE ONLY PLACE THE TWO RESERVED ARENAS ARE SIZED.
 
     `cfg` is a `scrape_model_cfg()` dict; None means the build target that
@@ -371,6 +385,7 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
         cfg = scrape_model_cfg(scrape_build_model())
     ch_b, cm_w = scrape_kv_record_terms()
     gdn_mant_w, gdn_exp_w = scrape_gdn_state_terms()
+    conv_w = scrape_gdn_conv_mant_bits()
 
     attn_layers = cfg["blocks"] // cfg["attn_interval"]
     gdn_layers = cfg["blocks"] - attn_layers
@@ -388,7 +403,31 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
     # exponents.  See the port list of rtl/gdn_block.vhd.
     gdn_mant_b = val_heads * dim * dim * (gdn_mant_w // 8)
     gdn_exp_b = val_heads * dim * (gdn_exp_w // 8)
-    gdn_per_layer = gdn_mant_b + (gdn_exp_b if include_gdn_exp else 0)
+
+    # ---- The CONV TAP HISTORY, added 2026-09-02.  THIS IS THE THIRD PIECE OF
+    # PER-LAYER GDN STATE AND IT HAD NO RESERVATION AT ALL.
+    #
+    # `gdn_block` reads `cv_x` as "[KCONV-1 stored columns | this token's qkv]"
+    # (its header, and rtl/fk33_llama_top.vhd:270 names the same buffer as one
+    # "this file does not have").  A depthwise causal conv of kernel KCONV over
+    # the qkv stream therefore needs the previous KCONV-1 columns of the WHOLE
+    # qkv width carried from token to token, exactly like the recurrent state.
+    # Without it the second token of any sequence convolves against zeros, and
+    # that is a WRONG NUMBER rather than a hang -- which is why the omission
+    # survived: `B_SRC_REAL` has never run past token 0 anywhere.
+    #
+    # `qkv_dim = 2*key_dim + val_dim` is not invented here.  It is
+    # `gen_layer_program.Shape.qkv_dim` and `llama_map_pkg.qkv_dim`, and
+    # `pack_model_fk33.py` already checks the packed weights against the same
+    # identity.  Deriving it a fourth way would be a fourth thing to drift.
+    key_dim = cfg["lin_key_heads"] // ncards * dim
+    val_dim = val_heads * dim
+    qkv_dim = 2 * key_dim + val_dim
+    gdn_conv_b = (cfg["conv_kernel"] - 1) * qkv_dim * (conv_w // 8)
+
+    gdn_per_layer = (gdn_mant_b
+                     + (gdn_exp_b if include_gdn_exp else 0)
+                     + (gdn_conv_b if include_gdn_conv else 0))
 
     # ---- KV.  One record per (layer, kv_head, position) per STREAM, and K and
     # V are separate regions.
@@ -397,6 +436,7 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
 
     return dict(
         model_blocks=cfg["blocks"], attn_interval=cfg["attn_interval"],
+        model_conv_kernel=cfg["conv_kernel"],
         ncards=ncards,
         attn_layers=attn_layers, gdn_layers=gdn_layers,
         val_heads_per_card=val_heads, kv_heads_per_card=kv_heads,
@@ -405,6 +445,8 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True):
         gdn_mant_bits=gdn_mant_w, gdn_exp_bits=gdn_exp_w,
         gdn_state_mant_bytes_per_layer=gdn_mant_b,
         gdn_state_exp_bytes_per_layer=gdn_exp_b,
+        gdn_conv_mant_bits=conv_w, gdn_qkv_dim=qkv_dim,
+        gdn_state_conv_bytes_per_layer=gdn_conv_b,
         gdn_state_bytes_per_layer=gdn_per_layer,
         gdn_state_bytes=gdn_layers * gdn_per_layer,
         kv_record_hdr_bytes=ch_b, kv_mantissa_bits=cm_w,
@@ -426,6 +468,9 @@ def arena_arithmetic(sz):
         "               + %d x %d x %d/8 B = %d B column exponents"
         % (sz["val_heads_per_card"], sz["lin_head_dim"], sz["gdn_exp_bits"],
            sz["gdn_state_exp_bytes_per_layer"]),
+        "               + %d x %d x %d/8 B = %d B conv tap history"
+        % (sz["model_conv_kernel"] - 1, sz["gdn_qkv_dim"],
+           sz["gdn_conv_mant_bits"], sz["gdn_state_conv_bytes_per_layer"]),
         "GDN total      %d layers x %d B = %d B"
         % (sz["gdn_layers"], sz["gdn_state_bytes_per_layer"],
            sz["gdn_state_bytes"]),

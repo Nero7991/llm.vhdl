@@ -11,6 +11,205 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-02, later still: both phases of the state move, the conv arena is reserved, and a standing check had been red
+
+**LANDED: the exponent phase.** `rtl/gdn_state_store.vhd` now instantiates
+`gdn_state_axi` TWICE -- once at the mantissa shape and once at
+`WORD_BITS => 8, N_GRP => 1` -- with a four-state sequencer and a 2:1 on the
+ONE pair of HBM masters. One `load_start` moves 1,052,672 bytes in two
+transfers and pulses `done` once. **MEASURED, composed OOC, shipping shape,
+5.0 ns: 3,310 CLB LUT (1,390 logic + 1,920 as memory), 1,355 FF, 32 URAM288,
+0 BRAM, 2 DSP, WNS +1.400 (278 MHz).** The parts sum to 2,963, so the second
+mover, the sequencer and the muxes cost **+347 LUT, +11.7%** -- the second time
+in two days that a composed draw came in above the sum of its components, and
+the second time neither component's own census showed it.
+
+`sim/tb_gdn_state_store.vhd`: **4,632 checks, 512 of them exponents**, three
+tokens, three evictions per layer per token.
+
+**A DESIGN DEFECT AND A BENCH DEFECT, WITH THE SAME SIGNATURE, ON THE SAME
+DAY.** Both shifted the data by exactly one element, and that is why the second
+cost an hour:
+
+* **Design.** `gdn_exp_mem`'s mover-facing read had to be REGISTERED. The
+  mover collects a word TWO edges after issuing its address because
+  `gdn_state_mem` is a block RAM; an ASYNCHRONOUS port presents each byte one
+  edge early and the mover collects the NEXT one. That is defect D2 of the
+  write-up recurring on a second port, and the fix is 8 FF on the mover port
+  only -- the unit's port must stay asynchronous.
+* **Bench.** After fixing that, 511 of 512 exponent checks still failed,
+  shifted by one. The obvious reading was that the fix was wrong.
+  **PROBE A settled it in one run**: a loop reading the exponents straight back
+  through the unit port with NO DMA in between failed 767 of 768. The mover had
+  not run. The cause was a relay signal inside the DUT -- `se_rdata <=
+  ex_r_data` -- adding a delta, against a bench that checked the combinational
+  read after a fixed `wait for 0 ns; wait for 0 ns;`.
+
+**THE REUSABLE PART: a fixed delta count encodes a private detail of the DUT's
+internal wiring in the bench.** Add one relay inside the DUT and every read
+shifts by one address, and the bench reports a data error in the wrong module.
+`unit_eread` now parks at a FALLING edge and waits a real 1 ns -- half a clock
+period, so no rising edge can occur and the read is still proven
+combinational, but the check survives any internal rewiring.
+
+**EIGHT MUTATIONS, SIX BITE, AND THE ATTRIBUTION CONTROL SAYS THE NEW CHECKS
+EARN THREE.** Every mutant was re-run against the bench with the exponent
+checks removed. Three (an asynchronous mover read; the exponent phase skipped;
+load and save swapped for that phase only) pass the control and are genuine new
+detections. Three do not: `sel_e` never asserted and `done` reported early are
+caught by machinery that already existed, and **writing the exponents on top of
+the mantissas is caught by the MANTISSA checks** -- it reads like an exponent
+bug and is not. Without the control this table would have claimed six.
+
+**TWO MUTATIONS DO NOT BITE AND ARE REPORTED UNDER THEIR OWN NAMES.** Forcing
+the idle mover's `arready`/`rvalid` low, and gating the unit's exponent write
+with `busy`, are both defensive: an idle `gdn_state_axi` holds `arvalid` low
+and the bench never violates the ownership rule, so neither has anything to
+discriminate against. They are kept and they are UNTESTED, and no mutation of
+this bench can change that. That is the resolution floor, not a gap to paper
+over.
+
+**LANDED: the conv tap history is reserved.** `(conv_kernel-1) * qkv_dim * 16`
+= 49,152 B per layer, 1,179,648 B total, now DERIVED in
+`hbm_map.arena_sizes()` from `model_cfg_pkg`'s `conv_kernel`, the
+`qkv_dim = 2*key_dim + val_dim` identity that `gen_layer_program` and
+`llama_map_pkg` already use, and a new `scrape_gdn_conv_mant_bits()` that reads
+the width off `gdn_block`'s own `cv_x` port. It went INSIDE
+`gdn_state_bytes_per_layer` rather than becoming a fourth arena, so there is
+one base and one stride: 1,052,672 -> **1,101,824**, total 25,264,128 ->
+**26,443,776** (+4.7%). **`server/fk33_manifest.c` needed no change** -- it
+reads `gdn_state_base` and `gdn_state_bytes` and nothing finer. **Nothing moves
+it yet**, so `B_SRC_REAL` still cannot run past token 0, and the module says so
+in its own header rather than implying otherwise.
+
+**AND A FINDING NOBODY WAS LOOKING FOR: `sim/realshape_gate.sh` was RED, at
+HEAD, and had been for an unknown length of time.** Running it to check the
+arena change found 10 of its rows failing. **The control -- the same script in
+a worktree at `8e22ff3` -- failed the same ten**, which is what turned "my
+change broke it" into "it was already broken" for the cost of one command.
+Both causes were flag mismatches with `sim/regress.sh`, in a file nothing had
+touched: no `-frelaxed` (10 rows, dying on
+`attn_block.vhd:1065: constant "g" is not visible here`), and no
+`--max-stack-alloc=0` (the `all_real` row, dying at GHDL's 128 KB default on a
+256 KB object). It is now **PASS, 25 rows, 13 of them guards that must
+refuse** -- and all 13 still refuse, which is the check that the fix did not
+defang them. Write-up
+`docs/debugging/2026-09-02_realshape-gate-silently-red.md`.
+
+**The general lesson is in that file's section 7.** The script is deliberately
+NOT a gate row, for a good reason its header states: ten of its rows must make
+the elaborator REFUSE, which no testbench can express. The consequence is that
+nothing runs it unless a person does, and **the repository has no record of
+when it last passed**, so the honest answer to "how long was it red" is
+unknown. Where two harnesses run the same tree, their flag sets are an
+interface, and this interface has no check -- still doesn't.
+
+**GATE, BOTH TREES.** Working tree **PASS 121, FAIL 0**; clean-checkout
+archive with the new files overlaid and `MV4I_FK33_FILE=/nonexistent`
+**PASS 113, FAIL 0**. `BASELINE_PASS` 112 -> **113**, taken from the archive
+number as rule 10 requires -- **the runner REFUSED the working-tree number**,
+naming 23 rows a clean checkout does not get (19 untracked `sim/tb_*.vhd` plus
+the four FK33 rows needing the model set). Teeth run on the same archive tree
+with `sim/tb_gdn_conv_tap_mem.vhd` deliberately omitted: `PASS 112 FAIL 0`,
+`BASELINE DROP: 112 passing, expected at least 113`, `REGRESSION: FAIL`. Note
+the `FAIL 0` -- nothing was red, the run is red only because a row vanished,
+which is the one class every other check in that runner is blind to.
+
+**LANDED: `rtl/gdn_conv_tap_mem.vhd`**, the on-chip conv tap history --
+`gdn_conv` is a causal kernel-4 depthwise conv, so the previous 3 columns of
+the whole 8,192-wide qkv stream have to survive from token to token, and
+`llama_top`'s stub returns ZERO for all of them. **MEASURED: 12 RAMB36, 317
+CLB LUT, 8 FF, WNS +3.831 (261 MHz).**
+
+**IT TOOK FOUR VERSIONS AND THE FIRST COST 35,726 LUT AND ZERO BRAM.** Each
+was stopped by a DIFFERENT Vivado refusal:
+
+| version | structure | CLB LUT | BRAM |
+|---|---|---:|---:|
+| 1 | one array of 192-bit words, variable-offset partial writes | **35,726** | 0 |
+| 2 | array-of-array of 16-bit banks, whole-word writes | -- | 0 |
+| 3 | banks inside a generate, TRUE dual port | -- | 0 |
+| 4 | banks inside a generate, SIMPLE dual port | **317** | **12** |
+
+**`49 KB is 12 RAMB36` was true of the bits in all four and predicted nothing
+about three of them.** Version 2 removed a real defect -- a bit slice whose
+bounds are expressions is not a byte-enable -- and the count stayed zero
+because a second cause was behind it (`[Synth 8-11357]`, an
+`array of array of vector` is a "3D-RAM" and gets dissolved into 393,216
+registers whatever `ram_style` says). Version 3 fixed that and hit a third
+(`[Synth 8-4767]`, the true-dual-port template needs one process PER PORT, and
+two VHDL processes cannot drive one signal). **Re-census after every rewrite;
+a rewrite that obviously fixes the inference may be fixing a different thing.**
+
+Version 4 is a SIMPLE dual port -- one write port, one read port, each muxed
+between the unit and the mover -- which is sound because they are mutually
+exclusive by construction, and which makes the mover-wins rule STRUCTURAL
+instead of defensive. In version 3 that rule was a priority term no bench
+could see: in simulation port B assigns second and simply overwrites, so
+removing it PASSED 107 of 107 while being an undefined same-address dual-port
+write in hardware.
+
+**Nine mutations, eight bite.** T4 (rotate by the live `phase` rather than the
+captured one) does not, and the RTL comment that justified the capture has been
+corrected: it claimed a reachable boundary case and there is none, because
+`tok_adv` fires only after every layer has read and written. The 2 FF stay as
+defence and are recorded as UNTESTED rather than as verified. **T5 -- making
+the bank read combinational -- bites on exactly ONE of the 107 checks**, the
+pair that asserts the data has not moved BEFORE the clock edge. Without that
+one check the wrong primitive passes, which is how `region_mem` cost 91,073
+LUT.
+
+**AND A BENCH BUG THAT LOOKED EXACTLY LIKE A DUT BUG: VHDL identifiers are
+CASE-INSENSITIVE, so `for t` nested inside `for T` is the SAME name.** All 48
+tap-order checks failed on the first run and the DUT was correct. GHDL says so
+in one `-Whide` line that reads like pedantry --
+`declaration of "t" hides constant "t"` -- and it is the whole diagnosis.
+
+**A PHANTOM REGRESSION IN THE CHAT TEMPLATE, AND THE HARNESS WAS THE BUG.**
+Re-running `server/verify_chat_template.py` as a goal check reported
+`992 identical, 1045 DIFFER ... CHAT_TEMPLATE FAIL`, with the two thinking
+preambles exactly SWAPPED. `git diff HEAD -- server/` was empty, so it could
+not be this session's work; a direct probe compiling `qwen35_chat_render` and
+calling it twice showed the C emitting **74 bytes at `think=0` and 63 at
+`think=1`, which is correct and matches jinja2 byte for byte**.
+
+**The harness was running last week's MUTANT.** `--cbin` defaults to
+`build_artifacts_tok/chat_batch`, the script only rebuilds under `--build`, and
+a `--build --mutate think-default` run compiles the mutant TO THAT SAME PATH
+and leaves it there. Every subsequent plain run then tests the mutant and
+reports a FAIL that reads exactly like a regression in `qwen35_chat.c`. Half an
+hour went into hunting one.
+
+Fixed in `server/verify_chat_template.py`: a mutation now builds to
+`<cbin>.<mutation>` so it can never poison the clean binary, and a run without
+`--build` REFUSES if the binary is missing or older than any of its four
+sources rather than reporting on it. **Teeth-checked as a sequence**: clean
+build PASS -> `--mutate think-default` BITES -> plain run PASS again. Before
+the fix that third step was the FAIL.
+
+**AND I BROKE THE ONE-VIVADO RULE, BY ACCIDENT, THE WAY IT ACTUALLY HAPPENS.**
+Not by deciding to run two: by launching each OOC census with `nohup ... &` and
+then launching the NEXT one after reading the previous one's log, without ever
+confirming the previous PROCESS had exited. A log line is not an exit. Three
+Vivados accumulated -- the two register-based versions were slow precisely
+BECAUSE they had failed to infer BRAM and were elaborating 393,216 registers,
+so the failing runs are the ones that linger -- and with two gates also running
+the box reached **0 free, 12 GB of swap in use, 3 GB available**. That is the
+state described in this project's own memory-budget section, one step before
+the night the machine had to be power-cycled.
+
+Killed all nine PIDs, resolved by reading `/proc/PID/exe` rather than by any
+`pgrep` pattern; memory went straight back to 21 GB free and both gates
+survived. **Nothing was lost, and the reason nothing was lost is luck.** The
+rule that would have caught it: after `nohup vivado &`, gate the next launch
+on the PROCESS being gone, never on the log being complete.
+
+**Next:** the B job sequencer (load state, run `gdn_block`, save state, plus
+the activation movement `gb_real`'s `bp` process does today) and, with it, the
+third HBM phase for the conv taps -- `gdn_state_axi` at
+`WORD_BITS => 16, N_GRP => 1` -- plus whatever pulses `tok_adv`. Then the same
+for C. Write-up `docs/debugging/2026-09-02_conv-tap-history.md`.
+
 ### 2026-09-02, later: the GDN state mover exists and works, and its bench found nine defects of which FIVE were the bench's
 
 Oren widened the goal to "bitstream and inference, plus driver, server and

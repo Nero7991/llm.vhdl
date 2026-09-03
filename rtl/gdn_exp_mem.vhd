@@ -23,10 +23,12 @@
 -- `[Synth 8-7186]` claiming `ram_style = "distributed"` was ignored for
 -- objects that ARE `RAM32M16` in the same run's mapping report.
 --
--- THE WRITE IS SYNCHRONOUS AND THE READ IS NOT.  That asymmetry is what
--- distributed RAM is, and it is also why read-during-write needs no
+-- THE WRITE IS SYNCHRONOUS AND THE UNIT'S READ IS NOT.  That asymmetry is
+-- what distributed RAM is, and it is also why read-during-write needs no
 -- discussion here: an asynchronous read reflects the write the moment it
--- lands, which is the behaviour `llama_top`'s signal-based `semem` had.
+-- lands, which is the behaviour `llama_top`'s signal-based `semem` had.  The
+-- MOVER's read is registered on the way out for a reason that has nothing to
+-- do with the array; see the `m_r_data` port comment.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -57,6 +59,21 @@ entity gdn_exp_mem is
 
     -- the mover's port, 8-bit words, flat within the layer.  Separate from
     -- the unit's port because the caller arbitrates; see gdn_state_store.
+    --
+    -- `m_r_data` IS REGISTERED AND THE UNIT'S `r_data` IS NOT, AND THAT
+    -- ASYMMETRY IS DELIBERATE.  `gdn_state_axi` registers the address it
+    -- issues and then collects the word TWO edges later, because that is what
+    -- `gdn_state_mem` (a block/ultra RAM) does.  Handing it an ASYNCHRONOUS
+    -- read would present each word one edge EARLY, and since the mover walks
+    -- a new address every cycle the word it collected would be the NEXT one:
+    -- every saved exponent block shifted by exactly one byte, wrapping at the
+    -- beat.  That is a wrong number, not a hang, and it is the same defect
+    -- this project already paid for once on the mantissa path
+    -- (docs/debugging/2026-09-02_gdn-state-dma.md, defect D2).
+    --
+    -- The flop costs 8 FF and changes nothing about the ARRAY: the read is
+    -- still asynchronous out of the memory, with a register on the way out.
+    -- The unit's port, which must stay asynchronous, is untouched.
     m_r_addr : in  natural range 0 to VAL_HEADS*DIM-1;
     m_r_data : out signed(7 downto 0);
     m_w_en   : in  std_logic;
@@ -91,15 +108,16 @@ architecture rtl of gdn_exp_mem is
   attribute ram_style : string;
   attribute ram_style of mem : signal is STY;
 begin
-  -- BOTH reads are asynchronous.  The unit's is required to be; the mover's
-  -- is free to be, and making them the same shape keeps one memory rather
-  -- than forcing a second port style onto the same array.
+  -- The unit's read is asynchronous because gdn_block consumes it on the same
+  -- edge it drives the address (:632-633 and :1203).  The mover's is
+  -- registered because gdn_state_axi expects a two-edge memory; see the port
+  -- comment.
   r_data   <= mem(r_head*DIM + r_col);
-  m_r_data <= mem(m_r_addr);
 
   p : process(clk) is
   begin
     if rising_edge(clk) then
+      m_r_data <= mem(m_r_addr);
       -- The mover and the unit never write together: the caller gates the
       -- unit off while the mover owns the store, and gdn_state_store asserts
       -- that it does.  Written as elsif rather than as two ifs so that a
