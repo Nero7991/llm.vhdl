@@ -11,6 +11,63 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (night, last): THE HOST SOFTWARE IS GATED, and its teeth are 1 of 4
+
+`server/pl_backend.c` is the driver and `server/llama_server.cpp` is the
+OpenAI-compatible server. **Nothing scheduled either of their harnesses.** Both
+pass; that was never the point.
+
+**THE ROT ALREADY HAPPENED AND NOBODY SAW IT.** `server/tests/server_e2e.py`
+began failing 2026-08-29 when `pl_open` started refusing an undeclared
+descriptor arena: `seam_selftest.c` was updated for it, `llama_server.cpp` was
+not. It stayed red for days saying only *"FAIL: server never came up"*, because
+it sent the server's stderr to `DEVNULL` and could not show the refusal that
+explained it. It was fixed earlier in this session (`c13976e`) -- but only
+because someone happened to run it.
+
+Two rows now exist, `sim:srvseam` and `sim:srve2e`, added by the THREE edits
+`regress.sh` demands (command, plan printf, and the dispatch case in `run_one`,
+which is the one its old comment used to omit).
+
+**THE TEETH WERE MEASURED FIRST, AND THREE OF FOUR MUTANTS SURVIVED:**
+
+| mutant | result |
+|---|---|
+| M4 off-by-one in `pl_prefill`'s KV bound | **KILLED** |
+| M1 `FK33_SEAM_ID_MAGIC` changed | SURVIVED |
+| M2 alignment refusal DELETED outright | SURVIVED |
+| M3 identity comparison disabled (`if (0)`) | SURVIVED |
+
+M4 proves the row can fail, so it is real and not decoration. The survivors are
+the more valuable half:
+
+- **M1 is a SHARED CONSTANT.** `fk33_sim.c` and `pl_backend.c` both read it, so
+  moving it moves BOTH sides and the comparison still agrees. Self-consistency,
+  not an oracle -- the `m7 mutant` shape exactly.
+- **M3 shows T2 PASSES FOR THE WRONG REASON.** T2 is titled "a wrong seam base
+  is refused by the identity read" and asserts only `pl_open(...) < 0`. With
+  the identity check disabled it still fails, for a different reason.
+- **M2** means T6's "four layout refusals" never reaches the alignment
+  predicate in `check_geometry()`.
+
+**So "84 checks, 0 failed" is NOT coverage of the identity read, the alignment
+refusal, or the seam magic.** Tightening those three is open work, stated as
+open rather than implied closed by a green row.
+
+**Two limitations recorded rather than hidden:** `srve2e` is a NO-OP on a clean
+checkout (it needs a 9 MB uncommitted `.qtk` and returns 0 without it), so it
+is teeth on a developer tree only -- which is precisely where the 2026-08-29
+regression lived. And a failing row's detail line is make's `Error 1`, not the
+selftest's, because `SELFCHECK_CMD` is expanded UNQUOTED so `sh -c` and `&&`
+cannot be used; the failing checks are in the row's log.
+
+**Process note worth keeping:** the `count == 1` anchor guard refused a mutation
+whose target line appears TWICE, and one intermediate run was discarded rather
+than recorded as a survival because the mutation had failed to apply and the
+run was on clean code. `make` was also verified to have genuinely rebuilt
+between mutants -- three survivals is more often a broken measurement than a
+weak test.
+
 ### 2026-09-03 (night, later): THE WIRED TOP ROUTES. 60.5% LUT, 75.6% DSP, 181.7 MHz.
 
 `gen_compose4_top.py:177` said "the wired top needs its own place-and-route

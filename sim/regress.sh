@@ -400,7 +400,39 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=115  # RAISED FROM 113, 2026-09-03.  TWO new rows across three
+BASELINE_PASS=117  # RAISED FROM 115, 2026-09-03 (later).  TWO new rows, the
+                   #    HOST SOFTWARE: sim:srvseam (server/tests/seam_selftest.c,
+                   #    the driver, 84 checks) and sim:srve2e
+                   #    (server/tests/server_e2e.py, the OpenAI-compatible
+                   #    server's request path).  Until now nothing scheduled
+                   #    either, and server_e2e.py had been silently RED since
+                   #    2026-08-29.  See the teeth table beside the rows.
+                   #
+                   #    MEASURED on a `git archive HEAD` tree with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 2:
+                   #
+                   #      OVERALL PASS 117  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 117 passing, above the recorded floor of
+                   #                115 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    The run printed NO "rows a clean checkout does not get"
+                   #    section, which is the condition rule 10 requires.
+                   #    115 + 2 = 117.
+                   #
+                   #    BOTH ROWS WERE CHECKED FOR WHAT THEY DO ON THAT CLEAN
+                   #    TREE, because one of them does nothing there:
+                   #      sim:srvseam  PASS  "SEAM_SELFTEST PASS (84 checks)"
+                   #      sim:srve2e   PASS  "SKIP: .../qwen35_9b.qtk missing"
+                   #    srve2e therefore contributes a PASS to this floor
+                   #    WITHOUT TESTING ANYTHING on a clean clone.  That is
+                   #    deliberate and is why the floor is still reachable
+                   #    after a fresh clone, but it means the floor's 117th row
+                   #    is not evidence about the server.  Stated here so the
+                   #    number is not read as stronger than it is.
+                   #
+                   # ---- the previous entry, kept ----
+                   # RAISED FROM 113, 2026-09-03.  TWO new rows across three
                    #    commits: sim:tb_gdn_job_seq (ce410db, B's per-layer job
                    #    sequencer) and sim:tb_a_job_counter (e359805, which A
                    #    descriptor within a token).  A third row,
