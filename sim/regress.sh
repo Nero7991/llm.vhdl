@@ -400,7 +400,59 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=108  # RAISED FROM 107, 2026-09-02, TRACK CARDTOP increment 4.
+BASELINE_PASS=112  # RAISED FROM 108, 2026-09-02.  FOUR new rows:
+                   #    sim:tb_gdn_state_mem, sim:tb_gdn_state_axi,
+                   #    sim:tb_gdn_state_store and sim:tb_gdn_exp_mem -- the
+                   #    resident-state tier for subsystem B
+                   #    (docs/debugging/2026-09-02_gdn-state-dma.md).
+                   #
+                   #    MEASURED AS A FULL-TREE NUMBER, on a `git archive`
+                   #    tree with the new files overlaid by explicit path and
+                   #    run with MV4I_FK33_FILE=/nonexistent so the four
+                   #    model-dependent FK33 rows SKIP:
+                   #
+                   #      OVERALL PASS 112  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 112 passing, matches the recorded floor
+                   #                of 112
+                   #      REGRESSION: PASS
+                   #
+                   #    and with NO "rows a clean checkout does not get"
+                   #    section, which is the condition rule 10 requires
+                   #    before a raise is legitimate.
+                   #
+                   #    THE ROUTE THERE, because each step was measured rather
+                   #    than inferred and they agree:
+                   #      * c4c4f8c's archive (tb_gdn_state_mem only) measured
+                   #        109 the same way.
+                   #      * that archive WITH the model set present measured
+                   #        113 and named exactly the four extra rows;
+                   #        113 - 4 = 109 agrees.
+                   #      * plus tb_gdn_state_axi and tb_gdn_state_store:
+                   #        full-tree 111.
+                   #      * plus tb_gdn_exp_mem: full-tree 112, above.
+                   #
+                   #    AND IT WAS SHOWN TO DISCRIMINATE, NOT MERELY TO MATCH.
+                   #    Teeth run on the 111-row tree with the floor set to
+                   #    112, verbatim:
+                   #
+                   #      OVERALL     PASS 111  FAIL 0  BUILD-ERROR 0
+                   #      BASELINE DROP: 111 passing, expected at least 112
+                   #      REGRESSION: FAIL
+                   #
+                   #    A floor that merely equals the count it was copied
+                   #    from has never been shown to fire.  This one has.
+                   #
+                   #    WHY THE ROUTE IS WRITTEN OUT.  This line was set to
+                   #    111 first, and then a FOURTH row (tb_gdn_exp_mem) was
+                   #    added in the SAME SESSION and the 111 went stale
+                   #    within the hour.  That is rule 10's failure mode
+                   #    arriving from inside one session rather than across a
+                   #    clone.  Re-measure after adding a row; do not reason
+                   #    from the last number you took.
+                   #
+                   #    The superseded note for 108 follows.
+                   #
+                   # WAS 108, RAISED FROM 107, 2026-09-02, TRACK CARDTOP increment 4.
                    #    ONE new row, `sim:tb_u_seam`, and 107 + 1 = 108 agrees.
                    #
                    #    NOT taken from the full run's headline number.  That

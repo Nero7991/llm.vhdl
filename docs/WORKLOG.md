@@ -11,6 +11,141 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-02, later: the GDN state mover exists and works, and its bench found nine defects of which FIVE were the bench's
+
+Oren widened the goal to "bitstream and inference, plus driver, server and
+integration for generating output". **The survey answer is that the software
+side is essentially DONE and waiting on the RTL**, which is not what I
+expected: `server/fk33_transport.h` says in its own header that
+`fk33_transport_open_chardev()` IS the real transport and that pointing it at
+`/dev/xdma0_user` talks to the card -- *"'swap in the real transport' is not a
+code change at all, it is an argument change. What is NOT written here is the
+ENGINE the real transport would be talking to."* The OpenAI-compatible server
+(`server/llama_server.cpp`) already has an FK33 arm with the real Qwen3.5 chat
+template, a tokenizer bit-exact against llama.cpp, the prefill/decode seam and
+the host sampler; it runs against a simulated card and says so in its own
+`/v1/models` description. **So writing more host software now would be building
+against nothing. The critical path is the RTL and nothing else.**
+
+**LANDED: `rtl/gdn_state_axi.vhd`**, the HBM mover for one GDN layer, plus
+`sim/tb_gdn_state_axi.vhd`. Bulk DMA and not a cache, because `gdn_block`'s
+`st_rdata` is a registered read one cycle after the address and no prefetch
+reaches HBM from there. **MEASURED on the BC-250 lane at the shipping
+geometry: 269 LUT, 703 FF, 1 DSP, 0 BRAM, 0 URAM, WNS +2.670 at 5.0 ns
+(434 MHz).** It is free next to the 32 URAM288 store it feeds. The one DSP is
+`layer * LAYER_STRIDE` and a shift-and-add would remove it if DSP ever binds
+-- worth knowing, since the composition IS DSP-bound at 2,177 of 2,880.
+
+**393 checks per run, six geometries (up to 1,545 checks), five mutations, all
+five bite.** Write-up `docs/debugging/2026-09-02_gdn-state-dma.md`.
+
+**THE LESSON IS THE DEFECT SPLIT: nine found, and FIVE were in the BENCH.**
+Every one of those five presented as a design bug -- all zeros, all 'X', a
+one-beat shift, a WLAST violation. Named in the write-up as B1..B5. Two are
+repeats of traps this repository already documents and I broke anyway on the
+same day I read them: **`while busy = '1'` after a start pulse completes
+INSTANTLY** (llama_top's own S_ARM comment says so; 384 of 390 checks failed
+with the store reading zeros), and **two processes driving one resolved signal
+resolve rather than take turns** (the same defect fixed in `f_lost` that
+morning).
+
+**B5 is the one worth carrying forward.** A BRESP-completeness check was
+written specifically to kill mutant M2 (a save that reports done before its
+writes retire), added, and **M2 still passed** -- because the slave model
+answered B in one cycle, so every response was in hand by the time `done`
+reached the stimulus. The check existed and did not discriminate. A 6-cycle
+write-response latency is what turned it into a check. **A check written for a
+mutant, that the mutant survives, is exactly the shape of a guard that passes
+for the wrong reason, and the only way to know is to re-run the mutant AFTER
+adding the check.**
+
+**Two design defects were found ONLY by the parameter sweep and cannot fire at
+the shipping numbers:** a `LAYER_STRIDE` that is not a whole number of beats
+(layers 0 and 1 correct, layer 2 wrong) and unbounded outstanding AW. The real
+stride is aligned (1,052,672 / 32 = 32,896) so neither is reachable today.
+**A defect the shipping parameters happen to avoid is still a defect**, because
+the next shape change reaches it silently.
+
+**Census filter trap, again:** `get_cells -hier -filter {PRIMITIVE_GROUP == LUT}`
+returns **0** in this Vivado on a design whose own `report_utilization` says
+269 in the same run. Fixed to `REF_NAME =~ LUT*` / `FD*` in both OOC scripts.
+**A census that reports zero reads as a tiny module, not as a broken filter.**
+
+**COMPOSED CENSUS: 497 LUT, 708 FF, 32 URAM288, 1 DSP, WNS +1.400 at 5.0 ns.**
+**The parts do NOT sum** -- the arbiter costs +228 LUT and 1.15 ns that neither
+component's own census shows. That is the "separately-measured units do not
+share" assumption being tested and coming back NO; it is small (0.11% of the
+device) but a budget built from the component numbers would have been 228 LUT
+short. Also: the object census says 548 LUT and `report_utilization` says 497.
+Both are right -- PRIMITIVES versus SITES -- and **the site count is the budget
+number**, which is also what the per-module figures were, so they are
+comparable. Quoting 548 against them would have overstated by 10%.
+
+**THE EXPONENT STORE LANDED TOO, AND IT CORRECTED HOW I HAVE BEEN MEASURING
+AREA ALL SESSION.** `rtl/gdn_exp_mem.vhd` is one layer's state exponents,
+4,096 bytes, exactly `gdn_state_exp_bytes_per_layer`. **It cannot be BRAM or
+URAM and that is not a preference**: `gdn_block:317` labels the port
+"COMBINATIONAL read", drives the address combinationally (:632-633) and
+consumes it on the SAME edge (:1203); both alternatives have registered reads.
+That is the `region_mem` lesson recurring -- one combinational port turned that
+store into 91,073 LUT and zero BRAM. Its bench checks the read **without
+advancing time** (drive the address, wait two deltas, the data must already be
+right), which a registered read cannot pass; all three mutations bite,
+including that one at 31 failures.
+
+**THE MEASUREMENT CORRECTION, and it is the most reusable thing here.** The
+object census said **550 LUT**; `report_utilization` said **2,466**. Wrong by
+**4.5x**, not the 10% gap seen earlier on ordinary logic.
+`get_cells -filter {REF_NAME =~ LUT*}` **does not see distributed RAM at all**
+-- it counted 546 logic LUTs and missed the memory; the separate `RAM64M8`
+count of 384 is a correct primitive count and a useless budget number, because
+**each RAM64M8 occupies FIVE LUT sites** (1,920 / 384 = 5).
+
+**The rule that survives all three census defects found today:
+`CLB LUTs` from `report_utilization` is the budget number. An object census
+answers "which primitive did I get", not "what does it cost".** All four OOC
+scripts are annotated. The earlier figures in this session are unaffected --
+269 and 497 are site counts and none of those designs contains distributed RAM.
+
+**And the attribute question came out OPPOSITE to the mantissa store.** For
+`gdn_exp_mem`, `ram_style = "distributed"` and `"auto"` are byte-identical, so
+the attribute earns nothing; for `gdn_state_mem`, `auto` gave 228 BRAM and the
+`ultra` attribute was the difference between fitting and not. **Two stores in
+one subsystem, opposite answers, neither guessable from the other.**
+
+**GATE FLOOR: 108 -> 112**, measured as a full-tree number on a clean archive
+(`OVERALL PASS 112 ... matches the recorded floor of 112`) and **shown to fire**
+by a teeth run (`BASELINE DROP: 111 passing, expected at least 112`).
+**It drifted mid-session and that is recorded in the comment**: it was set to
+111, then a fourth row was added an hour later and the 111 went stale. Rule
+10's failure mode arriving from inside one session rather than across a clone.
+
+**PROCESS MISTAKE, AND IT IS NOT THE ONE I FIRST WROTE DOWN.** I edited
+`sim/regress.sh` while a full gate was running from it, reasoned that bash
+reads scripts by file offset so a length-changing edit could corrupt the run,
+and discarded a 124-row gate on that basis.
+
+**The reasoning is right in general and WRONG HERE, because `regress.sh`
+already guards against exactly this and says so.** At `:337` it takes a
+private `mktemp` copy of itself, `bash -n` checks the copy, and re-execs it --
+with a comment naming the very hazard ("a half-written source ... re-execing
+it would produce exactly the failure this guard exists to prevent"). The
+running gate was reading `/tmp/regress-self.*.sh`, not the file I edited, and
+was immune by construction.
+
+So the discard cost about 25 minutes for nothing. **The lesson is not "never
+edit the harness mid-run" -- it is that I applied a general principle without
+checking whether this specific harness already handled it, and the check was
+one `grep` away in the file I had just edited.** Being cautious is not the
+same as being correct, and an unnecessary discard is a real cost, not a free
+safety margin.
+
+**STILL MISSING for B:** the per-layer state EXPONENTS (4,096 B, reserved in
+the arena, no mover), the conv tap history (49,152 B per layer, **no arena
+reservation at all**), and the mux between the DMA's store ports and
+`gdn_block`'s `st_*` ports, which is described and not written.
+
+
 ### 2026-09-02, session: the B data mover is NOT a port, because B's state does not fit the device
 
 **Oren asked what remains to flash a bitstream, and chose the B/C data movers

@@ -30,6 +30,41 @@ the WORKLOG is the live board.
 and nothing else.** There is no B, no C and no D on the card. The host is
 currently doing every non-matvec step.
 
+## 1b. THE SOFTWARE HALF IS DONE AND WAITING. VERIFIED 2026-09-02, not assumed.
+
+Added because the goal was widened to include "driver, OpenAI compatible server
+and integration for generating output", and the honest answer is that writing
+more host software now would be building against nothing.
+
+`server/fk33_transport.h` says it in its own header:
+`fk33_transport_open_chardev()` **is** the real transport, and pointing it at
+`/dev/xdma0_user` talks to the card -- *"'swap in the real transport' is not a
+code change at all, it is an argument change. What is NOT written here is the
+ENGINE the real transport would be talking to."*
+
+**That claim was read, then TESTED, because a header comment is not evidence:**
+
+| check | result |
+|---|---|
+| `make -C server check` (C99 + C++17, host and aarch64) | `SERVER_COMPILE OK` |
+| `server/seam_selftest` | **PASS, 84 checks, 0 failed** |
+| `server/tests/server_e2e.py` | **PASS, 0 failed**, 6 cases + a refusal |
+| `verify_chat_template.py --build` | **PASS**, 2,047 cases, 2,037 identical, 0 differ |
+| the same with `--mutate think-default` | **BITES**, as required |
+
+The seam selftest includes `T11 the REAL transport, pointed at files instead of
+/dev` and `T12 the hardware tripwire`. The end-to-end run exercises the WHOLE
+OpenAI request path -- chat template, tokenizer, prefill, decode, sampler,
+UTF-8 boundary gate, detokenizer, HTTP -- and returned real tokens plus a
+correct `400 the 'tool' role is not implemented`.
+
+**The tokens come from the SIMULATED card**, which the server declares in its
+own `/v1/models` description ("THE OUTPUT OF THIS MODEL IS NOT INFERENCE").
+So the INTEGRATION is complete and tested; only the engine behind it is
+missing. **The critical path is the RTL and nothing else**, and every hour
+spent on host code before a bitstream exists is an hour spent against a
+simulator.
+
 ## 2. The gap, in one sentence
 
 **A synthesisable, functionally wired card top carrying A+B+C+D does not exist,
@@ -299,9 +334,90 @@ one.
 already had one silent collision between two allocators that could not see each
 other, and the symptom was a wrong token.
 
-**Done when:** the per-job load and store move a layer between HBM and
-`gdn_state_mem`, and a bench shows `gdn_block` producing identical output
-across a save-and-restore, against a token stream longer than one token.
+**BUILT AND VERIFIED 2026-09-02.** Three modules and three benches, write-up
+`docs/debugging/2026-09-02_gdn-state-dma.md`:
+
+| module | what it is | measured |
+|---|---|---|
+| `rtl/gdn_state_mem.vhd` | one resident layer | **32 URAM288**, 0 BRAM, WNS +2.549 |
+| `rtl/gdn_state_axi.vhd` | the per-job HBM mover | **269 LUT, 703 FF, 1 DSP**, WNS +2.670 |
+| `rtl/gdn_state_store.vhd` | the two plus the arbiter | **497 LUT, 708 FF, 32 URAM288, 1 DSP, WNS +1.400** |
+
+**The parts do NOT sum: the arbiter costs +228 LUT and 1.15 ns of slack**, and
+neither is visible in either component's own census. Small in absolute terms
+(0.11% of the device) but not zero, and a budget built from the two component
+numbers would have been 228 LUT short. Note also that `get_cells REF_NAME =~
+LUT*` says 548 and `report_utilization` says 497: those count PRIMITIVES and
+SITES respectively, both correct, and **the site count is the budget number**.
+
+`sim/tb_gdn_state_store.vhd` proves the property the whole design rests on:
+**a layer's recurrent state survives being evicted by every other layer, across
+tokens.** 536 checks, 3 tokens, 3 evictions per layer per token, and all three
+of its mutations bite. A design that kept 24 layers on-chip would pass that
+trivially and is exactly the design that does not fit.
+
+**WHAT IT COSTS THE COMPOSITION, DERIVED from the two measured numbers.**
+ONE store instance serves all 24 layers -- that is the whole point of the
+design -- so the cost is not per layer:
+
+| | wired `compose4_top` (MEASURED) | + the state tier | of device |
+|---|---:|---:|---:|
+| CLB LUTs | 270,141 | 270,638 | 61.6% |
+| Block RAM | 327.5 | 327.5 | 48.7% |
+| **URAM288** | 0 | **32** | **10.0%** |
+| DSPs | 2,177 | 2,178 | **75.6%** |
+
+**It is essentially free, and it spends a resource nothing else in this design
+uses.** DSP stays the binding resource at 75.6%. This is DERIVED addition of
+two separately measured OOC runs, not a composed draw, and section 7c of the
+DMA write-up is a live example of why that distinction matters -- composing the
+store with its own mover cost +228 LUT that neither component showed. Treat
+this table as an ESTIMATE until a composed synthesis reports it.
+
+**Done when** -- the remaining B work, all of it still open:
+1. ~~the per-layer state EXPONENTS~~ -- the STORE is built and measured
+   (`rtl/gdn_exp_mem.vhd`, **2,466 LUT sites**, 1,920 of them LUT-as-memory,
+   0 FF, 0 BRAM, 0 URAM, WNS +3.450). **It cannot be BRAM or URAM**:
+   `gdn_block:317` demands a COMBINATIONAL read and both have registered ones.
+   The MOVER is ready for it -- `gdn_state_axi` now takes `WORD_BITS` and
+   `N_GRP` generics, so `WORD_BITS => 8, N_GRP => 1` gives exactly 4,096 bytes
+   -- but **nothing instantiates it at that shape yet**. What remains is a
+   sequencer in `gdn_state_store` to run the mantissa phase then the exponent
+   phase over the ONE shared pair of HBM masters;
+2. the conv tap history. **COSTED EXACTLY 2026-09-02**, through the
+   repository's own scrapers rather than by hand
+   (`hbm_map.scrape_model_cfg` + `scrape_gdn_state_terms`):
+
+   ```
+   qkv_dim                      8192
+   conv history bytes per layer 49152      = (KCONV-1) * qkv_dim * mant_w/8
+   conv history all 24 layers 1179648
+   current gdn arena total   25264128
+   would become              26443776      (+4.7%)
+   ```
+
+   **It must go into `hbm_map.arena_sizes()` and not be placed by hand.** That
+   file's own header records why: three allocators already share this device,
+   two of them anchored at the same end, and they COLLIDED at the shipping
+   default -- 153,664 bytes of the logits writeback overlapping the descriptor
+   arena, "whichever master writes last wins, and the symptom is a WRONG
+   TOKEN, silently".
+
+   **The blast radius is smaller than it looks and is worth stating before
+   anyone flinches at it.** The GDN arena sits ABOVE the weights, so growing it
+   by 4.7% shifts the KV arena and the descriptor arena upward but leaves the
+   4,487,442,432 bytes of packed weights -- already resident on the card and
+   verified against a pack-time `blake2b_128` -- untouched. What changes is the
+   manifest's `hbm` block, which `--write-manifest-hbm` rewrites in place. So
+   the cost is a manifest rewrite and a re-verify, NOT a reflash of the weight
+   image.
+
+   `B_SRC_REAL` has never run past token 0 anywhere in this repository because
+   this buffer does not exist, so nothing downstream can be trusted until it
+   does.
+3. the B job sequencer: load state, run `gdn_block`, save state, plus the
+   activation movement that `gb_real`'s `bp` process does today;
+4. the same for C, which already has its HBM tier in `attn_kv_axi`.
 
 ### STEP 4 -- Wire the seam to D and retire the refusal.
 

@@ -23,6 +23,24 @@
 # been measured lying in BOTH directions in this project, so every number here
 # comes from `get_cells`, and `report_utilization` is printed only alongside.
 
+# THE `PRIMITIVE_GROUP` FILTER DOES NOT WORK IN THIS VIVADO AND RETURNS ZERO.
+# MEASURED 2026-09-02: `get_cells -hier -filter {PRIMITIVE_GROUP == LUT}` and
+# `== FLOP_LATCH` both returned 0 on a design whose own report_utilization said
+# 269 LUTs and 703 registers in the same run.  A census that reports zero looks
+# like a tiny module rather than like a broken filter, which is the worst way
+# for a measurement to fail.  Use REF_NAME patterns, and CROSS-CHECK against
+# report_utilization every time -- when they disagree the census wins, but only
+# once you know both are actually counting something.
+
+#
+# THE OBJECT CENSUS DOES NOT SEE DISTRIBUTED RAM, AND THE SITE COUNT IS THE
+# BUDGET.  MEASURED 2026-09-02 on `gdn_exp_mem`: `REF_NAME =~ LUT*` reported
+# 550 while `report_utilization`'s `CLB LUTs` reported 2,466, because 384
+# RAM64M8 primitives occupy 1,920 LUT SITES -- five each -- and the LUT filter
+# matches none of them.  Wrong by 4.5x.  Quote `CLB LUTs` for area; use the
+# object census to answer WHICH PRIMITIVE was inferred, which is a different
+# question.
+
 set part   xcvu33p-fsvh2104-2L-e
 set period 5.0
 set rtldir /home/orencollaco/GitHub/llama.vhdl/rtl
@@ -47,9 +65,12 @@ foreach STYLE {ultra block auto} {
   set nuram [llength [get_cells -hier -filter {REF_NAME =~ URAM288*}]]
   set nb36  [llength [get_cells -hier -filter {REF_NAME =~ RAMB36*}]]
   set nb18  [llength [get_cells -hier -filter {REF_NAME =~ RAMB18*}]]
-  set nlutr [llength [get_cells -hier -filter {REF_NAME =~ RAM*}]]
-  set nlut  [llength [get_cells -hier -filter {PRIMITIVE_GROUP == LUT}]]
-  set nff   [llength [get_cells -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
+  # NOT `REF_NAME =~ RAM*`: that also matches RAMB36E2, so the BRAM count was
+  # reported a second time in the LUTRAM column.  RAM32M/RAM64M/RAM256X are the
+  # distributed-RAM primitives.
+  set nlutr [llength [get_cells -hier -filter {REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256*}]]
+  set nlut  [llength [get_cells -hier -filter {REF_NAME =~ LUT*}]]
+  set nff   [llength [get_cells -hier -filter {REF_NAME =~ FD*}]]
 
   puts "CENSUS STYLE=$STYLE URAM288=$nuram RAMB36=$nb36 RAMB18=$nb18 \
 LUTasRAM=$nlutr LUT=$nlut FF=$nff WNS=$wns FMAX=$fmax"
