@@ -78,6 +78,34 @@ refuses to add this column to the mover's own 63,905 LUT / 34 BRAM / 32 URAM /
 194 DSP, because parts do not sum across synthesis contexts. **DSP at 75.59% is
 the tightest resource and is the number to watch when the mover is added.**
 
+**CORRECTION, same day, MEASURED: most of the -0.502 was the DIRECTIVES.**
+A controlled re-implementation from the SAME `wire4_synth.dcp` -- identical
+netlist, only `opt`/`place`/`phys_opt`/`route` directives changed, plus a
+post-route `phys_opt` the default flow never runs:
+
+| | default | high effort |
+|---|---|---|
+| WNS | -0.502 | **-0.090** |
+| failing endpoints | 5,287 | **815** |
+| achieved | 181.7 MHz | **196.5 MHz** |
+
+**82% of the gap closed with no RTL change.** So "the design misses 200 MHz"
+was the wrong sentence; the DEFAULT FLOW misses by 0.502 and the design misses
+by 0.090. Same class of error as reading a synthesis estimate as a routed one.
+
+**Timing MET at +0.016 BEFORE routing, and routing cost 0.106 ns**, so what
+remains is routing detour rather than logic depth -- which points AWAY from the
+DSP-pipelining lead recorded above. That lead is neither confirmed nor refuted;
+it was never tested and at -0.090 may not be needed.
+
+The census moved the same way and A became relatively MORE dominant: `a_eng`
+4,024 -> 615 (75.5% of what is left), `b_gdn` 591 -> 157, `c_attn` 603 -> **42**,
+`d_norm` 69 -> 1. **`c_attn` fell 14x, so the default run's worst path being in
+C was misleading twice over**: C was both a small share AND the share that
+effort almost entirely removes.
+
+Still unmeasured: whether 200 MHz is required at all.
+
 Full write-up: `hw/fk33/results/wire4_2026-09-03/README.md`.
 
 ### 2026-09-03 (night): B's data mover FITS. The blocker was one array, and it is gone.

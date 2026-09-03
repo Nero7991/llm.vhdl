@@ -157,6 +157,63 @@ pipeline `a_eng`'s DSPs and re-run impl: if WNS moves, it was that.
 target and no throughput requirement in this repo has been checked against it.
 Retiming effort is worth spending only after that question is answered.
 
+## CORRECTION AND FOLLOW-UP, same day: -0.502 WAS MOSTLY THE DIRECTIVES
+
+The section above treats -0.502 ns as the design's number and offers DSP
+pipelining as the lead. **A controlled experiment shows most of that gap
+belonged to the DEFAULT DIRECTIVES, not to the design.** The claim above is not
+deleted, it is superseded here.
+
+Same `wire4_synth.dcp`, the SAME input netlist, only the directives differ
+(`effort_impl.tcl`): `opt_design -directive Explore`, `place_design -directive
+ExtraTimingOpt`, `phys_opt_design -directive AggressiveExplore`, `route_design
+-directive AggressiveExplore`, and a second `phys_opt_design` AFTER routing,
+which the default flow does not run at all.
+
+| stage | WNS |
+|---|---|
+| after `place_design` | -0.033 |
+| after pre-route `phys_opt_design` | **+0.016 (MET)** |
+| after `route_design` + post-route `phys_opt` | **-0.090** |
+
+| | default | high effort |
+|---|---|---|
+| WNS | -0.502 | **-0.090** |
+| failing endpoints | 5,287 | **815** |
+| achieved | 181.7 MHz | **196.5 MHz** |
+
+**The gap closed by 82%.** Reporting -0.502 as "the design misses 200 MHz"
+would have been wrong: it is what the DEFAULT directives miss by. This is the
+same class of error as reading a synthesis estimate as a routed result.
+
+**Timing MET before routing (+0.016) and routing cost 0.106 ns.** So the
+remaining gap is routing detour, not logic depth, and that points at
+congestion/placement rather than at pipelining.
+
+The census moved the same way and A got relatively MORE dominant:
+
+| bucket | default | high effort | share now |
+|---|---|---|---|
+| `a_eng` | 4,024 | **615** | **75.5%** |
+| `b_gdn` | 591 | 157 | 19.3% |
+| `c_attn` | 603 | **42** | 5.2% |
+| `d_norm` | 69 | 1 | 0.1% |
+
+`c_attn` fell 14x and `d_norm` essentially vanished, so the worst path being in
+C in the default run was doubly misleading: not only was C a small share, it is
+the share that effort removes almost entirely. **A is where the remaining work
+is, by both runs.**
+
+**WHAT IS STILL NOT ESTABLISHED.** The DSP-pipelining lead above is neither
+confirmed nor refuted -- it was never tested, and at -0.090 it may not be
+needed. Nothing here shows 200 MHz is reachable; it shows 196.5 MHz is, and
+that the last 0.090 ns is routing rather than logic. **And it is still
+unmeasured whether 200 MHz is required at all.** That question should be
+answered before any RTL is changed for it.
+
+**Cost:** the high-effort run is substantially slower than the default flow.
+It is the right setting for a closing run, not for every iteration.
+
 ## Files
 
 - `util_wire4_synth.rpt`, `util_hier_wire4_synth.rpt`, `timing_wire4_synth.rpt`
