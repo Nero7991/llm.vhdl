@@ -11,6 +11,75 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (night, later): THE WIRED TOP ROUTES. 60.5% LUT, 75.6% DSP, 181.7 MHz.
+
+`gen_compose4_top.py:177` said "the wired top needs its own place-and-route
+run". It has now had one. The wired top was generated into a SCRATCH tree, so
+the checked-in unwired `compose4_top.vhd` and TRACK ROUTE3's numbers on it are
+untouched.
+
+`C4_DONE synth wire4` then `C4_DONE impl wire4`, both `EXIT 0`.
+
+| | post-route | device | % |
+|---|---|---|---|
+| CLB LUT | 266,138 | 439,680 | 60.53 |
+| CLB register | 243,161 | 879,360 | 27.65 |
+| Block RAM tile | 327.5 | 672 | 48.74 |
+| DSP | 2,177 | 2,880 | **75.59** |
+
+**Routing is CLEAN: 521,388 of 521,388 routable nets, 0 routing errors, and DRC
+reports 0 errors and 0 critical warnings.**
+
+| clock | target | WNS | failing |
+|---|---|---|---|
+| `hbm_aclk` | 250 MHz | **+0.006** | **0** of 12,862 |
+| `core_clk` | 200 MHz | **-0.502** | 5,287 of 956,041 |
+
+**Hold was never a problem.** Synthesis showed WHS -0.100 with 402,321 failing
+endpoints; routing fixed it to **+0.010 with ZERO**. The synthesis stage's
+"Timing constraints are not met" is HOLD, and reading it as a setup failure
+would have been wrong.
+
+**THE CENSUS OVERTURNED THE WORST PATH, and this is the transferable part.**
+The routed report lists FOUR paths for 5,287 failing endpoints and its worst is
+in `c_attn/u_arr`. Counting endpoints on the routed DCP instead:
+
+| bucket | failing | share | worst |
+|---|---|---|---|
+| **`a_eng`** | **4,024** | **76.1%** | -0.493 |
+| `c_attn` | 603 | 11.4% | **-0.502** |
+| `b_gdn` | 591 | 11.2% | -0.460 |
+| `d_norm` | 69 | 1.3% | -0.439 |
+
+`CENSUS_TOTAL 5287` matches the summary's own count, which is the check that
+both measure the same population. **The worst path is in C; 76% of the work is
+in A.** Only the census names the work.
+
+**AND ALL FOUR BUCKETS LIE WITHIN 0.063 ns OF EACH OTHER.** A single broken
+path leaves one bucket far worse. Four subsystems inside 63 ps is a
+DESIGN-WIDE shortfall against an aggressive target, not a localised defect.
+Do not go hunting for "the" critical path.
+
+**The lead, labelled a lead:** DRC reports 2,728 DSP pipelining warnings on
+2,177 DSPs (1,762 unpipelined inputs, 632 missing MREG, 334 missing PREG),
+bucketing `a_eng` 1,592, `c_attn` 689, `b_gdn` 348, `d_norm` 99. Both orderings
+agree A dominates and 0.502 ns on 5 ns is 10%. But that is a correlation of two
+rankings over four buckets and no advisory has been shown to lie ON a failing
+path. The discriminator is to pipeline A's DSPs and re-run impl.
+
+**Also unmeasured: whether 200 MHz is needed.** 181.7 MHz is 91% of target and
+no throughput requirement here has been checked against it. That question is
+worth answering BEFORE spending retiming effort.
+
+**THE CAVEAT ON THE FIT, which is not small:** `compose4_top` instantiates
+`gdn_block` DIRECTLY and does NOT contain `gb_real`, so 48.74% BRAM excludes
+B's recurrent state entirely and URAM is 0. The results README explicitly
+refuses to add this column to the mover's own 63,905 LUT / 34 BRAM / 32 URAM /
+194 DSP, because parts do not sum across synthesis contexts. **DSP at 75.59% is
+the tightest resource and is the number to watch when the mover is added.**
+
+Full write-up: `hw/fk33/results/wire4_2026-09-03/README.md`.
+
 ### 2026-09-03 (night): B's data mover FITS. The blocker was one array, and it is gone.
 
 **`gb_real` is subsystem B's data mover.** It is 614 lines of `llama_top.vhd`,
