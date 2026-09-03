@@ -28,6 +28,10 @@ It does not fit, and the overage is **a single named object**:
 
 **5,472 RAMB36 against 672 on the device. 814%. One array.**
 
+**And substituting `gdn_state_store` for that one array brings it to 34 tiles
+and halves the LUT count. B's mover fits.** See the follow-up section below,
+measured the same day.
+
 3,072 Ki x 64 bits is **24.0 MiB exactly**, and
 `llama_top.vhd:3847` says why: `stmem_t is array (0 to NLY*STLY-1)` with
 `STLY = VH*DM*NBR`, so it is **1.0 MiB per layer times all 24 GDN layers,
@@ -156,6 +160,61 @@ gdn_state_store 32 URAM288  = 1.125 MiB          (covers one layer)
   that "every hand-derivation of these in this repo has been wrong once". 9B
   has `blocks => 32, attn_interval => 4`, so `attn_layers = 8`, `gdn_layers = 24`.
 
+## FOLLOW-UP, same day: the substitution was made and MEASURED. It fits.
+
+`sim/ooc_gdnadapt_extract.py --state-store` replaces memory 1 and memory 2 with
+a `gdn_state_store` instance and nothing else. Every anchor is required to match
+exactly once and the script dies otherwise, because a substitution that silently
+matched zero times would emit the unchanged block and report a saving of zero,
+which reads exactly like a real negative result.
+
+MEASURED, `sim/ooc_gdnadapt_ss.tcl`, `MAXROWS=64`, `OOC_EXIT 0`, sentinel present:
+
+| | unsubstituted | substituted | device |
+|---|---|---|---|
+| Block RAM tile | 5,472 (**814%**) | **34 (5.06%)** | 672 |
+| URAM | 0 | 32 (10.00%) | 320 |
+| CLB LUT | 127,260 (28.9%) | **63,905 (14.53%)** | 439,680 |
+| LUT as logic | 91,883 | 51,792 | |
+| LUT as memory | 35,078 | 12,113 | 205,440 |
+| CLB FF | 46,279 | 37,933 | 879,360 |
+| DSP | 141 | **194 (6.74%)** | 2,880 |
+| WNS | -4.008 | **-4.008** | |
+
+The invariance control at `MAXROWS=256`, `OOC_EXIT 0`: **34 BRAM tiles and 32
+URAM again, unchanged**, with LUT 67,921, FF 41,005, DSP 195. So the memory
+result is a property of the substitution and not of the buffer size, and the
+LUT/FF growth between the two sizes is the buffers, as it should be.
+
+**`-4.008` IS NOW IDENTICAL ACROSS FOUR RUNS** -- both variants at both buffer
+sizes, to the digit. That is not a coincidence to be reported as four
+measurements: it says the critical path lies in a structure that neither the
+24 MiB state array nor the row buffers participate in. Whatever it is, it is
+the same path every time, and it is what holds this block to 111 MHz.
+
+**B's data mover fits.** The census agrees with the totals: 41 RAMB cells and 32
+URAM cells, with the store's tap banks named explicitly as
+`\gb_real.u_state /u_conv gbank[N].m_reg`, so the store was NOT trimmed despite
+its conv face being tied off. This figure is therefore an upper bound: the real
+integration replaces `gb_real`'s memory 3 with that same face instead of
+carrying both.
+
+**Three things this measurement says that were not expected:**
+
+- **The LUT count HALVED**, 127,260 to 63,905. That was not the goal and was not
+  predicted. The 24 MiB array was being addressed by
+  `b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp` on every access, and a
+  3-million-entry address computation plus its decode is not free.
+- **DSP went UP, 141 to 194.** The store buys its area back partly in address
+  arithmetic. It is 6.74% of the part, so it does not matter here, but a saving
+  reported without this row would be dishonest.
+- **TIMING DID NOT MOVE. `-4.008` before, `-4.008` after, to the digit.** The
+  open question above said `stmem` was "the largest suspect" for the mover's
+  critical path. **That is now REJECTED, measured.** The 111 MHz has nothing to
+  do with the state array, it survives the array's removal unchanged, and it is
+  still the reason this block cannot run at the card's 200 MHz. It is
+  unattributed and it is now the top open item for B.
+
 ## Open, not yet answered
 
 - **No substitution has been made.** `gdn_state_store` is built and verified
@@ -164,9 +223,10 @@ gdn_state_store 32 URAM288  = 1.125 MiB          (covers one layer)
 - **`zb`/`yb` still need a real memory** before the block builds at 12288, and
   no fix is proposed here. It is now the SECOND blocker rather than a
   side-issue, because removing `stmem` does not remove it.
-- **The mover's `-4.008` is not attributed.** `stmem` is the largest suspect
-  and is being removed regardless, so the honest position is that the timing
-  question reopens after the substitution.
+- **The mover's `-4.008` is not attributed.** ~~`stmem` is the largest
+  suspect~~ WITHDRAWN the same day: the substituted build measures the SAME
+  `-4.008`, so `stmem` is not on the critical path at all. The path is
+  unidentified and this is now B's top open item.
 - **LUT and timing figures are pre-`opt_design`**, and no place-and-route has
   been run.
 - **C's mover (`gcr`, 762 lines) has not been extracted.** The method

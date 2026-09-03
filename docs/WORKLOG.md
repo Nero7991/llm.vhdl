@@ -11,6 +11,87 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-03 (night): B's data mover FITS. The blocker was one array, and it is gone.
+
+**`gb_real` is subsystem B's data mover.** It is 614 lines of `llama_top.vhd`,
+it instantiates `gdn_block`, every `llama_top` gate row has exercised it for
+weeks, and it had NEVER been synthesised. The standing blocker "per-unit data
+movers for B/C (~1,600 unwritten lines)" is a statement about ENTITIES. The
+logic exists.
+
+Extracted (`sim/ooc_gdnadapt_extract.py`) and built alone it needed **5,472
+RAMB36 against 672 on the part, 814%**. Vivado's own RAM inference table names
+the object outright:
+
+```
+| gb_real.stmem_p.stmem_reg | 3072 K x 64 (READ_FIRST) | 5472 RAMB36 |
+```
+
+3072 Ki x 64 is **24.0 MiB exactly** = 1.0 MiB per layer x all 24 GDN layers
+resident at once. That is this project's own 24 MB finding, now attached to a
+line number (`llama_top.vhd:3847`).
+
+**Substituting `gdn_state_store` for that one array fixes it.** MEASURED,
+`sim/ooc_gdnadapt_ss.tcl`, `MAXROWS=64`, `OOC_EXIT 0` with sentinel:
+
+| | before | after | device |
+|---|---|---|---|
+| Block RAM tile | 5,472 (**814%**) | **34 (5.06%)** | 672 |
+| URAM | 0 | 32 (10.00%) | 320 |
+| CLB LUT | 127,260 (28.9%) | **63,905 (14.53%)** | 439,680 |
+| CLB FF | 46,279 | 37,933 | 879,360 |
+| DSP | 141 | 194 (6.74%) | 2,880 |
+| WNS | -4.008 | **-4.008** | |
+
+**The LUT count HALVED**, which was not the goal and not predicted: a
+3-million-entry address computation is not free. **DSP went UP** 141 to 194, the
+store buying area back in address arithmetic; a saving reported without that row
+would be dishonest.
+
+**`gdn_block` itself was never the problem: 22 BRAM tiles, 141 DSP, WNS +0.483 =
+221 MHz, which MEETS the card's 200 MHz.**
+
+**THE THREE MODULES BUILT THIS WEEK COMPOSE EXACTLY, and that is now CHECKED
+rather than assumed.** `gdn_job_seq`'s `ss_load_start`/`ss_save_start`/
+`ss_layer`/`ss_done`/`ss_err` and its `cvw_*` group map one-to-one onto
+`gdn_state_store`; `b_start`/`b_busy` map onto `gdn_block`. `tok_adv` is
+deliberately the caller's, being per-token not per-layer. The only signal
+needing a new source is `q_data`, this token's qkv column.
+
+**AND THE TOKEN-1 REFUSAL IS THE SAME CHANGE.** `llama_top.vhd:4316` refuses
+`B_SRC_REAL` past token 0 and names exactly what is missing: *"a new (KCONV-1)
+x qkv_dim buffer, 3 x 8,192 words at the 9B shape"*. That is
+`rtl/gdn_conv_tap_mem.vhd`, which exists and is already inside
+`gdn_state_store`. The refusal's SECOND reason -- that `B_SRC_REAL` raises the
+degenerate-residual count -- is a BENCH artifact, not a silicon one: the file
+says it is "A's synthetic weights" that make `R_ALPHA` physically impossible,
+and that "sourcing the taps ALONE is neutral".
+
+**WHAT IS STILL NOT DONE.** No substitution has been made in `llama_top` --
+this is an OOC measurement of a generated variant. The integration wants the
+`C_KV_AXI` pattern: a default-false `B_STATE_AXI` generic, top-level AXI master
+ports with defaults on the inputs, tied off when false. And the measurement ties
+the store's conv face off while keeping `gb_real`'s own memory 3, so it is an
+UPPER bound; the real integration replaces memory 3 too, which is what lifts
+:4316.
+
+**THE TIMING IS NOW B'S TOP OPEN ITEM AND IT IS UNATTRIBUTED.** `-4.008` before
+the substitution and `-4.008` after, to the digit. The write-up had guessed
+`stmem` was the largest suspect for the critical path; that is now REJECTED,
+measured. 111 MHz against the card's 200 is unexplained.
+
+**THE PROCESS LESSON, which cost the first version of the write-up.** A size
+sweep showed the 5,472 did not move when the buffers were quadrupled, so it was
+not the buffers -- and from "not the buffers" this dispatcher concluded "then it
+is `gdn_block`", wrote it up with a table, cross-checked the arithmetic against
+the known 24 MB figure and got AGREEMENT. `gdn_block` alone is 22 tiles. **An
+invariance argument identifies what a number is NOT, never what it is**, an
+agreeing cross-check does not rescue a wrong owner, and the naming table had
+been sitting in the log from the first run. Both lessons are in `CLAUDE.md`.
+
+Full write-up: `docs/debugging/2026-09-03_b-mover-does-not-fit.md`.
+
+
 ### 2026-09-03 (evening): the first integration lands, and `--wire` is not "nothing is wired"
 
 **A CORRECTION TO THIS SESSION'S OWN READING OF THE BOARD.** It was reported

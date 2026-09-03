@@ -402,6 +402,20 @@ contract, and it was written down in the driver's own header the whole time.
 The fix cost one flip-flop (10 -> 11) and made the module unbreakable by a
 caller behaving correctly.
 
+**AND EDITING `regress.sh` ITSELF MID-RUN IS WORSE THAN EDITING A BENCH: IT CAN
+CORRUPT THE RUNNER.** Bash executes a script by byte offset -- it parses one
+compound command, runs it, then SEEKS BACK to the stored offset. Inserting
+lines ahead of that offset shifts every byte after them, so when the main loop
+finishes bash resumes mid-line and executes garbage. MEASURED 2026-09-03: ~20
+comment lines (~1.1 KB) were added to `sim/regress.sh` at line 437 while a gate
+was 96 rows into its main loop. **The damage would have landed in the TAIL --
+the summary and the BASELINE check -- which is precisely the part whose verdict
+you were waiting for**, and nothing in the log up to that point looks wrong.
+The run was stopped and re-run rather than trusted. **Make every edit BEFORE
+starting a gate, and if you touch the runner while one is live, that run is
+dead: stop it, do not read its verdict.** A comment-only edit is not exempt;
+bash counts bytes, not meaning.
+
 **A GATE RUN THAT OVERLAPPED AN EDIT PROVES NOTHING ABOUT EITHER VERSION.**
 `regress.sh` compiles from the repo per row. MEASURED 2026-09-03: three rows
 sharing ONE bench body reported `FAIL 3`, `FAIL 1` and `PASS 1` in the same

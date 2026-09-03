@@ -436,6 +436,26 @@ BASELINE_PASS=115  # RAISED FROM 113, 2026-09-03.  TWO new rows across three
                    #    rows a clean checkout does not get, sim:tb_a_job_counter
                    #    among them while it was still untracked.
                    #
+                   #    THE FLOOR WAS TEETH-CHECKED, 2026-09-03.  A floor
+                   #    nothing has ever been shown to trip is decoration, so
+                   #    a tree short of the full row set was run against it:
+                   #
+                   #      OVERALL PASS 114  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      BASELINE DROP: 114 passing, expected at least 115
+                   #      REGRESSION: FAIL          (exit 1)
+                   #
+                   #    Nothing went red; rows went MISSING, which is exactly
+                   #    the condition this floor exists to catch and the one
+                   #    a FAIL/PASS count cannot see.
+                   #
+                   #    WHAT THAT DOES *NOT* ESTABLISH, stated because the
+                   #    obvious reading is wrong: the teeth tree differed from
+                   #    the working tree by MORE than the one row deliberately
+                   #    removed (it also lacked sim:tb_a_job_counter and
+                   #    sim:tb_attn_cmp2).  So this shows the floor fires on a
+                   #    SHORTFALL.  It does not show it fires on any particular
+                   #    single row, and it is not a per-row resolution claim.
+                   #
                    # ---- the previous entry, kept ----
                    # RAISED FROM 112, 2026-09-02 (later).  ONE new row,
                    #    sim:tb_gdn_conv_tap_mem -- the conv tap history for one
