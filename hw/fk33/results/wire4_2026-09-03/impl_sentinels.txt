@@ -1,0 +1,2 @@
+C4_BEGIN impl tag=wire4 dcp=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/c4wire/out/wire4_synth.dcp pblock=0
+C4_DONE impl wire4

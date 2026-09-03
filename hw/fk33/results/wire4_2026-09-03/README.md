@@ -69,6 +69,94 @@ unsafe.** The only way to know is to compose them and re-synthesise.
 **DSP is the tightest resource at 75.59%** and is the number to watch when the
 mover is added, not LUT or BRAM.
 
+## PLACE AND ROUTE, same day: it ROUTES CLEAN and misses 200 MHz by 0.502 ns
+
+`C4_DONE impl wire4`, `IMPL_EXIT 0`. First place-and-route of the wired top.
+
+| | post-route | device | % |
+|---|---|---|---|
+| CLB LUT | 266,138 | 439,680 | **60.53** |
+| LUT as logic | 238,821 | | 54.32 |
+| LUT as memory | 27,317 | 205,440 | 13.30 |
+| CLB register | 243,161 | 879,360 | 27.65 |
+| Block RAM tile | 327.5 | 672 | 48.74 |
+| URAM | 0 | 320 | 0.00 |
+| DSP | 2,177 | 2,880 | **75.59** |
+
+LUT came in BELOW the synthesis estimate (266,138 against 270,125) because
+`opt_design` runs between them. Do not read the drop as an error.
+
+**ROUTING IS CLEAN: 521,388 routable nets, 521,388 fully routed, 0 nets with
+routing errors. DRC: 0 errors, 0 critical warnings.**
+
+**TIMING, and the two clocks behave differently:**
+
+| clock | target | WNS | failing endpoints |
+|---|---|---|---|
+| `hbm_aclk` | 250 MHz (4.0 ns) | **+0.006** | **0** of 12,862 |
+| `core_clk` | 200 MHz (5.0 ns) | **-0.502** | 5,287 of 956,041 (0.55%) |
+
+So the HBM domain MEETS and the core domain misses by 0.502 ns, i.e. 5.502 ns
+achieved = **181.7 MHz against the 200 MHz target**.
+
+**HOLD IS FIXED BY ROUTING and was never a problem.** Synthesis reported
+WHS -0.100 with 402,321 failing endpoints; post-route it is **+0.010 with
+ZERO**. The synthesis-stage "Timing constraints are not met" line was hold, and
+quoting it as a setup failure would have been wrong.
+
+## THE FAILING-ENDPOINT CENSUS, AND WHY THE WORST PATH MISLEADS
+
+The routed timing report lists **4 paths** for **5,287 failing endpoints**. Its
+worst path is `c_attn/u_arr/p_reg_reg[43][3]` -> `c_attn/u_arr/er_r_reg`, and
+three of the other reported paths are in `a_eng`. Reading that as "the problem
+is C's attention array" is exactly the mistake this project keeps paying for,
+so the endpoints were counted instead (`timing_census.tcl`, on the routed DCP):
+
+| bucket | failing endpoints | share | worst slack |
+|---|---|---|---|
+| **`a_eng`** | **4,024** | **76.1%** | -0.493 |
+| `c_attn` | 603 | 11.4% | **-0.502** |
+| `b_gdn` | 591 | 11.2% | -0.460 |
+| `d_norm` | 69 | 1.3% | -0.439 |
+
+`CENSUS_TOTAL 5287` matches the timing summary's own count exactly, which is
+the check that the census is measuring the same population.
+
+**THE WORST PATH IS IN C AND 76% OF THE FAILING ENDPOINTS ARE IN A.** The two
+answers point at different subsystems, and only the census points at the work.
+
+**AND THE SPREAD IS THE REAL FINDING: all four buckets lie within 0.063 ns of
+each other, -0.439 to -0.502.** A single broken path leaves one bucket far
+worse than the rest. Four subsystems all landing within 63 ps is the signature
+of a DESIGN-WIDE shortfall against an aggressive target, not a localised
+defect. Nobody should go hunting for "the" critical path here.
+
+## THE LEAD ON THE 0.502 ns
+
+DRC reports **2,728 DSP pipelining warnings** on a design with 2,177 DSPs:
+1,762 unpipelined inputs (DPIP-2), 632 missing MREG (DPOP-4), 334 missing PREG
+(DPOP-3). Bucketed the same way (`dsp_pipelining_by_subsystem.txt`):
+
+| bucket | DSP advisories | failing endpoints |
+|---|---|---|
+| `a_eng` | 1,592 | 4,024 |
+| `c_attn` | 689 | 603 |
+| `b_gdn` | 348 | 591 |
+| `d_norm` | 99 | 69 |
+
+The two orderings agree that `a_eng` dominates. Registering DSP inputs and
+enabling MREG/PREG is the standard recovery for a shortfall of this size, and
+0.502 ns on a 5 ns period is 10%.
+
+**THIS IS A LEAD, NOT A DIAGNOSIS.** The correlation is between two rankings
+over four buckets, which is far too little to establish cause, and no DSP
+advisory has been shown to lie ON a failing path. The cheap discriminator is to
+pipeline `a_eng`'s DSPs and re-run impl: if WNS moves, it was that.
+
+**Also unmeasured: whether 200 MHz is required at all.** 181.7 MHz is 91% of
+target and no throughput requirement in this repo has been checked against it.
+Retiming effort is worth spending only after that question is answered.
+
 ## Files
 
 - `util_wire4_synth.rpt`, `util_hier_wire4_synth.rpt`, `timing_wire4_synth.rpt`
