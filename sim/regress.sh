@@ -400,7 +400,31 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=117  # RAISED FROM 115, 2026-09-03 (later).  TWO new rows, the
+BASELINE_PASS=119  # RAISED FROM 117, 2026-09-03 (latest).  TWO new rows, the
+                   #    B STATE TIER: sim:tb_llama_top_bstate and
+                   #    sim:tb_llama_top_bstate_seq, which run llama_top with
+                   #    B_STATE_AXI => true so B's recurrent state lives behind
+                   #    an AXI3 master instead of in on-chip registers.  Both
+                   #    are thin wrappers that copy their FLAT siblings'
+                   #    landmarks verbatim, so a tier that computes different
+                   #    numbers fails rather than merely differing.
+                   #
+                   #    MEASURED on a `git archive HEAD` tree with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 2:
+                   #
+                   #      OVERALL PASS 119  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 119 passing, above the recorded floor of
+                   #                117 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    The run printed NO "rows a clean checkout does not get"
+                   #    section, which is the condition rule 10 requires, and
+                   #    BOTH new rows PASS on that clean tree (112s and 383s),
+                   #    so neither is a row that only exists in a dirty tree.
+                   #    117 + 2 = 119.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # 117 # RAISED FROM 115, 2026-09-03 (earlier).  TWO new rows, the
                    #    HOST SOFTWARE: sim:srvseam (server/tests/seam_selftest.c,
                    #    the driver, 84 checks) and sim:srve2e
                    #    (server/tests/server_e2e.py, the OpenAI-compatible
@@ -1648,6 +1672,31 @@ printf 'cardtop\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 printf 'srvseam\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 printf 'srve2e\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# THE BLOCK-DESIGN PORT ROW (added 2026-09-03, defect PCIEEP-BD-PORTS).
+# ---------------------------------------------------------------------------
+# The pcieep bitstream build was dead from 3a145fd until 2026-09-03 and nobody
+# knew, because NOTHING SCHEDULES `pcieep_build.sh`.  One of its two defects
+# was `rtl/fk33_seam.vhd` declaring four ports as `natural`:
+#
+#   ERROR: [IP_Flow 19-734] Port type 'natural' is not recognized.
+#   ERROR: [BD 41-1699] Unable to add reference type cell ... 'fk33_seam'
+#
+# That is legal VHDL.  It elaborates, it simulates, sim:tb_fk33_seam passes,
+# and NO BENCH CAN EVER SEE IT -- the constraint belongs to Vivado's IP
+# packager, not to the language.  Only a build catches it, and a build costs
+# 3 minutes and 3.4 GB of Vivado.  This row costs milliseconds and catches the
+# same class statically, plus the second rule that is invisible until the
+# first is fixed ([IP_Flow 19-627]: a port width is an XPath expression over
+# the generics and cannot call a VHDL function).
+#
+# It is NOT a substitute for `pcieep_build.sh --bd-only`.  It checks entities,
+# not the block design: it cannot see a miswired cell or a bad address map.
+# Teeth and controls are recorded at the bottom of sim/check_bd_ports.py --
+# in particular the control that a `natural` port on llama_top, which is not a
+# block-design cell, does NOT fire, so this is scoped and not a tree-wide grep.
+printf 'bdports\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -2319,6 +2368,7 @@ declare -A SELFCHECK_CMD=(
   [cardtop]="python3 $REPO/tools/gen_cardtop.py --check --bench"
   [srvseam]="make -s -C $REPO/server test"
   [srve2e]="make -s -C $REPO/server test-e2e"
+  [bdports]="python3 $REPO/sim/check_bd_ports.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2350,7 +2400,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

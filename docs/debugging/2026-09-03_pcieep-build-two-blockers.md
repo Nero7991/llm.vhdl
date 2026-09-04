@@ -10,15 +10,34 @@ Can a bitstream be built tonight, and would it contain the state-tier work?
 
 ## The answer
 
-**No, and no.**
+**The block design now builds. Nothing has been synthesised, and a bitstream
+would contain subsystem A only.**
 
-1. **The build ABORTS before Vivado starts**, on a guard that false-positives.
-   Fixed here.
-2. **With that removed it gets into the block design and fails again**, on
+Two defects, each hiding the next:
+
+1. **The build ABORTED before Vivado started**, on a guard that
+   false-positived on a comment. Fixed.
+2. **With that removed it reached the block design and failed again**, on
    `fk33_seam`'s four `natural`-typed ports, which Vivado's module inference
-   rejects. NOT fixed here; it is the real next blocker.
+   rejects. Fixed, in two steps -- the obvious fix produced a THIRD error.
 
-**Defect 1 masked defect 2**, which is why neither was known.
+**Defect 1 masked defect 2**, which is why neither was known. The end state,
+MEASURED by `hw/fk33/pcieep_build.sh --bd-only`:
+
+```
+BD4_EXIT 0
+errors: 0
+FK33_BD_VALIDATE OK
+FK33_BD_ONLY_DONE
+```
+
+read with line-anchored greps (`grep -cE '^FK33_BD_VALIDATE OK'` -> 2), not
+from a tail, because this script echoes its own source into its log.
+
+**This is `--bd-only`. It is NOT a bitstream.** `synth_design`,
+`place_design`, `route_design` and `write_bitstream` have never run on this
+path, so a third blocker behind this one remains possible -- exactly as this
+one sat behind the first.
 
 And separately: a bitstream would contain **subsystem A only**.
 `hw/fk33/rtl/fk33_engine.vhd` instantiates exactly one entity,
@@ -74,7 +93,7 @@ has_d = (re.search(r"entity\s+work\.llama_top\b", eng_nc) is not None
 The second row is the control: without it, "the abort stopped happening" is
 equally consistent with having broken the guard entirely.
 
-## Defect 2: `fk33_seam` cannot be a block-design cell. NOT FIXED.
+## Defect 2: `fk33_seam` cannot be a block-design cell. FIXED.
 
 With defect 1 gone the build reaches `create_bd_cell` and fails:
 
@@ -96,11 +115,155 @@ ERROR: [BD 41-1699] Unable to add reference type cell for reference-module 'fk33
 77:    hr_addr      : out natural range 0 to REGMAX-1;
 ```
 
-Last touched in **9270c7a**, so this predates tonight as well. The fix is to
-make them `std_logic_vector` and convert inside, which also touches
-`sim/tb_fk33_seam*` and whatever the BD wiring expects. **It is four ports, so
-it is tractable, but it is a load-bearing file and it needs its own gate cycle.
-It is not done here and nothing should claim the build works until it is.**
+Last touched in **9270c7a**, so this predates tonight as well.
+
+### The obvious fix produced a THIRD error
+
+Converting the ports to `std_logic_vector` with the width written the way the
+rest of the file writes widths:
+
+```vhdl
+hw_reg : out std_logic_vector(clog2(NREG)-1 downto 0);
+```
+
+is correct VHDL, elaborates, and Vivado's IP packager still refuses it:
+
+```
+ERROR: [IP_Flow 19-627] Unsupported function call "clog2" in the expression
+```
+
+**A block-design port width is an XPath expression over the cell's generics,
+evaluated by the packager, not by VHDL.** It can reference a generic and do
+arithmetic on it; it cannot call a VHDL function, so no function of `NREG` is
+admissible however trivially it evaluates. This is a genuinely different
+constraint from `19-734` and is invisible until `19-734` is gone.
+
+### What actually works: carry the width as a generic
+
+Two new generics, and the ports sized directly from them:
+
+```vhdl
+generic (
+  HREG_W  : positive := 4;
+  HADDR_W : positive := 12;
+  ...
+);
+port (
+  hw_reg  : out std_logic_vector(HREG_W-1  downto 0);
+  hw_addr : out std_logic_vector(HADDR_W-1 downto 0);
+  hr_reg  : out std_logic_vector(HREG_W-1  downto 0);
+  hr_addr : out std_logic_vector(HADDR_W-1 downto 0);
+);
+```
+
+`HREG_W-1` is arithmetic on a generic, which the packager accepts.
+
+**A generic that must agree with a derived value is a new way to be silently
+wrong**, so the agreement is enforced TWO-SIDED, in the architecture, using the
+out-of-range-`natural` idiom because Vivado ignores `assert ... severity
+failure` in synthesis:
+
+```vhdl
+constant bad_hreg_w_small  : natural := HREG_W - clog2(NREG);
+constant bad_hreg_w_big    : natural := clog2(NREG) - HREG_W;
+constant bad_haddr_w_small : natural := HADDR_W - clog2(REGMAX);
+constant bad_haddr_w_big   : natural := clog2(REGMAX) - HADDR_W;
+```
+
+Either direction of disagreement makes one of the four negative and fails
+elaboration. A one-sided check would have let a too-WIDE port through.
+
+`use work.util_pkg.all;` was added for `clog2`. That is safe in the BD project
+specifically because `build_fk33_pcieep.tcl:187` already adds `util_pkg` to it;
+it was checked rather than assumed.
+
+`sim/tb_fk33_seam.vhd` converts at the bench boundary, because `llama_top`'s
+matching host-window ports are still `natural`. **Only the seam's own entity
+had to change**, which is why this stayed at four ports.
+
+### Evidence
+
+- `sim:tb_fk33_seam` **PASS, 52 s** (a live gate row, not a new one written to
+  agree with the change): `tb_fk33_seam: PASS -- a whole token ran with llama`.
+- `--bd-only`: `BD4_EXIT 0`, `errors: 0`, `FK33_BD_VALIDATE OK`,
+  `FK33_BD_ONLY_DONE`.
+- `FK33_SEAMMAP tie-off present and fk33_engine.vhd has no llama_top --
+  consistent`, i.e. defect 1's guard now agrees with reality instead of with a
+  comment.
+
+## Defect 1's teeth test was built from defect 1
+
+Found 2026-09-03 by the full gate, AFTER the fix landed: `sim:runguard` went
+red with *"the seam tie-off guard does not discriminate as claimed"*.
+
+`gen_pcieep.py`'s `seam_tieoff_teeth()` constructs the state "subsystem D is
+present" like this:
+
+```python
+with_d = no_d + "  -- u_top : entity work.llama_top\n"
+```
+
+**That is a comment.** The selftest asserted that a commented-out
+instantiation MEANS subsystem D exists, which is exactly the misconception the
+detector had. Both were wrong in the same direction, so the four rows agreed
+with each other and the suite passed **every day the build was dead**. Fixing
+the detector is what finally made them disagree, and the "failure" was the
+selftest catching up, not a regression.
+
+**A teeth test whose mutant is built from the same misconception as the check
+cannot detect that misconception.** Construct the mutant from the THING -- a
+real instantiation -- never from the check's notion of it.
+
+Fixed by making `with_d` a real instantiation, and adding the two rows that
+never existed:
+
+| row | state | verdict |
+|---|---|---|
+| S5 | tie-off present, `llama_top` in COMMENTS only | must ACCEPT |
+| S6 | no tie-off, `llama_top` in COMMENTS only | must REFUSE |
+
+S5 is the shipping state, verbatim the shape `fk33_engine.vhd` has carried
+since 3a145fd.
+
+### Attribution control
+
+The pre-fix detector (`re.search(r"\bllama_top\b", eng_src)`, no comment
+stripping) run against all six rows:
+
+```
+S1 accepted   S2 REFUSED   S3 REFUSED   S4 accepted   -- all CORRECT
+S5 REFUSED  <== WRONG      S6 accepted <== WRONG
+```
+
+**The four original rows are insensitive to the defect in BOTH directions.**
+They pass identically with the broken detector and the fixed one. S5 and S6
+are the entire discrimination. Without the control the fix would have been
+credited to a suite that cannot see it.
+
+## A static gate row now covers the port class
+
+`sim/check_bd_ports.py` (row `sim:bdports`, milliseconds) parses every entity
+named by a `create_bd_cell -type module -reference` and refuses a port that is
+not `std_logic`/`std_logic_vector`/`signed`/`unsigned`, or whose width calls a
+function. Five cells, 1,860 ports today.
+
+`signed` and `unsigned` ARE accepted despite 19-734's wording. MEASURED: the
+`--bd-only` run that succeeded had ELEVEN such ports on `fk33_seam` and the
+packager named only the four `natural` ones. **The first version of the
+checker trusted the error TEXT instead and reported 11 failures against RTL
+that demonstrably builds** -- the same class of error as the selftest above,
+caught the same way, by running it against reality.
+
+Teeth: M1 (`natural` port), M2 (`clog2` width), M3 (cell with no entity),
+M4 (all `create_bd_cell` lines broken -> refuses the vacuous scan), M7
+(`signed` width calling a function) all KILLED. Controls that must NOT bite
+and did not: M5 a new `unsigned` port on a BD cell (port count 1860 -> 1861,
+so it was parsed and accepted); **M6 a `natural` port added to `llama_top`,
+which is not a BD cell (port count unchanged, so llama_top was never scanned)**
+-- that is the control distinguishing "checks block-design cells" from "greps
+the tree for the word natural".
+
+**It does NOT replace `--bd-only`.** It checks entities, not the block design.
 
 ## Measured and REJECTED -- do not retry
 
@@ -134,10 +297,17 @@ It is not done here and nothing should claim the build works until it is.**
 
 ## Open, not yet answered
 
-- **Defect 2 is unfixed**, so no bitstream has been produced and none can be
-  until `fk33_seam`'s four ports change.
-- **Whether anything downstream of `create_bd_cell` also fails** is unknown;
-  the build has never got past it, so there may be a third blocker behind this
-  one exactly as this one sat behind the first.
+- **NO BITSTREAM HAS BEEN PRODUCED.** `--bd-only` stops before synthesis by
+  design. Whether `synth_design` / `place_design` / `route_design` /
+  `write_bitstream` succeed on this path is untested, and the composed
+  `compose4_top` route that IS measured (`core_clk` -0.090 ns with high-effort
+  directives) is a different top, so it does not answer this.
+- **A third blocker behind `create_bd_cell` remains possible.** Each fix so far
+  produced a DIFFERENT error, which is the sign the layers are real; there is
+  no reason to assume this one was the last.
+- **`HREG_W`/`HADDR_W` defaults (4, 12) are only checked at ELABORATION.** A
+  caller that instantiates the seam with a mismatched pair gets a hard failure,
+  which is intended -- but a caller that never elaborates (a packaged IP reused
+  with different generics) would not hit it. Nothing does that today.
 - **Nothing here has run against the card**, and `fk33_transport` still refuses
   to open a `/dev` path without an explicit `FK33_ALLOW_HARDWARE` token.

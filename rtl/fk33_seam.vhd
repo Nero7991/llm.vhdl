@@ -166,11 +166,34 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+-- `clog2`, for the region-access port widths below.  This file otherwise
+-- depends on ieee only, and the dependency is SAFE for the block design:
+-- `hw/fk33/build_fk33_pcieep.tcl` already adds `rtl/util_pkg.vhd` to the
+-- project (it is a dependency of the engine), so `create_bd_cell -reference
+-- fk33_seam` can resolve it.
+use work.util_pkg.all;
 
 entity fk33_seam is
   generic(
     -- ---- geometry, and it must AGREE with the llama_top it drives -------
     NREG    : positive := 14;     -- activation regions; rel-mask width
+    -- THE REGION-ACCESS PORT WIDTHS ARE GENERICS, NOT A clog2 CALL, AND THAT
+    -- IS A VIVADO CONSTRAINT.  The IP packager evaluates a port's width as an
+    -- XPath expression over the generics and cannot call a VHDL function:
+    --   ERROR: [IP_Flow 19-627] Port 'hw_reg': XPath expression failed:
+    --   Unsupported function call or array usage "clog2"
+    -- so sizing these ports by a function fails `create_bd_cell` exactly as
+    -- `natural` did.  Arithmetic on a generic is fine; a function call is not.
+    -- MEASURED 2026-09-03, both errors in turn:
+    -- docs/debugging/2026-09-03_pcieep-build-two-blockers.md.
+    -- Defaults are clog2(14) = 4 and clog2(4096) = 12.
+    --
+    -- THEY CANNOT DRIFT: the architecture refuses any value that is not
+    -- exactly clog2 of its region count, in BOTH directions, by the
+    -- out-of-range-natural idiom this project uses because Vivado silently
+    -- ignores `assert ... severity failure` in synthesis.
+    HREG_W  : positive := 4;      -- must equal clog2(NREG)
+    HADDR_W : positive := 12;     -- must equal clog2(REGMAX)
     REGMAX  : positive := 4096;   -- elements in the widest region
     XREG    : natural  := 0;      -- the region the host writes (R_X)
     STEP_W  : positive := 11;
@@ -239,11 +262,23 @@ entity fk33_seam is
 
     -- ======================== REGION ACCESS PORTS ======================
     hw_we        : out std_logic;
-    hw_reg       : out natural range 0 to NREG-1;
-    hw_addr      : out natural range 0 to REGMAX-1;
+    -- SLV, NOT `natural`, AND THAT IS A BUILD REQUIREMENT RATHER THAN A
+    -- STYLE CHOICE.  Vivado's block-design module inference refuses a
+    -- `natural` port outright -- "[IP_Flow 19-734] Port type 'natural' is not
+    -- recognized.  Only std_logic and std_logic_vector types are allowed for
+    -- ports" -- and `hw/fk33/gen_pcieep.py` adds this entity to the BD with
+    -- `create_bd_cell -type module -reference fk33_seam`.  With these four as
+    -- `natural` that call FAILS and no bitstream can be built at all.
+    -- MEASURED 2026-09-03, docs/debugging/2026-09-03_pcieep-build-two-blockers.md.
+    --
+    -- `clog2(n)` is the width holding 0 .. n-1, so NREG=14 gives 4 bits and
+    -- REGMAX=4096 gives 12.  NREG=1 would give a null range; it is not a real
+    -- configuration and nothing instantiates it that way.
+    hw_reg       : out std_logic_vector(HREG_W-1 downto 0);
+    hw_addr      : out std_logic_vector(HADDR_W-1 downto 0);
     hw_data      : out signed(MANT_W-1 downto 0);
-    hr_reg       : out natural range 0 to NREG-1;
-    hr_addr      : out natural range 0 to REGMAX-1;
+    hr_reg       : out std_logic_vector(HREG_W-1 downto 0);
+    hr_addr      : out std_logic_vector(HADDR_W-1 downto 0);
     hr_data      : in  signed(MANT_W-1 downto 0);
 
     -- ============================ OBSERVATION ==========================
@@ -274,6 +309,15 @@ entity fk33_seam is
 end entity;
 
 architecture rtl of fk33_seam is
+  -- A WIDTH GENERIC THAT DOES NOT MATCH ITS REGION COUNT IS REFUSED, in both
+  -- directions, so the Vivado workaround above cannot silently truncate an
+  -- address or widen a port past what the BD wires.  Too small and the first
+  -- of each pair goes negative; too large and the second does.
+  constant bad_hreg_w_small  : natural := HREG_W - clog2(NREG);
+  constant bad_hreg_w_big    : natural := clog2(NREG) - HREG_W;
+  constant bad_haddr_w_small : natural := HADDR_W - clog2(REGMAX);
+  constant bad_haddr_w_big   : natural := clog2(REGMAX) - HADDR_W;
+
 
   -- ---------------- the register map, byte offsets --------------------
   -- 0x00..0x48 are `server/fk33_seam.h` v1, unchanged.
@@ -477,11 +521,11 @@ begin
   -- THE REGION PORTS
   -- ====================================================================
   hw_we   <= xw_we;
-  hw_reg  <= XREG;
-  hw_addr <= xw_addr;
+  hw_reg  <= std_logic_vector(to_unsigned(XREG, hw_reg'length));
+  hw_addr <= std_logic_vector(to_unsigned(xw_addr, hw_addr'length));
   hw_data <= xw_data;
-  hr_reg  <= XREG;
-  hr_addr <= xr_addr;
+  hr_reg  <= std_logic_vector(to_unsigned(XREG, hr_reg'length));
+  hr_addr <= std_logic_vector(to_unsigned(xr_addr, hr_addr'length));
 
   -- ====================================================================
   -- AXI4-LITE WRITE CHANNEL

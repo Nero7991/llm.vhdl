@@ -99,6 +99,7 @@ use ieee.numeric_std.all;
 use work.model_cfg_pkg.all;
 use work.llama_map_pkg.all;
 use work.llama_sched_pkg.all;
+use work.util_pkg.all;          -- clog2, for the seam's slv port widths
 
 entity tb_fk33_seam is
   generic(
@@ -216,6 +217,18 @@ architecture tb of tb_fk33_seam is
   signal s_hw_data : signed(MANT_W-1 downto 0);
   signal s_hr_reg : natural range 0 to NREGION-1;
   signal s_hr_addr : natural range 0 to REGMAX-1;
+
+  -- `fk33_seam`'s four region-access ports became std_logic_vector on
+  -- 2026-09-03 because Vivado's block-design module inference REFUSES a
+  -- `natural` port and no bitstream could be built with them
+  -- (docs/debugging/2026-09-03_pcieep-build-two-blockers.md).  `llama_top`'s
+  -- matching ports are still `natural`, so the conversion lives here rather
+  -- than changing a second entity's face for a BD constraint that applies
+  -- only to the seam.
+  signal sv_hw_reg  : std_logic_vector(clog2(NREGION)-1 downto 0);
+  signal sv_hw_addr : std_logic_vector(clog2(REGMAX)-1 downto 0);
+  signal sv_hr_reg  : std_logic_vector(clog2(NREGION)-1 downto 0);
+  signal sv_hr_addr : std_logic_vector(clog2(REGMAX)-1 downto 0);
   signal s_hr_data : signed(MANT_W-1 downto 0);
   signal s_obs_issue : std_logic;
   signal s_obs_tok_pos : unsigned(15 downto 0);
@@ -379,8 +392,17 @@ begin
       err_gate_drop => s_f_gate, err_unit_stub => s_f_stub,
       err_e_coll => s_f_ecoll);
 
+  s_hw_reg  <= to_integer(unsigned(sv_hw_reg));
+  s_hw_addr <= to_integer(unsigned(sv_hw_addr));
+  s_hr_reg  <= to_integer(unsigned(sv_hr_reg));
+  s_hr_addr <= to_integer(unsigned(sv_hr_addr));
+
   seam : entity work.fk33_seam
     generic map(NREG => NREGION, REGMAX => REGMAX, XREG => R_X,
+                -- MUST match, and fk33_seam REFUSES them if they do not: the
+                -- widths are generics rather than clog2 calls because Vivado's
+                -- IP packager cannot evaluate a function in a port width.
+                HREG_W => clog2(NREGION), HADDR_W => clog2(REGMAX),
                 STEP_W => STEP_W, EXP_W => EXP_W, MANT_W => MANT_W,
                 DESC_WORDS => SCHED_MAX_WORDS, REL_ENT => SCHED_MAX_STEPS,
                 CAPS_VOCAB => SHAPE.vocab_shard, CAPS_EMBD => SHAPE.hidden,
@@ -405,9 +427,9 @@ begin
       d_steps_done => s_steps_done,
       d_raddr => s_draddr, d_ren => s_dren, d_rdata => s_drdata,
       d_rvalid => s_drvalid,
-      hw_we => s_hw_we, hw_reg => s_hw_reg, hw_addr => s_hw_addr,
+      hw_we => s_hw_we, hw_reg => sv_hw_reg, hw_addr => sv_hw_addr,
       hw_data => s_hw_data,
-      hr_reg => s_hr_reg, hr_addr => s_hr_addr, hr_data => s_hr_data,
+      hr_reg => sv_hr_reg, hr_addr => sv_hr_addr, hr_data => s_hr_data,
       obs_issue => s_obs_issue, obs_tok_pos => s_obs_tok_pos,
       smp_token => s_smp_token, smp_n => s_smp_n, smp_exp => s_smp_exp,
       f_smp_ovf => s_f_ovf, f_lost_beat => s_f_lost,

@@ -305,6 +305,33 @@ out-of-range `natural` constant. Its XDC reader forbids `if`, skipping the block
 with only a CRITICAL WARNING. Reading a block-design `CONFIG.*` reads a REQUEST,
 not an answer.
 
+**A BLOCK-DESIGN CELL'S PORTS ARE NOT VHDL PORTS, AND THE TWO RULES ARRIVE ONE
+AT A TIME.** MEASURED 2026-09-03, `hw/fk33/pcieep_build.sh --bd-only` against
+`rtl/fk33_seam.vhd`:
+
+- **`natural` is not a port type.** `[IP_Flow 19-734] Port type 'natural' is
+  not recognized. Only std_logic and std_logic_vector types are allowed`, then
+  `19-4668 Failed to infer definition` and `BD 41-1699 Unable to add reference
+  type cell`. Perfectly legal VHDL that elaborates and simulates.
+- **A port WIDTH is an XPath expression over the generics, evaluated by the
+  packager, NOT by VHDL.** So the obvious fix fails differently:
+  `[IP_Flow 19-627] Unsupported function call "clog2" in the expression`. It
+  can reference a generic and do arithmetic on it; **no function of a generic
+  is admissible however trivially it evaluates.** This error is invisible until
+  `19-734` is gone.
+
+The fix is to carry the width as its OWN generic (`HREG_W : positive := 4`)
+and size the port `std_logic_vector(HREG_W-1 downto 0)`. **A generic that must
+agree with a derived value is a new way to be silently wrong**, so pin it
+TWO-SIDED with the out-of-range-`natural` idiom -- `HREG_W - clog2(NREG)` AND
+`clog2(NREG) - HREG_W` -- because a one-sided check lets a too-WIDE port
+through.
+
+**Neither error is reachable by any bench**, so no amount of simulation finds
+them. `--bd-only` costs 3 minutes and 3.4 GB and finds everything that is not a
+timing or placement result; nothing schedules it, which is why the build had
+been dead since `3a145fd` with nobody aware.
+
 **AND A SENTINEL GREP MUST BE LINE-ANCHORED, BECAUSE THE LOG CONTAINS THE
 SCRIPT THAT WRITES IT.** MEASURED 2026-09-03, twice in a row on the same job:
 `sim/ooc_compose4_pnr.tcl` echoes its own source into its log, so the log holds
@@ -474,6 +501,38 @@ any amount of additional structural checking.**
   check with four detections instead of three. A check credited with a kill
   that an existing property would have caught anyway is not worth its
   maintenance, and you cannot tell which case you are in without the control.
+- **A TEETH TEST WHOSE MUTANT IS BUILT FROM THE SAME MISCONCEPTION AS THE CHECK
+  CANNOT DETECT THAT MISCONCEPTION.** MEASURED 2026-09-03. `gen_pcieep.py`'s
+  D-presence guard matched `\bllama_top\b` anywhere, so a COMMENT satisfied
+  it, and the pcieep build had been dead since 3a145fd. Its own selftest,
+  `seam_tieoff_teeth()`, constructed the state "subsystem D is present" as
+  `with_d = no_d + "  -- u_top : entity work.llama_top"` -- **also a comment.**
+  Check and mutant were wrong in the same direction, so all four rows agreed
+  with each other and `sim:runguard` passed GREEN every day the build was
+  dead. It went red only when the detector was FIXED, i.e. the failure was the
+  selftest catching up.
+  **Construct the mutant from the THING, never from the check's notion of it.**
+  A real instantiation, not the string the detector happens to look for.
+  The attribution control then showed how little the existing rows were worth:
+  with the pre-fix detector, S1-S4 all give the CORRECT verdict and only the
+  two NEW rows (a comment-only reference, both with and without the tie-off)
+  disagree. **Four rows were insensitive to the defect in both directions.**
+  Same shape as the `check_bd_ports.py` first draft an hour later, which
+  trusted Vivado's error TEXT ("Only std_logic and std_logic_vector are
+  allowed") and reported 11 failures against RTL that demonstrably builds --
+  `signed`/`unsigned` are accepted, MEASURED by a passing `--bd-only` whose
+  packager named only the `natural` ports. **When a check and the thing it
+  checks disagree, re-run the check against a state you have MEASURED, before
+  believing either.**
+- **A BUFFERED LOG'S LINE COUNT IS NOT A PROGRESS SIGNAL.** MEASURED
+  2026-09-03: a full gate under `nohup ... > log` sat at **0 rows for 20
+  minutes** while 142 row directories existed in its scratch tree and two
+  `ghdl-mcode` processes were live. stdout to a file is block-buffered, so
+  per-row lines appear only at the end. Count the scratch ROW DIRECTORIES, or
+  read `/proc/PID/cwd` of the running tool, both of which the kernel updates
+  immediately. This is the third form of "the harness is reporting a fact
+  about the harness": after `wait_on_run -timeout` returning 0 on expiry and a
+  waiter firing on a killed unit, now a log that has not been flushed.
 - **GUARDS THAT PASS FOR THE WRONG REASON are their own defect class.** Four
   found on 2026-08-29 alone: a residency checker that printed PASS over an
   object neither of its two checks ever read (250 in, 249 checked); a

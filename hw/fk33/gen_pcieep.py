@@ -3335,7 +3335,29 @@ def seam_tieoff_teeth():
     no_tie = base.replace(tie, "[get_bd_pins seam_z1/dout] "
                                 "[get_bd_pins %s/d_err]" % SEAM_CELL)
     no_d = "entity fk33_engine is\n"
-    with_d = no_d + "  -- u_top : entity work.llama_top\n"
+    # A REAL INSTANTIATION.  This used to be a COMMENT:
+    #
+    #     with_d = no_d + "  -- u_top : entity work.llama_top\n"
+    #
+    # which is defect 1 written into the guard's own teeth test.  The detector
+    # matched `\bllama_top\b` anywhere, so a comment satisfied it, and this
+    # selftest was built to agree -- it asserted that a commented-out
+    # instantiation MEANS subsystem D is present.  Both were wrong in the same
+    # direction, so the selftest passed for the entire period the pcieep build
+    # was dead (3a145fd to 2026-09-03).  Fixing the detector is what finally
+    # made them disagree.
+    #
+    # A teeth test whose mutant is built from the same misconception as the
+    # check cannot detect that misconception.  Construct the mutant from the
+    # THING (a real instantiation), never from the check's notion of it.
+    with_d = no_d + "  u_top : entity work.llama_top\n    generic map (\n"
+    # And the state that actually ships: comment references only.  This is
+    # verbatim the shape `hw/fk33/rtl/fk33_engine.vhd` has carried since
+    # 3a145fd, and it is what the old detector false-positived on.
+    cmt_d = (no_d
+             + "  -- see rtl/llama_top.vhd:3197-3226 for the D-facing "
+               "contract\n"
+             + "  -- llama_top drives d_x_we/d_x_waddr in that order\n")
 
     rows = [
         ("S1", False, base,   no_d,   "SHIPPING: tie-off present, "
@@ -3349,7 +3371,29 @@ def seam_tieoff_teeth():
         ("S4", False, no_tie, with_d, "N3's future state: no tie-off and a "
          "real llama_top. Must be ACCEPTED or this guard blocks the work it "
          "exists to hand over to"),
+        # --- DEFECT 1's REGRESSION, added 2026-09-03.  Neither row existed
+        # while the build was dead, which is precisely why it stayed dead.
+        ("S5", False, base,   cmt_d,  "SHIPPING TODAY: tie-off present and "
+         "fk33_engine mentions llama_top only in COMMENTS. A comment is not "
+         "an instantiation; refusing this aborted every pcieep build from "
+         "3a145fd until 2026-09-03"),
+        ("S6", True,  no_tie, cmt_d,  "no tie-off, and llama_top only in "
+         "comments: subsystem D is NOT there, so the seam's D face is driven "
+         "by nothing and a (done | err) poll hangs. Same refusal as S3, "
+         "reached through the comment path"),
     ]
+    # ATTRIBUTION CONTROL, MEASURED 2026-09-03.  The pre-fix detector
+    # (`re.search(r"\bllama_top\b", eng_src)`, no comment stripping) was run
+    # against all six rows:
+    #
+    #   S1 accepted   S2 REFUSED   S3 REFUSED   S4 accepted   -- all CORRECT
+    #   S5 REFUSED  <== WRONG      S6 accepted <== WRONG
+    #
+    # So the four ORIGINAL rows are insensitive to the defect in both
+    # directions: they pass identically with the broken detector and with the
+    # fixed one, and would have passed every day the build was dead.  S5 and
+    # S6 are the whole of the discrimination.  Without this control the fix
+    # would have been credited to a suite that cannot see it.
     print()
     print("SEAM TIE-OFF TEETH (check_seam_tieoff)")
     print("%-4s %-9s %s" % ("ROW", "RESULT", "STATE"))
