@@ -400,7 +400,42 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=120  # RAISED FROM 119, 2026-09-03 (latest).  ONE new row,
+BASELINE_PASS=121  # RAISED FROM 120, 2026-09-04.  ONE new row,
+                   #    sim:srvstories (server/tests/server_stories_e2e.py),
+                   #    the DEFAULT server path's OpenAI surface: usage
+                   #    accounting and prompt echo.  sim:srve2e gates the
+                   #    qwen35 path only, and two compatibility defects lived
+                   #    unseen in the path `./server/llama_server` actually
+                   #    serves.
+                   #
+                   #    MEASURED on a `git archive HEAD` tree with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 2:
+                   #
+                   #      OVERALL PASS 121  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 121 passing, above the recorded floor of
+                   #                120 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    No "rows a clean checkout does not get" section.
+                   #    120 + 1 = 121.
+                   #
+                   #    WHAT THE ROW DOES ON THAT TREE, because it is not what
+                   #    it does here:
+                   #      sim:srvstories  PASS  "SERVER_STORIES SKIP"
+                   #    `ref/*.bin` is gitignored, so a clean checkout has no
+                   #    model to serve and the row checks NOTHING there.  It is
+                   #    counted anyway, on the same footing as sim:srve2e in
+                   #    the 117 raise, because the floor counts rows a clean
+                   #    tree GETS, not rows that do work.
+                   #
+                   #    A FIRST ATTEMPT AT THIS MEASUREMENT WAS DISCARDED: it
+                   #    had copied the untracked model files into the archive
+                   #    tree, which would have made the run not a clean
+                   #    checkout at all and the floor unreachable after a fresh
+                   #    clone.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # 120 # RAISED FROM 119, 2026-09-03.  ONE new row,
                    #    sim:bdports (sim/check_bd_ports.py), which refuses a
                    #    block-design module cell whose entity Vivado's IP
                    #    packager cannot infer.  Neither packager error it
