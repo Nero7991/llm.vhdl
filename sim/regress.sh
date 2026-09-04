@@ -400,7 +400,29 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=119  # RAISED FROM 117, 2026-09-03 (latest).  TWO new rows, the
+BASELINE_PASS=120  # RAISED FROM 119, 2026-09-03 (latest).  ONE new row,
+                   #    sim:bdports (sim/check_bd_ports.py), which refuses a
+                   #    block-design module cell whose entity Vivado's IP
+                   #    packager cannot infer.  Neither packager error it
+                   #    catches is reachable by any bench -- the constraint
+                   #    belongs to the packager, not to VHDL -- so the pcieep
+                   #    build sat dead from 3a145fd to 2026-09-03 with every
+                   #    simulation green.
+                   #
+                   #    MEASURED on a `git archive HEAD` tree with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 2:
+                   #
+                   #      OVERALL PASS 120  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 120 passing, above the recorded floor of
+                   #                119 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    No "rows a clean checkout does not get" section, which
+                   #    rule 10 requires, and sim:bdports PASSES on that clean
+                   #    tree (0s).  119 + 1 = 120.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # 119 # RAISED FROM 117, 2026-09-03.  TWO new rows, the
                    #    B STATE TIER: sim:tb_llama_top_bstate and
                    #    sim:tb_llama_top_bstate_seq, which run llama_top with
                    #    B_STATE_AXI => true so B's recurrent state lives behind
