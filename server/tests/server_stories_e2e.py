@@ -80,6 +80,23 @@ def main():
     proc = None
     url = args.url
     if not url:
+        # SKIP CLEANLY WHEN THE MODEL IS ABSENT.  `ref/*.bin` is gitignored
+        # (.gitignore:5), so a clean checkout has no model and the server dies
+        # at startup with "Couldn't open file ref/stories260K.bin".  Without
+        # this arm the row turns a CLEAN-CHECKOUT gate red, which is the one
+        # run BASELINE_PASS is measured from.  Same contract as test-e2e.
+        #
+        # The message is explicit and names the files, because a skip that
+        # fires for the wrong reason is a row that silently checks nothing --
+        # and the row's detail line in the gate is this text.
+        missing = [f for f in ("ref/stories260K.bin", "ref/tok512.bin")
+                   if not os.path.exists(os.path.join(ROOT, f))]
+        if missing:
+            print("SKIP: %s absent (gitignored), so there is no model to "
+                  "serve. Nothing was checked." % ", ".join(missing))
+            print("SERVER_STORIES SKIP")
+            return 0
+
         exe = os.path.join(SERVER_DIR, "llama_server")
         if not os.path.exists(exe):
             print("SERVER_STORIES VOID: %s does not exist (run `make -C server`)"
