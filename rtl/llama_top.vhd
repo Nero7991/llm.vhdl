@@ -1406,6 +1406,60 @@ begin
     end if;
   end process;
 
+  -- CAN THE SCALAR WRITE AND THE D-VEC LANE WRITE COINCIDE?
+  --
+  -- `wr_region` below PICKS ONE of them (llama_top.vhd, "wr_region <= v_reg_d
+  -- when w_we = '1' else ..."), so if both are high in one cycle the lock is
+  -- told about the `w_we` region and NEVER about the `el_we` one -- while
+  -- `memp` performs BOTH writes regardless, because they are separate `if`
+  -- arms.  That is an unpoliced region write, which this file calls the worst
+  -- failure it can have.
+  --
+  -- The exclusivity was ASSUMED and never checked.  It is not obviously true:
+  -- `el_we` takes `hw_we`, the HOST write window, in preference to any unit,
+  -- and a host write is not sequenced by D at all.
+  --
+  -- It also decides how the region file is banked for synthesis: one write
+  -- port per bank or two, i.e. 74.7 tiles or 149.3 of 672.  See
+  -- docs/2026-09-04_region-file-for-synthesis.md.
+  --
+  -- Same shape as `onehot` above: a clocked assert, which Vivado ignores in
+  -- synthesis, so it costs nothing in hardware.
+  --
+  -- MEASURED 2026-09-04, and THE ANSWER IS NOT "IT CANNOT HAPPEN".  Across
+  -- all eight llama_top gate rows this never fires, but that is vacuous:
+  -- instrumenting `tb_llama_top_real` gave
+  --
+  --   hw_we=128  w_we=128  el_we=8959  both=0  hw_while_busy=0
+  --
+  -- so the bench does drive the host write window 128 times -- and NOT ONCE
+  -- while the machine is busy.  Every host write happens before `go`.  The
+  -- interesting case is therefore UNTESTED rather than impossible, and
+  -- nothing in this file prevents it: `el_we` takes `hw_we` in preference to
+  -- any unit (see `elmux`), and a host write is not sequenced by D at all.
+  --
+  -- The check itself IS armed.  Teeth: weakening the condition to
+  -- `w_we = '1'`, which is reached 128 times, fires it at 5.09 ns. So a green
+  -- run means the condition was not reached, not that the assert is dead.
+  --
+  -- CONSEQUENCE FOR SYNTHESIS: the exclusivity is a HOST USAGE CONVENTION,
+  -- not a property of this design, so the banked region file must budget TWO
+  -- write ports per bank (149.3 tiles of 672) and not one (74.7).  Halving it
+  -- requires the RTL to ENFORCE the convention -- refusing or stalling a host
+  -- write while `busy` -- which is a contract change, not a refactor.
+  -- See docs/2026-09-04_region-file-for-synthesis.md.
+  wcollide : process(clk) is
+  begin
+    if rising_edge(clk) then
+      assert not (w_we = '1' and el_we = '1')
+        report "llama_top: a D-vec lane write and a scalar region write in "
+             & "the SAME cycle.  wr_region reports only the D-vec region, so "
+             & "the scalar write reaches the region file unpoliced by the "
+             & "lock."
+        severity failure;
+    end if;
+  end process;
+
   memp : process(clk) is
     variable a : natural;
   begin

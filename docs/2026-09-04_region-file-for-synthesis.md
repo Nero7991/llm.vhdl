@@ -131,13 +131,47 @@ The same applies here: `REGFILE_BANKED : boolean := false`, the flat array
 kept as the default, and a wrapper row per existing llama_top bench with the
 generic true and the landmarks copied verbatim.
 
+## ANSWERED: two write ports per bank, not one
+
+**The exclusivity is a HOST USAGE CONVENTION, not a property of the design.**
+MEASURED 2026-09-04 with a `wcollide` assert added to `llama_top.vhd` (same
+shape as the existing `onehot` guard, so Vivado ignores it in synthesis).
+
+Across all eight llama_top gate rows the assert never fires. **That result is
+vacuous**, and instrumenting `tb_llama_top_real` says why:
+
+```
+WCOLL_PROBE hw_we=128  w_we=128  el_we=8959  both=0  hw_while_busy=0
+```
+
+The bench DOES drive the host write window, 128 times -- and **not once while
+the machine is busy**. Every host write happens before `go`. So the collision
+is UNTESTED, not impossible, and nothing in the RTL prevents it: `elmux` takes
+`hw_we` in preference to any unit, and a host write is not sequenced by D.
+
+**The check is armed, which had to be shown separately.** Teeth: weakening the
+condition to `w_we = '1'`, reached 128 times, fires it at 5.09 ns. So a green
+run means the condition was not reached, not that the assert is dead code.
+
+Therefore the banked region file must budget **two write ports per bank,
+149.3 tiles of 672**, and the 74.7 figure is not available. Halving it requires
+the RTL to ENFORCE the convention -- refusing or stalling a host write while
+`busy` -- which is a contract change, not a refactor, and would need the seam
+to report the refusal.
+
+**Taking the 74.7 number on the strength of `both=0` would have been the exact
+failure this project keeps hitting**: a guard that has never been shown to
+discriminate, used as evidence.
+
 ## Open, not yet answered
+
 
 - **Whether llama_top FITS at 9B once this is done.** Unknown, and this note
   does not answer it: 150 tiles is the region file alone. There is still no
   area figure for llama_top at any shape.
-- **Whether the two writes per bank actually conflict. PARTIALLY ANSWERED,
-  and the answer is uncomfortable.** `llama_top.vhd:1554-1556` already assumes
+- **[ANSWERED 2026-09-04, see the section above. Kept for the record.]**
+  **Whether the two writes per bank actually conflict. The answer is
+  uncomfortable.** `llama_top.vhd:1554-1556` already assumes
   they do not:
 
   ```vhdl
