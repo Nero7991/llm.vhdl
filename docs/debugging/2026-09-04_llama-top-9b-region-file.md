@@ -115,3 +115,98 @@ problem**, which makes it a much easier fix than B's was.
   llama_top at any shape, and `compose4_top`'s numbers are for an unwired
   composition with a different instance set.
 - **Nothing here ran against the card.**
+
+
+---
+
+## CORRECTION 2026-09-04 (appended, nothing above deleted)
+
+Two things in this document were reported as new and were not, and one
+conclusion needs sharpening.
+
+### 1. The crash was already recorded, and D3 already fixes it
+
+`sim/elab_cardtop.tcl`, which predates this investigation, opens with:
+
+> `sim/mk_browse_proj.tcl` records, MEASURED, that `llama_top` at the real
+> shape CRASHES Vivado in `HOptDfg::dissolveRam at 2,752,512 bits`. That
+> number is the flat region array: 14 regions x 12,288 elements x 16 bits.
+> D3 replaces it with sized per-region BRAM banks, so `fk33_llama_top` should
+> elaborate where `llama_top` cannot.
+
+Same crash, same number, same cause. **`rtl/region_mem.vhd` exists**, with
+`sim/tb_region_mem.vhd` and six mutations holding it, and
+`tools/gen_cardtop.py` substitutes it into the card top as decision D3.
+`llama_top` keeps the flat array deliberately, under decision D1, because it is
+the untouched oracle the card top is tested against.
+
+**So "llama_top does not synthesise at 9B" is true and is not a defect.** It is
+the design, and the card top is the thing that is supposed to synthesise.
+
+### 2. A duplicate was written and reverted
+
+A `REGFILE_WIDE` tier was added to `llama_top` implementing the same
+substitution: wide-word storage, three replicas, registered host read. It
+worked -- `sim/tb_llama_top_regwide` passed against `tb_llama_top_real`'s
+landmarks unmodified, and mutants W1 (wrong scalar lane), W2 (operand B reads
+A) and W4 (one replica not written) were all killed. **It was reverted anyway**,
+because it duplicates `region_mem` and because putting a second implementation
+inside the oracle is exactly what D1 forbids.
+
+CLAUDE.md's rule covers this exactly: *"BEFORE WRITING A MODULE, GREP THE
+ENTITY DECLARATIONS FOR THE SHAPE YOU ARE ABOUT TO BUILD."* `llama_top`'s RTL
+was read carefully; `rtl/` was never searched for an existing region memory.
+Reading the file you are changing is not the same as searching for the thing
+you are about to build.
+
+**One thing the duplicate did earn:** two independent implementations of the
+same substitution reach the SAME next error, which is stronger evidence that
+the next error is real than either run alone.
+
+### 3. The real next blocker, on the real build path
+
+MEASURED, `TOP=fk33_llama_top HOST_WINDOW=false` through
+`sim/elab_cardtop.tcl` -- the card top, with D3 applied:
+
+```
+ELAB_TOP fk33_llama_top
+ELAB_SRCS 111
+ELAB_HOST_WINDOW false
+ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for
+  'gb_real.bp.zb_reg' ... the number of bits (196608) is too large
+```
+
+**The card top does not elaborate at 9B either**, and the region file is no
+longer why. `gb_real.bp` is subsystem B's adapter process and `zb` is one of
+its staging buffers: `variable zb : buf_t(0 to A_MAXROWS-1)` at
+`rtl/llama_top.vhd:4626`, and `A_MAXROWS = region_max(SHAPE)` = 12,288, so
+12,288 x 16 = 196,608 bits.
+
+It is one of a FAMILY. Every shape-sized staging buffer in the adapters, from
+`grep -nE 'variable [a-z_, ]+ : buf_t\(0 to' rtl/llama_top.vhd`:
+
+| line | variables | count | size | bits |
+|---|---|---|---|---|
+| 1964 | `buf` | 1 | REGMAX | 196,608 |
+| 3424 | `xb` | 1 | REGMAX | 196,608 |
+| 3732 | `yb` | 1 | A_MAXROWS | 196,608 |
+| 4001 | `qb, zb, bb` | 3 | REGMAX | 589,824 |
+| 4626-7 | `zb, yb` | 2 | A_MAXROWS | 393,216 |
+| 5630 | `yb` | 1 | YN | (vocabulary-sized) |
+
+**1,572,864 bits = 0.19 MiB across eight buffers**, plus the vocabulary-sized
+one. Synthesis stops at the first, so each will surface in turn as the one
+before it is fixed -- at least five more errors of this identical shape.
+
+These are a different class from the region file: each is PRIVATE to one
+adapter process with a simple one-write one-read pattern, so each is a much
+smaller change than `region_mem` was. But there are eight of them, and 4001's
+three sit in `gb_behav`, which only elaborates when `B_BEHAV` is true.
+
+## Open, not yet answered (revised)
+
+- **Whether the eight staging buffers are the last layer.** Every fix so far
+  has produced a different error, so there is no reason to assume so.
+- **Whether the card top FITS once it elaborates.** Elaboration is not
+  synthesis and neither is placement. There is still no area figure for the
+  card top at 9B.

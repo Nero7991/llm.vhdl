@@ -2,7 +2,32 @@
 
 **Date:** 2026-09-04
 **Blocks:** synthesis of `rtl/llama_top.vhd` at the 9B shape
-**Status:** DESIGN NOTE. Nothing here is implemented.
+**Status: SUPERSEDED. READ THIS BOX BEFORE THE REST.**
+
+> **THIS NOTE DESIGNS SOMETHING THAT ALREADY EXISTS.** `rtl/region_mem.vhd`
+> implements the substitution, `sim/tb_region_mem.vhd` holds it with six
+> mutations, and `tools/gen_cardtop.py` applies it to the card top as decision
+> **D3**, taken 2026-09-02. `llama_top` keeps the flat array on purpose, under
+> decision **D1**, because it is the untouched oracle the card top is tested
+> against. `sim/elab_cardtop.tcl` had already recorded the same crash, with
+> the same 2,752,512-bit figure.
+>
+> The note was written from a careful reading of `llama_top.vhd` and no search
+> of `rtl/` for an existing region memory, which is the exact failure
+> CLAUDE.md describes: *"BEFORE WRITING A MODULE, GREP THE ENTITY
+> DECLARATIONS FOR THE SHAPE YOU ARE ABOUT TO BUILD."*
+>
+> **What survives, because it was measured rather than assumed:** the
+> `REGMAX mod LANES = 0` result and the lane-alias argument; the two
+> corrections to my own tile arithmetic (depth granularity, and a replica
+> costing one write plus one read); and the port-count conclusion that two
+> writes plus a read exceeds a primitive's two ports, so the host-write
+> exclusivity is a precondition rather than an optimisation. Those apply to
+> `region_mem` too and were not stated there.
+>
+> **What is withdrawn:** the recommendation to build any of it. It is built.
+> See `docs/debugging/2026-09-04_llama-top-9b-region-file.md`, CORRECTION 3,
+> for the blocker that is actually next on the card top.
 
 ## Why
 
