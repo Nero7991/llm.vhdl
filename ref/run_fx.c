@@ -1605,6 +1605,34 @@ int llama_generate(LlamaCtx *ctx, const char *prompt, int max_tokens,
     return n;
 }
 
+/* The number of tokens `prompt` encodes to, WITH the BOS the generation path
+ * adds (encode(..., bos=1, eos=0)), so it is exactly the count that
+ * generate_stream teacher-forces.
+ *
+ * WHY THE SERVER NEEDS THIS.  generate_stream calls on_piece for EVERY
+ * position, including the `pos < num_prompt_tokens - 1` positions where the
+ * next token is taken from the prompt rather than sampled.  That is correct
+ * for the CLI, whose original llama2.c behaviour is to print the prompt back
+ * as it goes, and it is what run_tokens.sh compares against -- so it must NOT
+ * change.  An OpenAI-compatible server has the opposite contract:
+ * /v1/completions returns only the completion unless `echo` is true, and
+ * max_tokens counts generated tokens only.  The server therefore has to know
+ * how many leading pieces are echo, and this is the only honest way to tell
+ * it: ask the same tokenizer the same question.
+ *
+ * Returns 0 if the prompt encodes to nothing, which the caller must treat as
+ * "no echo to skip" rather than as an error. */
+int llama_prompt_tokens(LlamaCtx *ctx, const char *prompt) {
+    if (!ctx || !prompt) return 0;
+    int n = 0;
+    /* +3 matches generate_stream's own allocation for this exact call. */
+    int *ids = (int*)malloc((strlen(prompt) + 3) * sizeof(int));
+    if (!ids) return 0;
+    encode(&ctx->tokenizer, (char*)prompt, 1, 0, ids, &n);
+    free(ids);
+    return n;
+}
+
 void llama_free(LlamaCtx *ctx) {
     if (!ctx) return;
     free_fakequant_buffers();

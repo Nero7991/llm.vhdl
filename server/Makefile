@@ -147,6 +147,15 @@ test: seam_selftest
 test-e2e: llama_server
 	python3 tests/server_e2e.py
 
+# The DEFAULT path's OpenAI surface: usage accounting and prompt echo.  This is
+# the path `./server/llama_server` serves and the only one that does real
+# fixed-point inference, and nothing checked it until 2026-09-04, when two
+# compatibility defects were found in it (prompt_tokens hardcoded 0, and an
+# unconditional prompt echo that was also charged against max_tokens).  Runs
+# from the REPO ROOT because the model files are ref/*.bin relative paths.
+test-stories: llama_server
+	cd .. && python3 server/tests/server_stories_e2e.py
+
 # ---------------------------------------------------------------------------
 # Qwen3.5 tokenizer (qwen35_tok.c + the generated qwen35_unicode_data.c).
 #
@@ -187,4 +196,4 @@ clean:
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
-.PHONY: board clean tok tok-board check test test-e2e embed-check
+.PHONY: board clean tok tok-board check test test-e2e test-stories embed-check

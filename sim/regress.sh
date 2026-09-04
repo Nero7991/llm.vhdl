@@ -1719,6 +1719,31 @@ printf 'srve2e\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # block-design cell, does NOT fire, so this is scoped and not a tree-wide grep.
 printf 'bdports\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# THE STORIES OPENAI-SURFACE ROW (added 2026-09-04, defect SRV-USAGE-ECHO).
+# ---------------------------------------------------------------------------
+# sim:srve2e gates the QWEN35 path against a simulated card.  Nothing gated the
+# DEFAULT path -- the one `./server/llama_server` serves, and the only one that
+# runs real fixed-point inference -- and two OpenAI-compatibility defects lived
+# there:
+#
+#   1. usage.prompt_tokens was the literal 0 in both response builders, so
+#      total_tokens equalled completion_tokens.
+#   2. /v1/completions ECHOED THE PROMPT unconditionally, every echoed piece
+#      counted as a completion token, and max_tokens was spent on them.
+#
+# Both produce a well-formed 200 with plausible text, which is why no existing
+# test saw them.
+#
+# Teeth, MEASURED against a `git archive HEAD` build of the pre-fix server:
+# C1, C4, C5, C7, C8 and C11 FAIL there and pass here.
+# C2, C3, C6, C9 and C10 pass on BOTH and are labelled SHAPE ONLY in the test
+# itself -- in particular C3 and C9 originally carried messages claiming they
+# caught the echo, and the control proved they do not: the old code counted
+# echo pieces toward max_tokens, so the COUNTS matched either way. C11 was
+# added because of that control.
+printf 'srvstories\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -2391,6 +2416,7 @@ declare -A SELFCHECK_CMD=(
   [srvseam]="make -s -C $REPO/server test"
   [srve2e]="make -s -C $REPO/server test-e2e"
   [bdports]="python3 $REPO/sim/check_bd_ports.py"
+  [srvstories]="make -s -C $REPO/server test-stories"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2422,7 +2448,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

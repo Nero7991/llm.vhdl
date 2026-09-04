@@ -29,13 +29,31 @@ int llama_seq_len(const LlamaCtx *ctx);   /* max positions (context length) */
 int llama_vocab(const LlamaCtx *ctx);     /* vocabulary size */
 
 /* Generate up to max_tokens continuation tokens from `prompt`. temperature<=0
- * is greedy (argmax = VHDL-exact); >0 samples (top_p nucleus). Each generated
- * piece is delivered to on_piece(piece, user) in order. Stops early at BOS.
+ * is greedy (argmax = VHDL-exact); >0 samples (top_p nucleus).
+ *
+ * EVERY piece is delivered to on_piece(piece, user) in order, INCLUDING the
+ * leading `llama_prompt_tokens(ctx, prompt) - 1` pieces that echo the prompt
+ * back.  That is llama2.c's original CLI behaviour and run_tokens.sh compares
+ * against it, so it is deliberate and will not change.  A caller that wants
+ * only the continuation must skip that many pieces itself; the count comes
+ * from llama_prompt_tokens below.
+ *
+ * (This paragraph used to read "Each generated piece", which was wrong in a
+ * way no caller could detect except by counting: the server was reporting
+ * echoed prompt tokens as completion tokens and charging them against
+ * max_tokens.)
+ *
+ * Stops early at BOS.
  * Returns the number of positions advanced. NOT thread-safe for one ctx (the
  * model RunState is shared) — the caller serializes concurrent generations. */
 int llama_generate(LlamaCtx *ctx, const char *prompt, int max_tokens,
                    float temperature, float top_p, unsigned long long seed,
                    llama_piece_cb on_piece, void *user);
+
+/* How many tokens `prompt` encodes to, including the BOS that the generation
+ * path prepends.  `n - 1` is exactly the number of leading on_piece calls that
+ * are prompt echo rather than generation. */
+int llama_prompt_tokens(LlamaCtx *ctx, const char *prompt);
 
 void llama_free(LlamaCtx *ctx);
 

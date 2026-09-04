@@ -262,6 +262,23 @@ struct GenSink {
     bool stream;
     int  max_tokens;
     int  generated = 0;
+    // ECHO SUPPRESSION.  ref/run_fx.c's generate_stream calls on_piece for
+    // EVERY position, including the leading ones where the next token is
+    // teacher-forced from the prompt rather than sampled.  That is llama2.c's
+    // original CLI behaviour and run_tokens.sh compares against it, so it is
+    // fixed in ref/ and suppressed HERE instead.
+    //
+    // `echo_left` counts pieces still to be swallowed.  It is
+    // llama_prompt_tokens(prompt) - 1: position 0 consumes prompt token 0 and
+    // emits token 1, so a one-token prompt has NO echo.
+    //
+    // Before this, /v1/completions returned the prompt prepended to the
+    // completion, every echoed piece counted as a completion token, and
+    // max_tokens was spent on them -- `max_tokens: 8` on a 3-token prompt
+    // produced 5 new tokens, not 8.
+    int  echo_left = 0;
+    int  prompt_tokens = 0;   // reported in usage; 0 was HARDCODED before
+    bool echo = false;        // OpenAI's `echo`: keep the prompt in the output
     std::string full;                 // full generated text (non-stream + stop match)
     std::vector<std::string> stops;
     std::string stream_id;            // chatcmpl id for chunk objects
@@ -291,6 +308,24 @@ static std::string text_chunk(const std::string& id, long created, const std::st
 // extern "C" so it matches llama_piece_cb; returns non-zero to stop.
 extern "C" int piece_cb(const char* piece, void* user) {
     GenSink* s = (GenSink*)user;
+
+    // Swallow the prompt echo BEFORE anything counts it or sends it.  When
+    // `echo` is requested the text is kept, but it is still not a completion
+    // token: OpenAI counts echoed prompt under prompt_tokens, and charging it
+    // against max_tokens would silently shorten every completion.
+    if (s->echo_left > 0) {
+        s->echo_left--;
+        if (s->echo) {
+            s->full += piece;
+            if (s->stream && s->ok) {
+                std::string chunk = s->is_chat ? chat_chunk(s->stream_id, s->created, piece, nullptr)
+                                               : text_chunk(s->stream_id, s->created, piece, nullptr);
+                if (!send_str(s->fd, "data: " + chunk + "\n\n")) s->ok = false;
+            }
+        }
+        return s->ok ? 0 : 1;
+    }
+
     s->full += piece;
     s->generated++;
 
@@ -725,6 +760,13 @@ static void run_generation(GenSink& sink, const std::string& prompt,
             return;
         }
     }
+    // How many leading on_piece calls are prompt echo.  Asked of the SAME
+    // tokenizer generate_stream uses, rather than counted from the request
+    // text, because only the tokenizer knows.
+    int np = llama_prompt_tokens(g_ctx, prompt.c_str());
+    sink.prompt_tokens = np;
+    sink.echo_left     = np > 0 ? np - 1 : 0;
+
     // steps = 0 -> llama caps at seq_len; the callback stops at max_tokens/stop.
     llama_generate(g_ctx, prompt.c_str(), 0, temperature, top_p, seed, piece_cb, &sink);
 }
@@ -752,6 +794,12 @@ static void handle_completion(int fd, const JValue& root, bool is_chat) {
     float top_p       = (float)(root.find("top_p") ? root.find("top_p")->as_num(0.9) : 0.9);
     int   max_tokens  = (int)(root.find("max_tokens") ? root.find("max_tokens")->as_num(256) : 256);
     bool  stream      = root.find("stream") ? root.find("stream")->as_bool(false) : false;
+    // OpenAI's `echo` on /v1/completions.  Defaults FALSE, which is the spec
+    // and is a BEHAVIOUR CHANGE: this server used to echo unconditionally,
+    // because ref/run_fx.c hands the teacher-forced prompt pieces to the same
+    // callback as generated ones.  Chat completions have no `echo` in the API
+    // and never echo.
+    bool  want_echo   = (!is_chat) && root.find("echo") && root.find("echo")->as_bool(false);
     if (max_tokens <= 0) max_tokens = 256;
     int cap = g_qwen ? pl_max_ctx(g_card) : llama_seq_len(g_ctx);
     if (max_tokens > cap) max_tokens = cap;
@@ -777,6 +825,7 @@ static void handle_completion(int fd, const JValue& root, bool is_chat) {
     sink.stream_id = gen_id(is_chat ? "chatcmpl" : "cmpl");
     sink.created = now_sec();
     sink.is_chat = is_chat;
+    sink.echo    = want_echo;
 
     if (stream) {
         std::string hdr; http_headers(hdr, 200, "OK", "text/event-stream", -1);
@@ -798,14 +847,18 @@ static void handle_completion(int fd, const JValue& root, bool is_chat) {
             body = "{\"id\":\"" + sink.stream_id + "\",\"object\":\"chat.completion\",\"created\":" +
                    std::to_string(sink.created) + ",\"model\":\"" + MODEL_ID +
                    "\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"" +
-                   json_escape(text) + "\"},\"finish_reason\":\"" + fr + "\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":" +
-                   std::to_string(sink.generated) + ",\"total_tokens\":" + std::to_string(sink.generated) + "}}";
+                   json_escape(text) + "\"},\"finish_reason\":\"" + fr + "\"}],\"usage\":{\"prompt_tokens\":" +
+                   std::to_string(sink.prompt_tokens) + ",\"completion_tokens\":" +
+                   std::to_string(sink.generated) + ",\"total_tokens\":" +
+                   std::to_string(sink.prompt_tokens + sink.generated) + "}}";
         } else {
             body = "{\"id\":\"" + sink.stream_id + "\",\"object\":\"text_completion\",\"created\":" +
                    std::to_string(sink.created) + ",\"model\":\"" + MODEL_ID +
                    "\",\"choices\":[{\"index\":0,\"text\":\"" + json_escape(text) +
-                   "\",\"finish_reason\":\"" + fr + "\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":" +
-                   std::to_string(sink.generated) + ",\"total_tokens\":" + std::to_string(sink.generated) + "}}";
+                   "\",\"finish_reason\":\"" + fr + "\"}],\"usage\":{\"prompt_tokens\":" +
+                   std::to_string(sink.prompt_tokens) + ",\"completion_tokens\":" +
+                   std::to_string(sink.generated) + ",\"total_tokens\":" +
+                   std::to_string(sink.prompt_tokens + sink.generated) + "}}";
         }
         send_json(fd, 200, "OK", body);
     }
