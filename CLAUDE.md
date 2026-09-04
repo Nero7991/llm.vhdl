@@ -65,6 +65,19 @@ The rules that follow from this:
   peaks: full `pcieep` build 25.0 GiB, composed place-and-route several GiB,
   and a single OOC synthesis 11.9 GiB. Two of anything in that list does not
   fit beside `llama-server`.
+  **CORRECTION 2026-09-04: THE 25.0 GiB FIGURE DID NOT REPRODUCE.** A full
+  `hw/fk33/pcieep_build.sh` that ran to a bitstream with 0 errors peaked at
+  **10.66 GB** (Vivado's own `Memory (MB): peak` at the largest phase; RSS
+  sampled via `/proc/PID/exe` agreed at 9.98 GB), and `free physical` never
+  went below 14,440 MB. See
+  `docs/debugging/2026-09-04_first-pcieep-bitstream.md`. **Do not quote 25.0
+  GiB for this script again without re-measuring it**, and in particular do not
+  use it to refuse to run the build -- the refusal is the expensive error, and
+  this build had been unrun for weeks partly on that number. The 25.0 GiB may
+  belong to a different configuration; it has never been re-derived.
+  What does NOT change: the peak is a property of the JOB, one observation is
+  not the peak, and the thing that made running it safe was the
+  `systemd-run -p MemoryHigh=26G` cap, not the sample.
 - **A composed `route_design` left `free physical = 233 MB` while ALONE on the
   box** (MEASURED 2026-08-30, TRACK TIMING). Six of those were running
   concurrently when the box hung. **A tool that leaves 233 MB when it is the
