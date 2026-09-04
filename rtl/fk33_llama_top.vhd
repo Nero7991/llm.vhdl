@@ -1446,6 +1446,74 @@ begin
     end if;
   end process;
 
+  -- CAN THE SCALAR WRITE AND THE D-VEC LANE WRITE COINCIDE?
+  --
+  -- `wr_region` below PICKS ONE of them ("wr_region <= v_reg_d when w_we = '1'
+  -- else ..."), and `memp` performs BOTH writes regardless, because they are
+  -- separate `if` arms.
+  --
+  -- CORRECTION 2026-09-04, appended rather than edited because the first
+  -- version of this comment was committed and is WRONG IN THE OTHER
+  -- DIRECTION.  It said a coincident scalar write reaches the region file
+  -- "unpoliced by the lock".  That is not the hazard: `gatechk` reads
+  --
+  --     elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0'
+  --
+  -- so a HOST write is DELIBERATELY exempt from the lock check, always, not
+  -- only when it collides.  Nothing was ever policing it.
+  --
+  -- The real hazard runs the opposite way: when `hw_we` and `w_we` are high
+  -- together, that `hw_we = '0'` term makes the whole check FALSE for the
+  -- cycle, so a D-VEC WRITE THAT IS GENUINELY OUTSIDE ITS LOCK WINDOW IS NOT
+  -- FLAGGED.  A host write MASKS a D-vec lock violation, and `wr_region`
+  -- naming the D-vec region is then reported to nobody.  That is a
+  -- detection hole in the guard, not an unpoliced write.
+  --
+  -- The exclusivity was ASSUMED and never checked.  It is not obviously true:
+  -- `el_we` takes `hw_we`, the HOST write window, in preference to any unit,
+  -- and a host write is not sequenced by D at all.
+  --
+  -- It also decides how the region file is banked for synthesis: one write
+  -- port per bank or two, i.e. 74.7 tiles or 149.3 of 672.  See
+  -- docs/2026-09-04_region-file-for-synthesis.md.
+  --
+  -- Same shape as `onehot` above: a clocked assert, which Vivado ignores in
+  -- synthesis, so it costs nothing in hardware.
+  --
+  -- MEASURED 2026-09-04, and THE ANSWER IS NOT "IT CANNOT HAPPEN".  Across
+  -- all eight llama_top gate rows this never fires, but that is vacuous:
+  -- instrumenting `tb_llama_top_real` gave
+  --
+  --   hw_we=128  w_we=128  el_we=8959  both=0  hw_while_busy=0
+  --
+  -- so the bench does drive the host write window 128 times -- and NOT ONCE
+  -- while the machine is busy.  Every host write happens before `go`.  The
+  -- interesting case is therefore UNTESTED rather than impossible, and
+  -- nothing in this file prevents it: `el_we` takes `hw_we` in preference to
+  -- any unit (see `elmux`), and a host write is not sequenced by D at all.
+  --
+  -- The check itself IS armed.  Teeth: weakening the condition to
+  -- `w_we = '1'`, which is reached 128 times, fires it at 5.09 ns. So a green
+  -- run means the condition was not reached, not that the assert is dead.
+  --
+  -- CONSEQUENCE FOR SYNTHESIS: the exclusivity is a HOST USAGE CONVENTION,
+  -- not a property of this design, so the banked region file must budget TWO
+  -- write ports per bank (149.3 tiles of 672) and not one (74.7).  Halving it
+  -- requires the RTL to ENFORCE the convention -- refusing or stalling a host
+  -- write while `busy` -- which is a contract change, not a refactor.
+  -- See docs/2026-09-04_region-file-for-synthesis.md.
+  wcollide : process(clk) is
+  begin
+    if rising_edge(clk) then
+      assert not (w_we = '1' and el_we = '1')
+        report "llama_top: a D-vec lane write and a scalar region write in "
+             & "the SAME cycle.  wr_region reports only the D-vec region, so "
+             & "the scalar write reaches the region file unpoliced by the "
+             & "lock."
+        severity failure;
+    end if;
+  end process;
+
   -- ======================================================================
   -- D3.  THE REGION FILE, as sized per-region BRAM banks.
   --
@@ -1595,7 +1663,22 @@ begin
     if rising_edge(clk) then
       if rst = '1' then
         f_gate <= '0';
-      elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0' then
+      -- FIXED 2026-09-04.  This used to read
+      --
+      --     elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0' then
+      --
+      -- where `hw_we = '0'` was standing in for "this is not a host write",
+      -- because `el_we` is high whenever `hw_we` is (see `elmux`).  That is
+      -- correct while only ONE write is in flight and WRONG when both are:
+      -- `wr_region` names the D-VEC region in that cycle, so the write being
+      -- judged is the D-vec one -- and the `hw_we = '0'` term switched the
+      -- whole check off.  A host write MASKED a D-vec lock violation.
+      --
+      -- Say what was meant instead: a non-host write is either the D-vec
+      -- write (never a host write) or a scalar write that is not the host's.
+      -- The host's own write stays exempt, deliberately and as before.
+      elsif ((w_we = '1') or (el_we = '1' and hw_we = '0'))
+            and wr_gate /= '1' then
         f_gate <= '1';
         report "llama_top: the region lock DROPPED a write to region "
              & integer'image(to_integer(wr_region))

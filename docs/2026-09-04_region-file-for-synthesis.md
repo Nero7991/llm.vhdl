@@ -163,7 +163,43 @@ to report the refusal.
 failure this project keeps hitting**: a guard that has never been shown to
 discriminate, used as evidence.
 
+## CORRECTION 2026-09-04: the hazard runs the other way
+
+The section above, and commit `444a357`, described a coincident scalar write
+as reaching the region file **"unpoliced by the lock"**. **That claim is
+withdrawn.** It is not the hazard, and it misreads `gatechk`:
+
+```vhdl
+elsif wr_we = '1' and wr_gate /= '1' and hw_we = '0' then
+```
+
+**A host write is DELIBERATELY exempt from the lock check, always** -- not only
+when it collides. Nothing was ever policing it, so a collision cannot make it
+unpoliced.
+
+The real hazard is the reverse. When `hw_we` and `w_we` are high in the same
+cycle, that `hw_we = '0'` term makes the whole condition FALSE, so **a D-vec
+write that is genuinely outside its lock window is not flagged**. A host write
+MASKS a D-vec lock violation. `f_gate` stays low, `err_gate_drop` stays low,
+and nothing reports it.
+
+This is a **detection hole in a guard**, which is a different defect class from
+an unpoliced write, and it is the class this project keeps rediscovering: the
+check is correct for the case it was written for and silently absent for one it
+was not.
+
+**What does NOT change:** the collision is still untested (`hw_while_busy=0`),
+the exclusivity is still a host convention rather than a design property, and
+the banked region file still needs two write ports per bank unless the RTL
+enforces the convention. The tile numbers stand.
+
+**What this adds:** enforcing the convention is now worth more than the 74.7
+tiles. It would close the detection hole as a side effect, because with the
+two writes made mutually exclusive the `hw_we = '0'` term can no longer
+suppress a D-vec check that would otherwise have fired.
+
 ## Open, not yet answered
+
 
 
 - **Whether llama_top FITS at 9B once this is done.** Unknown, and this note
