@@ -8,6 +8,26 @@
 # HOW TO REPRODUCE IT, and there is no other recipe:
 #   SMP=1 bash tools/ref9b/capture_llama_top.sh real
 #
+# HOW TO CHECK IT AGAINST THE MODELS, and the flags are NOT optional:
+#   python3 tools/ref9b/bisect_scaled.py --blocks 4 --attn-int 4 --attn-hd 16 \
+#       --norm real --w-image sim/llama_top_w_b4_pool.hex <capture>
+#
+# RUN IT WITH DEFAULTS AND IT REPORTS A DEFECT THAT IS NOT THERE.  MEASURED
+# 2026-09-04: defaults gave "FIRST DIVERGENCE: R_XN-0 at element 0 -- expected
+# -31488, captured -26133", seven more diverging seams, and two seams REFUSED.
+# All of it was the wrong configuration.  bisect_scaled.py's own --help says
+# so for one of the flags -- "the capture does NOT record this and guessing it
+# wrong makes every norm seam diverge, which looks like a defect" -- and the
+# same applies to --attn-hd and --w-image, which it does not warn about.
+# This row pins ATTN_HD => 16, NORM_REAL => true and that weight image; with
+# them passed, the divergence is gone AND the two refusals become checks,
+# because the subsystem C oracle rejects HEAD_DIM=32 and accepts 16.
+# 62 checked with a false alarm becomes 64 checked with none:
+#
+#   # 64 seams checked against a model, 0 NOT checked
+#   EVERY MODELLED SEAM MATCHES ITS MODEL BIT FOR BIT, given the machine's
+#   own inputs.
+#
 # THIS FILE IS NOT GATED, ON PURPOSE.  It is a CHARACTERISATION landmark:
 # it says what the machine computed on this date, not that the numbers are
 # right.  Gating on it would turn every legitimate numeric change by any
