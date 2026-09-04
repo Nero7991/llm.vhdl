@@ -198,7 +198,75 @@ tiles. It would close the detection hole as a side effect, because with the
 two writes made mutually exclusive the `hw_we = '0'` term can no longer
 suppress a D-vec check that would otherwise have fired.
 
+## CORRECTION 2026-09-04 (second): the tile numbers above are WRONG, and the
+## banking was the wrong structure
+
+**The 74.7 and 149.3 tile figures are withdrawn.** They are wrong in two
+independent ways, and the second one changes the design rather than the price.
+
+**Error 1: depth granularity ignored.** A bank of 21,504 words is not
+`344064/36864 = 9.33` tiles. A RAMB36 is 1024x36, 2048x18 or 4096x9, so a
+21,504-deep by 16-wide bank costs **11 tiles at 2048x18** (and 21 at 1024x36).
+Dividing total bits by total bits per tile assumes a packing the primitive
+cannot do.
+
+**Error 2: a replica was costed as free of ports.** A block RAM has TWO ports.
+In simple-dual-port a replica serves **one write and one read**. The bank needs
+three reads (lane `x`, lane `e`, and the scalar `el_ren`/`hr_data` pair muxed),
+so it needs **three replicas, not two**.
+
+Corrected, at 2048x18: 8 x 11 x 3 = **264 tiles, 39.3% of 672.**
+
+**AND A PRECONDITION FALLS OUT OF THE PORT COUNT.** Two writes plus one read is
+three ports on a replica that has two. So **no BRAM implementation exists at
+all while the host write can coincide with the D-vec write** -- enforcing the
+exclusivity is not an optimisation that halves the cost, it is a
+**precondition**. That is a stronger statement than the section above makes and
+it supersedes it.
+
+### The banking was the wrong structure: the lanes are ONE WIDE WORD
+
+The lane write writes all `LANES` elements in one cycle under `w_be`, and both
+lane reads read all `LANES` in one cycle. So the eight lanes are not eight
+banks to be accessed independently -- **they are one 128-bit word**, and the
+natural memory is
+
+    21,504 words x (LANES * MANT_W) = 21,504 x 128
+
+which is the same 2,752,512 bits arranged the way the accesses actually use
+them. The `a mod LANES = i` result above is still exactly right; it is what
+proves the eight elements at one `r_addr` are contiguous and never alias, which
+is what makes the wide word legal. It just is not a reason to build eight
+separate memories.
+
+### With the wide word, URAM is the right resource
+
+`URAM288` is 4096x72 and this device has **320 of them, idle**. CLAUDE.md
+records that URAM cannot hold an initialised table -- but the region file is
+written at run time and initialised to zero, so that restriction does not
+apply here.
+
+| structure | per replica | x3 replicas | of the device |
+|---|---|---|---|
+| BRAM 2048x18, 8 banks x 16b | 88 tiles | **264** | 39.3% of 672 |
+| URAM 4096x72, one 128b word | 12 URAM | **36** | **11.3% of 320** |
+
+The wide word needs 2 URAMs across (2 x 72 = 144 >= 128) and 6 deep
+(21,504 / 4096 = 5.25 -> 6). **36 URAM against 264 BRAM tiles**, on a resource
+nothing else in the design is using.
+
+**The cost that buys it:** the scalar writes (`el_we`, and the host write
+behind it) write ONE element into a 128-bit word. URAM has byte-write enables,
+so a 16-bit lane is two of them and this is expressible -- but it is the part
+of the design that has to be got right, and it is where a read-modify-write
+would creep in if the enables are handled carelessly.
+
+**None of this is implemented.** It is arithmetic and a structure, checked
+against the primitive geometries, and it replaces the arithmetic above rather
+than refining it.
+
 ## Open, not yet answered
+
 
 
 
