@@ -2812,7 +2812,24 @@ def check_seam_tieoff(text, eng_src=None):
             eng_src = open(ENG_RTL).read()
         except OSError:
             eng_src = ""
-    has_d = re.search(r"\bllama_top\b", eng_src) is not None
+    # STRIP VHDL COMMENTS FIRST, AND MATCH AN INSTANTIATION, NOT THE WORD.
+    #
+    # This used to be `re.search(r"\bllama_top\b", eng_src)`, which matches the
+    # word ANYWHERE -- including a comment.  MEASURED 2026-09-03:
+    # `hw/fk33/rtl/fk33_engine.vhd` has carried three COMMENT references to
+    # `llama_top.vhd:3197-3226` since 3a145fd ("fk33_engine gains a D-facing
+    # surface"), and they are citations of a contract, not an instantiation.
+    # So this guard aborted the ENTIRE pcieep build -- `--bd-only` and the full
+    # bitstream alike -- with "instantiates llama_top" about a design that does
+    # not, and had done since that commit.  Nothing caught it because nothing
+    # schedules `pcieep_build.sh`.
+    #
+    # It is the same trap as `pgrep -f` matching its own command line and as a
+    # sentinel grep matching the script embedded in its own log: a haystack
+    # that can contain the needle in a context you did not mean.  Anchor it.
+    eng_nc = re.sub(r"--[^\n]*", "", eng_src)
+    has_d = (re.search(r"entity\s+work\.llama_top\b", eng_nc) is not None
+             or re.search(r":\s*llama_top\s", eng_nc) is not None)
     if has_tie and has_d:
         sys.exit("ABORT: %s instantiates llama_top, so subsystem D IS in this "
                  "design, but SEAM_BLOCK still ties the seam's d_err HIGH. "
