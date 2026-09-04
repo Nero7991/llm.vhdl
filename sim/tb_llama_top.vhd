@@ -352,6 +352,19 @@ entity tb_llama_top is
     -- and no region for it.
     NORM_W_IMAGE : string := "";
     -- ==================================================================
+    -- SUBSYSTEM B'S RECURRENT STATE, TIERED.  See `B_STATE_AXI` in
+    -- rtl/llama_top.vhd.  false keeps `stmem`/`semem`, every layer on chip.
+    -- true replaces both with `gdn_state_store` over the `bst_*` master,
+    -- which this file then models with a STORING AXI3 slave below.
+    --
+    -- THE FLAT ARM IS THE ORACLE, and that is why this needs no new numbers.
+    -- `stmem` initialises to zero and zero is the correct initial recurrent
+    -- state, so with a slave that starts zeroed the two arms begin
+    -- identically and must compute identically.  The landmarks below are
+    -- therefore NOT re-derived for the tiered arm: the rows that set this
+    -- true carry the SAME EXP_* values as their flat siblings.
+    B_STATE_AXI : boolean := false;
+    -- ==================================================================
     -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
     -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
     -- `wword` and every published number unchanged.
@@ -1081,6 +1094,44 @@ architecture tb of tb_llama_top is
   end protected body;
   shared variable kvm : kvm_t;
 
+  -- ---- subsystem B's state store, B_STATE_AXI only ---------------------
+  -- Sized from the SAME geometry rtl/llama_top.vhd derives the store's byte
+  -- generics from, so the model and the design cannot disagree about the
+  -- layout: mant VH*DM*DM*2, exp VH*DM, conv (KC-1)*QKVN*2, stride the sum.
+  constant BST_VH     : natural := SHAPE.val_heads;
+  constant BST_DM     : natural := SHAPE.head_dim;
+  constant BST_KC     : natural := SHAPE.conv_kernel;
+  constant BST_NLY    : natural := n_gdn_blocks(SHAPE);
+  constant BST_QKVN   : natural := qkv_dim(SHAPE);
+  constant BST_MANT   : natural := BST_VH*BST_DM*BST_DM*2;
+  constant BST_EXP    : natural := BST_VH*BST_DM;
+  constant BST_CONV   : natural := (BST_KC-1)*BST_QKVN*2;
+  constant BST_STRIDE : natural := BST_MANT + BST_EXP + BST_CONV;
+  constant BST_BEAT_B : natural := 32;                    -- 256-bit AXI
+  constant BST_BEATS  : natural :=
+      (BST_NLY*BST_STRIDE + BST_BEAT_B - 1) / BST_BEAT_B;
+  type bst_mem_t is array (0 to BST_BEATS-1)
+                    of std_logic_vector(255 downto 0);
+
+  signal bst_state_base : std_logic_vector(32 downto 0) := (others => '0');
+  signal bst_busy, bst_done, bst_err : std_logic;
+  signal bst_arvalid, bst_rready, bst_awvalid : std_logic;
+  signal bst_wvalid, bst_wlast, bst_bready    : std_logic;
+  signal bst_araddr, bst_awaddr : std_logic_vector(32 downto 0);
+  signal bst_arlen,  bst_awlen  : std_logic_vector(7 downto 0);
+  signal bst_arsize, bst_awsize : std_logic_vector(2 downto 0);
+  signal bst_arburst, bst_awburst : std_logic_vector(1 downto 0);
+  signal bst_wdata : std_logic_vector(255 downto 0);
+  signal bst_wstrb : std_logic_vector(31 downto 0);
+  signal bst_arready : std_logic := '1';
+  signal bst_rvalid, bst_rlast : std_logic := '0';
+  signal bst_rdata : std_logic_vector(255 downto 0) := (others => '0');
+  signal bst_rresp : std_logic_vector(1 downto 0) := "00";
+  signal bst_awready, bst_wready, bst_bvalid : std_logic := '0';
+  signal bst_bresp : std_logic_vector(1 downto 0) := "00";
+  -- protocol faults, folded into the bench's own fault count below
+  signal bst_bad : natural := 0;
+
   signal kv_arvalid, kv_arready, kv_rvalid, kv_rready, kv_rlast
        : std_logic_vector(1 downto 0) := (others => '0');
   signal kv_araddr  : std_logic_vector(2*KV_ADDR_W-1 downto 0);
@@ -1272,7 +1323,7 @@ begin
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
-      C_REAL => C_REAL,
+      C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
       C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,
@@ -1317,7 +1368,141 @@ begin
       smp_exp => smp_exp, smp_token => smp_token, smp_done => smp_done,
       smp_n => smp_n, err_smp_ovf => err_smp_ovf,
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
-      err_unit_stub => err_unit_stub, err_e_coll => err_e_coll);
+      err_unit_stub => err_unit_stub, err_e_coll => err_e_coll,
+      bst_state_base => bst_state_base,
+      bst_busy => bst_busy, bst_done => bst_done, bst_err => bst_err,
+      bst_arvalid => bst_arvalid, bst_arready => bst_arready,
+      bst_araddr => bst_araddr, bst_arlen => bst_arlen,
+      bst_arsize => bst_arsize, bst_arburst => bst_arburst,
+      bst_rvalid => bst_rvalid, bst_rready => bst_rready,
+      bst_rdata => bst_rdata, bst_rlast => bst_rlast, bst_rresp => bst_rresp,
+      bst_awvalid => bst_awvalid, bst_awready => bst_awready,
+      bst_awaddr => bst_awaddr, bst_awlen => bst_awlen,
+      bst_awsize => bst_awsize, bst_awburst => bst_awburst,
+      bst_wvalid => bst_wvalid, bst_wready => bst_wready,
+      bst_wdata => bst_wdata, bst_wstrb => bst_wstrb, bst_wlast => bst_wlast,
+      bst_bvalid => bst_bvalid, bst_bready => bst_bready,
+      bst_bresp => bst_bresp);
+
+  -- ======================================================================
+  -- SUBSYSTEM B'S STATE-STORE SLAVE, B_STATE_AXI only.
+  --
+  -- IT MUST ACTUALLY STORE.  A slave that discarded writes and always
+  -- returned zeros would make every token reload zero state, which is
+  -- precisely defect B-TOP-1 -- B is RECURRENT, and when its state was being
+  -- discarded per token, 65 to 88 of 128 mantissas per R_Y seam were wrong at
+  -- tokens 1 and 2 while token 0 was untouched.  The NTOK=3 row below would
+  -- then FAIL against tb_llama_top_seq's landmarks, which is correct
+  -- detection; but a sink would also make the NTOK=1 row pass while proving
+  -- nothing, so the round trip is the point.
+  --
+  -- Zero-initialised, because zero IS the correct initial recurrent state and
+  -- that is what makes the flat arm this arm's oracle.
+  -- ======================================================================
+  bst_slave : process(clk) is
+    variable mem  : bst_mem_t := (others => (others => '0'));
+    variable rbeat, rleft, ridx : natural := 0;
+    variable wbeat, widx : natural := 0;
+    variable rbusy, wbusy : boolean := false;
+    variable a, l : natural;
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        rbusy := false; wbusy := false;
+        bst_arready <= '1'; bst_rvalid <= '0'; bst_rlast <= '0';
+        bst_awready <= '1'; bst_wready <= '0'; bst_bvalid <= '0';
+      else
+        -- ---- READ ------------------------------------------------------
+        if not rbusy then
+          bst_rvalid <= '0'; bst_rlast <= '0';
+          if bst_arvalid = '1' and bst_arready = '1' then
+            a := to_integer(unsigned(bst_araddr));
+            l := to_integer(unsigned(bst_arlen)) + 1;
+            -- The FK33's HBM slave is AXI3: ARLEN is 4 bits, so a 17-beat
+            -- burst does not fail, it silently becomes a 1-beat burst.
+            if l > 16 then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst read burst of " & integer'image(l)
+                   & " beats exceeds the AXI3 cap of 16" severity error;
+            end if;
+            if a mod BST_BEAT_B /= 0 then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst read address " & integer'image(a)
+                   & " is not beat aligned" severity error;
+            end if;
+            if (a mod 4096) + l*BST_BEAT_B > 4096 then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst read burst at " & integer'image(a)
+                   & " crosses a 4 KB boundary" severity error;
+            end if;
+            if a/BST_BEAT_B + l > BST_BEATS then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst read at " & integer'image(a)
+                   & " runs past the modelled state memory" severity error;
+            else
+              ridx := a / BST_BEAT_B; rleft := l; rbeat := 0;
+              rbusy := true; bst_arready <= '0';
+            end if;
+          end if;
+        else
+          if bst_rvalid = '0' or bst_rready = '1' then
+            if rbeat < rleft then
+              bst_rdata  <= mem(ridx + rbeat);
+              bst_rvalid <= '1';
+              if rbeat = rleft - 1 then bst_rlast <= '1';
+              else                      bst_rlast <= '0'; end if;
+              rbeat := rbeat + 1;
+            else
+              bst_rvalid <= '0'; bst_rlast <= '0';
+              rbusy := false; bst_arready <= '1';
+            end if;
+          end if;
+        end if;
+
+        -- ---- WRITE -----------------------------------------------------
+        if bst_bvalid = '1' and bst_bready = '1' then bst_bvalid <= '0'; end if;
+        if not wbusy then
+          if bst_awvalid = '1' and bst_awready = '1' then
+            a := to_integer(unsigned(bst_awaddr));
+            l := to_integer(unsigned(bst_awlen)) + 1;
+            if l > 16 then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst write burst of " & integer'image(l)
+                   & " beats exceeds the AXI3 cap of 16" severity error;
+            end if;
+            if a mod BST_BEAT_B /= 0 then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst write address " & integer'image(a)
+                   & " is not beat aligned" severity error;
+            end if;
+            if a/BST_BEAT_B + l > BST_BEATS then
+              bst_bad <= bst_bad + 1;
+              report "tb_llama_top: bst write at " & integer'image(a)
+                   & " runs past the modelled state memory" severity error;
+            else
+              widx := a / BST_BEAT_B; wbeat := l;
+              wbusy := true; bst_awready <= '0'; bst_wready <= '1';
+            end if;
+          end if;
+        else
+          if bst_wvalid = '1' and bst_wready = '1' then
+            for b in 0 to 31 loop
+              if bst_wstrb(b) = '1' then
+                mem(widx)((b+1)*8-1 downto b*8) :=
+                    bst_wdata((b+1)*8-1 downto b*8);
+              end if;
+            end loop;
+            widx  := widx + 1;
+            wbeat := wbeat - 1;
+            if bst_wlast = '1' or wbeat = 0 then
+              wbusy := false; bst_wready <= '0'; bst_awready <= '1';
+              bst_bvalid <= '1'; bst_bresp <= "00";
+            end if;
+          end if;
+        end if;
+      end if;
+    end if;
+  end process;
 
   -- ======================================================================
   -- THE THREE KV AXI SLAVES.
@@ -2790,7 +2975,12 @@ begin
     -- ---- verdict ---------------------------------------------------------
     fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
           + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp
-          + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt + n_bad_land;
+          + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt + n_bad_land
+          -- bst_bad is FOLDED IN, not merely printed.  A protocol counter the
+          -- verdict does not read is decoration: it would let the state store
+          -- violate AXI3 on every burst while the row stayed green.  It is 0
+          -- in the flat arm, which never drives this master at all.
+          + bst_bad;
     wait for 0 ns;
 
     -- THE MEASURED LANDMARKS, ALWAYS, PASS OR FAIL.  Printed as a line a
@@ -2840,6 +3030,7 @@ begin
          & ", served bytes " & integer'image(kv_bad_dat)
          & ", coverage " & integer'image(kv_bad_cov)
          & ", bresp ordering " & integer'image(kv_bad_bresp) & ")"
+         & " B-state AXI faults=" & integer'image(bst_bad)
       severity note;
 
     if fail = 0 then

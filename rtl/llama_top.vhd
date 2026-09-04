@@ -3947,6 +3947,30 @@ begin
     -- the job FSM waits on, so the FSM below is UNCHANGED in either mode:
     -- with the tier on, `gdn_job_seq` sits between them and runs the state
     -- load and save around `gdn_block`'s invocation.
+    -- The AXI3 burst cap for the state store, DERIVED.  `gdn_state_axi`
+    -- refuses a segment with fewer beats than one burst ("a geometry with
+    -- fewer beats than one burst transfers nothing at all", its
+    -- `bad_fewer_beats_than_one_burst`), and it runs THREE movers whose
+    -- segments differ by orders of magnitude: mantissa, exponent and conv.
+    -- The EXPONENT segment is the small one -- VH*DM bytes, 4096 at 9B but
+    -- only 128 at a bench shape -- so a fixed MAXB of 16 is right at 9B and
+    -- fires the refusal at any smaller geometry.  MEASURED 2026-09-03: both
+    -- new tiered rows died on exactly that bound check until this was derived.
+    -- 32 is AXI_DW/8 with `gdn_state_store`'s default AXI_DW of 256.
+    function min4(a, b, c, d : natural) return natural is
+      variable m : natural := a;
+    begin
+      if b < m then m := b; end if;
+      if c < m then m := c; end if;
+      if d < m then m := d; end if;
+      return m;
+    end function;
+    constant BST_MANT_B : natural := VH*DM*DM*2;
+    constant BST_EXP_B  : natural := VH*DM;
+    constant BST_CONV_B : natural := (KC-1)*qkv_dim(SHAPE)*2;
+    constant BST_MAXB   : natural := min4(16, BST_MANT_B/32,
+                                          BST_EXP_B/32, BST_CONV_B/32);
+
     signal gb_start : std_logic;
     signal j_busy   : std_logic;
     signal js_b_start, js_busy, js_done, js_err : std_logic := '0';
@@ -4094,10 +4118,30 @@ begin
       -- The store's st_*/se_* ports are `gdn_block`'s VERBATIM, which is why
       -- this is a drop-in for both processes above and why nothing between
       -- here and `gdn_block` changes shape.
+      -- THE FOUR BYTE SIZES ARE DERIVED, NOT DEFAULTED.  `gdn_state_store`'s
+      -- defaults (1101824 / 1048576 / 4096 / 49152) are the 9B manifest's
+      -- numbers, and they are RIGHT ONLY AT 9B.  Left defaulted, this instance
+      -- would address HBM with 9B strides at every other shape -- silently, and
+      -- invisibly at 9B, which is the only shape anyone had looked at.
+      --
+      -- Each is the geometry, and each reproduces the 9B manifest constant:
+      --   mant   VH*DM*DM*2      = 32*128*128*2 = 1048576   (stmem: VH*DM*NBR
+      --                            entries of RECUR_LANES*16 bits, and
+      --                            NBR = DM/RECUR_LANES, so the lanes cancel)
+      --   exp    VH*DM           = 32*128       =    4096   (one byte per
+      --                                                      head, col)
+      --   conv   (KC-1)*QKVN*2   = 3*8192*2     =   49152   (the STORED taps;
+      --                            the current column is this token's qkv)
+      --   stride mant+exp+conv                  = 1101824
       u_state : entity work.gdn_state_store
         generic map(VAL_HEADS => VH, DIM => DM, RECUR_LANES => B_RECUR_LANES,
                     LAYERS => NLY, KEY_HEADS => KH, KCONV => KC,
-                    CONV_LANES => B_CONV_LANES)
+                    CONV_LANES => B_CONV_LANES,
+                    MANT_BYTES   => BST_MANT_B,
+                    EXP_BYTES    => BST_EXP_B,
+                    CONV_BYTES   => BST_CONV_B,
+                    LAYER_STRIDE => BST_MANT_B + BST_EXP_B + BST_CONV_B,
+                    MAXB         => BST_MAXB)
         port map(
           clk => clk, rst => rst,
           load_start => js_ld, save_start => js_sv,
