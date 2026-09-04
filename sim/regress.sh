@@ -400,7 +400,30 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=121  # RAISED FROM 120, 2026-09-04.  ONE new row,
+BASELINE_PASS=122  # RAISED FROM 121, 2026-09-04 (later).  ONE new row,
+                   #    sim:tb_gatechk_mask, which enumerates the WHOLE
+                   #    sixteen-row input space of llama_top's region-lock
+                   #    drop check.  A host write used to MASK a D-vec lock
+                   #    violation: `hw_we = '0'` stood in for "not a host
+                   #    write", and when both writes were high it switched the
+                   #    entire check off.  All eight llama_top rows stayed
+                   #    green across the fix, so the truth table is the only
+                   #    thing that discriminates.
+                   #
+                   #    MEASURED on a `git archive HEAD` tree with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 2:
+                   #
+                   #      OVERALL PASS 122  FAIL 0  BUILD-ERROR 0  SKIPPED 10
+                   #      baseline: 122 passing, above the recorded floor of
+                   #                121 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    No "rows a clean checkout does not get" section, and
+                   #    the row PASSES on that clean tree doing real work (it
+                   #    needs no model and no vectors).  121 + 1 = 122.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # 121 # RAISED FROM 120, 2026-09-04.  ONE new row,
                    #    sim:srvstories (server/tests/server_stories_e2e.py),
                    #    the DEFAULT server path's OpenAI surface: usage
                    #    accounting and prompt echo.  sim:srve2e gates the
