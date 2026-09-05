@@ -294,3 +294,26 @@ shape as the residency checker that printed PASS over an object it never read.
 
 The attribution did not depend on it: the bit indices and the fan-out pattern
 settled the question from the timing paths alone.
+
+
+## AND NEITHER NUMBER IS A ROUTED RESULT
+
+MEASURED: `grep -cE 'opt_design|place_design|route_design' sim/ooc_cattnadapt.tcl`
+returns **0**. That harness calls `synth_design`, `create_clock`, and reports.
+So does the B harness. **Both `-4.008` and `-1.611` are POST-SYNTHESIS
+estimates with ESTIMATED routing**, quoted as blockers for a week.
+
+**This caveat weakens the two numbers by very different amounts, and the split
+above says by how much:**
+
+- **B is barely affected.** 77.7% of its path is LOGIC delay -- primitive
+  propagation through DSP tiles, which synthesis models well because it is a
+  property of the cells, not of where they land. The 6.739 ns is close to real,
+  and the conclusion that no directive can fix it survives regardless.
+- **C is badly affected.** 64.2% of its path is ROUTE, which is exactly what a
+  pre-placement estimate models WORST. A post-synthesis WNS on a route-bound
+  path is not a result; it is a guess about placement that has not happened.
+
+An implementation run for C is in flight to replace the estimate with a routed
+number, reporting WNS at synth / opt / placed / physopt / routed so the size of
+the estimate's error is measured rather than asserted.
