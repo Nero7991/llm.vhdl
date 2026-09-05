@@ -114,9 +114,12 @@ PROLOGUE = """\
 -- The history IS wired now: `gdn_state_store`'s tap face supplies the KCONV-1
 -- older columns and `tok_adv` rotates them, so the refusal was narrowed to
 -- B_SRC_REAL WITHOUT B_STATE_AXI, where the history has nowhere to live.
--- That wiring is MEASURED to change the result (hash(R_X) 26934 wired against
--- 10998 zero-filled) and is NOT verified against a value oracle, so it is
--- still not a claim that B can run a token -- just a different reason.
+-- UPDATED AGAIN 2026-09-05: that wiring IS now verified against a value
+-- oracle.  tools/ref9b/gdn_oracle.py fills the tap history from CAPTURED
+-- per-token QKV records fetched by capture key, never consulting the store it
+-- checks, and 9 of 9 R_Y seams are bit-exact at BLOCKS=4 NTOK=3.  A mutant
+-- keeping the old hardcoded zeros scores 3 of 9.  It is still not a claim
+-- about THIS extraction, which is one generate block synthesised alone.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -137,6 +140,12 @@ entity {ent} is
     STRICT      : boolean  := true;
     B_BEHAV     : boolean  := false;
     B_SRC_REAL  : boolean  := false;
+    -- SEAM REPAIR 2026-09-05.  `5f1db1a` put `gen_st_flat`/`gen_st_tier`
+    -- inside `gb_real`, both guarded on this generic, and the seam was
+    -- never updated.  Default FALSE selects `gen_st_flat`, which is what
+    -- the previously committed extraction synthesised, so the -4.008 ns
+    -- measurement stays comparable.
+    B_STATE_AXI : boolean  := false;
     B_CONV_LANES  : positive := 4;
     B_RECUR_LANES : positive := 4;
     B_RECUR_SLOTS : positive := 16;
@@ -187,6 +196,61 @@ entity {ent} is
     uw_reg_b  : out std_logic_vector(RW-1 downto 0);
     uw_addr_b : out std_logic_vector(AW-1 downto 0);
     uw_data_b : out std_logic_vector(MANT_W-1 downto 0);
+
+    -- SEAM REPAIR 2026-09-05.  Four names cross `gb_real`'s boundary that
+    -- this list did not carry.  Each direction was determined by READING
+    -- llama_top, not by pattern: this script's own docstring records that a
+    -- first automated pass got five such calls wrong.
+    --   tok_done_i  llama_top:994  signal, READ    in the block  -> in
+    --   tok_ack     llama_top:708  PORT in,  READ  in the block  -> in
+    --   bst_done_i  llama_top:917  signal, WRITTEN at :4310      -> out
+    --   bst_err_i   llama_top:917  signal, WRITTEN at :4311      -> out
+    -- They are PORTS rather than local signals for the reason SSPORTS already
+    -- states: a locally tied-off input lets synthesis trim the logic behind
+    -- it, which would understate the area and flatter the timing.
+    tok_done_i   : in  std_logic;
+    tok_ack      : in  std_logic;
+    bst_done_i   : out std_logic;
+    bst_err_i    : out std_logic;
+
+    -- ...AND THE OTHER 27.  Vivado reported FIVE undeclared names and I sized
+    -- the first repair from that list; GHDL then named 27 more.  One tool's
+    -- diagnostic is not the complete set.  These are `gen_st_tier`'s
+    -- `gdn_state_store` port map (llama_top:4255-4300), which exists in the
+    -- verbatim body in BOTH modes, so they belong here and not in SSPORTS.
+    --
+    -- Direction is read off the INSTANCE, not the name: a signal bound to a
+    -- store OUTPUT (`r_arvalid => bst_arvalid_i`) is driven, hence `out`; one
+    -- bound to a store INPUT (`r_arready => bst_arready`) is `in`.  Types are
+    -- llama_top:788-816 and :917-926 verbatim.  None is read inside the
+    -- block, so plain `out` is legal and no buffer/local pair is needed.
+    bst_state_base : in  std_logic_vector(32 downto 0);
+    bst_arready    : in  std_logic;
+    bst_rvalid     : in  std_logic;
+    bst_rdata      : in  std_logic_vector(255 downto 0);
+    bst_rlast      : in  std_logic;
+    bst_rresp      : in  std_logic_vector(1 downto 0);
+    bst_awready    : in  std_logic;
+    bst_wready     : in  std_logic;
+    bst_bvalid     : in  std_logic;
+    bst_bresp      : in  std_logic_vector(1 downto 0);
+    bst_busy_i     : out std_logic;
+    bst_arvalid_i  : out std_logic;
+    bst_araddr_i   : out std_logic_vector(32 downto 0);
+    bst_arlen_i    : out std_logic_vector(7 downto 0);
+    bst_arsize_i   : out std_logic_vector(2 downto 0);
+    bst_arburst_i  : out std_logic_vector(1 downto 0);
+    bst_rready_i   : out std_logic;
+    bst_awvalid_i  : out std_logic;
+    bst_awaddr_i   : out std_logic_vector(32 downto 0);
+    bst_awlen_i    : out std_logic_vector(7 downto 0);
+    bst_awsize_i   : out std_logic_vector(2 downto 0);
+    bst_awburst_i  : out std_logic_vector(1 downto 0);
+    bst_wvalid_i   : out std_logic;
+    bst_wdata_i    : out std_logic_vector(255 downto 0);
+    bst_wstrb_i    : out std_logic_vector(31 downto 0);
+    bst_wlast_i    : out std_logic;
+    bst_bready_i   : out std_logic;
 
     -- B's own exponent plumbing and the token position
     b_seq_rst    : in  std_logic;
@@ -273,13 +337,48 @@ SS_REPL = '    -- ---- memories 1 and 2: ONE resident layer in gdn_state_store -
 
 
 def substitute_state_store(body):
-    """Replace gb_real's memory 1 and memory 2 with a gdn_state_store instance.
+    """SUPERSEDED 2026-09-05.  Refuses rather than emitting a broken file.
 
-    EVERY anchor is required to appear EXACTLY ONCE and the function dies
-    otherwise.  A substitution that silently matches zero times would emit the
-    UNCHANGED block and report a saving of zero, which reads exactly like a
-    real negative result -- that is the failure mode this guards.
+    WHY IT IS OBSOLETE.  This mode existed to replace `gb_real`'s memory 1 and
+    memory 2 with a `gdn_state_store` instance by TEXT SUBSTITUTION, which is
+    how the 5,472 -> 34 BRAM result was obtained.  `5f1db1a` then did the same
+    thing in the RTL itself and did it properly: the flat memories now live
+    inside `gen_st_flat : if not B_STATE_AXI generate` and a real
+    `gdn_state_store` sits in `gen_st_tier : if B_STATE_AXI generate`.  So the
+    substitution's whole effect is now reachable as
+    `-generic B_STATE_AXI=true` on the ORDINARY extraction.
+
+    WHY IT MUST REFUSE RATHER THAN TRY.  The anchors no longer bracket a
+    balanced region.  MEASURED: `SS_START` (memory 1) is at llama_top:4188,
+    INSIDE `gen_st_flat`, and `SS_END` (memory 3) is at :4340, after
+    `end generate gen_st_tier;`.  The span therefore contains ONE generate
+    opener and TWO enders, and replacing it produced a file with 3 openers
+    against 1 ender:
+
+        ooc_gdnadapt_ss_top.vhd:1018:4: missing ";" at end of generate
+        statement body
+
+    The old anchor-count guard did not catch this: all three anchors still
+    matched exactly once, which is what it checks.  **An anchor being unique
+    says nothing about whether the region it delimits is well formed** -- the
+    guard was right about the thing it tested and the thing it tested had
+    stopped being the thing that mattered.
     """
+    sys.exit(
+        "ooc_gdnadapt_extract: --state-store is SUPERSEDED and refuses.\n"
+        "  Use the ordinary extraction with `-generic B_STATE_AXI=true`:\n"
+        "  since 5f1db1a the RTL itself puts the flat memories behind\n"
+        "  `gen_st_flat : if not B_STATE_AXI generate` and instantiates\n"
+        "  gdn_state_store in `gen_st_tier`, so the generic does what this\n"
+        "  text substitution used to do, without three text anchors that must\n"
+        "  bracket a balanced region.  Emitting the substituted file now\n"
+        "  produces unbalanced generates (3 openers, 1 ender) that do not\n"
+        "  analyse.  rtl/ooc_gdnadapt_ss_top.vhd is frozen as the historical\n"
+        "  artefact of the 5,472 -> 34 BRAM measurement.")
+
+
+def _dead_substitute_state_store(body):
+    """Kept only so the anchors above stay greppable; never called."""
     for name, anc in (("SS_START", SS_START), ("SS_END", SS_END),
                       ("SS_SEMEM", SS_SEMEM)):
         n = body.count(anc)
@@ -315,7 +414,10 @@ USAGE = "\n".join(l for l in __doc__.strip().splitlines()
 # whole cost of gating another variant.
 CANONICAL = (
     ("rtl/ooc_gdnadapt_top.vhd",    "ooc_gdnadapt",    False),
-    ("rtl/ooc_gdnadapt_ss_top.vhd", "ooc_gdnadapt_ss", True),
+    # `rtl/ooc_gdnadapt_ss_top.vhd` is deliberately NOT here.  See
+    # substitute_state_store(): --state-store is SUPERSEDED and now refuses.
+    # That file is frozen as the historical vehicle for the 5,472 -> 34 BRAM
+    # measurement; it still analyses, and nothing regenerates it.
 )
 
 
@@ -346,7 +448,20 @@ def emit(src, ent, state_store):
     body = "\n".join(lines[i:end + 1])
     if state_store:
         body = substitute_state_store(body)
-    text = (PROLOGUE.format(ent=ent, src=src,
+    # NORMALISE THE RECORDED SOURCE PATH.  The prologue embeds it, so without
+    # this the OUTPUT BYTES depend on how the generator was invoked:
+    # `rtl/llama_top.vhd` and `/abs/path/rtl/llama_top.vhd` produce different
+    # files.  MEASURED 2026-09-05, on the `sim:gdnstale` row's very first run:
+    # the row passes $REPO-absolute and I had regenerated with a relative
+    # path, so the row went RED over a 10-line diff that was one path string.
+    # A generated artefact must not depend on the caller's cwd or path style.
+    import os as _os
+    _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    try:
+        src_disp = _os.path.relpath(_os.path.abspath(src), _root)
+    except ValueError:                      # different drive/mount
+        src_disp = src
+    text = (PROLOGUE.format(ent=ent, src=src_disp,
                             ssports=SSPORTS if state_store else "")
             + body + EPILOGUE.format(ent=ent))
     return text, i, end

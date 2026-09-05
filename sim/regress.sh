@@ -1863,6 +1863,38 @@ printf 'srvstories\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 printf 'c4stale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
+# gdnstale -- rtl/ooc_gdnadapt_top.vhd is GENERATED from rtl/llama_top.vhd by
+# sim/ooc_gdnadapt_extract.py, and it was STALE for two days.
+#
+# MEASURED 2026-09-05.  `5f1db1a` put nested generates inside `gb_real`.  The
+# extractor's `END_RE` was pinned to a literal two-space indent, so its depth
+# count never returned to zero and it exited 1 on every llama_top from that
+# commit onward.  It failed LOUDLY and was never heard, because nothing ran
+# it.  The committed generated file froze at `e9beec9` while llama_top moved
+# on five commits and 225 body lines -- and B's mover timing, the project's
+# headline blocker, was measured against that frozen copy.  `-4.008` was
+# CORRECT when taken; it simply stopped describing the tree three hours later.
+#
+# The row runs `--check` with no `out` argument, which checks every row of the
+# generator's CANONICAL table in ONE process.  It takes no `out` on purpose:
+# run_selfcheck below runs its command UNQUOTED and NOT through a shell, so a
+# chained `a && b` would hand `&&` to argv, `ent = argv[3]` would ignore the
+# tail, and the row would check only the first file and pass.
+#
+# WHAT THIS ROW DOES NOT CHECK, stated rather than implied: that the generated
+# file ANALYSES.  It compares text.  Tonight's second, independent breakage
+# was exactly that -- the extractor's hand-maintained seam had fallen 27 names
+# behind, so the output was FRESH and did not compile.  A future llama_top
+# that adds a cross-scope name will regenerate cleanly, pass this row, and
+# produce a file GHDL rejects.  Closing that needs a row that analyses the
+# output against a built library, which is not this row.
+#
+# The structural half of the risk IS closed at the source: --state-store used
+# to emit unbalanced generates and now refuses outright, so it cannot produce
+# a broken file at all.
+printf 'gdnstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
+# ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
 # ---------------------------------------------------------------------------
 # MEASURED 2026-09-04.  compose4_top IS at the real 9B shape, 13 of 13
@@ -2565,6 +2597,7 @@ declare -A SELFCHECK_CMD=(
   [bdports]="python3 $REPO/sim/check_bd_ports.py"
   [srvstories]="make -s -C $REPO/server test-stories"
   [c4stale]="python3 $REPO/hw/fk33/gen_compose4_top.py --check"
+  [gdnstale]="python3 $REPO/sim/ooc_gdnadapt_extract.py --check $REPO/rtl/llama_top.vhd"
   [shapechk]="python3 $REPO/sim/check_model_shape.py"
 )
 
@@ -2597,7 +2630,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

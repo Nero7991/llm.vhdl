@@ -17,9 +17,19 @@
 --
 -- WHAT THIS IS NOT.  It is not a routability result, it is not `llama_top`,
 -- and it is NOT a claim that B can run a token.  It is one generate block
--- synthesised alone.  `rtl/llama_top.vhd:4316` still refuses B_SRC_REAL past
--- token 0 because the conv tap history is not wired to it, and extracting the
--- block does not change that.
+-- synthesised alone.
+--
+-- UPDATED 2026-09-05.  This notice used to say `llama_top` "still refuses
+-- B_SRC_REAL past token 0 because the conv tap history is not wired to it".
+-- The history IS wired now: `gdn_state_store`'s tap face supplies the KCONV-1
+-- older columns and `tok_adv` rotates them, so the refusal was narrowed to
+-- B_SRC_REAL WITHOUT B_STATE_AXI, where the history has nowhere to live.
+-- UPDATED AGAIN 2026-09-05: that wiring IS now verified against a value
+-- oracle.  tools/ref9b/gdn_oracle.py fills the tap history from CAPTURED
+-- per-token QKV records fetched by capture key, never consulting the store it
+-- checks, and 9 of 9 R_Y seams are bit-exact at BLOCKS=4 NTOK=3.  A mutant
+-- keeping the old hardcoded zeros scores 3 of 9.  It is still not a claim
+-- about THIS extraction, which is one generate block synthesised alone.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -40,6 +50,12 @@ entity ooc_gdnadapt is
     STRICT      : boolean  := true;
     B_BEHAV     : boolean  := false;
     B_SRC_REAL  : boolean  := false;
+    -- SEAM REPAIR 2026-09-05.  `5f1db1a` put `gen_st_flat`/`gen_st_tier`
+    -- inside `gb_real`, both guarded on this generic, and the seam was
+    -- never updated.  Default FALSE selects `gen_st_flat`, which is what
+    -- the previously committed extraction synthesised, so the -4.008 ns
+    -- measurement stays comparable.
+    B_STATE_AXI : boolean  := false;
     B_CONV_LANES  : positive := 4;
     B_RECUR_LANES : positive := 4;
     B_RECUR_SLOTS : positive := 16;
@@ -90,6 +106,61 @@ entity ooc_gdnadapt is
     uw_reg_b  : out std_logic_vector(RW-1 downto 0);
     uw_addr_b : out std_logic_vector(AW-1 downto 0);
     uw_data_b : out std_logic_vector(MANT_W-1 downto 0);
+
+    -- SEAM REPAIR 2026-09-05.  Four names cross `gb_real`'s boundary that
+    -- this list did not carry.  Each direction was determined by READING
+    -- llama_top, not by pattern: this script's own docstring records that a
+    -- first automated pass got five such calls wrong.
+    --   tok_done_i  llama_top:994  signal, READ    in the block  -> in
+    --   tok_ack     llama_top:708  PORT in,  READ  in the block  -> in
+    --   bst_done_i  llama_top:917  signal, WRITTEN at :4310      -> out
+    --   bst_err_i   llama_top:917  signal, WRITTEN at :4311      -> out
+    -- They are PORTS rather than local signals for the reason SSPORTS already
+    -- states: a locally tied-off input lets synthesis trim the logic behind
+    -- it, which would understate the area and flatter the timing.
+    tok_done_i   : in  std_logic;
+    tok_ack      : in  std_logic;
+    bst_done_i   : out std_logic;
+    bst_err_i    : out std_logic;
+
+    -- ...AND THE OTHER 27.  Vivado reported FIVE undeclared names and I sized
+    -- the first repair from that list; GHDL then named 27 more.  One tool's
+    -- diagnostic is not the complete set.  These are `gen_st_tier`'s
+    -- `gdn_state_store` port map (llama_top:4255-4300), which exists in the
+    -- verbatim body in BOTH modes, so they belong here and not in SSPORTS.
+    --
+    -- Direction is read off the INSTANCE, not the name: a signal bound to a
+    -- store OUTPUT (`r_arvalid => bst_arvalid_i`) is driven, hence `out`; one
+    -- bound to a store INPUT (`r_arready => bst_arready`) is `in`.  Types are
+    -- llama_top:788-816 and :917-926 verbatim.  None is read inside the
+    -- block, so plain `out` is legal and no buffer/local pair is needed.
+    bst_state_base : in  std_logic_vector(32 downto 0);
+    bst_arready    : in  std_logic;
+    bst_rvalid     : in  std_logic;
+    bst_rdata      : in  std_logic_vector(255 downto 0);
+    bst_rlast      : in  std_logic;
+    bst_rresp      : in  std_logic_vector(1 downto 0);
+    bst_awready    : in  std_logic;
+    bst_wready     : in  std_logic;
+    bst_bvalid     : in  std_logic;
+    bst_bresp      : in  std_logic_vector(1 downto 0);
+    bst_busy_i     : out std_logic;
+    bst_arvalid_i  : out std_logic;
+    bst_araddr_i   : out std_logic_vector(32 downto 0);
+    bst_arlen_i    : out std_logic_vector(7 downto 0);
+    bst_arsize_i   : out std_logic_vector(2 downto 0);
+    bst_arburst_i  : out std_logic_vector(1 downto 0);
+    bst_rready_i   : out std_logic;
+    bst_awvalid_i  : out std_logic;
+    bst_awaddr_i   : out std_logic_vector(32 downto 0);
+    bst_awlen_i    : out std_logic_vector(7 downto 0);
+    bst_awsize_i   : out std_logic_vector(2 downto 0);
+    bst_awburst_i  : out std_logic_vector(1 downto 0);
+    bst_wvalid_i   : out std_logic;
+    bst_wdata_i    : out std_logic_vector(255 downto 0);
+    bst_wstrb_i    : out std_logic_vector(31 downto 0);
+    bst_wlast_i    : out std_logic;
+    bst_bready_i   : out std_logic;
 
     -- B's own exponent plumbing and the token position
     b_seq_rst    : in  std_logic;
@@ -190,6 +261,17 @@ begin
     signal cv_grp   : integer range 0 to (VH*DM)/B_CONV_LANES-1;
     signal cv_x, cv_w : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
     signal cv_cw_exp  : signed(7 downto 0);
+    -- THE STORED CONV TAPS, read back from `gdn_state_store`'s tap face.
+    -- KC-1 taps, OLDEST FIRST, the current token's column NOT included --
+    -- exactly the slots `cvdata_p` used to fill with zeros.  Defaulted to
+    -- zeros so the `B_STATE_AXI = false` build is bit-identical to before:
+    -- nothing drives this signal unless `gen_st_tier` exists.
+    signal st_cv_x : std_logic_vector((KC-1)*B_CONV_LANES*16-1 downto 0)
+                   := (others => '0');
+    -- ONE pulse per token, the same `tok_done`/`tok_ack` handshake that
+    -- advances `tok_pos` (see `tokp`), which is the only point in this file
+    -- where a token is finished with every layer read AND written.
+    signal tok_adv_i : std_logic;
     signal cv_taken, eseg_taken : std_logic;
     signal cvq_seg : integer range 0 to 2 := 0;
     signal cvq_grp : integer range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
@@ -258,6 +340,54 @@ begin
     type semem_t is array (0 to NLY*SELY-1) of signed(7 downto 0);
     signal semem : semem_t := (others => (others => '0'));
 
+    -- ---- B_STATE_AXI arm ------------------------------------------------
+    -- `gb_start` is what `gdn_block` actually starts on and `j_busy` is what
+    -- the job FSM waits on, so the FSM below is UNCHANGED in either mode:
+    -- with the tier on, `gdn_job_seq` sits between them and runs the state
+    -- load and save around `gdn_block`'s invocation.
+    -- The AXI3 burst cap for the state store, DERIVED.  `gdn_state_axi`
+    -- refuses a segment with fewer beats than one burst ("a geometry with
+    -- fewer beats than one burst transfers nothing at all", its
+    -- `bad_fewer_beats_than_one_burst`), and it runs THREE movers whose
+    -- segments differ by orders of magnitude: mantissa, exponent and conv.
+    -- The EXPONENT segment is the small one -- VH*DM bytes, 4096 at 9B but
+    -- only 128 at a bench shape -- so a fixed MAXB of 16 is right at 9B and
+    -- fires the refusal at any smaller geometry.  MEASURED 2026-09-03: both
+    -- new tiered rows died on exactly that bound check until this was derived.
+    -- 32 is AXI_DW/8 with `gdn_state_store`'s default AXI_DW of 256.
+    function min4(a, b, c, d : natural) return natural is
+      variable m : natural := a;
+    begin
+      if b < m then m := b; end if;
+      if c < m then m := c; end if;
+      if d < m then m := d; end if;
+      return m;
+    end function;
+    constant BST_MANT_B : natural := VH*DM*DM*2;
+    constant BST_EXP_B  : natural := VH*DM;
+    constant BST_CONV_B : natural := (KC-1)*qkv_dim(SHAPE)*2;
+    constant BST_MAXB   : natural := min4(16, BST_MANT_B/32,
+                                          BST_EXP_B/32, BST_CONV_B/32);
+
+    signal gb_start : std_logic;
+    signal j_busy   : std_logic;
+    signal js_b_start, js_busy, js_done, js_err : std_logic := '0';
+    signal js_ld, js_sv : std_logic := '0';
+    signal js_layer : integer range 0 to NLY-1 := 0;
+    signal js_cvw_en : std_logic := '0';
+    signal js_cvw_seg : integer range 0 to 2 := 0;
+    signal js_cvw_grp : natural range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+    signal js_cvw_data : std_logic_vector(B_CONV_LANES*16-1 downto 0) := (others => '0');
+    -- `gdn_job_seq` REGISTERS q_seg/q_grp, so the source sees the address one
+    -- edge after issue and must present data one edge after THAT.  A
+    -- combinational read of `qkv_b` is one edge EARLY, so this register is
+    -- not optional: see the port comment in rtl/gdn_job_seq.vhd, where a
+    -- one-stage refill failed 31 of 32 data checks with count and order both
+    -- green.
+    signal js_q_seg : integer range 0 to 2 := 0;
+    signal js_q_grp : natural range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
+    signal js_q_data : std_logic_vector(B_CONV_LANES*16-1 downto 0) := (others => '0');
+
     signal w_mant : std_logic_vector(DM*16-1 downto 0);
     signal w_exp  : integer := 12;
     signal w_taken : std_logic;
@@ -313,7 +443,7 @@ begin
         RMS_LANES => B_RMS_LANES, STRICT_PRODUCER => STRICT)
       port map(
         clk => clk, rst => rst,
-        start => b_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
+        start => gb_start, layer => b_layer, tk0 => b_tk0, busy => b_busy,
         seq_rst => b_seq_rst,
         cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
         cap_exp => cap_exp, cap_ready => cap_ready,
@@ -340,40 +470,163 @@ begin
         err_conv => open, err_g => open, err_se => open, y_sat => open,
         dbg_col_ready => open, dbg_col_drop => open);
 
+    -- ---- memories 1 and 2, in one of two forms --------------------------
+    -- FALSE: every GDN layer's state on chip.  MEASURED at 5,472 RAMB36
+    -- against 672 on the part, and the only reason `gb_real` does not fit.
+    -- TRUE: one resident layer in `gdn_state_store`, the rest over AXI.
+    -- See the `B_STATE_AXI` generic.
+    gen_st_flat : if not B_STATE_AXI generate
     -- ---- memory 1: the recurrent state.  Registered, one cycle. ---------
-    st_rdata <= st_rq;
-    stmem_p : process(clk) is
-      variable a : integer;
-      variable stmem : stmem_t := (others => (others => '0'));
-    begin
-      if rising_edge(clk) then
-        -- b_layer is registered at job issue and held for the whole
-        -- invocation, so it is stable across every access the block makes.
-        --
-        -- READ FIRST.  See the declaration comment: with `stmem` a variable
-        -- the statement order IS the read-during-write policy, and read-old
-        -- is what the signal form gave.  Do not reorder these two blocks.
-        if st_ren = '1' then
-          a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
-          st_rq <= stmem(a);
+      st_rdata <= st_rq;
+      stmem_p : process(clk) is
+        variable a : integer;
+        variable stmem : stmem_t := (others => (others => '0'));
+      begin
+        if rising_edge(clk) then
+          -- b_layer is registered at job issue and held for the whole
+          -- invocation, so it is stable across every access the block makes.
+          --
+          -- READ FIRST.  See the declaration comment: with `stmem` a variable
+          -- the statement order IS the read-during-write policy, and read-old
+          -- is what the signal form gave.  Do not reorder these two blocks.
+          if st_ren = '1' then
+            a := b_layer*STLY + st_rhead*DM*NBR + st_rcol*NBR + st_rgrp;
+            st_rq <= stmem(a);
+          end if;
+          if st_wen = '1' then
+            a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
+            stmem(a) := st_wdata;
+          end if;
         end if;
-        if st_wen = '1' then
-          a := b_layer*STLY + st_whead*DM*NBR + st_wcol*NBR + st_wgrp;
-          stmem(a) := st_wdata;
-        end if;
-      end if;
-    end process;
+      end process;
 
-    -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
-    se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
-    semem_p : process(clk) is
-    begin
-      if rising_edge(clk) then
-        if se_wen = '1' then
-          semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+      -- ---- memory 2: the state exponents.  COMBINATIONAL read. -----------
+      se_rdata <= semem(b_layer*SELY + se_rhead*DM + se_rcol);
+      semem_p : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if se_wen = '1' then
+            semem(b_layer*SELY + se_whead*DM + se_wcol) <= se_wdata;
+          end if;
         end if;
-      end if;
-    end process;
+      end process;
+    end generate gen_st_flat;
+
+    gen_st_tier : if B_STATE_AXI generate
+      -- The store's st_*/se_* ports are `gdn_block`'s VERBATIM, which is why
+      -- this is a drop-in for both processes above and why nothing between
+      -- here and `gdn_block` changes shape.
+      -- THE FOUR BYTE SIZES ARE DERIVED, NOT DEFAULTED.  `gdn_state_store`'s
+      -- defaults (1101824 / 1048576 / 4096 / 49152) are the 9B manifest's
+      -- numbers, and they are RIGHT ONLY AT 9B.  Left defaulted, this instance
+      -- would address HBM with 9B strides at every other shape -- silently, and
+      -- invisibly at 9B, which is the only shape anyone had looked at.
+      --
+      -- Each is the geometry, and each reproduces the 9B manifest constant:
+      --   mant   VH*DM*DM*2      = 32*128*128*2 = 1048576   (stmem: VH*DM*NBR
+      --                            entries of RECUR_LANES*16 bits, and
+      --                            NBR = DM/RECUR_LANES, so the lanes cancel)
+      --   exp    VH*DM           = 32*128       =    4096   (one byte per
+      --                                                      head, col)
+      --   conv   (KC-1)*QKVN*2   = 3*8192*2     =   49152   (the STORED taps;
+      --                            the current column is this token's qkv)
+      --   stride mant+exp+conv                  = 1101824
+      u_state : entity work.gdn_state_store
+        generic map(VAL_HEADS => VH, DIM => DM, RECUR_LANES => B_RECUR_LANES,
+                    LAYERS => NLY, KEY_HEADS => KH, KCONV => KC,
+                    CONV_LANES => B_CONV_LANES,
+                    MANT_BYTES   => BST_MANT_B,
+                    EXP_BYTES    => BST_EXP_B,
+                    CONV_BYTES   => BST_CONV_B,
+                    LAYER_STRIDE => BST_MANT_B + BST_EXP_B + BST_CONV_B,
+                    MAXB         => BST_MAXB)
+        port map(
+          clk => clk, rst => rst,
+          load_start => js_ld, save_start => js_sv,
+          layer => js_layer, state_base => bst_state_base,
+          busy => bst_busy_i, done => js_done, err => js_err,
+          st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
+          st_rgrp => st_rgrp, st_rdata => st_rdata,
+          st_wen => st_wen, st_whead => st_whead, st_wcol => st_wcol,
+          st_wgrp => st_wgrp, st_wdata => st_wdata,
+          se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
+          se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
+          se_wdata => se_wdata,
+          -- THE TAP FACE IS NOW READ, 2026-09-05.  The two producers are NOT
+          -- swapped wholesale, because they cannot be: memory 3 supplies
+          -- `cv_w`/`cv_cw_exp` as well as the taps and the store carries only
+          -- taps.  So the split is by TAP AGE -- the store supplies the KC-1
+          -- OLDER columns (`cvdata_p` filled those with zeros), memory 3 keeps
+          -- the newest column and both weights.
+          --
+          -- THE TIMING LINES UP EXACTLY, and that is why the unregistered
+          -- `cv_seg`/`cv_grp` are passed and not `cvq_*`.  This port samples
+          -- seg/grp on the rising edge and presents `cv_x` the NEXT cycle
+          -- (:128); memory 3 is a registered ADDRESS (`cvaddr_p`) feeding a
+          -- combinational DATA process (`cvdata_p`), which is the same
+          -- one-cycle contract.  Feeding this port the ALREADY-registered
+          -- `cvq_*` would land the stored taps one cycle late against the
+          -- newest column they are summed with.
+          cv_seg => cv_seg, cv_grp => cv_grp, cv_x => st_cv_x,
+          cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
+          cvw_data => js_cvw_data, tok_adv => tok_adv_i,
+          r_arvalid => bst_arvalid_i, r_arready => bst_arready,
+          r_araddr => bst_araddr_i, r_arlen => bst_arlen_i,
+          r_arsize => bst_arsize_i, r_arburst => bst_arburst_i,
+          r_rvalid => bst_rvalid, r_rready => bst_rready_i,
+          r_rdata => bst_rdata, r_rlast => bst_rlast, r_rresp => bst_rresp,
+          w_awvalid => bst_awvalid_i, w_awready => bst_awready,
+          w_awaddr => bst_awaddr_i, w_awlen => bst_awlen_i,
+          w_awsize => bst_awsize_i, w_awburst => bst_awburst_i,
+          w_wvalid => bst_wvalid_i, w_wready => bst_wready,
+          w_wdata => bst_wdata_i, w_wstrb => bst_wstrb_i,
+          w_wlast => bst_wlast_i,
+          w_bvalid => bst_bvalid, w_bready => bst_bready_i,
+          w_bresp => bst_bresp);
+
+      u_jobseq : entity work.gdn_job_seq
+        generic map(VAL_HEADS => VH, DIM => DM, KEY_HEADS => KH,
+                    KCONV => KC, CONV_LANES => B_CONV_LANES, LAYERS => NLY)
+        port map(
+          clk => clk, rst => rst,
+          start => b_start, layer => b_layer,
+          busy => js_busy, done => open, err => open,
+          ss_load_start => js_ld, ss_save_start => js_sv,
+          ss_layer => js_layer, ss_done => js_done, ss_err => js_err,
+          cvw_en => js_cvw_en, cvw_seg => js_cvw_seg,
+          cvw_grp => js_cvw_grp, cvw_data => js_cvw_data,
+          b_start => js_b_start, b_busy => b_busy,
+          q_seg => js_q_seg, q_grp => js_q_grp, q_data => js_q_data);
+
+      bst_done_i <= js_done;
+      bst_err_i  <= js_err;
+
+      -- THE ONE REGISTER STAGE.  Addressed exactly as `cvdata_p`'s
+      -- `t = KC-1` branch addresses this token's column, which is the only
+      -- place in this file that already computes it.
+      qcol_p : process(clk) is
+        variable sbase, ch : integer;
+      begin
+        if rising_edge(clk) then
+          if    js_q_seg = 0 then sbase := 0;
+          elsif js_q_seg = 1 then sbase := KH*DM;
+          else                    sbase := 2*KH*DM; end if;
+          for ln in 0 to B_CONV_LANES-1 loop
+            ch := sbase + js_q_grp*B_CONV_LANES + ln;
+            if ch < QKVN then
+              js_q_data((ln+1)*16-1 downto ln*16) <= std_logic_vector(qkv_b(ch));
+            else
+              js_q_data((ln+1)*16-1 downto ln*16) <= (others => '0');
+            end if;
+          end loop;
+        end if;
+      end process;
+    end generate gen_st_tier;
+
+    -- `gdn_block` starts from the sequencer when the tier is on, and the job
+    -- FSM waits on the sequencer instead of on `gdn_block` directly.
+    gb_start <= js_b_start when B_STATE_AXI else b_start;
+    j_busy   <= js_busy    when B_STATE_AXI else b_busy;
 
     -- ---- memory 3: conv taps and weights.  Registered ADDRESS, ---------
     -- combinational DATA, which is what a BRAM with a registered address
@@ -386,7 +639,16 @@ begin
       end if;
     end process;
 
-    cvdata_p : process(cvq_seg, cvq_grp, qkv_b) is
+    -- ONE pulse per token: the `tok_done`/`tok_ack` handshake, which is the
+    -- same edge `tokp` uses to advance `tok_pos`, so the store's rotation and
+    -- this file's sequence position cannot drift apart.  Held at '0' when the
+    -- state tier is absent, where nothing reads it.
+    tok_adv_i <= tok_done_i and tok_ack when B_STATE_AXI else '0';
+
+    -- `st_cv_x` IS in the sensitivity list: it is read below whenever
+    -- B_STATE_AXI, and a combinational process that reads a signal it does not
+    -- list simulates differently from the hardware it synthesises to.
+    cvdata_p : process(cvq_seg, cvq_grp, qkv_b, st_cv_x) is
       variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
       variable b, ch, sbase : integer;
     begin
@@ -415,9 +677,18 @@ begin
               else
                 xv(b+15 downto b) := (others => '0');
               end if;
+            elsif B_STATE_AXI then
+              -- THE STORED HISTORY, 2026-09-05.  `gdn_state_store` holds the
+              -- previous KC-1 columns (49,152 B per layer) and presents them
+              -- OLDEST FIRST on `cv_x`, with the current column excluded --
+              -- which is exactly this loop's `t = 0 .. KC-2`, same `b`, same
+              -- `B_CONV_LANES`.  So the index is shared, not converted.
+              xv(b+15 downto b) := st_cv_x(b+15 downto b);
             else
-              -- Older than the first token.  `gdn_exp_capture`'s tvalid mask
-              -- excludes these; zero is what they are, not a stand-in.
+              -- Older than the first token, and with no state tier there is
+              -- nowhere else for them to come from.  `gdn_exp_capture`'s
+              -- tvalid mask excludes these AT TOKEN 0; from token 1 it does
+              -- NOT, which is what the `tok_pos` assert below still refuses.
               xv(b+15 downto b) := (others => '0');
             end if;
           end loop;
@@ -714,26 +985,59 @@ begin
               -- SIMULATION ONLY, like the `j_lay` guard above: a VHDL
               -- severity is not a check in synthesis.  B_SRC_REAL is a bench
               -- switch and has no meaning on the card.
-              assert not (B_SRC_REAL and tok_pos > 0)
+              -- NARROWED 2026-09-05, from `B_SRC_REAL and tok_pos > 0`.  The
+              -- history now EXISTS when the state tier is on: `gdn_state_store`
+              -- holds the previous KC-1 columns and `cvdata_p` reads them off
+              -- `st_cv_x` instead of writing zeros.  So the refusal applies to
+              -- exactly the case that is still unfixed -- B_SRC_REAL WITHOUT
+              -- the tier, where there is nowhere for the history to live.
+              --
+              -- THIS IS NOT A CLAIM THAT THE WIRED PATH IS CORRECT.  It is a
+              -- claim that it is no longer STRUCTURALLY absent.  Correctness
+              -- at tok_pos > 0 is an oracle question, not an assert question.
+              assert not (B_SRC_REAL and not B_STATE_AXI and tok_pos > 0)
                 report "llama_top: B_SRC_REAL is true at token "
-                     & integer'image(tok_pos) & ", but this file holds no "
-                     & "conv tap HISTORY -- every tap but the newest is zero "
-                     & "(cvdata_p).  From token 1 gdn_exp_capture's tvalid "
-                     & "marks those slots VALID, so the conv would sum zeros "
-                     & "at a real exponent.  Refusing rather than producing a "
-                     & "plausible wrong number."
+                     & integer'image(tok_pos) & " with B_STATE_AXI false, so "
+                     & "this file holds no conv tap HISTORY -- every tap but "
+                     & "the newest is zero (cvdata_p).  From token 1 "
+                     & "gdn_exp_capture's tvalid marks those slots VALID, so "
+                     & "the conv would sum zeros at a real exponent.  Refusing "
+                     & "rather than producing a plausible wrong number.  Turn "
+                     & "B_STATE_AXI on: the store carries the history."
                 severity failure;
+
+              -- AND THE WIRED PATH IS VERIFIED, 2026-09-05, against an
+              -- INDEPENDENT model and with the control that gives the result
+              -- meaning.  `tools/ref9b/gdn_oracle.py --b-src-real`, which
+              -- reaches the history by CAPTURE KEY (`R_QKV.*` at an earlier
+              -- token) and derives tap `j` as the column of token
+              -- `t-(KCONV-1-j)` from the DEFINITION of a causal convolution,
+              -- never consulting the store or the rotation:
+              --
+              --   stored taps  9 of 9 R_Y seams match the model BIT FOR BIT
+              --   zero-fill    3 of 9 -- and the 3 are exactly the TOKEN 0
+              --                seams, where no history exists so both agree.
+              --                All six token-1/2 seams differ, 124-128 of 128
+              --                mantissas each.
+              --
+              -- So the oracle discriminates exactly where history exists and
+              -- nowhere else, which is what makes 9 of 9 evidence rather than
+              -- an insensitive check.  BLOCKS=4, NTOK=3, real weights.
+              --
+              -- NOT yet shown: 8/16/32 blocks, and a LAYER boundary as opposed
+              -- to a token boundary.  The refusal above still stands for
+              -- B_SRC_REAL without the tier.
               st      := S_ARM;
 
             -- `busy` does not rise on the same edge as `start`, so waiting
             -- for it to FALL without first seeing it RISE completes instantly.
             when S_ARM =>
-              if b_busy = '1' then st := S_RUN; end if;
+              if j_busy = '1' then st := S_RUN; end if;
 
             when S_RUN =>
               -- COMPLETION IS `busy` FALLING.  `done` is a one-cycle pulse
               -- with no ack and this adapter never reads it.
-              if b_busy = '0' then
+              if j_busy = '0' then
                 k    := 0;
                 yexp <= resize(b_yexp, EXP_W);
                 assert ycnt = VH*DM
