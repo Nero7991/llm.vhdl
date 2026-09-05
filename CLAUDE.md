@@ -207,7 +207,18 @@ put six Vivado processes on the workstation instead.
   **holds for a full place-and-route and bitstream**. A pcieep build measured
   there is quotable here.
 
-  **Do NOT read the 2h18m wall time as a speed ratio.** That run was capped at
+  **CAVEAT ADDED SAME DAY, AND IT COST THE BOX.** The completed build above
+  ran under `MemoryHigh=11G`. A SECOND build was then launched with the cap
+  raised to **12G on a 14 GB box**, specifically to avoid the throttling noted
+  below -- and the machine became **completely unreachable** partway through
+  (3 pings unanswered, ARP `FAILED`). Not proven to be the cause: `wlan0` is a
+  **USB dongle** and could have dropped on its own. But one thing changed and
+  the box died, and it is on **no WoL watchdog**, so it needs a physical
+  power-cycle. **Stay at or below `MemoryHigh=11G` there for a pcieep build**
+  until someone establishes otherwise, and treat the ~2.3 GB of free physical
+  that the 11G run left as the real headroom rather than slack to spend.
+
+    **Do NOT read the 2h18m wall time as a speed ratio.** That run was capped at
   `MemoryHigh=11G` and peaked at 11.85 GB, so it built partly throttled into
   reclaim. A capped job's wall time measures the cap, not the machine. See
   `docs/debugging/2026-09-05_cross-machine-bitstream-identity.md`.
