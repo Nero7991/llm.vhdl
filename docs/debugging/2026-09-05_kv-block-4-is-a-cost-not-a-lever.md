@@ -204,3 +204,88 @@ a question about the model, not about the tools, and it is Oren's to answer.
 - Whether an intermediate value (8 or 16) sits better on the tradeoff. Two points
   do not establish the shape of a curve, and the recorded LEVERC48 result is that
   fitting a trend to two points produces a confident wrong one.
+
+---
+
+# CORRECTION 2026-09-05, one hour later: THE EXPERIMENT WAS NOT CONTROLLED
+
+**This document's header claims both runs used "same directives
+(`ExploreWithRemap` / `ExtraTimingOpt` / `AggressiveExplore` / `Explore`)", and
+step 3 of the procedure claims they were "identical to `c4nd`". BOTH ARE FALSE.**
+
+Read from each run's own `C4_DIRECTIVES` sentinel and cross-checked against each
+run's `run.sh`:
+
+| run | KV_BLOCK | opt | place | phys_opt | route | routed WNS |
+|---|---|---|---|---|---|---|
+| `c4nd` | 32 | *(none)* | `ExtraNetDelay_high` | `AggressiveExplore` | `NoTimingRelaxation` | -0.422 |
+| `c4kv4` | **4** | **`ExploreWithRemap`** | **`ExtraTimingOpt`** | `AggressiveExplore` | **`Explore`** | -1.542 |
+
+**Five things changed between the two runs, not one.** `c4kv4`'s own script says
+its directives are "the PRIOR BEST from 2026-09-04:175 so the comparison is
+against a recorded number" -- and then the result was compared against `c4nd`,
+which is a different recorded number taken with a different directive set.
+
+## What is WITHDRAWN
+
+- **The 1.120 ns.** It is the combined effect of `KV_BLOCK` and four directive
+  changes. It is not attributable to `KV_BLOCK`.
+- **"`KV_BLOCK = 4` costs 1.120 ns"**, the headline. Withdrawn pending the
+  control.
+- **The refutation of the congestion hypothesis.** Congestion is a placement and
+  routing outcome, and all four placement and routing directives changed. **The
+  congestion hypothesis is therefore NOT refuted. It is untested.** The
+  correction appended to
+  `docs/debugging/2026-09-05_composed-context-penalty-is-cattn-congestion.md` is
+  itself withdrawn on the same grounds.
+- **The critical-path move** from `u_arr/p_reg_reg` to `c_attn/vhdr_reg`.
+  Placement directives move critical paths on their own.
+- **The routed CLB figure** 49,620 -> 46,706. Packing density depends on the
+  placer directive, so this is partly confounded too.
+
+## What SURVIVES, and why
+
+**Everything measured at SYNTHESIS stands, because synthesis does not read
+implementation directives.** The two runs' synthesis hierarchies confirm it
+directly: `a_eng` is 92,134 LUT in both **to the digit** and `d_norm` 5,017 in
+both, which could not happen if anything upstream of implementation differed.
+
+- LUT 267,202 -> 252,819, **-14,383**, attributable to `KV_BLOCK`.
+- DSP 2,177 -> 1,953, **-224**, matching `2 * G * KV_BLOCK` exactly.
+- `u_arr` 57,927 -> 39,905 LUT and 256 -> 32 DSP.
+- F8 muxes 3,961 -> 8,425, **+113%**, so the "narrower array needs deeper
+  muxing" mechanism is real as an AREA effect. Whether it is what costs the
+  timing is exactly what is no longer established.
+- The projection warning stands: scaling `u_arr`'s LUT by the 8x `KV_BLOCK`
+  factor predicts ~-50,000 against -18,022 measured.
+
+## The control now running
+
+`c4kv4c`: the **same KV=4 synthesis DCP**, re-implemented with `c4nd`'s exact
+directives (`opt=''`, `ExtraNetDelay_high`, `AggressiveExplore`,
+`NoTimingRelaxation`). Synthesis is not re-run because it cannot differ.
+`c4nd` against `c4kv4c` then differs in `KV_BLOCK` and nothing else.
+
+**No number should be quoted from this document's timing sections until that
+lands.**
+
+## What this cost, and the honest naming of it
+
+Today I wrote into `CLAUDE.md`: *"a difference was attributed to the mechanism
+being discussed rather than to the uncontrolled variable... assert the tree
+identity; do not infer it."* That entry was written about a stale directory. **I
+then made the same error a second time within the hour, on a different
+uncontrolled variable, in the document announcing the first one.**
+
+The area controls were chosen carefully -- `a_eng` and `d_norm` unmoving to the
+digit -- and they are genuinely good controls. **They are controls on the wrong
+axis.** They prove synthesis was identical, which is exactly why the area
+numbers survive, and they say nothing whatever about implementation. Having a
+control does not mean having the control the claim needs, and a well-chosen
+control on one axis reads as rigour and disguises the missing one.
+
+The generalisable form, and it is not "check the directives":
+**enumerate what differs between two runs from the runs' own recorded
+parameters, not from the intent of whoever launched them.** Both `C4_DIRECTIVES`
+sentinels were sitting in the logs the entire time, one line each, and the
+comparison was made from memory of what the run was *for*.
