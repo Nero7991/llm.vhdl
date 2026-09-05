@@ -780,6 +780,36 @@ any amount of additional structural checking.**
   sentinel the work itself wrote, never on the waiter's status.
 - **Coverage of the input space is not coverage of the output space.** Ask what
   the generated inputs cannot reach, and enumerate it separately.
+- **A COMPARISON NEEDS BOTH ENDS DRAWN FROM THE SAME TREE, AND INTERNAL
+  CONSISTENCY CANNOT DETECT STALENESS.** MEASURED 2026-09-05: a subsystem area
+  table was read from `hw/fk33/results/compose4_2026-08-29/` -- the date is in
+  the path -- and compared against this week's routed run. `d_norm` was wrong by
+  **9.7x in LUT and 66x in FF** (48,501/133,169 against the real 5,017/2,004),
+  and the whole difference between a week-old synthesis and a current routed
+  number was written up as a **25% stage over-count**. Same-tree, the stage
+  effect is **-1.4%**. A week of design change had been charged to the mechanism
+  under discussion.
+  **The stale table passed every arithmetic check**: its four subsystems summed
+  to 343,907 against its stated top of 350,283, leaving 6,376 of glue, and the
+  CORRECT table leaves the identical 6,376. Self-consistency survives staleness
+  because staleness does not break arithmetic. Nothing but reading the date
+  would have caught it.
+  This is the "not the buffers" failure in a new place: a difference was
+  attributed to the mechanism being discussed rather than to the uncontrolled
+  variable. **Assert the tree identity; do not infer it from a filename being
+  plausible.** The cheap discriminator is a control that should NOT move: in the
+  corrected experiment `a_eng` was 92,134 LUT in both runs to the digit and
+  `b_gdn` differed by 3, which is what made the 14,383 LUT delta attributable at
+  all.
+- **THE SAVING IS NOT PROPORTIONAL TO THE PARAMETER.** MEASURED the same day, on
+  a fresh case: `u_arr`'s DSP count is exactly `2 * G * KV_BLOCK` and an 8x
+  reduction in `KV_BLOCK` delivered exactly the derived **-224 DSP**. Scaling its
+  **LUT** the same way predicts about -50,000; the measurement is **-18,022** in
+  `u_arr` and **-14,383** net, because a narrower array needs deeper muxing
+  (F8 muxes **+113%**) and ~3,642 LUT plus ~2,051 FF reappeared elsewhere in the
+  same block. **An exact relationship for one resource is not a licence to scale
+  a different resource by the same factor.** Refusing to project was worth 3.4x
+  here, and the projection would have erred in the flattering direction.
 - **Where a document and the RTL disagree, the RTL wins.** That includes the
   specs, the audit, and this file.
 
