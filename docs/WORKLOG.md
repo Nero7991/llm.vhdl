@@ -11,7 +11,57 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-05 (latest): THE FULL DESIGN FITS, BUT CLB OCCUPANCY IS THE CONSTRAINT
+### 2026-09-05 (latest): KV_BLOCK=4 COSTS 1.120 ns, AND MY CONGESTION HYPOTHESIS IS REFUTED
+
+**`c4kv4` landed. Both routes clean** (`nets=3264259 errors=0 unrouted=0
+partial=0`). Full writeup:
+`docs/debugging/2026-09-05_kv-block-4-is-a-cost-not-a-lever.md`.
+
+| | `c4nd` KV=32 | `c4kv4` KV=4 | delta |
+|---|---|---|---|
+| **routed WNS** | **-0.422** | **-1.542** | **-1.120** |
+| achieved | **184.4 MHz** | **152.9 MHz** | -31.5 MHz |
+| LUT | 263,544 | 248,727 | -14,817 |
+| DSP | 2,177 | 1,953 | -224 |
+| CLB sites | 49,620 (90.3%) | 46,706 (**85.0%**) | -2,914 |
+| F8 mux | 3,961 | 8,425 | **+113%** |
+
+**`KV_BLOCK = 4` is a COST, not a lever. `compose4_top`'s accidental 32 has been
+FLATTERING every composed number on record.** If 4 is the correct spec value,
+the real distance to 200 MHz is **1.542 ns**, the worst composed figure ever
+measured here.
+
+**Clean isolation:** `a_eng` 92,134 LUT in both runs to the digit, `d_norm`
+5,017 in both, `b_gdn` differs by 3. Every change is inside `c_attn`.
+
+**MY CONGESTION HYPOTHESIS IS REFUTED.** The doc from earlier today argued
+`u_arr`'s DSP density caused the composed context penalty, on the evidence of
+100% DSP occupancy in the windows `u_arr` owns. DSP in `u_arr` fell **8x**
+(256 -> 32, exactly `2*G*KV_BLOCK`), CLB occupancy fell 5.3 points, 14,817 LUT
+left the design, and **routed congestion got WORSE**: South Level 5 -> **6**,
+East 6 -> 6. DSP density was *correlated* with the congested windows, not
+causal. **What drives them is now OPEN with no candidate measured**, which is a
+worse position than that doc claimed and the true one. The prediction was
+registered in `fa92069` **before** the run, which is why one experiment settled
+it instead of the story surviving indefinitely.
+
+**Why timing got worse:** the critical path MOVED OUT of the array. At KV=32 it
+is `c_attn/u_arr/p_reg_reg -> u_arr/er_r_reg`; at KV=4 it is
+`c_attn/vhdr_reg -> c_attn/vref_r_reg`. `u_arr` gives up 18,022 LUT but `c_attn`
+only 14,380, because ~3,642 LUT and ~2,051 FF reappear around it as deeper
+muxing. A narrower array does the same work in more steps.
+
+**Third measured case of phys_opt over-promising:** -1.004 phys_opt against
+-1.542 routed, 0.538 ns given back. `c4nd` gave back 0.428. Quoting phys_opt
+would have made `c4nd` read as *meeting* 200 MHz.
+
+**DECISION FOR OREN, and it is no longer cosmetic.** `rtl/attn_block.vhd:223`
+and `rtl/llama_top.vhd:479` both cite spec clause 2.1.1 with different
+`KV_BLOCK` values, 32 against 4, and **nothing checks that they agree**. The
+disagreement is now measured at **31.5 MHz against 5.3 points of device
+occupancy**. Which value the model requires is a spec question, not a tools one.
+
+### 2026-09-05 THE FULL DESIGN FITS, BUT CLB OCCUPANCY IS THE CONSTRAINT
 
 **Nobody had asked whether shell + A + B + C + D physically fits on the
 xcvu33p.** The bitstream goal has been pursued as a timing problem for weeks
