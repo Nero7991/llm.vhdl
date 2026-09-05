@@ -95,6 +95,48 @@ that hand-written file is a generator INPUT and nothing on it says so.
 Regenerated in `14c43fb`; rule and root cause in `CLAUDE.md` and
 `docs/debugging/2026-09-05_generator-input-staleness.md`.
 
+**THE STRATEGY SWEEP LANDED, AND THE SHIPPED BITSTREAM USES THE WORST PASSING
+STRATEGY.** 8 points, implementation only (synthesis reused), one Vivado.
+**299 ps spread on identical RTL**, +0.096 to -0.203:
+
+| strategy | WNS | achievable |
+|---|---|---|
+| **`Performance_NetDelay_high`** | **+0.096** | **203.9 MHz** |
+| `Performance_ExtraTimingOpt` | +0.033 | 201.3 MHz |
+| `Performance_ExploreWithRemap` | +0.0098 | 200.4 MHz |
+| `Performance_ExplorePostRoutePhysOpt` **(shipped)** | +0.0009 | 200.0 MHz |
+| `Performance_Explore` | -0.0066 | misses, 20 ep |
+| `Performance_Retiming` / `RefinePlacement` | -0.203 | 192.2 MHz, 9,213 ep |
+| `Flow_RunPostRoutePhysOpt` | -0.221 | 191.5 MHz, 5,194 ep |
+
+**The control validated the whole sweep:** `RefinePlacement` returned
+-0.203225 = **192.19 MHz**, and this file already recorded the previously
+shipped bitstream at **"measured 192.2 MHz"** (line ~167), weeks earlier and
+independently.
+
+**There is no seed to sweep.** MEASURED: Vivado 2023.2 has no `-seed` on
+`place_design`/`phys_opt_design`/`route_design`, only `-directive`.
+
+**Post-route phys_opt is INSURANCE, measured both ways:** no-op at positive
+slack (EPR 0.001 -> 0.001), but +131 ps and 1,007 endpoints recovered at
+negative slack (Flow -0.352 -> -0.221). **Keep it in whatever becomes the
+default** -- it is what will claw back ~130 ps when B's and C's movers push
+this design negative.
+
+**LEAD:** rows 6/7 fail on **9,213 endpoints**, the same count this board
+records as *"A-only endpoint bitstream's 9,213 failing endpoints still
+unattributed by hierarchy"*. Same design. `sim/ooc_mover_paths.tcl` can census
+it from a run already on disk.
+
+Full write-up: `docs/debugging/2026-09-05_pcieep-strategy-sweep.md`.
+Cross-machine identity: `docs/debugging/2026-09-05_cross-machine-bitstream-identity.md`.
+
+**THE BC-250 IS DOWN and needs a physical power-cycle.** It completed the
+cross-machine build first (that result is safe and committed). A second build
+was then launched with the cap raised 11G -> 12G on a 14 GB box and it became
+unreachable; not proven causal (its `wlan0` is a USB dongle) but recorded in
+`CLAUDE.md`. No WoL watchdog, so it stays down until someone power-cycles it.
+
 #### Open, and explicitly NOT settled
 
 - **Whether `Performance_ExplorePostRoutePhysOpt` becomes the pcieep default.**
