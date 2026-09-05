@@ -151,3 +151,62 @@ So the same one-line generator gap is the leading candidate for the timing miss
   number should be read alongside the WNS, not after it.
 - The FF column is at 35% and the URAM column at 0%. Two levers exist that trade
   LUT for those, and neither has been costed against this budget.
+
+---
+
+## APPENDED 2026-09-05: where the area actually is, and the URAM lever is small
+
+MEASURED, `hw/fk33/results/compose4_2026-08-29/util_hier_c4_synth.rpt`,
+synthesis stage (so LUT is the 25% over-count; the RATIOS are what this table is
+for, and DSP/BRAM are stage-stable).
+
+| instance | LUT | % of top | LUTRAM | FF | RAMB36 | DSP |
+|---|---|---|---|---|---|---|
+| `compose4_top` | 350,283 | 100.0 | 14,382 | 355,468 | 231 | 2,177 |
+| `a_eng` (A) | 134,633 | **38.4** | 4,440 | 63,704 | **192** | **1,585** |
+| `c_attn` (C) | 85,592 | **24.4** | 80 | 101,046 | 3 | 298 |
+| &nbsp;&nbsp;`u_arr` | 55,854 | **15.9** | 0 | 39,275 | 0 | **256** |
+| `b_gdn` (B) | 75,181 | 21.5 | **9,862** | 52,470 | 36 | 253 |
+| `d_norm` (D) | 48,501 | 13.8 | 0 | **133,169** | 0 | 41 |
+
+Three things this settles.
+
+**`u_arr` alone is 15.9% of the entire composed design** and 65% of `c_attn`,
+carrying 256 of `c_attn`'s 298 DSP. It is simultaneously the largest single
+block after subsystem A, the owner of 65-95% of every Level 5 congestion window,
+and the block whose size is set by the `KV_BLOCK` generic that the composed top
+gets **by omission**. That is three independent problems with one cause.
+
+**The DSP relationship is exact and comes from the RTL, not from a fit:**
+`DSPs(u_arr) = 2 * G * KV_BLOCK` gives 256 at `KV_BLOCK = 32` and 32 at 4, and
+the report's 256 confirms it. **The LUT saving is deliberately NOT projected
+here.** The recorded LEVERC48 result is that a two-parameter fit to two points
+read scatter as slope and missed by a factor of five; `c4kv4` will measure the
+LUT, and a number measured is worth more than a number derived from one point.
+
+**CORRECTION to this document's own "Open" list.** It closed by saying the FF
+column at 35% and the URAM column at 0% represent two uncosted levers trading
+LUT for them. The URAM half is now costed and it is **small**: total LUTRAM is
+**14,382 of 350,283, i.e. 4.1%** at synthesis (27,317 of 263,544, 10.4%, at
+routed), and **68% of it lives in `b_gdn`**, 6,120 of that directly in `b_gdn`
+itself rather than any child. `c_attn` holds 80 and `d_norm` zero. So moving
+distributed RAM into the 350 free BRAM tiles and 320 idle URAM cannot address
+the CLB pressure in the region that has it, and would in any case waste whole
+tiles on memories this small. **The lever is real, it is in B, and it is worth
+at most a few percent.** It is not the answer to a 90.3% CLB occupancy.
+
+The FF half stands uncosted. `d_norm` is the striking row: **133,169 FF against
+48,501 LUT**, 37% of every flop in the design for 13.8% of the LUT.
+
+### Measurement trap hit, and it produced a wrong table first
+
+`report_utilization -hierarchical` has columns
+`Instance | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs | FFs | ...`, so
+with `awk -F'|'` the LUTRAM column is **`$6`, not `$5`**. `$5` is Logic LUTs.
+The first pass of this analysis read `$5` and produced a table in which
+`compose4_top` owned "334,703 LUTRAM" out of 350,283 total LUT, and `c_attn`
+"85,483". **Every number was a real number from a real report and the table was
+entirely wrong**, and it is superficially plausible because Logic LUTs and Total
+LUTs are the same order of magnitude. The tell was that the claimed LUTRAM was
+95% of the design's LUT, which no design does. **An off-by-one field index
+produces confident wrong numbers, not an error.**
