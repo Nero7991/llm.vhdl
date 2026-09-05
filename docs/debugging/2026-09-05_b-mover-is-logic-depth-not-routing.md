@@ -317,3 +317,63 @@ above says by how much:**
 An implementation run for C is in flight to replace the estimate with a routed
 number, reporting WNS at synth / opt / placed / physopt / routed so the size of
 the estimate's error is measured rather than asserted.
+
+---
+
+## C IMPLEMENTED: 155.3 MHz routed, and my prediction about the estimate was WRONG
+
+`ooc_cattnadapt_top`, same generics, taken all the way through routing.
+
+```
+CIMPL_WNS synth   -1.611     151.3 MHz
+CIMPL_WNS opt     -1.611     151.3 MHz
+CIMPL_WNS placed  -0.964     167.7 MHz
+CIMPL_WNS physopt -0.805     172.3 MHz
+CIMPL_WNS routed  -1.438     155.3 MHz
+route status: 140,959 routable, 140,959 fully routed, 0 with routing errors
+```
+
+**WITHDRAWN: "a post-synthesis WNS on a route-bound path is not a result, and
+4.232 ns of route is an upper bound."** I wrote that an hour ago, reasoning
+that a route-bound path must be badly modelled before placement. MEASURED: the
+synthesis estimate was pessimistic by **0.173 ns** -- 151.3 against 155.3 MHz.
+The estimate was good. The reasoning predicted a large error and the
+measurement shows a small one, so the mechanism I proposed was not the one
+operating. **A plausible mechanism is not a measurement, even when the
+direction it predicts turns out to be right.**
+
+### phys_opt over-promised again, and this is now a PATTERN with two observations
+
+| design | phys_opt (pre-route) | routed | given back |
+|---|---|---|---|
+| composed top, this morning | **+0.006** | -0.422 | **0.428 ns** |
+| C's mover, this run | **-0.805** | -1.438 | **0.633 ns** |
+
+Both clean routes, both on this device, both large enough to invert a verdict.
+**Do not read a `phys_opt_design` WNS as a result on this part.** The composed
+run would have been reported as "meets 200 MHz" on its pre-route number.
+
+### C's path, attributed
+
+```
+Slack -1.438ns   gcr.u_attn/vhdr_reg[312]/C -> gcr.u_attn/vref_r_reg[14][2]/D
+Data Path Delay 6.419ns  logic 2.730 (42.5%)  route 3.689 (57.5%)
+Logic Levels 23  (CARRY8=7 LUT2=1 LUT3=5 LUT4=1 LUT5=3 LUT6=6)
+```
+
+**THIS PATH HAS ALREADY BEEN FIXED ONCE.** `rtl/attn_block.vhd:662-685` records
+TRACK TIMING (2026-08-30) rebuilding the SEAM 2 write-time fold from a SERIAL
+compare-select chain seeded on `vref_r` into the balanced `emin_tree`, because
+the serial form was **28 logic levels** and "every one of the forty worst paths"
+in the composed design. That fix is real and it worked: the path is now **23**.
+It did not go far enough.
+
+What remains is `vhdr` -> the balanced min-tree over `NBLK` block exponents ->
+the subtract against `vref_r` at `:1018`
+(`s := to_integer(e_of(vhdr, opb)) - to_integer(vref_r(...))`) -> back into
+`vref_r`. The seven CARRY8 are the 8-bit compares and that subtract.
+
+Unlike B's, **this is the real design and the number is a routed one.** C is
+genuinely 155.3 MHz against a 200 MHz target, and closing 1.438 ns needs the
+reduction split across a cycle rather than re-bracketed again -- re-bracketing
+is the lever TRACK TIMING already pulled.
