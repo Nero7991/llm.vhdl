@@ -477,3 +477,54 @@ scalars from registers or memory, which would expose the mover's real logic in
 the ordinary timing report. That is a smaller job than pipelining `gdn_conv`,
 and pipelining `gdn_conv` would have been work spent on a path that is not in
 the design -- which is exactly where the -4.008 was pointing.
+
+---
+
+## CORRECTION, same session: "B has no demonstrated timing blocker" NEEDS THE CONTEXT CAVEAT
+
+**WITHDRAWN as written.** It is true of `gdn_block` in ISOLATION and false of
+the composed design, and the composed number is the one a bitstream depends on.
+
+`hw/fk33/rtl/compose4_top.vhd` instantiates `gdn_block` DIRECTLY and its
+`cv_x`/`cv_w` are top-level PORTS (`:945-946`, `:2176-2177`), so nothing in it
+manufactures inputs. Checked by DEFINITION, not by name: `function m12` occurs
+**0** times there and the constants `1103515245` / `668265261` occur **0**
+times.
+
+**A trap on the way, worth recording because I nearly published it.** A first
+grep for `m12` in `compose4_top.vhd` returned **58 hits** and I briefly took
+that as the hash being present. They are `a_eng_m12_axi_*` -- **AXI master 12**
+of the A engine. A substring, not the function. *Grep for the thing, not for
+the word that names it* -- the same rule this project already carries about
+searching for a port of the right width rather than for a spelling.
+
+So the composed per-block census stands, uncontaminated:
+
+| hierarchy | failing endpoints | worst slack |
+|---|---|---|
+| `c_attn` | 990 | -0.401 |
+| `b_gdn` | 986 | **-0.402** |
+| `a_eng` | 319 | -0.338 |
+| `d_norm` | 66 | -0.168 |
+
+### The honest three-line summary of B
+
+| measurement | result | real? |
+|---|---|---|
+| `gdn_block` alone, and restricted-startpoint inside the mover | +0.483 / +0.837 | yes, and it MEETS |
+| OOC mover total, `-4.008` / 111 MHz | stimulus generators | **no, discard it** |
+| composed `b_gdn`, routed, in context | **-0.402** | **yes, and this is the blocker** |
+
+**B's real problem is CONTEXT, worth 0.885 ns** (+0.483 alone to -0.402
+composed): placement pressure, fanout and congestion inside a 267k-LUT design,
+not the block's own logic and not the mover's stimulus.
+
+That is a different problem from the one the project has been carrying, and it
+has a different shape: a context penalty responds to floorplanning, placement
+directives and congestion relief, whereas the block's own arithmetic depth
+would not have. It is also **shared** -- `c_attn` -0.401, `a_eng` -0.338 and
+`d_norm` -0.168 sit alongside, three independent subsystems within 0.064 ns,
+which is the signature of a global effect rather than four separate defects.
+
+**What today changed** is that two of B's three numbers are now known to be
+either fine or fictitious, leaving exactly one real target instead of three.
