@@ -11,7 +11,48 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-05 (latest): KV_BLOCK=4 COSTS 1.120 ns, AND MY CONGESTION HYPOTHESIS IS REFUTED
+### 2026-09-05 (latest): THE KV_BLOCK EXPERIMENT WAS NOT CONTROLLED. TIMING CLAIMS WITHDRAWN.
+
+**Read this before the entry below it, which is partly withdrawn.**
+
+`c4nd` and `c4kv4` differ in **five** things, not one. Per each run's own
+`C4_DIRECTIVES` sentinel and each run's `run.sh`:
+
+| run | KV_BLOCK | opt | place | phys_opt | route | routed |
+|---|---|---|---|---|---|---|
+| `c4nd` | 32 | *(none)* | `ExtraNetDelay_high` | `AggressiveExplore` | `NoTimingRelaxation` | -0.422 |
+| `c4kv4` | **4** | **`ExploreWithRemap`** | **`ExtraTimingOpt`** | `AggressiveExplore` | **`Explore`** | -1.542 |
+
+**WITHDRAWN:** the 1.120 ns; "KV_BLOCK=4 costs 1.120 ns"; **the refutation of
+the congestion hypothesis** (congestion is a placement and routing outcome and
+all four directives changed, so that hypothesis is **untested, not refuted**);
+the critical-path move; the routed CLB figure.
+
+**SURVIVES: everything at synthesis**, because synthesis does not read
+implementation directives, and both runs' synthesis hierarchies confirm it --
+`a_eng` **92,134 LUT in both to the digit**, `d_norm` **5,017 in both**. So
+**-14,383 LUT** and **-224 DSP** (exactly `2*G*KV_BLOCK`), `u_arr` 57,927 ->
+39,905, and F8 muxes **+113%** all stand. **KV_BLOCK=4 is a real area saving of
+known size; its timing cost is not established.**
+
+**CONTROL RUNNING: `c4kv4c`** -- the same KV=4 synthesis DCP re-implemented with
+`c4nd`'s exact directives, so the pair differs only in `KV_BLOCK`. Synthesis is
+not re-run because it cannot differ.
+
+**What this cost, named plainly.** I wrote the "attributed to the mechanism
+being discussed rather than to the uncontrolled variable" entry into `CLAUDE.md`
+this morning, and then made the same error within the hour **in the document
+announcing the first one**. The area controls (`a_eng`, `d_norm` unmoving to the
+digit) are genuinely good controls -- **on the wrong axis**. They prove
+synthesis was identical, which is why the area survives, and say nothing about
+implementation. A well-chosen control on one axis reads as rigour and disguises
+the missing one. Both `C4_DIRECTIVES` lines sat in the logs the whole time; the
+comparison was made from memory of what the run was *for*.
+
+**Rule: enumerate what differs between two runs from the runs' own recorded
+parameters, never from the intent of whoever launched them.**
+
+### (partly WITHDRAWN, see above) KV_BLOCK=4 COSTS 1.120 ns
 
 **`c4kv4` landed. Both routes clean** (`nets=3264259 errors=0 unrouted=0
 partial=0`). Full writeup:

@@ -204,3 +204,43 @@ would have been aimed at nothing.
 **What actually drives the Level 5/6 windows is now OPEN, with no candidate
 measured.** That is a worse position than this document claimed to be in, and it
 is the true one.
+
+---
+
+# CORRECTION 2, one hour after CORRECTION 1: THE REFUTATION IS ITSELF WITHDRAWN
+
+**CORRECTION 1 above is WITHDRAWN. This document's DSP-density hypothesis is
+NOT refuted. It is untested.**
+
+CORRECTION 1 rested on `c4kv4` showing worse routed congestion (South Level
+5 -> 6) than `c4nd` after an 8x DSP cut in `u_arr`. But the two runs did not
+differ only in `KV_BLOCK`:
+
+| run | KV_BLOCK | opt | place | phys_opt | route |
+|---|---|---|---|---|---|
+| `c4nd` | 32 | *(none)* | `ExtraNetDelay_high` | `AggressiveExplore` | `NoTimingRelaxation` |
+| `c4kv4` | 4 | `ExploreWithRemap` | `ExtraTimingOpt` | `AggressiveExplore` | `Explore` |
+
+**Congestion is a placement and routing outcome, and all four placement and
+routing directives changed.** A congestion level that moved between those two
+runs says nothing about `KV_BLOCK`. Attributing it to DSP density -- in either
+direction -- is exactly the error CORRECTION 1 accused this document of.
+
+## Current status of the hypothesis: OPEN
+
+- **Not confirmed.** The original evidence remains a co-location: `u_arr`
+  occupies 65-95% of every Level 5 window at 100% DSP occupancy. That is a
+  correlation and this document over-read it as a mechanism. That criticism
+  stands on its own and does not depend on `c4kv4`.
+- **Not refuted.** The experiment that appeared to refute it was confounded.
+- The control `c4kv4c` (same KV=4 netlist, `c4nd`'s exact directives) will
+  settle it. Until it lands, no claim either way.
+
+## The reusable part
+
+CORRECTION 1 congratulated itself for having registered a falsifiable prediction
+in advance, and that was genuinely the right thing to do. **But a falsifiable
+prediction tested by an uncontrolled experiment is not falsified, and
+pre-registration makes the resulting verdict feel earned.** Registering the
+prediction and running the experiment are two separate obligations, and doing
+the first well does not discharge the second.

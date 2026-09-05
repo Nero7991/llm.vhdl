@@ -130,10 +130,13 @@ TWO CONSEQUENCES OF THAT CHOICE, both recorded because they are real gaps:
         composed KV_BLOCK = 32 (this file, by omission)   ROUTED -0.422
         composed KV_BLOCK =  4 (llama_top's value)        ROUTED -1.542
 
-    **"Correcting" this gap to 4 COSTS 1.120 ns, 184.4 -> 152.9 MHz.**  It is
-    not a lever, it is a cost, and this file's accidental 32 has been
-    FLATTERING every composed number on record.  Do not change it expecting an
-    improvement.
+    **WITHDRAWN same day: those two runs also differ in ALL FOUR implementation
+    directives** (`c4nd` used `''`/`ExtraNetDelay_high`/`AggressiveExplore`/
+    `NoTimingRelaxation`; `c4kv4` used `ExploreWithRemap`/`ExtraTimingOpt`/
+    `AggressiveExplore`/`Explore`), so the 1.120 ns is NOT attributable to
+    KV_BLOCK.  Control `c4kv4c` is running: same KV=4 netlist, `c4nd`'s exact
+    directives.  **Do not quote a composed KV_BLOCK timing figure until it
+    lands.**
 
     The controls make it attributable: `a_eng` is 92,134 LUT in both runs to
     the digit, `d_norm` 5,017 in both, `b_gdn` differs by 3 LUT.  Every change
@@ -143,9 +146,12 @@ TWO CONSEQUENCES OF THAT CHOICE, both recorded because they are real gaps:
     critical path MOVES OUT of the array, from `u_arr/p_reg_reg` to
     `c_attn/vhdr_reg`.
 
-    What 4 does buy: CLB occupancy 90.3% -> 85.0% and DSP 2,177 -> 1,953.  So
-    the spec question is a real tradeoff, 5.3 points of device occupancy
-    against 31.5 MHz, not a bookkeeping tidy-up.
+    What SURVIVES the withdrawal, because synthesis does not read implementation
+    directives and both runs' synthesis hierarchies are identical outside
+    `c_attn` (`a_eng` 92,134 LUT in both TO THE DIGIT, `d_norm` 5,017 in both):
+    **-14,383 LUT and -224 DSP**, the latter exactly `2*G*KV_BLOCK`.  So
+    KV_BLOCK = 4 is a genuine AREA saving of known size; what it costs in
+    TIMING is not yet established.
 
     Full measurement, controls, and the refuted congestion hypothesis:
     `docs/debugging/2026-09-05_kv-block-4-is-a-cost-not-a-lever.md`.
