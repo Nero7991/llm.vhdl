@@ -635,3 +635,51 @@ moves C's slack by **2.436 ns** (-1.611 to +0.825 at synthesis).
 - **Should `gen_compose4_top.py` pass `KV_BLOCK => 4`?** If the composed top is
   meant to predict the real design, yes -- and every composed timing number on
   record was taken without it.
+
+---
+
+## FAILED ISOLATION: hierarchy cannot separate the mover from its stimulus
+
+Recorded because it is a negative result with a reusable reason, and because
+the obvious next attempt would repeat it.
+
+The plan: the hoisted hash cells (`a0`, `a[-1111111108]`) carry NO hierarchy
+prefix, so restricting startpoints to `gb_real.*` should drop them while
+keeping the mover's own registers AND `u_gdn`.
+
+```
+BML_SEQ_IN_GBREAL 59494        (u_gdn alone 52045 -> 7,449 cells in the mover proper)
+BMLPATH 1  slack -2.802  levels 28
+  start gb_real.cvq_grp_reg[4]/C
+  end   gb_real.u_gdn/u_conv/p1_reg[2][1]/DSP_A_B_DATA_INST/B[16]
+```
+
+**It did not work, and the reason is structural.** `cvq_grp_reg` is a
+LEGITIMATE DESIGN REGISTER. It feeds `cvdata_p`, which computes `m12`. So the
+hash is not reachable only from hoisted cells -- it is *driven by* real
+registers, and any startpoint filter that keeps the design keeps the hash's
+input too. The path is the same hash, entered one register earlier: -2.802
+against -4.008, 28 levels against 31.
+
+**Hierarchy filtering separates cells, not COMBINATIONAL CONES.** The stimulus
+and the datapath share startpoints, so no `-from` set distinguishes them. The
+earlier `u_gdn`-only restriction worked precisely because it cut at the cone's
+far end, inside the consumer, not at its source.
+
+**What still holds:** `+0.837` for `gdn_block` internal paths, cross-validated
+by the repo's independent `+0.483` for `gdn_block` alone.
+
+**What remains unmeasured, unchanged:** the mover's 7,449 registers of address
+generation, handshakes and region-file port. Every attempt to see them by
+filtering has now failed twice.
+
+**What would actually work**, and neither is a filter:
+
+1. Drive taps, weights and scalars from REGISTERS or memory -- an RTL harness
+   change, and the same conclusion this file reached before.
+2. `set_false_path` through the hash's own cells. Fragile: the cells are
+   Vivado-generated (`a0`, `ARG__16`, `a[-1111111108]`) with unstable names,
+   and a false path that silently matches nothing reports success -- the same
+   shape as the `get_cells` filter that matched nothing earlier today.
+
+Option 1 is the honest one.
