@@ -35,7 +35,27 @@ out-of-gate; regressions in this path will be silent.
 "for the OTHER reason ALONE: the conv tap history". That reason is discharged.
 The remaining bar is the STIMULUS, not the tap history.
 
-### B'S -4.008 ns (111 MHz) IS UNVERIFIED, NOT WRONG
+### RESOLVED: B'S -4.008 REPRODUCES, THE MOVER FITS, AND THE PATH IS LOGIC DEPTH
+
+MEASURED 2026-09-05 against the repaired extraction (`f2bbd50`).  `-4.008`
+reproduces EXACTLY at both `MAXROWS` 64 and 256 -- LUT 127,260 / FF 46,279 /
+BRAM 5,472 / WNS -4.008, every figure matching the 2026-09-03 record.  So the
+staleness alarm below is RETIRED: the number was stale in provenance and
+correct in value.
+
+**THE MOVER FITS** with `-generic B_STATE_AXI=true`: BRAM **5,472 tiles (814%
+of the device) -> 50 (7.44%)**, URAM 0 -> 32, LUT 127,260 -> 65,044, failing
+endpoints **110,298 -> 858**.  Through the generic, not the text substitution.
+
+**AND NO DIRECTIVE CAN FIX THE TIMING.**  The path is 31 logic levels,
+**77.7% logic and 22.3% route**, five DSPs cascaded through PCOUT inside
+`gdn_conv`.  Driving route delay to ZERO still leaves 6.739 ns against a
+5.000 ns period.  That is a closed-form refutation of the entire
+strategy/directive lever on this block.  It has to be pipelined.
+
+`docs/debugging/2026-09-05_b-mover-is-logic-depth-not-routing.md`.
+
+### (superseded) B'S -4.008 ns (111 MHz) IS UNVERIFIED, NOT WRONG
 
 `sim/ooc_gdnadapt_extract.py` has been REFUSING TO RUN since `5f1db1a`
 (2026-09-03 16:20): nested generates inside `gb_real` broke a depth count whose
