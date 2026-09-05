@@ -420,3 +420,60 @@ be in the design.
 where `PRIMITIVE_GROUP == DSP` returned 0 with only a WARNING; 1746/9 = 194,
 matching `report_utilization` exactly. The arithmetic is the check that the
 filter is now right, rather than merely non-empty.
+
+---
+
+## THE ANSWER: B's compute MEETS timing. The blocker was stimulus, end to end.
+
+Startpoints restricted to sequential cells inside `gb_real.u_gdn` -- the real
+`gdn_block` -- so the reported paths BEGIN in the datapath rather than in a
+generator. The set is 52,045 cells, so the empty-set abort did not fire.
+
+```
+BDP_INNER_SEQ_CELLS 52045
+Slack (MET) : 0.837ns
+  Source:       gb_real.u_gdn/u_exp/e_t_r_reg[9]/C
+  Destination:  gb_real.u_gdn/u_conv/shf_reg[0][0]/R
+  Data Path Delay: 4.046ns  (logic 1.286ns (31.8%)  route 2.760ns (68.2%))
+  Logic Levels: 14  (CARRY8=5 LUT3=1 LUT4=3 LUT5=3 LUT6=2)
+25 worst restricted paths span +0.837 .. +1.161, all from the same startpoint
+```
+
+**POSITIVE SLACK. 0.837 ns of margin at 5.000 ns = 240.2 MHz**, against the
+111 MHz quoted as B's blocker in three documents.
+
+### Cross-validated against a measurement the repo already had
+
+| method | result |
+|---|---|
+| 2026-09-03, `gdn_block` synthesised ALONE | **+0.483 -> 221 MHz** |
+| today, startpoints restricted to `gdn_block` INSIDE the mover | **+0.837 -> 240 MHz** |
+
+Two independent methods, both positive, both comfortably past 200 MHz.
+`docs/debugging/2026-09-03_b-mover-does-not-fit.md:41-44` had already written
+*"Everything else in the block is fine ... The mover's `-4.008` therefore
+belongs to the mover, not to the compute."*
+
+**That conclusion was right and it stopped one step short.** It established
+WHERE the -4.008 lives; nothing established WHAT it is. Today: it is the
+synthetic input generation -- `m12`'s two serial 32x32 multiplies for the conv
+weights, and the index functions for the taps and scalars -- all of which the
+shipping design replaces with memory reads.
+
+### What is and is not established
+
+**ESTABLISHED.** B's compute block meets 200 MHz with margin, twice over. The
+-4.008 / 111 MHz figure measures test-pattern generation and does not describe
+anything that will be built. **B has no demonstrated timing blocker.**
+
+**NOT ESTABLISHED.** The mover's OWN logic -- address generation, handshakes,
+buffering, the region-file port -- is still unmeasured, because it sits in
+`gb_real` alongside the generators and the generators own all 400 worst paths.
+Its worst path is somewhere better than -3.226 ns and that is all this run can
+say. **"B has no demonstrated blocker" is not "B is finished."**
+
+**THE NEXT MEASUREMENT** is therefore a harness that drives taps, weights and
+scalars from registers or memory, which would expose the mover's real logic in
+the ordinary timing report. That is a smaller job than pipelining `gdn_conv`,
+and pipelining `gdn_conv` would have been work spent on a path that is not in
+the design -- which is exactly where the -4.008 was pointing.
