@@ -395,6 +395,53 @@ script text that was searching for it, now a log grep matching the source
 embedded in the log. **Whenever you search a haystack that can contain your own
 needle, anchor the match or pick a needle the haystack cannot hold.**
 
+**A `phys_opt_design` WNS IS NOT A RESULT ON THIS PART. IT OVER-PROMISES BY
+0.4 TO 0.6 ns, MEASURED TWICE.**
+
+| design | phys_opt (pre-route) | routed | given back |
+|---|---|---|---|
+| composed top, 2026-09-05 | **+0.006**, 0 failing endpoints | -0.422 | **0.428 ns** |
+| C's mover, 2026-09-05 | **-0.805** | -1.438 | **0.633 ns** |
+
+Both clean routes, both large enough to INVERT THE VERDICT: the composed run
+showed positive slack with zero failing endpoints before routing and would have
+been reported as meeting 200 MHz. A placed WNS is no better and can be worse --
+that same run placed at **-0.406**, WORSE than the baseline's -0.402, and ended
+phys_opt 0.4 ns BETTER. **Nothing before `route_design` orders two runs
+correctly.** This is the `STATS.WNS`-from-the-wrong-stage lesson, except the
+intermediate number had the opposite SIGN.
+
+**AND A SYNTHESIS-ONLY HARNESS IS NOT A TIMING RESULT AT ALL.** MEASURED
+2026-09-05: `grep -cE 'opt_design|place_design|route_design' sim/ooc_cattnadapt.tcl`
+returns **0**, and B's harness is the same. Both movers' headline figures --
+`-4.008` (111 MHz) and `-1.611` (151.3 MHz) -- were POST-SYNTHESIS estimates
+quoted as blockers for a week. Implemented, C is **-1.438 (155.3 MHz)**.
+Check for `route_design` before quoting any fmax from an OOC script.
+
+**SYNTHETIC STIMULUS DISTORTS TIMING AND AREA, NOT ONLY VALUES.** MEASURED
+2026-09-05: B's `-4.008`, the project's headline blocker in three documents, is
+`m12` -- a 32-bit LCG with TWO SERIAL 32x32 multiplies that builds the conv
+WEIGHTS combinationally in `llama_top`'s `cvdata_p`. In the shipping design
+those weights come from memory and that cascade does not exist. Two independent
+proofs: the path traverses `DSP_MULTIPLIER U[43]` and `ALU_OUT[47]`, which a
+`signed(16)*signed(16)` MAC producing 32 bits CANNOT reach; and all 15 worst
+paths share ONE startpoint fanning to sixteen `p1_reg[t][ln]` A-inputs at
+constant depth, the signature of `m12`'s shared first argument.
+
+**It does NOT follow that B is fast.** The harness has no memory-sourced
+weights, so B's real fmax is UNKNOWN. The established claim is only that the
+quoted number measures something that will not be built. This is the recorded
+`B_SRC_REAL` stimulus finding generalised from VALUES to TIMING AND AREA, and
+the distortion was large enough to have set project priorities.
+
+**A `get_cells` FILTER THAT MATCHES NOTHING IS A WARNING, NOT AN ERROR.**
+MEASURED the same day: `get_cells -hier -filter {PRIMITIVE_GROUP == DSP}`
+matched nothing (`WARNING: [Vivado 12-180]`), so a census printed zero lines
+while `report_utilization` said 194 DSPs, and the run still reported success.
+The working idiom is `REF_NAME =~ DSP*`, matching this file's recorded
+`REF_NAME =~ RAM*`. Same silent-empty-result shape as a checker printing PASS
+over an object it never read.
+
 **A COMPLETION SIGNAL THAT ALSO FIRES ON FAILURE IS NOT A COMPLETION SIGNAL.**
 MEASURED 2026-08-30: a waiter armed on a `systemd` unit reported **"completed"
 when the unit was KILLED**, not only when it succeeded, and announced a
