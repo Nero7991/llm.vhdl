@@ -1361,7 +1361,15 @@ if {[get_property top [current_fileset]] ne "bd_wrapper"} {
 }
 puts "FK33_TOP [get_property top [current_fileset]]"
 
-set_property strategy Performance_RefinePlacement [get_runs impl_1]
+set fk33_strategy "Performance_RefinePlacement"
+if {[info exists ::env(FK33_IMPL_STRATEGY)] && $::env(FK33_IMPL_STRATEGY) ne ""} {
+    set fk33_strategy $::env(FK33_IMPL_STRATEGY)
+}
+set_property strategy $fk33_strategy [get_runs impl_1]
+if {[get_property strategy [get_runs impl_1]] ne $fk33_strategy} {
+    error "FK33_STRATEGY FAIL: asked for '$fk33_strategy', run reports '[get_property strategy [get_runs impl_1]]'. set_property accepted it silently and it did not apply."
+}
+puts "FK33_IMPL_STRATEGY [get_property strategy [get_runs impl_1]]"
 add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc
 set_property used_in_synthesis false [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
 set_property used_in_implementation true [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]

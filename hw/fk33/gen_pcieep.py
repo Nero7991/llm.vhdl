@@ -2077,8 +2077,45 @@ if {$otarm == 3} {
     # congestion-spreading directive, WITHOUT removing pblock_bd_i moves the
     # core's clock-region distribution by about six points and does not make
     # the design routable.  The constraint was the problem, not the directive.
+    # ADDED 2026-09-04: the strategy is overridable from the environment,
+    # DEFAULTING TO `Performance_RefinePlacement`, so an unset variable
+    # reproduces every earlier build byte for byte.  The lever is provided,
+    # NOT pulled.
+    #
+    # WHY THE PARAGRAPH ABOVE DOES NOT SETTLE IT.  That measurement asked
+    # whether a directive change made the design ROUTABLE, and the answer was
+    # no -- the constraint was the problem.  The question now is different:
+    # the build reaches a bitstream with 0 errors and misses timing by
+    # 0.203 ns (192.2 MHz).  MEASURED 2026-09-04 on the composed top
+    # (docs/debugging/2026-09-04_composed-top-routed.md), implementation
+    # directives moved a routed design 0.402 -> 0.110 ns and a POST-ROUTE
+    # phys_opt -- a step `Performance_RefinePlacement` does NOT include --
+    # was worth a further 0.051.  `Performance_ExplorePostRoutePhysOpt`
+    # carries both.
+    #
+    # IT IS STILL NOT SWITCHED BY DEFAULT, and deliberately so: this build
+    # currently PRODUCES A WORKING BITSTREAM, the pblock interacts with
+    # placement, and trading a routable 192.2 MHz for an unrouteable 200 is a
+    # bad trade nobody asked for.  Changing it is a judgement about hours of
+    # build time against 4% of clock, so it is the operator's call.
+    #
+    # The readback check is not decoration: a misspelt strategy is accepted
+    # silently by `set_property` on some versions and then does not apply,
+    # which reads as "the strategy did not help" rather than "the strategy
+    # never ran" -- and that mistake costs a whole build to discover.
     ("set_property strategy Performance_RefinePlacement [get_runs impl_1]",
-     "set_property strategy Performance_RefinePlacement [get_runs impl_1]\n"
+     'set fk33_strategy "Performance_RefinePlacement"\n'
+     'if {[info exists ::env(FK33_IMPL_STRATEGY)] '
+     '&& $::env(FK33_IMPL_STRATEGY) ne ""} {\n'
+     '    set fk33_strategy $::env(FK33_IMPL_STRATEGY)\n'
+     '}\n'
+     'set_property strategy $fk33_strategy [get_runs impl_1]\n'
+     'if {[get_property strategy [get_runs impl_1]] ne $fk33_strategy} {\n'
+     '    error "FK33_STRATEGY FAIL: asked for \'$fk33_strategy\', run '
+     'reports \'[get_property strategy [get_runs impl_1]]\'. set_property '
+     'accepted it silently and it did not apply."\n'
+     '}\n'
+     'puts "FK33_IMPL_STRATEGY [get_property strategy [get_runs impl_1]]"\n'
      f"add_files -fileset constrs_1 -norecurse {PBLOCK_XDC}\n"
      f"set_property used_in_synthesis false [get_files {PBLOCK_XDC}]\n"
      f"set_property used_in_implementation true [get_files {PBLOCK_XDC}]\n"
