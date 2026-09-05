@@ -46,9 +46,12 @@ Three traps recorded as do-not-retry:
 - **The 109.3% summed CLB figure is NOT a non-fit proof.** `CLB` counts occupied
   *sites*, a placement outcome, and is the one row in `report_utilization` that
   does not sum. It is still the most informative row here.
-- **The composed SYNTHESIS figure is 350,283 LUT against 263,544 routed**, a 25%
-  over-count that would have put the total at 91.3% and given the wrong answer.
-  The stage discipline this project records for WNS applies to area too.
+- ~~**The composed SYNTHESIS figure is 350,283 LUT against 263,544 routed**, a 25%
+  over-count.~~ **WITHDRAWN same day.** That compared a week-old synthesis run
+  against this week's routed run and charged a week of design change to the
+  stage. Same-tree measurement: `c4nd` synth **267,202** against `c4nd` routed
+  **263,544**, a stage effect of **-1.4%**. Synthesis LUT is still not a
+  placement result, but not for this reason.
 - Deriving the shell from a synthesis A against a placed shell+A mixes stages in
   the direction that under-states the shell.
 
@@ -63,6 +66,37 @@ leading candidate for both the timing miss and the CLB pressure.** Read the
 Open: whether the placer actually reaches 5.72 LUT/CLB. Nothing here measures
 that, and the only way to know is to build shell + composed engine, which has
 never been done.
+
+**CORRECTION, same day: the subsystem attribution table in the debugging doc was
+a week stale and is withdrawn.** It came from
+`hw/fk33/results/compose4_2026-08-29/`. Against this week's tree: `d_norm` is
+**5,017 LUT / 2,004 FF**, not 48,501 / 133,169 (wrong by 9.7x and 66x, so D is
+**1.9%** of the design, not 13.8%); `a_eng` is **92,134**, not 134,633; the top
+is **267,202**, not 350,283. **The headline fit arithmetic is unaffected**, since
+it used the routed 263,544 throughout. The stale table was *internally
+consistent* -- its parts summed correctly and left the same 6,376 of glue as the
+correct one -- so no arithmetic check could have caught it. Only the date in the
+path would have, and it was not read.
+
+**c4kv4 SYNTH RESULT (route still running, no WNS quoted or implied):**
+
+| | `c4nd` KV=32 | `c4kv4` KV=4 | delta |
+|---|---|---|---|
+| LUT | 267,202 | 252,819 | **-14,383 (-5.4%)** |
+| FF | 237,905 | 239,960 | +2,055 |
+| F8 mux | 3,961 | 8,425 | **+4,464 (+113%)** |
+| DSP | 2,177 | 1,953 | **-224 (exactly as derived)** |
+
+**Clean isolation:** `a_eng` is 92,134 LUT in both runs to the digit, `d_norm`
+5,017 in both, `b_gdn` differs by 3 LUT. Every change is inside `c_attn`.
+`u_arr` falls 57,927 to 39,905 with DSP 256 to 32, exactly the `2*G*KV_BLOCK`
+prediction. But `c_attn` as a whole falls only 14,380, so ~3,642 LUT and ~2,051
+FF reappear elsewhere in it and F8 muxes more than double: a narrower array
+needs deeper muxing.
+
+**The refusal to project was worth it.** Scaling `u_arr` by the 8x reduction
+predicts about -50,000 LUT against a measured -18,022 in `u_arr` and -14,383
+net: wrong by **3.4x**, in the flattering direction. LEVERC48 on a fresh case.
 
 ### 2026-09-05 (latest): B CAN RUN PAST TOKEN 0, AND B'S HEADLINE BLOCKER IS UNVERIFIED
 
