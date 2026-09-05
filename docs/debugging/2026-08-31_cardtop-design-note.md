@@ -999,6 +999,19 @@ would serve are not yet connected to it.
 
 ## 15. Unit V is wired, and the cost is measured AGAINST A CONTROL, 2026-09-04
 
+> **CONFIGURATION WARNING, added 2026-09-04 (later): every ABSOLUTE area
+> number in sections 14 and 15 is for `RECUR_LANES=32`, which is NOT the
+> shipping configuration.** `compose4_top` instantiates `b_gdn` with an empty
+> generic map, so it takes `gdn_block`'s own default of 32, while
+> `rtl/llama_top.vhd` passes `B_RECUR_LANES = 4`. MEASURED: at the shipping 4
+> the composed top is 252,622 LUT / 218,971 FF / 306.5 BRAM / **2,065 DSP**,
+> against 270,125 / 237,896 / 327.5 / **2,177** here -- so these tables
+> overstate the shipping design by 17,503 LUT, 18,925 FF, 21 BRAM and **112
+> DSP, on the part's binding resource**. The DELTA in section 15's table is
+> unaffected, because both of its arms used 32. Timing is `+0.346` either way.
+> See `docs/debugging/2026-09-04_mover-timing-is-a-vehicle-artefact.md`.
+
+
 Section 14's last paragraph lists three things absent from the `--wire` top:
 the B and C data movers, unit V, and the descriptor-index wiring. **Two of the
 three are now closed.** The descriptor-index wiring landed in `11bf64b`
