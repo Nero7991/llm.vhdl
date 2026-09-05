@@ -400,7 +400,29 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=124  # RAISED FROM 122, 2026-09-04 (evening).  TWO new rows,
+BASELINE_PASS=125  # RAISED FROM 124, 2026-09-05.  ONE new row, sim:gdnstale,
+                   #    which checks rtl/ooc_gdnadapt_top.vhd against what
+                   #    sim/ooc_gdnadapt_extract.py emits.  That generator had
+                   #    been REFUSING TO RUN since 5f1db1a and nothing noticed,
+                   #    because nothing invoked it.
+                   #
+                   #    MEASURED on a `git archive` of a7a662c with
+                   #    MV4I_FK33_FILE=/nonexistent, --jobs 1:
+                   #
+                   #      OVERALL PASS 125  FAIL 0  NOCHECK 4  SKIPPED 10
+                   #      baseline: 125 passing, above the recorded floor of
+                   #                124 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #      sim:gdnstale  PASS  GDNADAPT_CHECK ok (1 outputs)
+                   #
+                   #    NOT measured on the working tree, which carries 22 rows
+                   #    a clean checkout does not get and where this runner
+                   #    said "DO NOT raise BASELINE_PASS from this run".  Every
+                   #    commit between a7a662c and the raise is docs-only, so
+                   #    the row count is unchanged.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # 124 # RAISED FROM 122, 2026-09-04 (evening).  TWO new rows,
                    #    sim:c4stale and sim:shapechk.
                    #
                    #    MEASURED, and the measurement is the point: run on a
