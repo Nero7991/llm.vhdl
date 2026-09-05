@@ -135,3 +135,67 @@ two of them is five DSPs deep.
   `report_timing_summary` printed one. `-max_paths` would say.
 - **Subsystem C's 151.3 MHz** has had no equivalent analysis. Its extractor is
   in sync (measured, body drift 0) so the measurement is available cheaply.
+
+
+---
+
+## LEAD, 2026-09-05, not yet confirmed: the path may be SYNTHETIC WEIGHTS
+
+Traced by reading, after the write-up above. Recorded as a LEAD, not a result,
+because the discriminating run had not returned when this was written.
+
+The path ends at `p1_reg[3][3]/DSP_A_B_DATA_INST/A[24]`. `p1` is
+`xf * wf` (`rtl/gdn_conv.vhd:300`), and both operands are registered, so
+Vivado absorbs them into the DSP's own A/B registers -- which means the delay
+arriving at that pin is the combinational path computing `x_in`/`w_in`, from
+OUTSIDE `gdn_conv`.
+
+`cv_w` and `cv_x` are produced by `cvdata_p` in `llama_top`'s `gb_real`, and
+that process is deliberately combinational (`rtl/llama_top.vhd:4106`: *"the
+producers are separate processes: `cv_x` has to be combinational"*). Its first
+act is to build the conv WEIGHTS:
+
+```vhdl
+wv(b+15 downto b) :=
+  std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+```
+
+`m12` is a 32-bit LCG:
+
+```vhdl
+t := to_unsigned(a mod 1048576, 32) * to_unsigned(1103515245, 32);
+x := t(31 downto 0) + to_unsigned((b mod 100000) * 12345, 32);
+x := x xor shift_right(x, 15);
+t := x * to_unsigned(668265261, 32);
+x := x xor shift_right(x, 13);
+```
+
+**TWO SERIAL 32x32 MULTIPLIES, combinational.** A 32x32 does not fit one
+DSP48E2 (27x18), so each becomes a cascade of tiles -- which is exactly the
+observed shape: `DSP_MULTIPLIER=3`, `DSP_ALU=5`, `DSP_OUTPUT=5`, chained
+through `PCOUT`, ending at the conv multiply's operand pin.
+
+**If this holds, B's headline blocker is measuring a TEST-PATTERN GENERATOR.**
+The comment above the loop says it outright -- *"The conv WEIGHTS are learned
+constants in every configuration"* -- meaning in the shipping design they come
+from memory, and this hash exists only to supply them in simulation and OOC.
+It would generalise the project's existing finding that `B_SRC_REAL`'s
+degenerate-residual rise is a property of the STIMULUS rather than the design:
+the synthetic weights would distort not just VALUES but TIMING and AREA.
+
+**WHY IT IS NOT YET A RESULT.** The evidence is circumstantial: a shape match
+between the primitive histogram and what two serial 32x32 multiplies should
+produce, plus the path terminating on the operand pin those weights feed. That
+is a hypothesis about which cells are on the path, and this project's record on
+attributing a number by resemblance is bad -- the `gdn_block` BRAM
+misattribution was exactly this, and it came with an agreeing cross-check.
+
+**THE DISCRIMINATING RUN**, launched rather than argued: a DSP census
+(`get_cells -hier -filter {PRIMITIVE_GROUP == DSP}`) plus the 15 worst paths
+with start and end pins. If the DSPs on those paths sit in the weight
+generator and not in `gdn_conv`'s MAC, it is confirmed; if they are the MAC's,
+the logic-depth conclusion stands as written and this lead is dead.
+
+Either way the headline conclusion above -- that no implementation directive
+can fix a path that is 77.7% logic -- is unaffected. What changes is WHAT has
+to be pipelined, and whether it is in the shipping design at all.
