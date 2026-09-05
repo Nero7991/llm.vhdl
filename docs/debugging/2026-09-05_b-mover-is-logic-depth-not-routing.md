@@ -528,3 +528,42 @@ which is the signature of a global effect rather than four separate defects.
 
 **What today changed** is that two of B's three numbers are now known to be
 either fine or fictitious, leaving exactly one real target instead of three.
+
+---
+
+## C's number is measured 8x off its own spec value. Run in flight.
+
+The composed `c_attn` (-0.401) and the OOC `ooc_cattnadapt` (-1.438) differ by
+**1.037 ns on the same internal path** (`u_attn/vhdr_reg` -> `u_attn/vref_r_reg`).
+For a register-to-register path inside the same block that gap needs a cause.
+It is not context. **They are different design points.**
+
+| | HEAD_DIM | KV_BLOCK | NBLK = HD/KV_BLOCK | LAYERS |
+|---|---|---|---|---|
+| composed `c_attn` | 256 | **32** (by omission = block default) | **8** | 8 |
+| OOC `ooc_cattnadapt` | `SHAPE.attn_head_dim` (9B) | **4** | **8x larger** | `nlay(SHAPE)` |
+
+`rtl/attn_block.vhd:223`:
+
+```vhdl
+KV_BLOCK  : positive := 32;   -- C spec 2.1.1, and one 256-bit HBM beat
+```
+
+**32 is the spec value.** `sim/ooc_cattnadapt.tcl:40-41` defaults to
+`($kv eq "true" ? 16 : 4)`, so every C measurement to date -- the 151.3 MHz
+quoted since 2026-08-31 and today's 155.3 MHz routed -- was taken at **4**.
+
+`NBLK` sizes the `emin_tree` reduction, which is **exactly the structure on C's
+critical path**. KV_BLOCK 4 makes NBLK eight times larger, i.e. three more
+levels of the reduction TRACK TIMING rebuilt in the first place. So C's number
+is measured on a tree three levels deeper than the composed design builds.
+
+**This is the same shape as B's finding**: the OOC harness measures a
+configuration that is not the shipping one. B's was manufactured inputs;
+C's is a generic default 8x off spec. Neither is a defect in the design.
+
+A fully implemented run at `KV_BLOCK=32` is in flight. **What it cannot
+settle**: whether 32 or 4 is right for the 9B shape at the FULL layer count --
+the composed top runs LAYERS=8 and HEAD_DIM=256, which is not the 9B shape
+either. Two variables differ between the two measurements and this run pins
+only one.
