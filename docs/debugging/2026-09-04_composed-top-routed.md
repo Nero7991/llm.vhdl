@@ -368,3 +368,52 @@ That comparison is a STAGE MISMATCH and is void. The 0.012/0.002/0.004 gains in
 FOLLOW-UP 2 are POST-ROUTE incremental passes on an already-routed checkpoint;
 the 0.412 here is the main PRE-route `phys_opt`. They are not comparable
 quantities, and the pre-route figure turned out not to survive routing at all.
+
+---
+
+## VOID EXPERIMENT, 2026-09-05: `compose4_top` does not contain `llama_top`
+
+Recorded because it cost 20 minutes of synthesis and would cost the next person
+77, and because the null result was about to be reported as a real one.
+
+**The intent** was to measure what commit `32d8c27`'s per-lane conv-tap mux
+costs in the composed top. `b_gdn` is this file's critical-path block, the mux
+sits inside `gb_real`, so the change looked like a timing risk worth measuring.
+A tree was pinned at the new HEAD, the PRIOR BEST directive set was used so
+that exactly ONE variable changed, and synthesis was run.
+
+**Every utilization figure came back bit-identical:**
+
+```
+pre-tap  (tree_0905,  1d7b87ac)  lut 267202  ff 237905  bram 253.5  dsp 2177
+post-tap (tree_0905c, 05addd1)   lut 267202  ff 237905  bram 253.5  dsp 2177
+```
+
+An identical result across a real RTL change is a reason to check the harness,
+not to publish. `llama_top.vhd` does not appear ANYWHERE in the synthesis log,
+and `compose4_top` instantiates:
+
+```
+attn_block  fk33_engine  gdn_block  ooc_normadapt
+seq_desc_fetch  seq_opdec  seq_region_lock  seq_vec_issue  seq_vec_res
+```
+
+**`gdn_block` directly, never `llama_top`.** So `gb_real` -- subsystem B's data
+mover, and the whole location of the change -- is not in the composed top at
+all. The identical numbers are correct and mean nothing about the tap wiring.
+
+**The error is the one this file's FOLLOW-UP 3 already criticises, in a new
+form.** There it was changing three variables at once; here it was failing to
+confirm the changed code was inside the device under test before spending an
+hour measuring it. *Verify the change is in the DUT before designing the
+comparison*, which costs one `grep` for the instantiation list.
+
+**It also explains why the composed top is not an inference design.** The
+per-unit data movers are absent by construction: `compose4_top` wires the
+COMPUTE blocks together, and `gb_real` is the thing that would feed them. That
+is consistent with what `gen_compose4_top.py:928` already says, and it means a
+mover measurement has to be done on the extracted block, not here.
+
+The run was stopped rather than finished. Its only remaining value would have
+been a reproducibility check of the -0.110 figure, which did not justify
+holding the single Vivado lane for another 50 minutes.

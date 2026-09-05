@@ -85,6 +85,22 @@ prior best, so the loss cannot be attributed to `NoTimingRelaxation`, which is
 the knob the open item actually named. Attribution needs three more 77-minute
 runs; given the direction, spend them elsewhere.
 
+### VOID: `compose4_top` does not contain `llama_top`
+
+A follow-up run meant to measure the tap mux's cost in the composed top
+returned **bit-identical utilization** (lut 267202, ff 237905, bram 253.5, dsp
+2177 both sides). `compose4_top` instantiates `attn_block`, `fk33_engine`,
+`gdn_block`, `ooc_normadapt` and the five `seq_*` units -- **`gdn_block`
+directly, never `llama_top`** -- so `gb_real`, where the change lives, is not
+in that design at all.
+
+Stopped rather than finished. **Verify the change is inside the DUT before
+designing the comparison**; it costs one grep of the instantiation list. Same
+family as FOLLOW-UP 3's three-knobs-at-once error.
+
+It also explains structurally why the composed top is not an inference design:
+the per-unit data movers are absent by construction.
+
 ### 2026-09-05 (earlier): THE CARD BITSTREAM MEETS 200 MHz, AND IT WAS ALMOST LOST IN /tmp
 
 **`hw/fk33/pcieep_build.sh` produced a bitstream that MEETS its 200 MHz
