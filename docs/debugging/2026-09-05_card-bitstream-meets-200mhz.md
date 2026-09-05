@@ -119,3 +119,56 @@ placement and routing, not a different design.
   with this strategy; only `phys_opt` directives were tried there.
 - **Correctness on hardware, and hardware access.** Unchanged and outside what
   any build can settle.
+
+---
+
+## WHERE THE ARTIFACT ACTUALLY IS (added 2026-09-05, after nearly losing it)
+
+**This document recorded the bitstream's SIZE and its TIMING and not its
+LOCATION, and the only copy was in the session scratchpad under `/tmp`**,
+which does not survive the session. A reader following this write-up would
+have found every number in it reproducible and the artifact itself gone.
+
+Preserved to, and MEASURED byte-identical by md5 (`201b6206...`):
+
+```
+hw/fk33/bit/fk33_pcieep_eng_epr_wns+0p001.bit          21,647,330 bytes
+hw/fk33/bit/pcieep_eng_epr_2026-09-05/
+    timing_summary_postroute_physopted.rpt
+    route_status.rpt
+    utilization_placed.rpt
+```
+
+**`hw/fk33/bit/` is gitignored** (`.gitignore:134`), which is deliberate --
+bitstreams live on disk, not in git. **So this paragraph is the only tracked
+record that the file exists**, and a `git clean -x` would remove it with no
+warning and nothing to point at what was lost.
+
+### The verification, re-read from the reports rather than from memory
+
+Both figures below were re-derived from the copied reports, not carried
+forward from the build log:
+
+```
+WNS(ns)  TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints   WHS(ns)
+  0.001    0.000                      0               672531     0.009
+
+All user specified timing constraints are met.
+
+# of routable nets ..... : 286806
+# of fully routed nets . : 286806
+# of nets with routing errors : 0
+```
+
+So: **0 failing endpoints of 672,531, hold met at +0.009, every routable net
+routed, 0 routing errors.** The 1 ps margin noted above is real and is the
+whole margin; nothing here makes it reproducible.
+
+### Measurement trap this nearly repeated
+
+**A size recorded in a document is not a located artifact.** The size was the
+only thing that made it findable at all -- it was recovered with
+`find -size 21647330c` after `find hw -name '*.bit'` returned nothing newer
+than 2026-08-29, because the newest bitstream in the repo tree predated this
+build by a week. **Record the path at the moment the artifact is produced**,
+and if the path is under `/tmp`, that is not a record.
