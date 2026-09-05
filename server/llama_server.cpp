@@ -956,8 +956,18 @@ int main(int argc, char** argv) {
      * "pl_open failed" and exited, and server/tests/server_e2e.py has been
      * reporting "server never came up" for the same reason.
      *
+     * CORRECTION 2026-09-05: the CONSEQUENCE above is spent, the CAUSE is not.
+     * server/tests/server_e2e.py:195 now passes --desc-arena-bytes 159232 and
+     * MEASURED green today: "SERVER_E2E PASS (0 failed)", 6 chat cases plus
+     * the tool-role refusal, so the FK33 arm DOES open its backend and does
+     * emit tokens.  server/tests/server_stories_e2e.py is green in the same
+     * session (11 checks).  Do not go hunting the "unable to open" bug; it
+     * was in the CALLER, and it is fixed.  The paragraph is kept rather than
+     * deleted because it is why the flag is mandatory.
+     *
      * Deliberately NOT defaulted to a nonzero value: a silent default is what
-     * the refusal exists to prevent.  Pass a manifest, or state the size. */
+     * the refusal exists to prevent.  Pass a manifest, or state the size.
+     * That part still holds and is the reason a caller must pass the flag. */
     const char* manifest_path = nullptr;
     unsigned long long desc_arena_bytes = 0;
     for (int i = 1; i < argc; i++) {
