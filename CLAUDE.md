@@ -395,6 +395,21 @@ script text that was searching for it, now a log grep matching the source
 embedded in the log. **Whenever you search a haystack that can contain your own
 needle, anchor the match or pick a needle the haystack cannot hold.**
 
+**PRESENCE IS A LANE CHECK, NOT A QUEUE. TWO WAITERS ON `vivado_present` BOTH
+START.** This file already says to gate on PRESENCE via `/proc/PID/exe` rather
+than on a count, and that is right for "may I use the lane". It does NOT
+serialise. MEASURED 2026-09-05: two jobs were armed on the same presence poll
+while a third ran; when that third ended, both would have seen a free lane in
+the same window and launched together -- two Vivados, which is the condition
+that hung this box in August. Caught before it fired, by arithmetic rather than
+by observation.
+
+**Chain each queued job on the SENTINEL of the job ahead of it, then check
+presence as the safety net.** The sentinel says "the work before me finished";
+presence says "nothing else grabbed the lane meanwhile". Neither alone is
+enough: a sentinel cannot see an unrelated tool, and presence cannot see a
+sibling waiter that is about to start.
+
 **A `phys_opt_design` WNS IS NOT A RESULT ON THIS PART. IT OVER-PROMISES BY
 0.4 TO 0.6 ns, MEASURED TWICE.**
 
