@@ -3970,6 +3970,17 @@ begin
     signal cv_grp   : integer range 0 to (VH*DM)/B_CONV_LANES-1;
     signal cv_x, cv_w : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
     signal cv_cw_exp  : signed(7 downto 0);
+    -- THE STORED CONV TAPS, read back from `gdn_state_store`'s tap face.
+    -- KC-1 taps, OLDEST FIRST, the current token's column NOT included --
+    -- exactly the slots `cvdata_p` used to fill with zeros.  Defaulted to
+    -- zeros so the `B_STATE_AXI = false` build is bit-identical to before:
+    -- nothing drives this signal unless `gen_st_tier` exists.
+    signal st_cv_x : std_logic_vector((KC-1)*B_CONV_LANES*16-1 downto 0)
+                   := (others => '0');
+    -- ONE pulse per token, the same `tok_done`/`tok_ack` handshake that
+    -- advances `tok_pos` (see `tokp`), which is the only point in this file
+    -- where a token is finished with every layer read AND written.
+    signal tok_adv_i : std_logic;
     signal cv_taken, eseg_taken : std_logic;
     signal cvq_seg : integer range 0 to 2 := 0;
     signal cvq_grp : integer range 0 to (VH*DM)/B_CONV_LANES-1 := 0;
@@ -4250,14 +4261,24 @@ begin
           se_rhead => se_rhead, se_rcol => se_rcol, se_rdata => se_rdata,
           se_wen => se_wen, se_whead => se_whead, se_wcol => se_wcol,
           se_wdata => se_wdata,
-          -- The tap face is present but NOT used: memory 3 below supplies the
-          -- taps AND `cv_w`/`cv_cw_exp`, which the store does not carry, so
-          -- the two cannot be swapped wholesale.  `gdn_job_seq` still refills
-          -- the store's taps so the arm is complete and one change lifts the
-          -- token-1 refusal later.
-          cv_seg => 0, cv_grp => 0, cv_x => open,
+          -- THE TAP FACE IS NOW READ, 2026-09-05.  The two producers are NOT
+          -- swapped wholesale, because they cannot be: memory 3 supplies
+          -- `cv_w`/`cv_cw_exp` as well as the taps and the store carries only
+          -- taps.  So the split is by TAP AGE -- the store supplies the KC-1
+          -- OLDER columns (`cvdata_p` filled those with zeros), memory 3 keeps
+          -- the newest column and both weights.
+          --
+          -- THE TIMING LINES UP EXACTLY, and that is why the unregistered
+          -- `cv_seg`/`cv_grp` are passed and not `cvq_*`.  This port samples
+          -- seg/grp on the rising edge and presents `cv_x` the NEXT cycle
+          -- (:128); memory 3 is a registered ADDRESS (`cvaddr_p`) feeding a
+          -- combinational DATA process (`cvdata_p`), which is the same
+          -- one-cycle contract.  Feeding this port the ALREADY-registered
+          -- `cvq_*` would land the stored taps one cycle late against the
+          -- newest column they are summed with.
+          cv_seg => cv_seg, cv_grp => cv_grp, cv_x => st_cv_x,
           cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
-          cvw_data => js_cvw_data, tok_adv => '0',
+          cvw_data => js_cvw_data, tok_adv => tok_adv_i,
           r_arvalid => bst_arvalid_i, r_arready => bst_arready,
           r_araddr => bst_araddr_i, r_arlen => bst_arlen_i,
           r_arsize => bst_arsize_i, r_arburst => bst_arburst_i,
@@ -4327,7 +4348,16 @@ begin
       end if;
     end process;
 
-    cvdata_p : process(cvq_seg, cvq_grp, qkv_b) is
+    -- ONE pulse per token: the `tok_done`/`tok_ack` handshake, which is the
+    -- same edge `tokp` uses to advance `tok_pos`, so the store's rotation and
+    -- this file's sequence position cannot drift apart.  Held at '0' when the
+    -- state tier is absent, where nothing reads it.
+    tok_adv_i <= tok_done_i and tok_ack when B_STATE_AXI else '0';
+
+    -- `st_cv_x` IS in the sensitivity list: it is read below whenever
+    -- B_STATE_AXI, and a combinational process that reads a signal it does not
+    -- list simulates differently from the hardware it synthesises to.
+    cvdata_p : process(cvq_seg, cvq_grp, qkv_b, st_cv_x) is
       variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
       variable b, ch, sbase : integer;
     begin
@@ -4356,9 +4386,18 @@ begin
               else
                 xv(b+15 downto b) := (others => '0');
               end if;
+            elsif B_STATE_AXI then
+              -- THE STORED HISTORY, 2026-09-05.  `gdn_state_store` holds the
+              -- previous KC-1 columns (49,152 B per layer) and presents them
+              -- OLDEST FIRST on `cv_x`, with the current column excluded --
+              -- which is exactly this loop's `t = 0 .. KC-2`, same `b`, same
+              -- `B_CONV_LANES`.  So the index is shared, not converted.
+              xv(b+15 downto b) := st_cv_x(b+15 downto b);
             else
-              -- Older than the first token.  `gdn_exp_capture`'s tvalid mask
-              -- excludes these; zero is what they are, not a stand-in.
+              -- Older than the first token, and with no state tier there is
+              -- nowhere else for them to come from.  `gdn_exp_capture`'s
+              -- tvalid mask excludes these AT TOKEN 0; from token 1 it does
+              -- NOT, which is what the `tok_pos` assert below still refuses.
               xv(b+15 downto b) := (others => '0');
             end if;
           end loop;
@@ -4655,15 +4694,48 @@ begin
               -- SIMULATION ONLY, like the `j_lay` guard above: a VHDL
               -- severity is not a check in synthesis.  B_SRC_REAL is a bench
               -- switch and has no meaning on the card.
-              assert not (B_SRC_REAL and tok_pos > 0)
+              -- NARROWED 2026-09-05, from `B_SRC_REAL and tok_pos > 0`.  The
+              -- history now EXISTS when the state tier is on: `gdn_state_store`
+              -- holds the previous KC-1 columns and `cvdata_p` reads them off
+              -- `st_cv_x` instead of writing zeros.  So the refusal applies to
+              -- exactly the case that is still unfixed -- B_SRC_REAL WITHOUT
+              -- the tier, where there is nowhere for the history to live.
+              --
+              -- THIS IS NOT A CLAIM THAT THE WIRED PATH IS CORRECT.  It is a
+              -- claim that it is no longer STRUCTURALLY absent.  Correctness
+              -- at tok_pos > 0 is an oracle question, not an assert question.
+              assert not (B_SRC_REAL and not B_STATE_AXI and tok_pos > 0)
                 report "llama_top: B_SRC_REAL is true at token "
-                     & integer'image(tok_pos) & ", but this file holds no "
-                     & "conv tap HISTORY -- every tap but the newest is zero "
-                     & "(cvdata_p).  From token 1 gdn_exp_capture's tvalid "
-                     & "marks those slots VALID, so the conv would sum zeros "
-                     & "at a real exponent.  Refusing rather than producing a "
-                     & "plausible wrong number."
+                     & integer'image(tok_pos) & " with B_STATE_AXI false, so "
+                     & "this file holds no conv tap HISTORY -- every tap but "
+                     & "the newest is zero (cvdata_p).  From token 1 "
+                     & "gdn_exp_capture's tvalid marks those slots VALID, so "
+                     & "the conv would sum zeros at a real exponent.  Refusing "
+                     & "rather than producing a plausible wrong number.  Turn "
+                     & "B_STATE_AXI on: the store carries the history."
                 severity failure;
+
+              -- AND THE WIRED PATH IS VERIFIED, 2026-09-05, against an
+              -- INDEPENDENT model and with the control that gives the result
+              -- meaning.  `tools/ref9b/gdn_oracle.py --b-src-real`, which
+              -- reaches the history by CAPTURE KEY (`R_QKV.*` at an earlier
+              -- token) and derives tap `j` as the column of token
+              -- `t-(KCONV-1-j)` from the DEFINITION of a causal convolution,
+              -- never consulting the store or the rotation:
+              --
+              --   stored taps  9 of 9 R_Y seams match the model BIT FOR BIT
+              --   zero-fill    3 of 9 -- and the 3 are exactly the TOKEN 0
+              --                seams, where no history exists so both agree.
+              --                All six token-1/2 seams differ, 124-128 of 128
+              --                mantissas each.
+              --
+              -- So the oracle discriminates exactly where history exists and
+              -- nowhere else, which is what makes 9 of 9 evidence rather than
+              -- an insensitive check.  BLOCKS=4, NTOK=3, real weights.
+              --
+              -- NOT yet shown: 8/16/32 blocks, and a LAYER boundary as opposed
+              -- to a token boundary.  The refusal above still stands for
+              -- B_SRC_REAL without the tier.
               st      := S_ARM;
 
             -- `busy` does not rise on the same edge as `start`, so waiting

@@ -11,7 +11,73 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-05 (last): THE CARD BITSTREAM MEETS 200 MHz, AND IT WAS ALMOST LOST IN /tmp
+### 2026-09-05 (latest): B CAN RUN PAST TOKEN 0, AND B'S HEADLINE BLOCKER IS UNVERIFIED
+
+**Landed (pending the clean gate's verdict at time of writing):** `llama_top`'s
+causal-conv tap history was hardcoded to zeros for every tap older than the
+current token, and `u_state` was instantiated with `cv_seg => 0, cv_grp => 0,
+cv_x => open, tok_adv => '0'`. The state tier existed, was tested, and was
+wired to nothing. Four connections and a narrowed assert fix it.
+
+**9 of 9 R_Y seams bit-exact** against `tools/ref9b/gdn_oracle.py`, which now
+fills tap history from CAPTURED per-token QKV records fetched by capture key,
+never consulting the store it is checking. Discriminating control: the mutant
+that keeps the hardcoded zeros scores **3 of 9**, failing exactly the tokens
+where history exists.
+
+**NOT PROTECTED BY THE GATE, and this is the honest caveat.** `B_SRC_REAL`
+defaults false and no row sets it true. A row that did is **not constructible
+from a clean checkout**: `B_SRC_REAL=true` fails on synthetic weights and
+passes on real ones, and the real weight image is not in git. Verified
+out-of-gate; regressions in this path will be silent.
+
+**`rtl/llama_top.vhd:66-70` is now stale**: it says the default stays FALSE
+"for the OTHER reason ALONE: the conv tap history". That reason is discharged.
+The remaining bar is the STIMULUS, not the tap history.
+
+### B'S -4.008 ns (111 MHz) IS UNVERIFIED, NOT WRONG
+
+`sim/ooc_gdnadapt_extract.py` has been REFUSING TO RUN since `5f1db1a`
+(2026-09-03 16:20): nested generates inside `gb_real` broke a depth count whose
+END pattern was pinned to a literal two-space indent. **It failed loudly and
+was never heard, because nothing invoked it.** Measured body drift, attributed:
+
+| generated file                | pre-existing at HEAD | from the tap edit |
+|-------------------------------|----------------------|-------------------|
+| `rtl/ooc_gdnadapt_top.vhd`    | **225**              | 106               |
+| `rtl/ooc_gdnadapt_ss_top.vhd` | **60**               | 82                |
+
+`-4.008` was measured at `e9beec9` (13:11 the same day), when the extraction
+was genuinely in sync, and went stale three hours later. **It was not wrong
+when taken; it stopped describing the tree.** A re-measurement against a fresh
+extraction is queued as `bmover-chain.scope`, gated on Vivado PRESENCE via
+`/proc/PID/exe`.
+
+**C is NOT exposed the same way** -- measured, body drift 0. Its extractor
+anchors on the block's own indentation rather than counting depth, which is
+immune to nesting by construction. I asserted the parallel before measuring it
+and it was false; see the CORRECTION in the debugging file.
+
+Write-up: `docs/debugging/2026-09-05_b-mover-extraction-went-stale-unheard.md`.
+
+### COMPOSED TOP: phys_opt reaches +0.006 PRE-ROUTE, route still running
+
+`place=ExtraNetDelay_high / physopt=AggressiveExplore / route=NoTimingRelaxation`,
+fresh synthesis from a pinned tree at HEAD. This is exactly the untried item
+recorded at `2026-09-04_composed-top-routed.md:224`.
+
+```
+placed   wns -0.406   failing 147
+physopt  wns  0.006   failing 0
+```
+
+**The routed number is the one that counts and is NOT in yet.** Prior best is
+**-0.041 routed (198.4 MHz)**. Do not quote +0.006 as a 200 MHz result.
+
+**The placed number was worthless as a predictor**: -0.406 here against the
+baseline's -0.402, and it ended phys_opt 0.4 ns better.
+
+### 2026-09-05 (earlier): THE CARD BITSTREAM MEETS 200 MHz, AND IT WAS ALMOST LOST IN /tmp
 
 **`hw/fk33/pcieep_build.sh` produced a bitstream that MEETS its 200 MHz
 constraint**, built with `FK33_IMPL_STRATEGY=Performance_ExplorePostRoutePhysOpt`

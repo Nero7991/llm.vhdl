@@ -359,25 +359,52 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
                     # masked those slots; from token 1 it no longer does, and a
                     # zero mantissa at a real captured exponent is a plausible
                     # wrong answer on both sides at once.
-                    if not pre and t > 0:
-                        raise SystemExit(
-                            "gdn_oracle: --b-src-real at token %d.  "
-                            "rtl/llama_top.vhd holds no conv tap HISTORY -- "
-                            "every tap but the newest is zero -- and since "
-                            "defect B-TOP-1 gdn_exp_capture marks those slots "
-                            "VALID from token 1.  The machine asserts on this "
-                            "combination; this model refuses rather than "
-                            "modelling the zeros it would sum." % t)
-                    # The newest tap from R_QKV, the older ones ZERO, which is
-                    # what rtl/llama_top.vhd's cvdata_p writes.  At token 0
-                    # those are the slots tvalid excludes, so the value is
-                    # inert; it is written as zero anyway so this branch is a
-                    # transcription of that process and not a claim about what
-                    # matters.
+                    # THE CONV TAP HISTORY, 2026-09-05.  This used to REFUSE at
+                    # t > 0, because `rtl/llama_top.vhd`'s `cvdata_p` wrote
+                    # ZERO into every tap but the newest and a zero mantissa at
+                    # a real captured exponent is a plausible wrong answer on
+                    # both sides at once.  `llama_top` now sources those slots
+                    # from `gdn_state_store` under B_STATE_AXI, so the refusal
+                    # would model a machine that no longer exists.
+                    #
+                    # DERIVED FROM THE DEFINITION OF A CAUSAL CONVOLUTION, NOT
+                    # FROM THE RTL, and that distinction is the whole value of
+                    # this file.  A kernel of width KCONV at token `t` sees
+                    # columns `t-(KCONV-1) .. t`, so tap `j` holds the qkv
+                    # column of token `t - (KCONV-1-j)`; tap KCONV-1 is the
+                    # current token, which is exactly what the previous code
+                    # wrote as its only non-zero entry.  Columns before the
+                    # start of the sequence do not exist and stay zero --
+                    # `gdn_exp_capture`'s `tvalid` excludes them at token n for
+                    # all but the newest min(n+1, KCONV) taps, as this file's
+                    # header already states.
+                    #
+                    # The model reaches for them by CAPTURE KEY, `R_QKV.*` at
+                    # an earlier token, so it never consults the store, the
+                    # rotation, or anything else the implementation does.  If
+                    # the RTL's stored taps and this arithmetic agree, that is
+                    # two independent routes to the same number.
                     real = [0] * (CHTOT * KCONV)
-                    cur = list(q.v) + list(k.v) + list(v.v)
-                    for c in range(CHTOT):
-                        real[c * KCONV + KCONV - 1] = cur[c]
+                    for j in range(KCONV):
+                        src_t = t - (KCONV - 1 - j)
+                        if src_t < 0:
+                            continue          # before the sequence: no column
+                        if src_t == t:
+                            col = list(q.v) + list(k.v) + list(v.v)
+                        else:
+                            hq = recs_by_key.get(("R_QKV.q-%d" % b, src_t))
+                            hk = recs_by_key.get(("R_QKV.k-%d" % b, src_t))
+                            hv = recs_by_key.get(("R_QKV.v-%d" % b, src_t))
+                            if hq is None or hk is None or hv is None:
+                                raise SystemExit(
+                                    "gdn_oracle: --b-src-real at token %d needs "
+                                    "the R_QKV columns of token %d for conv tap "
+                                    "%d, and the capture has no such record.  "
+                                    "Capture the whole sequence, or the history "
+                                    "cannot be modelled." % (t, src_t, j))
+                            col = list(hq.v) + list(hk.v) + list(hv.v)
+                        for c in range(CHTOT):
+                            real[c * KCONV + j] = col[c]
                     fp.write(" ".join(str(x) for x in real) + "\n")
                 else:
                     fp.write(" ".join(str(x) for x in xt_flat) + "\n")
