@@ -118,3 +118,94 @@ that point and cannot be right about any other.
   history exists, so the default is still correct today.
 - **Nothing here runs on hardware**, and `B_SRC_REAL` is a bench switch with
   no meaning on the card (`llama_top.vhd:4642`).
+
+---
+
+## FOLLOW-UP: the remaining blocker is NOT "a new buffer". It is two connections.
+
+`llama_top.vhd:4636` sizes the remaining work as *"Holding the history is a new
+(KCONV-1) x qkv_dim buffer -- 3 x 8,192 words at the 9B shape"*. **That
+buffer is not new. It already exists, is correctly sized, is instantiated, and
+its WRITE path is already connected.**
+
+`rtl/gdn_state_store.vhd:45-47` carries it as one of three per-layer segments:
+
+```
+-- A GDN layer's state is the recurrent MANTISSAS (1,048,576 B), the state
+-- EXPONENTS (4,096 B) and the CONV TAP HISTORY (49,152 B) -- `(conv_kernel-1)
+-- x qkv_dim` 16-bit elements, the previous KCONV-1 columns of the whole qkv
+-- stream that `gdn_conv`'s causal kernel needs.
+```
+
+49,152 B is exactly `(KC-1) * qkv_dim * 2` = `BST_CONV_B` at `llama_top:4066`,
+and `llama_top:4232` instantiates `gdn_state_store` with `CONV_BYTES =>
+BST_CONV_B` inside `LAYER_STRIDE`.
+
+**A per-layer rotation is NOT needed, and the design says why** -- which
+answers the obvious objection that conv state is per layer and 24 layers would
+mean 24x the storage (`gdn_state_store.vhd:139-142`):
+
+```
+-- ONE pulse per TOKEN, after every layer has read and written.  Not per
+-- layer: every GDN layer is visited once per token so all of them rotate in
+-- lockstep, which is why the rotation needs no per-layer state and therefore
+-- no HBM storage.
+```
+
+### What is actually missing
+
+`gdn_state_store.vhd:51-56` named it when the tier was written: *"nothing here
+FEEDS the conv tap write port ... and nothing pulses `tok_adv` ... Both are
+the job sequencer's, and until it exists this tier is complete and unused."*
+
+**The job sequencer now exists.** `llama_top:4258` connects the write side:
+
+```vhdl
+cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
+cvw_data => js_cvw_data, tok_adv => '0',
+cv_seg => 0, cv_grp => 0, cv_x => open,
+```
+
+So of the two things that comment says are missing, **one is done**. What
+remains, and `llama_top:4252-4256` states it outright -- *"`gdn_job_seq` still
+refills the store's taps so the arm is complete and one change lifts the
+token-1 refusal later"*:
+
+1. **`tok_adv` is tied to `'0'`**, so the rotation never advances.
+2. **`cv_x` is left `open`**, so the stored taps reach nothing.
+
+### The real constraint, which is NOT storage
+
+`llama_top:4252` records why the read side was left open, and it is a genuine
+design problem rather than an oversight:
+
+> *"memory 3 below supplies the taps AND `cv_w`/`cv_cw_exp`, which the store
+> does not carry, so the two cannot be swapped wholesale."*
+
+`cvdata_p` produces `cv_x`, `cv_w` (conv WEIGHTS, learned constants) and
+`cv_cw_exp` together. `gdn_state_store` carries only the taps. So wiring
+`cv_x` from the store means splitting one producer into two, keeping the
+weights from memory 3 and taking the taps from the store.
+
+**It also couples `B_SRC_REAL` to `B_STATE_AXI`**, because the store exists
+only in that tier. Two generics that are independent today would stop being
+independent.
+
+### So the corrected cost
+
+| | recorded | measured |
+|---|---|---|
+| storage to add | "a new 3 x 8,192 word buffer" | **none; it exists and is instantiated** |
+| conv tap write path | missing | **already connected to `gdn_job_seq`** |
+| remaining | -- | drive `tok_adv`; split `cvdata_p` so taps come from `cv_x` |
+| new coupling | not stated | `B_SRC_REAL` would require `B_STATE_AXI` |
+
+**This is not a recommendation to make the change.** Splitting a producer that
+three signals share, and coupling two generics, is a design decision with a
+real blast radius, and the existing refusal is correct behaviour until it is
+made. It is a correction to the COST, which is what a decision would be taken
+on.
+
+**And it is still not a correctness claim.** Nothing here says B computes the
+right numbers at token 1; it says what stands between the design and being
+able to try.
