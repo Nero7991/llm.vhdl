@@ -11,7 +11,95 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-04 (evening, last): THE 9B SHAPE WAS ALREADY RIGHT, AND THE GENERATED TOP WAS STALE
+### 2026-09-05 (last): THE CARD BITSTREAM MEETS 200 MHz, AND IT WAS ALMOST LOST IN /tmp
+
+**`hw/fk33/pcieep_build.sh` produced a bitstream that MEETS its 200 MHz
+constraint**, built with `FK33_IMPL_STRATEGY=Performance_ExplorePostRoutePhysOpt`
+(the strategy knob is new, in `gen_pcieep.py`, defaulting to the old value and
+validated by readback). Re-derived from the copied reports, not from the build
+log:
+
+```
+WNS(ns)  TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints   WHS(ns)
+  0.001    0.000                      0               672531     0.009
+All user specified timing constraints are met.
+# of routable nets 286806 / fully routed 286806 / routing errors 0
+```
+
+**The artifact lived ONLY in the session scratchpad under `/tmp`.** The
+write-up recorded its size and its timing and not its path;
+`find hw -name '*.bit'` returned nothing newer than 2026-08-29, and it was
+recovered only by searching on the byte size the document happens to quote.
+Now preserved, md5-verified byte-identical:
+
+```
+hw/fk33/bit/fk33_pcieep_eng_epr_wns+0p001.bit               21,647,330  201b6206...
+hw/fk33/bit/pcieep_eng_epr_2026-09-05/
+    bd_wrapper_postroute_physopt.dcp                       215,948,390  e1c8af9d...
+    timing_summary_postroute_physopted.rpt, route_status.rpt,
+    utilization_placed.rpt, README.md
+```
+
+`hw/fk33/bit/` is gitignored (`.gitignore:134`) by design, so
+`docs/debugging/2026-09-05_card-bitstream-meets-200mhz.md` is the only TRACKED
+record that any of it exists. **A `git clean -x` takes it silently.**
+
+**The `.dcp` matters more than the `.bit`.** The margin is 1 ps and no seed
+sweep was run, so nothing shows the result is REPRODUCIBLE. Regenerate with
+`write_bitstream` from the checkpoint; a rebuild is a gamble.
+
+**Host software is green, and one of its recorded bugs is spent.**
+`llama_server.cpp` carried a note that the FK33 arm "has been unable to open
+its backend" and that `server_e2e.py` "has been reporting server never came
+up". MEASURED today, both false: `server_e2e.py:195` now passes
+`--desc-arena-bytes 159232`.
+
+```
+SERVER_E2E     PASS (0 failed)   6 chat cases + the tool-role refusal
+SERVER_STORIES PASS (0 failed)   11 checks
+gate --only srv                  OVERALL PASS 3 FAIL 0, REGRESSION: PASS
+```
+
+The note was corrected IN PLACE, not deleted: its CAUSE is still live
+(`llama_server` deliberately supplies no default, because a silent default is
+what `pl_open`'s refusal exists to prevent), only its consequence is spent.
+
+**THE CONV TAP-HISTORY BLOCKER IS MUCH SMALLER THAN RECORDED.**
+`llama_top.vhd:4636` sizes it as "a new `(KCONV-1) x qkv_dim` buffer". It is
+not new. `rtl/gdn_state_store.vhd:45` already carries the CONV TAP HISTORY
+(49,152 B), `llama_top:4232` instantiates it, and `llama_top:4258` already
+connects the WRITE side from `gdn_job_seq`. The per-layer worry is answered by
+the design itself (`gdn_state_store.vhd:139`): "Not per layer: every GDN layer
+is visited once per token so all of them rotate in lockstep."
+
+What actually remains is two connections, and `llama_top:4252` says so --
+"one change lifts the token-1 refusal later":
+
+- `tok_adv` is tied to `'0'`, so the rotation never advances
+- `cv_x` is left `open`, so the stored taps reach nothing
+
+**The real constraint is not storage.** `cvdata_p` produces `cv_x`, `cv_w` and
+`cv_cw_exp` together and the store carries only taps, so wiring it splits one
+producer in two; and the store exists only under `B_STATE_AXI`, so
+`B_SRC_REAL` would stop being independent of it. **Not done, deliberately:**
+that is a design decision with real blast radius, and the
+`assert not (B_SRC_REAL and tok_pos > 0)` at `:4645` exists precisely to
+refuse a plausible wrong number until it is taken.
+
+#### Open, and explicitly NOT settled
+
+- **Whether `Performance_ExplorePostRoutePhysOpt` becomes the pcieep default.**
+  Costs build time, buys the clock, 1 ps of margin, no seed sweep. NOT decided.
+- **`RECUR_LANES` 4 or 32 for `compose4_top`.** The composed top bakes 32 into
+  a 512-bit B state port where `llama_top` uses 4; 112 DSPs on the binding
+  resource. NOT decided.
+- **Whether to wire the conv taps** (above). NOT decided.
+- **The composed top is still at -0.041 (198.4 MHz)** and has NOT been rebuilt
+  with this strategy.
+- **Correctness on hardware, and hardware access.** Unchanged, and outside
+  what any build can settle. No agent may program this card.
+
+### 2026-09-04 (evening): THE 9B SHAPE WAS ALREADY RIGHT, AND THE GENERATED TOP WAS STALE
 
 Oren asked whether `compose4_top` can be used to get the real 9B shape into
 `llama_top` so the full inference goal is reachable. **The composed top is
