@@ -80,6 +80,37 @@ TWO CONSEQUENCES OF THAT CHOICE, both recorded because they are real gaps:
     top produces includes the gain image, and 32,943 must be added before
     comparing against a pb_core budget.  The generated file says so too.
 
+ 3. `attn_block` at its DEFAULT `KV_BLOCK = 32`, and `rtl/llama_top.vhd:479`
+    passes `C_KV_BLOCK = 4`.  Same policy as gap 1 -- the booking's C row is
+    `HEAD_DIM=256 N_QH=16 N_KVH=4 LAYERS=8` and does not name KV_BLOCK, so the
+    default applies and the composed number stays comparable to it.
+
+    THIS ONE IS DIFFERENT IN MAGNITUDE AND WAS NOT RECORDED UNTIL 2026-09-05.
+    `NBLK = HEAD_DIM/KV_BLOCK` sizes the `emin_tree` reduction that sits on
+    C's critical path, so KV_BLOCK 32 gives NBLK 8 where llama_top's 4 gives
+    NBLK 64 -- three more levels of the very structure TRACK TIMING rebuilt.
+    MEASURED, `ooc_cattnadapt_top`, OOC synthesis, 5.000 ns:
+
+        KV_BLOCK = 4   (llama_top's value)   WNS -1.611
+        KV_BLOCK = 32  (this file's value)   WNS +0.825
+                                             -------------
+                                             2.436 ns
+
+    Gaps 1 and 2 are small or additive (4,820 + 702 LUT; +32,943 LUT).  This
+    one moves C's SLACK by 2.436 ns, which is 49x the 0.041 ns by which the
+    best composed result misses 200 MHz.  **So `c_attn -0.401` and the
+    -0.041 (198.4 MHz) headline are both measured on a C that is EASIER than
+    llama_top builds, and no composed number on record includes this.**
+
+    A generic passed BY OMISSION leaves no line to review and no diff to
+    notice, which is why this went unrecorded while gaps 1 and 2 did not.
+
+    NOT RESOLVED HERE, because it is a spec question and not a build one:
+    `rtl/attn_block.vhd:223` says `KV_BLOCK := 32  -- C spec 2.1.1, and one
+    256-bit HBM beat` and `rtl/llama_top.vhd:479` says `C_KV_BLOCK := 4  --
+    C spec 2.1.1 block`.  **Two files cite the SAME clause with different
+    values.**  One of them is wrong and nothing checks either.
+
 `fk33_engine` has NO generics at all -- it is the shipping subsystem A,
 byte-for-byte the entity in the bitstream on card 1.
 
