@@ -71,6 +71,19 @@
 --                     blocks, because A's synthetic weights make R_ALPHA's
 --                     VALUES physically impossible and gdn_scalar's gate
 --                     saturates shut.  Sourcing the taps ALONE is neutral.
+--                     CORRECTED 2026-09-05: that rise is a property of the
+--                     STIMULUS, not of this generic.  MEASURED with the same
+--                     bench at token 0, changing ONLY the weight image:
+--                     B_SRC_REAL=true FAILS on synthetic weights and PASSES
+--                     on real ones at 4, 8 AND 16 blocks.  The cause is the
+--                     one this file already states at :328-341 -- the
+--                     synthetic image's rms row norm is 2**4.87 against the
+--                     real weights' 2**-0.03, five octaves per matvec -- and
+--                     B_SRC_REAL is merely the first thing to notice it,
+--                     because it sources alpha from R_ALPHA.  The default
+--                     stays FALSE, but for the OTHER reason ALONE: the conv
+--                     tap history at :4645.  See
+--                     docs/debugging/2026-09-05_b-src-real-is-a-stimulus-artefact.md
 --                     See PART 3 of
 --                     docs/debugging/2026-08-28_llama-top-first-seams.md.
 --
