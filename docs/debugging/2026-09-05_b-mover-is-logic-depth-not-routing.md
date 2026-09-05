@@ -567,3 +567,71 @@ settle**: whether 32 or 4 is right for the 9B shape at the FULL layer count --
 the composed top runs LAYERS=8 and HEAD_DIM=256, which is not the 9B shape
 either. Two variables differ between the two measurements and this run pins
 only one.
+
+---
+
+## CORRECTION: I had the C configuration BACKWARDS. The composed top is the outlier.
+
+**WITHDRAWN: "C's 151.3/155.3 MHz was measured with KV_BLOCK 8x off its own
+spec value."** Committed as `55a8e2c`. It is wrong and it is wrong in the
+direction that flatters the design, which is the worse way to be wrong.
+
+I read `attn_block.vhd:223` (`KV_BLOCK : positive := 32; -- C spec 2.1.1, and
+one 256-bit HBM beat`), saw the OOC harness using 4, and concluded the harness
+was off spec. I did not check what the REAL integration passes.
+
+```
+rtl/attn_block.vhd:223   KV_BLOCK   : positive := 32;  -- C spec 2.1.1, and one 256-bit HBM beat
+rtl/llama_top.vhd:479    C_KV_BLOCK : positive := 4;   -- C spec 2.1.1 block; must divide HEAD_DIM
+```
+
+**Two files cite THE SAME SPEC CLAUSE and disagree.** And `llama_top` -- the
+real inference top, the one `fk33_llama_top` is generated from -- passes
+**4** into `attn_block` (`:5476`). So:
+
+| top | KV_BLOCK reaching attn_block | how |
+|---|---|---|
+| `llama_top` (the real design) | **4** | explicit, `C_KV_BLOCK` |
+| OOC `ooc_cattnadapt` harness | **4** | explicit, matches llama_top |
+| `compose4_top` | **32** | **by omission** -- `gen_compose4_top.py` contains the string `KV_BLOCK` **zero** times, so `attn_block`'s own default applies |
+
+**The OOC harness matches the real design. `compose4_top` is the outlier, and
+it got there by silence rather than by decision.**
+
+### What this inverts
+
+- **C's -1.438 routed / 155.3 MHz stands as a REAL number** at the real
+  configuration. It is a genuine blocker, not an artefact. My previous entry
+  said the opposite.
+- **`+0.825` at KV_BLOCK=32 is not good news about C.** It measures a
+  configuration the real design does not build.
+- **The composed top's `c_attn -0.401` UNDERSTATES C's difficulty**, because it
+  was measured with NBLK eight times smaller than `llama_top` would give it.
+  The composed design at the true configuration would be worse than -0.402,
+  not better.
+
+That last point matters for the bitstream: the composed top's best recorded
+**-0.041 (198.4 MHz)** is measured on a C that is easier than the one that
+will be built.
+
+### The general rule this cost me twice today
+
+**A generic's DEFAULT is not the design's value. Read the instantiation that
+will be BUILT.** I applied this correctly to B in the morning -- checking what
+`compose4_top` instantiates rather than assuming -- and then failed to apply it
+to C in the evening, reading a default in the leaf entity instead of following
+the generic up to `llama_top`.
+
+**And a generic passed BY OMISSION is invisible.** `gen_compose4_top.py` never
+mentions `KV_BLOCK`, so nothing in the composed flow records that a choice was
+made. There is no line to review and no diff to notice. That is how the
+synthesis vehicle and the real design came to disagree on a parameter that
+moves C's slack by **2.436 ns** (-1.611 to +0.825 at synthesis).
+
+## Open, and now sharper
+
+- **Which value does the C spec actually require?** Two files cite clause 2.1.1
+  and disagree, 4 against 32. One of them is wrong and neither is checked.
+- **Should `gen_compose4_top.py` pass `KV_BLOCK => 4`?** If the composed top is
+  meant to predict the real design, yes -- and every composed timing number on
+  record was taken without it.
