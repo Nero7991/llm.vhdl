@@ -11,6 +11,59 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-05 (latest): THE FULL DESIGN FITS, BUT CLB OCCUPANCY IS THE CONSTRAINT
+
+**Nobody had asked whether shell + A + B + C + D physically fits on the
+xcvu33p.** The bitstream goal has been pursued as a timing problem for weeks
+while the shipping bitstream holds shell + subsystem A only.
+
+MEASURED, all same-stage (physopt postRoute for the shell path, routed for the
+composed top). Full writeup and the do-not-retry list in
+`docs/debugging/2026-09-05_does-the-full-design-fit-on-the-card.md`.
+
+| resource | shell | A+B+C+D | TOTAL | device | % |
+|---|---|---|---|---|---|
+| LUT  | 50,999 | 263,544 | 314,543 | 439,680 | **71.5** |
+| FF   | 62,065 | 245,425 | 307,490 | 879,360 | 35.0 |
+| BRAM | 69.0   | 253.5   | 322.5   | 672     | 48.0 |
+| URAM | 0      | 0       | 0       | 320     | 0.0 |
+| DSP  | 0      | 2,177   | 2,177   | 2,880   | **75.6** |
+
+**It fits on every hard resource.** DSP is tightest at 75.6%, LUT next at 71.5%.
+
+**The binding constraint is in none of those rows.** The composed design ALONE
+occupies **49,620 of 54,960 CLB sites, 90.3% of the device**, at 5.31 LUT/CLB.
+Fitting the total needs **5.72 LUT/CLB**, 7.7% denser than this design has ever
+been packed, in a design already at congestion Level 5 in `c_attn/u_arr` and
+missing 200 MHz by 0.4 ns. 71.5% LUT reads comfortable; 90.3% CLB does not.
+
+DERIVED the shell alone by same-stage subtraction of a `-cells [get_cells
+bd_i/eng]` report from the full design **in the same run**. Cross-checked that
+both contexts hold the same subsystem A by the exact DSP match, 1,585 in each.
+
+Three traps recorded as do-not-retry:
+
+- **The 109.3% summed CLB figure is NOT a non-fit proof.** `CLB` counts occupied
+  *sites*, a placement outcome, and is the one row in `report_utilization` that
+  does not sum. It is still the most informative row here.
+- **The composed SYNTHESIS figure is 350,283 LUT against 263,544 routed**, a 25%
+  over-count that would have put the total at 91.3% and given the wrong answer.
+  The stage discipline this project records for WNS applies to area too.
+- Deriving the shell from a synthesis A against a placed shell+A mixes stages in
+  the direction that under-states the shell.
+
+**Consequence: `c4kv4` is not only a timing experiment.** `c_attn`'s array
+carries `DSPs(u_arr) = 2*G*KV_BLOCK`, which is 256 at the composed top's
+`KV_BLOCK = 32` and 32 at the design's actual `KV_BLOCK = 4`. That is 224 of the
+2,177 DSP, and the LUT and CLB it takes with it land in the region owning 65-95%
+of every Level 5 congestion window. **The same one-line generator gap is the
+leading candidate for both the timing miss and the CLB pressure.** Read the
+`clb` field of its `C4_UTIL ... routed` line alongside the WNS, not after it.
+
+Open: whether the placer actually reaches 5.72 LUT/CLB. Nothing here measures
+that, and the only way to know is to build shell + composed engine, which has
+never been done.
+
 ### 2026-09-05 (latest): B CAN RUN PAST TOKEN 0, AND B'S HEADLINE BLOCKER IS UNVERIFIED
 
 **Landed (pending the clean gate's verdict at time of writing):** `llama_top`'s
