@@ -57,8 +57,24 @@ strategy/directive lever on this block.  It has to be pipelined.
 Startpoints restricted to the 52,045 sequential cells inside `gb_real.u_gdn`
 give **Slack (MET) +0.837 ns = 240.2 MHz**, cross-validated by the repo's own
 2026-09-03 measurement of `gdn_block` ALONE at **+0.483 = 221 MHz**. Two
-independent methods, both comfortably past target. **B has no demonstrated
-timing blocker.**
+independent methods, both comfortably past target.
+
+**CORRECTED SAME SESSION: that is true of the block IN ISOLATION and false of
+the composed design.** `compose4_top` instantiates `gdn_block` directly with
+`cv_x`/`cv_w` as top-level PORTS and carries NO hash (`function m12` occurs 0
+times; constants `1103515245`/`668265261` occur 0 times), so its census is
+uncontaminated and `b_gdn` genuinely fails at **-0.402 routed**.
+
+| B measurement | result | real? |
+|---|---|---|
+| `gdn_block` alone / restricted startpoints | +0.483 / +0.837 | yes, MEETS |
+| OOC mover total, -4.008 (111 MHz) | stimulus | **no, discard** |
+| composed `b_gdn`, routed, in context | **-0.402** | **yes, THE blocker** |
+
+**B's real problem is CONTEXT, worth 0.885 ns**, and it is SHARED: `c_attn`
+-0.401, `a_eng` -0.338, `d_norm` -0.168 -- three independent subsystems within
+0.064 ns, the signature of a global effect rather than four defects. Two of
+B's three numbers are now known fine or fictitious, leaving ONE real target.
 
 NOT established: the mover's OWN logic (address generation, handshakes,
 buffering) is still unmeasured -- it sits in `gb_real` beside the generators,
