@@ -143,3 +143,64 @@ rather than only a gap. If not, the composed number gets worse and the true
 distance to 200 MHz is larger than any figure on record. Both are useful; only
 one is good news, and saying so in advance is what stops the result being
 argued into the shape I would prefer.
+
+---
+
+# CORRECTION 2026-09-05, same day: THE MECHANISM IN THIS DOCUMENT IS REFUTED
+
+**The central claim of this document -- that `c_attn/u_arr`'s DSP density causes
+the composed context penalty -- is WITHDRAWN. It was tested and it is wrong.**
+
+The claim rested on a real observation: `u_arr` occupies 65-95% of every Level 5
+congestion window at **100% DSP occupancy**. That observation stands. The
+inference drawn from it, that relieving the DSP density would relieve the
+congestion, does not.
+
+`c4kv4` cut `KV_BLOCK` on `c_attn` from 32 to 4, which by the exact RTL relation
+`DSPs(u_arr) = 2 * G * KV_BLOCK` cuts `u_arr`'s DSPs **256 -> 32, an 8x
+reduction**, confirmed in the report. It also removed 14,817 LUT from the design
+and dropped CLB occupancy from 90.3% to 85.0%.
+
+**Maximum routed congestion level went UP:**
+
+| direction | KV=32 | KV=4 |
+|---|---|---|
+| South | Level 5 | **Level 6** |
+| East | Level 6 | Level 6 |
+| North | Level 5 | Level 5 |
+| West | Level 5 | Level 5 |
+
+And routed WNS went **-0.422 -> -1.542**, 1.120 ns worse, 184.4 -> 152.9 MHz.
+Both routes clean.
+
+**So DSP density was CORRELATED with the congested windows, not causal.**
+`u_arr` is where the congestion is; its DSP occupancy is not why.
+
+Full measurement, controls and the classified prediction:
+`docs/debugging/2026-09-05_kv-block-4-is-a-cost-not-a-lever.md`.
+
+## What survives
+
+- The congestion is real, it is Level 5 and 6, and `u_arr` sits in it.
+- SLR crossing is still ruled out; `xcvu33p` is monolithic, not SSI.
+- The composed context penalty is real.
+
+## What does not
+
+- That DSP density explains any of it.
+- Any expectation that shrinking `u_arr` improves the composed design. It does
+  the opposite, because the critical path moves out of the array and into the
+  deeper muxing that a narrower array requires (F8 muxes +113%).
+
+## The lesson, and it is the good version
+
+The mechanism was written down as a **falsifiable prediction before the run**
+(`fa92069`), including an explicit refusal to predict the net WNS sign. That is
+why one experiment settled it. Had it been asserted rather than registered, the
+co-location of `u_arr` with the congested windows would have gone on reading as
+an explanation indefinitely, and every subsequent effort aimed at DSP density
+would have been aimed at nothing.
+
+**What actually drives the Level 5/6 windows is now OPEN, with no candidate
+measured.** That is a worse position than this document claimed to be in, and it
+is the true one.
