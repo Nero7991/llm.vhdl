@@ -53,6 +53,24 @@ endpoints **110,298 -> 858**.  Through the generic, not the text substitution.
 5.000 ns period.  That is a closed-form refutation of the entire
 strategy/directive lever on this block.  It has to be pipelined.
 
+**CONFIRMED: B's path IS THE SYNTHETIC WEIGHT HASH, not the datapath.** The
+path traverses `DSP_MULTIPLIER U[43]` and `DSP_ALU ALU_OUT[47]`; `gdn_conv`'s
+MAC is 16x16 and its product is 32 bits, so **those bits are unreachable from
+it**. The only wide multiplies are `m12`'s two 32x32. All 15 worst paths share
+ONE startpoint fanning out to sixteen `p1_reg[t][ln]` A-inputs at constant
+depth -- the signature of `m12`'s shared first argument.
+
+So **`-4.008` / 111 MHz does not characterise the shipping design**, where conv
+weights come from memory. It does NOT follow that B is fast: **B's real fmax is
+UNKNOWN**. Three documents quote 111 MHz as the headline blocker; it is
+measuring a test-pattern generator.
+
+**C ATTRIBUTED for the first time, and it is the MIRROR IMAGE:**
+`gcr.u_attn/vhdr_reg[0]` -> `vref_r_reg[N][6]`, 23 levels,
+**logic 2.361 ns (35.8%) / route 4.232 ns (64.2%)**, seven paths at exactly
+-1.611, one per head. **Route-bound, so directives ARE the right lever for C**
+-- the opposite conclusion to B, and an OOC route estimate is an upper bound.
+
 `docs/debugging/2026-09-05_b-mover-is-logic-depth-not-routing.md`.
 
 ### (superseded) B'S -4.008 ns (111 MHz) IS UNVERIFIED, NOT WRONG

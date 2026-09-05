@@ -199,3 +199,98 @@ the logic-depth conclusion stands as written and this lead is dead.
 Either way the headline conclusion above -- that no implementation directive
 can fix a path that is 77.7% logic -- is unaffected. What changes is WHAT has
 to be pipelined, and whether it is in the shipping design at all.
+
+
+---
+
+## CONFIRMED, 2026-09-05: the path IS the synthetic weight hash. And C is the OPPOSITE.
+
+The discriminating run returned. The lead above is **confirmed**, by two
+independent pieces of evidence, and the same run attributed C's path for the
+first time since 2026-08-31.
+
+### B: confirmed, by bit index and by fan-out shape
+
+**1. Bit indices a 16x16 multiply cannot produce.** The path traverses
+
+```
+a0/DSP_MULTIPLIER_INST/U[43]
+a0/DSP_ALU_INST/ALU_OUT[47]
+```
+
+`gdn_conv`'s MAC is `signed(16) * signed(16)` (`rtl/gdn_conv.vhd:300`), whose
+product is 32 bits. **Bit 43 and bit 47 are unreachable from it.** The only
+multiplies wide enough are `m12`'s two 32x32, which build a 64-bit `t`. This
+is decisive on its own and it was sitting in the first timing report.
+
+**2. All 15 worst paths share ONE startpoint**, `a0/DSP_A_B_DATA_INST/CLK`,
+at a constant 31 levels, fanning out to `p1_reg[t][ln]`'s **A** input across
+`[1][1] [1][3] [2][0] [2][2] [3][1] [3][3]`:
+
+```
+B PATH  1 slack -4.008 levels 31 start a0/...CLK end .../p1_reg[3][3]/...A[24]
+B PATH  4 slack -3.989 levels 31 start a0/...CLK end .../p1_reg[3][1]/...A[24]
+B PATH  5 slack -3.983 levels 31 start a0/...CLK end .../p1_reg[1][1]/...A[24]
+```
+
+That is the signature of a **shared subexpression**. In
+`m12(cvq_seg*65537 + cvq_grp*13, t*101+ln+5)` the first argument is IDENTICAL
+for all sixteen `(t,ln)`, so Vivado computes `(a mod 1048576)*1103515245` once
+-- that is `a0` -- and every lane continues from it. One source, sixteen
+destinations, constant depth. The conv MAC has no such shared term.
+
+### What this means, stated carefully
+
+**B's `-4.008` / 111 MHz does NOT characterise the shipping design.** The
+critical path is a test-pattern generator. `cvdata_p`'s own comment says the
+conv weights "are learned constants in every configuration"; in the shipping
+design they come from memory, and this combinational LCG exists only to supply
+them in simulation and OOC.
+
+**It does NOT follow that B is fast.** Removing the hash means sourcing weights
+from memory, which this harness does not do. **B's real fmax is UNKNOWN, not
+acceptable.** The correct statement is that the number three documents quote as
+the headline blocker is measuring something that will not be built.
+
+This generalises the recorded `B_SRC_REAL` finding from VALUES to TIMING AND
+AREA: synthetic stimulus distorts both, and the distortion is large enough to
+have set the project's priorities.
+
+### C: 151.3 MHz attributed, and it is ROUTE-bound
+
+`sim/ooc_cattnadapt.tcl` extracts WNS by regexp and never printed a path, so
+this figure had been quoted for five days with nothing behind it.
+
+```
+Slack -1.611ns
+Source:       gcr.u_attn/vhdr_reg[0]/C
+Destination:  gcr.u_attn/vref_r_reg[10][6]/D
+Data Path Delay: 6.593ns  (logic 2.361ns (35.8%)  route 4.232ns (64.2%))
+Logic Levels: 23  (CARRY8=7 LUT2=1 LUT3=3 LUT4=2 LUT5=4 LUT6=6)
+```
+
+Seven of the fifteen worst paths are the same source to `vref_r_reg[N][6]`
+with N = 2, 6, 10, 14, 18, 22, 26 -- one per head, all at exactly -1.611.
+
+**C is the MIRROR IMAGE of B: 64.2% ROUTE against B's 77.7% LOGIC.** So the
+implementation-directive lever, which arithmetic forbids for B, is precisely
+the right lever for C. And an OOC route estimate with an unconstrained boundary
+is systematically pessimistic, so 4.232 ns is an upper bound rather than a
+measurement of the final design.
+
+**Both headline blockers are therefore much weaker than recorded**, for
+opposite reasons, and neither was ever attributed before today.
+
+## Measurement trap hit in this run
+
+**`get_cells -hier -filter {PRIMITIVE_GROUP == DSP}` matched NOTHING** --
+`WARNING: [Vivado 12-180] No cells matched`. The census printed zero lines and
+the run still reported success, so a reader counting `BDSP` lines would have
+concluded the design has no DSPs while `report_utilization` says 194. The
+recorded idiom in `CLAUDE.md` is `REF_NAME =~ RAM*`; the DSP equivalent is
+`REF_NAME =~ DSP*`, not `PRIMITIVE_GROUP`. **A `get_cells` filter that matches
+nothing is a WARNING, not an error**, which is the same silent-empty-result
+shape as the residency checker that printed PASS over an object it never read.
+
+The attribution did not depend on it: the bit indices and the fan-out pattern
+settled the question from the timing paths alone.
