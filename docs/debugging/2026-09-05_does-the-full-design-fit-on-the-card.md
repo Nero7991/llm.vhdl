@@ -324,3 +324,56 @@ proportional to the parameter.
   both cite spec clause 2.1.1 and disagree, 32 against 4. This experiment shows
   the composed top has been carrying the larger one by omission; it does not
   establish which the design should use. That remains a decision for Oren.
+
+---
+
+## APPENDED: why D shrank 9.7x, and it reframes the "small lever" conclusion
+
+A subsystem losing 90% of its area in a week is either a landed optimisation or
+a gutting, and the corrected table above does not say which. Checked, because
+assuming would have been exactly the error this document is about.
+
+**It is a landed optimisation, and it is the largest area win in the design.**
+The module under `d_norm/gvr.u_rms` changed identity:
+
+| | STALE 2026-08-29 | CURRENT |
+|---|---|---|
+| module | `rmsnorm_rs__parameterized0` | **`rmsnorm_rs_mem`** |
+| LUT | 43,185 | 4,804 |
+| FF | 67,189 | 1,566 |
+| DSP | 40 | **40** |
+
+and `d_norm` as a whole went 48,501 LUT / 133,169 FF -> **5,017 / 2,004**, while
+gaining **12 RAMB18 and 1 RAMB36**.
+
+`rtl/rmsnorm_rs_mem.vhd` is real RTL, added in `ce7b836` ("rmsnorm_rs's flat read
+is not load-bearing, and the memory-backed unit fires done on the SAME cycle").
+
+**DSP is unchanged at 41 across the rewrite.** That is the discriminator between
+an optimisation and a gutting: identical arithmetic, different storage. A block
+that had been quietly disconnected would have lost its multipliers too.
+
+**Trade realised: 131,165 flops and 43,484 LUT for 12 RAMB18 tiles.**
+
+### This corrects the tone of the "URAM lever is small" finding above
+
+That section measured the remaining LUTRAM at 4.1% and concluded the
+BRAM/URAM lever "is worth at most a few percent". The measurement stands, but
+the framing was wrong. **The lever is not weak. It is largely already spent**,
+and the place it was spent is the reason the composed design fits at all: had D
+still been the register-file version, the composed top would be roughly 310,000
+LUT rather than 267,202, and the projected total would be **~361,000 of 439,680,
+82%**, with CLB occupancy well past anything the placer could absorb.
+
+So the correct statement is: **this class of lever is the most effective one on
+record here, and the remaining instances of it are small because the large one
+has been taken.**
+
+### Lead, not a finding
+
+`b_gdn` holds **9,862 LUTRAM** and 75,099 LUT against only 36 BRAM tiles, and
+**6,120 of that LUTRAM sits directly in `(b_gdn)`** rather than in any child.
+`c_attn` holds 80 and `d_norm` zero. If a `rmsnorm_rs_mem`-shaped move exists
+anywhere else, B is where to look. **Nothing here measures whether it does** --
+B's distributed RAM may be many small memories, for which a BRAM tile each is a
+loss, and that is precisely the question `rmsnorm_rs_mem` had to answer for D.
