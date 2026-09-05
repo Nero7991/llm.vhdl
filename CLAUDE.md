@@ -184,10 +184,33 @@ put six Vivado processes on the workstation instead.
 - **What it is FOR: OOC unit synthesis and area sweeps.** Results are
   **bit-identical** to the workstation (DSP/LUT/FF/BRAM/WNS/Fmax match to 13
   significant figures), so a number measured there is quotable here.
-- **What it is NOT for:** it has **15.2 GB unified** memory. A full `pcieep`
-  build peaks at 25.0 GiB and does not fit; a full `engine_shared` OOC peaks
-  23.8 GB and does not fit either. **Check the peak against 14 GB before
-  sending anything.**
+- **What it is NOT for:** it has **15.2 GB unified** memory. A full
+  `engine_shared` OOC peaks 23.8 GB and does not fit. **Check the peak against
+  14 GB before sending anything.**
+
+  **CORRECTION 2026-09-05: A FULL `pcieep` BUILD DOES FIT, AND HAS RUN THERE
+  TO A BITSTREAM.** This entry used to say it "peaks at 25.0 GiB and does not
+  fit". MEASURED on the BC-250: **Vivado's own peak 11.85 GB**, lowest free
+  physical 2,361 MB, 0 errors, `bd_wrapper.bit` written. That is the SECOND
+  independent measurement against the 25.0 GiB figure (the first, on the
+  workstation, was 10.66 GB) and the first that completes the job on this box.
+  **The 25.0 GiB number has never been re-derived and should not be quoted
+  again.** Refusing to run a build on it is the expensive error.
+
+  **AND THE RESULT IS THE SAME BITSTREAM.** `cmp -l` against the workstation's:
+  **35 differing bytes of 21,647,330, all at offsets 28-123, all header** --
+  the attribute order (`COMPRESS`/`UserID`) and the build timestamp. All
+  21,647,207 bytes of configuration payload are IDENTICAL, and timing matched
+  exactly (WNS 0.001, TNS 0.000, WHS 0.009, 0 failing endpoints of 672,531,
+  286,806 of 286,806 nets routed). So the documented "bit-identical across the
+  two machines" property, previously established only for OOC synthesis,
+  **holds for a full place-and-route and bitstream**. A pcieep build measured
+  there is quotable here.
+
+  **Do NOT read the 2h18m wall time as a speed ratio.** That run was capped at
+  `MemoryHigh=11G` and peaked at 11.85 GB, so it built partly throttled into
+  reclaim. A capped job's wall time measures the cap, not the machine. See
+  `docs/debugging/2026-09-05_cross-machine-bitstream-identity.md`.
 - **It is 2.3x slower** end to end, MEASURED on identical ZU3EG synthesis. A
   2 h workstation sweep is ~4.5 h there. **That is still infinitely faster than
   a sweep that hangs the box and loses ninety minutes of place-and-route.**
