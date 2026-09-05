@@ -210,3 +210,117 @@ entirely wrong**, and it is superficially plausible because Logic LUTs and Total
 LUTs are the same order of magnitude. The tell was that the claimed LUTRAM was
 95% of the design's LUT, which no design does. **An off-by-one field index
 produces confident wrong numbers, not an error.**
+
+---
+
+## CORRECTION 2026-09-05, same day: the subsystem table above is A WEEK STALE
+
+**The four-subsystem table in the previous section is WITHDRAWN.** It was read
+from `hw/fk33/results/compose4_2026-08-29/`, and the date is in the path. The
+composed design changed substantially in the intervening week. Corrected figures
+below, from **this week's** `c4nd` run at the same synthesis stage.
+
+| instance | STALE 2026-08-29 | CURRENT (`c4nd`) | error |
+|---|---|---|---|
+| `compose4_top` LUT | 350,283 | **267,202** | +31% |
+| `a_eng` LUT | 134,633 | **92,134** | +46% |
+| `c_attn` LUT | 85,592 | **88,576** | -3% |
+| `u_arr` LUT | 55,854 | **57,927** | -4% |
+| `b_gdn` LUT | 75,181 | **75,099** | 0% |
+| `d_norm` LUT | 48,501 | **5,017** | **+867%** |
+| `d_norm` FF | 133,169 | **2,004** | **+6547%** |
+| `compose4_top` LUTRAM | 14,382 | **26,670** | -46% |
+
+**`d_norm` was wrong by a factor of 9.7 in LUT and 66 in FF.** The claim in the
+previous section that "`d_norm` is the striking row, 133,169 FF for 13.8% of the
+LUT" is false: D is **1.9%** of the design and holds 2,004 flops. Everything
+said about D's flop-heaviness is withdrawn.
+
+**And the 25% stage over-count claimed in "Measured and REJECTED" item 2 is also
+withdrawn.** It compared a week-old synthesis figure against this week's routed
+figure and attributed the whole difference to stage. Measured on the same tree:
+`c4nd` synth **267,202** against `c4nd` routed **263,544**, a stage effect of
+**-1.4%**, not -25%. Synthesis LUT is still not a placement result and should
+still not be used for a fit verdict, but the reason is not that it over-counts
+by a quarter on this design.
+
+**The headline fit arithmetic at the top of this document is UNAFFECTED**, because
+it used the routed 263,544 throughout. Only the attribution table and the
+stage-effect claim were contaminated.
+
+### Why this was not caught, and it is not "I forgot to check the date"
+
+The stale table was **internally consistent**. Its four subsystems summed to
+343,907 against a stated top of 350,283, leaving 6,376 of glue, which is exactly
+the right shape. The current table sums to 260,826 against 267,202, leaving
+6,376. **Both are self-consistent, and the identical glue figure is coincidence.**
+A sanity check on the arithmetic passes on stale data, because staleness does
+not break arithmetic. The only thing that would have caught it is reading the
+date in the path, which was visible and was not read.
+
+This is the project's own recorded failure mode arriving in a new place: a
+report was used **because it existed**, and a difference was attributed to the
+mechanism under discussion (stage) rather than to the uncontrolled variable
+(a week of design change). Compare the recorded case where "not the buffers"
+was taken to promote a single remaining candidate. Here "synth vs routed" was
+taken to explain a gap that was mostly "August vs September".
+
+**The rule: a comparison needs BOTH ends drawn from the same tree, and the tree
+identity has to be asserted, not assumed from the filename being plausible.**
+
+## THE RESULT: KV_BLOCK = 4 measured, at synthesis
+
+`c4kv4` synthesis completed 15:52:27. Route still running; **no WNS is quoted
+here** and none should be inferred from these numbers.
+
+Both runs are this week's tree, same stage, same directives. The ONLY difference
+is `KV_BLOCK` on the `c_attn` instance, added in a scratch copy of the generator.
+
+| metric | `c4nd` (KV=32) | `c4kv4` (KV=4) | delta |
+|---|---|---|---|
+| LUT | 267,202 | 252,819 | **-14,383 (-5.4%)** |
+| lut_logic | 239,360 | 224,949 | -14,411 |
+| lut_mem | 27,842 | 27,870 | +28 |
+| FF | 237,905 | 239,960 | **+2,055 (+0.9%)** |
+| CARRY8 | 12,505 | 10,601 | -1,904 |
+| F7 mux | 20,212 | 19,532 | -680 |
+| F8 mux | 3,961 | 8,425 | **+4,464 (+113%)** |
+| BRAM | 253.5 | 253.5 | 0 |
+| URAM | 0 | 0 | 0 |
+| DSP | 2,177 | 1,953 | **-224** |
+
+**The isolation is clean, and this is the part that makes the numbers usable.**
+`a_eng` is **92,134 LUT in both runs, identical to the digit**. `d_norm` is
+**5,017 in both**. `b_gdn` differs by **3 LUT** (75,099 against 75,096), which is
+synthesis noise. Every change is inside `c_attn`. A controlled experiment that
+actually controlled.
+
+Within `c_attn`: **`u_arr` falls 57,927 to 39,905, -18,022 LUT**, and its DSP
+falls **256 to 32, exactly the -224 derived from `2 * G * KV_BLOCK`**. The
+derivation was right and the generator change did precisely what was intended.
+
+**But `c_attn` as a whole only falls 14,380**, so roughly **3,642 LUT and 2,051
+FF appear elsewhere in `c_attn`** to pay for it, and F8 muxes more than double
+across the design. A narrower array needs deeper muxing and more sequencing.
+That cost is real and was not anticipated.
+
+**The refusal to project was worth it.** Scaling `u_arr`'s 57,927 LUT by the 8x
+`KV_BLOCK` reduction predicts roughly -50,000 LUT. The measurement is **-18,022
+in `u_arr` and -14,383 net**. A projection would have been wrong by **3.4x**, in
+the flattering direction, and it would have been written down as a headline.
+This is the LEVERC48 lesson holding on a fresh case: the saving is not
+proportional to the parameter.
+
+### What is NOT settled by this
+
+- **The routed WNS.** That is the actual question `c4kv4` was launched to answer
+  and it is still running. Area moving the right way says nothing about timing,
+  and this project has two recorded cases of placed WNS ordering runs backwards
+  against their routed result.
+- **Whether the congestion clears.** DSP density in `u_arr` fell 8x, which is
+  the stated mechanism, but congestion is a routed property and the Level 5
+  windows have not been re-measured.
+- **Which `KV_BLOCK` is correct.** `attn_block.vhd:223` and `llama_top.vhd:479`
+  both cite spec clause 2.1.1 and disagree, 32 against 4. This experiment shows
+  the composed top has been carrying the larger one by omission; it does not
+  establish which the design should use. That remains a decision for Oren.
