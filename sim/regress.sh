@@ -400,7 +400,37 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=122  # RAISED FROM 121, 2026-09-04 (later).  ONE new row,
+BASELINE_PASS=124  # RAISED FROM 122, 2026-09-04 (evening).  TWO new rows,
+                   #    sim:c4stale and sim:shapechk.
+                   #
+                   #    MEASURED, and the measurement is the point: run on a
+                   #    `git archive` of the INDEX TREE about to be committed
+                   #    (b8d7738c), NOT of HEAD -- HEAD does not contain these
+                   #    rows, so a floor measured there would be describing a
+                   #    different tree.  MV4I_FK33_FILE=/nonexistent, --jobs 1:
+                   #
+                   #      OVERALL PASS 124  FAIL 0  NOCHECK 4  SKIPPED 10
+                   #      baseline: 124 passing, above the recorded floor of
+                   #                122 -- raise BASELINE_PASS in this script
+                   #      REGRESSION: PASS
+                   #
+                   #    Both new rows PASS on that clean tree doing real work:
+                   #    shapechk elaborates model_cfg_pkg under GHDL and needs
+                   #    no model and no vectors; c4stale runs the generator.
+                   #    122 + 2 = 124, and the 124 is MEASURED, not derived.
+                   #
+                   #    AN EARLIER FLOOR RUN OF THIS SAME CHANGE MEASURED 123
+                   #    WITH c4stale FAILING, and that failure was REAL: it
+                   #    caught rtl/ooc_normadapt_top.vhd being UNTRACKED while
+                   #    both its siblings were tracked, so a clean checkout of
+                   #    HEAD could not build the composed top that
+                   #    instantiates it.  Tracking that file is part of this
+                   #    change.  A floor is not just a number to raise -- the
+                   #    run that produces it is the first time the tree is
+                   #    ever seen from outside the author's working copy.
+                   #
+                   # ---- PREVIOUS FLOOR, kept for the audit trail ----
+                   # RAISED FROM 121, 2026-09-04 (later).  ONE new row,
                    #    sim:tb_gatechk_mask, which enumerates the WHOLE
                    #    sixteen-row input space of llama_top's region-lock
                    #    drop check.  A host write used to MASK a D-vec lock
@@ -1802,6 +1832,65 @@ printf 'bdports\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # added because of that control.
 printf 'srvstories\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# ---------------------------------------------------------------------------
+# c4stale -- hw/fk33/rtl/compose4_top.vhd is GENERATED, and was STALE.
+# ---------------------------------------------------------------------------
+# MEASURED 2026-09-04.  Commit 11bf64b ("wire the A job counter") added the
+# `job_index` port to hw/fk33/rtl/fk33_engine.vhd, which compose4_top.vhd
+# instantiates.  It did not regenerate compose4_top.vhd, so the committed
+# generated file lost a port its own instance needed and stayed that way.
+# Nothing noticed, because nothing checked: tools/gen_cardtop.py has carried
+# `--check` since TRACK CARDTOP and is gated as sim:cardtop, but
+# gen_compose4_top.py had no equivalent and gen_fk33_engine.py still does not.
+#
+# It surfaced only because an unrelated run regenerated the file and
+# `git status` showed it modified when the generation should have been a
+# no-op.  That is luck, not a gate.
+#
+# The row runs the generator in DEFAULT mode with NO flags, because the
+# default-mode output is what is committed.  --wire and --wire-v are
+# measurement vehicles written to a scratch --out and are deliberately not
+# committed, so they must not be checked here (recorded as control M5 in the
+# generator: `--check --wire` fails forever and would read as staleness).
+#
+# Teeth are in hw/fk33/gen_compose4_top.py beside the --check argument.  The
+# M1 mutant there is this exact historical file, and it is KILLED.
+#
+# NOT COVERED, and stated rather than implied: gen_fk33_engine.py takes no
+# arguments at all and writes unconditionally, so it can be neither checked
+# nor invoked safely -- even `--help` rewrites the repo file.  fk33_engine.vhd
+# was MEASURED in sync on 2026-09-04, but it is ungated.
+printf 'c4stale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
+# ---------------------------------------------------------------------------
+# shapechk -- the 9B shape is transcribed at three sites and nothing held them
+# ---------------------------------------------------------------------------
+# MEASURED 2026-09-04.  compose4_top IS at the real 9B shape, 13 of 13
+# literals.  But rtl/model_cfg_pkg.vhd is the only authority and the ONLY
+# consumer that derives from it is the --wire top's
+# `RG_SHAPE : shape_t := mk_shape(MODEL, NCARDS)`.  attn_block.vhd:199-206
+# states that its four generics are "DERIVED from QWEN35_9B" -- in a COMMENT;
+# the VHDL has literals.  gdn_block.vhd does not mention model_cfg_pkg at all.
+# hw/fk33/gen_compose4_top.py restates attention's four AGAIN as Python
+# strings.  Flipping MODEL to QWEN38_27B moves the region file and leaves A, B
+# and C at 9B numbers, with no error anywhere.  That is this project's
+# "agrees by coincidence of geometry" class applied to a CONFIGURATION.
+#
+# The row's expected values come from GHDL elaborating sim/shape_probe.vhd
+# against model_cfg_pkg's own functions, NOT from arithmetic in the checker.
+# Re-deriving `blocks / attn_interval` in Python would make the guard a fourth
+# transcription that agrees with the others by construction.
+#
+# shape_probe.vhd is deliberately NOT named tb_*, because regress.sh
+# auto-discovers `tb_*.vhd` and would turn an oracle with no checks in it into
+# a gate row of its own.
+#
+# NOT COVERED, stated rather than implied: subsystem A takes its shape from
+# descriptors at run time, so there is no literal to compare and A is not
+# checked.  And at NCARDS = 1 the per-card head counts equal the totals, so a
+# per-card-versus-total confusion is invisible here.
+printf 'shapechk\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ===========================================================================
 # 1b. WHICH OF THOSE ROWS EXIST ONLY IN THIS WORKING TREE
 # ===========================================================================
@@ -2475,6 +2564,8 @@ declare -A SELFCHECK_CMD=(
   [srve2e]="make -s -C $REPO/server test-e2e"
   [bdports]="python3 $REPO/sim/check_bd_ports.py"
   [srvstories]="make -s -C $REPO/server test-stories"
+  [c4stale]="python3 $REPO/hw/fk33/gen_compose4_top.py --check"
+  [shapechk]="python3 $REPO/sim/check_model_shape.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2506,7 +2597,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

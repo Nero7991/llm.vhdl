@@ -11,6 +11,118 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-04 (evening, last): THE 9B SHAPE WAS ALREADY RIGHT, AND THE GENERATED TOP WAS STALE
+
+Oren asked whether `compose4_top` can be used to get the real 9B shape into
+`llama_top` so the full inference goal is reachable. **The composed top is
+ALREADY at the real 9B shape**, MEASURED, 13 of 13 literals:
+
+```
+SHAPE_OK 13 literals agree with model_cfg_pkg (MODEL at NCARDS=1):
+  attn 16x4 hd=256 layers=8, gdn 16/32 hd=128 layers=24
+```
+
+**There is no retarget to do. What there was is no gate holding it.** The
+shape is hand-transcribed at THREE independent sites and only the region
+file's `RG_SHAPE : shape_t := mk_shape(MODEL, NCARDS)` actually derives from
+`MODEL`. `attn_block.vhd:199-206` says its four generics are "DERIVED from
+QWEN35_9B" -- **the derivation is in the COMMENT and the VHDL has literals.**
+`gdn_block.vhd` does not mention `model_cfg_pkg` at all. The generator
+restates the same four AGAIN as Python strings. Flipping `MODEL` to
+`QWEN38_27B` would move the region file and leave A, B and C at 9B numbers
+with no error raised anywhere.
+
+New: `sim/shape_probe.vhd` (deliberately NOT `tb_*`, so it is not
+auto-discovered as a row) and `sim/check_model_shape.py`. Its expected values
+come from GHDL elaborating `model_cfg_pkg`'s own functions rather than from
+arithmetic in Python, because a guard that restates the thing it guards agrees
+with it by construction.
+
+**AND `hw/fk33/rtl/compose4_top.vhd` WAS STALE.** Commit `11bf64b` added the
+`job_index` port to `fk33_engine.vhd` and did not regenerate the top that
+instantiates it. Nothing checked: `tools/gen_cardtop.py` has had `--check`
+since TRACK CARDTOP and is gated; `gen_compose4_top.py` had none. It surfaced
+only because an unrelated run regenerated the file and `git status` showed it
+modified when the generation should have been a no-op. **That is luck, not a
+gate.** Fixed: `gen_compose4_top.py --check` (M1 is the real historical file,
+KILLED) and the `sim:c4stale` row. `fk33_engine.vhd` was MEASURED in sync and
+stays UNGATED, because its generator takes no arguments and writes
+unconditionally -- even `--help` rewrites the repo file.
+
+**UNIT V IS WIRED**, `--wire-v`, additive and OFF by default so section 14's
+`--wire` numbers keep describing what they measured.
+`ELABV_RESULT OK cells=444169`, 0 errors. Controls: `--wire` output
+byte-identical at 134,199 bytes, default at 123,286, and the comparison has
+teeth (449 lines differ with V on).
+
+**WHAT ACTUALLY BLOCKS FULL INFERENCE IS TIMING, NOT SHAPE.** The composed top
+carries all four subsystems' compute at the real 9B shape plus D's control
+plane plus unit V. Absent are B's and C's data movers, and both are short:
+
+| piece | state |
+|---|---|
+| B `gdn_block` | 22 BRAM, 141 DSP, **WNS +0.483 = 221 MHz, MEETS 200** |
+| B's mover `gb_real` | fits after the `gdn_state_store` substitution, **111 MHz**, path UNATTRIBUTED |
+| C's mover `gcr` | fits on area (60 BRAM), **151.3 MHz**, KV-AXI arm will not synthesise |
+
+**AND 200 MHz IS A CHOSEN DESIGN POINT, NOT A BOARD CONSTRAINT.**
+`gen_pcieep.py:360` sets it from the duty identity `f_core / f_axi = 200/250 =
+80.0%`. At the shipped bitstream's measured 192.2 MHz that becomes 76.9%,
+which INCREASES HBM margin and costs ~3.9% throughput. So the existing
+bitstream is usable as built. **This is Oren's call and has not been made.**
+
+Full write-up: `docs/debugging/2026-09-04_composed-top-9b-shape.md`.
+
+**THE NEW ROW EARNED ITS KEEP IMMEDIATELY.** `sim:c4stale`'s FIRST
+clean-checkout run FAILED: `rtl/ooc_normadapt_top.vhd` was **untracked and not
+gitignored**, while both its siblings were tracked. The COMMITTED
+`compose4_top.vhd` instantiates `ooc_normadapt`, so **a clean checkout of HEAD
+referenced an entity whose file was not in the repository** -- nobody could
+have built the composed top from a fresh clone. Fixed by tracking it, after
+confirming it is byte-identical to what the extractor produces from the
+current `llama_top.vhd`. Swept: it was the only untracked `.vhd` under `rtl/`.
+
+**Gate state:** working tree `OVERALL PASS 132 FAIL 0` (131 + `shapechk`;
+`c4stale` took it 130 -> 131). Clean-checkout floor measured separately,
+because the gate itself warns that 22 of this tree's rows are unreachable
+after a fresh clone.
+
+**RESULT, the branch taken:** synth PASSED (`elab rc=0`, `synth rc=0`, both
+`C4_DONE` line-anchored), so section 14 got a COMPANION section 15, not an
+edit. **And the first number was not reportable.** The V-wired top is 2,308
+LUT below section 14's table -- but ten commits touched `rtl/` since
+2026-09-02, so that delta conflates unit V with all of them. A CONTROL was
+synthesised the same day from a tree differing in exactly one file:
+
+| | `--wire` control | `--wire --wire-v` | delta |
+|---|---|---|---|
+| CLB LUT | 270,125 | 267,833 | **-2,292** |
+| CLB Registers | 237,896 | 237,905 | **+9** |
+| CARRY8 | 12,514 | 12,554 | **+40** |
+| Block RAM / DSP | 327.5 / 2,177 | 327.5 / 2,177 | **0 / 0** |
+
+**Unit V costs +9 FF and +40 CARRY8 at zero BRAM and zero DSP, and SAVES
+2,292 LUT.** Mechanism is an ESTIMATE (93 boundary ports internalised, 1,185
+-> 1,092), not established. Confound stated in section 15: the two runs had
+different `MemoryHigh` caps, so their RSS peaks are NOT comparable and no
+memory delta is claimed.
+
+**Composed synthesis is a WORKSTATION job, measured:** 16.4-20.1 GB peak, so
+it does not fit the BC-250's 14 GB.
+
+**A DISPATCHER ERROR THAT COST NOTHING ONLY BY MARGIN.** The gate-liveness
+test asked "is any process's cwd inside the scratch dir". Between rows nothing
+satisfies that, so it reported the gate DEAD twice while it was running fine.
+Acting on the first false report, a second full gate was launched: **two gates
+plus a Vivado ran concurrently**, memory reached 19.9 of 31.9 GiB. No OOM, but
+that is margin, not design. The duplicate (orphaned session 1213141, six
+processes) was killed by explicit pid after confirming its sid was not the
+live shell's. **Liveness is now tested by SESSION ID, which is stable across
+rows.** This is the project's own trap in a new place: identify a process by
+what the kernel maintains about it, never by a property that merely happens to
+hold at the moment you look. `cwd` is as unreliable a needle as a command
+line, for a different reason.
+
 ### 2026-09-03 (night, last): THE HOST SOFTWARE IS GATED, and its teeth are 1 of 4
 
 `server/pl_backend.c` is the driver and `server/llama_server.cpp` is the

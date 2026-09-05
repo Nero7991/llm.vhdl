@@ -28,7 +28,7 @@
 -- before comparing it to a pb_core budget.
 --
 -- Instances, and the generics each carries:
---   a_eng    fk33_engine      864 ports, 861 exported   CB_STYLE="distributed"
+--   a_eng    fk33_engine      865 ports, 862 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
 --   c_attn   attn_block        68 ports,  66 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
@@ -107,6 +107,7 @@ entity compose4_top is
     a_eng_s_axix_rresp     : out   std_logic_vector(1 downto 0);
     a_eng_d_job_done       : out   std_logic;
     a_eng_d_job_err        : out   std_logic;
+    a_eng_job_index        : in    std_logic_vector(31 downto 0);
     a_eng_d_x_we           : in    std_logic;
     a_eng_d_x_waddr        : in    std_logic_vector(15 downto 0);
     a_eng_d_x_wdata        : in    std_logic_vector(15 downto 0);
@@ -1331,6 +1332,7 @@ begin
       s_axix_rresp => a_eng_s_axix_rresp,
       d_job_done => a_eng_d_job_done,
       d_job_err => a_eng_d_job_err,
+      job_index => a_eng_job_index,
       d_x_we => a_eng_d_x_we,
       d_x_waddr => a_eng_d_x_waddr,
       d_x_wdata => a_eng_d_x_wdata,

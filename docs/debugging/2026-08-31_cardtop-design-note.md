@@ -996,3 +996,75 @@ between these two tables would be comparing three differences at once.
 the B and C data movers (roughly 1,600 lines, see 13b), unit V, and the
 descriptor-index wiring. The region file is present and real; the units it
 would serve are not yet connected to it.
+
+## 15. Unit V is wired, and the cost is measured AGAINST A CONTROL, 2026-09-04
+
+Section 14's last paragraph lists three things absent from the `--wire` top:
+the B and C data movers, unit V, and the descriptor-index wiring. **Two of the
+three are now closed.** The descriptor-index wiring landed in `11bf64b`
+(`a_job_counter` + `a_desc_adapter` in the glue), and unit V is wired here.
+
+`--wire-v` is ADDITIVE and OFF BY DEFAULT, specifically so section 14's table
+keeps describing what it measured. It joins `seq_vec_issue`, `seq_vec_res` and
+`ooc_normadapt` to each other and to the region file. Those three instances
+were ALREADY in the composed top under `--wire`; what changes is their glue,
+from tie-offs and exported ports to real connections.
+
+**DO NOT COMPARE THESE NUMBERS TO SECTION 14'S TABLE.** Ten commits touched
+`rtl/` between 2026-09-02 and this run, including the A job counter, the B
+state tier and a `llama_top` lock fix. A delta against section 14 would
+conflate unit V with all of them -- the same "comparing three differences at
+once" error section 14 warns about two paragraphs above its own table.
+
+So the comparison below is against a CONTROL synthesised the same day, from a
+tree that differs in **exactly one file** (`diff -rq` clean apart from
+`compose4_top.vhd`), same tool, same device, same options:
+
+| | `--wire` control | `--wire --wire-v` | delta |
+|---|---|---|---|
+| CLB LUT | 270,125 | 267,833 | **-2,292** |
+| LUT as logic | 242,283 | 239,990 | -2,293 |
+| LUT as memory | 27,842 | 27,843 | +1 |
+| CLB Registers | 237,896 | 237,905 | **+9** |
+| CARRY8 | 12,514 | 12,554 | **+40** |
+| F7 / F8 | 20,315 / 3,987 | 20,314 / 3,987 | -1 / 0 |
+| Block RAM tile | 327.5 | 327.5 | **0** |
+| DSP | 2,177 | 2,177 | **0** |
+| top-level ports | 1,185 | 1,092 | -93 |
+
+Both `OOC_EXIT 0`, both `C4_DONE synth c4` present and line-anchored, synth
+457 s (control) and 462 s (V).
+
+**MEASURED: unit V costs +9 FF and +40 CARRY8, at zero BRAM and zero DSP, and
+SAVES 2,292 LUT.** The +9 and +40 are the V glue's own address arithmetic and
+are the right order of magnitude for what was added. The LUT saving is
+essentially all in `lut_logic`.
+
+**The mechanism is an ESTIMATE and is NOT established.** The leading candidate
+is the 93 boundary ports that become internal nets: under `--wire`, `d_vres`
+exports 20 ports that must be driven to the OOC boundary, and under
+`--wire-v` it exports 2. That is 24.6 LUT per internalised port, which is high
+enough not to assert without a test. What IS established is the delta, because
+the control isolates it.
+
+**A CONFOUND THAT IS MINE, stated rather than buried:** the two runs ran under
+DIFFERENT `MemoryHigh` caps (14G for V, 18G for the control, raised after the
+first exceeded its cap). Their RSS peaks -- 16.4 GB and 20.1 GB -- are
+therefore **not comparable to each other** and no memory delta is claimed here.
+The area numbers are unaffected: Vivado synthesis is deterministic for
+identical input regardless of memory throttling. Both runs EXCEEDED their
+caps, which `MemoryHigh` permits (it throttles, it does not fail), so both
+figures are lower bounds on the appetite rather than the appetite.
+
+**What this says about where the composed synthesis can run:** at 16.4-20.1 GB
+it does NOT fit the BC-250's 14 GB. Composed synthesis is a workstation job by
+measurement, not by preference.
+
+**Still absent after this section:** the B and C data movers. Both are
+extracted and measured (`ooc_gdnadapt_top`, `ooc_cattnadapt_top`) and neither
+is instantiated here. Both miss the 200 MHz target -- B's mover at 111 MHz
+(`-4.008`, identical across four runs, so `stmem` is REJECTED as the cause)
+and C's at 151.3 MHz -- with neither critical path attributed. **That, not the
+model shape, is what stands between this top and full inference:** the shape
+is already the real 9B one, MEASURED, 13 of 13 literals
+(`docs/debugging/2026-09-04_composed-top-9b-shape.md`).

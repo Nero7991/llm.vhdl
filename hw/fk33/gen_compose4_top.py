@@ -139,6 +139,11 @@ INSTANCES = [
     ("d_fetch", "seq_desc_fetch",  "RTL",  {}),
     ("d_opdec", "seq_opdec",       "RTL",  {}),
     ("d_lock",  "seq_region_lock", "RTL",  {}),
+    # VN_W and ADDR_W are passed EXACTLY as llama_top passes them
+    # (`u_vissue`: VN_W => VN_W; `u_vres`: ADDR_W => VN_W).  Left at their
+    # file defaults, seq_vec_res's address is 10 bits against region_mem's
+    # 11 and Vivado refuses the instantiation -- which is the good case; the
+    # bad case is the run-time refusal llama_top's VN_W comment describes.
     ("d_viss",  "seq_vec_issue",   "RTL",  {}),
     ("d_vres",  "seq_vec_res",     "RTL",  {}),
     ("d_norm",  "ooc_normadapt",   "RTL",  {}),
@@ -226,6 +231,145 @@ WIRE = {
         "job_epoch": "w_job_epoch",
     },
 }
+
+# ======================================================================
+# UNIT V (--wire-v).  ADDITIVE ON TOP OF --wire, and OFF BY DEFAULT for the
+# same reason --wire is: `docs/debugging/2026-08-31_cardtop-design-note.md`
+# section 14 measured the `--wire` top and listed unit V among the pieces
+# still absent from it.  Folding V into --wire would silently invalidate
+# those numbers; a separate flag makes the pair a CONTROLLED COMPARISON.
+#
+# WHAT GOES ON THE CARD AND WHAT DOES NOT.  `llama_top` has THREE D-vec
+# slots (`llama_map_pkg`: V_NORM=0, V_RES=1, NVOP=3) and says of the others
+# "THE TWO D-VEC ENGINES THAT DO NOT EXIST ... BEHAVIOURAL MODEL".  So this
+# wires the TWO REAL ones -- `seq_vec_res` at V_RES, which llama_top calls
+# "the spine and the one arithmetic unit in the block loop that is not a
+# model", and `ooc_normadapt` at V_NORM -- and leaves slot 2 NOT READY.
+# Tying an absent engine ready is the failure `g_unwired` already guards.
+#
+# THE TWO ENGINES DO NOT CONTEND FOR A REGION PORT, which is what makes this
+# wiring possible at all: `seq_vec_res` drives the region file's WIDE D-vec
+# port (r_en/r_addr/x_rdata/e_rdata, w_we/w_addr/w_be/w_data) while
+# `ooc_normadapt` drives its SCALAR element port (o_ur_*/o_uw_*).  Read off
+# the two entities, not assumed.
+#
+# Every connection below is lifted from `rtl/llama_top.vhd`'s own `u_vissue`
+# and `u_vres` port maps, which are the authoritative reference for this
+# contract; the design note's rule is that the wiring is lifted rather than
+# invented.
+WIRE_V = {
+    "seq_desc_fetch": {
+        # the job fields d_viss reads.  Names match its inputs EXACTLY, which
+        # was checked against both entities rather than assumed.
+        "job_issue":   "w_job_issue",   "job_unit":    "w_job_unit",
+        "job_opcode":  "w_job_opcode",  "job_src":     "w_job_src",
+        "job_src2":    "w_job_src2",    "job_dst":     "w_job_dst",
+        "job_dst_off": "w_job_dst_off", "job_n_rows":  "w_job_n_rows",
+        "job_step":    "w_job_step",
+    },
+    "seq_vec_issue": {
+        "job_issue":   "w_job_issue",   "job_unit":    "w_job_unit",
+        "job_opcode":  "w_job_opcode",  "job_src":     "w_job_src",
+        "job_src2":    "w_job_src2",    "job_dst":     "w_job_dst",
+        "job_dst_off": "w_job_dst_off", "job_n_rows":  "w_job_n_rows",
+        "job_step":    "w_job_step",    "job_epoch":   "w_job_epoch",
+        "u_start": "w_vi_u_start", "u_ack":   "w_vi_u_ack",
+        "u_ready": "w_vi_u_ready", "u_done":  "w_vi_u_done",
+        "u_err":   "w_vi_u_err",
+        "v_start": "w_v_start", "v_ready": "w_v_ready",
+        "v_taken": "w_v_taken", "v_done":  "w_v_done",
+        "v_ack":   "w_v_ack",   "v_err":   "w_v_err",
+        "v_y_exp": "w_v_y_exp",
+        "v_n":     "w_v_n",     "v_exp_a": "w_v_exp_a",
+        "v_exp_b": "w_v_exp_b", "v_reg_a": "w_v_reg_a",
+        "v_reg_b": "w_v_reg_b", "v_reg_d": "w_v_reg_d",
+    },
+    "seq_vec_res": {
+        "ready":    "w_vres_ready",  "start":    "w_vres_start",
+        "i_n":      "w_v_n",         "i_exp_x":  "w_v_exp_a",
+        "i_exp_e":  "w_v_exp_b",     "i_taken":  "w_vres_taken",
+        "done":     "w_vres_done",   "done_ack": "w_vres_ack",
+        "err":      "w_vres_err",    "o_exp":    "w_vres_exp",
+        # the region file's WIDE D-vec port
+        "r_en":     "w_rg_r_en",     "r_addr":   "w_rg_r_addr",
+        "x_rdata":  "w_rg_x_rdata",  "e_rdata":  "w_rg_e_rdata",
+        "w_we":     "w_rg_w_we",     "w_addr":   "w_rg_w_addr",
+        "w_be":     "w_rg_w_be",     "w_data":   "w_rg_w_data",
+    },
+    "ooc_normadapt": {
+        "i_v_start": "w_vnrm_start", "i_v_ack":   "w_vnrm_ack",
+        "i_v_n":     "w_v_n",        "i_v_exp_a": "w_v_exp_a",
+        "i_v_reg_a": "w_v_reg_a",    "i_v_reg_d": "w_v_reg_d",
+        "i_el_rdata": "w_rg_el_rdata",
+        "o_v_ready": "w_vnrm_ready", "o_v_done":  "w_vnrm_done",
+        "o_v_taken": "w_vnrm_taken", "o_v_err":   "w_vnrm_err",
+        "o_v_y_exp": "w_vnrm_yexp",
+        "o_ur_en":   "w_nrm_ur_en",  "o_ur_reg":  "w_nrm_ur_reg",
+        "o_ur_addr": "w_nrm_ur_addr",
+        "o_uw_en":   "w_nrm_uw_en",  "o_uw_reg":  "w_nrm_uw_reg",
+        "o_uw_addr": "w_nrm_uw_addr","o_uw_data": "w_nrm_uw_data",
+    },
+}
+
+WIRE_V_SIGNALS = [
+    ("w_job_issue",   "std_logic"),
+    ("w_job_unit",    "unsigned(2 downto 0)"),
+    ("w_job_opcode",  "unsigned(3 downto 0)"),
+    ("w_job_src",     "unsigned(7 downto 0)"),
+    ("w_job_src2",    "unsigned(7 downto 0)"),
+    ("w_job_dst",     "unsigned(7 downto 0)"),
+    ("w_job_dst_off", "unsigned(31 downto 0)"),
+    ("w_job_n_rows",  "unsigned(31 downto 0)"),
+    ("w_job_step",    "unsigned(STEP_W-1 downto 0)"),
+    ("w_vi_u_start",  "std_logic"),
+    ("w_vi_u_ack",    "std_logic"),
+    ("w_vi_u_ready",  "std_logic"),
+    ("w_vi_u_done",   "std_logic"),
+    ("w_vi_u_err",    "std_logic"),
+    ("w_v_start",     "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_ready",     "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_taken",     "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_done",      "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_ack",       "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_err",       "std_logic_vector(NVOP-1 downto 0)"),
+    ("w_v_y_exp",     "std_logic_vector(NVOP*EXP_W-1 downto 0)"),
+    ("w_v_n",         "unsigned(VN_W-1 downto 0)"),
+    ("w_v_exp_a",     "signed(EXP_W-1 downto 0)"),
+    ("w_v_exp_b",     "signed(EXP_W-1 downto 0)"),
+    ("w_v_reg_a",     "unsigned(7 downto 0)"),
+    ("w_v_reg_b",     "unsigned(7 downto 0)"),
+    ("w_v_reg_d",     "unsigned(7 downto 0)"),
+    ("w_vres_ready",  "std_logic"),
+    ("w_vres_start",  "std_logic"),
+    ("w_vres_taken",  "std_logic"),
+    ("w_vres_done",   "std_logic"),
+    ("w_vres_ack",    "std_logic"),
+    ("w_vres_err",    "std_logic"),
+    ("w_vres_exp",    "signed(EXP_W-1 downto 0)"),
+    ("w_vnrm_start",  "std_logic"),
+    ("w_vnrm_ack",    "std_logic"),
+    ("w_vnrm_ready",  "std_logic"),
+    ("w_vnrm_done",   "std_logic"),
+    ("w_vnrm_taken",  "std_logic"),
+    ("w_vnrm_err",    "std_logic"),
+    ("w_vnrm_yexp",   "std_logic_vector(EXP_W-1 downto 0)"),
+    ("w_nrm_ur_en",   "std_logic"),
+    ("w_nrm_ur_reg",  "std_logic_vector(15 downto 0)"),
+    ("w_nrm_ur_addr", "std_logic_vector(31 downto 0)"),
+    ("w_nrm_uw_en",   "std_logic"),
+    ("w_nrm_uw_reg",  "std_logic_vector(15 downto 0)"),
+    ("w_nrm_uw_addr", "std_logic_vector(31 downto 0)"),
+    ("w_nrm_uw_data", "std_logic_vector(15 downto 0)"),
+    ("w_rg_r_en",     "std_logic"),
+    ("w_rg_r_addr",   "unsigned(10 downto 0)"),
+    ("w_rg_x_rdata",  "std_logic_vector(8*16-1 downto 0)"),
+    ("w_rg_e_rdata",  "std_logic_vector(8*16-1 downto 0)"),
+    ("w_rg_w_we",     "std_logic"),
+    ("w_rg_w_addr",   "unsigned(10 downto 0)"),
+    ("w_rg_w_be",     "std_logic_vector(7 downto 0)"),
+    ("w_rg_w_data",   "std_logic_vector(8*16-1 downto 0)"),
+    ("w_rg_el_rdata", "signed(15 downto 0)"),
+]
 
 # Nets the WIRE table names, declared once.  A net named in WIRE and missing
 # here is a hard error rather than an implicit std_logic, because a silently
@@ -493,6 +637,108 @@ GLUE = """
   end generate;
 """
 
+# ======================================================================
+# UNIT V's GLUE (--wire-v).  Replaces the g_unwired tie-off above for U_V
+# and joins the two REAL D-vec engines to the region file.
+#
+# Every line is lifted from `rtl/llama_top.vhd`'s own V wiring rather than
+# invented; the slot constants are `llama_map_pkg`'s.
+# ======================================================================
+GLUE_V = """
+  -- ====================================================================
+  -- UNIT V.  seq_vec_issue, with the TWO REAL engines behind it.
+  --
+  -- SLOT 2 IS DELIBERATELY NOT READY.  llama_top has three D-vec slots and
+  -- says of the ones that are not V_RES and not the real V_NORM: "THE TWO
+  -- D-VEC ENGINES THAT DO NOT EXIST ... BEHAVIOURAL MODEL".  A model must
+  -- not go on the card, and tying an absent engine READY is exactly the
+  -- failure `g_unwired` guards against for whole units.
+  -- ====================================================================
+  w_vi_u_start <= w_u_start(U_V);
+  w_u_ack(U_V) <= '0';          -- D acks V through seq_vec_issue's own path
+  w_vi_u_ack   <= w_u_ack(U_V);
+  w_u_ready(U_V) <= w_vi_u_ready;
+  w_u_done(U_V)  <= w_vi_u_done;
+  w_u_err(U_V)   <= w_vi_u_err;
+
+  -- V_RES: the residual.  llama_top calls it "the spine and the one
+  -- arithmetic unit in the block loop that is not a model".
+  w_vres_start        <= w_v_start(V_RES);
+  w_vres_ack          <= w_v_ack(V_RES);
+  w_v_ready(V_RES)    <= w_vres_ready;
+  w_v_taken(V_RES)    <= w_vres_taken;
+  w_v_done(V_RES)     <= w_vres_done;
+  w_v_err(V_RES)      <= w_vres_err;
+  w_v_y_exp((V_RES+1)*EXP_W-1 downto V_RES*EXP_W)
+    <= std_logic_vector(w_vres_exp);
+
+  -- V_NORM: ooc_normadapt, the extraction of llama_top's `gvr`.
+  w_vnrm_start        <= w_v_start(V_NORM);
+  w_vnrm_ack          <= w_v_ack(V_NORM);
+  w_v_ready(V_NORM)   <= w_vnrm_ready;
+  w_v_taken(V_NORM)   <= w_vnrm_taken;
+  w_v_done(V_NORM)    <= w_vnrm_done;
+  w_v_err(V_NORM)     <= w_vnrm_err;
+  w_v_y_exp((V_NORM+1)*EXP_W-1 downto V_NORM*EXP_W) <= w_vnrm_yexp;
+
+  g_v_absent : for v in 0 to NVOP-1 generate
+    g_voff : if v /= V_RES and v /= V_NORM generate
+      w_v_ready(v) <= '0';
+      w_v_taken(v) <= '0';
+      w_v_done(v)  <= '0';
+      w_v_err(v)   <= '0';
+      w_v_y_exp((v+1)*EXP_W-1 downto v*EXP_W) <= (others => '0');
+    end generate;
+  end generate;
+"""
+
+
+# The region file's two ports, joined to the two engines.  SEPARATE from
+# GLUE_V because it is a statement about `region_mem`, not about unit V, and
+# because it is the part that would have to change if either engine moved.
+RG_V_JOIN = """
+  -- ====================================================================
+  -- THE REGION FILE'S TWO PORTS, joined to V's two engines.
+  --
+  -- THEY DO NOT CONTEND.  `seq_vec_res` drives the WIDE D-vec port and
+  -- `ooc_normadapt` the SCALAR element port; read off the two entities.
+  -- That is what makes one region file serve both without an arbiter.
+  --
+  -- THE REGION INDICES COME FROM seq_vec_issue, NOT from the engines.
+  -- `seq_vec_res` has no `r_rega`/`w_regd` port at all -- llama_top's `memp`
+  -- takes them from `v_reg_a`/`v_reg_b`/`v_reg_d`, and region_mem makes them
+  -- ports.  Wiring the engines and forgetting these three would leave every
+  -- D-vec access pointed at region 0.
+  -- ====================================================================
+  rg_r_rega <= w_v_reg_a;
+  rg_r_regb <= w_v_reg_b;
+  rg_w_regd <= w_v_reg_d;
+
+  rg_r_en    <= w_rg_r_en;
+  rg_r_addr  <= w_rg_r_addr;
+  w_rg_x_rdata <= rg_x_rdata;
+  w_rg_e_rdata <= rg_e_rdata;
+  rg_w_we    <= w_rg_w_we;
+  rg_w_addr  <= w_rg_w_addr;
+  rg_w_be    <= w_rg_w_be;
+  rg_w_data  <= w_rg_w_data;
+
+  -- The scalar element port, from the norm adapter.  Its o_ur_reg/o_ur_addr
+  -- are 16 and 32 bits wide and region_mem's are constrained naturals, so
+  -- the conversion is explicit and the truncation is stated rather than
+  -- implied: NREGION is 14 and region_max is 12288 at 9B, so the low 4 and
+  -- 14 bits carry every legal value and a value outside them is a defect
+  -- upstream, not something to be silently masked here.
+  rg_el_ren   <= w_nrm_ur_en;
+  rg_el_reg   <= to_integer(unsigned(w_nrm_ur_reg)) mod NREGION;
+  rg_el_addr  <= to_integer(unsigned(w_nrm_ur_addr)) mod region_max(RG_SHAPE);
+  w_rg_el_rdata <= rg_el_rdata;
+  rg_el_we    <= w_nrm_uw_en;
+  rg_el_wreg  <= to_integer(unsigned(w_nrm_uw_reg)) mod NREGION;
+  rg_el_waddr <= to_integer(unsigned(w_nrm_uw_addr)) mod region_max(RG_SHAPE);
+  rg_el_wdata <= signed(w_nrm_uw_data);
+"""
+
 
 def strip_comment(line):
     # No VHDL string literal in any entity header here contains "--", and the
@@ -651,6 +897,51 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rtl", default=os.path.join(REPO, "rtl"))
     ap.add_argument("--fk33-rtl", default=os.path.join(HERE, "rtl"))
+    ap.add_argument("--check", action="store_true",
+                    help="do not write; regenerate into memory and compare "
+                         "against the file --out names, exiting 1 if they "
+                         "differ.  MEASURED 2026-09-04: commit 11bf64b added "
+                         "the `job_index` port to fk33_engine.vhd and never "
+                         "regenerated hw/fk33/rtl/compose4_top.vhd, so the "
+                         "committed generated file sat stale for two days "
+                         "with nothing to notice.  tools/gen_cardtop.py has "
+                         "had --check the whole time; this generator did not.")
+    #
+    # TEETH, MEASURED 2026-09-04.  A check never shown to fail has not been
+    # shown to work, so every row below was actually run:
+    #
+    #   M1  the REAL historical mutant: `git show HEAD:...compose4_top.vhd`,
+    #       i.e. the stale file as committed by 11bf64b        KILLED rc=1
+    #   M2  one line deleted from a correct file               KILLED rc=1
+    #   M3  a single trailing space added to one line          KILLED rc=1
+    #       (byte comparison, so cosmetic drift is caught too)
+    #
+    #   M4  CONTROL, the correct file            does NOT bite, rc=0  <- wanted
+    #   M5  CONTROL, `--check --wire` against the DEFAULT file     rc=1
+    #       This one is a WARNING, not a pass: the check compares against
+    #       whatever `--out` names, so it is MODE-SENSITIVE.  regress.sh must
+    #       invoke it with NO flags, because the default-mode output is what
+    #       is committed.  Invoking it with --wire would fail forever and
+    #       read as a stale file rather than as a wrong invocation.
+    #
+    # Also verified: a FAILING --check leaves the file byte-for-byte untouched.
+    #
+    #   M7  NOT A MUTANT -- the row's FIRST clean-checkout run, and it found a
+    #       real pre-existing defect.  MEASURED 2026-09-04: on a `git archive`
+    #       of the tree about to be committed, c4stale FAILED with
+    #       `COMPOSE4 ABORT: missing rtl/ooc_normadapt_top.vhd`.  That file
+    #       was UNTRACKED and not gitignored, while both its siblings
+    #       (ooc_gdnadapt_top.vhd, ooc_cattnadapt_top.vhd) were tracked -- it
+    #       had simply never been committed.  Since the COMMITTED
+    #       compose4_top.vhd instantiates `ooc_normadapt`, a clean checkout of
+    #       HEAD referenced an entity whose file was not in the repository.
+    #       Nobody could have built it, and nothing had noticed.
+    #       Fixed by tracking the file, after confirming it is byte-identical
+    #       to what sim/ooc_normadapt_extract.py produces from the current
+    #       llama_top.vhd (i.e. current, not a stale local artefact).
+    #       This is worth more than the six mutants above: they show the check
+    #       CAN fail, and this shows it fails on something that was actually
+    #       wrong.
     ap.add_argument("--out", default=os.path.join(HERE, "rtl",
                                                   "compose4_top.vhd"))
     # A SUBSET top, for the case where the full composition will not fit in the
@@ -665,6 +956,13 @@ def main():
                          "default so the co-residency measurement vehicle, "
                          "and TRACK ROUTE3's numbers taken on it, are "
                          "preserved exactly.")
+    ap.add_argument("--wire-v", action="store_true",
+                    help="ALSO wire unit V: seq_vec_issue, seq_vec_res at "
+                         "V_RES and ooc_normadapt at V_NORM, joined to the "
+                         "region file. Requires --wire. ADDITIVE and OFF by "
+                         "default so the design note's section 14 numbers, "
+                         "which were taken on --wire alone and list unit V "
+                         "as absent, keep describing what they measured.")
     # LEVER C.  "distributed" is the configuration STEP 2 is asking about;
     # "regs" reproduces the pre-lever composition and is the attribution
     # control.  Anything else is rejected here rather than silently meaning
@@ -717,6 +1015,18 @@ def main():
                      % ",".join(sorted(unknown)))
         INSTANCES = [i for i in INSTANCES if i[0] in keep]
 
+    # THE V WIDTHS, applied ONLY under --wire-v.  Unconditional overrides
+    # would name `VN_W`, which the top does not declare without it, and the
+    # generator's own convergence guard refuses that -- correctly:
+    #   COMPOSE4 ABORT: generic substitution did not converge on
+    #   'unsigned(VN_W-1 downto 0)'
+    if a.wire_v:
+        V_GEN = {"d_viss": {"VN_W": "VN_W"},
+                 "d_vres": {"ADDR_W": "VN_W"},
+                 "d_norm": {"VN_W": "VN_W"}}
+        INSTANCES = [(i0, i1, i2, dict(i3, **V_GEN.get(i0, {})))
+                     for i0, i1, i2, i3 in INSTANCES]
+
     roots = {"RTL": a.rtl, "FK33": a.fk33_rtl}
 
     top_ports = []          # (name, dir, type)
@@ -724,6 +1034,13 @@ def main():
     summary = []
     epoch_w_default = None
     lite_aw = None
+    rg_signals = []
+    # The V widths, LIFTED from the entities that own them for exactly the
+    # reason EPOCH_W is: a literal here would be a second, independent
+    # opinion about a width another module owns, and the two drift silently.
+    # STEP_W and NVOP belong to seq_desc_fetch and seq_vec_issue; EXP_W and
+    # VN_W to seq_vec_issue.
+    v_w = {}
 
     for inst, ent, _which, over in INSTANCES:
         which, fname = SRC_FILE[ent]
@@ -781,6 +1098,10 @@ def main():
                 sys.exit("COMPOSE4 ABORT: seq_desc_fetch declares no EPOCH_W "
                          "generic; the composed top cannot size w_job_epoch "
                          "without inventing a value")
+            v_w["STEP_W"] = gdefs.get("STEP_W")
+        if ent == "seq_vec_issue":
+            for k_ in ("EXP_W", "VN_W", "NVOP"):
+                v_w[k_] = gdefs.get(k_)
         for k in over:
             if k not in gdefs:
                 sys.exit("COMPOSE4 ABORT: %s has no generic %s" % (ent, k))
@@ -806,9 +1127,23 @@ def main():
                                  "fk33_engine.s_axi_awaddr from %r" % tp_)
                     lite_aw = int(m_.group(1)) + 1
         shared = dict(SHARED.get(ent, SHARED["_default"]))
+        # --wire-v is ADDITIVE: its entries are merged over --wire's, and a
+        # key present in both would be a silent override, so that is refused
+        # rather than resolved by ordering.
+        wire_tbl = dict(WIRE.get(ent, {}))
+        sig_tbl  = dict(WIRE_SIGNALS)
+        if a.wire_v:
+            for k_, v_ in WIRE_V.get(ent, {}).items():
+                if k_ in wire_tbl and wire_tbl[k_] != v_:
+                    sys.exit("COMPOSE4 ABORT: WIRE and WIRE_V both name a net "
+                             "for %s.%s (%s vs %s).  One of them would win by "
+                             "dict order, which is not a decision."
+                             % (ent, k_, wire_tbl[k_], v_))
+                wire_tbl[k_] = v_
+            sig_tbl.update(dict(WIRE_V_SIGNALS))
         if a.wire:
-            for pn_, net_ in WIRE.get(ent, {}).items():
-                if net_ not in dict(WIRE_SIGNALS):
+            for pn_, net_ in wire_tbl.items():
+                if net_ not in sig_tbl:
                     sys.exit("COMPOSE4 ABORT: WIRE names net %s for %s.%s but "
                              "WIRE_SIGNALS does not declare it.  An undeclared "
                              "net would become an implicit signal and a "
@@ -1004,8 +1339,19 @@ def main():
             ("w_be",     "in",  "std_logic_vector(7 downto 0)"),
             ("w_data",   "in",  "std_logic_vector(8*16-1 downto 0)"),
         ]
-        for pn_, dir_, tp_ in RG:
-            top_ports.append(("rg_" + pn_, dir_, tp_))
+        # WITH UNIT V WIRED THESE STOP BEING PORTS.  They are the region
+        # file's own face, and with V present the engines drive it from
+        # INSIDE, so exporting them would make an `in` port that the
+        # architecture also drives -- which is what Vivado refused:
+        #   ERROR: [Synth 8-10561] cannot update object 'rg_r_rega' of mode
+        #   'in'
+        # Declared as signals instead, so GLUE's region_mem port map is
+        # unchanged and RG_V_JOIN drives them.
+        if a.wire_v:
+            rg_signals.extend(("rg_" + pn_, tp_) for pn_, _d, tp_ in RG)
+        else:
+            for pn_, dir_, tp_ in RG:
+                top_ports.append(("rg_" + pn_, dir_, tp_))
 
     w = max(len(p[0]) for p in top_ports)
     body = []
@@ -1036,12 +1382,29 @@ def main():
         "  -- so a literal in this file would be a second, independent opinion",
         "  -- about a width D alone owns, and the two would drift in silence.",
         "  constant EPOCH_W : positive := %s;" % epoch_w_default,
+    ] + ([
+        "",
+        "  -- V's widths, LIFTED the same way and for the same reason.",
+        "  -- VN_W IS THE ONE THAT IS NOT LIFTED, and it must not be.",
+        "  -- seq_vec_issue's own default is 13; llama_top computes",
+        "  --   VN_W := maximum(13, clog2(region_max(SHAPE) + 1))",
+        "  -- which is 14 at 9B, and its comment records why: `ffn` is 12288,",
+        "  -- so a fixed 13 `refused EVERY FFN of EVERY block at run time and",
+        "  -- nothing rejected the combination at elaboration`.  Lifting the",
+        "  -- default here would reproduce exactly that defect, one bit short,",
+        "  -- silently.",
+        "  constant VN_W    : positive :=",
+        "    maximum(13, clog2(region_max(RG_SHAPE) + 1));",
+    ] + ["  constant %-7s : positive := %s;" % (k, v_w[k])
+         for k in ("STEP_W", "EXP_W", "NVOP")]
+        if a.wire_v else []) + [
         "",
         "  -- nets carrying the D-to-A, D-to-B and D-to-C seams; see WIRE",
     ] + ["  signal %-16s : %s;"
          % (n, t if t is not None
               else "std_logic_vector(%d downto 0)" % (lite_aw - 1))
-         for n, t in WIRE_SIGNALS]
+         for n, t in (WIRE_SIGNALS + (WIRE_V_SIGNALS if a.wire_v else [])
+                      + rg_signals)]
         if a.wire else []) + [
         "begin",
         "",
@@ -1054,14 +1417,41 @@ def main():
         "    hbm_aclk_i <= hbm_aclk;",
         "  end generate;",
         "",
-    ] + inst_blocks + (GLUE.replace("%LITE_AW%", str(lite_aw)).splitlines()
+    ] + inst_blocks + ((GLUE + (GLUE_V + RG_V_JOIN if a.wire_v else ""))
+                       .replace("%LITE_AW%", str(lite_aw)).splitlines()
                        if a.wire else []) + [
         "end architecture;",
         "",
     ]
 
+    text = "\n".join(out)
+
+    if a.check:
+        # Compare, never write.  Reading the file back and comparing the
+        # STRING (not a hash of it) keeps the failure message able to show
+        # what drifted, which is the whole reason to have the check.
+        try:
+            have = open(a.out).read()
+        except OSError as e:
+            print("COMPOSE4_STALE cannot read %s: %s" % (a.out, e))
+            return 1
+        if have == text:
+            print("COMPOSE4_CHECK ok %s (%d bytes)" % (a.out, len(text)))
+            return 0
+        import difflib
+        d = list(difflib.unified_diff(have.splitlines(), text.splitlines(),
+                                      "committed", "regenerated", lineterm=""))
+        print("COMPOSE4_STALE %s differs from a fresh generation "
+              "(%d diff lines).  Regenerate it and commit the result:"
+              % (a.out, len(d)))
+        for line in d[:40]:
+            print("  " + line)
+        if len(d) > 40:
+            print("  ... %d more" % (len(d) - 40))
+        return 1
+
     with open(a.out, "w") as fh:
-        fh.write("\n".join(out))
+        fh.write(text)
 
     print("COMPOSE4_GEN wrote %s : %d instances, %d top-level ports"
           % (a.out, len(INSTANCES), len(top_ports) + 4))
