@@ -9,6 +9,27 @@
  * nothing -- code that has never executed -- and writing it against an
  * explicit one that can be run, mutated and gated.  This is the explicit one.
  *
+ * CORRECTION 2026-09-05: BOTH HALVES OF THAT PREMISE ARE NOW FALSE, and the
+ * conclusion still holds for a different reason.
+ *
+ *   1. The composed top ROUTES.  MEASURED today: 520,701 routable nets,
+ *      520,701 fully routed, 0 with routing errors, 0 unrouted, 0 partial.
+ *      It misses TIMING, not routability -- best recorded -0.041 ns
+ *      (198.4 MHz against a 200 MHz constraint).  The congestion-level-7
+ *      failure above belongs to an older geometry.
+ *   2. A BITSTREAM EXISTS.  `hw/fk33/pcieep_build.sh` produced one that MEETS
+ *      200 MHz (WNS +0.001, later +0.096 with a better strategy), preserved
+ *      under `hw/fk33/bit/`.  See
+ *      docs/debugging/2026-09-05_card-bitstream-meets-200mhz.md.
+ *
+ * WHY THE ABSTRACTION IS STILL RIGHT.  That bitstream is the PCIe shell plus
+ * subsystem A only -- B, C and D are not in it -- so it cannot run an
+ * inference, and this header's code still has no card to talk to.  The reason
+ * shifted from "nothing routes" to "what was built is a subset", which is a
+ * better position and not a finished one.  Do not read the paragraph above as
+ * current: it is kept because it was acted on, per this project's rule that a
+ * superseded claim is marked withdrawn rather than deleted.
+ *
  * There are exactly FOUR operations, and the whole rest of the host stack is
  * built out of them:
  *
