@@ -810,6 +810,41 @@ any amount of additional structural checking.**
   same block. **An exact relationship for one resource is not a licence to scale
   a different resource by the same factor.** Refusing to project was worth 3.4x
   here, and the projection would have erred in the flattering direction.
+- **ENUMERATE WHAT DIFFERS BETWEEN TWO RUNS FROM THE RUNS' OWN RECORDED
+  PARAMETERS, NEVER FROM THE INTENT OF WHOEVER LAUNCHED THEM -- AND A CONTROL ON
+  THE WRONG AXIS READS AS RIGOUR.** MEASURED 2026-09-05, and it happened within
+  an hour of the same-tree entry above being written, in the document announcing
+  it. Two composed runs were compared as a one-variable `KV_BLOCK` experiment and
+  a **1.120 ns** result was written up, committed, and propagated to three
+  documents. **They differed in FIVE things**: `KV_BLOCK` plus all four
+  implementation directives (`c4nd` `''`/`ExtraNetDelay_high`/`AggressiveExplore`/
+  `NoTimingRelaxation` against `c4kv4` `ExploreWithRemap`/`ExtraTimingOpt`/
+  `AggressiveExplore`/`Explore`). Both runs print a one-line `C4_DIRECTIVES`
+  sentinel and both sat in the logs the whole time; the comparison was made from
+  memory of what the run was *for*.
+  **The experiment HAD careful controls and they were on the wrong axis.**
+  `a_eng` was 92,134 LUT in both runs to the digit and `d_norm` 5,017 in both --
+  genuinely good controls, which is precisely why the SYNTHESIS results survive
+  (synthesis does not read implementation directives). They say nothing about
+  implementation, so every timing, congestion and placement claim fell. **Having
+  a control is not having the control the claim needs, and a well-chosen one on
+  a neighbouring axis is worse than none, because it reads as rigour.**
+  Ask which stage the claim lives at, then ask what was held constant AT THAT
+  STAGE. An area claim and a timing claim from the same pair of runs can have
+  different answers, and here they did.
+- **A FALSIFIABLE PREDICTION TESTED BY AN UNCONTROLLED EXPERIMENT IS NOT
+  FALSIFIED.** Same incident. The congestion mechanism had been registered in
+  advance, deliberately, with the net sign left unpredicted -- all correct
+  practice -- and the uncontrolled result was then written up as a refutation
+  and propagated. **Pre-registration makes the verdict feel earned and does
+  nothing to make it valid.** Registering the prediction and controlling the
+  experiment are two separate obligations; discharging the first well is the
+  thing most likely to stop you checking the second.
+- **RE-IMPLEMENT FROM THE EXISTING DCP WHEN ONLY IMPLEMENTATION VARIES.**
+  Synthesis cannot read `opt/place/phys_opt/route` directives, so a directive
+  control reuses the synthesised checkpoint and skips ~20 minutes. This also
+  makes the control exact rather than merely equivalent: there is one netlist,
+  not two that ought to match.
 - **Where a document and the RTL disagree, the RTL wins.** That includes the
   specs, the audit, and this file.
 
