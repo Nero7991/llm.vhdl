@@ -291,3 +291,32 @@ their verdicts differ.
 **This does NOT make B a blocker again.** The design MEETS 200 MHz; owning the
 critical path with positive slack is not a failure. It identifies where the
 next nanosecond is, not a defect.
+
+---
+
+## CORRECTION, 2026-09-04 (later): the +0.346 was SYNTHESIS and did not survive routing
+
+This file reports `WNS +0.346` with zero failing endpoints and uses it to
+withdraw the movers-miss-timing blocker. **The withdrawal stands** -- the
+movers' own numbers really were measured on configurations the card does not
+use, and one of those vehicles cannot be built at the card's configuration at
+all.
+
+**But `+0.346` is a SYNTHESIS number and the routed result is `-0.402`**, a
+0.748 ns swing, i.e. 185.1 MHz against the 200 MHz target. See
+`2026-09-04_composed-top-routed.md`. Two specific claims made from `+0.346`
+are withdrawn:
+
+- *"B's `u_scal` owns the composed top's critical path ... that is where any
+  frequency headroom has to come from."* The path DID carry over, same
+  startpoint and destination array. But routed, `c_attn` fails at -0.401
+  against `b_gdn`'s -0.402: **990 and 986 failing endpoints respectively, plus
+  319 in `a_eng`**. There is no single owner and no single fix.
+- The session's statement that the 200 MHz retarget pressure came from the
+  A-only endpoint bitstream "not from the composed logic". The composed top
+  routed is the WORSE of the two.
+
+What this file got right and is worth keeping: the vehicle-configuration
+finding, the 512-bit-versus-64-bit state interface, the 112-DSP cost of
+`RECUR_LANES=32`, and the rule that an invariance argument says only what a
+quantity is NOT sensitive to.
