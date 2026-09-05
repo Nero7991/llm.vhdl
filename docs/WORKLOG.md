@@ -53,6 +53,19 @@ endpoints **110,298 -> 858**.  Through the generic, not the text substitution.
 5.000 ns period.  That is a closed-form refutation of the entire
 strategy/directive lever on this block.  It has to be pipelined.
 
+**RESOLVED: B'S COMPUTE MEETS 200 MHz. THE 111 MHz BLOCKER WAS STIMULUS.**
+Startpoints restricted to the 52,045 sequential cells inside `gb_real.u_gdn`
+give **Slack (MET) +0.837 ns = 240.2 MHz**, cross-validated by the repo's own
+2026-09-03 measurement of `gdn_block` ALONE at **+0.483 = 221 MHz**. Two
+independent methods, both comfortably past target. **B has no demonstrated
+timing blocker.**
+
+NOT established: the mover's OWN logic (address generation, handshakes,
+buffering) is still unmeasured -- it sits in `gb_real` beside the generators,
+which own all 400 worst paths. Its worst path is better than -3.226 ns and
+that is all that can be said. The next measurement is a harness driving taps,
+weights and scalars from registers or memory.
+
 **CONFIRMED: B's path IS THE SYNTHETIC WEIGHT HASH, not the datapath.** The
 path traverses `DSP_MULTIPLIER U[43]` and `DSP_ALU ALU_OUT[47]`; `gdn_conv`'s
 MAC is 16x16 and its product is 32 bits, so **those bits are unreachable from
