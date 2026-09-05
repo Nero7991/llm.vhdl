@@ -86,6 +86,15 @@ that is a design decision with real blast radius, and the
 `assert not (B_SRC_REAL and tok_pos > 0)` at `:4645` exists precisely to
 refuse a plausible wrong number until it is taken.
 
+**GATE GREEN, and it caught one of my own commits.** `OVERALL PASS 132
+FAIL 0, REGRESSION: PASS` (floor 124; do NOT raise it, this tree has 22 rows a
+clean checkout does not get and `regress.sh` says so). The first run was
+`PASS 131 FAIL 1` on `sim:cardtop` -- appending a COMMENT to
+`rtl/llama_top.vhd` left the generated `rtl/fk33_llama_top.vhd` stale, because
+that hand-written file is a generator INPUT and nothing on it says so.
+Regenerated in `14c43fb`; rule and root cause in `CLAUDE.md` and
+`docs/debugging/2026-09-05_generator-input-staleness.md`.
+
 #### Open, and explicitly NOT settled
 
 - **Whether `Performance_ExplorePostRoutePhysOpt` becomes the pcieep default.**
