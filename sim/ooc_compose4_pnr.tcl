@@ -58,6 +58,19 @@ set top     [envdef C4_TOP    compose4_top]
 set dcp     [envdef C4_DCP    ""]
 set usepb   [envdef C4_PBLOCK 0]
 set nthread [envdef C4_THREADS 8]
+# IMPLEMENTATION DIRECTIVES, added 2026-09-04.  ALL DEFAULT TO EMPTY, which
+# calls each command exactly as before, so every measurement taken before this
+# change still describes what it measured.  A directive is passed ONLY when its
+# variable is non-empty.
+#   MEASURED with all four empty: routed core_clk WNS -0.402 (185.1 MHz) on the
+#   shipping config, `impl_pb`, 2026-09-04.  That is the baseline any directive
+#   run must be compared against, and it must be compared against THAT run and
+#   not against the +0.346 synthesis figure, which is a different stage.
+set optdir   [envdef C4_OPT_DIR     ""]
+set placedir [envdef C4_PLACE_DIR   ""]
+set physdir  [envdef C4_PHYSOPT_DIR ""]
+set routedir [envdef C4_ROUTE_DIR   ""]
+proc c4_dir_args {d} { return [expr {$d eq "" ? {} : [list -directive $d]}] }
 
 file mkdir $outdir
 set_param general.maxThreads $nthread
@@ -309,13 +322,14 @@ number below would be meaningless."
     }
 
     set t0 [clock seconds]
-    opt_design
+    puts "C4_DIRECTIVES opt='$optdir' place='$placedir' physopt='$physdir' route='$routedir'"
+    eval opt_design [c4_dir_args $optdir]
     puts "C4_OPT_SECONDS [expr {[clock seconds] - $t0}]"
     emit_util $tag opt $outdir
     write_checkpoint -force [file join $outdir ${tag}_opt.dcp]
 
     set t0 [clock seconds]
-    place_design
+    eval place_design [c4_dir_args $placedir]
     puts "C4_PLACE_SECONDS [expr {[clock seconds] - $t0}]"
     emit_util $tag placed $outdir
     report_timing_summary -file [file join $outdir timing_${tag}_placed.rpt]
@@ -329,7 +343,7 @@ number below would be meaningless."
     c4_place_verdict $tag placed $outdir
 
     set t0 [clock seconds]
-    phys_opt_design -quiet
+    eval phys_opt_design -quiet [c4_dir_args $physdir]
     puts "C4_PHYSOPT_SECONDS [expr {[clock seconds] - $t0}]"
     write_checkpoint -force [file join $outdir ${tag}_physopt.dcp]
     c4_place_verdict $tag physopt $outdir
@@ -344,7 +358,7 @@ number below would be meaningless."
     # so the reports have to survive it.  `C4_ROUTE_RC` is the verdict; it is
     # NOT the sentinel, and the caller must not confuse the two.
     set t0 [clock seconds]
-    set rrc [catch {route_design} rmsg]
+    set rrc [catch {eval route_design [c4_dir_args $routedir]} rmsg]
     puts "C4_ROUTE_SECONDS [expr {[clock seconds] - $t0}]"
     puts "C4_ROUTE_RC $rrc"
     if {$rrc} {

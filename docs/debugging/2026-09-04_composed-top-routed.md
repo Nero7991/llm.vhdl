@@ -152,3 +152,81 @@ example, re-running with a relaxed pblock or a floorplan that spreads
   A 0.402 ns gap is within the range implementation strategies sometimes
   close, and none has been tried.
 - **Still no token-correctness claim, and nothing has run on the card.**
+
+---
+
+## FOLLOW-UP, same day: directives close 85% of the gap. 197.7 MHz, fully routed.
+
+The "open" item above -- *"one placement, no seed sweep, no `-directive`
+exploration, and 0.402 ns is within the range implementation strategies
+sometimes close"* -- is now measured. It was closable, mostly.
+
+**`sim/ooc_compose4_pnr.tcl` had no way to pass a directive.** It called
+`opt_design`, `place_design`, `phys_opt_design` and `route_design` bare. Four
+env knobs were added (`C4_OPT_DIR`, `C4_PLACE_DIR`, `C4_PHYSOPT_DIR`,
+`C4_ROUTE_DIR`), **all defaulting to empty**, which invokes each command
+exactly as before -- so every measurement taken before the change still
+describes what it measured. Verified in `tclsh`, not assumed: empty yields a
+zero-length argument list.
+
+| run | core_clk WNS | fmax | failing endpoints |
+|---|---|---|---|
+| baseline, no directives | -0.402 | 185.1 MHz | 2,361 |
+| `ExploreWithRemap` / `ExtraTimingOpt` / `AggressiveExplore` / `Explore` | **-0.110** | 195.7 MHz | -- |
+| + POST-ROUTE `phys_opt_design -directive AggressiveExplore`, then `route_design -preserve` | **-0.059** | **197.7 MHz** | **707** |
+
+All three FULLY ROUTED. The final checkpoint, verified with the project's own
+classification AND Vivado's `report_route_status`:
+
+```
+RS_VERDICT nets=3364687 errors=0 unrouted=0 partial=0
+RS_UNROUTED 0  RS_PARTIAL 0  RS_ANTENNAS 0  RS_CONFLICTS 0
+report_route_status: # of nets with routing errors : 0
+```
+
+Hold: `whs 0.000`, met. **0.402 ns -> 0.059 ns is 85% of the gap closed by
+tooling alone, with no RTL change**: from 8.0% short of the period to 1.2%.
+
+**The post-route `phys_opt` lever had never been pulled on this design.** The
+script runs `phys_opt_design` BEFORE `route_design` and never after, so the
+standard treatment for a small routed residual was structurally unavailable.
+It is worth 0.051 ns here.
+
+### A trap this follow-up walked into, and the check that caught it
+
+The post-route run printed `PR_UNROUTED 368454` from a hand-rolled filter of
+"every net whose `ROUTE_STATUS` is neither `ROUTED` nor `INTRASITE`". **A
+timing number from a design with 368,000 unrouted nets is meaningless, and
+closing timing by leaving nets unrouted is the classic way this goes wrong**,
+so `-0.059` was NOT reported until the count was resolved.
+
+It was a misclassification, and the arithmetic is exact:
+
+```
+HIERPORT   99,166
+NOLOADS   269,288
+          -------
+          368,454   <- exactly the bogus "unrouted" count
+```
+
+`ooc_compose4_pnr.tcl:394-401` already documents this for `HIERPORT` --
+*"the ordinary status of a net attached to a hierarchical port ... a false
+alarm of that size on the single question the composition exists to answer
+would have read as a routing failure"* -- and counts only `ANTENNAS` and
+`CONFLICTS` as errors. **The existing guard was right and the new one was
+wrong.** Use the script's classification, or `report_route_status`, never a
+negated filter over an enum whose members you have not enumerated.
+
+## Still open
+
+- **0.059 ns remains.** Untried: a seed sweep (`-directive` is one axis,
+  placement seed is another and moves designs of this size by comparable
+  amounts), further `phys_opt` iterations, and `route_design -directive
+  AggressiveExplore` or `NoTimingRelaxation`.
+- **This is one seed.** 197.7 MHz is a point on a distribution, not the
+  design's ceiling, and not a guarantee that a rebuild reproduces it.
+- **Meeting timing is necessary, not sufficient.** `llama_top:4316` still
+  refuses `B_SRC_REAL` past token 0: there is no token-correctness claim for
+  B on hardware at any frequency.
+- The directive run has NOT been repeated on the `RECUR_LANES=32` variant, so
+  the lane-count decision is still open on its own terms.
