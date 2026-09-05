@@ -134,10 +134,20 @@ Preserved to, and MEASURED byte-identical by md5 (`201b6206...`):
 ```
 hw/fk33/bit/fk33_pcieep_eng_epr_wns+0p001.bit          21,647,330 bytes
 hw/fk33/bit/pcieep_eng_epr_2026-09-05/
+    bd_wrapper_postroute_physopt.dcp                  215,948,390 bytes
     timing_summary_postroute_physopted.rpt
     route_status.rpt
     utilization_placed.rpt
+    README.md
 ```
+
+**The routed checkpoint is kept deliberately, and it is the more important of
+the two files.** The margin is 1 ps and no seed sweep was run, so there is no
+evidence this result is REPRODUCIBLE -- a rebuild is a gamble and the `.dcp`
+is not. To regenerate the bitstream, `write_bitstream` from the checkpoint
+rather than re-running the build, unless reproducibility is itself the
+question being asked. It costs 206 MB on a root filesystem at 96% (60 G free),
+which is 0.3% of what is left and buys back a build that may not land again.
 
 **`hw/fk33/bit/` is gitignored** (`.gitignore:134`), which is deliberate --
 bitstreams live on disk, not in git. **So this paragraph is the only tracked
