@@ -94,6 +94,18 @@ weights come from memory. It does NOT follow that B is fast: **B's real fmax is
 UNKNOWN**. Three documents quote 111 MHz as the headline blocker; it is
 measuring a test-pattern generator.
 
+**AND compose4_top MEASURES AN EASIER C THAN WILL BE BUILT.** `llama_top:479`
+passes `C_KV_BLOCK = 4` into `attn_block`; `gen_compose4_top.py` contains the
+string `KV_BLOCK` **zero** times, so `compose4_top` silently takes
+`attn_block`'s own default of **32**. `NBLK = HEAD_DIM/KV_BLOCK` sizes the
+reduction on C's critical path, and the difference is worth **2.436 ns** of C's
+slack (-1.611 at 4 against +0.825 at 32, synthesis). So `c_attn -0.401` and the
+best composed result **-0.041 (198.4 MHz)** are BOTH measured on a C that is
+easier than the real design. A generic passed by OMISSION leaves no line to
+review and no diff to notice.
+(`attn_block:223` and `llama_top:479` cite the SAME spec clause 2.1.1 with
+different values, 32 against 4. One is wrong; neither is checked.)
+
 **C ATTRIBUTED for the first time, and it is the MIRROR IMAGE:**
 `gcr.u_attn/vhdr_reg[0]` -> `vref_r_reg[N][6]`, 23 levels,
 **logic 2.361 ns (35.8%) / route 4.232 ns (64.2%)**, seven paths at exactly
