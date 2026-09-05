@@ -445,6 +445,28 @@ composed top that had elaborated cleanly, with nothing to point at the cause.
 Edit the generator, regenerate, then `git diff` the output and confirm it
 contains your change and nothing else.
 
+**AND THE RULE RUNS BOTH WAYS: EDITING A GENERATOR'S *INPUT* CARRIES THE SAME
+OBLIGATION, BUT LINE 2 CANNOT WARN YOU.** MEASURED 2026-09-05: the full gate
+went red on `sim:cardtop` (`GEN_CARDTOP_CHECK: STALE`) after a commit appended
+a 13-line COMMENT to `rtl/llama_top.vhd`. That file is hand-written, carries no
+banner, and is a perfectly ordinary file to edit -- **it is also the input to
+`tools/gen_cardtop.py`, which emits `rtl/fk33_llama_top.vhd`, and nothing on
+the source says so.** The check above is performable by reading the file in
+front of you; this one is not, because the derived file is elsewhere and the
+source holds no back-pointer. Ask whether anything generates FROM the file,
+not only whether it was generated.
+
+There is **no clean detector** and do not build one:
+`grep -rln "llama_top" tools/*.py hw/fk33/gen_*.py` returns **29 files**,
+narrowing to those that also emit a `.vhd` gives **9**, and nine still
+over-reports. It is a LEAD that turns "read every tool" into "read nine".
+**What actually works is the `--check` gate row**, and the contrast is the
+argument for them: this cost one row and printed the diff, whereas the
+IDENTICAL staleness in `compose4_top.vhd` had no gate, was wrong since
+`11bf64b`, and surfaced only because an unrelated run happened to regenerate
+it -- luck, not a check. **`fk33_engine.vhd` is still ungated**, because its
+generator writes unconditionally and even `--help` rewrites the repo file.
+
 **BEFORE CONNECTING A SIGNAL, READ THE DRIVER'S STATED CONTRACT FOR IT, NOT THE
 SHAPE YOU EXPECT -- AND WHERE THEY DIFFER, TAKE THE WEAKER ONE**, because that
 is the one the other end is allowed to produce. MEASURED 2026-09-03:
