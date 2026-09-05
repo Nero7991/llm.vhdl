@@ -124,6 +124,32 @@ TWO CONSEQUENCES OF THAT CHOICE, both recorded because they are real gaps:
     C spec 2.1.1 block`.  **Two files cite the SAME clause with different
     values.**  One of them is wrong and nothing checks either.
 
+    MEASURED 2026-09-05, COMPOSED, BOTH ROUTES CLEAN -- and it settles the
+    direction, which the standalone numbers above did not:
+
+        composed KV_BLOCK = 32 (this file, by omission)   ROUTED -0.422
+        composed KV_BLOCK =  4 (llama_top's value)        ROUTED -1.542
+
+    **"Correcting" this gap to 4 COSTS 1.120 ns, 184.4 -> 152.9 MHz.**  It is
+    not a lever, it is a cost, and this file's accidental 32 has been
+    FLATTERING every composed number on record.  Do not change it expecting an
+    improvement.
+
+    The controls make it attributable: `a_eng` is 92,134 LUT in both runs to
+    the digit, `d_norm` 5,017 in both, `b_gdn` differs by 3 LUT.  Every change
+    is inside `c_attn`.  `u_arr` gives up 18,022 LUT and 224 DSP (exactly the
+    `2*G*KV_BLOCK` relation) but `c_attn` as a whole gives up only 14,380,
+    because a narrower array needs deeper muxing: F8 muxes **+113%**, and the
+    critical path MOVES OUT of the array, from `u_arr/p_reg_reg` to
+    `c_attn/vhdr_reg`.
+
+    What 4 does buy: CLB occupancy 90.3% -> 85.0% and DSP 2,177 -> 1,953.  So
+    the spec question is a real tradeoff, 5.3 points of device occupancy
+    against 31.5 MHz, not a bookkeeping tidy-up.
+
+    Full measurement, controls, and the refuted congestion hypothesis:
+    `docs/debugging/2026-09-05_kv-block-4-is-a-cost-not-a-lever.md`.
+
 `fk33_engine` has NO generics at all -- it is the shipping subsystem A,
 byte-for-byte the entity in the bitstream on card 1.
 
