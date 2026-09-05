@@ -230,3 +230,56 @@ negated filter over an enum whose members you have not enumerated.
   B on hardware at any frequency.
 - The directive run has NOT been repeated on the `RECUR_LANES=32` variant, so
   the lane-count decision is still open on its own terms.
+
+## FOLLOW-UP 2: phys_opt is EXHAUSTED at -0.041 (198.4 MHz)
+
+Three further `phys_opt_design` directives on the post-route checkpoint, each
+followed by `route_design -preserve`, each route-status checked with the
+project's classification:
+
+| pass | directive | WNS | gain | route status |
+|---|---|---|---|---|
+| start | (post-route `AggressiveExplore`) | -0.059 | -- | clean |
+| 1 | `AlternateReplication` | -0.047 | **0.012** | errors=0 unrouted=0 partial=0 |
+| 2 | `AggressiveFanoutOpt` | -0.045 | **0.002** | errors=0 unrouted=0 partial=0 |
+| 3 | `AlternateFlowWithRetiming` | **-0.041** | **0.004** | errors=0 unrouted=0 partial=0 |
+
+**The gains are 0.012, 0.002, 0.004 ns. That is a plateau, not a trend.** The
+last two are noise-level against a 5.000 ns period. Different directives were
+used rather than repeating `AggressiveExplore`, so this is not the same lever
+pulled three times: it is three levers, all spent.
+
+**Full progression, shipping configuration, inside `pb_core`, all fully
+routed:**
+
+| stage | WNS | fmax | % of period short |
+|---|---|---|---|
+| baseline, no directives | -0.402 | 185.1 MHz | 8.0% |
+| high-effort directives | -0.110 | 195.7 MHz | 2.2% |
+| + post-route phys_opt | -0.059 | 197.7 MHz | 1.2% |
+| + three more phys_opt directives | **-0.041** | **198.4 MHz** | **0.8%** |
+
+**90% of the original gap closed by tooling alone, no RTL change.**
+
+### What 0.041 ns actually costs, and why this may be the stopping point
+
+`hw/fk33/gen_pcieep.py:360` derives the 200 MHz target from the duty identity
+`duty = f_core / f_axi = 200/250 = 80.0%`. At **198.4 MHz that is 79.4%** --
+inside the design point, not a concession that changes the bandwidth argument.
+The throughput difference against the target is **0.8%**.
+
+So the engineering question is no longer "can this design run" but "is 0.8%
+worth a seed sweep". **That is a judgement, and it is Oren's**, not something
+to settle by burning hours of place-and-route.
+
+### Still untried, and it is a DIFFERENT axis
+
+Placement **seed** is the one remaining lever and it is not a local-optimum
+escape of the kind `phys_opt` performs -- it changes the starting placement,
+so it explores a different basin entirely. Designs of this size commonly move
+by more than 0.041 ns across seeds. Nothing about the plateau above predicts
+what a seed sweep would find, in either direction.
+
+**Everything else in this file's "still open" list is unchanged**, including
+the one that matters most: meeting timing is NECESSARY, NOT SUFFICIENT, and
+`llama_top:4316` still refuses `B_SRC_REAL` past token 0.
