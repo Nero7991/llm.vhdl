@@ -377,3 +377,46 @@ Unlike B's, **this is the real design and the number is a routed one.** C is
 genuinely 155.3 MHz against a 200 MHz target, and closing 1.438 ns needs the
 reduction split across a cycle rather than re-bracketed again -- re-bracketing
 is the lever TRACK TIMING already pulled.
+
+---
+
+## THE STIMULUS DOMINATES THE WHOLE BLOCK, not one path
+
+400 worst paths pulled from the same synthesis, to find the worst path that is
+NOT the weight hash. There isn't one in 400.
+
+```
+BNS_DSP_COUNT 1746            (= 194 DSP tiles x ~9 sub-cells; report_utilization says 194)
+400 paths pulled, slack range -4.008 .. -3.226
+startpoints:  373  a0/DSP_A_B_DATA_INST/CLK
+               27  a[-1111111108]/C
+```
+
+Both are Vivado-generated arithmetic cells, not datapath registers, and the
+second group ends in `gb_real.u_gdn/u_scal/...` -- `gdn_scalar`, a DIFFERENT
+sub-block from the conv. So this is not one cascade feeding one place.
+
+`llama_top`'s own header says why: at the default generics B's **conv taps,
+conv weights AND scalars** are all *"deterministic functions of index"*. Every
+input the block has is manufactured by combinational hash arithmetic, so that
+arithmetic owns the entire top of the timing report.
+
+**Therefore the OOC extraction cannot measure B's datapath timing at all.**
+Not "measures it pessimistically" -- cannot measure it. The 400 worst paths
+belong to a test-pattern generator that the shipping design will not contain.
+
+**The one bound this does give:** B's datapath worst path is better than
+**-3.226 ns**, i.e. **> 121.6 MHz**, because nothing in the 400 worst belongs
+to it. That is weak, and it is still better than the -4.008 / 111 MHz the
+project has been quoting as B's blocker.
+
+**What a real measurement needs:** a harness that drives the block's taps,
+weights and scalars from REGISTERS or memory rather than from index functions.
+That does not exist. Building it is the actual prerequisite for knowing whether
+B meets 200 MHz, and it is a smaller job than pipelining a path that may not
+be in the design.
+
+**The census filter, retried and reconciled.** `REF_NAME =~ DSP*` returns 1746
+where `PRIMITIVE_GROUP == DSP` returned 0 with only a WARNING; 1746/9 = 194,
+matching `report_utilization` exactly. The arithmetic is the check that the
+filter is now right, rather than merely non-empty.
