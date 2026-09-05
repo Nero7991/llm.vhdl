@@ -1,4 +1,4 @@
-// llama_server.cpp — zero-dependency OpenAI-compatible HTTP server for the
+// llama_server.cpp -- zero-dependency OpenAI-compatible HTTP server for the
 // fixed-point stories260K model (token-identical to the VHDL engine).
 //
 // Links the in-process inference (ref/run_fx.c compiled with -DLLAMA_LIB via
@@ -9,7 +9,7 @@
 // Endpoints: GET /v1/models, POST /v1/chat/completions (+ stream),
 //            POST /v1/completions, OPTIONS * (CORS preflight).
 //
-// NOTE: stories260K is a TinyStories model — it CONTINUES children's-story
+// NOTE: stories260K is a TinyStories model, and it CONTINUES children's-story
 // prose, it does not follow chat instructions. "Chat" concatenates message
 // contents into a prompt and continues the story. Greedy (temperature 0) is
 // token-identical to the VHDL; temperature>0 uses the C sampler.
@@ -886,8 +886,8 @@ static void handle_models(int fd) {
     std::string body =
         std::string("{\"object\":\"list\",\"data\":[{\"id\":\"") + MODEL_ID +
         "\",\"object\":\"model\",\"created\":" + std::to_string(now_sec()) +
-        ",\"owned_by\":\"llama.vhdl\",\"description\":\"Fixed-point stories260K (TinyStories) — "
-        "token-identical to the AXU3EG VHDL engine. Continues children's-story prose; does NOT follow chat instructions. "
+        ",\"owned_by\":\"llama.vhdl\",\"description\":\"Fixed-point stories260K (TinyStories). "
+        "Token-identical to the AXU3EG VHDL engine. Continues children's-story prose; does NOT follow chat instructions. "
         "Greedy (temperature 0) = hardware-exact.\",\"backend\":\"" +
         std::string(g_use_pl ? "fpga-pl" : "cpu") + "\"" +
         (g_use_pl ? std::string(",\"backend_detail\":\"") + plv1_describe() +
