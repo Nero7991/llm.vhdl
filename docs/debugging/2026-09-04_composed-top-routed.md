@@ -283,3 +283,88 @@ what a seed sweep would find, in either direction.
 **Everything else in this file's "still open" list is unchanged**, including
 the one that matters most: meeting timing is NECESSARY, NOT SUFFICIENT, and
 `llama_top:4316` still refuses `B_SRC_REAL` past token 0.
+
+---
+
+## FOLLOW-UP 3, 2026-09-05: `ExtraNetDelay_high` + `NoTimingRelaxation` LOSES. Do not retry.
+
+**The question**, taken verbatim from this file's own open list at line 224:
+
+> Untried: ... `route_design -directive AggressiveExplore` or
+> `NoTimingRelaxation`.
+
+**The answer: it is WORSE than doing nothing.** Fully routed, clean, on a fresh
+synthesis from a pinned tree at HEAD:
+
+```
+C4_DIRECTIVES opt='' place='ExtraNetDelay_high' physopt='AggressiveExplore' route='NoTimingRelaxation'
+
+placed    wns -0.406   failing   147
+physopt   wns  0.006   failing     0
+routed    wns -0.422   whs 0.009   TNS -26.000   failing 1066 / 970997
+C4_ROUTE_STATUS nets=3535996 errors=0 unrouted=0 partial=0
+route_status_c4nd.rpt:  520701 routable, 520701 fully routed, 0 with errors
+```
+
+`core_clk` 5.000 ns, WNS -0.422 -> **184.4 MHz**, against the no-directive
+baseline's 185.1 MHz and this file's best of **198.4 MHz**. Total wall time
+**77.3 minutes** (synth 465 + opt 102 + place 1073 + physopt 1087 + route 1910).
+
+### The pre-route number was optimistic by 0.428 ns
+
+**`phys_opt` finished at +0.006 with ZERO failing endpoints, and routing gave
+all of it back and more.** The progression is not monotonic:
+
+| stage | WNS | failing endpoints |
+|---|---|---|
+| placed | -0.406 | 147 |
+| phys_opt | **+0.006** | **0** |
+| routed | **-0.422** | 1066 |
+
+A pre-route estimate of "meets timing with zero failing endpoints" preceded a
+routed result 0.428 ns short. **Nothing before `route_design` is a timing
+result on this design.** This is the same lesson as reading `STATS.WNS` from
+the wrong stage, but far more expensive: the intermediate number was not merely
+from a different stage, it had the opposite sign.
+
+### METHODOLOGICAL FLAW IN THIS EXPERIMENT, stated because it limits the conclusion
+
+**Three variables were changed at once** against the prior best:
+
+| knob | prior best | this run |
+|---|---|---|
+| `opt` | `ExploreWithRemap` | (none) |
+| `place` | `ExtraTimingOpt` | `ExtraNetDelay_high` |
+| `physopt` | `AggressiveExplore` | `AggressiveExplore` |
+| `route` | `Explore` | `NoTimingRelaxation` |
+
+So **the loss cannot be attributed to `NoTimingRelaxation`**, which is the knob
+the open item actually named. It could be the dropped `opt_design` directive,
+the placer, the router, or an interaction. What is established is that this
+COMBINATION is worse than both the baseline and the prior best; what is NOT
+established is which knob did it.
+
+To attribute, change one at a time from the prior best. That is three more runs
+at ~77 min each, and given the result is 0.4 ns in the wrong direction the
+honest recommendation is to spend them elsewhere.
+
+## Measured and REJECTED -- do not retry
+
+- **`place=ExtraNetDelay_high` + `route=NoTimingRelaxation` with no
+  `opt_design` directive.** -0.422 routed, 184.4 MHz, 77.3 min. Worse than the
+  no-directive baseline. The name `NoTimingRelaxation` suggests it should
+  protect timing; measured, this combination does not.
+- **Reading a `phys_opt` WNS as a result.** +0.006 with 0 failing endpoints
+  preceded -0.422 routed in this very run.
+- **Reading a PLACED WNS as a predictor either.** -0.406 here against the
+  baseline's -0.402, and this run ended phys_opt 0.4 ns better and routed 0.02
+  ns worse. Placed WNS ordered the two runs backwards at both later stages.
+
+## Correction to a claim made earlier the same day
+
+**WITHDRAWN: "phys_opt gained 0.412 ns here against 0.012/0.002/0.004 in the
+prior chain, so 'phys_opt is EXHAUSTED' was a statement about a placement."**
+That comparison is a STAGE MISMATCH and is void. The 0.012/0.002/0.004 gains in
+FOLLOW-UP 2 are POST-ROUTE incremental passes on an already-routed checkpoint;
+the 0.412 here is the main PRE-route `phys_opt`. They are not comparable
+quantities, and the pre-route figure turned out not to survive routing at all.

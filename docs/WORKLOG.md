@@ -69,13 +69,21 @@ recorded at `2026-09-04_composed-top-routed.md:224`.
 ```
 placed   wns -0.406   failing 147
 physopt  wns  0.006   failing 0
+routed   wns -0.422   failing 1066     <- clean route, 0 errors
 ```
 
-**The routed number is the one that counts and is NOT in yet.** Prior best is
-**-0.041 routed (198.4 MHz)**. Do not quote +0.006 as a 200 MHz result.
+**RESULT: IT LOSES. -0.422 routed = 184.4 MHz**, worse than the no-directive
+baseline (185.1) and far worse than the prior best (-0.041, 198.4 MHz). 77.3
+minutes. Recorded under "do not retry" in
+`docs/debugging/2026-09-04_composed-top-routed.md` FOLLOW-UP 3.
 
-**The placed number was worthless as a predictor**: -0.406 here against the
-baseline's -0.402, and it ended phys_opt 0.4 ns better.
+**`phys_opt` reached +0.006 with ZERO failing endpoints and routing gave back
+0.428 ns.** Nothing before `route_design` is a timing result on this design.
+
+**The experiment changed THREE knobs at once** (opt, place, route) against the
+prior best, so the loss cannot be attributed to `NoTimingRelaxation`, which is
+the knob the open item actually named. Attribution needs three more 77-minute
+runs; given the direction, spend them elsewhere.
 
 ### 2026-09-05 (earlier): THE CARD BITSTREAM MEETS 200 MHz, AND IT WAS ALMOST LOST IN /tmp
 
