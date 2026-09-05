@@ -98,8 +98,11 @@ measuring a test-pattern generator.
 passes `C_KV_BLOCK = 4` into `attn_block`; `gen_compose4_top.py` contains the
 string `KV_BLOCK` **zero** times, so `compose4_top` silently takes
 `attn_block`'s own default of **32**. `NBLK = HEAD_DIM/KV_BLOCK` sizes the
-reduction on C's critical path, and the difference is worth **2.436 ns** of C's
-slack (-1.611 at 4 against +0.825 at 32, synthesis). So `c_attn -0.401` and the
+reduction on C's critical path. ROUTED against routed, same flow both sides:
+**-1.438 at 4 (155.3 MHz) against -0.596 at 32 (178.6 MHz) = 0.842 ns**, still
+20x the composed miss. (An earlier entry said 2.436 ns; that was the
+SYNTHESIS-to-synthesis delta and is withdrawn.) **C misses at BOTH settings**,
+so this changes how far short C is, not whether. So `c_attn -0.401` and the
 best composed result **-0.041 (198.4 MHz)** are BOTH measured on a C that is
 easier than the real design. A generic passed by OMISSION leaves no line to
 review and no diff to notice.

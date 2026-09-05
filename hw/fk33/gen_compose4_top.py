@@ -89,18 +89,31 @@ TWO CONSEQUENCES OF THAT CHOICE, both recorded because they are real gaps:
     `NBLK = HEAD_DIM/KV_BLOCK` sizes the `emin_tree` reduction that sits on
     C's critical path, so KV_BLOCK 32 gives NBLK 8 where llama_top's 4 gives
     NBLK 64 -- three more levels of the very structure TRACK TIMING rebuilt.
-    MEASURED, `ooc_cattnadapt_top`, OOC synthesis, 5.000 ns:
+    MEASURED, `ooc_cattnadapt_top`, 5.000 ns, both sides taken through the
+    SAME flow (opt -> place -> phys_opt AggressiveExplore -> route):
 
-        KV_BLOCK = 4   (llama_top's value)   WNS -1.611
-        KV_BLOCK = 32  (this file's value)   WNS +0.825
-                                             -------------
-                                             2.436 ns
+        KV_BLOCK = 4   (llama_top's value)   synth -1.611   ROUTED -1.438
+        KV_BLOCK = 32  (this file's value)   synth +0.825   ROUTED -0.596
+                                                            -------------
+                                                            0.842 ns
+
+    CORRECTED 2026-09-05, same session: this entry first quoted **2.436 ns**,
+    which is the SYNTHESIS-to-synthesis delta.  Routed against routed it is
+    **0.842 ns**.  Quoting a pre-route delta as the real one is the error this
+    file's own neighbours warn about, made here.
 
     Gaps 1 and 2 are small or additive (4,820 + 702 LUT; +32,943 LUT).  This
-    one moves C's SLACK by 2.436 ns, which is 49x the 0.041 ns by which the
-    best composed result misses 200 MHz.  **So `c_attn -0.401` and the
+    one moves C's routed SLACK by 0.842 ns, still **20x** the 0.041 ns by which
+    the best composed result misses 200 MHz.  **So `c_attn -0.401` and the
     -0.041 (198.4 MHz) headline are both measured on a C that is EASIER than
     llama_top builds, and no composed number on record includes this.**
+
+    NOTE C misses at BOTH settings -- 155.3 MHz at 4, 178.6 MHz at 32 -- so
+    KV_BLOCK changes HOW FAR short C is, not WHETHER.  And the critical path
+    MOVES: at 32 it leaves the `emin_tree` reduction and becomes
+    `u_arr/p_reg_reg[23][3] -> u_arr/er_r_reg`, 19 levels, inside the same
+    `u_arr` that owns 65-95% of every congested window in the composed
+    design's congestion report.
 
     A generic passed BY OMISSION leaves no line to review and no diff to
     notice, which is why this went unrecorded while gaps 1 and 2 did not.
