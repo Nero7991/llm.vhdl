@@ -12,6 +12,21 @@ Date: 2026-09-05. Written after Oren's direction: *"It's okay if we don't hit
 
 **One binding. Everything else on the path is built, benched and waiting.**
 
+**AMENDED, same day: calling it "one binding" undersells what it is.**
+`llama_top`'s A path does not merely use a different unit -- it fabricates
+weight base addresses, and its own header says so: *"a job that FITS is still
+reading whatever happens to be at a made-up address."* The block bounds each
+job to `A_SUB_BYTES/16 = 256` beats per port and **refuses** anything larger,
+and llama_top's own DERIVED figure at the shipping Qwen3.5-9B shape is that the
+FFN gate job needs `ceil(12288/4)*ceil(4096/32) = 393,216` beats per port --
+**short by 1536x**.
+
+So `llama_top` CANNOT run the real model shape, by construction and by its own
+arithmetic. D1/D2 is not a swap of one unit for an equivalent one; it is the
+step that replaces a simulation fabrication with a real descriptor carrying real
+HBM addresses. **It is the difference between a design that refuses at the
+shipping shape and one that can generate a token.**
+
 `rtl/fk33_llama_top.vhd:3551` instantiates `u_mv : entity work.matvec_int4` --
 the plain core, which takes shape registers and a codebook write port. The card's
 A is `matvec_int4_desc_axi`, which lives in `fk33_engine`, fetches its own
@@ -57,8 +72,14 @@ all six states including the two that matter here (S4: no tie-off and a real
 
 ## Why the substitution is smaller than the design note implies
 
-The note budgets D1/D2 at ~205 lines (`llama_top.vhd:3196-3400`). Reading the
-actual instantiation, most of that is reusable:
+**CORRECTION, same day: the region is 341 lines, not 205.** `ga_real` spans
+`llama_top.vhd:3444-3785`. The note's ~205 was for a differently-drawn region
+and the "smaller than the design note implies" lead below was wrong -- in the
+flattering direction, which is the direction this project keeps recording. The
+port-mapping table stands; the size claim does not.
+
+The note budgets D1/D2 at ~205 lines. Reading the actual instantiation, the
+port mapping is reusable even though the surrounding block is larger:
 
 | `matvec_int4` port | card equivalent | action |
 |---|---|---|
