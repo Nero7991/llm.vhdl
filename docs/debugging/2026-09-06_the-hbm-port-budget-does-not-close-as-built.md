@@ -92,3 +92,99 @@ needs 3 -- which is on its first screen.
   at the mux, as the doc suggests, or need changes inside B and C.
 - Whether the descriptor master genuinely needs a dedicated SAXI port, or could
   share one with a data lane -- which would restore the doc's third spare.
+
+---
+
+## RESOLVED, same day: C does NOT scale with the clock, and the fix is one shared lane
+
+### The open question is answered, and the answer is the unwelcome one
+
+`docs/2026-08-27_hbm-port-contention.md:375`, verbatim:
+
+> **C, DERIVED.** 3 masters (2 read + 1 write) is a *concurrency* requirement,
+> not a bandwidth one. C's KV traffic is 0.036 GB per token at ctx 2048 over
+> 1,217,484 cycles = 5.156 ms = **6.98 GB/s**, which is 0.6 of one port; at ctx
+> 32,768 it is 0.570 GB over 66.6 ms = 8.56 GB/s. **C needs 3 ports because its
+> datapath issues three concurrent streams, and it needs no more at any
+> context.**
+
+**So the clock lever does not help C.** B's 3 -> 2 at 175 MHz is real and
+bandwidth-driven; C is pinned at 3 by concurrency at every clock and every
+context. The budget at the clock the full-engine build now targets:
+
+```
+A data                     27
+A descriptor master         1
+max(B = 2, C = 3)           3
+                          ---
+                           31
+available                  30
+                          ---
+                    SHORT BY 1
+```
+
+And the budget doc's own table, which assumed A = 27, already closed at exactly
+30 with **spare 0**. **There was never room for the descriptor master.** That is
+the whole discrepancy: `gen_pcieep` calls SAXI_30/31 "two spare engine ports
+budgeted for B and C", and the document it cites budgets **three** to
+`max(B, C)` and leaves none.
+
+### The fix: the descriptor master shares a data lane. It is nearly free and it is SAFE BY CONSTRUCTION.
+
+**Cost, DERIVED.** The arena is 311 descriptors x 512 B = 159,232 B per token:
+
+| context | token time | descriptor traffic | share of one port |
+|---|---|---|---|
+| ctx 2,048 | 5.156 ms | 0.03088 GB/s | **0.262%** |
+| ctx 32,768 | 66.6 ms | 0.00239 GB/s | **0.020%** |
+
+**Safety, MEASURED from the RTL rather than argued from timing.**
+`rtl/matvec_int4_desc_axi.vhd` starts the two masters from different FSM states,
+227 lines and six states apart:
+
+- `d_start <= '1'` at **:771**, in `S_IDLE` -- launches the descriptor fetch.
+- `core_start <= '1'` at **:998** -- launches the 27 weight/scale masters,
+  reached only via `S_FETCH -> S_R -> S_CHECK -> S_SHAPE -> S_SHAPE_C -> S_CB`.
+
+The descriptor read is therefore COMPLETE before any weight read is issued, and
+the next descriptor fetch begins only from `S_IDLE`, i.e. after `done`. **The
+two never contend**, so sharing a lane is a phase separation enforced by a state
+machine, not an arbitration with a deadline.
+
+That distinction is the one this project already insists on elsewhere: the norm
+path's gate was put on `wbusy` rather than `w_active` precisely because
+*"`wbusy` is a single bit that is either true or false; that is the difference
+between a check with teeth and an argument."* A 2:1 select driven by an FSM
+state is the same kind of object.
+
+**With the descriptor master sharing lane 0 the budget closes exactly:**
+
+```
+A data (lane 0 also carries the descriptor)   27
+max(B = 2, C = 3)                              3
+                                             ---
+                                              30
+available                                      30      CLOSES, spare 0
+```
+
+### What is STILL required before a bitstream carrying B and C means anything
+
+Unchanged by any of the above, and not to be skipped:
+
+1. **The 2:1 grant between B and C over the shared 3 ports does not exist in
+   RTL.** The budget closes only because B and C are mutually exclusive, and
+   that must be ENFORCED, not assumed.
+2. **The drain interlock at the mux does not exist**, and its absence is rated
+   *"a silent-data-corruption class of bug, not a performance one"*: one counter
+   per shared port, one FSM state, MEASURED below 0.02% of the token.
+3. **B at 2 ports has not been re-derived for correctness, only for
+   bandwidth.** 22.40 GB/s against 2 x 11.77 = 23.54 GB/s is a 4.8% margin, and
+   a margin that thin should be checked against the burst pattern rather than
+   the average before it is trusted.
+
+### Open
+
+- Whether lane 0 is the right lane to share (any of the 27 works on bandwidth;
+  the choice may matter for the stack-boundary straddle the arena layout note
+  describes).
+- Whether B at 2 ports holds under bursts, per item 3 above.
