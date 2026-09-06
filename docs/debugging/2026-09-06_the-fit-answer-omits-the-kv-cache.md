@@ -221,3 +221,82 @@ the working idiom against a `PRIMITIVE_GROUP == DSP` filter that silently
 matched nothing. That fix was right for the empty-result failure and wrong
 here: **`RAM*` has no sub-cell problem and `DSP*` does.** For DSP, read
 `report_utilization`'s `DSP48E2` row.
+
+---
+
+## PLACED, and this is the answer: 98.89% CLB for the ENGINE ALONE
+
+`place_design` on `compose4_mem`, out of context, no shell:
+
+```
+| CLB   |  54351 |     0 |     0 |  54960 | 98.89 |
+|   CLBL|  28912
+|   CLBM|  25439
+| CLB LUTs | 342163 | ... | 439680 | 77.82 |
+C4P_RESULT top=compose4_mem clb=54351 clb_avail=54960 placed_wns_NOT_AN_FMAX=-5.136
+```
+
+**609 CLB sites spare, at a packing density of 6.30 LUT/CLB.**
+
+For contrast the composed design WITHOUT the two memory subsystems placed at
+**49,620 CLB (90.3%) at 5.31 LUT/CLB**. So the placer absorbed the extra 76,510
+LUT largely by packing harder -- density rose 19% -- rather than by spreading,
+because there was nowhere to spread to.
+
+### And the shell still has to go somewhere
+
+| | LUT | CLB | density |
+|---|---|---|---|
+| engine + both memory subsystems (MEASURED, placed) | 342,163 | 54,351 (98.89%) | 6.30 |
+| PCIe/HBM shell (2026-09-05, same-stage derived) | 50,999 | 10,446 | 4.88 |
+| **whole card** | **393,162 (89.4% LUT)** | naive 64,797 = **117.9%** | **7.15 needed** |
+
+The naive CLB sum is **not** a valid figure -- CLB is a placement outcome and
+does not add -- which is exactly the trap the 2026-09-05 document flagged. The
+valid form of the question is the one that document used: **what packing
+density would the placer need device-wide?**
+
+- Without the memory subsystems: **5.72 LUT/CLB**, which that document called
+  *"achievable, since the architectural maximum is 8, but it means the placer is
+  left with essentially no freedom to spread."*
+- With them: **7.15 LUT/CLB**, 89% of the architectural maximum, device-wide,
+  including a shell that measured 4.88 and shows no sign of packing to 7.
+
+**No run has demonstrated 7.15 device-wide on this part, and the engine alone
+needed 6.30 with 609 sites to spare.** The honest statement is that the full
+card design as currently structured does not have a credible fit, and that this
+is a NEW conclusion: every prior fit answer was taken on a top containing
+neither HBM memory subsystem.
+
+### The cause is nameable and it is one block
+
+`attn_kv_axi` is **73,050 LUT-as-logic, 16.61% of the device**, against
+`gdn_state_store`'s 4,028. It is 95% of the +76,510 LUT that moved the engine
+from 90.3% to 98.89% CLB.
+
+It contains **no memory primitives at all** -- 0 BRAM, 0 URAM, 0 LUT-as-memory
+-- because the cache it manages lives in HBM and this block is the address
+generation, the record packing and the burst logic. 73,050 LUT of pure
+combinational logic for an AXI interface is the number to be suspicious of, and
+nobody has ever looked at it, because until today nobody had synthesised it.
+
+### What is NOT concluded
+
+- **That it cannot be made to fit.** Nothing here has tried `-directive` options
+  on placement, and no attempt has been made to reduce `attn_kv_axi`.
+- **Any timing statement.** `placed_wns = -5.136` is recorded for the log and is
+  not an fmax: `CLAUDE.md` records a composed run placing at -0.406, reading
+  +0.006 after phys_opt, and routing at -0.422. Nothing before `route_design`
+  orders two runs correctly.
+- **That the shell figure is same-tree with this one.** It is carried from the
+  2026-09-05 document. Given that a stale table cost this project a wrong
+  conclusion earlier the same day, the shell should be re-derived against this
+  tree before the 7.15 figure is treated as final.
+
+## Open, not yet answered
+
+- Why is `attn_kv_axi` 73,050 LUT? No breakdown exists. That is the single
+  highest-value question this measurement raises.
+- `MAXCTX` is 2048 here against the card's real 262,144, and `POS_W = 16` caps
+  it at 65,536. The card configuration is still not the one measured.
+- The shell has not been re-derived against this tree.
