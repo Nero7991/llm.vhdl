@@ -11,7 +11,56 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-05 (latest): THE KV_BLOCK EXPERIMENT WAS NOT CONTROLLED. TIMING CLAIMS WITHDRAWN.
+### 2026-09-05 (latest): CONTROLLED. KV_BLOCK=4 COSTS 1.309 ns AND THE CONGESTION HYPOTHESIS IS DEAD
+
+**`c4kv4c` landed: the FIRST controlled composed timing comparison in this
+project.** Identical directives, identical tree, same KV=4 synthesis DCP, both
+routes clean, only `KV_BLOCK` differs.
+
+| | `c4nd` KV=32 | `c4kv4c` KV=4 | delta |
+|---|---|---|---|
+| **routed WNS** | **-0.422** | **-1.731** | **-1.309** |
+| **achieved** | **184.4 MHz** | **148.6 MHz** | **-35.8 MHz** |
+| LUT | 263,544 | 249,376 | -14,168 |
+| DSP | 2,177 | 1,953 | -224 |
+| CLB sites | 49,620 (90.3%) | 46,770 (**85.1%**) | -2,850 |
+| routed nets | 3,535,996 | 3,264,841 | -271,155 |
+| F8 mux | 3,961 | 8,425 | **+113%** |
+
+**HEADLINE REINSTATED, WITH A BIGGER NUMBER.** The withdrawn confounded figure
+was 1.120; the true cost is **1.309**, because the confound was *masking* part
+of it -- the other directive set is **0.189 ns BETTER at KV=4** (-1.542 against
+-1.731). **Running the control changed the number, in the unflattering
+direction. A confound is not noise that averages out.**
+
+**THE CONGESTION HYPOTHESIS IS REFUTED, properly this time.** Controlled, the
+maximum routed congestion level is **IDENTICAL in all four directions** (South
+5, East 6, North 5, West 5) while `u_arr`'s DSPs fell **8x**, 14,168 LUT and
+**271,155 routed nets** left the design, and CLB occupancy dropped 5.2 points.
+`u_arr`'s DSP density is not what drives the Level 5/6 windows.
+
+**And the confounded run was directionally WRONG, not merely unattributable.**
+It showed South going 5 -> 6, written up as "congestion got worse"; controlled,
+congestion does not move at all and the 5 -> 6 belonged to the *directive*
+change. "Confounded" is usually heard as "real effect, uncertain size". Here the
+**sign** of the observed change was an artifact.
+
+**Fourth measured case of phys_opt over-promising, and the largest:** -1.123
+phys_opt against -1.731 routed, **0.608 ns** given back. Four cases now span
+0.428 to 0.633 and **not one was optimistic in the routed direction**.
+
+**THE DECISION IS NOW PRICED.** `KV_BLOCK = 4` buys **5.2 points of CLB
+headroom and 224 DSP**, and costs **35.8 MHz**. `rtl/attn_block.vhd:223` and
+`rtl/llama_top.vhd:479` cite the same spec clause 2.1.1 with 32 against 4 and
+nothing checks that they agree. **Which value the model requires is Oren's
+call.**
+
+**Still open:** what actually drives the Level 5/6 congestion -- DSP density is
+eliminated and **nothing has replaced it**; and the composed baseline with all
+directives empty on the current tree, which no surviving run establishes (see
+`docs/debugging/2026-09-05_the-composed-timing-record-is-not-comparable.md`).
+
+### (superseded, kept for the method) THE KV_BLOCK EXPERIMENT WAS NOT CONTROLLED.
 
 **Read this before the entry below it, which is partly withdrawn.**
 

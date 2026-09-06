@@ -244,3 +244,50 @@ prediction tested by an uncontrolled experiment is not falsified, and
 pre-registration makes the resulting verdict feel earned.** Registering the
 prediction and running the experiment are two separate obligations, and doing
 the first well does not discharge the second.
+
+---
+
+# CORRECTION 3, evening: REFUTED, and this time the experiment supports it
+
+**CORRECTION 2 withdrew the refutation as confounded. The control has now run
+and the hypothesis IS refuted.** `c4nd` against `c4kv4c`: identical directives,
+identical tree, both routes clean, only `KV_BLOCK` differs.
+
+Maximum routed congestion level per direction:
+
+| direction | `c4nd` KV=32 | `c4kv4c` KV=4 |
+|---|---|---|
+| South | Level 5 | **Level 5** |
+| East | Level 6 | **Level 6** |
+| North | Level 5 | **Level 5** |
+| West | Level 5 | **Level 5** |
+
+**Identical in every direction.** Meanwhile `u_arr`'s DSPs fell **8x**
+(256 -> 32), **14,168 LUT** left the design, **271,155 routed nets**
+disappeared, and CLB occupancy dropped from 90.3% to 85.1%.
+
+**`u_arr`'s DSP density is not what drives the Level 5/6 windows.** The 100% DSP
+occupancy this document reported is real and is a co-location, not a mechanism.
+
+## The confounded run was directionally WRONG, which is worth more than knowing it was unattributable
+
+CORRECTION 1 reported congestion getting **worse** (South Level 5 -> 6) and
+built a refutation on it. CORRECTION 2 said that was unattributable. The control
+shows it was **wrong**: controlled, congestion does not move at all, and the
+South 5 -> 6 belonged to the **directive** change.
+
+So an uncontrolled experiment did not merely fail to license its conclusion --
+it produced an observation pointing the wrong way. "Confounded" is often heard
+as "the effect is real but the size is uncertain". Here the *sign* of the
+observed change was an artifact of the uncontrolled variable.
+
+## Status
+
+- **Hypothesis: REFUTED**, by a controlled experiment.
+- **What drives the Level 5 and Level 6 windows: OPEN.** DSP density is
+  eliminated and **nothing has replaced it**. No candidate is currently measured.
+- The composed context penalty remains real.
+- SLR crossing remains ruled out; `xcvu33p` is monolithic.
+
+Full controlled measurement:
+`docs/debugging/2026-09-05_kv-block-4-is-a-cost-not-a-lever.md`.
