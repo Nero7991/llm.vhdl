@@ -509,6 +509,9 @@ SRC_FILE = {
     "seq_vec_issue":   ("RTL",  "seq_vec_issue.vhd"),
     "seq_vec_res":     ("RTL",  "seq_vec_res.vhd"),
     "ooc_normadapt":   ("RTL",  "ooc_normadapt_top.vhd"),
+    # --mem only.  The two HBM memory subsystems compose4 otherwise omits.
+    "gdn_state_store": ("RTL",  "gdn_state_store.vhd"),
+    "attn_kv_axi":     ("RTL",  "attn_kv_axi.vhd"),
 }
 
 # A port declaration line.  Deliberately strict: anything in an entity's port
@@ -1077,6 +1080,30 @@ def main():
     # the PnR Tcl passes no generics on its synth_design line.  Default ""
     # preserves every existing number.
     ap.add_argument("--norm-w-image", default="")
+    # --mem.  ADDITIVE and OFF BY DEFAULT, for exactly the reason --wire is:
+    # every published compose4 number was taken WITHOUT these two blocks, and
+    # folding them into the default would silently invalidate all of them.
+    #
+    # WHY IT EXISTS.  compose4_top instantiates `gdn_block` and `attn_block`
+    # directly, so it contains NEITHER HBM memory subsystem: not
+    # `gdn_state_store` (B's recurrent state, what `B_STATE_AXI` switches on)
+    # and not `attn_kv_axi` (C's KV cache interface, what `C_KV_AXI` switches
+    # on).  Those two own the HBM masters the port budget is about, and the
+    # project's "does the full design fit" answer was taken from a top that has
+    # neither.  MEASURED 2026-09-06, `attn_kv_axi` ALONE is 73,050
+    # LUT-as-logic, 16.61% of the device.
+    #
+    # Their ports are EXPORTED rather than wired to B and C, which is what
+    # compose4 already does with B's and C's raw memory seams.  So this
+    # measures CO-RESIDENCY -- what the blocks cost in ONE synthesis context --
+    # and NOT a working memory path.  That distinction is the point: CLAUDE.md
+    # records that the parts do not sum across synthesis contexts, which is
+    # exactly why they have to be measured together rather than added up.
+    ap.add_argument("--mem", action="store_true",
+                    help="also instantiate gdn_state_store and attn_kv_axi, "
+                         "the two HBM memory subsystems compose4 omits. "
+                         "ADDITIVE, OFF by default so every published number "
+                         "taken without them stays reproducible.")
     a = ap.parse_args()
 
     global INSTANCES
@@ -1084,6 +1111,18 @@ def main():
                   (dict(i[3], CB_STYLE='"%s"' % a.cb_style)
                    if i[0] == "a_eng" else i[3]))
                  for i in INSTANCES]
+    if a.mem:
+        # Shape matched to compose4's own C instance so the two are comparable.
+        # gdn_state_store's DEFAULTS are already the real card shape
+        # (VAL_HEADS 32, DIM 128, LAYERS 24, KEY_HEADS 16, KCONV 4), confirmed
+        # against llama_top's own generic map, so it takes none.
+        INSTANCES = INSTANCES + [
+            ("b_state", "gdn_state_store", "RTL", {}),
+            ("c_kv",    "attn_kv_axi",     "RTL", {"HEAD_DIM": "256",
+                                                   "KV_BLOCK": "32",
+                                                   "N_KVH": "4",
+                                                   "LAYERS": "8"}),
+        ]
     if a.norm_w_image:
         INSTANCES = [(i[0], i[1], i[2],
                       (dict(i[3], NORM_W_IMAGE='"%s"' % a.norm_w_image)
