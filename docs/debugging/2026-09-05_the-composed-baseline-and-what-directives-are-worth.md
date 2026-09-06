@@ -120,3 +120,58 @@ future: a WNS now carries the netlist it belongs to.
   the current tree, and per the recorded LEVERC48 result two points do not give
   the shape of anything.
 - **The 0.422 ns to 200 MHz.** Nothing here closes it.
+
+---
+
+# THE 2x2 IS COMPLETE, and directives are worth 0.473 ns
+
+`c4ewr` landed: **KV=32 with the `ExploreWithRemap`/`ExtraTimingOpt`/
+`AggressiveExplore`/`Explore` set. Routed WNS -0.164, 193.6 MHz.** Route clean
+(`nets=3536037 errors=0 unrouted=0 partial=0`), fingerprint `bram=253.5
+dsp=2177`, so it is the same netlist as `c4base`, `c4nd` and `c4ewr` alike.
+
+**This is the best composed figure ever measured on this project, by 0.258 ns.**
+
+| routed WNS | **dirs NONE** | **dirs A** `ExtraNetDelay_high`+`NoTimingRelaxation` | **dirs B** `ExploreWithRemap`+`ExtraTimingOpt`+`Explore` |
+|---|---|---|---|
+| **KV=32** | **-0.637** (177.4 MHz) | -0.422 (184.4 MHz) | **-0.164 (193.6 MHz)** |
+| **KV=4** | not run | -1.731 (148.6 MHz) | -1.542 (152.9 MHz) |
+
+## The effects, and they are very nearly additive
+
+| effect | value |
+|---|---|
+| dirs B vs dirs A, at KV=32 | **+0.258** |
+| dirs B vs dirs A, at KV=4 | **+0.189** |
+| dirs B vs NO directives, at KV=32 | **+0.473** |
+| `KV_BLOCK` 32 -> 4, at dirs A | **-1.309** |
+| `KV_BLOCK` 32 -> 4, at dirs B | **-1.378** |
+| **interaction** | **-0.069** |
+
+**The interaction is -0.069 ns, 5% of the `KV_BLOCK` effect.** So the two levers
+are essentially independent and may be reasoned about separately -- which is a
+measured licence, not an assumption, and it is exactly what three cells could
+not have told us. The earlier entry's `KV_BLOCK` cost of 1.309 ns is confirmed
+at a second directive setting.
+
+## What this changes
+
+**Directives are worth 0.473 ns on this design**, not the 0.020 ns "loss" the
+withdrawn `impl_pb` comparison implied. That is more than the entire remaining
+gap to 200 MHz.
+
+**The composed design is 0.164 ns from 200 MHz, not 0.422.** The distance was
+overstated by a factor of 2.6 by the previous best-known configuration.
+
+This is recorded and then **deliberately set down**. Oren's direction is to
+prioritise inference and optimise afterwards, and the number that matters for
+that is the one already acted on: the full-engine build targets
+`FK33_ENG_CORE_MHZ=175`, which every cell in the KV=32 row clears comfortably.
+The value of this result is that **200 MHz now looks reachable later**, so the
+clock override is a schedule decision rather than a permanent concession.
+
+**Caveat, and it is the one this document exists to enforce:** every figure here
+is `compose4_top`, the UNWIRED composition. The WIRED top (`wire4`, BRAM 327.5)
+is a different netlist and its -0.502 was measured with directives that were
+never recorded. **`wire4` has never been run with dirs B.** Nothing here
+licenses a claim about the design that will actually be built.
