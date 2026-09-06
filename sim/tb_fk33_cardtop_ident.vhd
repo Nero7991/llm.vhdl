@@ -371,6 +371,21 @@ entity tb_fk33_cardtop_ident is
     -- therefore NOT re-derived for the tiered arm: the rows that set this
     -- true carry the SAME EXP_* values as their flat siblings.
     B_STATE_AXI : boolean := false;
+
+    -- D1/D2, ADDED BY tools/gen_cardtop.py.  llama_top's own bench has no such
+    -- generic, because llama_top has no card A binding to select.  false = the
+    -- `ga_real` arm this bench's landmarks were measured on; true = `ga_desc`,
+    -- the card's descriptor-plane binding.
+    --
+    -- THE LANDMARKS ARE NOT RE-DERIVED FOR THE true ARM AND MUST NOT BE.
+    -- `sim/tb_llama_top_bstate.vhd` states the rule this follows: re-deriving
+    -- a new arm's expected values from a run of that arm is a round trip
+    -- against itself, which this project has on record passing for a
+    -- wrong-but-consistent implementation (the `m7 mutant`).  Both arms must
+    -- therefore compute the SAME numbers, which is why the true arm drives the
+    -- REAL `matvec_int4_desc_axi` and not a behavioural model of it.
+    A_DESC : boolean := false;
+    A_N_JOBS : positive := 311;
     -- ==================================================================
     -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
     -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
@@ -1331,6 +1346,7 @@ begin
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
+      A_DESC => A_DESC, A_N_JOBS => A_N_JOBS,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
       C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,
