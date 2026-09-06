@@ -289,3 +289,139 @@ The generalisable form, and it is not "check the directives":
 parameters, not from the intent of whoever launched them.** Both `C4_DIRECTIVES`
 sentinels were sitting in the logs the entire time, one line each, and the
 comparison was made from memory of what the run was *for*.
+
+---
+
+# THE CONTROLLED RESULT, 2026-09-05 evening: `c4nd` vs `c4kv4c`
+
+**`c4kv4c` landed. This is the first controlled composed timing comparison in
+the project.** Identical directives, identical tree, the same KV=4 synthesis
+DCP, both routes clean. Only `KV_BLOCK` differs.
+
+```
+c4nd    C4_DIRECTIVES opt='' place='ExtraNetDelay_high' physopt='AggressiveExplore' route='NoTimingRelaxation'
+c4kv4c  C4_DIRECTIVES opt='' place='ExtraNetDelay_high' physopt='AggressiveExplore' route='NoTimingRelaxation'
+c4nd    C4_ROUTE_STATUS nets=3535996 errors=0 unrouted=0 partial=0
+c4kv4c  C4_ROUTE_STATUS nets=3264841 errors=0 unrouted=0 partial=0
+```
+
+| | `c4nd` KV=32 | `c4kv4c` KV=4 | delta |
+|---|---|---|---|
+| **routed WNS** | **-0.422** | **-1.731** | **-1.309** |
+| **achieved** | **184.4 MHz** | **148.6 MHz** | **-35.8 MHz** |
+| routed WHS | +0.009 | +0.009 | 0 |
+| LUT | 263,544 | 249,376 | -14,168 |
+| FF | 245,425 | 242,243 | -3,182 |
+| CARRY8 | 12,505 | 10,601 | -1,904 |
+| F7 mux | 20,212 | 19,532 | -680 |
+| **F8 mux** | 3,961 | **8,425** | **+113%** |
+| BRAM | 253.5 | 253.5 | **0** |
+| URAM | 0 | 0 | 0 |
+| **DSP** | 2,177 | **1,953** | **-224** |
+| **CLB sites** | 49,620 (90.3%) | **46,770 (85.1%)** | -2,850 |
+| routed nets | 3,535,996 | 3,264,841 | -271,155 |
+
+## The headline is REINSTATED, with a bigger number and a valid method
+
+**`KV_BLOCK = 4` costs 1.309 ns on the composed design, 184.4 -> 148.6 MHz.**
+
+The withdrawn confounded figure was **1.120**. **The true cost is LARGER**,
+because the confounding had been *masking* part of it: the directive set
+`c4kv4` happened to use is **better at KV=4** than `c4nd`'s is.
+
+| KV_BLOCK | `''`/`ExtraNetDelay_high`/`AggressiveExplore`/`NoTimingRelaxation` | `ExploreWithRemap`/`ExtraTimingOpt`/`AggressiveExplore`/`Explore` |
+|---|---|---|
+| 32 | **-0.422** | not run |
+| 4 | **-1.731** | **-1.542** |
+
+So the directive effect at KV=4 is **0.189 ns**, and it points the opposite way
+from what the confounded comparison implicitly assumed. **Running the control
+did not merely make the claim defensible, it changed the number by 0.189 ns and
+in the unflattering direction.** A confound is not noise that averages out.
+
+## The congestion hypothesis is REFUTED, now properly
+
+Maximum routed congestion level per direction, **controlled**:
+
+| direction | `c4nd` KV=32 | `c4kv4c` KV=4 |
+|---|---|---|
+| South | Level 5 | **Level 5** |
+| East | Level 6 | **Level 6** |
+| North | Level 5 | **Level 5** |
+| West | Level 5 | **Level 5** |
+
+**Identical. Every direction, every level.**
+
+`u_arr`'s DSPs fell **8x** (256 -> 32), **14,168 LUT** left the design,
+**271,155 routed nets** disappeared, and CLB occupancy dropped **5.2 points** --
+and the congestion did not move by a single level in any direction.
+
+**So `docs/debugging/2026-09-05_composed-context-penalty-is-cattn-congestion.md`
+is refuted, and this time the experiment supports the verdict.** `u_arr`'s DSP
+density is not what drives the Level 5/6 windows.
+
+**And the earlier confounded run had this wrong in a way that mattered.** It
+showed South going **5 -> 6** and that was written up as "congestion got worse".
+Controlled, congestion is **unchanged**; the 5 -> 6 belonged to the *directive*
+change. The confounded experiment produced a directionally wrong observation,
+not merely an unattributable one.
+
+## The critical path moves out of the array, confirmed under control
+
+| run | worst path source | destination |
+|---|---|---|
+| `c4nd` | `c_attn/u_arr/p_reg_reg[18][0]/C` | `c_attn/u_arr/er_r_reg/D` |
+| `c4kv4c` | `c_attn/vhdr_reg[48]/C` | `c_attn/vref_r_reg[3][4]/D` |
+
+Same move the confounded run showed, now attributable. At KV=32 the critical
+path is **inside** the MAC array; at KV=4 it is in `c_attn`'s header/reference
+logic **outside** it. The mechanism is the F8 mux count: **+113%**. A narrower
+array does the same work in more steps, and the muxing that serialises it
+becomes the longer path.
+
+## Fourth measured case of phys_opt over-promising
+
+`c4kv4c` phys_opt **-1.123**, routed **-1.731**: **0.608 ns given back**, the
+largest yet recorded on this part.
+
+| design | phys_opt | routed | given back |
+|---|---|---|---|
+| `c4nd` | +0.006 | -0.422 | 0.428 |
+| C's mover | -0.805 | -1.438 | 0.633 |
+| `c4kv4` | -1.004 | -1.542 | 0.538 |
+| **`c4kv4c`** | **-1.123** | **-1.731** | **0.608** |
+
+Four cases, range 0.428 to 0.633, **never once optimistic in the routed
+direction**. `c4nd` again shows why it matters: +0.006 with 0 failing endpoints
+reads as *meeting* 200 MHz.
+
+## The decision, now priced
+
+| | `KV_BLOCK = 32` | `KV_BLOCK = 4` |
+|---|---|---|
+| composed fmax | **184.4 MHz** | 148.6 MHz |
+| CLB occupancy (engine alone) | 90.3% | **85.1%** |
+| total LUT with shell | 314,543 (71.5%) | **300,375 (68.3%)** |
+| total DSP with shell | 2,177 (75.6%) | **1,953 (67.8%)** |
+| required packing to fit | 5.72 LUT/CLB | **5.47 LUT/CLB** |
+
+**`KV_BLOCK = 4` buys 5.2 points of CLB headroom and 224 DSP, and costs
+35.8 MHz.**
+
+`rtl/attn_block.vhd:223` and `rtl/llama_top.vhd:479` cite **the same spec clause
+2.1.1** with different values and **nothing checks that they agree**. That
+disagreement is now priced. Which value the model requires is a question about
+the model, and it is Oren's.
+
+## Open, not yet answered
+
+- **Which `KV_BLOCK` is correct.** Unchanged; this prices the choice, it does
+  not make it.
+- **What actually drives the Level 5/6 congestion.** DSP density is now properly
+  eliminated and **no candidate has replaced it.**
+- **The composed baseline with all directives empty on the current tree.** Still
+  unmeasured; see
+  `docs/debugging/2026-09-05_the-composed-timing-record-is-not-comparable.md`.
+  Both runs here used a directive set, so neither is a baseline.
+- Whether an intermediate `KV_BLOCK` of 8 or 16 sits better. Two points do not
+  give the shape of a curve.
