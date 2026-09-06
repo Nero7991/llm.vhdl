@@ -11,7 +11,63 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-05 (latest): CONTROLLED. KV_BLOCK=4 COSTS 1.309 ns AND THE CONGESTION HYPOTHESIS IS DEAD
+### 2026-09-05 (latest): THE REAL BASELINE IS -0.637, AND "DIRECTIVES LOSE" IS REFUTED
+
+Three composed runs, **all routes clean**, all on ONE netlist
+(`bram=253.5 dsp=2177`; the KV=4 cell is `dsp=1953`). Full writeup:
+`docs/debugging/2026-09-05_the-composed-baseline-and-what-directives-are-worth.md`.
+
+| run | KV | directives | routed WNS | fmax |
+|---|---|---|---|---|
+| `c4base` | 32 | **all four empty** | **-0.637** | 177.4 MHz |
+| **`c4nd`** | 32 | `''`/`ExtraNetDelay_high`/`AggressiveExplore`/`NoTimingRelaxation` | **-0.422** | **184.4 MHz** |
+| `c4kv4c` | **4** | *(same as `c4nd`)* | -1.731 | 148.6 MHz |
+
+**Two controlled one-variable results now stand on the same netlist:**
+**directives are worth +0.215 ns**, and **`KV_BLOCK` 32 -> 4 costs 1.309 ns.**
+
+**"Directives lose" is REFUTED.** That verdict came from comparing `c4nd`'s
+-0.422 against `impl_pb`'s -0.402, a run whose artifacts do not exist.
+**Best reproducible composed figure: -0.422 (184.4 MHz). Distance to 200 MHz:
+0.422 ns.**
+
+**DIRECTIVES MOVE THE CONGESTION; `KV_BLOCK` DOES NOT.**
+
+| run | South | East | North | West |
+|---|---|---|---|---|
+| `c4base` (none) | **L6** | L6 | **L6** | *(no row)* |
+| `c4nd` (directives) | **L5** | L6 | **L5** | L5 |
+| `c4kv4c` (directives, KV=4) | L5 | L6 | L5 | L5 |
+
+`ExtraNetDelay_high` placement drops South and North a full level. Cutting
+`u_arr`'s DSPs 8x drops nothing. **First positive evidence since the DSP-density
+hypothesis died: the congestion responds to PLACEMENT, not to how much
+arithmetic sits in the congested block.** Any further work shrinking `c_attn` to
+relieve congestion is aimed at the wrong variable, measured twice now.
+
+**THE WITHDRAWN -0.402 IS QUANTITATIVELY SUSPICIOUS.** It claimed -0.402 with
+directives empty; the current tree measures **-0.637** under the same
+conditions. So the vanished baseline was **0.235 ns BETTER** than anything
+reproducible today. Either **the design regressed 0.235 ns in a day and nothing
+detected it**, or `impl_pb` was a different netlist. Artifacts are gone, so
+neither can be checked. The new `C4_TIMING` fingerprint makes this ambiguity
+impossible in future.
+
+**TOOLING FIX LANDED AND PROVED ITSELF ON ITS FIRST RUN.** `C4_TIMING` now
+carries `bram`, `dsp`, `lut` and the directives on the verdict line.
+Confirming `c4base` shares `c4nd`'s netlist took **one grep** instead of the
+cross-referencing that had already failed four times. Teeth-tested in `tclsh`
+across five states; the legacy regex still matches. The Tcl's instruction to
+compare against the unrecoverable -0.402 is retired.
+
+**IN FLIGHT: `c4ewr`** completes a 2x2. The `ExploreWithRemap`/`ExtraTimingOpt`/
+`AggressiveExplore`/`Explore` set is **0.189 ns better at KV=4** and has never
+been run at KV=32. If that carries over, the composed design lands near -0.233
+and the gap to 200 MHz roughly halves. Four cells also allow the directive and
+`KV_BLOCK` effects to be checked for **additivity** rather than assumed; three
+cells cannot detect an interaction.
+
+### (superseded) CONTROLLED. KV_BLOCK=4 COSTS 1.309 ns AND THE CONGESTION HYPOTHESIS IS DEAD
 
 **`c4kv4c` landed: the FIRST controlled composed timing comparison in this
 project.** Identical directives, identical tree, same KV=4 synthesis DCP, both
