@@ -63,9 +63,23 @@ set nthread [envdef C4_THREADS 8]
 # change still describes what it measured.  A directive is passed ONLY when its
 # variable is non-empty.
 #   MEASURED with all four empty: routed core_clk WNS -0.402 (185.1 MHz) on the
-#   shipping config, `impl_pb`, 2026-09-04.  That is the baseline any directive
-#   run must be compared against, and it must be compared against THAT run and
-#   not against the +0.346 synthesis figure, which is a different stage.
+#   shipping config, `impl_pb`, 2026-09-04.
+#
+#   AMENDED 2026-09-05: DO NOT COMPARE AGAINST THAT NUMBER.  No `impl_pb`
+#   artifact survives anywhere in the repo or the session scratch, so its
+#   netlist cannot be identified, and the tree changed the following day.  The
+#   instruction that used to stand here -- "that is the baseline any directive
+#   run must be compared against" -- sent every later run to an unverifiable
+#   reference, and `c4nd`'s -0.422 was called a directive LOSS against it on
+#   that basis.  That verdict is withdrawn in both directions.
+#
+#   There is currently NO measured composed baseline with all four empty on the
+#   current tree.  Anything calling itself one is either a different netlist
+#   (`wire4` carries 327.5 BRAM against `c4nd`'s 253.5) or unrecoverable.
+#   See docs/debugging/2026-09-05_the-composed-timing-record-is-not-comparable.md
+#
+#   The stage caveat still stands: never compare a routed figure against a
+#   synthesis one such as the +0.346.
 set optdir   [envdef C4_OPT_DIR     ""]
 set placedir [envdef C4_PLACE_DIR   ""]
 set physdir  [envdef C4_PHYSOPT_DIR ""]
@@ -117,6 +131,12 @@ proc emit_util {tag phase outdir} {
         dsp       [uget $u "DSPs"] \
         clb       [uget $u "CLB"]]
     puts "C4_UTIL $tag $phase $row"
+    # Stash for the C4_TIMING fingerprint.  A WNS is only comparable against
+    # another WNS from the SAME netlist, and BRAM/DSP are the discriminator
+    # because they are fixed at synthesis and no implementation directive moves
+    # them.  Keeping them one line away from the verdict is what let four
+    # composed figures be compared across three different netlists.
+    set ::c4_last_util $row
     return $row
 }
 
@@ -323,6 +343,7 @@ number below would be meaningless."
 
     set t0 [clock seconds]
     puts "C4_DIRECTIVES opt='$optdir' place='$placedir' physopt='$physdir' route='$routedir'"
+    set ::c4_dirs "|$optdir|$placedir|$physdir|$routedir"
     eval opt_design [c4_dir_args $optdir]
     puts "C4_OPT_SECONDS [expr {[clock seconds] - $t0}]"
     emit_util $tag opt $outdir
@@ -425,7 +446,16 @@ number below would be meaningless."
 
     set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
     set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
-    puts "C4_TIMING wns=$wns whs=$whs"
+    # FINGERPRINT ON THE VERDICT LINE.  Everything after whs is redundant with
+    # C4_UTIL and C4_DIRECTIVES; it is repeated here so that comparing two runs
+    # is ONE grep and an incomparable pair is visible without a second lookup.
+    # Guarded so a stage that never called emit_util still prints the verdict.
+    set fp ""
+    if {[info exists ::c4_last_util]} {
+        catch { append fp " bram=[dict get $::c4_last_util bram] dsp=[dict get $::c4_last_util dsp] lut=[dict get $::c4_last_util lut]" }
+    }
+    if {[info exists ::c4_dirs]} { append fp " dirs='$::c4_dirs'" }
+    puts "C4_TIMING wns=$wns whs=$whs$fp"
     foreach c [get_clocks] {
         set p [get_timing_paths -to [get_clocks $c] -delay_type max -max_paths 1]
         if {[llength $p]} {
