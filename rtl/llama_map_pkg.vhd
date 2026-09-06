@@ -239,6 +239,24 @@ package body llama_map_pkg is
     --   py    64        1         0        64     128       0
     --   vhd   64        4         2       256     512     128     DIVERGE
     --
+    -- CORRECTION 2026-09-06: THE SILENT HALF OF THIS IS FIXED, AND HAS BEEN
+    -- SINCE 36 MINUTES AFTER THIS COMMENT WAS WRITTEN.  `bb2230d` (08:38)
+    -- recorded the trap; `51bf591` (09:14) gave the Python mirror an explicit
+    -- refusal, and nobody came back to say so here.  `mk_shape_scaled` in
+    -- `tools/gen_layer_program.py` now RAISES at `attn_hd = 64` rather than
+    -- emitting two zero-sized regions, so the DIVERGENCE stands but the
+    -- SILENCE does not: the table below is still the state of the two
+    -- branches, and the "emits a plan with TWO ZERO-SIZED REGIONS instead of
+    -- refusing" sentence above is WITHDRAWN.
+    --
+    -- WHY IT MATTERS NOW, and why this correction is not bookkeeping.  A
+    -- caller has genuinely arrived that needs `attn_hd > 32`: `C_KV_AXI`
+    -- demands HEAD_DIM 64 (see `rtl/llama_top.vhd`'s declaration), so subsystem
+    -- C cannot reach HBM at any shape below it.  The Python refusal's own
+    -- docstring names the remedy -- "transcribe the VHDL branch and check it
+    -- against the VHDL, then remove this raise" -- and NOTHING cross-checks
+    -- the two today; the table below was produced by hand.
+    --
     -- So the ten shapes anyone has measured (all at attn_hd 16 or 32) are
     -- byte-identical between the two, and the D-table byte-identity argument
     -- that rests on them is unaffected.  What is NOT safe is
