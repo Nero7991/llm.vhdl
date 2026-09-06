@@ -8,11 +8,13 @@
 -- This is the CARD's top level.  llama_top stays the untouched oracle; see
 -- docs/debugging/2026-08-31_cardtop-design-note.md, decision D1.
 --
--- APPLIED HERE:  D3, the region file becomes sized per-region BRAM banks.
--- NOT YET APPLIED:  D1/D2, the A binding to matvec_int4_desc_axi via
--- rtl/a_desc_adapter.vhd; and D4, the w_active gate on the gain loader.
--- Until those land this top is llama_top with a different memory, which is
--- exactly what makes it testable against llama_top's own benches TODAY.
+-- APPLIED HERE:  D3, the region file becomes sized per-region BRAM banks;
+-- and D1/D2, the A binding to matvec_int4_desc_axi via rtl/a_desc_adapter.vhd
+-- and rtl/a_job_counter.vhd, as the `ga_desc` branch behind the A_DESC
+-- generic.  A_DESC DEFAULTS TO FALSE, so this top is still llama_top with a
+-- different memory unless a build asks otherwise -- which is what keeps it
+-- testable against llama_top's own benches.  The card build sets A_DESC true.
+-- NOT YET APPLIED:  D4, the w_active gate on the gain loader.
 --
 -- rtl/llama_top.vhd
 -- THE INTEGRATION TOP LEVEL.  One token, N transformer blocks, one residual
@@ -714,7 +716,26 @@ entity fk33_llama_top is
     -- card, hr_data reads zero and the banks can infer BRAM.  The proven and
     -- the built configuration therefore differ by exactly one output port
     -- that no card logic reads.  Oren's decision, 2026-09-02.
-    HOST_WINDOW : boolean := true
+    HOST_WINDOW : boolean := true;
+
+    -- D1/D2, ADDED BY tools/gen_cardtop.py.  false = llama_top's `ga_real`,
+    -- driving `matvec_int4` from a FABRICATED weight base; that is the
+    -- configuration in which identity with llama_top is PROVEN, and it is the
+    -- default so the identity bench keeps meaning what it says.  true = the
+    -- card: `ga_desc`, which drives the descriptor plane of
+    -- `matvec_int4_desc_axi` living outside this top in fk33_engine.
+    --
+    -- THE TWO ARE NOT EQUIVALENT AND MUST NOT BE READ AS A TUNING CHOICE.
+    -- `ga_real` bounds every job to A_SUB_BEATS per port and REFUSES anything
+    -- larger; llama_top's own arithmetic at Qwen3.5-9B puts the FFN gate job
+    -- 1536x over that cap.  false cannot run the shipping model.  true can.
+    A_DESC : boolean := false;
+
+    -- Descriptors the arena was sized for; must match a_desc_adapter's and
+    -- a_job_counter's N_JOBS and the arena tools/gen_layer_program.py emits.
+    -- DERIVED at the 9B shape: 311 A jobs x 512 B = 159,232 B, DMA'd once per
+    -- model load rather than once per token.
+    A_N_JOBS : positive := 311
   );
   port(
     clk : in std_logic;
@@ -930,7 +951,49 @@ entity fk33_llama_top is
     err_lost_beat : out std_logic;   -- an un-stallable producer beat dropped
     err_gate_drop : out std_logic;   -- the lock refused a region write
     err_unit_stub : out std_logic;   -- a stub unit produced a result
-    err_e_coll    : out std_logic    -- OP_E_COLL issued at NCARDS=1
+    err_e_coll    : out std_logic;   -- OP_E_COLL issued at NCARDS=1
+
+    -- ==================================================================
+    -- D1/D2.  THE CARD'S A-FACING SURFACE.  ADDED BY tools/gen_cardtop.py.
+    --
+    -- These are always PRESENT and only driven when A_DESC is true, because
+    -- a VHDL entity cannot have a conditional port clause.  With A_DESC
+    -- false the `gnd_a` generate ties every output off, so the unused
+    -- configuration presents constants rather than 'U'.
+    --
+    -- EVERY ONE OF THESE ALREADY HAS A COUNTERPART ON fk33_engine, and the
+    -- widths are taken from there rather than chosen here:
+    --   a_x_*        -> d_x_we / d_x_waddr(15..0) / d_x_wdata(15..0)
+    --   a_y_*        -> d_y_we / d_y_addr(15..0) / d_y_data(48*64-1..0)
+    --                   / d_y_mask(47..0) / d_y_exp(31..0)
+    --   a_job_done   -> d_job_done      a_job_err -> d_job_err
+    --   a_job_index  -> job_index(31..0)
+    --   a_aw/a_w/a_b -> the engine's AXI-Lite control map at 0x12000
+    -- A_ROWS_IF is 48 on the card, which is what makes the y widths agree.
+    -- ==================================================================
+    a_arena_base  : in  std_logic_vector(39 downto 0) := (others => '0');
+    a_awaddr      : out std_logic_vector(7 downto 0);
+    a_awvalid     : out std_logic;
+    a_awready     : in  std_logic := '0';
+    a_wdata       : out std_logic_vector(31 downto 0);
+    a_wstrb       : out std_logic_vector(3 downto 0);
+    a_wvalid      : out std_logic;
+    a_wready      : in  std_logic := '0';
+    a_bresp       : in  std_logic_vector(1 downto 0) := "00";
+    a_bvalid      : in  std_logic := '0';
+    a_bready      : out std_logic;
+    a_job_index   : out std_logic_vector(31 downto 0);
+    a_jobs_issued : out std_logic_vector(31 downto 0);
+    a_x_we        : out std_logic;
+    a_x_waddr     : out std_logic_vector(15 downto 0);
+    a_x_wdata     : out std_logic_vector(15 downto 0);
+    a_y_we        : in  std_logic := '0';
+    a_y_addr      : in  std_logic_vector(15 downto 0) := (others => '0');
+    a_y_data      : in  std_logic_vector(A_ROWS_IF*64-1 downto 0) := (others => '0');
+    a_y_mask      : in  std_logic_vector(A_ROWS_IF-1 downto 0) := (others => '0');
+    a_y_exp       : in  std_logic_vector(31 downto 0) := (others => '0');
+    a_job_done    : in  std_logic := '0';
+    a_job_err     : in  std_logic := '0'
   );
 end entity;
 
@@ -3476,7 +3539,302 @@ begin
   -- sim/run_matvec.sh against its own oracle; what is verified HERE is the
   -- seam.
   -- ======================================================================
-  ga_real : if not A_BEHAV generate
+  -- ======================================================================
+  -- D1/D2.  UNIT A, BOUND TO THE CARD'S DESCRIPTOR-PLANE ENGINE.
+  -- GENERATED BY tools/gen_cardtop.py.  llama_top does not have this block.
+  --
+  -- WHY IT EXISTS, and it is not "a different unit for the same job".
+  -- `ga_real` drives `matvec_int4` from a FABRICATED weight base
+  -- (`A_MEM_BASE + j_step * A_JOB_STRIDE`) and its own header says a job that
+  -- fits "is still reading whatever happens to be at a made-up address".  It
+  -- also BOUNDS each job to A_SUB_BEATS per port and refuses anything larger,
+  -- and llama_top's own DERIVED figure at the shipping Qwen3.5-9B shape is
+  -- that the FFN gate job needs 393,216 beats per port against a cap of 256:
+  -- short by 1536x.  So `ga_real` cannot run the real model, by construction.
+  --
+  -- This branch replaces the fabrication with the card's descriptor plane.
+  -- `matvec_int4_desc_axi` lives OUTSIDE this top, in hw/fk33/rtl/fk33_engine
+  -- .vhd, and reaches HBM through its own 28 read masters.  What crosses the
+  -- boundary is exactly what fk33_engine already exposes and has exposed
+  -- since before this block existed: `job_index` in, `d_x_*` in, `d_y_*` out,
+  -- `d_job_done`/`d_job_err` out, plus its AXI-Lite control map at 0x12000.
+  --
+  -- WHAT THIS BRANCH KEEPS FROM `ga_real`, verbatim in behaviour:
+  --   S_XRD    reads the source region and streams x into A, with the same
+  --            two-cycle pipeline offset (`k-2`), because `el_rdata` is a
+  --            registered read and the card changes nothing about that.
+  --   S_SDRAIN waits for the SAMPLER and not for A on a FLG_TO_SMP job, for
+  --            the reason `ga_real` states: done at A would let the next go
+  --            clear the FIFO with beats still in it, a lost result that no
+  --            counter shows.
+  --   S_DRAIN  writes the row buffer back through uw_*.
+  --   S_DONE   holds `dn` as a LEVEL until `u_ack`.  Seam rule (2).
+  --
+  -- WHAT IT DROPS, and why each is safe:
+  --   S_CB/S_CBGAP   the 16-entry codebook write.  The card's unit takes its
+  --                  codebook from the descriptor, so there is nothing to
+  --                  push and no gap cycle to wait.
+  --   S_EXP          the shape computation AND its capacity refusal.  Both
+  --                  exist only to serve the fabricated base; the descriptor
+  --                  carries n_rows/n_cols/shift/w_exp/x_exp/out_mode and the
+  --                  real w_base/w_beats/s_base/s_beats.
+  --   m_ar*/m_r*     the single 128-bit weight master.  A owns 28 of its own.
+  --
+  -- THE ONE ORDERING RULE.  A must not be started until every x element of
+  -- this job has been written, because `d_x_we` has no back-pressure and A
+  -- begins reading x on GO.  So the adapter's `u_start` is NOT D's `u_start`:
+  -- it is asserted by S_GO, after S_XRD has run to completion.  Wiring D's
+  -- issue straight to the adapter would start A against a half-written x.
+  -- ======================================================================
+  ga_desc : if A_DESC generate
+    signal rdy   : std_logic := '1';
+    signal dn    : std_logic := '0';
+    signal uerr  : std_logic := '0';
+    signal ep    : unsigned(EPOCH_W-1 downto 0) := (others => '0');
+    signal yexp  : signed(EXP_W-1 downto 0) := (others => '0');
+    signal j_smp : std_logic := '0';
+    signal smp_base : unsigned(31 downto 0) := (others => '0');
+    signal rstn_s   : std_logic;
+    -- The adapter handshake.  Named apart from the D-facing rdy/dn/uerr on
+    -- purpose: this FSM is the adapter's CLIENT and D's SERVER, and conflating
+    -- the two sets is how a start reaches A one job early.
+    signal ad_start : std_logic := '0';
+    signal ad_ready : std_logic;
+    signal ad_done  : std_logic;
+    signal ad_err   : std_logic;
+    signal ad_ack   : std_logic := '0';
+    signal ad_epoch : std_logic_vector(EPOCH_W-1 downto 0);
+    signal jc_index : std_logic_vector(15 downto 0);
+    signal jc_err   : std_logic;
+    signal jc_retire : std_logic := '0';
+    signal xw_we    : std_logic := '0';
+    signal xw_addr  : std_logic_vector(15 downto 0) := (others => '0');
+    signal xw_data  : std_logic_vector(15 downto 0) := (others => '0');
+  begin
+    rstn_s <= not rst;
+
+    u_ready(U_A) <= rdy;
+    u_done(U_A)  <= dn;
+    -- `jc_err` is sticky in a_job_counter and means the token issued more A
+    -- jobs than the arena was sized for.  That is a descriptor-plane fault and
+    -- it must reach D, not just a status register nobody polls.
+    u_err(U_A)   <= uerr or jc_err;
+    u_done_epoch((U_A+1)*EPOCH_W-1 downto U_A*EPOCH_W) <= std_logic_vector(ep);
+    u_y_exp((U_A+1)*EXP_W-1 downto U_A*EXP_W) <= std_logic_vector(yexp);
+
+    a_x_we    <= xw_we;
+    a_x_waddr <= xw_addr;
+    a_x_wdata <= xw_data;
+
+    -- `go` is the token boundary, the same instant `ga_real` uses to zero
+    -- smp_base.  The counter is reset per token because the arena is indexed
+    -- per token: descriptor n is the n'th A job OF THIS TOKEN.
+    u_jc : entity work.a_job_counter
+      generic map (N_JOBS => A_N_JOBS)
+      port map (
+        clk => clk, rst => rst,
+        tok_start  => go,
+        job_retire => jc_retire,
+        u_index    => jc_index,
+        job_index  => a_job_index,
+        err        => jc_err);
+
+    u_ad : entity work.a_desc_adapter
+      generic map (
+        ADDR_W      => 40,
+        LITE_AW     => 8,
+        DESC_STRIDE => 512,
+        N_JOBS      => A_N_JOBS,
+        EPOCH_W     => EPOCH_W)
+      port map (
+        clk => clk, rstn => rstn_s,
+        arena_base   => a_arena_base,
+        u_start      => ad_start,
+        u_index      => jc_index,
+        u_ready      => ad_ready,
+        u_done       => ad_done,
+        u_err        => ad_err,
+        u_ack        => ad_ack,
+        job_epoch    => ep,
+        u_done_epoch => ad_epoch,
+        m_awaddr  => a_awaddr,  m_awvalid => a_awvalid, m_awready => a_awready,
+        m_wdata   => a_wdata,   m_wstrb   => a_wstrb,   m_wvalid  => a_wvalid,
+        m_wready  => a_wready,
+        m_bresp   => a_bresp,   m_bvalid  => a_bvalid,  m_bready  => a_bready,
+        job_done  => a_job_done, job_err  => a_job_err,
+        jobs_issued => a_jobs_issued);
+
+    ap : process(clk) is
+      type st_t is (S_IDLE, S_XRD, S_GO, S_RUN, S_SDRAIN, S_DRAIN, S_DONE);
+      variable st : st_t := S_IDLE;
+      variable yb : buf_t(0 to A_MAXROWS-1);
+      variable j_src, j_dst, j_off, j_rows, j_cols : natural := 0;
+      variable k, r : natural := 0;
+      variable a    : natural;
+    begin
+      if rising_edge(clk) then
+        ur_en(U_A) <= '0';
+        uw_en(U_A) <= '0';
+        xw_we      <= '0';
+        smp_be_we  <= '0';
+        jc_retire  <= '0';
+        ad_ack     <= '0';
+
+        if rst = '1' then
+          st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
+          smp_run <= '0'; smp_base <= (others => '0'); j_smp <= '0';
+          ad_start <= '0';
+        else
+          if go = '1' then smp_base <= (others => '0'); end if;
+
+          if job_issue = '1' and to_integer(job_unit) = U_A then
+            j_src  := to_integer(job_src(6 downto 0));
+            j_dst  := to_integer(job_dst(6 downto 0));
+            j_off  := to_integer(job_dst_off(15 downto 0));
+            j_rows := to_integer(job_n_rows(15 downto 0));
+            j_cols := to_integer(job_n_cols(15 downto 0));
+            ep     <= job_epoch;
+            rdy    <= '0';
+            k      := 0;
+            st     := S_XRD;
+            if SMP_EN then
+              j_smp <= job_flags(1);          -- FLG_TO_SMP, llama_map_pkg:102
+            else
+              j_smp <= '0';
+            end if;
+          end if;
+
+          -- The logits egress seam, producer half.  Identical to `ga_real`:
+          -- the card returns the SAME beat shape on d_y_*, so this is a
+          -- rename of the source and not a second model of the FIFO.
+          if a_y_we = '1' and j_smp = '1' then
+            smp_be_we  <= '1';
+            smp_be_msk <= a_y_mask;
+            smp_yexp_i <= resize(signed(a_y_exp), EXP_W);
+            smp_be_idx <= smp_base + to_integer(unsigned(a_y_addr));
+            for rr in 0 to A_ROWS_IF-1 loop
+              smp_be_dat(rr*32+31 downto rr*32)
+                <= a_y_data(rr*64+31 downto rr*64);
+            end loop;
+          end if;
+
+          if a_y_we = '1' then
+            if st /= S_RUN then
+              f_lost_a <= '1';
+              report "fk33_llama_top: unit A emitted a y beat outside its run "
+                   & "window.  d_y_we has no ready, so this beat is LOST."
+                severity error;
+            end if;
+            for rr in 0 to A_ROWS_IF-1 loop
+              if a_y_mask(rr) = '1' then
+                a := to_integer(unsigned(a_y_addr)) + rr;
+                if j_dst < NREGION then
+                  if a < A_MAXROWS then
+                    yb(a) := signed(a_y_data(rr*64+MANT_W-1 downto rr*64));
+                  else
+                    f_lost_a <= '1';
+                    report "fk33_llama_top: unit A produced row "
+                         & integer'image(a) & " past the y buffer ("
+                         & integer'image(A_MAXROWS) & ")." severity error;
+                  end if;
+                end if;
+              end if;
+            end loop;
+          end if;
+
+          case st is
+            when S_IDLE => null;
+
+            when S_XRD =>
+              if k < j_cols then
+                ur_en(U_A)   <= '1';
+                ur_reg(U_A)  <= j_src;
+                ur_addr(U_A) <= k;
+              end if;
+              if k >= 2 then
+                xw_we   <= '1';
+                xw_addr <= std_logic_vector(to_unsigned(k-2, 16));
+                xw_data <= std_logic_vector(el_rdata);
+              end if;
+              if k = j_cols+1 then
+                k := 0;
+                st := S_GO;
+              else
+                k := k + 1;
+              end if;
+
+            when S_GO =>
+              -- `u_start` is a LEVEL held until the adapter is ready, which is
+              -- the contract a_desc_adapter states for it.  Every x element is
+              -- already in A: S_XRD ran to k = j_cols+1.
+              ad_start <= '1';
+              if j_smp = '1' then smp_run <= '1'; end if;
+              if ad_ready = '0' then
+                ad_start <= '0';
+                st := S_RUN;
+              end if;
+
+            when S_RUN =>
+              if ad_done = '1' then
+                ad_ack    <= '1';
+                jc_retire <= '1';
+                uerr      <= uerr or ad_err;
+                if j_smp = '1' then
+                  st := S_SDRAIN;
+                elsif j_dst < NREGION then
+                  r := 0; st := S_DRAIN;
+                else
+                  st := S_DONE;
+                end if;
+              end if;
+
+            when S_SDRAIN =>
+              smp_run <= '0';
+              if smp_empty = '1' then
+                if j_dst < NREGION then
+                  r := 0; st := S_DRAIN;
+                else
+                  st := S_DONE;
+                end if;
+              end if;
+
+            when S_DRAIN =>
+              uw_en(U_A)   <= '1';
+              uw_reg(U_A)  <= j_dst;
+              uw_addr(U_A) <= j_off + r;
+              uw_data(U_A) <= yb(r);
+              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
+
+            when S_DONE =>
+              dn   <= '1';
+              yexp <= resize(signed(a_y_exp), EXP_W);
+              if u_ack(U_A) = '1' then
+                dn  <= '0';
+                rdy <= '1';
+                st  := S_IDLE;
+              end if;
+          end case;
+        end if;
+      end if;
+    end process;
+  end generate;
+
+  -- When A_DESC is false the card-facing outputs still need drivers, or they
+  -- read 'U' and a synthesis tool sees an undriven port rather than a tied one.
+  gnd_a : if not A_DESC generate
+    a_awaddr   <= (others => '0');
+    a_awvalid  <= '0';
+    a_wdata    <= (others => '0');
+    a_wstrb    <= (others => '0');
+    a_wvalid   <= '0';
+    a_bready   <= '0';
+    a_job_index   <= (others => '0');
+    a_jobs_issued <= (others => '0');
+    a_x_we     <= '0';
+    a_x_waddr  <= (others => '0');
+    a_x_wdata  <= (others => '0');
+  end generate;
+  ga_real : if not A_BEHAV and not A_DESC generate
     -- ------------------------------------------------------------------
     -- THE CAPACITY OF THE FABRICATED BLOCK, AND WHY IT IS CHECKED.
     --
