@@ -125,3 +125,104 @@ difference hides both halves**, and the added half is where all four blocking
   all, or is exported only so synthesis cannot optimise the region file away.
   That decides whether the wrapper terminates it or the generator should.
 - The area and timing cost of the D-to-A data connection. Unmeasured.
+
+---
+
+## CORRECTION, 2026-09-06, same day, appended in place
+
+Three claims above are wrong or incomplete. The superseded text is left
+standing; this section is what to believe.
+
+### 1. WITHDRAWN: "no vector port width is a function call"
+
+The section *"What is NOT a problem"* says every port width is arithmetic on
+literals and that `[IP_Flow 19-627]` does not apply. **That was derived from a
+grep restricted to `std_logic_vector(...)` widths, and C's offending ports are
+`unsigned`.** MEASURED, 13 ports carry a `clog2` call in their range:
+
+```
+c_attn_qg_raddr  : out unsigned(clog2(2*(256)*(16))-1 downto 0);
+c_attn_kin_raddr : out unsigned(clog2((256)*(4))-1 downto 0);
+c_attn_kv_layer  : out unsigned(clog2((8))-1 downto 0);
+...
+```
+
+11 on C, 2 on D (`d_vres_*`), present in the wired AND the unwired top alike.
+
+**The trap: I filtered by the type I expected the defect to have.** The rule is
+about widths, and the type I searched was one of three that can carry one.
+`signed` and `unsigned` were on my own list of accepted types two paragraphs
+earlier, and I still did not search them.
+
+Note these are functions of LITERALS, not of generics, so they are not
+identical to the recorded case (`clog2(NREG)`). `sim/check_bd_ports.py` rejects
+them anyway, on its stated rule that a width *"may NOT call a function, however
+trivially that function evaluates."*
+
+### 2. WITHDRAWN: "the checker validates a hardcoded list of cells"
+
+It does not. `sim/check_bd_ports.py` discovers cells by scanning the build
+scripts for `create_bd_cell -type module -reference`, so **it will cover a new
+BD cell automatically** the moment `gen_pcieep.py` references one. I said the
+opposite after seeing five cell names in its output and not reading `main()`.
+
+### 3. The refusal count is 35, not 22
+
+Running the checker's own `check_port` over the wired entity:
+
+```
+ports parsed: 1185
+REFUSALS the packager check would raise: 35
+  19-734 port type            22   e.g. b_gdn_layer : type 'integer range 0 to (24)-1'
+  19-627 function in width    13   e.g. c_attn_qg_raddr : range 'clog2(...)' calls 'clog2'
+```
+
+The 46 `signed` and 90 `unsigned` ports are NOT flagged, confirming the recorded
+measurement that those types are accepted.
+
+## THE LARGER FINDING: B AND C DO NOT PRESENT AXI MASTERS HERE
+
+The option's stated cost included *"mapping B and C onto SAXI_30/31"*. That is
+not a port-mapping exercise, because **those masters do not exist in this top.**
+
+```
+$ grep -cE '^\s+(bst_|kv_)' <wired entity>
+0
+```
+
+B and C expose **raw addressed memory seams** instead:
+
+```
+b_gdn_st_ren   : out std_logic;
+b_gdn_st_rhead : out integer range 0 to (32)-1;
+b_gdn_st_rcol  : out integer range 0 to (128)-1;
+b_gdn_st_rdata : in  std_logic_vector((32)*16-1 downto 0);
+c_attn_kin_raddr : out unsigned(clog2((256)*(4))-1 downto 0);
+c_attn_kin_rdata : in  signed((16)-1 downto 0);
+```
+
+So `compose4_top` instantiates B and C in a configuration whose state and KV
+memories are **external and non-AXI**. `llama_top`'s `bst_*` AXI master, on
+which the whole HBM port budget and the grant committed earlier today are
+based, is a DIFFERENT configuration of the same subsystems.
+
+**This does not invalidate the grant** -- `bc_port_grant` is written against the
+AXI configuration, which is the one the card must use. It does mean the composed
+top cannot reach HBM for B and C without either selecting the AXI-backed
+configuration or attaching those seams to something.
+
+**And it qualifies the composed area and timing record again**, in the same
+direction as the unwired data seam: those runs contain neither the D-to-A data
+connection nor any B/C memory subsystem behind the seams.
+
+## Revised statement of the work
+
+| item | size |
+|---|---|
+| terminate/convert 22 `integer`/`natural` ports | 22 ports, 5 of which are inputs |
+| replace 13 `clog2` widths with their own generics | 13 ports, generator edit |
+| wire the A-to-D data seam | 8 ports, 3,072-bit `d_y_data`, new logic |
+| give B and C their AXI-backed memory configuration | structural, size unknown |
+| rewrite `gen_pcieep` ENGINE_BLOCK for 28 prefixed masters | 812 ports, mechanical |
+
+The last row is the one the option named, and it is the only mechanical one.
