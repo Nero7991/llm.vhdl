@@ -136,3 +136,88 @@ that synthesis had not yet grown past 779 MB.
   configuration is not the one measured here** and the relationship between
   MAXCTX and this block's area is unmeasured.
 - `gdn_state_store` was not re-measured against this tree.
+
+---
+
+## MEASURED, same day: the design WITH both memory subsystems, and a control
+
+`gen_compose4_top.py --mem` (added 9b3e49f) instantiates `gdn_state_store` and
+`attn_kv_axi` alongside the five compute blocks. Both tops were synthesised
+**from the same tree through the same script with one variable changed**, which
+is the control this project failed to run twice earlier the same day.
+
+| resource | without mem | with mem | delta | device | % with |
+|---|---|---|---|---|---|
+| CLB LUTs | 267,202 | **343,712** | +76,510 | 439,680 | **78.17** |
+| CLB Registers | 237,905 | 261,044 | +23,139 | 879,360 | 29.69 |
+| CARRY8 | 12,505 | 13,327 | +822 | 54,960 | 24.25 |
+| Block RAM Tile | 253.5 | 265.5 | +12 | 672 | 39.51 |
+| URAM288 | 0 | **32** | +32 | 320 | 10.00 |
+| DSP48E2 | 2,177 | 2,185 | +8 | 2,880 | **75.87** |
+
+**The control validates itself three ways**, which is what makes the delta
+attributable rather than merely plausible:
+
+- DSP48E2 without `--mem` is **2,177**, reproducing the figure the 2026-09-05
+  fit document already carried. A control that lands on a previously published
+  number is the strongest available evidence that the flow is the same one.
+- URAM goes **0 -> 32**, matching `gdn_state_store`'s recorded 32 URAM288 to the
+  digit. URAM is fixed at synthesis, so this also proves the resource was
+  GRANTED rather than refused -- see `[Synth 8-10226]`, which refuses a URAM
+  request and only WARNS.
+- BRAM goes **253.5 -> 265.5**, matching its recorded 12 RAMB36 exactly.
+
+### The answer on hard resources
+
+**They fit.** LUT 78.17%, DSP 75.87%, BRAM 39.51%, URAM 10.00%, and none of
+these move under implementation directives. The design that the port budget and
+the grant are written about -- A, B, C, D plus both HBM memory subsystems --
+does not exceed the part on any resource fixed at synthesis.
+
+**CLB OCCUPANCY IS STILL UNANSWERED AND IT IS THE BINDING ONE.** The
+2026-09-05 fit document found the composed design at **90.3% CLB** while LUT sat
+at 71.5%, because CLB is a placement outcome and the one row in
+`report_utilization` that does not sum. Nothing here places anything. A LUT
+figure under 100% is necessary and not sufficient, and the honest state is that
+the fit question has been answered for five resources and not for the sixth.
+
+### CORRECTION: attn_kv_axi has 5 DSPs, not 45
+
+The measurement above says `attn_kv_axi lut=84252 ... dsp=45`. **The DSP count
+is wrong.** `get_cells -hier -filter {REF_NAME =~ DSP*}` matches the DSP's
+SUB-CELLS -- `DSP_MULTIPLIER`, `DSP_ALU`, `DSP_OUTPUT` -- not whole DSP48E2s.
+`report_utilization` for the same run says **DSP48E2 = 5**.
+
+The composed run made the same error much more loudly: its census reported
+`dsp=19665` on a part that has **2,880**, which is impossible on its face and
+is what exposed the filter.
+
+With 5 rather than 45, the predicted delta from summing the parts becomes
+`3 + 5 = 8`, and the measured delta is **exactly 8**.
+
+**This qualifies `CLAUDE.md`'s "the parts do not sum across synthesis
+contexts".** Here they summed, to within 0.74% on LUT, 0.05% on FF, and exactly
+on BRAM, URAM and DSP:
+
+| resource | predicted | measured | error |
+|---|---|---|---|
+| LUT | 77,078 | 76,510 | +0.74% |
+| FF | 23,151 | 23,139 | +0.05% |
+| URAM | 32 | 32 | 0.00% |
+| BRAM | 12 | 12 | 0.00% |
+| DSP | 8 | 8 | exact |
+
+The rule is real and it is CONDITIONAL. Its recorded counter-example is
+`gdn_block` reporting 22 BRAM tiles alone against 5,472 in context -- a block
+whose memory INFERENCE changed with what surrounded it. These two blocks are
+port-isolated: every one of their ports is exported, so Vivado cannot merge
+their logic with anything, and there is nothing for the context to change.
+**Ask whether the block shares anything with its surroundings before deciding
+which case you are in** -- and note that even here the prediction was made
+AFTER the measurement, so it is a consistency check and not a forecast.
+
+`REF_NAME =~ DSP*` was chosen because `CLAUDE.md` records `REF_NAME =~ RAM*` as
+the working idiom against a `PRIMITIVE_GROUP == DSP` filter that silently
+matched nothing. That fix was right for the empty-result failure and wrong
+here: **`RAM*` has no sub-cell problem and `DSP*` does.** For DSP, read
+`report_utilization`'s `DSP48E2` row.
