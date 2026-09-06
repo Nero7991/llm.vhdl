@@ -207,7 +207,24 @@ BANNER = """-- rtl/fk33_llama_top.vhd
 -- generic.  A_DESC DEFAULTS TO FALSE, so this top is still llama_top with a
 -- different memory unless a build asks otherwise -- which is what keeps it
 -- testable against llama_top's own benches.  The card build sets A_DESC true.
--- NOT YET APPLIED:  D4, the w_active gate on the gain loader.
+-- D4 NEEDS NO CARD-TOP SUBSTITUTION, and this line used to say it was "not
+-- yet applied".  The design note specifies "gate the gain-load start on
+-- `w_active = '0'` and assert the gate".  `llama_top` gates on **`wbusy`**
+-- instead, and its own comment records rejecting the `w_active` route: that
+-- one "needs the writer to stay AHEAD of a reader that is LANES times faster,
+-- which is an element-by-element deadline and not a state boundary. `wbusy` is
+-- a single bit that is either true or false; that is the difference between a
+-- check with teeth and an argument."
+--
+-- So D4's INTENT -- a gain load must not race the read -- is satisfied in the
+-- shared 91% and arrives here for free.  Present in this file and verified:
+-- the `wbusy` gate at `when S_GO`, the `wact_chk` assertion that fires if the
+-- load is still running when the gain is READ, and the OP_VEC_NORM guard.
+-- `sim/tb_rmswire_loadrace.vhd` covers the race AT THE REAL SHAPE and passes
+-- (6 rows at N=4096).
+--
+-- Where the note and the RTL disagree, the RTL wins -- and here the RTL is
+-- also the stronger of the two.
 --
 """
 
