@@ -680,6 +680,23 @@ static int qwen_generate(GenSink& sink, const JValue& root, bool is_chat,
         return -1;
     }
 
+    // OpenAI's `usage.prompt_tokens` is the token count of the prompt actually
+    // submitted, which for this arm is the rendered chat template after
+    // tokenization -- exactly `ids`.  It was never set here, so every response
+    // from the FK33 seam arm reported `prompt_tokens: 0` and a `total_tokens`
+    // equal to the completion alone.
+    //
+    // The stories arm has set it since the hardcoded-zero fix (see line ~767,
+    // `sink.prompt_tokens = np`) and has a test pinning it, C8.  This arm had
+    // neither, which is why the defect survived: the row that would have caught
+    // it was written against the OTHER arm.
+    //
+    // `echo_left` is deliberately left at 0.  `echo` is a completions-API
+    // feature and the chat API has none; server_stories C7 states that chat
+    // "must never echo", so borrowing the stories arm's `np - 1` here would
+    // introduce the very behaviour that test forbids.
+    sink.prompt_tokens = (int)ids.size();
+
     const int nv = pl_n_vocab(g_card);
     std::vector<int32_t> logits((size_t)nv);
     std::vector<float>   f;

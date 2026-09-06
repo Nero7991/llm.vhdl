@@ -252,6 +252,48 @@ def main():
                 print(f"  ok   case {i}: {len(ids)} ids, first token {want_id} "
                       f"-> {want_bytes!r}")
 
+        # ---- usage.prompt_tokens on THIS arm -----------------------------
+        #
+        # The FK33 seam arm reported `prompt_tokens: 0` on every response, and
+        # `total_tokens` equal to the completion alone.  The stories arm has
+        # set it correctly since the hardcoded-zero fix and pins it with C8 --
+        # which is exactly why this survived: the row that would have caught it
+        # was written against the OTHER arm, so both arms were "covered" and
+        # one of them was wrong.
+        #
+        # TWO PROMPTS, NOT ONE, AND THAT IS THE POINT.  A single case cannot
+        # tell a real token count from a constant: the pre-fix server returned
+        # 0 for everything, and a server that returned 13 for everything would
+        # pass a one-prompt check just as happily.  The check that has teeth is
+        # that a longer prompt reports MORE tokens, and that total = prompt +
+        # completion holds at both lengths.
+        u_short = post(url + "/v1/chat/completions",
+                       {"messages": [{"role": "user", "content": "hello"}],
+                        "max_tokens": 4})["usage"]
+        u_long = post(url + "/v1/chat/completions",
+                      {"messages": [{"role": "user", "content":
+                                     "a considerably longer prompt with a good "
+                                     "many more words in it than the first"}],
+                       "max_tokens": 2})["usage"]
+        for nm, u in (("short", u_short), ("long", u_long)):
+            if u["prompt_tokens"] <= 0:
+                fails += 1
+                print(f"  FAIL: usage.prompt_tokens is {u['prompt_tokens']} on "
+                      f"the {nm} prompt; the seam arm is not counting it")
+            elif u["total_tokens"] != u["prompt_tokens"] + u["completion_tokens"]:
+                fails += 1
+                print(f"  FAIL: usage on the {nm} prompt does not add up: {u}")
+        if not (fails) and u_long["prompt_tokens"] <= u_short["prompt_tokens"]:
+            fails += 1
+            print(f"  FAIL: the longer prompt reports "
+                  f"{u_long['prompt_tokens']} tokens, not more than the "
+                  f"shorter one's {u_short['prompt_tokens']} -- this is a "
+                  f"constant, not a count")
+        elif not fails:
+            print(f"  ok   usage.prompt_tokens counts: {u_short['prompt_tokens']}"
+                  f" for the short prompt, {u_long['prompt_tokens']} for the "
+                  f"long one, and total = prompt + completion at both")
+
         # And the refusal path, which no other test drives through HTTP.
         try:
             post(url + "/v1/chat/completions",
