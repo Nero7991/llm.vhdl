@@ -142,3 +142,62 @@ written down so it can be checked against what the work actually costs.
 - **Throughput at 175 MHz.** No requirement has ever been stated, and the
   2026-09-03 entry flagged this as unmeasured. Still unmeasured; now explicitly
   deprioritised rather than unknown.
+
+---
+
+## CORRECTION 2026-09-06: I OVERSTATED THE REMAINING WORK. TWICE.
+
+This document called item 4 -- "HBM plumbing for B's 29 `bst_*` and C's 26
+`kv_*` ports" -- "the piece with no existing plumbing", "probably the largest",
+and repeated that in every status since. **Both halves of that are wrong.**
+
+### The 55 ports are TWO AXI MASTERS, not 55 loose signals
+
+Reading the names rather than counting them:
+
+- `bst_*` is one **AXI4 full master** (`ar`/`aw`/`w`/`r`/`b` channels) plus
+  `bst_state_base`, `bst_busy`, `bst_done`, `bst_err`.
+- `kv_*` is one **AXI4 full master** plus `kv_base`, `kv_layer`, `kv_quant`,
+  `kv_bytes_per_token`, `kv_seq_rst`, `kv_err`, `kv_sat`.
+
+A count of port identifiers is not a measure of interface complexity, and 55 of
+them is what two AXI masters and their configuration look like written out.
+
+### The HBM slots are ALREADY RESERVED for exactly these two
+
+`hw/fk33/gen_pcieep.py`, unchanged and in the tree the whole time:
+
+> SAXI_30 and SAXI_31 are left DISABLED: they are the two spare engine ports
+> `docs/2026-08-27_hbm-port-contention.md` **budgets for B and C**.
+
+So there is no port-allocation problem to solve, no contention to resolve, and
+no decision outstanding: the budget was made, the slots were held open, and the
+count matches exactly -- **two masters, two spare ports.**
+
+### What this changes, and what it does not
+
+The remaining gateware work is **`gen_fk33_engine.py` instantiating the card
+top and bringing two AXI masters out to the engine's entity, then mapping them
+onto SAXI_30 and SAXI_31.** That is a real job with real risk, but it is
+assembly against a reserved allocation rather than the open-ended design problem
+this document has been describing since it was written.
+
+**It does NOT make the build succeed.** Timing, area and the arena's contents
+are all still ahead, and `B_STATE_AXI = false` does not fit the part at the
+shipping shape (MEASURED earlier: 5,472 BRAM tiles against 672), so B's master
+is not optional at the real shape -- it is the thing that makes B fit at all.
+
+### Why I got it wrong, which is the reusable part
+
+I counted ports with `grep -oE` and reported the count. **A count answers "how
+many symbols" and was silently substituted for "how much work", which is a
+different question the count cannot address.** Reading twenty of the names would
+have shown `arvalid`/`awvalid`/`wlast`/`bresp` and settled it in seconds, and
+the reservation note was one grep away in a file this session had already read
+twice for other reasons.
+
+This is the project's recorded "grep the entity declarations for the SHAPE you
+are about to build, not for the words a document used" trap, arriving from the
+opposite direction: there a null grep was read as absence; here a large count
+was read as difficulty. **Neither the presence nor the size of a grep result is
+evidence about the thing itself.**
