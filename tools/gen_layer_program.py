@@ -239,7 +239,33 @@ def mk_shape_scaled(blocks, attn_interval, attn_hd=32):
     """rtl/llama_map_pkg.vhd's `mk_shape_scaled`, so a program emitted here can
     be executed by `llama_top` in simulation.
 
-    REFUSES above attn_hd 32 rather than mirroring the VHDL's third branch.
+    TRANSCRIBED 2026-09-06, and no longer refusing.  The docstring below used
+    to end "when a caller genuinely needs attn_hd > 32, transcribe the VHDL
+    branch and check it against the VHDL, then remove this raise".  That caller
+    has arrived, though NOT the one first claimed here.
+
+    WITHDRAWN, same day: "C_KV_AXI demands HEAD_DIM 64, so subsystem C cannot
+    reach HBM at any smaller shape."  That reads as a blocker on the CARD and
+    it is not one.  The card never calls this function -- it takes
+    `mk_shape(MODEL, NCARDS)`, and the real Qwen3.5-9B is attn_head_dim 256
+    with 16 q heads and 4 kv heads, satisfying every one of `C_KV_AXI`'s six
+    geometry constraints already.  MEASURED against the generated composed
+    top, whose C instance is `HEAD_DIM => 256, N_QH => 16, N_KVH => 4`.
+
+    THE REAL REASON, narrower and still good: the KV cache is entirely
+    UNCOVERED in simulation.  `sim/tb_llama_top_real.vhd` says so itself --
+    "WHAT THIS ROW DOES NOT COVER, and it is the whole KV cache: C_KV_AXI is
+    false here because attn_kv_axi cannot elaborate at ATTN_HD = 16".
+    attn_hd 64 is the smallest shape that could cover it, so this branch is
+    what a future C_KV_AXI bench stands on.  A verification enabler, not a
+    build blocker.  The branch is transcribed verbatim from
+    `rtl/llama_map_pkg.vhd` and is CHECKED against it by `sim:shapemirror`
+    -- `tools/gen_shape_mirror.py` emits this side's numbers and
+    `sim/tb_shape_mirror.vhd` compares every field against the VHDL functions
+    at attn_hd 16, 32 and 64.  Without that bench this would be exactly the
+    "second unchecked claim" the original refusal was written to prevent.
+
+    THE HISTORICAL TEXT, kept because the reasoning still explains the shape:
     The VHDL declares `attn_q_heads`/`attn_kv_heads` as `positive`, so at
     `attn_hd = 64` the shared formula's `32/64 = 0` is a hard elaboration
     error and the language catches it; that is why `llama_map_pkg.vhd` grew an
@@ -256,6 +282,17 @@ def mk_shape_scaled(blocks, attn_interval, attn_hd=32):
     claim. A loud refusal is the honest state: when a caller genuinely needs
     attn_hd > 32, transcribe the VHDL branch and check it against the VHDL,
     then remove this raise."""
+    if attn_hd > 32:
+        # rtl/llama_map_pkg.vhd's `attn_hd > 32` branch, verbatim.  The head
+        # counts are PINNED at the minimum `attn_kv_axi` and `attn_block` both
+        # accept (4 q, 2 kv, GQA group 2) rather than following 64/attn_hd,
+        # which would give one q head and zero kv heads.  The attention region
+        # widths then grow with the head dim through the SAME att_q/att_qg/
+        # att_kv formulas -- there is no separate widening rule.
+        return Shape(blocks=blocks, attn_interval=attn_interval,
+                     hidden=64, ffn=128, key_heads=2, val_heads=4, head_dim=32,
+                     attn_q_heads=4, attn_kv_heads=2,
+                     attn_head_dim=attn_hd, vocab_shard=128)
     if attn_hd <= 0 or 64 // attn_hd == 0 or 32 // attn_hd == 0:
         raise ValueError(
             "gen_layer_program: mk_shape_scaled has no shape at attn_hd=%r. "

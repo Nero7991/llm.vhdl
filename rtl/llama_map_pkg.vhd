@@ -250,12 +250,35 @@ package body llama_map_pkg is
     -- refusing" sentence above is WITHDRAWN.
     --
     -- WHY IT MATTERS NOW, and why this correction is not bookkeeping.  A
-    -- caller has genuinely arrived that needs `attn_hd > 32`: `C_KV_AXI`
-    -- demands HEAD_DIM 64 (see `rtl/llama_top.vhd`'s declaration), so subsystem
-    -- C cannot reach HBM at any shape below it.  The Python refusal's own
-    -- docstring names the remedy -- "transcribe the VHDL branch and check it
-    -- against the VHDL, then remove this raise" -- and NOTHING cross-checks
-    -- the two today; the table below was produced by hand.
+    -- caller has genuinely arrived that needs `attn_hd > 32`, but NOT the one
+    -- first claimed here.
+    --
+    -- WITHDRAWN, same day: "C_KV_AXI demands HEAD_DIM 64, so subsystem C
+    -- cannot reach HBM at any shape below it."  That reads as a blocker on the
+    -- CARD and it is not one.  The card does not use this function at all --
+    -- it takes `mk_shape(MODEL, NCARDS)`, and the real Qwen3.5-9B is
+    -- `attn_head_dim => 256` with 16 q heads and 4 kv heads, which satisfies
+    -- every one of `C_KV_AXI`'s six geometry constraints already.  MEASURED
+    -- against the generated composed top, whose C instance is
+    -- `HEAD_DIM => 256, N_QH => 16, N_KVH => 4`.  `mk_shape_scaled` is the
+    -- SIMULATION shape helper (hidden 64, ffn 128) and nothing on the card
+    -- path reaches it.
+    --
+    -- THE REAL REASON, which is narrower and still good: the KV cache is
+    -- entirely UNCOVERED in simulation, and `sim/tb_llama_top_real.vhd` says
+    -- so itself -- "WHAT THIS ROW DOES NOT COVER, and it is the whole KV
+    -- cache: C_KV_AXI is false here because attn_kv_axi cannot elaborate at
+    -- ATTN_HD = 16 ... and the real weight image is indexed by STEP, so it
+    -- does not apply at the ATTN_HD = 64 shape either."  attn_hd 64 is the
+    -- smallest shape that could cover it, so this branch is what a future
+    -- C_KV_AXI bench stands on.  That is a verification enabler, not a build
+    -- blocker, and the distinction is the correction.
+    --
+    -- The Python refusal's own docstring named the remedy -- "transcribe the
+    -- VHDL branch and check it against the VHDL, then remove this raise".
+    -- Done: `sim/tb_shape_mirror.vhd` compares 18 fields at attn_hd 16, 32 and
+    -- 64 against the functions below.  The hand table further down is no
+    -- longer the only record.
     --
     -- So the ten shapes anyone has measured (all at attn_hd 16 or 32) are
     -- byte-identical between the two, and the D-table byte-identity argument

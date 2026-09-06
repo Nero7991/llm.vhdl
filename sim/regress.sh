@@ -400,7 +400,16 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=125  # RAISED FROM 124, 2026-09-05.  ONE new row, sim:gdnstale,
+BASELINE_PASS=128  # RAISED FROM 125, 2026-09-06.  THREE new rows:
+                   #   sim:tb_bc_port_grant  the B/C grant's drain interlock
+                   #   sim:tb_shape_mirror   Python vs VHDL mk_shape_scaled
+                   #   sim:shapemirror       and its staleness check
+                   # The middle one is the first thing that has ever compared
+                   # the two `mk_shape_scaled` implementations; the hand-written
+                   # table in rtl/llama_map_pkg.vhd was the only prior record
+                   # and it had gone stale.
+                   # ---- previous entry ----
+                   # BASELINE_PASS=125  RAISED FROM 124, 2026-09-05.  ONE new row, sim:gdnstale,
                    #    which checks rtl/ooc_gdnadapt_top.vhd against what
                    #    sim/ooc_gdnadapt_extract.py emits.  That generator had
                    #    been REFUSING TO RUN since 5f1db1a and nothing noticed,
@@ -1915,6 +1924,12 @@ printf 'c4stale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # to emit unbalanced generates and now refuses outright, so it cannot produce
 # a broken file at all.
 printf 'gdnstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# shapemirror -- sim/shape_mirror_pkg.vhd is GENERATED from the Python
+# `mk_shape_scaled` by tools/gen_shape_mirror.py.  This row catches the Python
+# changing without the package being regenerated, which would leave
+# sim:tb_shape_mirror comparing the VHDL against a stale transcription and
+# passing.  The bench is the equivalence check; this is the freshness check.
+printf 'shapemirror\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
@@ -2621,6 +2636,12 @@ declare -A SELFCHECK_CMD=(
   [c4stale]="python3 $REPO/hw/fk33/gen_compose4_top.py --check"
   [gdnstale]="python3 $REPO/sim/ooc_gdnadapt_extract.py --check $REPO/rtl/llama_top.vhd"
   [shapechk]="python3 $REPO/sim/check_model_shape.py"
+  # The Python side of `mk_shape_scaled` is a hand transcription of the VHDL
+  # and nothing compared them until 2026-09-06.  This row catches the Python
+  # changing without `sim/shape_mirror_pkg.vhd` being regenerated; the row
+  # `sim:tb_shape_mirror` is what compares the two implementations.  Both are
+  # needed: staleness here would make that bench compare last week's Python.
+  [shapemirror]="python3 $REPO/tools/gen_shape_mirror.py --check"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2652,7 +2673,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
