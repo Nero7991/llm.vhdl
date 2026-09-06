@@ -370,7 +370,53 @@ ENG_CELL       = "eng"
 ENG_NMAST      = 28
 ENG_CTL_BASE   = 0x00012000    # 4 KB, the engine's own register map.
 ENG_XW_BASE    = 0x00013000    # 4 KB, the activation writer
-ENG_CORE_MHZ   = 200.000
+# THE CORE CLOCK IS OVERRIDABLE, and the reason is a decision, not a tuning knob.
+#
+# Oren, 2026-09-05, verbatim: "It's okay if we don't hit 200MHz, let's prioritise
+# inference and then optimise once we have that."
+#
+# That answers a question this repository had left open in writing.  The
+# 2026-09-03 WORKLOG entry on the wired top closes: "Also unmeasured: whether
+# 200 MHz is needed.  181.7 MHz is 91% of target and no throughput requirement
+# here has been checked against it.  That question is worth answering BEFORE
+# spending retiming effort."
+#
+# WHAT IS MEASURED, and why 200 was never reachable by the FULL design:
+#
+#   shell + subsystem A only (ships today)      core WNS  +0.001   200.0 MHz
+#   the WIRED top, `wire4`, routed clean        core WNS  -0.502   181.7 MHz
+#   composed top, best directives, `c4nd`       core WNS  -0.422   184.4 MHz
+#   composed top, no directives, `c4base`       core WNS  -0.637   177.4 MHz
+#
+# So 200.000 is met by A ALONE and by nothing containing B, C and D.  Holding
+# the constant at 200 does not make the full design faster; it makes it
+# unbuildable, which is how a timing target becomes a schedule blocker.
+#
+# WHAT LOWERING IT COSTS, stated exactly.  The duty identity above is
+# `duty = f_core / f_axi`, with no efficiency term because 27 x 256 bits is
+# 864 B exactly.  At 250 MHz HBM: 200 -> 80.0% duty, 175 -> 70.0%.  A lower
+# core clock therefore RELAXES the HBM side rather than stressing it; the cost
+# is compute throughput, proportional and only where compute-bound.
+#
+# THE DEFAULT STAYS 200.000 DELIBERATELY.  The shipping shell+A bitstream met
+# timing at 200 and must remain reproducible byte-for-byte; changing this
+# constant in place would silently retarget it.  A full-engine build selects a
+# lower value explicitly:
+#
+#     FK33_ENG_CORE_MHZ=175 python3 hw/fk33/gen_pcieep.py ...
+#
+# 175.000 is the suggested full-engine value: 181.7 MHz measured leaves 3.8%
+# margin, and margin is the point, since every figure above is a ROUTED number
+# on an OOC block and the block design adds a shell those runs never saw.
+ENG_CORE_MHZ   = float(os.environ.get("FK33_ENG_CORE_MHZ", "200.000"))
+# Refuse a value that cannot be met or cannot be built.  The clocking wizard
+# will happily accept nonsense and fail much later, in HDL generation, with a
+# message that does not name this variable.
+if not (50.0 <= ENG_CORE_MHZ <= 250.0):
+    sys.exit("ABORT: FK33_ENG_CORE_MHZ=%r is outside 50..250 MHz. The HBM AXI "
+             "side runs at 250 MHz and duty = f_core/f_axi must not exceed 1.0; "
+             "below 50 MHz the aux-domain canary counters lose meaning."
+             % ENG_CORE_MHZ)
 # m00..m27 -> HBM SAXI port index.  Written out rather than computed so the
 # mapping is greppable and a future arena table has one place to change.
 ENG_PORT_MAP   = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
