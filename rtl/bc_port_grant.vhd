@@ -53,7 +53,7 @@ entity bc_port_grant is
   generic (
     ADDR_W  : positive := 33;      -- the HBM SAXI address width, MEASURED
     DATA_W  : positive := 256;
-    NPORT   : positive := 3;       -- the shared pool
+    NPORT   : positive := 2;       -- the shared pool
     -- Width of the outstanding counters.  8 bits is 255 in flight per port,
     -- far above anything either master issues; it is a counter, not a budget.
     CNT_W   : positive := 8
@@ -345,17 +345,23 @@ begin
       c_rvalid  <= m_rvalid(1 downto 0);
       c_rlast   <= m_rlast(1 downto 0);
       c_rdata   <= m_rdata(2*DATA_W-1 downto 0);
-      -- port 2 <- C write
-      m_awvalid(2) <= c_awvalid;
-      m_awaddr(3*ADDR_W-1 downto 2*ADDR_W) <= c_awaddr;
-      m_awlen(23 downto 16) <= c_awlen;
-      m_wvalid(2)  <= c_wvalid;
-      m_wdata(3*DATA_W-1 downto 2*DATA_W) <= c_wdata;
-      m_wlast(2)   <= c_wlast;
-      m_bready(2)  <= c_bready;
-      c_awready    <= m_awready(2);
-      c_wready     <= m_wready(2);
-      c_bvalid     <= m_bvalid(2);
+      -- C's write rides port 0's WRITE channels.  Port 0 carries a READ in both
+      -- owners -- B's read above, C's read 0 immediately above -- and its AW/W/B
+      -- channels are driven by neither, so this shares a PORT without sharing a
+      -- CHANNEL.  That is what lets the pool be 2 rather than 3, which is what
+      -- the card actually has: the HBM's 32 SAXI are 2 host + 28 subsystem A.
+      -- The interlock is unaffected: rd_out(0) and wr_out(0) are separate
+      -- counters and `quiet` already requires both to be zero.
+      m_awvalid(0) <= c_awvalid;
+      m_awaddr(ADDR_W-1 downto 0) <= c_awaddr;
+      m_awlen(7 downto 0) <= c_awlen;
+      m_wvalid(0)  <= c_wvalid;
+      m_wdata(DATA_W-1 downto 0) <= c_wdata;
+      m_wlast(0)   <= c_wlast;
+      m_bready(0)  <= c_bready;
+      c_awready    <= m_awready(0);
+      c_wready     <= m_wready(0);
+      c_bvalid     <= m_bvalid(0);
     end if;
   end process;
 end architecture;

@@ -71,7 +71,7 @@ GRANT_C2 = ",".join([
     "c_arvalid", "c_arready", "c_araddr", "c_arlen",
     "c_rvalid", "c_rdata", "c_rlast", "c_rready",
 ])
-GRANT_M3 = ",".join([
+GRANT_M2 = ",".join([
     "m_arvalid", "m_araddr", "m_arlen", "m_arready",
     "m_rvalid", "m_rdata", "m_rlast", "m_rready",
     "m_awvalid", "m_awaddr", "m_awlen", "m_awready",
@@ -84,7 +84,7 @@ GRANT_ARGS = [
     "--entity", "bc_port_grant",
     "--wrapper", "fk33_bc_grant",
     "--split", "2:" + GRANT_C2,
-    "--split", "3:" + GRANT_M3,
+    "--split", "2:" + GRANT_M2,
 ]
 
 # C's two read masters, carried flattened on the card top.  EXPLICIT, because a

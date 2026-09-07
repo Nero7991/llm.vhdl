@@ -25,7 +25,7 @@ entity tb_bc_port_grant is end entity;
 architecture sim of tb_bc_port_grant is
   constant AW : positive := 33;
   constant DW : positive := 256;
-  constant NP : positive := 3;
+  constant NP : positive := 2;   -- the pool is 2: HBM has 32 SAXI, 2 host + 28 subsystem A
 
   signal clk  : std_logic := '0';
   signal rstn : std_logic := '0';
@@ -62,6 +62,14 @@ architecture sim of tb_bc_port_grant is
 
   -- monitor results, published at the end
   signal n_checks, n_fail, n_switch, n_rd, n_wr : natural := 0;
+
+  -- PER-PORT traffic.  The aggregate counters above cannot see WHICH port
+  -- carried a transfer, so they cannot see that the pool shrank from 3 to 2 by
+  -- putting C's write on port 0's idle WRITE channels.  That fact is what the
+  -- block design now depends on -- port 0 is wired to a real SAXI's AW/W/B --
+  -- so it is pinned here rather than left as a reading of the source.
+  type natvec is array (0 to NP-1) of natural;
+  signal n_prd, n_pwr : natvec := (others => 0);
 begin
   clk <= '0' when done else not clk after 2.5 ns;
   rstn <= '1' after 40 ns;
@@ -264,6 +272,7 @@ begin
     variable cur : integer;
     variable prev : integer := -1;
     variable chk, bad, sw, nrd, nwr : natural := 0;
+    variable prd, pwr : natvec := (others => 0);
   begin
     if rising_edge(clk) then
       if rstn = '1' then
@@ -276,7 +285,7 @@ begin
         for i in 0 to NP-1 loop
           if (m_arvalid(i) and m_arready(i)) = '1' then rd_own(i) := cur; end if;
           if (m_rvalid(i) and m_rlast(i) and m_rready(i)) = '1' then
-            chk := chk + 1; nrd := nrd + 1;
+            chk := chk + 1; nrd := nrd + 1; prd(i) := prd(i) + 1;
             if rd_own(i) /= cur then
               bad := bad + 1;
               report "MISDELIVERED READ port=" & integer'image(i)
@@ -286,7 +295,7 @@ begin
           end if;
           if (m_awvalid(i) and m_awready(i)) = '1' then wr_own(i) := cur; end if;
           if (m_bvalid(i) and m_bready(i)) = '1' then
-            chk := chk + 1; nwr := nwr + 1;
+            chk := chk + 1; nwr := nwr + 1; pwr(i) := pwr(i) + 1;
             if wr_own(i) /= cur then
               bad := bad + 1;
               report "MISDELIVERED WRITE port=" & integer'image(i)
@@ -300,12 +309,13 @@ begin
         prev := cur;
       end if;
       n_checks <= chk; n_fail <= bad; n_switch <= sw;
-      n_rd <= nrd; n_wr <= nwr;
+      n_rd <= nrd; n_wr <= nwr; n_prd <= prd; n_pwr <= pwr;
     end if;
   end process;
 
   drive : process is
-    variable verdict : boolean := false;
+    variable verdict  : boolean := false;
+    variable pool_ok  : boolean := false;
     function verdict_s(b : boolean) return string is
     begin
       if b then return "PASS"; else return "FAIL"; end if;
@@ -316,8 +326,23 @@ begin
       report "err_switch_busy asserted: the owner moved while the pool was busy"
         severity error;
     end if;
+    -- EVERY port must have carried BOTH a read and a write.  With the pool at
+    -- 2 this is only satisfiable if C's write really does ride port 0, beside
+    -- the reads that port already carries.  Move it back onto port 1 and
+    -- n_pwr(0) is zero, which the aggregate n_wr cannot show.
+    pool_ok := true;
+    for i in 0 to NP-1 loop
+      if n_prd(i) = 0 then
+        pool_ok := false;
+        report "POOL PORT " & integer'image(i) & " CARRIED NO READ" severity error;
+      end if;
+      if n_pwr(i) = 0 then
+        pool_ok := false;
+        report "POOL PORT " & integer'image(i) & " CARRIED NO WRITE" severity error;
+      end if;
+    end loop;
     if n_fail = 0 and err_switch_busy = '0' and n_switch >= 8
-       and n_rd >= 40 and n_wr >= 20 then
+       and n_rd >= 40 and n_wr >= 20 and pool_ok then
       verdict := true;
     end if;
     report "tb_bc_port_grant RESULT: "
@@ -327,6 +352,8 @@ begin
          & " switches=" & integer'image(n_switch)
          & " reads=" & integer'image(n_rd)
          & " writes=" & integer'image(n_wr)
+         & " p0rd=" & integer'image(n_prd(0)) & " p0wr=" & integer'image(n_pwr(0))
+         & " p1rd=" & integer'image(n_prd(1)) & " p1wr=" & integer'image(n_pwr(1))
          & " err_switch_busy=" & std_logic'image(err_switch_busy);
     done <= true;
     wait;
