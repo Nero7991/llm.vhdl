@@ -400,7 +400,10 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=128  # RAISED FROM 125, 2026-09-06.  THREE new rows:
+BASELINE_PASS=129  # RAISED FROM 128, 2026-09-07 for sim:fk33card, the card
+                   # cell's staleness check.  See the note below.
+                   # ---- previous entry ----
+                   # BASELINE_PASS=128  RAISED FROM 125, 2026-09-06.  THREE new rows:
                    #   sim:tb_bc_port_grant  the B/C grant's drain interlock
                    #   sim:tb_shape_mirror   Python vs VHDL mk_shape_scaled
                    #   sim:shapemirror       and its staleness check
@@ -1930,6 +1933,10 @@ printf 'gdnstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # sim:tb_shape_mirror comparing the VHDL against a stale transcription and
 # passing.  The bench is the equivalence check; this is the freshness check.
 printf 'shapemirror\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# fk33card -- see the SELFCHECK_CMD entry.  The packager rules this guards are
+# invisible to simulation, so this row is the only thing between a stale card
+# cell and a block design built from last week's port list.
+printf 'fk33card\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
@@ -2642,6 +2649,12 @@ declare -A SELFCHECK_CMD=(
   # `sim:tb_shape_mirror` is what compares the two implementations.  Both are
   # needed: staleness here would make that bench compare last week's Python.
   [shapemirror]="python3 $REPO/tools/gen_shape_mirror.py --check"
+  # hw/fk33/rtl/fk33_card.vhd is the board-facing face of subsystems B, C and
+  # D -- the second cell of the card's two-cell block design -- GENERATED from
+  # rtl/fk33_llama_top.vhd.  Its whole purpose is to satisfy IP-packager rules
+  # that NO BENCH CAN SEE, so nothing else in this gate would notice it going
+  # stale, and a stale one silently reverts the design the block design builds.
+  [fk33card]="python3 $REPO/hw/fk33/gen_fk33_card.py --check"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2673,7 +2686,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
