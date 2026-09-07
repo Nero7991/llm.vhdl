@@ -54,6 +54,39 @@ REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(HERE, "rtl", "fk33_card.vhd")
 SRC = os.path.join(REPO, "rtl", "fk33_llama_top.vhd")
 
+# ---- the THIRD cell: the B/C grant ---------------------------------------
+# A takes 28 HBM masters, B needs 2 and C needs 3, which is 33 against the 30
+# the host leaves free.  `rtl/bc_port_grant.vhd` closes B-versus-C to 3 SHARED
+# ports with a drain interlock, and it belongs in the block design between the
+# card cell and hbm/SAXI_nn rather than inside the card top -- putting it
+# inside would mean hand-writing a 141-port RTL level around a generated one.
+#
+# It is already packager-legal (63 ports, 0 refusals); it only needs its
+# flattened groups cut into named interfaces: C's TWO reads on the requester
+# side, and the THREE shared masters on the pool side.
+GRANT_OUT = os.path.join(HERE, "rtl", "fk33_bc_grant.vhd")
+GRANT_SRC = os.path.join(REPO, "rtl", "bc_port_grant.vhd")
+
+GRANT_C2 = ",".join([
+    "c_arvalid", "c_arready", "c_araddr", "c_arlen",
+    "c_rvalid", "c_rdata", "c_rlast", "c_rready",
+])
+GRANT_M3 = ",".join([
+    "m_arvalid", "m_araddr", "m_arlen", "m_arready",
+    "m_rvalid", "m_rdata", "m_rlast", "m_rready",
+    "m_awvalid", "m_awaddr", "m_awlen", "m_awready",
+    "m_wvalid", "m_wdata", "m_wlast", "m_wready",
+    "m_bvalid", "m_bready",
+])
+
+GRANT_ARGS = [
+    "--src", GRANT_SRC,
+    "--entity", "bc_port_grant",
+    "--wrapper", "fk33_bc_grant",
+    "--split", "2:" + GRANT_C2,
+    "--split", "3:" + GRANT_M3,
+]
+
 # C's two read masters, carried flattened on the card top.  EXPLICIT, because a
 # width being divisible by 2 does not make a port two masters: `kv_awaddr` is
 # 16 bits and is one, and inferring here would cut a working interface in half.
@@ -76,9 +109,9 @@ ARGS = [
 ]
 
 
-def render(dest):
+def render(dest, args=None):
     cmd = [sys.executable, os.path.join(REPO, "tools", "gen_bd_wrapper.py"),
-           "--out", dest] + ARGS
+           "--out", dest] + (ARGS if args is None else args)
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
@@ -86,31 +119,38 @@ def render(dest):
     return open(dest).read()
 
 
-def main():
+def one(out, args, label, source):
     check = "--check" in sys.argv
-    tmp = OUT + (".check" if check else "")
-    text = render(tmp)
+    tmp = out + (".check" if check else "")
+    text = render(tmp, args)
     if text is None:
-        print("FK33_CARD_CHECK: GENERATOR FAILED")
+        print("FK33_CARD_CHECK: GENERATOR FAILED for %s" % label)
         return 1
     if check:
         try:
-            cur = open(OUT).read()
+            cur = open(out).read()
         except IOError:
             os.remove(tmp)
             print("FK33_CARD_CHECK: MISSING %s -- run "
-                  "hw/fk33/gen_fk33_card.py" % OUT)
+                  "hw/fk33/gen_fk33_card.py" % out)
             return 1
         os.remove(tmp)
         if cur != text:
-            print("FK33_CARD_CHECK: STALE %s -- rtl/fk33_llama_top.vhd or the "
-                  "configuration changed and this file was not regenerated. "
-                  "Run hw/fk33/gen_fk33_card.py." % OUT)
+            print("FK33_CARD_CHECK: STALE %s -- %s or the configuration "
+                  "changed and this file was not regenerated. Run "
+                  "hw/fk33/gen_fk33_card.py." % (out, source))
             return 1
-        print("FK33_CARD_CHECK: OK (%d bytes)" % len(text))
+        print("FK33_CARD_CHECK: OK %s (%d bytes)"
+              % (os.path.basename(out), len(text)))
         return 0
-    print("wrote %s (%d bytes)" % (OUT, len(text)))
+    print("wrote %s (%d bytes)" % (out, len(text)))
     return 0
+
+
+def main():
+    rc = one(OUT, ARGS, "fk33_card", "rtl/fk33_llama_top.vhd")
+    rc |= one(GRANT_OUT, GRANT_ARGS, "fk33_bc_grant", "rtl/bc_port_grant.vhd")
+    return rc
 
 
 if __name__ == "__main__":
