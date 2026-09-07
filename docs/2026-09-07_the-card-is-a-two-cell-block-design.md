@@ -55,11 +55,23 @@ They were added by the D1/D2 work earlier in this session.
 
 ## What is next, in order
 
-1. **Un-flatten the card cell's masters.** `bst_*` and `kv_*` are flattened
-   `std_logic_vector`s, and *"Vivado's block designer cannot see a flattened
-   vector as AXI at all"* (`gen_fk33_engine.py`'s own words). Cell A solved
-   this with a generated wrapper; cell B+C+D needs the same. `A_NPORTS` is 5
-   there and irrelevant to the card, since A's masters come from cell A.
+1. **Un-flatten C's read side. That is the whole of it, and it is TWO
+   interfaces.** MEASURED on the generated top:
+
+   | signal group | shape | needs splitting |
+   |---|---|---|
+   | `kv_ar*` / `kv_r*` | `std_logic_vector(1 downto 0)`, `2*C_KV_ADDR_W`, `2*C_KV_AXI_DW` | **yes, 2 masters** |
+   | `kv_aw*` / `kv_w*` / `kv_b*` | single, `std_logic` | no |
+   | `bst_*` | single, `std_logic` | no |
+
+   So cell B+C+D presents **five** masters (B read, B write, C read 0, C read 1,
+   C write) of which only C's two reads are flattened. *"Vivado's block designer
+   cannot see a flattened vector as AXI at all"* (`gen_fk33_engine.py`'s own
+   words) applies to exactly those two. Cell A needed a 28-master generated
+   wrapper for this; cell B+C+D needs a two-interface split.
+
+   `A_NPORTS` is 5 on this top and is irrelevant to the card, because A's
+   masters come from cell A.
 2. **Add the second cell to `gen_pcieep.py`** beside `_eng_block()`, wire the
    23-port seam, and map `bst_*`/`kv_*` onto the spare SAXI ports through
    `bc_port_grant`.
