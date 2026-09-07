@@ -154,9 +154,16 @@ def classify(typ):
             if not rng.startswith("("):
                 return ("ok", t)
             inner = rng[1:rng.rfind(")")]
-            if not re.search(r"\b[A-Za-z_]\w*\s*\(", inner):
+            # A LITERAL width passes through.  Anything else must be FOLDED,
+            # not passed through: the wrapper declares no generics, so a width
+            # naming `STEP_W` is simply undeclared in it.  The first draft only
+            # folded widths that CALLED a function and let generic-valued ones
+            # through, which produced a wrapper that generated cleanly and then
+            # failed elaboration with six `[Synth 8-36] not declared` errors
+            # naming signals that look like they should exist.
+            if re.fullmatch(r"[-0-9\s+*/()]*(downto|to)[-0-9\s+*/()]*", inner,
+                            re.I):
                 return ("ok", t)
-            # width calls a function: try to fold it to a literal
             m2 = re.match(r"^(.*?)\s+downto\s+(.*)$", inner, re.I)
             if not m2:
                 return ("unhandled", t)
@@ -168,6 +175,26 @@ def classify(typ):
     if low in C.ALLOWED_SCALAR:
         return ("ok", t)
     return ("unhandled", t)
+
+
+def seed_consts_from_generics(path, name):
+    """Take NAME := <integer literal> from the entity's generic clause.
+
+    These are the values the wrapper PINS, since it declares no generics of its
+    own and instantiates with the defaults unless --generic says otherwise. A
+    generic whose default is an expression (VN_W, REGMAX) is deliberately NOT
+    guessed; supply it with --const and the tool will say so if you have not.
+    """
+    src = open(path, errors="replace").read()
+    m = re.search(r"\bentity\s+%s\s+is\b(.*?)\bport\s*\("
+                  % re.escape(name), src, re.S | re.I)
+    if not m:
+        return {}
+    found = {}
+    for gm in re.finditer(r"^\s*([A-Za-z_]\w*)\s*:\s*\w+\s*:=\s*(-?\d+)\s*[;)]",
+                          C.strip_comments(m.group(1)), re.M):
+        found[gm.group(1)] = int(gm.group(2))
+    return found
 
 
 def parse_entity(path, name):
@@ -198,6 +225,14 @@ def main():
     ap.add_argument("--entity", required=True, help="entity to wrap")
     ap.add_argument("--out", required=True)
     ap.add_argument("--wrapper", default="")
+    ap.add_argument("--generic", action="append", default=[],
+                    metavar="NAME=VALUE",
+                    help="pin a generic on the wrapped instance. The wrapper "
+                         "itself declares NO generics -- that is deliberate, "
+                         "because it gives the packager a cell with nothing to "
+                         "infer -- so the CONFIGURATION is chosen here and is "
+                         "visible in the generated file. VALUE is emitted "
+                         "verbatim, so pass VHDL: true, 256, \"block\".")
     ap.add_argument("--const", action="append", default=[],
                     metavar="NAME=VALUE",
                     help="substitute NAME with VALUE in port range "
@@ -217,6 +252,32 @@ def main():
         except ValueError:
             sys.exit("gen_bd_wrapper: --const %r value is not an integer" % kv)
 
+    # A --generic PIN MUST ALSO DRIVE WIDTH FOLDING, or the wrapper is
+    # silently wrong.  Pinning C_KV_BLOCK=32 while folding widths with its
+    # default of 4 produces an entity whose port widths do not match the
+    # instance behind them -- and nothing errors, because both halves are
+    # individually well-formed VHDL.  This is CLAUDE.md's recorded hazard,
+    # "a generic that must agree with a derived value is a new way to be
+    # silently wrong", arriving in a new place.
+    pinned = {}
+    for kv in a.generic:
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            try:
+                pinned[k.strip()] = int(v.strip())
+            except ValueError:
+                pass          # booleans and strings cannot appear in a width
+    CONSTS.update(pinned)
+    if pinned:
+        print("BD_WRAPPER folding widths with the PINNED values: %s"
+              % ", ".join("%s=%d" % (k, pinned[k]) for k in sorted(pinned)))
+
+    seeded = seed_consts_from_generics(a.src, a.entity)
+    for k, v in seeded.items():
+        CONSTS.setdefault(k, v)   # --const wins over a seeded default
+    if seeded:
+        print("BD_WRAPPER pinned generics from the entity's own defaults: %s"
+              % ", ".join("%s=%d" % (k, seeded[k]) for k in sorted(seeded)))
     ports = parse_entity(a.src, a.entity)
     decls, maps, sigs, pre, post = [], [], [], [], []
     n_int = n_fold = n_ok = 0
@@ -303,6 +364,16 @@ def main():
     for p in post:
         w(p)
     w("  u : entity work.%s" % a.entity)
+    if a.generic:
+        gl = []
+        for kv in a.generic:
+            if "=" not in kv:
+                sys.exit("gen_bd_wrapper: --generic wants NAME=VALUE, got %r" % kv)
+            k, v = kv.split("=", 1)
+            gl.append("      %-24s => %s" % (k.strip(), v.strip()))
+        w("    generic map(")
+        w(",\n".join(gl))
+        w("    )")
     w("    port map(")
     w(",\n".join(maps))
     w("    );")
