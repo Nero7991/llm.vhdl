@@ -211,13 +211,25 @@ mutate O2 "the beat counter advances by one record's worth, not one beat" \
 "            r_beat <= r_beat + 1;" \
 "            r_beat <= r_beat + BEAT_CH;"
 
-mutate O3 "the mantissa read is off by one chunk: the header is block 0" \
-"                <= recbuf(hit_slot*CPR + 1 + to_integer(q_blk(s))*MPB + c);" \
-"                <= recbuf(hit_slot*CPR + to_integer(q_blk(s))*MPB + c);"
+# O3/O4 RE-ANCHORED 2026-09-07, when `recbuf` was split into MPB mantissa
+# banks plus a small header register file to remove a 68-way multiplexer worth
+# 48,388 LUT.  BOTH ANCHORS SILENTLY STOPPED MATCHING and the script reported
+# them as "never ran (anchor failure)" -- the RTL change had disabled two of
+# this block's own mutations without failing anything.  That is the hazard of
+# anchoring a mutation on source TEXT, and the only tell is the never-ran
+# count, which is easy to read past because the surviving rows all still pass.
+#
+# O3 keeps its INTENT -- the mantissa read reaching the wrong chunk -- in the
+# form the banked code can express.  The old "+1" no longer exists, because
+# the banking absorbed it, so the analogous defect is the two mantissa chunks
+# arriving from swapped banks.  MPB-1-c is in bounds by construction.
+mutate O3 "the mantissa chunks are read from swapped banks" \
+"                <= mbank(c)(hit_slot*NBLK + to_integer(q_blk(s)));" \
+"                <= mbank(MPB-1-c)(hit_slot*NBLK + to_integer(q_blk(s)));"
 
 mutate O4 "the header is always read out of slot 0" \
-"            q_hdr(s) <= recbuf(hit_slot*CPR)(NBLK*EXP_W-1 downto 0);" \
-"            q_hdr(s) <= recbuf(0)(NBLK*EXP_W-1 downto 0);"
+"            q_hdr(s) <= hdr_r(hit_slot)(NBLK*EXP_W-1 downto 0);" \
+"            q_hdr(s) <= hdr_r(0)(NBLK*EXP_W-1 downto 0);"
 
 # ---- partially filled records and the slot window -------------------------
 mutate W1 "residency is declared on the FIRST chunk of a record, not the last" \

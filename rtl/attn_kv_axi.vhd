@@ -643,7 +643,30 @@ begin
   -- file saying it twice and drifting.
   -- ======================================================================
   GEN_RD : for s in 0 to 1 generate
-    signal recbuf: ch_arr(0 to RBUF*CPR-1) := (others => (others => '0'));
+    -- recbuf WAS one flat ch_arr(0 to RBUF*CPR-1) -- 68 words of 128 bits at
+    -- the composed shape -- carrying the header word and every mantissa chunk
+    -- of every slot together.  MEASURED 2026-09-06, that cost about 21,000
+    -- LUT PER PREFETCH SLOT, roughly 10 LUT per stored bit, because the
+    -- consumer read three words per cycle through a 68-way multiplexer, and
+    -- the array is written twice per cycle besides.  Storage was never the
+    -- expensive part; the SELECT across slots was.
+    --
+    -- THE SPLIT IS AN IDENTITY, not an approximation.  The read index was
+    --     hit_slot*CPR + 1 + q_blk*MPB + c,   c in 0 .. MPB-1
+    -- so substituting mm = 1 + q_blk*MPB + c gives (mm-1) mod MPB = c exactly
+    -- and (mm-1)/MPB = q_blk exactly.  Banking on (mm-1) mod MPB therefore
+    -- turns each of the MPB reads into its OWN bank at index
+    -- hit_slot*NBLK + q_blk, and CPR-1 = NBLK*MPB makes that index range
+    -- exact rather than merely sufficient.
+    --
+    -- The header (mm = 0) is kept separate because only NBLK*EXP_W of its
+    -- bits are ever read and there are only RBUF of them -- four words, far
+    -- too small to be worth a bank, and reading it from one would add a port
+    -- for nothing.
+    type   mbank_t  is array (0 to RBUF*NBLK-1) of std_logic_vector(CH_W-1 downto 0);
+    type   mbanks_t is array (0 to MPB-1) of mbank_t;
+    signal mbank : mbanks_t := (others => (others => (others => '0')));
+    signal hdr_r : ch_arr(0 to RBUF-1) := (others => (others => '0'));
     signal sv    : std_logic_vector(RBUF-1 downto 0) := (others => '0');
     type   sh_t  is array (0 to RBUF-1) of unsigned(AW_H-1 downto 0);
     type   sp_t  is array (0 to RBUF-1) of unsigned(POS_W-1 downto 0);
@@ -727,10 +750,12 @@ begin
           -- Identical in shape to sim/tb_attn_block.vhd:498-510: registered
           -- data, and the record's header registered with every beat.
           if q_en(s) = '1' and hit = '1' then
-            q_hdr(s) <= recbuf(hit_slot*CPR)(NBLK*EXP_W-1 downto 0);
+            q_hdr(s) <= hdr_r(hit_slot)(NBLK*EXP_W-1 downto 0);
             for c in 0 to MPB-1 loop
+              -- was recbuf(hit_slot*CPR + 1 + q_blk*MPB + c); by the identity
+              -- above this is bank c at index hit_slot*NBLK + q_blk.
               q_mant(s)((c+1)*CH_W-1 downto c*CH_W)
-                <= recbuf(hit_slot*CPR + 1 + to_integer(q_blk(s))*MPB + c);
+                <= mbank(c)(hit_slot*NBLK + to_integer(q_blk(s)));
             end loop;
           end if;
 
@@ -767,7 +792,15 @@ begin
                 slot := rr mod RBUF;
                 if rr <= c_max + RBUF - 1
                    and (to_integer(run_p0) + rr) < to_integer(cpos_r) then
-                  recbuf(slot*CPR + mm) <= lane;
+                  -- mm = 0 is the header; mm >= 1 lands in bank
+                  -- (mm-1) mod MPB at slot*NBLK + (mm-1)/MPB.  Two chunks
+                  -- arrive per cycle and their mm always differ, so no bank
+                  -- ever sees two writes in one cycle.
+                  if mm = 0 then
+                    hdr_r(slot) <= lane;
+                  else
+                    mbank((mm-1) mod MPB)(slot*NBLK + (mm-1)/MPB) <= lane;
+                  end if;
                   if mm = 0 then
                     sh(slot) <= run_hd;
                     sp(slot) <= run_p0 + to_unsigned(rr, POS_W);
