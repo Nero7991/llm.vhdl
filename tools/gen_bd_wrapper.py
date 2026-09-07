@@ -225,6 +225,17 @@ def main():
     ap.add_argument("--entity", required=True, help="entity to wrap")
     ap.add_argument("--out", required=True)
     ap.add_argument("--wrapper", default="")
+    ap.add_argument("--split", action="append", default=[],
+                    metavar="N:port,port,...",
+                    help="un-flatten each named port into N interfaces. "
+                         "A port of total width W becomes N ports of W/N, and "
+                         "the leading `<prefix>_` becomes `<prefix><i>_`. "
+                         "Vivado's block designer cannot see a flattened "
+                         "std_logic_vector as AXI at all, so a master carried "
+                         "as one wide vector cannot reach hbm/SAXI_nn. "
+                         "The list is EXPLICIT rather than inferred: a width "
+                         "being divisible by N does not mean the port is N "
+                         "masters (kv_awaddr is 16 bits and is one).")
     ap.add_argument("--generic", action="append", default=[],
                     metavar="NAME=VALUE",
                     help="pin a generic on the wrapped instance. The wrapper "
@@ -278,13 +289,93 @@ def main():
     if seeded:
         print("BD_WRAPPER pinned generics from the entity's own defaults: %s"
               % ", ".join("%s=%d" % (k, seeded[k]) for k in sorted(seeded)))
+    split = {}
+    for spec in a.split:
+        if ":" not in spec:
+            sys.exit("gen_bd_wrapper: --split wants N:port,port,..., got %r" % spec)
+        n_s, plist = spec.split(":", 1)
+        try:
+            n = int(n_s)
+        except ValueError:
+            sys.exit("gen_bd_wrapper: --split count %r is not an integer" % n_s)
+        if n < 2:
+            sys.exit("gen_bd_wrapper: --split N must be >= 2")
+        for nm in plist.split(","):
+            nm = nm.strip()
+            if nm:
+                split[nm] = n
+
     ports = parse_entity(a.src, a.entity)
-    decls, maps, sigs, pre, post = [], [], [], [], []
+    unknown = set(split) - set(p[0] for p in ports)
+    if unknown:
+        sys.exit("gen_bd_wrapper: --split names port(s) this entity does not "
+                 "have: %s" % ", ".join(sorted(unknown)))
+    decls, maps, sigs, pre_asg, post = [], [], [], [], []
     n_int = n_fold = n_ok = 0
     unhandled = []
 
+    n_split = 0
     for nm, direction, typ in ports:
         kind, info = classify(typ)
+
+        if nm in split:
+            n = split[nm]
+            if kind not in ("ok", "fold"):
+                sys.exit("gen_bd_wrapper: cannot split %s, whose type %r is "
+                         "not a plain vector" % (nm, typ))
+            if kind == "fold":
+                v, hi, lo = info
+                tot = hi - lo + 1
+            else:
+                mrng = re.search(r"\((.*?)\s+downto\s+(.*?)\)", info)
+                if not mrng:
+                    # a scalar cannot be split
+                    sys.exit("gen_bd_wrapper: cannot split %s: %r is not a "
+                             "vector" % (nm, info))
+                v = info.split("(")[0].strip()
+                hi = const_eval(mrng.group(1)); lo = const_eval(mrng.group(2))
+                if hi is None or lo is None:
+                    sys.exit("gen_bd_wrapper: cannot fold %s's width to split "
+                             "it: %r" % (nm, info))
+                tot = hi - lo + 1
+            if tot % n:
+                sys.exit("gen_bd_wrapper: %s is %d bits, which %d does not "
+                         "divide -- so it is not %d equal interfaces and this "
+                         "tool will not guess how to cut it"
+                         % (nm, tot, n, n))
+            each = tot // n
+            # `kv_araddr` -> `kv0_araddr`: the index goes on the PREFIX, which
+            # is what makes each slice look like its own interface to the
+            # block designer.
+            if "_" not in nm:
+                sys.exit("gen_bd_wrapper: cannot index %s, it has no `_` to "
+                         "split the prefix on" % nm)
+            pre, rest = nm.split("_", 1)
+            sig = "w_" + nm
+            sigs.append("  signal %-22s : %s(%d downto 0);" % (sig, v, tot - 1))
+            for i in range(n):
+                sub = "%s%d_%s" % (pre, i, rest)
+                if each == 1:
+                    decls.append("    %-24s : %-6s std_logic" % (sub, direction))
+                else:
+                    decls.append("    %-24s : %-6s %s(%d downto 0)"
+                                 % (sub, direction, v, each - 1))
+                if direction == "in":
+                    if each == 1:
+                        pre_asg.append("  %s(%d) <= %s;" % (sig, i, sub))
+                    else:
+                        pre_asg.append("  %s(%d downto %d) <= %s;"
+                                       % (sig, (i + 1) * each - 1, i * each, sub))
+                else:
+                    if each == 1:
+                        post.append("  %s <= %s(%d);" % (sub, sig, i))
+                    else:
+                        post.append("  %s <= %s(%d downto %d);"
+                                    % (sub, sig, (i + 1) * each - 1, i * each))
+            maps.append("      %-24s => %s" % (nm, sig))
+            n_split += 1
+            continue
+
         if kind == "ok":
             decls.append("    %-24s : %-6s %s" % (nm, direction, info))
             maps.append("      %-24s => %s" % (nm, nm))
@@ -306,7 +397,7 @@ def main():
             decls.append("    %-24s : %-6s signed(31 downto 0)" % (nm, direction))
             maps.append("      %-24s => %s" % (nm, sig))
             if direction == "in":
-                pre.append("  %s <= to_integer(%s);" % (sig, nm))
+                pre_asg.append("  %s <= to_integer(%s);" % (sig, nm))
             else:
                 post.append("  %s <= to_signed(%s, 32);" % (nm, sig))
             n_int += 1
@@ -318,7 +409,7 @@ def main():
                          % (nm, direction, w - 1))
             maps.append("      %-24s => %s" % (nm, sig))
             if direction == "in":
-                pre.append("  %s <= to_integer(unsigned(%s));" % (sig, nm))
+                pre_asg.append("  %s <= to_integer(unsigned(%s));" % (sig, nm))
             else:
                 post.append("  %s <= std_logic_vector(to_unsigned(%s, %d));"
                             % (nm, sig, w))
@@ -345,6 +436,7 @@ def main():
     w("--   %4d ports passed through unchanged" % n_ok)
     w("--   %4d vector widths folded to literals   [IP_Flow 19-627]" % n_fold)
     w("--   %4d integer/natural ports re-typed      [IP_Flow 19-734]" % n_int)
+    w("--   %4d flattened port(s) un-flattened into named interfaces" % n_split)
     w("library ieee;")
     w("use ieee.std_logic_1164.all;")
     w("use ieee.numeric_std.all;")
@@ -359,7 +451,7 @@ def main():
     for s in sigs:
         w(s)
     w("begin")
-    for p in pre:
+    for p in pre_asg:
         w(p)
     for p in post:
         w(p)
