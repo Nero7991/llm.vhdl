@@ -102,9 +102,70 @@ ARGS = [
     "--const", "NREGION=14",
     "--const", "REGMAX=12288",
     "--const", "A_NPORTS=5",
+    # A_DESC = true IS THE WHOLE POINT OF THIS CELL and it was missing from
+    # the first version of this list, which is worth recording because nothing
+    # complained about the omission directly.  With A_DESC false the `ga_real`
+    # generate is instantiated, bringing `matvec_int4` -- the SIMULATION path's
+    # A, five masters at ROWS_IF 4 -- into a cell whose entire purpose is to
+    # drive the OTHER cell's A over the `a_*` seam.
+    #
+    # The symptom was not "A_DESC is false".  It was
+    #   [Synth 8-549] port width mismatch for port 'm_arvalid':
+    #                 port width = 49, actual width = 5
+    # because A_ROWS_IF = 48 asks `matvec_int4` for 49 masters while
+    # `A_NPORTS` is a package CONSTANT of 5 (llama_map_pkg.vhd:69, pinned
+    # because `weight_streamer.vhd` fixes NPORTS_W = ROWS_IF = 4 at BLK 32 /
+    # AXI_DW 128).  That reads as "A_ROWS_IF = 48 is illegal here", which is
+    # true of `ga_real` and irrelevant to this cell -- the path should not
+    # exist at all.
+    "--generic", "A_DESC=true",
     "--generic", "B_STATE_AXI=true",
     "--generic", "C_KV_AXI=true",
     "--generic", "C_KV_BLOCK=32",
+    # A_ROWS_IF = 48 IS NOT A TUNING CHOICE, IT IS THE SEAM WIDTH.
+    # `hw/fk33/gen_fk33_engine.py` pins `ROWS_IF = 48` (TRACK LEVERC48 measured
+    # "distributed" at 48 as -42,633 CLB LUT), so the engine cell's
+    # `d_y_data` is 48*64 = 3072 bits and `d_y_mask` is 48.  The card top's
+    # `A_ROWS_IF` DEFAULTS TO 4, which makes `a_y_data` 256 bits and `a_y_mask`
+    # 4 -- a 12x mismatch on the seam that joins the two cells.
+    #
+    # Found by comparing the two entities' port lists rather than by a tool:
+    # nothing in either file references the other, and each is internally
+    # consistent, so the disagreement is invisible until they are connected.
+    # This is also what makes `--generic` drive width folding load-bearing
+    # rather than defensive -- a pin that did not reach the folding would leave
+    # the wrapper's port 256 bits wide over a 3072-bit instance.
+    "--generic", "A_ROWS_IF=48",
+    # A_JOB_STRIDE = 0x40000 (262,144) EXISTS ONLY TO SATISFY A GUARD THAT IS
+    # OVER-BROAD IN THIS CONFIGURATION, and saying so is the point of this note.
+    #
+    # `fk33_llama_top.vhd:1092` is
+    #     CHK_A_BLOCK : natural := A_JOB_STRIDE - (A_ROWS_IF + 1) * A_SUB_BYTES
+    # which is the project's out-of-range-natural idiom for a compile-time
+    # assertion, because Vivado silently ignores `assert ... severity failure`
+    # in synthesis.  At A_ROWS_IF = 48 it evaluates to
+    # 32,768 - 49*4,096 = -167,936 and Vivado refuses with
+    # `[Synth 8-11323] assigned value '-167936' out of range`.
+    #
+    # The guard is CORRECT arithmetic and its own comment says what it guards:
+    # "the run-time half of this bound is A_SUB_BEATS / A_SCL_BEATS in the
+    # `ga_real` generate; this is the half a synthesis run can see."  But
+    # `ga_real` is `if not A_BEHAV and not A_DESC generate`, so at A_DESC = true
+    # it is NOT INSTANTIATED, and MEASURED by grep, A_JOB_STRIDE appears
+    # nowhere else outside that generate.  The constant is declared in the
+    # architecture's declarative region, so it is evaluated regardless of
+    # whether the path it describes exists.
+    #
+    # So the guard fires over a memory map this configuration does not build:
+    # in the card, A's weight sub-regions belong to the OTHER cell,
+    # `fk33_engine`, and A_ROWS_IF here only sizes the `a_y_*` seam.  262,144
+    # is 49*4,096 rounded up to a power of two; nothing reads it.
+    #
+    # The cleaner fix is to make CHK_A_BLOCK conditional on `not A_DESC` in
+    # rtl/llama_top.vhd and regenerate.  Deliberately NOT done here: that edits
+    # a guard, and a guard weakened by someone who only wanted their own build
+    # to pass is how guards stop working.
+    "--generic", "A_JOB_STRIDE=16#40000#",
     "--split", "2:" + KV_READ,
 ]
 

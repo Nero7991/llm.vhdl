@@ -161,8 +161,8 @@ entity fk33_card is
     a_x_wdata                : out    std_logic_vector(15 downto 0);
     a_y_we                   : in     std_logic;
     a_y_addr                 : in     std_logic_vector(15 downto 0);
-    a_y_data                 : in     std_logic_vector(255 downto 0);
-    a_y_mask                 : in     std_logic_vector(3 downto 0);
+    a_y_data                 : in     std_logic_vector(3071 downto 0);
+    a_y_mask                 : in     std_logic_vector(47 downto 0);
     a_y_exp                  : in     std_logic_vector(31 downto 0);
     a_job_done               : in     std_logic;
     a_job_err                : in     std_logic
@@ -214,9 +214,12 @@ begin
   kv1_rready <= w_kv_rready(1);
   u : entity work.fk33_llama_top
     generic map(
+      A_DESC                   => true,
       B_STATE_AXI              => true,
       C_KV_AXI                 => true,
-      C_KV_BLOCK               => 32
+      C_KV_BLOCK               => 32,
+      A_ROWS_IF                => 48,
+      A_JOB_STRIDE             => 16#40000#
     )
     port map(
       clk                      => clk,
