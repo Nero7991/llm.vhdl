@@ -4780,3 +4780,55 @@ for B+C+D together. The 3h30m `synth_design -rtl` attempt that preceded this
 was NOT the same thing -- it set `dissolveMemorySizeLimit 200000`, which
 expands inferred memories into individual bits, and the hypothesis under test
 is that real synthesis is faster because it infers BRAM instead.
+
+## 2026-09-08 -- the software path is complete and verified; the bitstream is not
+
+**Re-verified end to end tonight, all green, nothing outstanding on the host
+side.** The OpenAI-compatible server, the driver/transport, the tokenizer, the
+chat template and the FK33 host seam are finished work:
+
+```
+SEAM_SELFTEST   PASS (84 checks, 0 failed)   12 groups incl. the real transport
+SERVER_STORIES  PASS (0 failed)              11 checks, echo/stream invariants
+SERVER_E2E      PASS (0 failed)              6 chat cases + usage + tool refusal
+```
+
+Live against a running server: `/v1/models`, `/v1/chat/completions` streaming
+and non-streaming, `/v1/completions`, correct `usage` accounting on both arms.
+`stories260k` produces coherent prose and is token-identical to the AXU3EG VHDL
+engine at temperature 0.
+
+**What is NOT inference, stated plainly because the server states it too.** The
+`qwen3.5-9b-fk33` arm runs the real chat template, the real tokenizer (bit-exact
+against llama.cpp) and the real prefill/decode-returning-logits protocol against
+a **SIMULATED** card that does not execute a transformer. Its tokens are
+gibberish by construction and the model description says so. The only card
+backends are `sim` and `file`; there is deliberately no flag that opens
+`/dev/xdma*`.
+
+So the remaining gap to generated output on hardware is exactly two things, both
+below the host software, and neither is a software task:
+
+1. **A bitstream for the three-cell card.** The block design builds as of
+   2026-09-07; area, fit and timing are still unknown.
+2. **A whole-model 9B numeric reference**, without which a real card's output
+   cannot be checked against anything.
+
+**Measurement trap hit tonight, recorded because it nearly produced a wrong
+"fix".** `--model qwen35` refused at startup with `pl_open: block layout
+refused: out of range: SEQ_POS + N_STEP past the KV capacity, or a block past
+the top of HBM`. Grepping the journal for error-shaped words returned that line
+and fragments, and it reads like a KV-capacity bug. It is not: the server
+prints, immediately after, a complete remedy naming `--manifest` and
+`--desc-arena-bytes` and the exact figure (159,232 bytes for the 9B program's
+311 descriptors at a 512-byte slot). **The guidance was there and the grep cut
+it off.** The zero default is deliberate -- `llama_server.cpp:986` says a silent
+default is what the refusal exists to prevent -- and must not be "fixed".
+Read the whole refusal, not a grep of it.
+
+**Card OOC synthesis: still running at 5h15m, 15.4 GB under a 16 GB cap**,
+`memory.events high 0` (no throttling), swap flat at 4 GB throughout, one RSS
+dip at ~4h49m that was a genuine phase change rather than reclaim. This is the
+first attempt at B+C+D together. The 3h30m `synth_design -rtl` that preceded it
+is not comparable: it set `dissolveMemorySizeLimit 200000`, expanding inferred
+memories to individual bits, and reached 14.5 GB without finishing.
