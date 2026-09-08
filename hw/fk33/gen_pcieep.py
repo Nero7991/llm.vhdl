@@ -2130,13 +2130,60 @@ if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
     error "IMPL FAILED -- see the run log"
 }'''
 
-# ---- MEMORY.  -jobs 8 on SYNTHESIS launches up to 8 concurrent
-# out-of-context IP runs, each its own Vivado process, on a 31 GB box that has
+# ---- MEMORY.  `-jobs N` on SYNTHESIS launches up to N concurrent
+# out-of-context IP runs, EACH ITS OWN VIVADO PROCESS, on a 31 GB box that has
 # OOM-killed unrelated services before (the 2026-07-04 systemd-oomd incident
 # took down the whole code-server cgroup).  The engine adds a ~135 kLUT module
 # to the main run, so this build is materially heavier than every pcieep build
 # before it.  Implementation is left at 8: its -jobs is threads inside ONE
 # process and does not multiply the footprint.
+#
+# The value used to be hardcoded, and the comment above it went on saying 8
+# after the code had been changed to 4 -- a stale number in the one comment
+# whose whole job is to say how much memory this costs.  It is a variable now
+# so the two cannot drift again.
+#
+# MEASURED 2026-09-08, and this is why the default drops with the card on:
+# `FK33_CARD=1` with 4 jobs was killed by **systemd-oomd** 2.5 minutes after
+# `launch_runs` -- "cardbuild.service: systemd-oomd killed 134 process(es) in
+# this unit" -- even though the unit ran under `MemoryHigh=18G` and the cgroup
+# never reported a single `memory.events high`.  **`MemoryHigh` throttles; it
+# does not stop systemd-oomd**, which fires on memory PRESSURE (PSI) across the
+# cgroup, not on the limit.  That is the same distinction CLAUDE.md already
+# records for `OOMPolicy=continue`, in a new place.  Four workers all
+# allocating hard at once is a pressure spike whatever the ceiling says.
+#
+# TWO FURTHER MEASUREMENTS THE SAME NIGHT, both correcting the obvious fixes:
+#
+# (a) **`-jobs N` BOUNDS CONCURRENT RUNS, NOT PROCESSES.** Relaunched at
+#     `-jobs 2` and counted **ELEVEN** Vivado processes totalling 22.04 GB,
+#     with `MemAvailable` down to 3.8 GB. Each run forks its own parallel
+#     synthesis workers, which this file already records elsewhere ("a single
+#     Vivado shows five matches ... because Vivado forks parallel-synthesis
+#     workers that inherit the parent's argv"). So the process count is roughly
+#     `jobs x 5 + 1`, and halving `-jobs` does NOT halve the footprint.
+#
+# (b) **DO NOT USE `ManagedOOMPreference=avoid` HERE. It is the wrong remedy
+#     and it is worse than none.** It was added on the theory that the first
+#     kill was oomd's fault. It does not reduce anything: it tells systemd-oomd
+#     to spare THIS cgroup, so when the box goes under pressure oomd kills a
+#     BYSTANDER instead -- and the bystander on this machine is `code-server`,
+#     which is exactly what the 2026-07-04 incident destroyed (275 processes,
+#     every claude session in that cgroup). The run was stopped by hand before
+#     it fired. **oomd killing the offending build is the SAFETY VALVE, not the
+#     bug.** If a hard ceiling is wanted, use `MemoryMax`, which makes the
+#     kernel kill THIS cgroup and nothing else.
+#
+# So the standing recipe for a card build is `-jobs 1`, no oomd exemption, and
+# `MemoryMax` if a hard stop is wanted. Even that is unproven: no card build has
+# completed.
+# Concurrent OOC synthesis runs.  FOUR is what the engine-only build has used;
+# with the card in the design that was OOM-killed by systemd-oomd (see above),
+# so the default halves when FK33_CARD is on.  Override with FK33_SYNTH_JOBS.
+SYNTH_JOBS = int(os.environ.get("FK33_SYNTH_JOBS", "1" if CARD_ON else "4"))
+if SYNTH_JOBS < 1:
+    sys.exit("ABORT: FK33_SYNTH_JOBS must be >= 1, got %d" % SYNTH_JOBS)
+
 LAUNCH_NEW = RUN_GUARD_TCL + '''
 set FK33_SYNTH_MAX_MIN [fk33_bound FK33_SYNTH_MAX_MIN %(smin)d]
 set FK33_IMPL_MAX_MIN  [fk33_bound FK33_IMPL_MAX_MIN  %(imin)d]
@@ -2144,7 +2191,7 @@ if {[info exists ::env(FK33_SYNTH_MAX_MIN)]} { set FK33_SYNTH_MAX_MIN [fk33_boun
 if {[info exists ::env(FK33_IMPL_MAX_MIN)]}  { set FK33_IMPL_MAX_MIN  [fk33_bound FK33_IMPL_MAX_MIN  $::env(FK33_IMPL_MAX_MIN)] }
 puts "FK33_RUNBOUND synth=$FK33_SYNTH_MAX_MIN min impl=$FK33_IMPL_MAX_MIN min"
 
-launch_runs synth_1 -jobs 4
+launch_runs synth_1 -jobs %(sjobs)d
 fk33_assert_run_started synth_1
 wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
 fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN
@@ -2154,7 +2201,8 @@ launch_runs impl_1 -to_step write_bitstream -jobs 8
 fk33_assert_run_started impl_1
 wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1
 fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN''' % {"smin": SYNTH_MAX_MIN,
-                                                     "imin": IMPL_MAX_MIN}
+                                                     "imin": IMPL_MAX_MIN,
+                                                     "sjobs": SYNTH_JOBS}
 
 SUBS = [
     # ---- 7. separate project + artifacts
