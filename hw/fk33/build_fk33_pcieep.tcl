@@ -203,6 +203,117 @@ update_compile_order -fileset sources_1
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_seam.vhd
 update_compile_order -fileset sources_1
 
+# ---- subsystems B/C/D RTL (gen_pcieep.py) ---------------------------------
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/bc_port_grant.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/a_desc_adapter.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/a_job_counter.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_emit.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_luts_pkg.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_gate.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_quant.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_mac_array.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/divider_rs.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_recip.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_rope.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_score_q12.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_softmax.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/imrope_pkg.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_twiddle.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_pkg.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_block.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_axi.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_head_emit.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_silu.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_y_emit.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_emit_chain.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_capture.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_recur_pipe.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_scalar.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/l2norm_rs.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_job_seq.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_store.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/model_cfg_pkg.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/llama_map_pkg.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/region_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/vec_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs_mem.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/sampler_stream.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/seq_desc_fetch.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/seq_opdec.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/seq_region_lock.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_issue.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_res.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_llama_top.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_bc_grant.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_card.vhd
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/bc_port_grant.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/a_desc_adapter.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/a_job_counter.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_emit.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/fixed_luts_pkg.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_gate.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_quant.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_mac_array.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/divider_rs.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_recip.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_rope.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_score_q12.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_softmax.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/imrope_pkg.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_twiddle.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/fixed_pkg.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_block.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_axi.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_head_emit.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_silu.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_y_emit.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_emit_chain.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_capture.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_recur_pipe.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_scalar.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/l2norm_rs.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_job_seq.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_store.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/model_cfg_pkg.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/llama_map_pkg.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/region_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/vec_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs_mem.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/sampler_stream.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/seq_desc_fetch.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/seq_opdec.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/seq_region_lock.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_issue.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_res.vhd}]
+set_property FILE_TYPE {VHDL 2008} [get_files {/home/orencollaco/GitHub/llama.vhdl/rtl/fk33_llama_top.vhd}]
+# READ BACK.  A path that did not match leaves the file at VHDL-93 and
+# the failure is 400 lines later in a generated bd.v, naming neither
+# the file nor the standard.
+foreach f {/home/orencollaco/GitHub/llama.vhdl/rtl/bc_port_grant.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/a_desc_adapter.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/a_job_counter.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_emit.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_luts_pkg.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_gate.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_quant.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_mac_array.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/divider_rs.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_recip.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_rope.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_score_q12.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_softmax.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/imrope_pkg.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_twiddle.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_pkg.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_block.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_axi.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_head_emit.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_silu.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_y_emit.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_emit_chain.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_capture.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_recur_pipe.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_scalar.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/l2norm_rs.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_job_seq.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_store.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/model_cfg_pkg.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/llama_map_pkg.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/region_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/vec_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs_mem.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/sampler_stream.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/seq_desc_fetch.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/seq_opdec.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/seq_region_lock.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_issue.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_res.vhd /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_llama_top.vhd} {
+    set t [get_property FILE_TYPE [get_files -quiet $f]]
+    if {$t ne "VHDL 2008"} {
+        error "FK33_CARD FAIL: $f is FILE_TYPE \"$t\", not VHDL 2008."
+    }
+}
+puts "FK33_CARD 48 sources set to VHDL 2008 (the two wrapper tops stay VHDL-93)"
+update_compile_order -fileset sources_1
+
 #create_project $ProjectName ./$ProjectName -part xcvu33p-fsvh2104-2-e-es1
 
 set_param synth.maxThreads 8
@@ -1083,26 +1194,26 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z16
 set_property -dict [list CONFIG.CONST_WIDTH {16} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z16]
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 seam_z32
 set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0}] [get_bd_cells seam_z32]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_busy]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_tok_done]
-connect_bd_net [get_bd_pins seam_h1/dout] [get_bd_pins fk33_seam_0/d_err]
-connect_bd_net [get_bd_pins seam_nd4/dout] [get_bd_pins fk33_seam_0/d_err_code]
-connect_bd_net [get_bd_pins seam_z11/dout] [get_bd_pins fk33_seam_0/d_err_step]
-connect_bd_net [get_bd_pins seam_z11/dout] [get_bd_pins fk33_seam_0/d_steps_done]
-connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/d_raddr]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/d_ren]
-connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/hr_data]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/obs_issue]
-connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/obs_tok_pos]
-connect_bd_net [get_bd_pins seam_z32/dout] [get_bd_pins fk33_seam_0/smp_token]
-connect_bd_net [get_bd_pins seam_z32/dout] [get_bd_pins fk33_seam_0/smp_n]
-connect_bd_net [get_bd_pins seam_z16/dout] [get_bd_pins fk33_seam_0/smp_exp]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_smp_ovf]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_lost_beat]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_gate_drop]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_unit_stub]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_e_coll]
-connect_bd_net [get_bd_pins seam_z1/dout] [get_bd_pins fk33_seam_0/f_kv_err]
+# d_busy is driven by card/busy (FK33_CARD): no tie-off.
+# d_tok_done is driven by card/tok_done (FK33_CARD): no tie-off.
+# d_err is driven by card/err (FK33_CARD): no tie-off.
+# d_err_code is driven by card/err_code (FK33_CARD): no tie-off.
+# d_err_step is driven by card/err_step (FK33_CARD): no tie-off.
+# d_steps_done is driven by card/steps_done (FK33_CARD): no tie-off.
+# d_raddr is driven by card/d_raddr (FK33_CARD): no tie-off.
+# d_ren is driven by card/d_ren (FK33_CARD): no tie-off.
+# hr_data is driven by card/hr_data (FK33_CARD): no tie-off.
+# obs_issue is driven by card/obs_issue (FK33_CARD): no tie-off.
+# obs_tok_pos is driven by card/obs_tok_pos (FK33_CARD): no tie-off.
+# smp_token is driven by card/smp_token (FK33_CARD): no tie-off.
+# smp_n is driven by card/smp_n (FK33_CARD): no tie-off.
+# smp_exp is driven by card/smp_exp (FK33_CARD): no tie-off.
+# f_smp_ovf is driven by card/err_smp_ovf (FK33_CARD): no tie-off.
+# f_lost_beat is driven by card/err_lost_beat (FK33_CARD): no tie-off.
+# f_gate_drop is driven by card/err_gate_drop (FK33_CARD): no tie-off.
+# f_unit_stub is driven by card/err_unit_stub (FK33_CARD): no tie-off.
+# f_e_coll is driven by card/err_e_coll (FK33_CARD): no tie-off.
+# f_kv_err is driven by card/kv_err (FK33_CARD): no tie-off.
 
 # READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a
 # CONFIG name an object does not have and get_property then returns the
@@ -1117,6 +1228,261 @@ foreach g {CAPS_VOCAB CAPS_EMBD CAPS_LAYER CAPS_CTX} {
     puts "FK33_SEAM $g = $v"
 }
 # ---- end host seam --------------------------------------------------------
+
+# ---- SUBSYSTEMS B, C, D + THE B/C GRANT (gen_pcieep.py) -------------------
+create_bd_cell -type module -reference fk33_card card
+create_bd_cell -type module -reference fk33_bc_grant bcgrant
+
+# WHAT VIVADO ACTUALLY INFERRED, printed rather than assumed.  The name of
+# an inferred interface is the PORT PREFIX, not the prefix plus `_axi`:
+# `a_awvalid` gives an interface called `a`, and the engine's `m00_axi_*`
+# gives `m00_axi` only because `_axi` is part of its port names.  Guessing
+# `card/a_axi` cost a --bd-only run that got through every cell, both
+# clocks and all eleven A-seam nets before failing on BD 5-232.
+foreach c {card bcgrant} {
+    foreach i [get_bd_intf_pins -quiet $c/*] {
+        puts "FK33_CARD INTF $c [file tail $i]"
+    }
+}
+
+# CLOCKS.  Both cells sit wholly in the CORE domain -- clk_wiz_0/clk_out3 --
+# including the HBM-facing side of the grant, which is why the grant's
+# m0/m1 need a clock converter at the HBM end if the two ever differ.  They
+# do not today: ENGINE_BLOCK already drives every SAXI ACLK from
+# xdma/axi_aclk, so CARD_CDC below is where that assumption is checked
+# rather than assumed.
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins card/clk]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins bcgrant/clk]
+
+# RESET POLARITY, read back rather than assumed.  The card takes an ACTIVE
+# HIGH `rst` and the grant an ACTIVE LOW `rstn`, so one of them gets the
+# inverted form.  Getting this backwards holds a subsystem in reset
+# forever, which looks exactly like a subsystem that never starts.
+set_property CONFIG.POLARITY ACTIVE_HIGH [get_bd_pins card/rst]
+set_property CONFIG.POLARITY ACTIVE_LOW  [get_bd_pins bcgrant/rstn]
+connect_bd_net [get_bd_pins core_reset/peripheral_reset]   [get_bd_pins card/rst]
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins bcgrant/rstn]
+
+# ---- the A seam, card <-> eng --------------------------------------------
+connect_bd_net [get_bd_pins card/a_job_index] [get_bd_pins eng/job_index]
+connect_bd_net [get_bd_pins card/a_x_we] [get_bd_pins eng/d_x_we]
+connect_bd_net [get_bd_pins card/a_x_waddr] [get_bd_pins eng/d_x_waddr]
+connect_bd_net [get_bd_pins card/a_x_wdata] [get_bd_pins eng/d_x_wdata]
+connect_bd_net [get_bd_pins card/a_y_we] [get_bd_pins eng/d_y_we]
+connect_bd_net [get_bd_pins card/a_y_addr] [get_bd_pins eng/d_y_addr]
+connect_bd_net [get_bd_pins card/a_y_data] [get_bd_pins eng/d_y_data]
+connect_bd_net [get_bd_pins card/a_y_mask] [get_bd_pins eng/d_y_mask]
+connect_bd_net [get_bd_pins card/a_y_exp] [get_bd_pins eng/d_y_exp]
+connect_bd_net [get_bd_pins card/a_job_done] [get_bd_pins eng/d_job_done]
+connect_bd_net [get_bd_pins card/a_job_err] [get_bd_pins eng/d_job_err]
+
+# THE CARD'S AXI-LITE MASTER ONTO THE ENGINE'S CONTROL SLAVE.  Two masters
+# now want eng/s_axi: the host, to place DESC_PTR and the arena base before
+# a run, and the card, to issue one job per A step during it.  The existing
+# net is DELETED and both go through a 2:1 smartconnect, rather than
+# ENGINE_BLOCK being edited, so that block stays exactly what the
+# engine-only build already proved.
+delete_bd_objs [get_bd_intf_nets -of_objects [get_bd_intf_pins eng/s_axi]]
+create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 engctl
+set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {2}] [get_bd_cells engctl]
+connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]
+connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]
+connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins engctl/S00_AXI]
+connect_bd_intf_net [get_bd_intf_pins card/a]             [get_bd_intf_pins engctl/S01_AXI]
+connect_bd_intf_net [get_bd_intf_pins engctl/M00_AXI]   [get_bd_intf_pins eng/s_axi]
+
+# ---- the host seam, fk33_seam <-> card ------------------------------------
+# Subsystem D is PRESENT now, so _seam_block skipped every _SEAM_TIES
+# constant that stood in for it -- the tie-off is not emitted rather than
+# emitted and deleted, so check_seam_tieoff's reading of the script text
+# stays true.  The xlconstant cells still exist for the pins NOT in
+# SEAM_FROM_CARD; Vivado drops any that end up unused.
+connect_bd_net [get_bd_pins fk33_seam_0/d_busy] [get_bd_pins card/busy]
+connect_bd_net [get_bd_pins fk33_seam_0/d_tok_done] [get_bd_pins card/tok_done]
+connect_bd_net [get_bd_pins fk33_seam_0/d_err] [get_bd_pins card/err]
+connect_bd_net [get_bd_pins fk33_seam_0/d_err_code] [get_bd_pins card/err_code]
+connect_bd_net [get_bd_pins fk33_seam_0/d_err_step] [get_bd_pins card/err_step]
+connect_bd_net [get_bd_pins fk33_seam_0/d_steps_done] [get_bd_pins card/steps_done]
+connect_bd_net [get_bd_pins fk33_seam_0/d_raddr] [get_bd_pins card/d_raddr]
+connect_bd_net [get_bd_pins fk33_seam_0/d_ren] [get_bd_pins card/d_ren]
+connect_bd_net [get_bd_pins fk33_seam_0/hr_data] [get_bd_pins card/hr_data]
+connect_bd_net [get_bd_pins fk33_seam_0/obs_issue] [get_bd_pins card/obs_issue]
+connect_bd_net [get_bd_pins fk33_seam_0/obs_tok_pos] [get_bd_pins card/obs_tok_pos]
+connect_bd_net [get_bd_pins fk33_seam_0/smp_token] [get_bd_pins card/smp_token]
+connect_bd_net [get_bd_pins fk33_seam_0/smp_n] [get_bd_pins card/smp_n]
+connect_bd_net [get_bd_pins fk33_seam_0/smp_exp] [get_bd_pins card/smp_exp]
+connect_bd_net [get_bd_pins fk33_seam_0/f_smp_ovf] [get_bd_pins card/err_smp_ovf]
+connect_bd_net [get_bd_pins fk33_seam_0/f_lost_beat] [get_bd_pins card/err_lost_beat]
+connect_bd_net [get_bd_pins fk33_seam_0/f_gate_drop] [get_bd_pins card/err_gate_drop]
+connect_bd_net [get_bd_pins fk33_seam_0/f_unit_stub] [get_bd_pins card/err_unit_stub]
+connect_bd_net [get_bd_pins fk33_seam_0/f_e_coll] [get_bd_pins card/err_e_coll]
+connect_bd_net [get_bd_pins fk33_seam_0/f_kv_err] [get_bd_pins card/kv_err]
+connect_bd_net [get_bd_pins fk33_seam_0/d_go] [get_bd_pins card/go]
+connect_bd_net [get_bd_pins fk33_seam_0/d_abort] [get_bd_pins card/abort]
+connect_bd_net [get_bd_pins fk33_seam_0/d_tbl_len] [get_bd_pins card/tbl_len]
+connect_bd_net [get_bd_pins fk33_seam_0/d_host_x_exp] [get_bd_pins card/host_x_exp]
+connect_bd_net [get_bd_pins fk33_seam_0/d_rel_mask] [get_bd_pins card/rel_mask]
+connect_bd_net [get_bd_pins fk33_seam_0/d_tok_ack] [get_bd_pins card/tok_ack]
+connect_bd_net [get_bd_pins fk33_seam_0/d_rdata] [get_bd_pins card/d_rdata]
+connect_bd_net [get_bd_pins fk33_seam_0/d_rvalid] [get_bd_pins card/d_rvalid]
+connect_bd_net [get_bd_pins fk33_seam_0/hw_we] [get_bd_pins card/hw_we]
+connect_bd_net [get_bd_pins fk33_seam_0/hw_reg] [get_bd_pins card/hw_reg]
+connect_bd_net [get_bd_pins fk33_seam_0/hw_addr] [get_bd_pins card/hw_addr]
+connect_bd_net [get_bd_pins fk33_seam_0/hw_data] [get_bd_pins card/hw_data]
+connect_bd_net [get_bd_pins fk33_seam_0/hr_reg] [get_bd_pins card/hr_reg]
+connect_bd_net [get_bd_pins fk33_seam_0/hr_addr] [get_bd_pins card/hr_addr]
+
+# ---- B and C onto the grant -----------------------------------------------
+connect_bd_net [get_bd_pins bcgrant/b_arvalid] [get_bd_pins card/bst_arvalid]
+connect_bd_net [get_bd_pins bcgrant/b_arready] [get_bd_pins card/bst_arready]
+connect_bd_net [get_bd_pins bcgrant/b_araddr] [get_bd_pins card/bst_araddr]
+connect_bd_net [get_bd_pins bcgrant/b_arlen] [get_bd_pins card/bst_arlen]
+connect_bd_net [get_bd_pins bcgrant/b_rvalid] [get_bd_pins card/bst_rvalid]
+connect_bd_net [get_bd_pins bcgrant/b_rready] [get_bd_pins card/bst_rready]
+connect_bd_net [get_bd_pins bcgrant/b_rdata] [get_bd_pins card/bst_rdata]
+connect_bd_net [get_bd_pins bcgrant/b_rlast] [get_bd_pins card/bst_rlast]
+connect_bd_net [get_bd_pins bcgrant/b_awvalid] [get_bd_pins card/bst_awvalid]
+connect_bd_net [get_bd_pins bcgrant/b_awready] [get_bd_pins card/bst_awready]
+connect_bd_net [get_bd_pins bcgrant/b_awaddr] [get_bd_pins card/bst_awaddr]
+connect_bd_net [get_bd_pins bcgrant/b_awlen] [get_bd_pins card/bst_awlen]
+connect_bd_net [get_bd_pins bcgrant/b_wvalid] [get_bd_pins card/bst_wvalid]
+connect_bd_net [get_bd_pins bcgrant/b_wready] [get_bd_pins card/bst_wready]
+connect_bd_net [get_bd_pins bcgrant/b_wdata] [get_bd_pins card/bst_wdata]
+connect_bd_net [get_bd_pins bcgrant/b_wlast] [get_bd_pins card/bst_wlast]
+connect_bd_net [get_bd_pins bcgrant/b_bvalid] [get_bd_pins card/bst_bvalid]
+connect_bd_net [get_bd_pins bcgrant/b_bready] [get_bd_pins card/bst_bready]
+connect_bd_net [get_bd_pins bcgrant/c0_arvalid] [get_bd_pins card/kv0_arvalid]
+connect_bd_net [get_bd_pins bcgrant/c0_arready] [get_bd_pins card/kv0_arready]
+connect_bd_net [get_bd_pins bcgrant/c0_araddr] [get_bd_pins card/kv0_araddr]
+connect_bd_net [get_bd_pins bcgrant/c0_arlen] [get_bd_pins card/kv0_arlen]
+connect_bd_net [get_bd_pins bcgrant/c0_rvalid] [get_bd_pins card/kv0_rvalid]
+connect_bd_net [get_bd_pins bcgrant/c0_rready] [get_bd_pins card/kv0_rready]
+connect_bd_net [get_bd_pins bcgrant/c0_rdata] [get_bd_pins card/kv0_rdata]
+connect_bd_net [get_bd_pins bcgrant/c0_rlast] [get_bd_pins card/kv0_rlast]
+connect_bd_net [get_bd_pins bcgrant/c1_arvalid] [get_bd_pins card/kv1_arvalid]
+connect_bd_net [get_bd_pins bcgrant/c1_arready] [get_bd_pins card/kv1_arready]
+connect_bd_net [get_bd_pins bcgrant/c1_araddr] [get_bd_pins card/kv1_araddr]
+connect_bd_net [get_bd_pins bcgrant/c1_arlen] [get_bd_pins card/kv1_arlen]
+connect_bd_net [get_bd_pins bcgrant/c1_rvalid] [get_bd_pins card/kv1_rvalid]
+connect_bd_net [get_bd_pins bcgrant/c1_rready] [get_bd_pins card/kv1_rready]
+connect_bd_net [get_bd_pins bcgrant/c1_rdata] [get_bd_pins card/kv1_rdata]
+connect_bd_net [get_bd_pins bcgrant/c1_rlast] [get_bd_pins card/kv1_rlast]
+connect_bd_net [get_bd_pins bcgrant/c_awvalid] [get_bd_pins card/kv_awvalid]
+connect_bd_net [get_bd_pins bcgrant/c_awready] [get_bd_pins card/kv_awready]
+connect_bd_net [get_bd_pins bcgrant/c_awaddr] [get_bd_pins card/kv_awaddr]
+connect_bd_net [get_bd_pins bcgrant/c_awlen] [get_bd_pins card/kv_awlen]
+connect_bd_net [get_bd_pins bcgrant/c_wvalid] [get_bd_pins card/kv_wvalid]
+connect_bd_net [get_bd_pins bcgrant/c_wready] [get_bd_pins card/kv_wready]
+connect_bd_net [get_bd_pins bcgrant/c_wdata] [get_bd_pins card/kv_wdata]
+connect_bd_net [get_bd_pins bcgrant/c_wlast] [get_bd_pins card/kv_wlast]
+connect_bd_net [get_bd_pins bcgrant/c_bvalid] [get_bd_pins card/kv_bvalid]
+connect_bd_net [get_bd_pins bcgrant/c_bready] [get_bd_pins card/kv_bready]
+
+# THE REQUESTS.  Neither B nor C exposes a `want the bus` line, and their
+# `busy` outputs are the WRONG signal: busy means `I have traffic in
+# flight`, which cannot be asserted before the grant is held, so using it
+# would be circular -- no grant without traffic, no traffic without a
+# grant.  A master's own VALID is the correct request: AXI requires VALID
+# to stay asserted until READY, so a denied requester holds its request up
+# by the rules of the protocol and no separate handshake is needed.
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 b_req_or
+set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {or}] [get_bd_cells b_req_or]
+connect_bd_net [get_bd_pins card/bst_arvalid] [get_bd_pins b_req_or/Op1]
+connect_bd_net [get_bd_pins card/bst_awvalid] [get_bd_pins b_req_or/Op2]
+connect_bd_net [get_bd_pins b_req_or/Res]   [get_bd_pins bcgrant/b_req]
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 c_req_or0
+set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {or}] [get_bd_cells c_req_or0]
+connect_bd_net [get_bd_pins card/kv0_arvalid] [get_bd_pins c_req_or0/Op1]
+connect_bd_net [get_bd_pins card/kv1_arvalid] [get_bd_pins c_req_or0/Op2]
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 c_req_or1
+set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {or}] [get_bd_cells c_req_or1]
+connect_bd_net [get_bd_pins c_req_or0/Res]  [get_bd_pins c_req_or1/Op1]
+connect_bd_net [get_bd_pins card/kv_awvalid]  [get_bd_pins c_req_or1/Op2]
+connect_bd_net [get_bd_pins c_req_or1/Res]  [get_bd_pins bcgrant/c_req]
+
+# ---- the grant's pool onto the two SAXI the budget leaves -----------------
+# These two are CONFIG.USER_SAXI_nn {false} in the engine-only build and
+# have to be turned on here.  Every ENABLED port exposes its own ACLK and
+# ARESET_N and leaving them dangling fails HDL generation with 41-758.
+# A CLOCK CONVERTER PER PORT, and the engine is why it is needed HERE and
+# not there.  fk33_engine has TWO clock ports -- core_clk and hbm_aclk --
+# because matvec_int4_desc_axi carries its own async_fifo and crosses the
+# domain INSIDE the unit.  The grant does not: it is one clock domain, and
+# its requesters (the card's B and C) are in the core domain, so its
+# masters come out at clk_out3 while every HBM SAXI is on xdma/axi_aclk.
+# Connecting them directly fails with four BD 41-237 errors -- FREQ_HZ
+# 200000000 against 250000000 and CLK_DOMAIN clk_out1 against axi_aclk --
+# which name the symptom and not the cause.
+#
+# axi_clock_converter rather than a smartconnect: SmartConnect speaks
+# AXI4/AXI4-Lite, and BOTH ends here are AXI3 (the grant's 4-bit length
+# above, and the HBM slave itself), so a smartconnect would have to
+# protocol-convert twice to do a job that is purely a domain crossing.
+set_property CONFIG.USER_SAXI_30 {true} [get_bd_cells hbm]
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 bc_cdc0
+set_property -dict [list CONFIG.PROTOCOL {AXI3}] [get_bd_cells bc_cdc0]
+connect_bd_intf_net [get_bd_intf_pins bcgrant/m0] [get_bd_intf_pins bc_cdc0/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins bc_cdc0/M_AXI] [get_bd_intf_pins hbm/SAXI_30]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins bc_cdc0/s_axi_aclk]
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins bc_cdc0/s_axi_aresetn]
+connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins bc_cdc0/m_axi_aclk]
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins bc_cdc0/m_axi_aresetn]
+connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_30_ACLK]
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_30_ARESET_N]
+# READ BACK.  Vivado silently ignores set_property on a CONFIG name an
+# object does not have, so an IP that quietly stayed AXI4 would fail
+# again at the far end with the same unhelpful 41-237.
+set _p [get_property CONFIG.PROTOCOL [get_bd_cells bc_cdc0]]
+if {$_p ne "AXI3"} {
+    error "FK33_CARD FAIL: bc_cdc0 PROTOCOL is \"$_p\", not AXI3."
+}
+puts "FK33_CARD bc_cdc0 PROTOCOL $_p -> SAXI_30"
+set_property CONFIG.USER_SAXI_31 {true} [get_bd_cells hbm]
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 bc_cdc1
+set_property -dict [list CONFIG.PROTOCOL {AXI3}] [get_bd_cells bc_cdc1]
+connect_bd_intf_net [get_bd_intf_pins bcgrant/m1] [get_bd_intf_pins bc_cdc1/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins bc_cdc1/M_AXI] [get_bd_intf_pins hbm/SAXI_31]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins bc_cdc1/s_axi_aclk]
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins bc_cdc1/s_axi_aresetn]
+connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins bc_cdc1/m_axi_aclk]
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins bc_cdc1/m_axi_aresetn]
+connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_31_ACLK]
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_31_ARESET_N]
+# READ BACK.  Vivado silently ignores set_property on a CONFIG name an
+# object does not have, so an IP that quietly stayed AXI4 would fail
+# again at the far end with the same unhelpful 41-237.
+set _p [get_property CONFIG.PROTOCOL [get_bd_cells bc_cdc1]]
+if {$_p ne "AXI3"} {
+    error "FK33_CARD FAIL: bc_cdc1 PROTOCOL is \"$_p\", not AXI3."
+}
+puts "FK33_CARD bc_cdc1 PROTOCOL $_p -> SAXI_31"
+foreach i {30 31} {
+    set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
+    if {$v ne "true"} {
+        error "FK33_CARD FAIL: USER_SAXI_$i is \"$v\", not true. The grant has nowhere to go."
+    }
+    puts "FK33_CARD SAXI_$i ENABLED"
+}
+
+# THE CARD'S OWN VIEW OF THE ENGINE, assigned HERE and not in ENGINE_ADDR.
+# `a_awaddr` is 8 bits, so this master can reach 256 bytes; ENGINE_ADDR
+# maps the same slave at 4K for the HOST, and an unqualified
+# assign_bd_address covers EVERY master that can reach the segment. It
+# therefore tried to give this 8-bit master a 4K window and failed with
+# BD 41-1075 -- `the proposed range 4K is greater than the maximum range
+# 256`. Assigning the narrow space first, with an explicit target, leaves
+# ENGINE_ADDR's later call to find this one already mapped and skip it.
+assign_bd_address -offset 0x00000000 -range 256 \
+    -target_address_space [get_bd_addr_spaces card/a] \
+    [get_bd_addr_segs {eng/s_axi/reg0}]
+set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces card/a]]
+if {[llength $_cseg] != 1} {
+    error "FK33_CARD FAIL: card/a maps [llength $_cseg] segments, not 1. The card cannot issue A jobs."
+}
+puts "FK33_CARD card/a maps $_cseg"
+
+# ---- end subsystems B, C, D -----------------------------------------------
 regenerate_bd_layout
 save_bd_design
 
@@ -1187,7 +1553,11 @@ assign_bd_address -offset 0x0000D000 -range 4K [get_bd_addr_segs {fk33_thermc/S_
 # 0x10000..0x11FFF, and 0x11000 collides with its second 4 KB.  MEASURED -- the
 # --bd-only gate refused it with BD 41-1075 in 90 seconds, which is what that
 # gate is for.
-assign_bd_address -offset 0x00012000 -range 4K [get_bd_addr_segs {eng/s_axi/reg0}]
+foreach sp {jtag_axil/Data xdma/M_AXI_LITE} {
+    assign_bd_address -offset 0x00012000 -range 4K \
+        -target_address_space [get_bd_addr_spaces $sp] \
+        [get_bd_addr_segs {eng/s_axi/reg0}]
+}
 assign_bd_address -offset 0x00013000 -range 4K [get_bd_addr_segs {eng/s_axix/reg0}]
 
 # EVERY engine master sees ALL 32 pseudo-channel segments, i.e. the whole 8 GiB.
@@ -1351,6 +1721,8 @@ if {$HBMGlobalSwitch == 1} {
 add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pcieep.xdc
 set_property target_constrs_file /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pcieep.xdc [current_fileset -constrset]
 
+set_property synth_checkpoint_mode None [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]
+puts "FK33_CARD synth_checkpoint_mode = [get_property synth_checkpoint_mode [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]]"
 make_wrapper -files [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd] -top
 add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v
 update_compile_order -fileset sources_1
@@ -1633,7 +2005,22 @@ if {[info exists ::env(FK33_SYNTH_MAX_MIN)]} { set FK33_SYNTH_MAX_MIN [fk33_boun
 if {[info exists ::env(FK33_IMPL_MAX_MIN)]}  { set FK33_IMPL_MAX_MIN  [fk33_bound FK33_IMPL_MAX_MIN  $::env(FK33_IMPL_MAX_MIN)] }
 puts "FK33_RUNBOUND synth=$FK33_SYNTH_MAX_MIN min impl=$FK33_IMPL_MAX_MIN min"
 
-launch_runs synth_1 -jobs 4
+# THE PROCESS COUNT IS `general.maxThreads`, NOT `-jobs`.  CORRECTION to the
+# reasoning above, MEASURED 2026-09-08 after `synth_checkpoint_mode None` was
+# in place: the run directory listing showed exactly ONE run (`synth_1`), so
+# global mode HAD removed every per-IP out-of-context run -- and there were
+# still TEN Vivado processes at 21.16 GB.
+#
+# They are not runs. They are the parallel synthesis workers Vivado forks
+# INSIDE one run, which this file already records ("four at 2.36 GB each plus
+# a 1.41 GB parent") and which `-jobs` has never governed. `-jobs` bounds
+# concurrent RUNS; `general.maxThreads` bounds the workers within a run. Every
+# earlier attempt turned the wrong knob, including the one that concluded
+# `-jobs` "does not bound this build at all" -- it does bound runs, there was
+# simply only ever one run to bound once global mode was on.
+set_param general.maxThreads 2
+puts "FK33_CARD general.maxThreads = [get_param general.maxThreads]"
+launch_runs synth_1 -jobs 1
 fk33_assert_run_started synth_1
 wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
 fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN

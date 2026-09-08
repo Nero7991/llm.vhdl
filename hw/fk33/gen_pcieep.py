@@ -1015,24 +1015,39 @@ CARD_SRCS = [
 # instead`, then `8-6156 failed synthesizing module 'bd'`. **No bench can reach
 # this** -- GHDL is invoked with `--std=08` throughout, so every one of these
 # files simulates cleanly and the defect exists only in the synthesis flow.
-_CARD_ALL = ([os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
-             + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd"),
-                GRANT_RTL, CARD_RTL])
+# AND THE TWO WRAPPER TOPS MUST *NOT* BE VHDL 2008.  The requirements are
+# OPPOSITE and each error is invisible until the other is fixed, which is the
+# same shape as the IP_Flow 19-734 / 19-627 pair this project already records.
+#
+# MEASURED 2026-09-08, immediately after setting all 50 files to 2008:
+#   ERROR: [filemgmt 56-195] Reference 'fk33_card' contains top file
+#   '.../fk33_card.vhd' of type VHDL 2008. This type is not allowed as the top
+#   file in the reference.
+# then `[BD 41-1690] Unable to resolve module-source` and the create_bd_cell
+# fails. A `create_bd_cell -type module -reference` top must be VHDL-93.
+#
+# That is fine and not a compromise: hw/fk33/gen_fk33_card.py emits both
+# wrappers as plain entity-plus-instantiation with every width folded to a
+# literal, precisely so they carry no 2008 construct. The 2008 code is all
+# BELOW them, in the sources listed here.
+_CARD_2008 = ([os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
+              + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd")])
+_CARD_ALL = _CARD_2008 + [GRANT_RTL, CARD_RTL]
 
 CARD_RTL_ADD = "\n".join(
     ["", "# ---- subsystems B/C/D RTL (gen_pcieep.py) ---------------------------------"]
     + ["add_files -norecurse %s" % f for f in _CARD_ALL]
-    + ["set_property FILE_TYPE {VHDL 2008} [get_files {%s}]" % f for f in _CARD_ALL]
+    + ["set_property FILE_TYPE {VHDL 2008} [get_files {%s}]" % f for f in _CARD_2008]
     + ["# READ BACK.  A path that did not match leaves the file at VHDL-93 and",
        "# the failure is 400 lines later in a generated bd.v, naming neither",
        "# the file nor the standard.",
-       "foreach f {%s} {" % " ".join(_CARD_ALL),
+       "foreach f {%s} {" % " ".join(_CARD_2008),
        "    set t [get_property FILE_TYPE [get_files -quiet $f]]",
        "    if {$t ne \"VHDL 2008\"} {",
        "        error \"FK33_CARD FAIL: $f is FILE_TYPE \\\"$t\\\", not VHDL 2008.\"",
        "    }",
        "}",
-       "puts \"FK33_CARD %d sources set to VHDL 2008\"" % len(_CARD_ALL),
+       "puts \"FK33_CARD %d sources set to VHDL 2008 (the two wrapper tops stay VHDL-93)\"" % len(_CARD_2008),
        "update_compile_order -fileset sources_1", ""])
 
 # ---- the A seam, engine <-> card.  Signal level, not AXI. -----------------
@@ -2204,6 +2219,13 @@ if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
 # with the card in the design that was OOM-killed by systemd-oomd (see above),
 # so the default halves when FK33_CARD is on.  Override with FK33_SYNTH_JOBS.
 SYNTH_JOBS = int(os.environ.get("FK33_SYNTH_JOBS", "1" if CARD_ON else "4"))
+# Workers WITHIN a synthesis run.  Vivado defaults to 8 on this box, which is
+# ~8 x 2.4 GB plus a parent and does not fit beside the card. 2 is the value
+# that leaves headroom; FK33_SYNTH_THREADS overrides. Left at Vivado's default
+# for the engine-only build, which has completed at that setting.
+SYNTH_THREADS = int(os.environ.get("FK33_SYNTH_THREADS", "2" if CARD_ON else "8"))
+if SYNTH_THREADS < 1:
+    sys.exit("ABORT: FK33_SYNTH_THREADS must be >= 1, got %d" % SYNTH_THREADS)
 if SYNTH_JOBS < 1:
     sys.exit("ABORT: FK33_SYNTH_JOBS must be >= 1, got %d" % SYNTH_JOBS)
 
@@ -2214,6 +2236,21 @@ if {[info exists ::env(FK33_SYNTH_MAX_MIN)]} { set FK33_SYNTH_MAX_MIN [fk33_boun
 if {[info exists ::env(FK33_IMPL_MAX_MIN)]}  { set FK33_IMPL_MAX_MIN  [fk33_bound FK33_IMPL_MAX_MIN  $::env(FK33_IMPL_MAX_MIN)] }
 puts "FK33_RUNBOUND synth=$FK33_SYNTH_MAX_MIN min impl=$FK33_IMPL_MAX_MIN min"
 
+# THE PROCESS COUNT IS `general.maxThreads`, NOT `-jobs`.  CORRECTION to the
+# reasoning above, MEASURED 2026-09-08 after `synth_checkpoint_mode None` was
+# in place: the run directory listing showed exactly ONE run (`synth_1`), so
+# global mode HAD removed every per-IP out-of-context run -- and there were
+# still TEN Vivado processes at 21.16 GB.
+#
+# They are not runs. They are the parallel synthesis workers Vivado forks
+# INSIDE one run, which this file already records ("four at 2.36 GB each plus
+# a 1.41 GB parent") and which `-jobs` has never governed. `-jobs` bounds
+# concurrent RUNS; `general.maxThreads` bounds the workers within a run. Every
+# earlier attempt turned the wrong knob, including the one that concluded
+# `-jobs` "does not bound this build at all" -- it does bound runs, there was
+# simply only ever one run to bound once global mode was on.
+set_param general.maxThreads %(mthr)d
+puts "FK33_CARD general.maxThreads = [get_param general.maxThreads]"
 launch_runs synth_1 -jobs %(sjobs)d
 fk33_assert_run_started synth_1
 wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
@@ -2225,7 +2262,8 @@ fk33_assert_run_started impl_1
 wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1
 fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN''' % {"smin": SYNTH_MAX_MIN,
                                                      "imin": IMPL_MAX_MIN,
-                                                     "sjobs": SYNTH_JOBS}
+                                                     "sjobs": SYNTH_JOBS,
+                                                     "mthr": SYNTH_THREADS}
 
 SUBS = ([] if not CARD_ON else [
     # ---- GLOBAL SYNTHESIS FOR THE CARD BUILD.

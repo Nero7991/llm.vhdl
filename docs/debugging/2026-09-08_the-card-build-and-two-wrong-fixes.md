@@ -127,11 +127,85 @@ OVER-COUNTS a multi-process job, so it is a safety signal and not a cgroup
 figure.** Use it to decide when to stop; do not expect a `MemoryMax` set from
 it to fire.
 
+### Launches 4-7 -- global synthesis, VHDL 2008, and the knob that actually worked
+
+Four more launches, each fixing exactly what the previous one revealed:
+
+| # | change | result |
+|---|---|---|
+| 4 | `synth_checkpoint_mode None` | 1 process, peak 3.96 GB, **real synthesis error in 2m50s** |
+| 5 | all 50 card sources set VHDL 2008 | `[filemgmt 56-195]` the BD cell top may NOT be 2008 |
+| 6 | 48 sources 2008, the two wrapper tops left at 93 | past the BD, but **10 processes / 21.16 GB** |
+| 7 | `set_param general.maxThreads 2` | **4 processes / 14.21 GB**, synthesis running |
+
+**Launch 4 is the turning point** and vindicates global mode: one bounded
+process that FAILED ON A DIAGNOSABLE ERROR beats ten unbounded ones that take
+the machine. The errors it exposed are below.
+
+**THE CARD SOURCES WERE BEING PARSED AS VHDL-93, and no bench can see it.**
+`rtl/a_desc_adapter.vhd` reads its own `out` ports (`m_awvalid`:269,
+`m_wvalid`:270, `u_done`/`u_ready` in asserts at :318 and :321). That is legal
+in 2008 and illegal in 93, and `CARD_RTL_ADD` had copied the engine's plain
+`add_files`, which leaves a file at Vivado's default of 93. GHDL runs
+`--std=08` throughout, so every one of these files simulates cleanly; the
+defect existed only in the synthesis flow.
+
+**AND THE TWO WRAPPER TOPS MUST NOT BE 2008.** Setting all 50 produced
+`[filemgmt 56-195] Reference 'fk33_card' contains top file ... of type VHDL
+2008. This type is not allowed as the top file in the reference`. The
+requirements are OPPOSITE, and each is invisible until the other is fixed --
+the same shape as the recorded `IP_Flow 19-734` / `19-627` pair. Resolution: 48
+sources at 2008, the two generated wrappers at 93, which costs nothing because
+`gen_fk33_card.py` emits them with every width folded to a literal precisely so
+they carry no 2008 construct.
+
+**CORRECTION TO THIS DOCUMENT'S OWN CONCLUSION: `-jobs` was never the wrong
+knob, it was the wrong LAYER.** After global mode was on, the runs directory
+listing showed exactly ONE run and there were still ten processes. They are the
+parallel workers Vivado forks INSIDE a run, which `-jobs` has never governed;
+`general.maxThreads` does. Setting it to 2 took the count 10 -> 4 and the
+footprint 21.16 -> 14.21 GB. The earlier claim that "`-jobs` does not bound this
+build at all" is withdrawn: it bounds RUNS, and once global mode left only one
+run there was nothing for it to bound. **Both knobs are needed and they act on
+different things.**
+
+### What launch 7 measured
+
+With global synthesis, `-jobs 1` and `maxThreads 2`, under `MemoryMax=17G`:
+
+```
+cgroup memory.current  15.00 -> 15.38 -> 15.81 -> 16.27 -> 16.66 -> 17.00 GB
+memory.events          max 0 ... max 21 ... max 97 ... max 111   (oom_kill 0)
+MemAvailable           9663 -> 8461 -> 7691 -> 6353 -> 5495 -> 5361 MB
+swap                   4678 -> 4796 MB
+```
+
+It reached the ceiling and the kernel RECLAIMED rather than killed -- `oom 0,
+oom_kill 0` throughout, 111 `max` events -- while synthesis continued into the
+GT wizard IP. Stopped by hand at sustained reclaim with 5.3 GB free and swap
+beginning to creep. Afterwards: 0 Vivado, 22.8 GB available, `code-server`
+still `active`.
+
+**`MemoryMax` throttles before it kills.** That is a third distinct behaviour
+from `MemoryHigh` (reclaim, no kill, invisible to oomd) and systemd-oomd (kills
+on PSI). Worth knowing: a `MemoryMax` job that is "at the limit" is not
+necessarily about to die.
+
+**The peak is NOT measurable from this run.** `memory.peak` reads 17.00 GB,
+which is the cap. All that is established is that the card build's synthesis
+wants MORE than 17 GiB.
+
 ## The conclusion
 
-**A card build with per-IP out-of-context synthesis does not fit in 31 GB, and
-no `-jobs` value changes that.** This is a resource wall, not a tuning problem,
-and the next attempt should change the METHOD rather than the knob.
+**The card build now runs bounded and reaches real synthesis, and it wants more
+than 17 GiB.** That is the state after seven launches. The method changes that
+got it there -- global synthesis, VHDL 2008 below the wrapper tops, and
+`general.maxThreads` -- are all committed and gated on `FK33_CARD`.
+
+What remains is a memory budget question, not a Vivado one. On a 31 GB box
+carrying ~9 GB of other usage, a job that wants >17 GiB has no comfortable
+room, and every attempt to give it more pushes `MemAvailable` into the range
+where systemd-oomd starts hitting bystanders.
 
 ## Open, not yet answered
 
