@@ -102,6 +102,37 @@ block above `launch_runs` said "`-jobs 8` on SYNTHESIS launches up to 8
 concurrent out-of-context IP runs" while the code had already been changed to
 4. The count is a variable now so the two cannot drift again.
 
+### Launch 3 -- `MemoryMax=20G`, NO oomd exemption, `-jobs 1`
+
+The corrected recipe, and it made almost no difference:
+
+```
+ 90 s:  vivado=1   total= 2.53 GB   avail=19957 MB
+~4 min: vivado=10  total=23.91 GB   avail= 2512 MB   swap=5873 MB
+```
+
+**TEN Vivado processes from `-jobs 1`.** Stopped by hand. Afterwards: 0 Vivado,
+22.9 GB available, `code-server` still `active`.
+
+So `-jobs` does not bound this build's footprint at ALL, not merely
+disproportionately. Going 4 -> 2 -> 1 gave 134 processes (killed), 11, and 10.
+The per-IP out-of-context runs that a block design generates are not what
+`-jobs` is throttling here, or they are launched faster than it serialises them.
+
+**`MemoryMax=20G` did not stop it either**, and the reason matters: summed RSS
+across processes is NOT the cgroup's charge -- shared pages are counted once by
+the cgroup and once per process by the sum. 23.91 GB of summed RSS can sit under
+a 20 GB cgroup charge. **The summing idiom this project uses to size a job
+OVER-COUNTS a multi-process job, so it is a safety signal and not a cgroup
+figure.** Use it to decide when to stop; do not expect a `MemoryMax` set from
+it to fire.
+
+## The conclusion
+
+**A card build with per-IP out-of-context synthesis does not fit in 31 GB, and
+no `-jobs` value changes that.** This is a resource wall, not a tuning problem,
+and the next attempt should change the METHOD rather than the knob.
+
 ## Open, not yet answered
 
 - **No card build has completed, and none has reached synthesis proper.** Both
@@ -112,3 +143,21 @@ concurrent out-of-context IP runs" while the code had already been changed to
 - **The BC-250 second lane.** Its recorded pcieep peak is 11.85 GB of 15.2 GB
   total, with a standing instruction to stay at or below `MemoryHigh=11G` there.
   A card build is bigger than an engine-only one, so it may not fit at all.
+- **GLOBAL synthesis instead of per-IP OOC.** UNTESTED and the most promising
+  lever: `set_property synth_checkpoint_mode None [get_files bd.bd]` makes the
+  block design synthesise inside the top run instead of generating a separate
+  OOC run per IP. That is ONE process whose footprint can actually be capped,
+  against ten that cannot. It trades incremental rebuilds for a bounded peak,
+  which is the right trade when the current peak is unbounded. The risk is that
+  one process then has to hold the whole design: the card cell ALONE peaked at
+  15.52 GB as a monolithic OOC, so global synthesis of the whole top could
+  exceed what this box has, and that would be a real answer rather than a hang.
+- **More RAM.** The workstation has 2 free DIMM slots and a 128 GB maximum;
+  filling all four usually forces a speed drop below 6000 MT/s, so 2 x 32 GB
+  replacing the current pair is the documented preference. This is the only
+  option here that certainly works, and it is Oren's call.
+- **Whether the card configuration should be trimmed for a FIRST bitstream.**
+  Nothing says the first working card has to be the full 9B geometry. A smaller
+  `C_KV_BLOCK`, fewer `A_ROWS_IF`, or B omitted would produce a bitstream that
+  proves the three-cell wiring on real hardware, which is worth more than a
+  full-size build that cannot be synthesised.
