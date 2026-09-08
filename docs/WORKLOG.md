@@ -4738,3 +4738,45 @@ card computes anything correctly, because nothing has measured that. N1 is the
 row that would, and until it returns a number, every downstream estimate on
 this board -- the LUT margin, the token budget, the schedule -- is arithmetic
 about a machine whose arithmetic has never been checked.
+
+## 2026-09-07 -- the three-cell card block design builds
+
+**`pcieep_build.sh --bd-only` passes with the card in it.** Exit 0, zero
+`ERROR:` lines, zero address-overlap warnings, `validate_bd_design` and
+`make_wrapper` both clean, in BOTH configurations (`FK33_CARD=1` and unset).
+This is LEGALITY ONLY: nothing was synthesised, so area, fit and timing for the
+three-cell design remain unknown.
+
+The design is `eng` (subsystem A) + `card` (B, C, D) + `bcgrant`, joined by the
+11-net A seam, the card's AXI-Lite master onto the engine's control slave
+through a new 2:1 smartconnect, the 34-net host seam replacing the subsystem-D
+tie-off, and B/C through the grant onto SAXI_30/31 via a clock converter each.
+
+Six faults were fixed to get there, none of them reachable by simulation; the
+order matters because each was invisible until the previous one was fixed. See
+`docs/debugging/2026-09-07_wiring-the-card-into-the-block-design.md`.
+
+**Two guard defects found on the way, both worth remembering:**
+
+- `FK33_ENG portcheck bad=2 (must be 0)` **and the build passed.** The counter
+  was printed and never branched on, so a dangling master, an undriven ACLK or
+  an undriven `compute_halt` would all have been reported into a log and
+  ignored. It now raises.
+- The seam tie-off guard reads the generated script's TEXT. Deleting the
+  tie-off at Tcl run time would have left its text in place and the guard would
+  have kept passing even if the delete matched nothing. The tie-off is now not
+  emitted at all when the card is on.
+
+**The grant's pool went from 3 HBM ports to 2, because 2 is all there is.**
+32 SAXI, minus 2 host, minus A's 28. It never needed 3: port 0 is driven only
+on AR/R and port 2 only on AW/W/B, so C's write moved onto port 0's idle write
+channels. See
+`docs/debugging/2026-09-07_the-grant-pool-was-one-port-over-budget.md`.
+
+Full gate PASS 137 FAIL 0 BUILD-ERROR 0, unchanged from baseline.
+
+**Next:** OOC synthesis of `fk33_card` is running, to get the first area figure
+for B+C+D together. The 3h30m `synth_design -rtl` attempt that preceded this
+was NOT the same thing -- it set `dissolveMemorySizeLimit 200000`, which
+expands inferred memories into individual bits, and the hypothesis under test
+is that real synthesis is faster because it infers BRAM instead.
