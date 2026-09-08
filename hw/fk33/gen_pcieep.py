@@ -1004,12 +1004,35 @@ CARD_SRCS = [
     "seq_region_lock.vhd", "seq_vec_issue.vhd", "seq_vec_res.vhd",
 ]
 
+# VHDL 2008, STATED RATHER THAN INHERITED.  `add_files` alone leaves a .vhd at
+# Vivado's default, which is VHDL-93, and B/C/D do not compile as 93:
+# `rtl/a_desc_adapter.vhd` READS ITS OWN `out` PORTS (`m_awvalid` at :269,
+# `m_wvalid` at :270, and `u_done`/`u_ready` inside asserts at :318 and :321),
+# which 2008 allows and 93 does not.
+#
+# MEASURED 2026-09-08: without this the card build dies with four
+# `[Synth 8-10557] cannot read from 'out' object ...; use 'buffer' or 'inout'
+# instead`, then `8-6156 failed synthesizing module 'bd'`. **No bench can reach
+# this** -- GHDL is invoked with `--std=08` throughout, so every one of these
+# files simulates cleanly and the defect exists only in the synthesis flow.
+_CARD_ALL = ([os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
+             + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd"),
+                GRANT_RTL, CARD_RTL])
+
 CARD_RTL_ADD = "\n".join(
     ["", "# ---- subsystems B/C/D RTL (gen_pcieep.py) ---------------------------------"]
-    + ["add_files -norecurse %s" % os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
-    + ["add_files -norecurse %s" % os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd"),
-       "add_files -norecurse %s" % GRANT_RTL,
-       "add_files -norecurse %s" % CARD_RTL,
+    + ["add_files -norecurse %s" % f for f in _CARD_ALL]
+    + ["set_property FILE_TYPE {VHDL 2008} [get_files {%s}]" % f for f in _CARD_ALL]
+    + ["# READ BACK.  A path that did not match leaves the file at VHDL-93 and",
+       "# the failure is 400 lines later in a generated bd.v, naming neither",
+       "# the file nor the standard.",
+       "foreach f {%s} {" % " ".join(_CARD_ALL),
+       "    set t [get_property FILE_TYPE [get_files -quiet $f]]",
+       "    if {$t ne \"VHDL 2008\"} {",
+       "        error \"FK33_CARD FAIL: $f is FILE_TYPE \\\"$t\\\", not VHDL 2008.\"",
+       "    }",
+       "}",
+       "puts \"FK33_CARD %d sources set to VHDL 2008\"" % len(_CARD_ALL),
        "update_compile_order -fileset sources_1", ""])
 
 # ---- the A seam, engine <-> card.  Signal level, not AXI. -----------------
@@ -2204,7 +2227,32 @@ fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN''' % {"smin": SYNTH_MAX_MIN,
                                                      "imin": IMPL_MAX_MIN,
                                                      "sjobs": SYNTH_JOBS}
 
-SUBS = [
+SUBS = ([] if not CARD_ON else [
+    # ---- GLOBAL SYNTHESIS FOR THE CARD BUILD.
+    # MEASURED 2026-09-08: with the card in the design, the per-IP
+    # out-of-context runs a block design generates cannot be bounded.
+    # `launch_runs synth_1 -jobs 4` was OOM-killed by systemd-oomd in 2.5
+    # minutes; `-jobs 2` gave ELEVEN Vivado processes at 22.04 GB; `-jobs 1`
+    # gave TEN at 23.91 GB with 2.5 GB of the box left. `-jobs` does not bound
+    # this build at all -- see
+    # docs/debugging/2026-09-08_the-card-build-and-two-wrong-fixes.md.
+    #
+    # `synth_checkpoint_mode None` makes the block design synthesise INSIDE the
+    # top run instead of spawning a run per IP. That is ONE process, whose
+    # footprint a cgroup can actually cap, against ten that it cannot. The
+    # trade is losing per-IP incremental rebuild, which is worth nothing on a
+    # build that has never completed once.
+    #
+    # It may still not fit: the card cell ALONE peaked at 15.52 GB as a
+    # monolithic OOC. But a single capped process that dies is a RESULT, and
+    # ten uncapped ones that take the machine are not.
+    ("make_wrapper -files [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd] -top",
+     "set_property synth_checkpoint_mode None "
+     "[get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]\n"
+     "puts \"FK33_CARD synth_checkpoint_mode = [get_property synth_checkpoint_mode "
+     "[get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]]\"\n"
+     "make_wrapper -files [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd] -top"),
+]) + [
     # ---- 7. separate project + artifacts
     ("set ProjectName fk33_i2cprobe",
      "set ProjectName fk33_pcieep"),
@@ -2806,6 +2854,26 @@ def selftest():
                  "A missing file is VOID, not a pass." % DST)
 
     built = open(DST).read()
+
+    # WHICH CONFIGURATION IS THIS?  The selftest grades the file a PREVIOUS
+    # invocation wrote, so its verdict depends on whether that invocation had
+    # FK33_CARD set -- and until 2026-09-08 it never said so.
+    #
+    # MEASURED that day: `check_bar_map`'s attribution control reports
+    # "no mutation is caught by check_bar_map alone" on a CARD-ON file and
+    # passes on a card-off one, so the same command printed PASS, then FAIL,
+    # then PASS again with no change to this file -- only regenerations in
+    # between. That is indistinguishable from a flaky test and it is not one.
+    #
+    # Naming the configuration does not make the selftest hermetic; it makes
+    # the result interpretable, which is the part that was missing. A hermetic
+    # selftest would build its own text for each configuration and grade both.
+    _sel_card = ("create_bd_cell -type module -reference fk33_card" in built)
+    print("SELFTEST CONFIGURATION: %s  (%s)"
+          % ("FK33_CARD=1, three-cell" if _sel_card else "engine-only",
+             DST))
+    print("  A verdict here is about THAT file. Regenerate with the same\n"
+          "  configuration before comparing two runs.")
     procs = {}
     for pname in ("fk33_assert_run_started", "fk33_assert_run_done",
                   "fk33_bound"):
