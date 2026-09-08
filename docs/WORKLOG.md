@@ -4832,3 +4832,44 @@ dip at ~4h49m that was a genuine phase change rather than reclaim. This is the
 first attempt at B+C+D together. The 3h30m `synth_design -rtl` that preceded it
 is not comparable: it set `dissolveMemorySizeLimit 200000`, expanding inferred
 memories to individual bits, and reached 14.5 GB without finishing.
+
+## 2026-09-08 -- the card build runs bounded, and wants more than 17 GiB
+
+Seven launches took the `FK33_CARD=1` build from "OOM-killed in 2.5 minutes" to
+"running real synthesis under a hard cap". Three method changes did it, all
+committed and gated on `FK33_CARD`:
+
+1. **`synth_checkpoint_mode None`** -- the block design synthesises inside the
+   top run instead of spawning an out-of-context run per IP. One run instead of
+   many, and a bounded process that fails on a diagnosable error rather than
+   ten that take the machine.
+2. **VHDL 2008 on the 48 card sources, VHDL-93 on the two wrapper tops.** The
+   requirements are OPPOSITE and each is invisible until the other is fixed.
+3. **`set_param general.maxThreads 2`** -- bounds the parallel workers Vivado
+   forks INSIDE a run. 10 processes -> 4, 21.16 GB -> 14.21 GB.
+
+**Result: synthesis runs, reaches the GT wizard IP, and pins the cgroup at the
+17 GiB ceiling in sustained reclaim.** `oom_kill 0` throughout -- `MemoryMax`
+throttles before it kills -- but `MemAvailable` fell to 5.3 GB and swap began
+to creep, so it was stopped by hand. **The true peak is NOT known; all that is
+established is that it wants more than 17 GiB.**
+
+Three memory mechanisms, each behaving differently, all met tonight:
+`MemoryHigh` reclaims and is INVISIBLE to systemd-oomd; systemd-oomd kills on
+PSI regardless of either limit; `MemoryMax` reclaims first and only then kills
+its own cgroup. **`ManagedOOMPreference=avoid` was tried and is WRONG** -- it
+frees nothing and redirects the kill onto a bystander, which here is
+`code-server`.
+
+**Next, and it is Oren's call rather than a track's:**
+
+- **More RAM.** 2 free DIMM slots, 128 GB max; the documented preference is
+  2 x 32 GB replacing the current pair rather than filling all four (which
+  drops below 6000 MT/s). This is the only option that certainly works.
+- **Or trim the card for a FIRST bitstream.** Nothing requires the first
+  working card to be the full 9B geometry. A smaller `C_KV_BLOCK`, fewer
+  `A_ROWS_IF`, or B omitted would prove the three-cell wiring on real hardware,
+  which is worth more than a full-size build that cannot be synthesised.
+
+Full write-up incl. the four measured-and-rejected remedies:
+`docs/debugging/2026-09-08_the-card-build-and-two-wrong-fixes.md`
