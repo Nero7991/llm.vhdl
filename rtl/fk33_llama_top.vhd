@@ -989,7 +989,17 @@ entity fk33_llama_top is
     -- A_ROWS_IF is 48 on the card, which is what makes the y widths agree.
     -- ==================================================================
     a_arena_base  : in  std_logic_vector(39 downto 0) := (others => '0');
-    a_awaddr      : out std_logic_vector(7 downto 0);
+    -- TWELVE BITS, NOT EIGHT, AND IT IS THE SMARTCONNECT THAT DECIDES THIS.
+    -- The adapter needs only 0x00/0x04/0x08, which is why this was 8, and 8 is
+    -- correct for the in-card `matvec_int4`.  But on the card this master goes
+    -- through a smartconnect to `matvec_int4_desc_axi`'s AXI-Lite slave, whose
+    -- map is 4 KB.  Vivado sizes the smartconnect's slave MMU from the SLAVE's
+    -- segment, not from the window assigned to this master, and refuses:
+    -- `[IP_Flow 19-3478] PARAM_VALUE.SEG000_SIZE must be <= ADDR_WIDTH (8)`.
+    -- Assigning this master a 256-byte address window does NOT avoid it --
+    -- MEASURED, that was tried first.  The extra four bits are always zero, so
+    -- this is a pure zero-extension of the same three register offsets.
+    a_awaddr      : out std_logic_vector(11 downto 0);
     a_awvalid     : out std_logic;
     a_awready     : in  std_logic := '0';
     a_wdata       : out std_logic_vector(31 downto 0);
@@ -3659,7 +3669,7 @@ begin
     u_ad : entity work.a_desc_adapter
       generic map (
         ADDR_W      => 40,
-        LITE_AW     => 8,
+        LITE_AW     => 12,
         DESC_STRIDE => 512,
         N_JOBS      => A_N_JOBS,
         EPOCH_W     => EPOCH_W)

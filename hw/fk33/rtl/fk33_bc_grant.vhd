@@ -4,7 +4,7 @@
 -- A BLOCK-DESIGN-LEGAL face for an entity the IP packager refuses.
 -- It changes NO logic: every port is the same signal in a type the
 -- packager accepts, converted at the boundary.
---     31 ports passed through unchanged
+--     32 ports passed through unchanged
 --      6 vector widths folded to literals   [IP_Flow 19-627]
 --      0 integer/natural ports re-typed      [IP_Flow 19-734]
 --     26 flattened port(s) un-flattened into named interfaces
@@ -68,8 +68,8 @@ entity fk33_bc_grant is
     m1_arvalid               : out    std_logic;
     m0_araddr                : out    std_logic_vector(32 downto 0);
     m1_araddr                : out    std_logic_vector(32 downto 0);
-    m0_arlen                 : out    std_logic_vector(7 downto 0);
-    m1_arlen                 : out    std_logic_vector(7 downto 0);
+    m0_arlen                 : out    std_logic_vector(3 downto 0);
+    m1_arlen                 : out    std_logic_vector(3 downto 0);
     m0_arready               : in     std_logic;
     m1_arready               : in     std_logic;
     m0_rvalid                : in     std_logic;
@@ -84,8 +84,8 @@ entity fk33_bc_grant is
     m1_awvalid               : out    std_logic;
     m0_awaddr                : out    std_logic_vector(32 downto 0);
     m1_awaddr                : out    std_logic_vector(32 downto 0);
-    m0_awlen                 : out    std_logic_vector(7 downto 0);
-    m1_awlen                 : out    std_logic_vector(7 downto 0);
+    m0_awlen                 : out    std_logic_vector(3 downto 0);
+    m1_awlen                 : out    std_logic_vector(3 downto 0);
     m0_awready               : in     std_logic;
     m1_awready               : in     std_logic;
     m0_wvalid                : out    std_logic;
@@ -102,7 +102,8 @@ entity fk33_bc_grant is
     m1_bready                : out    std_logic;
     owner_is_c               : out    std_logic;
     draining                 : out    std_logic;
-    err_switch_busy          : out    std_logic
+    err_switch_busy          : out    std_logic;
+    err_len_ovf              : out    std_logic
   );
 end entity;
 
@@ -117,7 +118,7 @@ architecture wrap of fk33_bc_grant is
   signal w_c_rready             : std_logic_vector(1 downto 0);
   signal w_m_arvalid            : std_logic_vector(1 downto 0);
   signal w_m_araddr             : std_logic_vector(65 downto 0);
-  signal w_m_arlen              : std_logic_vector(15 downto 0);
+  signal w_m_arlen              : std_logic_vector(7 downto 0);
   signal w_m_arready            : std_logic_vector(1 downto 0);
   signal w_m_rvalid             : std_logic_vector(1 downto 0);
   signal w_m_rdata              : std_logic_vector(511 downto 0);
@@ -125,7 +126,7 @@ architecture wrap of fk33_bc_grant is
   signal w_m_rready             : std_logic_vector(1 downto 0);
   signal w_m_awvalid            : std_logic_vector(1 downto 0);
   signal w_m_awaddr             : std_logic_vector(65 downto 0);
-  signal w_m_awlen              : std_logic_vector(15 downto 0);
+  signal w_m_awlen              : std_logic_vector(7 downto 0);
   signal w_m_awready            : std_logic_vector(1 downto 0);
   signal w_m_wvalid             : std_logic_vector(1 downto 0);
   signal w_m_wdata              : std_logic_vector(511 downto 0);
@@ -168,16 +169,16 @@ begin
   m1_arvalid <= w_m_arvalid(1);
   m0_araddr <= w_m_araddr(32 downto 0);
   m1_araddr <= w_m_araddr(65 downto 33);
-  m0_arlen <= w_m_arlen(7 downto 0);
-  m1_arlen <= w_m_arlen(15 downto 8);
+  m0_arlen <= w_m_arlen(3 downto 0);
+  m1_arlen <= w_m_arlen(7 downto 4);
   m0_rready <= w_m_rready(0);
   m1_rready <= w_m_rready(1);
   m0_awvalid <= w_m_awvalid(0);
   m1_awvalid <= w_m_awvalid(1);
   m0_awaddr <= w_m_awaddr(32 downto 0);
   m1_awaddr <= w_m_awaddr(65 downto 33);
-  m0_awlen <= w_m_awlen(7 downto 0);
-  m1_awlen <= w_m_awlen(15 downto 8);
+  m0_awlen <= w_m_awlen(3 downto 0);
+  m1_awlen <= w_m_awlen(7 downto 4);
   m0_wvalid <= w_m_wvalid(0);
   m1_wvalid <= w_m_wvalid(1);
   m0_wdata <= w_m_wdata(255 downto 0);
@@ -250,6 +251,7 @@ begin
       m_bready                 => w_m_bready,
       owner_is_c               => owner_is_c,
       draining                 => draining,
-      err_switch_busy          => err_switch_busy
+      err_switch_busy          => err_switch_busy,
+      err_len_ovf              => err_len_ovf
     );
 end architecture;

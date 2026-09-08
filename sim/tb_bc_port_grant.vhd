@@ -55,10 +55,14 @@ architecture sim of tb_bc_port_grant is
   signal m_awvalid, m_awready, m_wvalid, m_wlast, m_wready : std_logic_vector(NP-1 downto 0);
   signal m_bvalid, m_bready : std_logic_vector(NP-1 downto 0);
   signal m_araddr, m_awaddr : std_logic_vector(NP*AW-1 downto 0);
-  signal m_arlen,  m_awlen  : std_logic_vector(NP*8-1 downto 0);
+  -- The HBM face is AXI3: MLEN_W bits, not 8.  The bench follows the DUT's
+  -- generic rather than carrying its own 8, because a bench that keeps the
+  -- wide form still elaborates -- the widths simply stop matching the ports.
+  constant MLW : positive := 4;
+  signal m_arlen,  m_awlen  : std_logic_vector(NP*MLW-1 downto 0);
   signal m_rdata,  m_wdata  : std_logic_vector(NP*DW-1 downto 0);
 
-  signal owner_is_c, draining, err_switch_busy : std_logic;
+  signal owner_is_c, draining, err_switch_busy, err_len_ovf : std_logic;
 
   -- monitor results, published at the end
   signal n_checks, n_fail, n_switch, n_rd, n_wr : natural := 0;
@@ -93,7 +97,8 @@ begin
       m_awvalid=>m_awvalid, m_awaddr=>m_awaddr, m_awlen=>m_awlen, m_awready=>m_awready,
       m_wvalid=>m_wvalid, m_wdata=>m_wdata, m_wlast=>m_wlast, m_wready=>m_wready,
       m_bvalid=>m_bvalid, m_bready=>m_bready,
-      owner_is_c=>owner_is_c, draining=>draining, err_switch_busy=>err_switch_busy);
+      owner_is_c=>owner_is_c, draining=>draining, err_switch_busy=>err_switch_busy,
+      err_len_ovf=>err_len_ovf);
 
   -- ---- slave model: variable latency, one burst outstanding per port -----
   -- Latency VARIES per port so that a switch request can land at any point in
@@ -119,7 +124,7 @@ begin
           if rbeats = 0 and rlat = 0 and m_rvalid(i) = '0' then
             if m_arvalid(i) = '1' and m_arready(i) = '0' then
               m_arready(i) <= '1';
-              rbeats := to_integer(unsigned(m_arlen(i*8+7 downto i*8))) + 1;
+              rbeats := to_integer(unsigned(m_arlen(i*MLW+MLW-1 downto i*MLW))) + 1;
               rlat   := 1 + to_integer(lfsr(2 downto 0));
             end if;
           end if;
@@ -341,7 +346,12 @@ begin
         report "POOL PORT " & integer'image(i) & " CARRIED NO WRITE" severity error;
       end if;
     end loop;
-    if n_fail = 0 and err_switch_busy = '0' and n_switch >= 8
+    if err_len_ovf = '1' then
+      report "err_len_ovf asserted: a requester presented a burst longer than "
+           & "the AXI3 16-beat cap and the HBM-facing length was truncated"
+        severity error;
+    end if;
+    if n_fail = 0 and err_switch_busy = '0' and err_len_ovf = '0' and n_switch >= 8
        and n_rd >= 40 and n_wr >= 20 and pool_ok then
       verdict := true;
     end if;
@@ -354,7 +364,8 @@ begin
          & " writes=" & integer'image(n_wr)
          & " p0rd=" & integer'image(n_prd(0)) & " p0wr=" & integer'image(n_pwr(0))
          & " p1rd=" & integer'image(n_prd(1)) & " p1wr=" & integer'image(n_pwr(1))
-         & " err_switch_busy=" & std_logic'image(err_switch_busy);
+         & " err_switch_busy=" & std_logic'image(err_switch_busy)
+         & " err_len_ovf=" & std_logic'image(err_len_ovf);
     done <= true;
     wait;
   end process;

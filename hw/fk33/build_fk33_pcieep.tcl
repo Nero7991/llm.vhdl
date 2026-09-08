@@ -1460,6 +1460,10 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     #   * an enabled port's ACLK or ARESET_N is undriven (41-758 catches that at
     #     HDL generation, but only if it is still undriven THEN)
     #   * an engine master interface never got connected to an HBM port
+    # READ FROM THE DESIGN, not from a generator flag.  Whether the card is in
+    # this build is a fact about the block design, and asking the tool means
+    # this check cannot disagree with what was actually built.
+    set ::fk33_card_on [expr {[llength [get_bd_cells -quiet card]] > 0}]
     set engbad 0
     foreach i {01 02 03 04 05 06 07 08 09 10 11 12 13 14 15                17 18 19 20 21 22 23 24 25 26 27 28 29} {
         set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
@@ -1476,8 +1480,15 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     }
     foreach i {30 31} {
         set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
-        puts "FK33_ENG SAXI_$i = $v (must be false: spare for B and C)"
-        if {[string tolower $v] ne "false"} { incr engbad }
+        # THE EXPECTATION FOLLOWS THE CONFIGURATION.  Without the card these two
+        # are spare and MUST stay off, or a later edit could quietly consume the
+        # only ports B and C will ever have.  With the card they are the grant's
+        # pool and must be ON.  Hardcoding `false` made this check report
+        # bad=2 on a correct card build -- and the build passed anyway, which
+        # is the more serious half: see the abort added below.
+        set _want [expr {$::fk33_card_on ? "true" : "false"}]
+        puts "FK33_ENG SAXI_$i = $v (must be $_want)"
+        if {[string tolower $v] ne $_want} { incr engbad }
     }
     for {set m 0} {$m < 28} {incr m} {
         set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
@@ -1488,6 +1499,15 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         }
     }
     puts "FK33_ENG portcheck bad=$engbad (must be 0)"
+    # AND IT MUST ACTUALLY STOP THE BUILD.  Until 2026-09-07 this counter was
+    # printed and never acted on, so `bad=2` sailed through a --bd-only run
+    # that reported success.  A check whose result nothing branches on is
+    # decoration: every fault it counts -- a dangling master, an undriven
+    # ACLK, an unconnected m..._axi, an undriven compute_halt -- was being
+    # reported into a log nobody reads and then ignored.
+    if {$engbad != 0} {
+        error "FK33_ENG FAIL: portcheck bad=$engbad. See the FK33_ENG lines above for which."
+    }
     puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
     if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
         puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"

@@ -144,7 +144,7 @@ entity fk33_card is
     err_unit_stub            : out    std_logic;
     err_e_coll               : out    std_logic;
     a_arena_base             : in     std_logic_vector(39 downto 0);
-    a_awaddr                 : out    std_logic_vector(7 downto 0);
+    a_awaddr                 : out    std_logic_vector(11 downto 0);
     a_awvalid                : out    std_logic;
     a_awready                : in     std_logic;
     a_wdata                  : out    std_logic_vector(31 downto 0);

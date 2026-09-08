@@ -54,6 +54,17 @@ entity bc_port_grant is
     ADDR_W  : positive := 33;      -- the HBM SAXI address width, MEASURED
     DATA_W  : positive := 256;
     NPORT   : positive := 2;       -- the shared pool
+    -- THE HBM FACE IS AXI3.  The FK33's HBM slave takes a 4-bit AWLEN/ARLEN,
+    -- so 16 beats is the hard cap; the requester side stays 8 bits because
+    -- both gdn_state_axi and attn_kv_axi declare AXI4-width ports.  Vivado
+    -- refuses the connection outright on the width -- `[BD 41-1285] The
+    -- protocols of the interfaces ... (AXI4) and ... (AXI3) are incompatible`
+    -- -- which is a good failure, but it only appears at block-design time and
+    -- no bench can reach it.  Both requesters are capped at 16 beats by their
+    -- own compile-time checks, so the upper nibble is always zero and the
+    -- narrowing is lossless; `err_len_ovf` below reports it if that ever stops
+    -- being true, rather than letting a long burst silently become a short one.
+    MLEN_W  : positive := 4;       -- HBM-facing AWLEN/ARLEN width (AXI3)
     -- Width of the outstanding counters.  8 bits is 255 in flight per port,
     -- far above anything either master issues; it is a counter, not a budget.
     CNT_W   : positive := 8
@@ -111,7 +122,7 @@ entity bc_port_grant is
     -- ---- the shared pool, flattened NPORT-wide --------------------------
     m_arvalid : out std_logic_vector(NPORT-1 downto 0);
     m_araddr  : out std_logic_vector(NPORT*ADDR_W-1 downto 0);
-    m_arlen   : out std_logic_vector(NPORT*8-1 downto 0);
+    m_arlen   : out std_logic_vector(NPORT*MLEN_W-1 downto 0);
     m_arready : in  std_logic_vector(NPORT-1 downto 0);
     m_rvalid  : in  std_logic_vector(NPORT-1 downto 0);
     m_rdata   : in  std_logic_vector(NPORT*DATA_W-1 downto 0);
@@ -119,7 +130,7 @@ entity bc_port_grant is
     m_rready  : out std_logic_vector(NPORT-1 downto 0);
     m_awvalid : out std_logic_vector(NPORT-1 downto 0);
     m_awaddr  : out std_logic_vector(NPORT*ADDR_W-1 downto 0);
-    m_awlen   : out std_logic_vector(NPORT*8-1 downto 0);
+    m_awlen   : out std_logic_vector(NPORT*MLEN_W-1 downto 0);
     m_awready : in  std_logic_vector(NPORT-1 downto 0);
     m_wvalid  : out std_logic_vector(NPORT-1 downto 0);
     m_wdata   : out std_logic_vector(NPORT*DATA_W-1 downto 0);
@@ -135,7 +146,9 @@ entity bc_port_grant is
     -- which cannot happen if this block is correct.  It is here so that a
     -- future change which bypasses the interlock is LOUD rather than silent,
     -- because the failure it guards is silent by nature.
-    err_switch_busy : out std_logic
+    err_switch_busy : out std_logic;
+    -- Sticky.  A requester presented a burst longer than the AXI3 cap.
+    err_len_ovf     : out std_logic
   );
 end entity;
 
@@ -153,6 +166,7 @@ architecture rtl of bc_port_grant is
   signal out_idle   : std_logic;
   signal may_switch : std_logic;
   signal err_r      : std_logic := '0';
+  signal errlen_r   : std_logic := '0';
   signal own_q      : own_t := OWN_NONE;
   signal quiet_q    : std_logic := '1';
   signal to_c, to_b : std_logic;
@@ -216,6 +230,36 @@ begin
   owner_is_c <= '1' when own = OWN_C else '0';
   draining   <= not quiet;
   err_switch_busy <= err_r;
+  err_len_ovf     <= errlen_r;
+
+  -- THE AXI3 NARROWING, WATCHED RATHER THAN ASSUMED.  m_*len carries only the
+  -- low MLEN_W bits of the requester's length.  Both requesters cap themselves
+  -- at 16 beats at COMPILE time, so the discarded bits are always zero -- but
+  -- that is a property of two other files, and if either ever relaxes its cap
+  -- the truncation here would turn a long burst into a short one silently,
+  -- which on a read is a short beat count the master waits forever for.  Only
+  -- the length actually being PRESENTED is checked, on the cycle it is
+  -- presented, so this costs one flip-flop and no timing path of its own.
+  errlen_p : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rstn = '0' then
+        errlen_r <= '0';
+      else
+        if (b_arvalid = '1' and unsigned(b_arlen(7 downto MLEN_W)) /= 0)
+           or (b_awvalid = '1' and unsigned(b_awlen(7 downto MLEN_W)) /= 0)
+           or (c_awvalid = '1' and unsigned(c_awlen(7 downto MLEN_W)) /= 0) then
+          errlen_r <= '1';
+        end if;
+        for i in 0 to 1 loop
+          if c_arvalid(i) = '1'
+             and unsigned(c_arlen(i*8+7 downto i*8+MLEN_W)) /= 0 then
+            errlen_r <= '1';
+          end if;
+        end loop;
+      end if;
+    end if;
+  end process;
 
   to_c <= '1' when (c_req = '1' and own /= OWN_C) else '0';
   to_b <= '1' when (b_req = '1' and own /= OWN_B) else '0';
@@ -317,7 +361,7 @@ begin
       -- port 0 <- B read
       m_arvalid(0) <= b_arvalid;
       m_araddr(ADDR_W-1 downto 0) <= b_araddr;
-      m_arlen(7 downto 0) <= b_arlen;
+      m_arlen(MLEN_W-1 downto 0) <= b_arlen(MLEN_W-1 downto 0);
       m_rready(0)  <= b_rready;
       b_arready    <= m_arready(0);
       b_rvalid     <= m_rvalid(0);
@@ -326,7 +370,7 @@ begin
       -- port 1 <- B write
       m_awvalid(1) <= b_awvalid;
       m_awaddr(2*ADDR_W-1 downto ADDR_W) <= b_awaddr;
-      m_awlen(15 downto 8) <= b_awlen;
+      m_awlen(2*MLEN_W-1 downto MLEN_W) <= b_awlen(MLEN_W-1 downto 0);
       m_wvalid(1)  <= b_wvalid;
       m_wdata(2*DATA_W-1 downto DATA_W) <= b_wdata;
       m_wlast(1)   <= b_wlast;
@@ -339,7 +383,8 @@ begin
       -- ports 0,1 <- C's two reads
       m_arvalid(1 downto 0) <= c_arvalid;
       m_araddr(2*ADDR_W-1 downto 0) <= c_araddr;
-      m_arlen(15 downto 0)  <= c_arlen;
+      m_arlen(MLEN_W-1 downto 0) <= c_arlen(MLEN_W-1 downto 0);
+      m_arlen(2*MLEN_W-1 downto MLEN_W) <= c_arlen(8+MLEN_W-1 downto 8);
       m_rready(1 downto 0)  <= c_rready;
       c_arready <= m_arready(1 downto 0);
       c_rvalid  <= m_rvalid(1 downto 0);
@@ -354,7 +399,7 @@ begin
       -- counters and `quiet` already requires both to be zero.
       m_awvalid(0) <= c_awvalid;
       m_awaddr(ADDR_W-1 downto 0) <= c_awaddr;
-      m_awlen(7 downto 0) <= c_awlen;
+      m_awlen(MLEN_W-1 downto 0) <= c_awlen(MLEN_W-1 downto 0);
       m_wvalid(0)  <= c_wvalid;
       m_wdata(DATA_W-1 downto 0) <= c_wdata;
       m_wlast(0)   <= c_wlast;
