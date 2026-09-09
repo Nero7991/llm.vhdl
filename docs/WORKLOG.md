@@ -11,6 +11,78 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-09: cardbuild9 is in silent global elaboration; the length guard now has teeth
+
+**The card build.** `cardbuild9` (`FK33_CARD=1 bash pcieep_build.sh` under
+`systemd-run --user -p MemoryMax=24G`) started 23:13:51 and at 52 min is at
+**19.87 GB, climbing ~48 MB/min**, `memory.events` all zero (`low 0 high 0
+max 0 oom 0`), swap **3474 MB against a 3479 MB baseline** (i.e. below it),
+available 6.4 GB. Its `runme.log` has been static at 23:17:25 for 49 minutes.
+
+**That silence is not a hang, and this is how it was established** rather than
+assumed: two Vivado workers identified via `/proc/PID/exe` are each burning
+101 ticks/s (1.01 core), which is exactly the `general.maxThreads 2` this
+configuration sets, and one worker's RSS grows ~12 MB per 15 s. Global
+synthesis (`synth_checkpoint_mode None`) elaborates the whole PCIe/GT IP set
+plus the 48 card sources in one pass and prints nothing while doing it. **A
+buffered-looking log plus live CPU is the third recorded form of "the harness
+is reporting a fact about the harness"**; the kernel's view of the process is
+what settles it.
+
+Stop rule in force, unchanged: oomd fires, OR swap grows >500 MB from the
+3479 MB baseline, OR available <2 GB. A watcher is armed on those conditions
+rather than polled by hand.
+
+**THE FULL GATE IS DELIBERATELY NOT RUNNING, and here is the arithmetic.**
+Available 6,403 MB now; cardbuild8 peaked at 22.40 GB unthrottled so this run
+should take ~2,530 MB more; the recorded full-gate peak at `--jobs 1` is
+2,181 MB. That leaves **1,678 MB at coincident peak, below the 2,000 MB stop
+threshold**, so the gate waits for the build instead of running beside it.
+Only the one affected bench was run, and it exited before this was written.
+The gate is owed as soon as `cardbuild9` ends, whichever way it ends.
+
+**`err_len_ovf` now actually tests its threshold** (`8abe9f7`, doc
+`docs/debugging/2026-09-09_the-length-guard-was-checked-by-never-firing-it.md`).
+It had been in the verdict only as "must stay '0'", and the bench's own
+traffic never exceeds 4 beats against a 16-beat cap, so that term passed
+identically against a guard tied to '0'. A directed phase on a SECOND DUT
+instance (needed because `b_arlen`/`c_arlen` already have drivers) now drives
+all five sources at 15, 16 and 32 beats plus a sticky-after-withdrawal check:
+17 checks, six mutants, all killed.
+
+**The attribution control came out unusually clean and is the point.** In all
+six mutant runs every pre-existing verdict term holds -- misdeliveries 0,
+`err_switch_busy` '0', `err_len_ovf` '0', switches 7619, reads 5142, writes
+3352, all four per-port counters non-zero -- so the old bench returns PASS on
+all six and the new phase is the sole detector for every one. Those counters
+are also byte-identical to the reference run, so the added instance perturbs
+nothing.
+
+**The resolution floor was measured before it was closed, not guessed.** The
+first version used 15 and 16 only, 12 checks. A mutant testing
+`axlen(MLEN_W)` instead of the whole upper nibble -- which catches 16..31 and
+passes 32 silently -- **PASSED that version**. The five 32-beat cases exist to
+close a demonstrated hole; do not trim them as redundant.
+
+`rtl/bc_port_grant.vhd` was NOT edited: every mutant was a copy in scratch,
+confirmed by `git diff --quiet`, which matters because a card synthesis was
+reading that file at the time.
+
+**Next, branched before the answer:**
+- cardbuild9 completes synthesis -> let it run on into implementation and
+  `write_bitstream`; run the full gate once the box is free.
+- cardbuild9 hits the cap or the stop rule -> the decision already put to Oren
+  stands: add RAM (2 free DIMM slots, 2 x 32 GB preferred over filling four),
+  or trim the card geometry for a first bitstream (smaller `C_KV_BLOCK`, fewer
+  `A_ROWS_IF`, or B omitted).
+
+**Still open, and unchanged by the above:** `err_switch_busy` and
+`err_len_ovf` are sticky outputs that **nothing reads**. The work above shows
+the guard fires correctly; it does not make anyone able to hear it. Wiring
+them is an RTL change and would invalidate a build that is currently running,
+so it is queued behind the bitstream rather than done now.
+
+
 ### 2026-09-05 (latest): THE REAL BASELINE IS -0.637, AND "DIRECTIVES LOSE" IS REFUTED
 
 Three composed runs, **all routes clean**, all on ONE netlist
