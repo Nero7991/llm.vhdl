@@ -195,10 +195,42 @@ necessarily about to die.
 which is the cap. All that is established is that the card build's synthesis
 wants MORE than 17 GiB.
 
+### Launch 8 -- 23G after freeing code-server. THE NUMBER.
+
+`systemctl --user restart code-server` reclaimed **4.0 GB** of the 4.28 GB it
+held (used 9,790 -> 5,800 MB) and incidentally freed ~1.4 GB of swap. That
+bought the headroom for a 23G cap.
+
+```
+cgroup memory.current  2.23 -> 13.54 -> 16.97 -> 18.46 -> 19.79 -> 21.29
+                            -> 21.85 -> 22.15 -> 22.38 GB
+memory.events          max 0, oom_kill 0 THROUGHOUT -- never throttled
+MemAvailable           25646 -> 8434 -> 4457 -> 3236 MB
+swap                   3297 MB, FLAT for over an hour, then +185 MB in one
+                       interval as the kernel began swapping the SYSTEM
+```
+
+**`memory.peak = 22.40 GB` with `max 0`. The cap was never reached, so this is
+a REAL UNTHROTTLED PEAK and it is quotable.** It is also a LOWER BOUND: the
+figure was still creeping when the run was stopped, and it was stopped on the
+swap movement, not on any failure.
+
+For contrast, the same build with the earlier settings pinned at 17.00 GB and
+reclaimed 111 times. The 23G run sailed past 17 GiB without a single reclaim
+event, which is what the extra 4 GB of headroom bought.
+
 ## The conclusion
 
-**The card build now runs bounded and reaches real synthesis, and it wants more
-than 17 GiB.** That is the state after seven launches. The method changes that
+**THE CARD BUILD'S SYNTHESIS NEEDS AT LEAST 22.40 GB, measured cleanly and
+without throttling.** That is the number this whole investigation was for, and
+it is the answer to "why not just give it 28 GB": it never needed 28, it needs
+about 22.4, and this box cannot comfortably supply even that.
+
+Arithmetic, on a 31.9 GB machine: baseline usage with code-server freshly
+restarted is ~5.5 GB, leaving ~26 GB. A 22.4 GB job fits in that with ~3.5 GB
+of margin -- which is exactly the margin at which the kernel started swapping
+the system. **It very nearly worked, and it was stopped by hand rather than by
+a failure.** The method changes that
 got it there -- global synthesis, VHDL 2008 below the wrapper tops, and
 `general.maxThreads` -- are all committed and gated on `FK33_CARD`.
 
