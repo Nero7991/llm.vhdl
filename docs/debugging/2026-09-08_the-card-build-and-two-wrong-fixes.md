@@ -267,3 +267,45 @@ where systemd-oomd starts hitting bystanders.
   `C_KV_BLOCK`, fewer `A_ROWS_IF`, or B omitted would produce a bitstream that
   proves the three-cell wiring on real hardware, which is worth more than a
   full-size build that cannot be synthesised.
+
+---
+
+## CORRECTION, 2026-09-09: 22.40 GB WAS NOT THE JOB'S PEAK
+
+**Withdrawn:** the reading of `cardbuild8`'s `memory.peak = 22.40 GB` with
+`max 0` as *the card synthesis's memory requirement*. The observation itself
+stands and was correctly qualified as unthrottled; what was wrong was using a
+single unthrottled observation as the job's appetite.
+
+**MEASURED:** `cardbuild9`, the same configuration under `MemoryMax=24G`, is at
+**23.18 GB at 144 minutes with `memory.events` all zero** -- `low 0 high 0
+max 0 oom 0 oom_kill 0`, and `memory.stat` showing `pgscan 0 pgsteal 0`, so
+there has been no reclaim of any kind and 23.18 GB is genuine. It is still
+climbing, with 0.82 GB of headroom to its cap.
+
+So `cardbuild8` was stopped **before its own peak**, not at it. It was halted
+on a 185 MB swap move at 22.40 GB, and the number that halt produced was then
+used as though the job had finished growing.
+
+**This is CLAUDE.md's recorded trap, hit on the exact figure the file warns
+about:** *"the peak is a property of the JOB, one observation is not the
+peak."* The file even records the inverse case -- a capped `memory.peak` being
+the cap rather than the peak -- and the guard against that (`max 0`, no
+throttling) was correctly applied here. **Passing the throttle check does not
+make an observation a peak; it only makes it honest about not having been
+throttled.** A number can be unthrottled and still be a lower bound, because
+the job was stopped rather than finished.
+
+**The operational consequence: the cap was NOT raised.** With available memory
+at 3,370 MB, raising `MemoryMax` to 26G would leave roughly 1.4 GB free at that
+peak. `MemoryMax` bounds this cgroup, but **systemd-oomd kills on PSI
+regardless of any cgroup limit**, and it kills by cgroup -- which is the
+documented 2026-07-04 failure where 134 processes went with `code-server`. The
+correct move is to let the run hit its own cap, where `MemoryMax` reclaims
+first and can only kill inside its own cgroup, leaving the box intact.
+
+**What is now known and what is not.** The card synthesis needs **more than
+23.18 GB**; that is a lower bound, not a requirement, and it will remain a
+lower bound unless the run completes. If it dies at 24 GB the bound simply
+moves. Do not quote 22.40 GB, and do not quote 23.18 GB as a requirement
+either.
