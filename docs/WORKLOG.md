@@ -11,6 +11,72 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-09 (LATEST): THE CARD WAS NEVER 9B. NINE HOURS OF VIVADO FITTING A STAND-IN.
+
+**`hw/fk33/gen_fk33_card.py` set SIX generics and none of the KV geometry**, so
+every card build instantiated `rtl/fk33_llama_top.vhd`'s defaults: `C_MAXPOS`
+**4** against 131072, `C_CTXLEN` **1**, `C_K_BASE_CH` **1** against 282598912,
+`C_V_BASE_CH` **254** against 353902080, `C_KV_ADDR_W` **16** against 33. A
+four-position KV cache with a context length of one.
+
+**It was reported twenty times and nothing branched on it.** `[BD 41-2383]
+Width mismatch ... '/card/kv0_araddr'(16) - Only lower order bits will be
+connected`. The build gates on `^ERROR`; a CRITICAL WARNING is not one. So a
+silent 17-bit truncation of C's whole KV address path passed every gate, and
+the bitstream would have built, run, and addressed the low 64 KiB of HBM for
+every head of every layer.
+
+**A SECOND instance in the same log:** `fk33_seam` also took its defaults
+(`REGMAX` 4096 / `HADDR_W` 12) against the card's 12,288-element region needing
+14 bits, so host registers 4096..12287 were unreachable.
+
+**FIXED AND VERIFIED, 20 -> 4 -> 0.** `--bd-only` after the KV generics: 4
+mismatches, 0 errors. After `CONFIG.REGMAX 12288` / `CONFIG.HADDR_W 14`: **0
+mismatches, 0 errors**, with `FK33_SEAM REGMAX=12288 HADDR_W=14` confirming the
+property took. Each step attributable to one change.
+
+**WHY `check_kv_map.py` WAS GREEN THE WHOLE TIME, and this is the reusable
+part.** All 16 rows passed, including `C_KV_ADDR_W - 4 >= clog2(top chunk)` at
+ZERO slack. It validates the KVR block in `sim/realshape_gate.sh` against the
+HBM manifest and **never reads `gen_fk33_card.py`**. The guard was not weak and
+not wrong -- it was correct, rigorous, and **checking a different artifact than
+the one that ships**. That is the "guard that passes for the wrong reason"
+class one level up: a checker over the SIMULATION configuration says nothing
+about the HARDWARE configuration unless something asserts the two are equal.
+It is also referenced nowhere in `sim/regress.sh`, only in `realshape_gate.sh`
+-- the recorded "a script nothing schedules" pattern as well.
+
+It now has a fourth side comparing each generic in `gen_fk33_card.py` against
+the already-manifest-checked KVR value. Teeth, against the ACTUAL pre-fix file
+from `git show HEAD:`: control 0 refusals, pre-fix file **5**, and
+`C_KV_ADDR_W` 33->32 **1** -- that last being the state the "does it set it"
+row cannot catch, and not an arbitrary mutant but `realshape_gate.sh`'s own
+known-bad `real_kv_addr_short` value.
+
+**THE MEMORY WORK IS INVALIDATED.** cardbuild8/9/10 -- about nine hours of
+Vivado, three stop-rule trips and a long argument about a 24 GB ceiling -- were
+fitting the stand-in. **22.40, 23.18 and 24.00 GB are not quotable for the 9B
+card in either direction.** The check that would have settled it,
+`grep -c '"--generic"'`, costs one second and was never run. The 22.40 GB
+lower-bound correction from earlier today stands but is now moot.
+
+**`cardbuild11` is the first build of the actual 9B design**, cap 24G, flatten
+`none`, swap baseline 4,210 MB. Its memory requirement is UNKNOWN and could go
+either way: wider addresses and 18-bit positions cost something, but the KV
+storage was already in HBM so nothing large moved on-chip.
+
+**Next, branched before the answer:**
+- completes -> first real bitstream; run the full gate once the box is free.
+- stops at the cap -> the geometry is now correct, so trimming `C_KV_BLOCK`
+  32->16 or adding RAM are the levers, and for the first time those would be
+  decisions about the real design.
+
+**Open:** nothing enumerates which OTHER BD cells are instantiated with
+defaults. Two were found by reading one log, and the same failure mode looks
+identical everywhere. `[BD 41-2383]` is still ungated; every instance found
+today was a genuine defect.
+
+
 ### 2026-09-09: cardbuild9 is in silent global elaboration; the length guard now has teeth
 
 **The card build.** `cardbuild9` (`FK33_CARD=1 bash pcieep_build.sh` under
