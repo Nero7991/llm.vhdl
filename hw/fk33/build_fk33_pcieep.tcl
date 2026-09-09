@@ -2020,6 +2020,33 @@ puts "FK33_RUNBOUND synth=$FK33_SYNTH_MAX_MIN min impl=$FK33_IMPL_MAX_MIN min"
 # simply only ever one run to bound once global mode was on.
 set_param general.maxThreads 2
 puts "FK33_CARD general.maxThreads = [get_param general.maxThreads]"
+
+# FLATTEN_HIERARCHY.  Vivado's default is `rebuilt`: flatten the WHOLE design,
+# optimise across every boundary, then rebuild the hierarchy for reporting.
+# On this design that default is the documented failure, twice over --
+# docs/debugging/2026-09-08_card-ooc-synthesis-does-not-finish.md records two
+# flat synthesis attempts of the card, ~10 hours of Vivado between them, and
+# NEITHER FINISHED.  The second emitted no phase marker in 6 h 34 m while
+# sitting at a comfortable 15.52 GB, so the binding constraint there was TIME,
+# not memory.  cardbuild9 then hit 24.00 GB on the same flat strategy applied
+# to the whole top and was still growing at 144 minutes.
+#
+# `none` keeps the module boundaries, so the optimiser never builds the single
+# enormous flat netlist that both of those runs were grinding on.  It is the
+# ONE lever that addresses both failures at once, and grep says it had never
+# been set anywhere in this flow -- every previous attempt turned a
+# parallelism or memory-cap knob and left the strategy alone.
+#
+# THE TRADE IS REAL AND IS DELIBERATELY ACCEPTED: forbidding cross-boundary
+# optimisation costs QoR, so expect worse timing than the -0.422 the composed
+# top reached.  Standing instruction from Oren is that a bitstream comes
+# first and 200 MHz is an optimisation for afterwards, which is exactly this
+# trade.  Set FK33_FLATTEN=rebuilt to get the old strategy back.
+set fk33_flat "none"
+if {$fk33_flat ne ""} {
+  set_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY $fk33_flat [get_runs synth_1]
+  puts "FK33_CARD FLATTEN_HIERARCHY = [get_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY [get_runs synth_1]]"
+}
 launch_runs synth_1 -jobs 1
 fk33_assert_run_started synth_1
 wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1

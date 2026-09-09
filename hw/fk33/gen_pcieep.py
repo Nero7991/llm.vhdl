@@ -2224,6 +2224,14 @@ SYNTH_JOBS = int(os.environ.get("FK33_SYNTH_JOBS", "1" if CARD_ON else "4"))
 # that leaves headroom; FK33_SYNTH_THREADS overrides. Left at Vivado's default
 # for the engine-only build, which has completed at that setting.
 SYNTH_THREADS = int(os.environ.get("FK33_SYNTH_THREADS", "2" if CARD_ON else "8"))
+
+# Empty string means "leave Vivado's default alone", which is what the
+# card-free build has always used and which is known to work there (10.66 GB,
+# 0 errors, a bitstream).  Only the card build changes strategy, so a
+# regression here cannot be blamed on this lever.
+SYNTH_FLATTEN = os.environ.get("FK33_FLATTEN", "none" if CARD_ON else "")
+assert SYNTH_FLATTEN in ("", "none", "rebuilt", "full"), \
+    "FK33_FLATTEN must be one of '', none, rebuilt, full -- got %r" % SYNTH_FLATTEN
 if SYNTH_THREADS < 1:
     sys.exit("ABORT: FK33_SYNTH_THREADS must be >= 1, got %d" % SYNTH_THREADS)
 if SYNTH_JOBS < 1:
@@ -2251,6 +2259,33 @@ puts "FK33_RUNBOUND synth=$FK33_SYNTH_MAX_MIN min impl=$FK33_IMPL_MAX_MIN min"
 # simply only ever one run to bound once global mode was on.
 set_param general.maxThreads %(mthr)d
 puts "FK33_CARD general.maxThreads = [get_param general.maxThreads]"
+
+# FLATTEN_HIERARCHY.  Vivado's default is `rebuilt`: flatten the WHOLE design,
+# optimise across every boundary, then rebuild the hierarchy for reporting.
+# On this design that default is the documented failure, twice over --
+# docs/debugging/2026-09-08_card-ooc-synthesis-does-not-finish.md records two
+# flat synthesis attempts of the card, ~10 hours of Vivado between them, and
+# NEITHER FINISHED.  The second emitted no phase marker in 6 h 34 m while
+# sitting at a comfortable 15.52 GB, so the binding constraint there was TIME,
+# not memory.  cardbuild9 then hit 24.00 GB on the same flat strategy applied
+# to the whole top and was still growing at 144 minutes.
+#
+# `none` keeps the module boundaries, so the optimiser never builds the single
+# enormous flat netlist that both of those runs were grinding on.  It is the
+# ONE lever that addresses both failures at once, and grep says it had never
+# been set anywhere in this flow -- every previous attempt turned a
+# parallelism or memory-cap knob and left the strategy alone.
+#
+# THE TRADE IS REAL AND IS DELIBERATELY ACCEPTED: forbidding cross-boundary
+# optimisation costs QoR, so expect worse timing than the -0.422 the composed
+# top reached.  Standing instruction from Oren is that a bitstream comes
+# first and 200 MHz is an optimisation for afterwards, which is exactly this
+# trade.  Set FK33_FLATTEN=rebuilt to get the old strategy back.
+set fk33_flat "%(flat)s"
+if {$fk33_flat ne ""} {
+  set_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY $fk33_flat [get_runs synth_1]
+  puts "FK33_CARD FLATTEN_HIERARCHY = [get_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY [get_runs synth_1]]"
+}
 launch_runs synth_1 -jobs %(sjobs)d
 fk33_assert_run_started synth_1
 wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
@@ -2263,7 +2298,8 @@ wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1
 fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN''' % {"smin": SYNTH_MAX_MIN,
                                                      "imin": IMPL_MAX_MIN,
                                                      "sjobs": SYNTH_JOBS,
-                                                     "mthr": SYNTH_THREADS}
+                                                     "mthr": SYNTH_THREADS,
+                                                     "flat": SYNTH_FLATTEN}
 
 SUBS = ([] if not CARD_ON else [
     # ---- GLOBAL SYNTHESIS FOR THE CARD BUILD.
