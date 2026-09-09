@@ -74,6 +74,33 @@ architecture sim of tb_bc_port_grant is
   -- so it is pinned here rather than left as a reading of the source.
   type natvec is array (0 to NP-1) of natural;
   signal n_prd, n_pwr : natvec := (others => 0);
+
+  -- ---- SECOND DUT, dedicated to the AXI3 length guard -------------------
+  -- The main instance above never presents a burst longer than 4 beats, so it
+  -- can only ever observe err_len_ovf STAYING LOW.  That is a plumbing check:
+  -- it passes identically if errlen_r is tied to '0', or if the comparator
+  -- looks at the wrong bits.  What has to be shown is that the guard
+  -- DISCRIMINATES at the AXI3 boundary -- 15 beats (AxLEN = 0x0F) is legal and
+  -- must not fire, 16 beats (AxLEN = 0x10) is the first illegal one and must.
+  -- A separate instance is needed because b_arlen and c_arlen already have a
+  -- driver in bmast/cmast; one signal cannot be driven from two processes.
+  constant Z_AW   : std_logic_vector(AW-1 downto 0)    := (others=>'0');
+  constant Z_2AW  : std_logic_vector(2*AW-1 downto 0)  := (others=>'0');
+  constant Z_DW   : std_logic_vector(DW-1 downto 0)    := (others=>'0');
+  constant Z_NP   : std_logic_vector(NP-1 downto 0)    := (others=>'0');
+  constant O_NP   : std_logic_vector(NP-1 downto 0)    := (others=>'1');
+  constant Z_NPDW : std_logic_vector(NP*DW-1 downto 0) := (others=>'0');
+  constant Z_2    : std_logic_vector(1 downto 0)       := (others=>'0');
+
+  signal o_rstn      : std_logic := '0';
+  signal o_b_arvalid, o_b_awvalid, o_c_awvalid : std_logic := '0';
+  signal o_c_arvalid : std_logic_vector(1 downto 0) := (others=>'0');
+  signal o_b_arlen, o_b_awlen, o_c_awlen : std_logic_vector(7 downto 0) := (others=>'0');
+  signal o_c_arlen   : std_logic_vector(15 downto 0) := (others=>'0');
+  signal o_err_ovf   : std_logic;
+  signal ovf_done    : boolean := false;
+  signal ovf_checks  : natural := 0;
+  signal ovf_fail    : natural := 0;
 begin
   clk <= '0' when done else not clk after 2.5 ns;
   rstn <= '1' after 40 ns;
@@ -318,6 +345,107 @@ begin
     end if;
   end process;
 
+  ovf_dut : entity work.bc_port_grant
+    generic map (ADDR_W=>AW, DATA_W=>DW, NPORT=>NP)
+    port map (
+      clk=>clk, rstn=>o_rstn, b_req=>'0', c_req=>'0', b_gnt=>open, c_gnt=>open,
+      b_arvalid=>o_b_arvalid, b_araddr=>Z_AW, b_arlen=>o_b_arlen, b_arready=>open,
+      b_rvalid=>open, b_rdata=>open, b_rlast=>open, b_rready=>'0',
+      b_awvalid=>o_b_awvalid, b_awaddr=>Z_AW, b_awlen=>o_b_awlen, b_awready=>open,
+      b_wvalid=>'0', b_wdata=>Z_DW, b_wlast=>'0', b_wready=>open,
+      b_bvalid=>open, b_bready=>'0',
+      c_arvalid=>o_c_arvalid, c_araddr=>Z_2AW, c_arlen=>o_c_arlen, c_arready=>open,
+      c_rvalid=>open, c_rdata=>open, c_rlast=>open, c_rready=>Z_2,
+      c_awvalid=>o_c_awvalid, c_awaddr=>Z_AW, c_awlen=>o_c_awlen, c_awready=>open,
+      c_wvalid=>'0', c_wdata=>Z_DW, c_wlast=>'0', c_wready=>open,
+      c_bvalid=>open, c_bready=>'0',
+      m_arvalid=>open, m_araddr=>open, m_arlen=>open, m_arready=>O_NP,
+      m_rvalid=>Z_NP, m_rdata=>Z_NPDW, m_rlast=>Z_NP, m_rready=>open,
+      m_awvalid=>open, m_awaddr=>open, m_awlen=>open, m_awready=>O_NP,
+      m_wvalid=>open, m_wdata=>open, m_wlast=>open, m_wready=>O_NP,
+      m_bvalid=>Z_NP, m_bready=>open,
+      owner_is_c=>open, draining=>open, err_switch_busy=>open,
+      err_len_ovf=>o_err_ovf);
+
+  -- Five sources reach the guard: B's read, B's write, C's write, and each of
+  -- C's TWO reads, which live in one flattened vector and are the pair most
+  -- likely to be got wrong by an off-by-8 in the slice.  Each is tested alone,
+  -- from its own reset, so a firing is attributable to that source rather than
+  -- to whichever ran first.
+  --
+  -- Each source is driven at 15 (legal), 16 (the first illegal length) and 32.
+  -- The 32 case is not redundant: a guard written as `axlen(MLEN_W) = '1'`
+  -- rather than as a test of the whole upper nibble catches 16..31 and passes
+  -- 32 silently, and a 15/16 pair alone CANNOT see that.  It was measured --
+  -- mutant M6 passed a 12-check version of this phase -- so the case is here
+  -- to close a resolution floor that was demonstrated, not an imagined one.
+  ovf : process is
+    variable chk  : natural := 0;
+    variable bad  : natural := 0;
+
+    procedure clr is
+    begin
+      o_rstn <= '0';
+      o_b_arvalid <= '0'; o_b_awvalid <= '0'; o_c_awvalid <= '0';
+      o_c_arvalid <= "00";
+      o_b_arlen <= x"00"; o_b_awlen <= x"00"; o_c_awlen <= x"00";
+      o_c_arlen <= x"0000";
+      wait until rising_edge(clk); wait until rising_edge(clk);
+      o_rstn <= '1';
+      wait until rising_edge(clk);
+    end procedure;
+
+    procedure expect(name : string; want : std_logic) is
+    begin
+      wait until rising_edge(clk); wait until rising_edge(clk);
+      chk := chk + 1;
+      if o_err_ovf /= want then
+        bad := bad + 1;
+        report "LEN GUARD " & name & ": err_len_ovf=" & std_logic'image(o_err_ovf)
+             & " expected " & std_logic'image(want) severity error;
+      end if;
+    end procedure;
+  begin
+    -- baseline: out of reset with nothing presented, the guard is low.
+    clr;
+    expect("idle", '0');
+
+    -- B read
+    clr; o_b_arlen <= x"0F"; o_b_arvalid <= '1'; expect("b_ar len=15", '0');
+    clr; o_b_arlen <= x"10"; o_b_arvalid <= '1'; expect("b_ar len=16", '1');
+    clr; o_b_arlen <= x"20"; o_b_arvalid <= '1'; expect("b_ar len=32", '1');
+
+    -- B write
+    clr; o_b_awlen <= x"0F"; o_b_awvalid <= '1'; expect("b_aw len=15", '0');
+    clr; o_b_awlen <= x"10"; o_b_awvalid <= '1'; expect("b_aw len=16", '1');
+    clr; o_b_awlen <= x"20"; o_b_awvalid <= '1'; expect("b_aw len=32", '1');
+
+    -- C write
+    clr; o_c_awlen <= x"0F"; o_c_awvalid <= '1'; expect("c_aw len=15", '0');
+    clr; o_c_awlen <= x"10"; o_c_awvalid <= '1'; expect("c_aw len=16", '1');
+    clr; o_c_awlen <= x"20"; o_c_awvalid <= '1'; expect("c_aw len=32", '1');
+
+    -- C read port 0 -- low byte of the flattened vector.  The high byte is
+    -- held at 16 with its OWN valid low, so a guard that ignores c_arvalid and
+    -- looks at the whole vector fires here and is caught.
+    clr; o_c_arlen <= x"10" & x"0F"; o_c_arvalid <= "01"; expect("c_ar0 len=15", '0');
+    clr; o_c_arlen <= x"00" & x"10"; o_c_arvalid <= "01"; expect("c_ar0 len=16", '1');
+    clr; o_c_arlen <= x"00" & x"20"; o_c_arvalid <= "01"; expect("c_ar0 len=32", '1');
+
+    -- C read port 1 -- high byte.  Same trick mirrored: an off-by-8 slice that
+    -- reads the low byte for port 1 sees 0x0F here and fails to fire.
+    clr; o_c_arlen <= x"0F" & x"10"; o_c_arvalid <= "10"; expect("c_ar1 len=15", '0');
+    clr; o_c_arlen <= x"10" & x"00"; o_c_arvalid <= "10"; expect("c_ar1 len=16", '1');
+    clr; o_c_arlen <= x"20" & x"00"; o_c_arvalid <= "10"; expect("c_ar1 len=32", '1');
+
+    -- sticky: once set it stays set after the offending burst goes away.
+    o_c_arvalid <= "00"; o_c_arlen <= x"0000";
+    expect("sticky after withdraw", '1');
+
+    ovf_checks <= chk; ovf_fail <= bad; ovf_done <= true;
+    wait;
+  end process;
+
   drive : process is
     variable verdict  : boolean := false;
     variable pool_ok  : boolean := false;
@@ -351,8 +479,14 @@ begin
            & "the AXI3 16-beat cap and the HBM-facing length was truncated"
         severity error;
     end if;
+    -- The length guard's own verdict comes from the second instance: this one
+    -- can only ever watch err_len_ovf stay low, which is not a test of it.
+    if not ovf_done then
+      report "LEN GUARD phase did not finish" severity error;
+    end if;
     if n_fail = 0 and err_switch_busy = '0' and err_len_ovf = '0' and n_switch >= 8
-       and n_rd >= 40 and n_wr >= 20 and pool_ok then
+       and n_rd >= 40 and n_wr >= 20 and pool_ok
+       and ovf_done and ovf_fail = 0 and ovf_checks = 17 then
       verdict := true;
     end if;
     report "tb_bc_port_grant RESULT: "
@@ -365,7 +499,9 @@ begin
          & " p0rd=" & integer'image(n_prd(0)) & " p0wr=" & integer'image(n_pwr(0))
          & " p1rd=" & integer'image(n_prd(1)) & " p1wr=" & integer'image(n_pwr(1))
          & " err_switch_busy=" & std_logic'image(err_switch_busy)
-         & " err_len_ovf=" & std_logic'image(err_len_ovf);
+         & " err_len_ovf=" & std_logic'image(err_len_ovf)
+         & " lenguard_checks=" & integer'image(ovf_checks)
+         & " lenguard_fail=" & integer'image(ovf_fail);
     done <= true;
     wait;
   end process;
