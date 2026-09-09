@@ -53,8 +53,8 @@ entity fk33_card is
     kv1_arvalid              : out    std_logic;
     kv0_arready              : in     std_logic;
     kv1_arready              : in     std_logic;
-    kv0_araddr               : out    std_logic_vector(15 downto 0);
-    kv1_araddr               : out    std_logic_vector(15 downto 0);
+    kv0_araddr               : out    std_logic_vector(32 downto 0);
+    kv1_araddr               : out    std_logic_vector(32 downto 0);
     kv0_arlen                : out    std_logic_vector(7 downto 0);
     kv1_arlen                : out    std_logic_vector(7 downto 0);
     kv0_arsize               : out    std_logic_vector(2 downto 0);
@@ -73,7 +73,7 @@ entity fk33_card is
     kv1_rresp                : in     std_logic_vector(1 downto 0);
     kv_awvalid               : out    std_logic;
     kv_awready               : in     std_logic;
-    kv_awaddr                : out    std_logic_vector(15 downto 0);
+    kv_awaddr                : out    std_logic_vector(32 downto 0);
     kv_awlen                 : out    std_logic_vector(7 downto 0);
     kv_awsize                : out    std_logic_vector(2 downto 0);
     kv_awburst               : out    std_logic_vector(1 downto 0);
@@ -176,7 +176,7 @@ architecture wrap of fk33_card is
   signal w_hr_addr              : integer range 0 to 12287;
   signal w_kv_arvalid           : std_logic_vector(1 downto 0);
   signal w_kv_arready           : std_logic_vector(1 downto 0);
-  signal w_kv_araddr            : std_logic_vector(31 downto 0);
+  signal w_kv_araddr            : std_logic_vector(65 downto 0);
   signal w_kv_arlen             : std_logic_vector(15 downto 0);
   signal w_kv_arsize            : std_logic_vector(5 downto 0);
   signal w_kv_arburst           : std_logic_vector(3 downto 0);
@@ -202,8 +202,8 @@ begin
   w_kv_rresp(3 downto 2) <= kv1_rresp;
   kv0_arvalid <= w_kv_arvalid(0);
   kv1_arvalid <= w_kv_arvalid(1);
-  kv0_araddr <= w_kv_araddr(15 downto 0);
-  kv1_araddr <= w_kv_araddr(31 downto 16);
+  kv0_araddr <= w_kv_araddr(32 downto 0);
+  kv1_araddr <= w_kv_araddr(65 downto 33);
   kv0_arlen <= w_kv_arlen(7 downto 0);
   kv1_arlen <= w_kv_arlen(15 downto 8);
   kv0_arsize <= w_kv_arsize(2 downto 0);
@@ -218,6 +218,11 @@ begin
       B_STATE_AXI              => true,
       C_KV_AXI                 => true,
       C_KV_BLOCK               => 32,
+      C_KV_ADDR_W              => 33,
+      C_K_BASE_CH              => 282598912,
+      C_V_BASE_CH              => 353902080,
+      C_MAXPOS                 => 131072,
+      C_CTXLEN                 => 131072,
       A_ROWS_IF                => 48,
       A_JOB_STRIDE             => 16#40000#
     )

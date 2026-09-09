@@ -1161,6 +1161,9 @@ connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
 # purpose and tying it low makes a host poll loop hang.
 create_bd_cell -type module -reference fk33_seam fk33_seam_0
 
+set_property -dict [list CONFIG.REGMAX {12288} CONFIG.HADDR_W {14}] [get_bd_cells fk33_seam_0]
+puts "FK33_SEAM REGMAX=[get_property CONFIG.REGMAX [get_bd_cells fk33_seam_0]] HADDR_W=[get_property CONFIG.HADDR_W [get_bd_cells fk33_seam_0]]"
+
 # THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,
 # and it does so through the smartconnect ENGINE_BLOCK already built.  Two
 # reasons, in order: subsystem D will be in the core domain, so putting the

@@ -122,6 +122,43 @@ ARGS = [
     "--generic", "B_STATE_AXI=true",
     "--generic", "C_KV_AXI=true",
     "--generic", "C_KV_BLOCK=32",
+    # ---------------------------------------------------------------------
+    # THE 9B KV GEOMETRY.  MEASURED 2026-09-09: these five were NEVER SET, so
+    # every card build so far synthesised `rtl/fk33_llama_top.vhd`'s DEFAULTS
+    # -- a KV cache of FOUR positions with a context length of ONE, K based at
+    # byte 16 and V at byte 4064, on a 16-bit address bus.  That is the bench
+    # stand-in, not Qwen3.5-9B.
+    #
+    # The symptom was visible in every build and nothing branched on it:
+    #   CRITICAL WARNING: [BD 41-2383] Width mismatch when connecting input
+    #   pin '/bcgrant/c0_araddr'(33) to pin '/card/kv0_araddr'(16) - Only
+    #   lower order bits will be connected, and other input bits of this pin
+    #   will be left unconnected.
+    # Twenty of them, across kv0/kv1/kv_aw and the host register address.
+    # The build gates on `^ERROR`, and a CRITICAL WARNING is not one, so a
+    # SILENT 17-BIT ADDRESS TRUNCATION on C's entire KV path passed every
+    # gate this project has. C would have read and written the low 64 KiB of
+    # HBM for every head of every layer, and the bitstream would have run.
+    #
+    # The values are `rtl/fk33_llama_top.vhd`'s own documented shipping set
+    # (the comment block above C_K_BASE_CH), not invented here.
+    #
+    # C_MAXPOS IS SAFE TO RAISE ONLY BECAUSE C_KV_AXI IS TRUE.  The
+    # behavioural cache that C_MAXPOS would size is inside
+    # `gkvmem : if not C_KV_AXI generate`, so it is not instantiated at all
+    # here; the file records it costing 8.9 GB of elaboration at C_MAXPOS 256
+    # when it IS instantiated. With the real cache in HBM, C_MAXPOS buys only
+    # POSW = clog2(C_MAXPOS+1) = 18 bits of position width against 3 today.
+    #
+    # C_CTXLEN = C_MAXPOS is legal, and was not always: POSW used to be
+    # clog2(C_MAXPOS) and the guard demanded both `C_CTXLEN <= C_MAXPOS` and
+    # `C_CTXLEN < 2**POSW`, which is self-contradictory at exactly the
+    # boundary. That is already fixed in the RTL (POSW = clog2(C_MAXPOS+1)).
+    "--generic", "C_KV_ADDR_W=33",
+    "--generic", "C_K_BASE_CH=282598912",
+    "--generic", "C_V_BASE_CH=353902080",
+    "--generic", "C_MAXPOS=131072",
+    "--generic", "C_CTXLEN=131072",
     # A_ROWS_IF = 48 IS NOT A TUNING CHOICE, IT IS THE SEAM WIDTH.
     # `hw/fk33/gen_fk33_engine.py` pins `ROWS_IF = 48` (TRACK LEVERC48 measured
     # "distributed" at 48 as -42,633 CLB LUT), so the engine cell's

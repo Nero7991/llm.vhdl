@@ -1509,6 +1509,38 @@ def _seam_block():
     a("# purpose and tying it low makes a host poll loop hang.")
     a("create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL)
     a("")
+    # THE HOST REGISTER ADDRESS MUST REACH THE CARD'S WIDEST REGION.
+    # MEASURED 2026-09-09: the seam was instantiated with rtl/fk33_seam.vhd's
+    # DEFAULTS -- REGMAX 4096, HADDR_W 12 -- while `card`'s hr_addr/hw_addr are
+    # 14 bits because its widest host-visible region is 12,288 elements.  The
+    # block design reported it and nothing branched on it:
+    #   CRITICAL WARNING: [BD 41-2383] Width mismatch when connecting input pin
+    #   '/card/hr_addr'(14) to pin '/fk33_seam_0/hr_addr'(12) - Only lower
+    #   order bits will be connected ...
+    # so the host could address only 4,096 of the card's 12,288 elements and
+    # registers 4096..12287 were UNREACHABLE.  Same defect class as the KV
+    # generics fixed in gen_fk33_card.py the same day, and the same reason it
+    # survived: the build gates on `^ERROR` and this is a CRITICAL WARNING.
+    #
+    # clog2(12288) = 14, so HADDR_W = 14 and REGMAX = 12288 satisfy the seam's
+    # OWN two-sided guard (`bad_haddr_w_small`/`bad_haddr_w_big` at
+    # rtl/fk33_seam.vhd:318), which fails elaboration with an out-of-range
+    # natural if the pair ever disagrees.  That guard is the reason this can be
+    # set here rather than having to be re-derived: a wrong pair cannot build.
+    #
+    # REGMAX SIZES NO STORAGE.  It appears only in range constraints
+    # (`xw_addr`/`xr_addr`) and bounds tests, so 4096 -> 12288 costs two bits of
+    # address width and nothing else.  Checked before changing it, because the
+    # obvious fear is that it sizes a register file.
+    a("set_property -dict [list CONFIG.REGMAX {12288} CONFIG.HADDR_W {14}] "
+      "[get_bd_cells %s]" % SEAM_CELL)
+    # A CONFIG.* READ-BACK IS A REQUEST, NOT AN ANSWER (recorded trap), so the
+    # real verification is that the [BD 41-2383] width mismatch for hr_addr and
+    # hw_addr DISAPPEARS from the build log.  This line is a breadcrumb only.
+    a("puts \"FK33_SEAM REGMAX=[get_property CONFIG.REGMAX [get_bd_cells %s]] "
+      "HADDR_W=[get_property CONFIG.HADDR_W [get_bd_cells %s]]\""
+      % (SEAM_CELL, SEAM_CELL))
+    a("")
     a("# THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,")
     a("# and it does so through the smartconnect ENGINE_BLOCK already built.  Two")
     a("# reasons, in order: subsystem D will be in the core domain, so putting the")

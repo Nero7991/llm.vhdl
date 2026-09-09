@@ -179,6 +179,37 @@ def read_gate(path=GATE):
 # --------------------------------------------------------------------------
 # the check itself
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# side 4: hw/fk33/gen_fk33_card.py -- WHAT THE HARDWARE ACTUALLY GETS
+#
+# MEASURED 2026-09-09, and this side exists because of it: every other row in
+# this file was GREEN while the card build instantiated `llama_top`'s DEFAULTS
+# -- C_MAXPOS 4, C_CTXLEN 1, C_K_BASE_CH 1, C_V_BASE_CH 254, C_KV_ADDR_W 16.
+# The KVR block in sim/realshape_gate.sh carried the real 9B values and was
+# checked against the manifest to zero slack, so the geometry was pinned for
+# SIMULATION and nothing whatsoever linked it to the geometry that gets built.
+#
+# The symptom reached the block design as twenty
+# `CRITICAL WARNING: [BD 41-2383] Width mismatch ... Only lower order bits
+# will be connected`, silently truncating C's KV address from 33 bits to 16.
+# The build gates on `^ERROR` and a CRITICAL WARNING is not one, so it passed.
+#
+# This is the "guard that passes for the wrong reason" class one level up: the
+# guard was correct and was checking a different artifact than the one that
+# ships.  A checker that validates the simulation configuration says nothing
+# about the hardware configuration unless something asserts they are equal.
+# --------------------------------------------------------------------------
+CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
+
+
+def read_card(path=CARD_GEN):
+    src = open(path).read()
+    out = {}
+    for k, v in re.findall(r'"--generic",\s*"(C_\w+)=(-?\d+)"', src):
+        out[k] = int(v)
+    return out
+
+
 def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
           rtl_over=None, gate_over=None, sz_over=None, mani_over=None):
     import hbm_map as H
@@ -295,6 +326,31 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
         "clog2(%d) = %d, C_KV_ADDR_W - %d = %d  (slack %d bit(s))"
         % (max(K, V) + region_ch, need, clog2(CH_B), AW - clog2(CH_B),
            AW - clog2(CH_B) - need))
+
+    # ---- side 4: the built geometry must equal the simulated geometry ----
+    try:
+        card = read_card()
+    except OSError as e:
+        row("hw/fk33/gen_fk33_card.py is readable", False, str(e))
+        card = None
+    if card is not None:
+        for name in ("C_KV_BLOCK", "C_K_BASE_CH", "C_V_BASE_CH",
+                     "C_KV_ADDR_W", "C_MAXPOS", "C_CTXLEN"):
+            want = gate.get(name)
+            got  = card.get(name)
+            if want is None:
+                row("gen_fk33_card %s has an authority" % name, False,
+                    "sim/realshape_gate.sh's KVR block does not set %s, so "
+                    "there is nothing to compare the build against" % name)
+            elif got is None:
+                row("gen_fk33_card sets %s" % name, False,
+                    "hw/fk33/gen_fk33_card.py passes no --generic %s, so the "
+                    "card cell is built with llama_top's DEFAULT and not the "
+                    "9B value %d.  This is the 2026-09-09 defect." % (name, want))
+            else:
+                row("gen_fk33_card %s == KVR %s" % (name, name), got == want,
+                    "built %d vs simulated %d%s"
+                    % (got, want, "" if got == want else "  <-- DIVERGED"))
 
     nfail = sum(1 for _, ok, _ in rows if ok is False)
     nskip = sum(1 for _, ok, _ in rows if ok is None)
