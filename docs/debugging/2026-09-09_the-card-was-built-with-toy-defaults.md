@@ -98,6 +98,19 @@ width mismatches fall from **20 to 4** -- all sixteen KV-path ones gone, the
 four survivors being the separate `hr_addr`/`hw_addr` seam defect, which is
 fixed by `CONFIG.REGMAX 12288` / `CONFIG.HADDR_W 14`.
 
+**CONFIRMED after the seam fix, second `--bd-only` run:** `[BD 41-2383]` count
+**0**, `ERROR` count 0, unit result success, and the property took --
+`FK33_SEAM REGMAX=12288 HADDR_W=14`. So the sequence across the two runs is
+**20 -> 4 -> 0**, with each step attributable to one change.
+
+**A trap in reading even that confirmation.** The breadcrumb was pulled with
+`grep 'FK33_SEAM ' | tail -1`, which returned a PRE-EXISTING
+`FK33_SEAM CAPS_CTX = 0` line and not the new one -- another unanchored match
+against a haystack that already contained a similar needle. The new line was
+only confirmed by grepping for `FK33_SEAM (REGMAX|HADDR_W)` specifically. The
+mismatch count reaching 0 is the load-bearing evidence either way; the
+breadcrumb was written as a breadcrumb for exactly this reason.
+
 ## The gate that would have caught it
 
 `tools/check_kv_map.py` gains a fourth side reading `gen_fk33_card.py` and
