@@ -400,7 +400,10 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=129  # RAISED FROM 128, 2026-09-07 for sim:fk33card, the card
+BASELINE_PASS=130  # RAISED FROM 129, 2026-09-09 for sim:kvmap, which links
+                   # the HBM map to the generics the CARD BUILD passes; it was
+                   # correct-but-unscheduled while the build shipped toy defaults.
+                   # Previously RAISED FROM 128, 2026-09-07 for sim:fk33card, the card
                    # cell's staleness check.  See the note below.
                    # ---- previous entry ----
                    # BASELINE_PASS=128  RAISED FROM 125, 2026-09-06.  THREE new rows:
@@ -1938,6 +1941,10 @@ printf 'shapemirror\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # cell and a block design built from last week's port list.
 printf 'fk33card\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# kvmap -- see the SELFCHECK_CMD entry.  Links the HBM manifest to BOTH the RTL
+# generics and the ones hw/fk33/gen_fk33_card.py actually passes to the build.
+printf 'kvmap\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
 # ---------------------------------------------------------------------------
@@ -2655,6 +2662,22 @@ declare -A SELFCHECK_CMD=(
   # that NO BENCH CAN SEE, so nothing else in this gate would notice it going
   # stale, and a stale one silently reverts the design the block design builds.
   [fk33card]="python3 $REPO/hw/fk33/gen_fk33_card.py --check"
+  # tools/check_kv_map.py links the HBM address map's AUTHORITY to subsystem
+  # C's KV generics -- AND, since 2026-09-09, to the generics the CARD BUILD
+  # actually passes.  IT WAS NEVER A GATE ROW UNTIL NOW, and that is exactly
+  # how the 2026-09-09 defect survived: the checker was GREEN on all 16 rows
+  # while hw/fk33/gen_fk33_card.py set none of the KV geometry, so every card
+  # build instantiated llama_top's DEFAULTS -- a 4-position KV cache, context
+  # length 1, and a 16-bit address bus against the 33 bits HBM needs.  The
+  # block design reported the resulting truncation twenty times as
+  # `[BD 41-2383] Width mismatch`, the build gates on `^ERROR`, and a CRITICAL
+  # WARNING is not one.  See
+  # docs/debugging/2026-09-09_the-card-was-built-with-toy-defaults.md.
+  #
+  # It was referenced only from sim/realshape_gate.sh, which is the recorded
+  # "a script nothing schedules" pattern.  A checker that is correct and
+  # unscheduled is worth exactly as much as one that is wrong.
+  [kvmap]="python3 $REPO/tools/check_kv_map.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2686,7 +2709,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
