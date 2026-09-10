@@ -11,6 +11,76 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-10 (LATEST): B AND C ARE FINE, THE CARD TOP IS THE WALL, AND INFERENCE RUNS
+
+**Inference is DEMONSTRATED end to end.** `server/llama_server` rebuilt from the
+current tree, serving `:8000`: `/v1/models`, `/v1/completions`,
+`/v1/chat/completions` non-streaming AND streaming (27 SSE chunks, `[DONE]`).
+Three server gate rows green (`PASS 3`, read off `OVERALL PASS n`, not the
+verdict). Greedy output at temperature 0, which the model card states is
+hardware-exact against the AXU3EG VHDL engine.
+**Be precise: the backend reports `cpu`.** It is the bit-exact fixed-point
+reference path, NOT the FK33. Card-backed inference still needs a bitstream.
+
+**B AND C EACH SYNTHESISE IN MINUTES AND EACH MEETS 200 MHz** -- measured for
+the first time:
+
+| unit | wall | LUT | FF | DSP | BRAM | WNS | fmax |
+|---|---|---|---|---|---|---|---|
+| `gdn_block` (B) | 3 min | 75,246 | 52,203 | 253 | 43 | +0.483 | **221.4 MHz** |
+| `attn_block` (C) | 4 min | 87,340 | 101,319 | 298 | 11 | +0.825 | **239.5 MHz** |
+
+Seven minutes for both, against ~40 hours of whole-card attempts that produced
+nothing.
+
+**THE PER-SUBSYSTEM SPLIT IS TRIED AND REFUTED.** Black-boxing B and C moves
+the wall from elaboration into optimisation rather than removing it: the card
+top with both stubbed hit a 120-minute ceiling, no sentinel, no `.dcp`,
+0 errors. **So B and C are not what makes the card intractable** -- the card
+top itself is. Unlike every earlier stall this one is NOT the message cap:
+`[Common 17-14]` appears **0** times.
+
+**A TRAP THAT NEARLY PRODUCED A FALSE ROOT CAUSE.** The first black-box run
+targeted `llama_top`, not `fk33_llama_top`. `tools/gen_cardtop.py`'s D3
+transform replaces `llama_top`'s flat `NREGION*REGMAX` array with a
+`region_mem` instance, so the card top has **0** occurrences and `llama_top`
+has **1**. Against `llama_top` it failed in 6 minutes with
+`[Synth 8-3391] Failed to dissolve the memory into bits (2752512)` -- which
+looks exactly like the answer to a 40-hour wall, is real for `llama_top`, and
+is IRRELEVANT to the card. Only asking which top the harness actually targets
+caught it. Same shape as the recorded stale-table failure.
+
+**VHDL DOES NOT INFER BLACK BOXES.** A missing unit is
+`[Synth 8-5826] no such design unit`, because `entity work.X` is a DIRECT
+BINDING; that is a Verilog behaviour. A stub entity with
+`attribute black_box of <arch> : architecture is "yes"` is required. Worth
+knowing before designing any DCP flow over VHDL sources.
+
+**`region_mem` could NOT be probed** and is the remaining prime suspect: it has
+an unconstrained array generic `SZ` (the per-region size table) and an array
+aggregate cannot be passed as `-generic`
+(`[Synth 8-78]` / `[Synth 8-318]`). It needs a small sizing wrapper -- minutes,
+against the two hours every card-level test costs. That is the cheapest next
+measurement.
+
+**A-only bitstream building now** (`aonly2`, 20G cap). The card-free
+configuration is the one path on this box documented to reach
+`write_bitstream`, and the seam contract v2 explicitly supports a card without
+D. **The first attempt was OOM-killed by MY cap**: 14G chosen from the
+documented 10.66 GB with no margin, 21,699 throttle events, killed at 12:21:22.
+The card-free build defaults to `-jobs 4` / `maxThreads 8` -- far more parallel
+workers than the card build's ONE -- so 10.66 GB was never the number to size
+against. Contained to its own cgroup; the box was never at risk.
+
+**Next, branched before the answer:**
+- `aonly2` completes -> a real bitstream exists; then wire card-backed inference
+  behind the v2 seam contract.
+- `aonly2` fails -> the A-only path is also blocked and the honest position is
+  that this design does not build on this box without restructuring.
+- Either way the card wall needs `region_mem` probed via a sizing wrapper before
+  any further whole-card attempt.
+
+
 ### 2026-09-09 (LATEST): THE CARD WAS NEVER 9B. NINE HOURS OF VIVADO FITTING A STAND-IN.
 
 **`hw/fk33/gen_fk33_card.py` set SIX generics and none of the KV geometry**, so
