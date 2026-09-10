@@ -70,3 +70,70 @@ is gone.
   necessary, not sufficient.
 - The union may still be intractable at `link_design`/`opt_design` rather than
   at synthesis. Nothing here speaks to that.
+
+---
+
+## THE APPROACH DOES NOT RESCUE THE CARD (same day, later)
+
+**Black-boxing B and C is NOT sufficient.** The card top with both stubbed hit a
+120-minute ceiling with no sentinel, no `.dcp`, and 0 errors -- still grinding.
+
+| job | wall | reached | finished |
+|---|---|---|---|
+| `gdn_block` (B) alone | 3 min | all phases | **yes**, 221.4 MHz |
+| `attn_block` (C) alone | 4 min | all phases | **yes**, 239.5 MHz |
+| card, B+C black-boxed | **>121 min** | optimisation | no |
+| card, whole | >12 h | RTL elaboration | no |
+
+So removing B and C **moves the wall from elaboration into optimisation rather
+than removing it**. B and C are not what makes the card intractable. The one
+untried structural approach is now tried, and it does not work as framed.
+
+Note the stall here is NOT explained by the message cap, unlike every earlier
+run: `[Common 17-14]` appears **0** times in this log, and nothing was written
+to the run directory for the last 30 minutes while RSS climbed 6.04 -> 10.02 GB
+on 1.23 h of CPU.
+
+## Two traps hit, one of which nearly produced a false root cause
+
+**I ran the first black-box test against the WRONG TOP.** The compose harness's
+target is `llama_top`; the card builds `fk33_llama_top`. Those are different
+files: `tools/gen_cardtop.py`'s D3 transform replaces `llama_top`'s flat
+`NREGION*REGMAX` array with a `region_mem` instance, so the card top has **0**
+occurrences of that array and `llama_top` has **1**.
+
+Against `llama_top` the run failed in 6 minutes with what looked exactly like
+the answer:
+
+```
+ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for 'mem_reg'
+because the memory pattern used is not supported.  Failed to dissolve the
+memory into bits because the number of bits (2752512) is too large.
+```
+
+**That error is real for `llama_top` and IRRELEVANT to the card**, and it would
+have been written up as the root cause of a 35-hour wall. The check that caught
+it was asking which top the harness actually targets before believing the
+result. Same shape as the recorded stale-table failure: an artifact whose name
+looked right, never asserted to be the one that ships.
+
+`REGMAX=12288` in `gen_fk33_card.py` is also correct -- `REGMAX := region_max(SHAPE)`
+for the 9B shape -- and pre-dates this session by at least six commits, so the
+seam `REGMAX` change made earlier today is not implicated either.
+
+**VHDL DOES NOT INFER BLACK BOXES.** Removing a unit's source gives
+`ERROR: [Synth 8-5826] no such design unit 'gdn_block' in library 'work'`,
+because `entity work.gdn_block` is a DIRECT BINDING. Inferring a black box from
+a missing module is Verilog behaviour. A stub entity is required, carrying the
+port list verbatim plus an architecture with
+`attribute black_box of <arch> : architecture is "yes"`. Worth knowing before
+designing any DCP flow around VHDL sources.
+
+## Open, and now narrower
+
+The suspect is the card top itself -- D, the glue, the A-seam adapters, and
+`region_mem`. **`region_mem` could not be probed**: it has an unconstrained
+array generic `SZ` (the per-region size table) and an array aggregate cannot be
+passed as `-generic`, so it needs a sizing wrapper. That wrapper is the cheapest
+next measurement, at minutes rather than the two hours every card-level test
+costs.
