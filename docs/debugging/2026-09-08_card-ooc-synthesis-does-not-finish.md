@@ -122,3 +122,51 @@ unthrottled peak.
 - **Whether the BC-250 second lane could carry it.** It has 15.2 GB total
   against this job's 15.52 GB peak, so a monolithic OOC does NOT fit there. A
   hierarchical build might; the recorded pcieep peaks on that box are 11.85 GB.
+
+---
+
+## THIRD ATTEMPT, 2026-09-09: `-flatten_hierarchy none` DOES NOT FIX IT
+
+**My named "reason to expect a different outcome" was tested and is REFUTED.**
+This file's rule -- *do not launch a third without a reason to expect a
+different outcome* -- was honoured rather than ignored: the reason offered was
+`-flatten_hierarchy none`, absent from both earlier runs and aimed squarely at
+the recorded failure (TIME, not memory, from Vivado's default `rebuilt`
+flattening the whole design before rebuilding the hierarchy). It was a good
+hypothesis. It is wrong.
+
+| run | wall | peak | finished |
+|---|---|---|---|
+| `synth_design -rtl`, dissolve 200000 | 3 h 30 m | ~14.5 GB | no |
+| `synth_design`, default (`rebuilt`) | 6 h 34 m | 15.52 GB | no |
+| **`synth_design`, `-flatten_hierarchy none`** | **7 h 03 m** | **17.40 GB** | **no** |
+
+**It is WORSE on both axes** -- 29 minutes longer than the longest previous run
+and 1.9 GB heavier -- which is the opposite of the prediction on both counts.
+
+The signature is identical to the second run's, and that is the tell: the log
+stopped at **539 lines at 14:20:33** and had not been written for **seven
+hours**, with the last phase marker `Starting Synthesize` at t=2 s. Meanwhile
+`/proc` showed the process genuinely working the whole time -- 1.01 core,
+**7.1 hours of accumulated CPU**, RSS still creeping. Stopped deliberately at
+17.49 GB against an 18 GB cap with `memory.events max 0`, i.e. before it began
+to throttle, so the peak is real and unthrottled.
+
+**The strengthened rule: a monolithic OOC synthesis of `fk33_card` does not
+finish on this workstation under ANY of the three strategies tried, and the
+next candidate reason needs to explain why three different optimisation
+strategies all fail the same way.** Roughly 17 hours of Vivado across the three.
+
+**This kills the DCP split AS DESIGNED, but not the idea.** The split's run 1
+IS this command, so run 1 is not viable. What has NOT been tried is splitting
+at a LOWER boundary: the card is B + C + D, and B (`gdn_block`) and C
+(`attn_block`) are units this project already synthesises out of context
+routinely via `sim/ooc_compose_bcd.tcl`. A per-subsystem checkpoint set is a
+different job from one flat synthesis of their union, and it is the obvious
+next thing rather than a fourth strategy on the monolith.
+
+**Measurement note.** `-flatten_hierarchy none` costing MORE memory is worth
+keeping: the intuition was that preserving boundaries avoids the big flat
+netlist and therefore saves memory. Measured, it did the reverse. Preserved
+hierarchy means more distinct netlist objects retained simultaneously, and on
+this design that outweighed whatever the flat optimisation would have cost.
