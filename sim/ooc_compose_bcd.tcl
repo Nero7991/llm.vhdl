@@ -107,6 +107,23 @@ foreach u {seq_desc_fetch seq_opdec seq_region_lock seq_vec_issue seq_vec_res} {
 #     because attn_block carries its own port-shape defaults.
 set GEN(llama_top) {}
 
+# region_mem -- DELIBERATELY NOT A TARGET, and this comment is the finding.
+#
+# It is the prime suspect for the card's synthesis wall -- the D3 replacement
+# for llama_top's flat array, 14 x 12288 x 16 = 2,752,512 bits, exactly the
+# size at which the raw llama_top array fails outright with
+# `[Synth 8-3391] ... Failed to dissolve the memory into bits because the
+# number of bits (2752512) is too large`.
+#
+# MEASURED 2026-09-10: it CANNOT be driven from this harness.  It has an
+# UNCONSTRAINED ARRAY GENERIC, the per-region size table:
+#     ERROR: [Synth 8-78]  a value must be associated with generic SZ
+#     ERROR: [Synth 8-318] illegal unconstrained array generic 'SZ'
+# and a VHDL array aggregate cannot be passed as `-generic SZ=...`.  Probing it
+# needs a small sizing WRAPPER that supplies SZ from region_sizes(SHAPE), not a
+# one-line entry here.  Adding `set GEN(region_mem) {}` produces a target that
+# always fails, which is worse than no target.
+
 # ---- CONTROLS -------------------------------------------------------------
 # Two of B's leaves dominate its LUT count, and both have a pre-existing
 # standalone OOC measurement in sim/ooc_micro that is an order of magnitude
