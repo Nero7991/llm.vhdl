@@ -202,6 +202,17 @@ def read_gate(path=GATE):
 CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
 
 
+def _read_bool_generic(path, name):
+    """Return True/False for a `"--generic", "NAME=true|false"` pair, or None.
+
+    Deliberately separate from read_card(), which parses only INTEGER generics
+    -- a boolean would silently not match its regex and read as absent, which
+    is the failure this row exists to catch."""
+    src = open(path).read()
+    m = re.search(r'"--generic",\s*"%s=(true|false)"' % re.escape(name), src)
+    return None if not m else (m.group(1) == "true")
+
+
 def read_card(path=CARD_GEN):
     src = open(path).read()
     out = {}
@@ -333,6 +344,22 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
     except OSError as e:
         row("hw/fk33/gen_fk33_card.py is readable", False, str(e))
         card = None
+    if card is not None:
+        # HOST_WINDOW is not a KV generic, but it is the SAME FAILURE MODE in
+        # the SAME FILE and there is nowhere better for it.  MEASURED
+        # 2026-09-10: it defaults to TRUE (simulation), `fk33_llama_top`
+        # re-declares it TRUE, and gen_fk33_card.py did not override it -- so
+        # every card build asked Vivado to optimise region_mem as 2,752,512
+        # REGISTERS instead of BRAM, because a combinational full-range read
+        # port cannot be a BRAM.  rtl/region_mem.vhd says so in the comment
+        # above the generic and records FALSE as the card configuration.
+        # Ten builds and ~40 hours were spent against that.
+        hw = _read_bool_generic(CARD_GEN, "HOST_WINDOW")
+        row("gen_fk33_card sets HOST_WINDOW=false", hw is False,
+            "got %r; the card must be false -- region_mem's combinational host "
+            "read port forces 2,752,512 registers when true, and nothing on "
+            "the board drives that port" % (hw,))
+
     if card is not None:
         for name in ("C_KV_BLOCK", "C_K_BASE_CH", "C_V_BASE_CH",
                      "C_KV_ADDR_W", "C_MAXPOS", "C_CTXLEN"):

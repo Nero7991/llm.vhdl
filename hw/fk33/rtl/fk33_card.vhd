@@ -217,6 +217,7 @@ begin
       A_DESC                   => true,
       B_STATE_AXI              => true,
       C_KV_AXI                 => true,
+      HOST_WINDOW              => false,
       C_KV_BLOCK               => 32,
       C_KV_ADDR_W              => 33,
       C_K_BASE_CH              => 282598912,

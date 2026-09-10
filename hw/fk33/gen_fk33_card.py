@@ -121,6 +121,35 @@ ARGS = [
     "--generic", "A_DESC=true",
     "--generic", "B_STATE_AXI=true",
     "--generic", "C_KV_AXI=true",
+    # ---------------------------------------------------------------------
+    # HOST_WINDOW=false IS THE CARD CONFIGURATION, AND IT WAS NEVER SET.
+    #
+    # MEASURED 2026-09-10, and rtl/region_mem.vhd states it outright in the
+    # comment above the generic: llama_top exposes hr_reg/hr_addr/hr_data as a
+    # COMBINATIONAL, full-range random read into the region file, and
+    #   "A memory with a combinational read port CANNOT be a BRAM, so while
+    #    that port exists this store is LUTs and registers no matter what
+    #    shape the array has.  MEASURED 2026-09-02: Vivado reports
+    #    `[Synth 8-11357] ... RAM mem_reg with 2752512 registers` ...
+    #    Reorganising the array from flat to per-region did not change it,
+    #    because the array's shape was never the cause."
+    #
+    # The generic DEFAULTS TO TRUE, `fk33_llama_top` re-declares it as `true`,
+    # and nothing here overrode it -- so every card build so far asked Vivado
+    # to optimise 2.75 MILLION REGISTERS.  That is a sufficient explanation for
+    # the synthesis wall: ten builds, ~40 hours, none of which ever emitted a
+    # phase marker past `Starting RTL Elaboration`.
+    #
+    # The port is DEAD ON THE CARD -- nothing on the board drives or consumes
+    # it; it exists for sim/tb_llama_top.vhd, which reads results through it.
+    # region_mem's own comment records the decision as Oren's, 2026-09-02:
+    #   TRUE  (default) -- simulation.  Identity against llama_top is proven
+    #                      in this configuration.
+    #   FALSE           -- the card.  hr_data reads zero and the banks can
+    #                      infer BRAM.
+    # It was decided and then never wired into this generator.  Same defect
+    # class as the KV geometry above, in the same file, found the same way.
+    "--generic", "HOST_WINDOW=false",
     "--generic", "C_KV_BLOCK=32",
     # ---------------------------------------------------------------------
     # THE 9B KV GEOMETRY.  MEASURED 2026-09-09: these five were NEVER SET, so
