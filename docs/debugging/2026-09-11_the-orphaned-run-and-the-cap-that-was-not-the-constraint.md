@@ -126,3 +126,61 @@ t=+15m  cgroup=22.10 GiB  psi_full60=0.00   cores busy 1.0   runme.log still 20:
 - **Whether it will ever finish.** Eleven prior attempts did not.
 - Per-subsystem synthesis remains the measured, working alternative:
   `gdn_block` 221.4 MHz and `attn_block` 239.5 MHz, 3-4 minutes each.
+
+---
+
+## CORRECTION 2026-09-11, same day: the full mechanism, measured on a live build
+
+The body above establishes THAT the run survives its parent. It does not
+explain why the **systemd unit** stayed `ActiveState=active` for four hours
+instead of the cgroup emptying. That is now measured, on `card13` while it ran,
+by reading `/proc/PID/fd/1` for every process in the unit.
+
+**A hypothesis of mine was REFUTED first.** I expected the orphaned synthesis
+workers to be holding the pipe to `tee`. They are not:
+
+```
+  vivado   pid=2076038 stdout=.../fk33_pcieep.runs/synth_1/runme.log
+  vivado   pid=2076500 stdout=/dev/null
+  vivado   pid=2076586 stdout=/dev/null
+```
+
+The workers redirect to `runme.log` or `/dev/null`. Killing that theory took one
+command and would otherwise have produced a confident wrong detector.
+
+**The process that actually holds it is the RUN LAUNCHER:**
+
+```
+pid=2075958 exe=/usr/bin/bash  ppid=2073971  stdout=pipe:[202759730]
+   cmd=/bin/bash .../bin/loader -m64 -exec vrs .../fk33_pcieep.runs/synth_1 ...
+tee pid=2073931  stdin=pipe:[202759730]
+```
+
+`ppid=2073971` is the main Vivado, the one running `build_fk33_pcieep.tcl`. So:
+
+1. `launch_runs` spawns `loader -exec vrs ...` as a **child of the main Vivado**,
+   which inherits the main Vivado's stdout -- the pipe to `tee`.
+2. The main Vivado exits on `fk33_assert_run_done`.
+3. The launcher and everything beneath it survive, because the run is detached.
+4. **The pipe's write end is therefore still open**, so `tee` never sees EOF.
+5. `bash pcieep_build.sh` blocks waiting for the pipeline to complete.
+6. systemd sees a non-empty cgroup with a live main process: `ActiveState=active`.
+
+This is what made `Result=success` and `ActiveState=active` true simultaneously,
+and it is why nothing surfaced the 02:10 failure for four hours: **there was no
+moment at which anything reported an ending.**
+
+### The detector this yields
+
+Presence of `vivado` is not the signal, and neither is unit state. The signal is
+the **pair**: the main Vivado (`-source build_fk33_pcieep.tcl`) gone, while
+`vrs` descendants still hold the `tee` pipe. Resolve both by `/proc/PID/exe` and
+`/proc/PID/fd/1`, never by command-line matching.
+
+### Measured and REJECTED, added here
+
+- **"The orphaned synthesis workers hold the pipe."** REJECTED by direct
+  `/proc/PID/fd/1` reads: they hold `runme.log` and `/dev/null`.
+- **"An empty cgroup or an inactive unit will tell you the build ended."**
+  REJECTED. Neither happens. The unit stays active precisely BECAUSE the build
+  failed and left the run behind.
