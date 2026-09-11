@@ -1944,6 +1944,14 @@ printf 'fk33card\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # kvmap -- see the SELFCHECK_CMD entry.  Links the HBM manifest to BOTH the RTL
 # generics and the ones hw/fk33/gen_fk33_card.py actually passes to the build.
 printf 'kvmap\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# seamregs -- see the SELFCHECK_CMD entry.  The host drives the card through
+# server/fk33_seam.h; rtl/fk33_seam.vhd is the AXI4-Lite slave that answers.
+# Nothing compared the two until 2026-09-11.  A drift is invisible to EVERY
+# bench here, because the header is C, the decode is VHDL, and no simulation in
+# this repository links them -- it surfaces on hardware as a card that
+# configures, links, identifies and then returns rubbish, after a multi-hour
+# build.  Same shape as the KV-geometry defect the row above exists for.
+printf 'seamregs\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
@@ -2678,6 +2686,7 @@ declare -A SELFCHECK_CMD=(
   # "a script nothing schedules" pattern.  A checker that is correct and
   # unscheduled is worth exactly as much as one that is wrong.
   [kvmap]="python3 $REPO/tools/check_kv_map.py"
+  [seamregs]="python3 $REPO/tools/check_seam_regs.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2709,7 +2718,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
