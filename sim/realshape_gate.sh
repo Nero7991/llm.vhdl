@@ -291,6 +291,30 @@ KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902080"
 KVR="$KVR -gC_KV_ADDR_W=33 -gC_MAXPOS=131072 -gC_CTXLEN=131072"
 # shellcheck disable=SC2086
 row real_kv_map       ok   llama_top $CKV $KVR
+
+# ===========================================================================
+# THE CARD'S OWN CONFIGURATION, AND C_N_ROT IN PARTICULAR.
+#
+# Added 2026-09-11. `KVR` above is the card's KV map and is well covered, but
+# NOTHING in this repository has ever elaborated `C_N_ROT`. Every row, this
+# file included, left it at llama_top's default of 8 -- which is
+# SIMULATION-scaled, exactly like C_KV_BLOCK's default of 4, and is the wrong
+# value for the card.
+#
+# The RoPE table is GENERATED for N_ROT = 64:
+#     rtl/imrope_pkg.vhd       IMROPE_NPAIR = 32, IMROPE_W is (0 to 31)
+#     tools/gen_imrope_pkg.py  NPAIR = 32   # N_ROT / 2
+#     rtl/attn_twiddle.vhd     NPAIR : positive := 32
+#     rtl/attn_block.vhd       N_ROT : positive := 64  -- GGUF rope.dimension_count
+#
+# At 8 the design indexes 4 of those 32 entries. That is IN RANGE, raises
+# nothing, and rotates the wrong number of dimensions: a build that succeeds
+# and computes garbage. So a gate row that merely passes at 8 proves nothing
+# about the card, and this row is the one that covers what is SHIPPED.
+#
+# `hw/fk33/rtl/fk33_card.vhd` passes C_N_ROT => 64 as of 34a9ce1.
+# shellcheck disable=SC2086
+row real_card_nrot    ok   llama_top $CKV $KVR -gC_N_ROT=64
 # shellcheck disable=SC2086
 row real_kv_addr_short fail llama_top $CKV -gC_KV_BLOCK=32 \
                              -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902080 \

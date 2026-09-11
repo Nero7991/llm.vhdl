@@ -202,6 +202,19 @@ def read_gate(path=GATE):
 CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
 
 
+def _read_int_generic(path, name):
+    """An INTEGER `"--generic", "NAME=123"` from gen_fk33_card.py's source.
+
+    Separate from _read_bool_generic because read_card() parses only the
+    generics it knows about, and a missing name must be distinguishable from a
+    zero -- None means "the card does not set it", which for C_N_ROT is itself
+    the defect (llama_top's simulation default would ship).
+    """
+    src = open(path).read()
+    m = re.search(r'"--generic",\s*"%s=(\d+)"' % re.escape(name), src)
+    return None if not m else int(m.group(1))
+
+
 def _read_bool_generic(path, name):
     """Return True/False for a `"--generic", "NAME=true|false"` pair, or None.
 
@@ -378,6 +391,42 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
                 row("gen_fk33_card %s == KVR %s" % (name, name), got == want,
                     "built %d vs simulated %d%s"
                     % (got, want, "" if got == want else "  <-- DIVERGED"))
+
+    # ----------------------------------------------------------------------
+    # C_N_ROT AGAINST THE GENERATED RoPE TABLE.  Added 2026-09-11.
+    #
+    # Elaboration CANNOT catch this one, which is why it needs a static row.
+    # attn_block asserts only `N_ROT mod 2 = 0 and N_ROT <= HEAD_DIM`, so
+    # llama_top's simulation-scaled default of 8 is perfectly legal at
+    # HEAD_DIM 256: it raises nothing, indexes 4 of the table's 32 entries,
+    # and rotates the wrong number of dimensions. A build that succeeds and
+    # computes garbage -- the same class as the KV-geometry defect this whole
+    # side exists for, and the same trap as C_KV_BLOCK's default of 4.
+    #
+    # The table is GENERATED, so the correct value is not a matter of opinion:
+    # tools/gen_imrope_pkg.py emits NPAIR = N_ROT/2 entries, and rtl/
+    # imrope_pkg.vhd records that as IMROPE_NPAIR. So the card's C_N_ROT must
+    # be exactly 2 * IMROPE_NPAIR, and that is what is asserted here rather
+    # than the literal 64, so regenerating the table at a different width
+    # moves the requirement with it.
+    IMROPE = os.path.join(REPO, "rtl", "imrope_pkg.vhd")
+    m = re.search(r"constant\s+IMROPE_NPAIR\s*:\s*integer\s*:=\s*(\d+)",
+                  open(IMROPE).read())
+    card_nrot = _read_int_generic(CARD_GEN, "C_N_ROT")
+    if m is None:
+        rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", False,
+                     "could not read IMROPE_NPAIR from %s" % IMROPE))
+    elif card_nrot is None:
+        rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", False,
+                     "gen_fk33_card.py sets no C_N_ROT, so llama_top's "
+                     "SIMULATION default of 8 would ship (table wants %d)"
+                     % (2 * int(m.group(1)))))
+    else:
+        want = 2 * int(m.group(1))
+        rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", card_nrot == want,
+                     "built %d vs table %d (IMROPE_NPAIR=%s); at the wrong "
+                     "value RoPE rotates the wrong number of dimensions and "
+                     "NOTHING raises" % (card_nrot, want, m.group(1))))
 
     nfail = sum(1 for _, ok, _ in rows if ok is False)
     nskip = sum(1 for _, ok, _ in rows if ok is None)
