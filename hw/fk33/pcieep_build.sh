@@ -16,6 +16,7 @@
 #                                result, at 1/20th of the cost.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+FK33_DIR="$PWD"   # hw/fk33; line 72 cds into BUILD_ROOT and never returns
 
 BD_ONLY=0
 [[ "${1:-}" == "--bd-only" ]] && BD_ONLY=1
@@ -252,4 +253,29 @@ print("FK33_CFGTIME budget: 100 ms T_PVPERL + 100 ms host wait = 200 ms, minus"
       " startup, GT lock and link training")
 PY
 echo
+
+# AUTO-PRESERVE.  MEASURED 2026-09-10: a completed A-only bitstream was lost
+# because this script only PRINTED the next step.  BUILD_ROOT is recreated on
+# every launch, so the window between "bitstream written" and "next build
+# started" is the only time the file exists, and nothing was closing it.  The
+# copy is unconditional, uniquely named, and never overwrites: a build cannot
+# destroy the artifact of the build before it.
+#
+# It deliberately does NOT touch bit/fk33_pcieep.bit -- that name is what
+# pcieep.sh prefers, so promoting a fresh build to it is a decision, not a
+# side effect.  Use ./save_bitstream.sh for that.
+if [[ -f "$BIT" ]]; then
+    _stamp="$(date +%Y%m%d_%H%M%S)"
+    _tag="${FK33_BITTAG:-$([[ "${FK33_CARD:-0}" == "1" ]] && echo card || echo eng)}"
+    _keep="$FK33_DIR/bit/autosave/fk33_pcieep_${_tag}_${_stamp}.bit"
+    mkdir -p "$FK33_DIR/bit/autosave"
+    if cp "$BIT" "$_keep"; then
+        echo "FK33_AUTOSAVE $_keep ($(stat -c %s "$_keep") bytes, md5 $(md5sum "$_keep" | cut -d" " -f1))"
+    else
+        echo "FK33_AUTOSAVE FAILED to copy $BIT -- copy it by hand NOW, $BUILD_ROOT is wiped by the next build"
+    fi
+else
+    echo "FK33_AUTOSAVE no bitstream at $BIT (build did not reach write_bitstream)"
+fi
+
 echo "Next: ./save_bitstream.sh   then   export EP_BIT=$BIT  and run ./pcieep.sh"
