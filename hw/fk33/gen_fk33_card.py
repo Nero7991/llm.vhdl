@@ -255,6 +255,36 @@ ARGS = [
 #      `grep -E 'C_KV_BLOCK|A_ROWS_IF' hw/fk33/rtl/fk33_card.vhd` states what
 #      was really built.
 # DO NOT run the kvmap gate row against an overridden tree and believe it.
+# A TRIM IS NOT A FREE PARAMETER.  MEASURED 2026-09-11, the hard way: this
+# dispatcher trimmed C_KV_BLOCK 32 -> 4 on the reasoning that an 8x cut was
+# well characterised for DSPs, and never checked the legal set.  4 is ILLEGAL
+# at the shipping shape and the build was doomed from launch.
+#
+# rtl/llama_top.vhd states the rule where it is easy to miss, because the
+# generic's own default is the ILLEGAL value for this configuration:
+#     C_KV_BLOCK : positive := 4;   <- correct only when C_KV_AXI is FALSE
+#     "legal set at head_dim 256 is {16,32,64,128}"
+# The card sets C_KV_AXI=true, and then attn_kv_axi requires a 16-byte granule:
+# KV_BLOCK*CM_W/8 must be a multiple of 16, i.e. KV_BLOCK >= 16.  attn_head_dim
+# is 256 for BOTH 9B and 27B, so this does not relax at either shape.
+#
+# It would NOT have been silent -- rtl/attn_kv_axi.vhd's CHK_HDR_FITS is the
+# out-of-range-natural idiom precisely so it survives Vivado, and that file
+# records the measurement: at HEAD_DIM 256 / KV_BLOCK 4 synthesis FAILS with
+# "[Synth 8-11323] assigned value '-48' out of range".  But that fires deep in
+# elaboration, hours in.  Refusing here costs nothing and fails in a second.
+LEGAL = {
+    "C_KV_BLOCK": (
+        (16, 32, 64, 128),
+        "attn_kv_axi needs a 16-byte granule (KV_BLOCK*CM_W/8 a multiple of 16,"
+        " so >= 16) and attn_block needs HEAD_DIM/KV_BLOCK >= 2; head_dim is 256"
+        " at both 9B and 27B. See rtl/llama_top.vhd and rtl/attn_kv_axi.vhd:412.",
+    ),
+    # A_ROWS_IF has no legal set recorded anywhere in the tree.  Left unchecked
+    # DELIBERATELY rather than guessed at: a fabricated bound would be worse
+    # than none, because it would read as authoritative.
+}
+
 TRIMMABLE = ("C_KV_BLOCK", "A_ROWS_IF")
 _trims = []
 for _k in TRIMMABLE:
@@ -263,6 +293,10 @@ for _k in TRIMMABLE:
         continue
     if not _v.isdigit() or int(_v) <= 0:
         sys.exit("FK33_%s must be a positive integer, got %r" % (_k, _v))
+    if _k in LEGAL and int(_v) not in LEGAL[_k][0]:
+        sys.exit("FK33_%s=%s is NOT in the legal set %s.\n  %s\n"
+                 "  Refusing here rather than letting synthesis discover it hours in."
+                 % (_k, _v, list(LEGAL[_k][0]), LEGAL[_k][1]))
     _hit = 0
     for _i in range(len(ARGS) - 1):
         if ARGS[_i] == "--generic" and ARGS[_i + 1].startswith(_k + "="):
