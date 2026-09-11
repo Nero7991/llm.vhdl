@@ -48,9 +48,19 @@ create_project -in_memory -part $part
 # `[Synth 8-36] 'clog2' is not declared` then `[Synth 8-439] module not found`,
 # which reads like a missing top rather than a missing package.
 foreach f {util_pkg.vhd attn_kv_axi.vhd} { read_vhdl -vhdl2008 [file join $rtldir $f] }
+# MAXCTX and POS_W are overridable so the CONTROL can be run from this same
+# file. They move TOGETHER by construction -- POS_W = clog2(MAXCTX+1) -- so
+# varying MAXCTX alone would build an illegal design, exactly the mistake that
+# C_KV_BLOCK=4 was this morning. ADDR_W is independent and is deliberately held
+# at the card's 33 in both arms, so the comparison has one variable and not two.
+set MAXCTX 131072
+set POS_W  18
+if {[info exists ::env(KV_MAXCTX)]} { set MAXCTX $::env(KV_MAXCTX) }
+if {[info exists ::env(KV_POS_W)]}  { set POS_W  $::env(KV_POS_W) }
+puts "KVSHAPE MAXCTX=$MAXCTX POS_W=$POS_W ADDR_W=33 (card arm is 131072/18)"
 synth_design -mode out_of_context -top attn_kv_axi -part $part \
              -generic HEAD_DIM=256 -generic KV_BLOCK=32 -generic N_KVH=4 \
-             -generic LAYERS=8 -generic MAXCTX=131072 -generic POS_W=18 \
+             -generic LAYERS=8 -generic MAXCTX=$MAXCTX -generic POS_W=$POS_W \
              -generic CM_W=8 -generic EXP_W=8 \
              -generic AXI_DW=256 -generic ADDR_W=33 \
              -generic MAXB=16 -generic MAXOUT=4 -generic RBUF=4
@@ -70,5 +80,5 @@ set nbram [llength [get_cells -hier -filter {REF_NAME =~ RAMB*}]]
 set nuram [llength [get_cells -hier -filter {REF_NAME =~ URAM*}]]
 set nff   [llength [get_cells -hier -filter {REF_NAME =~ FD*}]]
 set nlut  [llength [get_cells -hier -filter {REF_NAME =~ LUT*}]]
-puts "RESULT attn_kv_axi_card lut=$nlut ff=$nff dsp=$ndsp ram=$nram bram=$nbram uram=$nuram wns=$wns fmax=[expr {1000.0/($period-$wns)}]"
+puts "RESULT attn_kv_axi_card maxctx=$MAXCTX pos_w=$POS_W lut=$nlut ff=$nff dsp=$ndsp ram=$nram bram=$nbram uram=$nuram wns=$wns fmax=[expr {1000.0/($period-$wns)}]"
 puts "ATTN_KV_AXI_CARD_OOC_DONE"
