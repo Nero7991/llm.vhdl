@@ -11,7 +11,71 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE BUILD REPORTED FAILURE AT 02:10 AND KEPT RUNNING
+### 2026-09-11 (LATEST): THE CARD WAS BUILDING SUBSYSTEM C AS A STUB
+
+**The card could not have run inference, whatever happened to synthesis.**
+`hw/fk33/rtl/fk33_card.vhd` passed twelve generics and **`C_REAL` was not one
+of them**, so the default `false` applied and the card elaborated
+`gc : if not C_REAL generate` -- a three-state stub FSM -- instead of `gcr`,
+**where `attn_block` AND `attn_kv_axi` both live**. `fk33_llama_top`
+instantiates `attn_block` exactly once, at `:5893`, inside `gcr`.
+
+`docs/PLAN_TO_FIRST_INFERENCE.md:236` required `C_REAL`, `C_KV_AXI`,
+`NORM_REAL` and `B_SRC_REAL` all true. The card passed `C_KV_AXI` and **none of
+the other three**.
+
+Three consequences, each independently checkable: there was no attention on the
+card; the five KV generics were **inert**, being consumed inside `gcr`; and
+`gkvtie : if not (C_REAL and C_KV_AXI) generate` **tied the `kv0`/`kv1` AXI
+ports off**, despite the block design wiring them through a grant to HBM.
+
+**THE GUARD LESSON, and it is the sharpest of the day.** `check_kv_map.py`
+validated all six KV generics, had no notion of `C_REAL`, and reported 23 green
+rows -- and this dispatcher ADDED rows to that checker two days ago without
+noticing the generics were inert. **A checker comparing two descriptions of a
+thing cannot tell you whether the thing is built.**
+
+**FIXED (`34a9ce1`):** the card now passes `C_REAL=true`, `NORM_REAL=true` and
+`C_N_ROT=64`. `B_SRC_REAL` stays false deliberately -- PLAN STEP 3b records it
+"has never executed past token 0 anywhere in this repository" and it needs a
+conv tap history buffer that does not exist. That is new RTL, not a generic.
+
+**ONE DEFECT SHAPE, HIT THREE TIMES TODAY.** A generic whose declared DEFAULT is
+the SIMULATION value, which therefore looks conservative and is wrong for the
+card:
+
+| generic | default | card needs | how it was caught |
+|---|---|---|---|
+| `C_KV_BLOCK` | 4 | 32 | my own error; an out-of-range `natural` would have caught it hours into synthesis |
+| `C_REAL` | false | true | reading the ARTIFACT's generic map against the plan |
+| `C_N_ROT` | 8 | 64 | asking what the GENERATED RoPE table wants |
+
+`C_N_ROT` is the subtle one: `attn_block` asserts only `N_ROT mod 2 = 0 and
+N_ROT <= HEAD_DIM`, so 8 is LEGAL at HEAD_DIM 256. It raises nothing, indexes 4
+of the table's 32 entries, and rotates the wrong number of dimensions.
+**Now guarded twice** (`8b2aeac`): `realshape_gate.sh`'s `real_card_nrot`
+elaborates it (rc=0, 1.27 GB, 1.37 s), and `check_kv_map.py` pins it to
+`2*IMROPE_NPAIR` so regenerating the table moves the requirement.
+
+**MEASURED, and it closes a gap in the fit answer.** `attn_kv_axi` at the
+card's own geometry: **33,259 LUT, 20,653 FF, 0 BRAM, 0 URAM**. Its only
+previous run used `MAXCTX=2048` and its own header says not to quote that as
+the card's. A control at 2048 gives 32,483 LUT, so **a 64x context increase
+costs 2.4% more LUT** -- the harness's "should be small" prediction was right
+and my suspicion that context drove the wall was WRONG.
+Neither `attn_kv_axi` nor `gdn_state_store` (4,028 LUT, 32 URAM288, 12 RAMB36)
+is in `compose4_top`, which is where the project's "does it fit" answer comes
+from, so **that answer understates the card by ~37,000 LUT plus 32 URAM and 12
+BRAM and should be re-derived rather than quoted.**
+
+**THE WALL HAS A NAME: `synth_design` RTL Elaboration.** `grep -c 'Finished RTL
+Elaboration'` is **zero across every surviving log**, twelve attempts, two
+machines. And every one of those ran with C STUBBED, so the wall exists WITHOUT
+the real C. `cardreal` is the first build of the configuration that could
+actually run the model; at 30 min it is at 23.5 GiB against a 26 GiB cap, above
+`card13`'s 23.1 GiB plateau, as expected.
+
+### 2026-09-11 (earlier): THE BUILD REPORTED FAILURE AT 02:10 AND KEPT RUNNING
 
 **Attempt 12 (`cardfull`) did not finish and had already failed.** The parent
 Vivado hit the 360-minute `FK33_SYNTH_MAX_MIN` bound at 02:10:47,
