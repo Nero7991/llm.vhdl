@@ -150,6 +150,35 @@ ARGS = [
     # It was decided and then never wired into this generator.  Same defect
     # class as the KV geometry above, in the same file, found the same way.
     "--generic", "HOST_WINDOW=false",
+    # ======================================================================
+    # THE THREE SWITCHES THAT MAKE THIS A CARD THAT CAN RUN INFERENCE.
+    # Added 2026-09-11. Before this the card passed NONE of them, so it built
+    # subsystem C as a STUB and could not have run the model whatever happened
+    # to synthesis. See docs/debugging/2026-09-11_the-card-builds-subsystem-c-
+    # as-a-stub.md. PLAN_TO_FIRST_INFERENCE.md:236 required all of them.
+    #
+    # C_REAL gates `gcr`, which is where attn_block AND attn_kv_axi live --
+    # fk33_llama_top instantiates attn_block exactly once, at :5893, inside it.
+    # With C_REAL false, `gc` elaborates instead: a three-state stub FSM that
+    # hardwires u_err(U_C) <= '0'. It ALSO makes the five KV generics below
+    # inert (they are consumed inside gcr) and makes `gkvtie` tie the kv0/kv1
+    # AXI ports off, despite the block design wiring them to HBM.
+    "--generic", "C_REAL=true",
+    # NORM_REAL gates `gvr`, the real norm, against a stub at `gv`.
+    "--generic", "NORM_REAL=true",
+    # C_N_ROT: NOT a free choice and NOT the declared default. llama_top's
+    # default is 8, which is SIMULATION-scaled -- the same trap as C_KV_BLOCK's
+    # default of 4. The RoPE table is GENERATED for N_ROT = 64:
+    #   rtl/imrope_pkg.vhd   IMROPE_NPAIR = 32, IMROPE_W is (0 to 31)
+    #   tools/gen_imrope_pkg.py   NPAIR = 32   # N_ROT / 2
+    #   rtl/attn_twiddle.vhd  NPAIR : positive := 32
+    #   rtl/attn_block.vhd    N_ROT : positive := 64  -- GGUF rope.dimension_count
+    # At 8 the design would index 4 of the 32 table entries. That is IN RANGE,
+    # raises nothing, and rotates the wrong number of dimensions -- a bitstream
+    # that builds and computes garbage, which is the defect class this file has
+    # already shipped once.
+    "--generic", "C_N_ROT=64",
+
     "--generic", "C_KV_BLOCK=32",
     # ---------------------------------------------------------------------
     # THE 9B KV GEOMETRY.  MEASURED 2026-09-09: these five were NEVER SET, so
