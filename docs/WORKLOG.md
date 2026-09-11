@@ -11,7 +11,62 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-10 (LATEST): B AND C ARE FINE, THE CARD TOP IS THE WALL, AND INFERENCE RUNS
+### 2026-09-11 (LATEST): THE BUILD REPORTED FAILURE AT 02:10 AND KEPT RUNNING
+
+**Attempt 12 (`cardfull`) did not finish and had already failed.** The parent
+Vivado hit the 360-minute `FK33_SYNTH_MAX_MIN` bound at 02:10:47,
+`fk33_assert_run_done` raised, and it exited. **The run it had launched was
+still going at 06:00** -- 9 h 52 m old, 588 CPU-minutes, 5.0 cores busy,
+holding 19.4 GB. `launch_runs` detaches; the parent's `error` does not reach
+the child. **A build script's failure is not evidence that the build stopped.**
+Fourth recorded instance of a harness reporting a fact about the harness.
+
+**`HOST_WINDOW => false` IS genuinely in the build and did NOT clear the
+wall.** Verified against the thing being built, not the repo: no copy of
+`fk33_card.vhd` exists under `BUILD_ROOT`, `build_fk33_pcieep.tcl:256` adds the
+repo path directly, and `create_bd_cell -type module -reference fk33_card` is a
+module reference rather than a packaged IP. Necessary, not sufficient.
+
+**MEASURED AND REJECTED: the memory cap was NOT the constraint.** I raised it
+live 22 -> 28 GiB predicting memory would climb. PSI `full avg60` fell 0.10 ->
+0.00, so the cap was causing real pressure -- and `memory.current` moved
+**0.10 GiB in fifteen minutes**, with cores busy falling 5.0 -> 1.0 and
+`runme.log` still untouched since 20:11. The job does not want more than
+~22 GiB. **Do not raise the cap again expecting progress.**
+The cap itself had been derived from `llama-server` holding 18 GB. That service
+went down overnight and nothing revisited the number, so **a cap derived from
+another process's footprint outlived its premise.**
+
+**THE A-ONLY BITSTREAM WAS DESTROYED, and the hole is now closed.** 22,095,214
+bytes, md5 `7203f6ddc20eae762e91c1261a72acf3`, 0 errors, wiped when `cardfull`
+recreated `BUILD_ROOT`. `pcieep_build.sh` only *printed* "Next:
+./save_bitstream.sh". It now copies unconditionally to `bit/autosave/` under a
+timestamped name that never overwrites (`f0bed60`).
+**The first draft of that fix was itself broken and looked fine:** line 72
+`cd`s into `BUILD_ROOT` and never returns, so `$PWD` at the end IS the doomed
+directory. Both forms print an identical healthy `FK33_AUTOSAVE ... md5 ...`
+line; only a mutant built from the script's real `cd` sequence separated them
+(fixed 1 file in the surviving tree, mutant 0). My own teeth test supplied
+`PWD` and could not have caught it.
+
+**Equivalent bitstreams survive and the hardware test is NOT blocked:**
+`bit/fk33_pcieep_eng_epr_wns+0p001.bit` (21,647,330 B, WNS +0.001) and
+`bit/fk33_i2cprobe.bit`, which `pcieep.sh` needs for the VCCINT step.
+
+**IN FLIGHT: attempt 13 (`card13`), launched 07:29.** Three changes, not a
+repeat: `FK33_SYNTH_MAX_MIN=1200` so the parent cannot declare failure before
+elaboration can finish (12 proved it exceeds 6 h); `MemoryMax=26G` sized to the
+box as it now is; and the autosave, so anything it produces survives.
+Branches, written before the result: **clears elaboration** -> let it run to a
+bitstream, then `save_bitstream.sh` and program the card. **Hits the wall
+again** -> stop treating one-piece card synthesis as viable; go per-subsystem
+(B 221.4 MHz, C 239.5 MHz, 3-4 min each) and compose at implementation.
+**Dies on memory** -> the stop rule fires first; re-measure, do not re-cap.
+
+Full write-up, incl. the procedure and every rejected hypothesis:
+`docs/debugging/2026-09-11_the-orphaned-run-and-the-cap-that-was-not-the-constraint.md`
+
+### 2026-09-10: B AND C ARE FINE, THE CARD TOP IS THE WALL, AND INFERENCE RUNS
 
 **Inference is DEMONSTRATED end to end.** `server/llama_server` rebuilt from the
 current tree, serving `:8000`: `/v1/models`, `/v1/completions`,
