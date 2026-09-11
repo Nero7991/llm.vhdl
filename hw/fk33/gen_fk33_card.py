@@ -236,6 +236,53 @@ ARGS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# TRIM OVERRIDES, for a FIRST card bitstream that need not be full 9B geometry.
+#
+# WHY THIS SHAPE.  The `"--generic", "NAME=VALUE"` literals above are left
+# EXACTLY as they are and the override is applied to the built list here,
+# because tools/check_kv_map.py reads this file's SOURCE TEXT with a regex
+# (read_card / _read_bool_generic).  Rewriting a literal into an f-string or an
+# os.environ call would make those rows stop matching, and a checker whose
+# pattern matches nothing REPORTS NOTHING -- the recorded silent-empty failure,
+# which is indistinguishable from a pass.
+#
+# CONSEQUENCE, AND IT IS REAL: with an override active, check_kv_map.py
+# validates the DEFAULT geometry while the build uses the trimmed one.  Two
+# things keep that detectable rather than silent:
+#   1. a loud stderr banner whenever an override is in force, and
+#   2. the value lands in the GENERATED VHDL as `C_KV_BLOCK => N,`, so
+#      `grep -E 'C_KV_BLOCK|A_ROWS_IF' hw/fk33/rtl/fk33_card.vhd` states what
+#      was really built.
+# DO NOT run the kvmap gate row against an overridden tree and believe it.
+TRIMMABLE = ("C_KV_BLOCK", "A_ROWS_IF")
+_trims = []
+for _k in TRIMMABLE:
+    _v = os.environ.get("FK33_" + _k)
+    if not _v:
+        continue
+    if not _v.isdigit() or int(_v) <= 0:
+        sys.exit("FK33_%s must be a positive integer, got %r" % (_k, _v))
+    _hit = 0
+    for _i in range(len(ARGS) - 1):
+        if ARGS[_i] == "--generic" and ARGS[_i + 1].startswith(_k + "="):
+            _was = ARGS[_i + 1].split("=", 1)[1]
+            ARGS[_i + 1] = "%s=%s" % (_k, _v)
+            _trims.append("%s %s -> %s" % (_k, _was, _v))
+            _hit += 1
+    # Exactly one, or the override silently did nothing (or too much).
+    if _hit != 1:
+        sys.exit("FK33_%s: expected exactly 1 generic to override, matched %d"
+                 % (_k, _hit))
+if _trims:
+    sys.stderr.write(
+        "\n*** FK33 CARD TRIM ACTIVE: %s ***\n"
+        "*** NOT the default geometry.  check_kv_map.py validates the DEFAULTS\n"
+        "*** and will NOT see this.  Verify what was built with:\n"
+        "***   grep -E 'C_KV_BLOCK|A_ROWS_IF' hw/fk33/rtl/fk33_card.vhd\n\n"
+        % ", ".join(_trims))
+
+
 def render(dest, args=None):
     cmd = [sys.executable, os.path.join(REPO, "tools", "gen_bd_wrapper.py"),
            "--out", dest] + (ARGS if args is None else args)
