@@ -40,6 +40,8 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RTL = os.path.join(REPO, "rtl", "fk33_seam.vhd")
 HDR = os.path.join(REPO, "server", "fk33_seam.h")
+ENG_RTL = os.path.join(REPO, "rtl", "matvec_int4_desc_pkg.vhd")
+ENG_HDR = os.path.join(REPO, "hw", "fk33", "host", "fk33_regs.h")
 
 # RTL name -> host name, where the two sides spell the same register differently.
 ALIASES = {"DESC_LO": "DESC_PTR_LO", "DESC_HI": "DESC_PTR_HI"}
@@ -67,6 +69,36 @@ def read_hdr(path=HDR):
             r"^\s*#define\s+FK33_SEAM_([A-Z0-9_]+)\s+0x([0-9A-Fa-f]+)", src, re.M):
         out[m.group(1)] = int(m.group(2), 16)
     return out
+
+
+def read_seam_ec(path=RTL):
+    """The SEAM's 4-bit error space, from fk33_seam.vhd."""
+    src = open(path).read()
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(r"^\s*constant\s+EC_([A-Z0-9_]+)\s*:\s*natural\s*:=\s*(\d+)",
+                                 src, re.M)}
+
+
+def read_eng_ec(path=ENG_RTL):
+    """SUBSYSTEM A's 4-bit error space. A DIFFERENT NAMESPACE -- see below."""
+    src = open(path).read()
+    return {m.group(1): int(m.group(2), 16)
+            for m in re.finditer(
+                r"^\s*constant\s+EC_([A-Z0-9_]+)\s*:\s*std_logic_vector\(3 downto 0\)\s*:=\s*x\"([0-9A-Fa-f])\"",
+                src, re.M)}
+
+
+def read_host_prefixed(path, prefix):
+    src = open(path).read()
+    return {m.group(1): int(m.group(2), 16)
+            for m in re.finditer(r"^\s*#define\s+%s([A-Z0-9_]+)\s+0x([0-9A-Fa-f]+)"
+                                 % re.escape(prefix), src, re.M)}
+
+
+def read_magic(path=RTL):
+    m = re.search(r'constant\s+ID_MAGIC\s*:\s*std_logic_vector\(31 downto 0\)\s*:=\s*x"([0-9A-Fa-f]{8})"',
+                  open(path).read())
+    return None if not m else int(m.group(1), 16)
 
 
 def main():
@@ -107,6 +139,56 @@ def main():
                          "host defines FK33_SEAM_%s = 0x%02X but NO RTL constant implements it"
                          % (name, hdr[name])))
             fail += 1
+
+    # --- ID_MAGIC: the FIRST thing the host reads. A mismatch here means the
+    # host does not believe it is talking to the card at all. ---
+    magic, want_magic = read_magic(), hdr.get("ID_MAGIC")
+    if magic is None:
+        rows.append(("REFUSED", "ID_MAGIC", "no ID_MAGIC constant in %s" % RTL)); fail += 1
+    elif want_magic is None:
+        rows.append(("REFUSED", "ID_MAGIC", "host header defines no FK33_SEAM_ID_MAGIC")); fail += 1
+    elif magic != want_magic:
+        rows.append(("REFUSED", "ID_MAGIC",
+                     "RTL 0x%08X vs host 0x%08X -- the host would REJECT the card outright"
+                     % (magic, want_magic))); fail += 1
+    else:
+        rows.append(("ok", "ID_MAGIC", "0x%08X both sides" % magic))
+
+    # --- TWO ERROR NAMESPACES, CHECKED SEPARATELY AND DELIBERATELY NOT MERGED.
+    # fk33_seam.vhd's header says it outright: "D's OWN 4-bit err_code IS NOT
+    # THE SEAM'S 4-bit code".  The same NAME means different NUMBERS in each --
+    # DESC is 0x3 in A's space and 0x6 in the seam's.  A checker that pooled
+    # them would report a false mismatch, and "fixing" one to match the other
+    # would break a live contract.  So each is compared only against ITS OWN
+    # host prefix, and the collisions are printed as evidence the split is real.
+    for label, ec, host, prefix in (
+            ("seam", read_seam_ec(), read_host_prefixed(HDR, "FK33_SEAM_ERR_"), "FK33_SEAM_ERR_"),
+            ("eng", read_eng_ec(), read_host_prefixed(ENG_HDR, "FK33_ENG_EC_"), "FK33_ENG_EC_")):
+        if not ec:
+            rows.append(("REFUSED", "%s:EC_*" % label, "no EC_ constants parsed -- a checker with no input reports nothing")); fail += 1
+            continue
+        for name in sorted(ec):
+            if name not in host:
+                rows.append(("note", "%s:%s" % (label, name),
+                             "RTL raises EC_%s=0x%X; host has no %s%s (not fatal: host may never see it)"
+                             % (name, ec[name], prefix, name)))
+            elif host[name] != ec[name]:
+                rows.append(("REFUSED", "%s:%s" % (label, name),
+                             "RTL 0x%X vs host 0x%X -- a fault would be MISREPORTED"
+                             % (ec[name], host[name]))); fail += 1
+            else:
+                rows.append(("ok", "%s:%s" % (label, name), "0x%X both sides" % ec[name]))
+
+    # The namespaces MUST stay distinct. If they ever agree on every shared
+    # name, someone has merged them and the seam header's rule is gone.
+    se, en = read_seam_ec(), read_eng_ec()
+    shared = sorted(set(se) & set(en))
+    diff = [n for n in shared if se[n] != en[n]]
+    rows.append(("ok" if diff or not shared else "REFUSED", "NAMESPACES",
+                 "shared names %s; differing %s -- the two error spaces are distinct, as fk33_seam.vhd requires"
+                 % (shared or "none", diff or "NONE")))
+    if shared and not diff:
+        fail += 1
 
     for verdict, name, why in rows:
         print("  %-8s %-14s %s" % (verdict, name, why))
