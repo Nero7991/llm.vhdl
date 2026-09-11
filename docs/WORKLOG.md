@@ -4972,6 +4972,15 @@ D to fix the engine's internal rate should read this first.
 
 ### THE ORDERED READY-TO-DISPATCH LIST
 
+**STALE AS A WHOLE -- AUDIT BEFORE USING. Checked 2026-09-11:** this list was
+produced 2026-08-29 and **row 1 (N1) has been ANSWERED since that same evening**
+without ever being struck. The list reads as current and is not. Before
+dispatching ANY row here, grep this file for a section that closes it -- for N1
+that is "ROW N1 IS ANSWERED" -- because the closing sections are written and the
+table is not updated. That asymmetry has now cost three dispatches by the board's
+own count, plus one near-miss on 2026-09-11.
+
+
 **Produced 2026-08-29 by TRACK BOARDAUDIT at HEAD `5a19f984`, after auditing
 every row above against the tree.** READY means both of: its file ownership
 does not collide with WRITEDEC, KVVALUE or CLOG2TOP, and its dependency has
@@ -4983,7 +4992,7 @@ run concurrently right now.**
 
 | order | row | why now | owns | collides with a running track? |
 |---|---|---|---|---|
-| **1** | **N1** | **The only item that converts "9B inference on the card" from unfalsifiable into measurable.** No dependency, no decision, no new RTL. **CORRECTED while this list was being written: `hw/fk33/host/` is NOT wholly free.** An undeclared track committed `4b26b7e` / `6d9c857` into `hw/fk33/host/fk33_load_weights.py` minutes ago. N1 adds a new file and edits `fk33_regs.h`, so it does not collide -- **but this is the second ownership error of the night and it was caught by watching `git log`, not by reading the table. Re-check `git log --oneline` for the target directory immediately before dispatching anything.** Write and fully exercise the runner through `fk33_transport_open_sim`/`_filedir` with **no hardware**; hand the final run to Oren, who is authorised for card 1 tonight and only tonight. | `hw/fk33/host/` (new file), `hw/fk33/host/fk33_regs.h` | no |
+| ~~1~~ | ~~**N1**~~ | **ANSWERED 2026-08-29, STRUCK 2026-09-11.** Subsystem A computes correctly on the FK33: twelve jobs, all eight distinct `(M, K)` geometries, every mantissa and `y_exp` bit-identical to `ref/matvec_int4.c`, `err_code=EC_NONE` throughout, unconfounded by THERM-255 (counter read 0 before AND after every job). See `docs/debugging/2026-08-29_first-arithmetic-on-the-silicon.md` and the "ROW N1 IS ANSWERED" section above. **This row sat unstruck for 13 days and this dispatcher nearly dispatched onto it on 2026-09-11**, reading the list before the section that closes it -- the TENTH recorded instance of the board's own strike-on-landing rule not being followed. Original text: **The only item that converts "9B inference on the card" from unfalsifiable into measurable.** No dependency, no decision, no new RTL. **CORRECTED while this list was being written: `hw/fk33/host/` is NOT wholly free.** An undeclared track committed `4b26b7e` / `6d9c857` into `hw/fk33/host/fk33_load_weights.py` minutes ago. N1 adds a new file and edits `fk33_regs.h`, so it does not collide -- **but this is the second ownership error of the night and it was caught by watching `git log`, not by reading the table. Re-check `git log --oneline` for the target directory immediately before dispatching anything.** Write and fully exercise the runner through `fk33_transport_open_sim`/`_filedir` with **no hardware**; hand the final run to Oren, who is authorised for card 1 tonight and only tonight. | `hw/fk33/host/` (new file), `hw/fk33/host/fk33_regs.h` | no |
 | **2** | **N12** | Oren decided the route hours ago, so it is determined work rather than a question. Carries DESC-MUT's `EC_DESC` nine-site collision measurement, which is the thing the route actually buys. | `rtl/matvec_int4_desc_pkg.vhd`, `rtl/matvec_int4_desc_axi.vhd`, `server/pl_backend.c`, `sim/tb_matvec_fk33_desc.vhd`, `sim/regress.sh` (shared) | no |
 | **3** | **N4** | Small, self-contained, and it is the fix for a defect that already cost 27.6 hours of a build slot silently. `hw/fk33/gen_pcieep.py` was released by PBLOCK and nobody has claimed it. Fold **N9** into this track: copying the only surviving SQRL factory image off a 91%-full root disk is minutes of work and the cost of not doing it is unbounded. | `hw/fk33/gen_pcieep.py`; plus `hw/fk33/bit/` (copy only) for N9 | no |
 | **4** | **N8** | Three named subsystem-A coverage gaps, all still open, all independent of everything running. Sequence it AFTER N12 if N12 is running, because both touch `sim/regress.sh` and one of them touches `tb_matvec_fk33_desc`. | `sim/mutate_matvec_int4.sh` (new), `sim/mutate_axi_rd_port.sh` (new), `sim/regress.sh` (shared) | no, but serialise with N12 |
