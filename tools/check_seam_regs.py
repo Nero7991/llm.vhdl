@@ -41,6 +41,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RTL = os.path.join(REPO, "rtl", "fk33_seam.vhd")
 HDR = os.path.join(REPO, "server", "fk33_seam.h")
 ENG_RTL = os.path.join(REPO, "rtl", "matvec_int4_desc_pkg.vhd")
+CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
 ENG_HDR = os.path.join(REPO, "hw", "fk33", "host", "fk33_regs.h")
 
 # RTL name -> host name, where the two sides spell the same register differently.
@@ -99,6 +100,26 @@ def read_magic(path=RTL):
     m = re.search(r'constant\s+ID_MAGIC\s*:\s*std_logic_vector\(31 downto 0\)\s*:=\s*x"([0-9A-Fa-f]{8})"',
                   open(path).read())
     return None if not m else int(m.group(1), 16)
+
+
+def read_caps(path=RTL):
+    """CAPS_FLAGS_V -- what the bitstream tells the host it implements."""
+    m = re.search(r'constant\s+CAPS_FLAGS_V\s*:\s*std_logic_vector\(31 downto 0\)'
+                  r'\s*:=\s*x"([0-9A-Fa-f]{8})"', open(path).read())
+    return None if not m else int(m.group(1), 16)
+
+
+def read_cap_bits(path=HDR):
+    return {m.group(1): 1 << int(m.group(2))
+            for m in re.finditer(r"^\s*#define\s+FK33_CAP_([A-Z_]+)\s+\(1u\s*<<\s*(\d+)\)",
+                                 open(path).read(), re.M)}
+
+
+def read_card_bool(name, path=CARD_GEN):
+    """A boolean generic the CARD passes. None means it does not set it."""
+    m = re.search(r'"--generic",\s*"%s=(true|false)"' % re.escape(name),
+                  open(path).read())
+    return None if not m else (m.group(1) == "true")
 
 
 def main():
@@ -189,6 +210,38 @@ def main():
                  % (shared or "none", diff or "NONE")))
     if shared and not diff:
         fail += 1
+
+    # --- CAPS_FLAGS MUST NOT ADVERTISE WHAT THE BITSTREAM LACKS. ---
+    # rtl/fk33_seam.vhd calls CAPS_FLAGS "What this bitstream ACTUALLY
+    # implements, so a host cannot discover it by trying", and notes bit 1
+    # being 0 is "the honest report".  MEASURED 2026-09-11: bit 2, "sampler
+    # argmax published", is SET while the card leaves SMP_EN at its default of
+    # FALSE, which ties the whole logits stream off.  So the seam tells the
+    # host it has a sampler that is not in the design.  A host that believes it
+    # waits for an argmax that never arrives, on hardware, with no error.
+    caps, bits = read_caps(), read_cap_bits()
+    smp = read_card_bool("SMP_EN")
+    smp_on = bool(smp)          # absent => llama_top's default, which is false
+    if caps is None or not bits:
+        rows.append(("REFUSED", "CAPS_FLAGS", "could not read CAPS_FLAGS_V or the FK33_CAP_* bits")); fail += 1
+    else:
+        for capname, want_on in (("SAMPLER", smp_on), ("LOGITS", smp_on)):
+            bit = bits.get(capname)
+            if bit is None:
+                rows.append(("note", "CAPS:%s" % capname, "host defines no FK33_CAP_%s" % capname))
+                continue
+            advertised = bool(caps & bit)
+            if advertised != want_on:
+                rows.append(("REFUSED", "CAPS:%s" % capname,
+                             "CAPS_FLAGS_V=0x%08X %s the bit, card SMP_EN=%s -- the bitstream "
+                             "%s a capability it %s"
+                             % (caps, "SETS" if advertised else "CLEARS",
+                                "unset (default false)" if smp is None else smp,
+                                "ADVERTISES" if advertised else "hides",
+                                "does not have" if advertised else "has"))); fail += 1
+            else:
+                rows.append(("ok", "CAPS:%s" % capname,
+                             "advertised=%s, card SMP_EN=%s" % (advertised, smp_on)))
 
     for verdict, name, why in rows:
         print("  %-8s %-14s %s" % (verdict, name, why))
