@@ -78,6 +78,38 @@ That turned out not to matter, but it was not KNOWN not to matter.
 **AREA ONLY.** This harness has no `route_design`, so no timing claim is made
 or admissible from it.
 
+**AND C_KV_BLOCK IS NOT THE LEVER: LUT IS NON-MONOTONIC WITH ITS MINIMUM AT
+THE VALUE THE CARD ALREADY BUILDS.** Three points, same tree, same box,
+`C_KV_AXI=true` and `C_N_ROT=64` held, only `C_KV_BLOCK` varied:
+
+| C_KV_BLOCK | NBLK | LUT | FF | DSP |
+|---|---|---|---|---|
+| 16 | 16 | 413,341 | 376,889 | 168 |
+| **32 (the card)** | 8 | **325,794** | 369,197 | 296 |
+| 64 | 4 | 350,326 | 367,949 | 552 |
+
+Moving off 32 costs **+26.9% LUT** going down and **+7.5%** going up, while
+DSP scales structurally. **So C_KV_BLOCK is MEASURED and REJECTED as an answer
+to C's area -- do not retry it.** LUT is the scarce resource here; DSP sits at
+10% of the part.
+
+**DSP is EXACTLY structural and the derived model holds at all three points:**
+`2*G*KV_BLOCK + 40` with G=4 gives 168 / 296 / 552 against measured
+168 / 296 / 552.
+
+**A PREDICTION I REGISTERED AND GOT HALF WRONG, recorded because the wrong
+half is the informative one.** Before the blk=64 point ran I predicted DSP 552
+(**right, exactly**) and LUT *below* 325,794 on the reasoning that
+`NBLK = HEAD_DIM/KV_BLOCK` sizes the `emin_tree` and NBLK would drop 8 -> 4.
+LUT **ROSE** to 350,326. **The "NBLK drives LUT" explanation is REFUTED**: it
+is right about the 16 point and wrong about the 64 point, so it is not the
+mechanism, and whatever dominates LUT here is not the reduction tree width.
+Not chased further, because the lever is closed either way.
+
+This is the file's own rule arriving intact: **a quantity that is structural is
+a constant and holds exactly (DSP); a quantity that scatters is not a slope
+(LUT). Do not fit the second kind.**
+
 A caution on the 74% itself: it is an isolated synthesis of a generated
 wrapper top with no surrounding context to optimise against, so it is an upper
 bound on that block's contribution rather than its cost in situ.
