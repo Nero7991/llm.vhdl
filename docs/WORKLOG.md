@@ -227,6 +227,18 @@ DSP scales structurally. **So C_KV_BLOCK is MEASURED and REJECTED as an answer
 to C's area -- do not retry it.** LUT is the scarce resource here; DSP sits at
 10% of the part.
 
+**CORRECTION, appended 2026-09-12: THESE THREE MAGNITUDES ARE NOT THE CARD'S
+SHAPE.** This sweep ran before the harness-defaults defect was found, so all
+three points carry `C_MAXPOS=4`, `C_CTXLEN=4`, `C_KV_RBUF=64` instead of the
+card's 131072/131072/4. The card-faithful total at blk=32 is **112,519 LUT,
+not 325,794**. What survives is the SHAPE -- non-monotonic with a minimum at
+32 -- because that rests on a structural argument about
+`NBLK = HEAD_DIM/KV_BLOCK` rather than on the magnitudes, and the DSP model
+below is unaffected since DSP does not depend on the KV buffer depth. **The
+sweep has NOT been repeated at the corrected settings**, so do not quote
+413,341 / 325,794 / 350,326 as card numbers. See
+`docs/debugging/2026-09-12_the-harness-defaults-that-were-not-the-cards.md`.
+
 **DSP is EXACTLY structural and the derived model holds at all three points:**
 `2*G*KV_BLOCK + 40` with G=4 gives 168 / 296 / 552 against measured
 168 / 296 / 552.
