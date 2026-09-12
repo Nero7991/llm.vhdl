@@ -11,7 +11,44 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-12: B'S HARNESS FAILS AT THE 9B SHAPE BY DOCUMENTED DESIGN, AND I CALLED IT A DEFECT
+### 2026-09-12: B'S 5,472-BRAM BLOCKER IS THE ARM THE CARD DOES NOT BUILD. ON THE CARD'S ARM IT IS 50.
+
+**MEASURED, one variable, same tree, same box, both arms 0 errors**
+(`GDNADAPT_MAXROWS=2048` on BOTH, only `B_STATE_AXI` varied):
+
+| `B_STATE_AXI` | LUT | FF | BRAM | URAM | DSP |
+|---|---|---|---|---|---|
+| `false` -- what EVERY prior B figure used | 148,995 | 77,973 | **5,472** | 0 | 191 |
+| `true` -- **what `fk33_card.vhd` passes** | 85,255 | 69,783 | **50** | **32** | 194 |
+
+**The project's headline B blocker -- "5,472 RAMB36 against 672 on the part"
+-- is an ARTIFACT OF THE ARM THE CARD DOES NOT BUILD.** On the card's arm B's
+mover uses **50 of 672 BRAM tiles and 32 of 320 URAM288**. It fits, with room.
+LUT falls 43% as well.
+
+**Two independent corroborations, which is why this is not another of tonight's
+mis-measurements:**
+1. The CONTROL reproduces 5,472 **exactly**, so the setup is sound and the
+   figure's true configuration is now known: `B_STATE_AXI=false`,
+   `MAXROWS_OVR=2048` -- NOT the 9B shape, which fails by documented design.
+2. The recorded standalone `gdn_state_store` figure is **32 URAM288**, and 32
+   URAM288 is precisely what appears when the tiered arm is selected --
+   because `gen_st_tier` is what instantiates it. Two separate measurements
+   agreeing on a number that only exists in one of the two arms.
+
+**SCOPE LIMIT, stated rather than glossed:** `maxrows=2048`, so the LUT and FF
+magnitudes are NOT 9B figures. The BRAM result should carry to 9B because the
+flat state array is sized by LAYERS (`NLY*STLY`) and not by `MAXROWS` -- but
+that is REASONING, not measurement, and the 9B shape cannot be synthesised in
+this harness at all (`zb`/`yb` are process variables of 12,288 x 16 bits).
+
+**WHAT THIS CHANGES.** "B does not fit" has been a standing project premise.
+It rests on a measurement of a configuration the card does not build. Taken
+with the corrected C figure (112,519 LUT at the card's shape, area in the MAC
+array), **both of the two subsystems believed to be area blockers were
+measured in configurations the card does not use.**
+
+### 2026-09-12 (earlier): B'S HARNESS FAILS AT THE 9B SHAPE BY DOCUMENTED DESIGN, AND I CALLED IT A DEFECT
 
 **WITHDRAWN IN FULL, WITHIN THE HOUR, AND THE HEADING ABOVE IS THE CLAIM BEING
 WITHDRAWN.** I recorded that `sim/ooc_gdnadapt.tcl` "does not run at HEAD" and
