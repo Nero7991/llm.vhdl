@@ -11,7 +11,56 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-12: C AT THE CARD'S REAL SHAPE IS 112,519 LUT, AND THE AREA IS THE MAC ARRAY
+### 2026-09-12: B'S HARNESS DOES NOT RUN AT HEAD, SO THE HEADLINE B BLOCKER IS UNREPRODUCIBLE
+
+**MEASURED on the BC-250: `sim/ooc_gdnadapt.tcl` fails at HEAD**, producing no
+utilization at all:
+
+```
+ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for
+'gb_real.bp.zb_reg' because the memory pattern used is not supported.
+Failed to dissolve the memory into bits because the number of bits (196608)
+is too large.
+```
+
+**CONTROL, and it is the only reason this is attributable:** the script was
+checked out from `121dc7d~1` -- the version before tonight's edit -- shipped
+to the box and run verbatim. **It fails identically.** So tonight's edit did
+not break it; **it was already broken.**
+
+**CONSEQUENCE: the project's headline B blocker, 5,472 RAMB36 against 672 on
+the part, is NOT REPRODUCIBLE from the harness credited with it.** Either the
+tree has moved since it was taken or it came from a different script. Until
+that is resolved, **do not quote 5,472 as a current measurement**, and do not
+treat "B does not fit" as established.
+
+**AND B'S AREA ON THE ARM THE CARD BUILDS IS STILL UNKNOWN.** The experiment
+that motivated all this could not be run.
+
+**WHAT SURVIVES, from READING the RTL rather than from any measurement:**
+`B_STATE_AXI` selects between two mutually exclusive generates in
+`rtl/ooc_gdnadapt_top.vhd` -- `gen_st_flat : if not B_STATE_AXI` (the flat
+all-layers state array) and `gen_st_tier : if B_STATE_AXI` (state over AXI to
+HBM) -- and `hw/fk33/rtl/fk33_card.vhd` passes **true** while the harness
+defaults **false**. So the concern is structurally real and remains
+unquantified.
+
+**CORRECTION to commit `121dc7d`'s message**, which claimed the 5,472 figure
+came from this harness's flat arm. The structural half is right; the
+attribution half is unsupported, because the harness does not run.
+
+**TWO WRONG DIAGNOSES OF MINE ALONG THE WAY, both retracted by measurement:**
+(1) "`C_MAXPOS=131072` breaks it" -- refuted, the rerun at `maxpos=4` failed
+identically; (2) "the harness and the card disagree about `zb_reg`" -- built
+on (1) and premature. **I also varied TWO generics at once** (`B_STATE_AXI`
+and `C_MAXPOS`) in the first attempt, after a night of insisting on
+one-variable controls, which is what made (1) look plausible.
+
+**THE CARD PATH IS CLEAN, and this is from `cardooc`'s own log, not a
+harness:** 0 ERROR lines, zero `zb_reg` mentions, full elaboration of
+`fk33_card`. Whatever ails the harness does not ail the card.
+
+### 2026-09-12 (earlier): C AT THE CARD'S REAL SHAPE IS 112,519 LUT, AND THE AREA IS THE MAC ARRAY
 
 **MEASURED, card-faithful, 0 errors** (`C_KV_AXI=true C_KV_BLOCK=32
 C_N_ROT=64 C_MAXPOS=131072 C_CTXLEN=131072 C_KV_RBUF=4`), BC-250,
