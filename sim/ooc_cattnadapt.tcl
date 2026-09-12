@@ -50,9 +50,31 @@ set rot [expr {[info exists ::env(CATTN_N_ROT)] ? $::env(CATTN_N_ROT) : 8}]
 puts "=== C_KV_AXI = $kv  C_KV_BLOCK = $blk  C_N_ROT = $rot ==="
 puts "CATTN_CONFIG kv=$kv blk=$blk rot=$rot"
 
+# THE OOC TOP'S DEFAULTS ARE NOT THE CARD'S, AND TWO OF THEM MATTER ENORMOUSLY.
+# MEASURED 2026-09-12: leaving them alone built a 16x oversized read buffer at
+# a FOUR-position context and reported attn_kv_axi at 238,410 LUT, a
+# configuration nothing will ever build.
+#
+#   generic      ooc top default   the CARD    why it matters
+#   C_MAXPOS     4                 131072      POSW = clog2(C_MAXPOS+1) follows it
+#   C_CTXLEN     4                 131072      guarded <= C_MAXPOS and < 2**POSW
+#   C_KV_RBUF    64                4           read buffer depth, pure registers
+#
+# Note C_KV_RBUF: the EXTRACTED top says 64 while the rtl/fk33_llama_top.vhd it
+# was extracted from says 4, and the card does not override it. An extraction
+# that silently changes a default is a trap with no tell.
+#
+# Defaults below reproduce every figure taken before this change.
+set maxpos [expr {[info exists ::env(CATTN_MAXPOS)] ? $::env(CATTN_MAXPOS) : 4}]
+set ctxlen [expr {[info exists ::env(CATTN_CTXLEN)] ? $::env(CATTN_CTXLEN) : 4}]
+set rbuf   [expr {[info exists ::env(CATTN_RBUF)]   ? $::env(CATTN_RBUF)   : 64}]
+puts "CATTN_CONFIG2 maxpos=$maxpos ctxlen=$ctxlen rbuf=$rbuf"
+
 synth_design -mode out_of_context -top ooc_cattnadapt_top -part $part \
              -generic C_KV_AXI=$kv -generic C_KV_BLOCK=$blk \
-             -generic C_N_ROT=$rot
+             -generic C_N_ROT=$rot \
+             -generic C_MAXPOS=$maxpos -generic C_CTXLEN=$ctxlen \
+             -generic C_KV_RBUF=$rbuf
 
 create_clock -period $period -name clk [get_ports clk]
 
