@@ -56,6 +56,28 @@ it. What is established is STRUCTURAL -- the composed number omits the mover
 composed synthesis that actually contains C's mover, which is precisely what
 `cardooc` is doing.**
 
+**AND C_N_ROT 8 -> 64 IS FREE. MEASURED, two points, one variable.** Same
+harness, same tree, same box, `C_KV_AXI=true` and `C_KV_BLOCK=32` held
+constant, only `C_N_ROT` varied. Both runs print a `CATTN_CONFIG` line, so the
+generic demonstrably took effect rather than being silently ignored:
+
+| C_N_ROT | LUT | FF | DSP |
+|---|---|---|---|
+| 8 (harness default, what every prior C figure used) | 325,773 | 369,188 | 296 |
+| 64 (what the card builds) | 325,794 | 369,197 | 296 |
+| **delta** | **+21** | **+9** | **0** |
+
+**An 8x increase in rotation pairs costs 21 LUTs, 0.006%.** Today's `C_N_ROT`
+correctness fix is therefore free, and the worry that the card's rotation
+count would move the fit is **MEASURED and REJECTED -- do not retry it.**
+
+`sim/ooc_cattnadapt.tcl` never set `C_N_ROT` before today, so every C area
+figure in this project was taken at one eighth of the shipping rotation count.
+That turned out not to matter, but it was not KNOWN not to matter.
+
+**AREA ONLY.** This harness has no `route_design`, so no timing claim is made
+or admissible from it.
+
 A caution on the 74% itself: it is an isolated synthesis of a generated
 wrapper top with no surrounding context to optimise against, so it is an upper
 bound on that block's contribution rather than its cost in situ.
