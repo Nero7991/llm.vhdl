@@ -135,3 +135,54 @@ NEW  BAR rows=10  check_bar_map=accepted      (identical segment lists)
 - `seam_tieoff_teeth()` now reports NOT APPLICABLE on a card-on file. That is
   honest but it means the tie-off guard is ungraded whenever the card is the
   build target, which is currently always.
+
+---
+
+## CORRECTION, appended 2026-09-11 (same day): a fourth defect, and the
+## "NOT APPLICABLE" fix above was the wrong one
+
+The section above closes with an open item saying the tie-off guard is now
+"ungraded whenever the card is the build target, which is currently always."
+Chasing that turned up a **fourth defect, worse than the three above**, and
+the NOT APPLICABLE skip has been **replaced**. That part of the write-up is
+withdrawn as a fix, though it is accurate as a description of what was wrong.
+
+**`check_seam_tieoff`'s verdict was a property of the caller's shell.** It
+took subsystem D's presence from `CARD_ON`, read from `FK33_CARD` at import.
+MEASURED on the same card-on file, same bytes:
+
+```
+FK33_CARD unset  ->  the SHIPPING file is REFUSED, re-adding the tie is ACCEPTED
+FK33_CARD=1      ->  the shipping file is accepted, re-adding the tie is REFUSED
+```
+
+Exactly inverted. During generation the environment and the emitted text
+always agree, so it never fired there. It bites a checker pointed at a file
+some OTHER invocation wrote, which is precisely what the selftest and the
+gate do. **The anchor VOID was hiding it**: the teeth died on a missing
+engine-only literal before ever calling the guard, so the guard that would
+have refused the shipping file was never reached.
+
+Fixed by deriving D's presence from the TEXT as well as `CARD_ON`, and by
+grading the card-on invariant rather than skipping it:
+
+```
+C0   accepted  the UNMUTATED card-on script (the control)
+C1   REFUSED   the tie-off re-added beside a present subsystem D
+```
+
+Control, engine-only file from `1380dbf`: OLD and NEW identical under both
+`FK33_CARD` unset and `FK33_CARD=1`.
+
+**The reusable lesson, and it is the sharpest one here:** a VOID is not a
+neutral outcome. This project's convention is that VOID is not a pass, which
+is right, but a VOID also STOPS THE TEST, and everything downstream of it goes
+ungraded. Three of the four defects in this file were downstream of a check
+that aborted early. **When a selftest reports VOID, ask what it did not get to
+run, not only why it stopped.**
+
+Still open: the selftest remains non-hermetic. It grades whatever file the
+last invocation wrote, and both the "wrong anchor" and "wrong environment"
+defects grow from that root. Making it build its own text per configuration
+would remove the class, not just these instances. The generator writes into
+the repo and reads `FK33_CARD` at import, so that rework needs a quiet tree.
