@@ -68,13 +68,20 @@ puts "CATTN_CONFIG kv=$kv blk=$blk rot=$rot"
 set maxpos [expr {[info exists ::env(CATTN_MAXPOS)] ? $::env(CATTN_MAXPOS) : 4}]
 set ctxlen [expr {[info exists ::env(CATTN_CTXLEN)] ? $::env(CATTN_CTXLEN) : 4}]
 set rbuf   [expr {[info exists ::env(CATTN_RBUF)]   ? $::env(CATTN_RBUF)   : 64}]
-puts "CATTN_CONFIG2 maxpos=$maxpos ctxlen=$ctxlen rbuf=$rbuf"
+# THE HBM BASES DEFAULT TO ZERO, AND A ZERO BASE IS NOT A NEUTRAL CHOICE:
+# `C_K_BASE_CH`/`C_V_BASE_CH` feed address arithmetic, so at 0 the adders
+# constant-fold away and the area comes out OPTIMISTIC.  The card passes
+# 282598912 and 353902080.  Defaults kept at 0 so earlier figures reproduce.
+set kbase  [expr {[info exists ::env(CATTN_KBASE)]  ? $::env(CATTN_KBASE)  : 0}]
+set vbase  [expr {[info exists ::env(CATTN_VBASE)]  ? $::env(CATTN_VBASE)  : 0}]
+puts "CATTN_CONFIG2 maxpos=$maxpos ctxlen=$ctxlen rbuf=$rbuf kbase=$kbase vbase=$vbase"
 
 synth_design -mode out_of_context -top ooc_cattnadapt_top -part $part \
              -generic C_KV_AXI=$kv -generic C_KV_BLOCK=$blk \
              -generic C_N_ROT=$rot \
              -generic C_MAXPOS=$maxpos -generic C_CTXLEN=$ctxlen \
-             -generic C_KV_RBUF=$rbuf
+             -generic C_KV_RBUF=$rbuf \
+             -generic C_K_BASE_CH=$kbase -generic C_V_BASE_CH=$vbase
 
 create_clock -period $period -name clk [get_ports clk]
 
