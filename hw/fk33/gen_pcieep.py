@@ -3348,6 +3348,13 @@ SEG_SPACE = {
 # about a CONFIG.* being a request rather than an answer.
 BAR_BYTES = 128 * 1024
 
+# The masters through which the HOST reaches the AXI-Lite BAR.  Anything
+# assigned into some OTHER master's address space is that master's private
+# view and is not part of the host register map, so it must not be folded
+# into the BAR overlap check.  Kept next to the regex because both describe
+# the shape of the emitted assign_bd_address lines.
+_HOST_MASTERS = ("jtag_axil/Data", "xdma/M_AXI_LITE")
+
 _ASSIGN_RE = re.compile(
     r"^assign_bd_address\s+-offset\s+(0x[0-9A-Fa-f]+)\s+-range\s+(\S+)\s+"
     r"\[get_bd_addr_segs\s*\{([^}]+)\}\]\s*$", re.M)
@@ -3377,11 +3384,91 @@ def parse_address_map(text):
     # cosmetic: without it the check either crashes or, worse, silently
     # classifies 896 HBM segments as unparseable BAR entries.
     joined = re.sub(r"\\\n\s*", " ", text)
+    # THE MASTER CAN BE A TCL VARIABLE.  The host's view of the engine control
+    # page is emitted inside `foreach sp {jtag_axil/Data xdma/M_AXI_LITE} {`,
+    # so the assignment's -target_address_space reads `$sp` and the master
+    # names exist only in the loop header.  Track the binding as the scan walks
+    # the file.  This resolves the one shape this generator emits; it is NOT a
+    # Tcl interpreter and does not pretend to be.  An unresolved variable is
+    # left unresolved and the assignment is skipped rather than guessed at.
+    _foreach = {}
+    _depth = 0
     for line in joined.splitlines():
         s = line.strip()
+        _mfe = re.match(r"^foreach\s+(\w+)\s+\{([^}]*)\}\s*\{", s)
+        if _mfe:
+            _foreach[_mfe.group(1)] = _mfe.group(2).split()
+            _depth += 1
+            continue
+        if s == "}" and _depth:
+            _depth -= 1
+            if _depth == 0:
+                _foreach = {}
+            continue
         if not s.startswith("assign_bd_address"):
             continue
         if "-target_address_space" in s:
+            # NOT ALL OF THESE ARE HBM, and assuming so left a REAL BAR PAGE
+            # invisible to the overlap check.  MEASURED 2026-09-11 on a
+            # card-on file: `eng/s_axi/reg0` is assigned at 0x12000 inside a
+            # `foreach sp {jtag_axil/Data xdma/M_AXI_LITE}` loop and carries
+            # -target_address_space because it is given to two named masters.
+            # Skipping on the FLAG rather than on the SEGMENT meant the guard
+            # could not see it, so mutating it onto the 8 KB scratch at
+            # 0x11000 -- the exact collision the comment above that block says
+            # cost a --bd-only run -- was ACCEPTED by check_bar_map.  The
+            # SEG_SPACE entry has said `"eng": "BAR",  # both s_axi and s_axix`
+            # the whole time; only one of the two was ever actually covered.
+            #
+            # Filter by what the line ADDRESSES, not by which flags it uses.
+            _mseg = re.search(r"\[get_bd_addr_segs\s*\{([^}]+)\}\]", s)
+            if _mseg is None:
+                # No explicit segment: an auto-assign of a master's whole view
+                # (the engine's view of HBM).  It has no static base, so it is
+                # out of this function's contract, which is STATIC assignments.
+                continue
+            _seg = _mseg.group(1).strip()
+            _cell = _seg.split("/")[0]
+            if SEG_SPACE.get(_cell) == "DMA":
+                continue          # the masters' view of HBM, as before
+            # ONE SEGMENT, TWO LEGITIMATE ADDRESSES.  A slave may sit at a
+            # different offset in each master's address space, and
+            # `eng/s_axi/reg0` genuinely does: 0x0 range 256 in `card/a`'s
+            # space (the card's own internal master) and 0x12000 range 4K in
+            # the HOST masters' spaces.  Those do not conflict, and keying the
+            # collapse below by segment alone reports them as a contradiction.
+            #
+            # The BAR overlap check is a statement about WHAT THE HOST SEES, so
+            # admit only assignments into a host master and let every internal
+            # master's view through untouched.
+            _mts = re.search(r"-target_address_space\s+\[get_bd_addr_spaces\s+"
+                             r"(?:\{\s*)?([^\]\}\s]+)", s)
+            if _mts is None:
+                continue
+            _tgt = _mts.group(1)
+            if _tgt.startswith("$"):
+                _items = _foreach.get(_tgt[1:])
+                if not _items:
+                    continue      # unresolved variable: skip, never guess
+                if not all(i in _HOST_MASTERS for i in _items):
+                    continue      # at least one internal master in the loop
+            elif _tgt not in _HOST_MASTERS:
+                continue
+            _moff = re.search(r"-offset\s+(0x[0-9A-Fa-f]+)", s)
+            _mrng = re.search(r"-range\s+(\S+)", s)
+            if _moff is None or _mrng is None:
+                continue          # not a static assignment
+            _size = _parse_range(_mrng.group(1))
+            if _size is None:
+                sys.exit("ABORT: cannot read the -range token %r on:\n  %s"
+                         % (_mrng.group(1), s))
+            _space = SEG_SPACE.get(_cell)
+            if _space is None:
+                sys.exit("ABORT: %r is assigned an address but gen_pcieep.py's "
+                         "SEG_SPACE does not say which address space it is in, "
+                         "so the overlap check cannot cover it. Add it to "
+                         "SEG_SPACE as BAR, AUX or DMA.\n  %s" % (_cell, s))
+            rows.append((_space, _cell, _seg, int(_moff.group(1), 16), _size))
             continue
         m = _ASSIGN_RE.match(s)
         if not m:
@@ -3834,11 +3921,36 @@ _ADDR_OLD_NEEDLES = [
     "assign_bd_address -offset 0x00004000",
     "assign_bd_address -offset 0x0000B000",
 ]
-_ADDR_NEW_NEEDLES = [
-    "assign_bd_address -offset 0x%08X" % SEAM_BASE,
-    "create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
-    "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL,
-]
+# CONFIGURATION-DEPENDENT, and it has to be.  The third needle pins how the
+# seam's `d_err` is DRIVEN, and the two configurations drive it from different
+# places:
+#
+#   engine-only   a constant:  [get_bd_pins seam_h1/dout] [get_bd_pins .../d_err]
+#   FK33_CARD=1   the card:    [get_bd_pins .../d_err] [get_bd_pins card/err]
+#
+# MEASURED 2026-09-11: as a flat list pinned to the engine-only spelling, the
+# third needle was MISSING from every card-on file, so `_arm_new` reported a
+# missing needle for EVERY row including the unmutated control.  The whole
+# NEEDLE column read `yes` unconditionally, A0 refused the shipping map, three
+# legal relocations (A9/A10/A11) were reported as wrongly refused, and
+# `MAP ALONE=0` was an ARTIFACT of that: a needle arm that refuses everything
+# cannot leave any kill attributable to check_bar_map alone.  The selftest was
+# not detecting a defect in the address map, it was reporting its own.
+#
+# This is the project's own "a guard that never discriminates is decoration"
+# rule, arriving as a guard that discriminates against reality instead.
+def _addr_new_needles(text):
+    """The seam needles for the configuration `text` is in."""
+    card_on = "create_bd_cell -type module -reference fk33_card" in text
+    if card_on:
+        derr = "[get_bd_pins %s/d_err] [get_bd_pins card/err]" % SEAM_CELL
+    else:
+        derr = "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL
+    return [
+        "assign_bd_address -offset 0x%08X" % SEAM_BASE,
+        "create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
+        derr,
+    ]
 
 _ADDR_TEETH = [
     # (tag, must_refuse, description, old, new)
@@ -3937,7 +4049,7 @@ def addr_map_teeth():
         return [n for n in _ADDR_OLD_NEEDLES if n not in t]
 
     def _arm_new(t):
-        return [n for n in _ADDR_NEW_NEEDLES if n not in t]
+        return [n for n in _addr_new_needles(t) if n not in t]
 
     def _arm_map(t):
         buf = io.StringIO()
@@ -4023,6 +4135,27 @@ def seam_tieoff_teeth():
     if not os.path.exists(DST):
         sys.exit("SELFTEST VOID: %s does not exist." % DST)
     base = open(DST).read()
+    # CONFIGURATION, NOT A DEFECT.  The tie-off this test grades exists only
+    # in the ENGINE-ONLY build.  With FK33_CARD=1 the seam's d_err is driven
+    # by `card/err` and gen_pcieep.py deliberately emits no tie at all -- the
+    # emitted file says so in as many words ("d_err is driven by card/err
+    # (FK33_CARD): no tie-off").  Grading a card-on file against the
+    # engine-only anchor produced `SELFTEST VOID: the d_err tie anchor occurs
+    # 0 times`, which read as a broken selftest and turned the shared gate red
+    # for as long as the card was the build target.
+    #
+    # Say NOT APPLICABLE and skip, rather than either failing (which blames
+    # the wrong thing) or passing (which would be a guard reporting a verdict
+    # on something it never looked at).  The anchor stays MANDATORY on an
+    # engine-only file, which is the configuration where its absence is a real
+    # defect.
+    if "create_bd_cell -type module -reference fk33_card" in base:
+        print()
+        print("SEAM d_err TIE-OFF TEETH: NOT APPLICABLE in this configuration.")
+        print("  FK33_CARD=1 drives the seam's d_err from card/err, so there is")
+        print("  no tie-off to grade.  Run this against an engine-only file.")
+        return
+
     tie = "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL
     if base.count(tie) != 1:
         sys.exit("SELFTEST VOID: the d_err tie anchor occurs %d times in the "
