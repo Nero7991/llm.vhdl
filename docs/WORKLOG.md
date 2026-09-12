@@ -11,7 +11,67 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE WALL IS AFTER ELABORATION, AND NOTHING IS HUNG
+### 2026-09-11 (LATEST): FOUR DEFECTS IN THE RUN GUARD, AND A VOID IS NOT NEUTRAL
+
+**`sim:runguard` was red on every card-on file, so it was red for as long as
+the card is the build target.** Not a regression; four separate defects, and
+the first three were only visible once the one in front of them was fixed.
+
+1. **The needle arm refused EVERYTHING.** `_ADDR_NEW_NEEDLES` pinned the
+   engine-only spelling of the seam's `d_err` wiring, which does not exist
+   with `FK33_CARD=1`. So `_arm_new` reported a missing needle for every row
+   INCLUDING the unmutated control: A0 "refused the shipping address map",
+   three legal maps were reported as wrongly refused, and **`MAP ALONE=0` was
+   an ARTIFACT** -- an arm that refuses everything leaves nothing attributable
+   to `check_bar_map` alone. The selftest was reporting its own defect as the
+   address map's.
+2. **That masked a REAL BLIND SPOT.** With the arm honest, A5 was **accepted
+   by everything**: the engine control page moved onto the 8 KB scratch, which
+   the emitted file's own comment says cost a `--bd-only` run.
+   `parse_address_map` skipped every `-target_address_space` line as "HBM".
+   With the card on, `eng/s_axi/reg0` is assigned at 0x12000 inside a
+   `foreach sp {jtag_axil/Data xdma/M_AXI_LITE}` loop and carries that flag
+   because it goes to two named masters. `SEG_SPACE` has said
+   `"eng": "BAR",  # both s_axi and s_axix` all along; **only one of the two
+   was ever covered.** Two further facts had to be handled: one segment may
+   hold two legitimate addresses in two masters' spaces, so only HOST-master
+   assignments belong in a check about what the host sees; and the master is
+   the Tcl variable `$sp`, so the enclosing `foreach` binding is tracked.
+3. **The tie-off teeth graded the wrong configuration**, VOIDing on a missing
+   engine-only anchor.
+4. **And the VOID was hiding the worst one: `check_seam_tieoff`'s verdict was
+   a property of the caller's shell.** D's presence came from `CARD_ON`, read
+   from the environment at import. MEASURED, same card-on file, same bytes:
+   **`FK33_CARD` unset REFUSES the shipping file and ACCEPTS a re-added
+   tie-off; `FK33_CARD=1` does the exact opposite.** Generation never saw it
+   because there the environment and the text always agree. Now derived from
+   the TEXT, and the card-on invariant is graded rather than skipped
+   (C0 accepted, C1 refused).
+
+**MEASURED after: A1-A8 refused, A0/A9/A10/A11 accepted, MAP ALONE=4,
+NEITHER=0, `sim:runguard` PASS.** CONTROL on the real engine-only file from
+`1380dbf`: old and new identical, 10 BAR rows, both accepted, under both
+environment settings. The guard was correct for the configuration it was
+written against and went blind exactly when the card arrived.
+
+**THE LESSON, and it is the sharpest one in this file: a VOID is not a neutral
+outcome.** VOID is correctly not a pass here, but it also STOPS THE TEST, and
+everything downstream goes ungraded. **Three of the four defects were
+downstream of a check that aborted early.** When a selftest reports VOID, ask
+what it did NOT get to run, not only why it stopped.
+
+Also fixed: `tb_fk33_seam` still pinned `CAPS_FLAGS=5` after the sampler bit
+was cleared, feeding the mismatch into its P4 readback counter. My own
+regression, caught by the gate.
+
+**BASELINE_PASS STAYS AT 130.** The gate refuses the raise in its own words:
+this tree has 22 rows a clean checkout does not get, so `PASS 137` is not a
+clean-checkout floor and raising to it would be unreachable after a clone.
+
+Write-ups: `docs/debugging/2026-09-11_the-guard-that-was-blind-to-a-real-bar-page.md`
+(with a same-day CORRECTION appended for defect 4).
+
+### 2026-09-11 (earlier): THE WALL IS AFTER ELABORATION, AND NOTHING IS HUNG
 
 **RTL elaboration of the card COMPLETES. The standing claim that card builds
 stall in `synth_design` RTL Elaboration is WITHDRAWN.** MEASURED on `cardooc`
