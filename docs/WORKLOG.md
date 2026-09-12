@@ -11,7 +11,43 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE CARD WAS BUILDING SUBSYSTEM C AS A STUB
+### 2026-09-11 (LATEST): THE WALL IS AFTER ELABORATION, AND NOTHING IS HUNG
+
+**RTL elaboration of the card COMPLETES. The standing claim that card builds
+stall in `synth_design` RTL Elaboration is WITHDRAWN.** MEASURED on `cardooc`
+(OOC `fk33_card`, shipping config, `flatten_hierarchy=none`): the log's last
+three lines are `done synthesizing module` for `attn_block`, then
+`fk33_llama_top`, then **`fk33_card` itself, the top**. What follows is a
+silent single-threaded phase that prints nothing at all.
+
+**And it is not hung. It is computing at 101% of one core**, measured 36
+minutes into that phase with the log byte-frozen the whole time
+(`utime+stime` delta 3,000 ticks in 30 s; RSS 9,526 MB). `wchan` reads
+`futex_wait_queue` on the process leader and would have told you the opposite,
+because the leader waits while a worker thread does the work. **`wchan` alone
+is the wrong liveness test here.**
+
+**This reframes every previous card attempt.** Three runs show the identical
+two-phase-line signature and each was stopped or abandoned, not observed to
+fail: `cardbb` 09-10 stopped at 121 min with no DCP (37 modules), `cardooc`
+09-09 abandoned (60 modules), `cardooc` 09-11 still running (**90 modules,
+top reached**). Attempt 12's "elaboration exceeds 6 h" is the same phase,
+mis-named. **No card build has ever been allowed to run this phase to
+completion**, so whether it terminates is now THE open question, and the
+per-subsystem fallback should not be chosen until it is answered.
+
+Do not kill a card build on the strength of a frozen log again. Read the last
+module NAME, not the count, and measure CPU over a wall-clock interval.
+
+Two traps, both mine: I read a rising module count as progress into those
+modules when it was completion of them, and I asserted my own monitor's stop
+rule was "the biggest threat" to the run when reading it back shows it only
+`exit 0`s the observer and never touches the job.
+
+Full write-up:
+`docs/debugging/2026-09-11_the-wall-is-after-elaboration-not-in-it.md`
+
+### 2026-09-11 (earlier): THE CARD WAS BUILDING SUBSYSTEM C AS A STUB
 
 **The card could not have run inference, whatever happened to synthesis.**
 `hw/fk33/rtl/fk33_card.vhd` passed twelve generics and **`C_REAL` was not one
