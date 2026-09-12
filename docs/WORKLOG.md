@@ -11,7 +11,44 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): FOUR DEFECTS IN THE RUN GUARD, AND A VOID IS NOT NEUTRAL
+### 2026-09-11 (LATEST): THE CARD NORMALISES WITH A RAMP, NOT THE MODEL'S GAINS
+
+**FOUND, NOT FIXED, and it is a correctness blocker for inference on the
+card.** `hw/fk33/rtl/fk33_card.vhd` passes `NORM_REAL => true` and does NOT
+pass `NORM_W_IMAGE`, which therefore defaults to `""`. `rtl/fk33_llama_top.vhd`
+is explicit about what that means: *"this ramp is what runs when it is
+empty"*. So the bitstream under construction computes RMSNorm with a
+**synthetic ramp gain instead of the model's learned gains**. The structure is
+real and the numbers are wrong.
+
+**This is the FOURTH instance of the SAME defect shape in one day**, after
+`C_REAL` (C built as a stub), `C_KV_BLOCK` (4 vs 32) and `C_N_ROT` (8 vs 64):
+**a generic whose declared DEFAULT is the SIMULATION value, so leaving it
+alone looks conservative and is wrong for the card.** Four for four. The
+lesson has outgrown the individual instances: **on the card top, an unset
+generic is a claim that the simulation default is right for hardware, and that
+claim has been false every single time it has been checked.** Audit the whole
+generic list against what the card needs, rather than waiting for the next one
+to surface.
+
+**NOT fixed here, deliberately, and the reason is NOT effort.**
+`NORM_W_IMAGE` is declared by its own RTL to be **stimulus, not a card path**:
+*"It is NOT a weight region, a descriptor field or a packing. The design still
+has no way for a norm gain to reach this unit from HBM."* Setting it would
+bake every layer's gains in as an elaboration-time constant table, which is
+legitimate for a fixed model but is a real BRAM decision on a part where the
+fit is already the open question, and it is not the mechanism the design
+intends. **Do not set it casually to make a seam comparison pass.** The actual
+missing feature is a fetch path for norm gains, which is new RTL of the same
+class as `B_SRC_REAL`.
+
+Consequence to carry forward: **a card bitstream produced before that lands
+cannot be judged against the reference on `R_XN-L`, `R_XN.ffn-L` or
+`R_XN.final`** (9 of the 63 captured seams), because the model's gain is not
+what normalises them. It can still prove the plumbing, the sequencing and the
+seam contract, which is what the current build is for.
+
+### 2026-09-11 (earlier): FOUR DEFECTS IN THE RUN GUARD, AND A VOID IS NOT NEUTRAL
 
 **`sim:runguard` was red on every card-on file, so it was red for as long as
 the card is the build target.** Not a regression; four separate defects, and
