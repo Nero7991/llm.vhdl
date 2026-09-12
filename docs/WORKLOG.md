@@ -11,7 +11,49 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-12: B'S 5,472-BRAM BLOCKER IS THE ARM THE CARD DOES NOT BUILD. ON THE CARD'S ARM IT IS 50.
+### 2026-09-12: THE A AUDIT -- A MEASURED 42,633-LUT LEVER SITTING UNUSED, AND A CHECK THE CARD QUALIFIES FOR
+
+Completing the per-subsystem generic audit (B, C and D done; A was the gap).
+`hw/fk33/rtl/fk33_engine.vhd` has exactly two generics and
+`hw/fk33/build_fk33_pcieep.tcl` passes **neither**, so both defaults apply.
+**Neither is a defect -- both are documented -- but one is a large unused
+lever.**
+
+**1. `CB_STYLE = "regs"`, and `"distributed"` is worth -42,633 CLB LUT.**
+Already MEASURED by TRACK LEVERC48 (`a4828ab`) at `ROWS_IF = 48`:
+**-42,633 CLB LUT, MUXF7 24,583 -> 0, MUXF8 12,288 -> 0**, costing
+**+13,195 CLB FF and +12,288 LUTRAM**. That is **9.7% of the part's 439,680
+LUT**, available today.
+
+The default is DELIBERATE and the reason is stated in the file: `"regs"` is
+*"the shipping value and keeps this entity byte-identical in behaviour to the
+bitstream on card 1"*. **So this is a DECISION, not an oversight** -- but it
+is a decision made when the fit looked hopeless, and tonight's corrected B and
+C figures change what it is being traded against. Worth re-deciding, not worth
+flipping silently.
+
+Note the file also records WHY the lever was previously unreachable: it was
+forwarded through `matvec_int4_desc_axi`/`matvec_int4`/`matvec_int4_axi` but
+`fk33_engine` -- the entity the card and `compose4_top` actually bind -- had
+no generics at all, so it was reachable *"from a unit synthesis of
+matvec_core and from NO top the card or the composition actually builds"*.
+**And `-generic` on the `synth_design` line does not help: it reaches the
+TOP's generics only, never a deep instance.**
+
+**2. `CHECK_JOB_INDEX = false`, and the card QUALIFIES for true.** The file's
+own rule: *"A build that drives `job_index` from `rtl/a_job_counter.vhd` sets
+this true and gains the check."* VERIFIED: `rtl/fk33_llama_top.vhd`
+instantiates `u_jc : entity work.a_job_counter` and wires
+`job_index => a_job_index` (:3666). The card therefore drives it from the
+counter and is **not opting in**, losing the v2 descriptor index check that
+refuses *"a well-formed descriptor for the WRONG step"*.
+
+This is the file's stated safe direction -- *"forgetting to opt in loses a
+check, forgetting to opt out breaks a working card"* -- so it is a missed
+check rather than a hazard. `gen_compose4_top.py --wire` already opts in; the
+card does not.
+
+### 2026-09-12 (earlier): B'S 5,472-BRAM BLOCKER IS THE ARM THE CARD DOES NOT BUILD. ON THE CARD'S ARM IT IS 50.
 
 **MEASURED, one variable, same tree, same box, both arms 0 errors**
 (`GDNADAPT_MAXROWS=2048` on BOTH, only `B_STATE_AXI` varied):
