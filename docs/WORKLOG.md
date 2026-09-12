@@ -49,6 +49,39 @@ records. **Do not quote either figure as C's KV cost until that is settled**,
 and settle it by diffing the two harnesses' generics, not by preferring the
 number that suits the argument.
 
+**CORRECTION, same night, BEFORE THIS WAS ACTED ON: the 238,410 IS NOT THE
+CARD'S CONFIGURATION AND THE HEADLINE ABOVE IS WITHDRAWN.** The discrepancy
+the entry flagged as open is now settled, and it settles AGAINST my own
+number. `rtl/ooc_cattnadapt_top.vhd`'s generic defaults are not the card's,
+and I overrode only three of them:
+
+| generic | ooc top default | what the CARD gets | used in my run |
+|---|---|---|---|
+| `C_MAXPOS` | **4** | **131072** | 4 |
+| `C_KV_RBUF` | **64** | **4** (`llama_top`'s default; card does not override) | 64 |
+| `C_KV_BLOCK` | 4 | 32 | 32 (overridden) |
+| `C_N_ROT` | 8 | 64 | 64 (overridden) |
+
+So that synthesis built a **16x oversized read buffer at a toy 4-position
+context**. `POSW` is derived (`clog2(C_MAXPOS+1)`) so it followed C_MAXPOS
+down. **238,410 LUT measures a configuration nothing will ever build.**
+
+Note the divergence that made it possible: **the extracted OOC top defaults
+`C_KV_RBUF` to 64 while the `llama_top` it was extracted from defaults it to
+4.** An extraction that changes a default is a trap with no tell, because the
+harness looks like the thing it came from.
+
+**This is the unset-generic defect shape for the FIFTH time in two days, and
+this time I walked into it myself** -- after writing the entry that says to
+audit generics rather than wait for the next one to surface. The audit I did
+covered `fk33_card.vhd` against `llama_top`; it did not cover the OOC
+harnesses, and those are where measurements come from.
+
+What SURVIVES the correction: the attribution SHAPE is still informative --
+within that synthesis `attn_kv_axi` dominated `attn_block` and used **zero**
+memory primitives while holding 274,550 flip-flops. Whether that holds at
+`RBUF=4` and `MAXPOS=131072` is now the question, and it is being re-measured.
+
 Levers already closed, both MEASURED with one-variable controls on the same
 tree and box: `C_N_ROT` 8 -> 64 costs +21 LUT, and `C_KV_BLOCK` is
 non-monotonic in LUT with its minimum at the 32 the card already builds
