@@ -39,10 +39,20 @@ set kv [expr {[info exists ::env(CATTN_KV_AXI)] ? $::env(CATTN_KV_AXI) : "false"
 # mirrored from attn_kv_axi's own :455 assert.
 set blk [expr {[info exists ::env(CATTN_KV_BLOCK)] ? $::env(CATTN_KV_BLOCK) \
                : ($kv eq "true" ? 16 : 4)}]
-puts "=== C_KV_AXI = $kv  C_KV_BLOCK = $blk ==="
+# C_N_ROT WAS NEVER SET HERE, AND THE CARD DOES NOT BUILD THE DEFAULT.
+# rtl/ooc_cattnadapt_top.vhd defaults C_N_ROT to 8 and passes it to attn_block
+# as N_ROT, so every area figure this harness has ever produced for C is at
+# N_ROT=8.  hw/fk33/rtl/fk33_card.vhd passes C_N_ROT => 64, pinned two-sided
+# to 2*IMROPE_NPAIR by tools/check_kv_map.py, so the shipping configuration is
+# EIGHT TIMES the rotation pairs that were measured.  Default stays 8 so every
+# previous number reproduces; set CATTN_N_ROT=64 for the card's shape.
+set rot [expr {[info exists ::env(CATTN_N_ROT)] ? $::env(CATTN_N_ROT) : 8}]
+puts "=== C_KV_AXI = $kv  C_KV_BLOCK = $blk  C_N_ROT = $rot ==="
+puts "CATTN_CONFIG kv=$kv blk=$blk rot=$rot"
 
 synth_design -mode out_of_context -top ooc_cattnadapt_top -part $part \
-             -generic C_KV_AXI=$kv -generic C_KV_BLOCK=$blk
+             -generic C_KV_AXI=$kv -generic C_KV_BLOCK=$blk \
+             -generic C_N_ROT=$rot
 
 create_clock -period $period -name clk [get_ports clk]
 
