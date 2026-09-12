@@ -42,6 +42,28 @@ intends. **Do not set it casually to make a seam comparison pass.** The actual
 missing feature is a fetch path for norm gains, which is new RTL of the same
 class as `B_SRC_REAL`.
 
+**THE AUDIT THE LESSON DEMANDS, DONE: 58 generics, 15 passed, 43 left at
+default, and only ONE new defect in them.** Two suspicions were raised and
+both are REFUTED, which is the point of writing them down rather than leaving
+them as unease:
+
+- **`A_N_JOBS = 311` is CORRECT**, not a stale default. DERIVED at the 9B
+  shape and independently cross-checked: `gen_mv4i_desc.py` records
+  "311 of 311 A jobs, 0 refused" and `check_a_geometry.py` names the same
+  figure.
+- **`A_MEM_BASE` DOES NOT MATTER on the card path.** With `A_DESC => true`
+  the generated `ga_desc` branch takes real `w_base`/`s_base` from the
+  descriptor plane. The fabricated `A_MEM_BASE + j_step * A_JOB_STRIDE`
+  belongs to `ga_real`, which the card does not build. It looked like a
+  half-configured pair with `A_JOB_STRIDE` and is not.
+- **`SMP_EN = false` independently cross-confirms today's `CAPS_FLAGS` fix.**
+  There is genuinely no sampler, so clearing bit 2 was right for a reason
+  arrived at separately from the one that prompted it.
+
+Net: one new defect (`NORM_W_IMAGE`), one already-tracked gap
+(`B_SRC_REAL = false`), and 41 widths and lane counts that are legitimately
+defaulted. **The unset-generic risk is now BOUNDED rather than open.**
+
 Consequence to carry forward: **a card bitstream produced before that lands
 cannot be judged against the reference on `R_XN-L`, `R_XN.ffn-L` or
 `R_XN.final`** (9 of the 63 captured seams), because the model's gain is not
