@@ -68,6 +68,20 @@ regression, caught by the gate.
 this tree has 22 rows a clean checkout does not get, so `PASS 137` is not a
 clean-checkout floor and raising to it would be unreachable after a clone.
 
+**VERIFIED GREEN.** A clean full gate at `64c7f3a`, started after every edit
+landed (an earlier run was DISCARDED because `gen_pcieep.py` was edited while
+it ran, and an overlapped run proves nothing about either version):
+
+```
+PASS  sim:tb_fk33_seam   54s        PASS -- a whole token ran with llama
+PASS  sim:runguard        0s        SELFTEST PASS
+suite sim  PASS 113  FAIL 0  NOVERDICT 0
+suite tb   PASS  26  FAIL 0  NOVERDICT 0      139 passing, 0 failing
+```
+
+No peak figure for that run: the cgroup is removed when the unit exits, so
+`memory.peak` read 0. That is an absent measurement, not a small one.
+
 Write-ups: `docs/debugging/2026-09-11_the-guard-that-was-blind-to-a-real-bar-page.md`
 (with a same-day CORRECTION appended for defect 4).
 
