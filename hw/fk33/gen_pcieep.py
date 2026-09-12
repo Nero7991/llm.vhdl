@@ -3606,7 +3606,22 @@ def check_seam_tieoff(text, eng_src=None):
     # ENG_RTL alone reports has_d = False for a design that certainly has D --
     # a false NEGATIVE, which is the direction that ships the bug rather than
     # blocking the build.  The card being enabled IS D being present.
-    if CARD_ON:
+    #
+    # AND DERIVE IT FROM THE TEXT, NOT ONLY FROM THE ENVIRONMENT.  CARD_ON is
+    # read from FK33_CARD at import, so grading a file written by a DIFFERENT
+    # invocation made this guard's verdict a property of the caller's shell
+    # rather than of the file.  MEASURED 2026-09-11 on the same card-on file:
+    #
+    #   FK33_CARD unset  ->  the SHIPPING file is REFUSED ("the tie-off is
+    #                        gone but ..."), and re-adding the tie is ACCEPTED
+    #   FK33_CARD=1      ->  the shipping file is accepted, and re-adding the
+    #                        tie is REFUSED
+    #
+    # Exactly inverted, same bytes. During generation the two always agree, so
+    # this never fired there; it only bites a checker pointed at a file, which
+    # is what the selftest and the gate do. A file that instantiates the card
+    # HAS subsystem D whoever is asking.
+    if CARD_ON or ("create_bd_cell -type module -reference fk33_card" in text):
         has_d = True
     if has_tie and has_d:
         sys.exit("ABORT: %s instantiates llama_top, so subsystem D IS in this "
@@ -4150,10 +4165,56 @@ def seam_tieoff_teeth():
     # engine-only file, which is the configuration where its absence is a real
     # defect.
     if "create_bd_cell -type module -reference fk33_card" in base:
+        # CARD-ON HAS ITS OWN INVARIANT, SO GRADE THAT INSTEAD OF SKIPPING.
+        # The engine-only anchor does not exist here (card/err drives d_err),
+        # but the SAFETY PROPERTY is the same and is still testable: a tie-off
+        # re-appearing beside a present subsystem D gives a bitstream that
+        # answers ERR to every GO with a real transformer behind it.
+        # "NOT APPLICABLE" would leave that ungraded in the only configuration
+        # currently being built.
+        drv = ("connect_bd_net [get_bd_pins %s/d_err] [get_bd_pins %s/err]"
+               % (SEAM_CELL, CARD_CELL))
+        if base.count(drv) != 1:
+            sys.exit("SELFTEST VOID: the card-on d_err driver anchor occurs "
+                     "%d times, not once." % base.count(drv))
+        tie = ("connect_bd_net [get_bd_pins seam_h1/dout] [get_bd_pins "
+               "%s/d_err]" % SEAM_CELL)
+
+        def _verdict(t):
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    check_seam_tieoff(t)
+                return False
+            except SystemExit:
+                return True
+
         print()
-        print("SEAM d_err TIE-OFF TEETH: NOT APPLICABLE in this configuration.")
-        print("  FK33_CARD=1 drives the seam's d_err from card/err, so there is")
-        print("  no tie-off to grade.  Run this against an engine-only file.")
+        print("SEAM d_err TIE-OFF TEETH (card-on invariant)")
+        print("%-4s %-9s %s" % ("ROW", "VERDICT", "MUTATION"))
+        print("-" * 78)
+        rows = [
+            ("C0", False, "the UNMUTATED card-on script (the control)", base),
+            ("C1", True,
+             "the tie-off re-added beside a present subsystem D",
+             base.replace(drv, tie)),
+        ]
+        bad = []
+        for tag, must_refuse, desc, txt in rows:
+            got = _verdict(txt)
+            ok = (got == must_refuse)
+            print("%-4s %-9s %s%s" % (tag, "REFUSED" if got else "accepted",
+                                      desc, "" if ok else "   <== WRONG"))
+            if not ok:
+                bad.append("%s: expected %s, got %s"
+                           % (tag, "a refusal" if must_refuse else "acceptance",
+                              "a refusal" if got else "acceptance"))
+        print("-" * 78)
+        if bad:
+            for b in bad:
+                print("FAIL " + b)
+            sys.exit("SELFTEST FAIL: the card-on d_err invariant is not "
+                     "enforced as claimed.")
         return
 
     tie = "[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL
