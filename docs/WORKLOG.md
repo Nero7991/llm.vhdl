@@ -25,6 +25,16 @@ Already MEASURED by TRACK LEVERC48 (`a4828ab`) at `ROWS_IF = 48`:
 **+13,195 CLB FF and +12,288 LUTRAM**. That is **9.7% of the part's 439,680
 LUT**, available today.
 
+**BUT THE FIGURE IS 264 COMMITS OLD AND A'S PATH HAS MOVED.** `a4828ab` is
+dated **2026-08-30**; `git rev-list --count a4828ab..HEAD` = **264**, and
+`git diff --name-only` over A's path shows **`hw/fk33/rtl/fk33_engine.vhd`,
+`rtl/matvec_int4_desc_axi.vhd` and `rtl/matvec_int4_desc_pkg.vhd` have all
+changed since**. `rtl/matvec_core.vhd`, which holds the `CB_STYLE`
+implementation itself, has NOT. **Re-measure before acting on -42,633.** This
+file already records a case where a week-old area table was wrong by 9.7x on
+one subsystem and a whole conclusion was built on it; 264 commits is a good
+deal more than a week.
+
 The default is DELIBERATE and the reason is stated in the file: `"regs"` is
 *"the shipping value and keeps this entity byte-identical in behaviour to the
 bitstream on card 1"*. **So this is a DECISION, not an oversight** -- but it
