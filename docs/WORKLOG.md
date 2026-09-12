@@ -11,7 +11,56 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE CARD BLOCK DESIGN IS CLEAN -- 0 ERRORS, ON THE BC-250
+### 2026-09-11 (LATEST): THE COMPOSED AREA FIGURE OMITS SUBSYSTEM C'S ENTIRE MOVER
+
+**STRUCTURAL, not an estimate.** `hw/fk33/rtl/compose4_top.vhd` instantiates
+`attn_block` ONCE and `attn_kv_axi` **ZERO** times, and it does not
+instantiate `llama_top`'s `gcr` block at all. So every composed area number
+this project has quoted contains C's compute block and **none of C's data
+mover**.
+
+**MEASURED the same day, one coherent synthesis (not a sum across trees):**
+C's mover at the CARD's geometry -- `ooc_cattnadapt_top`, `C_KV_AXI=true`,
+`C_KV_BLOCK=32`, on the BC-250, 0 errors:
+
+```
+CLB LUTs*        325773 of 439680   74.09%     <-- C's MOVER ALONE
+CLB Registers    369188 of 879360   41.98%
+DSPs                296 of   2880   10.28%     (= 2*G*KV_BLOCK + rest, G=4)
+Block RAM Tile       16 of    672    2.38%
+F7 Muxes          53519      F8 Muxes  20334
+```
+
+`attn_block` alone was 87,340 LUT in its own context, so the mover's
+buffering and muxing is the bulk of that 325,773 -- and it is exactly what
+the composed top leaves out.
+
+**MY OWN EARLIER NOTE THIS SESSION IS WITHDRAWN.** I recorded that compose4
+"excludes both HBM-facing blocks, understating the fit by ~37k LUT + 32 URAM
++ 12 BRAM". The scale is wrong by an order of magnitude: the omission is C's
+whole mover, not two peripheral blocks.
+
+**AND THE HEADLINE B+C+D FIGURE SAYS SO ABOUT ITSELF.**
+`hw/fk33/gen_compose4_top.py:16` states that TRACK DISTRAM's 217,381 CLB LUT
+is *"the SUM of seven independent `synth_design -mode out_of_context` runs,
+with `opt_design` deliberately not run, across FOUR different pinned trees,
+none of them placed and none routed."* That is the cross-context arithmetic
+this project forbids elsewhere, labelled as such at the source and quoted
+downstream anyway.
+
+**DO NOT turn this into a new total by subtraction.** 325,773 minus 87,340 is
+two measurements from different contexts, not a delta; this file has already
+recorded that Vivado maps the same RTL differently depending on what surrounds
+it. What is established is STRUCTURAL -- the composed number omits the mover
+-- and that the mover is large in its own right. **The fit question needs one
+composed synthesis that actually contains C's mover, which is precisely what
+`cardooc` is doing.**
+
+A caution on the 74% itself: it is an isolated synthesis of a generated
+wrapper top with no surrounding context to optimise against, so it is an upper
+bound on that block's contribution rather than its cost in situ.
+
+### 2026-09-11 (earlier): THE CARD BLOCK DESIGN IS CLEAN -- 0 ERRORS, ON THE BC-250
 
 **`--bd-only` PASSES on the card configuration: 0 errors,
 `FK33_BD_VALIDATE OK`, peak 3,754 MB, ~4 min on the BC-250.** First run since
