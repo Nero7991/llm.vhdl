@@ -553,10 +553,16 @@ begin
            & ", expected 2." severity error;
     if iv /= 2 then n_bad_rback <= n_bad_rback + 1; end if;
     axi_ri(A_CAPS_FL, iv);
-    assert iv = 5
+    -- 1, not 5.  Bit 2 (SAMPLER) was CLEARED in rtl/fk33_seam.vhd on
+    -- 2026-09-11: the seam was advertising a sampler that the bitstream does
+    -- not contain, so a host that trusted CAPS would have asked the card to
+    -- sample and got nothing.  The honest value is windows-only.  If this
+    -- ever reads 5 again, either the sampler was really built or the
+    -- advertisement went back to lying; find out which before editing this.
+    assert iv = 1
       report "tb_fk33_seam: CAPS_FLAGS reads " & integer'image(iv)
-           & ", expected 5 (windows + sampler, no HBM fetch)." severity error;
-    if iv /= 5 then n_bad_rback <= n_bad_rback + 1; end if;
+           & ", expected 1 (windows only; no sampler, no HBM fetch)." severity error;
+    if iv /= 1 then n_bad_rback <= n_bad_rback + 1; end if;
 
     -- ==================================================================
     -- P6a: A GO BEFORE ANYTHING IS PROGRAMMED MUST BE REFUSED, and it must
