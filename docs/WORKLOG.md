@@ -11,7 +11,51 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE COMPOSED AREA FIGURE OMITS SUBSYSTEM C'S ENTIRE MOVER
+### 2026-09-12: C'S AREA IS `attn_kv_axi`, AND IT IS 238,410 LUT OF REGISTERS
+
+**ATTRIBUTED INSIDE ONE SYNTHESIS, not by subtracting contexts.**
+`report_utilization -hierarchical`, `ooc_cattnadapt_top`, card geometry
+(`C_KV_AXI=true C_KV_BLOCK=32 C_N_ROT=64`), BC-250, 0 errors:
+
+```
+ooc_cattnadapt_top        325,794 LUT   369,197 FF   296 DSP
+  gcr.gkvaxi.u_kv         238,410 LUT   274,550 FF     0 DSP    <- attn_kv_axi
+  gcr.u_attn               85,188 LUT    94,351 FF   296 DSP    <- attn_block
+    u_arr                  56,155 LUT    39,247 FF   256 DSP
+    8 head units            ~4,088
+    u_emit                     692
+  (top itself)              2,196
+```
+
+**`attn_kv_axi` is 73% of C's mover and 54% of the WHOLE PART's LUTs by
+itself** (439,680 on xcvu33p). The attention compute is 85,188. **The area
+problem is the KV cache interface, not the arithmetic** -- and nothing was
+looking there, because every composed top instantiates `attn_block` and NOT
+`attn_kv_axi`.
+
+**AND THE SHAPE IS THE REAL FINDING: it uses NO MEMORY PRIMITIVES AT ALL.**
+`LUTRAMs 0, SRLs 0, RAMB36 0, RAMB18 0, URAM 0, DSP 0` -- 238,410 **logic**
+LUTs and **274,550 flip-flops**. A KV cache interface holding a quarter of a
+million registers and not one block RAM is this file's own recorded
+signature: *"if a run reports `RAM=0 FF=1024` you have registers"*. The part
+has 320 idle URAM288 and 672 BRAM tiles.
+
+**OPEN, AND IT DECIDES WHETHER THE ABOVE IS THE REAL NUMBER: the same module
+measured 33,259 LUT / 20,653 FF standalone earlier the same session**
+(`sim/ooc_attn_kv_axi_card.tcl`, card geometry), against 238,410 / 274,550
+here. **A 7x discrepancy for one module.** Either the two harnesses pass
+different generics, or it is the cross-context effect this file already
+records. **Do not quote either figure as C's KV cost until that is settled**,
+and settle it by diffing the two harnesses' generics, not by preferring the
+number that suits the argument.
+
+Levers already closed, both MEASURED with one-variable controls on the same
+tree and box: `C_N_ROT` 8 -> 64 costs +21 LUT, and `C_KV_BLOCK` is
+non-monotonic in LUT with its minimum at the 32 the card already builds
+(413,341 / 325,794 / 350,326 at 16 / 32 / 64). **So neither knob touches the
+238,410, which is now the only thing worth attacking.**
+
+### 2026-09-11 (earlier): THE COMPOSED AREA FIGURE OMITS SUBSYSTEM C'S ENTIRE MOVER
 
 **STRUCTURAL, not an estimate.** `hw/fk33/rtl/compose4_top.vhd` instantiates
 `attn_block` ONCE and `attn_kv_axi` **ZERO** times, and it does not
