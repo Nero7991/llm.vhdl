@@ -11,7 +11,55 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-12: B'S HARNESS DOES NOT RUN AT HEAD, SO THE HEADLINE B BLOCKER IS UNREPRODUCIBLE
+### 2026-09-12: B'S HARNESS FAILS AT THE 9B SHAPE BY DOCUMENTED DESIGN, AND I CALLED IT A DEFECT
+
+**WITHDRAWN IN FULL, WITHIN THE HOUR, AND THE HEADING ABOVE IS THE CLAIM BEING
+WITHDRAWN.** I recorded that `sim/ooc_gdnadapt.tcl` "does not run at HEAD" and
+that the headline B blocker was therefore unreproducible. **Both are wrong.**
+
+`rtl/ooc_gdnadapt_top.vhd:69-79` documents this failure in its own header:
+
+> `MAXROWS_OVR` ... exists because the block declares `zb` and `yb` as process
+> VARIABLES of `buf_t(0 to A_MAXROWS-1)`, and at the 9B shape that is
+> 12,288 x 16 bits EACH. **Synthesis of the extracted block at the default
+> shape fails:** `ERROR: [Synth 8-3391] ... 'gb_real.bp.zb_reg' ...` and Vivado
+> then terminates abnormally (signal 11). **This generic is the control that
+> separates "the block is unsynthesisable" from "the block is unsynthesisable
+> AT THIS SIZE", which are different findings.**
+
+So the harness behaves exactly as documented, `MAXROWS_OVR` is the provided
+workaround, and 196,608 bits is precisely `12,288 x 16`. I ran it at the
+default `MAXROWS_OVR=0` and reported the documented outcome as a defect.
+
+**What this cost, and the lesson:** a control run of the pre-edit script (the
+right instinct) correctly told me my edit was innocent -- and I then converted
+"not my edit" into "already broken" without reading the twenty lines of header
+that name the error verbatim. **Ruling out one cause promotes nothing; this
+file already says so about the BRAM attribution, and I did it again.** The
+cheap step I skipped was reading the entity, which this file also already
+prescribes.
+
+**FOUR wrong claims of mine in this one thread, each retracted by evidence:**
+(1) `C_MAXPOS=131072` breaks it -- refuted at `maxpos=4`; (2) harness and card
+"disagree" about `zb_reg` -- built on (1); (3) the harness is broken at HEAD --
+refuted by its own header; (4) commit `121dc7d`'s message attributing the
+5,472 RAMB36 figure to this harness's flat arm -- still unsupported, since the
+figure's own `MAXROWS` is unknown. I also varied TWO generics at once in the
+first attempt.
+
+**WHAT IS ACTUALLY ESTABLISHED, all of it structural and read from the RTL:**
+`B_STATE_AXI` selects `gen_st_flat : if not B_STATE_AXI` (the flat all-layers
+state array) against `gen_st_tier : if B_STATE_AXI` (state over AXI to HBM);
+`hw/fk33/rtl/fk33_card.vhd` passes **true**; the harness defaults **false**.
+So B's area on the arm the card builds is **still unmeasured**, and the
+experiment is runnable -- at a reduced `MAXROWS_OVR`, which makes it a valid
+one-variable test of `B_STATE_AXI` even though the magnitudes are not 9B.
+
+**THE CARD PATH REMAINS CLEAN**, from `cardooc`'s own log rather than any
+harness: 0 ERROR lines, zero `zb_reg` mentions, full elaboration of
+`fk33_card`.
+
+### 2026-09-12 (earlier): C AT THE CARD'S REAL SHAPE IS 112,519 LUT, AND THE AREA IS THE MAC ARRAY
 
 **MEASURED on the BC-250: `sim/ooc_gdnadapt.tcl` fails at HEAD**, producing no
 utilization at all:
