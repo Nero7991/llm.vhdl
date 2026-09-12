@@ -359,7 +359,22 @@ architecture rtl of fk33_seam is
   --   bit 1  HBM pointer fetch (X_BASE/L_BASE/DESC_PTR) present
   --   bit 2  sampler argmax published
   --   bit 3  full logits egress present
-  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"00000005";
+  -- CORRECTED 2026-09-11: was x"00000005", which SET bit 2 and told every host
+  -- this bitstream publishes a sampler argmax.  It does not.  The card leaves
+  -- `SMP_EN` at llama_top's default of FALSE, which ties the entire logits
+  -- stream off, so bit 2 advertised hardware that is not in the design.
+  --
+  -- A host that reads CAPS_FLAGS and believes it waits for an argmax that never
+  -- arrives: no error, no timeout from the card, nothing in a log -- which is
+  -- precisely the discovery-by-trying this constant exists to prevent.
+  -- docs/PLAN_TO_FIRST_INFERENCE.md:644 recorded it and nothing enforced it.
+  --
+  -- Now enforced by `check_seam_regs.py`'s CAPS:SAMPLER row, which derives the
+  -- expectation from gen_fk33_card.py's SMP_EN rather than hardcoding a value,
+  -- so BUILDING the sampler and setting this bit back is the other way to make
+  -- it pass.  Bit 1 was already 0 and its comment calls that "the honest
+  -- report"; this makes bit 2 honest too.
+  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"00000001";
 
   -- seam error codes, `server/fk33_seam.h`
   constant EC_NONE  : natural := 0;
