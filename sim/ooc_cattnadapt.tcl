@@ -59,6 +59,16 @@ create_clock -period $period -name clk [get_ports clk]
 puts "=== report_utilization ==="
 puts [report_utilization -return_string]
 
+# WHERE THE AREA ACTUALLY IS.  The flat report says this block is 325,773 LUT
+# at the card's geometry (74% of the part) and says nothing about which part
+# of it that is.  Attribution INSIDE one synthesis is legitimate; subtracting
+# one context's total from another's is not, and this project has already
+# measured that trap.  attn_block alone measured 87,340 LUT in its OWN
+# context, so the remainder is the mover's buffering and muxing -- but that
+# subtraction is exactly the cross-context arithmetic to avoid, hence this.
+puts "=== report_utilization -hierarchical ==="
+puts [report_utilization -hierarchical -return_string]
+
 # The object-level census.  CLAUDE.md records that Vivado's inference log lies
 # in BOTH directions and that only the mapping report and a census are
 # authoritative; B's 5,472 tiles were found by the RAM table NAMING the
