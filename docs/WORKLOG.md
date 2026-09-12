@@ -159,6 +159,16 @@ ooc_cattnadapt_top   112,519 LUT   115,424 FF   301 DSP   16 BRAM   0 URAM
   (top itself)         2,196
 ```
 
+**FINAL, every card generic set (2026-09-12): 112,549 LUT, 115,426 FF,
+301 DSP, 16 BRAM, 0 URAM.** The last two unset generics were the HBM bases
+`C_K_BASE_CH`/`C_V_BASE_CH`, left at 0, where zero is NOT neutral because the
+address adders constant-fold away. Setting them to the card's 282598912 /
+353902080 costs **+30 LUT** (112,519 -> 112,549), all of it inside
+`attn_kv_axi` (25,485 -> 25,515) with `attn_block` unchanged to the digit. So
+the "optimistic" caveat was right in direction and **negligible in magnitude,
+0.03%** -- recorded because a caveat that turns out not to matter is still
+worth closing rather than leaving open.
+
 **C's mover is 25.6% of the part's 439,680 LUT**, and the area sits in
 `attn_block`/`u_arr`, i.e. in the COMPUTE, which is where it should be.
 `attn_kv_axi` is 23% of the mover. Memory is inferred properly here: 16 BRAM
