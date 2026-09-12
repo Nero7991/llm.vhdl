@@ -11,7 +11,64 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-12: C'S AREA IS `attn_kv_axi`, AND IT IS 238,410 LUT OF REGISTERS
+### 2026-09-12: C AT THE CARD'S REAL SHAPE IS 112,519 LUT, AND THE AREA IS THE MAC ARRAY
+
+**MEASURED, card-faithful, 0 errors** (`C_KV_AXI=true C_KV_BLOCK=32
+C_N_ROT=64 C_MAXPOS=131072 C_CTXLEN=131072 C_KV_RBUF=4`), BC-250,
+`report_utilization -hierarchical`:
+
+```
+ooc_cattnadapt_top   112,519 LUT   115,424 FF   301 DSP   16 BRAM   0 URAM
+  gcr.gkvaxi.u_kv     25,485 LUT    20,584 FF     3 DSP            <- attn_kv_axi
+  gcr.u_attn          84,918 LUT    94,521 FF   298 DSP            <- attn_block
+    u_arr             55,689 LUT    39,312 FF   256 DSP            <- the MAC array
+  (top itself)         2,196
+```
+
+**C's mover is 25.6% of the part's 439,680 LUT**, and the area sits in
+`attn_block`/`u_arr`, i.e. in the COMPUTE, which is where it should be.
+`attn_kv_axi` is 23% of the mover. Memory is inferred properly here: 16 BRAM
+tiles, `u_attn/ypre` as a `RAM_SDP 4096x24`.
+
+**THE ENTRY THAT STOOD HERE FOR AN HOUR IS WITHDRAWN IN FULL.** It said "C's
+area is `attn_kv_axi` and it is 238,410 LUT of registers", concluded the KV
+interface was built from a quarter-million flip-flops with zero memory
+primitives, and called that the thing to attack. **All of it was an artifact
+of generics I failed to set.** Same harness, same tree, same box, the only
+difference being the three generics named above:
+
+| | wrong run | card-faithful | ratio |
+|---|---|---|---|
+| top LUT | 325,794 | **112,519** | 2.9x |
+| `attn_kv_axi` LUT | 238,410 | **25,485** | **9.4x** |
+| `attn_kv_axi` FF | 274,550 | **20,584** | 13.3x |
+| BRAM | 16 (top) | 16 | -- |
+
+**`C_KV_RBUF` 64 vs 4 -- one buffer-depth generic -- moved that block by 9.4x
+and the whole measurement by 2.9x.** The "registers where memory was intended"
+signature vanished entirely at the real depth.
+
+**Two independent confirmations the corrected figure is the right one:** it
+agrees in magnitude with the standalone `attn_kv_axi` measurement of 33,259
+LUT taken earlier from a different harness, and that agreement is what makes
+238,410 the lone outlier rather than leaving the standalone unexplained. **A
+7x disagreement between two harnesses was the tell, and chasing it rather than
+picking the number that suited the story is the only reason this was caught.**
+
+**THE LESSON, FIFTH INSTANCE OF THE SAME SHAPE IN TWO DAYS AND THE FIRST ONE
+THAT WAS MINE:** an unset generic is a claim that the default is right, and
+**OOC harnesses are where measurements come from, so their defaults matter
+more than the design's.** The audit recorded yesterday covered
+`fk33_card.vhd` against `llama_top` and did not cover the harnesses. Worse,
+`rtl/ooc_cattnadapt_top.vhd` defaults `C_KV_RBUF` to **64** where the
+`llama_top` it was EXTRACTED FROM says **4** -- an extraction that changes a
+default looks exactly like the thing it came from and has no tell.
+
+`sim/ooc_cattnadapt.tcl` now exposes `CATTN_MAXPOS`, `CATTN_CTXLEN` and
+`CATTN_RBUF`, with defaults that reproduce every figure taken before the
+change.
+
+### 2026-09-11 (earlier): THE COMPOSED AREA FIGURE OMITS SUBSYSTEM C'S ENTIRE MOVER
 
 **ATTRIBUTED INSIDE ONE SYNTHESIS, not by subtracting contexts.**
 `report_utilization -hierarchical`, `ooc_cattnadapt_top`, card geometry
