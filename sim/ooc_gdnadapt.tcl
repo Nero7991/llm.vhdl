@@ -15,7 +15,25 @@ foreach f [glob $rtldir/*.vhd] { read_vhdl -vhdl2008 $f }
 # are the SAME script.  See the generic's comment in the extract script.
 set mr [expr {[info exists ::env(GDNADAPT_MAXROWS)] ? $::env(GDNADAPT_MAXROWS) : 0}]
 puts "=== A_MAXROWS override = $mr (0 = region_max(SHAPE), 12288 at 9B) ==="
-synth_design -mode out_of_context -top ooc_gdnadapt -part $part -generic MAXROWS_OVR=$mr
+# B_STATE_AXI IS THE ARM THE CARD BUILDS, AND THIS HARNESS COULD NOT SET IT.
+# `rtl/ooc_gdnadapt_top.vhd` defaults it FALSE; `hw/fk33/rtl/fk33_card.vhd`
+# passes TRUE.  The generic selects between two mutually exclusive generates:
+#   gen_st_flat : if not B_STATE_AXI  -- the flat all-layers state array
+#   gen_st_tier : if     B_STATE_AXI  -- the tiered arm, state over AXI to HBM
+# So every figure this harness has produced measures the arm the card does NOT
+# build, including the project's headline B blocker of 5,472 RAMB36 against 672
+# on the part, which is that flat array.
+#
+# C_MAXPOS likewise defaults to 4 here against the card's 131072.
+#
+# Defaults below reproduce every figure taken before this change.
+set sax [expr {[info exists ::env(GDNADAPT_STATE_AXI)] ? $::env(GDNADAPT_STATE_AXI) : "false"}]
+set mp  [expr {[info exists ::env(GDNADAPT_MAXPOS)]    ? $::env(GDNADAPT_MAXPOS)    : 4}]
+puts "GDNADAPT_CONFIG state_axi=$sax maxpos=$mp maxrows=$mr"
+
+synth_design -mode out_of_context -top ooc_gdnadapt -part $part \
+             -generic MAXROWS_OVR=$mr \
+             -generic B_STATE_AXI=$sax -generic C_MAXPOS=$mp
 create_clock -period $period -name clk [get_ports clk]
 puts "=== report_utilization (the budget numbers) ==="
 puts [report_utilization -return_string]
