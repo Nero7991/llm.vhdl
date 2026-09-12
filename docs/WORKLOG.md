@@ -11,7 +11,36 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-11 (LATEST): THE CARD NORMALISES WITH A RAMP, NOT THE MODEL'S GAINS
+### 2026-09-11 (LATEST): THE CARD BLOCK DESIGN IS CLEAN -- 0 ERRORS, ON THE BC-250
+
+**`--bd-only` PASSES on the card configuration: 0 errors,
+`FK33_BD_VALIDATE OK`, peak 3,754 MB, ~4 min on the BC-250.** First run since
+today's `C_REAL` / `C_N_ROT=64` / `C_KV_BLOCK=32` changes.
+
+**What this buys: the long silent synthesis phase is NOT a block-design
+problem.** `--bd-only` is the stage that catches packager errors, the
+`natural`-port and `clog2`-in-a-port-width refusals, and address-map
+collisions -- none of which any bench can reach. All clean. So whatever
+`cardooc` is doing for hours, it is not a malformed BD.
+
+**ANCHORING THE SENTINEL MATTERED, MEASURED:** `FK33_BD_ONLY_DONE` matches
+**6** times unanchored and **2** anchored -- four matches are the script's own
+commented source echoed into its own log. A waiter on the unanchored pattern
+would have declared success at launch. Third recorded instance of the
+self-match trap in this project, and the first where it was checked BEFORE
+believing the result rather than after.
+
+**OPEN, flagged not dismissed: 32 x `BD 41-1377`.** "Network address
+<0x0000_0000 [256M]> is occupied by different slave segments,
+`/hbm/SAXI_00/HBM_MEM00` in `/jtag_hbm/Data` and `/hbm/SAXI_16/HBM_MEM00` in
+`/xdma/M_AXI`. This is illegal and must be resolved before passing
+validation." **And validation then passed.** Those are two different MASTERS'
+address spaces -- the same structural fact that `parse_address_map` was taught
+today -- so Vivado is likely being conservative, but a message saying
+"illegal" beside a clean validate is contradictory and is not yet understood.
+167 critical warnings total, 0 errors.
+
+### 2026-09-11 (earlier): THE CARD NORMALISES WITH A RAMP, NOT THE MODEL'S GAINS
 
 **FOUND, NOT FIXED, and it is a correctness blocker for inference on the
 card.** `hw/fk33/rtl/fk33_card.vhd` passes `NORM_REAL => true` and does NOT
