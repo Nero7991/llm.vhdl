@@ -145,4 +145,40 @@ rather than a cap.
   should preserve that saving while removing the 3D shape, but that is an
   ESTIMATE and has not been synthesised.
 - Whether any OTHER `8-11357` object exists elsewhere in the design that has
-  simply not been reached yet.
+  simply not been reached yet. **PARTIALLY ANSWERED, as a LEAD not a
+  measurement** -- see the census below.
+
+## What else has this shape (a LEAD, not a measurement)
+
+A scan of the card's REAL source closure -- the 66 files parsed out of
+`ooc_card_dcp.tcl`'s own `read_vhdl` lines, not a hand-picked list -- finds
+**10 array-of-array types**:
+
+| file:line | type | element |
+|---|---|---|
+| `rtl/matvec_core.vhd:263` | `cb_bank_t` | `cb_t` |
+| `rtl/matvec_core.vhd:384` | `lvl_arr` | `node_arr` |
+| `rtl/matvec_core.vhd:404` | `scp_t` | `sc_arr` |
+| **`rtl/attn_kv_axi.vhd:667`** | **`mbanks_t`** | **`mbank_t`** |
+| `rtl/gdn_conv.vhd:150` | `pk_arr` | `s32_arr` |
+| `rtl/gdn_conv.vhd:151` | `xk_arr` | `s16_arr` |
+| `rtl/rmsnorm_bf.vhd:360` | `tree_t` | `u63a` |
+| `rtl/gdn_recur_pipe.vhd:206` | `red_s_t` | `s42_arr` |
+| `rtl/gdn_recur_pipe.vhd:207` | `red_u_t` | `u35_arr` |
+| `rtl/seq_desc_fetch.vhd:281` | `bank_arr` | `word_arr` |
+
+**Only `mbanks_t` has been OBSERVED to trigger `8-11357`.** The rest are
+unmeasured, and most are probably harmless: `lvl_arr`, `scp_t`, `tree_t`,
+`red_s_t`, `red_u_t`, `pk_arr` and `xk_arr` are reduction-tree and pipeline
+stages indexed by LOOP CONSTANTS, and Vivado only attempts RAM inference on a
+structure addressed by a non-constant index.
+
+**The two worth watching are `cb_bank_t` and `bank_arr`**, which are
+RAM-shaped. Note that `cb_bank_t` is the codebook broadcast already on this
+project's radar as `CB_BCAST` (the named timing suspect, and the object behind
+the stale `CB_STYLE="distributed"` -42,633 LUT figure).
+
+**Do not read this table as a list of defects.** It is a list of places to look
+IF fixing `mbank` moves the wall rather than removing it. Synthesis has never
+got past `mbank`, so nothing downstream of it has been exercised at all, and a
+shape census cannot tell you which of these Vivado will treat as a RAM.
