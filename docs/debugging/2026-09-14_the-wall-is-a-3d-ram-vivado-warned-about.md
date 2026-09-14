@@ -250,6 +250,77 @@ no matter how many rounds it ran. The discriminator was not another variant; it
 was noticing that a top which already routes and a top which never elaborates
 differ by exactly one property, and that property is stated in a docstring.
 
+## ROOT CAUSE, round 10, 08:41 MDT: `gb_real.bp.zb_reg`, AND IT WAS ALREADY IN THE REPO
+
+`synth_design -rtl -top fk33_llama_top` on the WORKSTATION errors at **224 s**:
+
+    ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for
+    'gb_real.bp.zb_reg' because the memory pattern used is not supported.
+    Failed to dissolve the memory into bits because the number of bits
+    (196608) is too large.
+
+**196,608 = 12,288 x 16.** `rtl/fk33_llama_top.vhd:4892-4897`, inside
+`gb_real : if not B_BEHAV generate`:
+
+    bp : process(clk) is
+      variable zb : buf_t(0 to A_MAXROWS-1);
+      variable yb : buf_t(0 to A_MAXROWS-1);
+
+`A_MAXROWS` is a CONSTANT at `:1423` (`region_max(SHAPE)` = 12288), not a
+generic. Two more `yb : buf_t(0 to A_MAXROWS-1)` exist at `:3697` and `:3963`.
+
+### THE ANSWER WAS WRITTEN DOWN IN THIS REPOSITORY THE WHOLE TIME
+
+`rtl/ooc_gdnadapt_top.vhd:69-79` names **the identical object and the identical
+error**:
+
+> "It exists because the block declares `zb` and `yb` as process VARIABLES of
+> `buf_t(0 to A_MAXROWS-1)`, and at the 9B shape that is 12,288 x 16 bits EACH.
+> Synthesis of the extracted block at the default shape fails:
+> `ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for
+> 'gb_real.bp.zb_reg' because the memory pattern used is not supported`
+> and Vivado then terminates abnormally (signal 11)."
+
+**I read that header hours earlier and quoted it for a different purpose**, to
+establish that B's harness was not broken at HEAD. It contained the answer to
+the 60-hour question and I did not connect it, because I was searching for a
+hung PHASE rather than for a named OBJECT that this project had already hit.
+
+### THE WALL IS NOT INFINITE
+
+It terminates in a named error. Every earlier run looked like a hang for two
+compounding reasons: the full `synth_design` path takes far longer to reach it
+than `-rtl` does, and **the BC-250 is 2.3x slower, so a 300 s window never got
+there**. On the workstation with `-rtl` the answer costs **224 seconds**.
+
+That also retires "silence" as the metric. Silence was the right discriminator
+for "is this the same defect", and it was WRONG as a model of what was
+happening: Vivado was not stalled, it was grinding toward an error it would
+eventually print.
+
+### What is refuted, by direct control
+
+- **`gen_vstub` / the client-muxing lead: REFUTED.** A scratch copy with
+  `gv : if false generate` (exactly 1 line changed, asserted) produced the
+  **identical error on the identical object**. The mux is not the cause. This
+  was my named lead and it was wrong.
+- **`REGMAX` cannot be lowered**, exactly as `:1085` pins it:
+  `ERROR: [Synth 8-11323] assigned value '-12160' out of range` from
+  `CHK_REGMAX : natural := REGMAX - region_max(SHAPE)`.
+
+### Open
+
+- Whether this is "unsynthesisable" or "unsynthesisable AT THIS SIZE" --
+  round 11 runs the scratch `A_MAXROWS := 512` control that
+  `ooc_gdnadapt_top.vhd` describes.
+- Whether `yb` at `:3697` and `:3963` fail the same way once `zb` is fixed.
+  The error names only the first object reached.
+- The fix. Expected direction is to move `zb`/`yb` out of process variables into
+  a memory, the pattern this repo already uses in `gdn_state_mem`,
+  `gdn_exp_mem` and `region_mem`. **NOT** the `dissolveMemorySizeLimit` param
+  the error message suggests -- that permits the dissolve into 196,608
+  individual bits, which is the catastrophe, not the cure.
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
