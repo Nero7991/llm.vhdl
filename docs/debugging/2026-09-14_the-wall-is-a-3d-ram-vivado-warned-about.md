@@ -128,6 +128,58 @@ completed in minutes. That is the route with evidence behind it.
   without supplying them, and both failed with `[Synth 8-78] a value must be
   associated with generic`.
 
+## ROUND 7, 09:06 EDT: EVERY UNIT COMPLETES. THE WALL IS THE COMPOSITION ITSELF.
+
+The two units round 4 could not test are now tested. Both have generics with no
+defaults; `region_mem`'s `SZ` is an `integer_vector`, which `-generic` cannot
+carry, so it needed a scratch wrapper copying the bindings from
+`rtl/fk33_llama_top.vhd:1641-1660` (GHDL-analysed clean; the repo is untouched).
+
+| top | outcome | area |
+|---|---|---|
+| `region_mem`, `HOST_WINDOW=false` | **completed, 46 s** | lut=4038 ff=27 **ramb=100** |
+| `region_mem`, `HOST_WINDOW=true` | **completed, 118 s** | lut=11214 ff=3611 **ramb=0** |
+| `rmsnorm_rs_mem`, `N=12288` | **completed, 58 s** | lut=5591 ff=1634 dsp=360 ramb=24 |
+
+**`region_mem` is not the wall**, in either configuration. Neither is
+`rmsnorm_rs_mem`.
+
+**Bonus, and it CONFIRMS `region_mem.vhd`'s header by measurement:** the
+combinational host read port costs the whole BRAM inference. `HOST_WINDOW=false`
+gets **100 BRAM tiles and 4,038 LUT**; `HOST_WINDOW=true` gets **0 BRAM and
+11,214 LUT plus 3,611 FF**. The header said "a memory with a combinational read
+port CANNOT be a BRAM" and that is exactly what the two runs show. The card's
+`HOST_WINDOW => false` is correct and worth 100 tiles and 7,176 LUT.
+
+### The complete picture
+
+**Everything that synthesises standalone, all of it, in seconds to minutes:**
+`vec_mem` (17 s), `sampler_stream` (17 s), `seq_vec_issue` (17 s),
+`region_mem` (46 s / 118 s), `rmsnorm_rs_mem` (58 s), `matvec_int4_desc_axi`
+(166 s), `fk33_engine` (170 s).
+
+**Everything that walls:** `fk33_card`, `fk33_llama_top`. Nothing else.
+
+So the wall is **not attributable to any single entity**. Every part completes;
+only the whole does not. `fk33_engine` is itself a large composition (subsystem
+A) and completes, so it is not simply "big compositions fail" either -- but
+`fk33_llama_top` adds B, C, D, the norm path, `region_mem` and the glue, and
+that is where it stops.
+
+**This is a negative result and it is complete at the unit level.** Further
+generic or entity bisection has nowhere left to go. The remaining hypotheses are
+about the COMPOSITION -- instance count, cross-module connectivity, or a
+Vivado-version behaviour -- none of which is reachable by the axes used here.
+
+### What to do instead
+
+**The per-block compose path is the one with evidence.** `attn_block`
+(dsp=298 lut=87340 ff=101319 ramb=11 wns=0.825 fmax=239.5) and `gdn_block`
+(dsp=253 lut=75246 ff=52203 bram=43 wns=0.483 fmax=221.4) both have real
+`COMPOSE_RESULT` lines from runs that completed in minutes. Synthesise blocks
+out of context and compose checkpoints, rather than elaborating the whole card
+in one `synth_design`.
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
