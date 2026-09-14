@@ -6,6 +6,58 @@ part `xcvu33p-fsvh2104-2L-e`, Vivado 2023.2.
 **Runs:** `cardooc` (workstation, full shape, 54 h and counting) and
 `cardsmall4096` (BC-250, `C_MAXPOS=C_CTXLEN=4096`, launched 01:00:05 EDT).
 
+## CORRECTION, 2026-09-14 06:30 EDT: THE TITLE'S CLAIM IS WITHDRAWN. `mbank` IS NOT THE CAUSE.
+
+**The attribution control ran and refuted it.** Two variants that remove
+`attn_kv_axi` entirely -- so their logs contain no `8-11357` and no `mbank_reg`
+at all -- go silent just the same:
+
+| variant | change | last write | then silent | stop |
+|---|---|---|---|---|
+| `ctl` | ctx=4096 only | 44 s | 6 min | the `mbank`/`hdr_r` line |
+| `noC` | `C_REAL=false` | **34 s** | 6 min | `8-6014` message cap |
+| `noKV` | `C_KV_AXI=false` | **45 s** | 6 min | `8-6014` message cap |
+| `noN` | `NORM_REAL=false` | 33 s | 6 min | the `mbank`/`hdr_r` line |
+| `noB` | `B_STATE_AXI=false` | 47 s | 6 min | the `mbank`/`hdr_r` line |
+| `noA` | `A_DESC=false` | 31 s | (exited) | **5 ERRORS, invalid variant** |
+
+**Removing the object Vivado named does not clear the wall.** The `8-11357`
+warning is real, the object is real, the register count matched exactly -- and
+it is still not the cause. It is a warning that happens to sit one line above
+where output stops, which is a fact about message ordering, not about causation.
+
+**Subsystem A is NOT TESTABLE through the card's generics, and that is a
+finding in itself.** `A_DESC=false`, `A_ROWS_IF=4` and `A_ROWS_IF=1` all fail
+identically: 5 errors at 31 s, `[Synth 8-549] port width mismatch for port
+'m_arvalid': port width = 49, actual width = 5`. A's width is fixed elsewhere in
+the hierarchy, so the generic cannot move it. This is this repository's recorded
+"a generic that must agree with a derived value is a new way to be silently
+wrong" trap, except here it is loudly wrong.
+
+So generic-space bisection is **exhausted**: context, C, KV, NORM and B have no
+effect, and A cannot be varied at all.
+
+### Two more traps, both mine
+
+- **MY PASS CONDITION COULD NOT DISCRIMINATE.** I defined PROGRESSED as "the log
+  grows past 71,325 bytes". **Removing a subsystem REMOVES log output**, so
+  `noC` came in at 62,223 bytes and `noKV` at 69,299 -- smaller than baseline
+  whether or not synthesis advanced. It is the cross-context-arithmetic error in
+  a new place: comparing byte counts between runs that do not emit the same
+  things. The verdicts happened to be right, by luck, not by design.
+- **I NEVER CALIBRATED THE WINDOW AGAINST A HEALTHY RUN**, because no healthy
+  run of this design has ever existed. "STUCK in 7 minutes" could have meant
+  "legitimately still working". **The metric that actually works is SILENCE**:
+  a healthy Vivado emits continuously, and every walled run here stops emitting
+  at 31-47 s and never resumes -- for 6 minutes, for 4 h 08 m, and for 56 h.
+  That signature is shape-independent and window-independent, and it is what
+  every table above should have measured from the start.
+
+**What survives from the original write-up below:** the procedure, the null
+result on the context axis, the unthrottled 7.97 GiB figure, and the rejection
+of `llama_top`'s flat `mem`. **What does not: the title, and the identification
+of `mbank` as the cause.**
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
