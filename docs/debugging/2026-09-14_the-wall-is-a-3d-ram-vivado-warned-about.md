@@ -180,6 +180,76 @@ Vivado-version behaviour -- none of which is reachable by the axes used here.
 out of context and compose checkpoints, rather than elaborating the whole card
 in one `synth_design`.
 
+## ROUND 8, 10:06 EDT: THE WALL IS INSIDE `RTL Elaboration`, AND THE TRIGGER IS THE INTER-SUBSYSTEM WIRING
+
+### Where it is: elaboration, settled by `synth_design -rtl`
+
+`synth_design -rtl` builds the RTL netlist and stops, before inference,
+optimisation and technology mapping. With `fk33_engine` as the control, because
+`-rtl` is cheaper for EVERY design and a fast result alone would prove nothing:
+
+| top | `-rtl` | last phase line |
+|---|---|---|
+| `fk33_engine` (CONTROL) | **completed, 115 s**, 5 phase lines | `Finished RTL Optimization Phase 1` |
+| `fk33_llama_top` | **WALLS**, silent from 37 s | `Starting RTL Elaboration` |
+| `fk33_card` | **WALLS**, silent from 48 s | `Starting RTL Elaboration` |
+
+Both walling tops print `Starting RTL Elaboration` at t = 4 s and **never print
+`Finished RTL Elaboration`**.
+
+**THIS IS THE THIRD AND FINAL CORRECTION TO WHERE THE WALL IS.** It was first
+written up as a "post-elaboration wall"; then the `Starting Synthesize` line at
+t = 2 s was read as proof it was 2 s INTO synthesis. Both were wrong, and in
+opposite directions. `Starting Synthesize` is printed BEFORE elaboration runs,
+so it was never evidence about elaboration at all. The wall is IN elaboration.
+
+That is a material distinction, not a pedantic one: elaboration is where VHDL is
+turned into a netlist, so the cause is a **structural construct** -- a mux, a
+generate, a constant-folding blow-up -- and NOT RAM inference, mapping, or any
+`ram_style`/`8-11357` question. Every object-level hypothesis pursued tonight
+(`mbank`, `region_mem`, `HOST_WINDOW`, `llama_top`'s `mem`) was looking in the
+wrong PHASE, which is why none of them moved it.
+
+### What triggers it: the wiring, not the parts
+
+`hw/fk33/gen_compose4_top.py`'s docstring states what `compose4_top` is:
+
+> "It is a CO-RESIDENCY top. The nine instances share `core_clk` and
+> `core_rst` ...; every other port of every instance is brought out to the top
+> level." and it does NOT measure "inter-subsystem nets. **The subsystems are
+> not wired to each other**, because HOW they are wired is board row N2."
+
+So there are **two tops carrying A+B+C+D at the real 9B shape**:
+
+| top | subsystems wired to each other? | outcome |
+|---|---|---|
+| `compose4_top` | **NO** (co-residency, ports to top level) | synthesises, places, **ROUTES** (WNS -0.422, 286,806 nets) |
+| `fk33_llama_top` | **YES** (sequencer glue, region-file client muxing) | **never finishes RTL Elaboration** |
+
+Same four subsystems, same shape, same part, opposite outcomes. **The
+difference is the interconnect**, and that is consistent with every other result:
+each unit elaborates alone, the unwired composition elaborates, only the wired
+one does not.
+
+### The named suspect, as a LEAD
+
+`rtl/fk33_llama_top.vhd` around the region file describes "**Per-CLIENT element
+ports, muxed below**", where a client is not a unit -- "unit V is an ADAPTER in
+front of NVOP engines, and each engine needs its own port". A combinational mux
+across clients x `NREGION` x `REGMAX` is exactly the shape that stalls
+elaboration. **This is a lead and has not been measured.** The way to test it is
+to reduce the client count or the mux width and re-run `-rtl`, which now costs
+five minutes rather than a day.
+
+### Why this reframes the whole investigation
+
+Rounds 0-7 varied generics and entity boundaries and found nothing, because
+**every one of those axes acts on WHAT is instantiated, and the trigger is HOW
+the instances are connected.** Generic-space bisection could not have found this
+no matter how many rounds it ran. The discriminator was not another variant; it
+was noticing that a top which already routes and a top which never elaborates
+differ by exactly one property, and that property is stated in a docstring.
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
