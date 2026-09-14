@@ -5947,3 +5947,27 @@ frees nothing and redirects the kill onto a bystander, which here is
 
 Full write-up incl. the four measured-and-rejected remedies:
 `docs/debugging/2026-09-08_the-card-build-and-two-wrong-fixes.md`
+
+## PROCESS DEFECT, 2026-09-14: I MONITORED THE JOB I WAS WATCHING AND NOT THE JOBS I WAS RUNNING
+
+`probe10` finished at **08:41 MDT** with the root cause in its log. I read it at
+**12:30**, when Oren asked. **Three hours forty-nine minutes**, with the answer
+on disk and BOTH Vivado lanes idle.
+
+There was a monitor on `cardooc` the whole time, firing every 30 minutes. There
+was none on `probe9`/`probe10`, which were the jobs actually doing the work. I
+even built `chain10.sh` to chain probe10 onto probe9's completion -- so the
+chaining was careful and the NOTIFICATION was absent. A chain tells the next job
+when to start; it does not tell ME when the last one ended.
+
+**The rule: every background job that produces a RESULT I am waiting on gets a
+completion notification, not just a completion.** `systemd-run` + a `sleep` loop
+is a scheduler, not a monitor. The check is: "if this finishes while I am
+looking elsewhere, what wakes me?" If the answer is "nothing", it is not
+monitored, however well it is chained.
+
+This is the REFILL RULE failing in a new way. The rule was written about not
+leaving agent slots empty; here the slots were empty because I did not know the
+work had finished. **Idle-because-unnoticed is indistinguishable from
+idle-because-unscheduled, and costs the same.**
+
