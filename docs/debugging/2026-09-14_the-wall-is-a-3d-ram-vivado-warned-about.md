@@ -58,6 +58,76 @@ result on the context axis, the unthrottled 7.97 GiB figure, and the rejection
 of `llama_top`'s flat `mem`. **What does not: the title, and the identification
 of `mbank` as the cause.**
 
+## SECOND CORRECTION, 08:36 EDT: SIX ROUNDS, NOTHING MOVES IT. AND `-flatten_hierarchy none` IS REFUTED AS THE FLOW'S RATIONALE.
+
+### Everything that does NOT change the wall (all MEASURED tonight)
+
+| axis | values tried | result |
+|---|---|---|
+| `C_MAXPOS` / `C_CTXLEN` | 131072 -> 4096 (32x) | byte-identical stop |
+| `C_REAL` | false | silent at 34 s |
+| `C_KV_AXI` | false | silent at 45 s |
+| `NORM_REAL` | false | silent at 33 s |
+| `B_STATE_AXI` | false | silent at 47 s |
+| `A_DESC`, `A_ROWS_IF` | false, 4, 1 | **all ERROR**, `8-549` port width; A not variable |
+| `HOST_WINDOW` | true vs false, on `fk33_llama_top` | **identical**, 33 s both, `8-11357` absent in both |
+| `-flatten_hierarchy` | `none` / `rebuilt` / `full` | **identical**: 44 / 43 / 44 s, peak 6.71 / 6.69 / 6.70 GiB |
+
+### Everything that DOES synthesise, in seconds
+
+| top | outcome |
+|---|---|
+| `matvec_int4_desc_axi` | emitted to 166 s, `Finished Part Resource Summary` |
+| `fk33_engine` | emitted to 170 s, `Finished Part Resource Summary` |
+| `vec_mem` | **completed**, 17 s, 18 phase lines |
+| `sampler_stream` | **completed**, 17 s, 16 phase lines |
+| `seq_vec_issue` | **completed**, 17 s, 16 phase lines |
+
+**Only the COMPOSITIONS wall.** `fk33_card` and `fk33_llama_top` both stop at
+33-45 s and never reach `Finished Synthesize`; every individual entity that can
+be synthesised standalone finishes in under three minutes. `fk33_engine`
+contains subsystem A and completes, so **A is cleared too.**
+
+### `-flatten_hierarchy none` was the flow's entire justification, and it does nothing
+
+`ooc_card_dcp.tcl`'s header says two earlier card OOC runs did not finish, that
+its own rule is "do not launch a third without a reason to expect a different
+outcome", and that **the reason is `-flatten_hierarchy none`**. That claim had
+never been tested. It is now: `none`, `rebuilt` and `full` are indistinguishable
+to within one second and 0.02 GiB. **The third run was launched on a
+justification that does not hold, and it has now burned 58 hours.**
+
+### A confound in my own metric, stated
+
+Both `fk33_llama_top` runs and the `noC`/`noKV` variants go silent **exactly at
+the `8-6014` message-cap line** (*"appears 100 times and further instances of the
+messages will be disabled"*). Output may therefore be stopping because messages
+are SUPPRESSED, not because work stopped. CPU stays at 100-102% and memory keeps
+growing, so work does continue. **"Silent" means "not emitting", which is weaker
+than "stuck"** -- though 58 hours without reaching `Finished Synthesize` settles
+the practical question regardless.
+
+### What this means
+
+**Monolithic OOC synthesis of the card does not work, and no knob reachable from
+the card's generics or from `synth_design` changes that.** Three runs have now
+failed this way: two recorded in
+`2026-09-08_card-ooc-synthesis-does-not-finish.md` and this one.
+
+**The per-block compose path demonstrably DOES work** -- `attn_block`
+(dsp=298 lut=87340 ff=101319 wns=0.825) and `gdn_block` (dsp=253 lut=75246
+ff=52203 wns=0.483) both have real `COMPOSE_RESULT` numbers from runs that
+completed in minutes. That is the route with evidence behind it.
+
+### Still open
+
+- **Why** a composition of entities that each synthesise in seconds does not
+  synthesise at all. Not answered, and not answerable from the generics.
+- Whether `region_mem` and `rmsnorm_rs_mem` wall. **Untested** -- both have
+  generics with NO defaults (`SZ`, `N`), so they cannot be a standalone top
+  without supplying them, and both failed with `[Synth 8-78] a value must be
+  associated with generic`.
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
