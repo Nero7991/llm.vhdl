@@ -4647,6 +4647,35 @@ which IS capped.)
 - **Reducing `C_MAXPOS`/`C_CTXLEN`** does not move the wall. Measured, both
   runs identical to the byte.
 
+#### CORRECTION, same night: THE `mbank` REJECTION ABOVE IS WITHDRAWN. IT IS THE CANDIDATE.
+
+The entry above rejects `mbank` because it is "8,192 bits per instance.
+Trivial." **The arithmetic was right and the inference was wrong.** Vivado names
+the object one line before the hang, in both runs:
+
+    WARNING: [Synth 8-11357] Potential Runtime issue for 3D-RAM or RAM from
+    Record/Structs for RAM  mbank_reg with 16384 registers
+
+16,384 is exactly the two `GEN_RD` instances at 8,192 bits each -- **the same
+number I used to dismiss it.** The hazard is not the bit count, it is the
+**3D array-of-array-of-vector shape**: `mbanks_t is array (0 to MPB-1) of
+mbank_t` at `rtl/attn_kv_axi.vhd:667-668`.
+
+**I broke this file's own rule while quoting it**: *when a report names the
+object, no argument about the total is admissible*. The message was in the log
+from the first minute; I reasoned from the total instead of reading the census.
+
+It also explains the null result cleanly: `mbank` is sized by `KV_BLOCK`,
+`RBUF` and `HEAD_DIM`, and **not by `C_MAXPOS` or `C_CTXLEN`** -- so the 32x
+context cut could not possibly have moved it.
+
+Full write-up, with the procedure and every trap:
+`docs/debugging/2026-09-14_the-wall-is-a-3d-ram-vivado-warned-about.md`.
+
+**STILL A CANDIDATE, NOT A CAUSE.** The attribution control -- a variant that
+removes `attn_kv_axi` progressing past byte 71,325 while the unmodified control
+stays STUCK -- is armed for 05:10 MDT and had not run when this was written.
+
 #### Measurement traps hit
 
 - **MY PHASE-LINE CHECK COULD NEVER HAVE FIRED, AND I REPORTED ITS OUTPUT FOR
