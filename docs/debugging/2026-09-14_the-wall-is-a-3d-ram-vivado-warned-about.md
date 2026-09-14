@@ -321,6 +321,72 @@ eventually print.
   the error message suggests -- that permits the dissolve into 196,608
   individual bits, which is the catastrophe, not the cure.
 
+## CONFIRMED, round 11: "UNSYNTHESISABLE AT THIS SIZE". THE SIZE CONTROL PASSES.
+
+One-variable, one-line scratch diff (asserted before the run), on the SAME tree,
+same part, same `-rtl` command:
+
+| variant | `A_MAXROWS` | result |
+|---|---|---|
+| `ctl` | 12288 (`region_max(SHAPE)`) | **ERROR at 232 s**, `8-3391` on `gb_real.bp.zb_reg` |
+| `r512` | 512 | **ELABORATES CLEAN** |
+
+`r512`'s own phase lines:
+
+    Starting  RTL Elaboration : cpu = 00:00:02 ; peak = 2810.617
+    Finished  RTL Elaboration : cpu = 00:04:04 ; peak = 8569.039
+    Finished  Handling Custom Attributes
+    Finished  RTL Optimization Phase 1
+    RTL_DONE r512
+    RTL_END  r512
+
+**Zero `8-3391`. Zero `8-11357`. Peak 8.57 GiB. Four minutes.** The design that
+had not elaborated in 60 hours elaborates cleanly the moment those two process
+variables shrink.
+
+So this is `ooc_gdnadapt_top.vhd`'s distinction, resolved on the card top: the
+construct is **not** unsynthesisable, it is unsynthesisable **at 12,288**.
+
+### Where the fix belongs, and where it does NOT
+
+`rtl/fk33_llama_top.vhd` is **GENERATED** by `tools/gen_cardtop.py` from
+`rtl/llama_top.vhd` (`SRC` at `:50`). It must not be hand-edited. The same
+declarations are in the generator's INPUT:
+
+    rtl/llama_top.vhd:4476   variable zb : buf_t(0 to A_MAXROWS-1);
+    rtl/llama_top.vhd:4477   variable yb : buf_t(0 to A_MAXROWS-1);
+    rtl/llama_top.vhd:3543   variable yb : buf_t(0 to A_MAXROWS-1);
+
+and `:5513` has a fourth, `yb : buf_t(0 to YN-1)`, on a different bound.
+
+**This is the recorded "editing a generator's INPUT carries the same obligation"
+trap**: `llama_top.vhd` is hand-written, carries no banner, and nothing on it
+says `fk33_llama_top.vhd` derives from it. Edit the input, regenerate, then diff
+the output and confirm it contains the change and nothing else. The
+`sim:cardtop` gate row (`GEN_CARDTOP_CHECK`) exists for exactly this.
+
+**The fix direction** is to move `zb`/`yb` out of process variables into a
+memory, which is a pattern this repository already has four instances of:
+`rtl/gdn_state_mem.vhd`, `rtl/gdn_exp_mem.vhd`, `rtl/gdn_conv_tap_mem.vhd` and
+`rtl/region_mem.vhd`. `gdn_conv_tap_mem.vhd:67` even says so outright -- "This
+is `region_mem` again -- the case this repository already has on".
+
+**NOT the fix:** `set_param synth.elaboration.rodinMoreOptions
+{rt::set_parameter dissolveMemorySizeLimit 196608}`, which the error message
+itself suggests. That PERMITS the dissolve into 196,608 individual bits. It
+converts a fast error into the 60-hour grind, and if it ever completed it would
+produce 196,608 registers.
+
+### Open
+
+- `yb` at `:3697` and `:3963` of the generated top (`:3543` of the input) have
+  the same bound and are **untested** -- the error names only the first object
+  reached, so fixing `zb` may simply expose the next.
+- `r512` is a DIAGNOSTIC, not a configuration. 512 rows is not the 9B shape and
+  the design is wrong at that size; it proves the mechanism, nothing more.
+- `8-11357` on `mbank_reg` is absent from the `r512` log. Unexplained, and NOT
+  claimed as related -- `mbank` is sized by `KV_BLOCK`/`RBUF`, not `A_MAXROWS`.
+
 ## The question, verbatim
 
 > "Start tonight at 1am ET on BC-250, I'm gonna be using it before that"
