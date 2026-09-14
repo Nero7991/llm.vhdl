@@ -4610,6 +4610,70 @@ defect this section's own rule describes.
 | **CARDOOC** (running, 45.8 h) | Does the full-shape card OOC (`C_MAXPOS=C_CTXLEN=131072`, `-flatten_hierarchy none`) terminate? 45.8 h in: 22.7 GiB resident, CPU 101%, **0 errors, 0 phase lines**, log frozen at 71,492 bytes since 2026-09-11 18:57. Not hung; in the silent post-elaboration phase. | workstation Vivado lane; `scratchpad/cardooc/` | workstation, `MemoryHigh=24G` |
 | **CARDSMALL** (scheduled 2026-09-14 01:00 EDT) | Does that silent phase TERMINATE at a smaller context, and how does it scale? Two chained points, `C_MAXPOS=C_CTXLEN` = **4096** then **16384**, everything else identical to the card. | BC-250 Vivado lane; `~/cardooc-small/` there | BC-250, `MemoryHigh=10G` / `MemoryMax=12G` / `MemorySwapMax=8G` / `RuntimeMaxSec=6h` |
 
+### CARDSMALL, 2026-09-14: THE WALL IS NOT ON THE CONTEXT AXIS. AND IT REPRODUCES IN 45 SECONDS.
+
+Point 1 (`C_MAXPOS=C_CTXLEN=4096`, 1/32 the card's context) launched 01:00:05
+EDT on the BC-250, every guard passing, and reached the wall in **45 seconds**.
+
+**The two runs stop at the BYTE-IDENTICAL line.** Not the same phase, the same
+line:
+
+    RAM "GEN_RD[1].hdr_r_reg" dissolved into registers
+
+Both have exactly 2 `[Synth 8-4767]` warnings and 2 dissolved RAMs before going
+silent. cardooc has now been there 52 h; point 1 got there in 45 s. **A 32x
+context reduction moved the wall by zero.** The probe's axis was wrong, and that
+is the result: `C_MAXPOS`/`C_CTXLEN` are not what the synthesiser is grinding on.
+
+**THE OPERATIONALLY IMPORTANT PART: a 52-hour experiment is now a 45-second
+one.** Any hypothesis about this wall can be tested in about a minute at
+ctx=4096, because the failure state is reached before anything shape-dependent
+has had time to matter. Every future probe should run there, not at full shape.
+
+**First UNTHROTTLED card-OOC memory figure.** Point 1: `MemoryPeak` **7.75 GiB**
+with `memory.events` reading `high 0, max 0, oom 0` and zero swap. Nothing was
+holding it down, so unlike every previous card figure this one is a real peak
+rather than a cap. (It is not comparable to the full shape's at-least-39.1 GiB,
+which IS capped.)
+
+#### Measured and REJECTED -- do not retry
+
+- **`mbank` in `attn_kv_axi`'s `GEN_RD` is NOT the stuck memory.** It is the
+  declaration immediately preceding `hdr_r`, which made it the obvious suspect.
+  Sized from the file's own constants -- `MPB=2`, `RBUF*NBLK=4*8=32`,
+  `CH_W=128` -- it is **8,192 bits per instance**. Trivial. Declaration order is
+  not processing order, and the log tail names the LAST memory completed, not
+  the one in progress, so it does not identify the culprit at all.
+- **Reducing `C_MAXPOS`/`C_CTXLEN`** does not move the wall. Measured, both
+  runs identical to the byte.
+
+#### Measurement traps hit
+
+- **MY PHASE-LINE CHECK COULD NEVER HAVE FIRED, AND I REPORTED ITS OUTPUT FOR
+  HOURS.** I was grepping `^(Start|Finished) ` -- with a trailing space. Vivado
+  prints "**Starting** synth_design" and "**Starting** Synthesize", which that
+  pattern cannot match. I reported "0 phase lines" on tick after tick as though
+  it meant something. The true count is **2**, and the second one is the
+  informative one:
+
+      Starting Synthesize : Time (s): cpu = 00:00:02 ... peak = 1761.844
+
+  So the job entered `Synthesize` at **t = 2 seconds** and has been inside that
+  single phase for 52 hours. That reframes "post-elaboration wall": it is not
+  after elaboration, it is 2 seconds into synthesis. A check that cannot fire is
+  decoration, and this one produced a confident number every 30 minutes.
+
+#### Open, not yet answered
+
+- **Which memory Vivado is actually grinding on.** The log tail does NOT name
+  it. Attribution requires a probe, not a reading of the last line.
+- Whether the phase terminates at all: point 1 has until 07:00:05 EDT before
+  `RuntimeMaxSec` kills it. That is the one thing still worth waiting for, and
+  it distinguishes STUCK from merely SLOW.
+- A separate build's `[Synth 8-3391]` names `'mem_reg'` at **2,752,512 bits**
+  as too large to dissolve. Whether that is this wall is UNTESTED; it comes from
+  a different job and must not be assumed to be the same object.
+
 ### CORRECTION 2026-09-13: the card half does NOT fit comfortably. At least 39 GiB.
 
 `hw/fk33/ooc_card_dcp.tcl`'s header justified splitting the build at the card
