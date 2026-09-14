@@ -25,6 +25,44 @@
 # THE COST IS REAL: `none` forbids cross-boundary optimisation, so the area and
 # timing below are an UPPER BOUND on what the shipping flow would get, not a
 # prediction of it.  A bitstream first; optimisation afterwards.
+#
+# CORRECTION 2026-09-13: "THE CARD ALONE WAS MEASURED AT 15.52 GB" IS WITHDRAWN.
+# THE CARD HALF DOES NOT FIT COMFORTABLY; IT WANTS AT LEAST 39 GiB.
+#
+# MEASURED on the workstation, 47 h into this script's own run under
+# `MemoryHigh=24G`, read from the job's OWN cgroup rather than from `free` or
+# `ps`:
+#
+#   memory.current       24,352 MiB   (RAM)
+#   memory.swap.current  15,664 MiB   (swap, SEPARATE from the above)
+#   ------------------------------------------------------------------
+#   total                40,016 MiB = 39.1 GiB
+#
+#   memory.events: high 7215, max 0, oom 0, oom_kill 0
+#   memory.peak    24,433 MiB
+#
+# Two things follow, and the second is the reusable one.
+#
+# FIRST, 39.1 GiB is a LOWER BOUND, not the peak.  `memory.events high=7215`
+# says the cap has been throttling this job continuously, and `memory.peak`
+# 24,433 MiB is 143 MiB under `memory.high` -- so that peak is the THROTTLE
+# holding it there, not the job's appetite.  This file may not quote 24.4 GiB as
+# a footprint; it is the cap, exactly as the project rule about capped
+# `memory.peak` figures says.
+#
+# SECOND, THE 15.52 GB WAS A SAMPLE OF A RUN THAT NEVER FINISHED.  It comes from
+# docs/debugging/2026-09-08_card-ooc-synthesis-does-not-finish.md, whose whole
+# subject is that NEITHER of two card OOC runs terminated.  A number taken from
+# the middle of an unfinished job is a moment, and peak is a property of the JOB,
+# not of the moment you looked.  Quoting it as "the card alone fits" turned an
+# observation into a fit claim it could not support.
+#
+# So the premise "two halves that each fit" rests on one figure that is a
+# mid-run sample and another (10.66 GB) that IS from a completed build.  Only
+# the second is a peak.  Whether splitting at the card boundary actually helps
+# is therefore OPEN, not established -- and the 39.1 GiB says the card half
+# alone already exceeds the 26.25 GB that the unsplit build was faulted for
+# needing.
 set part xcvu33p-fsvh2104-2L-e
 set out  [lindex $argv 0]
 puts "CARDOOC_BEGIN part=$part out=$out flatten=none"

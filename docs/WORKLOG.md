@@ -4610,6 +4610,49 @@ defect this section's own rule describes.
 | **CARDOOC** (running, 45.8 h) | Does the full-shape card OOC (`C_MAXPOS=C_CTXLEN=131072`, `-flatten_hierarchy none`) terminate? 45.8 h in: 22.7 GiB resident, CPU 101%, **0 errors, 0 phase lines**, log frozen at 71,492 bytes since 2026-09-11 18:57. Not hung; in the silent post-elaboration phase. | workstation Vivado lane; `scratchpad/cardooc/` | workstation, `MemoryHigh=24G` |
 | **CARDSMALL** (scheduled 2026-09-14 01:00 EDT) | Does that silent phase TERMINATE at a smaller context, and how does it scale? Two chained points, `C_MAXPOS=C_CTXLEN` = **4096** then **16384**, everything else identical to the card. | BC-250 Vivado lane; `~/cardooc-small/` there | BC-250, `MemoryHigh=10G` / `MemoryMax=12G` / `MemorySwapMax=8G` / `RuntimeMaxSec=6h` |
 
+### CORRECTION 2026-09-13: the card half does NOT fit comfortably. At least 39 GiB.
+
+`hw/fk33/ooc_card_dcp.tcl`'s header justified splitting the build at the card
+boundary on "the two HALVES each fit comfortably -- the card alone was measured
+at **15.52 GB** and a card-free pcieep build at 10.66 GB". **The 15.52 GB is
+withdrawn.**
+
+MEASURED 47 h into `cardooc`, from the job's OWN cgroup rather than `free` or
+`ps`:
+
+| | |
+|---|---|
+| `memory.current` | 24,352 MiB (RAM) |
+| `memory.swap.current` | 15,664 MiB (swap, SEPARATE) |
+| **total** | **40,016 MiB = 39.1 GiB** |
+| `memory.events` | `high 7215`, `max 0`, `oom 0`, `oom_kill 0` |
+| `memory.peak` | 24,433 MiB |
+
+**39.1 GiB is a LOWER BOUND.** `high=7215` says the cap has been throttling the
+job continuously and `memory.peak` is 143 MiB under `memory.high`, so that peak
+is the throttle, not the appetite -- the recorded rule about capped
+`memory.peak` figures, hit again. Do not quote 24.4 GiB as a footprint.
+
+**Why 15.52 GB was wrong: it is a sample of a run that never finished.** It
+comes from `docs/debugging/2026-09-08_card-ooc-synthesis-does-not-finish.md`,
+whose entire subject is that NEITHER of two card OOC runs terminated. Peak is a
+property of the JOB, not of the moment you looked, and a mid-run sample of a
+non-terminating job is the weakest possible basis for a fit claim.
+
+So of the two figures the split rests on, only the 10.66 GB is from a completed
+build. **Whether splitting at the card boundary helps at all is OPEN**, not
+established: 39.1 GiB for the card half alone already exceeds the 26.25 GB that
+the unsplit build was faulted for needing. PSI is nevertheless 0.00 across
+cgroup and system, so nothing is stalling -- the job is healthy, just far larger
+than anything previously recorded.
+
+This is also why CARDSMALL's caps moved from `MemoryMax=12G`/`MemorySwapMax=8G`
+to **`MemoryHigh=11G` / `MemoryMax=13G` / `MemorySwapMax=24G`**: RAM stays
+bounded at 13 of the BC-250's 15.2 GB so the box survives a runaway, while 24G
+of its 47.4 GB free swap lets a mid-sized point FINISH SLOWLY rather than be
+killed. The old caps would have turned any point wanting over 20 GB into no
+result at all.
+
 **CARDSMALL is a SCALING PROBE, not an attribution experiment.** `C_MAXPOS`
 and `C_CTXLEN` move together deliberately as one "context size" axis. A result
 does NOT attribute the wall to either generic individually, and must not be
