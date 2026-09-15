@@ -5971,3 +5971,44 @@ leaving agent slots empty; here the slots were empty because I did not know the
 work had finished. **Idle-because-unnoticed is indistinguishable from
 idle-because-unscheduled, and costs the same.**
 
+
+## 2026-09-14: MY CLAMP TURNED A DETECTABLE FAULT INTO SILENT WRONG NUMBERS
+
+Fixing `gb_real.bp`'s `zb` (the 60-hour elaboration wall), v1 of the change
+stored z DM-wide with a lane/word cursor pair. It was written up as an
+IDENTITY, with three arguments from the code: sequential writes, a read of
+exactly one word, and all writes completing before any read.
+
+**All three arguments were true and the change was still wrong.**
+`tb_llama_top` went **PASS 8 -> FAIL 6**, `R_X(0)` off by 29, with
+`schedule mismatches=0 KV faults=0 B-state AXI faults=0`. Structure intact,
+numbers wrong -- this file's oldest recorded lesson, hit again by me.
+
+**The defect: `S_ZRD` has TWO entry paths and I reset the cursors on one.**
+The `not B_SRC_REAL` bypass entered with stale cursors. I had verified the
+index algebra twice and never enumerated the state's predecessors.
+
+**AND THE REASON IT WAS SILENT RATHER THAN LOUD WAS MY OWN GUARD.** I wrote
+
+    if zword < VH-1 then zword := zword + 1; end if;
+
+as defensive clamping. `zword` is declared `natural range 0 to VH-1`, so
+**without the clamp the second sweep would have raised a range error in
+simulation on the first overrun.** The clamp caught that fault and converted it
+into every element landing in the last word -- wrong numbers, no diagnostic.
+It cost a full bench cycle plus a differential run to find what the subtype
+would have reported immediately.
+
+**A bounds guard on a value whose subtype already bounds it is not defence, it
+is suppression.** Where a range is already declared, let it fire. v2 keys the
+reset off `k = 0` at the top of `S_ZRD` -- both paths set `k := 0` before
+entering, so a future third path cannot miss it -- and increments without
+clamping.
+
+**What actually found it: a DIFFERENTIAL run.** Keeping the old array alongside
+the new store and asserting equality at every read printed
+`ZBDIFF h=0 j=0 k=0 zlane=0 zword=3 VH=4 DM=32` in under a minute. Re-deriving
+the algebra a third time would not have; the cursor was wrong, not the algebra.
+**When a rewrite claims to be an identity, run both and assert it, rather than
+arguing it.**
+
