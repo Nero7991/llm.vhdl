@@ -6012,3 +6012,51 @@ the algebra a third time would not have; the cursor was wrong, not the algebra.
 **When a rewrite claims to be an identity, run both and assert it, rather than
 arguing it.**
 
+
+## 2026-09-15: THE CARD'S A BINDING (`ga_desc`) HAS NO BEHAVIOURAL COVERAGE
+
+Found while trying to extend `sim/tb_fk33_cardtop_ident.vhd` to cover the arm a
+fix has to change.
+
+`fk33_llama_top`'s A-facing ports are **defaulted inputs** -- `a_y_we : in
+std_logic := '0'`, `a_bvalid := '0'`, `a_job_done := '0'`, `a_y_data := (others
+=> '0')` -- because "a VHDL entity cannot have a conditional port clause". The
+identity bench **never connects any of them**: `grep -c` for `a_awaddr|a_y_we|
+a_job_done|a_x_we` over the whole bench returns **0**, and its port map ends at
+`bst_bresp`.
+
+So with `A_DESC => true`:
+
+- `a_bvalid` is stuck low, so `a_desc_adapter` never completes a descriptor
+  write and `ad_done` never asserts;
+- `a_y_we` is stuck low, so no y beat ever reaches `ga_desc.ap`;
+- the FSM sits in S_GO/S_RUN and the run times out.
+
+**The `A_DESC` generic is present on the bench and cannot be exercised.** The
+bench's own header states the rule that both arms "must compute the SAME
+numbers" and that the true arm "drives the REAL `matvec_int4_desc_axi`" -- that
+is the INTENT; the wiring for it does not exist.
+
+**Consequences, stated plainly:**
+
+1. `ga_desc` -- the branch the CARD BUILDS -- has never been simulated. Its
+   `ap` process, its y buffer, its handshake with `a_desc_adapter` and
+   `a_job_counter`, and the S_GO ordering rule its own header calls "THE ONE
+   ORDERING RULE" are all unverified behaviourally.
+2. Every landmark this project quotes for the card top was measured on the
+   `ga_real` arm, i.e. on the binding the card does NOT use.
+3. Any fix to `ga_desc` -- including the y-store rewrite the elaboration stall
+   requires -- is unverifiable until this is closed. Structure and synthesis
+   can be checked; VALUES cannot.
+
+This is this repository's own recorded failure mode: a per-unit evidence class
+that says nothing about the composition, and a generic whose default quietly
+selects the arm that is NOT shipped. It is the same shape as the harness-default
+traps already catalogued, one level up: not a wrong default VALUE, but a bench
+that cannot run the non-default arm at all.
+
+**What closing it needs:** a descriptor-plane engine model in the bench -- an
+AXI-Lite slave that accepts the adapter's descriptor writes and responds, plus a
+y-beat producer whose numbers match what `ga_real` computes, since the identity
+claim is that both arms agree. That is bench engineering, not a generic flip.
+
