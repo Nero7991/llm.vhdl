@@ -618,3 +618,38 @@ configuration `hw/fk33/rtl/fk33_card.vhd` builds. Arm C
 unit reported `Result=success` to `systemctl show` after being killed by
 `RuntimeMaxSec`. The run had written no `RTLPROBE_DONE`. Gate on the sentinel
 the work itself writes; a unit result is a fact about systemd.
+
+### AMENDMENT to the correction above, same day, 40 minutes later
+
+The correction above said *"`8-3391` DOES NOT CAUSE THE STALL"*. That is right
+about the HANG and **wrong if read as "`8-3391` is harmless"**, which is how it
+reads. Arm C settles it:
+
+| arm | configuration | elaboration | errors |
+|---|---|---|---|
+| A | defaults | finishes 3:37 | `8-3391` on `ga_real.ap.yb_reg`, then `[Vivado_Tcl 4-5] Elaboration failed` |
+| C | `A_DESC=true` only | finishes 3:29 | `8-3391` on `ga_desc.ap.yb_reg`, then `[Vivado_Tcl 4-5] Elaboration failed` |
+| B | `A_DESC=true`, `A_ROWS_IF=48`, `A_JOB_STRIDE=262144`, `A_MAXROWS=512` | **HANGS >25 min** | none |
+
+**THERE ARE TWO INDEPENDENT DEFECTS AND THEY WERE BEING TREATED AS ONE.**
+
+1. **`8-3391` is a HARD ERROR that FAILS elaboration.** It fails FAST rather
+   than hanging -- the phase completes in about three and a half minutes and
+   the tool reports `Elaboration failed`. So the card genuinely cannot
+   elaborate while `ga_desc.ap.yb` is a 196,608-bit process variable. That fix
+   is **NECESSARY**. It is simply not **SUFFICIENT**, and it is not the hang.
+2. **A SEPARATE, SILENT HANG** appears only once `A_ROWS_IF=48` and/or
+   `A_JOB_STRIDE` are set. It emits **no diagnostic of any kind** -- zero
+   errors, zero warnings, the log simply stops. `A_DESC=true` ALONE does not
+   hang (arm C, 3:29).
+
+**Both readings of this file have now been wrong in opposite directions on the
+same day**: first "`8-3391` is the wall" (it is not the hang), then
+"`8-3391` is not the wall" (it still fails the build). The accurate statement
+is the boring one: **there are two defects, one loud and fatal, one silent and
+fatal, and fixing either alone leaves the card unbuildable.** The reason one
+sentence kept being wrong is that it was trying to describe two mechanisms.
+
+**OPEN:** arm D (`A_DESC=true` + `A_ROWS_IF=48`, default `A_JOB_STRIDE`) is
+running to decide which of the two remaining generics triggers the silent
+hang.
