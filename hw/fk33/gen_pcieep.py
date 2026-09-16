@@ -409,6 +409,31 @@ ENG_XW_BASE    = 0x00013000    # 4 KB, the activation writer
 # margin, and margin is the point, since every figure above is a ROUTED number
 # on an OOC block and the block design adds a shell those runs never saw.
 ENG_CORE_MHZ   = float(os.environ.get("FK33_ENG_CORE_MHZ", "200.000"))
+# LEVER C.  `fk33_engine`'s CB_STYLE, forwarded to matvec_int4_desc_axi and on
+# to matvec_core, where it decides whether the IQ4_NL codebook lives in
+# registers ("regs") or in LUTRAM ("distributed").  matvec_core hard-errors on
+# any other value.
+#
+# DEFAULT "regs", UNCHANGED, because that is the shipping value and the one the
+# engine's own header calls out as keeping the entity byte-identical in
+# behaviour to the bitstream on card 1.  This is opt-in.
+#
+# WHY IT IS REACHABLE ONLY HERE.  `fk33_engine.vhd:67` states it: `-generic`
+# reaches the TOP's generics and never a deep instance, so the value has to be
+# set as a CONFIG property on the block-design cell.
+#
+# WHY IT EXISTS.  MEASURED 2026-09-16: the first full FK33_CARD=1 build
+# SYNTHESISED with 0 errors and was then REFUSED by the placer --
+# `[DRC UTLZ-1] ... requires 479919 CLB LUTs but only 439680 are available`,
+# 109.15%.  Registers (56%), BRAM, DSP and the mux columns all had headroom; it
+# is purely LUT-bound.  TRACK LEVERC48 measured this lever at -42,633 CLB LUT
+# with MUXF7 24,583 -> 0 and MUXF8 12,288 -> 0, against a ~40,239 LUT overage.
+# That figure is 264 commits old and is NOT quoted as a prediction here -- the
+# point of making it settable is to MEASURE it on the current tree.
+ENG_CB_STYLE   = os.environ.get("FK33_CB_STYLE", "regs")
+if ENG_CB_STYLE not in ("regs", "distributed"):
+    raise SystemExit("FK33_CB_STYLE must be regs or distributed, got %r"
+                     % ENG_CB_STYLE)
 # Refuse a value that cannot be met or cannot be built.  The clocking wizard
 # will happily accept nonsense and fail much later, in HDL generation, with a
 # message that does not name this variable.
@@ -868,6 +893,23 @@ def _eng_block():
     a("# wiring: the thermal halt, the activation write port and the 40 -> 33 bit")
     a("# address truncation.")
     a("create_bd_cell -type module -reference fk33_engine %s" % ENG_CELL)
+    if ENG_CB_STYLE != "regs":
+        a("")
+        a("# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a")
+        a("# generic as a CONFIG property; `-generic` on synth_design would reach")
+        a("# only the top and never this instance (fk33_engine.vhd:67).")
+        a("set_property CONFIG.CB_STYLE {%s} [get_bd_cells %s]"
+          % (ENG_CB_STYLE, ENG_CELL))
+        a("# READ BACK.  Vivado silently ignores a set_property whose target did")
+        a("# not match, and this file already does this for every other CONFIG it")
+        a("# sets.  A lever that was quietly not applied looks exactly like a")
+        a("# lever that did not work.")
+        a("set _cb [get_property CONFIG.CB_STYLE [get_bd_cells %s]]" % ENG_CELL)
+        a("if {$_cb ne \"%s\"} {" % ENG_CB_STYLE)
+        a("    error \"FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \\\"$_cb\\\", not %s\""
+          % ENG_CB_STYLE)
+        a("}")
+        a("puts \"FK33_CB_STYLE $_cb\"")
     a("")
     a("# WHICH CLOCK OWNS WHICH INTERFACE.  A module-reference cell with ONE clock")
     a("# port gets this for free -- which is why rtl/hbm_tg_ip.vhd never needed it")
