@@ -125,3 +125,60 @@ and a lever that was never applied looks exactly like a lever that did not work.
 - **Values on subsystem A's card binding.** `ga_desc` still has no behavioural
   coverage at all, and the `x_exp` divergence remains open. A bitstream does
   not change either.
+
+---
+
+## MEASURED, same day: lever C fits the design, at 99.67%
+
+`FK33_CB_STYLE=distributed`, full `FK33_CARD=1` build, synthesis complete:
+
+```
+| CLB LUTs*                  | 438219 |  0 |  0 | 439680 | 99.67 |
+|   LUT as Logic             | 377833 |  0 |  0 | 439680 | 85.93 |
+|   LUT as Memory            |  60386 |  0 |  0 | 205440 | 29.39 |
+| CLB Registers              | 507624 |  0 |  0 | 879360 | 57.73 |
+| F7 Muxes                   |  56174 |  0 |  0 | 219840 | 25.55 |
+| F8 Muxes                   |  20488 |  0 |  0 | 109920 | 18.64 |
+Starting Placer Task
+```
+
+**Under the limit by 1,461 LUT**, and `place_design` now runs where it
+previously refused to start.
+
+### The 264-commit-old figures held, and the STRUCTURAL ones held EXACTLY
+
+TRACK LEVERC48's numbers were deliberately NOT quoted as a prediction here --
+`docs/WORKLOG.md` flagged them as stale and three of A's files had changed. The
+lever was made settable in order to MEASURE it. Having measured it, the
+comparison is worth recording:
+
+| quantity | LEVERC48, 2026-08-30 | measured 2026-09-16 | error |
+|---|---|---|---|
+| CLB LUT | -42,633 | **-41,700** | 2.2% |
+| CLB FF | +13,195 | **+13,204** | 9 |
+| MUXF7 | -24,583 | **-24,576** | 7 |
+| MUXF8 | -12,288 | **-12,288** | **0** |
+| LUTRAM | +12,288 | **+12,288** | **0** |
+
+This is `CLAUDE.md`'s own distinction confirmed on a fresh case: **a quantity
+that is structural is a constant, and a quantity that scatters is a mean.**
+LUTRAM and MUXF8 are exactly `12,288` -- `ROWS_IF * 256` at the card shape --
+and came back to the unit across 264 commits. FF and MUXF7 moved by single
+digits. Only the aggregate LUT total, which absorbs every downstream
+optimisation, scattered, and it scattered by 2.2%.
+
+**This does NOT retroactively justify quoting the stale figure.** The reason
+to measure was that nothing in the number itself said which of its components
+were structural and which were not; that is visible only afterwards. Had A's
+codebook path changed, the same table would have shown it.
+
+### The margin is thin and placement is not yet a result
+
+**1,461 LUT of 439,680 is 0.33%.** Vivado commonly struggles to place above
+roughly 90% LUT, so `Starting Placer Task` is not the same as a placed design,
+and congestion is the live risk. Per this project's own record, nothing before
+`route_design` orders two runs correctly on this part -- a `phys_opt` WNS has
+over-promised by 0.4 to 0.6 ns here, twice, with enough margin to invert a
+verdict.
+
+**Open:** whether it places, whether it routes, and what the routed WNS is.
