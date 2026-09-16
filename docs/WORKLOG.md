@@ -11,6 +11,83 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-15: THE CARD'S WEIGHT MASTERS HAD NO DRIVER, AND TWO THINGS THE SEAM BENCH MUST SETTLE FIRST
+
+**LANDED, teeth-tested.** `fk33_llama_top`'s six weight-master OUTPUT ports
+(`m_arvalid`, `m_araddr`, `m_arlen`, `m_arsize`, `m_arburst`, `m_rready`) had
+**no driver at all** in the card configuration (`A_BEHAV` false, `A_DESC`
+true). `ga_real` drives them, `ga_tie` ties them off, and their guards are
+`if not A_BEHAV and not A_DESC` and `if A_BEHAV` -- so the card matched
+NEITHER. Fixed in `tools/gen_cardtop.py` as `ga_tie : if A_BEHAV or A_DESC`.
+Full write-up:
+`docs/debugging/2026-09-15_card-top-weight-masters-undriven.md`.
+
+New gate row `sim:tb_fk33_cardtop_adesc`, which is **the first thing in this
+project ever to elaborate the `A_DESC` arm**. MEASURED, both directions:
+against the pre-fix guard `checks=13 bad=6` (exactly the six ports), against
+the fix `checks=13 bad=0`. The seven `a_*` checks are a POSITIVE CONTROL and
+pass in BOTH runs, which is what makes the six failures attributable to the
+tie-off rather than to a generate that never elaborated.
+
+**It does NOT close the coverage gap of `9b4477a`.** It checks that ports have
+DRIVERS, not that the binding computes anything. That remains open.
+
+#### AND THE SEAM BENCH IS BIGGER THAN "FLIP THE GENERIC" -- TWO BLOCKERS FOUND BY READING
+
+**(a) The bench has no engine on the far side of the `a_*` ports.**
+`sim/tb_fk33_cardtop_ident.vhd` never connects one: `grep -cE
+"\ba_(awaddr|wdata|bvalid|y_we|y_data|job_done|x_we)\b"` returns **0** and its
+port map ends at `bst_bresp`. With `A_DESC => true`, `a_bvalid` is stuck low so
+`a_desc_adapter` never completes a descriptor write and `ad_done` never
+asserts; `a_y_we` is stuck low so no y beat arrives. The arm HANGS; it does not
+run. **A behavioural stub is ruled out by the bench's own header** -- *"the
+true arm drives the REAL `matvec_int4_desc_axi` and not a behavioural model of
+it"*, on the m7-mutant round-trip argument. So the bench must instantiate the
+real engine and build a descriptor arena reproducing `ga_real`'s S_EXP
+arithmetic exactly (`n_rows`, `n_cols`, `out_shift`, `w_exp`, `out_mode`,
+`w_base[p] = A_MEM_BASE + j_step*A_JOB_STRIDE + p*A_SUB_BYTES`, `s_base`,
+`w_beats = tiles*nb`, `s_beats = (tiles*nb*A_ROWS_IF*2+15)/16`).
+
+**(b) OPEN, AND IT MAY BREAK THE IDENTITY CLAIM OUTRIGHT: the two arms do not
+agree on where `x_exp` comes from.** `ga_real` reads it LIVE from the lock
+(`r_xexp <= resize(exp_rd_data, 32)`, S_EXP), which its own comment calls *"the
+producing job's captured exponent ... part of the locked object"*. The card's
+engine takes it from the DESCRIPTOR: `hw/fk33/rtl/fk33_engine.vhd:1309` sets
+`USE_XEXP_PORT => false` and `:1353` ties `x_exp_in => x_exp_zero`. And
+`fk33_llama_top` has **no `a_x_exp` port**, so `ga_desc` has no way to send a
+live value even if the engine would take one. Meanwhile
+`tools/gen_layer_program.py` takes `x_exp` as **one program-level argument**
+(`a.x_exp`, required at `:1175`), i.e. a single static value stamped into every
+descriptor.
+
+`matvec_int4_desc_axi`'s own header already states the hazard: *"the activation
+vector's block exponent is a per-token value produced by the previous stage, so
+the descriptor's copy is stale by construction"*, and `USE_XEXP_PORT` exists
+precisely to fix it. **The card does not use it.**
+
+**AND THE LIVE VALUE IS EXPLICITLY PER-TOKEN**, which makes the static copy
+more suspicious rather than less. `server/fk33_seam.h:265-276` calls `TBL_LEN`
+and `X_EXP` *"the two things subsystem D actually needs from a host every
+token"*, and maps `X_EXP` to the top's `host_x_exp` port
+(`rtl/fk33_llama_top.vhd:765`, consumed at `:1714`). So the live path is
+host -> `host_x_exp` -> the exponent lock -> `ga_real`'s `exp_rd_data`, updated
+every token; the descriptor path is a value frozen at program-generation time.
+
+**NOT YET DETERMINED, and do not write this up as a defect until it is:**
+whether the shipping flow keeps the descriptor's `x_exp` current by other means
+(the host rewriting descriptors per token), or whether `x_exp` is intended to be
+fixed for a program. If neither holds, the two arms cannot compute identically
+and the bench's landmark rule -- *"THE LANDMARKS ARE NOT RE-DERIVED FOR THE
+true ARM AND MUST NOT BE"* -- is unsatisfiable as written. **Settle this BEFORE
+building the arena**, because the arena's `x_exp` field is the thing in
+question and building it first would bake the assumption in.
+
+#### STILL OPEN, unchanged
+The `8-3391` y stores: `ga_desc.ap.yb` (the one the CARD builds),
+`ga_real.ap.yb` (`rtl/llama_top.vhd:3543`) and `gb_real.bp.yb` (`:4477`), all
+12,288-element process variables. `gb_real.bp.zb` was fixed in `587d9b5`.
+
+
 ### 2026-09-12: THE A AUDIT -- A MEASURED 42,633-LUT LEVER SITTING UNUSED, AND A CHECK THE CARD QUALIFIES FOR
 
 Completing the per-subsystem generic audit (B, C and D done; A was the gap).

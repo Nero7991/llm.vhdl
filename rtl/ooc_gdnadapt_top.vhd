@@ -764,7 +764,36 @@ begin
       type st_t is (S_IDLE, S_QRD, S_BRD, S_ARD, S_ZRD, S_CAPW, S_CAPR,
                     S_GO, S_ARM, S_RUN, S_DRAIN, S_DONE);
       variable st : st_t := S_IDLE;
-      variable zb : buf_t(0 to A_MAXROWS-1);
+      -- `zb` IS READ DM ELEMENTS AT A TIME, SO IT IS STORED DM-WIDE.
+      --
+      -- It used to be `buf_t(0 to A_MAXROWS-1)` -- 12,288 x 16 = 196,608 bits
+      -- of PROCESS VARIABLE -- read below as
+      --     for j in 0 to DM-1 loop ... zb(h*DM + j) ... end loop;
+      -- i.e. a DM-way PARALLEL COMBINATIONAL read at an arbitrary base.  That
+      -- is not a memory pattern under any `ram_style`, and MEASURED 2026-09-14
+      -- it is what stopped the card top elaborating at all:
+      --   ERROR: [Synth 8-3391] Unable to infer a block/distributed RAM for
+      --   'gb_real.bp.zb_reg' ... number of bits (196608) is too large
+      -- `synth_design -rtl -top fk33_llama_top` never finished RTL Elaboration
+      -- for 60 h; with A_MAXROWS forced to 512 it finished in 4 minutes with
+      -- zero errors.  See
+      -- docs/debugging/2026-09-14_the-wall-is-a-3d-ram-vivado-warned-about.md.
+      --
+      -- THE REWRITE IS AN IDENTITY, not an approximation:
+      --   * S_ZRD writes indices 0 .. VH*DM-1 STRICTLY SEQUENTIALLY (`k` rises
+      --     by one per cycle and the write is `zb(k-2)`), so staging DM
+      --     elements and committing one word cannot reorder anything.
+      --   * the ONLY read is `zb(h*DM + j)` for all j in 0..DM-1, which is
+      --     exactly word `h`.
+      --   * every write completes in S_ZRD before the z handshake, which runs
+      --     only in S_GO/S_ARM/S_RUN, so no word is read before it is whole.
+      -- A_MAXROWS was also 3x oversized here: the code's own bound is
+      -- `k < VH*DM` = 4,096, against A_MAXROWS = 12,288.
+      type zw_t is array (0 to VH-1) of std_logic_vector(DM*16-1 downto 0);
+      variable zbw   : zw_t;
+      variable zstg  : std_logic_vector(DM*16-1 downto 0) := (others => '0');
+      variable zlane : natural range 0 to DM-1 := 0;
+      variable zword : natural range 0 to VH-1 := 0;
       variable yb : buf_t(0 to A_MAXROWS-1);
       variable j_dst, j_rows, j_lay : natural := 0;
       variable k, seg, h, ycnt : natural := 0;
@@ -913,12 +942,38 @@ begin
             -- the z handshake never has to wait on a region read while the
             -- block is running.
             when S_ZRD =>
+              -- PATH-INDEPENDENT CURSOR RESET, and the reason it is written
+              -- this way.  There are TWO transitions into S_ZRD -- the
+              -- `not B_SRC_REAL` bypass and the alpha path after S_ARD -- and
+              -- the first version of this fix reset the cursors on only one of
+              -- them.  MEASURED: `tb_llama_top` went from PASS 8 to FAIL 6 with
+              -- `R_X(0)` off by 29, because the second sweep entered with a
+              -- saturated `zword` and every element landed in the last word.
+              -- Both paths set `k := 0` before entering, so keying the reset off
+              -- `k = 0` cannot be missed by a future third path.
+              if k = 0 then zlane := 0; zword := 0; end if;
               if k < VH*DM then
                 ur_en(U_B)   <= '1';
                 ur_reg(U_B)  <= R_Z;
                 ur_addr(U_B) <= k;
               end if;
-              if k >= 2 then zb(k-2) := el_rdata; end if;
+              -- Was `zb(k-2) := el_rdata`.  Same element, same order; the
+              -- word is committed when its last lane arrives.
+              if k >= 2 then
+                zstg((zlane+1)*16-1 downto zlane*16) :=
+                  std_logic_vector(el_rdata);
+                if zlane = DM-1 then
+                  zbw(zword) := zstg;
+                  zlane := 0;
+                  -- NO CLAMP.  `zword` is `natural range 0 to VH-1`, so an
+                  -- overrun is a loud range error in simulation.  The first
+                  -- version clamped here, which converted exactly that fault
+                  -- into silent corruption and cost a full bench cycle to find.
+                  if zword /= VH-1 then zword := zword + 1; end if;
+                else
+                  zlane := zlane + 1;
+                end if;
+              end if;
               if k = VH*DM+1 then
                 z_exp <= resize(exp_rd_data, 8);
                 k := 0;
@@ -1067,10 +1122,9 @@ begin
           -- The z handshake, one offer per value head, running alongside.
           if st = S_RUN or st = S_ARM or st = S_GO then
             if z_valid = '0' and h < VH then
-              for j in 0 to DM-1 loop
-                z_mant((j+1)*16-1 downto j*16) <=
-                  std_logic_vector(zb(h*DM + j));
-              end loop;
+              -- Was a DM-way parallel read `zb(h*DM + j)` for all j.  Word
+              -- `h` holds exactly those DM elements in the same bit order.
+              z_mant <= zbw(h);
               z_valid <= '1';
             elsif z_valid = '1' and z_ready = '1' then
               z_valid <= '0';

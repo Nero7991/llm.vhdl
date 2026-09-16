@@ -252,6 +252,8 @@ def generate_rtl(src_text):
     # safe from one end.
     t = sub_once(t, D12_PORT_OLD, D12_PORT_NEW, "D1/D2 card A ports")
     t = sub_once(t, D12_GA_OLD, D12_GA_NEW, "D1/D2 ga_desc branch")
+    t = sub_once(t, D12_TIE_OLD, D12_TIE_NEW,
+                 "D1/D2 weight-master tie-off")
     return BANNER + t
 
 
@@ -314,6 +316,35 @@ D12_PORT_NEW = """    err_e_coll    : out std_logic;   -- OP_E_COLL issued at NC
     a_job_err     : in  std_logic := '0'
   );
 end entity;"""
+
+D12_TIE_OLD = "  ga_tie : if A_BEHAV generate"
+
+D12_TIE_NEW = """  -- D1/D2.  `or A_DESC` ADDED BY tools/gen_cardtop.py, and it is a FIX rather
+  -- than a tidy-up.  In llama_top this reads `if A_BEHAV generate`, which is
+  -- correct THERE because that file has only two arms: behavioural, which has
+  -- no weight streamer and so ties these off, and real, which drives them from
+  -- `matvec_int4`.  Between them they cover every configuration.
+  --
+  -- The card adds a THIRD arm.  `ga_desc` reaches HBM through unit A's own 28
+  -- read masters, which live OUTSIDE this top, so it drives none of these --
+  -- and `ga_real` is guarded `if not A_BEHAV and not A_DESC`, so it is not
+  -- generated either.  The card configuration (A_BEHAV false, A_DESC true)
+  -- therefore matched NEITHER generate and left every one of these OUTPUT
+  -- ports with NO DRIVER AT ALL: 'U' in simulation, and an undriven port into
+  -- the smartconnect in synthesis, where an undriven `m_arvalid` is a weight
+  -- read request that may or may not be issued.
+  --
+  -- This is the `gnd_a` generate's exact twin.  `gnd_a` exists because "a VHDL
+  -- entity cannot have a conditional port clause", so the a_* outputs need a
+  -- driver in the arm that does not use them.  The identical argument applies
+  -- to the m_* outputs in the arm that does not use them, and it was missed
+  -- when the third arm was added.
+  --
+  -- FOUND BY READING THE GENERATE CONDITIONS, NOT BY ANY RUN, and it could not
+  -- have been found by a run: no bench sets A_DESC, which is precisely the
+  -- coverage gap recorded in WORKLOG 9b4477a.  The defect and the reason it
+  -- stayed invisible are the same fact.
+  ga_tie : if A_BEHAV or A_DESC generate"""
 
 D12_TB_GEN_OLD = "    B_STATE_AXI : boolean := false;"
 
