@@ -3662,6 +3662,58 @@ begin
     signal xw_we    : std_logic := '0';
     signal xw_addr  : std_logic_vector(15 downto 0) := (others => '0');
     signal xw_data  : std_logic_vector(15 downto 0) := (others => '0');
+
+    -- ==================================================================
+    -- THE y BUFFER, STORED ONE BEAT PER WORD.
+    --
+    -- ROOT CAUSE, MEASURED 2026-09-16.  This used to be
+    -- `variable yb : buf_t(0 to A_MAXROWS-1)` written inside
+    -- `for rr in 0 to A_ROWS_IF-1 loop` at a DYNAMIC index
+    -- `a := to_integer(unsigned(a_y_addr)) + rr`.  That is A_ROWS_IF
+    -- INDEPENDENT WRITE PORTS, and the port count -- not the size -- is what
+    -- stopped the card building:
+    --
+    --   A_ROWS_IF =  4 (default)  ->  4 ports, Vivado gives up FAST with
+    --                                 [Synth 8-3391], elaboration fails ~3.5 min
+    --   A_ROWS_IF = 48 (the card) -> 48 ports, elaboration NEVER RETURNS,
+    --                                 with no diagnostic of any kind
+    --
+    -- The size theory was refuted by its own control: `A_MAXROWS` forced from
+    -- 12,288 to 512, a 24x reduction, HANGS EXACTLY AS HARD.  Shrinking the
+    -- array does not reduce the number of write ports.  Note that 8-3391's
+    -- text blames the bit count and even suggests `dissolveMemorySizeLimit`;
+    -- taking that advice would have changed nothing.
+    --
+    -- WHY ONE WORD PER BEAT IS AN IDENTITY, from `rtl/matvec_core.vhd`'s
+    -- stated contract rather than from inspection:
+    --   * ":97  Result, ROWS_IF rows per beat, y_addr = BASE row of the tile"
+    --   * `rbase := <tile> * ROWS_IF` at :1065, :1106 and :1300, so `y_addr`
+    --     is ALWAYS a multiple of A_ROWS_IF and the beat index is exactly
+    --     `y_addr / A_ROWS_IF`.  No partial or overlapping beat exists.
+    --   * ":1308  if rbase + rr < n_rows then y_mask(rr) <= '1'", so a lane is
+    --     masked ONLY when its row is past `n_rows`, i.e. only in the final
+    --     tile.  S_DRAIN reads rows 0 .. j_rows-1 and therefore NEVER reads a
+    --     masked lane.  That is why the word below is written WHOLE, with the
+    --     mask deliberately not applied: a per-lane write enable would put
+    --     A_ROWS_IF enables back on the memory and undo the fix, and the lanes
+    --     it would protect are unreadable by construction.
+    --
+    -- A SIGNAL, NOT A VARIABLE, for the reason `zb` and B's `yb` record: a
+    -- variable reads back its own same-cycle write, which no block RAM
+    -- implements, so no `ram_style` can apply to one.  Every write here
+    -- happens on `a_y_we` during S_RUN and the only read is in S_DRAIN,
+    -- entered after `ad_done`, so writes are complete before the first read.
+    -- They overlap only when a beat arrives outside the run window, which
+    -- already sets `f_lost_a` and already reports -- that beat was lost
+    -- regardless, because `d_y_we` has no ready.
+    -- ==================================================================
+    constant A_YWORDS : positive := (A_MAXROWS + A_ROWS_IF - 1) / A_ROWS_IF;
+    type ybw_t is array (0 to A_YWORDS-1)
+      of std_logic_vector(A_ROWS_IF*MANT_W-1 downto 0);
+    signal ybw : ybw_t;
+    attribute ram_style : string;
+    attribute ram_style of ybw : signal is "block";
+
   begin
     rstn_s <= not rst;
 
@@ -3719,10 +3771,16 @@ begin
     ap : process(clk) is
       type st_t is (S_IDLE, S_XRD, S_GO, S_RUN, S_SDRAIN, S_DRAIN, S_DONE);
       variable st : st_t := S_IDLE;
-      variable yb : buf_t(0 to A_MAXROWS-1);
+      -- `yb` is gone; it is the signal `ybw` declared above this process.
       variable j_src, j_dst, j_off, j_rows, j_cols : natural := 0;
       variable k, r : natural := 0;
-      variable a    : natural;
+      -- The write-side beat index, and the read-side cursor pair.  `rword` and
+      -- `rlane` exist so S_DRAIN never divides: `r` rises by one and they
+      -- track it, exactly as `zword`/`zlane` do for `zb`.
+      variable w     : natural;
+      variable ywstg : std_logic_vector(A_ROWS_IF*MANT_W-1 downto 0);
+      variable rword : natural range 0 to A_YWORDS-1 := 0;
+      variable rlane : natural range 0 to A_ROWS_IF-1 := 0;
     begin
       if rising_edge(clk) then
         ur_en(U_A) <= '0';
@@ -3777,21 +3835,24 @@ begin
                    & "window.  d_y_we has no ready, so this beat is LOST."
                 severity error;
             end if;
-            for rr in 0 to A_ROWS_IF-1 loop
-              if a_y_mask(rr) = '1' then
-                a := to_integer(unsigned(a_y_addr)) + rr;
-                if j_dst < NREGION then
-                  if a < A_MAXROWS then
-                    yb(a) := signed(a_y_data(rr*64+MANT_W-1 downto rr*64));
-                  else
-                    f_lost_a <= '1';
-                    report "fk33_llama_top: unit A produced row "
-                         & integer'image(a) & " past the y buffer ("
-                         & integer'image(A_MAXROWS) & ")." severity error;
-                  end if;
-                end if;
+            -- ONE dynamic index, not A_ROWS_IF of them.  `a_y_addr` is the
+            -- tile's BASE row and is always a multiple of A_ROWS_IF, so the
+            -- beat index is an exact division.  See `ybw`'s block comment.
+            w := to_integer(unsigned(a_y_addr)) / A_ROWS_IF;
+            if j_dst < NREGION then
+              if w < A_YWORDS then
+                for rr in 0 to A_ROWS_IF-1 loop
+                  ywstg((rr+1)*MANT_W-1 downto rr*MANT_W)
+                    := a_y_data(rr*64+MANT_W-1 downto rr*64);
+                end loop;
+                ybw(w) <= ywstg;
+              else
+                f_lost_a <= '1';
+                report "fk33_llama_top: unit A produced tile "
+                     & integer'image(w) & " past the y buffer ("
+                     & integer'image(A_YWORDS) & " words)." severity error;
               end if;
-            end loop;
+            end if;
           end if;
 
           case st is
@@ -3851,10 +3912,30 @@ begin
               end if;
 
             when S_DRAIN =>
+              -- PATH-INDEPENDENT RESET.  S_DRAIN is entered from TWO places
+              -- (S_RUN directly, and S_SDRAIN on a FLG_TO_SMP job), and
+              -- resetting the cursors at the entry sites instead of here is
+              -- the exact bug the first `zb` rewrite shipped: one path reset
+              -- them and the other did not, which passed structurally and
+              -- computed wrong numbers.  `r = 0` is true on the first cycle
+              -- of S_DRAIN whichever way it was reached.
+              if r = 0 then rword := 0; rlane := 0; end if;
               uw_en(U_A)   <= '1';
               uw_reg(U_A)  <= j_dst;
               uw_addr(U_A) <= j_off + r;
-              uw_data(U_A) <= yb(r);
+              uw_data(U_A) <=
+                signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W));
+              -- NO CLAMP on `rword`.  It is a constrained `natural range`, so
+              -- an overrun is a loud range error in simulation rather than a
+              -- silently saturated read -- the second lesson from `zb`, where
+              -- a clamp the author added turned a detectable fault into wrong
+              -- numbers.
+              if rlane = A_ROWS_IF-1 then
+                rlane := 0;
+                if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+              else
+                rlane := rlane + 1;
+              end if;
               if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
 
             when S_DONE =>
