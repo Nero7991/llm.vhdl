@@ -563,3 +563,58 @@ the stale `CB_STYLE="distributed"` -42,633 LUT figure).
 IF fixing `mbank` moves the wall rather than removing it. Synthesis has never
 got past `mbank`, so nothing downstream of it has been exercised at all, and a
 shape census cannot tell you which of these Vivado will treat as a RAM.
+
+---
+
+## CORRECTION, 2026-09-16: THE TITLE OF THIS FILE IS WRONG. `8-3391` IS NOT THE WALL.
+
+Appended in place rather than by editing the above, per the house rule. Every
+measurement recorded above stands; the ATTRIBUTION built on them does not.
+
+**MEASURED 2026-09-16, `synth_design -rtl -mode out_of_context -top
+fk33_llama_top -part xcvu33p-fsvh2104-2L-e`, elaboration only, one Vivado on
+the workstation:**
+
+| arm | configuration | result |
+|---|---|---|
+| A | default generics (`A_DESC=false`) | **`Finished RTL Elaboration : cpu = 00:03:36 ; elapsed = 00:03:37`**, `errors=2`, including `[Synth 8-3391] ... 'ga_real.ap.yb_reg'` |
+| B | `A_DESC=true`, `A_ROWS_IF=48`, `A_JOB_STRIDE=262144`, **`A_MAXROWS` forced to 512** | **never finished in 25 min**, `errors=0`, log silent from 16 s in |
+
+**Two things follow, and both contradict this file's thesis.**
+
+1. **`8-3391` DOES NOT CAUSE THE STALL.** It is PRESENT in the arm that
+   finishes in under four minutes and ABSENT from every arm that hangs. The
+   stall emits no error at all. This file's title claims the wall is "a 3D RAM
+   Vivado warned about"; the warning and the wall are in different runs.
+2. **BUFFER SIZE IS NOT THE TRIGGER.** `A_MAXROWS` at 512 stalls exactly as
+   hard as at 12,288. The recorded "forced to 512, finished in 4 minutes"
+   control is REAL but was run at DEFAULT generics, where the design finishes
+   anyway -- so it never discriminated. It measured the arm that was not
+   broken.
+
+**HOW THE WRONG ATTRIBUTION SURVIVED.** The chain was: one genuine `8-3391`
+naming `gb_real.bp.zb_reg`; a genuine `A_MAXROWS` control; and a genuine
+before/after improvement at default generics. Every link was measured. What
+was never measured is the one that mattered -- **`fk33_card` has now produced
+about two hours of silence across three runs and has never emitted a single
+`8-3391`.** The message was carried across from a different configuration and
+treated as if it described this one. Same shape as the "not the buffers, so it
+must be `gdn_block`" error already recorded in `CLAUDE.md`: ruling something in
+by association rather than by a control that could have ruled it out.
+
+**WHAT REMAINS TRUE AND SHOULD NOT BE RE-LITIGATED.** `gb_real.bp.zb` and
+`gb_real.bp.yb` were real storage-class defects -- a process variable reads
+back its same-cycle write and no block RAM implements that -- and both are
+fixed (`587d9b5`, `2f4ab91`), the second teeth-tested by a read-index mutant
+that the `tb_llama_top` rows kill. They are good changes. **They are not the
+wall.**
+
+**OPEN, being bisected now:** the trigger is somewhere in the three coupled
+generics `A_DESC=true` / `A_ROWS_IF=48` / `A_JOB_STRIDE=262144`, which is the
+configuration `hw/fk33/rtl/fk33_card.vhd` builds. Arm C
+(`A_DESC=true` alone) is running.
+
+**MEASUREMENT TRAP, recorded because it nearly cost the verdict:** the arm B
+unit reported `Result=success` to `systemctl show` after being killed by
+`RuntimeMaxSec`. The run had written no `RTLPROBE_DONE`. Gate on the sentinel
+the work itself writes; a unit result is a fact about systemd.
