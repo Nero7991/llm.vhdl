@@ -11,6 +11,80 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-16: THE ELABORATION WALL IS DOWN. THE CARD SYNTHESISES. A FULL BITSTREAM BUILD IS RUNNING.
+
+**The wall was never the memory SIZE. It was the WRITE PORT COUNT.**
+
+`ga_desc.ap` and `ga_real.ap` stored y as `variable yb : buf_t(0 to
+A_MAXROWS-1)` written inside `for rr in 0 to A_ROWS_IF-1 loop` at the DYNAMIC
+index `to_integer(unsigned(y_addr)) + rr`. That is `A_ROWS_IF` INDEPENDENT
+WRITE PORTS. At 4 (default) Vivado gives up fast with `[Synth 8-3391]`; at 48
+(the card) elaboration never returns and emits nothing at all.
+
+**Killed by its own control:** `A_MAXROWS` forced 12,288 -> 512, a 24x
+reduction, HANGS EXACTLY AS HARD. Every earlier `A_MAXROWS` control had been
+run at DEFAULT generics where nothing is broken, so it could not have failed.
+**A control applied to the healthy arm is decoration.** And `8-3391`'s text
+blames the bit count and suggests `dissolveMemorySizeLimit` -- a remedy that
+would have changed nothing. Full bisect in
+`docs/debugging/2026-09-14_the-wall-is-a-3d-ram-vivado-warned-about.md`.
+
+**LANDED TODAY**
+
+| commit | what |
+|---|---|
+| `dcbea17` | `ga_tie` fix: the card's six weight-master outputs had NO DRIVER in the only shipping configuration. New row `sim:tb_fk33_cardtop_adesc`, the first thing ever to elaborate the `A_DESC` arm. Teeth: 6 bad pre-fix, 0 post-fix, 7 `a_*` controls pass in BOTH. |
+| `2f4ab91` | `gb_real.bp.yb` -> block RAM. Teeth: read-index mutant fails `tb_llama_top_real`. |
+| `6a2d282` | `ga_desc.ap.yb` -> one beat per word. **Card elaborates: 3:54, 0 errors**, from a >25 min silent hang. |
+| `f4e69bf` | `ga_real.ap.yb`, same defect at 4 ports. Teeth: lane-reversal mutant fails `tb_llama_top_real` at `R_X(0) = -16111`. |
+| `4b1d58f` | DSP census over-counted **9x**. See below. |
+| `a913ca8` `03ca377` `85c7898` `63fe87f` | corrections and root cause, appended in place. |
+
+All three 196,608-bit process variables are gone (`zb` was `587d9b5`).
+
+**MILESTONES MEASURED TODAY**
+
+- **`fk33_card` full synthesis: 745 s, 0 errors, 61 MB DCP.** B, C and D are a
+  netlist for the first time.
+- **`--bd-only` with `FK33_CARD=1`: `FK33_BD_VALIDATE OK`,
+  `FK33_BD_ONLY_DONE`**, 0 errors, `FK33_ENG portcheck bad=0`, zero
+  address-overlap warnings, all seven AXI interfaces inferred. That is the
+  class no bench can reach.
+- **A full `FK33_CARD=1` bitstream build is RUNNING** (launched 14:18, cap
+  `MemoryHigh=18G`, 24 GB free, `llama-server` left up).
+
+**CORRECTED CARD AREA (B+C+D; A is a separate cell), xcvu33p:**
+
+| resource | used | available | % |
+|---|---|---|---|
+| CLB LUT | 292,383 | 439,680 | 66.5% |
+| DSP48E2 | **538** | 2,880 | 18.7% |
+| Block RAM | 197 | 672 | 29.3% |
+| URAM | 32 | 320 | 10.0% |
+
+**THE DSP FIGURE WAS FIRST REPORTED AS 4,842, i.e. 168% AND "DOES NOT FIT".**
+`REF_NAME =~ DSP*` matches each `DSP48E2` PLUS its eight internal primitives:
+538 * 9 = 4842. A plausible-looking over-count on the one resource most likely
+to be exhausted, and it would have been quoted as a blocker against B and C.
+Cross-checked against the log's own `Report Cell Usage` (the LUT sum matches
+to the digit). Same class as the recorded `PRIMITIVE_GROUP == DSP` trap, which
+matched NOTHING -- **a census filter can be wrong in both directions.**
+
+**WHAT IS STILL NOT VERIFIED, and a bitstream will not change it**
+
+- **`ga_desc` has NO value coverage.** The identity bench connects none of the
+  `a_*` ports, so `6a2d282` is verified for elaboration and structure only.
+  `ga_real`'s twin fix IS teeth-tested, which is the difference.
+- **The `x_exp` divergence is OPEN** and would break the arm-identity claim if
+  real: `ga_real` reads it live from the lock, the card engine takes it from
+  the descriptor (`fk33_engine.vhd:1309` `USE_XEXP_PORT => false`), there is no
+  `a_x_exp` port, and `gen_layer_program.py` bakes ONE static value per program
+  while `fk33_seam.h` calls `X_EXP` a per-token host register.
+- **`BASELINE_PASS` deliberately NOT raised** for `sim:tb_fk33_cardtop_adesc`:
+  the floor is a clean-checkout number and this tree carries 23 working-tree-only
+  rows.
+
+
 ### 2026-09-15: THE CARD'S WEIGHT MASTERS HAD NO DRIVER, AND TWO THINGS THE SEAM BENCH MUST SETTLE FIRST
 
 **LANDED, teeth-tested.** `fk33_llama_top`'s six weight-master OUTPUT ports
