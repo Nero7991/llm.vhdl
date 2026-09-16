@@ -4581,6 +4581,50 @@ begin
       x := x xor shift_right(x, 13);
       return to_signed(to_integer(x(11 downto 0)) - 2048, 16);
     end function;
+
+    -- ------------------------------------------------------------------
+    -- B'S y BUFFER, AS A BLOCK RAM RATHER THAN A PROCESS VARIABLE.
+    --
+    -- This is the SECOND of the two 196,608-bit process variables that stop
+    -- `synth_design` finishing RTL Elaboration on the card top.  The first
+    -- was `zb`, fixed above; MEASURED 2026-09-15, with `zb` already fixed a
+    -- `fk33_card` OOC run still went silent 16 s in and had written nothing
+    -- more 44 minutes later, at 9.49 GB and climbing.  Vivado's message for
+    -- both is `[Synth 8-3391] ... Failed to dissolve the memory into bits
+    -- because the number of bits (196608) is too large`.
+    --
+    -- WHY A SIGNAL AND NOT A WIDER VARIABLE.  `zb` had to become word-wide
+    -- because it is READ DM elements at a time; `yb` is read ONE element per
+    -- cycle, so it needs no packing at all.  What it needs is to stop being a
+    -- process variable: a variable reads back the same-cycle written value,
+    -- which no block RAM implements, so no `ram_style` can apply to one.
+    -- `rtl/region_mem.vhd` is this file's working precedent for the shape.
+    --
+    -- ONE WRITE SITE AND ONE READ SITE, which is what makes it inferrable.
+    -- region_mem records the boundary: at THREE read sites Vivado reports
+    -- `[Synth 8-6849] Infeasible attribute ram_style = "block"` and falls
+    -- back to LUTRAM; at two it recognises the template.  Keep it at one of
+    -- each -- a second reader added later silently costs the BRAM.
+    --
+    -- SIZED VH*DM, NOT A_MAXROWS.  The code's own bound is the assert in
+    -- S_RUN, `ycnt = VH*DM` = 4,096; A_MAXROWS is 12,288 and was 3x
+    -- oversized here exactly as it was for `zb`.
+    --
+    -- THE ONE BEHAVIOURAL DIVERGENCE, stated rather than buried.  A variable
+    -- write is visible to a read in the SAME cycle and a signal write is not.
+    -- Here every write happens on `y_valid` and the only read is in S_DRAIN,
+    -- which is entered after `j_busy` falls, so the write stream is complete
+    -- before the first read and the two cannot overlap in normal operation.
+    -- They can overlap ONLY when a y beat arrives outside the run window --
+    -- which already sets `f_lost_b` and already reports an error, because
+    -- `y_valid` has no ready and that beat was lost regardless.  So the
+    -- divergence is confined to a path this file already treats as a fault,
+    -- and it is not reachable by a correct producer.
+    -- ------------------------------------------------------------------
+    signal ybs : buf_t(0 to VH*DM-1);
+    attribute ram_style : string;
+    attribute ram_style of ybs : signal is "block";
+
   begin
     u_ready(U_B) <= rdy;
     u_done(U_B)  <= dn;
@@ -4948,7 +4992,7 @@ begin
       variable zstg  : std_logic_vector(DM*16-1 downto 0) := (others => '0');
       variable zlane : natural range 0 to DM-1 := 0;
       variable zword : natural range 0 to VH-1 := 0;
-      variable yb : buf_t(0 to A_MAXROWS-1);
+      -- `yb` is gone; it is the signal `ybs` declared above this process.
       variable j_dst, j_rows, j_lay : natural := 0;
       variable k, seg, h, ycnt : natural := 0;
       variable zi : natural := 0;
@@ -5024,7 +5068,7 @@ begin
                    & "window.  y_valid has no ready, so this element is LOST."
                 severity error;
             end if;
-            if ycnt < A_MAXROWS then yb(ycnt) := y_mant; end if;
+            if ycnt < VH*DM then ybs(ycnt) <= y_mant; end if;
             ycnt := ycnt + 1;
           end if;
 
@@ -5261,7 +5305,7 @@ begin
               uw_en(U_B)   <= '1';
               uw_reg(U_B)  <= j_dst;
               uw_addr(U_B) <= k;
-              if k < A_MAXROWS then uw_data(U_B) <= yb(k); end if;
+              if k < VH*DM then uw_data(U_B) <= ybs(k); end if;
               if k = j_rows-1 then st := S_DONE; else k := k + 1; end if;
 
             when S_DONE =>
