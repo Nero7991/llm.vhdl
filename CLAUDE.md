@@ -165,8 +165,29 @@ The rules that follow from this:
 
 ### AND THERE IS A SECOND MACHINE. USE IT.
 
-**`labuser@192.0.2.200` (`cachyos-bc250`) exists for exactly this and was
-never touched.** On the night the workstation died it was **up 3 days, load
+**`labuser@192.0.2.133` (`cachyos-bc250`) exists for exactly this and was
+never touched.**
+
+**CORRECTION 2026-09-15: THE ADDRESS ABOVE USED TO READ `.200`, AND IT IS
+DHCP, SO ANY NUMBER WRITTEN HERE CAN GO STALE.** MEASURED: `ssh ... .200`
+returned `No route to host`, and this dispatcher read that as "the BC-250 is
+down, its sweep results are lost" and said so. The box was UP the whole time.
+The router's lease says `79834 40:a5:ef:5f:0a:79 192.0.2.133 cachyos-bc250`.
+**A failed connection to a hardcoded address measures the address, not the
+host**, and it is the same shape as every other trap in this file: a fact
+about the harness reported as a fact about the job. `~/GitHub/DevOps/CLAUDE.md`
+already said `.133` and already said *"Find it from the router, never by
+guessing"*; the guess was made anyway because the number was sitting here.
+**Resolve it before every dispatch, and do not trust this line either:**
+
+```bash
+ssh labuser@192.0.2.1 "grep -i cachyos /var/lib/misc/dnsmasq.leases"
+```
+
+`~/GitHub/DevOps/bc250-sync-llama-vhdl.sh` carried the same stale `.200` as its
+`HOST` default and was fixed the same day. **A lease entry is not proof the box
+is up** (the Dell note records exactly that failure), but the absence of a
+route to a WRONG address is proof of nothing at all. On the night the workstation died it was **up 3 days, load
 0.07, 13 of 14 GB free**, with Vivado 2023.2 at
 `/tools/Xilinx/2023.2/Vivado/2023.2` and a node-locked licence at
 `~/.Xilinx/Xilinx-4.lic` covering VU33P. Not one track that night mentioned it.
