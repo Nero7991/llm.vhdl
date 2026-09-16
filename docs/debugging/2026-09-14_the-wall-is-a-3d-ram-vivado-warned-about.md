@@ -727,3 +727,56 @@ behaviour on a final partial tile.
 can be verified for ELABORATION and AREA and not for numbers. `ga_real.ap.yb`
 (`rtl/llama_top.vhd:3543`) has the identical 4-port version of this defect and
 still fails arm A.
+
+---
+
+## CONFIRMED, 2026-09-16: THE CARD TOP ELABORATES
+
+The fix predicted by the section above was applied to `ga_desc.ap` and the
+prediction held.
+
+```
+RTLPROBE_DONE armE 280
+Finished RTL Elaboration : Time (s): cpu = 00:03:54 ; elapsed = 00:03:56
+errors=0
+Finished Handling Custom Attributes : ...
+Finished RTL Optimization Phase 1 : ...
+```
+
+Arm E is the exact card configuration -- `A_DESC=true`, `A_ROWS_IF=48`,
+`A_JOB_STRIDE=262144`, `A_MAXROWS` at its real value. **From a >25-minute
+silent hang to 3:54 with zero errors**, and it continues past elaboration.
+Committed as `6a2d282`.
+
+**THE FULL ARM TABLE, for anyone re-deriving this:**
+
+| arm | `A_DESC` | `A_ROWS_IF` | `A_JOB_STRIDE` | `A_MAXROWS` | before the fix | after |
+|---|---|---|---|---|---|---|
+| A | false | 4 | 0x8000 | real | 3:37, `8-3391` on `ga_real.ap.yb_reg` | unchanged (still open) |
+| C | true | 4 | 0x8000 | real | 3:29, `8-3391` on `ga_desc.ap.yb_reg` | fixed here |
+| F | true | 4 | 0x40000 | real | 3:30, same `8-3391` | fixed here |
+| D | true | 48 | 0x8000 | real | refused in 3 s by `CHK_A_BLOCK` | unchanged, correct |
+| B | true | 48 | 0x40000 | **512** | HANGS >25 min, 0 errors | -- |
+| E | true | 48 | 0x40000 | real | (was the hang) | **3:54, 0 errors** |
+
+**WHAT THE WHOLE EPISODE COST AND WHY.** Three sessions treated this as a
+memory-SIZE problem because the tool said so and because one real `8-3391`
+named one real oversized array. The measurement that would have settled it --
+force `A_MAXROWS` small *in the configuration that hangs* -- was never run;
+the version that WAS run used default generics, where nothing is broken.
+**A control that cannot fail is decoration**, and this one could not fail
+because it was applied to the healthy arm.
+
+The distinguishing question, had anyone asked it, was cheap: *how many write
+ports does this memory have, and does that number change with `A_ROWS_IF`?*
+It is answerable by reading one loop.
+
+**WHAT IS STILL NOT VERIFIED.** `ga_desc` has no behavioural coverage at all
+(WORKLOG `9b4477a`). Everything above is about ELABORATION and STRUCTURE.
+Nothing here says `ga_desc` computes the right numbers, and the identity claim
+against `ga_real` remains untested -- as does the `x_exp` divergence recorded
+in the WORKLOG, which would break that identity if it is real.
+
+**STILL OPEN:** `ga_real.ap.yb` (`rtl/llama_top.vhd:3543`), the same defect at
+4 ports, still fails arm A. It HAS bench coverage via the `tb_llama_top` rows,
+so unlike `ga_desc` it can be teeth-tested.
