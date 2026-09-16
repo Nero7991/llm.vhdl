@@ -78,6 +78,21 @@ The rules that follow from this:
   What does NOT change: the peak is a property of the JOB, one observation is
   not the peak, and the thing that made running it safe was the
   `systemd-run -p MemoryHigh=26G` cap, not the sample.
+
+  **AND THE 10.66 GB FIGURE IS THE *ENGINE-ONLY* BUILD. THE CARD BUILD IS
+  BIGGER.** MEASURED 2026-09-16: the first `FK33_CARD=1` build -- the one that
+  adds subsystems B, C and D via `hw/fk33/rtl/fk33_card.vhd` -- reached
+  `memory.peak` **18.00 GB within 28 minutes, still inside SYNTHESIS**, before
+  place-and-route began. That figure is exactly its `MemoryHigh`, so per the
+  rule below it is the CAP and not the appetite; the true peak is unknown and
+  is at least 18 GB. Swap went from 2 GB to 15 GB in the same period.
+  **`gen_pcieep.py:958` says outright that the card cell is gated so "the
+  engine-only build that has produced bitstreams is not disturbed", so the two
+  are different jobs and their budgets are not interchangeable.** This
+  dispatcher quoted 10.66 GB for the card build while calling the budget
+  "stated explicitly", which is the same cross-configuration borrowing that
+  cost three sessions on the elaboration wall. **Budget a `FK33_CARD=1` build
+  at 18 GB or more, and never at the eng-only number.**
 - **A composed `route_design` left `free physical = 233 MB` while ALONE on the
   box** (MEASURED 2026-08-30, TRACK TIMING). Six of those were running
   concurrently when the box hung. **A tool that leaves 233 MB when it is the
