@@ -237,3 +237,71 @@ removed clock-enable costs nothing functionally.
 - Which block-design cell owns the packing pressure. Being measured.
 - Whether control-set reduction alone closes 494 CLBs.
 - Timing, still entirely unknown -- the placer has never completed.
+
+---
+
+## The census, read BEFORE choosing a second lever
+
+`report_utilization -hierarchical` and `report_control_sets -verbose` on the
+existing post-synthesis checkpoint. Two minutes, no re-synthesis.
+
+### Where the LUTs are
+
+| cell | Total LUT | Logic LUT | LUTRAM | FF |
+|---|---|---|---|---|
+| `card` (B, C, D) | **288,877** (65.9%) | 263,166 | 25,366 | 357,311 |
+| `eng` (A) | **90,874** (20.7%) | 73,348 | 16,728 | 76,923 |
+| `xdma` | 16,494 | 14,617 | 1,864 | 20,402 |
+| `fk33_seam_0` | 11,083 | 1,615 | 9,468 | 888 |
+| `pcie2axil` | 10,783 | 8,767 | 1,768 | 12,537 |
+| `pcie2hbm` | 9,534 | 7,141 | 2,268 | 15,024 |
+| **top** | **438,219** | 377,833 | 58,794 | 507,624 |
+
+The card cell is two-thirds of the design. Infrastructure (xdma, the two PCIe
+bridges, the seam and the aux GPIOs) is about 48,000 LUT and is not a lever --
+it is the host interface.
+
+### Control sets, and why they are NOT the answer here
+
+```
+Total control sets                                       | 21278
+   Minimum number of control sets                        | 21278
+   Addition due to synthesis replication                 |     0
+Unused register locations in slices containing registers |  6292
+Histogram: >= 0 to < 4 : 1801     >= 4 to < 6 : 586     >= 6 to < 8 : 322
+```
+
+21,278 control sets, none of them from replication, and 1,801 with fanout below
+4. Vivado's own footnote points at `opt_design -control_set_merge`, and it is
+genuinely attractive because it changes **no RTL and no arithmetic**.
+
+**But the arithmetic says it cannot be sufficient.** 438,219 LUTs at 8 per CLB
+require **54,777 of the device's 54,960 CLBs for the LUTs ALONE** -- 183 CLBs
+of slack, 0.33%. Control-set merging improves FF packing density; **the full
+dimension is LUTs.** Merging control sets in a design whose LUT count already
+consumes 99.67% of the CLB array cannot recover 494 CLBs, because those CLBs
+are not being wasted on FFs, they are being spent on LUTs.
+
+**This is worth stating because it is exactly the lever a plausible-sounding
+argument would have reached for**: the placer's message names control sets, the
+report shows 1,801 bad ones, and the fix is free. All true, and still the wrong
+dimension. **The message names what CAN be reduced, not what IS binding.**
+
+### What follows
+
+The card cell is where any real saving has to come from, and the search is now
+aimed rather than hopeful. A depth-6 census is running to attribute the
+card's 288,877 LUT across B, C and D.
+
+Recorded candidate, NOT yet re-measured on this tree: `KV_BLOCK`, measured
+2026-09-05 at **-18,022 LUT in `u_arr` and -14,383 net**, with the warning
+attached that an exact relationship for one resource (DSP) did not license
+scaling a different resource (LUT) by the same factor. 14,383 LUT is about
+1,798 CLBs against a 494 CLB shortfall, so it would clear it with margin --
+IF it still holds, and if the behavioural cost is acceptable.
+
+### Do NOT retry
+
+- **Control-set merging as the fix for this failure.** Reason above. It may
+  still be worth enabling as a cheap density gain ALONGSIDE a LUT reduction,
+  but on its own it addresses a dimension that is not full.
