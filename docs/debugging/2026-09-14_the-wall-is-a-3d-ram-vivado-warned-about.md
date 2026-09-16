@@ -653,3 +653,77 @@ sentence kept being wrong is that it was trying to describe two mechanisms.
 **OPEN:** arm D (`A_DESC=true` + `A_ROWS_IF=48`, default `A_JOB_STRIDE`) is
 running to decide which of the two remaining generics triggers the silent
 hang.
+
+---
+
+## ROOT CAUSE, 2026-09-16: ONE LINE, AND IT IS THE WRITE PORT COUNT, NOT THE SIZE
+
+Both defects above are the SAME CODE: the `yb` write loop in `ga_desc.ap`,
+`rtl/fk33_llama_top.vhd` around :3780.
+
+```vhdl
+for rr in 0 to A_ROWS_IF-1 loop
+  if a_y_mask(rr) = '1' then
+    a := to_integer(unsigned(a_y_addr)) + rr;      -- DYNAMIC index
+    if j_dst < NREGION then
+      if a < A_MAXROWS then
+        yb(a) := signed(a_y_data(rr*64+MANT_W-1 downto rr*64));
+```
+
+`A_ROWS_IF` independent conditional writes per cycle, each at a DYNAMIC
+address derived from a 16-bit port. That is an `A_ROWS_IF`-write-port memory.
+
+| `A_ROWS_IF` | write ports | what Vivado does |
+|---|---|---|
+| 4 (default) | 4 | gives up FAST: `[Synth 8-3391]`, elaboration fails in ~3.5 min |
+| 48 (the card) | 48 | **never returns**, no diagnostic of any kind |
+
+**THE FULL BISECT, MEASURED 2026-09-16, `synth_design -rtl -mode
+out_of_context -top fk33_llama_top -part xcvu33p-fsvh2104-2L-e`:**
+
+| arm | `A_DESC` | `A_ROWS_IF` | `A_JOB_STRIDE` | `A_MAXROWS` | result |
+|---|---|---|---|---|---|
+| A | false | 4 | 0x8000 | default | finishes 3:37, `8-3391` on `ga_real.ap.yb_reg` |
+| C | true | 4 | 0x8000 | default | finishes 3:29, `8-3391` on `ga_desc.ap.yb_reg` |
+| F | true | 4 | **0x40000** | default | finishes 3:30, same `8-3391` |
+| D | true | **48** | 0x8000 | default | REFUSED in 3 s, `8-11323 assigned value '-167936' out of range` |
+| B | true | **48** | 0x40000 | **512** | **HANGS >25 min, zero errors** |
+
+**WHY THE SIZE THEORY SURVIVED SO LONG, and it is the reusable part.** Arm B
+is the control that kills it: `A_MAXROWS` forced from 12,288 to 512 -- a 24x
+reduction, the entire content of "the array is too big" -- and it hangs
+exactly as hard. **Shrinking the array does not reduce the number of write
+ports.** Every earlier `A_MAXROWS` control was run at DEFAULT generics, where
+`A_ROWS_IF` is 4 and the design completes anyway, so it only ever measured the
+arm that was not broken. A control that cannot fail is decoration.
+
+**AND THE ERROR MESSAGE ACTIVELY MISLEADS.** `8-3391` says *"Failed to
+dissolve the memory into bits because the number of bits (196608) is too
+large"* and even offers `dissolveMemorySizeLimit 196608` as a remedy. It names
+SIZE, it suggests a SIZE workaround, and size is not the problem -- the
+identical code at 512 elements still hangs at 48 ports. Taking the tool's own
+suggested fix would have raised a limit and changed nothing. This is the
+recorded "Vivado's inference log lies in both directions" rule extended: the
+log can be wrong about WHY as well as about WHETHER.
+
+**ARM D IS A CONTROL PASSING, NOT A FAILURE.** `CHK_A_BLOCK :=
+A_JOB_STRIDE - (A_ROWS_IF + 1) * A_SUB_BYTES` at :1101 is this project's
+out-of-range-`natural` idiom, and it refused `48 / 0x8000` at `-167936` in
+three seconds. That guard is also why a naive one-at-a-time sweep of these
+three generics cannot work: two of them are COUPLED and the illegal pair is
+rejected before anything is learned.
+
+**THE FIX, and it addresses both defects at once:** store the y BEAT as ONE
+WIDE WORD indexed by beat -- `A_ROWS_IF * MANT_W` = 768 bits at the card shape
+-- so 48 dynamic scattered writes collapse into ONE write per cycle at a small
+index. That is the same element-array-to-word-array transformation `zb`
+already got (`587d9b5`), with the word being the beat. It needs
+`matvec_int4`'s `y_addr` alignment contract READ, not assumed: whether beat n
+always covers rows [n*A_ROWS_IF, n*A_ROWS_IF+A_ROWS_IF-1], plus the `y_mask`
+behaviour on a final partial tile.
+
+**NOT YET DONE, and stated because the fix is otherwise easy to over-claim:**
+`ga_desc` has NO value coverage of any kind (WORKLOG 9b4477a), so a fix there
+can be verified for ELABORATION and AREA and not for numbers. `ga_real.ap.yb`
+(`rtl/llama_top.vhd:3543`) has the identical 4-port version of this defect and
+still fails arm A.
