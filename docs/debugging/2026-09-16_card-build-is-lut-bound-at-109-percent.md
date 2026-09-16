@@ -182,3 +182,58 @@ over-promised by 0.4 to 0.6 ns here, twice, with enough margin to invert a
 verdict.
 
 **Open:** whether it places, whether it routes, and what the routed WNS is.
+
+---
+
+## AND IT STILL DOES NOT PLACE: short by 494 CLBs, which is NOT the same as short of LUTs
+
+```
+ERROR: [Place 30-487] The packing of instances into the device could not be
+obeyed.  There are a total of 54960 CLBs in the device, of which 35872 CLBs are
+available, however, the unplaced instances require 36366 CLBs.  Please analyze
+your design to determine if the number of LUTs, FFs, and/or control sets can be
+reduced.
+ERROR: [Place 30-99] Placer failed with error: 'Detail Placement failed'
+```
+
+Placement ran for ~46 minutes, reached `Phase 3.2 Commit Most Macros`, and
+failed. **36,366 CLBs required against 35,872 available: short by 494**, or
+1.4%.
+
+**THE UNIT CHANGED AND THAT IS THE POINT.** The previous failure was counted in
+LUTs (109.15% of 439,680) and this one is counted in **CLBs**, which is a
+PACKING result rather than a resource count. At 99.67% LUT the design passes
+the DRC and still cannot be packed, because a CLB holds 8 LUTs and 16 FFs only
+when the logic in it shares a control set -- and Vivado names
+**"LUTs, FFs, and/or control sets"** in that order for a reason. **0.33% LUT
+headroom was not headroom.**
+
+This is also why the `CLB = F7/4 + (LUT - 2*F7)/D` closed form already recorded
+in `CLAUDE.md` exists: CLB count is not `LUT/8`, and it cannot be predicted
+from a LUT total alone.
+
+### What is being done about it, and in which order
+
+**The census FIRST, not a second lever guess.** `CLAUDE.md` records the exact
+failure of doing this the other way round -- forming a theory and then using a
+census to check it, which produced a confidently wrong attribution that an
+already-written document had to retract. So: `report_utilization -hierarchical`
+and `report_control_sets -verbose` on the EXISTING post-synthesis checkpoint,
+which needs no re-synthesis because the netlist already holds the answer.
+
+**Control sets are the half nobody looks at.** They are named by the placer's
+own message, they fragment CLB packing directly, and unlike LUT count they can
+often be reduced without changing arithmetic at all -- a shared reset or a
+removed clock-enable costs nothing functionally.
+
+### Do NOT retry
+
+- **"It fits, so it will place."** MEASURED false today, twice over: 99.67% LUT
+  passed the utilization DRC and failed detail placement 46 minutes later.
+  A LUT percentage is not a placement prediction.
+
+### Open
+
+- Which block-design cell owns the packing pressure. Being measured.
+- Whether control-set reduction alone closes 494 CLBs.
+- Timing, still entirely unknown -- the placer has never completed.
