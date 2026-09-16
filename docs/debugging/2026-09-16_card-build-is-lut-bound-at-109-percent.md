@@ -1,0 +1,127 @@
+# The first full card build synthesises clean and the placer refuses it: 109.15% LUT
+
+## 1. The question
+
+2026-09-16, continuing the goal *"continue toward the full bitstream build"*.
+Hardware: SQRL FK33, `xcvu33p-fsvh2104-2L-e`. Build:
+`FK33_CARD=1 hw/fk33/pcieep_build.sh`, i.e. the three-cell block design --
+`eng` (subsystem A), `card` (B, C and D via `fk33_llama_top`) and `bcgrant`.
+This is the first such build ever attempted; every previous FK33 bitstream was
+the engine-only configuration.
+
+Does it produce a bitstream?
+
+## 2. The answer
+
+**No. It synthesises with zero errors and the PLACER REFUSES TO START.**
+
+```
+ERROR: [DRC UTLZ-1] Resource utilization: Slice LUTs over-utilized in Top Level
+Design (This design requires more Slice LUTs cells than are available in the
+target device. This design requires 477022 of such cell types but only 439680
+compatible sites are available in the target device...)
+ERROR: [Vivado_Tcl 4-23] Error(s) found during DRC. Placer not run.
+ERROR: [Common 17-39] 'place_design' failed due to earlier errors.
+```
+
+**It is purely LUT-bound.** Every other resource has headroom.
+
+## 3. The evidence
+
+`bd_wrapper_utilization_synth.rpt`, Design State: Synthesized:
+
+| Site Type | Used | Available | Util% |
+|---|---|---|---|
+| **CLB LUTs** | **479,919** | 439,680 | **109.15** |
+| LUT as Logic | 431,821 | 439,680 | 98.21 |
+| LUT as Memory | 48,098 | 205,440 | 23.41 |
+| -- as Distributed RAM | 46,506 | | |
+| -- as Shift Register | 1,592 | | |
+| CLB Registers | 494,420 | 879,360 | 56.22 |
+| CARRY8 | 12,207 | 54,960 | 22.21 |
+| F7 Muxes | 80,750 | 219,840 | 36.73 |
+| F8 Muxes | 32,776 | 109,920 | 29.82 |
+
+The DRC quotes 477,022 and the synthesis report 479,919; the difference is
+post-synthesis optimisation and does not change the verdict. **Overage is
+about 40,239 LUT.**
+
+Subsystem B+C+D alone, measured separately the same day by
+`hw/fk33/ooc_card_dcp.tcl` (745 s, 0 errors, 61 MB DCP):
+
+| resource | used | available | % |
+|---|---|---|---|
+| CLB LUT | 292,383 | 439,680 | 66.5 |
+| DSP48E2 | 538 | 2,880 | 18.7 |
+| Block RAM | 197 | 672 | 29.3 |
+| URAM | 32 | 320 | 10.0 |
+
+## 4. The procedure that got here
+
+Everything upstream had to pass first, and all of it did, today:
+
+1. RTL elaboration of the card configuration: **3:54, 0 errors** -- previously
+   a silent hang of over 25 minutes. See
+   `2026-09-14_the-wall-is-a-3d-ram-vivado-warned-about.md`.
+2. `fk33_card` full OOC synthesis: **745 s, 0 errors**, checkpoint written.
+3. `FK33_CARD=1 --bd-only`: `FK33_BD_VALIDATE OK`, `FK33_BD_ONLY_DONE`, 0
+   errors, `FK33_ENG portcheck bad=0`, zero address-overlap warnings.
+4. Full build: synthesis clean, `place_design` refused.
+
+## 5. Measured and REJECTED -- do not retry
+
+- **`dsp=4842`, i.e. "the card does not fit on DSP" (168%).** WRONG, and it was
+  this dispatcher's own census that said so. `get_cells -hier -filter
+  {REF_NAME =~ DSP*}` matches each `DSP48E2` PLUS its eight internal
+  primitives, and the log says so: *"DSP48E2 => DSP48E2 (DSP_ALU,
+  DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD,
+  DSP_PREADD_DATA): 538 instances"*. 538 * 9 = 4842. **The real figure is 538,
+  18.7%.** Fixed in `4b1d58f` by anchoring to `REF_NAME == DSP48E2`. Do not
+  re-derive a DSP count with a glob.
+- **Budgeting the card build at 10.66 GB.** That figure is the ENGINE-ONLY
+  build. MEASURED: the card build hit `memory.peak` 18.00 GB -- its `MemoryHigh`
+  cap, so the true peak is unknown and at least that -- within 28 minutes and
+  still inside synthesis, taking swap from 2 GB to 15 GB. Corrected in
+  `CLAUDE.md`. **The two builds are different jobs; their budgets are not
+  interchangeable.**
+
+## 6. Measurement traps hit
+
+- **A capped job's `memory.peak` is the cap.** `cardbuild` reported exactly
+  18.00 GB against `MemoryHigh=18G`. That is the throttle holding it there, not
+  the appetite, exactly as `CLAUDE.md` already records.
+- **The over-utilisation number appears in two places and they differ** (DRC
+  477,022 against report 479,919). Quote which one you mean.
+
+## 7. The lever, and what is NOT being claimed about it
+
+`fk33_engine` has a `CB_STYLE` generic, forwarded to `matvec_int4_desc_axi` and
+on to `matvec_core`, choosing whether the IQ4_NL codebook lives in registers or
+LUTRAM. TRACK LEVERC48 measured `"distributed"` at **-42,633 CLB LUT, MUXF7
+24,583 -> 0, MUXF8 12,288 -> 0**, costing +13,195 FF and +12,288 LUTRAM -- and
+FF is at 56% and LUT-as-memory at 23%, so both costs have room.
+
+**That figure is 264 commits old and is NOT being quoted as a prediction.**
+`docs/WORKLOG.md` already flagged it as needing re-measurement, and three of
+A's files have changed since. The lever has been made settable
+(`FK33_CB_STYLE`, default `"regs"` so the shipping configuration is unchanged)
+**in order to measure it on the current tree**, not because -42,633 is believed.
+
+`fk33_engine.vhd:67` is why it is a block-design CONFIG property and not a
+`-generic`: *"-generic reaches the TOP's generics only, never a deep
+instance"*. The emitted Tcl reads the property back and errors if it did not
+take, because a `set_property` whose target did not match is silently ignored
+and a lever that was never applied looks exactly like a lever that did not work.
+
+## 8. Open, not yet answered
+
+- **Whether the lever closes a 40,239 LUT gap on the current tree.** Being
+  measured now.
+- **What to do if it does not.** Not yet investigated. The LUT-as-Logic figure
+  alone is 431,821 of 439,680 (98.21%), so even with all of LUT-as-Memory
+  removed the design would be marginal; a second lever may be needed.
+- **Timing.** Unknown and unmeasurable until the placer runs. Nothing before
+  `route_design` orders two runs correctly on this part.
+- **Values on subsystem A's card binding.** `ga_desc` still has no behavioural
+  coverage at all, and the `x_exp` divergence remains open. A bitstream does
+  not change either.
