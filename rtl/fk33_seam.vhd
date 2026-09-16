@@ -391,9 +391,41 @@ architecture rtl of fk33_seam is
   constant W_XOUT : natural := 3;
 
   -- ------------------------------- memories ---------------------------
+  -- ==================================================================
+  -- `desc_ram` IS BLOCK RAM, NOT LUTRAM, AND THAT IS A PLACEMENT FIX.
+  --
+  -- 4,608 x 64 = 294,912 bits.  Left to infer, Vivado puts it in distributed
+  -- RAM, and MEASURED 2026-09-16 on the first full FK33_CARD=1 build that is
+  -- most of `fk33_seam_0`'s 11,083 LUT -- 9,468 of them LUTRAM against just
+  -- 888 FF, which is the signature of storage rather than datapath.
+  --
+  -- WHY IT MATTERS: that build SYNTHESISED clean and then FAILED PLACEMENT --
+  -- `[Place 30-487] ... 36345 CLBs required, 35902 available`, short by 443 --
+  -- with CLB LUTs at 98.84%.  LUT is the full dimension; block RAM is at 437
+  -- tiles of 672 and this needs roughly 9 to 16 of the 235 spare.  Moving
+  -- storage off the LUT array is the cheapest LUT there is to give back,
+  -- because it buys CLBs without touching any arithmetic.
+  --
+  -- IT CHANGES NO BEHAVIOUR, BY CONSTRUCTION.  `ram_style` is a synthesis
+  -- attribute; GHDL ignores it, so every bench result is bit-identical before
+  -- and after.  What it can do is be REFUSED -- `[Synth 8-6849] Infeasible
+  -- attribute ram_style = "block"` -- and fall back to LUTRAM silently enough
+  -- that only the utilization report shows it.  rtl/region_mem.vhd records the
+  -- discriminator: at THREE read sites Vivado refuses and at TWO it accepts.
+  --
+  -- THIS MEMORY HAS EXACTLY ONE WRITE SITE AND TWO READ SITES, and both reads
+  -- are inside clocked processes off registered addresses:
+  --   write   :743/:745  the host WIN_DATA stream, 32 bits at a time
+  --   read    :524       `dq_data <= desc_ram(a)`, the descriptor fetch
+  --   read    :837/:839  the host readback, 32-bit half selected by parity
+  -- A THIRD reader added later silently costs the BRAM and puts 9,468 LUT
+  -- back.  Check the utilization report, not the log, if this ever regresses.
+  -- ==================================================================
   type desc_ram_t is array (0 to DESC_WORDS-1)
        of std_logic_vector(63 downto 0);
   signal desc_ram : desc_ram_t := (others => (others => '0'));
+  attribute ram_style : string;
+  attribute ram_style of desc_ram : signal is "block";
 
   type rel_ram_t is array (0 to REL_ENT-1)
        of std_logic_vector(NREG-1 downto 0);
