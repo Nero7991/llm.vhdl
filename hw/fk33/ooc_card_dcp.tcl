@@ -157,12 +157,37 @@ puts "CARDOOC_SYNTH_SECONDS $tsynth"
 
 # The area of the REAL 9B card, which has never been measured -- every previous
 # number was the 4-position stand-in.
+# `REF_NAME =~ DSP*` OVER-COUNTS BY EXACTLY 9x AND THE RESULT LOOKS PLAUSIBLE.
+#
+# MEASURED 2026-09-16, the first full `fk33_card` synthesis: this line reported
+# `dsp=4842` against 2,880 DSP48E2 on the part -- 168%, i.e. "the design does
+# not fit" -- and the real figure is 538.  Vivado TRANSFORMS each DSP48E2 into
+# itself PLUS EIGHT internal primitives, and the log says so outright:
+#   DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER,
+#                       DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA):
+#                       538 instances
+# All nine match `DSP*`, so 538 * 9 = 4842.
+#
+# THE OVER-COUNT IS DANGEROUS RATHER THAN MERELY WRONG: it reads as a hard fit
+# failure on the one resource this design is most likely to run out of, and it
+# would have been quoted as a blocker.  `REF_NAME == DSP48E2` is exact; the
+# sub-cells have no independent existence and must not be counted.
+#
+# This is the same class as the recorded `PRIMITIVE_GROUP == DSP` trap, which
+# matched NOTHING and printed a silent zero.  A census filter can be wrong in
+# both directions, so anchor it to the primitive you actually mean and
+# cross-check against the log's own `Report Cell Usage` table.
 set lut  [llength [get_cells -hier -filter {REF_NAME =~ LUT*}]]
 set ff   [llength [get_cells -hier -filter {REF_NAME =~ FD*}]]
-set dsp  [llength [get_cells -hier -filter {REF_NAME =~ DSP*}]]
-set ram  [llength [get_cells -hier -filter {REF_NAME =~ RAMB*}]]
-set uram [llength [get_cells -hier -filter {REF_NAME =~ URAM*}]]
-puts "CARDOOC_AREA lut=$lut ff=$ff dsp=$dsp ramb=$ram uram=$uram"
+set dsp  [llength [get_cells -hier -filter {REF_NAME == DSP48E2}]]
+# RAMB36E2 is one tile, RAMB18E2 is half of one; they are reported separately
+# so a caller can weight them rather than being handed a sum that means
+# neither.  The part has 672 RAMB36 tiles.
+set ram36 [llength [get_cells -hier -filter {REF_NAME == RAMB36E2}]]
+set ram18 [llength [get_cells -hier -filter {REF_NAME == RAMB18E2}]]
+set ram  [expr {$ram36 + $ram18}]
+set uram [llength [get_cells -hier -filter {REF_NAME == URAM288}]]
+puts "CARDOOC_AREA lut=$lut ff=$ff dsp=$dsp ramb=$ram ramb36=$ram36 ramb18=$ram18 uram=$uram"
 
 write_checkpoint -force $out
 puts "CARDOOC_WROTE $out"
