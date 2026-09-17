@@ -305,3 +305,83 @@ IF it still holds, and if the behavioural cost is acceptable.
 - **Control-set merging as the fix for this failure.** Reason above. It may
   still be worth enabling as a cheap density gain ALONGSIDE a LUT reduction,
   but on its own it addresses a dimension that is not full.
+
+---
+
+## BOTH `ram_style = "block"` ATTRIBUTES WERE REFUSED, AND ONE OF THEM IS MINE
+
+MEASURED 2026-09-16, build 3. After moving the seam's `desc_ram` to block RAM,
+the synthesis utilization report came back **bit-identical to build 2**:
+`CLB LUTs 438219 (99.67%)`, `LUT as Memory 60386`, `Block RAM Tile 436.5`.
+Nothing moved.
+
+The log says why, and it names two RAMs, not one:
+
+```
+WARNING: [Synth 8-6850] RAM (desc_ram_reg) has partial Byte Wide Write Enable
+  pattern with ram_style = "block", however no output register found in fanout
+  of RAM.  Recommended to use supported Byte Wide Write Enable template.
+WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" set for RAM
+  "fk33_seam_0/inst/desc_ram_reg", trying to implement using LUTRAM
+
+WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" set for RAM
+  "fk33_llama_top__GCB14/ga_desc.ybw_reg", trying to implement using LUTRAM
+```
+
+### `ga_desc.ybw` is LUTRAM, and that is my own unverified claim
+
+`6a2d282` replaced `ga_desc.ap`'s 48-write-port y store with a beat-wide word
+array carrying `attribute ram_style of ybw : signal is "block"`. **The
+elaboration fix was real and necessary** -- it took the card top from a
+25-minute silent hang to 3:54 -- but **the storage never became block RAM.**
+196,608 bits went into distributed RAM instead.
+
+The commit message asserted the `region_mem` precedent (one write site, one
+read site, therefore inferrable) and **never checked the utilization report to
+see whether the attribute was honoured.** This file already records, twice,
+that `8-6849` is a WARNING and falls back silently, and that only the mapping
+report and an object census are authoritative. The elaboration result was
+decisive enough that the storage question was not asked at all.
+
+**Why it is refused** is visible in the RTL: the read is a DYNAMIC BIT-SLICE of
+a 768-bit word --
+`signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W))` -- so the lane mux
+sits after the memory, and a 768-bit-wide port is not a BRAM shape.
+
+**The structure that would infer** is `A_ROWS_IF` SEPARATE memories, one per
+lane, each `A_YWORDS` deep by `MANT_W` wide: the write becomes one port per
+lane memory (which is what the beat already provides, one element per lane),
+and the read becomes `ybw_lane(rlane)(rword)` -- a word-select plus a mux over
+narrow outputs. 48 memories of 256 x 16 is about 24 RAMB36 equivalent against
+235 spare tiles. NOT YET DONE.
+
+### `desc_ram` is refused for a different reason
+
+`8-6850` is specific: a **partial byte-wide write enable** pattern (the host
+writes 32 bits at a time into a 64-bit word, `desc_ram(idx/2)(31 downto 0)`)
+**combined with no output register in the fanout**. The descriptor-fetch read at
+`:524` does register into `dq_data`; the host READBACK at `:837/:839` reads into
+a variable, and that is the path Vivado cannot see a register on.
+
+Neither fix is free:
+- Registering the readback adds a cycle to the AXI-Lite read and changes the
+  host contract in `server/fk33_seam.h`.
+- Making the write full-width means buffering the low half until the high half
+  arrives, which changes WHEN a half-written word becomes visible -- fine if the
+  host always writes low-then-high, a silent corruption if it ever does not.
+
+**Do not apply either without reading the host side first.**
+
+## Measurement traps hit, added to the list
+
+- **An attribute is a REQUEST.** This file already said that about block-design
+  `CONFIG.*` properties and about URAM; it is equally true of `ram_style`, and
+  this dispatcher wrote a commit message reasoning from a precedent instead of
+  reading the report. **The utilization report is the only thing that says
+  whether storage moved.** A bench passing says nothing -- GHDL ignores
+  `ram_style` entirely, so `sim:tb_fk33_seam` PASSED both before and after a
+  change that did nothing.
+- **`ExploreWithRemap` made packing WORSE while making LUTs fewer.** -3,638 LUT
+  recovered only 51 CLBs: it cut the LUT minimum by 455 CLBs and grew packing
+  overhead by about 434. Do not assume a LUT reduction converts to CLBs at 8:1
+  on this design.
