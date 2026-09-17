@@ -3193,64 +3193,34 @@ def selftest():
     if not os.path.exists(TCL):
         sys.exit("SELFTEST VOID: %s not found. A missing interpreter is VOID, "
                  "not a pass." % TCL)
-    if not os.path.exists(DST):
-        sys.exit("SELFTEST VOID: %s does not exist. Run gen_pcieep.py first. "
-                 "A missing file is VOID, not a pass." % DST)
+    # HERMETIC: the text is GENERATED for this invocation's configuration, not
+    # read from build_fk33_pcieep.tcl.  See assemble_script() for what the old
+    # coupling cost.  There is no longer a "run gen_pcieep.py first" step, and
+    # no artefact on disk can make this verdict wrong.
+    built = assemble_script()
 
-    built = open(DST).read()
-
-    # WHICH CONFIGURATION IS THIS?  The selftest grades the file a PREVIOUS
-    # invocation wrote, so its verdict depends on whether that invocation had
-    # FK33_CARD set -- and until 2026-09-08 it never said so.
+    # WHICH CONFIGURATION IS THIS?  Still worth printing, because the rows
+    # below differ between them -- but it is now a LABEL and not a hazard: the
+    # text was generated from CARD_ON/ENG_ON a few lines up, so it cannot
+    # disagree with the expectations it is graded against.
     #
-    # MEASURED that day: `check_bar_map`'s attribution control reports
-    # "no mutation is caught by check_bar_map alone" on a CARD-ON file and
-    # passes on a card-off one, so the same command printed PASS, then FAIL,
-    # then PASS again with no change to this file -- only regenerations in
-    # between. That is indistinguishable from a flaky test and it is not one.
-    #
-    # Naming the configuration does not make the selftest hermetic; it makes
-    # the result interpretable, which is the part that was missing. A hermetic
-    # selftest would build its own text for each configuration and grade both.
+    # The mismatch guard that stood here from earlier today is GONE, and
+    # deliberately: it detected the coupling, which was an improvement on the
+    # flakiness it replaced, and then took the shared gate red on sim:runguard
+    # whenever a build had regenerated the artefact in another configuration.
+    # A check that is correct and unactionable still stops the line. Removing
+    # the coupling beats reporting it.
     _sel_card = ("create_bd_cell -type module -reference fk33_card" in built)
-    print("SELFTEST CONFIGURATION: %s  (%s)"
-          % ("FK33_CARD=1, three-cell" if _sel_card else "engine-only",
-             DST))
-    print("  A verdict here is about THAT file. Regenerate with the same\n"
-          "  configuration before comparing two runs.")
-
-    # AND THE FILE'S CONFIGURATION MUST BE THIS INVOCATION'S, OR THE VERDICT IS
-    # ABOUT NEITHER.  Naming the artefact's configuration (above) made the
-    # result interpretable; it did not stop the rows being graded against the
-    # WRONG one.  Every expectation below is computed from CARD_ON/ENG_ON, i.e.
-    # from the ENVIRONMENT, while `built` comes from DISK -- so when they
-    # disagree the mutants are built for one design and scored against another.
-    #
-    # MEASURED 2026-09-17: `FK33_CARD=1 python3 gen_pcieep.py --selftest`
-    # against a card-off artefact reports
-    #   FAIL S1: expected acceptance, got a refusal
-    #   FAIL S3: expected a refusal, got acceptance
-    #   FAIL S5: expected acceptance, got a refusal
-    #   FAIL S6: expected a refusal, got acceptance
-    #   SELFTEST FAIL: the seam tie-off guard does not discriminate as claimed.
-    # -- four rows failing in BOTH directions, which reads as a broken guard
-    # and is nothing of the kind.  The same command passes once the artefact is
-    # regenerated with FK33_CARD=1, with no change to this file.  That is the
-    # recorded "the harness is reporting a fact about the harness" shape, and
-    # it costs whoever hits it a hunt through a guard that is working.
-    #
-    # VOID, not FAIL: a mismatch means the run graded nothing, and saying PASS
-    # would be a guard reporting a verdict on something it never looked at.
-    _sel_eng = ("create_bd_cell -type module -reference fk33_engine" in built)
+    _sel_eng  = ("create_bd_cell -type module -reference fk33_engine" in built)
+    print("SELFTEST CONFIGURATION: FK33_CARD=%d FK33_ENG=%d (%s), generated in "
+          "memory" % (CARD_ON, ENG_ON,
+                      "three-cell card" if _sel_card else "no card"))
     if _sel_card != CARD_ON or _sel_eng != ENG_ON:
-        sys.exit(
-            "SELFTEST VOID: %s was emitted with FK33_CARD=%d FK33_ENG=%d, but "
-            "this invocation is FK33_CARD=%d FK33_ENG=%d. Every row below is "
-            "scored against the environment, so grading that file would "
-            "measure the mismatch and not the guards. Regenerate first:\n"
-            "    FK33_CARD=%d FK33_ENG=%d python3 %s"
-            % (DST, _sel_card, _sel_eng, CARD_ON, ENG_ON,
-               CARD_ON, ENG_ON, os.path.basename(__file__)))
+        sys.exit("SELFTEST VOID: generated text has card=%d eng=%d but this "
+                 "invocation is CARD_ON=%d ENG_ON=%d. The emitter and its own "
+                 "flags disagree, which is a defect in assemble_script(), not "
+                 "a stale file." % (_sel_card, _sel_eng, CARD_ON, ENG_ON))
+
     procs = {}
     for pname in ("fk33_assert_run_started", "fk33_assert_run_done",
                   "fk33_bound"):
@@ -3419,7 +3389,12 @@ def selftest():
     open(cf, "w").write(
         'set fh [open [lindex $argv 0] r]; set t [read $fh]; close $fh\n'
         'if {[info complete $t]} { puts "PASSED" } else { puts "RAISED" }\n')
-    pc = subprocess.run([TCL, cf, DST], capture_output=True, text=True)
+    # The parse check reads the GENERATED text too, written to the scratch
+    # directory, so it cannot disagree with the rows above about what is being
+    # graded.
+    gf = os.path.join(tmp, "generated.tcl")
+    open(gf, "w").write(HEADER + built)
+    pc = subprocess.run([TCL, cf, gf], capture_output=True, text=True)
     parse = (pc.stdout + pc.stderr).strip().splitlines()
     parse = parse[-1].split(" ", 1)[0] if parse else "VOID"
     print("%-10s %-9s %-9s %-9s %s%s"
@@ -4363,9 +4338,7 @@ def addr_map_teeth():
     import io
     import contextlib
 
-    if not os.path.exists(DST):
-        sys.exit("SELFTEST VOID: %s does not exist." % DST)
-    base = open(DST).read()
+    base = assemble_script()
 
     def _arm_old(t):
         return [n for n in _ADDR_OLD_NEEDLES if n not in t]
@@ -4467,9 +4440,7 @@ def seam_tieoff_teeth():
     import io
     import contextlib
 
-    if not os.path.exists(DST):
-        sys.exit("SELFTEST VOID: %s does not exist." % DST)
-    base = open(DST).read()
+    base = assemble_script()
     # CONFIGURATION, NOT A DEFECT.  The tie-off this test grades exists only
     # in the ENGINE-ONLY build.  With FK33_CARD=1 the seam's d_err is driven
     # by `card/err` and gen_pcieep.py deliberately emits no tie at all -- the
@@ -4629,6 +4600,276 @@ def seam_tieoff_teeth():
             print("FAIL " + b)
         sys.exit("SELFTEST FAIL: the seam tie-off guard does not discriminate "
                  "as claimed.")
+
+
+def assemble_script():
+    """Build the emitted Tcl for the CURRENT configuration and return it.
+
+    EXTRACTED FROM main() SO --selftest CAN GRADE WHAT THIS INVOCATION WOULD
+    EMIT, rather than whatever configuration last wrote build_fk33_pcieep.tcl.
+    The rows' expectations come from CARD_ON/ENG_ON, i.e. the ENVIRONMENT, and
+    the text used to come from DISK -- so a selftest run after a FK33_CARD=1
+    build graded a card-on file against card-off expectations and reported four
+    seam rows failing in BOTH directions.  MEASURED 2026-09-17: that took the
+    shared gate red on sim:runguard while a build was in flight, and the same
+    coupling is what this file's own note called out as flakiness -- PASS, then
+    FAIL, then PASS, with no code change and only regenerations in between.
+
+    Generating in memory removes the coupling rather than detecting it: there
+    is no longer a second configuration for the verdict to be about.
+    """
+    text = open(SRC).read()
+    for old, new in SUBS:
+        if old not in text:
+            sys.exit("ABORT: the probe build script no longer contains:\n"
+                     f"{old}\n"
+                     "Refusing to emit a PCIe build whose width, IDs, CLKREQ "
+                     "polarity or smartconnect fan-out may be wrong.")
+        text = text.replace(old, new, 1)
+
+    # Belt and braces on the two substitutions that would fail SILENTLY -- a
+    # build that comes out x1 still links, and a build that keeps 1E24:1533
+    # still enumerates, so neither would be caught by the build log.
+    if "CONFIG.pl_link_cap_max_link_width {X4}" not in text:
+        sys.exit("ABORT: link width did not become X4.")
+    if "CONFIG.pf0_device_id {1533}" in text:
+        sys.exit("ABORT: the 1533 device ID survived the substitution.")
+    if "CONFIG.NUM_SI {2} CONFIG.NUM_MI {1}] [get_bd_cells pcie2axil]" in text:
+        sys.exit("ABORT: the upstream pcie2axil NUM_MI bug survived.")
+
+    # ---- BUILD-HANG.  Each of these fails SILENTLY: a build with an
+    # unbounded wait looks exactly like a long place-and-route, and a build
+    # with no post-launch assertion looks exactly like a slow queue.  The one
+    # that survived cost 27.6 hours.
+    if "wait_on_run synth_1\n" in text or "wait_on_run impl_1\n" in text:
+        sys.exit("ABORT: an UNBOUNDED wait_on_run survived into the build "
+                 "script. MEASURED 2026-08-29: an unbounded wait blocked for "
+                 "27.6 hours on a run that never started, with 7 minutes of "
+                 "CPU across the whole period.")
+    for need, why in (
+        ("proc fk33_assert_run_started",
+         "the post-launch_runs assertion that the run directory exists is "
+         "gone. launch_runs REPORTS SUCCESS when the run never starts"),
+        ("proc fk33_assert_run_done",
+         "the post-wait progress check is gone. wait_on_run -timeout RETURNS "
+         "rc 0 on expiry rather than raising, so without this check the bound "
+         "bounds nothing"),
+        ("fk33_assert_run_started synth_1",
+         "synthesis is launched without the run-started assertion"),
+        ("fk33_assert_run_started impl_1",
+         "implementation is launched without the run-started assertion"),
+        ("wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1",
+         "the synthesis wait is not bounded"),
+        ("wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1",
+         "the implementation wait is not bounded"),
+        ("fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN",
+         "nothing converts an expired synthesis bound into a stop"),
+        ("fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN",
+         "nothing converts an expired implementation bound into a stop"),
+        # The marker file is the part that is easy to get wrong in the safe-
+        # looking direction: runme.log exists only AFTER the run starts
+        # executing, so a guard testing for it would refuse every correct
+        # launch.  MEASURED on a real trivial synthesis run.
+        ("file join $dir runme.sh",
+         "the run-started assertion no longer tests for runme.sh. runme.sh is "
+         "written SYNCHRONOUSLY by launch_runs; runme.log and "
+         ".vivado.begin.rst are not, and testing for either would false-fire "
+         "on every healthy launch"),
+    ):
+        if need not in text:
+            sys.exit(f"ABORT: {why} ({need!r} missing).")
+    for var in ("FK33_SYNTH_MAX_MIN", "FK33_IMPL_MAX_MIN"):
+        # Both the DEFAULT and the ENVIRONMENT OVERRIDE have to go through
+        # fk33_bound.  Found by mutation: routing the default through it and
+        # letting $::env past unchecked leaves the bound settable to -1 from
+        # outside, which is Vivado's "no limit" and reinstates the hang.
+        if not re.search(r"set %s\s+\[fk33_bound %s\s+\$::env\(%s\)\]"
+                         % (var, var, var), text):
+            sys.exit(f"ABORT: the {var} environment override does not go "
+                     "through fk33_bound, so a non-positive value from the "
+                     "environment would restore the unbounded wait.")
+        m = re.search(r"set %s\s+\[fk33_bound %s\s+(-?\d+)\]" % (var, var), text)
+        if not m:
+            sys.exit(f"ABORT: {var} is not set through fk33_bound, so a "
+                     "non-positive limit would silently restore the unbounded "
+                     "wait (Vivado reads -1 as 'no limit').")
+        if int(m.group(1)) <= 0:
+            sys.exit(f"ABORT: {var} is {m.group(1)}. wait_on_run -timeout "
+                     "treats any non-positive value as NO LIMIT.")
+    if "runme.log]" in text or "file exists [file join $dir runme.log" in text:
+        sys.exit("ABORT: the run-started assertion tests for runme.log, which "
+                 "does not exist yet when launch_runs returns. That guard "
+                 "would refuse every correct launch.")
+    # The three bring-up peripherals are the entire reason there is anything to
+    # test on the day the card goes in.  A build without them enumerates,
+    # binds, and tells you nothing.
+    for cell in ("fk33_id", "fk33_scratch", "fk33_dmabram"):
+        if f"create_bd_cell -type ip -vlnv xilinx.com:ip:{'axi_gpio' if cell == 'fk33_id' else 'axi_bram_ctrl'}" not in text:
+            sys.exit(f"ABORT: {cell}'s IP was not instantiated.")
+        if f"{cell}/S_AXI" not in text:
+            sys.exit(f"ABORT: {cell} is not connected to a smartconnect master.")
+    if str(ID_MAGIC) not in text:
+        sys.exit("ABORT: the identity constant did not reach the build script.")
+    if "FK33_STOP_AFTER_BD" not in text:
+        sys.exit("ABORT: the no-card BD check hook is missing.")
+
+    # The aux domain.  Without every one of these the endpoint bitstream is
+    # exactly as blind with the link down as the one that produced the
+    # first-fit handoff, so a silent regression here costs another afternoon on
+    # the bench to notice.
+    for need, why in (
+        ("create_bd_cell -type module -reference fk33_aux fk33_aux_0",
+         "the aux block is not instantiated"),
+        ("util_ds_buf_1/IBUF_OUT",
+         "the free-running 200 MHz oscillator is not connected"),
+        ("fk33_aux_0/xdma_aclk",
+         "the PCIe user clock is not tapped, so it cannot be measured"),
+        ("fk33_aux_0/perstn",
+         "PERST# is not observed"),
+        ("fk33_aux_0/xdma_aresetn",
+         "the fabric reset state is not observed"),
+        ("jtag_aux/M_AXI",
+         "there is no JTAG read path on the free-running clock"),
+        ("set_property name i2cprobe_tri_io",
+         "the I2C balls lost their external port name and the XDC no longer "
+         "matches them"),
+        # ---- thermal.  Each of these is a way the build can come out with a
+        # thermal guard that is present, builds, closes timing, and is blind.
+        ("create_bd_cell -type module -reference fk33_thermal fk33_therm_0",
+         "the thermal guard is not instantiated, so this bitstream has no "
+         "thermal protection except SYSMON's 101 C shutdown"),
+        ("CONFIG.ENABLE_TEMP_BUS {true}",
+         "SYSMON's temperature bus is not enabled, so there is no die "
+         "temperature in the fabric for the guard to compare"),
+        ("CONFIG.USER_TEMP_ALARM {true}",
+         "SYSMON's user temperature alarm is not enabled, so the die has one "
+         "comparator instead of two"),
+        ("system_management_wiz_0/temp_out",
+         "the die temperature is not wired into the guard"),
+        ("system_management_wiz_0/eoc_out",
+         "the die LIVENESS strobe is not wired in, so a frozen SYSMON would "
+         "read as a cold card -- the exact fail-open this design refuses"),
+        ("hbm/DRAM_0_STAT_TEMP",
+         "the HBM stack temperature is still going nowhere"),
+        ("hbm/DRAM_0_STAT_CATTRIP",
+         "the HBM stacks' catastrophic-temperature signal is still asserting "
+         "into the void"),
+        ("hbm/DRAM_1_STAT_CATTRIP",
+         "stack 1's catastrophic-temperature signal is still unconnected"),
+        ("clk_wiz_0/clk_out1] [get_bd_pins fk33_therm_0/hbm_pclk",
+         "the HBM APB clock is not wired in, so the HBM sensor has no "
+         "liveness check at all"),
+        # Specific to the CONNECTION, not just the pin name: "/fk33_therm_0/
+        # compute_clk" also appears in the block-design check's allowlist, and a
+        # loose needle would be satisfied by that and test nothing.  Found by
+        # running this guard against a broken copy and watching it NOT bite.
+        ("[get_bd_pins fk33_therm_0/compute_clk]",
+         "the compute domain is not wired in, so the halt has no domain to "
+         "be synchronised into and the canary cannot run"),
+        ("assign_bd_address -offset 0x00004000",
+         "the thermal registers are not on jtag_aux, so a thermal trip would "
+         "be unreadable with the PCIe link down"),
+        ("assign_bd_address -offset 0x0000B000",
+         "the thermal registers are not on the PCIe BAR, so the host cannot "
+         "see why the card stopped computing"),
+        # The read-back checks themselves.  A check that only runs in
+        # --bd-only mode does not cover the artefact that gets flashed, and a
+        # check that reads a BD parameter reads a REQUEST rather than the
+        # answer.  Both of those were true until 2026-08-28.
+        ("FK33_SYSMONI FAIL: expected exactly one SYSMONE4",
+         "the build no longer reads the alarm thresholds out of the ROUTED "
+         "netlist, so nothing proves the trip points in the bitstream are the "
+         "ones this design asked for"),
+        ("OT arming nibble 53h",
+         "the build no longer reports whether SYSMON's automatic power-down is "
+         "armed, which is the one thermal behaviour that is baked into the "
+         "silicon rather than into the fabric"),
+    ):
+        if need not in text:
+            sys.exit(f"ABORT: {why} ({need!r} missing).")
+    # STRUCTURAL, not textual.  The thermal read-back used to sit inside the
+    # FK33_STOP_AFTER_BD block, so the build that produced the bitstream never
+    # ran it -- the only evidence came from a separate --bd-only run against a
+    # Tcl that was not provably the same file.  Position is the whole point of
+    # that fix, and a needle for the text alone would still pass if someone
+    # moved it back inside the gate.
+    i_gate = text.find("info exists ::env(FK33_STOP_AFTER_BD)")
+    i_sys  = text.find("FK33_SYSMON $p = ")
+    i_hbm  = text.find("FK33_THERM hbm/$hp connected")
+    if i_gate < 0 or i_sys < 0 or i_hbm < 0:
+        sys.exit("ABORT: the thermal block-design read-back is missing entirely.")
+    if i_sys > i_gate or i_hbm > i_gate:
+        sys.exit("ABORT: the thermal read-back is inside the FK33_STOP_AFTER_BD "
+                 "block, so a full build would never run it and the bitstream "
+                 "would ship with the SYSMON configuration unverified.")
+
+    # The aux branch must be clocked by fk33_aux_0/aux_clk and by nothing else.
+    for cell in ("jtag_aux", "auxconnect") + AUX_CELLS:
+        if f"{cell}/aclk] [get_bd_pins fk33_aux_0/aux_clk]" not in text and \
+           f"{cell}/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]" not in text and \
+           "[get_bd_pins $c/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]" not in text:
+            sys.exit(f"ABORT: {cell} is not clocked from the aux domain.")
+
+    # The one property that decides whether STRAY-NEXTJOB is reachable.  Run
+    # on the EMITTED text rather than on the tree's build_fk33_pcieep.tcl, so a
+    # change made here in the generator cannot pass by virtue of the checked-in
+    # artefact still being the old one.
+    check_reset_topology(text)
+
+    # ---- the host seam.  Each of these is a way this build can come out with
+    # a seam that is present, builds, closes timing, and is either unreachable
+    # or lying about what is behind it.
+    for need, why in (
+        ("create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
+         "the host seam is not instantiated, so board row N2's decision was "
+         "not carried into the bitstream and server/fk33_seam.h still drives "
+         "nothing"),
+        ("add_files -norecurse %s" % SEAM_RTL,
+         "rtl/fk33_seam.vhd is not added to the project, so the module "
+         "reference above cannot resolve"),
+        ("assign_bd_address -offset 0x%08X" % SEAM_BASE,
+         "the seam is not on the PCIe BAR at %#x, so the host cannot reach it"
+         % SEAM_BASE),
+        ("[get_bd_pins core_reset/peripheral_reset] [get_bd_pins %s/rst]"
+         % SEAM_CELL,
+         "the seam's ACTIVE-HIGH reset is not driven from proc_sys_reset's "
+         "active-high output. Wired to the active-low net it would sit in "
+         "reset forever and answer 0 to every read, which from the host is "
+         "indistinguishable from an unmapped BAR"),
+        # ONE REQUIREMENT, TWO CONFIGURATIONS.  Without the card, d_err MUST be
+        # tied high, because nothing else drives it and a GO would hang.  With
+        # the card, it must be driven BY THE CARD and must NOT be tied, because
+        # a tie-off would answer ERR to every GO with a real transformer behind
+        # the seam.  Making the entry conditional keeps a real requirement in
+        # both cases; deleting it for FK33_CARD would have left the new path
+        # unguarded, which is how the guard for D's absence came to pass green
+        # for the whole time the build was dead.
+        # The card pin is taken from SEAM_FROM_CARD rather than written out:
+        # d_err maps to the card's `err`, and hardcoding `d_err` here made this
+        # guard demand a pin that does not exist.
+        (("[get_bd_pins %s/d_err] [get_bd_pins %s/%s]"
+          % (SEAM_CELL, CARD_CELL, dict(SEAM_FROM_CARD)["d_err"])) if CARD_ON else
+         ("[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL),
+         ("the seam's d_err is not driven by the card, so with subsystem D "
+          "present the seam's D face floats") if CARD_ON else
+         ("the seam's d_err is no longer tied HIGH. With no subsystem D in "
+          "this design and d_err low, a GO sets `running` and nothing ever "
+          "clears it: a host polling (done | err) hangs forever")),
+        ("CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {%d}" % SEAM_NO_D_CODE,
+         "the no-subsystem-D marker code is gone from ERR_INFO[3:0], so a "
+         "refusal caused by D's absence would be indistinguishable from a "
+         "real descriptor fault"),
+        ("FK33_SEAM FAIL: $g is",
+         "the CAPS read-back is gone, so a generic renamed in "
+         "rtl/fk33_seam.vhd would leave this build publishing a model "
+         "geometry it does not have"),
+    ):
+        if need not in text:
+            sys.exit(f"ABORT: {why} ({need!r} missing).")
+    check_bar_map(text)
+    check_seam_tieoff(text)
+
+    return text
 
 
 def main():
@@ -4893,257 +5134,7 @@ def main():
                          "would read a different peripheral and print a "
                          "plausible number.")
 
-    text = open(SRC).read()
-    for old, new in SUBS:
-        if old not in text:
-            sys.exit("ABORT: the probe build script no longer contains:\n"
-                     f"{old}\n"
-                     "Refusing to emit a PCIe build whose width, IDs, CLKREQ "
-                     "polarity or smartconnect fan-out may be wrong.")
-        text = text.replace(old, new, 1)
-
-    # Belt and braces on the two substitutions that would fail SILENTLY -- a
-    # build that comes out x1 still links, and a build that keeps 1E24:1533
-    # still enumerates, so neither would be caught by the build log.
-    if "CONFIG.pl_link_cap_max_link_width {X4}" not in text:
-        sys.exit("ABORT: link width did not become X4.")
-    if "CONFIG.pf0_device_id {1533}" in text:
-        sys.exit("ABORT: the 1533 device ID survived the substitution.")
-    if "CONFIG.NUM_SI {2} CONFIG.NUM_MI {1}] [get_bd_cells pcie2axil]" in text:
-        sys.exit("ABORT: the upstream pcie2axil NUM_MI bug survived.")
-
-    # ---- BUILD-HANG.  Each of these fails SILENTLY: a build with an
-    # unbounded wait looks exactly like a long place-and-route, and a build
-    # with no post-launch assertion looks exactly like a slow queue.  The one
-    # that survived cost 27.6 hours.
-    if "wait_on_run synth_1\n" in text or "wait_on_run impl_1\n" in text:
-        sys.exit("ABORT: an UNBOUNDED wait_on_run survived into the build "
-                 "script. MEASURED 2026-08-29: an unbounded wait blocked for "
-                 "27.6 hours on a run that never started, with 7 minutes of "
-                 "CPU across the whole period.")
-    for need, why in (
-        ("proc fk33_assert_run_started",
-         "the post-launch_runs assertion that the run directory exists is "
-         "gone. launch_runs REPORTS SUCCESS when the run never starts"),
-        ("proc fk33_assert_run_done",
-         "the post-wait progress check is gone. wait_on_run -timeout RETURNS "
-         "rc 0 on expiry rather than raising, so without this check the bound "
-         "bounds nothing"),
-        ("fk33_assert_run_started synth_1",
-         "synthesis is launched without the run-started assertion"),
-        ("fk33_assert_run_started impl_1",
-         "implementation is launched without the run-started assertion"),
-        ("wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1",
-         "the synthesis wait is not bounded"),
-        ("wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1",
-         "the implementation wait is not bounded"),
-        ("fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN",
-         "nothing converts an expired synthesis bound into a stop"),
-        ("fk33_assert_run_done impl_1 $FK33_IMPL_MAX_MIN",
-         "nothing converts an expired implementation bound into a stop"),
-        # The marker file is the part that is easy to get wrong in the safe-
-        # looking direction: runme.log exists only AFTER the run starts
-        # executing, so a guard testing for it would refuse every correct
-        # launch.  MEASURED on a real trivial synthesis run.
-        ("file join $dir runme.sh",
-         "the run-started assertion no longer tests for runme.sh. runme.sh is "
-         "written SYNCHRONOUSLY by launch_runs; runme.log and "
-         ".vivado.begin.rst are not, and testing for either would false-fire "
-         "on every healthy launch"),
-    ):
-        if need not in text:
-            sys.exit(f"ABORT: {why} ({need!r} missing).")
-    for var in ("FK33_SYNTH_MAX_MIN", "FK33_IMPL_MAX_MIN"):
-        # Both the DEFAULT and the ENVIRONMENT OVERRIDE have to go through
-        # fk33_bound.  Found by mutation: routing the default through it and
-        # letting $::env past unchecked leaves the bound settable to -1 from
-        # outside, which is Vivado's "no limit" and reinstates the hang.
-        if not re.search(r"set %s\s+\[fk33_bound %s\s+\$::env\(%s\)\]"
-                         % (var, var, var), text):
-            sys.exit(f"ABORT: the {var} environment override does not go "
-                     "through fk33_bound, so a non-positive value from the "
-                     "environment would restore the unbounded wait.")
-        m = re.search(r"set %s\s+\[fk33_bound %s\s+(-?\d+)\]" % (var, var), text)
-        if not m:
-            sys.exit(f"ABORT: {var} is not set through fk33_bound, so a "
-                     "non-positive limit would silently restore the unbounded "
-                     "wait (Vivado reads -1 as 'no limit').")
-        if int(m.group(1)) <= 0:
-            sys.exit(f"ABORT: {var} is {m.group(1)}. wait_on_run -timeout "
-                     "treats any non-positive value as NO LIMIT.")
-    if "runme.log]" in text or "file exists [file join $dir runme.log" in text:
-        sys.exit("ABORT: the run-started assertion tests for runme.log, which "
-                 "does not exist yet when launch_runs returns. That guard "
-                 "would refuse every correct launch.")
-    # The three bring-up peripherals are the entire reason there is anything to
-    # test on the day the card goes in.  A build without them enumerates,
-    # binds, and tells you nothing.
-    for cell in ("fk33_id", "fk33_scratch", "fk33_dmabram"):
-        if f"create_bd_cell -type ip -vlnv xilinx.com:ip:{'axi_gpio' if cell == 'fk33_id' else 'axi_bram_ctrl'}" not in text:
-            sys.exit(f"ABORT: {cell}'s IP was not instantiated.")
-        if f"{cell}/S_AXI" not in text:
-            sys.exit(f"ABORT: {cell} is not connected to a smartconnect master.")
-    if str(ID_MAGIC) not in text:
-        sys.exit("ABORT: the identity constant did not reach the build script.")
-    if "FK33_STOP_AFTER_BD" not in text:
-        sys.exit("ABORT: the no-card BD check hook is missing.")
-
-    # The aux domain.  Without every one of these the endpoint bitstream is
-    # exactly as blind with the link down as the one that produced the
-    # first-fit handoff, so a silent regression here costs another afternoon on
-    # the bench to notice.
-    for need, why in (
-        ("create_bd_cell -type module -reference fk33_aux fk33_aux_0",
-         "the aux block is not instantiated"),
-        ("util_ds_buf_1/IBUF_OUT",
-         "the free-running 200 MHz oscillator is not connected"),
-        ("fk33_aux_0/xdma_aclk",
-         "the PCIe user clock is not tapped, so it cannot be measured"),
-        ("fk33_aux_0/perstn",
-         "PERST# is not observed"),
-        ("fk33_aux_0/xdma_aresetn",
-         "the fabric reset state is not observed"),
-        ("jtag_aux/M_AXI",
-         "there is no JTAG read path on the free-running clock"),
-        ("set_property name i2cprobe_tri_io",
-         "the I2C balls lost their external port name and the XDC no longer "
-         "matches them"),
-        # ---- thermal.  Each of these is a way the build can come out with a
-        # thermal guard that is present, builds, closes timing, and is blind.
-        ("create_bd_cell -type module -reference fk33_thermal fk33_therm_0",
-         "the thermal guard is not instantiated, so this bitstream has no "
-         "thermal protection except SYSMON's 101 C shutdown"),
-        ("CONFIG.ENABLE_TEMP_BUS {true}",
-         "SYSMON's temperature bus is not enabled, so there is no die "
-         "temperature in the fabric for the guard to compare"),
-        ("CONFIG.USER_TEMP_ALARM {true}",
-         "SYSMON's user temperature alarm is not enabled, so the die has one "
-         "comparator instead of two"),
-        ("system_management_wiz_0/temp_out",
-         "the die temperature is not wired into the guard"),
-        ("system_management_wiz_0/eoc_out",
-         "the die LIVENESS strobe is not wired in, so a frozen SYSMON would "
-         "read as a cold card -- the exact fail-open this design refuses"),
-        ("hbm/DRAM_0_STAT_TEMP",
-         "the HBM stack temperature is still going nowhere"),
-        ("hbm/DRAM_0_STAT_CATTRIP",
-         "the HBM stacks' catastrophic-temperature signal is still asserting "
-         "into the void"),
-        ("hbm/DRAM_1_STAT_CATTRIP",
-         "stack 1's catastrophic-temperature signal is still unconnected"),
-        ("clk_wiz_0/clk_out1] [get_bd_pins fk33_therm_0/hbm_pclk",
-         "the HBM APB clock is not wired in, so the HBM sensor has no "
-         "liveness check at all"),
-        # Specific to the CONNECTION, not just the pin name: "/fk33_therm_0/
-        # compute_clk" also appears in the block-design check's allowlist, and a
-        # loose needle would be satisfied by that and test nothing.  Found by
-        # running this guard against a broken copy and watching it NOT bite.
-        ("[get_bd_pins fk33_therm_0/compute_clk]",
-         "the compute domain is not wired in, so the halt has no domain to "
-         "be synchronised into and the canary cannot run"),
-        ("assign_bd_address -offset 0x00004000",
-         "the thermal registers are not on jtag_aux, so a thermal trip would "
-         "be unreadable with the PCIe link down"),
-        ("assign_bd_address -offset 0x0000B000",
-         "the thermal registers are not on the PCIe BAR, so the host cannot "
-         "see why the card stopped computing"),
-        # The read-back checks themselves.  A check that only runs in
-        # --bd-only mode does not cover the artefact that gets flashed, and a
-        # check that reads a BD parameter reads a REQUEST rather than the
-        # answer.  Both of those were true until 2026-08-28.
-        ("FK33_SYSMONI FAIL: expected exactly one SYSMONE4",
-         "the build no longer reads the alarm thresholds out of the ROUTED "
-         "netlist, so nothing proves the trip points in the bitstream are the "
-         "ones this design asked for"),
-        ("OT arming nibble 53h",
-         "the build no longer reports whether SYSMON's automatic power-down is "
-         "armed, which is the one thermal behaviour that is baked into the "
-         "silicon rather than into the fabric"),
-    ):
-        if need not in text:
-            sys.exit(f"ABORT: {why} ({need!r} missing).")
-    # STRUCTURAL, not textual.  The thermal read-back used to sit inside the
-    # FK33_STOP_AFTER_BD block, so the build that produced the bitstream never
-    # ran it -- the only evidence came from a separate --bd-only run against a
-    # Tcl that was not provably the same file.  Position is the whole point of
-    # that fix, and a needle for the text alone would still pass if someone
-    # moved it back inside the gate.
-    i_gate = text.find("info exists ::env(FK33_STOP_AFTER_BD)")
-    i_sys  = text.find("FK33_SYSMON $p = ")
-    i_hbm  = text.find("FK33_THERM hbm/$hp connected")
-    if i_gate < 0 or i_sys < 0 or i_hbm < 0:
-        sys.exit("ABORT: the thermal block-design read-back is missing entirely.")
-    if i_sys > i_gate or i_hbm > i_gate:
-        sys.exit("ABORT: the thermal read-back is inside the FK33_STOP_AFTER_BD "
-                 "block, so a full build would never run it and the bitstream "
-                 "would ship with the SYSMON configuration unverified.")
-
-    # The aux branch must be clocked by fk33_aux_0/aux_clk and by nothing else.
-    for cell in ("jtag_aux", "auxconnect") + AUX_CELLS:
-        if f"{cell}/aclk] [get_bd_pins fk33_aux_0/aux_clk]" not in text and \
-           f"{cell}/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]" not in text and \
-           "[get_bd_pins $c/s_axi_aclk]    [get_bd_pins fk33_aux_0/aux_clk]" not in text:
-            sys.exit(f"ABORT: {cell} is not clocked from the aux domain.")
-
-    # The one property that decides whether STRAY-NEXTJOB is reachable.  Run
-    # on the EMITTED text rather than on the tree's build_fk33_pcieep.tcl, so a
-    # change made here in the generator cannot pass by virtue of the checked-in
-    # artefact still being the old one.
-    check_reset_topology(text)
-
-    # ---- the host seam.  Each of these is a way this build can come out with
-    # a seam that is present, builds, closes timing, and is either unreachable
-    # or lying about what is behind it.
-    for need, why in (
-        ("create_bd_cell -type module -reference fk33_seam %s" % SEAM_CELL,
-         "the host seam is not instantiated, so board row N2's decision was "
-         "not carried into the bitstream and server/fk33_seam.h still drives "
-         "nothing"),
-        ("add_files -norecurse %s" % SEAM_RTL,
-         "rtl/fk33_seam.vhd is not added to the project, so the module "
-         "reference above cannot resolve"),
-        ("assign_bd_address -offset 0x%08X" % SEAM_BASE,
-         "the seam is not on the PCIe BAR at %#x, so the host cannot reach it"
-         % SEAM_BASE),
-        ("[get_bd_pins core_reset/peripheral_reset] [get_bd_pins %s/rst]"
-         % SEAM_CELL,
-         "the seam's ACTIVE-HIGH reset is not driven from proc_sys_reset's "
-         "active-high output. Wired to the active-low net it would sit in "
-         "reset forever and answer 0 to every read, which from the host is "
-         "indistinguishable from an unmapped BAR"),
-        # ONE REQUIREMENT, TWO CONFIGURATIONS.  Without the card, d_err MUST be
-        # tied high, because nothing else drives it and a GO would hang.  With
-        # the card, it must be driven BY THE CARD and must NOT be tied, because
-        # a tie-off would answer ERR to every GO with a real transformer behind
-        # the seam.  Making the entry conditional keeps a real requirement in
-        # both cases; deleting it for FK33_CARD would have left the new path
-        # unguarded, which is how the guard for D's absence came to pass green
-        # for the whole time the build was dead.
-        # The card pin is taken from SEAM_FROM_CARD rather than written out:
-        # d_err maps to the card's `err`, and hardcoding `d_err` here made this
-        # guard demand a pin that does not exist.
-        (("[get_bd_pins %s/d_err] [get_bd_pins %s/%s]"
-          % (SEAM_CELL, CARD_CELL, dict(SEAM_FROM_CARD)["d_err"])) if CARD_ON else
-         ("[get_bd_pins seam_h1/dout] [get_bd_pins %s/d_err]" % SEAM_CELL),
-         ("the seam's d_err is not driven by the card, so with subsystem D "
-          "present the seam's D face floats") if CARD_ON else
-         ("the seam's d_err is no longer tied HIGH. With no subsystem D in "
-          "this design and d_err low, a GO sets `running` and nothing ever "
-          "clears it: a host polling (done | err) hangs forever")),
-        ("CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {%d}" % SEAM_NO_D_CODE,
-         "the no-subsystem-D marker code is gone from ERR_INFO[3:0], so a "
-         "refusal caused by D's absence would be indistinguishable from a "
-         "real descriptor fault"),
-        ("FK33_SEAM FAIL: $g is",
-         "the CAPS read-back is gone, so a generic renamed in "
-         "rtl/fk33_seam.vhd would leave this build publishing a model "
-         "geometry it does not have"),
-    ):
-        if need not in text:
-            sys.exit(f"ABORT: {why} ({need!r} missing).")
-    check_bar_map(text)
-    check_seam_tieoff(text)
-
+    text = assemble_script()
     open(DST, "w").write(HEADER + text)
     print(f"wrote {DST}")
 
