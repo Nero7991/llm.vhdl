@@ -514,6 +514,10 @@ begin
     end procedure;
 
     variable d      : std_logic_vector(31 downto 0);
+    -- P5's counter.  A VARIABLE, not a signal: two `chk`-style increments in
+    -- one delta collapse to a single signal assignment, and a bench that
+    -- reports fewer checks than it ran passes while measuring nothing.
+    variable bad_d  : natural := 0;
     variable iv     : integer;
     variable st     : integer;
     variable rx_ref : integer;
@@ -593,6 +597,41 @@ begin
       axi_w(A_WIN_DATA, TBL(w)(31 downto 0));
       axi_w(A_WIN_DATA, TBL(w)(63 downto 32));
     end loop;
+
+    -- ==================================================================
+    -- P5: THE DESCRIPTOR WINDOW READS BACK WHAT WAS WRITTEN.
+    --
+    -- WHY IT EXISTS.  MEASURED 2026-09-16: `desc_ram` was moved to block RAM
+    -- to reclaim 9,468 LUT, which required registering the host readback into
+    -- `desc_q` one state earlier (the read channel already spends an idle
+    -- cycle at `rd_wait = 1`, so this costs no AXI latency).  That is a REAL
+    -- behavioural change to this path -- and this bench PASSED across it
+    -- unchanged, because P1 reads back only through the XOUT window and
+    -- NOTHING here had ever read the DESC window at all.
+    --
+    -- A green bench across a real change means the change is untested.  This
+    -- is the case that distinguishes the two versions.
+    --
+    -- IT IS ALSO A HAZARD CHECK, not just a data check.  `WIN_ADDR`
+    -- auto-increments on every WIN_DATA access, READ INCLUDED, so a readback
+    -- that captured its word one state early would be reading against a
+    -- moving address if the increment happened before `rd_wait = 2`.  It does
+    -- not -- the increment is in the `rd_wait = 2` block -- and streaming the
+    -- whole window back in order is what would catch it if that ever changed.
+    -- ==================================================================
+    axi_wi(A_WIN_SEL, 0);
+    axi_wi(A_WIN_ADDR, 0);
+    bad_d := 0;
+    for w in 0 to NSTEP*8-1 loop
+      axi_r(A_WIN_DATA, d);
+      if d /= TBL(w)(31 downto 0) then bad_d := bad_d + 1; end if;
+      axi_r(A_WIN_DATA, d);
+      if d /= TBL(w)(63 downto 32) then bad_d := bad_d + 1; end if;
+    end loop;
+    n_bad_rback <= n_bad_rback + bad_d;
+    report "tb_fk33_seam: P5 descriptor-window readback, "
+         & integer'image(NSTEP*8*2) & " words checked, "
+         & integer'image(bad_d) & " wrong" severity note;
 
     axi_wi(A_WIN_SEL, 1);
     axi_wi(A_WIN_ADDR, 0);

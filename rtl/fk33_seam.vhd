@@ -431,6 +431,24 @@ architecture rtl of fk33_seam is
        of std_logic_vector(NREG-1 downto 0);
   signal rel_ram : rel_ram_t := (others => (others => '0'));
 
+  -- THE OUTPUT REGISTER `desc_ram` NEEDS TO BE A BLOCK RAM.
+  --
+  -- MEASURED 2026-09-16: with `ram_style = "block"` and no register in the read
+  -- fanout, Vivado answers
+  --   [Synth 8-6850] RAM (desc_ram_reg) has partial Byte Wide Write Enable
+  --     pattern with ram_style = "block", however no output register found in
+  --     fanout of RAM
+  --   [Synth 8-6849] Infeasible attribute ... trying to implement using LUTRAM
+  -- and the 9,468 LUTRAM stay exactly where they were.  The descriptor-fetch
+  -- read at :524 DOES register into `dq_data`; it is the host READBACK that
+  -- reads into a variable, and a variable is not a register Vivado can see.
+  --
+  -- THIS COSTS NO AXI LATENCY.  The read channel already spends a dead cycle:
+  -- `rd_wait` walks 0 -> 1 -> 2 -> 3 and state 1 only advances the counter.
+  -- Registering the word there and consuming it in state 2 uses a cycle that
+  -- was already being spent, so the host sees the identical handshake.
+  signal desc_q : std_logic_vector(63 downto 0) := (others => '0');
+
   -- ------------------------------ registers ---------------------------
   signal r_seq_pos  : unsigned(31 downto 0) := (others => '0');
   signal r_n_step   : unsigned(31 downto 0) := to_unsigned(1, 32);
@@ -818,6 +836,14 @@ begin
             xr_addr <= to_integer(r_win_addr);
           end if;
         elsif rd_wait = 1 then
+          -- The output register.  Unconditional: `r_win_addr` is stable for the
+          -- duration of a read, and reading a word we then discard costs
+          -- nothing but makes this a clean single-address BRAM port.
+          if to_integer(r_win_addr)/2 < DESC_WORDS then
+            desc_q <= desc_ram(to_integer(r_win_addr)/2);
+          else
+            desc_q <= (others => '0');
+          end if;
           rd_wait <= 2;
         elsif rd_wait = 2 then
           roff := to_integer(rd_addr(11 downto 2)) * 4;
@@ -864,11 +890,16 @@ begin
             when A_WIN_DATA   =>
               case to_integer(r_win_sel) is
                 when W_DESC =>
+                  -- `desc_q`, not `desc_ram`, so this is the memory's ONLY
+                  -- readback port and it is registered.  Same word, same cycle,
+                  -- captured one state earlier.  Indexing `desc_ram` here again
+                  -- would restore the second read site and silently cost the
+                  -- block RAM.
                   if to_integer(r_win_addr)/2 < DESC_WORDS then
                     if to_integer(r_win_addr) mod 2 = 0 then
-                      rv := desc_ram(to_integer(r_win_addr)/2)(31 downto 0);
+                      rv := desc_q(31 downto 0);
                     else
-                      rv := desc_ram(to_integer(r_win_addr)/2)(63 downto 32);
+                      rv := desc_q(63 downto 32);
                     end if;
                   end if;
                 when W_REL =>
