@@ -11,6 +11,56 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-17 03:50: THERE IS A BITSTREAM. IT CONTAINS B, C AND D, AND NO SUBSYSTEM A.
+
+`hw/fk33/bit/fk33_card_noeng_75mhz_2026-09-17.bit`, 24,695,270 bytes,
+`FK33_BUILD_DONE`, 0 errors. Built with
+`FK33_CARD=1 FK33_ENG=0 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75`.
+
+**READ THIS BEFORE USING IT: it is not a working accelerator.** With no engine,
+Vivado ties `a_y_we`, `a_y_addr`, `a_y_data`, `a_y_mask`, `a_y_exp`,
+`a_job_done` and `a_job_err` to 0, so an A job issued by subsystem D never
+reports done and the host's poll hangs. It proves the FLOW -- synthesis, place,
+route, timing, bitstream over B, C, D, the host seam and the PCIe/HBM shell --
+and NOTHING about subsystem A. Label it that way wherever it is used.
+
+**IT HAS NOT BEEN ON THE CARD.** Programming is a hardware action and needs a
+human; nothing in this session went near `/dev/xdma*`, `xsdb` or `flash.sh`.
+
+| stage | result |
+|---|---|
+| synthesis | 330,408 LUT (**75.15%**), 425,925 FF (48.44%), 257 BRAM, 32 URAM, 536 DSP; peak 14.29 GB under a 20G cap, so a real peak |
+| place | WNS +0.463 pre-route (**not a result** -- it gave back 0.45 ns, inside the recorded 0.4-0.6 band) |
+| route | **WNS +0.013, WHS +0.010**, TNS/THS 0.000; 0 failed / 0 unrouted / 0 partially routed / 0 node overlaps; congestion **level 5** against the engine-on build's level 7; 3 h 30 m |
+
+Reports in `hw/fk33/results/noeng_2026-09-17/` (`ff8af51`). Full account, with
+the dead ends, in `docs/debugging/2026-09-16_card-build-is-lut-bound-at-109-percent.md`.
+
+**WHAT THIS DOES NOT RESOLVE.** The card WITH subsystem A is still 109.15% LUT
+and still does not route. Nothing here reclaimed a single LUT of that; the
+engine was removed, not shrunk. The open item is unchanged and is
+architectural: 22,000-31,000 LUT.
+
+**THREE DEFECTS FOUND ON THE WAY, TWO OF THEM MINE (`a138ad0`, `5d880ff`):**
+
+- `_ENG_ADDR_PART` opened with `+=` in the card-off branch, so **the
+  engine-only build could not generate at all** while the card build was fine.
+  It survived because the byte-identity check was run only with `FK33_CARD=1`:
+  a control applied to the arm that was never broken.
+- **`--selftest` graded whatever configuration was last written to disk.** Row
+  expectations come from the environment, the mutated text from the file, and
+  nothing compared them: the same command printed PASS, then FAIL, then PASS,
+  with no code change. A mismatch is now VOID with the command to fix it.
+- Two address-map rows were engine-dependent and said so only by failing (A5
+  now an explicit SKIP, A6's expectation follows `ENG_ON`).
+
+**NEXT, and it is Oren's call:**
+1. Program the card with this bitstream and exercise B/C/D from the host (needs
+   a human at the hardware).
+2. Or go after the 22,000-31,000 LUT so subsystem A can come back.
+
+---
+
 ### 2026-09-16: THE ELABORATION WALL IS DOWN. THE CARD SYNTHESISES. A FULL BITSTREAM BUILD IS RUNNING.
 
 **The wall was never the memory SIZE. It was the WRITE PORT COUNT.**
