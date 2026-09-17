@@ -439,3 +439,89 @@ is worth measuring before spending more.
 **And the 8:1 exchange rate is not trustworthy on this design** -- MEASURED
 earlier today, `ExploreWithRemap` cut 3,638 LUT and recovered only 51 CLBs. The
 build now running is the measurement.
+
+---
+
+## THE WALL MOVES AGAIN: it places, it meets timing, and it will not ROUTE
+
+MEASURED 2026-09-16, full `FK33_CARD=1` build at **75 MHz** with
+`CB_STYLE=distributed` and `desc_ram` in block RAM.
+
+**Synthesis:**
+
+| | 200 MHz, desc_ram in LUTRAM | 75 MHz, desc_ram in BRAM | delta |
+|---|---|---|---|
+| CLB LUTs | 438,219 (99.67%) | **426,882 (97.09%)** | **-11,337** |
+| LUT as Memory | 60,386 | 51,170 | -9,216 |
+| Block RAM Tile | 436.5 | 449.5 | +13 |
+| CLB Registers | 507,624 | 507,319 | -305 |
+
+**Attribution, and it is not what the clock change was sold as.** The
+`desc_ram` move accounts for **-9,216** of the -11,337; the drop from 200 MHz
+to 75 MHz contributed only about **-2,100 LUT**. Relaxing the clock did help,
+by removing timing-driven replication, but it was the SMALLER of the two
+effects by a factor of four.
+
+**PLACEMENT SUCCEEDED.** `Phase 3 Detail Placement` completed, where the
+99.67% run had died inside Phase 3 at "Commit Most Macros" with
+`[Place 30-487] ... 36345 CLBs required, 35902 available`. The CLB packing
+wall is gone.
+
+**TIMING IS COMFORTABLE.**
+
+```
+INFO: [Place 30-746] Post Placement Timing Summary WNS=0.051
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.222 | TNS=0.000 | WHS=-0.473 | THS=-782.452
+```
+
+Positive setup slack with zero total negative slack at 75 MHz. The clock
+compromise did its job. (Hold is negative and is what routing normally fixes.)
+
+**AND ROUTING FAILED ON CONGESTION.**
+
+```
+ERROR: [Route 35-3] Design is not routable as its global congestion level is 7.
+ERROR: [Route 35-4445] route_design is terminated due to errors/critical
+  warnings issued before and during initial routing.  The issues reported
+  cannot be resolved later in route_design.
+```
+
+Congestion level 7 of 8. The congestion report shows the maximum region size,
+**128x128, in all four directions** -- North, South, East and West -- which is
+device-wide uniform density rather than a hotspot. That is what 97.09% LUT
+looks like to a router.
+
+### The unit has changed THREE times and that is the story of this file
+
+| failure | unit | number |
+|---|---|---|
+| utilization DRC | LUTs | 479,919 of 439,680 (109.15%) |
+| detail placement | CLBs | 36,345 of 35,902 (short 443) |
+| initial routing | congestion level | 7 of 8, 128x128 all directions |
+
+Each fix moved the failure to a different resource with a different metric, and
+**none of the three is predictable from the one before it.** A LUT percentage
+did not predict CLB packing; CLB packing did not predict routability. This is
+the same lesson as `phys_opt` WNS not predicting routed WNS, one level up:
+**every stage of this flow is its own measurement.**
+
+### Do NOT retry
+
+- **"It fits, so it will place."** Refuted: 99.67% LUT passed the DRC and
+  failed detail placement.
+- **"It places, so it will route."** Refuted here: placement completed, setup
+  timing passed with margin, and initial routing refused the design outright.
+
+### Open
+
+- Whether congestion-directed implementation (`place_design -directive
+  AltSpreadLogic_high`, `route_design -directive Explore`) closes a level-7
+  global congestion. Running now, from the existing checkpoint. **Directives
+  cannot manufacture routing resources**, so if uniform density is the whole
+  story this will not be enough.
+- `ga_desc.ybw` is still LUTRAM (`8-6849`, refused: the read is a dynamic
+  bit-slice of a 768-bit word). Worth roughly 3-4k LUT. The working shape is
+  proven in the same design -- `gb_real.ybs` IS block RAM at 2 tiles because it
+  reads one narrow element.
+- Beyond that, reducing this design below roughly 90% LUT needs a real
+  architectural saving, not a lever.
