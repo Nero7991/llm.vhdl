@@ -1490,7 +1490,14 @@ if CARD_ON:
                     "        [get_bd_addr_segs {%s/s_axi/reg0}]\n"
                     "}\n" % (ENG_CTL_BASE, ENG_CELL))
 else:
-    _ENG_ADDR_PART += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axi/reg0}]\n"
+    # `=`, NOT `+=`.  This branch OPENS the string; the card-on branch above
+    # opens its own.  MEASURED 2026-09-17: written as `+=` it raised
+    # NameError: name '_ENG_ADDR_PART' is not defined for every FK33_CARD-unset
+    # run -- i.e. the engine-only build that has produced every bitstream this
+    # project owns could not generate at all, while the card build was fine.
+    # It survived review because the byte-identity check was run only with
+    # FK33_CARD=1: a control applied to the arm that was never broken.
+    _ENG_ADDR_PART = ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axi/reg0}]\n"
                     % (ENG_CTL_BASE, ENG_CELL))
 _ENG_ADDR_PART += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axix/reg0}]\n"
                 % (ENG_XW_BASE, ENG_CELL))
@@ -3211,6 +3218,39 @@ def selftest():
              DST))
     print("  A verdict here is about THAT file. Regenerate with the same\n"
           "  configuration before comparing two runs.")
+
+    # AND THE FILE'S CONFIGURATION MUST BE THIS INVOCATION'S, OR THE VERDICT IS
+    # ABOUT NEITHER.  Naming the artefact's configuration (above) made the
+    # result interpretable; it did not stop the rows being graded against the
+    # WRONG one.  Every expectation below is computed from CARD_ON/ENG_ON, i.e.
+    # from the ENVIRONMENT, while `built` comes from DISK -- so when they
+    # disagree the mutants are built for one design and scored against another.
+    #
+    # MEASURED 2026-09-17: `FK33_CARD=1 python3 gen_pcieep.py --selftest`
+    # against a card-off artefact reports
+    #   FAIL S1: expected acceptance, got a refusal
+    #   FAIL S3: expected a refusal, got acceptance
+    #   FAIL S5: expected acceptance, got a refusal
+    #   FAIL S6: expected a refusal, got acceptance
+    #   SELFTEST FAIL: the seam tie-off guard does not discriminate as claimed.
+    # -- four rows failing in BOTH directions, which reads as a broken guard
+    # and is nothing of the kind.  The same command passes once the artefact is
+    # regenerated with FK33_CARD=1, with no change to this file.  That is the
+    # recorded "the harness is reporting a fact about the harness" shape, and
+    # it costs whoever hits it a hunt through a guard that is working.
+    #
+    # VOID, not FAIL: a mismatch means the run graded nothing, and saying PASS
+    # would be a guard reporting a verdict on something it never looked at.
+    _sel_eng = ("create_bd_cell -type module -reference fk33_engine" in built)
+    if _sel_card != CARD_ON or _sel_eng != ENG_ON:
+        sys.exit(
+            "SELFTEST VOID: %s was emitted with FK33_CARD=%d FK33_ENG=%d, but "
+            "this invocation is FK33_CARD=%d FK33_ENG=%d. Every row below is "
+            "scored against the environment, so grading that file would "
+            "measure the mismatch and not the guards. Regenerate first:\n"
+            "    FK33_CARD=%d FK33_ENG=%d python3 %s"
+            % (DST, _sel_card, _sel_eng, CARD_ON, ENG_ON,
+               CARD_ON, ENG_ON, os.path.basename(__file__)))
     procs = {}
     for pname in ("fk33_assert_run_started", "fk33_assert_run_done",
                   "fk33_bound"):
@@ -4180,6 +4220,8 @@ def reset_topology_teeth():
 #
 # A row where only MAP fires is a row that justifies check_bar_map's
 # existence.  A row where only OLD fires is one this track should not claim.
+_ADDR_TEETH_ENG_ONLY = {"A5"}
+
 _ADDR_OLD_NEEDLES = [
     "assign_bd_address -offset 0x00004000",
     "assign_bd_address -offset 0x0000B000",
@@ -4244,8 +4286,25 @@ _ADDR_TEETH = [
      "assign_bd_address -offset 0x00012000 -range 4K",
      "assign_bd_address -offset 0x00011000 -range 4K"),
 
-    ("A6", True, "the scratch grown to 16 KB, swallowing both engine pages "
-     "without either of them moving",
+    # A6's EXPECTATION FOLLOWS THE CONFIGURATION, and it is the only row here
+    # that has to.  The 16 KB scratch swallows 0x12000 and 0x13000 -- the
+    # engine's two control pages -- so with FK33_ENG=0 there is nothing in that
+    # window and ACCEPTANCE is the correct verdict, not a miss.  Hardcoding
+    # `True` made this row report "<== WRONG" on an engine-less build that is
+    # behaving exactly as it should, which is the same defect as the SAXI_30/31
+    # check that reported bad=2 on a correct card build.
+    #
+    # It is not skipped, because the grown scratch still must not collide with
+    # anything that IS mapped in this configuration (the seam at 0xE000, the
+    # thermal pages, fk33_id); the row keeps grading that, and A5 self-voids on
+    # its missing anchor rather than pretending to test it.
+    # A5 mutates `assign_bd_address -offset 0x00012000`, the engine's control
+    # page.  FK33_ENG=0 does not emit it, so the row is NOT APPLICABLE there
+    # rather than VOID; see the loop in addr_map_teeth().
+    ("A6", ENG_ON, "the scratch grown to 16 KB, swallowing both engine pages "
+     "without either of them moving"
+     + ("" if ENG_ON else " -- SAFE with FK33_ENG=0: those two pages are not "
+        "mapped, so nothing is swallowed"),
      "assign_bd_address -offset 0x00010000  -range 8K",
      "assign_bd_address -offset 0x00010000  -range 16K"),
 
@@ -4330,6 +4389,19 @@ def addr_map_teeth():
     print("-" * 100)
     bad, map_alone, both, neither = [], 0, 0, 0
     for tag, must_refuse, desc, old, new in _ADDR_TEETH:
+        # A ROW WHOSE ANCHOR CANNOT EXIST IN THIS CONFIGURATION IS NOT DRIFT.
+        # A5 mutates the engine's own control page, which FK33_ENG=0 does not
+        # map at all.  The VOID-on-missing-anchor rule below is right in
+        # general -- a vanished anchor usually means the emitter moved and the
+        # row silently tested nothing -- but applying it here reports a defect
+        # on a build that is correct, and VOID counts as a failure, so an
+        # engine-less selftest could never pass.  Named explicitly rather than
+        # made conditional on the anchor being absent: "skip when the anchor is
+        # missing" would swallow exactly the drift the rule exists to catch.
+        if tag in _ADDR_TEETH_ENG_ONLY and not ENG_ON:
+            print("%-4s %-9s NOT APPLICABLE (FK33_ENG=0: the engine's control "
+                  "pages are not mapped) -- %s" % (tag, "SKIP", desc))
+            continue
         n = base.count(old)
         if n != 1:
             print("%-4s %-9s ANCHOR x%d -- TESTED NOTHING -- %s"
