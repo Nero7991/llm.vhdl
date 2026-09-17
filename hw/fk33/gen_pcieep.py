@@ -430,6 +430,27 @@ ENG_CORE_MHZ   = float(os.environ.get("FK33_ENG_CORE_MHZ", "200.000"))
 # with MUXF7 24,583 -> 0 and MUXF8 12,288 -> 0, against a ~40,239 LUT overage.
 # That figure is 264 commits old and is NOT quoted as a prediction here -- the
 # point of making it settable is to MEASURE it on the current tree.
+# SUBSYSTEM A, ON OR OFF.  Default ON -- this is opt-OUT and the shipping
+# configuration is unchanged.
+#
+# WHY IT EXISTS.  MEASURED 2026-09-16: the full FK33_CARD=1 design SYNTHESISES,
+# PLACES and MEETS TIMING at 75 MHz (WNS +0.222, TNS 0.000) and then fails
+# `[Route 35-3] Design is not routable as its global congestion level is 7` at
+# 426,882 CLB LUTs, 97.09%.  Congestion-directed place and route
+# (AltSpreadLogic_high / Explore) reached the IDENTICAL level 7, so the density
+# is not directive-addressable.  Reaching a routable ~90% needs about 31,000
+# LUT removed and every knob is spent.
+#
+# `eng` is 90,874 LUT of the 426,882.  Dropping it leaves roughly 336,000
+# (about 76%), which routes with room -- and produces the first bitstream this
+# project has ever built containing subsystems B, C and D.
+#
+# WHAT SUCH A BITSTREAM IS NOT: a working accelerator.  With no engine the
+# card's `a_*` inputs have no driver, so an A job issued by D never completes.
+# It proves the FLOW -- synthesis, placement, routing, timing and bitstream
+# generation over B, C, D, the host seam and the PCIe/HBM shell -- and nothing
+# about subsystem A.  Label it that way wherever it is used.
+ENG_ON         = os.environ.get("FK33_ENG", "1") == "1"
 ENG_CB_STYLE   = os.environ.get("FK33_CB_STYLE", "regs")
 if ENG_CB_STYLE not in ("regs", "distributed"):
     raise SystemExit("FK33_CB_STYLE must be regs or distributed, got %r"
@@ -881,6 +902,79 @@ ENG_RTL_ADD = "\n".join(
        "update_compile_order -fileset sources_1", ""])
 
 
+# THE CORE CLOCK DOMAIN AND THE CONTROL INTERCONNECT ARE *NOT* PART OF
+# SUBSYSTEM A, although they were emitted inside _eng_block until 2026-09-16.
+# `core_reset` resets the card as well as the engine, and `axil2eng` is the
+# only AXI-Lite path into the core clock domain, so the HOST SEAM hangs off it
+# whether or not there is an engine.  MEASURED: with FK33_ENG=0 the whole block
+# was skipped and the --bd-only run died at
+#   WARNING: [BD 5-230] No cells matched 'get_bd_cells axil2eng'
+#   ERROR:   [Common 17-55] 'get_property' expects at least one object.
+# in SEAM_BLOCK -- i.e. gating on "subsystem A" took two things with it that
+# subsystem A does not own.  They are factored into these two helpers rather
+# than duplicated, so the FK33_ENG=1 text stays byte-identical (checked by
+# selftest) and the two configurations cannot drift apart.
+
+
+def _core_reset_lines():
+    return [
+        "# THE CORE CLOCK.  A third MMCM output rather than a reuse of clk_out2:",
+        "# clk_out2 is HBM_REF_CLK_0/1, and sharing the HBM reference clock net with",
+        "# a fabric datapath clock would tie two unrelated requirements together for",
+        "# no gain.  clk_wiz_0's reference is xdma/axi_aclk in this branch, so the",
+        "# core clock stops with the PCIe link -- which is correct: with no host",
+        "# there is no job, and the thermal guard is on the aux domain and does not",
+        "# stop with it.",
+        "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset",
+        "connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins core_reset/slowest_sync_clk]",
+        "connect_bd_net [get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+        "connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]",
+    ]
+
+
+def _axil2eng_lines(num_mi):
+    """The AXI-Lite bridge from xdma's domain into the core domain.
+
+    NUM_MI is 2 with an engine (s_axi and s_axix) and 1 without, because a
+    smartconnect master interface that is created and never connected is not
+    prunable -- it reaches HDL generation as a dangling interface.  The host
+    seam appends itself to whatever this leaves; see SEAM_BLOCK.
+    """
+    return [
+        "# CONTROL.  A dedicated smartconnect because the engine's AXI-Lite slave is",
+        "# in the CORE clock domain (matvec_int4_desc_axi's s_axi_aclk IS the core",
+        "# clock) while pcie2axil is in xdma's.  NUM_CLKS 2 with aclk on the incoming",
+        "# side and aclk1 on the outgoing side is exactly the shape",
+        "# build_fk33_hbmbw.tcl:334-341 used for axil2tg, which built, routed and ran.",
+        "create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axil2eng",
+        "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {%d} CONFIG.NUM_CLKS {2}] [get_bd_cells axil2eng]" % num_mi,
+        "set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]",
+        "set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells pcie2axil]",
+        "connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \\",
+        "                    [get_bd_intf_pins axil2eng/S00_AXI]",
+        "connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins axil2eng/aclk]",
+        "connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins axil2eng/aresetn]",
+        "connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins axil2eng/aclk1]",
+    ]
+
+
+def _noeng_core_block():
+    """FK33_ENG=0: no engine, but the core domain and its AXI-Lite path stay."""
+    L = ["",
+         "# ---- SUBSYSTEM A OMITTED (FK33_ENG=0) -------------------------------------",
+         "# The `eng` cell, its 28 HBM read masters and its AXI-Lite control slave are",
+         "# absent.  See ENG_ON for why, and for what a bitstream built this way does",
+         "# and does not prove.  What is NOT absent: core_reset, which the card needs,",
+         "# and axil2eng, which carries the host seam into the core clock domain.",
+         ""]
+    L.extend(_core_reset_lines())
+    L.append("")
+    L.extend(_axil2eng_lines(1))
+    L.append("# ---- end core domain ------------------------------------------------------")
+    L.append("")
+    return "\n".join(L)
+
+
 def _eng_block():
     L = []
     a = L.append
@@ -936,17 +1030,7 @@ def _eng_block():
     a("    puts \"FK33_ENG ASSOCIATED_BUSIF $pin = $got\"")
     a("}")
     a("")
-    a("# THE CORE CLOCK.  A third MMCM output rather than a reuse of clk_out2:")
-    a("# clk_out2 is HBM_REF_CLK_0/1, and sharing the HBM reference clock net with")
-    a("# a fabric datapath clock would tie two unrelated requirements together for")
-    a("# no gain.  clk_wiz_0's reference is xdma/axi_aclk in this branch, so the")
-    a("# core clock stops with the PCIe link -- which is correct: with no host")
-    a("# there is no job, and the thermal guard is on the aux domain and does not")
-    a("# stop with it.")
-    a("create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset")
-    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins core_reset/slowest_sync_clk]")
-    a("connect_bd_net [get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]")
-    a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]")
+    L.extend(_core_reset_lines())
     a("")
     a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/core_clk]" % ENG_CELL)
     a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/core_aresetn]" % ENG_CELL)
@@ -961,20 +1045,7 @@ def _eng_block():
     a("# abandoned, which would hang that channel permanently.")
     a("connect_bd_net [get_bd_pins fk33_therm_0/compute_halt] [get_bd_pins %s/compute_halt]" % ENG_CELL)
     a("")
-    a("# CONTROL.  A dedicated smartconnect because the engine's AXI-Lite slave is")
-    a("# in the CORE clock domain (matvec_int4_desc_axi's s_axi_aclk IS the core")
-    a("# clock) while pcie2axil is in xdma's.  NUM_CLKS 2 with aclk on the incoming")
-    a("# side and aclk1 on the outgoing side is exactly the shape")
-    a("# build_fk33_hbmbw.tcl:334-341 used for axil2tg, which built, routed and ran.")
-    a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axil2eng")
-    a("set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} CONFIG.NUM_CLKS {2}] [get_bd_cells axil2eng]")
-    a("set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]")
-    a("set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells pcie2axil]")
-    a("connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \\")
-    a("                    [get_bd_intf_pins axil2eng/S00_AXI]")
-    a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins axil2eng/aclk]")
-    a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins axil2eng/aresetn]")
-    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins axil2eng/aclk1]")
+    L.extend(_axil2eng_lines(2))
     a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
     a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M01_AXI] [get_bd_intf_pins %s/s_axix]" % ENG_CELL)
     a("")
@@ -992,7 +1063,7 @@ def _eng_block():
     return "\n".join(L)
 
 
-ENGINE_BLOCK = _eng_block()
+ENGINE_BLOCK = _eng_block() if ENG_ON else _noeng_core_block()
 
 # ============================================================================
 # THE CARD CELL (subsystems B, C, D) AND THE B/C GRANT.  gen_pcieep.py
@@ -1211,26 +1282,36 @@ def _card_block():
     a("connect_bd_net [get_bd_pins core_reset/peripheral_reset]   [get_bd_pins %s/rst]" % CARD_CELL)
     a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/rstn]" % GRANT_CELL)
     a("")
-    a("# ---- the A seam, card <-> eng --------------------------------------------")
-    for cp, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG:
-        a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
-          % (CARD_CELL, cp, ENG_CELL, ep))
+    if ENG_ON:
+        a("# ---- the A seam, card <-> eng --------------------------------------------")
+        for cp, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG:
+            a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
+              % (CARD_CELL, cp, ENG_CELL, ep))
+    else:
+        a("# ---- the A seam is ABSENT (FK33_ENG=0) ------------------------------------")
+        a("# The card's a_* OUTPUTS drive nothing and its a_* INPUTS have no driver,")
+        a("# so unit A never reports done and any A job issued by D hangs.  That is")
+        a("# expected and is the whole cost of this configuration; see ENG_ON.")
     a("")
-    a("# THE CARD'S AXI-LITE MASTER ONTO THE ENGINE'S CONTROL SLAVE.  Two masters")
-    a("# now want eng/s_axi: the host, to place DESC_PTR and the arena base before")
-    a("# a run, and the card, to issue one job per A step during it.  The existing")
-    a("# net is DELETED and both go through a 2:1 smartconnect, rather than")
-    a("# ENGINE_BLOCK being edited, so that block stays exactly what the")
-    a("# engine-only build already proved.")
-    a("delete_bd_objs [get_bd_intf_nets -of_objects [get_bd_intf_pins %s/s_axi]]" % ENG_CELL)
-    a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 engctl")
-    a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {2}] [get_bd_cells engctl]")
-    a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]")
-    a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]")
-    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]")
-    a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins engctl/S00_AXI]")
-    a("connect_bd_intf_net [get_bd_intf_pins %s/a]             [get_bd_intf_pins engctl/S01_AXI]" % CARD_CELL)
-    a("connect_bd_intf_net [get_bd_intf_pins engctl/M00_AXI]   [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
+    if ENG_ON:
+        a("# THE CARD'S AXI-LITE MASTER ONTO THE ENGINE'S CONTROL SLAVE.  Two masters")
+        a("# now want eng/s_axi: the host, to place DESC_PTR and the arena base before")
+        a("# a run, and the card, to issue one job per A step during it.  The existing")
+        a("# net is DELETED and both go through a 2:1 smartconnect, rather than")
+        a("# ENGINE_BLOCK being edited, so that block stays exactly what the")
+        a("# engine-only build already proved.")
+        a("delete_bd_objs [get_bd_intf_nets -of_objects [get_bd_intf_pins %s/s_axi]]" % ENG_CELL)
+        a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 engctl")
+        a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {2}] [get_bd_cells engctl]")
+        a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]")
+        a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]")
+        a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]")
+        a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins engctl/S00_AXI]")
+        a("connect_bd_intf_net [get_bd_intf_pins %s/a]             [get_bd_intf_pins engctl/S01_AXI]" % CARD_CELL)
+        a("connect_bd_intf_net [get_bd_intf_pins engctl/M00_AXI]   [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
+    else:
+        a("# The card's AXI-Lite master `card/a` has no engine to drive and is left")
+        a("# unconnected; `axil2eng` likewise terminates nowhere.  Vivado prunes both.")
     a("")
     a("# ---- the host seam, fk33_seam <-> card ------------------------------------")
     a("# Subsystem D is PRESENT now, so _seam_block skipped every _SEAM_TIES")
@@ -1328,22 +1409,34 @@ def _card_block():
     a("    puts \"FK33_CARD SAXI_$i ENABLED\"")
     a("}")
     a("")
-    a("# THE CARD'S OWN VIEW OF THE ENGINE, assigned HERE and not in ENGINE_ADDR.")
-    a("# `a_awaddr` is 8 bits, so this master can reach 256 bytes; ENGINE_ADDR")
-    a("# maps the same slave at 4K for the HOST, and an unqualified")
-    a("# assign_bd_address covers EVERY master that can reach the segment. It")
-    a("# therefore tried to give this 8-bit master a 4K window and failed with")
-    a("# BD 41-1075 -- `the proposed range 4K is greater than the maximum range")
-    a("# 256`. Assigning the narrow space first, with an explicit target, leaves")
-    a("# ENGINE_ADDR's later call to find this one already mapped and skip it.")
-    a("assign_bd_address -offset 0x00000000 -range 256 \\")
-    a("    -target_address_space [get_bd_addr_spaces %s/a] \\" % CARD_CELL)
-    a("    [get_bd_addr_segs {%s/s_axi/reg0}]" % ENG_CELL)
-    a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
-    a("if {[llength $_cseg] != 1} {")
-    a("    error \"FK33_CARD FAIL: %s/a maps [llength $_cseg] segments, not 1. The card cannot issue A jobs.\"" % CARD_CELL)
-    a("}")
-    a("puts \"FK33_CARD %s/a maps $_cseg\"" % CARD_CELL)
+    if ENG_ON:
+        a("# THE CARD'S OWN VIEW OF THE ENGINE, assigned HERE and not in ENGINE_ADDR.")
+        a("# `a_awaddr` is 8 bits, so this master can reach 256 bytes; ENGINE_ADDR")
+        a("# maps the same slave at 4K for the HOST, and an unqualified")
+        a("# assign_bd_address covers EVERY master that can reach the segment. It")
+        a("# therefore tried to give this 8-bit master a 4K window and failed with")
+        a("# BD 41-1075 -- `the proposed range 4K is greater than the maximum range")
+        a("# 256`. Assigning the narrow space first, with an explicit target, leaves")
+        a("# ENGINE_ADDR's later call to find this one already mapped and skip it.")
+        a("assign_bd_address -offset 0x00000000 -range 256 \\")
+        a("    -target_address_space [get_bd_addr_spaces %s/a] \\" % CARD_CELL)
+        a("    [get_bd_addr_segs {%s/s_axi/reg0}]" % ENG_CELL)
+        a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
+        a("if {[llength $_cseg] != 1} {")
+        a("    error \"FK33_CARD FAIL: %s/a maps [llength $_cseg] segments, not 1. The card cannot issue A jobs.\"" % CARD_CELL)
+        a("}")
+        a("puts \"FK33_CARD %s/a maps $_cseg\"" % CARD_CELL)
+    else:
+        a("# THE CARD'S AXI-LITE MASTER MAPS NOTHING (FK33_ENG=0).  There is no")
+        a("# eng/s_axi/reg0 to assign, so `card/a` reaches no segment.  Asserted")
+        a("# rather than skipped: if a segment ever appears here in this")
+        a("# configuration it is a slave this build did not intend to expose to")
+        a("# the card, and the assertion is what would say so.")
+        a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
+        a("if {[llength $_cseg] != 0} {")
+        a("    error \"FK33_CARD FAIL: %s/a maps [llength $_cseg] segments with no engine in the design: $_cseg\"" % CARD_CELL)
+        a("}")
+        a("puts \"FK33_CARD %s/a maps nothing: unit A is absent and every A job hangs\"" % CARD_CELL)
     a("")
     a("# ---- end subsystems B, C, D -----------------------------------------------")
     a("")
@@ -1388,18 +1481,20 @@ ENGINE_ADDR = """
 # it failed identically -- so the two host spaces are named instead.  They are
 # `jtag_axil/Data` and `xdma/M_AXI_LITE`, taken from this call's own log lines
 # in the engine-only build rather than guessed.
+# The engine's address segments and HBM master mapping, built at module level
+# so no conditional indentation can leak into the emitted Tcl.
 if CARD_ON:
-    ENGINE_ADDR += ("foreach sp {jtag_axil/Data xdma/M_AXI_LITE} {\n"
+    _ENG_ADDR_PART = ("foreach sp {jtag_axil/Data xdma/M_AXI_LITE} {\n"
                     "    assign_bd_address -offset 0x%08X -range 4K \\\n"
                     "        -target_address_space [get_bd_addr_spaces $sp] \\\n"
                     "        [get_bd_addr_segs {%s/s_axi/reg0}]\n"
                     "}\n" % (ENG_CTL_BASE, ENG_CELL))
 else:
-    ENGINE_ADDR += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axi/reg0}]\n"
+    _ENG_ADDR_PART += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axi/reg0}]\n"
                     % (ENG_CTL_BASE, ENG_CELL))
-ENGINE_ADDR += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axix/reg0}]\n"
+_ENG_ADDR_PART += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axix/reg0}]\n"
                 % (ENG_XW_BASE, ENG_CELL))
-ENGINE_ADDR += """
+_ENG_ADDR_PART += """
 # EVERY engine master sees ALL 32 pseudo-channel segments, i.e. the whole 8 GiB.
 #
 # That is not laziness and it is not a bandwidth claim.  Under the flat packed
@@ -1424,10 +1519,10 @@ ENGINE_ADDR += """
 # MEASURED, it killed the --bd-only gate after 7 of 28 masters had been mapped.
 # The zero padding belongs in the format string on the Tcl side, where it is
 # applied to an integer, and nowhere else.
-ENGINE_ADDR += ("foreach pair {"
+_ENG_ADDR_PART += ("foreach pair {"
                 + " ".join("{m%02d %d}" % (i, p) for i, p in enumerate(ENG_PORT_MAP))
                 + "} {\n")
-ENGINE_ADDR += """    set m  [lindex $pair 0]
+_ENG_ADDR_PART += """    set m  [lindex $pair 0]
     set sx [lindex $pair 1]
     for {set s 0} {$s < 32} {incr s} {
         assign_bd_address \\
@@ -1437,6 +1532,12 @@ ENGINE_ADDR += """    set m  [lindex $pair 0]
     }
 }
 """.replace("ENGCELL", ENG_CELL)
+
+if ENG_ON:
+    ENGINE_ADDR += _ENG_ADDR_PART
+else:
+    ENGINE_ADDR += ("# subsystem A omitted (FK33_ENG=0): no eng address "
+                    "segments, no HBM master assignment\n")
 
 
 # ---------------------------------------------------------------------------
@@ -1590,7 +1691,15 @@ def _seam_block():
     a("# NUM_CLKS 2 with the incoming side on xdma/axi_aclk and the outgoing side")
     a("# on clk_wiz_0/clk_out3, so this is one more MI on an interconnect that")
     a("# exists rather than a new one.")
-    a("set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]")
+    if ENG_ON:
+        a("set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]")
+    else:
+        a("# FK33_ENG=0: axil2eng was created with NUM_MI 1 and no master")
+        a("# connected, so the seam takes M00 rather than appending after the")
+        a("# engine's two.  Reading NUM_MI here would give 1 and put the seam on")
+        a("# M01, leaving M00 dangling -- and a smartconnect MI that is created")
+        a("# and never connected is not pruned, it reaches HDL generation.")
+        a("set n 0")
     a("set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells axil2eng]")
     a("connect_bd_intf_net [get_bd_intf_pins axil2eng/[format M%02d_AXI $n]] \\")
     a("                    [get_bd_intf_pins %s/s_axi]" % SEAM_CELL)
@@ -1765,7 +1874,7 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         puts "FK33_CFG $c.NUM_SI = [get_property CONFIG.NUM_SI [get_bd_cells $c]]"
         puts "FK33_CFG $c.NUM_MI = [get_property CONFIG.NUM_MI [get_bd_cells $c]]"
     }
-    foreach c {fk33_id fk33_scratch fk33_dmabram eng core_reset axil2eng} {
+    foreach c {fk33_id fk33_scratch fk33_dmabram core_reset axil2eng} {
         if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING CELL $c" }
     }
     # SUBSYSTEM A.  Three ways this build can come out looking healthy and be
@@ -1778,18 +1887,30 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     # this build is a fact about the block design, and asking the tool means
     # this check cannot disagree with what was actually built.
     set ::fk33_card_on [expr {[llength [get_bd_cells -quiet card]] > 0}]
+    # AND WHETHER SUBSYSTEM A IS IN IT, read the same way and for the same
+    # reason: FK33_ENG=0 omits the engine deliberately, and every expectation
+    # below has to follow the configuration rather than assert the shipping
+    # one.  An enabled SAXI port with no master is not a harmless leftover --
+    # its ACLK and ARESET_N reach HDL generation undriven and fail with
+    # 41-758 -- so with no engine the 28 ports must be OFF, which is a real
+    # check and not a skip.
+    set ::fk33_eng_on [expr {[llength [get_bd_cells -quiet eng]] > 0}]
+    puts "FK33_ENG present=$::fk33_eng_on card=$::fk33_card_on"
     set engbad 0
     foreach i {01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 \
                17 18 19 20 21 22 23 24 25 26 27 28 29} {
         set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
-        if {[string tolower $v] ne "true"} {
-            puts "FK33_ENG SAXI_$i IS NOT ENABLED (USER_SAXI_$i = $v)"
+        set _want [expr {$::fk33_eng_on ? "true" : "false"}]
+        if {[string tolower $v] ne $_want} {
+            puts "FK33_ENG SAXI_$i = $v, must be $_want"
             incr engbad
         }
-        foreach pin [list hbm/AXI_${i}_ACLK hbm/AXI_${i}_ARESET_N] {
-            if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $pin]]]} {
-                puts "FK33_ENG $pin IS UNDRIVEN"
-                incr engbad
+        if {$::fk33_eng_on} {
+            foreach pin [list hbm/AXI_${i}_ACLK hbm/AXI_${i}_ARESET_N] {
+                if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $pin]]]} {
+                    puts "FK33_ENG $pin IS UNDRIVEN"
+                    incr engbad
+                }
             }
         }
     }
@@ -1805,12 +1926,14 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         puts "FK33_ENG SAXI_$i = $v (must be $_want)"
         if {[string tolower $v] ne $_want} { incr engbad }
     }
-    for {set m 0} {$m < 28} {incr m} {
-        set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
-        if {![llength $ip]} { puts "FK33_ENG eng/m${m}_axi MISSING"; incr engbad; continue }
-        if {![llength [get_bd_intf_nets -quiet -of_objects $ip]]} {
-            puts [format "FK33_ENG eng/m%02d_axi IS NOT CONNECTED" $m]
-            incr engbad
+    if {$::fk33_eng_on} {
+        for {set m 0} {$m < 28} {incr m} {
+            set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
+            if {![llength $ip]} { puts "FK33_ENG eng/m${m}_axi MISSING"; incr engbad; continue }
+            if {![llength [get_bd_intf_nets -quiet -of_objects $ip]]} {
+                puts [format "FK33_ENG eng/m%02d_axi IS NOT CONNECTED" $m]
+                incr engbad
+            }
         }
     }
     puts "FK33_ENG portcheck bad=$engbad (must be 0)"
@@ -1823,10 +1946,19 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     if {$engbad != 0} {
         error "FK33_ENG FAIL: portcheck bad=$engbad. See the FK33_ENG lines above for which."
     }
-    puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
-    if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
-        puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"
-        incr engbad
+    if {$::fk33_eng_on} {
+        puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
+        if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
+            puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"
+            incr engbad
+        }
+    } else {
+        # THE THERMAL GUARD HAS NOTHING TO STOP, and that is the honest state to
+        # report rather than a silent pass: with no engine there is no HBM read
+        # traffic and no DSP array, so compute_halt has no consumer.  B and C in
+        # the card are NOT halt-gated -- that path does not exist -- which is one
+        # more thing a bitstream built this way does not prove.
+        puts "FK33_ENG absent: no masters, no compute_halt consumer, no thermal throttle path"
     }
     # The aux domain.  A missing cell here means the bitstream is blind with
     # the link down, which is the exact condition it exists for, so name them.
@@ -2042,6 +2174,21 @@ ENG_XDC = [
     "set_clock_groups -asynchronous \\",
     "    -group [get_clocks -of_objects [get_pins bd_i/eng/core_clk]] \\",
     "    -group [get_clocks -of_objects [get_pins bd_i/eng/hbm_aclk]]",
+] if ENG_ON else [
+    "",
+    "###############################################################################",
+    "# SUBSYSTEM A ABSENT (FK33_ENG=0): NO CLOCK-GROUP LINE (gen_pcieep.py)",
+    "###############################################################################",
+    "# The line this block normally carries addresses bd_i/eng/core_clk and",
+    "# bd_i/eng/hbm_aclk.  With no engine `get_pins` matches nothing and",
+    "# `get_clocks -of_objects` on an empty object is an ERROR, not the warning",
+    "# an empty set_clock_groups would be -- and the XDC is read during",
+    "# implementation, so it would abort the build after place_design rather",
+    "# than at the start.  There is also nothing left to declare asynchronous:",
+    "# the 28 gray-pointer FIFOs it covers live inside the engine.",
+    "#",
+    "# The card runs wholly on clk_out3, so this configuration has no",
+    "# core-to-hbm_aclk crossing of its own.",
 ]
 
 IMPL_ENG_OLD = 'set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]\nset whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]\nputs [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]'
@@ -2098,6 +2245,11 @@ foreach cn [list $ecore $eaxi] {
 report_utilization -cells [get_cells bd_i/eng] -file fk33_pcieep_engine_util.rpt
 puts "FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt"
 
+# NOTHING ABOVE THIS POINT EXISTS UNDER FK33_ENG=0.  Everything from the top of
+# this section down to the `set wns` line below reads bd_i/eng off the
+# implemented design, so under FK33_ENG=0 it is replaced (see _IMPL_TAIL_AT,
+# just after this string) by a line saying the engine is absent.  The tail from
+# `set wns` on is configuration-independent and is kept in both.
 set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
 set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
 puts [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]
@@ -2136,6 +2288,35 @@ if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
 puts "FK33_PBLK pb_core $pbr"
 report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
 puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt\""""
+
+# FK33_ENG=0: KEEP THE TAIL, DROP THE ENGINE.  Everything from the top of
+# IMPL_ENG_NEW down to the `set wns` line reads bd_i/eng off the implemented
+# design -- the two clocks, the clock-group check, the engine-only utilization
+# report -- and every one of those checks would FAIL on a design that is
+# correct for this configuration.  The tail (WNS/WHS, the timing summary, the
+# congestion and clock reports, the floorplan checks, the bitstream line) is
+# configuration-independent and is exactly what a reduced-scope build is being
+# run to obtain, so it is kept verbatim rather than re-written.
+_IMPL_TAIL_AT = "set wns [get_property SLACK [get_timing_paths -delay_type max"
+assert IMPL_ENG_NEW.count(_IMPL_TAIL_AT) == 1, (
+    "IMPL_ENG_NEW's tail marker moved; the FK33_ENG=0 form would silently "
+    "keep or drop the wrong half")
+if not ENG_ON:
+    IMPL_ENG_NEW = (
+        "# ---- SUBSYSTEM A OMITTED (FK33_ENG=0) -------------------------------------\n"
+        "# There is no bd_i/eng in this design, so the engine's two clocks, the\n"
+        "# set_clock_groups check that rides on them and the engine-only area report\n"
+        "# have nothing to read.  The timing and floorplan checks below are kept:\n"
+        "# they are what this configuration exists to produce.\n"
+        "puts \"==== FK33 subsystem A (implemented design) ====\"\n"
+        "if {[llength [get_cells -quiet bd_i/eng]] != 0} {\n"
+        "    error \"FK33_ENGI FAIL: bd_i/eng IS in the implemented design, but this\n"
+        "build was generated with FK33_ENG=0. The script and the design disagree.\"\n"
+        "}\n"
+        "puts \"FK33_ENGI absent by request (FK33_ENG=0): no subsystem A, no HBM read\n"
+        "masters, and every A job issued by subsystem D hangs.\"\n"
+        "\n"
+        + IMPL_ENG_NEW[IMPL_ENG_NEW.index(_IMPL_TAIL_AT):])
 
 SAXI0_OLD = ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK} "
              + " ".join("CONFIG.USER_SAXI_%02d {false}" % i for i in range(1, 16))
@@ -2684,11 +2865,19 @@ if {$otarm == 3} {
     # SAXI_17..29 (stack 1) stay ENABLED and every one of them gets its clock
     # and reset in ENGINE_BLOCK.  SAXI_30/31 stay off: they are the two spare
     # engine ports docs/2026-08-27_hbm-port-contention.md reserves for B and C.
+    # WITH FK33_ENG=0 THESE TWO ARE IDENTITIES, deliberately.  The ports stay
+    # DISABLED, because the reason to enable them is the engine's 28 masters and
+    # an enabled port whose ACLK/ARESET_N dangle fails HDL generation with
+    # 41-758 -- which is exactly what the generator's own port check reported
+    # when the engine was first gated out and these substitutions still ran.
+    # SAXI_30/31 are re-enabled later by the card block for B and C.
     (SAXI0_OLD,
-     "    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK}] [get_bd_cells hbm]"),
+     ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK}] [get_bd_cells hbm]"
+      if ENG_ON else SAXI0_OLD)),
     (SAXI1_OLD,
-     "    set_property -dict [list CONFIG.USER_CLK_SEL_LIST1 {AXI_16_ACLK} "
-     "CONFIG.USER_SAXI_30 {false} CONFIG.USER_SAXI_31 {false}] [get_bd_cells hbm]"),
+     ("    set_property -dict [list CONFIG.USER_CLK_SEL_LIST1 {AXI_16_ACLK} "
+      "CONFIG.USER_SAXI_30 {false} CONFIG.USER_SAXI_31 {false}] [get_bd_cells hbm]"
+      if ENG_ON else SAXI1_OLD)),
 
     (IMPL_ENG_OLD, IMPL_ENG_NEW),
 
@@ -3696,6 +3885,13 @@ def _reset_abort(detail):
 def check_reset_topology(text):
     """Refuse to emit a build whose reset tree re-opens STRAY-NEXTJOB.
 
+    SKIPPED ENTIRELY WHEN FK33_ENG=0.  Every rule below is about the engine's
+    28 master ports and its core reset descending from theirs; with no engine
+    cell there are no such ports, and the check reported all 28 as "driven by
+    nothing" -- which is TRUE and is not a defect.  Skipping is right here and
+    weakening the rule would not be: the rule protects a hazard
+    (STRAY-NEXTJOB) that only exists when the engine exists.
+
     The SLAVE side defines the reference net and the ENGINE side has to descend
     from it, not the other way round.  Stated that way the rule accepts any
     topology in which the descendancy holds -- including wiring the engine
@@ -3706,6 +3902,16 @@ def check_reset_topology(text):
     strictly-safe simplification, and a checker that refuses safe changes is a
     checker that gets deleted.
     """
+    # WHETHER THERE IS AN ENGINE IS A FACT ABOUT THE SCRIPT, NOT ABOUT THE
+    # ENVIRONMENT.  Keying this on ENG_ON would make the teeth rows below
+    # vacuous under FK33_ENG=0 -- every mutation accepted, table still green --
+    # which is the "check that passes for the wrong reason" shape this file
+    # exists to avoid.  The cell-creation line is the DEFINITION of the engine
+    # being present, and it cannot be confused with the wiring this checks:
+    # deleting a connect_bd_net leaves it, so a broken topology is still
+    # refused.
+    if "create_bd_cell -type module -reference fk33_engine" not in text:
+        return
     # 1. Every engine master port's ARESET_N, and they must agree.  This is the
     #    reference net: it is the reset of the slaves that hold the in-flight
     #    bursts.
@@ -3896,7 +4102,7 @@ def reset_topology_teeth():
     import io
     import contextlib
 
-    base = ENGINE_BLOCK + (
+    base = _eng_block() + (
         "\n# from build_fk33_i2cprobe.tcl, the reset of the MMCM that feeds\n"
         "# core_reset/dcm_locked:\n"
         "connect_bd_net [get_bd_pins xdma/axi_aresetn] "
