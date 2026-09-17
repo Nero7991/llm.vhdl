@@ -525,3 +525,67 @@ the same lesson as `phys_opt` WNS not predicting routed WNS, one level up:
   reads one narrow element.
 - Beyond that, reducing this design below roughly 90% LUT needs a real
   architectural saving, not a lever.
+
+---
+
+## Congestion is NOT directive-addressable at this density
+
+MEASURED 2026-09-16, re-implementation from the same 75 MHz checkpoint with
+`place_design -directive AltSpreadLogic_high` and `route_design -directive
+Explore`:
+
+```
+SPREAD_OPT_DONE
+SPREAD_PLACED                      <- AltSpreadLogic_high placed successfully
+ERROR: [Route 35-3] Design is not routable as its global congestion level is 7.
+```
+
+**The identical congestion level as the default directives.** Placement
+succeeded both times; routing refused both times at level 7 of 8. Spreading
+logic cannot manufacture routing resources, and the congestion report's
+128x128 regions in all four directions said the density was uniform rather
+than a hotspot -- so there was nothing for a directive to spread it INTO.
+
+**Do not retry implementation directives for this failure.** The levers that
+remain are area, and only area.
+
+## What routing actually requires, arithmetically
+
+Device: 439,680 CLB LUTs. Current: **426,882 (97.09%)**.
+
+| target | LUTs | must remove |
+|---|---|---|
+| 92% | 404,505 | **22,377** |
+| 90% | 395,712 | **31,170** |
+| 88% | 386,918 | 39,964 |
+| 85% | 373,728 | 53,154 |
+
+**Everything in hand is an order of magnitude short.** `ga_desc.ybw` to block
+RAM is worth roughly 3,500 LUT and is the last cheap item; `CB_STYLE`, the
+clock, `desc_ram`, `ExploreWithRemap` and `AltSpreadLogic_high` are all spent.
+
+### Where the LUTs are, for whoever picks this up
+
+| cell | LUT | share |
+|---|---|---|
+| `card` (B, C, D) | 288,877 | 65.9% |
+| -- `(u)` llama_top's own logic | 107,288 | |
+| -- `gcr.u_attn` (C) | 84,879 (of which `u_arr` 50,591) | |
+| -- `gb_real.u_gdn` (B) | 54,404 | |
+| -- `gcr.gkvaxi.u_kv` | 23,986 | |
+| `eng` (A) | 90,874 | 20.7% |
+| infrastructure (xdma, PCIe bridges, seam, aux) | ~48,000 | 11% |
+
+**Two parameters that LOOK like levers and are not**, both checked in the RTL
+rather than assumed:
+- `KV_BLOCK` is the KV cache's exponent-block FORMAT (one exponent per 32
+  elements, C spec 2.1.1), not a throughput knob. `attn_mac_array.vhd:46`:
+  *"ONE BLOCK PER CYCLE IS THE CACHE'S STRUCTURE, NOT A TUNING KNOB."*
+- `QH_TILE` is already correct: `attn_block` passes `QH_TILE => G` where
+  `G = N_QH/N_KVH`, and `model_cfg_pkg.vhd:85` selects `QWEN35_9B` (16 q / 4
+  kv), so G is 4 and no lanes idle.
+- `A_ROWS_IF = 48` is the A seam width, not a tuning choice
+  (`gen_fk33_card.py:220`).
+
+**A 22,000-to-31,000 LUT saving is an architectural change, not a knob.** That
+is a design decision and it is where this stops being a debugging exercise.
