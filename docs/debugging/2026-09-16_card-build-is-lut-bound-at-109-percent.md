@@ -589,3 +589,153 @@ rather than assumed:
 
 **A 22,000-to-31,000 LUT saving is an architectural change, not a knob.** That
 is a design decision and it is where this stops being a debugging exercise.
+
+---
+
+## APPENDED 2026-09-16 22:57 -- THE REDUCED-SCOPE ROUTE, AND WHAT GATING SUBSYSTEM A ACTUALLY COSTS
+
+### The question
+
+Can a bitstream be produced at all, given the 109.15% above, by building the
+card WITHOUT subsystem A? `eng` is 90,874 of the 426,882 LUT, so dropping it
+should leave roughly 336,000 (about 76%).
+
+### The answer
+
+Yes as far as block-design validation: `FK33_ENG=0` validates with 0 errors
+(`FK33_BD_VALIDATE OK`, 22:57:22). Whether it ROUTES is a separate question and
+is being measured now; nothing below claims it.
+
+**But the gate does not fall where the name suggests.** Two things that live
+inside `_eng_block()` are not owned by subsystem A:
+
+- **`core_reset`** (a `proc_sys_reset`) resets the CARD as well as the engine.
+- **`axil2eng`** is the only AXI-Lite path into the core clock domain, and the
+  HOST SEAM hangs off it whether or not there is an engine.
+
+Skipping the block wholesale therefore removed subsystem D's host interface
+along with subsystem A, and the first attempt died at:
+
+```
+WARNING: [BD 5-230] No cells matched 'get_bd_cells axil2eng'
+ERROR:   [Common 17-55] 'get_property' expects at least one object.
+```
+
+### The procedure
+
+1. `--bd-only` with `FK33_ENG=0`. Three minutes, ~3.3 GB. Found the error above.
+   It is the cheap probe and it is the only one that runs before synthesis.
+2. `grep -nE "^[^#]*\beng\b"` over the EMITTED script rather than over the
+   generator, which is what found the three remaining sites. Searching the
+   generator would have missed them: the emitted text is what Vivado reads.
+3. `grep -n eng fk33_pcieep.xdc` separately, because the XDC is a second emitted
+   artifact read at a different STAGE.
+4. Byte-compare the `FK33_ENG=1` output against `git show HEAD:...`'s output, to
+   prove the shipping configuration was not disturbed.
+5. `--selftest` under BOTH settings, to prove the teeth still discriminate.
+
+### Four sites, and only one of them fails early
+
+| site | stage it fires at | what it would have done |
+|---|---|---|
+| `axil2eng` in `SEAM_BLOCK` | BD | the `17-55` above |
+| `card/a` -> `eng/s_axi/reg0` | BD | assign_bd_address onto an absent segment |
+| `set_clock_groups` in the XDC | **implementation** | `get_clocks -of_objects` on an empty object, AFTER `place_design` |
+| `FK33_ENGI` clock and area checks | post-route | three checks failing on a design that is correct for its configuration |
+
+**The XDC one is the expensive member.** Constraints are read during
+implementation, so it would have aborted roughly an hour in, long after a
+three-minute `--bd-only` had said the design was fine. This is the same shape
+as the `--bd-only`-finds-what-no-bench-can entry in CLAUDE.md, one stage later:
+**a cheap check at stage N says nothing about stage N+1, and the configuration
+flag has to be honoured at every stage it reaches.**
+
+### The trap this nearly repeated: a flag-keyed check is a vacuous check
+
+`check_reset_topology` was gated `if not ENG_ON: return`. That is defensible --
+the hazard it guards (STRAY-NEXTJOB) only exists when the engine exists -- and
+it is also exactly how its ten teeth rows become **vacuous** under
+`FK33_ENG=0`: every mutation accepted, table still printing GREEN.
+
+It now decides from the SCRIPT TEXT (`create_bd_cell -type module -reference
+fk33_engine`), which is the definition of the engine being present and cannot
+be confused with the wiring the check tests -- deleting a `connect_bd_net`
+leaves the creation line in place. MEASURED under both settings:
+
+```
+T1..T7  REFUSED     (the seven real hazards)
+T8, T9  accepted    (the two deliberately-safe topologies)
+T0      accepted    (the unmutated control)
+```
+
+Similarly, the 28 SAXI ports are now checked against `false` with no engine
+rather than skipped: **an enabled port with no master is not inert** -- its
+ACLK and ARESET_N reach HDL generation undriven and fail with `41-758`.
+
+### Evidence
+
+```
+FK33_ENG present=0 card=1
+FK33_ENG portcheck bad=0 (must be 0)
+FK33_ENG absent: no masters, no compute_halt consumer, no thermal throttle path
+FK33_CARD card/a maps nothing: unit A is absent and every A job hangs
+FK33_SEAM CAPS_VOCAB = 0 / CAPS_EMBD = 0 / CAPS_LAYER = 0 / CAPS_CTX = 0
+FK33_BD_VALIDATE OK
+FK33_BD_ONLY_DONE
+errors: 0
+```
+
+The pins Vivado ties to 0, which is the honest statement of what is missing:
+
+| build | tied-off inputs |
+|---|---|
+| card + engine | `bst_state_base`, `a_arena_base` |
+| card, no engine | those two, plus `a_y_we`, `a_y_addr`, `a_y_data`, `a_y_mask`, `a_y_exp`, `a_job_done`, `a_job_err` |
+
+`a_job_done` tied low is the concrete form of "an A job never completes".
+**`bst_state_base` and `a_arena_base` were ALREADY tied to 0 in the engine-on
+build** -- a pre-existing gap, not something this configuration introduced, and
+worth its own look.
+
+Critical warnings, with the engine-on card build as the control:
+
+| class | card + engine (validated, placed, met 75 MHz) | card, no engine |
+|---|---|---|
+| `41-1377` HBM address aliasing | 32 | 32 |
+| `41-1356` unassigned slave segment | 128 | 64 |
+
+Both pre-existing. The `41-1356` halving is what dropping 28 master address
+spaces should do.
+
+### Measurement traps hit
+
+- **`grep -o 'FK33_BD_VALIDATE[A-Z ]*'` reported FAIL on runs that PASSED.**
+  The log contains the script that writes it, so the first match was the
+  emitter's own `puts "FK33_BD_VALIDATE FAIL: $verr"` line. This is the
+  line-anchored-sentinel rule in CLAUDE.md, hit for the fourth recorded time.
+  Anchored (`^FK33_BD_VALIDATE`), both earlier card runs printed OK.
+- **Indentation leaked into the emitted Tcl** on the first attempt at gating
+  `ENGINE_ADDR`, because the payload was indented inside an `if`. Moving it to
+  a module-level constant restored byte-identity. A generator's Python
+  structure is not free: it shows up in the artifact.
+
+### Measured and REJECTED -- do not retry
+
+- **Gating `_eng_block()` as a unit.** It takes `core_reset` and `axil2eng`
+  with it and breaks subsystem D's host interface. Split at the boundary of
+  what subsystem A actually owns.
+- **Leaving the 28 SAXI ports enabled with no engine.** `41-758` at HDL
+  generation; the ports must go back to disabled, which is why the
+  `SAXI0_OLD`/`SAXI1_OLD` substitutions become identities rather than being
+  skipped.
+- **Keying `check_reset_topology` on `ENG_ON`.** Vacuous teeth, green table.
+
+### Open, not yet answered
+
+- **Whether it routes.** 336,000 LUT is an ESTIMATE by subtraction; the real
+  post-synthesis number is not in hand, and the failure unit has changed three
+  times already in this investigation (LUT, then CLB, then congestion level).
+- `ga_desc.ybw` is still LUTRAM, worth roughly 3,500 LUT, and is unaffected by
+  any of this.
+- Subsystem A's own gaps are untouched: `ga_desc` has no value coverage, and
+  the `x_exp` divergence between the two A arms is unexplained.
