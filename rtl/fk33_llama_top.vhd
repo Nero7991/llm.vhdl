@@ -1899,12 +1899,52 @@ begin
         variable st   : st_t := S_IDLE;
         variable buf  : buf_t(0 to REGMAX-1);
         variable buf2 : buf_t(0 to REGMAX-1);
+        -- ONE READ SITE EACH, AND THAT IS WHAT DECIDES THE IMPLEMENTATION.
+        -- MEASURED 2026-09-17 on the placed card+A design: `buf2` is inferred
+        -- as distributed RAM (`RAM64M8 x 576`, 16 K x 16, named outright in
+        -- Vivado's Report RAM Utilization) while `buf` -- written and read at
+        -- the same indices, in the same process -- was implemented in
+        -- FLIP-FLOPS: 196,608 of them, 39% of the whole design's registers and
+        -- 97% of llama_top's own.
+        --
+        -- The asymmetry was the READ SITE COUNT in the source text. `buf2` had
+        -- exactly one (`buf2(k)` in the swiglu branch); `buf` had four -- the
+        -- NORM_ANCHOR probe loop, the two V_NORM branches and the swiglu
+        -- branch -- and Vivado refuses RAM inference on the multi-read form.
+        -- This is the recorded `region_mem` mechanism (3 read sites refused,
+        -- 2 accepted), and NOT a question of what is reachable: with
+        -- NORM_ANCHOR false and NORM_REAL true this generate arm is V_SWG
+        -- only, so every one of those other sites is STATICALLY DEAD and the
+        -- inference was refused anyway.
+        --
+        -- Hoisting the read is exact, not an approximation: `buf` is never
+        -- written inside S_WR, so `bq := buf(k)` at the top of the state and
+        -- `buf(k)` in the branch are the same value in the same delta.
+        variable bq   : signed(MANT_W-1 downto 0);
+        variable bq2  : signed(MANT_W-1 downto 0);
+        -- ASKING OUTRIGHT, because hoisting the read to a single site was
+        -- MEASURED to change NOTHING: `lut=292383 ff=357608` to the digit,
+        -- identical to the run before it, and `buf_reg` still absent from
+        -- Report RAM Utilization while `buf2_reg` sits in it as
+        -- `RAM64M8 x 576`.  So the read-site count is not what separates them
+        -- here, and the recorded region_mem threshold (3 refused, 2 accepted)
+        -- does not carry over.
+        --
+        -- `ram_style` is a REQUEST, not an answer: this project has already
+        -- recorded `[Synth 8-6849] Infeasible attribute` being a WARNING that
+        -- falls back silently, so the verdict is Report RAM Utilization and
+        -- the FF count, never this line.  If it IS refused, the message names
+        -- the reason, which no amount of restructuring-by-guess would.
+        attribute ram_style : string;
+        attribute ram_style of buf : variable is "distributed";
         variable n    : natural := 0;
         variable k    : natural := 0;
         variable acc  : integer := 0;
         variable pass : natural := 0;
         -- NORM_ANCHOR only.
         variable mx, pmsb, nsh, d : integer := 0;
+        -- NORM_ANCHOR's running extrema.  See S_RD.
+        variable mxv, mnv : integer := 0;
         -- The magnitude tap.  A 32-bit `integer` cannot hold this: 64 elements
         -- of a 16-bit mantissa reach 2**36.
         variable ssq  : unsigned(63 downto 0) := (others => '0');
@@ -1928,6 +1968,10 @@ begin
                   pass := 0;
                   acc  := 0;
                   ssq  := (others => '0');
+                  -- Wider than any MANT_W mantissa, so the first element
+                  -- always replaces both.
+                  mxv  := -2**20;
+                  mnv  :=  2**20;
                   st   := S_RD;
                 end if;
 
@@ -1951,6 +1995,18 @@ begin
                     buf(k-2) := el_rdata; acc := acc + to_integer(el_rdata);
                     sqp := el_rdata * el_rdata;   -- non-negative, fits 2*MANT_W
                     ssq := ssq + unsigned(resize(sqp, 64));
+                    -- THE MAGNITUDE IS FOLDED AS IT STREAMS, which is what
+                    -- this block's own comment says a real unit does.  It used
+                    -- to be a scan over `buf(i)` for i in 0 to REGMAX-1 after
+                    -- the read finished -- a 12,288-wide COMBINATIONAL read of
+                    -- the whole array, in one cycle, and the reason `buf`
+                    -- could not be a memory at all.
+                    if to_integer(el_rdata) > mxv then
+                      mxv := to_integer(el_rdata);
+                    end if;
+                    if to_integer(el_rdata) < mnv then
+                      mnv := to_integer(el_rdata);
+                    end if;
                   else                buf2(k-2) := el_rdata; end if;
                 end if;
                 if k = n+1 then
@@ -1973,14 +2029,16 @@ begin
                     -- MANT_W-2 bits.  Behavioural: a real unit folds the
                     -- magnitude as it streams, exactly as seq_vec_res does.
                     if NORM_ANCHOR and vi = V_NORM then
-                      mx := 0;
-                      for i in 0 to REGMAX-1 loop
-                        if i < n then
-                          d := to_integer(buf(i)) - (acc / n);
-                          if d < 0 then d := -d; end if;
-                          if d > mx then mx := d; end if;
-                        end if;
-                      end loop;
+                      -- EXACT, not an approximation of the scan it replaces.
+                      -- max |x_i - m| over a set is max(max_x - m, m - min_x)
+                      -- for ANY constant m, so the streamed extrema give the
+                      -- identical integer, with the identical truncation of
+                      -- `acc / n`.  The clamp covers the degenerate case where
+                      -- truncation puts the mean outside [min, max].
+                      d  := acc / n;
+                      mx := mxv - d;
+                      if d - mnv > mx then mx := d - mnv; end if;
+                      if mx < 0 then mx := 0; end if;
                       pmsb := -1;
                       for i in 0 to 30 loop
                         if mx >= 2**i then pmsb := i; end if;
@@ -1998,13 +2056,16 @@ begin
                 uw_en(NUNIT+vi)   <= '1';
                 uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
                 uw_addr(NUNIT+vi) <= k;
+                -- The single read of each array.  See the declarations.
+                bq  := buf(k);
+                bq2 := buf2(k);
                 if NORM_ANCHOR and vi = V_NORM then
-                  d := to_integer(buf(k)) - (acc / n);
+                  d := to_integer(bq) - (acc / n);
                   if    nsh > 0 then d := d / (2**nsh);
                   elsif nsh < 0 then d := d * (2**(-nsh)); end if;
                   uw_data(NUNIT+vi) <= sat_m(d);
                 elsif vi = V_NORM then
-                  uw_data(NUNIT+vi) <= sat_m(to_integer(buf(k)) - (acc / n));
+                  uw_data(NUNIT+vi) <= sat_m(to_integer(bq) - (acc / n));
                 else
                   -- THE NORMALISATION SHIFT IS MANT_W AND THAT IS NOT
                   -- ARBITRARY.  Two MANT_W-wide mantissas multiply to at most
@@ -2019,8 +2080,8 @@ begin
                   -- exponent describes.  A real engine picks this shift from
                   -- the data, exactly as seq_vec_res does; a fixed MANT_W is
                   -- the stand-in that is never wrong in the unsafe direction.
-                  uw_data(NUNIT+vi) <= sat_m((to_integer(buf(k))
-                                         * to_integer(buf2(k)))
+                  uw_data(NUNIT+vi) <= sat_m((to_integer(bq)
+                                         * to_integer(bq2))
                                          / (2**MANT_W));
                 end if;
                 if k = n-1 then
