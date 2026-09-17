@@ -385,3 +385,57 @@ Neither fix is free:
   recovered only 51 CLBs: it cut the LUT minimum by 455 CLBs and grew packing
   overhead by about 434. Do not assume a LUT reduction converts to CLBs at 8:1
   on this design.
+
+---
+
+## `desc_ram` IS block RAM now, and the fix was the output register, not the attribute
+
+MEASURED 2026-09-16, OOC synthesis of `fk33_seam` alone (two minutes, against
+an hour for a full build):
+
+```
+8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) for RAM "fk33_seam/desc_ram_reg"
+SEAMOOC_AREA lut=722 ramb36=12 ramb18=2 distram=294
+```
+
+No `8-6849`. The 9,468 LUTRAM are gone, paid for in about 13 BRAM tiles
+against 235 spare.
+
+**What actually fixed it was the OUTPUT REGISTER, not the attribute.** The
+attribute had been there for a whole build cycle doing nothing. Vivado's
+`8-6850` named the real requirement -- *"partial Byte Wide Write Enable pattern
+... however no output register found in fanout of RAM"* -- and the host readback
+read into a VARIABLE, which is not a register it can see. The descriptor-fetch
+read at `:524` already registered into `dq_data`; only the readback path was
+unregistered.
+
+**It cost no AXI latency**, because the read channel already spent an idle
+cycle: `rd_wait` walks 0 -> 1 -> 2 -> 3 and state 1 only advanced the counter.
+The word is captured there and consumed in state 2.
+
+**THE AUTO-INCREMENT HAZARD WAS CHECKED, NOT ASSUMED.** `WIN_ADDR`
+auto-increments on every WIN_DATA access **including reads**, which would make a
+one-state-early capture read against a moving address. It does not: the
+read-path increment is at `:922`, inside the `rd_wait = 2` block. It is close
+enough that P5 exists to catch it if that ordering ever changes.
+
+### The cheap-verification pattern that made this tractable
+
+An OOC synthesis of ONE entity answered "did the storage move?" in two minutes.
+The previous attempt burned a full hour-long build to learn the same class of
+fact. **When the question is about inference rather than about the system,
+synthesise the entity, not the design.**
+
+### Still outstanding
+
+`ga_desc.ybw` is still LUTRAM -- `8-6849`, refused because the read is a
+dynamic bit-slice of a 768-bit word. The shape that works is proved in the same
+design: `gb_real.ybs` (4,096 x 16, one element per read) IS block RAM, 2 tiles,
+`8-7030 Implemented Non-Cascaded Block Ram`. The fix is `A_ROWS_IF` separate
+narrow memories rather than one wide one. **Not attempted yet**: `desc_ram`
+alone is about 9,468 LUT against a 443 CLB shortfall (~3,544 LUT at 8:1), so it
+is worth measuring before spending more.
+
+**And the 8:1 exchange rate is not trustworthy on this design** -- MEASURED
+earlier today, `ExploreWithRemap` cut 3,638 LUT and recovered only 51 CLBs. The
+build now running is the measurement.
