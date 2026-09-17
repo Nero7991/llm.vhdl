@@ -1826,7 +1826,7 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         puts "FK33_CFG $c.NUM_SI = [get_property CONFIG.NUM_SI [get_bd_cells $c]]"
         puts "FK33_CFG $c.NUM_MI = [get_property CONFIG.NUM_MI [get_bd_cells $c]]"
     }
-    foreach c {fk33_id fk33_scratch fk33_dmabram eng core_reset axil2eng} {
+    foreach c {fk33_id fk33_scratch fk33_dmabram core_reset axil2eng} {
         if {![llength [get_bd_cells -quiet $c]]} { puts "FK33_CFG MISSING CELL $c" }
     }
     # SUBSYSTEM A.  Three ways this build can come out looking healthy and be
@@ -1839,17 +1839,29 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     # this build is a fact about the block design, and asking the tool means
     # this check cannot disagree with what was actually built.
     set ::fk33_card_on [expr {[llength [get_bd_cells -quiet card]] > 0}]
+    # AND WHETHER SUBSYSTEM A IS IN IT, read the same way and for the same
+    # reason: FK33_ENG=0 omits the engine deliberately, and every expectation
+    # below has to follow the configuration rather than assert the shipping
+    # one.  An enabled SAXI port with no master is not a harmless leftover --
+    # its ACLK and ARESET_N reach HDL generation undriven and fail with
+    # 41-758 -- so with no engine the 28 ports must be OFF, which is a real
+    # check and not a skip.
+    set ::fk33_eng_on [expr {[llength [get_bd_cells -quiet eng]] > 0}]
+    puts "FK33_ENG present=$::fk33_eng_on card=$::fk33_card_on"
     set engbad 0
     foreach i {01 02 03 04 05 06 07 08 09 10 11 12 13 14 15                17 18 19 20 21 22 23 24 25 26 27 28 29} {
         set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]
-        if {[string tolower $v] ne "true"} {
-            puts "FK33_ENG SAXI_$i IS NOT ENABLED (USER_SAXI_$i = $v)"
+        set _want [expr {$::fk33_eng_on ? "true" : "false"}]
+        if {[string tolower $v] ne $_want} {
+            puts "FK33_ENG SAXI_$i = $v, must be $_want"
             incr engbad
         }
-        foreach pin [list hbm/AXI_${i}_ACLK hbm/AXI_${i}_ARESET_N] {
-            if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $pin]]]} {
-                puts "FK33_ENG $pin IS UNDRIVEN"
-                incr engbad
+        if {$::fk33_eng_on} {
+            foreach pin [list hbm/AXI_${i}_ACLK hbm/AXI_${i}_ARESET_N] {
+                if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $pin]]]} {
+                    puts "FK33_ENG $pin IS UNDRIVEN"
+                    incr engbad
+                }
             }
         }
     }
@@ -1865,12 +1877,14 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
         puts "FK33_ENG SAXI_$i = $v (must be $_want)"
         if {[string tolower $v] ne $_want} { incr engbad }
     }
-    for {set m 0} {$m < 28} {incr m} {
-        set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
-        if {![llength $ip]} { puts "FK33_ENG eng/m${m}_axi MISSING"; incr engbad; continue }
-        if {![llength [get_bd_intf_nets -quiet -of_objects $ip]]} {
-            puts [format "FK33_ENG eng/m%02d_axi IS NOT CONNECTED" $m]
-            incr engbad
+    if {$::fk33_eng_on} {
+        for {set m 0} {$m < 28} {incr m} {
+            set ip [get_bd_intf_pins -quiet [format "eng/m%02d_axi" $m]]
+            if {![llength $ip]} { puts "FK33_ENG eng/m${m}_axi MISSING"; incr engbad; continue }
+            if {![llength [get_bd_intf_nets -quiet -of_objects $ip]]} {
+                puts [format "FK33_ENG eng/m%02d_axi IS NOT CONNECTED" $m]
+                incr engbad
+            }
         }
     }
     puts "FK33_ENG portcheck bad=$engbad (must be 0)"
@@ -1883,10 +1897,19 @@ if {[info exists ::env(FK33_STOP_AFTER_BD)]} {
     if {$engbad != 0} {
         error "FK33_ENG FAIL: portcheck bad=$engbad. See the FK33_ENG lines above for which."
     }
-    puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
-    if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
-        puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"
-        incr engbad
+    if {$::fk33_eng_on} {
+        puts "FK33_ENG masters=28 halt=[llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]"
+        if {![llength [get_bd_nets -quiet -of_objects [get_bd_pins eng/compute_halt]]]} {
+            puts "FK33_ENG compute_halt IS UNDRIVEN -- the thermal guard cannot stop the array"
+            incr engbad
+        }
+    } else {
+        # THE THERMAL GUARD HAS NOTHING TO STOP, and that is the honest state to
+        # report rather than a silent pass: with no engine there is no HBM read
+        # traffic and no DSP array, so compute_halt has no consumer.  B and C in
+        # the card are NOT halt-gated -- that path does not exist -- which is one
+        # more thing a bitstream built this way does not prove.
+        puts "FK33_ENG absent: no masters, no compute_halt consumer, no thermal throttle path"
     }
     # The aux domain.  A missing cell here means the bitstream is blind with
     # the link down, which is the exact condition it exists for, so name them.
@@ -2243,6 +2266,11 @@ foreach cn [list $ecore $eaxi] {
 report_utilization -cells [get_cells bd_i/eng] -file fk33_pcieep_engine_util.rpt
 puts "FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt"
 
+# NOTHING ABOVE THIS POINT EXISTS UNDER FK33_ENG=0.  Everything from the top of
+# this section down to the `set wns` line below reads bd_i/eng off the
+# implemented design, so under FK33_ENG=0 it is replaced (see _IMPL_TAIL_AT,
+# just after this string) by a line saying the engine is absent.  The tail from
+# `set wns` on is configuration-independent and is kept in both.
 set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
 set whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
 puts [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]
