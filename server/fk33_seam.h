@@ -569,11 +569,29 @@ typedef struct {
     int version;            /* 0/1 -> v1 (default), 2 -> the window seam */
     uint32_t caps_flags;    /* 0 -> derive from `version`; else reported as-is */
 
-    /* v2 window sizes, in ENTRIES.  0 -> a default large enough for the 9B
-     * shape.  They are options rather than constants so a test can construct
-     * an overflow without allocating the real thing. */
-    int win_desc_words;     /* 32-bit halves; 0 -> 4096 */
-    int win_rel_words;      /* one per step;  0 -> 1024 */
+    /* v2 window sizes, in ENTRIES.  0 -> the RTL's own generics.  They are
+     * options rather than constants so a test can construct an overflow
+     * without allocating the real thing.
+     *
+     * The defaults come from `rtl/fk33_seam.vhd:204-206`: DESC_WORDS = 4608
+     * SIXTY-FOUR-bit words, which a host writes as 9,216 32-bit halves (low
+     * half first), and REL_ENT = 576 entries. */
+    int win_desc_words;     /* 32-bit halves; 0 -> 9216 = 2 * DESC_WORDS */
+    int win_rel_words;      /* one per descriptor; 0 -> 576 = REL_ENT */
+
+    /* CHECKS THE MODEL MAKES THAT THE CARD DOES NOT.  Default OFF, so the
+     * model's default behaviour is the CARD's behaviour and a driver cannot
+     * come to depend on a refusal that only exists here.  Turning it on is
+     * how a test shows what the card will NOT catch:
+     *
+     *   TBL_LEN set with fewer descriptor halves actually written
+     *   an activation row shorter than n_embd
+     *
+     * `rtl/fk33_seam.vhd:746-761` bounds TBL_LEN against the window CAPACITY
+     * (REL_ENT, and DESC_WORDS/8) and never against what a host wrote, and it
+     * has no row-length check at all.  Both failures therefore reach the
+     * arithmetic on real hardware and present as an ordinary wrong answer. */
+    int model_strict;
 
     /* v2 fault injection. */
     int fault_win_no_incr;  /* WIN_ADDR does not auto-increment on DATA */

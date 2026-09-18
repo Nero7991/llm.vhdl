@@ -229,34 +229,52 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
         fail(s, FK33_SEAM_ERR_SEQ, (uint32_t)s->next_pos); return;
     }
     if (v2) {
-        /* THE v2 PRECONDITIONS, and they are the ones a v1 host does not
-         * satisfy -- which is the point of modelling them.  A host ported
-         * from v1 writes X_BASE and GOes, and must be REFUSED here rather
-         * than quietly running on a stale window.
+        /* THE v2 PRECONDITIONS, IN THE RTL'S OWN ORDER AND WITH ITS OWN
+         * ERROR CODES.  `rtl/fk33_seam.vhd:746-761`, verbatim in structure:
          *
-         * `rtl/seq_desc_fetch.vhd` checks the walk against TBL_LEN
-         * two-sidedly, so a card that does not know it cannot run a token at
-         * all (server/fk33_seam.h).  TBL_LEN = 0 is therefore ERR_DESC, not a
-         * default.  The v1 block registers must be ZERO: fk33_seam.h marks
-         * X_BASE/L_BASE/DESC_PTR "v3, must be 0 in v2", and a non-zero one is
-         * a host that thinks it is driving a card it is not. */
-        if (tbl_len <= 0) { fail(s, FK33_SEAM_ERR_DESC, 0); return; }
-        if (tbl_len > s->desc_written) {
-            /* TBL_LEN counts DESCRIPTORS; the window holds 32-bit halves, so
-             * a program of n descriptors occupies at least n halves.  This is
-             * the cheap bound, not the exact one: it catches "TBL_LEN was set
-             * and the program was never written", which is the failure a host
-             * under development actually produces. */
-            fail(s, FK33_SEAM_ERR_DESC, (uint32_t)s->desc_written); return;
+         *     if r_n_step /= 1                       -> EC_NSTEP
+         *     elsif r_tbl_len = 0
+         *        or r_tbl_len > REL_ENT
+         *        or r_tbl_len * 8 > DESC_WORDS       -> EC_NSTEP
+         *     elsif x_base /= 0 or l_base /= 0
+         *        or desc_ptr /= 0                    -> EC_RSVD
+         *     elsif r_seq_pos /= cur_pos             -> EC_SEQ
+         *     elsif cur_pos >= MAXPOS                -> EC_POS
+         *
+         * CORRECTED 2026-09-17, BEFORE ANY DRIVER WAS WRITTEN AGAINST IT.
+         * The first version of this block was modelled from the HEADER'S
+         * PROSE and disagreed with the RTL in two ways that would each have
+         * produced a wrong driver:
+         *
+         *   * it accepted N_STEP > 1.  The RTL takes ONE POSITION PER GO in
+         *     v2 and says so in a comment on the line -- so there is no
+         *     chunked prefill on this card at all, and a host that batches
+         *     gets EC_NSTEP on every GO.  The v1 host's whole max_chunk
+         *     notion does not survive the move.
+         *   * it returned ERR_DESC for TBL_LEN = 0.  The RTL returns
+         *     EC_NSTEP, folding the descriptor-bound failures into the same
+         *     code.  A driver branching on ERR_DESC would never have fired.
+         *
+         * This is the recorded trap: read the RTL, not the document.  The
+         * bounds below are against the window CAPACITY, exactly as the RTL
+         * has them, and NOT against what the host actually wrote. */
+        if (nstep != 1) { fail(s, FK33_SEAM_ERR_NSTEP, (uint32_t)nstep); return; }
+        if (tbl_len <= 0 || tbl_len > s->n_rel || tbl_len * 8 > s->n_desc / 2) {
+            fail(s, FK33_SEAM_ERR_NSTEP, (uint32_t)tbl_len); return;
         }
         if (xb || lb || dp) { fail(s, FK33_SEAM_ERR_RSVD, 0xB10C); return; }
-        if (s->xin_written < s->o.n_embd) {
-            /* A short activation row is the defect that looks like an
-             * ordinary wrong answer: the card computes on whatever the window
-             * held from the last token.  The RTL has no counter for this and
-             * the model does, deliberately -- it is a MODEL check, and
-             * server/tests/ says so where it is used. */
-            fail(s, FK33_SEAM_ERR_RSVD, (uint32_t)s->xin_written); return;
+
+        /* --- and the two checks the CARD DOES NOT MAKE.  Off by default so
+         * the model's default behaviour is the card's; see `model_strict` in
+         * fk33_seam.h for why a stricter model is a hazard rather than a
+         * bonus. */
+        if (s->o.model_strict) {
+            if (tbl_len * 8 > s->desc_written) {
+                fail(s, FK33_SEAM_ERR_DESC, (uint32_t)s->desc_written); return;
+            }
+            if (s->xin_written < s->o.n_embd) {
+                fail(s, FK33_SEAM_ERR_RSVD, (uint32_t)s->xin_written); return;
+            }
         }
     } else {
         if ((xb % FK33_BLOCK_ALIGN) || (lb % FK33_BLOCK_ALIGN)) {
@@ -533,8 +551,10 @@ fk33_transport *fk33_transport_open_sim(const void *opts_v)
     if (!s->logit_buf || !s->x_buf) { sim_close(s); return NULL; }
 
     if (s->o.version >= 2) {
-        s->n_desc = s->o.win_desc_words > 0 ? s->o.win_desc_words : 4096;
-        s->n_rel  = s->o.win_rel_words  > 0 ? s->o.win_rel_words  : 1024;
+        /* rtl/fk33_seam.vhd:204-206: DESC_WORDS 4608 SIXTY-FOUR-bit words,
+         * written as 9,216 32-bit halves, and REL_ENT 576. */
+        s->n_desc = s->o.win_desc_words > 0 ? s->o.win_desc_words : 9216;
+        s->n_rel  = s->o.win_rel_words  > 0 ? s->o.win_rel_words  : 576;
         s->win_desc = (uint32_t *)calloc((size_t)s->n_desc, 4);
         s->win_rel  = (uint32_t *)calloc((size_t)s->n_rel, 4);
         s->win_xin  = (int16_t  *)calloc((size_t)s->o.n_embd, 2);

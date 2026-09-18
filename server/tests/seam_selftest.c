@@ -545,24 +545,34 @@ static void t13_v2_windows(void)
     CK(R(FK33_SEAM_WIN_DATA) == 1001u,
        "a READ must advance the address too, not only a write");
 
-    /* ---- the v1 host's GO must be REFUSED, and this is the whole point of
-     * the version switch: a host ported from v1 writes X_BASE and GOes. */
-    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
-    W(FK33_SEAM_TBL_LEN, 0);
+    /* ---- ONE POSITION PER GO.  rtl/fk33_seam.vhd:746 refuses any other
+     * N_STEP with a comment on the line saying so, which means THERE IS NO
+     * CHUNKED PREFILL ON THIS CARD: the v1 host's max_chunk does not survive
+     * the move to v2 and a host that batches gets EC_NSTEP on every GO. */
+    W(FK33_SEAM_TBL_LEN, 8);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 2);
     GO_AND_READ();
-    CK((st & FK33_ST_ERR) && FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
-       "TBL_LEN 0 must be ERR_DESC on v2 -- seq_desc_fetch checks the walk "
-       "against it two-sidedly, so a card that does not know it cannot run a "
-       "token at all.  status 0x%X", st);
+    CK((st & FK33_ST_ERR) && FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_NSTEP,
+       "N_STEP 2 must be ERR_NSTEP on v2 -- one position per GO.  0x%X", st);
     CK(!(st & FK33_ST_DONE), "done set on an error");
 
-    /* TBL_LEN set but no program written: the failure a host under
-     * development actually produces. */
-    W(FK33_SEAM_TBL_LEN, 8);
+    /* TBL_LEN 0 is EC_NSTEP, NOT EC_DESC.  Taken from the RTL rather than
+     * from this header's prose: :747-750 folds every descriptor-bound
+     * failure into EC_NSTEP, so a driver branching on ERR_DESC here would
+     * never fire.  The first version of this test asserted ERR_DESC. */
+    W(FK33_SEAM_TBL_LEN, 0);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
     GO_AND_READ();
-    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
-       "TBL_LEN 8 with an empty descriptor window was accepted (0x%X)", st);
-    CK(info == 0, "ERR_INFO should carry what WAS written, got %u", info);
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_NSTEP,
+       "TBL_LEN 0 must be ERR_NSTEP (0x%X)", st);
+
+    /* And the CAPACITY bounds, which are what the RTL checks: TBL_LEN above
+     * REL_ENT, or needing more than DESC_WORDS. */
+    W(FK33_SEAM_TBL_LEN, 577);          /* REL_ENT is 576 */
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_NSTEP,
+       "TBL_LEN past REL_ENT must be ERR_NSTEP (0x%X)", st);
+    CK(info == 577u, "ERR_INFO should carry the offending TBL_LEN, got %u", info);
 
     /* ---- write a program, and the run must then be accepted. */
     W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
@@ -571,6 +581,7 @@ static void t13_v2_windows(void)
     W(FK33_SEAM_WIN_SEL, FK33_WIN_REL);
     W(FK33_SEAM_WIN_ADDR, 0);
     for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x3Fu);
+    W(FK33_SEAM_TBL_LEN, 1);
     W(FK33_SEAM_X_EXP, (uint32_t)(int32_t)-3);
     W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
     GO_AND_READ();
@@ -650,6 +661,40 @@ static void t13_v2_windows(void)
     CK(R(FK33_SEAM_WIN_DATA) != 0xBEEFu,
        "a write to WIN_XOUT landed; fk33_seam.h says that window is readback");
 
+    /* ---- THE SHORT ACTIVATION ROW, written deliberately short rather than
+     * produced by a fault: a host that streams n_embd-1 elements is the
+     * realistic bug, and it is the one that looks like an ordinary wrong
+     * answer because the card computes on whatever the window held from the
+     * last token.  model_strict only; see the note printed below. */
+    t->close(t->ctx); free(t);
+    small_opts(&s, &o);
+    s.version = 2;
+    s.model_strict = 1;
+    t = fk33_transport_open_sim(&s);
+    if (!t) { CK(0, "sim transport (strict)"); return; }
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x1000u + (uint32_t)i);
+    W(FK33_SEAM_TBL_LEN, 1);
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < TE - 1; i++) W(FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)i);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_RSVD,
+       "a row one element short was accepted (0x%X)", st);
+    CK(info == (uint32_t)(TE - 1),
+       "ERR_INFO must carry how many row elements DID land, got %u", info);
+    /* The control: the SAME setup with the last element written must pass, or
+     * the row above is refusing for some other reason. */
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
+    W(FK33_SEAM_WIN_ADDR, TE - 1);
+    W(FK33_SEAM_WIN_DATA, 77u);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK((st & FK33_ST_DONE) && !(st & FK33_ST_ERR),
+       "TEETH CONTROL: completing the row did not clear the refusal (0x%X)", st);
+
     /* ---- the no-increment fault, so the auto-increment check has teeth.
      * Without this, "WIN_ADDR advanced" is a check that has never been shown
      * to fail. */
@@ -657,6 +702,10 @@ static void t13_v2_windows(void)
     small_opts(&s, &o);
     s.version = 2;
     s.fault_win_no_incr = 1;
+    /* The short-row refusal is a MODEL check; the card has none.  Asking for
+     * it explicitly is what keeps that distinction visible -- see the note
+     * below, and `model_strict` in fk33_seam.h. */
+    s.model_strict = 1;
     t = fk33_transport_open_sim(&s);
     if (!t) { CK(0, "sim transport (fault)"); return; }
     W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
@@ -680,16 +729,13 @@ static void t13_v2_windows(void)
     GO_AND_READ();
     CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
        "with the address stuck, TBL_LEN 8 against ONE landed word must be "
-       "ERR_DESC (0x%X)", st);
-    W(FK33_SEAM_TBL_LEN, 1);
-    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
-    GO_AND_READ();
-    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_RSVD,
-       "a card whose window did not advance wrote ONE element of the row and "
-       "the GO was accepted (0x%X).  That is the short-row defect, and it "
-       "looks exactly like an ordinary wrong answer", st);
-    CK(info == 1u,
-       "ERR_INFO must carry how many row elements DID land, got %u", info);
+       "ERR_DESC under model_strict (0x%X)", st);
+    printf("    NOT DETECTED BY THE CARD, measured from rtl/fk33_seam.vhd:"
+           "746-761: the RTL's\n    GO checks bound TBL_LEN against the "
+           "window CAPACITY and never against what\n    a host wrote, and it "
+           "has NO row-length check.  Both of the refusals just\n    "
+           "exercised are model_strict only.  On hardware each reaches the "
+           "arithmetic\n    and presents as an ordinary wrong answer.\n");
 
 #undef R
 #undef W
