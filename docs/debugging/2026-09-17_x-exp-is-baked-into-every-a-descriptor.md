@@ -1,0 +1,145 @@
+# Every A descriptor in the token program carries the SAME baked `x_exp`, and the card build reads it
+
+> **Status: DERIVED from reading the RTL, the generator and the build's own
+> generic map. NOT MEASURED. Nothing has been run.** The falsification test is
+> stated at the bottom and costs one bench run. This is written now, before the
+> bitstream lands, because if it is right it is the class of defect that
+> presents as an ordinary wrong answer with no fault raised anywhere, and
+> because the evidence is all in files that are about to be built into a card.
+
+## The question, verbatim
+
+> `tools/gen_layer_program.py` refuses to emit subsystem A's descriptors
+> without `--x-exp`, and calls it *"the activation vector's BFP exponent, a
+> per-token runtime value the previous stage produces; nothing in the manifest
+> supplies it."* The v2 seam writes the program into the card's windows ONCE
+> per model. So what happens on the second token, whose exponent is different?
+
+Date: 2026-09-17, while the `FK33_CARD=1` A+B+C+D bitstream was routing.
+
+## The answer, up front
+
+**Two things, and the second is the larger one.**
+
+1. **The card build takes `x_exp` from the DESCRIPTOR, not from the live
+   port.** `hw/fk33/rtl/fk33_engine.vhd:1309` sets `USE_XEXP_PORT => false`
+   explicitly, and :1118 says *"USE_XEXP_PORT is false, so this is never
+   read."* The RTL's own comment on that generic
+   (`rtl/matvec_int4_desc_axi.vhd:173-178`) says the descriptor's copy is
+   **"stale by construction"** in the integrated system, and ends *"Which one
+   the FK33 build uses is an integration decision."* **That decision has never
+   been made; the default stands.**
+
+2. **`gen_layer_program.py` bakes ONE `x_exp` into EVERY A descriptor of the
+   token.** `a_jobs_for(steps, manifest_path, x_exp, ...)` takes a scalar and
+   passes it unchanged to `build_descriptor(... st.n_rows, x_exp, ...)` for
+   every step. So it is not merely stale across tokens: **within a single
+   token, every A job carries the exponent of the host's input row**, while
+   each job's actual input is the previous stage's output with its own
+   runtime exponent.
+
+The mantissas are unaffected. What is wrong is `y_exp`, and `y_exp` is what
+D propagates.
+
+## Why it propagates rather than staying local
+
+`rtl/matvec_int4_desc_axi` computes, per the descriptor format doc's own
+formula, `y_exp = w_exp + x_exp - out_shift`. Subsystem D then takes the
+exponent **from the unit's output**, not from its own model of it:
+
+```vhdl
+-- rtl/seq_opdec.vhd:531
+x_exp <= signed(u_y_exp((x_unit+1)*EXP_W-1 downto x_unit*EXP_W));
+```
+
+So an A job whose descriptor carries a wrong `x_exp` reports a wrong `y_exp`,
+D records that as the region's exponent, and the next stage consumes it. An
+error of `d` in the baked exponent is a factor of `2^d` on that tensor,
+carried forward.
+
+## The chain, file by file
+
+| link | evidence |
+|---|---|
+| the card's A unit is `matvec_int4_desc_axi` | `rtl/a_desc_adapter.vhd:7` -- *"THE CARD'S UNIT IS DIFFERENT: it is `matvec_int4_desc_axi`"* |
+| D reaches it through a pointer and a GO, and patches nothing | `a_desc_adapter.vhd:9-11` -- *"three AXI-Lite writes per job: DESC_PTR_LO, DESC_PTR_HI, CTRL"* |
+| the descriptor carries `x_exp` | `docs/2026-08-28_matvec-descriptor-format.md:191` -- `ext word 2 (E + 0x10) : [31:0] x_exp (i32)` |
+| the unit chooses descriptor or port | `rtl/matvec_int4_desc_axi.vhd:638` -- `v_xexp <= x_exp_in when USE_XEXP_PORT else lo32(dw(EXT0 + 2));` |
+| the card chooses the DESCRIPTOR | `hw/fk33/rtl/fk33_engine.vhd:1309` -- `USE_XEXP_PORT => false,` |
+| the generator bakes one value for all jobs | `tools/gen_layer_program.py:666, :775` |
+| the generator says it is a runtime value | `gen_layer_program.py:1176-1180`, the refusal text |
+| D propagates the unit's `y_exp` | `rtl/seq_opdec.vhd:531` |
+
+## What the project already knew, and what it did not
+
+**This is not a new discovery of the generic.** `sim/tb_matvec_fk33_desc_xexp.vhd`
+exists for exactly it, and it is a good bench: under `XEXP_PORT` it writes the
+descriptor's own `x_exp` **seven too large** and drives the true value on the
+port, so a mux wired the wrong way fails rather than passing on agreement. Its
+teeth are MEASURED (`CASE 0: Y_EXP MISMATCH got 13 want 6`).
+
+Its closing paragraph is the gap, verbatim:
+
+> **WHAT IT DOES NOT COVER.** It elaborates `USE_XEXP_PORT = true` at
+> `DUAL_CLK = false` only, and **it says nothing about WHICH source the FK33
+> build should use** -- that build sets the generic false and puts `x_exp` in
+> the descriptor, and this row does not argue with it.
+
+So the branch was proven to WORK and was deliberately not chosen. The reading
+above is that not choosing it is wrong for the composed card, and **nothing in
+the tree connects that bench's existence to the fact that a whole token's
+descriptors now come from one `--x-exp` argument.** The two facts have never
+been in the same place until this file.
+
+`sim/mv4i_desc_mutations.py:446` also names it, as row N1, class GEN: *"guarded
+by a generic this harness does not set"* -- i.e. it was correctly recorded as
+an untested branch rather than a passing one.
+
+## What this does NOT establish
+
+* **It is not measured.** No bench was run, no simulation, no hardware. Every
+  claim above is a reading.
+* **It does not establish that `--x-exp 0` is what the card will be given.**
+  `0` is what was passed while generating a program to exercise the host
+  driver, and any value has the same problem.
+* **It does not establish the magnitude.** How far the true per-stage exponents
+  drift from the host row's is unknown and is a property of the model's
+  activations, not of this code. If a normalisation stage pins every
+  intermediate to the same block exponent, the defect could be small or absent
+  -- and that is a real possibility worth checking before acting, because
+  `rms_norm` is exactly the kind of stage that would do it.
+* **It says nothing about whether `x_exp_in` is WIRED** in the composed top, as
+  opposed to merely present. Turning the generic on requires a source for the
+  live exponent at each job, and the only per-token value the seam has is
+  `host_x_exp`, which is the HOST ROW's exponent -- the right answer for the
+  first A job of a token and not obviously for the rest.
+
+## The falsification test, which is cheap
+
+**Run a whole token through `sim/tb_llama_top*` twice with two different host
+activation exponents and compare the output mantissas.** If the descriptors'
+baked `x_exp` is genuinely consumed, changing only the host row's exponent
+changes `y_exp` reporting while the descriptors stay put, and the divergence
+appears at the first A job. The benches already run whole tokens
+(`sim_tb_llama_top_seq`, 300 checks) so this is a stimulus change, not a new
+bench.
+
+A second, even cheaper one: **grep the existing token benches for how they
+supply A's descriptors.** If they build them per-run from the live exponent,
+they are not exercising the card's configuration at all, and that alone would
+explain why 300 passing checks have never seen this.
+
+## Open, not yet answered
+
+* **Whether `out_mode` makes `y_exp` irrelevant for some or all A jobs.** Not
+  investigated. If a job's output is consumed in a fixed-point mode that
+  ignores the block exponent, that job is unaffected.
+* **Whether D's region bookkeeping overrides the unit's `y_exp` anywhere.**
+  `seq_opdec.vhd:531` is the only assignment found, and `:665` shows
+  `host_x_exp` is used only at `T_PUB`, the publish of the HOST region. But the
+  whole of D was not read.
+* **What the right fix is.** Two shapes are visible and neither was chosen
+  here: set `USE_XEXP_PORT => true` and find a live per-job exponent for
+  `x_exp_in`, or have the host rewrite the A descriptors' `x_exp` word per
+  token. The second is 505 descriptors of DMA per token and defeats the point
+  of writing the program once; the first needs a source the seam may not have.
