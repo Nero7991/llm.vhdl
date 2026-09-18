@@ -143,3 +143,67 @@ explain why 300 passing checks have never seen this.
   `x_exp_in`, or have the host rewrite the A descriptors' `x_exp` word per
   token. The second is 505 descriptors of DMA per token and defeats the point
   of writing the program once; the first needs a source the seam may not have.
+
+---
+
+## ADDENDUM, same day: the second cheap test was run, and it strengthens the finding
+
+**The first falsification test proposed above CANNOT WORK, and finding out why
+is the more useful result.**
+
+`sim/tb_llama_top*` instantiates `rtl/llama_top.vhd`, and **`llama_top` uses
+`matvec_int4`, a unit with NO DESCRIPTOR PLANE AT ALL.** The card uses
+`matvec_int4_desc_axi`. `rtl/a_desc_adapter.vhd:3-7` states the difference
+outright:
+
+> `llama_top`'s adapter (llama_top.vhd:3196-3235) bridges D to `matvec_int4`,
+> a unit with no descriptor plane, by holding six shape registers and
+> fabricating weight base addresses. **THE CARD'S UNIT IS DIFFERENT:** it is
+> `matvec_int4_desc_axi`, which fetches a host-prebuilt descriptor over its
+> own read master.
+
+So running a whole token at two different host exponents would exercise the
+FABRICATED path and say nothing about the descriptor's `x_exp`. **No
+whole-token bench in this repository exercises the card's A binding**, which is
+the direct answer to why 300 passing checks in `sim_tb_llama_top_seq` have
+never seen this.
+
+The generated card top says the same thing from the other side, and names the
+two arms (`rtl/fk33_llama_top.vhd:738-749`):
+
+> **false** = llama_top's `ga_real`, driving `matvec_int4` from a FABRICATED
+> weight base; that is the configuration in which identity with llama_top is
+> PROVEN, and it is the default so the identity bench keeps meaning what it
+> says. **true** = the card: `ga_desc`, which drives the descriptor plane of
+> `matvec_int4_desc_axi` living outside this top in `fk33_engine`.
+>
+> **THE TWO ARE NOT EQUIVALENT AND MUST NOT BE READ AS A TUNING CHOICE.**
+
+`hw/fk33/rtl/fk33_card.vhd:217` sets `A_DESC => true`. **The bitstream now
+routing is the arm no whole-token bench covers**, and the arm whose identity
+with `llama_top` is explicitly NOT the proven one.
+
+## And the design says the descriptors are written once, in as many words
+
+`rtl/fk33_llama_top.vhd:751-754`:
+
+> `A_N_JOBS : positive := 311` -- Descriptors the arena was sized for [...]
+> **DERIVED at the 9B shape: 311 A jobs x 512 B = 159,232 B, DMA'd once per
+> model load rather than once per token.**
+
+So "written once per model" is the stated intent, not an accident of how the
+program was generated. A per-token value baked into a once-per-model artefact
+is therefore a design question with an owner, not a bug in the generator.
+
+## Revised status
+
+The reading is unchanged and the two supporting facts are now stronger:
+
+* the card's A binding is `A_DESC = true`, **covered by no whole-token bench**;
+* the A descriptors are **intended** to be written once per model load, and
+  carry a field the generator itself calls a per-token runtime value.
+
+**Still not measured.** What would measure it is a whole-token bench at
+`A_DESC = true` against `matvec_int4_desc_axi`, which does not exist. That is
+the real gap this file found, and it is larger than the `x_exp` question:
+**the card's A path has unit coverage and no token-level coverage.**
