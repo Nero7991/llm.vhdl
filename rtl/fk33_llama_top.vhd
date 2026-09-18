@@ -587,9 +587,14 @@ entity fk33_llama_top is
     --                               affords 233,396; anything past 131,072
     --                               needs RoPE extension that does not exist.
     --     C_CTXLEN     <= C_MAXPOS
-    --     C_K_BASE_CH  282598912    = 0x1_0D81_E000 / 16
-    --     C_V_BASE_CH  353902080    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
-    --     C_KV_ADDR_W  33           clog2(353902080 + 71303168) = 29 = 33-4,
+    --     C_K_BASE_CH  282672640    = 0x1_0D93_E000 / 16  (manifest hbm.kv_base)
+    --     C_V_BASE_CH  353975808    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
+    --                               (both re-derived 2026-09-18: the previous
+    --                               282598912 sat 1,179,648 B INSIDE the GDN
+    --                               arena once that arena was sized correctly;
+    --                               see docs/debugging/2026-09-17_gdn-arena-
+    --                               omitted-the-conv-tap-history.md)
+    --     C_KV_ADDR_W  33           clog2(353975808 + 71303168) = 29 = 33-4,
     --                               satisfied with ZERO slack.  That slack is
     --                               set by the BASE, not by C_MAXPOS: the
     --                               base alone exceeds 2**28, so clog2 is 29

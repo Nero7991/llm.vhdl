@@ -117,7 +117,7 @@ synth_design -mode out_of_context -top fk33_llama_top -part $part \
              -generic HOST_WINDOW=false \
              -generic C_N_ROT=64 -generic C_KV_BLOCK=32 \
              -generic C_KV_ADDR_W=33 \
-             -generic C_K_BASE_CH=282598912 -generic C_V_BASE_CH=353902080 \
+             -generic C_K_BASE_CH=282672640 -generic C_V_BASE_CH=353975808 \
              -generic C_MAXPOS=131072 -generic C_CTXLEN=131072
 set tsynth [expr {[clock seconds] - $t0}]
 puts "CINCARD_SYNTH_SECONDS $tsynth"

@@ -574,6 +574,32 @@ static void t13_v2_windows(void)
        "TBL_LEN past REL_ENT must be ERR_NSTEP (0x%X)", st);
     CK(info == 577u, "ERR_INFO should carry the offending TBL_LEN, got %u", info);
 
+    /* ---- THE UNWRITTEN-BASE REFUSAL, and it is the row this file exists
+     * for on 2026-09-18.  Two consecutive card builds had /card/a_arena_base
+     * and /card/bst_state_base UNCONNECTED (CRITICAL WARNING [BD 41-759]),
+     * i.e. zero: A fetching descriptors from HBM address 0 and B storing its
+     * recurrent state there, both inside the weight image, no fault raised.
+     * The seam now carries both as registers and REFUSES a GO with either
+     * still zero.  Written program, everything else valid, bases untouched. */
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x1000u + (uint32_t)i);
+    W(FK33_SEAM_TBL_LEN, 1);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC && info == 0xA000u,
+       "a GO with the arena base unwritten (zero) was not refused as ERR_DESC "
+       "with info 0xA000: status 0x%X info 0x%X", st, info);
+    W(FK33_SEAM_ARENA_LO, 0xAD000u); W(FK33_SEAM_ARENA_HI, 0x1u);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC && info == 0xB000u,
+       "arena set, GDN base still zero: not refused with info 0xB000 "
+       "(0x%X / 0x%X)", st, info);
+    W(FK33_SEAM_BST_LO, 0x0C006000u); W(FK33_SEAM_BST_HI, 0x1u);
+    CK(R(FK33_SEAM_ARENA_HI) == 0x1u && R(FK33_SEAM_ARENA_LO) == 0xAD000u,
+       "arena base does not read back");
+    CK(R(FK33_SEAM_BST_HI) == 0x1u, "GDN base bit 32 does not read back");
+
     /* ---- write a program, and the run must then be accepted. */
     W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
     W(FK33_SEAM_WIN_ADDR, 0);
@@ -672,6 +698,8 @@ static void t13_v2_windows(void)
     s.model_strict = 1;
     t = fk33_transport_open_sim(&s);
     if (!t) { CK(0, "sim transport (strict)"); return; }
+    W(FK33_SEAM_ARENA_LO, 0xAD000u); W(FK33_SEAM_ARENA_HI, 0x1u);
+    W(FK33_SEAM_BST_LO, 0x0C006000u); W(FK33_SEAM_BST_HI, 0x1u);
     W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
     W(FK33_SEAM_WIN_ADDR, 0);
     for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x1000u + (uint32_t)i);
@@ -708,6 +736,8 @@ static void t13_v2_windows(void)
     s.model_strict = 1;
     t = fk33_transport_open_sim(&s);
     if (!t) { CK(0, "sim transport (fault)"); return; }
+    W(FK33_SEAM_ARENA_LO, 0xAD000u); W(FK33_SEAM_ARENA_HI, 0x1u);
+    W(FK33_SEAM_BST_LO, 0x0C006000u); W(FK33_SEAM_BST_HI, 0x1u);
     W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
     W(FK33_SEAM_WIN_ADDR, 0);
     for (i = 0; i < TE; i++) W(FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)(1000 + i));
@@ -787,6 +817,26 @@ static void t14_v2_backend(void)
     c = NULL;
     CK(pl_open(&o, &c) != 0, "tbl_len needing more program than given was accepted");
 
+    /* ---- no manifest and no stated bases: refused at OPEN, not at GO.
+     * small_opts has no manifest, so this is the shape a caller hits when
+     * it forgets; the message names both fields. */
+    small_opts(&s, &o);
+    s.version = 2;
+    o.desc_prog = prog; o.desc_words = 64;
+    o.rel_tbl = rel;    o.rel_words = 8;
+    o.tbl_len = 4;
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a v2 open with no arena and no GDN base was accepted");
+    o.desc_arena_base = 0x1FFADD000ull;      /* arena only: still refused */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a v2 open with the arena but no GDN base was accepted");
+    o.gdn_state_base = 0x1ull << 33;         /* does not fit 33 bits */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a GDN base past the card's 33-bit port was accepted");
+
     /* ---- the working case. */
     small_opts(&s, &o);
     s.version = 2;
@@ -794,6 +844,8 @@ static void t14_v2_backend(void)
     o.rel_tbl = rel;    o.rel_words = 8;
     o.tbl_len = 4;                      /* 4 * 16 = 64 halves, 4 <= 8 */
     o.max_chunk = 8;                    /* must be OVERRIDDEN to 1 */
+    o.desc_arena_base = 0x1FFADD000ull; /* the manifest's, stated by hand */
+    o.gdn_state_base  = 0x10C006000ull;
     c = NULL;
     rc = pl_open(&o, &c);
     CK(rc == 0 && c != NULL, "a complete v2 open was refused (%d)", rc);

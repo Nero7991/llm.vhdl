@@ -1226,6 +1226,19 @@ SEAM_TO_CARD = [
     ("hw_data",      "hw_data"),
     ("hr_reg",       "hr_reg"),
     ("hr_addr",      "hr_addr"),
+    # THE TWO HBM BASES, ADDED 2026-09-18.  Before this both card inputs were
+    # UNCONNECTED in every FK33_CARD=1 build -- MEASURED twice:
+    #   CRITICAL WARNING: [BD 41-759] The input pins (listed below) are either
+    #   not connected or do not have a source port, and they don't have a
+    #   tie-off specified.  /card/bst_state_base  /card/a_arena_base
+    # An unconnected input is zero, so A fetched descriptors from HBM address
+    # 0 and B stored recurrent state there, both inside the weight image, and
+    # the build passed every gate because 41-759 is a CRITICAL WARNING and the
+    # build gates on ^ERROR -- the same shape as the 17-bit KV truncation
+    # recorded in gen_fk33_card.py.  check_bd_unconnected() below now fails
+    # the build on it.
+    ("d_a_arena",    "a_arena_base"),
+    ("d_bst_base",   "bst_state_base"),
 ]
 
 # ---- B and C onto the grant ----------------------------------------------
@@ -1918,6 +1931,75 @@ foreach hp {DRAM_0_STAT_TEMP DRAM_1_STAT_TEMP DRAM_0_STAT_CATTRIP DRAM_1_STAT_CA
         error "FK33_THERM FAIL: hbm/$hp is UNCONNECTED.  The stacks' own temperature is going nowhere, which is the defect this build exists to fix."
     }
     puts "FK33_THERM hbm/$hp connected"
+}
+'''
+
+# EVERY BUILD, before the wrapper is made and NOT only under --bd-only, for the
+# reason THERM_BD_CHECK's comment gives: a guard that does not run on the
+# artefact you ship is not a guard.
+#
+# MEASURED 2026-09-18, in two consecutive FK33_CARD=1 builds (buildsmp,
+# buildcong):
+#   CRITICAL WARNING: [BD 41-759] The input pins (listed below) are either
+#   not connected or do not have a source port, and they don't have a tie-off
+#   specified.  /card/bst_state_base  /card/a_arena_base
+# An unconnected input is zero, so subsystem A fetched its descriptors from
+# HBM address 0 and subsystem B stored its recurrent state there -- both inside
+# the weight image -- and the build passed every gate, because 41-759 is a
+# CRITICAL WARNING and pcieep_build.sh gates on ^ERROR.  This is the third
+# recorded instance of that shape on this project (after the 17-bit KV
+# truncation in gen_fk33_card.py and the pcieep build dead since 3a145fd).
+#
+# Vivado's own list is authoritative and is not re-derived: the check walks
+# every INPUT pin of every cell, and for each one with no net, no tie-off and
+# no source, it names the pin and FAILS THE BUILD.  Interface pins are
+# excluded because a bus is validated as a bus.  The allowlist below is
+# deliberately EMPTY: a pin that is genuinely meant to float needs a tie-off
+# constant, not an exemption here, because an exemption is a second place for
+# the truth to live.
+UNCONNECTED_PIN_CHECK = '''
+# ---- unconnected input pins (gen_pcieep.py) --------------------------------
+# THE DISCRIMINATOR IS VIVADO'S OWN.  The first version of this check walked
+# every input pin with no net and FAILED on 37 of them -- MEASURED 2026-09-18
+# --bd-only: 32 hbm/AXI_nn_WDATA_PARITY, two aux_reset_in, two
+# mb_debug_sys_rst and xdma/usr_irq_req -- every one an IP pin that carries a
+# default and that validate_bd_design does NOT warn about.  A check stricter
+# than the tool it replaces needs an allowlist, and an allowlist is a second
+# place for the truth to live.  So the rule is not re-derived here: run the
+# validation and turn ITS 41-759 into a failure.
+#
+# The message shape is fixed by Vivado: the warning line, then the sentence
+# "Please check your design and connect them as needed:", then one pin path
+# per line, then a blank line.  Anchored on the message ID, not on prose.
+set fk33_vmsg ""
+if {[catch {validate_bd_design -force} fk33_vmsg]} {
+    error "FK33_BD_VALIDATE FAIL (pre-wrapper): $fk33_vmsg"
+}
+set fk33_uncon_bad {}
+# The pins are read from the cells the way the warning lists them: every
+# input pin left with no net, restricted to MODULE-REFERENCE cells (the card,
+# the seam, the engine).  IP cells declare a default for a floating input and
+# validate_bd_design does not warn about those; a user module has no such
+# default and 41-759 names exactly its pins.  That is the discriminator, and
+# it is Vivado's rather than one invented here.
+# MEASURED 2026-09-18 by a probe against the live project, because the first
+# version of this loop was wrong in two ways that made it fire on NOTHING:
+#   * a module-reference cell reports TYPE "ip", the same as any packaged IP.
+#     What distinguishes it is the VLNV, xilinx.com:module_ref:<entity>:1.0.
+#   * a top-level pin's PARENT property is EMPTY, so get_bd_cells of it
+#     resolves to the root, whose TYPE is "hier" -- every pin was excluded.
+# The attribution control caught it: the exact pre-fix state (both nets
+# deleted from the Tcl) ran through the first version and reported count=0.
+foreach cell [get_bd_cells -hierarchical -quiet -filter {VLNV =~ "*:module_ref:*"}] {
+    foreach pin [get_bd_pins -quiet -of_objects $cell -filter {DIR == I && INTF == false}] {
+        if {[llength [get_bd_nets -quiet -of_objects $pin]] > 0} { continue }
+        lappend fk33_uncon_bad [get_property PATH $pin]
+    }
+}
+puts "FK33_UNCONNECTED count=[llength $fk33_uncon_bad]"
+foreach p $fk33_uncon_bad { puts "FK33_UNCONNECTED pin $p" }
+if {[llength $fk33_uncon_bad] > 0} {
+    error "FK33_UNCONNECTED FAIL: [llength $fk33_uncon_bad] module input pin(s) have no driver and no tie-off: $fk33_uncon_bad.  An unconnected input is ZERO.  Connect it or tie it off explicitly."
 }
 '''
 
@@ -2922,7 +3004,8 @@ if {$otarm == 3} {
 
     # ---- 9. the no-card stopping point
     ('puts "==== IP status before upgrade ===="',
-     THERM_BD_CHECK + BD_CHECK_BLOCK + '\nputs "==== IP status before upgrade ===="'),
+     THERM_BD_CHECK + UNCONNECTED_PIN_CHECK + BD_CHECK_BLOCK
+     + '\nputs "==== IP status before upgrade ===="'),
 
 
     # ---- the engine's core clock.  A THIRD clk_wiz output; ENGINE_BLOCK says

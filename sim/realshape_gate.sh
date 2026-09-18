@@ -287,7 +287,14 @@ row all_real          ok   llama_top -gA_BEHAV=false -gB_BEHAV=false \
 #    C_MAXPOS from 1 to 233,705 -- which covers the arena ceiling of 233,396.
 #    `real_kv_ceiling` runs the map at that ceiling to show 33 still holds.
 # ===========================================================================
-KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282598912 -gC_V_BASE_CH=353902080"
+# RE-DERIVED 2026-09-18 with hw/fk33/gen_fk33_card.py, from the manifest
+# after its GDN arena grew by 1,179,648 B to include the conv tap history
+# (docs/debugging/2026-09-17_gdn-arena-omitted-the-conv-tap-history.md).
+# The old bases put C's K cache 1,179,648 B INSIDE the correctly sized GDN
+# arena.  tools/check_kv_map.py holds this block and the generator's values
+# to an identity, so they move together or the gate goes red.
+# C_KV_ADDR_W stays 33: clog2(353975808 + 71303168) = 29 = 33-4, unchanged.
+KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282672640 -gC_V_BASE_CH=353975808"
 KVR="$KVR -gC_KV_ADDR_W=33 -gC_MAXPOS=131072 -gC_CTXLEN=131072"
 # shellcheck disable=SC2086
 row real_kv_map       ok   llama_top $CKV $KVR

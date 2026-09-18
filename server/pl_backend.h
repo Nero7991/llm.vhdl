@@ -152,6 +152,10 @@ typedef struct {
      *                     --desc-base.  Checked, never trusted. */
     uint64_t desc_arena_base;
     uint64_t desc_arena_bytes;
+    /* v2 only: subsystem B's recurrent-state base.  0 -> the manifest's
+     * hbm.gdn_state_base.  With no manifest it must be stated, and a v2
+     * open with neither is refused. */
+    uint64_t gdn_state_base;
 
     /* Where the card's own bytes end.  Two ways to say it, and either is
      * enough; the manifest is preferred because it is the artefact the loader

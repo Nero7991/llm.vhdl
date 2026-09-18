@@ -246,6 +246,12 @@ entity fk33_seam is
     d_host_x_exp : out signed(EXP_W-1 downto 0);
     d_rel_mask   : out std_logic_vector(NREG-1 downto 0);
     d_tok_ack    : out std_logic;
+    -- HBM bases for A's descriptor arena and B's recurrent state.  Widths are
+    -- the card's port widths (fk33_card.vhd:146 and :88), stated as plain
+    -- literals rather than derived, because a block-design port width may be
+    -- a generic or arithmetic on one but NEVER a function of one.
+    d_a_arena    : out std_logic_vector(39 downto 0);
+    d_bst_base   : out std_logic_vector(32 downto 0);
 
     d_busy       : in  std_logic;
     d_tok_done   : in  std_logic;
@@ -349,6 +355,31 @@ architecture rtl of fk33_seam is
   constant A_WIN_DATA   : natural := 16#60#;
   constant A_SMP_N      : natural := 16#64#;
   constant A_FAULTS     : natural := 16#68#;
+  -- THE TWO HBM BASES THE CARD CANNOT KNOW BY ITSELF, ADDED 2026-09-18.
+  -- MEASURED in two consecutive builds (buildsmp, buildcong):
+  --   CRITICAL WARNING: [BD 41-759] The input pins (listed below) are either
+  --   not connected or do not have a source port, and they don't have a
+  --   tie-off specified.  /card/bst_state_base  /card/a_arena_base
+  -- An unconnected input is zero, so as built, subsystem A fetched its
+  -- descriptors from HBM address 0 and subsystem B stored its recurrent state
+  -- there -- both inside the weight image -- and the build passed every gate
+  -- because a CRITICAL WARNING is not an ERROR.  rtl/fk33_llama_top.vhd:719
+  -- predicted it verbatim: "the tiered arm needs an HBM allocation for
+  -- bst_state_base that nothing supplies yet, so turning it on without one
+  -- gives a store that loads from address zero."
+  --
+  -- They are REGISTERS and not generics or tie-offs because
+  -- rtl/a_desc_adapter.vhd already argues the point: a hardcoded copy of the
+  -- arena address became "a FOURTH model of the same address", and
+  -- tools/hbm_map.py is the only thing in this repository that chooses one.
+  -- The manifest says where they are; the host reads the manifest and writes
+  -- them here, once per model load, and the card takes them as given.
+  -- The host side reads the SAME manifest fields (hbm.desc_arena_base,
+  -- hbm.gdn_state_base) that fk33_load_weights.py places against.
+  constant A_ARENA_LO   : natural := 16#6C#;  -- RW  a_arena_base[31:0]
+  constant A_ARENA_HI   : natural := 16#70#;  -- RW  a_arena_base[39:32]
+  constant A_BST_LO     : natural := 16#74#;  -- RW  bst_state_base[31:0]
+  constant A_BST_HI     : natural := 16#78#;  -- RW  bst_state_base[32]
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -462,6 +493,8 @@ architecture rtl of fk33_seam is
   signal r_l_base   : std_logic_vector(63 downto 0) := (others => '0');
   signal r_desc_ptr : std_logic_vector(63 downto 0) := (others => '0');
   signal r_tbl_len  : unsigned(STEP_W-1 downto 0) := (others => '0');
+  signal r_a_arena  : std_logic_vector(39 downto 0) := (others => '0');
+  signal r_bst_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_x_exp    : signed(EXP_W-1 downto 0) := (others => '0');
   signal r_win_sel  : unsigned(1 downto 0) := (others => '0');
   signal r_win_addr : unsigned(15 downto 0) := (others => '0');
@@ -535,6 +568,8 @@ begin
   d_tok_ack    <= ack_r;
   d_tbl_len    <= r_tbl_len;
   d_host_x_exp <= r_x_exp;
+  d_a_arena    <= r_a_arena;
+  d_bst_base   <= r_bst_base;
 
   -- THE RELEASE MASK.  Published combinationally from the RAM, exactly as
   -- `sim/tb_llama_top.vhd:1923` publishes it from its PLAN array, and zero
@@ -642,6 +677,8 @@ begin
         r_l_base  <= (others => '0');
         r_desc_ptr<= (others => '0');
         r_tbl_len <= (others => '0');
+        r_a_arena <= (others => '0');
+        r_bst_base<= (others => '0');
         r_x_exp   <= (others => '0');
         r_win_sel <= (others => '0');
         r_win_addr<= (others => '0');
@@ -753,6 +790,15 @@ begin
                    or unsigned(r_l_base) /= 0
                    or unsigned(r_desc_ptr) /= 0 then
                   bad := EC_RSVD;           -- v2 has no HBM master.  Say so.
+                elsif unsigned(r_a_arena) = 0
+                   or unsigned(r_bst_base) = 0 then
+                  -- A base of ZERO is the weight image, and it is exactly the
+                  -- value an unwritten register holds.  Running would have A
+                  -- fetch descriptors from the first weight tensor and B
+                  -- overwrite it with recurrent state, with no fault raised
+                  -- anywhere.  Refuse, with the code the host already
+                  -- decodes as "the program was refused".
+                  bad := EC_DESC;
                 elsif r_seq_pos /= cur_pos then
                   bad := EC_SEQ;
                 elsif cur_pos >= MAXPOS then
@@ -778,6 +824,10 @@ begin
             when A_DESC_LO   => r_desc_ptr(31 downto 0)  <= dat;
             when A_DESC_HI   => r_desc_ptr(63 downto 32) <= dat;
             when A_TBL_LEN   => r_tbl_len <= resize(unsigned(dat), STEP_W);
+            when A_ARENA_LO  => r_a_arena(31 downto 0)  <= dat;
+            when A_ARENA_HI  => r_a_arena(39 downto 32) <= dat(7 downto 0);
+            when A_BST_LO    => r_bst_base(31 downto 0) <= dat;
+            when A_BST_HI    => r_bst_base(32)          <= dat(0);
             when A_X_EXP     => r_x_exp   <= resize(signed(dat), EXP_W);
             when A_WIN_SEL   => r_win_sel <= unsigned(dat(1 downto 0));
             when A_WIN_ADDR  =>
@@ -879,6 +929,10 @@ begin
             when A_SEQ_POS    => rv := std_logic_vector(cur_pos);
             when A_N_STEP     => rv := std_logic_vector(r_n_step);
             when A_TBL_LEN    => rv := to_slv32(r_tbl_len);
+            when A_ARENA_LO   => rv := r_a_arena(31 downto 0);
+            when A_ARENA_HI   => rv := x"000000" & r_a_arena(39 downto 32);
+            when A_BST_LO     => rv := r_bst_base(31 downto 0);
+            when A_BST_HI     => rv := (0 => r_bst_base(32), others => '0');
             when A_X_EXP      => rv := std_logic_vector(resize(r_x_exp, 32));
             when A_WIN_SEL    => rv := to_slv32(r_win_sel);
             when A_WIN_ADDR   => rv := to_slv32(r_win_addr);

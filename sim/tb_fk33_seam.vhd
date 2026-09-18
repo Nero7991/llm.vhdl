@@ -203,6 +203,8 @@ architecture tb of tb_fk33_seam is
   -- EVERY ONE OF THESE IS DRIVEN BY `fk33_seam` AND BY NOTHING ELSE.
   signal s_go, s_abort, s_tok_ack : std_logic;
   signal s_tbl_len : unsigned(STEP_W-1 downto 0);
+  signal s_a_arena  : std_logic_vector(39 downto 0);
+  signal s_bst_base : std_logic_vector(32 downto 0);
   signal s_x_exp   : signed(EXP_W-1 downto 0);
   signal s_rel     : std_logic_vector(NREGION-1 downto 0);
   signal s_busy, s_tok_done, s_err : std_logic;
@@ -276,6 +278,10 @@ architecture tb of tb_fk33_seam is
   constant A_CAPS_FL  : natural := 16#4C#;
   constant A_TBL_LEN  : natural := 16#50#;
   constant A_X_EXP    : natural := 16#54#;
+  constant A_ARENA_LO : natural := 16#6C#;
+  constant A_ARENA_HI : natural := 16#70#;
+  constant A_BST_LO   : natural := 16#74#;
+  constant A_BST_HI   : natural := 16#78#;
   constant A_WIN_SEL  : natural := 16#58#;
   constant A_WIN_ADDR : natural := 16#5C#;
   constant A_WIN_DATA : natural := 16#60#;
@@ -422,6 +428,7 @@ begin
       s_axi_rdata => ax_rdata, s_axi_rresp => ax_rresp,
       d_go => s_go, d_abort => s_abort, d_tbl_len => s_tbl_len,
       d_host_x_exp => s_x_exp, d_rel_mask => s_rel, d_tok_ack => s_tok_ack,
+      d_a_arena => s_a_arena, d_bst_base => s_bst_base,
       d_busy => s_busy, d_tok_done => s_tok_done, d_err => s_err,
       d_err_code => s_err_code, d_err_step => s_err_step,
       d_steps_done => s_steps_done,
@@ -672,6 +679,54 @@ begin
       n_bad_rback <= n_bad_rback + 1;
       report "tb_fk33_seam: descriptor word 0 low half did not read back."
         severity error;
+    end if;
+
+    -- ==================================================================
+    -- P6d: AN UNWRITTEN HBM BASE MUST REFUSE A GO.  Added 2026-09-18.
+    -- MEASURED in two consecutive card builds: /card/a_arena_base and
+    -- /card/bst_state_base were UNCONNECTED (CRITICAL WARNING [BD 41-759]),
+    -- i.e. zero, so A fetched descriptors from HBM address 0 and B stored
+    -- recurrent state there -- inside the weight image -- and every gate
+    -- passed.  Zero is also what an unwritten register holds, so the seam
+    -- refuses a GO with either base still zero, code EC_DESC (6).  This
+    -- check runs BEFORE the bases are written, so it is the state a
+    -- forgetful host actually produces, not a constructed one.
+    -- ==================================================================
+    axi_wi(A_CTRL, 1);
+    axi_r(A_STATUS, d);
+    if d(2) /= '1' or to_integer(unsigned(d(11 downto 8))) /= 6 then
+      n_bad_gate <= n_bad_gate + 1;
+      report "tb_fk33_seam: a GO with a_arena_base and bst_state_base still "
+           & "ZERO was not refused with EC_DESC; STATUS = "
+           & integer'image(to_integer(unsigned(d))) severity error;
+    end if;
+    axi_wi(A_CTRL, 32);
+    axi_w(A_ARENA_LO, x"FFADD000");   -- the 9B manifest's hbm.desc_arena_base
+    axi_wi(A_ARENA_HI, 1);            --   = 0x1_FFAD_D000
+    axi_wi(A_CTRL, 1);                -- arena set, GDN still zero: still refused
+    axi_r(A_STATUS, d);
+    if d(2) /= '1' or to_integer(unsigned(d(11 downto 8))) /= 6 then
+      n_bad_gate <= n_bad_gate + 1;
+      report "tb_fk33_seam: a GO with only the arena written was not refused"
+        severity error;
+    end if;
+    axi_wi(A_CTRL, 32);
+    axi_w(A_BST_LO, x"0C006000");     -- the 9B manifest's hbm.gdn_state_base
+    axi_wi(A_BST_HI, 1);              --   = 0x1_0C00_6000
+    -- and both must read back and reach the card-facing ports
+    axi_r(A_ARENA_HI, d);
+    -- s_a_arena is 40 bits and s_bst_base 33; a hex literal is a multiple
+    -- of 4 bits, so the comparisons are made field by field.  The first
+    -- version compared a 33-bit vector against x"10C006000" (36 bits) and
+    -- reported a fault on a value that was correct.
+    if to_integer(unsigned(d)) /= 1
+       or s_a_arena(39 downto 32) /= x"01"
+       or s_a_arena(31 downto 0)  /= x"FFADD000"
+       or s_bst_base(32) /= '1'
+       or s_bst_base(31 downto 0) /= x"0C006000" then
+      n_bad_rback <= n_bad_rback + 1;
+      report "tb_fk33_seam: the HBM bases did not read back or did not reach "
+           & "d_a_arena / d_bst_base" severity error;
     end if;
 
     -- ==================================================================

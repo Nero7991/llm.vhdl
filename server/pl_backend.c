@@ -25,6 +25,7 @@ struct pl_ctx {
 
     int n_vocab, n_embd, n_layer, max_ctx, max_chunk;
     int version;                 /* 1 or 2, from the card's own register */
+    uint64_t a_arena, bst_base;  /* v2: what was written to the seam */
     uint32_t caps;               /* CAPS_FLAGS, 0 on a v1 card */
     uint64_t x_base, l_base, desc_ptr;
     uint64_t x_stride, l_stride;
@@ -554,6 +555,47 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
             || wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, 0)
             || wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, 0)) {
             pl_close(c); return -2;
+        }
+        /* THE TWO BASES THE CARD CANNOT KNOW BY ITSELF.  From the manifest
+         * and nothing else: the same hbm.desc_arena_base that
+         * fk33_load_weights.py places the descriptors at, and the same
+         * hbm.gdn_state_base that hbm_map.py sized.  A caller without a
+         * manifest may state them in opts; a caller with neither is refused
+         * here rather than at the first GO, and the card refuses too. */
+        {
+            fk33_manifest mv;
+            uint64_t arena = o->desc_arena_base, bst = o->gdn_state_base;
+            if (o->manifest_path && !fk33_manifest_read(o->manifest_path, &mv)) {
+                if (!arena) arena = mv.desc_arena_base;
+                if (!bst)   bst   = mv.gdn_state_base;
+            }
+            if (!arena || !bst) {
+                fprintf(stderr,
+                    "pl_open: a v2 card needs subsystem A's descriptor arena base\n"
+                    "  and subsystem B's recurrent-state base, and neither the\n"
+                    "  manifest nor opts supplied %s.  Zero is HBM address 0 --\n"
+                    "  the first weight tensor -- and the card refuses a GO with\n"
+                    "  either unset, so this is refused here instead.\n",
+                    !arena && !bst ? "either" : (!arena ? "the arena" : "the GDN base"));
+                pl_close(c); return -1;
+            }
+            if (arena >> 40) {
+                fprintf(stderr, "pl_open: desc_arena_base 0x%llX does not fit the "
+                                "card's 40-bit port\n", (unsigned long long)arena);
+                pl_close(c); return -1;
+            }
+            if (bst >> 33) {
+                fprintf(stderr, "pl_open: gdn_state_base 0x%llX does not fit the "
+                                "card's 33-bit port\n", (unsigned long long)bst);
+                pl_close(c); return -1;
+            }
+            if (wr(c, FK33_SEAM_ARENA_LO, (uint32_t)arena)
+                || wr(c, FK33_SEAM_ARENA_HI, (uint32_t)(arena >> 32))
+                || wr(c, FK33_SEAM_BST_LO, (uint32_t)bst)
+                || wr(c, FK33_SEAM_BST_HI, (uint32_t)(bst >> 32))) {
+                pl_close(c); return -2;
+            }
+            c->a_arena = arena; c->bst_base = bst;
         }
         /* The windows are written once per model, not per token. */
         if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_DESC)

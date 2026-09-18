@@ -230,8 +230,21 @@ ARGS = [
     # `C_CTXLEN < 2**POSW`, which is self-contradictory at exactly the
     # boundary. That is already fixed in the RTL (POSW = clog2(C_MAXPOS+1)).
     "--generic", "C_KV_ADDR_W=33",
-    "--generic", "C_K_BASE_CH=282598912",
-    "--generic", "C_V_BASE_CH=353902080",
+    # RE-DERIVED 2026-09-18 from the migrated manifest, and the gate row
+    # sim:kvmap is what forced it.  The old values (282598912 / 353902080) put
+    # the K cache at 0x10D81E000, which leaves EXACTLY 25,264,128 B between
+    # weights_end and the K base -- the old, under-sized GDN arena figure.
+    # The correct GDN arena is 26,443,776 B (it omitted the conv tap history;
+    # docs/debugging/2026-09-17_gdn-arena-omitted-the-conv-tap-history.md),
+    # so B's recurrent state overran C's K cache by 1,179,648 B.  The RTL
+    # constant inherited the same defect the manifest had.
+    #   C_K_BASE_CH = hbm.kv_base / 16              = 0x10D93E000 / 16
+    #   C_V_BASE_CH = (kv_base + 8704 * C_MAXPOS) / 16
+    # Both re-derived by tools/check_kv_map.py against the manifest; the row
+    # is an IDENTITY, so a manifest that moves again fails the gate rather
+    # than silently disagreeing with the bitstream.
+    "--generic", "C_K_BASE_CH=282672640",
+    "--generic", "C_V_BASE_CH=353975808",
     "--generic", "C_MAXPOS=131072",
     "--generic", "C_CTXLEN=131072",
     # A_ROWS_IF = 48 IS NOT A TUNING CHOICE, IT IS THE SEAM WIDTH.

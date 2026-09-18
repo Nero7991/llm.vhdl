@@ -263,6 +263,17 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
             fail(s, FK33_SEAM_ERR_NSTEP, (uint32_t)tbl_len); return;
         }
         if (xb || lb || dp) { fail(s, FK33_SEAM_ERR_RSVD, 0xB10C); return; }
+        /* rtl/fk33_seam.vhd's refusal of an unwritten base.  Zero is the
+         * weight image AND what an unwritten register holds. */
+        {
+            uint64_t ar = ((uint64_t)(s->reg[FK33_SEAM_ARENA_HI / 4] & 0xFFu) << 32)
+                        | s->reg[FK33_SEAM_ARENA_LO / 4];
+            uint64_t bs = ((uint64_t)(s->reg[FK33_SEAM_BST_HI / 4] & 1u) << 32)
+                        | s->reg[FK33_SEAM_BST_LO / 4];
+            if (ar == 0 || bs == 0) {
+                fail(s, FK33_SEAM_ERR_DESC, ar == 0 ? 0xA000u : 0xB000u); return;
+            }
+        }
 
         /* --- and the two checks the CARD DOES NOT MAKE.  Off by default so
          * the model's default behaviour is the card's; see `model_strict` in

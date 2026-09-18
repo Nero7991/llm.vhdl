@@ -307,6 +307,24 @@ extern "C" {
 #define FK33_SEAM_SMP_N           0x64u   /* R   logits folded since GO */
 #define FK33_SEAM_FAULTS          0x68u   /* R   see FK33_FAULT_* */
 
+/* THE TWO HBM BASES THE CARD CANNOT KNOW BY ITSELF.  Added 2026-09-18 after
+ * two consecutive builds carried
+ *     CRITICAL WARNING: [BD 41-759] ... /card/bst_state_base /card/a_arena_base
+ * i.e. both inputs UNCONNECTED and therefore zero: subsystem A would have
+ * fetched its descriptors from HBM address 0 and subsystem B stored its
+ * recurrent state there, both inside the weight image, and every gate passed.
+ *
+ * The host reads them from the manifest -- hbm.desc_arena_base and
+ * hbm.gdn_state_base, the same fields fk33_load_weights.py places against --
+ * and writes them ONCE per model load.  A GO with either still zero is
+ * refused with FK33_SEAM_ERR_DESC, because zero is the weight image and is
+ * also what an unwritten register holds.  40 and 33 bits respectively, the
+ * card's own port widths. */
+#define FK33_SEAM_ARENA_LO        0x6Cu   /* RW  a_arena_base[31:0] */
+#define FK33_SEAM_ARENA_HI        0x70u   /* RW  a_arena_base[39:32] */
+#define FK33_SEAM_BST_LO          0x74u   /* RW  bst_state_base[31:0] */
+#define FK33_SEAM_BST_HI          0x78u   /* RW  bst_state_base[32] */
+
 #define FK33_WIN_DESC             0u
 #define FK33_WIN_REL              1u
 #define FK33_WIN_XIN              2u
