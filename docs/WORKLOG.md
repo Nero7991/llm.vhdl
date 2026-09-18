@@ -11,6 +11,50 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-17 19:06: THE WHOLE DESIGN FITS. A, B, C AND D, ROUTED, 75 MHz.
+
+`hw/fk33/bit/fk33_card_withA_75mhz_2026-09-17.bit`, 24,938,098 bytes,
+`FK33_BUILD_DONE`, 0 errors. **Subsystem A is IN.**
+
+| | this morning | now |
+|---|---|---|
+| post-synthesis LUT | 479,909 (**109.15%**) | **347,629 (79.06%)** |
+| routed LUT | never routed | **336,326 (76.49%)** = 284,283 logic + 52,043 memory |
+| registers | 500,677 | 304,036 (34.57%) |
+| route | gave up, global congestion **level 7** | 0 failed / 0 unrouted / 0 overlaps |
+| WNS / WHS | never reached | **+0.009 / +0.010**, TNS/THS 0.000 |
+
+**THE ENTIRE GAP WAS ONE LINE.** `gen_vstub[2].gv.vproc.buf` was
+`variable buf : buf_t(0 to REGMAX-1)` in a clocked process -- 12,288 x 16 =
+196,608 bits in FLIP-FLOPS, 39% of the design's registers -- and the thing
+stopping it inferring as memory was a **statically dead** 12,288-wide
+combinational read (the NORM_ANCHOR probe). Its identical twin `buf2` had been
+distributed RAM all along. `251cbca`, writeup in
+`docs/debugging/2026-09-17_one-flop-array-was-the-whole-lut-gap.md`.
+
+**TWO OBVIOUS-LOOKING FIXES CHANGED NOTHING FIRST** -- both measured at
+`lut=292383 ff=357608`, identical to the digit: hoisting to a single read site
+(the recorded `region_mem` 3-refused/2-accepted threshold does NOT carry over)
+and `ram_style` on its own (**no `8-6849` ever named the array** -- Vivado
+never treated it as a RAM candidate, which is silence, not a refusal).
+
+**WHAT THIS IS NOT.** A routed bitstream is not a working accelerator. It fits,
+closes timing, and is loadable. **It has NOT been on the card** -- programming
+needs a human. Whether A computes correctly in hardware is untested, and the
+two known gaps are unchanged: `ga_desc` has NO value coverage, and the `x_exp`
+divergence between the two A arms is unexplained.
+
+**DO NOT** difference this against the 2026-09-16 engine-less build (316,167
+LUT) to price subsystem A at ~20,000 LUT. That build predates this fix, so the
+arms differ in RTL as well as in A's presence.
+
+**STILL AVAILABLE if more LUTs are ever needed:** `buf` and `buf2` are 1,152
+`RAM64M8` between them and BRAM is at 66.89%, URAM at 10%. And the same
+question has not been asked of `u_arr` (50,523 LUT) or `u_kv` (23,101 LUT,
+zero LUTRAM).
+
+---
+
 ### 2026-09-17 03:50: THERE IS A BITSTREAM. IT CONTAINS B, C AND D, AND NO SUBSYSTEM A.
 
 `hw/fk33/bit/fk33_card_noeng_75mhz_2026-09-17.bit`, 24,695,270 bytes,
