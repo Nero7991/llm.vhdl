@@ -338,3 +338,108 @@ before a reboot.**
   presentational. Left alone deliberately.
 * **The `trip_cnt_sat` sticky bit** (section 4) is a recommendation with no
   owner and no scheduled rebuild to ride along with.
+
+---
+
+## CORRECTION 2026-09-17: the fix is LANDED, and two of this document's predictions were wrong in opposite directions
+
+Commit `5e8495d`. Everything section 5 designed is now in the tree, all six
+consumers, plus the section 2a fixture. **The withdrawn claim is only the
+status line: "designed, argued, NOT written" and "the fix is designed but NOT
+landed" no longer describe the tree.** Every technical judgement in sections
+1-4 survives unchanged, including the one that matters most: **the RTL
+saturation is CORRECT and was not touched.**
+
+### What was predicted correctly, and it saved a wrong result
+
+Section "open, not yet answered" said `SimBar._status` fires the injected
+in-job trip only when `self.trip == self.f.get("trip0", 0)`, so after a clear
+the equality is false, **the injected trip would never fire, and the new row
+would pass for the wrong reason.** MEASURED: that is exactly what happened on
+the first run.
+
+```
+saturated, then a trip         INCONCLUSIVE   PASS           MISMATCH
+```
+
+It was found by reading rather than by running, and the note is why the PASS
+was recognised as a broken model rather than as a working tool. The fix is the
+`tripped` latch this document asked for. **The general form: an injection
+predicated on the state NOT having been touched cannot survive a change that
+touches it, and it fails silently in the flattering direction.**
+
+### PREDICTION WRONG 1: the new row's verdict is INCONCLUSIVE, not REFUSED
+
+This document specified
+`("trip counter saturated at 255", dict(trip0=255, trip_during=1), Verdict.REFUSED)`.
+MEASURED, it is **INCONCLUSIVE**, and REFUSED is a *different* row.
+
+The reasoning that produced REFUSED assumed the tool would refuse to run at the
+ceiling. What it actually does is CLEAR the counter, which is the whole point:
+the base is then 0, the injected trip is visible as 0 -> 1, and the job runs
+and comes out INCONCLUSIVE exactly as an ordinary in-job trip does. REFUSED is
+right only when the clear itself does not take, which is now its own row
+(`clear_refused=True`). **Two rows, not one, and the distinction is the
+difference between "cannot measure" and "measured a trip".**
+
+### PREDICTION WRONG 2: `aux_probe.tcl` was touched, and should have been
+
+"Left alone deliberately" on the grounds that its defect is presentational and
+its directory was out of scope. That reasoning does not hold up: it is the
+readout on the **JTAG** path, i.e. the one that still works when PCIe does not,
+which is precisely when someone is reading a trip count under pressure. The
+change is three lines and prints `255 OR MORE (SATURATED)`.
+
+### The attribution controls, MEASURED
+
+Each was produced by reverting ONLY the named change in the working tree and
+re-running, then restoring from a saved copy.
+
+`fk33_run_job.py selfcheck`, control = clear-and-prove removed, SimBar latch
+fix KEPT, so the control isolates the tool change rather than the model change:
+
+| row | with the fix | control |
+|---|---|---|
+| saturated, then a trip | INCONCLUSIVE | **PASS** |
+| saturated, clear refused | REFUSED | **PASS** |
+| counter at 7, cleared | PASS | PASS |
+
+The third bites in neither arm and is listed under its own name in the
+do-not-bite output. It is a control, not a tooth, and discarding it would hide
+that the clear path is exercised in the ordinary case too.
+
+`fk33_run_token.py selfcheck`, control = the OLD sampling wrapper. **The
+halt-retry wrapper had no coverage at all before this**; these are its first
+rows, and they measure the hazard section 5 predicted rather than asserting it:
+
+| row | new wrapper | control (sampling) |
+|---|---|---|
+| a cleared counter is not a phantom trip | 1 call / 0 trip | **1 call / 1 trip** |
+| a real in-job trip is still retried | 3 call / 3 trip | 2 call / 1 trip |
+| run_job publishing no `p['therm']` refuses | refused | **returned** |
+
+Row 1 is the phantom trip, measured: a job that merely cleared the counter is
+logged as a thermal trip by the old wrapper. Row 2 exists so row 1 cannot be
+satisfied by a wrapper that has simply gone deaf.
+
+`tests_fk33ctl.py`, 48 checks, control = the `fk33ctl.py` line reverted with
+the fixture kept: exactly the two new rows fail, and the `trip_cnt = 3` control
+row (which must NOT print the saturation note) passes in both arms.
+
+### Also found, and fixed, while writing the teeth
+
+`_wait_clear` raised `ZeroDivisionError` on `poll_s = 0` -- a legitimate
+caller intent, "do not sleep at all" -- **before the job ran**, and therefore
+indistinguishable from a guard refusal at the call site. It was reached by a
+teeth row passing `poll_s=0.0`, not by any hardware path.
+
+### Still open
+
+* **Nothing here has run against the card.** Every row above is the simulated
+  register plane. The clear-and-prove writes `THERM_CTL` for the first time
+  from this tool, and that write has never been issued to silicon.
+* **The `trip_cnt_sat` sticky bit** (section 4) is still a recommendation with
+  no owner. Unchanged.
+* **`fk33_run_layer.py` remains a non-consumer** and inherits the fixed veto
+  through `fk33_run_job.run_job`. Re-checked, still 0 matches on
+  `THERM_STATUS`.

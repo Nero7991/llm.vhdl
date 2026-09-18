@@ -698,9 +698,15 @@ matches on argmax is not verified.
    reasons that are not heat, and each trip halts the compute domain. The trip
    counter **saturates at 255** (`fk33_thermal.vhd:1166`) and six host consumers
    read it as unbounded -- two give a false PASS, three under-report, and
-   `therm_selftest.py` is INVERTED. Enumerated in `729df43`; **the fix is
-   designed but NOT landed**, because the obvious one breaks
-   `fk33_run_token.py`'s retry wrapper into a phantom trip on every job.
+   `therm_selftest.py` is INVERTED. Enumerated in `729df43`; **the host half is
+   LANDED as of `5e8495d`** -- all six consumers, with the attribution control
+   for each, and the phantom-retry hazard resolved by having `run_job` publish
+   `p["therm"]` rather than having the wrapper sample the register around a
+   call that clears it. The RTL is untouched and stays that way: saturation is
+   correct. **What remains open is that none of it has run against the card**,
+   and the underlying defect -- the guard tripping every ~3 minutes for reasons
+   that are not heat -- is unchanged. The fix makes a trip VISIBLE, it does not
+   stop one.
 6. **`tb_attn_block` passed a broken tree** on a degenerate oracle stimulus,
    fixed in `1e18ce3` -- but `ref/attn_block_seq_vec.c:214` still carries the
    untapered line, giving a minimum over a constant vector on half the design.

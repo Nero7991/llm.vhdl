@@ -11,6 +11,46 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-17 21:10: THERM-255's HOST HALF IS LANDED, AND THE GOAL HAS A HARNESS
+
+Two things landed while the `FK33_CARD=1` + sampler build runs (started 20:45,
+in synthesis at 21:05; unit `buildsmp`, capped `MemoryHigh=20G`, one Vivado on
+this box and none on the BC-250).
+
+**`5e8495d` -- THERM-255, all six consumers.** `729df43` enumerated them and
+said outright that the fix was designed but NOT landed, because the obvious one
+turns a dead veto into a phantom retry on every job. That is resolved: `run_job`
+clears the trip counter and PROVES the clear, then publishes
+`p["therm"] = dict(trip0, trip1, moved, cleared, guard, saturated)`, and
+`run_token`'s wrapper reads that instead of sampling the register either side of
+a call that clears it. **The phantom trip is not an argument, it is measured**:
+the old wrapper logs `1 call / 1 trip` on a job that merely cleared the counter,
+the new one logs `1 call / 0 trip`. The RTL is untouched -- saturation is
+correct -- and the CORRECTION is appended in place to the original write-up.
+Three new `fk33_run_job.py selfcheck` rows, three new `fk33_run_token.py
+selfcheck` rows over a wrapper that **had no coverage at all**, and the 255
+fixture section 2a asked for. Every one with its attribution control.
+
+**`2d3cbcf` -- `server/tests/run_prompt.c`.** The committed goal
+(`hw/fk33/results/goal_dcdc_2026-09-17/`) now has a program that drives it:
+`pl_prefill` then `pl_decode`, FIRST DIVERGENCE against the 1,197 reference
+ids. Simulated transport only, never a `/dev` path. MEASURED: the full 1,197
+generated, pos 1219, `h2c 10064064 = 1219 * 8256` exactly, no negative return in
+1,197 iterations. **The divergence at position 0 is the expected result and
+proves nothing about any number** -- the sim's logits are synthetic. It proves
+the loop, and the reference becomes an oracle the day it points at silicon.
+`--check-argmax` adds the one check with teeth today: the host rescans the
+returned row against the card's own argmax register. That is NOT
+`pl_backend.c:742`, which compares the row HEADER against the register, two
+copies of one computed index; this recomputes it from the data and so catches
+both copies being wrong together, which is the `smp_base` shape fixed in
+`e62fded`. New sim knob `fault_argmax_bias` exists because the obvious mutant
+(`fault_stale_argmax`) is intercepted by the existing check and would have
+credited the new one with a kill it did not make.
+
+**Open on both: neither has run against the card.**
+
+
 ### 2026-09-17 19:06: THE WHOLE DESIGN FITS. A, B, C AND D, ROUTED, 75 MHz.
 
 `hw/fk33/bit/fk33_card_withA_75mhz_2026-09-17.bit`, 24,938,098 bytes,
