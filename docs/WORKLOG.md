@@ -11,6 +11,82 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-17 22:00: THE HOST CAN NOW SPEAK THE SEAM THE BITSTREAM CARRIES, AND TWO BLOCKERS SURFACED ON THE WAY
+
+**The finding that reordered the evening.** Looking for what would drive the
+seam on card day found that nothing could:
+
+| | before tonight |
+|---|---|
+| `rtl/fk33_seam.vhd` | **v2** since TRACK DSEAM: windows, `TBL_LEN`, `X_EXP`, no HBM fetch |
+| `server/fk33_sim.c` | v1 only |
+| `server/pl_backend.c` | v1 only -- writes a block at `X_BASE` and GOes |
+| `hw/fk33/host/*.py` | the **engine at 0x12000**, never the seam |
+
+The bitstream in place-and-route implemented a protocol no program in the repo
+spoke. `8bdea36` + `47055c4` give the simulator a v2 mode (version-switched, so
+v1's 84 checks keep their meaning); `ace2ce6` makes `pl_backend` speak it.
+**124 checks, 0 failed**, up from 84 this morning. `server_e2e.py` still PASS.
+
+MEASURED, driving the sim with the REAL 505-descriptor program:
+
+```
+program    token.dtbl: 8080 halves (505 descriptors of 8 64-bit words)
+card       seam v2 @BAR+0xE000 ... chunk=1
+decode     1197 ids generated, pos 1219
+bytes      h2c 19972096, go 1219
+```
+
+1,219 GOs for 1,219 positions, and 19,972,096 = 1219 * 4096 * 4 exactly.
+
+**THERE IS NO CHUNKED PREFILL ON THIS CARD.** `rtl/fk33_seam.vhd:746` refuses
+any `N_STEP` but 1, with a comment on the line. A 23-token prompt is 23 GOs,
+and each is **4,096 MMIO writes** of the activation row where v1 did one DMA.
+`pl_open` now forces `max_chunk` to 1 and says so, rather than letting a host
+discover it one `EC_NSTEP` at a time.
+
+**I got the v2 model wrong first, from the header's prose, and the RTL said
+otherwise** (`47055c4`). Two contradictions, each of which would have produced
+a wrong driver rather than a failing test: `N_STEP` above, and `TBL_LEN = 0`
+being `EC_NSTEP` and not `EC_DESC`. The model was also STRICTER than the card
+in two places, which is worse than useless -- those are now `model_strict`,
+off by default.
+
+**BLOCKER FOUND AND FIXED: the packed manifest's GDN arena was 1,179,648 B
+short**, exactly `24 layers x 49,152 B` of conv tap history
+(`docs/debugging/2026-09-17_gdn-arena-omitted-the-conv-tap-history.md`). Stale
+artefact, not a code defect. The lane-striped manifest had it too and was
+migrated; three older packs are over-reserved, which is safe. The cross-check
+was worth more than the fix: the program emits **505** descriptors and
+`fk33_seam.vhd:123-125` predicts that number outright, and it fits the card's
+windows exactly (505 <= `REL_ENT` 576, 505*8 = 4040 <= `DESC_WORDS` 4608).
+
+**BLOCKER FOUND, NOT FIXED, AND IT NEEDS A DECISION:
+`docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md`.**
+`hw/fk33/rtl/fk33_engine.vhd:1309` sets `USE_XEXP_PORT => false`, so the card's
+A takes `x_exp` from the DESCRIPTOR -- which the RTL's own comment calls "stale
+by construction" in the integrated system -- and
+`gen_layer_program.py:666` bakes ONE `--x-exp` into all 311 of them.
+`seq_opdec.vhd:531` propagates the unit's `y_exp`, so the error carries.
+**DERIVED from reading, NOT measured.**
+
+**And the larger gap the same file found:** the card's A binding is
+`A_DESC = true` (`fk33_card.vhd:217`), and **no whole-token bench covers it**.
+`llama_top` uses `matvec_int4`, a unit with no descriptor plane;
+`fk33_llama_top.vhd:738-749` names the two arms and says "THE TWO ARE NOT
+EQUIVALENT AND MUST NOT BE READ AS A TUNING CHOICE". So the card's A path has
+unit coverage and **no token-level coverage**, which is why 300 passing checks
+in `sim_tb_llama_top_seq` have never seen the `x_exp` question.
+
+**Also landed:** `fk33ctl.py seam` (`67c7071`), the first host-side read of the
+seam at all -- `fk33_regs.h` had no seam block. One read-only pass, writes
+nothing, distinguishes a dead bus from a real-but-wrong answer from a tie-off,
+and cross-checks its own register map against `server/fk33_seam.h` at run time.
+
+Build status at 21:59: routing, phase 3.2, 0 errors, 0 placement overlaps,
+post-placement WNS +0.375 (**which is not a result** -- nothing before
+`route_design` orders two runs correctly on this part).
+
 ### 2026-09-17 21:10: THERM-255's HOST HALF IS LANDED, AND THE GOAL HAS A HARNESS
 
 Two things landed while the `FK33_CARD=1` + sampler build runs (started 20:45,
