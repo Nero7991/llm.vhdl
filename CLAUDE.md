@@ -415,6 +415,23 @@ them. `--bd-only` costs 3 minutes and 3.4 GB and finds everything that is not a
 timing or placement result; nothing schedules it, which is why the build had
 been dead since `3a145fd` with nobody aware.
 
+**AN UNCONNECTED MODULE-REFERENCE INPUT IS TIED TO ZERO, AND WHETHER VIVADO
+SAYS SO DEPENDS ON WHETHER THE VHDL PORT HAS A DEFAULT.** MEASURED twice on
+2026-09-18. Two `FK33_CARD=1` builds carried `CRITICAL WARNING: [BD 41-759]`
+naming `/card/a_arena_base` and `/card/bst_state_base` -- ports WITHOUT a
+default, because `tools/gen_bd_wrapper.py` strips them -- and every gate
+passed because the build greps `^ERROR`. A fetched descriptors from HBM
+address 0. Then the mutant of the fix: `eng/d_x_exp`, declared
+`:= (others => '0')`, left with no net, and `validate_bd_design` printed
+**nothing at any severity** (`grep -c 41-759` = 0). The whole D-facing
+surface of `fk33_engine` is declared with defaults. So the loud case was
+luck, the quiet case is the normal one, and the only guard on either is the
+net-based `FK33_UNCONNECTED` check in `gen_pcieep.py`, which walks every
+`module_ref` cell's input pins and errors on any without a net. **Gate on
+nets, never on the warning, and never on `^ERROR` alone.** Its own teeth:
+count=2 on the arena mutant, count=1 naming `/eng/d_x_exp` on the wire
+mutant, count=0 on both controls.
+
 **AND A SENTINEL GREP MUST BE LINE-ANCHORED, BECAUSE THE LOG CONTAINS THE
 SCRIPT THAT WRITES IT.** MEASURED 2026-09-03, twice in a row on the same job:
 `sim/ooc_compose4_pnr.tcl` echoes its own source into its log, so the log holds

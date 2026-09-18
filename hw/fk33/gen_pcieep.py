@@ -455,6 +455,19 @@ ENG_CB_STYLE   = os.environ.get("FK33_CB_STYLE", "regs")
 if ENG_CB_STYLE not in ("regs", "distributed"):
     raise SystemExit("FK33_CB_STYLE must be regs or distributed, got %r"
                      % ENG_CB_STYLE)
+# WHERE THE ENGINE TAKES x_exp FROM.  `fk33_engine`'s USE_XEXP_PORT, forwarded
+# to matvec_int4_desc_axi.  Read here rather than from CARD_ON because
+# ENGINE_BLOCK is rendered before CARD_ON is defined; the two are the same
+# environment test and the selftest asserts they agree.
+#
+# WHY IT FOLLOWS FK33_CARD.  Engine-only (host-driven), the host builds every
+# descriptor at run time from the exponent of the vector that arrived, so the
+# descriptor's x_exp word is right and the port has no driver.  On the card
+# the descriptors are DMA'd once per model and the same baked scalar reached
+# every A job of every token; D's ga_desc arm now drives the live value per
+# job on card/a_x_exp -> eng/d_x_exp, and the engine must READ it.  See
+# docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md.
+ENG_XEXP_PORT  = os.environ.get("FK33_CARD", "") == "1"
 # Refuse a value that cannot be met or cannot be built.  The clocking wizard
 # will happily accept nonsense and fail much later, in HDL generation, with a
 # message that does not name this variable.
@@ -1004,6 +1017,19 @@ def _eng_block():
           % ENG_CB_STYLE)
         a("}")
         a("puts \"FK33_CB_STYLE $_cb\"")
+    if ENG_XEXP_PORT:
+        a("")
+        a("# x_exp FROM THE PORT, not the descriptor (FK33_CARD).  Same mechanism as")
+        a("# CB_STYLE: a generic on a module-reference cell is a CONFIG property.")
+        a("# Read back for the same reason: a set_property that matched nothing is")
+        a("# silent, and a lever quietly not applied looks like one that did not")
+        a("# work -- here, wrong exponents with FAULTS = 0.")
+        a("set_property CONFIG.USE_XEXP_PORT {true} [get_bd_cells %s]" % ENG_CELL)
+        a("set _xe [get_property CONFIG.USE_XEXP_PORT [get_bd_cells %s]]" % ENG_CELL)
+        a("if {![string is true -strict $_xe]} {")
+        a("    error \"FK33_XEXP_PORT FAIL: CONFIG.USE_XEXP_PORT is \\\"$_xe\\\", not true\"")
+        a("}")
+        a("puts \"FK33_XEXP_PORT $_xe\"")
     a("")
     a("# WHICH CLOCK OWNS WHICH INTERFACE.  A module-reference cell with ONE clock")
     a("# port gets this for free -- which is why rtl/hbm_tg_ip.vhd never needed it")
@@ -1173,6 +1199,12 @@ CARD_SEAM_TO_ENG = [
     ("a_x_we",      "d_x_we"),
     ("a_x_waddr",   "d_x_waddr"),
     ("a_x_wdata",   "d_x_wdata"),
+    # THE LIVE x EXPONENT, ADDED 2026-09-18.  Read by the engine only because
+    # ENG_XEXP_PORT sets CONFIG.USE_XEXP_PORT on it; without that CONFIG this
+    # net is driven and ignored, and without this net the CONFIG reads a pin
+    # the FK33_UNCONNECTED check refuses to leave floating.  Both halves are
+    # gated on the same FK33_CARD test.
+    ("a_x_exp",     "d_x_exp"),
 ]
 CARD_SEAM_FROM_ENG = [
     ("a_y_we",     "d_y_we"),
@@ -1463,6 +1495,9 @@ CARD_BLOCK = _card_block()
 # which is the build that has produced bitstreams.  A half-wired card must not
 # be able to break that by merely existing in the file.
 CARD_ON = os.environ.get("FK33_CARD", "") == "1"
+if CARD_ON != ENG_XEXP_PORT:
+    raise SystemExit("gen_pcieep.py: CARD_ON and ENG_XEXP_PORT disagree; they "
+                     "must be the same environment test")
 if not CARD_ON:
     CARD_BLOCK = ""
     CARD_RTL_ADD = ""

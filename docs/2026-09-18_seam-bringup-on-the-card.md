@@ -11,22 +11,33 @@ the file, starting with the 6-pin aux lead.
 
 ## Which bitstream this is for, and what it cannot do
 
-`hw/fk33/bit/fk33_card_withA_75mhz_2026-09-17.bit`, 24,938,098 B, written
-19:04 on 2026-09-17. A+B+C+D, routed, WNS +0.009.
+**As of 11:28 on 2026-09-18 this is written for
+`hw/fk33/bit/fk33_card_smp_bases_75mhz_2026-09-18.bit`** (24,880,718 B,
+sha256 `a8db5c2b...`, reports in `hw/fk33/results/card_smp_bases_2026-09-18/`).
+A+B+C+D, routed, WNS +0.061, `SMP_EN` true, `CAPS_FLAGS` reads `0xD`, both
+HBM bases driven from seam registers `0x6C..0x78`, K/V cache moved out of the
+GDN arena, and the first `FK33_CARD=1` build whose log carries no
+`[BD 41-759]`. **Every step below applies, including 6 onward.**
 
-**It predates `e62fded`, so `SMP_EN` is false and `CAPS_FLAGS` reads `0x1`:
-windows only, no sampler, no logits egress.** The card can RUN a token and has
-no way to REPORT one -- there is no argmax register value to read, and a v2
-seam publishes no logits row (`rtl/fk33_seam.vhd:91-94`).
+Load it with the bus taken down around the configure, from your own account:
 
-**So steps 1 to 5 below are the whole of what this bitstream can answer, and
-that is deliberately worth doing**: they are independent of the sampler, they
-are the steps that would otherwise serialise behind the next bitstream, and a
-defect found in any of them is a defect that would have been blamed on the
-sampler build tomorrow.
+```
+sudo hw/fk33/host/fk33_reload.sh hw/fk33/bit/fk33_card_smp_bases_75mhz_2026-09-18.bit
+```
 
-Step 6 onward needs the sampler bitstream and is written here so the order is
-one document rather than two.
+The script refuses if anything holds `/dev/xdma*` and refuses if VCCINT reads
+below 0.698 V (add `--with-vccint` in that case; the wiper is volatile and is
+lost on every power cycle). It ends with `lspci` and the `id` read.
+
+**What it does NOT carry: the baked `x_exp` fix.** See the last section. If
+step 8 returns a plausible wrong token with `FAULTS = 0`, read that file
+before anything else.
+
+The previous target, `hw/fk33/bit/fk33_card_withA_75mhz_2026-09-17.bit`
+(24,938,098 B, 19:04 on 2026-09-17), predates `e62fded`: `SMP_EN` false,
+`CAPS_FLAGS` `0x1`, and it could run a token with no way to report one. Steps
+1 to 5 are all it can answer; it is kept here only so a result taken against
+it is not mistaken for one taken against the sampler build.
 
 ---
 

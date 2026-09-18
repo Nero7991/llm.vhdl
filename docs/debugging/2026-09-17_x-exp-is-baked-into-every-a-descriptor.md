@@ -328,3 +328,111 @@ where they differ take the weaker one."*
 **Still nothing measured.** What this addendum establishes is only that the
 fix does not need a new signal, and that the design already contains a
 per-job answer to the question the card's arm answers once per model.
+
+---
+
+## FOURTH ADDENDUM, 2026-09-18: THE FIX LANDED AS THE LIVE PORT, AND THE CARD ARM HAD NEVER CLAIMED THE EXPONENT READ PORT AT ALL
+
+Oren chose shape (b), the live port, on 2026-09-18. What was found on the
+way in, and what was built:
+
+### The arm did not merely read the wrong source; it read no source
+
+The third addendum said `ga_real` latches `exp_rd_data` per job and `ga_desc`
+does not. Reading `ga_desc` for the edit showed something the addendum did
+not say: **`a_exp_region` is driven at job issue in `ga_behav`
+(`fk33_llama_top.vhd:3472`) and in `ga_real` (`:4251`), and in `ga_desc` it
+was not driven anywhere.** It sat at its `(others => '0')` default. So the
+card arm was not choosing the descriptor's copy over the live one; it had
+never addressed the exponent store, because the descriptor carried a value
+and nothing in the arm needed another. The live source was in scope, per the
+third addendum, and unused.
+
+### What was built (all four files are generated; the generators were edited)
+
+| generator | emits | change |
+|---|---|---|
+| `tools/gen_cardtop.py` | `rtl/fk33_llama_top.vhd` | new output `a_x_exp(31..0)`; `ga_desc` drives `a_exp_region <= job_src; a_exp_seg <= "00"` at issue (the sibling arms' exact lines); `S_GO` asserts `exp_rd_valid` and latches `r_xexp <= resize(exp_rd_data, 32)` on the edge `ad_start` first rises; `gnd_a` ties the port off in the other arm |
+| `hw/fk33/gen_fk33_engine.py` | `hw/fk33/rtl/fk33_engine.vhd` | generic `USE_XEXP_PORT : boolean := false`, forwarded to `matvec_int4_desc_axi`; port `d_x_exp(31..0) := 0` replaces the `x_exp_zero` signal on `x_exp_in` |
+| `hw/fk33/gen_fk33_card.py` | `hw/fk33/rtl/fk33_card.vhd` | picked the new port up unaided (the wrapper walks the entity) |
+| `hw/fk33/gen_pcieep.py` | `hw/fk33/build_fk33_pcieep.tcl` | under `FK33_CARD=1`: `set_property CONFIG.USE_XEXP_PORT {true}` on `eng` with a readback that errors on anything but true, and `connect_bd_net card/a_x_exp eng/d_x_exp` in `CARD_SEAM_TO_ENG` |
+| `hw/fk33/gen_compose4_top.py` | `hw/fk33/rtl/compose4_top.vhd` | regenerated; the `c4stale` gate row caught it (the top exports every engine port, so a new engine port is a new top port) |
+
+**The generic defaults FALSE and follows `FK33_CARD`, deliberately.** The
+engine-only host flow (`fk33_run_layer.py`) builds every descriptor at run
+time with the right `x_exp` and drives no port, so flipping the default
+would break the flow that has produced element-exact results on silicon.
+`gen_pcieep.py` reads the same environment test for the CONFIG and for the
+net and refuses to run if the two ever disagree.
+
+### The sample edge, answered
+
+The third addendum left open when the value is sampled and how it is held.
+`r_xexp` is written in `S_GO`, which is entered only after `S_XRD` has run
+to `k = j_cols + 1`, so the source region's exponent has been captured for at
+least `j_cols` cycles (the same `exp_rd_valid` assertion `ga_real` makes in
+`S_EXP`). It is written on the SAME edge `ad_start` first rises. The adapter
+then issues three AXI-Lite writes and the unit fetches a 512 B descriptor
+before reaching `S_CHECK`, where `v_xexp <= x_exp_in` is first read
+(`matvec_int4_desc_axi.vhd:638`, combinational). `r_xexp` is next written at
+the next `S_GO`, which cannot happen before this job has retired
+(`S_RUN -> S_DONE -> u_ack -> S_IDLE -> job_issue`). So the port is stable
+under every read of the job. `act_unit` is latched at issue, so the exponent
+mux cannot move under `S_GO` either.
+
+### What was MEASURED, and what was not
+
+* `sim:tb_fk33_cardtop_adesc` elaborates `A_DESC = true` with the change and
+  reports `a_x_exp` driven: **checks=14 bad=0** (was 13).
+* `sim:tb_fk33_cardtop_ident` (the `A_DESC = false` identity bench):
+  **PASS 108**, unchanged, so the other arm is untouched.
+* `sim:cardtop`, `sim:runguard`, `sim:kvmap`: green. `sim:c4stale` went RED
+  on the first run (27 diff lines, the new port) and green after regenerating
+  `compose4_top.vhd`. That is the gate working, not a defect.
+* `hw/fk33/rtl/fk33_engine.vhd` analysed, elaborated and ran 1 us under
+  `ghdl-mcode` with the new generic and port bound.
+* `pcieep_build.sh --bd-only` under `FK33_CARD=1`: `FK33_XEXP_PORT true`
+  (the readback executed and accepted Vivado's value), `FK33_UNCONNECTED
+  count=0`, `FK33_BD_VALIDATE OK`, `FK33_BD_ONLY_DONE`, 0 `^ERROR`. The 32
+  `[BD 41-1377]` address-overlap warnings are the same 32 the routed
+  2026-09-18 build carries, MEASURED by `grep -c` on both logs.
+
+**Not measured, and still the gap this file is about:** no bench runs a job
+through `ga_desc` against a descriptor-plane engine, so the VALUE reaching
+`x_exp_in` has not been compared with anything. The check for that is the
+card: `server/tests/run_prompt.c`'s first-divergence report against
+`reference_tokens.txt`. If the card diverges at the first A job with the
+port build and did not with the descriptor build, the sample edge above is
+wrong; if it diverges identically in both, the defect is elsewhere and this
+fix was necessary but not sufficient.
+
+### Mutant of the wire, MEASURED, and it found a second thing
+
+The `("a_x_exp", "d_x_exp")` row was removed from `CARD_SEAM_TO_ENG` in the
+generator (the generator, not the emitted Tcl, which `pcieep_build.sh`
+regenerates) and `--bd-only` re-run under `FK33_CARD=1`:
+
+```
+FK33_UNCONNECTED count=1
+FK33_UNCONNECTED pin /eng/d_x_exp
+FK33_UNCONNECTED FAIL: 1 module input pin(s) have no driver and no tie-off: /eng/d_x_exp.  An unconnected input is ZERO.  Connect it or tie it off explicitly.
+```
+
+Control (the unmutated generator, same session): `count=0`, `FK33_BD_ONLY_DONE`.
+Killed, attributed to the check.
+
+**AND VIVADO ITSELF SAID NOTHING.** `grep -c 41-759` on the mutant's log is
+**0**. `validate_bd_design` ran (15 s, peak 3,830 MB) and raised no
+`[BD 41-759]` for `/eng/d_x_exp`, where it had raised one for
+`/card/a_arena_base` the day before. The difference is that `d_x_exp` is
+declared `:= (others => '0')` in the engine's entity and the card wrapper
+strips defaults from its ports. **So a module-reference input WITH a VHDL
+default that is left unconnected produces no warning of any severity: it is
+tied to the default silently.** The 41-759 that led to the unconnected-pin
+check is the loud case; this is the quiet one, and the engine's whole
+D-facing surface (`d_x_we`, `d_x_waddr`, `d_x_wdata`, `job_index`, and now
+`d_x_exp`) is declared with defaults. Had the net been forgotten, the port
+build would have read `x_exp = 0` for every job with no message anywhere,
+which is exactly the symptom this file describes, arrived at by a different
+road. The net-based check is therefore the ONLY guard on this wire, and it is
+gated in every `FK33_CARD=1` build.

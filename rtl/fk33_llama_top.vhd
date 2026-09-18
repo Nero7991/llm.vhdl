@@ -1019,6 +1019,16 @@ entity fk33_llama_top is
     a_x_we        : out std_logic;
     a_x_waddr     : out std_logic_vector(15 downto 0);
     a_x_wdata     : out std_logic_vector(15 downto 0);
+    -- THE LIVE x EXPONENT.  matvec_int4_desc_axi's `x_exp_in`, which the
+    -- card's engine now reads (USE_XEXP_PORT => true) INSTEAD of the
+    -- descriptor's `x_exp` word.  That word is the one per-token runtime
+    -- value in a program written once per model, and every A job of a token
+    -- carried the same baked scalar; see
+    -- docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md.
+    -- Latched in S_GO from the region exponent store, BEFORE `ad_start`
+    -- rises, and held until the next S_GO, so it is stable for the whole job
+    -- the way `ga_real` holds `r_xexp` for `matvec_int4`.
+    a_x_exp       : out std_logic_vector(31 downto 0);
     a_y_we        : in  std_logic := '0';
     a_y_addr      : in  std_logic_vector(15 downto 0) := (others => '0');
     a_y_data      : in  std_logic_vector(A_ROWS_IF*64-1 downto 0) := (others => '0');
@@ -3728,6 +3738,7 @@ begin
     signal xw_we    : std_logic := '0';
     signal xw_addr  : std_logic_vector(15 downto 0) := (others => '0');
     signal xw_data  : std_logic_vector(15 downto 0) := (others => '0');
+    signal r_xexp   : std_logic_vector(31 downto 0) := (others => '0');
 
     -- ==================================================================
     -- THE y BUFFER, STORED ONE BEAT PER WORD.
@@ -3795,6 +3806,7 @@ begin
     a_x_we    <= xw_we;
     a_x_waddr <= xw_addr;
     a_x_wdata <= xw_data;
+    a_x_exp   <= r_xexp;
 
     -- `go` is the token boundary, the same instant `ga_real` uses to zero
     -- smp_base.  The counter is reset per token because the arena is indexed
@@ -3878,6 +3890,13 @@ begin
             else
               j_smp <= '0';
             end if;
+            -- Claim the exponent read port for THIS job's source, at the
+            -- latch instant, exactly as `ga_behav` and `ga_real` do.  This
+            -- arm used to leave `a_exp_region` at its default and never
+            -- read `exp_rd_data` at all, because the descriptor carried a
+            -- (baked) x_exp and nothing here needed the live one.
+            a_exp_region <= job_src;
+            a_exp_seg    <= "00";
           end if;
 
           -- The logits egress seam, producer half.  Identical to `ga_real`:
@@ -3943,6 +3962,21 @@ begin
               end if;
 
             when S_GO =>
+              -- THE LIVE x EXPONENT, latched here and not at issue.  S_XRD has
+              -- run to completion, so the source region's exponent has been
+              -- captured for at least j_cols cycles; the same assertion
+              -- `ga_real` makes in S_EXP.  `r_xexp` is written on the SAME
+              -- edge `ad_start` first rises, and the adapter takes at least
+              -- three AXI-Lite writes plus a descriptor fetch before the unit
+              -- reaches S_CHECK and reads `x_exp_in`, so the port is stable
+              -- under every read.  It is next written at the next S_GO,
+              -- after this job has retired.
+              assert exp_rd_valid = '1'
+                report "fk33_llama_top: unit A (ga_desc) read region "
+                     & integer'image(to_integer(a_exp_region))
+                     & "'s exponent before anything captured it."
+                severity error;
+              r_xexp <= std_logic_vector(resize(exp_rd_data, 32));
               -- `u_start` is a LEVEL held until the adapter is ready, which is
               -- the contract a_desc_adapter states for it.  Every x element is
               -- already in A: S_XRD ran to k = j_cols+1.
@@ -4051,6 +4085,7 @@ begin
     a_x_we     <= '0';
     a_x_waddr  <= (others => '0');
     a_x_wdata  <= (others => '0');
+    a_x_exp    <= (others => '0');
   end generate;
   ga_real : if not A_BEHAV and not A_DESC generate
     -- ------------------------------------------------------------------

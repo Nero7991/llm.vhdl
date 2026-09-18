@@ -1037,8 +1037,17 @@ def main(argv=None):
     ap.add_argument("--d-cb-load", action="store_true",
                     help="also set flags bit 2 (cb_load) in the D header")
     ap.add_argument("--x-exp", type=int, default=None,
-                    help="the activation BFP exponent.  NOT DERIVABLE; it is a "
-                         "per-token runtime value from the previous stage")
+                    help="the activation BFP exponent written into EVERY A "
+                         "descriptor's x_exp word.  NOT DERIVABLE; it is a "
+                         "per-job runtime value from the previous stage.  ON "
+                         "THE CARD THIS WORD IS DEAD: the FK33_CARD=1 build "
+                         "sets USE_XEXP_PORT and the engine reads the live "
+                         "value from D per job (fk33_llama_top ga_desc, "
+                         "2026-09-18).  It is still consumed by the "
+                         "host-driven engine-only flow and by every A bench "
+                         "that reads descriptors, which is why it stays "
+                         "required rather than defaulting to a number that "
+                         "would be wrong there.")
     ap.add_argument("--desc-base", type=G.parse_int, default=None,
                     help="HBM byte address of the first A descriptor.  Nothing "
                          "in the manifest reserves descriptor space, so this "
@@ -1175,9 +1184,12 @@ def main(argv=None):
         if a.x_exp is None:
             raise SystemExit(
                 "gen_layer_program: --x-exp is required for the A descriptors."
-                "  It is the activation vector's BFP exponent, a per-token "
+                "  It is the activation vector's BFP exponent, a per-job "
                 "runtime value the previous stage produces; nothing in the "
-                "manifest supplies it.  Use --no-a for the D table alone.")
+                "manifest supplies it.  The card build ignores the word (it "
+                "reads the live exponent from D, USE_XEXP_PORT), so any value "
+                "is right there; the engine-only host flow reads it.  Use "
+                "--no-a for the D table alone.")
         desc_base = place_desc_arena(a, mani, steps, sel)
         ajobs, mani = a_jobs_for(sel, a.manifest, a.x_exp, desc_base,
                                  check_hash=not a.no_hash)

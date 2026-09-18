@@ -11,6 +11,47 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 17:25: THE x_exp FIX IS IN THE TREE, NOT YET IN A BITSTREAM
+
+Oren chose the live port. Four generators edited, five generated files
+regenerated, and every board-free check that can see the change is green:
+
+* `rtl/fk33_llama_top.vhd` (`tools/gen_cardtop.py`): `ga_desc` now claims the
+  exponent read port at issue (`a_exp_region <= job_src`, the sibling arms'
+  line, **which this arm had never had**), latches `r_xexp` from
+  `exp_rd_data` in `S_GO` on the edge `ad_start` first rises, and exports it
+  as `a_x_exp`. `gnd_a` ties it off in the other arm.
+* `hw/fk33/rtl/fk33_engine.vhd` (`gen_fk33_engine.py`): generic
+  `USE_XEXP_PORT := false` forwarded to the unit; port `d_x_exp` on
+  `x_exp_in`. Default FALSE so the host-driven engine-only flow is untouched.
+* `hw/fk33/build_fk33_pcieep.tcl` (`gen_pcieep.py`, `FK33_CARD=1` only):
+  `CONFIG.USE_XEXP_PORT {true}` on `eng` with a readback, and the net
+  `card/a_x_exp -> eng/d_x_exp`. Same environment test for both halves,
+  asserted equal.
+* `fk33_card.vhd`, `compose4_top.vhd`: regenerated. `sim:c4stale` caught the
+  second one RED before it was regenerated, which is the gate doing its job.
+
+MEASURED: `tb_fk33_cardtop_adesc` checks 13 -> 14 (`a_x_exp` driven at
+`A_DESC = true`); `tb_fk33_cardtop_ident` PASS 108 unchanged; `cardtop`,
+`runguard`, `kvmap`, `c4stale` green; `--bd-only` under `FK33_CARD=1`:
+`FK33_XEXP_PORT true`, `FK33_UNCONNECTED count=0`, `FK33_BD_VALIDATE OK`,
+0 errors. Wire mutant (net row removed from the generator): `count=1
+/eng/d_x_exp`, FAIL. **And the mutant showed Vivado prints NO 41-759 for a
+defaulted port** -- the check is the only guard on that wire (CLAUDE.md,
+TRAPS).
+
+NOT measured: the value. No bench runs a job through `ga_desc` against a
+descriptor-plane engine. The oracle is the card (`run_prompt` first
+divergence vs `reference_tokens.txt`). Doc: fourth addendum of
+`docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md`.
+
+**Next: a full `FK33_CARD=1` build with the fix, same recipe as 11:28**
+(`FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75
+FK33_IMPL_STRATEGY=Congestion_SpreadLogic_high`, `MemoryHigh=20G`). One
+32-bit register and one 32-bit net against a design that routed at +0.061;
+not launched until Oren says so. Meanwhile the 11:28 bitstream is on the
+bench for steps 0-5, which the fix does not touch.
+
 ### 2026-09-18 11:28: A BITSTREAM WITH THE SAMPLER, BOTH HBM BASES WIRED, AND THE K CACHE OUT OF THE GDN ARENA
 
 **`hw/fk33/bit/fk33_card_smp_bases_75mhz_2026-09-18.bit`**, 24,880,718 B,

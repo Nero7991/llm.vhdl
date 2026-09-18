@@ -78,6 +78,10 @@ architecture tb of tb_fk33_cardtop_adesc is
   signal a_wvalid   : std_logic;
   signal a_bready   : std_logic;
   signal a_x_we     : std_logic;
+  -- The live x exponent, added 2026-09-18 with the USE_XEXP_PORT fix.  An
+  -- OUTPUT of ga_desc and of gnd_a, so the driven-ness rule applies to it
+  -- exactly as to the a_* set above.
+  signal a_x_exp    : std_logic_vector(31 downto 0);
 
   -- `driven` is the whole test.  'U' is the undriven case; 'X' would be a
   -- multiple-driver conflict, which is a different defect and equally fatal,
@@ -121,7 +125,7 @@ begin
       m_arsize => m_arsize, m_arburst => m_arburst, m_rready => m_rready,
       a_awaddr => a_awaddr, a_awvalid => a_awvalid,
       a_wdata => a_wdata, a_wstrb => a_wstrb, a_wvalid => a_wvalid,
-      a_bready => a_bready, a_x_we => a_x_we);
+      a_bready => a_bready, a_x_we => a_x_we, a_x_exp => a_x_exp);
 
   drv : process
     -- COUNTED IN VARIABLES, never in signals: consecutive checks inside one
@@ -164,6 +168,7 @@ begin
     chk(driven(a_awaddr),  "a_awaddr has no driver with A_DESC true");
     chk(driven(a_wdata),   "a_wdata has no driver with A_DESC true");
     chk(driven(a_wstrb),   "a_wstrb has no driver with A_DESC true");
+    chk(driven(a_x_exp),   "a_x_exp has no driver with A_DESC true");
 
     report "TB_FK33_CARDTOP_ADESC checks=" & integer'image(checks)
          & " bad=" & integer'image(bad) severity note;

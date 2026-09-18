@@ -360,7 +360,7 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
 set_property CONFIG.RESET_TYPE ACTIVE_LOW [get_bd_cells /clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT1_USED {true} CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100.000}] [get_bd_cells clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
-set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {75.000}] [get_bd_cells clk_wiz_0]
+set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
                                                                                                      
 create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_hbm
 set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]
@@ -1000,19 +1000,17 @@ connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/g
 # address truncation.
 create_bd_cell -type module -reference fk33_engine eng
 
-# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a
-# generic as a CONFIG property; `-generic` on synth_design would reach
-# only the top and never this instance (fk33_engine.vhd:67).
-set_property CONFIG.CB_STYLE {distributed} [get_bd_cells eng]
-# READ BACK.  Vivado silently ignores a set_property whose target did
-# not match, and this file already does this for every other CONFIG it
-# sets.  A lever that was quietly not applied looks exactly like a
-# lever that did not work.
-set _cb [get_property CONFIG.CB_STYLE [get_bd_cells eng]]
-if {$_cb ne "distributed"} {
-    error "FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \"$_cb\", not distributed"
+# x_exp FROM THE PORT, not the descriptor (FK33_CARD).  Same mechanism as
+# CB_STYLE: a generic on a module-reference cell is a CONFIG property.
+# Read back for the same reason: a set_property that matched nothing is
+# silent, and a lever quietly not applied looks like one that did not
+# work -- here, wrong exponents with FAULTS = 0.
+set_property CONFIG.USE_XEXP_PORT {true} [get_bd_cells eng]
+set _xe [get_property CONFIG.USE_XEXP_PORT [get_bd_cells eng]]
+if {![string is true -strict $_xe]} {
+    error "FK33_XEXP_PORT FAIL: CONFIG.USE_XEXP_PORT is \"$_xe\", not true"
 }
-puts "FK33_CB_STYLE $_cb"
+puts "FK33_XEXP_PORT $_xe"
 
 # WHICH CLOCK OWNS WHICH INTERFACE.  A module-reference cell with ONE clock
 # port gets this for free -- which is why rtl/hbm_tg_ip.vhd never needed it
@@ -1290,6 +1288,7 @@ connect_bd_net [get_bd_pins card/a_job_index] [get_bd_pins eng/job_index]
 connect_bd_net [get_bd_pins card/a_x_we] [get_bd_pins eng/d_x_we]
 connect_bd_net [get_bd_pins card/a_x_waddr] [get_bd_pins eng/d_x_waddr]
 connect_bd_net [get_bd_pins card/a_x_wdata] [get_bd_pins eng/d_x_wdata]
+connect_bd_net [get_bd_pins card/a_x_exp] [get_bd_pins eng/d_x_exp]
 connect_bd_net [get_bd_pins card/a_y_we] [get_bd_pins eng/d_y_we]
 connect_bd_net [get_bd_pins card/a_y_addr] [get_bd_pins eng/d_y_addr]
 connect_bd_net [get_bd_pins card/a_y_data] [get_bd_pins eng/d_y_data]

@@ -90,7 +90,28 @@ entity fk33_engine is
     -- true and gains the check.  `hw/fk33/gen_compose4_top.py --wire` does.
     -- Opting in is the safe direction: forgetting to opt in loses a check,
     -- forgetting to opt out breaks a working card.
-    CHECK_JOB_INDEX : boolean := false
+    CHECK_JOB_INDEX : boolean := false;
+
+    -- WHERE x_exp COMES FROM, forwarded to matvec_int4_desc_axi.
+    --
+    -- false (DEFAULT): the descriptor's own `x_exp` word (ext word 2).  That
+    -- is the host-driven flow, where hw/fk33/host/fk33_run_layer.py builds
+    -- every descriptor at run time from the exponent of the vector that
+    -- actually arrived, and it is the flow that produced 1,675,264 result
+    -- rows element-exact.  Nothing drives `d_x_exp` there and it is not read.
+    --
+    -- true: the `d_x_exp` port, driven per job by subsystem D's ga_desc arm
+    -- from the region exponent store.  The CARD build sets this, because on
+    -- the card the descriptors are DMA'd once per model load and every A job
+    -- of a token carried the same baked scalar --
+    -- docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md.
+    -- Set as CONFIG.USE_XEXP_PORT on the block-design cell by
+    -- hw/fk33/gen_pcieep.py under FK33_CARD=1, for the reason CB_STYLE gives.
+    --
+    -- Opting in is the safe direction, as with CHECK_JOB_INDEX: forgetting to
+    -- opt in on the card gives wrong exponents with FAULTS = 0; forgetting to
+    -- opt out on a host-driven build reads a port nothing drives.
+    USE_XEXP_PORT : boolean := false
   );
   port(
     ------------------------------------------------------------------------
@@ -194,6 +215,11 @@ entity fk33_engine is
     d_x_we         : in  std_logic := '0';
     d_x_waddr      : in  std_logic_vector(15 downto 0) := (others => '0');
     d_x_wdata      : in  std_logic_vector(15 downto 0) := (others => '0');
+    -- The live x exponent for the job, read by the unit only when
+    -- USE_XEXP_PORT is true (above).  Held stable by the driver for the whole
+    -- job: fk33_llama_top's ga_desc latches it before `u_start` rises and
+    -- rewrites it only at the next job's S_GO.
+    d_x_exp        : in  std_logic_vector(31 downto 0) := (others => '0');
 
     -- D-FACING RESULT.  Results currently leave this engine ONLY through the
     -- AXI-Lite Y_IDX/Y_LO/Y_HI registers, one row per two reads, which D
@@ -1115,11 +1141,6 @@ architecture rtl of fk33_engine is
   signal x_waddr_mux : std_logic_vector(15 downto 0);
   signal x_wdata_mux : std_logic_vector(15 downto 0);
 
-  -- USE_XEXP_PORT is false, so this is never read.  It is a signal rather than
-  -- an aggregate in the port map because VHDL-93 does not allow an expression
-  -- as the actual of a port, and Vivado's default is VHDL-93.
-  signal x_exp_zero : std_logic_vector(31 downto 0) := (others => '0');
-
   -- results.  Left unconnected on purpose: the host reads results through the
   -- engine's own Y_IDX / Y_LO / Y_HI / Y_EXP registers, and exporting a
   -- ROWS_IF*64 = 3072-bit bus to a block design that has no consumer for it
@@ -1306,7 +1327,7 @@ begin
       MAXOUT        => 16,
       DESC_MAXB     => 16,
       CHECK_JOB_INDEX => CHECK_JOB_INDEX,
-      USE_XEXP_PORT => false,
+      USE_XEXP_PORT => USE_XEXP_PORT,
       DUAL_CLK      => true,
       C_S_AXI_DATA_WIDTH => 32,
       C_S_AXI_ADDR_WIDTH => 8
@@ -1350,7 +1371,7 @@ begin
       x_we     => x_we_mux,
       x_waddr  => x_waddr_mux,
       x_wdata  => x_wdata_mux,
-      x_exp_in => x_exp_zero,
+      x_exp_in => d_x_exp,
 
       y_we     => y_we,
       y_addr   => y_addr,
