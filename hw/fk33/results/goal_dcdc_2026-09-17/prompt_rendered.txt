@@ -1,0 +1,7 @@
+<|im_start|>user
+In what cases is DC-DC converters better than transformers<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
