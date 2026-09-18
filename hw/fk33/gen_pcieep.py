@@ -1649,6 +1649,57 @@ _SEAM_TIES = [
 ]
 
 
+# THE SEAM'S MODEL GEOMETRY, DERIVED AND NOT TYPED.
+#
+# CAPS_VOCAB / CAPS_EMBD / CAPS_LAYER / CAPS_CTX are how a host discovers what
+# model is behind the seam.  Until 2026-09-17 they were left at the RTL default
+# of 0 and this block ASSERTED they must stay 0, because there was no subsystem
+# D -- `CAPS_VOCAB = 0` read as "this bitstream has no model".  D is in the card
+# cell now, so leaving them at 0 makes the seam lie in the OTHER direction: the
+# host refuses a card that is in fact ready.
+#
+# They are read from the SAME two files the card is built from, so a model or a
+# context change cannot leave this claim behind:
+#   * rtl/model_cfg_pkg.vhd's QWEN35_9B record -- vocab, hidden, blocks
+#   * hw/fk33/gen_fk33_card.py's C_CTXLEN generic -- the context THIS BITSTREAM
+#     implements, which is NOT the model's max_context (262,144 in the record
+#     against 131,072 the card is built for).  CAPS reports what the bitstream
+#     has, and the record's larger number is exactly the sort of plausible
+#     figure that would never be questioned afterwards.
+def _model_caps():
+    import re as _re
+    _rtl = os.path.normpath(os.path.join(HERE, "..", "..", "rtl"))
+    cfg = open(os.path.join(_rtl, "model_cfg_pkg.vhd")).read()
+    m = _re.search(r"constant\s+QWEN35_9B\s*:\s*model_cfg_t\s*:=\s*\((.*?)\);",
+                   cfg, _re.S)
+    if not m:
+        sys.exit("ABORT: cannot find QWEN35_9B in model_cfg_pkg.vhd, so the "
+                 "seam's CAPS geometry cannot be derived. Refusing to guess.")
+    body = m.group(1)
+    def field(name):
+        f = _re.search(r"\b%s\s*=>\s*(\d+)" % name, body)
+        if not f:
+            sys.exit("ABORT: QWEN35_9B has no field %r; the seam's CAPS "
+                     "geometry cannot be derived." % name)
+        return int(f.group(1))
+    card = open(os.path.join(HERE, "gen_fk33_card.py")).read()
+    c = _re.search(r'"--generic",\s*"C_CTXLEN=(\d+)"', card)
+    if not c:
+        sys.exit("ABORT: gen_fk33_card.py does not set C_CTXLEN, so the "
+                 "context this bitstream implements is unknown.")
+    caps = {"CAPS_VOCAB": field("vocab"), "CAPS_EMBD": field("hidden"),
+            "CAPS_LAYER": field("blocks"), "CAPS_CTX": int(c.group(1))}
+    # A zero here would reproduce the "no model" reading this exists to end.
+    for k, v in caps.items():
+        if v <= 0:
+            sys.exit("ABORT: derived %s = %d, which a host reads as 'no model "
+                     "behind the seam'." % (k, v))
+    return caps
+
+
+MODEL_CAPS = _model_caps()
+
+
 def _seam_block():
     L = []
     a = L.append
@@ -1740,15 +1791,31 @@ def _seam_block():
         a("connect_bd_net [get_bd_pins seam_%s/dout] [get_bd_pins %s/%s]"
           % (suf, SEAM_CELL, pin))
     a("")
+    # THE MODEL GEOMETRY THE SEAM PUBLISHES.  With the card in the design the
+    # host must be able to discover the model; with no card there is nothing
+    # behind the seam and 0 is the honest report.  Both arms are checked below
+    # against the SAME expectation this emits, so a generic renamed in
+    # rtl/fk33_seam.vhd fails the build rather than silently publishing zeros.
+    if CARD_ON:
+        for _g, _v in sorted(MODEL_CAPS.items()):
+            a("set_property CONFIG.%s {%d} [get_bd_cells %s]"
+              % (_g, _v, SEAM_CELL))
     a("# READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a")
     a("# CONFIG name an object does not have and get_property then returns the")
     a("# empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this")
-    a("# build claiming a model geometry it does not have.  A bitstream with no")
-    a("# subsystem D behind the seam MUST report CAPS_VOCAB = 0.")
-    a("foreach g {CAPS_VOCAB CAPS_EMBD CAPS_LAYER CAPS_CTX} {")
+    a("# build claiming a model geometry it does not have -- or, since 2026-09-17,")
+    a("# publishing 0 for a model that IS behind the seam, which a host reads as")
+    a("# 'no model' and refuses.")
+    a("foreach {g want} {%s} {"
+      % " ".join("%s %d" % (k, MODEL_CAPS[k] if CARD_ON else 0)
+                 for k in ("CAPS_VOCAB", "CAPS_EMBD", "CAPS_LAYER", "CAPS_CTX")))
     a("    set v [get_property CONFIG.$g [get_bd_cells %s]]" % SEAM_CELL)
-    a("    if {$v ne \"0\"} {")
-    a("        error \"FK33_SEAM FAIL: $g is \\\"$v\\\", not 0. There is no subsystem D in this bitstream, so the seam must not publish a model geometry.\"")
+    a("    if {$v ne $want} {")
+    a("        error \"FK33_SEAM FAIL: $g is \\\"$v\\\", not $want. %s\""
+      % ("Subsystem D is in this bitstream, so the seam must publish the model "
+         "geometry the card was built for." if CARD_ON else
+         "There is no subsystem D in this bitstream, so the seam must not "
+         "publish a model geometry."))
     a("    }")
     a("    puts \"FK33_SEAM $g = $v\"")
     a("}")

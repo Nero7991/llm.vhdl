@@ -374,7 +374,13 @@ architecture rtl of fk33_seam is
   -- so BUILDING the sampler and setting this bit back is the other way to make
   -- it pass.  Bit 1 was already 0 and its comment calls that "the honest
   -- report"; this makes bit 2 honest too.
-  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"00000001";
+  -- UPDATED 2026-09-17: bits 2 and 3 are SET, because the card now passes
+  -- SMP_EN=true and the sampler IS in the design. The 2026-09-11 correction
+  -- below removed them when they were a lie; restoring them now is the other
+  -- half of the same rule, and tools/check_seam_regs.py enforces BOTH
+  -- directions from gen_fk33_card.py's SMP_EN rather than from a constant
+  -- here, so neither the claim nor its retraction can drift from the design.
+  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000000D";
 
   -- seam error codes, `server/fk33_seam.h`
   constant EC_NONE  : natural := 0;

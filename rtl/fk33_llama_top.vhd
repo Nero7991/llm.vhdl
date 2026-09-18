@@ -3954,6 +3954,25 @@ begin
                 jc_retire <= '1';
                 uerr      <= uerr or ad_err;
                 if j_smp = '1' then
+                  -- THE NEXT FLG_TO_SMP JOB'S ROWS START WHERE THIS ONE'S
+                  -- ENDED.  `ga_real` has carried this line since the sampler
+                  -- was written; this branch was missing it, so every one of
+                  -- the lm_head's 15 windows restarted its logit numbering at
+                  -- zero and the published ARGMAX was an index INSIDE a window
+                  -- rather than a token id.  Wrong for every token whose
+                  -- argmax does not fall in window 0, with no error anywhere:
+                  -- the card would answer confidently with the wrong word.
+                  --
+                  -- FOUND BY SYNTHESIS, not by any bench: `[Synth 8-3333]
+                  -- propagating constant 0 across sequential element
+                  -- (ga_desc.smp_base_reg[0])`.  A register the design never
+                  -- changes is one the tool folds away, and that message is
+                  -- what a missing accumulator looks like from the outside.
+                  --
+                  -- Advanced HERE, after the last beat has been pushed with
+                  -- the old base, so a window boundary cannot renumber a
+                  -- window boundary -- the placement `ga_real` states.
+                  smp_base <= smp_base + j_rows;
                   st := S_SDRAIN;
                 elsif j_dst < NREGION then
                   r := 0; st := S_DRAIN;

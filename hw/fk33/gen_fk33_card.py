@@ -166,6 +166,23 @@ ARGS = [
     "--generic", "C_REAL=true",
     # NORM_REAL gates `gvr`, the real norm, against a stub at `gv`.
     "--generic", "NORM_REAL=true",
+    # SMP_EN BUILDS THE SAMPLER, AND WITHOUT IT THE CARD CANNOT SAY WHICH TOKEN
+    # IT PRODUCED.  llama_top's default is FALSE, which ties the entire logits
+    # stream off: `gsmptie` drives smp_* to zero and the seam's `smp_token`
+    # carries nothing.  Every other piece of the path already exists -- the
+    # ga_desc adapter has the producer half (`smp_be_we`, `smp_run`, and
+    # `j_smp <= job_flags(1)` for FLG_TO_SMP), and gen_pcieep.py wires
+    # `smp_token` from the card to the seam -- so this generic is the whole
+    # difference between a card that computes a token and a card that can
+    # report one.
+    #
+    # THE TWO CAPS BITS FOLLOW THIS FLAG AND ARE CHECKED AGAINST IT.
+    # tools/check_seam_regs.py derives its SAMPLER and LOGITS expectations from
+    # this line rather than hardcoding them, so flipping it here REQUIRES
+    # CAPS_FLAGS_V in rtl/fk33_seam.vhd to set bits 2 and 3. That check exists
+    # because the reverse mistake shipped: bit 2 was set while SMP_EN was
+    # false, telling every host to wait for an argmax that never arrives.
+    "--generic", "SMP_EN=true",
     # C_N_ROT: NOT a free choice and NOT the declared default. llama_top's
     # default is 8, which is SIMULATION-scaled -- the same trap as C_KV_BLOCK's
     # default of 4. The RoPE table is GENERATED for N_ROT = 64:

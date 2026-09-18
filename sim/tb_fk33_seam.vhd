@@ -557,16 +557,31 @@ begin
            & ", expected 2." severity error;
     if iv /= 2 then n_bad_rback <= n_bad_rback + 1; end if;
     axi_ri(A_CAPS_FL, iv);
-    -- 1, not 5.  Bit 2 (SAMPLER) was CLEARED in rtl/fk33_seam.vhd on
-    -- 2026-09-11: the seam was advertising a sampler that the bitstream does
-    -- not contain, so a host that trusted CAPS would have asked the card to
-    -- sample and got nothing.  The honest value is windows-only.  If this
-    -- ever reads 5 again, either the sampler was really built or the
-    -- advertisement went back to lying; find out which before editing this.
-    assert iv = 1
+    -- 13 = bits 0, 2 and 3.  This row previously demanded 1, with the standing
+    -- instruction: "if this ever reads 5 again, either the sampler was really
+    -- built or the advertisement went back to lying; find out which before
+    -- editing this."  ANSWERED 2026-09-17: THE SAMPLER WAS REALLY BUILT.
+    --   * hw/fk33/gen_fk33_card.py now passes SMP_EN=true
+    --   * Vivado synthesised it: `sampler_stream` appears in the card's OOC
+    --     run at 204 LUT, and the whole card moved 209,814 -> 210,145 LUT and
+    --     160,847 -> 162,756 FF, i.e. +331 LUT and +1,909 FF
+    --   * the logits egress that bit 3 names is the same `gsmp` block; with
+    --     SMP_EN false `gsmptie` ties the entire stream off, so both bits
+    --     stand or fall together and tools/check_seam_regs.py grades them as
+    --     one pair against gen_fk33_card.py's SMP_EN
+    -- Bit 1 (HBM pointer fetch) stays 0 and that is still the honest report:
+    -- the seam has no HBM master, and the v3 pointer registers refuse a
+    -- non-zero write with FK33_SEAM_ERR_RSVD.
+    --
+    -- THIS NUMBER IS DUPLICATED KNOWLEDGE and the duplicate is deliberate: the
+    -- constant lives in rtl/fk33_seam.vhd's architecture where a bench cannot
+    -- read it.  What stops the two drifting is tools/check_seam_regs.py, which
+    -- derives its expectation from the CARD's generic rather than from either
+    -- copy.  If this row and that checker ever disagree, the checker wins.
+    assert iv = 13
       report "tb_fk33_seam: CAPS_FLAGS reads " & integer'image(iv)
-           & ", expected 1 (windows only; no sampler, no HBM fetch)." severity error;
-    if iv /= 1 then n_bad_rback <= n_bad_rback + 1; end if;
+           & ", expected 13 (windows + sampler + logits; no HBM fetch)." severity error;
+    if iv /= 13 then n_bad_rback <= n_bad_rback + 1; end if;
 
     -- ==================================================================
     -- P6a: A GO BEFORE ANYTHING IS PROGRAMMED MUST BE REFUSED, and it must

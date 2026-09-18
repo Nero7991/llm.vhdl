@@ -220,6 +220,7 @@ begin
       HOST_WINDOW              => false,
       C_REAL                   => true,
       NORM_REAL                => true,
+      SMP_EN                   => true,
       C_N_ROT                  => 64,
       C_KV_BLOCK               => 32,
       C_KV_ADDR_W              => 33,
