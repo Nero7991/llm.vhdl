@@ -1218,15 +1218,20 @@ set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0}] [get_bd_c
 # f_e_coll is driven by card/err_e_coll (FK33_CARD): no tie-off.
 # f_kv_err is driven by card/kv_err (FK33_CARD): no tie-off.
 
+set_property CONFIG.CAPS_CTX {131072} [get_bd_cells fk33_seam_0]
+set_property CONFIG.CAPS_EMBD {4096} [get_bd_cells fk33_seam_0]
+set_property CONFIG.CAPS_LAYER {32} [get_bd_cells fk33_seam_0]
+set_property CONFIG.CAPS_VOCAB {248320} [get_bd_cells fk33_seam_0]
 # READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a
 # CONFIG name an object does not have and get_property then returns the
 # empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this
-# build claiming a model geometry it does not have.  A bitstream with no
-# subsystem D behind the seam MUST report CAPS_VOCAB = 0.
-foreach g {CAPS_VOCAB CAPS_EMBD CAPS_LAYER CAPS_CTX} {
+# build claiming a model geometry it does not have -- or, since 2026-09-17,
+# publishing 0 for a model that IS behind the seam, which a host reads as
+# 'no model' and refuses.
+foreach {g want} {CAPS_VOCAB 248320 CAPS_EMBD 4096 CAPS_LAYER 32 CAPS_CTX 131072} {
     set v [get_property CONFIG.$g [get_bd_cells fk33_seam_0]]
-    if {$v ne "0"} {
-        error "FK33_SEAM FAIL: $g is \"$v\", not 0. There is no subsystem D in this bitstream, so the seam must not publish a model geometry."
+    if {$v ne $want} {
+        error "FK33_SEAM FAIL: $g is \"$v\", not $want. Subsystem D is in this bitstream, so the seam must publish the model geometry the card was built for."
     }
     puts "FK33_SEAM $g = $v"
 }
