@@ -178,6 +178,11 @@ def main():
 
     m = Mmio()
     fail = []
+    # Checks that could NOT be made, as distinct from checks that failed.  A
+    # PASS that quietly skipped a check is the shape this file was already
+    # vulnerable to at the trip counter's 255 ceiling, so a skip is printed
+    # next to the verdict rather than swallowed.
+    inconclusive = []
     # Set the instant the FIRST write lands, and checked by the restore in the
     # finally block.  Without it --status, whose contract is "write nothing",
     # ran the restore on its way out and rewrote the trip register from 0xba51
@@ -292,7 +297,25 @@ def main():
             if not (st >> 7) & 1:
                 fail.append("halted, but bit 7 (trip latched) is 0")
             trips_after = (st >> 16) & 0xFF
-            if trips_after == trips_before:
+            if trips_before == 255:
+                # INVERTED CONSUMER, fixed.  The counter SATURATES at 255
+                # (rtl/fk33_thermal.vhd:1166), so at the ceiling
+                # `trips_after == trips_before` is true no matter what the
+                # guard did -- and this test WANTS it to move, so it reported
+                # a working guard as broken.  Of the six consumers enumerated
+                # in docs/debugging/2026-08-30_tripveto-every-consumer-of-a-
+                # saturating-counter.md this is the only one whose failure
+                # direction was safe, and it is still wrong: a false FAIL here
+                # sends someone after a guard that is fine.  This check cannot
+                # be made at the ceiling, so say so instead of answering.
+                print(f"  trip count is SATURATED at {trips_before}; this "
+                      f"check cannot run.\n  Clear it first "
+                      f"(fk33ctl.py thermal --clear) and re-run.  NOT counted "
+                      f"as a failure:\n  at 255 the counter cannot move and "
+                      f"the guard may be perfectly healthy.")
+                inconclusive.append("the trip-count-moved check: the counter "
+                                    "was saturated at 255 before the test")
+            elif trips_after == trips_before:
                 fail.append(f"halted, but the trip count did not move "
                             f"({trips_before})")
             else:
@@ -354,8 +377,17 @@ def main():
         print("THERMAL SELFTEST FAILED")
         for f in fail:
             print(f"  - {f}")
+        for f in inconclusive:
+            print(f"  ? NOT CHECKED: {f}")
         return 1
-    print("THERMAL SELFTEST PASS")
+    if inconclusive:
+        print("THERMAL SELFTEST PASS, WITH CHECKS THAT COULD NOT RUN")
+        for f in inconclusive:
+            print(f"  ? NOT CHECKED: {f}")
+        print("  A pass over a check that did not run is not a pass over that "
+              "check.")
+    else:
+        print("THERMAL SELFTEST PASS")
     print("  the guard halted on a real SYSMON alarm, latched the cause, "
           "stopped the compute\n  domain, and released when the alarm cleared.")
     print("  NOTE the sticky bits (25/27) and the trip count are LEFT SET on "

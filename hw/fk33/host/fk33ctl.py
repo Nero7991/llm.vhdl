@@ -355,7 +355,14 @@ def cmd_thermal(a):
         print(f"LATCHED TRIP  {THERM_CAUSE.get((st >> 12) & 0xF, '?')}")
         print(f"              at die {die_c(tr & 0x3FF):.1f} C, HBM code "
               f"{(tr >> 10) & 0x7F} / {(tr >> 17) & 0x7F}")
-        print(f"              trips since the last clear: {(st >> 16) & 0xFF}")
+        _tc = (st >> 16) & 0xFF
+        # The field is 8 bits and SATURATES (rtl/fk33_thermal.vhd:1166), so at
+        # 255 this is a floor and not a count.  Printing the bare number read
+        # as "255 trips"; the true figure is unbounded above.
+        print(f"              trips since the last clear: {_tc}"
+              + (" OR MORE (the 8-bit counter is SATURATED; clear it with "
+                 "--clear\n              to make the next reading a count)"
+                 if _tc == 255 else ""))
     else:
         print("LATCHED TRIP  none since the last clear")
     for bit, what in ((25, "SYSMON OT alarm has fired"),

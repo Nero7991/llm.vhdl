@@ -725,7 +725,11 @@ def install_halt_retry(regs, log, retries=8, wait_s=5.0, poll_s=0.02,
         count: with a no-op sleep (the dry run) a purely time-bounded loop
         would spin for the whole budget, and with a real sleep a purely
         count-bounded loop would not respect --halt-wait."""
-        cap = max(1, int(wait_s / poll_s))
+        # poll_s = 0 is a legitimate caller intent ("do not sleep at all") and
+        # used to be a ZeroDivisionError here, raised before the job ran and
+        # therefore indistinguishable from a guard refusal.  Found while
+        # writing the wrapper's teeth rows below, which are its first coverage.
+        cap = max(1, int(wait_s / poll_s)) if poll_s > 0 else 1
         t0, n = time.time(), 0
         while (bar.rd(regs["FK33_ENGX_STAT"]) & 1):
             if n >= cap or time.time() - t0 >= wait_s:
@@ -734,8 +738,9 @@ def install_halt_retry(regs, log, retries=8, wait_s=5.0, poll_s=0.02,
             n += 1
         return time.time() - t0
 
-    def _trips(bar):
-        return (bar.rd(regs["FK33_THERM_STATUS"]) >> 16) & 0xFF
+    # There is deliberately NO _trips(bar) helper here any more.  Sampling the
+    # trip counter around a call that clears it is the phantom-retry hazard
+    # described below; the observation arrives on p["therm"] instead.
 
     def run_job_halt_retry(p, regs_, bar, hbm, a, out=sys.stdout):
         key = (p["fields"].get("tensor", "?"), p["desc_addr"])
@@ -745,7 +750,7 @@ def install_halt_retry(regs, log, retries=8, wait_s=5.0, poll_s=0.02,
             # and the dwell is self-clearing, so waiting is the correct action
             # and refusing is not.
             waited = _wait_clear(bar)
-            t0 = _trips(bar)
+            p.pop("therm", None)       # never read a previous job's record
             try:
                 res = _ORIG_RUN_JOB(p, regs_, bar, hbm, a, out)
             except J.RunError as e:
@@ -768,13 +773,41 @@ def install_halt_retry(regs, log, retries=8, wait_s=5.0, poll_s=0.02,
                 if not cleared:
                     break
                 continue
-            # The job RAN.  Did the guard fire across it?  Read the counter,
-            # do not read run_job's prose: the whole point of retrying here is
-            # that a trip is not a compute fault, and a check that depended on
-            # another module's wording would stop working without saying so.
-            t1 = _trips(bar)
-            if t1 == t0 or res[0] == J.Verdict.PASS:
-                if t1 != t0:
+            # The job RAN.  Did the guard fire across it?
+            #
+            # This USED TO sample the counter here, around the call, and the
+            # comment said: "Read the counter, do not read run_job's prose:
+            # [...] a check that depended on another module's wording would
+            # stop working without saying so."  That rule is right and is kept.
+            # What changed is that run_job now CLEARS the counter before the
+            # job, because it saturates at 255 and 'it did not move' is false
+            # forever at the ceiling (open issue THERM-255).  Sampling around a
+            # call that clears would see t1 < t0 on EVERY job and burn a
+            # phantom retry on every job of every layer of every token -- a
+            # dead veto converted into a live false alarm, which is worse,
+            # because it would read as evidence about THERM-255 itself.
+            #
+            # So run_job publishes a STRUCTURED observation on the plan dict
+            # this caller already owns, and this reads that.  A dict of ints is
+            # not prose: `moved` is a boolean the producer computed from two
+            # readings taken either side of the job, with a base it proved was
+            # 0.  The rule the old comment states is about not parsing text,
+            # and a missing or malformed field is a REFUSAL here rather than a
+            # silent pass, so it still cannot stop working without saying so.
+            th = p.get("therm")
+            if not isinstance(th, dict) or th.get("moved") is None:
+                raise J.RunError(
+                    "fk33_run_job returned without publishing p['therm'], so "
+                    "this wrapper cannot tell whether the thermal guard fired "
+                    "across the job.  Sampling the counter here instead is "
+                    "NOT a fallback: run_job clears it before the job, so a "
+                    "sample either side would read as a trip on every single "
+                    "job.  The two files must be updated together; see "
+                    "docs/debugging/2026-08-30_tripveto-every-consumer-of-a-"
+                    "saturating-counter.md section 5.")
+            t0, t1 = th["trip0"], th["trip1"]
+            if not th["moved"] or res[0] == J.Verdict.PASS:
+                if th["moved"]:
                     log.trip(key, attempt, t0, t1, True)
                 return res
             last_res = res
@@ -1360,8 +1393,17 @@ def print_verdict(a, tp, res, out=None):
                           if r["verdict"] != J.Verdict.PASS
                           and (r["job"].tensor, r["job"].desc_addr)
                           in tripped_keys]
-    w("            THERM-255 trip counter %d -> %d%s\n"
-      % (res["trips0"], res["trips1"], "  <-- MOVED" if trips_moved else ""))
+    # The counter SATURATES at 255 (rtl/fk33_thermal.vhd:1166).  The adjacent
+    # paragraph already warns that this number is a lower bound BECAUSE OF
+    # SAMPLING; the ceiling is a second, independent reason and used to go
+    # unmentioned, so `255 -> 255` printed with no MOVED read as "the guard
+    # never fired" when it means "nothing after the 255th can be seen".
+    _sat = " (SATURATED: a FLOOR, not a count)" if res["trips1"] == 255 else ""
+    w("            THERM-255 trip counter %d -> %d%s%s\n"
+      % (res["trips0"], res["trips1"], _sat,
+         "  <-- MOVED" if trips_moved else
+         ("  <-- cannot be observed at the ceiling" if res["trips0"] == 255
+          else "")))
     if g is not None:
         w("            GUARD       %d refused GO(s) waited out and retried "
           "(%.2f s waiting, %d\n                        unrecovered); %d trip"
@@ -1857,6 +1899,89 @@ def cmd_selfcheck(a):
             dict(header=None), [0] * 4, 0,
             {(SEAM_LOGITS, 0): LR.Seam(SEAM_LOGITS, 0, -1, LR.KIND_BFP16, 0,
                                        [0] * 4)}, 0, out=_Cap()))
+
+    # ---- the halt-retry wrapper, which had NO coverage at all
+    #
+    # docs/debugging/2026-08-30_tripveto-every-consumer-of-a-saturating-
+    # counter.md section 5 named the hazard that kept the THERM-255 fix out of
+    # the tree: run_job must CLEAR the trip counter (it saturates at 255, where
+    # "it did not move" is false forever), and a wrapper that samples the
+    # counter either side of that call sees t1 < t0 on EVERY job and burns a
+    # phantom retry on every job of every layer of every token.  The wrapper
+    # now reads run_job's published p["therm"] instead.  These rows are what
+    # make that claim checkable; the write-up listed them as unrun.
+    class _FakeBar(object):
+        """Counts nothing but ENGX_STAT/THERM_STATUS reads, and models a card
+        that is NOT halted, so _wait_clear returns immediately."""
+        def __init__(self, regs, trip=0):
+            self.r, self.trip, self.reads = regs, trip, 0
+        def rd(self, off):
+            self.reads += 1
+            if off == self.r["FK33_THERM_STATUS"]:
+                return (1 << 31) | ((min(self.trip, 255) & 0xFF) << 16)
+            return 0                      # ENGX_STAT: no halt, no GO_BLOCKED
+        def wr(self, off, val):
+            pass
+
+    def _wrapper_row(name, publish, want_calls, want_trips, expect_raise=False):
+        regs_ = _regs()
+        log = GuardLog()
+        bar = _FakeBar(regs_, trip=255)
+        plan = dict(fields=dict(tensor="t"), desc_addr=0)
+        calls = []
+
+        def fake_run_job(pp, rr, bb, hh, aa, out=sys.stdout):
+            calls.append(1)
+            # The real run_job clears the counter, so the register MOVES
+            # BACKWARDS across this call.  A wrapper that sampled it would
+            # read that as a trip.
+            bb.trip = 0
+            if publish is not None:
+                pp["therm"] = dict(publish)
+            return (J.Verdict.PASS if publish and not publish.get("moved")
+                    else J.Verdict.INCONCLUSIVE, "detail")
+
+        orig = J.run_job
+        try:
+            wrapped = install_halt_retry(regs_, log, retries=2, wait_s=0.01,
+                                         poll_s=0.01, sleep=lambda _s: None)
+            J.run_job = fake_run_job          # what the wrapper calls through
+            globals()["_ORIG_RUN_JOB"] = fake_run_job
+            try:
+                wrapped(plan, regs_, bar, None, None, out=_Cap())
+                got_raise = False
+            except Exception:
+                got_raise = True
+        finally:
+            J.run_job = orig
+            globals()["_ORIG_RUN_JOB"] = orig
+            uninstall_halt_retry()
+
+        if expect_raise:
+            rows.append((name, "refuse", "refused" if got_raise else "returned",
+                         "ok" if got_raise else "MISMATCH"))
+            return
+        ok = (len(calls) == want_calls and log.n_trips == want_trips
+              and not got_raise)
+        rows.append((name, "%d call/%d trip" % (want_calls, want_trips),
+                     "%d call/%d trip%s" % (len(calls), log.n_trips,
+                                            " RAISED" if got_raise else ""),
+                     "ok" if ok else "MISMATCH"))
+
+    # THE REGRESSION ROW.  run_job cleared 255 -> 0 and reported no movement.
+    # One call, no retry, nothing logged.  A wrapper sampling the register
+    # would see 255 -> 0, call that a trip, and retry.
+    _wrapper_row("a job that CLEARED the counter is not a phantom trip",
+                 dict(trip0=0, trip1=0, moved=False, cleared=True,
+                      guard=True, saturated=False), 1, 0)
+    # And a REAL trip is still retried, so the row above is not just deafness.
+    _wrapper_row("a real in-job trip is still retried",
+                 dict(trip0=0, trip1=1, moved=True, cleared=True,
+                      guard=True, saturated=False), 3, 3)
+    # A run_job that publishes nothing is a REFUSAL, not a silent pass: the
+    # two files must move together and a stale half must say so.
+    _wrapper_row("run_job publishing no p['therm'] is a refusal",
+                 None, 0, 0, expect_raise=True)
 
     print("\n%-62s %-12s %-14s %s" % ("check", "want", "got", "verdict"))
     print("-" * 108)

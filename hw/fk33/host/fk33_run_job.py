@@ -159,7 +159,8 @@ def load_regs(path=REGS_H):
             "FK33_ENGX_BASE", "FK33_ENGX_X_ADDR", "FK33_ENGX_X_DATA",
             "FK33_ENGX_STAT", "FK33_ENGX_ID", "FK33_ENGX_ID_MAGIC",
             "FK33_THERM_STATUS", "FK33_THERM_TEMPS", "FK33_THERM_PEAK",
-            "FK33_THERM_TRIP", "FK33_HBM_TOP"]
+            "FK33_THERM_TRIP", "FK33_THERM_CTL", "FK33_THERM_KEY",
+            "FK33_HBM_TOP"]
     missing = [n for n in need if n not in out]
     if missing:
         raise RunError("%s carries no %s.  The engine block is added by\n"
@@ -695,6 +696,7 @@ class SimBar(object):
         self.status = 0
         self.err_addr = 0
         self.trip = self.f.get("trip0", 0)
+        self.tripped = False
         self.therm = self.f.get("therm0", 1 << 31)
         self.go_blocked = 0
         self.polls = 0
@@ -771,8 +773,17 @@ class SimBar(object):
             return st | (1 << 1)
         # A trip DURING the job: the guard halts the compute domain and the
         # counter moves.  This is the THERM-255 shape.
-        if self.f.get("trip_during") and self.trip == self.f.get("trip0", 0):
+        #
+        # The one-shot used to be `self.trip == self.f["trip0"]`, which made
+        # the injection depend on the counter still holding its INITIAL value.
+        # That is a model built from the pre-clear notion of the state: once
+        # run_job clears the counter the equality is false and the trip never
+        # fires, so the `trip0=255, trip_during=1` mutant came out PASS for a
+        # reason that had nothing to do with the tool under test.  A latch is
+        # the state "this job has already tripped", which is what was meant.
+        if self.f.get("trip_during") and not self.tripped:
             self.trip += self.f["trip_during"]
+            self.tripped = True
         return st | 1
 
     def _y(self):
@@ -810,6 +821,16 @@ class SimBar(object):
         elif off == r["FK33_ENGX_STAT"]:
             if val & 2:
                 self.go_blocked = 0
+        elif off == r["FK33_THERM_CTL"]:
+            # Edge triggered and key-gated, exactly as fk33ctl.py:380-382 and
+            # fk33_regs.h:62 describe.  Modelled here so that --dry-run can
+            # construct the 255 case, which is the only way to test it offline:
+            # a saturated counter cannot be produced on demand on the card.
+            if (val >> 16) == r["FK33_THERM_KEY"]:
+                if val & 1:
+                    self.trip = 0 if not self.f.get("clear_refused") else self.trip
+                if val & 2:
+                    self.f.pop("peak", None)
 
     def close(self):
         pass
@@ -923,10 +944,55 @@ def run_job(p, regs, bar, hbm, a, out=sys.stdout):
           "a CDC fault.  It is DIAGNOSTIC: since the THERMFIX change it cannot "
           "halt the card, and a bitstream predating that change halts on a "
           "5 ns transient at every code crossing (open issue THERM-255)\n")
-    if trip0 == 255:
-        w("warn        the trip counter is at its 8-bit SATURATING maximum, so "
-          "'it did not move' cannot be observed on this run.  Clear it first: "
-          "fk33ctl.py thermal --clear\n")
+    # ------------------------------------------------- CLEAR AND PROVE
+    # The counter SATURATES at 255 (rtl/fk33_thermal.vhd:1166), so the
+    # post-job test `trip1 != trip0` is FALSE FOREVER once it gets there: a
+    # real trip during the job is then invisible and the job reports PASS.
+    # That is the defect enumerated in 729df43 and it is a HOST defect, not an
+    # RTL one -- saturation is the correct behaviour for the counter.
+    #
+    # So do not merely warn.  Clear the counter before the job and REFUSE
+    # unless the clear is observed to have worked, which is the only thing
+    # that makes the after-reading a measurement.  The shape is TRACK
+    # STRIPEREADY's, applied one level down.
+    guard = bool(therm0 & (1 << 31))
+    cleared = False
+    if guard and trip0 and not getattr(a, "no_clear_trips", False):
+        bar.wr(R["FK33_THERM_CTL"], (R["FK33_THERM_KEY"] << 16) | 1)
+        time.sleep(0.01)
+        bar.wr(R["FK33_THERM_CTL"], 0)          # edge triggered; fk33ctl.py:380
+        therm0 = bar.rd(R["FK33_THERM_STATUS"])
+        post = (therm0 >> 16) & 0xFF
+        if post != 0:
+            refuse("the trip counter would not clear: it read %d before the "
+                   "clear and %d after.  The counter saturates at 255 "
+                   "(rtl/fk33_thermal.vhd:1166), so a count that will not "
+                   "return to 0 makes the post-job 'it did not move' test "
+                   "false forever, and a trip DURING this job would be "
+                   "invisible.  Refusing rather than running blind; see open "
+                   "issue THERM-255." % (trip0, post))
+        w("thermal     cleared the trip counter %d -> 0 and PROVED it by "
+          "re-reading; 'it did not move' is now a measurement\n" % trip0)
+        trip0, cleared = 0, True
+    elif guard and trip0 == 255:
+        refuse("the trip counter is at its 8-bit SATURATING maximum (255) and "
+               "clearing is disabled (--no-clear-trips).  'it did not move' "
+               "cannot be observed at the ceiling, so a trip during this job "
+               "would be invisible and a PASS would not mean what it says.  "
+               "Drop --no-clear-trips, or clear it by hand: "
+               "fk33ctl.py thermal --clear")
+    elif guard and trip0:
+        w("warn        the trip counter reads %d and clearing is disabled, so "
+          "the post-job comparison starts from a non-zero base.  It still "
+          "detects movement; it cannot detect movement at 255\n" % trip0)
+
+    # The channel fk33_run_token.py reads instead of sampling the register
+    # around this call.  A wrapper that samples it itself CANNOT be combined
+    # with the clear above -- it would see t1 < t0 on every job and burn a
+    # phantom retry on all of them -- and run_token:770 rightly refuses to
+    # parse this module's prose.  A structured field is not prose.
+    p["therm"] = dict(trip0=trip0, trip1=None, moved=None, cleared=cleared,
+                      guard=guard, saturated=False)
 
     # ------------------------------------------------- descriptor into memory
     img = p["desc"].to_bytes()
@@ -999,8 +1065,14 @@ def run_job(p, regs, bar, hbm, a, out=sys.stdout):
     therm1 = bar.rd(R["FK33_THERM_STATUS"])
     trip1 = (therm1 >> 16) & 0xFF
     moved = trip1 != trip0
-    w("thermal     STATUS=0x%08X trips=%d (was %d)%s\n"
-      % (therm1, trip1, trip0, "  <-- MOVED" if moved else ""))
+    w("thermal     STATUS=0x%08X trips=%d%s (was %d)%s\n"
+      % (therm1, trip1, " OR MORE (SATURATED)" if trip1 == 255 else "",
+         trip0, "  <-- MOVED" if moved else ""))
+    if trip1 == 255:
+        w("warn        the counter ENDED at its saturating maximum, so %d is a "
+          "LOWER BOUND and not a count.  Anything after the 255th trip of "
+          "this job is not represented\n" % trip1)
+    p["therm"].update(trip1=trip1, moved=moved, saturated=trip1 == 255)
 
     if err:
         _ei = bar.rd(R["FK33_ENG_ERR_INFO"])
@@ -1199,6 +1271,21 @@ def cmd_selfcheck(a):
         ("trip counter moves in-job",  dict(trip_during=1),         Verdict.INCONCLUSIVE),
         ("wrong answer AND a trip",    dict(bad_row=0, trip_during=1),
                                                                     Verdict.INCONCLUSIVE),
+        # THERM-255.  The counter saturates at 255, so before the clear-and-
+        # prove above landed, this row PASSED: the in-job trip took the model
+        # from 255 to 256, _therm_word clamped both readings to 255, and
+        # `trip1 != trip0` was false.  A real halt across the job, reported as
+        # a clean PASS.  It must now come out INCONCLUSIVE, because the clear
+        # puts the base at 0 where the movement is visible.
+        ("saturated, then a trip",     dict(trip0=255, trip_during=1),
+                                                                    Verdict.INCONCLUSIVE),
+        # The same state with the clear refused: the tool must REFUSE rather
+        # than run a job whose thermal verdict it cannot make.
+        ("saturated, clear refused",   dict(trip0=255, trip_during=1,
+                                            clear_refused=True),    Verdict.REFUSED),
+        # A non-saturated count clears and the job is then clean.  This is the
+        # ordinary case on a card that has been up a while.
+        ("counter at 7, cleared",      dict(trip0=7),               Verdict.PASS),
         ("busy for several polls",     dict(busy_polls=5),          Verdict.PASS),
         ("BEATS wrong (warn only)",    dict(beats=1),               Verdict.PASS),
         ("STARVED nonzero (warn)",     dict(starved=77),            Verdict.PASS),
@@ -1439,6 +1526,12 @@ def main(argv=None):
                    help="simulated register plane and file-backed HBM; opens "
                         "nothing under /dev.  Proves the plumbing, NOT the card")
     s.add_argument("--timeout", type=float, default=30.0)
+    s.add_argument("--no-clear-trips", action="store_true",
+                   dest="no_clear_trips",
+                   help="do NOT clear the thermal trip counter before the job. "
+                        "The counter saturates at 255, where 'it did not move' "
+                        "is false forever; with this flag the tool REFUSES at "
+                        "the ceiling rather than running blind.  See THERM-255")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("selfcheck",

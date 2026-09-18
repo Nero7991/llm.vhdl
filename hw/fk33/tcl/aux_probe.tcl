@@ -111,9 +111,14 @@ proc decode_thermal {th tt tpk ttr tcan} {
             puts [format "CAUSE   %s" [lindex $causes [expr {($vth >> 8) & 7}]]]
             if {[expr {($vth >> 7) & 1}]} {
                 puts [format "TRIP    LATCHED: %s" [lindex $causes [expr {($vth >> 12) & 7}]]]
-                puts [format "        at die %.1f C, HBM code %d / %d, %d trips since the last clear" \
+                # The trip count is an 8-bit SATURATING field
+                # (rtl/fk33_thermal.vhd:1166), so 255 is a floor and not a
+                # count.  Printing the bare number read as "255 trips".
+                set tcnt [expr {($vth >> 16) & 0xff}]
+                set tsat [expr {$tcnt == 255 ? " OR MORE (SATURATED)" : ""}]
+                puts [format "        at die %.1f C, HBM code %d / %d, %d%s trips since the last clear" \
                       [diec [expr {$vttr & 0x3ff}]] [expr {($vttr >> 10) & 0x7f}] \
-                      [expr {($vttr >> 17) & 0x7f}] [expr {($vth >> 16) & 0xff}]]
+                      [expr {($vttr >> 17) & 0x7f}] $tcnt $tsat]
             } else {
                 puts "TRIP    none latched since the last clear"
             }

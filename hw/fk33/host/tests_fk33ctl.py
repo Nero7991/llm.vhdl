@@ -170,6 +170,25 @@ check("all-zeroes is NOT called an unprotected bitstream",
 out1, _ = thermal_out({k: 0xFFFFFFFF for k in THERM_VECTORS})
 check("all-ones is called a dead bus", "dead bus" in out1, out1)
 
+# THE 255 FIXTURE.  Both fixtures above sit at trip_cnt = 3
+# (0x8A0377CD >> 16 & 0xFF = 3, and so does the no-guard variant below), so
+# fk33ctl's decode has only ever been exercised at a value where the counter's
+# SATURATION is invisible.  That is the defect enumerated in
+# docs/debugging/2026-08-30_tripveto-every-consumer-of-a-saturating-counter.md
+# section 2a: a veto that works at 3 and fails at 255 is the bug, and a test
+# that exercises only small counts reproduces it rather than catching it.
+_sat = dict(THERM_VECTORS)
+_sat[fk33ctl.THERM_STATUS] = (THERM_VECTORS[fk33ctl.THERM_STATUS]
+                              & ~(0xFF << 16)) | (255 << 16)
+outs, _ = thermal_out(_sat)
+check("at 255 the count is reported as a FLOOR, not a count",
+      "OR MORE" in outs and "SATURATED" in outs, outs)
+check("and the reader is told how to make it a count again",
+      "--clear" in outs, outs)
+# The control: at 3 it must NOT say any of that, or the new line is noise
+# rather than a discriminator.
+check("at 3 there is no saturation note", "OR MORE" not in out, out)
+
 # A real answer with bit 31 clear is a real bitstream without the guard.
 _noguard = dict(THERM_VECTORS)
 _noguard[fk33ctl.THERM_STATUS] = 0x0A0377CD
