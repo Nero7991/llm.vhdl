@@ -486,6 +486,217 @@ static void t10_card_refusals(void)
     t->close(t->ctx); free(t);
 }
 
+/* ===========================================================================
+ * T13.  THE v2 WINDOW SEAM.
+ *
+ * `rtl/fk33_seam.vhd` has been v2 since TRACK DSEAM: it reports VERSION2 at
+ * :859 and CAPS_FLAGS 0xD at :383, the activation row and the descriptor
+ * program arrive through WIN_SEL/WIN_ADDR/WIN_DATA, and no host block is
+ * fetched from HBM.  MEASURED 2026-09-17: NOTHING ON THE HOST DROVE ANY OF
+ * THAT.  server/fk33_sim.c reported VERSION_1 and modelled the v1 shape;
+ * pl_backend.c writes a block at X_BASE and GOes; the Python tooling under
+ * hw/fk33/host/ talks to the ENGINE at 0x12000, not to the seam.  So there
+ * was no simulator a v2 driver could be written against, and these are the
+ * first checks of the v2 path in this repository.
+ *
+ * Everything here is driven at REGISTER level on purpose.  pl_backend is
+ * still a v1 host, and a test that went through it would be testing the v1
+ * path with v2 switched on -- which is exactly the refusal case below, not
+ * the working one.
+ * ======================================================================== */
+static void t13_v2_windows(void)
+{
+    fk33_sim_opts s;
+    pl_open_opts o;
+    fk33_transport *t;
+    uint32_t v = 0, st = 0, info = 0;
+    int i;
+    printf("T13 the v2 window seam, which nothing on the host drove before\n");
+
+    small_opts(&s, &o);
+    s.version = 2;
+    t = fk33_transport_open_sim(&s);
+    if (!t) { CK(0, "sim transport"); return; }
+
+#define R(r) (t->reg_read32(t->ctx, FK33_SEAM_BASE + (r), &v), v)
+#define W(r, val) t->reg_write32(t->ctx, FK33_SEAM_BASE + (r), (uint32_t)(val))
+#define GO_AND_READ() do { W(FK33_SEAM_CTRL, FK33_CTRL_GO); \
+      t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_STATUS, &st); \
+      t->reg_read32(t->ctx, FK33_SEAM_BASE + FK33_SEAM_ERR_INFO, &info); } while (0)
+
+    CK(R(FK33_SEAM_ID) == FK33_SEAM_ID_MAGIC, "v2 identity");
+    CK(R(FK33_SEAM_VERSION) == FK33_SEAM_VERSION_2,
+       "a v2 model must report 2, got %u", v);
+    CK((R(FK33_SEAM_CAPS_FLAGS) & FK33_CAP_WINDOWS) != 0,
+       "v2 must advertise WINDOWS, caps 0x%X", v);
+    CK((R(FK33_SEAM_CAPS_FLAGS) & FK33_CAP_HBM_FETCH) == 0,
+       "v2 must NOT advertise HBM_FETCH -- rtl/fk33_seam.vhd:357 calls bit 1 "
+       "being 0 'the honest report'");
+
+    /* ---- the window port's contract: WIN_ADDR auto-increments on DATA. */
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < TE; i++) W(FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)(1000 + i));
+    CK(R(FK33_SEAM_WIN_ADDR) == (uint32_t)TE,
+       "WIN_ADDR must advance once per DATA write; after %d writes it reads %u",
+       TE, v);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    CK(R(FK33_SEAM_WIN_DATA) == 1000u, "readback of WIN_XIN[0]");
+    CK(R(FK33_SEAM_WIN_DATA) == 1001u,
+       "a READ must advance the address too, not only a write");
+
+    /* ---- the v1 host's GO must be REFUSED, and this is the whole point of
+     * the version switch: a host ported from v1 writes X_BASE and GOes. */
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    W(FK33_SEAM_TBL_LEN, 0);
+    GO_AND_READ();
+    CK((st & FK33_ST_ERR) && FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
+       "TBL_LEN 0 must be ERR_DESC on v2 -- seq_desc_fetch checks the walk "
+       "against it two-sidedly, so a card that does not know it cannot run a "
+       "token at all.  status 0x%X", st);
+    CK(!(st & FK33_ST_DONE), "done set on an error");
+
+    /* TBL_LEN set but no program written: the failure a host under
+     * development actually produces. */
+    W(FK33_SEAM_TBL_LEN, 8);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
+       "TBL_LEN 8 with an empty descriptor window was accepted (0x%X)", st);
+    CK(info == 0, "ERR_INFO should carry what WAS written, got %u", info);
+
+    /* ---- write a program, and the run must then be accepted. */
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x1000u + (uint32_t)i);
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_REL);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x3Fu);
+    W(FK33_SEAM_X_EXP, (uint32_t)(int32_t)-3);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK((st & FK33_ST_DONE) && !(st & FK33_ST_ERR),
+       "a complete v2 setup was refused: status 0x%X err_info %u", st, info);
+    CK(R(FK33_SEAM_SEQ_POS) == 0 || 1, "seq_pos readable");
+    CK(R(FK33_SEAM_SMP_N) == (uint32_t)TV,
+       "SMP_N must report the logits folded since GO, got %u of %d", v, TV);
+
+    /* ---- THE ROW IS WHAT THE CARD COMPUTES ON, and nothing else is.
+     * Change one mantissa in the window, re-run the same position, and the
+     * argmax must move.  Without this the window could be write-only storage
+     * the model never reads and every check above would still pass. */
+    {
+        uint32_t am0, am1;
+        am0 = R(FK33_SEAM_ARGMAX);
+        W(FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET);
+        W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
+        W(FK33_SEAM_WIN_ADDR, TE / 2);
+        W(FK33_SEAM_WIN_DATA, 4242u);
+        W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+        GO_AND_READ();
+        CK((st & FK33_ST_DONE) && !(st & FK33_ST_ERR), "re-run refused 0x%X", st);
+        am1 = R(FK33_SEAM_ARGMAX);
+        CK(am0 != am1,
+           "TEETH: one changed mantissa in WIN_XIN did not move the argmax "
+           "(%u both times).  The window is not reaching the computation.",
+           am0);
+    }
+
+    /* ---- X_EXP is a REGISTER on v2, not a field in an HBM header, and it
+     * must reach the computation too. */
+    {
+        uint32_t am0, am1;
+        W(FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET);
+        W(FK33_SEAM_X_EXP, (uint32_t)(int32_t)-3);
+        W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+        GO_AND_READ();
+        am0 = R(FK33_SEAM_ARGMAX);
+        W(FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET);
+        W(FK33_SEAM_X_EXP, (uint32_t)(int32_t)+11);
+        W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+        GO_AND_READ();
+        am1 = R(FK33_SEAM_ARGMAX);
+        /* The built-in synthetic logits fold the ROW, not the exponent, so
+         * this is EXPECTED NOT TO MOVE.  It is recorded as a measured
+         * resolution floor rather than dropped: it says the model cannot
+         * today detect a host that sends the wrong X_EXP, which is a real
+         * blind spot for any driver written against it. */
+        CK(am0 == am1,
+           "the model's synthetic logits are documented as folding the row "
+           "only; if X_EXP now moves the argmax this note is stale (%u -> %u)",
+           am0, am1);
+        printf("    NOT DETECTED, measured: a wrong X_EXP does not move the "
+               "argmax.  The\n    model's synthetic logits fold the ROW only, "
+               "so no v2 driver test built\n    on this model can catch an "
+               "X_EXP the host got wrong.\n");
+    }
+
+    /* ---- a v1 host's block pointers must be refused outright. */
+    W(FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET);
+    W(FK33_SEAM_X_BASE_LO, 0x1000u);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_RSVD,
+       "a non-zero X_BASE on v2 was accepted (0x%X).  fk33_seam.h marks the "
+       "block registers 'v3, must be 0 in v2', and a host that sets one is a "
+       "host driving a card it is not", st);
+    W(FK33_SEAM_X_BASE_LO, 0);
+
+    /* ---- WIN_XOUT is read-only. */
+    W(FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET);
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_XOUT);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    W(FK33_SEAM_WIN_DATA, 0xBEEFu);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    CK(R(FK33_SEAM_WIN_DATA) != 0xBEEFu,
+       "a write to WIN_XOUT landed; fk33_seam.h says that window is readback");
+
+    /* ---- the no-increment fault, so the auto-increment check has teeth.
+     * Without this, "WIN_ADDR advanced" is a check that has never been shown
+     * to fail. */
+    t->close(t->ctx); free(t);
+    small_opts(&s, &o);
+    s.version = 2;
+    s.fault_win_no_incr = 1;
+    t = fk33_transport_open_sim(&s);
+    if (!t) { CK(0, "sim transport (fault)"); return; }
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    for (i = 0; i < TE; i++) W(FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)(1000 + i));
+    CK(R(FK33_SEAM_WIN_ADDR) == 0,
+       "TEETH CONTROL: with fault_win_no_incr the address must NOT advance, "
+       "reads %u.  If this is TE the auto-increment check above proves "
+       "nothing", v);
+    /* The same fault breaks the DESCRIPTOR window, and that refusal fires
+     * first.  Measured rather than assumed: the first attempt at this row
+     * expected ERR_RSVD and got 0x604, ERR_DESC.  Keeping the two apart
+     * matters -- one says the program is short, the other says the ROW is --
+     * so TBL_LEN is set to 1, which the one landed word satisfies, and the
+     * row check then becomes reachable. */
+    W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
+    W(FK33_SEAM_WIN_ADDR, 0);
+    W(FK33_SEAM_WIN_DATA, 0x1000u);
+    W(FK33_SEAM_TBL_LEN, 8);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC,
+       "with the address stuck, TBL_LEN 8 against ONE landed word must be "
+       "ERR_DESC (0x%X)", st);
+    W(FK33_SEAM_TBL_LEN, 1);
+    W(FK33_SEAM_SEQ_POS, 0); W(FK33_SEAM_N_STEP, 1);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_RSVD,
+       "a card whose window did not advance wrote ONE element of the row and "
+       "the GO was accepted (0x%X).  That is the short-row defect, and it "
+       "looks exactly like an ordinary wrong answer", st);
+    CK(info == 1u,
+       "ERR_INFO must carry how many row elements DID land, got %u", info);
+
+#undef R
+#undef W
+#undef GO_AND_READ
+    t->close(t->ctx); free(t);
+}
+
 static void t11_file_transport(void)
 {
     fk33_transport *t;
@@ -573,6 +784,7 @@ int main(void)
     t10_card_refusals();
     t11_file_transport();
     t12_hardware_tripwire();
+    t13_v2_windows();
 
     printf("\nSEAM_SELFTEST %s  (%d checks, %d failed)\n",
            fails ? "FAIL" : "PASS", checks, fails);

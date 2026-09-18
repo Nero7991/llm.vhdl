@@ -104,6 +104,21 @@ typedef struct {
     int16_t      *x_buf;
     char          desc[192];
     unsigned long n_go;
+
+    /* ------------------------------------------------------------ VERSION 2
+     * The window port.  WIN_ADDR indexes the window WIN_SEL names and
+     * auto-increments on every WIN_DATA access, read OR write, so a host
+     * streams a program or a row without touching the address again. */
+    uint32_t  win_sel;
+    uint32_t  win_addr;
+    uint32_t *win_desc;         /* WIN_SEL 0, 32-bit halves, low half first */
+    uint32_t *win_rel;          /* WIN_SEL 1, the release-mask table */
+    int16_t  *win_xin;          /* WIN_SEL 2, one int16 mantissa per entry */
+    int16_t  *win_xout;         /* WIN_SEL 3, the residual readback */
+    int       n_desc, n_rel;
+    int       desc_written;     /* highest WIN_DESC index written, + 1 */
+    int       rel_written;
+    int       xin_written;
 } sim_ctx;
 
 /* The BUILT-IN synthetic logits.  Deterministic and input-dependent, so a
@@ -194,6 +209,8 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
     int all    = (ctrl & FK33_CTRL_LOGITS_ALL) != 0;
     uint64_t xs = fk33_x_stride(s->o.n_embd);
     uint64_t ls = fk33_l_stride(s->o.n_vocab);
+    int v2     = s->o.version >= 2;
+    int tbl_len = (int)s->reg[FK33_SEAM_TBL_LEN / 4];
     int k, rc;
 
     s->n_go++;
@@ -211,15 +228,47 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
     if (pos != s->next_pos) {
         fail(s, FK33_SEAM_ERR_SEQ, (uint32_t)s->next_pos); return;
     }
-    if ((xb % FK33_BLOCK_ALIGN) || (lb % FK33_BLOCK_ALIGN)) {
-        fail(s, FK33_SEAM_ERR_ALIGN, 0); return;
-    }
-    if (dp == 0) { fail(s, FK33_SEAM_ERR_DESC, 0); return; }
-    if (dp % 512u) { fail(s, FK33_SEAM_ERR_ALIGN, 1); return; }
-    {
-        int e = fk33_seam_check_blocks(xb, xs * (uint64_t)nstep,
-                                       lb, ls * (uint64_t)(all ? nstep : 1));
-        if (e) { fail(s, (unsigned)e, 2); return; }
+    if (v2) {
+        /* THE v2 PRECONDITIONS, and they are the ones a v1 host does not
+         * satisfy -- which is the point of modelling them.  A host ported
+         * from v1 writes X_BASE and GOes, and must be REFUSED here rather
+         * than quietly running on a stale window.
+         *
+         * `rtl/seq_desc_fetch.vhd` checks the walk against TBL_LEN
+         * two-sidedly, so a card that does not know it cannot run a token at
+         * all (server/fk33_seam.h).  TBL_LEN = 0 is therefore ERR_DESC, not a
+         * default.  The v1 block registers must be ZERO: fk33_seam.h marks
+         * X_BASE/L_BASE/DESC_PTR "v3, must be 0 in v2", and a non-zero one is
+         * a host that thinks it is driving a card it is not. */
+        if (tbl_len <= 0) { fail(s, FK33_SEAM_ERR_DESC, 0); return; }
+        if (tbl_len > s->desc_written) {
+            /* TBL_LEN counts DESCRIPTORS; the window holds 32-bit halves, so
+             * a program of n descriptors occupies at least n halves.  This is
+             * the cheap bound, not the exact one: it catches "TBL_LEN was set
+             * and the program was never written", which is the failure a host
+             * under development actually produces. */
+            fail(s, FK33_SEAM_ERR_DESC, (uint32_t)s->desc_written); return;
+        }
+        if (xb || lb || dp) { fail(s, FK33_SEAM_ERR_RSVD, 0xB10C); return; }
+        if (s->xin_written < s->o.n_embd) {
+            /* A short activation row is the defect that looks like an
+             * ordinary wrong answer: the card computes on whatever the window
+             * held from the last token.  The RTL has no counter for this and
+             * the model does, deliberately -- it is a MODEL check, and
+             * server/tests/ says so where it is used. */
+            fail(s, FK33_SEAM_ERR_RSVD, (uint32_t)s->xin_written); return;
+        }
+    } else {
+        if ((xb % FK33_BLOCK_ALIGN) || (lb % FK33_BLOCK_ALIGN)) {
+            fail(s, FK33_SEAM_ERR_ALIGN, 0); return;
+        }
+        if (dp == 0) { fail(s, FK33_SEAM_ERR_DESC, 0); return; }
+        if (dp % 512u) { fail(s, FK33_SEAM_ERR_ALIGN, 1); return; }
+        {
+            int e = fk33_seam_check_blocks(xb, xs * (uint64_t)nstep,
+                                           lb, ls * (uint64_t)(all ? nstep : 1));
+            if (e) { fail(s, (unsigned)e, 2); return; }
+        }
     }
 
     for (k = 0; k < nstep; k++) {
@@ -229,15 +278,32 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
         uint32_t tok = 0, xe = 0;
         int32_t  lexp = 0;
 
-        rd_u32(s, xa + 0, &xe);
-        memcpy(&x_exp, &xe, 4);          /* no int32 vs uint32 pointer aliasing */
-        rd_u32(s, xa + 4, &tok);
-        rd_u32(s, xa + 8, &rsv_lo);
-        rd_u32(s, xa + 12, &rsv_hi);
-        if (rsv_lo || rsv_hi) { fail(s, FK33_SEAM_ERR_RSVD, (uint32_t)k); return; }
-
-        sparse_rw(&s->mem, xa + FK33_SEAM_HDR_BYTES, s->x_buf,
-                  (size_t)s->o.n_embd * 2, 0);
+        if (v2) {
+            /* NO HBM BLOCK IS READ.  The row came through WIN_XIN and the
+             * exponent through the X_EXP register; that is the whole of what
+             * v2 changed and it is why a v1 host cannot drive a v2 card.
+             *
+             * THERE IS NO TOKEN ID ON THIS PATH.  v1 carried one in the
+             * block header and the model's synthetic logits fold it in; v2's
+             * card never sees a token id, because the HOST gathers the
+             * embedding and what crosses is the row.  Passing 0 keeps the
+             * model honest about that: the answer depends on the ROW, which
+             * is the only thing the real card has. */
+            memcpy(&x_exp, &s->reg[FK33_SEAM_X_EXP / 4], 4);
+            tok = 0;
+            memcpy(s->x_buf, s->win_xin, (size_t)s->o.n_embd * 2);
+        } else {
+            rd_u32(s, xa + 0, &xe);
+            memcpy(&x_exp, &xe, 4);      /* no int32 vs uint32 pointer aliasing */
+            rd_u32(s, xa + 4, &tok);
+            rd_u32(s, xa + 8, &rsv_lo);
+            rd_u32(s, xa + 12, &rsv_hi);
+            if (rsv_lo || rsv_hi) {
+                fail(s, FK33_SEAM_ERR_RSVD, (uint32_t)k); return;
+            }
+            sparse_rw(&s->mem, xa + FK33_SEAM_HDR_BYTES, s->x_buf,
+                      (size_t)s->o.n_embd * 2, 0);
+        }
 
         rc = s->o.logits_fn(s->o.user ? s->o.user : (void *)s,
                             pos + k, (int)tok, s->x_buf, x_exp,
@@ -245,7 +311,7 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
         if (rc) { fail(s, FK33_SEAM_ERR_DESC, (uint32_t)k); return; }
 
         if (all || k == nstep - 1) {
-            uint64_t la = lb + ls * (uint64_t)(all ? k : 0);
+            uint64_t la = v2 ? 0 : lb + ls * (uint64_t)(all ? k : 0);
             uint64_t z = 0;
             int32_t  am = 0;
             int      v, nv = s->o.n_vocab;
@@ -264,10 +330,31 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
                 am = b;
             }
 
-            sparse_rw(&s->mem, la + 0, &lexp, 4, 1);
-            sparse_rw(&s->mem, la + 4, &am, 4, 1);
-            sparse_rw(&s->mem, la + 8, &z, 8, 1);
-            sparse_rw(&s->mem, la + FK33_SEAM_HDR_BYTES, s->logit_buf, nbytes, 1);
+            /* ON v2 NO LOGITS ROW IS WRITTEN ANYWHERE, and that is the
+             * RTL's own statement rather than a simplification here.
+             * `rtl/fk33_seam.vhd:91-94`: "THE FULL LOGITS.  This block
+             * returns the sampler's ARGMAX and its shared exponent.  It does
+             * NOT return 248,320 s32 logits [...] A host that needs real
+             * logits needs the DMA".  L_BASE is required to be 0 in v2, so
+             * there is no destination to write one to.
+             *
+             * OPEN, AND NOT RESOLVED HERE: CAPS_FLAGS_V is x"0000000D",
+             * which SETS bit 3, FK33_CAP_LOGITS, documented in this header as
+             * "the card writes the full logits row".  The RTL comment above
+             * says it does not, and tools/check_seam_regs.py ties bit 3 to
+             * SMP_EN -- i.e. to the logits STREAM existing inside the design
+             * -- rather than to egress across the seam.  Those are two
+             * different claims and a host cannot act on both.  The model
+             * follows the RTL's behavioural statement, publishes ARGMAX and
+             * LOGIT_EXP only, and a driver written against it will therefore
+             * NOT depend on a row it may not get. */
+            if (!v2) {
+                sparse_rw(&s->mem, la + 0, &lexp, 4, 1);
+                sparse_rw(&s->mem, la + 4, &am, 4, 1);
+                sparse_rw(&s->mem, la + 8, &z, 8, 1);
+                sparse_rw(&s->mem, la + FK33_SEAM_HDR_BYTES,
+                          s->logit_buf, nbytes, 1);
+            }
 
             if (!s->o.fault_stale_argmax) {
                 s->reg[FK33_SEAM_ARGMAX / 4]    = (uint32_t)am;
@@ -284,6 +371,66 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
     s->status = FK33_ST_DONE;
 }
 
+/* ----------------------------------------------------------- the v2 windows
+ * WIN_ADDR indexes the window WIN_SEL names and AUTO-INCREMENTS on every
+ * WIN_DATA access, read or write (server/fk33_seam.h, and
+ * `rtl/fk33_seam.vhd:790`).  An access past the end of a window is DROPPED
+ * and the address still advances, which is what the RTL does: there is no
+ * error path for it, and a host that streams past the end gets silence.  That
+ * is worth modelling exactly, because it is how a too-long program becomes a
+ * card running a truncated one rather than a card raising a fault.
+ */
+static uint32_t win_read(sim_ctx *s)
+{
+    uint32_t a = s->win_addr, v = 0;
+    switch (s->win_sel) {
+    case FK33_WIN_DESC:
+        if ((int)a < s->n_desc) v = s->win_desc[a];
+        break;
+    case FK33_WIN_REL:
+        if ((int)a < s->n_rel) v = s->win_rel[a];
+        break;
+    case FK33_WIN_XIN:
+        if ((int)a < s->o.n_embd) v = (uint32_t)(uint16_t)s->win_xin[a];
+        break;
+    case FK33_WIN_XOUT:
+        if ((int)a < s->o.n_embd) v = (uint32_t)(uint16_t)s->win_xout[a];
+        break;
+    default: break;
+    }
+    if (!s->o.fault_win_no_incr) s->win_addr = a + 1;
+    return v;
+}
+
+static void win_write(sim_ctx *s, uint32_t v)
+{
+    uint32_t a = s->win_addr;
+    switch (s->win_sel) {
+    case FK33_WIN_DESC:
+        if ((int)a < s->n_desc) {
+            s->win_desc[a] = v;
+            if ((int)a + 1 > s->desc_written) s->desc_written = (int)a + 1;
+        }
+        break;
+    case FK33_WIN_REL:
+        if ((int)a < s->n_rel) {
+            s->win_rel[a] = v;
+            if ((int)a + 1 > s->rel_written) s->rel_written = (int)a + 1;
+        }
+        break;
+    case FK33_WIN_XIN:
+        if ((int)a < s->o.n_embd) {
+            s->win_xin[a] = (int16_t)(uint16_t)(v & 0xFFFFu);
+            if ((int)a + 1 > s->xin_written) s->xin_written = (int)a + 1;
+        }
+        break;
+    case FK33_WIN_XOUT:
+        break;                      /* read-only, per fk33_seam.h */
+    default: break;
+    }
+    if (!s->o.fault_win_no_incr) s->win_addr = a + 1;
+}
+
 static int sim_reg_read32(void *c, uint32_t off, uint32_t *v)
 {
     sim_ctx *s = (sim_ctx *)c;
@@ -296,7 +443,24 @@ static int sim_reg_read32(void *c, uint32_t off, uint32_t *v)
     o = off - FK33_SEAM_BASE;
     switch (o) {
     case FK33_SEAM_ID:         *v = FK33_SEAM_ID_MAGIC; return 0;
-    case FK33_SEAM_VERSION:    *v = FK33_SEAM_VERSION_1; return 0;
+    case FK33_SEAM_VERSION:
+        *v = s->o.version >= 2 ? FK33_SEAM_VERSION_2 : FK33_SEAM_VERSION_1;
+        return 0;
+    case FK33_SEAM_CAPS_FLAGS:
+        /* A v1 card reports nothing: the flags register is v2's, and a host
+         * reading 0 on a v1 model is reading the truth about it. */
+        *v = s->o.caps_flags ? s->o.caps_flags
+           : (s->o.version >= 2 ? (FK33_CAP_WINDOWS | FK33_CAP_SAMPLER
+                                   | FK33_CAP_LOGITS) : 0u);
+        return 0;
+    case FK33_SEAM_WIN_ADDR:   *v = s->win_addr; return 0;
+    case FK33_SEAM_WIN_SEL:    *v = s->win_sel; return 0;
+    case FK33_SEAM_WIN_DATA:   *v = win_read(s); return 0;
+    case FK33_SEAM_SMP_N:
+        /* Logits folded since GO.  The model folds the whole row in one go,
+         * so this is n_vocab after a job and 0 before the first. */
+        *v = s->n_go ? (uint32_t)s->o.n_vocab : 0u;
+        return 0;
     case FK33_SEAM_CAPS_VOCAB: *v = (uint32_t)s->o.n_vocab; return 0;
     case FK33_SEAM_CAPS_EMBD:  *v = ((uint32_t)s->o.n_layer << 16)
                                   | ((uint32_t)s->o.n_embd & 0xFFFFu); return 0;
@@ -316,6 +480,9 @@ static int sim_reg_write32(void *c, uint32_t off, uint32_t v)
         || off >= FK33_SEAM_BASE + FK33_SEAM_SPAN || (off & 3u))
         return 0;                        /* writes to nothing are dropped */
     o = off - FK33_SEAM_BASE;
+    if (o == FK33_SEAM_WIN_DATA) { win_write(s, v); return 0; }
+    if (o == FK33_SEAM_WIN_ADDR) { s->win_addr = v; s->reg[o / 4] = v; return 0; }
+    if (o == FK33_SEAM_WIN_SEL)  { s->win_sel = v & 3u; s->reg[o / 4] = v; return 0; }
     if (o == FK33_SEAM_CTRL) {
         if (v & FK33_CTRL_SEQ_RESET) {
             s->next_pos = 0; s->kv_valid = 0; s->hist = 2166136261u;
@@ -340,6 +507,7 @@ static void sim_close(void *c)
     sim_ctx *s = (sim_ctx *)c;
     sparse_free(&s->mem);
     free(s->logit_buf); free(s->x_buf);
+    free(s->win_desc); free(s->win_rel); free(s->win_xin); free(s->win_xout);
     free(s);
 }
 
@@ -364,11 +532,24 @@ fk33_transport *fk33_transport_open_sim(const void *opts_v)
     s->x_buf     = (int16_t *)calloc((size_t)s->o.n_embd, 2);
     if (!s->logit_buf || !s->x_buf) { sim_close(s); return NULL; }
 
+    if (s->o.version >= 2) {
+        s->n_desc = s->o.win_desc_words > 0 ? s->o.win_desc_words : 4096;
+        s->n_rel  = s->o.win_rel_words  > 0 ? s->o.win_rel_words  : 1024;
+        s->win_desc = (uint32_t *)calloc((size_t)s->n_desc, 4);
+        s->win_rel  = (uint32_t *)calloc((size_t)s->n_rel, 4);
+        s->win_xin  = (int16_t  *)calloc((size_t)s->o.n_embd, 2);
+        s->win_xout = (int16_t  *)calloc((size_t)s->o.n_embd, 2);
+        if (!s->win_desc || !s->win_rel || !s->win_xin || !s->win_xout) {
+            sim_close(s); return NULL;
+        }
+    }
+
     s->hist   = 2166136261u;
     s->status = FK33_ST_DONE;   /* idle looks like "the last job finished" */
     snprintf(s->desc, sizeof s->desc,
              "SIMULATED card (NOT hardware, NOT a numeric reference) "
-             "vocab=%d embd=%d layer=%d ctx=%d",
+             "v%d vocab=%d embd=%d layer=%d ctx=%d",
+             s->o.version >= 2 ? 2 : 1,
              s->o.n_vocab, s->o.n_embd, s->o.n_layer, s->o.max_ctx);
 
     t = (fk33_transport *)calloc(1, sizeof *t);

@@ -313,8 +313,11 @@ extern "C" {
 #define FK33_WIN_XOUT             3u
 
 /* CAPS_FLAGS.  What the BITSTREAM implements, so a host does not discover it
- * by trying.  `rtl/fk33_seam.vhd` reports 0x5: windows and sampler, no HBM
- * fetch and no logits egress. */
+ * by trying.  `rtl/fk33_seam.vhd:383` reports **0xD**: windows, sampler and
+ * logits egress; no HBM fetch.  (This comment read 0x5 until 2026-09-17 and
+ * was one commit stale: `e62fded` enabled the sampler and set CAPS_FLAGS_V to
+ * x"0000000D".  Where a document and the RTL disagree, the RTL wins -- read
+ * the constant, not this line.) */
 #define FK33_CAP_WINDOWS          (1u << 0)
 #define FK33_CAP_HBM_FETCH        (1u << 1)
 #define FK33_CAP_SAMPLER          (1u << 2)
@@ -336,19 +339,31 @@ extern "C" {
 #define FK33_SEAM_VERSION_1       1u
 #define FK33_SEAM_VERSION_2       2u
 
-/* TWO IMPLEMENTATIONS OF THIS HEADER NOW EXIST AND THEY REPORT DIFFERENT
+/* TWO IMPLEMENTATIONS OF THIS HEADER EXIST AND THEY CAN REPORT DIFFERENT
  * VERSIONS.  Said here rather than left to be discovered:
  *
  *   rtl/fk33_seam.vhd   reports 2.  Windows, no HBM fetch, no logits egress.
- *   server/fk33_sim.c   reports 1.  It models the v1 shape -- X_BASE, L_BASE,
- *                       DESC_PTR and a sparse AXI space -- and TRACK DSEAM did
- *                       not change it, because that file is not this track's
- *                       and a second edit to a model nobody had asked for is
- *                       how two producers end up disagreeing quietly.
+ *   server/fk33_sim.c   reports whichever `fk33_sim_opts.version` asks for.
+ *                       DEFAULT 1, the v1 shape -- X_BASE, L_BASE, DESC_PTR
+ *                       and a sparse AXI space -- because that is what the
+ *                       84 checks of seam_selftest.c and server_e2e.py are
+ *                       written against, and changing a model underneath a
+ *                       passing suite turns it into a suite that passes for
+ *                       a different reason.  `version = 2` gets the window
+ *                       seam; T13 in seam_selftest.c drives it.
+ *
+ * UPDATED 2026-09-17.  This block previously said reconciling fk33_sim.c to
+ * v2 was "open work with no owner", and it was open for long enough to
+ * matter: the RTL had been v2 since TRACK DSEAM and, MEASURED on 2026-09-17,
+ * NOTHING ANYWHERE DROVE IT.  Not this model, not pl_backend.c (which still
+ * writes a block at X_BASE and GOes), and not the Python tooling under
+ * hw/fk33/host/ (which talks to the ENGINE at 0x12000, never to the seam).
+ * The model is now the half that exists; **pl_backend.c is still a v1 host
+ * and is the remaining half.**
  *
  * So a host must BRANCH ON THE VERSION REGISTER, not on this header.  A v2
- * card ignores the pointers and refuses a non-zero one; a v1 model ignores the
- * windows.  Reconciling `fk33_sim.c` to v2 is open work with no owner. */
+ * card ignores the pointers and refuses a non-zero one; a v1 model ignores
+ * the windows. */
 
 /* CTRL, write-only, every bit self-clearing. */
 #define FK33_CTRL_GO              (1u << 0)
@@ -527,6 +542,41 @@ typedef struct {
      * row, which is what run_prompt --check-argmax does.  The index wraps
      * into [0, n_vocab). */
     int fault_argmax_bias;
+
+    /* ------------------------------------------------------------ VERSION 2
+     * The contract version this model presents.  0 or 1 -> the v1 card the
+     * host has always been tested against: X_BASE/L_BASE/DESC_PTR in HBM, no
+     * windows, no TBL_LEN, no X_EXP.  2 -> the card `rtl/fk33_seam.vhd`
+     * ACTUALLY IS: the activation row and the descriptor program arrive
+     * through the WIN_SEL/WIN_ADDR/WIN_DATA port and no host block is fetched
+     * from HBM at all.
+     *
+     * WHY THIS IS A SWITCH RATHER THAN A REPLACEMENT.  The v1 behaviour is
+     * what server/tests/seam_selftest.c's 84 checks and server_e2e.py are
+     * written against, and silently changing the model underneath them would
+     * turn a passing suite into a suite that passes for a different reason --
+     * the exact shape this project keeps recording.  So v1 stays exactly as
+     * it was, byte for byte, and v2 is reached only by asking for it.
+     *
+     * MEASURED 2026-09-17, and it is why this exists: the RTL has been v2
+     * since TRACK DSEAM, `rtl/fk33_seam.vhd:859` reports VERSION2 and :383
+     * reports CAPS_FLAGS 0xD -- and NOTHING on the host drives it.  This
+     * model was v1-only, pl_backend.c writes HBM at X_BASE and GOes, and the
+     * Python tooling under hw/fk33/host/ talks to the ENGINE at 0x12000
+     * rather than to the seam.  A simulator that cannot present the card the
+     * bitstream implements is a simulator no v2 driver can be written
+     * against, so this is the first of the two pieces. */
+    int version;            /* 0/1 -> v1 (default), 2 -> the window seam */
+    uint32_t caps_flags;    /* 0 -> derive from `version`; else reported as-is */
+
+    /* v2 window sizes, in ENTRIES.  0 -> a default large enough for the 9B
+     * shape.  They are options rather than constants so a test can construct
+     * an overflow without allocating the real thing. */
+    int win_desc_words;     /* 32-bit halves; 0 -> 4096 */
+    int win_rel_words;      /* one per step;  0 -> 1024 */
+
+    /* v2 fault injection. */
+    int fault_win_no_incr;  /* WIN_ADDR does not auto-increment on DATA */
 } fk33_sim_opts;
 
 /* Build a default opts for the Qwen3.5-9B shape.  MEASURED shape numbers:
