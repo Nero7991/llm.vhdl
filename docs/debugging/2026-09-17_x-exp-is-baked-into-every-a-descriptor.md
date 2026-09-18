@@ -263,3 +263,68 @@ descriptors' `x_exp` is deliberately frozen at one value**, which is exactly
 what the card build does. If the frozen run diverges, the card build diverges.
 That is a host-side change to a tool that already exists, and it is Oren's run
 because it touches the card.
+
+---
+
+## THIRD ADDENDUM: the live per-job exponent already exists, and the sibling generate arm already uses it
+
+The two fixes listed at the top were written as if a live exponent source might
+not exist. **It does, it is architecture-level, and `ga_real` -- the OTHER arm
+of the same generate -- reads it per job today.**
+
+`rtl/fk33_llama_top.vhd:1202`:
+
+```vhdl
+signal exp_rd_data : signed(EXP_W-1 downto 0);
+```
+
+Declared at architecture level, before any `generate`, so it is in scope for
+**both** arms. `ga_real` (`A_DESC = false`, from :4050) latches it at job
+issue:
+
+```vhdl
+-- rtl/fk33_llama_top.vhd:4374, inside ga_real
+r_xexp <= std_logic_vector(resize(exp_rd_data, 32));
+```
+
+and hands it straight to `matvec_int4` at :4180 as `x_exp => r_xexp`.
+
+**So the arm whose identity with `llama_top` is PROVEN takes the exponent from
+the region's live exponent store, per job. The card's arm, `ga_desc` (:3702),
+takes it from a descriptor written once per model load.** Those are the two
+arms of one `if A_DESC generate`, and they disagree about the one value the
+generator calls a per-token runtime quantity.
+
+This is the same disagreement `fk33_run_layer.py`'s docstring describes from
+the host side, now visible inside a single RTL file.
+
+### What this changes about the fix
+
+The `USE_XEXP_PORT => true` shape is **cheaper than it looked**, because the
+source is not missing:
+
+1. `ga_desc` routes `exp_rd_data` out of `fk33_llama_top` as a new port;
+2. `fk33_card.vhd` wires it to `fk33_engine`'s `x_exp_in`;
+3. `fk33_engine.vhd:1309` becomes `USE_XEXP_PORT => true`.
+
+**Every one of those three files is GENERATED** (`tools/gen_cardtop.py`,
+`hw/fk33/gen_fk33_card.py`, `hw/fk33/gen_fk33_engine.py`), so all three edits
+go in the generators and `fk33_engine.vhd:1118`'s comment -- *"USE_XEXP_PORT is
+false, so this is never read"* -- is the line that has to stop being true.
+Adding a port to a block-design cell is subject to the recorded packager rules:
+`natural` is not a port type and no function of a generic may size a port, but
+`signed`/`unsigned` of a plain generic expression are accepted, MEASURED.
+
+### The one design question it raises, and it is not answered here
+
+**`ga_real` latches the exponent at job ISSUE; A on the card reads `x_exp_in`
+when it processes the descriptor, which is after the GO.** So a direct wire is
+not sufficient -- the value must be HELD stable for the duration of the job,
+which means a register in the adapter path and a statement of when it is
+sampled. Getting that edge wrong is the recorded `seq_desc_fetch` `go`
+level-vs-pulse defect in a new place: *"read the driver's stated contract, and
+where they differ take the weaker one."*
+
+**Still nothing measured.** What this addendum establishes is only that the
+fix does not need a new signal, and that the design already contains a
+per-job answer to the question the card's arm answers once per model.
