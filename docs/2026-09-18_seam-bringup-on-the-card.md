@@ -173,7 +173,19 @@ WIN_ADDR = 0
 WIN_DATA = ...           505 writes
 read WIN_ADDR            must read 505
 TBL_LEN  = 505           BAR+0xE050
+ARENA_LO = 0xFFADD000    BAR+0xE06C   hbm.desc_arena_base = 0x1_FFAD_D000
+ARENA_HI = 0x1           BAR+0xE070
+BST_LO   = 0x0C006000    BAR+0xE074   hbm.gdn_state_base  = 0x1_0C00_6000
+BST_HI   = 0x1           BAR+0xE078
 ```
+
+**The four base writes exist only in a bitstream built after `2bcd236`.** On
+the 19:04 bitstream those offsets are unimplemented and the two card inputs
+are tied to zero -- which is the defect
+`docs/debugging/2026-09-18_two-hbm-bases-were-never-connected.md` records.
+**So on the 19:04 bitstream, step 5 must NOT be run with real weights loaded:**
+a GO would have subsystem B write its recurrent state over the first weight
+tensor. Steps 1-4 are safe; they write nothing to HBM.
 
 **Read `WIN_ADDR` back after each stream.** That check costs two register reads
 and is the only thing standing between a partially-landed program and a card
@@ -221,6 +233,12 @@ and whose `FAULTS` is non-zero has not computed what it claims.
 **Settles:** subsystem D accepts a token and runs it to completion on silicon,
 which has never happened. **On this bitstream that is where it ends**: there is
 no argmax to read.
+
+**And on this bitstream do not run it with weights loaded** -- see the note
+under step 4. With HBM empty a GO is harmless and still proves D sequences;
+with the model loaded it corrupts it. On a post-`2bcd236` bitstream a GO
+with the bases unwritten is refused with `err_code 6` and the question does
+not arise.
 
 ---
 
