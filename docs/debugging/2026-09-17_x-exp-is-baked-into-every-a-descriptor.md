@@ -207,3 +207,59 @@ The reading is unchanged and the two supporting facts are now stronger:
 `A_DESC = true` against `matvec_int4_desc_axi`, which does not exist. That is
 the real gap this file found, and it is larger than the `x_exp` question:
 **the card's A path has unit coverage and no token-level coverage.**
+
+---
+
+## SECOND ADDENDUM: the path that HAS produced correct arithmetic on this silicon says the value is per-job and not knowable in advance
+
+This is the strongest evidence in the file and it is a docstring, not a
+derivation. `hw/fk33/host/fk33_run_layer.py:398-402`, `make_layer`:
+
+> """The layer's A jobs, their descriptors' inputs, and the seams each one
+> reads and writes. No card, no /dev, and **no descriptor is built yet: the
+> x_exp a descriptor carries is a property of the vector that reaches the job,
+> which in chained mode is not known until the previous job has run.**"""
+
+That is the tool behind
+`docs/debugging/2026-08-29_first-layer-in-sequence-on-silicon.md` and the
+whole-token run: 88,128 result rows compared element for element against
+`ref/run9b`, zero differ, in `chained` mode where every activation after the
+layer input is the card's own output. **It gets the right answer, and it gets
+it by building every A descriptor at run time from the exponent of the vector
+that actually arrives.**
+
+The v2 card path does the opposite by construction:
+`rtl/fk33_llama_top.vhd:751-754` says the 311 descriptors are "**DMA'd once
+per model load rather than once per token**", and `gen_layer_program.py:666`
+takes a single `--x-exp` scalar for all of them.
+
+**Two paths, opposite answers to the same question, and the one that is
+demonstrably correct on hardware is the one the card build does not use.**
+
+### What this changes and what it does not
+
+* It is **corroboration, not measurement.** No run of the `A_DESC = true` path
+  has happened. But the claim is no longer only a reading of the RTL: the
+  project's own working host tool states the requirement in its docstring and
+  satisfies it by rebuilding per job.
+* It **identifies which of the two candidate fixes matches known-good
+  behaviour.** The "host rewrites the descriptors" shape is what
+  `fk33_run_layer` already does; the `USE_XEXP_PORT => true` shape is the
+  cheaper one but needs a live per-job exponent source that the seam may not
+  expose. Neither is chosen here.
+* It **sharpens the cost objection I raised against rewriting.** I wrote that
+  rewriting 311 descriptors per token "defeats the point of writing the
+  program once". `fk33_run_layer` shows the rewrite is not the whole
+  descriptor -- only the fields that depend on the arriving vector -- and it
+  does it per JOB rather than per token, which is more work, not less. So the
+  cost objection stands and is if anything understated. That is an argument for
+  the port, not against the finding.
+
+### The one measurement that would settle it, restated
+
+Not a bench on `llama_top` -- that arm uses `matvec_int4` and cannot see this.
+**Drive `fk33_run_token.py` on hardware and compare against a run in which the
+descriptors' `x_exp` is deliberately frozen at one value**, which is exactly
+what the card build does. If the frozen run diverges, the card build diverges.
+That is a host-side change to a tool that already exists, and it is Oren's run
+because it touches the card.
