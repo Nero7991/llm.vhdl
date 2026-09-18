@@ -743,6 +743,99 @@ static void t13_v2_windows(void)
     t->close(t->ctx); free(t);
 }
 
+/* ===========================================================================
+ * T14.  pl_backend DRIVING a v2 card, which is what T13 could not test.
+ *
+ * T13 drives the seam at register level because pl_backend was a v1 host.  It
+ * is not any more, so this is the first end-to-end prefill and decode over
+ * the window protocol -- and the first thing in this repository that could
+ * drive the bitstream the card actually carries.
+ * ======================================================================== */
+static void t14_v2_backend(void)
+{
+    fk33_sim_opts s;
+    pl_open_opts o;
+    pl_ctx *c = NULL;
+    uint32_t prog[64], rel[8];
+    int32_t lexp = 0, dummy[4];
+    int argmax = -1, i, rc;
+    int ids[3] = { 11, 22, 33 };
+
+    printf("T14 pl_backend driving a v2 card, end to end\n");
+
+    for (i = 0; i < 64; i++) prog[i] = 0x1000u + (uint32_t)i;
+    for (i = 0; i < 8; i++)  rel[i] = 0x3Fu;
+
+    /* ---- a v2 card with NO program is a refusal at open, naming the tool
+     * that emits one.  A host that reached GO without it would get EC_NSTEP
+     * and have nothing to go on. */
+    small_opts(&s, &o);
+    s.version = 2;
+    CK(pl_open(&o, &c) != 0,
+       "a v2 card opened without a descriptor program");
+    CK(c == NULL, "pl_open returned a context on the failure path");
+
+    /* ---- and the bounds are checked HERE, not discovered at the first GO. */
+    small_opts(&s, &o);
+    s.version = 2;
+    o.desc_prog = prog; o.desc_words = 64;
+    o.rel_tbl = rel;    o.rel_words = 8;
+    o.tbl_len = 9;                      /* > rel_words */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0, "tbl_len past the release table was accepted");
+    o.tbl_len = 5;                      /* 5 * 16 = 80 halves > 64 */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0, "tbl_len needing more program than given was accepted");
+
+    /* ---- the working case. */
+    small_opts(&s, &o);
+    s.version = 2;
+    o.desc_prog = prog; o.desc_words = 64;
+    o.rel_tbl = rel;    o.rel_words = 8;
+    o.tbl_len = 4;                      /* 4 * 16 = 64 halves, 4 <= 8 */
+    o.max_chunk = 8;                    /* must be OVERRIDDEN to 1 */
+    c = NULL;
+    rc = pl_open(&o, &c);
+    CK(rc == 0 && c != NULL, "a complete v2 open was refused (%d)", rc);
+    if (!c) return;
+    CK(pl_version(c) == 2, "pl_version reports %d", pl_version(c));
+    CK(pl_max_chunk(c) == 1,
+       "max_chunk must be 1 on v2 -- rtl/fk33_seam.vhd:746 takes one position "
+       "per GO -- got %d", pl_max_chunk(c));
+
+    /* ---- prefill three ids.  On v1 that is one GO; on v2 it is three, and
+     * the GO counter is what proves it rather than a comment. */
+    {
+        uint64_t go0 = pl_go_count(c);
+        rc = pl_prefill(c, ids, 3, NULL, &lexp, &argmax);
+        CK(rc == 3, "v2 prefill of 3 returned %d (%s)", rc, pl_last_error_str(c));
+        CK(pl_seq_pos(c) == 3, "position %d after 3", pl_seq_pos(c));
+        CK(pl_go_count(c) - go0 == 3,
+           "a v2 prefill of 3 must be THREE GOs, not one; measured %llu",
+           (unsigned long long)(pl_go_count(c) - go0));
+        CK(argmax >= 0 && argmax < pl_n_vocab(c), "argmax %d out of range", argmax);
+    }
+
+    /* ---- decode, and the argmax must move with the token.  Without this the
+     * window could be write-only and every check above would still pass. */
+    {
+        int a1 = -1, a2 = -1;
+        CK(pl_decode(c, 7, NULL, &lexp, &a1) == 1, "v2 decode 1");
+        CK(pl_decode(c, 8, NULL, &lexp, &a2) == 1, "v2 decode 2");
+        CK(a1 != a2,
+           "TEETH: two different tokens produced the same argmax (%d).  The "
+           "row is not reaching the card's computation", a1);
+    }
+
+    /* ---- asking a v2 card for a logits ROW is an error, not a short read.
+     * rtl/fk33_seam.vhd:91-94 says the block does not return one and L_BASE
+     * is required to be 0, so there is nowhere to read it from. */
+    CK(pl_decode(c, 9, dummy, &lexp, &argmax) == -1,
+       "a v2 card handed back a logits row it does not have");
+
+    pl_close(c);
+}
+
 static void t11_file_transport(void)
 {
     fk33_transport *t;
@@ -831,6 +924,7 @@ int main(void)
     t11_file_transport();
     t12_hardware_tripwire();
     t13_v2_windows();
+    t14_v2_backend();
 
     printf("\nSEAM_SELFTEST %s  (%d checks, %d failed)\n",
            fails ? "FAIL" : "PASS", checks, fails);

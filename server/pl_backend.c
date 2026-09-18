@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <time.h>
 
 #include "pl_backend.h"
@@ -23,6 +24,8 @@ struct pl_ctx {
     uint32_t base;
 
     int n_vocab, n_embd, n_layer, max_ctx, max_chunk;
+    int version;                 /* 1 or 2, from the card's own register */
+    uint32_t caps;               /* CAPS_FLAGS, 0 on a v1 card */
     uint64_t x_base, l_base, desc_ptr;
     uint64_t x_stride, l_stride;
 
@@ -240,6 +243,90 @@ static int check_geometry(const pl_hbm_bases *b)
  * nobody checked, which is exactly the 153,664 B of logits row this whole
  * mechanism exists to stop being overwritten.  A warning that reads as
  * "checked" is how that defect survived; this is a refusal. */
+/* ------------------------------------------------------------------ loader
+ * tools/gen_layer_program.py writes one unsigned hex integer per line with no
+ * prefix.  A .dtbl line is a 64-bit word; the WIN_DESC window takes 32-bit
+ * halves low half first, so `halves` splits each line into two.  A .rel line
+ * is one 32-bit entry.
+ *
+ * Deliberately strict: a line that is not hex, or a 64-bit line in a file read
+ * as 32-bit, is a REFUSAL.  A program silently truncated at the first bad line
+ * is a card running a different program, which is the failure this whole seam
+ * version exists to make impossible to reach by accident. */
+int pl_load_hex_words(const char *path, int fmt, uint32_t **out)
+{
+    FILE *f;
+    uint32_t *v = NULL;
+    int n = 0, cap = 0, line = 0;
+    char buf[256];
+
+    if (!path || !out) return -1;
+    *out = NULL;
+    f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "pl_load_hex_words: cannot open %s\n", path);
+        return -1;
+    }
+    while (fgets(buf, sizeof buf, f)) {
+        unsigned long long w = 0;
+        char *p = buf, *end = NULL;
+        line++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\n' || *p == '\r' || *p == '\0' || *p == '#') continue;
+        errno = 0;
+        if (fmt == PL_FMT_BIN) {
+            /* A digit string, MSB first, and ONLY 0/1 -- strtoull base 2 would
+             * stop at the first other character and return a short value
+             * rather than complain, which is the silent truncation this
+             * loader exists to refuse. */
+            char *q = p;
+            int nb = 0;
+            while (*q == '0' || *q == '1') { w = (w << 1) | (unsigned)(*q - '0');
+                                             q++; nb++; }
+            if (nb == 0 || nb > 32) {
+                fprintf(stderr, "pl_load_hex_words: %s:%d is %d binary digits, "
+                                "expected 1..32\n", path, line, nb);
+                free(v); fclose(f); return -1;
+            }
+            end = q;
+        } else {
+            w = strtoull(p, &end, 16);
+            if (end == p || errno) {
+                fprintf(stderr, "pl_load_hex_words: %s:%d is not a hex word\n",
+                        path, line);
+                free(v); fclose(f); return -1;
+            }
+        }
+        while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+        if (*end != '\n' && *end != '\0') {
+            fprintf(stderr, "pl_load_hex_words: %s:%d has trailing junk\n",
+                    path, line);
+            free(v); fclose(f); return -1;
+        }
+        if (fmt != PL_FMT_HEX64 && (w >> 32)) {
+            fprintf(stderr, "pl_load_hex_words: %s:%d does not fit 32 bits.  "
+                            "Is this a .dtbl being read as 32-bit entries, or "
+                            "a .rel being read as hex?\n", path, line);
+            free(v); fclose(f); return -1;
+        }
+        if (n + 2 > cap) {
+            int nc = cap ? cap * 2 : 1024;
+            uint32_t *nv = (uint32_t *)realloc(v, (size_t)nc * sizeof *nv);
+            if (!nv) { free(v); fclose(f); return -1; }
+            v = nv; cap = nc;
+        }
+        v[n++] = (uint32_t)(w & 0xFFFFFFFFu);
+        if (fmt == PL_FMT_HEX64) v[n++] = (uint32_t)(w >> 32);
+    }
+    fclose(f);
+    if (n == 0) {
+        fprintf(stderr, "pl_load_hex_words: %s holds no words\n", path);
+        free(v); return -1;
+    }
+    *out = v;
+    return n;
+}
+
 int pl_check_bases(const pl_hbm_bases *b)
 {
     int e = check_geometry(b);
@@ -372,11 +459,14 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
         pl_close(c); return -3;
     }
     rd(c, FK33_SEAM_VERSION, &v);
-    if (v != FK33_SEAM_VERSION_1) {
-        fprintf(stderr, "pl_open: seam contract version %u, this host speaks %u\n",
-                v, FK33_SEAM_VERSION_1);
+    if (v != FK33_SEAM_VERSION_1 && v != FK33_SEAM_VERSION_2) {
+        fprintf(stderr, "pl_open: seam contract version %u, this host speaks "
+                        "%u and %u\n", v, FK33_SEAM_VERSION_1,
+                        FK33_SEAM_VERSION_2);
         pl_close(c); return -3;
     }
+    c->version = (int)v;
+    rd(c, FK33_SEAM_CAPS_FLAGS, &v); c->caps = v;
 
     rd(c, FK33_SEAM_CAPS_VOCAB, &v); c->n_vocab = (int)v;
     rd(c, FK33_SEAM_CAPS_EMBD,  &v); c->n_embd = (int)(v & 0xFFFFu);
@@ -388,6 +478,17 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
         pl_close(c); return -3;
     }
     c->max_chunk = o->max_chunk > 0 ? o->max_chunk : 512;
+    if (c->version >= 2) {
+        /* ONE POSITION PER GO.  `rtl/fk33_seam.vhd:746` refuses any other
+         * N_STEP, with a comment on the line saying so.  There is no chunked
+         * prefill on a v2 card and a caller's max_chunk cannot change that,
+         * so it is OVERRIDDEN rather than validated: a host that thinks it
+         * batches would otherwise discover it one EC_NSTEP at a time. */
+        if (o->max_chunk > 1)
+            fprintf(stderr, "[pl_backend] NOTE max_chunk %d -> 1: a v2 card "
+                            "takes one position per GO\n", o->max_chunk);
+        c->max_chunk = 1;
+    }
     c->go_timeout_ms = o->go_timeout_ms > 0 ? o->go_timeout_ms : PL_GO_TIMEOUT_MS;
 
     c->x_stride = fk33_x_stride(c->n_embd);
@@ -400,7 +501,94 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
      * that would have caught the shipped defect: x_base/l_base/desc_ptr at
      * 0x00E0000000..0x00E2000000 are 3.5 GiB, inside a weight image that ends
      * at 0x12F203000 (shipped set) or 0x10C006000 (post-drop set). */
-    {
+    if (c->version >= 2) {
+        /* ------------------------------------------------------ THE v2 SETUP
+         * NO HOST BLOCKS EXIST.  `server/fk33_seam.h` marks
+         * X_BASE/L_BASE/DESC_PTR "v3, must be 0 in v2" and
+         * `rtl/fk33_seam.vhd:752-754` returns EC_RSVD for a non-zero one, so
+         * the whole derivation below is not merely unnecessary here, it is
+         * forbidden.  What replaces it is the program, written into the
+         * windows ONCE.
+         *
+         * The caller supplies it because this file does not know the model:
+         * `tools/gen_layer_program.py --token` emits the descriptor table and
+         * the release mask, and pl_load_hex_words() reads its format.  The
+         * same argument as the embedding provider -- an interface, not an
+         * implementation. */
+        int i;
+        if (!o->desc_prog || o->desc_words <= 0 || !o->rel_tbl
+            || o->rel_words <= 0 || o->tbl_len <= 0) {
+            fprintf(stderr,
+                "pl_open: this card reports seam version 2, which has NO HBM\n"
+                "  master and therefore fetches nothing for itself.  It needs\n"
+                "  subsystem D's program handed to it through the windows, and\n"
+                "  opts.desc_prog / desc_words / rel_tbl / rel_words / tbl_len\n"
+                "  were not all given.\n"
+                "  Emit them with:\n"
+                "    python3 tools/gen_layer_program.py --token --shape 9b \\\n"
+                "        --manifest <m.json> --x-exp 0 \\\n"
+                "        --d-table token.dtbl --rel-file token.rel\n"
+                "  and load them with pl_load_hex_words(path, PL_FMT_HEX64, &p) for\n"
+                "  the .dtbl and PL_FMT_BIN for the .rel.\n");
+            pl_close(c); return -1;
+        }
+        /* The card's own bounds, checked HERE so the failure names the
+         * program rather than arriving as EC_NSTEP on the first GO.  Both
+         * come from rtl/fk33_seam.vhd:748-750 and the window generics at
+         * :204-206; they are repeated rather than read because this host
+         * cannot see the bitstream's generics. */
+        if (o->tbl_len > o->rel_words) {
+            fprintf(stderr, "pl_open: tbl_len %d descriptors but only %d "
+                            "release-mask entries\n", o->tbl_len, o->rel_words);
+            pl_close(c); return -1;
+        }
+        if (o->tbl_len * 16 > o->desc_words) {
+            /* 8 sixty-four-bit words per descriptor = 16 32-bit halves. */
+            fprintf(stderr, "pl_open: tbl_len %d descriptors needs %d 32-bit "
+                            "halves of program, got %d\n",
+                            o->tbl_len, o->tbl_len * 16, o->desc_words);
+            pl_close(c); return -1;
+        }
+        c->x_base = c->l_base = c->desc_ptr = 0;
+        if (wr64(c, FK33_SEAM_X_BASE_LO, FK33_SEAM_X_BASE_HI, 0)
+            || wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, 0)
+            || wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, 0)) {
+            pl_close(c); return -2;
+        }
+        /* The windows are written once per model, not per token. */
+        if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_DESC)
+            || wr(c, FK33_SEAM_WIN_ADDR, 0)) { pl_close(c); return -2; }
+        for (i = 0; i < o->desc_words; i++)
+            if (wr(c, FK33_SEAM_WIN_DATA, o->desc_prog[i])) {
+                pl_close(c); return -2;
+            }
+        if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_REL)
+            || wr(c, FK33_SEAM_WIN_ADDR, 0)) { pl_close(c); return -2; }
+        for (i = 0; i < o->rel_words; i++)
+            if (wr(c, FK33_SEAM_WIN_DATA, o->rel_tbl[i])) {
+                pl_close(c); return -2;
+            }
+        /* PROVE THE STREAM LANDED.  WIN_ADDR auto-increments, so reading it
+         * back is a cheap check that every write was accepted -- and a stuck
+         * address is exactly the fault that leaves a truncated program the
+         * card will happily run.  This costs two register reads. */
+        {
+            uint32_t a = 0;
+            if (rd(c, FK33_SEAM_WIN_ADDR, &a)) { pl_close(c); return -2; }
+            if (a != (uint32_t)o->rel_words) {
+                fprintf(stderr,
+                    "pl_open: after writing %d release entries the card's own\n"
+                    "  WIN_ADDR reads %u.  The window did not take the whole\n"
+                    "  table, so the program on the card is not the program\n"
+                    "  that was sent.\n", o->rel_words, a);
+                pl_close(c); return -3;
+            }
+        }
+        if (wr(c, FK33_SEAM_TBL_LEN, (uint32_t)o->tbl_len)) {
+            pl_close(c); return -2;
+        }
+        c->to_card += (uint64_t)(o->desc_words + o->rel_words) * 4u;
+    } else {
         fk33_manifest man;
         pl_hbm_bases b, want;
         uint64_t hbm_top, reserved_end = 0, kv_bpt = 0;
@@ -606,7 +794,7 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
     snprintf(c->desc, sizeof c->desc,
              "seam v%u @BAR+0x%X vocab=%d embd=%d layer=%d ctx=%d chunk=%d "
              "x_stride=%llu l_stride=%llu | %s",
-             FK33_SEAM_VERSION_1, c->base, c->n_vocab, c->n_embd, c->n_layer,
+             (unsigned)c->version, c->base, c->n_vocab, c->n_embd, c->n_layer,
              c->max_ctx, c->max_chunk,
              (unsigned long long)c->x_stride, (unsigned long long)c->l_stride,
              c->t->describe(c->t->ctx));
@@ -629,6 +817,7 @@ int pl_n_embd  (const pl_ctx *c) { return c ? c->n_embd  : 0; }
 int pl_n_layer (const pl_ctx *c) { return c ? c->n_layer : 0; }
 int pl_max_ctx (const pl_ctx *c) { return c ? c->max_ctx : 0; }
 int pl_max_chunk(const pl_ctx *c) { return c ? c->max_chunk : 0; }
+int pl_version  (const pl_ctx *c) { return c ? c->version : 0; }
 int pl_seq_pos (const pl_ctx *c) { return c ? c->next_pos : 0; }
 
 unsigned    pl_last_error(const pl_ctx *c)      { return c ? c->last_err : 0; }
@@ -676,6 +865,26 @@ static int push_x(pl_ctx *c, int k, int token_id)
     rc = c->embed(c->embed_user, token_id,
                   (int16_t *)(c->xbuf + FK33_SEAM_HDR_BYTES), c->n_embd, &exp);
     if (rc) return -5;
+    if (c->version >= 2) {
+        /* THE ROW GOES THROUGH THE WINDOW AND THE EXPONENT THROUGH A
+         * REGISTER.  No HBM block is written; `k` is always 0 because a v2
+         * card takes one position per GO.
+         *
+         * n_embd register writes per token is the cost of having no HBM
+         * master, and it is worth stating: at 4,096 for the 9B shape that is
+         * 4,096 non-posted-free MMIO writes where v1 did one DMA.  Nothing
+         * here can avoid it; the card has no other way in. */
+        const int16_t *row = (const int16_t *)(c->xbuf + FK33_SEAM_HDR_BYTES);
+        int i;
+        (void)k;
+        if (wr(c, FK33_SEAM_X_EXP, (uint32_t)exp)) return -2;
+        if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XIN)) return -2;
+        if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
+        for (i = 0; i < c->n_embd; i++)
+            if (wr(c, FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)row[i])) return -2;
+        c->to_card += (uint64_t)c->n_embd * 4u;
+        return 0;
+    }
     memcpy(c->xbuf + 0, &exp, 4);
     { uint32_t t = (uint32_t)token_id; memcpy(c->xbuf + 4, &t, 4); }
     /* bytes 8..15 stay zero: the card refuses a non-zero reserved field, and
@@ -700,9 +909,14 @@ static int run_chunk(pl_ctx *c, int n, int want_logits,
 
     if (wr(c, FK33_SEAM_SEQ_POS, (uint32_t)c->next_pos)) return -2;
     if (wr(c, FK33_SEAM_N_STEP,  (uint32_t)n)) return -2;
-    if (wr64(c, FK33_SEAM_X_BASE_LO, FK33_SEAM_X_BASE_HI, c->x_base)) return -2;
-    if (wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, c->l_base)) return -2;
-    if (wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, c->desc_ptr)) return -2;
+    if (c->version < 2) {
+        if (wr64(c, FK33_SEAM_X_BASE_LO, FK33_SEAM_X_BASE_HI, c->x_base)) return -2;
+        if (wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, c->l_base)) return -2;
+        if (wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, c->desc_ptr)) return -2;
+    }
+    /* On v2 the three pointers were written as zero once, at open, and must
+     * STAY zero: rewriting them here is how a merge would reintroduce the
+     * EC_RSVD.  They are not touched per GO on purpose. */
 
     c->gos++;
     if (wr(c, FK33_SEAM_CTRL, FK33_CTRL_GO)) return -2;
@@ -721,6 +935,22 @@ static int run_chunk(pl_ctx *c, int n, int want_logits,
         *logit_exp = (int32_t)v;
     }
 
+    if (want_logits && logits && c->version >= 2) {
+        /* THERE IS NO LOGITS ROW ON v2 AND ASKING FOR ONE IS AN ERROR RATHER
+         * THAN A SHORT READ.  `rtl/fk33_seam.vhd:91-94`: the block "returns
+         * the sampler's ARGMAX and its shared exponent.  It does NOT return
+         * 248,320 s32 logits [...] A host that needs real logits needs the
+         * DMA."  L_BASE is required to be 0, so there is nowhere to read one
+         * from; reading anyway would return whatever is at address 0, which
+         * is exactly how a plausible wrong token gets produced.
+         *
+         * The consequence for a server is real and is stated here rather than
+         * discovered: temperature, top_p and logit bias are NOT available on
+         * this bitstream.  Greedy decoding through `argmax` is. */
+        fprintf(stderr, "[pl_backend] a v2 card publishes no logits row; pass "
+                        "logits = NULL and use the argmax\n");
+        return -1;
+    }
     if (want_logits && logits) {
         size_t nb = (size_t)c->n_vocab * 4;
         if (!c->lbuf) {

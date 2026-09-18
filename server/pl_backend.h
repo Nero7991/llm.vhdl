@@ -171,6 +171,28 @@ typedef struct {
     uint64_t    hbm_reserved_end;
     uint64_t    hbm_size;         /* 0 -> the manifest's, else FK33_HBM_TOP */
 
+    /* ---------------------------------------------------- THE v2 PROGRAM
+     * Subsystem D's descriptor program and its release-mask table, which a v2
+     * card takes through the WIN_DESC and WIN_REL windows because it has no
+     * HBM master to fetch them with.  `tools/gen_layer_program.py --token`
+     * emits both; `pl_load_hex_words()` below parses its text format.
+     *
+     * REQUIRED on a v2 card and REFUSED on a v1 one, rather than ignored in
+     * either direction: a host that supplies a program to a card that fetches
+     * its own is a host confused about which card it has, and that confusion
+     * is the thing this seam's version register exists to prevent.
+     *
+     * `desc_words` counts 32-BIT HALVES, low half first.  `tbl_len` counts
+     * DESCRIPTORS including the END_TOKEN, and `rtl/fk33_seam.vhd:746-761`
+     * bounds it against the window capacity two ways -- `tbl_len <= REL_ENT`
+     * and `tbl_len * 8 <= DESC_WORDS` -- so 8 sixty-four-bit words per
+     * descriptor is not a convention here, it is the card's arithmetic. */
+    const uint32_t *desc_prog;    /* 32-bit halves, low half first */
+    int             desc_words;
+    const uint32_t *rel_tbl;      /* one entry per descriptor */
+    int             rel_words;
+    int             tbl_len;      /* descriptors, END_TOKEN included */
+
     /* The embedding provider.  NULL is an error; pass pl_embed_synthetic
      * explicitly to say you meant the nonsense one. */
     pl_embed_fn embed;
@@ -273,6 +295,39 @@ int pl_place_desc_arena(pl_hbm_bases *b, uint64_t arena_bytes);
  * which runs the geometry half and does not demand the fourth region it has
  * not placed.  Returns 0, or a FK33_SEAM_ERR_* code. */
 int pl_check_bases(const pl_hbm_bases *b);
+
+/* ---------------------------------------------------------------------------
+ * Parse `tools/gen_layer_program.py`'s text output, one value per line.
+ *
+ * THE TWO FILES ARE IN DIFFERENT NOTATIONS and it is not obvious from looking
+ * at them, which is why this takes a format rather than a flag:
+ *
+ *   .dtbl   16 HEX digits, a 64-bit descriptor word.  Yields TWO 32-bit
+ *           halves, low half first, which is the order WIN_DESC takes.
+ *   .rel    14 BINARY digits, MSB first -- `write_rel()` at
+ *           gen_layer_program.py:972 emits one character per region, and
+ *           NREGION is 14.  A line like `10000000000000` is 0x2000, not
+ *           0x10000000000000.
+ *
+ * MEASURED 2026-09-17: reading the .rel as hex is accepted by strtoull and
+ * produces values ~2^52, which pl_open would then have written into the
+ * release window as silently wrong masks.  It was caught only because this
+ * loader refuses a value that does not fit the width it was asked for.  That
+ * refusal is the reason the format is a parameter now.
+ *
+ * Returns the number of 32-bit words written to *out (malloc'd, caller frees),
+ * or negative.  This is a convenience and not part of the seam: a caller that
+ * already has the program in memory passes it straight to pl_open.
+ * ------------------------------------------------------------------------- */
+#define PL_FMT_HEX32   0   /* one 32-bit hex value per line */
+#define PL_FMT_HEX64   1   /* one 64-bit hex value -> two halves, low first */
+#define PL_FMT_BIN     2   /* a binary digit string, MSB first */
+int pl_load_hex_words(const char *path, int fmt, uint32_t **out);
+
+/* The seam contract version the open card reports, 1 or 2, or 0 if not open.
+ * A caller that must branch -- there is no chunked prefill on v2, so
+ * pl_max_chunk() is 1 there -- branches on this. */
+int pl_version(const pl_ctx *c);
 
 /* Open, read CAPS, and check them.  Returns 0, or negative.  On success
  * *out is a context the caller frees with pl_close. */

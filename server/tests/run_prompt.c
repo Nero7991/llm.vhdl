@@ -65,6 +65,7 @@
  *   run_prompt --prompt <ids.txt> [--reference <ids.txt>] [--max-new N]
  *              [--qtk <tokenizer.qtk>] [--mv4i <t.mv4i> --manifest <m.json>]
  *              [--check-argmax] [--max-chunk N] [--stop ID] [--quiet]
+ *              [--v2 --dtbl <token.dtbl> --rel <token.rel>]
  *              [--teeth-argmax N]
  *
  * An id file is whitespace-separated decimal integers; # to end of line is a
@@ -139,6 +140,7 @@ static void usage(void)
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
       "                  [--mv4i <t.mv4i> --manifest <m.json>]\n"
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
+      "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
       "                  [--teeth-argmax N]   self-test of --check-argmax\n"
       "Simulated transport only; this program never opens the card.\n");
 }
@@ -147,6 +149,9 @@ int main(int argc, char **argv)
 {
     const char *prompt_path = NULL, *ref_path = NULL, *qtk_path = NULL;
     const char *mv4i_path = NULL, *manifest_path = NULL;
+    const char *dtbl_path = NULL, *rel_path = NULL;
+    uint32_t *dprog = NULL, *drel = NULL;
+    int n_dprog = 0, n_drel = 0, want_v2 = 0;
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
     int stop_id = QWEN35_EOS, stop_given = 0;
@@ -170,6 +175,9 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--qtk"))          NEXT(qtk_path);
         else if (!strcmp(a, "--mv4i"))         NEXT(mv4i_path);
         else if (!strcmp(a, "--manifest"))     NEXT(manifest_path);
+        else if (!strcmp(a, "--dtbl"))         NEXT(dtbl_path);
+        else if (!strcmp(a, "--rel"))          NEXT(rel_path);
+        else if (!strcmp(a, "--v2"))           want_v2 = 1;
         else if (!strcmp(a, "--max-new"))    { const char *s; NEXT(s); max_new = atoi(s); }
         else if (!strcmp(a, "--max-chunk"))  { const char *s; NEXT(s); max_chunk = atoi(s); }
         else if (!strcmp(a, "--stop"))       { const char *s; NEXT(s); stop_id = atoi(s); stop_given = 1; }
@@ -211,6 +219,24 @@ int main(int argc, char **argv)
         printf("embedding  %s\n", pl_embed_mv4i_describe(emb));
     }
 
+    if (want_v2) {
+        /* THE REAL PROGRAM, from tools/gen_layer_program.py --token.  The
+         * point of driving the sim with it rather than with a synthetic one
+         * is that the SIZES are the card's: 505 descriptors is what
+         * rtl/fk33_seam.vhd:123-125 predicts and what its windows are sized
+         * for, and a program that does not fit here does not fit there. */
+        if (!dtbl_path || !rel_path) {
+            fprintf(stderr, "run_prompt: --v2 needs --dtbl and --rel\n");
+            status = 2; goto done;
+        }
+        n_dprog = pl_load_hex_words(dtbl_path, PL_FMT_HEX64, &dprog);
+        n_drel  = pl_load_hex_words(rel_path, PL_FMT_BIN, &drel);
+        if (n_dprog <= 0 || n_drel <= 0) { status = 2; goto done; }
+        printf("program    %s: %d 32-bit halves (%d descriptors of 8 64-bit "
+               "words)\n", dtbl_path, n_dprog, n_dprog / 16);
+        printf("release    %s: %d entries\n", rel_path, n_drel);
+    }
+
     fk33_sim_opts_default(&sim);
     if (teeth_bias) {
         sim.fault_argmax_bias = teeth_bias;
@@ -222,6 +248,12 @@ int main(int argc, char **argv)
     }
     pl_open_opts_default(&o);
     o.sim_opts = &sim;                 /* simulated transport; see the header */
+    if (want_v2) {
+        sim.version = 2;
+        o.desc_prog = dprog; o.desc_words = n_dprog;
+        o.rel_tbl   = drel;  o.rel_words  = n_drel;
+        o.tbl_len   = n_drel;          /* one release entry per descriptor */
+    }
     if (manifest_path) o.manifest_path = manifest_path;
     if (emb) { o.embed = pl_embed_mv4i; o.embed_user = emb; }
     if (max_chunk > 0) o.max_chunk = (uint32_t)max_chunk;
@@ -372,5 +404,6 @@ done:
     if (emb) pl_embed_mv4i_close(emb);
     if (tok) qwen35_tok_free(tok);
     free(logits); free(prompt); free(ref); free(got);
+    free(dprog); free(drel);
     return status;
 }
