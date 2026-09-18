@@ -122,6 +122,17 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 	   echo "SKIP embed_e2e: $(EMBED_MANIFEST) is not present"; exit 0; fi
 	./embed_e2e --mv4i $(EMBED_MV4I) --manifest $(EMBED_MANIFEST) --gguf $(EMBED_GGUF)
 
+# ---------------------------------------------------------------------------
+# The goal harness: a committed prompt through the real seam, its ids compared
+# against a committed reference.  Simulated transport only; see the header of
+# tests/run_prompt.c for what that does and does not prove.
+run_prompt: tests/run_prompt.c pl_backend.c fk33_transport.c fk33_sim.c \
+            fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
+            qwen35_unicode_data.c
+	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c fk33_transport.c \
+	      fk33_sim.c fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
+	      qwen35_unicode_data.c -lm
+
 # The chat-template batch driver, for server/verify_chat_template.py.  That
 # script builds it itself with --build; this rule exists so `make check` can
 # compile it under BOTH toolchains without the Python.
@@ -132,7 +143,8 @@ chat_batch: tests/chat_batch.c qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 # what a no-card CI runs.
 check:
 	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c \
-	      tests/embed_dump.c tests/embed_e2e.c tests/embed_bf16_dump.c
+	      tests/embed_dump.c tests/embed_e2e.c tests/embed_bf16_dump.c \
+	      tests/run_prompt.c
 	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c embed_mv4i.c embed_bf16.c 2>/dev/null \
 	  || echo "  (no aarch64 toolchain; the SBC-side syntax check was skipped)" 
 	$(CXX) $(CXXFLAGS) $(INC) -fsyntax-only llama_server.cpp
@@ -192,7 +204,7 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 
 clean:
 	rm -f llama_server llama_server_arm seam_selftest chat_batch \
-	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump \
+	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 

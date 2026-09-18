@@ -515,6 +515,18 @@ typedef struct {
     int fault_err_on_go;    /* set err (and NOT done) on the next GO */
     int fault_short_logits; /* write only half the logits row */
     int fault_stale_argmax; /* leave the previous step's argmax in place */
+
+    /* Add this to the argmax written to the row header AND to the register,
+     * so the two AGREE with each other and both disagree with the row's own
+     * contents.  That is the shape of a wrong per-shard base in the card's
+     * sampler (the `smp_base` accumulator makes the argmax a GLOBAL vocab
+     * index across the lm_head's 15 shards, and getting that offset wrong
+     * yields a plausible id with no fault raised anywhere).  pl_backend's
+     * header-against-register check CANNOT see it -- both copies are wrong
+     * together -- so detecting it requires recomputing the argmax from the
+     * row, which is what run_prompt --check-argmax does.  The index wraps
+     * into [0, n_vocab). */
+    int fault_argmax_bias;
 } fk33_sim_opts;
 
 /* Build a default opts for the Qwen3.5-9B shape.  MEASURED shape numbers:

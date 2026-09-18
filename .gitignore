@@ -20,6 +20,8 @@ server/chat_batch
 server/embed_dump
 server/embed_ref_oracle
 server/embed_e2e
+server/embed_bf16_dump
+server/run_prompt
 server/fk33_file_backend/
 ref/dump_luts
 ref/test_fx

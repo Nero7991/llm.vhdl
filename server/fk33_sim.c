@@ -256,6 +256,14 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
 
             if (s->o.fault_short_logits) nbytes /= 2;
 
+            /* Both copies move together; see fault_argmax_bias in fk33_seam.h. */
+            if (s->o.fault_argmax_bias) {
+                int32_t b = am + s->o.fault_argmax_bias;
+                b %= nv;
+                if (b < 0) b += nv;
+                am = b;
+            }
+
             sparse_rw(&s->mem, la + 0, &lexp, 4, 1);
             sparse_rw(&s->mem, la + 4, &am, 4, 1);
             sparse_rw(&s->mem, la + 8, &z, 8, 1);
