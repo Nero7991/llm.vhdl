@@ -205,6 +205,102 @@ check("a clear writes the key", len(ctl) == 2 and (ctl[0][1] >> 16) == fk33ctl.T
 check("a clear is edge shaped (asserted then released)",
       len(ctl) == 2 and (ctl[0][1] & 1) == 1 and ctl[1][1] == 0, str(ctl))
 
+print("--- 5. cmd_seam must not report an absent seam as a working one")
+# The v2 seam at BAR+0xE000 has no host-side presence at all before this, so
+# these are its only checks.  The vectors are constructed from
+# rtl/model_cfg_pkg.vhd's QWEN35_9B and rtl/fk33_seam.vhd's CAPS_FLAGS_V
+# (0x0000000D = WINDOWS | SAMPLER | LOGITS, set when the sampler was enabled
+# in e62fded), not from cmd_seam's own notion of them.
+SEAM_VECTORS = {
+    fk33ctl.SEAM_ID:         fk33ctl.SEAM_ID_MAGIC,
+    fk33ctl.SEAM_VERSION:    2,
+    fk33ctl.SEAM_CAPS_VOCAB: 248320,
+    fk33ctl.SEAM_CAPS_EMBD:  (32 << 16) | 4096,
+    fk33ctl.SEAM_CAPS_CTX:   4096,
+    fk33ctl.SEAM_CAPS_FLAGS: 0x0000000D,
+}
+
+
+def seam_out(vals):
+    fake = FakeMmio()
+    fake.rd = lambda off: vals.get(off, 0)
+    buf = io.StringIO()
+    with mock.patch.object(fk33ctl, "Mmio", lambda *a, **k: fake), \
+         mock.patch.object(fake, "close", lambda: None, create=True), \
+         mock.patch("sys.stdout", buf):
+        rc = fk33ctl.cmd_seam(type("A", (), {})())
+    return buf.getvalue(), rc, fake
+
+
+outq, rcq, fakeq = seam_out(SEAM_VECTORS)
+check("a healthy seam is OK", "SEAM OK" in outq and rcq == 0, outq)
+check("the 9B shape is decoded", "n_vocab 248320" in outq
+      and "n_embd 4096" in outq and "n_layer 32" in outq, outq)
+check("the sampler capability is read out of the flags",
+      "yes  SAMPLER" in outq, outq)
+check("and HBM_FETCH, which this build does NOT have, reads as no",
+      " no  HBM_FETCH" in outq, outq)
+# It must be THE fake cmd_seam actually drove, not a fresh one: a fresh
+# FakeMmio has no writes by construction and the row could never fail.
+check("cmd_seam writes NOTHING", fakeq.writes == [], str(fakeq.writes))
+
+# The two dead-bus words.  Neither may be mistaken for a pass, and neither may
+# be mistaken for the OTHER problem: a real answer that is not the magic.
+for dead in (0x00000000, 0xFFFFFFFF):
+    o, rc, _ = seam_out({fk33ctl.SEAM_ID: dead})
+    check(f"seam id 0x{dead:08x} is a dead bus and fails",
+          "SEAM OK" not in o and rc == 1, o)
+    check(f"seam id 0x{dead:08x} is NOT called a wrong bitstream",
+          "decoded somewhere else" not in o, o)
+# An ENGINE-ONLY bitstream answers the engine's magic here, which is a real
+# answer and a different diagnosis from a dead bus.
+o, rc, _ = seam_out({fk33ctl.SEAM_ID: 0x464B3333})
+check("a real non-magic answer says the seam is not in this bitstream",
+      "decoded somewhere else" in o and rc == 1, o)
+
+# A seam that answers its ID and claims nothing is a tie-off.  This is the
+# shape gen_pcieep.py's D-presence guard was fooled by in 3a145fd, where a
+# COMMENT satisfied the check, so it gets its own row.
+_tie = dict(SEAM_VECTORS)
+_tie[fk33ctl.SEAM_CAPS_FLAGS] = 0
+o, rc, _ = seam_out(_tie)
+check("a seam claiming no capabilities is called a tie-off",
+      "tie-off" in o and rc == 1, o)
+
+# A wrong shape must be named, not averaged into a pass.
+_wrong = dict(SEAM_VECTORS)
+_wrong[fk33ctl.SEAM_CAPS_VOCAB] = 151936        # the shipped Qwen3 tokenizer's
+o, rc, _ = seam_out(_wrong)
+check("a vocabulary that is not 248320 is a MISMATCH",
+      "MISMATCH n_vocab" in o and rc == 1, o)
+
+# A sticky fault bit must fail even when everything else is healthy.
+_flt = dict(SEAM_VECTORS)
+_flt[fk33ctl.SEAM_FAULTS] = 1 << 0              # SMP_OVF
+o, rc, _ = seam_out(_flt)
+check("a sticky SMP_OVF fault fails the check", "SMP_OVF" in o and rc == 1, o)
+
+# THE DRIFT CHECK'S TEETH.  Two copies of the register map exist (this file's
+# constants and server/fk33_seam.h) and the whole point of the comparison is
+# that it FIRES when they disagree.  A checker never shown to fail has not
+# been shown to work, so move one offset and require it to be caught.
+check("with the real header the offsets agree",
+      "offsets agree with" in outq, outq)
+_real_argmax = fk33ctl.SEAM_ARGMAX
+try:
+    fk33ctl.SEAM_ARGMAX = fk33ctl.SEAM_BASE + 0x48      # LOGIT_EXP's offset
+    od, rcd, _ = seam_out(SEAM_VECTORS)
+    check("a drifted offset is CAUGHT",
+          "DRIFT FK33_SEAM_ARGMAX" in od and rcd == 1, od)
+finally:
+    fk33ctl.SEAM_ARGMAX = _real_argmax
+# And the header being unreachable is reported as "not checked", never as a
+# pass: a comparison that did not run is not a comparison that agreed.
+with mock.patch.object(fk33ctl, "seam_header_offsets", lambda *a, **k: {}):
+    oh, rch, _ = seam_out(SEAM_VECTORS)
+check("an unreachable header says NOT cross-checked, and still passes",
+      "NOT cross-checked" in oh and rch == 0, oh)
+
 print()
 if FAILS:
     print(f"FK33CTL_TESTS FAIL ({len(FAILS)})")

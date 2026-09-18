@@ -35,6 +35,7 @@ Nothing here needs root once the udev rule from build_xdma_driver.sh is in
 place.
 """
 import argparse
+import re
 import hashlib
 import os
 import struct
@@ -70,6 +71,42 @@ THERM_TRIP   = 0xC008
 THERM_CTL    = 0xD000             # write; [31:16] must be the key
 THERM_CANARY = 0xD008
 THERM_KEY    = 0xC1EA
+# ---------------------------------------------------------------- the v2 seam
+# rtl/fk33_seam.vhd's AXI-Lite slave, the host-card contract for whole-token
+# inference.  The authority for these offsets is server/fk33_seam.h and they
+# are repeated here rather than shared because that header is C and this file
+# deliberately imports nothing; `seam` below CROSS-CHECKS itself against the
+# header at run time, so a drift is reported rather than silently tolerated.
+SEAM_BASE       = 0xE000
+SEAM_ID         = SEAM_BASE + 0x00
+SEAM_VERSION    = SEAM_BASE + 0x04
+SEAM_CAPS_VOCAB = SEAM_BASE + 0x08
+SEAM_CAPS_EMBD  = SEAM_BASE + 0x0C      # [15:0] n_embd  [31:16] n_layer
+SEAM_CAPS_CTX   = SEAM_BASE + 0x10
+SEAM_STATUS     = SEAM_BASE + 0x18
+SEAM_ERR_INFO   = SEAM_BASE + 0x1C
+SEAM_SEQ_POS    = SEAM_BASE + 0x20
+SEAM_CYCLES     = SEAM_BASE + 0x40
+SEAM_ARGMAX     = SEAM_BASE + 0x44
+SEAM_LOGIT_EXP  = SEAM_BASE + 0x48
+SEAM_CAPS_FLAGS = SEAM_BASE + 0x4C
+SEAM_TBL_LEN    = SEAM_BASE + 0x50
+SEAM_SMP_N      = SEAM_BASE + 0x64
+SEAM_FAULTS     = SEAM_BASE + 0x68
+SEAM_ID_MAGIC   = 0x4C4C4D32            # "LLM2"
+SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
+            (1 << 1, "HBM_FETCH the card fetches its own D program"),
+            (1 << 2, "SAMPLER   the card computes a running argmax"),
+            (1 << 3, "LOGITS    the card writes the full logits row"))
+SEAM_FAULT = ((1 << 0, "SMP_OVF    the logits FIFO lost beats"),
+              (1 << 1, "LOST_BEAT  an unstallable producer beat was dropped"),
+              (1 << 2, "GATE_DROP  the region lock refused a write"),
+              (1 << 3, "UNIT_STUB  a STUB unit produced a result"),
+              (1 << 4, "E_COLL     OP_E_COLL issued at NCARDS=1"),
+              (1 << 5, "KV         attn_kv_axi's sticky error"))
+SEAM_ERR = {0: "NONE", 1: "POS", 2: "NSTEP", 3: "ALIGN", 4: "STACK",
+            5: "RSVD", 6: "DESC", 7: "HALT", 8: "SEQ"}
+
 THERM_CAUSE = {
     0: "none",
     1: "SYSMON over-temperature alarm (the armed 101 C backstop)",
@@ -416,6 +453,156 @@ def cmd_id(a):
     return 0 if magic == ID_MAGIC else 1
 
 
+def seam_header_offsets(path=None):
+    """The offsets server/fk33_seam.h declares, so `seam` can prove it agrees
+    with the C half rather than assuming it.  Two copies of a register map that
+    nothing compares are two copies that will drift; this is the comparison.
+    Returns {} when the header is not reachable, which is not a failure -- this
+    tool must work from a directory that has no repository around it."""
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "..", "server", "fk33_seam.h")
+    try:
+        txt = open(path).read()
+    except OSError:
+        return {}
+    out = {}
+    for m in re.finditer(r"^#define\s+(FK33_SEAM_[A-Z0-9_]+)\s+"
+                         r"(0x[0-9A-Fa-f]+)u?\s", txt, re.M):
+        out[m.group(1)] = int(m.group(2), 16)
+    return out
+
+
+def cmd_seam(a):
+    """Read the v2 seam and say whether the card can be driven at all.
+
+    This is the FIRST thing to run on a freshly loaded card build.  Like
+    `id`, the single ID read settles a great deal at once -- but unlike `id` it
+    settles it about the SEAM: that rtl/fk33_seam.vhd is present in this
+    bitstream, that it is decoded at 0xE000, and that its AXI-Lite clock and
+    reset are alive.  0xFFFFFFFF and 0x00000000 are both dead-bus words and
+    neither can be mistaken for a pass.
+
+    It writes NOTHING.  Every register read here is R or RW-read, so this is
+    safe to run against a card mid-job; the counters it prints are simply the
+    last job's.
+    """
+    m = Mmio()
+    bad = 0
+    ident = m.rd(SEAM_ID)
+    print(f"seam id    0x{ident:08x}   expected 0x{SEAM_ID_MAGIC:08x} "
+          f"(\"LLM2\") at BAR+0x{SEAM_BASE:04X}")
+    if ident != SEAM_ID_MAGIC:
+        print("  " + describe_dead_word(ident).replace("\n", "\n  "))
+        if ident not in (0, 0xFFFFFFFF):
+            print("  A real answer that is not the magic means the seam is NOT "
+                  "in this\n  bitstream, or is decoded somewhere else.  An "
+                  "engine-only build reads\n  as a dead word here, which is "
+                  "correct: it has no seam.")
+        m.close()
+        return 1
+
+    ver   = m.rd(SEAM_VERSION)
+    vocab = m.rd(SEAM_CAPS_VOCAB)
+    embd  = m.rd(SEAM_CAPS_EMBD)
+    ctx   = m.rd(SEAM_CAPS_CTX)
+    flags = m.rd(SEAM_CAPS_FLAGS)
+    print(f"version    {ver}")
+    print(f"caps       n_vocab {vocab}  n_embd {embd & 0xFFFF}  "
+          f"n_layer {(embd >> 16) & 0xFFFF}  ctx {ctx} tokens")
+    # rtl/model_cfg_pkg.vhd's QWEN35_9B.  A mismatch here is not cosmetic: the
+    # host derives x_stride and l_stride from these and would address the
+    # wrong rows.  The audit flags n_vocab as UNVERIFIED, so it is COMPARED
+    # and reported rather than asserted.
+    want = (("n_vocab", vocab, 248320), ("n_embd", embd & 0xFFFF, 4096),
+            ("n_layer", (embd >> 16) & 0xFFFF, 32))
+    for nm, got, exp in want:
+        if got != exp:
+            print(f"  MISMATCH {nm} reads {got}, rtl/model_cfg_pkg.vhd's "
+                  f"QWEN35_9B says {exp}")
+            bad += 1
+    if ctx == 0:
+        print("  MISMATCH ctx is 0: the card claims no KV capacity at all")
+        bad += 1
+
+    print(f"cap flags  0x{flags:08x}")
+    for bit, what in SEAM_CAP:
+        print(f"  {'yes' if flags & bit else ' no'}  {what}")
+    if not flags:
+        print("  NO capabilities at all.  A seam that answers its ID and "
+              "claims nothing is\n  a tie-off, not an engine.")
+        bad += 1
+
+    st = m.rd(SEAM_STATUS)
+    ec = (st >> 8) & 0xF
+    print(f"status     0x{st:08x}  done={st & 1} busy={(st >> 1) & 1} "
+          f"err={(st >> 2) & 1} err_code={ec} ({SEAM_ERR.get(ec, '?')})")
+    if st & (1 << 2):
+        print(f"  ERR is STICKY from a previous job.  ERR_INFO=0x"
+              f"{m.rd(SEAM_ERR_INFO):08x}")
+    if st & (1 << 1):
+        print("  BUSY: a job is in flight right now, so the counters below "
+              "are mid-job.")
+
+    faults = m.rd(SEAM_FAULTS)
+    print(f"faults     0x{faults:08x}" + ("  (none)" if not faults else ""))
+    for bit, what in SEAM_FAULT:
+        if faults & bit:
+            print(f"  SET  {what}")
+            bad += 1
+
+    print(f"last job   seq_pos {m.rd(SEAM_SEQ_POS)}  cycles "
+          f"{m.rd(SEAM_CYCLES)}  argmax {m.rd(SEAM_ARGMAX)}  "
+          f"logit_exp {m.rd(SEAM_LOGIT_EXP)}")
+    print(f"           tbl_len {m.rd(SEAM_TBL_LEN)}  smp_n {m.rd(SEAM_SMP_N)}")
+
+    # Two copies of a register map, compared.  See seam_header_offsets.
+    hdr = seam_header_offsets()
+    if not hdr:
+        print("drift      server/fk33_seam.h not reachable from here; the "
+              "offsets above were\n           NOT cross-checked")
+    else:
+        mine = {"FK33_SEAM_ID": SEAM_ID, "FK33_SEAM_VERSION": SEAM_VERSION,
+                "FK33_SEAM_CAPS_VOCAB": SEAM_CAPS_VOCAB,
+                "FK33_SEAM_CAPS_EMBD": SEAM_CAPS_EMBD,
+                "FK33_SEAM_CAPS_CTX": SEAM_CAPS_CTX,
+                "FK33_SEAM_STATUS": SEAM_STATUS,
+                "FK33_SEAM_ERR_INFO": SEAM_ERR_INFO,
+                "FK33_SEAM_SEQ_POS": SEAM_SEQ_POS,
+                "FK33_SEAM_CYCLES": SEAM_CYCLES,
+                "FK33_SEAM_ARGMAX": SEAM_ARGMAX,
+                "FK33_SEAM_LOGIT_EXP": SEAM_LOGIT_EXP,
+                "FK33_SEAM_CAPS_FLAGS": SEAM_CAPS_FLAGS,
+                "FK33_SEAM_TBL_LEN": SEAM_TBL_LEN,
+                "FK33_SEAM_SMP_N": SEAM_SMP_N,
+                "FK33_SEAM_FAULTS": SEAM_FAULTS}
+        drift = [(k, v - SEAM_BASE, hdr[k]) for k, v in sorted(mine.items())
+                 if k in hdr and v - SEAM_BASE != hdr[k]]
+        miss = [k for k in mine if k not in hdr]
+        if drift or miss:
+            for k, got, exp in drift:
+                print(f"  DRIFT {k}: this file 0x{got:02X}, "
+                      f"server/fk33_seam.h 0x{exp:02X}")
+            for k in miss:
+                print(f"  DRIFT {k} is not in server/fk33_seam.h at all")
+            bad += 1
+        else:
+            print(f"drift      {len(mine)} offsets agree with "
+                  f"server/fk33_seam.h")
+
+    m.close()
+    if bad:
+        print(f"\nSEAM {bad} problem(s) above.  The ID read PASSED, so the "
+              "path is good and\nthe card is answering; what is wrong is what "
+              "it answers.")
+        return 1
+    print("\nSEAM OK -- the seam is present, decoded, claims a usable shape, "
+          "and reports\nno sticky fault.  That is the whole of what a "
+          "read-only check can settle: it\nsays NOTHING about whether a job "
+          "computes correctly.")
+    return 0
+
+
 def cmd_scratch(a):
     """Prove MMIO WRITES land.  SYSMON and the id register are both read-only."""
     m = Mmio()
@@ -651,6 +838,8 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("id").set_defaults(fn=cmd_id)
+    sub.add_parser("seam", help="read the v2 inference seam at BAR+0xE000; "
+                                "writes nothing").set_defaults(fn=cmd_seam)
     sub.add_parser("scratch").set_defaults(fn=cmd_scratch)
     sub.add_parser("sysmon").set_defaults(fn=cmd_sysmon)
     sub.add_parser("gpio").set_defaults(fn=cmd_gpio)
