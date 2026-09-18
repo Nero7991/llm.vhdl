@@ -11,6 +11,50 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 11:28: A BITSTREAM WITH THE SAMPLER, BOTH HBM BASES WIRED, AND THE K CACHE OUT OF THE GDN ARENA
+
+**`hw/fk33/bit/fk33_card_smp_bases_75mhz_2026-09-18.bit`**, 24,880,718 B,
+sha256 `a8db5c2b...`. `FK33_BUILD_DONE`, 0 errors, **routed legally** (node
+overlaps converged to 0, no `[Route 35-2]`), **`FK33_TIMING WNS=+0.061 ns
+WHS=+0.009 ns`** from the build's own sentinel, 0 of 1,412,614 endpoints
+failing. Reports and the full log in
+`hw/fk33/results/card_smp_bases_2026-09-18/`.
+
+| routed | 2026-09-17 19:04 (no sampler) | **this** |
+|---|---|---|
+| CLB LUTs | 336,326 (76.49%) | **342,479 (77.89%)** |
+| CLB Registers | 304,036 | 306,570 |
+| BRAM / URAM / DSP | 449.5 / 32 / 2121 | 449.5 / 32 / 2121 |
+| WNS | +0.009 | **+0.061** |
+| strategy | Performance_RefinePlacement | **Congestion_SpreadLogic_high** |
+
+Same-stage, same-tree comparison (both routed, both `report_utilization` after
+`write_bitstream`, mtime checked). The sampler and the seam registers cost
+**+6,153 LUT / +2,534 FF**; BRAM, URAM and DSP are identical.
+
+**What it carries that 19:04 did not:** `SMP_EN=true` with `CAPS_FLAGS=0xD`
+(`e62fded`); `a_arena_base` and `bst_state_base` driven from seam registers
+`0x6C..0x78`, with a GO refused while either is zero (`2bcd236`); C's K/V
+cache moved 1,179,648 B up, out of the correctly sized GDN arena (`2bcd236`);
+and the `FK33_UNCONNECTED` build check, which printed `count=0` inside this
+run. **This is the first `FK33_CARD=1` build with no `[BD 41-759]` in its
+log.**
+
+**What it does NOT carry, stated:** the baked `x_exp`
+(`docs/debugging/2026-09-17_x-exp-is-baked-into-every-a-descriptor.md`),
+still an open design question; and no whole-token bench covers the
+`A_DESC = true` arm this bitstream implements.
+
+**The congestion question is answered by this run and not by a controlled
+experiment.** Two variables changed against the failed build: the strategy,
+and the bases/K-V. It routed. The clean control (19:04 sources under this
+strategy) was not run, so "the strategy fixed it" is the likely reading and
+not a measured one.
+
+**Bring-up:** `docs/2026-09-18_seam-bringup-on-the-card.md`, steps 1 onward,
+now including the base registers in step 4 and the argmax read in step 8.
+Card work is Oren's.
+
 ### 2026-09-17 22:00: THE HOST CAN NOW SPEAK THE SEAM THE BITSTREAM CARRIES, AND TWO BLOCKERS SURFACED ON THE WAY
 
 **The finding that reordered the evening.** Looking for what would drive the
