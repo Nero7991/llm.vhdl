@@ -373,6 +373,12 @@ architecture sim of tb_gdn_block is
   -- Which layer the DUT is running.  Held for the whole invocation by the
   -- driver, and it is what qualifies every memory access below.
   signal cur_lay : integer range 0 to NLAYER-1 := 0;
+  -- The DUT's `layer` is `range 0 to LAYERS-1` (one more than NLAYER, see
+  -- the generic).  GHDL 6.0.0 refuses to associate `cur_lay` directly
+  -- ("range of formal `layer` is different from formal range", 2026-09-19),
+  -- so this copy carries it in the DUT's subtype; `cur_lay` keeps its
+  -- tighter range as the bench's own check.
+  signal cur_lay_dut : integer range 0 to LAYERS-1 := 0;
   -- Pulsed by the driver between the two phases: puts both memories back to
   -- the state phase A started from, for EVERY layer.
   signal mem_rst : std_logic := '0';
@@ -429,7 +435,7 @@ begin
                   ISSUE_GAP => ISSUE_GAP, HEAD_GAP => HEAD_GAP,
                   STRICT_PRODUCER => STRICT )
     port map ( clk => clk, rst => rst,
-               start => blk_start, layer => cur_lay, tk0 => tk0,
+               start => blk_start, layer => cur_lay_dut, tk0 => tk0,
                busy => busy,
                seq_rst => seq_rst,
                cap_req => cap_req, cap_layer => cap_layer, cap_seg => cap_seg,
@@ -457,6 +463,8 @@ begin
                err_conv => err_conv, err_g => err_g, err_se => err_se,
                y_sat => y_sat,
                dbg_col_ready => dbg_col_ready, dbg_col_drop => dbg_col_drop );
+  cur_lay_dut <= cur_lay;
+
 
   -- ======================= memory models ================================
 

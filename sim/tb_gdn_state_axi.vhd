@@ -78,11 +78,16 @@ architecture sim of tb_gdn_state_axi is
   signal busy, dn, er : std_logic;
 
   -- DUT <-> store, in the store's own (head, col, grp) shape
+  -- Subtypes MATCH the DUT's m_* ports (GHDL 6.0.0, see s_* below).
   signal d_we   : std_logic;
-  signal d_wh, d_wc, d_wg : natural;
+  signal d_wh   : natural range 0 to VAL_HEADS-1;
+  signal d_wc   : natural range 0 to DIM-1;
+  signal d_wg   : natural range 0 to DIM/RECUR_LANES-1;
   signal d_wd   : std_logic_vector(WBITS-1 downto 0);
   signal d_re   : std_logic;
-  signal d_rh, d_rc, d_rg : natural;
+  signal d_rh   : natural range 0 to VAL_HEADS-1;
+  signal d_rc   : natural range 0 to DIM-1;
+  signal d_rg   : natural range 0 to DIM/RECUR_LANES-1;
   signal d_rd   : std_logic_vector(WBITS-1 downto 0);
 
   -- bench <-> store (the second port, used only when the DUT is idle).  The
@@ -97,10 +102,17 @@ architecture sim of tb_gdn_state_axi is
 
   -- muxed store ports
   signal s_we : std_logic;
-  signal s_wh, s_wc, s_wg : natural;
+  -- Subtypes MATCH gdn_state_mem's ports: GHDL 6.0.0 refuses a scalar port
+  -- association whose actual and formal ranges differ ("range of formal
+  -- `r_head` is different from formal range", 2026-09-19); GHDL 1.0.0 did not.
+  signal s_wh : natural range 0 to VAL_HEADS-1;
+  signal s_wc : natural range 0 to DIM-1;
+  signal s_wg : natural range 0 to DIM/RECUR_LANES-1;
   signal s_wd : std_logic_vector(WBITS-1 downto 0);
   signal s_re : std_logic;
-  signal s_rh, s_rc, s_rg : natural;
+  signal s_rh : natural range 0 to VAL_HEADS-1;
+  signal s_rc : natural range 0 to DIM-1;
+  signal s_rg : natural range 0 to DIM/RECUR_LANES-1;
   signal s_rd : std_logic_vector(WBITS-1 downto 0);
 
   -- AXI

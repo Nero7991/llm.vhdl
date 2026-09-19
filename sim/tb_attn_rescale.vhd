@@ -151,7 +151,12 @@ architecture tb of tb_attn_rescale is
   -- rather than assumed distinct.
   function poison(j : integer) return signed is
   begin
-    return to_signed(-(2**(ACC_W-2)) + 12345 + j*7919, ACC_W);
+    -- Not `2**(ACC_W-2)`: at ACC_W = 36 that is 2**34, which overflows the
+    -- 32-bit `integer` GHDL 6.0.0 evaluates it in ("arithmetic overflow in
+    -- static expression", then a bound check failure, 2026-09-19).  Same
+    -- value, built in ACC_W bits.
+    return to_signed(12345 + j*7919, ACC_W)
+         - shift_left(to_signed(1, ACC_W), ACC_W-2);
   end function;
 
 begin
