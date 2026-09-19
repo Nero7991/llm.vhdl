@@ -11,6 +11,47 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-19 00:20: THE LAST STAND-IN IS GONE AT THE SIM SHAPE. FULL GATE 145 PASS. THE CONSTANTS BUILD IS ARMED BEHIND THE ROUTER.
+
+- **Track F (`3fdfe8f`, `d93a745`, merged)**: `C_QKN_IMAGE` on `llama_top`,
+  the model's PER-LAYER `attn_q_norm`/`attn_k_norm` gains (8 layers x 2 x
+  256 at 9B, `hw/fk33/gen/qkn_9b.hex`; `C_QKN_EXP` stays 12, largest
+  mantissa 11,968 MEASURED) selected by the C job's layer, pinned two-sided
+  to `2 * n_attn_blocks` at elaboration. MEASURED at the sim shape:
+  `R_Y-3` bit for bit at tokens 0/1/2 with the image model, and the ramp
+  model FAILS the same capture at 8/63/64 of 64 mantissas; at 2 attention
+  layers, 6 of 6 with the image and 0 of 6 for each of ramp / layers
+  swapped / q-k swapped. Rows `sim:qknimage`, `sim:tb_llama_top_qkn`,
+  `sim:seamgate_qkn`. Empty default leaves `tb_llama_top_real`'s four
+  landmarks unmoved. Card generics now carry `C_QKN_IMAGE`.
+  **So every learned constant the design consumes is now the model's**, at
+  least where a bench can see it: A's weights (descriptors), the D-vec norm
+  gains (image), B's taps/alpha/beta (regions), B's conv weights/dt/a/ssm
+  norm (HBM `gdn_const`), C's QK-norm gains (image).
+- **Gate rows for B** (`252b4f6` `220d3b7` `4e14b4c`): `sim:gdnconst`,
+  `sim:constimage`, `sim:tb_llama_top_bconst`, `sim:seamgate_bconst` (9 of
+  9 R_Y, floor 61 + RY_FLOOR 9; control 0 of 9). The capture file list had
+  been missing `gdn_conv_w_mem.vhd` since `e212f04`, which had turned
+  `seamgate_{real,stub,seq}` red unheard; fixed there.
+- **Full gate at `1abb514`, `--jobs 1`, MEASURED: 145 PASS, 2 FAIL**, both
+  `--check` rows stale from track D's own edits (`sim:gdnstale`:
+  `rtl/ooc_gdnadapt_top.vhd` is extracted from `gb_real`; `sim:cardtop`:
+  `tb_fk33_cardtop_ident.vhd` is derived from `tb_llama_top.vhd` by
+  `gen_cardtop.py --bench`). Regenerated in `3b61938`/`907918a`; both read
+  OK. The generator-input trap in CLAUDE.md, again, and again caught only
+  by the `--check` rows. `BASELINE_PASS` stays 130 (this tree carries 22
+  rows a clean checkout does not get).
+- **Memory incident avoided**: the 9B-geometry store bench sat at its 8 GB
+  cap beside the 15 GB router and swap went 7 -> 15 GB in an hour; stopped
+  by PID (`/proc/PID/exe`), swap back to 7 GB at once. Its appetite is
+  > 8 GB and UNKNOWN (a capped `memory.peak` is the cap); rerun when the
+  box is quiet. The reference `llama-server` on 8140 is stopped.
+- **The constants build is armed** (`$SD/build5/arm.sh`): chained on the
+  maxpos build's own `FK33_BUILD_DONE`, then a `/proc/PID/exe` presence
+  check, then `const-build.service` at `MemoryHigh=20G`, same recipe. It
+  takes the tree at launch, i.e. HEAD `907918a` with all of the above.
+  BD validated on the BC-250 with the new seam wire.
+
 ### 2026-09-18 23:00: THE B CONSTANTS PATH IS IN THE TREE. AT THE SIM SHAPE, B NOW COMPUTES THE MODEL'S ARITHMETIC: 9 OF 9 R_Y SEAMS OVER 3 TOKENS, BIT FOR BIT, WITH BOTH CONTROLS AT 0 OF 9
 
 Four tracks plus the dispatcher's, all landed between 22:00 and 23:00
