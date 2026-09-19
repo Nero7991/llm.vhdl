@@ -219,6 +219,7 @@ architecture tb of tb_fk33_seam is
   signal s_tbl_len : unsigned(STEP_W-1 downto 0);
   signal s_a_arena  : std_logic_vector(39 downto 0);
   signal s_bst_base : std_logic_vector(32 downto 0);
+  signal s_bcb_base : std_logic_vector(32 downto 0);
   signal s_x_exp   : signed(EXP_W-1 downto 0);
   signal s_rel     : std_logic_vector(NREGION-1 downto 0);
   signal s_busy, s_tok_done, s_err : std_logic;
@@ -300,6 +301,8 @@ architecture tb of tb_fk33_seam is
   constant A_ARENA_HI : natural := 16#70#;
   constant A_BST_LO   : natural := 16#74#;
   constant A_BST_HI   : natural := 16#78#;
+  constant A_BCB_LO   : natural := 16#84#;
+  constant A_BCB_HI   : natural := 16#88#;
   constant A_WIN_SEL  : natural := 16#58#;
   constant A_WIN_ADDR : natural := 16#5C#;
   constant A_WIN_DATA : natural := 16#60#;
@@ -447,6 +450,7 @@ begin
       d_go => s_go, d_abort => s_abort, d_tbl_len => s_tbl_len,
       d_host_x_exp => s_x_exp, d_rel_mask => s_rel, d_tok_ack => s_tok_ack,
       d_a_arena => s_a_arena, d_bst_base => s_bst_base,
+      d_bcb_base => s_bcb_base,
       d_busy => s_busy, d_tok_done => s_tok_done, d_err => s_err,
       d_err_code => s_err_code, d_err_step => s_err_step,
       d_steps_done => s_steps_done,
@@ -554,6 +558,11 @@ begin
     variable nwait  : natural;
     variable x0     : integer := 0;
     variable nfail  : natural;
+    -- P6e's counters, VARIABLES for the reason bad_d gives above.  n_chk_bcb
+    -- counts every comparison made, so a check that did not run is visible
+    -- as a count that does not match the number written below (9).
+    variable n_chk_bcb : natural := 0;
+    variable n_bad_bcb : natural := 0;
   begin
     report "tb_fk33_seam: shape blocks=" & integer'image(SHAPE.blocks)
          & " hidden=" & integer'image(SHAPE.hidden)
@@ -746,6 +755,82 @@ begin
       report "tb_fk33_seam: the HBM bases did not read back or did not reach "
            & "d_a_arena / d_bst_base" severity error;
     end if;
+
+    -- ==================================================================
+    -- P6e: THE B CONSTANTS BASE, A_BCB_LO/HI (0x84/0x88) -> d_bcb_base.
+    -- Added 2026-09-18, docs/2026-09-18_b-constants-path.md.  Nine checks:
+    -- reset value on the port and both registers (3), write LO then HI and
+    -- read both back (2), the port follows the register in both fields (2),
+    -- HI keeps only bit 0 of what was written (1), and the BST register is
+    -- untouched by a BCB write, i.e. the decode is distinct (1).
+    -- ==================================================================
+    axi_r(A_BCB_LO, d);
+    n_chk_bcb := n_chk_bcb + 1;
+    if d /= x"00000000" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: A_BCB_LO reads non-zero before any write"
+        severity error;
+    end if;
+    axi_r(A_BCB_HI, d);
+    n_chk_bcb := n_chk_bcb + 1;
+    if d /= x"00000000" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: A_BCB_HI reads non-zero before any write"
+        severity error;
+    end if;
+    n_chk_bcb := n_chk_bcb + 1;
+    if unsigned(s_bcb_base) /= 0 then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: d_bcb_base is non-zero before any write"
+        severity error;
+    end if;
+    axi_w(A_BCB_LO, x"0DA2C000");      -- a plausible hbm.gdn_const_base
+    axi_w(A_BCB_HI, x"FFFFFFFF");      -- every bit set: only bit 0 may land
+    axi_r(A_BCB_LO, d);
+    n_chk_bcb := n_chk_bcb + 1;
+    if d /= x"0DA2C000" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: A_BCB_LO did not read back what was written"
+        severity error;
+    end if;
+    axi_r(A_BCB_HI, d);
+    n_chk_bcb := n_chk_bcb + 1;
+    if d /= x"00000001" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: A_BCB_HI read back "
+           & integer'image(to_integer(unsigned(d)))
+           & ", expected 1 (only bit 0 is implemented)" severity error;
+    end if;
+    n_chk_bcb := n_chk_bcb + 1;
+    if s_bcb_base(31 downto 0) /= x"0DA2C000" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: d_bcb_base[31:0] does not follow A_BCB_LO"
+        severity error;
+    end if;
+    n_chk_bcb := n_chk_bcb + 1;
+    if s_bcb_base(32) /= '1' then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: d_bcb_base[32] does not follow A_BCB_HI"
+        severity error;
+    end if;
+    -- clear HI and the port's bit 32 must drop with it
+    axi_wi(A_BCB_HI, 0);
+    n_chk_bcb := n_chk_bcb + 1;
+    if s_bcb_base(32) /= '0' or s_bcb_base(31 downto 0) /= x"0DA2C000" then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: clearing A_BCB_HI did not clear d_bcb_base[32] "
+           & "alone" severity error;
+    end if;
+    -- the BST register written above is untouched: distinct decode
+    axi_r(A_BST_LO, d);
+    n_chk_bcb := n_chk_bcb + 1;
+    if d /= x"0C006000" or s_bst_base(32) /= '1' then
+      n_bad_bcb := n_bad_bcb + 1;
+      report "tb_fk33_seam: writing A_BCB_* disturbed A_BST_* / d_bst_base"
+        severity error;
+    end if;
+    -- and leave it holding a full value, as a host would
+    axi_wi(A_BCB_HI, 1);
 
     -- ==================================================================
     -- P6b: THE RESERVED HBM POINTERS MUST REFUSE A GO.  v2 has no HBM
@@ -1091,7 +1176,14 @@ begin
     tick(4);
 
     nfail := n_bad_val + n_bad_acct + n_bad_poll + n_bad_rback
-           + n_bad_land + n_bad_gate + n_bad_ack;
+           + n_bad_land + n_bad_gate + n_bad_ack + n_bad_bcb;
+    report "tb_fk33_seam: P6e bcb checks=" & integer'image(n_chk_bcb)
+         & " bad=" & integer'image(n_bad_bcb) severity note;
+    if n_chk_bcb /= 9 then
+      nfail := nfail + 1;
+      report "tb_fk33_seam: P6e ran " & integer'image(n_chk_bcb)
+           & " checks, not the 9 written" severity error;
+    end if;
     report "tb_fk33_seam: P1 value " & integer'image(n_bad_val)
          & "  P2 accounting " & integer'image(n_bad_acct)
          & "  P3 poll " & integer'image(n_bad_poll)

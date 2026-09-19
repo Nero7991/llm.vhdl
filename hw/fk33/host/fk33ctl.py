@@ -95,6 +95,8 @@ SEAM_SMP_N      = SEAM_BASE + 0x64
 SEAM_FAULTS     = SEAM_BASE + 0x68
 SEAM_STEPS_ISS  = SEAM_BASE + 0x7C      # R  obs_issue count since GO (2026-09-18)
 SEAM_ISSUE_CYC  = SEAM_BASE + 0x80      # R  CYCLES at the last issue
+SEAM_BCB_LO     = SEAM_BASE + 0x84      # RW bst_const_base[31:0], B's learned constants (2026-09-18)
+SEAM_BCB_HI     = SEAM_BASE + 0x88      # RW bst_const_base[32]
 SEAM_ID_MAGIC   = 0x4C4C4D32            # "LLM2"
 SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 1, "HBM_FETCH the card fetches its own D program"),
@@ -586,6 +588,15 @@ def cmd_seam(a):
     print(f"progress   steps issued {si}  last issue at cycle {ic}  "
           f"(the current or last step has run {cy - ic if cy >= ic else 0} "
           f"cycles)")
+    # B's learned-constants base (docs/2026-09-18_b-constants-path.md).  Read
+    # only; a bitstream before 2026-09-18 22:00 has no register here and reads
+    # a dead word.  Zero after a model load means the host never wrote it,
+    # and a card built with B_CONST_HBM then loads its constants from HBM
+    # address 0, the weight image, with no fault raised: the seam does NOT
+    # refuse a GO on it, so this line is the only place it shows.
+    bcb = ((m.rd(SEAM_BCB_HI) & 1) << 32) | m.rd(SEAM_BCB_LO)
+    print(f"bases      bst_const_base 0x{bcb:09x}"
+          + ("  (ZERO: never written by the host)" if bcb == 0 else ""))
 
     # Two copies of a register map, compared.  See seam_header_offsets.
     hdr = seam_header_offsets()
@@ -608,7 +619,9 @@ def cmd_seam(a):
                 "FK33_SEAM_SMP_N": SEAM_SMP_N,
                 "FK33_SEAM_FAULTS": SEAM_FAULTS,
                 "FK33_SEAM_STEPS_ISS": SEAM_STEPS_ISS,
-                "FK33_SEAM_ISSUE_CYC": SEAM_ISSUE_CYC}
+                "FK33_SEAM_ISSUE_CYC": SEAM_ISSUE_CYC,
+                "FK33_SEAM_BCB_LO": SEAM_BCB_LO,
+                "FK33_SEAM_BCB_HI": SEAM_BCB_HI}
         drift = [(k, v - SEAM_BASE, hdr[k]) for k, v in sorted(mine.items())
                  if k in hdr and v - SEAM_BASE != hdr[k]]
         miss = [k for k in mine if k not in hdr]

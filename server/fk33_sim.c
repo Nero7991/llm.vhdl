@@ -521,6 +521,13 @@ static int sim_reg_write32(void *c, uint32_t off, uint32_t v)
             run_go(s, v);
         return 0;                        /* CTRL is write-only, self-clearing */
     }
+    /* The HI halves of the three HBM bases keep only the bits the RTL
+     * implements (fk33_seam.vhd: ARENA_HI dat(7 downto 0), BST_HI and
+     * BCB_HI dat(0)), so a readback here reports what the card would.
+     * BCB (bst_const_base, B's learned constants) is a plain RW pair
+     * with no GO-time refusal, exactly as the RTL has it. */
+    if (o == FK33_SEAM_ARENA_HI) v &= 0xFFu;
+    if (o == FK33_SEAM_BST_HI || o == FK33_SEAM_BCB_HI) v &= 1u;
     s->reg[o / 4] = v;
     return 0;
 }

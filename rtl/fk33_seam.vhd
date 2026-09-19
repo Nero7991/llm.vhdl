@@ -252,6 +252,10 @@ entity fk33_seam is
     -- a generic or arithmetic on one but NEVER a function of one.
     d_a_arena    : out std_logic_vector(39 downto 0);
     d_bst_base   : out std_logic_vector(32 downto 0);
+    -- B's learned constants base, the card's `bst_const_base` (33 bits, the
+    -- same width as bst_state_base; it addresses the same HBM).  Added
+    -- 2026-09-18, docs/2026-09-18_b-constants-path.md.
+    d_bcb_base   : out std_logic_vector(32 downto 0);
 
     d_busy       : in  std_logic;
     d_tok_done   : in  std_logic;
@@ -393,6 +397,17 @@ architecture rtl of fk33_seam is
   -- but starts no unit and never issues (seq_desc_fetch.vhd:768).
   constant A_STEPS_ISS  : natural := 16#7C#;  -- R   obs_issue count since go
   constant A_ISSUE_CYC  : natural := 16#80#;  -- R   r_cycles at the last issue
+  -- THE THIRD HBM BASE, ADDED 2026-09-18: B's learned constants.  The packed
+  -- per-layer image of conv weights, dt bias, A and the ssm norm gain that
+  -- gdn_state_store loads as a fourth, load-only phase
+  -- (docs/2026-09-18_b-constants-path.md).  A register for the same reason
+  -- ARENA and BST are: tools/hbm_map.py chooses the address
+  -- (hbm.gdn_const_base) and the host writes it once per model load.
+  -- Deliberately NOT in the GO-time zero refusal above: a card built without
+  -- B_CONST_HBM never reads the port, and a host that predates this register
+  -- would otherwise be refused every GO.
+  constant A_BCB_LO     : natural := 16#84#;  -- RW  bst_const_base[31:0]
+  constant A_BCB_HI     : natural := 16#88#;  -- RW  bst_const_base[32]
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -508,6 +523,7 @@ architecture rtl of fk33_seam is
   signal r_tbl_len  : unsigned(STEP_W-1 downto 0) := (others => '0');
   signal r_a_arena  : std_logic_vector(39 downto 0) := (others => '0');
   signal r_bst_base : std_logic_vector(32 downto 0) := (others => '0');
+  signal r_bcb_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_x_exp    : signed(EXP_W-1 downto 0) := (others => '0');
   signal r_win_sel  : unsigned(1 downto 0) := (others => '0');
   signal r_win_addr : unsigned(15 downto 0) := (others => '0');
@@ -585,6 +601,7 @@ begin
   d_host_x_exp <= r_x_exp;
   d_a_arena    <= r_a_arena;
   d_bst_base   <= r_bst_base;
+  d_bcb_base   <= r_bcb_base;
 
   -- THE RELEASE MASK.  Published combinationally from the RAM, exactly as
   -- `sim/tb_llama_top.vhd:1923` publishes it from its PLAN array, and zero
@@ -698,6 +715,7 @@ begin
         r_tbl_len <= (others => '0');
         r_a_arena <= (others => '0');
         r_bst_base<= (others => '0');
+        r_bcb_base<= (others => '0');
         r_x_exp   <= (others => '0');
         r_win_sel <= (others => '0');
         r_win_addr<= (others => '0');
@@ -888,6 +906,8 @@ begin
             when A_ARENA_HI  => r_a_arena(39 downto 32) <= dat(7 downto 0);
             when A_BST_LO    => r_bst_base(31 downto 0) <= dat;
             when A_BST_HI    => r_bst_base(32)          <= dat(0);
+            when A_BCB_LO    => r_bcb_base(31 downto 0) <= dat;
+            when A_BCB_HI    => r_bcb_base(32)          <= dat(0);
             when A_X_EXP     => r_x_exp   <= resize(signed(dat), EXP_W);
             when A_WIN_SEL   => r_win_sel <= unsigned(dat(1 downto 0));
             when A_WIN_ADDR  =>
@@ -993,6 +1013,8 @@ begin
             when A_ARENA_HI   => rv := x"000000" & r_a_arena(39 downto 32);
             when A_BST_LO     => rv := r_bst_base(31 downto 0);
             when A_BST_HI     => rv := (0 => r_bst_base(32), others => '0');
+            when A_BCB_LO     => rv := r_bcb_base(31 downto 0);
+            when A_BCB_HI     => rv := (0 => r_bcb_base(32), others => '0');
             when A_X_EXP      => rv := std_logic_vector(resize(r_x_exp, 32));
             when A_WIN_SEL    => rv := to_slv32(r_win_sel);
             when A_WIN_ADDR   => rv := to_slv32(r_win_addr);
