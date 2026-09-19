@@ -157,3 +157,104 @@ step 7 in the program:
   paragraph.
 * Whether 5.5 cycles per beat on the flat image is representative or was
   helped by the first jobs being small.
+
+---
+
+## ADDENDUM 18:40: THE SECOND GO EXPOSED A SEAM DEFECT THAT MAKES ANY D ERROR PERMANENT, ROOT-CAUSED AND REPRODUCED IN SIMULATION
+
+### The observation
+
+To ask whether B had merely been slow, layer 0's state slot at
+`0x1_0C00_6000` (1,101,824 B) was zeroed and the GO repeated. Two results:
+
+1. **The slot stayed all zero** (mant, exp and conv regions, 0 of 1,101,824
+   bytes non-zero, read back 3 s after the GO). Before zeroing it held a
+   pattern of exactly 644 non-zero bytes in EVERY 4 KB page across all
+   three regions (15.7% everywhere): an uninitialised-HBM pattern, not a
+   saved state. So neither GO produced a state save. **But the second GO
+   is not evidence about B at all**, because of the second result.
+2. **The second GO reported the same error with `CYCLES = 1`.** D did not
+   run the token. `fk33ctl.py seam`: `status 0x604 ... D's own code 4
+   (WDOG) at step 7 ... cycles 1`.
+
+### The cause, from the RTL
+
+`rtl/seq_desc_fetch.vhd`: a watchdog raises `err_r` at the WDOG instant,
+then spends up to another `WDOG_LIMIT` in `S_ABORT` draining the unit, then
+`S_TOKDONE` raises `tok_r` (`tok_done`, a LEVEL held until `tok_ack`) and
+returns to `S_IDLE`, which takes a `go` only while `tok_r = '0'` and clears
+`tok_r` only on `tok_ack` (`:726-728`).
+
+`rtl/fk33_seam.vhd` (before this fix) acked at the instant `d_err` rose:
+`ack_r <= '1'` for ONE cycle, in the same branch that latched the error and
+cleared `running`. That pulse came 200,000 cycles before `tok_done` existed.
+D reached `S_IDLE` with `tok_r = '1'`, no ack ever arrived, and **every later
+GO was accepted by the seam and ignored by D.** The seam then saw D's
+still-sticky `err` on the first running cycle (D clears it only on a `go` it
+takes) and re-reported the previous token's error: `CYCLES = 1`.
+
+Every D error that reaches `S_TOKDONE` within a cycle of raising `err` (a
+refused descriptor, the counting identity) happened to work, because the
+seam's one-cycle ack landed while D was in `S_TOKDONE`/`S_IDLE`. Only the
+watchdog path has the drain between the two, and no bench had ever driven
+the seam with a watchdog error.
+
+### The fix (`rtl/fk33_seam.vhd`, same commit)
+
+* `ack_r <= d_tok_done`: the ack is a level equal to the level it answers.
+* The error REPORT is latched when `d_err` rises, but only once `d_busy` is
+  high or `d_tok_done` is high in the same cycle: for the one cycle between
+  the seam raising `running` and D taking the `go`, the PREVIOUS token's
+  sticky `err` is still on the wire and must not be latched.
+* `running` clears, and the done/argmax/position publish happens, on
+  `d_tok_done`; the publish is skipped if an error was latched. CYCLES now
+  counts GO to `tok_done`, drain included.
+* A GO is refused (EC_SEQ) while `d_tok_done` is still high.
+* `server/pl_backend.c`: after seeing `err`, keep polling until `busy`
+  drops (bounded by the GO timeout), because the seam now reports the error
+  while D is still draining and refuses a GO until the drain ends.
+
+### Reproduced and killed in simulation
+
+`sim/tb_fk33_seam_wdog.vhd` (new gate row): `tb_fk33_seam` with
+`WDOG_LIMIT = 64`, so step 0 (a VEC_NORM) cannot finish and every token ends
+in ERR_WDOG after a drain. New check P7: after the seam reports completion
+the DUT's `tok_done` must be low within 8 cycles, and `CYCLES >= WDOG_LIMIT`
+(D ran the token).
+
+| seam | result |
+|---|---|
+| before the fix (`98f6b8a`) | **FAIL**: `P7 -- the seam DUT still holds tok_done after ... token 0`, then `token 1 CYCLES = 1 < WDOG_LIMIT 64: D did not run this token` -- the silicon signature, exactly |
+| after the fix | PASS: three tokens, each ERR_WDOG, `tok_done` released, CYCLES >= 64 |
+| `sim:tb_fk33_seam` (default WDOG) | PASS, landmark `-17280 / 53529` unchanged |
+
+Two read-only registers were added while the seam was open, because the
+only per-token number the host could read was the total: `STEPS_ISS`
+(`0x7C`, `job_issue` pulses since GO; a clean token reads TBL_LEN - 1
+because END_TOKEN never issues -- MEASURED 34 of 35 on the first run of the
+check) and `ISSUE_CYC` (`0x80`, CYCLES at the last issue). Polled with
+CYCLES they give a per-step timeline; after a watchdog they say how long the
+stuck unit had run. `fk33ctl.py seam` prints them as `progress`.
+
+### A third finding, in the gate itself
+
+The pre-fix run of the new row was judged **NOVERDICT** three times while
+its log held six `(report error)` lines. `sim/regress.sh` tested the
+failure regex with `printf '%s' "$scan" | grep -aqE`, under `set -o
+pipefail`: `-q` exits at the first match, printf (13 MB still to write) dies
+of SIGPIPE, the pipeline's status becomes printf's, and a match reads as no
+match. Invisible on small logs. Replaced with `grep -c` compared to zero, in
+all three places (failure scan, declared marker, PASS_RE). This is the
+SIGPIPE-plus-pipefail theory `fk33_reload.sh` records as refuted for its own
+case; it is real here, and the difference is the size of what printf still
+had to write.
+
+### What is still open after this addendum
+
+* B on silicon: no evidence either way. Both GOs on the card so far are
+  explained without B having done anything wrong -- the first by the
+  watchdog, the second by the seam. The rebuild (x_exp + WDOG 4,000,000 +
+  this seam fix + the progress registers, launched 18:38) is the first
+  bitstream on which a B result can be read.
+* On the 11:28 bitstream that is on the card now, any D error requires a
+  bitstream reload to recover. Do not debug B on it.

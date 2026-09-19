@@ -11,6 +11,31 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 18:40: A SECOND GO SHOWED THE SEAM MAKES ANY D ERROR PERMANENT; FIXED, REPRODUCED IN SIM, BUILD RESTARTED WITH EVERYTHING
+
+Repeating the GO on a zeroed state slot gave the same error with **CYCLES =
+1**: D never ran it. Cause in the RTL: the seam acked at the `err` instant,
+a WDOG error raises `err` up to 200,000 cycles BEFORE `tok_done` (the
+S_ABORT drain), D parked with `tok_done` high and ignored every later GO,
+and the seam re-reported D's sticky error one cycle after each. Fixed:
+ack follows `d_tok_done` as a level, the error latch waits for `d_busy`,
+GO refused while `tok_done` is high; `pl_backend` waits for busy to drop
+after an error. New row `sim:tb_fk33_seam_wdog` (WDOG_LIMIT 64, every
+token a watchdog) with P7: FAILS on the old seam with the exact silicon
+signature (`token 1 CYCLES = 1`), PASSES on the fix; `tb_fk33_seam`
+landmark unchanged. Two read-only progress registers added (`STEPS_ISS`
+0x7C, `ISSUE_CYC` 0x80) so a stuck token can be localised by polling.
+
+Also found: `sim/regress.sh` judged the failing row NOVERDICT three times
+(`printf | grep -q` under pipefail: SIGPIPE on a 13 MB log). Fixed with
+`grep -c` in all three judge sites.
+
+Build restarted 18:38 (`xexp-seam-build`): x_exp port + WDOG 4,000,000 +
+seam ack fix + progress registers. ~21:40. The 11:28 bitstream on the card
+cannot recover from any D error without a reload; B is not to be debugged
+on it. Doc: addendum in
+`docs/debugging/2026-09-18_first-token-on-silicon-stops-at-step-7.md`.
+
 ### 2026-09-18 18:30: THE FIRST GO ON THE COMPOSED CARD RAN SEVEN STEPS, AND THE WATCHDOG IS TOO SMALL FOR 9B BY ARITHMETIC
 
 The 11:28 bitstream is on the card (Oren ran `fk33_reload.sh`; steps 0-3

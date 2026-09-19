@@ -339,8 +339,19 @@ int main(int argc, char **argv)
         int32_t lexp = 0;
         rc = pl_prefill(c, prompt, n_prompt, logits, &lexp, &argmax);
         if (rc != n_prompt) {
+            uint32_t info = pl_last_error_info(c);
             fprintf(stderr, "run_prompt: prefill returned %d for %d ids (%s)\n",
                     rc, n_prompt, pl_last_error_str(c));
+            if (pl_last_error(c) == FK33_SEAM_ERR_DESC)
+                /* rtl/fk33_seam.vhd:921: D code [3:0], step [14:4], done [26:16].
+                 * D codes, rtl/seq_desc_fetch.vhd:263: 1 UNIT 2 LOCK 3 DESC
+                 * 4 WDOG 5 GRANT 6 CTX 7 EPOCH 8 ABORT. */
+                fprintf(stderr, "  ERR_INFO 0x%08X: D code %u, at step %u, "
+                                "%u descriptors completed before it%s\n",
+                        info, info & 0xFu, (info >> 4) & 0x7FFu,
+                        (info >> 16) & 0x7FFu,
+                        (info & 0xFu) == 4 ? "  (WDOG: the GO was accepted; a "
+                        "unit did not finish within WDOG_LIMIT)" : "");
             status = 1; goto done;
         }
         if (check_argmax) {

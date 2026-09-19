@@ -380,6 +380,19 @@ architecture rtl of fk33_seam is
   constant A_ARENA_HI   : natural := 16#70#;  -- RW  a_arena_base[39:32]
   constant A_BST_LO     : natural := 16#74#;  -- RW  bst_state_base[31:0]
   constant A_BST_HI     : natural := 16#78#;  -- RW  bst_state_base[32]
+  -- LIVE PROGRESS, READ-ONLY, ADDED 2026-09-18 after the first GO on the
+  -- composed card stopped at step 7 and the only number the host could read
+  -- was the token total (CYCLES).  `steps issued` counts `obs_issue` since
+  -- `go` -- the same pulse that advances the release index -- and
+  -- `issue cycle` is r_cycles at the most recent one.  Polled together with
+  -- CYCLES while a token runs, they give a per-step timeline from the host
+  -- (which step D is on, and for how long), and after a watchdog they say
+  -- exactly how long the stuck unit had been running.  Neither is written
+  -- by the host.
+  -- A clean token reads NSTEP - 1 here: END_TOKEN is counted as a step by D
+  -- but starts no unit and never issues (seq_desc_fetch.vhd:768).
+  constant A_STEPS_ISS  : natural := 16#7C#;  -- R   obs_issue count since go
+  constant A_ISSUE_CYC  : natural := 16#80#;  -- R   r_cycles at the last issue
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -500,6 +513,8 @@ architecture rtl of fk33_seam is
   signal r_win_addr : unsigned(15 downto 0) := (others => '0');
 
   signal r_cycles   : unsigned(31 downto 0) := (others => '0');
+  signal r_steps_iss: unsigned(15 downto 0) := (others => '0');
+  signal r_issue_cyc: unsigned(31 downto 0) := (others => '0');
   signal r_argmax   : unsigned(31 downto 0) := (others => '0');
   signal r_logit_e  : signed(EXP_W-1 downto 0) := (others => '0');
   signal r_smp_n    : unsigned(31 downto 0) := (others => '0');
@@ -586,7 +601,11 @@ begin
       if rst = '1' or go_r = '1' then
         rel_idx <= 0;
         rel_end <= '0';
+        r_steps_iss <= (others => '0');
+        r_issue_cyc <= (others => '0');
       elsif obs_issue = '1' then
+        r_steps_iss <= r_steps_iss + 1;
+        r_issue_cyc <= r_cycles;
         if rel_idx = REL_ENT-1 then
           rel_end <= '1';
         else
@@ -663,7 +682,7 @@ begin
       -- ---- one-cycle strobes ------------------------------------------
       go_r    <= '0';
       abort_r <= '0';
-      ack_r   <= '0';
+      -- ack_r is NOT a strobe any more; it is assigned from d_tok_done below.
       xw_we   <= '0';
 
       if rst = '1' then
@@ -698,26 +717,65 @@ begin
         -- not be able to erase what it reported -- the same rule
         -- `seq_desc_fetch` applies one level down.
         -- ==============================================================
+        -- THE ACK FOLLOWS tok_done, AND NOTHING ELSE.  D holds `tok_done`
+        -- as a LEVEL until `tok_ack` and looks at `tok_ack` only in S_IDLE
+        -- (`rtl/seq_desc_fetch.vhd:726`), so the ack must be there WHEN D
+        -- gets to S_IDLE, which is after `tok_done` rises.  Driving it from
+        -- anything earlier is a pulse into a unit that is not listening.
+        --
+        -- MEASURED ON SILICON 2026-09-18, the first GO on the composed card
+        -- (docs/debugging/2026-09-18_first-token-on-silicon-stops-at-step-7.md):
+        -- this block used to ack at the instant `d_err` rose.  A watchdog
+        -- error raises `err` and then spends up to WDOG_LIMIT more cycles in
+        -- S_ABORT draining the unit before S_TOKDONE raises `tok_done`; the
+        -- one-cycle ack had come and gone 200,000 cycles earlier, D parked
+        -- in S_IDLE with `tok_r = '1'`, and EVERY LATER GO WAS IGNORED --
+        -- accepted by this block, never taken by D, and reported one cycle
+        -- later as the previous token's error (CYCLES = 1).  A single
+        -- error made the card unusable until reset.  Errors that end in
+        -- S_TOKDONE directly (a refused descriptor, the counting identity)
+        -- happened to work because `err` and `tok_done` rose within a cycle
+        -- of each other, which is why sim:tb_fk33_seam never saw it.
+        -- sim/tb_fk33_seam_wdog.vhd is the row that does.
+        --
+        -- So: the error REPORT is latched the moment `d_err` rises (a unit
+        -- that drops `err` after `done` must not erase it), `running` and
+        -- the ack follow `d_tok_done`, and the ack is a level equal to
+        -- `d_tok_done` rather than a strobe, so it is present for as long
+        -- as D is holding the level it answers.  CYCLES therefore counts
+        -- GO to tok_done, drain included.
+        -- AND THE ERROR LATCH WAITS FOR D TO HAVE TAKEN THE GO.  D clears
+        -- its sticky `err` on the same edge it takes `go` and raises `busy`
+        -- (`seq_desc_fetch.vhd:733`), one cycle after this block raised
+        -- `running`.  For that one cycle the PREVIOUS token's `err` is still
+        -- on the wire, and latching it here reports a stale error against a
+        -- token that is in fact running -- the second half of what the
+        -- silicon showed (CYCLES = 1).  So a bare `d_err` is admissible only
+        -- once `d_busy` is high, or in the same cycle as `d_tok_done` (the
+        -- counting-identity error in S_TOKDONE raises `err`, `tok_done` and
+        -- drops `busy` on one edge, and must not be missed).
+        ack_r <= d_tok_done;
         if running = '1' then
           r_cycles <= r_cycles + 1;
-          if d_err = '1' then
+          if d_err = '1' and st_err = '0'
+             and (d_busy = '1' or d_tok_done = '1') then
             st_err   <= '1';
             st_code  <= to_unsigned(EC_DESC, 4);
             st_dcode <= d_err_code;
             st_dstep <= d_err_step;
             st_dsteps<= d_steps_done;
-            running  <= '0';
-            ack_r    <= '1';
-          elsif d_tok_done = '1' then
-            st_done  <= '1';
+          end if;
+          if d_tok_done = '1' then
             st_dsteps<= d_steps_done;
-            r_argmax <= smp_token;
-            r_smp_n  <= smp_n;
-            r_logit_e<= smp_exp;
             running  <= '0';
-            ack_r    <= '1';
-            if cur_pos < MAXPOS then
-              cur_pos <= cur_pos + 1;
+            if d_err = '0' and st_err = '0' then
+              st_done  <= '1';
+              r_argmax <= smp_token;
+              r_smp_n  <= smp_n;
+              r_logit_e<= smp_exp;
+              if cur_pos < MAXPOS then
+                cur_pos <= cur_pos + 1;
+              end if;
             end if;
           end if;
         end if;
@@ -803,7 +861,9 @@ begin
                   bad := EC_SEQ;
                 elsif cur_pos >= MAXPOS then
                   bad := EC_POS;
-                elsif running = '1' or d_busy = '1' then
+                elsif running = '1' or d_busy = '1' or d_tok_done = '1' then
+                  -- `d_tok_done` still high means D has not yet seen the ack
+                  -- for the previous token and would ignore this `go`.
                   bad := EC_SEQ;
                 end if;
                 if bad = EC_NONE then
@@ -937,6 +997,8 @@ begin
             when A_WIN_SEL    => rv := to_slv32(r_win_sel);
             when A_WIN_ADDR   => rv := to_slv32(r_win_addr);
             when A_CYCLES     => rv := std_logic_vector(r_cycles);
+            when A_STEPS_ISS  => rv := x"0000" & std_logic_vector(r_steps_iss);
+            when A_ISSUE_CYC  => rv := std_logic_vector(r_issue_cyc);
             when A_ARGMAX     => rv := std_logic_vector(r_argmax);
             when A_LOGIT_EXP  => rv := std_logic_vector(resize(r_logit_e, 32));
             when A_SMP_N      => rv := std_logic_vector(r_smp_n);

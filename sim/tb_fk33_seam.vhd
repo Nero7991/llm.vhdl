@@ -144,7 +144,21 @@ entity tb_fk33_seam is
     -- nobody has recorded a landmark for.
     EXP_X0   : integer := -17280;
     EXP_XSUM : integer := 53529;
-    MAXCYC   : natural := 2000000
+    MAXCYC   : natural := 2000000;
+    -- D'S PER-JOB WATCHDOG, passed to BOTH DUTs.  At the default no job
+    -- trips it and this bench runs as it always has.  `EXPECT_WDOG` is the
+    -- configuration sim/tb_fk33_seam_wdog.vhd pins: WDOG_LIMIT small enough
+    -- that step 0 (a VEC_NORM over `hidden` elements) cannot finish, so
+    -- EVERY token ends in ERR_WDOG after an S_ABORT drain -- the one D error
+    -- whose `err` rises hundreds of cycles BEFORE `tok_done`.  In that mode
+    -- the value checks (P1, P5) and the "completed cleanly" half of P3 are
+    -- not applicable and are skipped, P2 requires ERR_WDOG on both sides,
+    -- and P7 below is the check the mode exists for.  MEASURED ON SILICON
+    -- 2026-09-18: the seam acked `err` instead of `tok_done`, D parked with
+    -- `tok_done` high forever, and every later GO was accepted by the seam
+    -- and ignored by D.
+    WDOG_LIMIT  : positive := 200000;
+    EXPECT_WDOG : boolean  := false
   );
 end entity;
 
@@ -263,6 +277,7 @@ architecture tb of tb_fk33_seam is
   signal n_bad_rback : natural := 0;   -- P4
   signal n_bad_land  : natural := 0;   -- P5
   signal n_bad_gate  : natural := 0;   -- P6
+  signal n_bad_ack   : natural := 0;   -- P7
   signal done_flag   : boolean := false;
 
   -- register offsets, the same numbers `server/fk33_seam.h` defines
@@ -274,6 +289,9 @@ architecture tb of tb_fk33_seam is
   constant A_SEQ_POS  : natural := 16#20#;
   constant A_N_STEP   : natural := 16#24#;
   constant A_XB_LO    : natural := 16#28#;
+  constant A_CYCLES   : natural := 16#40#;
+  constant A_STEPS_ISS: natural := 16#7C#;
+  constant A_ISSUE_CYC: natural := 16#80#;
   constant A_ARGMAX   : natural := 16#44#;
   constant A_CAPS_FL  : natural := 16#4C#;
   constant A_TBL_LEN  : natural := 16#50#;
@@ -319,7 +337,7 @@ begin
   dut_ref : entity work.llama_top
     generic map(SHAPE => SHAPE, A_BEHAV => A_BEHAV, NORM_ANCHOR => true,
                 C_MAXPOS => 4, MANT_W => MANT_W, EXP_W => EXP_W,
-                STEP_W => STEP_W)
+                STEP_W => STEP_W, WDOG_LIMIT => WDOG_LIMIT)
     port map(
       clk => clk, rst => drst,
       go => r_go, abort => r_abort, tbl_len => r_tbl_len,
@@ -377,7 +395,7 @@ begin
   dut_seam : entity work.llama_top
     generic map(SHAPE => SHAPE, A_BEHAV => A_BEHAV, NORM_ANCHOR => true,
                 C_MAXPOS => 4, MANT_W => MANT_W, EXP_W => EXP_W,
-                STEP_W => STEP_W)
+                STEP_W => STEP_W, WDOG_LIMIT => WDOG_LIMIT)
     port map(
       clk => clk, rst => drst,
       go => s_go, abort => s_abort, tbl_len => s_tbl_len,
@@ -525,7 +543,7 @@ begin
     -- one delta collapse to a single signal assignment, and a bench that
     -- reports fewer checks than it ran passes while measuring nothing.
     variable bad_d  : natural := 0;
-    variable iv     : integer;
+    variable iv, iv2 : integer;
     variable st     : integer;
     variable rx_ref : integer;
     variable rx_sea : integer;
@@ -784,7 +802,13 @@ begin
     -- difference between token 0's R_X and token t's is cross-token state
     -- and nothing else.
     -- ==================================================================
-    axi_wi(A_SEQ_POS, t);
+    -- An error token does not advance the card's position, so in the
+    -- watchdog configuration every GO carries position 0.
+    if EXPECT_WDOG then
+      axi_wi(A_SEQ_POS, 0);
+    else
+      axi_wi(A_SEQ_POS, t);
+    end if;
     axi_wi(A_WIN_SEL, 2);
     axi_wi(A_WIN_ADDR, 0);
     for i in 0 to SHAPE.hidden-1 loop
@@ -838,7 +862,22 @@ begin
     report "tb_fk33_seam: token " & integer'image(t) & " seam STATUS "
          & integer'image(st) & " after " & integer'image(nwait) & " polls."
       severity note;
-    if (st mod 2) /= 1 then
+    if EXPECT_WDOG then
+      -- Every token must END IN ERROR here, and specifically the seam's
+      -- code 6 wrapping D's ERR_WDOG (4).  A clean completion at a watchdog
+      -- shorter than one VEC_NORM would mean the watchdog is not counting.
+      if (st / 4) mod 2 /= 1 or (st / 256) mod 16 /= 6 then
+        n_bad_poll <= n_bad_poll + 1;
+        report "tb_fk33_seam: EXPECT_WDOG but the seam token did not end in "
+             & "err_code 6; STATUS = " & integer'image(st) severity error;
+      end if;
+      axi_ri(A_ERR_INFO, iv);
+      if iv mod 16 /= 4 then
+        n_bad_poll <= n_bad_poll + 1;
+        report "tb_fk33_seam: EXPECT_WDOG but ERR_INFO[3:0] = "
+             & integer'image(iv mod 16) & ", not 4 (ERR_WDOG)" severity error;
+      end if;
+    elsif (st mod 2) /= 1 then
       n_bad_poll <= n_bad_poll + 1;
       report "tb_fk33_seam: the seam token did not complete cleanly; "
            & "STATUS = " & integer'image(st) severity error;
@@ -866,10 +905,43 @@ begin
     tick(4);
 
     -- ==================================================================
+    -- P7: THE SEAM IS THE SOLE ACKNOWLEDGER, SO `tok_done` MUST DROP.
+    -- D holds `tok_done` as a level until `tok_ack`.  The seam has just
+    -- reported (done | err); within a few cycles D must have seen its ack
+    -- and dropped the level, on a clean token AND on an error token.  A
+    -- seam that acked at the wrong instant leaves `s_tok_done` high here,
+    -- and D will ignore the next GO -- which the next iteration of this
+    -- loop then measures as CYCLES = 1 (D never ran) or as a GO-time
+    -- refusal.  MEASURED on silicon 2026-09-18 for the ERR_WDOG shape.
+    -- ==================================================================
+    tick(8);
+    if s_tok_done /= '0' then
+      n_bad_ack <= n_bad_ack + 1;
+      report "tb_fk33_seam: P7 -- the seam DUT still holds tok_done after "
+           & "the seam reported completion of token " & integer'image(t)
+           & ".  The ack did not reach D, and the next GO will be ignored."
+        severity error;
+    end if;
+    axi_ri(A_CYCLES, iv);
+    if EXPECT_WDOG then
+      -- D must have RUN this token: at least WDOG_LIMIT cycles waiting on
+      -- the unit, plus the S_ABORT drain.  CYCLES = 1 is the stale-error
+      -- signature of a GO that D never took.
+      if iv < WDOG_LIMIT then
+        n_bad_ack <= n_bad_ack + 1;
+        report "tb_fk33_seam: P7 -- token " & integer'image(t)
+             & " CYCLES = " & integer'image(iv) & " < WDOG_LIMIT "
+             & integer'image(WDOG_LIMIT) & ": D did not run this token; the "
+             & "seam is reporting the previous token's error."
+          severity error;
+      end if;
+    end if;
+
+    -- ==================================================================
     -- P2: THE COMPLETION ACCOUNTING.  `steps_done` must equal the table
     -- length; that is seq_desc_fetch's own counting identity.
     -- ==================================================================
-    if to_integer(r_steps_done) /= NSTEP then
+    if not EXPECT_WDOG and to_integer(r_steps_done) /= NSTEP then
       n_bad_acct <= n_bad_acct + 1;
       report "tb_fk33_seam: reference steps_done "
            & integer'image(to_integer(r_steps_done)) & " /= "
@@ -894,8 +966,45 @@ begin
            & integer'image((iv / 65536) mod 2048) & " /= the DUT's "
            & integer'image(to_integer(s_steps_done)) severity error;
     end if;
+    -- P4, the live-progress pair (added 2026-09-18).  STEPS_ISS counts
+    -- `job_issue` pulses since GO.  END_TOKEN is a descriptor that starts
+    -- no unit and never reaches S_ISSUE (seq_desc_fetch.vhd:768), so a
+    -- clean token issues NSTEP - 1 -- MEASURED 34 for NSTEP 35 on the first
+    -- run of this check, which is how the "- 1" got here.  A token that
+    -- dies in its first job has issued at most one.  ISSUE_CYC is CYCLES
+    -- at the last issue, so it can never exceed CYCLES.
+    axi_ri(A_STEPS_ISS, iv);
+    if EXPECT_WDOG then
+      if iv > 1 then
+        n_bad_rback <= n_bad_rback + 1;
+        report "tb_fk33_seam: STEPS_ISS = " & integer'image(iv)
+             & " after a token that died in step 0; expected 0 or 1"
+          severity error;
+      end if;
+    elsif iv /= NSTEP - 1 then
+      n_bad_rback <= n_bad_rback + 1;
+      report "tb_fk33_seam: STEPS_ISS = " & integer'image(iv) & " /= NSTEP-1 "
+           & integer'image(NSTEP - 1) & " (END_TOKEN never issues)"
+        severity error;
+    end if;
+    axi_ri(A_ISSUE_CYC, iv);
+    axi_ri(A_CYCLES, iv2);
+    if iv > iv2 or (iv = 0 and not EXPECT_WDOG) then
+      n_bad_rback <= n_bad_rback + 1;
+      report "tb_fk33_seam: ISSUE_CYC " & integer'image(iv)
+           & " against CYCLES " & integer'image(iv2) severity error;
+    end if;
+
     axi_ri(A_SEQ_POS, iv);
-    if iv /= t + 1 then
+    if EXPECT_WDOG then
+      -- An error token must NOT advance the position: the next GO carries
+      -- the same SEQ_POS and must be accepted with it.
+      if iv /= 0 then
+        n_bad_rback <= n_bad_rback + 1;
+        report "tb_fk33_seam: SEQ_POS advanced to " & integer'image(iv)
+             & " across an error token" severity error;
+      end if;
+    elsif iv /= t + 1 then
       n_bad_rback <= n_bad_rback + 1;
       report "tb_fk33_seam: SEQ_POS after token " & integer'image(t)
            & " reads " & integer'image(iv) & ", expected "
@@ -907,6 +1016,10 @@ begin
     -- P1: THE NUMBERS.  Every element of R_X, both sides, plus the
     -- landmark.  The seam side is read ONLY through the XOUT window.
     -- ==================================================================
+    if EXPECT_WDOG then
+      -- No values were produced: step 0 never completed.  Skip P1.
+      xt0 := 0;
+    else
     axi_wi(A_WIN_SEL, 3);
     axi_wi(A_WIN_ADDR, 0);
     -- R_X's LIVE EXTENT is `hidden`, not `REGMAX`.  Every region is
@@ -938,6 +1051,7 @@ begin
       h_ref := hash_of(rx_ref, h_ref, i);
       h_sea := hash_of(rx_sea, h_sea, i);
     end loop;
+    end if;   -- not EXPECT_WDOG
 
     report "tb_fk33_seam: token " & integer'image(t)
          & " R_X(0) = " & integer'image(xt0)
@@ -954,14 +1068,16 @@ begin
 
     end loop;   -- the token loop
 
-    -- P5: the landmark.
-    if EXP_X0 /= integer'low and x0 /= EXP_X0 then
+    -- P5: the landmark.  Not applicable when no value was produced.
+    if EXPECT_WDOG then
+      null;
+    elsif EXP_X0 /= integer'low and x0 /= EXP_X0 then
       n_bad_land <= n_bad_land + 1;
       report "tb_fk33_seam: R_X(0) = " & integer'image(x0)
            & ", the pinned landmark is " & integer'image(EXP_X0)
         severity error;
     end if;
-    if EXP_XSUM >= 0 and h0_ref /= EXP_XSUM then
+    if not EXPECT_WDOG and EXP_XSUM >= 0 and h0_ref /= EXP_XSUM then
       n_bad_land <= n_bad_land + 1;
       report "tb_fk33_seam: token 0 hash(R_X) = " & integer'image(h0_ref)
            & ", the pinned landmark is " & integer'image(EXP_XSUM)
@@ -975,13 +1091,14 @@ begin
     tick(4);
 
     nfail := n_bad_val + n_bad_acct + n_bad_poll + n_bad_rback
-           + n_bad_land + n_bad_gate;
+           + n_bad_land + n_bad_gate + n_bad_ack;
     report "tb_fk33_seam: P1 value " & integer'image(n_bad_val)
          & "  P2 accounting " & integer'image(n_bad_acct)
          & "  P3 poll " & integer'image(n_bad_poll)
          & "  P4 readback " & integer'image(n_bad_rback)
          & "  P5 landmark " & integer'image(n_bad_land)
-         & "  P6 go-gate " & integer'image(n_bad_gate) severity note;
+         & "  P6 go-gate " & integer'image(n_bad_gate)
+         & "  P7 ack " & integer'image(n_bad_ack) severity note;
 
     -- THE VERDICT LINE HAS TO SATISFY TWO READERS AND THEY DISAGREE.
     -- MEASURED, both of them, in that order:

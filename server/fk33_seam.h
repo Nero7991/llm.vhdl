@@ -324,6 +324,12 @@ extern "C" {
 #define FK33_SEAM_ARENA_HI        0x70u   /* RW  a_arena_base[39:32] */
 #define FK33_SEAM_BST_LO          0x74u   /* RW  bst_state_base[31:0] */
 #define FK33_SEAM_BST_HI          0x78u   /* RW  bst_state_base[32] */
+/* Live progress, read-only, 2026-09-18.  obs_issue count since GO, and
+ * CYCLES at the most recent issue.  Polled with CYCLES they give a
+ * per-step timeline of a running token; after a watchdog they say how long
+ * the stuck unit had been running (CYCLES - ISSUE_CYC). */
+#define FK33_SEAM_STEPS_ISS       0x7Cu   /* R   job issues since go; a clean token reads TBL_LEN - 1 (END_TOKEN never issues) */
+#define FK33_SEAM_ISSUE_CYC       0x80u   /* R   CYCLES at the last issue */
 
 #define FK33_WIN_DESC             0u
 #define FK33_WIN_REL              1u

@@ -93,6 +93,8 @@ SEAM_CAPS_FLAGS = SEAM_BASE + 0x4C
 SEAM_TBL_LEN    = SEAM_BASE + 0x50
 SEAM_SMP_N      = SEAM_BASE + 0x64
 SEAM_FAULTS     = SEAM_BASE + 0x68
+SEAM_STEPS_ISS  = SEAM_BASE + 0x7C      # R  obs_issue count since GO (2026-09-18)
+SEAM_ISSUE_CYC  = SEAM_BASE + 0x80      # R  CYCLES at the last issue
 SEAM_ID_MAGIC   = 0x4C4C4D32            # "LLM2"
 SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 1, "HBM_FETCH the card fetches its own D program"),
@@ -579,6 +581,11 @@ def cmd_seam(a):
           f"{m.rd(SEAM_CYCLES)}  argmax {m.rd(SEAM_ARGMAX)}  "
           f"logit_exp {m.rd(SEAM_LOGIT_EXP)}")
     print(f"           tbl_len {m.rd(SEAM_TBL_LEN)}  smp_n {m.rd(SEAM_SMP_N)}")
+    # Live progress (a bitstream before 2026-09-18 19:00 reads both as 0).
+    si, ic, cy = m.rd(SEAM_STEPS_ISS), m.rd(SEAM_ISSUE_CYC), m.rd(SEAM_CYCLES)
+    print(f"progress   steps issued {si}  last issue at cycle {ic}  "
+          f"(the current or last step has run {cy - ic if cy >= ic else 0} "
+          f"cycles)")
 
     # Two copies of a register map, compared.  See seam_header_offsets.
     hdr = seam_header_offsets()
@@ -599,7 +606,9 @@ def cmd_seam(a):
                 "FK33_SEAM_CAPS_FLAGS": SEAM_CAPS_FLAGS,
                 "FK33_SEAM_TBL_LEN": SEAM_TBL_LEN,
                 "FK33_SEAM_SMP_N": SEAM_SMP_N,
-                "FK33_SEAM_FAULTS": SEAM_FAULTS}
+                "FK33_SEAM_FAULTS": SEAM_FAULTS,
+                "FK33_SEAM_STEPS_ISS": SEAM_STEPS_ISS,
+                "FK33_SEAM_ISSUE_CYC": SEAM_ISSUE_CYC}
         drift = [(k, v - SEAM_BASE, hdr[k]) for k, v in sorted(mine.items())
                  if k in hdr and v - SEAM_BASE != hdr[k]]
         miss = [k for k in mine if k not in hdr]

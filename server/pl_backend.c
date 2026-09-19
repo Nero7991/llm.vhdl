@@ -110,14 +110,34 @@ static int seam_wait(pl_ctx *c, uint32_t *status_out)
             return -4;
         }
     }
-    if (status_out) *status_out = st;
     if (st & FK33_ST_ERR) {
         uint32_t info = 0;
+        /* AN ERROR CAN BE REPORTED WHILE THE CARD IS STILL BUSY.  A D
+         * watchdog raises `err` and then drains the in-flight unit for up
+         * to another WDOG_LIMIT cycles before `tok_done`; the seam publishes
+         * the error at once (so a host sees it) and stays BUSY until the
+         * drain ends, and it refuses a GO while busy.  So after an error,
+         * wait for busy to drop before returning, or the next GO is refused
+         * with SEQ for a reason that has nothing to do with the sequence.
+         * MEASURED on silicon 2026-09-18 (STATUS 0x606 on the first poll
+         * after the WDOG in sim:tb_fk33_seam_wdog: err AND busy). */
+        while (st & FK33_ST_BUSY) {
+            if (rd(c, FK33_SEAM_STATUS, &st)) return -2;
+            if ((pl_now_s() - t0) * 1000.0 > (double)c->go_timeout_ms) {
+                fprintf(stderr,
+                    "[pl_backend] TIMEOUT after %d ms: err reported, but busy "
+                    "never dropped (STATUS=0x%08X).  The unit D is draining "
+                    "did not finish.\n", c->go_timeout_ms, st);
+                break;
+            }
+        }
+        if (status_out) *status_out = st;
         c->last_err = FK33_ST_ERRCODE(st);
         rd(c, FK33_SEAM_ERR_INFO, &info);
         c->last_err_info = info;
         return -3;
     }
+    if (status_out) *status_out = st;
     if (!(st & FK33_ST_DONE)) return -4;
     c->last_err = FK33_SEAM_ERR_NONE;
     c->last_err_info = 0;

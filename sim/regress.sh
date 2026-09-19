@@ -2865,13 +2865,25 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   if [ "$rc" != "0" ]; then
     verdict FAIL "exit $rc: $(printf '%s' "$scan" | grep -aE "$FAIL_RE" | head -1 | cut -c1-160)"; return
   fi
-  if printf '%s' "$scan" | grep -aqE "$FAIL_RE"; then
+  # `grep -c`, NEVER `grep -q`, ON A printf PIPELINE UNDER pipefail.  `-q`
+  # exits at the FIRST match and closes the pipe; if printf has not finished
+  # writing, printf dies of SIGPIPE, `set -o pipefail` makes the pipeline's
+  # status printf's, and the `if` reads a MATCH as NO MATCH.  Invisible on a
+  # small log (printf is done before grep exits) and reliable on a large
+  # one.  MEASURED 2026-09-18 on sim:tb_fk33_seam_wdog against a seam that
+  # FAILS it: a 13 MB log with six `(report error)` lines at line ~7,000 of
+  # 97,000 was judged NOVERDICT three runs out of three, while an
+  # instrumented `grep -c` in the same function counted 6.  NOVERDICT is
+  # still not green, so the gate stayed red -- but a PASSING row whose
+  # marker sits early in a large log would be misjudged the same way, and
+  # that one costs a re-run rather than a wrong pass.  `-c` reads all input.
+  if [ "$(printf '%s' "$scan" | grep -acE "$FAIL_RE")" -gt 0 ]; then
     verdict FAIL "$(printf '%s' "$scan" | grep -aE "$FAIL_RE" | head -1 | cut -c1-160)"; return
   fi
 
   marker="$(tb_pass_marker "$key")"
   if [ -n "$marker" ]; then
-    if printf '%s' "$body" | grep -aqE "$marker"; then
+    if [ "$(printf '%s' "$body" | grep -acE "$marker")" -gt 0 ]; then
       verdict PASS "$(printf '%s' "$body" | grep -aE "$marker" | head -1 | cut -c1-140)"; return
     fi
     verdict NOVERDICT "ran clean but its declared success marker ('$marker') never appeared"; return
@@ -2882,7 +2894,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
     verdict NOCHECK "$nocheck"; return
   fi
 
-  if printf '%s' "$body" | grep -aqiE "$PASS_RE"; then
+  if [ "$(printf '%s' "$body" | grep -aciE "$PASS_RE")" -gt 0 ]; then
     verdict PASS "$(printf '%s' "$body" | grep -aiE "$PASS_RE" | head -1 | cut -c1-140)"; return
   fi
   verdict NOVERDICT "exit 0 and no failure marker, but NO success marker either -- that is not evidence of a pass"
