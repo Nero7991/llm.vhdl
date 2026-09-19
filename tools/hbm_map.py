@@ -165,6 +165,15 @@ HBM_TOP = _C["FK33_HBM_TOP"]
 STACK_LINE = _C["FK33_HBM_STACK_LINE"]
 PAGE = 4096                       # pl_derive_bases()'s own page granularity
 
+# The GDN constant image's fixed terms, from docs/2026-09-18_b-constants-path.md
+# (and rtl/gdn_state_store.vhd's CONST_WORDS once track A lands it).  The
+# scalar block is 256 sixteen-bit words = 512 B whatever the shape; the six
+# exponents are cw_exp[0..2], dt_e, a_e, w_exp; and 512 B is one 16-beat AXI3
+# burst at 32 B, the granule the mover fetches in.
+GDN_CONST_SCALAR_WORDS = 256
+GDN_CONST_N_EXP = 6
+GDN_CONST_BURST_BYTES = 512
+
 
 def _desc_stride():
     """Bytes one subsystem A descriptor occupies in the arena.
@@ -429,6 +438,32 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True,
                      + (gdn_exp_b if include_gdn_exp else 0)
                      + (gdn_conv_b if include_gdn_conv else 0))
 
+    # ---- THE LEARNED GDN CONSTANTS, added 2026-09-18 (TRACK B of the
+    # constants path, docs/2026-09-18_b-constants-path.md).  A FOURTH
+    # per-layer region, and unlike the three above it is written ONCE by
+    # tools/pack_gdn_consts.py and only ever READ by the card: the conv
+    # weights (KCONV x QKVN int16), then one 512 B scalar block holding
+    # ssm_dt_bias[VAL_HEADS], ssm_a[VAL_HEADS], ssm_norm[DIM] and the six
+    # exponents.  512 B is the contract's burst granule (16-beat AXI3 bursts
+    # at 32 B), so the per-layer figure must stay a multiple of it, and the
+    # scalar block must actually hold what it is declared to hold -- both are
+    # refused here rather than left to a reader.
+    gdn_const_words = cfg["conv_kernel"] * qkv_dim + GDN_CONST_SCALAR_WORDS
+    gdn_const_scalar_used = 2 * val_heads + dim + GDN_CONST_N_EXP
+    if gdn_const_scalar_used > GDN_CONST_SCALAR_WORDS:
+        raise SystemExit(
+            "hbm_map: the GDN constant scalar block needs %d words (2 x %d "
+            "heads + %d dim + %d exponents) and the contract gives it %d.  "
+            "The layout in docs/2026-09-18_b-constants-path.md does not hold "
+            "at this shape." % (gdn_const_scalar_used, val_heads, dim,
+                                GDN_CONST_N_EXP, GDN_CONST_SCALAR_WORDS))
+    gdn_const_b = 2 * gdn_const_words
+    if gdn_const_b % GDN_CONST_BURST_BYTES:
+        raise SystemExit(
+            "hbm_map: the GDN constant image is %d B per layer, which is not "
+            "a multiple of the %d B burst granule; the mover cannot fetch it."
+            % (gdn_const_b, GDN_CONST_BURST_BYTES))
+
     # ---- KV.  One record per (layer, kv_head, position) per STREAM, and K and
     # V are separate regions.
     kv_rec_b = ch_b + cfg["attn_head_dim"] * cm_w // 8
@@ -449,6 +484,11 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True,
         gdn_state_conv_bytes_per_layer=gdn_conv_b,
         gdn_state_bytes_per_layer=gdn_per_layer,
         gdn_state_bytes=gdn_layers * gdn_per_layer,
+        gdn_const_layers=gdn_layers,
+        gdn_const_words_per_layer=gdn_const_words,
+        gdn_const_bytes_per_layer=gdn_const_b,
+        gdn_const_bytes=gdn_layers * gdn_const_b,
+        gdn_const_scalar_words_used=gdn_const_scalar_used,
         kv_record_hdr_bytes=ch_b, kv_mantissa_bits=cm_w,
         kv_record_bytes=kv_rec_b,
         kv_bytes_per_layer_per_token=kv_per_layer_per_token,
@@ -474,6 +514,11 @@ def arena_arithmetic(sz):
         "GDN total      %d layers x %d B = %d B"
         % (sz["gdn_layers"], sz["gdn_state_bytes_per_layer"],
            sz["gdn_state_bytes"]),
+        "GDN consts     2 B x (%d taps x %d qkv + %d scalar words) = %d B "
+        "per layer, x %d layers = %d B"
+        % (sz["model_conv_kernel"], sz["gdn_qkv_dim"], GDN_CONST_SCALAR_WORDS,
+           sz["gdn_const_bytes_per_layer"], sz["gdn_const_layers"],
+           sz["gdn_const_bytes"]),
         "KV record      %d B header + %d x %d/8 B mantissas = %d B"
         % (sz["kv_record_hdr_bytes"], sz["attn_head_dim"],
            sz["kv_mantissa_bits"], sz["kv_record_bytes"]),
@@ -561,6 +606,36 @@ def check_arenas(mani, ncards=1):
                 "excess costs %s.  Over-reservation is SAFE, so this is a "
                 "note and not a fault."
                 % (what, got, name, want, got / float(want), cost))
+    # THE GDN CONSTANT IMAGE.  Two checks, and the second is the sharper one:
+    # a region that is big enough but declares the wrong PER-LAYER STRIDE
+    # serves layer L the bytes of some other layer, and every address in the
+    # map is still aligned, in range and disjoint.  The stride is therefore
+    # required to be exactly the derived one, not merely large enough.
+    if "gdn_const_bytes" in hbm:
+        got = int(hbm["gdn_const_bytes"])
+        if got < sz["gdn_const_bytes"]:
+            fails.append(
+                "the GDN constant image: hbm.gdn_const_bytes is %d B and the "
+                "%s shape needs %d B (%d layers x %d B).  The layer past the "
+                "end is read from whatever sits above the region."
+                % (got, name, sz["gdn_const_bytes"], sz["gdn_const_layers"],
+                   sz["gdn_const_bytes_per_layer"]))
+        stride = hbm.get("gdn_const_bytes_per_layer")
+        if stride is not None and int(stride) != sz["gdn_const_bytes_per_layer"]:
+            fails.append(
+                "the GDN constant image: hbm.gdn_const_bytes_per_layer is %d "
+                "and the %s shape packs %d B per layer (2 x (%d x %d + %d)).  "
+                "A wrong stride hands layer L another layer's constants with "
+                "no address fault."
+                % (int(stride), name, sz["gdn_const_bytes_per_layer"],
+                   sz["model_conv_kernel"], sz["gdn_qkv_dim"],
+                   GDN_CONST_SCALAR_WORDS))
+        layers = hbm.get("gdn_const_layers")
+        if layers is not None and int(layers) != sz["gdn_const_layers"]:
+            fails.append(
+                "the GDN constant image: hbm.gdn_const_layers is %d, the %s "
+                "shape has %d GDN layers." % (int(layers), name,
+                                               sz["gdn_const_layers"]))
     return fails, notes
 
 
@@ -802,6 +877,13 @@ def manifest_regions(mani):
     for i, ext in enumerate(hbm.get("kv_extents", [])):
         out.append(Region(f"<kv arena {i}>", ext["base"], ext["nbytes"], "kv",
                           "pack_model_fk33.py", ext.get("stack")))
+    if hbm.get("gdn_const_bytes"):
+        # Placed by derive_gdn_const_block() below, at pack_gdn_consts.py's
+        # request: the one region in this map that is written once and only
+        # read by the card.
+        out.append(Region("<gdn constants>", hbm["gdn_const_base"],
+                          hbm["gdn_const_bytes"], "gdn_const",
+                          "pack_gdn_consts.py", hbm.get("gdn_const_stack")))
     return out
 
 
@@ -946,7 +1028,8 @@ class HbmMap:
 
         An overlap between two TOP-ANCHORED regions is a different thing and
         stays a FAIL."""
-        top = [r for r in self.regions if r.kind in ("host", "desc")]
+        top = [r for r in self.regions
+               if r.kind in ("host", "desc", "gdn_const")]
         per = int(self.hbm.get("kv_bytes_per_token", 0)) or 1
         charged = 0
         for r in self.regions:
@@ -1049,6 +1132,10 @@ class HbmMap:
                 note = f"{r.nbytes // per} tokens at {per} B/token, after the charge"
             elif r.kind in ("host", "desc"):
                 note = "NOT reserved by the manifest"
+            elif r.kind == "gdn_const":
+                note = (f"{self.hbm.get('gdn_const_layers', '?')} layers x "
+                        f"{self.hbm.get('gdn_const_bytes_per_layer', '?')} B, "
+                        f"read-only to the card")
             out.append((r.name.strip("<>"), r.base, r.nbytes, r.owner, note))
         out.sort(key=lambda t: t[1])
         return out
@@ -1344,6 +1431,126 @@ def derive_region_block(mani, desc_jobs, max_chunk=512, n_embd=None,
     return blk
 
 
+def kv_extents_below(kv_base, cap, top, stack, per):
+    """The KV arena as per-stack extents from `kv_base` up to `cap`.
+
+    `pack_model_fk33.py`'s rule, restated with a CEILING: the region is split
+    at every stack boundary and whole records counted inside each extent, so a
+    record cannot straddle the line.  `cap` is the lowest address the arena
+    may not reach -- `top` when nothing is reserved above it, and
+    `gdn_const_base` once the constant image is placed, because that image is
+    the one top-anchored region the manifest itself declares and the context
+    figure it publishes must not count bytes the card cannot cache into."""
+    extents, q = [], int(kv_base)
+    cap = min(int(cap), int(top))
+    while q < cap:
+        e = min((q // stack + 1) * stack, cap)
+        extents.append(dict(base=q, nbytes=e - q, stack=stack_of(q),
+                            tokens=(e - q) // per))
+        q = e
+    return extents
+
+
+def derive_gdn_const_block(mani, ncards=1):
+    """THE ONLY PLACE THAT CHOOSES WHERE THE GDN CONSTANT IMAGE LIVES.
+
+    Called by `tools/pack_gdn_consts.py` after it has packed the image, and by
+    `--write-manifest-gdn-const`.  Returns the dict that goes into the
+    manifest's `hbm` object.
+
+    THE RULE: the first 4 KB-aligned block BELOW `desc_arena_base` that holds
+    the whole image.  Nothing already placed moves -- the weights, the GDN
+    state, `kv_base`, the descriptor arena and the host blocks all keep their
+    addresses -- and the image is paid for out of the KV arena's top, which is
+    the same account the descriptor arena and the host blocks are charged to.
+    The KV extents are therefore RE-CAPPED at the new base and
+    `max_context_tokens` / `free_after_gdn` recomputed, so the figure the
+    manifest publishes is the context the card can actually hold.
+
+    It REFUSES rather than returning a block it cannot stand behind: the
+    manifest must already carry the region block (the arena is the floor this
+    sits under, and a floor nobody declared is not a floor), the shape must
+    match a model_cfg_t record (the size is derived, never typed), and the
+    resulting map must check clean."""
+    if isinstance(mani, str):
+        with open(mani) as f:
+            mani = json.load(f)
+    hbm = mani.get("hbm") or {}
+    name, cfg = shape_of_manifest(mani)
+    if cfg is None:
+        raise SystemExit(
+            "hbm_map: this manifest's output.weight matches no model_cfg_t "
+            "record in rtl/model_cfg_pkg.vhd, so the GDN constant image has "
+            "no derived size.  Refusing rather than guessing.")
+    sz = arena_sizes(cfg, ncards)
+    try:
+        desc_base, _, _ = manifest_arena(mani)
+    except NoRegionBlock as e:
+        raise SystemExit("hbm_map: " + str(e))
+    for k in ("kv_base", "kv_bytes_per_token"):
+        if k not in hbm:
+            raise SystemExit("hbm_map: the manifest declares no hbm.%s, so "
+                             "the KV arena cannot be re-capped under the "
+                             "constant image." % k)
+    top = int(hbm.get("size", HBM_TOP))
+    stack = int(hbm.get("stack_bytes", STACK_LINE))
+    need = align_up(sz["gdn_const_bytes"], PAGE)
+    base = align_down(desc_base - need, PAGE)
+    per = int(hbm["kv_bytes_per_token"])
+    extents = kv_extents_below(hbm["kv_base"], base, top, stack, per)
+    kv_total = sum(x["nbytes"] for x in extents)
+    blk = {
+        "gdn_const_base": int(base),
+        "gdn_const_bytes": int(sz["gdn_const_bytes"]),
+        "gdn_const_stack": stack_of(base),
+        "gdn_const_layers": int(sz["gdn_const_layers"]),
+        "gdn_const_bytes_per_layer": int(sz["gdn_const_bytes_per_layer"]),
+        "gdn_const_words_per_layer": int(sz["gdn_const_words_per_layer"]),
+        "gdn_const_placement": "first 4 KB block below hbm.desc_arena_base, "
+                               "by tools/hbm_map.py derive_gdn_const_block()",
+        "kv_extents": extents,
+        "free_after_gdn": int(kv_total),
+        "max_context_tokens": int(sum(x["tokens"] for x in extents)),
+    }
+    trial = json.loads(json.dumps(mani))
+    trial.setdefault("hbm", {}).update(blk)
+    m = plan(trial, policy="manifest", strict_arena=True)
+    fails = m.check()
+    if fails:
+        raise SystemExit(
+            "hbm_map: REFUSING to declare a GDN constant region -- the map "
+            "that results has %d fault(s):\n" % len(fails)
+            + "\n".join("  " + s for s in fails))
+    return blk
+
+
+def write_gdn_const_block(path, blk, extra=None):
+    """Install `derive_gdn_const_block()`'s dict (plus `extra`, the packer's
+    digest and file name) into a manifest, atomically, keeping a
+    `.bak-gdnconst`.  Additive on every key but the three KV figures it
+    re-caps (`kv_extents`, `free_after_gdn`, `max_context_tokens`), which is
+    the whole point of the re-cap: a reader that predates the region still
+    parses, and the context figure it reads is the true one."""
+    with open(path) as f:
+        mani = json.load(f)
+    if "hbm" not in mani:
+        raise SystemExit("hbm_map: %s has no top-level hbm object" % path)
+    keys = list(blk) + list(extra or {})
+    before = {k: mani["hbm"].get(k) for k in keys}
+    mani["hbm"].update(blk)
+    if extra:
+        mani["hbm"].update(extra)
+    bak = path + ".bak-gdnconst"
+    if not os.path.exists(bak):
+        with open(bak, "w") as f:
+            json.dump(json.load(open(path)), f, indent=1)
+    tmp = path + ".tmp-gdnconst"
+    with open(tmp, "w") as f:
+        json.dump(mani, f, indent=1)
+    os.replace(tmp, path)
+    return before, bak
+
+
 def relayout_arenas(mani, ncards=1):
     """Re-place the GDN state and the KV arena at the size the SHAPE needs.
 
@@ -1390,13 +1597,11 @@ def relayout_arenas(mani, ncards=1):
 
     # The KV region is split at every stack boundary and whole records counted
     # inside each extent, which is `pack_model_fk33`'s rule and the reason a
-    # record cannot straddle the line by an alignment coincidence.
-    extents, q = [], kv_base
-    while q < top:
-        e = min((q // stack + 1) * stack, top)
-        extents.append(dict(base=q, nbytes=e - q, stack=stack_of(q),
-                            tokens=(e - q) // per))
-        q = e
+    # record cannot straddle the line by an alignment coincidence.  CAPPED at
+    # the GDN constant image when one is placed: that region is charged to the
+    # KV arena's top and the context figure must not count it.
+    cap = int(hbm["gdn_const_base"]) if hbm.get("gdn_const_bytes") else top
+    extents = kv_extents_below(kv_base, cap, top, stack, per)
 
     hbm.update(
         gdn_state_base=gdn_base, gdn_state_bytes=gdn_bytes,
@@ -1417,7 +1622,7 @@ def relayout_arenas(mani, ncards=1):
         # the -1 that means "nobody said".
         gdn_state_layers_used=sz["gdn_layers"],
         kv_layers_used=sz["attn_layers"],
-        free_after_gdn=top - kv_base,
+        free_after_gdn=sum(x["nbytes"] for x in extents),
         max_context_tokens=sum(x["tokens"] for x in extents),
         arena_sizing="derived from rtl/model_cfg_pkg.vhd %s by "
                      "tools/hbm_map.py arena_sizes()" % name)
@@ -1684,6 +1889,13 @@ def _teeth_cases(mani, max_chunk=None, desc_jobs=311):
     blocked = json.loads(json.dumps(mani))
     blocked.setdefault("hbm", {}).update(
         derive_region_block(raw, desc_jobs, max_chunk or 512))
+    # AND THE GDN CONSTANT REGION, installed the same way, so every row below
+    # runs over the map the card will actually see: weights, GDN state, KV,
+    # constants, descriptor arena, host blocks.  A manifest that predates the
+    # region gets it derived here; one that carries it keeps what it carries
+    # (the derivation is deterministic, so the two agree or the rows say so).
+    if not blocked["hbm"].get("gdn_const_bytes"):
+        blocked["hbm"].update(derive_gdn_const_block(blocked))
     mani = blocked
 
     def base_map(**kw):
@@ -1825,6 +2037,49 @@ def _teeth_cases(mani, max_chunk=None, desc_jobs=311):
     yield ("arena_right_place_wrong_jobcount", False,
            lambda: base_map(desc_jobs=1))
 
+    # ---------------------------------------------------------------- the
+    # GDN constant image (2026-09-18).  Same shape of evidence as the arena
+    # rows: the region is declared, so it is checked like any other, and the
+    # three ways a declared address can be wrong each get a row.
+
+    def _const_on_the_arena(m2):
+        m2["hbm"]["gdn_const_base"] = int(m2["hbm"]["desc_arena_base"])
+    yield ("gdn_const_placed_on_the_descriptor_arena", True,
+           lambda: mutate(_const_on_the_arena))
+
+    def _const_in_gdn_state(m2):
+        m2["hbm"]["gdn_const_base"] = int(m2["hbm"]["gdn_state_base"]) + PAGE
+    yield ("gdn_const_placed_inside_the_gdn_state", True,
+           lambda: mutate(_const_in_gdn_state))
+
+    def _const_unaligned(m2):
+        m2["hbm"]["gdn_const_base"] = int(m2["hbm"]["gdn_const_base"]) + 64
+    yield ("gdn_const_unaligned", True, lambda: mutate(_const_unaligned))
+
+    def _const_under_the_host(m2):
+        # Right size, aligned, but sitting under R_X staging: the host's
+        # next prefill overwrites layer 23's conv weights.
+        m2["hbm"]["gdn_const_base"] = align_down(
+            int(m2["hbm"]["host_x_base"]) + PAGE, PAGE)
+    yield ("gdn_const_placed_under_the_host_rx_staging", True,
+           lambda: mutate(_const_under_the_host))
+
+    # MUST STAY GREEN.  With the KV extent NOT re-capped -- a manifest whose
+    # kv_extents still run to the top of the device, as every set packed
+    # before this region existed does -- the image sits INSIDE the KV arena
+    # and is a CHARGE, not a collision, exactly as the descriptor arena is.
+    # Named so that green is read as the decision it is; the context figure
+    # such a manifest publishes is then over by the image's size, which is
+    # tools/weights_residency.py's finding and not this map's.
+    def _const_in_uncapped_kv(m2):
+        h_ = m2["hbm"]
+        top = int(h_.get("size", HBM_TOP))
+        h_["kv_extents"] = kv_extents_below(
+            h_["kv_base"], top, top, int(h_.get("stack_bytes", STACK_LINE)),
+            int(h_["kv_bytes_per_token"]))
+    yield ("gdn_const_inside_an_uncapped_kv_extent_is_a_charge", False,
+           lambda: mutate(_const_in_uncapped_kv))
+
 
 # ----------------------------------------------------- teeth, the two arenas
 #
@@ -1876,6 +2131,41 @@ def _arena_teeth_cases(mani):
            lambda: mutate(lambda m: m["hbm"].update(
                gdn_state_bytes=sz["gdn_layers"]
                * sz["gdn_state_mant_bytes_per_layer"])))
+
+    # ---- the GDN constant image: size, stride and layer count
+    yield ("gdn_const_one_byte_under_the_shape", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_const_bytes=sz["gdn_const_bytes"] - 1)))
+    yield ("gdn_const_one_layer_short", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_const_bytes=(sz["gdn_const_layers"] - 1)
+               * sz["gdn_const_bytes_per_layer"])))
+    # Big enough and WRONG: the whole region at 24 x 65536, i.e. the conv
+    # weights with the scalar block forgotten.  Every address check passes and
+    # layer 1 reads its dt bias out of layer 0's tail.  This is the row the
+    # stride check exists for.
+    yield ("gdn_const_stride_forgets_the_scalar_block", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_const_bytes=sz["gdn_const_bytes"],
+               gdn_const_bytes_per_layer=sz["gdn_const_bytes_per_layer"]
+               - GDN_CONST_BURST_BYTES)))
+    yield ("gdn_const_layers_counted_as_all_blocks", True,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_const_bytes=sz["gdn_const_bytes"],
+               gdn_const_layers=sz["model_blocks"])))
+    yield ("gdn_const_exactly_the_derived_size", False,
+           lambda: mutate(lambda m: m["hbm"].update(
+               gdn_const_bytes=sz["gdn_const_bytes"],
+               gdn_const_bytes_per_layer=sz["gdn_const_bytes_per_layer"],
+               gdn_const_layers=sz["gdn_const_layers"])))
+    # The floor: a manifest with no constant image declared is a manifest
+    # whose card runs the m12 stand-ins, and that is a build decision this
+    # check cannot see.  Green, and named.
+    yield ("gdn_const_keys_absent_entirely", False,
+           lambda: mutate(lambda m: [m["hbm"].pop(k, None) for k in
+                                     ("gdn_const_bytes",
+                                      "gdn_const_bytes_per_layer",
+                                      "gdn_const_layers")]))
 
     # ---- exactly right, and over.  Both must stay GREEN.
     yield ("both_arenas_exactly_the_derived_size", False,
@@ -1931,6 +2221,21 @@ def _arena_shape_teeth():
     row("9B attention layers are 8, not 16", nine["attn_layers"], 8)
     row("9B gdn mantissas are 4096*128*2, not 6144*128*2",
         nine["gdn_state_mant_bytes_per_layer"], 4096 * 128 * 2)
+    # The constant image's contract figures (docs/2026-09-18_b-constants-path.md)
+    # are DERIVED here from the RTL record, so the row is the contract being
+    # reproduced rather than restated: 2 x (4 x 8192 + 256) = 66048 = 129
+    # bursts, x 24 layers.  The 27B figure is what the same rule gives at
+    # qkv 10240 and is stated so a shape change is seen to move it.
+    row("9B constant image is 66048 B per layer (129 x 512)",
+        (nine["gdn_const_bytes_per_layer"],
+         nine["gdn_const_bytes_per_layer"] % GDN_CONST_BURST_BYTES),
+        (66048, 0))
+    row("9B constant image totals 24 x 66048 = 1585152 B",
+        nine["gdn_const_bytes"], 1585152)
+    row("27B constant image is 2 x (4 x 10240 + 256) = 82432 B per layer",
+        tw["gdn_const_bytes_per_layer"], 82432)
+    row("the scalar block holds 2 x 32 + 128 + 6 = 198 of 256 words at 9B",
+        nine["gdn_const_scalar_words_used"], 198)
     # The KV RECORD is shape-independent between these two models -- both have
     # attn_kv_heads 4 and attn_head_dim 256 -- so the per-layer KV term is the
     # SAME 2176 B at both scales and only the layer count moves.  Stated
@@ -2106,6 +2411,17 @@ def main(argv=None):
                          "manifest, atomically, keeping a .bak-arenas.  No "
                          "placed tensor moves; both arenas begin after "
                          "weights_end")
+    ap.add_argument("--gdn-const", action="store_true",
+                    help="print the GDN constant region this manifest would "
+                         "get from derive_gdn_const_block(): the base below "
+                         "the descriptor arena, the re-capped KV extents and "
+                         "the new max_context_tokens.  Writes nothing")
+    ap.add_argument("--write-manifest-gdn-const", action="store_true",
+                    help="DERIVE the GDN constant region and WRITE it into "
+                         "this manifest, atomically, keeping a .bak-gdnconst. "
+                         "tools/pack_gdn_consts.py does this itself after "
+                         "packing; this is for a manifest whose image already "
+                         "exists (the digest keys are left as they are)")
     ap.add_argument("--ncards", type=int, default=1,
                     help="tensor-parallel group size, which divides the value "
                          "heads and the KV heads.  1 for the 9B bring-up, "
@@ -2150,6 +2466,29 @@ def main(argv=None):
         for s_ in fails:
             print("FAIL  " + s_)
         return 1 if fails else 0
+
+    if a.gdn_const or a.write_manifest_gdn_const:
+        blk = derive_gdn_const_block(mani, a.ncards)
+        hbm = mani.get("hbm", {})
+        print("GDN constant region for %s" % a.manifest)
+        for k in ("gdn_const_base", "gdn_const_bytes", "gdn_const_stack",
+                  "gdn_const_layers", "gdn_const_bytes_per_layer",
+                  "gdn_const_words_per_layer", "free_after_gdn",
+                  "max_context_tokens"):
+            b = hbm.get(k)
+            print("  %-28s %-14s -> %s" % (
+                k, "absent" if b is None else (h(b) if "base" in k else b),
+                h(blk[k]) if "base" in k else blk[k]))
+        print("  %-28s %d extent(s) -> %d extent(s), KV top %s -> %s"
+              % ("kv_extents", len(hbm.get("kv_extents", [])),
+                 len(blk["kv_extents"]),
+                 h(max(int(x["base"]) + int(x["nbytes"])
+                       for x in hbm.get("kv_extents", [dict(base=0, nbytes=0)]))),
+                 h(blk["kv_extents"][-1]["base"] + blk["kv_extents"][-1]["nbytes"])))
+        if a.write_manifest_gdn_const:
+            before, bak = write_gdn_const_block(a.manifest, blk)
+            print("  written; backup: %s" % bak)
+        return 0
 
     if a.write_manifest_arenas:
         before, new_hbm, bak = write_arenas(a.manifest, a.ncards)
