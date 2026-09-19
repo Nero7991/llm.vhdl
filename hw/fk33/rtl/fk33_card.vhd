@@ -217,10 +217,12 @@ begin
     generic map(
       A_DESC                   => true,
       B_STATE_AXI              => true,
+      B_SRC_REAL               => true,
       C_KV_AXI                 => true,
       HOST_WINDOW              => false,
       C_REAL                   => true,
       NORM_REAL                => true,
+      NORM_W_IMAGE             => "/home/orencollaco/GitHub/llama.vhdl/hw/fk33/gen/norm_w_9b.hex",
       SMP_EN                   => true,
       C_N_ROT                  => 64,
       C_KV_BLOCK               => 32,

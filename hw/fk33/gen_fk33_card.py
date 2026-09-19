@@ -53,6 +53,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(HERE, "rtl", "fk33_card.vhd")
 SRC = os.path.join(REPO, "rtl", "fk33_llama_top.vhd")
+# THE REAL NORM GAIN IMAGE, 65 x 4096 entries at NORM_W_EXP = 12, written by
+# sim/ooc_nwrom_gen_image.py and committed (track E of
+# docs/2026-09-18_b-constants-path.md).  An ABSOLUTE path derived from this
+# script's own location, because `NORM_W_IMAGE` is opened by file_open at
+# elaboration from wherever Vivado's cwd happens to be; the BC-250 holds the
+# repo at the same absolute path, so the generated wrapper is valid on both
+# lanes.  Refused here if absent: a missing image fails only at elaboration,
+# hours in, as `file_open ... severity failure`, which synthesis may not even
+# honour.
+NORM_W_HEX = os.path.join(REPO, "hw", "fk33", "gen", "norm_w_9b.hex")
+if not os.path.exists(NORM_W_HEX):
+    sys.exit("gen_fk33_card.py: NORM_W_IMAGE %s does not exist; the card "
+             "would elaborate the synthetic norm gain ramp, or fail at "
+             "file_open hours into synthesis.  Run "
+             "sim/ooc_nwrom_gen_image.py (track E) first." % NORM_W_HEX)
 
 # ---- the THIRD cell: the B/C grant ---------------------------------------
 # A takes 28 HBM masters, B needs 2 and C needs 3, which is 33 against the 30
@@ -120,6 +135,25 @@ ARGS = [
     # exist at all.
     "--generic", "A_DESC=true",
     "--generic", "B_STATE_AXI=true",
+    # B_SRC_REAL: subsystem B takes its conv taps, alpha and beta from the
+    # regions the schedule wrote (R_QKV and the two gate projections) instead
+    # of the `m12` stand-ins that every card build so far ran.  MEASURED
+    # 2026-09-18, docs/debugging/2026-09-18_the-card-runs-subsystem-b-on-
+    # stand-in-inputs-and-weights.md: the composed card computed B on
+    # synthetic inputs and synthetic weights.  Legal here because B_STATE_AXI
+    # is true: rtl/llama_top.vhd asserts `not (B_SRC_REAL and not
+    # B_STATE_AXI and tok_pos > 0)`, and the pair was verified with the tier
+    # on 2026-09-05.  docs/2026-09-18_b-constants-path.md, track C.
+    "--generic", "B_SRC_REAL=true",
+    # B_CONST_HBM=true BELONGS HERE AND IS NOT YET PASSED.  It is the generic
+    # track D adds to llama_top (the fourth, load-only phase of
+    # gdn_state_store that brings the learned conv weights, dt bias, A and
+    # ssm norm gain in from HBM at `bst_const_base`).  tools/gen_bd_wrapper.py
+    # emits `--generic NAME=VALUE` into the generic map VERBATIM and checks
+    # nothing against the entity, so passing it before the generic exists
+    # produces a wrapper that does not elaborate.  Add the line, and
+    # regenerate, once `B_CONST_HBM` and `bst_const_base` are in
+    # rtl/fk33_llama_top.vhd (git log --oneline -- rtl/llama_top.vhd).
     "--generic", "C_KV_AXI=true",
     # ---------------------------------------------------------------------
     # HOST_WINDOW=false IS THE CARD CONFIGURATION, AND IT WAS NEVER SET.
@@ -166,6 +200,16 @@ ARGS = [
     "--generic", "C_REAL=true",
     # NORM_REAL gates `gvr`, the real norm, against a stub at `gv`.
     "--generic", "NORM_REAL=true",
+    # NORM_W_IMAGE: the REAL RMSNorm gains, one row per OP_VEC_NORM of a token
+    # in schedule order, read at elaboration into ~114 BRAM
+    # (docs/debugging/2026-08-29_nwrom-norm-gain-image-area.md).  Empty, the
+    # default and what every card build so far used, keeps the SYNTHETIC ramp
+    # (fk33_llama_top.vhd, the NORM_W_IMAGE comment).  The path is built from
+    # REPO above rather than written as a literal so the wrapper is right on
+    # whichever machine generates it; NORM_W_EXP stays at its default of 12,
+    # which is the exponent the image was packed at.  A VHDL string generic
+    # needs the quotes, and gen_bd_wrapper passes the value through as is.
+    "--generic", 'NORM_W_IMAGE="%s"' % NORM_W_HEX,
     # SMP_EN BUILDS THE SAMPLER, AND WITHOUT IT THE CARD CANNOT SAY WHICH TOKEN
     # IT PRODUCED.  llama_top's default is FALSE, which ties the entire logits
     # stream off: `gsmptie` drives smp_* to zero and the seam's `smp_token`
