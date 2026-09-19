@@ -1271,7 +1271,104 @@ SEAM_TO_CARD = [
     # the build on it.
     ("d_a_arena",    "a_arena_base"),
     ("d_bst_base",   "bst_state_base"),
+    # THE THIRD BASE, ADDED 2026-09-18: B's learned constants
+    # (docs/2026-09-18_b-constants-path.md).  fk33_seam's A_BCB_LO/HI drive
+    # the card's `bst_const_base`, from which gdn_state_store loads the packed
+    # per-layer conv weights, dt bias, A and ssm norm gain.  The card port is
+    # llama_top's (track D) and is passed through fk33_card.vhd by
+    # gen_fk33_card.py; until it exists there, check_card_pins() below refuses
+    # to emit a card-on build rather than wiring a pin that is not there.
+    ("d_bcb_base",   "bst_const_base"),
 ]
+
+
+# ---- EVERY CARD PIN NAMED ABOVE MUST BE A PORT OF fk33_card ---------------
+# What happens when it is not, and why this exists.  `connect_bd_net
+# [get_bd_pins seam/x] [get_bd_pins card/y]` with `card/y` absent hands
+# connect_bd_net an EMPTY second argument; whatever Vivado then does, the
+# seam register the host writes reaches nothing, and the card's own input
+# -- if it exists under another name, or arrives later with a VHDL default --
+# is zero.  CLAUDE.md records that an unconnected module_ref input with a
+# VHDL default draws NO [BD 41-759] at all (MEASURED 2026-09-18 on
+# eng/d_x_exp), so the only guard that sees the quiet case is one that
+# checks the NAME against the entity before the build starts.  That is this:
+# the port clause of `entity fk33_card` is read from CARD_RTL and every
+# card-side pin in the four seam tables must be in it.  Refusing here costs
+# milliseconds; the alternative is a bitstream whose B loads its constants
+# from HBM address 0.
+#
+# The same list is emitted into the Tcl as an existence check on the LIVE
+# cell (see _card_block), because the entity the packager inferred is the
+# thing that is actually wired, and a file on disk is only a prediction of it.
+def _entity_ports(src_text, entity):
+    """Port names of `entity <entity> is ... end`, from VHDL source text.
+    Comments stripped first; a `--` citation of a port name is not a port."""
+    nc = re.sub(r"--[^\n]*", "", src_text)
+    m = re.search(r"^\s*entity\s+%s\s+is\b" % re.escape(entity), nc, re.M)
+    if not m:
+        return None
+    end = re.search(r"^\s*end\s+(entity\s+)?%s\s*;" % re.escape(entity),
+                    nc[m.end():], re.M)
+    ent = nc[m.end():] if not end else nc[m.end():m.end() + end.start()]
+    pm = re.search(r"\bport\s*\(", ent, re.I)
+    if not pm:
+        return None
+    depth, i = 1, pm.end()
+    while i < len(ent) and depth:
+        depth += {"(": 1, ")": -1}.get(ent[i], 0)
+        i += 1
+    clause = ent[pm.end():i - 1]
+    names = set()
+    for decl in clause.split(";"):
+        if ":" not in decl:
+            continue
+        lhs = decl.split(":", 1)[0]
+        for n in lhs.split(","):
+            n = n.strip()
+            if re.match(r"^[A-Za-z_]\w*$", n):
+                names.add(n)
+    return names
+
+
+def card_pins_wanted():
+    """Every card-side pin the seam tables wire, (pin, table) pairs."""
+    out = []
+    out += [(cp, "SEAM_FROM_CARD") for _, cp in SEAM_FROM_CARD]
+    out += [(cp, "SEAM_TO_CARD") for _, cp in SEAM_TO_CARD]
+    out += [(cp, "CARD_SEAM_TO_ENG") for cp, _ in CARD_SEAM_TO_ENG]
+    out += [(cp, "CARD_SEAM_FROM_ENG") for cp, _ in CARD_SEAM_FROM_ENG]
+    return out
+
+
+def check_card_pins(card_src_text):
+    """Return the list of (pin, table) whose pin is NOT a port of fk33_card
+    in `card_src_text`.  Raises if the entity cannot be parsed at all, so an
+    unreadable file is not an empty (passing) list."""
+    ports = _entity_ports(card_src_text, "fk33_card")
+    if not ports:
+        raise ValueError("no `entity fk33_card is ... port (...)` could be "
+                         "parsed; a checker with no input must not pass")
+    return [(cp, tbl) for cp, tbl in card_pins_wanted() if cp not in ports]
+
+
+def _refuse_missing_card_pins():
+    try:
+        missing = check_card_pins(open(CARD_RTL).read())
+    except (OSError, ValueError) as e:
+        sys.exit("ABORT: cannot verify the seam<->card pin names against %s: "
+                 "%s" % (CARD_RTL, e))
+    if missing:
+        sys.exit("ABORT: %d seam<->card pin(s) named in gen_pcieep.py are NOT "
+                 "ports of `entity fk33_card` in %s: %s.  connect_bd_net "
+                 "would be handed an empty pin and the host register behind "
+                 "it would reach nothing (an unconnected module_ref input "
+                 "with a VHDL default draws no [BD 41-759]).  Regenerate the "
+                 "card (python3 hw/fk33/gen_fk33_card.py) after the port lands "
+                 "in rtl/fk33_llama_top.vhd, or fix the table."
+                 % (len(missing), CARD_RTL,
+                    ", ".join("%s (%s)" % mp for mp in missing)))
+    print("FK33_CARDPINS %d seam<->card pins checked against %s: all present"
+          % (len(card_pins_wanted()), os.path.basename(CARD_RTL)))
 
 # ---- B and C onto the grant ----------------------------------------------
 # (grant pin, card pin).  The card's masters carry five AXI signals the grant
@@ -1364,6 +1461,27 @@ def _card_block():
     a("# emitted and deleted, so check_seam_tieoff's reading of the script text")
     a("# stays true.  The xlconstant cells still exist for the pins NOT in")
     a("# SEAM_FROM_CARD; Vivado drops any that end up unused.")
+    a("# EVERY PIN BELOW MUST EXIST ON THE LIVE CELL BEFORE IT IS CONNECTED.")
+    a("# A `get_bd_pins` that matches nothing is a WARNING and an empty list,")
+    a("# and the seam register behind it would then drive nothing.  The names")
+    a("# were checked against fk33_card.vhd when this file was generated; this")
+    a("# checks them against the entity Vivado actually inferred.")
+    a("foreach fk33_sp {%s} {"
+      % " ".join("%s/%s" % (SEAM_CELL, sp)
+                 for sp, _ in SEAM_FROM_CARD + SEAM_TO_CARD))
+    a("    if {![llength [get_bd_pins -quiet $fk33_sp]]} {")
+    a("        error \"FK33_SEAMWIRE FAIL: seam pin $fk33_sp does not exist on the inferred fk33_seam.  Its card pin would be left with no driver, i.e. ZERO.\"")
+    a("    }")
+    a("}")
+    a("foreach fk33_cp {%s} {"
+      % " ".join("%s/%s" % (CARD_CELL, cp)
+                 for _, cp in SEAM_FROM_CARD + SEAM_TO_CARD))
+    a("    if {![llength [get_bd_pins -quiet $fk33_cp]]} {")
+    a("        error \"FK33_SEAMWIRE FAIL: card pin $fk33_cp does not exist on the inferred fk33_card.  The seam register behind it would reach nothing, and a card input with a VHDL default draws no BD 41-759 when left unconnected.\"")
+    a("    }")
+    a("}")
+    a("puts \"FK33_SEAMWIRE %d seam<->card pins exist on both cells\""
+      % len(SEAM_FROM_CARD + SEAM_TO_CARD))
     for sp, cp in SEAM_FROM_CARD:
         a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
           % (SEAM_CELL, sp, CARD_CELL, cp))
@@ -1542,6 +1660,11 @@ if CARD_ON != ENG_XEXP_PORT:
 if not CARD_ON:
     CARD_BLOCK = ""
     CARD_RTL_ADD = ""
+else:
+    # The card is in this build, so every pin the tables above name must be a
+    # port of the wrapper that will be inferred.  Refuse at generation time;
+    # see check_card_pins for what the alternative silently builds.
+    _refuse_missing_card_pins()
 
 
 
@@ -3653,6 +3776,7 @@ def selftest():
     reset_topology_teeth()
     addr_map_teeth()
     seam_tieoff_teeth()
+    card_pins_teeth()
 
     print("SELFTEST PASS")
 
@@ -4662,6 +4786,49 @@ def addr_map_teeth():
             print("FAIL " + b)
         sys.exit("SELFTEST FAIL: the address-map guard does not discriminate "
                  "as claimed.")
+
+
+def card_pins_teeth():
+    """Show that check_card_pins discriminates, with the attribution control.
+
+    THE MUTANT IS BUILT FROM THE THING, not from the check's notion of it: the
+    real hw/fk33/rtl/fk33_card.vhd with one REAL port declaration removed --
+    `bst_state_base`, the pin whose absence was MEASURED as [BD 41-759] in two
+    builds.  The control is the same file untouched.  The row passes only if
+    the mutant's missing set is the control's plus exactly that pin, so a
+    checker that reports everything missing (a broken parser) and one that
+    reports nothing missing (an empty port set) both fail here.  The control's
+    own missing set is PRINTED rather than asserted empty: a card pin that is
+    legitimately not there yet (a port another track has not landed) shows up
+    as a name, not as a red row, and the card-on generator refuses on it
+    separately.
+    """
+    src = open(CARD_RTL).read()
+    ctl = check_card_pins(src)
+    mut_src, n = re.subn(r"^\s*bst_state_base\s*:\s*in\s+std_logic_vector\(32 downto 0\)\s*;\s*$",
+                         "", src, flags=re.M)
+    if n != 1:
+        sys.exit("SELFTEST VOID: expected exactly one `bst_state_base : in "
+                 "std_logic_vector(32 downto 0);` port line in %s, found %d; "
+                 "the mutant cannot be built from the thing." % (CARD_RTL, n))
+    mut = check_card_pins(mut_src)
+    want = sorted(ctl + [("bst_state_base", "SEAM_TO_CARD")])
+    print("CARDPINS control missing=%s" % (sorted(ctl) or "none"))
+    print("CARDPINS mutant  missing=%s" % sorted(mut))
+    if sorted(mut) != want:
+        sys.exit("SELFTEST FAIL: check_card_pins did not attribute exactly "
+                 "the removed port: want %s, got %s" % (want, sorted(mut)))
+    # And the parser must refuse a text with no entity at all, not pass it.
+    try:
+        check_card_pins("-- nothing here\n")
+    except ValueError:
+        pass
+    else:
+        sys.exit("SELFTEST FAIL: check_card_pins passed a text with no "
+                 "fk33_card entity, i.e. a checker with no input reported "
+                 "nothing missing.")
+    print("CARDPINS teeth: control %d missing, mutant %d missing, empty text "
+          "refused" % (len(ctl), len(mut)))
 
 
 def seam_tieoff_teeth():
