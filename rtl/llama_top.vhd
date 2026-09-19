@@ -693,6 +693,22 @@ entity llama_top is
     -- NOT used here: memory 3 supplies `cv_w` and `cv_cw_exp` as well as the
     -- taps, and the store carries taps only, so the two cannot be swapped
     -- wholesale.  See the refusal's own comment.
+    --
+    -- B_CONST_HBM, 2026-09-18: THE MODEL'S LEARNED GDN CONSTANTS FROM HBM.
+    -- With it true the conv WEIGHTS, ssm_dt_bias, ssm_a and the ssm_norm
+    -- weight come from `gdn_state_store`'s fourth, load-only phase (the
+    -- `gdn_const` region, `bst_const_base`, one 66,048-byte image per layer
+    -- at 9B; docs/2026-09-18_b-constants-path.md) instead of the `m12`
+    -- stand-ins below.  It is what turns B_SRC_REAL from "the inputs are
+    -- real" into "the arithmetic is the model's": MEASURED 2026-09-18 the
+    -- card ran whole tokens with every one of those four a stand-in and no
+    -- probe could tell until step 8 (docs/debugging/2026-09-18_the-card-runs-
+    -- subsystem-b-on-stand-in-inputs-and-weights.md).  Requires B_STATE_AXI,
+    -- because the store is what moves it; refused below otherwise.  Default
+    -- FALSE keeps every existing bench bit-identical.  Declared BEFORE
+    -- B_STATE_AXI because tools/gen_cardtop.py anchors on that generic
+    -- being the last.
+    B_CONST_HBM : boolean := false;
     B_STATE_AXI : boolean := false
   );
   port(
@@ -791,6 +807,8 @@ entity llama_top is
     -- B_STATE_AXI), so an existing instantiation still elaborates.  The same
     -- precedent `kv_*` set directly above.
     bst_state_base : in  std_logic_vector(32 downto 0) := (others => '0');
+    -- hbm.gdn_const_base, B_CONST_HBM only: the per-layer constants images.
+    bst_const_base : in  std_logic_vector(32 downto 0) := (others => '0');
     bst_busy   : out std_logic;
     bst_done   : out std_logic;
     bst_err    : out std_logic;
@@ -2237,6 +2255,28 @@ begin
         return n;
       end function;
       constant NW_N : positive := nw_count;
+
+      -- THE IMAGE IS PINNED TO THE SCHEDULE, TWO-SIDED, AT ELABORATION.
+      -- `nw_count` refuses a SHORT or EMPTY image; nothing refused a LONG
+      -- one, and the only op-count check was the run-time `novf` assert
+      -- below, which Vivado ignores.  FOUND 2026-09-18 by TRACK E while
+      -- committing the 9B image: a 33-block image would elaborate, build,
+      -- and serve `blk.32.attn_norm` to the final norm, silently.  The
+      -- schedule (sim/llama_sched_pkg.vhd :233/:250/:264/:290) issues one
+      -- OP_VEC_NORM before each block's attention/GDN half, one before its
+      -- FFN half, and one final: 2*blocks + 1.  Out-of-range naturals, not
+      -- asserts, so the refusal is visible in synthesis; the NAME is the
+      -- diagnostic.  Only when an image is given: the empty default keeps
+      -- `NW_N = 1` and the synthetic ramp.
+      function nw_expected return natural is
+      begin
+        if NORM_W_IMAGE = "" then return NW_N; end if;
+        return 2*SHAPE.blocks + 1;
+      end function;
+      constant bad_norm_image_longer_than_schedule  : natural
+             := nw_expected - NW_N;
+      constant bad_norm_image_shorter_than_schedule : natural
+             := NW_N - nw_expected;
 
       type nw_t is array (0 to NW_N-1)
         of std_logic_vector(NN*MANT_W-1 downto 0);
@@ -4217,6 +4257,23 @@ begin
     constant BST_CONV_B : natural := (KC-1)*qkv_dim(SHAPE)*2;
     constant BST_MAXB   : natural := min4(16, BST_MANT_B/32,
                                           BST_EXP_B/32, BST_CONV_B/32);
+    -- The constants image: KC*QKVN conv-weight words then a 512-byte scalar
+    -- block (docs/2026-09-18_b-constants-path.md), so at 9B 65,536 + 512.
+    constant BST_CNST_B : natural := KC*qkv_dim(SHAPE)*2 + 512;
+    -- B_CONST_HBM without the tier has nothing to move it: refused at
+    -- elaboration, the out-of-range-natural idiom (Vivado ignores asserts).
+    constant bad_const_hbm_without_state_axi : natural
+           := 0 - boolean'pos(B_CONST_HBM and not B_STATE_AXI);
+
+    -- THE STORE'S CONSTANT FACES, B_CONST_HBM only.  Defaulted to zero so
+    -- nothing changes unless `gen_st_tier` drives them.
+    signal st_cw_w   : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0)
+                     := (others => '0');
+    signal st_cw_exp : std_logic_vector(3*8-1 downto 0) := (others => '0');
+    signal st_dt_m, st_a_m : std_logic_vector(VH*16-1 downto 0)
+                     := (others => '0');
+    signal st_sn_w   : std_logic_vector(DM*16-1 downto 0) := (others => '0');
+    signal st_dt_e, st_a_e, st_sn_e : signed(7 downto 0) := (others => '0');
 
     signal gb_start : std_logic;
     signal j_busy   : std_logic;
@@ -4432,11 +4489,22 @@ begin
                     EXP_BYTES    => BST_EXP_B,
                     CONV_BYTES   => BST_CONV_B,
                     LAYER_STRIDE => BST_MANT_B + BST_EXP_B + BST_CONV_B,
-                    MAXB         => BST_MAXB)
+                    MAXB         => BST_MAXB,
+                    CONST_EN     => B_CONST_HBM,
+                    CONST_STRIDE => BST_CNST_B,
+                    CONST_BYTES  => BST_CNST_B)
         port map(
           clk => clk, rst => rst,
           load_start => js_ld, save_start => js_sv,
           layer => js_layer, state_base => bst_state_base,
+          const_base => bst_const_base,
+          -- The constants faces.  `cw_seg`/`cw_grp` take the same
+          -- unregistered address as the tap face and for the same reason
+          -- (see cv_seg below): one-cycle contract, data next cycle.
+          cw_seg => cv_seg, cw_grp => cv_grp, cw_w => st_cw_w,
+          cw_exp => st_cw_exp,
+          sc_dt_m => st_dt_m, sc_a_m => st_a_m, sn_w => st_sn_w,
+          sc_dt_e => st_dt_e, sc_a_e => st_a_e, sn_exp => st_sn_e,
           busy => bst_busy_i, done => js_done, err => js_err,
           st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
           st_rgrp => st_rgrp, st_rdata => st_rdata,
@@ -4541,18 +4609,25 @@ begin
     -- `st_cv_x` IS in the sensitivity list: it is read below whenever
     -- B_STATE_AXI, and a combinational process that reads a signal it does not
     -- list simulates differently from the hardware it synthesises to.
-    cvdata_p : process(cvq_seg, cvq_grp, qkv_b, st_cv_x) is
+    cvdata_p : process(cvq_seg, cvq_grp, qkv_b, st_cv_x, st_cw_w) is
       variable xv, wv : std_logic_vector(KC*B_CONV_LANES*16-1 downto 0);
       variable b, ch, sbase : integer;
     begin
       -- The conv WEIGHTS are learned constants in every configuration.
-      for t in 0 to KC-1 loop
-        for ln in 0 to B_CONV_LANES-1 loop
-          b := (t*B_CONV_LANES + ln)*16;
-          wv(b+15 downto b) :=
-            std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+      -- With B_CONST_HBM they are the MODEL'S, read off the store's weight
+      -- face at the same (seg, grp) and in the same bit order this loop
+      -- builds: tap t lane ln at (t*B_CONV_LANES + ln)*16, t = KC-1 newest.
+      if B_CONST_HBM then
+        wv := st_cw_w;
+      else
+        for t in 0 to KC-1 loop
+          for ln in 0 to B_CONV_LANES-1 loop
+            b := (t*B_CONV_LANES + ln)*16;
+            wv(b+15 downto b) :=
+              std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+          end loop;
         end loop;
-      end loop;
+      end if;
 
       if B_SRC_REAL then
         -- q | k | v in that channel order, the same two boundaries
@@ -4603,7 +4678,14 @@ begin
     cvsq : process(clk) is
     begin
       if rising_edge(clk) then
-        cv_cw_exp <= to_signed(12 + cv_seg, 8);
+        if B_CONST_HBM then
+          -- The packer's per-segment exponent for this layer, a level from
+          -- the end of the load phase; registered here like the stand-in so
+          -- gdn_block's cv_seg-before-cv_cw_exp ordering is unchanged.
+          cv_cw_exp <= signed(st_cw_exp(cv_seg*8+7 downto cv_seg*8));
+        else
+          cv_cw_exp <= to_signed(12 + cv_seg, 8);
+        end if;
       end if;
     end process;
 
@@ -4615,19 +4697,28 @@ begin
       end if;
     end process;
 
-    scdrv : process(sc_head_q, alp_b, bet_b, alp_e, bet_e) is
+    scdrv : process(sc_head_q, alp_b, bet_b, alp_e, bet_e,
+                    st_dt_m, st_a_m, st_dt_e, st_a_e) is
       variable ix : integer;
     begin
       ix      := sc_head_q;
       -- ssm_dt_bias and ssm_a are LEARNED per-head weights.  They have no
       -- region and their scale does not move with the token.
-      sc_dt_m <= m12(ix*31 + 2, 3);
-      -- ssm_a is -exp(A_log), so `a` is always <= 0 and the decay never
-      -- amplifies.  A positive one would exercise a case the model cannot
-      -- produce.
-      sc_a_m  <= -abs(m12(ix*31 + 3, 4));
-      sc_dt_e <= to_signed(12, 8);
-      sc_a_e  <= to_signed(12, 8);
+      if B_CONST_HBM then
+        -- The model's, from the store's scalar block; head ix at ix*16.
+        sc_dt_m <= signed(st_dt_m(ix*16+15 downto ix*16));
+        sc_a_m  <= signed(st_a_m(ix*16+15 downto ix*16));
+        sc_dt_e <= st_dt_e;
+        sc_a_e  <= st_a_e;
+      else
+        sc_dt_m <= m12(ix*31 + 2, 3);
+        -- ssm_a is -exp(A_log), so `a` is always <= 0 and the decay never
+        -- amplifies.  A positive one would exercise a case the model cannot
+        -- produce.
+        sc_a_m  <= -abs(m12(ix*31 + 3, 4));
+        sc_dt_e <= to_signed(12, 8);
+        sc_a_e  <= to_signed(12, 8);
+      end if;
       if B_SRC_REAL then
         -- alpha and beta ARE per-token activations: subsystem A projects them
         -- into R_ALPHA and R_BETA, one element per value head, which is
@@ -4647,9 +4738,16 @@ begin
     -- ---- memory 5: the ssm_norm weight.  A level. ----------------------
     wdrv : process(all) is
     begin
-      for j in 0 to DM-1 loop
-        w_mant((j+1)*16-1 downto j*16) <= std_logic_vector(m12(4242, j));
-      end loop;
+      if B_CONST_HBM then
+        -- The model's ssm_norm weight and its exponent, from the store.
+        w_mant <= st_sn_w;
+        w_exp  <= to_integer(st_sn_e);
+      else
+        for j in 0 to DM-1 loop
+          w_mant((j+1)*16-1 downto j*16) <= std_logic_vector(m12(4242, j));
+        end loop;
+        w_exp <= 12;
+      end if;
     end process;
 
     -- ---- the adapter, the z producer and the y sink --------------------

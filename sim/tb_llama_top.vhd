@@ -365,6 +365,20 @@ entity tb_llama_top is
     -- true carry the SAME EXP_* values as their flat siblings.
     B_STATE_AXI : boolean := false;
     -- ==================================================================
+    -- THE MODEL'S GDN CONSTANTS FROM HBM, 2026-09-18.  See `B_CONST_HBM` in
+    -- rtl/llama_top.vhd and docs/2026-09-18_b-constants-path.md.  With it
+    -- true the slave below also models the `gdn_const` region, placed 4 KiB
+    -- aligned AFTER the state layers, and initialises it from B_CONST_IMAGE:
+    -- `tools/pack_gdn_consts.py --hex`, one 4-hex-digit int16 word per line,
+    -- word 0 first, every layer back to back.  THE FLAT ARM IS NOT AN ORACLE
+    -- FOR THIS ONE: it has no path for these constants at all, so the rows
+    -- that set this true are judged by `tools/ref9b/gdn_oracle.py --b-const`
+    -- on their capture, never by the EXP_* landmarks.  Both default off and
+    -- with them off nothing here changes (the slave's memory is not even
+    -- enlarged), so every published number stands.
+    B_CONST_HBM   : boolean := false;
+    B_CONST_IMAGE : string  := "";
+    -- ==================================================================
     -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
     -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
     -- `wword` and every published number unchanged.
@@ -1108,12 +1122,69 @@ architecture tb of tb_llama_top is
   constant BST_CONV   : natural := (BST_KC-1)*BST_QKVN*2;
   constant BST_STRIDE : natural := BST_MANT + BST_EXP + BST_CONV;
   constant BST_BEAT_B : natural := 32;                    -- 256-bit AXI
+  -- The constants region, B_CONST_HBM only: KC*QKVN conv-weight words plus
+  -- a 512-byte scalar block per layer (the packer's layout), based 4 KiB
+  -- above the last state layer, which is where the real arena allocator
+  -- would also be free to put it.  Sized to ZERO when off so the slave's
+  -- bounds checks stay exactly as tight as they were.
+  constant BST_CNST   : natural := BST_KC*BST_QKVN*2 + 512;
+  constant BST_CBASE  : natural :=
+      ((BST_NLY*BST_STRIDE + 4095) / 4096) * 4096;
+  function bst_total_bytes return natural is
+  begin
+    if B_CONST_HBM then return BST_CBASE + BST_NLY*BST_CNST;
+    else                return BST_NLY*BST_STRIDE; end if;
+  end function;
   constant BST_BEATS  : natural :=
-      (BST_NLY*BST_STRIDE + BST_BEAT_B - 1) / BST_BEAT_B;
+      (bst_total_bytes + BST_BEAT_B - 1) / BST_BEAT_B;
   type bst_mem_t is array (0 to BST_BEATS-1)
                     of std_logic_vector(255 downto 0);
 
+  -- The image loader.  Word w of the file lands at byte BST_CBASE + 2w,
+  -- little-endian inside the beat, which is how the packer writes the .bin
+  -- the card loads and how `gdn_state_axi` reads 16-bit words back out.
+  -- A short or long image is a REFUSAL: the region is indexed per layer,
+  -- so an image for another shape would serve every layer someone else's
+  -- constants, silently.
+  impure function bst_mem_init return bst_mem_t is
+    variable m    : bst_mem_t := (others => (others => '0'));
+    file     fh   : text;
+    variable ln   : line;
+    variable v    : std_logic_vector(15 downto 0);
+    variable w    : natural := 0;
+    variable byte, beat, bit0 : natural;
+  begin
+    if B_CONST_HBM and B_CONST_IMAGE /= "" then
+      file_open(fh, B_CONST_IMAGE, read_mode);
+      while not endfile(fh) loop
+        readline(fh, ln);
+        if ln'length >= 4 then
+          hread(ln, v);
+          assert w < BST_NLY*BST_CNST/2
+            report "tb_llama_top: B_CONST_IMAGE " & B_CONST_IMAGE
+                 & " is LONGER than " & integer'image(BST_NLY*BST_CNST/2)
+                 & " words; refusing an image for another shape"
+            severity failure;
+          byte := BST_CBASE + 2*w;
+          beat := byte / BST_BEAT_B;
+          bit0 := (byte mod BST_BEAT_B) * 8;
+          m(beat)(bit0+15 downto bit0) := v;
+          w := w + 1;
+        end if;
+      end loop;
+      file_close(fh);
+      assert w = BST_NLY*BST_CNST/2
+        report "tb_llama_top: B_CONST_IMAGE " & B_CONST_IMAGE & " holds "
+             & integer'image(w) & " words, the shape needs "
+             & integer'image(BST_NLY*BST_CNST/2) & "; refusing"
+        severity failure;
+    end if;
+    return m;
+  end function;
+
   signal bst_state_base : std_logic_vector(32 downto 0) := (others => '0');
+  signal bst_const_base : std_logic_vector(32 downto 0)
+       := std_logic_vector(to_unsigned(BST_CBASE, 33));
   signal bst_busy, bst_done, bst_err : std_logic;
   signal bst_arvalid, bst_rready, bst_awvalid : std_logic;
   signal bst_wvalid, bst_wlast, bst_bready    : std_logic;
@@ -1324,6 +1395,7 @@ begin
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
+      B_CONST_HBM => B_CONST_HBM,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
       C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,
@@ -1370,6 +1442,7 @@ begin
       err_lost_beat => err_lost_beat, err_gate_drop => err_gate_drop,
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll,
       bst_state_base => bst_state_base,
+      bst_const_base => bst_const_base,
       bst_busy => bst_busy, bst_done => bst_done, bst_err => bst_err,
       bst_arvalid => bst_arvalid, bst_arready => bst_arready,
       bst_araddr => bst_araddr, bst_arlen => bst_arlen,
@@ -1400,7 +1473,7 @@ begin
   -- that is what makes the flat arm this arm's oracle.
   -- ======================================================================
   bst_slave : process(clk) is
-    variable mem  : bst_mem_t := (others => (others => '0'));
+    variable mem  : bst_mem_t := bst_mem_init;
     variable rbeat, rleft, ridx : natural := 0;
     variable wbeat, widx : natural := 0;
     variable rbusy, wbusy : boolean := false;

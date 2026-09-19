@@ -175,6 +175,52 @@ def ssm_norm_w(shape):
     return [m12(4242, j) for j in range(shape.head_dim)]
 
 
+# ----------------------------------------------- the constants image
+def read_const_image(path, shape):
+    """`tools/pack_gdn_consts.py`'s per-layer image, the layout of
+    docs/2026-09-18_b-constants-path.md, as one dict per GDN layer in the
+    packer's layer order (which is `gdn_layers(shape)`'s order).
+
+    Word w is the little-endian int16 at byte 2w.  Per layer, in words:
+      [0, KCONV*QKVN)   conv weights, word t*QKVN + ch  (t = KCONV-1 newest)
+      + 0    dt[VH]   + VH  a[VH]   + 2VH  norm[D]
+      + 2VH + D        cw_exp[3] dt_e a_e w_exp
+    and the layer is padded to KCONV*QKVN + 256 words.  A file whose size is
+    not a whole number of such layers, or fewer layers than the shape has, is
+    REFUSED: an image for another shape would hand every layer somebody
+    else's constants, silently.
+    """
+    import struct
+    KH, VH, D = shape.key_heads, shape.val_heads, shape.head_dim
+    QKVN = 2 * KH * D + VH * D
+    per = KCONV * QKVN + 256
+    with open(path, "rb") as fp:
+        raw = fp.read()
+    if len(raw) % (2 * per) != 0:
+        raise SystemExit("gdn_oracle: --b-const %s is %d bytes, not a whole "
+                         "number of %d-byte layers at this shape"
+                         % (path, len(raw), 2 * per))
+    nl = len(raw) // (2 * per)
+    need = len(gdn_layers(shape))
+    if nl < need:
+        raise SystemExit("gdn_oracle: --b-const %s holds %d layers, the shape "
+                         "has %d GDN layers" % (path, nl, need))
+    words = struct.unpack("<%dh" % (len(raw) // 2), raw)
+    out = []
+    for L in range(need):
+        w = words[L * per:(L + 1) * per]
+        sb = KCONV * QKVN
+        eb = sb + 2 * VH + D
+        # channel-major [ch*KCONV + t], the order blk_t.wtap wants
+        wt_flat = [w[t * QKVN + c] for c in range(QKVN) for t in range(KCONV)]
+        out.append(dict(wt_flat=wt_flat,
+                        dt=list(w[sb:sb + VH]), a=list(w[sb + VH:sb + 2 * VH]),
+                        norm=list(w[sb + 2 * VH:sb + 2 * VH + D]),
+                        cw_exp=list(w[eb:eb + 3]), dt_e=w[eb + 3],
+                        a_e=w[eb + 4], w_exp=w[eb + 5]))
+    return out
+
+
 def seg_nch(shape, s):
     return shape.val_dim if s == 2 else shape.key_dim
 
@@ -210,8 +256,15 @@ def build_oracle(verbose=False):
 
 
 def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
-            kmap="mod", verbose=False, tk0="seq"):
-    """Run the oracle over the capture.  Returns {(seam, tok): (exp, mant)}."""
+            kmap="mod", verbose=False, tk0="seq", b_const=None):
+    """Run the oracle over the capture.  Returns {(seam, tok): (exp, mant)}.
+
+    `b_const` is `read_const_image()`'s list, or None for the `m12`
+    stand-ins.  The C model's stimulus carries cw_exp, W_E and the norm
+    weight ONCE per run, and the image has them PER LAYER, so with an image
+    the oracle is invoked once per layer (NLAY = 1 in each stimulus) and the
+    predictions are merged; without one the single run is unchanged.
+    """
     lays = gdn_layers(shape)
     if not lays:
         return {}, []
@@ -231,6 +284,10 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
     xt = conv_taps_synth(shape, conv_lanes)
     sc = scalars_synth(shape)
     wm = ssm_norm_w(shape)
+    if b_const is not None:
+        lay_groups = [[(li, lb)] for li, lb in enumerate(lays)]
+    else:
+        lay_groups = [list(enumerate(lays))]
 
     def flat_chan(tbl):
         """[seg][ch][tap] -> the channel-major flat order `blk_t.xtap` wants."""
@@ -243,16 +300,28 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
     wt_flat = flat_chan(wt)
     xt_flat = flat_chan(xt)
 
+    out, flags = {}, []
+    exe = build_oracle(verbose)
     d = tempfile.mkdtemp(prefix="gdn_cap_")
-    stim, pred = os.path.join(d, "stim.txt"), os.path.join(d, "pred.txt")
-    with open(stim, "w") as fp:
-        fp.write("%d %d %d %d %d %d %d %d\n"
-                 % (KH, VH, D, KCONV, len(lays), NTOK, 12,
-                    1 if kmap == "div" else 0))
+    for gi, group in enumerate(lay_groups):
+      stim = os.path.join(d, "stim%d.txt" % gi)
+      pred = os.path.join(d, "pred%d.txt" % gi)
+      glays = [lb for (_li, lb) in group]
+      if b_const is not None:
+        cst = b_const[group[0][0]]
+        g_wt_flat, g_wm, g_we = cst["wt_flat"], cst["norm"], cst["w_exp"]
+        g_cw = cst["cw_exp"]
+      else:
+        g_wt_flat, g_wm, g_we = wt_flat, wm, 12
         # cw_exp: rtl/llama_top.vhd:3044 -- to_signed(12 + cv_seg, 8)
-        fp.write(" ".join(str(12 + s) for s in range(SEGS)) + "\n")
-        fp.write(" ".join(str(v) for v in wm) + "\n")
-        for (b, _ord) in lays:
+        g_cw = [12 + s for s in range(SEGS)]
+      with open(stim, "w") as fp:
+        fp.write("%d %d %d %d %d %d %d %d\n"
+                 % (KH, VH, D, KCONV, len(glays), NTOK, g_we,
+                    1 if kmap == "div" else 0))
+        fp.write(" ".join(str(x) for x in g_cw) + "\n")
+        fp.write(" ".join(str(v) for v in g_wm) + "\n")
+        for (b, _ord) in glays:
             for t in toks:
                 need = ["R_QKV.q-%d" % b, "R_QKV.k-%d" % b,
                         "R_QKV.v-%d" % b, "R_Z-%d" % b]
@@ -408,8 +477,14 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
                     fp.write(" ".join(str(x) for x in real) + "\n")
                 else:
                     fp.write(" ".join(str(x) for x in xt_flat) + "\n")
-                fp.write(" ".join(str(x) for x in wt_flat) + "\n")
+                fp.write(" ".join(str(x) for x in g_wt_flat) + "\n")
 
+                # dt and a: the image's, or the stand-ins' sc columns 2..5
+                if b_const is not None:
+                    dta = [[cst["dt"][h], cst["dt_e"], cst["a"][h], cst["a_e"]]
+                           for h in range(VH)]
+                else:
+                    dta = [sc[h][2:6] for h in range(VH)]
                 if b_src_real:
                     for nm in ("R_ALPHA-%d" % b, "R_BETA-%d" % b):
                         if (nm, t) not in recs_by_key:
@@ -420,26 +495,25 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
                     be = recs_by_key[("R_BETA-%d" % b, t)]
                     row = []
                     for h in range(VH):
-                        row += [al.v[h], al.exp, sc[h][2], sc[h][3],
-                                sc[h][4], sc[h][5], be.v[h], be.exp]
+                        row += [al.v[h], al.exp] + dta[h] + [be.v[h], be.exp]
                     fp.write(" ".join(str(x) for x in row) + "\n")
                 else:
-                    fp.write(" ".join(str(x) for h in range(VH)
-                                      for x in sc[h]) + "\n")
+                    row = []
+                    for h in range(VH):
+                        row += [sc[h][0], sc[h][1]] + dta[h] + [sc[h][6], sc[h][7]]
+                    fp.write(" ".join(str(x) for x in row) + "\n")
                 fp.write(" ".join(str(x) for x in z.v) + "\n")
 
-    exe = build_oracle(verbose)
-    r = subprocess.run([exe, stim, pred, kmap], capture_output=True, text=True)
-    if r.returncode != 0:
+      r = subprocess.run([exe, stim, pred, kmap], capture_output=True, text=True)
+      if r.returncode != 0:
         raise SystemExit("gdn_oracle: the oracle refused the stimulus\n"
                          + r.stdout + r.stderr)
 
-    out, flags = {}, []
-    # A prediction spans several lines (the C writer wraps at 16 values), so
-    # the parser accumulates until the header's declared count is reached and
-    # REFUSES a short one.  A silently short record would be compared against
-    # a longer capture and reported as a LENGTH mismatch at an innocent seam.
-    with open(pred) as fp:
+      # A prediction spans several lines (the C writer wraps at 16 values), so
+      # the parser accumulates until the header's declared count is reached and
+      # REFUSES a short one.  A silently short record would be compared against
+      # a longer capture and reported as a LENGTH mismatch at an innocent seam.
+      with open(pred) as fp:
         cur, acc = None, []
         for line in fp:
             if line.startswith("#"):
@@ -464,7 +538,7 @@ def predict(recs_by_key, shape, toks, conv_lanes=4, b_src_real=False,
                 raise SystemExit("gdn_oracle: prediction for layer %d token %d "
                                  "has %d values, header says %d"
                                  % (li, t, len(acc), n))
-            b = lays[li][0]
+            b = glays[li][0]
             out[("R_Y-%d" % b, t)] = (ye, acc)
             if ec or eg or es or ys:
                 flags.append(("R_Y-%d" % b, t, ec, eg, es, ys))
@@ -556,6 +630,13 @@ def main():
                          "purpose: it meant 'what the machine does', which is "
                          "now 'seq', so accepting it would silently compare "
                          "the fixed machine against the broken model")
+    ap.add_argument("--b-const", default=None, metavar="IMAGE.bin",
+                    help="rtl/llama_top.vhd's B_CONST_HBM: the conv weights, "
+                         "ssm_dt_bias, ssm_a and the ssm_norm weight (and "
+                         "their exponents) are read from this "
+                         "tools/pack_gdn_consts.py image, per layer, instead "
+                         "of the m12 stand-ins.  Alpha and beta still follow "
+                         "--b-src-real.  Added 2026-09-18")
     ap.add_argument("--tok", type=int, default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
@@ -566,15 +647,16 @@ def main():
     toks = sorted(set(r.tok for r in recs))
     shape = SP.Shape(a.blocks, a.attn_int, a.attn_hd)
 
+    bc = read_const_image(a.b_const, shape) if a.b_const else None
     pred, flags = predict(by, shape, toks, a.conv_lanes, a.b_src_real,
-                          a.kmap, a.verbose, a.tk0)
+                          a.kmap, a.verbose, a.tk0, bc)
     print("# subsystem B's R_Y against ref/gdn_block_cap_vec.c, driven from the")
     print("# machine's own captured R_Z and R_QKV exponents.")
     print("# shape KH=%d VH=%d D=%d KCONV=%d, GDN blocks %s, %d token(s), "
-          "kmap '%s', conv lanes %d, B_SRC_REAL %s, tk0 '%s'"
+          "kmap '%s', conv lanes %d, B_SRC_REAL %s, tk0 '%s', B_CONST %s"
           % (shape.key_heads, shape.val_heads, shape.head_dim, KCONV,
              [b for (b, _o) in gdn_layers(shape)], len(toks), a.kmap,
-             a.conv_lanes, a.b_src_real, a.tk0))
+             a.conv_lanes, a.b_src_real, a.tk0, a.b_const or "stand-ins"))
     for (nm, t, ec, eg, es, ys) in flags:
         print("  MODEL FLAG %-10s tok %d  err_conv=%d err_g=%d err_se=%d "
               "y_sat=%d" % (nm, t, ec, eg, es, ys))
