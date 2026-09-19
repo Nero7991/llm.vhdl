@@ -8,7 +8,7 @@
 # that directory is `bash tools/ref9b/capture_llama_top.sh <config>` and
 # nothing else.
 #
-# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub|bconst|qkn} [outfile]
+# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub|bconst|qkn|swg} [outfile]
 # Env:    SCRATCH=<dir>      keep the work directory
 #         CAPTURE_REV=<sha>  stamp this revision in the provenance header, for
 #                            a `git archive` scratch tree that has no .git
@@ -33,6 +33,8 @@
 #            inputs and the packed constants image; added 2026-09-18)
 #   qkn    = sim/tb_llama_top_qkn.vhd     (real, 3 tokens, C on the model's
 #            QK-norm gains from sim/llama_top_qkn_b4.hex; added 2026-09-18)
+#   swg    = sim/tb_llama_top_swg.vhd     (real, 3 tokens, the REAL swiglu_mem
+#            on OP_VEC_SWG via SWG_REAL; added 2026-09-19)
 # NRUNS is forced to 1: only run 0 is captured, every run starts from a reset,
 # so runs 1..N-1 cost wall time and change nothing in the file.
 set -uo pipefail
@@ -64,6 +66,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/gdn_state_store.vhd rtl/gdn_job_seq.vhd
        rtl/matvec_int4.vhd rtl/sampler_stream.vhd
        rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd rtl/rmsnorm_bf_mem.vhd
+       rtl/swiglu_mem.vhd
        rtl/llama_top.vhd
        sim/tb_llama_top.vhd"
 
@@ -96,6 +99,11 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
 # so the dispatcher can reverse it: the alternative was to leave the shared
 # gate red at HEAD, where the next track to run it cannot tell this failure
 # apart from its own.
+#
+# `rtl/swiglu_mem.vhd` ADDED 2026-09-19 with the `swg` configuration: it is
+# instantiated by rtl/llama_top.vhd's `gsr` arm (SWG_REAL), so llama_top does
+# not analyse without it whatever configuration is being captured.  Ordering:
+# after vec_mem (which it instantiates three times) and before llama_top.
 #
 # `rtl/gdn_conv_w_mem.vhd` ADDED 2026-09-18 BY TRACK G (the B constants gate
 # rows), AND THE SAME THREE ROWS HAD BEEN RED SINCE e212f04 WITHOUT IT.  The
@@ -187,13 +195,29 @@ case "$CFG" in
         B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
            --w-image sim/llama_top_w_b4_pool.hex
            --qkn-image sim/llama_top_qkn_b4.hex" ;;
+  # A SIXTH CONFIGURATION, `swg`, ADDED 2026-09-19.  `real` plus three
+  # tokens and the REAL SwiGLU on OP_VEC_SWG: SWG_REAL puts rtl/swiglu_mem.vhd
+  # (Q12 silu(g)*u with rtl/bfp_pack.vhd's pack) behind llama_top's `gsr`
+  # adapter in place of the `g*u / 2**MANT_W` stand-in every other row
+  # elaborates.  The generics are sim/tb_llama_top_swg.vhd's, copied.  ONE
+  # comparator: bisect_scaled.py's `--swg real` selects
+  # vec_oracle.swg_real for the R_H seams, so the `B` string holds everything
+  # and `O` is empty.  This is the only row whose R_H is SwiGLU; without
+  # `--swg real` the stand-in model judges the real machine and the twelve
+  # R_H seams FAIL (the attribution control seamgate.sh records).
+  swg)  G="-gBLOCKS=4 -gATTN_INT=4 -gNTOK=3 -gC_REAL=true -gATTN_HD=16
+           -gNORM_REAL=true -gNORM_ANCHOR=false
+           -gW_IMAGE=llama_top_w_b4_pool.hex -gMAXPOS=8
+           -gSWG_REAL=true"
+        B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
+           --w-image sim/llama_top_w_b4_pool.hex --swg real" ;;
   seq)  G="-gBLOCKS=4 -gATTN_INT=2 -gNTOK=3 -gC_REAL=true -gATTN_HD=64
            -gKV_BLOCK=16 -gN_ROT=16 -gMAXPOS=8 -gKV_AXI=true"
         B="--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor
            --kv-block 16 --n-rot 16" ;;
   stub) G=""
         B="--blocks 4 --attn-int 4 --attn-hd 32 --norm anchor" ;;
-  *) echo "unknown configuration $CFG (real|seq|stub|bconst|qkn)"; exit 2 ;;
+  *) echo "unknown configuration $CFG (real|seq|stub|bconst|qkn|swg)"; exit 2 ;;
 esac
 if [ "${LIST_BISECT:-0}" = "1" ]; then
   echo $B

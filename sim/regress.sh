@@ -1382,8 +1382,9 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
           sim:tb_llama_top_seq sim:tb_llama_top_real sim:tb_llama_top_normw
           sim:tb_llama_top_bconst sim:tb_llama_top_qkn
+          sim:tb_llama_top_swg sim:tb_swiglu_mem_9b
           sim:seamgate_real sim:seamgate_stub sim:seamgate_seq
-          sim:seamgate_bconst sim:seamgate_qkn
+          sim:seamgate_bconst sim:seamgate_qkn sim:seamgate_swg
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
@@ -1679,7 +1680,16 @@ PYEOF
 # reads the same file, so its floor is `real`'s.  The attribution control
 # (the ramp model against the image capture FAILS at R_Y-3 on every token)
 # is recorded in tools/ref9b/seamgate.sh.  Same cost as bconst.
-for _sg in real stub seq bconst qkn; do
+#
+# `swg` ADDED 2026-09-19: `real` with three tokens and the REAL SwiGLU on
+# OP_VEC_SWG (SWG_REAL puts rtl/swiglu_mem.vhd behind llama_top's `gsr`
+# adapter) in place of the `g*u / 2**MANT_W` stand-in the other five rows
+# elaborate.  One comparator: bisect_scaled.py's `--swg real` selects
+# vec_oracle.swg_real for the twelve R_H seams, so its floor is `real`'s.
+# The attribution control (the stand-in model against the real capture
+# FAILS at R_H-0 on every token) is recorded in tools/ref9b/seamgate.sh.
+# Same cost as qkn.
+for _sg in real stub seq bconst qkn swg; do
   printf 'seamgate_%s\tsim\tRUN\t-\t-\t-\t-\n' "$_sg" >> "$PLAN"
 done
 unset _sg
@@ -2926,7 +2936,14 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
 
   # ---- judge --------------------------------------------------------
   local rc body marker nocheck
-  rc=$(grep -oE '^GHDL_EXIT=[0-9]+' "$log" | tail -1 | cut -d= -f2)
+  # `-a`, because a log GNU grep decides is binary yields "binary file
+  # matches" instead of the match, rc comes back EMPTY, the `|| rc=1` below
+  # fires, and a passing row is reported "FAIL exit 1:" with no reason.
+  # MEASURED 2026-09-19 on the BC-250 (btrfs, GHDL 6.0.0):
+  # sim:tb_llama_top_bstate_seq, log ending `RESULT: PASS` and
+  # `GHDL_EXIT=0`, judged FAIL because one line of the 18 MB log carried a
+  # run of NUL bytes.  Every other grep in this function already has -a.
+  rc=$(grep -aoE '^GHDL_EXIT=[0-9]+' "$log" | tail -1 | cut -d= -f2)
   body=$(grep -avE '^(### |GHDL_EXIT=)' "$log")
 
   # Elapsed seconds are part of the result, not decoration: --quick's exclusion

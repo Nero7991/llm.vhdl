@@ -351,6 +351,13 @@ entity tb_llama_top is
     -- because `llama_top`'s norm gain has no other way in: there is no port
     -- and no region for it.
     NORM_W_IMAGE : string := "";
+    -- THE REAL SwiGLU ON THE D-VEC SWG OP.  A pass-through to the generic of
+    -- the same name in rtl/llama_top.vhd (added 2026-09-19): true puts
+    -- rtl/swiglu_mem.vhd on OP_VEC_SWG in place of the `g*u / 2**MANT_W`
+    -- stand-in.  DEFAULT FALSE so every pinned landmark in this family is
+    -- unchanged; sim/tb_llama_top_swg.vhd and sim:seamgate_swg elaborate it
+    -- true.
+    SWG_REAL    : boolean := false;
     -- ==================================================================
     -- SUBSYSTEM B'S RECURRENT STATE, TIERED.  See `B_STATE_AXI` in
     -- rtl/llama_top.vhd.  false keeps `stmem`/`semem`, every layer on chip.
@@ -1290,7 +1297,7 @@ architecture tb of tb_llama_top is
        (BLOCKS = 4) and (ATTN_INT = 4) and (NTOK = 1)
    and (not A_BEHAV) and (not B_BEHAV) and (not B_SRC_REAL)
    and NORM_ANCHOR and (not NORM_REAL) and (not C_REAL)
-   and (NORM_W_IMAGE = "") and (W_IMAGE = "")
+   and (NORM_W_IMAGE = "") and (W_IMAGE = "") and (not SWG_REAL)
    and (ATTN_HD = 32) and (KV_BLOCK = 4) and (N_ROT = 8) and (MAXPOS = 4)
    and (not KV_AXI)
    and (not MUT_KV_STALE) and (not MUT_KV_DROP_REC) and (not MUT_KV_ZERO)
@@ -1400,6 +1407,7 @@ begin
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
+      SWG_REAL => SWG_REAL,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
       B_CONST_HBM => B_CONST_HBM, C_QKN_IMAGE => C_QKN_IMAGE,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,

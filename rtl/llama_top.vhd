@@ -76,13 +76,26 @@
 --   the region file          a flat array.  Really 14 BRAM/URAM regions.
 --   unit A when A_BEHAV      a plain integer matvec with synthetic weights.
 --   unit B when B_BEHAV      a first-order recurrence, NOT Gated DeltaNet.
---   unit C always            *** ATTENTION IS A STUB.  SEE THE BANNER. ***
+--   unit C when not C_REAL   *** ATTENTION IS A STUB.  SEE THE BANNER. ***
+--                            With C_REAL the real `attn_block` runs (`gcr`).
+--                            This line read "unit C always" until 2026-09-19,
+--                            long after C_REAL existed and the card built
+--                            with it; the block-3 probe on silicon showed C
+--                            right while this banner said it was a stub.
 --   unit E always            unreachable at NCARDS=1; errors if ever started.
 --   the norm when not        `out(i) = in(i) - mean(in)`, NOT rmsnorm.  With
---     NORM_REAL              NORM_REAL the real `rmsnorm_rs` runs instead --
---                            see that generic, and read the MEASURED result
---                            there before assuming it is an improvement.
---   swiglu always            `out(i) = (a(i)*b(i)) / 2**MANT_W`, no gate.
+--     NORM_REAL              NORM_REAL the real `rmsnorm_bf_mem` runs instead
+--                            (`gvr`) -- see that generic, and read the
+--                            MEASURED result there before assuming it is an
+--                            improvement.
+--   swiglu when not          `out(i) = (a(i)*b(i)) / 2**MANT_W`, no gate.
+--     SWG_REAL               With SWG_REAL the real `swiglu_mem` runs
+--                            instead (`gsr`): Q12 silu(g)*u, packed.
+--
+-- THE LIST OF STAND-INS IS THIS BANNER, AND A BANNER IS NOT MAINTAINED BY
+-- ANYTHING.  The bisection of 2026-09-19 found it wrong about C in one
+-- direction; grep this file for "behavioural", "stand-in" and "model" before
+-- trusting it in the other.
 --
 -- `A_BEHAV` and `B_BEHAV` exist so that a failure can be BISECTED to a side of
 -- a seam.  They are not an alternative implementation and nothing about them
@@ -419,6 +432,47 @@ entity llama_top is
     -- NORM_REAL only.  With NORM_REAL false the behavioural mean-removal model
     -- runs, it has no weight at all, and this generic is not read.
     NORM_W_IMAGE : string := "";
+
+    -- ==================================================================
+    -- THE REAL SwiGLU, NOT THE PRODUCT.  Added 2026-09-19.
+    --
+    -- With SWG_REAL true the D-vec OP_VEC_SWG is computed by
+    -- `rtl/swiglu_mem.vhd` -- rtl/swiglu.vhd's Q12 silu(g)*u (sigmoid_q from
+    -- fixed_pkg, verified against ref/test_swiglu.c) behind word-stream
+    -- ports, with rtl/bfp_pack.vhd's pack of the Q12 results into 16-bit
+    -- mantissas under one exponent folded in -- behind the `gsr` adapter
+    -- below, which translates seq_vec_issue's by-value protocol exactly as
+    -- `gvr` does for the norm.  With it false the behavioural stand-in in
+    -- `gv` runs, `out(i) = (g(i)*u(i)) / 2**MANT_W` with NO GATE, and the
+    -- default path is bit-identical to what it was before this generic
+    -- existed.
+    --
+    -- WHY.  docs/debugging/2026-09-19_the-swiglu-on-the-card-is-a-product-
+    -- with-no-gate.md: bisecting token 0 on silicon, with the tok_pos and
+    -- norm defects fixed, found G and U right and H wrong in EVERY block --
+    -- block 3's H at exponent 9 against the reference's 13, block 0's at 10
+    -- against 14 -- and `grep -n swiglu rtl/llama_top.vhd` gave the cause in
+    -- one line.  This was the last stand-in in the composed top.
+    --
+    -- THE OUTPUT EXPONENT IS DATA-DRIVEN, `Q - shift`, where shift puts
+    -- max|out_q| at bit 14 (rtl/bfp_pack.vhd's rule) -- and it is CAPPED
+    -- AT Q = 12 by the Q12 output grid, so a small H uses fewer than 15
+    -- mantissa bits (MEASURED on the 9B block-3 capture: max|out_q| 8247,
+    -- 14 bits, o_exp 12 against the reference's 13).  That is a property of
+    -- swiglu.vhd's fixed-point recipe, stated rather than hidden; see
+    -- tools/ref9b/check_swg_real.py for the agreement it gives (corr
+    -- 0.999996 against the double reference, rms relative error 4.8e-3, of
+    -- which the Q12 grid is 4.7e-3 and the sigmoid table the rest).
+    --
+    -- `swiglu_mem` is elaborated ONCE at N = SHAPE.ffn.  Every OP_VEC_SWG in
+    -- the schedule is `n_rows => s.ffn` (llama_sched_pkg.vhd:238), and the
+    -- adapter ASSERTS the issued `v_n` against it rather than padding: a
+    -- padded vector changes the pack's max, so a shorter op would be a
+    -- wrong exponent and not a wasted cycle.
+    --
+    -- The model is `tools/ref9b/vec_oracle.swg_real`; `sim:seamgate_swg`
+    -- holds the R_H seams to it bit for bit over 3 tokens at the sim shape.
+    SWG_REAL : boolean := false;
 
     -- ==================================================================
     -- THE REAL SUBSYSTEM C, NOT THE STUB.  With C_REAL true `OP_C_JOB` is
@@ -1454,9 +1508,10 @@ begin
         & c_line & LF
         & " * unit A behavioural : " & boolean'image(A_BEHAV) & LF
         & " * unit B behavioural : " & boolean'image(B_BEHAV) & LF
-        & " * the D-vec norm is the REAL rmsnorm_rs : "
+        & " * the D-vec norm is the REAL rmsnorm_bf_mem : "
         & boolean'image(NORM_REAL) & LF
-        & " * swiglu is behavioural in every configuration." & LF
+        & " * the D-vec swiglu is the REAL swiglu_mem : "
+        & boolean'image(SWG_REAL) & LF
         & " * the region file is a flat behavioural array." & LF
         & " * no weights are fetched: the descriptor base array past" & LF
         & "   the header is range-checked and not read." & LF
@@ -1761,7 +1816,8 @@ begin
 
   -- ======================================================================
   -- SUBSYSTEM D-VEC.  seq_vec_issue is real; seq_vec_res is real; the norm
-  -- and swiglu engines behind it do not exist as RTL and are modelled.
+  -- and swiglu engines behind it are modelled unless NORM_REAL / SWG_REAL,
+  -- which put rmsnorm_bf_mem (`gvr`) and swiglu_mem (`gsr`) on the ops.
   -- ======================================================================
   u_vissue : entity work.seq_vec_issue
     generic map(
@@ -1818,13 +1874,14 @@ begin
   v_y_exp((V_RES+1)*EXP_W-1 downto V_RES*EXP_W) <= std_logic_vector(vres_exp);
 
   -- ======================================================================
-  -- THE TWO D-VEC ENGINES THAT DO NOT EXIST.
+  -- THE TWO D-VEC ENGINES' STAND-INS.
   --
   -- BEHAVIOURAL MODEL.  rmsnorm and swiglu both have real RTL in this repo
-  -- (rtl/rmsnorm_rs.vhd, rtl/swiglu.vhd) and NEITHER has a D-vec adapter:
-  -- they take their own shapes and handshakes and nothing translates
-  -- seq_vec_issue's by-value protocol to them.  Building those adapters is
-  -- remaining work.  These models produce a well-formed, deterministic,
+  -- and, since 2026-09-19, BOTH have a D-vec adapter: `gvr` (NORM_REAL)
+  -- puts rmsnorm_bf_mem on OP_VEC_NORM and `gsr` (SWG_REAL) puts swiglu_mem
+  -- on OP_VEC_SWG.  This arm is what runs on each op when its generic is
+  -- FALSE, which is the default so that every existing bench elaborates
+  -- unchanged.  These models produce a well-formed, deterministic,
   -- input-dependent result over the same handshake, so the SEQUENCING is
   -- exercised and the arithmetic is not claimed.
   --
@@ -1839,7 +1896,8 @@ begin
   -- at S_DONE for the derivation of each one.
   -- ======================================================================
   gen_vstub : for vi in 0 to NVOP-1 generate
-    gv : if vi /= V_RES and not (NORM_REAL and vi = V_NORM) generate
+    gv : if vi /= V_RES and not (NORM_REAL and vi = V_NORM)
+                        and not (SWG_REAL and vi = V_SWG) generate
       signal rdy  : std_logic := '1';
       signal dn   : std_logic := '0';
       signal tk   : std_logic := '0';
@@ -3398,6 +3456,245 @@ begin
               -- derived from the SAME cycle's `o_ra`, so a `rav_d` seen high
               -- means the word beside it is the one `kw` wants.  The unit is
               -- idle across this whole pass, so nothing is moving underneath.
+              when S_WR =>
+                if k < n then
+                  o_ra <= std_logic_vector(to_unsigned(k, LOG2N));
+                  rav  <= '1';
+                  k    := k + 1;
+                else
+                  rav  <= '0';
+                end if;
+                rav_d <= rav;
+                if rav_d = '1' then
+                  uw_en(NUNIT+vi)   <= '1';
+                  uw_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_d(6 downto 0)));
+                  uw_addr(NUNIT+vi) <= kw;
+                  uw_data(NUNIT+vi) <= signed(o_rd);
+                  if kw = n-1 then kw := 0; st := S_DONE;
+                  else kw := kw + 1; end if;
+                end if;
+
+              when S_DONE =>
+                dn   <= '1';
+                yexp <= to_signed(oe, EXP_W);
+                if v_ack(vi) = '1' then
+                  dn  <= '0';
+                  rdy <= '1';
+                  st  := S_IDLE;
+                end if;
+            end case;
+          end if;
+        end if;
+      end process;
+    end generate;
+
+    -- ====================================================================
+    -- THE REAL SwiGLU ON THE D-VEC SWG OP.  SWG_REAL only.  Added 2026-09-19.
+    --
+    -- `rtl/swiglu_mem.vhd` is rtl/swiglu.vhd's Q12 silu(g)*u (sigmoid_q from
+    -- fixed_pkg, verified against ref/test_swiglu.c) behind word-stream
+    -- ports into block RAM, with rtl/bfp_pack.vhd's pack folded in; it is
+    -- asserted bit-identical to the shipping `swiglu -> vec_mem -> bfp_pack`
+    -- chain of engine_shared.vhd by sim/tb_swiglu_mem.vhd at every gate run,
+    -- at N = 128 and at N = 12288.  This adapter translates seq_vec_issue's
+    -- by-value protocol to it, on `gvr`'s pattern, and is deliberately the
+    -- SAME SHAPE as `gvr`'s `nproc` so that the two can be read side by side:
+    --   S_IDLE  accept: latch n and BOTH exponents (seam rule 1).
+    --   S_RD    two passes over the region file, pass 0 streams src (G) into
+    --           the unit's g bank and pass 1 streams src2 (U) into its u
+    --           bank, one word per cycle, consumed at k-2 (seam rule 3).
+    --           Each pass drains fully before the next, so the (region,
+    --           address) pair in flight always belongs to the pass that
+    --           issued it -- the same rule the stub's two passes obey.
+    --   S_GO    one cycle of `start`.  No load interlock: unlike the norm's
+    --           gain, both operands are streamed by THIS process before
+    --           `start`, so residency is by construction.
+    --   S_RUN   wait for the unit's `done`; capture o_exp.
+    --   S_WR    read the output bank word by word (one-edge latency, the
+    --           same two-deep valid pipeline as `gvr`) into dst.
+    --   S_DONE  hold `done` as a level until v_ack (seam rule 2).
+    --
+    -- THE PUBLISHED EXPONENT IS THE UNIT'S, `Q - shift`.  Data-driven, as a
+    -- real engine's is and as the stub's comment at S_DONE says a real engine
+    -- would be; it depends on both source captures through the values, so a
+    -- stale capture is still a WRONG number rather than a repeat.  The stub
+    -- asserted `v_reg_b /= x"FF"` because its exponent formula READ v_exp_b;
+    -- here the unit reads v_exp_b for the u conversion, so the same absence
+    -- would silently convert U at exponent 0 -- the assert is kept.
+    --
+    -- ELABORATION PINS.  swiglu_mem's data ports are 16-bit and its address
+    -- ports are clog2(N) wide; MANT_W = 16 is pinned two-sided with the
+    -- out-of-range-natural idiom (Vivado ignores `severity failure`), and
+    -- the issued n is asserted against NN at run time in simulation.
+    -- ====================================================================
+    gsr : if SWG_REAL and vi = V_SWG generate
+      constant NN : positive := SHAPE.ffn;
+      -- Two-sided: negative either way is an out-of-range natural, which is
+      -- an elaboration error in both GHDL and Vivado.
+      constant bad_swg_mant_w_below_16 : natural := MANT_W - 16;
+      constant bad_swg_mant_w_above_16 : natural := 16 - MANT_W;
+
+      -- Local, not util_pkg.clog2, for the reason `gvr`'s `log2c` records:
+      -- the area-draw extraction harness compiles this block outside
+      -- llama_top with a narrower use-clause set.  Same body.
+      function log2c(n : positive) return natural is
+        variable m : natural;
+        variable r : natural := 0;
+      begin
+        if n <= 1 then return 0; end if;
+        m := n - 1;
+        for i in 1 to 31 loop
+          if m > 0 then m := m / 2; r := r + 1; end if;
+        end loop;
+        return r;
+      end function;
+      constant LOG2N : natural := log2c(NN);
+
+      signal rdy  : std_logic := '1';
+      signal dn   : std_logic := '0';
+      signal tk   : std_logic := '0';
+      signal yexp : signed(EXP_W-1 downto 0) := (others => '0');
+
+      -- The two input word streams, driven by S_RD.
+      signal g_we, u_we : std_logic := '0';
+      signal g_wa, u_wa : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal g_wd, u_wd : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+      signal r_ge, r_ue : integer := 0;
+      -- The output word stream, driven by S_WR.
+      signal o_ra   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal o_rd   : std_logic_vector(MANT_W-1 downto 0);
+      signal rav    : std_logic := '0';
+      signal rav_d  : std_logic := '0';
+      signal r_go   : std_logic := '0';
+      signal r_done : std_logic;
+      signal r_oe   : integer;
+    begin
+      v_ready(vi) <= rdy;
+      v_done(vi)  <= dn;
+      v_taken(vi) <= tk;
+      v_err(vi)   <= '0';
+      v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
+
+      swsay : if SHOUT generate
+        process is
+        begin
+          report "llama_top: the D-vec swiglu is the REAL swiglu_mem at N = "
+               & integer'image(NN) & " (Q12 silu(g)*u, packed; "
+               & "tools/ref9b/vec_oracle.swg_real is its model)."
+            severity note;
+          wait;
+        end process;
+      end generate;
+
+      u_swg : entity work.swiglu_mem
+        generic map(N => NN, Q => 12)
+        port map(
+          clk => clk, rst => rst, start => r_go,
+          g_we => g_we, g_waddr => g_wa, g_wdata => g_wd, g_exp => r_ge,
+          u_we => u_we, u_waddr => u_wa, u_wdata => u_wd, u_exp => r_ue,
+          done => r_done,
+          o_raddr => o_ra, o_rdata => o_rd, o_exp => r_oe,
+          o_shift => open, o_maxabs => open);
+
+      sproc : process(clk) is
+        type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);
+        variable st   : st_t := S_IDLE;
+        variable n    : natural := 0;
+        variable k    : natural := 0;
+        variable kw   : natural := 0;
+        variable pass : natural range 0 to 1 := 0;
+        variable oe   : integer := 0;
+      begin
+        if rising_edge(clk) then
+          tk   <= '0';
+          r_go <= '0';
+          g_we <= '0';
+          u_we <= '0';
+          ur_en(NUNIT+vi) <= '0';
+          uw_en(NUNIT+vi) <= '0';
+          if rst = '1' then
+            st := S_IDLE; rdy <= '1'; dn <= '0'; k := 0; kw := 0; pass := 0;
+            rav <= '0'; rav_d <= '0';
+          else
+            case st is
+              when S_IDLE =>
+                if v_start(vi) = '1' and rdy = '1' then
+                  tk  <= '1';
+                  rdy <= '0';
+                  n   := to_integer(v_n);
+                  -- NOT PADDED: a padded vector changes the pack's max.
+                  assert n = NN
+                    report "llama_top: the swiglu op was issued with n = "
+                         & integer'image(n) & ", but the swiglu_mem instance "
+                         & "is elaborated at N = " & integer'image(NN)
+                         & ".  Every OP_VEC_SWG in the schedule is s.ffn."
+                    severity failure;
+                  assert v_reg_b /= x"FF"
+                    report "llama_top: an OP_VEC_SWG descriptor named no "
+                         & "src2, so U would be converted at a fabricated "
+                         & "exponent 0."
+                    severity error;
+                  r_ge <= to_integer(v_exp_a);
+                  r_ue <= to_integer(v_exp_b);
+                  k    := 0;
+                  pass := 0;
+                  st   := S_RD;
+                end if;
+
+              -- Two edges of read latency; the loop runs to n+1 and drains
+              -- before the pass counter moves.  See READ_LATENCY in the
+              -- region-file header.
+              when S_RD =>
+                if k < n then
+                  ur_en(NUNIT+vi)   <= '1';
+                  ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)))
+                                  when pass = 0
+                                  else to_integer(unsigned(v_reg_b(6 downto 0)));
+                  ur_addr(NUNIT+vi) <= k;
+                end if;
+                if k >= 2 then
+                  -- Straight into the unit's bank; enable, address and datum
+                  -- are all registered here so they reach it on one edge.
+                  if pass = 0 then
+                    g_we <= '1';
+                    g_wa <= std_logic_vector(to_unsigned(k-2, LOG2N));
+                    g_wd <= std_logic_vector(el_rdata);
+                  else
+                    u_we <= '1';
+                    u_wa <= std_logic_vector(to_unsigned(k-2, LOG2N));
+                    u_wd <= std_logic_vector(el_rdata);
+                  end if;
+                end if;
+                if k = n+1 then
+                  k := 0;
+                  if pass = 0 then
+                    pass := 1;
+                  else
+                    st := S_GO;
+                  end if;
+                else
+                  k := k + 1;
+                end if;
+
+              -- Both banks are resident: the last u word was registered on
+              -- the edge that ended S_RD and lands on this one, and the
+              -- unit's first bank read is two edges after `start`.
+              when S_GO =>
+                r_go <= '1';
+                st   := S_RUN;
+
+              when S_RUN =>
+                if r_done = '1' then
+                  oe := r_oe;
+                  k  := 0;
+                  kw := 0;
+                  st := S_WR;
+                end if;
+
+              -- The write-back: the same two-deep read pipeline as `gvr`'s
+              -- S_WR.  `rav_d` and `o_rd` derive from the same cycle's
+              -- `o_ra`, so a `rav_d` seen high means the word beside it is
+              -- the one `kw` wants.
               when S_WR =>
                 if k < n then
                   o_ra <= std_logic_vector(to_unsigned(k, LOG2N));

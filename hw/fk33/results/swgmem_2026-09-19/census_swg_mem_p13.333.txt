@@ -1,0 +1,38 @@
+# LUTDIET cell-name census, target=swiglu_mem
+# LUT primitives grouped by the RTL signal root Vivado named them
+# after.  The root is a heuristic; the accounted total is printed
+# at the end so the remainder is visible.
+root                                     LUT   MUXF7   MUXF8       FF  CARRY8  example_cell
+ARG                                      891     270     119        0      13  ARG_i_112
+a_hq                                     515       4       0       32      20  a_hq[30]_i_100
+a_vq                                     515       4       0       32      20  a_vq[30]_i_101
+b_sig                                    251       0       1       17      19  b_sig[16]_i_20
+o_wd                                     168       0       0       16       9  o_wd[15]_i_18
+max_abs                                  111       0       0       32       6  max_abs[16]_i_10
+SHIFT_LEFT4                               94       0       0        0       9  SHIFT_LEFT4__0_i_18
+o_exp                                     51       0       0        6       1  o_exp[0]_i_10
+d_out                                     48       0       0       32       6  d_out[11]_i_2
+idx                                       25       0       0       14       0  idx[13]_i_3
+widx                                      19       0       0       14       0  widx[0]_i_1
+ug                                        14       0       0        0       0  ug_i_1
+ram_reg_bram_1                            12       0       0        0       0  ug/ram_reg_bram_1_i_1
+ram_reg_bram_2                            12       0       0        0       0  ug/ram_reg_bram_2_i_1
+ram_reg_bram_0                             9       0       0        0       0  ug/ram_reg_bram_0_i_1
+ram_reg_bram_3                             6       0       0        0       0  ug/ram_reg_bram_3_i_1
+ram_reg_bram_4                             6       0       0        0       0  ug/ram_reg_bram_4_i_1
+done                                       5       0       0        1       0  done_i_1
+o_shift                                    4       0       0        4       0  o_shift[1]_i_1
+ge                                         1       0       0       32       0  ge[31]_i_1
+o_wa                                       1       0       0       14       0  o_wa[13]_i_1
+o_we                                       1       0       0        1       0  o_we_i_1
+FSM_onehot_state                           1       0       0        3       0  FSM_onehot_state[2]_i_1
+vf                                         1       0       0        1       0  vf_i_1
+ue                                         0       0       0       32       0  ue_reg[0]
+ram_reg_bram_5                             0       0       0        0       0  ug/ram_reg_bram_5
+ram_reg_bram_6                             0       0       0        0       0  ug/ram_reg_bram_6
+va                                         0       0       0        1       0  va_reg
+vb                                         0       0       0        1       0  vb_reg
+vc                                         0       0       0        1       0  vc_reg
+o_maxabs                                   0       0       0       32       0  o_maxabs_reg[0]
+vd                                         0       0       0        1       0  vd_reg
+# LUT primitives accounted: 2761 of 2761

@@ -69,7 +69,7 @@ def _write_rec(fp, name, tok, layer, exp, values, kind=KIND_BFP16):
 
 def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
           norm_q, w_image, kv_block, n_rot, qkn_exp, attn_fold, no_a,
-          conv_lanes=4, b_src_real=False, kmap="mod"):
+          conv_lanes=4, b_src_real=False, kmap="mod", swg="standin"):
     """(list of (name, layer, exp, values, kind), list of (name, why-omitted))."""
     recs = BS.read_capture(capture)
     by = {}
@@ -200,7 +200,11 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
             exp_v, exp_e, _sh, _sat = VO.res(x.v, e.v, x.exp, e.exp)
         elif st.op == SP.OP_SWG:
             g, u = by[(src, tok)], by[(src2, tok)]
-            exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
+            if swg == "real":
+                # 2026-09-19: SWG_REAL puts rtl/swiglu_mem.vhd on the op.
+                exp_v, exp_e, _d = VO.swg_real(g.v, u.v, g.exp, u.exp)
+            else:
+                exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
         elif st.op == SP.OP_NORM:
             x = by[(src, tok)]
             if norm == "real":
@@ -255,6 +259,9 @@ def main():
                     default="anchor",
                     help="real = rmsnorm_bf (the top's unit since 2026-09-19); "
                          "rs = rmsnorm_rs, the unit it replaced")
+    ap.add_argument("--swg", choices=("standin", "real"), default="standin",
+                    help="standin = the g*u/2**MANT_W model (SWG_REAL false, "
+                         "the default); real = rtl/swiglu_mem.vhd (SWG_REAL)")
     ap.add_argument("--norm-exp", type=int, default=12)
     ap.add_argument("--norm-w-exp", type=int, default=12)
     ap.add_argument("--norm-q", type=int, default=12)
@@ -284,7 +291,7 @@ def main():
         o, om = build(a.capture, t, a.blocks, a.attn_int, a.attn_hd,
                       a.norm, a.norm_exp, a.norm_w_exp, a.norm_q, a.w_image,
                       a.kv_block, a.n_rot, a.qkn_exp, a.attn_fold, a.no_a,
-                      a.conv_lanes, a.b_src_real, a.kmap)
+                      a.conv_lanes, a.b_src_real, a.kmap, a.swg)
         out += [(n, t, l, e, v, k) for (n, l, e, v, k) in o]
         omitted += [("tok %d %s" % (t, n), why) for n, why in om]
 

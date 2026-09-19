@@ -12,14 +12,24 @@ be the whole failure this file exists to avoid.
             that C file, not from the VHDL.  A disagreement here is a real
             defect in the residual.
 
-  swg       there is NO swiglu hardware in this path in ANY configuration.
-            `rtl/llama_top.vhd:903` prints "swiglu is behavioural in every
-            configuration" at time zero, and `rtl/swiglu.vhd` is not
-            instantiated.  So this model checks the top level's SEQUENCING,
-            ADDRESSING and EXPONENT BOOKKEEPING for that op and says nothing
-            whatever about SwiGLU.  It is still worth having: the exponent rule
-            `e(G) + e(U) - MANT_W` is the one that was FABRICATED until
-            2026-08-28 and silently masked half the FFN excursion.
+  swg       the behavioural STAND-IN, `out = (g*u) / 2**MANT_W`, no gate --
+            what the top computes with SWG_REAL false (the default, and
+            every capture before 2026-09-19).  It checks the top level's
+            SEQUENCING, ADDRESSING and EXPONENT BOOKKEEPING for that op and
+            says nothing whatever about SwiGLU.  Still worth having: the
+            exponent rule `e(G) + e(U) - MANT_W` is the one that was
+            FABRICATED until 2026-08-28 and silently masked half the FFN
+            excursion.
+
+  swg_real  `rtl/swiglu_mem.vhd` behind `gsr` when SWG_REAL is true, since
+            2026-09-19 (docs/debugging/2026-09-19_the-swiglu-on-the-card-is-
+            a-product-with-no-gate.md).  Transcribed from ref/run_fx.c's
+            swiglu_fx + ref/fx.h's fx_sigmoid_q, plus rtl/bfp_pack.vhd's
+            pack rule.  This is a second integer path over the C's recipe,
+            the same weak evidence class as the norm models below; what
+            makes it more than a round trip is that the C it transcribes is
+            held to a float oracle by ref/test_swiglu.c, and
+            tools/ref9b/check_swg_real.py holds this model to the C.
 
   norm      three different things behind one opcode.  `NORM_REAL` is the real
             `rtl/rmsnorm_rs.vhd`; `NORM_ANCHOR` is a probe on a behavioural
@@ -183,6 +193,149 @@ def swg(g, u, eg, eu):
     assert len(g) == len(u)
     out = [sat16(trunc_div(a * b, 1 << MANT_W)) for a, b in zip(g, u)]
     return out, eg + eu - MANT_W
+
+
+# rtl/fixed_luts_pkg.vhd's SIG_ROM, i.e. mem/luts/sig_lut.mem, i.e. ref/fx.h's
+# `_fx_sig_lut_q`: 513 samples of sigmoid over z in [-16, 16], Q30, built by
+# the formula fx_init() uses.  REGENERATED here from that formula rather than
+# copied, and CHECKED against the .mem file at import when it is reachable, so
+# a table that drifted from the C would be loud rather than silently modelled.
+# MEASURED 2026-09-19: the 513 regenerated values equal mem/luts/sig_lut.mem
+# exactly (tools/ref9b/check_swg_real.py repeats the check).
+def _sig_rom():
+    import math
+    rom = [int(round((1.0 / (1.0 + math.exp(-(-16.0 + k * (32.0 / 512.0)))))
+                     * (1 << 30))) for k in range(513)]
+    import os
+    mem = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                       "mem", "luts", "sig_lut.mem")
+    if os.path.exists(mem):
+        vals = [int(l) for l in open(mem) if l.strip()]
+        if vals != rom:
+            raise SystemExit("vec_oracle: mem/luts/sig_lut.mem differs from "
+                             "the fx_init() formula; the sigmoid model would "
+                             "not be the RTL's table")
+    return rom
+
+
+SIG_ROM = _sig_rom()
+
+
+def sigmoid_q(z_q, q=12):
+    """ref/fx.h:fx_sigmoid_q, transcribed; = fixed_pkg.sigmoid_q.
+
+    Every intermediate fits comfortably in 64 bits (|z_q| < 2**31, table
+    entries < 2**30, frac <= 2**q), so Python ints ARE the C int64s here.
+    """
+    one_q = 1 << q
+    if z_q <= -16 * one_q:
+        return 0
+    if z_q >= 16 * one_q:
+        return one_q
+    offset = z_q + 16 * one_q
+    idx_fp = offset * 16
+    k = idx_fp >> q
+    k = 511 if k > 511 else (0 if k < 0 else k)
+    frac = idx_fp - (k << q)
+    lo, hi = SIG_ROM[k], SIG_ROM[k + 1]
+    interp = lo + (((hi - lo) * frac) >> q)           # floor, as C >> on +ve
+    if q <= 30:
+        sh = 30 - q
+        r = ((interp + (1 << (sh - 1))) >> sh) if sh > 0 else interp
+    else:
+        r = interp << (q - 30)
+    if r < 0:
+        return 0
+    if r > one_q:
+        return one_q
+    return r
+
+
+def bfp_to_qq(mant, exp, q=12):
+    """rtl/swiglu.vhd's S_CALC_A conversion (= rtl/swiglu_mem.vhd's to_qq),
+    NOT ref/run_fx.c's `lroundf(hb[i] * 4096.0f)`.  The two agree wherever
+    the C is exact: for exp <= q the value is an integer; for exp > q the RTL
+    rounds half toward +infinity and lroundf rounds half away from zero, so
+    a NEGATIVE mantissa sitting exactly on a half differs by one.  That is
+    the RTL's rule and this file models the RTL; tools/ref9b/check_swg_real.py
+    measures the disagreement against the C on random vectors and reports it.
+
+    The 64-bit `shift_left` drops high bits and `resize(.., 32)` keeps the
+    sign bit plus the low 31 -- both modelled with vsll64/vresize, so the
+    absurd-exponent behaviour (exp >= q + 64, where swiglu.vhd's bias term
+    wraps) is the RTL's, not a cleaned-up version of it.
+    """
+    m64 = mant                                        # resize(mant16, 64)
+    sh = q - exp
+    if sh >= 0:
+        return vresize(vsll64(m64, sh), 32)
+    k = -sh
+    bias = vsll64(1, k - 1)                           # shift_left(1, k-1)
+    return vresize(vsrl_a(_s64(m64 + bias), k), 32)   # shift_right(m + bias, k)
+
+
+def swg_real(g, u, eg, eu, Q=12):
+    """`rtl/swiglu_mem.vhd`, and therefore `rtl/swiglu.vhd` + `rtl/bfp_pack.vhd`
+    (sim/tb_swiglu_mem.vhd asserts the three bit-identical), at
+    `rtl/llama_top.vhd`'s `gsr` generics.  The REAL SwiGLU since 2026-09-19
+    when SWG_REAL is true; `swg` above is the stand-in it replaces.
+
+    TRANSCRIBED FROM ref/run_fx.c:swiglu_fx() and ref/fx.h:fx_sigmoid_q(),
+    element by element, with the Q-conversion taken from the RTL (see
+    bfp_to_qq for the one place the C is not exact), and the pack from
+    rtl/bfp_pack.vhd's S_MAX/S_PACK (the recipe engine_shared has shipped on
+    silicon; it has no C counterpart because run_fx.c keeps hb as float).
+
+    Per element, ALL Q12:
+        v_q   = bfp_to_qq(g, eg)              round half up
+        h2_q  = bfp_to_qq(u, eu)              round half up
+        sig   = sigmoid_q(v_q)                Q12 in [0, 4096]
+        silu  = resize32((v_q * sig) >> Q)    floor
+        out   = resize32((silu * h2_q) >> Q)  floor; CAN WRAP, modelled
+    Pack, over all N:
+        max_abs = max |out|   (as a 32-bit magnitude: -2**31 -> 2**31)
+        p = msb(max_abs) (0 for 0);  sh = max(0, p - 14)
+        mant = sat16((out + 2**(sh-1)) >> sh)   round half up; out if sh = 0
+        o_exp = Q - sh
+    Returns (mant, o_exp, diag) with diag carrying sh, max_abs, saturations
+    and the DOUBLE-PRECISION ideal silu(g)*u error, reported never gated.
+    """
+    import math
+    assert len(g) == len(u)
+    n = len(g)
+    out = []
+    for a, b in zip(g, u):
+        v_q = bfp_to_qq(a, eg, Q)
+        h2_q = bfp_to_qq(b, eu, Q)
+        sig = sigmoid_q(v_q, Q)
+        silu = vresize(vsrl_a(v_q * sig, Q), 32)
+        out.append(vresize(vsrl_a(silu * h2_q, Q), 32))
+    max_abs = max((abs(v) for v in out), default=0)
+    p = 0
+    for i in range(32):
+        if (max_abs >> i) & 1:
+            p = i
+    sh = max(p - 14, 0)
+    mant, nsat = [], 0
+    for v in out:
+        r = ((v + (1 << (sh - 1))) >> sh) if sh > 0 else v
+        if r > 32767:
+            r, nsat = 32767, nsat + 1
+        elif r < -32768:
+            r, nsat = -32768, nsat + 1
+        mant.append(r)
+    o_exp = Q - sh
+    # The double-precision ideal from the definition: silu(g) * u.
+    gr = [v * 2.0 ** -eg for v in g]
+    ur = [v * 2.0 ** -eu for v in u]
+    ideal = [gr[i] / (1.0 + math.exp(-gr[i])) * ur[i] if gr[i] > -700 else 0.0
+             for i in range(n)]
+    got = [mant[i] * 2.0 ** -o_exp for i in range(n)]
+    num_e = math.sqrt(sum((got[i] - ideal[i]) ** 2 for i in range(n)))
+    den_e = math.sqrt(sum(v * v for v in ideal))
+    diag = dict(shift=sh, max_abs=max_abs, saturations=nsat,
+                rel_rms_vs_ideal=(num_e / den_e) if den_e > 0 else 0.0)
+    return mant, o_exp, diag
 
 
 # ------------------------------------------------------------------ OP_VEC_NORM
