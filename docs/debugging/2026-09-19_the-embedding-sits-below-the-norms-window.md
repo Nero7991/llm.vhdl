@@ -132,3 +132,69 @@ divisor is `sqrt(2^-12) = 2^-6 = 0.015625` against the true rms 0.01226;
 - The first-token-after-reload argmax 0 / logit exp -25 (whole token) is
   still unexplained; it may be this defect compounding over 32 blocks or a
   third one.
+
+## UPDATE 2026-09-19 (later): the `_mem` variant exists and the top binds it
+
+The first open item above is closed at commit `3527c44` (worktree branch,
+not yet merged): `rtl/rmsnorm_bf_mem.vhd` is `rmsnorm_bf` under exactly the
+port transformation `rmsnorm_rs -> rmsnorm_rs_mem`, `rtl/llama_top.vhd`'s
+`u_rms` binds it, and `sim/tb_rmsnorm_bf_mem.vhd` is a gate row asserting
+it bit-exact with `rmsnorm_bf` in every element, `o_exp` and the `done`
+cycle, including an x_exp 19 / rms 2^-6.35 trial (MEASURED: checks=1822
+bad=0, 13 of 14 trials non-degenerate).  `tools/ref9b/vec_oracle.norm_bf`
+is the bit-exact Python of the same recipe (220 of 220 cases against the C).
+
+Two things learned while doing it, recorded because they are the kind that
+get re-derived:
+
+- **`done` fires ONE cycle later than `rmsnorm_rs_mem`'s** at equal N/LANES
+  (MEASURED 149 vs 148 at N=128 LANES=4).  `rmsnorm_bf` carries a DSP MREG
+  stage (`p2_m`) in the element passes that `rmsnorm_rs` never had.  Any
+  cycle-pinned landmark downstream moves by +1 per norm op.
+- **The embedding is NOT in the eps-dominated branch.**  At rms 2^-6.35 the
+  mean square is 1.5e-4 against eps 1e-6, so the unit takes the
+  "eps is smaller" alignment branch and the epsilon is a 0.33% gain term
+  there.  A mutant dropping the eps add on the OTHER branch passed the
+  embedding trial bit-for-bit and was caught only by the deep-eps trial (by
+  the unit's own S_SEED2 assert).  The gain the embedding needs from this
+  unit is the un-clamped `1/rms` far more than the epsilon; the fixed-grid
+  unit's defect on it is the 2^-12 floor, not the missing 1e-6.
+  DERIVED on an N=4096 embedding-shaped vector: rs gain 64.0000, bf gain
+  80.4480, ideal 80.4481, ratio 0.7955.
+
+### What `rmsnorm_bf_mem` costs at the shipping shape (MEASURED 2026-09-19)
+
+BC-250, Vivado 2023.2, `sim/ooc_bfmem_run.sh` driving `sim/ooc_lutdiet_ports.tcl`
+unmodified (the flow that drew rs_mem's 4,825 on 2026-08-30), N=4096 LANES=4,
+`-flatten_hierarchy none`, 5.0 ns, numbers from `report_utilization` plus
+the `get_cells` census, both units in one session:
+
+```
+bf_mem: rmsnorm_bf_mem,"N=4096 LANES=4",dsp=40,lut=4995,ff=2411,ramb18=12,bram=6,carry8=258,f7=0,f8=0,wns=0.971
+rs_mem: rmsnorm_rs_mem,"N=4096 LANES=4",dsp=40,lut=4825,ff=1629,ramb18=12,bram=6,carry8=252,f7=0,f8=0,wns=0.971
+```
+
+The control reproduced the 08-30 draw exactly (4,825 / 1,629 / 6 / 40 /
++0.971), so the +170 LUT / +782 FF is attributable to the arithmetic.  The
+FF delta is the DSP MREG/PREG pairs rmsnorm_bf carries (four Newton pairs
+plus `p2_m`), which are fabric flops only if the absorption fails.  Peak
+RSS 3.54 GB.
+
+Measurement trap hit: `ooc_lutdiet_ports.tcl` globs every `.vhd` in the
+directory it is given, and `rtl/ooc_gdnadapt_top.vhd` (a stale area-draw
+extraction naming an undeclared `b_const_hbm`) made Vivado abort the whole
+`synth_design` AFTER the unit itself had synthesised cleanly.  The runner
+now hands the flow a directory of symlinks to the six-file closure.
+
+### The gate on the BC-250 cannot judge llama_top-level rows
+
+Its GHDL 6.0.0 rejects `rtl/axi_rd_port.vhd:260` ("range of formal
+`level` is different from formal range") at elaboration, so every
+`tb_llama_top*`, `seamgate_*` and `tb_fk33_cardtop_ident` row failed there
+in 1 to 20 s with no capture.  The workstation's GHDL 1.0.0 accepts the
+same file (`tb_fk33_cardtop_ident` PASS, 108 s, same tree).  That file was
+not touched by this change; it is a GHDL-version incompatibility and is
+recorded here so nobody reads those rows as a norm regression.
+`tb_fk33_seam` and `tb_fk33_seam_wdog` do not reach that unit and PASSED
+there with their pinned landmarks (`EXP_X0 -17280`, `EXP_XSUM 53529`)
+unchanged.

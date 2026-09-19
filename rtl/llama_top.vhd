@@ -2609,10 +2609,24 @@ begin
       -- real generic from the command line, so it is deliberately NOT lifted
       -- to a llama_top generic.
       --
-      -- WHY THE OLD NUMBERS STAY ABOVE: they measure the port shape, which
-      -- is unchanged.  The bf arithmetic's own cost at N=128 was +719 LUT /
-      -- +7 FF / +0 DSP over rs; at N=4096 behind these ports it has not been
-      -- drawn yet, and the rs_mem figures must not be quoted for it.
+      -- THE NUMBERS FOR THIS UNIT, MEASURED 2026-09-19 on the BC-250 beside
+      -- a same-session rs_mem control through the SAME flow as the table
+      -- above (sim/ooc_bfmem_run.sh -> sim/ooc_lutdiet_ports.tcl, N=4096
+      -- LANES=4, report_utilization + census, not the log):
+      --
+      --                rmsnorm_rs_mem   rmsnorm_bf_mem
+      --     CLB LUT         4,825            4,995   (+170)
+      --     CLB FF          1,629            2,411   (+782, the DSP
+      --                                              MREG/PREG pairs)
+      --     DSP                40               40
+      --     BRAM tile           6                6
+      --     CARRY8            252              258
+      --     MUXF7/F8          0/0              0/0
+      --     WNS @ 5.0ns    +0.971           +0.971
+      --
+      -- The control reproduced the 2026-08-30 draw to the digit, which is
+      -- what licenses comparing the two rows.  DSP-neutral, BRAM-neutral,
+      -- timing-identical at this period; +3.5% LUT.
       u_rms : entity work.rmsnorm_bf_mem
         generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
         port map(
