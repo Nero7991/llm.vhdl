@@ -360,7 +360,7 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
 set_property CONFIG.RESET_TYPE ACTIVE_LOW [get_bd_cells /clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT1_USED {true} CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100.000}] [get_bd_cells clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
-set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {75.000}] [get_bd_cells clk_wiz_0]
+set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
                                                                                                      
 create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_hbm
 set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]
@@ -1000,20 +1000,6 @@ connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/g
 # address truncation.
 create_bd_cell -type module -reference fk33_engine eng
 
-# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a
-# generic as a CONFIG property; `-generic` on synth_design would reach
-# only the top and never this instance (fk33_engine.vhd:67).
-set_property CONFIG.CB_STYLE {distributed} [get_bd_cells eng]
-# READ BACK.  Vivado silently ignores a set_property whose target did
-# not match, and this file already does this for every other CONFIG it
-# sets.  A lever that was quietly not applied looks exactly like a
-# lever that did not work.
-set _cb [get_property CONFIG.CB_STYLE [get_bd_cells eng]]
-if {$_cb ne "distributed"} {
-    error "FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \"$_cb\", not distributed"
-}
-puts "FK33_CB_STYLE $_cb"
-
 # x_exp FROM THE PORT, not the descriptor (FK33_CARD).  Same mechanism as
 # CB_STYLE: a generic on a module-reference cell is a CONFIG property.
 # Read back for the same reason: a set_property that matched nothing is
@@ -1500,6 +1486,36 @@ foreach i {30 31} {
         error "FK33_CARD FAIL: USER_SAXI_$i is \"$v\", not true. The grant has nowhere to go."
     }
     puts "FK33_CARD SAXI_$i ENABLED"
+}
+
+# THE GRANT MASTERS' ADDRESS MAP: ALL 32 SEGMENTS, EXACTLY AS THE ENGINE'S.
+# MEASURED 2026-09-18: every FK33_CARD=1 build so far carried 128
+# `CRITICAL WARNING: [BD 41-1356] Slave segment </hbm/SAXI_3x/HBM_MEMnn>
+# is not assigned into address space </bcgrant/m0|m1>` -- the B state
+# store's and C's KV cache's masters were the ONLY address spaces in the
+# design with no assignment, and the first token on silicon stalled in
+# the first B job.  Whether the two are related is NOT established: the
+# connection is direct (clock converter, no interconnect), so no decoder
+# is generated from this map.  What IS established is that A's 28
+# masters, which ran six jobs on silicon, have the assignment below, and
+# that the absence was an unread CRITICAL WARNING rather than a decision.
+# Same rationale as ENGINE_ADDR: under the flat layout every stack is
+# reachable, and it costs nothing in fabric.  Counted after, so a master
+# that quietly lost its map fails the build rather than the token.
+foreach pair {{m0 30} {m1 31}} {
+    set m  [lindex $pair 0]
+    set sx [lindex $pair 1]
+    for {set s 0} {$s < 32} {incr s} {
+        assign_bd_address \
+            -target_address_space [get_bd_addr_spaces bcgrant/$m] \
+            -offset [format 0x%X [expr {$s * 0x10000000}]] -range 256M \
+            [get_bd_addr_segs [format "hbm/SAXI_%02d/HBM_MEM%02d" $sx $s]]
+    }
+    set _n [llength [get_bd_addr_segs -of_objects [get_bd_addr_spaces bcgrant/$m]]]
+    if {$_n != 32} {
+        error "FK33_GRANT_ADDR FAIL: bcgrant/$m maps $_n segments, not 32"
+    }
+    puts "FK33_GRANT_ADDR bcgrant/$m maps $_n segments of SAXI_$sx"
 }
 
 # THE CARD'S OWN VIEW OF THE ENGINE, assigned HERE and not in ENGINE_ADDR.
