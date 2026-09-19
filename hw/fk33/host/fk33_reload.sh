@@ -44,6 +44,14 @@ REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 FK33_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 [[ -n "$BIT" ]] || BIT="$FK33_DIR/bit/fk33_pcieep_eng.bit"
 [[ -f "$BIT" ]] || { echo "BITSTREAM_MISSING $BIT" >&2; exit 1; }
+# ABSOLUTE, before anything changes directory.  The configure step below runs
+# `cd "$FK33_DIR" && ./pcieep.sh` with EP_BIT="$BIT", so a path given relative
+# to the repo root (`hw/fk33/bit/x.bit`, the documented form) passed THIS
+# check and then failed inside pcieep.sh as BITSTREAM_MISSING, after the bus
+# had already been taken down.  MEASURED 2026-09-19 06:34: the card came back
+# on the exit trap still carrying the previous bitstream, with nothing in the
+# transcript saying so except one line in the middle.
+BIT=$(readlink -f "$BIT")
 KO="$REAL_HOME/GitHub/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko"
 [[ -f "$KO" ]] || { echo "XDMA_KO_MISSING $KO" >&2; exit 1; }
 
