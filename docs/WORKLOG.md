@@ -11,6 +11,47 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-19 08:10: TWO ROOT CAUSES ON SILICON IN ONE MORNING. B WAS NEVER RUNNING TOKEN 0, AND THE NORM CLAMPS ON THE EMBEDDING. seq_rst LANDED (`1b8d28f`) AND IS BUILDING; THE NORM PORT IS IN FLIGHT.
+
+- **ROOT CAUSE 1 (`1b8d28f`, docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md)**:
+  the card's `tok_pos` advances on every closed token and was cleared ONLY
+  by the PCIe link reset; the seam's SEQ_RESET cleared its own `cur_pos`
+  and nothing in the engine (`run_prompt.c:343` said so in a comment).
+  Every B-reaching probe after the first token ran at `tk0 = 0` against a
+  zero loaded state, the update quantiser chose `e_u = se_j + 2 = 2`, and
+  Y came out at exponent 10 / attn_gate argmax 2591. MEASURED by reading
+  layer-0 S back from HBM (`fk33ctl.dma_read` at `gdn_state_base`):
+  mantissas 0/-1 at a uniform exponent 2, and the model with tk0 forced
+  to 0 reproduces 507,460 of 524,288 mantissas, the exponent and the
+  argmax. After one reconfiguration, the first token gives **2131, the
+  reference**. Fix: `llama_top.seq_rst` (clears tok_pos, re-arms KV seq
+  reset), seam SEQ_RESET idle-only and pulsing `d_seq_rst`, `A_TOK_POS`
+  0x8C, CAPS bit 4, host readback in `pl_seq_reset`, `tb_fk33_seam` P6f
+  (9 checks; two mutants killed by name). `--bd-only` validates,
+  FK33_UNCONNECTED count=0. **Building as `seqrst-build.service`
+  (launched 07:39, MemoryHigh 24G / Max 26G, `$SD/build6/`), swap guard
+  kills it at 30 GB.** MEASURED: its cgroup is 23.5 GB resident + 23.9 GB
+  SWAPPED in synthesis = a 47 GB footprint; "at least 21.5 GB" in CLAUDE.md
+  under-states it by half because swap was never counted.
+- **HBM does NOT survive a reconfiguration** (MEASURED: gdn_const verify
+  fails 0x751 bytes in). A reload costs the weight load (~4.5 GB, 251/251
+  in a few minutes), not just 2 minutes.
+- **ROOT CAUSE 2 (`573b677`, docs/debugging/2026-09-19_the-embedding-sits-below-the-norms-window.md)**:
+  with a true first token, B's input (the tap column) is 0.7727x the
+  reference for q, k AND v at corr 0.999. X scaled by 4: unchanged; by
+  1/4: 0.9774x. `rmsnorm_rs_mem` (still the norm in `llama_top:2571`)
+  floors the mean square at 2^-12, rms 2^-6; the embedding row's rms is
+  2^-6.35. The 08-26 fix `rmsnorm_bf` has no `_mem` variant and was never
+  composed in. **A subagent (worktree) is porting it: `rmsnorm_bf_mem`,
+  identity bench, top swap, `vec_oracle.norm_bf`, gate rows after the
+  build ends, OOC on the BC-250.** This needs a THIRD build after the
+  seqrst one.
+- **Still open**: the first-token whole-token argmax 0 / logit exp -25.
+  The seqrst bitstream makes B-reaching probes free again (no reload per
+  probe), which is what the bisection needs.
+- **BC-250**: up, synced, Vivado present, **no GHDL**; it can take OOC
+  synthesis, not gate rows.
+
 ### 2026-09-19 00:20: THE LAST STAND-IN IS GONE AT THE SIM SHAPE. FULL GATE 145 PASS. THE CONSTANTS BUILD IS ARMED BEHIND THE ROUTER.
 
 - **Track F (`3fdfe8f`, `d93a745`, merged)**: `C_QKN_IMAGE` on `llama_top`,
