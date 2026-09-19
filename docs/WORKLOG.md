@@ -23,7 +23,11 @@ conv WEIGHTS, `ssm_dt_bias`, `ssm_a` and the `ssm_norm` weight are stand-ins
 in EVERY configuration (no path exists, `rtl/llama_top.vhd:4068`), the D-vec
 norm gain is the synthetic ramp because `NORM_W_IMAGE` is not passed either,
 and C's QK-norm gains are stand-ins. Same class as the 2026-09-11 "C is a
-stub" finding, same file, found seven days later by the same grep.
+stub" finding, same file, found seven days later by the same grep. **And it was
+already on this board**: the 2026-09-11 entry below names `NORM_W_IMAGE` a
+correctness blocker and `B_SRC_REAL = false` a tracked gap; the bring-up
+plan never carried it, so the first whole token was judged against the
+reference with an outcome that was known in advance.
 
 MEASURED, the drain is CLEARED: a new `--probe-dup-src REGION` in
 `tools/gen_layer_program.py` appends a copy of the last A job reading REGION

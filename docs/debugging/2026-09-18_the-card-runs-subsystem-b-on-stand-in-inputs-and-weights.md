@@ -167,10 +167,18 @@ go through HBM, loaded per layer by the state mover, or not at all.
 - **The stream's `R_X-0` is not the input to block 0's norm.** A Python
   `x / rms(x) * gain` from it correlates 0.07 with `R_XN-0`. Do not build
   norm references from that record; use `run9b` for the whole chain.
-- **The generic list was read for C on 2026-09-11 and not for B.** Same
-  file, same class of omission, seven days apart. The check is one grep
-  against the top's header table of "WHAT IS STILL A STAND-IN" and it does
-  not need a bitstream.
+- **THIS WAS ALREADY ON THE BOARD, AND THE BRING-UP RAN WITHOUT IT.**
+  `docs/WORKLOG.md`, 2026-09-11: *"Net: one new defect (`NORM_W_IMAGE`), one
+  already-tracked gap (`B_SRC_REAL = false`)"*, with the norm ramp called
+  *"a correctness blocker for inference on the card"* in so many words.
+  Seven days and four bitstreams later the same session measured a wrong
+  argmax, bisected it with hardware probes for two hours, and rediscovered
+  the entry. The probes were not wasted (they cleared the drain and A's
+  region reads, which nothing else had), but the expected result of the
+  first whole token was KNOWN to be wrong before it ran, and no plan said
+  so. **Before judging a card result against the reference, list the
+  stand-ins the build still carries; the top's own header does it in a
+  table.**
 
 ## What is still open
 
