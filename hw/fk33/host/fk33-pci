@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# fk33-pci -- the ONLY root-needing part of a bitstream reload, as a helper
+# with a two-word vocabulary, so the reload itself can run without a password.
+#
+#     fk33-pci down     remove the PCI device, then rmmod xdma
+#     fk33-pci up       rescan the bus, then insmod the pinned xdma.ko
+#     fk33-pci status   print what is loaded and bound; exit 0 (the probe)
+#
+# INSTALL (once, as root; see hw/fk33/host/fk33-pci.sudoers):
+#     sudo install -o root -g root -m 0755 hw/fk33/host/fk33-pci /usr/local/sbin/fk33-pci
+#     sudo install -d -o root -g root -m 0755 /usr/local/lib/fk33
+#     sudo install -o root -g root -m 0644 ~/GitHub/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko /usr/local/lib/fk33/xdma.ko
+#     sudo install -o root -g root -m 0440 hw/fk33/host/fk33-pci.sudoers /etc/sudoers.d/fk33-pci
+#
+# WHY A COPY OF THE MODULE, AND WHY NOTHING HERE IS A PARAMETER.  This runs as
+# root without a password.  Everything it touches is therefore pinned: the
+# device address, the module path and the module arguments are literals in a
+# root-owned file, and the module is a root-owned copy rather than the build
+# in a user's home.  A helper that insmod'ed whatever path it was handed would
+# be a passwordless root shell for anyone who can write that path, which in
+# this project includes every agent.  When the driver is rebuilt, re-run the
+# third install line by hand; the `status` verb prints both md5s so a stale
+# copy is visible rather than silent.
+#
+# NEVER `modprobe xdma`: the in-tree module of that name binds nothing
+# (hw/fk33/host/fk33_reload.sh header).  poll_mode=1 keeps MSI-X out of it.
+set -euo pipefail
+DEV=0000:06:00.0
+KO=/usr/local/lib/fk33/xdma.ko
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+[[ $EUID -eq 0 ]] || { echo "fk33-pci: must run as root (via sudo)" >&2; exit 1; }
+case "${1:-}" in
+  status)
+    echo "device   $(lspci -s "${DEV#0000:}" 2>/dev/null || echo absent)"
+    echo "driver   $(lsmod | grep -E '^xdma ' || echo 'xdma not loaded')"
+    echo "bound    $([[ -e /sys/bus/pci/drivers/xdma/$DEV ]] && echo yes || echo no)"
+    echo "module   $KO $(md5sum "$KO" 2>/dev/null | cut -d' ' -f1)"
+    ;;
+  down)
+    if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
+      echo "--- removing $DEV (this also unbinds the driver) ---"
+      echo 1 > "/sys/bus/pci/devices/$DEV/remove"
+      sleep 1
+    else
+      echo "  $DEV already absent from sysfs"
+    fi
+    if lsmod | grep -qE '^xdma '; then
+      rc=1
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        rc=$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)
+        [[ "$rc" == "0" ]] && break
+        sleep 1
+      done
+      echo "--- rmmod xdma (refcnt now $rc) ---"
+      if [[ "$rc" != "0" ]]; then
+        echo "  refcount never reached 0; SKIPPING rmmod rather than forcing it."
+      elif ! rmmod xdma; then
+        echo "  RMMOD_FAILED -- continuing with the driver still loaded."
+      fi
+    else
+      echo "  xdma not loaded (nothing to rmmod)"
+    fi
+    lspci -d 10ee: || echo "  Xilinx device gone from the bus (expected)"
+    echo "FK33_PCI_DOWN"
+    ;;
+  up)
+    echo 1 > /sys/bus/pci/rescan || true
+    sleep 2
+    if [[ -n "$(lspci -d 10ee: || true)" ]]; then
+      lspci -d 10ee:
+      lspci -vv -s "${DEV#0000:}" 2>/dev/null | grep -iE 'LnkSta:|LnkCap:|Region 0' || true
+      if ! lsmod | grep -qE '^xdma '; then
+        echo "--- insmod $KO poll_mode=1 ---"
+        insmod "$KO" poll_mode=1 || echo "INSMOD_FAILED"
+      fi
+      ls -la /dev/xdma0_control /dev/xdma0_user 2>/dev/null || echo "NO /dev/xdma* NODES"
+      echo "FK33_PCI_UP"
+    else
+      echo "NO XILINX DEVICE AFTER RESCAN."
+      exit 2
+    fi
+    ;;
+  *)
+    echo "usage: fk33-pci down|up|status" >&2; exit 1 ;;
+esac

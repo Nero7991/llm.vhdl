@@ -6,6 +6,10 @@
 #     sudo hw/fk33/host/fk33_reload.sh path/to.bit      # a specific one
 #     sudo hw/fk33/host/fk33_reload.sh --with-vccint    # also raise VCCINT first
 #
+# or, once hw/fk33/host/fk33-pci is installed (see its header), without sudo:
+#
+#     hw/fk33/host/fk33_reload.sh path/to.bit
+#
 # WHY THE BUS HAS TO COME DOWN.  Reconfiguring the FPGA while the xdma driver is
 # bound is the documented way to hang the host: the endpoint vanishes
 # mid-transaction and later MMIO reads return all-ones or raise a bus error.
@@ -21,6 +25,12 @@
 # ROOT AND NON-ROOT ARE BOTH NEEDED, which is the whole reason this script
 # exists.  rmmod/remove/rescan/insmod need root; Vivado must NOT run as root, so
 # the configure step drops back to the invoking user.
+#
+# SUDOLESS FORM (2026-09-19).  With hw/fk33/host/fk33-pci installed as
+# /usr/local/sbin/fk33-pci and its sudoers snippet in place, run this WITHOUT
+# sudo: the four root operations go through `sudo -n fk33-pci down|up`, a
+# root-owned helper with pinned literals, and everything else runs as you.
+# The sudo form above still works and is used whenever the helper is absent.
 set -euo pipefail
 
 CARD_SERIAL="${FK33_CARD:-153300000607A}"     # card 1, the one in the slot
@@ -36,10 +46,21 @@ for a in "$@"; do
     esac
 done
 
-[[ $EUID -eq 0 ]] || { echo "Run me with sudo: sudo $0 $*" >&2; exit 1; }
-REAL_USER="${SUDO_USER:-}"
-[[ -n "$REAL_USER" ]] || { echo "Run via sudo from your own account, not a root shell." >&2; exit 1; }
-REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+HELPER=/usr/local/sbin/fk33-pci
+if [[ $EUID -eq 0 ]]; then
+    MODE=root
+    REAL_USER="${SUDO_USER:-}"
+    [[ -n "$REAL_USER" ]] || { echo "Run via sudo from your own account, not a root shell." >&2; exit 1; }
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+elif [[ -x "$HELPER" ]] && sudo -n "$HELPER" status >/dev/null 2>&1; then
+    MODE=helper
+    REAL_USER="$USER"
+    REAL_HOME="$HOME"
+else
+    echo "Run me with sudo: sudo $0 $*" >&2
+    echo "  (or install hw/fk33/host/fk33-pci and its sudoers snippet for the sudoless form)" >&2
+    exit 1
+fi
 
 FK33_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 [[ -n "$BIT" ]] || BIT="$FK33_DIR/bit/fk33_pcieep_eng.bit"
@@ -52,10 +73,14 @@ FK33_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # on the exit trap still carrying the previous bitstream, with nothing in the
 # transcript saying so except one line in the middle.
 BIT=$(readlink -f "$BIT")
-KO="$REAL_HOME/GitHub/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko"
-[[ -f "$KO" ]] || { echo "XDMA_KO_MISSING $KO" >&2; exit 1; }
-
-asuser () { sudo -u "$REAL_USER" -H env HOME="$REAL_HOME" "$@"; }
+if [[ $MODE = root ]]; then
+    KO="$REAL_HOME/GitHub/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko"
+    [[ -f "$KO" ]] || { echo "XDMA_KO_MISSING $KO" >&2; exit 1; }
+    asuser () { sudo -u "$REAL_USER" -H env HOME="$REAL_HOME" "$@"; }
+else
+    KO="/usr/local/lib/fk33/xdma.ko (pinned copy, via $HELPER)"
+    asuser () { "$@"; }
+fi
 
 # Resolve by absolute path.  These live in /usr/sbin, which is not guaranteed to
 # be on sudo's secure_path, and a not-found tool makes an `if` read as "no".
@@ -66,6 +91,7 @@ LSPCI=$(command -v lspci || echo /usr/bin/lspci)
 for t in "$LSMOD" "$RMMOD" "$INSMOD" "$LSPCI"; do
     [[ -x "$t" ]] || { echo "TOOL_MISSING $t" >&2; exit 1; }
 done
+[[ $MODE = helper ]] && echo "  mode       sudoless, via $HELPER"
 
 echo "=== plan ==="
 echo "  card       $CARD_SERIAL   (PCI $DEV)"
@@ -119,6 +145,10 @@ BUS_IS_DOWN=0
 bring_bus_up () {
     echo
     echo "=== bus up ==="
+    if [[ $MODE = helper ]]; then
+        if sudo -n "$HELPER" up; then echo "BUS_UP_OK"; else echo "NO XILINX DEVICE AFTER RESCAN (helper rc $?)"; fi
+        return
+    fi
     echo 1 > /sys/bus/pci/rescan || true
     sleep 2
     if [[ -n "$(lspci -d 10ee: || true)" ]]; then
@@ -142,6 +172,10 @@ trap '[[ $BUS_IS_DOWN = 1 ]] && bring_bus_up' EXIT
 
 echo
 echo "=== bus down ==="
+if [[ $MODE = helper ]]; then
+    sudo -n "$HELPER" down
+    BUS_IS_DOWN=1
+fi
 # ORDER IS LOAD-BEARING: REMOVE THE DEVICE FIRST, THEN rmmod.
 #
 # MEASURED 2026-08-29: rmmod-then-remove fails with "Module xdma is in use",
@@ -150,45 +184,47 @@ echo "=== bus down ==="
 # Removing the device unbinds it and drops the refcount to 0, after which the
 # rmmod succeeds.  Doing it the other way round can never work with the card
 # present, which is the only case that matters.
-if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
-    echo "--- removing $DEV (this also unbinds the driver) ---"
-    echo 1 > "/sys/bus/pci/devices/$DEV/remove"
-    sleep 1
-else
-    echo "  $DEV already absent from sysfs"
-fi
-BUS_IS_DOWN=1
-
-# Now the module is idle, so it can be unloaded and reloaded cleanly against
-# the new bitstream.  A failure here is NOT fatal: the first run of this script
-# proved the driver re-binds correctly on rescan while staying loaded, so a
-# stuck rmmod costs a stale driver, not a broken card.  Report and continue.
-LSMOD_OUT="$($LSMOD 2>&1 || true)"
-if [[ -z "$LSMOD_OUT" ]]; then
-    echo "  WARNING: '$LSMOD' produced NO output. Cannot tell if xdma is loaded."
-fi
-if [[ -n "$(printf '%s\n' "$LSMOD_OUT" | grep -E '^xdma ' || true)" ]]; then
-    # Wait for the refcount to actually drop.  MEASURED 2026-08-29: it was
-    # still 1 immediately after the device removal, so the single `sleep 1`
-    # above was not enough on its own.  Bounded, and skipped entirely if it
-    # never reaches 0, because a stale driver is not worth failing the run for.
-    for _i in 1 2 3 4 5 6 7 8 9 10; do
-        _rc=$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)
-        [[ "$_rc" == "0" ]] && break
+if [[ $MODE = root ]]; then
+    if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
+        echo "--- removing $DEV (this also unbinds the driver) ---"
+        echo 1 > "/sys/bus/pci/devices/$DEV/remove"
         sleep 1
-    done
-    echo "--- rmmod xdma (refcnt now ${_rc:-?}) ---"
-    if [[ "${_rc:-1}" != "0" ]]; then
-        echo "  refcount never reached 0; SKIPPING rmmod rather than forcing it."
-        echo "  The driver re-binds on rescan, which is MEASURED to work."
-    elif ! "$RMMOD" xdma; then
-        echo "  RMMOD_FAILED -- continuing with the driver still loaded."
-        echo "  It will re-bind on rescan; the insmod below will be skipped."
+    else
+        echo "  $DEV already absent from sysfs"
     fi
-else
-    echo "  xdma not loaded, per $LSMOD (nothing to rmmod)"
+    BUS_IS_DOWN=1
+
+    # Now the module is idle, so it can be unloaded and reloaded cleanly against
+    # the new bitstream.  A failure here is NOT fatal: the first run of this script
+    # proved the driver re-binds correctly on rescan while staying loaded, so a
+    # stuck rmmod costs a stale driver, not a broken card.  Report and continue.
+    LSMOD_OUT="$($LSMOD 2>&1 || true)"
+    if [[ -z "$LSMOD_OUT" ]]; then
+        echo "  WARNING: '$LSMOD' produced NO output. Cannot tell if xdma is loaded."
+    fi
+    if [[ -n "$(printf '%s\n' "$LSMOD_OUT" | grep -E '^xdma ' || true)" ]]; then
+        # Wait for the refcount to actually drop.  MEASURED 2026-08-29: it was
+        # still 1 immediately after the device removal, so the single `sleep 1`
+        # above was not enough on its own.  Bounded, and skipped entirely if it
+        # never reaches 0, because a stale driver is not worth failing the run for.
+        for _i in 1 2 3 4 5 6 7 8 9 10; do
+            _rc=$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)
+            [[ "$_rc" == "0" ]] && break
+            sleep 1
+        done
+        echo "--- rmmod xdma (refcnt now ${_rc:-?}) ---"
+        if [[ "${_rc:-1}" != "0" ]]; then
+            echo "  refcount never reached 0; SKIPPING rmmod rather than forcing it."
+            echo "  The driver re-binds on rescan, which is MEASURED to work."
+        elif ! "$RMMOD" xdma; then
+            echo "  RMMOD_FAILED -- continuing with the driver still loaded."
+            echo "  It will re-bind on rescan; the insmod below will be skipped."
+        fi
+    else
+        echo "  xdma not loaded, per $LSMOD (nothing to rmmod)"
+    fi
+    lspci -d 10ee: || echo "  Xilinx device gone from the bus (expected)"
 fi
-lspci -d 10ee: || echo "  Xilinx device gone from the bus (expected)"
 
 # ------------------------------------------------------------- configure
 echo

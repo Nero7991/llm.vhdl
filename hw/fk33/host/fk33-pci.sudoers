@@ -1,0 +1,4 @@
+# /etc/sudoers.d/fk33-pci -- passwordless bus-down / bus-up for the FK33 reload.
+# ONLY the pinned helper, by absolute root-owned path, with no arguments it
+# does not validate itself.  Install with mode 0440 (see hw/fk33/host/fk33-pci).
+orencollaco ALL=(root) NOPASSWD: /usr/local/sbin/fk33-pci down, /usr/local/sbin/fk33-pci up, /usr/local/sbin/fk33-pci status
