@@ -140,6 +140,19 @@ architecture rtl of axi_rd_port is
   signal f_qv, f_qr : std_logic;
   signal f_qd : std_logic_vector(AXI_DW-1 downto 0);
   signal f_level : integer range 0 to 2*DEPTH + LVL_MARGIN;
+  -- The FIFO's `level` formal is an unconstrained `integer`.  GHDL 6.0.0
+  -- (the BC-250's, 2026-09-19) refuses to associate it directly with the
+  -- constrained signal above ("range of formal `level` is different from
+  -- formal range"); GHDL 1.0.0 accepts it.  The FIFO drives this
+  -- unconstrained copy and the concurrent assignment below carries the
+  -- value into `f_level`, where the range check the comment above relies on
+  -- still fires in simulation.  A delta, not a cycle.  The copy runs at
+  -- delta 0, one delta before the FIFO's first driving value lands, so the
+  -- formal's DEFAULT is what it copies: stream_fifo's `level` is declared
+  -- `:= 0` for that reason (MEASURED, `bound check failure` at the copy on
+  -- GHDL 1.0.0 with the formal at integer'low; an initialiser on this
+  -- signal does not help, the formal's driver wins at delta 0).
+  signal f_level_raw : integer;
 
   -- clear handshake, in the AXI domain
   signal clr, clr_done : std_logic;
@@ -257,7 +270,8 @@ begin
       port map(clk => clk, rst => rst, flush => clr,
                i_valid => f_iv, i_data => rdata, i_ready => f_ir,
                q_valid => f_qv, q_data => f_qd, q_ready => f_qr,
-               level => f_level);
+               level => f_level_raw);
+    f_level <= f_level_raw;
 
     -- one-cycle acknowledgement, so the four-phase handshake in the FSM is the
     -- same code in both configurations

@@ -31,7 +31,11 @@ entity stream_fifo is
     q_ready  : in  std_logic;
 
     -- occupancy INCLUDING the output stage, for the AR-issue throttle
-    level    : out integer
+    -- Defaulted, so the formal's driving value at delta 0 is 0 and not
+    -- integer'low: rtl/axi_rd_port.vhd copies this port into a range-
+    -- constrained signal and the copy runs before the first driving value
+    -- lands (2026-09-19).
+    level    : out integer := 0
   );
 end entity;
 
