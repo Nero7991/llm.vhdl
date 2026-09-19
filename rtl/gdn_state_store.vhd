@@ -54,6 +54,22 @@
 -- `tok_adv`, which only something that knows where a token ends can do.  Both
 -- are the job sequencer's, and until it exists this tier is complete and
 -- unused.
+--
+-- A FOURTH REGION, A FOURTH PHASE, AND IT IS NOT STATE (2026-09-18, under
+-- `CONST_EN`).  The layer's learned GDN CONSTANTS -- the conv weights
+-- `[KCONV][QKVN]`, the dt bias and A `[VAL_HEADS]`, the ssm norm weight
+-- `[DIM]` and their six exponents -- are 66,048 bytes per layer at 9B and do
+-- not fit as a ROM beside the norm image (docs/2026-09-18_b-constants-path.md).
+-- They live in a SEPARATE HBM region, `const_base + layer*CONST_STRIDE`, NOT
+-- inside `LAYER_STRIDE`, because that arena is per-layer STATE the host may
+-- snapshot and this is model data the host loads once with the weights.  A
+-- fourth `gdn_state_axi` instance moves them after the conv taps, LOAD ONLY:
+-- a save job has three phases as before and never writes the region.  The
+-- weights land in `gdn_conv_w_mem` (KCONV slots, no rotation, `cw_w` shaped
+-- as gdn_block's `cv_w`); the scalar block lands in a decoded register file
+-- whose outputs are LEVELS, valid from `done` until the next load.
+-- `CONST_EN = false` is the store as it was: no fourth phase, no fourth
+-- mover, no memory, every new output a constant zero.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -80,6 +96,14 @@ entity gdn_state_store is
     EXP_BYTES    : positive := 4096;      -- gdn_state_exp_bytes_per_layer
     CONV_BYTES   : positive := 49152;     -- gdn_state_conv_bytes_per_layer
 
+    -- ---- the fourth, LOAD-ONLY phase: the layer's learned constants -----
+    -- Defaults are the 9B figures from tools/hbm_map.py (`gdn_const_*`) and
+    -- are still only defaults; the caller passes the manifest's.  With
+    -- CONST_EN false none of the three is read.
+    CONST_EN     : boolean  := false;     -- the fourth phase exists
+    CONST_STRIDE : positive := 66048;     -- gdn_const_bytes_per_layer
+    CONST_BYTES  : positive := 66048;     -- bytes moved per layer (= stride)
+
     AXI_DW : positive := 256;
     ADDR_W : positive := 33;
     MAXB   : positive := 16;
@@ -90,7 +114,9 @@ entity gdn_state_store is
     rst : in std_logic;
 
     -- ---- the mover's job control ----------------------------------------
-    -- ONE start covers BOTH phases.  `done` pulses once, after the exponents.
+    -- ONE start covers EVERY phase.  `done` pulses once, after the last of
+    -- them: the conv taps for a save, the constants for a load under
+    -- CONST_EN.
     load_start : in  std_logic;
     save_start : in  std_logic;
     layer      : in  integer range 0 to LAYERS-1;
@@ -142,7 +168,43 @@ entity gdn_state_store is
     -- therefore no HBM storage.  See rtl/gdn_conv_tap_mem.vhd.
     tok_adv  : in  std_logic;
 
-    -- ---- the AXI masters, ONE pair, shared by both phases -----------------
+    -- ---- the constants (CONST_EN only; zeros otherwise) -------------------
+    -- Layer L's image is at `const_base + L*CONST_STRIDE`, L the SAME index
+    -- `layer` carries.  Word `w` of the image is at byte `2w`:
+    --   w <  KCONV*QKVN            conv weight, tap `w / QKVN`, channel
+    --                               `w mod QKVN`, t = 0 OLDEST .. KCONV-1
+    --                               NEWEST, channels in q | k | v order
+    --   w >= KCONV*QKVN = SB       the scalar block, 256 words:
+    --     SB + 0 .. SB + VAL_HEADS-1               dt bias, Q(dt_e)
+    --     SB + VAL_HEADS .. SB + 2*VAL_HEADS-1     A, Q(a_e)
+    --     SB + 2*VAL_HEADS .. SB + 2*VAL_HEADS+DIM-1   norm weight, Q(w_exp)
+    --     SB + 2*VAL_HEADS + DIM + {0,1,2}        cw_exp for seg q, k, v
+    --     SB + 2*VAL_HEADS + DIM + {3,4,5}        dt_e, a_e, w_exp
+    --     the rest of the 256                     zero
+    -- Every exponent is the LOW BYTE of its word, signed.
+    const_base : in  std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
+
+    -- The conv WEIGHT face, addressed exactly like cv_seg/cv_grp and with
+    -- the same timing: address sampled on the edge, data valid next cycle.
+    -- Defaulted so a caller without the phase need not wire them.
+    cw_seg  : in  integer range 0 to 2 := 0;
+    cw_grp  : in  natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1 := 0;
+    -- bit slice (t*CONV_LANES+ln)*16 +: 16 is tap t, lane ln, t=KCONV-1
+    -- the NEWEST: gdn_block's `cv_w` order.
+    cw_w    : out std_logic_vector(KCONV*CONV_LANES*16-1 downto 0);
+    -- seg s at s*8 +: 8, signed
+    cw_exp  : out std_logic_vector(3*8-1 downto 0);
+
+    -- The scalar block.  LEVELS, valid from the `done` of a load until the
+    -- next load replaces them.  Head h / column c at h*16 +: 16 / c*16 +: 16.
+    sc_dt_m : out std_logic_vector(VAL_HEADS*16-1 downto 0);
+    sc_a_m  : out std_logic_vector(VAL_HEADS*16-1 downto 0);
+    sn_w    : out std_logic_vector(DIM*16-1 downto 0);
+    sc_dt_e : out signed(7 downto 0);
+    sc_a_e  : out signed(7 downto 0);
+    sn_exp  : out signed(7 downto 0);
+
+    -- ---- the AXI masters, ONE pair, shared by every phase -----------------
     r_arvalid : out std_logic;
     r_arready : in  std_logic;
     r_araddr  : out std_logic_vector(ADDR_W-1 downto 0);
@@ -217,6 +279,40 @@ architecture rtl of gdn_state_store is
          := 0 - ((MANT_BYTES + EXP_BYTES) mod BPB);
   -- The arena figure must match the SHAPE, two bytes per 16-bit element.
   constant bad_conv_bytes_vs_shape : natural := CONV_BYTES - 2*CONV_WORDS;
+
+  -- ---- the constants image geometry ----------------------------------
+  constant CW_WORDS    : positive := KCONV * QKVN;    -- conv weight words
+  constant SB_WORDS    : positive := 256;             -- the scalar block
+  constant CONST_WORDS : positive := CW_WORDS + SB_WORDS;
+  -- Offsets WITHIN the scalar block, in words.
+  constant SB_DT  : natural := 0;
+  constant SB_A   : natural := VAL_HEADS;
+  constant SB_NW  : natural := 2*VAL_HEADS;
+  constant SB_EXP : natural := 2*VAL_HEADS + DIM;
+  constant SB_END : natural := SB_EXP + 6;
+
+  -- THE CONST REFUSALS ARE GATED ON `CONST_EN`, and they have to be: the
+  -- generics default to the 9B figures, and a caller at the sim shape with
+  -- the phase OFF would otherwise be refused for a region it never moves.
+  -- Two-sided where the contract is an equality, because a one-sided check
+  -- lets a too-large arena figure through (the HREG_W lesson).
+  function only_if(en : boolean; v : integer) return integer is
+  begin
+    if en then return v; else return 0; end if;
+  end function;
+  constant bad_const_bytes_below_shape : natural
+         := only_if(CONST_EN, CONST_BYTES - 2*CONST_WORDS);
+  constant bad_const_bytes_above_shape : natural
+         := only_if(CONST_EN, 2*CONST_WORDS - CONST_BYTES);
+  -- 129 bursts of 512 B at 9B; the packer keeps every shape a multiple.
+  constant bad_const_bytes_not_512_aligned : natural
+         := only_if(CONST_EN, 0 - (CONST_BYTES mod 512));
+  constant bad_const_stride_below_bytes : natural
+         := only_if(CONST_EN, CONST_STRIDE - CONST_BYTES);
+  -- The scalar block must hold both vectors, the norm weight and the six
+  -- exponents inside its 256 words.
+  constant bad_scalar_block_overflows : natural
+         := only_if(CONST_EN, SB_WORDS - SB_END);
 
   signal bsy : std_logic;
 
@@ -315,13 +411,40 @@ architecture rtl of gdn_state_store is
 
   signal cv_unit_wen : std_logic;
 
+  -- ---- the CONSTANTS mover (CONST_EN) ----------------------------------
+  -- Same entity a fourth time, at `VAL_HEADS => 1, DIM => CONST_WORDS,
+  -- N_GRP => 1, WORD_BITS => 16`, so again `col` IS the flat word address.
+  -- LOAD ONLY: `k_save` is a constant '0' and the read-side port is tied off.
+  -- Every signal here is DRIVEN in both arms of the `gconst` generate below,
+  -- so with CONST_EN false the 4:1's "11" leg and the new outputs are
+  -- constant zeros rather than undriven.
+  signal k_load, k_busy, k_done, k_err : std_logic := '0';
+  signal k_we : std_logic := '0';
+  signal k_wa : natural range 0 to CONST_WORDS-1 := 0;
+  signal k_wd : std_logic_vector(15 downto 0) := (others => '0');
+
+  signal k_arvalid, k_arready, k_rvalid, k_rready : std_logic := '0';
+  signal k_araddr : std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
+  signal k_arlen  : std_logic_vector(7 downto 0) := (others => '0');
+  signal k_arsize : std_logic_vector(2 downto 0) := (others => '0');
+  signal k_arburst: std_logic_vector(1 downto 0) := (others => '0');
+  signal k_awvalid, k_awready, k_wvalid, k_wready, k_wlast : std_logic := '0';
+  signal k_bvalid, k_bready : std_logic := '0';
+  signal k_awaddr : std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
+  signal k_awlen  : std_logic_vector(7 downto 0) := (others => '0');
+  signal k_awsize : std_logic_vector(2 downto 0) := (others => '0');
+  signal k_awburst: std_logic_vector(1 downto 0) := (others => '0');
+  signal k_wdata  : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  signal k_wstrb  : std_logic_vector(AXI_DW/8-1 downto 0) := (others => '0');
+
   -- ---- the sequencer ---------------------------------------------------
-  type q_t is (Q_IDLE, Q_MANT, Q_EXP, Q_CONV, Q_DONE);
+  type q_t is (Q_IDLE, Q_MANT, Q_EXP, Q_CONV, Q_CONST, Q_DONE);
   signal q       : q_t := Q_IDLE;
   signal is_save : std_logic := '0';
   signal done_q  : std_logic := '0';
-  -- WHICH MOVER OWNS THE MASTERS.  Two bits now, not one: "00" mantissas,
-  -- "01" exponents, "10" conv taps.  Held for a whole phase.
+  -- WHICH MOVER OWNS THE MASTERS.  "00" mantissas, "01" exponents, "10" conv
+  -- taps, "11" the constants (CONST_EN only; never reached otherwise).  Held
+  -- for a whole phase.
   signal sel     : std_logic_vector(1 downto 0) := "00";
 
   -- The three regions of THIS layer, in order.  The movers add
@@ -333,7 +456,7 @@ begin
   busy <= bsy;
   bsy  <= '0' when q = Q_IDLE else '1';
   done <= done_q;
-  err  <= a_err or e_err or c_err;
+  err  <= a_err or e_err or c_err or k_err;
 
   exp_base  <= std_logic_vector(unsigned(state_base)
                               + to_unsigned(MANT_BYTES, ADDR_W));
@@ -341,10 +464,11 @@ begin
                               + to_unsigned(MANT_BYTES + EXP_BYTES, ADDR_W));
 
   -- ================= the sequencer ======================================
-  -- ONE start in, THREE transfers, ONE done out.  `sel` is set on the edge a
-  -- phase reports done and held for the whole of the next one; a mover has
-  -- fully retired by the time it reports done (it does not leave S_SDRAIN
-  -- until its last BRESP is in) so there is no residual traffic to steal.
+  -- ONE start in, THREE transfers (FOUR for a load under CONST_EN), ONE done
+  -- out.  `sel` is set on the edge a phase reports done and held for the
+  -- whole of the next one; a mover has fully retired by the time it reports
+  -- done (it does not leave S_SDRAIN until its last BRESP is in) so there is
+  -- no residual traffic to steal.
   seq : process(clk) is
   begin
     if rising_edge(clk) then
@@ -352,6 +476,7 @@ begin
       a_load <= '0'; a_save <= '0';
       e_load <= '0'; e_save <= '0';
       c_load <= '0'; c_save <= '0';
+      k_load <= '0';
 
       if rst = '1' then
         q <= Q_IDLE; sel <= "00"; is_save <= '0';
@@ -384,6 +509,20 @@ begin
 
           when Q_CONV =>
             if c_done = '1' then
+              -- THE FOURTH PHASE IS A LOAD'S ONLY.  A save has nothing to
+              -- write back: the constants are the model's, not the token's.
+              if CONST_EN and is_save = '0' then
+                k_load <= '1';
+                sel    <= "11";
+                q      <= Q_CONST;
+              else
+                sel <= "00";
+                q   <= Q_DONE;
+              end if;
+            end if;
+
+          when Q_CONST =>
+            if k_done = '1' then
               sel <= "00";
               q   <= Q_DONE;
             end if;
@@ -396,8 +535,8 @@ begin
     end if;
   end process;
 
-  -- ================= the AXI 3:1 ========================================
-  -- Outputs follow `sel`.  Inputs are FORCED LOW to the two movers that do not
+  -- ================= the AXI 4:1 ========================================
+  -- Outputs follow `sel`.  Inputs are FORCED LOW to the movers that do not
   -- own the bus rather than merely broadcast, because a handshake is an AND of
   -- valid and ready: broadcasting `r_arready` to an idle mover is harmless
   -- only for as long as that mover keeps `arvalid` low, and a design that is
@@ -405,22 +544,23 @@ begin
   -- shape of bug this project keeps paying for.  Data and response fields ARE
   -- broadcast: they are qualified by the valid that is already gated.
   --
-  -- `with ... select` rather than a chain of `when`, because with three
-  -- sources a chain buries the default and this form makes the unused fourth
-  -- encoding explicit.  "11" never occurs; it maps to the mantissa mover
-  -- rather than to 'X' so a glitch cannot inject an undefined AXI valid.
-  with sel select r_arvalid <= e_arvalid when "01",
-                               c_arvalid when "10", a_arvalid when others;
-  with sel select r_araddr  <= e_araddr  when "01",
-                               c_araddr  when "10", a_araddr  when others;
-  with sel select r_arlen   <= e_arlen   when "01",
-                               c_arlen   when "10", a_arlen   when others;
-  with sel select r_arsize  <= e_arsize  when "01",
-                               c_arsize  when "10", a_arsize  when others;
-  with sel select r_arburst <= e_arburst when "01",
-                               c_arburst when "10", a_arburst when others;
-  with sel select r_rready  <= e_rready  when "01",
-                               c_rready  when "10", a_rready  when others;
+  -- `with ... select` rather than a chain of `when`, because with four
+  -- sources a chain buries the default.  All four encodings are now named;
+  -- `others` covers only metavalues and maps to the mantissa mover rather
+  -- than to 'X' so a glitch cannot inject an undefined AXI valid.  With
+  -- CONST_EN false the "11" leg is constant zeros and `sel` never takes it.
+  with sel select r_arvalid <= e_arvalid when "01", c_arvalid when "10",
+                               k_arvalid when "11", a_arvalid when others;
+  with sel select r_araddr  <= e_araddr  when "01", c_araddr  when "10",
+                               k_araddr  when "11", a_araddr  when others;
+  with sel select r_arlen   <= e_arlen   when "01", c_arlen   when "10",
+                               k_arlen   when "11", a_arlen   when others;
+  with sel select r_arsize  <= e_arsize  when "01", c_arsize  when "10",
+                               k_arsize  when "11", a_arsize  when others;
+  with sel select r_arburst <= e_arburst when "01", c_arburst when "10",
+                               k_arburst when "11", a_arburst when others;
+  with sel select r_rready  <= e_rready  when "01", c_rready  when "10",
+                               k_rready  when "11", a_rready  when others;
 
   a_arready <= r_arready when sel = "00" else '0';
   a_rvalid  <= r_rvalid  when sel = "00" else '0';
@@ -428,27 +568,29 @@ begin
   e_rvalid  <= r_rvalid  when sel = "01" else '0';
   c_arready <= r_arready when sel = "10" else '0';
   c_rvalid  <= r_rvalid  when sel = "10" else '0';
+  k_arready <= r_arready when sel = "11" else '0';
+  k_rvalid  <= r_rvalid  when sel = "11" else '0';
 
-  with sel select w_awvalid <= e_awvalid when "01",
-                               c_awvalid when "10", a_awvalid when others;
-  with sel select w_awaddr  <= e_awaddr  when "01",
-                               c_awaddr  when "10", a_awaddr  when others;
-  with sel select w_awlen   <= e_awlen   when "01",
-                               c_awlen   when "10", a_awlen   when others;
-  with sel select w_awsize  <= e_awsize  when "01",
-                               c_awsize  when "10", a_awsize  when others;
-  with sel select w_awburst <= e_awburst when "01",
-                               c_awburst when "10", a_awburst when others;
-  with sel select w_wvalid  <= e_wvalid  when "01",
-                               c_wvalid  when "10", a_wvalid  when others;
-  with sel select w_wdata   <= e_wdata   when "01",
-                               c_wdata   when "10", a_wdata   when others;
-  with sel select w_wstrb   <= e_wstrb   when "01",
-                               c_wstrb   when "10", a_wstrb   when others;
-  with sel select w_wlast   <= e_wlast   when "01",
-                               c_wlast   when "10", a_wlast   when others;
-  with sel select w_bready  <= e_bready  when "01",
-                               c_bready  when "10", a_bready  when others;
+  with sel select w_awvalid <= e_awvalid when "01", c_awvalid when "10",
+                               k_awvalid when "11", a_awvalid when others;
+  with sel select w_awaddr  <= e_awaddr  when "01", c_awaddr  when "10",
+                               k_awaddr  when "11", a_awaddr  when others;
+  with sel select w_awlen   <= e_awlen   when "01", c_awlen   when "10",
+                               k_awlen   when "11", a_awlen   when others;
+  with sel select w_awsize  <= e_awsize  when "01", c_awsize  when "10",
+                               k_awsize  when "11", a_awsize  when others;
+  with sel select w_awburst <= e_awburst when "01", c_awburst when "10",
+                               k_awburst when "11", a_awburst when others;
+  with sel select w_wvalid  <= e_wvalid  when "01", c_wvalid  when "10",
+                               k_wvalid  when "11", a_wvalid  when others;
+  with sel select w_wdata   <= e_wdata   when "01", c_wdata   when "10",
+                               k_wdata   when "11", a_wdata   when others;
+  with sel select w_wstrb   <= e_wstrb   when "01", c_wstrb   when "10",
+                               k_wstrb   when "11", a_wstrb   when others;
+  with sel select w_wlast   <= e_wlast   when "01", c_wlast   when "10",
+                               k_wlast   when "11", a_wlast   when others;
+  with sel select w_bready  <= e_bready  when "01", c_bready  when "10",
+                               k_bready  when "11", a_bready  when others;
 
   a_awready <= w_awready when sel = "00" else '0';
   a_wready  <= w_wready  when sel = "00" else '0';
@@ -459,6 +601,9 @@ begin
   c_awready <= w_awready when sel = "10" else '0';
   c_wready  <= w_wready  when sel = "10" else '0';
   c_bvalid  <= w_bvalid  when sel = "10" else '0';
+  k_awready <= w_awready when sel = "11" else '0';
+  k_wready  <= w_wready  when sel = "11" else '0';
+  k_bvalid  <= w_bvalid  when sel = "11" else '0';
 
   -- ================= the mantissa store =================================
   -- THE 2:1, AND NOTHING ELSE.  No arithmetic: see the header.
@@ -623,6 +768,131 @@ begin
              w_wready => c_wready, w_wdata => c_wdata, w_wstrb => c_wstrb,
              w_wlast => c_wlast, w_bvalid => c_bvalid, w_bready => c_bready,
              w_bresp => w_bresp);
+
+  -- ================= the constants: weights, scalars, mover ==============
+  -- Present only under CONST_EN.  The `else` arm ties every signal the rest
+  -- of this architecture reads to a constant, so the disabled store is the
+  -- store as it was with one unreachable sequencer state.
+  gconst : if CONST_EN generate
+    -- The mover's flat word address, split by REGION at one comparator.
+    -- Words below CW_WORDS are weights and go to the memory unchanged; the
+    -- rest are the scalar block.  The memory's address port is bounded at
+    -- CW_WORDS-1, so an out-of-region word is clamped to 0 AND its enable
+    -- is dropped, which is what keeps the clamp from ever writing.
+    signal kw_we  : std_logic;
+    signal kw_wa  : natural range 0 to CW_WORDS-1;
+    -- The read side of a load-only mover: tied off, never consulted.
+    signal k_rd_z : std_logic_vector(15 downto 0) := (others => '0');
+
+    type dt_arr_t is array (0 to VAL_HEADS-1) of std_logic_vector(15 downto 0);
+    type nw_arr_t is array (0 to DIM-1)       of std_logic_vector(15 downto 0);
+    type ex_arr_t is array (0 to 5)           of signed(7 downto 0);
+    signal dt_m : dt_arr_t := (others => (others => '0'));
+    signal a_m  : dt_arr_t := (others => (others => '0'));
+    signal nw_m : nw_arr_t := (others => (others => '0'));
+    signal ex_m : ex_arr_t := (others => (others => '0'));
+  begin
+    kw_we <= k_we when k_wa < CW_WORDS else '0';
+    kw_wa <= k_wa when k_wa < CW_WORDS else 0;
+
+    u_cw : entity work.gdn_conv_w_mem
+      generic map(KCONV => KCONV, CONV_LANES => CONV_LANES,
+                  KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE)
+      port map(clk => clk,
+               r_seg => cw_seg, r_grp => cw_grp, r_w => cw_w,
+               m_w_en => kw_we, m_w_addr => kw_wa, m_w_data => k_wd);
+
+    -- THE SCALAR BLOCK, a decoded register file.  One write per cycle from
+    -- the mover, decoded on the offset within the block; the outputs are
+    -- the registers themselves, so they are levels.  Nothing resets them:
+    -- they are meaningless until a load has run, and a load writes every
+    -- one of them.
+    scal : process(clk) is
+      variable si : natural range 0 to SB_WORDS-1;
+    begin
+      if rising_edge(clk) then
+        if k_we = '1' and k_wa >= CW_WORDS then
+          si := k_wa - CW_WORDS;
+          if si < SB_A then
+            dt_m(si - SB_DT) <= k_wd;
+          elsif si < SB_NW then
+            a_m(si - SB_A) <= k_wd;
+          elsif si < SB_EXP then
+            nw_m(si - SB_NW) <= k_wd;
+          elsif si < SB_END then
+            -- The LOW BYTE, signed.  The packer clamps to [-64, 63].
+            ex_m(si - SB_EXP) <= signed(k_wd(7 downto 0));
+          end if;
+        end if;
+      end if;
+    end process;
+
+    gdt : for h in 0 to VAL_HEADS-1 generate
+      sc_dt_m((h+1)*16-1 downto h*16) <= dt_m(h);
+      sc_a_m ((h+1)*16-1 downto h*16) <= a_m(h);
+    end generate;
+    gnw : for c in 0 to DIM-1 generate
+      sn_w((c+1)*16-1 downto c*16) <= nw_m(c);
+    end generate;
+    gex : for s in 0 to 2 generate
+      cw_exp((s+1)*8-1 downto s*8) <= std_logic_vector(ex_m(s));
+    end generate;
+    sc_dt_e <= ex_m(3);
+    sc_a_e  <= ex_m(4);
+    sn_exp  <= ex_m(5);
+
+    u_kdma : entity work.gdn_state_axi
+      -- VAL_HEADS 1 and N_GRP 1, so `col` IS the flat word address, as for
+      -- the conv taps.  `save_start` is a constant '0': this region is
+      -- never written by the card.
+      generic map(VAL_HEADS => 1, DIM => CONST_WORDS,
+                  RECUR_LANES => RECUR_LANES, LAYERS => LAYERS,
+                  WORD_BITS => 16, N_GRP => 1,
+                  LAYER_STRIDE => CONST_STRIDE, MANT_BYTES => CONST_BYTES,
+                  AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                  MAXB => MAXB, MAXOUT => MAXOUT)
+      port map(clk => clk, rst => rst,
+               load_start => k_load, save_start => '0',
+               layer => layer, state_base => const_base,
+               busy => k_busy, done => k_done, err => k_err,
+               m_w_en => k_we, m_w_head => open, m_w_col => k_wa,
+               m_w_grp => open, m_w_data => k_wd,
+               m_r_en => open, m_r_head => open, m_r_col => open,
+               m_r_grp => open, m_r_data => k_rd_z,
+               r_arvalid => k_arvalid, r_arready => k_arready,
+               r_araddr => k_araddr, r_arlen => k_arlen, r_arsize => k_arsize,
+               r_arburst => k_arburst, r_rvalid => k_rvalid,
+               r_rready => k_rready, r_rdata => r_rdata, r_rlast => r_rlast,
+               r_rresp => r_rresp,
+               w_awvalid => k_awvalid, w_awready => k_awready,
+               w_awaddr => k_awaddr, w_awlen => k_awlen, w_awsize => k_awsize,
+               w_awburst => k_awburst, w_wvalid => k_wvalid,
+               w_wready => k_wready, w_wdata => k_wdata, w_wstrb => k_wstrb,
+               w_wlast => k_wlast, w_bvalid => k_bvalid, w_bready => k_bready,
+               w_bresp => w_bresp);
+  else generate
+    -- The stand-in-free constants: zeros.  Every signal the 4:1 and the
+    -- sequencer read from this side is a constant, so the disabled leg
+    -- costs nothing and the phase is unreachable.
+    k_busy <= '0'; k_done <= '0'; k_err <= '0';
+    k_we <= '0'; k_wa <= 0; k_wd <= (others => '0');
+    k_arvalid <= '0'; k_rready <= '0';
+    k_araddr <= (others => '0'); k_arlen <= (others => '0');
+    k_arsize <= (others => '0'); k_arburst <= (others => '0');
+    k_awvalid <= '0'; k_wvalid <= '0'; k_wlast <= '0'; k_bready <= '0';
+    k_awaddr <= (others => '0'); k_awlen <= (others => '0');
+    k_awsize <= (others => '0'); k_awburst <= (others => '0');
+    k_wdata <= (others => '0'); k_wstrb <= (others => '0');
+
+    cw_w    <= (others => '0');
+    cw_exp  <= (others => '0');
+    sc_dt_m <= (others => '0');
+    sc_a_m  <= (others => '0');
+    sn_w    <= (others => '0');
+    sc_dt_e <= (others => '0');
+    sc_a_e  <= (others => '0');
+    sn_exp  <= (others => '0');
+  end generate;
 
   -- SIMULATION ONLY.  A VHDL severity is a width in synthesis and not a
   -- check, so this catches the caller in a bench and not on the card.  It is

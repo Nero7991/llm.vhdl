@@ -124,6 +124,9 @@ of 512.
 
 ### Track A: the store (`rtl/gdn_conv_w_mem.vhd` NEW, `rtl/gdn_state_store.vhd`, `sim/tb_gdn_conv_w_mem.vhd` NEW, `sim/tb_gdn_state_store.vhd`)
 
+LANDED 2026-09-18. Differences from the lines below are marked **(as built)**
+and the RTL is the authority.
+
 `gdn_state_store` gains:
 
 ```vhdl
@@ -133,8 +136,9 @@ generic  CONST_EN     : boolean  := false;   -- the fourth phase exists
 port     const_base : in  std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
          -- the conv WEIGHT face, addressed exactly like cv_seg/cv_grp and with
          -- the same timing (address sampled on the edge, data valid next cycle):
-         cw_seg  : in  integer range 0 to 2;
-         cw_grp  : in  natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1;
+         cw_seg  : in  integer range 0 to 2 := 0;   -- (as built) defaulted, so
+         cw_grp  : in  natural range 0 to (VAL_HEADS*DIM)/CONV_LANES-1 := 0;
+                    -- a caller without the phase (ooc_gdnadapt_top) elaborates
          cw_w    : out std_logic_vector(KCONV*CONV_LANES*16-1 downto 0);
          -- bit slice (t*CONV_LANES+ln)*16 +: 16 is tap t, lane ln, t=KCONV-1 newest
          cw_exp  : out std_logic_vector(3*8-1 downto 0);  -- seg s at s*8 +: 8, signed
@@ -152,19 +156,64 @@ port     const_base : in  std_logic_vector(ADDR_W-1 downto 0) := (others => '0')
   cover it; the AXI 4:1 keeps the forced-low rule.
 - Words `< KCONV*QKVN` go to `gdn_conv_w_mem`, a copy of
   `gdn_conv_tap_mem` with KCONV slots, NO rotation, NO unit write port, the
-  mover's flat address `t*QKVN + ch` decomposed the same way. Words
-  `>= KCONV*QKVN` go to the scalar registers (a plain decoded register file;
-  the exponents are the low byte of their words, sign-extended).
+  mover's flat address `t*QKVN + ch` decomposed the same way. **(as built)**
+  It also has NO mover READ port: the phase is load-only, so the fourth
+  mover's `m_r_data` is tied to zero in the store and the memory's one read
+  address is the unit's, unmuxed. Words `>= KCONV*QKVN` go to the scalar
+  registers (a plain decoded register file; the exponents are the low byte
+  of their words, sign-extended). The decode, in WORDS from
+  `SB = KCONV*QKVN`, at ANY shape (this is what the packer's `Layout` also
+  derives, checked 2026-09-18 against `tools/pack_gdn_consts.py:137-141`):
+  `dt` at `SB + 0`, `a` at `SB + VAL_HEADS`, `norm` at `SB + 2*VAL_HEADS`,
+  the six exponents at `SB + 2*VAL_HEADS + DIM + {0..5}` in the order
+  `cw_exp q, k, v, dt_e, a_e, w_exp`, and the store refuses a shape where
+  `2*VAL_HEADS + DIM + 6 > 256`.
 - `CONST_EN = false` must be BIT-IDENTICAL to today: no fourth phase, the new
   outputs driven to the stand-in-free constants (zeros). Existing rows
   `tb_gdn_state_store`, `tb_llama_top_bstate*` must not move.
-- The store's elaboration refusals extend: `CONST_BYTES = 2*CONST_WORDS`,
-  `CONST_BYTES mod 512 = 0`, `CONST_STRIDE >= CONST_BYTES`.
+- The store's elaboration refusals extend: `CONST_BYTES = 2*CONST_WORDS`
+  (two-sided), `CONST_BYTES mod 512 = 0`, `CONST_STRIDE >= CONST_BYTES`,
+  and the scalar-block bound above. **(as built)** All of them are GATED ON
+  `CONST_EN`, necessarily: the generics default to the 9B figures, and a
+  caller at the sim shape with the phase off (every existing instantiation)
+  would otherwise be refused for a region it never moves. The fourth mover
+  adds its own (`bad_beats_not_multiple_of_maxb` etc.); DERIVED at 9B
+  (`AXI_DW 256, MAXB 16`): 33,024 words = 2,064 beats = 129 bursts, 66,048 B.
+  MEASURED at the bench shape (`AXI_DW 64, MAXB 4`, QKVN 128): 768 words =
+  192 beats = 48 bursts, 1,536 B.
 - Bench: load an image with known contents through the AXI model, read every
   (seg, grp) back through `cw_w`, every scalar, every exponent; a save must
   not touch the const region; a second load of another layer replaces all of
   it. Teeth: a mutant that skips the phase, one that swaps tap order, one that
   drops the scalar decode. Report the mutants that do NOT bite.
+
+  **(as built, MEASURED 2026-09-18)** `sim/tb_gdn_state_store.vhd` runs with
+  `CONST_EN => true` by default: 9,475 checks (7,968 before, the same body,
+  plus 16 loads x (64 weight groups + 30 scalars/exponents) plus 3 region
+  checks). The region is compared beat by beat at the end, the slave counts
+  W beats into it (must be 0) and AR bursts into it (must be exactly
+  `NTOK*LAYERS*CONST_BEATS/MAXB` = 768: one image per LOAD, none per SAVE).
+  `-gCONST_EN=false` reproduces the old run to the nanosecond (finishes at
+  867,845 ns as before, 2,898 W stalls as before) with 7,971 checks, the
+  three extra being the region checks passing against the old three-phase
+  store (0 W beats, 0 AR bursts, every beat unchanged).
+  `sim/tb_gdn_conv_w_mem.vhd`: 59 checks, 24 (image, seg, grp) blocks across
+  3 images, each read proved to arrive on the edge and not before.
+  Mutants, each under its own name:
+
+  | mutant | tb_gdn_conv_w_mem | tb_gdn_state_store |
+  |---|---|---|
+  | M1 skip the fourth phase | n/a | BITES 1,505 of 9,475 |
+  | M2 tap order reversed in the memory | BITES 51 of 59 | BITES 1,024 |
+  | M3 scalar decode dropped | n/a | BITES 480 |
+  | M4 exponent from the HIGH byte | n/a | BITES 96 (all 6 x 16 loads) |
+  | M5 lane order reversed in the memory | BITES 51 of 59 | BITES 1,024 |
+  | M6 phase also runs on a SAVE | n/a | BITES 1 of 9,475, the AR-burst count ONLY; attribution control: with that check disabled it PASSES 9,475 of 9,475 (a reload is harmless to every value check) |
+  | M7 the out-of-region address clamp value (`else 0` -> `else CW_WORDS-1`) | n/a | does NOT bite: the clamp is dead because the enable is gated on the same comparison, so its value is unobservable by design |
+
+  The old store cannot be run against the new checks (it has none of the
+  ports); M1 is that control, since a skipped phase IS the old store's
+  behaviour with the ports present.
 
 ### Track B: packing, arena, host (`tools/pack_gdn_consts.py` NEW, `tools/hbm_map.py`, `hw/fk33/host/fk33_load_weights.py`, `hw/fk33/host/fk33ctl.py` load path only, `server/pl_backend.c`, `tools/tests` for the packer)
 

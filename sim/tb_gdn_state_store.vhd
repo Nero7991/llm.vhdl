@@ -32,6 +32,25 @@
 -- Layer L's exponents sit at `base + L*stride + MANT_BYTES`, immediately
 -- after its mantissas: an off-by-one-region address error is invisible at
 -- layer 0 and corrupts every other layer.
+--
+-- THE FOURTH PHASE, UNDER `CONST_EN` (2026-09-18).  Each layer's learned
+-- constants -- conv weights, dt bias, A, ssm norm weight, six exponents --
+-- live in a SEPARATE region at `CBASE + L*CONST_STRIDE` that the bench
+-- initialises with a known per-layer image and that nothing on the card ever
+-- writes.  After every LOAD the bench reads every (seg, grp) of the weight
+-- face, every scalar and every exponent back and checks them against the
+-- image of THAT layer; because every layer is loaded in turn, this is also
+-- the check that a load replaces the previous layer's constants entirely.
+-- At the end, every beat of the region is compared with the image it started
+-- as, and the slave counts writes landing in it: a SAVE must never touch it.
+-- `CONST_EN => false` runs the bench exactly as it was, 7968 checks
+-- (MEASURED 2026-09-18 at the same generics), which is the control that the
+-- disabled store is the old store.
+--
+-- CHECKS ARE COUNTED IN VARIABLES, NOT SIGNALS.  A signal incremented twice
+-- in one delta keeps only the last value.  The counters here used to be
+-- signals with a `wait for 0 ns` after every increment, which was correct;
+-- variables need no such rule and cannot be got wrong the same way.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -63,6 +82,9 @@ entity tb_gdn_state_store is
     -- rotation's interesting case goes unchecked.  The mantissa and exponent
     -- checks only ever needed two.
     NTOK        : positive := 4;
+    -- The constants phase.  TRUE here so the gate row covers it; FALSE is
+    -- the control that reproduces the previous 7968-check run.
+    CONST_EN    : boolean  := true;
     AXI_DW      : positive := 64;
     MAXB        : positive := 4;
     MAXOUT      : positive := 2;
@@ -99,6 +121,27 @@ architecture sim of tb_gdn_state_store is
   constant ADDR_W : positive := 33;
   constant BASE   : natural := 8192;
 
+  -- ---- the constants image geometry, the contract's ----------------------
+  -- CONST_WORDS = KCONV*QKVN + 256, two bytes per word; the scalar block is
+  -- always 256 words and the per-layer size is a multiple of 512 bytes,
+  -- which the packer guarantees and the store refuses otherwise.
+  constant CW_WORDS    : positive := KCONV * QKVN;
+  constant SB_WORDS    : positive := 256;
+  constant CONST_WORDS : positive := CW_WORDS + SB_WORDS;
+  constant CONST_BYTES : positive := 2 * CONST_WORDS;
+  constant CONST_BEATS : positive := CONST_BYTES / BPB;
+  -- A GAP after every image, for the same reason LAYER_STRIDE has one: an
+  -- overrun lands in a hole nothing reads and the CHECK catches it.
+  constant CONST_STRIDE : positive := CONST_BYTES + BPB;
+  constant SB_DT  : natural := 0;
+  constant SB_A   : natural := VAL_HEADS;
+  constant SB_NW  : natural := 2*VAL_HEADS;
+  constant SB_EXP : natural := 2*VAL_HEADS + DIM;
+  -- The region sits AFTER the whole state arena, with a spare beat between,
+  -- so a state mover running one layer too far cannot reach it silently
+  -- either: it would land in the gap.
+  constant CBASE  : natural := BASE + LAYERS * LAYER_STRIDE + BPB;
+
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';
 
@@ -127,6 +170,14 @@ architecture sim of tb_gdn_state_store is
                   := (others => '0');
   signal tok_adv  : std_logic := '0';
 
+  signal cw_seg   : integer range 0 to 2 := 0;
+  signal cw_grp   : natural range 0 to VAL_CH/CONV_LANES-1 := 0;
+  signal cw_w     : std_logic_vector(KCONV*CONV_LANES*16-1 downto 0);
+  signal cw_exp   : std_logic_vector(23 downto 0);
+  signal sc_dt_m, sc_a_m : std_logic_vector(VAL_HEADS*16-1 downto 0);
+  signal sn_w     : std_logic_vector(DIM*16-1 downto 0);
+  signal sc_dt_e, sc_a_e, sn_exp : signed(7 downto 0);
+
   signal arvalid, arready, rvalid, rready, rlast : std_logic := '0';
   signal araddr : std_logic_vector(ADDR_W-1 downto 0);
   signal arlen  : std_logic_vector(7 downto 0);
@@ -145,20 +196,84 @@ architecture sim of tb_gdn_state_store is
   signal bvalid, bready : std_logic := '0';
   signal bresp  : std_logic_vector(1 downto 0) := "00";
 
-  constant SLAVE_BEATS : positive := LAYERS * (LAYER_STRIDE / BPB)
-                                    + BEATS + EXP_BEATS + CONV_BEATS;
+  constant SLAVE_BEATS : positive := (CBASE - BASE) / BPB
+                                    + LAYERS * (CONST_STRIDE / BPB)
+                                    + CONST_BEATS;
+  constant CFIRST : natural := (CBASE - BASE) / BPB;   -- first const beat
   type smem_t is array (0 to SLAVE_BEATS-1)
                  of std_logic_vector(AXI_DW-1 downto 0);
+
+  -- ---- the constants image of layer L, word w ----------------------------
+  -- A FOURTH generator, distinct from val/eval/cval: four regions, and a
+  -- mover that wrote one over another must not read back consistent bytes.
+  function wgt(L, tap, ch : natural) return std_logic_vector is
+  begin
+    return std_logic_vector(to_unsigned(
+      ((L*5003 + tap*1013 + ch*37 + 3) mod 65536), 16));
+  end function;
+  function sdt(L, h : natural) return std_logic_vector is
+  begin
+    return std_logic_vector(to_unsigned(((L*211 + h*17 + 5) mod 65536), 16));
+  end function;
+  function sa(L, h : natural) return std_logic_vector is
+  begin
+    return std_logic_vector(to_unsigned(((L*307 + h*23 + 9) mod 65536), 16));
+  end function;
+  function snw(L, c : natural) return std_logic_vector is
+  begin
+    return std_logic_vector(to_unsigned(((L*401 + c*29 + 13) mod 65536), 16));
+  end function;
+  -- The six exponents: signed, inside the packer's [-64, 63], and NEGATIVE
+  -- for some (L, j) so the sign extension from the low byte is exercised.
+  function sexp(L, j : natural) return integer is
+  begin
+    return ((L*19 + j*7 + 40) mod 128) - 64;
+  end function;
+  function cimg(L, w : natural) return std_logic_vector is
+    variable si : natural;
+  begin
+    if w < CW_WORDS then
+      return wgt(L, w / QKVN, w mod QKVN);
+    end if;
+    si := w - CW_WORDS;
+    if    si < SB_A     then return sdt(L, si - SB_DT);
+    elsif si < SB_NW    then return sa (L, si - SB_A);
+    elsif si < SB_EXP   then return snw(L, si - SB_NW);
+    elsif si < SB_EXP+6 then
+      return std_logic_vector(to_signed(sexp(L, si - SB_EXP), 16));
+    else
+      return x"0000";
+    end if;
+  end function;
+
+  -- The slave's memory at time zero: the state arena zeroed (a sequence
+  -- start), the constants region holding every layer's image.  Word w of
+  -- layer L is at byte `CBASE + L*CONST_STRIDE + 2w`, little-endian int16,
+  -- so word j of a beat is bits j*16 +: 16, which is the order the mover
+  -- unpacks.
+  function init_smem return smem_t is
+    variable m : smem_t := (others => (others => '0'));
+    variable b, j : natural;
+  begin
+    for L in 0 to LAYERS-1 loop
+      for w in 0 to CONST_WORDS-1 loop
+        b := CFIRST + (L*CONST_STRIDE + 2*w) / BPB;
+        j := ((2*w) mod BPB) / 2;
+        m(b)((j+1)*16-1 downto j*16) := cimg(L, w);
+      end loop;
+    end loop;
+    return m;
+  end function;
+
   -- Driven by the slave process ONLY; nothing else assigns it.  Two drivers
   -- on one resolved signal resolve rather than take turns, and it costs an
   -- afternoon (see docs/debugging/2026-09-02_gdn-state-dma.md, defect B2).
-  signal smem : smem_t := (others => (others => '0'));
+  -- Its INITIAL value is the image above; an initial value is not a driver.
+  signal smem : smem_t := init_smem;
 
-  signal n_chk, n_bad : natural := 0;
   signal n_stall : natural := 0;
-  signal n_exp   : natural := 0;   -- exponent bytes actually checked
-  signal n_conv  : natural := 0;   -- conv tap groups actually checked
-  signal n_full  : natural := 0;   -- of those, with a FULL history behind them
+  signal n_cwr   : natural := 0;   -- W beats that landed in the const region
+  signal n_crd   : natural := 0;   -- AR bursts that read the const region
 
   -- the value layer L holds at token T, distinct in every 16-bit lane
   function val(L, T, i : natural) return std_logic_vector is
@@ -228,12 +343,19 @@ begin
                 EXP_STYLE => "distributed", CONV_STYLE => "auto",
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => MANT_BYTES,
                 EXP_BYTES => EXP_BYTES, CONV_BYTES => CONV_BYTES,
+                CONST_EN => CONST_EN, CONST_STRIDE => CONST_STRIDE,
+                CONST_BYTES => CONST_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXB => MAXB, MAXOUT => MAXOUT)
     port map(clk => clk, rst => rst,
              load_start => load_start, save_start => save_start,
              layer => layer,
              state_base => std_logic_vector(to_unsigned(BASE, ADDR_W)),
+             const_base => std_logic_vector(to_unsigned(CBASE, ADDR_W)),
+             cw_seg => cw_seg, cw_grp => cw_grp, cw_w => cw_w,
+             cw_exp => cw_exp, sc_dt_m => sc_dt_m, sc_a_m => sc_a_m,
+             sn_w => sn_w, sc_dt_e => sc_dt_e, sc_a_e => sc_a_e,
+             sn_exp => sn_exp,
              busy => busy, done => dn, err => er,
              st_ren => st_ren, st_rhead => st_rhead, st_rcol => st_rcol,
              st_rgrp => st_rgrp, st_rdata => st_rdata,
@@ -286,6 +408,9 @@ begin
         rq(head) := ((to_integer(unsigned(araddr)) - BASE) / BPB,
                      to_integer(unsigned(arlen)) + 1, 0, true);
         head := (head + 1) mod 8;
+        if (to_integer(unsigned(araddr)) - BASE) / BPB >= CFIRST then
+          n_crd <= n_crd + 1;
+        end if;
       end if;
       if rvalid = '1' and rready = '1' then
         if rq(tail).len = 1 then
@@ -315,6 +440,7 @@ begin
           report "tb_gdn_state_store: W beat with no outstanding AW"
           severity failure;
         smem(wq(wtail).addr) <= wdata;
+        if wq(wtail).addr >= CFIRST then n_cwr <= n_cwr + 1; end if;
         if wq(wtail).len = 1 then
           assert wlast = '1' report "tb_gdn_state_store: burst without WLAST"
             severity failure;
@@ -363,14 +489,21 @@ begin
       end loop;
     end procedure;
 
+    variable n_chk, n_bad : natural := 0;
+    variable n_exp   : natural := 0;   -- exponent bytes actually checked
+    variable n_conv  : natural := 0;   -- conv tap groups actually checked
+    variable n_full  : natural := 0;   -- of those, with a FULL history
+    variable n_cw    : natural := 0;   -- conv WEIGHT groups checked
+    variable n_sc    : natural := 0;   -- scalar and exponent checks
+    variable n_cimg  : natural := 0;   -- const-region beats compared at end
+
     procedure chk(cond : boolean; msg : string) is
     begin
-      n_chk <= n_chk + 1;
+      n_chk := n_chk + 1;
       if not cond then
-        n_bad <= n_bad + 1;
+        n_bad := n_bad + 1;
         report "tb_gdn_state_store: " & msg severity error;
       end if;
-      wait for 0 ns;
     end procedure;
 
     -- the unit's own port, addressed the way gdn_block addresses it
@@ -448,8 +581,74 @@ begin
       tick;
       cvw_en <= '0';
     end procedure;
+
+    -- The conv WEIGHT face: same timing contract as the tap face.
+    procedure unit_wread(seg : integer; grp : natural) is
+    begin
+      cw_seg <= seg; cw_grp <= grp;
+      tick;
+      wait for 1 ns;
+    end procedure;
+
+    -- Every constant of layer L, read back through the store's faces.
+    procedure check_consts(L, T : natural) is
+      variable wok : boolean;
+    begin
+      for seg in 0 to 2 loop
+        for grp in 0 to grps_in(seg)-1 loop
+          unit_wread(seg, grp);
+          wok := true;
+          for k in 0 to KCONV-1 loop
+            for ln in 0 to CONV_LANES-1 loop
+              if cw_w(k*CONV_LANES*16 + (ln+1)*16 - 1
+                      downto k*CONV_LANES*16 + ln*16)
+                 /= wgt(L, k, chan_of(seg, grp, ln)) then
+                wok := false;
+              end if;
+            end loop;
+          end loop;
+          n_cw := n_cw + 1;
+          chk(wok, "token " & integer'image(T) & " layer " & integer'image(L)
+                 & " seg " & integer'image(seg) & " grp " & integer'image(grp)
+                 & ": the conv weights are not the image's, tap-major; got "
+                 & to_hstring(cw_w));
+        end loop;
+      end loop;
+      for h in 0 to VAL_HEADS-1 loop
+        n_sc := n_sc + 2;
+        chk(sc_dt_m((h+1)*16-1 downto h*16) = sdt(L, h),
+            "layer " & integer'image(L) & " dt[" & integer'image(h)
+            & "] got " & to_hstring(sc_dt_m((h+1)*16-1 downto h*16)));
+        chk(sc_a_m((h+1)*16-1 downto h*16) = sa(L, h),
+            "layer " & integer'image(L) & " a[" & integer'image(h)
+            & "] got " & to_hstring(sc_a_m((h+1)*16-1 downto h*16)));
+      end loop;
+      for c in 0 to DIM-1 loop
+        n_sc := n_sc + 1;
+        chk(sn_w((c+1)*16-1 downto c*16) = snw(L, c),
+            "layer " & integer'image(L) & " norm_w[" & integer'image(c)
+            & "] got " & to_hstring(sn_w((c+1)*16-1 downto c*16)));
+      end loop;
+      for j in 0 to 2 loop
+        n_sc := n_sc + 1;
+        chk(to_integer(signed(cw_exp((j+1)*8-1 downto j*8))) = sexp(L, j),
+            "layer " & integer'image(L) & " cw_exp[" & integer'image(j)
+            & "] got "
+            & integer'image(to_integer(signed(cw_exp((j+1)*8-1 downto j*8))))
+            & " want " & integer'image(sexp(L, j)));
+      end loop;
+      n_sc := n_sc + 3;
+      chk(to_integer(sc_dt_e) = sexp(L, 3), "layer " & integer'image(L)
+          & " dt_e got " & integer'image(to_integer(sc_dt_e)));
+      chk(to_integer(sc_a_e) = sexp(L, 4), "layer " & integer'image(L)
+          & " a_e got " & integer'image(to_integer(sc_a_e)));
+      chk(to_integer(sn_exp) = sexp(L, 5), "layer " & integer'image(L)
+          & " w_exp got " & integer'image(to_integer(sn_exp)));
+    end procedure;
+
     variable ccol : std_logic_vector(CONV_LANES*16-1 downto 0);
     variable cok  : boolean;
+    variable ref  : smem_t;
   begin
     rst <= '1'; tick(4); rst <= '0'; tick(2);
 
@@ -460,6 +659,12 @@ begin
         wait_done;
         chk(er = '0', "err after LOAD, token " & integer'image(T)
                     & " layer " & integer'image(L));
+
+        -- THE CONSTANTS, every load: this layer's image, and since the
+        -- previous load was another layer's, all of it replaced.
+        if CONST_EN then
+          check_consts(L, T);
+        end if;
 
         -- Token 0 has nothing to check: HBM starts zeroed and that is what a
         -- real sequence start means.  From token 1 the layer MUST hold what
@@ -482,7 +687,7 @@ begin
         if T > 0 then
           for i in 0 to EXPN-1 loop
             unit_eread(i);
-            n_exp <= n_exp + 1;
+            n_exp := n_exp + 1;
             chk(se_rdata = eval(L, T-1, i),
                 "token " & integer'image(T) & " layer " & integer'image(L)
                 & " exponent " & integer'image(i) & " lost its state: got "
@@ -510,8 +715,8 @@ begin
                 end if;
               end loop;
             end loop;
-            n_conv <= n_conv + 1;
-            if T >= NTAP then n_full <= n_full + 1; end if;
+            n_conv := n_conv + 1;
+            if T >= NTAP then n_full := n_full + 1; end if;
             chk(cok, "token " & integer'image(T) & " layer "
                    & integer'image(L) & " seg " & integer'image(seg)
                    & " grp " & integer'image(grp)
@@ -552,6 +757,41 @@ begin
     end loop;
 
     tick(4);
+
+    -- A SAVE NEVER WRITES THE CONST REGION.  Two independent forms: the
+    -- slave counted every W beat landing at or above CFIRST, and every beat
+    -- of the region still holds the image it started as.  Both run with
+    -- CONST_EN false too, where they say the old store never strayed there.
+    ref := init_smem;
+    chk(n_cwr = 0, "the slave saw " & integer'image(n_cwr)
+        & " W beats land in the constants region; a save must never write it");
+    -- LOAD ONLY, AND ONCE PER LOAD: the region is read exactly
+    -- CONST_BEATS/MAXB bursts per load job and not at all by a save.  A
+    -- sequencer that ran the phase on a save too would still pass every
+    -- value check above, because a reload is harmless; this is the check
+    -- that sees it.
+    if CONST_EN then
+      chk(n_crd = NTOK * LAYERS * (CONST_BEATS / MAXB),
+          "the constants region was read " & integer'image(n_crd)
+          & " bursts; want exactly "
+          & integer'image(NTOK * LAYERS * (CONST_BEATS / MAXB))
+          & " (one image per LOAD, none per SAVE)");
+    else
+      chk(n_crd = 0, "CONST_EN is off and the constants region was read "
+          & integer'image(n_crd) & " bursts");
+    end if;
+    -- From the gap beat BEFORE the region, so a state mover that ran one
+    -- layer too far is caught here as well as by its own checks.
+    for b in CFIRST-1 to SLAVE_BEATS-1 loop
+      n_cimg := n_cimg + 1;
+      if smem(b) /= ref(b) then
+        chk(false, "constants region beat " & integer'image(b)
+            & " changed: got " & to_hstring(smem(b)) & " want "
+            & to_hstring(ref(b)));
+      end if;
+    end loop;
+    n_chk := n_chk + 1;   -- the loop above is ONE check: "nothing changed"
+
     report "tb_gdn_state_store: checks=" & integer'image(n_chk)
          & " bad=" & integer'image(n_bad)
          & " tokens=" & integer'image(NTOK)
@@ -559,6 +799,11 @@ begin
          & " exponent bytes=" & integer'image(n_exp)
          & " conv groups=" & integer'image(n_conv)
          & " (full history " & integer'image(n_full) & ")"
+         & " conv weight groups=" & integer'image(n_cw)
+         & " scalar+exp checks=" & integer'image(n_sc)
+         & " const beats compared=" & integer'image(n_cimg)
+         & " const-region W beats=" & integer'image(n_cwr)
+         & " const-region AR bursts=" & integer'image(n_crd)
          & " W stalls=" & integer'image(n_stall) severity note;
 
     -- A run that never reached token 1 checked no persistence at all.
@@ -588,16 +833,25 @@ begin
       report "tb_gdn_state_store: FAIL, no conv tap was ever checked with a "
            & "FULL history behind it; NTOK must exceed KCONV-1."
       severity failure;
+    -- With the phase on, a run that checked no weight group or no scalar
+    -- left the FOURTH phase untested.
+    assert (not CONST_EN) or (n_cw > 0 and n_sc > 0)
+      report "tb_gdn_state_store: FAIL, CONST_EN is on and no constant was "
+           & "ever checked, so the FOURTH phase is UNTESTED."
+      severity failure;
 
     if n_bad = 0 then
       report "tb_gdn_state_store RESULT: PASS -- " & integer'image(n_chk)
            & " checks, of which " & integer'image(n_exp)
            & " exponents and " & integer'image(n_conv)
            & " conv tap groups (" & integer'image(n_full)
-           & " with a full history); every layer's mantissas, exponents AND "
+           & " with a full history) and " & integer'image(n_cw)
+           & " conv weight groups + " & integer'image(n_sc)
+           & " scalars; every layer's mantissas, exponents AND "
            & "conv taps survived " & integer'image(LAYERS-1)
            & " evictions per token across " & integer'image(NTOK)
-           & " tokens." severity note;
+           & " tokens, and the constants region was never written."
+           severity note;
     else
       report "tb_gdn_state_store RESULT: FAIL -- " & integer'image(n_bad)
            & " of " & integer'image(n_chk) severity error;
