@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/ref9b/seamgate.sh -- THE SEAM COMPARISON AS ONE VERDICT.
 #
-#   bash tools/ref9b/seamgate.sh {real|seq|stub|bconst|qkn}
+#   bash tools/ref9b/seamgate.sh {real|seq|stub|bconst|qkn|swg}
 #
 # Exit 0 = PASS, non-zero = not green.  Designed to be a `sim/regress.sh` row
 # (`sim:seamgate_<cfg>`), and to be runnable on its own with the same meaning.
@@ -177,6 +177,28 @@
 # R_Y-3 on every token.  So the match is the gains being right, not the
 # comparison being loose.  The converse (the `real` capture judged WITH the
 # image) fails the same way.
+# ---------------------------------------------------------------------------
+# `swg` IS THE ROW WHERE THE D-VEC SWIGLU IS THE REAL UNIT, 2026-09-19
+# ---------------------------------------------------------------------------
+# `real` with three tokens and `SWG_REAL = true`, so OP_VEC_SWG is computed
+# by rtl/swiglu_mem.vhd (Q12 silu(g)*u, sigmoid_q from fixed_pkg,
+# rtl/bfp_pack.vhd's pack) behind llama_top's `gsr` adapter instead of the
+# `g*u / 2**MANT_W` stand-in every other row elaborates
+# (docs/debugging/2026-09-19_the-swiglu-on-the-card-is-a-product-with-no-
+# gate.md).  ONE comparator: bisect_scaled.py's `--swg real` selects
+# vec_oracle.swg_real (transcribed from ref/run_fx.c's swiglu_fx and
+# ref/fx.h's fx_sigmoid_q, plus bfp_pack's rule; held to the C by
+# tools/ref9b/check_swg_real.py) for the R_H seams, so its floor is `real`'s
+# 64 per token and there is no `O` string.
+#
+# THE FLOOR, MEASURED 2026-09-19: 64 seams per token over 3 tokens, the
+# twelve R_H seams (R_H-0..3 at tokens 0, 1, 2) among them, bit for bit.
+#
+# ATTRIBUTION CONTROL, MEASURED 2026-09-19: the same capture judged with
+# `--swg real` removed (the stand-in model against the real machine) FAILS
+# at R_H-0 on every token.  So the match is the SwiGLU being what the model
+# says, not the comparison being loose.  The converse (the `real` capture,
+# SWG_REAL false, judged WITH `--swg real`) fails the same way.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
@@ -193,7 +215,8 @@ case "$CFG" in
   seq)  FLOOR=61 ;;
   bconst) FLOOR=61; RY_FLOOR=9 ;;
   qkn)  FLOOR=64 ;;
-  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub|bconst|qkn)"; exit 2 ;;
+  swg)  FLOOR=64 ;;
+  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub|bconst|qkn|swg)"; exit 2 ;;
 esac
 
 # Ours to create, ours to remove; a caller-named one is the caller's and is

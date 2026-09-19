@@ -593,7 +593,7 @@ def main():
     # can see they are inert here rather than silently applied.
     for _dead in ("--norm", "--norm-exp", "--norm-w-exp", "--norm-q",
                   "--w-image", "--kv-block", "--n-rot", "--qkn-exp",
-                  "--qkn-image", "--attn-fold"):
+                  "--qkn-image", "--attn-fold", "--swg"):
         ap.add_argument(_dead, default=None,
                         help="accepted and IGNORED: subsystem B does not read "
                              "it.  Present so the capture's own bisect "

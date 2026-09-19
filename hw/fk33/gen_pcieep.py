@@ -1146,6 +1146,11 @@ CARD_SRCS = [
     # rmsnorm_rs_mem stays listed: nothing else in the card binds it today,
     # but its removal is a separate decision from this swap.
     "rmsnorm_bf_mem.vhd",
+    # 2026-09-19: llama_top's D-vec swiglu is swiglu_mem when SWG_REAL, which
+    # gen_fk33_card.py now passes true (docs/debugging/2026-09-19_the-swiglu-
+    # on-the-card-is-a-product-with-no-gate.md).  It instantiates vec_mem
+    # (above) and uses fixed_pkg's sigmoid_q (above); after both.
+    "swiglu_mem.vhd",
     "sampler_stream.vhd", "seq_desc_fetch.vhd", "seq_opdec.vhd",
     "seq_region_lock.vhd", "seq_vec_issue.vhd", "seq_vec_res.vhd",
 ]

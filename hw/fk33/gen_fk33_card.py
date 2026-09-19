@@ -214,6 +214,16 @@ ARGS = [
     "--generic", "C_REAL=true",
     # NORM_REAL gates `gvr`, the real norm, against a stub at `gv`.
     "--generic", "NORM_REAL=true",
+    # SWG_REAL gates `gsr`, the real SwiGLU (rtl/swiglu_mem.vhd: Q12
+    # silu(g)*u with bfp_pack's pack), against the `g*u / 2**MANT_W` stand-in
+    # at `gv`.  Added 2026-09-19.  Before this every card build computed H
+    # as a plain product with no gate, and the token-0 bisection on silicon
+    # found G and U right and H wrong in every block
+    # (docs/debugging/2026-09-19_the-swiglu-on-the-card-is-a-product-with-
+    # no-gate.md).  It was the LAST stand-in in the composed top.  llama_top's
+    # default is FALSE so every existing bench elaborates unchanged; the
+    # card wants the real unit, exactly as it wants NORM_REAL.
+    "--generic", "SWG_REAL=true",
     # NORM_W_IMAGE: the REAL RMSNorm gains, one row per OP_VEC_NORM of a token
     # in schedule order, read at elaboration into ~114 BRAM
     # (docs/debugging/2026-08-29_nwrom-norm-gain-image-area.md).  Empty, the

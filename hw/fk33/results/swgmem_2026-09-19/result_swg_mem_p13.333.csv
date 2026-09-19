@@ -1,0 +1,2 @@
+target,gen,dsp,lut,lut_logic,lut_mem,ff,ramb36,ramb18,bram_tile,uram,carry8,f7,f8,wns_ns,fmax_mhz,synth_s,opt_s,synth_lut,synth_ff,synth_dsp,synth_bram
+swiglu_mem,"N=12288 Q=12",16,2493,2493,0,319,18,3,19.5,0,103,278,120,4.664,115.35355865728457,41,18,2497,319,16,19.5

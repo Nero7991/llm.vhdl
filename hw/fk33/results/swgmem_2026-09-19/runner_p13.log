@@ -1,0 +1,13 @@
+SWGMEM_ENV host=cachyos-bc250 repo=/home/orencollaco/GitHub/llama.vhdl out=/home/labuser/swgmem_area sha=unknown
+               total        used        free      shared  buff/cache   available
+Mem:              14           2           5           0           6          12
+SWGMEM_PERIOD 13.333: 2 lines differ from the shipping script
+=== SWGMEM draw swg_mem_p13.333 (swiglu_mem N=12288 Q=12) begin 2026-09-19T19:03:57-04:00 ===
+SWGMEM_OK swg_mem_p13.333 rc=0 peak_rss=3.24GB
+LUTDIET_CENSUS target=swiglu_mem lut_prims=2761 roots=24
+LUTDIET_RESULT target=swiglu_mem gen="N=12288 Q=12" dsp=16 lut=2493  lut_logic=2493 lut_mem=0 ff=319 ramb36=18 ramb18=3 bram=19.5  uram=0 carry8=103 f7=278 f8=120 wns=4.664 fmax=115.35355865728457 synth_s=41  opt_s=18
+LUTDIET_SYNTH_VS_OPT target=swiglu_mem synth_lut=2497 opt_lut=2493  synth_ff=319 opt_ff=319 synth_dsp=16 opt_dsp=16 synth_bram=19.5  opt_bram=19.5
+=== SWGMEM_TABLE (from result_*.csv, i.e. report_utilization + census) ===
+result_swg_mem.csv: swiglu_mem,"N=12288 Q=12",16,2493,2493,0,319,18,3,19.5,0,103,278,120,-3.669,115.35355865728457,41,18,2497,319,16,19.5
+result_swg_mem_p13.333.csv: swiglu_mem,"N=12288 Q=12",16,2493,2493,0,319,18,3,19.5,0,103,278,120,4.664,115.35355865728457,41,18,2497,319,16,19.5
+SWGMEM_ALLDONE rc=0

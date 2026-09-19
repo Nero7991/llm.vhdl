@@ -240,6 +240,13 @@ def main():
                     help="which OP_VEC_NORM the run elaborated.  The capture "
                          "does NOT record this and guessing it wrong makes "
                          "every norm seam diverge, which looks like a defect.")
+    ap.add_argument("--swg", choices=("standin", "real"), default="standin",
+                    help="which OP_VEC_SWG the run elaborated: standin = "
+                         "the `g*u / 2**MANT_W` model (SWG_REAL false, the "
+                         "default and every capture before 2026-09-19); "
+                         "real = rtl/swiglu_mem.vhd via SWG_REAL.  NOT "
+                         "recorded in the capture; the wrong choice makes "
+                         "every R_H seam diverge")
     ap.add_argument("--norm-exp", type=int, default=12,
                     help="rtl/llama_top.vhd's NORM_EXP (:220, default 12), "
                          "used by --norm anchor")
@@ -473,8 +480,14 @@ def main():
             why = "ref/seq_vec_res_vec.c recipe (REAL RTL on the other side)"
         elif st.op == SP.OP_SWG:
             g, u = by[(src, a.tok)], by[(src2, a.tok)]
-            exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
-            why = "the behavioural stand-in: sequencing and exponent only"
+            if a.swg == "real":
+                exp_v, exp_e, diag = VO.swg_real(g.v, u.v, g.exp, u.exp)
+                why = ("swiglu_mem (Q12 silu*u + pack), bit-exact, shift %d, "
+                       "rel_rms vs the double ideal %.4g"
+                       % (diag["shift"], diag["rel_rms_vs_ideal"]))
+            else:
+                exp_v, exp_e = VO.swg(g.v, u.v, g.exp, u.exp)
+                why = "the behavioural stand-in: sequencing and exponent only"
         elif st.op == SP.OP_NORM:
             x = by[(src, a.tok)]
             if a.norm == "real":

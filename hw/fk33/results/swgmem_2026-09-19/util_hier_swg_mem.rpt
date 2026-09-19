@@ -1,0 +1,32 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sat Sep 19 19:02:10 2026
+| Host         : cachyos-bc250 running 64-bit CachyOS
+| Command      : report_utilization -hierarchical -file /home/labuser/swgmem_area/util_hier_swg_mem.rpt
+| Design       : swiglu_mem
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------------+------------+------------+------------+---------+------+-----+--------+--------+------+------------+
+|    Instance    |   Module   | Total LUTs | Logic LUTs | LUTRAMs | SRLs | FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++----------------+------------+------------+------------+---------+------+-----+--------+--------+------+------------+
+| swiglu_mem     |      (top) |       2493 |       2493 |       0 |    0 | 319 |     18 |      3 |    0 |         16 |
+|   (swiglu_mem) |      (top) |       2472 |       2472 |       0 |    0 | 319 |      0 |      0 |    0 |         16 |
+|   ug           | vec_mem__1 |          7 |          7 |       0 |    0 |   0 |      6 |      1 |    0 |          0 |
+|   uo           |    vec_mem |          7 |          7 |       0 |    0 |   0 |      6 |      1 |    0 |          0 |
+|   uu           | vec_mem__2 |          7 |          7 |       0 |    0 |   0 |      6 |      1 |    0 |          0 |
++----------------+------------+------------+------------+---------+------+-----+--------+--------+------+------------+
+
+

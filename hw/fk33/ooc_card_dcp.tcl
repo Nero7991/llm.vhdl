@@ -142,6 +142,7 @@ read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/region_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/vec_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf_mem.vhd
+read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/swiglu_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/sampler_stream.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_desc_fetch.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_opdec.vhd
