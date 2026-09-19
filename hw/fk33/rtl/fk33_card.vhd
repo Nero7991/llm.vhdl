@@ -4,7 +4,7 @@
 -- A BLOCK-DESIGN-LEGAL face for an entity the IP packager refuses.
 -- It changes NO logic: every port is the same signal in a type the
 -- packager accepts, converted at the boundary.
---     99 ports passed through unchanged
+--    100 ports passed through unchanged
 --     28 vector widths folded to literals   [IP_Flow 19-627]
 --      4 integer/natural ports re-typed      [IP_Flow 19-734]
 --     11 flattened port(s) un-flattened into named interfaces
@@ -86,6 +86,7 @@ entity fk33_card is
     kv_bready                : out    std_logic;
     kv_bresp                 : in     std_logic_vector(1 downto 0);
     bst_state_base           : in     std_logic_vector(32 downto 0);
+    bst_const_base           : in     std_logic_vector(32 downto 0);
     bst_busy                 : out    std_logic;
     bst_done                 : out    std_logic;
     bst_err                  : out    std_logic;
@@ -218,6 +219,7 @@ begin
       A_DESC                   => true,
       B_STATE_AXI              => true,
       B_SRC_REAL               => true,
+      B_CONST_HBM              => true,
       C_KV_AXI                 => true,
       HOST_WINDOW              => false,
       C_REAL                   => true,
@@ -297,6 +299,7 @@ begin
       kv_bready                => kv_bready,
       kv_bresp                 => kv_bresp,
       bst_state_base           => bst_state_base,
+      bst_const_base           => bst_const_base,
       bst_busy                 => bst_busy,
       bst_done                 => bst_done,
       bst_err                  => bst_err,

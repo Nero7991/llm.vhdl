@@ -145,15 +145,18 @@ ARGS = [
     # B_STATE_AXI and tok_pos > 0)`, and the pair was verified with the tier
     # on 2026-09-05.  docs/2026-09-18_b-constants-path.md, track C.
     "--generic", "B_SRC_REAL=true",
-    # B_CONST_HBM=true BELONGS HERE AND IS NOT YET PASSED.  It is the generic
-    # track D adds to llama_top (the fourth, load-only phase of
-    # gdn_state_store that brings the learned conv weights, dt bias, A and
-    # ssm norm gain in from HBM at `bst_const_base`).  tools/gen_bd_wrapper.py
-    # emits `--generic NAME=VALUE` into the generic map VERBATIM and checks
-    # nothing against the entity, so passing it before the generic exists
-    # produces a wrapper that does not elaborate.  Add the line, and
-    # regenerate, once `B_CONST_HBM` and `bst_const_base` are in
-    # rtl/fk33_llama_top.vhd (git log --oneline -- rtl/llama_top.vhd).
+    # B_CONST_HBM=true: the fourth, load-only phase of gdn_state_store that
+    # brings the learned conv weights, dt bias, A and ssm norm gain in from
+    # HBM at `bst_const_base` (seam 0x84/0x88, hbm.gdn_const_base, image by
+    # tools/pack_gdn_consts.py).  Landed f425d82, 2026-09-18.  MEASURED at
+    # the sim shape: with B_SRC_REAL, B_STATE_AXI and this, 9 of 9 R_Y seams
+    # over 3 tokens match tools/ref9b/gdn_oracle.py --b-src-real --b-const
+    # bit for bit, and 0 of 9 with either the constants or the inputs left
+    # as stand-ins.  Without this line B's arithmetic is not the model's
+    # whatever its inputs are.  tools/gen_bd_wrapper.py emits generics
+    # VERBATIM and checks nothing against the entity, which is why this line
+    # waited for the generic to exist in rtl/fk33_llama_top.vhd.
+    "--generic", "B_CONST_HBM=true",
     "--generic", "C_KV_AXI=true",
     # ---------------------------------------------------------------------
     # HOST_WINDOW=false IS THE CARD CONFIGURATION, AND IT WAS NEVER SET.
