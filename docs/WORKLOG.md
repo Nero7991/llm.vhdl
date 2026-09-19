@@ -11,6 +11,51 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 21:10: FOUR WHOLE TOKENS RAN ON THE CARD. B COMPLETES. THE SEAM'S MAXPOS DEFAULTED TO 4. THE ARGMAX IS WRONG.
+
+Bitstream `hw/fk33/bit/fk33_card_xexp_wdog_seam_75mhz_2026-09-18.bit`
+(25,017,338 B, WNS +0.143, routed legally, built 21:03: x_exp port +
+WDOG 4,000,000 + seam ack fix + progress registers). Oren reloaded it;
+the weight image did NOT survive the reconfiguration (verify: 245 FAIL) and
+was reloaded and re-verified (250/250), arena verified, layer 0's state
+slot zeroed.
+
+**`run_prompt --max-new 1`: positions 0, 1, 2, 3 each ran to `done=1`** --
+504 issues (TBL_LEN - 1, the clean count), ~60.0M cycles = 0.80 s per token
+at 75 MHz, `FAULTS = 0`, trips 0. MEASURED from the progress registers
+polled every 2 ms:
+
+| step | what | issued at cycle | took |
+|---|---|---|---|
+| 7 | first B_JOB (`blk.0`, GDN) | 320,642 | **617,226** (3x the old watchdog) |
+| 12 | A_JOB `ffn_gate` 12,288 x 4,096 | 1,048,088 | 282,670 (89 B/cycle) |
+| 503 -> 504 | last lm_head window -> END | 59,995,673 | done at 60,079,143 |
+
+So subsystem B runs to completion on silicon with the tiered store, C's
+attention layers ran (steps in between), the sampler saw all 248,320 logits
+(`smp_n 248320`) and published an argmax.
+
+**Then position 4 was refused EC_POS.** `rtl/fk33_seam.vhd:215 MAXPOS :
+positive := 4` -- the simulation default -- and no build had ever set it.
+`gen_pcieep.py` now sets `CONFIG.MAXPOS` from `gen_fk33_card.py`'s
+`C_MAXPOS` (read from the file, not restated) with read-back. Build
+`maxpos-build` launched 21:12 with that and the grant address map.
+
+**The argmax is WRONG.** After the 4-token prefix `248045,846,198,623`
+(`<|im_start|>user\nIn`) the card's argmax is **151353** (detokenises to an
+invalid byte sequence). llama.cpp on the BF16 GGUF, `/completion` with the
+same ids, greedy: **279** (" the"). `ref/run9b --acts bfp` (rung 3, the
+hardware model) on the same ids is running for the third opinion. Every
+structural check passed; the value is off. Exactly the case the README of
+`goal_dcdc` warns about: a plausible-looking, silently wrong token.
+
+Two candidate causes already on the table, neither measured: the x_exp
+path was changed today and has no bench at `A_DESC = true`; and the card's
+embedding is the packed INT4 row (`--mv4i`, recipe wide) where the
+reference's headline runs use the BF16 row. The tool that settles it is
+element-wise: `run9b --out F.r9bs` writes every region per step, and the
+card exposes R_X through the XOUT window after a token.
+
 ### 2026-09-18 19:50: FULL GATE GREEN AT 141 (WAS 139 + 2 NEW ROWS); THE STATE STORE PASSES AT THE 9B GEOMETRY
 
 `OVERALL PASS 141 FAIL 0 NOVERDICT 0 NOCHECK 5 SKIPPED 19`, `--jobs 2`,

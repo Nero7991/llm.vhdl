@@ -1525,6 +1525,17 @@ CARD_BLOCK = _card_block()
 # which is the build that has produced bitstreams.  A half-wired card must not
 # be able to break that by merely existing in the file.
 CARD_ON = os.environ.get("FK33_CARD", "") == "1"
+# The card's position capacity, READ from gen_fk33_card.py's C_MAXPOS generic
+# rather than restated: the seam refuses SEQ_POS >= MAXPOS and C sizes its KV
+# cache by C_MAXPOS, and two copies of that number is one way to be wrong.
+def _card_maxpos():
+    import re as _re
+    src = open(os.path.join(HERE, "gen_fk33_card.py")).read()
+    m = _re.search(r'"--generic",\s*"C_MAXPOS=(\d+)"', src)
+    if not m:
+        raise SystemExit("gen_pcieep.py: C_MAXPOS not found in gen_fk33_card.py")
+    return int(m.group(1))
+CARD_MAXPOS = _card_maxpos()
 if CARD_ON != ENG_XEXP_PORT:
     raise SystemExit("gen_pcieep.py: CARD_ON and ENG_XEXP_PORT disagree; they "
                      "must be the same environment test")
@@ -1878,6 +1889,15 @@ def _seam_block():
         for _g, _v in sorted(MODEL_CAPS.items()):
             a("set_property CONFIG.%s {%d} [get_bd_cells %s]"
               % (_g, _v, SEAM_CELL))
+        # MAXPOS: THE SEAM'S OWN POSITION CAP, AND IT DEFAULTED TO 4.
+        # MEASURED on silicon 2026-09-18 21:15, the first whole tokens on
+        # the composed card: positions 0..3 ran to done (504 issues each,
+        # ~60.0M cycles), and the GO for position 4 was refused EC_POS
+        # (`cur_pos >= MAXPOS`, rtl/fk33_seam.vhd:862) -- the generic's
+        # simulation default, which no build had ever set.  The card's own
+        # capacity is C_MAXPOS (gen_fk33_card.py); the seam must agree, and
+        # the read-back below fails the build if the generic is renamed.
+        a("set_property CONFIG.MAXPOS {%d} [get_bd_cells %s]" % (CARD_MAXPOS, SEAM_CELL))
     a("# READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a")
     a("# CONFIG name an object does not have and get_property then returns the")
     a("# empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this")
@@ -1885,8 +1905,9 @@ def _seam_block():
     a("# publishing 0 for a model that IS behind the seam, which a host reads as")
     a("# 'no model' and refuses.")
     a("foreach {g want} {%s} {"
-      % " ".join("%s %d" % (k, MODEL_CAPS[k] if CARD_ON else 0)
-                 for k in ("CAPS_VOCAB", "CAPS_EMBD", "CAPS_LAYER", "CAPS_CTX")))
+      % (" ".join("%s %d" % (k, MODEL_CAPS[k] if CARD_ON else 0)
+                  for k in ("CAPS_VOCAB", "CAPS_EMBD", "CAPS_LAYER", "CAPS_CTX"))
+         + (" MAXPOS %d" % CARD_MAXPOS if CARD_ON else "")))
     a("    set v [get_property CONFIG.$g [get_bd_cells %s]]" % SEAM_CELL)
     a("    if {$v ne $want} {")
     a("        error \"FK33_SEAM FAIL: $g is \\\"$v\\\", not $want. %s\""
