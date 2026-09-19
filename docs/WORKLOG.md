@@ -46,6 +46,22 @@ the answer only has to be classified, not argued with.
   identity bench, top swap, `vec_oracle.norm_bf`, gate rows after the
   build ends, OOC on the BC-250.** This needs a THIRD build after the
   seqrst one.
+- **10:45 UPDATE: the norm port LANDED (`3527c44` `feb84b1` `b601ca8`,
+  merged fast-forward).** `rtl/rmsnorm_bf_mem.vhd` behind rs_mem's ports;
+  identity bench 1,822 checks bit-exact incl. the x_exp 19 embedding case;
+  10 mutants bite, 4 survive by name (`owe_norst`, `xwswap`,
+  `transpose_all`, `align_rnd`); `vec_oracle.norm_bf` 220/220 bit-exact
+  against the C oracle, and `--norm real` now means bf; `llama_top` binds
+  it (`done` +1 cycle, 149 vs 148). OOC on the BC-250 at N=4096: 4,995 LUT
+  / 2,411 FF / 6 BRAM / 40 DSP / WNS +0.971 against rs_mem 4,825 / 1,629 /
+  6 / 40 / +0.971 (control reproduced the 08-30 draw to the digit). Gate on
+  the BC-250: seamgate 5/5, tb_llama_top 10/10 (one row needs
+  `--timeout 2400` there), cardtop 3/3, tb_fk33_seam 2/2, no golden moved
+  (DERIVED: no bench-shape vector reaches the clamp region; open item).
+  **The BC-250 runs llama_top-level rows now**: GHDL 6.0.0 refused
+  `axi_rd_port.vhd:260`, fixed in `0f6b82c` on both GHDL versions.
+  **The norm build is ARMED behind the seqrst build** (`$SD/build7/arm.sh`,
+  unit `norm-build`, same caps, own swap guard) at HEAD `b601ca8`.
 - **Still open**: the first-token whole-token argmax 0 / logit exp -25.
   The seqrst bitstream makes B-reaching probes free again (no reload per
   probe), which is what the bisection needs.
