@@ -11,6 +11,71 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 23:00: THE B CONSTANTS PATH IS IN THE TREE. AT THE SIM SHAPE, B NOW COMPUTES THE MODEL'S ARITHMETIC: 9 OF 9 R_Y SEAMS OVER 3 TOKENS, BIT FOR BIT, WITH BOTH CONTROLS AT 0 OF 9
+
+Four tracks plus the dispatcher's, all landed between 22:00 and 23:00
+(`18d5864` contract; A `e212f04`; B `2177bee` `0126c24` `4c1c4cd`; C
+`7430bae` `f212358` `d3c043b` `ff8ff6b`; E `39b1992` `ee42054`; D
+`f425d82`; card regen `14289cf`). `docs/2026-09-18_b-constants-path.md` is
+the contract and was corrected in place by the tracks where the build
+differed.
+
+What exists now:
+
+- **HBM region `gdn_const`**, 66,048 B per GDN layer x 24 = 1,585,152 B at
+  `hbm.gdn_const_base = 0x1FF95A000` (ends at the descriptor arena; nothing
+  placed moved; `max_context_tokens` 233,638 -> 233,237). Image
+  `/mnt/storage/llama-models/qwen35-9b-mv4i-noembd/gdn_const.bin`, blake2b
+  `ec3eda1a…`, `--check` PASS; the packer's selftest catches 7 of 8 mutant
+  packers (`round_half_up` is the named non-biter). Per-layer exponents:
+  conv 14..17, dt 10..12, a 8..17, norm 14..15; the units accept those
+  ranges (checked: `to_q_wide`, `rsh_r`, `gdn_conv`'s `e_acc`, `rmsnorm_rs`).
+- **`gdn_state_store`'s fourth, load-only phase** into the new
+  `gdn_conv_w_mem` (KCONV slots, no rotation) plus a scalar register file;
+  9,475 checks at the sim shape, 7 mutants of which 6 bite (M7, a dead
+  clamp, is unobservable by design; M6 bites by ONE check, attribution
+  control run). `CONST_EN = false` is bit-identical to before.
+- **Seam registers 0x84/0x88** (`bst_const_base`), host define, sim model,
+  `fk33ctl seam`, drift check 55 rows; `pl_backend` writes it from the
+  manifest; the host loader loads and verifies the image.
+- **`llama_top` `B_CONST_HBM`**: conv weights, dt, a, ssm_norm and their
+  exponents from the store. `NORM_W_IMAGE` now pinned two-sided to
+  `2*blocks+1` ops at elaboration (a LONG image was never refused; found
+  by track E).
+- **`gen_pcieep.py` refuses a missing seam/card pin at Python time** and
+  the Tcl carries an `FK33_SEAMWIRE` existence guard; the old generator
+  silently emitted a connect to a pin the wrapper did not have (MEASURED).
+- **The card generics** now carry `B_SRC_REAL=true`, `B_CONST_HBM=true`
+  and `NORM_W_IMAGE=hw/fk33/gen/norm_w_9b.hex` (99 BRAM tiles MEASURED by
+  GAIN16's `cbland` on this exact image, not NWROM's 114). BD validated on
+  the BC-250: `FK33_SEAMWIRE 37`, `FK33_UNCONNECTED count=0`,
+  `FK33_BD_VALIDATE OK`.
+
+**The verification (MEASURED, `tools/ref9b/gdn_oracle.py --b-const`, which
+reads the packed image and runs the C model per layer; byte-identical to
+the old oracle with the option off):**
+
+| run (sim shape, real pooled weights) | R_Y match |
+|---|---|
+| 1 token, B_CONST_HBM | 3 of 3 |
+| same capture, stand-in model | 0 of 3 (127-128 of 128 differ) |
+| 3 tokens, B_SRC_REAL + B_STATE_AXI + B_CONST_HBM | **9 of 9** |
+| control A: stand-in constants, real inputs | 0 of 9 |
+| control B: image constants, stand-in inputs | 0 of 9 |
+
+A gate-row track is turning this into `sim:gdnconst`, `sim:constimage`,
+`sim:tb_llama_top_bconst` and `sim:seamgate_bconst`. The 9B-geometry store
+bench with the fourth phase is running (`$SD/st9b`).
+
+**Still stand-ins after this lands:** C's QK-norm gains (8 layers x 2 x
+256, an image; not started). Nothing else in B or D.
+
+**Next:** the constants build queues behind the maxpos build (one Vivado
+here; maxpos is in routing). Recipe unchanged except the tree; budget
+`MemoryHigh=20G`. Then: reload, load weights + `gdn_const.bin` + arena,
+verify, `run_prompt` at token 0 against `reference_tokens.txt`, and the
+step-8 probe (expect 3994).
+
 ### 2026-09-18 22:20: THE WRONG ARGMAX IS ROOT-CAUSED. THE CARD RUNS B ON STAND-IN INPUTS AND STAND-IN WEIGHTS, AND NO CARD BUILD HAS EVER ASKED FOR THE MODEL'S LEARNED CONSTANTS
 
 `docs/debugging/2026-09-18_the-card-runs-subsystem-b-on-stand-in-inputs-and-weights.md`.
