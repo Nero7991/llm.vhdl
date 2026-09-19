@@ -163,6 +163,8 @@ static void usage(void)
       "                  [--open-only]        stream the program, write the\n"
       "                        bases, read WIN_ADDR back, then exit (no GO)\n"
       "                  [--go-timeout-ms N]  per-GO wait (default 60000)\n"
+      "                  [--resume]           start at the card's SEQ_POS\n"
+      "                  [--seq-reset]        clear the SEAM's position first\n"
       "Simulated transport unless --allow-hardware is given by a human.\n");
 }
 
@@ -176,7 +178,7 @@ int main(int argc, char **argv)
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
     const char *hw_token = NULL;
-    int open_only = 0, go_timeout_ms = 0;
+    int open_only = 0, go_timeout_ms = 0, resume = 0, seq_reset = 0;
     int stop_id = QWEN35_EOS, stop_given = 0;
     int *prompt = NULL, *ref = NULL, *got = NULL;
     int n_prompt = 0, n_ref = 0, n_got = 0, cap_got = 0;
@@ -209,6 +211,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--quiet"))        quiet = 1;
         else if (!strcmp(a, "--allow-hardware")) NEXT(hw_token);
         else if (!strcmp(a, "--open-only"))    open_only = 1;
+        else if (!strcmp(a, "--resume"))       resume = 1;
+        else if (!strcmp(a, "--seq-reset"))    seq_reset = 1;
         else if (!strcmp(a, "--go-timeout-ms")) { const char *s; NEXT(s); go_timeout_ms = atoi(s); }
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else { fprintf(stderr, "run_prompt: unknown argument %s\n", a); usage(); return 2; }
@@ -313,6 +317,19 @@ int main(int argc, char **argv)
         status = 1; goto done;
     }
     printf("card       %s\n", pl_describe(c));
+    if (seq_reset) {
+        /* The SEAM's position only.  The card's own tok_pos (attention
+         * history, B's tk0) is NOT reset by this; only a reconfiguration
+         * does that.  Fine for a probe program that never reaches C or B. */
+        int r = pl_seq_reset(c);
+        printf("seq-reset  seam position cleared (rc %d); the card's own "
+               "history is NOT cleared\n", r);
+    }
+    if (resume) {
+        int p = pl_resume_pos(c);
+        printf("resume     continuing at the card's position %d (the ids below "
+               "are appended to its history)\n", p);
+    }
     if (open_only) {
         printf("OPEN_ONLY  program streamed and read back, bases written, no GO"
                " issued.  h2c %llu B, c2h %llu B.\n",

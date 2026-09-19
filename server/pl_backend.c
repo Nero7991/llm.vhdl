@@ -916,6 +916,19 @@ int pl_seq_reset(pl_ctx *c)
     return 0;
 }
 
+/* Continue from wherever the card is.  Reads SEQ_POS (the card's next
+ * position) and adopts it, instead of assuming 0.  For a bench session where
+ * the card has already run tokens and a reload is not wanted; the ids fed
+ * after this are appended to whatever history the card holds. */
+int pl_resume_pos(pl_ctx *c)
+{
+    uint32_t v = 0;
+    if (!c) return -1;
+    if (rd(c, FK33_SEAM_SEQ_POS, &v)) return -2;
+    c->next_pos = (int)v;
+    return (int)v;
+}
+
 /* ------------------------------------------------------------------ the run */
 
 /* Stage one activation row into c->xbuf and DMA it to slot `k`. */

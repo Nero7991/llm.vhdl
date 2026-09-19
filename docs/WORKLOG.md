@@ -11,6 +11,51 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 22:20: THE WRONG ARGMAX IS ROOT-CAUSED. THE CARD RUNS B ON STAND-IN INPUTS AND STAND-IN WEIGHTS, AND NO CARD BUILD HAS EVER ASKED FOR THE MODEL'S LEARNED CONSTANTS
+
+`docs/debugging/2026-09-18_the-card-runs-subsystem-b-on-stand-in-inputs-and-weights.md`.
+
+The step-8 mismatch (ssm_out on B's Y: card 2768, reference 3994) is not a
+drain defect and not a B defect. **`hw/fk33/gen_fk33_card.py` does not pass
+`B_SRC_REAL`**, so on the card B's conv taps, alpha and beta are `m12`
+stand-ins and B reads exactly one per-token input, z. Independently, the
+conv WEIGHTS, `ssm_dt_bias`, `ssm_a` and the `ssm_norm` weight are stand-ins
+in EVERY configuration (no path exists, `rtl/llama_top.vhd:4068`), the D-vec
+norm gain is the synthetic ramp because `NORM_W_IMAGE` is not passed either,
+and C's QK-norm gains are stand-ins. Same class as the 2026-09-11 "C is a
+stub" finding, same file, found seven days later by the same grep.
+
+MEASURED, the drain is CLEARED: a new `--probe-dup-src REGION` in
+`tools/gen_layer_program.py` appends a copy of the last A job reading REGION
+and probes it, turning the sampler into a read port on any A-drained region.
+`ssm_beta`/`ssm_alpha` reading Z: 5/25 = reference 5/25 (14%/28% margins);
+reading QKV[0:4096] (q,k): 31/26 = reference 31/26 (34%/35%). B was not in
+those programs. `attn_gate(Z)` is a 0.5% tie and is not a discriminator.
+
+**What a correct token needs, and none of it is a bug fix:**
+
+1. `B_SRC_REAL=true` in the card generics. Zero structural cost, verified in
+   sim with the tier on 2026-09-05.
+2. `NORM_W_IMAGE` at 9B (65 x 4096 gains, ~114 BRAM; 222 of 672 free on the
+   running bitstream).
+3. A path for B's conv weights (64 KiB per layer): through HBM as a fourth
+   phase of `gdn_state_store`'s mover into a 16-tile BRAM, load-only. A
+   1.5 MiB ROM (~341 tiles) does not fit. Plus `ssm_dt_bias`/`ssm_a`/
+   `ssm_norm` (24 x 192 int16, an image). The oracle models `m12` weights and
+   changes with it. THIS IS THE TRACK.
+4. C's QK-norm gains, an image.
+
+The maxpos build (`$SD/build4`, MAXPOS 131072 + grant address map, lands
+~23:40) carries none of this; it is still worth loading for multi-token runs
+past position 4, and its Y will still be wrong.
+
+Uncommitted at this entry: `server/tests/run_prompt.c` (`--resume`,
+`--seq-reset`), `server/pl_backend.c/.h` (`pl_resume_pos`),
+`tools/gen_layer_program.py` (`--upto`, `--probe-smp`, `--probe-dup-src`,
+partial arena image). Reference harnesses live in the session scratch
+(`$SD/probe_ref.c`, `probe_ref2.c`, `probe_hyp.c`) and are described in the
+debugging doc.
+
 ### 2026-09-18 21:10: FOUR WHOLE TOKENS RAN ON THE CARD. B COMPLETES. THE SEAM'S MAXPOS DEFAULTED TO 4. THE ARGMAX IS WRONG.
 
 Bitstream `hw/fk33/bit/fk33_card_xexp_wdog_seam_75mhz_2026-09-18.bit`

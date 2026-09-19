@@ -358,6 +358,8 @@ int pl_check_vocab(const pl_ctx *c, int n_vocab_from_tokenizer);
 
 /* KV bookkeeping.  The bytes never cross; the position does. */
 int pl_seq_reset(pl_ctx *c);
+/* Adopt the card's current SEQ_POS as the next position; returns it. */
+int pl_resume_pos(pl_ctx *c);
 int pl_seq_pos(const pl_ctx *c);
 
 /* ---------------------------------------------------------------------------

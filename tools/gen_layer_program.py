@@ -969,7 +969,7 @@ def write_hex(path, words):
             fp.write("%016X\n" % w)
 
 
-def write_arena_image(path, ajobs, desc_base, mani):
+def write_arena_image(path, ajobs, desc_base, mani, partial_ok=False):
     """The 311 descriptors as one HBM image, in the order the card counts.
 
     The card computes descriptor n's address as BASE + n*STRIDE
@@ -990,7 +990,7 @@ def write_arena_image(path, ajobs, desc_base, mani):
                          "a hole is a job that fetches zeros."
                          % (len(bad), bad[0]["step"], bad[0]["tensor"],
                             bad[0]["reason"]))
-    if n_slots and len(ok) != n_slots:
+    if n_slots and len(ok) != n_slots and not partial_ok:
         raise SystemExit("gen_layer_program: --arena-image refused: %d "
                          "descriptors for an arena the manifest sizes at %d "
                          "slots (hbm.desc_arena_jobs).  The card counts jobs "
@@ -1068,6 +1068,35 @@ def main(argv=None):
     ap.add_argument("--blocks", type=int, default=4, help="--shape sim only")
     ap.add_argument("--attn-int", type=int, default=4, help="--shape sim only")
     ap.add_argument("--attn-hd", type=int, default=32, help="--shape sim only")
+    ap.add_argument("--upto", type=int, default=None,
+                    help="keep only the first N steps of the selection (with "
+                         "--token, steps 0..N-1 of the whole token).  A probe "
+                         "tool: with --close-token the truncated table is a "
+                         "runnable token that stops early.  The A jobs it "
+                         "issues are the SAME first jobs in the SAME order, so "
+                         "the arena image of the full token still serves it; "
+                         "use --no-a and keep the full arena loaded.")
+    ap.add_argument("--probe-smp", action="store_true",
+                    help="set FLG_TO_SMP on the LAST kept step (it must be an "
+                         "A_JOB), so the sampler publishes the argmax of THAT "
+                         "job's output rows -- the one number the card can "
+                         "report per token, turned into a probe on any A job. "
+                         "Added 2026-09-18 when every token on silicon gave "
+                         "the same argmax (151353) whatever the input, and the "
+                         "card has no region read port to say where the "
+                         "constant enters.")
+    ap.add_argument("--probe-dup-src", default=None, metavar="REGION",
+                    help="with --probe-smp: instead of probing the last kept "
+                         "step itself, APPEND A COPY of it (same tensor, same "
+                         "rows) whose source is REGION (a name from RNAME), "
+                         "and probe the copy.  The kept step still drains "
+                         "into its region, so the copy reads what the DRAIN "
+                         "wrote, which turns the sampler into a read port on "
+                         "any A-drained region: [.. attn_gate XN->Z, "
+                         "attn_gate Z->SMP] answers whether Z holds the "
+                         "numbers the reference computes for it.  Added "
+                         "2026-09-18 to split the ga_desc region drain from "
+                         "subsystem B at the first mismatching step")
     ap.add_argument("--close-token", action="store_true",
                     help="append an END_TOKEN so a LAYER SLICE is a runnable "
                          "table.  seq_desc_fetch enforces END_TOKEN-last in "
@@ -1216,6 +1245,63 @@ def main(argv=None):
     if not sel:
         raise SystemExit("gen_layer_program: no steps for layer %r" % a.layer)
 
+    if a.upto is not None:
+        if a.upto < 1 or a.upto > len(sel):
+            raise SystemExit("gen_layer_program: --upto %d outside 1..%d"
+                             % (a.upto, len(sel)))
+        sel = sel[:a.upto]
+        if sel[-1].opcode == OP_END_TOKEN and a.upto < len(steps):
+            raise SystemExit("gen_layer_program: --upto landed on END_TOKEN")
+    if a.probe_dup_src is not None:
+        if not a.probe_smp:
+            raise SystemExit("gen_layer_program: --probe-dup-src needs "
+                             "--probe-smp")
+        if a.probe_dup_src not in RNAME:
+            raise SystemExit("gen_layer_program: --probe-dup-src %r is not a "
+                             "region name (%s)"
+                             % (a.probe_dup_src, " ".join(RNAME)))
+        if sel[-1].opcode != OP_A_JOB:
+            raise SystemExit("gen_layer_program: --probe-dup-src needs the "
+                             "last kept step to be an A_JOB; step %d is "
+                             "opcode %d" % (sel[-1].idx, sel[-1].opcode))
+        dup = Step(**dict((k, getattr(sel[-1], k)) for k in Step.__slots__))
+        dup.src = RNAME.index(a.probe_dup_src)
+        dup.idx = sel[-1].idx + 1
+        dup.note = "probe copy of step %d, src %s" % (sel[-1].idx,
+                                                     a.probe_dup_src)
+        sel = sel + [dup]
+        print("PROBE-DUP: step %d is a copy of step %d (%s, %d rows) reading "
+              "region %s" % (dup.idx, sel[-2].idx, dup.tensor, dup.n_rows,
+                             a.probe_dup_src))
+    if a.probe_smp:
+        if sel[-1].opcode != OP_A_JOB:
+            raise SystemExit("gen_layer_program: --probe-smp needs the last "
+                             "kept step to be an A_JOB; step %d is opcode %d"
+                             % (sel[-1].idx, sel[-1].opcode))
+        # dst becomes R_NONE: seq_desc_fetch refuses "a named destination
+        # with a route flag set" (ERR_DESC, MEASURED on the card 2026-09-18
+        # at the first probe), because a job may claim a region OR an
+        # external sink, never both.  The probed job's rows therefore go to
+        # the sampler only, which is fine for the LAST step of a table.
+        probed = (sel[-1].dst, sel[-1].dst_off)
+        sel[-1].flags |= FLG_TO_SMP
+        sel[-1].dst = R_NONE
+        sel[-1].dst_off = 0
+        # RAW output, as the lm_head windows: in BFP mode the core must see
+        # every row before it can pick the block exponent, so it emits ALL
+        # the job's beats in one burst at the end, and the 8-beat logits FIFO
+        # loses the rest.  MEASURED on the card 2026-09-18: a BFP probe on
+        # the 2,048-row qkv job returned smp_n = 384 (8 beats) with SMP_OVF
+        # set.  RAW mode emits a beat per tile as it completes.  The arena
+        # descriptor carries the mode the ENGINE reads, so a probe needs
+        # its own arena image (--arena-image, partial, see below).
+        sel[-1].out_mode = 1
+        print("PROBE step %d %s: FLG_TO_SMP set, dst R_NONE (was region %d "
+              "offset %d); the sampler's ARGMAX is the row index of the max "
+              "over this job's %d output rows"
+              % (sel[-1].idx, sel[-1].tensor, probed[0], probed[1],
+                 sel[-1].n_rows))
+
     if a.close_token and (sel and sel[-1].opcode != OP_END_TOKEN):
         # `rtl/seq_desc_fetch.vhd:526-533` enforces the counting identity in
         # hardware: END_TOKEN must be the LAST descriptor and the last
@@ -1270,7 +1356,10 @@ def main(argv=None):
                     outdir, "a%02d_%s.hex" % (j["step"], j["tensor"])),
                     j["desc"].words)
         if a.arena_image:
-            write_arena_image(a.arena_image, ajobs, desc_base, mani)
+            # A truncated table (--upto) issues the first N jobs in order, so
+            # a partial image of exactly those slots is what the card needs.
+            write_arena_image(a.arena_image, ajobs, desc_base, mani,
+                              partial_ok=a.upto is not None)
 
     # ---- report -----------------------------------------------------------
     if a.print:
