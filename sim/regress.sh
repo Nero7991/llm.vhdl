@@ -247,6 +247,12 @@
 #                               difference between the two rows is the norm
 #                               weight.  Same cost as _real, so it is in
 #                               SLOW_TBS for the same reason.
+#   tb_llama_top_bconst         tb_llama_top_real with THREE tokens and
+#                               subsystem B on its real inputs and the
+#                               model's own GDN constants (B_STATE_AXI,
+#                               B_SRC_REAL, B_CONST_HBM from the committed
+#                               sim/llama_top_const_b4.hex).  A 3-token run
+#                               of the real configuration: ~7 minutes.
 #   tb_seq_desc_fetch           491-descriptor walk
 #   tb_seq_opdec                491-step walk through three units
 #   tb_seq_region_lock          491-step plan
@@ -400,7 +406,13 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=130  # RAISED FROM 129, 2026-09-09 for sim:kvmap, which links
+BASELINE_PASS=130  # NOT RAISED 2026-09-18 for TRACK G's FOUR new rows
+                   # (sim:gdnconst, sim:constimage, sim:tb_llama_top_bconst,
+                   # sim:seamgate_bconst): each was run and passed through
+                   # --only, but no full unfiltered run was made on that day
+                   # (a 16-21 GB Vivado build held the box), and this floor is
+                   # a full-run number.  Raise it from the next clean full run.
+                   # RAISED FROM 129, 2026-09-09 for sim:kvmap, which links
                    # the HBM map to the generics the CARD BUILD passes; it was
                    # correct-but-unscheduled while the build shipped toy defaults.
                    # Previously RAISED FROM 128, 2026-09-07 for sim:fk33card, the card
@@ -1359,7 +1371,9 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           sim:tb_b_audit_ser_handshake sim:tb_hbm_tg sim:tb_seq_desc_fetch
           sim:tb_seq_opdec sim:tb_seq_region_lock sim:tb_llama_top
           sim:tb_llama_top_seq sim:tb_llama_top_real sim:tb_llama_top_normw
+          sim:tb_llama_top_bconst
           sim:seamgate_real sim:seamgate_stub sim:seamgate_seq
+          sim:seamgate_bconst
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg"
@@ -1637,7 +1651,17 @@ PYEOF
 # empty field collapses under IFS=tab and shifts every field after it).  The
 # CONFIGURATION is carried in the name and `run_one` dispatches on it, so no
 # field changes meaning and no existing row can take a different path.
-for _sg in real stub seq; do
+#
+# `bconst` ADDED 2026-09-18 (TRACK G): `real` with three tokens and subsystem
+# B on the MODEL'S inputs and constants (B_STATE_AXI, B_SRC_REAL, B_CONST_HBM
+# loading sim/llama_top_const_b4.hex).  It is the only seam row whose R_Y
+# depends on the learned constants, and the only one whose B model needs an
+# argument bisect_scaled.py cannot take, so tools/ref9b/seamgate.sh judges it
+# with two comparators on one capture (bisect_scaled.py --no-b for every seam
+# but R_Y, gdn_oracle.py --b-const for R_Y).  Its floors and the attribution
+# control are recorded in that script.  ~8 minutes: a 3-token run of the real
+# configuration.
+for _sg in real stub seq bconst; do
   printf 'seamgate_%s\tsim\tRUN\t-\t-\t-\t-\n' "$_sg" >> "$PLAN"
 done
 unset _sg
@@ -1957,6 +1981,14 @@ printf 'seamregs\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # the gguf by mmap, MEASURED peak RSS 587 MB.  VOID (red) if the gguf is not
 # mounted, never a silent pass.
 printf 'normimage\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# gdnconst -- see the SELFCHECK_CMD entry.  The packer's own selftest, the
+# only check on the image format the card's fourth store phase and the two
+# sim consumers all decode.  0.34 s.
+printf 'gdnconst\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# constimage -- see the SELFCHECK_CMD entry.  The committed sim-shape GDN
+# constants image against what the packer emits today (TRACK G, 2026-09-18).
+# ~6 s, reads the gguf by mmap.  VOID (red) if the gguf is not mounted.
+printf 'constimage\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
 # shapechk -- the 9B shape is transcribed at three sites and nothing held them
@@ -2700,6 +2732,24 @@ declare -A SELFCHECK_CMD=(
   # accepts any whole number of 4096-line groups, so a stale or re-ordered
   # image serves every norm a wrong gain with no structural symptom.
   [normimage]="python3 $REPO/tools/check_norm_image_9b.py"
+  # tools/pack_gdn_consts.py packs the model's four learned GDN constants per
+  # layer (conv weights, ssm_dt_bias, ssm_a, ssm_norm weight) into the HBM
+  # image rtl/gdn_state_store.vhd's fourth phase loads, at the 9B shape for
+  # the card and at the sim shape for the benches and the oracle.  Its
+  # --selftest packs a fake model, decodes it back, runs the allocator on a
+  # synthetic manifest and scores 8 mutant packers under their own names
+  # (MEASURED 2026-09-18: 22 checks, 7 of 8 caught, 0.34 s, 58 MB).  No GGUF,
+  # no manifest.  docs/2026-09-18_b-constants-path.md, track B.
+  [gdnconst]="python3 $REPO/tools/pack_gdn_consts.py --selftest"
+  # sim/llama_top_const_b4.{bin,hex} are the packed SIM-SHAPE constants image
+  # (mk_shape_scaled(4, 4): 3 GDN layers x 2,560 B = 7,680 B; 3,840 hex lines)
+  # that sim:tb_llama_top_bconst loads through the state store and
+  # sim:seamgate_bconst's oracle reads.  GENERATED from the 9B gguf by the
+  # packer above, and both consumers read the same bytes, so a stale image is
+  # a wrong constant the seam row agrees with itself about.  This regenerates
+  # into scratch and byte-compares both files; VOID (red) without the gguf.
+  # MEASURED 2026-09-18: 5.6 s, peak RSS 590 MB.  Same shape as sim:normimage.
+  [constimage]="python3 $REPO/tools/check_const_image_b4.py"
 )
 
 run_selfcheck() {   # run_selfcheck <suite:name>
@@ -2731,7 +2781,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
@@ -2754,6 +2804,8 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   # real Qwen3.5-9B weight image sim/tb_llama_top_real.vhd opens by bare name.
   # sim/llama_top_nw_b4_mean.hex, the real RMSNorm gain image
   # sim/tb_llama_top_normw.vhd opens the same way, rides on the same rule.
+  # sim/llama_top_const_b4.hex, the packed GDN constants image
+  # sim/tb_llama_top_bconst.vhd opens by bare name (B_CONST_IMAGE), likewise.
   # Without it that row fails with "cannot open the weight image", which reads
   # like a missing file and is a missing GLOB.
   for f in "$SIM"/*.txt "$SIM"/*.dat "$SIM"/*.csv "$SIM"/*.mem "$SIM"/*.bin \
