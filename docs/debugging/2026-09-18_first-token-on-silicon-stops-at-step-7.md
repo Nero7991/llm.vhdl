@@ -258,3 +258,26 @@ had to write.
   bitstream on which a B result can be read.
 * On the 11:28 bitstream that is on the card now, any D error requires a
   bitstream reload to recover. Do not debug B on it.
+
+### ADDENDUM 19:35: the tiered state store PASSES at the card's 9B geometry in simulation
+
+`sim/tb_gdn_state_store` had only ever run at `VAL_HEADS 4 / DIM 16 /
+AXI_DW 64` (its defaults). Run by hand at the card's shape --
+`-gVAL_HEADS=32 -gDIM=128 -gRECUR_LANES=4 -gKEY_HEADS=16 -gKCONV=4
+-gCONV_LANES=4 -gLAYERS=2 -gNTOK=4 -gAXI_DW=256 -gMAXB=16 -gMAXOUT=4`, i.e.
+`LAYER_STRIDE = 1,101,824` B per layer, 34,432 beats each way -- with an
+unlimited stack (`ulimit -s unlimited`; the default stack dumps core on the
+slave array):
+
+```
+tb_gdn_state_store: checks=827408 bad=0 tokens=4 layers=2 exponent bytes=24576
+  conv groups=16384 (full history 4096) W stalls=137672
+tb_gdn_state_store RESULT: PASS -- 827408 checks ...
+```
+
+MEASURED. So the store's address arithmetic and round trip at the 9B size
+are not the reason B would hang on the card; if it hangs, look at the
+grant/port path (`bc_port_grant`, the SAXI the store reaches) and at the
+33-bit address base `0x1_0C00_6000`, neither of which this bench models.
+Not gated: 65 ms of simulated time is ~12 minutes of GHDL, and the shape is
+pinned here so it can be re-run rather than re-derived.

@@ -11,6 +11,18 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 19:50: FULL GATE GREEN AT 141 (WAS 139 + 2 NEW ROWS); THE STATE STORE PASSES AT THE 9B GEOMETRY
+
+`OVERALL PASS 141 FAIL 0 NOVERDICT 0 NOCHECK 5 SKIPPED 19`, `--jobs 2`,
+beside the running Vivado. Includes `sim:tb_fk33_seam_wdog` and the
+regress.sh judge fix (no row changed verdict under it).
+
+`sim/tb_gdn_state_store` run by hand at the card's shape (VAL_HEADS 32,
+DIM 128, AXI_DW 256, MAXB 16, MAXOUT 4, LAYER_STRIDE 1,101,824, 4 tokens x 2
+layers): **827,408 checks, bad=0**. First time the store has been simulated
+at 9B; needs `ulimit -s unlimited`. So if B hangs on the card it is not the
+store's arithmetic; look at the grant/port path.
+
 ### 2026-09-18 18:40: A SECOND GO SHOWED THE SEAM MAKES ANY D ERROR PERMANENT; FIXED, REPRODUCED IN SIM, BUILD RESTARTED WITH EVERYTHING
 
 Repeating the GO on a zeroed state slot gave the same error with **CYCLES =
