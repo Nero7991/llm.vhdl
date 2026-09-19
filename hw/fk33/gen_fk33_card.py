@@ -68,6 +68,17 @@ if not os.path.exists(NORM_W_HEX):
              "would elaborate the synthetic norm gain ramp, or fail at "
              "file_open hours into synthesis.  Run "
              "sim/ooc_nwrom_gen_image.py (track E) first." % NORM_W_HEX)
+# THE REAL QK-NORM GAIN IMAGE, 8 attention layers x (q, k) x 256 entries at
+# C_QKN_EXP = 12, written by tools/gen_qkn_image.py and committed (TRACK F,
+# 2026-09-18; the last stand-in after docs/2026-09-18_b-constants-path.md).
+# Same absolute-path and refuse-if-absent rules as NORM_W_HEX, for the same
+# reasons.  Held to its generator by sim:qknimage.
+QKN_HEX = os.path.join(REPO, "hw", "fk33", "gen", "qkn_9b.hex")
+if not os.path.exists(QKN_HEX):
+    sys.exit("gen_fk33_card.py: C_QKN_IMAGE %s does not exist; the card "
+             "would elaborate the synthetic QK-norm gain ramp, or fail at "
+             "file_open hours into synthesis.  Run tools/gen_qkn_image.py "
+             "(track F) first." % QKN_HEX)
 
 # ---- the THIRD cell: the B/C grant ---------------------------------------
 # A takes 28 HBM masters, B needs 2 and C needs 3, which is 33 against the 30
@@ -213,6 +224,14 @@ ARGS = [
     # which is the exponent the image was packed at.  A VHDL string generic
     # needs the quotes, and gen_bd_wrapper passes the value through as is.
     "--generic", 'NORM_W_IMAGE="%s"' % NORM_W_HEX,
+    # C_QKN_IMAGE: the REAL QK-norm gains, one q and one k vector of 256 per
+    # attention layer in schedule order, read at elaboration into a table
+    # indexed by the C job's layer ordinal (fk33_llama_top.vhd, the
+    # C_QKN_IMAGE comment).  Empty, the default and what every card build
+    # before 2026-09-18 used, keeps the SYNTHETIC `qkn_const` ramp, which is
+    # a wrong number at every attention layer.  C_QKN_EXP stays at its
+    # default of 12, the exponent the image was packed at.
+    "--generic", 'C_QKN_IMAGE="%s"' % QKN_HEX,
     # SMP_EN BUILDS THE SAMPLER, AND WITHOUT IT THE CARD CANNOT SAY WHICH TOKEN
     # IT PRODUCED.  llama_top's default is FALSE, which ties the entire logits
     # stream off: `gsmptie` drives smp_* to zero and the seam's `smp_token`

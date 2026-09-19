@@ -379,6 +379,12 @@ entity tb_llama_top is
     B_CONST_HBM   : boolean := false;
     B_CONST_IMAGE : string  := "";
     -- ==================================================================
+    -- THE REAL QK-NORM GAINS.  A PASS-THROUGH AND NOTHING ELSE, exactly as
+    -- NORM_W_IMAGE above: see `C_QKN_IMAGE` in rtl/llama_top.vhd.  Added
+    -- 2026-09-18 by TRACK F, which does not own this file.  Empty, nothing
+    -- here changes and every landmark stands (MEASURED).
+    C_QKN_IMAGE   : string  := "";
+    -- ==================================================================
     -- REAL WEIGHTS FOR SUBSYSTEM A.  Path to a memory image emitted by
     -- `tools/gen_llama_top_weights.py`; "" (the DEFAULT) keeps the synthetic
     -- `wword` and every published number unchanged.
@@ -1395,7 +1401,7 @@ begin
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
-      B_CONST_HBM => B_CONST_HBM,
+      B_CONST_HBM => B_CONST_HBM, C_QKN_IMAGE => C_QKN_IMAGE,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
       C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/ref9b/seamgate.sh -- THE SEAM COMPARISON AS ONE VERDICT.
 #
-#   bash tools/ref9b/seamgate.sh {real|seq|stub|bconst}
+#   bash tools/ref9b/seamgate.sh {real|seq|stub|bconst|qkn}
 #
 # Exit 0 = PASS, non-zero = not green.  Designed to be a `sim/regress.sh` row
 # (`sim:seamgate_<cfg>`), and to be runnable on its own with the same meaning.
@@ -157,6 +157,26 @@
 # the comparison being loose.  Track D's own controls on the same
 # configuration (f425d82): stand-in constants with real inputs 0 of 9, image
 # constants with stand-in inputs 0 of 9.
+# ---------------------------------------------------------------------------
+# `qkn` IS THE ROW WHERE SUBSYSTEM C COMPUTES ON THE MODEL'S QK-NORM GAINS,
+# 2026-09-18 (TRACK F)
+# ---------------------------------------------------------------------------
+# `real` with three tokens and `C_QKN_IMAGE = sim/llama_top_qkn_b4.hex`, so
+# attn_block's per-job q/k gains are blk.3's attn_q_norm/attn_k_norm (sliced
+# to this shape by tools/gen_qkn_image.py) instead of rtl/llama_top.vhd's
+# `qkn_const` ramp, which every other row elaborates.  ONE comparator:
+# bisect_scaled.py passes `--qkn-image` through to attn_oracle.py, which
+# reads the same file, so its floor is `real`'s 64 per token and there is no
+# `O` string.
+#
+# THE FLOOR, MEASURED 2026-09-18: 64 seams per token over 3 tokens, the three
+# attention R_Y seams (R_Y-3 at tokens 0, 1, 2) among them.
+#
+# ATTRIBUTION CONTROL, MEASURED 2026-09-18: the same capture judged with
+# `--qkn-image` removed (the ramp model against the image machine) FAILS at
+# R_Y-3 on every token.  So the match is the gains being right, not the
+# comparison being loose.  The converse (the `real` capture judged WITH the
+# image) fails the same way.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
@@ -172,7 +192,8 @@ case "$CFG" in
   stub) FLOOR=63 ;;
   seq)  FLOOR=61 ;;
   bconst) FLOOR=61; RY_FLOOR=9 ;;
-  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub|bconst)"; exit 2 ;;
+  qkn)  FLOOR=64 ;;
+  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub|bconst|qkn)"; exit 2 ;;
 esac
 
 # Ours to create, ours to remove; a caller-named one is the caller's and is
