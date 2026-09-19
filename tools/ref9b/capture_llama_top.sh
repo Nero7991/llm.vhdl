@@ -8,7 +8,7 @@
 # that directory is `bash tools/ref9b/capture_llama_top.sh <config>` and
 # nothing else.
 #
-# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub} [outfile]
+# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub|bconst} [outfile]
 # Env:    SCRATCH=<dir>      keep the work directory
 #         CAPTURE_REV=<sha>  stamp this revision in the provenance header, for
 #                            a `git archive` scratch tree that has no .git
@@ -29,6 +29,8 @@
 #   real  = sim/tb_llama_top_real.vhd   (real A, B, C, rmsnorm_rs, real weights)
 #   seq   = sim/tb_llama_top_seq.vhd    (the KV cache, 3 tokens, ATTN_INT = 2)
 #   stub  = sim/tb_llama_top.vhd's own defaults (attention is the ramp stub)
+#   bconst = sim/tb_llama_top_bconst.vhd  (real, 3 tokens, B on its real
+#            inputs and the packed constants image; added 2026-09-18)
 # NRUNS is forced to 1: only run 0 is captured, every run starts from a reset,
 # so runs 1..N-1 cost wall time and change nothing in the file.
 set -uo pipefail
@@ -56,6 +58,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_twiddle.vhd rtl/axi_rd_port.vhd rtl/gdn_emit_chain.vhd
        rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
        rtl/attn_block.vhd rtl/attn_kv_axi.vhd rtl/gdn_block.vhd
+       rtl/gdn_conv_w_mem.vhd
        rtl/gdn_state_store.vhd rtl/gdn_job_seq.vhd
        rtl/matvec_int4.vhd rtl/sampler_stream.vhd
        rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd
@@ -91,13 +94,28 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
 # so the dispatcher can reverse it: the alternative was to leave the shared
 # gate red at HEAD, where the next track to run it cannot tell this failure
 # apart from its own.
+#
+# `rtl/gdn_conv_w_mem.vhd` ADDED 2026-09-18 BY TRACK G (the B constants gate
+# rows), AND THE SAME THREE ROWS HAD BEEN RED SINCE e212f04 WITHOUT IT.  The
+# B constants path's track A gave `gdn_state_store` a fourth phase whose conv
+# weights live in a new memory, instantiated at rtl/gdn_state_store.vhd:798,
+# and this list did not follow.  MEASURED by analysing `LIST_FILES=1`'s own
+# output in order:
+#
+#   rtl/gdn_state_store.vhd:798:24: unit "gdn_conv_w_mem" not found in library "work"
+#   DID NOT ANALYZE: rtl/gdn_state_store.vhd
+#
+# THE FIFTH CONSUMER OF THIS HAND-MAINTAINED CLOSURE TO BREAK THE SAME WAY,
+# and the entry above, written after the fourth, did not prevent it -- an
+# entry in a comment is not a check.  The ordering is load bearing again:
+# `gdn_conv_w_mem` before `gdn_state_store`, which instantiates it.
 
 # LIST_FILES=1 prints the analysis closure and exits, so tools/ref9b/
 # golden_status.sh can ask "did any file this capture READ change?" without
 # owning a second copy of the list.  Two copies of a file list is how a
 # staleness check ends up blind to the one file that moved.
 if [ "${LIST_FILES:-0}" = "1" ]; then
-  echo $FILES sim/llama_top_w_b4_pool.hex
+  echo $FILES sim/llama_top_w_b4_pool.hex sim/llama_top_const_b4.hex
   exit 0
 fi
 
@@ -111,22 +129,58 @@ fi
 # `B` string lives here, one line under the `G` string it must agree with, and
 # `LIST_BISECT=1` is how tools/ref9b/seamgate.sh reads it instead of holding a
 # second copy -- the same rule LIST_FILES=1 exists for.
+#
+# A FOURTH CONFIGURATION, `bconst`, ADDED 2026-09-18 (TRACK G).  It is `real`
+# plus three tokens and subsystem B on the MODEL'S OWN INPUTS AND CONSTANTS:
+# B_STATE_AXI (the tiered state store), B_SRC_REAL (taps, alpha, beta from the
+# regions) and B_CONST_HBM (the conv weights, ssm_dt_bias, ssm_a and the
+# ssm_norm weight loaded from sim/llama_top_const_b4.hex, the packed sim-shape
+# image, by the store's fourth phase).  The generics are
+# sim/tb_llama_top_bconst.vhd's, copied.  The `real`, `seq` and `stub` rows
+# elaborate B_SRC_REAL = false and see m12 stand-ins; this is the row where B
+# computes on what the model would give it, and the ONLY one whose R_Y
+# depends on the constants image.
+#
+# ITS B MODEL NEEDS AN ARGUMENT bisect_scaled.py CANNOT TAKE.  The oracle for
+# these constants is `tools/ref9b/gdn_oracle.py --b-const IMAGE.bin`, and
+# bisect_scaled.py has no --b-const pass-through (its GO.predict call at
+# bisect_scaled.py:359 does not carry one).  So the `B` string holds only what
+# BOTH comparators accept -- bisect_scaled.py runs it with `--no-b` and models
+# every seam but R_Y -- and the `O` string below holds the oracle-only part,
+# which seamgate.sh appends when it runs gdn_oracle.py on the SAME capture for
+# the R_Y seams.  gdn_oracle.py accepts the whole `B` string unchanged (its
+# C-side and norm-side flags are declared there as accepted-and-ignored for
+# exactly this reason).  `LIST_ORACLE=1` reads `O` the way `LIST_BISECT=1`
+# reads `B`; an empty `O` means "one comparator, as before".
 case "$CFG" in
   real) G="-gBLOCKS=4 -gATTN_INT=4 -gC_REAL=true -gATTN_HD=16
            -gNORM_REAL=true -gNORM_ANCHOR=false
            -gW_IMAGE=llama_top_w_b4_pool.hex"
         B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
            --w-image sim/llama_top_w_b4_pool.hex" ;;
+  bconst)
+        G="-gBLOCKS=4 -gATTN_INT=4 -gNTOK=3 -gC_REAL=true -gATTN_HD=16
+           -gNORM_REAL=true -gNORM_ANCHOR=false
+           -gW_IMAGE=llama_top_w_b4_pool.hex -gMAXPOS=8
+           -gB_STATE_AXI=true -gB_SRC_REAL=true -gB_CONST_HBM=true
+           -gB_CONST_IMAGE=llama_top_const_b4.hex"
+        B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
+           --w-image sim/llama_top_w_b4_pool.hex --b-src-real"
+        O="--b-const sim/llama_top_const_b4.bin" ;;
   seq)  G="-gBLOCKS=4 -gATTN_INT=2 -gNTOK=3 -gC_REAL=true -gATTN_HD=64
            -gKV_BLOCK=16 -gN_ROT=16 -gMAXPOS=8 -gKV_AXI=true"
         B="--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor
            --kv-block 16 --n-rot 16" ;;
   stub) G=""
         B="--blocks 4 --attn-int 4 --attn-hd 32 --norm anchor" ;;
-  *) echo "unknown configuration $CFG (real|seq|stub)"; exit 2 ;;
+  *) echo "unknown configuration $CFG (real|seq|stub|bconst)"; exit 2 ;;
 esac
 if [ "${LIST_BISECT:-0}" = "1" ]; then
   echo $B
+  exit 0
+fi
+if [ "${LIST_ORACLE:-0}" = "1" ]; then
+  echo ${O:-}
   exit 0
 fi
 GSMP=""
@@ -139,6 +193,9 @@ for f in $FILES; do
   fi
 done
 ln -sfn "$PWD/sim/llama_top_w_b4_pool.hex" "$W/run/" 2>/dev/null
+# The constants image `bconst` opens by bare name (B_CONST_IMAGE); harmless
+# to the other three, which never open it.
+ln -sfn "$PWD/sim/llama_top_const_b4.hex" "$W/run/" 2>/dev/null
 
 ( cd "$W/run" && timeout -k 5 3600 ghdl -r --std=08 -frelaxed --workdir=".." \
     tb_llama_top $G $GSMP -gNRUNS=1 -gCAPTURE=cap.txt \

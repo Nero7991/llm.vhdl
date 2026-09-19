@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/ref9b/seamgate.sh -- THE SEAM COMPARISON AS ONE VERDICT.
 #
-#   bash tools/ref9b/seamgate.sh {real|seq|stub}
+#   bash tools/ref9b/seamgate.sh {real|seq|stub|bconst}
 #
 # Exit 0 = PASS, non-zero = not green.  Designed to be a `sim/regress.sh` row
 # (`sim:seamgate_<cfg>`), and to be runnable on its own with the same meaning.
@@ -122,16 +122,57 @@
 # is arithmetic and not a gap to be closed: one token has no previous state.
 # A B-side mutation must be run at `seq` before "it survived" means anything.
 # docs/debugging/2026-08-29_btop1-b-recurrence.md.
+#
+# ---------------------------------------------------------------------------
+# `bconst` IS THE ROW WHERE SUBSYSTEM B COMPUTES ON THE MODEL, 2026-09-18
+# ---------------------------------------------------------------------------
+# Every paragraph above that says "B_SRC_REAL is false, so R_Y depends on the
+# capture only through R_Z and the exponents" is about `real`, `seq` and
+# `stub`.  `bconst` (TRACK G, the gate rows for docs/2026-09-18_b-constants-
+# path.md) is `real` with three tokens and B on its real inputs AND its real
+# constants: B_STATE_AXI, B_SRC_REAL, and B_CONST_HBM loading the packed
+# sim-shape image sim/llama_top_const_b4.hex through the state store's fourth
+# phase.  Its R_Y depends on the conv weights, ssm_dt_bias, ssm_a and the
+# ssm_norm weight of blk.0..2 of the shipped 9B gguf, sliced -- and on taps,
+# alpha and beta derived from the activations.  This is the stimulus the
+# residual paragraph above says the other three rows cannot reach.
+#
+# TWO COMPARATORS, ONE CAPTURE.  Its B model is `gdn_oracle.py --b-const
+# IMAGE.bin`, and bisect_scaled.py has no --b-const pass-through (its
+# GO.predict call carries none), so the row is judged in two parts on the
+# SAME capture: bisect_scaled.py with `--no-b`, which models every seam but
+# R_Y and reports the R_Y seams NOT CHECKED, and gdn_oracle.py with the
+# capture's `B` string plus its `O` string (LIST_ORACLE=1 in
+# capture_llama_top.sh), which models the R_Y seams only.  The two floors
+# below are the two parts.  A `--b-const` pass-through in bisect_scaled.py
+# would fold them into one, and is the dispatcher's call, not this row's.
+#
+# THE FLOORS, MEASURED 2026-09-18 (see the bconst case below): 61 seams per
+# token from bisect_scaled.py (64 present, 3 R_Y NOT CHECKED by --no-b) and
+# 9 of 9 R_Y over 3 tokens from gdn_oracle.py.
+#
+# ATTRIBUTION CONTROL, MEASURED 2026-09-18: with `--b-const` removed from the
+# gdn_oracle.py call (the stand-in model against the real-constants machine)
+# the row FAILS with 0 of 9.  So the 9 of 9 is the constants being right, not
+# the comparison being loose.  Track D's own controls on the same
+# configuration (f425d82): stand-in constants with real inputs 0 of 9, image
+# constants with stand-in inputs 0 of 9.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
 CFG="${1:-real}"
 
+# RY_FLOOR is the second comparator's floor, gdn_oracle.py's "N of M R_Y seams
+# match" over ALL tokens of the capture, and only a configuration with an `O`
+# string has one.  It is a count of SEAMS across tokens (3 GDN layers x NTOK),
+# where FLOOR is per token; the two are read off different verdict lines.
+RY_FLOOR=0
 case "$CFG" in
   real) FLOOR=64 ;;
   stub) FLOOR=63 ;;
   seq)  FLOOR=61 ;;
-  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub)"; exit 2 ;;
+  bconst) FLOOR=61; RY_FLOOR=9 ;;
+  *) echo "SEAMGATE FAIL -- unknown configuration '$CFG' (real|seq|stub|bconst)"; exit 2 ;;
 esac
 
 # Ours to create, ours to remove; a caller-named one is the caller's and is
@@ -200,6 +241,12 @@ fi
 # defect, and that trap has already been paid for once (first-bisect trap T5).
 BARGS="$(LIST_BISECT=1 bash tools/ref9b/capture_llama_top.sh "$CFG")" || {
   echo "SEAMGATE FAIL -- could not read the bisect arguments for $CFG"; exit 2; }
+# The oracle-only arguments (empty for real/seq/stub).  When non-empty, R_Y is
+# withheld from bisect_scaled.py (--no-b) and judged by gdn_oracle.py below.
+OARGS="$(LIST_ORACLE=1 bash tools/ref9b/capture_llama_top.sh "$CFG")" || {
+  echo "SEAMGATE FAIL -- could not read the oracle arguments for $CFG"; exit 2; }
+BSPLIT=""
+[ -n "$OARGS" ] && BSPLIT="--no-b"
 
 # Every token the capture carries, taken FROM THE CAPTURE.  `seq` is three
 # tokens and the other two are one; deriving it means adding NTOK to a
@@ -221,7 +268,7 @@ for t in $TOKS; do
   # scripts is.  python3 puts the SCRIPT's directory on sys.path, so the
   # `import scaled_plan` beside it still resolves.
   # shellcheck disable=SC2086
-  python3 tools/ref9b/bisect_scaled.py "$CAP" $BARGS --tok "$t" > "$out" 2>&1
+  python3 tools/ref9b/bisect_scaled.py "$CAP" $BARGS $BSPLIT --tok "$t" > "$out" 2>&1
   brc=$?
   chk=$(awk '/^# [0-9]+ seams checked/{print $2}' "$out")
   # The counts come from bisect_scaled.py's own verdict line, never recounted
@@ -274,7 +321,47 @@ for t in $TOKS; do
   fi
   echo "  token $t: $chk seams bit-exact against a model, ${nch:-?} not checked"
   grep -a '^    NOT CHECKED' "$out" | sed 's/^/  /'
+  # bisect_scaled.py's reason for an R_Y withheld by --no-b reads "no
+  # integration-level model", which is its text and not this row's state: in
+  # a split configuration those seams are judged by gdn_oracle.py below.
+  [ -n "$BSPLIT" ] && echo "      (R_Y withheld from bisect_scaled.py by --no-b; judged by gdn_oracle.py below)"
 done
+
+# ------------------------------------------ the second comparator, R_Y only
+# Runs once over every token of the capture, because subsystem B is recurrent
+# and gdn_oracle.py carries the state across tokens (the same reason
+# bisect_scaled.py's own B call is whole-capture).  Same three verdict shapes
+# as above: no verdict line is HARNESS, a non-zero exit with one is
+# DIVERGENCE, and fewer R_Y seams than RY_FLOOR is COVERAGE.
+if [ -n "$OARGS" ]; then
+  oout="$SG/oracle_$CFG.txt"
+  # shellcheck disable=SC2086
+  python3 tools/ref9b/gdn_oracle.py "$CAP" $BARGS $OARGS > "$oout" 2>&1
+  orc=$?
+  ryline="$(grep -a '^# [0-9]* of [0-9]* R_Y seams match' "$oout")"
+  ryok="$(echo "$ryline" | awk '{print $2}')"
+  ryall="$(echo "$ryline" | awk '{print $4}')"
+  if [ -z "$ryok" ]; then
+    echo "SEAMGATE FAIL (HARNESS) -- $CFG: gdn_oracle.py produced no verdict"
+    echo "  line at all (rc=$orc).  This is the COMPARATOR failing, not a seam"
+    echo "  diverging.  R_Y has NOT been judged."
+    tail -12 "$oout" | sed 's/^/    /'
+    [ "$worst" -lt 2 ] && worst=2
+  elif [ "$orc" != 0 ]; then
+    echo "SEAMGATE FAIL (DIVERGENCE) -- $CFG: an R_Y seam does not match"
+    echo "  gdn_oracle.py $OARGS, given the machine's own inputs ($ryok of $ryall)."
+    grep -a 'FIRST DIVERGENCE' "$oout" | sed 's/^/    /'
+    grep -a '^  R_Y' "$oout" | head -9 | sed 's/^/    /'
+    [ "$worst" -lt 1 ] && worst=1
+  elif [ "$ryok" -lt "$RY_FLOOR" ]; then
+    echo "SEAMGATE FAIL (COVERAGE) -- $CFG: every compared R_Y matched, but only"
+    echo "  $ryok R_Y seams were compared against the recorded floor of $RY_FLOOR."
+    [ "$worst" -lt 1 ] && worst=1
+  else
+    echo "  R_Y: $ryok of $ryall seams over $ntok token(s) bit-exact against"
+    echo "  gdn_oracle.py $OARGS (floor $RY_FLOOR)"
+  fi
+fi
 
 echo
 if [ "$worst" != 0 ]; then
@@ -283,16 +370,19 @@ if [ "$worst" != 0 ]; then
   KEEP=1
   exit "$worst"
 fi
+RYNOTE=""
+[ -n "$OARGS" ] && RYNOTE=" plus $ryok R_Y seams by gdn_oracle.py"
 echo "SEAMGATE PASS -- $CFG: $ntok token(s), at least $minchk seams per token"
 echo "  bit-identical to an independent model driven by the machine's own"
-echo "  inputs (floor $FLOOR).  This is NOT a statement that the token is"
+echo "  inputs (floor $FLOOR)$RYNOTE.  This is NOT a statement that the token is"
 echo "  right: read the NOT CHECKED lines above.  A wrong value at an"
 echo "  unmodelled seam is passed forward AS GIVEN and every later seam still"
 echo "  agrees."
 echo "  AND WHEN NOTHING IS LISTED AS UNCHECKED, THE RESIDUAL MOVES RATHER"
 echo "  THAN VANISHING.  Every seam then has a model, but the STIMULUS is"
-echo "  still the bench's: B_SRC_REAL is false in all three configurations, so"
-echo "  subsystem B sees m12 stand-in taps, and the four approximation kernels"
-echo "  are INCLUDED by the models rather than independently transcribed."
+echo "  still the bench's: B_SRC_REAL is false in real, seq and stub, so"
+echo "  subsystem B sees m12 stand-in taps there (bconst is the row where it"
+echo "  does not), and the four approximation kernels are INCLUDED by the"
+echo "  models rather than independently transcribed."
 
 exit 0
