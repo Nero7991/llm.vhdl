@@ -156,6 +156,14 @@ typedef struct {
      * hbm.gdn_state_base.  With no manifest it must be stated, and a v2
      * open with neither is refused. */
     uint64_t gdn_state_base;
+    /* v2 only: subsystem B's learned-constant image base
+     * (docs/2026-09-18_b-constants-path.md).  0 -> the manifest's
+     * hbm.gdn_const_base, which is itself optional; if that is also absent
+     * the seam register FK33_SEAM_BCB_LO/HI is written 0 and pl_open warns,
+     * because a B_CONST_HBM card handed 0 reads its constants out of the
+     * first weight tensor.  See fk33_manifest.h for why absent is not a
+     * refusal. */
+    uint64_t gdn_const_base;
 
     /* Where the card's own bytes end.  Two ways to say it, and either is
      * enough; the manifest is preferred because it is the artefact the loader

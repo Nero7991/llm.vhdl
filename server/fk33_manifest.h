@@ -79,6 +79,23 @@ typedef struct {
     uint64_t desc_arena_bytes;
     uint64_t host_max_chunk;
 
+    /* OPTIONAL, and the only optional pair in this struct: the GDN constant
+     * image (docs/2026-09-18_b-constants-path.md), which tools/pack_gdn_consts.py
+     * declares in a set packed for a `B_CONST_HBM` card and which every set
+     * packed before 2026-09-18 lacks.  Both read as 0 when absent, and 0 is
+     * the honest value: the card then runs subsystem B's m12 stand-ins, and
+     * pl_open() says so on stderr rather than refusing, because refusing
+     * would make every pre-image set unloadable on every card, including the
+     * ones that do not read the register.  A card that DOES read it and is
+     * handed 0 fetches its constants from HBM address 0 -- the first weight
+     * tensor -- which is why pl_open() prints the warning in capitals and why
+     * the loader (hw/fk33/host/fk33_load_weights.py) will not place an image
+     * a manifest does not declare.  When both are present they are checked
+     * like every other region: 4 KB aligned, above kv_base, inside hbm.size,
+     * and below the descriptor arena. */
+    uint64_t gdn_const_base;
+    uint64_t gdn_const_bytes;
+
     /* DERIVED here, not read: the first address the host may place a block at
      * without landing on something the card owns.  max of the three ends. */
     uint64_t reserved_end;
@@ -87,9 +104,10 @@ typedef struct {
 } fk33_manifest;
 
 /* Returns 0, or negative with a message on stderr.  Every field above except
- * `reserved_end` and `path` must be present in the file; a missing one is an
- * error, because a zero would read as "no constraint" and that is exactly the
- * failure this file exists to prevent. */
+ * `gdn_const_base`, `gdn_const_bytes`, `reserved_end` and `path` must be
+ * present in the file; a missing one is an error, because a zero would read
+ * as "no constraint" and that is exactly the failure this file exists to
+ * prevent.  The two optional ones are documented above. */
 int fk33_manifest_read(const char *path, fk33_manifest *m);
 
 /* Human-readable one-liner, into `buf`. */

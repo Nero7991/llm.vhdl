@@ -26,6 +26,7 @@ struct pl_ctx {
     int n_vocab, n_embd, n_layer, max_ctx, max_chunk;
     int version;                 /* 1 or 2, from the card's own register */
     uint64_t a_arena, bst_base;  /* v2: what was written to the seam */
+    uint64_t bcb_base;           /* v2: B's constant image base, or 0 */
     uint32_t caps;               /* CAPS_FLAGS, 0 on a v1 card */
     uint64_t x_base, l_base, desc_ptr;
     uint64_t x_stride, l_stride;
@@ -585,9 +586,11 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
         {
             fk33_manifest mv;
             uint64_t arena = o->desc_arena_base, bst = o->gdn_state_base;
+            uint64_t bcb = o->gdn_const_base;
             if (o->manifest_path && !fk33_manifest_read(o->manifest_path, &mv)) {
                 if (!arena) arena = mv.desc_arena_base;
                 if (!bst)   bst   = mv.gdn_state_base;
+                if (!bcb)   bcb   = mv.gdn_const_base;
             }
             if (!arena || !bst) {
                 fprintf(stderr,
@@ -616,6 +619,35 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                 pl_close(c); return -2;
             }
             c->a_arena = arena; c->bst_base = bst;
+            /* THE THIRD BASE: subsystem B's learned-constant image
+             * (docs/2026-09-18_b-constants-path.md), hbm.gdn_const_base,
+             * placed by tools/hbm_map.py below the descriptor arena and
+             * written by tools/pack_gdn_consts.py.  Same 33-bit port as the
+             * state base.  It is OPTIONAL in the manifest (sets packed
+             * before the image existed), so 0 is written rather than
+             * refused -- and said out loud, because a B_CONST_HBM card
+             * handed 0 fetches its conv weights from the first weight
+             * tensor and computes garbage with no fault. */
+            if (bcb >> 33) {
+                fprintf(stderr, "pl_open: gdn_const_base 0x%llX does not fit the "
+                                "card's 33-bit port\n", (unsigned long long)bcb);
+                pl_close(c); return -1;
+            }
+            if (wr(c, FK33_SEAM_BCB_LO, (uint32_t)bcb)
+                || wr(c, FK33_SEAM_BCB_HI, (uint32_t)(bcb >> 32))) {
+                pl_close(c); return -2;
+            }
+            c->bcb_base = bcb;
+            if (!bcb)
+                fprintf(stderr,
+                    "[pl_backend] WARNING: NO GDN CONSTANT IMAGE BASE.  Neither the\n"
+                    "  manifest (hbm.gdn_const_base) nor opts supplied one, so\n"
+                    "  FK33_SEAM_BCB_LO/HI were written 0.  A card built with\n"
+                    "  B_CONST_HBM reads subsystem B's conv weights, dt bias, ssm_a\n"
+                    "  and ssm_norm from that address: 0 is the first weight tensor.\n"
+                    "  A card built without it ignores the register.  Pack the image\n"
+                    "  with tools/pack_gdn_consts.py and load it with\n"
+                    "  fk33_load_weights.py before trusting any B output.\n");
         }
         /* The windows are written once per model, not per token. */
         if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_DESC)

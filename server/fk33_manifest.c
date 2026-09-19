@@ -24,7 +24,8 @@
 
 #define MAX_MANIFEST_BYTES (64u * 1024u * 1024u)
 
-typedef struct { const char *name; uint64_t *slot; int seen; } field;
+typedef struct { const char *name; uint64_t *slot; int seen; int optional; } field;
+#define NFIELD 15
 
 static int fail(const char *path, const char *what)
 {
@@ -58,7 +59,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     char *buf = NULL;
     long n = 0, i, hbm_depth = -1;
     int depth = 0, rc = -1, k;
-    field f[13];      /* ALL required as of 2026-08-29; see the header */
+    field f[NFIELD];  /* f[0..12] required as of 2026-08-29; see the header */
 
     if (!path || !m) return -1;
     memset(m, 0, sizeof *m);
@@ -83,7 +84,11 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     f[10].name = "desc_arena_base";   f[10].slot = &m->desc_arena_base;
     f[11].name = "desc_arena_bytes";  f[11].slot = &m->desc_arena_bytes;
     f[12].name = "host_max_chunk";    f[12].slot = &m->host_max_chunk;
-    for (k = 0; k < 13; k++) f[k].seen = 0;
+    /* THE GDN CONSTANT IMAGE, optional -- see the header for why this pair
+     * alone may be absent.  Absent reads as 0 and pl_open() reports it. */
+    f[13].name = "gdn_const_base";    f[13].slot = &m->gdn_const_base;
+    f[14].name = "gdn_const_bytes";   f[14].slot = &m->gdn_const_bytes;
+    for (k = 0; k < NFIELD; k++) { f[k].seen = 0; f[k].optional = (k >= 13); }
 
     fp = fopen(path, "rb");
     if (!fp) { fprintf(stderr, "fk33_manifest: %s: %s\n", path, strerror(errno));
@@ -120,7 +125,7 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
                 continue;
             }
             if (depth != hbm_depth) continue;   /* nested: not our key */
-            for (k = 0; k < 13; k++) {
+            for (k = 0; k < NFIELD; k++) {
                 size_t len = strlen(f[k].name);
                 if ((size_t)(q1 - q0 - 1) != len) continue;
                 if (strncmp(buf + q0 + 1, f[k].name, len)) continue;
@@ -145,8 +150,9 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     free(buf);
 
     if (hbm_depth < 0) return fail(path, "no top-level \"hbm\" object");
-    for (k = 0; k < 13; k++) {
+    for (k = 0; k < NFIELD; k++) {
         if (f[k].seen == 1) continue;
+        if (f[k].optional && f[k].seen == 0) continue;
         fprintf(stderr, "fk33_manifest: %s: hbm.%s appears %d times, want "
                 "exactly 1.  A missing key would read as zero, and a zero here "
                 "reads as \"no constraint\".\n", path, f[k].name, f[k].seen);
@@ -188,6 +194,25 @@ int fk33_manifest_read(const char *path, fk33_manifest *m)
     if (m->host_max_chunk == 0)
         return fail(path, "hbm.host_max_chunk is 0; the host blocks cannot have "
                           "been placed under a zero chunk cap");
+    /* The GDN constant image, when declared.  One key without the other is
+     * refused: a base with no length is not a region and a length with no
+     * base is address 0. */
+    if ((m->gdn_const_base != 0) != (m->gdn_const_bytes != 0))
+        return fail(path, "hbm.gdn_const_base and hbm.gdn_const_bytes must be "
+                          "declared together and both nonzero");
+    if (m->gdn_const_bytes) {
+        if (m->gdn_const_base % 4096ull)
+            return fail(path, "hbm.gdn_const_base is not 4 KB aligned");
+        if (m->gdn_const_base + m->gdn_const_bytes > m->size)
+            return fail(path, "the GDN constant image runs past hbm.size");
+        if (m->gdn_const_base < m->kv_base)
+            return fail(path, "the GDN constant image starts below kv_base, "
+                              "i.e. inside bytes the card already owns");
+        if (m->gdn_const_base + m->gdn_const_bytes > m->desc_arena_base
+            && m->gdn_const_base < m->desc_arena_base + m->desc_arena_bytes)
+            return fail(path, "the GDN constant image overlaps the descriptor "
+                              "arena");
+    }
 
     m->reserved_end = m->weights_end;
     if (m->gdn_state_base + m->gdn_state_bytes > m->reserved_end)
@@ -204,7 +229,7 @@ const char *fk33_manifest_describe(const fk33_manifest *m, char *buf, size_t n)
     snprintf(buf, n,
              "manifest %s: hbm %llu B, weights_end 0x%llX, gdn 0x%llX+%llu, "
              "kv_base 0x%llX, %llu B/token, max_ctx %llu, reserved_end 0x%llX, "
-             "A arena 0x%llX+%llu, host_max_chunk %llu",
+             "A arena 0x%llX+%llu, host_max_chunk %llu, B consts 0x%llX+%llu",
              m->path, (unsigned long long)m->size,
              (unsigned long long)m->weights_end,
              (unsigned long long)m->gdn_state_base,
@@ -215,6 +240,8 @@ const char *fk33_manifest_describe(const fk33_manifest *m, char *buf, size_t n)
              (unsigned long long)m->reserved_end,
              (unsigned long long)m->desc_arena_base,
              (unsigned long long)m->desc_arena_bytes,
-             (unsigned long long)m->host_max_chunk);
+             (unsigned long long)m->host_max_chunk,
+             (unsigned long long)m->gdn_const_base,
+             (unsigned long long)m->gdn_const_bytes);
     return buf;
 }
