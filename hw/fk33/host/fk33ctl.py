@@ -823,8 +823,53 @@ def cmd_bench(a):
           f"{4.5e9 / (size / tw):.1f} s.")
 
 
+def manifest_place(a):
+    """`--manifest M`: take the OFFSET and the expected DIGEST of `file` from
+    the manifest instead of the command line.  Added 2026-09-18 for the GDN
+    constant image (docs/2026-09-18_b-constants-path.md): `load` and
+    `verify` here pair a file with an offset the OPERATOR typed, which is the
+    recorded way a wrong pairing reproduces itself in the verify.  With the
+    manifest named, the pairing is the packer's, and a `--offset` that
+    disagrees is a refusal.
+
+    The only object the `hbm` block places by name today is the constant
+    image (`hbm.gdn_const_file` at `hbm.gdn_const_base`, digest
+    `hbm.gdn_const_blake2b_128`); the packed tensors are `files` entries and
+    belong to `fk33_load_weights.py`, which walks all 250 of them.  Returns
+    (offset, digest or None)."""
+    if not getattr(a, "manifest", None):
+        return a.offset, None
+    import json
+    with open(a.manifest) as f:
+        mani = json.load(f)
+    hbm = mani.get("hbm") or {}
+    root = os.path.dirname(os.path.abspath(a.manifest))
+    want = os.path.abspath(a.file)
+    if hbm.get("gdn_const_file") and \
+            os.path.abspath(os.path.join(root, hbm["gdn_const_file"])) == want:
+        off = int(hbm["gdn_const_base"])
+        dig = hbm.get("gdn_const_blake2b_128")
+        sz = os.path.getsize(a.file)
+        if sz != int(hbm["gdn_const_bytes"]):
+            sys.exit(f"FAIL {a.file} is {sz} B on disk, the manifest declares "
+                     f"hbm.gdn_const_bytes {hbm['gdn_const_bytes']}")
+    else:
+        sys.exit(f"FAIL {a.manifest} does not place {a.file}: the only object "
+                 f"its hbm block names is "
+                 f"{hbm.get('gdn_const_file', '(no gdn_const_file)')}.  The "
+                 f"packed tensors are loaded by fk33_load_weights.py, which "
+                 f"reads their offsets from the manifest's files list.")
+    if a.offset and a.offset != off:
+        sys.exit(f"FAIL --offset {a.offset:#x} disagrees with the manifest's "
+                 f"{off:#x} for {a.file}; the manifest is the authority, drop "
+                 f"the --offset")
+    print(f"offset {off:#x} and digest {dig} taken from {a.manifest}")
+    return off, dig
+
+
 def cmd_load(a):
     sz = os.path.getsize(a.file)
+    a.offset, want_dig = manifest_place(a)
     check_range(a.offset, sz)
     print(f"loading {a.file} ({sz / 1e9:.2f} GB) to HBM {a.offset:#x}")
     h = hashlib.blake2b(digest_size=16)
@@ -847,15 +892,23 @@ def cmd_load(a):
     dt = time.perf_counter() - t0
     print(f"wrote {pos} bytes in {dt:.2f} s = {pos / dt / 1e9:.2f} GB/s")
     print(f"source blake2b-128 {h.hexdigest()}")
+    if want_dig and h.hexdigest() != want_dig:
+        # The bytes are already on the card; say so rather than verify them
+        # against the same wrong file and print PASS.
+        sys.exit(f"FAIL the file just written hashes to {h.hexdigest()}, the "
+                 f"manifest's pack-time digest is {want_dig}: the file on "
+                 f"disk is not the image that was packed, and it is now in "
+                 f"HBM at {a.offset:#x}")
     if a.verify:
-        _verify(a.offset, a.file, sz)
+        _verify(a.offset, a.file, sz, want_dig)
 
 
 def cmd_verify(a):
-    _verify(a.offset, a.file, os.path.getsize(a.file))
+    a.offset, want_dig = manifest_place(a)
+    _verify(a.offset, a.file, os.path.getsize(a.file), want_dig)
 
 
-def _verify(off, path, sz):
+def _verify(off, path, sz, want_dig=None):
     print("verifying by read-back")
     hs, hd = hashlib.blake2b(digest_size=16), hashlib.blake2b(digest_size=16)
     fd = os.open(C2H, os.O_RDONLY)
@@ -875,7 +928,12 @@ def _verify(off, path, sz):
                 pos += len(want)
     finally:
         os.close(fd)
-    print(f"PASS  {sz} bytes identical")
+    if want_dig and hd.hexdigest() != want_dig:
+        sys.exit(f"FAIL HBM hashes to {hd.hexdigest()}, the manifest's "
+                 f"pack-time digest is {want_dig}: the card holds the file "
+                 f"it was handed, and that file is not the packed image")
+    print(f"PASS  {sz} bytes identical"
+          + (" and the manifest's pack-time digest" if want_dig else ""))
     print(f"      source {hs.hexdigest()}  hbm {hd.hexdigest()}")
 
 
@@ -917,12 +975,18 @@ def main():
     s = sub.add_parser("load")
     s.add_argument("file")
     s.add_argument("--offset", type=lambda x: int(x, 0), default=0)
+    s.add_argument("--manifest", default=None,
+                   help="take the offset and the pack-time digest of FILE "
+                        "from this manifest.json (today: the GDN constant "
+                        "image, hbm.gdn_const_file at hbm.gdn_const_base). "
+                        "A --offset that disagrees is refused")
     s.add_argument("--verify", action="store_true")
     s.set_defaults(fn=cmd_load)
 
     s = sub.add_parser("verify")
     s.add_argument("file")
     s.add_argument("--offset", type=lambda x: int(x, 0), default=0)
+    s.add_argument("--manifest", default=None, help="as for load")
     s.set_defaults(fn=cmd_verify)
 
     a = p.parse_args()

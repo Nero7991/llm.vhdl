@@ -293,8 +293,44 @@ def load_manifest(path):
     return m, os.path.dirname(os.path.abspath(path))
 
 
+def const_entries(mani):
+    """THE GDN CONSTANT IMAGE AS A LOADABLE OBJECT (2026-09-18, the B
+    constants path, docs/2026-09-18_b-constants-path.md).
+
+    `tools/pack_gdn_consts.py` declares the image in the manifest's `hbm`
+    block -- `gdn_const_base`, `gdn_const_bytes`, `gdn_const_file`,
+    `gdn_const_blake2b_128` -- and NOT as a `files` entry, because every
+    other reader of `files` (tools/check_hbm_stack.py, tools/check_mv4i_set.py)
+    parses each entry that is not an `f32blob` as an mv4i header, and the
+    image has none.  So the loader synthesises the one entry here, shaped
+    like a flat headerless object, and every path below (preflight, load,
+    verify, plan) treats it as it treats `nonmatvec_f32.bin`: written from
+    the file, digested on load, digested again on verify against the
+    pack-time blake2b, even under --headers-only.
+
+    A manifest without the region yields nothing: the card then runs the
+    m12 stand-ins, which is a build decision and not a loader fault."""
+    hbm = mani.get("hbm") or {}
+    if not hbm.get("gdn_const_bytes"):
+        return []
+    missing = [k for k in ("gdn_const_base", "gdn_const_file",
+                           "gdn_const_blake2b_128") if k not in hbm]
+    if missing:
+        sys.exit("hbm.gdn_const_bytes is declared but %s is not; the image "
+                 "cannot be placed or verified.  Re-run "
+                 "tools/pack_gdn_consts.py." % ", ".join(missing))
+    return [dict(file=hbm["gdn_const_file"], kind="gdn_const",
+                 tensor="<gdn constants, %s layers x %s B>"
+                 % (hbm.get("gdn_const_layers", "?"),
+                    hbm.get("gdn_const_bytes_per_layer", "?")),
+                 hbm_offset=int(hbm["gdn_const_base"]),
+                 nbytes=int(hbm["gdn_const_bytes"]),
+                 stack=hbm.get("gdn_const_stack"),
+                 blake2b_128=hbm["gdn_const_blake2b_128"])]
+
+
 def select(mani, only):
-    ents = mani["files"]
+    ents = mani["files"] + const_entries(mani)
     if only:
         ents = [e for e in ents if only in e["file"]]
         if not ents:
@@ -722,12 +758,32 @@ def cmd_selfcheck(a):
     # PRESENT.  What it is NOT is a second allocator: nothing derives a
     # shipping address from this, and `no_region_block` below removes it to
     # show the requirement biting.
+    # A GDN CONSTANT IMAGE, three 512 B "layers" of deterministic bytes,
+    # placed above the four objects.  Declared the way pack_gdn_consts.py
+    # declares it -- in `hbm`, not in `files` -- so the loader's own
+    # `const_entries()` is what puts it on the load list, and the C rows
+    # below are what show that path can fail.
+    # The layer term is not decoration.  The first draft was `(j*31+7) & 0xFF`,
+    # which has period 256, so all three 512 B layers were IDENTICAL and C4
+    # (two layers swapped) could not bite -- MEASURED, one row WRONG.  A
+    # fixture whose parts are indistinguishable cannot show a swap.
+    cimg = bytes((j * 31 + 7 + (j // 512) * 97) & 0xFF for j in range(3 * 512))
+    cbase = base
+    with open(os.path.join(tmp, "gdn_const.bin"), "wb") as f:
+        f.write(cimg)
+    base += (len(cimg) + ALIGN - 1) & ~(ALIGN - 1)
     mani = dict(format="selfcheck", geometry=dict(
         rows_if=rows_if, axi_dw=axi_dw, block=BLOCK,
         nports_w=_nports_w(rows_if, axi_dw),
         n_scale_sub=_n_scale_sub(rows_if, axi_dw)),
         hbm=dict(desc_arena_base=0x1_F000_0000, desc_arena_bytes=0x28000,
-                 host_max_chunk=512),
+                 host_max_chunk=512,
+                 gdn_const_base=cbase, gdn_const_bytes=len(cimg),
+                 gdn_const_stack=0, gdn_const_layers=3,
+                 gdn_const_bytes_per_layer=512,
+                 gdn_const_file="gdn_const.bin",
+                 gdn_const_blake2b_128=hashlib.blake2b(
+                     cimg, digest_size=16).hexdigest()),
         files=files)
     mpath = os.path.join(tmp, "manifest.json")
     with open(mpath, "w") as f:
@@ -760,9 +816,7 @@ def cmd_selfcheck(a):
             mutate()
         ns = NS()
         ns.headers_only = headers_only
-        rc = _verify(mani, sorted(mani["files"],
-                                  key=lambda e: e["hbm_offset"]),
-                     headers_only, False)
+        rc = _verify(mani, select(mani, None), headers_only, False)
         caught = rc != 0
         ok = caught == expect_fail
         results.append((label, expect_fail, caught, ok))
@@ -853,6 +907,38 @@ def cmd_selfcheck(a):
     run("M14 two identical-shape tensors swapped, headers only "
         "(EXPECTED NOT TO BITE)", swap_two(0, 3), False, True)
 
+    # ---- the GDN constant image.  Headerless, so the digest is its only
+    # oracle, and it is digested even under --headers-only (the f32blob
+    # policy: a headerless object nothing looked at must not be PASS).
+    def place_const_at(dst):
+        def go():
+            with open(dev, "r+b") as g:
+                g.seek(dst)
+                g.write(cimg)
+                g.seek(cbase)
+                g.write(bytes(len(cimg)))
+        return go
+
+    run("C1 one byte of the GDN constant image flipped",
+        poke(cbase + 700, 0x80), True)
+    run("C2 one byte of the GDN constant image flipped, headers only",
+        poke(cbase + 700, 0x80), True, True)
+    run("C3 the constant image written one 4 KB page above its base",
+        place_const_at(cbase + ALIGN), True)
+    def swap_const_layers(i, j):
+        """Two layers of the constant image at each other's stride.  Every
+        byte belongs in the image; layer i's B job reads layer j's weights."""
+        def go():
+            with open(dev, "r+b") as f:
+                f.seek(cbase + 512 * i); x = f.read(512)
+                f.seek(cbase + 512 * j); y = f.read(512)
+                f.seek(cbase + 512 * i); f.write(y)
+                f.seek(cbase + 512 * j); f.write(x)
+        return go
+
+    run("C4 layers 1 and 2 of the constant image swapped",
+        swap_const_layers(1, 2), True)
+
     # ---------------------------------------------------- the striped arm
     #
     # THE SAME FOUR FILES, CUT AT THEIR OWN SUB-REGION BOUNDARIES AND
@@ -918,9 +1004,7 @@ def cmd_selfcheck(a):
             return
         if mutate:
             mutate()
-        rc = _verify(smani, sorted(smani["files"],
-                                   key=lambda e: e["hbm_offset"]),
-                     headers_only, False)
+        rc = _verify(smani, select(smani, None), headers_only, False)
         caught = rc != 0
         ok = caught == expect_fail
         results.append((label, expect_fail, caught, ok))
