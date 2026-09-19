@@ -324,6 +324,17 @@ extern "C" {
 #define FK33_SEAM_ARENA_HI        0x70u   /* RW  a_arena_base[39:32] */
 #define FK33_SEAM_BST_LO          0x74u   /* RW  bst_state_base[31:0] */
 #define FK33_SEAM_BST_HI          0x78u   /* RW  bst_state_base[32] */
+/* THE THIRD HBM BASE: B's LEARNED CONSTANTS, added 2026-09-18.  The card's
+ * `bst_const_base` input, the base of the packed per-layer image of conv
+ * weights, dt bias, A and the ssm norm gain that gdn_state_store loads as a
+ * fourth, load-only phase (docs/2026-09-18_b-constants-path.md).  The host
+ * takes it from the manifest's hbm.gdn_const_base and writes it once per
+ * model load, beside ARENA and BST.  Same width as BST (33 bits, the card's
+ * port width).  A GO does NOT refuse zero here: a card built without
+ * B_CONST_HBM never reads the port, and refusing would break every host
+ * that predates the register. */
+#define FK33_SEAM_BCB_LO          0x84u   /* RW  bst_const_base[31:0] */
+#define FK33_SEAM_BCB_HI          0x88u   /* RW  bst_const_base[32] */
 /* Live progress, read-only, 2026-09-18.  obs_issue count since GO, and
  * CYCLES at the most recent issue.  Polled with CYCLES they give a
  * per-step timeline of a running token; after a watchdog they say how long
