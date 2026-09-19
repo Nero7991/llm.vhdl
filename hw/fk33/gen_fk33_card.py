@@ -247,6 +247,20 @@ ARGS = [
     "--generic", "C_V_BASE_CH=353975808",
     "--generic", "C_MAXPOS=131072",
     "--generic", "C_CTXLEN=131072",
+    # D'S PER-JOB WATCHDOG.  The default, 200,000 cycles, was set when B's
+    # state was on chip and the benches ran a SCALED shape.  MEASURED on
+    # silicon 2026-09-18 (the first GO on the composed card,
+    # docs/debugging/2026-09-18_first-token-on-silicon-stops-at-step-7.md):
+    # steps 0-6 (a norm and six A jobs, 25 MB of weights) took ~320,000
+    # cycles, then the first B job hit the watchdog at exactly 200,000.
+    # DERIVED from the RTL geometry, a 9B B job cannot fit: one recurrent
+    # pass is 32*(128/4)*128 = 131,072 cycles and the tiered store moves
+    # 1,101,824 B in and out over a 256-bit port, 68,864 beats, before any
+    # HBM latency.  And at the measured A rate the 12,288-row FFN jobs need
+    # ~320,000 each.  4,000,000 is ten times the largest derived job and
+    # still 53 ms at 75 MHz, so a hung unit is reported, not waited on
+    # forever.  seq_desc_fetch's counter is 32 bits.
+    "--generic", "WDOG_LIMIT=4000000",
     # A_ROWS_IF = 48 IS NOT A TUNING CHOICE, IT IS THE SEAM WIDTH.
     # `hw/fk33/gen_fk33_engine.py` pins `ROWS_IF = 48` (TRACK LEVERC48 measured
     # "distributed" at 48 as -42,633 CLB LUT), so the engine cell's

@@ -229,6 +229,7 @@ begin
       C_V_BASE_CH              => 353975808,
       C_MAXPOS                 => 131072,
       C_CTXLEN                 => 131072,
+      WDOG_LIMIT               => 4000000,
       A_ROWS_IF                => 48,
       A_JOB_STRIDE             => 16#40000#
     )

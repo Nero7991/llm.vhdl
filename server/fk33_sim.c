@@ -629,7 +629,7 @@ const char *fk33_seam_strerror(unsigned code)
     case FK33_SEAM_ERR_ALIGN: return "a block base is not 64-byte aligned";
     case FK33_SEAM_ERR_STACK: return "a block straddles the HBM stack boundary";
     case FK33_SEAM_ERR_RSVD:  return "a reserved field was not zero, or the blocks overlap";
-    case FK33_SEAM_ERR_DESC:  return "the descriptor program was refused";
+    case FK33_SEAM_ERR_DESC:  return "subsystem D reported an error (decode ERR_INFO[3:0]: 3=DESC program, 4=WDOG unit timed out, 7=EPOCH; step in [14:4]); or a GO with an HBM base unwritten";
     case FK33_SEAM_ERR_HALT:  return "the thermal guard refused the GO";
     case FK33_SEAM_ERR_SEQ:   return "SEQ_POS is not the card's next position";
     default:                  return "unknown seam error";

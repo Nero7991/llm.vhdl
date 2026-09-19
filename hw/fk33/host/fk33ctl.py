@@ -107,6 +107,25 @@ SEAM_FAULT = ((1 << 0, "SMP_OVF    the logits FIFO lost beats"),
 SEAM_ERR = {0: "NONE", 1: "POS", 2: "NSTEP", 3: "ALIGN", 4: "STACK",
             5: "RSVD", 6: "DESC", 7: "HALT", 8: "SEQ"}
 
+# Subsystem D's OWN codes, carried in ERR_INFO[3:0] whenever the seam's code
+# is 6 (DESC).  rtl/seq_desc_fetch.vhd:263-271.  The seam wraps EVERY D error
+# as DESC (rtl/fk33_seam.vhd:148-152), so "DESC" alone says only "D reported
+# something"; the decode below is what says what.  MEASURED 2026-09-18: the
+# first GO on the composed card returned DESC with ERR_INFO 0x00070074 =
+# ERR_WDOG at step 7 after 7 steps, and the raw hex was read as a refused
+# program for the first minute.
+D_ERR = {0: "NONE", 1: "UNIT", 2: "LOCK", 3: "DESC", 4: "WDOG", 5: "GRANT",
+         6: "CTX", 7: "EPOCH", 8: "ABORT"}
+
+
+def decode_err_info(info):
+    """ERR_INFO per rtl/fk33_seam.vhd:921-929: D code [3:0], failing step
+    [14:4], descriptors completed [26:16] (STEP_W = 11)."""
+    dcode = info & 0xF
+    dstep = (info >> 4) & 0x7FF
+    ddone = (info >> 16) & 0x7FF
+    return dcode, dstep, ddone
+
 THERM_CAUSE = {
     0: "none",
     1: "SYSMON over-temperature alarm (the armed 101 C backstop)",
@@ -538,8 +557,13 @@ def cmd_seam(a):
     print(f"status     0x{st:08x}  done={st & 1} busy={(st >> 1) & 1} "
           f"err={(st >> 2) & 1} err_code={ec} ({SEAM_ERR.get(ec, '?')})")
     if st & (1 << 2):
-        print(f"  ERR is STICKY from a previous job.  ERR_INFO=0x"
-              f"{m.rd(SEAM_ERR_INFO):08x}")
+        info = m.rd(SEAM_ERR_INFO)
+        print(f"  ERR is STICKY from a previous job.  ERR_INFO=0x{info:08x}")
+        if ec == 6:
+            dcode, dstep, ddone = decode_err_info(info)
+            print(f"  D's own code {dcode} ({D_ERR.get(dcode, '?')}) at step "
+                  f"{dstep}, {ddone} descriptor(s) completed before it."
+                  f"{'  WDOG: the unit did not finish within WDOG_LIMIT cycles; the GO was ACCEPTED.' if dcode == 4 else ''}")
     if st & (1 << 1):
         print("  BUSY: a job is in flight right now, so the counters below "
               "are mid-job.")

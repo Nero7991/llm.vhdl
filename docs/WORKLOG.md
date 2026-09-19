@@ -11,6 +11,35 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-18 18:30: THE FIRST GO ON THE COMPOSED CARD RAN SEVEN STEPS, AND THE WATCHDOG IS TOO SMALL FOR 9B BY ARITHMETIC
+
+The 11:28 bitstream is on the card (Oren ran `fk33_reload.sh`; steps 0-3
+clean: seam LLM2 v2, caps 0xD, 15 offsets agree). At Oren's direction the
+non-sudo steps ran from this session: step 4 (`run_prompt --open-only
+--allow-hardware HOST`, 505 descriptors streamed and read back, TBL_LEN 505,
+ARENA 0x1_FFADD000, BST 0x1_0C006000 read back), step 7 (flat `noembd`
+image, 4.18 GiB in 6.35 s, digest-verified; arena 159,232 B verified), step
+8 (`--max-new 1`).
+
+**Result: the GO was ACCEPTED, D ran a VEC_NORM and SIX A JOBS through the
+card's descriptor plane -- `ga_desc`, the arm no bench covers -- in ~320,000
+cycles with FAULTS 0, then the first B job hit `WDOG_LIMIT = 200,000` and D
+reported ERR_WDOG** (`ERR_INFO 0x00070074`: code 4, step 7, 7 done; CYCLES
+520,706). The seam wraps it as code 6 and `pl_backend` printed "the
+descriptor program was refused", which is wrong for this case; both
+messages now decode ERR_INFO.
+
+**200,000 cannot fit a 9B job, DERIVED two ways** (doc:
+`docs/debugging/2026-09-18_first-token-on-silicon-stops-at-step-7.md`): B's
+recurrent pass alone is 131,072 cycles plus 68,864 state beats each way;
+and at the MEASURED A rate (~80 B/cycle on the flat image) the 12,288-row
+FFN jobs need ~320,000 each, so step 11 would fire it even with B fixed.
+`gen_fk33_card.py` now passes `WDOG_LIMIT=4000000` (53 ms at 75 MHz).
+Whether B completes at all is NOT established; the rebuild answers it.
+
+The running x_exp build (17:25) does not carry the watchdog. Decision
+pending: restart with both, or let it finish and queue a second.
+
 ### 2026-09-18 17:25: THE x_exp FIX IS IN THE TREE, NOT YET IN A BITSTREAM
 
 Oren chose the live port. Four generators edited, five generated files
