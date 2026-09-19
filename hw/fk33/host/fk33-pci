@@ -25,6 +25,13 @@
 # NEVER `modprobe xdma`: the in-tree module of that name binds nothing
 # (hw/fk33/host/fk33_reload.sh header).  poll_mode=1 keeps MSI-X out of it.
 set -euo pipefail
+# NEVER `lsmod | grep -q` HERE.  MEASURED 2026-09-19 on the first sudoless
+# reload: with pipefail, grep -q exits at the match, lsmod takes SIGPIPE on
+# the rest of its output, and the pipeline reads FALSE while the module is
+# loaded -- `down` skipped the rmmod and `up` hit "File exists".  The same
+# misread fk33_reload.sh recorded on 2026-08-29 and worked around by
+# capturing first.  Capture, then test the text.
+xdma_loaded () { [[ -n "$(lsmod 2>/dev/null | grep -E '^xdma ' || true)" ]]; }
 DEV=0000:06:00.0
 KO=/usr/local/lib/fk33/xdma.ko
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -45,7 +52,7 @@ case "${1:-}" in
     else
       echo "  $DEV already absent from sysfs"
     fi
-    if lsmod | grep -qE '^xdma '; then
+    if xdma_loaded; then
       rc=1
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         rc=$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)
@@ -70,7 +77,7 @@ case "${1:-}" in
     if [[ -n "$(lspci -d 10ee: || true)" ]]; then
       lspci -d 10ee:
       lspci -vv -s "${DEV#0000:}" 2>/dev/null | grep -iE 'LnkSta:|LnkCap:|Region 0' || true
-      if ! lsmod | grep -qE '^xdma '; then
+      if ! xdma_loaded; then
         echo "--- insmod $KO poll_mode=1 ---"
         insmod "$KO" poll_mode=1 || echo "INSMOD_FAILED"
       fi

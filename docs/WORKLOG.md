@@ -74,6 +74,28 @@ the answer only has to be classified, not argued with.
   the unit ending) carries seq_rst too and supersedes it; running.**
   Oren has authorised the main session to reload bitstreams itself
   (sudoless `fk33_reload.sh` via `/usr/local/sbin/fk33-pci`, `f5ec164`).
+- **16:02: THE NORM BUILD ROUTED (WNS +0.054, no congestion report) and is
+  ON THE CARD**: `hw/fk33/bit/fk33_card_seqrst_bfnorm_75mhz_2026-09-19.bit`
+  (sha256 f6c89e4f..., from `b601ca8`), results in
+  `hw/fk33/results/card_seqrst_bfnorm_2026-09-19/`. Reloaded sudoless
+  (first use of `fk33-pci`; its `lsmod | grep -q` misread under pipefail,
+  fixed to capture-then-test). MEASURED on silicon: `attn_gate(Y)` = 2131
+  on TWO consecutive runs with `--seq-reset` between (was 2591 on the
+  second before), `engine tok_pos` reads back 0 after the reset, and
+  `logit_exp` moved 19 -> 18 (Y grew, the norm fix). Token 0 end to end:
+  no faults, 504 steps, **argmax 247749 against the reference 846**.
+- **ROOT CAUSE 3 (docs/debugging/2026-09-19_the-swiglu-on-the-card-is-a-product-with-no-gate.md)**:
+  bisecting XN entering each block with `hw/fk33/host/fk33_bisect_layers.sh`
+  (probes are free now): blocks 0-2 right, first DIFF entering block 4;
+  inside block 3 C's Y is RIGHT (attn_output 3456 = ref), G and U are
+  right, `ffn_down(H)` is wrong with H at exponent 9 vs 13 (block 0: 10 vs
+  14, argmax survived by luck). **`rtl/llama_top.vhd:1832`: the D-vec
+  SwiGLU is the behavioural `g*u/2^16` with no silu, in every
+  configuration; `rtl/swiglu.vhd` has no D-vec adapter.** The last
+  stand-in in the composed top (the banner's "ATTENTION IS A STUB" line is
+  stale: C is real and measured right). **Adapter track dispatched 16:40
+  (worktree): `swiglu_mem` + `gsr`/`SWG_REAL` + `vec_oracle.swg_real` +
+  `seamgate_swg` + OOC on the BC-250.** Fourth build after it lands.
 - **Still open**: the first-token whole-token argmax 0 / logit exp -25.
   The seqrst bitstream makes B-reaching probes free again (no reload per
   probe), which is what the bisection needs.
