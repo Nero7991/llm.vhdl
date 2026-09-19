@@ -271,7 +271,17 @@ put six Vivado processes on the workstation instead.
 - **It is 2.3x slower** end to end, MEASURED on identical ZU3EG synthesis. A
   2 h workstation sweep is ~4.5 h there. **That is still infinitely faster than
   a sweep that hangs the box and loses ninety minutes of place-and-route.**
-- **Its shell is fish**, so wrap remote commands in `bash -c "..."`.
+- **Its shell is fish**, so wrap remote commands in `bash -c "..."`, or
+  better `ssh ... 'bash -s' < script.sh`, which sidesteps fish's quoting
+  of `$` entirely (MEASURED 2026-09-19: a `bash -c` with a `/proc` loop
+  died on `$"`).
+- **It has GHDL since 2026-09-19** (AUR `ghdl` 6.0.0, mcode; the official
+  repos carry none, and a stale pacman DB 404s the AUR's deps until
+  `pacman -Sy`). MEASURED: `sim/regress.sh --only tb_rmsnorm_rs_mem` PASS
+  there with `REGRESS_SCRATCH=~/regress_scratch/<run>`. So it is a second
+  GATE lane as well as a second Vivado lane; keep the two `sim/*.tcl`
+  absolute-path traps in mind (the sync destination already matches) and
+  `ulimit -s unlimited` before the big benches.
 - It is deliberately on no WoL watchdog, so if it is off, it is off.
 
 **The rule, from Oren 2026-08-30: USE BOTH. They are two lanes, not a primary
