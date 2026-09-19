@@ -1140,6 +1140,12 @@ CARD_SRCS = [
     "gdn_state_axi.vhd", "gdn_state_mem.vhd", "gdn_state_store.vhd",
     "model_cfg_pkg.vhd", "llama_map_pkg.vhd",
     "region_mem.vhd", "vec_mem.vhd", "rmsnorm_rs_mem.vhd",
+    # 2026-09-19: llama_top's D-vec norm is now rmsnorm_bf_mem (the
+    # block-floating unit with the real epsilon, behind rs_mem's port shape;
+    # docs/debugging/2026-09-19_the-embedding-sits-below-the-norms-window.md).
+    # rmsnorm_rs_mem stays listed: nothing else in the card binds it today,
+    # but its removal is a separate decision from this swap.
+    "rmsnorm_bf_mem.vhd",
     "sampler_stream.vhd", "seq_desc_fetch.vhd", "seq_opdec.vhd",
     "seq_region_lock.vhd", "seq_vec_issue.vhd", "seq_vec_res.vhd",
 ]

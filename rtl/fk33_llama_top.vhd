@@ -398,9 +398,12 @@ entity fk33_llama_top is
     -- loop restores the scale EXCEPT a real norm.  See PART 6.
     NORM_REAL  : boolean  := false;
     NORM_LANES : positive := 4;      -- must divide SHAPE.hidden
-    -- rmsnorm_rs's internal Q, left at ITS OWN default.  Do not raise it to
-    -- move the P6 count: measured above, it moves the count and does not
-    -- remove the mechanism.
+    -- The norm unit's internal Q, left at ITS OWN default.  Do not raise it
+    -- to move the P6 count: measured above, it moves the count and does not
+    -- remove the mechanism.  Since 2026-09-19 the unit is rmsnorm_bf_mem,
+    -- where Q is only the OUTPUT grid of inv32 and the epsilon is a real
+    -- generic of the unit (see u_rms below); the window this comment block
+    -- describes belonged to rmsnorm_rs_mem.
     NORM_Q     : integer  := 12;
     -- The stand-in weight's exponent.  The weight mantissas sit around
     -- 2**NORM_W_EXP, i.e. a value near 1.0, which is what an RMSNorm gain is
@@ -2703,7 +2706,49 @@ begin
       -- It stops being obviously right if BRAM ever becomes the binding
       -- resource; the term to reshape first would be the gain image below,
       -- which is 171 tiles.
-      u_rms : entity work.rmsnorm_rs_mem
+      --
+      -- ============ 2026-09-19: THE UNIT IS NOW rmsnorm_bf_mem. ============
+      -- Everything above about the PORT SHAPE still holds; the ARITHMETIC
+      -- behind it changed, and here is why.  MEASURED on the card
+      -- (docs/debugging/2026-09-19_the-embedding-sits-below-the-norms-
+      -- window.md): `rmsnorm_rs_mem` floors its mean square at 2^-Q = 2^-12,
+      -- i.e. rms at 2^-6, and the Qwen3.5-9B embedding row has rms 2^-6.35.
+      -- So the first norm of every token divided by 2^-6 instead of the real
+      -- rms, R_XN came out 0.75x (bit-exact model 0.7496x on the card's INT4
+      -- row, corr 0.9967), and every q/k/v/z/alpha/beta of layer 0 inherited
+      -- the factor.  The scale test that pinned it: the card's q tap was
+      -- IDENTICAL at x1 and x4 input scale and moved only at x1/4, which is
+      -- a clamp and not an epsilon.
+      --
+      -- The fix was already RESOLVED for the unit on 2026-08-26 --
+      -- `rtl/rmsnorm_bf.vhd`, block-floating mean plus the model's real
+      -- epsilon 1e-6, worst gain error 1.3e-4 over the model's measured
+      -- range, DSP-neutral and timing-identical to rmsnorm_rs at N=128 -- and
+      -- never reached this file because it had only flat ports.
+      -- `rtl/rmsnorm_bf_mem.vhd` is that unit behind rmsnorm_rs_mem's exact
+      -- port shape (same names, widths, one-edge read latency, `w_active`
+      -- tap), so this port map is like-for-like and nothing else in this
+      -- generate moves.  `sim/tb_rmsnorm_bf_mem.vhd` asserts it bit-exact
+      -- with rmsnorm_bf in every element, o_exp and the `done` cycle,
+      -- including the x_exp 19 embedding case.  `done` fires ONE CYCLE
+      -- LATER than rmsnorm_rs_mem's at equal N/LANES -- MEASURED 2026-09-19
+      -- by the two benches at N=128 LANES=4: rs_mem done_cyc 148, bf_mem
+      -- 149.  The extra cycle is rmsnorm_bf's DSP MREG stage (p2_m) in the
+      -- element passes, which rs never had.  So any sequencer landmark
+      -- pinned to a cycle count moves by +1 per norm op; a pinned VALUE
+      -- moves because the arithmetic did.
+      --
+      -- EPS is left at the unit's default 1.0e-6, which is
+      -- `qwen35.attention.layer_norm_rms_epsilon` for this model.  It is a
+      -- real generic resolved at elaboration; ghdl-mcode cannot override a
+      -- real generic from the command line, so it is deliberately NOT lifted
+      -- to a llama_top generic.
+      --
+      -- WHY THE OLD NUMBERS STAY ABOVE: they measure the port shape, which
+      -- is unchanged.  The bf arithmetic's own cost at N=128 was +719 LUT /
+      -- +7 FF / +0 DSP over rs; at N=4096 behind these ports it has not been
+      -- drawn yet, and the rs_mem figures must not be quoted for it.
+      u_rms : entity work.rmsnorm_bf_mem
         generic map(N => NN, LANES => NORM_LANES, Q => NORM_Q)
         port map(
           clk => clk, rst => rst, start => r_go,
@@ -3366,7 +3411,7 @@ begin
                   -- cycle.  Every OP_VEC_NORM in the schedule is `s.hidden`.
                   assert n = NN
                     report "llama_top: the norm op was issued with n = "
-                         & integer'image(n) & ", but the rmsnorm_rs_mem "
+                         & integer'image(n) & ", but the rmsnorm_bf_mem "
                          & "instance "
                          & "is elaborated at N = " & integer'image(NN)
                          & ".  A norm of a different length needs its own "

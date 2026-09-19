@@ -204,6 +204,15 @@ def build(capture, tok, blocks, attn_int, attn_hd, norm, norm_exp, norm_w_exp,
         elif st.op == SP.OP_NORM:
             x = by[(src, tok)]
             if norm == "real":
+                # 2026-09-19: the composed top's D-vec norm is rmsnorm_bf_mem
+                # (docs/debugging/2026-09-19_the-embedding-sits-below-the-
+                # norms-window.md), so "real" is the block-floating model.
+                wv = VO.norm_w_const(len(x.v), norm_w_exp)
+                exp_v, exp_e, _d = VO.norm_bf(x.v, x.exp, wv, norm_w_exp, norm_q)
+            elif norm == "rs":
+                # The unit the top instantiated BEFORE 2026-09-19, kept for
+                # comparison against captures taken with it.  It floors rms
+                # at 2^-6 and is wrong on the 9B embedding by design.
                 wv = VO.norm_w_const(len(x.v), norm_w_exp)
                 exp_v, exp_e, _d = VO.norm_rs(x.v, x.exp, wv, norm_w_exp, norm_q)
             elif norm == "anchor":
@@ -242,7 +251,10 @@ def main():
     ap.add_argument("--blocks", type=int, default=4)
     ap.add_argument("--attn-int", type=int, default=4)
     ap.add_argument("--attn-hd", type=int, default=32)
-    ap.add_argument("--norm", choices=("real", "anchor", "mean"), default="anchor")
+    ap.add_argument("--norm", choices=("real", "rs", "anchor", "mean"),
+                    default="anchor",
+                    help="real = rmsnorm_bf (the top's unit since 2026-09-19); "
+                         "rs = rmsnorm_rs, the unit it replaced")
     ap.add_argument("--norm-exp", type=int, default=12)
     ap.add_argument("--norm-w-exp", type=int, default=12)
     ap.add_argument("--norm-q", type=int, default=12)

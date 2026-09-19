@@ -36,7 +36,8 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/matvec_core.vhd rtl/weight_streamer.vhd sim/llama_sched_pkg.vhd
        rtl/attn_block.vhd rtl/attn_kv_axi.vhd rtl/gdn_block.vhd
        rtl/matvec_int4.vhd rtl/sampler_stream.vhd
-       rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd rtl/llama_top.vhd
+       rtl/vec_mem.vhd rtl/rmsnorm_rs_mem.vhd rtl/rmsnorm_bf_mem.vhd
+       rtl/llama_top.vhd
        sim/tb_llama_top.vhd"
 
 # sim/tb_llama_top_normw.vhd's generics, copied from that wrapper.  NRUNS is

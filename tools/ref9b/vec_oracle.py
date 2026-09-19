@@ -358,6 +358,166 @@ def norm_rs(xm, xe, wm, we, Q=12):
     return o, o_exp, diag
 
 
+def norm_bf(xm, xe, wm, we, Q=12, eps=1e-6):
+    """`rtl/rmsnorm_bf.vhd` (and therefore `rtl/rmsnorm_bf_mem.vhd`, which is
+    bit-exact with it, sim/tb_rmsnorm_bf_mem.vhd), at `rtl/llama_top.vhd`'s
+    generics.  Since 2026-09-19 this is the unit the composed top instantiates
+    for the D-vec norm; `norm_rs` above is the unit it replaced.
+
+    TRANSCRIBED FROM ref/rmsnorm_bf_vec.c:rmsnorm_bf_int(), state by state,
+    NOT from the VHDL -- the C is the oracle the RTL is gated against, and a
+    second transcription of the RTL would agree with a wrong recipe.  The
+    reciprocal-square-root seed, Newton, fold, fin and emit stages are the
+    same lines `norm_rs` already lifted from that file; the two models differ
+    ONLY in S_INV1..S_INV6 (block-floating mean + eps, no fixed grid, no
+    floor) and in the fold's `rq_d = rq_p - e_out` (not `- Q`).
+
+    The epsilon is resolved at "elaboration" exactly as the RTL's E_EPS /
+    M_EPS_C constants are: E_EPS = 30 - floor(log2(eps)), M_EPS =
+    round(eps * 2^E_EPS).  For eps = 1e-6 that is E_EPS = 50, M_EPS =
+    1125899907 -- the header of sim/rmsnorm_bf_vec.txt carries both and
+    sim/tb_rmsnorm_bf.vhd asserts them against its own generic.
+
+    VERIFIED 2026-09-19 bit-exact against every case of sim/rmsnorm_bf_vec.txt
+    (200 cases x 128 elements plus o_exp, emitted by the C) and against a
+    C harness run on the x_exp 19 embedding-shaped vectors; see
+    tools/ref9b/check_norm_bf.py.
+
+    LANES has no numeric content (exact integer sum, order-independent max).
+    N must be a power of two.  Returns (o, o_exp, diag).
+    """
+    import math
+    N = len(xm)
+    assert len(wm) == N
+    LOG2N = N.bit_length() - 1
+    assert (1 << LOG2N) == N, "rmsnorm_bf asserts N is a power of two"
+
+    E_EPS = 30 - int(math.floor(math.log2(eps)))
+    M_EPS = int(round(eps * 2.0 ** E_EPS))
+
+    # ---- S_ACC
+    S = sum(v * v for v in xm)
+    if not (0 <= S <= (1 << (30 + LOG2N))):
+        raise SystemExit("rmsnorm_bf oracle: sum of squares %d is outside the "
+                         "range the RTL asserts" % S)
+
+    # ---- S_INV1 / S_INV2: renormalise S to a 31-bit mantissa, carry the
+    # exponent.  mean = S * 2^-LOG2N * 2^-2xe, so (m, e) = (S, LOG2N + 2xe)
+    # and shifting the mantissa by shs shifts e with it.
+    s_msb = vmsb63(S)
+    shs = 30 - s_msb
+    e_mean = LOG2N + 2 * xe + shs
+
+    # ---- S_INV3
+    if S == 0:
+        m_mean = 0
+    elif shs >= 0:
+        m_mean = vsll64(S, shs)
+    else:
+        m_mean = vsrl_a(S, -shs)
+
+    # ---- S_INV4: align to the LARGER value, i.e. the SMALLER e.  The
+    # e_mean == E_EPS tie goes to the eps-smaller branch with d = 0.
+    if S == 0:
+        d, mean_smaller, e_out = 0, True, E_EPS
+    elif e_mean > E_EPS:
+        d = min(e_mean - E_EPS, 63)
+        mean_smaller, e_out = True, E_EPS
+    else:
+        d = min(E_EPS - e_mean, 63)
+        mean_smaller, e_out = False, e_mean
+
+    # ---- S_INV5: TRUNCATING, no rounding bias
+    if S == 0:
+        align = 0
+    elif mean_smaller:
+        align = vsrl_a(m_mean, d)
+    else:
+        align = vsrl_a(M_EPS, d)
+
+    # ---- S_INV6
+    msq = (align + M_EPS) if mean_smaller else (m_mean + align)
+
+    # ---- S_SEED1 / S_SEED2
+    rq_p = vmsb63(msq)
+    A = msq & ((1 << 64) - 1)
+    mant = ((A << (30 - rq_p)) & ((1 << 64) - 1)) if rq_p <= 30 else (A >> (rq_p - 30))
+    assert (mant >> 30) & 1, "rsqrt mantissa not normalised to Q30"
+    rq_smant = mant & 0xFFFFFFFF
+    rq_y = RSQRT_ROM[(mant >> 24) & 0x3F]
+
+    # ---- S_RQ: two Newton iterations
+    for _ in range(2):
+        y2 = vresize(vsrl_a(vresize(rq_y * rq_y, 66), 30), 32)
+        my2 = vresize(rq_smant * y2, 66)
+        diff = vresize(THREE_Q30 - vresize(vsrl_a(my2, 30), 34), 34)
+        prod = vresize(diff * rq_y, 66)
+        rq_y = vresize(vsrl_a(prod, 31), 32)
+
+    # ---- S_RQ_FOLD.  rq_d = rq_p - e_out, NOT rq_p - Q: msq is on the
+    # 2^-e_out grid.  VHDL `/` truncates toward zero; `mod` only feeds a
+    # zero test, where the sign convention does not matter.
+    rq_d = rq_p - e_out
+    if rq_d % 2 != 0:
+        rq_yfin = vresize(vsrl_a(rq_y * INV_SQRT2_C, 30), 32)
+        rq_he = trunc_div(rq_d - 1, 2)
+    else:
+        rq_yfin = rq_y
+        rq_he = trunc_div(rq_d, 2)
+    rq_E = Q - 30 - rq_he
+
+    # ---- S_RQ_FIN1/2/3 and S_RQ_CLAMP
+    rq_bias = 0 if rq_E >= 0 else vsll64(1, -rq_E - 1)
+    rq_sum = rq_yfin + rq_bias
+    if rq_E > 32:
+        rq_shifted = 2147483647
+    elif rq_E >= 0:
+        rq_shifted = vsll64(rq_yfin, rq_E)
+    else:
+        rq_shifted = vsrl_a(rq_sum, -rq_E)
+    inv32 = min(max(rq_shifted, 0), 2147483647)
+
+    # ---- S_RAW
+    raw, max_raw = [], 0
+    for j in range(N):
+        xi = vresize(xm[j] * inv32, 48)
+        r = vresize(xi * wm[j], 64)
+        raw.append(r)
+        if abs(r) > max_raw:
+            max_raw = abs(r)
+
+    # ---- S_SHIFT1 / S_SHIFT2
+    msb_p = vmsb63(max_raw)
+    st = max(msb_p - 14, 0)
+    o_exp = xe + we + Q - st
+    emit_bias = 0 if st == 0 else vsll64(1, st - 1)
+
+    # ---- S_EMIT
+    o, nsat = [], 0
+    for j in range(N):
+        om = vsrl_a(raw[j] + emit_bias, st)
+        if om > 32767:
+            om, nsat = 32767, nsat + 1
+        elif om < -32768:
+            om, nsat = -32768, nsat + 1
+        o.append(om)
+
+    # The DOUBLE-PRECISION ideal from the definition the model computes,
+    # x / sqrt(mean(x^2) + eps) * w.  Reported, never gated on.
+    xr = [v * 2.0 ** -xe for v in xm]
+    wr = [v * 2.0 ** -we for v in wm]
+    ms = sum(v * v for v in xr) / N
+    ideal = [xr[j] / math.sqrt(ms + eps) * wr[j] for j in range(N)]
+    got = [o[j] * 2.0 ** -o_exp for j in range(N)]
+    num_e = math.sqrt(sum((got[j] - ideal[j]) ** 2 for j in range(N)))
+    den_e = math.sqrt(sum(v * v for v in ideal))
+    diag = dict(inv32=inv32, max_raw=max_raw, shift_total=st, saturations=nsat,
+                msq=msq, e_out=e_out, mean_smaller=mean_smaller,
+                gain=inv32 * 2.0 ** -Q, ideal_gain=1.0 / math.sqrt(ms + eps),
+                rel_rms_vs_ideal=(num_e / den_e) if den_e > 0 else 0.0)
+    return o, o_exp, diag
+
+
 if __name__ == "__main__":
     # A smoke check with numbers, not a test suite.  The real check is
     # tools/ref9b/bisect_scaled.py against a capture.

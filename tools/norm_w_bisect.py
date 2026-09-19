@@ -13,7 +13,7 @@ should move there and this file should go.
 
 WHAT IT CHECKS.  For every OP_VEC_NORM step of a captured token:
 
-    expected = rmsnorm_rs( machine's own captured R_X, machine's own x_exp,
+    expected = rmsnorm_bf( machine's own captured R_X, machine's own x_exp,
                            the REAL gain for that (layer, half) )
 
 compared BIT FOR BIT, mantissa by mantissa plus the published exponent, against
@@ -22,8 +22,9 @@ the `R_XN` the machine actually wrote.
 THE TWO HALVES OF THE ORACLE COME FROM DIFFERENT PLACES, which is what stops
 this being a round trip:
 
-  * the ARITHMETIC is `tools/ref9b/vec_oracle.norm_rs`, a transcription of
-    `rtl/rmsnorm_rs.vhd` written by another track for another purpose;
+  * the ARITHMETIC is `tools/ref9b/vec_oracle.norm_bf`, transcribed from
+    `ref/rmsnorm_bf_vec.c` (the top binds rmsnorm_bf_mem since 2026-09-19;
+    `--unit rs` selects `norm_rs` for captures taken before that);
   * the GAIN is the model's, and with `--gguf` it is re-derived here from the
     GGUF by a SECOND implementation of the reduction rather than read from the
     committed image, so the image itself is under test too.
@@ -129,7 +130,7 @@ def norm_tensor_order(blocks, attn_interval):
     return order
 
 
-def compare(steps, prod, by, tok, gains, w_exp, q, label):
+def compare(steps, prod, by, tok, gains, w_exp, q, label, unit="bf"):
     """One pass of the comparison.  Returns (nseam, nbad_seam, lines)."""
     lines, k, nbad = [], 0, 0
     for st in steps:
@@ -144,7 +145,10 @@ def compare(steps, prod, by, tok, gains, w_exp, q, label):
         if len(wv) != len(x.v):
             raise SystemExit("%s: gain %d has %d elements, the norm is %d"
                              % (label, k, len(wv), len(x.v)))
-        exp_v, exp_e, diag = VO.norm_rs(x.v, x.exp, wv, w_exp, q)
+        # 2026-09-19: the top's norm is rmsnorm_bf_mem; --unit rs keeps the
+        # pre-swap model for captures taken with rmsnorm_rs_mem.
+        norm_fn = VO.norm_rs if unit == "rs" else VO.norm_bf
+        exp_v, exp_e, diag = norm_fn(x.v, x.exp, wv, w_exp, q)
         nmis = (sum(1 for i in range(len(exp_v)) if exp_v[i] != got.v[i])
                 if len(exp_v) == len(got.v) else -1)
         ebad = exp_e != got.exp
@@ -177,6 +181,9 @@ def main():
     ap.add_argument("--tok", type=int, default=0)
     ap.add_argument("--norm-w-exp", type=int, default=12)
     ap.add_argument("--norm-q", type=int, default=12)
+    ap.add_argument("--unit", choices=("bf", "rs"), default="bf",
+                    help="bf = rmsnorm_bf_mem, the top's unit since "
+                         "2026-09-19; rs = rmsnorm_rs_mem, the unit before")
     ap.add_argument("--also-ramp", action="store_true",
                     help="repeat the comparison with rtl/llama_top.vhd's OLD "
                          "synthetic ramp, to show the check discriminates")
@@ -213,8 +220,8 @@ def main():
     print("# tools/norm_w_bisect.py -- R_XN against a MODEL-DERIVED gain")
     print("# capture %s  token %d  shape blocks=%d attn_interval=%d hidden=%d"
           % (a.capture, a.tok, a.blocks, a.attn_int, n))
-    print("# gains   %s  (%d norm ops, w_exp %d, rmsnorm_rs Q %d)"
-          % (a.gains, len(gains), a.norm_w_exp, a.norm_q))
+    print("# gains   %s  (%d norm ops, w_exp %d, rmsnorm_%s Q %d)"
+          % (a.gains, len(gains), a.norm_w_exp, a.unit, a.norm_q))
 
     rc = 0
     if a.gguf:
@@ -227,7 +234,7 @@ def main():
             rc = 1
 
     nseam, nbad, lines = compare(steps, prod, by, a.tok, gains,
-                                 a.norm_w_exp, a.norm_q, "real")
+                                 a.norm_w_exp, a.norm_q, "real", a.unit)
     print("\n# THE REAL GAIN")
     for l in lines:
         print("  " + l)
@@ -239,7 +246,7 @@ def main():
     if a.also_ramp:
         ramp = [VO.norm_w_const(n, a.norm_w_exp) for _ in range(len(gains))]
         rseam, rbad, rlines = compare(steps, prod, by, a.tok, ramp,
-                                      a.norm_w_exp, a.norm_q, "ramp")
+                                      a.norm_w_exp, a.norm_q, "ramp", a.unit)
         print("\n# THE OLD SYNTHETIC RAMP, on the SAME capture.  This is the "
               "teeth check:")
         print("# if these also matched, the comparison above would not be "

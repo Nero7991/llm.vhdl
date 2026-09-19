@@ -41,7 +41,7 @@ and should be read before the verdict.
 
 usage:
   bisect_scaled.py capture.txt --blocks 4 --attn-int 4 --attn-hd 16 \
-      [--tok 0] [--norm real|anchor|mean] [--w-image sim/llama_top_w_b4_pool.hex]
+      [--tok 0] [--norm real|rs|anchor|mean] [--w-image sim/llama_top_w_b4_pool.hex]
       [--no-a] [-v]
 """
 import argparse
@@ -236,7 +236,7 @@ def main():
     ap.add_argument("--attn-int", type=int, default=4)
     ap.add_argument("--attn-hd", type=int, default=32)
     ap.add_argument("--tok", type=int, default=0)
-    ap.add_argument("--norm", choices=("real", "anchor", "mean"), default="anchor",
+    ap.add_argument("--norm", choices=("real", "rs", "anchor", "mean"), default="anchor",
                     help="which OP_VEC_NORM the run elaborated.  The capture "
                          "does NOT record this and guessing it wrong makes "
                          "every norm seam diverge, which looks like a defect.")
@@ -478,11 +478,20 @@ def main():
         elif st.op == SP.OP_NORM:
             x = by[(src, a.tok)]
             if a.norm == "real":
+                # 2026-09-19: the top's D-vec norm is rmsnorm_bf_mem, so the
+                # real model is the block-floating one.  `rs` below is the
+                # unit it replaced, for captures taken before that commit.
+                wv = VO.norm_w_const(len(x.v), a.norm_w_exp)
+                exp_v, exp_e, diag = VO.norm_bf(x.v, x.exp, wv, a.norm_w_exp,
+                                                a.norm_q)
+                why = ("rmsnorm_bf, bit-exact, rel_rms vs the double ideal "
+                       "%.4g" % diag["rel_rms_vs_ideal"])
+            elif a.norm == "rs":
                 wv = VO.norm_w_const(len(x.v), a.norm_w_exp)
                 exp_v, exp_e, diag = VO.norm_rs(x.v, x.exp, wv, a.norm_w_exp,
                                                 a.norm_q)
-                why = ("rmsnorm_rs, bit-exact, rel_rms vs the double ideal "
-                       "%.4g" % diag["rel_rms_vs_ideal"])
+                why = ("rmsnorm_rs (pre-2026-09-19 unit), bit-exact, rel_rms "
+                       "vs the double ideal %.4g" % diag["rel_rms_vs_ideal"])
             elif a.norm == "anchor":
                 exp_v, exp_e = VO.norm_anchor(x.v, x.exp, a.norm_exp)
                 why = "the NORM_ANCHOR probe: sequencing and scale only"
