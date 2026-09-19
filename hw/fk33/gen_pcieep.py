@@ -1135,7 +1135,8 @@ CARD_SRCS = [
     "gdn_conv.vhd", "gdn_head_emit.vhd", "gdn_silu.vhd", "gdn_y_emit.vhd",
     "rmsnorm_bf.vhd", "gdn_emit_chain.vhd", "gdn_exp_capture.vhd",
     "gdn_recur_pipe.vhd", "gdn_scalar.vhd", "l2norm_rs.vhd", "gdn_block.vhd",
-    "gdn_job_seq.vhd", "gdn_conv_tap_mem.vhd", "gdn_exp_mem.vhd",
+    "gdn_job_seq.vhd", "gdn_conv_tap_mem.vhd", "gdn_conv_w_mem.vhd",
+    "gdn_exp_mem.vhd",
     "gdn_state_axi.vhd", "gdn_state_mem.vhd", "gdn_state_store.vhd",
     "model_cfg_pkg.vhd", "llama_map_pkg.vhd",
     "region_mem.vhd", "vec_mem.vhd", "rmsnorm_rs_mem.vhd",
@@ -1349,6 +1350,59 @@ def check_card_pins(card_src_text):
         raise ValueError("no `entity fk33_card is ... port (...)` could be "
                          "parsed; a checker with no input must not pass")
     return [(cp, tbl) for cp, tbl in card_pins_wanted() if cp not in ports]
+
+
+# THE CLOSURE IS CHECKED, NOT TRUSTED.  MEASURED 2026-09-19 01:42: the first
+# constants build died 7 minutes into synthesis with
+#   ERROR: [Synth 8-5826] no such design unit 'gdn_conv_w_mem' in library
+#   'work' [rtl/gdn_state_store.vhd:798]
+# because track A added that file and this hand-maintained list did not
+# know.  The comment above says "regenerate with the closure walker", and
+# nothing schedules the walker.  The same gap had already turned three
+# seamgate rows red the same night through capture_llama_top.sh's OWN list
+# (the fifth consumer of the closure to break this way, per that script).
+# So: every `entity work.X` any listed card source instantiates must be
+# declared by a listed source (ENG_SRCS, CARD_SRCS or fk33_llama_top.vhd),
+# or generation refuses.  Cheap (a regex over ~50 files), and it fires at
+# the moment the file is added, not at the end of a Vivado licence fetch.
+_ENT_DECL = re.compile(r"^\s*entity\s+(\w+)\s+is", re.M | re.I)
+_ENT_INST = re.compile(r"entity\s+work\.(\w+)", re.I)
+
+
+def check_card_closure(paths):
+    """Return sorted [(missing_unit, first_file_that_instantiates_it)] over
+    `paths`.  Every instantiated `entity work.X` must be declared by one of
+    `paths`.  Raises if no file declares any entity, so an unreadable or
+    empty list is not a passing (empty) result."""
+    declared, wanted = set(), {}
+    for f in paths:
+        txt = open(f).read()
+        for m in _ENT_DECL.finditer(txt):
+            declared.add(m.group(1).lower())
+        for m in _ENT_INST.finditer(txt):
+            wanted.setdefault(m.group(1).lower(), os.path.basename(f))
+    if not declared:
+        raise ValueError("no `entity X is` in any of %d files; a closure "
+                         "check with no declarations must not pass" % len(paths))
+    return sorted((u, f) for u, f in wanted.items() if u not in declared)
+
+
+def _refuse_open_card_closure():
+    paths = ([os.path.join(ENG_SRC_DIR, f) for f in ENG_SRCS]
+             + [os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
+             + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd")])
+    try:
+        missing = check_card_closure(paths)
+    except (OSError, ValueError) as e:
+        sys.exit("ABORT: cannot check the card source closure: %s" % e)
+    if missing:
+        sys.exit("ABORT: %d design unit(s) are instantiated by the card sources "
+                 "but declared by NO listed source: %s.  Add the file to "
+                 "CARD_SRCS (or ENG_SRCS) in gen_pcieep.py; synthesis would "
+                 "fail on it with [Synth 8-5826] after the licence fetch."
+                 % (len(missing), ", ".join("%s (from %s)" % m for m in missing)))
+    print("FK33_CARDCLOSURE %d card sources, every instantiated unit declared"
+          % len(paths))
 
 
 def _refuse_missing_card_pins():
@@ -1665,6 +1719,7 @@ else:
     # port of the wrapper that will be inferred.  Refuse at generation time;
     # see check_card_pins for what the alternative silently builds.
     _refuse_missing_card_pins()
+    _refuse_open_card_closure()
 
 
 
@@ -3777,6 +3832,7 @@ def selftest():
     addr_map_teeth()
     seam_tieoff_teeth()
     card_pins_teeth()
+    card_closure_teeth()
 
     print("SELFTEST PASS")
 
@@ -4786,6 +4842,43 @@ def addr_map_teeth():
             print("FAIL " + b)
         sys.exit("SELFTEST FAIL: the address-map guard does not discriminate "
                  "as claimed.")
+
+
+def card_closure_teeth():
+    """check_card_closure discriminates, with the attribution control.
+
+    The mutant is the REAL list with one REAL file removed -- gdn_conv_w_mem
+    .vhd, the file whose absence was MEASURED as [Synth 8-5826] on
+    2026-09-19 -- so the check must name exactly that unit, from
+    gdn_state_store.vhd.  The control is the full list and must be closed.
+    A checker reporting everything missing (broken parser) or nothing
+    missing on the mutant (blind) both fail here.
+    """
+    full = ([os.path.join(ENG_SRC_DIR, f) for f in ENG_SRCS]
+            + [os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
+            + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd")])
+    ctl = check_card_closure(full)
+    if ctl:
+        sys.exit("SELFTEST FAIL: the committed card source list is not "
+                 "closed: %s" % ctl)
+    victim = os.path.join(ENG_SRC_DIR, "gdn_conv_w_mem.vhd")
+    if victim not in full:
+        sys.exit("SELFTEST VOID: gdn_conv_w_mem.vhd is not in the list, so "
+                 "the mutant cannot be built from the thing.")
+    mut = check_card_closure([f for f in full if f != victim])
+    want = [("gdn_conv_w_mem", "gdn_state_store.vhd")]
+    print("CARDCLOSURE control missing=none  mutant missing=%s" % mut)
+    if mut != want:
+        sys.exit("SELFTEST FAIL: check_card_closure did not attribute exactly "
+                 "the removed file: want %s, got %s" % (want, mut))
+    try:
+        check_card_closure([])
+    except ValueError:
+        pass
+    else:
+        sys.exit("SELFTEST FAIL: check_card_closure passed an empty list.")
+    print("CARDCLOSURE teeth: control closed, mutant names the unit, empty "
+          "list refused")
 
 
 def card_pins_teeth():

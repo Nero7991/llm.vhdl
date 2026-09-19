@@ -87,6 +87,7 @@ read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/l2norm_rs.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_job_seq.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd
+read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_w_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd
 read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd
