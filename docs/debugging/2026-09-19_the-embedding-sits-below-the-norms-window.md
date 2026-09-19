@@ -198,3 +198,71 @@ recorded here so nobody reads those rows as a norm regression.
 `tb_fk33_seam` and `tb_fk33_seam_wdog` do not reach that unit and PASSED
 there with their pinned landmarks (`EXP_X0 -17280`, `EXP_XSUM 53529`)
 unchanged.
+
+### CORRECTION 2026-09-19 (later still): the BC-250 CAN judge llama_top-level rows
+
+The section "The gate on the BC-250 cannot judge llama_top-level rows" above
+is WITHDRAWN as a standing claim.  The GHDL 6.0.0 elaboration failure at
+`rtl/axi_rd_port.vhd:260` was real and is fixed on `fpga` at `0f6b82c`
+(`rtl/axi_rd_port.vhd` copies `f_level` through an unconstrained signal into
+`stream_fifo`'s unconstrained `level`; `rtl/stream_fifo.vhd` adjusted with
+it), MEASURED by the coordinator as `seamgate_real PASS` on the BC-250 in
+129 s.  That fix is merged into this worktree branch at `6a1a27f`, the tree
+was re-synced (md5 of both fixed files identical on both ends), and the
+`seamgate`, `tb_llama_top` and `cardtop` groups were re-run THERE at
+`--jobs 1`.  Their OVERALL lines are recorded below as they landed.  The
+earlier failures were a tool-version incompatibility in an untouched file,
+exactly as the withdrawn section said; what was wrong was the implied
+conclusion that the rows had to wait for the workstation.
+
+MEASURED on the BC-250 at `6a1a27f`, `--jobs 1`, one group at a time:
+
+```
+=== seamgate
+PASS  sim:seamgate_real    129s   PASS  sim:seamgate_stub     80s
+PASS  sim:seamgate_seq     440s   PASS  sim:seamgate_bconst  596s
+PASS  sim:seamgate_qkn     369s
+ OVERALL     PASS 5   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+=== tb_llama_top
+PASS  sim:tb_llama_top          306s   PASS  sim:tb_llama_top_bconst  599s
+PASS  sim:tb_llama_top_bstate   348s   TIMEOUT sim:tb_llama_top_bstate_seq 901s
+PASS  sim:tb_llama_top_normw    231s   PASS  sim:tb_llama_top_qkn     366s
+PASS  sim:tb_llama_top_real     233s   PASS  sim:tb_llama_top_seq     844s
+PASS  sim:tb_llama_top_smp        2s   PASS  sim:tb_llama_top_smp_beh   2s
+ OVERALL     PASS 9   FAIL 0   NOVERDICT 0   TIMEOUT 1   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+=== cardtop
+PASS  sim:tb_fk33_cardtop_adesc 3s   PASS  sim:tb_fk33_cardtop_ident 305s   PASS  sim:cardtop 0s
+ OVERALL     PASS 3   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+```
+
+**No golden moved.**  `tb_llama_top_real` / `_bstate` (EXP_X0 -16364,
+EXP_XSUM 91622, EXP_STEPH 17333) and `tb_llama_top_normw` (EXP_X0 -16350,
+EXP_XSUM 90889, EXP_STEPH 18618) passed with their pinned values.  That is
+expected once the vectors are looked at: at the bench shape every norm input
+sits inside `[2^-6, 2^12]`, where `rmsnorm_rs` was exact and `rmsnorm_bf`'s
+epsilon is below the output grid, so the two units agree bit for bit there.
+The landmarks therefore do NOT test the fix; they test that nothing else
+moved.  The fix is tested by `tb_rmsnorm_bf_mem`'s x_exp 19 trial and by
+the card, not by these rows.  A bench-shape vector that exercises the
+clamp region through the top is an open item.
+
+The one `TIMEOUT` is `tb_llama_top_bstate_seq` at the gate's 900 s row cap.
+`tb_llama_top_seq` alone took 844 s on this box (2.3x slower than the
+workstation), and bstate_seq is that bench with the B-state tier on top, so
+the cap is the first hypothesis; it was re-run alone with `--timeout 2400`
+and the result is recorded below.
+
+MEASURED, the re-run alone with `--timeout 2400` on the BC-250:
+
+```
+PASS       sim:tb_llama_top_bstate_seq         1071s  ... tb_llama_top RESULT: PASS -- 61 descriptors, 4 b
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+```
+
+So the TIMEOUT was the 900 s cap against a 1071 s row on the slower box, not
+a deadlock.  Every llama_top-level row the brief asked for is green at
+`6a1a27f`.  Measurement trap for the next person: on the BC-250 the gate's
+default `TIMEOUT=900` is too short for `tb_llama_top_bstate_seq` (and close
+for `tb_llama_top_seq` at 844 s); pass `--timeout 2400` there or read a
+TIMEOUT on those two rows as "cap", never as "hung", until the row itself
+says so.
