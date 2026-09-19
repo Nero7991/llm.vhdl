@@ -944,7 +944,37 @@ int pl_seq_reset(pl_ctx *c)
     if (wr(c, FK33_SEAM_CTRL, FK33_CTRL_SEQ_RESET)) return -2;
     if (rd(c, FK33_SEAM_STATUS, &st)) return -2;
     if (st & FK33_ST_ERR) { c->last_err = FK33_ST_ERRCODE(st); return -3; }
+    /* THE ENGINE'S POSITION, NOT ONLY THE SEAM'S.  Until 2026-09-19 this
+     * call cleared the seam's counter and nothing else; llama_top's tok_pos
+     * (B's tk0, C's position) was cleared only by the PCIe reset, so every
+     * sequence after the first ran B as "not the first token" and no host
+     * output said so.  A card that advertises the capability is READ BACK;
+     * one that does not gets the seam-only reset it always got and a return
+     * of 1, which the caller must not read as "the card is at position 0":
+     * on that card only a reconfiguration is. */
     c->next_pos = 0;
+    /* A v1 card has no CAPS register and no engine behind the seam; the
+     * question does not arise there and the old verdict stands. */
+    if (c->version < 2) return 0;
+    if (!(c->caps & FK33_CAP_ENG_SEQ_RESET)) {
+        fprintf(stderr, "pl_seq_reset: SEAM ONLY.  This bitstream lacks "
+                        "FK33_CAP_ENG_SEQ_RESET (caps 0x%X): SEQ_RESET does "
+                        "not reach the engine's tok_pos, so unless the card "
+                        "was reconfigured since its last token, the next "
+                        "token is NOT a first token.\n", c->caps);
+        return 1;
+    }
+    {
+        uint32_t tp = 0, sp = 0;
+        if (rd(c, FK33_SEAM_TOK_POS, &tp)) return -2;
+        if (rd(c, FK33_SEAM_SEQ_POS, &sp)) return -2;
+        if (tp != 0 || sp != 0) {
+            fprintf(stderr, "pl_seq_reset: after SEQ_RESET the card reads "
+                            "TOK_POS %u SEQ_POS %u, not 0/0 (a token was "
+                            "running, so the reset was ignored)\n", tp, sp);
+            return -5;
+        }
+    }
     return 0;
 }
 

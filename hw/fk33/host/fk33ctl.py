@@ -97,6 +97,7 @@ SEAM_STEPS_ISS  = SEAM_BASE + 0x7C      # R  obs_issue count since GO (2026-09-1
 SEAM_ISSUE_CYC  = SEAM_BASE + 0x80      # R  CYCLES at the last issue
 SEAM_BCB_LO     = SEAM_BASE + 0x84      # RW bst_const_base[31:0], B's learned constants (2026-09-18)
 SEAM_BCB_HI     = SEAM_BASE + 0x88      # RW bst_const_base[32]
+SEAM_TOK_POS    = SEAM_BASE + 0x8C      # R  llama_top's own tok_pos (2026-09-19)
 SEAM_ID_MAGIC   = 0x4C4C4D32            # "LLM2"
 SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 1, "HBM_FETCH the card fetches its own D program"),
@@ -579,6 +580,19 @@ def cmd_seam(a):
             print(f"  SET  {what}")
             bad += 1
 
+    # THE ENGINE'S position beside the seam's.  They are different counters:
+    # the seam's is cleared by SEQ_RESET, the engine's (B's tk0, C's position)
+    # only by SEQ_RESET on a card with caps bit 4, else by reconfiguration
+    # (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
+    # On a card without bit 4 this register does not exist and reads 0.
+    caps = m.rd(SEAM_CAPS_FLAGS)
+    tp = m.rd(SEAM_TOK_POS)
+    if caps & (1 << 4):
+        print(f"engine     tok_pos {tp}" + ("" if tp == 0 else
+              "  (NOT 0: the next token is not a first token; B runs at tk0=0)"))
+    else:
+        print("engine     tok_pos UNREADABLE (caps bit 4 clear): only a "
+              "reconfiguration clears it on this bitstream")
     print(f"last job   seq_pos {m.rd(SEAM_SEQ_POS)}  cycles "
           f"{m.rd(SEAM_CYCLES)}  argmax {m.rd(SEAM_ARGMAX)}  "
           f"logit_exp {m.rd(SEAM_LOGIT_EXP)}")
@@ -621,7 +635,8 @@ def cmd_seam(a):
                 "FK33_SEAM_STEPS_ISS": SEAM_STEPS_ISS,
                 "FK33_SEAM_ISSUE_CYC": SEAM_ISSUE_CYC,
                 "FK33_SEAM_BCB_LO": SEAM_BCB_LO,
-                "FK33_SEAM_BCB_HI": SEAM_BCB_HI}
+                "FK33_SEAM_BCB_HI": SEAM_BCB_HI,
+                "FK33_SEAM_TOK_POS": SEAM_TOK_POS}
         drift = [(k, v - SEAM_BASE, hdr[k]) for k, v in sorted(mine.items())
                  if k in hdr and v - SEAM_BASE != hdr[k]]
         miss = [k for k in mine if k not in hdr]

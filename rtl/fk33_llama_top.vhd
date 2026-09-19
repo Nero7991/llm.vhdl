@@ -844,6 +844,18 @@ entity fk33_llama_top is
     busy       : out std_logic;
     tok_done   : out std_logic;
     tok_ack    : in  std_logic;
+    -- THE PER-SEQUENCE RESET, 2026-09-19.  One-cycle pulse, honoured only
+    -- while idle: clears `tok_pos` and re-arms C's `kv_seq_rst`, which
+    -- together are everything this file keys on `tok_pos = 0` -- B's `tk0`,
+    -- `b_seq_rst` for the exponent capture, C's position and its v_ref.
+    -- Before this existed the only thing that cleared `tok_pos` was `rst`,
+    -- which on the FK33 is the PCIe link reset, so a host could start
+    -- exactly one sequence per reconfiguration, and every closed probe
+    -- token after the first ran B at `tk0 = 0` against a zeroed state and
+    -- produced a Y that no fault in B could explain
+    -- (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
+    -- Defaulted so every existing instantiation elaborates unchanged.
+    seq_rst    : in  std_logic := '0';
     err        : out std_logic;
     err_code   : out std_logic_vector(3 downto 0);
     err_step   : out unsigned(STEP_W-1 downto 0);
@@ -1247,6 +1259,7 @@ architecture rtl of fk33_llama_top is
                       := (others => '0');
 
   signal host_busy : std_logic;
+  signal busy_i    : std_logic;   -- u_fetch's busy, readable for `seq_rst`
   signal lock_rst  : std_logic;
   signal iss_req, iss_commit, iss_prod : std_logic;
   signal iss_dst   : unsigned(7 downto 0);
@@ -1752,6 +1765,7 @@ begin
   -- ever been connected, and it is the authoritative reference for it.
   -- ======================================================================
   d_ren <= d_ren_i;
+  busy  <= busy_i;
 
   u_fetch : entity work.seq_desc_fetch
     generic map(
@@ -1761,7 +1775,7 @@ begin
     port map(
       clk => clk, rst => rst,
       go => go_walk, tbl_len => tbl_len, abort => abort,
-      busy => busy, tok_done => tok_done_i, tok_ack => tok_ack,
+      busy => busy_i, tok_done => tok_done_i, tok_ack => tok_ack,
       err => err, err_code => err_code, err_step => err_step,
       steps_done => steps_done,
       d_raddr => d_raddr, d_ren => d_ren_i, d_rdata => d_rdata,
@@ -6240,8 +6254,8 @@ begin
     srp : process(clk) is
     begin
       if rising_edge(clk) then
-        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;
       end if;
     end process;
 
@@ -6946,6 +6960,13 @@ begin
   begin
     if rising_edge(clk) then
       if rst = '1' then
+        tok_pos <= 0;
+      elsif seq_rst = '1' then
+        -- Only while idle.  A reset mid-token would give the rest of that
+        -- token a position its earlier steps did not use; the sim refuses
+        -- it and the seam never issues one while `running`.
+        assert busy_i = '0'
+          report "llama_top: seq_rst while busy" severity failure;
         tok_pos <= 0;
       elsif tok_done_i = '1' and tok_ack = '1' then
         if tok_pos = C_MAXPOS-1 then

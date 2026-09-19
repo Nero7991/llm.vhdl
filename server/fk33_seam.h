@@ -341,6 +341,14 @@ extern "C" {
  * the stuck unit had been running (CYCLES - ISSUE_CYC). */
 #define FK33_SEAM_STEPS_ISS       0x7Cu   /* R   job issues since go; a clean token reads TBL_LEN - 1 (END_TOKEN never issues) */
 #define FK33_SEAM_ISSUE_CYC       0x80u   /* R   CYCLES at the last issue */
+/* The ENGINE's own sequence position, read-only, 2026-09-19.  SEQ_POS above
+ * is the seam's counter; this is llama_top's tok_pos, the one B's tk0 and
+ * C's position are keyed on.  After a SEQ_RESET both must read 0.  A card
+ * without FK33_CAP_ENG_SEQ_RESET has no register here and reads 0 always,
+ * which is why the capability bit exists: on such a card the only thing
+ * that clears the engine's position is a reconfiguration, and a host that
+ * trusts a 0 here has checked nothing. */
+#define FK33_SEAM_TOK_POS         0x8Cu   /* R   llama_top tok_pos[15:0] */
 
 #define FK33_WIN_DESC             0u
 #define FK33_WIN_REL              1u
@@ -357,6 +365,13 @@ extern "C" {
 #define FK33_CAP_HBM_FETCH        (1u << 1)
 #define FK33_CAP_SAMPLER          (1u << 2)
 #define FK33_CAP_LOGITS           (1u << 3)
+#define FK33_CAP_ENG_SEQ_RESET    (1u << 4)  /* CTRL SEQ_RESET reaches the
+                                              * engine (clears its tok_pos,
+                                              * re-arms the KV sequence reset)
+                                              * and FK33_SEAM_TOK_POS exists.
+                                              * Without it a card runs ONE
+                                              * sequence per reconfiguration,
+                                              * silently (2026-09-19). */
 
 /* FAULTS.  Every bit is a DEFECT, not a statistic, and every one is SILENT in
  * the arithmetic -- which is the whole reason they get a register rather than
@@ -402,7 +417,12 @@ extern "C" {
 
 /* CTRL, write-only, every bit self-clearing. */
 #define FK33_CTRL_GO              (1u << 0)
-#define FK33_CTRL_SEQ_RESET       (1u << 1)  /* invalidate KV, seq pos -> 0 */
+#define FK33_CTRL_SEQ_RESET       (1u << 1)  /* invalidate KV, seq pos -> 0.
+                                              * IDLE ONLY: ignored entirely
+                                              * while a token runs.  Reaches
+                                              * the engine's own position only
+                                              * with FK33_CAP_ENG_SEQ_RESET;
+                                              * read FK33_SEAM_TOK_POS back. */
 #define FK33_CTRL_LOGITS_ALL      (1u << 2)  /* write logits for EVERY step,
                                               * not only the last one.
                                               * NOT IMPLEMENTED in v2: there

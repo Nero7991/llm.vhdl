@@ -1280,6 +1280,12 @@ SEAM_TO_CARD = [
     # gen_fk33_card.py; until it exists there, check_card_pins() below refuses
     # to emit a card-on build rather than wiring a pin that is not there.
     ("d_bcb_base",   "bst_const_base"),
+    # THE ENGINE'S PER-SEQUENCE RESET, ADDED 2026-09-19.  fk33_seam's
+    # SEQ_RESET used to clear only the seam's own position; llama_top's
+    # `tok_pos` was cleared by nothing but the PCIe link reset, so every
+    # token after the first ran B at tk0 = 0
+    # (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
+    ("d_seq_rst",    "seq_rst"),
 ]
 
 

@@ -168,6 +168,14 @@ static void usage(void)
       "Simulated transport unless --allow-hardware is given by a human.\n");
 }
 
+static int g_embed_bias = 0;
+static int embed_biased(void *user, int tok, int16_t *mant, int n_embd, int32_t *exp)
+{
+    int rc = pl_embed_mv4i(user, tok, mant, n_embd, exp);
+    if (!rc) *exp += g_embed_bias;
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     const char *prompt_path = NULL, *ref_path = NULL, *qtk_path = NULL;
@@ -179,6 +187,7 @@ int main(int argc, char **argv)
     int teeth_bias = 0;
     const char *hw_token = NULL;
     int open_only = 0, go_timeout_ms = 0, resume = 0, seq_reset = 0;
+    int x_exp_bias = 0;
     int stop_id = QWEN35_EOS, stop_given = 0;
     int *prompt = NULL, *ref = NULL, *got = NULL;
     int n_prompt = 0, n_ref = 0, n_got = 0, cap_got = 0;
@@ -213,6 +222,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--open-only"))    open_only = 1;
         else if (!strcmp(a, "--resume"))       resume = 1;
         else if (!strcmp(a, "--seq-reset"))    seq_reset = 1;
+        else if (!strcmp(a, "--x-exp-bias"))   { const char *s; NEXT(s); x_exp_bias = atoi(s); }
         else if (!strcmp(a, "--go-timeout-ms")) { const char *s; NEXT(s); go_timeout_ms = atoi(s); }
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else { fprintf(stderr, "run_prompt: unknown argument %s\n", a); usage(); return 2; }
@@ -310,6 +320,18 @@ int main(int argc, char **argv)
     }
     if (manifest_path) o.manifest_path = manifest_path;
     if (emb) { o.embed = pl_embed_mv4i; o.embed_user = emb; }
+    if (x_exp_bias) {
+        /* A PROBE, 2026-09-19: hand the card the SAME mantissas with a
+         * different block exponent, so X's value is scaled by 2^-bias while
+         * rmsnorm (scale-free) keeps XN, and so B, ER, identical.  The one
+         * thing that changes is the residual's alignment gap between X and
+         * ER, which is what the card's first wrong step exercised and every
+         * matching probe did not. */
+        if (!emb) { fprintf(stderr, "run_prompt: --x-exp-bias needs --mv4i\n"); status = 2; goto done; }
+        g_embed_bias = x_exp_bias;
+        o.embed = embed_biased;
+        printf("x-exp-bias %+d applied to the host X exponent (a probe)\n", x_exp_bias);
+    }
     if (max_chunk > 0) o.max_chunk = (uint32_t)max_chunk;
 
     if (pl_open(&o, &c) != 0 || !c) {
@@ -322,8 +344,15 @@ int main(int argc, char **argv)
          * history, B's tk0) is NOT reset by this; only a reconfiguration
          * does that.  Fine for a probe program that never reaches C or B. */
         int r = pl_seq_reset(c);
-        printf("seq-reset  seam position cleared (rc %d); the card's own "
-               "history is NOT cleared\n", r);
+        if (r == 0)
+            printf("seq-reset  seam AND engine positions cleared (TOK_POS "
+                   "read back 0): the next token is a first token\n");
+        else if (r == 1)
+            printf("seq-reset  SEAM ONLY (rc 1): this bitstream cannot reset "
+                   "the engine's tok_pos; the next token is a first token "
+                   "only if the card was reconfigured since its last one\n");
+        else
+            printf("seq-reset  FAILED rc %d (see stderr)\n", r);
     }
     if (resume) {
         int p = pl_resume_pos(c);

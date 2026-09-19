@@ -246,6 +246,17 @@ entity fk33_seam is
     d_host_x_exp : out signed(EXP_W-1 downto 0);
     d_rel_mask   : out std_logic_vector(NREG-1 downto 0);
     d_tok_ack    : out std_logic;
+    -- THE ENGINE'S PER-SEQUENCE RESET, 2026-09-19.  A one-cycle pulse on
+    -- CTRL bit 1 (SEQ_RESET) while not `running`; drives llama_top's
+    -- `seq_rst`, which clears its `tok_pos` and re-arms C's KV sequence
+    -- reset.  Until this existed SEQ_RESET cleared only this block's
+    -- `cur_pos` and the engine's position was cleared by `rst` alone --
+    -- the PCIe link reset -- so a host got one sequence per reconfiguration
+    -- and every later token ran B at tk0 = 0
+    -- (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
+    -- A SEQ_RESET while `running` is ignored entirely (neither counter
+    -- clears); the host reads A_SEQ_POS and A_TOK_POS back to know.
+    d_seq_rst    : out std_logic;
     -- HBM bases for A's descriptor arena and B's recurrent state.  Widths are
     -- the card's port widths (fk33_card.vhd:146 and :88), stated as plain
     -- literals rather than derived, because a block-design port width may be
@@ -408,6 +419,13 @@ architecture rtl of fk33_seam is
   -- would otherwise be refused every GO.
   constant A_BCB_LO     : natural := 16#84#;  -- RW  bst_const_base[31:0]
   constant A_BCB_HI     : natural := 16#88#;  -- RW  bst_const_base[32]
+  -- THE ENGINE'S OWN POSITION, READ-ONLY, ADDED 2026-09-19.  `obs_tok_pos`
+  -- had reached this block as a port since the card existed and was mapped
+  -- to nothing, so the position B and C actually ran at was unobservable
+  -- from the host while SEQ_POS above reported this block's.  The two are
+  -- different counters; after a SEQ_RESET both must read 0, and a host
+  -- that reads only one has checked only one.
+  constant A_TOK_POS    : natural := 16#8C#;  -- R   llama_top's tok_pos
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -418,6 +436,7 @@ architecture rtl of fk33_seam is
   --   bit 1  HBM pointer fetch (X_BASE/L_BASE/DESC_PTR) present
   --   bit 2  sampler argmax published
   --   bit 3  full logits egress present
+  --   bit 4  SEQ_RESET reaches the engine (d_seq_rst) and A_TOK_POS exists
   -- CORRECTED 2026-09-11: was x"00000005", which SET bit 2 and told every host
   -- this bitstream publishes a sampler argmax.  It does not.  The card leaves
   -- `SMP_EN` at llama_top's default of FALSE, which ties the entire logits
@@ -439,7 +458,7 @@ architecture rtl of fk33_seam is
   -- half of the same rule, and tools/check_seam_regs.py enforces BOTH
   -- directions from gen_fk33_card.py's SMP_EN rather than from a constant
   -- here, so neither the claim nor its retraction can drift from the design.
-  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000000D";
+  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000001D";
 
   -- seam error codes, `server/fk33_seam.h`
   constant EC_NONE  : natural := 0;
@@ -547,6 +566,7 @@ architecture rtl of fk33_seam is
 
   signal go_r       : std_logic := '0';
   signal abort_r    : std_logic := '0';
+  signal seqrst_r   : std_logic := '0';
   signal ack_r      : std_logic := '0';
 
   -- release-mask index.  Cleared at `go`, advanced at `obs_issue`.
@@ -596,6 +616,7 @@ begin
   -- ====================================================================
   d_go         <= go_r;
   d_abort      <= abort_r;
+  d_seq_rst    <= seqrst_r;
   d_tok_ack    <= ack_r;
   d_tbl_len    <= r_tbl_len;
   d_host_x_exp <= r_x_exp;
@@ -699,6 +720,7 @@ begin
       -- ---- one-cycle strobes ------------------------------------------
       go_r    <= '0';
       abort_r <= '0';
+      seqrst_r <= '0';
       -- ack_r is NOT a strobe any more; it is assigned from d_tok_done below.
       xw_we   <= '0';
 
@@ -840,9 +862,14 @@ begin
                 st_err  <= '0';
                 st_code <= (others => '0');
               end if;
-              if dat(1) = '1' then          -- SEQ_RESET
+              -- SEQ_RESET, IDLE ONLY (narrowed 2026-09-19; it used to clear
+              -- `cur_pos` whatever the state, which mid-token would have
+              -- made the NEXT GO's position check refuse).  The host reads
+              -- A_SEQ_POS and A_TOK_POS back to know whether it landed.
+              if dat(1) = '1' and running = '0' then
                 cur_pos   <= (others => '0');
                 r_seq_pos <= (others => '0');
+                seqrst_r  <= '1';             -- the engine's, see d_seq_rst
               end if;
               if dat(0) = '1' then          -- GO
                 -- Clear the previous token's verdict FIRST, so a stale DONE
@@ -1021,6 +1048,7 @@ begin
             when A_CYCLES     => rv := std_logic_vector(r_cycles);
             when A_STEPS_ISS  => rv := x"0000" & std_logic_vector(r_steps_iss);
             when A_ISSUE_CYC  => rv := std_logic_vector(r_issue_cyc);
+            when A_TOK_POS    => rv := x"0000" & std_logic_vector(obs_tok_pos);
             when A_ARGMAX     => rv := std_logic_vector(r_argmax);
             when A_LOGIT_EXP  => rv := std_logic_vector(resize(r_logit_e, 32));
             when A_SMP_N      => rv := std_logic_vector(r_smp_n);

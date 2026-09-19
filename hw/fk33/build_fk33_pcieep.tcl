@@ -1341,17 +1341,17 @@ connect_bd_intf_net [get_bd_intf_pins engctl/M00_AXI]   [get_bd_intf_pins eng/s_
 # and the seam register behind it would then drive nothing.  The names
 # were checked against fk33_card.vhd when this file was generated; this
 # checks them against the entity Vivado actually inferred.
-foreach fk33_sp {fk33_seam_0/d_busy fk33_seam_0/d_tok_done fk33_seam_0/d_err fk33_seam_0/d_err_code fk33_seam_0/d_err_step fk33_seam_0/d_steps_done fk33_seam_0/d_raddr fk33_seam_0/d_ren fk33_seam_0/hr_data fk33_seam_0/obs_issue fk33_seam_0/obs_tok_pos fk33_seam_0/smp_token fk33_seam_0/smp_n fk33_seam_0/smp_exp fk33_seam_0/f_smp_ovf fk33_seam_0/f_lost_beat fk33_seam_0/f_gate_drop fk33_seam_0/f_unit_stub fk33_seam_0/f_e_coll fk33_seam_0/f_kv_err fk33_seam_0/d_go fk33_seam_0/d_abort fk33_seam_0/d_tbl_len fk33_seam_0/d_host_x_exp fk33_seam_0/d_rel_mask fk33_seam_0/d_tok_ack fk33_seam_0/d_rdata fk33_seam_0/d_rvalid fk33_seam_0/hw_we fk33_seam_0/hw_reg fk33_seam_0/hw_addr fk33_seam_0/hw_data fk33_seam_0/hr_reg fk33_seam_0/hr_addr fk33_seam_0/d_a_arena fk33_seam_0/d_bst_base fk33_seam_0/d_bcb_base} {
+foreach fk33_sp {fk33_seam_0/d_busy fk33_seam_0/d_tok_done fk33_seam_0/d_err fk33_seam_0/d_err_code fk33_seam_0/d_err_step fk33_seam_0/d_steps_done fk33_seam_0/d_raddr fk33_seam_0/d_ren fk33_seam_0/hr_data fk33_seam_0/obs_issue fk33_seam_0/obs_tok_pos fk33_seam_0/smp_token fk33_seam_0/smp_n fk33_seam_0/smp_exp fk33_seam_0/f_smp_ovf fk33_seam_0/f_lost_beat fk33_seam_0/f_gate_drop fk33_seam_0/f_unit_stub fk33_seam_0/f_e_coll fk33_seam_0/f_kv_err fk33_seam_0/d_go fk33_seam_0/d_abort fk33_seam_0/d_tbl_len fk33_seam_0/d_host_x_exp fk33_seam_0/d_rel_mask fk33_seam_0/d_tok_ack fk33_seam_0/d_rdata fk33_seam_0/d_rvalid fk33_seam_0/hw_we fk33_seam_0/hw_reg fk33_seam_0/hw_addr fk33_seam_0/hw_data fk33_seam_0/hr_reg fk33_seam_0/hr_addr fk33_seam_0/d_a_arena fk33_seam_0/d_bst_base fk33_seam_0/d_bcb_base fk33_seam_0/d_seq_rst} {
     if {![llength [get_bd_pins -quiet $fk33_sp]]} {
         error "FK33_SEAMWIRE FAIL: seam pin $fk33_sp does not exist on the inferred fk33_seam.  Its card pin would be left with no driver, i.e. ZERO."
     }
 }
-foreach fk33_cp {card/busy card/tok_done card/err card/err_code card/err_step card/steps_done card/d_raddr card/d_ren card/hr_data card/obs_issue card/obs_tok_pos card/smp_token card/smp_n card/smp_exp card/err_smp_ovf card/err_lost_beat card/err_gate_drop card/err_unit_stub card/err_e_coll card/kv_err card/go card/abort card/tbl_len card/host_x_exp card/rel_mask card/tok_ack card/d_rdata card/d_rvalid card/hw_we card/hw_reg card/hw_addr card/hw_data card/hr_reg card/hr_addr card/a_arena_base card/bst_state_base card/bst_const_base} {
+foreach fk33_cp {card/busy card/tok_done card/err card/err_code card/err_step card/steps_done card/d_raddr card/d_ren card/hr_data card/obs_issue card/obs_tok_pos card/smp_token card/smp_n card/smp_exp card/err_smp_ovf card/err_lost_beat card/err_gate_drop card/err_unit_stub card/err_e_coll card/kv_err card/go card/abort card/tbl_len card/host_x_exp card/rel_mask card/tok_ack card/d_rdata card/d_rvalid card/hw_we card/hw_reg card/hw_addr card/hw_data card/hr_reg card/hr_addr card/a_arena_base card/bst_state_base card/bst_const_base card/seq_rst} {
     if {![llength [get_bd_pins -quiet $fk33_cp]]} {
         error "FK33_SEAMWIRE FAIL: card pin $fk33_cp does not exist on the inferred fk33_card.  The seam register behind it would reach nothing, and a card input with a VHDL default draws no BD 41-759 when left unconnected."
     }
 }
-puts "FK33_SEAMWIRE 37 seam<->card pins exist on both cells"
+puts "FK33_SEAMWIRE 38 seam<->card pins exist on both cells"
 connect_bd_net [get_bd_pins fk33_seam_0/d_busy] [get_bd_pins card/busy]
 connect_bd_net [get_bd_pins fk33_seam_0/d_tok_done] [get_bd_pins card/tok_done]
 connect_bd_net [get_bd_pins fk33_seam_0/d_err] [get_bd_pins card/err]
@@ -1389,6 +1389,7 @@ connect_bd_net [get_bd_pins fk33_seam_0/hr_addr] [get_bd_pins card/hr_addr]
 connect_bd_net [get_bd_pins fk33_seam_0/d_a_arena] [get_bd_pins card/a_arena_base]
 connect_bd_net [get_bd_pins fk33_seam_0/d_bst_base] [get_bd_pins card/bst_state_base]
 connect_bd_net [get_bd_pins fk33_seam_0/d_bcb_base] [get_bd_pins card/bst_const_base]
+connect_bd_net [get_bd_pins fk33_seam_0/d_seq_rst] [get_bd_pins card/seq_rst]
 
 # ---- B and C onto the grant -----------------------------------------------
 connect_bd_net [get_bd_pins bcgrant/b_arvalid] [get_bd_pins card/bst_arvalid]

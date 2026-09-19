@@ -1097,6 +1097,15 @@ def main(argv=None):
                          "numbers the reference computes for it.  Added "
                          "2026-09-18 to split the ga_desc region drain from "
                          "subsystem B at the first mismatching step")
+    ap.add_argument("--override", action="append", default=[],
+                    metavar="STEP:FIELD=VALUE",
+                    help="set one Step field of kept step STEP (index in the "
+                         "selection) before encoding, e.g. 9:src2=Z or "
+                         "11:n_rows=64.  Region-valued fields (src, src2, "
+                         "dst) take a name from RNAME; others an integer.  A "
+                         "PROBE TOOL, added 2026-09-19 to run VEC_RES with a "
+                         "different second operand on the card; never for a "
+                         "shipping program, which is why it prints loudly")
     ap.add_argument("--close-token", action="store_true",
                     help="append an END_TOKEN so a LAYER SLICE is a runnable "
                          "table.  seq_desc_fetch enforces END_TOKEN-last in "
@@ -1252,6 +1261,33 @@ def main(argv=None):
         sel = sel[:a.upto]
         if sel[-1].opcode == OP_END_TOKEN and a.upto < len(steps):
             raise SystemExit("gen_layer_program: --upto landed on END_TOKEN")
+    for ov in a.override:
+        try:
+            si, rest = ov.split(":", 1)
+            fld, val = rest.split("=", 1)
+            si = int(si)
+        except ValueError:
+            raise SystemExit("gen_layer_program: --override wants "
+                             "STEP:FIELD=VALUE, got %r" % ov)
+        if si < 0 or si >= len(sel):
+            raise SystemExit("gen_layer_program: --override step %d outside "
+                             "0..%d" % (si, len(sel) - 1))
+        if fld not in Step.__slots__:
+            raise SystemExit("gen_layer_program: --override field %r is not "
+                             "a Step field" % fld)
+        if fld in ("src", "src2", "dst"):
+            if val not in RNAME:
+                raise SystemExit("gen_layer_program: --override %s wants a "
+                                 "region name (%s)" % (fld, " ".join(RNAME)))
+            nv = RNAME.index(val)
+        elif fld == "tensor":
+            nv = val
+        else:
+            nv = int(val, 0)
+        print("OVERRIDE step %d (%s) %s: %r -> %r"
+              % (sel[si].idx, OPNAME[sel[si].opcode], fld,
+                 getattr(sel[si], fld), nv))
+        setattr(sel[si], fld, nv)
     if a.probe_dup_src is not None:
         if not a.probe_smp:
             raise SystemExit("gen_layer_program: --probe-dup-src needs "

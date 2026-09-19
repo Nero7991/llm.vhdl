@@ -480,7 +480,15 @@ static int sim_reg_read32(void *c, uint32_t off, uint32_t *v)
          * reading 0 on a v1 model is reading the truth about it. */
         *v = s->o.caps_flags ? s->o.caps_flags
            : (s->o.version >= 2 ? (FK33_CAP_WINDOWS | FK33_CAP_SAMPLER
-                                   | FK33_CAP_LOGITS) : 0u);
+                                   | FK33_CAP_LOGITS
+                                   | FK33_CAP_ENG_SEQ_RESET) : 0u);
+        return 0;
+    case FK33_SEAM_TOK_POS:
+        /* The engine's own position.  This model has one counter where the
+         * card has two (the seam's cur_pos and llama_top's tok_pos), so it
+         * reports the same number for both -- which is exactly the property
+         * the card's fix restores (rtl/fk33_seam.vhd A_TOK_POS, 2026-09-19). */
+        *v = (uint32_t)s->next_pos & 0xFFFFu;
         return 0;
     case FK33_SEAM_WIN_ADDR:   *v = s->win_addr; return 0;
     case FK33_SEAM_WIN_SEL:    *v = s->win_sel; return 0;

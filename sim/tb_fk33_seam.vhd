@@ -220,6 +220,10 @@ architecture tb of tb_fk33_seam is
   signal s_a_arena  : std_logic_vector(39 downto 0);
   signal s_bst_base : std_logic_vector(32 downto 0);
   signal s_bcb_base : std_logic_vector(32 downto 0);
+  -- P6f (2026-09-19): the engine's per-sequence reset, seam -> llama_top,
+  -- and a sticky catcher for the one-cycle pulse.
+  signal s_seq_rst    : std_logic;
+  signal seqrst_seen  : std_logic := '0';
   signal s_x_exp   : signed(EXP_W-1 downto 0);
   signal s_rel     : std_logic_vector(NREGION-1 downto 0);
   signal s_busy, s_tok_done, s_err : std_logic;
@@ -303,6 +307,7 @@ architecture tb of tb_fk33_seam is
   constant A_BST_HI   : natural := 16#78#;
   constant A_BCB_LO   : natural := 16#84#;
   constant A_BCB_HI   : natural := 16#88#;
+  constant A_TOK_POS  : natural := 16#8C#;
   constant A_WIN_SEL  : natural := 16#58#;
   constant A_WIN_ADDR : natural := 16#5C#;
   constant A_WIN_DATA : natural := 16#60#;
@@ -322,6 +327,15 @@ architecture tb of tb_fk33_seam is
 begin
 
   clk <= not clk after CLK_HALF when running else '0';
+
+  -- P6f's pulse catcher: `d_seq_rst` is one cycle wide and the stimulus
+  -- process is busy inside an AXI transaction when it fires.
+  srcatch : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if s_seq_rst = '1' then seqrst_seen <= '1'; end if;
+    end if;
+  end process;
 
   ticker : process(clk) is
   begin
@@ -403,6 +417,7 @@ begin
       clk => clk, rst => drst,
       go => s_go, abort => s_abort, tbl_len => s_tbl_len,
       host_x_exp => s_x_exp, rel_mask => s_rel, tok_ack => s_tok_ack,
+      seq_rst => s_seq_rst,
       busy => s_busy, tok_done => s_tok_done, err => s_err,
       err_code => s_err_code, err_step => s_err_step,
       steps_done => s_steps_done,
@@ -450,7 +465,7 @@ begin
       d_go => s_go, d_abort => s_abort, d_tbl_len => s_tbl_len,
       d_host_x_exp => s_x_exp, d_rel_mask => s_rel, d_tok_ack => s_tok_ack,
       d_a_arena => s_a_arena, d_bst_base => s_bst_base,
-      d_bcb_base => s_bcb_base,
+      d_bcb_base => s_bcb_base, d_seq_rst => s_seq_rst,
       d_busy => s_busy, d_tok_done => s_tok_done, d_err => s_err,
       d_err_code => s_err_code, d_err_step => s_err_step,
       d_steps_done => s_steps_done,
@@ -563,6 +578,10 @@ begin
     -- as a count that does not match the number written below (9).
     variable n_chk_bcb : natural := 0;
     variable n_bad_bcb : natural := 0;
+    -- P6f's, same discipline.
+    variable n_chk_sr  : natural := 0;
+    variable n_bad_sr  : natural := 0;
+    variable n_exp_sr  : natural;
   begin
     report "tb_fk33_seam: shape blocks=" & integer'image(SHAPE.blocks)
          & " hidden=" & integer'image(SHAPE.hidden)
@@ -612,10 +631,13 @@ begin
     -- read it.  What stops the two drifting is tools/check_seam_regs.py, which
     -- derives its expectation from the CARD's generic rather than from either
     -- copy.  If this row and that checker ever disagree, the checker wins.
-    assert iv = 13
+    -- Bit 4 (SEQ_RESET reaches the engine, A_TOK_POS exists) added
+    -- 2026-09-19, so 13 became 29.
+    assert iv = 29
       report "tb_fk33_seam: CAPS_FLAGS reads " & integer'image(iv)
-           & ", expected 13 (windows + sampler + logits; no HBM fetch)." severity error;
-    if iv /= 13 then n_bad_rback <= n_bad_rback + 1; end if;
+           & ", expected 29 (windows + sampler + logits + engine seq reset; "
+           & "no HBM fetch)." severity error;
+    if iv /= 29 then n_bad_rback <= n_bad_rback + 1; end if;
 
     -- ==================================================================
     -- P6a: A GO BEFORE ANYTHING IS PROGRAMMED MUST BE REFUSED, and it must
@@ -927,6 +949,27 @@ begin
       st := to_integer(unsigned(d));
       exit when d(0) = '1' or d(2) = '1';
       nwait := nwait + 1;
+      -- P6f, THE NEGATIVE CONTROL: a SEQ_RESET while the token RUNS must be
+      -- ignored entirely -- no pulse to the engine, the engine's position
+      -- unchanged, and (checked by the NEXT token's GO being accepted) the
+      -- seam's own position unchanged too.
+      if t = 0 and nwait = 3 then
+        axi_wi(A_CTRL, 2);
+        axi_r(A_TOK_POS, d);
+        n_chk_sr := n_chk_sr + 1;
+        if seqrst_seen /= '0' then
+          n_bad_sr := n_bad_sr + 1;
+          report "tb_fk33_seam: P6f -- SEQ_RESET while running reached the "
+               & "engine (d_seq_rst pulsed)" severity error;
+        end if;
+        n_chk_sr := n_chk_sr + 1;
+        if to_integer(unsigned(d)) /= t then
+          n_bad_sr := n_bad_sr + 1;
+          report "tb_fk33_seam: P6f -- A_TOK_POS changed under a mid-token "
+               & "SEQ_RESET: " & integer'image(to_integer(unsigned(d)))
+            severity error;
+        end if;
+      end if;
       -- THE CAP IS 20,000 AND IT IS CHOSEN FROM MEASUREMENT, not from
       -- caution.  A clean token here takes 1,720 polls, so 20,000 is a 11.6x
       -- margin, and one poll is about five cycles -- so the cap costs at most
@@ -1175,10 +1218,86 @@ begin
 
     tick(4);
 
+    -- ==================================================================
+    -- P6f: SEQ_RESET REACHES THE ENGINE, AND A_TOK_POS (0x8C) SHOWS IT.
+    -- Added 2026-09-19 after every probe token on silicon but the first
+    -- ran B at tk0 = 0, because CTRL bit 1 cleared only the seam's own
+    -- position and nothing short of the PCIe reset cleared llama_top's
+    -- (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
+    -- Here, with every token done: the register mirrors the port; it counts
+    -- the completed tokens; no pulse has fired yet (the mid-token write
+    -- above was ignored); one idle SEQ_RESET pulses the engine and both
+    -- positions read 0 afterwards.
+    -- ==================================================================
+    axi_r(A_TOK_POS, d);
+    n_chk_sr := n_chk_sr + 1;
+    if unsigned(d(15 downto 0)) /= s_obs_tok_pos then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- A_TOK_POS = "
+           & integer'image(to_integer(unsigned(d))) & " but the engine's "
+           & "obs_tok_pos is " & integer'image(to_integer(s_obs_tok_pos))
+        severity error;
+    end if;
+    if not EXPECT_WDOG then
+      n_chk_sr := n_chk_sr + 1;
+      if to_integer(unsigned(d)) /= NTOK then
+        n_bad_sr := n_bad_sr + 1;
+        report "tb_fk33_seam: P6f -- after " & integer'image(NTOK)
+             & " clean tokens A_TOK_POS reads "
+             & integer'image(to_integer(unsigned(d))) severity error;
+      end if;
+    end if;
+    n_chk_sr := n_chk_sr + 1;
+    if seqrst_seen /= '0' then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- d_seq_rst pulsed before any idle "
+           & "SEQ_RESET was written" severity error;
+    end if;
+    axi_wi(A_CTRL, 2);                 -- SEQ_RESET, idle
+    tick(4);
+    n_chk_sr := n_chk_sr + 1;
+    if seqrst_seen /= '1' then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- an idle SEQ_RESET did not pulse d_seq_rst"
+        severity error;
+    end if;
+    n_chk_sr := n_chk_sr + 1;
+    if s_obs_tok_pos /= 0 then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- the engine's tok_pos is "
+           & integer'image(to_integer(s_obs_tok_pos)) & " after SEQ_RESET"
+        severity error;
+    end if;
+    axi_r(A_TOK_POS, d);
+    n_chk_sr := n_chk_sr + 1;
+    if unsigned(d) /= 0 then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- A_TOK_POS reads "
+           & integer'image(to_integer(unsigned(d))) & " after SEQ_RESET"
+        severity error;
+    end if;
+    axi_r(A_SEQ_POS, d);
+    n_chk_sr := n_chk_sr + 1;
+    if unsigned(d) /= 0 then
+      n_bad_sr := n_bad_sr + 1;
+      report "tb_fk33_seam: P6f -- A_SEQ_POS reads "
+           & integer'image(to_integer(unsigned(d))) & " after SEQ_RESET"
+        severity error;
+    end if;
+    if EXPECT_WDOG then n_exp_sr := 8; else n_exp_sr := 9; end if;
+
     nfail := n_bad_val + n_bad_acct + n_bad_poll + n_bad_rback
-           + n_bad_land + n_bad_gate + n_bad_ack + n_bad_bcb;
+           + n_bad_land + n_bad_gate + n_bad_ack + n_bad_bcb + n_bad_sr;
     report "tb_fk33_seam: P6e bcb checks=" & integer'image(n_chk_bcb)
          & " bad=" & integer'image(n_bad_bcb) severity note;
+    report "tb_fk33_seam: P6f seq_rst checks=" & integer'image(n_chk_sr)
+         & " bad=" & integer'image(n_bad_sr) severity note;
+    if n_chk_sr /= n_exp_sr then
+      nfail := nfail + 1;
+      report "tb_fk33_seam: P6f ran " & integer'image(n_chk_sr)
+           & " checks, not the " & integer'image(n_exp_sr) & " written"
+        severity error;
+    end if;
     if n_chk_bcb /= 9 then
       nfail := nfail + 1;
       report "tb_fk33_seam: P6e ran " & integer'image(n_chk_bcb)
