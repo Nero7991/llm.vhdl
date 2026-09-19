@@ -93,6 +93,16 @@ The rules that follow from this:
   "stated explicitly", which is the same cross-configuration borrowing that
   cost three sessions on the elaboration wall. **Budget a `FK33_CARD=1` build
   at 18 GB or more, and never at the eng-only number.**
+  **MEASURED 2026-09-19, AND THE REAL NUMBER IS ABOUT 47 GB.** The card
+  build under `MemoryHigh=24G` in synthesis: cgroup `memory.current`
+  23.5 GB AND `memory.swap.current` 23.9 GB at the same instant, box swap
+  27 of 31 GB. Every figure above counted RESIDENT memory only, and a capped
+  job's resident set is the cap; the rest was in the swapfile the whole
+  time. **The build fits this box only because of 31 GB of swap, and a
+  second large job beside it fills that swap.** Run it alone, put a guard
+  on swap-in-use (kill the unit at 30 GB, `$SD/build6/swapguard.sh` is the
+  shape), and read `memory.swap.current` next to `memory.current` before
+  quoting any footprint.
 - **A composed `route_design` left `free physical = 233 MB` while ALONE on the
   box** (MEASURED 2026-08-30, TRACK TIMING). Six of those were running
   concurrently when the box hung. **A tool that leaves 233 MB when it is the
