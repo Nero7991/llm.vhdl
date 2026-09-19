@@ -360,7 +360,7 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0
 set_property CONFIG.RESET_TYPE ACTIVE_LOW [get_bd_cells /clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT1_USED {true} CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100.000}] [get_bd_cells clk_wiz_0]
 set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
-set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]
+set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {75.000}] [get_bd_cells clk_wiz_0]
                                                                                                      
 create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_hbm
 set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]
@@ -999,6 +999,20 @@ connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/g
 # wiring: the thermal halt, the activation write port and the 40 -> 33 bit
 # address truncation.
 create_bd_cell -type module -reference fk33_engine eng
+
+# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a
+# generic as a CONFIG property; `-generic` on synth_design would reach
+# only the top and never this instance (fk33_engine.vhd:67).
+set_property CONFIG.CB_STYLE {distributed} [get_bd_cells eng]
+# READ BACK.  Vivado silently ignores a set_property whose target did
+# not match, and this file already does this for every other CONFIG it
+# sets.  A lever that was quietly not applied looks exactly like a
+# lever that did not work.
+set _cb [get_property CONFIG.CB_STYLE [get_bd_cells eng]]
+if {$_cb ne "distributed"} {
+    error "FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \"$_cb\", not distributed"
+}
+puts "FK33_CB_STYLE $_cb"
 
 # x_exp FROM THE PORT, not the descriptor (FK33_CARD).  Same mechanism as
 # CB_STYLE: a generic on a module-reference cell is a CONFIG property.

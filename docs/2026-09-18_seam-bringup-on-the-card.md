@@ -163,13 +163,31 @@ own GO bounds at `:746-761` require `505 <= REL_ENT 576` and
 `505 * 8 = 4040 <= DESC_WORDS 4608`. **The window in this bitstream is sized
 for exactly this program.**
 
-Then write it and read it back. **There is no host tool for this step yet** --
-`server/pl_backend.c` does it (`ace2ce6`) but only over the simulated or
-file transport, because nothing in this tree may open `/dev/xdma*`. Driving it
-against the card means passing `FK33_ALLOW_HARDWARE` from your own caller,
-which is a deliberate act and is yours: see the tripwire in
-`server/fk33_transport.h`, and **do not add the token to a script, a test or a
-default.**
+Then write it and read it back. **As of 17:50 there IS a host tool for this
+step**: `server/run_prompt --open-only`, which is `pl_open` and nothing else.
+It reads VERSION and CAPS, streams the two windows, reads `WIN_ADDR` back
+after each and refuses on a mismatch, writes `TBL_LEN`, and writes the two
+HBM bases out of the manifest. No GO. Build it once (`make -C server
+run_prompt`), then:
+
+```
+server/run_prompt --open-only --allow-hardware HOST --v2 \
+    --dtbl token.dtbl --rel token.rel \
+    --prompt hw/fk33/results/goal_dcdc_2026-09-17/prompt_tokens.txt \
+    --manifest /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json
+```
+
+**`--allow-hardware HOST` is the operator typing the transport's token.** The
+program packs the four letters you type into the `allow_hardware` word and
+does not reference `FK33_ALLOW_HARDWARE` itself, so it cannot open the card
+unless a person supplies the word at the prompt; a wrong word is refused by
+the transport with its own message. The tripwire in `server/fk33_transport.h`
+is unchanged: no test, no default, no script carries the token.
+
+Expect `card  seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ...` and
+then `OPEN_ONLY program streamed and read back, bases written, no GO issued.
+h2c 34340 B` (8,080 + 505 halves x 4 B). MEASURED against the simulated card
+with the same program; the card is the first real run.
 
 What the sequence is, in register terms, so it can be done by hand:
 
@@ -258,13 +276,53 @@ not arise.
 Not runnable on the 19:04 build. Recorded here so the order is one document.
 
 6. `fk33ctl.py seam` must show `cap flags 0x0000000D` and `yes SAMPLER`.
-7. Load the weights: `fk33_load_weights.py load <manifest> --verify`.
-   250 objects, 4.18 GiB. The A descriptor arena is separate and is written
-   once per model load.
-8. One token, argmax read from `BAR+0xE044`, compared against `ref/run9b`.
-9. Prefill 23 + decode, against
-   `hw/fk33/results/goal_dcdc_2026-09-17/reference_tokens.txt`. The useful
-   output is the FIRST DIVERGENCE position, not pass or fail.
+7. Load the weights AND the descriptor arena. **The FLAT `noembd` manifest,
+   not the striped one**: the bitstream's K/V bases are generics derived from
+   the flat manifest's `kv_base 0x1_0D93_E000` (`C_K_BASE_CH = 282672640`),
+   and the striped image's weights end at `0x1_ABDE_4000`, so the striped
+   image would have the K cache written over `blk.*` tensors. Bandwidth is
+   the striped layout's whole point (11.09x, MEASURED 2026-08-30) and it will
+   need a bitstream built for its manifest; correctness first.
+
+   ```
+   python3 hw/fk33/host/fk33_load_weights.py load \
+       /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json --verify
+   ```
+   250 objects, 4.18 GiB, verified back over the other DMA engine.
+
+   The A descriptor arena is separate (159,232 B, 311 slots of 512 B at
+   `hbm.desc_arena_base = 0x1_FFAD_D000`) and is written once per model
+   load. `gen_layer_program.py --arena-image` (added 17:57) emits it as one
+   file, in the order the card counts, refusing a hole, a wrong offset or a
+   wrong v2 stamp (five mutants and a control, MEASURED):
+   ```
+   python3 tools/gen_layer_program.py --token --shape 9b \
+       --manifest /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json \
+       --x-exp 0 --d-table token.dtbl --rel-file token.rel --arena-image arena.bin
+   python3 hw/fk33/host/fk33ctl.py load arena.bin --offset 0x1FFADD000 --verify
+   ```
+   The offset is printed by the generator; do not type it from memory.
+   `--x-exp 0` is dead on a `USE_XEXP_PORT` bitstream and BAKED on this one
+   (the 11:28 build); see the last section.
+
+8. One token, argmax read from `BAR+0xE044`. `run_prompt` with `--max-new 1`
+   does exactly this and compares against the reference's first id:
+   ```
+   server/run_prompt --allow-hardware HOST --v2 \
+       --dtbl token.dtbl --rel token.rel \
+       --prompt hw/fk33/results/goal_dcdc_2026-09-17/prompt_tokens.txt \
+       --reference hw/fk33/results/goal_dcdc_2026-09-17/reference_tokens.txt \
+       --manifest /mnt/storage/llama-models/qwen35-9b-mv4i-noembd/manifest.json \
+       --mv4i /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i \
+       --qtk build_artifacts_tok/qwen35_9b.qtk --max-new 1
+   ```
+   That is 23 prefill GOs plus one decode GO, each carrying 4,096 MMIO writes
+   of the activation row. Read `fk33ctl.py thermal` and `fk33ctl.py seam`
+   (STATUS, FAULTS) afterwards; a wrong id with a non-zero trip count or a
+   non-zero FAULTS is not evidence about the arithmetic.
+
+9. The same with `--max-new 64` (then the full 1,197). The useful output is
+   `FIRST DIVERGENCE`, not pass or fail.
 
 ---
 

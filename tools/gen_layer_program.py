@@ -969,6 +969,65 @@ def write_hex(path, words):
             fp.write("%016X\n" % w)
 
 
+def write_arena_image(path, ajobs, desc_base, mani):
+    """The 311 descriptors as one HBM image, in the order the card counts.
+
+    The card computes descriptor n's address as BASE + n*STRIDE
+    (rtl/a_desc_adapter.vhd), so the image is the arena's bytes from BASE
+    onward, one slot per A job, dense.  Every slot is checked to land where
+    that arithmetic will look: slot i at i*stride, stride from the manifest,
+    and the stamped job_index (extension word 3, descriptor version 2) equal
+    to i, so that an image whose order disagrees with the card's counter is
+    refused HERE rather than by EC_DESC / ED_JOB_INDEX at run time.
+    """
+    stride = int(mani["hbm"].get("desc_arena_stride", 512))
+    n_slots = int(mani["hbm"].get("desc_arena_jobs", 0))
+    ok = [j for j in ajobs if j.get("ok") and j.get("desc") is not None]
+    bad = [j for j in ajobs if not j.get("ok")]
+    if bad:
+        raise SystemExit("gen_layer_program: --arena-image refused: %d A job(s) "
+                         "were refused (first: step %d %s: %s).  An arena with "
+                         "a hole is a job that fetches zeros."
+                         % (len(bad), bad[0]["step"], bad[0]["tensor"],
+                            bad[0]["reason"]))
+    if n_slots and len(ok) != n_slots:
+        raise SystemExit("gen_layer_program: --arena-image refused: %d "
+                         "descriptors for an arena the manifest sizes at %d "
+                         "slots (hbm.desc_arena_jobs).  The card counts jobs "
+                         "per token and the arena was sized for the whole "
+                         "token; a partial program is not loadable as one."
+                         % (len(ok), n_slots))
+    img = bytearray(len(ok) * stride)
+    for i, j in enumerate(ok):
+        off = j["desc_addr"] - desc_base
+        if off != i * stride:
+            raise SystemExit("gen_layer_program: --arena-image: descriptor %d "
+                             "(step %d) sits at arena offset %d, expected %d "
+                             "= %d * %d" % (i, j["step"], off, i * stride, i,
+                                            stride))
+        blob = j["desc"].to_bytes()
+        if len(blob) > stride:
+            raise SystemExit("gen_layer_program: --arena-image: descriptor %d "
+                             "is %d bytes, over the %d-byte stride"
+                             % (i, len(blob), stride))
+        # The v2 stamp, read from the WORDS rather than from a fields entry:
+        # `fields` carries no job_index, and a .get() on it would have made
+        # this check a no-op that reads as a check.  ext word 3 [31:0] per
+        # gen_mv4i_desc.build_descriptor.
+        stamped = j["desc"].words[j["desc"].ext0 + 3] & 0xFFFFFFFF
+        if stamped != i:
+            raise SystemExit("gen_layer_program: --arena-image: descriptor %d "
+                             "(step %d) is stamped job_index %d; the card "
+                             "would refuse it with ED_JOB_INDEX"
+                             % (i, j["step"], stamped))
+        img[off:off + len(blob)] = blob
+    with open(path, "wb") as fp:
+        fp.write(bytes(img))
+    print("A arena image %s: %d descriptors x %d B stride = %d B; load at "
+          "HBM 0x%X (hbm.desc_arena_base)" % (path, len(ok), stride, len(img),
+                                              desc_base))
+
+
 def write_rel(path, steps, nreg=NREGION):
     with open(path, "w") as fp:
         for st in steps:
@@ -1079,6 +1138,16 @@ def main(argv=None):
                          "seq_tbl_pkg.A_NPORTS_W")
     ap.add_argument("--nsub-s", type=int, default=None)
     ap.add_argument("--outdir", default=None)
+    ap.add_argument("--arena-image", default=None,
+                    help="write the whole A descriptor arena as ONE binary "
+                         "image: every emitted descriptor at (desc_addr - "
+                         "arena base), little-endian 64-bit words, slots "
+                         "zero-padded to the stride.  Load it with "
+                         "fk33ctl.py load IMAGE --offset <hbm.desc_arena_base> "
+                         "--verify; the offset is printed.  Refused if any "
+                         "A job was refused, because a hole in the arena is "
+                         "a job that fetches zeros and fails EC_DESC at a "
+                         "position the host cannot predict.")
     ap.add_argument("--d-table", default=None, help="write the D table here")
     ap.add_argument("--rel-file", default=None)
     ap.add_argument("--json", default=None)
@@ -1200,6 +1269,8 @@ def main(argv=None):
                 write_hex(os.path.join(
                     outdir, "a%02d_%s.hex" % (j["step"], j["tensor"])),
                     j["desc"].words)
+        if a.arena_image:
+            write_arena_image(a.arena_image, ajobs, desc_base, mani)
 
     # ---- report -----------------------------------------------------------
     if a.print:

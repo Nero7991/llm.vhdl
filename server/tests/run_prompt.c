@@ -57,9 +57,24 @@
  * lm_head's shards and the host just scans a row -- and the check acquires
  * meaning in the clean case too.
  *
- * NO HARDWARE.  This file never names a /dev path and never sets
- * allow_hardware; the transport stays at pl_open_opts_default's simulated one.
- * See the tripwire in server/fk33_transport.h.
+ * HARDWARE, ONLY WHEN A HUMAN TYPES THE TOKEN.  By default this file never
+ * opens a /dev path; the transport is pl_open_opts_default's simulated one.
+ * `--allow-hardware <TOKEN>` switches to the /dev/xdma0_* char devices and
+ * passes the token THE OPERATOR TYPED, packed from its four ASCII characters,
+ * as `allow_hardware`.  The literal FK33_ALLOW_HARDWARE is deliberately NOT
+ * referenced here: this program cannot open the card unless the person at the
+ * prompt supplies the word the transport wants, and a wrong word is refused by
+ * the transport with its own message.  That keeps the tripwire in
+ * server/fk33_transport.h where it was -- in no test, no default and no
+ * script -- while giving the bring-up procedure
+ * (docs/2026-09-18_seam-bringup-on-the-card.md, steps 4, 8 and 9) a program
+ * to run.  Added 2026-09-18, the day the first bitstream with the sampler and
+ * the window seam was loaded.
+ *
+ * `--open-only` is step 4 on its own: pl_open streams the program into the
+ * DESC and REL windows, reads WIN_ADDR back after each and refuses on a
+ * mismatch, writes TBL_LEN and the two HBM bases from the manifest, and this
+ * program then prints pl_describe() and exits without a GO.
  *
  * Usage:
  *   run_prompt --prompt <ids.txt> [--reference <ids.txt>] [--max-new N]
@@ -67,6 +82,7 @@
  *              [--check-argmax] [--max-chunk N] [--stop ID] [--quiet]
  *              [--v2 --dtbl <token.dtbl> --rel <token.rel>]
  *              [--teeth-argmax N]
+ *              [--allow-hardware <TOKEN>] [--open-only] [--go-timeout-ms N]
  *
  * An id file is whitespace-separated decimal integers; # to end of line is a
  * comment, so the committed artefacts can carry their own provenance.
@@ -142,7 +158,12 @@ static void usage(void)
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
       "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
       "                  [--teeth-argmax N]   self-test of --check-argmax\n"
-      "Simulated transport only; this program never opens the card.\n");
+      "                  [--allow-hardware <TOKEN>]  /dev/xdma0_*; the operator\n"
+      "                        types the transport's four-letter token\n"
+      "                  [--open-only]        stream the program, write the\n"
+      "                        bases, read WIN_ADDR back, then exit (no GO)\n"
+      "                  [--go-timeout-ms N]  per-GO wait (default 60000)\n"
+      "Simulated transport unless --allow-hardware is given by a human.\n");
 }
 
 int main(int argc, char **argv)
@@ -154,6 +175,8 @@ int main(int argc, char **argv)
     int n_dprog = 0, n_drel = 0, want_v2 = 0;
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
+    const char *hw_token = NULL;
+    int open_only = 0, go_timeout_ms = 0;
     int stop_id = QWEN35_EOS, stop_given = 0;
     int *prompt = NULL, *ref = NULL, *got = NULL;
     int n_prompt = 0, n_ref = 0, n_got = 0, cap_got = 0;
@@ -184,6 +207,9 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
+        else if (!strcmp(a, "--allow-hardware")) NEXT(hw_token);
+        else if (!strcmp(a, "--open-only"))    open_only = 1;
+        else if (!strcmp(a, "--go-timeout-ms")) { const char *s; NEXT(s); go_timeout_ms = atoi(s); }
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else { fprintf(stderr, "run_prompt: unknown argument %s\n", a); usage(); return 2; }
         #undef NEXT
@@ -248,6 +274,30 @@ int main(int argc, char **argv)
     }
     pl_open_opts_default(&o);
     o.sim_opts = &sim;                 /* simulated transport; see the header */
+    if (hw_token) {
+        /* The operator's word, packed big-endian: "HOST" -> 0x484F5354.  No
+         * constant from fk33_transport.h appears here on purpose; if the word
+         * is wrong the transport refuses and says why. */
+        size_t n = strlen(hw_token);
+        uint32_t tok32 = 0;
+        size_t k;
+        if (n != 4) {
+            fprintf(stderr, "run_prompt: --allow-hardware takes the transport's"
+                            " four-letter token, got %zu characters\n", n);
+            status = 2; goto done;
+        }
+        for (k = 0; k < 4; k++) tok32 = (tok32 << 8) | (uint8_t)hw_token[k];
+        o.transport = PL_TRANSPORT_CHARDEV;
+        o.allow_hardware = tok32;
+        if (teeth_bias) {
+            fprintf(stderr, "run_prompt: --teeth-argmax is a sim self-test and"
+                            " cannot be combined with --allow-hardware\n");
+            status = 2; goto done;
+        }
+        printf("transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator"
+               " token supplied)\n");
+    }
+    if (go_timeout_ms > 0) o.go_timeout_ms = go_timeout_ms;
     if (want_v2) {
         sim.version = 2;
         o.desc_prog = dprog; o.desc_words = n_dprog;
@@ -263,6 +313,13 @@ int main(int argc, char **argv)
         status = 1; goto done;
     }
     printf("card       %s\n", pl_describe(c));
+    if (open_only) {
+        printf("OPEN_ONLY  program streamed and read back, bases written, no GO"
+               " issued.  h2c %llu B, c2h %llu B.\n",
+               (unsigned long long)pl_bytes_to_card(c),
+               (unsigned long long)pl_bytes_from_card(c));
+        status = 0; goto done;
+    }
     n_vocab = pl_n_vocab(c);
     if (tok && pl_check_vocab(c, qwen35_tok_n_vocab(tok)) != 0) {
         printf("NOTE the card's n_vocab %d and the tokenizer's %d disagree\n",
