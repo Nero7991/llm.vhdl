@@ -34,7 +34,22 @@ WHAT THE MODEL DOES NOT COVER.  Three things, all stated rather than implied:
 
 usage:
   attn_oracle.py capture.txt --blocks 4 --attn-int 4 --attn-hd 16 \
-      [--kv-block 4] [--n-rot 8] [--qkn-exp 12] [-v]
+      [--kv-block 4] [--n-rot 8] [--qkn-exp 12] [--qkn-image FILE] [-v]
+
+THE QK-NORM GAIN IMAGE, `--qkn-image`, ADDED 2026-09-18 (TRACK F).  Without
+it the gains are `qkn_const`'s ramp, one pair for every layer, and nothing
+about this module changes.  With it the model reads the SAME FILE
+`rtl/llama_top.vhd`'s `C_QKN_IMAGE` reads (one 4-hex-digit int16 per line,
+`attn_hd` per vector, q then k per attention layer in ordinal order) and
+gives layer ordinal l the vectors at entries 2l and 2l+1, which is exactly
+the RTL's `QKN_TBL(2*c_layer)` / `QKN_TBL(2*c_layer+1)`.  Because
+`ref/attn_block_cap_vec.c`'s stimulus carries ONE gain pair, a per-layer
+image is run as one driver invocation PER LAYER (NLAY = 1 each); that is
+exact for the `perlayer` and `pertoken` folds, whose layers are independent
+by construction, and is REFUSED for `shared` with more than one layer, whose
+whole point is cross-layer order.  A single-layer image (the `real` bench
+configuration) takes the ordinary one-invocation path with the image's pair
+in place of the ramp.
 """
 import argparse
 import os
@@ -86,12 +101,83 @@ def attn_layers(shape):
     return out
 
 
+def read_qkn_image(path, head_dim, nlay):
+    """The C_QKN_IMAGE file -> [(qnw, knw)] per attention layer ordinal.
+
+    Held to the RTL loader's shape: 4 hex digits per line, a whole number of
+    `head_dim`-element vectors, exactly 2 per attention layer.  A file of the
+    wrong length is a refusal and not a truncation, for the reason the RTL
+    gives: the table is indexed by layer, so a short or long image serves
+    some layer another layer's gain silently.
+    """
+    vals = []
+    with open(path) as fp:
+        for ln, line in enumerate(fp, 1):
+            t = line.strip()
+            if not t:
+                continue
+            if len(t) != 4 or any(c not in "0123456789abcdefABCDEF" for c in t):
+                raise SystemExit("attn_oracle: %s line %d is %r, not 4 hex "
+                                 "digits" % (path, ln, t))
+            v = int(t, 16)
+            if v >= 0x8000:
+                v -= 0x10000
+            vals.append(v)
+    want = 2 * nlay * head_dim
+    if len(vals) != want:
+        raise SystemExit("attn_oracle: %s holds %d values; this shape has %d "
+                         "attention layers x 2 ports x %d elements = %d.  The "
+                         "image was built for another shape, and a table "
+                         "indexed by layer cannot be truncated or padded."
+                         % (path, len(vals), nlay, head_dim, want))
+    return [(vals[(2 * l) * head_dim:(2 * l + 1) * head_dim],
+             vals[(2 * l + 1) * head_dim:(2 * l + 2) * head_dim])
+            for l in range(nlay)]
+
+
 def predict(recs_by_key, shape, toks, kv_block, n_rot, qkn_exp, verbose=False,
-            fold="perlayer"):
+            fold="perlayer", qkn_image=None):
     """Run the oracle over the capture.  Returns {(seam, tok): (exp, mant)}."""
     lays = attn_layers(shape)
     if not lays:
         return {}, [], []
+    N = shape.attn_hd
+    if qkn_image is None:
+        gains = [(qkn_const(N, 37, qkn_exp), qkn_const(N, 53, qkn_exp))] \
+            * len(lays)
+    else:
+        gains = read_qkn_image(qkn_image, N, len(lays))
+    # One driver invocation when every layer carries the same pair (the ramp,
+    # or a one-layer image): the path this module always took.  Otherwise
+    # one per layer, exact for the independent folds and refused for the
+    # shared one; see the header.
+    if all(g == gains[0] for g in gains):
+        groups = [(list(range(len(lays))), gains[0])]
+    elif fold == "shared":
+        raise SystemExit("attn_oracle: --qkn-image gives %d attention layers "
+                         "different gains, and the 'shared' v_ref fold runs "
+                         "every layer in one driver invocation with ONE gain "
+                         "pair.  Use --fold perlayer or pertoken, or an image "
+                         "whose layers agree." % len(lays))
+    else:
+        groups = [([li], gains[li]) for li in range(len(lays))]
+    out, vtrace = {}, []
+    for (lis, (qnw, knw)) in groups:
+        o, vt = _predict_layers(recs_by_key, shape, lays, lis, toks, kv_block,
+                                n_rot, qkn_exp, qnw, knw, verbose, fold)
+        out.update(o)
+        vtrace.extend(vt)
+    # No re-sort: one group is the driver's own order (layer-major, or
+    # token-major for `shared`), unchanged from before; per-layer groups are
+    # appended in ordinal order, which IS layer-major.
+    return out, [b for (b, _l) in lays], vtrace
+
+
+def _predict_layers(recs_by_key, shape, lays, lis, toks, kv_block, n_rot,
+                    qkn_exp, qnw, knw, verbose, fold):
+    """One driver invocation over the layers whose indices are `lis`, all
+    with the gain pair (qnw, knw).  Layer indices in the output are the
+    ordinals in `lays`, not the driver's 0-based position."""
     N = shape.attn_hd
     N_QH, N_KVH = shape.attn_q_heads, shape.attn_kv_heads
     NTOK = len(toks)
@@ -99,19 +185,18 @@ def predict(recs_by_key, shape, toks, kv_block, n_rot, qkn_exp, verbose=False,
         raise SystemExit("attn_oracle: the capture's token indices are %s; "
                          "this model assumes one contiguous sequence starting "
                          "at 0." % toks)
+    sub = [lays[li] for li in lis]
 
     d = tempfile.mkdtemp(prefix="attn_cap_")
     stim, pred = os.path.join(d, "stim.txt"), os.path.join(d, "pred.txt")
-    qnw = qkn_const(N, 37, qkn_exp)
-    knw = qkn_const(N, 53, qkn_exp)
     missing = []
     with open(stim, "w") as fp:
         fp.write("%d %d %d %d %d %d %d\n"
-                 % (N, N_QH, N_KVH, kv_block, n_rot, len(lays), NTOK))
+                 % (N, N_QH, N_KVH, kv_block, n_rot, len(sub), NTOK))
         fp.write("%d %d\n" % (qkn_exp, qkn_exp))
         fp.write(" ".join(str(v) for v in qnw) + "\n")
         fp.write(" ".join(str(v) for v in knw) + "\n")
-        for (b, _l) in lays:
+        for (b, _l) in sub:
             for t in toks:
                 need = ["R_QG-%d" % b, "R_KIN-%d" % b, "R_VIN-%d" % b]
                 if any((nm, t) not in recs_by_key for nm in need):
@@ -154,9 +239,9 @@ def predict(recs_by_key, shape, toks, kv_block, n_rot, qkn_exp, verbose=False,
             if not f:
                 continue
             if f[0] == "Y":
-                cur = (int(f[1]), int(f[2]), int(f[3]), int(f[4]))
+                cur = (lis[int(f[1])], int(f[2]), int(f[3]), int(f[4]))
             elif f[0] == "VREF":
-                vtrace.append((int(f[1]), int(f[2]),
+                vtrace.append((lis[int(f[1])], int(f[2]),
                                [int(x) for x in f[3:]]))
             elif cur is not None:
                 li, t, ye, n = cur
@@ -168,7 +253,7 @@ def predict(recs_by_key, shape, toks, kv_block, n_rot, qkn_exp, verbose=False,
                 b = lays[li][0]
                 out[("R_Y-%d" % b, t)] = (ye, v)
                 cur = None
-    return out, [b for (b, _l) in lays], vtrace
+    return out, vtrace
 
 
 def compare(recs_by_key, pred):
@@ -217,6 +302,9 @@ def main():
                     help="rtl/llama_top.vhd's C_N_ROT.  Same hazard as "
                          "--kv-block")
     ap.add_argument("--qkn-exp", type=int, default=12)
+    ap.add_argument("--qkn-image", default=None,
+                    help="rtl/llama_top.vhd's C_QKN_IMAGE, the same file: "
+                         "per-layer q/k gains in place of the ramp")
     ap.add_argument("--fold", default="perlayer",
                     choices=("perlayer", "shared", "pertoken"),
                     help="which v_ref fold to model: perlayer is C spec "
@@ -234,7 +322,7 @@ def main():
     shape = SP.Shape(a.blocks, a.attn_int, a.attn_hd)
 
     pred, blks, vtrace = predict(by, shape, toks, a.kv_block, a.n_rot,
-                                a.qkn_exp, a.verbose, a.fold)
+                                a.qkn_exp, a.verbose, a.fold, a.qkn_image)
     print("# subsystem C's R_Y against ref/attn_block_cap_vec.c, driven from")
     print("# the machine's own captured R_QG / R_KIN / R_VIN.")
     print("# shape HEAD_DIM=%d N_QH=%d N_KVH=%d KV_BLOCK=%d N_ROT=%d "

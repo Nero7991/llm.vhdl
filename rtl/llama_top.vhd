@@ -573,7 +573,60 @@ entity llama_top is
     C_KV_RBUF   : positive := 4;
     -- The QK-norm gains.  LEARNED WEIGHTS, so fixed-scale stand-ins, exactly
     -- as NORM_W_EXP is for the D-vec norm and the conv weights are for B.
+    --
+    -- C_QKN_EXP STAYS AT 12 WITH THE IMAGE BELOW.  MEASURED 2026-09-18 over
+    -- the 8 attention layers of Qwen3.5-9B: max |attn_q_norm| = 2.336
+    -- (blk.11), max |attn_k_norm| = 2.922 (blk.11), so the largest mantissa
+    -- is round(2.922 * 4096) = 11,968, well inside int16, and 13 (23,936)
+    -- would also fit while 14 would not.  12 is kept because it is the
+    -- exponent every existing configuration, the stand-in ramp, and
+    -- tools/ref9b/attn_oracle.py already carry, so an image at 12 changes
+    -- the mantissas and nothing about the exponent path; `attn_block`
+    -- takes `qn_exp`/`kn_exp` as ports and `rmsnorm_rs` adds it to the
+    -- output exponent, so a later image at another exponent is one generic.
     C_QKN_EXP   : integer  := 12;
+    -- ==================================================================
+    -- THE REAL QK-NORM GAINS, `C_QKN_IMAGE`.  Added 2026-09-18 (TRACK F).
+    -- The LAST stand-in in the design once the B constants path landed
+    -- (docs/2026-09-18_b-constants-path.md): `blk.L.attn_q_norm.weight` and
+    -- `blk.L.attn_k_norm.weight`, [attn_head_dim] F32 each, PER ATTENTION
+    -- LAYER, and `attn_block` takes one vector of `C_HD` mantissas per port
+    -- per job.  So a correct token needs a per-layer, per-port gain selected
+    -- by the C job's layer ordinal, and that is what this image provides.
+    --
+    -- WHAT IT IS.  A text file, one 4-hex-digit two's complement int16 per
+    -- line, element 0 first, `C_HD` elements per vector, vectors in the order
+    -- the schedule visits attention layers (ordinal 0 first), q then k per
+    -- layer: `2 * n_attn_blocks(SHAPE) * C_HD` lines.  Mantissas are
+    -- round(g * 2**C_QKN_EXP).  Written by `tools/gen_qkn_image.py`; the
+    -- committed images are `hw/fk33/gen/qkn_9b.hex` (8 layers x 2 x 256 =
+    -- 4,096 lines, the card) and `sim/llama_top_qkn_b4.hex` (1 x 2 x 16 =
+    -- 32 lines, the `real` bench configuration), both held to the generator
+    -- by `sim:qknimage`.
+    --
+    -- Empty (the DEFAULT) keeps the `qkn_const` ramp and the default path is
+    -- bit-identical to what it was before this generic existed -- MEASURED
+    -- on `tb_llama_top_real`'s landmarks, see the commit that added this.
+    -- With an image, `gcr` below reads it at elaboration into a table of
+    -- `2 * n_attn_blocks(SHAPE)` vectors and drives `attn_block`'s
+    -- `qn_mant`/`kn_mant` from entries `2*c_layer` and `2*c_layer + 1`.
+    -- That mux is safe because `c_layer` is written at job ISSUE and
+    -- `attn_block` latches both vectors at `start`, which the C branch pulses
+    -- only after it has read R_QG, R_KIN and R_VIN (many cycles later), so
+    -- the block never sees the vectors change under a job.
+    --
+    -- A SHORT, LONG OR EMPTY IMAGE IS A REFUSAL, in synthesis as well as in
+    -- simulation: the count is pinned two-sided to the schedule with
+    -- out-of-range naturals (`bad_qkn_image_*_schedule`), the same idiom as
+    -- NORM_W_IMAGE, whose long-image gap was found the day this was written.
+    -- The loader counts in groups of `C_HD` with nested loops for the same
+    -- Vivado loop-limit reason the norm loader records at `nw_count`.
+    --
+    -- WHAT IT IS NOT.  It adds no region, descriptor field or packing.  Like
+    -- NORM_W_IMAGE it is an elaboration-time table of learned weights whose
+    -- scale does not move with the token.  Only read under C_REAL; the stub
+    -- branch `gc` never opens it.
+    C_QKN_IMAGE : string   := "";
 
     -- ==================================================================
     -- THE LOGITS EGRESS SEAM.  `FLG_TO_SMP`, AND THE ONE OUTPUT THIS FILE
@@ -5281,10 +5334,13 @@ begin
   --     JOB_POS = 0 case and it is why a one-token run proves nothing about
   --     the cache.
   --
-  -- The QK-norm gains are fixed-scale stand-ins.  They are LEARNED WEIGHTS:
+  -- The QK-norm gains are fixed-scale stand-ins UNLESS `C_QKN_IMAGE` names
+  -- the model's per-layer gains (2026-09-18).  They are LEARNED WEIGHTS:
   -- their scale does not move with the token, there is no region, descriptor
   -- field or packing for them, and sourcing one from an activation region is
-  -- the mistake PART 3 measured.
+  -- the mistake PART 3 measured.  The image is an elaboration-time table
+  -- indexed by the C job's layer ordinal, like NORM_W_IMAGE for the D-vec
+  -- norm.
   -- ======================================================================
   gcr : if C_REAL generate
     function nlay(s : shape_t) return positive is
@@ -5331,6 +5387,105 @@ begin
     end function;
     constant QN_CONST : std_logic_vector(C_HD*MANT_W-1 downto 0) := qkn_const(37);
     constant KN_CONST : std_logic_vector(C_HD*MANT_W-1 downto 0) := qkn_const(53);
+
+    -- THE QK-NORM GAIN IMAGE, `C_QKN_IMAGE`.  See the generic.  The shape of
+    -- this loader is `nw_count`/`nw_load`'s: the outer loop runs once per
+    -- VECTOR and the inner once per ELEMENT, so no single loop statement
+    -- comes near Vivado's 65,536-iteration elaboration limit (at 9B the
+    -- outer runs 16 times and the inner 256).
+    impure function qkn_count return natural is
+      file     fh : text;
+      variable ok    : file_open_status;
+      variable l     : line;
+      variable n     : natural := 0;      -- COMPLETE C_HD-line vectors read
+      variable part  : natural := 0;      -- lines read in a final SHORT one
+      variable short : boolean := false;
+    begin
+      if C_QKN_IMAGE = "" then return 1; end if;
+      file_open(ok, fh, C_QKN_IMAGE, read_mode);
+      assert ok = open_ok
+        report "llama_top: cannot open the QK-norm gain image "
+             & C_QKN_IMAGE severity failure;
+      while not endfile(fh) loop
+        part := 0;
+        for i in 0 to C_HD-1 loop
+          if endfile(fh) then
+            short := true;
+            exit;
+          end if;
+          readline(fh, l);
+          part := part + 1;
+        end loop;
+        if short then exit; end if;
+        n := n + 1;
+      end loop;
+      file_close(fh);
+      assert not short
+        report "llama_top: the QK-norm gain image " & C_QKN_IMAGE & " holds "
+             & integer'image(n) & " complete vectors of "
+             & integer'image(C_HD) & " elements plus "
+             & integer'image(part) & " leftover lines.  It must be a whole "
+             & "number of vectors."
+        severity failure;
+      assert n > 0
+        report "llama_top: the QK-norm gain image " & C_QKN_IMAGE
+             & " is empty.  It must hold q and k vectors of "
+             & integer'image(C_HD) & " elements for every attention layer."
+        severity failure;
+      return n;
+    end function;
+    constant QKN_NV : positive := qkn_count;
+
+    -- PINNED TO THE SCHEDULE, TWO-SIDED, AT ELABORATION.  One q and one k
+    -- vector per attention layer, so 2 * n_attn_blocks(SHAPE) vectors --
+    -- NOT 2 * C_LAY, which is clamped to 1 at a shape with no attention
+    -- layers and would accept a two-vector image that nothing reads.
+    -- Out-of-range naturals, not asserts, so the refusal is visible in
+    -- synthesis; the NAME is the diagnostic.  Only when an image is given:
+    -- the empty default keeps `QKN_NV = 1` and the ramp.
+    function qkn_expected return natural is
+    begin
+      if C_QKN_IMAGE = "" then return QKN_NV; end if;
+      return 2 * n_attn_blocks(SHAPE);
+    end function;
+    constant bad_qkn_image_longer_than_schedule  : natural
+           := qkn_expected - QKN_NV;
+    constant bad_qkn_image_shorter_than_schedule : natural
+           := QKN_NV - qkn_expected;
+
+    type qkn_t is array (0 to QKN_NV-1)
+      of std_logic_vector(C_HD*MANT_W-1 downto 0);
+
+    impure function qkn_load return qkn_t is
+      file     fh : text;
+      variable ok : file_open_status;
+      variable l  : line;
+      variable v  : std_logic_vector(MANT_W-1 downto 0);
+      variable r  : qkn_t := (others => QN_CONST);
+    begin
+      if C_QKN_IMAGE = "" then return r; end if;
+      file_open(ok, fh, C_QKN_IMAGE, read_mode);
+      assert ok = open_ok
+        report "llama_top: cannot open the QK-norm gain image "
+             & C_QKN_IMAGE severity failure;
+      for k in 0 to QKN_NV-1 loop
+        for i in 0 to C_HD-1 loop
+          readline(fh, l);
+          hread(l, v);
+          r(k)((i+1)*MANT_W-1 downto i*MANT_W) := v;
+        end loop;
+      end loop;
+      file_close(fh);
+      return r;
+    end function;
+    constant QKN_TBL : qkn_t := qkn_load;
+
+    -- What `attn_block` sees.  Signals rather than the constants directly
+    -- because the image arm is a mux on `c_layer`; the ramp arm assigns the
+    -- constants, which synthesis folds back to exactly what the port map
+    -- used to carry.  See `gqkn_ramp`/`gqkn_img` below.
+    signal qn_sel : std_logic_vector(C_HD*MANT_W-1 downto 0) := QN_CONST;
+    signal kn_sel : std_logic_vector(C_HD*MANT_W-1 downto 0) := KN_CONST;
 
     signal rdy  : std_logic := '1';
     signal dn   : std_logic := '0';
@@ -5805,6 +5960,23 @@ begin
     kin_e8 <= resize(kin_e, 8);
     vin_e8 <= resize(vin_e, 8);
 
+    -- THE QK-NORM GAIN SELECT.  Empty image: the ramp constants, as before.
+    -- Image: entries 2*c_layer (q) and 2*c_layer+1 (k) of the table, i.e.
+    -- the vectors of the attention layer whose ordinal the C job carries.
+    -- `c_layer` is written at job issue and `attn_block` latches
+    -- `qn_mant`/`kn_mant` at `start`, which S_GO pulses only after the three
+    -- region reads, so the mux output is stable long before it is sampled.
+    -- The index cannot leave the table: `c_layer` ranges 0 .. C_LAY-1 and
+    -- the two-sided pin above makes `QKN_NV = 2 * n_attn_blocks(SHAPE)`
+    -- whenever an image is given.
+    gqkn_ramp : if C_QKN_IMAGE = "" generate
+      qn_sel <= QN_CONST;
+      kn_sel <= KN_CONST;
+    end generate;
+    gqkn_img : if C_QKN_IMAGE /= "" generate
+      qn_sel <= QKN_TBL(2*c_layer);
+      kn_sel <= QKN_TBL(2*c_layer + 1);
+    end generate;
 
     u_attn : entity work.attn_block
       generic map(
@@ -5823,8 +5995,8 @@ begin
         kin_exp => kin_e8,
         vin_raddr => vin_raddr, vin_re => vin_re, vin_rdata => vin_rdata,
         vin_exp => vin_e8,
-        qn_mant => QN_CONST, qn_exp => QKN_E8,
-        kn_mant => KN_CONST, kn_exp => QKN_E8,
+        qn_mant => qn_sel, qn_exp => QKN_E8,
+        kn_mant => kn_sel, kn_exp => QKN_E8,
         wn_taken => c_wntk,
         kv_layer => kv_layer, kw_sel => kw_sel, kw_head => kw_head,
         kw_pos => kw_pos, kw_hen => kw_hen, kw_hdr => kw_hdr,

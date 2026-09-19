@@ -8,7 +8,7 @@
 # that directory is `bash tools/ref9b/capture_llama_top.sh <config>` and
 # nothing else.
 #
-# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub|bconst} [outfile]
+# Usage:  bash tools/ref9b/capture_llama_top.sh {real|seq|stub|bconst|qkn} [outfile]
 # Env:    SCRATCH=<dir>      keep the work directory
 #         CAPTURE_REV=<sha>  stamp this revision in the provenance header, for
 #                            a `git archive` scratch tree that has no .git
@@ -31,6 +31,8 @@
 #   stub  = sim/tb_llama_top.vhd's own defaults (attention is the ramp stub)
 #   bconst = sim/tb_llama_top_bconst.vhd  (real, 3 tokens, B on its real
 #            inputs and the packed constants image; added 2026-09-18)
+#   qkn    = sim/tb_llama_top_qkn.vhd     (real, 3 tokens, C on the model's
+#            QK-norm gains from sim/llama_top_qkn_b4.hex; added 2026-09-18)
 # NRUNS is forced to 1: only run 0 is captured, every run starts from a reset,
 # so runs 1..N-1 cost wall time and change nothing in the file.
 set -uo pipefail
@@ -115,7 +117,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
 # owning a second copy of the list.  Two copies of a file list is how a
 # staleness check ends up blind to the one file that moved.
 if [ "${LIST_FILES:-0}" = "1" ]; then
-  echo $FILES sim/llama_top_w_b4_pool.hex sim/llama_top_const_b4.hex
+  echo $FILES sim/llama_top_w_b4_pool.hex sim/llama_top_const_b4.hex sim/llama_top_qkn_b4.hex
   exit 0
 fi
 
@@ -167,13 +169,31 @@ case "$CFG" in
         B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
            --w-image sim/llama_top_w_b4_pool.hex --b-src-real"
         O="--b-const sim/llama_top_const_b4.bin" ;;
+  # A FIFTH CONFIGURATION, `qkn`, ADDED 2026-09-18 (TRACK F).  `real` plus
+  # three tokens and subsystem C on the MODEL'S QK-NORM GAINS: C_QKN_IMAGE
+  # names sim/llama_top_qkn_b4.hex (tools/gen_qkn_image.py at this shape,
+  # blk.3's attn_q_norm/attn_k_norm sliced to 16 elements), which replaces
+  # the `qkn_const` ramp the other four rows elaborate.  The generics are
+  # sim/tb_llama_top_qkn.vhd's, copied.  ONE comparator: bisect_scaled.py
+  # carries `--qkn-image` straight through to attn_oracle.py, which reads the
+  # same file, so the `B` string holds everything and `O` is empty.  This is
+  # the only row whose attention R_Y depends on the gain image; without
+  # `--qkn-image` in `B` the ramp model judges an image machine and the
+  # three attention seams FAIL (the attribution control seamgate.sh records).
+  qkn)  G="-gBLOCKS=4 -gATTN_INT=4 -gNTOK=3 -gC_REAL=true -gATTN_HD=16
+           -gNORM_REAL=true -gNORM_ANCHOR=false
+           -gW_IMAGE=llama_top_w_b4_pool.hex -gMAXPOS=8
+           -gC_QKN_IMAGE=llama_top_qkn_b4.hex"
+        B="--blocks 4 --attn-int 4 --attn-hd 16 --norm real
+           --w-image sim/llama_top_w_b4_pool.hex
+           --qkn-image sim/llama_top_qkn_b4.hex" ;;
   seq)  G="-gBLOCKS=4 -gATTN_INT=2 -gNTOK=3 -gC_REAL=true -gATTN_HD=64
            -gKV_BLOCK=16 -gN_ROT=16 -gMAXPOS=8 -gKV_AXI=true"
         B="--blocks 4 --attn-int 2 --attn-hd 64 --norm anchor
            --kv-block 16 --n-rot 16" ;;
   stub) G=""
         B="--blocks 4 --attn-int 4 --attn-hd 32 --norm anchor" ;;
-  *) echo "unknown configuration $CFG (real|seq|stub|bconst)"; exit 2 ;;
+  *) echo "unknown configuration $CFG (real|seq|stub|bconst|qkn)"; exit 2 ;;
 esac
 if [ "${LIST_BISECT:-0}" = "1" ]; then
   echo $B
@@ -196,6 +216,8 @@ ln -sfn "$PWD/sim/llama_top_w_b4_pool.hex" "$W/run/" 2>/dev/null
 # The constants image `bconst` opens by bare name (B_CONST_IMAGE); harmless
 # to the other three, which never open it.
 ln -sfn "$PWD/sim/llama_top_const_b4.hex" "$W/run/" 2>/dev/null
+# The QK-norm gain image `qkn` opens by bare name (C_QKN_IMAGE); likewise.
+ln -sfn "$PWD/sim/llama_top_qkn_b4.hex" "$W/run/" 2>/dev/null
 
 ( cd "$W/run" && timeout -k 5 3600 ghdl -r --std=08 -frelaxed --workdir=".." \
     tb_llama_top $G $GSMP -gNRUNS=1 -gCAPTURE=cap.txt \

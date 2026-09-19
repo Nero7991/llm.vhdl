@@ -269,6 +269,15 @@ def main():
     ap.add_argument("--kv-block", type=int, default=4)
     ap.add_argument("--n-rot", type=int, default=8)
     ap.add_argument("--qkn-exp", type=int, default=12)
+    ap.add_argument("--qkn-image", default=None,
+                    help="rtl/llama_top.vhd's C_QKN_IMAGE, the same file, so "
+                         "the R_Y model of subsystem C reads the model's "
+                         "per-layer QK-norm gains instead of the ramp.  NOT "
+                         "in the capture: a run elaborated with an image and "
+                         "judged without one diverges at every attention "
+                         "R_Y, and the reverse likewise (that is the "
+                         "attribution control tools/ref9b/seamgate.sh "
+                         "records for the qkn configuration)")
     ap.add_argument("--attn-fold", default="perlayer",
                     choices=("perlayer", "shared", "pertoken"),
                     help="which v_ref fold subsystem C's model assumes.  The "
@@ -336,7 +345,7 @@ def main():
         try:
             cpred, _cblks, _cvt = AO.predict(
                 by, shape, ctoks, a.kv_block, a.n_rot, a.qkn_exp,
-                False, a.attn_fold)
+                False, a.attn_fold, a.qkn_image)
             cwhy = ("ref/attn_block_vec.c's attn_token() over the capture's "
                     "own R_QG/R_KIN/R_VIN, v_ref fold '%s'" % a.attn_fold)
         except SystemExit as e:
