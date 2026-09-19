@@ -1,0 +1,56 @@
+07:39 active=active done=0 cg=1.4G swap=5G
+07:44 active=active done=0 cg=24.6G swap=5G
+07:49 active=active done=0 cg=25.8G swap=21G
+07:54 active=active done=0 cg=25.2G swap=23G
+07:59 active=active done=0 cg=22.5G swap=25G
+08:04 active=active done=0 cg=23.6G swap=27G
+08:09 active=active done=0 cg=17.0G swap=25G
+08:14 active=active done=0 cg=11.3G swap=7G
+08:19 active=active done=0 cg=15.6G swap=7G
+08:24 active=active done=0 cg=16.2G swap=7G
+08:29 active=active done=0 cg=16.3G swap=7G
+08:34 active=active done=0 cg=16.7G swap=7G
+08:39 active=active done=0 cg=16.7G swap=7G
+08:44 active=active done=0 cg=16.9G swap=7G
+08:49 active=active done=0 cg=16.9G swap=7G
+08:54 active=active done=0 cg=17.3G swap=7G
+08:59 active=active done=0 cg=17.6G swap=7G
+09:04 active=active done=0 cg=17.6G swap=7G
+09:09 active=active done=0 cg=17.6G swap=7G
+09:14 active=active done=0 cg=17.5G swap=7G
+09:19 active=active done=0 cg=17.4G swap=7G
+09:24 active=active done=0 cg=17.3G swap=7G
+09:29 active=active done=0 cg=17.2G swap=7G
+09:34 active=active done=0 cg=17.2G swap=7G
+09:39 active=active done=0 cg=17.1G swap=7G
+09:44 active=active done=0 cg=17.1G swap=7G
+09:49 active=active done=0 cg=17.0G swap=7G
+09:54 active=active done=0 cg=17.0G swap=7G
+09:59 active=active done=0 cg=17.0G swap=7G
+10:04 active=active done=0 cg=17.0G swap=7G
+10:09 active=active done=0 cg=17.0G swap=7G
+10:14 active=active done=0 cg=16.9G swap=7G
+10:19 active=active done=0 cg=16.9G swap=7G
+10:24 active=active done=0 cg=16.9G swap=7G
+10:29 active=active done=0 cg=16.9G swap=7G
+10:34 active=active done=0 cg=16.9G swap=7G
+10:39 active=active done=0 cg=16.9G swap=7G
+10:44 active=active done=0 cg=17.5G swap=7G
+10:49 active=active done=0 cg=17.4G swap=7G
+10:54 active=active done=0 cg=17.3G swap=7G
+10:59 active=active done=0 cg=17.1G swap=7G
+11:04 active=active done=0 cg=17.1G swap=7G
+11:09 active=active done=0 cg=17.0G swap=7G
+11:14 active=active done=0 cg=16.9G swap=7G
+11:19 active=active done=0 cg=16.9G swap=7G
+11:24 active=active done=0 cg=16.9G swap=7G
+11:29 active=active done=0 cg=16.9G swap=7G
+11:34 active=active done=0 cg=16.9G swap=7G
+11:39 active=active done=0 cg=17.3G swap=7G
+11:44 active=active done=0 cg=17.6G swap=7G
+11:49 active=failed done=0 cg= swap=4G
+UNIT ENDED WITHOUT SENTINEL: FAILURE
+ERROR: [DRC RTSTAT-6] Partial route conflicts: 9293 net(s) have a partial conflict. The problem bus(es) and/or net(s) are bd_i/eng/inst/eng/dut/core/ARG[32], bd_i/eng/inst/eng/dut/core/ARG[48], bd_i/card/inst/u/gen_vstub[0].gvr.u_rms/ARG__3_i_6_n_0, bd_i/card/inst/u/gcr.u_attn/u_norm/ARG__14_i_16_n_0, bd_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/AXI_07_RDATA[176], bd_i/fk33_dmabram/U0/gext_inst.abcv4_0_ext_inst/GEN_AXI4.I_FULL_AXI/I_RD_CHNL/AXI_RDATA[39], bd_i/card/inst/u/gcr.u_attn/u_gate/A[1], bd_i/card/inst/u/gen_vstub[2].gv.vproc.buf_reg_7296_7359_14_15/DOA, bd_i/card/inst/u/gb_real.qkv_b_reg_r8_7296_7359_14_15/DOA, bd_i/card/inst/u/gb_real.qkv_b_reg_r5_1088_1151_7_13/DOA, bd_i/card/inst/u/ga_desc.ybw_reg_64_127_77_83/DOA, bd_i/card/inst/u/gen_vstub[2].gv.vproc.buf_reg_8000_8063_14_15/DOA, bd_i/card/inst/u/ga_desc.ybw_reg_192_255_77_83/DOA, bd_i/card/inst/u/gb_real.qkv_b_reg_r1_6464_6527_7_13/DOA, bd_i/card/inst/u/gb_real.qkv_b_reg_r5_3456_3519_7_13/DOA... and (the first 15 of 9269 listed), GLOBAL_LOGIC0.
+ERROR: [Vivado 12-1345] Error(s) found during DRC. Bitgen not run.
+ERROR: [Common 17-39] 'write_bitstream' failed due to earlier errors.
+ERROR: [Vivado 12-13638] Failed runs(s) : 'impl_1'

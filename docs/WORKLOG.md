@@ -62,6 +62,18 @@ the answer only has to be classified, not argued with.
   `axi_rd_port.vhd:260`, fixed in `0f6b82c` on both GHDL versions.
   **The norm build is ARMED behind the seqrst build** (`$SD/build7/arm.sh`,
   unit `norm-build`, same caps, own swap guard) at HEAD `b601ca8`.
+- **11:46: THE SEQRST BUILD DID NOT ROUTE.** `Route 35-162`: 9,293 signals
+  unrouted, 7,871 node overlaps, congestion 85-88% in all four directions,
+  bitgen not run. Same strategy (`Congestion_SpreadLogic_high`) as the four
+  card builds that routed with no congestion report at all; LUT 83.74%
+  against 83.47%. A placement draw, not a size change (the 08-30
+  scatter-per-draw doc). Log and placed utilization kept in
+  `hw/fk33/results/card_seqrst_2026-09-19_ROUTEFAIL/`; the synth DCP is in
+  `$SD/build6/root` for a re-implementation if the norm draw also fails.
+  **The norm build (unit `norm-build`, launched 11:47 by the arm script on
+  the unit ending) carries seq_rst too and supersedes it; running.**
+  Oren has authorised the main session to reload bitstreams itself
+  (sudoless `fk33_reload.sh` via `/usr/local/sbin/fk33-pci`, `f5ec164`).
 - **Still open**: the first-token whole-token argmax 0 / logit exp -25.
   The seqrst bitstream makes B-reaching probes free again (no reload per
   probe), which is what the bisection needs.
