@@ -37,7 +37,12 @@ import json
 import os
 import sys
 
-C2H = "/dev/xdma0_c2h_0"
+# FK33_C2H overrides the device, the same convention fk33_load_weights.py
+# and fk33_imgfp.py use.  It exists so this file's callers can be tested
+# against an ordinary sparse file standing in for HBM -- without it the
+# fallback branch of fk33_chat.sh could only be exercised on the card,
+# which is the class of path this project has repeatedly found untested.
+C2H = os.environ.get("FK33_C2H", "/dev/xdma0_c2h_0")
 
 # The directories a card in this project is ever loaded from.  Order matters
 # only for reporting; the probe decides.

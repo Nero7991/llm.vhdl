@@ -621,6 +621,14 @@ fk33_transport *fk33_transport_open_sim(const void *opts_v)
         }
     }
 
+    /* HBM AS THE HOST WILL FIND IT.  See fk33_sim_opts.preload. */
+    if (s->o.preload && s->o.preload_len) {
+        if (sparse_rw(&s->mem, s->o.preload_addr, (void *)(size_t)s->o.preload,
+                      s->o.preload_len, 1)) {
+            sim_close(s); return NULL;
+        }
+    }
+
     s->hist   = 2166136261u;
     s->status = FK33_ST_DONE;   /* idle looks like "the last job finished" */
     snprintf(s->desc, sizeof s->desc,

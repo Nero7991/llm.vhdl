@@ -11,6 +11,72 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK IMGLOCK: the card now says which image it is holding, and every tool refuses a manifest that disagrees
+
+- **The defect, MEASURED this morning: nothing on the card recorded which
+  packed image was resident and nothing on the host checked.** The flat
+  manifest was driven at the lane-striped image; both declare
+  `desc_arena_base = 0x1ffadd000`, so the flat descriptor table overwrote the
+  striped one, and `pl_open` programmed the flat `kv_base = 0x10d93e000` into
+  the KV seam register so C wrote its records into the WEIGHT image.
+- **`109dc27` (C's KV base as a host-programmed register) is what made the
+  striped image runnable and delivered 2.04x, AND is what converted this class
+  from a wrong answer into data loss.** Both halves of that trade are real and
+  the register stays. This is the guard it needed.
+- **The interlock**: `fk33_load_weights.py load` writes a 512-byte IMAGE
+  RECORD into the last 512 bytes of the descriptor arena extent the manifest
+  already reserves (`0x1ffb03e00` on every 9B set) -- the eleven region
+  numbers verbatim plus a BLAKE2b-128 PLACEMENT fingerprint over every piece
+  address. `pl_open`, `fk33ctl.py seam --manifest`, `fk33_imgfp.py check` and
+  `fk33_chat.sh` read it back and REFUSE on disagreement, naming both
+  manifests and the field. It is invalidated BEFORE the first weight byte
+  moves, so a load that dies half way leaves "no image", which is a refusal.
+- **PLACEMENT, not content, and that is measured, not assumed.** All 250
+  per-file `blake2b_128` are IDENTICAL across flat, striped and seg27, so no
+  content digest separates them; `-striped` and `-striped-seg27` place all 250
+  objects and every piece at IDENTICAL addresses and differ only in the GDN
+  state and KV regions, so the `c419de7` byte probe cannot separate them
+  either. That was its stated gap and it is now closed: the six packed sets
+  fingerprint to six distinct values.
+- **The incident predicted exactly from the two manifests: 35 objects, 0
+  missed and 0 extra**, at every token count from 1 to 34, once `C_MAXPOS` is
+  read from the CARD (65536) rather than from the morning's document
+  (131072, which predicts 41).
+- **TEETH, all green and all off-hardware:** `server/tests/imglock_selftest.c`
+  13 rows / 15 checks against `fk33_sim` with **X3 the attribution control**
+  (the same pair, no record: ACCEPTED, so nothing else in `pl_open` catches
+  it) and **X12 the ordering row** (the refusal lands before the v2 program
+  check, i.e. before any base register is written);
+  `fk33_imgfp.py selfcheck` 32 rows including two NOT-BITING rows under their
+  own names and a two-way C/Python cross-check; three new R rows in
+  `fk33_load_weights.py selfcheck`.
+- **Gate row `sim:imglock`** = `make -s -C server imglock-check`, all three
+  suites in one command, **0.42 s, 24 MB peak**, no card, no model file, no
+  `/mnt/storage`.
+- **FOUND WHILE BUILDING IT, both recorded in the doc:** the record's
+  `objs_loaded` was counted against `mani["files"]`, which omits the GDN
+  constant image, so every full load recorded itself as PARTIAL (`5 of 4`);
+  and a 512-byte write at `0x1f0027e00` made the loader selfcheck's sparse
+  fake-HBM really extend to 8.32 GB, which the `M9` mutation then `f.read()`
+  whole -- **18 MB / 0.05 s became 7,953 MB / 7.25 s while every row still
+  printed PASS.** Bounded to `f.read(span)`: 20.5 MB / 0.10 s.
+- **NEXT, and it needs the card, so the dispatcher runs it:** the resident
+  seg27 image predates the record, so `fk33_chat.sh` will REFUSE (the byte
+  probe reports both striped images and an ambiguous probe is a refusal by
+  design). Run `fk33_load_weights.py verify <seg27 manifest>` then
+  `fk33_imgfp.py write <seg27 manifest>`, then `fk33ctl.py seam --manifest
+  <seg27 manifest>` and a bare `fk33_chat.sh` to confirm it selects seg27.
+- **Files owned:** `hw/fk33/host/fk33_imgfp.py`, `fk33_load_weights.py`,
+  `fk33_chat.sh`, `fk33ctl.py`, `fk33_resident_image.py`,
+  `server/fk33_imglock.[ch]`, `server/tests/imglock_selftest.c`,
+  `server/pl_backend.[ch]`, `server/fk33_sim.c`, `server/fk33_seam.h`,
+  `server/Makefile`, `sim/regress.sh` (one row),
+  `docs/debugging/2026-09-20_two-manifests-one-card.md`.
+- **Full write-up:** `docs/debugging/2026-09-20_two-manifests-one-card.md`,
+  with the REJECTED list (a new seam register; a carved page at the top of
+  HBM, which has NO gap and would refuse every existing image until every
+  manifest was re-derived; a host-side state file; a content digest).
+
 ### 2026-09-20 TRACK BNARROW: the three NARROW movers are beat-wide too -- 307,784 -> 222,805 cycles a B job, -84,979 at every read latency
 
 - **Landed at `748ff91`.** One generic `NWIDE` on `rtl/gdn_state_store.vhd`,

@@ -12,6 +12,7 @@
 #include "fk33_transport.h"
 #include "fk33_seam.h"
 #include "fk33_manifest.h"
+#include "fk33_imglock.h"
 
 /* How long to wait for a GO.  The token budget is 38.27 ms
  * (docs/2026-08-28_token-io-path.md); a prefill chunk of 512 is 512 of those,
@@ -536,6 +537,102 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
 
     c->x_stride = fk33_x_stride(c->n_embd);
     c->l_stride = fk33_l_stride(c->n_vocab);
+
+    /* ------------------------------------------------- THE IMAGE INTERLOCK
+     *
+     * BEFORE ANY BASE IS PROGRAMMED AND BEFORE ANY GO.  MEASURED 2026-09-20:
+     * this host was handed the FLAT manifest while the card held the
+     * lane-striped image.  Both declare `desc_arena_base = 0x1ffadd000`, so
+     * the flat descriptor table overwrote the striped one; and the block
+     * below programmed the FLAT `kv_base = 0x10d93e000` into FK33_SEAM_KVK,
+     * so subsystem C wrote 24 positions of KV records into the WEIGHT image.
+     * Intersecting the flat KV slot grid at the card's C_MAXPOS = 65536
+     * against the striped pieces predicts the 35 destroyed objects exactly:
+     * 0 missed, 0 extra.
+     *
+     * Every check in this file was already correct and every one of them
+     * passed, because they check the manifest against ITSELF and against the
+     * card's CAPS.  Nothing checked the manifest against the IMAGE, because
+     * until that morning nothing could: the card recorded no identity.  Now
+     * `fk33_load_weights.py load` writes one into the descriptor arena's
+     * reserved tail, and this reads it back.
+     *
+     * WHY HERE AND NOT LATER.  The refusal has to land before the first
+     * register write of the base block, because a programmed KVK is enough on
+     * its own -- one GO afterwards writes C's records at the wrong address.
+     * There is no safe point after this one. */
+    {
+        fk33_manifest mi;
+        fk33_imglock_rec ir;
+        unsigned char rbuf[FK33_IMGLOCK_BYTES];
+        char why[1536];
+        int require = o->require_image_lock
+                      || o->transport == PL_TRANSPORT_CHARDEV;
+        int prc, n;
+        uint64_t addr;
+
+        if (!o->manifest_path) {
+            if (require) {
+                fprintf(stderr,
+                    "pl_open: REFUSING -- no manifest was given, so there is\n"
+                    "  nothing to check the resident image against.  On a real\n"
+                    "  card subsystem C's KV base is a register this host\n"
+                    "  programs, and programming it from the wrong image writes\n"
+                    "  KV records over the weights (MEASURED 2026-09-20, 35\n"
+                    "  objects).  Pass opts.manifest_path.\n");
+                pl_close(c); return -1;
+            }
+        } else if (fk33_manifest_read(o->manifest_path, &mi)) {
+            /* fk33_manifest_read already said why on stderr. */
+            pl_close(c); return -1;
+        } else if (!(addr = fk33_imglock_addr(&mi))) {
+            fprintf(stderr,
+                "pl_open: %s reserves %llu B of descriptor arena, too little to\n"
+                "  hold the %u-byte image record, so nothing can say which image\n"
+                "  is resident.%s\n", o->manifest_path,
+                (unsigned long long)mi.desc_arena_bytes, FK33_IMGLOCK_BYTES,
+                require ? "  REFUSING." : "");
+            if (require) { pl_close(c); return -1; }
+        } else if (c->t->mem_read(c->t->ctx, addr, rbuf, sizeof rbuf)) {
+            fprintf(stderr, "pl_open: could not read the image record at "
+                            "0x%llX\n", (unsigned long long)addr);
+            pl_close(c); return -2;
+        } else if ((prc = fk33_imglock_parse(rbuf, sizeof rbuf, &ir)) != 0) {
+            fprintf(stderr,
+                "[pl_backend] %s NO IMAGE RECORD at 0x%llX: %s.\n"
+                "  Nothing on this card says which packed image is resident, so\n"
+                "  %s does not mean anything yet.\n"
+                "  Load the image with\n"
+                "    python3 hw/fk33/host/fk33_load_weights.py load %s --verify\n"
+                "  which writes the record as its last step.\n",
+                require ? "REFUSING --" : "NOTE:",
+                (unsigned long long)addr, fk33_imglock_why(prc),
+                o->manifest_path, o->manifest_path);
+            if (require) { pl_close(c); return -1; }
+        } else if ((n = fk33_imglock_compare(&ir, &mi, why, sizeof why)) > 0) {
+            fprintf(stderr,
+                "pl_open: REFUSING -- THE CARD IS NOT HOLDING THIS IMAGE.\n"
+                "  resident : %s\n"
+                "  requested: %s\n"
+                "%s"
+                "  %d field(s) disagree.  Driving this manifest would not merely\n"
+                "  give a wrong answer: subsystem C's KV base is a register this\n"
+                "  host programs, and one GO with the wrong one writes KV records\n"
+                "  into the weight image (MEASURED 2026-09-20, 35 objects, 0\n"
+                "  missed and 0 extra against the predicted slot grid).\n"
+                "  Either load this image, or drive the resident manifest.\n"
+                "  Nothing has been programmed and no GO has been issued.\n",
+                ir.manifest_path[0] ? ir.manifest_path : "(the record carries no path)",
+                o->manifest_path, why, n);
+            pl_close(c); return -1;
+        } else {
+            fprintf(stderr,
+                "[pl_backend] image lock OK: the card holds the image %s\n"
+                "  describes (record at 0x%llX, %u of %u objects)\n",
+                o->manifest_path, (unsigned long long)addr,
+                (unsigned)ir.objs_loaded, (unsigned)ir.objs_total);
+        }
+    }
 
     /* ---------------------------------------------------------------- bases
      *

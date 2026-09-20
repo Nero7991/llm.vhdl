@@ -236,6 +236,23 @@ typedef struct {
      * token budget.  Tests set it small so the never-done fault can be shown
      * to fire in a bounded time. */
     int go_timeout_ms;
+
+    /* THE IMAGE INTERLOCK (2026-09-20, server/fk33_imglock.h).
+     *
+     * `pl_open` reads the 512-byte image record out of the descriptor arena
+     * and refuses to program the card's bases if it describes a DIFFERENT
+     * image from `manifest_path`.  That refusal is unconditional and needs no
+     * flag: a record that disagrees is always wrong.
+     *
+     * This flag decides the OTHER case -- a card with NO record at all, which
+     * is a card nobody can say anything about.  On the real transport it is
+     * forced to 1, because there `kv_base` is a register subsystem C writes
+     * through and an unverified manifest costs weight objects (MEASURED:
+     * 35 of them).  A simulated or file-backed card has no loaded image to
+     * disagree with and its HBM reads as zero, so 0 there is honest and the
+     * absence is reported rather than refused.  A test sets it to 1 on the
+     * FILE transport to exercise the hardware branch without hardware. */
+    int require_image_lock;
 } pl_open_opts;
 
 /* Fill `o` with the defaults: simulated transport, 9B shape, synthetic

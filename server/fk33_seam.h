@@ -688,6 +688,24 @@ typedef struct {
 
     /* v2 fault injection. */
     int fault_win_no_incr;  /* WIN_ADDR does not auto-increment on DATA */
+
+    /* A REGION OF HBM THAT IS ALREADY THERE WHEN THE HOST OPENS.
+     *
+     * The real card's HBM is loaded by hw/fk33/host/fk33_load_weights.py long
+     * before pl_open() runs, and since 2026-09-20 it carries the 512-byte
+     * IMAGE RECORD (server/fk33_imglock.h) that pl_open reads to decide
+     * whether the manifest it was handed describes the resident image.  A
+     * model whose HBM is always empty cannot present that card, so the
+     * interlock would have nothing to bite on and its teeth could only be
+     * tested on hardware -- which is exactly the class of check this project
+     * has repeatedly found untested.
+     *
+     * `preload_len` bytes from `preload` are written at `preload_addr` before
+     * the first register access.  NULL or 0 -> HBM reads as zero, which is
+     * the honest state of a simulated card nobody has loaded. */
+    const void *preload;
+    uint64_t    preload_addr;
+    size_t      preload_len;
 } fk33_sim_opts;
 
 /* Build a default opts for the Qwen3.5-9B shape.  MEASURED shape numbers:

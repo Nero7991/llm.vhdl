@@ -105,6 +105,15 @@ except Exception as _e:                                   # pragma: no cover
     HM = None
     _HM_WHY = str(_e)
 
+# THE IMAGE RECORD.  `load` is the only thing in this project that makes an
+# image resident, so it is the only honest place to record WHICH image that
+# is.  MEASURED 2026-09-20: without it, driving the flat manifest at a card
+# holding the striped image destroyed 35 weight objects, because the arena
+# base is the same in both and C's KV base is now a host-programmed register.
+# See hw/fk33/host/fk33_imgfp.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fk33_imgfp as IMGFP                                # noqa: E402
+
 HBM_SIZE = 0x2_0000_0000
 CHUNK = 8 << 20
 ALIGN = 4096
@@ -471,6 +480,23 @@ def cmd_load(a):
         return 1
 
     tot = sum(int(e["nbytes"]) for e in ents)
+
+    # INVALIDATE THE IMAGE RECORD BEFORE THE FIRST BYTE MOVES.  From here
+    # until the record is rewritten the card honestly reports NO IMAGE, so a
+    # load that dies half way -- or is killed, or hits a short write -- leaves
+    # a refusal rather than a record describing an image that is only partly
+    # there.  The address is inside the arena this manifest already reserves
+    # and `record_addr` refuses rather than overlapping a descriptor.
+    try:
+        rec_addr = IMGFP.record_addr(mani)
+    except IMGFP.NoRecordSlot as e:
+        print(f"FAIL  the image record cannot be placed: {e}")
+        print("1 FAIL -- refusing to write anything")
+        return 1
+    IMGFP.invalidate(mani)
+    print(f"image record at {rec_addr:#x} zeroed: the card reports NO IMAGE "
+          f"until this load finishes")
+
     print(f"loading {len(ents)} objects, {tot / 1e9:.2f} GB, "
           f"H2C {h2c()}")
     t0 = time.perf_counter()
@@ -532,7 +558,62 @@ def cmd_load(a):
     print("PASS  every object written and its source bytes match the manifest "
           "digest")
     if a.verify:
-        return _verify(mani, ents, headers_only=False, progress=a.progress)
+        rc = _verify(mani, ents, headers_only=False, progress=a.progress)
+        if rc:
+            print("the image record stays ZERO: the card reports NO IMAGE, "
+                  "because verify did not pass")
+            return rc
+
+    # THE RECORD, WRITTEN LAST.  Only a WHOLE load may claim the image is
+    # resident: `--only` places some objects and says nothing about the rest
+    # of HBM, so it leaves the record zero and says so.  That is the safe
+    # direction -- an operator who knows better can run
+    # `fk33_imgfp.py write <manifest>` after a full `verify`.
+    # THE DENOMINATOR IS `select(mani, None)`, NOT `mani["files"]`.  The GDN
+    # constant image is declared in `hbm`, not in `files`, and `const_entries`
+    # puts it on the load list -- so counting files under-states the total by
+    # one and every full load would record itself as PARTIAL.  MEASURED by
+    # this file's own R1 row, which reported "5 of 4 objects".
+    n_all = len(select(mani, None))
+    if a.only:
+        print(f"NOTE  --only loaded {len(ents)} of {n_all} objects, so the "
+              f"image record at {rec_addr:#x} stays ZERO and the card will "
+              f"report NO IMAGE.\n      Run `fk33_load_weights.py verify "
+              f"<manifest>` and then `fk33_imgfp.py write <manifest>` if the "
+              f"whole image really is resident.")
+        return 0
+    IMGFP.write_bytes(mani, IMGFP.pack_record(mani, a.manifest, len(ents),
+                                              n_all, tot))
+    print(f"image record written at {rec_addr:#x}: "
+          f"{IMGFP.fingerprint_hex(mani)}\n"
+          f"      the card now answers `which image is resident` with this "
+          f"manifest's placement")
+    return 0
+
+
+def cmd_fingerprint(a):
+    """What this manifest fingerprints to, and -- with --card -- what the
+    card says is resident.  rc=1 on any disagreement, so it is usable as a
+    gate in a script."""
+    mani, _root = load_manifest(a.manifest)
+    print(f"manifest   {os.path.abspath(a.manifest)}")
+    print(f"placement  {IMGFP.fingerprint_hex(mani)}")
+    print(f"record at  {IMGFP.record_addr(mani):#x}")
+    if not a.card:
+        return 0
+    try:
+        rec = IMGFP.read_record(mani)
+    except IMGFP.BadRecord as e:
+        print(f"REFUSE     {e}", file=sys.stderr)
+        return 1
+    print("resident   " + IMGFP.describe(rec).replace("\n", "\n           "))
+    bad = IMGFP.compare(rec, mani)
+    if bad:
+        print("REFUSE     the card is NOT holding this image:", file=sys.stderr)
+        for m in bad:
+            print(f"             {m}", file=sys.stderr)
+        return 1
+    print("MATCH      the card is holding the image this manifest describes")
     return 0
 
 
@@ -778,6 +859,22 @@ def cmd_selfcheck(a):
         n_scale_sub=_n_scale_sub(rows_if, axi_dw)),
         hbm=dict(desc_arena_base=0x1_F000_0000, desc_arena_bytes=0x28000,
                  host_max_chunk=512,
+                 # THE REST OF THE REGION BLOCK, added 2026-09-20 for the
+                 # image record.  `server/fk33_manifest.c` already requires
+                 # every one of these of a real set, so a fixture without
+                 # them was describing a manifest the card could not use.
+                 # `desc_arena_jobs`/`_stride` are what prove the arena's
+                 # last 512 bytes are not a descriptor: 319 * 512 = 163,328
+                 # and 0x28000 - 512 = 163,328, so the record fits exactly,
+                 # which is also the real set's margin (311 * 512 against
+                 # 159,744 - 512).  `record_row_*` below mutate this.
+                 desc_arena_jobs=319, desc_arena_stride=512,
+                 size=0x2_0000_0000, align=ALIGN,
+                 stack_bytes=0x1_0000_0000,
+                 weights_bytes=cbase, weights_end=cbase,
+                 gdn_state_base=0x1_0000_0000, gdn_state_bytes=0x1000,
+                 kv_base=0x1_0000_1000, kv_bytes_per_token=4096,
+                 max_context_tokens=64,
                  gdn_const_base=cbase, gdn_const_bytes=len(cimg),
                  gdn_const_stack=0, gdn_const_layers=3,
                  gdn_const_bytes_per_layer=512,
@@ -859,8 +956,15 @@ def cmd_selfcheck(a):
         """The operator typed one extra --offset.  Every object is present,
         intact and in the right order, and every base is wrong."""
         def go():
+            # READ `span`, NOT THE WHOLE FILE.  The fake HBM is SPARSE and,
+            # since the image record was added (2026-09-20), it really does
+            # extend to the descriptor arena at 0x1F000000 -- so `f.read()`
+            # pulled 8.32 GB of mostly-holes into one bytes object and took
+            # this selfcheck's peak RSS from 18 MB to 7,953 MB.  MEASURED by
+            # sampling /proc/PID/status VmHWM.  Only `img[:span - delta]` was
+            # ever used, so the bound is not a compromise.
             with open(dev, "rb") as f:
-                img = f.read()
+                img = f.read(span)
             with open(dev, "wb") as f:
                 f.truncate(span)
                 f.seek(delta)
@@ -1058,6 +1162,77 @@ def cmd_selfcheck(a):
     srun("S5 one byte flipped in a middle sub-region, headers only "
          "(EXPECTED NOT TO BITE)", spoke(1, 5, 17), False, True)
 
+    # ------------------------------------------------------- THE IMAGE RECORD
+    # `load` is the only thing in this project that makes an image resident, so
+    # it is the only honest place to record WHICH image that is.  These rows
+    # are about the loader's half of that contract; the record's own teeth
+    # (torn writes, mutant manifests, the C decoder) are in
+    # `fk33_imgfp.py selfcheck`.
+    rrows = []
+
+    def rrow(label, ok, detail):
+        nonlocal hard
+        rrows.append((label, ok, detail))
+        if not ok:
+            hard += 1
+
+    fresh()
+    if cmd_load(NS()) != 0:
+        rrow("R1 a clean load writes the record", False, "the load failed")
+    else:
+        try:
+            rec = IMGFP.read_record(mani)
+            bad = IMGFP.compare(rec, mani)
+            rrow("R1 a clean load writes the record", not bad,
+                 rec["fp_hex"] if not bad else "; ".join(bad))
+        except IMGFP.BadRecord as e:
+            rrow("R1 a clean load writes the record", False, str(e))
+
+    # R2: a PARTIAL load must leave the record ABSENT, not stale.  The record
+    # is present when this starts (R1 wrote it and `fresh()` is NOT called),
+    # so this shows the invalidation, not an empty slot.
+    class NSonly(NS):
+        only = "t0"
+
+    cmd_load(NSonly())
+    try:
+        IMGFP.read_record(mani)
+        rrow("R2 a --only load leaves the record ABSENT", False,
+             "a partial load left a record claiming the whole image")
+    except IMGFP.BadRecord as e:
+        rrow("R2 a --only load leaves the record ABSENT", True,
+             str(e).split(":")[0])
+
+    # R3: THE INCIDENT'S SHAPE, on this file's own fixtures.  The striped and
+    # flat fixtures share one `hbm` block -- exactly as the real flat and
+    # striped manifests share `desc_arena_base = 0x1ffadd000`, which is what
+    # made the collision destructive -- so every REGION field agrees and only
+    # the placement fingerprint separates them.  This is the row that says the
+    # fingerprint half is not redundant with the field-by-field half.
+    with open(sdev, "wb") as f:
+        f.truncate(sspan)
+    os.environ["FK33_H2C"] = sdev
+    os.environ["FK33_C2H"] = sdev
+    if cmd_load(SNS()) != 0:
+        rrow("R3 the flat manifest at a striped image is REFUSED", False,
+             "the striped load failed")
+    else:
+        srec = IMGFP.read_record(smani)
+        bad = IMGFP.compare(srec, mani)
+        region_only = [k for k in IMGFP.REGION_FIELDS
+                       if srec[k] != IMGFP.region_of(mani)[k]]
+        rrow("R3 the flat manifest at a striped image is REFUSED",
+             bool(bad), "; ".join(bad) if bad else "ACCEPTED")
+        rrow("R3-ATTRIBUTION the region fields alone are BLIND to it",
+             not region_only,
+             "blind, so the fingerprint is what refuses"
+             if not region_only else "they also differ: " + ",".join(region_only))
+
+    print()
+    print(f"{'image record':64s} verdict  detail")
+    for label, ok, detail in rrows:
+        print(f"{label:64s} {'ok' if ok else 'WRONG':7s}  {detail}")
+
     print()
     print(f"{'mutation':56s} {'expect':>8s} {'caught':>7s}  verdict")
     for label, exp, got, ok in results:
@@ -1117,6 +1292,18 @@ def main():
     s = common(sub.add_parser("verify"))
     s.add_argument("--headers-only", action="store_true")
     s.set_defaults(fn=cmd_verify)
+
+    # THE IMAGE RECORD, read back.  A thin front door onto fk33_imgfp.py so
+    # an operator who has this file open does not have to know there is a
+    # second one; the logic lives THERE and exists once.
+    s = sub.add_parser("fingerprint",
+                       help="the placement fingerprint of a manifest, and "
+                            "the record the card holds")
+    s.add_argument("manifest")
+    s.add_argument("--card", action="store_true",
+                   help="read the record from HBM and compare (opens "
+                        "/dev/xdma0_c2h_0)")
+    s.set_defaults(fn=cmd_fingerprint)
 
     s = sub.add_parser("selfcheck", help="prove the checks can fail; no card")
     s.set_defaults(fn=cmd_selfcheck)

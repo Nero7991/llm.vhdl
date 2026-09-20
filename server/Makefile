@@ -31,13 +31,14 @@ ARM_CC    ?= aarch64-linux-gnu-gcc
 ARM_CXX   ?= aarch64-linux-gnu-g++
 
 CSRC := pl_backend_axu3eg.c pl_backend.c fk33_transport.c fk33_sim.c \
+        fk33_imglock.c \
         fk33_manifest.c embed_mv4i.c embed_bf16.c \
         qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 COBJ := $(CSRC:.c=.o)
 CARM := $(CSRC:.c=_arm.o)
 
 DEPS := llama_server.cpp $(CSRC) pl_backend.h pl_backend_axu3eg.h \
-        fk33_transport.h fk33_seam.h fk33_manifest.h embed_mv4i.h \
+        fk33_transport.h fk33_seam.h fk33_manifest.h fk33_imglock.h embed_mv4i.h \
         embed_bf16.h ../ref/embed_bf16.h ../ref/embed_bf16.c \
         qwen35_chat.h qwen35_tok.h \
         qwen35_unicode_data.h ../hw/tok512.h ../hw/tok512_pkg.h \
@@ -61,10 +62,10 @@ board: $(DEPS)
 # The seam self-test.  No card, no driver, no FPGA; see tests/seam_selftest.c
 # for what it can and cannot prove.
 seam_selftest: tests/seam_selftest.c pl_backend.c fk33_transport.c fk33_sim.c \
-               fk33_manifest.c pl_backend.h fk33_transport.h fk33_seam.h \
-               fk33_manifest.h
+               fk33_manifest.c fk33_imglock.c pl_backend.h fk33_transport.h fk33_seam.h \
+               fk33_manifest.h fk33_imglock.h
 	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c fk33_transport.c \
-	      fk33_sim.c fk33_manifest.c
+	      fk33_sim.c fk33_manifest.c fk33_imglock.c
 
 # ---------------------------------------------------------------------------
 # The host embedding gather (server/embed_mv4i.c), and its checks.
@@ -101,9 +102,9 @@ embed_ref_oracle: tests/embed_ref_oracle.c ../ref/matvec_int4.c ../ref/mv4i_arit
 	$(CC) $(CBACK) -o $@ tests/embed_ref_oracle.c -lm
 
 embed_e2e: tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
-           fk33_transport.c fk33_sim.c fk33_manifest.c
+           fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c
 	$(CC) $(CBACK) -o $@ tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
-	      fk33_transport.c fk33_sim.c fk33_manifest.c -lm
+	      fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lm
 
 embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 	@if [ ! -f "$(EMBED_MV4I)" ]; then \
@@ -127,10 +128,10 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 # against a committed reference.  Simulated transport only; see the header of
 # tests/run_prompt.c for what that does and does not prove.
 run_prompt: tests/run_prompt.c pl_backend.c fk33_transport.c fk33_sim.c \
-            fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
+            fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
             qwen35_chat.c qwen35_unicode_data.c
 	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c fk33_transport.c \
-	      fk33_sim.c fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
+	      fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
 	      qwen35_chat.c qwen35_unicode_data.c -lm
 
 # The chat-template batch driver, for server/verify_chat_template.py.  That
@@ -144,14 +145,27 @@ chat_batch: tests/chat_batch.c qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 check:
 	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c \
 	      tests/embed_dump.c tests/embed_e2e.c tests/embed_bf16_dump.c \
-	      tests/run_prompt.c
-	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c embed_mv4i.c embed_bf16.c 2>/dev/null \
+	      tests/run_prompt.c tests/imglock_selftest.c
+	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c 2>/dev/null \
 	  || echo "  (no aarch64 toolchain; the SBC-side syntax check was skipped)" 
 	$(CXX) $(CXXFLAGS) $(INC) -fsyntax-only llama_server.cpp
 	@echo "SERVER_COMPILE OK"
 
 test: seam_selftest
 	./seam_selftest
+
+# THE IMAGE INTERLOCK, both halves in one command so it can be a single gate
+# row (sim/regress.sh runs a row's command unquoted and not through a shell,
+# so `a && b` would hand `&&` to argv and only the first half would run).
+#   imglock_selftest   pl_open refusing today's incident against the simulated
+#                      card, with the attribution control
+#   fk33_imgfp.py      the record's own teeth, and the two-language
+#                      cross-check in BOTH directions
+# Neither needs hardware, a model file, or /mnt/storage.
+imglock-check: imglock_selftest
+	./imglock_selftest
+	python3 ../hw/fk33/host/fk33_imgfp.py selfcheck
+	python3 ../hw/fk33/host/fk33_load_weights.py selfcheck
 
 # The end-to-end check of the server's OWN request path.  Needs the .qtk
 # artefact (9 MB, not committed) and builds its own reference driver; it SKIPS
@@ -203,9 +217,21 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 	$(ARM_CC) $(TOKFLAGS) -c qwen35_unicode_data.c -o $@
 
 clean:
-	rm -f llama_server llama_server_arm seam_selftest chat_batch \
+	rm -f llama_server llama_server_arm seam_selftest imglock_selftest chat_batch \
 	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
-.PHONY: board clean tok tok-board check test test-e2e test-stories embed-check
+.PHONY: board clean tok tok-board check test test-e2e test-stories embed-check \
+        imglock-check
+
+# THE IMAGE INTERLOCK's teeth.  Today's incident reconstructed against the
+# simulated card: a flat manifest driven at a card holding the striped image's
+# record must be REFUSED, and the SAME pair with no record -- the state of the
+# world before 2026-09-20 -- must be ACCEPTED, which is the attribution
+# control.  No hardware, no model file, no /mnt/storage.
+imglock_selftest: tests/imglock_selftest.c pl_backend.c fk33_transport.c \
+                  fk33_sim.c fk33_manifest.c fk33_imglock.c pl_backend.h \
+                  fk33_transport.h fk33_seam.h fk33_manifest.h fk33_imglock.h
+	$(CC) $(CBACK) -o $@ tests/imglock_selftest.c pl_backend.c \
+	      fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c

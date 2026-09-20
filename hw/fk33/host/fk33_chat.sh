@@ -32,10 +32,50 @@ mkdir -p "$RUN"
 # mistake only produced a wrong answer; now it costs the image.
 #
 # So: ask the CARD what it is holding, and refuse anything else.
+#
+# THERE ARE TWO WAYS TO ASK AND THEY COVER DIFFERENT GROUND.
+#
+#   fk33_imgfp.py    reads the 512-byte IMAGE RECORD that
+#                    `fk33_load_weights.py load` writes into the descriptor
+#                    arena's reserved tail.  It carries the whole PLACEMENT:
+#                    the region block AND a fingerprint over every piece
+#                    address.  It is the authority, and it is the only thing
+#                    that separates the two striped images, which place every
+#                    weight piece identically and differ only in the GDN state
+#                    and KV regions -- the regions that hold no file bytes and
+#                    that `kv_base` lives in.  MEASURED: their fingerprints are
+#                    2431269a... and 7f9e57e3...
+#   fk33_resident_image.py  reads a few hundred BYTES at addresses a candidate
+#                    manifest claims.  It needs nothing to have been recorded,
+#                    so it still works on a card loaded before 2026-09-20, and
+#                    it is the fallback below.
+#
+# The record wins where it exists.  Where it does not, the byte probe must
+# identify EXACTLY ONE image or this refuses: an ambiguous probe is precisely
+# the striped pair, and choosing between them by position in a list is how a
+# wrong kv_base gets programmed.
 PROBE="$REPO/hw/fk33/host/fk33_resident_image.py"
+IMGFP="$REPO/hw/fk33/host/fk33_imgfp.py"
+RESIDENT_MANIFEST=$(python3 "$IMGFP" which 2>"$RUN/imgfp.log") || RESIDENT_MANIFEST=""
+
 if [[ -n "${FK33_MODEL_DIR:-}" ]]; then
     M="$FK33_MODEL_DIR"
-    if ! python3 "$PROBE" --check "$M/manifest.json" > "$RUN/resident.log" 2>&1; then
+    if [[ -n "$RESIDENT_MANIFEST" ]]; then
+        if ! python3 "$IMGFP" check "$M/manifest.json" > "$RUN/resident.log" 2>&1; then
+            cat "$RUN/resident.log" >&2
+            echo "fk33_chat.sh: REFUSING to run." >&2
+            echo "  resident : $RESIDENT_MANIFEST" >&2
+            echo "  requested: $M/manifest.json" >&2
+            echo "  Driving this manifest would not merely give a wrong answer:" >&2
+            echo "  subsystem C's KV base is a register this host programs, and one" >&2
+            echo "  GO with the wrong one writes KV records into the weight image" >&2
+            echo "  (MEASURED 2026-09-20, 35 objects)." >&2
+            echo "  To use it, load it:  fk33_load_weights.py load $M/manifest.json --verify" >&2
+            echo "  To use what is there, unset FK33_MODEL_DIR." >&2
+            exit 1
+        fi
+        echo "resident   $M  (image record on the card, not assumed)"
+    elif ! python3 "$PROBE" --check "$M/manifest.json" > "$RUN/resident.log" 2>&1; then
         cat "$RUN/resident.log" >&2
         echo "fk33_chat.sh: REFUSING to run.  FK33_MODEL_DIR does not describe" >&2
         echo "  the image on the card.  Driving it would corrupt the weights," >&2
@@ -43,9 +83,19 @@ if [[ -n "${FK33_MODEL_DIR:-}" ]]; then
         echo "  fk33_load_weights.py load <manifest> --verify, or unset" >&2
         echo "  FK33_MODEL_DIR to use whatever is resident." >&2
         exit 1
+    else
+        echo "resident   $M  (byte probe; this card carries NO image record, so" >&2
+        echo "           the GDN state and KV regions were NOT checked.  Run" >&2
+        echo "           fk33_load_weights.py verify <manifest> and then" >&2
+        echo "           fk33_imgfp.py write <manifest> to make it authoritative.)" >&2
     fi
+elif [[ -n "$RESIDENT_MANIFEST" ]]; then
+    # The record names its own manifest, so there is nothing to choose.
+    M="$(dirname "$RESIDENT_MANIFEST")"
+    echo "resident   $M  (image record on the card, not assumed)"
 else
-    # No preference stated: use what is actually loaded.
+    # NO RECORD.  Fall back to the byte probe, and refuse an ambiguous answer.
+    cat "$RUN/imgfp.log" >&2
     mapfile -t RESIDENT < <(python3 "$PROBE" 2>"$RUN/resident.log") || true
     if [[ ${#RESIDENT[@]} -eq 0 ]]; then
         cat "$RUN/resident.log" >&2
@@ -53,14 +103,24 @@ else
         echo "  Load one with fk33_load_weights.py load <manifest> --verify." >&2
         exit 1
     fi
-    M="${RESIDENT[0]}"
     if [[ ${#RESIDENT[@]} -gt 1 ]]; then
-        echo "note       ${#RESIDENT[@]} known images place their weight pieces identically;" >&2
-        echo "           using $M" >&2
-        echo "           (they differ only in the GDN state and KV regions, which hold no" >&2
-        echo "            file bytes to probe.  Set FK33_MODEL_DIR to be explicit.)" >&2
+        echo "fk33_chat.sh: REFUSING to run.  ${#RESIDENT[@]} known images place" >&2
+        echo "  their weight pieces identically and this card carries no image" >&2
+        echo "  record, so the byte probe cannot tell them apart:" >&2
+        printf '    %s\n' "${RESIDENT[@]}" >&2
+        echo "  They differ only in the GDN state and KV regions -- which is" >&2
+        echo "  exactly where a wrong choice writes over the weights.  Either" >&2
+        echo "  reload the image (fk33_load_weights.py load <manifest> --verify," >&2
+        echo "  which writes the record), or state it:" >&2
+        echo "    fk33_load_weights.py verify <manifest>   # prove which one it is" >&2
+        echo "    fk33_imgfp.py write <manifest>           # then record it" >&2
+        exit 1
     fi
-    echo "resident   $M  (probed on the card, not assumed)"
+    M="${RESIDENT[0]}"
+    echo "resident   $M  (byte probe; this card carries NO image record, so the" >&2
+    echo "           GDN state and KV regions were NOT checked.  Run" >&2
+    echo "           fk33_load_weights.py verify <manifest> and then" >&2
+    echo "           fk33_imgfp.py write <manifest> to make it authoritative.)" >&2
 fi
 
 # THE CACHED TOKEN PROGRAM BELONGS TO ONE MANIFEST.  Regenerating only when

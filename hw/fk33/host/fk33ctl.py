@@ -504,6 +504,85 @@ def seam_header_offsets(path=None):
     return out
 
 
+def _print_image_record(manifest_path):
+    """The resident image record, and -- given a manifest -- whether it is the
+    one this manifest describes.  Returns 0, or 1 to make `seam` report a
+    problem.
+
+    THE ADDRESS COMES FROM A MANIFEST, so with none given this tries the ones
+    this project's packed sets all use.  That is not a guess about the card:
+    a wrong address holds no record, and no record is reported as no record.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import fk33_imgfp as IMGFP
+    except Exception as e:                                # pragma: no cover
+        print(f"image      fk33_imgfp.py not importable ({e}); the resident "
+              f"image was NOT read")
+        return 0
+    manis = []
+    if manifest_path:
+        manis.append(manifest_path)
+    else:
+        for d in ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27",
+                  "/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped",
+                  "/mnt/storage/llama-models/qwen35-9b-mv4i-noembd"):
+            p = os.path.join(d, "manifest.json")
+            if os.path.exists(p):
+                manis.append(p)
+    if not manis:
+        print("image      no manifest given and none of the usual packed sets "
+              "is present, so\n           the record's address is unknown and "
+              "nothing was read")
+        return 0
+    rec, where = None, None
+    seen = set()
+    last = "no candidate manifest yielded a readable record address"
+    for p in manis:
+        try:
+            mani = IMGFP.load_manifest(p)
+            addr = IMGFP.record_addr(mani)
+        except Exception:
+            continue
+        if addr in seen:
+            continue
+        seen.add(addr)
+        try:
+            rec, where = IMGFP.read_record(mani), addr
+            break
+        except IMGFP.BadRecord as e:
+            last = str(e)
+    if rec is None:
+        print(f"image      NO RECORD at {', '.join(hex(a_) for a_ in seen)}: "
+              f"{last}\n"
+              f"           Nothing on this card says which packed image is "
+              f"resident.  Until\n"
+              f"           fk33_load_weights.py load writes one, every tool "
+              f"that drives the\n"
+              f"           card on the hardware path REFUSES rather than "
+              f"guessing.")
+        return 1
+    print("image      " + IMGFP.describe(rec).replace("\n", "\n           "))
+    if not manifest_path:
+        return 0
+    bad = IMGFP.compare(rec, IMGFP.load_manifest(manifest_path))
+    if not bad:
+        print(f"           MATCH {os.path.abspath(manifest_path)} describes "
+              f"the resident image")
+        return 0
+    print(f"           MISMATCH {os.path.abspath(manifest_path)} is NOT the "
+          f"resident image:")
+    for msg in bad:
+        print(f"             {msg}")
+    print("           Driving it would not merely give a wrong answer: C's KV "
+          "base is a\n"
+          "           register this host programs, and one GO with the wrong "
+          "one writes KV\n"
+          "           records into the weight image (MEASURED 2026-09-20, 35 "
+          "objects).")
+    return 1
+
+
 def cmd_seam(a):
     """Read the v2 seam and say whether the card can be driven at all.
 
@@ -638,6 +717,16 @@ def cmd_seam(a):
         print("           kv_k_base / kv_v_base / kv_maxpos UNREADABLE (caps bit "
               "5 clear): C's KV base is COMPILED IN on this bitstream; only "
               "the manifest it was built against is safe to load")
+
+    # ------------------------------------------------------ WHICH IMAGE
+    # MEASURED 2026-09-20, and it cost 35 weight objects: nothing on the card
+    # recorded which packed image was resident and nothing on the host
+    # checked, so the flat manifest was driven at the lane-striped image.
+    # `fk33_load_weights.py load` now writes a 512-byte record into the
+    # descriptor arena's reserved tail; this reads it back.  The read is a
+    # C2H read and writes nothing, so it stays inside this command's "writes
+    # NOTHING" contract.
+    bad += _print_image_record(getattr(a, "manifest", None))
 
     # Two copies of a register map, compared.  See seam_header_offsets.
     hdr = seam_header_offsets()
@@ -989,8 +1078,17 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("id").set_defaults(fn=cmd_id)
-    sub.add_parser("seam", help="read the v2 inference seam at BAR+0xE000; "
-                                "writes nothing").set_defaults(fn=cmd_seam)
+    s = sub.add_parser("seam", help="read the v2 inference seam at BAR+0xE000; "
+                                    "writes nothing")
+    # WHICH IMAGE IS RESIDENT is part of "can this card be driven at all", and
+    # since 2026-09-20 it is the part that decides whether driving it costs
+    # weight objects.  `seam` reads the record out of HBM through C2H, which
+    # writes nothing, and with --manifest says whether that manifest is the
+    # resident one.
+    s.add_argument("--manifest", help="compare the resident image record "
+                                      "against this manifest.json; rc=1 on a "
+                                      "mismatch")
+    s.set_defaults(fn=cmd_seam)
     sub.add_parser("scratch").set_defaults(fn=cmd_scratch)
     sub.add_parser("sysmon").set_defaults(fn=cmd_sysmon)
     sub.add_parser("gpio").set_defaults(fn=cmd_gpio)
