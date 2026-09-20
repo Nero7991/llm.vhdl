@@ -112,7 +112,14 @@ entity async_fifo is
     -- Extra beats the write side pretends are resident, covering the read
     -- side's output stage plus the in-flight memory read.  3 is exactly that
     -- stage's capacity; it is a generic only so a caller can prove it matters.
-    OUT_MARGIN : natural := 3
+    OUT_MARGIN : natural := 3;
+    -- FAST_POP -- the read-side read-issue condition.  false is the shipping
+    -- cadence and sustains 2 beats per 3 rclk cycles; true sustains one beat
+    -- per rclk cycle.  See the `do_rd` comment in the read domain below, and
+    -- rtl/stream_fifo.vhd, whose identical line carries the measurement.
+    -- Defaulted false so rtl/fk33_eng_cdc.vhd's two instances and every
+    -- existing bench are unchanged.
+    FAST_POP : boolean := false
   );
   port(
     -- ------------------------------------------------------- write domain
@@ -233,6 +240,10 @@ architecture rtl of async_fifo is
   signal empty_r  : std_logic;
   signal do_rd    : std_logic;
   signal inflight : integer range 0 to 1;
+  -- what the output stage will hold after this edge's pop, before the read
+  -- issued at this edge lands.  0..3, and the lower bound is a proof: the -1
+  -- arm is guarded by `ocnt > 0` read in the same delta.
+  signal after_e  : integer range 0 to 3;
 
   -- the registered occupancy actually presented on w_level; see the header
   signal w_level_r : integer range 0 to 2*DEPTH + OUT_MARGIN := OUT_MARGIN + 1;
@@ -347,8 +358,30 @@ begin
   wp_bin_r <= gray2bin(wp_g_s2);
   empty_r  <= '1' when rp = wp_bin_r else '0';
   inflight <= 1 when mem_q_v = '1' else 0;
+
+  -- THE READ-ISSUE CONDITION.  This is the SAME line as rtl/stream_fifo.vhd's
+  -- and it has the same defect and the same fix; that file's comment carries
+  -- the full trace and the measurement.  In one sentence: the shipping form
+  -- `(ocnt + inflight) < 2` counts the beat LEAVING the output stage at this
+  -- edge as if it were staying, so the FIFO settles into pop, pop, q_valid
+  -- LOW and sustains 2 beats per 3 read cycles.
+  --
+  -- THIS IS THE FIFO THE CARD RUNS.  `DUAL_CLK => true` at
+  -- hw/fk33/gen_fk33_engine.py, so all 27 of subsystem A's weight and scale
+  -- ports are async_fifo, not stream_fifo, and the 1.5101 cycles-per-word
+  -- slope MEASURED on silicon (docs/2026-09-20_d-side-vector-traffic.md
+  -- section 4.1) is this cadence and not the memory.
+  --
+  -- The pop term is INLINED rather than carried in its own signal: a
+  -- concurrent signal costs a delta and the subtraction then reaches -1 in
+  -- the delta after the stage empties.  MEASURED as a `bound check failure`
+  -- in stream_fifo before the same form was used here.
+  after_e <= ocnt + inflight - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt + inflight;
   do_rd    <= '1' when empty_r = '0' and clr_r_s2 = '0'
-                   and (ocnt + inflight) < 2 else '0';
+                   and ((FAST_POP and after_e < 2) or
+                        ((not FAST_POP) and (ocnt + inflight) < 2))
+              else '0';
 
   q_valid <= '1' when ocnt > 0 else '0';
   q_data  <= ob(ob_rp);

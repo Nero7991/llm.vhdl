@@ -92,7 +92,14 @@ entity axi_rd_port is
     -- DEPTH=512 / MAXB=16 that boundary is MAXOUT=32.
     MAXOUT  : positive := 16;
     -- See the DUAL CLOCK block in the header.
-    DUAL_CLK : boolean := false
+    DUAL_CLK : boolean := false;
+    -- FAST_POP -- forwarded UNCHANGED to whichever FIFO the DUAL_CLK generate
+    -- selects, so the two configurations cannot drift apart.  false is the
+    -- shipping cadence of 1.5 core cycles per beat out of this port; true is
+    -- one beat per cycle.  The measurement and the mechanism are in
+    -- rtl/stream_fifo.vhd's `do_rd` comment.  Defaulted false, so every
+    -- existing instantiation and every bench is bit-identical to before.
+    FAST_POP : boolean := false
   );
   port(
     clk, rst : in  std_logic;
@@ -266,7 +273,7 @@ begin
     -- cycles the S_CLR/S_CLR2 handshake takes is the same thing the old
     -- single-cycle S_FLUSH state did, two cycles later.
     fifo : entity work.stream_fifo
-      generic map(W => AXI_DW, DEPTH => DEPTH)
+      generic map(W => AXI_DW, DEPTH => DEPTH, FAST_POP => FAST_POP)
       port map(clk => clk, rst => rst, flush => clr,
                i_valid => f_iv, i_data => rdata, i_ready => f_ir,
                q_valid => f_qv, q_data => f_qd, q_ready => f_qr,
@@ -386,7 +393,8 @@ begin
                run => run_f);
 
     fifo : entity work.async_fifo
-      generic map(W => AXI_DW, DEPTH => DEPTH, OUT_MARGIN => LVL_MARGIN)
+      generic map(W => AXI_DW, DEPTH => DEPTH, OUT_MARGIN => LVL_MARGIN,
+                  FAST_POP => FAST_POP)
       port map(wclk => aclk, wrst => frst,
                w_valid => f_iv, w_data => rdata, w_ready => f_ir,
                w_level => f_level, clr => clr, clr_done => clr_done,

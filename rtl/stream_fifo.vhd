@@ -17,7 +17,16 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity stream_fifo is
-  generic(W : positive := 128; DEPTH : positive := 512);
+  generic(
+    W : positive := 128;
+    DEPTH : positive := 512;
+    -- FAST_POP -- see the `do_rd` comment in the body.  false reproduces the
+    -- shipping cadence of 1.5 cycles per beat EXACTLY, bit for bit; true
+    -- delivers one beat per cycle.  Defaulted to false so that every existing
+    -- instantiation and every testbench is unchanged and the lever has to be
+    -- asked for by name.
+    FAST_POP : boolean := false
+  );
   port(
     clk, rst : in  std_logic;
     flush    : in  std_logic;      -- synchronous, drops everything (7.7)
@@ -59,11 +68,66 @@ architecture rtl of stream_fifo is
 
   signal do_rd    : std_logic;
   signal inflight : integer range 0 to 1;
+  -- what the output stage will hold AFTER this edge, before the read issued
+  -- at this edge lands.  0..3 because ocnt <= 2 and inflight <= 1, and the -1
+  -- arm is only taken when ocnt > 0, so it cannot go negative.
+  signal after_e  : integer range 0 to 3;
 begin
   inflight <= 1 when mem_q_v = '1' else 0;
-  -- issue a memory read whenever the output stage has room for the beat that
-  -- read will produce, counting the one already in flight
-  do_rd <= '1' when mcnt > 0 and (ocnt + inflight) < 2 else '0';
+
+  -- THE READ-ISSUE CONDITION, AND THE 1.5 CYCLES PER BEAT IT USED TO COST.
+  --
+  -- The output stage holds 2 beats and the memory read has one cycle of
+  -- latency, so a read may be issued only while the stage will have room for
+  -- the beat it produces.  The shipping form is
+  --
+  --     do_rd <= '1' when mcnt > 0 and (ocnt + inflight) < 2 else '0';
+  --
+  -- and it counts the beat that is LEAVING at this same edge as if it were
+  -- still there.  MEASURED 2026-09-20, TRACK AIDLE, with a producer offering a
+  -- beat every cycle and a consumer holding q_ready high: the FIFO settles
+  -- into a three-cycle cadence -- pop, pop, q_valid LOW -- and sustains
+  -- **2 beats per 3 cycles, 1.501 cycles per beat, with q_valid low 33.4% of
+  -- the time**.  Trace, with (ocnt, mem_q_v) read pre-edge:
+  --
+  --     (1,1): sum = 2, no read issued; a beat lands, one pops -> (1,0)
+  --     (1,0): sum = 1, read issued;    nothing lands, one pops -> (0,1)
+  --     (0,1): sum = 1, read issued;    a beat lands, NONE pops -> (1,1)
+  --                                     ^ q_valid was LOW this cycle
+  --
+  -- That cadence is subsystem A's whole 0.51 cycles-per-word stall: the array
+  -- accepts a weight word only when all 24 weight FIFOs and all 3 scale FIFOs
+  -- present one, so 1.5 here is 1.5 there, whatever the memory does.
+  --
+  -- The correct bound is on what the stage holds AFTER the pop, which is the
+  -- room the landing beat actually needs:
+  --
+  --     after_e = ocnt + inflight - pop   must be <= 1 for a read to issue
+  --
+  -- because next edge that read lands and the stage must not exceed 2 even if
+  -- nothing pops then.  It is the same invariant, evaluated one pop later, so
+  -- it can never overrun the two entries -- and `ocnt` keeps its 0..2 range as
+  -- the proof, since a bound check would fire in simulation if it did.
+  --
+  -- WHAT IT DOES NOT CHANGE: the ORDER and the VALUES.  Both arms read `mem`
+  -- at `rp` and advance `rp` by one per read; the only difference is WHEN a
+  -- read is issued.  A slower consumer takes the same beats in the same order.
+  -- THE POP TERM IS INLINED, NOT A SIGNAL, AND THAT IS NOT STYLE.  MEASURED
+  -- 2026-09-20: written as a separate `pop <= '1' when ocnt > 0 and q_ready =
+  -- '1'` signal this line dies with `bound check failure` on the FIRST run.
+  -- A concurrent signal costs a delta, so in the delta after an edge that
+  -- emptied the stage, `ocnt` reads 0 while `pop` still reads the PREVIOUS
+  -- delta's '1', and the subtraction reaches -1.  Inlined, the guard and the
+  -- subtraction read `ocnt` in the SAME delta, so `ocnt > 0` implies
+  -- `ocnt + inflight - 1 >= 0` and the 0..3 range is a proof rather than a
+  -- hope.  Same delta-skew trap as rtl/axi_rd_fsm.vhd's header records for a
+  -- clock; here it hits an arithmetic guard instead.
+  after_e <= ocnt + inflight - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt + inflight;
+  do_rd   <= '1' when mcnt > 0 and
+                      ((FAST_POP and after_e < 2) or
+                       ((not FAST_POP) and (ocnt + inflight) < 2))
+             else '0';
 
   i_ready <= '1' when mcnt < DEPTH else '0';
   q_valid <= '1' when ocnt > 0 else '0';

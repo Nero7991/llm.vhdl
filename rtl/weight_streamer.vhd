@@ -88,7 +88,13 @@ entity weight_streamer is
     -- 288.0 GB/s measurement; see that file's MAXOUT comment for the cost.
     MAXOUT   : positive := 16;
     -- Run the AXI masters on `aclk` instead of `clk`.  See the header.
-    DUAL_CLK : boolean := false
+    DUAL_CLK : boolean := false;
+    -- FAST_POP -- forwarded to EVERY one of the NPORTS_W + NPORTS_S ports,
+    -- weight and scale alike, and that is the point: matvec_core accepts a
+    -- word only when all of them present a beat in the SAME cycle
+    -- (rtl/matvec_core.vhd:860), so a rate lever applied to some of them and
+    -- not the others buys nothing at all.  false is the shipping cadence.
+    FAST_POP : boolean := false
   );
   port(
     clk, rst : in  std_logic;
@@ -197,7 +203,8 @@ begin
   gen_w : for p in 0 to NPORTS_W-1 generate
     port_p : entity work.axi_rd_port
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
+                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK,
+                  FAST_POP => FAST_POP)
       port map(
         clk => clk, rst => rst, aclk => aclk, start => start,
         base => w_base((p+1)*ADDR_W-1 downto p*ADDR_W), n_beats => w_beats,
@@ -217,7 +224,8 @@ begin
   gen_s : for q in 0 to NPORTS_S-1 generate
     scale_port : entity work.axi_rd_port
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH,
-                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
+                  MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK,
+                  FAST_POP => FAST_POP)
       port map(
         clk => clk, rst => rst, aclk => aclk, start => start,
         base => s_base((q+1)*ADDR_W-1 downto q*ADDR_W), n_beats => s_beats,

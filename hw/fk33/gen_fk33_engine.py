@@ -94,6 +94,24 @@ MAXB = 16
 MAXOUT = 16
 DESC_MAXB = 16
 
+# ---------------------------------------------------------------- LEVER AIDLE
+# The DEFAULT of the generated entity's FAST_POP generic.  This is the ONE LINE
+# a card build flips, and it is here rather than in the template so that the
+# flip is a data change and shows up as a one-line diff in the generated file.
+#
+# WHAT IT IS.  Every one of the {NLANE} read ports ends in a FIFO whose
+# read-issue condition counted the beat LEAVING the output stage as if it were
+# staying, so the port sustained 2 beats per 3 core cycles.  The array accepts
+# a weight word only when all 27 ports present a beat in the same cycle, so
+# that cadence WAS subsystem A's rate: MEASURED 1.5101 core cycles per weight
+# word on silicon against a structural floor of 1.000
+# (docs/2026-09-20_d-side-vector-traffic.md section 4.1, and
+# docs/debugging/2026-09-20_a-accept-port-idle.md for the attribution).
+#
+# False reproduces the shipping bitstream exactly.  True is the lever.  Values
+# and their order are identical either way; only the issue cycle moves.
+FAST_POP_DEFAULT = False
+
 NLANE = NPORTS_W + NPORTS_S          # 27 weight+scale masters
 NMAST = NLANE + 1                    # + the descriptor master
 HBM_ADDR_W = 33                      # the HBM SAXI port, MEASURED from the IP
@@ -311,7 +329,32 @@ entity fk33_engine is
     -- Opting in is the safe direction, as with CHECK_JOB_INDEX: forgetting to
     -- opt in on the card gives wrong exponents with FAULTS = 0; forgetting to
     -- opt out on a host-driven build reads a port nothing drives.
-    USE_XEXP_PORT : boolean := false
+    USE_XEXP_PORT : boolean := false;
+
+    -- LEVER AIDLE, forwarded to matvec_int4_desc_axi -> matvec_int4 ->
+    -- weight_streamer -> all {NLANE} read ports, and to this engine's own
+    -- descriptor read master.
+    --
+    -- false (the value below is FAST_POP_DEFAULT in
+    -- hw/fk33/gen_fk33_engine.py) is the shipping cadence: each read port
+    -- delivers 2 beats per 3 core cycles because its FIFO's read-issue
+    -- condition counts the beat leaving the output stage as if it were
+    -- staying, and since matvec_core accepts a word only when all {NLANE}
+    -- ports present one in the SAME cycle, that is the array's rate.
+    -- MEASURED on silicon: 1.5101 core cycles per weight word against a
+    -- structural floor of 1.000, i.e. the array is idle 34% of the time with
+    -- the memory idle 61% of the time.
+    --
+    -- true removes the bubble.  It changes no value, no order, no register
+    -- decode, no port width and no descriptor field, exactly as CB_STYLE
+    -- does not -- so it is invisible to a host driver and a build with it set
+    -- must produce bit-identical results.
+    --
+    -- IT IS A GENERIC AND NOT A HARD-CODED true FOR THE SAME REASON CB_STYLE
+    -- IS: `-generic` on the synth_design line reaches the TOP's generics
+    -- only, never a deep instance, so a lever that is not carried by THIS
+    -- entity is not reachable from the card build or from compose4_top at all.
+    FAST_POP : boolean := {FAST_POP_DEFAULT}
   );
   port(
     ------------------------------------------------------------------------
@@ -689,6 +732,7 @@ begin
       DESC_MAXB     => {DESC_MAXB},
       CHECK_JOB_INDEX => CHECK_JOB_INDEX,
       USE_XEXP_PORT => USE_XEXP_PORT,
+      FAST_POP      => FAST_POP,
       DUAL_CLK      => true,
       C_S_AXI_DATA_WIDTH => 32,
       C_S_AXI_ADDR_WIDTH => 8
@@ -764,6 +808,7 @@ def main():
         BYTES=NLANE * AXI_DW // 8, PORTB=AXI_DW // 8,
         YBITS=ROWS_IF * 64,
         ENG_MAGIC=ENG_MAGIC,
+        FAST_POP_DEFAULT=str(FAST_POP_DEFAULT).lower(),
         MASTER_PORTS=master_ports(),
         MASTER_WIRING=master_wiring(),
     )

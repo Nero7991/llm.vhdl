@@ -55,7 +55,17 @@ entity matvec_int4 is
     -- board top: before this generic existed the choice could not be made
     -- above matvec_core, so the lever was implemented and unusable.
     -- matvec_core hard-errors on any other value.
-    CB_STYLE    : string := "regs"
+    CB_STYLE    : string := "regs";
+    -- LEVER AIDLE, forwarded to weight_streamer and to nothing else.  false is
+    -- the shipping design, in which each of the NPORTS_W + NPORTS_S read
+    -- ports delivers 2 beats per 3 core cycles and the array therefore
+    -- accepts a weight word every 1.5 cycles against a structural floor of 1.
+    -- true issues the FIFO's memory read one pop earlier and delivers one
+    -- beat per cycle.  Nothing about the VALUES or their ORDER changes; see
+    -- rtl/stream_fifo.vhd's `do_rd` comment for the trace and the
+    -- measurement.  Defaulted false so rtl/llama_top.vhd's and
+    -- rtl/fk33_llama_top.vhd's instantiations are untouched.
+    FAST_POP    : boolean := false
   );
   port(
     clk, rst : in  std_logic;
@@ -119,7 +129,16 @@ entity matvec_int4 is
     -- actually consumed and the cycles the array spent starved, not just a
     -- wall-clock time.
     dbg_wbeat   : out std_logic;   -- a weight word was accepted this cycle
-    dbg_wstarve : out std_logic    -- no weight word was available this cycle
+    dbg_wstarve : out std_logic;   -- no weight word was available this cycle
+    -- THE STALL `dbg_wstarve` CANNOT SEE.  matvec_int4_desc_axi's header has
+    -- said since 2026-08-30 that STARVED "does NOT see the SCALE path, so a
+    -- cycle with every weight FIFO full and the scale superword missing counts
+    -- as neither BEATS nor STARVED", and
+    -- docs/debugging/2026-08-30_counters-cycles-beats-starved.md section 8
+    -- left that residual open because nothing observed it.  This is the
+    -- observable, and it costs one AND gate.  Unassociated at every existing
+    -- instantiation, which is legal for an OUT port, so no caller moves.
+    dbg_sstarve : out std_logic    -- weights present, the scale group was not
   );
 end entity;
 
@@ -159,7 +178,8 @@ begin
     generic map(NPORTS_W => NPORTS_W, NPORTS_S => NPORTS_S,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 ROWS_IF => ROWS_IF, BLK => BLK, DEPTH => FIFO_DEPTH,
-                MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK)
+                MAXB => MAXB, MAXOUT => MAXOUT, DUAL_CLK => DUAL_CLK,
+                FAST_POP => FAST_POP)
     port map(clk => clk, rst => rst, aclk => aclk, start => start,
              w_base => w_base, w_beats => i_wbeats,
              s_base => s_base, s_beats => i_sbeats,
@@ -198,6 +218,7 @@ begin
 
   dbg_wbeat   <= wv and wr;
   dbg_wstarve <= not wv;
+  dbg_sstarve <= wv and not sv;
 
   i_rows   <= to_integer(signed(n_rows));
   i_cols   <= to_integer(signed(n_cols));

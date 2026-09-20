@@ -187,6 +187,19 @@ entity matvec_int4_desc_axi is
     -- a host driver.  "regs" is what is on the card; "distributed" puts the
     -- IQ4_NL codebook in LUTRAM.  matvec_core hard-errors on any other value.
     CB_STYLE    : string := "regs";
+    -- LEVER AIDLE.  Forwarded to matvec_int4 -> weight_streamer AND to this
+    -- file's own descriptor read master, so that "the whole memory side --
+    -- weights, scales and the descriptor -- is one domain and every word
+    -- crosses through the same tested FIFO" stays true of the RATE as well as
+    -- of the crossing.  Like CB_STYLE it changes no register decode, no port
+    -- width and no descriptor field, so it is invisible to a host driver.
+    --
+    -- false is what the card runs: every read port delivers 2 beats per 3
+    -- core cycles, so the array accepts a weight word every 1.5 cycles
+    -- against a structural floor of 1.  MEASURED slope on silicon 1.5101
+    -- (docs/2026-09-20_d-side-vector-traffic.md section 4.1).  true removes
+    -- the bubble.  Values and their order are unchanged either way.
+    FAST_POP    : boolean := false;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -611,7 +624,8 @@ begin
   -- discipline as a weight sub-region port; only the length differs.
   dfetch : entity work.axi_rd_port
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DESC_FIFO,
-                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => DUAL_CLK)
+                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => DUAL_CLK,
+                FAST_POP => FAST_POP)
     port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
              start => d_start,
              base => dptr(ADDR_W-1 downto 0), n_beats => DBEATS,
@@ -672,7 +686,8 @@ begin
                 NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
                 FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
-                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE)
+                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                FAST_POP => FAST_POP)
     port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
              start => core_start,
              n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
