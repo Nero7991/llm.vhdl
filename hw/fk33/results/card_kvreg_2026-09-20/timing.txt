@@ -1,0 +1,3 @@
+FK33_BITSTREAM ./fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit (25745854 bytes)
+FK33_TIMING WNS=0.061 ns  WHS=0.009 ns
+FK33_BITSTREAM ./fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit (25745854 bytes)

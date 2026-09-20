@@ -217,3 +217,50 @@ with it on (MEASURED PASS, 301 s, 0 of 4 landmarks moved).  Mutants:
 - C_MAXPOS 65536 halves the context; POSW drops 18 -> 17.  Nothing else
   in the card reads C_MAXPOS (the behavioural cache is not instantiated),
   MEASURED by the kvport/seq rows only at the sim shape.
+
+---
+
+## CONFIRMED ON SILICON, 2026-09-20 11:20
+
+The fix is built and measured. Bitstream
+`hw/fk33/bit/fk33_card_kvreg_75mhz_2026-09-20.bit` (build 9, WNS +0.061 ns,
+WHS +0.009 ns at 75 MHz, sha256 f1caefe8...), image
+`/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27`.
+
+MEASURED, in order:
+
+```
+seam       cap flags 0x3d, KV_BASE present, kv_maxpos 65536, ctx 65536
+bases      kv_k_base 0x1b1938000  kv_v_base 0x1d3938000
+           V - K = 570,425,344 B = 65536 * 8704   (exact)
+token 0    argmax 846 = THE REFERENCE VALUE, exp 15, smp_n 248320
+one token  30,115,217 cycles = 0.402 s at 75 MHz
+182 GOs    73.854 s = 0.4058 s/token = 2.46 tok/s = 2.04x the flat image
+verify     251 of 251 objects PASS after 34 tokens, and again after 182
+           (the same check reported 41 corrupted objects before the fix)
+```
+
+`smp_n 248320` matters: TRACK SMPWIN established that the published argmax is
+`sampler_stream`'s own fold count, so a single lost beat shifts it. The full
+vocabulary was swept, so 846 is the argmax of the whole row and not of a
+prefix.
+
+Per-step profile of the corrected striped token
+(`hw/fk33/results/card_kvreg_2026-09-20/profile_striped_seg27_tok0.txt`):
+
+| opcode | steps | cycles | share |
+|---|---:|---:|---:|
+| B_JOB | 24 | 15,854,364 | 52.6% |
+| A_JOB | 310 | 10,890,053 | 36.2% |
+| VEC_SWG | 32 | 1,967,136 | 6.5% |
+| VEC_NORM | 65 | 736,840 | 2.4% |
+| C_JOB | 8 | 594,472 | 2.0% |
+| VEC_RES | 64 | 67,712 | 0.2% |
+
+B is now the majority of the token, which is what the B-mover lever
+(`14fa888`, DERIVED -8.28 M cycles) is for.
+
+The 160-token answer is in
+`hw/fk33/results/card_kvreg_2026-09-20/dcdc_prompt_160_striped.txt` and is
+coherent and on-topic, including the point that a transformer cannot handle
+DC and that a DC-DC converter uses one internally via switching.

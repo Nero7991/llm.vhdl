@@ -1,0 +1,18 @@
+[pl_backend] KV base programmed: K 0x1B1938000 V 0x1D3938000 (C_MAXPOS 65536, 17408 B/token, extent ends 0x1F5938000 under hbm.gdn_const_base 0x1FF95A000)
+text       23 ids from the chat template (thinking off)
+embedding  mv4i /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i M=248320 K=4096 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=128 tiles=5174 w_exp=8 recipe=wide read=4096B x2
+program    /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/xexp/chat_seg27/token.dtbl: 8080 32-bit halves (505 descriptors of 8 64-bit words)
+release    /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/xexp/chat_seg27/token.rel: 505 entries
+transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator token supplied)
+card       seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ctx=65536 chunk=1 x_stride=8256 l_stride=993344 | chardev user=/dev/xdma0_user h2c=/dev/xdma0_h2c_0 c2h=/dev/xdma0_c2h_0
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    23 ids, pos 23, first argmax 1206, exp 15
+To answer this question accurately, it is important to first clarify a fundamental distinction: **DC-DC converters and transformers operate on different principles and are generally not direct competitors.**
+
+*   **Transformers** work by electromagnetic induction and **only** work with Alternating Current (AC). They are used to step up or step down AC voltage.
+*   **DC-DC Converters** take Direct Current (DC) as input and produce DC as output. Since transformers cannot handle DC (it would cause saturation and overheating), a DC-DC converter typically uses a transformer internally (via a switching mechanism like PWM) to create a temporary AC signal, processes it, and then converts it back to DC.
+
+Therefore, the comparison is usually between **using a DC-DC converter** versus
+decode     160 ids generated, pos 182, stopped at --max-new
+timing     182 GOs: run_chunk 73.854 s (of which STATUS wait 73.853 s over 670563 polls), X pushes 0.432 s, wall since start 74.360 s
+bytes      h2c 2981888, c2h 0, go 182 (argmax fast path)
