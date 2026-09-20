@@ -11,6 +11,47 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK BENABLE: B's mover levers are ON in llama_top (`PIPE`, `WIDE`, `MAXOUT => 8`); values bit-identical, DERIVED 8.28 M cycles per token off the card
+
+- **The change is three lines** in `rtl/llama_top.vhd`'s `u_state` generic
+  map, all three generics already existing on `gdn_state_store` and all
+  three defaulting to the shipping behaviour. Nothing else in the RTL.
+- **`llama_top` feeds THREE generators, not one.** `tools/gen_cardtop.py`
+  (`rtl/fk33_llama_top.vhd`, what the card build compiles) was known;
+  `sim/ooc_gdnadapt_extract.py` (`rtl/ooc_gdnadapt_top.vhd`) was not, and
+  `sim:gdnstale` went red on the edit. Both regenerated, `--check` green,
+  and `git diff` on each output carries the generic map and nothing else.
+  `hw/fk33/gen_fk33_card.py` reads the generated top and was unaffected.
+- **ACTIVE (MEASURED, BC-250, two isolated trees that `diff -rq` says
+  differ in exactly one file):** per-token `cycles elapsed` falls by
+  **5,136 x6** (bstate_seq), **7,941 x3** (bconst), **7,704 x2**
+  (bstate), while jobs issued, completions, KV records and KV beats are
+  identical element for element in both arms.
+- **VALUES UNCHANGED:** all four landmarks identical in all three rows in
+  both arms (`0 of the pinned landmarks moved`), and for bstate/bstate_seq
+  those landmarks are the FLAT arm's, an implementation with no mover in
+  it. `sim:seamgate_bconst` PASS on the changed tree checks the nine `R_Y`
+  seams bit for bit against `tools/ref9b/gdn_oracle.py`.
+- **Gate:** BC-250 `PASS 3 FAIL 0` both arms; workstation `--only gdn`
+  PASS 21 / NOCHECK 1, `bmover` 1, `cardtop` 3, `fk33card` 1, `gdnstale`
+  1, `seamgate` 6, all FAIL 0.
+- **DERIVED for the card:** 660,601 x 0.4778 = 315,633 per job, 8.28 M
+  cycles per token (110 ms at 75 MHz), about 27% off the lane-striped
+  token. The 2.5% bench-to-card residual is still unexplained and the
+  ratio assumes it scales; the additive alternative gives 8.07 M.
+- **TRAP, and it voided the first experiment:** another track's
+  `bc250-sync-llama-vhdl.sh` overwrote `rtl/llama_top.vhd` on the BC-250
+  mid-baseline, because the sync pushes the workstation's WORKING TREE to
+  one shared path. One row of that baseline was corrupted and one was
+  not. **When a BC-250 measurement depends on an uncommitted file, copy
+  the tree under `/home/labuser/` and run there.** Also: the BC-250
+  needs `--timeout 3600` for `tb_llama_top_bstate_seq` (1,083 s).
+- **NEXT (not this track's files):** routed timing with the levers on, in
+  the next `FK33_CARD=1` build; then the three narrow movers' remaining
+  90,540 cycles per job (`gdn_conv_tap_mem`, `gdn_conv_w_mem`,
+  `gdn_exp_mem`). Detail in
+  `docs/debugging/2026-09-20_b-job-660k-cycles.md`.
+
 ### 2026-09-20 TRACK ARENAPLACE: the GDN state is back on segment 27 where the packer puts it, one rule now, and the defect cost at most 2.5% of a B job (DERIVED 0 today)
 
 - **CONFIRMED as STRIPE27 described it.** `.bak-arenas` (the packer) says

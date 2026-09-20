@@ -4959,7 +4959,45 @@ begin
                     MAXB         => BST_MAXB,
                     CONST_EN     => B_CONST_HBM,
                     CONST_STRIDE => BST_CNST_B,
-                    CONST_BYTES  => BST_CNST_B)
+                    CONST_BYTES  => BST_CNST_B,
+                    -- ---- THE MOVER'S THROUGHPUT LEVERS, TRACK BENABLE ----
+                    -- 2026-09-20.  These three are the ONLY change: they are
+                    -- `gdn_state_store`'s own generics, all three defaulting
+                    -- to the shipping behaviour, and nothing about the port
+                    -- shapes `gdn_block` sees changes.
+                    --
+                    -- WHY.  MEASURED on the card, one B_JOB step is 660,601
+                    -- cycles and there are 24 of them per token, which is
+                    -- about half the token on the lane-striped image.
+                    -- MEASURED in GHDL (sim/tb_bmover_phases.vhd, the phase
+                    -- table in docs/debugging/2026-09-20_b-job-660k-cycles.md)
+                    -- the bound is the mover's PER-BEAT HANDSHAKE, not HBM
+                    -- latency and not HBM bandwidth: the shipping mover takes
+                    -- a mantissa beat in WPB+1 cycles on a load and WPB+3 on a
+                    -- save, 5 and 7 at this shape, and the 32,768 mantissa
+                    -- beats alone are 393,280 of the 644,172 the bench
+                    -- accounts for.
+                    --
+                    -- WIDE gives `gdn_state_mem` a beat-wide port so the
+                    -- mantissa mover moves one AXI beat per cycle (5/7 -> 1/1).
+                    -- PIPE overlaps the handshake with the unpack in the three
+                    -- NARROW movers, which have no beat-wide port.  Together,
+                    -- MEASURED: 644,172 -> 307,784 cycles per job.
+                    --
+                    -- MAXOUT 8 rather than the default 4 because WIDE makes
+                    -- the consumer fast enough to EXPOSE the read latency:
+                    -- 4 bursts of 16 beats cover 64 cycles of it, and the HBM
+                    -- read latency at 75 MHz is an ESTIMATE (40 to 80), not a
+                    -- measurement.  MEASURED in the bench, 8 costs 0 cycles at
+                    -- every latency tested and saves 17,374 at 80.  Its area,
+                    -- MEASURED OOC at the 9B geometry, is +1 FF over MAXOUT 4
+                    -- (hw/fk33/results/bmover_ooc_2026-09-20/README.md); the
+                    -- two levers together are +1,004 LUT / +1,040 FF, with
+                    -- BRAM, URAM (32 URAM288, unchanged) and DSP unmoved and
+                    -- the post-synthesis WNS estimate 0.36 ns BETTER.
+                    MAXOUT       => 8,
+                    PIPE         => true,
+                    WIDE         => true)
         port map(
           clk => clk, rst => rst,
           load_start => js_ld, save_start => js_sv,
