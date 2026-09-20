@@ -89,6 +89,17 @@ static double pl_now_s(void)
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+/* Where the host's time goes, per process.  Read with pl_host_timing(). */
+static double g_t_push = 0, g_t_wait = 0, g_t_go = 0;
+static unsigned long g_polls = 0;
+void pl_host_timing(double *push_s, double *wait_s, double *go_s, unsigned long *polls)
+{
+    if (push_s) *push_s = g_t_push;
+    if (wait_s) *wait_s = g_t_wait;
+    if (go_s)   *go_s   = g_t_go;
+    if (polls)  *polls  = g_polls;
+}
+
 /* THE ONLY CORRECT WAIT.  `done` is latched and is NEVER set on an error, so a
  * done-only poller hangs forever -- the descriptor-format document states this
  * for subsystem A and the simulated card reproduces it under
@@ -100,7 +111,15 @@ static int seam_wait(pl_ctx *c, uint32_t *status_out)
 
     for (;;) {
         if (rd(c, FK33_SEAM_STATUS, &st)) return -2;
-        if (st & (FK33_ST_DONE | FK33_ST_ERR)) break;
+        g_polls++;
+        if (st & (FK33_ST_DONE | FK33_ST_ERR)) { g_t_wait += pl_now_s() - t0; break; }
+        /* A token is ~0.8 s on this card and a STATUS pread is ~1.7 us, so
+         * a bare spin is ~600k polls per token and a whole core in the
+         * kernel.  MEASURED 2026-09-20: 37.8 M polls over 76 GOs, 63 s of
+         * sys time, zero effect on wall time (wall = the card's cycles).
+         * 50 us between polls bounds the wasted CPU at ~6% of a core and
+         * adds at most 50 us to a token. */
+        { struct timespec ts = {0, 50000}; nanosleep(&ts, NULL); }
         if ((pl_now_s() - t0) * 1000.0 > (double)c->go_timeout_ms) {
             if (status_out) *status_out = st;
             fprintf(stderr,
@@ -994,7 +1013,15 @@ int pl_resume_pos(pl_ctx *c)
 /* ------------------------------------------------------------------ the run */
 
 /* Stage one activation row into c->xbuf and DMA it to slot `k`. */
+static int push_x_inner(pl_ctx *c, int k, int token_id);
 static int push_x(pl_ctx *c, int k, int token_id)
+{
+    double t0 = pl_now_s();
+    int rc = push_x_inner(c, k, token_id);
+    g_t_push += pl_now_s() - t0;
+    return rc;
+}
+static int push_x_inner(pl_ctx *c, int k, int token_id)
 {
     int32_t exp = 0;
     int rc;
@@ -1035,8 +1062,18 @@ static int push_x(pl_ctx *c, int k, int token_id)
 
 /* Run one GO covering `n` steps starting at c->next_pos.  `want_logits`
  * selects whether the ~1 MB C2H happens at all. */
+static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
+                           int32_t *logits, int32_t *logit_exp, int *argmax);
 static int run_chunk(pl_ctx *c, int n, int want_logits,
                      int32_t *logits, int32_t *logit_exp, int *argmax)
+{
+    double t0 = pl_now_s();
+    int rc = run_chunk_inner(c, n, want_logits, logits, logit_exp, argmax);
+    g_t_go += pl_now_s() - t0;
+    return rc;
+}
+static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
+                           int32_t *logits, int32_t *logit_exp, int *argmax)
 {
     uint32_t st = 0, v = 0;
     int rc;

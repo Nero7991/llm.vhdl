@@ -1,0 +1,45 @@
+verifying 251 objects against the manifest (full read-back), C2H /dev/xdma0_c2h_0
+read 4,490,047,488 bytes in 5.79 s = 0.78 GB/s
+249 headers parsed and matched, 211 payload digests matched
+extents      6974 of 6974 digested
+FAIL  output.weight.mv4i @ 0x0: HBM hashes to 21e6af1e42c949778ba5150294993a43, the manifest's pack-time digest is 619a7aa9b1ada3c74317c04d3fa27aee -- the bytes on the card are NOT this tensor
+FAIL  blk.14.ffn_gate.weight.mv4i @ 0x2000: HBM hashes to f7e9ce3867035542aaa964f03087b7af, the manifest's pack-time digest is 818bfaecf77c5fcef59731658fdc83fd -- the bytes on the card are NOT this tensor
+FAIL  blk.14.ffn_up.weight.mv4i @ 0x3000: HBM hashes to 225226362d91830a70060be846133a9e, the manifest's pack-time digest is 0500c3becce6e1630ae2ad0a9e0bde05 -- the bytes on the card are NOT this tensor
+FAIL  blk.15.ffn_gate.weight.mv4i @ 0x5000: HBM hashes to 62b1e2d53340ca078a545a3ffee913cc, the manifest's pack-time digest is 6c98ba02ff687d6a689809f0954bf2c9 -- the bytes on the card are NOT this tensor
+FAIL  blk.25.ffn_down.weight.mv4i @ 0x7000: HBM hashes to 97f117b1914a59c7b905d93285ba9b34, the manifest's pack-time digest is 28b42593300a0ebaca320ae0205c6570 -- the bytes on the card are NOT this tensor
+FAIL  blk.0.ffn_up.weight.mv4i @ 0xf000: HBM hashes to 819396b979a125f327bf127c56bfce91, the manifest's pack-time digest is 8fd051f84e0eb3289bc3e172c5ffb5a2 -- the bytes on the card are NOT this tensor
+FAIL  blk.1.ffn_gate.weight.mv4i @ 0x11000: HBM hashes to 1df4344633205944a169bf6de91a2729, the manifest's pack-time digest is 407875d3bae998c70a35044582602a58 -- the bytes on the card are NOT this tensor
+FAIL  blk.10.ffn_down.weight.mv4i @ 0x13000: HBM hashes to 449feec130ea88e89ca86f03eb42b3b2, the manifest's pack-time digest is 7a8374a16a48f4446bc8905bfbe7da26 -- the bytes on the card are NOT this tensor
+FAIL  blk.11.ffn_gate.weight.mv4i @ 0x17000: HBM hashes to 6f2ba9dd74e85e8a488f919368d6001d, the manifest's pack-time digest is 786b0be48e707de43f045c111535bd16 -- the bytes on the card are NOT this tensor
+FAIL  blk.17.ffn_down.weight.mv4i @ 0x1c000: HBM hashes to be0c3833259144700b85a28d4c14b993, the manifest's pack-time digest is 68eacec826f2232f2ebf0c28e08d6b2c -- the bytes on the card are NOT this tensor
+FAIL  blk.17.ffn_gate.weight.mv4i @ 0x1d000: HBM hashes to 5724eb6d3edb33b02c463f537065b635, the manifest's pack-time digest is 1ddf03630b92e6820a8c1d345e25d6b7 -- the bytes on the card are NOT this tensor
+FAIL  blk.18.ffn_down.weight.mv4i @ 0x1f000: HBM hashes to c6b46c5193ac6858adf47ef0ff510713, the manifest's pack-time digest is ca2d375b7c4e66ae2a23ff12bddd63c5 -- the bytes on the card are NOT this tensor
+FAIL  blk.18.ffn_up.weight.mv4i @ 0x21000: HBM hashes to 2c41a8cb5c145ad6c8887283b8259872, the manifest's pack-time digest is 7ec6dbc765c56dfa727501b39671a25e -- the bytes on the card are NOT this tensor
+FAIL  blk.22.ffn_gate.weight.mv4i @ 0x27000: HBM hashes to 4c40ddbf7d6f2d8e2b8a910b6efce78e, the manifest's pack-time digest is 0ef9c12c9c1fb46a0f8e907c7bc75504 -- the bytes on the card are NOT this tensor
+FAIL  blk.23.ffn_gate.weight.mv4i @ 0x2a000: HBM hashes to 267adeb81254fd337f97777e49aa4eb6, the manifest's pack-time digest is 537314778cb2ee61f574e531db221b98 -- the bytes on the card are NOT this tensor
+FAIL  blk.27.ffn_up.weight.mv4i @ 0x2c000: HBM hashes to 97f8513be0917f7d0930bef19d176e56, the manifest's pack-time digest is 29840e977eebae4f21e0948d0d4427bb -- the bytes on the card are NOT this tensor
+FAIL  blk.3.ffn_gate.weight.mv4i @ 0x2e000: HBM hashes to d3f184194b6fd46a497eac2f6987d909, the manifest's pack-time digest is 30dab5dc8cda5fd5bb8836ba6eee2453 -- the bytes on the card are NOT this tensor
+FAIL  blk.8.ffn_down.weight.mv4i @ 0x39000: HBM hashes to ad328820016d6ab4a94bc36507d6d3b4, the manifest's pack-time digest is 2d66759e8243304293a2d8bbe68e037f -- the bytes on the card are NOT this tensor
+FAIL  blk.8.ffn_gate.weight.mv4i @ 0x3a000: HBM hashes to 58a9418db1a4511a0a4fcb59193ed07d, the manifest's pack-time digest is cae2aaea1551080060cd6509ed2d3fef -- the bytes on the card are NOT this tensor
+FAIL  blk.9.ffn_down.weight.mv4i @ 0x3c000: HBM hashes to f47346f9ec92f3c52679dcf2e7d9ee34, the manifest's pack-time digest is 2d85abaa0fbfd72ce0c9e4d71f5e188c -- the bytes on the card are NOT this tensor
+FAIL  blk.13.ffn_up.weight.mv4i @ 0x48000: HBM hashes to 5ac9a7cb4140f3a2f9e1269157e53a01, the manifest's pack-time digest is 9ecdb1e21d20eef116723fb45a2d752c -- the bytes on the card are NOT this tensor
+FAIL  blk.14.attn_qkv.weight.mv4i @ 0x49000: HBM hashes to d912ab0923efae7b8428d50e9cda8acd, the manifest's pack-time digest is 2356c9adcc1dad84692df759c467ecd7 -- the bytes on the card are NOT this tensor
+FAIL  blk.16.attn_qkv.weight.mv4i @ 0x4b000: HBM hashes to ac7647fe85fe7b8d533bfc1c15b19da0, the manifest's pack-time digest is d90df36a2d0586a5b9f1e0ebf8671fd8 -- the bytes on the card are NOT this tensor
+FAIL  blk.17.attn_qkv.weight.mv4i @ 0x4c000: HBM hashes to 988d3b9b40aebdcf9055d8329d5cb671, the manifest's pack-time digest is f92e073ad8abd039d349acf079d41344 -- the bytes on the card are NOT this tensor
+FAIL  blk.20.ffn_up.weight.mv4i @ 0x58000: HBM hashes to a66dce468ca98d0cc0d04eda475b4369, the manifest's pack-time digest is 060b02c70db3b12b6d204d2027aea954 -- the bytes on the card are NOT this tensor
+FAIL  blk.24.attn_qkv.weight.mv4i @ 0x5b000: HBM hashes to b44b56453efafe1561ec9854ca88984e, the manifest's pack-time digest is 81ab4b2447ae44653d6e311022f74ce2 -- the bytes on the card are NOT this tensor
+FAIL  blk.24.ffn_down.weight.mv4i @ 0x5c000: HBM hashes to ed5f6d4f77c6dff233ce35d2c2800b24, the manifest's pack-time digest is 40ce0e697fe1f8c9b2e006f5c5f448f8 -- the bytes on the card are NOT this tensor
+FAIL  blk.24.ffn_up.weight.mv4i @ 0x5e000: HBM hashes to 80f2ae65c4b13500b4351531fd2446e4, the manifest's pack-time digest is 4a1765f088f042ecbfa0b722d4c3d5dc -- the bytes on the card are NOT this tensor
+FAIL  blk.29.ffn_gate.weight.mv4i @ 0x68000: HBM hashes to 0792f62f0274998e1509a1f5895e999f, the manifest's pack-time digest is f8c6c9979d4ccef96f05cf6a93c5ce1c -- the bytes on the card are NOT this tensor
+FAIL  blk.3.attn_q.weight.mv4i @ 0x6a000: HBM hashes to 0342b8c904be5964ceab23880c1f737a, the manifest's pack-time digest is f02037a637a905b18fdd781ba0dab8bf -- the bytes on the card are NOT this tensor
+FAIL  blk.30.attn_qkv.weight.mv4i @ 0x6b000: HBM hashes to 84fe43d68da96c56bc66f5918100be64, the manifest's pack-time digest is fa6e42694c81dc1389894da4a3da22ba -- the bytes on the card are NOT this tensor
+FAIL  blk.5.attn_qkv.weight.mv4i @ 0x6e000: HBM hashes to 839f0de23ba1ee65a05f7e3e272f9e6b, the manifest's pack-time digest is 1542b04d22d8375afbb95b7e6b982d75 -- the bytes on the card are NOT this tensor
+FAIL  blk.7.attn_q.weight.mv4i @ 0x79000: HBM hashes to f406b6fbfd2a3c62242e355bde305063, the manifest's pack-time digest is 291ddaa52ec611a441f9a93dbb2526b1 -- the bytes on the card are NOT this tensor
+FAIL  blk.9.attn_qkv.weight.mv4i @ 0x7b000: HBM hashes to 1f1351219f85ae44dd10e43d615840e1, the manifest's pack-time digest is ab1d6fa8f5c151e3170d1d15e0718e9f -- the bytes on the card are NOT this tensor
+FAIL  blk.10.attn_gate.weight.mv4i @ 0x86000: HBM hashes to 716319f7df7a9738f3649b1acd979651, the manifest's pack-time digest is 29ad452a338a7a7eb4f37546142d83be -- the bytes on the card are NOT this tensor
+FAIL  blk.12.attn_qkv.weight.mv4i @ 0x8d000: HBM hashes to 7db92fa6af4a92796f188ac345e4aa84, the manifest's pack-time digest is cc016045417d2710ec9ac940466f073c -- the bytes on the card are NOT this tensor
+FAIL  blk.21.ssm_out.weight.mv4i @ 0xb7000: HBM hashes to 47511f86887fbee44f1ed2f8714abc8c, the manifest's pack-time digest is 359a91b6af68897d43b8e18ed312968e -- the bytes on the card are NOT this tensor
+FAIL  blk.24.attn_gate.weight.mv4i @ 0xc1000: HBM hashes to f97caa82421c8ca6b4c30bad7b998b88, the manifest's pack-time digest is c9bafe986f7bf0c482c7aaab384564de -- the bytes on the card are NOT this tensor
+FAIL  blk.26.ssm_out.weight.mv4i @ 0xca000: HBM hashes to aee201cb5e4d8ef9d2e7161e1682b52d, the manifest's pack-time digest is 6885bc151889fea3f91010bab8c12a71 -- the bytes on the card are NOT this tensor
+FAIL  blk.28.attn_gate.weight.mv4i @ 0xd1000: HBM hashes to ca5c9e9ad595ca18ed46b6b7a1e4781f, the manifest's pack-time digest is 6ab3aa0f741dd5207b6226751a0192bf -- the bytes on the card are NOT this tensor
+40 FAIL

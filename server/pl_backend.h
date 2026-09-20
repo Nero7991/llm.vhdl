@@ -366,6 +366,9 @@ int pl_check_vocab(const pl_ctx *c, int n_vocab_from_tokenizer);
 
 /* KV bookkeeping.  The bytes never cross; the position does. */
 int pl_seq_reset(pl_ctx *c);
+/* Host-side time accounting (seconds since process start): the X-row pushes,
+ * the STATUS poll loops (and their count), and whole run_chunk calls. */
+void pl_host_timing(double *push_s, double *wait_s, double *go_s, unsigned long *polls);
 /* Adopt the card's current SEQ_POS as the next position; returns it. */
 int pl_resume_pos(pl_ctx *c);
 int pl_seq_pos(const pl_ctx *c);

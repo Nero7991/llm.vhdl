@@ -173,6 +173,13 @@ static void usage(void)
       "Simulated transport unless --allow-hardware is given by a human.\n");
 }
 
+#include <time.h>
+static double pl_now_wall(void)
+{
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+static double t_start;
 static int g_embed_bias = 0;
 static int embed_biased(void *user, int tok, int16_t *mant, int n_embd, int32_t *exp)
 {
@@ -183,6 +190,7 @@ static int embed_biased(void *user, int tok, int16_t *mant, int n_embd, int32_t 
 
 int main(int argc, char **argv)
 {
+    t_start = pl_now_wall();
     const char *prompt_path = NULL, *ref_path = NULL, *qtk_path = NULL;
     const char *text = NULL;
     int stream = 0;
@@ -485,6 +493,13 @@ int main(int argc, char **argv)
 
     printf("decode     %d ids generated, pos %d, stopped %s\n",
            n_got, pl_seq_pos(c), stopped ? "on the stop token" : "at --max-new");
+    {
+        double tp = 0, tw = 0, tg = 0; unsigned long np = 0;
+        pl_host_timing(&tp, &tw, &tg, &np);
+        printf("timing     %d GOs: run_chunk %.3f s (of which STATUS wait %.3f s over %lu polls), "
+               "X pushes %.3f s, wall since start %.3f s\n",
+               (int)(pl_go_count(c)), tg, tw, np, tp, pl_now_wall() - t_start);
+    }
     printf("bytes      h2c %llu, c2h %llu, go %llu (%s)\n",
            (unsigned long long)pl_bytes_to_card(c) - h2c0,
            (unsigned long long)pl_bytes_from_card(c) - c2h0,
