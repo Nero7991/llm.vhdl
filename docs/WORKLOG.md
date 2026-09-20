@@ -11,6 +11,63 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK DSIDE: 5.15 M cycles a token go through a ONE-element region-file port while an EIGHT-element port sits beside it with one client; A's drain is 1.25 M of them and the fix is llama_top-only
+
+- **The on-card control needs no new measurement.** Same length N = 4,096,
+  same region file: `VEC_RES` (the group port) **1,058 cycles**, `VEC_NORM`
+  (the element port) **11,336**. `seq_vec_res` reads TWO operand regions and
+  writes one and is still **10.7x cheaper per element**. The region file has
+  four ports (`llama_top.vhd:1334-1389`); the LANES = 8 group read (two
+  operand regions at once) and group write (per-lane `w_be`) have exactly one
+  client between them.
+- **MEASURED census, 5,153,058 cycles = 17.11% of the striped token and 8.32%
+  of the flat one:** A `S_XRD` 1,536,622, A `S_DRAIN` 1,426,944, `VEC_SWG`
+  1,179,840, `VEC_NORM` 532,740, B 394,944, C 81,968.
+- **TRACK ACLK's S_XRD/S_DRAIN figure is CONFIRMED to the cycle** and was
+  0.21% low: `sum(K+2) + sum(M) = 2,963,566` exactly, plus `311 x 20` fixed
+  states = 2,969,786, **27.26%** of the striped `A_JOB` total. All 311 steps
+  fit `dur = K + M(drained) + 21 + 294 + 1.5101*beats` with residuals in
+  **[-197, +81]**, sd 51.5 (0.147% of the mean step). **Two wrong-model
+  controls:** charging the drain to the lm_head windows too gives max
+  residual 13,356 (68x worse); dropping the `K+2` term gives 6,249 (32x).
+- **CORRECTION to the brief:** `gvr` has TWO passes, not three (the gain is
+  preloaded, `llama_top.vhd:3462-3470`), so the vector-movement total is
+  **1,712,580**, not the 1,979,000 the brief DERIVED.
+- **PROVED IN SIMULATION, new files `rtl/region_drain.vhd` and
+  `sim/tb_region_drain.vhd`** (auto-discovered row, `OVERALL PASS 1 FAIL 0`,
+  48 checks, peak RSS 664 MB): the drain goes from `n + 2` to
+  `ceil(n/8) + 2` cycles with both region images identical to an INDEPENDENT
+  model over the whole 49,152-word address space, at twelve shapes including
+  a non-multiple-of-8 tail and two misaligned offsets that correctly FALL
+  BACK. 11 mutants, 9 BITE (2 of those as range errors); **N1_no_reset
+  SURVIVES and is reported: the extracted entity has one entry point, so
+  llama_top's path-independent `r = 0` reset is invisible here.** Attribution
+  control (model replaced by narrow-vs-wide): every kill is attributable to
+  the round trip, so the independent model bought nothing against THIS
+  mutant set.
+- **DERIVED: -1,248,576 cycles a token, 4.15% striped / 2.02% flat**, exact
+  arithmetic over the schedule rather than a ratio.
+- **THE PATCH IS WRITTEN OUT, NOT APPLIED** -- BENABLE holds
+  `rtl/llama_top.vhd`. Five hunks behind `A_DRAIN_WIDE : boolean := false`:
+  a group-write region signal `wg_reg`, a `wgmux` on `act_unit` (the same
+  rule `elmux` uses), `memp`'s group arm reading `wg_reg`, **`wr_region <=
+  wg_reg` so the region LOCK names the region actually written** (without
+  this the lever is silently wrong in the guard, not in the data), and the
+  wide arm in `S_DRAIN`. All 311 A jobs have `dst_off` in {0, 2048, 4096}
+  and `n_rows mod 8 = 0`, MEASURED, so the fallback never runs in the
+  shipping schedule.
+- **NEXT, ranked:** L2 `gsr` on both group ports + `swiglu_mem` at LANES 8
+  (-1,769,472, needs new wide ports on that unit); L3 A's `S_XRD`
+  (-1,344,000, but it widens `matvec_int4`'s x bank); L4 `gvr` (-465,920).
+  **REJECTED, do not retry:** writing y through during `S_RUN` (only
+  +178,368 over L1 and it puts region writes inside the run window); and
+  overlapping drain N with XRD N+1 (a `seq_desc_fetch` change, not an
+  adapter change). Detail, arithmetic and the full diff in
+  `docs/2026-09-20_d-side-vector-traffic.md`.
+- **`BASELINE_PASS` was NOT raised** for the new row; it is a floor so the
+  gate stays green, and CLAUDE.md's rule against editing `regress.sh` while a
+  gate may be live is why. The next full unfiltered gate should raise it by 1.
+
 ### 2026-09-20 TRACK SMPWIN: there is NO seam sample window; the chain that IS reachable is CONSTANT on the only reference we have
 
 - **The question was "can the shipping bitstream publish enough of the
