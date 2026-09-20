@@ -412,7 +412,11 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=130  # NOT RAISED 2026-09-18 for TRACK F's THREE new rows
+BASELINE_PASS=130  # NOT RAISED 2026-09-20 for TRACK IMGLOCK's sim:imglock,
+                   # for the same reason as the rows below: it passed
+                   # through --only (OVERALL PASS 1, 1s) and no full
+                   # unfiltered both-suite run was made that day.
+                   # NOT RAISED 2026-09-18 for TRACK F's THREE new rows
                    # (sim:qknimage, sim:tb_llama_top_qkn, sim:seamgate_qkn)
                    # for the same reason as TRACK G's below: each passed
                    # through --only, no full unfiltered run that day.
@@ -1996,6 +2000,16 @@ printf 'fk33card\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # kvmap -- see the SELFCHECK_CMD entry.  Links the HBM manifest to BOTH the RTL
 # generics and the ones hw/fk33/gen_fk33_card.py actually passes to the build.
 printf 'kvmap\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# imglock -- see the SELFCHECK_CMD entry.  The IMAGE INTERLOCK: whether the
+# host can be made to drive a manifest that does not describe the image on the
+# card.  MEASURED 2026-09-20, that cost 35 weight objects, and every check
+# pl_open already made passed, because they check the manifest against ITSELF
+# and against the card's CAPS.  Nothing checked it against the IMAGE, because
+# nothing recorded which image that was.  This row is the only thing in the
+# gate that exercises the refusal, and its most important line is the
+# ATTRIBUTION CONTROL: the same incident pair with no record must be ACCEPTED,
+# which is what says the interlock is the thing catching it.
+printf 'imglock\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # seamregs -- see the SELFCHECK_CMD entry.  The host drives the card through
 # server/fk33_seam.h; rtl/fk33_seam.vhd is the AXI4-Lite slave that answers.
 # Nothing compared the two until 2026-09-11.  A drift is invisible to EVERY
@@ -2762,6 +2776,27 @@ declare -A SELFCHECK_CMD=(
   # "a script nothing schedules" pattern.  A checker that is correct and
   # unscheduled is worth exactly as much as one that is wrong.
   [kvmap]="python3 $REPO/tools/check_kv_map.py"
+  # THE IMAGE INTERLOCK, three suites in ONE command because run_selfcheck
+  # runs its command UNQUOTED and NOT through a shell, so a chained `a && b`
+  # would hand `&&` to argv and only the first half would run -- the trap the
+  # gdnstale entry above already records.  `make -s -C server imglock-check`
+  # runs:
+  #   server/tests/imglock_selftest.c  pl_open refusing today's incident
+  #       against fk33_sim -- a card whose HBM already holds the striped
+  #       image's record, driven with the FLAT manifest -- WITH the
+  #       attribution control (the same pair, no record: ACCEPTED) and the
+  #       ordering row (the refusal lands before the v2 program check, i.e.
+  #       before any base register is written).
+  #   hw/fk33/host/fk33_imgfp.py selfcheck   the record's own teeth: mutant
+  #       manifests, torn and truncated records, the arena-slot guard, two
+  #       NOT-BITING rows under their own names, and a C/Python cross-check
+  #       in BOTH directions.
+  #   hw/fk33/host/fk33_load_weights.py selfcheck   the loader's 27 mutations
+  #       plus R1-R3 on the record.  IT WAS NEVER A GATE ROW UNTIL NOW, which
+  #       is this project's recorded "a checker nothing schedules" pattern.
+  # No card, no model file, no /mnt/storage, no GGUF.
+  # MEASURED 2026-09-20: 0.42 s, 24 MB peak RSS.
+  [imglock]="make -s -C $REPO/server imglock-check"
   [seamregs]="python3 $REPO/tools/check_seam_regs.py"
   # tools/ref9b/logit_compare.py compares the card's token-0 LOGIT VECTOR
   # against the 9B reference: argmax, the ranks each side's argmax holds in
@@ -2844,7 +2879,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp) run_selfcheck "$key"; return ;;
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
