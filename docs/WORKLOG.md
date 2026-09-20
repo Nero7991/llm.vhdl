@@ -11,6 +11,78 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK ACLK (verification pass): the A clock-domain split is VERIFIED to the limit of what runs without synthesis. Byte-identity OFF holds; `--bd-only` with the switch ON PASSES on the BC-250 WITH an OFF control beside it; `sim:runguard` goes RED if the switch is exported without `FK33_CARD=1`.
+
+- The first attempt committed `99e5d99` / `886ebc0` / `11a4d6a` and was
+  rate-limited before reporting ANY verification. Everything below was re-run
+  from scratch, not inherited. Appended as section 9 of
+  `docs/2026-09-20_a-clock-domain-split.md` (pure append, 346 lines).
+- **Byte-identity OFF: MEASURED.** Regenerated with `FK33_CARD=1
+  FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75`, both SHA256 unchanged,
+  `git diff` empty, rc=0 checked BEFORE the diff was believed. **Teeth added:**
+  in a throwaway worktree, OFF vs ON differ by 177 tcl lines and 9 xdc lines,
+  so the identity test is not passing because the switch does nothing.
+- **Gate rows, seven each column.** OFF: `tb_eng_cdc` 1, `seamgate` 6,
+  `cardtop` 3, `fk33card` 1, `runguard` 1, `bdports` 1, `srvseam` 1, all
+  `REGRESSION: PASS`. ON: identical **except `runguard` PASS 0 FAIL 1**.
+- **That red row is the generator's own guard, not a defect.** `sim:runguard`
+  runs `gen_pcieep.py --selftest` with no `FK33_CARD`, which is the one
+  configuration the split refuses (`ABORT: FK33_ENG_SPLIT_CLK=1 without
+  FK33_CARD=1`). With both exported the row PASSES (MEASURED). Section 6's
+  "runguard PASS 1 / PASS 1" is **withdrawn as written** -- true only for an ON
+  column that also sets `FK33_CARD=1`, which was not stated. **The switch is
+  not composable with a whole-gate run**; open for a decision, not changed.
+- **`--bd-only` ON, on the BC-250, WITH THE OFF CONTROL.** Lane gated on
+  PRESENCE by `/proc/PID/exe`, address re-resolved from the router lease,
+  tree synced first. Both runs: `FK33_BD_ONLY_DONE` x2, `FK33_BD_VALIDATE OK`
+  x2, `FK33_UNCONNECTED count=0`, `^ERROR:` 0, zero REAL `41-759`, peak
+  3.8 GB under a 6G cap. **The split adds exactly four CRITICAL WARNINGs**
+  (`BD 41-737` read-only on `eng_cdc`'s clock/reset pins) against 3 of the
+  identical class already in the shipped OFF build. Everything else in the
+  census is unchanged, including the 32 pre-existing `41-1377`.
+  It ANSWERS section 8's open packager question: `sa`/`ma` ARE inferred as
+  AXI-Lite and the two-hop 256-byte assignment resolves.
+- **The 41-759 count is the log-contains-its-own-script trap again.** An
+  unanchored `grep -c` says 1; the hit is `pcieep_build.sh`'s echoed source.
+  Real Vivado messages: **0**.
+- **Mutants: 15 of 15 as expected**, both attribution controls biting (W12/W34
+  for the redundant wait pairs, G2 for G1). Seven survivors reported under
+  their own names with the real guard for each. The bench already drives BOTH
+  ratios (13.333/5 then swapped 5/13.333, periods are signals), 11,678 checks
+  counted in variables, so the one-ratio objection does not apply.
+- **Constraints, anchored.** `^set_clock_groups .*-asynchronous` 2 -> 3;
+  `^set_max_delay .*-datapath_only` **0 in both**; no `if` in the file, so the
+  XDC reader cannot skip the block. The missing max-delay is DELIBERATE -- a
+  clock group is a false path and outranks a max-delay exception -- but the
+  consequence is real and now recorded: **nothing bounds routed skew on the
+  crossing**, justified by precedent only.
+- **Projection re-derived; section 7 reproduces EXACTLY** (striped 0.4015 ->
+  0.3484 s, 1.15x). **At 200 MHz A is datapath-bound, not memory-bound:** one
+  PC gives 32 B per ACLK cycle at 250 MHz = 4.0 ns/beat, 2 lanes per PC = 8.0
+  ns/lane-beat = 1.60 cycles at 200 MHz, against a measured 2.03, so **21% of
+  the busiest PC's supply is still unused**. **CORRECTION:** section 7's flat
+  row used an unsourced 108 ns/beat and so projected flat getting SLOWER than
+  measured; the profile's own arithmetic gives **102.16 ns/beat**, flat token
+  0.8254 s, **1.00x**. Conclusion unchanged, number corrected.
+- **The post-split token depends on B.** B is MEASURED at 660,601 cycles/job
+  (52.6% of a striped token); another track's levers project ~308k (ESTIMATE).
+  DERIVED: split alone 1.15x, B alone 1.39x, **both 1.70x (0.2356 s)**. If B
+  lands first the A split's share RISES from 15% to 23%.
+- **A trap worth knowing: `gen_pcieep.py` is NOT path-portable.** It ABORTs
+  from any checkout that is not `/home/orencollaco/GitHub/llama.vhdl`, because
+  a guard compares an absolute path baked into `build_fk33_i2cprobe.tcl`.
+  Harmless today only because `bc250-sync-llama-vhdl.sh`'s `DEST` happens to
+  be exactly that path. Third file with this trap.
+- **NOT DETERMINED:** anything needing synthesis or routing (timing, area,
+  `report_cdc`, `FK33_ENGSPLIT`, the 44 RAMB36 y FIFO, `clk_wiz_0`'s four
+  outputs from one VCO); the routed skew; why Vivado refuses `ASSOCIATED_RESET`
+  on `eng_cdc`; `seamgate`'s six rows are unattributable because another track
+  was editing `rtl/swiglu_mem.vhd` while they compiled; and the projection is
+  still cross-build arithmetic until the card's own counters are read at
+  200 MHz.
+- **No hardware was touched and no Vivado ran on the workstation** (a card
+  build held its lane throughout).
+
 ### 2026-09-20 TRACK SWGFAST: LANDED at `7ed6535`. VEC_SWG's 5.0 cycles/element is 1+1+2+1 (G load, U load, the unit's two passes, write-back). `swiglu_mem` gains LANES (default 1); at LANES = 4 the unit is 6,157 cycles instead of 24,588 -- which is 30% of the VEC_SWG step and **0.95% of a token**. NEEDS ONE LINE IN llama_top TO REACH THE CARD. NEVER SYNTHESISED.
 
 - **Accounting** (docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md):

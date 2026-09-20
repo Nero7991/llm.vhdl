@@ -323,3 +323,349 @@ needs its own measurement first.
   emitted for it.
 - The projection in section 7 is DERIVED from two different builds' numbers
   and has to be re-measured with the card's own `CYCLES/BEATS` counters.
+
+---
+
+## 9. Independent re-verification, 2026-09-20 (TRACK ACLK, second attempt)
+
+The first attempt's last act was to commit sections 1-8; it was rate-limited
+before reporting any verification, so everything in this section was re-run
+from scratch rather than inherited. Where a number below differs from the one
+above, this section is the measurement and the one above is withdrawn.
+
+### 9.1 Byte-identity with the switch OFF (MEASURED)
+
+In the MAIN checkout, with `FK33_ENG_SPLIT_CLK` unset:
+
+```
+$ env -u FK33_ENG_SPLIT_CLK FK33_CARD=1 FK33_CB_STYLE=distributed \
+      FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py     # rc=0
+sha256 before == sha256 after, both files:
+  dcf6957db2dea3639f4ab2aa006313a17639fa600591a44941f9e403ccdd82dd  build_fk33_pcieep.tcl
+  143679ce8c6c96d3fadd8f6f08b3f7d7ec9ce6e8488a216e9297f5b8df9c9f0f  fk33_pcieep.xdc
+$ git diff --stat -- hw/fk33/build_fk33_pcieep.tcl hw/fk33/fk33_pcieep.xdc
+(empty)
+```
+
+A card build was running against the committed tree at the time, so both files
+were copied to the scratchpad first and the hashes were compared rather than
+assumed. The identity claim in section 6 stands.
+
+**The teeth for that test, which section 6 did not have.** An identity test
+passes trivially if the switch does nothing, so the switch was shown to change
+the output. This was done in a throwaway `git worktree` at HEAD so the live
+build's inputs were never written: OFF and ON in the same tree differ by
+**177 lines of `build_fk33_pcieep.tcl` and 9 lines of `fk33_pcieep.xdc`**.
+
+`--selftest` passes in all four configurations (re-run):
+
+| `FK33_ENG_SPLIT_CLK` | `FK33_CARD` | rc | last line |
+|---|---|---:|---|
+| unset | unset | 0 | `SELFTEST PASS` |
+| unset | 1 | 0 | `SELFTEST PASS` |
+| 1 | 1 | 0 | `SELFTEST PASS` |
+| 1 | unset | 1 | `ABORT: FK33_ENG_SPLIT_CLK=1 without FK33_CARD=1` |
+
+with `CDC-PINS  48 pins checked; one removed port on each face is named; an
+empty text raises` in every configuration, and `SPLIT-GATE on: 6 fragments
+present, 24 seam pins checked on the live cell` against `SPLIT-GATE off: none
+of 6 split fragments in the generated text`.
+
+### 9.2 A TRAP FOUND ON THE WAY: `gen_pcieep.py` IS NOT PATH-PORTABLE
+
+The worktree run ABORTed before writing anything:
+
+```
+ABORT: the probe build script no longer contains:
+add_files -fileset constrs_1 -norecurse <WORKTREE>/hw/fk33/fk33_i2cprobe.xdc
+Refusing to emit a PCIe build whose width, IDs, CLKREQ polarity or
+smartconnect fan-out may be wrong.
+```
+
+Both inputs (`build_fk33_i2cprobe.tcl`, `fk33_i2cprobe.xdc`) ARE tracked and
+WERE present. The guard compares against an **absolute path** baked into
+`build_fk33_i2cprobe.tcl`, so the generator runs only from a checkout at
+`/home/orencollaco/GitHub/llama.vhdl`. This is the recorded "two `sim/*.tcl`
+hardcode the absolute path" trap, in a third file, and it is why
+`bc250-sync-llama-vhdl.sh`'s `DEST` must stay exactly that path -- which it
+does, so the BC-250 lane is unaffected. **An empty `git diff` from a run that
+ABORTed proves nothing**; the rc was checked before the diff was believed,
+which is the only reason this was noticed rather than recorded as a pass.
+
+### 9.3 Gate rows, both columns (MEASURED)
+
+`REGRESS_SCRATCH=<per-run dir> bash sim/regress.sh --only <substring> --keep`,
+serially, one GHDL at a time. `OVERALL` lines verbatim:
+
+| row | OFF (`FK33_ENG_SPLIT_CLK` unset) | ON (`=1`) |
+|---|---|---|
+| `tb_eng_cdc` | `PASS 1  FAIL 0` | `PASS 1  FAIL 0` |
+| `seamgate` | `PASS 6  FAIL 0` | `PASS 6  FAIL 0` |
+| `cardtop` | `PASS 3  FAIL 0` | `PASS 3  FAIL 0` |
+| `fk33card` | `PASS 1  FAIL 0` | `PASS 1  FAIL 0` |
+| `runguard` | `PASS 1  FAIL 0` | **`PASS 0  FAIL 1`** |
+| `bdports` | `PASS 1  FAIL 0` | `PASS 1  FAIL 0` |
+| `srvseam` | `PASS 1  FAIL 0` | `PASS 1  FAIL 0` |
+
+All OFF rows `REGRESSION: PASS`. Every ON row is `REGRESSION: PASS` except
+`runguard`.
+
+**`sim:runguard` ON is a real red row, and it is the generator's own guard
+firing, not a defect in the split.** The row runs
+`python3 hw/fk33/gen_pcieep.py --selftest` with no `FK33_CARD`, so exporting
+the switch alone puts the generator in the one configuration it refuses:
+
+```
+FAIL  sim:runguard  0s  ABORT: FK33_ENG_SPLIT_CLK=1 without FK33_CARD=1.
+```
+
+With both variables exported the same row passes (MEASURED, third column):
+
+```
+$ FK33_ENG_SPLIT_CLK=1 FK33_CARD=1 bash sim/regress.sh --only runguard
+PASS  sim:runguard  0s  SELFTEST PASS
+ OVERALL     PASS 1   FAIL 0 ...
+```
+
+Section 6's "`sim:runguard` PASS 1 / PASS 1" is therefore **withdrawn as
+written**: it is true only for an ON column that also exports `FK33_CARD=1`,
+and the environment was not stated. The guard itself is right -- silently
+ignoring a requested split would be worse than refusing it -- so nothing was
+changed. What this costs is that the switch is **not composable with a
+whole-gate run**: `FK33_ENG_SPLIT_CLK=1` exported in a shell turns the shared
+gate red on a row that is testing a different configuration. Left open below.
+
+*Caveat on `seamgate`, stated because it is not attributable.* Those six rows
+compile from the repo, and `rtl/swiglu_mem.vhd` was being edited by another
+track while they ran (three other GHDL processes were live, by
+`/proc/PID/cwd`). Both columns agree at `PASS 6`, and the switch cannot reach
+those benches, but neither column is a clean measurement of any one tree.
+
+### 9.4 Mutation table, re-run in full (MEASURED)
+
+`SCRATCH=<dir> bash sim/mutate_eng_cdc.sh` -> `MUTATE_ENG_CDC
+rows-as-expected=15 unexpected=0`, `MUTATE_ENG_CDC: PASS`. Every row matched
+the table in section 6, verdict for verdict, including all seven survivors.
+
+The survivors, and the real guard for each -- this is the part worth re-reading:
+
+| row | verdict | why it cannot bite here, and what does guard it |
+|---|---|---|
+| W1, W2 | SURV | each is one half of a redundant pair; the other half still orders the x path. **W12 (both removed) KILLs** -- that pair is the attribution control, and without it W1/W2 would read as untested code. |
+| W3, W4 | SURV | same shape on the y path. **W34 KILLs.** |
+| W7 | SURV | one synchroniser flop instead of two is an MTBF defect. A zero-delay simulation never produces metastability, so no functional bench can reach it. Guarded by `ASYNC_REG` in `rtl/fk33_eng_cdc.vhd` plus `report_cdc` on the implemented design (emitted under `FK33_ENGSPLIT`). |
+| W8 | SURV | payload and toggle on the same edge is a skew defect; RTL sim samples atomically. Same guard; the XDC clock group is what makes the router's freedom legal, and `report_cdc` is what reads it back. |
+| G1 | SURV | gray encode AND decode both identity: pointers cross as plain binary, which is functionally identical when sampling is atomic. **G2 (encoder only) KILLs**, which is the control proving G1's survival is a property of the simulation and not of a dead bench. Static guard: `sim/gray_check.sh`. |
+| F2 | SURV | full flag early by one: refuses a beat the clean phases never ask for. A stated floor of the STIMULUS, not of the checker. |
+| C0 | SURV | unmutated control. |
+
+Killed: W12, W34, W5 (done leaks into the next `S_WAIT`), W6 (done as a level),
+G2. Aborted: F1, on `async_fifo`'s own severity-failure assert.
+
+The bench drives **both ratios**, so the "one ratio has not been shown to
+discriminate" objection does not apply: the clock periods are SIGNALS and the
+run reports, from the unmutated C0 control,
+
+```
+PHASE 1: card 13.333 ns / engine 5 ns
+PHASE 2: card 5 ns / engine 13.333 ns (swapped), x throttled
+PHASE 3: x overflow (expected fault)
+PHASE 4: reset clears the fault; y overflow (expected fault)
+PHASE 5: d_job_err
+tb_eng_cdc: checks card=190 eng=11488 fails card=0 eng=0
+tb_eng_cdc: PASS  checks=11678
+```
+
+11,678 counted in VARIABLES, matching section 6.
+
+### 9.5 The constraints, by anchored grep (MEASURED)
+
+Against the generated `fk33_pcieep.xdc`, OFF and ON from the same tree:
+
+| anchored pattern | OFF | ON |
+|---|---:|---:|
+| `^set_clock_groups .*-asynchronous` | 2 | **3** |
+| `^set_max_delay .*-datapath_only` | 0 | **0** |
+| `^set_property ASYNC_REG` | 0 | 0 |
+| `^\s*if\s` (anywhere in the file) | 0 | 0 |
+
+The one added group, verbatim and unconditional -- no `if`, no `foreach`, no
+`set`, so Vivado's XDC reader cannot skip it with a CRITICAL WARNING:
+
+```
+# Sentinel: FK33_ENG_SPLIT_CLK xdc eng/core_clk card/clk asynchronous
+set_clock_groups -asynchronous \
+    -group [get_clocks -of_objects [get_pins bd_i/eng/core_clk]] \
+    -group [get_clocks -of_objects [get_pins bd_i/card/clk]]
+```
+
+**There is no `set_max_delay -datapath_only` anywhere in the generated XDC,
+and that is deliberate**, not an omission: a clock group makes the crossing a
+FALSE PATH, and a false path outranks a max-delay exception in Vivado's
+exception priority, so the bound would be silently overridden. The cost is
+real and is recorded as open below: nothing bounds the routed skew across the
+gray pointer buses. This is the same trade the shipped design already makes
+for the engine's 28 core-to-`hbm_aclk` FIFOs, so it is by precedent, not by
+measurement.
+
+**The XDC names no register pairs**, so "every CDC register pair named in the
+XDC exists in the wrapper" is not a check that exists. What exists instead,
+and what was verified to be emitted, is `FK33_ENGSPLIT` on the IMPLEMENTED
+design (3 anchored `puts`, 8 references): it errors unless `card/clk` and
+`eng/core_clk` resolve to DISTINCT clocks, unless `bd_i/eng_cdc` is present,
+and unless at least ten `ASYNC_REG` cells survive under it, then writes
+`report_cdc` both ways. None of that can run without a routed build.
+
+### 9.6 `--bd-only` on the BC-250, WITH ITS OFF CONTROL (MEASURED)
+
+Lane gated on PRESENCE via `/proc/PID/exe` (`vivado_present=0`), address
+re-resolved from the router lease (`192.0.2.133`) rather than trusted from
+this file, tree synced with `bc250-sync-llama-vhdl.sh` (2,459 tracked files)
+first. `hw/fk33/pcieep_build.sh --bd-only`, `MemoryHigh=6G`, run twice: once
+with the switch ON and once with it OFF, on the same synced tree.
+
+| anchored sentinel | OFF control | ON |
+|---|---|---|
+| `^FK33_BD_ONLY_DONE` | 2 | 2 |
+| `^FK33_BD_VALIDATE` | `OK`, `OK` | `OK`, `OK` |
+| `^FK33_UNCONNECTED count=` | `count=0` | `count=0` |
+| `^ERROR:` | 0 | 0 |
+| BD **41-759**, real messages | 0 | 0 |
+| `^CRITICAL WARNING [BD 41-1377]` | 32 | 32 |
+| `^CRITICAL WARNING [BD 41-737]` | **3** | **7** |
+| `^FK33_ENGCDC` | 0 | 8 |
+| Vivado `peak` MB | 3,795.6 | 3,815.3 |
+
+**The split adds exactly four CRITICAL WARNINGs and changes nothing else in
+the census.** All four are `BD 41-737` "Cannot set the parameter ... It is
+read-only" on the new cell's `eng_cdc/s_clk`, `m_clk`, `s_rstn`, `m_rstn`. The
+attribution control is in the same pair of logs: the identical message class
+already occurs **3 times in the shipped OFF build**, on `/eng/core_clk`,
+`/eng/core_aresetn` and `/bcgrant/rstn`. So this is a pre-existing pattern
+extended to one more cell, not a new failure mode -- but it does mean the
+requested `ASSOCIATED_RESET` and `POLARITY` did NOT take, which is recorded as
+open below. The 32 `41-1377` are pre-existing HBM address aliasing on the
+`xdma`/`jtag_hbm` paths, identical in both columns and untouched by the split.
+
+**The 41-759 count needs stating carefully, because it is the log-contains-its-
+own-script trap.** An unanchored `grep -c '41-759'` returns **1** on the ON
+log. That single hit is `pcieep_build.sh`'s own echoed source -- a line reading
+`#  error "FK33_SEAMWIRE FAIL: ... draws no BD 41-759 when left unconnected."`
+Filtering to lines that are actual Vivado messages gives **0**:
+
+```
+total                                        : 1
+non-# lines                                  : 0
+^(CRITICAL WARNING|WARNING|INFO|ERROR):...   : 0
+```
+
+This is why the net-based `FK33_UNCONNECTED count=0` is the check that matters
+and 41-759 is not: CLAUDE.md already records that an input with a VHDL default
+draws no 41-759 at all.
+
+What this run ANSWERS from section 8, which listed it as unverified: the
+packager DOES infer `sa` and `ma` as AXI-Lite interfaces, and the two-hop
+256-byte assignment DOES resolve --
+
+```
+FK33_ENGCDC 48 wrapper pins present in fk33_eng_cdc.vhd
+FK33_ENGCDC ASSOCIATED_BUSIF eng_cdc/s_clk = sa
+FK33_ENGCDC ASSOCIATED_BUSIF eng_cdc/m_clk = ma
+FK33_ENGCDC 24 seam pins exist on both faces of the inferred cell
+FK33_ENGCDC card/a maps /card/a/SEG_eng_cdc_reg0
+FK33_ENGCDC eng_cdc/ma maps /eng_cdc/ma/SEG_eng_reg0
+```
+
+It answers NOTHING about timing, area or `clk_wiz_0`'s ability to produce four
+outputs from one VCO: `--bd-only` stops before synthesis.
+
+### 9.7 The projection, re-derived and one row corrected
+
+Section 7 reproduces EXACTLY from the profiles, recomputed independently from
+`hw/fk33/results/card_swg_2026-09-20/profile/` (MEASURED, my own aggregation):
+
+```
+striped: A=10,894,638  card-side=2,963,566  eng-side=7,931,072  rest=19,220,608  token=0.4015 s
+flat:    A=42,686,358  card-side=2,963,566  eng-side=39,722,792 rest=19,220,767  token=0.8254 s
+striped post-split = 0.3484 s  ->  1.152x       (section 7's figure, confirmed)
+naive "all A_JOB at 200 MHz" = 0.3107 s (1.292x) -- the figure section 7 rejects, and it is right to
+```
+
+The memory-side assumption, stated explicitly and shown (DERIVED from
+`docs/debugging/2026-08-30_counters-cycles-beats-starved.md`): one pseudo-channel
+delivers 32 B per ACLK cycle at 250 MHz ACLK, so **4.0 ns per 32 B beat**; the
+busiest PC carries **2 lanes**, so each lane gets a beat every **8.0 ns**,
+which at 200 MHz is **1.60 core cycles**. The measured engine does **2.03
+cycles/beat = 10.15 ns**. Demand/supply = 8.0/10.15 = **0.788**.
+
+**So at 200 MHz A is NOT memory-bound: it is datapath-and-overhead-bound with
+about 21% of the busiest pseudo-channel's supply still unused** (equivalently,
+it is 27% above both the supply bound and the 1.53-1.60 cycles/beat datapath
+floor). That is the answer to "memory-bound or datapath-bound at 200 MHz", and
+it is also why clocking past 200 MHz buys little: the next lever is one lane
+per PC, not a faster core.
+
+**CORRECTION to section 7's flat row.** It projects flat A engine-side as
+`5.18 M x 108 ns = 0.560 s`, which is SLOWER than the measured 0.530 s, so the
+table shows flat getting worse and then rounds it to "~0.83 s, 1.0x". The
+108 ns is not derived anywhere in this document. The profile's own arithmetic
+gives `39,722,792 cycles / 75 MHz / 5,184,384 beats = **102.16 ns/beat**`.
+Using the measured figure, flat A engine-side is clock-independent at
+**0.5296 s** and the flat token is **0.8254 s exactly, 1.00x**. The CONCLUSION
+is unchanged and was always the right one -- the flat image is single-PC bound
+and the split buys it nothing -- but the number quoted for it should be the
+measured 102.16 ns, not the unsourced 108 ns.
+
+**What the post-split token time actually depends on, which section 7 could
+not yet state.** B's mover is MEASURED at **660,601 cycles per job**
+(`docs/debugging/2026-09-20_b-job-660k-cycles.md`), 24 jobs = 15,854,448
+cycles = 52.6% of the striped token. Another track has levers projected to cut
+that to about **308k/job** (ESTIMATE, that track's, not measured here).
+Combining (DERIVED):
+
+| striped token | B at 660,601/job (MEASURED) | B at ~308k/job (ESTIMATE) |
+|---|---:|---:|
+| no split (today) | 0.4015 s | 0.2887 s (1.39x) |
+| with the A split | 0.3484 s (1.15x) | **0.2356 s (1.70x)** |
+
+The two levers are close to independent -- A's saving is engine-side beats, B's
+is a per-beat handshake in a different subsystem -- so they compose, but
+**neither alone gets past about 1.4x, and the order matters for what is worth
+measuring next**: B is the bigger single block by cycles, A is the one whose
+200 MHz is MEASURED on silicon. If B's levers land first, the A split's share
+of the remaining token RISES from 15% to 23%, which strengthens rather than
+weakens the case for it.
+
+### 9.8 Open, NOT determined
+
+- **Everything that needs synthesis or routing.** `--bd-only` stops before it.
+  No timing, no area, no `report_cdc`, no evidence that A closes at 200 MHz
+  inside a card build at 83% LUT, and no confirmation that `clk_wiz_0` yields
+  100/200/75/200 from one VCO. `FK33_ENGSPLIT` and the 44 RAMB36 y-FIFO cost
+  are unmeasured.
+- **Nothing bounds the routed skew on the crossing.** The `set_clock_groups
+  -asynchronous` makes it a false path and no `set_max_delay -datapath_only`
+  can survive beside it. Justified by precedent (the engine's own 28 FIFOs
+  ship this way), never measured for this seam.
+- **`ASSOCIATED_RESET` and `POLARITY` on `eng_cdc`'s clock/reset pins were
+  REFUSED by Vivado** (`BD 41-737`, 4 instances). `ASSOCIATED_BUSIF` did take
+  and is read back. The consequence of the refusal is not established; it is
+  cosmetic for timing, since the XDC group is what constrains the crossing,
+  but the generator is asking for something it does not get. CLAUDE.md:
+  reading a `CONFIG.*` back reads a REQUEST -- here Vivado says no out loud.
+- **`FK33_ENG_SPLIT_CLK=1` exported alone turns `sim:runguard` red.** Decide
+  whether the guard should move from configuration time to emission time so
+  `--selftest` stays runnable in every environment, or whether the gate row
+  should pin `FK33_CARD=1`. Not changed by this track, because the guard is
+  correct and changing a shipped refusal on a verification pass is the wrong
+  order of operations.
+- **`seamgate`'s six rows are not attributable to either tree**, because
+  another track was editing `rtl/swiglu_mem.vhd` while they compiled.
+- **The projection is still cross-build arithmetic.** The 2.03 cycles/beat
+  comes from the engine-only 200 MHz build and the profile from the 75 MHz
+  card build. Same memory layout and same ACLK, but they are two builds, and
+  CLAUDE.md is explicit that a comparison needs both ends from one tree. The
+  card's own `CYCLES`/`BEATS` counters settle it and have not been read at
+  200 MHz.
+- **B's ~308k/job is another track's ESTIMATE**, carried here unverified. The
+  1.70x row stands or falls with it.
