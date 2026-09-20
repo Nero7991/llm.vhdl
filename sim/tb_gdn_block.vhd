@@ -196,6 +196,30 @@ entity tb_gdn_block is
     EXP_ERR_SE   : boolean := false;
     EXP_Y_SAT    : boolean := false;
 
+    -- ---- TRACK BRECUR 2026-09-20: the two phase checks ------------------
+    -- Both are about the SHAPE of the schedule rather than about a value, and
+    -- no value oracle can stand in for either: a sweep that issued the wrong
+    -- number of groups, or a conv that started overlapping the sweep, would
+    -- still be checked element by element by the dump comparison and would
+    -- still agree, because both would compute the same numbers.
+    --
+    --   PH_ISSUE  the sweep issues EXACTLY VAL_HEADS*DIM*(DIM/RECUR_LANES)
+    --             group requests.  This is the whole of the 131,072 at 9B,
+    --             and it is the quantity every cycle claim in
+    --             docs/debugging/2026-09-20_the-gdn-recurrence.md rests on.
+    --   PH_ORDER  the conv phase ENDS before the sweep phase BEGINS, i.e.
+    --             gdn_block.vhd's "WHY THE PHASES ARE STRICTLY SEQUENTIAL"
+    --             is a property of the build and not only of its header.
+    --
+    -- NOT A CHECK, and saying so is the point: the five spans this bench
+    -- prints sum to the total ALGEBRAICALLY (pre + conv + mid + recur + drain
+    -- telescopes), so an assertion on that sum can never fail and would be
+    -- decoration.  It is not made.
+    --
+    -- Generics so each can be turned off for its attribution control.
+    PH_ISSUE : boolean := true;
+    PH_ORDER : boolean := true;
+
     OUTFILE  : string  := "gdn_block_out.txt"
   );
 end entity;
@@ -408,6 +432,41 @@ architecture sim of tb_gdn_block is
   signal cyc      : integer := 0;
   signal tok_cyc  : tarr_t := (others => 0);
   signal counting : boolean := false;
+
+  -- ---- TRACK BRECUR 2026-09-20: WHERE INSIDE THE BLOCK DO THE CYCLES GO --
+  --
+  -- The block's total was already counted above and
+  -- docs/debugging/2026-09-20_b-job-660k-cycles.md attributes the difference
+  -- between it (149,579 at 9B) and the derived sweep (131,072) to "the conv
+  -- passes, the L2 norms, the scalar path and the per-head boundaries" -- a
+  -- DERIVATION, not a measurement.  This splits the invocation into five
+  -- disjoint spans from the DUT'S OWN PORTS, so no RTL changes and nothing
+  -- depends on the internal FSM encoding:
+  --
+  --   pre    start .. the cycle before the first cv_ren   (P_IDLE/P_SEG setup)
+  --   conv   first cv_ren .. last cv_ren                  (gdn_conv + silu)
+  --   mid    after last cv_ren .. before first st_ren     (L2 norms, scalars)
+  --   recur  first st_ren .. last st_ren                  (THE SWEEP)
+  --   drain  after last st_ren .. busy falling            (P_DRAIN + P_WAITY)
+  --
+  -- WHY SPANS AND NOT ACTIVITY COUNTS.  A count of cv_ren-high cycles is a
+  -- count of REQUESTS and misses every idle cycle inside the phase, so the
+  -- five counts would not sum to the total and could not be used to attribute
+  -- anything.  Both are kept: the spans PARTITION the invocation (asserted
+  -- below, and that assertion is the check with teeth), and the activity
+  -- counts say how much of each span was issuing.
+  --
+  -- A NOTE ON THE BOUNDARY.  These ports are the block's REQUEST ports, and
+  -- the pipelines behind them drain after the last request; `drain` is
+  -- exactly that tail, so `recur` is the ISSUE span and the sweep's true cost
+  -- is recur + drain.  Stated rather than hidden, as the mover bench states
+  -- its own one-to-two cycle phase boundary error.
+  signal ph_cv_first, ph_cv_last : integer := -1;
+  signal ph_st_first, ph_st_last : integer := -1;
+  signal ph_cv_act,  ph_st_act   : integer := 0;
+  signal p_cv_first, p_cv_last   : tarr_t := (others => -1);
+  signal p_st_first, p_st_last   : tarr_t := (others => -1);
+  signal p_cv_act,   p_st_act    : tarr_t := (others => 0);
 
   signal w_dirty  : boolean := false;
   signal sc_dirty : boolean := false;
@@ -718,6 +777,37 @@ begin
     end if;
   end process;
 
+  -- TRACK BRECUR: the same window cyccnt counts, split by the request ports.
+  -- Mirrors cyccnt's control exactly (same `counting`, same `cyc`) so the
+  -- spans and the total are indices into one timeline rather than two.
+  phcnt : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '1' or blk_start = '1' then
+        ph_cv_first <= -1; ph_cv_last <= -1;
+        ph_st_first <= -1; ph_st_last <= -1;
+        ph_cv_act   <=  0; ph_st_act  <=  0;
+      elsif counting then
+        if busy = '0' and cyc > 1 then
+          p_cv_first(inv) <= ph_cv_first; p_cv_last(inv) <= ph_cv_last;
+          p_st_first(inv) <= ph_st_first; p_st_last(inv) <= ph_st_last;
+          p_cv_act(inv)   <= ph_cv_act;   p_st_act(inv)  <= ph_st_act;
+        else
+          if cv_ren = '1' then
+            if ph_cv_first < 0 then ph_cv_first <= cyc; end if;
+            ph_cv_last <= cyc;
+            ph_cv_act  <= ph_cv_act + 1;
+          end if;
+          if st_ren = '1' then
+            if ph_st_first < 0 then ph_st_first <= cyc; end if;
+            ph_st_last <= cyc;
+            ph_st_act  <= ph_st_act + 1;
+          end if;
+        end if;
+      end if;
+    end if;
+  end process;
+
   -- ======================= collector ====================================
   collect : process(clk)
   begin
@@ -892,6 +982,40 @@ begin
       report "tb_gdn_block: CYCLES invocation " & integer'image(t)
            & " (layer " & integer'image(lay_of(t)) & " token "
            & integer'image(ltok_of(t)) & ") = " & integer'image(tok_cyc(t));
+    end loop;
+
+    -- ---- TRACK BRECUR: the same invocations, split by phase --------------
+    for t in 0 to NINV-1 loop
+      report "BRECUR_CYCLES inv " & integer'image(t)
+           & " pre "   & integer'image(p_cv_first(t))
+           & " conv "  & integer'image(p_cv_last(t) - p_cv_first(t) + 1)
+           & " mid "   & integer'image(p_st_first(t) - p_cv_last(t) - 1)
+           & " recur " & integer'image(p_st_last(t) - p_st_first(t) + 1)
+           & " drain " & integer'image(tok_cyc(t) - p_st_last(t) - 1)
+           & " total " & integer'image(tok_cyc(t));
+      report "BRECUR_ISSUE inv " & integer'image(t)
+           & " cv_req " & integer'image(p_cv_act(t))
+           & " st_req " & integer'image(p_st_act(t))
+           & " st_req_derived " & integer'image(VAL_HEADS*DIM*NB_R);
+    end loop;
+
+    for t in 0 to NINV-1 loop
+      assert (not PH_ISSUE) or p_st_act(t) = VAL_HEADS*DIM*NB_R
+        report "tb_gdn_block: BRECUR PH_ISSUE, invocation " & integer'image(t)
+             & " issued " & integer'image(p_st_act(t)) & " state-group "
+             & "requests, derived VAL_HEADS*DIM*(DIM/RECUR_LANES) = "
+             & integer'image(VAL_HEADS*DIM*NB_R) & ".  The sweep is the "
+             & "dominant term of the block's run and every cycle claim "
+             & "about it rests on this count."
+        severity failure;
+      assert (not PH_ORDER) or p_cv_last(t) < p_st_first(t)
+        report "tb_gdn_block: BRECUR PH_ORDER, invocation " & integer'image(t)
+             & " last conv request at cycle " & integer'image(p_cv_last(t))
+             & " is not before the first state request at cycle "
+             & integer'image(p_st_first(t)) & ".  rtl/gdn_block.vhd states "
+             & "the phases are strictly sequential; if they overlap, the "
+             & "phase account above double-counts and no value check sees it."
+        severity failure;
     end loop;
     report "tb_gdn_block: err_conv=" & std_logic'image(err_conv)
          & " err_g=" & std_logic'image(err_g)

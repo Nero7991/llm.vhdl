@@ -1,0 +1,9 @@
+======== gdn_recur_pipe DIM=128 LANES=4 SLOTS=16 ========
+RESULT L=4 dsp=17 (derived 17) lut=0 (util 9427)  ff=0 bram=3.5 wns=-0.044 fmax=299.04306220095697
+======== gdn_recur_pipe DIM=128 LANES=8 SLOTS=16 ========
+RESULT L=8 dsp=33 (derived 33) lut=0 (util 12549)  ff=0 bram=6.5 wns=-0.044 fmax=299.04306220095697
+======== gdn_recur_pipe DIM=128 LANES=16 SLOTS=16 ========
+RESULT L=16 dsp=65 (derived 65) lut=0 (util 17292)  ff=0 bram=12.5 wns=-0.044 fmax=299.04306220095697
+======== gdn_recur_pipe DIM=128 LANES=32 SLOTS=16 ========
+RESULT L=32 dsp=129 (derived 129) lut=0 (util 27861)  ff=0 bram=24.5 wns=-0.044 fmax=299.04306220095697
+BRECUR_LANES_DONE

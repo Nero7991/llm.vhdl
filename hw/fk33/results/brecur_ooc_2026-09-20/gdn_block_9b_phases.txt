@@ -1,0 +1,10 @@
+@149624500ps:(report note): tb_gdn_block: CYCLES invocation 0 (layer 0 token 0) = 149579
+@149624500ps:(report note): BRECUR_CYCLES inv 0 pre 6 conv 3132 mid 6330 recur 131134 drain 8977 total 149579
+@149624500ps:(report note): BRECUR_ISSUE inv 0 cv_req 2048 st_req 131072 st_req_derived 131072
+@149624500ps:(report note): tb_gdn_block: PASS, 4096 elements, dump in b9_l4.txt
+@51202500ps:(report note): tb_gdn_block: CYCLES invocation 0 (layer 0 token 0) = 51157
+@51202500ps:(report note): BRECUR_CYCLES inv 0 pre 6 conv 3132 mid 6330 recur 32830 drain 8859 total 51157
+@51202500ps:(report note): BRECUR_ISSUE inv 0 cv_req 2048 st_req 32768 st_req_derived 32768
+@51202500ps:(report note): tb_gdn_block: PASS, 4096 elements, dump in b9_l16.txt
+9545a7f02300e633898c60f632a9544a  /mnt/storage/fk33_builds/scratch/brecur/dumps/n_l4.txt
+9545a7f02300e633898c60f632a9544a  /mnt/storage/fk33_builds/scratch/brecur/dumps/n_l16.txt
