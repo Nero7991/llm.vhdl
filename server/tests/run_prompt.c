@@ -163,6 +163,10 @@ static void usage(void)
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
       "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
       "                  [--teeth-argmax N]   self-test of --check-argmax\n"
+      "                  [--sim-kv-maxpos N]  the SIMULATED card's C_MAXPOS\n"
+      "                        (KV_MAXPOS register, default 65536); 131072\n"
+      "                        against the striped manifest is the 2026-09-20\n"
+      "                        defect and pl_open must refuse it\n"
       "                  [--allow-hardware <TOKEN>]  /dev/xdma0_*; the operator\n"
       "                        types the transport's four-letter token\n"
       "                  [--open-only]        stream the program, write the\n"
@@ -200,6 +204,7 @@ int main(int argc, char **argv)
     int n_dprog = 0, n_drel = 0, want_v2 = 0;
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
+    long sim_kv_maxpos = 0;
     const char *hw_token = NULL;
     int open_only = 0, go_timeout_ms = 0, resume = 0, seq_reset = 0;
     int x_exp_bias = 0;
@@ -234,6 +239,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--stop"))       { const char *s; NEXT(s); stop_id = atoi(s); stop_given = 1; }
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
+        else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
         else if (!strcmp(a, "--allow-hardware")) NEXT(hw_token);
         else if (!strcmp(a, "--open-only"))    open_only = 1;
@@ -328,6 +334,12 @@ int main(int argc, char **argv)
                check_argmax ? "--check-argmax must fire"
                             : "ATTRIBUTION CONTROL: the row scan is OFF, so"
                               " nothing should complain");
+    }
+    if (sim_kv_maxpos > 0) {
+        sim.kv_maxpos = (uint32_t)sim_kv_maxpos;
+        printf("sim        KV_MAXPOS %ld: pl_open lays K and V regions of "
+               "%ld * kv_bytes_per_token/2 each at the manifest's kv_base\n",
+               sim_kv_maxpos, sim_kv_maxpos);
     }
     pl_open_opts_default(&o);
     o.sim_opts = &sim;                 /* simulated transport; see the header */

@@ -349,6 +349,31 @@ extern "C" {
  * that clears the engine's position is a reconfiguration, and a host that
  * trusts a 0 here has checked nothing. */
 #define FK33_SEAM_TOK_POS         0x8Cu   /* R   llama_top tok_pos[15:0] */
+/* THE FOURTH AND FIFTH HBM BASES: subsystem C's K and V cache regions,
+ * 2026-09-20.  Until then the pair was a BUILD-TIME GENERIC taken from the
+ * flat manifest (hw/fk33/gen_fk33_card.py C_K_BASE_CH/C_V_BASE_CH), and on
+ * the lane-striped image -- whose kv_base is 0x1AD71C000 -- every C job
+ * wrote its 272-byte records into weight pieces: 40 objects corrupted,
+ * predicted exactly by the 64 compiled slot heads
+ * (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-
+ * bitstream.md).  BST already followed the manifest; this is the same
+ * register twice, for the two regions C addresses.  33 bits each, the
+ * card's port width (C_KV_ADDR_W), BYTE addresses.
+ *
+ * The host writes K = hbm.kv_base and V = K + KV_MAXPOS * kv_bytes_per_token
+ * / 2, where KV_MAXPOS is the card's own C_MAXPOS read back from
+ * FK33_SEAM_KV_MAXPOS -- the number C strides its per-(layer, head) slots
+ * by -- and REFUSES a manifest whose KV extent cannot hold the pair
+ * (server/pl_backend.c).  A GO with either register still zero is refused
+ * with FK33_SEAM_ERR_DESC, like ARENA and BST.  Only on a card that
+ * advertises FK33_CAP_ENG_KV_BASE; on an older bitstream the base is
+ * compiled in, these offsets read a dead word, and ONLY the manifest the
+ * bitstream was built against is safe to load. */
+#define FK33_SEAM_KVK_LO          0x90u   /* RW  kv_k_base[31:0] */
+#define FK33_SEAM_KVK_HI          0x94u   /* RW  kv_k_base[32] */
+#define FK33_SEAM_KVV_LO          0x98u   /* RW  kv_v_base[31:0] */
+#define FK33_SEAM_KVV_HI          0x9Cu   /* RW  kv_v_base[32] */
+#define FK33_SEAM_KV_MAXPOS       0xA0u   /* R   the card's C_MAXPOS (positions per KV slot) */
 
 #define FK33_WIN_DESC             0u
 #define FK33_WIN_REL              1u
@@ -356,11 +381,11 @@ extern "C" {
 #define FK33_WIN_XOUT             3u
 
 /* CAPS_FLAGS.  What the BITSTREAM implements, so a host does not discover it
- * by trying.  `rtl/fk33_seam.vhd:383` reports **0xD**: windows, sampler and
- * logits egress; no HBM fetch.  (This comment read 0x5 until 2026-09-17 and
- * was one commit stale: `e62fded` enabled the sampler and set CAPS_FLAGS_V to
- * x"0000000D".  Where a document and the RTL disagree, the RTL wins -- read
- * the constant, not this line.) */
+ * by trying.  `rtl/fk33_seam.vhd`'s CAPS_FLAGS_V reports **0x3D** as of
+ * 2026-09-20: windows, sampler, logits egress, engine seq reset, KV base
+ * register; no HBM fetch.  (This comment read 0x5 until 2026-09-17 and 0xD
+ * until 2026-09-20; where a document and the RTL disagree, the RTL wins --
+ * read the constant, not this line.) */
 #define FK33_CAP_WINDOWS          (1u << 0)
 #define FK33_CAP_HBM_FETCH        (1u << 1)
 #define FK33_CAP_SAMPLER          (1u << 2)
@@ -372,6 +397,14 @@ extern "C" {
                                               * Without it a card runs ONE
                                               * sequence per reconfiguration,
                                               * silently (2026-09-19). */
+#define FK33_CAP_ENG_KV_BASE      (1u << 5)  /* C's KV base is a register
+                                              * (FK33_SEAM_KVK_LO/HI, KVV_LO/HI)
+                                              * FK33_SEAM_KV_MAXPOS exists.
+                                              * Without it the base is
+                                              * COMPILED IN and only the
+                                              * manifest the bitstream was
+                                              * built against is safe
+                                              * (2026-09-20). */
 
 /* FAULTS.  Every bit is a DEFECT, not a statistic, and every one is SILENT in
  * the arithmetic -- which is the whole reason they get a register rather than
@@ -623,6 +656,11 @@ typedef struct {
      * against, so this is the first of the two pieces. */
     int version;            /* 0/1 -> v1 (default), 2 -> the window seam */
     uint32_t caps_flags;    /* 0 -> derive from `version`; else reported as-is */
+    /* What FK33_SEAM_KV_MAXPOS reads on the v2 model: the card's C_MAXPOS.
+     * 0 -> 65536, hw/fk33/gen_fk33_card.py's value since 2026-09-20.  A
+     * test that wants the host's "does not fit" refusal sets it to 131072
+     * against the striped manifest, which is exactly the shipped defect. */
+    uint32_t kv_maxpos;
 
     /* v2 window sizes, in ENTRIES.  0 -> the RTL's own generics.  They are
      * options rather than constants so a test can construct an overflow

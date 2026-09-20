@@ -187,6 +187,17 @@ void fk33_sim_opts_default(fk33_sim_opts *o)
     o->max_chunk = 512;
 }
 
+/* CAPS_FLAGS as this model reports it: an explicit value, else what the
+ * RTL constant says for the contract version presented.  One function so
+ * the GO-time gate and the register read cannot disagree. */
+static uint32_t caps_of(const sim_ctx *s)
+{
+    if (s->o.caps_flags) return s->o.caps_flags;
+    return s->o.version >= 2 ? (FK33_CAP_WINDOWS | FK33_CAP_SAMPLER
+                                | FK33_CAP_LOGITS | FK33_CAP_ENG_SEQ_RESET
+                                | FK33_CAP_ENG_KV_BASE) : 0u;
+}
+
 static void fail(sim_ctx *s, unsigned code, uint32_t info)
 {
     s->status = FK33_ST_ERR | (code << 8);   /* NOTE: done is NOT set */
@@ -272,6 +283,20 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
                         | s->reg[FK33_SEAM_BST_LO / 4];
             if (ar == 0 || bs == 0) {
                 fail(s, FK33_SEAM_ERR_DESC, ar == 0 ? 0xA000u : 0xB000u); return;
+            }
+        }
+        /* and, since 2026-09-20, subsystem C's KV bases: an unwritten pair
+         * would put C's records at HBM address 0.  Only a card that
+         * advertises the register refuses on it; a v2 model told to report
+         * caps WITHOUT bit 5 is modelling the older bitstream, whose base is
+         * compiled in and which never reads these. */
+        if (caps_of(s) & FK33_CAP_ENG_KV_BASE) {
+            uint64_t kk = ((uint64_t)(s->reg[FK33_SEAM_KVK_HI / 4] & 1u) << 32)
+                        | s->reg[FK33_SEAM_KVK_LO / 4];
+            uint64_t kv = ((uint64_t)(s->reg[FK33_SEAM_KVV_HI / 4] & 1u) << 32)
+                        | s->reg[FK33_SEAM_KVV_LO / 4];
+            if (kk == 0 || kv == 0) {
+                fail(s, FK33_SEAM_ERR_DESC, kk == 0 ? 0xC000u : 0xD000u); return;
             }
         }
 
@@ -478,10 +503,14 @@ static int sim_reg_read32(void *c, uint32_t off, uint32_t *v)
     case FK33_SEAM_CAPS_FLAGS:
         /* A v1 card reports nothing: the flags register is v2's, and a host
          * reading 0 on a v1 model is reading the truth about it. */
-        *v = s->o.caps_flags ? s->o.caps_flags
-           : (s->o.version >= 2 ? (FK33_CAP_WINDOWS | FK33_CAP_SAMPLER
-                                   | FK33_CAP_LOGITS
-                                   | FK33_CAP_ENG_SEQ_RESET) : 0u);
+        *v = caps_of(s);
+        return 0;
+    case FK33_SEAM_KV_MAXPOS:
+        /* The card's C_MAXPOS, read-only.  A model without the KV base
+         * register (caps bit 5 clear) has no register here: dead word, as
+         * the older bitstream reads. */
+        *v = (caps_of(s) & FK33_CAP_ENG_KV_BASE)
+           ? (s->o.kv_maxpos ? s->o.kv_maxpos : 65536u) : 0xFFFFFFFFu;
         return 0;
     case FK33_SEAM_TOK_POS:
         /* The engine's own position.  This model has one counter where the
@@ -535,7 +564,9 @@ static int sim_reg_write32(void *c, uint32_t off, uint32_t v)
      * BCB (bst_const_base, B's learned constants) is a plain RW pair
      * with no GO-time refusal, exactly as the RTL has it. */
     if (o == FK33_SEAM_ARENA_HI) v &= 0xFFu;
-    if (o == FK33_SEAM_BST_HI || o == FK33_SEAM_BCB_HI) v &= 1u;
+    if (o == FK33_SEAM_BST_HI || o == FK33_SEAM_BCB_HI
+        || o == FK33_SEAM_KVK_HI || o == FK33_SEAM_KVV_HI) v &= 1u;
+    if (o == FK33_SEAM_KV_MAXPOS) return 0;     /* read-only */
     s->reg[o / 4] = v;
     return 0;
 }

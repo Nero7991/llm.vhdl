@@ -164,6 +164,20 @@ typedef struct {
      * first weight tensor.  See fk33_manifest.h for why absent is not a
      * refusal. */
     uint64_t gdn_const_base;
+    /* v2 only, on a card advertising FK33_CAP_ENG_KV_BASE: subsystem C's KV
+     * cache base (2026-09-20, docs/debugging/2026-09-20_the-kv-cache-base-
+     * is-compiled-into-the-bitstream.md).  0 -> the manifest's hbm.kv_base.
+     * V is DERIVED, never stated: V = K + KV_MAXPOS * kv_bytes_per_token /
+     * 2 with KV_MAXPOS read from the card, so the pair is the card's own
+     * geometry laid at the image's kv_base.  With no manifest both kv_base
+     * and kv_bytes_per_token must be stated here, and the extent is checked
+     * only against hbm_size (and the arena when stated); with a manifest it
+     * is checked against the space below gdn_const/the arena, and an image
+     * whose free KV space is smaller than the card's pair is REFUSED at
+     * open.  A card WITHOUT the capability ignores both: its base is
+     * compiled in and pl_open says so once on stderr. */
+    uint64_t kv_base;
+    uint64_t kv_bytes_per_token;
 
     /* Where the card's own bytes end.  Two ways to say it, and either is
      * enough; the manifest is preferred because it is the artefact the loader
@@ -409,6 +423,12 @@ const char *pl_last_error_str(const pl_ctx *c);
 uint64_t pl_bytes_to_card(const pl_ctx *c);
 uint64_t pl_bytes_from_card(const pl_ctx *c);
 uint64_t pl_go_count(const pl_ctx *c);
+/* v2 + FK33_CAP_ENG_KV_BASE: subsystem C's KV pair as READ BACK from the
+ * card after pl_open wrote it (pl_open refuses if the read-back differs),
+ * and the card's C_MAXPOS.  All 0 on a card without the capability. */
+uint64_t pl_kv_k_base(const pl_ctx *c);
+uint64_t pl_kv_v_base(const pl_ctx *c);
+uint32_t pl_kv_maxpos(const pl_ctx *c);
 
 #ifdef __cplusplus
 }

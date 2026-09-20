@@ -98,11 +98,18 @@ SEAM_ISSUE_CYC  = SEAM_BASE + 0x80      # R  CYCLES at the last issue
 SEAM_BCB_LO     = SEAM_BASE + 0x84      # RW bst_const_base[31:0], B's learned constants (2026-09-18)
 SEAM_BCB_HI     = SEAM_BASE + 0x88      # RW bst_const_base[32]
 SEAM_TOK_POS    = SEAM_BASE + 0x8C      # R  llama_top's own tok_pos (2026-09-19)
+SEAM_KVK_LO     = SEAM_BASE + 0x90      # RW kv_k_base[31:0], subsystem C's K region (2026-09-20)
+SEAM_KVK_HI     = SEAM_BASE + 0x94      # RW kv_k_base[32]
+SEAM_KVV_LO     = SEAM_BASE + 0x98      # RW kv_v_base[31:0]
+SEAM_KVV_HI     = SEAM_BASE + 0x9C      # RW kv_v_base[32]
+SEAM_KV_MAXPOS  = SEAM_BASE + 0xA0      # R  the card's C_MAXPOS, positions per KV slot
 SEAM_ID_MAGIC   = 0x4C4C4D32            # "LLM2"
 SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 1, "HBM_FETCH the card fetches its own D program"),
             (1 << 2, "SAMPLER   the card computes a running argmax"),
-            (1 << 3, "LOGITS    the card writes the full logits row"))
+            (1 << 3, "LOGITS    the card writes the full logits row"),
+            (1 << 4, "SEQ_RESET SEQ_RESET reaches the engine; TOK_POS exists"),
+            (1 << 5, "KV_BASE   C's KV base is a register (KVK/KVV); KV_MAXPOS exists"))
 SEAM_FAULT = ((1 << 0, "SMP_OVF    the logits FIFO lost beats"),
               (1 << 1, "LOST_BEAT  an unstallable producer beat was dropped"),
               (1 << 2, "GATE_DROP  the region lock refused a write"),
@@ -611,6 +618,26 @@ def cmd_seam(a):
     bcb = ((m.rd(SEAM_BCB_HI) & 1) << 32) | m.rd(SEAM_BCB_LO)
     print(f"bases      bst_const_base 0x{bcb:09x}"
           + ("  (ZERO: never written by the host)" if bcb == 0 else ""))
+    # Subsystem C's KV pair (2026-09-20).  Only a bitstream with caps bit 5
+    # has the registers; on an older one C's base is COMPILED IN from the
+    # flat manifest and the offsets read a dead word, so they are reported
+    # as UNREADABLE rather than as numbers.  Zero after a model load means
+    # the host never wrote them; the seam refuses a GO on that, so unlike
+    # bst_const_base it cannot run silently.
+    if caps & (1 << 5):
+        kvk = ((m.rd(SEAM_KVK_HI) & 1) << 32) | m.rd(SEAM_KVK_LO)
+        kvv = ((m.rd(SEAM_KVV_HI) & 1) << 32) | m.rd(SEAM_KVV_LO)
+        mp = m.rd(SEAM_KV_MAXPOS)
+        print(f"           kv_k_base 0x{kvk:09x}  kv_v_base 0x{kvv:09x}  "
+              f"kv_maxpos {mp}"
+              + ("  (ZERO: never written; the seam refuses a GO)"
+                 if kvk == 0 or kvv == 0 else "")
+              + ("" if kvv == 0 or mp == 0 else
+                 f"  (V - K = {kvv - kvk} B = {mp} * {(kvv - kvk) // mp if mp else 0})"))
+    else:
+        print("           kv_k_base / kv_v_base / kv_maxpos UNREADABLE (caps bit "
+              "5 clear): C's KV base is COMPILED IN on this bitstream; only "
+              "the manifest it was built against is safe to load")
 
     # Two copies of a register map, compared.  See seam_header_offsets.
     hdr = seam_header_offsets()
@@ -636,7 +663,12 @@ def cmd_seam(a):
                 "FK33_SEAM_ISSUE_CYC": SEAM_ISSUE_CYC,
                 "FK33_SEAM_BCB_LO": SEAM_BCB_LO,
                 "FK33_SEAM_BCB_HI": SEAM_BCB_HI,
-                "FK33_SEAM_TOK_POS": SEAM_TOK_POS}
+                "FK33_SEAM_TOK_POS": SEAM_TOK_POS,
+                "FK33_SEAM_KVK_LO": SEAM_KVK_LO,
+                "FK33_SEAM_KVK_HI": SEAM_KVK_HI,
+                "FK33_SEAM_KVV_LO": SEAM_KVV_LO,
+                "FK33_SEAM_KVV_HI": SEAM_KVV_HI,
+                "FK33_SEAM_KV_MAXPOS": SEAM_KV_MAXPOS}
         drift = [(k, v - SEAM_BASE, hdr[k]) for k, v in sorted(mine.items())
                  if k in hdr and v - SEAM_BASE != hdr[k]]
         miss = [k for k in mine if k not in hdr]

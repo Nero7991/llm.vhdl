@@ -599,6 +599,30 @@ static void t13_v2_windows(void)
     CK(R(FK33_SEAM_ARENA_HI) == 0x1u && R(FK33_SEAM_ARENA_LO) == 0xAD000u,
        "arena base does not read back");
     CK(R(FK33_SEAM_BST_HI) == 0x1u, "GDN base bit 32 does not read back");
+    /* ---- and since 2026-09-20 subsystem C's KV pair, the two registers
+     * that did not exist when C wrote the striped image's weights.  The
+     * model advertises FK33_CAP_ENG_KV_BASE by default, so the GO is still
+     * refused with both bases zero, then with only K written. */
+    CK((R(FK33_SEAM_CAPS_FLAGS) & FK33_CAP_ENG_KV_BASE) != 0,
+       "the v2 model must advertise FK33_CAP_ENG_KV_BASE, caps 0x%X", v);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC && info == 0xC000u,
+       "arena and GDN set, KV bases still zero: not refused with info 0xC000 "
+       "(0x%X / 0x%X)", st, info);
+    W(FK33_SEAM_KVK_LO, 0xAD71C000u); W(FK33_SEAM_KVK_HI, 0xFFFFFFFFu);
+    GO_AND_READ();
+    CK(FK33_ST_ERRCODE(st) == FK33_SEAM_ERR_DESC && info == 0xD000u,
+       "K written, V still zero: not refused with info 0xD000 (0x%X / 0x%X)",
+       st, info);
+    W(FK33_SEAM_KVV_LO, 0xCF71C000u); W(FK33_SEAM_KVV_HI, 0x1u);
+    CK(R(FK33_SEAM_KVK_HI) == 0x1u && R(FK33_SEAM_KVK_LO) == 0xAD71C000u,
+       "KV K base does not read back (HI must keep bit 0 only)");
+    CK(R(FK33_SEAM_KVV_HI) == 0x1u && R(FK33_SEAM_KVV_LO) == 0xCF71C000u,
+       "KV V base does not read back");
+    CK(R(FK33_SEAM_KV_MAXPOS) == 65536u,
+       "KV_MAXPOS must read the card's C_MAXPOS (65536), got %u", v);
+    W(FK33_SEAM_KV_MAXPOS, 7u);
+    CK(R(FK33_SEAM_KV_MAXPOS) == 65536u, "KV_MAXPOS is read-only, got %u", v);
 
     /* ---- write a program, and the run must then be accepted. */
     W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
@@ -700,6 +724,8 @@ static void t13_v2_windows(void)
     if (!t) { CK(0, "sim transport (strict)"); return; }
     W(FK33_SEAM_ARENA_LO, 0xAD000u); W(FK33_SEAM_ARENA_HI, 0x1u);
     W(FK33_SEAM_BST_LO, 0x0C006000u); W(FK33_SEAM_BST_HI, 0x1u);
+    W(FK33_SEAM_KVK_LO, 0xAD71C000u); W(FK33_SEAM_KVK_HI, 0x1u);
+    W(FK33_SEAM_KVV_LO, 0xCF71C000u); W(FK33_SEAM_KVV_HI, 0x1u);
     W(FK33_SEAM_WIN_SEL, FK33_WIN_DESC);
     W(FK33_SEAM_WIN_ADDR, 0);
     for (i = 0; i < 8; i++) W(FK33_SEAM_WIN_DATA, 0x1000u + (uint32_t)i);
@@ -738,6 +764,8 @@ static void t13_v2_windows(void)
     if (!t) { CK(0, "sim transport (fault)"); return; }
     W(FK33_SEAM_ARENA_LO, 0xAD000u); W(FK33_SEAM_ARENA_HI, 0x1u);
     W(FK33_SEAM_BST_LO, 0x0C006000u); W(FK33_SEAM_BST_HI, 0x1u);
+    W(FK33_SEAM_KVK_LO, 0xAD71C000u); W(FK33_SEAM_KVK_HI, 0x1u);
+    W(FK33_SEAM_KVV_LO, 0xCF71C000u); W(FK33_SEAM_KVV_HI, 0x1u);
     W(FK33_SEAM_WIN_SEL, FK33_WIN_XIN);
     W(FK33_SEAM_WIN_ADDR, 0);
     for (i = 0; i < TE; i++) W(FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)(1000 + i));
@@ -846,9 +874,35 @@ static void t14_v2_backend(void)
     o.max_chunk = 8;                    /* must be OVERRIDDEN to 1 */
     o.desc_arena_base = 0x1FFADD000ull; /* the manifest's, stated by hand */
     o.gdn_state_base  = 0x10C006000ull;
+    /* ---- the KV pair (2026-09-20): a v2 open with the model advertising
+     * FK33_CAP_ENG_KV_BASE and no kv_base is refused, and so is a pair the
+     * stated arena cannot hold; then the working case. */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a v2 open on a KV-base card with no kv_base was accepted");
+    o.kv_base = 0x10D93E000ull;          /* the flat manifest's hbm.kv_base */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a v2 open with kv_base but no kv_bytes_per_token was accepted");
+    o.kv_bytes_per_token = 17408;
+    o.desc_arena_base = 0x10D93E000ull + 0x44000000ull - 4096; /* one page short of the pair */
+    c = NULL;
+    CK(pl_open(&o, &c) != 0 && c == NULL,
+       "a KV pair ending past the descriptor arena was accepted");
+    o.desc_arena_base = 0x1FFADD000ull;
     c = NULL;
     rc = pl_open(&o, &c);
     CK(rc == 0 && c != NULL, "a complete v2 open was refused (%d)", rc);
+    if (c) {
+        /* the pair landed, as READ BACK from the card: K at kv_base and
+         * V = K + 65536 * 8704, the model's C_MAXPOS times half a token */
+        CK(pl_kv_maxpos(c) == 65536u, "kv_maxpos read %u", pl_kv_maxpos(c));
+        CK(pl_kv_k_base(c) == 0x10D93E000ull, "K base on the card is 0x%llX",
+           (unsigned long long)pl_kv_k_base(c));
+        CK(pl_kv_v_base(c) == 0x12F93E000ull,
+           "V base on the card is 0x%llX, want K + 65536*8704 = 0x12F93E000",
+           (unsigned long long)pl_kv_v_base(c));
+    }
     if (!c) return;
     CK(pl_version(c) == 2, "pl_version reports %d", pl_version(c));
     CK(pl_max_chunk(c) == 1,

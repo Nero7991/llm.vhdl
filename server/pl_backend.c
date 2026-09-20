@@ -27,6 +27,8 @@ struct pl_ctx {
     int version;                 /* 1 or 2, from the card's own register */
     uint64_t a_arena, bst_base;  /* v2: what was written to the seam */
     uint64_t bcb_base;           /* v2: B's constant image base, or 0 */
+    uint64_t kv_k_base, kv_v_base; /* v2 + CAP_ENG_KV_BASE: C's KV pair */
+    uint32_t kv_maxpos;          /* the card's C_MAXPOS, 0 without the cap */
     uint32_t caps;               /* CAPS_FLAGS, 0 on a v1 card */
     uint64_t x_base, l_base, desc_ptr;
     uint64_t x_stride, l_stride;
@@ -667,6 +669,132 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                     "  A card built without it ignores the register.  Pack the image\n"
                     "  with tools/pack_gdn_consts.py and load it with\n"
                     "  fk33_load_weights.py before trusting any B output.\n");
+
+            /* THE FOURTH AND FIFTH BASES: subsystem C's KV cache regions
+             * (2026-09-20, docs/debugging/2026-09-20_the-kv-cache-base-is-
+             * compiled-into-the-bitstream.md).  K is the image's hbm.kv_base;
+             * V is DERIVED from the CARD's own C_MAXPOS, read back from
+             * FK33_SEAM_KV_MAXPOS, because that is the number C strides its
+             * per-(layer, head) slots by and a host that computed V from any
+             * other MAXPOS would lay the V region where C does not look.  The
+             * pair's whole extent must fit the image's free KV space: an
+             * image that cannot hold it is REFUSED HERE, before anything is
+             * written, rather than discovered as 40 corrupted weight objects
+             * after the first token, which is how the defect presented. */
+            if (c->caps & FK33_CAP_ENG_KV_BASE) {
+                int have_mv = o->manifest_path
+                              && !fk33_manifest_read(o->manifest_path, &mv);
+                uint64_t kb = o->kv_base, bpt = o->kv_bytes_per_token;
+                uint64_t half, vb, kend, ktop;
+                uint32_t mp = 0, r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+                const char *ktop_what;
+                if (rd(c, FK33_SEAM_KV_MAXPOS, &mp)) { pl_close(c); return -2; }
+                if (mp == 0 || mp == 0xFFFFFFFFu) {
+                    fprintf(stderr,
+                        "pl_open: the card advertises FK33_CAP_ENG_KV_BASE but\n"
+                        "  FK33_SEAM_KV_MAXPOS reads 0x%08X, which is not a slot\n"
+                        "  depth.  Refusing rather than guessing C's geometry.\n", mp);
+                    pl_close(c); return -3;
+                }
+                if (have_mv) {
+                    if (!kb)  kb  = mv.kv_base;
+                    if (!bpt) bpt = mv.kv_bytes_per_token;
+                }
+                if (!kb || !bpt) {
+                    fprintf(stderr,
+                        "pl_open: this card takes subsystem C's KV base from the host\n"
+                        "  (FK33_CAP_ENG_KV_BASE) and neither the manifest nor opts\n"
+                        "  supplied %s.  Zero is HBM address 0, the first weight\n"
+                        "  tensor, and the card refuses a GO with it unset, so this is\n"
+                        "  refused here instead.\n",
+                        !kb && !bpt ? "hbm.kv_base and kv_bytes_per_token"
+                                    : (!kb ? "hbm.kv_base" : "kv_bytes_per_token"));
+                    pl_close(c); return -1;
+                }
+                if (kb % 16u) {
+                    fprintf(stderr, "pl_open: kv_base 0x%llX is not 16-byte aligned; "
+                                    "attn_kv_axi refuses it (err_cfg)\n",
+                            (unsigned long long)kb);
+                    pl_close(c); return -1;
+                }
+                half = (uint64_t)mp * (bpt / 2u);
+                vb   = kb + half;
+                kend = vb + half;
+                /* The ceiling: with a manifest, the first thing above
+                 * kv_base (the GDN constant image if declared, else the
+                 * descriptor arena; the parser guarantees both are above
+                 * kv_base).  Without one, the stated arena if any, else the
+                 * top of HBM. */
+                if (have_mv) {
+                    ktop = mv.gdn_const_base ? mv.gdn_const_base : mv.desc_arena_base;
+                    ktop_what = mv.gdn_const_base ? "hbm.gdn_const_base"
+                                                  : "hbm.desc_arena_base";
+                } else if (o->desc_arena_base) {
+                    ktop = o->desc_arena_base; ktop_what = "opts.desc_arena_base";
+                } else {
+                    ktop = o->hbm_size ? o->hbm_size : FK33_HBM_TOP;
+                    ktop_what = "the top of HBM";
+                }
+                if (kend > ktop || (kend - 1) >> 33) {
+                    fprintf(stderr,
+                        "pl_open: THE IMAGE CANNOT HOLD THIS CARD'S KV CACHE.\n"
+                        "  The card's C_MAXPOS is %u positions, so its K and V regions\n"
+                        "  are %llu bytes each (MAXPOS * %llu) and the pair laid at\n"
+                        "  hbm.kv_base 0x%llX ends at 0x%llX; the image's free KV\n"
+                        "  space ends at 0x%llX (%s), %llu bytes short.  Running would\n"
+                        "  put C's records into %s.  Either load an image with at\n"
+                        "  least %llu bytes free above its GDN state, or build the card\n"
+                        "  with a smaller C_MAXPOS (hw/fk33/gen_fk33_card.py).\n",
+                        mp, (unsigned long long)half, (unsigned long long)(bpt / 2u),
+                        (unsigned long long)kb, (unsigned long long)kend,
+                        (unsigned long long)ktop, ktop_what,
+                        (unsigned long long)(kend - ktop),
+                        have_mv && mv.gdn_const_base ? "B's constant image and the arena"
+                                                     : "the descriptor arena",
+                        (unsigned long long)(2u * half));
+                    pl_close(c); return -1;
+                }
+                if (wr(c, FK33_SEAM_KVK_LO, (uint32_t)kb)
+                    || wr(c, FK33_SEAM_KVK_HI, (uint32_t)(kb >> 32))
+                    || wr(c, FK33_SEAM_KVV_LO, (uint32_t)vb)
+                    || wr(c, FK33_SEAM_KVV_HI, (uint32_t)(vb >> 32))) {
+                    pl_close(c); return -2;
+                }
+                /* PROVE THEY LANDED.  Four reads; a register that did not take
+                 * the write is C writing at address 0. */
+                if (rd(c, FK33_SEAM_KVK_LO, &r0) || rd(c, FK33_SEAM_KVK_HI, &r1)
+                    || rd(c, FK33_SEAM_KVV_LO, &r2) || rd(c, FK33_SEAM_KVV_HI, &r3)) {
+                    pl_close(c); return -2;
+                }
+                if (r0 != (uint32_t)kb || r1 != (uint32_t)(kb >> 32)
+                    || r2 != (uint32_t)vb || r3 != (uint32_t)(vb >> 32)) {
+                    fprintf(stderr,
+                        "pl_open: the KV base registers did not read back what was\n"
+                        "  written: K 0x%08X%08X (wrote 0x%llX), V 0x%08X%08X (wrote\n"
+                        "  0x%llX).  The card would run C at the wrong address.\n",
+                        r1, r0, (unsigned long long)kb, r3, r2,
+                        (unsigned long long)vb);
+                    pl_close(c); return -3;
+                }
+                c->kv_k_base = kb; c->kv_v_base = vb; c->kv_maxpos = mp;
+                fprintf(stderr,
+                    "[pl_backend] KV base programmed: K 0x%llX V 0x%llX "
+                    "(C_MAXPOS %u, %llu B/token, extent ends 0x%llX under %s "
+                    "0x%llX)\n",
+                    (unsigned long long)kb, (unsigned long long)vb, mp,
+                    (unsigned long long)bpt, (unsigned long long)kend,
+                    ktop_what, (unsigned long long)ktop);
+            } else {
+                fprintf(stderr,
+                    "[pl_backend] NOTE: this bitstream has NO KV BASE REGISTER (caps\n"
+                    "  0x%X lacks FK33_CAP_ENG_KV_BASE): subsystem C's KV cache base is\n"
+                    "  COMPILED IN from the manifest the card was built against\n"
+                    "  (hw/fk33/gen_fk33_card.py C_K_BASE_CH/C_V_BASE_CH).  Loading\n"
+                    "  any OTHER image on it makes C write its records over that\n"
+                    "  image's weights with no fault raised -- MEASURED 2026-09-20,\n"
+                    "  40 objects.  Continuing; make sure the loaded image is the\n"
+                    "  one this bitstream was built for.\n", c->caps);
+            }
         }
         /* The windows are written once per model, not per token. */
         if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_DESC)
@@ -925,6 +1053,9 @@ void pl_close(pl_ctx *c)
 }
 
 const char *pl_describe(const pl_ctx *c) { return c ? c->desc : "(none)"; }
+uint64_t pl_kv_k_base(const pl_ctx *c) { return c ? c->kv_k_base : 0; }
+uint64_t pl_kv_v_base(const pl_ctx *c) { return c ? c->kv_v_base : 0; }
+uint32_t pl_kv_maxpos(const pl_ctx *c) { return c ? c->kv_maxpos : 0; }
 int pl_n_vocab (const pl_ctx *c) { return c ? c->n_vocab : 0; }
 int pl_n_embd  (const pl_ctx *c) { return c ? c->n_embd  : 0; }
 int pl_n_layer (const pl_ctx *c) { return c ? c->n_layer : 0; }
