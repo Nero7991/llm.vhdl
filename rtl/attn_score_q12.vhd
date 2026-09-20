@@ -104,9 +104,11 @@
 -- STRUCTURE, and the project's timing rule: never two of {barrel shift, wide
 -- add, wide compare, bus mux, multiply} in series within one stage.
 --
---   S_EMIN    one narrow compare per cycle over the NBLK header exponents
+--   S_EMIN    one narrow compare per cycle over the NBLK header exponents,
+--             or HDR_TREE levels of a balanced min tree per cycle
 --   S_SHIFTS  one narrow subtract per cycle, e_k[b] - e_min, precomputed so
---             the accumulate pipeline never has a subtract feeding a shift
+--             the accumulate pipeline never has a subtract feeding a shift,
+--             or all NBLK of them in one cycle when HDR_TREE > 0
 --   S_ACC     capture and mux the shift | barrel shift | wide add
 --   S_EXP1/2  q_exp + e_min, then + KQ_SHIFT, two narrow adds not one
 --   S_SH      sh = score_exp - QOUT, and the branch decision
@@ -148,6 +150,55 @@ entity attn_score_q12 is
     --              range, not argued only.
     LSH_CLAMP : positive := 32;
     RSH_CLAMP : positive := 32;
+    -- ==================================================================
+    -- HDR_TREE -- how many levels of the e_min COMPARISON TREE are folded
+    -- per cycle.  0 selects the legacy one-compare-per-cycle scan and is
+    -- the default, so every existing instantiation keeps the schedule it
+    -- has cycle for cycle.
+    --
+    -- WHY IT EXISTS, MEASURED.  sim/tb_csweep_rate.vhd 2026-09-20 at the
+    -- real 9B geometry: P_SCORE is 23.00 cycles per position per KV head
+    -- of which 14.00 are spent with `ar_prdy` LOW, and those 14 are this
+    -- unit's header pass.  S_EMIN below is NBLK-1 narrow compares one per
+    -- cycle and S_SHIFTS is NBLK narrow subtracts one per cycle; with
+    -- the S_IDLE latch that is 2*NBLK = 16 cycles at NBLK = 8 before
+    -- p_ready can rise.  The sweep has nothing to do for any of them.
+    --
+    -- NEITHER PASS IS SERIAL BY NECESSITY, AND THEY ARE SERIAL FOR TWO
+    -- DIFFERENT REASONS.
+    --   S_EMIN    is a REDUCTION with a genuine loop-carried dependency
+    --             AS WRITTEN (`e_min` feeds the next compare), but min is
+    --             associative and commutative, so the dependency is a
+    --             property of the spelling and not of the function.  A
+    --             balanced tree computes the same value in clog2(NBLK)
+    --             levels.
+    --   S_SHIFTS  has NO dependency at all.  `e_l(b) - e_min` for
+    --             different b share only e_min, which is already fixed
+    --             when the state is entered.  It is simply a loop written
+    --             serially, and every iteration can run in one cycle.
+    -- Neither is a shared-comparator or shared-subtractor argument: both
+    -- operands are EXP_W = 8 bits wide, so a whole level is NBLK/2 8-bit
+    -- compares, and the whole shift pass is NBLK 8-bit subtracts.
+    --
+    -- WHAT IT COSTS, AND WHY IT IS A DIAL RATHER THAN A SWITCH.  Every
+    -- level folded in one cycle is one more 8-bit compare plus mux in
+    -- series inside that cycle.  Cycles go as
+    --     1 (S_IDLE latch) + ceil(clog2(NBLK)/HDR_TREE) + 1 (S_SHIFTS)
+    -- against the legacy 2*NBLK, so at NBLK = 8:
+    --     HDR_TREE = 0 -> 16 cycles, combinational depth 1 compare
+    --     HDR_TREE = 1 ->  5 cycles, depth 1 compare  (3 tree cycles)
+    --     HDR_TREE = 2 ->  4 cycles, depth 2 compares
+    --     HDR_TREE = 3 ->  3 cycles, depth 3 compares
+    -- HDR_TREE = 1 buys 11 of the 13 available cycles at NO increase in
+    -- combinational depth over the legacy scan, which is why it is the
+    -- value to set on a design with 0.061 ns of slack.  Going past it
+    -- trades a hard timing risk for 1 or 2 cycles.
+    --
+    -- The project's stage rule is respected in both modes: the tree's
+    -- compares and the subtracts are in SEPARATE cycles, so a subtract
+    -- never feeds a compare or a barrel shift within one stage, and
+    -- p_ready is still raised at the END of S_SHIFTS.
+    HDR_TREE : natural := 0;
     STRICT_PRODUCER : boolean := false
   );
   port(
@@ -235,6 +286,20 @@ architecture rtl of attn_score_q12 is
   signal blk : integer range 0 to NBLK-1 := 0;
   signal got : integer range 0 to NBLK-1 := 0;   -- partials accepted
 
+  -- ---- HDR_TREE > 0 only.  Inert, and trimmed, when HDR_TREE = 0. ------
+  -- The working set of the comparison tree.  LEVEL 0 IS `e_l` ITSELF, so
+  -- this array only ever has to hold the result of the FIRST fold and
+  -- everything after it: ceil(NBLK/2) entries, not NBLK.  At NBLK = 8 that
+  -- is 4 x EXP_W = 32 flip-flops per unit rather than 64.
+  constant TW : integer := (NBLK + 1) / 2;
+  type t_arr_t is array (0 to TW-1) of signed(EXP_W-1 downto 0);
+  signal tv  : t_arr_t := (others => (others => '0'));
+  -- Live entries in the array the NEXT fold reads.  It starts at NBLK
+  -- because that first read is of `e_l`.
+  signal tn  : integer range 0 to NBLK := 0;
+  -- '1' while the source of the next fold is still `e_l`.
+  signal tl0 : std_logic := '0';
+
   -- accumulate pipeline
   signal c1_v, c2_v : std_logic := '0';
   signal c1_p  : signed(P_W-1 downto 0) := (others => '0');
@@ -284,6 +349,13 @@ begin
 
   process(clk)
     variable sv   : integer;
+    -- HDR_TREE only.  `wv` is a WIRE bundle, not storage: it is written and
+    -- read within one evaluation of this process and never read before it is
+    -- written in that evaluation.  It is NBLK wide because the first fold
+    -- reads `e_l`, which is.
+    variable wv   : e_arr_t;
+    variable wn   : integer range 0 to NBLK;
+    variable nn   : integer range 0 to NBLK;
     variable ext  : signed(ACC_W-1 downto 0);
     variable bias : signed(ACC_W-1 downto 0);
     variable rndv : signed(ACC_W-1 downto 0);
@@ -331,6 +403,11 @@ begin
               -- for an all-positive header, which is the common case.
               e_min  <= signed(e_k(EXP_W-1 downto 0));
               blk    <= 1;
+              -- HDR_TREE.  The first fold reads `e_l`, which is being
+              -- latched in this very cycle and is therefore readable in the
+              -- next one -- the same relationship the legacy scan relies on.
+              tn     <= NBLK;
+              tl0    <= '1';
               got    <= 0;
               nsum   <= 0;
               acc    <= (others => '0');
@@ -339,35 +416,129 @@ begin
               state  <= S_EMIN;
             end if;
 
-          -- ---- one narrow compare per cycle -----------------------------
+          -- ---- one narrow compare per cycle, or HDR_TREE of them --------
           when S_EMIN =>
-            if e_l(blk) < e_min then
-              e_min <= e_l(blk);
-            end if;
-            if blk = NBLK-1 then
-              blk   <= 0;
-              state <= S_SHIFTS;
+            if HDR_TREE = 0 then
+              if e_l(blk) < e_min then
+                e_min <= e_l(blk);
+              end if;
+              if blk = NBLK-1 then
+                blk   <= 0;
+                state <= S_SHIFTS;
+              else
+                blk <= blk + 1;
+              end if;
             else
-              blk <= blk + 1;
+              -- Load this cycle's source.  Level 0 is `e_l`; every later
+              -- level is the previous cycle's partial minima.
+              --
+              -- EVERY ENTRY IS ASSIGNED ON EVERY PATH, INCLUDING THE ONES
+              -- THAT ARE NEVER READ.  `wv` is a process variable inside a
+              -- clocked process, so an entry left unassigned on some path
+              -- is read-before-write and INFERS A REGISTER -- NBLK-TW of
+              -- them, feeding muxes that can never select them.  It would
+              -- simulate identically and cost flip-flops in the build, and
+              -- this project's own rule is that the inference log is not
+              -- the place to find out.  `tv(0)` is a filler, not a value:
+              -- indices TW..NBLK-1 are unreachable once tl0 is '0' because
+              -- wn is then at most TW.
+              for i in 0 to NBLK-1 loop
+                if tl0 = '1' then
+                  wv(i) := e_l(i);
+                elsif i < TW then
+                  wv(i) := tv(i);
+                else
+                  wv(i) := tv(0);
+                end if;
+              end loop;
+              if tl0 = '1' then wn := NBLK; else wn := tn; end if;
+
+              -- Fold HDR_TREE levels.  IN PLACE IS SAFE HERE and it is worth
+              -- saying why rather than leaving it to be re-derived: level
+              -- entry i writes index i and reads indices 2i and 2i+1.  For
+              -- i >= 1 both are strictly greater than i, so they are read
+              -- before the iteration that writes them; for i = 0 the read of
+              -- wv(0) and wv(1) is on the right-hand side of the assignment
+              -- that writes wv(0), and VHDL variable assignment is sequential.
+              for lv in 1 to HDR_TREE loop
+                if wn > 1 then
+                  nn := (wn + 1) / 2;
+                  for i in 0 to NBLK-1 loop
+                    if i < nn then
+                      if 2*i + 1 <= wn - 1 then
+                        -- STRICTLY LESS, matching the legacy scan's `<`, so
+                        -- ties keep the earlier block.  min is associative
+                        -- and commutative so the tree's answer is the scan's
+                        -- answer whatever the tie rule; the rule is pinned
+                        -- anyway because it is the kind of thing a mutant
+                        -- flips and nothing else would notice.
+                        if wv(2*i + 1) < wv(2*i) then
+                          wv(i) := wv(2*i + 1);
+                        else
+                          wv(i) := wv(2*i);
+                        end if;
+                      else
+                        -- ODD LEVEL: the last entry has no partner and is
+                        -- carried forward unchanged.  UNREACHABLE at any
+                        -- power-of-two NBLK, which is every geometry this
+                        -- design is built at; see the teeth table in
+                        -- docs/debugging/2026-09-20_the-score-header-pass.md,
+                        -- where it is exercised by running this unit at
+                        -- NBLK = 5 and 7 rather than argued to be correct.
+                        wv(i) := wv(2*i);
+                      end if;
+                    end if;
+                  end loop;
+                  wn := nn;
+                end if;
+              end loop;
+
+              if wn = 1 then
+                e_min <= wv(0);
+                blk   <= 0;
+                state <= S_SHIFTS;
+              else
+                for i in 0 to TW-1 loop tv(i) <= wv(i); end loop;
+                tn  <= wn;
+                tl0 <= '0';
+              end if;
             end if;
 
-          -- ---- one narrow subtract per cycle ----------------------------
+          -- ---- one narrow subtract per cycle, or all NBLK in one --------
           -- Precomputed so the accumulate stage never has a subtract feeding
-          -- a barrel shift, which is what keeps p_ready unconditional.
+          -- a barrel shift, which is what keeps p_ready unconditional.  That
+          -- argument requires the shifts to EXIST before the first partial;
+          -- it never required them to arrive one per cycle, which is why
+          -- HDR_TREE can do them all at once without weakening it.
           when S_SHIFTS =>
-            sv := to_integer(e_l(blk)) - to_integer(e_min);
-            -- e_min is the minimum, so sv >= 0 by construction.  The clamp is
-            -- the project's shift convention and it also stops a corrupted
-            -- header from producing a LEFT shift here, which would overflow
-            -- the accumulator silently.
-            if sv < 0 then sv := 0; elsif sv > 63 then sv := 63; end if;
-            shb(blk) <= to_unsigned(sv, SHW);
-            if blk = NBLK-1 then
-              blk   <= 0;
-              p_rdy <= '1';          -- ready BEFORE the first partial can come
-              state <= S_ACC;
+            if HDR_TREE = 0 then
+              sv := to_integer(e_l(blk)) - to_integer(e_min);
+              -- e_min is the minimum, so sv >= 0 by construction.  The clamp
+              -- is the project's shift convention and it also stops a
+              -- corrupted header from producing a LEFT shift here, which
+              -- would overflow the accumulator silently.
+              if sv < 0 then sv := 0; elsif sv > 63 then sv := 63; end if;
+              shb(blk) <= to_unsigned(sv, SHW);
+              if blk = NBLK-1 then
+                blk   <= 0;
+                p_rdy <= '1';        -- ready BEFORE the first partial can come
+                state <= S_ACC;
+              else
+                blk <= blk + 1;
+              end if;
             else
-              blk <= blk + 1;
+              -- The SAME NBLK subtracts, all in one cycle.  They were never
+              -- serial for any reason but the spelling: they share only
+              -- `e_min`, which is fixed before this state is entered.  The
+              -- clamp is character for character the one above.
+              for b in 0 to NBLK-1 loop
+                sv := to_integer(e_l(b)) - to_integer(e_min);
+                if sv < 0 then sv := 0; elsif sv > 63 then sv := 63; end if;
+                shb(b) <= to_unsigned(sv, SHW);
+              end loop;
+              blk   <= 0;
+              p_rdy <= '1';
+              state <= S_ACC;
             end if;
 
           -- ================= align and accumulate ========================

@@ -222,6 +222,14 @@ entity tb_attn_kv_seam is
     -- for, so a header taken from the wrong record would be caught here
     -- even if it happened to produce a plausible y.
     SCORE_EARLY : boolean := false;
+    -- PASSED STRAIGHT THROUGH to attn_block's SCORE_HDR_TREE and on to
+    -- attn_score_q12's HDR_TREE.  It replaces that unit's serial header
+    -- scan with a comparison tree and parallel subtracts: the SAME
+    -- e_min, the SAME per-block shifts, the same partials in the same
+    -- order, only fewer cycles before p_ready rises.  So the answer
+    -- must be bit-identical at every value of it, and that is the
+    -- check.
+    SCORE_HDR_TREE : natural := 0;
     HEARTBEAT_US : integer := 0
   );
 end entity;
@@ -518,6 +526,7 @@ begin
                   EXP_W => EXP_W, NORM_LANES => 1,
                   SWEEP_PIPE => SWEEP_PIPE,
                   SCORE_EARLY => SCORE_EARLY,
+                  SCORE_HDR_TREE => SCORE_HDR_TREE,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => lay_blk,

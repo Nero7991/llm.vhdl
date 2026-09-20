@@ -48,6 +48,16 @@ entity tb_attn_score_q12 is
            -- silently dropping a score.
            S_READY_LAG : natural := 2;
            ACK_LAG     : natural := 4;
+           -- rtl/attn_score_q12.vhd's HDR_TREE.  0 is the legacy serial
+           -- header scan.  EVERY VECTOR MUST PRODUCE THE SAME s_q12 AND
+           -- THE SAME s_sat AT EVERY VALUE OF IT: the tree computes the
+           -- same e_min and the parallel subtracts the same per-block
+           -- shifts, so only the number of cycles before p_ready rises
+           -- may move.  The p_ready property this bench already checks is
+           -- what makes that testable rather than assumed -- partials are
+           -- driven with no regard for p_ready, so a tree that raised it
+           -- too EARLY would take partials against stale shifts.
+           HDR_TREE    : natural := 0;
            HEARTBEAT_US : natural := 0;
            VECS  : string := "attn_score_q12_vec.txt" );
 end entity;
@@ -83,6 +93,7 @@ begin
   dut : entity work.attn_score_q12
     generic map ( NBLK => NBLK, P_W => 32, EXP_W => 8,
                   KQ_SHIFT => KQ, QOUT => 12, LSH_CLAMP => 32, RSH_CLAMP => 32,
+                  HDR_TREE => HDR_TREE,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                hdr_valid => hdr_valid, e_k => e_k, q_exp => q_exp,
@@ -303,7 +314,8 @@ begin
       report "tb_attn_score_q12: PASS -- " & integer'image(NCASE)
            & " cases x " & integer'image(NBLK)
            & " blocks bit-exact: s_q12, s_sat, s_exp, with p_ready never "
-           & "falling under the partial stream, S_READY_LAG="
+           & "falling under the partial stream, HDR_TREE="
+           & integer'image(HDR_TREE) & " S_READY_LAG="
            & integer'image(S_READY_LAG) & " ACK_LAG=" & integer'image(ACK_LAG)
         severity note;
     else

@@ -282,7 +282,32 @@ entity attn_block is
     -- under the previous position's PV.  This generic does that and
     -- nothing else: no arithmetic moves, no beat moves, and the partials
     -- are still issued by P_SCORE in the same order.
-    SCORE_EARLY : boolean := false
+    SCORE_EARLY : boolean := false;
+    -- ==================================================================
+    -- SCORE_HDR_TREE -- passed STRAIGHT THROUGH to attn_score_q12's
+    -- HDR_TREE and used for nothing else here.  0 (the default) is that
+    -- unit's legacy one-compare-per-cycle header scan, so every existing
+    -- instantiation keeps the schedule it has cycle for cycle.
+    --
+    -- It attacks the SAME 14.00 cycles SCORE_EARLY hides, from the other
+    -- end: SCORE_EARLY moves the pass earlier, this SHORTENS it.
+    --
+    -- SO THE TWO OVERLAP AND THEIR SAVINGS MUST NEVER BE SUMMED.  MEASURED
+    -- 2026-09-20, sim/tb_csweep_rate.vhd, cycles per position per C job:
+    --
+    --                          SCORE_HDR_TREE 0   SCORE_HDR_TREE 1
+    --     SCORE_EARLY off            355.17             311.17
+    --     SCORE_EARLY on             323.17             291.17
+    --
+    -- 44.00 + 32.00 = 76.00 against a MEASURED 64.00.  With SWEEP_PIPE on
+    -- as well the three give 219.87, and SWEEP_PIPE + SCORE_HDR_TREE=1
+    -- alone (231.11) equals SWEEP_PIPE + SCORE_EARLY (231.17).
+    --
+    -- SET IT TO 1, NOT 2 OR 3.  On the all-three arm 1, 2 and 3 all measure
+    -- 219.87 to the digit, because the pass is already fully hidden; every
+    -- level past the first is pure combinational depth for no cycles.
+    -- All eleven arms: docs/debugging/2026-09-20_the-score-header-pass.md.
+    SCORE_HDR_TREE : natural := 0
   );
   port(
     clk : in std_logic;
@@ -1095,6 +1120,7 @@ begin
       generic map ( NBLK => NBLK, P_W => P_W, EXP_W => EXP_W,
                     KQ_SHIFT => KQ_SH, QOUT => Q,
                     LSH_CLAMP => 32, RSH_CLAMP => 32,
+                    HDR_TREE => SCORE_HDR_TREE,
                     STRICT_PRODUCER => STRICT_PRODUCER )
       port map ( clk => clk, rst => rst,
                  hdr_valid => sq_hdrv, e_k => khdr, q_exp => qexp_r(gg),

@@ -193,6 +193,12 @@ entity tb_csweep_rate is
     -- out of the same per-position budget, so crediting each with its own
     -- saving measured alone would double-count them.
     SCORE_EARLY : boolean := false;
+    -- See rtl/attn_score_q12.vhd's HDR_TREE generic, passed through
+    -- rtl/attn_block.vhd's SCORE_HDR_TREE.  0 is the legacy
+    -- one-compare-per-cycle header scan.  It attacks the SAME 14.00
+    -- cycles SCORE_EARLY hides, so the two OVERLAP rather than add and
+    -- the combination must be measured, never summed.
+    SCORE_HDR_TREE : natural := 0;
     -- THE ROW'S TEETH.  Without a ceiling this bench prints numbers and
     -- passes whatever they are, which is decoration: a schedule regression
     -- in the sweep loop would raise the slope and the gate would stay green.
@@ -448,6 +454,7 @@ begin
                   EXP_W => EXP_W, NORM_LANES => 1,
                   SWEEP_PIPE => SWEEP_PIPE,
                   SCORE_EARLY => SCORE_EARLY,
+                  SCORE_HDR_TREE => SCORE_HDR_TREE,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => lay_i,
@@ -950,7 +957,8 @@ begin
          & " spread=" & integer'image(SPREAD)
          & " ideal=" & boolean'image(IDEAL_CACHE)
          & " sweep_pipe=" & boolean'image(SWEEP_PIPE)
-         & " score_early=" & boolean'image(SCORE_EARLY));
+         & " score_early=" & boolean'image(SCORE_EARLY)
+         & " score_hdr_tree=" & integer'image(SCORE_HDR_TREE));
 
     rst <= '1';
     for i in 1 to 8 loop wait until rising_edge(clk); end loop;
