@@ -11,6 +11,66 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK ARENAPLACE: the GDN state is back on segment 27 where the packer puts it, one rule now, and the defect cost at most 2.5% of a B job (DERIVED 0 today)
+
+- **CONFIRMED as STRIPE27 described it.** `.bak-arenas` (the packer) says
+  `gdn_state_base 0x1b0000000` segment 27; the live manifest says
+  `0x1abde4000` segment 26, with `kv_base 0x1ad71c000` also segment 26.
+  26,443,776 B of GDN state and 42,876,928 B = 2,463 tokens of KV in a segment
+  six weight lanes have bytes in. **One correction to the census**: it is 198
+  tensors with ONE lane in segment 26 and 51 with TWO, not "two per tensor".
+- **THE FIX IS ONE RULE, CALLED, NOT RESTATED.** `relayout_arenas()` now calls
+  `pack_model_fk33.stripe_context_tokens()` on a striped manifest instead of
+  `PK.place()`, and the new `hbm_map.stripe_residency_fails()` (fault P7) is in
+  `plan().check()`, so `gen_layer_program.py` and `pack_gdn_consts.py` refuse
+  the defective image too. MEASURED: a full repack and the fixed re-layout
+  agree to the byte on `gdn_state_base` and `kv_base`. **On a FLAT manifest the
+  result is byte-identical to HEAD's**, key for key.
+- **TEETH, 29 of 29 in `check_kv_map.py --teeth`.** The mutant is the SHIPPED
+  image at its real path: REFUSED on exactly one row. **Attribution control,
+  the same image with only the residency rows off: ACCEPTED by all 38
+  pre-existing rows**, which is the measurement that none of them could see it.
+  One byte below the segment boundary REFUSED, exactly on it accepted, one
+  page below REFUSED, `kv_base` alone dragged back REFUSED. **Reported not
+  biting, under its own name:** one byte ABOVE the boundary, which is inside a
+  reserved segment and costs nothing; its real guard is `hbm_map`'s existing
+  4 KB alignment rule, MEASURED firing on it.
+- **A HOLE THIS TRACK OPENED AND CLOSED (M-C).** The first fix branched on the
+  lane-segment SET being non-empty, so a `lane_stripe` block with an EMPTY
+  `segments` list fell through to the 4 KB rule and reproduced the defect
+  silently. Branch on the BLOCK's presence; an empty lane plan is now a P7
+  fault. An empty set is not evidence of a flat image.
+- **THE CORRECTED IMAGE, FOR THE DISPATCHER TO LOAD:**
+  `/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27`. Same 250
+  symlinks, **all 250 per-file blake2b equal to the shipped set and 0 of 250
+  `hbm_offset` moved**; `gdn_const.bin` blake2b `ec3eda1a...b917`, equal.
+  `gdn_state 0x1b0000000` seg 27, `kv_base 0x1b1938000`, KV spans segments
+  27..31, all reserved. `max_context_tokens` 75,181 against the card's
+  `C_MAXPOS` 65,536 (read from `gen_fk33_card.py`), margin 1.147x.
+  `check_kv_map` 40 rows 0 refused; `check_hbm_stack` PASS. **The token program
+  does NOT need regenerating: `.dtbl`, `.rel` AND `.arena` are byte-identical**
+  because no weight piece moved and `desc_arena_base` is unchanged.
+  `check_kv_map.py`'s DEFAULT striped manifest now points here.
+- **MAGNITUDE, DERIVED.** At most **16,429 cycles per B job (2.5%)**, the
+  unattributed residual between the card's 660,601 and BMOVER's 644,172, shared
+  with three other named candidates; at most 1.3% of a striped token. **And 0
+  today**, because D issues steps serially, so no weight lane is active while
+  B's mover or C's KV port uses pseudo-channel 26. B asks for a 3.13% duty
+  cycle on that PC (68,864 beats x 4.00 ns against an 8.808 ms job), so this
+  becomes load-bearing exactly when BMOVER's lever 5 (overlap the state load
+  with A) lands. **The flat-vs-striped equality is NOT a control for this:**
+  flat puts the state at segment 16, which also holds weights.
+- **`check_mv4i_set.py`: recorded, NOT fixed.** Re-MEASURED: 249 FAILURES rc=1
+  on BOTH striped sets, PASS on flat. **Nothing in the repo invokes it** (every
+  hit outside `.claude/worktrees` is a comment or docstring), so its wrong
+  verdict has cost nothing. Making it striping-aware means routing its
+  placement, overlap and sub-region rules through `hbm_map.file_pieces()`.
+- Write-up: section 10 appended to
+  `docs/debugging/2026-09-20_stripe-width-after-the-kv-halved.md` (append only).
+  **Trap worth the whole section: a `cp` onto a SYMLINK writes through it and
+  silently reverted this track's edits to `tools/hbm_map.py`; `git status`
+  showed the file clean.**
+
 ### 2026-09-20 TRACK STRIPE27: one lane per pseudo-channel BUYS NOTHING at 75 MHz, and at most 3.2% of a token at 200 MHz. Built anyway, as a measurement image that must not be loaded.
 
 - **The answer, DERIVED.** A pseudo-channel passes one 32 B beat every 4.00 ns

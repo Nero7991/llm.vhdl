@@ -726,6 +726,94 @@ def file_pieces(e):
     return out
 
 
+def stripe_lane_segments(mani):
+    """The pseudo-channels a weight lane occupies, out of the manifest's own
+    `lane_stripe` block.  Empty set on a FLAT manifest, which is what makes
+    every rule below inert there.
+
+    READ, never re-derived.  `pack_model_fk33.lane_stripe_plan()` chose these
+    segments and recorded them; recomputing the choice here would be a second
+    allocator, which is the exact defect this function exists to catch."""
+    ls = (mani.get("hbm") or mani).get("lane_stripe") or {}
+    return {int(x["segment"]) for x in ls.get("segments") or []}
+
+
+def stripe_residency_fails(mani):
+    """P7: ON A LANE-STRIPED MANIFEST, NO BYTE OF THE GDN STATE OR OF THE KV
+    ARENA MAY DECODE TO A PSEUDO-CHANNEL THAT A WEIGHT LANE OCCUPIES.
+
+    THE DEFECT THIS EXISTS FOR, MEASURED 2026-09-20 in the SHIPPED striped
+    image.  `pack_model_fk33` places the GDN state at the next SEGMENT
+    boundary above the weights and refuses outright if that segment belongs
+    to a lane (`stripe_context_tokens()`'s docstring states the rule and
+    `main()` enforces it).  `hbm_map.relayout_arenas()` then re-placed the
+    same arena with a 4 KB round-up and rewrote the manifest in place, which
+    pulled `gdn_state_base` from segment 27 back into segment 26 -- 26.4 MB
+    of B's recurrent state and the first 2,463 tokens of the KV cache sharing
+    one pseudo-channel with six weight lanes.
+
+    WHY NO EXISTING CHECK SAW IT.  Every other rule in this file is about
+    BYTES: alignment, range, the stack line, pairwise overlap.  Those bytes
+    overlap nothing -- they sit in the TAIL of segment 26, above the highest
+    lane arena, and `check_kv_map.py` passes them for the same reason.  The
+    invariant that was violated is about the pseudo-channel the ADDRESS
+    decodes to, and until this function there was no rule of that shape.
+
+    WHAT IS DELIBERATELY NOT CHECKED, named so nothing is credited with it:
+    that `gdn_state_base` is SEGMENT-aligned.  A base that is page- but not
+    segment-aligned inside a RESERVED segment costs nothing -- the contention
+    is a property of which pseudo-channel the bytes land on, not of where in
+    it they start -- so an alignment rule here would be a rule that fires for
+    a reason other than the one it names.  The alignment comes from
+    `stripe_context_tokens()` being the only thing that chooses the base."""
+    hbm = mani.get("hbm") or mani
+    lane_segs = stripe_lane_segments(mani)
+    if not lane_segs:
+        # A FLAT manifest has no `lane_stripe` key at all and there is nothing
+        # to say.  A manifest that HAS the block and lists no segments is a
+        # different thing: MEASURED as teeth row M-C, it made the allocator
+        # fall straight back to the 4 KB rule and reproduce the 2026-09-20
+        # placement in silence.  An empty set is not evidence of a flat image.
+        if hbm.get("lane_stripe") is not None:
+            return ["PIECES P7: this manifest carries an hbm.lane_stripe "
+                    "block that lists no segments.  A striped manifest whose "
+                    "lane plan is empty cannot be checked against it, and "
+                    "treating it as flat puts the arenas back on a 4 KB "
+                    "round-up.  Refusing rather than assuming."]
+        return []
+    fails = []
+    ceil = None
+    for k in ("gdn_const_base", "desc_arena_base", "size"):
+        if hbm.get(k):
+            ceil = int(hbm[k])
+            break
+    spans = []
+    if hbm.get("gdn_state_bytes"):
+        spans.append(("gdn_state", int(hbm["gdn_state_base"]),
+                      int(hbm["gdn_state_base"]) + int(hbm["gdn_state_bytes"])))
+    if hbm.get("kv_base") is not None and ceil is not None:
+        spans.append(("kv arena", int(hbm["kv_base"]), ceil))
+    for name, lo, hi in spans:
+        if hi <= lo:
+            continue
+        hit = sorted(s for s in range(segment_of(lo), segment_of(hi - 1) + 1)
+                     if s in lane_segs)
+        if not hit:
+            continue
+        s0 = hit[0]
+        shared = min(hi, (s0 + 1) * SEGMENT_BYTES) - max(lo, s0 * SEGMENT_BYTES)
+        fails.append(
+            "PIECES P7: %s spans %s..%s, which decodes to pseudo-channel(s) "
+            "%s that weight lane(s) occupy (%d byte(s) in segment %d alone).  "
+            "pack_model_fk33.stripe_context_tokens() places these arenas at "
+            "the next SEGMENT boundary above the weights precisely so this "
+            "cannot happen; a 4 KB round-up puts them back on a lane's "
+            "pseudo-channel and overlaps nothing, so no byte-range rule can "
+            "see it." % (name, h(lo), h(hi),
+                         ", ".join(str(s) for s in hit), shared, s0))
+    return fails
+
+
 def manifest_piece_fails(mani):
     """What a striped object's PIECES must satisfy that the region model cannot.
 
@@ -1358,7 +1446,8 @@ def plan(mani, desc_jobs=311, desc_base=None, policy="manifest",
 
     m = HbmMap(regions, hbm, notes, top)
     m.extra_fails = [s for s in (block_fail, chunk_fail, arena_fail) if s] \
-        + arena_fails + manifest_piece_fails(mani)
+        + arena_fails + manifest_piece_fails(mani) \
+        + stripe_residency_fails(mani)
     # THE DECLARED HOST BLOCKS ARE A FACT ABOUT `host_max_chunk`, so they are
     # only comparable when this map was built at that cap.  Comparing them at
     # any other cap would report a disagreement that is simply the cap doing
@@ -1591,9 +1680,45 @@ def relayout_arenas(mani, ncards=1):
     stack = int(hbm.get("stack_bytes", 4 * 1024 ** 3))
     weights_end = int(hbm["weights_end"])
     gdn_bytes = sz["gdn_state_bytes"]
-    gdn_base, hole = PK.place(weights_end, gdn_bytes)
-    kv_base = align_up(gdn_base + gdn_bytes, int(hbm.get("align", 4096)))
     per = sz["kv_bytes_per_token"]
+
+    # THE PLACEMENT RULE IS THE PACKER'S, CALLED, NOT RESTATED.  On a LANE-
+    # STRIPED manifest the GDN state and the KV cache start at the next
+    # SEGMENT boundary above the weights, not at the next 4 KB page, so the
+    # state does not share the top lane's pseudo-channel.
+    # `pack_model_fk33.stripe_context_tokens()` is where that rule lives and
+    # its docstring is where it is argued; CALLING it is the only form that
+    # cannot drift from the packer.  Until 2026-09-20 this function used
+    # `PK.place()` unconditionally and silently undid the packer's choice in
+    # the SHIPPED image -- see docs/debugging/2026-09-20_stripe-width-after-
+    # the-kv-halved.md section 4.11, and section 11 for the fix.
+    segment_pad = 0
+    # THE BLOCK'S PRESENCE, NOT ITS CONTENTS.  Branching on a non-empty
+    # segment set let a `lane_stripe` block with an empty `segments` list fall
+    # through to the 4 KB rule (teeth M-C); presence is what says "this is a
+    # striped image", and an unusable block is then refused below rather than
+    # silently treated as a flat one.
+    if hbm.get("lane_stripe") is not None:
+        _tokens, gdn_base, _kvb = PK.stripe_context_tokens(
+            weights_end, gdn_bytes, top, per)
+        segment_pad = gdn_base - weights_end
+        # THE STACK RULE STILL APPLIES.  A segment boundary is not a stack
+        # boundary, so a large enough arena placed at one could still straddle
+        # the 4 GiB line.  `PK.place()` is asked whether the segment-aligned
+        # base is legal rather than asked to choose one; a disagreement is
+        # REFUSED rather than quietly moved, because moving it would leave the
+        # segment boundary behind and reintroduce exactly this defect.
+        chk, _ = PK.place(gdn_base, gdn_bytes)
+        if chk != gdn_base:
+            raise SystemExit(
+                "hbm_map: the lane-striped GDN state at %s straddles the "
+                "stack line and cannot be placed at a segment boundary.  "
+                "Refusing rather than falling back to a 4 KB placement."
+                % h(gdn_base))
+        hole = 0
+    else:
+        gdn_base, hole = PK.place(weights_end, gdn_bytes)
+    kv_base = align_up(gdn_base + gdn_bytes, int(hbm.get("align", 4096)))
 
     # The KV region is split at every stack boundary and whole records counted
     # inside each extent, which is `pack_model_fk33`'s rule and the reason a
@@ -1634,6 +1759,23 @@ def relayout_arenas(mani, ncards=1):
                  why="stack boundary before the re-laid-out GDN state region"))
         hbm["stack_hole_bytes"] = sum(h["nbytes"]
                                       for h in hbm["stack_holes"])
+    if segment_pad:
+        # NOT a stack hole, and deliberately not filed as one: these bytes are
+        # skipped to reach a PSEUDO-CHANNEL boundary, not a stack boundary,
+        # and merging the two would make `stack_hole_bytes` a number about two
+        # different mechanisms.  The packer records neither; recording it here
+        # is additive and costs no reader.
+        hbm["gdn_state_segment_pad_bytes"] = int(segment_pad)
+
+    # THE RESULT IS CHECKED BEFORE IT IS RETURNED, against the same rule every
+    # other reader of this manifest now applies.  A producer that trusts its
+    # own arithmetic is how the 2026-09-20 placement came to be written.
+    fails = stripe_residency_fails(dict(mani, hbm=hbm))
+    if fails:
+        raise SystemExit(
+            "hbm_map: REFUSING to re-lay-out the arenas -- the result puts "
+            "them on a weight lane's pseudo-channel:\n"
+            + "\n".join("  " + s for s in fails))
     return hbm, before
 
 

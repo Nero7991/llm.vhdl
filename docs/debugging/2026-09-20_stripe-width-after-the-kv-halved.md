@@ -590,3 +590,515 @@ records over `gdn_const`, the descriptor arena and the host blocks, with no
 fault and a wrong token. It becomes loadable only alongside a card built at
 `C_MAXPOS <= 44341`, and by section 4.10 that build is worth at most 3.2% of a
 token and probably nothing.
+
+---
+
+# APPENDED 2026-09-20 by TRACK ARENAPLACE: the 4.11 defect, fixed and measured
+
+Section 4.11 above found the defect and did not fix it. This section fixes it,
+teeth-tests the fix, produces a corrected image, and bounds what the defect was
+costing. **Nothing above this line is edited.**
+
+## 10.1 The question, verbatim
+
+> `tools/hbm_map.py`'s `write_arenas()` re-places the GDN state with a 4 KB
+> round-up and never reads the manifest's `lane_stripe` block. In the shipped
+> striped image that pulls `gdn_state_base` from segment 27 back into segment
+> 26, so about 26.4 MB of B's recurrent state and the first 2,463 tokens of the
+> KV cache now share pseudo-channel 26 with two weight lanes per tensor. [...]
+> Magnitude is UNMEASURED.
+
+Date 2026-09-20. Inputs: `/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/`
+(`manifest.json` of Sep 20 06:32 and its `manifest.json.bak-arenas` of Sep 17
+21:24), `tools/hbm_map.py` and `tools/pack_model_fk33.py` at `8771f32`.
+
+## 10.2 The answer, up front
+
+**The defect is exactly as 4.11 described, and it is now caught in three
+places by one rule.** `relayout_arenas()` now CALLS
+`pack_model_fk33.stripe_context_tokens()` on a striped manifest instead of
+`PK.place()`, so the placement rule is stated once, in the packer; and a new
+`hbm_map.stripe_residency_fails()` (fault code P7) refuses any manifest whose
+GDN state or KV arena decodes to a pseudo-channel a weight lane occupies. P7
+is in `plan().check()`, so `gen_layer_program.py` and `pack_gdn_consts.py`
+refuse the defective image too, and it is a named row in `check_kv_map.py`.
+
+**The performance cost of the defect as it stands is bounded above by 16,429
+cycles per B job (2.5%), and is DERIVED to be ZERO in the current design**,
+because D issues steps serially: no weight lane is active while B's state
+mover or C's KV port is using pseudo-channel 26. It is a correctness defect
+that becomes load-bearing the moment lever 5 of the BMOVER table (overlap the
+state load with the next layer's A jobs) lands.
+
+**One correction to 4.11's census**, which does not change its conclusion: the
+phrase "two weight lanes per tensor" over-states it. MEASURED over the shipped
+manifest's own pieces, 249 tensors have bytes in segment 26; **198 of them put
+ONE lane there and 51 put TWO**.
+
+## 10.3 The procedure
+
+1. Read `write_arenas()` / `relayout_arenas()` and every caller, and read the
+   packer's `stripe_context_tokens()` and `main()`'s refusal. Quote both.
+2. Read the shipped manifest AND its three backup files, which is the only way
+   to see which tool wrote which field (trap recorded in section 6).
+3. Census segment 26 out of the manifest's own `pieces`, not out of a brief.
+4. Make the second allocator CALL the packer's rule rather than restate it,
+   and add the invariant as a fault in the map's own checker.
+5. Teeth, including the shipped image as a live mutant and the attribution
+   control with the new rows disabled.
+6. Repack the corrected image from the same symlinked bytes. Cross-check that
+   the repack and the fixed `relayout_arenas()` agree on the placement, which
+   is the evidence that the two allocators no longer disagree.
+7. Bound the magnitude from the BMOVER measurement rather than assert it.
+
+## 10.4 The evidence
+
+### The two placements, and who owns segment 26
+
+```
+manifest.json.bak-arenas   gdn_state_base 0x1b0000000 segment 27   (the PACKER)
+manifest.json              gdn_state_base 0x1abde4000 segment 26   (write_arenas)
+manifest.json              kv_base        0x1ad71c000 segment 26
+
+segment 26 spans [0x1a0000000, 0x1b0000000); weights_end 0x1abde4000
+reserved_segments in the manifest        : [16, 27, 28, 29, 30, 31]
+lanes whose stripe includes segment 26   : [15..26], 12 lanes
+lanes with BYTES in segment 26           : {16:51, 18:53, 20:54, 22:57, 24:34, 26:51}
+                                           300 pieces over 249 tensors
+tensors with 1 lane in segment 26        : 198
+tensors with 2 lanes in segment 26       : 51
+GDN state bytes in segment 26            : 26443776
+KV bytes in segment 26                   : 42876928 = 2463 tokens of 17408
+```
+
+### The code, quoted
+
+`tools/pack_model_fk33.py:643` states the rule and argues it:
+
+```python
+def stripe_context_tokens(weights_end, gdn_bytes, kv_top, per_token):
+    """...
+    The GDN state and the KV cache start at the next SEGMENT boundary above the
+    weights, not the next 4 KB page.  Two reasons, both load-bearing:
+    `server/fk33_manifest.c:170` requires `gdn_state_base >= weights_end`, and
+    a 4 KB round-up would leave the GDN state sharing the top lane's
+    pseudo-channel -- the exact contention this whole change removes."""
+    gdn = ((weights_end + SEGMENT_BYTES - 1) // SEGMENT_BYTES) * SEGMENT_BYTES
+```
+
+and `main()` refuses the violation outright (`pack_model_fk33.py:1329`):
+
+```python
+        if segment_of(gdn_base) in lane_segs:
+            raise SystemExit("pack_model_fk33: the GDN state would land in "
+                             "segment %d, which a weight lane owns"
+                             % segment_of(gdn_base))
+```
+
+`tools/hbm_map.py:relayout_arenas()` at `8771f32` bypassed both:
+
+```python
+    gdn_base, hole = PK.place(weights_end, gdn_bytes)
+    kv_base = align_up(gdn_base + gdn_bytes, int(hbm.get("align", 4096)))
+```
+
+`PK.place()` is the 4 KB allocator (`pack_model_fk33.py:374`, "Next legal base
+for `nbytes` at or after `off`"). `lane_stripe` appears nowhere in the
+function. It is now:
+
+```python
+    if hbm.get("lane_stripe") is not None:
+        _tokens, gdn_base, _kvb = PK.stripe_context_tokens(
+            weights_end, gdn_bytes, top, per)
+        ...
+        chk, _ = PK.place(gdn_base, gdn_bytes)      # the STACK rule still applies
+        if chk != gdn_base:
+            raise SystemExit(...)
+    else:
+        gdn_base, hole = PK.place(weights_end, gdn_bytes)
+```
+
+### Old versus new, same inputs (the attribution control for the ALLOCATOR)
+
+HEAD's `tools/hbm_map.py` was run from a scratch tree that symlinks `server/`
+and `rtl/`, so both versions read the same authorities.
+
+```
+== striped manifest.json.bak-arenas (what write_arenas was actually given)
+   OLD(HEAD) relayout OK  gdn 0x1abde4000 seg 26  kv 0x1ad71c000
+   NEW       relayout OK  gdn 0x1b0000000 seg 27  kv 0x1b1938000
+   keys differing: gdn_state_base, kv_base, kv_extents, free_after_gdn,
+                   max_context_tokens, gdn_state_segment_pad_bytes
+== flat manifest (the behaviour that must NOT change)
+   OLD(HEAD) relayout OK  gdn 0x10c006000 seg 16  kv 0x10d93e000
+   NEW       relayout OK  gdn 0x10c006000 seg 16  kv 0x10d93e000
+   keys differing OLD vs NEW: NONE (byte-identical layout)
+== striped manifest.json (the SHIPPED, already-defective one)
+   OLD(HEAD) relayout OK  gdn 0x1abde4000 seg 26  plan().check() faults on INPUT: 0
+   NEW       relayout OK  gdn 0x1b0000000 seg 27  plan().check() faults on INPUT: 2
+```
+
+The third block is the whole finding in three lines: on the image that is
+loaded on the card, HEAD's checker reports **0 faults** and HEAD's allocator
+**reproduces the defect**; the new one reports 2 and repairs it.
+
+### The teeth
+
+`hbm_map` allocator, run directly. WANT written before the numbers were seen.
+
+| mutant | want | got |
+|---|---|---|
+| flat manifest (control) | accept, unchanged | ACCEPTED, gdn 0x10c006000, identical to HEAD |
+| corrected striped image (control) | accept | ACCEPTED, gdn 0x1b0000000 seg 27 |
+| SHIPPED defective manifest, re-laid out | accept AND repair | ACCEPTED, gdn moved to 0x1b0000000 seg 27 |
+| M-A: a lane plan that OWNS segment 27 | REFUSE | REFUSED, P7 names segment 27 |
+| M-C: `lane_stripe` present, `segments` empty | REFUSE | REFUSED (see below) |
+
+**M-C is a hole this track opened and then closed, and it is reported because
+it was real for about twenty minutes.** The first fix branched on
+`stripe_lane_segments(mani)` being non-empty. A manifest carrying a
+`lane_stripe` block with an EMPTY `segments` list then fell straight through to
+the 4 KB rule and reproduced the defect in silence (MEASURED: `gdn 0x1abde4000
+seg 26`). The branch is now on the BLOCK's presence, and an empty lane plan is
+a P7 fault in its own right. **An empty set is not evidence of a flat image**,
+and this is the same shape as every "passes for the wrong reason" entry in
+CLAUDE.md.
+
+`tools/check_kv_map.py --teeth`, **29 of 29 rows behaved as intended**. The
+seven new rows:
+
+| row | want | got |
+|---|---|---|
+| THE SHIPPED striped image `.../noembd-striped` as it stands today | REFUSE | REFUSED on exactly one row, the residency row |
+| **attribution control: same image, residency rows OFF** | **accept** | **accepted** |
+| `gdn_state` ONE BYTE BELOW the boundary (0x1afffffff) | REFUSE | REFUSED, segment 26 |
+| `gdn_state` EXACTLY ON the boundary (0x1b0000000) | accept | accepted |
+| `gdn_state` one PAGE below the boundary (0x1affff000) | REFUSE | REFUSED, segment 26 |
+| `kv_base` alone dragged back to 0x1ad71c000, `gdn_state` left correct | REFUSE | REFUSED, names kv_base |
+| `gdn_state` ONE BYTE ABOVE the boundary (0x1b0000001) | **accept -- DOES NOT BITE** | accepted |
+
+**The attribution control is the load-bearing row.** The shipped image with
+only the residency rows disabled is ACCEPTED by all 38 pre-existing rows,
+which is the measurement that none of them could see this. Its refusal with
+the rows on names exactly one row, so the kill is not shared.
+
+**The non-biting row, under its own name.** A base one byte ABOVE the segment
+boundary is inside reserved segment 27, no lane shares its pseudo-channel, and
+P7 is silent -- correctly, because the contention is a property of WHICH
+pseudo-channel the bytes decode to, not of where inside it they start. An
+alignment rule inside P7 would be a rule that fires for a reason other than the
+one it names. **The real guard for it is measured separately and does exist:**
+
+```
+gdn_state one BYTE above the boundary 0x1b0000001    P7 0  other 2
+  <gdn recurrent state>: base 0x1_b000_0001 is not 4 KB aligned (placed by pack_model_fk33.py)
+gdn_state one BYTE below 0x1afffffff                 P7 1  other 1
+gdn_state one PAGE below 0x1affff000                 P7 1  other 0
+kv_base back to 0x1ad71c000                          P7 1  other 0
+baseline (corrected image)                           P7 0  other 0
+```
+
+so `hbm_map.plan().check()` refuses the misaligned base on its pre-existing
+4 KB region rule, and P7 is not credited with it.
+
+### The corrected image
+
+```
+/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27/
+  250 symlinks onto the same packed files as .../qwen35-9b-mv4i-noembd-striped
+  manifest.json           1179587 B
+      sha256 05daf1c011b89a2ed2b02e26dfa708dab94eaa6a4b564f2708a6623235b62ae6
+  manifest.json.bak-gdnconst
+  gdn_const.bin           1585152 B
+      sha256 7c6400623f8bc0d8884ed3d346ed7e62e2b79dfcd05cde328fe2ca20ccee7e36
+      blake2b-128 ec3eda1ae15abf20326541ceacdeb917 (equal to the shipped set's,
+      and to the stripe27 set's: the constant image does not depend on placement)
+```
+
+MEASURED against the shipped striped set:
+
+```
+files shipped 250, new 250        same name set: True
+per-file blake2b differing        : NONE -- all 250 equal
+files whose hbm_offset moved      : 0
+weights_end       shipped 0x1abde4000 seg26   new 0x1abde4000 seg26
+gdn_state_base    shipped 0x1abde4000 seg26   new 0x1b0000000 seg27
+gdn_state_bytes   shipped 26443776            new 26443776
+kv_base           shipped 0x1ad71c000 seg26   new 0x1b1938000 seg27
+gdn_const_base    shipped 0x1ff95a000 seg31   new 0x1ff95a000 seg31
+desc_arena_base   shipped 0x1ffadd000 seg31   new 0x1ffadd000 seg31
+max_context_tokens shipped 79163              new 75181
+card_kv_fits      shipped absent              new True
+gdn_const_blake2b shipped ec3eda1a...b917     new ec3eda1a...b917
+lane segment fills shipped vs new : IDENTICAL in all 25 segments
+P7 on the new image               : CLEAN
+hbm_map plan().check() on new     : CLEAN
+kv arena spans segments           : 27..31, every one of them reserved
+```
+
+`max_context_tokens` FALLS from 79,163 to 75,181. That is the defect being
+paid back: the shipped figure counted the 2,463 tokens that were sitting on
+segment 26 plus the bytes of the 69,320,704-byte segment pad. 75,181 is still
+1.147x the card's `C_MAXPOS`.
+
+`C_MAXPOS` is 65,536, MEASURED by reading `hw/fk33/gen_fk33_card.py` (via
+`check_kv_map`'s own `_read_int_generic`, row `gen_fk33_card C_MAXPOS == KVR
+C_MAXPOS  built 65536 vs simulated 65536`), not from any prose.
+
+Checks on it:
+
+```
+python3 tools/check_kv_map.py --striped-manifest <new>/manifest.json
+  check_kv_map: 40 rows, 0 refused, 0 not run        (rc 0)
+python3 tools/check_hbm_stack.py <newdir>
+  PASS no range crosses a stack boundary; 7154 ranges, 249 of 250 lane-striped
+```
+
+Cost, MEASURED: `pack_model_fk33` 11.13 s wall, peak RSS 606,320 KiB;
+`pack_gdn_consts` 5.76 s, peak RSS 600,736 KiB. No Vivado, no GHDL, no card.
+
+### The token program does NOT need regenerating
+
+MEASURED, both programs emitted with `--x-exp 0` and byte-compared:
+
+```
+token.dtbl  IDENTICAL
+token.rel   IDENTICAL
+token.arena IDENTICAL
+```
+
+against section 4.9's stripe27 result, where `token.arena` DIFFERED in 10,376
+bytes. The difference there was the 27 per-lane bases; here **no weight piece
+moved** (0 of 250 `hbm_offset` changed) and `desc_arena_base` is unchanged, so
+the A descriptors are the same bytes. The GDN state and KV bases are not in
+the program at all -- `grep -n "gdn_state_base\|kv_base" tools/gen_layer_program.py`
+returns nothing; the host programs them into the seam from the manifest.
+
+The old program had to be emitted with HEAD's `hbm_map.py`, because the new
+one REFUSES:
+
+```
+gen_layer_program: REFUSING to emit A descriptors -- the HBM map has 2
+overlap/placement fault(s).  See tools/hbm_map.py.
+  PIECES P7: gdn_state spans 0x1_abde_4000..0x1_ad71_c000, ...
+```
+
+That refusal was not designed; it follows from putting P7 in `plan().check()`,
+and it is the third independent place the defective image is now stopped.
+
+Digests of the corrected image's program (scratchpad, regenerate anywhere):
+
+```
+b6d8888913c8bd58aee27638dc1bfbdcb6a77e383844e989ba8e7836786dd156  token.dtbl
+7c6e8ae899eadb2a1858b182b88453d50d38a10cc704146ac0922cb2b6eb98f4  token.rel
+7707d67a0be24bf3041b5fe42a9d666599c710341bf2d43fa1c5fe3fa44d91d3  token.arena
+```
+
+## 10.5 The magnitude, DERIVED
+
+**Upper bound, from the BMOVER measurement.** B's state mover is 660,601
+cycles per job on the card (MEASURED, `profile_flat_tok0.txt` step 7) and
+`sim/tb_bmover_phases` accounts for **644,172** of them against a modelled
+memory. The residual is **16,429 cycles, 2.5%**, and
+`docs/debugging/2026-09-20_b-job-660k-cycles.md` lists it as open with three
+named candidates (the card's slower producers, per-beat bubbles in the HBM
+path, the seam's issue overhead). Pseudo-channel contention is a fourth
+candidate inside the same residual. So:
+
+> **The defect costs at most 16,429 cycles per B job, at most 2.5% of the job,
+> at most 24 x 16,429 = 394,296 cycles = 5.26 ms per token at 75 MHz, which is
+> at most 1.3% of the 30.1 M-cycle striped token -- and it shares that budget
+> with three other candidates, so its own share is at most that and may be 0.**
+
+**DERIVED, it is 0 today.** D issues steps serially. A `B_JOB` is one step and
+an `A_JOB` is another; the BMOVER lever table lists "load layer L+1's state
+during layer L's A jobs" as lever 5, **not done**, needing `llama_top` and D
+scheduling. So while B's mover is using pseudo-channel 26 no weight lane is
+active, and there is nothing to contend with. The same argument covers C's KV
+reads. **The defect is a correctness defect with no measurable cost in the
+current schedule.**
+
+**The duty cycle, for when that stops being true.** Per B job the state
+traffic is 1,101,824 B in and 1,101,824 B out = **68,864 beats** of 32 B, all
+of it in segment 26 in the shipped image (`gdn_state_bytes` 26,443,776 / 24
+layers = 1,101,824 B per layer, and the whole arena is inside segment 26). At
+the STRUCTURAL 4.000 ns per beat per pseudo-channel from section 4.10 that is
+**275.5 us** of pseudo-channel occupancy inside a job that takes
+660,601 / 75 MHz = **8.808 ms**: a **3.13% duty cycle**. Even under full
+overlap with A, B is asking for 3.1% of one pseudo-channel.
+
+**What is NOT bounded here.** C's KV traffic for positions 0..2,462, which
+also sits in segment 26 in the shipped image. No per-position C measurement
+exists, so no number is claimed. Under the same serial-step argument it is
+also 0 today.
+
+**The flat-versus-striped comparison is NOT a control for this**, and it would
+be easy to mistake it for one. The BMOVER doc records the B job as "identical
+on the flat and the lane-striped HBM image" -- but the FLAT layout puts
+`gdn_state_base` at 0x10c006000, which is segment 16, and segment 16 also
+holds the top of the flat weight image. Both layouts share the state's
+pseudo-channel with weights. The comparison measures that the job does not
+care which layout it is on; it does not measure a contended case against an
+uncontended one.
+
+## 10.6 Measured and REJECTED -- do not retry
+
+- **"Add a segment-alignment rule to P7."** REJECTED. The mutant
+  `gdn_state_base = 0x1b0000001` is inside reserved segment 27 and costs
+  nothing in contention; an alignment rule in P7 would fire for a reason other
+  than the one it names. MEASURED: `hbm_map.plan().check()` already refuses it
+  on the pre-existing 4 KB region rule (2 faults), so the behaviour exists and
+  is correctly attributed elsewhere.
+- **"Duplicate the segment-boundary rule in `hbm_map`."** REJECTED on sight and
+  then on measurement: a rule stated twice is how this defect happened.
+  `relayout_arenas()` CALLS `pack_model_fk33.stripe_context_tokens()`. The
+  cross-check is that a full repack and the fixed re-layout agree to the byte
+  on `gdn_state_base` (0x1b0000000) and `kv_base` (0x1b1938000).
+- **"Branch on the lane-segment SET being non-empty."** REJECTED, MEASURED as
+  teeth M-C: a `lane_stripe` block with an empty `segments` list then falls
+  through to the 4 KB rule and reproduces the defect silently. Branch on the
+  block's presence.
+- **"Repack with `--stripe-stack1-segments` to reproduce the shipped width."**
+  Not needed. The width search re-chose `n = 10` on its own (12/11 under the
+  65,536 target, 10 at 75,272 chosen), and the resulting 25 lane-segment fills
+  are IDENTICAL to the shipped manifest's.
+- **"Use `tools/check_mv4i_set.py` on the corrected set."** REJECTED, see 10.7.
+
+## 10.7 `tools/check_mv4i_set.py` is v1-only -- recorded, NOT fixed
+
+MEASURED today, re-derived rather than restated from the brief:
+
+```
+qwen35-9b-mv4i-noembd              PASS, rc 0
+qwen35-9b-mv4i-noembd-striped      249 FAILURES, rc 1
+qwen35-9b-mv4i-noembd-striped-seg27 249 FAILURES, rc 1
+
+FAIL blk.14.ffn_down.weight.mv4i: HBM offset 0x1000 overlaps the previous
+     region ending 0x221b3000
+```
+
+It models an entry as `nbytes` contiguous bytes at `hbm_offset`, which on a v2
+manifest names a 4 KB HEADER. Every striped entry therefore "overlaps" its
+neighbour. **Its verdict on any striped image carries no information** and it
+must not be quoted for or against one.
+
+**What it would take to make it striping-aware:** it should use
+`hbm_map.file_pieces(e)`, which already exists and already returns a synthetic
+one-piece list for a flat entry precisely so that the flat and striped paths
+cannot drift. Three of its rules -- placement, overlap, and the sub-region
+offset arithmetic -- would then run per piece instead of per file, and the
+`blake2b` and size rules are already piece-independent because the packer
+digests the whole file. Until then the honest change is a REFUSAL on
+`format ... v2 lane-striped` rather than 249 wrong lines; that is a behaviour
+change and was deliberately not made by this track.
+
+**Nothing in the repository treats its output as a gate.** MEASURED:
+`grep -rn check_mv4i_set` over the tree outside `.claude/worktrees` finds it in
+`tools/hbm_map.py:109`, `tools/pack_model_fk33.py:899,1582`,
+`tools/weights_residency.py:9,55`, `hw/fk33/host/fk33_load_weights.py:303`,
+`docs/2026-09-18_b-constants-path.md:79` and `docs/WORKLOG.md:62` -- **every
+one a comment or a docstring, none an invocation.** `sim/regress.sh` and
+`sim/realshape_gate.sh` do not run it. It is the recorded "a script nothing
+schedules" pattern, which is the only reason its wrong verdict has cost
+nothing so far.
+
+## 10.8 Measurement traps hit
+
+- **A `cp` onto a SYMLINK writes through it.** Building the HEAD-version
+  scratch tree with `for f in tools/*.py; do ln -s ...; done` and then
+  `cp $SD/old/hbm_map.py $SD/oldrepo/tools/hbm_map.py` **overwrote the REPO's
+  `tools/hbm_map.py` with the HEAD copy and destroyed this track's edits.**
+  `git status` showed the file clean, which is exactly what makes it
+  dangerous: the evidence of the loss looks like the absence of work. Caught
+  by `grep -c stripe_residency_fails` returning 0, and the edits were redone.
+  `cp --remove-destination` is the fix. This is CLAUDE.md's recorded
+  `cp "$SD/tree/$f" "$f"` hazard with the variable on the DESTINATION side
+  only, and it still fired.
+- **`cmd | tail` reports `tail`'s exit code.** The first
+  `check_mv4i_set.py` run appeared to exit 0 while printing "249 FAILURES",
+  which would have become a second finding about its exit code. Re-run without
+  the pipe: rc 1. A fact about the harness reported as a fact about the job.
+- **The stored `context_tokens` in a manifest is not today's number.** The
+  shipped block says 75,340; a re-pack of the identical width says 75,272,
+  because `GDN_STATE_BYTES` grew under it. Section 6 already recorded this and
+  it recurred here; the lane-segment FILLS being byte-identical is what made
+  the repack attributable.
+- **"Two weight lanes per tensor" was a summary, not a census.** The real
+  distribution is 198 tensors with one lane in segment 26 and 51 with two.
+  Read the census out of the artefact, including from a document written the
+  same day.
+
+## 10.9 Open, NOT determined
+
+- **What C's KV traffic on segment 26 was costing.** No per-position C
+  measurement exists. Under the serial-step argument it is 0 today; nobody has
+  measured a C step's pseudo-channel occupancy.
+- **Whether pseudo-channel contention is any part of the BMOVER 16,429-cycle
+  residual.** It is inside the bound and shares it with three other named
+  candidates. Distinguishing them needs the corrected image on the card
+  beside the shipped one, which is a hardware measurement this track cannot
+  make.
+- **Whether the 69,320,704-byte segment pad below `gdn_state_base` can be
+  used.** It is recorded as `hbm.gdn_state_segment_pad_bytes` for the first
+  time, and it is 66 MiB of segment-26 tail. It is usable only by a consumer
+  that does not mind sharing six weight lanes' pseudo-channel, which is the
+  whole point of not putting the arenas there.
+- **Whether the packer should record that pad too.** It does not, and the two
+  tools therefore differ in what they write, which is the shape of defect this
+  section exists to close. It is additive and harmless, and it was left alone
+  rather than changed under a track that is not the packer's owner.
+- **`hbm_map.relayout_arenas()`'s stack-line refusal has no mutant that
+  reaches it through a real layout.** It fires only if a segment-aligned base
+  would straddle the 4 GiB line, which needs an arena of a size nothing in
+  this shape produces. It is asserted, not measured.
+
+## 10.10 The corrected image: what to run
+
+**Load it (HARDWARE -- the dispatcher, never a subagent):**
+
+```bash
+NEW=/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27
+python3 hw/fk33/host/fk33_load_weights.py plan "$NEW/manifest.json"     # no device
+python3 hw/fk33/host/fk33_load_weights.py load "$NEW/manifest.json" --verify
+```
+
+`load` places all 250 objects AND `gdn_const.bin` at `hbm.gdn_const_base`
+(0x1FF95A000); the constant image is synthesised as an extra entry from the
+`hbm.gdn_const_*` fields, so it needs no second command. The A descriptor
+arena goes to 0x1FFADD000 as before, and the token program is byte-identical
+to the one already in use, so it does not have to be re-emitted.
+
+**Regenerate the image from nothing but the GGUF and the existing packed set:**
+
+```bash
+NEW=/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27
+OLD=/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped
+G=/mnt/storage/llama-models/qwen35-9b/Qwen3.5-9B-BF16.gguf
+mkdir -p "$NEW"
+cd "$OLD"; for f in *; do [ -L "$f" ] && cp -a -- "$f" "$NEW/$f"; done
+cd /home/orencollaco/GitHub/llama.vhdl
+python3 tools/pack_model_fk33.py "$G" "$NEW" --rows-if 48 --axi-dw 256 \
+    --drop token_embd.weight --stripe-lanes
+python3 tools/pack_gdn_consts.py --gguf "$G" --manifest "$NEW/manifest.json" \
+    --out "$NEW/gdn_const.bin" --shape 9b
+python3 tools/check_kv_map.py --striped-manifest "$NEW/manifest.json"
+python3 tools/check_hbm_stack.py "$NEW"
+```
+
+**DO NOT run `python3 tools/hbm_map.py <manifest> --write-manifest-arenas` on
+it.** It is no longer wrong -- that is this section -- but it is also not
+needed: a fresh pack already sizes the arenas from
+`rtl/model_cfg_pkg.vhd`. The flag exists for the migration of a set packed
+against the 27B literals.
+
+**Regenerate the token program (optional, it is unchanged):**
+
+```bash
+python3 tools/gen_layer_program.py --token --shape 9b --x-exp 0 \
+  --manifest /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27/manifest.json \
+  --d-table <SD>/token.dtbl --rel-file <SD>/token.rel \
+  --arena-image <SD>/token.arena --json <SD>/token.json
+```
+
+**The shipped `.../qwen35-9b-mv4i-noembd-striped` is left on disk, unmodified,
+as the mutant `check_kv_map.py --teeth` fires on.** It must not be loaded.

@@ -85,8 +85,20 @@ sys.path.insert(0, HERE)
 
 DEF_MANIFEST = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd/"
                 "manifest.json")
-DEF_STRIPED  = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/"
+# THE LANE-STRIPED IMAGE TO LOAD, CHANGED 2026-09-20 BY TRACK ARENAPLACE.
+# `.../qwen35-9b-mv4i-noembd-striped` -- the image that was loaded on the card
+# -- has its GDN state and the first 2,463 tokens of its KV cache on segment
+# 26, a pseudo-channel six weight lanes read, because `hbm_map.write_arenas()`
+# re-placed them with a 4 KB round-up after the packer had placed them at the
+# segment boundary.  `-striped-seg27` is the same 250 packed files (every
+# per-file blake2b equal, every weight piece at the same HBM address) with the
+# arenas where the packer puts them.  The OLD path is kept as a named teeth
+# row below and must REFUSE; it is not the default because the default is the
+# image that should be loaded.
+DEF_STRIPED  = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27/"
                 "manifest.json")
+DEFECTIVE_STRIPED = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/"
+                     "manifest.json")
 LLAMA_TOP = os.path.join(REPO, "rtl", "llama_top.vhd")
 GATE      = os.path.join(REPO, "sim", "realshape_gate.sh")
 
@@ -320,7 +332,8 @@ def kv_extent_rows(row, label, doc, K, V, MP, PERTOK):
 
 def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
           rtl_over=None, gate_over=None, sz_over=None, mani_over=None,
-          striped_path=DEF_STRIPED, kv_over=None, extent_rows=True):
+          striped_path=DEF_STRIPED, kv_over=None, extent_rows=True,
+          residency_rows=True, res_over=None):
     import hbm_map as H
 
     sz = dict(H.arena_sizes())
@@ -448,6 +461,52 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
                 hk, mp = kv_over[label]
             kv_extent_rows(row, label + " manifest", doc,
                            hk, hk + mp * (PERTOK // 2), mp, PERTOK)
+
+    # ---- THE PSEUDO-CHANNEL THE ARENAS DECODE TO (2026-09-20, ARENAPLACE) --
+    #
+    # Every row above is about BYTES: does the KV region fit, does it overlap
+    # a weight piece, does it run into gdn_const.  The 2026-09-20 arena defect
+    # violates NONE of them.  `hbm_map.write_arenas()` pulled the GDN state
+    # and the bottom of the KV cache down into segment 26 -- a pseudo-channel
+    # six weight lanes read -- and they landed in that segment's TAIL, above
+    # the highest lane arena, overlapping nothing.  Every check in this file
+    # passed it, which is the attribution control below.
+    #
+    # The rule is `hbm_map.stripe_residency_fails()`, imported rather than
+    # restated so this file and the map cannot disagree about it, and it is
+    # INERT on a flat manifest by construction (no `lane_stripe` block, no
+    # lane segments, nothing to be on).  `res_over` substitutes `hbm` fields
+    # for the teeth.
+    if residency_rows:
+        import hbm_map as HM
+        for label, doc in (("flat", flat_doc), ("striped", striped_doc)):
+            if doc is None:
+                row("%s manifest: arena pseudo-channel residency" % label,
+                    None, "no manifest; the rule DID NOT RUN")
+                continue
+            d = doc
+            if res_over and label in res_over:
+                d = dict(doc)
+                d["hbm"] = dict(doc["hbm"])
+                d["hbm"].update(res_over[label])
+            lanes = HM.stripe_lane_segments(d)
+            bad = HM.stripe_residency_fails(d)
+            if not lanes:
+                detail = ("this manifest has no hbm.lane_stripe block, so no "
+                          "pseudo-channel is a weight lane's and the rule is "
+                          "vacuous here")
+            else:
+                hb = d["hbm"]
+                detail = ("%d lane segment(s); gdn_state at %#x is segment "
+                          "%d, kv_base at %#x is segment %d%s"
+                          % (len(lanes), int(hb["gdn_state_base"]),
+                             int(hb["gdn_state_base"]) // HM.SEGMENT_BYTES,
+                             int(hb["kv_base"]),
+                             int(hb["kv_base"]) // HM.SEGMENT_BYTES,
+                             "" if not bad else
+                             "  <-- " + bad[0].split(".  ")[0]))
+            row("%s manifest: GDN state and KV arena clear of every weight "
+                "lane's pseudo-channel" % label, not bad, detail)
 
     # ---- the two regions, and the address width -------------------------
     row("V region starts where K's ends", V == K + region_ch,
@@ -614,13 +673,55 @@ def teeth(manifest_path, striped_path=DEF_STRIPED):
         ("the record lost a byte", dict(sz_over={"kv_record_bytes": 271}),
          True),
         ("C_CM_W doubled", dict(rtl_over={"C_CM_W": 16}), True),
+
+        # ---- THE 2026-09-20 ARENA-PLACEMENT DEFECT (TRACK ARENAPLACE) ----
+        # The first row is not a synthetic mutant: it is the image that was
+        # loaded on the card, at its real path, as it stands on disk.  Its
+        # attribution control is the SAME image with only the residency rows
+        # off, and it must be ACCEPTED -- that is the measurement that every
+        # pre-existing row in this file was blind to the placement.
+        ("THE SHIPPED striped image .../noembd-striped as it stands today",
+         dict(striped_path=DEFECTIVE_STRIPED), True),
+        ("  attribution control: same image, residency rows OFF",
+         dict(striped_path=DEFECTIVE_STRIPED, residency_rows=False), False),
+        # 0x1b000_0000 is segment 27, the first segment above the highest
+        # weight lane.  One byte below it the state begins in segment 26 and
+        # the rule must bite; exactly on it the rule must be silent.  These
+        # two rows are the boundary itself, so a rule that was off by one
+        # segment in either direction cannot pass both.
+        ("gdn_state ONE BYTE BELOW the segment boundary (0x1afffffff)",
+         dict(res_over={"striped": {"gdn_state_base": 0x1b000_0000 - 1}}),
+         True),
+        ("gdn_state EXACTLY ON the segment boundary (0x1b0000000)",
+         dict(res_over={"striped": {"gdn_state_base": 0x1b000_0000}}), False),
+        ("gdn_state one PAGE below the boundary (0x1affff000)",
+         dict(res_over={"striped": {"gdn_state_base": 0x1b000_0000 - 4096}}),
+         True),
+        ("kv_base alone dragged back into segment 26, gdn_state left correct",
+         dict(res_over={"striped": {"kv_base": 0x1ad71_c000}}), True),
+        # DOES NOT BITE, KEPT AND NAMED.  A base one byte ABOVE the boundary
+        # is inside reserved segment 27, so no lane shares its pseudo-channel
+        # and P7 is silent -- correctly, because the contention is a property
+        # of WHICH pseudo-channel the bytes decode to and not of where in it
+        # they start.  The guard that does hold the alignment is that
+        # `pack_model_fk33.stripe_context_tokens()` is the only producer of
+        # this base and returns a segment multiple, plus hbm_map's own 4 KB
+        # region-alignment rule, which is NOT this row and is measured under
+        # `hbm_map` in the ARENAPLACE teeth table.
+        ("gdn_state ONE BYTE ABOVE the boundary -- DOES NOT BITE, by design",
+         dict(res_over={"striped": {"gdn_state_base": 0x1b000_0000 + 1}}),
+         False),
     ]
     npass = nmiss = 0
     print("==== teeth for tools/check_kv_map.py ====")
     for name, kw, want_refuse in cases:
         buf = io.StringIO()
+        # a case may name its OWN striped image; the 2026-09-20 row does,
+        # because the defect it measures lives at a path that is no longer
+        # the default.
+        kw = dict(kw)
         rc = check(manifest_path, require_manifest=True, out=buf,
-                   striped_path=striped_path, **kw)
+                   striped_path=kw.pop("striped_path", striped_path), **kw)
         refused = rc != 0
         if refused == want_refuse:
             npass += 1
