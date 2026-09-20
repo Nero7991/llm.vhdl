@@ -42,3 +42,29 @@ What it does NOT do: agree with the BF16 reference token for token past
 token 0 (INT4 weights and Q12 fixed point under greedy decoding diverge at
 token 1 to an equally sensible continuation). The logit-level gap at token 0
 has not been measured yet.
+
+## fk33_qwen35-9b_kvreg-striped_75mhz_2026-09-20.bit
+
+sha256 `f1caefe86b1f463200d97b769c5770760d97048935682ff5f58c38f7909a15f5`,
+25,745,854 bytes. Build 9, `FK33_CARD=1 FK33_CB_STYLE=distributed
+FK33_ENG_CORE_MHZ=75 FK33_IMPL_STRATEGY=Congestion_SpreadLogic_high`,
+routed WNS +0.061 ns, WHS +0.009 ns.
+
+THE FIRST BITSTREAM THAT RUNS THE LANE-STRIPED IMAGE. C's KV cache base is
+a seam register (`A_KVK/A_KVV` at 0x90..0x9C, caps bit 5) that the host
+programs from the loaded manifest, instead of a generic compiled from the
+FLAT manifest; `C_MAXPOS` is 65,536. On the previous bitstream the striped
+image ran 2.05x faster and produced a wrong argmax, because C wrote its KV
+records into 41 weight objects at the compiled flat address.
+
+MEASURED on the card, image
+`/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27`:
+token 0 argmax **846** (the BF16 reference value) with `smp_n 248320`;
+**0.4058 s/token = 2.46 tok/s over 182 GOs, 2.04x** the flat image's
+0.828 s; `fk33_load_weights.py verify` 251 of 251 objects PASS after 34
+tokens and again after 182.
+
+Requires a lane-striped image whose KV extent fits `2 * 65536 * 8704` and
+whose GDN state sits on a segment boundary. The flat image still works;
+`hw/fk33/host/fk33_chat.sh` defaults to it, so set `FK33_MODEL_DIR` to use
+the striped one.
