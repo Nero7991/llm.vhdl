@@ -214,6 +214,56 @@ def scrape_eng_port_map(path=GEN_PCIEEP):
 
 def segment_of(addr):
     return addr // SEGMENT_BYTES
+
+
+GEN_FK33_CARD = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "hw", "fk33", "gen_fk33_card.py")
+
+
+def scrape_card_maxpos(path=GEN_FK33_CARD):
+    """The CARD's `C_MAXPOS`, READ OUT OF hw/fk33/gen_fk33_card.py.
+
+    WHY THE PACKER HAS TO KNOW IT.  `--stripe-min-context` is a free
+    parameter: it says what the operator is willing to accept, and it can be
+    lowered to any number at all.  The card's `C_MAXPOS` is not a preference,
+    it is a compiled-in extent -- subsystem C writes `[kv_base, kv_base +
+    2 * C_MAXPOS * kv_bytes_per_token/2)` and nothing in the gateware clamps
+    it to whatever the layout happened to leave.  So a layout yielding FEWER
+    tokens than `C_MAXPOS` is not merely a short context, it is an image whose
+    KV cache runs past its own arena into the descriptor arena, the gdn_const
+    image and the host blocks, and the failure mode is a wrong token with no
+    fault.
+
+    MEASURED 2026-09-20 on silicon
+    (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-bitstream.md):
+    exactly that class, from the other direction -- the bases disagreed rather
+    than the extent -- and 40 objects were overwritten while every check in
+    this file passed.  `tools/check_kv_map.py` closes it at the RTL side; this
+    closes it at the ALLOCATOR side, which is the only place that can refuse
+    before an image exists.
+
+    Returns None if the file cannot be read, which is deliberate: the packer
+    can be run against a tree that has no card generator, and a scrape that
+    silently returns a WRONG number would be worse than no check.  A scrape
+    that finds the file but no `C_MAXPOS` in it is a REFUSAL, because that
+    means the name moved and the check has gone dark."""
+    try:
+        with open(path) as fp:
+            src = fp.read()
+    except OSError:
+        return None
+    m = re.findall(r'"--generic",\s*"C_MAXPOS=(\d+)"', src)
+    if not m:
+        raise SystemExit(
+            "pack_model_fk33: %s no longer sets C_MAXPOS in the form this "
+            "file scrapes.  The KV-extent check has gone dark rather than "
+            "failed, which is the worse of the two." % path)
+    if len(set(m)) != 1:
+        raise SystemExit("pack_model_fk33: %s sets C_MAXPOS to %s"
+                         % (path, sorted(set(m))))
+    return int(m[0])
+
+
 # THE TWO ARENAS NOTHING ALLOCATES WITHIN, SIZED FROM THE SHAPE.
 #
 # Both are reserved as a single opaque extent and the manifest has never said
@@ -1015,6 +1065,18 @@ def main():
                          "27-wide stripe yields about 44,500 and would fail "
                          "this, which is why it is not the default"
                          % DEFAULT_MIN_CONTEXT_TOKENS)
+    ap.add_argument("--stripe-allow-under-maxpos", dest="allow_under_maxpos",
+                    action="store_true",
+                    help="write the manifest even when the layout leaves "
+                         "FEWER tokens of KV arena than the card's compiled-in "
+                         "C_MAXPOS (scraped from hw/fk33/gen_fk33_card.py). "
+                         "The result is a MEASUREMENT image whose KV cache "
+                         "would run into gdn_const, the descriptor arena and "
+                         "the host blocks if it were loaded, so it is marked "
+                         "hbm.card_kv_fits = false and tools/check_kv_map.py "
+                         "refuses it.  Its only use is a layout experiment "
+                         "that will be paired with a card rebuilt at a smaller "
+                         "C_MAXPOS")
     ap.add_argument("--stripe-stack1-segments", type=int, default=None,
                     metavar="N",
                     help="override the width search and put the 12 stack-1 "
@@ -1454,6 +1516,49 @@ def main():
                     "placement-independent after all and every context figure "
                     "printed above is wrong.  Nothing was written."
                     % (kv_top, region_block["desc_arena_base"]))
+
+    # ------------------------------------------- THE CARD'S KV EXTENT FITS
+    #
+    # The check `--stripe-min-context` cannot make.  See
+    # `scrape_card_maxpos()`: that bar is an operator preference and this is a
+    # compiled-in extent.  The ceiling used here is the TIGHTEST one that
+    # exists at pack time, the descriptor arena base, because
+    # `hbm_map.derive_region_block()` anchors it and the three host blocks to
+    # the top of the device.  It is NOT the last word: `tools/pack_gdn_consts.py`
+    # later carves `gdn_const` out of the first 4 KB block BELOW the arena and
+    # lowers this by its own size, which is why it rewrites
+    # `hbm.max_context_tokens` in place.  So the figure recorded here is an
+    # upper bound on the tokens the card can address, and the authoritative
+    # cross-check against the RTL's own generics stays
+    # `python3 tools/check_kv_map.py`.
+    card_maxpos = scrape_card_maxpos()
+    kv_ceiling = (region_block["desc_arena_base"] if region_block
+                  else HBM_SIZE)
+    card_tokens = max(0, (kv_ceiling - kv_base) // KV_BYTES_PER_TOKEN)
+    hbm_core["card_c_maxpos"] = card_maxpos
+    hbm_core["card_c_maxpos_source"] = ("hw/fk33/gen_fk33_card.py C_MAXPOS"
+                                        if card_maxpos is not None else None)
+    hbm_core["card_kv_tokens_available"] = card_tokens
+    hbm_core["card_kv_fits"] = (None if card_maxpos is None
+                                else bool(card_tokens >= card_maxpos))
+    if card_maxpos is not None and card_tokens < card_maxpos:
+        msg = ("pack_model_fk33: this layout leaves %d tokens of KV between "
+               "kv_base %#x and the descriptor arena %#x, and the CARD writes "
+               "%d (hw/fk33/gen_fk33_card.py C_MAXPOS).  The last %d tokens "
+               "of the V region would land in gdn_const, the descriptor arena "
+               "and the host blocks, and nothing on the card faults -- it is "
+               "the 2026-09-20 silent-overwrite class from the extent side."
+               % (card_tokens, kv_base, kv_ceiling, card_maxpos,
+                  card_maxpos - card_tokens))
+        if not a.allow_under_maxpos:
+            raise SystemExit(msg + "  Nothing was written.  Rebuild the card "
+                             "at a smaller C_MAXPOS, widen the KV arena, or "
+                             "pass --stripe-allow-under-maxpos to write a "
+                             "MEASUREMENT image that must not be loaded.")
+        print("\n  WARNING  " + msg
+              + "\n           --stripe-allow-under-maxpos was given, so the "
+                "manifest is written with hbm.card_kv_fits = false.  This "
+                "image is NOT loadable with the shipped bitstream.\n")
 
     man = dict(
         # THE FORMAT STRING IS THE GATE, and it changes on purpose.  A striped

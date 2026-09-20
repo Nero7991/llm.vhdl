@@ -11,6 +11,58 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK STRIPE27: one lane per pseudo-channel BUYS NOTHING at 75 MHz, and at most 3.2% of a token at 200 MHz. Built anyway, as a measurement image that must not be loaded.
+
+- **The answer, DERIVED.** A pseudo-channel passes one 32 B beat every 4.00 ns
+  (STRUCTURAL, `32 B / (32 B x 250 MHz)`), so two lanes get one every 8.00 ns.
+  The card's striped A consumes one every **20.40 ns** (MEASURED, 7,931,072
+  cycles over 5,184,384 beats at 75 MHz): the supply bound is slack by 12.40 ns
+  and **the memory is already idle 61% of the time**. At 200 MHz the demand is
+  10.15 ns against the same 8.00 ns, still 21% slack. Halving the bound to
+  4.00 ns changes nothing that binds at either clock.
+- **AND THE PREMISE WAS WRONG.** The KV halving freed nothing. The packer's bar
+  has been `DEFAULT_MIN_CONTEXT_TOKENS = 65536` since 2026-08-30, which is the
+  number `C_MAXPOS` was lowered TO; `gen_fk33_card.py`'s own comment says the
+  halving was done "so the STRIPED layout fits", i.e. the card was writing a
+  131,072-token extent into a layout that yielded 75,340. Re-running the
+  identical width search: chosen width `n = 10` before, `n = 10` after.
+- **The curve, re-run (MEASURED).** n=12 -> 1 lane/PC, 61.8% fill, 44,432 tok;
+  n=11 -> 2, 69.7%, 59,852; **n=10 -> 2, 74.2%, 75,272 (chosen)**; n=9 -> 90,692;
+  n=8 -> 106,113; n<=7 REFUSED (segment overflow, then 3+ lanes per PC).
+- **The image exists**: `/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-stripe27`,
+  27 lanes on 27 segments, **max 1 lane per PC on all 249 tensors** (census),
+  all 7 stripe checks PASS, `check_hbm_stack` PASS. **250 of 250 blake2b digests
+  equal the shipped striped set** while 2,978 of 6,972 pieces moved and 2,534
+  changed pseudo-channel: the addresses changed, the values did not.
+- **DO NOT LOAD IT.** It yields 44,341 tokens against the card's `C_MAXPOS`
+  65,536. `tools/check_kv_map.py --striped-manifest <it>` refuses on 3 rows
+  (past `hbm.size`, into `gdn_const`, into `desc_arena`). The boundary is exact:
+  `C_MAXPOS=44342` REFUSED, `44341` ACCEPTED. Needs a card at 32,768.
+- **NEW REFUSAL in `tools/pack_model_fk33.py`.** `--stripe-min-context` is an
+  operator preference; the card's `C_MAXPOS` is a compiled-in extent, and
+  nothing connected them, so the packer wrote an unloadable image and reported
+  success. Added `scrape_card_maxpos()` (scrapes `hw/fk33/gen_fk33_card.py`),
+  the refusal, `hbm.card_c_maxpos` / `card_kv_tokens_available` /
+  `card_kv_fits`, and `--stripe-allow-under-maxpos`. **Attribution control: the
+  same layout with the new check off is accepted rc=0 with 7 of 7 pre-existing
+  stripe checks PASS.** Controls: the shipped n=10 and the flat set both re-pack
+  byte-identical with `card_kv_fits: true`.
+- **A separate defect found on the way, in the LOADED image.**
+  `hbm_map.write_arenas()` re-places the GDN state with a 4 KB round-up and
+  never reads `lane_stripe`, so it pulled `gdn_state_base` from segment 27 back
+  to segment 26 in the shipped striped manifest. 26.4 MB of GDN state and the
+  first 2,463 tokens of KV now share pseudo-channel 26 with two weight lanes.
+  The packer refuses exactly this placement; the second allocator bypasses it,
+  and `check_kv_map` passes it because the bytes do not OVERLAP a piece. Not
+  fixed here. Magnitude unmeasured.
+- **Token program generated** (`gen_layer_program.py --token --x-exp 0`): the
+  `.dtbl` and `.rel` are byte-IDENTICAL to the shipped striped set's and only
+  `token.arena` differs (10,376 of 159,232 B), which is the 27 per-lane bases.
+- Write-up: `docs/debugging/2026-09-20_stripe-width-after-the-kv-halved.md`.
+  Also REJECTED there: `check_mv4i_set.py` reports **249 FAILURES on the
+  SHIPPED striped set too** (v1-only), so its verdict on any striped image
+  carries no information.
+
 ### 2026-09-20 TRACK LOGITCMP: the logit-level comparison at token 0 CANNOT BE MADE on the shipping bitstream. The whole comparison path is built, teeth-tested and green; the card has no vector to give it.
 
 - **The blocker, three independent reasons, any one sufficient.** (1) The v2
