@@ -11,6 +11,79 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK BNARROW: the three NARROW movers are beat-wide too -- 307,784 -> 222,805 cycles a B job, -84,979 at every read latency
+
+- **Landed at `748ff91`.** One generic `NWIDE` on `rtl/gdn_state_store.vhd`,
+  default FALSE, gives `gdn_exp_mem`, `gdn_conv_tap_mem` and `gdn_conv_w_mem`
+  a beat-wide port and puts the exponent, conv-tap and constants movers in
+  `gdn_state_axi`'s existing `WIDE` mode. Closes ranked fix 4 and the open
+  item "the three small movers' per-beat cost" of
+  `docs/debugging/2026-09-20_b-job-660k-cycles.md`, which now carries the full
+  appended write-up.
+- **THE MECHANISM WAS THE PORT WIDTH AND NOTHING ELSE.** MEASURED on this
+  tree with PIPE+WIDE already on: `ld_exp 4,142`, `ld_conv 24,622`,
+  `ld_const 33,069`, `sv_exp 4,114`, `sv_conv 24,593` = **90,540 of 307,784,
+  29.4%**, i.e. 32 cycles per beat on the exponents and 16 on the other two.
+  That is `WPB = AXI_DW/WORD_BITS` exactly. Not a handshake (PIPE removed
+  that), not the shared AXI pair (the phases are serial and R was
+  back-pressured 57,846 cycles), not latency (swept 0/40/80, `ld_conv` moves
+  39 and 79 cycles -- once per phase).
+- **MEASURED, `MAXOUT 8` as the card runs it, RD_LAT 0/40/80:**
+  307,628/307,784/307,944 -> **222,649/222,805/222,965**, exactly **-84,979**
+  at every latency. Per beat 32.4/16.0/16.0/32.1/16.0 ->
+  1.35/1.03/1.02/1.14/1.01. All **770,970** value checks green including the
+  adversarial stalled pass.
+- **THE LATENCY SENSITIVITY INVERTS AT `MAXOUT 4`**, which is why it was
+  swept: with NWIDE on, `ld_const` becomes 2,069/2,108/**3,236** because four
+  bursts of 16 cover 64 cycles and the consumer now takes one. `MAXOUT 8`
+  removes it (2,148 at RD_LAT 80) and the card already passes 8. NWIDE adds
+  no new requirement, it depends on one already met.
+- **VALUES, against an independent oracle, from ONE private worktree two
+  lines apart:** `sim:seamgate_bconst` **PASS in both arms** (176s and 148s)
+  against `tools/ref9b/gdn_oracle.py`. `tb_llama_top_bconst`, same two arms:
+  all four pinned landmarks unchanged (`EXP_X0 => 10278` ...), `R_X
+  bit-identical`, jobs issued / completions / KV records / KV beats identical
+  element for element, and **-8,460 cycles per token, three times exactly**.
+- **TEETH: 13 mutants, every attribution control green.** The row worth
+  reading is **N6, which DID NOT BITE -- and that was a mutant defect, not a
+  blind check.** Replacing a registered select with a combinational one while
+  leaving the VHDL sensitivity list alone makes the mutation DEAD; it passed
+  385,488 checks in one bench and 107 in another and was about to be written
+  up as a resolution floor. With `ra_s` added to the list it kills 24,564
+  checks. **N11** (done one beat early) hangs in BOTH arms, so its kill
+  belongs to an older property and is not counted. **N12** (NWIDE not
+  threaded through) moves no value at all: it is caught only by the new
+  `BNARROW_BOUND` phase check, and with `-gNBOUND=false` it passes all
+  385,483 value checks.
+- **GATE, verbatim:** `--only gdn OVERALL PASS 21 FAIL 0 NOCHECK 1` (the
+  NOCHECK is the pre-existing `tb_gdn_conv_cycles`, unchanged);
+  `--only bmover OVERALL PASS 1`, `checks=770970 job_cycles=222805`;
+  `--only tb_llama_top_b OVERALL PASS 3`.
+- **NEXT, and it is one line the dispatcher applies**, because
+  `rtl/llama_top.vhd` is TRACK DSIDE's file: in `u_state`'s generic map,
+  `WIDE => true)` becomes `WIDE => true,` plus `NWIDE => true)`. Nothing else
+  changes; llama_top is the input to three generators, so run the `--check`
+  rows after.
+- **DERIVED card effect** at 24 jobs a token, with the 2.5% bench-to-card
+  residual carried rather than absorbed: **2.04 M (additive) to 2.09 M
+  (proportional) cycles a token, 27.2 to 27.9 ms at 75 MHz**. On the
+  lane-striped image that is about 9.4% of the token, and BENABLE plus
+  BNARROW together about 34%.
+- **OPEN, and it is the first thing anyone should run: THE CENSUS.** No
+  Vivado ran in this track. The two conv memories' WIDE arms are **48 and 64
+  banks of 512 x 16**, DERIVED at +12 and +16 BRAM tiles (28 -> 56 in
+  `gdn_state_store`); `gdn_exp_mem`'s 32-way banked distributed RAM is not
+  even derived. The 12-bank alternative with a wider word has the same tiles
+  and makes the UNIT write a sub-word slice, which is the refusal that
+  MEASURED 0 BRAM and 28,160 LUT on `gdn_conv_tap_mem` once already -- so the
+  bounded-area risk was taken deliberately over the silent-inference one.
+  Count `[Synth 8-10226]` and `[Synth 8-7186]`, read
+  `report_ram_utilization` and an object-level census, and do not transfer
+  TRACK BMOVERSYN's 32 URAM288 result: different array, different shape.
+- Also open: whether 512-deep banks pack; the 2.5% residual, inherited;
+  `gdn_block`'s own 149,579 cycles are now **67%** of the job and the mover
+  is 71,164, so the recurrence is the next lever, not the mover.
+
 ### 2026-09-20 TRACK PREFILL: batching A across prompt positions is a COSTED NO -- 1.100x, capped at K=2, and K=2 needs 1,536 DSPs against 793 free
 
 - **Scoping only. No RTL changed, no hardware, no Vivado.** Peak RSS
