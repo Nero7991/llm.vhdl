@@ -5,7 +5,7 @@
 -- It changes NO logic: every port is the same signal in a type the
 -- packager accepts, converted at the boundary.
 --    101 ports passed through unchanged
---     28 vector widths folded to literals   [IP_Flow 19-627]
+--     30 vector widths folded to literals   [IP_Flow 19-627]
 --      4 integer/natural ports re-typed      [IP_Flow 19-734]
 --     11 flattened port(s) un-flattened into named interfaces
 library ieee;
@@ -88,6 +88,8 @@ entity fk33_card is
     kv_bresp                 : in     std_logic_vector(1 downto 0);
     bst_state_base           : in     std_logic_vector(32 downto 0);
     bst_const_base           : in     std_logic_vector(32 downto 0);
+    kv_k_base                : in     std_logic_vector(32 downto 0);
+    kv_v_base                : in     std_logic_vector(32 downto 0);
     bst_busy                 : out    std_logic;
     bst_done                 : out    std_logic;
     bst_err                  : out    std_logic;
@@ -233,9 +235,9 @@ begin
       C_KV_BLOCK               => 32,
       C_KV_ADDR_W              => 33,
       C_K_BASE_CH              => 282672640,
-      C_V_BASE_CH              => 353975808,
-      C_MAXPOS                 => 131072,
-      C_CTXLEN                 => 131072,
+      C_V_BASE_CH              => 318324224,
+      C_MAXPOS                 => 65536,
+      C_CTXLEN                 => 65536,
       WDOG_LIMIT               => 4000000,
       A_ROWS_IF                => 48,
       A_JOB_STRIDE             => 16#40000#
@@ -304,6 +306,8 @@ begin
       kv_bresp                 => kv_bresp,
       bst_state_base           => bst_state_base,
       bst_const_base           => bst_const_base,
+      kv_k_base                => kv_k_base,
+      kv_v_base                => kv_v_base,
       bst_busy                 => bst_busy,
       bst_done                 => bst_done,
       bst_err                  => bst_err,

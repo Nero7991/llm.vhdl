@@ -267,6 +267,16 @@ entity fk33_seam is
     -- same width as bst_state_base; it addresses the same HBM).  Added
     -- 2026-09-18, docs/2026-09-18_b-constants-path.md.
     d_bcb_base   : out std_logic_vector(32 downto 0);
+    -- SUBSYSTEM C's KV CACHE BASES, the card's `kv_k_base`/`kv_v_base`
+    -- (33 bits, C_KV_ADDR_W on the card; BYTE addresses).  Added 2026-09-20:
+    -- until then the pair was a build-time generic derived from the FLAT
+    -- manifest, and on the lane-striped image C wrote its records into 40
+    -- weight objects (docs/debugging/2026-09-20_the-kv-cache-base-is-
+    -- compiled-into-the-bitstream.md).  Same pattern as d_bst_base: the host
+    -- writes A_KVK_LO/HI and A_KVV_LO/HI from the manifest once per model
+    -- load, and a GO with either still zero is refused.
+    d_kv_k_base  : out std_logic_vector(32 downto 0);
+    d_kv_v_base  : out std_logic_vector(32 downto 0);
 
     d_busy       : in  std_logic;
     d_tok_done   : in  std_logic;
@@ -426,6 +436,33 @@ architecture rtl of fk33_seam is
   -- different counters; after a SEQ_RESET both must read 0, and a host
   -- that reads only one has checked only one.
   constant A_TOK_POS    : natural := 16#8C#;  -- R   llama_top's tok_pos
+  -- THE FOURTH AND FIFTH HBM BASES, ADDED 2026-09-20: subsystem C's K and V
+  -- cache regions.  MEASURED on silicon the same day
+  -- (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-
+  -- bitstream.md): the pair was a build-time generic taken from the FLAT
+  -- manifest, the loaded image was the lane-striped one with its KV cache
+  -- elsewhere, and every C job wrote its 272-byte records into weight
+  -- pieces -- 40 objects, predicted exactly by the 64 compiled slot heads.
+  -- B's state base already followed the manifest through A_BST_LO/HI; this
+  -- is the same register, twice, for the two regions C addresses.  Both are
+  -- in the GO-time zero refusal with ARENA and BST, for the same reason:
+  -- zero is the weight image and is what an unwritten register holds.
+  --
+  -- The host computes V = K + MAXPOS * (kv_bytes_per_token / 2), and the
+  -- card's MAXPOS is what A_KV_MAXPOS publishes, so the host can size the
+  -- pair against the manifest's free KV extent and REFUSE an image the
+  -- card's geometry does not fit, before anything is written.
+  constant A_KVK_LO     : natural := 16#90#;  -- RW  kv_k_base[31:0]
+  constant A_KVK_HI     : natural := 16#94#;  -- RW  kv_k_base[32]
+  constant A_KVV_LO     : natural := 16#98#;  -- RW  kv_v_base[31:0]
+  constant A_KVV_HI     : natural := 16#9C#;  -- RW  kv_v_base[32]
+  -- READ-ONLY: the MAXPOS generic, which hw/fk33/gen_pcieep.py sets on the
+  -- seam cell from gen_fk33_card.py's C_MAXPOS -- one read of one source,
+  -- and the build's own read-back fails if the generic is renamed.  It is
+  -- the SAME number C sizes its slot stride by (MAXCTX => C_MAXPOS in
+  -- llama_top's u_kv), so a host that reads it here has the card's real
+  -- geometry and not a second copy of it.
+  constant A_KV_MAXPOS  : natural := 16#A0#;  -- R   MAXPOS
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -437,6 +474,9 @@ architecture rtl of fk33_seam is
   --   bit 2  sampler argmax published
   --   bit 3  full logits egress present
   --   bit 4  SEQ_RESET reaches the engine (d_seq_rst) and A_TOK_POS exists
+  --   bit 5  the KV cache base is a register (A_KVK_*/A_KVV_*) and
+  --          A_KV_MAXPOS exists; without it the base is compiled into the
+  --          bitstream and only the manifest it was built against is safe
   -- CORRECTED 2026-09-11: was x"00000005", which SET bit 2 and told every host
   -- this bitstream publishes a sampler argmax.  It does not.  The card leaves
   -- `SMP_EN` at llama_top's default of FALSE, which ties the entire logits
@@ -458,7 +498,9 @@ architecture rtl of fk33_seam is
   -- half of the same rule, and tools/check_seam_regs.py enforces BOTH
   -- directions from gen_fk33_card.py's SMP_EN rather than from a constant
   -- here, so neither the claim nor its retraction can drift from the design.
-  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000001D";
+  -- UPDATED 2026-09-20: bit 5 SET, the KV base registers and A_KV_MAXPOS
+  -- exist (0x1D -> 0x3D).
+  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000003D";
 
   -- seam error codes, `server/fk33_seam.h`
   constant EC_NONE  : natural := 0;
@@ -543,6 +585,8 @@ architecture rtl of fk33_seam is
   signal r_a_arena  : std_logic_vector(39 downto 0) := (others => '0');
   signal r_bst_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_bcb_base : std_logic_vector(32 downto 0) := (others => '0');
+  signal r_kvk_base : std_logic_vector(32 downto 0) := (others => '0');
+  signal r_kvv_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_x_exp    : signed(EXP_W-1 downto 0) := (others => '0');
   signal r_win_sel  : unsigned(1 downto 0) := (others => '0');
   signal r_win_addr : unsigned(15 downto 0) := (others => '0');
@@ -623,6 +667,8 @@ begin
   d_a_arena    <= r_a_arena;
   d_bst_base   <= r_bst_base;
   d_bcb_base   <= r_bcb_base;
+  d_kv_k_base  <= r_kvk_base;
+  d_kv_v_base  <= r_kvv_base;
 
   -- THE RELEASE MASK.  Published combinationally from the RAM, exactly as
   -- `sim/tb_llama_top.vhd:1923` publishes it from its PLAN array, and zero
@@ -738,6 +784,8 @@ begin
         r_a_arena <= (others => '0');
         r_bst_base<= (others => '0');
         r_bcb_base<= (others => '0');
+        r_kvk_base<= (others => '0');
+        r_kvv_base<= (others => '0');
         r_x_exp   <= (others => '0');
         r_win_sel <= (others => '0');
         r_win_addr<= (others => '0');
@@ -894,13 +942,17 @@ begin
                    or unsigned(r_desc_ptr) /= 0 then
                   bad := EC_RSVD;           -- v2 has no HBM master.  Say so.
                 elsif unsigned(r_a_arena) = 0
-                   or unsigned(r_bst_base) = 0 then
+                   or unsigned(r_bst_base) = 0
+                   or unsigned(r_kvk_base) = 0
+                   or unsigned(r_kvv_base) = 0 then
                   -- A base of ZERO is the weight image, and it is exactly the
                   -- value an unwritten register holds.  Running would have A
-                  -- fetch descriptors from the first weight tensor and B
-                  -- overwrite it with recurrent state, with no fault raised
-                  -- anywhere.  Refuse, with the code the host already
-                  -- decodes as "the program was refused".
+                  -- fetch descriptors from the first weight tensor, B
+                  -- overwrite it with recurrent state and C (since
+                  -- 2026-09-20, when its base became a register) write its
+                  -- KV records over it, with no fault raised anywhere.
+                  -- Refuse, with the code the host already decodes as "the
+                  -- program was refused".
                   bad := EC_DESC;
                 elsif r_seq_pos /= cur_pos then
                   bad := EC_SEQ;
@@ -935,6 +987,10 @@ begin
             when A_BST_HI    => r_bst_base(32)          <= dat(0);
             when A_BCB_LO    => r_bcb_base(31 downto 0) <= dat;
             when A_BCB_HI    => r_bcb_base(32)          <= dat(0);
+            when A_KVK_LO    => r_kvk_base(31 downto 0) <= dat;
+            when A_KVK_HI    => r_kvk_base(32)          <= dat(0);
+            when A_KVV_LO    => r_kvv_base(31 downto 0) <= dat;
+            when A_KVV_HI    => r_kvv_base(32)          <= dat(0);
             when A_X_EXP     => r_x_exp   <= resize(signed(dat), EXP_W);
             when A_WIN_SEL   => r_win_sel <= unsigned(dat(1 downto 0));
             when A_WIN_ADDR  =>
@@ -1042,6 +1098,11 @@ begin
             when A_BST_HI     => rv := (0 => r_bst_base(32), others => '0');
             when A_BCB_LO     => rv := r_bcb_base(31 downto 0);
             when A_BCB_HI     => rv := (0 => r_bcb_base(32), others => '0');
+            when A_KVK_LO     => rv := r_kvk_base(31 downto 0);
+            when A_KVK_HI     => rv := (0 => r_kvk_base(32), others => '0');
+            when A_KVV_LO     => rv := r_kvv_base(31 downto 0);
+            when A_KVV_HI     => rv := (0 => r_kvv_base(32), others => '0');
+            when A_KV_MAXPOS  => rv := to_slv32(to_unsigned(MAXPOS, 32));
             when A_X_EXP      => rv := std_logic_vector(resize(r_x_exp, 32));
             when A_WIN_SEL    => rv := to_slv32(r_win_sel);
             when A_WIN_ADDR   => rv := to_slv32(r_win_addr);

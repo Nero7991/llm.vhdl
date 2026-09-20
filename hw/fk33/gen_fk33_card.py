@@ -299,13 +299,29 @@ ARGS = [
     # `gkvmem : if not C_KV_AXI generate`, so it is not instantiated at all
     # here; the file records it costing 8.9 GB of elaboration at C_MAXPOS 256
     # when it IS instantiated. With the real cache in HBM, C_MAXPOS buys only
-    # POSW = clog2(C_MAXPOS+1) = 18 bits of position width against 3 today.
+    # POSW = clog2(C_MAXPOS+1) = 17 bits of position width against 3 today.
     #
     # C_CTXLEN = C_MAXPOS is legal, and was not always: POSW used to be
     # clog2(C_MAXPOS) and the guard demanded both `C_CTXLEN <= C_MAXPOS` and
     # `C_CTXLEN < 2**POSW`, which is self-contradictory at exactly the
     # boundary. That is already fixed in the RTL (POSW = clog2(C_MAXPOS+1)).
     "--generic", "C_KV_ADDR_W=33",
+    # SINCE 2026-09-20 THE TWO BASES ARE DEFAULTS, NOT THE ADDRESS C USES.
+    # MEASURED on silicon that day (docs/debugging/2026-09-20_the-kv-cache-
+    # base-is-compiled-into-the-bitstream.md): these generics are the FLAT
+    # manifest's layout, the loaded image was the lane-striped one (kv_base
+    # 0x1AD71C000), and every C job wrote its records into weight pieces --
+    # 40 objects corrupted, predicted exactly by the 64 compiled slot heads.
+    # The card's `kv_k_base`/`kv_v_base` input ports (rtl/llama_top.vhd,
+    # beside bst_state_base) now carry the pair, the seam drives them from
+    # A_KVK_LO/HI (0x90/0x94) and A_KVV_LO/HI (0x98/0x9C), and the host
+    # writes those from the loaded manifest's hbm.kv_base at model load --
+    # the same path bst_state_base already took.  gen_bd_wrapper strips the
+    # port defaults, so on the card the generics below reach NOTHING but the
+    # elaboration guards; they are kept at the flat manifest's values so that
+    # sim:kvmap's identity rows (the flat manifest against the defaults) and
+    # sim/realshape_gate.sh's real_kv_map row keep the same meaning.
+    #
     # RE-DERIVED 2026-09-18 from the migrated manifest, and the gate row
     # sim:kvmap is what forced it.  The old values (282598912 / 353902080) put
     # the K cache at 0x10D81E000, which leaves EXACTLY 25,264,128 B between
@@ -316,13 +332,26 @@ ARGS = [
     # constant inherited the same defect the manifest had.
     #   C_K_BASE_CH = hbm.kv_base / 16              = 0x10D93E000 / 16
     #   C_V_BASE_CH = (kv_base + 8704 * C_MAXPOS) / 16
+    #               = (4522762240 + 8704 * 65536) / 16 = 318324224
     # Both re-derived by tools/check_kv_map.py against the manifest; the row
     # is an IDENTITY, so a manifest that moves again fails the gate rather
-    # than silently disagreeing with the bitstream.
+    # than silently disagreeing with the DEFAULT.
     "--generic", "C_K_BASE_CH=282672640",
-    "--generic", "C_V_BASE_CH=353975808",
-    "--generic", "C_MAXPOS=131072",
-    "--generic", "C_CTXLEN=131072",
+    "--generic", "C_V_BASE_CH=318324224",
+    # C_MAXPOS HALVED 2026-09-20, 131072 -> 65536, so the STRIPED layout fits.
+    # The striped manifest has 1,378,082,816 B free above the GDN state
+    # (hbm.free_after_gdn); two regions of MAXPOS * 8704 B each need
+    # 2*131072*8704 = 2,281,701,376 B (does not fit) or 2*65536*8704 =
+    # 1,140,850,688 B (fits, 237 MB spare).  The seam publishes this value
+    # at A_KV_MAXPOS (hw/fk33/gen_pcieep.py sets the seam's MAXPOS from THIS
+    # line) so the host refuses a manifest whose KV extent is smaller than
+    # the pair rather than discovering it as corrupted weights.  C_CTXLEN
+    # follows it (the RTL requires C_CTXLEN <= C_MAXPOS).  The cost is
+    # context: 65,536 tokens, half of Qwen3.5-9B's native 131,072, and one
+    # bit of POSW (17 against 18); nothing else in the card reads C_MAXPOS
+    # (the behavioural cache it would size is not instantiated, C_KV_AXI).
+    "--generic", "C_MAXPOS=65536",
+    "--generic", "C_CTXLEN=65536",
     # D'S PER-JOB WATCHDOG.  The default, 200,000 cycles, was set when B's
     # state was on chip and the benches ran a SCALED shape.  MEASURED on
     # silicon 2026-09-18 (the first GO on the composed card,

@@ -605,18 +605,37 @@ entity llama_top is
     -- standing proof that the set below elaborates.
     --
     --     C_KV_BLOCK   32           legal set at head_dim 256 is {16,32,64,128}
-    --     C_MAXPOS     131072       Qwen3.5-9B's native context.  The arena
-    --                               affords 233,396; anything past 131,072
-    --                               needs RoPE extension that does not exist.
+    --     C_MAXPOS     65536        HALVED 2026-09-20 from 131072, Qwen3.5-9B's
+    --                               native context: the lane-striped image
+    --                               leaves 1,378,082,816 B above the GDN state
+    --                               and 2*131072*8704 = 2.28 GB does not fit
+    --                               it while 2*65536*8704 = 1.14 GB does.  The
+    --                               flat arena affords 233,396; anything past
+    --                               131,072 needs RoPE extension that does not
+    --                               exist.
     --     C_CTXLEN     <= C_MAXPOS
     --     C_K_BASE_CH  282672640    = 0x1_0D93_E000 / 16  (manifest hbm.kv_base)
-    --     C_V_BASE_CH  353975808    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
-    --                               (both re-derived 2026-09-18: the previous
-    --                               282598912 sat 1,179,648 B INSIDE the GDN
-    --                               arena once that arena was sized correctly;
-    --                               see docs/debugging/2026-09-17_gdn-arena-
+    --     C_V_BASE_CH  318324224    = C_K_BASE_CH + C_LAY*C_NKVH*C_MAXPOS*17
+    --                               at C_MAXPOS 65536 (was 353975808 at
+    --                               131072 until 2026-09-20; both re-derived
+    --                               2026-09-18: the previous 282598912 sat
+    --                               1,179,648 B INSIDE the GDN arena once that
+    --                               arena was sized correctly; see
+    --                               docs/debugging/2026-09-17_gdn-arena-
     --                               omitted-the-conv-tap-history.md)
-    --     C_KV_ADDR_W  33           clog2(353975808 + 71303168) = 29 = 33-4,
+    --
+    -- SINCE 2026-09-20 THESE TWO ARE DEFAULTS, NOT THE ADDRESS THE CARD USES.
+    -- The bases reach `attn_kv_axi` through the `kv_k_base`/`kv_v_base`
+    -- input ports, whose defaults are these generics shifted to bytes; on
+    -- the card the seam drives the ports from registers the host writes
+    -- out of the loaded manifest.  A generic here that is right for one
+    -- image and wrong for another is exactly what put C's records into the
+    -- lane-striped image's weights (docs/debugging/2026-09-20_the-kv-cache-
+    -- base-is-compiled-into-the-bitstream.md).  The generics, their guards
+    -- and this note stay because every bench and every non-card top still
+    -- take the default, and because the guards below are the only
+    -- elaboration-time check the pair gets.
+    --     C_KV_ADDR_W  33           clog2(318324224 + 35651584) = 29 = 33-4,
     --                               satisfied with ZERO slack.  That slack is
     --                               set by the BASE, not by C_MAXPOS: the
     --                               base alone exceeds 2**28, so clog2 is 29
@@ -931,6 +950,31 @@ entity llama_top is
     bst_state_base : in  std_logic_vector(32 downto 0) := (others => '0');
     -- hbm.gdn_const_base, B_CONST_HBM only: the per-layer constants images.
     bst_const_base : in  std_logic_vector(32 downto 0) := (others => '0');
+    -- ---- subsystem C's KV cache bases, C_KV_AXI only ----------------------
+    -- BYTE addresses, exactly what `attn_kv_axi`'s `k_base`/`v_base` take,
+    -- and they are PORTS since 2026-09-20 because a generic was the defect:
+    -- docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-
+    -- bitstream.md.  On the card the seam drives them (rtl/fk33_seam.vhd
+    -- A_KVK_LO/HI 0x90/0x94 and A_KVV_LO/HI 0x98/0x9C, the same pattern as
+    -- `bst_state_base` above), so the host programs them from the loaded
+    -- manifest's hbm.kv_base and the bitstream no longer carries one image's
+    -- layout.  The DEFAULT is the compiled pair, C_K_BASE_CH/C_V_BASE_CH
+    -- shifted from chunks to bytes -- the ONE place that shift lives (see
+    -- the note at the `u_kv` port map) -- so every bench and every
+    -- instantiation that never touched them is unchanged.
+    --
+    -- `attn_kv_axi` samples both per job (rtl/attn_kv_axi.vhd, the S_IDLE
+    -- latch), so a new value takes effect at the NEXT C job, never inside
+    -- one, and it refuses (err_cfg) a base that is not 16-byte aligned.
+    -- The elaboration guards in `gcr` below check the DEFAULTS; a value
+    -- programmed at run time is checked by the host (server/pl_backend.c)
+    -- against the manifest and by the card only for alignment.
+    kv_k_base  : in  std_logic_vector(C_KV_ADDR_W-1 downto 0)
+               := std_logic_vector(shift_left(
+                    to_unsigned(C_K_BASE_CH, C_KV_ADDR_W), 4));
+    kv_v_base  : in  std_logic_vector(C_KV_ADDR_W-1 downto 0)
+               := std_logic_vector(shift_left(
+                    to_unsigned(C_V_BASE_CH, C_KV_ADDR_W), 4));
     bst_busy   : out std_logic;
     bst_done   : out std_logic;
     bst_err    : out std_logic;
@@ -5925,19 +5969,18 @@ begin
 
     -- NO EXPRESSIONS IN THE PORT MAP, same rule as qg_e8 below.
     --
-    -- THE DOMAIN CHANGES BACK TO BYTES HERE, AND ONLY HERE.  `attn_kv_axi`'s
-    -- `k_base`/`v_base` are BYTE addresses: rtl/attn_kv_axi.vhd:403-408
-    -- computes `rec_addr = unsigned(base) + idx*REC_B` with REC_B in bytes.
-    -- So the generics are chunks, these two constants are the shift back to
-    -- bytes, and everything downstream of the port map is bytes as before.
-    -- That is why `attn_kv_axi` needed no change for this: the seam is one
-    -- shift wide and it is written out here rather than implied.
-    constant KBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
-                     := std_logic_vector(shift_left(
-                          to_unsigned(C_K_BASE_CH, C_KV_ADDR_W), 4));
-    constant VBASE_C : std_logic_vector(C_KV_ADDR_W-1 downto 0)
-                     := std_logic_vector(shift_left(
-                          to_unsigned(C_V_BASE_CH, C_KV_ADDR_W), 4));
+    -- THE DOMAIN CHANGES BACK TO BYTES AT THE PORT DEFAULTS, AND ONLY THERE.
+    -- `attn_kv_axi`'s `k_base`/`v_base` are BYTE addresses:
+    -- rtl/attn_kv_axi.vhd:403-408 computes `rec_addr = unsigned(base) +
+    -- idx*REC_B` with REC_B in bytes.  The generics are chunks, and the
+    -- shift back to bytes is written out ONCE, as the default of the
+    -- `kv_k_base`/`kv_v_base` input ports in the entity above; the port map
+    -- below hands those ports straight through.  Until 2026-09-20 the shift
+    -- lived here as two constants KBASE_C/VBASE_C and the port map used them
+    -- directly, which is what made the base a property of the bitstream
+    -- (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-
+    -- bitstream.md).  tools/check_kv_map.py reads the shift amount out of
+    -- the port defaults and refuses anything but log2(granule).
     constant REC_B_C : natural := 16 + C_HD*C_CM_W/8;
 
     -- The behavioural cache's storage.  The TYPES stay here because the
@@ -6235,8 +6278,10 @@ begin
       -- longer a representable value that violates it -- so the assert could
       -- never fire again, and a check that cannot fail is decoration rather
       -- than evidence.  The requirement itself has not gone away; it is now
-      -- enforced by the encoding, and `KBASE_C` above is where it is made
-      -- true.  `attn_kv_axi.vhd:44-50` still states it.
+      -- enforced by the encoding for the DEFAULTS, at the `kv_k_base` /
+      -- `kv_v_base` port defaults, and by `attn_kv_axi`'s err_cfg for a
+      -- value the seam programs at run time.  `attn_kv_axi.vhd:44-50` still
+      -- states it.
 
       u_kv : entity work.attn_kv_axi
         generic map(
@@ -6249,7 +6294,7 @@ begin
           clk => clk, rst => rst,
           start => c_start, layer => c_layer,
           cur_pos => c_cpos, ctx_len => c_ctx,
-          k_base => KBASE_C, v_base => VBASE_C,
+          k_base => kv_k_base, v_base => kv_v_base,
           cfg_taken => kv_cfgt_s, busy => kv_busy_s, wr_idle => wr_idle_s,
           err => kv_err_i,
           kw_sel => kw_sel, kw_head => kw_head, kw_pos => kw_pos,

@@ -294,8 +294,18 @@ row all_real          ok   llama_top -gA_BEHAV=false -gB_BEHAV=false \
 # arena.  tools/check_kv_map.py holds this block and the generator's values
 # to an identity, so they move together or the gate goes red.
 # C_KV_ADDR_W stays 33: clog2(353975808 + 71303168) = 29 = 33-4, unchanged.
-KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282672640 -gC_V_BASE_CH=353975808"
-KVR="$KVR -gC_KV_ADDR_W=33 -gC_MAXPOS=131072 -gC_CTXLEN=131072"
+#
+# RE-DERIVED AGAIN 2026-09-20, TRACK KVREG.  C_MAXPOS halved to 65536 so the
+# lane-striped image's 1,378,082,816 B of free KV space holds both regions
+# (2*65536*8704 = 1,140,850,688 B; at 131072 the pair is 2.28 GB and does
+# not fit), and C_V_BASE_CH follows: 282672640 + 8*4*65536*17 = 318324224.
+# C_KV_ADDR_W is still 33: clog2(318324224 + 35651584) = 29 = 33-4.  These
+# are now the DEFAULTS of llama_top's kv_k_base/kv_v_base ports; on the
+# card the seam overrides them from the loaded manifest
+# (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-the-
+# bitstream.md), and this row keeps proving the default pair elaborates.
+KVR="-gC_KV_BLOCK=32 -gC_K_BASE_CH=282672640 -gC_V_BASE_CH=318324224"
+KVR="$KVR -gC_KV_ADDR_W=33 -gC_MAXPOS=65536 -gC_CTXLEN=65536"
 # shellcheck disable=SC2086
 row real_kv_map       ok   llama_top $CKV $KVR
 

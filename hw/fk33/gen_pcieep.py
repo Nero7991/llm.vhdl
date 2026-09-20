@@ -1297,6 +1297,23 @@ SEAM_TO_CARD = [
     # token after the first ran B at tk0 = 0
     # (docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md).
     ("d_seq_rst",    "seq_rst"),
+    # THE FOURTH AND FIFTH BASES, ADDED 2026-09-20: subsystem C's K and V
+    # cache regions.  Until this the pair was gen_fk33_card.py's
+    # C_K_BASE_CH/C_V_BASE_CH -- the FLAT manifest's layout compiled into the
+    # bitstream -- and on the lane-striped image C wrote its records into 40
+    # weight objects (docs/debugging/2026-09-20_the-kv-cache-base-is-
+    # compiled-into-the-bitstream.md).  fk33_seam's A_KVK_LO/HI and
+    # A_KVV_LO/HI drive the card's `kv_k_base`/`kv_v_base` (llama_top ports,
+    # passed through fk33_card.vhd by gen_fk33_card.py), the host writes them
+    # from hbm.kv_base once per model load, and the seam refuses a GO with
+    # either still zero.  A card input with a VHDL default draws no BD
+    # 41-759 when left unconnected (MEASURED 2026-09-18, eng/d_x_exp), and
+    # these two HAVE defaults in llama_top -- the compiled pair -- so an
+    # entry missing from this table would rebuild today's defect silently;
+    # card_pins_teeth() below removes kv_k_base from the card and shows the
+    # pin check names it.
+    ("d_kv_k_base",  "kv_k_base"),
+    ("d_kv_v_base",  "kv_v_base"),
 ]
 
 
@@ -4915,19 +4932,27 @@ def card_pins_teeth():
     """
     src = open(CARD_RTL).read()
     ctl = check_card_pins(src)
-    mut_src, n = re.subn(r"^\s*bst_state_base\s*:\s*in\s+std_logic_vector\(32 downto 0\)\s*;\s*$",
-                         "", src, flags=re.M)
-    if n != 1:
-        sys.exit("SELFTEST VOID: expected exactly one `bst_state_base : in "
-                 "std_logic_vector(32 downto 0);` port line in %s, found %d; "
-                 "the mutant cannot be built from the thing." % (CARD_RTL, n))
-    mut = check_card_pins(mut_src)
-    want = sorted(ctl + [("bst_state_base", "SEAM_TO_CARD")])
     print("CARDPINS control missing=%s" % (sorted(ctl) or "none"))
-    print("CARDPINS mutant  missing=%s" % sorted(mut))
-    if sorted(mut) != want:
-        sys.exit("SELFTEST FAIL: check_card_pins did not attribute exactly "
-                 "the removed port: want %s, got %s" % (want, sorted(mut)))
+    # Two mutants, one per defect class: `bst_state_base` is the pin whose
+    # absence was MEASURED as [BD 41-759] (no VHDL default, so Vivado warns);
+    # `kv_k_base` (2026-09-20) is a pin WITH a default in llama_top -- the
+    # compiled KV base -- so its absence would draw no warning at all and
+    # this check is the only thing that names it.
+    for pin in ("bst_state_base", "kv_k_base"):
+        mut_src, n = re.subn(r"^\s*%s\s*:\s*in\s+std_logic_vector\(32 downto 0\)\s*;\s*$"
+                             % pin, "", src, flags=re.M)
+        if n != 1:
+            sys.exit("SELFTEST VOID: expected exactly one `%s : in "
+                     "std_logic_vector(32 downto 0);` port line in %s, found "
+                     "%d; the mutant cannot be built from the thing."
+                     % (pin, CARD_RTL, n))
+        mut = check_card_pins(mut_src)
+        want = sorted(ctl + [(pin, "SEAM_TO_CARD")])
+        print("CARDPINS mutant(%s) missing=%s" % (pin, sorted(mut)))
+        if sorted(mut) != want:
+            sys.exit("SELFTEST FAIL: check_card_pins did not attribute exactly "
+                     "the removed port %s: want %s, got %s"
+                     % (pin, want, sorted(mut)))
     # And the parser must refuse a text with no entity at all, not pass it.
     try:
         check_card_pins("-- nothing here\n")
@@ -4937,8 +4962,8 @@ def card_pins_teeth():
         sys.exit("SELFTEST FAIL: check_card_pins passed a text with no "
                  "fk33_card entity, i.e. a checker with no input reported "
                  "nothing missing.")
-    print("CARDPINS teeth: control %d missing, mutant %d missing, empty text "
-          "refused" % (len(ctl), len(mut)))
+    print("CARDPINS teeth: control %d missing, each of 2 mutants 1 missing, "
+          "empty text refused" % len(ctl))
 
 
 def seam_tieoff_teeth():
