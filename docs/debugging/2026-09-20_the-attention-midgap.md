@@ -67,7 +67,7 @@ at the end.
 **Nothing in the sweep is a divide.** `attn_recip` and `rtl/divider_rs.vhd`
 behind it were named as candidates in the brief and they are excluded by
 measurement, not by argument: they run in P_RCP / P_RCW
-(`rtl/attn_block.vhd:2068` and `:2078`), once per query head AFTER the whole
+(`rtl/attn_block.vhd:2087` and `:2097`), once per query head AFTER the whole
 sweep, and the sum above accounts for the entire slope to the digit, so every
 state outside the sweep contributes exactly 0.00 to it.
 
@@ -245,7 +245,7 @@ missing 14 was charged by the derivation to "8 score issues", one of its
 ### What each span IS, from the RTL
 
 * **P_SCORE's 14.00, a FIXED SERIAL LATENCY in another unit.**
-  `rtl/attn_block.vhd:1916` issues a block only `if ar_prdy = '1'`, and
+  `rtl/attn_block.vhd:1935` issues a block only `if ar_prdy = '1'`, and
   `:991` is `ar_prdy <= '1' when all_ones(sq_prdy) else '0'` -- every score
   unit's `p_ready`. `rtl/attn_score_q12.vhd` raises it at the END of its
   header pass:
@@ -267,16 +267,16 @@ missing 14 was charged by the derivation to "8 score issues", one of its
   what makes p_ready unconditional"* -- so this is a deliberate cost, not a
   defect. It is also **pure function of the header**, which is what makes it
   hoistable.
-* **P_SCW's 13.00, a FIXED PIPELINE LATENCY.** `:1928` waits
+* **P_SCW's 13.00, a FIXED PIPELINE LATENCY.** `:1947` waits
   `all_zero(sq_busy)`. That is `attn_score_q12`'s three-stage accumulate
   emptying (`S_ACC`, capture / barrel shift / wide add, :374) then
   S_EXP1, S_EXP2, S_SH, S_Q1, S_Q2, S_DONE. Nothing elastic; no memory in it.
-* **P_EPW's 13.00, a FIXED PIPELINE LATENCY.** `:1936` waits for every head's
+* **P_EPW's 13.00, a FIXED PIPELINE LATENCY.** `:1955` waits for every head's
   `e_p`. One pass of `attn_softmax`'s S_RUN -> S_CEIL -> S_TEST -> S_ZED and
   the exp cone. `sc_ready <= '1' when state = S_RUN` (`attn_softmax.vhd:402`)
   means the score is accepted the cycle it is produced, so **the score unit is
   already idle when P_EPW begins** -- that is the fact `SCORE_EARLY` uses.
-* **P_HDR's 3.00, a HANDSHAKE.** `sq_hdrv` up, latched, `sq_taken` back.
+* **P_HDR's 3.00, a HANDSHAKE** (`:1902`). `sq_hdrv` up, latched, `sq_taken` back.
 * **P_RECK's 12.79 and P_RECV's 11.00**, 8 beats each plus a 2-cycle capture
   tail (`rbv(1)` -> `rbv(2)` -> the write, :1420-1424) plus a wait for the
   first beat. `rk_pre` is 2.79 per position and **the four-span instrument
@@ -290,7 +290,7 @@ missing 14 was charged by the derivation to "8 score issues", one of its
   slope**. What this does NOT establish is the card's rescale rate; see the
   open list.
 * **No divide anywhere in the sweep.** `attn_recip` is `NW + 7 = 51` cycles
-  per invocation and runs at `:2068` / `:2078`, once per query head after
+  per invocation and runs at `:2087` / `:2097`, once per query head after
   P_SFW. Its own header books it at *"under 9,000 cycles of a 1.3-million
   cycle subsystem"*. The slope-sum identity above is the proof that it
   contributes nothing per position.
