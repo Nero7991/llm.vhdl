@@ -73,9 +73,20 @@ cat "$OUT/closure.sha256"
 RTLB="$OUT/rtl_base"
 mkdir -p "$RTLB"
 cp -f "$RTLC"/*.vhd "$RTLB/"
+#
+# AIDLE_BASE_DIR OVERRIDES THE GIT READ, AND THE BC-250 NEEDS IT.  The tree
+# ~/GitHub/DevOps/bc250-sync-llama-vhdl.sh lands there is git-TRACKED FILES
+# ONLY -- there is no .git, so `git show` on that box reads nothing and the
+# control draw would abort.  Point AIDLE_BASE_DIR at a directory holding the
+# four pre-change files, copied over beside the sync.
 for f in stream_fifo async_fifo axi_rd_port weight_streamer; do
-  if ! git -C "$REPO" show "${AIDLE_BASE_REV:-HEAD}:rtl/$f.vhd" > "$RTLB/$f.vhd"; then
-    echo "AIDLE_ABORT: cannot read rtl/$f.vhd at ${AIDLE_BASE_REV:-HEAD}"; exit 9
+  if [ -n "${AIDLE_BASE_DIR:-}" ]; then
+    if ! cp -f "$AIDLE_BASE_DIR/$f.vhd" "$RTLB/$f.vhd"; then
+      echo "AIDLE_ABORT: AIDLE_BASE_DIR has no $f.vhd"; exit 9
+    fi
+  elif ! git -C "$REPO" show "${AIDLE_BASE_REV:-HEAD}:rtl/$f.vhd" > "$RTLB/$f.vhd"; then
+    echo "AIDLE_ABORT: cannot read rtl/$f.vhd at ${AIDLE_BASE_REV:-HEAD} and"
+    echo "             AIDLE_BASE_DIR is unset (no .git here?)"; exit 9
   fi
 done
 sha256sum "$RTLB"/*.vhd > "$OUT/base.sha256"
