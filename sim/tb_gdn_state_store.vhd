@@ -88,6 +88,10 @@ entity tb_gdn_state_store is
     AXI_DW      : positive := 64;
     MAXB        : positive := 4;
     MAXOUT      : positive := 2;
+    -- TRACK BMOVER 2026-09-20: the mover's per-beat levers.  Defaults are
+    -- the shipping behaviour; the gate also runs this bench with each on.
+    PIPE        : boolean  := false;
+    WIDE        : boolean  := false;
     RD_LAT      : positive := 5;
     B_LAT       : natural  := 4
   );
@@ -346,7 +350,8 @@ begin
                 CONST_EN => CONST_EN, CONST_STRIDE => CONST_STRIDE,
                 CONST_BYTES => CONST_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                PIPE => PIPE, WIDE => WIDE)
     port map(clk => clk, rst => rst,
              load_start => load_start, save_start => save_start,
              layer => layer,

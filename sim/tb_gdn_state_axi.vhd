@@ -42,6 +42,10 @@ entity tb_gdn_state_axi is
     AXI_DW      : positive := 128;   -- 4 words of 32 bits
     MAXB        : positive := 4;
     MAXOUT      : positive := 2;
+    -- TRACK BMOVER 2026-09-20: the mover's per-beat levers.  Defaults are
+    -- the shipping behaviour; the gate also runs this bench with each on.
+    PIPE        : boolean  := false;
+    WIDE        : boolean  := false;
     RD_LAT      : positive := 7;     -- slave read latency, cycles
     -- WRITE-RESPONSE LATENCY, AND IT IS LOAD-BEARING FOR ONE CHECK.  With B
     -- returned the cycle after the last beat, a DMA that skips the BRESP wait
@@ -89,6 +93,10 @@ architecture sim of tb_gdn_state_axi is
   signal d_rc   : natural range 0 to DIM-1;
   signal d_rg   : natural range 0 to DIM/RECUR_LANES-1;
   signal d_rd   : std_logic_vector(WBITS-1 downto 0);
+  -- the beat-wide port, WIDE only
+  signal d_wwe, d_wre : std_logic;
+  signal d_wwb, d_wrb : natural range 0 to VAL_HEADS*DIM*(DIM/RECUR_LANES)/(AXI_DW/WBITS)-1;
+  signal d_wwd, d_wrd : std_logic_vector(AXI_DW-1 downto 0);
 
   -- bench <-> store (the second port, used only when the DUT is idle).  The
   -- bench addresses FLAT and decomposes here, deliberately using the same
@@ -217,19 +225,23 @@ begin
 
   store : entity work.gdn_state_mem
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
-                RECUR_LANES => RECUR_LANES, STYLE => "auto")
+                RECUR_LANES => RECUR_LANES, STYLE => "auto",
+                WIDE => WIDE, WPB => AXI_DW / (RECUR_LANES*16))
     port map(clk => clk,
              r_en => s_re, r_head => s_rh, r_col => s_rc, r_grp => s_rg,
              r_data => s_rd,
              w_en => s_we, w_head => s_wh, w_col => s_wc, w_grp => s_wg,
-             w_data => s_wd);
+             w_data => s_wd,
+             ww_en => d_wwe, ww_beat => d_wwb, ww_data => d_wwd,
+             wr_en => d_wre, wr_beat => d_wrb, wr_data => d_wrd);
 
   dut : entity work.gdn_state_axi
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
                 RECUR_LANES => RECUR_LANES, LAYERS => LAYERS,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => MANT_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                PIPE => PIPE, WIDE => WIDE)
     port map(clk => clk, rst => rst,
              load_start => load_start, save_start => save_start,
              layer => layer,
@@ -239,6 +251,8 @@ begin
              m_w_grp => d_wg, m_w_data => d_wd,
              m_r_en => d_re, m_r_head => d_rh, m_r_col => d_rc,
              m_r_grp => d_rg, m_r_data => d_rd,
+             mw_en => d_wwe, mw_beat => d_wwb, mw_data => d_wwd,
+             mr_en => d_wre, mr_beat => d_wrb, mr_data => d_wrd,
              r_arvalid => arvalid, r_arready => arready, r_araddr => araddr,
              r_arlen => arlen, r_arsize => arsize, r_arburst => arburst,
              r_rvalid => rvalid, r_rready => rready, r_rdata => rdata,

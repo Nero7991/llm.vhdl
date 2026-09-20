@@ -45,6 +45,23 @@
 -- measured on this card**; the ratio is what matters and it does not depend
 -- on the exact figure.
 --
+-- THE PER-BEAT HANDSHAKE, NOT HBM, IS WHAT THE CARD PAYS FOR (TRACK BMOVER,
+-- 2026-09-20).  MEASURED on the card: every B job costs 660,600 cycles.
+-- MEASURED by sim/tb_bmover_phases.vhd at the 9B geometry against an ideal
+-- pipelined slave: 644,172 of them are accounted for, and HBM latency swept
+-- 0/40/80 cycles moves the total by 4x the latency (paid once per load
+-- phase), i.e. not at all.  The cost is this file's original data path:
+-- a load accepted ONE beat, dropped RREADY, unpacked WPB words at one per
+-- cycle, then raised RREADY again -- WPB+1 cycles per beat, 5 for the
+-- mantissas -- and a save requested WPB words, waited two edges, presented
+-- the beat and waited for WREADY before requesting the next -- WPB+3, 7
+-- for the mantissas.  32,768 mantissa beats x (5+7) = 393k of the 660k.
+-- The two generics PIPE and WIDE below remove that: PIPE overlaps the
+-- handshake with the unpack (WPB per beat), WIDE moves a whole beat per
+-- cycle through a beat-wide store port (1 per beat).  Both together:
+-- 307,784 cycles per job in the same bench, all 770,964 value checks
+-- green.  See docs/debugging/2026-09-20_b-job-660k-cycles.md.
+--
 -- STATUS: ONE region per instantiation, whichever the generics name.  The
 -- caller runs it twice -- see `rtl/gdn_state_store.vhd`, which instantiates it
 -- at the mantissa shape and again at `WORD_BITS => 8, N_GRP => 1` for the
@@ -94,7 +111,18 @@ entity gdn_state_axi is
     AXI_DW : positive := 256;   -- FK33 HBM SAXI data width
     ADDR_W : positive := 33;    -- 8 GiB
     MAXB   : positive := 16;    -- AXI3: ARLEN is 4 bits.  16 is the CAP.
-    MAXOUT : positive := 4      -- bursts in flight
+    MAXOUT : positive := 4;     -- bursts in flight
+
+    -- ---- TRACK BMOVER 2026-09-20: the two levers on the per-beat cost ----
+    -- Both default to the SHIPPING behaviour so nothing existing moves.
+    -- PIPE: overlap the acceptance of beat n+1 with the unpack of beat n on
+    --   a load, and keep the store's read port busy across beats on a save,
+    --   so a beat costs WPB cycles instead of WPB+1 (load) / WPB+3 (save).
+    -- WIDE: move a whole AXI beat per cycle through the mw_*/mr_* ports
+    --   below (the store must then supply a beat-wide memory port); the
+    --   narrow m_w_*/m_r_* ports are held idle.
+    PIPE   : boolean  := false;
+    WIDE   : boolean  := false
   );
   port(
     clk : in std_logic;
@@ -136,6 +164,15 @@ entity gdn_state_axi is
     m_r_col  : out natural range 0 to DIM-1;
     m_r_grp  : out natural range 0 to N_GRP-1;
     m_r_data : in  std_logic_vector(WORD_BITS-1 downto 0);
+
+    -- ---- the beat-wide store port, WIDE only.  Idle otherwise. -----------
+    -- `mw_beat`/`mr_beat` is the flat BEAT index, i.e. word index / WPB.
+    mw_en   : out std_logic;
+    mw_beat : out natural range 0 to VAL_HEADS*DIM*N_GRP/(AXI_DW/WORD_BITS)-1;
+    mw_data : out std_logic_vector(AXI_DW-1 downto 0);
+    mr_en   : out std_logic;
+    mr_beat : out natural range 0 to VAL_HEADS*DIM*N_GRP/(AXI_DW/WORD_BITS)-1;
+    mr_data : in  std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
 
     -- ---- the read master -------------------------------------------------
     r_arvalid : out std_logic;
@@ -229,6 +266,12 @@ architecture rtl of gdn_state_axi is
   signal rbeat  : natural range 0 to BEATS  := 0;   -- beats fully unpacked
   signal upk_i  : natural range 0 to WPB    := WPB; -- word being unpacked
   signal rbuf   : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  -- PIPE: a second beat register, so beat n+1 is accepted while beat n is
+  -- unpacked.  `rcnt` is how many of the two hold a beat; RREADY is
+  -- registered from the count AFTER this edge's push and pop, so at most one
+  -- beat arrives per cycle and the count never exceeds two.
+  signal rbuf1  : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  signal rcnt   : natural range 0 to 2 := 0;
 
   -- ---- SAVE counters ---------------------------------------------------
   -- TWO indices, and they must be separate.  The store read is REGISTERED, so
@@ -257,12 +300,37 @@ architecture rtl of gdn_state_axi is
   signal req_v  : std_logic_vector(1 downto 0) := "00";
   signal bx_i   : natural range 0 to BURSTS := 0;   -- B responses retired
   signal wbuf   : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  -- PIPE save: the read port is kept busy ACROSS beats.  `rq_i` is the flat
+  -- word index requested next; `asm` assembles the beat behind `wbuf`, and
+  -- `pend` is words requested and not yet accepted by W, bounded at 2*WPB
+  -- (one beat in `wbuf`, one in `asm`; nothing can be in flight when both
+  -- are full, so no word ever lands with nowhere to go).
+  signal rq_i     : natural range 0 to WORDS := 0;
+  signal asm      : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  signal asm_full : std_logic := '0';
+  signal pend     : natural range 0 to 2*WPB := 0;
+  -- WIDE save: beats requested from the wide port land two edges later in
+  -- a small FIFO that feeds W.  `wcred` counts FIFO slots not yet spoken
+  -- for (requested or held), so a request is never issued for a beat that
+  -- could land with the FIFO full.
+  constant WFD : positive := 4;
+  type wf_t is array (0 to WFD-1) of std_logic_vector(AXI_DW-1 downto 0);
+  signal wfifo  : wf_t := (others => (others => '0'));
+  signal wf_wp, wf_rp : natural range 0 to WFD-1 := 0;
+  signal wf_cnt : natural range 0 to WFD := 0;
+  signal wcred  : natural range 0 to WFD := WFD;
+  signal rb_i   : natural range 0 to BEATS := 0;    -- next beat to request
 
   signal arv_q, rrd_q       : std_logic := '0';
   signal awv_q, wv_q, brd_q : std_logic := '0';
+  signal wv_r               : std_logic := '0';   -- the registered W valid
   signal mwe_q, mre_q       : std_logic := '0';
   signal mwa_q, mra_q       : natural range 0 to WORDS-1 := 0;
   signal mwd_q              : std_logic_vector(WBITS-1 downto 0)
+                            := (others => '0');
+  signal mwwe_q, mwre_q     : std_logic := '0';
+  signal mwwa_q, mwra_q     : natural range 0 to BEATS-1 := 0;
+  signal mwwd_q             : std_logic_vector(AXI_DW-1 downto 0)
                             := (others => '0');
 
   function addr_of_burst(b : natural; base : unsigned) return unsigned is
@@ -287,7 +355,7 @@ begin
   w_awburst <= "01";
   w_awaddr  <= std_logic_vector(addr_of_burst(aw_i, base_q));
   w_wvalid  <= wv_q;
-  w_wdata   <= wbuf;
+  w_wdata   <= wbuf when not WIDE else wfifo(wf_rp);
   w_wstrb   <= (others => '1');
   -- WLAST marks the last beat OF THE BURST, not of the transfer.
   w_wlast   <= '1' when (wbeat mod MAXB) = MAXB-1 else '0';
@@ -303,19 +371,42 @@ begin
   m_r_col  <= (mra_q / NBR) mod DIM;
   m_r_grp  <= mra_q mod NBR;
 
+  mw_en   <= mwwe_q;
+  mw_beat <= mwwa_q;
+  mw_data <= mwwd_q;
+  mr_en   <= mwre_q;
+  mr_beat <= mwra_q;
+
+  -- WIDE: W is valid whenever the FIFO holds a beat whose AW has been issued.
+  -- The AW-before-W rule is not AXI's (AXI3 permits W first) but it is the
+  -- conservative order and the one every slave model here asserts.
+  wv_q <= wv_r when not WIDE else
+          '1' when wf_cnt > 0 and (wbeat / MAXB) < aw_i and st = S_SAVE else
+          '0';
+
   p : process(clk) is
+    variable push, pop : boolean;
+    variable pend_v    : natural range 0 to 2*WPB;
+    variable wfree     : boolean;
+    variable cred_v    : integer range -1 to WFD+1;
+    variable rcnt_a    : natural range 0 to 3;
+    variable acc_a     : natural range 0 to BEATS+2;
   begin
     if rising_edge(clk) then
       done_q <= '0';
       mwe_q  <= '0';
       mre_q  <= '0';
+      mwwe_q <= '0';
+      mwre_q <= '0';
 
       if rst = '1' then
         st <= S_IDLE; arv_q <= '0'; rrd_q <= '0'; awv_q <= '0';
-        wv_q <= '0'; brd_q <= '0'; err_q <= '0';
-        ar_i <= 0; outst <= 0; rbeat <= 0; upk_i <= WPB;
+        wv_r <= '0'; brd_q <= '0'; err_q <= '0';
+        ar_i <= 0; outst <= 0; rbeat <= 0; rcnt <= 0;
+        if PIPE then upk_i <= 0; else upk_i <= WPB; end if;
         aw_i <= 0; wbeat <= 0; req_i <= 0; got_i <= 0; bx_i <= 0;
-        req_v <= "00";
+        req_v <= "00"; rq_i <= 0; asm_full <= '0'; pend <= 0;
+        wf_wp <= 0; wf_rp <= 0; wf_cnt <= 0; wcred <= WFD; rb_i <= 0;
       else
         case st is
           when S_IDLE =>
@@ -325,9 +416,12 @@ begin
               -- part-way through a long operation is defect class (a).
               base_q <= unsigned(state_base)
                       + to_unsigned(layer * LAYER_STRIDE, ADDR_W);
-              ar_i <= 0; outst <= 0; rbeat <= 0; upk_i <= WPB;
+              ar_i <= 0; outst <= 0; rbeat <= 0; rcnt <= 0;
+              -- PIPE unpacks from `rcnt`, not from the WPB sentinel.
+              if PIPE then upk_i <= 0; else upk_i <= WPB; end if;
               aw_i <= 0; wbeat <= 0; req_i <= 0; got_i <= 0; bx_i <= 0;
-              req_v <= "00";
+              req_v <= "00"; rq_i <= 0; asm_full <= '0'; pend <= 0;
+              wf_wp <= 0; wf_rp <= 0; wf_cnt <= 0; wcred <= WFD; rb_i <= 0;
               if load_start = '1' then
                 st <= S_LOAD; arv_q <= '1'; rrd_q <= '1';
               else
@@ -348,34 +442,131 @@ begin
             elsif arv_q = '0' and ar_i < BURSTS and outst < MAXOUT then
               arv_q <= '1';
             end if;
+            -- `outst` is also decremented below on RLAST; the two never
+            -- coincide on one edge in the legacy path (RREADY is low while
+            -- a beat is held) but they can in the PIPE and WIDE paths, so
+            -- the RLAST decrement is folded into the AR increment there.
 
-            -- ---- R accept, then unpack WPB words at one per cycle -------
-            -- `upk_i = WPB` means "no beat held": that is the only state in
-            -- which RREADY is high, so a beat is never accepted on top of one
-            -- still being unpacked.
-            if upk_i = WPB then
+            if WIDE then
+              -- ---- one beat per cycle, straight to the wide port -------
+              rrd_q <= '1';
               if r_rvalid = '1' and rrd_q = '1' then
                 if r_rresp /= "00" then err_q <= '1'; end if;
-                rbuf  <= r_rdata;
-                upk_i <= 0;
-                rrd_q <= '0';
-                if r_rlast = '1' then outst <= outst - 1; end if;
-              end if;
-            else
-              mwe_q <= '1';
-              mwa_q <= rbeat*WPB + upk_i;
-              mwd_q <= rbuf((upk_i+1)*WBITS-1 downto upk_i*WBITS);
-              if upk_i = WPB-1 then
-                upk_i <= WPB;
+                mwwe_q <= '1';
+                mwwa_q <= rbeat;
+                mwwd_q <= r_rdata;
+                if r_rlast = '1' then
+                  if arv_q = '1' and r_arready = '1' then
+                    outst <= outst;                 -- +1 -1
+                  else
+                    outst <= outst - 1;
+                  end if;
+                end if;
                 if rbeat + 1 = BEATS then
                   rbeat <= rbeat + 1;
+                  rrd_q <= '0';
                   st    <= S_LDRAIN;
                 else
                   rbeat <= rbeat + 1;
-                  rrd_q <= '1';
+                end if;
+              end if;
+
+            elsif PIPE then
+              -- ---- two-beat buffer; unpack WPB words at one per cycle ---
+              push := r_rvalid = '1' and rrd_q = '1';
+              pop  := rcnt > 0 and upk_i = WPB-1;
+              if push then
+                if r_rresp /= "00" then err_q <= '1'; end if;
+                if r_rlast = '1' then
+                  if arv_q = '1' and r_arready = '1' then
+                    outst <= outst;
+                  else
+                    outst <= outst - 1;
+                  end if;
+                end if;
+              end if;
+              -- the unpack of the head beat
+              if rcnt > 0 then
+                mwe_q <= '1';
+                mwa_q <= rbeat*WPB + upk_i;
+                mwd_q <= rbuf((upk_i+1)*WBITS-1 downto upk_i*WBITS);
+                if upk_i = WPB-1 then
+                  upk_i <= 0;
+                  rbeat <= rbeat + 1;
+                else
+                  upk_i <= upk_i + 1;
+                end if;
+              end if;
+              -- the buffer
+              if pop then
+                if rcnt = 2 then
+                  rbuf <= rbuf1;
+                  if push then rbuf1 <= r_rdata; end if;
+                elsif push then
+                  rbuf <= r_rdata;
+                end if;
+              elsif push then
+                if rcnt = 0 then rbuf <= r_rdata; else rbuf1 <= r_rdata; end if;
+              end if;
+              if push and not pop then rcnt <= rcnt + 1;
+              elsif pop and not push then rcnt <= rcnt - 1; end if;
+              -- RREADY from the count AFTER this edge, so a beat is never
+              -- accepted into a buffer that is not free.  Once every beat
+              -- has been accepted, RREADY stays low.
+              rcnt_a := rcnt;
+              acc_a  := rbeat + rcnt;          -- beats accepted so far
+              if push then rcnt_a := rcnt_a + 1; acc_a := acc_a + 1; end if;
+              if pop  then rcnt_a := rcnt_a - 1; end if;
+              rrd_q <= '1' when rcnt_a < 2 and acc_a < BEATS else '0';
+              if pop and rbeat + 1 = BEATS then
+                st <= S_LDRAIN;
+              end if;
+
+            else
+              -- ---- R accept, then unpack WPB words at one per cycle -------
+              -- `upk_i = WPB` means "no beat held": that is the only state in
+              -- which RREADY is high, so a beat is never accepted on top of one
+              -- still being unpacked.
+              if upk_i = WPB then
+                if r_rvalid = '1' and rrd_q = '1' then
+                  if r_rresp /= "00" then err_q <= '1'; end if;
+                  rbuf  <= r_rdata;
+                  upk_i <= 0;
+                  rrd_q <= '0';
+                  -- AN AR ACCEPT AND AN RLAST ON THE SAME EDGE MUST NET TO
+                  -- ZERO.  The first version wrote `outst <= outst - 1` here
+                  -- unconditionally, and a later assignment wins in VHDL, so
+                  -- the coincidence LOST the +1 above: the count ran one low,
+                  -- one more burst than MAXOUT could be in flight, and
+                  -- S_LDRAIN could report done with a burst still returning
+                  -- -- whose beats the NEXT phase's mover would then accept
+                  -- as its own data.  Found 2026-09-20 while writing the
+                  -- one-beat-per-cycle paths, where the coincidence is
+                  -- routine rather than rare.
+                  if r_rlast = '1' then
+                    if arv_q = '1' and r_arready = '1' then
+                      outst <= outst;
+                    else
+                      outst <= outst - 1;
+                    end if;
+                  end if;
                 end if;
               else
-                upk_i <= upk_i + 1;
+                mwe_q <= '1';
+                mwa_q <= rbeat*WPB + upk_i;
+                mwd_q <= rbuf((upk_i+1)*WBITS-1 downto upk_i*WBITS);
+                if upk_i = WPB-1 then
+                  upk_i <= WPB;
+                  if rbeat + 1 = BEATS then
+                    rbeat <= rbeat + 1;
+                    st    <= S_LDRAIN;
+                  else
+                    rbeat <= rbeat + 1;
+                    rrd_q <= '1';
+                  end if;
+                else
+                  upk_i <= upk_i + 1;
+                end if;
               end if;
             end if;
 
@@ -406,35 +597,123 @@ begin
               awv_q <= '1';
             end if;
 
-            -- ---- assemble one beat, WPB words, two-edge read ------------
-            if wv_q = '0' then
-              if req_i < WPB then
-                mre_q  <= '1';
-                mra_q  <= wbeat*WPB + req_i;
-                req_i  <= req_i + 1;
+            if WIDE then
+              -- ---- request a beat per cycle while credit allows --------
+              cred_v := wcred;
+              if rb_i < BEATS and wcred > 0 then
+                mwre_q <= '1';
+                mwra_q <= rb_i;
+                rb_i   <= rb_i + 1;
+                cred_v := cred_v - 1;
                 req_v  <= req_v(0) & '1';
               else
                 req_v  <= req_v(0) & '0';
               end if;
-              -- the word requested TWO cycles ago lands now
+              -- the beat requested two edges ago lands in the FIFO
               if req_v(1) = '1' then
-                wbuf((got_i+1)*WBITS-1 downto got_i*WBITS) <= m_r_data;
+                wfifo(wf_wp) <= mr_data;
+                wf_wp <= (wf_wp + 1) mod WFD;
+              end if;
+              -- W accept: the FIFO head goes out
+              if wv_q = '1' and w_wready = '1' then
+                wf_rp  <= (wf_rp + 1) mod WFD;
+                cred_v := cred_v + 1;
+                if wbeat + 1 = BEATS then
+                  wbeat <= wbeat + 1;
+                  st    <= S_SDRAIN;
+                else
+                  wbeat <= wbeat + 1;
+                end if;
+              end if;
+              if req_v(1) = '1' and not (wv_q = '1' and w_wready = '1') then
+                wf_cnt <= wf_cnt + 1;
+              elsif req_v(1) = '0' and (wv_q = '1' and w_wready = '1') then
+                wf_cnt <= wf_cnt - 1;
+              end if;
+              wcred <= cred_v;
+
+            elsif PIPE then
+              -- ---- keep the read port busy across beats ----------------
+              pend_v := pend;
+              wfree  := wv_r = '0' or w_wready = '1';
+              if wv_r = '1' and w_wready = '1' then
+                pend_v := pend_v - WPB;
+              end if;
+              if rq_i < WORDS and pend < 2*WPB then
+                mre_q  <= '1';
+                mra_q  <= rq_i;
+                rq_i   <= rq_i + 1;
+                pend_v := pend_v + 1;
+                req_v  <= req_v(0) & '1';
+              else
+                req_v  <= req_v(0) & '0';
+              end if;
+              pend <= pend_v;
+              -- the word requested two edges ago lands now
+              if req_v(1) = '1' then
                 if got_i = WPB-1 then
                   got_i <= 0;
-                  req_i <= 0;
-                  wv_q  <= '1';
+                  if wfree and asm_full = '0' then
+                    -- straight through: the completed beat becomes W data
+                    wbuf <= asm;
+                    wbuf((got_i+1)*WBITS-1 downto got_i*WBITS) <= m_r_data;
+                    wv_r <= '1';
+                  else
+                    asm((got_i+1)*WBITS-1 downto got_i*WBITS) <= m_r_data;
+                    asm_full <= '1';
+                  end if;
                 else
+                  asm((got_i+1)*WBITS-1 downto got_i*WBITS) <= m_r_data;
                   got_i <= got_i + 1;
                 end if;
               end if;
-            elsif w_wready = '1' then
-              wv_q  <= '0';
-              req_v <= "00";     -- the next beat starts with an empty pipe
-              if wbeat + 1 = BEATS then
-                wbeat <= wbeat + 1;
-                st    <= S_SDRAIN;
-              else
-                wbeat <= wbeat + 1;
+              -- a held beat moves to W as soon as W is free
+              if asm_full = '1' and wfree then
+                wbuf <= asm; wv_r <= '1'; asm_full <= '0';
+              elsif wv_r = '1' and w_wready = '1'
+                    and not (req_v(1) = '1' and got_i = WPB-1) then
+                wv_r <= '0';
+              end if;
+              if wv_r = '1' and w_wready = '1' then
+                if wbeat + 1 = BEATS then
+                  wbeat <= wbeat + 1;
+                  st    <= S_SDRAIN;
+                else
+                  wbeat <= wbeat + 1;
+                end if;
+              end if;
+
+            else
+              -- ---- assemble one beat, WPB words, two-edge read ------------
+              if wv_r = '0' then
+                if req_i < WPB then
+                  mre_q  <= '1';
+                  mra_q  <= wbeat*WPB + req_i;
+                  req_i  <= req_i + 1;
+                  req_v  <= req_v(0) & '1';
+                else
+                  req_v  <= req_v(0) & '0';
+                end if;
+                -- the word requested TWO cycles ago lands now
+                if req_v(1) = '1' then
+                  wbuf((got_i+1)*WBITS-1 downto got_i*WBITS) <= m_r_data;
+                  if got_i = WPB-1 then
+                    got_i <= 0;
+                    req_i <= 0;
+                    wv_r  <= '1';
+                  else
+                    got_i <= got_i + 1;
+                  end if;
+                end if;
+              elsif w_wready = '1' then
+                wv_r  <= '0';
+                req_v <= "00";     -- the next beat starts with an empty pipe
+                if wbeat + 1 = BEATS then
+                  wbeat <= wbeat + 1;
+                  st    <= S_SDRAIN;
+                else
+                  wbeat <= wbeat + 1;
+                end if;
               end if;
             end if;
 

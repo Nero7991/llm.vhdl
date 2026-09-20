@@ -107,7 +107,13 @@ entity gdn_state_store is
     AXI_DW : positive := 256;
     ADDR_W : positive := 33;
     MAXB   : positive := 16;
-    MAXOUT : positive := 4
+    MAXOUT : positive := 4;
+    -- TRACK BMOVER 2026-09-20.  See rtl/gdn_state_axi.vhd.  PIPE goes to all
+    -- four movers; WIDE to the mantissa mover and `gdn_state_mem` only, the
+    -- other three memories having no beat-wide port.  Both default to the
+    -- shipping behaviour.
+    PIPE   : boolean := false;
+    WIDE   : boolean := false
   );
   port(
     clk : in std_logic;
@@ -330,6 +336,10 @@ architecture rtl of gdn_state_store is
   signal a_wc, a_rc : natural range 0 to DIM-1;
   signal a_wg, a_rg : natural range 0 to NBR-1;
   signal a_wd       : std_logic_vector(WBITS-1 downto 0);
+  -- the beat-wide port between the mantissa mover and the memory (WIDE)
+  signal a_wwe, a_wre : std_logic;
+  signal a_wwb, a_wrb : natural range 0 to (VAL_HEADS*DIM*NBR)/(AXI_DW/WBITS)-1;
+  signal a_wwd, a_wrd : std_logic_vector(AXI_DW-1 downto 0);
 
   signal a_arvalid, a_arready, a_rvalid, a_rready : std_logic;
   signal a_araddr : std_logic_vector(ADDR_W-1 downto 0);
@@ -624,12 +634,16 @@ begin
 
   u_mem : entity work.gdn_state_mem
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
-                RECUR_LANES => RECUR_LANES, STYLE => STYLE)
+                RECUR_LANES => RECUR_LANES, STYLE => STYLE,
+                WIDE => WIDE, WPB => AXI_DW / WBITS)
     port map(clk => clk,
              r_en => m_re, r_head => m_rh, r_col => m_rc, r_grp => m_rg,
              r_data => m_rd,
              w_en => m_we, w_head => m_wh, w_col => m_wc, w_grp => m_wg,
-             w_data => m_wd);
+             w_data => m_wd,
+             -- the beat-wide port: the mantissa mover's, WIDE only
+             ww_en => a_wwe, ww_beat => a_wwb, ww_data => a_wwd,
+             wr_en => a_wre, wr_beat => a_wrb, wr_data => a_wrd);
 
   u_dma : entity work.gdn_state_axi
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
@@ -637,7 +651,8 @@ begin
                 WORD_BITS => WBITS, N_GRP => NBR,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => MANT_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                PIPE => PIPE, WIDE => WIDE)
     port map(clk => clk, rst => rst,
              load_start => a_load, save_start => a_save,
              layer => layer, state_base => state_base,
@@ -646,6 +661,8 @@ begin
              m_w_grp => a_wg, m_w_data => a_wd,
              m_r_en => a_re, m_r_head => a_rh, m_r_col => a_rc,
              m_r_grp => a_rg, m_r_data => m_rd,
+             mw_en => a_wwe, mw_beat => a_wwb, mw_data => a_wwd,
+             mr_en => a_wre, mr_beat => a_wrb, mr_data => a_wrd,
              r_arvalid => a_arvalid, r_arready => a_arready,
              r_araddr => a_araddr, r_arlen => a_arlen, r_arsize => a_arsize,
              r_arburst => a_arburst, r_rvalid => a_rvalid,
@@ -694,7 +711,7 @@ begin
                 WORD_BITS => 8, N_GRP => 1,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => EXP_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
     port map(clk => clk, rst => rst,
              load_start => e_load, save_start => e_save,
              layer => layer, state_base => exp_base,
@@ -748,7 +765,7 @@ begin
                 WORD_BITS => 16, N_GRP => 1,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => CONV_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT)
+                MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
     port map(clk => clk, rst => rst,
              load_start => c_load, save_start => c_save,
              layer => layer, state_base => conv_base,
@@ -850,7 +867,7 @@ begin
                   WORD_BITS => 16, N_GRP => 1,
                   LAYER_STRIDE => CONST_STRIDE, MANT_BYTES => CONST_BYTES,
                   AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                  MAXB => MAXB, MAXOUT => MAXOUT)
+                  MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
       port map(clk => clk, rst => rst,
                load_start => k_load, save_start => '0',
                layer => layer, state_base => const_base,

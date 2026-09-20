@@ -61,7 +61,13 @@ entity gdn_state_mem is
     DIM         : positive := 128;
     RECUR_LANES : positive := 4;
     -- "ultra", "block" or "auto".  Not a preference: a knob for the census.
-    STYLE       : string   := "ultra"
+    STYLE       : string   := "ultra";
+    -- TRACK BMOVER 2026-09-20.  WIDE banks the array WPB ways on the low
+    -- bits of the flat word index, so the ww_*/wr_* ports below move WPB
+    -- consecutive words -- one AXI beat -- per cycle, and the narrow ports
+    -- keep their contract on top.  FALSE is the flat array as it was.
+    WIDE        : boolean  := false;
+    WPB         : positive := 4
   );
   port(
     clk    : in  std_logic;
@@ -76,7 +82,21 @@ entity gdn_state_mem is
     w_head : in  natural range 0 to VAL_HEADS-1;
     w_col  : in  natural range 0 to DIM-1;
     w_grp  : in  natural range 0 to DIM/RECUR_LANES-1;
-    w_data : in  std_logic_vector(RECUR_LANES*16-1 downto 0)
+    w_data : in  std_logic_vector(RECUR_LANES*16-1 downto 0);
+
+    -- ---- the beat-wide port, WIDE only.  Idle otherwise. -----------------
+    -- Beat b is words b*WPB .. b*WPB+WPB-1 of the flat index, word j at
+    -- bits j*RECUR_LANES*16 +: RECUR_LANES*16, which is the order
+    -- `gdn_state_axi` packs a beat.  Same one-cycle read contract as r_*.
+    -- The narrow and wide ports share the one read address, so a caller
+    -- must not drive r_en and wr_en on the same edge; the store never does
+    -- (the mover owns the memory while `busy`).
+    ww_en   : in  std_logic := '0';
+    ww_beat : in  natural range 0 to VAL_HEADS*DIM*(DIM/RECUR_LANES)/WPB-1 := 0;
+    ww_data : in  std_logic_vector(WPB*RECUR_LANES*16-1 downto 0) := (others => '0');
+    wr_en   : in  std_logic := '0';
+    wr_beat : in  natural range 0 to VAL_HEADS*DIM*(DIM/RECUR_LANES)/WPB-1 := 0;
+    wr_data : out std_logic_vector(WPB*RECUR_LANES*16-1 downto 0)
   );
 end entity;
 
@@ -85,8 +105,8 @@ architecture rtl of gdn_state_mem is
   constant WORDS : positive := VAL_HEADS * DIM * NBR;
   constant WBITS : positive := RECUR_LANES * 16;
 
-  type mem_t is array (0 to WORDS-1) of std_logic_vector(WBITS-1 downto 0);
-  signal mem : mem_t := (others => (others => '0'));
+  constant BEATS : positive := WORDS / WPB;
+  constant bad_words_not_multiple_of_wpb : natural := WORDS - BEATS*WPB;
 
   -- A generic that is not one of the three legal strings must not silently
   -- become "auto".  Vivado ignores `assert ... severity failure` in synthesis,
@@ -115,25 +135,89 @@ architecture rtl of gdn_state_mem is
   constant STY : string(1 to STYLE'length) := chk_style(STYLE);
 
   attribute ram_style : string;
-  attribute ram_style of mem : signal is STY;
-
-  signal rq : std_logic_vector(WBITS-1 downto 0) := (others => '0');
 begin
-  r_data <= rq;
-
-  p : process(clk) is
-    variable a : natural;
+  -- ================= the flat array, as it was ============================
+  gflat : if not WIDE generate
+    type mem_t is array (0 to WORDS-1) of std_logic_vector(WBITS-1 downto 0);
+    signal mem : mem_t := (others => (others => '0'));
+    attribute ram_style of mem : signal is STY;
+    signal rq : std_logic_vector(WBITS-1 downto 0) := (others => '0');
   begin
-    if rising_edge(clk) then
-      -- READ FIRST.  See the header: read-old is the contract.
-      if r_en = '1' then
-        a := (r_head*DIM + r_col)*NBR + r_grp;
-        rq <= mem(a);
+    r_data  <= rq;
+    wr_data <= (others => '0');
+
+    p : process(clk) is
+      variable a : natural;
+    begin
+      if rising_edge(clk) then
+        -- READ FIRST.  See the header: read-old is the contract.
+        if r_en = '1' then
+          a := (r_head*DIM + r_col)*NBR + r_grp;
+          rq <= mem(a);
+        end if;
+        if w_en = '1' then
+          a := (w_head*DIM + w_col)*NBR + w_grp;
+          mem(a) <= w_data;
+        end if;
       end if;
-      if w_en = '1' then
-        a := (w_head*DIM + w_col)*NBR + w_grp;
-        mem(a) <= w_data;
+    end process;
+  end generate;
+
+  -- ================= WPB banks, one beat per cycle ========================
+  -- Bank k holds every word with `index mod WPB = k`, at depth `index / WPB`.
+  -- A wide access hits all banks at one depth; a narrow one hits all banks
+  -- at one depth too (the read is cheap and keeps one address per bank) and
+  -- the narrow data is selected AFTER the register by the bank index
+  -- captured with it, so the narrow read stays "data one cycle after the
+  -- address" with a WPB:1 mux on the way out.  A narrow write enables one
+  -- bank.  Same bits, same URAM count: WORDS x WBITS either way.
+  gwide : if WIDE generate
+    type bank_t is array (0 to BEATS-1) of std_logic_vector(WBITS-1 downto 0);
+    type rq_t   is array (0 to WPB-1)   of std_logic_vector(WBITS-1 downto 0);
+    signal rq    : rq_t := (others => (others => '0'));
+    signal sel_q : natural range 0 to WPB-1 := 0;
+    signal dep_r, dep_w : natural range 0 to BEATS-1;
+    signal nsel_r, nsel_w : natural range 0 to WPB-1;
+    signal ren_any : std_logic;
+  begin
+    dep_r  <= wr_beat when wr_en = '1'
+              else ((r_head*DIM + r_col)*NBR + r_grp) / WPB;
+    nsel_r <= ((r_head*DIM + r_col)*NBR + r_grp) mod WPB;
+    dep_w  <= ww_beat when ww_en = '1'
+              else ((w_head*DIM + w_col)*NBR + w_grp) / WPB;
+    nsel_w <= ((w_head*DIM + w_col)*NBR + w_grp) mod WPB;
+    ren_any <= r_en or wr_en;
+
+    r_data <= rq(sel_q);
+
+    gb : for k in 0 to WPB-1 generate
+      signal bank : bank_t := (others => (others => '0'));
+      attribute ram_style of bank : signal is STY;
+      signal we : std_logic;
+      signal wd : std_logic_vector(WBITS-1 downto 0);
+    begin
+      we <= '1' when ww_en = '1' or (w_en = '1' and nsel_w = k) else '0';
+      wd <= ww_data((k+1)*WBITS-1 downto k*WBITS) when ww_en = '1' else w_data;
+      wr_data((k+1)*WBITS-1 downto k*WBITS) <= rq(k);
+
+      pb : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if ren_any = '1' then
+            rq(k) <= bank(dep_r);
+          end if;
+          if we = '1' then
+            bank(dep_w) <= wd;
+          end if;
+        end if;
+      end process;
+    end generate;
+
+    ps : process(clk) is
+    begin
+      if rising_edge(clk) then
+        if r_en = '1' then sel_q <= nsel_r; end if;
       end if;
-    end if;
-  end process;
+    end process;
+  end generate;
 end architecture;
