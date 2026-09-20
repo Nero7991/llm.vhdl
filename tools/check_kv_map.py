@@ -2,7 +2,8 @@
 """check_kv_map.py -- the mechanical link between the HBM address map's
 AUTHORITY and subsystem C's KV generics.
 
-    python3 tools/check_kv_map.py [--manifest PATH] [--no-manifest] [--teeth]
+    python3 tools/check_kv_map.py [--manifest PATH] [--striped-manifest PATH]
+                                  [--no-manifest] [--teeth]
 
 WHY THIS FILE EXISTS
 ====================
@@ -45,6 +46,26 @@ THE THREE SIDES IT READS, AND WHY EACH IS THE RIGHT SOURCE
      default cannot become 131,072 without sizing the behavioural cache at
      8.4 million signal entries (CKVMAP section 7).
 
+THE ROWS ADDED 2026-09-20, AND THE DEFECT THEY WOULD HAVE CAUGHT
+================================================================
+Every row above pins the DEFAULT generics to ONE manifest, the flat one.
+MEASURED 2026-09-20 on silicon (docs/debugging/2026-09-20_the-kv-cache-base-
+is-compiled-into-the-bitstream.md): the loaded image was the lane-STRIPED
+one, whose kv_base is 0x1AD71C000, and the bitstream carried the flat pair
+compiled in; every C job wrote its records into weight pieces, 40 objects.
+This gate was green the whole time, because it was asked about the flat
+manifest and answered correctly about it.
+
+So the geometry is now checked against BOTH manifests, at the CARD's
+C_MAXPOS, with K = hbm.kv_base and V = K + C_MAXPOS * kv_bytes_per_token/2
+-- which is what the host now programs into the seam (A_KVK/A_KVV) -- and
+the pair's whole extent must lie inside hbm.size, intersect no piece of any
+file (striped entries carry `pieces`; flat entries carry hbm_offset/nbytes),
+and intersect none of gdn_state, gdn_const and the descriptor arena.  The
+teeth row `striped_image_with_the_compiled_flat_pair_at_131072` IS the
+2026-09-20 defect, and its attribution control (the same mutant with these
+rows disabled) shows the older rows were blind to it.
+
 WHAT IT DELIBERATELY DOES NOT DO
 ================================
 It does not check that the RTL COMPUTES anything.  That is
@@ -63,6 +84,8 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 DEF_MANIFEST = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd/"
+                "manifest.json")
+DEF_STRIPED  = ("/mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped/"
                 "manifest.json")
 LLAMA_TOP = os.path.join(REPO, "rtl", "llama_top.vhd")
 GATE      = os.path.join(REPO, "sim", "realshape_gate.sh")
@@ -118,33 +141,40 @@ def read_rtl(path=LLAMA_TOP):
 
     # THE CHUNK-TO-BYTE SEAM.  rtl/llama_top.vhd holds the bases in 16-byte
     # chunks because the byte value does not fit a `natural`, and shifts back
-    # to bytes at the port map.  That shift is the one place a silent 16x
-    # address error can be introduced, so its AMOUNT is read out of the source
-    # and checked against the granule rather than assumed to be 4.
+    # to bytes ONCE, as the DEFAULT of the `kv_k_base`/`kv_v_base` input
+    # ports (since 2026-09-20; before that at two architecture constants the
+    # port map used directly, which is what compiled the base into the
+    # bitstream).  That shift is the one place a silent 16x address error
+    # can be introduced, so its AMOUNT is read out of the source and checked
+    # against the granule rather than assumed to be 4.
     seam = {}
-    for gen, sig in (("C_K_BASE_CH", "KBASE_C"), ("C_V_BASE_CH", "VBASE_C")):
+    for gen, port in (("C_K_BASE_CH", "kv_k_base"),
+                      ("C_V_BASE_CH", "kv_v_base")):
         m = re.search(
-            r"constant\s+%s\s*:.*?shift_left\(\s*to_unsigned\(\s*%s\s*,"
-            r"\s*C_KV_ADDR_W\s*\)\s*,\s*(\d+)\s*\)" % (sig, gen),
-            src, re.S)
+            r"^\s*%s\s*:\s*in\s+std_logic_vector\(C_KV_ADDR_W-1 downto 0\)"
+            r"\s*:=\s*std_logic_vector\(shift_left\(\s*to_unsigned\(\s*%s\s*,"
+            r"\s*C_KV_ADDR_W\s*\)\s*,\s*(\d+)\s*\)\)" % (port, gen),
+            src, re.S | re.M)
         if not m:
             raise Bad(
                 "rtl/llama_top.vhd: could not find the chunk-to-byte shift "
-                "that builds %s from %s.  attn_kv_axi's k_base/v_base are "
-                "BYTE addresses (its rec_addr adds idx*REC_B with REC_B in "
-                "bytes) and the generic is a CHUNK count, so a shift must "
-                "exist at the port map.  If it moved, this check must move "
-                "with it -- a missing shift is a 16x address error that "
-                "elaborates perfectly cleanly." % (sig, gen))
-        seam[sig] = int(m.group(1))
+                "in the default of port %s (from %s).  attn_kv_axi's "
+                "k_base/v_base are BYTE addresses (its rec_addr adds "
+                "idx*REC_B with REC_B in bytes) and the generic is a CHUNK "
+                "count, so a shift must exist where the generic becomes the "
+                "port's default.  If it moved, this check must move with it "
+                "-- a missing shift is a 16x address error that elaborates "
+                "perfectly cleanly." % (port, gen))
+        seam[port] = int(m.group(1))
     out["shift"] = seam
 
-    # and the two constants must actually reach the instance
-    if not re.search(r"k_base\s*=>\s*KBASE_C\s*,\s*v_base\s*=>\s*VBASE_C",
+    # and the two PORTS must actually reach the instance, unmodified
+    if not re.search(r"k_base\s*=>\s*kv_k_base\s*,\s*v_base\s*=>\s*kv_v_base",
                      src):
-        raise Bad("rtl/llama_top.vhd: KBASE_C/VBASE_C are not the actuals of "
-                  "attn_kv_axi's k_base/v_base any more.  The shift they "
-                  "carry is then not on the path the cache uses.")
+        raise Bad("rtl/llama_top.vhd: kv_k_base/kv_v_base are not the actuals "
+                  "of attn_kv_axi's k_base/v_base any more.  The seam's "
+                  "registers would then not be on the path the cache uses, "
+                  "which is the 2026-09-20 defect again.")
     return out
 
 
@@ -234,8 +264,63 @@ def read_card(path=CARD_GEN):
     return out
 
 
+def kv_extent_rows(row, label, doc, K, V, MP, PERTOK):
+    """The rows that would have caught 2026-09-20.  `doc` is the WHOLE
+    manifest (files and hbm), K and V the BYTE bases the host programs, MP
+    the card's C_MAXPOS.  Every row names the manifest it was run against,
+    because the point is that there are two of them."""
+    h = doc["hbm"]
+    half = MP * (PERTOK // 2)
+    lo, hi = K, V + half            # [lo, hi), the K region then the V region
+    row("%s: V == K + C_MAXPOS*(kv_bytes_per_token/2)" % label,
+        V == K + half,
+        "K %d, V %d, K + %d*%d = %d" % (K, V, MP, PERTOK // 2, K + half))
+    row("%s: KV extent starts at hbm.kv_base" % label,
+        K == int(h["kv_base"]),
+        "K %d vs hbm.kv_base %d (delta %d)" % (K, h["kv_base"],
+                                               K - int(h["kv_base"])))
+    row("%s: KV extent inside hbm.size" % label, hi <= int(h["size"]),
+        "[%d, %d) against size %d (%d bytes past the end)"
+        % (lo, hi, h["size"], max(0, hi - int(h["size"]))))
+    # every piece of every file: striped entries carry `pieces`, flat entries
+    # carry hbm_offset/nbytes at the top level.  Both are ABSOLUTE HBM byte
+    # addresses (the maximum end equals hbm.weights_end in both manifests).
+    hits = []
+    for f in doc["files"]:
+        if f.get("pieces"):
+            for pc in f["pieces"]:
+                a, n = int(pc["hbm_offset"]), int(pc["nbytes"])
+                if a < hi and lo < a + n:
+                    hits.append((a, "%s lane %s seg %s [%d, %d)"
+                                 % (f["file"], pc.get("lane"),
+                                    pc.get("segment"), a, a + n)))
+        else:
+            a, n = int(f["hbm_offset"]), int(f["nbytes"])
+            if a < hi and lo < a + n:
+                hits.append((a, "%s [%d, %d)" % (f["file"], a, a + n)))
+    hits.sort()
+    row("%s: KV extent intersects no weight piece" % label, not hits,
+        "%d piece(s) hit; first (lowest address): %s"
+        % (len(hits), hits[0][1]) if hits else
+        "0 of the pieces of %d files intersect [%d, %d)"
+        % (len(doc["files"]), lo, hi))
+    for name, bkey, nkey in (("gdn_state", "gdn_state_base", "gdn_state_bytes"),
+                             ("gdn_const", "gdn_const_base", "gdn_const_bytes"),
+                             ("desc_arena", "desc_arena_base",
+                              "desc_arena_bytes")):
+        if bkey not in h:
+            row("%s: KV extent clear of %s" % (label, name), None,
+                "manifest declares no %s" % bkey)
+            continue
+        a, n = int(h[bkey]), int(h[nkey])
+        clear = not (a < hi and lo < a + n)
+        row("%s: KV extent clear of %s" % (label, name), clear,
+            "%s [%d, %d) against KV [%d, %d)" % (name, a, a + n, lo, hi))
+
+
 def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
-          rtl_over=None, gate_over=None, sz_over=None, mani_over=None):
+          rtl_over=None, gate_over=None, sz_over=None, mani_over=None,
+          striped_path=DEF_STRIPED, kv_over=None, extent_rows=True):
     import hbm_map as H
 
     sz = dict(H.arena_sizes())
@@ -249,11 +334,15 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
         gate.update(gate_over)
 
     mani = None
+    flat_doc = striped_doc = None
     if manifest_path and os.path.exists(manifest_path):
-        mani = json.load(open(manifest_path))["hbm"]
+        flat_doc = json.load(open(manifest_path))
+        mani = flat_doc["hbm"]
     if mani_over is not None:
         mani = dict(mani or {})
         mani.update(mani_over)
+    if striped_path and os.path.exists(striped_path):
+        striped_doc = json.load(open(striped_path))
 
     rows = []
 
@@ -337,6 +426,28 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
             "arithmetic can produce -- it depends on where the weight image "
             "ended -- so the rows that pin C_K_BASE_CH to the arena DID NOT "
             "RUN.  Pass --manifest PATH." % manifest_path)
+
+    # ---- BOTH IMAGES AGAINST THE CARD'S GEOMETRY (2026-09-20) -------------
+    # K and V here are what the HOST PROGRAMS (server/pl_backend.c: K =
+    # hbm.kv_base, V = K + KV_MAXPOS * kv_bytes_per_token/2, KV_MAXPOS read
+    # from the seam), not the default generics.  `kv_over` substitutes a
+    # different pair -- the teeth row feeds the flat manifest's compiled pair
+    # to the striped image, which is exactly the defect.  `extent_rows=False`
+    # is the attribution control: the same inputs with these rows off.
+    if extent_rows:
+        for label, doc in (("flat", flat_doc), ("striped", striped_doc)):
+            if doc is None:
+                row("%s manifest: extent rows" % label, None,
+                    "no manifest at %s; the rows that check the card's "
+                    "geometry against this image DID NOT RUN"
+                    % (manifest_path if label == "flat" else striped_path))
+                continue
+            hk = int(doc["hbm"]["kv_base"])
+            mp = MP
+            if kv_over and label in kv_over:
+                hk, mp = kv_over[label]
+            kv_extent_rows(row, label + " manifest", doc,
+                           hk, hk + mp * (PERTOK // 2), mp, PERTOK)
 
     # ---- the two regions, and the address width -------------------------
     row("V region starts where K's ends", V == K + region_ch,
@@ -447,10 +558,30 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
 # --------------------------------------------------------------------------
 # teeth.  A checker never shown to refuse has not been shown to work.
 # --------------------------------------------------------------------------
-def teeth(manifest_path):
+def teeth(manifest_path, striped_path=DEF_STRIPED):
     import io
+    # THE 2026-09-20 DEFECT AS A MUTANT: the striped image loaded, the card
+    # at C_MAXPOS 131072 with the FLAT manifest's pair compiled in, i.e. K =
+    # 282672640*16.  The row must refuse NAMING the first weight piece the
+    # pair lands on.  Its attribution control is the same mutant with the
+    # extent rows disabled; it must be ACCEPTED, which is the measurement
+    # that the older rows could not see this.
+    flat_k = 282672640 * 16
+    defect = dict(kv_over={"striped": (flat_k, 131072)})
     cases = [
         ("control", {}, False),
+        ("striped_image_with_the_compiled_flat_pair_at_131072", defect, True),
+        ("  attribution control: same mutant, extent rows OFF",
+         dict(defect, extent_rows=False), False),
+        ("striped_image, K one page below hbm.kv_base",
+         dict(kv_over={"striped": (7204880384 - 4096, 65536)}), True),
+        # kv_extents[0].tokens is 233237 = floor(free/17408), so 233237
+        # fits by construction and ONE more token puts the V region's last
+        # 17,408 bytes into gdn_const.
+        ("flat_image, C_MAXPOS 233238 (one past kv_extents.tokens, hits gdn_const)",
+         dict(kv_over={"flat": (4522762240, 233238)}), True),
+        ("striped_image, C_MAXPOS 131072 at the right base (does not fit)",
+         dict(kv_over={"striped": (7204880384, 131072)}), True),
         ("k_base_one_chunk_high", dict(gate_over={"C_K_BASE_CH": 282598913}),
          True),
         ("k_base_one_chunk_low", dict(gate_over={"C_K_BASE_CH": 282598911}),
@@ -461,17 +592,18 @@ def teeth(manifest_path):
          dict(gate_over={"C_V_BASE_CH": 34816}), True),
         ("v_base_one_chunk_high", dict(gate_over={"C_V_BASE_CH": 353902081}),
          True),
-        ("maxpos_halved", dict(gate_over={"C_MAXPOS": 65536}), True),
+        ("maxpos_doubled_back_to_131072", dict(gate_over={"C_MAXPOS": 131072}),
+         True),
         ("addr_w_one_short", dict(gate_over={"C_KV_ADDR_W": 32}), True),
         ("kv_block_illegal", dict(gate_over={"C_KV_BLOCK": 3}), True),
-        ("the seam shifts by 3", dict(rtl_over={"shift": {"KBASE_C": 3,
-                                                          "VBASE_C": 4}}),
+        ("the seam shifts by 3", dict(rtl_over={"shift": {"kv_k_base": 3,
+                                                          "kv_v_base": 4}}),
          True),
-        ("the seam shifts by 5", dict(rtl_over={"shift": {"KBASE_C": 4,
-                                                          "VBASE_C": 5}}),
+        ("the seam shifts by 5", dict(rtl_over={"shift": {"kv_k_base": 4,
+                                                          "kv_v_base": 5}}),
          True),
-        ("the seam does not shift", dict(rtl_over={"shift": {"KBASE_C": 0,
-                                                             "VBASE_C": 0}}),
+        ("the seam does not shift", dict(rtl_over={"shift": {"kv_k_base": 0,
+                                                             "kv_v_base": 0}}),
          True),
         ("the arena moved by one page",
          dict(mani_over={"kv_base": 4521586688}), True),
@@ -487,7 +619,8 @@ def teeth(manifest_path):
     print("==== teeth for tools/check_kv_map.py ====")
     for name, kw, want_refuse in cases:
         buf = io.StringIO()
-        rc = check(manifest_path, require_manifest=True, out=buf, **kw)
+        rc = check(manifest_path, require_manifest=True, out=buf,
+                   striped_path=striped_path, **kw)
         refused = rc != 0
         if refused == want_refuse:
             npass += 1
@@ -496,14 +629,14 @@ def teeth(manifest_path):
             nmiss += 1
             verdict = ("DID NOT REFUSE -- THIS IS A HOLE"
                        if want_refuse else "REFUSED THE CONTROL")
-        line = ""
-        for ln in buf.getvalue().splitlines():
-            if ln.strip().startswith("REFUSED"):
-                line = ln.strip()
-                break
-        print("  %-46s %s" % (name, verdict))
-        if line:
-            print("        %s" % line[:170])
+        # EVERY refused row, not the first: the 2026-09-20 defect row must
+        # be seen to NAME the weight piece it lands on, and that is not the
+        # first row that refuses it.
+        lines = [ln.strip() for ln in buf.getvalue().splitlines()
+                 if ln.strip().startswith("REFUSED")]
+        print("  %-66s %s" % (name, verdict))
+        for line in lines[:6]:
+            print("        %s" % line[:190])
     print("---- %d of %d teeth rows behaved as intended ----"
           % (npass, npass + nmiss))
     return 0 if nmiss == 0 else 1
@@ -514,15 +647,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", default=DEF_MANIFEST)
+    ap.add_argument("--striped-manifest", default=DEF_STRIPED,
+                    help="the lane-striped image's manifest; its KV extent "
+                         "is checked against the card's geometry too")
     ap.add_argument("--no-manifest", action="store_true",
                     help="run the in-repo rows only, and say so; still "
                          "refuses on any in-repo mismatch")
     ap.add_argument("--teeth", action="store_true")
     a = ap.parse_args(argv)
     if a.teeth:
-        return teeth(a.manifest)
+        return teeth(a.manifest, a.striped_manifest)
     try:
-        return check(a.manifest, require_manifest=not a.no_manifest)
+        return check(a.manifest, require_manifest=not a.no_manifest,
+                     striped_path=a.striped_manifest)
     except Bad as e:
         sys.stderr.write("check_kv_map: REFUSING -- %s\n" % e)
         return 2

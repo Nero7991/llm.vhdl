@@ -42,6 +42,7 @@ RTL = os.path.join(REPO, "rtl", "fk33_seam.vhd")
 HDR = os.path.join(REPO, "server", "fk33_seam.h")
 ENG_RTL = os.path.join(REPO, "rtl", "matvec_int4_desc_pkg.vhd")
 CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
+PCIEEP_GEN = os.path.join(REPO, "hw", "fk33", "gen_pcieep.py")
 ENG_HDR = os.path.join(REPO, "hw", "fk33", "host", "fk33_regs.h")
 
 # RTL name -> host name, where the two sides spell the same register differently.
@@ -242,6 +243,38 @@ def main():
             else:
                 rows.append(("ok", "CAPS:%s" % capname,
                              "advertised=%s, card SMP_EN=%s" % (advertised, smp_on)))
+
+    # --- CAPS bit 5, ENG_KV_BASE (2026-09-20): advertised iff the seam
+    # implements A_KVK_LO and A_KV_MAXPOS AND gen_pcieep.py wires the seam's
+    # d_kv_k_base to the card's kv_k_base.  Derived from the THING on both
+    # sides, not from either copy of the flag: a bit set with the register
+    # unwired would tell the host its base reaches C when it reaches nothing,
+    # which is the 2026-09-20 defect with a capability bit on top.
+    if caps is not None and bits:
+        bit = bits.get("ENG_KV_BASE")
+        have_reg = "KVK_LO" in rtl and "KV_MAXPOS" in rtl
+        try:
+            gen = open(PCIEEP_GEN).read()
+        except OSError:
+            gen = ""
+        wired = bool(re.search(r'\(\s*"d_kv_k_base"\s*,\s*"kv_k_base"\s*\)', gen)
+                     and re.search(r'\(\s*"d_kv_v_base"\s*,\s*"kv_v_base"\s*\)', gen))
+        if bit is None:
+            rows.append(("note", "CAPS:ENG_KV_BASE", "host defines no FK33_CAP_ENG_KV_BASE"))
+        else:
+            advertised = bool(caps & bit)
+            want = have_reg and wired
+            if advertised != want:
+                rows.append(("REFUSED", "CAPS:ENG_KV_BASE",
+                             "CAPS_FLAGS_V=0x%08X %s bit 5; seam registers %s, gen_pcieep "
+                             "SEAM_TO_CARD wiring %s -- the flag and the thing disagree"
+                             % (caps, "SETS" if advertised else "CLEARS",
+                                "present" if have_reg else "ABSENT",
+                                "present" if wired else "ABSENT"))); fail += 1
+            else:
+                rows.append(("ok", "CAPS:ENG_KV_BASE",
+                             "advertised=%s, A_KVK_LO/A_KV_MAXPOS=%s, seam->card wiring=%s"
+                             % (advertised, have_reg, wired)))
 
     for verdict, name, why in rows:
         print("  %-8s %-14s %s" % (verdict, name, why))
