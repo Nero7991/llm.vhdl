@@ -128,10 +128,10 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 # tests/run_prompt.c for what that does and does not prove.
 run_prompt: tests/run_prompt.c pl_backend.c fk33_transport.c fk33_sim.c \
             fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
-            qwen35_unicode_data.c
+            qwen35_chat.c qwen35_unicode_data.c
 	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c fk33_transport.c \
 	      fk33_sim.c fk33_manifest.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
-	      qwen35_unicode_data.c -lm
+	      qwen35_chat.c qwen35_unicode_data.c -lm
 
 # The chat-template batch driver, for server/verify_chat_template.py.  That
 # script builds it itself with --build; this rule exists so `make check` can

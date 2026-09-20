@@ -97,6 +97,7 @@
 #include "../fk33_seam.h"
 #include "../embed_mv4i.h"
 #include "../qwen35_tok.h"
+#include "../qwen35_chat.h"
 
 /* <|im_end|>, the vocabulary's eos.  qwen35_tok.h:67 states it; when --qtk is
  * given the tokenizer's own answer replaces this, and a disagreement is
@@ -153,6 +154,10 @@ static void usage(void)
 {
     fprintf(stderr,
       "usage: run_prompt --prompt <ids.txt> [--reference <ids.txt>]\n"
+      "       run_prompt --text \"question\" --qtk <t.qtk> [--stream] ...\n"
+      "                        one user message through the chat template\n"
+      "                        (thinking off), tokenized with the .qtk; --stream\n"
+      "                        prints each token's bytes as the card emits it\n"
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
       "                  [--mv4i <t.mv4i> --manifest <m.json>]\n"
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
@@ -179,6 +184,8 @@ static int embed_biased(void *user, int tok, int16_t *mant, int n_embd, int32_t 
 int main(int argc, char **argv)
 {
     const char *prompt_path = NULL, *ref_path = NULL, *qtk_path = NULL;
+    const char *text = NULL;
+    int stream = 0;
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
@@ -205,6 +212,8 @@ int main(int argc, char **argv)
         const char *a = argv[i];
         #define NEXT(dst) do { if (++i >= argc) { usage(); return 2; } dst = argv[i]; } while (0)
         if      (!strcmp(a, "--prompt"))       NEXT(prompt_path);
+        else if (!strcmp(a, "--text"))         NEXT(text);
+        else if (!strcmp(a, "--stream"))       stream = 1;
         else if (!strcmp(a, "--reference"))    NEXT(ref_path);
         else if (!strcmp(a, "--qtk"))          NEXT(qtk_path);
         else if (!strcmp(a, "--mv4i"))         NEXT(mv4i_path);
@@ -228,10 +237,36 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "run_prompt: unknown argument %s\n", a); usage(); return 2; }
         #undef NEXT
     }
-    if (!prompt_path) { usage(); return 2; }
+    if (!prompt_path && !text) { usage(); return 2; }
+    if (text && !qtk_path) { fprintf(stderr, "run_prompt: --text needs --qtk\n"); return 2; }
 
-    n_prompt = read_ids(prompt_path, &prompt);
-    if (n_prompt <= 0) { fprintf(stderr, "run_prompt: no ids in %s\n", prompt_path); return 2; }
+    if (text) {
+        /* ONE user message, add_generation_prompt = 1, enable_thinking = 0:
+         * the exact rendering hw/fk33/results/goal_dcdc_2026-09-17 was
+         * produced from (prompt_rendered.txt), tokenized with parse_special
+         * so the control tokens become single ids (23 for that prompt, not
+         * the 31 a text-level tokenizer gives). */
+        qwen35_chat_msg m;
+        qwen35_tok *tk = qwen35_tok_open(qtk_path);
+        int need = 0, n;
+        if (!tk) return 2;
+        memset(&m, 0, sizeof m);
+        m.role = QWEN35_ROLE_USER; m.content = text; m.content_len = strlen(text);
+        n = qwen35_chat_tokenize(tk, &m, 1, 1, 0, NULL, 0, &need);
+        if (n != QWEN35_CHAT_E_SHORT || need <= 0) {
+            fprintf(stderr, "run_prompt: the chat template refused the text (%d)\n", n);
+            qwen35_tok_free(tk); return 2;
+        }
+        prompt = (int *)malloc((size_t)need * sizeof *prompt);
+        if (!prompt) { qwen35_tok_free(tk); return 2; }
+        n_prompt = qwen35_chat_tokenize(tk, &m, 1, 1, 0, prompt, need, NULL);
+        qwen35_tok_free(tk);
+        if (n_prompt <= 0) { fprintf(stderr, "run_prompt: tokenize returned %d\n", n_prompt); free(prompt); return 2; }
+        printf("text       %d ids from the chat template (thinking off)\n", n_prompt);
+    } else {
+        n_prompt = read_ids(prompt_path, &prompt);
+        if (n_prompt <= 0) { fprintf(stderr, "run_prompt: no ids in %s\n", prompt_path); return 2; }
+    }
     if (ref_path) {
         n_ref = read_ids(ref_path, &ref);
         if (n_ref < 0) { free(prompt); return 2; }
@@ -414,6 +449,10 @@ int main(int argc, char **argv)
         if (!got) { status = 1; goto done; }
         got[n_got++] = argmax;
         if (argmax == stop_id) stopped = 1;
+        if (stream && tok) {
+            char pb[256]; int pl = qwen35_tok_piece(tok, argmax, pb, sizeof pb, 0);
+            if (pl > 0) { fwrite(pb, 1, (size_t)pl, stdout); fflush(stdout); }
+        }
     }
 
     /* -------------------------------------------------------------- decode */
@@ -437,7 +476,12 @@ int main(int argc, char **argv)
         }
         got[n_got++] = argmax;
         if (argmax == stop_id) stopped = 1;
+        if (stream && tok) {
+            char pb[256]; int pl = qwen35_tok_piece(tok, argmax, pb, sizeof pb, 0);
+            if (pl > 0) { fwrite(pb, 1, (size_t)pl, stdout); fflush(stdout); }
+        }
     }
+    if (stream) { printf("\n"); fflush(stdout); }
 
     printf("decode     %d ids generated, pos %d, stopped %s\n",
            n_got, pl_seq_pos(c), stopped ? "on the stop token" : "at --max-new");
