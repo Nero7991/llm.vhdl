@@ -97,6 +97,50 @@ python3 check_token.py ../../ref.r9bs ../../anchor.r9bs        # rung 3 vs rung 
 python3 check_token.py ../../ref.r9bs capture.r9bs --expect 2614
 ```
 
+## `tok0.r9bs`: what it is, where it lives, and how to make it again
+
+**Canonical path: `/mnt/storage/fk33_builds/refs/tok0.r9bs`** (5,976,368 bytes).
+It is the oracle behind `probe_ref`, `check_token.py` and `logit_compare.py`.
+It used to live only in a session scratch directory under `/tmp` and was
+deleted by a drive cleanup on 2026-09-20; it now lives on `/mnt/storage`
+for that reason. **Do not regenerate it into a scratch tree.**
+
+```sh
+gcc -O2 -Wall -Wextra -I ref -o ref/run9b ref/run9b.c -lm   # ref/run9b is .gitignored
+./ref/run9b --packed /mnt/storage/llama-models/qwen35-9b-mv4i-qkvpad \
+            --acts bfp --tokens 248045 \
+            --out /mnt/storage/fk33_builds/refs/tok0.r9bs
+```
+
+MEASURED 2026-09-20 on the workstation: **32.3 s wall, 4.28 GiB peak RSS**
+(`/usr/bin/time -v`), so run it alone and budget ~4.5 GB. It needs
+`index.txt` beside the packed model (`make_index.py` writes it; it was
+already there).
+
+**Verify it by its recorded property, never by its size alone:**
+
+```sh
+python3 tools/ref9b/check_token.py /mnt/storage/fk33_builds/refs/tok0.r9bs --expect 846
+```
+
+MEASURED on the regenerated file: `TOKEN` record **846** (REPORTED, i.e.
+`run9b`'s own argmax, not this script's), `LOGITS n=248320 kind=f32
+max=+12.7822 rms=2.50779`, gap 1.00577, gap/rms 0.40106 -- every field
+matching the record in
+`docs/debugging/2026-09-20_the-card-cannot-publish-a-logit-vector.md`, and
+the byte count landing on 5,976,368 exactly. Teeth: `--expect 845` exits 1,
+so the check discriminates rather than always passing.
+
+**THE PROMPT IS ONE TOKEN, 248045, AND IT IS NOT THE DC-DC PROMPT.** This is
+a recorded trap, not a detail: the 09-20 write-up lists "comparing the card
+on the DC-DC prompt against `tok0.r9bs`" under *measured and REJECTED*,
+because token 0 is **1206** for that prompt and **846** for this one, and
+the numbers come out well formed either way. `ls` on the file's directory
+cannot tell you which prompt it holds; only the capture's own log or the
+`TOKEN` record can. It is also **rung 3** (`--acts bfp`, the hardware
+model), not a BF16 `dump_llamacpp` capture -- calling it "the BF16
+reference" points at the wrong rung.
+
 ## The card's own token 0, and the vector it cannot give you
 
 `server/tests/run_prompt.c --dump-logits <p.r9bs>` writes the card's first

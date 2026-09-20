@@ -412,9 +412,79 @@ SUITES="sim tb"
 # Raise this whenever a testbench is added.  It is checked ONLY on a full,
 # unfiltered both-suite run -- --quick, --only and --suite all legitimately
 # pass fewer, and a floor that fired on those would be noise inside a week.
-BASELINE_PASS=130  # NOT RAISED 2026-09-20 for TRACK IMGLOCK's sim:imglock,
-                   # for the same reason as the rows below: it passed
-                   # through --only (OVERALL PASS 1, 1s) and no full
+BASELINE_PASS=130  # NOT RAISED 2026-09-20 by TRACK GATEDAY, AND THE REASON IS
+                   # NOT "nobody ran the gate" THIS TIME.  The first full
+                   # unfiltered both-suite run since the ten 2026-09-20
+                   # landings DID run, at e573f5d, --jobs 1, 82m09s wall,
+                   # cgroup memory.peak 3.30 GiB (3,543,232,512 B, well under
+                   # its 8G cap, so a real peak and not the cap):
+                   #
+                   #   OVERALL PASS 155  FAIL 3  NOVERDICT 0  TIMEOUT 0
+                   #           BUILD-ERROR 0  NOCHECK 4  SKIPPED 6
+                   #
+                   # THREE REASONS IT IS STILL NOT RAISABLE, and only the
+                   # first is the one everybody expects:
+                   #
+                   # 1. THE RUN WAS RED, so no floor may come off it at all.
+                   #    A floor raised from a run with FAIL > 0 is exactly the
+                   #    "106 hid a broken row" failure this file already
+                   #    records.  ALWAYS READ FAIL, NEVER JUST PASS.
+                   # 2. The 155 includes the FOUR .mv4i model rows, so this
+                   #    script printed its own refusal ("DO NOT raise
+                   #    BASELINE_PASS from this run ... the floor is a
+                   #    CLEAN-CHECKOUT number").  The recorded way round that
+                   #    is MV4I_FK33_FILE=/nonexistent, as the 125 entry did.
+                   # 3. AND THAT WORKAROUND IS NOW BLOCKED, WHICH IS THIS
+                   #    TRACK'S REAL FINDING: **THE GATE IS NOT
+                   #    PATH-INDEPENDENT.**  The run above was made in a
+                   #    `git worktree` at e573f5d (deliberately: another track
+                   #    was editing sim/tb_gdn_block.vhd while it ran, and a
+                   #    run that overlaps an edit proves nothing).  TWO of the
+                   #    three FAILs were artefacts of that path alone and PASS
+                   #    in the main checkout -- MEASURED both ways:
+                   #      sim:runguard  hw/fk33/build_fk33_i2cprobe.tcl is
+                   #                    TRACKED and hardcodes
+                   #                    /home/orencollaco/GitHub/llama.vhdl/
+                   #                    hw/fk33/fk33_i2cprobe.xdc, so
+                   #                    gen_pcieep.py's substitution target is
+                   #                    absent anywhere else and it ABORTS.
+                   #      sim:fk33card  the generated hw/fk33/rtl/fk33_card.vhd
+                   #                    embeds absolute NORM_W_IMAGE and
+                   #                    C_QKN_IMAGE hex paths, so --check calls
+                   #                    the committed file STALE off-path.
+                   #                    Diff is those two lines and nothing else.
+                   #    So a clean checkout can be clean, or at the canonical
+                   #    path, but the only tree that is BOTH is this one -- and
+                   #    this one carries ~18 untracked sim/tb_*.vhd rows.  The
+                   #    honest clean-at-canonical-path number is therefore
+                   #    DERIVED, not measured: 155 - 4 optional + 2 path
+                   #    artefacts = 153, with sim:ipsync still red.  DO NOT
+                   #    PUT 153 ON THIS LINE; it has never been observed.
+                   #
+                   # THE ONE GENUINELY RED ROW, and it is NOT from today:
+                   #   sim:ipsync  ip_repo/llama_engine_axi_1_0/src/
+                   #               llama_engine_axi.vhd is 20,045 bytes against
+                   #               rtl/'s 20,328.  Bisected: IDENTICAL at
+                   #               cb2600f, DIFFERS from 09f68a0 ("GHDL 6.0
+                   #               portability", 2026-09-19) onward -- that
+                   #               commit edited the RTL and never re-ran the
+                   #               packager.  It needs Vivado, so it is not
+                   #               fixable from a no-Vivado track.  It went
+                   #               unseen for a day precisely because no
+                   #               unfiltered run was made, which is the whole
+                   #               argument for making one.
+                   #
+                   # NEXT: fix sim:ipsync (re-package, needs Vivado), then run
+                   # the full gate IN THE MAIN CHECKOUT with
+                   # MV4I_FK33_FILE=/nonexistent on a tree whose untracked
+                   # sim/tb_*.vhd have been moved aside, and raise this line
+                   # from that green number.  Fixing the two absolute paths
+                   # above would also make the worktree route work and is the
+                   # cheaper long-term fix.
+                   #
+                   # PREVIOUSLY NOT RAISED 2026-09-20 for TRACK IMGLOCK's
+                   # sim:imglock, for the same reason as the rows below: it
+                   # passed through --only (OVERALL PASS 1, 1s) and no full
                    # unfiltered both-suite run was made that day.
                    # NOT RAISED 2026-09-18 for TRACK F's THREE new rows
                    # (sim:qknimage, sim:tb_llama_top_qkn, sim:seamgate_qkn)
