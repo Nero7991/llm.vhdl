@@ -1,0 +1,1 @@
+tag=apop_ctrl target=matvec_int4_desc_axi peak_rss_gb=10.02 cgroup_peak_mb=8195 cgroup_swap_mb=1024 at_cap=YES wall_s=713 rc=0

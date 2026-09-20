@@ -1,0 +1,2 @@
+tag,target,gen,lut,lut_logic,lut_mem,ff,bram_tile,ramb36,ramb18,uram,dsp,carry8,f7,f8,timing_per_clk,synth_s,opt_s,census_opt
+brecur16,gdn_block,"KEY_HEADS=16 VAL_HEADS=32 DIM=128 KCONV=4 LAYERS=24 CONV_LANES=4 RECUR_SLOTS=16 L2_LANES=4 SILU_LANES=8 RMS_LANES=4 STRICT_PRODUCER=true RECUR_LANES=16",64513,54324,10189,41773,31,24,14,0,189,2113,4593,831,"clk:8.816:20",435,67,"dsp48=189 uram288=0 ramb36=24 ramb18=14 lutram=1291 lut=62926 lut1=2199 lut2=9154 lut3=7931 lut4=5494 lut5=11084 lut6=27064 ff=41773 carry8=2113 f7=4593 f8=831 f9=0 srl=327"

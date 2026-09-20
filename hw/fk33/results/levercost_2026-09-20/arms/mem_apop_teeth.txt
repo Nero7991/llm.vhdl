@@ -1,0 +1,1 @@
+tag=apop_teeth target=matvec_int4_desc_axi peak_rss_gb=10.08 cgroup_peak_mb=8195 cgroup_swap_mb=801 at_cap=YES wall_s=427 rc=0

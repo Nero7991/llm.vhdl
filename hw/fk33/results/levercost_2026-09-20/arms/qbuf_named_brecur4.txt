@@ -1,0 +1,8 @@
+# cells matching *qbuf* by REF_NAME, stage=opt tag=brecur4
+LUT6 37
+MUXF7 2
+MUXF8 1
+RAM32M 1
+RAM32M16 306
+RAMD32 4290
+RAMS32 614
