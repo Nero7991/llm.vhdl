@@ -11,6 +11,45 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK KVREG: subsystem C's KV base is a SEAM REGISTER, not a generic. C_MAXPOS halved to 65536 so the striped image fits. Host refuses an unfit manifest. NOT YET BUILT.
+
+- **Defect** (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-
+  the-bitstream.md): `C_K_BASE_CH`/`C_V_BASE_CH` were compiled from the
+  FLAT manifest; the striped image's kv_base is elsewhere and C wrote 40
+  weight objects. **Fix, landed in this track:** `rtl/llama_top.vhd` gains
+  input ports `kv_k_base`/`kv_v_base` (byte addresses, defaulting to the
+  compiled pair, so every bench is unchanged) handed straight to
+  `attn_kv_axi`; `rtl/fk33_seam.vhd` gains **A_KVK_LO/HI 0x90/0x94,
+  A_KVV_LO/HI 0x98/0x9C (RW, reset 0, in the GO-time zero refusal with
+  ARENA/BST) and A_KV_MAXPOS 0xA0 (RO, the seam's MAXPOS generic, which
+  gen_pcieep.py sets from gen_fk33_card.py's C_MAXPOS)**; CAPS bit 5
+  (`FK33_CAP_ENG_KV_BASE`, 0x1D -> 0x3D). gen_pcieep SEAM_TO_CARD wires
+  both; gen_fk33_card sets **C_MAXPOS=C_CTXLEN=65536, C_V_BASE_CH=318324224**
+  (2*65536*8704 = 1.14 GB fits the striped image's 1.378 GB free; 131072
+  needs 2.28 GB and does not). All four generated files regenerated.
+- **Host:** `pl_backend.c` reads KV_MAXPOS, programs K = hbm.kv_base and
+  V = K + MAXPOS*8704, reads all four back, and REFUSES an image whose free
+  KV space (below gdn_const/the arena) cannot hold the pair. MEASURED on the
+  simulated card with the real striped manifest: `--sim-kv-maxpos 131072`
+  refused ("903618560 bytes short"), 65536 programmed K 0x1AD71C000 /
+  V 0x1CF71C000. Without the caps bit it prints that the base is compiled
+  in and continues. `fk33ctl.py seam` prints the pair or UNREADABLE.
+- **Gates:** `sim:kvmap` now checks BOTH manifests' KV extent at the card's
+  C_MAXPOS against every weight piece and the gdn_state/gdn_const/arena
+  regions; the teeth row "striped image with the compiled flat pair at
+  131072" REFUSES naming `output.weight.mv4i lane 15 seg 17`, and its
+  attribution control (extent rows off) is ACCEPTED, i.e. the old rows were
+  blind. New bench row `sim:tb_llama_top_kvport` (decoy generics, real
+  bases on the ports; landmarks identical to tb_llama_top_seq); tb_fk33_seam
+  P6g (17 checks). Mutants: A (seam never latches) fails P6g 8-13, 17 by
+  name; B (engine port map back to the constants) see the report.
+- **NEXT: a card build** (`FK33_CARD=1`, ~47 GB with swap, alone on the
+  box) and, on silicon, `fk33ctl.py seam` must show caps 0x3D and the pair
+  after `run_prompt --open-only`; then the striped image's token 0 argmax
+  must be 846 and `fk33_load_weights.py verify` clean AFTER the token.
+  Until that bitstream exists the shipped `.bit` still has the base
+  compiled in and must only be run with the flat image.
+
 ### 2026-09-20 03:05: THE CARD ANSWERS THE PROMPT. Qwen3.5-9B on the FK33, 23-token prefill + 160 generated tokens, no faults, first token = reference.
 
 - Bitstream `hw/fk33/bit/fk33_card_swg_75mhz_2026-09-20.bit` (sha256

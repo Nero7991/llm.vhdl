@@ -131,3 +131,89 @@ The kvmap gate should then check BOTH manifests against the card's geometry.
 
 - Whether C_MAXPOS 65536 changes anything else in the card (POSW 17 bits,
   RoPE tables): to be measured by the gate and the build.
+
+## The fix (landed 2026-09-20, TRACK KVREG; NOT YET BUILT INTO A BITSTREAM)
+
+Appended, not rewritten.  Everything above stands; this section records what
+was changed, how each piece was shown to bite, and what is still open.
+
+**RTL.** `rtl/llama_top.vhd` gained two input ports beside `bst_state_base`:
+`kv_k_base`, `kv_v_base : in std_logic_vector(C_KV_ADDR_W-1 downto 0)`, BYTE
+addresses, defaulting to the compiled pair (`C_K_BASE_CH`/`C_V_BASE_CH`
+shifted by 4, the one place the chunk-to-byte shift now lives) and handed
+straight to `attn_kv_axi`'s `k_base`/`v_base`.  The generics, their guards
+and the comment block stay, marked as DEFAULTS.  `rtl/fk33_seam.vhd` gained
+`A_KVK_LO/HI` 0x90/0x94 and `A_KVV_LO/HI` 0x98/0x9C (RW, reset 0, HI keeps bit
+0, output pins `d_kv_k_base`/`d_kv_v_base`, in the GO-time zero refusal with
+ARENA and BST), `A_KV_MAXPOS` 0xA0 (read-only, the seam's MAXPOS generic,
+which `gen_pcieep.py` sets from `gen_fk33_card.py`'s C_MAXPOS -- one read
+of one source), and CAPS bit 5 (0x1D -> 0x3D).  `gen_pcieep.py`'s
+SEAM_TO_CARD wires both; `gen_fk33_card.py` sets `C_MAXPOS=C_CTXLEN=65536`
+and `C_V_BASE_CH=318324224` (DERIVED: 282672640 + 8*4*65536*17; and
+(4522762240 + 8704*65536)/16 = 318324224, the two agree).  MEASURED
+`--bd-only` on the card configuration: `FK33_SEAMWIRE 40 seam<->card pins`,
+`FK33_SEAM MAXPOS = 65536`, `FK33_UNCONNECTED count=0`, `FK33_BD_VALIDATE OK`
+(line-anchored), exit 0.
+
+**Host.** `server/pl_backend.c` on a card advertising `FK33_CAP_ENG_KV_BASE`:
+reads KV_MAXPOS, programs K = hbm.kv_base and V = K + MAXPOS *
+kv_bytes_per_token/2, reads all four registers back, and refuses at open an
+image whose free KV space (below gdn_const, else the arena) cannot hold the
+pair.  MEASURED on the simulated card against the REAL striped manifest:
+
+```
+$ run_prompt --v2 ... --manifest .../qwen35-9b-mv4i-noembd-striped/manifest.json --open-only --sim-kv-maxpos 131072
+pl_open: THE IMAGE CANNOT HOLD THIS CARD'S KV CACHE.
+  The card's C_MAXPOS is 131072 positions, so its K and V regions
+  are 1140850688 bytes each (MAXPOS * 8704) and the pair laid at
+  hbm.kv_base 0x1AD71C000 ends at 0x23571C000; the image's free KV
+  space ends at 0x1FF95A000 (hbm.gdn_const_base), 903618560 bytes short.
+$ ... --sim-kv-maxpos 65536
+[pl_backend] KV base programmed: K 0x1AD71C000 V 0x1CF71C000 (C_MAXPOS 65536, 17408 B/token, extent ends 0x1F171C000 under hbm.gdn_const_base 0x1FF95A000)
+```
+
+Without the caps bit it prints that the base is compiled in and continues
+(today's behaviour).  The piece-overlap check is NOT in the host: the
+manifest parser reads only `hbm`, and the extent check against
+[kv_base, gdn_const/arena) is sufficient because every piece ends at
+weights_end <= gdn_state_base < kv_base (the parser refuses otherwise).
+The piece check lives in `tools/check_kv_map.py` (gate row sim:kvmap).
+
+**Gate.** `check_kv_map.py` now checks BOTH manifests at the card's
+C_MAXPOS: extent inside hbm.size, no intersection with any piece of any
+file, clear of gdn_state/gdn_const/desc_arena.  Teeth (MEASURED, 22 of 22):
+
+```
+  striped_image_with_the_compiled_flat_pair_at_131072                REFUSED
+        REFUSED striped manifest: KV extent starts at hbm.kv_base    K 4522762240 vs hbm.kv_base 7204880384
+        REFUSED striped manifest: KV extent intersects no weight piece  2458 piece(s) hit; first (lowest address): output.weight.mv4i lane 15 seg 17 [4563402752, 4584595456)
+    attribution control: same mutant, extent rows OFF                accepted
+```
+
+That mutant IS this document's defect, and the accepted control is the
+measurement that the older rows could not see it.
+
+**Benches.** `sim/tb_fk33_seam.vhd` P6g, 17 checks counted in a variable
+(GO refused with the pair zero and with only K written, reset values,
+readback, pins follow, HI keeps bit 0, A_KV_MAXPOS reads the generic, BST
+undisturbed, pair survives CLR_ERR).  `sim/tb_llama_top.vhd` gained
+`KV_PORT_BASES`: the DUT's generics get DECOY regions and the real bases go
+in through the ports; `sim/tb_llama_top_kvport.vhd` is tb_llama_top_seq
+with it on (MEASURED PASS, 301 s, 0 of 4 landmarks moved).  Mutants:
+
+| mutant | row | result |
+|---|---|---|
+| A: seam write-decode arms for A_KV*_* removed | tb_fk33_seam | FAIL, P6g checks 8-13 and 17 by name (7 of 17), then the token refused at GO (141 more faults) |
+| B: llama_top's u_kv port map back to the compiled constants | tb_llama_top_kvport | see the report / WORKLOG for the measured line |
+| B, attribution control | tb_llama_top_seq (ports unused) | must PASS: the pre-existing row is blind to B |
+
+## Open, not yet answered (after the fix)
+
+- The bitstream with this in it has not been built.  Until it is, the
+  shipped `.bit` has the base compiled in and only the flat image is safe.
+- On silicon: `fk33ctl.py seam` must show caps 0x3D and the pair after
+  `run_prompt --open-only`; the striped image's token 0 must give argmax
+  846 and `fk33_load_weights.py verify` must be clean AFTER the token.
+- C_MAXPOS 65536 halves the context; POSW drops 18 -> 17.  Nothing else
+  in the card reads C_MAXPOS (the behavioural cache is not instantiated),
+  MEASURED by the kvport/seq rows only at the sim shape.
