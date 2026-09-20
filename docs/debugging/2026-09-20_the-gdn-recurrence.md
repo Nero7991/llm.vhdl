@@ -515,9 +515,30 @@ gate in one you do.
   `LANES=16` are refused for the two DIM=32 reasons above, which are unrelated
   to this lever, so the oracle has NOT been run against a 16-lane build. A 9B
   vector set was generated (`gdn_block_vec 16 32 128 1 2 mod`, 6.4 MB) and a
-  `tb_gdn_block_vec` run at `LANES=4` and `LANES=16` against it was started and
-  **had not finished when this was written** -- it is not evidence here and
-  nothing above depends on it.
+  `tb_gdn_block_vec` run at `LANES=4` and `LANES=16` against it was started,
+  did not finish, and **was stopped**. It is not evidence here and nothing
+  above depends on it.
+
+  **WHY IT WAS STOPPED, and this is the reusable part: `tb_gdn_block_vec` does
+  not scale to the 9B shape, and the bottleneck is its VECTOR READER, not the
+  simulation.** MEASURED from `/proc/PID/fdinfo` after **42m49s of CPU**: the
+  read position on `gdn_block_vec_9b.txt` was **3,325,952 of 6,365,119 bytes,
+  52%** -- after three quarters of an hour it had not finished PARSING the
+  file, let alone started comparing. `tb_gdn_block` runs the same DUT at the
+  same 9B shape in **3m45s**, so the cost is the VHDL `textio` integer parse of
+  ~500k values, not the 149,579-cycle run. Extrapolated, one lane count is
+  ~90 minutes and the pair ~3 hours, for a check whose equality half is already
+  settled bit for bit.
+
+  The measurement trap avoided: the log sat at 130 bytes the whole time and RSS
+  was flat at 3.07 GB, so the run was indistinguishable from wedged by every
+  signal except the file offset, which the kernel updates immediately. That is
+  this project's "count something the kernel updates, not the log" rule in a
+  new place.
+
+  **What it would take to get this evidence:** give the bench a binary or
+  fixed-width vector format, or have it read only the slice it checks. Both are
+  changes to a bench this track owns; neither was in scope today.
 
   What the 16-lane claim actually rests on is the **cross-lane dump identity at
   the real 9B shape**, which compares the same 532,481 values the oracle would
