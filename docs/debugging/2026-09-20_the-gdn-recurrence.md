@@ -409,6 +409,44 @@ because it costs nothing and it pins the published 131,072 to the build rather
 than to a comment, but **it must not be quoted as a check with teeth**, and
 this row exists so that nobody credits it with a kill later.
 
+### CORRECTION, 2026-09-20, later the same day: PH_ISSUE is worse than shadowed
+
+The table above says PH_ISSUE's mutants are "killed first by an older
+property", which is true of the two shadowed runs and is **not the whole
+result**. The two remaining runs finished after the rest of this document was
+written, and both were **terminated by their 900 s timeout (exit 143)**:
+
+| run | outcome |
+|---|---|
+| M1, the sweep one value head short | ran to the stop-time, TERMINATED |
+| M4 at `RECUR_LANES=2` with BOTH `gdn_recur_pipe:670` and `:794` suppressed | ran to the stop-time, TERMINATED |
+
+The second one is the one that matters. With **every shadowing property
+removed**, the mutant still does not reach PH_ISSUE -- it **deadlocks**,
+because a block that issues the wrong number of state groups never satisfies
+`P_DRAIN`'s `res_cnt = NCOL`, so `busy` never falls and the end-of-run report
+block never executes.
+
+**So PH_ISSUE was never shown to be REACHABLE, not merely never shown to be
+the first detector.** That is the trap this project names explicitly -- a
+mutant that cannot reach the check it was built for -- and the withdrawn claim
+is the "every mutant is caught first by an older property" framing, which
+implies PH_ISSUE would have caught them second. It would not have caught them
+at all.
+
+What this does NOT change: PH_ORDER's result stands exactly as measured, and
+no cycle number in this document depends on either check. `st_req` matching
+`VAL_HEADS*DIM*NB_R` in both 9B runs is a PRINTED value that was read, and its
+correctness does not rest on the assertion that also tests it.
+
+On this project's own standard -- *ask what it would take for this check to
+FAIL, and if you cannot answer, it is decoration* -- **PH_ISSUE is
+decoration.** It is left in the bench, defaulted on, with that written at the
+generic in `sim/tb_gdn_block.vhd` in those words, so that the next person finds
+the verdict rather than the check. Removing it and keeping only the printed
+`BRECUR_ISSUE` line would be equally defensible and is the recommended cleanup
+if anyone touches this bench again.
+
 ## Gate rows, verbatim
 
 Every row below is `REGRESS_SCRATCH=/mnt/storage/fk33_builds/scratch/brecur/...

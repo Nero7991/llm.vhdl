@@ -197,19 +197,34 @@ entity tb_gdn_block is
     EXP_Y_SAT    : boolean := false;
 
     -- ---- TRACK BRECUR 2026-09-20: the two phase checks ------------------
-    -- Both are about the SHAPE of the schedule rather than about a value, and
-    -- no value oracle can stand in for either: a sweep that issued the wrong
-    -- number of groups, or a conv that started overlapping the sweep, would
-    -- still be checked element by element by the dump comparison and would
-    -- still agree, because both would compute the same numbers.
-    --
-    --   PH_ISSUE  the sweep issues EXACTLY VAL_HEADS*DIM*(DIM/RECUR_LANES)
-    --             group requests.  This is the whole of the 131,072 at 9B,
-    --             and it is the quantity every cycle claim in
-    --             docs/debugging/2026-09-20_the-gdn-recurrence.md rests on.
     --   PH_ORDER  the conv phase ENDS before the sweep phase BEGINS, i.e.
     --             gdn_block.vhd's "WHY THE PHASES ARE STRICTLY SEQUENTIAL"
     --             is a property of the build and not only of its header.
+    --             THIS ONE HAS TEETH AND THEY WERE MEASURED.  A mutant that
+    --             also asserts cv_ren during P_COL is killed by it, and the
+    --             attribution control -- the SAME mutant at PH_ORDER=false --
+    --             PASSES every value check in this bench.  So it is the SOLE
+    --             detector of that defect, and no value oracle stands in for
+    --             it: the overlap changes no number.
+    --
+    --   PH_ISSUE  the sweep issues EXACTLY VAL_HEADS*DIM*(DIM/RECUR_LANES)
+    --             group requests -- the whole of the 131,072 at 9B.
+    --             *** THIS ONE HAS NEVER BEEN MADE TO FAIL.  DO NOT CREDIT
+    --             IT WITH A KILL. ***  MEASURED 2026-09-20, three attempts:
+    --             a mutant that unthreads NB_R from the generic is a NO-OP at
+    --             the shipping RECUR_LANES=4; at RECUR_LANES=2 it is killed
+    --             first by gdn_recur_pipe:670, and with that assertion
+    --             suppressed by gdn_recur_pipe:794, and with BOTH suppressed
+    --             it DEADLOCKS and runs to the stop-time.  That last result
+    --             is the structural one: PH_ISSUE is an END-OF-RUN check, so
+    --             any mutant that stops the run from completing is caught by
+    --             the deadlock and never reaches it.  It is kept because it
+    --             costs nothing and it pins the published 131,072 to the
+    --             build rather than to a comment, but on this project's own
+    --             standard -- "ask what it would take for this check to FAIL,
+    --             and if you cannot answer, it is decoration" -- it has not
+    --             earned the name of a check.
+    --             See docs/debugging/2026-09-20_the-gdn-recurrence.md.
     --
     -- NOT A CHECK, and saying so is the point: the five spans this bench
     -- prints sum to the total ALGEBRAICALLY (pre + conv + mid + recur + drain
