@@ -76,10 +76,47 @@
  * mismatch, writes TBL_LEN and the two HBM bases from the manifest, and this
  * program then prints pl_describe() and exits without a GO.
  *
+ * --dump-logits: THE TOKEN-0 LOGIT VECTOR, AS AN .r9bs STREAM
+ * ------------------------------------------------------------
+ * `--dump-logits <path>` writes the FIRST decided position -- the one prefill
+ * produces, the only position at which the card and a reference start from
+ * identical state -- as a `tools/ref9b/seam_stream.h` stream, so that every
+ * instrument already written against that format reads it without a new
+ * decoder: `r9bs.py` for the per-record statistics, `check_token.py` for the
+ * argmax verdict and its margin, `logit_compare.py` for the vector.
+ *
+ * The file carries, at tok 0, layer -1:
+ *   LOGITS      S32, n = n_vocab, exp = the card's LOGIT_EXP register.  The
+ *               RAW s32 the sampler saw, NOT a float: the convention is the
+ *               project's `value = mant * 2^-exp`, and seam_stream.h's own
+ *               header records why recording it as BFP16 or F32 destroys
+ *               exactly the bits an argmax comparison needs.
+ *   LOGIT_EXP   S32, n = 1, exp 0.  The exponent AGAIN, as its own record, so
+ *               a reader that never decodes a payload can still see it and so
+ *               a v2 card (below) can publish it with no vector.
+ *   TOKEN       S32, n = 1, exp 0.  The CARD'S OWN argmax, read from the
+ *               ARGMAX register.  That makes the row REPORTED rather than
+ *               DERIVED in check_token.py's sense: it is the sampler's answer,
+ *               not a re-scan of the row.
+ *
+ * WHAT A v2 CARD CANNOT GIVE, AND WHY THIS DOES NOT PRETEND OTHERWISE.
+ * MEASURED by reading the contract rather than the card: pl_backend.c:1243
+ * refuses a logits row on `version >= 2` outright, because rtl/fk33_seam.vhd's
+ * own header (:91-94) says the block "returns the sampler's ARGMAX and its
+ * shared exponent.  It does NOT return 248,320 s32 logits" -- there is no C2H
+ * path behind that window.  The bitstream that produced the first inference
+ * on 2026-09-20 is v2 (`card seam v2 @BAR+0xE000`, `c2h 0`, `argmax fast
+ * path`, in hw/fk33/results/card_swg_2026-09-20/dcdc_prompt_160.txt).
+ * So on that card this flag writes LOGIT_EXP and TOKEN and NO LOGITS record,
+ * and says so on stdout in one line.  A comparator then reports the vector
+ * sections as UNAVAILABLE rather than as agreement, which is the difference
+ * between a measurement that was not made and one that passed.
+ *
  * Usage:
  *   run_prompt --prompt <ids.txt> [--reference <ids.txt>] [--max-new N]
  *              [--qtk <tokenizer.qtk>] [--mv4i <t.mv4i> --manifest <m.json>]
- *              [--check-argmax] [--max-chunk N] [--stop ID] [--quiet]
+ *              [--check-argmax] [--dump-logits <path>]
+ *              [--max-chunk N] [--stop ID] [--quiet]
  *              [--v2 --dtbl <token.dtbl> --rel <token.rel>]
  *              [--teeth-argmax N]
  *              [--allow-hardware <TOKEN>] [--open-only] [--go-timeout-ms N]
@@ -95,6 +132,9 @@
 
 #include "../pl_backend.h"
 #include "../fk33_seam.h"
+/* The .r9bs writer.  Reused rather than reimplemented: tools/ref9b already
+ * owns this format, its reader, its version rule and its S32 kind. */
+#include "../../tools/ref9b/seam_stream.h"
 #include "../embed_mv4i.h"
 #include "../qwen35_tok.h"
 #include "../qwen35_chat.h"
@@ -159,6 +199,12 @@ static void usage(void)
       "                        (thinking off), tokenized with the .qtk; --stream\n"
       "                        prints each token's bytes as the card emits it\n"
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
+      "                  [--dump-logits <p.r9bs>]  token 0's LOGITS (S32 +\n"
+      "                        the shared exponent), LOGIT_EXP and the card's\n"
+      "                        own TOKEN, in the tools/ref9b stream format.\n"
+      "                        A v2 card publishes no logits row, so there the\n"
+      "                        file carries LOGIT_EXP and TOKEN only and says\n"
+      "                        so; compare with tools/ref9b/logit_compare.py\n"
       "                  [--mv4i <t.mv4i> --manifest <m.json>]\n"
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
       "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
@@ -175,6 +221,41 @@ static void usage(void)
       "                  [--resume]           start at the card's SEQ_POS\n"
       "                  [--seq-reset]        clear the SEAM's position first\n"
       "Simulated transport unless --allow-hardware is given by a human.\n");
+}
+
+/* ------------------------------------------------------- the token-0 dump
+ * `logits` may be NULL, which is the v2 card and is not an error: the file is
+ * then LOGIT_EXP + TOKEN and a reader sees the vector is ABSENT rather than
+ * equal to something.  Returns 0, or -1 with a message.
+ *
+ * The version declared is R9BS_VERSION_S32 unconditionally, because every
+ * record written here is S32 and seam_stream.h's rule is that a file carrying
+ * one must declare 2 so an older reader stops loudly. */
+static int dump_token0(const char *path, const int32_t *logits, int n_vocab,
+                       int32_t lexp, int argmax, int card_version)
+{
+    FILE *fp = fopen(path, "wb");
+    int32_t one;
+    if (!fp) { fprintf(stderr, "run_prompt: cannot write %s\n", path); return -1; }
+    if (r9bs_write_header_ver(fp, R9BS_VERSION_S32)) goto bad;
+    if (logits) {
+        if (r9bs_write_s32(fp, "LOGITS", 0, -1, logits, (uint32_t)n_vocab,
+                           (int)lexp)) goto bad;
+    }
+    one = lexp;
+    if (r9bs_write_s32(fp, "LOGIT_EXP", 0, -1, &one, 1, 0)) goto bad;
+    one = (int32_t)argmax;
+    if (r9bs_write_s32(fp, "TOKEN", 0, -1, &one, 1, 0)) goto bad;
+    if (fclose(fp)) { fprintf(stderr, "run_prompt: short write on %s\n", path); return -1; }
+    printf("dump       %s: %s, LOGIT_EXP %d, TOKEN %d (seam v%d)\n", path,
+           logits ? "LOGITS S32 vector present"
+                  : "NO LOGITS RECORD -- this card publishes no logits row",
+           (int)lexp, argmax, card_version);
+    return 0;
+bad:
+    fprintf(stderr, "run_prompt: write failed on %s\n", path);
+    fclose(fp);
+    return -1;
 }
 
 #include <time.h>
@@ -202,6 +283,7 @@ int main(int argc, char **argv)
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
     int n_dprog = 0, n_drel = 0, want_v2 = 0;
+    const char *dump_path = NULL;
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
     long sim_kv_maxpos = 0;
@@ -238,6 +320,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--max-chunk"))  { const char *s; NEXT(s); max_chunk = atoi(s); }
         else if (!strcmp(a, "--stop"))       { const char *s; NEXT(s); stop_id = atoi(s); stop_given = 1; }
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
+        else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
@@ -426,7 +509,20 @@ int main(int argc, char **argv)
         printf("NOTE the card's n_vocab %d and the tokenizer's %d disagree\n",
                n_vocab, qwen35_tok_n_vocab(tok));
     }
-    if (check_argmax) {
+    /* THE DUMP NEEDS THE ROW, AND ON A v2 CARD THERE IS NO ROW TO NEED.
+     * Decided here, BEFORE the GO, so the refusal names the contract version
+     * rather than arriving as pl_prefill returning -1 after a token of work.
+     * pl_backend.c:1243 is the authority; this only reads pl_version(). */
+    if (dump_path && pl_version(c) >= 2) {
+        printf("dump       NOTE seam v%d publishes no logits row (rtl/"
+               "fk33_seam.vhd:91-94: \"It does NOT return %d s32 logits\").\n"
+               "           The dump will carry LOGIT_EXP and TOKEN only, and"
+               " logit_compare.py will report every\n"
+               "           vector section as UNAVAILABLE.  A full vector needs"
+               " a bitstream with the logits DMA.\n",
+               pl_version(c), n_vocab);
+    }
+    if (check_argmax || (dump_path && pl_version(c) < 2)) {
         logits = (int32_t *)malloc((size_t)n_vocab * sizeof *logits);
         if (!logits) { status = 1; goto done; }
     }
@@ -464,6 +560,16 @@ int main(int argc, char **argv)
         }
         printf("prefill    %d ids, pos %d, first argmax %d, exp %d\n",
                rc, pl_seq_pos(c), argmax, (int)lexp);
+        /* TOKEN 0 IS THIS POSITION AND ONLY THIS POSITION.  Every later
+         * position depends on the card's own previous choice, so a reference
+         * and a card that disagree once are no longer running the same
+         * sequence and a vector comparison there measures two different
+         * inputs.  The dump is written here and nowhere else. */
+        if (dump_path
+            && dump_token0(dump_path, logits, n_vocab, lexp, argmax,
+                           pl_version(c)) != 0) {
+            status = 1; goto done;
+        }
         cap_got = max_new;
         got = (int *)malloc((size_t)cap_got * sizeof *got);
         if (!got) { status = 1; goto done; }

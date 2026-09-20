@@ -22,6 +22,19 @@
 #
 # IT NEVER TOUCHES rtl/.  The tree is copied to scratch and the COPY mutated.
 #
+# AND IT IS NOT THE TEETH FOR THE *CARD DUMP* COMPARISON.  Added 2026-09-20:
+# `logit_compare.py` compares a token-0 logit VECTOR produced on the card
+# (`run_prompt --dump-logits`) against the 9B reference, and its mutants act on
+# a FINISHED .r9bs FILE -- one LSB, an exponent off by one, a rotation, a
+# truncation, a TOKEN record moved off its own row, the LOGITS record absent
+# altogether.  No GHDL, no RTL copy, no capture, ~3 s.  They live in
+# `logit_compare.py --selftest` and are the gate row `sim:logitcmp`, for the
+# same reason L0/L1 live here rather than in mutate_capture.sh: a different
+# object, a different pipeline and a different set of failure modes wants its
+# own table.  L0 (one logit moved by +1) is the nearest row in this file and
+# is deliberately NOT shared with it -- this one prices the CAPTURE path, that
+# one prices the COMPARATOR.
+#
 # THE SURVIVORS ARE THE POINT.  L5 and L6 are expected to survive and are in
 # the table for that reason: each names a structural property of this shape
 # that no capture at this shape can exercise, and both are properties the

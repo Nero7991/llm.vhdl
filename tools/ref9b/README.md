@@ -38,6 +38,7 @@ next token on all five positions of the reference prompt.
 | `mutate_capture.sh` | teeth for the region seams |
 | `mutate_logits.sh` | teeth for the LOGITS seam and the argmax |
 | `check_token.py` | the automatic verdict on the DECIDED TOKEN across streams, with the margin that decision had |
+| `logit_compare.py` | the token-0 logit VECTOR, card against reference: ranks, top-k overlap, the best-fit scale, the residual distribution and a per-lm_head-window breakdown. `--selftest` is its own teeth and is the gate row `sim:logitcmp` |
 | `mutate_token.py` | teeth for `check_token.py`, applied to the stream bytes rather than to the RTL |
 | `lmhead_window_check.py` | the 15 lm_head windows as a SET: tiling, per-window relations, and the fields all 15 must agree on |
 | `golden_status.sh` | is a committed golden capture provably current, and if not, WHICH file in its closure moved |
@@ -95,6 +96,25 @@ cd tools/ref9b
 python3 check_token.py ../../ref.r9bs ../../anchor.r9bs        # rung 3 vs rung 1
 python3 check_token.py ../../ref.r9bs capture.r9bs --expect 2614
 ```
+
+## The card's own token 0, and the vector it cannot give you
+
+`server/tests/run_prompt.c --dump-logits <p.r9bs>` writes the card's first
+decided position in this format: `LOGITS` (S32 plus the shared exponent),
+`LOGIT_EXP` and `TOKEN` (the sampler's own argmax, so the row is REPORTED and
+not DERIVED). `tools/ref9b/logit_compare.py CARD.r9bs REF.r9bs` then compares
+the vectors and `check_token.py` the decision.
+
+**On the bitstream that is loaded today there is no vector to compare.** The
+v2 window seam publishes the argmax and the exponent and nothing else
+(`rtl/fk33_seam.vhd:91-94`), subsystem A has no HBM write-back for its output,
+and the region read-back window is compiled out (`HOST_WINDOW=false`). So
+`--dump-logits` there writes `LOGIT_EXP` and `TOKEN` only, and
+`logit_compare.py` prints `VECTOR UNAVAILABLE` and **exits 2, never 0** -- a
+run that read no vector must not be quotable as a run that found no
+difference. The operator procedure, including what IS measurable today, is
+`hw/fk33/host/logit_compare_on_card.sh`, which prints its commands and touches
+no hardware.
 
 A row is **REPORTED** when the file carries `TOKEN` (the producer's own argmax)
 and **DERIVED** when this script had to take the argmax itself. A DERIVED row is

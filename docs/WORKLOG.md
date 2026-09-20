@@ -11,6 +11,47 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK LOGITCMP: the logit-level comparison at token 0 CANNOT BE MADE on the shipping bitstream. The whole comparison path is built, teeth-tested and green; the card has no vector to give it.
+
+- **The blocker, three independent reasons, any one sufficient.** (1) The v2
+  window seam publishes ARGMAX and LOGIT_EXP and nothing else
+  (`rtl/fk33_seam.vhd:91-94`; `pl_backend.c:1243` refuses the request).
+  (2) Subsystem A has no HBM write-back for its output -- `y_addr` is a 16-bit
+  local bus, and `gen_wb` is the WEIGHT-fetch generate. (3) The region
+  read-back window is compiled out: `gen_fk33_card.py` passes
+  `HOST_WINDOW=false`, so `hr_data` reads zero. Evidence in the transcript
+  itself: `c2h 0` over 182 GOs.
+  Write-up: `docs/debugging/2026-09-20_the-card-cannot-publish-a-logit-vector.md`.
+- **Built anyway, because both halves already existed and only met at a card
+  that does not.** `run_prompt --dump-logits <p.r9bs>` writes token 0 as
+  `LOGITS` (S32 + shared exponent), `LOGIT_EXP` and `TOKEN` in the EXISTING
+  `tools/ref9b` stream format -- `seam_stream.h`'s C writer reused, not
+  reimplemented -- so `r9bs.py` and `check_token.py` read it unchanged.
+  `tools/ref9b/logit_compare.py` adds what neither owns: ranks, top-k overlap,
+  the best-fit scale, the residual distribution and a **per lm_head window**
+  breakdown over the 15 shards. MEASURED against the simulated v1 card at the
+  real 9B shape: 0.18 s, 60 MB.
+- **On a v2 card it reports UNAVAILABLE and exits 2, never 0.** That took three
+  attempts to get right and is the part most likely to have been wrong
+  silently.
+- **New gate row `sim:logitcmp`**, self-contained (no GGUF, no manifest, no
+  capture, no card): 9 mutations of a synthetic 248,320-element dump scored PER
+  FIELD, with `check_token.py` as the attribution control on every row.
+  MEASURED 3.0 s, 75 MB, `OVERALL PASS 1`. Two mutants deliberately DO NOT
+  bite: `common` (an error both inputs share -- the resolution floor) and
+  `tokenbias` (check_token's kill by construction). Teeth on the teeth: two
+  mutants of the comparator itself fail exactly one row each.
+- **The operator procedure is `hw/fk33/host/logit_compare_on_card.sh`**, which
+  prints its commands and refuses to touch hardware (exit 3 if
+  `FK33_ALLOW_HARDWARE` is in the environment). `--check` verifies every
+  precondition that does not need the card. **Use the one-id prompt 248045**,
+  not the DC-DC prompt: the existing reference capture is that id (its own log,
+  `argmax=846 logit=12.782196`, matching the record's `max=+12.7822`).
+- **NEXT, for whoever picks this up.** Either (a) record `SMP_N`, `LOGIT_EXP`
+  and the argmax at token 0 on the one-id prompt, which runs today and is
+  unmeasured, or (b) decide whether a logits-DMA bitstream is worth a build.
+  The host half is already written and tested.
+
 ### 2026-09-20 TRACK ACLK (verification pass): the A clock-domain split is VERIFIED to the limit of what runs without synthesis. Byte-identity OFF holds; `--bd-only` with the switch ON PASSES on the BC-250 WITH an OFF control beside it; `sim:runguard` goes RED if the switch is exported without `FK33_CARD=1`.
 
 - The first attempt committed `99e5d99` / `886ebc0` / `11a4d6a` and was
