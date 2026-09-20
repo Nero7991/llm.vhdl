@@ -11,6 +11,45 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK SMPWIN: there is NO seam sample window; the chain that IS reachable is CONSTANT on the only reference we have
+
+- **The question was "can the shipping bitstream publish enough of the
+  token-0 logit vector through the seam sample window". NO, and the premise
+  was wrong.** 0x58/0x5C/0x60 are `WIN_SEL`/`WIN_ADDR`/`WIN_DATA`, the four
+  indirect windows (`fk33_seam.vhd:378-380`, `:513-517`). `W_XOUT` reads zero
+  (`HOST_WINDOW=false` -> `region_mem.vhd:414`) and the logits never enter a
+  region: every `FLG_TO_SMP` job has `dst = R_NONE`
+  (`seq_desc_fetch.vhd:502`), and 17,376 rows do not fit `REGMAX = 4096`.
+  The sampler's whole surface is ARGMAX 0x44, LOGIT_EXP 0x48, SMP_N 0x64.
+  `CAPS_FLAGS = 0x3D`: bit 2 SAMPLER set, **bit 3 LOGITS clear**.
+- **Closes LOGITCMP's open item** (prefix argmax under `--upto`): it works as
+  derived, and MEASURED it is worth much less than it looked. On `tok0.r9bs`
+  the winner 846 is in window 1 and beats every later window's maximum by
+  5.17 to 10.21 logits = **16 to 33 INT4 error scales**, so the reference
+  chain is the constant 846. 15 GOs = 5.93 s of card time (DERIVED from
+  `profile_striped_tok0.txt`, 0.4015 s per token at 75 MHz) to confirm what
+  the shipping argmax already reports. **It is a LOCALISER for a disagreement
+  that already exists, not a routine check**; `next` bisects in 4 GOs.
+- **The finding that changes how SMP_N is read:** the published argmax is
+  `sampler_stream`'s own FOLD COUNT (`:51-62`), not `llama_top`'s `smp_idx`,
+  which is wired to nothing. A lost beat shifts every later index, so
+  `SMP_N == expected` is the condition under which the index means anything.
+- **Landed** `84455bf`: `tools/ref9b/smpwin_sweep.py` (9 guards, `--selftest`
+  14 mutants 0 fail with an attribution control per firing guard and two
+  non-biting rows), `logit_compare.py` PARTIAL-vector support via a
+  `LOGITS_ROWS` record (`--partial-selftest` 5 rows 0 fail; the existing
+  nine-row table unchanged), `hw/fk33/host/smpwin_sweep_on_card.sh` (refuses
+  on `FK33_ALLOW_HARDWARE`, exit 3). Write-up appended to
+  `docs/debugging/2026-09-20_the-card-cannot-publish-a-logit-vector.md`.
+- **No hardware touched. No Vivado run. Peak RSS of anything this track ran:
+  75.6 MB.**
+- **Next, and it is the operator's call:** run the sweep ONLY if a card
+  full-token argmax disagrees with the reference. Otherwise the open items
+  worth one GO each are `SMP_N` (must read 248,320), `LOGIT_EXP` and
+  `FAULTS` at token 0, none of which has ever been recorded against a
+  prediction. A costed logits path (A's output to HBM, one extra master on a
+  build that is LUT-bound at 109%) is in section S10 of the write-up.
+
 ### 2026-09-20 TRACK BENABLE: B's mover levers are ON in llama_top (`PIPE`, `WIDE`, `MAXOUT => 8`); values bit-identical, DERIVED 8.28 M cycles per token off the card
 
 - **The change is three lines** in `rtl/llama_top.vhd`'s `u_state` generic
