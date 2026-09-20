@@ -146,6 +146,21 @@ entity {ent} is
     -- the previously committed extraction synthesised, so the -4.008 ns
     -- measurement stays comparable.
     B_STATE_AXI : boolean  := false;
+    -- SEAM REPAIR 2026-09-20, AND IT IS THE SAME DEFECT AS THE ONE ABOVE.
+    -- The B_CONST_HBM work of 2026-09-18 added a generic to `llama_top` and
+    -- used it at six places INSIDE `gb_real`.  The body below is copied
+    -- verbatim, so it picked those six references up; this generic clause is
+    -- a hardcoded template, so the DECLARATION did not follow, and the
+    -- extraction referenced an undeclared name.  `read_vhdl` accepts that
+    -- silently and `synth_design` dies much later (MEASURED by TRACK
+    -- LEVERCOST, which lost a run to it).  Default FALSE matches
+    -- `llama_top`'s own default and keeps the extraction comparable with the
+    -- previously committed measurements.
+    --
+    -- THIS IS NOW TWICE.  A generic added to `llama_top` and used inside
+    -- `gb_real` is invisible to `--check`, which compares the body text only
+    -- and never elaborates.  See the gdnstale note in sim/regress.sh.
+    B_CONST_HBM : boolean  := false;
     B_CONV_LANES  : positive := 4;
     B_RECUR_LANES : positive := 4;
     B_RECUR_SLOTS : positive := 16;
@@ -464,7 +479,92 @@ def emit(src, ent, state_store):
     text = (PROLOGUE.format(ent=ent, src=src_disp,
                             ssports=SSPORTS if state_store else "")
             + body + EPILOGUE.format(ent=ent))
+
+    # THE GENERIC-CLOSURE GATE.  Placed in `emit` on purpose: it is the one
+    # choke point BOTH the write path and `--check` go through, so the
+    # existing `sim:gdnstale` row gains these teeth without regress.sh being
+    # touched at all.  Refusing to WRITE a file that cannot compile is worth
+    # more than reporting it afterwards.
+    missing = undeclared_generics(src, text)
+    if missing:
+        sys.exit(
+            "ooc_gdnadapt_extract: GENERIC NOT CARRIED ACROSS THE SEAM: %s\n"
+            "  `llama_top` declares %s as a generic and the extracted\n"
+            "  `gb_real` body uses it, but this script's generic clause is a\n"
+            "  hardcoded template and does not declare it.  The emitted file\n"
+            "  would not compile: `read_vhdl` accepts an undeclared name\n"
+            "  silently and `synth_design` dies much later.\n"
+            "  FIX THE TEMPLATE, not the output: add the generic to PROLOGUE\n"
+            "  with the SAME DEFAULT `llama_top` gives it, so previously\n"
+            "  committed measurements stay comparable, then regenerate.\n"
+            "  See undeclared_generics() for the two times this has happened."
+            % (", ".join(missing), missing[0]))
     return text, i, end
+
+
+def undeclared_generics(src, text):
+    """Names that `llama_top` declares as GENERICS, that the extracted body
+    USES, and that the generated file never declares.  Such a name is a hard
+    compile error and NOTHING ELSE IN THIS TREE CATCHES IT.
+
+    WHY THIS EXISTS, and it is the same defect twice.  The body below is
+    copied verbatim from `llama_top`, but this script's generic clause is a
+    HARDCODED TEMPLATE.  So a commit that adds a generic to `llama_top` and
+    uses it inside `gb_real` lands the USES here and leaves the DECLARATION
+    behind, and the file stops compiling:
+
+      2026-09-05  B_STATE_AXI   `5f1db1a` put gen_st_flat/gen_st_tier inside
+                                `gb_real`; patched into the template by hand.
+      2026-09-18  B_CONST_HBM   the HBM-constants work; six use sites, no
+                                declaration.  Found 2026-09-20 by TRACK
+                                LEVERCOST, which lost a synth run to it.
+
+    WHY `--check` COULD NOT SEE EITHER.  It regenerates and DIFFS TEXT.  The
+    committed file and the regenerated one were byte-identical both times,
+    because the generator reproduced the same broken output it had written
+    before.  A text comparison cannot tell a correct file from a consistently
+    wrong one -- it is a round trip, not an oracle -- so the row passed green
+    over a file that does not compile.  MEASURED 2026-09-20: `--check` said
+    `GDNADAPT_CHECK ok` on the very file whose `ghdl -a` prints five
+    `no declaration for "b_const_hbm"` errors.
+
+    WHY NOT A COMPILE STEP IN THE GATE INSTEAD.  That was the obvious fix and
+    it does not currently work: `ooc_gdnadapt_top` instantiates `gdn_block`
+    and `gdn_state_store`, and NEITHER analyses under this box's GHDL 1.0
+    (MEASURED, rc=1 each, with their own dependency closure failing), so the
+    row could not be made green today.  This check needs no compiler, costs
+    nothing, and catches exactly the class that has actually bitten.  It does
+    NOT replace a compile step: it sees undeclared GENERICS only, and is
+    blind to every other way the extraction could fail to analyse.
+    """
+    gsrc = open(src).read()
+    m = re.search(r"\bentity\s+llama_top\s+is\b(.*?)\bport\s*\(", gsrc,
+                  re.S | re.I)
+    if not m:
+        # Not fatal: a renamed entity is the extractor's own anchor problem
+        # and `emit` already refuses on it.  Staying quiet here avoids a
+        # second, more confusing message about the same cause.
+        return []
+    gen_names = set(re.findall(r"^\s*([A-Za-z]\w*)\s*:\s*(?!in\b|out\b|inout\b)",
+                               m.group(1), re.M))
+
+    # Every identifier the GENERATED file declares, in any declarative form
+    # (generic, port, signal, constant, variable, alias).  Deliberately broad:
+    # a name declared ANYWHERE in the output is not missing, and over-matching
+    # here can only silence the check, never make it cry wolf.
+    decl = set()
+    for mm in re.finditer(r"^\s*(?:constant|signal|variable|shared\s+variable|"
+                          r"alias|file)?\s*([A-Za-z]\w*(?:\s*,\s*[A-Za-z]\w*)*)"
+                          r"\s*:", text, re.M):
+        for nm in mm.group(1).split(","):
+            decl.add(nm.strip())
+
+    body = re.sub(r"--[^\n]*", "", text)       # uses in COMMENTS do not count
+    missing = []
+    for g in sorted(gen_names - decl):
+        if re.search(r"\b%s\b" % re.escape(g), body):
+            missing.append(g)
+    return missing
 
 
 def check_one(src, out, ent, state_store):

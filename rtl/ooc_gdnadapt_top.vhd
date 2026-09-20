@@ -56,6 +56,21 @@ entity ooc_gdnadapt is
     -- the previously committed extraction synthesised, so the -4.008 ns
     -- measurement stays comparable.
     B_STATE_AXI : boolean  := false;
+    -- SEAM REPAIR 2026-09-20, AND IT IS THE SAME DEFECT AS THE ONE ABOVE.
+    -- The B_CONST_HBM work of 2026-09-18 added a generic to `llama_top` and
+    -- used it at six places INSIDE `gb_real`.  The body below is copied
+    -- verbatim, so it picked those six references up; this generic clause is
+    -- a hardcoded template, so the DECLARATION did not follow, and the
+    -- extraction referenced an undeclared name.  `read_vhdl` accepts that
+    -- silently and `synth_design` dies much later (MEASURED by TRACK
+    -- LEVERCOST, which lost a run to it).  Default FALSE matches
+    -- `llama_top`'s own default and keeps the extraction comparable with the
+    -- previously committed measurements.
+    --
+    -- THIS IS NOW TWICE.  A generic added to `llama_top` and used inside
+    -- `gb_real` is invisible to `--check`, which compares the body text only
+    -- and never elaborates.  See the gdnstale note in sim/regress.sh.
+    B_CONST_HBM : boolean  := false;
     B_CONV_LANES  : positive := 4;
     B_RECUR_LANES : positive := 4;
     B_RECUR_SLOTS : positive := 16;
