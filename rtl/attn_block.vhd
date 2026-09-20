@@ -250,7 +250,13 @@ entity attn_block is
     NORM_LANES : positive := 1;
     -- TRUE here, false in the leaves.  At the top level every producer is
     -- known, so a refused beat is a lost beat and not a stall.
-    STRICT_PRODUCER : boolean := true
+    STRICT_PRODUCER : boolean := true;
+    -- ==================================================================
+    -- SWEEP_PIPE -- the per-POSITION cost of the sweep loop.  OFF by
+    -- default, so every existing instantiation keeps the schedule it has
+    -- bit for bit.  See the note at P_RECK.
+    -- ==================================================================
+    SWEEP_PIPE : boolean := false
   );
   port(
     clk : in std_logic;
@@ -641,6 +647,43 @@ architecture rtl of attn_block is
   signal rbi   : integer range 0 to NBLK := 0;
   signal pos_i : unsigned(POS_W-1 downto 0) := (others => '0');
   signal is_byp: std_logic := '0';
+
+  -- ====================================================================
+  -- SWEEP_PIPE.  See the note at P_RECK.  Every signal below is inert
+  -- when the generic is false: `cap_v` falls back to `ph` and nothing
+  -- else is ever written, so the shipping schedule is unchanged bit for
+  -- bit and synthesis optimises the rest away.
+  -- ====================================================================
+  -- WHICH REGISTER A CAPTURED BEAT BELONGS TO, CARRIED WITH THE ISSUE
+  -- RATHER THAN READ FROM `ph` TWO CYCLES LATER.  In the shipping
+  -- schedule the two are the same fact, because a V beat is only ever
+  -- issued in P_RECV and P_RECV cannot be left until every beat of the
+  -- record has been captured.  Under SWEEP_PIPE they are NOT: a V record
+  -- is fetched while `ph` is in the score phase, so `ph` names the wrong
+  -- register for it.
+  signal rbs   : std_logic_vector(1 to 2) := (others => '0');
+  signal cap_v : std_logic;
+  signal cidx_k, cidx_v : integer range 0 to NBLK;
+
+  -- The K stream, which under SWEEP_PIPE runs ONE POSITION AHEAD of the
+  -- sweep, and the V stream, which runs ahead WITHIN the position.
+  signal pk_en  : std_logic := '0';   -- beats still to issue
+  signal pk_blk : integer range 0 to NBLK := 0;
+  signal pk_cnt : integer range 0 to NBLK := 0;   -- beats captured
+  signal pk_got : std_logic := '0';   -- krec holds this position's record
+  -- A REQUEST IS OUTSTANDING.  `pk_en` falls on the LAST ISSUE and the last
+  -- capture lands two cycles later, so `pk_en = '0'` on its own is true for
+  -- a window in which the record is already on its way.  MEASURED on the
+  -- first SWEEP_PIPE run of sim/tb_attn_block: without this, P_RECK re-armed
+  -- the SAME fetch inside that window, and the re-arm was still running when
+  -- P_RECK consumed the original and armed V -- which is the one state the
+  -- shared `rbv`/`rbs` pipe cannot represent.  The assert below caught it.
+  signal pk_pend: std_logic := '0';
+  signal pk_act : std_logic := '0';   -- the held K request LEADS pos_i
+  signal pv_en  : std_logic := '0';
+  signal pv_blk : integer range 0 to NBLK := 0;
+  signal pv_cnt : integer range 0 to NBLK := 0;
+  signal pv_got : std_logic := '0';
   signal wr_isv: std_logic := '0';
   signal gi    : integer range 0 to HEAD_DIM := 0;
 
@@ -796,10 +839,28 @@ begin
   -- refuses `pos >= cur_pos` by leaving `kr_rdy` low and raises `err` only
   -- for an ENABLED read, and P_RECK never enables one while `is_byp` is set.
   -- C spec 2.4's bypass therefore stays a property of the addresses.
+  --
+  -- UNDER SWEEP_PIPE THE K REQUEST LEADS `pos_i` BY ONE POSITION while
+  -- `pk_act` stands, and `pk_act` is cleared on the SAME EDGE at which
+  -- P_POSN advances `pos_i`.  The published number therefore does not
+  -- move across that edge, which is what the RESIDENCY contract needs:
+  -- `kr_rdy` is combinational in the request at the other end, so a
+  -- request that changed on the advance would withdraw a residency
+  -- answer the sweep is about to act on.
   kr_head <= to_unsigned(kvh, AW_H);
-  kr_pos  <= pos_i;
+  kr_pos  <= (pos_i + 1) when (SWEEP_PIPE and pk_act = '1') else pos_i;
   vr_head <= to_unsigned(kvh, AW_H);
   vr_pos  <= pos_i;
+
+  -- The capture destination and the two capture indices.  With SWEEP_PIPE
+  -- false these are EXACTLY the expressions the capture used inline
+  -- before the generic existed (`ph /= P_RECV` and `rbi`), so the old
+  -- path is unchanged rather than merely equivalent.
+  cap_v  <= rbs(2) when SWEEP_PIPE else
+            '1'    when ph = P_RECV else
+            '0';
+  cidx_k <= pk_cnt when SWEEP_PIPE else rbi;
+  cidx_v <= pv_cnt when SWEEP_PIPE else rbi;
 
   y_valid     <= em_mv;
   y_mant      <= signed(em_md);
@@ -1080,7 +1141,7 @@ begin
           if ph = P_RECK and is_byp = '1' then
             krec((j+1)*CM_W-1 downto j*CM_W)
               <= kbyp((j+1)*CM_W-1 downto j*CM_W);
-          elsif rbv(2) = '1' and ph /= P_RECV and rbi = j/KV_BLOCK then
+          elsif rbv(2) = '1' and cap_v = '0' and cidx_k = j/KV_BLOCK then
             krec((j+1)*CM_W-1 downto j*CM_W)
               <= kr_mant((j mod KV_BLOCK + 1)*CM_W-1 downto (j mod KV_BLOCK)*CM_W);
           elsif kq_mv = '1' and kq_isv = '0'
@@ -1099,7 +1160,7 @@ begin
           if ph = P_RECV and is_byp = '1' then
             vrec((j+1)*CM_W-1 downto j*CM_W)
               <= vbyp((j+1)*CM_W-1 downto j*CM_W);
-          elsif rbv(2) = '1' and ph = P_RECV and rbi = j/KV_BLOCK then
+          elsif rbv(2) = '1' and cap_v = '1' and cidx_v = j/KV_BLOCK then
             vrec((j+1)*CM_W-1 downto j*CM_W)
               <= vr_mant((j mod KV_BLOCK + 1)*CM_W-1 downto (j mod KV_BLOCK)*CM_W);
           elsif kq_mv = '1' and kq_isv = '1'
@@ -1136,6 +1197,10 @@ begin
         rmax_r <= (others => '0');
         kvh <= 0; qh <= 0; li <= 0; lw <= 0; blk <= 0; rbi <= 0;
         lv <= (others => '0'); rbv <= (others => '0');
+        rbs <= (others => '0');
+        pk_en <= '0'; pk_blk <= 0; pk_cnt <= 0; pk_got <= '0'; pk_act <= '0';
+        pk_pend <= '0';
+        pv_en <= '0'; pv_blk <= 0; pv_cnt <= 0; pv_got <= '0';
         gi <= 0; ypre_wi <= 0; opb <= 0;
         ep_have <= (others => '0'); rs_have <= (others => '0');
         rn_dn <= '0'; rp_dn <= '0'; kq_dn <= '0'; gt_dn <= '0';
@@ -1240,16 +1305,75 @@ begin
         -- so no capture ever lands after the state has moved on.
         rbv(1) <= '0';
         rbv(2) <= rbv(1);
+        rbs(1) <= '0';
+        rbs(2) <= rbs(1);
         if rbv(2) = '1' then
           -- the per-block krec/vrec write has moved to the gkrec / gvrec
           -- generates above, under this exact condition; only the header and
           -- the pointer remain here.
-          if ph = P_RECV then
+          if cap_v = '1' then
             vhdr <= vr_hdr;
+            if SWEEP_PIPE then
+              pv_cnt <= pv_cnt + 1;
+              if pv_cnt = NBLK-1 then pv_got <= '1'; end if;
+            end if;
           else
             khdr <= kr_hdr;
+            if SWEEP_PIPE then
+              pk_cnt <= pk_cnt + 1;
+              if pk_cnt = NBLK-1 then pk_got <= '1'; end if;
+            end if;
           end if;
-          rbi <= rbi + 1;
+          -- `rbi` is the OLD path's capture counter and is reset by the
+          -- states that own it (P_EPW and P_POSN).  Under SWEEP_PIPE two
+          -- records can be captured between those resets, so incrementing
+          -- it here runs it past its `0 to NBLK` range -- MEASURED as
+          -- `bound check failure at rtl/attn_block.vhd:1318` on the first
+          -- SWEEP_PIPE run of sim/tb_attn_block.  It is dead in that mode,
+          -- so it is simply not counted.
+          if not SWEEP_PIPE then
+            rbi <= rbi + 1;
+          end if;
+        end if;
+
+        -- ================================================================
+        -- SWEEP_PIPE: THE RECORD FETCH ENGINE.
+        --
+        -- It issues beats for whichever stream is armed, one per cycle
+        -- while that stream's `_rdy` stands, and it runs regardless of
+        -- `ph`.  That is the whole of the change: the beats themselves
+        -- are identical, the ORDER of the beats within a record is
+        -- identical, and only WHEN they are issued moves.
+        --
+        -- THE TWO STREAMS NEVER ISSUE IN THE SAME CYCLE, and the assert
+        -- below is what makes that a checked property rather than a
+        -- reading of the schedule.  `rbv` / `rbs` are ONE two-deep pipe,
+        -- so a simultaneous issue would silently give one stream's beat
+        -- to the other register -- exactly the failure mode that the
+        -- `ph`-based destination had.
+        -- ================================================================
+        if SWEEP_PIPE then
+          assert not (pk_en = '1' and kr_rdy = '1'
+                      and pv_en = '1' and vr_rdy = '1')
+            report "attn_block: SWEEP_PIPE issued a K beat and a V beat in "
+                 & "the same cycle; rbv/rbs is one pipe and one of the two "
+                 & "beats would land in the wrong record"
+            severity failure;
+          if pk_en = '1' and kr_rdy = '1' then
+            kr_en  <= '1';
+            kr_blk <= to_unsigned(pk_blk, AW_B);
+            rbv(1) <= '1';
+            rbs(1) <= '0';
+            if pk_blk = NBLK-1 then pk_en <= '0';
+            else pk_blk <= pk_blk + 1; end if;
+          elsif pv_en = '1' and vr_rdy = '1' then
+            vr_en  <= '1';
+            vr_blk <= to_unsigned(pv_blk, AW_B);
+            rbv(1) <= '1';
+            rbs(1) <= '1';
+            if pv_blk = NBLK-1 then pv_en <= '0';
+            else pv_blk <= pv_blk + 1; end if;
+          end if;
         end if;
 
         -- SEAM 5: e_p has no ready.  Latch it, and notice a lost one.
@@ -1522,6 +1646,12 @@ begin
             ep_have <= (others => '0');
             rs_have <= (others => '0');
             rbi <= 0; blk <= 0;
+            -- A new head's sweep starts at the bypass position, so nothing
+            -- is in flight and nothing is held: clear the whole prefetch
+            -- state rather than relying on the previous head having left
+            -- it clean.
+            pk_en <= '0'; pk_got <= '0'; pk_act <= '0'; pk_pend <= '0';
+            pv_en <= '0'; pv_got <= '0';
             ph <= P_RECK;
 
           -- THE SEAM.  `kr_rdy` is the whole of the change on the read side:
@@ -1531,11 +1661,63 @@ begin
           -- request itself is driven concurrently from `kvh` / `pos_i` below,
           -- which is what makes it stand a state earlier than this one and
           -- keeps standing until P_POSN moves `pos_i`.
+          -- ================================================================
+          -- SWEEP_PIPE, AND THE MEASUREMENT THAT MOTIVATES IT.
+          --
+          -- MEASURED 2026-09-20, sim/tb_csweep_rate.vhd at the real 9B
+          -- geometry with RD_LAT 100: one position of one KV head costs
+          -- 87.42 cycles, of which
+          --
+          --     7.00  the 8 K beats            (KSPAN)
+          --    56.42  P_HDR + P_SCORE + the score drain and the softmax
+          --     7.00  the 8 V beats            (VSPAN)
+          --    17.00  P_PV, P_POSN and the two record tails
+          --
+          -- and `kr_rdy` / `vr_rdy` are low for ZERO cycles inside a
+          -- record at every position.  Replacing `attn_kv_axi` with a
+          -- memory that cannot refuse reproduces all four numbers to the
+          -- integer, so the cache contributes nothing to the slope: the
+          -- per-position cost is THIS state machine, and the 16 beats of
+          -- actual data movement are 16 percent of it.
+          --
+          -- What SWEEP_PIPE changes, and it is only WHEN a beat is
+          -- issued:
+          --
+          --   * the V record of THIS position is fetched while the score
+          --     and the softmax drain, instead of after them.  `vrec` is
+          --     not read until P_PV, so the record may arrive any time
+          --     before it.
+          --   * the K record of the NEXT position is fetched during P_PV
+          --     and P_POSN.  `krec` is read only by P_SCORE, which for
+          --     this position is already over, and the quantizer -- the
+          --     only other writer of `krec` -- runs in P_KQW / P_VQW,
+          --     which are earlier in the job and cannot be concurrent
+          --     with the sweep.  So no double buffer is needed and none
+          --     is added.
+          --
+          -- NOT changed: the beats, their order within a record, the
+          -- capture, the arithmetic, or any handshake.  A beat is still
+          -- issued only while that stream's `_rdy` stands.
+          -- ================================================================
           when P_RECK =>
             if is_byp = '1' then
               -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
               ph <= P_HDR;
+            elsif SWEEP_PIPE then
+              -- The record is either already here (P_PV of the previous
+              -- position fetched it) or this is the first position of the
+              -- head's sweep, in which case nothing has been armed and
+              -- this state arms it for `pos_i` itself.
+              if pk_got = '1' then
+                pk_got <= '0'; pk_pend <= '0';
+                -- arm the V record of THIS position, to be fetched while
+                -- the score and the softmax drain
+                pv_en  <= '1'; pv_blk <= 0; pv_cnt <= 0; pv_got <= '0';
+                ph <= P_HDR;
+              elsif pk_pend = '0' then
+                pk_en <= '1'; pk_blk <= 0; pk_cnt <= 0; pk_pend <= '1';
+              end if;
             elsif blk < NBLK then
               if kr_rdy = '1' then
                 kr_en   <= '1';
@@ -1633,6 +1815,25 @@ begin
               vhdr <= vbh;
               blk <= 0;
               ph <= P_PV;
+            elsif SWEEP_PIPE then
+              -- The V record was fetched during the score drain.  Arm the
+              -- NEXT position's K record here rather than in P_PV so that
+              -- it overlaps P_PV's eight write-backs as well as P_POSN's
+              -- drain; `krec` is free from this instant because P_SCORE is
+              -- over.  `last_p` is already decided for this position, and
+              -- when it is clear P_POSN's own rule guarantees
+              -- `pos_i + 2 < cur_pos`, so the prefetched position is inside
+              -- the readable range and the cache's `pos >= cur_pos` refusal
+              -- is never reached by it.
+              if pv_got = '1' then
+                pv_got <= '0';
+                if last_p = '0' then
+                  pk_act <= '1'; pk_pend <= '1';
+                  pk_en  <= '1'; pk_blk <= 0; pk_cnt <= 0; pk_got <= '0';
+                end if;
+                blk <= 0;
+                ph <= P_PV;
+              end if;
             elsif blk < NBLK then
               if vr_rdy = '1' then
                 vr_en   <= '1';
@@ -1672,6 +1873,10 @@ begin
                 pos_i <= pos_i + 1;
                 if (pos_i + 2) = cpos_r then last_p <= '1';
                 else last_p <= '0'; end if;
+                -- The K request stops leading on the SAME EDGE at which
+                -- `pos_i` catches up with it, so the published number does
+                -- not move; see the note at `kr_pos`.
+                pk_act <= '0';
               end if;
               blk <= 0; rbi <= 0;
               ph <= P_RECK;

@@ -210,6 +210,12 @@ entity tb_attn_kv_seam is
     -- dead and nothing would say so.
     MUT_WN_SWAP     : boolean := false;
     WDOG     : positive := 20000;-- cycles of dead air that count as a hang
+    -- PASSED STRAIGHT THROUGH to attn_block; see the note in
+    -- sim/tb_attn_block.vhd.  Here the oracle is the MULTI-TOKEN
+    -- ref/attn_block_seq_vec.c and Q2 also checks the record image in
+    -- memory, so a reordered fetch that produced the right y from the
+    -- wrong record would still be caught.
+    SWEEP_PIPE : boolean := false;
     HEARTBEAT_US : integer := 0
   );
 end entity;
@@ -504,6 +510,7 @@ begin
                   KV_BLOCK => KV_BLOCK, N_ROT => N_ROT, LAYERS => LAYERS,
                   POS_W => POS_W, MANT_W => MANT_W, CM_W => CM_W,
                   EXP_W => EXP_W, NORM_LANES => 1,
+                  SWEEP_PIPE => SWEEP_PIPE,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => lay_blk,

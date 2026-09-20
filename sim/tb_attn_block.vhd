@@ -169,6 +169,12 @@ entity tb_attn_block is
     JOB_POS  : natural  := 3;
     JOB_LEN  : positive := 4;
     NRUNS    : positive := 3;
+    -- PASSED STRAIGHT THROUGH to attn_block.  The block's SWEEP_PIPE moves
+    -- WHEN a KV record beat is issued and nothing else, so this bench -- a
+    -- VALUE oracle against ref/attn_block_vec.c -- must give the identical
+    -- answer with it true and with it false.  That is the check, and it is
+    -- the reason the generic is reachable from here at all.
+    SWEEP_PIPE : boolean := false;
     HEARTBEAT_US : integer := 0
   );
 end entity;
@@ -466,6 +472,7 @@ begin
                   KV_BLOCK => KV_BLOCK, N_ROT => N_ROT, LAYERS => LAYERS,
                   POS_W => POS_W, MANT_W => MANT_W, CM_W => CM_W,
                   EXP_W => EXP_W, NORM_LANES => 1,
+                  SWEEP_PIPE => SWEEP_PIPE,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => 0,
