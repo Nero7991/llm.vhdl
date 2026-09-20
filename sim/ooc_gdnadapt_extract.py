@@ -240,6 +240,17 @@ entity {ent} is
     -- llama_top:788-816 and :917-926 verbatim.  None is read inside the
     -- block, so plain `out` is legal and no buffer/local pair is needed.
     bst_state_base : in  std_logic_vector(32 downto 0);
+    -- SEAM REPAIR 2026-09-20 (TRACK GDNSYNTH), AND IT IS THE THIRD INSTANCE
+    -- OF ONE DEFECT, ONE CLASS OVER.  The same B_CONST_HBM commit of
+    -- 2026-09-18 that added a GENERIC also added this PORT to `llama_top`
+    -- (`llama_top:972`) and used it inside `gb_real` at the `gdn_state_store`
+    -- port map.  IPSYNC repaired the generic and added a closure check for
+    -- generics; this name is a PORT, the check's regex excludes ports by
+    -- construction, so the extraction still did not synthesise.  MEASURED on
+    -- the BC-250: `ERROR: [Synth 8-36] 'bst_const_base' is not declared
+    -- [rtl/ooc_gdnadapt_top.vhd:677]`.  Type is `llama_top:972` verbatim
+    -- minus its default, matching `bst_state_base` directly above.
+    bst_const_base : in  std_logic_vector(32 downto 0);
     bst_arready    : in  std_logic;
     bst_rvalid     : in  std_logic;
     bst_rdata      : in  std_logic_vector(255 downto 0);
@@ -503,21 +514,42 @@ def emit(src, ent, state_store):
 
 
 def undeclared_generics(src, text):
-    """Names that `llama_top` declares as GENERICS, that the extracted body
-    USES, and that the generated file never declares.  Such a name is a hard
-    compile error and NOTHING ELSE IN THIS TREE CATCHES IT.
+    """Names that `llama_top`'s ENTITY HEADER declares -- generics AND ports --
+    that the extracted body USES, and that the generated file never declares.
+    Such a name is a hard compile error and NOTHING ELSE IN THIS TREE CATCHES
+    IT.
 
-    WHY THIS EXISTS, and it is the same defect twice.  The body below is
-    copied verbatim from `llama_top`, but this script's generic clause is a
-    HARDCODED TEMPLATE.  So a commit that adds a generic to `llama_top` and
-    uses it inside `gb_real` lands the USES here and leaves the DECLARATION
-    behind, and the file stops compiling:
+    WHY THIS EXISTS, and it is now the same defect three times.  The body
+    below is copied verbatim from `llama_top`, but this script's generic
+    clause AND its port list are HARDCODED TEMPLATES.  So a commit that adds a
+    generic or a port to `llama_top` and uses it inside `gb_real` lands the
+    USES here and leaves the DECLARATION behind, and the file stops compiling:
 
-      2026-09-05  B_STATE_AXI   `5f1db1a` put gen_st_flat/gen_st_tier inside
-                                `gb_real`; patched into the template by hand.
-      2026-09-18  B_CONST_HBM   the HBM-constants work; six use sites, no
-                                declaration.  Found 2026-09-20 by TRACK
-                                LEVERCOST, which lost a synth run to it.
+      2026-09-05  B_STATE_AXI     generic.  `5f1db1a` put gen_st_flat/
+                                  gen_st_tier inside `gb_real`; patched into
+                                  the template by hand.
+      2026-09-18  B_CONST_HBM     generic.  The HBM-constants work; six use
+                                  sites, no declaration.  Found 2026-09-20 by
+                                  TRACK LEVERCOST, which lost a synth run to
+                                  it, and repaired by TRACK IPSYNC, which
+                                  added the generic half of this check.
+      2026-09-18  bst_const_base  PORT, added by the SAME COMMIT as the
+                                  generic directly above, used at one site in
+                                  the `gdn_state_store` port map.  The check
+                                  written the day before excluded ports by
+                                  construction, so it passed green over a
+                                  file that does not synthesise.  MEASURED on
+                                  the BC-250 by TRACK GDNSYNTH, 2026-09-20:
+                                  `ERROR: [Synth 8-36] 'bst_const_base' is
+                                  not declared [ooc_gdnadapt_top.vhd:677]`.
+
+    THE LESSON OF THE THIRD ONE.  The generic-only version was not wrong about
+    anything it claimed; it stated its own limit honestly and the limit was
+    the bug.  A check scoped to the instance that just bit you catches that
+    instance, and the next name to arrive came from the same commit, through
+    the same hardcoded-template mechanism, one declaration class over.  When
+    two declaration lists have identical failure modes, covering one of them
+    is not half a check, it is a check with a hole the shape of the other.
 
     WHY `--check` COULD NOT SEE EITHER.  It regenerates and DIFFS TEXT.  The
     committed file and the regenerated one were byte-identical both times,
@@ -533,9 +565,20 @@ def undeclared_generics(src, text):
     and `gdn_state_store`, and NEITHER analyses under this box's GHDL 1.0
     (MEASURED, rc=1 each, with their own dependency closure failing), so the
     row could not be made green today.  This check needs no compiler, costs
-    nothing, and catches exactly the class that has actually bitten.  It does
-    NOT replace a compile step: it sees undeclared GENERICS only, and is
-    blind to every other way the extraction could fail to analyse.
+    nothing, and catches exactly the classes that have actually bitten.  It
+    still does NOT replace a compile step.  What it does NOT see, stated so
+    the next reader does not mistake it for completeness:
+
+      - ENCLOSING-SCOPE SIGNALS.  `llama_top`'s architecture declares
+        hundreds; the prologue re-declares by hand only those `gb_real`
+        reads, and a new one is a fourth instance of this defect waiting to
+        happen.  It would need the architecture parsed, not the header.
+      - TYPES, subprograms and constants from the architecture, same reason.
+      - Everything that is not an undeclared name at all: a type mismatch, a
+        width mismatch, a wrong port direction, an unbound instance.
+
+    Only a real analyse step covers those, and the reason there is not one is
+    recorded in the paragraph above rather than being a preference.
     """
     gsrc = open(src).read()
     m = re.search(r"\bentity\s+llama_top\s+is\b(.*?)\bport\s*\(", gsrc,
@@ -547,6 +590,28 @@ def undeclared_generics(src, text):
         return []
     gen_names = set(re.findall(r"^\s*([A-Za-z]\w*)\s*:\s*(?!in\b|out\b|inout\b)",
                                m.group(1), re.M))
+
+    # AND THE PORT LIST, ADDED 2026-09-20 BY TRACK GDNSYNTH, BECAUSE THE
+    # GENERIC-ONLY FORM ABOVE WAS EXACTLY ONE CLASS TOO NARROW.  The docstring
+    # said so honestly -- "it sees undeclared GENERICS only" -- and the very
+    # next name to bite was `bst_const_base`, a PORT added by the SAME commit
+    # as the generic it had just been written to catch.  The prologue
+    # hardcodes the port list for the same reason it hardcodes the generic
+    # clause, so the two have identical failure modes and there was never a
+    # reason to cover one and not the other.
+    #
+    # A PORT NAME IS NOT AN ENCLOSING-SCOPE SIGNAL, and this still does not
+    # cover those: `llama_top`'s architecture declares hundreds of signals,
+    # the prologue re-declares by hand the ones `gb_real` reads, and a NEW one
+    # is invisible here.  Naming that limit rather than implying completeness:
+    # this check now covers the ENTITY HEADER, generics and ports both.
+    pm = re.search(r"\bentity\s+llama_top\s+is\b.*?\bport\s*\((.*?)\n\s*\)\s*;",
+                   gsrc, re.S | re.I)
+    if pm:
+        for grp in re.findall(r"^\s*([A-Za-z]\w*(?:\s*,\s*[A-Za-z]\w*)*)\s*:\s*"
+                              r"(?:in|out|inout)\b", pm.group(1), re.M | re.I):
+            for nm in grp.split(","):
+                gen_names.add(nm.strip())
 
     # Every identifier the GENERATED file declares, in any declarative form
     # (generic, port, signal, constant, variable, alias).  Deliberately broad:
@@ -560,6 +625,23 @@ def undeclared_generics(src, text):
             decl.add(nm.strip())
 
     body = re.sub(r"--[^\n]*", "", text)       # uses in COMMENTS do not count
+    # AND USES AS A PORT-MAP FORMAL DO NOT COUNT EITHER.  A formal names a
+    # port of the INSTANTIATED entity; it is resolved in that entity's scope
+    # and has nothing to do with `llama_top`'s port of the same name.  Adding
+    # the port list to `gen_names` above made this matter: MEASURED 2026-09-20,
+    # the first widened run reported FOUR missing names, and three of them --
+    # `busy`, `err`, `seq_rst` -- appear in the body ONLY as formals
+    # (`busy => b_busy` at :522, `err => js_err` at :685).  They are
+    # `gdn_block`'s and `gdn_job_seq`'s ports that happen to share a spelling
+    # with `llama_top`'s.  The generic-only check never hit this because a
+    # generic name is not a port-map formal.
+    #
+    # Only the formal is removed, so a name appearing as an ACTUAL survives:
+    # `const_base => bst_const_base` loses `const_base` and keeps
+    # `bst_const_base`, which is the one real defect in that same run.  The
+    # degenerate `x => x` also keeps its actual, the regex consuming only the
+    # left-hand occurrence.
+    body = re.sub(r"\b[A-Za-z]\w*\s*=>", "=>", body)
     missing = []
     for g in sorted(gen_names - decl):
         if re.search(r"\b%s\b" % re.escape(g), body):

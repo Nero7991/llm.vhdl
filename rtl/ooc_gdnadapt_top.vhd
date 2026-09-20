@@ -150,6 +150,17 @@ entity ooc_gdnadapt is
     -- llama_top:788-816 and :917-926 verbatim.  None is read inside the
     -- block, so plain `out` is legal and no buffer/local pair is needed.
     bst_state_base : in  std_logic_vector(32 downto 0);
+    -- SEAM REPAIR 2026-09-20 (TRACK GDNSYNTH), AND IT IS THE THIRD INSTANCE
+    -- OF ONE DEFECT, ONE CLASS OVER.  The same B_CONST_HBM commit of
+    -- 2026-09-18 that added a GENERIC also added this PORT to `llama_top`
+    -- (`llama_top:972`) and used it inside `gb_real` at the `gdn_state_store`
+    -- port map.  IPSYNC repaired the generic and added a closure check for
+    -- generics; this name is a PORT, the check's regex excludes ports by
+    -- construction, so the extraction still did not synthesise.  MEASURED on
+    -- the BC-250: `ERROR: [Synth 8-36] 'bst_const_base' is not declared
+    -- [rtl/ooc_gdnadapt_top.vhd:677]`.  Type is `llama_top:972` verbatim
+    -- minus its default, matching `bst_state_base` directly above.
+    bst_const_base : in  std_logic_vector(32 downto 0);
     bst_arready    : in  std_logic;
     bst_rvalid     : in  std_logic;
     bst_rdata      : in  std_logic_vector(255 downto 0);
