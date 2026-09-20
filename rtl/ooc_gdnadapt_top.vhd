@@ -639,6 +639,19 @@ begin
                     -- two levers together are +1,004 LUT / +1,040 FF, with
                     -- BRAM, URAM (32 URAM288, unchanged) and DSP unmoved and
                     -- the post-synthesis WNS estimate 0.36 ns BETTER.
+                    -- NWIDE, the THREE NARROW movers (exponent, conv taps,
+                    -- constants), TRACK BNARROW 748ff91.  WIDE fixed only the
+                    -- mantissa path; these three still unpacked one word per
+                    -- cycle because WPB = AXI_DW/WORD_BITS is 32 and 16 for
+                    -- them, which is exactly the per-beat cost that was
+                    -- MEASURED.  A 9B B job 307,784 -> 222,805 cycles,
+                    -- -84,979 at read latency 0, 40 and 80 alike.
+                    -- MEASURED OOC (hw/fk33/results/bnarrow_ooc_2026-09-20):
+                    -- +28 BRAM tiles AND -368 LUT / -1,659 FF -- the movers
+                    -- give back more logic than the banked memories take, so
+                    -- CLB pressure falls on a card that places at 99.81% CLB.
+                    -- 8-10226 and 8-7186 are zero in every arm.
+                    NWIDE        => true,
                     MAXOUT       => 8,
                     PIPE         => true,
                     WIDE         => true)
