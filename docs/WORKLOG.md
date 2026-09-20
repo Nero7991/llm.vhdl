@@ -11,7 +11,7 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
-### 2026-09-20 TRACK SWGFAST: VEC_SWG's 5.0 cycles/element is 1+1+2+1 (G load, U load, the unit's two passes, write-back). `swiglu_mem` gains LANES (default 1); at LANES = 4 the unit is 6,157 cycles instead of 24,588. NEEDS ONE LINE IN llama_top TO REACH THE CARD.
+### 2026-09-20 TRACK SWGFAST: LANDED at `7ed6535`. VEC_SWG's 5.0 cycles/element is 1+1+2+1 (G load, U load, the unit's two passes, write-back). `swiglu_mem` gains LANES (default 1); at LANES = 4 the unit is 6,157 cycles instead of 24,588 -- which is 30% of the VEC_SWG step and **0.95% of a token**. NEEDS ONE LINE IN llama_top TO REACH THE CARD. NEVER SYNTHESISED.
 
 - **Accounting** (docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md):
   the unit is 2N + 12 = 24,588 (MEASURED, `SWGFAST_CYCLES` in
@@ -21,13 +21,34 @@ the answer only has to be classified, not argued with.
   11,322 against 11,336). Neither unit has a per-element multi-cycle loop.
 - **Change:** `rtl/swiglu_mem.vhd` LANES generic (banks, per-lane pipeline,
   per-lane running max + one S_MAX state above LANES = 1). MEASURED
-  24,588 / 12,301 / 6,157 at N = 12288 for LANES 1/2/4; read-out dumps
-  byte-identical to the HEAD unit's (184,335 lines). DERIVED step 61,473 ->
-  49,186 (-20%) / 43,042 (-30%), 393 k / 590 k cycles per token. Mutation
-  table 18 rows x 3 LANES, 0 unexpected; two planted trials added
-  (`one_big0..3`, `one_big_last`) because `lanemax` survived at LANES = 4
-  and `nodrain` had never bitten. Gate: tb_swiglu_mem(+_9b) PASS 2,
+  24,588 / 12,301 / 6,157 at N = 12288 for LANES 1/2/4. Identity re-run with
+  the CURRENT bench in all six arms (the first pass's dumps predated the
+  lane-stress trials): HEAD-unit vs LANES 1/2/4 at N = 128 AND N = 12288,
+  **6 of 6 `cmp` IDENTICAL** (3,741 and 233,491 lines). DERIVED step
+  61,473 -> 49,186 (-20%) / 43,042 (-30%). Mutation table 19 rows x 3 LANES
+  (`bankswap`, the swapped bank/offset split, added), 0 unexpected. Gate
+  re-run after the last edit: tb_swiglu_mem(+_9b) PASS 2,
   tb_rmsnorm_bf_mem PASS 1, tb_llama_top_swg PASS 1, seamgate_swg PASS 1.
+- **What it is actually worth, and this is the number to quote:** VEC_SWG is
+  **3.18%** of a flat token (1,967,136 of 61,907,125 cycles; A_JOB is 68.95%,
+  B_JOB 25.61%). LANES = 2 removes 0.64% of a token, LANES = 4 removes
+  **0.95%**. The unit gets 4x faster and the token gets about one percent
+  faster; only the second is a result. 3N of the 5N is the adapter and no
+  generic on this unit can reach it.
+- **NEVER SYNTHESISED, at any LANES.** No Vivado ran for this change. The
+  area figures in hw/fk33/results/swgmem_2026-09-19/ are the PRE-change unit,
+  so LANES 2/4 area is ESTIMATE and even LANES = 1 has not been re-drawn.
+  Weigh an UNMEASURED DSP/LUT cost against under one percent of a token
+  before building anything.
+- **Two planted trials** (`one_big0..3`, `one_big_last`) were added because
+  `lanemax` survived at LANES = 4 and `nodrain` had never bitten. A second
+  attribution control (mutants against HEAD's trial set) says the new trials
+  earned exactly **4 kills of 24 rows**: `nodrain` at all three LANES and
+  `lanemax` at LANES = 4. An older random trial already caught every other
+  lane mutant.
+- **Trap recorded:** this track's earlier WORKLOG entry was committed by
+  TRACK ACLK's `11a4d6a` (pathspec commit on a shared file captures the
+  working tree). Recorded, not amended.
 - **`rmsnorm_bf_mem` unchanged:** its unit share is 27.6% of VEC_NORM.
 - **NEXT (not this track's files):** `rtl/llama_top.vhd` generic
   `SWG_LANES : positive := 1` beside NORM_LANES and
