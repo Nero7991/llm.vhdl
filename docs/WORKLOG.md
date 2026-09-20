@@ -11,6 +11,38 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 03:05: THE CARD ANSWERS THE PROMPT. Qwen3.5-9B on the FK33, 23-token prefill + 160 generated tokens, no faults, first token = reference.
+
+- Bitstream `hw/fk33/bit/fk33_card_swg_75mhz_2026-09-20.bit` (sha256
+  8257e25c..., from `8dbe160`/`e40067f`: seq_rst + `rmsnorm_bf_mem` +
+  `swiglu_mem`, every stand-in gone). The synthesised netlist (362,195 LUT,
+  82.4%, SMALLER than the previous card: the stub's 1,152 LUTRAM blocks
+  left with the real SwiGLU) failed to route TWICE from the same
+  placement: `Congestion_SpreadLogic_high` 209 unrouted / 121 overlaps,
+  then `route_design -directive AlternateCLBRouting` on the same
+  placement gave the SAME 209 / 121 to the digit (MEASURED: a route
+  directive cannot fix a placement-bound overlap). Re-implemented from
+  the synth checkpoint with `place_design -directive ExtraNetDelay_high`:
+  routed, WNS +0.050, no congestion report. Evidence and the Tcl in
+  `hw/fk33/results/card_swg_2026-09-20/`. **A card build's placement is a
+  draw: two of five draws failed today; re-implement from the DCP with a
+  different placer directive rather than resynthesising (47 GB, 1 h).**
+- MEASURED on silicon (`dcdc_prompt_160.txt` in that directory):
+  `prefill 23 ids, first argmax 1206` = the reference's first token;
+  divergence at token 1 (4087 "To answer" vs 3418 "To understand"),
+  thereafter a coherent, correct answer: "DC-DC converters and
+  transformers operate on different principles ... Transformers work by
+  electromagnetic induction and only work with AC ... DC-DC converters
+  take DC as input ... a DC-DC converter typically uses a transformer
+  internally (via a switching mechanism like PWM)". 182 positions, KV
+  cache and GDN state across tokens, faults 0, ~0.8 s/token at 75 MHz.
+- Token-level agreement with the BF16 reference beyond token 0 is NOT
+  expected and was not the goal: INT4 weights + Q12 fixed point on the
+  card against BF16/double, and greedy decoding amplifies any early
+  difference. The next measurement is a logit-level comparison at token 0
+  (the card's full logits row vs the reference's) to quantify the
+  arithmetic gap, then speed.
+
 ### 2026-09-19 08:10: TWO ROOT CAUSES ON SILICON IN ONE MORNING. B WAS NEVER RUNNING TOKEN 0, AND THE NORM CLAMPS ON THE EMBEDDING. seq_rst LANDED (`1b8d28f`) AND IS BUILDING; THE NORM PORT IS IN FLIGHT.
 
 - **ROOT CAUSE 1 (`1b8d28f`, docs/debugging/2026-09-19_b-ran-every-probe-token-as-not-the-first.md)**:
