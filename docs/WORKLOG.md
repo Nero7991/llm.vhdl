@@ -11,6 +11,43 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK BNARROWSYN: `NWIDE` costs the +28 BRAM tiles it was DERIVED to cost and REFUNDS 368 LUT and 1,659 FF; URAM takes the whole thing and gives 28 tiles back
+
+- **No hardware. Four OOC Vivado draws of `gdn_state_store` at 9B**, one at a
+  time, `MemoryHigh=10G`, none at its cap (peaks 3.1-3.4 GB, zero swap).
+  `sim/ooc_bnarrow_run.sh` + `sim/ooc_bnarrow.tcl`, raw output in
+  `hw/fk33/results/bnarrow_ooc_2026-09-20/`, write-up appended as the last
+  section of `docs/debugging/2026-09-20_b-job-660k-cycles.md` (append only).
+- **MEASURED, all arms at `PIPE WIDE MAXOUT=8` so `ctrl` IS the card path.**
+  `NWIDE=true`: **+28 BRAM tiles (28 -> 56), -368 LUT, -1,659 FF**, URAM/DSP
+  and the synthesis WNS estimate unchanged to the digit. The DERIVED tile
+  figure was exact; the LOGIC term has the other sign, because the three
+  movers give back more than the memories take (`u_edma` -298 LUT/-808 FF,
+  `u_cdma` -183/-806, `u_kdma` -373/-297 against `u_conv` +484, `u_cw` +385).
+- **`CONV_STYLE => "ultra"` takes the unit's Block RAM Tile count to ZERO**:
+  112 banks -> 112 URAM288, `8-10226` and `8-7186` **0 in all four logs**,
+  census names all 144 URAM. DERIVED on the placed card that is 567 -> **539
+  tiles (133 free)** and URAM 32 -> 144 of 320. It needs the `chk_style`
+  guard widened in `rtl/gdn_conv_tap_mem.vhd` and `rtl/gdn_conv_w_mem.vhd`.
+- **THE REJECTED 12-BANK ARM WAS REJECTED FOR THE WRONG REASON.** Built,
+  bench-verified (107/107, two mutations of the sub-word decode FAIL 45 and 4),
+  drawn: **12 RAMB36, no LUT-as-memory blowup** -- so "refusal 1" does not
+  apply to a decoded sub-word write, and the header's "same tile count" is
+  wrong by 2x. It still loses, on the axis nobody argued about: **+650 LUT**.
+- **VERDICT for the next card build: `NWIDE => true` FITS** (77 free tiles
+  after it, 105 before, and CLB pressure goes DOWN). **Hold `ultra` one
+  question**: the BRAM mapping report states `READ_FIRST` per port and the
+  **Ultra RAM report has no write-mode column at all**, and neither GHDL nor
+  OOC synthesis can tell you what a URAM288 returns on a same-address
+  collision. Diffs for both levers are in the results README; the files
+  (`rtl/llama_top.vhd` and the two memories) belong to other tracks.
+- **TRAP, recorded because it nearly fired:** the rejected arm's source is a
+  SECOND `gdn_conv_tap_mem`, and `sim/regress.sh:1472` globs `sim/*.vhd` into
+  one provider slot per design unit. In `sim/` it would have silently
+  re-pointed every gate row at the rejected arm. It lives in the results
+  directory instead. Also: a Vivado message count of exactly **100 is the
+  message limit**, not a census -- five ids hit it here.
+
 ### 2026-09-20 TRACK WIDEDRAIN: lever L1 is applied, MEASURED in `llama_top` to the cycle, and the specified patch was wrong in three places
 
 - **No hardware, no Vivado. GHDL only.** Write-up appended as section 10 of

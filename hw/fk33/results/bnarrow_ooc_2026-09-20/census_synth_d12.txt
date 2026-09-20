@@ -1,0 +1,147 @@
+# BNARROW census stage=synth tag=d12 (get_cells -hier by REF_NAME)
+## uram 32
+u_mem/gwide.gb[0].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_7 URAM288
+## ramb36 12
+u_conv/gwide.gbank[0].m_reg RAMB36E2
+u_conv/gwide.gbank[10].m_reg RAMB36E2
+u_conv/gwide.gbank[11].m_reg RAMB36E2
+u_conv/gwide.gbank[1].m_reg RAMB36E2
+u_conv/gwide.gbank[2].m_reg RAMB36E2
+u_conv/gwide.gbank[3].m_reg RAMB36E2
+u_conv/gwide.gbank[4].m_reg RAMB36E2
+u_conv/gwide.gbank[5].m_reg RAMB36E2
+u_conv/gwide.gbank[6].m_reg RAMB36E2
+u_conv/gwide.gbank[7].m_reg RAMB36E2
+u_conv/gwide.gbank[8].m_reg RAMB36E2
+u_conv/gwide.gbank[9].m_reg RAMB36E2
+## ramb18 64
+gconst.u_cw/gwide.gbank[0].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[10].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[11].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[12].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[13].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[14].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[15].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[16].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[17].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[18].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[19].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[1].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[20].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[21].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[22].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[23].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[24].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[25].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[26].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[27].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[28].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[29].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[2].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[30].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[31].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[32].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[33].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[34].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[35].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[36].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[37].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[38].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[39].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[3].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[40].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[41].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[42].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[43].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[44].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[45].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[46].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[47].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[48].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[49].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[4].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[50].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[51].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[52].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[53].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[54].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[55].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[56].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[57].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[58].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[59].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[5].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[60].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[61].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[62].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[63].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[6].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[7].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[8].m_reg_bram_0 RAMB18E2
+gconst.u_cw/gwide.gbank[9].m_reg_bram_0 RAMB18E2
+## lutram 313
+u_cdma 19
+u_dma 19
+u_edma 19
+u_exp 256
+## dsp48 4
+gconst.u_kdma/base_q_reg DSP48E2
+u_cdma/base_q_reg DSP48E2
+u_dma/base_q_reg DSP48E2
+u_edma/base_q_reg DSP48E2
+## dsp 36
+## lut 5198
+. 999
+gconst.u_cw 538
+gconst.u_kdma 193
+u_cdma 188
+u_conv 1523
+u_dma 288
+u_edma 126
+u_exp 988
+u_mem 355
+## ff 4852
+. 3143
+gconst.u_cw 2
+gconst.u_kdma 350
+u_cdma 359
+u_conv 10
+u_dma 397
+u_edma 333
+u_exp 256
+u_mem 2
+## carry 46
+## f7 32
+## f8 0
+## srl 0

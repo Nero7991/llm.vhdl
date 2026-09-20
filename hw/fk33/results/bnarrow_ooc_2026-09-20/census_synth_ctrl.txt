@@ -1,0 +1,96 @@
+# BNARROW census stage=synth tag=ctrl (get_cells -hier by REF_NAME)
+## uram 32
+u_mem/gwide.gb[0].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[0].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[1].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[2].bank_reg_uram_7 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_0 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_1 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_2 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_3 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_4 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_5 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_6 URAM288
+u_mem/gwide.gb[3].bank_reg_uram_7 URAM288
+## ramb36 28
+gconst.u_cw/gnarrow.gbank[0].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[10].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[11].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[12].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[13].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[14].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[15].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[1].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[2].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[3].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[4].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[5].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[6].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[7].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[8].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gnarrow.gbank[9].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[0].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[10].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[11].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[1].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[2].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[3].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[4].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[5].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[6].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[7].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[8].m_reg_bram_0 RAMB36E2
+u_conv/gnarrow.gbank[9].m_reg_bram_0 RAMB36E2
+## ramb18 0
+## lutram 403
+u_dma 19
+u_exp 384
+## dsp48 4
+gconst.u_kdma/base_q_reg DSP48E2
+u_cdma/base_q_reg DSP48E2
+u_dma/base_q_reg DSP48E2
+u_edma/base_q_reg DSP48E2
+## dsp 36
+## lut 4097
+. 703
+gconst.u_cw 18
+gconst.u_kdma 579
+u_cdma 651
+u_conv 359
+u_dma 288
+u_edma 606
+u_exp 538
+u_mem 355
+## ff 6511
+. 3143
+gconst.u_kdma 647
+u_cdma 1165
+u_conv 8
+u_dma 397
+u_edma 1141
+u_exp 8
+u_mem 2
+## carry 49
+## f7 232
+## f8 96
+## srl 0

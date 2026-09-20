@@ -1,0 +1,37 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Sep 20 11:48:41 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/bnarrowsyn/out/util_hier_d12.rpt
+| Design       : gdn_state_store
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|       Instance      |             Module            | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| gdn_state_store     |                         (top) |       5761 |       4037 |    1724 |    0 | 4852 |     12 |     64 |   32 |          4 |
+|   (gdn_state_store) |                         (top) |        673 |        673 |       0 |    0 | 3143 |      0 |      0 |    0 |          0 |
+|   gconst.u_cw       |                gdn_conv_w_mem |        410 |        410 |       0 |    0 |    2 |      0 |     64 |    0 |          0 |
+|   gconst.u_kdma     | gdn_state_axi__parameterized2 |        149 |        149 |       0 |    0 |  350 |      0 |      0 |    0 |          1 |
+|   u_cdma            | gdn_state_axi__parameterized1 |        290 |        142 |     148 |    0 |  359 |      0 |      0 |    0 |          1 |
+|   u_conv            |              gdn_conv_tap_mem |       1387 |       1387 |       0 |    0 |   10 |     12 |      0 |    0 |          0 |
+|   u_dma             |                 gdn_state_axi |        368 |        220 |     148 |    0 |  397 |      0 |      0 |    0 |          1 |
+|   u_edma            | gdn_state_axi__parameterized0 |        248 |        100 |     148 |    0 |  333 |      0 |      0 |    0 |          1 |
+|   u_exp             |                   gdn_exp_mem |       2026 |        746 |    1280 |    0 |  256 |      0 |      0 |    0 |          0 |
+|   u_mem             |                 gdn_state_mem |        210 |        210 |       0 |    0 |    2 |      0 |      0 |   32 |          0 |
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+

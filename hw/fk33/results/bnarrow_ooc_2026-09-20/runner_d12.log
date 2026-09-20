@@ -1,0 +1,28 @@
+BNARROW_PATCH nwu gdn_conv_tap_mem: 2 lines differ
+BNARROW_PATCH nwu gdn_conv_w_mem: 2 lines differ
+BNARROW_PATCH d12 gdn_conv_tap_mem <- /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/bnarrow_ooc_2026-09-20/gdn_conv_tap_mem_d12.vhd
+BNARROW_ENV host=Oren-Dell-Ubuntu repo=/home/orencollaco/GitHub/llama.vhdl out=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/bnarrowsyn/out cap=10G sha=6f4458a
+BNARROW_CLOSURE_MD5
+07fb67e0161ac6f42c758288147bcadd  /home/orencollaco/GitHub/llama.vhdl/rtl/util_pkg.vhd
+ad37a861126f2b3707d9aeef99da46c3  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd
+ec748dd5a50d36cc59e73ec592e7d8fc  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd
+b1c9d31ea631e4ac8d598e6c927c9f3c  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd
+ce8e4ef7af598dbb83c46cd0644c03d7  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_w_mem.vhd
+58b81882ea5b672933cffd8532d4d3c6  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd
+82d03a9492f3cdc829363ef6b24c1aa2  /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_store.vhd
+               total        used        free      shared  buff/cache   available
+Mem:           31916        7095       13557          10       11263       24348
+BNARROW_CGROUP systemd-run --user scope available, cap 10G
+=== BNARROW draw d12 (NWIDE=true) rtl=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/bnarrowsyn/out/rtl_d12 begin 2026-09-20T11:47:27-06:00 ===
+BNARROW_OK d12 rc=0 peak_rss=3.49GB cgroup_peak=3101MB cgroup_swap=0MB at_cap=no wall=91s
+BNARROW_CENSUS stage=synth tag=d12 uram=32 ramb36=12 ramb18=64 lutram=313 dsp48=4 dsp=36 lut=5198 ff=4852 carry=46 f7=32 f8=0 srl=0
+BNARROW_CENSUS stage=opt tag=d12 uram=32 ramb36=12 ramb18=64 lutram=313 dsp48=4 dsp=36 lut=5198 ff=4852 carry=46 f7=32 f8=0 srl=0
+BNARROW_TIMING_ESTIMATE tag=d12 period=13.333 wns=10.139 fmax_est=313.1  levels=7 datapath=3.062 req=13.333 start=u_mem/gwide.gb[3].bank_reg_uram_0/CLK end=u_dma/wfifo_reg_0_3_196_209/RAMF/I
+BNARROW_TIMING_ESTIMATE tag=d12 period=5.0 wns=1.806 fmax_est=313.1  levels=7 datapath=3.062 req=5.000 start=u_mem/gwide.gb[3].bank_reg_uram_0/CLK end=u_dma/wfifo_reg_0_3_196_209/RAMF/I
+BNARROW_RESULT tag=d12 gen="VAL_HEADS=32 DIM=128 RECUR_LANES=4 LAYERS=24 KEY_HEADS=16 KCONV=4 CONV_LANES=4 MANT_BYTES=1048576 EXP_BYTES=4096 CONV_BYTES=49152 LAYER_STRIDE=1101824 MAXB=16 CONST_EN=true CONST_STRIDE=66048 CONST_BYTES=66048 PIPE=true WIDE=true MAXOUT=8 NWIDE=true" lut=5761 lut_logic=4037  lut_mem=1724 ff=4852 bram=44 ramb36=12 ramb18=64  uram=32 dsp=4 carry8=46 f7=32 f8=0  wns_13p333=10.139 wns_5p0=1.806 synth_s=58 opt_s=11
+BNARROW_SYNTH_VS_OPT tag=d12 synth_lut=5761 opt_lut=5761  synth_ff=4852 opt_ff=4852 synth_uram=32 opt_uram=32  synth_bram=44 opt_bram=44 synth_dsp=4 opt_dsp=4
+BNARROW_LOGMSG d12 synth_8-10226=0 synth_8-7186=0 synth_8-5780=12 synth_8-4767=0
+=== BNARROW_TABLE (from result_*.csv, i.e. report_utilization + census) ===
+d12: d12,"VAL_HEADS=32 DIM=128 RECUR_LANES=4 LAYERS=24 KEY_HEADS=16 KCONV=4 CONV_LANES=4 MANT_BYTES=1048576 EXP_BYTES=4096 CONV_BYTES=49152 LAYER_STRIDE=1101824 MAXB=16 CONST_EN=true CONST_STRIDE=66048 CONST_BYTES=66048 PIPE=true WIDE=true MAXOUT=8 NWIDE=true",5761,4037,1724,4852,44,12,64,32,4,46,32,0,10.139,7,1.806,7,58,11,5761,4852,"uram=32 ramb36=12 ramb18=64 lutram=313 dsp48=4 dsp=36 lut=5198 ff=4852 carry=46 f7=32 f8=0 srl=0"
+d12: peak_rss_gb=3.49 cgroup_peak_mb=3101 cgroup_swap_mb=0 at_cap=no wall_s=91 rc=0
+BNARROW_ALLDONE rc=0
