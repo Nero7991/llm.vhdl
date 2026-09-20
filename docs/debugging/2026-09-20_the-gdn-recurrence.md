@@ -472,10 +472,22 @@ gate in one you do.
 - **Fmax at `LANES=16` in context.** The OOC rows are synthesis-only; this
   project's own rule is that nothing before `route_design` orders two runs
   correctly, and the card routes at WNS +0.001.
-- **The oracle at `LANES=16`.** `ref/gdn_block_vec.c` was run at the committed
-  small shape only, where `LANES=16` is refused for shape reasons unrelated to
-  this lever. The 9B oracle run is listed in the evidence above; the cross-lane
-  dump identity stands on its own either way.
+- **The oracle at `LANES=16`.** `ref/gdn_block_vec.c` was run and PASSED at the
+  committed small shape at `LANES=4` only. At that shape `LANES=8` and
+  `LANES=16` are refused for the two DIM=32 reasons above, which are unrelated
+  to this lever, so the oracle has NOT been run against a 16-lane build. A 9B
+  vector set was generated (`gdn_block_vec 16 32 128 1 2 mod`, 6.4 MB) and a
+  `tb_gdn_block_vec` run at `LANES=4` and `LANES=16` against it was started and
+  **had not finished when this was written** -- it is not evidence here and
+  nothing above depends on it.
+
+  What the 16-lane claim actually rests on is the **cross-lane dump identity at
+  the real 9B shape**, which compares the same 532,481 values the oracle would
+  and needs no oracle to be conclusive about EQUALITY, though it cannot
+  establish CORRECTNESS on its own. Correctness at `LANES=4` is established by
+  the oracle and by `seamgate_bconst`; equality of `LANES=16` to `LANES=4` is
+  established bit for bit. Those two together are the argument, and the second
+  one is the one this track added.
 - **`sim/tb_llama_top.vhd` does not expose `B_RECUR_LANES`**, so `seamgate`
   cannot be run at any lane count but 4 without threading one generic into that
   bench. That is a file this track does not own.
