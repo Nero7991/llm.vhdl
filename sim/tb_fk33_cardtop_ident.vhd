@@ -655,7 +655,24 @@ entity tb_fk33_cardtop_ident is
     -- aliasing.
     KV_K_BASE_G : natural := 16;
     KV_V_BASE_G : natural := 4064;
-    KV_NB_G     : natural := 8192
+    KV_NB_G     : natural := 8192;
+    -- ==================================================================
+    -- THE KV BASES AS PORTS, 2026-09-20.  `rtl/llama_top.vhd` gained
+    -- `kv_k_base`/`kv_v_base` input ports, defaulting to the compiled
+    -- generics, because the compiled generic was the defect: on the card the
+    -- seam drives them from the manifest (docs/debugging/2026-09-20_the-kv-
+    -- cache-base-is-compiled-into-the-bitstream.md).  With this TRUE the
+    -- DUT's C_K_BASE_CH/C_V_BASE_CH generics are handed DECOY values --
+    -- two regions placed directly above the V region, inside neither of the
+    -- regions this bench models -- and the REAL bases KV_K_BASE_G/KV_V_BASE_G
+    -- go in through the ports.  Every KV check below is written against the
+    -- bench's own bases, so a DUT that still took the base from its generic
+    -- would write every record "inside neither region" (P7, note_beat) and
+    -- fail P11 and the landmarks; that is mutant B of TRACK KVREG and it is
+    -- exactly today's bug, at the engine side.  With this FALSE the ports
+    -- are driven with the same values the generics carry, which is the same
+    -- thing as leaving them at their defaults, so nothing else changes.
+    KV_PORT_BASES : boolean := false
   );
 end entity;
 
@@ -1097,6 +1114,23 @@ architecture tb of tb_fk33_cardtop_ident is
   constant KV_FIT_OK : boolean :=
     (KV_K_BASE + KV_RGN_B <= KV_NB) and (KV_V_BASE + KV_RGN_B <= KV_NB);
 
+  -- KV_PORT_BASES: the decoy generics.  Two regions stacked directly above
+  -- the real V region, so they are 16-byte aligned, non-overlapping, inside
+  -- llama_top's C_KV_ADDR_W guard at every shape this bench runs, and inside
+  -- NEITHER region the checkers accept.  `pick` because a generic cannot be
+  -- chosen with an if.
+  function pick(c : boolean; a, b : natural) return natural is
+  begin
+    if c then return a; else return b; end if;
+  end function;
+  constant KV_RGN_CH    : natural := (KV_RGN_B + 15) / 16;
+  constant KV_DECOY_K_CH : natural := KV_V_BASE_CH + KV_RGN_CH;
+  constant KV_DECOY_V_CH : natural := KV_DECOY_K_CH + KV_RGN_CH;
+  constant KV_GEN_K_CH  : natural := pick(KV_PORT_BASES, KV_DECOY_K_CH,
+                                          KV_K_BASE_CH);
+  constant KV_GEN_V_CH  : natural := pick(KV_PORT_BASES, KV_DECOY_V_CH,
+                                          KV_V_BASE_CH);
+
   -- The modelled HBM and the shadow, in ONE protected type: the two read
   -- slaves, the write slave and the checkers are several processes over one
   -- address space, and a plain shared variable is illegal in VHDL-2008.
@@ -1218,6 +1252,11 @@ architecture tb of tb_fk33_cardtop_ident is
   end function;
 
   signal bst_state_base : std_logic_vector(32 downto 0) := (others => '0');
+  -- the KV bases the DUT is told through its PORTS: always the real ones
+  signal kv_k_port : std_logic_vector(KV_ADDR_W-1 downto 0)
+    := std_logic_vector(to_unsigned(KV_K_BASE, KV_ADDR_W));
+  signal kv_v_port : std_logic_vector(KV_ADDR_W-1 downto 0)
+    := std_logic_vector(to_unsigned(KV_V_BASE, KV_ADDR_W));
   signal bst_const_base : std_logic_vector(32 downto 0)
        := std_logic_vector(to_unsigned(BST_CBASE, 33));
   signal bst_busy, bst_done, bst_err : std_logic;
@@ -1435,7 +1474,7 @@ begin
       B_CONST_HBM => B_CONST_HBM, C_QKN_IMAGE => C_QKN_IMAGE,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,
       C_KV_AXI => KV_AXI, C_CTXLEN => NTOK,
-      C_K_BASE_CH => KV_K_BASE_CH, C_V_BASE_CH => KV_V_BASE_CH,
+      C_K_BASE_CH => KV_GEN_K_CH, C_V_BASE_CH => KV_GEN_V_CH,
       C_KV_ADDR_W => KV_ADDR_W, C_KV_AXI_DW => KV_DW,
       A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
       SMP_EN => SMP_EN, SMP_FIFO => SMP_FIFO,
@@ -1480,6 +1519,7 @@ begin
       err_unit_stub => err_unit_stub, err_e_coll => err_e_coll,
       bst_state_base => bst_state_base,
       bst_const_base => bst_const_base,
+      kv_k_base => kv_k_port, kv_v_base => kv_v_port,
       bst_busy => bst_busy, bst_done => bst_done, bst_err => bst_err,
       bst_arvalid => bst_arvalid, bst_arready => bst_arready,
       bst_araddr => bst_araddr, bst_arlen => bst_arlen,

@@ -220,6 +220,11 @@ architecture tb of tb_fk33_seam is
   signal s_a_arena  : std_logic_vector(39 downto 0);
   signal s_bst_base : std_logic_vector(32 downto 0);
   signal s_bcb_base : std_logic_vector(32 downto 0);
+  -- P6g (2026-09-20): subsystem C's KV bases, seam -> the card's
+  -- kv_k_base/kv_v_base.  Observed on the seam's pins here; the engine side
+  -- (the port reaching attn_kv_axi) is sim/tb_llama_top_kvport.vhd's job.
+  signal s_kv_k_base : std_logic_vector(32 downto 0);
+  signal s_kv_v_base : std_logic_vector(32 downto 0);
   -- P6f (2026-09-19): the engine's per-sequence reset, seam -> llama_top,
   -- and a sticky catcher for the one-cycle pulse.
   signal s_seq_rst    : std_logic;
@@ -308,6 +313,11 @@ architecture tb of tb_fk33_seam is
   constant A_BCB_LO   : natural := 16#84#;
   constant A_BCB_HI   : natural := 16#88#;
   constant A_TOK_POS  : natural := 16#8C#;
+  constant A_KVK_LO   : natural := 16#90#;
+  constant A_KVK_HI   : natural := 16#94#;
+  constant A_KVV_LO   : natural := 16#98#;
+  constant A_KVV_HI   : natural := 16#9C#;
+  constant A_KV_MAXPOS: natural := 16#A0#;
   constant A_WIN_SEL  : natural := 16#58#;
   constant A_WIN_ADDR : natural := 16#5C#;
   constant A_WIN_DATA : natural := 16#60#;
@@ -466,6 +476,7 @@ begin
       d_host_x_exp => s_x_exp, d_rel_mask => s_rel, d_tok_ack => s_tok_ack,
       d_a_arena => s_a_arena, d_bst_base => s_bst_base,
       d_bcb_base => s_bcb_base, d_seq_rst => s_seq_rst,
+      d_kv_k_base => s_kv_k_base, d_kv_v_base => s_kv_v_base,
       d_busy => s_busy, d_tok_done => s_tok_done, d_err => s_err,
       d_err_code => s_err_code, d_err_step => s_err_step,
       d_steps_done => s_steps_done,
@@ -578,6 +589,9 @@ begin
     -- as a count that does not match the number written below (9).
     variable n_chk_bcb : natural := 0;
     variable n_bad_bcb : natural := 0;
+    -- P6g's (the KV bases), same discipline; 17 written below.
+    variable n_chk_kv  : natural := 0;
+    variable n_bad_kv  : natural := 0;
     -- P6f's, same discipline.
     variable n_chk_sr  : natural := 0;
     variable n_bad_sr  : natural := 0;
@@ -632,12 +646,14 @@ begin
     -- derives its expectation from the CARD's generic rather than from either
     -- copy.  If this row and that checker ever disagree, the checker wins.
     -- Bit 4 (SEQ_RESET reaches the engine, A_TOK_POS exists) added
-    -- 2026-09-19, so 13 became 29.
-    assert iv = 29
+    -- 2026-09-19, so 13 became 29.  Bit 5 (the KV cache base is a register,
+    -- A_KVK_*/A_KVV_*, and A_KV_MAXPOS exists) added 2026-09-20, so 29
+    -- became 61.
+    assert iv = 61
       report "tb_fk33_seam: CAPS_FLAGS reads " & integer'image(iv)
-           & ", expected 29 (windows + sampler + logits + engine seq reset; "
-           & "no HBM fetch)." severity error;
-    if iv /= 29 then n_bad_rback <= n_bad_rback + 1; end if;
+           & ", expected 61 (windows + sampler + logits + engine seq reset "
+           & "+ KV base register; no HBM fetch)." severity error;
+    if iv /= 61 then n_bad_rback <= n_bad_rback + 1; end if;
 
     -- ==================================================================
     -- P6a: A GO BEFORE ANYTHING IS PROGRAMMED MUST BE REFUSED, and it must
@@ -853,6 +869,170 @@ begin
     end if;
     -- and leave it holding a full value, as a host would
     axi_wi(A_BCB_HI, 1);
+
+    -- ==================================================================
+    -- P6g: THE KV CACHE BASES, A_KVK_LO/HI (0x90/0x94) and A_KVV_LO/HI
+    -- (0x98/0x9C) -> d_kv_k_base / d_kv_v_base, plus A_KV_MAXPOS (0xA0).
+    -- Added 2026-09-20, docs/debugging/2026-09-20_the-kv-cache-base-is-
+    -- compiled-into-the-bitstream.md: C's base was a generic from the FLAT
+    -- manifest and on the striped image it wrote records over 40 weight
+    -- objects.  Seventeen checks, counted in a variable:
+    --   1     a GO with ARENA and BST written but both KV bases still zero
+    --         is refused EC_DESC (the unwritten-register state)
+    --   2-5   reset value: the four registers read 0
+    --   6-7   reset value: both pins are 0
+    --   8-11  write all four, read all four back (HI written with every
+    --         bit set: only bit 0 may land)
+    --   12-13 the pins follow, K and V, field by field
+    --   14    a GO with K written and V still zero is STILL refused
+    --   15    A_KV_MAXPOS reads the seam's MAXPOS generic (4 here)
+    --   16    the BST register is untouched by the KV writes (distinct
+    --         decode)
+    --   17    after both are written the GO gate no longer refuses on
+    --         them: the next refusal is P6b's RSVD, checked there, so this
+    --         row checks the pins hold the written pair across a CLR_ERR
+    -- The values are the STRIPED manifest's: hbm.kv_base 0x1_AD71_C000 and
+    -- V = K + 65536 * 8704 = 0x1_CF71_C000, i.e. exactly the pair the
+    -- compiled generics could not have produced.
+    -- Mutant A (the seam never latches the write) fails 8-13 and 17 by
+    -- name; mutant B (the card ignores the register) cannot be seen from
+    -- this bench, whose llama_top runs the behavioural cache, and is
+    -- sim/tb_llama_top_kvport.vhd's row.
+    -- ==================================================================
+    axi_wi(A_CTRL, 1);
+    axi_r(A_STATUS, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d(2) /= '1' or to_integer(unsigned(d(11 downto 8))) /= 6 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- a GO with both KV bases still ZERO was "
+           & "not refused with EC_DESC; STATUS = "
+           & integer'image(to_integer(unsigned(d))) severity error;
+    end if;
+    axi_wi(A_CTRL, 32);
+    axi_r(A_KVK_LO, d);
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(d) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVK_LO reads non-zero before any write"
+        severity error;
+    end if;
+    axi_r(A_KVK_HI, d);
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(d) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVK_HI reads non-zero before any write"
+        severity error;
+    end if;
+    axi_r(A_KVV_LO, d);
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(d) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVV_LO reads non-zero before any write"
+        severity error;
+    end if;
+    axi_r(A_KVV_HI, d);
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(d) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVV_HI reads non-zero before any write"
+        severity error;
+    end if;
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(s_kv_k_base) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- d_kv_k_base is non-zero before any write"
+        severity error;
+    end if;
+    n_chk_kv := n_chk_kv + 1;
+    if unsigned(s_kv_v_base) /= 0 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- d_kv_v_base is non-zero before any write"
+        severity error;
+    end if;
+    -- K first, and a GO between K and V, so check 14 sees the half-written
+    -- state a host that crashed between the two writes would leave.
+    axi_w(A_KVK_LO, x"AD71C000");      -- striped manifest hbm.kv_base
+    axi_w(A_KVK_HI, x"FFFFFFFF");      -- every bit set: only bit 0 may land
+    axi_wi(A_CTRL, 1);
+    axi_r(A_STATUS, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d(2) /= '1' or to_integer(unsigned(d(11 downto 8))) /= 6 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- a GO with K written and V still ZERO was "
+           & "not refused with EC_DESC; STATUS = "
+           & integer'image(to_integer(unsigned(d))) severity error;
+    end if;
+    axi_wi(A_CTRL, 32);
+    axi_w(A_KVV_LO, x"CF71C000");      -- K + 65536 * 8704
+    axi_w(A_KVV_HI, x"FFFFFFFF");
+    axi_r(A_KVK_LO, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d /= x"AD71C000" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVK_LO did not read back what was written"
+        severity error;
+    end if;
+    axi_r(A_KVK_HI, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d /= x"00000001" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVK_HI read back "
+           & integer'image(to_integer(unsigned(d))) & ", expected 1 (bit 0 "
+           & "only)" severity error;
+    end if;
+    axi_r(A_KVV_LO, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d /= x"CF71C000" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVV_LO did not read back what was written"
+        severity error;
+    end if;
+    axi_r(A_KVV_HI, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d /= x"00000001" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KVV_HI read back "
+           & integer'image(to_integer(unsigned(d))) & ", expected 1 (bit 0 "
+           & "only)" severity error;
+    end if;
+    n_chk_kv := n_chk_kv + 1;
+    if s_kv_k_base(32) /= '1' or s_kv_k_base(31 downto 0) /= x"AD71C000" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- d_kv_k_base does not follow A_KVK_LO/HI"
+        severity error;
+    end if;
+    n_chk_kv := n_chk_kv + 1;
+    if s_kv_v_base(32) /= '1' or s_kv_v_base(31 downto 0) /= x"CF71C000" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- d_kv_v_base does not follow A_KVV_LO/HI"
+        severity error;
+    end if;
+    axi_r(A_KV_MAXPOS, d);
+    n_chk_kv := n_chk_kv + 1;
+    if to_integer(unsigned(d)) /= 4 then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- A_KV_MAXPOS reads "
+           & integer'image(to_integer(unsigned(d)))
+           & ", expected the MAXPOS generic (4)" severity error;
+    end if;
+    -- the BST register written in P6d is untouched: distinct decode
+    axi_r(A_BST_LO, d);
+    n_chk_kv := n_chk_kv + 1;
+    if d /= x"0C006000" or s_bst_base(32) /= '1' then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- writing A_KV*_* disturbed A_BST_* / "
+           & "d_bst_base" severity error;
+    end if;
+    -- the pair survives a CLR_ERR (17): the register is not cleared by the
+    -- error path, only by rst
+    axi_wi(A_CTRL, 32);
+    n_chk_kv := n_chk_kv + 1;
+    if s_kv_k_base(31 downto 0) /= x"AD71C000"
+       or s_kv_v_base(31 downto 0) /= x"CF71C000" then
+      n_bad_kv := n_bad_kv + 1;
+      report "tb_fk33_seam: P6g -- the KV pins changed across a CLR_ERR"
+        severity error;
+    end if;
 
     -- ==================================================================
     -- P6b: THE RESERVED HBM POINTERS MUST REFUSE A GO.  v2 has no HBM
@@ -1287,9 +1467,17 @@ begin
     if EXPECT_WDOG then n_exp_sr := 8; else n_exp_sr := 9; end if;
 
     nfail := n_bad_val + n_bad_acct + n_bad_poll + n_bad_rback
-           + n_bad_land + n_bad_gate + n_bad_ack + n_bad_bcb + n_bad_sr;
+           + n_bad_land + n_bad_gate + n_bad_ack + n_bad_bcb + n_bad_sr
+           + n_bad_kv;
     report "tb_fk33_seam: P6e bcb checks=" & integer'image(n_chk_bcb)
          & " bad=" & integer'image(n_bad_bcb) severity note;
+    report "tb_fk33_seam: P6g kv checks=" & integer'image(n_chk_kv)
+         & " bad=" & integer'image(n_bad_kv) severity note;
+    if n_chk_kv /= 17 then
+      nfail := nfail + 1;
+      report "tb_fk33_seam: P6g ran " & integer'image(n_chk_kv)
+           & " checks, not the 17 written" severity error;
+    end if;
     report "tb_fk33_seam: P6f seq_rst checks=" & integer'image(n_chk_sr)
          & " bad=" & integer'image(n_bad_sr) severity note;
     if n_chk_sr /= n_exp_sr then
