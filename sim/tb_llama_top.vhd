@@ -324,6 +324,15 @@ entity tb_llama_top is
     -- `matvec_int4`.  Set A_BEHAV true to bisect a failure to a side of the
     -- D-to-A seam.
     A_BEHAV   : boolean  := false;
+    -- UNIT A's DRAIN ON THE REGION FILE'S GROUP WRITE PORT.  A pass-through
+    -- to the generic of the same name in `rtl/llama_top.vhd`.  DEFAULT FALSE,
+    -- so every landmark in this family is measured on the shipping drain and
+    -- nothing in this file changes for any existing row (MEASURED, not
+    -- assumed: with it false `wgmux` reduces to the wires llama_top had).
+    -- `sim/tb_llama_top_wdrain.vhd` is the row that sets it true, and it
+    -- carries `tb_llama_top_real`'s landmarks UNCHANGED, which is the whole
+    -- point of it: the wide drain has to reproduce them, not re-derive them.
+    A_DRAIN_WIDE : boolean := false;
     B_BEHAV   : boolean  := false;
     -- Where subsystem B's ACTIVATION inputs come from.  See the generic of
     -- the same name in `rtl/llama_top.vhd`.  false = the fixed-exponent
@@ -1454,6 +1463,7 @@ begin
       C_K_BASE_CH => KV_GEN_K_CH, C_V_BASE_CH => KV_GEN_V_CH,
       C_KV_ADDR_W => KV_ADDR_W, C_KV_AXI_DW => KV_DW,
       A_MEM_BASE => A_MEM_BASE_C, A_JOB_STRIDE => A_JOB_STRIDE_C,
+      A_DRAIN_WIDE => A_DRAIN_WIDE,
       SMP_EN => SMP_EN, SMP_FIFO => SMP_FIFO,
       SHOUT => true)
     port map(

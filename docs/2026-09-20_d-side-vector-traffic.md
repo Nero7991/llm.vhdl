@@ -648,3 +648,420 @@ DERIVED by exact arithmetic over the schedule (`sum(M)` against
   quote the run, and CLAUDE.md's rule against editing `regress.sh` while a
   gate may be live is why this track did not.
 - **The 197-cycle `S_SDRAIN` class residual** is named but not modelled.
+
+---
+
+# 10. APPENDED 2026-09-20 -- TRACK WIDEDRAIN: L1 is applied, and section 7's patch was wrong in three places
+
+Date: 2026-09-20. TRACK WIDEDRAIN, on top of `82a3311`. Sections 1 to 9 above
+are DSIDE's and are not edited. **NO HARDWARE, NO VIVADO.** Everything below
+is `ghdl-mcode` or arithmetic over `tools/gen_layer_program.py`'s own plan.
+The largest `ghdl-mcode` process was SAMPLED at **3.11 GB** `VmRSS` while
+three benches ran concurrently; that is a sample and not a peak, and it is
+quoted as a sample deliberately.
+
+## 10.1 The answer, up front
+
+**MEASURED in `llama_top` itself, which is the one thing section 6.3 listed as
+unprovable by the extracted unit.** At `sim/tb_llama_top_real`'s configuration,
+changing exactly one generic and nothing else:
+
+```
+A_DRAIN_WIDE false   26,382 cycles a token   EXP_X0 -16364  EXP_XSUM 91622  EXP_XALL 91622  EXP_STEPH 17333
+A_DRAIN_WIDE true    24,204 cycles a token   EXP_X0 -16364  EXP_XSUM 91622  EXP_XALL 91622  EXP_STEPH 17333
+                     ------
+                      2,178
+```
+
+DERIVED independently from that schedule's 37 drained A jobs -- `sum(M) =
+2,904` against `sum(ceil(M/A_DW_GRP)) = 726` with `A_DW_GRP = 4` -- the saving
+is **2,178**. The model and the integration agree **to the cycle**, and the
+drain is `2,904 -> 726`.
+
+**All four landmarks are bit-identical across the two arms.** `EXP_STEPH` is
+the strong one: it hashes `obs_wsum`, a running hash over EVERY region write
+the machine makes, region-tagged, address by address, in order. So it is the
+whole write STREAM that is identical, not merely the residual that survives it.
+
+**On the card the lever is worth 1,248,576 cycles a token**, verified in 10.4
+from the plan rather than inherited from section 7.
+
+## 10.2 Three corrections to the patch of section 7
+
+### (i) THE ELABORATION PIN AS SPECIFIED REFUSES THE WHOLE TREE
+
+Section 7(d) pins the geometry with
+
+```vhdl
+constant bad_lanes_div_rows_if : natural := 0 - (A_ROWS_IF mod LANES);
+```
+
+`llama_top`'s defaults are **`A_ROWS_IF = 4`** and `LANES = 8`, so that is
+`0 - 4`: a negative `natural`, elaborated during the DECLARATIVE part, in
+every configuration **including `A_DRAIN_WIDE => false`**. Every
+`tb_llama_top*` row, every seam gate and every card build would have stopped
+with a range error while the new arm sat unreachable behind a false generic.
+
+And `A_ROWS_IF = 4` is not a default anybody may raise: `A_NPORTS` is the
+package constant **5** (`rtl/llama_map_pkg.vhd:69`), `llama_top`'s `m_*`
+ports are `A_NPORTS` wide, and `ga_real` maps `NPORTS_W => A_ROWS_IF`. Four
+is the only value that elaborates in `llama_top` at all.
+
+The applied form makes the check a property of the configuration being ASKED
+FOR, and admits both nestings rather than one:
+
+```vhdl
+constant CHK_A_DRAIN_WIDE : natural :=
+  0 - boolean'pos(A_DRAIN_WIDE)
+      * ((A_ROWS_IF mod LANES) * (LANES mod A_ROWS_IF));
+constant A_DW_GRP : positive := minimum(LANES, A_ROWS_IF);
+```
+
+`LANES | A_ROWS_IF` is the card (8 | 48, a whole group a cycle, exactly
+section 7's traversal); `A_ROWS_IF | LANES` is llama_top's own default
+(4 | 8, four of the eight lanes a cycle with the rest held off by `w_be`).
+The wide arm carries a `lane0 := (j_off + r) mod LANES` cursor for the second
+case; it is identically 0 in the first, so the card's code path is section 7's
+unchanged.
+
+### (ii) THE PATCH IS IN THE WRONG ARM FOR THE CARD
+
+Section 7 quotes `llama_top.vhd:4394-4413`, which is **`ga_real`**. The card
+does not generate `ga_real`. `hw/fk33/rtl/fk33_card.vhd:222` sets
+`A_DESC => true`; `tools/gen_cardtop.py` emits `ga_real` guarded
+`if not A_BEHAV and not A_DESC`; the arm that runs is **`ga_desc`**, whose
+`S_DRAIN` is a Python string literal (`D12_GA_NEW`) inside
+`tools/gen_cardtop.py`. **Applying L1 to `rtl/llama_top.vhd` alone would have
+saved the card nothing, and every bench would have agreed that it worked.**
+
+The cycle claim itself survives: `ga_desc` has the same `S_DRAIN` and the same
+`S_XRD`, and section 4.1's fit carries the fixed states in a free intercept
+`F`, so the `M` and `K` terms -- the only ones that discriminate -- are
+unaffected. (`ga_desc` has no `S_CB`, `S_CBGAP` or `S_EXP`, so section 7's
+`card_side = K + M + 21` is `ga_real`'s constant, not the card's. The
+difference is absorbed by `F` and changes no conclusion.) What was wrong is
+the LOCATION, not the number.
+
+This makes `rtl/llama_top.vhd` the input to a generator whose OUTPUT is what
+the card compiles -- CLAUDE.md's *"editing a generator's INPUT carries the
+same obligation, and line 2 cannot warn you"*, now for a third consumer
+alongside `tools/gen_cardtop.py`'s bench and `sim/ooc_gdnadapt_extract.py`.
+
+### (iii) THERE IS A THIRD `v_reg_d` SITE, AND IT IS THE INSTRUMENT
+
+Section 7 names two places that read `v_reg_d` as if it were the group write
+port's region -- `memp` and `wr_region` -- and warns, correctly, that missing
+the second fails in the GUARD rather than in the data. **There is a third:
+`wsump`, the observability write hash at `llama_top.vhd:6915-6937`**, which
+is precisely what `EXP_STEPH` hashes.
+
+MEASURED, and found by the bench rather than by reading. With the other hunks
+applied and this one missed, `sim:tb_llama_top_wdrain` reported:
+
+```
+P14 -- hash of the 64-completion step trace is 26718 and the recorded
+       landmark is 17333.
+P14 landmarks measured -- EXP_X0 => -16364, EXP_XSUM => 91622,
+                          EXP_XALL => 91622, EXP_STEPH => 26718
+                          (1 of the pinned landmarks moved)
+```
+
+**Three landmarks agreed and the fourth did not, and the fourth was right.**
+The data was correct; the INSTRUMENT was hashing A's writes against whatever
+region the last D-vec op happened to have named. A gate carrying only the
+three residual landmarks would have gone green over an observer that had
+silently stopped describing the design. With the site fixed to `wg_reg`, all
+four match; the mutation that restores it is `M7_wsum_region` in 10.5 and it
+is killed by `EXP_STEPH` alone.
+
+On the card the equivalent of hunk (b) is one line of `gen_cardtop.py`'s
+`D3_STMT_NEW` -- `cm_regd <= "0" & wg_reg(6 downto 0);` -- because there the
+region file is a `region_mem` instance and `memp` does not exist.
+
+## 10.3 What was applied
+
+`rtl/llama_top.vhd`, all of it behind `A_DRAIN_WIDE : boolean := false`:
+
+| # | site | change |
+|---|---|---|
+| a | group-port signals | new `wg_reg`; `seq_vec_res`'s four actuals renamed to `vw_*`; unit A's face `aw_we`/`aw_reg`/`aw_addr`/`aw_be`/`aw_data`, tied off at declaration |
+| b | after `act_port` | new `wgmux`, selected by `act_unit`, guarded `A_DRAIN_WIDE and act_unit = U_A` so the FALSE arm reduces textually to the wiring the file had |
+| c | `memp` group arm | `v_reg_d` -> `wg_reg` |
+| d | `wr_region` | `v_reg_d` -> `wg_reg` |
+| e | `wsump` write hash | `v_reg_d` -> `wg_reg`   **(NOT in section 7)** |
+| f | `u_vres` port map | `w_* => vw_*` |
+| g | `ga_real` `S_DRAIN` | the group arm in front of the shipping body, which stays verbatim and becomes the misalignment fallback |
+| h | declarations | `CHK_A_DRAIN_WIDE`, `A_DW_GRP`, and the `lane0` cursor |
+
+`tools/gen_cardtop.py`: (c) as `cm_regd` in `D3_STMT_NEW`; (g) plus `lane0`
+and the `aw_we <= '0'` default inside `D12_GA_NEW`, **so `ga_desc` gets the
+same lever**. `rtl/fk33_llama_top.vhd` and `sim/tb_fk33_cardtop_ident.vhd`
+regenerated; `git diff` on each carries this change and nothing else.
+
+`sim/tb_llama_top.vhd` gains one pass-through generic defaulting false.
+`sim/tb_llama_top_wdrain.vhd` is the new gate row: `tb_llama_top_real`'s
+generic map character for character plus `A_DRAIN_WIDE => true`, carrying
+`tb_llama_top_real`'s four landmarks UNCHANGED. **They are not re-derived,
+deliberately** -- re-measuring them from a run of the wide arm is a round trip
+against itself, which this project has on record passing for a
+wrong-but-consistent implementation (the `m7 mutant`). Those four values were
+themselves cleared against `tools/ref9b/` by `sim:seamgate_*`, so a wide run
+matching them has matched a Python model transitively at the element level.
+
+`sim/mutate_a_drain_wide.sh` is the teeth harness.
+
+## 10.4 The alignment claim, verified rather than trusted
+
+Section 7(e) asserts every A job has `dst_off` in {0, 2048, 4096} and
+`n_rows mod 8 = 0`. RE-DERIVED here from `gen_layer_program.build_plan` at
+`QWEN35_9B`, with the lm_head split into the 15 windows the profile unfolds:
+
+```
+A_JOB steps 311   drained 296   lm_head windows 15  (14 x 17,376 + 1 x 5,056)
+dst_off over drained jobs   {0, 2048, 4096}                  all = 0 mod 8
+n_rows  over drained jobs   {32, 1024, 2048, 4096, 8192, 12288}  all = 0 mod 8
+sum(M) 1,426,944    sum(ceil(M/8)) 178,368    saving 1,248,576
+```
+
+**CONFIRMED to the element, and one number sharpened.** `build_plan` at its
+default single lm_head window emits **297** A jobs, not 311; 311 is the count
+with 15 windows, which is also `A_N_JOBS` and what the profile's step table
+shows. Section 7 said "311 A jobs" without saying which; both are right for
+different window counts and only one of them is the arena size.
+
+**AND THE SAME ALIGNMENT HOLDS AT THE BENCH GEOMETRY, WHICH IS THE PROBLEM.**
+At `mk_shape_scaled(4, 4, 16)` every drained A job has `dst_off` in
+{0, 64, 128} and `n_rows` in {4, 64, 128}, and `A_DW_GRP` is 4 -- so **every
+offset and every row count is a multiple of the group, on the bench and on the
+card alike.** Two of the wide arm's four behaviours are therefore UNREACHABLE
+at every shape any bench or the card can present:
+
+- **the misaligned fallback**, `j_off mod A_DW_GRP /= 0`; and
+- **the partial final group**, which is the only thing `w_be`'s tail mask is
+  for.
+
+Both are exercised at the card's geometry by `sim/tb_region_drain.vhd`:
+`misaligned_37` and `misaligned_64` take the fallback, and `tail_100`,
+`cross_word_50` and `single_1` have partial groups, all against an independent
+model. They are NOT exercised in `llama_top`, and 10.5 measures exactly that
+rather than asserting it: the two mutants that break them both SURVIVE the new
+gate row, under their own names.
+
+## 10.5 The mutation table
+
+MEASURED by `bash sim/mutate_a_drain_wide.sh`, 29 rows, `ghdl-mcode`,
+`sim/tb_llama_top.vhd` at `tb_llama_top_real`'s generics. Every mutation is
+one anchored substitution in `rtl/llama_top.vhd`, applied in a scratch copy,
+with a REQUIRED occurrence count of 1 so a partial edit is an error and not a
+verdict.
+
+**Two attribution controls per row, because a kill proves nothing about who
+made it:**
+
+- `_N` -- the same mutation with **`A_DRAIN_WIDE` FALSE**. If it still bites,
+  `sim:tb_llama_top_real` already caught it and the new row deserves no credit.
+- `_X` -- the same mutation, wide, with the **four landmarks UNSET**. If it
+  still bites, the kill belongs to a structural property (the region lock, the
+  residual exponent check, a constrained range), not to the value gate.
+
+| mutant | what | wide | `_N` narrow | `_X` no landmarks | who actually killed it |
+|---|---|---|---|---|---|
+| `W0w` | CONTROL, clean, wide | SURVIVED, 24,204 cyc | -- | -- | clean passes |
+| `W0n` | CONTROL, clean, narrow | SURVIVED, 26,382 cyc | -- | -- | clean passes |
+| `M1_be_tail` | `w_be` enabled one row PAST the vector | **SURVIVED** | SURVIVED | SURVIVED | **nobody -- see below** |
+| `M2_addr_no_off` | group address drops `j_off` | KILLED, `EXP_STEPH` 17333 -> 31235, other three UNMOVED | SURVIVED | SURVIVED | **the new row's value gate, and only `EXP_STEPH`** |
+| `M3_last_group` | off by one on the last group (`>` for `>=`) | **SURVIVED**, 24,241 cyc | SURVIVED | SURVIVED | **nobody -- see below** |
+| `M4_lane_skew` | `ybw` lane slice skewed one mantissa | KILLED(ABORT) `overflow detected` | SURVIVED | KILLED(ABORT) | the SIMULATOR's constrained range, not the gate |
+| `M5_wr_region` | `wr_region` reads `v_reg_d` again | KILLED(ABORT) | SURVIVED | KILLED(ABORT) | `llama_top`'s OWN `gatechk`: *"the region lock DROPPED a write to region 1"* at 797,500 ps |
+| `M6_memp_region` | `memp` reads `v_reg_d` again | KILLED, ALL FOUR landmarks moved (`-32000 / 98349 / 98349 / 40262`) | SURVIVED | KILLED | the residual exponent check P6 fires first; the landmarks confirm |
+| `M7_wsum_region` | the write hash reads `v_reg_d` again | KILLED, `EXP_STEPH` 17333 -> 26718, other three UNMOVED | SURVIVED | SURVIVED | **the new row's value gate, and only `EXP_STEPH`** |
+| `M8_no_fallback` | the misaligned fallback removed | **SURVIVED** | SURVIVED | SURVIVED | **nobody -- see below** |
+| `M9_no_reset` | the `r = 0` cursor reset removed | KILLED(ABORT) | **KILLED(ABORT)** | KILLED(ABORT) | an EXISTING row. `_N` bites, so `sim:tb_llama_top_real` catches it already |
+
+### What the controls actually bought, stated rather than implied
+
+- **`M2` and `M7` are the new row's only unshared kills**, and both are
+  `EXP_STEPH`'s alone: their `_X` controls SURVIVE and their `_N` controls
+  SURVIVE. `M2` is the sharp one -- the group address losing `dst_off` puts
+  every A job's output at offset 0 of its region, and `EXP_X0`, `EXP_XSUM` and
+  `EXP_XALL` are all UNMOVED by it, because R_X is written by the residual and
+  not by A. **Three agreeing landmarks over a wholesale mis-addressing of
+  subsystem A's entire output.** The fourth is the whole gate.
+- **`M5` is the hunk section 7 warned about, and the warning was right in
+  mechanism and wrong about who catches it.** The kill is `llama_top`'s own
+  region-lock `gatechk`, an EXISTING property, not P14 -- its `_X` control
+  bites. What the new arm contributes is REACHABILITY: `_N` survives, so the
+  defect does not exist until A drives the group port. The lever creates the
+  hazard and an existing guard catches it, which is the cheapest possible
+  outcome and is worth recording as such.
+- **`M9` gets no credit at all.** It bites with `A_DRAIN_WIDE` false, so
+  `sim:tb_llama_top_real` would have caught it without this track. Reported
+  because a kill nobody can attribute is worse than no kill.
+- **`M4` is a range error, not a value check** -- GHDL's `overflow detected`,
+  caught by the same constrained `natural range` discipline the `rword`
+  comment already relies on. A real kill, and not the gate's.
+
+### The three mutants that do NOT bite, under their own names
+
+All three are the SAME geometric fact, and it is the one 10.4 establishes:
+**at every shape reachable here, `dst_off mod A_DW_GRP = 0` and
+`n_rows mod A_DW_GRP = 0`.**
+
+- **`M1_be_tail`** enables one lane past the vector. It can only differ when a
+  group extends past `j_rows`, i.e. when `j_rows` is not a multiple of
+  `A_DW_GRP`. There is no such job. The guard that DOES bite is
+  `sim/tb_region_drain.vhd` -- DSIDE's `W1_no_be_tail` kills on `tail_100`,
+  `cross_word_50` and `single_1`.
+- **`M3_last_group`** is an off-by-one on the final group. Its only observable
+  effect here is **one wasted cycle per drained A job**: 24,241 against the
+  clean 24,204, and `24,241 - 24,204 = 37`, which is exactly the number of
+  drained A jobs in this schedule. It writes an extra group with every lane
+  disabled, so no value moves and no landmark can see it. **Nothing in the
+  gate reads a cycle count**, which is why this row survives; the cycle figure
+  is printed by the bench and compared by a human.
+- **`M8_no_fallback`** removes the alignment guard. Unreachable for the same
+  reason. `tb_region_drain`'s `W4_no_fallback` kills it on both `misaligned_*`
+  rows.
+
+**That is the resolution floor of this gate row, measured rather than
+asserted: it cannot see the partial-group tail, the alignment fallback, or a
+cycle regression.** The first two are covered one level down; the third is
+covered by nothing.
+
+## 10.6 Gate rows, verbatim
+
+MEASURED by `bash sim/regress.sh --only <pat>`, every group re-run AFTER the
+last edit to the tree:
+
+```
+##### --only tb_llama_top
+ OVERALL     PASS 13   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only cardtop
+ OVERALL     PASS 3   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only gdnstale
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only seamgate
+ OVERALL     PASS 6   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only fk33card
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only region_drain
+ OVERALL     PASS 1   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 0   SKIPPED 0
+ REGRESSION: PASS
+##### --only gdn
+ OVERALL     PASS 21   FAIL 0   NOVERDICT 0   TIMEOUT 0   BUILD-ERROR 0   NOCHECK 1   SKIPPED 0
+ REGRESSION: PASS
+```
+
+The thirteen `tb_llama_top` rows include the new `sim:tb_llama_top_wdrain`
+(70 s) beside `sim:tb_llama_top_real` (77 s); `sim:tb_fk33_cardtop_ident`
+(107 s) is the generated identity bench, so `fk33_llama_top` with the generic
+false is still bit-identical to `llama_top`. The six `seamgate` rows are the
+independent Python oracle that cleared the landmarks this track reuses.
+
+`--only gdn` is the pre-existing state unchanged: `PASS 21 ... NOCHECK 1`, the
+one NOCHECK being `sim:tb_gdn_conv_cycles`, which was already there.
+
+`BASELINE_PASS` in `sim/regress.sh` was NOT raised for `sim:tb_llama_top_wdrain`
+(nor was it raised for `sim:tb_region_drain` by DSIDE). It is a floor, so the
+gate stays green; the next track to run a full unfiltered gate should raise it
+by 2 and quote that run.
+
+## 10.7 The recommendation for the next card build
+
+**A_DRAIN_WIDE stays FALSE in this commit, and the ask is an A/B, not a
+bitstream on trust.**
+
+What is settled: values are bit-identical through the whole write stream, the
+saving is exact arithmetic over the shipping schedule, and the lever is worth
+**1,248,576 cycles a token, 4.15% of the 30,115,280-cycle striped token and
+2.02% of the flat one**.
+
+What is NOT settled, and it is all of the cost side:
+
+- **Nothing here has been synthesised.** No `synth_design`, no `place_design`,
+  no `route_design` has seen this RTL, and CLAUDE.md's own table says nothing
+  before `route_design` orders two runs correctly on this part.
+- **The mux is small; the estimate is mine and unverified.** `wgmux` is a 2:1
+  over `w_we` (1) + `w_addr` (`GA_W` = 11) + `w_be` (8) + `w_data` (128) +
+  `wg_reg` (8) = **156 bits**, ESTIMATE ~156 LUT plus the select. Against the
+  card's 83% LUT occupancy that is noise, but it sits between a register and
+  a BRAM write port on a design that closes at 75 MHz, and one added logic
+  level on that path is exactly the kind of thing only a routed run prices.
+- **THE FALLBACK IS A RUN-TIME BRANCH, SO BOTH MUXES ARE BUILT.** `j_off` is a
+  descriptor field, so `if A_DRAIN_WIDE and (j_off mod A_DW_GRP) = 0` cannot
+  fold away. With the generic true, `ga_desc` carries BOTH the existing 48:1
+  16-bit element mux AND a new 6:1 128-bit group mux out of `ybw`, plus ~156
+  flip-flops for `aw_*`. ESTIMATE +250 to +400 LUT and +156 FF in `ga_desc`;
+  DERIVED from the mux widths, not measured. Making it a `generate` would drop
+  the fallback and the safety net with it -- **not recommended**, and 10.4/10.5
+  show the fallback is already untestable at any shipping shape, so removing
+  it would trade a known-untested path for a known-absent one.
+
+**The concrete ask, in the order that costs least:** one OOC synthesis of
+`fk33_llama_top` at `A_DESC => true` with `A_DRAIN_WIDE` false and true, on
+whichever Vivado lane is free, for the LUT/FF delta; then, only if that is
+acceptable, a routed card pair for WNS. A card build with the generic flipped
+and no A/B would put an unpriced 128-bit mux on the region file's write path
+in the same bitstream as everything else that changed that week, which is the
+uncontrolled-experiment shape CLAUDE.md records twice.
+
+## 10.8 Measurement traps hit
+
+- **THE STALE SHARED FILE LIST IN `sim/mutate_llama_top_kv.sh` MAKES EVERY
+  `mutate_llama_top*` HARNESS REPORT `DID NOT ANALYZE` ON EVERY ROW.**
+  MEASURED: reading its `FILES=` verbatim gives
+  `rtl/gdn_state_store.vhd:903: unit "gdn_conv_w_mem" not found in library
+  "work"`, because subsystem B's constants path (`e212f04`) added memories
+  nothing added to that list. `sim/regress.sh` builds its own order and is
+  unaffected, which is why nobody noticed. It fails LOUDLY, which is the only
+  reason this is a note. Worked around locally here (TRACK BNARROW holds those
+  files); **the shared list still needs the name.**
+- **Re-analysing ~60 files per mutation row costs about four minutes each.**
+  The first attempt at this 29-row matrix was going to take two and a half
+  hours, which is long enough that a table gets trimmed to fit -- and the rows
+  that get trimmed are the controls. Only `rtl/llama_top.vhd` and
+  `sim/tb_llama_top.vhd` can carry a mutation here, so the harness analyses
+  the rest once into a base library and copies it per row.
+- **A buffered redirect makes a running matrix look dead.** `nohup ... > log`
+  is block-buffered, so row verdicts appear in bursts. Progress was read from
+  the count of row DIRECTORIES, which the kernel updates immediately -- the
+  same instrument CLAUDE.md already records for a full gate.
+- **Three agreeing landmarks are not agreement.** Section 10.2(iii) and `M2`
+  in 10.5 are the same lesson from two directions: `EXP_X0`, `EXP_XSUM` and
+  `EXP_XALL` all read R_X, which subsystem A does not write. Any number of
+  them agreeing says nothing about A's output.
+- **`A_ROWS_IF` was read as a tunable and it is a fixed point.** The first
+  plan for proving this in `llama_top` assumed a bench could raise `A_ROWS_IF`
+  to 8 or 48. `A_NPORTS` is a package constant and `llama_top`'s `m_*` port
+  widths come from it, so 4 is the only value that elaborates. That is what
+  forced `A_DW_GRP = min(LANES, A_ROWS_IF)` rather than section 7's `LANES`,
+  and it is the difference between a provable lever and an unreachable one.
+
+## 10.9 Open, not determined
+
+- **Every cost figure.** Not synthesised, not placed, not routed. The LUT, FF
+  and WNS numbers in 10.7 are ESTIMATE from mux widths and nothing else.
+- **The partial final group and the misaligned fallback, in `llama_top`.**
+  MEASURED unreachable at every shape this design can present (10.4), and
+  MEASURED invisible to the new gate row (`M1`, `M3`, `M8` in 10.5). Covered
+  only by `sim/tb_region_drain.vhd`, one level down, at the card's geometry.
+  **Nothing checks that `llama_top`'s copy of the traversal still matches
+  `region_drain`'s** -- the extraction was a copy on 2026-09-20 and can drift.
+- **A cycle regression is invisible to the gate.** `M3_last_group` survives
+  while costing 37 cycles a token, because no row compares a cycle count. A
+  cycle landmark in `tb_llama_top` would close it and does not exist.
+- **`ga_desc`'s wide arm has never been SIMULATED.** `sim:tb_fk33_cardtop_adesc`
+  checks drivers, not values, and no bench runs an A job through `A_DESC`. The
+  code is textually the same traversal as `ga_real`'s at a different
+  `A_DW_GRP`, and that is an argument, not a measurement.
+- **Whether `wcollide` is still safe with two clients on the group port.**
+  Section 7 flagged that a host write during an A job would now fire it from a
+  second place. Unchanged and still MEASURED `both = 0` with every host write
+  before `go`; still an untested case rather than an impossible one.
+- **L2, L3, L4 and L5 are untouched.** L1 has now paid for the group-write mux
+  they all need.

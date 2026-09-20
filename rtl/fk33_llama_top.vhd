@@ -821,6 +821,26 @@ entity fk33_llama_top is
     -- check.  See A_SUB_BEATS below.
     A_SUB_BYTES  : natural := 4096;
 
+    -- UNIT A's DRAIN ON THE GROUP WRITE PORT.  TRACK WIDEDRAIN, lever L1 of
+    -- docs/2026-09-20_d-side-vector-traffic.md.
+    --
+    -- FALSE is the shipping behaviour: S_DRAIN writes the y buffer back one
+    -- 16-bit element per cycle through the region file's ELEMENT write port,
+    -- `M` cycles for an `M`-row job.  MEASURED over the 9B schedule's 311 A
+    -- jobs, that is 1,426,944 cycles a token, 4.74% of the striped token.
+    --
+    -- TRUE routes the same traversal through the region file's GROUP write
+    -- port -- the LANES-wide, per-lane-enabled port `seq_vec_res` already
+    -- uses -- so a cycle carries `min(LANES, A_ROWS_IF)` rows instead of one.
+    -- Nothing widens: `ybw` is already `A_ROWS_IF*MANT_W` bits per word and
+    -- the group port is already LANES*MANT_W wide.  What changes is which of
+    -- the region file's four ports the drain is wired to.
+    --
+    -- DEFAULT FALSE.  Every landmark, every seam and every card bitstream
+    -- built before this generic existed elaborates the same RTL it always
+    -- did; see `CHK_A_DRAIN_WIDE` for the one shape rule TRUE imposes.
+    A_DRAIN_WIDE : boolean := false;
+
     -- SUBSYSTEM B's LANE COUNTS.  These are the exact set `sim/tb_gdn_block.vhd`
     -- defaults to and `sim/run_gdn_block.sh` runs, which matters: the minimum
     -- legal `RECUR_SLOTS` in `gdn_recur_pipe` is SHAPE-DEPENDENT, so a smaller
@@ -1299,6 +1319,32 @@ architecture rtl of fk33_llama_top is
   -- `ga_real` generate; this is the half a synthesis run can see.
   constant CHK_A_BLOCK : natural :=
     A_JOB_STRIDE - (A_ROWS_IF + 1) * A_SUB_BYTES;
+  -- CHK_A_DRAIN_WIDE: with A_DRAIN_WIDE the drain writes a whole group of the
+  -- region file's LANES-wide port out of ONE `ybw` word, so the two widths
+  -- must NEST -- either LANES divides A_ROWS_IF (the card: 8 | 48, a full
+  -- group per cycle) or A_ROWS_IF divides LANES (the default bench: 4 | 8,
+  -- A_ROWS_IF of the LANES lanes per cycle, the rest masked off by `w_be`).
+  -- Anything else would need a group straddling two `ybw` words,
+  -- which is a second read port on a memory this file has already paid to
+  -- keep single-ported (see the `ybw` block comment in `ga_real`).
+  --
+  -- PINNED ONLY WHEN THE GENERIC IS TRUE, and this is the correction TRACK
+  -- WIDEDRAIN had to make to the patch as specified.  The patch pinned it
+  -- unconditionally as `0 - (A_ROWS_IF mod LANES)`, and llama_top's DEFAULTS
+  -- are A_ROWS_IF = 4 with LANES = 8 -- `A_NPORTS` is a package constant of
+  -- 5 and `ga_real` maps NPORTS_W => A_ROWS_IF, so 4 is the only value that
+  -- elaborates here at all.  4 mod 8 = 4, so the unconditional form is a
+  -- NEGATIVE natural at the shipping defaults and would have refused every
+  -- bench in the tree, with A_DRAIN_WIDE false and the wide arm unreachable.
+  -- The `boolean'pos` factor is what makes the check a property of the
+  -- configuration being asked for rather than of the file.
+  constant CHK_A_DRAIN_WIDE : natural :=
+    0 - boolean'pos(A_DRAIN_WIDE)
+        * ((A_ROWS_IF mod LANES) * (LANES mod A_ROWS_IF));
+  -- Rows moved per wide cycle.  LANES on the card, A_ROWS_IF in llama_top's
+  -- own default configuration.  Declared unconditionally because both drain
+  -- arms read it and a constant costs nothing when the arm is not generated.
+  constant A_DW_GRP : positive := minimum(LANES, A_ROWS_IF);
 
   -- ---- D core ----------------------------------------------------------
   signal go_walk    : std_logic;
@@ -1450,10 +1496,34 @@ architecture rtl of fk33_llama_top is
   signal r_addr : unsigned(GA_W-1 downto 0);
   signal x_rdata, e_rdata : std_logic_vector(LANES*MANT_W-1 downto 0)
                           := (others => '0');
+  -- THE GROUP WRITE PORT, as the region file sees it.  These four used to be
+  -- `seq_vec_res`'s output ports directly, because that unit was the port's
+  -- only client; they are now the OUTPUT of `wgmux` below.
   signal w_we   : std_logic;
   signal w_addr : unsigned(GA_W-1 downto 0);
   signal w_be   : std_logic_vector(LANES-1 downto 0);
   signal w_data : std_logic_vector(LANES*MANT_W-1 downto 0);
+  -- THE GROUP WRITE PORT'S REGION.  It used to be `v_reg_d` read directly at
+  -- its two use sites (`memp` and `wr_region`), which was correct while
+  -- `seq_vec_res` was the only client and is wrong the moment A can drive the
+  -- port: `v_reg_d` names the D-VEC destination, not the region being
+  -- written.  With A_DRAIN_WIDE false this is `v_reg_d` in every cycle.
+  signal wg_reg : unsigned(7 downto 0) := (others => '0');
+  -- `seq_vec_res`'s half of the mux.  Renamed from the bare `w_*` so the
+  -- instantiation names the CLIENT's port and not the region file's.
+  signal vw_we   : std_logic;
+  signal vw_addr : unsigned(GA_W-1 downto 0);
+  signal vw_be   : std_logic_vector(LANES-1 downto 0);
+  signal vw_data : std_logic_vector(LANES*MANT_W-1 downto 0);
+  -- Unit A's group-write face, driven by S_DRAIN when A_DRAIN_WIDE.  Tied
+  -- off at its declaration so the FALSE configuration has a constant here
+  -- rather than a 'U' reaching a mux input.
+  signal aw_we   : std_logic := '0';
+  signal aw_reg  : unsigned(7 downto 0) := (others => '0');
+  signal aw_addr : unsigned(GA_W-1 downto 0) := (others => '0');
+  signal aw_be   : std_logic_vector(LANES-1 downto 0) := (others => '0');
+  signal aw_data : std_logic_vector(LANES*MANT_W-1 downto 0)
+                 := (others => '0');
   signal vres_exp : signed(EXP_W-1 downto 0);
 
   -- ======================================================================
@@ -1713,6 +1783,38 @@ begin
   -- Element port mux.  One-hot by construction; the assertion says so.
   act_port <= act_unit when act_unit /= U_V else NUNIT + act_vop;
 
+  -- ----------------------------------------------------------------------
+  -- THE GROUP WRITE MUX.  Same rule as `elmux`: selected by `act_unit`,
+  -- which is latched at `job_issue` and held for the whole job, so the
+  -- selection cannot move underneath a writer mid-operation.  A and V are the
+  -- only clients and D issues one unit at a time (`cur_unit` in
+  -- `seq_desc_fetch` is a scalar).
+  --
+  -- THE `A_DRAIN_WIDE and` TERM IS DELIBERATE AND IS NOT DEAD LOGIC.  With
+  -- the generic false this process reduces to four wires plus
+  -- `wg_reg <= v_reg_d`, which is textually what the file did before the mux
+  -- existed -- so the FALSE configuration is identical by construction rather
+  -- than by an argument about when `aw_we` can be high.  It also means the
+  -- card builds in flight are unaffected whether or not they read this tree.
+  -- ----------------------------------------------------------------------
+  wgmux : process(act_unit, aw_we, aw_reg, aw_addr, aw_be, aw_data,
+                  vw_we, vw_addr, vw_be, vw_data, v_reg_d) is
+  begin
+    if A_DRAIN_WIDE and act_unit = U_A then
+      w_we   <= aw_we;
+      wg_reg <= aw_reg;
+      w_addr <= aw_addr;
+      w_be   <= aw_be;
+      w_data <= aw_data;
+    else
+      w_we   <= vw_we;
+      wg_reg <= v_reg_d;
+      w_addr <= vw_addr;
+      w_be   <= vw_be;
+      w_data <= vw_data;
+    end if;
+  end process;
+
   elmux : process(ur_en, ur_reg, ur_addr, uw_en, uw_reg, uw_addr, uw_data,
                   act_port, hw_we, hw_reg, hw_addr, hw_data) is
   begin
@@ -1837,7 +1939,10 @@ begin
   -- the mask llama_top applies, preserved verbatim; see the declarations
   cm_rega <= "0" & v_reg_a(6 downto 0);
   cm_regb <= "0" & v_reg_b(6 downto 0);
-  cm_regd <= "0" & v_reg_d(6 downto 0);
+  -- `wg_reg`, not `v_reg_d`: the group write port has two clients once
+  -- A_DRAIN_WIDE is true, and only `wgmux` knows which one owns the
+  -- cycle.  Identical while the generic is false.
+  cm_regd <= "0" & wg_reg(6 downto 0);
 
   u_regmem : entity work.region_mem
     generic map (
@@ -1960,7 +2065,15 @@ begin
   -- the window [iss_commit, cmp_valid] of the job that owns the region is
   -- DROPPED by a real design, so it is counted here rather than ignored.
   wr_we     <= w_we or el_we;
-  wr_region <= v_reg_d when w_we = '1'
+  -- `wg_reg`, not `v_reg_d`.  THIS IS THE HUNK THAT MAKES THE LEVER SAFE
+  -- RATHER THAN MERELY FAST, and it fails in the GUARD, not in the data: with
+  -- `v_reg_d` here, A's wide drain would be policed against whatever region
+  -- the last D-vec op named, so the lock would gate the wrong region and a
+  -- bench that only compares VALUES would pass.  `sim/tb_llama_top_wdrain`
+  -- exists to make that mutation bite; see M5_wr_region in
+  -- docs/2026-09-20_d-side-vector-traffic.md.  Identical while A_DRAIN_WIDE
+  -- is false.
+  wr_region <= wg_reg when w_we = '1'
                else to_unsigned(el_wreg, 8);
 
   gatechk : process(clk) is
@@ -2045,7 +2158,7 @@ begin
       ready => v_ready(V_RES), start => v_start(V_RES), i_n => v_n,
       i_exp_x => v_exp_a, i_exp_e => v_exp_b, i_taken => v_taken(V_RES),
       r_en => r_en, r_addr => r_addr, x_rdata => x_rdata, e_rdata => e_rdata,
-      w_we => w_we, w_addr => w_addr, w_be => w_be, w_data => w_data,
+      w_we => vw_we, w_addr => vw_addr, w_be => vw_be, w_data => vw_data,
       done => v_done(V_RES), done_ack => v_ack(V_RES),
       o_exp => vres_exp, o_shift => open, o_sat => open,
       err => v_err(V_RES));
@@ -4366,10 +4479,13 @@ begin
       variable ywstg : std_logic_vector(A_ROWS_IF*MANT_W-1 downto 0);
       variable rword : natural range 0 to A_YWORDS-1 := 0;
       variable rlane : natural range 0 to A_ROWS_IF-1 := 0;
+      -- The wide drain's lane offset inside the LANES-wide group.
+      variable lane0 : natural range 0 to LANES-1 := 0;
     begin
       if rising_edge(clk) then
         ur_en(U_A) <= '0';
         uw_en(U_A) <= '0';
+        aw_we      <= '0';
         xw_we      <= '0';
         smp_be_we  <= '0';
         jc_retire  <= '0';
@@ -4546,23 +4662,64 @@ begin
               -- computed wrong numbers.  `r = 0` is true on the first cycle
               -- of S_DRAIN whichever way it was reached.
               if r = 0 then rword := 0; rlane := 0; end if;
-              uw_en(U_A)   <= '1';
-              uw_reg(U_A)  <= j_dst;
-              uw_addr(U_A) <= j_off + r;
-              uw_data(U_A) <=
-                signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W));
-              -- NO CLAMP on `rword`.  It is a constrained `natural range`, so
-              -- an overrun is a loud range error in simulation rather than a
-              -- silently saturated read -- the second lesson from `zb`, where
-              -- a clamp the author added turned a detectable fault into wrong
-              -- numbers.
-              if rlane = A_ROWS_IF-1 then
-                rlane := 0;
-                if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+              if A_DRAIN_WIDE and (j_off mod A_DW_GRP) = 0 then
+                -- ==========================================================
+                -- THE GROUP PATH.  TRACK WIDEDRAIN lever L1, and THIS is the
+                -- copy that runs on the card: `ga_real` is guarded
+                -- `if not A_BEHAV and not A_DESC` and the card sets A_DESC.
+                -- A_ROWS_IF is 48 here and LANES is 8, so A_DW_GRP is 8 and
+                -- a cycle carries a whole group out of one `ybw` word.
+                -- ==========================================================
+                lane0 := (j_off + r) mod LANES;
+                aw_we   <= '1';
+                aw_reg  <= to_unsigned(j_dst, 8);
+                aw_addr <= to_unsigned((j_off + r) / LANES, GA_W);
+                for i in 0 to LANES-1 loop
+                  if i >= lane0 and i < lane0 + A_DW_GRP
+                     and (r + i - lane0) < j_rows then
+                    aw_be(i) <= '1';
+                    aw_data((i+1)*MANT_W-1 downto i*MANT_W)
+                      <= ybw(rword)((rlane+i-lane0+1)*MANT_W-1
+                                    downto (rlane+i-lane0)*MANT_W);
+                  else
+                    aw_be(i) <= '0';
+                    aw_data((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+                  end if;
+                end loop;
+                if rlane = A_ROWS_IF-A_DW_GRP then
+                  rlane := 0;
+                  if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+                else
+                  rlane := rlane + A_DW_GRP;
+                end if;
+                if r + A_DW_GRP >= j_rows then
+                  st := S_DONE;
+                else
+                  r := r + A_DW_GRP;
+                end if;
               else
-                rlane := rlane + 1;
+                -- THE SHIPPING PATH, unchanged.  Also the run-time fallback
+                -- for a descriptor whose `j_off` is not a multiple of
+                -- A_DW_GRP: the group port has no address for it, and slower
+                -- is not the same problem as wrong.
+                uw_en(U_A)   <= '1';
+                uw_reg(U_A)  <= j_dst;
+                uw_addr(U_A) <= j_off + r;
+                uw_data(U_A) <=
+                  signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W));
+                -- NO CLAMP on `rword`.  It is a constrained `natural range`,
+                -- so an overrun is a loud range error in simulation rather
+                -- than a silently saturated read -- the second lesson from
+                -- `zb`, where a clamp the author added turned a detectable
+                -- fault into wrong numbers.
+                if rlane = A_ROWS_IF-1 then
+                  rlane := 0;
+                  if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+                else
+                  rlane := rlane + 1;
+                end if;
+                if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
               end if;
-              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
 
             when S_DONE =>
               dn   <= '1';
@@ -4747,6 +4904,10 @@ begin
       variable ywstg : std_logic_vector(A_ROWS_IF*MANT_W-1 downto 0);
       variable rword : natural range 0 to A_YWORDS-1 := 0;
       variable rlane : natural range 0 to A_ROWS_IF-1 := 0;
+      -- The wide drain's lane offset inside the LANES-wide group.  A
+      -- constrained range for the same reason `rword` has one: an out-of-step
+      -- cursor is a loud range error, not a silently wrapped lane select.
+      variable lane0 : natural range 0 to LANES-1 := 0;
       -- THE LATCHED DESCRIPTOR.  Seam rule (1).  Nothing below reads `job_*`.
       variable j_src, j_dst, j_off, j_rows, j_cols, j_step : natural := 0;
       variable j_shift, j_wexp : integer := 0;
@@ -4763,6 +4924,9 @@ begin
       if rising_edge(clk) then
         ur_en(U_A) <= '0';
         uw_en(U_A) <= '0';
+        -- The wide drain's enable defaults off beside the narrow one, so a
+        -- group write is a single-cycle event exactly as an element write is.
+        aw_we      <= '0';
         cb_we      <= '0';
         x_we       <= '0';
         mv_start   <= '0';
@@ -4980,22 +5144,76 @@ begin
               -- `zb` rewrite got wrong: it reset on one path only, passed
               -- structurally, and computed wrong numbers.
               if r = 0 then rword := 0; rlane := 0; end if;
-              uw_en(U_A)   <= '1';
-              uw_reg(U_A)  <= j_dst;
-              uw_addr(U_A) <= j_off + r;
-              uw_data(U_A) <=
-                signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W));
-              -- NO CLAMP on `rword`: it is a constrained `natural range`, so an
-              -- overrun is a loud range error rather than a silently saturated
-              -- read.  A clamp added "for safety" is what turned the same `zb`
-              -- fault silent.
-              if rlane = A_ROWS_IF-1 then
-                rlane := 0;
-                if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+              if A_DRAIN_WIDE and (j_off mod A_DW_GRP) = 0 then
+                -- ==========================================================
+                -- THE GROUP PATH.  A_DW_GRP rows out of ONE `ybw` word, into
+                -- one LANES-wide group of the region file's group write port.
+                --
+                -- `lane0` is where this group's rows sit inside the LANES-wide
+                -- word.  It is 0 in every cycle when A_DW_GRP = LANES (the
+                -- card), and alternates 0, A_ROWS_IF, 2*A_ROWS_IF ... when
+                -- A_ROWS_IF < LANES.  `j_off mod A_DW_GRP = 0` plus `r` rising
+                -- by A_DW_GRP makes it a multiple of A_DW_GRP, so a group
+                -- never straddles a LANES boundary and `lane0 + A_DW_GRP`
+                -- never exceeds LANES.  CHK_A_DRAIN_WIDE pins the nesting.
+                --
+                -- `w_be` is what makes the FINAL group safe: a lane is enabled
+                -- only for a row this job actually owns, so the tail of a job
+                -- whose row count is not a multiple of A_DW_GRP writes the
+                -- rows it has and leaves the rest of the group alone.  The
+                -- narrow path gets that for free by writing one element.
+                -- ==========================================================
+                lane0 := (j_off + r) mod LANES;
+                aw_we   <= '1';
+                aw_reg  <= to_unsigned(j_dst, 8);
+                aw_addr <= to_unsigned((j_off + r) / LANES, GA_W);
+                for i in 0 to LANES-1 loop
+                  if i >= lane0 and i < lane0 + A_DW_GRP
+                     and (r + i - lane0) < j_rows then
+                    aw_be(i) <= '1';
+                    aw_data((i+1)*MANT_W-1 downto i*MANT_W)
+                      <= ybw(rword)((rlane+i-lane0+1)*MANT_W-1
+                                    downto (rlane+i-lane0)*MANT_W);
+                  else
+                    aw_be(i) <= '0';
+                    aw_data((i+1)*MANT_W-1 downto i*MANT_W) <= (others => '0');
+                  end if;
+                end loop;
+                -- Same cursor discipline as the narrow arm and the same
+                -- deliberate absence of a clamp on `rword`.
+                if rlane = A_ROWS_IF-A_DW_GRP then
+                  rlane := 0;
+                  if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+                else
+                  rlane := rlane + A_DW_GRP;
+                end if;
+                if r + A_DW_GRP >= j_rows then
+                  st := S_DONE;
+                else
+                  r := r + A_DW_GRP;
+                end if;
               else
-                rlane := rlane + 1;
+                -- THE SHIPPING PATH, unchanged.  Also the run-time fallback
+                -- for a descriptor whose `j_off` is not a multiple of
+                -- A_DW_GRP: the group port has no address for it, and slower
+                -- is not the same problem as wrong.
+                uw_en(U_A)   <= '1';
+                uw_reg(U_A)  <= j_dst;
+                uw_addr(U_A) <= j_off + r;
+                uw_data(U_A) <=
+                  signed(ybw(rword)((rlane+1)*MANT_W-1 downto rlane*MANT_W));
+                -- NO CLAMP on `rword`: it is a constrained `natural range`, so
+                -- an overrun is a loud range error rather than a silently
+                -- saturated read.  A clamp added "for safety" is what turned
+                -- the same `zb` fault silent.
+                if rlane = A_ROWS_IF-1 then
+                  rlane := 0;
+                  if rword /= A_YWORDS-1 then rword := rword + 1; end if;
+                else
+                  rlane := rlane + 1;
+                end if;
+                if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
               end if;
-              if r = j_rows-1 then st := S_DONE; else r := r + 1; end if;
 
             when S_DONE =>
               dn   <= '1';
@@ -7333,7 +7551,18 @@ begin
         for i in 0 to LANES-1 loop
           if w_be(i) = '1' then
             h := resize(h * 31, 32);
-            h := h + to_unsigned(to_integer(unsigned(v_reg_d(6 downto 0)))*8191
+            -- `wg_reg`, NOT `v_reg_d`.  THIS IS THE THIRD SITE THAT READ THE
+            -- D-VEC DESTINATION AS IF IT WERE THE GROUP PORT'S REGION, and
+            -- lever L1's specification named only the other two (`memp` and
+            -- `wr_region`).  MEASURED 2026-09-20 by TRACK WIDEDRAIN: with A's
+            -- wide drain on the port and this line still reading `v_reg_d`,
+            -- `sim:tb_llama_top_wdrain` reported EXP_X0, EXP_XSUM and EXP_XALL
+            -- bit-identical to the narrow tree and EXP_STEPH moved 17333 ->
+            -- 26718 -- the observer hashing A's writes against whatever region
+            -- the LAST D-vec op happened to name.  The values were right and
+            -- the instrument was wrong, which is why the fourth landmark
+            -- exists and why three agreeing ones are not a result.
+            h := h + to_unsigned(to_integer(unsigned(wg_reg(6 downto 0)))*8191
                                  + to_integer(w_addr)*LANES + i, 32)
                    + resize(unsigned(w_data((i+1)*MANT_W-1 downto i*MANT_W)), 32);
           end if;

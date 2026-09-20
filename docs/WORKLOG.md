@@ -11,6 +11,50 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK WIDEDRAIN: lever L1 is applied, MEASURED in `llama_top` to the cycle, and the specified patch was wrong in three places
+
+- **No hardware, no Vivado. GHDL only.** Write-up appended as section 10 of
+  `docs/2026-09-20_d-side-vector-traffic.md` (append-only, DSIDE's sections
+  1-9 untouched).
+- **MEASURED in the integration top, not in an extracted copy** -- which is
+  the open item DSIDE 6.3 left. `sim/tb_llama_top_real` (drain narrow)
+  **26,382 cycles** a token; `sim/tb_llama_top_wdrain`, the SAME generic map
+  plus `A_DRAIN_WIDE => true`, **24,204**. Delta **2,178**. DERIVED from that
+  schedule's 37 drained A jobs, `sum(M) = 2,904` against
+  `sum(ceil(M/4)) = 726` = **2,178**. Model and integration agree to the
+  cycle.
+- **All four landmarks bit-identical across the arms**, `EXP_STEPH` included
+  -- a running hash over EVERY region write, region-tagged, in order. The
+  whole write STREAM is identical, not just the residual.
+- **THE PATCH AS SPECIFIED REFUSES THE WHOLE TREE.** Its elaboration pin is
+  `0 - (A_ROWS_IF mod LANES)` and llama_top's defaults are `A_ROWS_IF = 4`,
+  `LANES = 8` -- a negative `natural` in every configuration including
+  `A_DRAIN_WIDE => false`. `A_ROWS_IF = 4` is forced: `A_NPORTS` is the
+  package constant 5. Pinned on `boolean'pos(A_DRAIN_WIDE)` instead, and
+  widened to admit both nestings.
+- **AND IT WAS IN THE WRONG ARM FOR THE CARD.** `llama_top.vhd:4394` is
+  `ga_real`; the card sets `A_DESC` and runs `ga_desc`, which lives inside
+  `tools/gen_cardtop.py`. Applying L1 to `rtl/llama_top.vhd` alone saves the
+  card NOTHING. Applied to both; the generated `rtl/fk33_llama_top.vhd`
+  carries it.
+- **THERE IS A THIRD `v_reg_d` SITE AND IT IS THE INSTRUMENT.** `wsump`, the
+  observability write hash, read the D-vec destination as if it were the
+  group port's region. Found by the bench, not by reading: three landmarks
+  agreed and `EXP_STEPH` moved 17333 -> 26718. The data was right and the
+  observer was wrong.
+- **VERIFIED, not trusted:** 311 A jobs at the 9B shape, 296 draining,
+  `dst_off` in {0, 2048, 4096} and `n_rows mod 8 = 0` for every one.
+  `sum(M) = 1,426,944` -> `178,368`, **saving 1,248,576 a token (4.15%
+  striped)**. One number sharpened: `build_plan`'s default is 297 A jobs; 311
+  is the count with the lm_head's 15 windows.
+- **A_DRAIN_WIDE STAYS FALSE.** It has never been synthesised, the fallback
+  is a run-time branch so both muxes are built, and only a routed A/B answers
+  timing. The ask is one OOC or routed pair, not a card build on trust.
+- Files: `rtl/llama_top.vhd`, `tools/gen_cardtop.py`,
+  `rtl/fk33_llama_top.vhd` + `sim/tb_fk33_cardtop_ident.vhd` (generated),
+  `sim/tb_llama_top.vhd` (one generic), `sim/tb_llama_top_wdrain.vhd` (new
+  row), `sim/mutate_a_drain_wide.sh` (new teeth).
+
 ### 2026-09-20 TRACK IMGLOCK: the card now says which image it is holding, and every tool refuses a manifest that disagrees
 
 - **The defect, MEASURED this morning: nothing on the card recorded which
