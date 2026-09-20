@@ -71,15 +71,41 @@
 -- 12288 is 12 of the 124.5 BRAM tiles the card has left.  BRAM is the
 -- resource this design has least of after LUT, so the trade is stated.
 --
--- SINGLE-PORT BANKS, NOT LANES-WAY.  rmsnorm_rs_mem banks LANES ways
--- because its element passes consume LANES elements per cycle.  This
--- datapath consumes ONE element per cycle by construction (one sigmoid, two
--- multiplies), so a LANES-way bank would feed LANES copies of that
--- datapath -- LANES times the DSPs, in a design the write-ups record as
--- DSP-bound in every congested window.  One element per cycle is already
--- 4x swiglu.vhd's own rate, and the op sits between two A jobs of
--- 12288 x 4096 that dwarf it.  So: one vec_mem per operand, one for the
--- output, a `LANES` generic deliberately absent.
+-- LANES-WAY BANKS, DEFAULT 1.  TRACK SWGFAST, 2026-09-20.  This unit used
+-- to argue here that a LANES generic was "deliberately absent": one element
+-- per cycle is already 4x swiglu.vhd's rate, a LANES-way bank feeds LANES
+-- copies of a datapath with two 32x32 multiplies and a sigmoid, and the op
+-- sits between two A jobs that dwarf it.  All three are still true, and the
+-- generic exists anyway, because the card MEASURED the op: 61,473 cycles
+-- per OP_VEC_SWG at N = 12288 (hw/fk33/results/card_swg_2026-09-20/profile/
+-- profile_flat_tok0.txt), 5.0 cycles per element, of which this unit's two
+-- passes are 2N + 12 = 24,588 (MEASURED by sim/tb_swiglu_mem.vhd's
+-- SWGFAST_CYCLES line) and the other 3N are llama_top's serial G load, U
+-- load and write-back, one word per cycle each.  The unit's share is the
+-- only one a unit change can touch, and LANES is how it is touched:
+--   * word i lives in bank (i mod LANES) at offset (i / LANES), the same
+--     layout rtl/rmsnorm_bf_mem.vhd uses, decoded from the low LB bits of
+--     the write address and selected by the low LB bits of o_raddr;
+--   * the four-stage pipeline is replicated per lane; each lane computes
+--     exactly the function above on its own element, so every value is the
+--     one the LANES = 1 unit computes for that element;
+--   * pass 1 keeps ONE RUNNING MAX PER LANE (so the per-cycle fold path is
+--     the LANES = 1 path, unchanged) and combines them in one extra state,
+--     S_MAX, that exists only when LANES > 1.  A maximum is order-independent,
+--     so the combined value is bit-identical to the serial fold;
+--   * pass 2 packs LANES words per cycle into LANES output banks.
+-- Both passes are NB = N / LANES beats, so start -> done is 2*NB + 12 at
+-- LANES = 1 and 2*NB + 13 above it: 24,588 / 12,301 / 6,157 cycles at
+-- N = 12288 for LANES = 1 / 2 / 4 (MEASURED, the bench line above).
+-- LANES must be a power of two that divides N; both are pinned with the
+-- out-of-range-natural idiom because Vivado ignores `severity failure`.
+-- BRAM is neutral in bits (LANES banks of N/LANES words); the cost is LANES
+-- copies of the sigmoid and the two multiplies.  sim/tb_swiglu_mem.vhd runs
+-- the identity bench at LANES 1, 2 and 4 and `cmp`s the read-out dumps.
+--
+-- At LANES = 1 the elaborated design is the 2026-09-19 unit: one bank per
+-- operand, no write decode, no read select (o_rdata is bank 0's registered
+-- dout directly), no S_MAX, the same cycle count.
 --
 -- READ LATENCY of o_raddr -> o_rdata is ONE EDGE, the same contract as
 -- rmsnorm_rs_mem: the output bank's own registered dout IS the port, with no
@@ -98,7 +124,10 @@ use work.util_pkg.all;   -- clog2
 entity swiglu_mem is
   generic(
     N : positive;
-    Q : integer := 12
+    Q : integer := 12;
+    -- Elements per cycle in both passes.  A power of two dividing N.  1 is
+    -- the 2026-09-19 unit exactly; see the header.
+    LANES : positive := 1
   );
   port(
     clk     : in  std_logic;
@@ -132,43 +161,63 @@ end entity;
 
 architecture rtl of swiglu_mem is
   constant LOG2N : natural := clog2(N);
+  constant LB    : natural := clog2(LANES);      -- bank-index width
+  constant NB    : natural := N / LANES;         -- beats per pass
+  constant AB    : natural := clog2(NB);         -- per-bank address width
 
-  type state_t is (S_IDLE, S_P1, S_P2);
+  -- ELABORATION PINS (out-of-range natural: an error in GHDL and Vivado).
+  -- LANES divides N; LANES is a power of two; the per-bank address is
+  -- exactly the element address minus the bank index (two-sided).
+  constant bad_lanes_divide : natural := 0 - (N mod LANES);
+  constant bad_lanes_pow2   : natural := LANES - 2**LB;
+  constant bad_ab_narrow    : natural := AB - (LOG2N - LB);
+  constant bad_ab_wide      : natural := (LOG2N - LB) - AB;
+
+  type state_t is (S_IDLE, S_P1, S_MAX, S_P2);
   signal state : state_t := S_IDLE;
 
-  -- The element index presented to the two input banks.  COMBINATIONAL read
+  -- The beat index presented to the input banks.  COMBINATIONAL read
   -- address, so the bank's own output register lands the word on the edge
   -- after the one that advanced `idx`.
-  signal idx    : natural range 0 to N := 0;
-  signal ram_ra : std_logic_vector(LOG2N-1 downto 0);
-  signal g_bq, u_bq : std_logic_vector(15 downto 0);
+  signal idx    : natural range 0 to NB := 0;
+  signal ram_ra : std_logic_vector(AB-1 downto 0);
+  type sl16a is array(0 to LANES-1) of std_logic_vector(15 downto 0);
+  signal g_bq, u_bq, o_bq : sl16a;
+  signal g_bwe, u_bwe : std_logic_vector(LANES-1 downto 0) := (others => '0');
+  signal o_rsel : std_logic_vector(LB downto 0) := (others => '0');
 
   -- The latched exponents.  Seam rule (1) of rtl/llama_top.vhd, applied
   -- inside the unit: read once at start, never again.
   signal ge, ue : integer := 0;
 
-  -- The valid chain.  vf: an address was issued last cycle, so the bank
-  -- output holds its word now.  va..vd: the four arithmetic stages.
+  -- The valid chain, shared by every lane.  vf: an address was issued last
+  -- cycle, so the bank outputs hold their words now.  va..vd: the four
+  -- arithmetic stages.
   signal vf, va, vb, vc, vd : std_logic := '0';
+  type s32a is array(0 to LANES-1) of signed(31 downto 0);
+  type u32a is array(0 to LANES-1) of unsigned(31 downto 0);
   -- Stage A: the two Qq operands.
-  signal a_vq, a_hq : signed(31 downto 0) := (others => '0');
+  signal a_vq, a_hq : s32a := (others => (others => '0'));
   -- Stage B: sigmoid, operands carried.
-  signal b_sig, b_vq, b_hq : signed(31 downto 0) := (others => '0');
+  signal b_sig, b_vq, b_hq : s32a := (others => (others => '0'));
   -- Stage C: silu, up operand carried.
-  signal c_silu, c_hq : signed(31 downto 0) := (others => '0');
-  -- Stage D: the Q12 result, exactly swiglu.vhd's out_v.
-  signal d_out : signed(31 downto 0) := (others => '0');
+  signal c_silu, c_hq : s32a := (others => (others => '0'));
+  -- Stage D: the Q12 result, exactly swiglu.vhd's out_v, per lane.
+  signal d_out : s32a := (others => (others => '0'));
 
-  -- Pass 1's running max of |d_out|, an UNSIGNED VECTOR (bfp_pack's rule).
+  -- Pass 1's running max of |d_out| PER LANE, UNSIGNED VECTORS (bfp_pack's
+  -- rule), and the combined max the shift is derived from.
+  signal lmax    : u32a := (others => (others => '0'));
   signal max_abs : unsigned(31 downto 0) := (others => '0');
   signal shift_o : integer range 0 to 63 := 0;
 
-  -- Pass 2's write side: registered, so we/addr/data reach the bank on the
-  -- same edge and cannot drift apart.
-  signal widx : natural range 0 to N := 0;
+  -- Pass 2's write side: registered, so we/addr/data reach the banks on the
+  -- same edge and cannot drift apart.  One enable and one address for all
+  -- LANES banks; one datum per bank.
+  signal widx : natural range 0 to NB := 0;
   signal o_we : std_logic := '0';
-  signal o_wa : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
-  signal o_wd : std_logic_vector(15 downto 0) := (others => '0');
+  signal o_wa : std_logic_vector(AB-1 downto 0) := (others => '0');
+  signal o_wd : sl16a := (others => (others => '0'));
 
   -- bfp_pack.vhd's msb_pos_u, verbatim: highest set bit, 0 for 0.
   function msb_pos_u(u : unsigned) return integer is
@@ -178,6 +227,17 @@ architecture rtl of swiglu_mem is
       if u(i) = '1' then r := i; end if;
     end loop;
     return r;
+  end function;
+
+  -- The max over the lane maxes.  Order-independent, so bit-identical to
+  -- the serial fold whatever the lane count.
+  function max_of(a : u32a) return unsigned is
+    variable m : unsigned(31 downto 0) := (others => '0');
+  begin
+    for l in 0 to LANES-1 loop
+      if a(l) > m then m := a(l); end if;
+    end loop;
+    return m;
   end function;
 
   -- swiglu.vhd's S_CALC_A conversion, as a function so the two operands
@@ -209,21 +269,55 @@ architecture rtl of swiglu_mem is
 begin
   assert 2**LOG2N >= N
     report "swiglu_mem: clog2(N) does not cover N" severity failure;
+  assert N mod LANES = 0 and LANES = 2**LB
+    report "swiglu_mem: LANES must be a power of two dividing N"
+    severity failure;
 
   -- The banks.  vec_mem is the repo's forced-block SDP RAM with a registered
   -- read (rtl/vec_mem.vhd), added for exactly this trade on swiglu/bfp_pack.
-  ram_ra <= std_logic_vector(to_unsigned(idx, LOG2N)) when idx < N
+  -- Word i lives in bank (i mod LANES) at offset (i / LANES): the low LB
+  -- bits of the element address pick the bank, the rest is the offset.
+  ram_ra <= std_logic_vector(to_unsigned(idx, AB)) when idx < NB
             else (others => '0');
 
-  ug : entity work.vec_mem generic map(WORDS => N, W => 16)
-    port map(clk => clk, we => g_we, waddr => g_waddr, raddr => ram_ra,
-             din => g_wdata, dout => g_bq);
-  uu : entity work.vec_mem generic map(WORDS => N, W => 16)
-    port map(clk => clk, we => u_we, waddr => u_waddr, raddr => ram_ra,
-             din => u_wdata, dout => u_bq);
-  uo : entity work.vec_mem generic map(WORDS => N, W => 16)
-    port map(clk => clk, we => o_we, waddr => o_wa, raddr => o_raddr,
-             din => o_wd, dout => o_rdata);
+  gbank : for k in 0 to LANES-1 generate
+    gsel1 : if LANES = 1 generate
+      g_bwe(0) <= g_we;
+      u_bwe(0) <= u_we;
+    else generate
+      g_bwe(k) <= g_we when unsigned(g_waddr(LB-1 downto 0)) = k else '0';
+      u_bwe(k) <= u_we when unsigned(u_waddr(LB-1 downto 0)) = k else '0';
+    end generate;
+
+    ug : entity work.vec_mem generic map(WORDS => NB, W => 16)
+      port map(clk => clk, we => g_bwe(k),
+               waddr => g_waddr(LOG2N-1 downto LB), raddr => ram_ra,
+               din => g_wdata, dout => g_bq(k));
+    uu : entity work.vec_mem generic map(WORDS => NB, W => 16)
+      port map(clk => clk, we => u_bwe(k),
+               waddr => u_waddr(LOG2N-1 downto LB), raddr => ram_ra,
+               din => u_wdata, dout => u_bq(k));
+    uo : entity work.vec_mem generic map(WORDS => NB, W => 16)
+      port map(clk => clk, we => o_we, waddr => o_wa,
+               raddr => o_raddr(LOG2N-1 downto LB),
+               din => o_wd(k), dout => o_bq(k));
+  end generate;
+
+  -- The output read: a LANES-to-1 select registered in PARALLEL with the
+  -- banks' own output registers, both from the same combinational o_raddr,
+  -- so the one-edge latency contract holds at every LANES.  At LANES = 1
+  -- the select is the constant 0 and o_rdata is bank 0's dout directly.
+  process(clk) begin
+    if rising_edge(clk) then
+      if LANES = 1 then
+        o_rsel <= (others => '0');
+      else
+        o_rsel <= std_logic_vector(resize(unsigned(o_raddr(LB-1 downto 0)),
+                                          LB+1));
+      end if;
+    end if;
+  end process;
+  o_rdata <= o_bq(to_integer(unsigned(o_rsel)));
 
   process(clk)
     variable prod1  : signed(63 downto 0);
@@ -235,6 +329,23 @@ begin
     variable bias34 : signed(33 downto 0);
     variable mant16 : signed(15 downto 0);
     variable drained : boolean;
+
+    -- The pack shift from a settled max: bfp_pack's rule, once, whichever
+    -- state reaches it.
+    procedure settle(mx : unsigned(31 downto 0)) is
+      variable pm : integer;
+      variable s  : integer;
+    begin
+      pm := msb_pos_u(mx);
+      s := pm - 14; if s < 0 then s := 0; end if;
+      shift_o  <= s;
+      o_exp    <= Q - s;
+      o_shift  <= s;
+      o_maxabs <= mx;
+      idx   <= 0;
+      widx  <= 0;
+      state <= S_P2;
+    end procedure;
   begin
     if rising_edge(clk) then
       done <= '0';
@@ -243,34 +354,43 @@ begin
         state <= S_IDLE;
         idx <= 0; widx <= 0;
         vf <= '0'; va <= '0'; vb <= '0'; vc <= '0'; vd <= '0';
+        lmax <= (others => (others => '0'));
         max_abs <= (others => '0');
       else
         -- ---- the element pipeline, running whenever an address was issued.
-        -- Each stage is exactly one of swiglu.vhd's S_CALC states.
+        -- Each stage is exactly one of swiglu.vhd's S_CALC states, per lane.
         va <= vf;
         if vf = '1' then
-          a_vq <= to_qq(signed(g_bq), Q - ge);
-          a_hq <= to_qq(signed(u_bq), Q - ue);
+          for l in 0 to LANES-1 loop
+            a_vq(l) <= to_qq(signed(g_bq(l)), Q - ge);
+            a_hq(l) <= to_qq(signed(u_bq(l)), Q - ue);
+          end loop;
         end if;
 
         vb <= va;
         if va = '1' then
-          b_sig <= sigmoid_q(a_vq, Q);
-          b_vq  <= a_vq;
-          b_hq  <= a_hq;
+          for l in 0 to LANES-1 loop
+            b_sig(l) <= sigmoid_q(a_vq(l), Q);
+            b_vq(l)  <= a_vq(l);
+            b_hq(l)  <= a_hq(l);
+          end loop;
         end if;
 
         vc <= vb;
         if vb = '1' then
-          prod1  := b_vq * b_sig;
-          c_silu <= resize(shift_right(prod1, Q), 32);
-          c_hq   <= b_hq;
+          for l in 0 to LANES-1 loop
+            prod1     := b_vq(l) * b_sig(l);
+            c_silu(l) <= resize(shift_right(prod1, Q), 32);
+            c_hq(l)   <= b_hq(l);
+          end loop;
         end if;
 
         vd <= vc;
         if vc = '1' then
-          prod2 := c_silu * c_hq;
-          d_out <= resize(shift_right(prod2, Q), 32);
+          for l in 0 to LANES-1 loop
+            prod2    := c_silu(l) * c_hq(l);
+            d_out(l) <= resize(shift_right(prod2, Q), 32);
+          end loop;
         end if;
 
         -- ---- the two passes.
@@ -280,71 +400,79 @@ begin
           when S_IDLE =>
             if start = '1' then
               ge <= g_exp; ue <= u_exp;
-              max_abs <= (others => '0');
+              lmax <= (others => (others => '0'));
               idx <= 0; widx <= 0;
               state <= S_P1;
             end if;
 
-          -- Pass 1: issue every element once, fold |out_v| into max_abs.
+          -- Pass 1: issue every beat once, fold |out_v| into each lane's
+          -- running max.
           when S_P1 =>
-            if idx < N then
+            if idx < NB then
               vf  <= '1';
               idx <= idx + 1;
             else
               vf <= '0';
             end if;
             if vd = '1' then
-              if d_out(31) = '1' then av_u := unsigned(-d_out);
-              else                    av_u := unsigned( d_out);
-              end if;
-              if av_u > max_abs then max_abs <= av_u; end if;
+              for l in 0 to LANES-1 loop
+                if d_out(l)(31) = '1' then av_u := unsigned(-d_out(l));
+                else                       av_u := unsigned( d_out(l));
+                end if;
+                if av_u > lmax(l) then lmax(l) <= av_u; end if;
+              end loop;
             end if;
-            -- Every element issued and the pipeline empty: max_abs holds the
-            -- max over all N (the last fold landed on the previous edge).
-            if idx = N and drained then
-              p_msb := msb_pos_u(max_abs);
-              sh := p_msb - 14; if sh < 0 then sh := 0; end if;
-              shift_o  <= sh;
-              o_exp    <= Q - sh;
-              o_shift  <= sh;
-              o_maxabs <= max_abs;
-              idx   <= 0;
-              widx  <= 0;
-              state <= S_P2;
+            -- Every beat issued and the pipeline empty: the lane maxes hold
+            -- the max over all N (the last fold landed on the previous
+            -- edge).  One lane: settle now, the 2026-09-19 schedule.  More:
+            -- combine the lanes first, in S_MAX, so the per-cycle fold path
+            -- above stays a single compare per lane.
+            if idx = NB and drained then
+              if LANES = 1 then
+                settle(lmax(0));
+              else
+                max_abs <= max_of(lmax);
+                state   <= S_MAX;
+              end if;
             end if;
 
+          when S_MAX =>
+            settle(max_abs);
+
           -- Pass 2: recompute, pack, write.  bfp_pack's S_PACK, verbatim in
-          -- effect: round half up by shift_o, saturate to int16.
+          -- effect: round half up by shift_o, saturate to int16, per lane.
           when S_P2 =>
-            if idx < N then
+            if idx < NB then
               vf  <= '1';
               idx <= idx + 1;
             else
               vf <= '0';
             end if;
             if vd = '1' then
-              r34 := resize(d_out, 34);
-              if shift_o /= 0 then
-                bias34 := shift_left(to_signed(1, 34), shift_o - 1);
-                r34    := shift_right(r34 + bias34, shift_o);
-              end if;
-              if    r34 > to_signed( 32767, 34) then
-                mant16 := to_signed( 32767, 16);
-              elsif r34 < to_signed(-32768, 34) then
-                mant16 := to_signed(-32768, 16);
-              else
-                mant16 := resize(r34, 16);
-              end if;
+              for l in 0 to LANES-1 loop
+                r34 := resize(d_out(l), 34);
+                if shift_o /= 0 then
+                  bias34 := shift_left(to_signed(1, 34), shift_o - 1);
+                  r34    := shift_right(r34 + bias34, shift_o);
+                end if;
+                if    r34 > to_signed( 32767, 34) then
+                  mant16 := to_signed( 32767, 16);
+                elsif r34 < to_signed(-32768, 34) then
+                  mant16 := to_signed(-32768, 16);
+                else
+                  mant16 := resize(r34, 16);
+                end if;
+                o_wd(l) <= std_logic_vector(mant16);
+              end loop;
               o_we <= '1';
-              o_wa <= std_logic_vector(to_unsigned(widx, LOG2N));
-              o_wd <= std_logic_vector(mant16);
+              o_wa <= std_logic_vector(to_unsigned(widx, AB));
               widx <= widx + 1;
             end if;
-            -- The last word's write is REGISTERED on the edge widx reaches N
-            -- and lands in the bank on the next one; `done` fires on that
-            -- next edge, so a reader that acts on `done` sees the whole
+            -- The last beat's write is REGISTERED on the edge widx reaches
+            -- NB and lands in the banks on the next one; `done` fires on
+            -- that next edge, so a reader that acts on `done` sees the whole
             -- vector.
-            if o_we = '1' and unsigned(o_wa) = N-1 then
+            if o_we = '1' and unsigned(o_wa) = NB-1 then
               done  <= '1';
               state <= S_IDLE;
             end if;

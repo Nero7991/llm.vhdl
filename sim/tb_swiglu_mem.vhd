@@ -58,13 +58,14 @@
 -- NO HARDWARE.  Simulation only.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use ieee.math_real.all;
+use std.textio.all;
 use work.util_pkg.all;
 
 entity tb_swiglu_mem is
   generic(N : positive := 128; Q : integer := 12;
-          -- Thirteen value trials are run and one is all-zero; MIN_LIVE is
+          -- Seventeen value trials are run and one is all-zero; MIN_LIVE is
           -- the rest.  Lower it only with a stated reason.
-          MIN_LIVE : natural := 12;
+          MIN_LIVE : natural := 16;
           -- The wild-exponent sweep is NWILD trials on top of the thirteen.
           -- Most of them rail (all-zero) by construction and are counted as
           -- RAIL, not LIVE; they are here for identity, not for liveness.
@@ -74,7 +75,16 @@ entity tb_swiglu_mem is
           -- kill until the same mutant is re-run with the other checks off.
           CHK_VAL : boolean := true;    -- mantissas against bfp_pack
           CHK_EXP : boolean := true;    -- o_exp against bfp_pack
-          CHK_LAT : boolean := true);   -- o_raddr -> o_rdata latency
+          CHK_LAT : boolean := true;    -- o_raddr -> o_rdata latency
+          -- The DUT's LANES generic (elements per cycle in both passes).
+          -- 1 is the 2026-09-19 unit; TRACK SWGFAST added 2 and 4.
+          LANES   : positive := 1;
+          -- TRACK SWGFAST.  When non-empty, every trial's DUT read-out
+          -- (o_exp, then the N mantissas as read through o_raddr) is
+          -- appended to this file, one integer per line, so two runs of the
+          -- bench -- e.g. LANES=1 against LANES=2 -- can be `cmp`ed as
+          -- FILES rather than trusted to the in-bench equality alone.
+          DUMP    : string := "");
 end entity;
 
 architecture sim of tb_swiglu_mem is
@@ -151,7 +161,7 @@ begin
   hbp_start <= sw_done;
 
   dut : entity work.swiglu_mem
-    generic map(N => N, Q => Q)
+    generic map(N => N, Q => Q, LANES => LANES)
     port map(clk => clk, rst => rst, start => d_start,
              g_we => g_we, g_waddr => g_wa, g_wdata => g_wd, g_exp => ge,
              u_we => u_we, u_waddr => u_wa, u_wdata => u_wd, u_exp => ue,
@@ -184,6 +194,11 @@ begin
     variable nlive, nrail : natural := 0;
     variable nchk, nbad : natural := 0;
     variable lat_v : integer;
+    -- TRACK SWGFAST: the unit's start -> done count on the LAST live trial,
+    -- printed as SWGFAST_CYCLES so a log grep can read it.
+    variable last_dut_cyc : natural := 0;
+    file dumpf : text;
+    variable dl : line;
 
     procedure setg(i : natural; v : integer) is
     begin
@@ -246,6 +261,9 @@ begin
 
       -- ---- the VALUES, element for element, DUT read out word by word
       nbadel := 0; nz := 0; seen2 := false;
+      if DUMP /= "" then
+        write(dl, integer'image(d_oe)); writeline(dumpf, dl);
+      end if;
       for i in 0 to N-1 loop
         o_ra <= std_logic_vector(to_unsigned(i, AW));
         wait until rising_edge(clk);
@@ -254,6 +272,9 @@ begin
         wait for 1 ns;
         dm := signed(o_rd);
         rm := signed(r_om((i+1)*16-1 downto i*16));
+        if DUMP /= "" then
+          write(dl, integer'image(to_integer(dm))); writeline(dumpf, dl);
+        end if;
         if CHK_VAL then
           nchk := nchk + 1;
           if dm /= rm then
@@ -273,6 +294,7 @@ begin
       -- ---- NON-DEGENERACY
       if nz > 0 and seen2 then
         nlive := nlive + 1;
+        last_dut_cyc := d_c;
         report "tb_swiglu_mem live " & tag & " g_exp " & integer'image(ge)
              & " u_exp " & integer'image(ue)
              & " o_exp " & integer'image(r_oe) & " shift " & integer'image(d_sh)
@@ -303,6 +325,7 @@ begin
       setu(i, integer(((r - 0.5) + (r2 - 0.5) + (r3 - 0.5)) * 2.0 * a));
     end procedure;
   begin
+    if DUMP /= "" then file_open(dumpf, DUMP, write_mode); end if;
     rst <= '1';
     for i in 0 to 9 loop wait until rising_edge(clk); end loop;
     rst <= '0';
@@ -359,10 +382,26 @@ begin
     end loop;
     ge <= 8; ue <= 12; trial("gpos");
 
-    -- ---- 8. one large element against zeros: max_abs from ONE element
+    -- ---- 8. one large element against zeros: max_abs from ONE element.
+    -- FOUR trials, the element at N/2 + 0..3, so that at LANES = 2 and 4
+    -- (TRACK SWGFAST) EVERY lane is the one holding the max exactly once.
+    -- MEASURED 2026-09-20: with the element at N/2 + 1 alone, a mutant that
+    -- dropped lane 0 from the lane-max combine (`lanemax` in
+    -- sim/mutate_swiglu_mem.sh) SURVIVED at LANES = 4 -- the pack shift only
+    -- moves when lane 0's max sits in a higher power-of-two bin than every
+    -- other lane's, which the random draws over 128 elements rarely give and
+    -- the one planted element at index N/2 + 1 (lane 1) never gives.
+    for k in 0 to 3 loop
+      for i in 0 to N-1 loop setg(i, 0); setu(i, 0); end loop;
+      setg(N/2 + k, 30000); setu(N/2 + k, 30000);
+      ge <= 8; ue <= 8; trial("one_big" & integer'image(k));
+    end loop;
+    -- And at the LAST element, so the max lands in the last beat of pass 1
+    -- and the drain test (`drained`) is what includes it.  MEASURED
+    -- 2026-09-20: the `nodrain` mutant survived every trial above.
     for i in 0 to N-1 loop setg(i, 0); setu(i, 0); end loop;
-    setg(N/2 + 1, 30000); setu(N/2 + 1, 30000);
-    ge <= 8; ue <= 8; trial("one_big");
+    setg(N-1, 30000); setu(N-1, 30000);
+    ge <= 8; ue <= 8; trial("one_big_last");
 
     -- ---- 9. all zero: max_abs = 0, msb 0, shift 0, exp Q.  RAIL by
     -- construction; the exponent check still bites.
@@ -446,6 +485,15 @@ begin
     end loop;
 
     -- ---- the VERDICT
+    if DUMP /= "" then file_close(dumpf); end if;
+    -- TRACK SWGFAST.  The unit's own start -> done cycle count at this N
+    -- and LANES (the last live trial's; every trial's is the same by
+    -- construction, the schedule is data-independent).  The card's VEC_SWG
+    -- step is this plus llama_top's serial G load, U load and write-back;
+    -- see docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md.
+    report "SWGFAST_CYCLES " & integer'image(last_dut_cyc)
+         & " N=" & integer'image(N) & " LANES=" & integer'image(LANES)
+      severity note;
     report "tb_swiglu_mem: checks=" & integer'image(nchk)
          & " bad=" & integer'image(nbad)
          & " live=" & integer'image(nlive) & " rail=" & integer'image(nrail)

@@ -151,6 +151,9 @@ begin
     variable nlive, nrail : natural := 0;
     variable nchk, nbad : natural := 0;
     variable lat_v : integer;
+    -- TRACK SWGFAST: the unit's start -> done count on the LAST live trial,
+    -- printed as NORMFAST_CYCLES so a log grep can read it.
+    variable last_done_cyc : natural := 0;
 
     procedure setx(i : natural; v : integer) is
     begin
@@ -265,6 +268,7 @@ begin
       -- ---- NON-DEGENERACY
       if nz > 0 and seen2 then
         nlive := nlive + 1;
+        last_done_cyc := d_c;
         report "tb_rmsnorm_bf_mem live " & tag & " x_exp " & integer'image(xe)
              & " o_exp " & integer'image(g_oe)
              & " nonzero " & integer'image(nz) & "/" & integer'image(N)
@@ -440,6 +444,14 @@ begin
     end if;
     checks <= nchk; bad <= nbad;
 
+    -- TRACK SWGFAST.  The unit's own start -> done cycle count at this N
+    -- and LANES (the last live trial's; the schedule is data-independent
+    -- apart from the rsqrt's fixed step count).  The card's VEC_NORM step is
+    -- this plus llama_top's serial x load and write-back; see
+    -- docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md.
+    report "NORMFAST_CYCLES " & integer'image(last_done_cyc)
+         & " N=" & integer'image(N) & " LANES=" & integer'image(LANES)
+      severity note;
     report "tb_rmsnorm_bf_mem: checks=" & integer'image(nchk)
          & " bad=" & integer'image(nbad)
          & " live=" & integer'image(nlive)
