@@ -530,6 +530,30 @@ The working idiom is `REF_NAME =~ DSP*`, matching this file's recorded
 `REF_NAME =~ RAM*`. Same silent-empty-result shape as a checker printing PASS
 over an object it never read.
 
+**CORRECTION 2026-09-20: `REF_NAME =~ DSP*` OVER-COUNTS BY EXACTLY 9x, AND
+THIS FILE RECOMMENDED IT FOR THREE WEEKS.** MEASURED by TRACK GDNSYNTH on the
+BC-250: **1,719 matches against a true 191**, because the filter also catches
+the DSP58's SUB-PRIMITIVES (the slice decomposes, and every piece carries a
+`REF_NAME` beginning `DSP`). So the two failures are mirror images and the
+paragraph above only warned about one of them: `PRIMITIVE_GROUP == DSP`
+silently matches NOTHING, and the "fix" silently matches NINE TIMES TOO MANY.
+Both run clean, both report success, and neither raises anything above a
+WARNING.
+
+**The rule is not a better filter, it is that A CENSUS IS AUTHORITATIVE ONLY
+WHEN ITS FILTER HAS BEEN VALIDATED, and a filter can be wrong in EITHER
+DIRECTION.** Anchor it against a total you already trust before you quote
+anything it produces -- `report_utilization`'s DSP row is the cheap
+cross-check here, and the discriminator is that agreement to the digit is
+evidence and a 9x discrepancy is the filter, not the design. The same caution
+now attaches to `REF_NAME =~ RAM*`, which has never been validated this way
+and is recorded above as authoritative.
+
+This does NOT retract the paragraph above. The census still beats the
+inference log, and where the two disagree the census still wins. What is
+retracted is the idea that switching to `REF_NAME` made the census
+self-validating.
+
 **A COMPLETION SIGNAL THAT ALSO FIRES ON FAILURE IS NOT A COMPLETION SIGNAL.**
 MEASURED 2026-08-30: a waiter armed on a `systemd` unit reported **"completed"
 when the unit was KILLED**, not only when it succeeded, and announced a
