@@ -9,7 +9,9 @@
 #
 # usage: ooc_readconv_drive.sh <tag> <top> [generic ...]
 set -u
-R=/home/orencollaco/GitHub/llama.vhdl/sim/ooc_lutdiet_run.sh
+# Sibling script, addressed relative to this one rather than by an
+# absolute path (TRACK PATHFREE, 2026-09-20).
+R="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ooc_lutdiet_run.sh"
 OUT=/mnt/storage/readconv/out
 RTL=/mnt/storage/readconv/rtl_v
 TAG="${1:?usage: ooc_readconv_drive.sh <tag> <top> [generics]}"

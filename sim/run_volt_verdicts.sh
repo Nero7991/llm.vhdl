@@ -12,7 +12,10 @@
 # Runs on the BC-250.  Sequential on purpose: 15.2 GB of RAM, and these are
 # small units, so the wall time is Vivado startup plus synthesis, not memory.
 set -u
-REPO=${REPO:-/home/orencollaco/GitHub/llama.vhdl}
+# The $REPO override stays; only its DEFAULT changes, from a literal to
+# this script's own parent (TRACK PATHFREE, 2026-09-20).  That matters on
+# the BC-250, which is where this runs.
+REPO=${REPO:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
 VOLT=${VOLT:-0.717}
 PART=xcvu33p-fsvh2104-2L-e
 LOGDIR=$REPO/sim/ooc_micro/voltlogs

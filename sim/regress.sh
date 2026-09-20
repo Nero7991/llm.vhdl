@@ -461,6 +461,31 @@ BASELINE_PASS=130  # NOT RAISED 2026-09-20 by TRACK GATEDAY, AND THE REASON IS
                    #    artefacts = 153, with sim:ipsync still red.  DO NOT
                    #    PUT 153 ON THIS LINE; it has never been observed.
                    #
+                   #    APPENDED 2026-09-20, TRACK PATHFREE: the two path
+                   #    artefacts above are CURED, and the record above is left
+                   #    standing because it is what was measured at the time.
+                   #    sim:runguard  hw/fk33/gen_i2cprobe.py now emits the XDC
+                   #                  path as $tgRoot/hw/fk33/..., and
+                   #                  gen_pcieep.py searches for that same
+                   #                  literal, so the match no longer depends on
+                   #                  where the tree lives.  $tgRoot is NOT a
+                   #                  bare [info script] derivation: pcieep_
+                   #                  build.sh:69 COPIES the generated script to
+                   #                  $BUILD_ROOT before sourcing it, so it
+                   #                  tries an env override, then the script's
+                   #                  location, then a generation-time literal,
+                   #                  probing each for rtl/util_pkg.vhd.
+                   #    sim:fk33card  the two hex-image generics MUST stay
+                   #                  absolute (file_open resolves from Vivado's
+                   #                  cwd), so --check now compares modulo the
+                   #                  repo PREFIX of those paths and prints the
+                   #                  prefix it saw.  File name, subdirectory
+                   #                  and every other byte still bite.
+                   #    So a clean checkout CAN now be both clean and off-path,
+                   #    and the DERIVED 153 floor is observable for the first
+                   #    time.  It is still DERIVED here -- do not put it on the
+                   #    BASELINE_PASS line from anything but a full run.
+                   #
                    # THE ONE GENUINELY RED ROW, and it is NOT from today:
                    #   sim:ipsync  ip_repo/llama_engine_axi_1_0/src/
                    #               llama_engine_axi.vhd is 20,045 bytes against

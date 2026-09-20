@@ -69,6 +69,30 @@ if {[file exists "$ProjectFolder"]} {
 
 # paths pinned to the upstream checkout -- see header note 7
 set scriptPath "/home/orencollaco/GitHub/SQRL_FK33/projects"
+
+# tgRoot -- the llama.vhdl repo root.  NOT $scriptPath above, which is SQRL's
+# vendor tree and a separate repository.
+#
+# Three candidates, tried in order, each accepted only if it really contains
+# the tree.  See the TGROOT_BLOCK comment in hw/fk33/gen_i2cprobe.py for why
+# this is not just [file dirname [info script]]: hw/fk33/pcieep_build.sh COPIES
+# the generated build script out of the repo before sourcing it, so the
+# script's own location is not the repo during a card build.
+set tgRoot ""
+foreach _cand [list \
+        [expr {[info exists ::env(FK33_TGROOT)] ? $::env(FK33_TGROOT) : ""}] \
+        [expr {[info script] eq "" ? "" : [file normalize [file join [file dirname [info script]] .. ..]]}] \
+        "/home/orencollaco/GitHub/llama.vhdl"] {
+    if {$_cand ne "" && [file exists [file join $_cand rtl util_pkg.vhd]]} {
+        set tgRoot [file normalize $_cand]
+        break
+    }
+}
+unset _cand
+if {$tgRoot eq ""} {
+    error "tgRoot: no candidate repo root contains rtl/util_pkg.vhd. Set FK33_TGROOT, or re-run hw/fk33/gen_pcieep.py from the checkout you mean to build."
+}
+puts "FK33_TGROOT $tgRoot"
 set sourceRoot "/home/orencollaco/GitHub/SQRL_FK33"
 #puts stdout $scriptPath
 #puts stdout [join [lrange [file split [file dirname [info script]]] 0 end-2] "/"]
@@ -468,8 +492,8 @@ if {$HBMGlobalSwitch == 1} {
 }
    
 #set_property PR_FLOW 1 [current_project]
-add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_i2cprobe.xdc
-set_property target_constrs_file /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_i2cprobe.xdc [current_fileset -constrset]
+add_files -fileset constrs_1 -norecurse $tgRoot/hw/fk33/fk33_i2cprobe.xdc
+set_property target_constrs_file $tgRoot/hw/fk33/fk33_i2cprobe.xdc [current_fileset -constrset]
 
 make_wrapper -files [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd] -top
 add_files -norecurse ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/hdl/bd_wrapper.v

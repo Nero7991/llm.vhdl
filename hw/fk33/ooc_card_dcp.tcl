@@ -83,75 +83,84 @@ create_project -in_memory -part $part
 #
 # Files unreachable from -top fk33_card are parsed and then ignored, so
 # including subsystem A's sources costs parse time and nothing else.
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_aux.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_thermal.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/util_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/mv4i_arith_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4_desc_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/stream_fifo.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/async_fifo.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/axi_rd_fsm.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/axi_rd_port.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/weight_streamer.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/act_mem_striped.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_core.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4_desc_axi.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_engine.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_seam.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/bc_port_grant.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/a_desc_adapter.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/a_job_counter.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_emit.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_luts_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_gate.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_quant.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_mac_array.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/divider_rs.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_recip.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_rope.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_score_q12.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_softmax.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/imrope_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_twiddle.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/fixed_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_block.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_axi.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_head_emit.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_silu.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_y_emit.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_emit_chain.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_capture.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_recur_pipe.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_scalar.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/l2norm_rs.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_job_seq.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_tap_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv_w_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_exp_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_axi.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_state_store.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/model_cfg_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/llama_map_pkg.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/region_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/vec_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_rs_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/swiglu_mem.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/sampler_stream.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_desc_fetch.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_opdec.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_region_lock.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_issue.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/seq_vec_res.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/fk33_llama_top.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_bc_grant.vhd
-read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_card.vhd
+# pfRoot -- the repo root, DERIVED from this script's own location rather than
+# written in as a literal, so the run works from any checkout path and survives
+# the repo directory being renamed (TRACK PATHFREE, 2026-09-20).  Probed rather
+# than trusted: a wrong root would otherwise read_vhdl nothing and fail much
+# later as a missing entity.
+set pfRoot [file normalize [file join [file dirname [info script]] .. ..]]
+if {![file exists $pfRoot/rtl/util_pkg.vhd]} {
+    error "pfRoot: derived repo root '$pfRoot' does not contain rtl/util_pkg.vhd. Source this script by its path in the tree."
+}
+read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_aux.vhd
+read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_thermal.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/util_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/mv4i_arith_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/matvec_int4_desc_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/stream_fifo.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/async_fifo.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/axi_rd_fsm.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/axi_rd_port.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/weight_streamer.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/act_mem_striped.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/matvec_core.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/matvec_int4.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/matvec_int4_desc_axi.vhd
+read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_engine.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/fk33_seam.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/bc_port_grant.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/a_desc_adapter.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/a_job_counter.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_emit.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/fixed_luts_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_gate.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_kv_quant.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_mac_array.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/divider_rs.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_recip.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_rope.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_score_q12.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_softmax.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/imrope_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_twiddle.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/fixed_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/rmsnorm_rs.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_block.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/attn_kv_axi.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_conv.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_head_emit.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_silu.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_y_emit.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/rmsnorm_bf.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_emit_chain.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_exp_capture.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_recur_pipe.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_scalar.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/l2norm_rs.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_block.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_job_seq.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_conv_tap_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_conv_w_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_exp_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_state_axi.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_state_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/gdn_state_store.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/model_cfg_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/llama_map_pkg.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/region_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/vec_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/rmsnorm_rs_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/rmsnorm_bf_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/swiglu_mem.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/sampler_stream.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/seq_desc_fetch.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/seq_opdec.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/seq_region_lock.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/seq_vec_issue.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/seq_vec_res.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/fk33_llama_top.vhd
+read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_bc_grant.vhd
+read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_card.vhd
 
 set t0 [clock seconds]
 synth_design -mode out_of_context -top fk33_card -part $part -flatten_hierarchy none

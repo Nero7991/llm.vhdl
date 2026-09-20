@@ -2,6 +2,15 @@
 # the CH=256 toy the 16-DSP row was first measured at.  Checks two things the
 # small shape cannot show: that the DSP count is set by LANES alone, and what
 # the segment accumulator actually costs in BRAM.
+# pfRoot -- the repo root, DERIVED from this script's own location rather than
+# written in as a literal, so the run works from any checkout path and survives
+# the repo directory being renamed (TRACK PATHFREE, 2026-09-20).  Probed rather
+# than trusted: a wrong root would otherwise read_vhdl nothing and fail much
+# later as a missing entity.
+set pfRoot [file normalize [file join [file dirname [info script]] ..]]
+if {![file exists $pfRoot/rtl/util_pkg.vhd]} {
+    error "pfRoot: derived repo root '$pfRoot' does not contain rtl/util_pkg.vhd. Source this script by its path in the tree."
+}
 set part xcvu33p-fsvh2104-2L-e
 set csv [open "gdn_conv_shapes.csv" w]
 puts $csv "ch_max,lanes,dsp,lut,bram,fmax_mhz"
@@ -9,8 +18,8 @@ foreach cfg {{256 4} {1024 4} {3072 4} {3072 8}} {
   set CH [lindex $cfg 0]; set L [lindex $cfg 1]
   puts "======== gdn_conv CH_MAX=$CH LANES=$L ========"
   create_project -in_memory -part $part
-  read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/util_pkg.vhd
-  read_vhdl -vhdl2008 /home/orencollaco/GitHub/llama.vhdl/rtl/gdn_conv.vhd
+  read_vhdl -vhdl2008 $pfRoot/rtl/util_pkg.vhd
+  read_vhdl -vhdl2008 $pfRoot/rtl/gdn_conv.vhd
   synth_design -mode out_of_context -top gdn_conv -part $part \
                -generic CH_MAX=$CH -generic LANES=$L
   create_clock -period 2.5 -name clk [get_ports clk]

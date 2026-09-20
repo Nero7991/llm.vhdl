@@ -47,6 +47,7 @@ descriptor unit in the other cell, so those five ports are not the card's.
 
 import os
 import subprocess
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -505,6 +506,46 @@ def render(dest, args=None):
     return open(dest).read()
 
 
+# THE ONE THING IN THE OUTPUT THAT LEGITIMATELY DEPENDS ON WHERE THE TREE
+# LIVES, AND WHY `--check` MUST COMPARE MODULO IT.
+#
+# `NORM_W_IMAGE` and `C_QKN_IMAGE` are opened by VHDL `file_open` at
+# elaboration, from wherever Vivado's cwd happens to be -- see the NORM_W_HEX
+# comment above.  An absolute path is therefore GENUINELY REQUIRED in the
+# generated entity, and this generator already computes it correctly, from its
+# own location rather than from a literal.  It is the one case in this tree
+# where an absolute path must survive into a generated file.
+#
+# The consequence, MEASURED 2026-09-20 (TRACK GATEDAY): in a git worktree the
+# regenerated text differed from the committed text in exactly those two lines
+# and `--check` reported STALE, so gate row sim:fk33card was red for a reason
+# that had nothing to do with the card.  Comparing the raw bytes asks "was this
+# file generated in THIS directory", which is not the question the row exists
+# to answer.
+#
+# So the comparison canonicalises the repo prefix of the image paths and
+# nothing else.  What that KEEPS teeth on: the generic being present at all,
+# the file name, the directory under the repo, the quoting, and every other
+# byte of the entity.  What it GIVES UP, stated plainly: a committed file whose
+# images sit under a DIFFERENT repo at the same relative path now compares
+# equal.  That is a real loss of resolution and it is why the prefix is
+# reported on the OK line rather than silently dropped -- after the
+# llama.vhdl -> llm.vhdl rename the printed prefix is how you see that the
+# committed file still names the old directory and wants regenerating.
+HEXPATH_RE = re.compile(r'"(/[^"]*?)(/hw/fk33/gen/[^"]*\.hex)"')
+
+
+def _canon_hexpaths(text):
+    """Return (canonicalised text, sorted list of distinct repo prefixes)."""
+    seen = set()
+
+    def sub(m):
+        seen.add(m.group(1))
+        return '"@REPO@%s"' % m.group(2)
+
+    return HEXPATH_RE.sub(sub, text), sorted(seen)
+
+
 def one(out, args, label, source):
     check = "--check" in sys.argv
     tmp = out + (".check" if check else "")
@@ -521,13 +562,20 @@ def one(out, args, label, source):
                   "hw/fk33/gen_fk33_card.py" % out)
             return 1
         os.remove(tmp)
-        if cur != text:
+        cur_c, cur_pfx = _canon_hexpaths(cur)
+        new_c, _ = _canon_hexpaths(text)
+        if cur_c != new_c:
             print("FK33_CARD_CHECK: STALE %s -- %s or the configuration "
                   "changed and this file was not regenerated. Run "
                   "hw/fk33/gen_fk33_card.py." % (out, source))
             return 1
-        print("FK33_CARD_CHECK: OK %s (%d bytes)"
-              % (os.path.basename(out), len(text)))
+        # The prefix is REPORTED, not checked.  A prefix that is not this
+        # checkout is legal (a worktree comparing a committed file) but it is
+        # also exactly what a post-rename stale file looks like, so it must be
+        # visible rather than absorbed.
+        pfx = ", ".join(cur_pfx) if cur_pfx else "none"
+        print("FK33_CARD_CHECK: OK %s (%d bytes, image repo prefix: %s)"
+              % (os.path.basename(out), len(text), pfx))
         return 0
     print("wrote %s (%d bytes)" % (out, len(text)))
     return 0

@@ -34,7 +34,16 @@
 # Run from sim/:  vivado -mode batch -source ooc_gdn_recur_pipe_lanes.tcl
 set part   xcvu33p-fsvh2104-2L-e
 set period 3.3
-set rtldir /home/orencollaco/GitHub/llama.vhdl/rtl
+# pfRoot -- the repo root, DERIVED from this script's own location rather than
+# written in as a literal, so the run works from any checkout path and survives
+# the repo directory being renamed (TRACK PATHFREE, 2026-09-20).  Probed rather
+# than trusted: a wrong root would otherwise read_vhdl nothing and fail much
+# later as a missing entity.
+set pfRoot [file normalize [file join [file dirname [info script]] ..]]
+if {![file exists $pfRoot/rtl/util_pkg.vhd]} {
+    error "pfRoot: derived repo root '$pfRoot' does not contain rtl/util_pkg.vhd. Source this script by its path in the tree."
+}
+set rtldir $pfRoot/rtl
 set csv [open "gdn_recur_pipe_lanes.csv" w]
 puts $csv "lanes,slots,dsp,lut,ff,bram,dsp_derived,lut_util,wns_ns,fmax_mhz"
 

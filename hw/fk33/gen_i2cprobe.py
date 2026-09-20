@@ -42,6 +42,87 @@ DST = os.path.join(HERE, "build_fk33_i2cprobe.tcl")
 XDC_SRC = os.path.expanduser("~/GitHub/SQRL_FK33/projects/fk33_example.xdc")
 XDC_DST = os.path.join(HERE, "fk33_i2cprobe.xdc")
 
+# THE PATH THAT GOES INTO THE GENERATED TCL IS *NOT* `XDC_DST`.
+#
+# XDC_DST is where THIS script writes the file, and it must stay an absolute
+# filesystem path for that.  What the generated Tcl carries is a path DERIVED
+# AT RUN TIME from the Tcl's own location, so the emitted text does not depend
+# on where this checkout happens to live.
+#
+# The defect this closes, MEASURED 2026-09-20 (TRACK GATEDAY, TRACK PATHFREE):
+# the emitted literal was an absolute path into this workstation's checkout, so
+# `hw/fk33/gen_pcieep.py` -- which finds that exact string in this file and
+# rewrites it -- built its search string from ITS OWN location and found
+# nothing from any other checkout.  `gen_pcieep.py --selftest` (gate row
+# sim:runguard) therefore ABORTED in a git worktree while passing in
+# /home/orencollaco/GitHub/llama.vhdl, and the same literal would break at the
+# moment the repo directory is renamed.
+#
+# `$tgRoot` is emitted by TGROOT_BLOCK below.  It is deliberately NOT
+# `$scriptPath`, which names SQRL's vendor tree and is a different repository.
+XDC_DST_TCL = "$tgRoot/hw/fk33/fk33_i2cprobe.xdc"
+
+REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+# HERE is <repo>/hw/fk33, so the repo is TWO levels up, not one.  The first
+# draft of this line said ".." and emitted "<repo>/hw" as the literal fallback;
+# the `rtl/util_pkg.vhd` probe in TGROOT_BLOCK rejected it, which is the whole
+# reason each candidate is probed rather than trusted.  Pinned two-sided here
+# so a future edit cannot reintroduce it silently.
+if not os.path.exists(os.path.join(REPO, "rtl", "util_pkg.vhd")):
+    sys.exit("gen_i2cprobe.py: REPO=%s does not contain rtl/util_pkg.vhd; the "
+             "emitted $tgRoot fallback would be wrong." % REPO)
+
+# WHY `$tgRoot` IS NOT SIMPLY `[file dirname [info script]]/../..`, WHICH IS
+# WHAT THE REST OF THIS TREE USES.
+#
+# MEASURED 2026-09-20: `hw/fk33/pcieep_build.sh:69` does
+# `cp build_fk33_pcieep.tcl "$BUILD_ROOT/"` and then sources the COPY from
+# `$BUILD_ROOT` (currently /mnt/storage/fk33_builds/build10/root).  This file is
+# the SOURCE `gen_pcieep.py` derives that script from, so anything emitted here
+# ends up in the copied script too -- where `[info script]` names the build
+# directory and a location-derived root resolves to /mnt/storage/fk33_builds.
+# A purely location-derived root would therefore have broken the card build,
+# which is the build that produces the shipping bitstream.
+#
+# So the order is: an explicit environment override first (explicit beats
+# inferred), then the script's own location, then the absolute path this
+# generator was run from.  Each candidate is ACCEPTED ONLY IF it actually
+# contains the tree -- `rtl/util_pkg.vhd` is the probe -- so a wrong candidate
+# is skipped rather than used, and running out of candidates is a hard error
+# rather than a silently wrong path.
+#
+# In place (a worktree, a renamed directory, the BC-250): the location-derived
+# candidate wins and the literal is never consulted.  Copied out of the tree by
+# pcieep_build.sh: the location-derived candidate fails its probe and the
+# literal wins, which is exactly the behaviour this file had before.  The
+# literal is refreshed every time the generator runs, and pcieep_build.sh runs
+# `gen_pcieep.py` on every build, so it cannot go stale for the card build.
+TGROOT_BLOCK = '''set scriptPath "/home/orencollaco/GitHub/SQRL_FK33/projects"
+
+# tgRoot -- the llama.vhdl repo root.  NOT $scriptPath above, which is SQRL's
+# vendor tree and a separate repository.
+#
+# Three candidates, tried in order, each accepted only if it really contains
+# the tree.  See the TGROOT_BLOCK comment in hw/fk33/gen_i2cprobe.py for why
+# this is not just [file dirname [info script]]: hw/fk33/pcieep_build.sh COPIES
+# the generated build script out of the repo before sourcing it, so the
+# script's own location is not the repo during a card build.
+set tgRoot ""
+foreach _cand [list \\
+        [expr {[info exists ::env(FK33_TGROOT)] ? $::env(FK33_TGROOT) : ""}] \\
+        [expr {[info script] eq "" ? "" : [file normalize [file join [file dirname [info script]] .. ..]]}] \\
+        "%(repo)s"] {
+    if {$_cand ne "" && [file exists [file join $_cand rtl util_pkg.vhd]]} {
+        set tgRoot [file normalize $_cand]
+        break
+    }
+}
+unset _cand
+if {$tgRoot eq ""} {
+    error "tgRoot: no candidate repo root contains rtl/util_pkg.vhd. Set FK33_TGROOT, or re-run hw/fk33/gen_pcieep.py from the checkout you mean to build."
+}
+puts "FK33_TGROOT $tgRoot"''' % {"repo": REPO}
+
 # SQRL's XDC names for the two balls under test.  bit0 -> scl ball, bit1 -> sda
 # ball, keeping SQRL's assignment so that a swap shows up as a finding rather
 # than being silently absorbed here.
@@ -99,9 +180,15 @@ set_property name iic [get_bd_intf_ports IIC_0]""",
     # Our own XDC: SQRL's constrains iic_scl_io/iic_sda_io, ports this build no
     # longer has.
     ("add_files -fileset constrs_1 -norecurse $scriptPath/fk33_example.xdc",
-     f"add_files -fileset constrs_1 -norecurse {XDC_DST}"),
+     f"add_files -fileset constrs_1 -norecurse {XDC_DST_TCL}"),
     ("set_property target_constrs_file $scriptPath/fk33_example.xdc [current_fileset -constrset]",
-     f"set_property target_constrs_file {XDC_DST} [current_fileset -constrset]"),
+     f"set_property target_constrs_file {XDC_DST_TCL} [current_fileset -constrset]"),
+
+    # Establish $tgRoot.  Must come BEFORE the two lines above in the emitted
+    # text, and it does: SQRL sets scriptPath at the top of the script and
+    # constrains the fileset near the end.
+    ('set scriptPath "/home/orencollaco/GitHub/SQRL_FK33/projects"',
+     TGROOT_BLOCK),
 ]
 
 if not os.path.exists(SRC):

@@ -4,7 +4,10 @@
 # A job over the reference R_XN-L record.  Match => everything before block L is right (to argmax).
 SD=/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/4d84bf97-4b0d-407d-ac40-96158eb597e1/scratchpad/xexp
 M=/mnt/storage/llama-models/qwen35-9b-mv4i-noembd
-cd /home/orencollaco/GitHub/llama.vhdl
+# Repo root DERIVED from this script's own location, not written in as a
+# literal, so the script survives the repo directory being renamed
+# (TRACK PATHFREE, 2026-09-20).  host/ is three levels below the root.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" || exit 1
 python3 tools/gen_layer_program.py --token --shape 9b --manifest $M/manifest.json --x-exp 0 --print --d-table $SD/probe/x.dtbl --rel-file $SD/probe/x.rel --arena-image $SD/probe/x.arena 2>&1 | sed -n '/step  opcode/,/END_TOKEN/p' > $SD/probe/steps.txt
 for L in "$@"; do
   line=$(awk -v t="blk.$L.attn_qkv.weight" '$2=="A_JOB" && $3=="XN" && $NF==t && $6==0 {print; exit}' $SD/probe/steps.txt)

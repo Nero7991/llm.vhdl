@@ -1,4 +1,13 @@
-set root /home/orencollaco/GitHub/llama.vhdl
+# pfRoot -- the repo root, DERIVED from this script's own location rather than
+# written in as a literal, so the run works from any checkout path and survives
+# the repo directory being renamed (TRACK PATHFREE, 2026-09-20).  Probed rather
+# than trusted: a wrong root would otherwise read_vhdl nothing and fail much
+# later as a missing entity.
+set pfRoot [file normalize [file join [file dirname [info script]] ..]]
+if {![file exists $pfRoot/rtl/util_pkg.vhd]} {
+    error "pfRoot: derived repo root '$pfRoot' does not contain rtl/util_pkg.vhd. Source this script by its path in the tree."
+}
+set root $pfRoot
 create_project -force tmp_mv_ip $root/hw/ip_proj_mv -part xczu3eg-sfvc784-1-e
 add_files -norecurse [list \
   $root/rtl/util_pkg.vhd \

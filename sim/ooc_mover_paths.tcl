@@ -21,10 +21,19 @@
 #   MOVER_RTL      rtl dir (default the repo's)
 #   MOVER_PERIOD   ns (default 5.0 = 200 MHz, the card's target)
 #   MOVER_MAXP     how many failing paths to tally (default 5000)
+# pfRoot -- the repo root, DERIVED from this script's own location rather than
+# written in as a literal, so the run works from any checkout path and survives
+# the repo directory being renamed (TRACK PATHFREE, 2026-09-20).  Probed rather
+# than trusted: a wrong root would otherwise read_vhdl nothing and fail much
+# later as a missing entity.
+set pfRoot [file normalize [file join [file dirname [info script]] ..]]
+if {![file exists $pfRoot/rtl/util_pkg.vhd]} {
+    error "pfRoot: derived repo root '$pfRoot' does not contain rtl/util_pkg.vhd. Source this script by its path in the tree."
+}
 set part   xcvu33p-fsvh2104-2L-e
 set period [expr {[info exists ::env(MOVER_PERIOD)] ? $::env(MOVER_PERIOD) : 5.0}]
 set rtldir [expr {[info exists ::env(MOVER_RTL)] ? $::env(MOVER_RTL) \
-                  : "/home/orencollaco/GitHub/llama.vhdl/rtl"}]
+                  : "$pfRoot/rtl"}]
 set top    $::env(MOVER_TOP)
 set maxp   [expr {[info exists ::env(MOVER_MAXP)] ? $::env(MOVER_MAXP) : 5000}]
 set gens   [expr {[info exists ::env(MOVER_GENERICS)] ? $::env(MOVER_GENERICS) : ""}]

@@ -177,6 +177,26 @@ SRC = os.path.join(HERE, "build_fk33_i2cprobe.tcl")
 DST = os.path.join(HERE, "build_fk33_pcieep.tcl")
 XDC_SRC = os.path.join(HERE, "fk33_i2cprobe.xdc")
 XDC_DST = os.path.join(HERE, "fk33_pcieep.xdc")
+
+# THE TCL FORMS ARE NOT THE FILESYSTEM FORMS.  XDC_SRC and XDC_DST above are
+# where this script READS and WRITES; the two below are what the generated Tcl
+# CARRIES, resolved at Vivado run time through `$tgRoot`.
+#
+# The defect these close, MEASURED 2026-09-20 (TRACK GATEDAY, TRACK PATHFREE):
+# these two substitution targets used to be the absolute XDC_SRC, so the string
+# this script searched for in build_fk33_i2cprobe.tcl was built from THIS
+# script's own location while the tracked file carried the workstation's.  From
+# any other checkout the target was absent and `--selftest` ABORTED with
+# "the probe build script no longer contains:", turning gate row sim:runguard
+# red for a reason that had nothing to do with the run guards it checks.  Both
+# ends now name `$tgRoot`, which is the same literal text everywhere, so the
+# match no longer depends on where the tree lives.  `$tgRoot` itself is emitted
+# by hw/fk33/gen_i2cprobe.py; read its TGROOT_BLOCK comment before changing it,
+# because pcieep_build.sh copies the generated script out of the repo before
+# sourcing it and a location-derived root is wrong in that case.
+XDC_SRC_TCL = "$tgRoot/hw/fk33/fk33_i2cprobe.xdc"
+XDC_DST_TCL = "$tgRoot/hw/fk33/fk33_pcieep.xdc"
+PBLOCK_XDC_TCL = "$tgRoot/hw/fk33/fk33_pblock.xdc"
 # Implementation-only floorplan.  Hand-written, NOT generated -- see its header.
 PBLOCK_XDC = os.path.join(HERE, "fk33_pblock.xdc")
 AUX_RTL = os.path.join(HERE, "rtl", "fk33_aux.vhd")
@@ -3680,10 +3700,10 @@ if {$otarm == 3} {
      'accepted it silently and it did not apply."\n'
      '}\n'
      'puts "FK33_IMPL_STRATEGY [get_property strategy [get_runs impl_1]]"\n'
-     f"add_files -fileset constrs_1 -norecurse {PBLOCK_XDC}\n"
-     f"set_property used_in_synthesis false [get_files {PBLOCK_XDC}]\n"
-     f"set_property used_in_implementation true [get_files {PBLOCK_XDC}]\n"
-     f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC}]]}} {{\n'
+     f"add_files -fileset constrs_1 -norecurse {PBLOCK_XDC_TCL}\n"
+     f"set_property used_in_synthesis false [get_files {PBLOCK_XDC_TCL}]\n"
+     f"set_property used_in_implementation true [get_files {PBLOCK_XDC_TCL}]\n"
+     f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC_TCL}]]}} {{\n'
      '    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. '
      'It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the '
      'LINKED design, so synthesis would read it, match nothing, leave an empty '
@@ -3692,10 +3712,10 @@ if {$otarm == 3} {
      'puts "FK33_PBLK fk33_pblock.xdc added, implementation only"'),
 
     # ---- 7. our own XDC
-    (f"add_files -fileset constrs_1 -norecurse {XDC_SRC}",
-     f"add_files -fileset constrs_1 -norecurse {XDC_DST}"),
-    (f"set_property target_constrs_file {XDC_SRC} [current_fileset -constrset]",
-     f"set_property target_constrs_file {XDC_DST} [current_fileset -constrset]"),
+    (f"add_files -fileset constrs_1 -norecurse {XDC_SRC_TCL}",
+     f"add_files -fileset constrs_1 -norecurse {XDC_DST_TCL}"),
+    (f"set_property target_constrs_file {XDC_SRC_TCL} [current_fileset -constrset]",
+     f"set_property target_constrs_file {XDC_DST_TCL} [current_fileset -constrset]"),
 ]
 
 HEADER = '''# GENERATED from hw/fk33/build_fk33_i2cprobe.tcl by hw/fk33/gen_pcieep.py
