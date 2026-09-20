@@ -409,6 +409,49 @@ ENG_XW_BASE    = 0x00013000    # 4 KB, the activation writer
 # margin, and margin is the point, since every figure above is a ROUTED number
 # on an OOC block and the block design adds a shell those runs never saw.
 ENG_CORE_MHZ   = float(os.environ.get("FK33_ENG_CORE_MHZ", "200.000"))
+# THE A CLOCK-DOMAIN SPLIT, TRACK ACLK 2026-09-20, opt-in via
+# FK33_ENG_SPLIT_CLK=1 (docs/2026-09-20_a-clock-domain-split.md).
+#
+# WHY.  MEASURED, hw/fk33/results/card_swg_2026-09-20/: the shipped card
+# runs A, B, C, D and the vector ops together on clk_out3 at 75 MHz (WNS
+# +0.299 of 13.333 ns, the worst paths 0.5 ns logic / 12.0 ns route), while
+# the engine-only build closed A ALONE at 200 MHz.  After lane striping A's
+# jobs are 10.9 M of a 30 M-cycle token, so A at 200 MHz takes its share
+# from 0.145 s to 0.055 s per token with nothing else changed.
+#
+# WHAT IT DOES.  A fourth MMCM output at FK33_ENG_FAST_MHZ clocks
+# eng/core_clk (its AXI-Lite slaves come with it: matvec_int4_desc_axi's
+# s_axi_aclk IS core_clk), a second proc_sys_reset `fast_reset` resets that
+# domain, and every signal-level net between `card` and `eng` -- plus the
+# card's AXI-Lite write master -- goes through rtl/fk33_eng_cdc.vhd, a new
+# module-reference cell `eng_cdc`.  The engine's 28 HBM masters are NOT
+# touched: they already run on hbm_aclk = xdma/axi_aclk at 250 MHz, with
+# the crossing inside rtl/axi_rd_port.vhd, exactly as in the engine-only
+# 200 MHz build; the split only changes which clock the engine's OTHER port
+# carries.  Both smartconnects that reach the engine's AXI-Lite slaves gain
+# the fast clock as a third aclk.  fk33_therm_0/compute_clk follows the
+# engine, because compute_halt is defined as synchronous to it.
+#
+# OFF BY DEFAULT and, when off, this file emits BYTE-FOR-BYTE what it
+# emitted before (the selftest asserts no fragment of the split appears in
+# the text, and the dispatcher regenerates and `git diff`s).  The 75 MHz
+# single-domain card that has run tokens on silicon is not disturbed by a
+# configuration that has never been through a routed build.
+ENG_SPLIT      = os.environ.get("FK33_ENG_SPLIT_CLK", "") == "1"
+ENG_FAST_MHZ   = float(os.environ.get("FK33_ENG_FAST_MHZ", "200.000"))
+if ENG_SPLIT and os.environ.get("FK33_CARD", "") != "1":
+    sys.exit("ABORT: FK33_ENG_SPLIT_CLK=1 without FK33_CARD=1. The split exists "
+             "to take the engine off the CARD's clock; with no card there is "
+             "no seam to cross and FK33_ENG_CORE_MHZ already sets A's clock.")
+if ENG_SPLIT and not (50.0 <= ENG_FAST_MHZ <= 250.0):
+    sys.exit("ABORT: FK33_ENG_FAST_MHZ=%r is outside 50..250 MHz; the same "
+             "bound as FK33_ENG_CORE_MHZ and for the same duty reason."
+             % ENG_FAST_MHZ)
+# The pin that clocks eng/core_clk, fk33_therm_0/compute_clk and the CDC's
+# engine side.  ONE definition, so the three cannot disagree.
+ENG_CORE_CLK   = "clk_wiz_0/clk_out4" if ENG_SPLIT else "clk_wiz_0/clk_out3"
+ENG_RESET_CELL = "fast_reset" if ENG_SPLIT else "core_reset"
+CDC_CELL       = "eng_cdc"
 # LEVER C.  `fk33_engine`'s CB_STYLE, forwarded to matvec_int4_desc_axi and on
 # to matvec_core, where it decides whether the IQ4_NL codebook lives in
 # registers ("regs") or in LUTRAM ("distributed").  matvec_core hard-errors on
@@ -815,7 +858,7 @@ connect_bd_net [get_bd_pins hbm/DRAM_1_STAT_CATTRIP] [get_bd_pins fk33_therm_0/h
 # SYNCHRONOUS TO compute_clk.  Driving it from a clock the datapath does not
 # use would hand the engine an unsynchronised halt, which is precisely the
 # torn-word failure this module's own host_* outputs exist to avoid.
-connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins fk33_therm_0/compute_clk]
+connect_bd_net [get_bd_pins {ENG_CORE_CLK}] [get_bd_pins fk33_therm_0/compute_clk]
 connect_bd_net [get_bd_pins xdma/axi_aclk] [get_bd_pins fk33_therm_0/ctl_host_clk]
 
 # ---- thermal registers on the AUX (JTAG) side -----------------------------
@@ -960,7 +1003,8 @@ def _axil2eng_lines(num_mi):
         "# side and aclk1 on the outgoing side is exactly the shape",
         "# build_fk33_hbmbw.tcl:334-341 used for axil2tg, which built, routed and ran.",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axil2eng",
-        "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {%d} CONFIG.NUM_CLKS {2}] [get_bd_cells axil2eng]" % num_mi,
+        "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {%d} CONFIG.NUM_CLKS {%d}] [get_bd_cells axil2eng]"
+        % (num_mi, 3 if ENG_SPLIT else 2),
         "set n [get_property CONFIG.NUM_MI [get_bd_cells pcie2axil]]",
         "set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells pcie2axil]",
         "connect_bd_intf_net [get_bd_intf_pins pcie2axil/[format M%02d_AXI $n]] \\",
@@ -968,7 +1012,13 @@ def _axil2eng_lines(num_mi):
         "connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins axil2eng/aclk]",
         "connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins axil2eng/aresetn]",
         "connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins axil2eng/aclk1]",
-    ]
+    ] + ([
+        "# FK33_ENG_SPLIT_CLK: M00 (via engctl) and M01 now land in the engine's",
+        "# own domain, so the smartconnect needs that clock as well.  Which of",
+        "# its three clocks each interface takes is Vivado's inference from the",
+        "# connected endpoint; giving it all three means no domain is missing.",
+        "connect_bd_net [get_bd_pins %s] [get_bd_pins axil2eng/aclk2]" % ENG_CORE_CLK,
+    ] if ENG_SPLIT else [])
 
 
 def _noeng_core_block():
@@ -1058,8 +1108,23 @@ def _eng_block():
     a("")
     L.extend(_core_reset_lines())
     a("")
-    a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/core_clk]" % ENG_CELL)
-    a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/core_aresetn]" % ENG_CELL)
+    if ENG_SPLIT:
+        a("# ---- FK33_ENG_SPLIT_CLK: the engine's OWN clock domain ---------------------")
+        a("# clk_out4 at FK33_ENG_FAST_MHZ clocks eng/core_clk; the card, the seam and")
+        a("# the grant stay on clk_out3.  Its reset is a SECOND proc_sys_reset whose")
+        a("# ext_reset_in is xdma/axi_aresetn -- the SAME net that resets the HBM")
+        a("# slaves -- and not core_reset's output: check_reset_topology requires the")
+        a("# engine's reset to DESCEND from the slaves' net through one proc_sys_reset")
+        a("# (STRAY-NEXTJOB), and rtl/fk33_eng_cdc.vhd is written so that the two")
+        a("# domains may leave reset in either order.  Its dcm_locked is the same MMCM")
+        a("# lock as core_reset's, so a lock drop resets both sides together.")
+        a("create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 %s" % ENG_RESET_CELL)
+        a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/slowest_sync_clk]" % (ENG_CORE_CLK, ENG_RESET_CELL))
+        a("connect_bd_net [get_bd_pins clk_wiz_0/locked]   [get_bd_pins %s/dcm_locked]" % ENG_RESET_CELL)
+        a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins %s/ext_reset_in]" % ENG_RESET_CELL)
+        a("")
+    a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/core_clk]" % (ENG_CORE_CLK, ENG_CELL))
+    a("connect_bd_net [get_bd_pins %s/peripheral_aresetn] [get_bd_pins %s/core_aresetn]" % (ENG_RESET_CELL, ENG_CELL))
     a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins %s/hbm_aclk]" % ENG_CELL)
     a("")
     a("# THE THERMAL HALT.  fk33_thermal's contract requires compute_halt to be")
@@ -1183,7 +1248,10 @@ CARD_SRCS = [
 # BELOW them, in the sources listed here.
 _CARD_2008 = ([os.path.join(ENG_SRC_DIR, f) for f in CARD_SRCS]
               + [os.path.join(ENG_SRC_DIR, "fk33_llama_top.vhd")])
-_CARD_ALL = _CARD_2008 + [GRANT_RTL, CARD_RTL]
+# rtl/fk33_eng_cdc.vhd is VHDL-93 and instantiates async_fifo, which ENG_SRCS
+# already adds; it joins the plain list only under FK33_ENG_SPLIT_CLK.
+CDC_RTL = os.path.join(ENG_SRC_DIR, "fk33_eng_cdc.vhd")
+_CARD_ALL = _CARD_2008 + [GRANT_RTL, CARD_RTL] + ([CDC_RTL] if ENG_SPLIT else [])
 
 CARD_RTL_ADD = "\n".join(
     ["", "# ---- subsystems B/C/D RTL (gen_pcieep.py) ---------------------------------"]
@@ -1403,6 +1471,53 @@ _ENT_DECL = re.compile(r"^\s*entity\s+(\w+)\s+is", re.M | re.I)
 _ENT_INST = re.compile(r"entity\s+work\.(\w+)", re.I)
 
 
+# ---- EVERY SEAM PIN MUST BE A PORT OF fk33_eng_cdc, ON BOTH FACES ---------
+# The same argument as check_card_pins, for the cell in the middle.  A pin
+# missing from the wrapper's card face leaves a card OUTPUT driving nothing
+# and the engine INPUT behind it at its VHDL default (zero, silently -- see
+# the 41-759 note above); a pin missing from the engine face does the same
+# from the other end.  Both faces are derived from CARD_SEAM_TO_ENG /
+# CARD_SEAM_FROM_ENG, so a seam row added to the tables without a port added
+# to the wrapper is refused here, before any Vivado run.
+CDC_AXIL_W = ["awaddr", "awvalid", "awready", "wdata", "wstrb", "wvalid",
+              "wready", "bresp", "bvalid", "bready"]
+
+
+def cdc_pins_wanted():
+    out = [(cp, "card face") for cp, _ in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG]
+    out += [(ep, "engine face") for _, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG]
+    out += [("sa_" + x, "sa") for x in CDC_AXIL_W]
+    out += [("ma_" + x, "ma") for x in CDC_AXIL_W]
+    out += [(x, "clocks") for x in ("s_clk", "s_rstn", "m_clk", "m_rstn")]
+    return out
+
+
+def check_cdc_pins(cdc_src_text):
+    """(pin, face) pairs that are NOT ports of fk33_eng_cdc in the text.
+    Raises on an unparseable entity: a checker with no input must not pass."""
+    ports = _entity_ports(cdc_src_text, "fk33_eng_cdc")
+    if not ports:
+        raise ValueError("no `entity fk33_eng_cdc is ... port (...)` could be "
+                         "parsed; a checker with no input must not pass")
+    return [(pn, face) for pn, face in cdc_pins_wanted() if pn not in ports]
+
+
+def _refuse_missing_cdc_pins():
+    if not os.path.exists(CDC_RTL):
+        sys.exit("ABORT: FK33_ENG_SPLIT_CLK=1 but %s does not exist." % CDC_RTL)
+    try:
+        missing = check_cdc_pins(open(CDC_RTL).read())
+    except ValueError as e:
+        sys.exit("ABORT: %s: %s" % (CDC_RTL, e))
+    if missing:
+        sys.exit("ABORT: %d seam pin(s) are not ports of fk33_eng_cdc:\n  %s\n"
+                 "A seam row without a wrapper port leaves one side of the "
+                 "seam at ZERO." % (len(missing), "\n  ".join(
+                     "%s (%s)" % m for m in missing)))
+    print("FK33_ENGCDC %d wrapper pins present in %s"
+          % (len(cdc_pins_wanted()), os.path.basename(CDC_RTL)))
+
+
 def check_card_closure(paths):
     """Return sorted [(missing_unit, first_file_that_instantiates_it)] over
     `paths`.  Every instantiated `entity work.X` must be declared by one of
@@ -1512,7 +1627,46 @@ def _card_block():
     a("connect_bd_net [get_bd_pins core_reset/peripheral_reset]   [get_bd_pins %s/rst]" % CARD_CELL)
     a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/rstn]" % GRANT_CELL)
     a("")
-    if ENG_ON:
+    if ENG_ON and ENG_SPLIT:
+        a("# ---- the A seam, card <-> eng_cdc <-> eng (FK33_ENG_SPLIT_CLK) ------------")
+        a("# rtl/fk33_eng_cdc.vhd: card-side pins carry the CARD's names, engine-side")
+        a("# pins carry the ENGINE's, so both halves below are the same table the")
+        a("# single-domain wiring uses, with the cell in the middle.  Its port list")
+        a("# was checked against these tables at generation time (check_cdc_pins);")
+        a("# the live-cell check below is the same test against what Vivado inferred.")
+        a("create_bd_cell -type module -reference fk33_eng_cdc %s" % CDC_CELL)
+        a("set_property CONFIG.ASSOCIATED_BUSIF {sa} [get_bd_pins %s/s_clk]" % CDC_CELL)
+        a("set_property CONFIG.ASSOCIATED_RESET {s_rstn} [get_bd_pins %s/s_clk]" % CDC_CELL)
+        a("set_property CONFIG.ASSOCIATED_BUSIF {ma} [get_bd_pins %s/m_clk]" % CDC_CELL)
+        a("set_property CONFIG.ASSOCIATED_RESET {m_rstn} [get_bd_pins %s/m_clk]" % CDC_CELL)
+        a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/s_rstn]" % CDC_CELL)
+        a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/m_rstn]" % CDC_CELL)
+        a("foreach {pin want} [list %s/s_clk {sa} %s/m_clk {ma}] {" % (CDC_CELL, CDC_CELL))
+        a("    set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]")
+        a("    if {$got ne $want} {")
+        a("        error \"FK33_ENGCDC FAIL: $pin ASSOCIATED_BUSIF is \\\"$got\\\", not \\\"$want\\\".\"")
+        a("    }")
+        a("    puts \"FK33_ENGCDC ASSOCIATED_BUSIF $pin = $got\"")
+        a("}")
+        a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/s_clk]" % CDC_CELL)
+        a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/s_rstn]" % CDC_CELL)
+        a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/m_clk]" % (ENG_CORE_CLK, CDC_CELL))
+        a("connect_bd_net [get_bd_pins %s/peripheral_aresetn] [get_bd_pins %s/m_rstn]" % (ENG_RESET_CELL, CDC_CELL))
+        a("foreach fk33_xp {%s} {"
+          % " ".join(["%s/%s" % (CDC_CELL, cp) for cp, _ in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG]
+                     + ["%s/%s" % (CDC_CELL, ep) for _, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG]))
+        a("    if {![llength [get_bd_pins -quiet $fk33_xp]]} {")
+        a("        error \"FK33_ENGCDC FAIL: pin $fk33_xp does not exist on the inferred fk33_eng_cdc; one side of the seam would be left with no driver, i.e. ZERO.\"")
+        a("    }")
+        a("}")
+        a("puts \"FK33_ENGCDC %d seam pins exist on both faces of the inferred cell\""
+          % (2 * len(CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG)))
+        for cp, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG:
+            a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
+              % (CARD_CELL, cp, CDC_CELL, cp))
+            a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
+              % (CDC_CELL, ep, ENG_CELL, ep))
+    elif ENG_ON:
         a("# ---- the A seam, card <-> eng --------------------------------------------")
         for cp, ep in CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG:
             a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
@@ -1532,12 +1686,21 @@ def _card_block():
         a("# engine-only build already proved.")
         a("delete_bd_objs [get_bd_intf_nets -of_objects [get_bd_intf_pins %s/s_axi]]" % ENG_CELL)
         a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 engctl")
-        a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {2}] [get_bd_cells engctl]")
+        a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {%d}] [get_bd_cells engctl]"
+          % (3 if ENG_SPLIT else 2))
         a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]")
         a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]")
         a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]")
+        if ENG_SPLIT:
+            a("# FK33_ENG_SPLIT_CLK: M00 lands in the engine's domain, and S01 now comes")
+            a("# from the CDC cell's engine-side master rather than from the card.")
+            a("connect_bd_net [get_bd_pins %s] [get_bd_pins engctl/aclk2]" % ENG_CORE_CLK)
         a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins engctl/S00_AXI]")
-        a("connect_bd_intf_net [get_bd_intf_pins %s/a]             [get_bd_intf_pins engctl/S01_AXI]" % CARD_CELL)
+        if ENG_SPLIT:
+            a("connect_bd_intf_net [get_bd_intf_pins %s/a]             [get_bd_intf_pins %s/sa]" % (CARD_CELL, CDC_CELL))
+            a("connect_bd_intf_net [get_bd_intf_pins %s/ma]            [get_bd_intf_pins engctl/S01_AXI]" % CDC_CELL)
+        else:
+            a("connect_bd_intf_net [get_bd_intf_pins %s/a]             [get_bd_intf_pins engctl/S01_AXI]" % CARD_CELL)
         a("connect_bd_intf_net [get_bd_intf_pins engctl/M00_AXI]   [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
     else:
         a("# The card's AXI-Lite master `card/a` has no engine to drive and is left")
@@ -1699,14 +1862,35 @@ def _card_block():
         a("# BD 41-1075 -- `the proposed range 4K is greater than the maximum range")
         a("# 256`. Assigning the narrow space first, with an explicit target, leaves")
         a("# ENGINE_ADDR's later call to find this one already mapped and skip it.")
-        a("assign_bd_address -offset 0x00000000 -range 256 \\")
-        a("    -target_address_space [get_bd_addr_spaces %s/a] \\" % CARD_CELL)
-        a("    [get_bd_addr_segs {%s/s_axi/reg0}]" % ENG_CELL)
-        a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
-        a("if {[llength $_cseg] != 1} {")
-        a("    error \"FK33_CARD FAIL: %s/a maps [llength $_cseg] segments, not 1. The card cannot issue A jobs.\"" % CARD_CELL)
-        a("}")
-        a("puts \"FK33_CARD %s/a maps $_cseg\"" % CARD_CELL)
+        if ENG_SPLIT:
+            a("# FK33_ENG_SPLIT_CLK: two hops.  The card's master reaches the CDC cell's")
+            a("# slave `sa`, and the CDC cell's master `ma` reaches the engine; each is")
+            a("# a 256-byte window for the same 41-1075 reason as below.")
+            a("assign_bd_address -offset 0x00000000 -range 256 \\")
+            a("    -target_address_space [get_bd_addr_spaces %s/a] \\" % CARD_CELL)
+            a("    [get_bd_addr_segs {%s/sa/reg0}]" % CDC_CELL)
+            a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
+            a("if {[llength $_cseg] != 1} {")
+            a("    error \"FK33_ENGCDC FAIL: %s/a maps [llength $_cseg] segments, not 1. The card cannot reach the CDC cell.\"" % CARD_CELL)
+            a("}")
+            a("puts \"FK33_ENGCDC %s/a maps $_cseg\"" % CARD_CELL)
+            a("assign_bd_address -offset 0x00000000 -range 256 \\")
+            a("    -target_address_space [get_bd_addr_spaces %s/ma] \\" % CDC_CELL)
+            a("    [get_bd_addr_segs {%s/s_axi/reg0}]" % ENG_CELL)
+            a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/ma]]" % CDC_CELL)
+            a("if {[llength $_cseg] != 1} {")
+            a("    error \"FK33_ENGCDC FAIL: %s/ma maps [llength $_cseg] segments, not 1. The card cannot issue A jobs.\"" % CDC_CELL)
+            a("}")
+            a("puts \"FK33_ENGCDC %s/ma maps $_cseg\"" % CDC_CELL)
+        else:
+            a("assign_bd_address -offset 0x00000000 -range 256 \\")
+            a("    -target_address_space [get_bd_addr_spaces %s/a] \\" % CARD_CELL)
+            a("    [get_bd_addr_segs {%s/s_axi/reg0}]" % ENG_CELL)
+            a("set _cseg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces %s/a]]" % CARD_CELL)
+            a("if {[llength $_cseg] != 1} {")
+            a("    error \"FK33_CARD FAIL: %s/a maps [llength $_cseg] segments, not 1. The card cannot issue A jobs.\"" % CARD_CELL)
+            a("}")
+            a("puts \"FK33_CARD %s/a maps $_cseg\"" % CARD_CELL)
     else:
         a("# THE CARD'S AXI-LITE MASTER MAPS NOTHING (FK33_ENG=0).  There is no")
         a("# eng/s_axi/reg0 to assign, so `card/a` reaches no segment.  Asserted")
@@ -1754,6 +1938,8 @@ else:
     # see check_card_pins for what the alternative silently builds.
     _refuse_missing_card_pins()
     _refuse_open_card_closure()
+    if ENG_SPLIT:
+        _refuse_missing_cdc_pins()
 
 
 
@@ -2645,6 +2831,32 @@ ENG_XDC = [
     "# core-to-hbm_aclk crossing of its own.",
 ]
 
+# FK33_ENG_SPLIT_CLK: the engine's core clock is no longer the card's.  Every
+# crossing between the two is inside rtl/fk33_eng_cdc.vhd -- gray-pointer
+# FIFOs (rtl/async_fifo.vhd), toggle handshakes and two-flop level
+# synchronisers, all with ASYNC_REG -- plus the two smartconnects, which carry
+# their own scoped constraints.  The multi-bit payloads ride a toggle as
+# data-before-toggle and are held stable until the response returns, which is
+# the same assumption async_fifo's gray pointers already make under the
+# engine's existing group above.  Declared through the two cells' OWN clock
+# pins, exactly as the engine's line is, so the impl-stage check that both
+# lookups are non-empty and DISTINCT (FK33_ENGSPLIT in the build script) is
+# the check that this line matched something.  A set_max_delay -datapath_only
+# on the same paths would be OVERRIDDEN by this group (clock groups take
+# precedence over max-delay exceptions in Vivado), so none is emitted.
+#
+# NOTHING BELOW MAY USE if/foreach/set.
+ENG_SPLIT_XDC = [
+    "",
+    "###############################################################################",
+    "# FK33_ENG_SPLIT_CLK: the engine's core clock vs the card's (gen_pcieep.py)",
+    "###############################################################################",
+    "# Sentinel: FK33_ENG_SPLIT_CLK xdc eng/core_clk card/clk asynchronous",
+    "set_clock_groups -asynchronous \\",
+    "    -group [get_clocks -of_objects [get_pins bd_i/eng/core_clk]] \\",
+    "    -group [get_clocks -of_objects [get_pins bd_i/card/clk]]",
+] if (ENG_ON and ENG_SPLIT) else []
+
 IMPL_ENG_OLD = 'set wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]\nset whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]\nputs [format "FK33_TIMING WNS=%.3f ns  WHS=%.3f ns" $wns $whs]'
 IMPL_ENG_NEW = """# ---- SUBSYSTEM A, on the implemented design (gen_pcieep.py) ---------------
 # The deliverable of the shell-integration track: the quantities the
@@ -2692,6 +2904,7 @@ foreach cn [list $ecore $eaxi] {
           [expr {1000.0 / [get_property PERIOD $cn]}]]
 }
 
+%ENG_SPLIT_IMPL%
 # AREA OF THE ENGINE ALONE, so it can be compared with the OOC figure without
 # the shell in it.  report_utilization -cells is the only honest way:
 # subtracting a remembered shell number from a design total is how the
@@ -2751,6 +2964,40 @@ puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt\""""
 # congestion and clock reports, the floorplan checks, the bitstream line) is
 # configuration-independent and is exactly what a reduced-scope build is being
 # run to obtain, so it is kept verbatim rather than re-written.
+ENG_SPLIT_IMPL = """# ---- FK33_ENG_SPLIT_CLK, on the implemented design ------------------------
+# The card's clock must be a DIFFERENT clock from the engine's, or the XDC's
+# second set_clock_groups matched one clock twice and constrained nothing.
+set ccard [get_clocks -quiet -of_objects [get_pins bd_i/card/clk]]
+if {[llength $ccard] != 1} {
+    error "FK33_ENGSPLIT FAIL: expected one clock on card/clk, got [llength $ccard]"
+}
+if {[get_property NAME $ccard] eq [get_property NAME $ecore]} {
+    error "FK33_ENGSPLIT FAIL: card/clk and eng/core_clk are the SAME clock ([get_property NAME $ccard]); the split did not happen and the XDC group is empty"
+}
+puts [format "FK33_ENGSPLIT card %s %.3f ns  eng %s %.3f ns" \\
+      [get_property NAME $ccard] [get_property PERIOD $ccard] \\
+      [get_property NAME $ecore] [get_property PERIOD $ecore]]
+# THE ELABORATED CHECK: the CDC cell exists in the implemented design and its
+# synchroniser flops carry ASYNC_REG.  The RTL declares ten in the wrapper
+# (ack/req/dn/err/yovf, two each) plus four per async_fifo pointer pair; a
+# count below ten means the cell was pruned or the attribute was lost.
+if {[llength [get_cells -quiet bd_i/eng_cdc]] == 0} {
+    error "FK33_ENGSPLIT FAIL: bd_i/eng_cdc is not in the implemented design"
+}
+set nasync [llength [get_cells -quiet -hier -filter {NAME =~ bd_i/eng_cdc/* && ASYNC_REG == 1}]]
+puts "FK33_ENGSPLIT eng_cdc ASYNC_REG cells = $nasync"
+if {$nasync < 10} {
+    error "FK33_ENGSPLIT FAIL: only $nasync ASYNC_REG cells under bd_i/eng_cdc; the synchronisers did not survive"
+}
+report_cdc -from $ccard -to $ecore -file fk33_pcieep_cdc_card2eng.rpt
+report_cdc -from $ecore -to $ccard -file fk33_pcieep_cdc_eng2card.rpt
+puts "FK33_ENGSPLIT report_cdc -> fk33_pcieep_cdc_card2eng.rpt, fk33_pcieep_cdc_eng2card.rpt"
+report_utilization -cells [get_cells bd_i/eng_cdc] -file fk33_pcieep_engcdc_util.rpt
+puts "FK33_ENGSPLIT eng_cdc utilization -> fk33_pcieep_engcdc_util.rpt"
+""" if (ENG_ON and ENG_SPLIT) else ""
+IMPL_ENG_NEW = IMPL_ENG_NEW.replace("%ENG_SPLIT_IMPL%\n", ENG_SPLIT_IMPL)
+assert "%ENG_SPLIT_IMPL%" not in IMPL_ENG_NEW
+
 _IMPL_TAIL_AT = "set wns [get_property SLACK [get_timing_paths -delay_type max"
 assert IMPL_ENG_NEW.count(_IMPL_TAIL_AT) == 1, (
     "IMPL_ENG_NEW's tail marker moved; the FK33_ENG=0 form would silently "
@@ -3310,7 +3557,11 @@ if {$otarm == 3} {
     # why it is not a reuse of clk_out2, which is HBM_REF_CLK_0/1.
     ("set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]",
      "set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000}] [get_bd_cells clk_wiz_0]\n"
-     "set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {%.3f}] [get_bd_cells clk_wiz_0]" % ENG_CORE_MHZ),
+     "set_property -dict [list CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {%.3f}] [get_bd_cells clk_wiz_0]" % ENG_CORE_MHZ
+     + ("\n# FK33_ENG_SPLIT_CLK: a FOURTH output for the engine's own domain, not a\n"
+        "# reuse of clk_out2 (HBM_REF_CLK) for the reason ENGINE_BLOCK gives.\n"
+        "set_property -dict [list CONFIG.CLKOUT4_USED {true} CONFIG.CLKOUT4_REQUESTED_OUT_FREQ {%.3f}] [get_bd_cells clk_wiz_0]" % ENG_FAST_MHZ
+        if ENG_SPLIT else "")),
 
     # ---- HBM ENGINE PORTS.  The IP defaults all 32 USER_SAXI_nn to true and
     # upstream turns 30 off.  That was CORRECT for every build before this one:
@@ -3867,6 +4118,8 @@ def selftest():
     seam_tieoff_teeth()
     card_pins_teeth()
     card_closure_teeth()
+    cdc_pins_teeth()
+    split_gate_teeth(built)
 
     print("SELFTEST PASS")
 
@@ -4560,6 +4813,13 @@ _RESET_TEETH = [
      "[get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]",
      "[get_bd_pins core_reset/ext_reset_in] [get_bd_pins xdma/axi_aresetn]"),
 ]
+# FK33_ENG_SPLIT_CLK: the engine's reset generator is `fast_reset`, emitted in
+# the same shapes as core_reset's lines, so the rows retarget by name.  With
+# the switch off ENG_RESET_CELL is "core_reset" and this is the identity.
+_RESET_TEETH = [(tag, mr, desc,
+                 old.replace("core_reset", ENG_RESET_CELL),
+                 new.replace("core_reset", ENG_RESET_CELL))
+                for tag, mr, desc, old, new in _RESET_TEETH]
 
 
 def reset_topology_teeth():
@@ -4569,7 +4829,7 @@ def reset_topology_teeth():
 
     base = _eng_block() + (
         "\n# from build_fk33_i2cprobe.tcl, the reset of the MMCM that feeds\n"
-        "# core_reset/dcm_locked:\n"
+        "# " + ENG_RESET_CELL + "/dcm_locked:\n"
         "connect_bd_net [get_bd_pins xdma/axi_aresetn] "
         "[get_bd_pins clk_wiz_0/resetn]\n")
 
@@ -4964,6 +5224,70 @@ def card_pins_teeth():
                  "nothing missing.")
     print("CARDPINS teeth: control %d missing, each of 2 mutants 1 missing, "
           "empty text refused" % len(ctl))
+
+
+def cdc_pins_teeth():
+    """check_cdc_pins discriminates, with the attribution control: the
+    committed wrapper passes clean, a copy with one seam port removed is
+    named on exactly that pin and face, and a text with no entity raises."""
+    src = open(CDC_RTL).read()
+    ctl = check_cdc_pins(src)
+    if ctl:
+        sys.exit("SELFTEST FAIL: check_cdc_pins names %s on the committed "
+                 "rtl/fk33_eng_cdc.vhd; the wrapper and the seam tables "
+                 "disagree" % ctl)
+    for pin, face in (("a_y_mask", "card face"), ("d_job_done", "engine face"),
+                      ("ma_bvalid", "ma")):
+        pat = re.compile(r"^\s*%s\s*:\s*(in|out)\s+[^;]*;\s*$" % pin, re.M)
+        if len(pat.findall(src)) != 1:
+            sys.exit("SELFTEST VOID: expected exactly one `%s : in|out ...;` "
+                     "line in rtl/fk33_eng_cdc.vhd, found %d"
+                     % (pin, len(pat.findall(src))))
+        mut = pat.sub("", src, count=1)
+        got = check_cdc_pins(mut)
+        if got != [(pin, face)]:
+            sys.exit("SELFTEST FAIL: check_cdc_pins did not attribute exactly "
+                     "the removed port %s to face %s: got %s" % (pin, face, got))
+    try:
+        check_cdc_pins("-- nothing here\n")
+    except ValueError:
+        pass
+    else:
+        sys.exit("SELFTEST FAIL: check_cdc_pins passed a text with no entity")
+    print("CDC-PINS  %d pins checked; one removed port on each face is named; "
+          "an empty text raises" % len(cdc_pins_wanted()))
+
+
+_SPLIT_NEEDLES = ("fk33_eng_cdc", "clk_out4", "fast_reset",
+                  "FK33_ENG_SPLIT_CLK", "eng_cdc/", "CLKOUT4_USED")
+
+
+def split_gate_teeth(built):
+    """FK33_ENG_SPLIT_CLK gates ALL of the split, in both directions: with it
+    off no fragment of the split is in the generated text (this is what
+    keeps the shipped 75 MHz configuration byte-identical), and with it on
+    every fragment is.  Read against the text this selftest generated, not
+    against the file on disk."""
+    xdc = "\n".join(ENG_SPLIT_XDC)
+    present = [nd for nd in _SPLIT_NEEDLES if nd in built or nd in xdc]
+    if ENG_SPLIT:
+        missing = [nd for nd in _SPLIT_NEEDLES if nd not in present]
+        if missing:
+            sys.exit("SELFTEST FAIL: FK33_ENG_SPLIT_CLK=1 but the generated "
+                     "text lacks %s" % missing)
+        want = 2 * len(CARD_SEAM_TO_ENG + CARD_SEAM_FROM_ENG)
+        if ("puts \"FK33_ENGCDC %d seam pins exist" % want) not in built:
+            sys.exit("SELFTEST FAIL: the live-cell pin check does not cover "
+                     "all %d seam pins" % want)
+        print("SPLIT-GATE on: %d fragments present, %d seam pins checked on "
+              "the live cell" % (len(present), want))
+    else:
+        if present:
+            sys.exit("SELFTEST FAIL: FK33_ENG_SPLIT_CLK is OFF but the generated "
+                     "text carries %s; the shipped configuration is no longer "
+                     "byte-identical" % present)
+        print("SPLIT-GATE off: none of %d split fragments in the generated "
+              "text" % len(_SPLIT_NEEDLES))
 
 
 def seam_tieoff_teeth():
@@ -5770,6 +6094,7 @@ def main():
 
     out += AUX_XDC
     out += ENG_XDC
+    out += ENG_SPLIT_XDC
     out += [
         "",
         "###############################################################################",
