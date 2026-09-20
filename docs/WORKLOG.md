@@ -11,6 +11,104 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK SWGFAST: VEC_SWG's 5.0 cycles/element is 1+1+2+1 (G load, U load, the unit's two passes, write-back). `swiglu_mem` gains LANES (default 1); at LANES = 4 the unit is 6,157 cycles instead of 24,588. NEEDS ONE LINE IN llama_top TO REACH THE CARD.
+
+- **Accounting** (docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md):
+  the unit is 2N + 12 = 24,588 (MEASURED, `SWGFAST_CYCLES` in
+  sim/tb_swiglu_mem.vhd); llama_top's `gsr` adds N+2 for each of G, U and
+  the write-back. DERIVED 61,459 against the card's 61,473; VEC_NORM leaves
+  the identical 14-cycle residual (unit 3,125 MEASURED `NORMFAST_CYCLES`,
+  11,322 against 11,336). Neither unit has a per-element multi-cycle loop.
+- **Change:** `rtl/swiglu_mem.vhd` LANES generic (banks, per-lane pipeline,
+  per-lane running max + one S_MAX state above LANES = 1). MEASURED
+  24,588 / 12,301 / 6,157 at N = 12288 for LANES 1/2/4; read-out dumps
+  byte-identical to the HEAD unit's (184,335 lines). DERIVED step 61,473 ->
+  49,186 (-20%) / 43,042 (-30%), 393 k / 590 k cycles per token. Mutation
+  table 18 rows x 3 LANES, 0 unexpected; two planted trials added
+  (`one_big0..3`, `one_big_last`) because `lanemax` survived at LANES = 4
+  and `nodrain` had never bitten. Gate: tb_swiglu_mem(+_9b) PASS 2,
+  tb_rmsnorm_bf_mem PASS 1, tb_llama_top_swg PASS 1, seamgate_swg PASS 1.
+- **`rmsnorm_bf_mem` unchanged:** its unit share is 27.6% of VEC_NORM.
+- **NEXT (not this track's files):** `rtl/llama_top.vhd` generic
+  `SWG_LANES : positive := 1` beside NORM_LANES and
+  `generic map(N => NN, Q => 12, LANES => SWG_LANES)` in `gsr`;
+  `hw/fk33/gen_fk33_card.py` `--generic SWG_LANES=2` (conservative) or 4.
+  Area above LANES = 1 is ESTIMATE (+16 DSP, +2.3 k LUT per lane); the
+  OOC draw on the BC-250 is `sim/ooc_swgmem_run.sh`'s `draw` with
+  `"N=12288 Q=12 LANES=4"`. The other 3N per step is the adapter's serial
+  region-file traffic (one word per cycle each way) and is a llama_top /
+  sequencer lever, listed in the write-up.
+
+### 2026-09-20 TRACK ACLK: the A clock-domain split is in the tree behind `FK33_ENG_SPLIT_CLK=1` (default OFF, byte-identical when off). Bench + 15 mutants green. DERIVED: 1.15x per striped token, 1.0x on the flat image. NOT YET BUILT.
+
+Oren's question: "can we not clock the blocks that have more cycles faster?"
+Answer for A, and the contract, in `docs/2026-09-20_a-clock-domain-split.md`.
+
+**What landed** (`99e5d99`, `886ebc0`):
+- `rtl/fk33_eng_cdc.vhd`: the seam cell between `card` (75 MHz clk_out3) and
+  `eng` (new clk_out4 at `FK33_ENG_FAST_MHZ`, default 200). Every
+  `CARD_SEAM_TO_ENG`/`FROM_ENG` net and the card's AXI-Lite write master
+  cross through it. x and y are `rtl/async_fifo.vhd` (y sized to a whole job,
+  256 beats = 44 RAMB36); the AXI-Lite write is a toggle handshake carrying
+  `a_x_exp`/`a_job_index` with it; **done crosses as a rising-edge EVENT
+  cleared by the next accepted write, not as a level**, because
+  `a_desc_adapter`'s S_WAIT argument is "the GO that put us here cleared
+  done_l" and a level synchroniser would hand it the previous job's done.
+  Three orderings the single-clock card relied on are enforced by handshake
+  on both sides (x before the first write; done never stale; every y beat
+  before done).
+- `hw/fk33/gen_pcieep.py`: the switch, `fast_reset` (ext_reset_in =
+  xdma/axi_aresetn, so `check_reset_topology`'s descendancy rule still holds
+  and its nine teeth rows pass retargeted), `axil2eng`/`engctl` at NUM_CLKS 3,
+  the `eng_cdc` cell and its wiring, the two-hop address map, one
+  `set_clock_groups -asynchronous` line with a sentinel, `check_cdc_pins`
+  (48 pins, teeth on each face), live-cell `FK33_ENGCDC`, implemented-design
+  `FK33_ENGSPLIT` (distinct clocks, >= 10 ASYNC_REG cells under
+  `bd_i/eng_cdc`, `report_cdc` both ways), `split_gate_teeth`.
+- **The 28 HBM masters are not touched.** They already run on `hbm_aclk` =
+  xdma/axi_aclk at 250 MHz with the crossing inside `axi_rd_port`, exactly as
+  the engine-only 200 MHz build; the split moves ONE engine clock pin.
+
+**MEASURED:**
+- `sim:tb_eng_cdc` OVERALL PASS 1 (11,678 checks; 13.333/5 ns, swapped
+  5/13.333 ns with a 12-element tail burst, both overflow faults, sticky err).
+- `sim/mutate_eng_cdc.sh`: 15 of 15 as expected. Killed: both-halves x wait
+  (W12), both-halves y wait (W34), done not cleared by a write (W5), done as a
+  LEVEL (W6), gray encoder only (G2), late full flag (F1, ABORT). Survivors,
+  stated as the floor: each single half of a redundant wait (W1-W4), one-flop
+  sync (W7), same-edge toggle (W8), binary pointers (G1), early full (F2).
+  W12 SURVIVED the first bench: the request path's own latency exceeds the x
+  FIFO's at either ratio; the tail burst made the ordering reachable.
+- Switch off: regenerate with `FK33_CARD=1 FK33_CB_STYLE=distributed
+  FK33_ENG_CORE_MHZ=75`, `git diff` on the tcl and xdc EMPTY. `--selftest`
+  PASS in all four configurations. `sim:runguard` PASS 1 / PASS 1,
+  `sim:cardtop` PASS 3 / PASS 3, `sim:fk33card` PASS 1 / PASS 1 (off / on).
+- On the way: `async_fifo`'s read side pops 2 beats per 3 rclk cycles with
+  `q_ready` high (`do_rd` gated on `ocnt + inflight < 2`).
+
+**DERIVED, from the token-0 profiles and the manifest shapes:** an `A_JOB`
+step is 27.2% card-side (x push `K+2` and drain `M` at the card clock,
+2,963,566 cycles) and 72.8% engine-side (7,931,072 cycles over ~5.18 M beats
+= **1.53 cycles/beat, the datapath floor: at 75 MHz the striped A is
+compute-bound**). The 200 MHz engine-only build measured 2.03 cycles/beat on
+the same striping = 10.15 ns/beat, against the busiest-PC (2 lanes) supply
+bound of 8.0 ns/beat = 1.6 cycles at 200 MHz: within 21% of the memory bound.
+Token: striped **0.4015 s -> 0.3484 s (1.15x)**, A 0.1453 -> 0.0921 s; flat
+0.8254 -> ~0.83 s (the single-PC bound is clock-independent). By cycles B is
+the bigger block (52.6%) but its fmax is unmeasured; A's 200 MHz is.
+
+**NOT done:** any Vivado run. The BC-250 lane had one Vivado present
+(3.75 GB RSS) when checked, so `--bd-only` with the switch on is the next
+step (3 min, 3.4 GB): it answers whether the packager infers `sa`/`ma` as
+write-only AXI4-Lite compatible with `card/a` and `engctl/S01`, and whether
+`eng_cdc/sa/reg0` exists. Then a routed card build with
+`FK33_ENG_SPLIT_CLK=1` (start at `FK33_ENG_FAST_MHZ=175` if 200 fails) reads
+`FK33_ENGSPLIT`, the two `report_cdc` files and `fk33_pcieep_engcdc_util.rpt`.
+
+**Files owned:** rtl/fk33_eng_cdc.vhd, sim/tb_eng_cdc.vhd,
+sim/mutate_eng_cdc.sh, hw/fk33/gen_pcieep.py (split parts),
+docs/2026-09-20_a-clock-domain-split.md.
+
 ### 2026-09-20 TRACK KVREG: subsystem C's KV base is a SEAM REGISTER, not a generic. C_MAXPOS halved to 65536 so the striped image fits. Host refuses an unfit manifest. NOT YET BUILT.
 
 - **Defect** (docs/debugging/2026-09-20_the-kv-cache-base-is-compiled-into-
