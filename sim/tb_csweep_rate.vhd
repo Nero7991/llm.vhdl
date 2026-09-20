@@ -54,6 +54,41 @@
 -- 349.2 the card measured.
 --
 -- ======================================================================
+-- THE MIDGAP SPLIT, ADDED 2026-09-20 (TRACK MIDGAP)
+-- ======================================================================
+-- The four spans above cannot split MIDGAP, and the first run of this bench
+-- therefore DERIVED the split by subtracting the countable parts: "about 40
+-- of the 56.42 are the score drain plus the softmax".  That derivation was
+-- wrong by 14 cycles, and it was wrong because it assumed P_SCORE issues one
+-- block per cycle.  It does not: it waits 14 cycles for `ar_prdy` first.
+--
+-- `rtl/attn_block.vhd` now publishes its sweep phase on `dbg_sw_ph` (a
+-- decode of the phase register into named codes, plus `is_byp`) and the four
+-- sweep handshakes on `dbg_sw_aux`, for exactly this measurement.  This
+-- bench charges every cycle to one code and prints:
+--
+--   MIDGAP_SPAN  <pos> <name> <cycles x100 per non-bypass position>
+--   MIDGAP_SUB   <pos> sc_wait= sc_iss= rk_pre= rk_post= rv_pre= rv_post=
+--   MIDGAP_SLOPE <name> <cycles x100 per position, from the two endpoints>
+--   MIDGAP_SLOPE_SUM <sum> expect_slope_over_nkvh=<CSWEEP_SLOPE/N_KVH>
+--
+-- QUOTE THE SLOPE LINES, NOT THE PER-POSITION ONES.  A per-position figure
+-- still carries the once-per-KV-HEAD costs -- opening the cache run, the
+-- first record's read latency -- divided over however many positions there
+-- happened to be; differencing the two endpoints removes them exactly,
+-- because both runs have the same N_KVH head openings.  The check that this
+-- is right is printed on the same line: MIDGAP_SLOPE_SUM must equal
+-- CSWEEP_SLOPE_X100 / N_KVH, and it does, to the digit, in all four
+-- generic combinations.  Two instruments that share no code agreeing on a
+-- total is worth more than either of them alone.
+--
+-- THE BYPASS POSITION IS EXCLUDED FROM EVERY PER-POSITION FIGURE.  At
+-- `cur_pos = p` the sweep runs p+1 positions per head and only p of them
+-- read a record, so charging the bypass against `n_pair` would inflate
+-- every span by (p+1)/p -- +1.6% at the default P3 = 64, which is ten times
+-- the 0.14% agreement this bench claims with the card.
+--
+-- ======================================================================
 -- THE CONTROL THAT MAKES THE SPLIT ATTRIBUTABLE
 -- ======================================================================
 -- `IDEAL_CACHE` replaces `attn_kv_axi` with a memory that can never refuse:
@@ -153,6 +188,11 @@ entity tb_csweep_rate is
     -- See rtl/attn_block.vhd's SWEEP_PIPE generic.  This bench passes it
     -- straight through so one invocation measures both.
     SWEEP_PIPE : boolean := false;
+    -- See rtl/attn_block.vhd's SCORE_EARLY generic.  It COMPOSES with
+    -- SWEEP_PIPE and the two must be reported together: both move cycles
+    -- out of the same per-position budget, so crediting each with its own
+    -- saving measured alone would double-count them.
+    SCORE_EARLY : boolean := false;
     -- THE ROW'S TEETH.  Without a ceiling this bench prints numbers and
     -- passes whatever they are, which is decoration: a schedule regression
     -- in the sweep loop would raise the slope and the gate would stay green.
@@ -292,6 +332,71 @@ architecture sim of tb_csweep_rate is
   signal n_beat  : integer := 0;
   signal slv_bad : integer := 0;
 
+  -- ---- THE MIDGAP SPLIT ------------------------------------------------
+  -- WHY THIS IS A SEPARATE INSTRUMENT FROM THE FOUR SPANS ABOVE.  KSPAN /
+  -- MIDGAP / VSPAN / LOOP are taken from `kr_en` / `vr_en`, which are the
+  -- only sweep activity visible at a port.  They cannot split MIDGAP,
+  -- because every state inside it -- P_HDR, P_SCORE, P_SCW, P_EPW and the
+  -- rescale pass -- drives nothing the bench can see.  The previous run of
+  -- this bench therefore DERIVED the split by subtracting the countable
+  -- parts, and that derivation is what this instrument replaces.
+  --
+  -- `dbg_sw_ph` is a decode of `attn_block`'s own phase register, published
+  -- for exactly this purpose (see its port declaration).  Bit 4 is `is_byp`.
+  --
+  -- THE BYPASS POSITION IS EXCLUDED, and it has to be: at `cur_pos = p` the
+  -- sweep runs p+1 positions per head but only p of them READ A RECORD, so
+  -- charging the bypass's cycles against `n_pair` would inflate every span
+  -- by (p+1)/p.  At the default P3 = 64 that is +1.6%, which is larger than
+  -- the 0.14% agreement this bench claims with the card.
+  constant NSPH : integer := 11;         -- codes 0..10; 0 is SWPH_NONE
+  type sph_acc_t is array (0 to NSPH-1) of integer;
+  signal s_ph   : sph_acc_t := (others => 0);   -- cycles, non-bypass only
+  signal s_phb  : sph_acc_t := (others => 0);   -- cycles, bypass positions
+  signal n_sw   : integer := 0;   -- non-bypass sweep positions entered
+  signal n_swb  : integer := 0;   -- bypass sweep positions entered
+  signal dbg_sw_ph : std_logic_vector(4 downto 0);
+  signal dbg_sw_aux : std_logic_vector(3 downto 0);
+
+  -- ---- the SUB-SPLIT, one level below the phase --------------------------
+  -- A phase code says which state the sweep is in; it does not say why it is
+  -- still there.  These four say that, and each is a number the fix for that
+  -- span would have to move:
+  --   sc_wait  cycles in P_SCORE with `ar_prdy` LOW -- the score unit's own
+  --            S_EMIN + S_SHIFTS header pass, during which the sweep has
+  --            nothing to do and nothing is issued.
+  --   sc_iss   cycles in P_SCORE with `ar_prdy` HIGH -- the eight issues.
+  --   rk_pre   cycles in P_RECK before this record's FIRST `kr_en`.  The
+  --            four-span instrument above cannot see these: `krdy_low` is
+  --            counted only once a record has started, so a wait for the
+  --            FIRST beat is invisible to it.
+  --   rk_post  cycles in P_RECK after this record's LAST `kr_en` -- the
+  --            capture tail, `rbi = NBLK`.
+  -- rv_pre / rv_post are the same two for P_RECV.
+  signal s_scwait, s_sciss : integer := 0;
+  signal s_rkpre, s_rkpost : integer := 0;
+  signal s_rvpre, s_rvpost : integer := 0;
+
+  -- A function rather than a constant array, because VHDL's array-of-string
+  -- needs one fixed length for every element and the names differ.  The
+  -- codes are rtl/attn_block.vhd's SWPH_* constants.
+  function SPH_NAME(i : integer) return string is
+  begin
+    case i is
+      when 1  => return "RECK";
+      when 2  => return "HDR";
+      when 3  => return "SCORE";
+      when 4  => return "SCW";
+      when 5  => return "EPW";
+      when 6  => return "RSPASS";
+      when 7  => return "RSACK";
+      when 8  => return "RECV";
+      when 9  => return "PV";
+      when 10 => return "POSN";
+      when others => return "NONE";
+    end case;
+  end function;
+
   signal job_cyc : pos_arr := (others => 0);
 
   -- ---- the modelled record image, a FUNCTION of the byte address -------
@@ -342,6 +447,7 @@ begin
                   POS_W => POS_W, MANT_W => MANT_W, CM_W => CM_W,
                   EXP_W => EXP_W, NORM_LANES => 1,
                   SWEEP_PIPE => SWEEP_PIPE,
+                  SCORE_EARLY => SCORE_EARLY,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => lay_i,
@@ -373,7 +479,8 @@ begin
                done => blk_done, done_ack => '1',
                err => blk_err, rope_sat => rope_sat, kv_sat => kv_sat,
                y_sat => y_sat, z_sat => z_sat,
-               rescale_max => rescale_max, dbg_ep_lost => dbg_ep_lost );
+               rescale_max => rescale_max, dbg_ep_lost => dbg_ep_lost,
+               dbg_sw_ph => dbg_sw_ph, dbg_sw_aux => dbg_sw_aux );
 
   -- ======================= the cache, or the control ====================
   GEN_REAL : if not IDEAL_CACHE generate
@@ -624,16 +731,60 @@ begin
     variable t_k1, t_k8, t_v1, t_v8 : integer := 0;
     variable have_prev : boolean := false;
     variable prev_head : integer := -1;
+    variable pcode : integer := 0;
+    variable prev_pcode : integer := 0;
+    variable seen_k, seen_v : boolean := false;
   begin
     if rising_edge(clk) then
       cyc <= cyc + 1;
       if rst = '1' then
         kc := 0; vc := 0; have_prev := false; prev_head := -1;
+        prev_pcode := 0; seen_k := false; seen_v := false;
       elsif instr_clr = '1' then
         kc := 0; vc := 0; have_prev := false; prev_head := -1;
+        prev_pcode := 0;
         n_pair <= 0; s_kspan <= 0; s_mid <= 0; s_vspan <= 0;
         s_loop <= 0; n_loop <= 0; s_krlow <= 0; s_vrlow <= 0;
+        s_ph <= (others => 0); s_phb <= (others => 0);
+        n_sw <= 0; n_swb <= 0;
+        s_scwait <= 0; s_sciss <= 0;
+        s_rkpre <= 0; s_rkpost <= 0; s_rvpre <= 0; s_rvpost <= 0;
+        seen_k := false; seen_v := false;
       elsif job_active then
+        -- ---- the MIDGAP split, from attn_block's published phase --------
+        -- One cycle is charged to exactly one code, and a position is
+        -- counted when the phase ENTERS P_RECK from anything else, which is
+        -- the one edge the sweep passes through once per position.
+        pcode := to_integer(unsigned(dbg_sw_ph(3 downto 0)));
+        if pcode > NSPH-1 then pcode := 0; end if;
+        if dbg_sw_ph(4) = '1' then
+          s_phb(pcode) <= s_phb(pcode) + 1;
+          if pcode = 1 and prev_pcode /= 1 then n_swb <= n_swb + 1; end if;
+        else
+          s_ph(pcode) <= s_ph(pcode) + 1;
+          if pcode = 1 and prev_pcode /= 1 then n_sw <= n_sw + 1; end if;
+        end if;
+        -- The sub-split.  Bypass positions are excluded here too.
+        if dbg_sw_ph(4) = '0' then
+          if pcode = 3 then                            -- P_SCORE
+            if dbg_sw_aux(0) = '1' then s_sciss  <= s_sciss  + 1;
+            else                        s_scwait <= s_scwait + 1; end if;
+          end if;
+          if pcode = 1 then                            -- P_RECK
+            if prev_pcode /= 1 then seen_k := false; end if;
+            if kr_en = '1' then seen_k := true; end if;
+            if not seen_k then s_rkpre  <= s_rkpre  + 1;
+            elsif kr_en = '0' and kc = 0 then s_rkpost <= s_rkpost + 1; end if;
+          end if;
+          if pcode = 8 then                            -- P_RECV
+            if prev_pcode /= 8 then seen_v := false; end if;
+            if vr_en = '1' then seen_v := true; end if;
+            if not seen_v then s_rvpre  <= s_rvpre  + 1;
+            elsif vr_en = '0' and vc = 0 then s_rvpost <= s_rvpost + 1; end if;
+          end if;
+        end if;
+        prev_pcode := pcode;
+
         if kr_en = '1' then
           if kc = 0 then
             t_k1 := cyc;
@@ -680,6 +831,14 @@ begin
     variable slope_x100 : integer;
     variable pred : integer;
     variable l : line;
+
+    -- The endpoint snapshots, for the per-phase SLOPE.  See MIDGAP_SLOPE
+    -- below for why a slope and not the per-position figure is the number
+    -- to quote.
+    type sub6_t is array (0 to 5) of integer;
+    variable ph_e0, ph_e3 : sph_acc_t := (others => 0);
+    variable sb_e0, sb_e3 : sub6_t := (others => 0);
+    variable nsw_e0, nsw_e3 : integer := 0;
 
     impure function nl_safe(n : integer) return integer is
     begin
@@ -736,6 +895,44 @@ begin
              & " loop_x100="
              & integer'image(s_loop*100/nl_safe(n_loop)));
       end if;
+      -- ---- THE MIDGAP SPLIT, MEASURED ---------------------------------
+      -- Cycles per NON-BYPASS sweep position, x100, one line per state, so
+      -- a reader can grep one name.  `n_sw` is printed beside `n_pair`
+      -- because they must agree: every non-bypass position reads exactly
+      -- one record pair, and if they disagree the phase decode and the beat
+      -- instrument are looking at different things.
+      emit("MIDGAP_POS " & integer'image(p)
+           & " nsw=" & integer'image(n_sw)
+           & " npair=" & integer'image(n_pair)
+           & " nswbyp=" & integer'image(n_swb));
+      for i in 1 to NSPH-1 loop
+        emit("MIDGAP_SPAN " & integer'image(p) & " " & SPH_NAME(i)
+             & " " & integer'image(s_ph(i)*100/nl_safe(n_sw))
+             & " raw=" & integer'image(s_ph(i))
+             & " byp=" & integer'image(s_phb(i)));
+      end loop;
+      emit("MIDGAP_SUM " & integer'image(p)
+           & " sweep_x100="
+           & integer'image((s_ph(1)+s_ph(2)+s_ph(3)+s_ph(4)+s_ph(5)
+                           +s_ph(6)+s_ph(7)+s_ph(8)+s_ph(9)+s_ph(10))
+                           *100/nl_safe(n_sw))
+           & " outside=" & integer'image(s_ph(0)));
+      emit("MIDGAP_SUB " & integer'image(p)
+           & " sc_wait=" & integer'image(s_scwait)
+           & " sc_iss=" & integer'image(s_sciss)
+           & " rk_pre=" & integer'image(s_rkpre)
+           & " rk_post=" & integer'image(s_rkpost)
+           & " rv_pre=" & integer'image(s_rvpre)
+           & " rv_post=" & integer'image(s_rvpost));
+      if idx = 0 then
+        for i in 0 to NSPH-1 loop ph_e0(i) := s_ph(i); end loop;
+        sb_e0 := (s_scwait, s_sciss, s_rkpre, s_rkpost, s_rvpre, s_rvpost);
+        nsw_e0 := n_sw;
+      elsif idx = 3 then
+        for i in 0 to NSPH-1 loop ph_e3(i) := s_ph(i); end loop;
+        sb_e3 := (s_scwait, s_sciss, s_rkpre, s_rkpost, s_rvpre, s_rvpost);
+        nsw_e3 := n_sw;
+      end if;
     end procedure;
   begin
     emit("CSWEEP_CONFIG hd=" & integer'image(HEAD_DIM)
@@ -752,7 +949,8 @@ begin
          & " stall=" & integer'image(STALL)
          & " spread=" & integer'image(SPREAD)
          & " ideal=" & boolean'image(IDEAL_CACHE)
-         & " sweep_pipe=" & boolean'image(SWEEP_PIPE));
+         & " sweep_pipe=" & boolean'image(SWEEP_PIPE)
+         & " score_early=" & boolean'image(SCORE_EARLY));
 
     rst <= '1';
     for i in 1 to 8 loop wait until rising_edge(clk); end loop;
@@ -784,6 +982,36 @@ begin
            & " residual=" & integer'image(job_cyc(i) - pred));
     end loop;
     emit("CSWEEP_PER_POS_PER_JOB_X100 " & integer'image(slope_x100));
+
+    -- ---- THE MIDGAP SPLIT AS A SLOPE ---------------------------------
+    -- WHY A SLOPE AND NOT THE PER-POSITION FIGURE.  Every per-position
+    -- number above still carries the once-per-KV-HEAD costs -- opening the
+    -- cache run, the first record's read latency -- divided over however
+    -- many positions there happened to be.  Differencing the two endpoints
+    -- removes them exactly, because both runs have the same N_KVH heads and
+    -- therefore the same number of head openings.  This is the same method
+    -- the card's own 2,793.4 was taken by, and the sum of these ten lines
+    -- must equal CSWEEP_SLOPE_X100 / N_KVH -- printed below as the check.
+    den := nsw_e3 - nsw_e0;
+    if den > 0 then
+      num := 0;
+      for i in 1 to NSPH-1 loop
+        num := num + (ph_e3(i) - ph_e0(i));
+        emit("MIDGAP_SLOPE " & SPH_NAME(i) & " "
+             & integer'image((ph_e3(i) - ph_e0(i))*100/den));
+      end loop;
+      emit("MIDGAP_SLOPE_SUM " & integer'image(num*100/den)
+           & " expect_slope_over_nkvh="
+           & integer'image(slope_x100/N_KVH));
+      emit("MIDGAP_SLOPE_SUB"
+           & " sc_wait=" & integer'image((sb_e3(0)-sb_e0(0))*100/den)
+           & " sc_iss=" & integer'image((sb_e3(1)-sb_e0(1))*100/den)
+           & " rk_pre=" & integer'image((sb_e3(2)-sb_e0(2))*100/den)
+           & " rk_post=" & integer'image((sb_e3(3)-sb_e0(3))*100/den)
+           & " rv_pre=" & integer'image((sb_e3(4)-sb_e0(4))*100/den)
+           & " rv_post=" & integer'image((sb_e3(5)-sb_e0(5))*100/den));
+    end if;
+
     emit("CSWEEP_SLOPE_CEILING " & integer'image(SLOPE_MAX_X100));
     emit("CSWEEP_STATUS err=" & std_logic'image(blk_err)
          & " kv_err=" & std_logic'image(kv_err)

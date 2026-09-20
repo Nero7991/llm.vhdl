@@ -256,7 +256,33 @@ entity attn_block is
     -- default, so every existing instantiation keeps the schedule it has
     -- bit for bit.  See the note at P_RECK.
     -- ==================================================================
-    SWEEP_PIPE : boolean := false
+    SWEEP_PIPE : boolean := false;
+    -- ==================================================================
+    -- SCORE_EARLY -- hand the K record's HEADER to attn_score_q12 as soon
+    -- as it is captured, instead of after the whole record is.  OFF by
+    -- default, so every existing instantiation keeps the schedule it has
+    -- bit for bit.  See the note at P_HDR.
+    --
+    -- WHY IT EXISTS, MEASURED.  sim/tb_csweep_rate.vhd 2026-09-20, real 9B
+    -- geometry, per position per KV head, asymptotic slope:
+    --
+    --     SWEEP_PIPE off            SWEEP_PIPE on
+    --     P_SCORE  23.00 cycles     P_SCORE  23.00 cycles
+    --       of which 14.00 is `ar_prdy` LOW and 9.00 is the eight issues
+    --
+    -- Those 14 cycles are `attn_score_q12` walking its own header:
+    -- S_EMIN is NBLK-1 narrow compares one per cycle and S_SHIFTS is NBLK
+    -- narrow subtracts one per cycle (rtl/attn_score_q12.vhd:343 and :357),
+    -- 15 cycles from the latch, of which 14 are visible here.  The sweep
+    -- has nothing to do for any of them.
+    --
+    -- The header is a function of the K record ALONE and it arrives with
+    -- that record's FIRST beat -- `kr_hdr` stands for every beat of a
+    -- record -- so the whole pass can run under the rest of the fetch and
+    -- under the previous position's PV.  This generic does that and
+    -- nothing else: no arithmetic moves, no beat moves, and the partials
+    -- are still issued by P_SCORE in the same order.
+    SCORE_EARLY : boolean := false
   );
   port(
     clk : in std_logic;
@@ -392,7 +418,43 @@ entity attn_block is
     -- Sticky, synthesizable: an e_p arrived for a head whose previous e_p had
     -- not been consumed.  In hardware that weight is gone; nothing else would
     -- say so.
-    dbg_ep_lost : out std_logic
+    dbg_ep_lost : out std_logic;
+
+    -- ---- THE SWEEP PHASE, PUBLISHED SO A RATE BENCH CAN SPLIT IT ---------
+    -- WHY THIS PORT EXISTS.  `ph` is a locally-declared enumeration in this
+    -- architecture, so no bench can name its type and no VHDL external name
+    -- can reach it.  MEASURED 2026-09-20 by sim/tb_csweep_rate.vhd, the
+    -- per-position cost of the sweep is 87.42 cycles of which 56.42 sit
+    -- between the last K beat and the first V beat -- and that 56.42 could
+    -- only be SPLIT by DERIVING it, because the states inside it drive no
+    -- port of this entity.  `docs/debugging/2026-09-20_c-sweeps-at-5-cycles-
+    -- per-beat.md` closes on exactly that gap.
+    --
+    -- The encoding is a NAMED constant per state (SWPH_* below), not the
+    -- `ph_t'pos` of the phase, so inserting a state cannot silently shift a
+    -- code that a bench or a document has already quoted.  It is zero
+    -- (SWPH_NONE) in every state outside the sweep.  Bit 4 is `is_byp`, the
+    -- bypass position, which reads no record and must be excluded from any
+    -- per-record-pair figure.
+    --
+    -- COST: none in the shipping build.  The phase register already exists;
+    -- this is a decode of it, and an unconnected OUT port is trimmed.  Every
+    -- instantiation in rtl/llama_top.vhd, rtl/fk33_llama_top.vhd,
+    -- rtl/ooc_cattnadapt_top.vhd and hw/fk33/rtl/compose4_top.vhd leaves it
+    -- unassociated, which is legal for mode `out` and needs no edit to any
+    -- of them.
+    dbg_sw_ph : out std_logic_vector(4 downto 0);
+
+    -- The four sweep handshakes, published for the same reason and with the
+    -- same cost.  A phase code says WHICH state the sweep is in; these say
+    -- WHY it is still there, which is the difference between "P_SCORE takes
+    -- 23 cycles" and "P_SCORE spends 15 of them waiting for
+    -- attn_score_q12's header pass and 8 issuing".
+    --   (0) ar_prdy  -- every score unit's p_ready, the score-issue gate
+    --   (1) ar_scv   -- a score partial block was issued this cycle
+    --   (2) sq_busy  -- some score unit is not idle
+    --   (3) ar_pvv   -- a PV block was issued this cycle
+    dbg_sw_aux : out std_logic_vector(3 downto 0)
   );
 end entity;
 
@@ -633,7 +695,34 @@ architecture rtl of attn_block is
                 P_SFW, P_RCP, P_RCW, P_GATEGO,
                 P_GAT1, P_GAT2, P_GAT3, P_GAT4, P_GATEW, P_GN,
                 P_HN, P_EMITGO, P_EMITW, P_DONE);
+
+  -- The published sweep-phase codes, driving `dbg_sw_ph(3 downto 0)`.  These
+  -- are DELIBERATELY not `ph_t'pos`: a code quoted in a document or decoded
+  -- by a bench must not move when a state is inserted into the enumeration
+  -- above.  Only the ten sweep states have a code; everything else reads
+  -- SWPH_NONE.
+  subtype swph_t is std_logic_vector(3 downto 0);
+  constant SWPH_NONE   : swph_t := x"0";
+  constant SWPH_RECK   : swph_t := x"1";
+  constant SWPH_HDR    : swph_t := x"2";
+  constant SWPH_SCORE  : swph_t := x"3";
+  constant SWPH_SCW    : swph_t := x"4";
+  constant SWPH_EPW    : swph_t := x"5";
+  constant SWPH_RSPASS : swph_t := x"6";
+  constant SWPH_RSACK  : swph_t := x"7";
+  constant SWPH_RECV   : swph_t := x"8";
+  constant SWPH_PV     : swph_t := x"9";
+  constant SWPH_POSN   : swph_t := x"A";
   signal ph : ph_t := P_IDLE;
+
+  -- ---- SCORE_EARLY.  Both are inert with the generic false. -------------
+  -- se_rdy   the K header of the position about to be scored has been
+  --          captured into `khdr` and has not yet been handed over.  Set on
+  --          the FIRST captured beat of a K record and on no other.
+  -- se_sent  every attn_score_q12 has taken that header, so P_HDR is a
+  --          no-op for this position.
+  signal se_rdy  : std_logic := '0';
+  signal se_sent : std_logic := '0';
 
   signal kvh   : integer range 0 to N_KVH := 0;
   signal qh    : integer range 0 to G := 0;
@@ -821,6 +910,30 @@ begin
   rescale_max <= rmax_r;
   done        <= done_r;
   dbg_ep_lost <= eplost_r;
+
+  -- THE SWEEP PHASE DECODE.  See the port declaration for why this exists.
+  -- One named code per sweep state; SWPH_NONE everywhere else.  Combinational
+  -- on the already-registered `ph` and `is_byp`, so it adds no state and is
+  -- trimmed wherever the port is left unassociated.
+  dbg_sw_ph(4) <= is_byp;
+  dbg_sw_ph(3 downto 0) <=
+      SWPH_RECK   when ph = P_RECK   else
+      SWPH_HDR    when ph = P_HDR    else
+      SWPH_SCORE  when ph = P_SCORE  else
+      SWPH_SCW    when ph = P_SCW    else
+      SWPH_EPW    when ph = P_EPW    else
+      SWPH_RSPASS when ph = P_RSPASS else
+      SWPH_RSACK  when ph = P_RSACK  else
+      SWPH_RECV   when ph = P_RECV   else
+      SWPH_PV     when ph = P_PV     else
+      SWPH_POSN   when ph = P_POSN   else
+      SWPH_NONE;
+
+  dbg_sw_aux(0) <= ar_prdy;
+  dbg_sw_aux(1) <= ar_scv;
+  dbg_sw_aux(2) <= '0' when all_zero(sq_busy) else '1';
+  dbg_sw_aux(3) <= ar_pvv;
+
   kv_layer    <= to_unsigned(lay_r, clog2(LAYERS));
   sm_last     <= last_p;
 
@@ -1189,6 +1302,7 @@ begin
         ar_rdv <= '0'; sq_hdrv <= '0'; sm_start <= '0'; sm_rsack <= '0';
         sm_dack <= '0'; rc_sv <= '0'; gt_cfgv <= '0'; gt_xv <= '0';
         em_start <= '0';
+        se_rdy <= '0'; se_sent <= '0';
         kw_hen <= '0'; kw_en <= '0'; kr_en <= '0'; vr_en <= '0';
         qg_re <= '0'; kin_re <= '0'; vin_re <= '0';
         cfgtk_r <= '0'; wntk_r <= '0'; srtk_r <= '0';
@@ -1322,6 +1436,40 @@ begin
             if SWEEP_PIPE then
               pk_cnt <= pk_cnt + 1;
               if pk_cnt = NBLK-1 then pk_got <= '1'; end if;
+            end if;
+            -- ==========================================================
+            -- SCORE_EARLY.  The header is complete on the FIRST captured
+            -- beat, so arm the hand-over here rather than after the whole
+            -- record.  `se_rdy` is set on the first beat and on no other,
+            -- because it must not re-arm behind a hand-over that has
+            -- already happened for this record.
+            --
+            -- AND THE ASSUMPTION IT RESTS ON IS CHECKED, NOT ASSUMED.
+            -- The old path read `khdr` only after beat NBLK-1, so it was
+            -- indifferent to whether `kr_hdr` was the same on every beat
+            -- of a record; this path is not.  Both producers stand it for
+            -- the life of a record -- rtl/attn_kv_axi.vhd replays the
+            -- record's header chunk with every beat, and the model in
+            -- sim/tb_attn_block.vhd does the same -- and the assert below
+            -- is what makes that a checked property of the CONNECTION
+            -- rather than a reading of two files.  A producer that
+            -- changed the header mid-record would otherwise align this
+            -- position's partials on another record's e_min, which is
+            -- exactly the 2026-08-28 vhdr defect in a new place: in
+            -- range, plausible, and wrong by a power of two.
+            if SCORE_EARLY then
+              if (SWEEP_PIPE and pk_cnt = 0) or ((not SWEEP_PIPE) and rbi = 0)
+              then
+                se_rdy <= '1';
+              else
+                assert kr_hdr = khdr
+                  report "attn_block: SCORE_EARLY -- kr_hdr changed inside a "
+                       & "K record.  The header handed to attn_score_q12 on "
+                       & "beat 0 is not the one this record's mantissas "
+                       & "belong to, so e_min and every alignment shift are "
+                       & "taken from the wrong record."
+                  severity failure;
+              end if;
             end if;
           end if;
           -- `rbi` is the OLD path's capture counter and is reset by the
@@ -1652,6 +1800,11 @@ begin
             -- it clean.
             pk_en <= '0'; pk_got <= '0'; pk_act <= '0'; pk_pend <= '0';
             pv_en <= '0'; pv_got <= '0';
+            -- and the SCORE_EARLY hand-over with it, for the same reason.
+            -- The bypass position reads no record, so it must go down
+            -- P_HDR's old path; a stale `se_sent` left by the previous
+            -- head would make it skip a header it never sent.
+            se_rdy <= '0'; se_sent <= '0';
             ph <= P_RECK;
 
           -- THE SEAM.  `kr_rdy` is the whole of the change on the read side:
@@ -1732,12 +1885,51 @@ begin
           -- The header must STAND before the first partial.  That is what
           -- lets attn_score_q12 know e_min with no buffer for the partials,
           -- and it is the ORDERING RULE expressed as a phase.
+          -- ================================================================
+          -- SCORE_EARLY.  With the generic false this state is exactly what
+          -- it was: raise the header, wait for every score unit to take it.
+          -- With it true the hand-over has normally already happened, under
+          -- the K fetch (SWEEP_PIPE false) or under the previous position's
+          -- PV (SWEEP_PIPE true), and this state is one cycle.
+          --
+          -- THE FALLBACK IS NOT DEAD CODE AND MUST STAY.  `se_sent` is
+          -- clear for the BYPASS position at every head -- it reads no
+          -- record, so no capture ever arms `se_rdy` -- and it is clear
+          -- whenever the arm below has not finished.  Both go down the old
+          -- path, which is why this generic cannot change the order in
+          -- which any score unit sees its header.
+          -- ================================================================
           when P_HDR =>
-            sq_hdrv <= '1';
-            if all_ones(sq_taken) then
-              sq_hdrv <= '0';
+            -- A HEADER NOT HANDED OVER EARLY IS NOT HANDED OVER LATE, and
+            -- this one line is what makes that structural instead of a
+            -- timing coincidence.  `se_rdy` is a LEVEL.  If the arm has not
+            -- consumed it by the time this state runs, the early path has
+            -- missed its window for THIS position -- and without this clear
+            -- the arm simply fires later, at P_EPW, where the score units
+            -- next go idle.  That hand-over carries the header of the
+            -- position just FINISHED and sets `se_sent`, so the NEXT
+            -- position's P_HDR skips on it and scores against the wrong
+            -- e_min.
+            --
+            -- MEASURED, and it is why the line exists: mutants E6 and E7 of
+            -- sim/mutate_attn_score_early.sh delay the arm in two different
+            -- ways, and BOTH were KILLED by ref/attn_block_seq_vec.c before
+            -- this clear was added.  Both were WRITTEN as pure schedule
+            -- changes that a value oracle should not be able to see, and
+            -- the oracle saw them, which is the tell that the delay was not
+            -- schedule-only at all.
+            if SCORE_EARLY then se_rdy <= '0'; end if;
+            if SCORE_EARLY and se_sent = '1' then
+              se_sent <= '0';
               blk <= 0;
               ph <= P_SCORE;
+            else
+              sq_hdrv <= '1';
+              if all_ones(sq_taken) then
+                sq_hdrv <= '0';
+                blk <= 0;
+                ph <= P_SCORE;
+              end if;
             end if;
 
           when P_SCORE =>
@@ -2012,6 +2204,46 @@ begin
 
         end case;
 
+        -- ================================================================
+        -- SCORE_EARLY: THE HAND-OVER, RUN OUTSIDE THE PHASE MACHINE.
+        --
+        -- It is placed AFTER the case and gated on `ph /= P_HDR`, which
+        -- makes it and P_HDR's own branch DISJOINT drivers of `sq_hdrv`
+        -- rather than two assignments in one delta where the later one
+        -- silently wins.  That is the same hazard this file already
+        -- records at the `vhdr` capture: an unguarded second writer of a
+        -- register produced numbers that were in range, plausible and
+        -- wrong by a power of two, and nothing structural could see it.
+        --
+        -- WHY `all_zero(sq_busy)` IS THE WHOLE GUARD.  A score unit takes
+        -- a header only in S_IDLE, and the sweep does not leave P_SCW
+        -- until every unit is back there (`all_zero(sq_busy)` at P_SCW).
+        -- So from P_EPW of position p until the header of position p+1 is
+        -- handed over, every unit is idle -- which is exactly the window
+        -- in which a K record is captured in BOTH modes: under the K fetch
+        -- of p+1 with SWEEP_PIPE false, and under the PV of p with it
+        -- true.  The gate is therefore a check of the thing itself and not
+        -- a reading of the schedule, and it holds if the schedule moves.
+        --
+        -- WHAT IT DOES NOT TOUCH: `khdr`, the partials, their order, the
+        -- array, and the score units' own arithmetic.  A unit that has
+        -- taken its header early sits in S_ACC with `p_ready` high and
+        -- receives nothing, because attn_mac_array raises `p_valid` only
+        -- in M_SCORE mode (rtl/attn_mac_array.vhd:456) and the only issuer
+        -- of M_SCORE is P_SCORE.
+        -- ================================================================
+        if SCORE_EARLY and ph /= P_HDR then
+          if sq_hdrv = '1' then
+            if all_ones(sq_taken) then
+              sq_hdrv <= '0';
+              se_sent <= '1';
+              se_rdy  <= '0';
+            end if;
+          elsif se_rdy = '1' and se_sent = '0' and all_zero(sq_busy) then
+            sq_hdrv <= '1';
+          end if;
+        end if;
+
       end if;
     end if;
   end process;
@@ -2027,5 +2259,78 @@ begin
   --   * the output stage of group 0 under the sweep of group 1;
   --   * the gate feed, four cycles per element here against one in the spec.
   -- Each of those is a new seam.  None of them changes the values.
+  --
+  -- ======================================================================
+  -- WHERE THE PER-POSITION CYCLES ACTUALLY GO, MEASURED RATHER THAN
+  -- DERIVED (TRACK MIDGAP, 2026-09-20)
+  -- ======================================================================
+  -- sim/tb_csweep_rate.vhd now publishes the phase split through
+  -- `dbg_sw_ph`, so the figures below are cycle counts and not a
+  -- subtraction.  Per position per KV head, asymptotic slope, real 9B
+  -- geometry, RD_LAT 100, SPREAD 0:
+  --
+  --                      base   SWEEP_PIPE   SCORE_EARLY   both
+  --   P_RECK            12.79       2.77        12.79       2.77
+  --   P_HDR              3.00       3.00         1.00       1.00
+  --   P_SCORE           23.00      23.00        17.00      14.01
+  --     of which waiting for `ar_prdy`
+  --                     14.00      14.00         8.00       5.01
+  --     of which issuing the eight blocks
+  --                      9.00       9.00         9.00       9.00
+  --   P_SCW             13.00      13.00        13.00      13.00
+  --   P_EPW             13.00      13.00        13.00      13.00
+  --   P_RSPASS/P_RSACK   0.00       0.00         0.00       0.00
+  --   P_RECV            11.00       1.00        11.00       1.00
+  --   P_PV               9.00       9.00         9.00       9.00
+  --   P_POSN             4.00       4.00         4.00       4.00
+  --   ---------------------------------------------------------------
+  --   per position      88.79      68.77        80.79      57.79
+  --   x N_KVH = 4      355.17     275.11       323.17     231.17
+  --
+  -- THE TWO GENERICS ARE NOT ADDITIVE AND THE COMBINATION IS WORTH MORE
+  -- THAN THE SUM.  Alone they save 80.06 and 32.00 cycles per position per
+  -- job; together they save 124.00, i.e. 11.94 MORE than 80.06 + 32.00.
+  -- The mechanism is in the table: with SWEEP_PIPE the K record of the
+  -- next position is captured during P_PV, so SCORE_EARLY's hand-over
+  -- happens a whole PV and P_POSN earlier and hides 8.99 of the header
+  -- pass instead of 6.00.  Quote the pair, never the two singles added.
+  --
+  -- THREE THINGS IN THAT TABLE ARE WORTH MORE THAN THE TOTALS:
+  --
+  -- 1. THE RESCALE PASS IS ZERO AT THE ASYMPTOTE.  It fires in the first
+  --    position or two of a head and never again at this stimulus, so it
+  --    is not a term in the slope at all.  What the bench does NOT
+  --    establish is the card's rescale rate; see the open list in
+  --    docs/debugging/2026-09-20_the-attention-midgap.md.
+  -- 2. P_SCW AND P_EPW ARE FIXED PIPELINE LATENCIES, NOT DRAINS OF
+  --    ANYTHING ELASTIC.  P_SCW is attn_score_q12's three-stage accumulate
+  --    emptying plus S_EXP1/S_EXP2/S_SH/S_Q1/S_Q2/S_DONE; P_EPW is one
+  --    pass of attn_softmax's cone.  Neither shortens with a faster memory
+  --    or a wider port, and together they are 26.00 of the 52.00 the score
+  --    chain costs.
+  -- 3. NOTHING IN THE SWEEP IS A DIVIDE.  attn_recip -- the only divider on
+  --    C's read path, rtl/divider_rs.vhd behind it -- runs in P_RCP/P_RCW
+  --    ONCE PER QUERY HEAD after the whole sweep, so its latency is in the
+  --    job's fixed cost and contributes 0.00 to the per-position slope.
+  --    It was a candidate and it is excluded by measurement.
+  --
+  -- AND THE OVERLAP THAT IS *NOT* BUILT, stated with its blocker because
+  -- the obvious reading of the table is to reach for it.  Computing the
+  -- score of position p+1 under the softmax of position p is NUMERICALLY
+  -- legal: the score is Q . K[p+1] aligned by e_min(p+1), and it reads
+  -- `qrec`, `krec` and `khdr` only -- no softmax state, no running maximum,
+  -- no accumulator.  It is blocked by the SCHEDULE, in two places:
+  --   * `krec` does not hold position p+1 yet.  Even with SWEEP_PIPE the
+  --     K record of p+1 is fetched during P_PV/P_POSN of p, which is AFTER
+  --     the softmax window, and moving it earlier puts it in the same
+  --     window as the V record of p through a capture path that is ONE
+  --     pipe wide (`rbv` / `rbs`, at the capture above).
+  --   * attn_mac_array has ONE multiplier and three mutually exclusive
+  --     modes (rtl/attn_mac_array.vhd:339).  P_PV needs it for nine cycles
+  --     immediately after P_EPW's thirteen, so a score issue moved into
+  --     the softmax window buys nothing unless the PV moves too.
+  -- SCORE_EARLY is the part of that lever which needs neither: the HEADER
+  -- is complete on the record's first beat and the header pass touches no
+  -- multiplier, so it can be hoisted on its own.  The rest is open work.
 
 end architecture;

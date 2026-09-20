@@ -175,6 +175,12 @@ entity tb_attn_block is
     -- answer with it true and with it false.  That is the check, and it is
     -- the reason the generic is reachable from here at all.
     SWEEP_PIPE : boolean := false;
+    -- PASSED STRAIGHT THROUGH for the same reason and with the same
+    -- obligation.  SCORE_EARLY moves WHEN the K record's header is handed
+    -- to attn_score_q12 and nothing else: the header is the same bits,
+    -- the partials are the same in the same order, and the answer must be
+    -- bit-identical with it true and with it false.
+    SCORE_EARLY : boolean := false;
     HEARTBEAT_US : integer := 0
   );
 end entity;
@@ -473,6 +479,7 @@ begin
                   POS_W => POS_W, MANT_W => MANT_W, CM_W => CM_W,
                   EXP_W => EXP_W, NORM_LANES => 1,
                   SWEEP_PIPE => SWEEP_PIPE,
+                  SCORE_EARLY => SCORE_EARLY,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => 0,

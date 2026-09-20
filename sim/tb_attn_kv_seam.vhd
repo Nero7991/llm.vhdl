@@ -216,6 +216,12 @@ entity tb_attn_kv_seam is
     -- memory, so a reordered fetch that produced the right y from the
     -- wrong record would still be caught.
     SWEEP_PIPE : boolean := false;
+    -- PASSED STRAIGHT THROUGH, and this is the bench that matters most
+    -- for it: Q2 checks the record IMAGE in HBM and Q3 matches every
+    -- returned beat to the (layer, head, position, block) it was asked
+    -- for, so a header taken from the wrong record would be caught here
+    -- even if it happened to produce a plausible y.
+    SCORE_EARLY : boolean := false;
     HEARTBEAT_US : integer := 0
   );
 end entity;
@@ -511,6 +517,7 @@ begin
                   POS_W => POS_W, MANT_W => MANT_W, CM_W => CM_W,
                   EXP_W => EXP_W, NORM_LANES => 1,
                   SWEEP_PIPE => SWEEP_PIPE,
+                  SCORE_EARLY => SCORE_EARLY,
                   STRICT_PRODUCER => true )
     port map ( clk => clk, rst => rst,
                start => blk_start, layer => lay_blk,
