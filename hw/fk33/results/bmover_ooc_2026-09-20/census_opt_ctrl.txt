@@ -1,0 +1,109 @@
+# BMOVER census stage=opt tag=ctrl (get_cells -hier by REF_NAME)
+## uram 32
+u_mem/gflat.mem_reg_uram_0 URAM288
+u_mem/gflat.mem_reg_uram_1 URAM288
+u_mem/gflat.mem_reg_uram_10 URAM288
+u_mem/gflat.mem_reg_uram_11 URAM288
+u_mem/gflat.mem_reg_uram_12 URAM288
+u_mem/gflat.mem_reg_uram_13 URAM288
+u_mem/gflat.mem_reg_uram_14 URAM288
+u_mem/gflat.mem_reg_uram_15 URAM288
+u_mem/gflat.mem_reg_uram_16 URAM288
+u_mem/gflat.mem_reg_uram_17 URAM288
+u_mem/gflat.mem_reg_uram_18 URAM288
+u_mem/gflat.mem_reg_uram_19 URAM288
+u_mem/gflat.mem_reg_uram_2 URAM288
+u_mem/gflat.mem_reg_uram_20 URAM288
+u_mem/gflat.mem_reg_uram_21 URAM288
+u_mem/gflat.mem_reg_uram_22 URAM288
+u_mem/gflat.mem_reg_uram_23 URAM288
+u_mem/gflat.mem_reg_uram_24 URAM288
+u_mem/gflat.mem_reg_uram_25 URAM288
+u_mem/gflat.mem_reg_uram_26 URAM288
+u_mem/gflat.mem_reg_uram_27 URAM288
+u_mem/gflat.mem_reg_uram_28 URAM288
+u_mem/gflat.mem_reg_uram_29 URAM288
+u_mem/gflat.mem_reg_uram_3 URAM288
+u_mem/gflat.mem_reg_uram_30 URAM288
+u_mem/gflat.mem_reg_uram_31 URAM288
+u_mem/gflat.mem_reg_uram_4 URAM288
+u_mem/gflat.mem_reg_uram_5 URAM288
+u_mem/gflat.mem_reg_uram_6 URAM288
+u_mem/gflat.mem_reg_uram_7 URAM288
+u_mem/gflat.mem_reg_uram_8 URAM288
+u_mem/gflat.mem_reg_uram_9 URAM288
+## ramb36 28
+gconst.u_cw/gbank[0].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[10].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[11].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[12].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[13].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[14].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[15].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[1].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[2].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[3].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[4].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[5].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[6].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[7].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[8].m_reg_bram_0 RAMB36E2
+gconst.u_cw/gbank[9].m_reg_bram_0 RAMB36E2
+u_conv/gbank[0].m_reg_bram_0 RAMB36E2
+u_conv/gbank[10].m_reg_bram_0 RAMB36E2
+u_conv/gbank[11].m_reg_bram_0 RAMB36E2
+u_conv/gbank[1].m_reg_bram_0 RAMB36E2
+u_conv/gbank[2].m_reg_bram_0 RAMB36E2
+u_conv/gbank[3].m_reg_bram_0 RAMB36E2
+u_conv/gbank[4].m_reg_bram_0 RAMB36E2
+u_conv/gbank[5].m_reg_bram_0 RAMB36E2
+u_conv/gbank[6].m_reg_bram_0 RAMB36E2
+u_conv/gbank[7].m_reg_bram_0 RAMB36E2
+u_conv/gbank[8].m_reg_bram_0 RAMB36E2
+u_conv/gbank[9].m_reg_bram_0 RAMB36E2
+## ramb18 0
+## lutram 384
+u_exp 384
+## dsp 36
+gconst.u_kdma/base_q_reg DSP48E2
+gconst.u_kdma/base_q_reg/DSP_ALU_INST DSP_ALU
+gconst.u_kdma/base_q_reg/DSP_A_B_DATA_INST DSP_A_B_DATA
+gconst.u_kdma/base_q_reg/DSP_C_DATA_INST DSP_C_DATA
+gconst.u_kdma/base_q_reg/DSP_MULTIPLIER_INST DSP_MULTIPLIER
+gconst.u_kdma/base_q_reg/DSP_M_DATA_INST DSP_M_DATA
+gconst.u_kdma/base_q_reg/DSP_OUTPUT_INST DSP_OUTPUT
+gconst.u_kdma/base_q_reg/DSP_PREADD_DATA_INST DSP_PREADD_DATA
+gconst.u_kdma/base_q_reg/DSP_PREADD_INST DSP_PREADD
+u_cdma/base_q_reg DSP48E2
+u_cdma/base_q_reg/DSP_ALU_INST DSP_ALU
+u_cdma/base_q_reg/DSP_A_B_DATA_INST DSP_A_B_DATA
+u_cdma/base_q_reg/DSP_C_DATA_INST DSP_C_DATA
+u_cdma/base_q_reg/DSP_MULTIPLIER_INST DSP_MULTIPLIER
+u_cdma/base_q_reg/DSP_M_DATA_INST DSP_M_DATA
+u_cdma/base_q_reg/DSP_OUTPUT_INST DSP_OUTPUT
+u_cdma/base_q_reg/DSP_PREADD_DATA_INST DSP_PREADD_DATA
+u_cdma/base_q_reg/DSP_PREADD_INST DSP_PREADD
+u_dma/base_q_reg DSP48E2
+u_dma/base_q_reg/DSP_ALU_INST DSP_ALU
+u_dma/base_q_reg/DSP_A_B_DATA_INST DSP_A_B_DATA
+u_dma/base_q_reg/DSP_C_DATA_INST DSP_C_DATA
+u_dma/base_q_reg/DSP_MULTIPLIER_INST DSP_MULTIPLIER
+u_dma/base_q_reg/DSP_M_DATA_INST DSP_M_DATA
+u_dma/base_q_reg/DSP_OUTPUT_INST DSP_OUTPUT
+u_dma/base_q_reg/DSP_PREADD_DATA_INST DSP_PREADD_DATA
+u_dma/base_q_reg/DSP_PREADD_INST DSP_PREADD
+u_edma/base_q_reg DSP48E2
+u_edma/base_q_reg/DSP_ALU_INST DSP_ALU
+u_edma/base_q_reg/DSP_A_B_DATA_INST DSP_A_B_DATA
+u_edma/base_q_reg/DSP_C_DATA_INST DSP_C_DATA
+u_edma/base_q_reg/DSP_MULTIPLIER_INST DSP_MULTIPLIER
+u_edma/base_q_reg/DSP_M_DATA_INST DSP_M_DATA
+u_edma/base_q_reg/DSP_OUTPUT_INST DSP_OUTPUT
+u_edma/base_q_reg/DSP_PREADD_DATA_INST DSP_PREADD_DATA
+u_edma/base_q_reg/DSP_PREADD_INST DSP_PREADD
+## lut 3058
+## ff 5468
+## carry 55
+## f7 264
+## f8 96
+## srl 0

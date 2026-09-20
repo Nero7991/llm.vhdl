@@ -1,0 +1,37 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Sep 20 10:38:16 2026
+| Host         : cachyos-bc250 running 64-bit CachyOS
+| Command      : report_utilization -hierarchical -file /home/labuser/bmover_ooc/util_hier_ctrl.rpt
+| Design       : gdn_state_store
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|       Instance      |             Module            | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| gdn_state_store     |                         (top) |       4530 |       2610 |    1920 |    0 | 5468 |     28 |      0 |   32 |          4 |
+|   (gdn_state_store) |                         (top) |        622 |        622 |       0 |    0 | 3143 |      0 |      0 |    0 |          0 |
+|   gconst.u_cw       |                gdn_conv_w_mem |         25 |         25 |       0 |    0 |    0 |     16 |      0 |    0 |          0 |
+|   gconst.u_kdma     | gdn_state_axi__parameterized2 |        228 |        228 |       0 |    0 |  366 |      0 |      0 |    0 |          1 |
+|   u_cdma            | gdn_state_axi__parameterized1 |        310 |        310 |       0 |    0 |  632 |      0 |      0 |    0 |          1 |
+|   u_conv            |              gdn_conv_tap_mem |        253 |        253 |       0 |    0 |    8 |     12 |      0 |    0 |          0 |
+|   u_dma             |                 gdn_state_axi |        267 |        267 |       0 |    0 |  703 |      0 |      0 |    0 |          1 |
+|   u_edma            | gdn_state_axi__parameterized0 |        229 |        229 |       0 |    0 |  605 |      0 |      0 |    0 |          1 |
+|   u_exp             |                   gdn_exp_mem |       2466 |        546 |    1920 |    0 |    8 |      0 |      0 |    0 |          0 |
+|   u_mem             |                 gdn_state_mem |        130 |        130 |       0 |    0 |    3 |      0 |      0 |   32 |          0 |
++---------------------+-------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+

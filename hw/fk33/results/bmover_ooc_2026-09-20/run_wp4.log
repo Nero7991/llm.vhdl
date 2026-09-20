@@ -1,0 +1,1174 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/orencollaco/GitHub/llama.vhdl/sim/ooc_bmover.tcl
+# set part    xcvu33p-fsvh2104-2L-e
+# set target  gdn_state_store
+# set periods {13.333 5.0}
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag     [envor BMOVER_TAG    $target]
+# set outdir  [envor BMOVER_OUT    bmover_out]
+# set rtldir  [envor BMOVER_RTL    rtl]
+# set gens    [envor BMOVER_GEN    ""]
+# file mkdir $outdir
+# puts "BMOVER_BEGIN tag=$tag target=$target part=$part rtl=$rtldir gen=\"$gens\""
+BMOVER_BEGIN tag=wp4 target=gdn_state_store part=xcvu33p-fsvh2104-2L-e rtl=/home/labuser/bmover_ooc/rtl_closure gen="VAL_HEADS=32 DIM=128 RECUR_LANES=4 LAYERS=24 KEY_HEADS=16 KCONV=4 CONV_LANES=4 MANT_BYTES=1048576 EXP_BYTES=4096 CONV_BYTES=49152 LAYER_STRIDE=1101824 MAXB=16 CONST_EN=true CONST_STRIDE=66048 CONST_BYTES=66048 PIPE=true WIDE=true MAXOUT=4"
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:07 ; elapsed = 00:00:07 . Memory (MB): peak = 1320.887 ; gain = 0.027 ; free physical = 6016 ; free virtual = 60452
+# foreach f [lsort [glob -directory $rtldir *.vhd]] {
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} { puts "BMOVER_READ_SKIP $f : $e" }
+# }
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set t0 [clock seconds]
+# eval synth_design -mode out_of_context -top $target -part $part \
+#     -flatten_hierarchy none $gl
+Command: synth_design -mode out_of_context -top gdn_state_store -part xcvu33p-fsvh2104-2L-e -flatten_hierarchy none -generic VAL_HEADS=32 -generic DIM=128 -generic RECUR_LANES=4 -generic LAYERS=24 -generic KEY_HEADS=16 -generic KCONV=4 -generic CONV_LANES=4 -generic MANT_BYTES=1048576 -generic EXP_BYTES=4096 -generic CONV_BYTES=49152 -generic LAYER_STRIDE=1101824 -generic MAXB=16 -generic CONST_EN=true -generic CONST_STRIDE=66048 -generic CONST_BYTES=66048 -generic PIPE=true -generic WIDE=true -generic MAXOUT=4
+Starting synth_design
+Attempting to get a license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xcvu33p'
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 38764
+---------------------------------------------------------------------------------
+Starting Synthesize : Time (s): cpu = 00:00:04 ; elapsed = 00:00:05 . Memory (MB): peak = 1732.637 ; gain = 403.734 ; free physical = 5610 ; free virtual = 59856
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'gdn_state_store' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_store.vhd:243]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter KEY_HEADS bound to: 16 - type: integer 
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 1048576 - type: integer 
+	Parameter EXP_BYTES bound to: 4096 - type: integer 
+	Parameter CONV_BYTES bound to: 49152 - type: integer 
+	Parameter CONST_EN bound to: 1 - type: bool 
+	Parameter CONST_STRIDE bound to: 66048 - type: integer 
+	Parameter CONST_BYTES bound to: 66048 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'gdn_state_mem' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_mem.vhd:103]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter STYLE bound to: ultra - type: string 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter WPB bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_mem' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_mem.vhd:103]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 64 - type: integer 
+	Parameter N_GRP bound to: 32 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 1048576 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_exp_mem' [/home/labuser/bmover_ooc/rtl_closure/gdn_exp_mem.vhd:85]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter STYLE bound to: distributed - type: string 
+INFO: [Synth 8-256] done synthesizing module 'gdn_exp_mem' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_exp_mem.vhd:85]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized0' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 8 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 4096 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized0' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_conv_tap_mem' [/home/labuser/bmover_ooc/rtl_closure/gdn_conv_tap_mem.vhd:163]
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter KEY_CH bound to: 2048 - type: integer 
+	Parameter VAL_CH bound to: 4096 - type: integer 
+	Parameter STYLE bound to: block - type: string 
+INFO: [Synth 8-256] done synthesizing module 'gdn_conv_tap_mem' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_conv_tap_mem.vhd:163]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized1' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 1 - type: integer 
+	Parameter DIM bound to: 24576 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 16 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 49152 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized1' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_conv_w_mem' [/home/labuser/bmover_ooc/rtl_closure/gdn_conv_w_mem.vhd:86]
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter KEY_CH bound to: 2048 - type: integer 
+	Parameter VAL_CH bound to: 4096 - type: integer 
+	Parameter STYLE bound to: block - type: string 
+INFO: [Synth 8-256] done synthesizing module 'gdn_conv_w_mem' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_conv_w_mem.vhd:86]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized2' [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 1 - type: integer 
+	Parameter DIM bound to: 33024 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 16 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 66048 - type: integer 
+	Parameter MANT_BYTES bound to: 66048 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized2' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:208]
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_store' (0#1) [/home/labuser/bmover_ooc/rtl_closure/gdn_state_store.vhd:243]
+WARNING: [Synth 8-6014] Unused sequential element wv_r_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:404]
+WARNING: [Synth 8-6014] Unused sequential element rcnt_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:405]
+WARNING: [Synth 8-6014] Unused sequential element upk_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:406]
+WARNING: [Synth 8-6014] Unused sequential element req_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:407]
+WARNING: [Synth 8-6014] Unused sequential element got_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:407]
+WARNING: [Synth 8-6014] Unused sequential element rq_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:408]
+WARNING: [Synth 8-6014] Unused sequential element asm_full_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:408]
+WARNING: [Synth 8-6014] Unused sequential element pend_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:408]
+WARNING: [Synth 8-6014] Unused sequential element mre_q_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:369]
+WARNING: [Synth 8-6014] Unused sequential element req_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:407]
+WARNING: [Synth 8-6014] Unused sequential element wf_wp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_rp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_cnt_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wcred_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element rb_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element mwre_q_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:377]
+WARNING: [Synth 8-6014] Unused sequential element req_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:407]
+WARNING: [Synth 8-6014] Unused sequential element wf_wp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_rp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_cnt_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wcred_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element rb_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element mwre_q_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:377]
+WARNING: [Synth 8-6014] Unused sequential element req_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:407]
+WARNING: [Synth 8-6014] Unused sequential element wf_wp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_rp_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wf_cnt_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element wcred_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element rb_i_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element mwre_q_reg was removed.  [/home/labuser/bmover_ooc/rtl_closure/gdn_state_axi.vhd:377]
+WARNING: [Synth 8-7129] Port mr_data[255] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[254] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[253] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[252] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[251] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[250] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[249] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[248] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[247] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[246] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[245] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[244] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[243] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[242] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[241] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[240] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[239] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[238] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[237] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[236] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[235] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[234] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[233] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[232] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[231] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[230] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[229] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[228] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[227] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[226] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[225] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[224] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[223] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[222] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[221] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[220] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[219] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[218] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[217] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[216] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[215] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[214] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[213] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[212] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[211] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[210] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[209] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[208] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[207] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[206] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[205] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[204] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[203] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[202] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[201] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[200] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[199] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[198] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[197] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[196] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[195] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[194] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[193] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[192] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[191] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[190] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[189] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[188] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[187] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[186] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[185] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[184] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[183] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[182] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[181] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[180] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[179] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[178] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[177] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[176] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[175] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[174] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[173] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[172] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[171] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[170] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[169] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[168] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[167] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[166] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[165] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[164] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[163] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[162] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[161] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[160] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[159] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[158] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[157] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port mr_data[156] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+INFO: [Common 17-14] Message 'Synth 8-7129' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+---------------------------------------------------------------------------------
+Finished Synthesize : Time (s): cpu = 00:00:10 ; elapsed = 00:00:10 . Memory (MB): peak = 1974.605 ; gain = 645.703 ; free physical = 5313 ; free virtual = 59540
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Constraint Validation : Time (s): cpu = 00:00:11 ; elapsed = 00:00:11 . Memory (MB): peak = 1983.512 ; gain = 654.609 ; free physical = 5385 ; free virtual = 59522
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Loading Part and Timing Information
+---------------------------------------------------------------------------------
+Loading part: xcvu33p-fsvh2104-2L-e
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-6742] Reading net delay rules and data
+---------------------------------------------------------------------------------
+Finished Loading Part and Timing Information : Time (s): cpu = 00:00:11 ; elapsed = 00:00:11 . Memory (MB): peak = 1991.516 ; gain = 662.613 ; free physical = 5382 ; free virtual = 59528
+---------------------------------------------------------------------------------
+INFO: [Synth 8-802] inferred FSM for state register 'st_reg' in module 'gdn_state_axi'
+INFO: [Synth 8-802] inferred FSM for state register 'st_reg' in module 'gdn_state_axi__parameterized0'
+INFO: [Synth 8-802] inferred FSM for state register 'st_reg' in module 'gdn_state_axi__parameterized1'
+INFO: [Synth 8-802] inferred FSM for state register 'st_reg' in module 'gdn_state_axi__parameterized2'
+INFO: [Synth 8-802] inferred FSM for state register 'q_reg' in module 'gdn_state_store'
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"gdn_state_mem:/gwide.gb[3].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"gdn_state_mem:/gwide.gb[2].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"gdn_state_mem:/gwide.gb[1].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"gdn_state_mem:/gwide.gb[0].bank_reg"'.
+---------------------------------------------------------------------------------------------------
+                   State |                     New Encoding |                Previous Encoding 
+---------------------------------------------------------------------------------------------------
+                  s_idle |                              000 |                              000
+                  s_load |                              001 |                              001
+                s_ldrain |                              010 |                              010
+                  s_save |                              011 |                              011
+                s_sdrain |                              100 |                              100
+                  s_done |                              101 |                              101
+---------------------------------------------------------------------------------------------------
+INFO: [Synth 8-3354] encoded FSM with state register 'st_reg' using encoding 'sequential' in module 'gdn_state_axi'
+INFO: [Synth 8-6904] The RAM "gdn_state_axi:/wfifo_reg" of size (depth=4 x width=256) is automatically implemented using LUTRAM. BRAM implementation would be inefficient 
+---------------------------------------------------------------------------------------------------
+                   State |                     New Encoding |                Previous Encoding 
+---------------------------------------------------------------------------------------------------
+                  s_idle |                              000 |                              000
+                  s_load |                              001 |                              001
+                s_ldrain |                              010 |                              010
+                  s_save |                              011 |                              011
+                s_sdrain |                              100 |                              100
+                  s_done |                              101 |                              101
+---------------------------------------------------------------------------------------------------
+INFO: [Synth 8-3354] encoded FSM with state register 'st_reg' using encoding 'sequential' in module 'gdn_state_axi__parameterized0'
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[0].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[4].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[8].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[1].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[5].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[9].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[2].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[6].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[10].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[3].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[7].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_tap_mem:/gbank[11].m_reg"
+---------------------------------------------------------------------------------------------------
+                   State |                     New Encoding |                Previous Encoding 
+---------------------------------------------------------------------------------------------------
+                  s_idle |                              000 |                              000
+                  s_load |                              001 |                              001
+                s_ldrain |                              010 |                              010
+                  s_save |                              011 |                              011
+                s_sdrain |                              100 |                              100
+                  s_done |                              101 |                              101
+---------------------------------------------------------------------------------------------------
+INFO: [Synth 8-3354] encoded FSM with state register 'st_reg' using encoding 'sequential' in module 'gdn_state_axi__parameterized1'
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[0].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[1].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[2].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[3].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[4].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[5].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[6].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[7].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[8].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[9].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[10].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[11].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[12].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[13].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[14].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "gdn_conv_w_mem:/gbank[15].m_reg"
+---------------------------------------------------------------------------------------------------
+                   State |                     New Encoding |                Previous Encoding 
+---------------------------------------------------------------------------------------------------
+                  s_idle |                              000 |                              000
+                  s_load |                              001 |                              001
+                s_ldrain |                              010 |                              010
+                  s_save |                              011 |                              011
+                s_sdrain |                              100 |                              100
+                  s_done |                              101 |                              101
+---------------------------------------------------------------------------------------------------
+INFO: [Synth 8-3354] encoded FSM with state register 'st_reg' using encoding 'sequential' in module 'gdn_state_axi__parameterized2'
+---------------------------------------------------------------------------------------------------
+                   State |                     New Encoding |                Previous Encoding 
+---------------------------------------------------------------------------------------------------
+                  q_idle |                           000001 |                              000
+                  q_mant |                           000010 |                              001
+                   q_exp |                           000100 |                              010
+                  q_conv |                           001000 |                              011
+                 q_const |                           010000 |                              100
+                  q_done |                           100000 |                              101
+---------------------------------------------------------------------------------------------------
+INFO: [Synth 8-3354] encoded FSM with state register 'q_reg' using encoding 'one-hot' in module 'gdn_state_store'
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 2 : Time (s): cpu = 00:00:20 ; elapsed = 00:00:17 . Memory (MB): peak = 2828.984 ; gain = 1500.082 ; free physical = 5656 ; free virtual = 58740
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start RTL Component Statistics 
+---------------------------------------------------------------------------------
+Detailed RTL Component Info : 
++---Adders : 
+	   2 Input   33 Bit       Adders := 2     
+	   2 Input   16 Bit       Adders := 4     
+	   2 Input   15 Bit       Adders := 1     
+	   3 Input   13 Bit       Adders := 2     
+	   2 Input   13 Bit       Adders := 1     
+	   2 Input   12 Bit       Adders := 5     
+	   3 Input   12 Bit       Adders := 1     
+	   2 Input   11 Bit       Adders := 5     
+	   3 Input   11 Bit       Adders := 1     
+	   3 Input    9 Bit       Adders := 2     
+	   3 Input    8 Bit       Adders := 3     
+	   2 Input    8 Bit       Adders := 5     
+	   3 Input    7 Bit       Adders := 1     
+	   2 Input    7 Bit       Adders := 3     
+	   2 Input    6 Bit       Adders := 2     
+	   3 Input    6 Bit       Adders := 2     
+	   3 Input    5 Bit       Adders := 2     
+	   2 Input    5 Bit       Adders := 4     
+	   2 Input    4 Bit       Adders := 3     
+	   2 Input    3 Bit       Adders := 12    
+	   3 Input    3 Bit       Adders := 1     
+	   2 Input    2 Bit       Adders := 12    
++---Registers : 
+	              256 Bit    Registers := 13    
+	               64 Bit    Registers := 4     
+	               33 Bit    Registers := 3     
+	               16 Bit    Registers := 227   
+	               15 Bit    Registers := 4     
+	               13 Bit    Registers := 1     
+	               12 Bit    Registers := 9     
+	               11 Bit    Registers := 3     
+	                8 Bit    Registers := 16    
+	                7 Bit    Registers := 6     
+	                6 Bit    Registers := 5     
+	                5 Bit    Registers := 6     
+	                4 Bit    Registers := 4     
+	                3 Bit    Registers := 6     
+	                2 Bit    Registers := 11    
+	                1 Bit    Registers := 51    
++---RAMs : 
+	            2048K Bit	(32768 X 64 bit)          RAMs := 4     
+	              32K Bit	(2048 X 16 bit)          RAMs := 28    
+	             1024 Bit	(4 X 256 bit)          RAMs := 1     
++---Muxes : 
+	   2 Input  256 Bit        Muxes := 21    
+	   6 Input  256 Bit        Muxes := 3     
+	   4 Input  256 Bit        Muxes := 1     
+	   2 Input   64 Bit        Muxes := 5     
+	   4 Input   64 Bit        Muxes := 1     
+	   4 Input   33 Bit        Muxes := 2     
+	   4 Input   32 Bit        Muxes := 1     
+	   6 Input   16 Bit        Muxes := 4     
+	   2 Input   16 Bit        Muxes := 6     
+	   2 Input   15 Bit        Muxes := 3     
+	   6 Input   15 Bit        Muxes := 1     
+	   6 Input   13 Bit        Muxes := 1     
+	   6 Input   12 Bit        Muxes := 5     
+	   2 Input   12 Bit        Muxes := 1     
+	   2 Input   11 Bit        Muxes := 8     
+	   6 Input   11 Bit        Muxes := 2     
+	   2 Input    8 Bit        Muxes := 3     
+	   6 Input    8 Bit        Muxes := 5     
+	   4 Input    8 Bit        Muxes := 2     
+	   6 Input    7 Bit        Muxes := 4     
+	   2 Input    7 Bit        Muxes := 2     
+	   2 Input    6 Bit        Muxes := 3     
+	   6 Input    6 Bit        Muxes := 5     
+	   2 Input    5 Bit        Muxes := 8     
+	   6 Input    5 Bit        Muxes := 4     
+	   6 Input    4 Bit        Muxes := 3     
+	   2 Input    3 Bit        Muxes := 13    
+	   6 Input    3 Bit        Muxes := 15    
+	   4 Input    3 Bit        Muxes := 2     
+	   6 Input    2 Bit        Muxes := 10    
+	   2 Input    2 Bit        Muxes := 8     
+	   4 Input    2 Bit        Muxes := 2     
+	   2 Input    1 Bit        Muxes := 304   
+	   6 Input    1 Bit        Muxes := 138   
+	   4 Input    1 Bit        Muxes := 6     
+---------------------------------------------------------------------------------
+Finished RTL Component Statistics 
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Part Resource Summary
+---------------------------------------------------------------------------------
+Part Resources:
+DSPs: 2880 (col length:90)
+BRAMs: 1344 (col length: RAMB18 96 RAMB36 48)
+---------------------------------------------------------------------------------
+Finished Part Resource Summary
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Cross Boundary and Area Optimization
+---------------------------------------------------------------------------------
+WARNING: [Synth 8-7080] Parallel synthesis criteria is not met
+DSP Report: Generating DSP base_q_reg, operation Mode is: (C+(A:0x10d000)*B)'.
+DSP Report: register base_q_reg is absorbed into DSP base_q_reg.
+DSP Report: operator base0 is absorbed into DSP base_q_reg.
+DSP Report: operator base1 is absorbed into DSP base_q_reg.
+INFO: [Synth 8-6904] The RAM "u_dma/wfifo_reg" of size (depth=4 x width=256) is automatically implemented using LUTRAM. BRAM implementation would be inefficient 
+DSP Report: Generating DSP base_q_reg, operation Mode is: (C+(A:0x10d000)*B)'.
+DSP Report: register base_q_reg is absorbed into DSP base_q_reg.
+DSP Report: operator base0 is absorbed into DSP base_q_reg.
+DSP Report: operator base1 is absorbed into DSP base_q_reg.
+DSP Report: Generating DSP base_q_reg, operation Mode is: (C+(A:0x10d000)*B)'.
+DSP Report: register base_q_reg is absorbed into DSP base_q_reg.
+DSP Report: operator base0 is absorbed into DSP base_q_reg.
+DSP Report: operator base1 is absorbed into DSP base_q_reg.
+DSP Report: Generating DSP base_q_reg, operation Mode is: (C+(A:0x10200)*B)'.
+DSP Report: register base_q_reg is absorbed into DSP base_q_reg.
+DSP Report: operator base0 is absorbed into DSP base_q_reg.
+DSP Report: operator base1 is absorbed into DSP base_q_reg.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[3].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[2].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[1].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[0].bank_reg"'.
+INFO: [Synth 8-6904] The RAM "u_dma/wfifo_reg" of size (depth=4 x width=256) is automatically implemented using LUTRAM. BRAM implementation would be inefficient 
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[0].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[4].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[8].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[1].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[5].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[9].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[2].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[6].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[10].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[3].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[7].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "u_conv/gbank[11].m_reg"
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[0].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[1].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[2].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[3].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[4].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[5].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[6].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[7].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[8].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[9].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[10].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[11].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[12].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[13].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[14].m_reg "
+INFO: [Synth 8-7030] Implemented Non-Cascaded Block Ram (cascade_height = 1) of width 16 for RAM "\gconst.u_cw/gbank[15].m_reg "
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[3].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[2].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[1].bank_reg"'.
+INFO: [Synth 8-5780] Default cascade height of 8 will be used for URAM '"u_mem/gwide.gb[0].bank_reg"'.
+---------------------------------------------------------------------------------
+Finished Cross Boundary and Area Optimization : Time (s): cpu = 00:00:40 ; elapsed = 00:00:37 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5487 ; free virtual = 58679
+---------------------------------------------------------------------------------
+ Sort Area is  base_q_reg_0 : 0 0 : 179 179 : Used 1 time 0
+ Sort Area is  base_q_reg_2 : 0 0 : 179 179 : Used 1 time 0
+ Sort Area is  base_q_reg_3 : 0 0 : 179 179 : Used 1 time 0
+ Sort Area is  base_q_reg_4 : 0 0 : 131 131 : Used 1 time 0
+WARNING: [Synth 8-6057] Memory: "gwide.gb[3].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[2].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[1].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[0].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+---------------------------------------------------------------------------------
+Start ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+
+Ultra RAM: Preliminary Mapping Report (see note below)
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+|Module Name | RTL Object           | PORT A (Depth x Width) | W | R | PORT B (Depth x Width) | W | R | Ports driving FF | URAM288 | Matrix Shape | FF provided for Pipeline | FF absorbed | 
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+|u_mem       | gwide.gb[3].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[2].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[1].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[0].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+
+Note: The table above is a preliminary report that shows the Ultra RAMs at the current stage of the synthesis flow. Some Ultra RAMs may be reimplemented as non Ultra RAM primitives later in the synthesis flow. Multiple instantiated Ultra RAMs are reported only once. Fields "FF provided for Pipeline" and "FF absorbed" respectively indicate number of registers available for pipelining and number of registers absorbed in the URAM matrix for pipelining. 
+
+Block RAM: Preliminary Mapping Report (see note below)
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+|Module Name   | RTL Object      | PORT A (Depth x Width) | W | R | PORT B (Depth x Width) | W | R | Ports driving FF | RAMB18 | RAMB36 | Cascade Heights | 
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+|u_conv        | gbank[0].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[4].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[8].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[1].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[5].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[9].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[2].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[6].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[10].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[3].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[7].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[11].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[0].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[1].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[2].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[3].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[4].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[5].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[6].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[7].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[8].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[9].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[10].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[11].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[12].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[13].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[14].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[15].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+
+Note: The table above is a preliminary report that shows the Block RAMs at the current stage of the synthesis flow. Some Block RAMs may be reimplemented as non Block RAM primitives later in the synthesis flow. Multiple instantiated Block RAMs are reported only once. 
+
+Distributed RAM: Preliminary Mapping Report (see note below)
++------------+------------+----------------+----------------------+----------------+
+|Module Name | RTL Object | Inference      | Size (Depth x Width) | Primitives     | 
++------------+------------+----------------+----------------------+----------------+
+|u_dma       | wfifo_reg  | Implied        | 4 x 256              | RAM32M16 x 19  | 
+|u_exp       | mem_reg    | User Attribute | 4 K x 8              | RAM64M8 x 384  | 
++------------+------------+----------------+----------------------+----------------+
+
+Note: The table above is a preliminary report that shows the Distributed RAMs at the current stage of the synthesis flow. Some Distributed RAMs may be reimplemented as non Distributed RAM primitives later in the synthesis flow. Multiple instantiated RAMs are reported only once.
+
+DSP: Preliminary Mapping Report (see note below. The ' indicates corresponding REG is set)
++--------------+---------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name   | DSP Mapping         | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++--------------+---------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|gdn_state_axi | (C+(A:0x10d000)*B)' | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+(A:0x10d000)*B)' | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+(A:0x10d000)*B)' | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+(A:0x10200)*B)'  | 5      | 17     | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
++--------------+---------------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+Note: The table above is a preliminary report that shows the DSPs inferred at the current stage of the synthesis flow. Some DSP may be reimplemented as non DSP primitives later in the synthesis flow. Multiple instantiated DSPs are reported only once.
+---------------------------------------------------------------------------------
+Finished ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+No constraint files found.
+---------------------------------------------------------------------------------
+Start Timing Optimization
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Timing Optimization : Time (s): cpu = 00:00:41 ; elapsed = 00:00:38 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5461 ; free virtual = 58677
+---------------------------------------------------------------------------------
+WARNING: [Synth 8-6057] Memory: "gwide.gb[3].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[2].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[1].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+WARNING: [Synth 8-6057] Memory: "gwide.gb[0].bank_reg" defined in module: "u_mem" implemented as Ultra-Ram has no pipeline registers. It is recommended to use pipeline registers to achieve high performance.
+---------------------------------------------------------------------------------
+Start ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+
+Ultra RAM: Final Mapping Report (see note below)
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+|Module Name | RTL Object           | PORT A (Depth x Width) | W | R | PORT B (Depth x Width) | W | R | Ports driving FF | URAM288 | Matrix Shape | FF provided for Pipeline | FF absorbed | 
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+|u_mem       | gwide.gb[3].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[2].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[1].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
+|u_mem       | gwide.gb[0].bank_reg | 32 K x 64              |   | R | 32 K x 64              | W |   | Port A and B     | 8       | 8x1          | 0                        | 0           | 
++------------+----------------------+------------------------+---+---+------------------------+---+---+------------------+---------+--------------+--------------------------+-------------+
+
+
+Block RAM: Final Mapping Report
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+|Module Name   | RTL Object      | PORT A (Depth x Width) | W | R | PORT B (Depth x Width) | W | R | Ports driving FF | RAMB18 | RAMB36 | Cascade Heights | 
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+|u_conv        | gbank[0].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[4].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[8].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[1].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[5].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[9].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[2].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[6].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[10].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[3].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[7].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|u_conv        | gbank[11].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[0].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[1].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[2].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[3].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[4].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[5].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[6].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[7].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[8].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[9].m_reg  | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[10].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[11].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[12].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[13].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[14].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
+|\gconst.u_cw  | gbank[15].m_reg | 2 K x 16(READ_FIRST)   | W |   | 2 K x 16(WRITE_FIRST)  |   | R | Port A and B     | 0      | 1      | 1               | 
++--------------+-----------------+------------------------+---+---+------------------------+---+---+------------------+--------+--------+-----------------+
+
+
+Distributed RAM: Final Mapping Report
++------------+------------+----------------+----------------------+----------------+
+|Module Name | RTL Object | Inference      | Size (Depth x Width) | Primitives     | 
++------------+------------+----------------+----------------------+----------------+
+|u_dma       | wfifo_reg  | Implied        | 4 x 256              | RAM32M16 x 19  | 
+|u_exp       | mem_reg    | User Attribute | 4 K x 8              | RAM64M8 x 384  | 
++------------+------------+----------------+----------------------+----------------+
+
+---------------------------------------------------------------------------------
+Finished ROM, RAM, DSP, Shift Register and Retiming Reporting
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Technology Mapping
+---------------------------------------------------------------------------------
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[0].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[4].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[8].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[1].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[5].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[9].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[2].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[6].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[10].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[3].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[7].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance u_conv/gbank[11].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[0].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[1].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[2].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[3].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[4].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[5].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[6].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[7].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[8].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[9].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[10].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[11].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[12].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[13].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[14].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+INFO: [Synth 8-7052] The timing for the instance gconst.u_cw/gbank[15].m_reg_bram_0 (implemented as a Block RAM) might be sub-optimal as no optional output register could be merged into the ram block. Providing additional output register may help in improving timing.
+---------------------------------------------------------------------------------
+Finished Technology Mapping : Time (s): cpu = 00:00:43 ; elapsed = 00:00:40 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5415 ; free virtual = 58657
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start IO Insertion
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Final Netlist Cleanup
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished IO Insertion : Time (s): cpu = 00:00:48 ; elapsed = 00:00:45 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5333 ; free virtual = 58661
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Renaming Generated Instances
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Renaming Generated Instances : Time (s): cpu = 00:00:48 ; elapsed = 00:00:45 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5333 ; free virtual = 58661
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:00:48 ; elapsed = 00:00:46 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5329 ; free virtual = 58665
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Writing Synthesis Report
+---------------------------------------------------------------------------------
+
+DSP Final Report (the ' indicates corresponding REG is set)
++--------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|Module Name   | DSP Mapping | A Size | B Size | C Size | D Size | P Size | AREG | BREG | CREG | DREG | ADREG | MREG | PREG | 
++--------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+|gdn_state_axi | (C+A*B)'    | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+A*B)'    | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+A*B)'    | 21     | 5      | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
+|gdn_state_axi | (C+A*B)'    | 5      | 17     | 33     | -      | 33     | 0    | 0    | 0    | -    | -     | 0    | 1    | 
++--------------+-------------+--------+--------+--------+--------+--------+------+------+------+------+-------+------+------+
+
+
+Report BlackBoxes: 
++-+--------------+----------+
+| |BlackBox name |Instances |
++-+--------------+----------+
++-+--------------+----------+
+
+Report Cell Usage: 
++------+---------+------+
+|      |Cell     |Count |
++------+---------+------+
+|1     |CARRY8   |    49|
+|2     |DSP48E2  |     4|
+|3     |LUT1     |     7|
+|4     |LUT2     |   341|
+|5     |LUT3     |   562|
+|6     |LUT4     |   307|
+|7     |LUT5     |  1590|
+|8     |LUT6     |  1224|
+|9     |MUXF7    |   288|
+|10    |MUXF8    |    96|
+|11    |RAM32M   |     1|
+|12    |RAM32M16 |    18|
+|13    |RAM64M8  |   192|
+|14    |RAM64X1D |   192|
+|15    |RAMB36E2 |    28|
+|16    |URAM288  |    32|
+|17    |FDRE     |  6506|
+|18    |FDSE     |     2|
++------+---------+------+
+
+Report Instance Areas: 
++------+------------------+------------------------------+------+
+|      |Instance          |Module                        |Cells |
++------+------------------+------------------------------+------+
+|1     |top               |                              | 11439|
+|2     |  u_mem           |gdn_state_mem                 |   389|
+|3     |  u_dma           |gdn_state_axi                 |   712|
+|4     |  u_exp           |gdn_exp_mem                   |  1230|
+|5     |  u_edma          |gdn_state_axi__parameterized0 |  1740|
+|6     |  u_conv          |gdn_conv_tap_mem              |   379|
+|7     |  u_cdma          |gdn_state_axi__parameterized1 |  1834|
+|8     |  \gconst.u_cw    |gdn_conv_w_mem                |    34|
+|9     |  \gconst.u_kdma  |gdn_state_axi__parameterized2 |  1270|
++------+------------------+------------------------------+------+
+---------------------------------------------------------------------------------
+Finished Writing Synthesis Report : Time (s): cpu = 00:00:48 ; elapsed = 00:00:46 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5329 ; free virtual = 58665
+---------------------------------------------------------------------------------
+Synthesis finished with 0 errors, 0 critical warnings and 1703 warnings.
+Synthesis Optimization Runtime : Time (s): cpu = 00:00:48 ; elapsed = 00:00:46 . Memory (MB): peak = 2891.922 ; gain = 1563.020 ; free physical = 5329 ; free virtual = 58665
+Synthesis Optimization Complete : Time (s): cpu = 00:00:48 ; elapsed = 00:00:46 . Memory (MB): peak = 2891.930 ; gain = 1563.020 ; free physical = 5329 ; free virtual = 58666
+INFO: [Project 1-571] Translating synthesized netlist
+Netlist sorting complete. Time (s): cpu = 00:00:00.13 ; elapsed = 00:00:00.13 . Memory (MB): peak = 2902.891 ; gain = 0.000 ; free physical = 5471 ; free virtual = 58911
+INFO: [Netlist 29-17] Analyzing 840 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 0 CPU seconds
+INFO: [Project 1-570] Preparing netlist for logic optimization
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2972.793 ; gain = 0.000 ; free physical = 5410 ; free virtual = 58900
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 407 instances were transformed.
+  DSP48E2 => DSP48E2 (DSP_ALU, DSP_A_B_DATA, DSP_C_DATA, DSP_MULTIPLIER, DSP_M_DATA, DSP_OUTPUT, DSP_PREADD, DSP_PREADD_DATA): 4 instances
+  RAM32M => RAM32M (RAMD32(x6), RAMS32(x2)): 1 instance 
+  RAM32M16 => RAM32M16 (RAMD32(x14), RAMS32(x2)): 18 instances
+  RAM64M8 => RAM64M8 (RAMD64E(x8)): 192 instances
+  RAM64X1D => RAM64X1D (RAMD64E(x2)): 192 instances
+
+Synth Design complete | Checksum: 568b25fe
+INFO: [Common 17-83] Releasing license: Synthesis
+141 Infos, 139 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:00:57 ; elapsed = 00:00:51 . Memory (MB): peak = 2972.828 ; gain = 1651.941 ; free physical = 5401 ; free virtual = 58897
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 2728.736; main = 2469.415; forked = 435.365
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 3879.727; main = 2972.797; forked = 987.801
+# set tsynth [expr {[clock seconds] - $t0}]
+# proc census {stage tag outdir} {
+#     set fh [open [file join $outdir census_${stage}_$tag.txt] w]
+#     puts $fh "# BMOVER census stage=$stage tag=$tag (get_cells -hier by REF_NAME)"
+#     set out {}
+#     foreach {label pat} {
+#         uram   {REF_NAME =~ URAM*}
+#         ramb36 {REF_NAME =~ RAMB36*}
+#         ramb18 {REF_NAME =~ RAMB18*}
+#         lutram {REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256* || REF_NAME =~ RAM512*}
+#         dsp    {REF_NAME =~ DSP*}
+#         lut    {REF_NAME =~ LUT*}
+#         ff     {REF_NAME =~ FD*}
+#         carry  {REF_NAME =~ CARRY*}
+#         f7     {REF_NAME == MUXF7}
+#         f8     {REF_NAME == MUXF8}
+#         srl    {REF_NAME =~ SRL*}
+#     } {
+#         set cells [get_cells -hier -quiet -filter $pat]
+#         set n [llength $cells]
+#         lappend out "$label=$n"
+#         puts $fh "## $label $n"
+#         # Memory-class primitives are few enough to list by name, which is
+#         # what attributes a URAM to u_mem's bank rather than to a total.
+#         if {$label in {uram ramb36 ramb18 dsp}} {
+#             foreach c [lsort $cells] { puts $fh "$c [get_property REF_NAME $c]" }
+#         } elseif {$label eq "lutram"} {
+#             # LUTRAM is many cells; tally by parent instance instead.
+#             array unset byinst
+#             foreach c $cells {
+#                 set p [file dirname $c]
+#                 if {![info exists byinst($p)]} { set byinst($p) 0 }
+#                 incr byinst($p)
+#             }
+#             foreach p [lsort [array names byinst]] { puts $fh "$p $byinst($p)" }
+#         }
+#     }
+#     close $fh
+#     puts "BMOVER_CENSUS stage=$stage tag=$tag [join $out { }]"
+#     return $out
+# }
+# report_utilization -file [file join $outdir synthutil_$tag.rpt]
+# report_utilization -hierarchical -file [file join $outdir synthutil_hier_$tag.rpt]
+# set surpt [report_utilization -return_string]
+BMOVER_CENSUS stage=synth tag=wp4 uram=32 ramb36=28 ramb18=0 lutram=403 dsp=36 lut=4031 ff=6508 carry=49 f7=288 f8=96 srl=0
+# set scens [census synth $tag $outdir]
+# set t1 [clock seconds]
+# opt_design
+Command: opt_design
+Attempting to get a license for feature 'Implementation' and/or device 'xcvu33p'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xcvu33p'
+Running DRC as a precondition to command opt_design
+
+Starting DRC Task
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Project 1-461] DRC finished with 0 Errors
+INFO: [Project 1-462] Please refer to the DRC report (report_drc) for more information.
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:03 . Memory (MB): peak = 3036.824 ; gain = 63.996 ; free physical = 5335 ; free virtual = 58900
+
+Starting Cache Timing Information Task
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Ending Cache Timing Information Task | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 3090.324 ; gain = 53.500 ; free physical = 5234 ; free virtual = 58885
+
+Starting Logic Optimization Task
+
+Phase 1 Initialization
+
+Phase 1.1 Core Generation And Design Setup
+Phase 1.1 Core Generation And Design Setup | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58595
+
+Phase 1.2 Setup Constraints And Sort Netlist
+Phase 1.2 Setup Constraints And Sort Netlist | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58595
+Phase 1 Initialization | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58595
+
+Phase 2 Timer Update And Timing Data Collection
+
+Phase 2.1 Timer Update
+Phase 2.1 Timer Update | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.34 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58596
+
+Phase 2.2 Timing Data Collection
+Phase 2.2 Timing Data Collection | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.38 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58596
+Phase 2 Timer Update And Timing Data Collection | Checksum: 1421eedd3
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.38 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58596
+
+Phase 3 Retarget
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+INFO: [Opt 31-49] Retargeted 0 cell(s).
+Phase 3 Retarget | Checksum: 122bf3594
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.59 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58596
+Retarget | Checksum: 122bf3594
+INFO: [Opt 31-389] Phase Retarget created 0 cells and removed 0 cells
+
+Phase 4 Constant propagation
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Phase 4 Constant propagation | Checksum: 1468deeb2
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.69 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4903 ; free virtual = 58596
+Constant propagation | Checksum: 1468deeb2
+INFO: [Opt 31-389] Phase Constant propagation created 0 cells and removed 0 cells
+
+Phase 5 Sweep
+Phase 5 Sweep | Checksum: 13b003d75
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3315.293 ; gain = 0.000 ; free physical = 4898 ; free virtual = 58597
+Sweep | Checksum: 13b003d75
+INFO: [Opt 31-389] Phase Sweep created 0 cells and removed 0 cells
+
+Phase 6 BUFG optimization
+INFO: [Opt 31-1077] Phase BUFG optimization inserted 0 global clock buffer(s) for CLOCK_LOW_FANOUT.
+Phase 6 BUFG optimization | Checksum: 13b003d75
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4896 ; free virtual = 58596
+BUFG optimization | Checksum: 13b003d75
+INFO: [Opt 31-662] Phase BUFG optimization created 0 cells of which 0 are BUFGs and removed 0 cells.
+
+Phase 7 Shift Register Optimization
+INFO: [Opt 31-1064] SRL Remap converted 0 SRLs to 0 registers and converted 0 registers of register chains to 0 SRLs
+Phase 7 Shift Register Optimization | Checksum: 13b003d75
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4896 ; free virtual = 58596
+Shift Register Optimization | Checksum: 13b003d75
+INFO: [Opt 31-389] Phase Shift Register Optimization created 0 cells and removed 0 cells
+
+Phase 8 Post Processing Netlist
+Phase 8 Post Processing Netlist | Checksum: 13b003d75
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4895 ; free virtual = 58596
+Post Processing Netlist | Checksum: 13b003d75
+INFO: [Opt 31-389] Phase Post Processing Netlist created 0 cells and removed 0 cells
+
+Phase 9 Finalization
+
+Phase 9.1 Finalizing Design Cores and Updating Shapes
+Phase 9.1 Finalizing Design Cores and Updating Shapes | Checksum: 1101ce4ee
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4893 ; free virtual = 58593
+
+Phase 9.2 Verifying Netlist Connectivity
+
+Starting Connectivity Check Task
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.02 . Memory (MB): peak = 3347.309 ; gain = 0.000 ; free physical = 4893 ; free virtual = 58593
+Phase 9.2 Verifying Netlist Connectivity | Checksum: 1101ce4ee
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4893 ; free virtual = 58593
+Phase 9 Finalization | Checksum: 1101ce4ee
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4893 ; free virtual = 58593
+Opt_design Change Summary
+=========================
+
+
+-------------------------------------------------------------------------------------------------------------------------
+|  Phase                        |  #Cells created  |  #Cells Removed  |  #Constrained objects preventing optimizations  |
+-------------------------------------------------------------------------------------------------------------------------
+|  Retarget                     |               0  |               0  |                                              0  |
+|  Constant propagation         |               0  |               0  |                                              0  |
+|  Sweep                        |               0  |               0  |                                              0  |
+|  BUFG optimization            |               0  |               0  |                                              0  |
+|  Shift Register Optimization  |               0  |               0  |                                              0  |
+|  Post Processing Netlist      |               0  |               0  |                                              0  |
+-------------------------------------------------------------------------------------------------------------------------
+
+
+Ending Logic Optimization Task | Checksum: 1101ce4ee
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 3347.309 ; gain = 32.016 ; free physical = 4893 ; free virtual = 58593
+INFO: [Constraints 18-11670] Building netlist checker database with flags, 0x8
+Done building netlist checker database: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 3347.309 ; gain = 0.000 ; free physical = 4892 ; free virtual = 58592
+
+Starting Power Optimization Task
+INFO: [Pwropt 34-132] Skipping clock gating for clocks with a period < 2.00 ns.
+INFO: [Pwropt 34-9] Applying IDT optimizations ...
+INFO: [Pwropt 34-10] Applying ODC optimizations ...
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+WARNING: [Power 33-232] No user defined clocks were found in the design! Power estimation will be inaccurate until this is corrected.
+Resolution: Please specify clocks using create_clock/create_generated_clock for sequential elements. For pure combinatorial circuits, please specify a virtual clock, otherwise the vectorless estimation might be inaccurate
+Running Vector-less Activity Propagation...
+
+Finished Running Vector-less Activity Propagation
+
+
+Starting PowerOpt Patch Enables Task
+INFO: [Pwropt 34-162] WRITE_MODE attribute of 0 BRAM(s) out of a total of 28 has been updated to save power. Run report_power_opt to get a complete listing of the BRAMs updated.
+INFO: [Pwropt 34-201] Structural ODC has moved 12 WE to EN ports
+Number of BRAM Ports augmented: 16 newly gated: 12 Total Ports: 56
+Ending PowerOpt Patch Enables Task | Checksum: 169681f73
+
+Time (s): cpu = 00:00:00.3 ; elapsed = 00:00:00.25 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4559 ; free virtual = 58484
+Ending Power Optimization Task | Checksum: 169681f73
+
+Time (s): cpu = 00:00:20 ; elapsed = 00:00:14 . Memory (MB): peak = 3655.508 ; gain = 308.199 ; free physical = 4559 ; free virtual = 58484
+
+Starting Final Cleanup Task
+
+Starting Logic Optimization Task
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Ending Logic Optimization Task | Checksum: f7efb924
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:01 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4670 ; free virtual = 58478
+INFO: [Constraints 18-11670] Building netlist checker database with flags, 0x8
+Done building netlist checker database: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.01 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4668 ; free virtual = 58476
+Ending Final Cleanup Task | Checksum: f7efb924
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:04 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4665 ; free virtual = 58474
+
+Starting Netlist Obfuscation Task
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4665 ; free virtual = 58474
+Ending Netlist Obfuscation Task | Checksum: f7efb924
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4665 ; free virtual = 58474
+INFO: [Common 17-83] Releasing license: Implementation
+26 Infos, 1 Warnings, 0 Critical Warnings and 0 Errors encountered.
+opt_design completed successfully
+opt_design: Time (s): cpu = 00:00:37 ; elapsed = 00:00:28 . Memory (MB): peak = 3655.508 ; gain = 682.680 ; free physical = 4665 ; free virtual = 58473
+# set topt [expr {[clock seconds] - $t1}]
+# report_utilization -file [file join $outdir util_$tag.rpt]
+# report_utilization -hierarchical -file [file join $outdir util_hier_$tag.rpt]
+# report_ram_utilization -file [file join $outdir ram_$tag.rpt]
+report_ram_utilization: Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4611 ; free virtual = 58440
+# set urpt [report_utilization -return_string]
+BMOVER_CENSUS stage=opt tag=wp4 uram=32 ramb36=28 ramb18=0 lutram=403 dsp=36 lut=4046 ff=6508 carry=49 f7=288 f8=96 srl=0
+# set ocens [census opt $tag $outdir]
+# proc uget {rpt label} {
+#     foreach line [split $rpt "\n"] {
+#         if {[string index [string trim $line] 0] ne "|"} continue
+#         set f [split $line "|"]
+#         if {[llength $f] < 4} continue
+#         if {[string trim [lindex $f 1]] eq $label} { return [string trim [lindex $f 2]] }
+#     }
+#     return "NA"
+# }
+# proc ugetd {rpt label {def 0}} {
+#     set v [uget $rpt $label]
+#     return [expr {$v eq "NA" ? $def : $v}]
+# }
+# proc utab {rpt} {
+#     set nlut [uget $rpt "CLB LUTs*"]
+#     if {$nlut eq "NA"} { set nlut [uget $rpt "CLB LUTs"] }
+#     return [list lut $nlut \
+#         lut_logic [uget  $rpt "LUT as Logic"] \
+#         lut_mem   [uget  $rpt "LUT as Memory"] \
+#         ff        [uget  $rpt "CLB Registers"] \
+#         carry8    [ugetd $rpt "CARRY8"] \
+#         f7        [ugetd $rpt "F7 Muxes"] \
+#         f8        [ugetd $rpt "F8 Muxes"] \
+#         bram      [ugetd $rpt "Block RAM Tile"] \
+#         ramb36    [ugetd $rpt "RAMB36/FIFO*"] \
+#         ramb18    [ugetd $rpt "RAMB18"] \
+#         uram      [ugetd $rpt "URAM"] \
+#         dsp       [ugetd $rpt "DSPs"]]
+# }
+# array set S [utab $surpt]
+# array set U [utab $urpt]
+# set tim {}
+# foreach period $periods {
+#     create_clock -period $period -name clk [get_ports clk]
+#     set ptag [string map {. p} $period]
+#     report_timing_summary -delay_type max -max_paths 3 \
+#         -file [file join $outdir timing_${ptag}_$tag.rpt]
+#     report_timing -delay_type max -max_paths 3 -nworst 1 \
+#         -file [file join $outdir worst_${ptag}_$tag.rpt]
+#     set p [lindex [get_timing_paths -delay_type max -max_paths 1 -nworst 1] 0]
+#     set wns   [get_property SLACK        $p]
+#     set sp    [get_property STARTPOINT_PIN $p]
+#     set ep    [get_property ENDPOINT_PIN   $p]
+#     set lvl   [get_property LOGIC_LEVELS   $p]
+#     set dly   [get_property DATAPATH_DELAY $p]
+#     set req   [get_property REQUIREMENT    $p]
+#     set fmax  [expr {1000.0/($period - $wns)}]
+#     puts "BMOVER_TIMING_ESTIMATE tag=$tag period=$period wns=$wns fmax_est=[format %.1f $fmax] \
+# levels=$lvl datapath=$dly req=$req start=$sp end=$ep"
+#     lappend tim $period $wns $lvl $sp $ep
+# }
+create_clock: Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 3655.508 ; gain = 0.000 ; free physical = 4524 ; free virtual = 58451
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "clk" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+report_timing_summary: Time (s): cpu = 00:00:21 ; elapsed = 00:00:18 . Memory (MB): peak = 4280.828 ; gain = 625.320 ; free physical = 4604 ; free virtual = 57786
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -2L, Temperature grade: E, Delay Type: max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+INFO: [Timing 38-78] ReportTimingParams: -max_paths 3 -nworst 1 -delay_type max -sort_by slack.
+BMOVER_TIMING_ESTIMATE tag=wp4 period=13.333 wns=10.096 fmax_est=308.9  levels=7 datapath=3.062 req=13.333 start=u_mem/gwide.gb[3].bank_reg_uram_0/CLK end=u_dma/wfifo_reg_0_3_196_209/RAMF/I
+WARNING: [Constraints 18-619] A clock with name 'clk' already exists, overwriting the previous clock with the same name.
+WARNING: [Timing 38-242] The property HD.CLK_SRC of clock port "clk" is not set. In out-of-context mode, this prevents timing estimation for clock delay/skew
+Resolution: Set the HD.CLK_SRC property of the out-of-context port to the location of the clock buffer instance in the top-level design
+INFO: [Timing 38-78] ReportTimingParams: -max_paths 3 -nworst 1 -delay_type max -sort_by slack.
+BMOVER_TIMING_ESTIMATE tag=wp4 period=5.0 wns=1.763 fmax_est=308.9  levels=7 datapath=3.062 req=5.000 start=u_mem/gwide.gb[3].bank_reg_uram_0/CLK end=u_dma/wfifo_reg_0_3_196_209/RAMF/I
+# puts "BMOVER_RESULT tag=$tag gen=\"$gens\" lut=$U(lut) lut_logic=$U(lut_logic) \
+# lut_mem=$U(lut_mem) ff=$U(ff) bram=$U(bram) ramb36=$U(ramb36) ramb18=$U(ramb18) \
+# uram=$U(uram) dsp=$U(dsp) carry8=$U(carry8) f7=$U(f7) f8=$U(f8) \
+# wns_13p333=[lindex $tim 1] wns_5p0=[lindex $tim 6] synth_s=$tsynth opt_s=$topt"
+BMOVER_RESULT tag=wp4 gen="VAL_HEADS=32 DIM=128 RECUR_LANES=4 LAYERS=24 KEY_HEADS=16 KCONV=4 CONV_LANES=4 MANT_BYTES=1048576 EXP_BYTES=4096 CONV_BYTES=49152 LAYER_STRIDE=1101824 MAXB=16 CONST_EN=true CONST_STRIDE=66048 CONST_BYTES=66048 PIPE=true WIDE=true MAXOUT=4" lut=5534 lut_logic=3466  lut_mem=2068 ff=6508 bram=28 ramb36=28 ramb18=0  uram=32 dsp=4 carry8=49 f7=288 f8=96  wns_13p333=10.096 wns_5p0=1.763 synth_s=52 opt_s=28
+# puts "BMOVER_SYNTH_VS_OPT tag=$tag synth_lut=$S(lut) opt_lut=$U(lut) \
+# synth_ff=$S(ff) opt_ff=$U(ff) synth_uram=$S(uram) opt_uram=$U(uram) \
+# synth_bram=$S(bram) opt_bram=$U(bram) synth_dsp=$S(dsp) opt_dsp=$U(dsp)"
+BMOVER_SYNTH_VS_OPT tag=wp4 synth_lut=5518 opt_lut=5534  synth_ff=6508 opt_ff=6508 synth_uram=32 opt_uram=32  synth_bram=28 opt_bram=28 synth_dsp=4 opt_dsp=4
+# set csv [open [file join $outdir result_$tag.csv] w]
+# puts $csv "tag,gen,lut,lut_logic,lut_mem,ff,bram_tile,ramb36,ramb18,uram,dsp,carry8,f7,f8,wns_13p333,levels_13p333,wns_5p0,levels_5p0,synth_s,opt_s,synth_lut,synth_ff,census_opt"
+# puts $csv "$tag,\"$gens\",$U(lut),$U(lut_logic),$U(lut_mem),$U(ff),$U(bram),$U(ramb36),$U(ramb18),$U(uram),$U(dsp),$U(carry8),$U(f7),$U(f8),[lindex $tim 1],[lindex $tim 2],[lindex $tim 6],[lindex $tim 7],$tsynth,$topt,$S(lut),$S(ff),\"[join $ocens { }]\""
+# close $csv
+# close_project
+# puts "BMOVER_DONE $tag"
+BMOVER_DONE wp4
+INFO: [Common 17-206] Exiting Vivado at Sun Sep 20 10:40:48 2026...

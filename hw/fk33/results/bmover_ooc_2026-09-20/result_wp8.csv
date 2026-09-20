@@ -1,0 +1,2 @@
+tag,gen,lut,lut_logic,lut_mem,ff,bram_tile,ramb36,ramb18,uram,dsp,carry8,f7,f8,wns_13p333,levels_13p333,wns_5p0,levels_5p0,synth_s,opt_s,synth_lut,synth_ff,census_opt
+wp8,"VAL_HEADS=32 DIM=128 RECUR_LANES=4 LAYERS=24 KEY_HEADS=16 KCONV=4 CONV_LANES=4 MANT_BYTES=1048576 EXP_BYTES=4096 CONV_BYTES=49152 LAYER_STRIDE=1101824 MAXB=16 CONST_EN=true CONST_STRIDE=66048 CONST_BYTES=66048 PIPE=true WIDE=true MAXOUT=8",5425,3357,2068,6509,28,28,0,32,4,49,256,96,10.096,7,1.763,7,52,27,5409,6509,"uram=32 ramb36=28 ramb18=0 lutram=403 dsp=36 lut=4041 ff=6509 carry=49 f7=256 f8=96 srl=0"
