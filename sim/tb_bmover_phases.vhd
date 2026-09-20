@@ -72,6 +72,12 @@ entity tb_bmover_phases is
     -- the header); pass -gPIPE=false -gWIDE=false for the shipping mover.
     PIPE   : boolean  := true;
     WIDE   : boolean  := true;
+    -- TRACK BNARROW 2026-09-20.  The same lever for the THREE NARROW movers
+    -- (exponents, conv taps, constants).  DEFAULTED TO THE PROPOSED
+    -- CONFIGURATION, as PIPE and WIDE are; pass -gNWIDE=false for the
+    -- 2026-09-20 shipping store, which is what the before/after table in
+    -- docs/debugging/2026-09-20_b-job-660k-cycles.md is measured against.
+    NWIDE  : boolean  := true;
 
     -- The slave.  RD_LAT is an ESTIMATE of the HBM read latency at the
     -- 75 MHz core clock and has not been measured on the card; it is a
@@ -87,7 +93,32 @@ entity tb_bmover_phases is
     B_RUN  : positive := 149579;
 
     -- Fail the bench if the job takes longer than this.  0 disables.
-    MAX_CYCLES : natural := 0
+    MAX_CYCLES : natural := 0;
+
+    -- ---- TRACK BNARROW 2026-09-20: the per-phase bound ------------------
+    -- THE ONE CHECK IN THIS BENCH THAT A VALUE ORACLE CANNOT STAND IN FOR.
+    -- Every other check here compares numbers, and NWIDE does not change a
+    -- number: a store that quietly failed to enable a wide path -- a generic
+    -- not threaded through, a port left at its default -- would move every
+    -- value correctly and simply take 16 or 32 cycles per beat again.  All
+    -- 770,965 value checks would pass and the whole lever would be gone,
+    -- which is exactly the defect this track exists to prevent.
+    --
+    -- The bound is 4 cycles per beat plus 256, and both halves are chosen to
+    -- DISCRIMINATE rather than to be tight.  MEASURED with NWIDE: 1.01 to
+    -- 1.35 cycles per beat (ld_exp 134-247 for 128 beats, ld_conv 1,542-2,403
+    -- for 1,536, ld_const 2,069-3,236 for 2,064).  MEASURED without it: 16
+    -- cycles per beat on the conv and const phases and 32 on the exponents.
+    -- 4 sits above every fast figure including RD_LAT 80 at MAXOUT 4, where
+    -- the phases DO become latency-sensitive, and a factor of four below the
+    -- slow ones.  The 256 is the fixed per-phase overhead (AR issue, the
+    -- drain, the boundary error this bench's own header states) and matters
+    -- only for the 128-beat exponent phases.
+    --
+    -- A generic so the ATTRIBUTION CONTROL can turn it off: a mutant that
+    -- this check kills has to be re-run with it disabled, or there is no
+    -- telling whether an older property would have caught it anyway.
+    NBOUND : boolean := true
   );
 end entity;
 
@@ -118,6 +149,10 @@ architecture sim of tb_bmover_phases is
   constant CONST_STRIDE : positive := CONST_BYTES;
 
   constant BPB : positive := AXI_DW / 8;
+  -- TRACK BNARROW: the three narrow regions' beat counts, for the bound.
+  constant EXP_BEATS  : positive := EXP_BYTES / BPB;
+  constant CONV_BEATS : positive := CONV_BYTES / BPB;
+  constant KONST_BEATS : positive := CONST_BYTES / BPB;
   constant STATE_BEATS : positive := LAYER_STRIDE / BPB;
   constant CONST_BEATS : positive := CONST_STRIDE / BPB;
   constant MANT_B0 : natural := 0;
@@ -316,7 +351,7 @@ begin
                 CONST_BYTES => CONST_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
                 MAXB => MAXB, MAXOUT => MAXOUT,
-                PIPE => PIPE, WIDE => WIDE)
+                PIPE => PIPE, WIDE => WIDE, NWIDE => NWIDE)
     port map(clk => clk, rst => rst,
              load_start => js_ld, save_start => js_sv,
              layer => js_layer, state_base => state_base,
@@ -752,7 +787,8 @@ begin
     report "BMOVER_CFG MAXOUT=" & integer'image(MAXOUT) & " MAXB=" & integer'image(MAXB)
          & " RD_LAT=" & integer'image(RD_LAT) & " B_LAT=" & integer'image(B_LAT)
          & " RD_GAP=" & integer'image(RD_GAP) & " PIPE=" & boolean'image(PIPE)
-         & " WIDE=" & boolean'image(WIDE) & " B_RUN=" & integer'image(B_RUN);
+         & " WIDE=" & boolean'image(WIDE) & " NWIDE=" & boolean'image(NWIDE)
+         & " B_RUN=" & integer'image(B_RUN);
     report "BMOVER_PHASE ld_mant " & integer'image(ph_cnt(PH_LD_MANT));
     report "BMOVER_PHASE ld_exp " & integer'image(ph_cnt(PH_LD_EXP));
     report "BMOVER_PHASE ld_conv " & integer'image(ph_cnt(PH_LD_CONV));
@@ -776,6 +812,39 @@ begin
     if MAX_CYCLES > 0 then
       chk(job_cycles <= MAX_CYCLES, "job took " & integer'image(job_cycles)
           & " cycles, limit " & integer'image(MAX_CYCLES));
+    end if;
+
+    -- ---- TRACK BNARROW: the per-phase bound.  See the generic's comment. --
+    -- Reported as well as checked, so a run that is merely SLOWER than
+    -- expected without breaching the bound is still visible in the log.
+    if NWIDE and NBOUND then
+      report "BNARROW_BOUND ld_exp " & integer'image(ph_cnt(PH_LD_EXP))
+           & "/" & integer'image(4*EXP_BEATS + 256)
+           & " ld_conv " & integer'image(ph_cnt(PH_LD_CONV))
+           & "/" & integer'image(4*CONV_BEATS + 256)
+           & " ld_const " & integer'image(ph_cnt(PH_LD_CONST))
+           & "/" & integer'image(4*KONST_BEATS + 256)
+           & " sv_exp " & integer'image(ph_cnt(PH_SV_EXP))
+           & "/" & integer'image(4*EXP_BEATS + 256)
+           & " sv_conv " & integer'image(ph_cnt(PH_SV_CONV))
+           & "/" & integer'image(4*CONV_BEATS + 256);
+      chk(ph_cnt(PH_LD_EXP) <= 4*EXP_BEATS + 256,
+          "ld_exp " & integer'image(ph_cnt(PH_LD_EXP)) & " cycles for "
+          & integer'image(EXP_BEATS) & " beats is not a beat-wide load");
+      chk(ph_cnt(PH_LD_CONV) <= 4*CONV_BEATS + 256,
+          "ld_conv " & integer'image(ph_cnt(PH_LD_CONV)) & " cycles for "
+          & integer'image(CONV_BEATS) & " beats is not a beat-wide load");
+      if CONST_EN then
+        chk(ph_cnt(PH_LD_CONST) <= 4*KONST_BEATS + 256,
+            "ld_const " & integer'image(ph_cnt(PH_LD_CONST)) & " cycles for "
+            & integer'image(KONST_BEATS) & " beats is not a beat-wide load");
+      end if;
+      chk(ph_cnt(PH_SV_EXP) <= 4*EXP_BEATS + 256,
+          "sv_exp " & integer'image(ph_cnt(PH_SV_EXP)) & " cycles for "
+          & integer'image(EXP_BEATS) & " beats is not a beat-wide save");
+      chk(ph_cnt(PH_SV_CONV) <= 4*CONV_BEATS + 256,
+          "sv_conv " & integer'image(ph_cnt(PH_SV_CONV)) & " cycles for "
+          & integer'image(CONV_BEATS) & " beats is not a beat-wide save");
     end if;
 
     -- ---- pass 2: the same job under back-pressure ----

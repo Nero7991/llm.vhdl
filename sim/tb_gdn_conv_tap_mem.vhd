@@ -34,7 +34,25 @@ entity tb_gdn_conv_tap_mem is
     CONV_LANES : positive := 2;
     KEY_CH     : positive := 4;
     VAL_CH     : positive := 8;
-    NTOK       : positive := 6
+    NTOK       : positive := 6;
+    -- TRACK BNARROW 2026-09-20.  The DUT's beat-wide arm.  DEFAULT FALSE, so
+    -- the gate row is the row it has always been; pass `-gWIDE=true` to run
+    -- the same 107 checks against the banked arm instead.
+    --
+    -- WHY THIS BENCH AND NOT tb_bmover_phases.  MEASURED: mutant N6, which
+    -- drops the `jq_q` capture and selects the sub-group COMBINATIONALLY,
+    -- survives tb_bmover_phases with all 385,488 checks green, because that
+    -- bench never changes the conv read address without crossing an edge
+    -- first.  The check that kills it is THIS file's "the read is ONE edge,
+    -- not zero" section, which drives a second address with no edge between
+    -- and asserts the data has not moved -- a property that already existed
+    -- and was simply unreachable in the WIDE arm until this generic.
+    --
+    -- WPB 4 rather than the store's 16: at CONV_LANES 2 it gives GS = 2, so
+    -- groups 0 and 1 land in DIFFERENT sub-groups and the no-edge check
+    -- discriminates.  GS = 1 would make the mutant and the DUT identical.
+    WIDE       : boolean  := false;
+    WPB        : positive := 4
   );
 end entity;
 
@@ -109,7 +127,8 @@ begin
     -- and is set to "auto" so the row does not read as though it exercised
     -- the BRAM configuration, WHICH IT DOES NOT.
     generic map(KCONV => KCONV, CONV_LANES => CONV_LANES,
-                KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => "auto")
+                KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => "auto",
+                WIDE => WIDE, WPB => WPB)
     port map(clk => clk,
              r_seg => r_seg, r_grp => r_grp, r_x => r_x,
              w_en => w_en, w_seg => w_seg, w_grp => w_grp, w_data => w_data,

@@ -113,7 +113,27 @@ entity gdn_state_store is
     -- other three memories having no beat-wide port.  Both default to the
     -- shipping behaviour.
     PIPE   : boolean := false;
-    WIDE   : boolean := false
+    WIDE   : boolean := false;
+    -- TRACK BNARROW 2026-09-20.  The same lever, one level down, for the
+    -- THREE NARROW movers: the exponents, the conv taps and the constants.
+    --
+    -- ONE GENERIC FOR ALL THREE, AND THE ARGUMENT IS NOT BREVITY.  PIPE and
+    -- WIDE above are two generics because they are two independent
+    -- MECHANISMS with different area costs, and a caller can sensibly want
+    -- one without the other (MEASURED: PIPE alone -139,779 cycles, WIDE alone
+    -- -327,677, and PIPE on top of WIDE only -8,711).  NWIDE is ONE mechanism
+    -- applied three times, to three movers that share one AXI master pair,
+    -- run strictly in sequence inside one job, and are measured by one bench
+    -- row against one oracle.  There is no configuration in which enabling it
+    -- for the conv taps and not for the exponents answers a question anyone
+    -- has; three generics would be three untested combinations for nothing.
+    --
+    -- It gates BOTH ends of each path -- the mover's `WIDE` and the memory's
+    -- `WIDE` -- which is what makes the narrow mover ports and the beat-wide
+    -- ports provably never live together.  Two memories state that mutual
+    -- exclusion in their headers as a contract; this generic is the reason it
+    -- holds.
+    NWIDE  : boolean := false
   );
   port(
     clk : in std_logic;
@@ -286,6 +306,16 @@ architecture rtl of gdn_state_store is
   -- The arena figure must match the SHAPE, two bytes per 16-bit element.
   constant bad_conv_bytes_vs_shape : natural := CONV_BYTES - 2*CONV_WORDS;
 
+  -- ---- TRACK BNARROW: the three narrow movers' beat geometry -----------
+  -- Words per AXI beat at each of the two narrow word widths, and the beat
+  -- counts that follow.  All three counts are CEILINGS so that they stay
+  -- `positive` at a bench shape below one beat; the memories refuse a
+  -- remainder when NWIDE is on, so the ceiling is exact wherever it matters.
+  constant WPB_E : positive := AXI_DW / 8;     -- exponent words per beat
+  constant WPB_C : positive := AXI_DW / 16;    -- conv/const words per beat
+  constant EXP_BEATS  : positive := (EXPN + WPB_E - 1) / WPB_E;
+  constant CONV_BEATS : positive := (CONV_WORDS + WPB_C - 1) / WPB_C;
+
   -- ---- the constants image geometry ----------------------------------
   constant CW_WORDS    : positive := KCONV * QKVN;    -- conv weight words
   constant SB_WORDS    : positive := 256;             -- the scalar block
@@ -296,6 +326,10 @@ architecture rtl of gdn_state_store is
   constant SB_NW  : natural := 2*VAL_HEADS;
   constant SB_EXP : natural := 2*VAL_HEADS + DIM;
   constant SB_END : natural := SB_EXP + 6;
+  -- TRACK BNARROW.  The const region's beats, and the beat at which the
+  -- weights stop and the scalar block starts.
+  constant CONST_BEATS : positive := (CONST_WORDS + WPB_C - 1) / WPB_C;
+  constant CW_BEATS    : positive := (CW_WORDS + WPB_C - 1) / WPB_C;
 
   -- THE CONST REFUSALS ARE GATED ON `CONST_EN`, and they have to be: the
   -- generics default to the 9B figures, and a caller at the sim shape with
@@ -319,6 +353,18 @@ architecture rtl of gdn_state_store is
   -- exponents inside its 256 words.
   constant bad_scalar_block_overflows : natural
          := only_if(CONST_EN, SB_WORDS - SB_END);
+
+  -- TRACK BNARROW.  A beat-wide const load splits by BEAT rather than by
+  -- word, so the weight region must end ON a beat boundary and the scalar
+  -- block must be a whole number of beats.  Neither is implied by anything
+  -- above: CW_WORDS is KCONV*QKVN and SB_WORDS is a bare 256, and if either
+  -- had a remainder one beat would carry both kinds of word and the split
+  -- below would put half of it in the wrong place -- silently, because both
+  -- destinations accept any bit pattern.
+  constant bad_cw_words_not_beat_aligned : natural
+         := only_if(CONST_EN and NWIDE, 0 - (CW_WORDS mod WPB_C));
+  constant bad_sb_words_not_beat_aligned : natural
+         := only_if(CONST_EN and NWIDE, 0 - (SB_WORDS mod WPB_C));
 
   signal bsy : std_logic;
 
@@ -388,6 +434,12 @@ architecture rtl of gdn_state_store is
   signal e_rd_s, e_wd_s     : signed(7 downto 0);
   signal e_unit_wen         : std_logic;
 
+  -- TRACK BNARROW: the beat-wide port between the exponent mover and
+  -- gdn_exp_mem.  Idle unless NWIDE.
+  signal e_wwe, e_wre : std_logic;
+  signal e_wwb, e_wrb : natural range 0 to EXP_BEATS-1;
+  signal e_wwd, e_wrd : std_logic_vector(AXI_DW-1 downto 0);
+
   -- ---- the CONV TAP mover ----------------------------------------------
   -- Same entity again, at `VAL_HEADS => 1, DIM => CONV_WORDS, N_GRP => 1,
   -- WORD_BITS => 16`.
@@ -404,6 +456,12 @@ architecture rtl of gdn_state_store is
   signal c_we, c_re : std_logic;
   signal c_wa, c_ra : natural range 0 to CONV_WORDS-1;
   signal c_wd, c_rd : std_logic_vector(15 downto 0);
+
+  -- TRACK BNARROW: the beat-wide port between the conv tap mover and
+  -- gdn_conv_tap_mem.  Idle unless NWIDE.
+  signal c_wwe, c_wre : std_logic;
+  signal c_wwb, c_wrb : natural range 0 to CONV_BEATS-1;
+  signal c_wwd, c_wrd : std_logic_vector(AXI_DW-1 downto 0);
 
   signal c_arvalid, c_arready, c_rvalid, c_rready : std_logic;
   signal c_araddr : std_logic_vector(ADDR_W-1 downto 0);
@@ -432,6 +490,12 @@ architecture rtl of gdn_state_store is
   signal k_we : std_logic := '0';
   signal k_wa : natural range 0 to CONST_WORDS-1 := 0;
   signal k_wd : std_logic_vector(15 downto 0) := (others => '0');
+
+  -- TRACK BNARROW: the beat-wide write from the const mover.  Split by BEAT
+  -- into the weight memory and the scalar block below; idle unless NWIDE.
+  signal k_wwe : std_logic := '0';
+  signal k_wwb : natural range 0 to CONST_BEATS-1 := 0;
+  signal k_wwd : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
 
   signal k_arvalid, k_arready, k_rvalid, k_rready : std_logic := '0';
   signal k_araddr : std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
@@ -688,7 +752,8 @@ begin
   e_unit_wen  <= se_wen and not bsy;
 
   u_exp : entity work.gdn_exp_mem
-    generic map(VAL_HEADS => VAL_HEADS, DIM => DIM, STYLE => EXP_STYLE)
+    generic map(VAL_HEADS => VAL_HEADS, DIM => DIM, STYLE => EXP_STYLE,
+                WIDE => NWIDE, WPB => WPB_E)
     port map(clk => clk,
              -- `se_rdata` IS DRIVEN DIRECTLY BY THE INSTANCE, with no
              -- intermediate signal relaying it out.  Such a relay is free in
@@ -703,7 +768,10 @@ begin
              w_col => se_wcol, w_data => se_wdata,
              m_r_addr => e_r_addr, m_r_data => e_rd_s,
              m_w_en => e_we, m_w_addr => e_w_addr,
-             m_w_data => e_wd_s);
+             m_w_data => e_wd_s,
+             -- the beat-wide port: the exponent mover's, NWIDE only
+             ww_en => e_wwe, ww_beat => e_wwb, ww_data => e_wwd,
+             wr_en => e_wre, wr_beat => e_wrb, wr_data => e_wrd);
 
   u_edma : entity work.gdn_state_axi
     generic map(VAL_HEADS => VAL_HEADS, DIM => DIM,
@@ -711,7 +779,8 @@ begin
                 WORD_BITS => 8, N_GRP => 1,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => EXP_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                PIPE => PIPE, WIDE => NWIDE)
     port map(clk => clk, rst => rst,
              load_start => e_load, save_start => e_save,
              layer => layer, state_base => exp_base,
@@ -720,6 +789,8 @@ begin
              m_w_grp => open, m_w_data => e_wd,
              m_r_en => e_re, m_r_head => e_rh, m_r_col => e_rc,
              m_r_grp => open, m_r_data => e_rd,
+             mw_en => e_wwe, mw_beat => e_wwb, mw_data => e_wwd,
+             mr_en => e_wre, mr_beat => e_wrb, mr_data => e_wrd,
              r_arvalid => e_arvalid, r_arready => e_arready,
              r_araddr => e_araddr, r_arlen => e_arlen, r_arsize => e_arsize,
              r_arburst => e_arburst, r_rvalid => e_rvalid,
@@ -742,7 +813,8 @@ begin
 
   u_conv : entity work.gdn_conv_tap_mem
     generic map(KCONV => KCONV, CONV_LANES => CONV_LANES,
-                KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE)
+                KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE,
+                WIDE => NWIDE, WPB => WPB_C)
     port map(clk => clk,
              r_seg => cv_seg, r_grp => cv_grp, r_x => cv_x,
              w_en => cv_unit_wen, w_seg => cvw_seg, w_grp => cvw_grp,
@@ -755,7 +827,10 @@ begin
              -- it open would give the mover the unit's address and read the
              -- wrong word every time.
              m_r_en => c_re, m_r_addr => c_ra, m_r_data => c_rd,
-             m_w_en => c_we, m_w_addr => c_wa, m_w_data => c_wd);
+             m_w_en => c_we, m_w_addr => c_wa, m_w_data => c_wd,
+             -- the beat-wide port: the conv tap mover's, NWIDE only
+             ww_en => c_wwe, ww_beat => c_wwb, ww_data => c_wwd,
+             wr_en => c_wre, wr_beat => c_wrb, wr_data => c_wrd);
 
   u_cdma : entity work.gdn_state_axi
     -- VAL_HEADS 1 and N_GRP 1, so `col` IS the flat word address and the
@@ -765,7 +840,8 @@ begin
                 WORD_BITS => 16, N_GRP => 1,
                 LAYER_STRIDE => LAYER_STRIDE, MANT_BYTES => CONV_BYTES,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
+                MAXB => MAXB, MAXOUT => MAXOUT,
+                PIPE => PIPE, WIDE => NWIDE)
     port map(clk => clk, rst => rst,
              load_start => c_load, save_start => c_save,
              layer => layer, state_base => conv_base,
@@ -774,6 +850,8 @@ begin
              m_w_grp => open, m_w_data => c_wd,
              m_r_en => c_re, m_r_head => open, m_r_col => c_ra,
              m_r_grp => open, m_r_data => c_rd,
+             mw_en => c_wwe, mw_beat => c_wwb, mw_data => c_wwd,
+             mr_en => c_wre, mr_beat => c_wrb, mr_data => c_wrd,
              r_arvalid => c_arvalid, r_arready => c_arready,
              r_araddr => c_araddr, r_arlen => c_arlen, r_arsize => c_arsize,
              r_arburst => c_arburst, r_rvalid => c_rvalid,
@@ -801,6 +879,13 @@ begin
     -- The read side of a load-only mover: tied off, never consulted.
     signal k_rd_z : std_logic_vector(15 downto 0) := (others => '0');
 
+    -- TRACK BNARROW: the same region split, one BEAT at a time.  It is a
+    -- beat comparison and not a word comparison, and `bad_cw_words_not_beat_
+    -- aligned` above is what makes the two agree: a beat is wholly weights or
+    -- wholly scalars, never both.
+    signal kw_wwe : std_logic;
+    signal kw_wwb : natural range 0 to CW_BEATS-1;
+
     type dt_arr_t is array (0 to VAL_HEADS-1) of std_logic_vector(15 downto 0);
     type nw_arr_t is array (0 to DIM-1)       of std_logic_vector(15 downto 0);
     type ex_arr_t is array (0 to 5)           of signed(7 downto 0);
@@ -812,12 +897,17 @@ begin
     kw_we <= k_we when k_wa < CW_WORDS else '0';
     kw_wa <= k_wa when k_wa < CW_WORDS else 0;
 
+    kw_wwe <= k_wwe when k_wwb < CW_BEATS else '0';
+    kw_wwb <= k_wwb when k_wwb < CW_BEATS else 0;
+
     u_cw : entity work.gdn_conv_w_mem
       generic map(KCONV => KCONV, CONV_LANES => CONV_LANES,
-                  KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE)
+                  KEY_CH => KEY_CH, VAL_CH => VAL_CH, STYLE => CONV_STYLE,
+                  WIDE => NWIDE, WPB => WPB_C)
       port map(clk => clk,
                r_seg => cw_seg, r_grp => cw_grp, r_w => cw_w,
-               m_w_en => kw_we, m_w_addr => kw_wa, m_w_data => k_wd);
+               m_w_en => kw_we, m_w_addr => kw_wa, m_w_data => k_wd,
+               ww_en => kw_wwe, ww_beat => kw_wwb, ww_data => k_wwd);
 
     -- THE SCALAR BLOCK, a decoded register file.  One write per cycle from
     -- the mover, decoded on the offset within the block; the outputs are
@@ -840,6 +930,31 @@ begin
             -- The LOW BYTE, signed.  The packer clamps to [-64, 63].
             ex_m(si - SB_EXP) <= signed(k_wd(7 downto 0));
           end if;
+        end if;
+
+        -- TRACK BNARROW: THE SAME DECODE, WPB_C WORDS AT ONCE.  The two
+        -- branches are mutually exclusive by construction -- `k_we` is the
+        -- mover's narrow write and is dead when NWIDE, `k_wwe` is its wide
+        -- write and is dead when it is not -- so they are two ifs rather than
+        -- an elsif, and neither needs to know about the other.
+        --
+        -- THE SCALAR BLOCK IS REGISTERS, NOT A MEMORY, so taking WPB_C words
+        -- in one edge costs a WPB_C:1 data mux per register and no extra
+        -- storage.  `q` is the loop constant, so `k_wwd`'s slice has STATIC
+        -- bounds; only the destination index moves.
+        if k_wwe = '1' and k_wwb >= CW_BEATS then
+          for qw in 0 to WPB_C-1 loop
+            si := (k_wwb - CW_BEATS)*WPB_C + qw;
+            if si < SB_A then
+              dt_m(si - SB_DT) <= k_wwd((qw+1)*16-1 downto qw*16);
+            elsif si < SB_NW then
+              a_m(si - SB_A) <= k_wwd((qw+1)*16-1 downto qw*16);
+            elsif si < SB_EXP then
+              nw_m(si - SB_NW) <= k_wwd((qw+1)*16-1 downto qw*16);
+            elsif si < SB_END then
+              ex_m(si - SB_EXP) <= signed(k_wwd(qw*16+7 downto qw*16));
+            end if;
+          end loop;
         end if;
       end if;
     end process;
@@ -867,7 +982,8 @@ begin
                   WORD_BITS => 16, N_GRP => 1,
                   LAYER_STRIDE => CONST_STRIDE, MANT_BYTES => CONST_BYTES,
                   AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                  MAXB => MAXB, MAXOUT => MAXOUT, PIPE => PIPE)
+                  MAXB => MAXB, MAXOUT => MAXOUT,
+                  PIPE => PIPE, WIDE => NWIDE)
       port map(clk => clk, rst => rst,
                load_start => k_load, save_start => '0',
                layer => layer, state_base => const_base,
@@ -876,6 +992,11 @@ begin
                m_w_grp => open, m_w_data => k_wd,
                m_r_en => open, m_r_head => open, m_r_col => open,
                m_r_grp => open, m_r_data => k_rd_z,
+               -- Load only, so there is a wide WRITE and no wide read;
+               -- `mr_data` carries a default and is left open for the same
+               -- reason `m_r_data` is tied off.
+               mw_en => k_wwe, mw_beat => k_wwb, mw_data => k_wwd,
+               mr_en => open, mr_beat => open,
                r_arvalid => k_arvalid, r_arready => k_arready,
                r_araddr => k_araddr, r_arlen => k_arlen, r_arsize => k_arsize,
                r_arburst => k_arburst, r_rvalid => k_rvalid,

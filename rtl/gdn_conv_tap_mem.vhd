@@ -97,6 +97,50 @@
 -- taps, not KCONV.  The newest element of `cv_x` is THIS token's qkv, which
 -- comes from A and is not state at all; putting it in here would mean writing
 -- it before the conv reads it, in the same cycle, for no gain.
+--
+-- ---- TRACK BNARROW 2026-09-20: THE BEAT-WIDE PORT ----------------------
+-- MEASURED by sim/tb_bmover_phases.vhd at the 9B geometry, with the mantissa
+-- mover already at one beat per cycle (PIPE+WIDE, commit 14fa888): the conv
+-- tap phases cost `ld_conv 24,622` and `sv_conv 24,593` cycles for 1,536
+-- beats each, i.e. 16 cycles per beat.  That is WPB, the number of 16-bit
+-- words in a 256-bit AXI beat, and it is paid because `gdn_state_axi` can
+-- hand this memory only ONE word per cycle through `m_w_*`/`m_r_*`.
+--
+-- WHY THE BANKING HAS TO CHANGE AND NOT ONLY THE PORT.  The arm above banks
+-- on (slot, lane) and is `NGRP` deep, so one AXI beat -- WPB consecutive flat
+-- words, which at the 9B shape is FOUR consecutive groups of all CONV_LANES
+-- lanes within ONE slot -- lands in CONV_LANES banks at GS = WPB/CONV_LANES
+-- DIFFERENT depths.  One port cannot reach four depths in a cycle, so the
+-- WIDE arm adds the sub-group as a third bank axis: bank (slot, lane, j)
+-- holds group `d*GS + j` at depth d.  A beat is then exactly one word from
+-- each of WPB banks at ONE depth, and the unit's read -- one group, every
+-- lane, every slot -- is one word from each of NTAP*CONV_LANES banks at ONE
+-- depth with a GS:1 select after the register.  Both accesses become plain
+-- parallel reads; neither needs a shifter.
+--
+-- EVERY WRITE IN THE WIDE ARM IS STILL A WHOLE 16-BIT WORD, and that is the
+-- whole reason the bank count is NTAP*CONV_LANES*GS rather than
+-- NTAP*CONV_LANES with a GS-times-wider word.  The wider-word form has the
+-- same bit count and the same tile count, and it makes the UNIT's write a
+-- sub-word slice at a computed offset -- refusal 1 in the list above, the one
+-- that MEASURED zero BRAM and 8% of the part on this very file.  Banking
+-- costs depth, which is an area number someone can bound; a partial write
+-- costs the inference, which is a silent 28,160-LUT surprise.  Until a census
+-- exists, take the bounded risk.
+--
+-- WHAT IS NOT KNOWN: the tile count of the WIDE arm.  DERIVED, NOT MEASURED:
+-- NTAP*CONV_LANES*GS = 48 banks of NGRP/GS = 512 x 16 bits, which is the same
+-- 393,216 bits as the narrow arm but in 48 objects a RAMB18 each rather than
+-- 12 objects a RAMB36 each, so about 24 tiles against 12.  No Vivado ran in
+-- TRACK BNARROW.  `report_utilization` plus an object-level `get_cells`
+-- census settles it and the inference log does not; see
+-- docs/debugging/2026-09-20_b-job-660k-cycles.md.
+--
+-- THE ONE READ ADDRESS SURVIVES.  The narrow arm's whole structure rests on
+-- there being a single read address per bank, muxed between the unit and the
+-- mover, because two read addresses on one array is refusal 2 above.  The
+-- WIDE arm keeps that property exactly: `wr_beat` wins, then `m_r_addr`, then
+-- the unit, one address into every bank.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -108,7 +152,13 @@ entity gdn_conv_tap_mem is
     CONV_LANES : positive := 4;      -- gdn_block CONV_LANES
     KEY_CH     : positive := 2048;   -- KEY_HEADS*DIM: the q and the k segment
     VAL_CH     : positive := 4096;   -- VAL_HEADS*DIM: the v segment
-    STYLE      : string   := "block" -- "block" or "auto".  NOT "distributed".
+    STYLE      : string   := "block"; -- "block" or "auto".  NOT "distributed".
+    -- TRACK BNARROW 2026-09-20.  WIDE adds the sub-group bank axis described
+    -- in the header and the `ww_*`/`wr_*` ports below, which move WPB
+    -- consecutive 16-bit words -- one AXI beat -- per cycle.  FALSE is the
+    -- array as it was, to the character.
+    WIDE       : boolean  := false;
+    WPB        : positive := 16
   );
   port(
     clk : in std_logic;
@@ -156,7 +206,25 @@ entity gdn_conv_tap_mem is
     m_r_data : out std_logic_vector(15 downto 0);
     m_w_en   : in  std_logic;
     m_w_addr : in  natural range 0 to (KCONV-1)*(2*KEY_CH+VAL_CH)-1;
-    m_w_data : in  std_logic_vector(15 downto 0)
+    m_w_data : in  std_logic_vector(15 downto 0);
+
+    -- ---- the beat-wide mover port, WIDE only.  Idle otherwise. -----------
+    -- Beat b is flat words b*WPB .. b*WPB+WPB-1, word q at bits q*16 +: 16,
+    -- which is the order `gdn_state_axi` packs a beat.  `wr_data` is valid
+    -- ONE cycle after `wr_beat`, the same two-edge contract `m_r_data` has.
+    --
+    -- THE BEAT RANGE IS A CEILING, NOT A DIVISION.  A bare `WORDS/WPB-1` is a
+    -- NULL RANGE at any bench shape smaller than one beat, and a port range is
+    -- elaborated whether or not the generate that uses it is taken -- so the
+    -- obvious form breaks every small-shape bench at WIDE => false too.
+    ww_en   : in  std_logic := '0';
+    ww_beat : in  natural
+              range 0 to ((KCONV-1)*(2*KEY_CH+VAL_CH) + WPB - 1)/WPB - 1 := 0;
+    ww_data : in  std_logic_vector(WPB*16-1 downto 0) := (others => '0');
+    wr_en   : in  std_logic := '0';
+    wr_beat : in  natural
+              range 0 to ((KCONV-1)*(2*KEY_CH+VAL_CH) + WPB - 1)/WPB - 1 := 0;
+    wr_data : out std_logic_vector(WPB*16-1 downto 0)
   );
 end entity;
 
@@ -167,6 +235,16 @@ architecture rtl of gdn_conv_tap_mem is
   constant GW    : positive := CONV_LANES * 16;       -- bits in one group
   constant NBANK : positive := NTAP * CONV_LANES;     -- one 16-bit bank each
   constant WORDS : positive := NTAP * QKVN;           -- 16-bit words in a layer
+
+  -- ---- the WIDE arm's geometry ----------------------------------------
+  -- GS groups per AXI beat, DW groups-of-GS per bank, BPS beats per slot.
+  -- Every one is a CEILING so it stays a `positive` at a bench shape smaller
+  -- than one beat, where the WIDE arm is not taken; the refusals below make
+  -- each division exact whenever it is.
+  constant GS    : positive := (WPB + CONV_LANES - 1) / CONV_LANES;
+  constant DW    : positive := (NGRP + GS - 1) / GS;
+  constant BPS   : positive := (QKVN + WPB - 1) / WPB;
+  constant NBW   : positive := NTAP * CONV_LANES * GS;
 
   -- ---- REFUSALS THAT RUN DURING ELABORATION ---------------------------
   -- Out-of-range `natural`s, not asserts: Vivado ignores
@@ -182,6 +260,26 @@ architecture rtl of gdn_conv_tap_mem is
   -- segment WIDER than v would index past the end of the store, silently.
   constant bad_key_wider_than_val : natural := VAL_CH - KEY_CH;
 
+  -- The WIDE refusals are GATED, because the generics that fail them are
+  -- perfectly legal at WIDE => false and several benches use them.
+  function only_if(en : boolean; v : integer) return integer is
+  begin
+    if en then return v; else return 0; end if;
+  end function;
+  -- A beat must be a whole number of groups, or one beat straddles a lane
+  -- boundary and the bank permutation below is not a permutation.
+  constant bad_wpb_not_multiple_of_lanes : natural
+         := only_if(WIDE, 0 - (WPB mod CONV_LANES));
+  -- The groups must tile into whole sub-group sets, or the last bank is short
+  -- and the unit's GS:1 select reads past the end of it.
+  constant bad_ngrp_not_multiple_of_gs : natural
+         := only_if(WIDE, 0 - (NGRP mod GS));
+  -- A SLOT must tile into whole beats.  A remainder makes one beat straddle
+  -- two slots, which is silent: the bank index would come out of one slot and
+  -- the depth out of the other.
+  constant bad_qkvn_not_multiple_of_wpb : natural
+         := only_if(WIDE, 0 - (QKVN mod WPB));
+
   function chk_style(s : string) return string is
     variable bad : natural;
   begin
@@ -195,18 +293,13 @@ architecture rtl of gdn_conv_tap_mem is
   end function;
 
   -- The bank arrays and the `ram_style` attribute are declared INSIDE the
-  -- `gbank` generate below, not here: see the comment there for the
+  -- bank generates below, not here: see the comment there for the
   -- measurement that forced it.  `STY` is shared because it is the checked
   -- STYLE string and nothing more.
   constant STY : string(1 to STYLE'length) := chk_style(STYLE);
 
   signal phase : natural range 0 to NTAP-1 := 0;
-
-  type word_arr_t is array (0 to NBANK-1) of std_logic_vector(15 downto 0);
-  -- ONE set of read registers, because there is one read port.
-  signal rq    : word_arr_t := (others => (others => '0'));
   signal rq_ph : natural range 0 to NTAP-1 := 0;
-  signal mb_q  : natural range 0 to NBANK-1 := 0;   -- which bank the mover read
 
   -- The flat group of a (segment, group) pair.  `seg_base` is 0, KEY_CH and
   -- 2*KEY_CH, which is the SAME decomposition llama_top's `cvdata_p` does and
@@ -237,11 +330,17 @@ architecture rtl of gdn_conv_tap_mem is
   begin return (a mod QKVN) mod CONV_LANES; end;
   function m_bank(a : natural) return natural is
   begin return m_slot(a) * CONV_LANES + m_lane(a); end;
+  -- The WIDE arm's bank index of a flat word: (slot, lane, sub-group).
+  function w_bank(a : natural) return natural is
+  begin return (m_slot(a) * CONV_LANES + m_lane(a)) * GS
+              + (m_grp(a) mod GS); end;
 
   signal ra_s, gb_s, wa_s : natural range 0 to NGRP-1 := 0;
   signal mwg_s : natural range 0 to NGRP-1 := 0;
   signal mwb_s : natural range 0 to NBANK-1 := 0;
   signal rad_s : natural range 0 to NGRP-1 := 0;   -- the shared read address
+
+  attribute ram_style : string;
 begin
   -- Addresses computed ONCE, outside the bank generate, so the divisions are
   -- shared rather than replicated NBANK times.
@@ -256,77 +355,206 @@ begin
   -- BRAM has something it can infer.
   rad_s <= gb_s when m_r_en = '1' else ra_s;
 
-  -- ---- ONE BRAM PER BANK, AS A GENERATE, AND THAT IS NOT A STYLE CHOICE ---
-  -- Declaring the array inside the generate is what makes each bank plainly
-  -- TWO-dimensional; as one `array of array of vector` in the architecture it
-  -- was a "3D-RAM" and Vivado dissolved it into 393,216 registers.  See the
-  -- header for the full sequence of refusals.
-  gbank : for b in 0 to NBANK-1 generate
-    -- Bank b holds slot `b / CONV_LANES`, lane `b mod CONV_LANES`.  BOTH are
-    -- static in this scope, so the lane slice of `w_data` below is a constant
-    -- range and not a mux.
-    constant SLOT : natural := b / CONV_LANES;
-    constant LANE : natural := b mod CONV_LANES;
-
-    type bank_t is array (0 to NGRP-1) of std_logic_vector(15 downto 0);
-    signal m : bank_t := (others => (others => '0'));
-    attribute ram_style : string;
-    attribute ram_style of m : signal is STY;
-
-    signal we  : std_logic;
-    signal wad : natural range 0 to NGRP-1;
-    signal wdt : std_logic_vector(15 downto 0);
+  -- ================= NTAP*CONV_LANES banks, as they were ==================
+  gnarrow : if not WIDE generate
+    type word_arr_t is array (0 to NBANK-1) of std_logic_vector(15 downto 0);
+    -- ONE set of read registers, because there is one read port.
+    signal rq   : word_arr_t := (others => (others => '0'));
+    signal mb_q : natural range 0 to NBANK-1 := 0;  -- which bank the mover read
   begin
-    -- THE MOVER WINS, STRUCTURALLY.  There is ONE write port; the mux below
-    -- hands it to the mover whenever `m_w_en` is high, so a simultaneous unit
-    -- write is not a collision to resolve, it is a write that does not
-    -- happen.  The earlier true-dual-port draft needed an explicit priority
-    -- term for this, and no bench could see whether it was there: in
-    -- simulation the second assignment in the process simply overwrote, so a
-    -- mutation removing the term PASSED 107 of 107 while being undefined in
-    -- hardware.  One port removes the question rather than guarding it.
-    we  <= '1' when (m_w_en = '1' and mwb_s = b)
-                 or (m_w_en = '0' and w_en = '1' and SLOT = phase) else '0';
-    wad <= mwg_s when m_w_en = '1' else wa_s;
-    wdt <= m_w_data when m_w_en = '1'
-           else w_data((LANE+1)*16-1 downto LANE*16);
+    wr_data <= (others => '0');
 
-    pb : process(clk) is
+    -- ---- ONE BRAM PER BANK, AS A GENERATE, AND THAT IS NOT A STYLE CHOICE -
+    -- Declaring the array inside the generate is what makes each bank plainly
+    -- TWO-dimensional; as one `array of array of vector` in the architecture
+    -- it was a "3D-RAM" and Vivado dissolved it into 393,216 registers.  See
+    -- the header for the full sequence of refusals.
+    gbank : for b in 0 to NBANK-1 generate
+      -- Bank b holds slot `b / CONV_LANES`, lane `b mod CONV_LANES`.  BOTH are
+      -- static in this scope, so the lane slice of `w_data` below is a constant
+      -- range and not a mux.
+      constant SLOT : natural := b / CONV_LANES;
+      constant LANE : natural := b mod CONV_LANES;
+
+      type bank_t is array (0 to NGRP-1) of std_logic_vector(15 downto 0);
+      signal m : bank_t := (others => (others => '0'));
+      attribute ram_style of m : signal is STY;
+
+      signal we  : std_logic;
+      signal wad : natural range 0 to NGRP-1;
+      signal wdt : std_logic_vector(15 downto 0);
+    begin
+      -- THE MOVER WINS, STRUCTURALLY.  There is ONE write port; the mux below
+      -- hands it to the mover whenever `m_w_en` is high, so a simultaneous unit
+      -- write is not a collision to resolve, it is a write that does not
+      -- happen.  The earlier true-dual-port draft needed an explicit priority
+      -- term for this, and no bench could see whether it was there: in
+      -- simulation the second assignment in the process simply overwrote, so a
+      -- mutation removing the term PASSED 107 of 107 while being undefined in
+      -- hardware.  One port removes the question rather than guarding it.
+      we  <= '1' when (m_w_en = '1' and mwb_s = b)
+                   or (m_w_en = '0' and w_en = '1' and SLOT = phase) else '0';
+      wad <= mwg_s when m_w_en = '1' else wa_s;
+      wdt <= m_w_data when m_w_en = '1'
+             else w_data((LANE+1)*16-1 downto LANE*16);
+
+      pb : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if we = '1' then
+            -- INTO THE SLOT ABOUT TO BE RETIRED, for a unit write.  After
+            -- `tok_adv` that slot becomes tap NTAP-1, the NEWEST stored column,
+            -- which is what the next token must see.
+            m(wad) <= wdt;
+          end if;
+          rq(b) <= m(rad_s);
+        end if;
+      end process;
+    end generate;
+
+    -- ---- the unit read: NBANK words, then rotate -------------------------
+    -- The ROTATION IS OUTSIDE THE MEMORY, on its registered outputs, so every
+    -- bank stays a plain BRAM.  Slot `phase` is the oldest -- it is the one the
+    -- next write will retire -- so tap k is slot (phase+k) mod NTAP.
+    rot : process(rq, rq_ph) is
+      variable sl : natural;
+    begin
+      for k in 0 to NTAP-1 loop
+        sl := (rq_ph + k) mod NTAP;
+        for ln in 0 to CONV_LANES-1 loop
+          r_x(k*GW + (ln+1)*16 - 1 downto k*GW + ln*16)
+            <= rq(sl*CONV_LANES + ln);
+        end loop;
+      end loop;
+    end process;
+
+    -- The mover's read: the same registered bank outputs, selected by the bank
+    -- its address named on the SAME edge.  Registered on the way in, muxed on
+    -- the way out, so the two-edge contract holds.
+    m_r_data <= rq(mb_q);
+
+    ctl : process(clk) is
     begin
       if rising_edge(clk) then
-        if we = '1' then
-          -- INTO THE SLOT ABOUT TO BE RETIRED, for a unit write.  After
-          -- `tok_adv` that slot becomes tap NTAP-1, the NEWEST stored column,
-          -- which is what the next token must see.
-          m(wad) <= wdt;
-        end if;
-        rq(b) <= m(rad_s);
+        mb_q <= m_bank(m_r_addr);
       end if;
     end process;
   end generate;
 
-  -- ---- the unit read: NBANK words, then rotate ---------------------------
-  -- The ROTATION IS OUTSIDE THE MEMORY, on its registered outputs, so every
-  -- bank stays a plain BRAM.  Slot `phase` is the oldest -- it is the one the
-  -- next write will retire -- so tap k is slot (phase+k) mod NTAP.
-  rot : process(rq, rq_ph) is
-    variable sl : natural;
+  -- ================= NTAP*CONV_LANES*GS banks, one beat per cycle =========
+  -- Bank (slot, lane, j) holds group `d*GS + j` of that slot and lane at depth
+  -- d.  See the header for why the sub-group has to be a bank axis and not a
+  -- wider word.  There is still ONE read address and ONE write address into
+  -- every bank; that property is what the narrow arm was rewritten three times
+  -- to obtain and it is not given up here.
+  gwide : if WIDE generate
+    type warr_t is array (0 to NBW-1) of std_logic_vector(15 downto 0);
+    signal rqw   : warr_t := (others => (others => '0'));
+    signal radw  : natural range 0 to DW-1 := 0;
+    signal wadw  : natural range 0 to DW-1 := 0;
+    signal jq_q  : natural range 0 to GS-1 := 0;    -- unit's sub-group select
+    signal sq_q  : natural range 0 to NTAP-1 := 0;  -- wide read's slot select
+    signal mbw_q : natural range 0 to NBW-1 := 0;   -- narrow mover's bank
+    signal wwslot, wrslot : natural range 0 to NTAP-1;
+    signal wwdep,  wrdep  : natural range 0 to BPS-1;
   begin
-    for k in 0 to NTAP-1 loop
-      sl := (rq_ph + k) mod NTAP;
-      for ln in 0 to CONV_LANES-1 loop
-        r_x(k*GW + (ln+1)*16 - 1 downto k*GW + ln*16)
-          <= rq(sl*CONV_LANES + ln);
+    wwslot <= ww_beat / BPS;
+    wwdep  <= ww_beat mod BPS;
+    wrslot <= wr_beat / BPS;
+    wrdep  <= wr_beat mod BPS;
+
+    -- THE ONE READ ADDRESS: the wide mover, then the narrow mover, then the
+    -- unit.  The two mover ports are the SAME mover -- one generic in
+    -- gdn_state_store decides which of them is live -- so this is a priority
+    -- over two cases that cannot coincide, written out so that it is a
+    -- statement rather than an assumption.
+    radw <= wrdep when wr_en = '1'
+            else gb_s / GS when m_r_en = '1'
+            else ra_s / GS;
+    wadw <= wwdep when ww_en = '1'
+            else mwg_s / GS when m_w_en = '1'
+            else wa_s / GS;
+
+    gbank : for b in 0 to NBW-1 generate
+      -- All three are static in this scope, so every slice below has constant
+      -- bounds.  b = (SLOT*CONV_LANES + LANE)*GS + JS.
+      constant SLOT : natural := b / (CONV_LANES*GS);
+      constant LANE : natural := (b / GS) mod CONV_LANES;
+      constant JS   : natural := b mod GS;
+      -- Word JS*CONV_LANES + LANE of a beat is this bank's word: a beat is GS
+      -- consecutive groups of CONV_LANES lanes, group-major.
+      constant BQ   : natural := JS*CONV_LANES + LANE;
+
+      type bank_t is array (0 to DW-1) of std_logic_vector(15 downto 0);
+      signal m : bank_t := (others => (others => '0'));
+      attribute ram_style of m : signal is STY;
+
+      signal we  : std_logic;
+      signal wdt : std_logic_vector(15 downto 0);
+    begin
+      -- THE MOVER WINS, STRUCTURALLY, exactly as in the narrow arm: one write
+      -- port, and the mux hands it over.  A WIDE write enables every bank of
+      -- ONE slot; a narrow mover write enables ONE bank; a unit write enables
+      -- every LANE of one slot at one sub-group.
+      we <= '1' when (ww_en = '1' and wwslot = SLOT)
+                  or (ww_en = '0' and m_w_en = '1' and w_bank(m_w_addr) = b)
+                  or (ww_en = '0' and m_w_en = '0' and w_en = '1'
+                      and SLOT = phase and (wa_s mod GS) = JS)
+            else '0';
+      wdt <= ww_data((BQ+1)*16-1 downto BQ*16) when ww_en = '1'
+             else m_w_data when m_w_en = '1'
+             else w_data((LANE+1)*16-1 downto LANE*16);
+
+      pb : process(clk) is
+      begin
+        if rising_edge(clk) then
+          if we = '1' then
+            m(wadw) <= wdt;
+          end if;
+          rqw(b) <= m(radw);
+        end if;
+      end process;
+    end generate;
+
+    -- ---- the unit read: one group of every slot and lane, then rotate ----
+    -- The sub-group select `jq_q` is captured WITH the data, for the same
+    -- reason `rq_ph` is: it names the address that produced what is in `rqw`
+    -- now, not the address the caller has moved on to.
+    rot : process(rqw, rq_ph, jq_q) is
+      variable sl : natural;
+    begin
+      for k in 0 to NTAP-1 loop
+        sl := (rq_ph + k) mod NTAP;
+        for ln in 0 to CONV_LANES-1 loop
+          r_x(k*GW + (ln+1)*16 - 1 downto k*GW + ln*16)
+            <= rqw((sl*CONV_LANES + ln)*GS + jq_q);
+        end loop;
       end loop;
-    end loop;
-  end process;
+    end process;
 
-  -- The mover's read: the same registered bank outputs, selected by the bank
-  -- its address named on the SAME edge.  Registered on the way in, muxed on
-  -- the way out, so the two-edge contract holds.
-  m_r_data <= rq(mb_q);
+    -- ---- the wide read: one beat, group-major within the captured slot ----
+    wrd : process(rqw, sq_q) is
+    begin
+      for q in 0 to WPB-1 loop
+        wr_data((q+1)*16-1 downto q*16)
+          <= rqw((sq_q*CONV_LANES + (q mod CONV_LANES))*GS + q/CONV_LANES);
+      end loop;
+    end process;
 
-  ctl : process(clk) is
+    m_r_data <= rqw(mbw_q);
+
+    ctl : process(clk) is
+    begin
+      if rising_edge(clk) then
+        jq_q  <= ra_s mod GS;
+        sq_q  <= wrslot;
+        mbw_q <= w_bank(m_r_addr);
+      end if;
+    end process;
+  end generate;
+
+  -- ---- the rotation counter, common to both arms -------------------------
+  tctl : process(clk) is
   begin
     if rising_edge(clk) then
       -- `rq_ph` is captured WITH the data.
@@ -343,7 +571,6 @@ begin
       -- column, and it is recorded here as an untested property rather than
       -- as a justified one.
       rq_ph <= phase;
-      mb_q  <= m_bank(m_r_addr);
 
       if tok_adv = '1' then
         if phase = NTAP-1 then phase <= 0; else phase <= phase + 1; end if;
