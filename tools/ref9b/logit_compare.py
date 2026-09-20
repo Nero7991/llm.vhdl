@@ -114,6 +114,17 @@ from capture_to_r9bs import _write_rec, MAGIC, VERSION_S32   # noqa: E402
 LOGITS_NAME = "LOGITS"
 TOKEN_NAME = "TOKEN"
 EXP_NAME = "LOGIT_EXP"
+# A PARTIAL VECTOR MUST CARRY ITS OWN COVERAGE, added by TRACK SMPWIN
+# 2026-09-20.  `LOGITS_ROWS` is s32, n = 2: (row_start, n_rows).  A LOGITS
+# record SHORTER than the reference's and WITHOUT this record is refused, not
+# aligned at zero: "the first n rows" is an assumption, and a subset silently
+# assumed to start at 0 produces a perfectly well-formed comparison of the
+# wrong rows.
+ROWS_NAME = "LOGITS_ROWS"
+# Written by tools/ref9b/smpwin_sweep.py.  Recognised here ONLY so that a
+# prefix-argmax sweep is named rather than reported as a generic absent
+# vector: it is not a vector and no statistic in this file applies to it.
+PREFIX_NAME = "SMP_PREFIX_ARGMAX"
 
 
 # --------------------------------------------------------------- the windows
@@ -149,9 +160,15 @@ class Side(object):
         self.kind = None
         self.token = None        # the producer's own argmax, if it reported one
         self.exp_record = None
+        self.rows = None         # (row_start, n_rows) when the vector is partial
+        self.prefix_sweep = False
         for rec in r9bs.read(path):
             if rec.tok != tok:
                 continue
+            if rec.name == ROWS_NAME and rec.n == 2:
+                self.rows = (int(rec.raw[0]), int(rec.raw[1]))
+            elif rec.name == PREFIX_NAME:
+                self.prefix_sweep = True
             if rec.name == LOGITS_NAME:
                 self.vec = rec.value
                 self.raw = rec.raw
@@ -164,12 +181,20 @@ class Side(object):
 
     def describe(self):
         if self.vec is None:
-            return ("%s: NO %s record at tok %d (LOGIT_EXP %s, TOKEN %s)"
+            extra = ""
+            if self.prefix_sweep:
+                extra = ("  [this file is a PREFIX-ARGMAX SWEEP, not a "
+                         "vector; compare it with "
+                         "tools/ref9b/smpwin_sweep.py compare]")
+            return ("%s: NO %s record at tok %d (LOGIT_EXP %s, TOKEN %s)%s"
                     % (os.path.basename(self.path), LOGITS_NAME, self.tok,
-                       self.exp_record, self.token))
-        return ("%s: %s n=%d kind=%s exp=%s rms=%.6g TOKEN=%s"
+                       self.exp_record, self.token, extra))
+        cov = ""
+        if self.rows is not None:
+            cov = " rows [%d,%d)" % (self.rows[0], self.rows[0] + self.rows[1])
+        return ("%s: %s n=%d%s kind=%s exp=%s rms=%.6g TOKEN=%s"
                 % (os.path.basename(self.path), LOGITS_NAME, len(self.vec),
-                   self.kind, self.exp,
+                   cov, self.kind, self.exp,
                    float(np.sqrt((self.vec * self.vec).mean())), self.token))
 
 
@@ -271,18 +296,59 @@ def compare(card, ref, ks=(1, 5, 20), want_windows=True, out=sys.stdout):
         f["_ok"] = False
         return f, False
 
-    if len(card.vec) != len(ref.vec):
-        print("STRUCTURAL: card n=%d, reference n=%d.  Two vectors of "
-              "different lengths are not two measurements of one quantity; "
-              "nothing is compared." % (len(card.vec), len(ref.vec)), file=out)
+    # ------------------------------------------------------- PARTIAL VECTORS
+    # A card that returns only PART of the row is a real future configuration
+    # (a windowed DMA, a per-shard read-back), and the honest failure mode is
+    # not "refuse everything" -- it is "report only what a subset supports".
+    # The coverage must be DECLARED, never inferred from the length.
+    subset = None
+    n_full = len(ref.vec) if ref.rows is None else None
+    if card.rows is not None:
+        r0, nr = card.rows
+        if nr != len(card.vec):
+            print("STRUCTURAL: %s says %d rows and the %s record holds %d.  "
+                  "A coverage claim that does not match its own payload "
+                  "describes neither." % (ROWS_NAME, nr, LOGITS_NAME,
+                                          len(card.vec)), file=out)
+            f["vector"] = "ROWS_PAYLOAD_MISMATCH"
+            return f, False
+        if r0 < 0 or r0 + nr > len(ref.vec):
+            print("STRUCTURAL: the card claims rows [%d,%d) and the reference "
+                  "has %d.  The claimed rows are not inside the reference's "
+                  "vocabulary." % (r0, r0 + nr, len(ref.vec)), file=out)
+            f["vector"] = "ROWS_OUT_OF_RANGE"
+            return f, False
+        subset = (r0, nr)
+    elif len(card.vec) != len(ref.vec):
+        print("STRUCTURAL: card n=%d, reference n=%d, and the card carries no "
+              "%s record.  Two vectors of different lengths are not two "
+              "measurements of one quantity, and WHICH rows the shorter one "
+              "covers is not recoverable from its length -- aligning it at "
+              "row 0 would be a guess that produces a well-formed comparison "
+              "of the wrong rows.  Nothing is compared."
+              % (len(card.vec), len(ref.vec), ROWS_NAME), file=out)
         f["vector"] = "LENGTH_MISMATCH"
         return f, False
 
-    a, b = card.vec, ref.vec
+    if subset is not None:
+        r0, nr = subset
+        a, b = card.vec, ref.vec[r0:r0 + nr]
+        n_full = len(ref.vec)
+        print("SUBSET the card covers rows [%d,%d) of %d (%.2f%%).  Every "
+              "figure below is over THOSE ROWS ONLY."
+              % (r0, r0 + nr, n_full, 100.0 * nr / n_full), file=out)
+        print("       NOT MEASURED, and not the same as agreement: the "
+              "whole-vector argmax, its rank, whole-vector top-k, and any "
+              "window the subset does not fully contain.", file=out)
+        f["subset_row_start"], f["subset_n_rows"] = r0, nr
+    else:
+        a, b = card.vec, ref.vec
+        n_full = len(ref.vec)
     n = len(a)
-    f["vector"] = "present"
+    f["vector"] = "present" if subset is None else "partial"
     f["_ok"] = True
     f["n"] = n
+    f["n_full"] = n_full
 
     # ------------------------------------------------------------- structure
     sh = detect_shift(a, b)
@@ -294,21 +360,47 @@ def compare(card, ref, ks=(1, 5, 20), want_windows=True, out=sys.stdout):
               "one." % sh, file=out)
 
     ia, ib = int(np.argmax(a)), int(np.argmax(b))
-    f["argmax_card_vec"], f["argmax_ref_vec"] = ia, ib
-    f["argmax_vec_agree"] = int(ia == ib)
+    off = subset[0] if subset else 0
+    f["argmax_card_vec"], f["argmax_ref_vec"] = ia + off, ib + off
     f["rank_ref_in_card"] = ranks_of(a, ib)
     f["rank_card_in_ref"] = ranks_of(b, ia)
-    print("ARGMAX(vector) card %d, reference %d -- %s" %
-          (ia, ib, "agree" if ia == ib else "DISAGREE"), file=out)
-    print("RANK  the reference's argmax is rank %d in the card's vector; the "
-          "card's argmax is rank %d in the reference's.  (Rank survives any "
-          "monotone rescaling, which is the card's one spare degree of "
-          "freedom.)" % (f["rank_ref_in_card"], f["rank_card_in_ref"]), file=out)
+    if subset is None:
+        f["argmax_vec_agree"] = int(ia == ib)
+        print("ARGMAX(vector) card %d, reference %d -- %s" %
+              (ia, ib, "agree" if ia == ib else "DISAGREE"), file=out)
+        print("RANK  the reference's argmax is rank %d in the card's vector; "
+              "the card's argmax is rank %d in the reference's.  (Rank "
+              "survives any monotone rescaling, which is the card's one spare "
+              "degree of freedom.)"
+              % (f["rank_ref_in_card"], f["rank_card_in_ref"]), file=out)
+    else:
+        # A SUBSET CANNOT REPORT A WHOLE-VECTOR ARGMAX, and the field is left
+        # None rather than filled with the local one: a caller reading
+        # `argmax_vec_agree` must get "not measured", not a number that
+        # happens to be about 7% of the vocabulary.
+        f["argmax_vec_agree"] = None
+        f["argmax_subset_agree"] = int(ia == ib)
+        print("ARGMAX(subset) card row %d, reference row %d -- %s.  This is "
+              "the maximum WITHIN rows [%d,%d) and says nothing about the "
+              "whole vector."
+              % (ia + off, ib + off, "agree" if ia == ib else "DISAGREE",
+                 off, off + n), file=out)
+        print("RANK(subset) reference's subset argmax is rank %d in the "
+              "card's subset; the card's is rank %d in the reference's.  "
+              "Ranks are WITHIN the subset."
+              % (f["rank_ref_in_card"], f["rank_card_in_ref"]), file=out)
+        if card.token is not None:
+            print("TOKEN RETRACTED for this run: the TOKEN line above is the "
+                  "producer's own claim about the whole row, and this file "
+                  "carries %.2f%% of it.  It is not corroborated here."
+                  % (100.0 * n / n_full), file=out)
+            f["token_agree"] = None
 
     for k in ks:
         ov = len(topk(a, k) & topk(b, k))
         f["topk_%d" % k] = ov
-        print("TOPK  k=%-3d overlap %d of %d" % (k, ov, min(k, n)), file=out)
+        print("TOPK%s k=%-3d overlap %d of %d"
+              % ("(subset)" if subset else "  ", k, ov, min(k, n)), file=out)
 
     # ----------------------------------------------------------- the scales
     bb = float(np.dot(b, b))
@@ -383,7 +475,11 @@ def compare(card, ref, ks=(1, 5, 20), want_windows=True, out=sys.stdout):
                  float(e[sl].mean())), file=out)
 
     # ----------------------------------------------------------- per window
-    wins = lmhead_windows(n) if want_windows else None
+    # THE TILING IS A PROPERTY OF THE VOCABULARY, NOT OF WHAT WAS CAPTURED.
+    # Passing `n` here for a subset would derive a DIFFERENT 15-window plan
+    # from the subset's length and then report shard numbers that correspond
+    # to no shard the card ever ran.
+    wins = lmhead_windows(n_full) if want_windows else None
     if wins is None:
         print("WINDOW UNAVAILABLE: the lm_head tiling could not be imported "
               "from tools/gen_lmhead_windows.py, so no per-shard section is "
@@ -394,7 +490,20 @@ def compare(card, ref, ks=(1, 5, 20), want_windows=True, out=sys.stdout):
               "weight set or shard exponent is a PER-WINDOW signal and is "
               "invisible in every aggregate above) --" % len(wins), file=out)
         worst = (None, -1.0)
+        nskip = 0
         for w, (r0, nr) in enumerate(wins):
+            if subset is not None:
+                s0, sn = subset
+                if r0 < s0 or r0 + nr > s0 + sn:
+                    # PARTIALLY COVERED WINDOWS ARE SKIPPED, NOT TRUNCATED.
+                    # A window statistic computed over the part of the window
+                    # that happens to be present is not that window's
+                    # statistic, and it would read exactly like one.
+                    print("      w%-2d rows %6d..%-6d NOT COVERED by the "
+                          "subset" % (w, r0, r0 + nr - 1), file=out)
+                    nskip += 1
+                    continue
+                r0 = r0 - s0
             aw, bw = a[r0:r0 + nr], b[r0:r0 + nr]
             bbw = float(np.dot(bw, bw))
             al = float(np.dot(aw, bw) / bbw) if bbw > 0 else float("nan")
@@ -402,13 +511,18 @@ def compare(card, ref, ks=(1, 5, 20), want_windows=True, out=sys.stdout):
             dw = aw / al - bw if np.isfinite(al) and al != 0 else aw - bw
             rr = float(np.sqrt((dw * dw).mean()) / rw) if rw > 0 else float("nan")
             la, lb = int(np.argmax(aw)), int(np.argmax(bw))
+            g0 = wins[w][0]
             print("      w%-2d rows %6d..%-6d alpha %.9g  rel_rms %.6g  local "
-                  "argmax %6d/%-6d %s" % (w, r0, r0 + nr - 1, al, rr, la, lb,
+                  "argmax %6d/%-6d %s" % (w, g0, g0 + nr - 1, al, rr, la, lb,
                                           "ok" if la == lb else "DIFFER"),
                   file=out)
             if rr > worst[1]:
                 worst = (w, rr)
-        f["windows"] = len(wins)
+        if nskip:
+            print("      %d of %d windows NOT COVERED; a window the subset "
+                  "does not fully contain is not reported at all."
+                  % (nskip, len(wins)), file=out)
+        f["windows"] = len(wins) - nskip
         f["window_worst"] = worst[0]
         f["window_worst_rel_rms"] = worst[1]
         print("      worst window w%s at rel_rms %.6g" % worst, file=out)
@@ -772,6 +886,119 @@ def selftest(tmpdir, out=sys.stdout):
     return 0 if nfail == 0 else 1
 
 
+# ------------------------------------------------- partial-vector teeth
+# KEPT SEPARATE FROM THE NINE-ROW TABLE ABOVE ON PURPOSE.  That table's rows
+# are quoted verbatim in docs/debugging/2026-09-20_the-card-cannot-publish-a-
+# logit-vector.md; adding rows to it would change a published result.  These
+# rows test one added capability and are scored on their own.
+def partial_selftest(tmpdir, out=sys.stdout):
+    import io
+    import struct
+    ref = _synth()
+    n_full = len(ref)
+    exp = 15
+    refp = os.path.join(tmpdir, "ref.r9bs")
+    with open(refp, "wb") as fp:
+        fp.write(MAGIC); fp.write(np.uint32(VERSION_S32).tobytes())
+        _write_rec(fp, LOGITS_NAME, 0, -1, 0, 0, [float(x) for x in ref])
+        _write_rec(fp, TOKEN_NAME, 0, -1, 2, 0, [int(np.argmax(ref))])
+
+    def card(path, r0, nr, rows_rec=True, claim=None, token=True):
+        mant = np.round(ref[r0:r0 + nr] * (2.0 ** exp)).astype(np.int64)
+        with open(path, "wb") as fp:
+            fp.write(MAGIC); fp.write(np.uint32(VERSION_S32).tobytes())
+            _write_rec(fp, LOGITS_NAME, 0, -1, 2, exp,
+                       [int(x) for x in mant])
+            if rows_rec:
+                _write_rec(fp, ROWS_NAME, 0, -1, 2, 0,
+                           list(claim if claim else (r0, nr)))
+            _write_rec(fp, EXP_NAME, 0, -1, 2, 0, [exp])
+            if token:
+                _write_rec(fp, TOKEN_NAME, 0, -1, 2, 0,
+                           [int(np.argmax(ref))])
+        return path
+
+    def run(cp, **kw):
+        buf = io.StringIO()
+        f, ok = compare(Side(cp, 0), Side(refp, 0), out=buf, **kw)
+        return f, ok, buf.getvalue()
+
+    wins = lmhead_windows(n_full)
+    w3 = wins[3]
+    rows = []
+
+    # 1. A LEGAL SUBSET: exactly windows 3..5.
+    s0 = w3[0]
+    sn = sum(w[1] for w in wins[3:6])
+    f, ok, txt = run(card(os.path.join(tmpdir, "p_ok.r9bs"), s0, sn))
+    rows.append(("subset_ok", ok,
+                 f.get("vector") == "partial"
+                 and f.get("argmax_vec_agree") is None
+                 and f.get("token_agree") is None
+                 and f.get("windows") == 3
+                 and "NOT COVERED" in txt,
+                 "partial; whole-vector argmax and TOKEN NOT MEASURED; "
+                 "3 of 15 windows reported"))
+
+    # 2. THE SAME BYTES WITHOUT THE COVERAGE RECORD.  This is the defect the
+    #    record exists to prevent: aligned at row 0 it would compare the
+    #    wrong rows and every number would look ordinary.
+    f, ok, txt = run(card(os.path.join(tmpdir, "p_norows.r9bs"), s0, sn,
+                          rows_rec=False))
+    rows.append(("subset_norows", ok,
+                 (not ok) and f.get("vector") == "LENGTH_MISMATCH",
+                 "refused: LENGTH_MISMATCH, naming LOGITS_ROWS"))
+
+    # 3. A COVERAGE CLAIM THAT DOES NOT MATCH ITS OWN PAYLOAD.
+    f, ok, txt = run(card(os.path.join(tmpdir, "p_badlen.r9bs"), s0, sn,
+                          claim=(s0, sn - 1)))
+    rows.append(("rows_payload", ok,
+                 (not ok) and f.get("vector") == "ROWS_PAYLOAD_MISMATCH",
+                 "refused: the claim and the payload disagree"))
+
+    # 4. A COVERAGE CLAIM THAT RUNS OFF THE END OF THE VOCABULARY.
+    f, ok, txt = run(card(os.path.join(tmpdir, "p_oob.r9bs"), s0, sn,
+                          claim=(n_full - sn + 1, sn)))
+    rows.append(("rows_oob", ok,
+                 (not ok) and f.get("vector") == "ROWS_OUT_OF_RANGE",
+                 "refused: the claimed rows leave the vocabulary"))
+
+    # 5. A WHOLE VECTOR THAT DECLARES FULL COVERAGE.  The control: adding the
+    #    record must not change a complete comparison into a subset one.
+    f, ok, txt = run(card(os.path.join(tmpdir, "p_full.r9bs"), 0, n_full))
+    rows.append(("full_with_rows", ok,
+                 ok and f.get("vector") == "partial"
+                 and f.get("windows") == 15,
+                 "accepted; all 15 windows covered"))
+
+    # ---- THE ATTRIBUTION CONTROL.  Each refusal above is claimed by ONE
+    # branch; disable that branch and the row must stop refusing.  Without
+    # this the three refusals are indistinguishable from one over-eager
+    # check that rejects anything unusual.
+    print("PARTIAL-VECTOR TEETH (TRACK SMPWIN, 2026-09-20)", file=out)
+    print("%-16s %-8s %s" % ("row", "verdict", "required"), file=out)
+    nfail = 0
+    for name, ok, good, why in rows:
+        print("%-16s %-8s %s" % (name, "ran" if ok else "REFUSED", why),
+              file=out)
+        if not good:
+            nfail += 1
+            print("    FAIL", file=out)
+    # control: with the coverage record IGNORED, does `subset_ok` still get a
+    # subset verdict?  It must not -- it must fall through to the ordinary
+    # length refusal, which is exactly what `subset_norows` measures.  The two
+    # rows are therefore each other's control and the table says so.
+    print("ATTRIBUTION: subset_ok and subset_norows are the same bytes with "
+          "and without %s." % ROWS_NAME, file=out)
+    print("             The only difference between 'compared, labelled "
+          "SUBSET' and 'refused' is that", file=out)
+    print("             record, so the coverage branch owns both rows and "
+          "nothing else does.", file=out)
+    print("PARTIAL SELFTEST %s: %d rows, %d fail"
+          % ("PASS" if nfail == 0 else "FAIL", len(rows), nfail), file=out)
+    return nfail
+
+
 # --------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -789,6 +1016,10 @@ def main():
                          "  There is no default: read the header on why a flat"
                          " threshold is meaningless without a baseline")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--partial-selftest", action="store_true",
+                    help="teeth for the PARTIAL-vector path only (TRACK "
+                         "SMPWIN); kept out of --selftest so the nine-row "
+                         "table quoted in docs/debugging does not move")
     ap.add_argument("--mutate", metavar="KIND")
     ap.add_argument("--in", dest="src")
     ap.add_argument("--out", dest="dst")
@@ -799,6 +1030,16 @@ def main():
         d = tempfile.mkdtemp(prefix="logitcmp.")
         try:
             return selftest(d)
+        finally:
+            for fn in os.listdir(d):
+                os.unlink(os.path.join(d, fn))
+            os.rmdir(d)
+
+    if a.partial_selftest:
+        import tempfile
+        d = tempfile.mkdtemp(prefix="logitcmp_partial.")
+        try:
+            return 1 if partial_selftest(d) else 0
         finally:
             for fn in os.listdir(d):
                 os.unlink(os.path.join(d, fn))
@@ -830,8 +1071,15 @@ def main():
         print("VERDICT NOT MEASURED: %s.  This is not a pass." % f["vector"])
         return 2
     bad = []
-    if a.require_argmax and not f.get("argmax_vec_agree"):
-        bad.append("argmax disagrees")
+    if a.require_argmax:
+        if f.get("argmax_vec_agree") is None:
+            # A GATE OVER A QUANTITY THAT WAS NOT MEASURED MUST FAIL AND SAY
+            # SO.  Reporting "argmax disagrees" for a partial vector would
+            # name a disagreement nobody observed.
+            bad.append("--require-argmax over a PARTIAL vector: the "
+                       "whole-vector argmax was NOT MEASURED")
+        elif not f["argmax_vec_agree"]:
+            bad.append("argmax disagrees")
     if (a.max_rel_rms_scaled is not None
             and f.get("scaled_rel_rms", 0) > a.max_rel_rms_scaled):
         bad.append("scaled rel_rms %.6g > %.6g"
