@@ -13,8 +13,9 @@ the answer only has to be classified, not argued with.
 
 ### 2026-09-20 TRACK PREFILL: batching A across prompt positions is a COSTED NO -- 1.100x, capped at K=2, and K=2 needs 1,536 DSPs against 793 free
 
-- **Scoping only. No RTL changed, no hardware, no Vivado.** Peak RSS under
-  120 MB. Write-up: `docs/2026-09-20_prefill-batching-scope.md`.
+- **Scoping only. No RTL changed, no hardware, no Vivado.** Peak RSS
+  **10,944 KiB MEASURED** (`/usr/bin/time -v`, the manifest parse; everything
+  else was awk/grep). Write-up: `docs/2026-09-20_prefill-batching-scope.md`.
 - **THE CRUX, settled from the RTL.** The array is exactly one weight word
   wide, and it is an identity, not a ratio: `NPORTS_W * AXI_DW = 24 * 256 =
   6,144 = ROWS_IF * BLK * 4 = 48 * 32 * 4`, with the scale side matching at

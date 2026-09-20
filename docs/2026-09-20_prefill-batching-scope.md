@@ -2,7 +2,8 @@
 
 TRACK PREFILL, 2026-09-20. Workstation, MAIN checkout, branch `fpga`.
 **No hardware touched. No Vivado run. No RTL changed.** Peak RSS of anything
-this track ran: under 120 MB (three `python3` scripts and `awk`).
+this track ran: **10,944 KiB MEASURED** (`/usr/bin/time -v` on the heaviest
+step, the manifest parse); everything else was `awk`, `grep` and `sed`.
 
 ---
 
