@@ -118,6 +118,10 @@ architecture rtl of llama_engine_axi is
       x"017A0105019701930001";
   signal prompt_reg : std_logic_vector(MAXPOS*16-1 downto 0) := DEF_PROMPT;
   signal prompt_len_reg : integer range 1 to MAXPOS := 5;
+  -- engine_shared's `prompt_len` is an unconstrained integer; GHDL 6.0.0
+  -- refuses the direct association with the constrained register above
+  -- (2026-09-19), so this copy is what the port sees.  A wire.
+  signal prompt_len_i   : integer := 5;
 
   -- one token out of the packed prompt register (ids are unsigned 0..VOCAB-1)
   impure function prompt_word(i : integer) return std_logic_vector is
@@ -184,7 +188,7 @@ begin
              token_out => eng_token, pos_out => eng_pos,
              token_valid => eng_tvalid, run_done => eng_rundone,
              dbg_pos => dbg_pos_reg,
-             prompt_mant => prompt_reg, prompt_len => prompt_len_reg,
+             prompt_mant => prompt_reg, prompt_len => prompt_len_i,
              dbg_emb_nz => e_emb_nz, dbg_emb_e => e_emb_e, dbg_emb_m => e_emb_m,
              dbg_l0_nz  => e_l0_nz,  dbg_l0_e  => e_l0_e,  dbg_l0_m  => e_l0_m,
              dbg_l1_nz  => e_l1_nz,  dbg_l1_e  => e_l1_e,  dbg_l1_m  => e_l1_m,
@@ -233,6 +237,8 @@ begin
              dbg_vc_res1  => e_vc_res1,  dbg_vc_xm    => e_vc_xm,
              dbg_vc_rmsx  => e_vc_rmsx,  dbg_vc_rmso  => e_vc_rmso,
              dbg_vc_w1    => e_vc_w1,    dbg_vc_w3    => e_vc_w3);
+  prompt_len_i <= prompt_len_reg;
+
 
   -- AXI write channel + CTRL decode.
   process(s_axi_aclk)

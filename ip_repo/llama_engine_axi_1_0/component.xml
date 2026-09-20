@@ -244,7 +244,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>21b19a24</spirit:value>
+            <spirit:value>1cc4253b</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -260,7 +260,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>21b19a24</spirit:value>
+            <spirit:value>1cc4253b</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -789,7 +789,7 @@
       <spirit:file>
         <spirit:name>src/llama_engine_axi.vhd</spirit:name>
         <spirit:userFileType>vhdlSource-2008</spirit:userFileType>
-        <spirit:userFileType>CHECKSUM_752134c8</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_cb2feefc</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -973,7 +973,6 @@
       <xilinx:supportedFamilies>
         <xilinx:family xilinx:lifeCycle="Production">virtex7</xilinx:family>
         <xilinx:family xilinx:lifeCycle="Production">qvirtex7</xilinx:family>
-        <xilinx:family xilinx:lifeCycle="Production">versal</xilinx:family>
         <xilinx:family xilinx:lifeCycle="Production">kintex7</xilinx:family>
         <xilinx:family xilinx:lifeCycle="Production">kintex7l</xilinx:family>
         <xilinx:family xilinx:lifeCycle="Production">qkintex7</xilinx:family>
@@ -1004,13 +1003,13 @@
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:vendorDisplayName>user</xilinx:vendorDisplayName>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-30T03:40:33Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-09-20T22:27:53Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2023.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="64199c7c"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="a13b2e93"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="6a47e42b"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="ab44052a"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="5371ece0"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="f69a78e9"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="27131edc"/>
