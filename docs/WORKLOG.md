@@ -11,6 +11,70 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-20 TRACK PREFILL: batching A across prompt positions is a COSTED NO -- 1.100x, capped at K=2, and K=2 needs 1,536 DSPs against 793 free
+
+- **Scoping only. No RTL changed, no hardware, no Vivado.** Peak RSS under
+  120 MB. Write-up: `docs/2026-09-20_prefill-batching-scope.md`.
+- **THE CRUX, settled from the RTL.** The array is exactly one weight word
+  wide, and it is an identity, not a ratio: `NPORTS_W * AXI_DW = 24 * 256 =
+  6,144 = ROWS_IF * BLK * 4 = 48 * 32 * 4`, with the scale side matching at
+  `3 * 256 = 48 * 16` (`hw/fk33/gen_fk33_engine.py:84-98`, `:225-228`;
+  `rtl/matvec_core.vhd:983-1008`). **So the structural floor is 1.000 cycles
+  per word and the striped card MEASURES 1.5298: the multiplier array is busy
+  65.4% of core cycles.** Per word it does `BLK*ROWS_IF = 1,536` products;
+  K positions need K passes, so per-position cycles per word is
+  `max(K,1.53)/K` -- **1.000 at K=2 and at every K after it. The ceiling is
+  1.53x of A's engine time and K=4, 8, 16 are worth exactly what K=2 is.**
+- **AND "BEATS" HAS NEVER MEANT AXI BEATS.** `rtl/matvec_int4_desc_axi.vhd:
+  68-70` says so outright. Re-derived independently from the manifest's own
+  shapes over the 249 tensors the profile touches: **5,184,256 weight words,
+  0.0025% from the ACLK doc's 5,184,384**, = 3.98 GB of weight traffic a
+  token. Read as AXI beats it is 166 MB, wrong by 24x (= `NPORTS_W`), and the
+  engine would have looked memory-starved.
+- **THE AMDAHL BOUND, and it is what decides it.** Batchable = A engine-side
+  only = 7,931,072 of 30,115,246 = **26.3%**. B (52.6%) is recurrent
+  (`gdn_recur_pipe.vhd:506`, `gdn_recur.vhd:595-600,632`,
+  `gdn_block.vhd:889-894`) and fetches NO weight from HBM -- its projections
+  are A-job outputs (`llama_top.vhd:5382,5399,5417,5438`). C writes one
+  position (`attn_block.vhd:1433,1454`), sweeps the whole context
+  (`:1665-1673`) and touches only the KV cache. The three VEC ops are
+  element-wise with an on-chip ROM gain (`llama_top.vhd:466-467`). A's own
+  card-side 2.96 M is per-position too. **Result: 1.100x today, 1.144x after
+  BENABLE, and the hard ceiling with A's engine time at ZERO is 1.358x
+  (1.570x after BENABLE).** 500-token prefill 200.8 s -> 182.5 s.
+- **IT DOES NOT FIT ANYWAY.** MEASURED, the shipped build's own
+  `bd_wrapper_utilization_placed.rpt`: **DSP 2,087 of 2,880 (793 free)** and
+  **CLB 54,854 of 54,960 = 99.81% (106 free)**. K=2 wants +1,536 DSP and
+  about 21,000 LUT of fabric adder tree. **The "109% LUT" figure is the
+  2026-09-16 build and is superseded; the free-LUT count (76,585) is not
+  headroom, the 106 free CLBs are.**
+- **THE SHARPEST LINE IN THE REPORT.** Full batching and simply closing A's
+  own accept-port idle save the **identical 2,746,816 cycles**, because both
+  are capped by the same 1-word-per-cycle floor. One costs 1,536 DSPs that do
+  not exist and helps prefill only; the other costs none and helps generation
+  too. **Batching is the cheaper fix with a DSP bill attached.**
+- **Ranked alternatives** (cycles/token): overlap positions t/t+1 (A||B)
+  14.26 M, prefill-only, 0 DSP, **1.899x** (1.531x after BENABLE), LUT cost
+  NOT estimated; BENABLE 8.28 M, both, landed; A clock split 3.98 M, both,
+  unbuilt; close A's idle 2.75 M, both, 0 DSP; batching 2.75 M, prefill only,
+  impossible. **Overlap and batching are equally prefill-only**, which is the
+  argument for the other three.
+- **Cross-reference TRACK DSIDE:** A's 1.25 M drain cycles through the
+  one-element region port are inside the 2,963,566 card-side figure this
+  track treats as non-amortisable, so DSIDE's fix and this verdict do not
+  conflict -- DSIDE shrinks the serial part, which RAISES batching's ceiling
+  and lowers its absolute value.
+- **Open, not determined:** the slope of C against position (bandwidth floor
+  272 cyc/position, FSM cost uncounted, under 2% at 500 tokens either way,
+  and **no C_JOB has ever been measured at a position other than 0**); where
+  A's 8,832 cycles per job of overhead go (the card's own `CYCLES`/`BEATS`
+  counters can be read per job and nobody has); whether the overlap lever
+  fits in 106 CLBs.
+- **NEXT, and it is the operator's call:** nothing here is a dispatchable
+  change. If prefill is the goal, scope the overlap lever's LUT cost; if
+  throughput generally is the goal, rows 2-4 all beat it and two of them are
+  already written.
+
 ### 2026-09-20 TRACK DSIDE: 5.15 M cycles a token go through a ONE-element region-file port while an EIGHT-element port sits beside it with one client; A's drain is 1.25 M of them and the fix is llama_top-only
 
 - **The on-card control needs no new measurement.** Same length N = 4,096,
