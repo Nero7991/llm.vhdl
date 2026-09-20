@@ -936,3 +936,22 @@ Label claims **MEASURED** (a tool ran, name it), **DERIVED** (arithmetic shown),
 
 No emojis. No em-dashes. Never add a Co-Authored-By line to a commit.
 Use the session scratchpad, not `/tmp`.
+
+**AND THE SESSION SCRATCHPAD IS ITSELF UNDER `/tmp`, SO NOTHING EXPENSIVE MAY
+LIVE THERE.** MEASURED 2026-09-20: a drive cleanup removed
+`/tmp/claude-1000/.../scratchpad` while a `FK33_CARD=1` build was running out
+of it. The unit stayed `active`, `/proc/PID/cwd` read
+`.../build10/root (deleted)`, and every byte Vivado had written since launch
+was unlinked. Lost with it: build 9's synthesis DCP, which was the
+re-implementation path for a routing failure, and `tok0.r9bs`, the 9B token-0
+reference capture that `probe_ref` and `tools/ref9b/check_token.py` compare
+against. Oren's instruction, same day: *"Don't use /tmp/ for things since that
+can get delete when cleaning."* The root filesystem on this box runs near
+full, which is exactly why it gets cleaned, so this is not a one-off.
+
+**FPGA build roots go under `/mnt/storage/fk33_builds/<tag>/`** (separate
+device, 916 GB) passed as `BUILD_ROOT`. Put the swap guard and the waiter
+there too, and have the guard watch free space on the device the build is
+actually on. **Copy a bitstream and its logs into the repo as soon as the
+sentinel appears**, not at the end of the session: every bitstream survived
+this incident only because it had already been committed.
