@@ -96,6 +96,24 @@ the answer only has to be classified, not argued with.
   stale: C is real and measured right). **Adapter track dispatched 16:40
   (worktree): `swiglu_mem` + `gsr`/`SWG_REAL` + `vec_oracle.swg_real` +
   `seamgate_swg` + OOC on the BC-250.** Fourth build after it lands.
+- **18:00: THE SWIGLU ADAPTER LANDED (`6ebc2d5`, merged `8dbe160`) AND
+  THE FOURTH BUILD IS RUNNING** (unit `swg-build`, `$SD/build8/`, same
+  caps and guards, HEAD `8dbe160`, `SWG_REAL=true` in the card generics,
+  51 card sources). MEASURED by the track: `swiglu_mem` bit-identical to
+  the shipping `swiglu -> vec_mem -> bfp_pack` chain at N=12288 (184,336
+  checks), 9 of 12 mutants bite (non-biting by name: `nodrain`, `nosat`,
+  `doneearly`), `vec_oracle.swg_real` vs the double-precision R_H-3 corr
+  0.999996 (Q12 grid is the limiting term), `seamgate_swg` 64 seams x 3
+  tokens bit-exact with both controls failing at R_H-0; gate groups all
+  green on both boxes; OOC at N=12288 +2,493 LUT / 19.5 BRAM / 16 DSP,
+  +4.664 ns at 13.333 ns. The banner's "ATTENTION IS A STUB" line was
+  stale and is fixed. `regress.sh`'s rc grep gained `-a` (a NUL-holed log
+  had hidden an rc line).
+- **The DC-DC prompt ran end to end on the seqrst+bfnorm card** (23-token
+  prefill + 16 generated, 39 positions through 32 blocks, no faults,
+  ~0.8 s/token): text is nonsense, first divergence at token 0, as
+  expected with every FFN at `g*u`. Same command is the test after the
+  swg build.
 - **Still open**: the first-token whole-token argmax 0 / logit exp -25.
   The seqrst bitstream makes B-reaching probes free again (no reload per
   probe), which is what the bisection needs.
