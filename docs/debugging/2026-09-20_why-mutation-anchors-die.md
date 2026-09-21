@@ -423,6 +423,65 @@ row and not merely to fire.
 
 ---
 
+## 6b. A LATENT GATE FAILURE FOUND ON THE WAY OUT: the manifest names a file that was never committed
+
+**MEASURED 2026-09-20, after this track's work was committed.**
+`sim/check_mutation_harness.py` -- the checker TRACK MUTAUDIT built and
+proposed to wire as the `sim:mutaudit` gate row -- **passes on this workstation
+and FAILS on a fresh clone of the very tree it was committed in.**
+
+```
+$ git clone --no-hardlinks <repo> freshclone && cd freshclone && git checkout da9a1aa
+$ ls sim/mutate_*.sh | wc -l
+61
+$ python3 sim/check_mutation_harness.py
+FAIL R1: the manifest names sim/mutate_swg_wide.sh, which does not exist.
+checked 61 harnesses; 1 finding(s)
+```
+
+Against 62 harnesses and 0 findings in the working checkout.
+
+**The cause is one line of the checker, and it is this track's own theme in a
+new place.**  R1 builds its list of harnesses from a DISK GLOB, not from git:
+
+```python
+here = sorted(f for f in os.listdir(os.path.join(REPO, "sim"))
+              if f.startswith("mutate_") and f.endswith(".sh"))
+```
+
+So the manifest is reconciled against whatever happens to be sitting in `sim/`,
+including UNTRACKED files.  `sim/mutate_swg_wide.sh` is **TRACK GSRWIDE's**
+(its own header, line 6: *"TRACK GSRWIDE, lever L2"*), it was on disk
+uncommitted when MUTAUDIT swept the tree, MUTAUDIT audited it and recorded it
+in `sim/mutation_harness_audit.tsv` with a MEASURED verdict -- and the manifest
+was committed while the file it names was not.  **A committed file now
+references an uncommitted one.**  It is the ONLY such entry: a check of all 62
+manifest rows against `git ls-files` finds exactly one untracked.
+
+**Nobody did anything wrong at the time and that is the point.**  MUTAUDIT's
+sweep was correct, its audit of that harness was MEASURED and real, and the
+manifest row is accurate about the file's behaviour.  The defect is that the
+CHECKER cannot tell "a harness exists" from "a harness exists in this working
+directory", so the completeness rule it enforces is relative to the machine it
+runs on.  That is the same failure shape as every other finding in this
+document: **a check that passes for an environment-specific reason.**
+
+**NOT FIXED HERE, DELIBERATELY.**  The obvious fix -- commit
+`sim/mutate_swg_wide.sh` -- would capture a live track's in-flight file under
+this track's message, which is the exact cross-track hazard `CLAUDE.md` records
+and which has already caught four tracks in one day.  The file is GSRWIDE's and
+GSRWIDE should commit it.  The second fix -- making R1 read `git ls-files`
+rather than `os.listdir` -- is a change to MUTAUDIT's checker, is not obviously
+right (a harness legitimately under development is untracked and SHOULD still
+be audited), and belongs with whoever wires the gate row.
+
+**What this does mean, concretely: `sim:mutaudit` MUST NOT be wired as a gate
+row until this is resolved, or it goes red on its first CI run** -- and it
+would go red naming a file nobody had touched, which is the least debuggable
+possible first failure for a new gate.
+
+---
+
 ## 7. Open, not determined
 
 - **The codebook has NO mutation coverage at all.**  MEASURED 2026-09-20:
@@ -446,6 +505,14 @@ row and not merely to fire.
   filtered out by `ONLY` and judged by a different bench
   (`sim/tb_rmswire_loadrace.vhd`), so the `w_active` half of that harness is
   untouched and unverified here in either direction.
+- **`sim/mutate_swg_wide.sh` is untracked and the manifest names it** (section
+  6b).  Owner is TRACK GSRWIDE.  Until it is committed, or R1 is changed,
+  `sim:mutaudit` fails on any fresh clone.  Deliberately NOT fixed here: the
+  file belongs to a live track.
+- **Whether R1 SHOULD read git rather than the disk is not settled.**  A
+  harness under active development is untracked and arguably still needs
+  auditing, so switching to `git ls-files` trades one blind spot for another.
+  Stated as a question for whoever wires the gate, not as a recommendation.
 - **R7/VR7 and R7b/VR7b carry a PREDICTION that was not tested here.**  Their
   own legends, written by TRACK C1, say R7 survives on the fixed design
   (`cmp` of the clean and R7 captures is IDENTICAL at NTOK 3, 5 and 8) and
