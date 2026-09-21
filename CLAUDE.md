@@ -499,6 +499,33 @@ phys_opt 0.4 ns BETTER. **Nothing before `route_design` orders two runs
 correctly.** This is the `STATS.WNS`-from-the-wrong-stage lesson, except the
 intermediate number had the opposite SIGN.
 
+**AND THE PLACED STAGE HAS NOW INVERTED A ONE-VARIABLE SAME-TREE PAIR, AT 3.5x
+THE LARGEST OVER-PROMISE RECORDED ABOVE.** MEASURED 2026-09-21 by TRACK
+ATTNDRAW on `attn_block` at the card's 9B generics, two arms differing only in
+`SWEEP_PIPE`/`SCORE_EARLY`, same tree `3e344a2`, same script, both clean routes
+with 0 failing endpoints:
+
+| | placed WNS | routed WNS | over-promise |
+|---|---|---|---|
+| `coff` (both levers off) | 4.558 | **2.356** | **2.202 ns** |
+| `con` (both on) | 3.774 | **2.735** | 1.039 ns |
+
+**Placed says `coff` is better by 0.784 ns. Routed says `con` is better by
+0.379 ns.** The sign of the comparison reverses. Every earlier entry here is a
+`phys_opt` figure or a cross-run comparison; this is the cleanest possible
+setting -- one variable, one tree, one script, one harness -- and the placed
+number still ordered the two arms backwards. **So "a placed WNS is no better and
+can be worse" understates it: a placed WNS cannot be used to RANK two arms even
+when everything else about them is identical.**
+
+The corollary ATTNDRAW drew, and it is the reusable half: **it reported the
+0.379 ns routed delta as NOT A RESULT**, pre-registered as such, because it is
+below the harness's noise floor, has the favourable sign, and its worst paths
+are in different modules. A cross-tree spread of **0.745 ns** on the same arm
+puts the real floor at roughly twice the 0.4 ns previously recorded, and
+settling that needs REPEATS OF ONE ARM, which nobody has run. **Quote a routed
+WNS as a bound, not as a comparison, until the floor is measured.**
+
 **AND A SYNTHESIS-ONLY HARNESS IS NOT A TIMING RESULT AT ALL.** MEASURED
 2026-09-05: `grep -cE 'opt_design|place_design|route_design' sim/ooc_cattnadapt.tcl`
 returns **0**, and B's harness is the same. Both movers' headline figures --
