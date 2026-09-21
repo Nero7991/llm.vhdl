@@ -660,6 +660,45 @@ IDENTICAL staleness in `compose4_top.vhd` had no gate, was wrong since
 it -- luck, not a check. **`fk33_engine.vhd` is still ungated**, because its
 generator writes unconditionally and even `--help` rewrites the repo file.
 
+**AND LINE 2 DOES NOT SAY *WITH WHAT*. A GENERATOR THAT READS THE ENVIRONMENT
+OR AN ARGUMENT MAKES "REGENERATE AND DIFF" THE ACTION THAT DESTROYS THE
+EVIDENCE.** MEASURED 2026-09-20: `hw/fk33/build_fk33_pcieep.tcl` has a correct
+banner and was built with `FK33_CARD=1` plus `FK33_CB_STYLE=distributed`;
+regenerating it with the default environment deleted **496 lines, the whole
+lever-C block**, in a diff that reads as ordinary drift. Nine environment
+variables decide what that generator emits and the file records none of them.
+
+**Before regenerating any committed generated file, read its `GENSTAMP` block
+and regenerate with exactly those values.** If it has no stamp, do NOT
+regenerate to find out what it is: recover the inputs first (`git log` on the
+file, and the configuration visible in its own text), confirm by byte-identity,
+and add the stamp. **A diff you cannot attribute to a named input is not a
+staleness result.**
+
+**When you write or change a generator whose output is COMMITTED, emit
+`tools/genstamp.py`'s block into that output.** Values and the reproduce
+command only: **no timestamp, no user, no hostname, no working directory**, or
+every `--check` staleness row (`sim:cardtop`, `sim:gdnstale`, `sim:c4stale`,
+`sim:fk33card`, `sim:ipsync`) goes red on every machine.
+`rtl/ooc_cattnadapt_top.vhd` is the counter-example already in the tree: its
+regenerate line embeds a `/tmp/claude-.../scratchpad` path that is neither
+reproducible nor still present.
+
+**And the stamp must not itself depend on what it says it does not depend on.**
+MEASURED the same day: one shared reproduce command built from the process
+environment made `fk33_bc_grant.vhd`, stamped `inputs: NONE`, grow by exactly
+19 bytes under `FK33_C_KV_BLOCK=16` -- the width of the prefix. Derive the
+command from the same list the rows are printed from.
+
+**A GENERATOR THAT REFUSES ITS ARGUMENT LEAVES THE FILE UNTOUCHED, AND AN
+UNTOUCHED FILE COMPARES EQUAL TO ITSELF.** `gen_hbmbw.py 31 300` was reported
+as a byte-identical reproduction, twice by `sha256sum`, while the generator had
+exited on a range check with its output sent to `/dev/null`. A `SyntaxError`
+did the same thing an hour later. **Read the exit status and let the generator
+print, and prefer a reproduction test that must CHANGE something over one that
+must change nothing.** This is the "guards that pass for the wrong reason"
+class arriving through the shell rather than through the check.
+
 **BEFORE CONNECTING A SIGNAL, READ THE DRIVER'S STATED CONTRACT FOR IT, NOT THE
 SHAPE YOU EXPECT -- AND WHERE THEY DIFFER, TAKE THE WEAKER ONE**, because that
 is the one the other end is allowed to produce. MEASURED 2026-09-03:
