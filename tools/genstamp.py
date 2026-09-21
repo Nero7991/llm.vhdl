@@ -111,6 +111,46 @@ def insert_after(text, marker, block):
     raise ValueError("genstamp: marker %r not found in generated text" % marker)
 
 
+def append_end(text, block, comment):
+    """Append `block` at the END of `text`, after a blank separator line.
+
+    WHY THIS EXISTS, AND IT IS A MEASURED COST RATHER THAN A PREFERENCE.
+    MEASURED 2026-09-20 (TRACK TCLOWNER): putting the stamp at the TOP of
+    `hw/fk33/fk33_pcieep.xdc` inserted 19 lines there in commit `08cc17d` and
+    moved ALL ELEVEN human line-number citations into that file by exactly 19.
+    Every one of them was correct at `08cc17d^`.  Nothing else changed in the
+    file in that commit, so the attribution is clean.
+
+    The one-off breakage is not the durable part of the argument.  The stamp's
+    HEIGHT is the number of inputs plus five, so it changes whenever an input
+    is added: `gen_pcieep.py` stamps nine environment variables today, and a
+    tenth would shift every citation into its output by one, again, silently.
+    **A top stamp re-breaks the citations on every change to the input list; an
+    end stamp never moves the body at all.**  That is why this is the right
+    placement for any generated file people cite into, and it is why the fixed
+    banner stays at the top while only the variable-height block moves.
+
+    ONLY SAFE FOR A COMMENT-ONLY BLOCK, AND THAT IS CHECKED HERE RATHER THAN
+    ASSUMED.  A constraints file is order-dependent -- a later `set_property`
+    overrides an earlier one -- so moving real directives to the end would
+    change the design, not just the layout.  Every line `stamp()` emits begins
+    with the comment marker, which makes the block inert at any position; this
+    function REFUSES a block for which that is not true rather than trusting
+    the caller, because the failure it would cause is a silent constraint
+    reordering that no bench can see.
+    """
+    for line in block.splitlines():
+        if line.strip() and not line.lstrip().startswith(comment):
+            raise ValueError(
+                "genstamp.append_end: refusing to append a block containing a "
+                "non-comment line (%r) with marker %r -- at the end of an "
+                "order-dependent file that would change its meaning, not its "
+                "formatting" % (line, comment))
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + "\n" + block
+
+
 # MEASUREMENT TRAP HIT WHILE BUILDING THIS, recorded because it produced a
 # WRONG RESULT THAT LOOKED RIGHT.  Recovering `build_fk33_hbmbw.tcl`'s
 # arguments was done by regenerating under candidate values and diffing.  The

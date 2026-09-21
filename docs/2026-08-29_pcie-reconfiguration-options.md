@@ -331,7 +331,7 @@ constraint tweak.
 MEASURED, from the diff across modes:
 
 - **Tandem PROM** adds `CONFIG_MODE SPIx4` (which
-  `fk33_pcieep.xdc:125` already sets) and `HD.OVERRIDE_PERSIST TRUE`, and emits
+  `fk33_pcieep.xdc:130` (`CONFIG_MODE SPIx4`) already sets) and `HD.OVERRIDE_PERSIST TRUE`, and emits
   a **Combined** bitstream: one file, both stages, in flash, loaded in one pass
   with the endpoint brought up between them. `HD.OVERRIDE_PERSIST TRUE` means
   the SPI configuration pins remain owned by the configuration engine while
@@ -628,7 +628,7 @@ way to reload everything.
 **3a, Tandem PROM.** Right if and only if the cold-boot measurement shows the
 budget does not close. It is the smallest fix for that specific problem, it
 needs no host software, and its `CONFIG_MODE SPIx4` requirement is already
-satisfied by `fk33_pcieep.xdc:125`. Requires solving bank 65 for the LEDs and
+satisfied by `fk33_pcieep.xdc:130` (`CONFIG_MODE SPIx4`). Requires solving bank 65 for the LEDs and
 I2C, and requires the design to route with 7.31% fewer CLBs.
 
 **3b, Tandem PCIe.** Right if 3a's conditions hold *and* you want to change the

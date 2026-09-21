@@ -17,6 +17,16 @@
 #     env  FK33_SYNTH_JOBS    = (unset)
 #     env  FK33_SYNTH_THREADS = (unset)
 #
+# NOTHING BUILDS FROM THIS COMMITTED COPY.  hw/fk33/pcieep_build.sh:89 runs
+# gen_pcieep.py unconditionally before every build and line 130 copies the
+# freshly generated result into BUILD_ROOT, which is the file Vivado actually
+# sources -- so these committed bytes are read by humans and by no tool.
+# Read it as the flow's reference text, not as a record of what was built:
+# what was built is the generator plus THAT build's environment, and the
+# artefact that answers that question is the build's own PROVENANCE.txt.
+# (The sibling hw/fk33/fk33_pcieep.xdc is different -- Vivado reads THAT one
+# in place from the repo, so its committed bytes do reach the tool.)
+#
 # PCIe Gen3 x4 XDMA endpoint for the FK33.  The first bitstream in this project
 # with a PCIe endpoint at all.
 #

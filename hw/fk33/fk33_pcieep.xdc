@@ -1,22 +1,8 @@
 # GENERATED from hw/fk33/fk33_i2cprobe.xdc by hw/fk33/gen_pcieep.py.
 # The probe build's pin and clock constraints, with the x4 lane, the
 # sysref and the debug-hub edits applied -- do not hand-edit.
-# GENSTAMP -- the out-of-band inputs that produced THIS file, and
-# the only record of them.  This generator's output DEPENDS on the
-# values below: regenerating with different ones changes the
-# CONFIGURATION, not the formatting, and the diff looks like
-# ordinary drift.  Reproduce this exact file with
-#     FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py
-# inputs ((unset) means the generator's own default was taken):
-#     env  FK33_CARD          = 1
-#     env  FK33_CB_STYLE      = distributed
-#     env  FK33_ENG           = (unset)
-#     env  FK33_ENG_CORE_MHZ  = 75
-#     env  FK33_ENG_FAST_MHZ  = (unset)
-#     env  FK33_ENG_SPLIT_CLK = (unset)
-#     env  FK33_FLATTEN       = (unset)
-#     env  FK33_SYNTH_JOBS    = (unset)
-#     env  FK33_SYNTH_THREADS = (unset)
+# The GENSTAMP naming the environment that produced it is at the END
+# of this file, so that adding an input cannot renumber these lines.
 # SQRL FK33 example project contraints
 
 ########### PCIe ##################################
@@ -275,3 +261,20 @@ set_clock_groups -asynchronous \
 # there so a flash-booted FPGA is configured inside the ~100 ms PCIe gives it
 # after PERST# deasserts.  They are irrelevant while configuring over JTAG.
 
+
+# GENSTAMP -- the out-of-band inputs that produced THIS file, and
+# the only record of them.  This generator's output DEPENDS on the
+# values below: regenerating with different ones changes the
+# CONFIGURATION, not the formatting, and the diff looks like
+# ordinary drift.  Reproduce this exact file with
+#     FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py
+# inputs ((unset) means the generator's own default was taken):
+#     env  FK33_CARD          = 1
+#     env  FK33_CB_STYLE      = distributed
+#     env  FK33_ENG           = (unset)
+#     env  FK33_ENG_CORE_MHZ  = 75
+#     env  FK33_ENG_FAST_MHZ  = (unset)
+#     env  FK33_ENG_SPLIT_CLK = (unset)
+#     env  FK33_FLATTEN       = (unset)
+#     env  FK33_SYNTH_JOBS    = (unset)
+#     env  FK33_SYNTH_THREADS = (unset)

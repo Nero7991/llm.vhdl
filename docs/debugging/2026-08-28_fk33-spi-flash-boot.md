@@ -273,7 +273,7 @@ requires, which is common but is not something to rely on silently.
 - **MT25QU256:** it is a **133 MHz** part in STR mode. The 1.8 V `MT25QU`
   variant, not the 3 V `MT25QL` which is the 166 MHz one.
 
-So the comment in `hw/fk33/fk33_pcieep.xdc:122` --
+So the comment in `hw/fk33/fk33_pcieep.xdc:126` --
 
 ```tcl
 # Should be able to push to 140 (flash part accepts 166; 15% tolerance on internal osc), so 127 really
@@ -295,7 +295,7 @@ at the moment they matter.
 
 ### 4.8 `EXTMASTERCCLK_EN`: relevant, but not the lever you want
 
-`BITSTREAM.CONFIG.EXTMASTERCCLK_EN` (commented out at `fk33_pcieep.xdc:123`)
+`BITSTREAM.CONFIG.EXTMASTERCCLK_EN` (commented out at `fk33_pcieep.xdc:128`)
 switches CCLK from the internal oscillator to a clock on the dedicated EMCCLK
 pin once the bitstream header has been read. On this package that pin is:
 

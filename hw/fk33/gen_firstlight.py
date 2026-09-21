@@ -16,7 +16,22 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                 "tools")))
+import upstream_pin
+
 SRC = os.path.expanduser("~/GitHub/SQRL_FK33/projects/fk33_example.tcl")
+
+# THE PIN.  See tools/upstream_pin.py for why an abort is the right response.
+# The substitution guards below cover the six lines this script REWRITES; this
+# covers the other four hundred, which it copies.  MEASURED 2026-09-20 (TRACK
+# UPPIN): mutating one HBM parameter upstream -- CONFIG.USER_HBM_STACK {2} ->
+# {1}, touching no anchor -- gave rc=0, no warning, and a changed build script.
+# Control, same generator against the real upstream: difflines=0.
+SRC_SHA256 = "556343e3514db2f6c173bae714b53a834d379e17ddc661f6d855df661d7a89aa"
+SRC_UPSTREAM = ("SQRL_FK33 branch Vivado_2022_2, commit 4242680 "
+                "'Update fk33_example.tcl' 2022-11-07, blob 157ea2dd")
 DST = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                    "build_fk33_firstlight.tcl")
 PART = "xcvu33p-fsvh2104-2L-e"
@@ -151,8 +166,7 @@ if {[llength $bit] == 1} {
 puts "FK33_BUILD_DONE"
 '''
 
-if not os.path.exists(SRC):
-    sys.exit(f"upstream script not found: {SRC}")
+upstream_pin.require(SRC, SRC_SHA256, "gen_firstlight.py", SRC_UPSTREAM)
 s = open(SRC).read()
 for old, new in SUBS:
     if old not in s:

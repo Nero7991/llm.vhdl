@@ -397,7 +397,7 @@ attribution of +1,640 LUTs to it was NOT measured**, because doing so needs a
 control synthesis at `928ad9f` and that is a second full build.
 
 **The bitstream size difference is not a divergence at all.**
-`fk33_pcieep.xdc:127` sets `BITSTREAM.GENERAL.COMPRESS TRUE`, so the file length
+`fk33_pcieep.xdc:132` sets `BITSTREAM.GENERAL.COMPRESS TRUE`, so the file length
 is content-dependent. DERIVED from the header parse the build script already
 does: 20,654,112 data bytes here against ~22,568,272 for PBLOCK's, i.e.
 **324.0 ms** of configuration time at the nominal 127.5 MHz against ~354 ms.
@@ -682,8 +682,8 @@ against the artefacts:
 - **All of PBLOCK's headline numbers are correct as quoted**: 282,090 of 282,090
   routed with 0 errors, WNS +0.045, TNS 0.000, 0 failing of 576,171, WHS +0.010,
   THS 0.000, `report_drc` 0 errors and 0 critical warnings, and the
-  `fk33_pcieep.xdc:133-140` line range for the live `pblock_bd_i` block (the
-  emitted file now carries 13 commented lines, 133-145, of which 141-145 were
+  `fk33_pcieep.xdc:138-145` line range for the live `pblock_bd_i` block (the
+  emitted file now carries 13 commented lines, 138-150, of which 146-150 were
   already commented upstream). Commit `ed1ffe2`, the write-up path and the
   evidence directory all exist as stated.
 - **"PBLOCK armed a guard at 18.0 GB and peaked at 8.62 GB" is correct, and

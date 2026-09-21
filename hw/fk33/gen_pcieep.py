@@ -233,6 +233,35 @@ DST = os.path.join(HERE, "build_fk33_pcieep.tcl")
 XDC_SRC = os.path.join(HERE, "fk33_i2cprobe.xdc")
 XDC_DST = os.path.join(HERE, "fk33_pcieep.xdc")
 
+# --emit-to <dir>: write the two outputs into <dir> instead of beside this
+# script.  `--check` uses it to regenerate without touching the committed
+# files.
+#
+# ARGV RATHER THAN AN ENVIRONMENT VARIABLE, DELIBERATELY.  `--selftest`'s
+# genstamp_teeth() asserts that the set of FK33_* names this script READS and
+# the set it STAMPS are equal in both directions.  A new FK33_* output-path
+# variable would be read and not stamped, which is precisely the "silent
+# input" that check is there to catch, and it would turn the row red for a
+# reason that has nothing to do with the design.  It would also be a lie: the
+# destination does not change a single byte of what is emitted, so stamping it
+# would claim a dependency the file does not have.
+#
+# HERE IS DELIBERATELY NOT REDIRECTED.  The generator writes 122 absolute
+# source paths derived from HERE, so running it from a copied tree makes every
+# one of them differ.  Redirecting only the two DESTINATIONS leaves HERE at the
+# real checkout, so the regenerated text carries the same paths the committed
+# file does and the comparison is about content rather than location.
+_EMIT_TO = None
+if "--emit-to" in sys.argv[1:]:
+    _i = sys.argv.index("--emit-to")
+    if _i + 1 >= len(sys.argv):
+        sys.exit("gen_pcieep.py: --emit-to needs a directory argument")
+    _EMIT_TO = sys.argv[_i + 1]
+    if not os.path.isdir(_EMIT_TO):
+        sys.exit("gen_pcieep.py: --emit-to %s is not a directory" % _EMIT_TO)
+    DST = os.path.join(_EMIT_TO, os.path.basename(DST))
+    XDC_DST = os.path.join(_EMIT_TO, os.path.basename(XDC_DST))
+
 # THE TCL FORMS ARE NOT THE FILESYSTEM FORMS.  XDC_SRC and XDC_DST above are
 # where this script READS and WRITES; the two below are what the generated Tcl
 # CARRIES, resolved at Vivado run time through `$tgRoot`.
@@ -3863,6 +3892,16 @@ if {$otarm == 3} {
 HEADER = '''# GENERATED from hw/fk33/build_fk33_i2cprobe.tcl by hw/fk33/gen_pcieep.py
 # -- do not hand-edit; regenerate so the probe build's fixes are not lost.
 #
+# NOTHING BUILDS FROM THIS COMMITTED COPY.  hw/fk33/pcieep_build.sh:89 runs
+# gen_pcieep.py unconditionally before every build and line 130 copies the
+# freshly generated result into BUILD_ROOT, which is the file Vivado actually
+# sources -- so these committed bytes are read by humans and by no tool.
+# Read it as the flow's reference text, not as a record of what was built:
+# what was built is the generator plus THAT build's environment, and the
+# artefact that answers that question is the build's own PROVENANCE.txt.
+# (The sibling hw/fk33/fk33_pcieep.xdc is different -- Vivado reads THAT one
+# in place from the repo, so its committed bytes do reach the tool.)
+#
 # PCIe Gen3 x4 XDMA endpoint for the FK33.  The first bitstream in this project
 # with a PCIe endpoint at all.
 #
@@ -6379,23 +6418,174 @@ def main():
     # only under FK33_ENG_SPLIT_CLK.  So it gets the SAME nine-row stamp as
     # the Tcl rather than an empty one: the honest statement is "these nine
     # were the environment", not "this file has no inputs".
-    # The marker is on the LAST line of the banner on purpose.
-    # genstamp.insert_after splits after the FIRST matching line, so a marker
-    # in the middle of a multi-line banner leaves the banner's own tail
-    # stranded BELOW the stamp.  MEASURED here on the first attempt.
+    # THE STAMP GOES AT THE END OF THIS FILE, NOT THE TOP, AND THE BANNER
+    # STAYS FIXED-HEIGHT.  MEASURED 2026-09-20 (TRACK TCLOWNER): the first
+    # version of this block put the stamp at the top, which inserted 19 lines
+    # in commit 08cc17d and moved ALL ELEVEN human line-number citations into
+    # this file by exactly 19.  Every one was correct at 08cc17d^ and nothing
+    # else in the file changed, so the attribution is clean.
+    #
+    # The one-off breakage is not the reason.  The stamp's height is the
+    # number of stamped inputs plus five, so adding a tenth environment
+    # variable to STAMP_ENV_NAMES would shift every citation by one again,
+    # silently, for ever.  The five banner lines below are hand-written and
+    # fixed, so the body's line numbers now move only when the BODY moves.
+    # See genstamp.append_end, which refuses any block that is not
+    # comment-only -- an XDC is order-dependent and a real directive moved to
+    # the end would change the design rather than the layout.
     xdc_banner = (
         "# GENERATED from hw/fk33/fk33_i2cprobe.xdc by hw/fk33/gen_pcieep.py.\n"
         "# The probe build's pin and clock constraints, with the x4 lane, the\n"
-        "# sysref and the debug-hub edits applied -- do not hand-edit.\n")
+        "# sysref and the debug-hub edits applied -- do not hand-edit.\n"
+        "# The GENSTAMP naming the environment that produced it is at the END\n"
+        "# of this file, so that adding an input cannot renumber these lines.\n")
     open(XDC_DST, "w").write(
-        genstamp.insert_after(xdc_banner, "hand-edit", stamp_block("#"))
-        + "\n".join(out) + "\n")
+        genstamp.append_end(xdc_banner + "\n".join(out) + "\n",
+                            stamp_block("#"), "#"))
     print(f"wrote {XDC_DST}  ({n_lane} lane constraints superseded, "
           f"{n_hub} debug-hub lines superseded, sysref kept)")
+
+
+# ---------------------------------------------------------------------------
+# --check: is the committed pair current with this generator?
+#
+# THE STANDING REASON THIS DID NOT EXIST WAS THE ABSOLUTE PATHS, AND IT IS NOT
+# A WALL.  MEASURED 2026-09-20 (TRACK TCLOWNER): the committed tcl carries 122
+# occurrences of the repo root and TWO of `/home/orencollaco/GitHub/SQRL_FK33`,
+# and folding one prefix gives difflines=0 at HEAD.
+#
+# **THERE ARE TWO PREFIXES AND FOLDING ONLY ONE IS THE TRAP.**  The second is
+# inherited down the generator chain from `build_fk33_firstlight.tcl` and
+# points OUTSIDE this repository, at a third-party checkout (see
+# `tools/upstream_pin.py`).  A canonicaliser that folds only the repo root
+# leaves those two lines machine-specific, so the row is green on the one box
+# whose home directory happens to match and red on every other -- the muted-row
+# failure that turns a gate into decoration.  Both are folded here.
+#
+# AND BOTH ARE *REPORTED* RATHER THAN CHECKED, which is the idiom
+# `hw/fk33/gen_fk33_card.py --check` already ships: a foreign prefix is legal
+# (a worktree comparing a committed file, or a renamed repo) but it is also
+# exactly what a stale file looks like, so it must be visible rather than
+# absorbed silently.
+#
+# THE ENVIRONMENT COMES FROM THE COMMITTED FILE'S OWN GENSTAMP, never from this
+# generator's defaults.  MEASURED by TRACK BUILDREPORT: regenerating under the
+# defaults deletes 496 lines including the whole lever-C block, so a check
+# using them would report STALE for ever on a current tree.  An UNSTAMPED file
+# ABORTS rather than falling back, because a fallback prints OK over a file
+# nobody can reproduce.
+_SQRL_PREFIX = "/home/orencollaco/GitHub/SQRL_FK33"
+
+
+# THE REPO ROOT MUST BE FOLDED OUT OF THE *COMMITTED* TEXT TOO, NOT ONLY OURS.
+# Folding `REPO` alone folds the prefix of the text WE regenerate; the
+# committed file carries whatever absolute root the last person to regenerate
+# it had, and on any other checkout those are different strings.  A check that
+# folds only its own root is green on exactly one machine, which is the failure
+# this whole block exists to avoid.  So the root is DETECTED from each text and
+# folded per-text.  The SQRL prefix needs no detection: it is a hardcoded
+# literal emitted by `gen_i2cprobe.py`'s TGROOT_BLOCK, so it is the same string
+# in every checkout -- which is itself the unpinned-external-dependency problem
+# recorded in `tools/upstream_pin.py`, not a portability one.
+_REPO_PATH_RE = re.compile(r'(/[^\s"\']+?)/(?:rtl|hw/fk33|sim|tools)/')
+
+
+def _canon(text):
+    """Fold every absolute prefix, longest first.
+
+    Order matters and is not cosmetic: the roots are siblings under the same
+    home directory, so folding a shorter one first can eat the head of a
+    longer one and leave a mangled tail that compares unequal for a reason
+    that has nothing to do with staleness.
+    """
+    roots = {_SQRL_PREFIX: "@SQRL@"}
+    for r in _REPO_PATH_RE.findall(text):
+        if r != _SQRL_PREFIX:
+            roots[r] = "@REPO@"
+    roots[REPO] = "@REPO@"
+    for prefix, token in sorted(roots.items(), key=lambda p: -len(p[0])):
+        text = text.replace(prefix, token)
+    return text
+
+
+def _prefixes_in(text):
+    """Report the roots actually present, so a FOREIGN one is visible.
+
+    Folding makes a foreign root compare equal, which is right -- a worktree
+    or a renamed repo is legal.  It is also exactly what a stale committed
+    file looks like, so the observed root is REPORTED rather than absorbed.
+    """
+    roots = {}
+    for r in _REPO_PATH_RE.findall(text):
+        roots[r] = roots.get(r, 0) + 1
+    n_sqrl = text.count(_SQRL_PREFIX)
+    parts = ["%s x%d%s" % (r, n, "" if r == REPO else "  <-- FOREIGN, not "
+                           "this checkout (%s)" % REPO)
+             for r, n in sorted(roots.items())]
+    if n_sqrl:
+        parts.append("%s x%d (external, unpinned-by-path)"
+                     % (_SQRL_PREFIX, n_sqrl))
+    return "; ".join(parts) if parts else "no absolute paths"
+
+
+def check():
+    import subprocess
+    import tempfile
+    try:
+        rows = genstamp.read_inputs(DST)
+    except ValueError as e:
+        sys.exit("PCIEEP_CHECK: ABORT %s" % e)
+
+    env = {k: v for k, v in os.environ.items() if k not in STAMP_ENV_NAMES}
+    stamped = []
+    for kind, name, val in rows:
+        if kind == "env" and val is not None:
+            env[name] = val
+            stamped.append("%s=%s" % (name, val))
+    tmp = tempfile.mkdtemp(prefix="pcieep_check_")
+    r = subprocess.run([sys.executable, os.path.abspath(__file__),
+                        "--emit-to", tmp], env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if r.returncode != 0:
+        sys.exit("PCIEEP_CHECK: ABORT the generator failed under the stamped "
+                 "environment (%s), rc=%d:\n%s"
+                 % (" ".join(stamped) or "(all unset)", r.returncode,
+                    r.stdout.decode("utf-8", "replace")))
+
+    stale = []
+    for real in (DST, XDC_DST):
+        name = os.path.basename(real)
+        fresh = os.path.join(tmp, name)
+        if not os.path.exists(fresh):
+            sys.exit("PCIEEP_CHECK: ABORT the generator did not write %s "
+                     "under --emit-to; nothing was compared" % name)
+        a = _canon(open(real).read())
+        b = _canon(open(fresh).read())
+        note = "paths: " + _prefixes_in(open(real).read())
+        if a == b:
+            print("PCIEEP_CHECK: OK %s (%d bytes, %s)"
+                  % (name, len(a), note))
+        else:
+            import difflib
+            d = list(difflib.unified_diff(a.splitlines(), b.splitlines(),
+                                          "committed", "regenerated",
+                                          lineterm="", n=1))
+            print("PCIEEP_CHECK: STALE %s -- %d differing diff lines, %s"
+                  % (name, len(d), note))
+            print("\n".join(d[:40]))
+            stale.append(name)
+    if stale:
+        sys.exit("PCIEEP_CHECK: STALE %s. Regenerate with the stamped "
+                 "environment (%s) and commit the result."
+                 % (", ".join(stale), " ".join(stamped) or "(all unset)"))
+    print("PCIEEP_CHECK: PASS both outputs current under %s"
+          % (" ".join(stamped) or "(all unset)"))
 
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv[1:]:
         selftest()
+    elif "--check" in sys.argv[1:]:
+        check()
     else:
         main()

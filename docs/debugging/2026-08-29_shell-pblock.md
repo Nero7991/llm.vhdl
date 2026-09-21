@@ -167,7 +167,7 @@ unguarded error discards a checkpoint that costs 70-80 seconds to open.
 
 ### 4.1 The inherited pblock, and that it is soft (MEASURED)
 
-`hw/fk33/fk33_pcieep.xdc:133-140`, generated verbatim from
+`hw/fk33/fk33_pcieep.xdc:138-145`, generated verbatim from
 `hw/fk33/fk33_i2cprobe.xdc:133-140` by `gen_pcieep.py` (which copies the XDC
 through with lane, sysref and debug-hub edits only):
 

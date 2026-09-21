@@ -42,6 +42,26 @@ DST = os.path.join(HERE, "build_fk33_i2cprobe.tcl")
 XDC_SRC = os.path.expanduser("~/GitHub/SQRL_FK33/projects/fk33_example.xdc")
 XDC_DST = os.path.join(HERE, "fk33_i2cprobe.xdc")
 
+sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "..", "tools")))
+import upstream_pin
+
+# THE PIN, AND THIS IS THE ONE THAT IS READ ON EVERY BUILD.
+# `hw/fk33/pcieep_build.sh:84` runs this generator before every card build, and
+# the loop below copies EVERY upstream constraint line verbatim into XDC_DST,
+# which is `gen_pcieep.py`'s XDC_SRC, which becomes `hw/fk33/fk33_pcieep.xdc`,
+# which Vivado reads in place.  So this external file's pin assignments and
+# clock constraints reach the bitstream directly.  The only guard below is a
+# count of the two iic lines; it says nothing about the other 160.  A changed
+# upstream must stop the build rather than quietly re-constrain it.
+# See tools/upstream_pin.py.  Note the revision differs from
+# gen_firstlight.py's: the .xdc was last touched three years earlier than the
+# .tcl, so "the SQRL_FK33 revision" is not one number.
+XDC_SRC_SHA256 = \
+    "5db73327abf66267bbecbc6a9197c4279a9886da687db7b27ae47ebb891cb40e"
+XDC_SRC_UPSTREAM = ("SQRL_FK33 branch Vivado_2022_2, commit 0737c22 "
+                    "'Add sysref clock to contraints' 2019-12-09, "
+                    "blob 750128ed")
+
 # THE PATH THAT GOES INTO THE GENERATED TCL IS *NOT* `XDC_DST`.
 #
 # XDC_DST is where THIS script writes the file, and it must stay an absolute
@@ -194,8 +214,8 @@ set_property name iic [get_bd_intf_ports IIC_0]""",
 if not os.path.exists(SRC):
     sys.exit(f"ABORT: first-light script not found: {SRC}\n"
              "Run gen_firstlight.py first.")
-if not os.path.exists(XDC_SRC):
-    sys.exit(f"ABORT: upstream XDC not found: {XDC_SRC}")
+upstream_pin.require(XDC_SRC, XDC_SRC_SHA256, "gen_i2cprobe.py",
+                     XDC_SRC_UPSTREAM)
 
 text = open(SRC).read()
 for old, new in SUBS:

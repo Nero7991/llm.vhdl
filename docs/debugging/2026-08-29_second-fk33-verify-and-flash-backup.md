@@ -273,7 +273,7 @@ So it is a **single configuration stream of 25.75 MiB**, not a golden plus
 multiboot pair.
 
 That is 2.2x our own `fk33_pcieep.bit` at 11.66 MiB for the same device.  The
-reason is not a second image: `fk33_pcieep.xdc:127` and `fk33_i2cprobe.xdc:127`
+reason is not a second image: `fk33_pcieep.xdc:132` and `fk33_i2cprobe.xdc:127`
 both set `BITSTREAM.GENERAL.COMPRESS TRUE`, so **our** image is compressed and
 25.75 MiB is the uncompressed size.  DERIVED.
 
