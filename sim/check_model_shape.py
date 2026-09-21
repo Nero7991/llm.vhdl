@@ -75,9 +75,44 @@ def oracle():
     return vals
 
 # --------------------------------------------------------------- parsers ----
+def strip_comments(text):
+    """Remove `-- ...` to end of line, preserving every newline.
+
+    Same one-liner as tools/check_beh_ports.py:53, tools/rtl_map.py:26 and
+    sim/check_bd_ports.py:84, which is the house form.
+    """
+    return re.sub(r"--[^\n]*", "", text)
+
+
 def generic_defaults(path, entity):
     """Literal defaults in `entity <name>`'s generic clause."""
-    src = open(os.path.join(REPO, path)).read()
+    # COMMENTS ARE STRIPPED BEFORE THE ENTITY REGEX, NOT AFTER IT, AND THAT
+    # ORDER IS THE WHOLE POINT.  MEASURED 2026-09-20: this file used to strip
+    # them only at the generic-clause stage below, so the non-greedy `(.*?)`
+    # terminating on `\bend\b` was terminated by the WORD "end" appearing in
+    # an ordinary English COMMENT.  `56d13e3` wrote `-- end: SCORE_EARLY moves
+    # the pass earlier` INSIDE attn_block's generic clause, the entity body was
+    # truncated before the clause closed, `generic\s*\((.*?)\)\s*;` no longer
+    # matched, and the row went red on a design that was correct:
+    #
+    #     committed        SHAPE_FAIL no generic clause on entity attn_block
+    #     "end:" -> ":"    SHAPE_OK 13 literals agree with model_cfg_pkg
+    #     restored         SHAPE_FAIL
+    #
+    # It is the checker that was wrong, not the comment: `end` is a legal
+    # English word and every future author is entitled to write it.  The two
+    # sibling parsers that use this IDENTICAL regex -- check_beh_ports.py and
+    # rtl_map.py -- already stripped first and were immune, which is where the
+    # fix comes from rather than from invention.
+    #
+    # This is the recorded "a regex or grep counting a COMMENT" class, fourth
+    # instance.  STILL LATENT ELSEWHERE, MEASURED the same day and not fixed
+    # here because neither fires today: tools/gen_bd_wrapper.py:189 and
+    # sim/ooc_gdnadapt_extract.py:584 both span to `\bport\s*\(` over RAW
+    # source, so a comment containing "port (" would truncate them the same
+    # way.  sim/mk_browse_wrapper.py:41 is safe by accident -- its `^end\b` is
+    # line-anchored and a comment line starts with `--`.
+    src = strip_comments(open(os.path.join(REPO, path)).read())
     m = re.search(r"\bentity\s+" + entity + r"\s+is\b(.*?)\bend\b",
                   src, re.S | re.I)
     if not m:
@@ -197,3 +232,53 @@ if __name__ == "__main__":
 # NOT a mutant and worth stating: subsystem A is never checked, so no mutant
 # here can fail on A's account.  A takes its shape from descriptors at run
 # time and has no literal to compare.
+#
+# ---------------------------------------------------------------------------
+# TEETH, SECOND ROUND -- MEASURED 2026-09-20, TRACK GATERED, for the
+# strip-before-match change in generic_defaults.  Run in a DETACHED WORKTREE
+# under /mnt/storage so the live tree was never mutated; every case restored
+# from a pristine copy and the result re-read.  13 literals checked in each
+# passing case, which is the same count as before the change.
+#
+#   T0  CONTROL, the PRE-FIX checker on the committed tree
+#                                                   rc=1 "no generic clause"
+#       The red this change exists to clear, reproduced from git show.
+#
+#   T1  committed tree, the `-- end:` comment in    NOT BITTEN rc=0
+#       place, hardened checker.  Was T0.
+#   T2  `generic(` renamed so the clause is         KILLED rc=1
+#       GENUINELY ABSENT
+#   T3  `entity attn_block` renamed, GENUINELY      KILLED rc=1
+#       ABSENT
+#   T8  same for gdn_block, the second parsed file  KILLED rc=1
+#       T2/T3/T8 are the load-bearing ones: they are the proof that a false
+#       RED was not traded for a false GREEN, which is strictly worse.  A
+#       change that made T1 pass and T2 pass would be a regression sold as a
+#       fix.
+#   T4  M1 re-run, HEAD_DIM 256 -> 128              KILLED rc=1
+#       The original kill still kills through the new parse path.
+#   T5  N_QH 16 -> 24 AND `-- end: of the line`     KILLED rc=1
+#       appended on the same line.  A wrong literal hiding behind exactly the
+#       construct that used to blind the checker is still named.
+#
+#   T6  CONTROL  the old M6: comment-only edit,     does NOT bite
+#       no `end` in it.  M6 is retained rather than replaced, because it is
+#       the case the old checker also passed, so it holds scope fixed.
+#   T7  CONTROL  comment-only edit reading          does NOT bite
+#       `-- end end end end.`  This is M6 aimed at the defect, and it is the
+#       row that DISCRIMINATES the two checkers.  Attribution control, run
+#       with the `-- end:` comment elided so the pre-fix checker can reach a
+#       verdict at all:
+#
+#         baseline, 'end:' elided             PRE-FIX  rc=0   HARDENED rc=0
+#         + T7 comment '-- end end end end.'  PRE-FIX  rc=1   HARDENED rc=0
+#
+#       So M6 AS WRITTEN COULD NEVER HAVE FOUND THIS.  M6's stated purpose is
+#       "comments are stripped before parsing, so this confirms the strip
+#       works" -- and it confirmed a strip that ran one stage too late, using
+#       a comment that happened not to contain the word the regex was about
+#       to trip over.  Check and control were wrong in the same direction,
+#       which is this project's recorded "a teeth test whose mutant is built
+#       from the same misconception as the check cannot detect that
+#       misconception".  T6 is kept because it still fixes scope; T7 is what
+#       it should have been.
