@@ -289,6 +289,8 @@ N2   KILLED     -- the real rmsnorm's writeback drops its last element
         56838 and the recorded landmark is 17333
         tb_llama_top: schedule mismatches=0 skew differences=0 degenerate
         residuals=0 token position faults=0 KV sticky errors=0 KV faults=0
+N2x  SURVIVED   -- the SAME mutation against the DEFAULT gate row
+        tb_llama_top RESULT: PASS -- 64 descriptors, 4 blocks, 1 tokens per run
 ```
 
 **N1's attribution is the harness's own designed control and it now works on
@@ -298,7 +300,8 @@ reason the N rows were added in the first place.  The discriminating check is
 `degenerate residuals=16` with every other counter at zero.
 
 **N2's attribution is sharper and is worth recording on its own: every
-STRUCTURAL counter is ZERO and only the P14 landmark hash fired.**  Dropping
+STRUCTURAL counter is ZERO and only the P14 landmark hash fired**, and its own
+control `N2x SURVIVED` on the default gate row.  Dropping
 the last element of the norm write-back moves no schedule, no position, no
 KV placement and produces no degenerate residual.  The value landmark is the
 only thing in the bench that can see it.
@@ -420,9 +423,9 @@ row and not merely to fire.
   are re-anchored, replay-clean at HEAD **and** in the working tree, and have
   their impossible-anchor teeth, but the row itself has not been RUN.  Their
   verdicts are DERIVED from the legend and the RTL, not MEASURED.
-  (`llama_top_kv` N2x and `rmswire` R8 were still running when this was
-  written; if they landed, the numbers are in the run logs under
-  `/mnt/storage/fk33_builds/scratch/reanchor/{kv_b,rw_b}.log`.)
+  (`rmswire` R8 was still running when this was written and had already left
+  the `FULL` column, i.e. it was not a survivor; its four-column result is in
+  `/mnt/storage/fk33_builds/scratch/reanchor/rw_b.log`.)
 - **R7/VR7 and R7b/VR7b carry a PREDICTION that was not tested here.**  Their
   own legends, written by TRACK C1, say R7 survives on the fixed design
   (`cmp` of the clean and R7 captures is IDENTICAL at NTOK 3, 5 and 8) and
