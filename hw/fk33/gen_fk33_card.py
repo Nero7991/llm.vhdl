@@ -428,14 +428,32 @@ ARGS = [
 # pattern matches nothing REPORTS NOTHING -- the recorded silent-empty failure,
 # which is indistinguishable from a pass.
 #
-# CONSEQUENCE, AND IT IS REAL: with an override active, check_kv_map.py
-# validates the DEFAULT geometry while the build uses the trimmed one.  Two
-# things keep that detectable rather than silent:
+# CONSEQUENCE, AND IT WAS REAL UNTIL 2026-09-20: with an override active,
+# check_kv_map.py validated the DEFAULT geometry while the build used the
+# trimmed one, and reported `40 rows, 0 refused` about a card it had never
+# read.  Two things kept that detectable rather than silent:
 #   1. a loud stderr banner whenever an override is in force, and
 #   2. the value lands in the GENERATED VHDL as `C_KV_BLOCK => N,`, so
 #      `grep -E 'C_KV_BLOCK|A_ROWS_IF' hw/fk33/rtl/fk33_card.vhd` states what
 #      was really built.
-# DO NOT run the kvmap gate row against an overridden tree and believe it.
+# CLOSED 2026-09-20 BY TRACK KVGEOM, and the remedy was not a third tell.
+# `tools/check_kv_map.py` now reads `hw/fk33/rtl/fk33_card.vhd` -- the file
+# the build compiles -- instead of the source text below, so the trimmed
+# value IS the value it checks, and it reads the GENSTAMP block so that a
+# trim with no KVR authority (A_ROWS_IF) is still named.  An overridden tree
+# now makes the kvmap gate row REFUSE, which is the correct verdict: the
+# built geometry and sim/realshape_gate.sh's KVR block have diverged.
+# MEASURED, both directions:
+#   FK33_C_KV_BLOCK=16 regenerate, then `gen_fk33_card.py --check` IN THAT
+#   SAME SHELL prints OK and rc=0 -- so sim:fk33card cannot see a legitimate
+#   trim, and sim:kvmap is the only row that can.
+#   Conversely a generator edit that is regenerated consistently
+#   (C_MAXPOS 65536 -> 131072) leaves `--check` at rc=0 and is caught only by
+#   sim:kvmap's `built card C_MAXPOS == KVR C_MAXPOS`.  The two rows are
+#   complementary; neither is redundant.
+# The literals below are STILL left exactly as they are, for the reason in
+# the paragraph above -- but note that nothing reads them any more, so a
+# future rewrite into an f-string no longer silently blinds a checker.
 # A TRIM IS NOT A FREE PARAMETER.  MEASURED 2026-09-11, the hard way: this
 # dispatcher trimmed C_KV_BLOCK 32 -> 4 on the reasoning that an 8x cut was
 # well characterised for DSPs, and never checked the legal set.  4 is ILLEGAL
@@ -525,8 +543,11 @@ def stamp_cmd(inputs):
 if _trims:
     sys.stderr.write(
         "\n*** FK33 CARD TRIM ACTIVE: %s ***\n"
-        "*** NOT the default geometry.  check_kv_map.py validates the DEFAULTS\n"
-        "*** and will NOT see this.  Verify what was built with:\n"
+        "*** NOT the default geometry.  Since 2026-09-20 tools/check_kv_map.py\n"
+        "*** READS hw/fk33/rtl/fk33_card.vhd and will REFUSE on this, which is\n"
+        "*** the correct verdict: the built geometry no longer matches\n"
+        "*** sim/realshape_gate.sh's KVR block.  Move KVR to match, or drop\n"
+        "*** the trim.  Verify what was built with:\n"
         "***   grep -E 'C_KV_BLOCK|A_ROWS_IF' hw/fk33/rtl/fk33_card.vhd\n\n"
         % ", ".join(_trims))
 

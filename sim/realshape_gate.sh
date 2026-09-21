@@ -364,9 +364,12 @@ row real_kv_ctx_over  fail llama_top $CKV $KVR -gC_CTXLEN=131073
 # `tools/check_kv_map.py` is what makes the $KVR numbers above DERIVED rather
 # than hand-copied: it reads `tools/hbm_map.py`'s shape (the authority TRACK
 # ARENA-MANIFEST established), the packed model's manifest for `hbm.kv_base`,
-# `rtl/llama_top.vhd` for the generic names and the chunk-to-byte shift, and
-# THIS BLOCK for the values, and refuses on any mismatch.  Its own teeth are
-# `python3 tools/check_kv_map.py --teeth`, 17 rows.
+# `rtl/llama_top.vhd` for the generic names and the chunk-to-byte shift,
+# `hw/fk33/rtl/fk33_card.vhd` for what is actually BUILT (since 2026-09-20 --
+# it used to read `gen_fk33_card.py`'s source text, which the FK33_C_KV_BLOCK
+# env trim is designed to leave untouched), and THIS BLOCK for the values,
+# and refuses on any mismatch.  Its own teeth are
+# `python3 tools/check_kv_map.py --teeth`, 44 rows as of 2026-09-20.
 #
 # It is run here rather than in `sim/regress.sh` because the values it checks
 # are the $KVR block a few lines up: the check and the thing checked belong in

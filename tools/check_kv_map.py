@@ -28,7 +28,7 @@ CAN close both is a check that reads the two sides and refuses on mismatch,
 and that is this file.  It is the only artefact in the tree that makes
 `C_K_BASE_CH` a DERIVED quantity rather than a hand-copied one.
 
-THE THREE SIDES IT READS, AND WHY EACH IS THE RIGHT SOURCE
+THE FOUR SIDES IT READS, AND WHY EACH IS THE RIGHT SOURCE
 =========================================================
   1. THE SHAPE.  `tools/hbm_map.py arena_sizes()`, which scrapes
      `rtl/model_cfg_pkg.vhd`.  TRACK ARENA-MANIFEST made `hbm_map.py`'s region
@@ -45,6 +45,11 @@ THE THREE SIDES IT READS, AND WHY EACH IS THE RIGHT SOURCE
      real map is a build configuration and not a default -- `C_MAXPOS`'s
      default cannot become 131,072 without sizing the behavioural cache at
      8.4 million signal entries (CKVMAP section 7).
+  4. WHAT IS ACTUALLY BUILT.  `hw/fk33/rtl/fk33_card.vhd`, the COMMITTED
+     artifact that `gen_pcieep.py` puts in the build's `read_vhdl` list.  NOT
+     `hw/fk33/gen_fk33_card.py`, which is what this side read until
+     2026-09-20 and which the `FK33_C_KV_BLOCK` env trim is designed to leave
+     untouched -- see the long comment above `card_generic_map`.
 
 THE ROWS ADDED 2026-09-20, AND THE DEFECT THEY WOULD HAVE CAUGHT
 ================================================================
@@ -222,7 +227,7 @@ def read_gate(path=GATE):
 # the check itself
 # --------------------------------------------------------------------------
 # --------------------------------------------------------------------------
-# side 4: hw/fk33/gen_fk33_card.py -- WHAT THE HARDWARE ACTUALLY GETS
+# side 4: hw/fk33/rtl/fk33_card.vhd -- WHAT THE HARDWARE ACTUALLY GETS
 #
 # MEASURED 2026-09-09, and this side exists because of it: every other row in
 # this file was GREEN while the card build instantiated `llama_top`'s DEFAULTS
@@ -240,40 +245,161 @@ def read_gate(path=GATE):
 # guard was correct and was checking a different artifact than the one that
 # ships.  A checker that validates the simulation configuration says nothing
 # about the hardware configuration unless something asserts they are equal.
+#
+# AND UNTIL 2026-09-20 THIS SIDE MADE THE SAME MISTAKE ONE LEVEL DOWN.  It read
+# `hw/fk33/gen_fk33_card.py`'s SOURCE TEXT -- the `"--generic", "NAME=VALUE"`
+# literals -- and printed the word "built" about the result.  The generator is
+# not what is built.  `hw/fk33/rtl/fk33_card.vhd` is: it is COMMITTED, and
+# `gen_pcieep.py:1274` puts it in `_CARD_ALL` -> `CARD_RTL_ADD` -> the
+# `read_vhdl` list of the generated build script (:3400).  Synthesis compiles
+# that file and never runs the generator.
+#
+# THREE SUPPORTED ROUTES MAKE THE TWO DIVERGE, and reading the source sees
+# none of them:
+#   1. THE ENV TRIM.  `gen_fk33_card.py`'s TRIMMABLE block rewrites the built
+#      ARGS list at run time from `FK33_C_KV_BLOCK` / `FK33_A_ROWS_IF`, leaving
+#      the source literals alone ON PURPOSE, so that this file's regexes keep
+#      matching.  MEASURED 2026-09-20: with the artifact regenerated at
+#      `FK33_C_KV_BLOCK=16`, so that `fk33_card.vhd:244` reads
+#      `C_KV_BLOCK => 16,`, the old row printed
+#      `gen_fk33_card C_KV_BLOCK == KVR C_KV_BLOCK  built 32 vs simulated 32`
+#      and the whole check returned `40 rows, 0 refused`.
+#   2. A STALE ARTIFACT.  The generator is edited and nobody regenerates.
+#   3. A HAND-EDIT of the generated file, which its own banner forbids and
+#      nothing prevents.
+#
+# Route 2 and route 3 are caught by `gen_fk33_card.py --check` (gate row
+# sim:fk33card) -- but ONLY with the environment unset.  MEASURED the same day:
+# in a shell exporting `FK33_C_KV_BLOCK=16`, which is the shell a trimmed build
+# is run from and the only shell in which the trimmed artifact is legitimate,
+# `--check` regenerates WITH the trim, matches, and prints `OK`; so
+# sim:fk33card and sim:kvmap are BOTH green while the card is at 16 and
+# `sim/realshape_gate.sh`'s KVR block simulates 32.  Two green rows, geometry
+# diverged, and that is the 2026-09-09 defect's own shape.
+#
+# So side 4 now reads the ARTIFACT for every value, and the generator only as
+# the thing to point the reader at.  CLAUDE.md's rule, recorded against this
+# very file on 2026-09-11 ("Reading the generator instead of the artifact"),
+# applied to the checker that was written in response to it.
 # --------------------------------------------------------------------------
 CARD_GEN = os.path.join(REPO, "hw", "fk33", "gen_fk33_card.py")
+CARD_RTL = os.path.join(REPO, "hw", "fk33", "rtl", "fk33_card.vhd")
+
+# A VHDL integer literal is not always decimal.  `A_JOB_STRIDE => 16#40000#`
+# is in this very generic map, and a `(\d+)` regex reads `16` out of it: a
+# silent 16x error of exactly the class side 4 exists to catch.  So the forms
+# are enumerated and anything else REFUSES rather than being guessed at.
+_DEC_LIT   = re.compile(r"^[+-]?\d+$")
+_BASED_LIT = re.compile(r"^(\d+)#([0-9a-fA-F]+)#$")
 
 
-def _read_int_generic(path, name):
-    """An INTEGER `"--generic", "NAME=123"` from gen_fk33_card.py's source.
+def _as_int(name, raw):
+    t = raw.replace("_", "")           # VHDL allows 1_000_000
+    if _DEC_LIT.match(t):
+        return int(t)
+    m = _BASED_LIT.match(t)
+    if m:
+        return int(m.group(2), int(m.group(1)))
+    raise Bad("hw/fk33/rtl/fk33_card.vhd: generic %s => %s is not an integer "
+              "literal this checker knows how to read.  REFUSING rather than "
+              "guessing: a decimal-only regex reads `16` out of `16#40000#`, "
+              "which is a silent 16x error and is the class this side exists "
+              "to catch." % (name, raw))
 
-    Separate from _read_bool_generic because read_card() parses only the
-    generics it knows about, and a missing name must be distinguishable from a
-    zero -- None means "the card does not set it", which for C_N_ROT is itself
-    the defect (llama_top's simulation default would ship).
+
+def card_generic_map(path=CARD_RTL):
+    """Every `NAME => VALUE` of fk33_card's instantiation of fk33_llama_top.
+
+    Values are returned RAW (as written).  The instance is pinned by name so
+    that a second `generic map` elsewhere in the file cannot be read by
+    mistake, and a missing one RAISES: a regex that matches nothing reports
+    nothing, which is indistinguishable from a pass (CLAUDE.md, the
+    silent-empty-result class).
     """
     src = open(path).read()
-    m = re.search(r'"--generic",\s*"%s=(\d+)"' % re.escape(name), src)
-    return None if not m else int(m.group(1))
-
-
-def _read_bool_generic(path, name):
-    """Return True/False for a `"--generic", "NAME=true|false"` pair, or None.
-
-    Deliberately separate from read_card(), which parses only INTEGER generics
-    -- a boolean would silently not match its regex and read as absent, which
-    is the failure this row exists to catch."""
-    src = open(path).read()
-    m = re.search(r'"--generic",\s*"%s=(true|false)"' % re.escape(name), src)
-    return None if not m else (m.group(1) == "true")
-
-
-def read_card(path=CARD_GEN):
-    src = open(path).read()
+    m = re.search(r"entity\s+work\.fk33_llama_top\s+generic\s+map\s*\("
+                  r"(.*?)\n\s*\)\s*\n\s*port\s+map", src, re.S | re.I)
+    if not m:
+        raise Bad("%s: no `entity work.fk33_llama_top generic map (...) port "
+                  "map` could be found.  That instantiation IS the built "
+                  "configuration; without it there is nothing to compare the "
+                  "simulated geometry against, and this checker must refuse "
+                  "rather than fall back on the generator's source text, "
+                  "which is what it used to read and what the env trim "
+                  "defeats." % path)
     out = {}
-    for k, v in re.findall(r'"--generic",\s*"(C_\w+)=(-?\d+)"', src):
-        out[k] = int(v)
+    for line in m.group(1).splitlines():
+        mm = re.match(r"\s*(\w+)\s*=>\s*(.+?)\s*,?\s*$", line)
+        if mm:
+            out[mm.group(1)] = mm.group(2)
+    if not out:
+        raise Bad("%s: the fk33_llama_top generic map parsed to zero "
+                  "generics." % path)
     return out
+
+
+def _read_int_generic(path, name, gm=None):
+    """An INTEGER generic of the BUILT card cell, or None if it is not set.
+
+    None means "the card cell does not pass it", so `fk33_llama_top`'s own
+    default ships -- which for C_N_ROT is itself the defect.  Separate from
+    _read_bool_generic so that a boolean cannot read as absent.
+    """
+    gm = card_generic_map(path) if gm is None else gm
+    raw = gm.get(name)
+    if raw is None or raw.startswith('"') or raw in ("true", "false"):
+        return None
+    return _as_int(name, raw)
+
+
+def _read_bool_generic(path, name, gm=None):
+    """True/False for a BOOLEAN generic of the built card cell, or None."""
+    gm = card_generic_map(path) if gm is None else gm
+    raw = gm.get(name)
+    return None if raw not in ("true", "false") else (raw == "true")
+
+
+def read_card(path=CARD_RTL):
+    """The INTEGER `C_*` generics the BUILD gets, from the artifact it gets."""
+    gm = card_generic_map(path)
+    out = {}
+    for k, v in gm.items():
+        if not k.startswith("C_"):
+            continue
+        if v.startswith('"') or v in ("true", "false"):
+            continue          # C_QKN_IMAGE, C_KV_AXI, C_REAL
+        out[k] = _as_int(k, v)
+    return out
+
+
+# THE PROVENANCE ROW.  `card_generic_map` reads the VALUES, which closes the
+# trim for every generic this file compares against an authority.  It cannot
+# close it for a generic with NO authority -- `A_ROWS_IF` is the other
+# TRIMMABLE and `sim/realshape_gate.sh` says nothing about it -- and it cannot
+# say WHY two numbers differ.  The GENSTAMP block that TRACK GENSTAMP put in
+# the generated file answers both: it names every out-of-band input and its
+# value, is written from the same list the generator trims from, and is
+# deterministic, so an unstamped or differently-stamped artifact is visible.
+#
+# SCOPE, stated rather than assumed: A_ROWS_IF is not a KV generic, and nor is
+# HOST_WINDOW, whose row three screens down carries the same argument -- same
+# failure mode, same file, nowhere better for it.  An artifact built under ANY
+# trim is not the configuration `sim/realshape_gate.sh` describes, so every
+# "built X vs simulated X" row in this file is making a claim about a
+# configuration nobody reviewed.  Saying so is this row's whole job.
+_STAMP_RE = re.compile(r"^--\s+env\s+(FK33_\w+)\s*=\s*(.+?)\s*$", re.M)
+
+
+def card_stamp_inputs(path=CARD_RTL):
+    """[(name, value-or-None)] from the artifact's GENSTAMP block.
+
+    None is the generator's `(unset)`, i.e. its own default was taken.  An
+    EMPTY list means the file carries no stamp at all, which is itself
+    reportable -- it is either pre-2026-09-20 or hand-made.
+    """
+    head = open(path).read().split("\nlibrary ", 1)[0]
+    return [(n, None if v == "(unset)" else v)
+            for n, v in _STAMP_RE.findall(head)]
 
 
 def kv_extent_rows(row, label, doc, K, V, MP, PERTOK):
@@ -333,7 +459,8 @@ def kv_extent_rows(row, label, doc, K, V, MP, PERTOK):
 def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
           rtl_over=None, gate_over=None, sz_over=None, mani_over=None,
           striped_path=DEF_STRIPED, kv_over=None, extent_rows=True,
-          residency_rows=True, res_over=None):
+          residency_rows=True, res_over=None, card_path=CARD_RTL,
+          card_rows=True):
     import hbm_map as H
 
     sz = dict(H.arena_sizes())
@@ -522,11 +649,40 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
            AW - clog2(CH_B) - need))
 
     # ---- side 4: the built geometry must equal the simulated geometry ----
-    try:
-        card = read_card()
-    except OSError as e:
-        row("hw/fk33/gen_fk33_card.py is readable", False, str(e))
-        card = None
+    # `card_rows=False` is the ATTRIBUTION CONTROL for this whole side: the
+    # same inputs with side 4 off.  A mutant that the control also refuses was
+    # caught by some older row and side 4 cannot claim it.
+    card = stamp = None
+    if card_rows:
+        try:
+            card = read_card(card_path)
+        except OSError as e:
+            row("hw/fk33/rtl/fk33_card.vhd is readable", False, str(e))
+            card = None
+        # PROVENANCE FIRST -- it is what makes the VALUES below meaningful.
+        try:
+            stamp = card_stamp_inputs(card_path)
+        except OSError as e:
+            stamp = None
+            row("hw/fk33/rtl/fk33_card.vhd carries a GENSTAMP", False, str(e))
+    if stamp is not None:
+        trims = [(n, v) for n, v in stamp if v is not None]
+        if not stamp:
+            row("the built card was generated with no trim in force", False,
+                "hw/fk33/rtl/fk33_card.vhd carries no GENSTAMP `env FK33_*` "
+                "lines at all, so what produced it is not recoverable from "
+                "the file.  Regenerate with hw/fk33/gen_fk33_card.py.")
+        elif trims:
+            row("the built card was generated with no trim in force", False,
+                "%s -- the artifact is NOT the default geometry, so every "
+                "'built X vs simulated X' row below compares the card against "
+                "a KVR block that does not describe it.  Move "
+                "sim/realshape_gate.sh's KVR to match, or drop the trim."
+                % ", ".join("%s=%s" % (n, v) for n, v in trims))
+        else:
+            row("the built card was generated with no trim in force", True,
+                "%d stamped input(s), all (unset): %s"
+                % (len(stamp), ", ".join(n for n, _ in stamp)))
     if card is not None:
         # HOST_WINDOW is not a KV generic, but it is the SAME FAILURE MODE in
         # the SAME FILE and there is nowhere better for it.  MEASURED
@@ -537,8 +693,8 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
         # port cannot be a BRAM.  rtl/region_mem.vhd says so in the comment
         # above the generic and records FALSE as the card configuration.
         # Ten builds and ~40 hours were spent against that.
-        hw = _read_bool_generic(CARD_GEN, "HOST_WINDOW")
-        row("gen_fk33_card sets HOST_WINDOW=false", hw is False,
+        hw = _read_bool_generic(card_path, "HOST_WINDOW")
+        row("built card sets HOST_WINDOW=false", hw is False,
             "got %r; the card must be false -- region_mem's combinational host "
             "read port forces 2,752,512 registers when true, and nothing on "
             "the board drives that port" % (hw,))
@@ -549,16 +705,17 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
             want = gate.get(name)
             got  = card.get(name)
             if want is None:
-                row("gen_fk33_card %s has an authority" % name, False,
+                row("built card %s has an authority" % name, False,
                     "sim/realshape_gate.sh's KVR block does not set %s, so "
                     "there is nothing to compare the build against" % name)
             elif got is None:
-                row("gen_fk33_card sets %s" % name, False,
-                    "hw/fk33/gen_fk33_card.py passes no --generic %s, so the "
-                    "card cell is built with llama_top's DEFAULT and not the "
-                    "9B value %d.  This is the 2026-09-09 defect." % (name, want))
+                row("built card sets %s" % name, False,
+                    "hw/fk33/rtl/fk33_card.vhd's fk33_llama_top instance "
+                    "passes no %s, so the card cell is built with "
+                    "fk33_llama_top's DEFAULT and not the 9B value %d.  This "
+                    "is the 2026-09-09 defect." % (name, want))
             else:
-                row("gen_fk33_card %s == KVR %s" % (name, name), got == want,
+                row("built card %s == KVR %s" % (name, name), got == want,
                     "built %d vs simulated %d%s"
                     % (got, want, "" if got == want else "  <-- DIVERGED"))
 
@@ -582,15 +739,27 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
     IMROPE = os.path.join(REPO, "rtl", "imrope_pkg.vhd")
     m = re.search(r"constant\s+IMROPE_NPAIR\s*:\s*integer\s*:=\s*(\d+)",
                   open(IMROPE).read())
-    card_nrot = _read_int_generic(CARD_GEN, "C_N_ROT")
-    if m is None:
+    # This row reads the same artifact, so it belongs to side 4 and must go
+    # dark under the attribution control too -- otherwise the control refuses
+    # for a reason that has nothing to do with the mutant and every mutant
+    # scores as "caught by something older".
+    try:
+        card_nrot = (_read_int_generic(card_path, "C_N_ROT")
+                     if card_rows else None)
+    except OSError:
+        # read_card() has already put a refusing row in for the same file;
+        # this one must not crash out of the check and lose every row.
+        card_nrot, card_rows = None, False
+    if not card_rows:
+        pass
+    elif m is None:
         rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", False,
                      "could not read IMROPE_NPAIR from %s" % IMROPE))
     elif card_nrot is None:
         rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", False,
-                     "gen_fk33_card.py sets no C_N_ROT, so llama_top's "
-                     "SIMULATION default of 8 would ship (table wants %d)"
-                     % (2 * int(m.group(1)))))
+                     "hw/fk33/rtl/fk33_card.vhd passes no C_N_ROT, so "
+                     "fk33_llama_top's SIMULATION default of 8 would ship "
+                     "(table wants %d)" % (2 * int(m.group(1)))))
     else:
         want = 2 * int(m.group(1))
         rows.append(("card C_N_ROT == 2*IMROPE_NPAIR", card_nrot == want,
@@ -617,6 +786,53 @@ def check(manifest_path=DEF_MANIFEST, require_manifest=True, out=sys.stdout,
 # --------------------------------------------------------------------------
 # teeth.  A checker never shown to refuse has not been shown to work.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# SIDE-4 MUTANTS ARE REAL FILES, NOT SUBSTITUTED DICTS.
+#
+# CLAUDE.md's recorded `seam_tieoff_teeth()` failure was a check and a mutant
+# built from the SAME misconception, so all four rows agreed with each other
+# while the thing they guarded was dead.  The misconception under test here is
+# "the built configuration is what gen_fk33_card.py's source text says".  A
+# mutant injected as a dict bypasses the reader entirely and therefore cannot
+# distinguish reading the generator from reading the artifact -- it would pass
+# identically against the OLD code.  So every side-4 mutant below WRITES A
+# `fk33_card.vhd` and hands over its path, and the real parser reads it.
+#
+# MEASURED 2026-09-20, the equivalence that makes `card_mutant` honest: a
+# `fk33_card.vhd` really produced by `FK33_C_KV_BLOCK=16 python3
+# hw/fk33/gen_fk33_card.py` differs from the committed one in exactly the
+# three lines the `TRIM16` mutant edits -- the reproduce line, the `env` line
+# and `C_KV_BLOCK => 16,` -- plus the two `..._IMAGE` paths, which differ
+# because that run was made in a scratch checkout and not because of the trim
+# (they are the one legitimately location-dependent thing in this file, and
+# `gen_fk33_card.py --check` canonicalises them for the same reason).
+# --------------------------------------------------------------------------
+def card_mutant(tmpdir, tag, subs, src=CARD_RTL):
+    """Write a mutated copy of the card artifact and return its path.
+
+    `subs` is a list of (old, new) literal substitutions, each of which MUST
+    hit exactly once -- a substitution that matches nothing produces a file
+    identical to the control, which scores as "the check did not bite" and is
+    indistinguishable from a real hole.
+    """
+    text = open(src).read()
+    for old, new in subs:
+        n = text.count(old)
+        if n != 1:
+            raise Bad("card_mutant(%s): %r appears %d times in %s, want 1"
+                      % (tag, old, n, src))
+        text = text.replace(old, new)
+    dst = os.path.join(tmpdir, "fk33_card.%s.vhd" % tag)
+    open(dst, "w").write(text)
+    return dst
+
+
+# The two stamp lines the generator writes for a trim, verbatim, so a mutant
+# that claims a trim is shaped exactly like a real one.
+_STAMP_UNSET = "--     env  FK33_C_KV_BLOCK = (unset)"
+_REPRO_PLAIN = "--     python3 hw/fk33/gen_fk33_card.py"
+
+
 def teeth(manifest_path, striped_path=DEF_STRIPED):
     import io
     # THE 2026-09-20 DEFECT AS A MUTANT: the striped image loaded, the card
@@ -712,16 +928,116 @@ def teeth(manifest_path, striped_path=DEF_STRIPED):
          dict(res_over={"striped": {"gdn_state_base": 0x1b000_0000 + 1}}),
          False),
     ]
+
+    # ---- SIDE 4: THE BUILT ARTIFACT.  Added 2026-09-20 by TRACK KVGEOM. ----
+    # Until today side 4 had NO teeth row at all: every mutant above reaches
+    # the gate, the RTL, the shape or a manifest, and not one of them touched
+    # the card.  The side added for the 2026-09-09 "built with toy defaults"
+    # defect had never been shown to refuse anything.
+    import tempfile
+    import shutil
+    tmpd = tempfile.mkdtemp(prefix="kvmap_teeth_")
+    if True:
+        M = lambda tag, subs: card_mutant(tmpd, tag, subs)
+
+        TRIM16 = [(_REPRO_PLAIN,
+                   "--     FK33_C_KV_BLOCK=16 python3 "
+                   "hw/fk33/gen_fk33_card.py"),
+                  (_STAMP_UNSET, "--     env  FK33_C_KV_BLOCK = 16"),
+                  ("C_KV_BLOCK               => 32,",
+                   "C_KV_BLOCK               => 16,")]
+
+        cases += [
+            # THE TRACK'S OWN DEFECT, as the generator really emits it.
+            ("card: FK33_C_KV_BLOCK=16 trim, exactly as the generator emits it",
+             dict(card_path=M("trim16", TRIM16)), True),
+            ("  attribution control: same artifact, side-4 rows OFF",
+             dict(card_path=M("trim16b", TRIM16), card_rows=False), False),
+            # The two halves separately, so neither row rides on the other.
+            ("card: the VALUE trimmed to 16, stamp still says (unset)",
+             dict(card_path=M("val16", TRIM16[2:])), True),
+            ("card: the STAMP says 16, the value still 32 (a stale stamp)",
+             dict(card_path=M("stamp16", TRIM16[:2])), True),
+            # A_ROWS_IF is the OTHER TRIMMABLE and has NO authority in
+            # sim/realshape_gate.sh, so only the provenance row can see it.
+            ("card: FK33_A_ROWS_IF=24 trim (only the stamp row can see it)",
+             dict(card_path=M("rows24", [
+                 (_REPRO_PLAIN, "--     FK33_A_ROWS_IF=24 python3 "
+                                "hw/fk33/gen_fk33_card.py"),
+                 ("--     env  FK33_A_ROWS_IF  = (unset)",
+                  "--     env  FK33_A_ROWS_IF  = 24"),
+                 ("A_ROWS_IF                => 48,",
+                  "A_ROWS_IF                => 24,")])), True),
+            # DOES NOT BITE, KEPT AND NAMED.  The same A_ROWS_IF value change
+            # with an HONEST-looking (unset) stamp is invisible: nothing in
+            # this tree states what A_ROWS_IF must be, so there is no
+            # authority to compare it against.  This row measures the
+            # resolution floor of side 4 and must not be "fixed" by inventing
+            # a bound -- gen_fk33_card.py's LEGAL table deliberately records
+            # none for A_ROWS_IF for the same reason.
+            ("card: A_ROWS_IF 48 -> 24 with a clean stamp -- DOES NOT BITE",
+             dict(card_path=M("rows24q", [("A_ROWS_IF                => 48,",
+                                           "A_ROWS_IF                => 24,")])),
+             False),
+            # THE 2026-09-09 DEFECT ITSELF: llama_top's simulation defaults.
+            ("card: C_MAXPOS => 4, llama_top's sim default (2026-09-09)",
+             dict(card_path=M("mp4", [("C_MAXPOS                 => 65536,",
+                                       "C_MAXPOS                 => 4,")])),
+             True),
+            ("card: C_K_BASE_CH one chunk high",
+             dict(card_path=M("kb1", [("C_K_BASE_CH              => 282672640,",
+                                       "C_K_BASE_CH              => 282672641,")])),
+             True),
+            ("card: the C_N_ROT generic deleted (sim default 8 ships)",
+             dict(card_path=M("nonrot", [("      C_N_ROT                  => 64,\n", "")])),
+             True),
+            ("card: HOST_WINDOW => true (the 2026-09-10 register blow-up)",
+             dict(card_path=M("hw", [("HOST_WINDOW              => false,",
+                                      "HOST_WINDOW              => true,")])),
+             True),
+            # THE BASED-LITERAL TRAP.  `A_JOB_STRIDE => 16#40000#` is already
+            # in this generic map; a decimal-only regex reads `16` out of it.
+            # The first row must be ACCEPTED (16#10000# IS 65536) and is the
+            # control that the parser reads the form rather than skipping it;
+            # the second must REFUSE, which is what proves it read the VALUE
+            # and did not merely tolerate the syntax.
+            ("card: C_MAXPOS => 16#10000#, the same 65536 -- must be ACCEPTED",
+             dict(card_path=M("hex_ok", [("C_MAXPOS                 => 65536,",
+                                          "C_MAXPOS                 => 16#10000#,")])),
+             False),
+            ("card: C_MAXPOS => 16#10001#, 65537 in hex",
+             dict(card_path=M("hex_bad", [("C_MAXPOS                 => 65536,",
+                                           "C_MAXPOS                 => 16#10001#,")])),
+             True),
+            # The reader must REFUSE an unreadable artifact, never fall back.
+            ("card: the whole generic map replaced by an expression",
+             dict(card_path=M("expr", [("C_MAXPOS                 => 65536,",
+                                        "C_MAXPOS                 => 2**16,")])),
+             True),
+            ("card: no `entity work.fk33_llama_top generic map` at all",
+             dict(card_path=M("nomap", [("entity work.fk33_llama_top",
+                                         "entity work.fk33_llama_top_RENAMED")])),
+             True),
+            ("card: the artifact does not exist",
+             dict(card_path=os.path.join(tmpd, "no_such_card.vhd")), True),
+        ]
     npass = nmiss = 0
     print("==== teeth for tools/check_kv_map.py ====")
+    print("     side-4 mutants are real files under %s" % tmpd)
     for name, kw, want_refuse in cases:
         buf = io.StringIO()
         # a case may name its OWN striped image; the 2026-09-20 row does,
         # because the defect it measures lives at a path that is no longer
         # the default.
         kw = dict(kw)
-        rc = check(manifest_path, require_manifest=True, out=buf,
-                   striped_path=kw.pop("striped_path", striped_path), **kw)
+        try:
+            rc = check(manifest_path, require_manifest=True, out=buf,
+                       striped_path=kw.pop("striped_path", striped_path), **kw)
+        except Bad as e:
+            # main() turns a Bad into rc 2, so teeth must score it the same
+            # way or a mutant that breaks the READER would look like a hole.
+            rc = 2
+            buf.write("  REFUSED (Bad) %s\n" % e)
         refused = rc != 0
         if refused == want_refuse:
             npass += 1
@@ -740,6 +1056,7 @@ def teeth(manifest_path, striped_path=DEF_STRIPED):
             print("        %s" % line[:190])
     print("---- %d of %d teeth rows behaved as intended ----"
           % (npass, npass + nmiss))
+    shutil.rmtree(tmpd, ignore_errors=True)
     return 0 if nmiss == 0 else 1
 
 
