@@ -110,3 +110,74 @@ were destroyed by a drive cleanup:
 
     /mnt/storage/fk33_builds/KEEP_build10_dcp/build10_synth_bd_wrapper.dcp   571 MB
     /mnt/storage/fk33_builds/KEEP_build10_dcp/build10_placed_bd_wrapper.dcp  318 MB
+
+---
+
+## CORRECTION 2026-09-20, appended in place: THE AREA ATTRIBUTION ABOVE IS NOT SUPPORTED BY THE TREE
+
+This file says the levers "grew the `card` block, and A's codebook command
+net could no longer be routed inside the period." **That claim was never
+measured and the one piece of evidence available contradicts its direction.**
+
+MEASURED by TRACK LEVERBOARD (`3caad6a`) against `card_swg`'s placed report,
+build 10 placed:
+
+    CLB   -103
+    LUT   -1,734
+    FF    -768
+    BRAM  +28
+
+**Smaller, not larger, in every logic resource.** Only BRAM grew.
+
+**And the control that would actually settle it does not exist.**
+`grep -c 'CLB LUTs' hw/fk33/results/card_kvreg_2026-09-20/build.stdout`
+returns **0**: build 9, the build immediately before this one and the only
+honest comparison, **committed no placed report at all**. So the pair that
+would test "the levers grew the card block" has never been made, and
+`card_swg` is a DIFFERENT build, which makes it the same
+cross-configuration borrowing this file already records itself committing
+once (the 672,531-endpoint figure).
+
+### What survives, and what is withdrawn
+
+SURVIVES, all MEASURED and unaffected:
+  * routed WNS -5.819 ns, TNS -14,030.521, 17,248 failing endpoints of
+    1,523,409, 17,194 of them on `clk_out3`;
+  * every one of the ten worst paths running from `eng/cb_addr_reg` to the
+    codebook command replicas, register to register with no logic between,
+    so the slack is pure net delay;
+  * `rtl/matvec_core.vhd` unchanged since `a4828ab` on 2026-08-30, so that
+    RTL is identical in builds 9 and 10;
+  * the DERIVED ~19,968 flop D-inputs from one source against 17,194
+    failing endpoints, which is why the codebook is the right thing to fix.
+
+WITHDRAWN: that the levers' AREA is what displaced the net. The mechanism
+is plausible and remains the leading hypothesis, but it is a HYPOTHESIS and
+this file stated it as the cause.
+
+### The honest statement
+
+The failure is the codebook command net. **Why that net became unroutable
+in build 10 and not in build 9 is NOT DETERMINED.** Area is one candidate;
+placement seed, the SpreadLogic directive interacting with a different
+netlist, and the BRAM growth are others, and none has been tested.
+
+### Why it happened, which is the reusable part
+
+This is the project's own recorded failure repeated: *"ENUMERATE WHAT
+DIFFERS BETWEEN TWO RUNS FROM THE RUNS' OWN RECORDED PARAMETERS, NEVER FROM
+THE INTENT OF WHOEVER LAUNCHED THEM."* The dispatcher knew what build 10
+was FOR -- adding four levers -- and reached for area because area was the
+thing being added. It then found a real defect (the 1,536-sink net), and an
+agreeing downstream result made the whole chain feel settled. **A correct
+diagnosis of the SYMPTOM does not validate the story about the CAUSE**, and
+this file had already written that same lesson down two sections earlier
+about a different number.
+
+**The fix is infrastructural, not a resolution to be more careful.** Three
+attribution questions failed this evening on the same missing evidence --
+a per-subsystem area figure that `report_utilization` never emitted because
+nobody passed `-hierarchical`, and a placed report build 9 never committed.
+Both are kilobytes, produced at zero marginal cost by a build that already
+ran four hours. TRACK BUILDREPORT is making every `FK33_CARD=1` build emit
+and commit them.
